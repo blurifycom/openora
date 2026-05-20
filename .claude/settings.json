@@ -1,0 +1,56 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(pnpm *)",
+      "Bash(turbo *)",
+      "Bash(prisma *)",
+      "Bash(docker *)",
+      "Bash(docker-compose *)",
+      "Bash(node *)",
+      "Bash(tsx *)",
+      "Bash(ls *)",
+      "Bash(find *)",
+      "Bash(grep *)",
+      "Bash(cat *)",
+      "Bash(mkdir *)",
+      "Bash(cp *)",
+      "Bash(mv *)",
+      "Bash(rm *)",
+      "Bash(git status)",
+      "Bash(git diff *)",
+      "Bash(git log *)",
+      "Bash(git branch *)",
+      "Bash(git stash *)"
+    ],
+    "deny": [
+      "Bash(git push *)",
+      "Bash(git commit *)",
+      "Bash(git reset --hard *)",
+      "Bash(npm *)",
+      "Bash(yarn *)"
+    ]
+  },
+  "mcpServers": {
+    "oss-dev": {
+      "type": "stdio",
+      "command": "node",
+      "args": ["apps/mcp-server-dev/dist/main.js"],
+      "env": {
+        "MCP_PORT": "3004"
+      }
+    }
+  },
+  "hooks": {
+    "PostToolUse": [
+      {
+        "matcher": "Edit|Write",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node --experimental-strip-types tools/hooks/post-edit.ts \"$CLAUDE_TOOL_INPUT_FILE_PATH\""
+          }
+        ]
+      }
+    ]
+  }
+}

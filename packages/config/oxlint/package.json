@@ -1,0 +1,11 @@
+{
+  "name": "@oss/oxlint-config",
+  "version": "0.0.1",
+  "private": true,
+  "files": [
+    "*.json"
+  ],
+  "devDependencies": {
+    "oxlint": "1.66.0"
+  }
+}

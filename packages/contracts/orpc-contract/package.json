@@ -1,0 +1,89 @@
+{
+  "name": "@oss/orpc-contract",
+  "version": "0.0.1",
+  "private": true,
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "import": "./dist/index.js",
+      "require": "./dist/index.js",
+      "types": "./dist/index.d.ts"
+    },
+    "./cms": {
+      "import": "./dist/cms.js",
+      "require": "./dist/cms.js",
+      "types": "./dist/cms.d.ts"
+    },
+    "./notifications": {
+      "import": "./dist/notifications.js",
+      "require": "./dist/notifications.js",
+      "types": "./dist/notifications.d.ts"
+    },
+    "./localization": {
+      "import": "./dist/localization.js",
+      "require": "./dist/localization.js",
+      "types": "./dist/localization.d.ts"
+    },
+    "./compliance": {
+      "import": "./dist/compliance.js",
+      "require": "./dist/compliance.js",
+      "types": "./dist/compliance.d.ts"
+    },
+    "./gaming": {
+      "import": "./dist/gaming.js",
+      "require": "./dist/gaming.js",
+      "types": "./dist/gaming.d.ts"
+    },
+    "./wallet": {
+      "import": "./dist/wallet.js",
+      "require": "./dist/wallet.js",
+      "types": "./dist/wallet.d.ts"
+    },
+    "./bonus": {
+      "import": "./dist/bonus.js",
+      "require": "./dist/bonus.js",
+      "types": "./dist/bonus.d.ts"
+    },
+    "./lobby": {
+      "import": "./dist/lobby.js",
+      "require": "./dist/lobby.js",
+      "types": "./dist/lobby.d.ts"
+    },
+    "./chat": {
+      "import": "./dist/chat.js",
+      "require": "./dist/chat.js",
+      "types": "./dist/chat.d.ts"
+    },
+    "./casino-aggregator": {
+      "import": "./dist/casino-aggregator.js",
+      "require": "./dist/casino-aggregator.js",
+      "types": "./dist/casino-aggregator.d.ts"
+    },
+    "./backoffice": {
+      "import": "./dist/backoffice.js",
+      "require": "./dist/backoffice.js",
+      "types": "./dist/backoffice.d.ts"
+    },
+    "./player": {
+      "import": "./dist/player.js",
+      "require": "./dist/player.js",
+      "types": "./dist/player.d.ts"
+    }
+  },
+  "scripts": {
+    "build": "tsc",
+    "typecheck": "tsc --noEmit",
+    "clean": "rm -rf dist"
+  },
+  "dependencies": {
+    "@orpc/contract": "1.14.3",
+    "@oss/domain-schemas": "workspace:*",
+    "zod": "4.4.3"
+  },
+  "devDependencies": {
+    "@oss/tsconfig": "workspace:*",
+    "typescript": "6.0.3"
+  }
+}

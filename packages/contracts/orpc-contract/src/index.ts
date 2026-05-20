@@ -1,0 +1,61 @@
+import { populateContractRouterPaths } from '@orpc/contract';
+import { healthContract } from './health.js';
+import { identityContract } from './identity.js';
+import { localizationContract } from './localization.js';
+import { cmsContract } from './cms.js';
+import { complianceContract } from './compliance.js';
+import { notificationsContract } from './notifications.js';
+import { walletContract } from './wallet.js';
+import { gamingContract } from './gaming.js';
+import { bonusContract } from './bonus.js';
+import { chatContract } from './chat.js';
+import { lobbyContract } from './lobby.js';
+import { backofficeContract } from './backoffice.js';
+import { playerContract } from './player.js';
+import { casinoAggregatorContract } from './casino-aggregator.js';
+
+export { healthContract } from './health.js';
+export { identityContract } from './identity.js';
+export { localizationContract } from './localization.js';
+export { cmsContract, PageSchema, BannerSchema } from './cms.js';
+export { complianceContract, LimitSchema, GeoRuleSchema } from './compliance.js';
+export { notificationsContract, NotificationSchema } from './notifications.js';
+export { walletContract, WalletBalanceSchema, WalletTransactionSchema } from './wallet.js';
+export { gamingContract, GameSchema, GameRoundSchema } from './gaming.js';
+export { bonusContract, BonusSchema, UserBonusSchema } from './bonus.js';
+export { chatContract, ChatRoomSchema, ChatMessageSchema } from './chat.js';
+export { lobbyContract, GameSummarySchema, LobbyCategorySchema } from './lobby.js';
+export {
+  backofficeContract,
+  PlatformStatsSchema,
+  AdminUserSchema,
+  AdminTransactionSchema,
+} from './backoffice.js';
+export {
+  playerContract,
+  PlayerSchema,
+  PlayerStatusSchema,
+  KycStatusSchema,
+  PlayerRegistrationPointSchema,
+  PlayerSummarySchema,
+} from './player.js';
+export { casinoAggregatorContract } from './casino-aggregator.js';
+
+export const contract = populateContractRouterPaths({
+  health: healthContract,
+  identity: identityContract,
+  localization: localizationContract,
+  cms: cmsContract,
+  compliance: complianceContract,
+  notifications: notificationsContract,
+  wallet: walletContract,
+  gaming: gamingContract,
+  bonus: bonusContract,
+  chat: chatContract,
+  lobby: lobbyContract,
+  backoffice: backofficeContract,
+  player: playerContract,
+  casinoAggregator: casinoAggregatorContract,
+});
+
+export type Contract = typeof contract;

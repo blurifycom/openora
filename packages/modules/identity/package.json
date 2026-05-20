@@ -1,0 +1,50 @@
+{
+  "name": "@oss/module-identity",
+  "version": "0.0.1",
+  "private": true,
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "import": "./dist/index.js",
+      "require": "./dist/index.js",
+      "types": "./dist/index.d.ts"
+    }
+  },
+  "scripts": {
+    "build": "tsc",
+    "typecheck": "tsc --noEmit",
+    "clean": "rm -rf dist",
+    "test": "vitest run",
+    "test:unit": "vitest run --project unit",
+    "test:integration": "vitest run --project integration"
+  },
+  "dependencies": {
+    "@nestjs/common": "11.1.21",
+    "@nestjs/core": "11.1.21",
+    "@orpc/nest": "1.14.3",
+    "@orpc/server": "1.14.3",
+    "@oss/auth": "workspace:*",
+    "@oss/core": "workspace:*",
+    "@oss/domain-schemas": "workspace:*",
+    "@oss/orpc-contract": "workspace:*",
+    "@oss/persistence": "workspace:*",
+    "@oss/plugin-host": "workspace:*",
+    "@oss/ui-provider-contract": "workspace:*",
+    "better-auth": "1.6.11",
+    "zod": "4.4.3"
+  },
+  "devDependencies": {
+    "@oss/tsconfig": "workspace:*",
+    "@types/express": "5.0.6",
+    "@types/node": "25.9.0",
+    "@types/react": "19.2.14",
+    "react": "^19.2.6",
+    "typescript": "6.0.3"
+  },
+  "peerDependencies": {
+    "react": ">=19.0.0",
+    "reflect-metadata": ">=0.1.0"
+  }
+}

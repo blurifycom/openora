@@ -1,0 +1,13 @@
+{
+  "name": "@oss/vitest-config",
+  "version": "0.0.1",
+  "private": true,
+  "files": [
+    "index.ts"
+  ],
+  "main": "index.ts",
+  "dependencies": {
+    "@vitest/coverage-v8": "4.1.6",
+    "vitest": "4.1.6"
+  }
+}

@@ -1,0 +1,39 @@
+{
+  "name": "oss-casino-platform",
+  "version": "0.0.1",
+  "private": true,
+  "scripts": {
+    "build": "turbo run build",
+    "dev": "turbo run dev",
+    "lint": "turbo run lint",
+    "typecheck": "turbo run typecheck",
+    "test": "turbo run test",
+    "test:unit": "turbo run test:unit",
+    "test:integration": "turbo run test:integration",
+    "codegen": "turbo run codegen",
+    "clean": "turbo run clean && rm -rf node_modules",
+    "format": "oxfmt",
+    "format:check": "oxfmt --check",
+    "sync:agent-docs": "tsx tools/sync-agent-docs.ts",
+    "scaffold": "tsx tools/scaffold.ts",
+    "regen": "tsx tools/prisma-merge.ts && turbo run codegen && pnpm -F @oss/infra prisma generate",
+    "seed": "tsx tools/seed.ts",
+    "verify": "turbo run typecheck lint test:unit",
+    "setup:agent": "tsx tools/setup-agent.ts"
+  },
+  "devDependencies": {
+    "@oss/api-runtime": "workspace:*",
+    "@oss/auth": "workspace:*",
+    "@oss/persistence": "workspace:*",
+    "@types/node": "25.9.0",
+    "oxfmt": "0.51.0",
+    "tsx": "4.22.2",
+    "turbo": "2.9.14",
+    "typescript": "6.0.3"
+  },
+  "engines": {
+    "node": ">=22.0.0",
+    "pnpm": ">=10.0.0"
+  },
+  "packageManager": "pnpm@11.1.3"
+}

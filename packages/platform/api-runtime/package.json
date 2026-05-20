@@ -1,0 +1,40 @@
+{
+  "name": "@oss/api-runtime",
+  "version": "0.0.1",
+  "private": true,
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "import": "./dist/index.js",
+      "require": "./dist/index.js",
+      "types": "./dist/index.d.ts"
+    }
+  },
+  "scripts": {
+    "build": "tsc",
+    "typecheck": "tsc --noEmit",
+    "clean": "rm -rf dist"
+  },
+  "dependencies": {
+    "@nestjs/common": "11.1.21",
+    "@nestjs/core": "11.1.21",
+    "@nestjs/platform-express": "11.1.21",
+    "@orpc/contract": "1.14.3",
+    "@orpc/nest": "1.14.3",
+    "@orpc/openapi": "1.14.3",
+    "@orpc/server": "1.14.3",
+    "@orpc/zod": "1.14.3",
+    "@oss/core": "workspace:*",
+    "@oss/orpc-contract": "workspace:*",
+    "@oss/persistence": "workspace:*",
+    "@oss/plugin-host": "workspace:*",
+    "reflect-metadata": "0.2.2"
+  },
+  "devDependencies": {
+    "@oss/tsconfig": "workspace:*",
+    "@types/express": "5.0.6",
+    "typescript": "6.0.3"
+  }
+}

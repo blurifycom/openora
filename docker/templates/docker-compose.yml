@@ -1,0 +1,76 @@
+name: <consumer>
+
+# Consumer-owned full stack. Pick port offsets that don't collide with the OSS
+# reference stack if you ever run both at once (OSS uses 3000/3001/5432/6379).
+#
+# Build context is the workspace parent so the build sees both <consumer>/ and
+# the sibling casino-oss/ clone.
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: <consumer>-postgres
+    environment:
+      POSTGRES_DB: <consumer>
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+    ports:
+      - '${POSTGRES_PORT:-5433}:5432'
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ['CMD-SHELL', 'pg_isready -U postgres']
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  redis:
+    image: redis:7-alpine
+    container_name: <consumer>-redis
+    ports:
+      - '${REDIS_PORT:-6380}:6379'
+    healthcheck:
+      test: ['CMD', 'redis-cli', 'ping']
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  api:
+    build:
+      # Parent dir contains both <consumer>/ and casino-oss/.
+      context: ../..
+      dockerfile: <consumer>/docker/Dockerfile.api
+    container_name: <consumer>-api
+    environment:
+      DATABASE_URL: postgresql://postgres:postgres@postgres:5432/<consumer>
+      PORT: 3101
+      CORS_ORIGINS: ${CORS_ORIGINS:-http://localhost:3100}
+      BETTER_AUTH_URL: ${BETTER_AUTH_URL:-http://localhost:3101}
+      BETTER_AUTH_SECRET: ${BETTER_AUTH_SECRET:-dev-only-change-me}
+    ports:
+      - '${API_PORT:-3101}:3101'
+    depends_on:
+      postgres:
+        condition: service_healthy
+    healthcheck:
+      test: ['CMD', 'wget', '-qO-', 'http://localhost:3101/health']
+      interval: 10s
+      timeout: 3s
+      retries: 10
+      start_period: 25s
+
+  web:
+    build:
+      context: ../..
+      dockerfile: <consumer>/docker/Dockerfile.web
+    container_name: <consumer>-web
+    environment:
+      NEXT_PUBLIC_API_URL: ${NEXT_PUBLIC_API_URL:-http://localhost:3101}
+    ports:
+      - '${WEB_PORT:-3100}:3100'
+    depends_on:
+      api:
+        condition: service_healthy
+
+volumes:
+  postgres_data:

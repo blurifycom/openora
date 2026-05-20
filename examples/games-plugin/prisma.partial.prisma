@@ -1,0 +1,36 @@
+// Tables owned by the consumer-games-plugin example.
+// Merged into infra/prisma/schema.prisma by `pnpm regen`.
+// Run `pnpm regen` after enabling this plugin to apply the migration.
+
+model CrashRound {
+  id         String           @id @default(cuid())
+  tenantId   String
+  multiplier Float
+  bustedAt   DateTime
+  status     CrashRoundStatus @default(active)
+  createdAt  DateTime         @default(now())
+
+  bets CrashBet[]
+
+  @@map("crash_round")
+}
+
+model CrashBet {
+  id        String     @id @default(cuid())
+  tenantId  String
+  roundId   String
+  userId    String
+  betAmount Decimal
+  cashOutAt Float?
+  winAmount Decimal    @default(0)
+  createdAt DateTime   @default(now())
+
+  round CrashRound @relation(fields: [roundId], references: [id])
+
+  @@map("crash_bet")
+}
+
+enum CrashRoundStatus {
+  active
+  crashed
+}

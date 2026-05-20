@@ -1,0 +1,27 @@
+// Tables owned by the localization module.
+// Merged into infra/prisma/schema.prisma by `pnpm regen`.
+// Rules: every multi-tenant model must have: tenantId  String
+
+model Locale {
+  id           String        @id @default(cuid())
+  code         String        @unique
+  name         String
+  isDefault    Boolean       @default(false)
+  createdAt    DateTime      @default(now())
+  translations Translation[]
+
+  @@map("locale")
+}
+
+model Translation {
+  id        String   @id @default(cuid())
+  localeId  String
+  locale    Locale   @relation(fields: [localeId], references: [id], onDelete: Cascade)
+  namespace String
+  key       String
+  value     String
+  updatedAt DateTime @updatedAt
+
+  @@unique([localeId, namespace, key])
+  @@map("translation")
+}

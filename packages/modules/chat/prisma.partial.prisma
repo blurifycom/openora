@@ -1,0 +1,32 @@
+// Tables owned by the chat module.
+// Merged into infra/prisma/schema.prisma by `pnpm regen`.
+// Rules: every multi-tenant model must have: tenantId  String
+
+model ChatRoom {
+  id        String   @id @default(cuid())
+  tenantId  String
+  name      String
+  slug      String
+  isPublic  Boolean  @default(true)
+  createdAt DateTime @default(now())
+
+  messages ChatMessage[]
+
+  @@unique([tenantId, slug])
+}
+
+model ChatMessage {
+  id        String   @id @default(cuid())
+  tenantId  String
+  roomId    String?
+  userId    String
+  username  String
+  content   String
+  isDeleted Boolean  @default(false)
+  createdAt DateTime @default(now())
+
+  room ChatRoom? @relation(fields: [roomId], references: [id])
+
+  @@index([roomId, createdAt])
+  @@index([tenantId, createdAt])
+}

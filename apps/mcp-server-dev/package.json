@@ -1,0 +1,22 @@
+{
+  "name": "@oss/mcp-server-dev",
+  "version": "0.0.1",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "tsc",
+    "dev": "node --watch dist/main.js",
+    "start": "node dist/main.js",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "1.29.0",
+    "fastify": "5.8.5",
+    "zod": "4.4.3"
+  },
+  "devDependencies": {
+    "@oss/tsconfig": "workspace:*",
+    "@types/node": "25.9.0",
+    "typescript": "6.0.3"
+  }
+}

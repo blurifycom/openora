@@ -1,0 +1,24 @@
+{
+  "name": "@oss/api",
+  "version": "0.0.1",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "tsc",
+    "dev": "node --import tsx --watch src/main.ts",
+    "start": "node dist/src/main.js",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "@oss/api-runtime": "workspace:*",
+    "@oss/orpc-contract": "workspace:*",
+    "@oss/plugin-host": "workspace:*",
+    "reflect-metadata": "0.2.2"
+  },
+  "devDependencies": {
+    "@oss/tsconfig": "workspace:*",
+    "tsx": "4.22.2",
+    "typescript": "6.0.3"
+  }
+}

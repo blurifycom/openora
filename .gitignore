@@ -1,0 +1,13 @@
+node_modules
+dist
+.next
+.turbo
+coverage
+*.local
+.env
+.env.*
+!.env.example
+prisma/migrations/*.sql
+*.tsbuildinfo
+.cache
+storybook-static

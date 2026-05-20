@@ -1,0 +1,32 @@
+// Tables owned by the player module (Player Account Management).
+// Merged into infra/prisma/schema.prisma by `pnpm regen`.
+// Do not edit infra/prisma/schema.prisma directly.
+//
+// `userId` references the identity `user` table by ID only (no Prisma relation):
+// modules must not hold cross-module FK relations - see the boundary rules in
+// AGENTS.md. The link is enforced in application code, not the DB.
+
+model Player {
+  id            String   @id @default(uuid())
+  userId        String   @unique
+  displayName   String
+  country       String?
+  currency      String   @default("USD")
+  language      String   @default("en")
+  // Lifecycle: active | dormant | self_excluded | suspended | closed
+  status        String   @default("active")
+  // KYC: pending | verified | rejected
+  kycStatus     String   @default("pending")
+  level         Int      @default(1)
+  totalWagered  Decimal  @default(0) @db.Decimal(18, 2)
+  totalDeposits Decimal  @default(0) @db.Decimal(18, 2)
+  lastSeenAt    DateTime?
+  tenantId      String   @default("default")
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  @@index([status])
+  @@index([tenantId])
+  @@index([createdAt])
+  @@map("player")
+}

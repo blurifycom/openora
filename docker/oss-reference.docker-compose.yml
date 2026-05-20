@@ -1,0 +1,50 @@
+name: oss-reference
+
+# One-command OSS reference stack: services + API + Backoffice, all bound to
+# canonical OSS ports (api :3001, backoffice :3000, postgres :5432).
+#
+#   docker compose -f docker/oss-reference.docker-compose.yml up
+#
+# This composes services.docker-compose.yml (services only) with the API and
+# Backoffice images built from this repo. Downstream consumers (Consumer et al.)
+# do NOT use this file - they ship their own compose using docker/api.Dockerfile.
+
+include:
+  - services.docker-compose.yml
+
+services:
+  api:
+    build:
+      context: ..
+      dockerfile: docker/api.Dockerfile
+    container_name: oss-api
+    environment:
+      DATABASE_URL: postgresql://postgres:postgres@postgres:5432/oss_casino
+      PORT: 3001
+      CORS_ORIGINS: http://localhost:3000
+      BETTER_AUTH_URL: http://localhost:3001
+      BETTER_AUTH_SECRET: ${BETTER_AUTH_SECRET:-dev-only-change-me}
+    ports:
+      - '3001:3001'
+    depends_on:
+      postgres:
+        condition: service_healthy
+    healthcheck:
+      test: ['CMD', 'wget', '-qO-', 'http://localhost:3001/health']
+      interval: 10s
+      timeout: 3s
+      retries: 10
+      start_period: 20s
+
+  backoffice:
+    build:
+      context: ..
+      dockerfile: docker/web.Dockerfile
+    container_name: oss-backoffice
+    environment:
+      NEXT_PUBLIC_API_URL: http://localhost:3001
+    ports:
+      - '3000:3000'
+    depends_on:
+      api:
+        condition: service_healthy

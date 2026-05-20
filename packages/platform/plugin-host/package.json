@@ -1,0 +1,34 @@
+{
+  "name": "@oss/plugin-host",
+  "version": "0.0.1",
+  "private": true,
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "import": "./dist/index.js",
+      "require": "./dist/index.js",
+      "types": "./dist/index.d.ts"
+    }
+  },
+  "scripts": {
+    "build": "tsc",
+    "typecheck": "tsc --noEmit",
+    "clean": "rm -rf dist",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "@nestjs/common": "11.1.21",
+    "@nestjs/core": "11.1.21"
+  },
+  "devDependencies": {
+    "@oss/tsconfig": "workspace:*",
+    "@types/node": "25.9.0",
+    "reflect-metadata": "^0.2.2",
+    "typescript": "6.0.3"
+  },
+  "peerDependencies": {
+    "reflect-metadata": ">=0.1.0"
+  }
+}
