@@ -1,0 +1,7 @@
+# Codex project config. Mirrors .mcp.json (Claude Code) so the same dev MCP
+# server is available to Codex. Codex uses TOML; Claude Code uses JSON.
+# If your Codex version only reads ~/.codex/config.toml, copy this block there.
+
+[mcp_servers.oss-dev]
+command = "pnpm"
+args = ["exec", "tsx", "apps/mcp-server-dev/src/main.ts"]

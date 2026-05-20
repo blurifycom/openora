@@ -241,6 +241,12 @@ The following are intentionally NOT delivered in this PRD and tracked separately
 - Phase 5 - Examples + extension demos: done
 - Post-phase refactor: `createApp` factory pattern landed, Consumer consumer scaffolded
 - Frontend platform: Consumer `apps/web` consumes the OSS admin at `/admin/*`; headless backoffice + typed client + theme system consolidated into `@oss/react-sdk` (former `@oss/client`, `@oss/backoffice-ui`, `@oss/design-system` removed); UI plugin registry (ADR-0006) shipped with `vip-tiers` as first consumer; Storybook refactored to contract-driven + adapter switcher; Docker reference stack + one-command `pnpm setup` for Consumer; end-to-end auth flow (register/login/cookie session/logout) working.
+- Player PAM: `player` OSS core module (list/detail/update/delete + registrations chart + summary), admin-gated; admin-vs-player role on the auth user; Consumer `player-badges` extension demonstrating the seam. Loading skeletons + longest-prefix nav active-state in the admin shell.
+- Demo data: `pnpm seed` in both repos (shared `seedDemoData` in `@oss/api-runtime`) - admin + players + wallets + transactions + games (+ badges in Consumer), idempotent and deterministic.
+- Theme: warm-graphite (lighter) palette; display/body fonts switched to Bricolage Grotesque + Hanken Grotesk via `next/font` (self-hosted), Storybook keeps an `@import` fallback.
+- Consumer plugins consolidated from per-feature packages into a single `@consumer/plugins` package (one folder per feature); `/scaffold-feature` deterministic generator added.
+- AI dev surface: MCP dev server registered correctly via `.mcp.json` (was dead in `.claude/settings.json`) + Codex `.codex/config.toml`; PostToolUse typecheck hook fixed (reads stdin, scoped + non-false-blocking); architecture diagram added at `docs/architecture.md`.
+- Tooling: prettier replaced by oxfmt (`oxlint` + `oxfmt`); dependencies bumped to latest majors and pinned.
 
 ### What's blocking first boot
 

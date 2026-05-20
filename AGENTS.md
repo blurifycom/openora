@@ -22,7 +22,7 @@ apps/
   api/                # NestJS + oRPC HTTP API (port 3001)
   backoffice/         # Next.js 16 admin UI (port 3000)
   worker/             # BullMQ worker (port 3003)
-  mcp-server-dev/     # MCP server agents connect to (port 3004)
+  mcp-server-dev/     # MCP dev server (stdio) - agents connect via .mcp.json
   storybook/          # Component playground (port 6006)
   extensions/         # In-tree overlay plugins (drop-in folders)
 packages/
@@ -49,6 +49,7 @@ packages/
 infra/                # Prisma schema (merged) + docker-compose
 docs/
   adr/                # Architecture decision records
+  architecture.md     # system diagram (mermaid) + adapter seams
   agent-quickstart.md
 tools/
   scaffold.ts         # Code-mod CLI used by slash commands and MCP
@@ -336,7 +337,8 @@ This must pass for every PR. CI runs the same command plus a "no schema drift" c
 ## Conventions for agents specifically
 
 - Read this file first, then the module's `AGENTS.md`, then ADRs. Don't reopen settled questions.
-- Use the MCP dev server (`mcp-server-dev`) for read-only inspection: `read-agents-md`, `list-modules`, `describe-route`, `query-openapi`, `get-prisma-model-graph`. It's faster than grep and always reflects current state.
+- The `oss-dev` MCP server is registered in `.mcp.json` (stdio, launched by your editor - no port). Claude Code reads it from `.mcp.json`, NOT from `.claude/settings.json`; it's pre-approved via `enabledMcpjsonServers`. Codex reads `.codex/config.toml`. Verify with `claude mcp list` or `/mcp`.
+- Use the MCP dev server for read-only inspection: `read-agents-md`, `list-modules`, `describe-module`, `list-routes`, `list-extension-points`, `query-openapi`, `get-prisma-model-graph`, `propose-prisma-change`. It's faster than grep and always reflects current state. Write ops (`scaffold-*`, `regen`, `run-verify`) delegate to the same `tools/scaffold.ts` / pnpm scripts humans use.
 - Use slash commands for write operations - they call the same `tools/scaffold.ts` that humans use, so the output is consistent.
 - Before adding a route, call `query-openapi` to check it doesn't already exist.
 - Before adding a table, call `propose-prisma-change` to validate against the merged graph (catches collisions).

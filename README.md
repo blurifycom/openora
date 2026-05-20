@@ -21,9 +21,12 @@ Open-source, headless, plugin-based, AI-native casino platform. Clone it, extend
 
 ```bash
 # Requirements: Node 22+, pnpm 10+, Docker
-pnpm setup:agent          # boot Docker (Postgres + Redis) + run migrations + start MCP server
+pnpm setup:agent          # boot Docker (Postgres + Redis) + run migrations
+pnpm seed                 # demo data: admin + players + wallets + transactions + games
 pnpm dev                  # api :3001, backoffice :3000, worker :3003, storybook :6006
 ```
+
+Log in to the backoffice with `admin@oss.dev` / `password123` (see `pnpm seed --help` flags).
 
 ## Adding a module
 
@@ -76,8 +79,9 @@ export const extensions = [
 ```
 Single Zod root  ->  oRPC contract  ->  NestJS controller  ->  OpenAPI spec
                                     ->  TypeScript client (zero codegen)
-                                    ->  REST SDK (hey-api, optional)
 ```
+
+Full system diagram (plugin host, adapter seams, consumer linking, AI dev surface): [docs/architecture.md](./docs/architecture.md).
 
 Pillars: [AGENTS.md](./AGENTS.md) | ADRs: [docs/adr/](./docs/adr/)
 
@@ -87,13 +91,15 @@ Module pages consume only `@oss/ui-provider-contract`. Swap the entire look by r
 
 ## AI-first development
 
-Every module ships an `AGENTS.md`. The MCP dev server (`apps/mcp-server-dev`) exposes schema registry, route catalog, plugin manifest, and scaffolders as tools - so Claude Code can extend the platform without asking the same questions every session.
+Every module ships an `AGENTS.md`. The MCP dev server (`apps/mcp-server-dev`) exposes the schema registry, route catalog, plugin manifest, and scaffolders as tools - so an agent can extend the platform without re-asking the same questions every session.
+
+It is a **stdio** server registered in [`.mcp.json`](./.mcp.json) (pre-approved via `enabledMcpjsonServers` in `.claude/settings.json`) - the editor launches it; there is no port and no separate `dev` command. Codex reads the same definition from [`.codex/config.toml`](./.codex/config.toml).
 
 ```bash
-pnpm -F @oss/mcp-server-dev dev   # start MCP server on :3004
+claude mcp list           # verify the oss-dev server is connected
 ```
 
-Connect via Claude Code settings and use `list-modules`, `describe-route`, `scaffold-module`, etc.
+Then use `list-modules`, `list-routes`, `query-openapi`, `get-prisma-model-graph`, `propose-prisma-change`, and the `scaffold-*` tools. Write operations go through `/scaffold-module`, `/scaffold-plugin`, `/scaffold-route`, `/scaffold-ui-component` (deterministic code-mods). See [docs/agent-quickstart.md](./docs/agent-quickstart.md).
 
 ## License
 

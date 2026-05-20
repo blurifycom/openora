@@ -5,8 +5,7 @@ This guide walks an AI agent through implementing a module end-to-end using only
 ## Assumptions
 
 - `pnpm setup:agent` has been run (Docker up, DB migrated, dependencies installed).
-- The MCP dev server is running: `pnpm -F @oss/mcp-server-dev dev`.
-- Claude Code is connected to the `oss-dev` MCP server.
+- The `oss-dev` MCP server is registered in `.mcp.json` and your agent launches it automatically (stdio). Verify with `claude mcp list` (Claude Code) or check `.codex/config.toml` (Codex). No separate process to start.
 
 ## Step 1: Understand the platform
 

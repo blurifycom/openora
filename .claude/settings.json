@@ -30,16 +30,8 @@
       "Bash(yarn *)"
     ]
   },
-  "mcpServers": {
-    "oss-dev": {
-      "type": "stdio",
-      "command": "node",
-      "args": ["apps/mcp-server-dev/dist/main.js"],
-      "env": {
-        "MCP_PORT": "3004"
-      }
-    }
-  },
+  "enableAllProjectMcpServers": false,
+  "enabledMcpjsonServers": ["oss-dev"],
   "hooks": {
     "PostToolUse": [
       {
@@ -47,7 +39,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "node --experimental-strip-types tools/hooks/post-edit.ts \"$CLAUDE_TOOL_INPUT_FILE_PATH\""
+            "command": "pnpm exec tsx .claude/hooks/post-edit.ts"
           }
         ]
       }
