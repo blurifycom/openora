@@ -66,11 +66,26 @@ export const extensions = [
 ];
 ```
 
-## Examples
+## Building your own igaming on top (downstream consumer)
+
+Scaffold a full consumer turborepo (api + player web + backoffice) that links this checkout:
+
+```bash
+pnpm create:app ../my-igaming --name my-igaming
+cd ../my-igaming
+pnpm install
+pnpm build:oss      # build the linked @oss/* packages once
+pnpm dev            # api :3001, web :3000, backoffice :3002
+```
+
+The generated repo holds only what's unique to your operation - branding, vendor adapters,
+overlay plugins, route shims. Core is consumed as linked `@oss/*` packages, never forked. It
+ships `turbo gen` generators (`pnpm gen plugin|adapter|page`) and three AI agents
+(`igaming-builder`, `igaming-expert`, `igaming-qa`) in `.claude/agents/`.
 
 | Example                                                  | What it shows                                                                                  |
 | -------------------------------------------------------- | ---------------------------------------------------------------------------------------------- |
-| [`examples/minimal-igaming/`](./examples/minimal-igaming/) | A downstream consumer end-to-end: `createApp`, `extensions.config.ts`, a custom vendor adapter binding, and a theme override - the canonical "start here" template. |
+| [`examples/minimal-igaming/`](./examples/minimal-igaming/) | The smallest possible single-file consumer: `createApp`, `extensions.config.ts`, a custom vendor adapter binding, and a theme override - read this to understand the wiring the scaffolder generates. |
 
 See [docs/downstream-consumer.md](./docs/downstream-consumer.md) for the full consumption guide.
 

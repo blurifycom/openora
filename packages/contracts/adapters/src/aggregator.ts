@@ -1,6 +1,6 @@
-// Casino-aggregator seam. An aggregator fans out to many game providers'
+// Igaming-aggregator seam. An aggregator fans out to many game providers'
 // catalogues; bind a concrete adapter to AGGREGATOR_ADAPTER in the
-// casino-aggregator module's plugin.ts.
+// igaming-aggregator module's plugin.ts.
 
 export interface AggregatorGame {
   externalId: string;

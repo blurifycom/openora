@@ -1,0 +1,21 @@
+import { definePlugin } from '@oss/plugin-host';
+import { {{token}}, type {{pascalCase token}} } from '@oss/adapters';
+
+// Swaps the {{token}} binding. Register AFTER `{{dependsOn}}` in
+// apps/api/src/extensions.config.ts so this binding wins (last registration of a DI
+// token wins):
+//   { id: '{{kebabCase name}}', path: `${LOCAL}/{{kebabCase name}}/plugin.ts` }
+//
+// Implement the interface from @oss/adapters against your vendor. This stub throws
+// until you wire it up.
+class {{pascalCase name}}Adapter implements {{pascalCase token}} {
+  // AGENT: implement the {{pascalCase token}} interface methods here.
+}
+
+export default definePlugin({
+  id: '{{kebabCase name}}',
+  dependsOn: ['{{dependsOn}}'],
+  register(ctx) {
+    ctx.providers.add({ provide: {{token}}, useClass: {{pascalCase name}}Adapter });
+  },
+});

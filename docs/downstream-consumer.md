@@ -8,6 +8,27 @@ See also [`examples/minimal-igaming/`](../examples/minimal-igaming/) for a runna
 [`CATALOG.md`](./CATALOG.md) for the machine-readable surface (routes, schemas, adapter tokens,
 slots, events, config schema) an agent reads instead of grepping `node_modules`.
 
+## Fastest path: scaffold the repo
+
+From this OSS checkout, generate a full consumer turborepo wired to link at it:
+
+```bash
+pnpm create:app ../my-igaming --name my-igaming
+cd ../my-igaming
+pnpm install
+pnpm build:oss          # build the linked @oss/* packages once
+cp .env.example .env     # set DATABASE_URL + AUTH_SECRET
+pnpm db:migrate          # apply the OSS schema
+pnpm dev                 # api :3001, web :3000, backoffice :3002
+```
+
+This emits everything the sections below describe by hand: `apps/api` (thin `createApp` entry +
+`extensions.config.ts`), `apps/web` + `apps/backoffice` (Next apps mounting react-sdk pages with
+the dedup `next.config.ts`), root `pnpm.overrides` linking every `@oss/*`, `.mcp.json`, the three
+consumer AI agents, and `turbo/generators/` (`pnpm gen plugin|adapter|page`). The CLI lives at
+`tools/create-igaming-app.ts`; the template tree at `tools/templates/consumer/`. Read on to
+understand what it generated and how to extend it.
+
 ## API entrypoint
 
 A downstream consumer imports `@oss/api-runtime` and creates an API instance:

@@ -1,0 +1,16 @@
+# Database (Postgres). In dev link-mode this is typically the same local DB the
+# OSS checkout uses, so migrations run via `pnpm db:migrate` line up.
+DATABASE_URL=postgresql://postgres:postgres@localhost:5432/oss_igaming
+
+# Auth secret (min 32 chars). Generate one: openssl rand -base64 32
+AUTH_SECRET=change-me-in-production-min-32-chars
+
+# Optional infra
+REDIS_URL=redis://localhost:6379
+
+# Ports
+PORT=3001
+CORS_ORIGINS=http://localhost:3000,http://localhost:3002
+
+# Player web app -> API
+NEXT_PUBLIC_API_URL=http://localhost:3001

@@ -10,6 +10,9 @@ coverage
 !.env.example
 prisma/migrations/*.sql
 *.tsbuildinfo
+# stray OpenAPI spec emitted when the API boots with cwd=apps/api (the canonical
+# one is docs/openapi.json at the repo root, read by gen-catalog)
+apps/*/docs/openapi.json
 .cache
 storybook-static
 .claude/worktrees

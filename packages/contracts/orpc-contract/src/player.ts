@@ -3,7 +3,7 @@ import * as z from 'zod';
 
 /**
  * Player Account Management (PAM) contract - the admin-facing surface for
- * managing casino players. igaming-standard lifecycle + KYC states.
+ * managing igaming players. igaming-standard lifecycle + KYC states.
  */
 
 export const PlayerStatusSchema = z.enum([

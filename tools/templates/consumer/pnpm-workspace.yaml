@@ -1,0 +1,8 @@
+packages:
+  - 'apps/*'
+
+allowBuilds:
+  '@nestjs/core': true
+  esbuild: true
+  msgpackr-extract: true
+  sharp: true

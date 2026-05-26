@@ -139,7 +139,13 @@ Creates the contract entry (`packages/ui/provider-contract/src/components/<name>
 
 ## How to consume this platform from a downstream repo
 
-See [docs/downstream-consumer.md](./docs/downstream-consumer.md) - `createApp`, mounting the backoffice, `link:` dev workflow, the consumer load pattern, and the `@oss/mcp` + `CATALOG.md` AI surface. Start from [`examples/minimal-igaming/`](./examples/minimal-igaming/).
+Scaffold a full consumer turborepo (api + web + backoffice) wired to `link:` at this checkout:
+
+```
+pnpm create:app ../my-igaming --name my-igaming
+```
+
+The generated repo ships `turbo gen` generators (`pnpm gen plugin|adapter|page`) and the three consumer AI agents. CLI: `tools/create-igaming-app.ts`; template: `tools/templates/consumer/`. See [docs/downstream-consumer.md](./docs/downstream-consumer.md) for `createApp`, mounting the backoffice, the `link:` dev workflow, the consumer load pattern, and the `@oss/mcp` + `CATALOG.md` AI surface. The smallest hand-wired reference is [`examples/minimal-igaming/`](./examples/minimal-igaming/).
 
 ## How to run things locally
 

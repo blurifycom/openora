@@ -43,13 +43,11 @@ flowchart TB
   end
 
   vendor["Vendor adapters<br/>PSP, KYC, aggregator, chat"]
-  worker["worker (apps/worker)<br/>BullMQ event handlers"]
 
   host --> mod
   nest --> auth
   mod --> db
   mod --> core
-  core -. events .-> worker
   adapters -. implemented by .-> vendor
 
   subgraph ui["Headless UI"]
@@ -107,7 +105,7 @@ Solid arrows are runtime/build dependencies; dashed arrows are **adapter seams**
 
 **Vendor adapters** - concrete implementations of a module's adapter interfaces (PSP, KYC vendor, igaming aggregator, chat), shipped as separate packages. The interface is the seam; the implementation is swappable.
 
-**worker** (`apps/worker`) - consumes events emitted by modules (e.g. wallet deposit completed) and runs long-running jobs off the request path.
+**Background jobs** - long-running work runs off the request path in a BullMQ worker shipped as an overlay plugin (`/scaffold-plugin <name>-worker`): a module emits an event via the typed `EventBus`, the worker plugin subscribes in `register(ctx)` and processes the job. There is no standalone worker app.
 
 **Headless UI**
 

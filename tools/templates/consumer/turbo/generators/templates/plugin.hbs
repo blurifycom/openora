@@ -1,0 +1,17 @@
+import { definePlugin } from '@oss/plugin-host';
+
+// Overlay plugin. Register it in apps/api/src/extensions.config.ts:
+//   { id: '{{kebabCase name}}', path: `${LOCAL}/{{kebabCase name}}/plugin.ts` }
+//
+// In register(ctx) you can:
+//   ctx.routers.add(namespace, router)         - mount oRPC routes
+//   ctx.providers.add({ provide, useClass })    - register a Nest provider
+//   ctx.events.on(eventType, handler)           - subscribe to platform events
+//   ctx.imports.add(NestModule)                 - import a Nest module
+export default definePlugin({
+  id: '{{kebabCase name}}',
+  register(ctx) {
+    void ctx;
+    // AGENT: implement here
+  },
+});

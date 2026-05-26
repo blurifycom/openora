@@ -21,7 +21,8 @@
     "storybook-static",
     "generated",
     "*.generated.ts",
-    "packages/platform/db/prisma/migrations"
+    "packages/platform/db/prisma/migrations",
+    "tools/templates"
   ],
   "overrides": [
     {

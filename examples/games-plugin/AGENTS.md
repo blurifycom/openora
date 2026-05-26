@@ -1,7 +1,7 @@
 # AGENTS.md - consumer-games-plugin example
 
 A worked example showing how a downstream consumer (Consumer, or anyone) plugs a
-proprietary PvP game into the OSS casino platform using `definePlugin` - without
+proprietary PvP game into the OSS igaming platform using `definePlugin` - without
 touching any core module.
 
 ## What this example shows
