@@ -23,7 +23,6 @@
     ],
     "deny": [
       "Bash(git push *)",
-      "Bash(git commit *)",
       "Bash(git reset --hard *)",
       "Bash(npm *)",
       "Bash(yarn *)"
