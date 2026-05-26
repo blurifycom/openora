@@ -16,8 +16,8 @@ overlay plugin that loads AFTER the default-binding module (last registration wi
 | aggregator | `AggregatorAdapter` | `AGGREGATOR_ADAPTER` | wired (default impl) | `packages/modules/player/aggregator/src/service/casino-aggregator.service.ts` |
 | game | `GameAdapter` | `GAME_ADAPTER` | wired (default impl) | `packages/modules/player/gaming/src/plugin.ts`<br>`packages/modules/player/gaming/src/service/gaming.service.ts` |
 | geo-ip | `GeoIpAdapter` | `GEO_IP_ADAPTER` | wired (default impl) | `packages/modules/platform/compliance/src/service/compliance.service.ts` |
-| kyc | `KycAdapter` | `KYC_ADAPTER` | STUB - not yet injected | - |
-| notification | `NotificationDeliveryAdapter` | `NOTIFICATION_DELIVERY_ADAPTER` | STUB - not yet injected | - |
+| kyc | `KycAdapter` | `KYC_ADAPTER` | wired (default impl) | `packages/modules/platform/identity/src/adapters/mock/mock-kyc-adapter.ts`<br>`packages/modules/platform/identity/src/plugin.ts` |
+| notification | `NotificationDeliveryAdapter` | `NOTIFICATION_DELIVERY_ADAPTER` | wired (default impl) | `packages/modules/platform/notifications/src/plugin.ts` |
 | payment | `PaymentAdapter` | `PAYMENT_ADAPTER` | wired (default impl) | `packages/modules/player/wallet/src/plugin.ts`<br>`packages/modules/player/wallet/src/service/wallet.service.ts` |
 
 ## Modules

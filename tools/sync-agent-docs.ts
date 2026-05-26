@@ -1,17 +1,18 @@
 #!/usr/bin/env node
 /**
- * Single source = AGENTS.md. Regenerates derived files agents read.
+ * Single source = AGENTS.md. Regenerates derived files that each editor/agent reads.
  *
  * Outputs:
- *   CLAUDE.md  - preserves head matter, replaces section after @AGENTS.md marker
- *
- * Claude-first: this repo only generates CLAUDE.md from AGENTS.md.
+ *   CLAUDE.md                          - Claude Code (preserves head matter)
+ *   .cursorrules                       - Cursor, Windsurf, and any editor reading this file
+ *   .github/copilot-instructions.md   - GitHub Copilot
  *
  * Run: pnpm sync:agent-docs
+ * CI drift gate: pnpm verify:drift
  */
 
-import { readFileSync, writeFileSync, existsSync } from 'node:fs';
-import { join, dirname } from 'node:path';
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const here = dirname(fileURLToPath(import.meta.url));
@@ -29,10 +30,35 @@ const targets: Array<{ path: string; transform: (s: string) => string }> = [
     path: join(repoRoot, 'CLAUDE.md'),
     transform: (s) => rewriteClaude(s),
   },
+  {
+    path: join(repoRoot, '.cursorrules'),
+    transform: (s) =>
+      [
+        '# Agent instructions for Cursor / Windsurf',
+        '',
+        'Auto-generated from `AGENTS.md` by `pnpm sync:agent-docs`. Edit `AGENTS.md`, not this file.',
+        '',
+        '---',
+        '',
+        s,
+      ].join('\n'),
+  },
+  {
+    path: join(repoRoot, '.github', 'copilot-instructions.md'),
+    transform: (s) =>
+      [
+        '<!-- GitHub Copilot instructions -->',
+        '<!-- Auto-generated from AGENTS.md by `pnpm sync:agent-docs`. Edit AGENTS.md, not this file. -->',
+        '',
+        s,
+      ].join('\n'),
+  },
 ];
 
 let changed = 0;
 for (const t of targets) {
+  const dir = dirname(t.path);
+  if (!existsSync(dir)) mkdirSync(dir, { recursive: true });
   const next = t.transform(source);
   const prev = existsSync(t.path) ? readFileSync(t.path, 'utf8') : '';
   if (prev === next) continue;
@@ -48,7 +74,6 @@ function rewriteClaude(agents: string): string {
   const marker = '@AGENTS.md';
   const idx = claude.indexOf(marker);
   if (idx === -1) {
-    // first write or marker missing - regenerate from scratch with embedded content
     return [
       '# CLAUDE.md',
       '',
@@ -59,6 +84,5 @@ function rewriteClaude(agents: string): string {
       agents,
     ].join('\n');
   }
-  // keep head matter, replace marker + everything after with embedded content
   return claude.slice(0, idx) + agents;
 }

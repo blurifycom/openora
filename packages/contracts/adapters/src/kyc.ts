@@ -1,5 +1,8 @@
-// KYC/identity-verification seam. A vendor (eg Sumsub) implements KycAdapter; bind
-// a concrete adapter to KYC_ADAPTER in the identity module's plugin.ts.
+// KYC/identity-verification seam. Intended real provider: SumSub (https://sumsub.com).
+// The identity module ships MockKycAdapter (auto-approves) as the default binding.
+// Override via overlay: ctx.providers.add({ provide: KYC_ADAPTER, useClass: SumsubKycAdapter })
+// Load your overlay AFTER the identity plugin in extensions.config.ts (last registration wins).
+// See docs/adapters/kyc.md for the full binding guide.
 
 export interface KycDocument {
   type: 'passport' | 'drivers_license' | 'national_id';

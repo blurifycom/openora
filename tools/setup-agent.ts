@@ -105,7 +105,7 @@ async function main() {
   console.log('Services:');
   console.log(`  API          http://localhost:${ports['PORT_API'] ?? '3001'}`);
   console.log(`  Backoffice   http://localhost:3000`);
-  console.log(`  MCP server   oss-dev (stdio, via .mcp.json - run 'claude mcp list' to verify)`);
+  console.log(`  MCP server   oss-dev (stdio, via .mcp.json - see docs/mcp-setup.md for per-editor setup)`);
   console.log(`  Storybook    http://localhost:6006`);
   console.log('');
   console.log('Start everything: pnpm dev');

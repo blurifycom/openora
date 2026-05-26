@@ -1,6 +1,8 @@
-// Notification-delivery seam. A vendor (eg SendGrid/SES) implements
-// NotificationDeliveryAdapter; bind a concrete adapter to NOTIFICATION_DELIVERY_ADAPTER
-// in the notifications module's plugin.ts.
+// Notification-delivery seam. Custom implementation expected (no prescribed vendor).
+// The notifications module ships MockNotificationDeliveryAdapter (logs to stdout) as default.
+// Override via overlay: ctx.providers.add({ provide: NOTIFICATION_DELIVERY_ADAPTER, useClass: MyAdapter })
+// Load your overlay AFTER the notifications plugin in extensions.config.ts (last registration wins).
+// See docs/adapters/notification.md for the full binding guide.
 
 export interface NotificationDeliveryAdapter {
   sendEmail(to: string, subject: string, body: string): Promise<void>;

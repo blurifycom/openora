@@ -23,7 +23,7 @@ Open-source, headless, plugin-based, AI-native casino platform. Clone it, extend
 # Requirements: Node 22+, pnpm 10+, Docker
 pnpm setup:agent          # boot Docker (Postgres + Redis) + run migrations
 pnpm seed                 # demo data: admin + players + wallets + transactions + games
-pnpm dev                  # api :3001, backoffice :3000, worker :3003, storybook :6006
+pnpm dev                  # api :3001, backoffice :3000, storybook :6006
 ```
 
 Log in to the backoffice with `admin@oss.dev` / `password123` (see `pnpm seed --help` flags).

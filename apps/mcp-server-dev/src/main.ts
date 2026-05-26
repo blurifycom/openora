@@ -665,8 +665,28 @@ server.tool(
   },
 );
 
+server.tool(
+  'list-slash-commands',
+  'List all available slash commands (scaffold shortcuts) with their one-line descriptions. These are repo-local commands auto-loaded by Claude Code from .claude/skills/; other editors can invoke the equivalent MCP scaffold tools directly.',
+  {},
+  async () => {
+    const skillsDir = join(repoRoot, '.claude', 'skills');
+    if (!existsSync(skillsDir)) return { content: [{ type: 'text', text: 'No .claude/skills/ directory found.' }] };
+    const lines: string[] = ['Available slash commands:\n'];
+    for (const file of readdirSync(skillsDir).sort()) {
+      if (!file.endsWith('.md')) continue;
+      const name = '/' + file.replace(/\.md$/, '');
+      const content = readFileSync(join(skillsDir, file), 'utf8');
+      const desc = content.split('\n').find(l => l.trim() && !l.startsWith('#'))?.trim() ?? '';
+      lines.push(`  ${name.padEnd(28)} ${desc}`);
+    }
+    lines.push('\nNote: use the MCP scaffold-* tools to invoke these from any editor.');
+    return { content: [{ type: 'text', text: lines.join('\n') }] };
+  },
+);
+
 // ---------------------------------------------------------------------------
-// Start (stdio transport for Claude Code)
+// Start (stdio transport - works with Claude Code, Cursor, Windsurf, VS Code, any MCP client)
 // ---------------------------------------------------------------------------
 const transport = new StdioServerTransport();
 await server.connect(transport);

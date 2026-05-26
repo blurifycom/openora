@@ -5,7 +5,7 @@ This guide walks an AI agent through implementing a module end-to-end using only
 ## Assumptions
 
 - `pnpm setup:agent` has been run (Docker up, DB migrated, dependencies installed).
-- The `oss-dev` MCP server is registered in `.mcp.json` and your agent launches it automatically (stdio). Verify with `claude mcp list`. No separate process to start.
+- The `oss-dev` MCP server is registered in `.mcp.json` and your agent launches it automatically (stdio). No separate process to start. Verify: `claude mcp list` (Claude Code), or check MCP settings in Cursor/Windsurf. See `docs/mcp-setup.md` for per-editor setup.
 
 ## Step 1: Understand the platform
 

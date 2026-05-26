@@ -22,7 +22,7 @@
     "gen:catalog": "tsx tools/gen-catalog.ts",
     "seed": "tsx tools/seed.ts",
     "verify": "turbo run typecheck test:unit && pnpm run lint && pnpm run verify:shape",
-    "verify:drift": "tsx tools/gen-catalog.ts && tsx tools/sync-agent-docs.ts && git diff --exit-code -- docs/catalog.json docs/CATALOG.md CLAUDE.md",
+    "verify:drift": "tsx tools/gen-catalog.ts && tsx tools/sync-agent-docs.ts && git diff --exit-code -- docs/catalog.json docs/CATALOG.md CLAUDE.md .cursorrules .github/copilot-instructions.md",
     "setup:agent": "tsx tools/setup-agent.ts"
   },
   "devDependencies": {

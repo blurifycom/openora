@@ -148,15 +148,20 @@
       "category": "kyc",
       "interface": "KycAdapter",
       "token": "KYC_ADAPTER",
-      "status": "stub",
-      "boundIn": []
+      "status": "wired",
+      "boundIn": [
+        "packages/modules/platform/identity/src/adapters/mock/mock-kyc-adapter.ts",
+        "packages/modules/platform/identity/src/plugin.ts"
+      ]
     },
     {
       "category": "notification",
       "interface": "NotificationDeliveryAdapter",
       "token": "NOTIFICATION_DELIVERY_ADAPTER",
-      "status": "stub",
-      "boundIn": []
+      "status": "wired",
+      "boundIn": [
+        "packages/modules/platform/notifications/src/plugin.ts"
+      ]
     },
     {
       "category": "payment",
