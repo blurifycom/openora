@@ -29,7 +29,7 @@ export function PlayerShell({ children }: { children: ReactNode }) {
   return (
     <div className="player-shell">
       <header className="player-topbar">
-        <div className="player-topbar__brand">OSS Casino</div>
+        <div className="player-topbar__brand">OSS Igaming</div>
         <nav className="player-topbar__nav">
           {NAV.map((item) => {
             const active = pathname === item.href;

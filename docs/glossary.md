@@ -2,14 +2,14 @@
 
 Shared vocabulary for this repo: the **roles** (who's who), the **platform/architecture** terms, and the **iGaming domain** terms. When a term maps onto a concrete part of the codebase, the last column points to it.
 
-> **Read this first - the word "user" is ambiguous in iGaming.** In casino UIs "user" usually means the gambler. In this repo we avoid the bare word: **operator / consumer / end user** = the developer or company that installs the OSS packages and builds a casino; **player** = the gambler who registers, deposits, and plays. Keep them distinct.
+> **Read this first - the word "user" is ambiguous in iGaming.** In igaming UIs "user" usually means the gambler. In this repo we avoid the bare word: **operator / consumer / end user** = the developer or company that installs the OSS packages and builds a igaming; **player** = the gambler who registers, deposits, and plays. Keep them distinct.
 
 ## Roles - who's who
 
 | Term | Who it is |
 | --- | --- |
-| **Operator** / **consumer** / **downstream consumer** / **end user** | The developer or company that installs the `@oss/*` packages and builds + runs their own casino (e.g. Consumer). They are the "end user" of the *package*, not a gambler. They bring their own `extensions.config.ts`, UI adapter, and vendor adapters. |
-| **Player** | The person who registers on an operator's casino, deposits funds, and plays. The operator's customer. Modeled by the `player` module + auth `User`. |
+| **Operator** / **consumer** / **downstream consumer** / **end user** | The developer or company that installs the `@oss/*` packages and builds + runs their own igaming (e.g. Consumer). They are the "end user" of the *package*, not a gambler. They bring their own `extensions.config.ts`, UI adapter, and vendor adapters. |
+| **Player** | The person who registers on an operator's igaming, deposits funds, and plays. The operator's customer. Modeled by the `player` module + auth `User`. |
 | **Admin** / **backoffice user** | Operator staff who manage players, approve withdrawals, configure games, and edit content via the backoffice. A role on the auth `User`, not a separate person type. |
 | **Maintainer** / **core contributor** | Someone working on the OSS platform itself (this repo) - distinct from an operator who only consumes it. |
 
@@ -41,7 +41,7 @@ Shared vocabulary for this repo: the **roles** (who's who), the **platform/archi
 | **AML** (Anti-Money Laundering) | Controls and monitoring to detect/prevent laundering through play (limits, source-of-funds, suspicious-activity flags). | `identity`, `compliance` |
 | **2FA** | Two-factor authentication (TOTP) on a player or admin account. | `identity` (better-auth) |
 | **Geo-blocking** | Refusing service from restricted jurisdictions based on IP/region. | `compliance` / `GeoIpAdapter` |
-| **Jurisdiction** / **licensing** | The regulatory regime a casino operates under; dictates allowed countries, game rules, RG requirements, and reporting. | operator concern |
+| **Jurisdiction** / **licensing** | The regulatory regime a igaming operates under; dictates allowed countries, game rules, RG requirements, and reporting. | operator concern |
 
 ### Wallet & payments
 
@@ -60,7 +60,7 @@ Shared vocabulary for this repo: the **roles** (who's who), the **platform/archi
 | Term | Meaning | Maps to |
 | --- | --- | --- |
 | **Game provider** | A studio/vendor supplying games, integrated behind an adapter. | `gaming` / `GameAdapter` |
-| **Aggregator** | A single integration that fans out to many game providers' catalogues. | `casino-aggregator` / `AggregatorAdapter` |
+| **Aggregator** | A single integration that fans out to many game providers' catalogues. | `igaming-aggregator` / `AggregatorAdapter` |
 | **Sportsbook** | Sports-betting product (e.g. Betby), integrated as a large isolated domain/plugin. | operator plugin |
 | **Game round** / **session** | One play cycle (bet -> result -> settle); a session groups rounds for a player at a game. | `gaming` |
 | **Lobby** | The browsable surface of games: categories, featured slots, search, recent activity. | `lobby` |

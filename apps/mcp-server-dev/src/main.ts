@@ -141,7 +141,7 @@ function extractDeclaration(src: string, name: string): { line: number; code: st
 /** DATABASE_URL from env, or the local docker default (mirrors tools/seed.ts). */
 function resolveDatabaseUrl(): string {
   return (
-    process.env['DATABASE_URL'] ?? 'postgresql://postgres:postgres@localhost:5432/oss_casino'
+    process.env['DATABASE_URL'] ?? 'postgresql://postgres:postgres@localhost:5432/oss_igaming'
   );
 }
 

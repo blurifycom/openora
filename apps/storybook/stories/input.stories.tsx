@@ -21,7 +21,7 @@ const meta: Meta<typeof InputDemo> = {
     type: { control: 'select', options: ['text', 'email', 'password', 'search', 'number'] },
     disabled: { control: 'boolean' },
   },
-  args: { label: 'Email', placeholder: 'you@casino.dev', type: 'email' },
+  args: { label: 'Email', placeholder: 'you@igaming.dev', type: 'email' },
 };
 export default meta;
 

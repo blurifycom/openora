@@ -28,7 +28,7 @@ type CurrentUser = { email?: string; name?: string | null } | null | undefined;
  */
 export function AppShell({
   children,
-  brand = 'OSS Casino',
+  brand = 'OSS Igaming',
   nav,
   loginPath = '/login',
 }: {

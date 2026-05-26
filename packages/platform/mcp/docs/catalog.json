@@ -122,7 +122,7 @@
       "token": "AGGREGATOR_ADAPTER",
       "status": "wired",
       "boundIn": [
-        "packages/modules/player/aggregator/src/service/casino-aggregator.service.ts"
+        "packages/modules/player/aggregator/src/service/igaming-aggregator.service.ts"
       ]
     },
     {
@@ -244,7 +244,7 @@
     },
     {
       "name": "AggregatorProviderSummarySchema",
-      "file": "packages/contracts/orpc-contract/src/casino-aggregator.ts"
+      "file": "packages/contracts/orpc-contract/src/igaming-aggregator.ts"
     },
     {
       "name": "BannerSchema",
@@ -260,19 +260,19 @@
     },
     {
       "name": "BrandingSchema",
-      "file": "packages/contracts/shared-schemas/src/casino-config.ts"
+      "file": "packages/contracts/shared-schemas/src/igaming-config.ts"
     },
     {
       "name": "CallbackInputSchema",
-      "file": "packages/contracts/orpc-contract/src/casino-aggregator.ts"
+      "file": "packages/contracts/orpc-contract/src/igaming-aggregator.ts"
     },
     {
       "name": "CallbackResultSchema",
-      "file": "packages/contracts/orpc-contract/src/casino-aggregator.ts"
+      "file": "packages/contracts/orpc-contract/src/igaming-aggregator.ts"
     },
     {
-      "name": "CasinoConfigSchema",
-      "file": "packages/contracts/shared-schemas/src/casino-config.ts"
+      "name": "iGamingConfigSchema",
+      "file": "packages/contracts/shared-schemas/src/igaming-config.ts"
     },
     {
       "name": "ChatMessageSchema",
@@ -284,11 +284,11 @@
     },
     {
       "name": "CountryCodeSchema",
-      "file": "packages/contracts/shared-schemas/src/casino-config.ts"
+      "file": "packages/contracts/shared-schemas/src/igaming-config.ts"
     },
     {
       "name": "CurrencyCodeSchema",
-      "file": "packages/contracts/shared-schemas/src/casino-config.ts"
+      "file": "packages/contracts/shared-schemas/src/igaming-config.ts"
     },
     {
       "name": "DepositInputSchema",
@@ -332,7 +332,7 @@
     },
     {
       "name": "LimitsSchema",
-      "file": "packages/contracts/shared-schemas/src/casino-config.ts"
+      "file": "packages/contracts/shared-schemas/src/igaming-config.ts"
     },
     {
       "name": "LobbyCategoryDetailSchema",
@@ -388,7 +388,7 @@
     },
     {
       "name": "ProviderSelectionSchema",
-      "file": "packages/contracts/shared-schemas/src/casino-config.ts"
+      "file": "packages/contracts/shared-schemas/src/igaming-config.ts"
     },
     {
       "name": "RegisterInputSchema",
@@ -404,7 +404,7 @@
     },
     {
       "name": "SyncResultSchema",
-      "file": "packages/contracts/orpc-contract/src/casino-aggregator.ts"
+      "file": "packages/contracts/orpc-contract/src/igaming-aggregator.ts"
     },
     {
       "name": "TimestampSchema",
@@ -444,8 +444,8 @@
     }
   ],
   "config": {
-    "token": "CASINO_CONFIG",
-    "source": "packages/contracts/shared-schemas/src/casino-config.ts",
+    "token": "IGAMING_CONFIG",
+    "source": "packages/contracts/shared-schemas/src/igaming-config.ts",
     "fields": [
       {
         "key": "branding",
@@ -453,11 +453,11 @@
       },
       {
         "key": "currencies",
-        "note": "Currencies the casino transacts in; the first is the default."
+        "note": "Currencies the igaming transacts in; the first is the default."
       },
       {
         "key": "jurisdictions",
-        "note": "Jurisdictions the casino is licensed to operate in."
+        "note": "Jurisdictions the igaming is licensed to operate in."
       },
       {
         "key": "blockedCountries",

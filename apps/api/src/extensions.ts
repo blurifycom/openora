@@ -33,12 +33,14 @@ export async function loadExtensions(): Promise<PluginEntry[]> {
 function findConfigUpwards(start: string): string {
   let dir = start;
   for (let i = 0; i < 8; i++) {
-    const candidate = resolve(dir, 'extensions.config.js');
-    try {
-      accessSync(candidate);
-      return candidate;
-    } catch {
-      // not here, walk up
+    for (const ext of ['.js', '.ts']) {
+      const candidate = resolve(dir, `extensions.config${ext}`);
+      try {
+        accessSync(candidate);
+        return candidate;
+      } catch {
+        // not here
+      }
     }
     const parent = dirname(dir);
     if (parent === dir) break;

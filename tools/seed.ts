@@ -20,7 +20,7 @@ function arg(name: string): string | undefined {
 
 async function main() {
   const databaseUrl =
-    process.env['DATABASE_URL'] ?? 'postgresql://postgres:postgres@localhost:5432/oss_casino';
+    process.env['DATABASE_URL'] ?? 'postgresql://postgres:postgres@localhost:5432/oss_igaming';
   const db = createDrizzleDb(databaseUrl);
   const auth = createAuth({ db });
 

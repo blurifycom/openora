@@ -3,7 +3,7 @@
   "version": "0.0.1",
   "type": "module",
   "bin": "./dist/main.js",
-  "files": ["dist", "docs"],
+  "files": ["dist", "docs", "agents"],
   "scripts": {
     "build": "tsc",
     "typecheck": "tsc --noEmit",

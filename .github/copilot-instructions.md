@@ -7,7 +7,7 @@ Canonical brief for AI agents (Claude Code, Codex, Cursor, etc.) working on this
 
 ## Mission
 
-Open-source, headless, plugin-based, AI-native casino platform. Anyone clones the repo and extends it with their own modules, UI provider, and adapters. The default surface is fully playable (auth, wallet, lobby, chat, bonus, compliance, backoffice, CMS, aggregator). Consumer is the first downstream consumer; nothing Consumer-specific lives in this repo.
+Open-source, headless, plugin-based, AI-native igaming platform. Anyone clones the repo and extends it with their own modules, UI provider, and adapters. The default surface is fully playable (auth, wallet, lobby, chat, bonus, compliance, backoffice, CMS, aggregator). Consumer is the first downstream consumer; nothing Consumer-specific lives in this repo.
 
 ## Architecture pillars
 
@@ -25,7 +25,6 @@ apps/
   api/            # NestJS + oRPC HTTP API (port 3001) - thin consumer of createApp
   backoffice/     # Next.js admin app (reference consumer of the admin surface)
   web/            # Next.js player app (reference consumer of the player surface)
-  worker/         # BullMQ worker (port 3003)
   mcp-server-dev/ # MCP dev server (stdio) - agents connect via .mcp.json
   storybook/      # Component playground (port 6006)
   extensions/     # In-tree overlay plugins (drop-in folders)
@@ -73,7 +72,7 @@ extensions.config.ts # the single registry of enabled plugins
 - A design token -> a `--bo-*` CSS variable in `react-sdk/src/styles.css` + a typed entry in `Theme` (`react-sdk/src/theme.tsx`). Override per-tenant via `<ThemeProvider theme={...}>`.
 - A plugin-contributed admin UI extension (nav item, column, tile, section, route) -> a client-side `defineUIPlugin({ register(ctx) { ctx.<slot>.add(...) } })`. See ADR-0006 and `react-sdk/AGENTS.md`.
 - A third-party integration (PSP, KYC, aggregator, chat) -> define the adapter interface + DI token in `@oss/adapters` (`packages/contracts/adapters/src/<category>.ts`), implement it under `packages/modules/<module>/adapters/<vendor>/`, and bind it to the token in the module's `plugin.ts`. Never inline. All vendor adapter interfaces live in `@oss/adapters` so the swap seams are findable in one place.
-- A long-running task -> emit an event, handle it in a worker under `apps/worker/handlers/`.
+- A long-running task -> emit an event; handle it in a BullMQ worker overlay plugin (scaffold with `/scaffold-plugin <name>-worker`, add a BullMQ processor, bind it in the plugin's `register(ctx)`).
 
 ## Naming
 
@@ -143,13 +142,13 @@ Creates the contract entry (`packages/ui/provider-contract/src/components/<name>
 
 ## How to consume this platform from a downstream repo
 
-See [docs/downstream-consumer.md](./docs/downstream-consumer.md) - `createApp`, mounting the backoffice, `link:` dev workflow, the consumer load pattern, and the `@oss/mcp` + `CATALOG.md` AI surface. Start from [`examples/minimal-casino/`](./examples/minimal-casino/).
+See [docs/downstream-consumer.md](./docs/downstream-consumer.md) - `createApp`, mounting the backoffice, `link:` dev workflow, the consumer load pattern, and the `@oss/mcp` + `CATALOG.md` AI surface. Start from [`examples/minimal-igaming/`](./examples/minimal-igaming/).
 
 ## How to run things locally
 
 ```
 pnpm setup:agent   # first time: docker + db + mcp + summary
-pnpm dev           # turbo dev (api, backoffice, worker, mcp, storybook)
+pnpm dev           # turbo dev (api, backoffice, mcp, storybook)
 pnpm regen         # drizzle-kit generate + openapi emit + sdk regen + catalog
 pnpm seed          # demo data: admin + players + wallets + txns + games
 pnpm verify        # typecheck + lint (incl. boundaries + module shape) + test
@@ -164,6 +163,21 @@ pnpm verify
 ```
 
 Must pass for every PR. CI runs the same plus a "no drift" check that re-runs drizzle-kit + the catalog generator and fails on an uncommitted diff.
+
+## Agent roster
+
+These agents are for **platform development** (building this OSS repo). Consumer igaming agents ship separately in `packages/platform/mcp/agents/`.
+
+| Agent | Role | When to use |
+|---|---|---|
+| `igaming-expert` | Domain/product expert | Turn a fuzzy ask into requirements + AC; answer regulatory/rules questions |
+| `igaming-fullstack-dev` | Senior fullstack engineer | Implement a module, plugin, adapter, or UI from a given spec |
+| `oss-module-author` | Module scaffolder | Author a complete module end-to-end from the roadmap |
+| `plugin-author` | Extension author | Create an overlay plugin that extends without touching core |
+| `ui-provider-author` | UI adapter author | Implement `@oss/ui-provider-contract` for a target library |
+| `igaming-operator-verifier` | Consumer readiness auditor | Audit platform from an operator perspective; find launch blockers |
+| `contract-reviewer` | PR / boundary reviewer | Review a diff for breaking changes, boundary violations, schema drift |
+| `qa-engineer` | E2E QA | Write/run Playwright tests; debug with Chrome DevTools; triage bugs |
 
 ## Conventions for agents specifically
 

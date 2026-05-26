@@ -6,7 +6,7 @@ import { ZodToJsonSchemaConverter } from '@orpc/zod/zod4';
 import type { ContractRouter } from '@orpc/contract';
 import type { PluginEntry } from '@oss/plugin-host';
 import { contract as defaultContract } from '@oss/orpc-contract';
-import { CASINO_CONFIG, type CasinoConfig } from '@oss/shared-schemas';
+import { IGAMING_CONFIG, type IgamingConfig } from '@oss/shared-schemas';
 import { writeFile, mkdir } from 'node:fs/promises';
 import { dirname, resolve } from 'node:path';
 import { AppModule } from './app.module.js';
@@ -36,10 +36,10 @@ export interface CreateAppConfig {
     outputPath?: string; // absolute path, default docs/openapi.json next to cwd
   };
 
-  // Declarative casino configuration (currencies, jurisdictions, limits, provider
-  // selection, branding). Build it with defineCasinoConfig() from @oss/shared-schemas.
-  // Injected app-wide via the CASINO_CONFIG token.
-  casino?: CasinoConfig;
+  // Declarative igaming configuration (currencies, jurisdictions, limits, provider
+  // selection, branding). Build it with defineIgamingConfig() from @oss/shared-schemas.
+  // Injected app-wide via the IGAMING_CONFIG token.
+  igaming?: IgamingConfig;
 
   // Extra Nest modules/providers to wire in (advanced).
   extraImports?: Array<Type | DynamicModule>;
@@ -62,10 +62,10 @@ export async function createApp(config: CreateAppConfig): Promise<CreatedApp> {
     process.env['DATABASE_URL'] = config.databaseUrl;
   }
 
-  const casinoProvider: Provider[] = config.casino
-    ? [{ provide: CASINO_CONFIG, useValue: config.casino }]
+  const igamingProvider: Provider[] = config.igaming
+    ? [{ provide: IGAMING_CONFIG, useValue: config.igaming }]
     : [];
-  const extraProviders = [...casinoProvider, ...(config.extraProviders ?? [])];
+  const extraProviders = [...igamingProvider, ...(config.extraProviders ?? [])];
 
   const appModule = await AppModule.create({
     plugins: config.plugins,
@@ -103,7 +103,7 @@ export async function createApp(config: CreateAppConfig): Promise<CreatedApp> {
       });
       const spec = await generator.generate(contract, {
         info: {
-          title: config.openapi?.info?.title ?? 'OSS Casino API',
+          title: config.openapi?.info?.title ?? 'OSS Igaming API',
           version: config.openapi?.info?.version ?? '0.0.1',
         },
       });

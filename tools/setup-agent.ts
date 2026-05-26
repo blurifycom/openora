@@ -36,7 +36,7 @@ function check(label: string, cmd: string, minVersion?: string) {
 }
 
 async function main() {
-  console.log('\n=== OSS Casino Platform - Agent Setup ===\n');
+  console.log('\n=== OSS Igaming Platform - Agent Setup ===\n');
 
   // 1. Prerequisites
   console.log('--- Checking prerequisites ---');

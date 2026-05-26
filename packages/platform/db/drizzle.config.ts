@@ -10,6 +10,6 @@ export default defineConfig({
   ],
   out: './drizzle/migrations',
   dbCredentials: {
-    url: process.env['DATABASE_URL'] ?? 'postgresql://postgres:postgres@localhost:5432/oss_casino',
+    url: process.env['DATABASE_URL'] ?? 'postgresql://postgres:postgres@localhost:5432/oss_igaming',
   },
 });

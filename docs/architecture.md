@@ -105,7 +105,7 @@ Solid arrows are runtime/build dependencies; dashed arrows are **adapter seams**
 
 **Business modules** (`packages/modules/*`) - one folder per domain. A module may import contracts, platform, UI, and SDK packages, but **never another module** - cross-module communication goes through events or shared contracts. Each depends on vendor adapter interfaces from `@oss/adapters`.
 
-**Vendor adapters** - concrete implementations of a module's adapter interfaces (PSP, KYC vendor, casino aggregator, chat), shipped as separate packages. The interface is the seam; the implementation is swappable.
+**Vendor adapters** - concrete implementations of a module's adapter interfaces (PSP, KYC vendor, igaming aggregator, chat), shipped as separate packages. The interface is the seam; the implementation is swappable.
 
 **worker** (`apps/worker`) - consumes events emitted by modules (e.g. wallet deposit completed) and runs long-running jobs off the request path.
 

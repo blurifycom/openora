@@ -6,7 +6,7 @@
  *   docs/CATALOG.md     - human/agent-readable rendering
  *
  * It captures: modules (+ tables + routes), adapter seams (+ wired-vs-stub
- * status), domain events, UI slots, Zod schema index, the casino-config shape,
+ * status), domain events, UI slots, Zod schema index, the igaming-config shape,
  * and the plugin-contract surface.
  *
  * Pure filesystem parsing - no package imports - so it is robust and DETERMINISTIC
@@ -140,10 +140,10 @@ function collectSchemas(): Array<{ name: string; file: string }> {
   return out.sort((a, b) => a.name.localeCompare(b.name));
 }
 
-// --- casino config shape (parse top-level keys + leading comment) ----------
+// --- igaming config shape (parse top-level keys + leading comment) ----------
 function collectConfigFields(): Array<{ key: string; note: string }> {
-  const src = read(join(repoRoot, 'packages', 'contracts', 'shared-schemas', 'src', 'casino-config.ts'));
-  const body = src.match(/export const CasinoConfigSchema = z\s*\.object\(\{([\s\S]*?)\}\)/)?.[1] ?? '';
+  const src = read(join(repoRoot, 'packages', 'contracts', 'shared-schemas', 'src', 'igaming-config.ts'));
+  const body = src.match(/export const IgamingConfigSchema = z\s*\.object\(\{([\s\S]*?)\}\)/)?.[1] ?? '';
   const out: Array<{ key: string; note: string }> = [];
   const lines = body.split('\n');
   let note = '';
@@ -187,7 +187,7 @@ const catalog = {
   events: collectEvents(),
   uiSlots: collectSlots(),
   schemas: collectSchemas(),
-  config: { token: 'CASINO_CONFIG', source: 'packages/contracts/shared-schemas/src/casino-config.ts', fields: collectConfigFields() },
+  config: { token: 'IGAMING_CONFIG', source: 'packages/contracts/shared-schemas/src/igaming-config.ts', fields: collectConfigFields() },
   pluginContract: collectPluginSurface(),
   httpRoutes: collectOpenApiRoutes(),
 };
@@ -240,10 +240,10 @@ function md(): string {
   for (const s of catalog.uiSlots) L.push(`| \`${s.name}\` | ${s.description || '-'} |`);
   L.push('');
 
-  L.push('## Casino config');
+  L.push('## Igaming config');
   L.push('');
-  L.push(`Declare with \`defineCasinoConfig({...})\` from \`@oss/shared-schemas\`, pass to`);
-  L.push('`createApp({ casino })`. Injected app-wide via the `CASINO_CONFIG` token.');
+  L.push(`Declare with \`defineIgamingConfig({...})\` from \`@oss/shared-schemas\`, pass to`);
+  L.push('`createApp({ igaming })`. Injected app-wide via the `IGAMING_CONFIG` token.');
   L.push('');
   L.push('| Field | Notes |');
   L.push('| --- | --- |');

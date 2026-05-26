@@ -7,7 +7,7 @@ export type TimeSeriesPoint = { date: string; count: number };
 /**
  * Dependency-free SVG area chart. Themed via `--bo-*` variables so it inherits
  * whatever palette `ThemeProvider` is serving. No charting library - keeps the
- * consumer bundle lean (a casino admin doesn't need recharts for one sparkline).
+ * consumer bundle lean (a igaming admin doesn't need recharts for one sparkline).
  */
 export function TimeSeriesChart({
   data,

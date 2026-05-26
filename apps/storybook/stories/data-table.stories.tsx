@@ -9,9 +9,9 @@ type UserRow = {
 } & Record<string, unknown>;
 
 const rows: UserRow[] = [
-  { email: 'ada@casino.dev', role: 'admin', isActive: true, joined: '2026-01-12' },
-  { email: 'grace@casino.dev', role: 'support', isActive: true, joined: '2026-02-03' },
-  { email: 'alan@casino.dev', role: 'user', isActive: false, joined: '2026-03-21' },
+  { email: 'ada@igaming.dev', role: 'admin', isActive: true, joined: '2026-01-12' },
+  { email: 'grace@igaming.dev', role: 'support', isActive: true, joined: '2026-02-03' },
+  { email: 'alan@igaming.dev', role: 'user', isActive: false, joined: '2026-03-21' },
 ];
 
 const meta: Meta = {

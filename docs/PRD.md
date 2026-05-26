@@ -1,4 +1,4 @@
-# PRD: casino-oss - Open-Source Casino Platform
+# PRD: igaming-oss - Open-Source iGaming Platform
 
 **Status:** Built (Phases 0-5 complete) + frontend platform consolidated
 **Owner:** Krystian + Adam
@@ -6,18 +6,18 @@
 
 ## Problem Statement
 
-Casino operators today have two choices when building a real-money gaming product:
+iGaming operators today have two choices when building a real-money gaming product:
 
 1. **License a closed, monolithic platform** (Softswiss, EveryMatrix, BetConstruct). Fast time-to-market but the operator never owns the IP, can't see the source, can't extend without vendor cooperation, pays per-license forever, and is locked into the vendor's UI, payment integrations, and roadmap.
 2. **Build everything in-house from scratch.** Full ownership, but the table-stakes work (auth, wallet, KYC, RNG, lobby, chat, CMS, compliance reporting) consumes 12-18 months before a single original game ships. Most teams never finish the core and ship a brittle MVP.
 
-There is no middle ground: no headless, plugin-based, OSS casino core that an operator can clone, extend with their proprietary IP (games, brand, UI, regional integrations), and deploy without forking. There's also no equivalent for AI agents to build on - existing platforms have no schema registry, no MCP server, no agent-friendly extension points, so Claude Code / Codex / Cursor can't meaningfully contribute to a casino codebase without a human translating intent into framework-specific incantations.
+There is no middle ground: no headless, plugin-based, OSS igaming core that an operator can clone, extend with their proprietary IP (games, brand, UI, regional integrations), and deploy without forking. There's also no equivalent for AI agents to build on - existing platforms have no schema registry, no MCP server, no agent-friendly extension points, so Claude Code / Codex / Cursor can't meaningfully contribute to a igaming codebase without a human translating intent into framework-specific incantations.
 
 Concretely, Consumer (the first internal consumer) needs to ship five proprietary PvP games + a sportsbook integration in ~12 weeks, and 80% of the engineering work would otherwise be re-implementing auth + wallet + lobby + chat + bonus + compliance + backoffice. That work is not differentiating.
 
 ## Solution
 
-A monorepo containing an OSS, headless, plugin-based casino platform that any team (Consumer first, then external operators) can clone, extend, and deploy. The platform is:
+A monorepo containing an OSS, headless, plugin-based igaming platform that any team (Consumer first, then external operators) can clone, extend, and deploy. The platform is:
 
 - **Headless.** UI providers are swappable via a contract package (`@oss/ui-provider-contract`). The default adapter is shadcn (`@oss/ui-provider-shadcn`); operators write their own adapter (MUI, Antd, ...) by implementing the same `UIProvider` interface, enforced at compile time. The React platform (`@oss/react-sdk`) ships the typed client, hooks, admin shell, pages, a CSS-variable theme system (per-tenant overridable), and a UI plugin registry - all adapter-agnostic via `useUI()`. The admin is consumed as components mounted in a consumer's own Next.js `app/` directory, not as a forked app.
 - **Plugin-based.** Every piece of functionality enters the system through a single `definePlugin({ id, register })` contract. The same contract works for in-tree overlays (`apps/extensions/<name>/`) and externally-published npm packages. Operators never fork core - they drop folders.
@@ -25,13 +25,13 @@ A monorepo containing an OSS, headless, plugin-based casino platform that any te
 - **AI-native.** Every module ships an `AGENTS.md`. An MCP dev server exposes the schema registry, route catalog, plugin manifest, and code scaffolders as tools. Repo-local slash commands (`/scaffold-module`, `/scaffold-plugin`, `/regen`, `/verify`) call the same code path humans use.
 - **Library-shaped for downstream consumers.** A downstream repo (eg `consumer/`) imports `@oss/api-runtime`, calls `createApp({ plugins, contract, ... })`, and gets a fully-configured Nest app. No forking of the OSS API entrypoint. Plugin-host overrides let consumers replace providers (eg swap the mock game provider for Consumer's real engine) without touching OSS code.
 
-The OSS ships 12 modules covering the full table-stakes surface: identity, wallet, gaming, lobby, chat, bonus, compliance, notifications, localization, cms, backoffice, casino-aggregator. Each is replaceable by a plugin. Two worked examples (`examples/consumer-games-plugin/`, `examples/sportsbook-plugin/`) demonstrate the overlay pattern.
+The OSS ships 12 modules covering the full table-stakes surface: identity, wallet, gaming, lobby, chat, bonus, compliance, notifications, localization, cms, backoffice, igaming-aggregator. Each is replaceable by a plugin. Two worked examples (`examples/consumer-games-plugin/`, `examples/sportsbook-plugin/`) demonstrate the overlay pattern.
 
 ## User Stories
 
-### Platform operator (the team running a casino)
+### Platform operator (the team running a igaming)
 
-1. As a platform operator, I want to clone a working casino backend with auth + wallet + lobby + chat + bonus + compliance + CMS already implemented, so that I can focus on my differentiating IP instead of re-implementing table stakes.
+1. As a platform operator, I want to clone a working igaming backend with auth + wallet + lobby + chat + bonus + compliance + CMS already implemented, so that I can focus on my differentiating IP instead of re-implementing table stakes.
 2. As a platform operator, I want to add a new feature (eg "VIP tiers") by dropping a single folder under `apps/extensions/` or `plugins/`, so that I never have to modify or fork OSS core code.
 3. As a platform operator, I want to remove a built-in module (eg "chat") by deleting one line from `extensions.config.ts`, so that I only ship the surface area my product actually needs.
 4. As a platform operator, I want to override the mock game provider with my real game engine by registering a Nest DI token in my plugin, so that the OSS gaming module works against my proprietary engine without code changes.
@@ -122,7 +122,7 @@ The OSS ships 12 modules covering the full table-stakes surface: identity, walle
 | localization      | Locale, Translation; locales/translations CRUD                               | i18next compatibility                       |
 | cms               | Page, Banner; pages CRUD + banners by placement                              | none                                        |
 | backoffice        | (no owned tables - reads cross-module) stats/users/transactions admin API    | none                                        |
-| casino-aggregator | AggregatorAdapter; sync/providers/callback routes                           | AggregatorAdapter port                     |
+| igaming-aggregator | AggregatorAdapter; sync/providers/callback routes                           | AggregatorAdapter port                     |
 
 **Pillar decisions (documented in ADRs):**
 
@@ -166,8 +166,8 @@ The OSS ships 12 modules covering the full table-stakes surface: identity, walle
 
 ### Downstream consumer model (Consumer sibling repo)
 
-- Consumer is a sibling directory (`consumer/`) to `casino-oss/`, not a fork.
-- `consumer/package.json` uses `pnpm.overrides` with `link:../casino-oss/packages/*` for local dev.
+- Consumer is a sibling directory (`consumer/`) to `igaming-oss/`, not a fork.
+- `consumer/package.json` uses `pnpm.overrides` with `link:../igaming-oss/packages/*` for local dev.
 - Consumer has its own `extensions.config.ts` referencing OSS modules by path AND its own plugins (eg `vip-tiers/`).
 - `consumer/apps/api/src/main.ts` is ~15 lines calling `createApp({ plugins, contract, port: 3101, ... })`.
 - In production, the `link:` paths are swapped for versioned npm tags. No code change needed.
@@ -186,7 +186,7 @@ The OSS ships 12 modules covering the full table-stakes surface: identity, walle
 ### What makes a good test in this codebase
 
 - **Test external behavior, not implementation.** A `wallet.service.test.ts` asserts that `deposit(userId, 100)` results in a new transaction row with status `completed` and a balance increase of 100. It does NOT assert "the service called `db.insert(walletTransaction)` with these specific args".
-- **Integration tests use a real Postgres** (via `@oss/db db:up`). Mocks of the database are forbidden per the architecture pillar "explicit > magic" - mock/prod divergence is a known incident pattern in casino billing systems.
+- **Integration tests use a real Postgres** (via `@oss/db db:up`). Mocks of the database are forbidden per the architecture pillar "explicit > magic" - mock/prod divergence is a known incident pattern in igaming billing systems.
 - **Service-level unit tests** mock only the adapter ports (PaymentAdapter, GameAdapter, GeoIpAdapter). Everything else is real.
 - **Router-level tests** assert that an HTTP request producing valid input returns the expected output and that domain errors map to the correct oRPC error codes (NOT_FOUND, FORBIDDEN, CONFLICT).
 - **Contract tests** assert that the emitted OpenAPI spec matches a committed snapshot - any unintended contract drift fails CI.
@@ -200,7 +200,7 @@ The OSS ships 12 modules covering the full table-stakes surface: identity, walle
 5. **compliance** - geo-check + limit enforcement. Test that exceeding daily deposit limit blocks the action.
 6. **identity** - register/login flows. better-auth handles most edge cases; test our wrapper.
 
-The other 6 modules (gaming, lobby, chat, notifications, localization, cms, backoffice, casino-aggregator) currently have smoke tests covering domain error classes only. That is acceptable for v1; expand as bugs surface.
+The other 6 modules (gaming, lobby, chat, notifications, localization, cms, backoffice, igaming-aggregator) currently have smoke tests covering domain error classes only. That is acceptable for v1; expand as bugs surface.
 
 ### Prior art for tests
 
@@ -258,7 +258,7 @@ The following are intentionally NOT delivered in this PRD and tracked separately
 - ~~Add a thin `createBackofficeApp({ uiAdapter, ... })` factory~~ - superseded. The admin ships as headless components from `@oss/react-sdk`; the consumer mounts them and swaps the adapter via `<UIProvider>`. No factory needed.
 - Build a second UI adapter (`@oss/ui-provider-mui` or similar) to exercise the adapter-swap path and validate the contract is truly library-agnostic. The Storybook adapter switcher is ready for it.
 - Server-side data prefetch for admin pages (RSC + TanStack Query hydration) - needs cookie-forwarding plumbing in the runtime; pages fetch client-side today.
-- Per-tenant theme persistence: a `theme` API/table returning a `Partial<Theme>` per casino, wired to `<ThemeProvider theme={...}>`.
+- Per-tenant theme persistence: a `theme` API/table returning a `Partial<Theme>` per igaming, wired to `<ThemeProvider theme={...}>`.
 - Typed client for consumer-defined routes: let a downstream consumer compose its own oRPC contract with the OSS one so plugin routes (eg `/consumer/vip/*`) get the same `z.infer` typing the core routes have. Today plugin UI calls those via the raw `useApiClient()`.
 - Add dynamic feature flags as a regular module + port (default DB-backed adapter; can swap for LaunchDarkly/Unleash/PostHog).
 - Wire eslint-plugin-boundaries to enforce the dependency rules at lint time, not just by convention.
@@ -267,6 +267,6 @@ The following are intentionally NOT delivered in this PRD and tracked separately
 
 ### Acceptance criteria for "v1.0 released"
 
-- A fresh Claude Code session, given only the prompt "implement a tournament module" in the casino-oss repo, ships a buildable module via `/scaffold-module tournament` + MCP tools + AGENTS.md, with at most two human confirmations.
+- A fresh Claude Code session, given only the prompt "implement a tournament module" in the igaming-oss repo, ships a buildable module via `/scaffold-module tournament` + MCP tools + AGENTS.md, with at most two human confirmations.
 - `cd consumer && pnpm setup && pnpm dev` brings up the API on `:3101` and the web app on `:3100`, including the OSS modules, the local VIP tiers plugin (server + UI), and the OSS admin mounted at `/admin/*`.
-- An external operator can fork the consumer pattern from `examples/` and have a brand-skinned (via `<ThemeProvider>` + UI adapter), branded-routed, branded-database casino API + admin running in under a day.
+- An external operator can fork the consumer pattern from `examples/` and have a brand-skinned (via `<ThemeProvider>` + UI adapter), branded-routed, branded-database igaming API + admin running in under a day.

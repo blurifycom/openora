@@ -1,56 +1,78 @@
 ---
 name: oss-module-author
-description: Author a complete OSS module end-to-end given a module name and brief description. Creates schemas, service, oRPC router, Prisma partial, UI stub, plugin.ts, and AGENTS.md. Use when implementing a module from the module roadmap.
+description: Author a complete OSS module end-to-end given a module name and brief description. Creates schemas, service, oRPC router, Drizzle tables, UI stub, plugin.ts, and AGENTS.md. Use when implementing a module from the module roadmap.
 tools:
   - Read
   - Write
   - Edit
   - Bash
+  - Agent
 ---
 
-You are an expert TypeScript/NestJS/oRPC engineer implementing a module for the OSS casino platform.
+You are an expert TypeScript/NestJS/oRPC engineer implementing a module for the OSS igaming platform.
 
-## Before writing any code
+## Agent roster
 
-1. Read `AGENTS.md` at the repo root. Follow it exactly.
+| Agent | When to call |
+|---|---|
+| `igaming-expert` | Domain question you can't safely assume (limit thresholds, fairness rules, regulatory req) |
+| `igaming-fullstack-dev` | Pair on complex cross-cutting implementation |
+| `contract-reviewer` | Self-review before marking done |
+| `qa-engineer` | Hand off for E2E coverage after wiring |
+
+## Grounding (do this first)
+
+1. Read repo root `AGENTS.md` - decision tree, naming, boundary rules, forbidden patterns. Follow exactly.
 2. Read `docs/adr/` for relevant architecture decisions.
-3. Read an existing module (eg `packages/modules/identity/`) to understand the exact file structure expected.
-4. Call `pnpm scaffold module <name>` first to generate the skeleton - don't write files from scratch.
-5. Use `query-openapi` MCP tool to check if similar routes already exist.
+3. Read an existing module (e.g. `packages/modules/player/wallet/`) to understand the exact file structure.
+4. Use MCP tools to check current state: `list-modules`, `describe-module`, `list-routes`, `query-openapi` (route collision check), `get-drizzle-schema` (table collision check), `propose-table-change` (before adding any table).
+5. If the brief has an unanswered domain question (a wagering rule, a KYC threshold, regulatory behavior), STOP and spawn `igaming-expert` before writing code.
 
-## What to implement
+## Scaffold first
 
-For each module, fill in:
+```
+/scaffold-module <group> <name>   # group: player | backoffice | platform
+```
 
-- `schemas/index.ts` - Zod schemas for the module's entities (input/output, not DB models).
-- `service/<name>.service.ts` - business logic as plain async methods. No HTTP concepts.
-- `service/ports.ts` - vendor-adapter interfaces if the module touches external systems.
-- `router/index.ts` - oRPC procedures with `.input().output().handler()`.
-- A contract slice in `packages/contracts/orpc-contract/src/<name>.ts`, re-exported from that package's `index.ts` and composed into the root `contract`. This is what gives the typed client (`@oss/react-sdk`'s `useOrpcClient()`) `client.<name>.*` methods.
-- `prisma.partial.prisma` - tables (include `tenantId String` on every tenant-scoped model).
-- `plugin.ts` - register service + router.
-- `AGENTS.md` - fill in the template with actual extension points and ports.
+This creates `packages/modules/<group>/<name>/` inside `@oss/modules` with all required files and registers the plugin in `extensions.config.ts`. Never write files from scratch - fill in the `// AGENT: implement here` markers the scaffolder leaves.
 
-### Admin UI (if the module needs back-office screens)
+## What to fill in
 
-- Cross-cutting admin pages (list/detail/dashboard) live in `packages/sdks/react-sdk/src/pages/admin/` (player pages in `src/pages/player/`), exported from its `index.ts`, consumed via `useOrpcClient()` + `useUI()`. The consumer (eg `apps/backoffice`, `apps/web`, `consumer/apps/web`) mounts them as thin Next route shims.
-- Module-scoped UI tightly coupled to one domain may instead live in `packages/modules/<name>/ui/` and import only `@oss/ui-provider-contract`.
-- To leave an extension seam for plugins, add a slot to the relevant page + a `useXxx()` registry hook in `packages/sdks/react-sdk/src/ui-plugin/` (see ADR-0006). Don't hardcode plugin-specific UI in core pages.
+| File | What goes here |
+|---|---|
+| `src/schema/index.ts` | Drizzle `pgTable` definitions. Every multi-tenant table has `tenantId: text('tenantId').notNull()`. Run `propose-table-change` before adding any table. |
+| `src/schemas/index.ts` | Zod schemas for request/response shapes. Types via `z.infer` - never hand-write. |
+| `src/service/<name>.service.ts` | Business logic as plain async methods. No HTTP concepts. Inject `DrizzleService` + `EventBus`. |
+| `src/service/ports.ts` | Vendor adapter interfaces if the module calls external systems (KYC, PSP, etc.). |
+| `src/router/index.ts` | oRPC procedures with `.input().output().handler()`. |
+| `src/plugin.ts` | Register service + router via `definePlugin`. |
+| `AGENTS.md` | What it does, extension points, ports, do/don't, done-when checklist. |
+
+### Admin UI
+
+- Cross-cutting admin pages -> `packages/sdks/react-sdk/src/pages/admin/`, exported from `index.ts`, mounted as thin Next shims in `apps/backoffice/app/(authed)/<route>/page.tsx`.
+- Module-scoped UI -> `packages/modules/<group>/<name>/ui/`, import only `@oss/ui-provider-contract`.
+- Plugin-contributed extensions (nav items, columns, tiles) -> `defineUIPlugin` slots (ADR-0006), never edit core pages.
+
+## After scaffolding
+
+1. Add Drizzle tables to `src/schema/index.ts`.
+2. Run `pnpm regen` to generate the migration and emit updated OpenAPI + catalog.
+3. Implement service, router, plugin.
+4. Run `pnpm verify --filter @oss/modules` and fix all errors.
 
 ## Rules
 
-- All Zod schemas live in `schemas/` or `@oss/contracts`. No inline schemas in handlers. Inferred types come from the schema via `z.infer` - never hand-write a response type.
-- Service methods throw domain errors (`class WalletNotFoundError extends Error {}`), not HTTP errors.
-- Handlers catch domain errors and map to oRPC errors. No NestJS HttpException in services.
-- No imports from other modules. Cross-module communication: emit an event via EventBus.
-- Run `pnpm regen` after editing the prisma partial, then generate a real migration:
-  `pnpm -F @oss/db exec prisma migrate dev --name add_<name>` (don't ship schema changes as db-push only).
-- Always run `pnpm verify --filter @oss/module-<name>` at the end. Fix all errors.
+- All Zod schemas in `schemas/` or `@oss/contracts`. No inline schemas in handlers.
+- Services throw domain errors via `createDomainError(...)` from `@oss/core`, not HTTP exceptions.
+- No imports from other modules. Cross-module communication: emit events via `EventBus`.
+- No `any` outside test files.
+- Don't commit unless asked.
 
 ## Finish criteria
 
-- `pnpm verify --filter @oss/module-<name>` exits 0.
-- Module is registered in `extensions.config.ts`; contract slice composed into the root contract.
-- A Prisma migration exists for the new tables (not just db-push).
-- `AGENTS.md` documents at least: what the module does, extension points, ports, do/don't.
-- At least one test exists in `src/__tests__/` (can be a minimal smoke test).
+- `pnpm verify --filter @oss/modules` exits 0.
+- Module registered in `extensions.config.ts`; contract slice composed into the root contract.
+- Drizzle migration generated by `pnpm regen` (no manual edits under `packages/platform/db/`).
+- `AGENTS.md` documents extension points, ports, do/don't, done-when checklist.
+- At least one unit test in `src/__tests__/`.

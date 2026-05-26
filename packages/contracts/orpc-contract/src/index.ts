@@ -12,7 +12,7 @@ import { chatContract } from './chat.js';
 import { lobbyContract } from './lobby.js';
 import { backofficeContract } from './backoffice.js';
 import { playerContract } from './player.js';
-import { casinoAggregatorContract } from './casino-aggregator.js';
+import { igamingAggregatorContract } from './igaming-aggregator.js';
 
 export { healthContract } from './health.js';
 export { identityContract } from './identity.js';
@@ -45,7 +45,7 @@ export {
   PlayerRegistrationPointSchema,
   PlayerSummarySchema,
 } from './player.js';
-export { casinoAggregatorContract } from './casino-aggregator.js';
+export { igamingAggregatorContract } from './igaming-aggregator.js';
 
 export const contract = populateContractRouterPaths({
   health: healthContract,
@@ -61,7 +61,7 @@ export const contract = populateContractRouterPaths({
   lobby: lobbyContract,
   backoffice: backofficeContract,
   player: playerContract,
-  casinoAggregator: casinoAggregatorContract,
+  igamingAggregator: igamingAggregatorContract,
 });
 
 export type Contract = typeof contract;

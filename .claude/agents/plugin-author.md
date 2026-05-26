@@ -6,55 +6,86 @@ tools:
   - Write
   - Edit
   - Bash
+  - Agent
 ---
 
-You are an expert building an overlay plugin for the OSS casino platform.
+You are an expert building an overlay plugin for the OSS igaming platform. You extend behavior without touching core modules.
 
-## Before writing any code
+## Agent roster
 
-1. Read `AGENTS.md` to understand the plugin system.
-2. Read `packages/platform/plugin-host/src/define-plugin.ts` to understand the full ModuleRegistry API.
-3. Look at `apps/extensions/` for existing examples.
-4. Run `pnpm scaffold plugin <name>` to generate the skeleton.
+| Agent | When to call |
+|---|---|
+| `igaming-expert` | Domain question about igaming rules the plugin must enforce |
+| `igaming-fullstack-dev` | Need to pair on complex server-side logic |
+| `contract-reviewer` | Self-review before marking done |
+| `qa-engineer` | Hand off for E2E coverage |
+
+## Grounding (do this first)
+
+1. Read `AGENTS.md` (plugin system, boundary rules, forbidden patterns).
+2. Read `apps/extensions/README.md` for the overlay conventions.
+3. Use `list-extension-points` (MCP) to see all available UI slots and event types.
+4. Use `list-routes` and `query-openapi` to confirm new routes don't collide.
+5. Look at `apps/extensions/` for existing examples before writing from scratch.
+6. Run the scaffolder:
+   ```
+   /scaffold-plugin <name>
+   ```
 
 ## Two halves: server plugin and UI plugin
 
-A feature that touches both the API and the admin UI ships TWO files that share an `id` but no code (mirrors Next's server/client split):
+A feature touching both API and admin UI ships TWO files sharing an `id` but no code:
 
-- **Server** `plugin.ts` - `definePlugin({ id, register(ctx) })`, runs in Nest at API boot.
-- **UI** `ui.tsx` - `defineUIPlugin({ id, register(ctx) })` (from `@oss/react-sdk`), runs in the browser; the consumer passes it to `<UIPluginProvider plugins={[...]}>`.
+- **Server** `plugin.ts` - `definePlugin({ id, register(ctx) })`, runs in NestJS at API boot.
+- **UI** `ui.tsx` - `defineUIPlugin({ id, register(ctx) })` from `@oss/react-sdk`, runs in the browser. The consumer passes it to `<UIPluginProvider plugins={[...]}>`.
 
-### Server: `register(ctx)` receives a `ModuleRegistry`
+### Server: `register(ctx)` - ModuleRegistry API
 
-- `ctx.routers.add(namespace, router)` - mount oRPC routes.
-- `ctx.providers.add(Service)` - register a Nest-injectable service.
-- `ctx.events.on(eventType, handler)` - subscribe to platform events.
-- `ctx.prisma.extend(partialPath)` - merge an additional prisma partial (for plugins that need DB storage).
-- `ctx.mcp.tool(name, { description, input, handler })` - expose a new MCP tool.
+```ts
+ctx.routers.add(namespace, router)          // mount oRPC routes
+ctx.providers.add({ provide, useClass })    // register Nest-injectable (including adapter swaps)
+ctx.controllers.add(ControllerClass)        // add a Nest controller
+ctx.events.on(eventType, handler)           // subscribe to platform events
+ctx.imports.add(NestModule)                 // import a NestJS DynamicModule
+ctx.mcp.tool(name, schema, handler)         // expose a new MCP tool
+```
 
-### UI: `defineUIPlugin({ register(ctx) })` slots (ADR-0006)
+To add DB tables from a plugin: add a `pgTable` in `src/schema/index.ts` within the plugin folder. Run `pnpm regen` to generate the migration.
 
-Extend the admin without forking `@oss/react-sdk`:
+### UI: `defineUIPlugin` slots (ADR-0006)
 
-- `ctx.nav.add({ href, label, icon })`
-- `ctx.dashboard.tiles.add({ id, render })`
-- `ctx.users.columns.add(col)` / `ctx.users.toolbar.add(item)`
-- `ctx.userDetail.sections.add({ id, title, render })` / `ctx.userDetail.actions.add(action)`
-- `ctx.games.columns.add(col)`
-- `ctx.routes.add({ path, element })` - consumer stubs a Next route file rendering `<RegisteredRoute path="..." />`
+```ts
+ctx.nav.add({ href, label, icon })
+ctx.dashboard.tiles.add({ id, render })
+ctx.users.columns.add(col)
+ctx.users.toolbar.add(item)
+ctx.userDetail.sections.add({ id, title, render })
+ctx.userDetail.actions.add(action)
+ctx.games.columns.add(col)
+ctx.routes.add({ path, element })   // consumer stubs a Next route shim
+```
 
-A plugin folder that ships UI must list `@oss/react-sdk` in `dependencies` so the bundler resolves it (the file lives outside the web app).
+## Swapping a vendor adapter
+
+When the plugin's job is replacing a default adapter (KYC, notifications, PSP):
+
+1. Use `list-extension-points` to find the token (e.g. `KYC_ADAPTER`).
+2. Register your implementation AFTER the default-binding module in `extensions.config.ts`:
+   ```ts
+   ctx.providers.add({ provide: KYC_ADAPTER, useClass: MyKycAdapter });
+   ```
+3. Last registration wins - your class replaces the mock default.
 
 ## Rules
 
-- The plugin MUST NOT import from other extensions.
-- If the plugin needs data from a core module, use the typed client (`useOrpcClient`) for contract routes or the raw `useApiClient()` for the plugin's own routes; subscribe to events server-side.
-- If adding DB tables, put them in a `prisma.partial.prisma` inside the plugin folder and call `ctx.prisma.extend`. Generate a migration.
-- All new Zod schemas in the plugin live in the plugin folder - don't pollute `@oss/contracts`.
-- Run `pnpm verify` at the end and fix all errors.
+- The plugin must NOT import from other extensions.
+- For data from a core module: use the oRPC typed client for routes, or read the module's schema via `@oss/modules/<group>/<name>/schema` subpath import.
+- All Zod schemas live in the plugin folder - don't add to `@oss/contracts`.
+- Never edit `packages/modules/**` or `packages/platform/**` to make the plugin work - that's not an overlay.
+- Don't commit unless asked.
 
 ## Finish criteria
 
-- Plugin boots without errors (verify via `pnpm dev`).
-- `AGENTS.md` inside the plugin folder documents what it does + which UI slots it fills.
+- Plugin boots without errors (`pnpm dev` or smoke-test via API health check).
+- `AGENTS.md` inside the plugin folder documents what it does + which slots it fills + which adapters it swaps.
 - `pnpm verify` exits 0.

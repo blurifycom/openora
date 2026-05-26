@@ -132,10 +132,10 @@ const server = new McpServer({
 // --- catalog-overview -------------------------------------------------------
 server.tool(
   'catalog-overview',
-  'START HERE. A concise "what can I extend" summary of the OSS casino platform you are consuming: counts of modules/events/slots/schemas, the adapter swap-seam table (category/interface/token/status), and the casino-config fields. Read this first to orient before drilling into the other tools.',
+  'START HERE. A concise "what can I extend" summary of the OSS igaming platform you are consuming: counts of modules/events/slots/schemas, the adapter swap-seam table (category/interface/token/status), and the igaming-config fields. Read this first to orient before drilling into the other tools.',
   {},
   withCatalog((c) => {
-    const lines: string[] = ['=== OSS casino platform catalog ==='];
+    const lines: string[] = ['=== OSS igaming platform catalog ==='];
     lines.push(
       `modules: ${c.modules.length}  adapters: ${c.adapters.length}  events: ${c.events.length}  ` +
         `uiSlots: ${c.uiSlots.length}  schemas: ${c.schemas.length}  ` +
@@ -295,10 +295,10 @@ server.tool(
 // --- get-config-schema ------------------------------------------------------
 server.tool(
   'get-config-schema',
-  'Return the casino-config surface: the DI token, the source file that defines it, and each configurable field with its note. Use this to learn what a consumer can configure (branding, currencies, jurisdictions, enabled modules, limits, ...).',
+  'Return the igaming-config surface: the DI token, the source file that defines it, and each configurable field with its note. Use this to learn what a consumer can configure (branding, currencies, jurisdictions, enabled modules, limits, ...).',
   {},
   withCatalog((c) => {
-    const lines: string[] = ['=== Casino config ==='];
+    const lines: string[] = ['=== Igaming config ==='];
     lines.push(`token:  ${c.config.token}`);
     lines.push(`source: ${c.config.source}`);
     lines.push('\n--- Fields ---');

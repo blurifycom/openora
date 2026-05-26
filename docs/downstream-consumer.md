@@ -1,10 +1,10 @@
 # Consuming the platform from a downstream repo
 
-How a downstream operator (eg Consumer) builds their own casino on top of `@oss/*` without
+How a downstream operator (eg Consumer) builds their own igaming on top of `@oss/*` without
 forking core. The root `AGENTS.md` links here; this is the detail an agent loads only when
 actually wiring a consumer.
 
-See also [`examples/minimal-casino/`](../examples/minimal-casino/) for a runnable template and
+See also [`examples/minimal-igaming/`](../examples/minimal-igaming/) for a runnable template and
 [`CATALOG.md`](./CATALOG.md) for the machine-readable surface (routes, schemas, adapter tokens,
 slots, events, config schema) an agent reads instead of grepping `node_modules`.
 
@@ -94,13 +94,13 @@ Until OSS packages are published to npm, downstream consumers point at this work
 ```jsonc
 "pnpm": {
   "overrides": {
-    "@oss/api-runtime":    "link:../casino-oss/packages/platform/api-runtime",
-    "@oss/plugin-host":    "link:../casino-oss/packages/platform/plugin-host",
-    "@oss/core":           "link:../casino-oss/packages/platform/core",
-    "@oss/db":             "link:../casino-oss/packages/platform/db",
-    "@oss/orpc-contract":  "link:../casino-oss/packages/contracts/orpc-contract",
-    "@oss/shared-schemas": "link:../casino-oss/packages/contracts/shared-schemas",
-    "@oss/tsconfig":       "link:../casino-oss/packages/config/tsconfig"
+    "@oss/api-runtime":    "link:../igaming-oss/packages/platform/api-runtime",
+    "@oss/plugin-host":    "link:../igaming-oss/packages/platform/plugin-host",
+    "@oss/core":           "link:../igaming-oss/packages/platform/core",
+    "@oss/db":             "link:../igaming-oss/packages/platform/db",
+    "@oss/orpc-contract":  "link:../igaming-oss/packages/contracts/orpc-contract",
+    "@oss/shared-schemas": "link:../igaming-oss/packages/contracts/shared-schemas",
+    "@oss/tsconfig":       "link:../igaming-oss/packages/config/tsconfig"
   }
 }
 ```

@@ -8,40 +8,60 @@ tools:
   - Bash
 ---
 
-You are implementing a UI provider adapter for the OSS casino platform.
+You are implementing a UI provider adapter for the OSS igaming platform. Your job is to make a target UI library satisfy the `@oss/ui-provider-contract` so any module can render through it without knowing which library is active.
 
-## Before writing any code
+## Agent roster
 
-1. Read `packages/ui/provider-contract/src/index.ts` for the full component contract.
-2. Read `packages/ui/provider-shadcn/` as a reference implementation.
+| Agent | When to call |
+|---|---|
+| `contract-reviewer` | Self-review before marking done |
+| `igaming-fullstack-dev` | If the contract needs a new component type to support a module requirement |
+
+## Grounding (do this first)
+
+1. Read `packages/ui/provider-contract/src/index.ts` for the full component contract - every type you must satisfy.
+2. Read `packages/ui/provider-shadcn/` as a reference implementation. Match its structure exactly.
 3. Read `AGENTS.md` section "UI provider abstraction".
+4. Note: `@oss/design-system` is removed. Design tokens are `--bo-*` CSS variables in `react-sdk/src/styles.css` and the `Theme` type in `react-sdk/src/theme.tsx`. Your provider does not own tokens.
 
 ## What to implement
 
 Create `packages/ui/provider-<lib>/` with:
 
-- `package.json` - name `@oss/ui-provider-<lib>`, peer deps on the target library + `@oss/ui-provider-contract`. Do NOT depend on `@oss/design-system` (removed - tokens live in `@oss/react-sdk`'s `theme.tsx`).
-- `src/<name>.tsx` - one file per component in the contract.
-- `src/index.ts` - export a single `export const <lib>Provider: UIProvider = { Button, Input, ... }`. The `: UIProvider` annotation is the conformance guarantee - TS fails to compile if any component is missing or mistyped.
-- `tsconfig.json` - extends `@oss/tsconfig/react-lib.json`.
+```
+packages/ui/provider-<lib>/
+  package.json           # name: @oss/ui-provider-<lib>, peer deps: target lib + @oss/ui-provider-contract
+  tsconfig.json          # extends @oss/tsconfig/react-lib.json
+  src/
+    <Component>.tsx      # one file per contract component
+    index.ts             # export const <lib>Provider: UIProvider = { Button, Input, ... }
+```
+
+The `: UIProvider` annotation on the exported object is the conformance guarantee - TypeScript will fail to compile if any component is missing or mistyped.
+
+## Storybook conformance check
+
+Stories are written once against the contract and run against all adapters:
+
+1. Add `@oss/ui-provider-<lib>` to `apps/storybook/package.json`.
+2. Add one line to `apps/storybook/.storybook/adapters.tsx`:
+   ```ts
+   import { <lib>Provider } from '@oss/ui-provider-<lib>';
+   // add to adapters map:
+   <lib>: <lib>Provider,
+   ```
+3. Run Storybook. Every existing story now renders through your adapter via the "Adapter" toolbar dropdown. Visual gaps = unimplemented or mis-styled components.
 
 ## Rules
 
-- Every component MUST accept and forward the props type from `@oss/ui-provider-contract`.
-- The provider object MUST be typed `: UIProvider`. That annotation is what enforces the contract.
-- No module code goes in a UI provider. Pure rendering only.
-- Run `pnpm verify --filter @oss/ui-provider-<lib>` at the end.
-
-## Storybook (conformance)
-
-Stories are written ONCE against the contract and shared across all adapters - do not write per-provider stories. To wire a new adapter in:
-
-1. Add one line to `apps/storybook/.storybook/adapters.tsx`: import `<lib>Provider` and add `<lib>: <lib>Provider` to the `adapters` map.
-2. Add `@oss/ui-provider-<lib>` to `apps/storybook/package.json`.
-3. Every existing story now renders through your adapter via the toolbar "Adapter" dropdown. Visual gaps = unimplemented/mis-styled components.
+- Every component MUST accept and forward the exact props type from `@oss/ui-provider-contract`.
+- The exported provider object MUST be typed `: UIProvider`.
+- No module or business logic in a UI provider. Pure rendering only.
+- Do not depend on `@oss/ui-provider-shadcn` - your provider is a parallel implementation.
+- Don't commit unless asked.
 
 ## Finish criteria
 
 - `pnpm verify --filter @oss/ui-provider-<lib>` exits 0.
-- The provider object satisfies `UIProvider` (compiles with the annotation).
-- The adapter appears in the Storybook toolbar and existing stories render through it.
+- The exported object satisfies `: UIProvider` (compiles without assertion).
+- The adapter appears in the Storybook toolbar and all existing stories render through it without runtime errors.

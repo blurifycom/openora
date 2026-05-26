@@ -1,6 +1,6 @@
 # @oss/mcp
 
-Consumer-facing MCP server for the OSS casino platform. It exposes the generated
+Consumer-facing MCP server for the OSS igaming platform. It exposes the generated
 platform catalog (`docs/catalog.json`) as read-only MCP tools so an AI agent
 working in a downstream consumer repo (one that installs the `@oss/*` packages,
 not the source tree) can discover what it can extend: modules, adapter swap-seams,
@@ -21,7 +21,7 @@ shipped in the published package, or a catalog you point it at.
 | `list-slots` | - | Named UI slots for extending the backoffice. |
 | `describe-module` | `name` | One module's tables + routes. |
 | `schema-get` | `name` | Where a Zod contract schema is defined. |
-| `get-config-schema` | - | Casino-config token, source, and fields. |
+| `get-config-schema` | - | iGaming-config token, source, and fields. |
 
 All tools are read-only. If the catalog cannot be located, every tool returns a
 helpful message instead of crashing.

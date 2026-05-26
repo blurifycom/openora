@@ -166,7 +166,7 @@ export async function seedDemoData(options: SeedOptions): Promise<SeedResult> {
     const first = pick(rng, FIRST_NAMES);
     const last = pick(rng, LAST_NAMES);
     const displayName = `${first} ${last}`;
-    const email = `player.${i + 1}@demo.casino.dev`;
+    const email = `player.${i + 1}@demo.igaming.dev`;
     const [country, currency, language] = pick(rng, LOCALES);
     const status = weighted(rng, STATUS_WEIGHTS);
     const kycStatus = weighted(rng, KYC_WEIGHTS);

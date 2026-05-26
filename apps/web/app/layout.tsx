@@ -11,7 +11,7 @@ const display = Bricolage_Grotesque({
 const body = Hanken_Grotesk({ subsets: ['latin'], variable: '--font-body', display: 'swap' });
 const mono = JetBrains_Mono({ subsets: ['latin'], variable: '--font-mono', display: 'swap' });
 
-export const metadata = { title: 'OSS Casino' };
+export const metadata = { title: 'OSS Igaming' };
 
 export default function RootLayout({ children }: { children: ReactNode }) {
   return (

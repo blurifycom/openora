@@ -9,10 +9,10 @@ The platform exposes one flat oRPC contract (`wallet.*`, `gaming.*`, `backoffice
 
 Two problems were intertwined:
 
-1. **Security gap.** Only the `player` module enforced an admin check (`assertAdmin`). 16 admin-capable routes were completely unguarded: all of `backoffice.*`, the `cms` write routes, `compliance.addGeoRule`/`listGeoRules`, `casino-aggregator.sync`/`listProviders`, and the `localization` write routes.
+1. **Security gap.** Only the `player` module enforced an admin check (`assertAdmin`). 16 admin-capable routes were completely unguarded: all of `backoffice.*`, the `cms` write routes, `compliance.addGeoRule`/`listGeoRules`, `igaming-aggregator.sync`/`listProviders`, and the `localization` write routes.
 2. **How to express the player/admin division.** The tempting option was to nest the contract into `player.*` and `admin.*` namespaces.
 
-A route-level audit showed the namespace re-prefix would touch ~60 procedures across 13 contract files, force 4 straddling modules (`cms`, `compliance`, `localization`, `casino-aggregator`) to be split in two, and ripple to the typed client, every react-sdk page, the Consumer app + plugins, the MCP `query-openapi` expectations, the emitted OpenAPI, and the docs. It is a one-way, high-churn change.
+A route-level audit showed the namespace re-prefix would touch ~60 procedures across 13 contract files, force 4 straddling modules (`cms`, `compliance`, `localization`, `igaming-aggregator`) to be split in two, and ripple to the typed client, every react-sdk page, the Consumer app + plugins, the MCP `query-openapi` expectations, the emitted OpenAPI, and the docs. It is a one-way, high-churn change.
 
 ## Decision
 
@@ -38,5 +38,5 @@ A route-level audit showed the namespace re-prefix would touch ~60 procedures ac
 
 **Neutral:**
 
-- `casino-aggregator.callback` stays unguarded by design - it is a machine-to-machine webhook secured by signature/allowlist at the edge, not an admin session.
+- `igaming-aggregator.callback` stays unguarded by design - it is a machine-to-machine webhook secured by signature/allowlist at the edge, not an admin session.
 - If a future need (eg per-surface rate limits, separate OpenAPI docs) justifies the churn, the re-prefix can still be done later; nothing here forecloses it.

@@ -1,10 +1,10 @@
 # @oss/module-player-management
 
-Player Account Management (PAM). Owns the casino `Player` profile - the operator-facing record for an end user - and the admin API to list, view, update, and delete players, plus registration analytics for the players dashboard.
+Player Account Management (PAM). Owns the igaming `Player` profile - the operator-facing record for an end user - and the admin API to list, view, update, and delete players, plus registration analytics for the players dashboard.
 
 ## What it does
 
-- Owns the `player` table: a casino profile (displayName, country, currency, language, lifecycle status, KYC status, level, lifetime stats) linked to an identity `user` by `userId` (ID reference only, no cross-module FK).
+- Owns the `player` table: a igaming profile (displayName, country, currency, language, lifecycle status, KYC status, level, lifetime stats) linked to an identity `user` by `userId` (ID reference only, no cross-module FK).
 - Exposes the `player.*` oRPC contract (admin/PAM surface): `list`, `get`, `update`, `remove`, `registrationsOverTime`, `summary`.
 - Every route is **admin-gated**: `PlayerService.assertAdmin(headers)` resolves the better-auth session and rejects callers whose `user.role !== 'admin'`. igaming separates the player realm from operator staff.
 
@@ -15,7 +15,7 @@ The platform has one auth realm (`user`, identity module) with a `role` discrimi
 - `role = "player"` (default) - end users. They do not have PAM access.
 - `role = "admin"` - back-office / PAM operators.
 
-A `Player` row is the casino-side profile for a player-role user. Admins manage players through PAM; they are not themselves players.
+A `Player` row is the igaming-side profile for a player-role user. Admins manage players through PAM; they are not themselves players.
 
 ## Extension points
 

@@ -1,6 +1,6 @@
-# OSS Casino Platform
+# OSS iGaming Platform
 
-Open-source, headless, plugin-based, AI-native casino platform. Clone it, extend it, deploy it - without forking core.
+Open-source, headless, plugin-based, AI-native igaming platform. Clone it, extend it, deploy it - without forking core.
 
 ## What's included
 
@@ -15,7 +15,7 @@ Open-source, headless, plugin-based, AI-native casino platform. Clone it, extend
 - **CMS** - pages + banners, JSON content blocks
 - **Localization** - i18next-compatible, DB-backed string overrides
 - **Backoffice** - admin API (stats, user management, transaction history)
-- **Casino Aggregator** - single aggregator adapter port (mock included)
+- **iGaming Aggregator** - single aggregator adapter port (mock included)
 
 ## Quick start
 
@@ -70,7 +70,7 @@ export const extensions = [
 
 | Example                                                  | What it shows                                                                                  |
 | -------------------------------------------------------- | ---------------------------------------------------------------------------------------------- |
-| [`examples/minimal-casino/`](./examples/minimal-casino/) | A downstream consumer end-to-end: `createApp`, `extensions.config.ts`, a custom vendor adapter binding, and a theme override - the canonical "start here" template. |
+| [`examples/minimal-igaming/`](./examples/minimal-igaming/) | A downstream consumer end-to-end: `createApp`, `extensions.config.ts`, a custom vendor adapter binding, and a theme override - the canonical "start here" template. |
 
 See [docs/downstream-consumer.md](./docs/downstream-consumer.md) for the full consumption guide.
 

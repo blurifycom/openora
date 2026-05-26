@@ -8,7 +8,7 @@ async function bootstrap() {
   const { listen, emitOpenApiSpec } = await createApp({
     plugins,
     contract,
-    openapi: { info: { title: 'OSS Casino API', version: '0.0.1' } },
+    openapi: { info: { title: 'OSS Igaming API', version: '0.0.1' } },
   });
 
   await listen();

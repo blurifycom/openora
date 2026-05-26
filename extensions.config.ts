@@ -12,7 +12,7 @@ export const extensions = [
   { id: 'compliance', path: './packages/modules/dist/platform/compliance/src/plugin.js' },
   { id: 'localization', path: './packages/modules/dist/platform/localization/src/plugin.js' },
 
-  // Player - the player-facing casino surface
+  // Player - the player-facing igaming surface
   { id: 'wallet', path: './packages/modules/dist/player/wallet/src/plugin.js' },
   { id: 'gaming', path: './packages/modules/dist/player/gaming/src/plugin.js' },
   { id: 'lobby', path: './packages/modules/dist/player/lobby/src/plugin.js' },

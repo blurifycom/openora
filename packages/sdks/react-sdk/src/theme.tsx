@@ -10,7 +10,7 @@ import { createContext, useContext, useMemo, type CSSProperties, type ReactNode 
  * sync with the `:root` block in `styles.css` so that the type system reflects
  * what's actually rendered when no overrides are provided.
  *
- * Future: a downstream consumer can fetch a row per casino from the database,
+ * Future: a downstream consumer can fetch a row per igaming from the database,
  * shape it into `Partial<Theme>`, and pass it to <ThemeProvider>. No CSS edits
  * needed - everything cascades through `--bo-*` variables.
  */
@@ -99,7 +99,7 @@ export const defaultTheme: Theme = {
 };
 
 /**
- * Preset palettes. Add more here as casinos onboard. Each preset is a
+ * Preset palettes. Add more here as igamings onboard. Each preset is a
  * `Partial<Theme>` so you only specify what differs from the default.
  */
 export const themePresets = {
@@ -161,7 +161,7 @@ const ThemeContext = createContext<Theme>(defaultTheme);
  * <ThemeProvider preset="midnightSapphire">{children}</ThemeProvider>
  *
  * // DB-driven (future)
- * const { data } = useQuery({ queryKey: ['theme', casinoId], ... });
+ * const { data } = useQuery({ queryKey: ['theme', igamingId], ... });
  * <ThemeProvider theme={data}>{children}</ThemeProvider>
  * ```
  */

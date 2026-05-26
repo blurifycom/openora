@@ -5,7 +5,7 @@
 
 ## Context
 
-Casino operators have strong branding requirements. Some run multiple brands. Others want to use their existing design system. Baking shadcn/ui (or any library) into module UI pages would make the platform hard to restyle without forking.
+iGaming operators have strong branding requirements. Some run multiple brands. Others want to use their existing design system. Baking shadcn/ui (or any library) into module UI pages would make the platform hard to restyle without forking.
 
 We also want the MCP server and AI agents to understand the component surface without parsing JSX trees.
 

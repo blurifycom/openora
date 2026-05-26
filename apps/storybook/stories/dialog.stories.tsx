@@ -18,7 +18,7 @@ export const EditUser: StoryObj = {
           open={open}
           onClose={() => setOpen(false)}
           title="Edit user"
-          description="ada@casino.dev"
+          description="ada@igaming.dev"
         >
           <div style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}>
             <label style={{ display: 'flex', gap: '0.5rem', alignItems: 'center' }}>

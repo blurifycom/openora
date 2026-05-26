@@ -13,7 +13,7 @@ overlay plugin that loads AFTER the default-binding module (last registration wi
 
 | Category | Interface | Token | Status | Bound in |
 | --- | --- | --- | --- | --- |
-| aggregator | `AggregatorAdapter` | `AGGREGATOR_ADAPTER` | wired (default impl) | `packages/modules/player/aggregator/src/service/casino-aggregator.service.ts` |
+| aggregator | `AggregatorAdapter` | `AGGREGATOR_ADAPTER` | wired (default impl) | `packages/modules/player/aggregator/src/service/igaming-aggregator.service.ts` |
 | game | `GameAdapter` | `GAME_ADAPTER` | wired (default impl) | `packages/modules/player/gaming/src/plugin.ts`<br>`packages/modules/player/gaming/src/service/gaming.service.ts` |
 | geo-ip | `GeoIpAdapter` | `GEO_IP_ADAPTER` | wired (default impl) | `packages/modules/platform/compliance/src/service/compliance.service.ts` |
 | kyc | `KycAdapter` | `KYC_ADAPTER` | wired (default impl) | `packages/modules/platform/identity/src/adapters/mock/mock-kyc-adapter.ts`<br>`packages/modules/platform/identity/src/plugin.ts` |
@@ -77,16 +77,16 @@ Fill from a `defineUIPlugin` via `ctx.<slot>.add(...)`. See ADR-0006.
 | `users:columns` | - |
 | `users:toolbar` | Toolbar controls above the users DataTable. Subject: void |
 
-## Casino config
+## iGaming config
 
-Declare with `defineCasinoConfig({...})` from `@oss/shared-schemas`, pass to
-`createApp({ casino })`. Injected app-wide via the `CASINO_CONFIG` token.
+Declare with `defineiGamingConfig({...})` from `@oss/shared-schemas`, pass to
+`createApp({ igaming })`. Injected app-wide via the `IGAMING_CONFIG` token.
 
 | Field | Notes |
 | --- | --- |
 | `branding` | - |
-| `currencies` | Currencies the casino transacts in; the first is the default. |
-| `jurisdictions` | Jurisdictions the casino is licensed to operate in. |
+| `currencies` | Currencies the igaming transacts in; the first is the default. |
+| `jurisdictions` | Jurisdictions the igaming is licensed to operate in. |
 | `blockedCountries` | Countries blocked regardless of licensing (geo-block list). |
 | `enabledModules` | Module ids to enable. Empty/omitted = all registered plugins load. |
 | `limits` | - |
@@ -103,18 +103,18 @@ Declare with `defineCasinoConfig({...})` from `@oss/shared-schemas`, pass to
 
 - `AdminTransactionSchema` - packages/contracts/orpc-contract/src/backoffice.ts
 - `AdminUserSchema` - packages/contracts/orpc-contract/src/backoffice.ts
-- `AggregatorProviderSummarySchema` - packages/contracts/orpc-contract/src/casino-aggregator.ts
+- `AggregatorProviderSummarySchema` - packages/contracts/orpc-contract/src/igaming-aggregator.ts
 - `BannerSchema` - packages/contracts/orpc-contract/src/cms.ts
 - `BonusSchema` - packages/contracts/orpc-contract/src/bonus.ts
 - `BonusTypeSchema` - packages/contracts/orpc-contract/src/bonus.ts
-- `BrandingSchema` - packages/contracts/shared-schemas/src/casino-config.ts
-- `CallbackInputSchema` - packages/contracts/orpc-contract/src/casino-aggregator.ts
-- `CallbackResultSchema` - packages/contracts/orpc-contract/src/casino-aggregator.ts
-- `CasinoConfigSchema` - packages/contracts/shared-schemas/src/casino-config.ts
+- `BrandingSchema` - packages/contracts/shared-schemas/src/igaming-config.ts
+- `CallbackInputSchema` - packages/contracts/orpc-contract/src/igaming-aggregator.ts
+- `CallbackResultSchema` - packages/contracts/orpc-contract/src/igaming-aggregator.ts
+- `iGamingConfigSchema` - packages/contracts/shared-schemas/src/igaming-config.ts
 - `ChatMessageSchema` - packages/contracts/orpc-contract/src/chat.ts
 - `ChatRoomSchema` - packages/contracts/orpc-contract/src/chat.ts
-- `CountryCodeSchema` - packages/contracts/shared-schemas/src/casino-config.ts
-- `CurrencyCodeSchema` - packages/contracts/shared-schemas/src/casino-config.ts
+- `CountryCodeSchema` - packages/contracts/shared-schemas/src/igaming-config.ts
+- `CurrencyCodeSchema` - packages/contracts/shared-schemas/src/igaming-config.ts
 - `DepositInputSchema` - packages/contracts/orpc-contract/src/wallet.ts
 - `EndRoundInputSchema` - packages/contracts/orpc-contract/src/gaming.ts
 - `EndRoundOutputSchema` - packages/contracts/orpc-contract/src/gaming.ts
@@ -125,7 +125,7 @@ Declare with `defineCasinoConfig({...})` from `@oss/shared-schemas`, pass to
 - `GeoRuleSchema` - packages/contracts/orpc-contract/src/compliance.ts
 - `KycStatusSchema` - packages/contracts/orpc-contract/src/player.ts
 - `LimitSchema` - packages/contracts/orpc-contract/src/compliance.ts
-- `LimitsSchema` - packages/contracts/shared-schemas/src/casino-config.ts
+- `LimitsSchema` - packages/contracts/shared-schemas/src/igaming-config.ts
 - `LobbyCategoryDetailSchema` - packages/contracts/orpc-contract/src/lobby.ts
 - `LobbyCategorySchema` - packages/contracts/orpc-contract/src/lobby.ts
 - `LoginInputSchema` - packages/contracts/shared-schemas/src/identity.ts
@@ -139,11 +139,11 @@ Declare with `defineCasinoConfig({...})` from `@oss/shared-schemas`, pass to
 - `PlayerSchema` - packages/contracts/orpc-contract/src/player.ts
 - `PlayerStatusSchema` - packages/contracts/orpc-contract/src/player.ts
 - `PlayerSummarySchema` - packages/contracts/orpc-contract/src/player.ts
-- `ProviderSelectionSchema` - packages/contracts/shared-schemas/src/casino-config.ts
+- `ProviderSelectionSchema` - packages/contracts/shared-schemas/src/igaming-config.ts
 - `RegisterInputSchema` - packages/contracts/shared-schemas/src/identity.ts
 - `StartRoundInputSchema` - packages/contracts/orpc-contract/src/gaming.ts
 - `StartRoundOutputSchema` - packages/contracts/orpc-contract/src/gaming.ts
-- `SyncResultSchema` - packages/contracts/orpc-contract/src/casino-aggregator.ts
+- `SyncResultSchema` - packages/contracts/orpc-contract/src/igaming-aggregator.ts
 - `TimestampSchema` - packages/contracts/shared-schemas/src/common.ts
 - `TransactionResultSchema` - packages/contracts/orpc-contract/src/wallet.ts
 - `UserBonusSchema` - packages/contracts/orpc-contract/src/bonus.ts
