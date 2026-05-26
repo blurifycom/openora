@@ -5,7 +5,9 @@
   "scripts": {
     "build": "turbo run build",
     "dev": "turbo run dev",
-    "lint": "turbo run lint",
+    "lint": "eslint .",
+    "lint:fix": "eslint . --fix",
+    "verify:shape": "tsx tools/verify-module-shape.ts",
     "typecheck": "turbo run typecheck",
     "test": "turbo run test",
     "test:unit": "turbo run test:unit",
@@ -16,20 +18,26 @@
     "format:check": "oxfmt --check",
     "sync:agent-docs": "tsx tools/sync-agent-docs.ts",
     "scaffold": "tsx tools/scaffold.ts",
-    "regen": "tsx tools/prisma-merge.ts && turbo run codegen && pnpm -F @oss/infra prisma generate",
+    "regen": "turbo run codegen && pnpm -F @oss/db generate && pnpm run gen:catalog",
+    "gen:catalog": "tsx tools/gen-catalog.ts",
     "seed": "tsx tools/seed.ts",
-    "verify": "turbo run typecheck lint test:unit",
+    "verify": "turbo run typecheck test:unit && pnpm run lint && pnpm run verify:shape",
+    "verify:drift": "tsx tools/gen-catalog.ts && tsx tools/sync-agent-docs.ts && git diff --exit-code -- docs/catalog.json docs/CATALOG.md CLAUDE.md",
     "setup:agent": "tsx tools/setup-agent.ts"
   },
   "devDependencies": {
+    "@eslint/js": "^10.0.1",
     "@oss/api-runtime": "workspace:*",
     "@oss/auth": "workspace:*",
-    "@oss/persistence": "workspace:*",
+    "@oss/db": "workspace:*",
     "@types/node": "25.9.0",
+    "eslint": "^9.39.4",
+    "eslint-plugin-boundaries": "^6.0.2",
     "oxfmt": "0.51.0",
     "tsx": "4.22.2",
     "turbo": "2.9.14",
-    "typescript": "6.0.3"
+    "typescript": "6.0.3",
+    "typescript-eslint": "^8.59.4"
   },
   "engines": {
     "node": ">=22.0.0",
