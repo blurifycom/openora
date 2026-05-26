@@ -6,6 +6,7 @@ import { ZodToJsonSchemaConverter } from '@orpc/zod/zod4';
 import type { ContractRouter } from '@orpc/contract';
 import type { PluginEntry } from '@oss/plugin-host';
 import { contract as defaultContract } from '@oss/orpc-contract';
+import { CASINO_CONFIG, type CasinoConfig } from '@oss/shared-schemas';
 import { writeFile, mkdir } from 'node:fs/promises';
 import { dirname, resolve } from 'node:path';
 import { AppModule } from './app.module.js';
@@ -35,6 +36,11 @@ export interface CreateAppConfig {
     outputPath?: string; // absolute path, default docs/openapi.json next to cwd
   };
 
+  // Declarative casino configuration (currencies, jurisdictions, limits, provider
+  // selection, branding). Build it with defineCasinoConfig() from @oss/shared-schemas.
+  // Injected app-wide via the CASINO_CONFIG token.
+  casino?: CasinoConfig;
+
   // Extra Nest modules/providers to wire in (advanced).
   extraImports?: Array<Type | DynamicModule>;
   extraProviders?: Provider[];
@@ -56,10 +62,15 @@ export async function createApp(config: CreateAppConfig): Promise<CreatedApp> {
     process.env['DATABASE_URL'] = config.databaseUrl;
   }
 
+  const casinoProvider: Provider[] = config.casino
+    ? [{ provide: CASINO_CONFIG, useValue: config.casino }]
+    : [];
+  const extraProviders = [...casinoProvider, ...(config.extraProviders ?? [])];
+
   const appModule = await AppModule.create({
     plugins: config.plugins,
     ...(config.extraImports ? { extraImports: config.extraImports } : {}),
-    ...(config.extraProviders ? { extraProviders: config.extraProviders } : {}),
+    ...(extraProviders.length > 0 ? { extraProviders } : {}),
     ...(config.disableHealthModule !== undefined
       ? { disableHealthModule: config.disableHealthModule }
       : {}),

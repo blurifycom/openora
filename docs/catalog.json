@@ -1,0 +1,486 @@
+{
+  "modules": [
+    {
+      "id": "aggregator",
+      "group": "player",
+      "tables": [
+        "aggregator_provider"
+      ],
+      "routes": []
+    },
+    {
+      "id": "bonus",
+      "group": "player",
+      "tables": [
+        "bonus",
+        "user_bonus"
+      ],
+      "routes": []
+    },
+    {
+      "id": "chat",
+      "group": "player",
+      "tables": [
+        "ChatMessage",
+        "ChatRoom"
+      ],
+      "routes": []
+    },
+    {
+      "id": "gaming",
+      "group": "player",
+      "tables": [
+        "Game",
+        "GameRound"
+      ],
+      "routes": []
+    },
+    {
+      "id": "lobby",
+      "group": "player",
+      "tables": [
+        "FeaturedSlot",
+        "LobbyCategory",
+        "LobbyCategoryGame"
+      ],
+      "routes": []
+    },
+    {
+      "id": "wallet",
+      "group": "player",
+      "tables": [
+        "wallet",
+        "wallet_transaction"
+      ],
+      "routes": []
+    },
+    {
+      "id": "admin-console",
+      "group": "backoffice",
+      "tables": [],
+      "routes": []
+    },
+    {
+      "id": "cms",
+      "group": "backoffice",
+      "tables": [
+        "banner",
+        "page"
+      ],
+      "routes": []
+    },
+    {
+      "id": "player-management",
+      "group": "backoffice",
+      "tables": [
+        "player"
+      ],
+      "routes": []
+    },
+    {
+      "id": "compliance",
+      "group": "platform",
+      "tables": [
+        "geo_rule",
+        "user_limit"
+      ],
+      "routes": []
+    },
+    {
+      "id": "identity",
+      "group": "platform",
+      "tables": [
+        "account",
+        "session",
+        "user",
+        "verification"
+      ],
+      "routes": []
+    },
+    {
+      "id": "localization",
+      "group": "platform",
+      "tables": [
+        "locale",
+        "translation"
+      ],
+      "routes": []
+    },
+    {
+      "id": "notifications",
+      "group": "platform",
+      "tables": [
+        "notification"
+      ],
+      "routes": []
+    }
+  ],
+  "adapters": [
+    {
+      "category": "aggregator",
+      "interface": "AggregatorAdapter",
+      "token": "AGGREGATOR_ADAPTER",
+      "status": "wired",
+      "boundIn": [
+        "packages/modules/player/aggregator/src/service/casino-aggregator.service.ts"
+      ]
+    },
+    {
+      "category": "game",
+      "interface": "GameAdapter",
+      "token": "GAME_ADAPTER",
+      "status": "wired",
+      "boundIn": [
+        "packages/modules/player/gaming/src/plugin.ts",
+        "packages/modules/player/gaming/src/service/gaming.service.ts"
+      ]
+    },
+    {
+      "category": "geo-ip",
+      "interface": "GeoIpAdapter",
+      "token": "GEO_IP_ADAPTER",
+      "status": "wired",
+      "boundIn": [
+        "packages/modules/platform/compliance/src/service/compliance.service.ts"
+      ]
+    },
+    {
+      "category": "kyc",
+      "interface": "KycAdapter",
+      "token": "KYC_ADAPTER",
+      "status": "stub",
+      "boundIn": []
+    },
+    {
+      "category": "notification",
+      "interface": "NotificationDeliveryAdapter",
+      "token": "NOTIFICATION_DELIVERY_ADAPTER",
+      "status": "stub",
+      "boundIn": []
+    },
+    {
+      "category": "payment",
+      "interface": "PaymentAdapter",
+      "token": "PAYMENT_ADAPTER",
+      "status": "wired",
+      "boundIn": [
+        "packages/modules/player/wallet/src/plugin.ts",
+        "packages/modules/player/wallet/src/service/wallet.service.ts"
+      ]
+    }
+  ],
+  "events": [
+    "aggregator.callback.received",
+    "aggregator.sync.completed",
+    "bonus.claimed",
+    "chat.message.sent",
+    "cms.page.published",
+    "compliance.limit.removed",
+    "compliance.limit.upserted",
+    "gaming.round.ended",
+    "gaming.round.started",
+    "identity.user.login",
+    "identity.user.registered",
+    "localization.translation.deleted",
+    "localization.translation.upserted",
+    "notifications.created",
+    "wallet.deposit.completed",
+    "wallet.withdrawal.completed"
+  ],
+  "uiSlots": [
+    {
+      "name": "append",
+      "description": ""
+    },
+    {
+      "name": "dashboard:tiles",
+      "description": "Stat cards in the dashboard grid. Subject: void"
+    },
+    {
+      "name": "games:columns",
+      "description": "Games list page."
+    },
+    {
+      "name": "player:detail:actions",
+      "description": "Action buttons in the player detail page header. Subject: Player"
+    },
+    {
+      "name": "player:detail:sections",
+      "description": "Collapsible sections in the player detail body. Subject: Player"
+    },
+    {
+      "name": "players:columns",
+      "description": ""
+    },
+    {
+      "name": "players:toolbar",
+      "description": "Toolbar controls above the players DataTable. Subject: void"
+    },
+    {
+      "name": "user:detail:actions",
+      "description": "Action buttons in the user detail page header. Subject: AdminUser"
+    },
+    {
+      "name": "user:detail:sections",
+      "description": "Sections in the user detail body. Subject: AdminUser"
+    },
+    {
+      "name": "users:columns",
+      "description": ""
+    },
+    {
+      "name": "users:toolbar",
+      "description": "Toolbar controls above the users DataTable. Subject: void"
+    }
+  ],
+  "schemas": [
+    {
+      "name": "AdminTransactionSchema",
+      "file": "packages/contracts/orpc-contract/src/backoffice.ts"
+    },
+    {
+      "name": "AdminUserSchema",
+      "file": "packages/contracts/orpc-contract/src/backoffice.ts"
+    },
+    {
+      "name": "AggregatorProviderSummarySchema",
+      "file": "packages/contracts/orpc-contract/src/casino-aggregator.ts"
+    },
+    {
+      "name": "BannerSchema",
+      "file": "packages/contracts/orpc-contract/src/cms.ts"
+    },
+    {
+      "name": "BonusSchema",
+      "file": "packages/contracts/orpc-contract/src/bonus.ts"
+    },
+    {
+      "name": "BonusTypeSchema",
+      "file": "packages/contracts/orpc-contract/src/bonus.ts"
+    },
+    {
+      "name": "BrandingSchema",
+      "file": "packages/contracts/shared-schemas/src/casino-config.ts"
+    },
+    {
+      "name": "CallbackInputSchema",
+      "file": "packages/contracts/orpc-contract/src/casino-aggregator.ts"
+    },
+    {
+      "name": "CallbackResultSchema",
+      "file": "packages/contracts/orpc-contract/src/casino-aggregator.ts"
+    },
+    {
+      "name": "CasinoConfigSchema",
+      "file": "packages/contracts/shared-schemas/src/casino-config.ts"
+    },
+    {
+      "name": "ChatMessageSchema",
+      "file": "packages/contracts/orpc-contract/src/chat.ts"
+    },
+    {
+      "name": "ChatRoomSchema",
+      "file": "packages/contracts/orpc-contract/src/chat.ts"
+    },
+    {
+      "name": "CountryCodeSchema",
+      "file": "packages/contracts/shared-schemas/src/casino-config.ts"
+    },
+    {
+      "name": "CurrencyCodeSchema",
+      "file": "packages/contracts/shared-schemas/src/casino-config.ts"
+    },
+    {
+      "name": "DepositInputSchema",
+      "file": "packages/contracts/orpc-contract/src/wallet.ts"
+    },
+    {
+      "name": "EndRoundInputSchema",
+      "file": "packages/contracts/orpc-contract/src/gaming.ts"
+    },
+    {
+      "name": "EndRoundOutputSchema",
+      "file": "packages/contracts/orpc-contract/src/gaming.ts"
+    },
+    {
+      "name": "FeaturedSlotSchema",
+      "file": "packages/contracts/orpc-contract/src/lobby.ts"
+    },
+    {
+      "name": "GameRoundSchema",
+      "file": "packages/contracts/orpc-contract/src/gaming.ts"
+    },
+    {
+      "name": "GameSchema",
+      "file": "packages/contracts/orpc-contract/src/gaming.ts"
+    },
+    {
+      "name": "GameSummarySchema",
+      "file": "packages/contracts/orpc-contract/src/lobby.ts"
+    },
+    {
+      "name": "GeoRuleSchema",
+      "file": "packages/contracts/orpc-contract/src/compliance.ts"
+    },
+    {
+      "name": "KycStatusSchema",
+      "file": "packages/contracts/orpc-contract/src/player.ts"
+    },
+    {
+      "name": "LimitSchema",
+      "file": "packages/contracts/orpc-contract/src/compliance.ts"
+    },
+    {
+      "name": "LimitsSchema",
+      "file": "packages/contracts/shared-schemas/src/casino-config.ts"
+    },
+    {
+      "name": "LobbyCategoryDetailSchema",
+      "file": "packages/contracts/orpc-contract/src/lobby.ts"
+    },
+    {
+      "name": "LobbyCategorySchema",
+      "file": "packages/contracts/orpc-contract/src/lobby.ts"
+    },
+    {
+      "name": "LoginInputSchema",
+      "file": "packages/contracts/shared-schemas/src/identity.ts"
+    },
+    {
+      "name": "MemberSchema",
+      "file": "packages/contracts/shared-schemas/src/identity.ts"
+    },
+    {
+      "name": "NotificationSchema",
+      "file": "packages/contracts/orpc-contract/src/notifications.ts"
+    },
+    {
+      "name": "OrganizationSchema",
+      "file": "packages/contracts/shared-schemas/src/identity.ts"
+    },
+    {
+      "name": "PageSchema",
+      "file": "packages/contracts/orpc-contract/src/cms.ts"
+    },
+    {
+      "name": "PaginationSchema",
+      "file": "packages/contracts/shared-schemas/src/common.ts"
+    },
+    {
+      "name": "PlatformStatsSchema",
+      "file": "packages/contracts/orpc-contract/src/backoffice.ts"
+    },
+    {
+      "name": "PlayerRegistrationPointSchema",
+      "file": "packages/contracts/orpc-contract/src/player.ts"
+    },
+    {
+      "name": "PlayerSchema",
+      "file": "packages/contracts/orpc-contract/src/player.ts"
+    },
+    {
+      "name": "PlayerStatusSchema",
+      "file": "packages/contracts/orpc-contract/src/player.ts"
+    },
+    {
+      "name": "PlayerSummarySchema",
+      "file": "packages/contracts/orpc-contract/src/player.ts"
+    },
+    {
+      "name": "ProviderSelectionSchema",
+      "file": "packages/contracts/shared-schemas/src/casino-config.ts"
+    },
+    {
+      "name": "RegisterInputSchema",
+      "file": "packages/contracts/shared-schemas/src/identity.ts"
+    },
+    {
+      "name": "StartRoundInputSchema",
+      "file": "packages/contracts/orpc-contract/src/gaming.ts"
+    },
+    {
+      "name": "StartRoundOutputSchema",
+      "file": "packages/contracts/orpc-contract/src/gaming.ts"
+    },
+    {
+      "name": "SyncResultSchema",
+      "file": "packages/contracts/orpc-contract/src/casino-aggregator.ts"
+    },
+    {
+      "name": "TimestampSchema",
+      "file": "packages/contracts/shared-schemas/src/common.ts"
+    },
+    {
+      "name": "TransactionResultSchema",
+      "file": "packages/contracts/orpc-contract/src/wallet.ts"
+    },
+    {
+      "name": "UserBonusSchema",
+      "file": "packages/contracts/orpc-contract/src/bonus.ts"
+    },
+    {
+      "name": "UserBonusStatusSchema",
+      "file": "packages/contracts/orpc-contract/src/bonus.ts"
+    },
+    {
+      "name": "UserSchema",
+      "file": "packages/contracts/shared-schemas/src/identity.ts"
+    },
+    {
+      "name": "UuidSchema",
+      "file": "packages/contracts/shared-schemas/src/common.ts"
+    },
+    {
+      "name": "WalletBalanceSchema",
+      "file": "packages/contracts/orpc-contract/src/wallet.ts"
+    },
+    {
+      "name": "WalletTransactionSchema",
+      "file": "packages/contracts/orpc-contract/src/wallet.ts"
+    },
+    {
+      "name": "WithdrawInputSchema",
+      "file": "packages/contracts/orpc-contract/src/wallet.ts"
+    }
+  ],
+  "config": {
+    "token": "CASINO_CONFIG",
+    "source": "packages/contracts/shared-schemas/src/casino-config.ts",
+    "fields": [
+      {
+        "key": "branding",
+        "note": ""
+      },
+      {
+        "key": "currencies",
+        "note": "Currencies the casino transacts in; the first is the default."
+      },
+      {
+        "key": "jurisdictions",
+        "note": "Jurisdictions the casino is licensed to operate in."
+      },
+      {
+        "key": "blockedCountries",
+        "note": "Countries blocked regardless of licensing (geo-block list)."
+      },
+      {
+        "key": "enabledModules",
+        "note": "Module ids to enable. Empty/omitted = all registered plugins load."
+      },
+      {
+        "key": "limits",
+        "note": ""
+      }
+    ]
+  },
+  "pluginContract": [
+    "controllers",
+    "events",
+    "imports",
+    "mcp",
+    "providers",
+    "routers",
+    "slots"
+  ],
+  "httpRoutes": []
+}

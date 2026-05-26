@@ -1,0 +1,21 @@
+{
+  "name": "@oss/mcp",
+  "version": "0.0.1",
+  "type": "module",
+  "bin": "./dist/main.js",
+  "files": ["dist", "docs"],
+  "scripts": {
+    "build": "tsc",
+    "typecheck": "tsc --noEmit",
+    "clean": "rm -rf dist"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "1.29.0",
+    "zod": "4.4.3"
+  },
+  "devDependencies": {
+    "@oss/tsconfig": "workspace:*",
+    "@types/node": "25.9.0",
+    "typescript": "6.0.3"
+  }
+}

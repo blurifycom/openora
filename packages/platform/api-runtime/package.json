@@ -26,10 +26,14 @@
     "@orpc/openapi": "1.14.3",
     "@orpc/server": "1.14.3",
     "@orpc/zod": "1.14.3",
+    "@oss/auth": "workspace:*",
     "@oss/core": "workspace:*",
     "@oss/orpc-contract": "workspace:*",
-    "@oss/persistence": "workspace:*",
+    "@oss/shared-schemas": "workspace:*",
+    "@oss/db": "workspace:*",
     "@oss/plugin-host": "workspace:*",
+    "@oss/modules": "workspace:*",
+    "drizzle-orm": "0.45.2",
     "reflect-metadata": "0.2.2"
   },
   "devDependencies": {

@@ -1,0 +1,47 @@
+{
+  "name": "minimal-casino",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "node --import tsx --watch --env-file-if-exists=.env src/main.ts",
+    "start": "node --import tsx src/main.ts",
+    "typecheck": "tsc --noEmit",
+    "build:oss": "pnpm -C ../casino-oss -F '@oss/api-runtime...' -F '@oss/orpc-contract...' -F '@oss/react-sdk...' -F '@oss/ui-provider-shadcn...' build && pnpm -C ../casino-oss -F '@oss/modules' build"
+  },
+  "dependencies": {
+    "@oss/api-runtime": "link:../casino-oss/packages/platform/api-runtime",
+    "@oss/orpc-contract": "link:../casino-oss/packages/contracts/orpc-contract",
+    "@oss/plugin-host": "link:../casino-oss/packages/platform/plugin-host",
+    "@oss/adapters": "link:../casino-oss/packages/contracts/adapters",
+    "@oss/shared-schemas": "link:../casino-oss/packages/contracts/shared-schemas",
+    "reflect-metadata": "0.2.2"
+  },
+  "devDependencies": {
+    "@oss/tsconfig": "link:../casino-oss/packages/config/tsconfig",
+    "@types/node": "25.9.1",
+    "tsx": "4.22.3",
+    "typescript": "6.0.3"
+  },
+  "engines": {
+    "node": ">=22.0.0",
+    "pnpm": ">=10.0.0"
+  },
+  "packageManager": "pnpm@10.33.4",
+  "pnpm": {
+    "overrides": {
+      "@oss/api-runtime": "link:../casino-oss/packages/platform/api-runtime",
+      "@oss/auth": "link:../casino-oss/packages/platform/auth",
+      "@oss/plugin-host": "link:../casino-oss/packages/platform/plugin-host",
+      "@oss/core": "link:../casino-oss/packages/platform/core",
+      "@oss/db": "link:../casino-oss/packages/platform/db",
+      "@oss/orpc-contract": "link:../casino-oss/packages/contracts/orpc-contract",
+      "@oss/adapters": "link:../casino-oss/packages/contracts/adapters",
+      "@oss/shared-schemas": "link:../casino-oss/packages/contracts/shared-schemas",
+      "@oss/tsconfig": "link:../casino-oss/packages/config/tsconfig",
+      "@oss/react-sdk": "link:../casino-oss/packages/sdks/react-sdk",
+      "@oss/ui-provider-contract": "link:../casino-oss/packages/ui/provider-contract",
+      "@oss/ui-provider-shadcn": "link:../casino-oss/packages/ui/provider-shadcn"
+    }
+  }
+}

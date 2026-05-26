@@ -15,7 +15,7 @@ apps/extensions/<name>/
   plugin.ts        # exports default definePlugin({ id, register })
   package.json     # name: extension-<name>
   AGENTS.md        # what it does, hooks, extension points
-  prisma.partial.prisma   # optional: additional DB tables
+  src/schema/index.ts   # optional: the overlay's own Drizzle pgTable definitions
 ```
 
 ## How it works
