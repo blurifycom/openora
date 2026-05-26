@@ -5,8 +5,8 @@
   "scripts": {
     "build": "turbo run build",
     "dev": "turbo run dev",
-    "lint": "eslint .",
-    "lint:fix": "eslint . --fix",
+    "lint": "oxlint .",
+    "lint:fix": "oxlint . --fix",
     "verify:shape": "tsx tools/verify-module-shape.ts",
     "typecheck": "turbo run typecheck",
     "test": "turbo run test",
@@ -26,18 +26,15 @@
     "setup:agent": "tsx tools/setup-agent.ts"
   },
   "devDependencies": {
-    "@eslint/js": "^10.0.1",
     "@oss/api-runtime": "workspace:*",
     "@oss/auth": "workspace:*",
     "@oss/db": "workspace:*",
     "@types/node": "25.9.0",
-    "eslint": "^9.39.4",
-    "eslint-plugin-boundaries": "^6.0.2",
     "oxfmt": "0.51.0",
+    "oxlint": "^1.64.0",
     "tsx": "4.22.2",
     "turbo": "2.9.14",
-    "typescript": "6.0.3",
-    "typescript-eslint": "^8.59.4"
+    "typescript": "6.0.3"
   },
   "engines": {
     "node": ">=22.0.0",
