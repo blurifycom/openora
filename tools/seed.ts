@@ -10,7 +10,7 @@
  * Requires DATABASE_URL (falls back to the local docker default).
  */
 import { createAuth } from '@oss/auth';
-import { createPrismaClient } from '@oss/persistence';
+import { createDrizzleDb } from '@oss/db';
 import { seedDemoData } from '@oss/api-runtime';
 
 function arg(name: string): string | undefined {
@@ -21,11 +21,11 @@ function arg(name: string): string | undefined {
 async function main() {
   const databaseUrl =
     process.env['DATABASE_URL'] ?? 'postgresql://postgres:postgres@localhost:5432/oss_casino';
-  const prisma = createPrismaClient(databaseUrl);
-  const auth = createAuth({ prisma });
+  const db = createDrizzleDb(databaseUrl);
+  const auth = createAuth({ db });
 
   const result = await seedDemoData({
-    prisma,
+    db,
     auth,
     playerCount: Number(arg('players') ?? 36),
     admin: {
@@ -36,8 +36,6 @@ async function main() {
     log: (m) => console.log(`  ${m}`),
   });
 
-  await prisma.$disconnect();
-
   console.log('\n=== Seed complete ===');
   console.log(`  Users:        ${result.users} (1 admin + ${result.players} players)`);
   console.log(`  Players:      ${result.players}`);
@@ -47,7 +45,9 @@ async function main() {
   console.log(`  ${result.adminEmail} / ${result.adminPassword}`);
 }
 
-main().catch((e) => {
-  console.error('\nSeed failed:', e);
-  process.exit(1);
-});
+main()
+  .then(() => process.exit(0))
+  .catch((e) => {
+    console.error('\nSeed failed:', e);
+    process.exit(1);
+  });

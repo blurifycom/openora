@@ -9,7 +9,7 @@ touching any core module.
 | Concern                  | How it is solved                                                               |
 | ------------------------ | ------------------------------------------------------------------------------ |
 | New game type + routes   | `ctx.controllers.add(CrashController)` - no core file edited                   |
-| Swap the game provider   | `ctx.providers.add({ provide: GAME_PROVIDER, useClass: ConsumerGameProvider })` |
+| Swap the game provider   | `ctx.providers.add({ provide: GAME_ADAPTER, useClass: ConsumerGameAdapter })` |
 | React to platform events | `ctx.events.on('wallet.deposit.completed', handler)`                           |
 | Custom lobby card        | `ctx.slots.fill('game-lobby-extra', { type: 'crash-game-card', ... })`         |
 | New DB tables            | `prisma.partial.prisma` + `ctx.prisma.extend(...)`                             |
@@ -59,7 +59,7 @@ a plain object - both are valid `component` values.
 
 1. Replace the in-process `Map` store in `crash.router.ts` with injected
    `PrismaService` calls backed by the tables in `prisma.partial.prisma`.
-2. Replace `ConsumerGameProvider` with a real adapter that calls your game engine
+2. Replace `ConsumerGameAdapter` with a real adapter that calls your game engine
    via an injected port (not a raw fetch - see the port pattern in
    `packages/modules/gaming/src/service/ports.ts`).
 3. Swap `console.log` in the deposit handler for an `EventBus.emit(...)` call
@@ -83,7 +83,7 @@ export default [
 Then run:
 
 ```bash
-pnpm regen   # merges prisma.partial.prisma into infra/prisma/schema.prisma
+pnpm regen   # merges prisma.partial.prisma into packages/platform/db/prisma/schema.prisma
 pnpm dev     # boots the API with the plugin loaded
 ```
 
@@ -96,7 +96,7 @@ examples/consumer-games-plugin/
   src/
     schemas/crash.schemas.ts        - all Zod schemas for this plugin
     game/crash.game.ts              - pure provably-fair multiplier function
-    provider/consumer-game-provider.ts - GameProvider implementation
+    provider/consumer-game-provider.ts - GameAdapter implementation
     router/crash.router.ts          - oRPC contract + NestJS controller
 ```
 

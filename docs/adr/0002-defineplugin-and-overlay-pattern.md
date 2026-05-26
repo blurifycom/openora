@@ -18,7 +18,9 @@ The platform's primary value proposition is extensibility: operators clone the r
 
 **Secondary path - npm package**: Same `definePlugin` contract. Listed in `extensions.config.ts` with an npm package name instead of a path.
 
-The `definePlugin` factory returns a typed `Plugin` object. The `register(ctx: ModuleRegistry)` function receives a registry that exposes typed methods: `ctx.routers.add`, `ctx.providers.add`, `ctx.slots.fill`, `ctx.events.on`, `ctx.prisma.extend`, `ctx.mcp.tool`.
+The `definePlugin` factory returns a typed `Plugin` object. The `register(ctx: ModuleRegistry)` function receives a registry that exposes typed methods: `ctx.providers.add`, `ctx.controllers.add`, `ctx.routers.add`, `ctx.slots.fill`, `ctx.events.on`, `ctx.mcp.tool`, `ctx.imports.add`.
+
+> **Update (2026-05):** the Drizzle migration removed `ctx.prisma.extend`. Overlays now add their own `pgTable` in their module's `src/schema/index.ts`; the plugin registry no longer exposes a `prisma` surface.
 
 Inspired by: OpenMercato's overlay pattern (in-tree, no core patching), Payload v3's `definePlugin` (ordered, slug-keyed, typed options).
 
@@ -30,6 +32,8 @@ Inspired by: OpenMercato's overlay pattern (in-tree, no core patching), Payload 
 - Overlays live in-repo so AI agents can scaffold and modify them without publishing packages.
 - `dependsOn` array enables topological sort; load order is explicit and deterministic.
 - Plugins can extend the Prisma schema via partials - no ORM lock-in for extensions.
+
+> **Update (2026-05):** after the Drizzle migration there are no Prisma partials. A plugin adds its own `pgTable` defs in its module's `src/schema/index.ts`; drizzle-kit globs them at `pnpm regen`.
 
 **Negative / trade-offs:**
 

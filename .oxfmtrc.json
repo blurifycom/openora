@@ -12,7 +12,7 @@
     "**/coverage/**",
     "**/storybook-static/**",
     "**/generated/**",
-    "infra/prisma/migrations/**",
+    "packages/platform/db/prisma/migrations/**",
     "pnpm-lock.yaml"
   ]
 }

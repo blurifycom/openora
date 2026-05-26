@@ -6,7 +6,7 @@ Auto-generated header by `pnpm sync:agent-docs`. Edit `AGENTS.md`, not this file
 
 # AGENTS.md
 
-Canonical brief for AI agents (Claude Code, Codex, Cursor, Copilot, etc.) working on this repo. Humans read this too. Generated copies live in `CLAUDE.md`, `.cursorrules`, and `.github/copilot-instructions.md` - regenerate them with `pnpm sync:agent-docs`.
+Canonical brief for AI agents (Claude Code, Codex, Cursor, etc.) working on this repo. Humans read this too. `CLAUDE.md` is generated from this file - edit `AGENTS.md`, then run `pnpm sync:agent-docs`.
 
 ## Mission
 
@@ -14,119 +14,107 @@ Open-source, headless, plugin-based, AI-native casino platform. Anyone clones th
 
 ## Architecture pillars
 
-1. Single Zod root. All contracts live in `packages/contracts/domain-schemas`. Types are `z.infer`'d, never hand-written.
+1. Zod-first contracts. Every shape is a Zod schema; types are `z.infer`'d, never hand-written. Cross-cutting schemas live in `packages/contracts/shared-schemas`; per-module request/response schemas live in `packages/contracts/orpc-contract`, and module-local ones in the module's `schemas/`.
 2. oRPC + NestJS. `@orpc/nest` owns route registration + validation + OpenAPI emit. Nest owns DI, lifecycle, guards, and the module system used to load plugins.
 3. Plugin host. `definePlugin({ id, dependsOn, register })` is the only way new functionality enters the system. Overlays (in-tree under `apps/extensions/<name>/`) are the primary path; npm-published plugins use the same contract.
 4. Headless UI. `@oss/ui-provider-contract` declares component contracts and named slots. `@oss/ui-provider-shadcn` is the default adapter. Module UI never imports a UI library directly.
 5. Explicit > magic. No auto-discovery, no decorator soup. Everything is greppable; every wiring point is a typed function call.
-6. AI-friendly by default. Every module has an `AGENTS.md`. Every scaffold is a slash command. Every contract is queryable via the MCP dev server.
+6. AI-friendly by default. Every module has an `AGENTS.md`. Every scaffold is a slash command. Every contract is queryable via the MCP dev server and the generated `docs/CATALOG.md`.
 
 ## Repo map
 
 ```
 apps/
-  api/                # NestJS + oRPC HTTP API (port 3001)
-  backoffice/         # Next.js 16 admin UI (port 3000)
-  worker/             # BullMQ worker (port 3003)
-  mcp-server-dev/     # MCP dev server (stdio) - agents connect via .mcp.json
-  storybook/          # Component playground (port 6006)
-  extensions/         # In-tree overlay plugins (drop-in folders)
+  api/            # NestJS + oRPC HTTP API (port 3001) - thin consumer of createApp
+  backoffice/     # Next.js admin app (reference consumer of the admin surface)
+  web/            # Next.js player app (reference consumer of the player surface)
+  worker/         # BullMQ worker (port 3003)
+  mcp-server-dev/ # MCP dev server (stdio) - agents connect via .mcp.json
+  storybook/      # Component playground (port 6006)
+  extensions/     # In-tree overlay plugins (drop-in folders)
 packages/
-  config/             # tsconfig, vitest, oxlint presets (lint: oxlint, format: oxfmt)
+  config/         # tsconfig, vitest, oxlint, eslint-boundaries presets
   contracts/
-    domain-schemas/   # Zod schemas - the source of truth
-    orpc-contract/    # Root oRPC contract composing module routers
+    shared-schemas/ # Zod schemas - the source of truth
+    orpc-contract/  # Root oRPC contract composing module routers
+    adapters/       # @oss/adapters - vendor adapter interfaces + DI tokens (the swap seams)
   platform/
-    core/             # logger, event bus, tenant context
-    auth/             # better-auth integration
-    persistence/      # Prisma client + tenant-scoped helpers
-    events/           # event bus types and helpers
-    jobs/             # BullMQ wrappers
-    observability/    # tracing, metrics, error reporting
-    plugin-host/      # definePlugin, ModuleRegistry, loader, prisma-merge
-  modules/            # OSS feature modules (one folder per business domain)
+    core/         # logger, event bus (EventBus + EVENT_BUS), tenant context
+    auth/         # better-auth integration + shared AdminGuard
+    db/           # @oss/db - Drizzle client (DrizzleService) + drizzle-kit migrations
+    plugin-host/  # definePlugin, ModuleRegistry, loader
+    mcp/          # @oss/mcp - publishable MCP server consumers run against their own repo
+  modules/        # @oss/modules - ONE package; feature modules grouped by surface:
+    player/       #   wallet gaming lobby chat bonus aggregator
+    backoffice/   #   admin-console player-management cms
+    platform/     #   identity notifications compliance localization
   sdks/
-    react-sdk/        # @oss/react-sdk — typed oRPC client + TanStack Query hooks +
-                      # auth/UI/theme context + admin shell + pages + UI plugin registry.
-                      # examples/backoffice/ is the reference Next consumer app.
+    sdk-core/     # @oss/sdk-core - framework-agnostic typed client
+    react-sdk/    # @oss/react-sdk - React hooks + context + admin shell + pages
   ui/
-    provider-contract/   # UIProvider type shape (Button, Input, DataTable, ...)
-    provider-shadcn/     # default adapter implementing the contract
-infra/                # Prisma schema (merged) + docker-compose
+    provider-contract/ # UIProvider type shape (Button, Input, DataTable, ...)
+    provider-shadcn/   # default adapter
 docs/
-  adr/                # Architecture decision records
-  architecture.md     # system diagram (mermaid) + adapter seams
-  agent-quickstart.md
-tools/
-  scaffold.ts         # Code-mod CLI used by slash commands and MCP
-  sync-agent-docs.ts  # Regenerates .cursorrules + copilot-instructions.md
-  templates/          # Module, plugin, route, ui-component, adr templates
-extensions.config.ts  # The single registry of enabled plugins
+  adr/            # Architecture decision records
+  architecture.md, glossary.md, agent-quickstart.md, downstream-consumer.md
+  CATALOG.md      # generated machine-readable surface (routes/schemas/adapters/slots/events)
+tools/            # scaffold.ts, sync-agent-docs.ts, gen-catalog.ts, verify-module-shape.ts
+extensions.config.ts # the single registry of enabled plugins
 ```
 
 ## Where does X go? (decision tree)
 
-- A new business domain (eg "tournaments") -> new module under `packages/modules/<name>/`. Use `/scaffold-module tournaments`.
-- A behavior that extends or overrides an existing module -> overlay plugin under `apps/extensions/<name>/`. Use `/scaffold-plugin <name>`.
-- A new HTTP route -> add to the relevant module's `router/index.ts`. Use `/scaffold-route <module> <method> <path>`.
-- A new database table -> add to the relevant module's `prisma.partial.prisma`. Run `pnpm regen` to remerge `infra/prisma/schema.prisma`.
-- A reusable Zod schema -> `packages/contracts/domain-schemas/src/<namespace>.ts`. Module-local schemas live in the module's `schemas/`.
-- A cross-module event -> declare in `packages/platform/events/src/types.ts`, emit via the injected `EventBus`.
+- A new business domain (eg "tournaments") -> new module under `packages/modules/<group>/<name>/` (group: `player`, `backoffice`, `platform`). Use `/scaffold-module <group> <name>`.
+- A behavior that extends/overrides an existing module -> overlay plugin under `apps/extensions/<name>/`. Use `/scaffold-plugin <name>`.
+- A new HTTP route -> add to the module's `router/index.ts`. Use `/scaffold-route <module> <method> <path>`. Player routes resolve the caller from the `x-user-id` header; admin routes MUST be guarded (next line).
+- An admin-only route -> inject `AdminGuard` from `@oss/auth` and `await this.adminGuard.assert(context)` as the first line of the handler (throws `ORPCError`). `AdminGuard` is provided globally by api-runtime's `InfraModule`. This is the single admin-enforcement point - never re-implement the role check.
+- A new database table -> add a Drizzle `pgTable` to the module's `src/schema/index.ts`. Run `pnpm regen` (drizzle-kit) to generate the migration.
+- A reusable Zod schema -> `packages/contracts/shared-schemas/src/<namespace>.ts`. Module-local schemas live in the module's `schemas/`.
+- A cross-module event -> declare the event type in `@oss/core` (`event-bus.ts`), emit via the injected `EventBus` (`@Inject(EVENT_BUS)`).
 - A UI component -> `/scaffold-ui-component <name>` creates both the contract entry and the shadcn impl.
-- A backoffice page (admin-only, consumed by the reference app and downstream consumers) -> add a component to `packages/sdks/react-sdk/src/pages/`, export from its `index.ts`, then add a Next route shim in `packages/sdks/react-sdk/examples/backoffice/app/(authed)/<route>/page.tsx`. See `packages/sdks/react-sdk/AGENTS.md`.
-- A design token (color / spacing / font) -> add a `--bo-*` CSS variable to `packages/sdks/react-sdk/src/styles.css` and a typed entry to `Theme` in `packages/sdks/react-sdk/src/theme.tsx`. Override per-tenant via `<ThemeProvider theme={...}>`.
-- A way for a plugin to extend the admin UI without forking (nav item, table column, dashboard tile, detail section, route) -> a client-side `defineUIPlugin({ register(ctx) { ctx.<slot>.add(...) } })`. See ADR-0006 and `packages/sdks/react-sdk/AGENTS.md`.
-- A third-party integration (PSP, KYC vendor, casino aggregator, chat) -> define a port (interface) in the module's `service/ports.ts`, implement adapter in a separate package under `packages/modules/<module>/adapters/<vendor>/`. Never inline.
+- A backoffice (admin) page -> add a component to `packages/sdks/react-sdk/src/pages/admin/`, export from `src/index.ts`, then add a Next route shim in `apps/backoffice/app/(authed)/<route>/page.tsx`. A player page goes in `src/pages/player/` with a shim in `apps/web/app/<route>/page.tsx`. See `packages/sdks/react-sdk/AGENTS.md`.
+- A design token -> a `--bo-*` CSS variable in `react-sdk/src/styles.css` + a typed entry in `Theme` (`react-sdk/src/theme.tsx`). Override per-tenant via `<ThemeProvider theme={...}>`.
+- A plugin-contributed admin UI extension (nav item, column, tile, section, route) -> a client-side `defineUIPlugin({ register(ctx) { ctx.<slot>.add(...) } })`. See ADR-0006 and `react-sdk/AGENTS.md`.
+- A third-party integration (PSP, KYC, aggregator, chat) -> define the adapter interface + DI token in `@oss/adapters` (`packages/contracts/adapters/src/<category>.ts`), implement it under `packages/modules/<module>/adapters/<vendor>/`, and bind it to the token in the module's `plugin.ts`. Never inline. All vendor adapter interfaces live in `@oss/adapters` so the swap seams are findable in one place.
 - A long-running task -> emit an event, handle it in a worker under `apps/worker/handlers/`.
-- An LLM-powered feature -> route through `packages/llm/provider-interface`. Don't call vendors directly.
 
 ## Naming
 
-- Packages: `@oss/<kebab>` (eg `@oss/module-wallet`, `@oss/ui-provider-shadcn`).
+- Packages: `@oss/<kebab>`. Feature modules are NOT separate packages - they live inside `@oss/modules` and are imported by subpath: `@oss/modules/<group>/<name>` and `@oss/modules/<group>/<name>/schema`.
 - Files: `kebab-case.ts`. One concept per file.
-- Types: `PascalCase`. Schemas: `<Name>Schema`. Inferred types: `type <Name> = z.infer<typeof <Name>Schema>`.
+- Types: `PascalCase`. Schemas: `<Name>Schema`. Inferred: `type <Name> = z.infer<typeof <Name>Schema>`.
 - oRPC routers: namespace by module (`wallet.transactions.list`).
-- Prisma models: `PascalCase` singular (`User`, `Transaction`). Table names default to model name.
-- Tenant column: `tenantId` on every multi-tenant table. Use the `withTenant` helper, never raw queries.
+- Drizzle tables: snake_case `pgTable('table_name', ...)`; exported const is camelCase; row type is `typeof <const>.$inferSelect`.
+- Tenant column: `tenantId` on every multi-tenant table.
 
-## Dependency rules (enforced by boundary lint)
+## Dependency rules (enforced by boundary lint in `pnpm verify`)
 
-- `packages/modules/*` may import: `@oss/contracts/*`, `@oss/platform/*`, `@oss/ui/*`, `@oss/sdks/*`. May NOT import another module - cross-module communication goes through events or contracts.
+- `packages/modules/**` may import: `@oss/contracts/*`, `@oss/adapters`, `@oss/platform/*`, `@oss/ui/*`, `@oss/sdks/*`. May NOT import another module - cross-module communication goes through events or contracts (read another module's tables via the `@oss/modules/<group>/<name>/schema` subpath).
 - `packages/platform/*` may import other `platform/*` and `@oss/contracts/*`. May NOT import modules or UI.
 - `packages/contracts/*` may only import other contracts and Zod.
 - `apps/extensions/*` may import any package, but never another extension.
-- `apps/api` registers modules only via `extensions.config.ts`. A direct `import` of a module file from `apps/api/src/*` is a lint error.
+- `apps/api` registers modules only via `extensions.config.ts`. A direct module-file import from `apps/api/src/*` is a lint error.
+- Consumers (and modules) import the package entry, never a deep `dist/` path.
 
 ## Forbidden patterns
 
 - `any` outside `*.test.ts`. Use `unknown` + narrowing.
-- Inline `fetch`/`axios`. Use the SDK or a port-based adapter.
-- Ad-hoc Zod schemas inside controllers/services. All schemas live in `schemas/` or `domain-schemas`.
-- Decorators for business rules. Decorators are reserved for transport wiring (Nest guards/interceptors). Business logic stays in services as plain functions.
+- Inline `fetch`/`axios`. Use the SDK or a vendor adapter.
+- Ad-hoc Zod schemas inside controllers/services. All schemas live in `schemas/` or `shared-schemas`.
+- Decorators for business rules. Decorators are for transport wiring only (Nest guards/interceptors).
 - Re-exporting types just to "be nice". Import from where it's defined.
-- TODOs without a tracking issue. Either fix it now or open an issue and reference it.
-- Manual edits to `infra/prisma/schema.prisma` - it's generated by `pnpm regen` from partials.
-- Manual edits to `docs/openapi.json` - it's emitted at build time.
+- TODOs without a tracking issue.
+- A per-module `package.json`/`tsconfig.json` - all feature modules share `@oss/modules`. New deps go in `packages/modules/package.json`.
+- Hand-editing generated drizzle migrations under `packages/platform/db/` - regenerate via `pnpm regen`.
+- Hand-editing `docs/openapi.json` or `docs/CATALOG.md` - both are emitted at build time.
 
 ## How to add a module
 
 ```
-/scaffold-module <name>
+/scaffold-module <group> <name>   (group: player | backoffice | platform)
 ```
 
-Generates `packages/modules/<name>/` with:
-
-- `schemas/index.ts` - module-local Zod (re-exports from domain-schemas where applicable).
-- `service/<name>.service.ts` - business logic, Nest-injectable.
-- `service/ports.ts` - vendor-adapter interfaces.
-- `router/index.ts` - oRPC contract + handlers.
-- `prisma.partial.prisma` - module's tables.
-- `ui/` - pages built on `@oss/ui-provider-contract`.
-- `plugin.ts` - `definePlugin({ id: '<name>', register })`.
-- `AGENTS.md` - extension points, ports, do/don't, sample diffs.
-- `package.json`, `tsconfig.json`, vitest config.
-
-Then register the plugin in `extensions.config.ts` (the scaffolder adds it automatically). Run `pnpm regen && pnpm verify`.
+Generates `packages/modules/<group>/<name>/` (a folder inside `@oss/modules`) with `src/schema/index.ts` (Drizzle tables), `src/schemas/index.ts` (Zod), `src/service/<name>.service.ts`, `src/router/index.ts`, `src/plugin.ts` (`definePlugin`), and `AGENTS.md`. The scaffolder registers the plugin in `extensions.config.ts` and wires the contract index. Run `pnpm regen && pnpm verify`. Each scaffolded file marks the regions you may edit with `// AGENT: implement here` - fill those; leave the wiring alone.
 
 ## How to add an extension (overlay plugin)
 
@@ -134,16 +122,7 @@ Then register the plugin in `extensions.config.ts` (the scaffolder adds it autom
 /scaffold-plugin <name>
 ```
 
-Generates `apps/extensions/<name>/` with a `plugin.ts` exporting `definePlugin`. Edit `register(ctx)` to:
-
-- `ctx.routers.add(...)` - mount new oRPC routes.
-- `ctx.providers.add(...)` - add Nest providers.
-- `ctx.slots.fill('<slot-name>', <component>)` - inject UI.
-- `ctx.events.on('<event>', handler)` - subscribe to events.
-- `ctx.prisma.extend(...)` - extend an existing model (additive only).
-- `ctx.mcp.tool(...)` - expose a new MCP tool.
-
-The scaffolder appends the plugin to `extensions.config.ts`. No further wiring needed.
+Generates `apps/extensions/<name>/plugin.ts` exporting `definePlugin`. In `register(ctx)`: `ctx.routers.add(...)`, `ctx.providers.add(...)`, `ctx.controllers.add(...)`, `ctx.slots.fill(...)`, `ctx.events.on(...)`, `ctx.mcp.tool(...)`, `ctx.imports.add(...)`. To add tables, put your own `pgTable` in the overlay's schema (additive). To override a vendor adapter, bind your impl to its token AND ensure the overlay loads after the default-binding module in `extensions.config.ts` (last registration wins). See `apps/extensions/AGENTS.md`.
 
 ## How to add an oRPC route
 
@@ -151,11 +130,11 @@ The scaffolder appends the plugin to `extensions.config.ts`. No further wiring n
 /scaffold-route <module> <method> <path>
 ```
 
-Edits the module's `router/index.ts` to add a route with input/output schemas. Implements a handler shell delegating to the service. Don't define ad-hoc schemas - import from `schemas/` or add to `domain-schemas`.
+Adds a route stub with input/output schemas to the module's `router/index.ts`. Don't define ad-hoc schemas - import from `schemas/` or add to `shared-schemas`.
 
-## How to extend the Prisma schema
+## How to extend the database schema (Drizzle)
 
-Edit `packages/modules/<module>/prisma.partial.prisma`. Run `pnpm regen` (which runs `prisma-merge` -> `prisma generate` -> `prisma migrate dev --name <prompted>`). Never edit `infra/prisma/schema.prisma` directly.
+Add/edit a `pgTable` in `packages/modules/<group>/<module>/src/schema/index.ts`. Check collisions with `propose-table-change` first. Run `pnpm regen` to produce the migration. Read another module's tables via the subpath import `@oss/modules/<group>/<module>/schema`.
 
 ## How to add a UI component contract
 
@@ -163,174 +142,23 @@ Edit `packages/modules/<module>/prisma.partial.prisma`. Run `pnpm regen` (which 
 /scaffold-ui-component <Name>
 ```
 
-Creates:
-
-- Contract entry in `packages/ui/provider-contract/src/components/<name>.ts`.
-- Default shadcn impl in `packages/ui/provider-shadcn/src/components/<name>.tsx`.
-- Storybook story in `apps/storybook/stories/<name>.stories.tsx`.
-
-Module UI may import only the contract type.
+Creates the contract entry (`packages/ui/provider-contract/src/components/<name>.ts`), the shadcn impl, and a Storybook story. Module UI may import only the contract type.
 
 ## How to consume this platform from a downstream repo
 
-A downstream consumer (eg Consumer) imports `@oss/api-runtime` and creates an API instance:
-
-```typescript
-// consumer/apps/api/src/main.ts
-import { createApp } from '@oss/api-runtime';
-import { contract } from '@oss/orpc-contract';
-import { extensions } from './extensions.config.js'; // their own plugin list
-
-const { listen, emitOpenApiSpec } = await createApp({
-  plugins: extensions,
-  contract, // pass a composed contract if extended
-  port: 3001,
-  cors: { origins: ['https://consumer.com'] },
-  openapi: { info: { title: 'Consumer API', version: '1.0.0' } },
-});
-
-await listen();
-await emitOpenApiSpec();
-```
-
-The OSS `apps/api` is itself a thin consumer of `createApp` and serves as the reference. Downstream consumers do NOT fork `apps/api` - they create their own thin entrypoint and bring their own `extensions.config.ts`.
-
-For the UI side, downstream consumers swap `@oss/ui-provider-shadcn` for their own adapter package via the `UIProvider` React Context at the Next.js layout layer. No factory needed for UI.
-
-### Mounting the backoffice in a downstream Next app
-
-`@oss/react-sdk` ships the typed client, hooks, UI/theme context, admin shell, and page bodies. Consumers mount the pages in their own `app/` directory. The page bodies are interactive client components; the route files stay server components.
-
-```tsx
-// consumer/apps/web/app/admin/(authed)/page.tsx (server component)
-import { DashboardPage } from '@oss/react-sdk';
-export default function Page() {
-  return <DashboardPage />;
-}
-```
-
-Wrap the consumer's root layout with `QueryClientProvider`, `ApiClientProvider`, and `UIProvider` (plus optionally `ThemeProvider` for theming and `UIPluginProvider` for plugin extensions). All except `QueryClientProvider` come from `@oss/react-sdk`:
-
-```tsx
-// consumer/apps/web/app/providers.tsx (client component)
-import { ApiClientProvider, UIProvider, ThemeProvider, UIPluginProvider } from '@oss/react-sdk';
-import { shadcnProvider } from '@oss/ui-provider-shadcn';
-import '@oss/react-sdk/styles.css';
-
-<ApiClientProvider client={{ baseUrl }}>
-  <ThemeProvider preset="editorialBrass">
-    <UIProvider value={shadcnProvider}>
-      <UIPluginProvider plugins={[vipTiersUI]}>{children}</UIPluginProvider>
-    </UIProvider>
-  </ThemeProvider>
-</ApiClientProvider>;
-```
-
-Per-tenant theming reduces to passing a `Partial<Theme>` from a DB row to `<ThemeProvider theme={...}>`. The package exports `Theme`, `defaultTheme`, and `themePresets`. UI extensions (nav items, table columns, dashboard tiles, etc) come from `defineUIPlugin` contributions passed to `UIPluginProvider` - see ADR-0006.
-
-Cross-workspace `link:` requires a dedup alias in the consumer's `next.config.ts` for `react`, `react-dom`, and `@tanstack/react-query` (single physical path). See ADR-0005 and `consumer/apps/web/next.config.ts` for the working setup.
-
-Full guide: `packages/sdks/react-sdk/AGENTS.md`.
-
-### Local dev linking to a sibling consumer (eg `../consumer/`)
-
-Until OSS packages are published to npm, downstream consumers point at this workspace via `pnpm.overrides` + `link:`. From the consumer's `package.json`:
-
-```jsonc
-"pnpm": {
-  "overrides": {
-    "@oss/api-runtime":    "link:../casino-oss/packages/platform/api-runtime",
-    "@oss/plugin-host":    "link:../casino-oss/packages/platform/plugin-host",
-    "@oss/core":           "link:../casino-oss/packages/platform/core",
-    "@oss/persistence":    "link:../casino-oss/packages/platform/persistence",
-    "@oss/orpc-contract":  "link:../casino-oss/packages/contracts/orpc-contract",
-    "@oss/domain-schemas": "link:../casino-oss/packages/contracts/domain-schemas",
-    "@oss/tsconfig":       "link:../casino-oss/packages/config/tsconfig"
-  }
-}
-```
-
-Each linked package's `main` resolves to `./dist/index.js`, so the consumer reads BUILT output. To keep the link hot during dev, run a watch build here in parallel with the consumer's dev process:
-
-```bash
-pnpm -F @oss/api-runtime -F @oss/core -F @oss/persistence \
-       -F @oss/plugin-host -F @oss/orpc-contract -F @oss/domain-schemas \
-       --parallel build --watch
-```
-
-Modules under `packages/modules/*` are loaded by the consumer via `extensions.config.ts` paths pointing at `src/plugin.ts` directly - tsx loads `.ts` source, no build needed for those. Paths in the consumer's `extensions.config.ts` resolve relative to that config file's own directory.
-
-Rejected alternatives: `pnpm link --global` (legacy, leaks state), `yalc` (extra publish step on every change), `file:` (snapshot copy on install, no live source).
-
-### Consumer load pattern
-
-Consumer `extensions.config.ts` points at `dist/plugin.js`, not `src/plugin.ts`, because tsx in the consumer's API entry can't reliably resolve each module's tsconfig (decorator metadata gets dropped). Always build modules before booting the consumer:
-
-```bash
-pnpm -r --filter '@oss/module-*' build
-```
-
-For a watch loop during development:
-
-```bash
-pnpm -r --filter '@oss/*' --parallel build --watch
-```
-
-### Tooling notes
-
-- `tools/prisma-merge.ts` reads each module's `prisma.partial.prisma` and writes `infra/prisma/schema.prisma`. Run it after editing any partial.
-- `infra/prisma/base.prisma` defines the datasource WITHOUT a `url` field. Prisma 7 requires the URL to come from `prisma.config.ts` (loaded by env), not the schema.
-- `pnpm-workspace.yaml#allowBuilds` (pnpm 11 syntax) replaces the legacy `pnpm.onlyBuiltDependencies` in package.json.
+See [docs/downstream-consumer.md](./docs/downstream-consumer.md) - `createApp`, mounting the backoffice, `link:` dev workflow, the consumer load pattern, and the `@oss/mcp` + `CATALOG.md` AI surface. Start from [`examples/minimal-casino/`](./examples/minimal-casino/).
 
 ## How to run things locally
 
 ```
-pnpm setup:agent          # first time: docker + db + mcp + summary
-pnpm dev                  # turbo dev (api, backoffice, worker, mcp, storybook)
-pnpm regen                # prisma-merge + generate + openapi emit + sdk regen
-pnpm seed                 # demo data: admin + players + wallets + txns + games
-pnpm verify               # typecheck + lint + test + storybook build
-pnpm verify --filter @oss/module-wallet   # just one package
+pnpm setup:agent   # first time: docker + db + mcp + summary
+pnpm dev           # turbo dev (api, backoffice, worker, mcp, storybook)
+pnpm regen         # drizzle-kit generate + openapi emit + sdk regen + catalog
+pnpm seed          # demo data: admin + players + wallets + txns + games
+pnpm verify        # typecheck + lint (incl. boundaries + module shape) + test
 ```
 
-`pnpm seed` populates the local DB with a coherent demo dataset so the backoffice
-has something realistic to render (dashboard stats, player list + registrations
-chart, games catalog). It is idempotent and deterministic - safe to re-run; it
-wipes the demo content tables it owns and rebuilds them, and upserts the auth
-users by email. Logs in with `admin@oss.dev` / `password123`. Flags:
-`--players=<n>`, `--admin-email=<e>`, `--admin-password=<p>`. The reusable
-`seedDemoData()` lives in `@oss/api-runtime` so downstream consumers can seed too.
-
-## How to run the OSS stack in Docker
-
-The reference stack (API + Backoffice + Postgres + Redis + MinIO) lives under
-`docker/`:
-
-```
-docker compose -f docker/oss-reference.docker-compose.yml up --build
-# api on http://localhost:3001  backoffice on http://localhost:3000
-```
-
-Files:
-
-| Path                                      | Role                                                               |
-| ----------------------------------------- | ------------------------------------------------------------------ |
-| `docker/services.docker-compose.yml`      | Just postgres + redis + minio (services-only)                      |
-| `docker/oss-reference.docker-compose.yml` | One-command full reference stack (services + api + backoffice)     |
-| `docker/api.Dockerfile`                   | OSS API image (multi-stage: install -> prisma -> build -> runtime) |
-| `docker/web.Dockerfile`                   | OSS Backoffice (Next standalone)                                   |
-| `docker/api-entrypoint.sh`                | Runs `prisma db push` on boot, then execs the node CMD             |
-| `docker/.env`                             | Port defaults (override here to avoid collisions)                  |
-| `docker/templates/`                       | Templates a downstream consumer copies into their own repo         |
-
-Ports default to OSS canonicals (postgres 5432, redis 6381, minio 9100/9101,
-api 3001, backoffice 3000). Edit `docker/.env` to shift them.
-
-The `docker/api.Dockerfile` is consumer-agnostic in spirit: it bakes in the OSS
-extensions list. Downstream consumers don't use it directly - they copy the
-contents of `docker/templates/` into their own repo (see `templates/README.md`
-for the full layout). Consumer's `consumer/docker/Dockerfile.api` is a working
-example of this pattern.
+`pnpm seed` is idempotent and deterministic. Logs in with `admin@oss.dev` / `password123`. Flags: `--players=<n>`, `--admin-email=<e>`, `--admin-password=<p>`. The reusable `seedDemoData()` lives in `@oss/api-runtime` so downstream consumers can seed too.
 
 ## How to verify before opening a PR
 
@@ -338,17 +166,15 @@ example of this pattern.
 pnpm verify
 ```
 
-This must pass for every PR. CI runs the same command plus a "no schema drift" check that re-runs `prisma-merge` and fails if the result differs from the committed `schema.prisma`.
+Must pass for every PR. CI runs the same plus a "no drift" check that re-runs drizzle-kit + the catalog generator and fails on an uncommitted diff.
 
 ## Conventions for agents specifically
 
 - Read this file first, then the module's `AGENTS.md`, then ADRs. Don't reopen settled questions.
-- The `oss-dev` MCP server is registered in `.mcp.json` (stdio, launched by your editor - no port). Claude Code reads it from `.mcp.json`, NOT from `.claude/settings.json`; it's pre-approved via `enabledMcpjsonServers`. Codex reads `.codex/config.toml`. Verify with `claude mcp list` or `/mcp`.
-- Use the MCP dev server for read-only inspection: `read-agents-md`, `list-modules`, `describe-module`, `list-routes`, `list-extension-points`, `query-openapi`, `get-prisma-model-graph`, `propose-prisma-change`. It's faster than grep and always reflects current state. Write ops (`scaffold-*`, `regen`, `run-verify`) delegate to the same `tools/scaffold.ts` / pnpm scripts humans use.
-- Use slash commands for write operations - they call the same `tools/scaffold.ts` that humans use, so the output is consistent.
-- Before adding a route, call `query-openapi` to check it doesn't already exist.
-- Before adding a table, call `propose-prisma-change` to validate against the merged graph (catches collisions).
-- After any change, run `pnpm verify` for the affected package. If it fails, fix before continuing.
+- The `oss-dev` MCP server is in `.mcp.json` (stdio, launched by your editor - no port), pre-approved via `enabledMcpjsonServers`. Verify with `claude mcp list` or `/mcp`.
+- Use the MCP dev server for read-only inspection: `read-agents-md`, `list-modules`, `describe-module`, `list-routes`, `list-extension-points`, `query-openapi`, `get-drizzle-schema`, `propose-table-change`, `schema-get`, `docs-search`, `db-query-readonly`. It's faster than grep and reflects current state. Write ops (`scaffold-*`, `regen`, `run-verify`) delegate to the same scripts humans use.
+- Before adding a route, call `query-openapi` to check it doesn't already exist. Before adding a table, call `propose-table-change`.
+- After any change, run `pnpm verify` for the affected package. Fix failures before continuing.
 - Prefer small PRs scoped to one module. Cross-module changes need explicit human approval.
-- Don't commit unless the user asks. Don't push without confirmation.
-- ASCII only in code unless the user requests otherwise. Short dashes (-) only, never long dashes.
+- Don't commit unless asked. Don't push without confirmation.
+- ASCII only in code. Short dashes (-) only, never long dashes.

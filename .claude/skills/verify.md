@@ -1,6 +1,6 @@
 ---
 name: verify
-description: Run full verification - typecheck, lint, unit tests. Equivalent to what CI runs. Optional filter: /verify --filter @oss/module-wallet
+description: Run full verification - typecheck, lint, unit tests. Equivalent to what CI runs. Optional filter: /verify --filter @oss/modules
 ---
 
 Parse $ARGUMENTS for an optional `--filter <package>` flag.

@@ -19,11 +19,17 @@
     "test": "vitest run"
   },
   "dependencies": {
-    "@oss/persistence": "workspace:*",
-    "better-auth": "1.6.11"
+    "@nestjs/common": "11.1.21",
+    "@orpc/server": "1.14.3",
+    "@oss/db": "workspace:*",
+    "better-auth": "1.6.11",
+    "drizzle-orm": "0.45.2"
   },
   "devDependencies": {
     "@oss/tsconfig": "workspace:*",
     "typescript": "6.0.3"
+  },
+  "peerDependencies": {
+    "reflect-metadata": ">=0.1.0"
   }
 }

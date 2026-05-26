@@ -1,0 +1,30 @@
+{
+  "name": "@oss/sdk-core",
+  "version": "0.0.1",
+  "private": true,
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "import": "./dist/index.js",
+      "require": "./dist/index.js",
+      "types": "./dist/index.d.ts"
+    }
+  },
+  "scripts": {
+    "build": "tsc",
+    "typecheck": "tsc --noEmit",
+    "clean": "rm -rf dist"
+  },
+  "dependencies": {
+    "@orpc/client": "1.14.3",
+    "@orpc/contract": "1.14.3",
+    "@orpc/openapi-client": "1.14.3",
+    "@oss/orpc-contract": "workspace:*"
+  },
+  "devDependencies": {
+    "@oss/tsconfig": "workspace:*",
+    "typescript": "6.0.3"
+  }
+}

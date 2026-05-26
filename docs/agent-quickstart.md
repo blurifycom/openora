@@ -5,7 +5,7 @@ This guide walks an AI agent through implementing a module end-to-end using only
 ## Assumptions
 
 - `pnpm setup:agent` has been run (Docker up, DB migrated, dependencies installed).
-- The `oss-dev` MCP server is registered in `.mcp.json` and your agent launches it automatically (stdio). Verify with `claude mcp list` (Claude Code) or check `.codex/config.toml` (Codex). No separate process to start.
+- The `oss-dev` MCP server is registered in `.mcp.json` and your agent launches it automatically (stdio). Verify with `claude mcp list`. No separate process to start.
 
 ## Step 1: Understand the platform
 
@@ -28,26 +28,26 @@ If the module is listed, use `describe-module <name>` to understand its current 
 ## Step 3: Scaffold the module
 
 ```
-/scaffold-module <name>
+/scaffold-module <group> <name>   # group: player | backoffice | platform
 ```
 
-This creates `packages/modules/<name>/` with all required files and registers in `extensions.config.ts`.
+This creates `packages/modules/<group>/<name>/` (a folder inside the single `@oss/modules` package - NOT its own package) with all required files and registers it in `extensions.config.ts`.
 
-## Step 4: Define the Prisma schema
+## Step 4: Define the Drizzle tables
 
-Edit `packages/modules/<name>/prisma.partial.prisma`. Add models following these rules:
+Edit `packages/modules/<group>/<name>/src/schema/index.ts`. Add `pgTable` definitions following these rules:
 
-- Every multi-tenant model has `tenantId  String`.
-- No FK references to models owned by other modules (use IDs).
-- Use PascalCase singular model names.
+- Every multi-tenant table has a `tenantId: text('tenantId').notNull()` column.
+- No FK references to tables owned by other modules (use plain ID columns). Within your own module, `.references(() => table.id)` is fine.
+- Table names are snake_case (`pgTable('tournament_entry', ...)`); the exported const is camelCase; the row type is `typeof <const>.$inferSelect`.
 
-Check for table name collisions before adding:
+Check for table-name collisions before adding:
 
 ```
-propose-prisma-change model=<ModelName>
+propose-table-change table=<snake_case_name>
 ```
 
-Then regenerate:
+Inspect the existing DB shape any time with `get-drizzle-schema` (pass `module=<name>` to scope). Then generate the migration:
 
 ```
 /regen
@@ -55,21 +55,22 @@ Then regenerate:
 
 ## Step 5: Define schemas
 
-Edit `packages/modules/<name>/src/schemas/index.ts`. Define Zod schemas for the module's entities. Check if a shared schema already exists:
+Edit `packages/modules/<group>/<name>/src/schemas/index.ts`. Define Zod schemas for the module's entities. Check if a shared schema already exists:
 
 ```
+schema-get name=<EntityName>
 query-openapi keyword="<entity>"
 ```
 
-If a shared schema exists in `@oss/contracts/domain-schemas`, re-export it instead of duplicating.
+If a shared schema exists in `@oss/contracts/shared-schemas`, re-export it instead of duplicating.
 
 ## Step 6: Implement the service
 
-Edit `packages/modules/<name>/src/service/<name>.service.ts`. Business logic only. Rules:
+Edit `packages/modules/<group>/<name>/src/service/<name>.service.ts`. Business logic only. Rules:
 
-- Receive PrismaClient + EventBus via constructor.
-- Throw domain errors (eg `class EntityNotFoundError extends Error {}`).
-- Never call external HTTP APIs directly - use a port interface from `ports.ts`.
+- Inject `DrizzleService` (from `@oss/db`) + `EventBus` (`@Inject(EVENT_BUS)`) via the constructor. Query with `this.drizzle.db.select().from(<table>).where(eq(...))`; import operators (`eq`, `desc`, `sql`) from `drizzle-orm` and tables from `../schema/index.js`.
+- Throw domain errors via `createDomainError(...)` from `@oss/core`.
+- Never call external HTTP APIs directly - use an adapter interface from `@oss/adapters`.
 
 ## Step 7: Add routes
 
@@ -89,32 +90,33 @@ list-routes module=<name>
 
 ## Step 8: Wire the plugin
 
-Edit `packages/modules/<name>/src/plugin.ts`. Confirm the service is added to `ctx.providers` and the router is added to `ctx.routers`.
+Edit `packages/modules/<group>/<name>/src/plugin.ts`. Confirm the service is added to `ctx.providers` and the router is added to `ctx.routers`. The registry surface is: `providers`, `controllers`, `routers`, `slots`, `events`, `mcp`, `imports`.
 
 ## Step 9: Add UI (backoffice pages)
 
 Two kinds of UI in this repo - pick the right one for your change:
 
-- **Module-scoped UI** (a screen tightly coupled to one module's domain) -> `packages/modules/<name>/ui/`. Import only from `@oss/ui-provider-contract`. Use the DataTable component for lists, Form for create/edit. The module's plugin mounts it via UI slots.
-- **Cross-cutting backoffice page** (dashboard, users, games - the admin shell itself) -> add to `packages/sdks/react-sdk/src/pages/`, export from `index.ts`, then add a Next route shim in `packages/sdks/react-sdk/examples/backoffice/app/(authed)/<route>/page.tsx`. `@oss/react-sdk` is consumed both by the reference example app and by downstream consumers like Consumer. See `packages/sdks/react-sdk/AGENTS.md` and ADR-0005.
+- **Module-scoped UI** (a screen tightly coupled to one module's domain) -> `packages/modules/<group>/<name>/ui/`. Import only from `@oss/ui-provider-contract`. Use the DataTable component for lists, Form for create/edit. The module's plugin mounts it via UI slots.
+- **Cross-cutting admin page** (dashboard, users, games) -> add to `packages/sdks/react-sdk/src/pages/admin/`, export from `index.ts`, then add a Next route shim in `apps/backoffice/app/(authed)/<route>/page.tsx`. A **player page** goes in `src/pages/player/` with a shim in `apps/web/app/<route>/page.tsx`. `@oss/react-sdk` is consumed by both reference apps and by downstream consumers. See `packages/sdks/react-sdk/AGENTS.md` and ADR-0005.
 - **A plugin-contributed admin extension** (column, tile, nav item, route - not a core page) -> use a client-side `defineUIPlugin` instead of editing react-sdk. See ADR-0006.
 
 ## Step 10: Update AGENTS.md
 
-Edit `packages/modules/<name>/AGENTS.md`. Fill in:
+Edit `packages/modules/<group>/<name>/AGENTS.md`. Fill in:
 
 - What the module does (one paragraph).
 - Extension points (ports, events emitted/consumed, UI slots, routes).
 - Do / don't list.
 - Sample diff showing how to add a route.
+- A "Done when:" checklist the next agent can self-verify against.
 
 ## Step 11: Verify
 
 ```
-/verify --filter @oss/module-<name>
+/verify --filter @oss/modules
 ```
 
-Fix any typecheck, lint, or test failures before considering the work done.
+Fix any typecheck, lint, boundary, or test failures before considering the work done.
 
 ## Step 12: Integration check
 
@@ -132,8 +134,8 @@ curl -X POST http://localhost:3001/<name>s -H "Content-Type: application/json" -
 
 ## Common pitfalls
 
-- Forgetting `pnpm regen` after changing `prisma.partial.prisma` - types will be stale.
-- Importing from another module directly - use events instead.
+- Forgetting `pnpm regen` after editing `src/schema/index.ts` - the migration and generated types will be stale.
+- Importing from another module directly - use events or read its tables via the `@oss/modules/<group>/<name>/schema` subpath. Boundary lint will reject a cross-module source import.
 - Defining schemas inline in handlers - they must live in `schemas/`.
-- Editing `infra/prisma/schema.prisma` directly - it's overwritten by `pnpm regen`.
+- Hand-editing the generated migrations under `packages/platform/db/` - they are produced by `pnpm regen` (drizzle-kit). The source of truth is each module's `src/schema/index.ts`.
 - Opening a PR with a failing `pnpm verify` - CI will reject it.

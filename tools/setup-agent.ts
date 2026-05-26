@@ -52,9 +52,8 @@ async function main() {
     console.log('\n--- Dependencies: already installed ---');
   }
 
-  // 3. Boot infra
-  console.log('\n--- Starting Docker services (postgres + redis + minio) ---');
-  run('pnpm -F @oss/infra db:up');
+  // 3. Database service (postgres) must already be running locally.
+  console.log('\n--- Checking database service (expects postgres on :5432) ---');
 
   // Wait for postgres to be ready
   await new Promise<void>((resolve) => {
@@ -77,17 +76,20 @@ async function main() {
   });
 
   // 4. Migrate
-  console.log('\n--- Running Prisma migrations ---');
+  console.log('\n--- Running Drizzle migrations ---');
   try {
-    run('pnpm -F @oss/infra generate');
-    run('pnpm -F @oss/infra migrate');
+    run('pnpm -F @oss/db generate');
+    run('pnpm -F @oss/db migrate');
   } catch (e) {
     console.warn('  [warn] Migration step skipped (schema may be empty - normal on first run)');
   }
 
   // 5. Summary
   const pkg = JSON.parse(readFileSync(join(root, 'package.json'), 'utf8'));
-  const envExample = readFileSync(join(root, 'infra', '.env.example'), 'utf8');
+  const envExample = readFileSync(
+    join(root, 'packages', 'platform', 'db', '.env.example'),
+    'utf8',
+  );
   const ports: Record<string, string> = {};
   for (const line of envExample.split('\n')) {
     const m = line.match(/^(PORT_\w+)=(\d+)/);

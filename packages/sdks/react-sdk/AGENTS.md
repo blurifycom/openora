@@ -2,7 +2,7 @@
 
 The React platform package. Everything a Next.js consumer needs to talk to the OSS API and render the admin: a typed client, query hooks, auth, the UI-adapter context, the theme system, the admin shell + pages, and a UI plugin registry.
 
-This package absorbed the former `@oss/client` (typed transport) and `@oss/backoffice-ui` (admin UI). If you're looking for either, it's here now. The reference consumer app lives at `examples/backoffice/`.
+This package absorbed the former `@oss/client` (typed transport) and `@oss/backoffice-ui` (admin UI). If you're looking for either, it's here now. The reference consumer apps live at `apps/backoffice/` (admin) and `apps/web/` (player).
 
 ## What's in the box
 
@@ -85,7 +85,7 @@ export function Providers({ children }) {
 }
 ```
 
-Reference: `examples/backoffice/` (a working `@oss/example-backoffice` Next app).
+Reference: `apps/backoffice/` (`@oss/backoffice`, admin) and `apps/web/` (`@oss/web`, player) - working Next apps.
 
 ## RSC pattern
 
@@ -105,31 +105,95 @@ Presets: `editorialBrass` (default), `midnightSapphire`, `veronaCrimson`, `porce
 
 ## UI plugin registry (extend without forking)
 
-A plugin contributes admin UI via a client-side `defineUIPlugin`. Pages read the registry and render contributions inline with their defaults. Full design: ADR-0006.
+A plugin contributes admin UI via a client-side `defineUIPlugin`. Full design: ADR-0006.
 
+### Named slots
+
+All injection points are named slots. Import `SLOTS` for autocomplete - never use bare strings.
+The MCP `list-extension-points` tool lists all available slots.
+
+**Fill a component slot** (sections, tiles, actions, toolbar):
 ```tsx
-import { defineUIPlugin } from '@oss/react-sdk';
+import { defineUIPlugin, defineSlotFill, SLOTS } from '@oss/react-sdk';
+import type { Player } from '@oss/shared-schemas';
 
 export const myUI = defineUIPlugin({
   id: 'my-feature',
-  register(ctx) {
-    ctx.nav.add({ href: '/admin/x', label: 'X', icon: XIcon });
-    ctx.dashboard.tiles.add({ id: 'x-tile', order: 60, render: () => <XTile /> });
-    ctx.users.columns.add({ key: 'x', header: 'X', render: (_, u) => <XCell user={u} /> });
-    ctx.users.toolbar.add({ id: 'x-export', render: () => <ExportButton /> });
-    ctx.userDetail.sections.add({ id: 'x', title: 'X', render: (u) => <XSection user={u} /> });
-    ctx.userDetail.actions.add({ id: 'x-act', render: (u) => <XAction user={u} /> });
-    ctx.games.columns.add({ key: 'x', header: 'X', render: () => <XBadge /> });
-    ctx.routes.add({ path: '/admin/x', element: <XPage /> });
-  },
+
+  nav: [{ href: '/admin/x', label: 'X', icon: XIcon }],
+
+  routes: [{ path: '/admin/x', element: <XPage /> }],
+
+  slots: [
+    // Append a section to the player detail page
+    {
+      name: SLOTS.playerDetail.sections,
+      id: 'my-section',
+      mode: 'append',
+      order: 40,
+      render: defineSlotFill<Player>(player => <MySection player={player} />),
+    },
+    // Replace the entire dashboard tiles area
+    {
+      name: SLOTS.dashboard.tiles,
+      id: 'custom-tiles',
+      mode: 'replace',
+      render: () => <MyCustomTiles />,
+    },
+    // Prepend a button to the users toolbar
+    {
+      name: SLOTS.users.toolbar,
+      id: 'export-btn',
+      mode: 'prepend',
+      render: () => <ExportButton />,
+    },
+  ],
+
+  columns: [
+    { name: SLOTS.players.columns, key: 'badge-count', header: 'Badges', render: v => <BadgeCount id={v as string} /> },
+  ],
 });
 ```
 
-Pass `[myUI]` to `<UIPluginProvider plugins={...}>`. For a registered route, the consumer stubs a Next file: `export default () => <RegisteredRoute path="/admin/x" />`.
+**Fill modes:**
+- `'append'` (default) - renders after page default content
+- `'prepend'` - renders before page default content
+- `'replace'` - replaces page default content entirely (last fill by order wins)
 
-Slot taxonomy: `nav`, `dashboard.tiles`, `users.columns`, `users.toolbar`, `userDetail.sections`, `userDetail.actions`, `games.columns`, `routes`. Adding a slot = extend `ui-plugin/context.ts` + add a `useXxx` hook + read it in the relevant page.
+Each fill is wrapped in an error boundary - a crashing fill is silenced without taking down the page.
 
-A plugin's UI file is separate from its server `plugin.ts` (ADR-0002) - they share an `id` but no code. The server file runs in Nest; the UI file runs in the browser.
+### Declare a new slot in a page
+
+No core files need changing. Just add `<Slot>` anywhere in a page:
+
+```tsx
+import { Slot, SLOTS } from '@oss/react-sdk';
+
+// In a page component:
+<Slot name={SLOTS.playerDetail.sections} subject={player}>
+  <DefaultSection player={player} />   {/* shown when no replace fill is active */}
+</Slot>
+```
+
+To add a new named slot: add it to `src/ui-plugin/slots.ts` (the `SLOTS` constant), then use `<Slot name={SLOTS.x.y} />` in the page. No other files change.
+
+### SSR contract
+
+Plugin render functions run during SSR (Next.js SSRs client components to HTML). Do not access `window`, `document`, or browser-only APIs at render time - defer those to `useEffect`.
+
+### Plugin files
+
+A plugin's UI file (`ui.tsx`) is separate from its server `plugin.ts` (ADR-0002). They share an `id` but no code. The server file runs in Nest; the UI file runs in the browser.
+
+Pass plugins as a **stable module-level array** to `<UIPluginProvider>` - never inline in JSX (new array reference per render re-runs `buildRegistry` and resets error boundaries):
+
+```tsx
+// providers.tsx
+const plugins = [myUI, otherUI]; // module-level constant
+<UIPluginProvider plugins={plugins}>...</UIPluginProvider>
+```
+
+For a registered route, stub a Next file: `export default () => <RegisteredRoute path="/admin/x" />`.
 
 ## File layout
 
@@ -149,15 +213,19 @@ src/
 ├── shell/
 │   ├── app-shell.tsx · auth-guard.tsx · stat-card.tsx · icons.tsx
 ├── pages/
-│   ├── login.tsx · dashboard.tsx · users.tsx · user-detail.tsx · games.tsx
+│   ├── admin/                # login · dashboard · users · user-detail · games · players*
+│   └── player/               # lobby · games · wallet
 └── ui-plugin/
-    ├── context.ts            # slot taxonomy + registry shape
+    ├── context.ts            # UIPluginContext, UIRegistry, SlotFill types
     ├── define.ts             # defineUIPlugin, buildRegistry
-    ├── registry.tsx          # UIPluginProvider, use* hooks, RegisteredRoute
+    ├── registry.tsx          # UIPluginProvider, useUIRegistry, useNavItems, RegisteredRoute
+    ├── slot.tsx              # <Slot>, useSlotFills, useSlotColumns, defineSlotFill
+    ├── slots.ts              # SLOTS constant - all named slot names (source of truth)
     └── index.ts
-examples/
-└── backoffice/               # @oss/example-backoffice - reference Next consumer
 ```
+
+Reference consumer apps live in the repo's `apps/` (not inside this package):
+`apps/backoffice` (`@oss/backoffice`, admin) and `apps/web` (`@oss/web`, player).
 
 ## Dependencies
 
@@ -166,7 +234,7 @@ examples/
 | `@orpc/client`, `@orpc/openapi-client`, `@orpc/contract` (deps)        | typed client transport                                                                                                                                                                            |
 | `@oss/orpc-contract` (dep)                                             | inferred types + the contract object                                                                                                                                                              |
 | `@oss/ui-provider-contract` (dep)                                      | the `UIProvider` interface                                                                                                                                                                        |
-| `@oss/domain-schemas` (dep)                                            | shared schemas used by auth/user hooks                                                                                                                                                            |
+| `@oss/shared-schemas` (dep)                                            | shared schemas used by auth/user hooks                                                                                                                                                            |
 | `@tanstack/react-query`, `next`, `react`, `react-dom` (optional peers) | provided by the consumer; optional in `peerDependenciesMeta` so pnpm doesn't duplicate them into this package's `node_modules` (which would split React Context across `link:`-linked workspaces) |
 
 ## What NOT to do

@@ -19,14 +19,14 @@ You are a strict code reviewer for the OSS casino platform. You are NOT the impl
 
 ### Contract rules
 
-- [ ] All Zod schemas are in `schemas/` or `@oss/contracts/domain-schemas`. No ad-hoc schemas in handlers.
+- [ ] All Zod schemas are in `schemas/` or `@oss/contracts/shared-schemas`. No ad-hoc schemas in handlers.
 - [ ] oRPC procedures all have `.input()` and `.output()` (typed).
 - [ ] No `z.any()` or `z.unknown()` in public contracts.
 - [ ] Breaking changes to existing routes are flagged (check against committed `docs/openapi.json`).
 
 ### Prisma rules
 
-- [ ] `infra/prisma/schema.prisma` was not manually edited (should only change via regen).
+- [ ] `packages/platform/db/prisma/schema.prisma` was not manually edited (should only change via regen).
 - [ ] Every new multi-tenant model has `tenantId String`.
 - [ ] No cross-module FK references (IDs only).
 

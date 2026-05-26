@@ -18,6 +18,11 @@
 > - Plugin-driven UI extension (the "extend without forking" gap this ADR's
 >   monolithic pages left open) is addressed by ADR-0006.
 >
+> **Update (2026-05-22)**: The reference consumer apps moved back under `apps/`
+> when the platform split into two surfaces: `apps/backoffice` (`@oss/backoffice`,
+> admin) and `apps/web` (`@oss/web`, player). The react-sdk pages are now grouped
+> as `src/pages/admin/` and `src/pages/player/`. The `examples/` dir was removed.
+>
 > Everywhere this ADR says `@oss/backoffice-ui`, read `@oss/react-sdk`.
 > Everywhere it says `packages/ui/backoffice/`, read `packages/sdks/react-sdk/`.
 

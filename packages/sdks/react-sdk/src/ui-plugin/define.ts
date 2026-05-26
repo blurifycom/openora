@@ -1,82 +1,105 @@
-import type { UIPluginContext, UIRegistry } from './context.js';
+import type {
+  UIRegistry,
+  SlotFill,
+  SlotContribution,
+  ColumnContribution,
+  AppShellNavItem,
+  RegisteredRouteDescriptor,
+} from './context.js';
 import { emptyRegistry } from './context.js';
 
+/**
+ * Declarative UI plugin descriptor.
+ *
+ * A plugin is a plain data object - no side effects, no builder API.
+ * Every field is optional; include only what the plugin contributes.
+ *
+ * @example
+ * export const myPlugin = defineUIPlugin({
+ *   id: 'my-feature',
+ *   nav:    [{ href: '/admin/x', label: 'X', icon: XIcon }],
+ *   routes: [{ path: '/admin/x', element: <XPage /> }],
+ *   slots: [
+ *     {
+ *       name: SLOTS.playerDetail.sections,
+ *       id: 'x-section',
+ *       mode: 'append',
+ *       order: 40,
+ *       render: defineSlotFill<Player>(p => <XSection player={p} />),
+ *     },
+ *   ],
+ *   columns: [
+ *     { name: SLOTS.players.columns, key: 'x', header: 'X', render: v => <XCell v={v} /> },
+ *   ],
+ * });
+ */
 export type UIPlugin = {
   id: string;
-  register: (ctx: UIPluginContext) => void;
+  /** Component slot fills (sections, tiles, actions, toolbar items) */
+  slots?: SlotContribution[];
+  /** DataTable column fills */
+  columns?: ColumnContribution[];
+  /** Sidebar nav items */
+  nav?: AppShellNavItem[];
+  /** Admin routes (consumers stub a Next page per route) */
+  routes?: RegisteredRouteDescriptor[];
 };
 
 /**
- * Define a UI plugin. The `register` function is called once when the
- * `<UIPluginProvider>` mounts; each `ctx.<slot>.add(...)` call appends to the
- * internal registry. After registration the registry is frozen for the
- * lifetime of the provider.
- *
- * Server-side plugin contributions (Nest providers, oRPC routers) live in a
- * separate `definePlugin({ register })` call - see ADR-0002 / ADR-0006.
+ * Define a UI plugin. Returns the descriptor unchanged - exists for type checking
+ * and to mark the export as a plugin for tooling.
  */
 export function defineUIPlugin(plugin: UIPlugin): UIPlugin {
   return plugin;
 }
 
-const byOrder = <T extends { order?: number }>(a: T, b: T): number =>
-  (a.order ?? 100) - (b.order ?? 100);
-
 /**
- * Run every plugin's `register` against a fresh registry. Used by the
- * provider; exposed for tests.
+ * Merge all plugin contributions into an immutable UIRegistry.
+ * Pure function - no side effects.
  */
 export function buildRegistry(plugins: UIPlugin[]): UIRegistry {
-  const reg: UIRegistry = {
-    nav: [...emptyRegistry.nav],
-    dashboardTiles: [...emptyRegistry.dashboardTiles],
-    usersColumns: [...emptyRegistry.usersColumns],
-    usersToolbar: [...emptyRegistry.usersToolbar],
-    userDetailSections: [...emptyRegistry.userDetailSections],
-    userDetailActions: [...emptyRegistry.userDetailActions],
-    gamesColumns: [...emptyRegistry.gamesColumns],
-    playersColumns: [...emptyRegistry.playersColumns],
-    playerDetailSections: [...emptyRegistry.playerDetailSections],
-    playerDetailActions: [...emptyRegistry.playerDetailActions],
-    routes: [...emptyRegistry.routes],
-  };
-
-  const ctx: UIPluginContext = {
-    nav: { add: (item) => reg.nav.push(item) },
-    dashboard: { tiles: { add: (t) => reg.dashboardTiles.push(t) } },
-    users: {
-      columns: { add: (c) => reg.usersColumns.push(c) },
-      toolbar: { add: (t) => reg.usersToolbar.push(t) },
-    },
-    userDetail: {
-      sections: { add: (s) => reg.userDetailSections.push(s) },
-      actions: { add: (a) => reg.userDetailActions.push(a) },
-    },
-    games: { columns: { add: (c) => reg.gamesColumns.push(c) } },
-    players: { columns: { add: (c) => reg.playersColumns.push(c) } },
-    playerDetail: {
-      sections: { add: (s) => reg.playerDetailSections.push(s) },
-      actions: { add: (a) => reg.playerDetailActions.push(a) },
-    },
-    routes: { add: (r) => reg.routes.push(r) },
-  };
+  const slots = new Map<string, SlotFill[]>();
+  const columns = new Map(emptyRegistry.columns);
+  const nav: AppShellNavItem[] = [];
+  const routes: RegisteredRouteDescriptor[] = [];
 
   const seenIds = new Set<string>();
+
   for (const plugin of plugins) {
     if (seenIds.has(plugin.id)) {
       throw new Error(`@oss/react-sdk: duplicate UI plugin id "${plugin.id}"`);
     }
     seenIds.add(plugin.id);
-    plugin.register(ctx);
+
+    for (const s of plugin.slots ?? []) {
+      const id = `${plugin.id}:${s.id}`;
+      const list = slots.get(s.name) ?? [];
+      list.push({
+        id,
+        pluginId: plugin.id,
+        order: s.order ?? 100,
+        mode: s.mode ?? 'append',
+        render: s.render,
+      });
+      slots.set(s.name, list);
+    }
+
+    for (const c of plugin.columns ?? []) {
+      const list = columns.get(c.name) ?? [];
+      const col = c.render
+        ? { key: c.key as string, header: c.header, render: c.render }
+        : { key: c.key as string, header: c.header };
+      list.push(col);
+      columns.set(c.name, list);
+    }
+
+    nav.push(...(plugin.nav ?? []));
+    routes.push(...(plugin.routes ?? []));
   }
 
-  // Stable sort by `order` within each ordered slot.
-  reg.dashboardTiles.sort(byOrder);
-  reg.usersToolbar.sort(byOrder);
-  reg.userDetailSections.sort(byOrder);
-  reg.userDetailActions.sort(byOrder);
-  reg.playerDetailSections.sort(byOrder);
-  reg.playerDetailActions.sort(byOrder);
+  for (const fills of slots.values()) {
+    fills.sort((a, b) => a.order - b.order);
+  }
 
-  return reg;
+  return { slots, columns, nav, routes };
 }

@@ -7,6 +7,8 @@
 
 The platform already has a server-side plugin host: `definePlugin({ id, register(ctx) { ctx.routers.add(...); ctx.providers.add(...); ctx.events.on(...) } })` (ADR-0002). It runs at API startup; each module / overlay contributes routers, services, event handlers, prisma extensions.
 
+> **Update (2026-05):** the Drizzle migration removed `ctx.prisma.extend`. Overlays now add their own `pgTable` in their module's `src/schema/index.ts`; the plugin registry no longer exposes a `prisma` surface. References to "prisma extensions" / `prisma.partial.prisma` below are historical.
+
 After ADR-0005 (headless backoffice pages in `@oss/react-sdk`), every consumer mounts the same admin shell + pages. There is no clean way for a plugin to add a column to the Users table, a tile to the dashboard, a tab to the user detail page, or a route to the admin nav. A consumer that wants any of these would have to fork the page component.
 
 Forking is the antithesis of the plugin model the rest of the codebase uses.

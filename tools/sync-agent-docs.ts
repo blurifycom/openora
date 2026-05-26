@@ -3,9 +3,9 @@
  * Single source = AGENTS.md. Regenerates derived files agents read.
  *
  * Outputs:
- *   CLAUDE.md                            - preserves head matter, replaces section after @AGENTS.md marker
- *   .cursorrules                         - full AGENTS.md content
- *   .github/copilot-instructions.md      - full AGENTS.md content
+ *   CLAUDE.md  - preserves head matter, replaces section after @AGENTS.md marker
+ *
+ * Claude-first: this repo only generates CLAUDE.md from AGENTS.md.
  *
  * Run: pnpm sync:agent-docs
  */
@@ -26,14 +26,6 @@ const source = readFileSync(sourcePath, 'utf8');
 
 const targets: Array<{ path: string; transform: (s: string) => string }> = [
   {
-    path: join(repoRoot, '.cursorrules'),
-    transform: (s) => banner('cursor') + s,
-  },
-  {
-    path: join(repoRoot, '.github', 'copilot-instructions.md'),
-    transform: (s) => banner('copilot') + s,
-  },
-  {
     path: join(repoRoot, 'CLAUDE.md'),
     transform: (s) => rewriteClaude(s),
   },
@@ -49,10 +41,6 @@ for (const t of targets) {
   changed += 1;
 }
 if (changed === 0) console.log('agent docs already in sync');
-
-function banner(target: string): string {
-  return `<!-- AUTO-GENERATED from AGENTS.md by tools/sync-agent-docs.ts. Do not edit directly. Target: ${target} -->\n\n`;
-}
 
 function rewriteClaude(agents: string): string {
   const claudePath = join(repoRoot, 'CLAUDE.md');

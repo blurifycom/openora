@@ -1,0 +1,45 @@
+{
+  "name": "@oss/db",
+  "version": "0.0.1",
+  "private": true,
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "import": "./dist/index.js",
+      "require": "./dist/index.js",
+      "types": "./dist/index.d.ts"
+    },
+    "./orm": {
+      "import": "./dist/orm.js",
+      "types": "./dist/orm.d.ts"
+    }
+  },
+  "scripts": {
+    "build": "tsc",
+    "typecheck": "tsc --noEmit",
+    "clean": "rm -rf dist",
+    "test": "vitest run",
+    "generate": "drizzle-kit generate",
+    "migrate": "drizzle-kit migrate",
+    "push": "drizzle-kit push"
+  },
+  "dependencies": {
+    "@nestjs/common": "11.1.21",
+    "@nestjs/core": "11.1.21",
+    "dotenv": "17.4.2",
+    "drizzle-orm": "0.45.2",
+    "pg": "8.21.0"
+  },
+  "devDependencies": {
+    "@oss/tsconfig": "workspace:*",
+    "@types/pg": "8.20.0",
+    "drizzle-kit": "0.31.10",
+    "reflect-metadata": "^0.2.2",
+    "typescript": "6.0.3"
+  },
+  "peerDependencies": {
+    "reflect-metadata": ">=0.1.0"
+  }
+}

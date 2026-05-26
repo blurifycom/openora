@@ -11,5 +11,4 @@ export { PluginHostModule } from './plugin-host.module.js';
 export type { PluginHostModuleOptions } from './plugin-host.module.js';
 export { loadPlugins } from './load-plugins.js';
 export type { PluginEntry } from './load-plugins.js';
-export { mergePrismaPartials } from './prisma-merge.js';
 export { LOADED_REGISTRY } from './tokens.js';

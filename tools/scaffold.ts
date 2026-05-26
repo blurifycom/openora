@@ -3,7 +3,7 @@
  * Code-mod scaffolder. Called by slash commands, pnpm scripts, and the MCP dev server.
  *
  * Usage:
- *   pnpm scaffold module <name>
+ *   pnpm scaffold module <group> <name>   (group: player | backoffice | platform)
  *   pnpm scaffold plugin <name>
  *   pnpm scaffold route <module> <method> <path>
  *   pnpm scaffold ui-component <Name>
@@ -39,30 +39,55 @@ fn(...args);
 // ---------------------------------------------------------------------------
 // Module
 // ---------------------------------------------------------------------------
-function scaffoldModule(rawName?: string) {
-  if (!rawName) die('Usage: pnpm scaffold module <name>');
+const MODULE_GROUPS = ['player', 'backoffice', 'platform'] as const;
+
+function scaffoldModule(rawGroup?: string, rawName?: string) {
+  if (!rawGroup || !rawName) {
+    die(`Usage: pnpm scaffold module <group> <name>  (group: ${MODULE_GROUPS.join(' | ')})`);
+  }
+  const group = toKebab(rawGroup);
+  if (!(MODULE_GROUPS as readonly string[]).includes(group)) {
+    die(`Unknown group "${group}". Use one of: ${MODULE_GROUPS.join(', ')}`);
+  }
 
   const name = toKebab(rawName);
   const Name = toPascal(name);
+  const camel = toCamel(name);
+  const table = name.replace(/-/g, '_');
   const NAME_UPPER = name.replace(/-/g, '_').toUpperCase();
-  const dest = join(repoRoot, 'packages', 'modules', name);
+  const dest = join(repoRoot, 'packages', 'modules', group, name);
 
-  if (existsSync(dest)) die(`packages/modules/${name} already exists`);
+  if (existsSync(dest)) die(`packages/modules/${group}/${name} already exists`);
 
   const tmpl = join(here, 'templates', 'module');
-  const vars = { name, Name, NAME_UPPER };
+  const vars = { name, Name, camel, table, NAME_UPPER };
 
   copyTemplate(tmpl, dest, vars);
-
-  // Create nested dirs for service file named after the module
   renameTemplateFiles(dest, vars);
 
   // Register in extensions.config.ts
-  appendExtensionConfig(name);
+  appendExtensionConfig(name, { group });
 
-  console.log(`- module @oss/module-${name} created at packages/modules/${name}/`);
+  // Create contract file and wire into orpc-contract index
+  createContractFile(name, Name);
+  appendContractIndex(name);
+
+  console.log(`- module created at packages/modules/${group}/${name}/ (part of @oss/modules)`);
   console.log(`- registered in extensions.config.ts`);
+  console.log(`- wired into packages/contracts/orpc-contract/src/index.ts`);
+  console.log(`- import its schema elsewhere as @oss/modules/${group}/${name}/schema`);
+  console.log(`- if it needs a new third-party dep, add it to packages/modules/package.json`);
   console.log(`- next: pnpm regen && pnpm verify`);
+}
+
+/** Find a module's directory across the grouped layout (or flat, as a fallback). */
+function findModuleDir(name: string): string | null {
+  for (const group of MODULE_GROUPS) {
+    const grouped = join(repoRoot, 'packages', 'modules', group, name);
+    if (existsSync(grouped)) return grouped;
+  }
+  const flat = join(repoRoot, 'packages', 'modules', name);
+  return existsSync(flat) ? flat : null;
 }
 
 // ---------------------------------------------------------------------------
@@ -96,8 +121,10 @@ function scaffoldRoute(moduleName?: string, method?: string, routePath?: string)
   }
 
   const name = toKebab(moduleName);
-  const routerFile = join(repoRoot, 'packages', 'modules', name, 'src', 'router', 'index.ts');
-  if (!existsSync(routerFile)) die(`Module ${name} not found at packages/modules/${name}`);
+  const moduleDir = findModuleDir(name);
+  if (!moduleDir) die(`Module ${name} not found under packages/modules/`);
+  const routerFile = join(moduleDir, 'src', 'router', 'index.ts');
+  if (!existsSync(routerFile)) die(`Module ${name} has no src/router/index.ts`);
 
   const procedureName = pathToProcedureName(routePath);
   const stub = `
@@ -118,9 +145,7 @@ function scaffoldRoute(moduleName?: string, method?: string, routePath?: string)
   }
   writeFileSync(routerFile, src);
 
-  console.log(
-    `- route stub ${procedureName} added to packages/modules/${name}/src/router/index.ts`,
-  );
+  console.log(`- route stub ${procedureName} added to ${routerFile.replace(repoRoot + '/', '')}`);
   console.log(`- implement the handler in service/${name}.service.ts`);
 }
 
@@ -258,12 +283,12 @@ function interpolate(str: string, vars: Record<string, string>): string {
   return str.replace(/\{\{(\w+)\}\}/g, (_, k) => vars[k] ?? `{{${k}}}`);
 }
 
-function appendExtensionConfig(name: string, opts?: { isOverlay?: boolean }) {
+function appendExtensionConfig(name: string, opts?: { isOverlay?: boolean; group?: string }) {
   const configFile = join(repoRoot, 'extensions.config.ts');
   const overlay = opts?.isOverlay ?? false;
   const line = overlay
     ? `  { id: '${name}', path: './apps/extensions/${name}/plugin.ts' },`
-    : `  { id: '${name}', path: './packages/modules/${name}/src/plugin.ts' },`;
+    : `  { id: '${name}', path: './packages/modules/dist/${opts?.group}/${name}/src/plugin.js' },`;
 
   if (!existsSync(configFile)) {
     writeFileSync(
@@ -283,6 +308,51 @@ function appendExtensionConfig(name: string, opts?: { isOverlay?: boolean }) {
     src = src.replace(/(export const extensions = \[)/, `$1\n${line}`);
     writeFileSync(configFile, src);
   }
+}
+
+function createContractFile(name: string, Name: string) {
+  const contractDir = join(repoRoot, 'packages', 'contracts', 'orpc-contract', 'src');
+  const contractFile = join(contractDir, `${name}.ts`);
+  if (existsSync(contractFile)) return;
+
+  const tpl = readFileSync(join(here, 'templates', 'contract.ts.tpl'), 'utf8');
+  writeFileSync(contractFile, interpolate(tpl, { name, Name }));
+}
+
+function appendContractIndex(name: string) {
+  const contractName = toCamel(name) + 'Contract';
+  const indexFile = join(
+    repoRoot,
+    'packages',
+    'contracts',
+    'orpc-contract',
+    'src',
+    'index.ts',
+  );
+  if (!existsSync(indexFile)) return;
+
+  let src = readFileSync(indexFile, 'utf8');
+
+  // Skip if already wired
+  if (src.includes(`from './${name}.js'`)) return;
+
+  // 1. Add import before the first `export {` or `export const`
+  const importLine = `import { ${contractName} } from './${name}.js';`;
+  src = src.replace(/(^export\s)/m, `${importLine}\n\n$1`);
+
+  // 2. Add named re-export before `export const contract`
+  const reExportLine = `export { ${contractName} } from './${name}.js';`;
+  src = src.replace(/(^export const contract)/m, `${reExportLine}\n\n$1`);
+
+  // 3. Insert into contract aggregation object before the closing `});`
+  const contractEntry = `  ${toCamel(name)}: ${contractName},`;
+  src = src.replace(/^(\}\);)/m, `${contractEntry}\n$1`);
+
+  writeFileSync(indexFile, src);
+}
+
+function toCamel(kebab: string): string {
+  return kebab.replace(/-([a-z])/g, (_, c: string) => c.toUpperCase());
 }
 
 function pathToProcedureName(p: string): string {

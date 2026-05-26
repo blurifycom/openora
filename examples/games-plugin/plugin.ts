@@ -10,9 +10,9 @@
  */
 
 import { definePlugin } from '@oss/plugin-host';
-import { GAME_PROVIDER } from '@oss/module-gaming';
+import { GAME_ADAPTER } from '@oss/module-gaming';
 import { CrashController } from './src/router/crash.router.js';
-import { ConsumerGameProvider } from './src/provider/consumer-game-provider.js';
+import { ConsumerGameAdapter } from './src/provider/consumer-game-provider.js';
 
 export default definePlugin({
   id: 'consumer-games',
@@ -20,8 +20,8 @@ export default definePlugin({
 
   register(ctx) {
     // 1. Override the OSS mock game provider with Consumer's real one.
-    //    Any code that injects GAME_PROVIDER will now get ConsumerGameProvider.
-    ctx.providers.add({ provide: GAME_PROVIDER, useClass: ConsumerGameProvider });
+    //    Any code that injects GAME_ADAPTER will now get ConsumerGameAdapter.
+    ctx.providers.add({ provide: GAME_ADAPTER, useClass: ConsumerGameAdapter });
 
     // 2. Mount the Crash game controller.
     //    Adds: POST /crash/rounds, POST /crash/bets,

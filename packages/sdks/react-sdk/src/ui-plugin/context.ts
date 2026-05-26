@@ -1,15 +1,5 @@
-/**
- * UI plugin slot taxonomy. Adding a slot here is a contract change - bump the
- * docs in ADR-0006 and add a corresponding `useXxx()` consumer hook.
- */
 import type { ReactNode } from 'react';
 import type { TableColumn } from '@oss/ui-provider-contract';
-import type { AdminUserSchema, GameSchema, PlayerSchema } from '@oss/orpc-contract';
-import type { z } from 'zod';
-
-type AdminUser = z.infer<typeof AdminUserSchema>;
-type Game = z.infer<typeof GameSchema>;
-type Player = z.infer<typeof PlayerSchema>;
 
 export type AppShellNavItem = {
   href: string;
@@ -17,100 +7,63 @@ export type AppShellNavItem = {
   icon?: (props: { width?: number; height?: number; className?: string }) => ReactNode;
 };
 
-export type TileContribution = {
-  id: string;
-  /** Lower order renders first. Default 100. Built-in tiles use 0..50. */
-  order?: number;
-  render: () => ReactNode;
-};
-
-export type SectionContribution<T> = {
-  id: string;
-  title: string;
-  order?: number;
-  render: (subject: T) => ReactNode;
-};
-
-export type ActionContribution<T> = {
-  id: string;
-  order?: number;
-  render: (subject: T) => ReactNode;
-};
-
-export type ToolbarContribution = {
-  id: string;
-  order?: number;
-  render: () => ReactNode;
-};
-
-export type RegisteredRoute = {
+export type RegisteredRouteDescriptor = {
   path: string;
   element: ReactNode;
 };
 
+export type SlotFillMode = 'append' | 'prepend' | 'replace';
+
 /**
- * The `ctx` object handed to each `defineUIPlugin({ register })` call.
- * Slots are namespaced and each exposes `.add()`. Order-of-call determines
- * render order unless an `order` override is provided.
+ * A component slot contribution declared in a UIPlugin.
+ * Use defineSlotFill<T>(render) to get type-safe subject access.
  */
-export type UIPluginContext = {
-  nav: {
-    add: (item: AppShellNavItem) => void;
-  };
-  dashboard: {
-    tiles: { add: (tile: TileContribution) => void };
-  };
-  users: {
-    columns: { add: (column: TableColumn<AdminUser>) => void };
-    toolbar: { add: (item: ToolbarContribution) => void };
-  };
-  userDetail: {
-    sections: { add: (section: SectionContribution<AdminUser>) => void };
-    actions: { add: (action: ActionContribution<AdminUser>) => void };
-  };
-  games: {
-    columns: { add: (column: TableColumn<Game>) => void };
-  };
-  players: {
-    columns: { add: (column: TableColumn<Player>) => void };
-  };
-  playerDetail: {
-    sections: { add: (section: SectionContribution<Player>) => void };
-    actions: { add: (action: ActionContribution<Player>) => void };
-  };
-  routes: {
-    add: (route: RegisteredRoute) => void;
-  };
+export type SlotContribution = {
+  /** Slot name - use SLOTS constant (e.g. SLOTS.playerDetail.sections) */
+  name: string;
+  /** Unique within the plugin */
+  id: string;
+  mode?: SlotFillMode;
+  /** Lower order renders first. Default 100. */
+  order?: number;
+  render: (subject: unknown) => ReactNode;
 };
 
 /**
- * Immutable snapshot of all plugin contributions, keyed by slot. Pages read
- * from this via the `use*` hooks in `registry.tsx`.
+ * A DataTable column contribution declared in a UIPlugin.
+ * Use SLOTS column names (e.g. SLOTS.players.columns).
+ */
+export type ColumnContribution = {
+  /** Column slot name - use SLOTS constant */
+  name: string;
+  key: string;
+  header: string;
+  render?: (value: unknown, row: Record<string, unknown>) => ReactNode;
+};
+
+/** Internal registry entry produced by buildRegistry */
+export type SlotFill = {
+  id: string;
+  pluginId: string;
+  order: number;
+  mode: SlotFillMode;
+  render: (subject: unknown) => ReactNode;
+};
+
+/**
+ * Immutable snapshot of all plugin contributions.
+ * Pages read via useSlotFills(name) and useSlotColumns(name).
  */
 export type UIRegistry = {
+  slots: Map<string, SlotFill[]>;
+  columns: Map<string, TableColumn<Record<string, unknown>>[]>;
   nav: AppShellNavItem[];
-  dashboardTiles: TileContribution[];
-  usersColumns: TableColumn<AdminUser>[];
-  usersToolbar: ToolbarContribution[];
-  userDetailSections: SectionContribution<AdminUser>[];
-  userDetailActions: ActionContribution<AdminUser>[];
-  gamesColumns: TableColumn<Game>[];
-  playersColumns: TableColumn<Player>[];
-  playerDetailSections: SectionContribution<Player>[];
-  playerDetailActions: ActionContribution<Player>[];
-  routes: RegisteredRoute[];
+  routes: RegisteredRouteDescriptor[];
 };
 
 export const emptyRegistry: UIRegistry = {
+  slots: new Map(),
+  columns: new Map(),
   nav: [],
-  dashboardTiles: [],
-  usersColumns: [],
-  usersToolbar: [],
-  userDetailSections: [],
-  userDetailActions: [],
-  gamesColumns: [],
-  playersColumns: [],
-  playerDetailSections: [],
-  playerDetailActions: [],
   routes: [],
 };

@@ -34,10 +34,6 @@ export interface ModuleRegistry {
     on(event: string, handler: (payload: unknown) => void | Promise<void>): void;
     getAll(): Map<string, Array<(payload: unknown) => void | Promise<void>>>;
   };
-  prisma: {
-    extend(modelName: string, fields: string): void;
-    getExtensions(): Map<string, string[]>;
-  };
   mcp: {
     tool(definition: McpToolDefinition): void;
     getAll(): McpToolDefinition[];

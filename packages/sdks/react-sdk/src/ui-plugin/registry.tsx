@@ -9,12 +9,15 @@ const RegistryContext = createContext<UIRegistry>(emptyRegistry);
 
 /**
  * Mount once near the top of your provider tree, above the admin shell.
+ * Pass an empty array if you have no plugins yet.
  *
- * ```tsx
- * <UIPluginProvider plugins={[vipTiersUI, kycUI]}>
- *   <UIProvider value={shadcnProvider}>...</UIProvider>
- * </UIPluginProvider>
- * ```
+ * IMPORTANT: define plugins as stable module-level constants, not inline in JSX.
+ * Inline arrays cause a new reference every render, re-running buildRegistry and
+ * resetting error boundary state.
+ *
+ * @example
+ * const plugins = [playerBadgesUI, vipTiersUI];
+ * <UIPluginProvider plugins={plugins}>...</UIPluginProvider>
  */
 export function UIPluginProvider({
   plugins,
@@ -31,24 +34,18 @@ export function useUIRegistry(): UIRegistry {
   return useContext(RegistryContext);
 }
 
-// Narrow accessors. Pages read these so plugin authors don't need to know the
-// full registry shape, and so the contract is auditable from one file.
-
 export const useNavItems = () => useUIRegistry().nav;
-export const useDashboardTiles = () => useUIRegistry().dashboardTiles;
-export const useUsersColumns = () => useUIRegistry().usersColumns;
-export const useUsersToolbar = () => useUIRegistry().usersToolbar;
-export const useUserDetailSections = () => useUIRegistry().userDetailSections;
-export const useUserDetailActions = () => useUIRegistry().userDetailActions;
-export const useGamesColumns = () => useUIRegistry().gamesColumns;
-export const usePlayersColumns = () => useUIRegistry().playersColumns;
-export const usePlayerDetailSections = () => useUIRegistry().playerDetailSections;
-export const usePlayerDetailActions = () => useUIRegistry().playerDetailActions;
 export const useRegisteredRoutes = () => useUIRegistry().routes;
 
 /**
- * Render a plugin-registered admin route by path. Consumers stub a Next page
- * file (`app/admin/(authed)/vip/page.tsx`) that just calls this helper.
+ * Render a plugin-registered admin route by path.
+ * Consumers create a stub Next page that calls this component.
+ *
+ * @example
+ * // apps/backoffice/app/(authed)/badges/page.tsx
+ * export default function Page() {
+ *   return <RegisteredRoute path="/admin/badges" />;
+ * }
  */
 export function RegisteredRoute({ path }: { path: string }) {
   const routes = useRegisteredRoutes();

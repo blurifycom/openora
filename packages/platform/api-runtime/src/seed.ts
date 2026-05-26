@@ -1,10 +1,10 @@
-import type { PrismaClient } from '@oss/persistence';
+import type { DrizzleDb } from '@oss/db';
+import { eq } from 'drizzle-orm';
+import { user } from '@oss/modules/platform/identity/schema';
+import { player } from '@oss/modules/backoffice/player-management/schema';
+import { wallet, walletTransaction } from '@oss/modules/player/wallet/schema';
+import { game } from '@oss/modules/player/gaming/schema';
 
-/**
- * Minimal structural shape of a better-auth instance - just the server-side
- * sign-up call the seeder needs. Typed structurally so this package does not
- * have to depend on @oss/auth (which would create a cycle through persistence).
- */
 export type SeedAuth = {
   api: {
     signUpEmail(args: {
@@ -14,17 +14,12 @@ export type SeedAuth = {
 };
 
 export type SeedOptions = {
-  prisma: PrismaClient;
+  db: DrizzleDb;
   auth: SeedAuth;
-  /** Admin account to create / promote. Defaults to admin@oss.dev. */
   admin?: { email: string; password: string; name: string };
-  /** Shared password for the generated demo player logins. */
   password?: string;
-  /** How many demo players (and matching player-role users) to create. */
   playerCount?: number;
-  /** Spread player registration dates across this many trailing days. */
   windowDays?: number;
-  /** Tenant the demo rows belong to. */
   tenantId?: string;
   log?: (msg: string) => void;
 };
@@ -39,7 +34,6 @@ export type SeedResult = {
   transactions: number;
 };
 
-// Deterministic LCG so re-running the seed produces the identical dataset.
 function makeRng(seed: number): () => number {
   let s = seed >>> 0;
   return () => {
@@ -67,59 +61,15 @@ function round2(n: number): number {
 }
 
 const FIRST_NAMES = [
-  'Alex',
-  'Maria',
-  'Liam',
-  'Sofia',
-  'Noah',
-  'Emma',
-  'Lucas',
-  'Olivia',
-  'Mateo',
-  'Ava',
-  'Hugo',
-  'Mia',
-  'Leon',
-  'Elena',
-  'Adam',
-  'Chloe',
-  'Jonas',
-  'Nora',
-  'Daniel',
-  'Lea',
-  'Ivan',
-  'Sara',
-  'Felix',
-  'Anna',
-  'Oscar',
-  'Lina',
-  'Theo',
-  'Zoe',
-  'Max',
-  'Iris',
+  'Alex', 'Maria', 'Liam', 'Sofia', 'Noah', 'Emma', 'Lucas', 'Olivia', 'Mateo', 'Ava',
+  'Hugo', 'Mia', 'Leon', 'Elena', 'Adam', 'Chloe', 'Jonas', 'Nora', 'Daniel', 'Lea',
+  'Ivan', 'Sara', 'Felix', 'Anna', 'Oscar', 'Lina', 'Theo', 'Zoe', 'Max', 'Iris',
 ] as const;
 
 const LAST_NAMES = [
-  'Novak',
-  'Kowalski',
-  'Muller',
-  'Rossi',
-  'Garcia',
-  'Andersen',
-  'Silva',
-  'Dubois',
-  'Horvath',
-  'Petrov',
-  'Nilsson',
-  'Fischer',
-  'Costa',
-  'Larsen',
-  'Weber',
-  'Romano',
-  'Schmidt',
-  'Lopez',
-  'Jensen',
-  'Moreau',
+  'Novak', 'Kowalski', 'Muller', 'Rossi', 'Garcia', 'Andersen', 'Silva', 'Dubois',
+  'Horvath', 'Petrov', 'Nilsson', 'Fischer', 'Costa', 'Larsen', 'Weber', 'Romano',
+  'Schmidt', 'Lopez', 'Jensen', 'Moreau',
 ] as const;
 
 const LOCALES = [
@@ -164,16 +114,9 @@ const GAMES = [
   ['Plinko', 'Spribe', 'crash'],
 ] as const;
 
-/**
- * Populate the database with a coherent, deterministic demo dataset so the
- * platform's backoffice (dashboard, users, players, games) has something
- * realistic to render. Idempotent: it wipes the demo content tables it owns
- * (player, wallet, wallet_transaction, game) and rebuilds them every run, and
- * upserts the auth users by email. Intended for local/dev databases only.
- */
 export async function seedDemoData(options: SeedOptions): Promise<SeedResult> {
   const {
-    prisma,
+    db,
     auth,
     playerCount = 36,
     windowDays = 90,
@@ -186,18 +129,15 @@ export async function seedDemoData(options: SeedOptions): Promise<SeedResult> {
     name: 'Platform Admin',
   };
   const playerPassword = options.password ?? 'password123';
-  // oxlint-disable-next-line typescript/no-explicit-any
-  const db = prisma as any;
   const rng = makeRng(0x5eed);
 
   log('Clearing existing demo content (player, wallet, transaction, game)...');
-  await db.walletTransaction.deleteMany({ where: { tenantId } });
-  await db.wallet.deleteMany({ where: { tenantId } });
-  await db.player.deleteMany({ where: { tenantId } });
-  await db.game.deleteMany({ where: { tenantId } });
+  await db.delete(walletTransaction).where(eq(walletTransaction.tenantId, tenantId));
+  await db.delete(wallet).where(eq(wallet.tenantId, tenantId));
+  await db.delete(player).where(eq(player.tenantId, tenantId));
+  await db.delete(game).where(eq(game.tenantId, tenantId));
 
-  // --- Admin (operator) ---
-  const adminUser = await ensureUser(prisma, auth, {
+  const adminUser = await ensureUser(db, auth, {
     email: admin.email,
     password: admin.password,
     name: admin.name,
@@ -206,19 +146,17 @@ export async function seedDemoData(options: SeedOptions): Promise<SeedResult> {
   });
   if (adminUser) log(`Admin ready: ${admin.email} / ${admin.password}`);
 
-  // --- Games catalog ---
-  await db.game.createMany({
-    data: GAMES.map(([name, provider, category]) => ({
+  await db.insert(game).values(
+    GAMES.map(([name, provider, category]) => ({
       tenantId,
       name,
       provider,
       category,
       isActive: true,
     })),
-  });
+  );
   log(`Created ${GAMES.length} games.`);
 
-  // --- Players (each backed by a player-role user) ---
   let userCount = adminUser ? 1 : 0;
   let txCount = 0;
   const now = Date.now();
@@ -233,12 +171,11 @@ export async function seedDemoData(options: SeedOptions): Promise<SeedResult> {
     const status = weighted(rng, STATUS_WEIGHTS);
     const kycStatus = weighted(rng, KYC_WEIGHTS);
     const level = 1 + Math.floor(rng() * 10);
-    // Square the roll so registrations skew recent -> upward chart trend.
     const daysAgo = Math.floor(rng() * rng() * windowDays);
     const createdAt = new Date(now - daysAgo * dayMs);
     const isActive = status !== 'suspended' && status !== 'closed';
 
-    const user = await ensureUser(prisma, auth, {
+    const playerUser = await ensureUser(db, auth, {
       email,
       password: playerPassword,
       name: displayName,
@@ -246,7 +183,7 @@ export async function seedDemoData(options: SeedOptions): Promise<SeedResult> {
       isActive,
       createdAt,
     });
-    if (!user) continue;
+    if (!playerUser) continue;
     userCount++;
 
     const totalDeposits = round2(rng() * 8000 + (level - 1) * 400);
@@ -258,64 +195,54 @@ export async function seedDemoData(options: SeedOptions): Promise<SeedResult> {
           ? new Date(now - (30 + Math.floor(rng() * 60)) * dayMs)
           : null;
 
-    await db.player.create({
-      data: {
-        userId: user.id,
-        displayName,
-        country,
-        currency,
-        language,
-        status,
-        kycStatus,
-        level,
-        totalWagered,
-        totalDeposits,
-        lastSeenAt,
-        tenantId,
-        createdAt,
-      },
+    await db.insert(player).values({
+      userId: playerUser.id,
+      displayName,
+      country,
+      currency,
+      language,
+      status,
+      kycStatus,
+      level,
+      totalWagered: String(totalWagered),
+      totalDeposits: String(totalDeposits),
+      lastSeenAt,
+      tenantId,
+      createdAt,
     });
 
-    const wallet = await db.wallet.create({
-      data: {
-        userId: user.id,
-        tenantId,
-        balance: round2(rng() * 1500),
-        currency,
-      },
-    });
+    const [walletRow] = await db.insert(wallet).values({
+      userId: playerUser.id,
+      tenantId,
+      balance: String(round2(rng() * 1500)),
+      currency,
+    }).returning();
 
-    // Deposits (completed) so dashboard deposit totals are non-zero.
     const deposits = 1 + Math.floor(rng() * 4);
     let depositSum = 0;
     for (let d = 0; d < deposits; d++) {
       const amount = round2(20 + rng() * 600);
       depositSum += amount;
-      await db.walletTransaction.create({
-        data: {
-          walletId: wallet.id,
-          tenantId,
-          type: 'deposit',
-          amount,
-          currency,
-          status: 'completed',
-          createdAt: new Date(createdAt.getTime() + (d + 1) * dayMs),
-        },
+      await db.insert(walletTransaction).values({
+        walletId: walletRow!.id,
+        tenantId,
+        type: 'deposit',
+        amount: String(amount),
+        currency,
+        status: 'completed',
+        createdAt: new Date(createdAt.getTime() + (d + 1) * dayMs),
       });
       txCount++;
     }
-    // Some verified players withdraw a slice back.
     if (kycStatus === 'verified' && rng() > 0.5) {
-      await db.walletTransaction.create({
-        data: {
-          walletId: wallet.id,
-          tenantId,
-          type: 'withdrawal',
-          amount: round2(depositSum * (0.2 + rng() * 0.3)),
-          currency,
-          status: 'completed',
-          createdAt: new Date(now - Math.floor(rng() * 14) * dayMs),
-        },
+      await db.insert(walletTransaction).values({
+        walletId: walletRow!.id,
+        tenantId,
+        type: 'withdrawal',
+        amount: String(round2(depositSum * (0.2 + rng() * 0.3))),
+        currency,
+        status: 'completed',
+        createdAt: new Date(now - Math.floor(rng() * 14) * dayMs),
       });
       txCount++;
     }
@@ -344,29 +271,24 @@ type EnsureUserInput = {
 };
 
 async function ensureUser(
-  prisma: PrismaClient,
+  db: DrizzleDb,
   auth: SeedAuth,
   input: EnsureUserInput,
 ): Promise<{ id: string } | null> {
-  // oxlint-disable-next-line typescript/no-explicit-any
-  const db = prisma as any;
-  let user = await db.user.findUnique({ where: { email: input.email } });
-  if (!user) {
-    // better-auth owns password hashing (scrypt) and the linked account row.
+  let [existing] = await db.select({ id: user.id }).from(user).where(eq(user.email, input.email));
+  if (!existing) {
     await auth.api.signUpEmail({
       body: { email: input.email, password: input.password, name: input.name },
     });
-    user = await db.user.findUnique({ where: { email: input.email } });
+    [existing] = await db.select({ id: user.id }).from(user).where(eq(user.email, input.email));
   }
-  if (!user) return null;
-  await db.user.update({
-    where: { id: user.id },
-    data: {
-      name: input.name,
-      role: input.role,
-      isActive: input.isActive,
-      ...(input.createdAt ? { createdAt: input.createdAt } : {}),
-    },
-  });
-  return { id: user.id };
+  if (!existing) return null;
+  const patch: Partial<typeof user.$inferInsert> = {
+    name: input.name,
+    role: input.role,
+    isActive: input.isActive,
+  };
+  if (input.createdAt) patch.createdAt = input.createdAt;
+  await db.update(user).set(patch).where(eq(user.id, existing.id));
+  return { id: existing.id };
 }

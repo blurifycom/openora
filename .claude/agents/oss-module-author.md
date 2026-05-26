@@ -33,7 +33,7 @@ For each module, fill in:
 
 ### Admin UI (if the module needs back-office screens)
 
-- Cross-cutting admin pages (list/detail/dashboard) live in `packages/sdks/react-sdk/src/pages/`, exported from its `index.ts`, consumed via `useOrpcClient()` + `useUI()`. The consumer (eg `examples/backoffice`, `consumer/apps/web`) mounts them as thin Next route shims.
+- Cross-cutting admin pages (list/detail/dashboard) live in `packages/sdks/react-sdk/src/pages/admin/` (player pages in `src/pages/player/`), exported from its `index.ts`, consumed via `useOrpcClient()` + `useUI()`. The consumer (eg `apps/backoffice`, `apps/web`, `consumer/apps/web`) mounts them as thin Next route shims.
 - Module-scoped UI tightly coupled to one domain may instead live in `packages/modules/<name>/ui/` and import only `@oss/ui-provider-contract`.
 - To leave an extension seam for plugins, add a slot to the relevant page + a `useXxx()` registry hook in `packages/sdks/react-sdk/src/ui-plugin/` (see ADR-0006). Don't hardcode plugin-specific UI in core pages.
 
@@ -44,7 +44,7 @@ For each module, fill in:
 - Handlers catch domain errors and map to oRPC errors. No NestJS HttpException in services.
 - No imports from other modules. Cross-module communication: emit an event via EventBus.
 - Run `pnpm regen` after editing the prisma partial, then generate a real migration:
-  `pnpm -F @oss/infra exec prisma migrate dev --name add_<name>` (don't ship schema changes as db-push only).
+  `pnpm -F @oss/db exec prisma migrate dev --name add_<name>` (don't ship schema changes as db-push only).
 - Always run `pnpm verify --filter @oss/module-<name>` at the end. Fix all errors.
 
 ## Finish criteria

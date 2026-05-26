@@ -1,15 +1,19 @@
 import { betterAuth } from 'better-auth';
-import { prismaAdapter } from 'better-auth/adapters/prisma';
+import { drizzleAdapter } from 'better-auth/adapters/drizzle';
 import { organization } from 'better-auth/plugins';
-import type { PrismaClient } from '@oss/persistence';
+import type { DrizzleDb } from '@oss/db';
 
 export type AuthOptions = {
-  prisma: PrismaClient;
+  db: DrizzleDb;
+  schema?: Record<string, unknown>;
 };
 
 export function createAuth(options: AuthOptions) {
   return betterAuth({
-    database: prismaAdapter(options.prisma, { provider: 'postgresql' }),
+    database: drizzleAdapter(options.db, {
+      provider: 'pg',
+      schema: options.schema,
+    }),
     emailAndPassword: { enabled: true },
     plugins: [organization()],
   });

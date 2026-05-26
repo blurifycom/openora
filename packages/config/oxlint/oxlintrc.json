@@ -5,18 +5,7 @@
     "no-console": "warn",
     "eqeqeq": "error",
     "no-var": "error",
-    "prefer-const": "error",
-    "no-restricted-imports": [
-      "error",
-      {
-        "patterns": [
-          {
-            "group": ["@oss/module-*"],
-            "message": "Modules must not import other modules. Use EventBus or @oss/contracts."
-          }
-        ]
-      }
-    ]
+    "prefer-const": "error"
   },
   "ignore": {
     "patterns": ["node_modules", "dist", ".next", "coverage", "*.generated.ts"]

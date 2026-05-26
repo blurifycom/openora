@@ -11,3 +11,4 @@ prisma/migrations/*.sql
 *.tsbuildinfo
 .cache
 storybook-static
+.claude/worktrees

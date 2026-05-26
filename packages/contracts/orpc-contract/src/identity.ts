@@ -1,5 +1,5 @@
 import { oc } from '@orpc/contract';
-import { UserSchema, LoginInputSchema, RegisterInputSchema } from '@oss/domain-schemas';
+import { UserSchema, LoginInputSchema, RegisterInputSchema } from '@oss/shared-schemas';
 import * as z from 'zod';
 
 const SessionSchema = z.object({

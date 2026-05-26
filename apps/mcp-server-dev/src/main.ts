@@ -5,6 +5,7 @@ import { existsSync, readFileSync, readdirSync, statSync } from 'node:fs';
 import { execSync } from 'node:child_process';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import pg from 'pg';
 
 const here = dirname(fileURLToPath(import.meta.url));
 const repoRoot = join(here, '..', '..', '..');
@@ -25,6 +26,31 @@ function readFile(p: string): string {
 function listDirs(p: string): string[] {
   if (!existsSync(p)) return [];
   return readdirSync(p).filter((f) => statSync(join(p, f)).isDirectory());
+}
+
+// Modules live under packages/modules/<group>/<name>/ (one @oss/modules package).
+const MODULE_GROUPS = ['player', 'backoffice', 'platform'] as const;
+
+/** Resolve a module's source dir by name across the grouped layout. */
+function findModuleDir(name: string): string | null {
+  for (const group of MODULE_GROUPS) {
+    const dir = repoPath('packages', 'modules', group, name);
+    if (existsSync(dir)) return dir;
+  }
+  return null;
+}
+
+/** Every module across all groups, with a plugin.ts. */
+function listAllModules(): Array<{ group: string; name: string; dir: string }> {
+  const out: Array<{ group: string; name: string; dir: string }> = [];
+  for (const group of MODULE_GROUPS) {
+    const groupDir = repoPath('packages', 'modules', group);
+    for (const name of listDirs(groupDir)) {
+      const dir = join(groupDir, name);
+      if (existsSync(join(dir, 'src', 'plugin.ts'))) out.push({ group, name, dir });
+    }
+  }
+  return out;
 }
 
 function parseAgentsMdSection(content: string, heading: string): string {
@@ -67,6 +93,59 @@ function run(cmd: string): { ok: boolean; output: string } {
     };
   }
 }
+
+/** Recursively collect files under `dir` matching `ext`, skipping build/vendor dirs. */
+function walkFiles(dir: string, ext: string, acc: string[] = []): string[] {
+  if (!existsSync(dir)) return acc;
+  for (const entry of readdirSync(dir)) {
+    if (entry === 'node_modules' || entry === 'dist' || entry === '.next' || entry === '.turbo') {
+      continue;
+    }
+    const full = join(dir, entry);
+    if (statSync(full).isDirectory()) walkFiles(full, ext, acc);
+    else if (full.endsWith(ext)) acc.push(full);
+  }
+  return acc;
+}
+
+/**
+ * Extract a single `export const <name> = ...;` declaration from source by
+ * tracking bracket depth, so the whole (possibly multi-line) Zod schema is
+ * returned. Returns null if not found.
+ */
+function extractDeclaration(src: string, name: string): { line: number; code: string } | null {
+  const lines = src.split('\n');
+  const startRe = new RegExp(`^\\s*export\\s+const\\s+${name}\\b`);
+  for (let i = 0; i < lines.length; i++) {
+    if (!startRe.test(lines[i]!)) continue;
+    let depth = 0;
+    let started = false;
+    const out: string[] = [];
+    for (let j = i; j < lines.length; j++) {
+      const l = lines[j]!;
+      out.push(l);
+      for (const ch of l) {
+        if (ch === '(' || ch === '{' || ch === '[') {
+          depth++;
+          started = true;
+        } else if (ch === ')' || ch === '}' || ch === ']') depth--;
+      }
+      if (started && depth <= 0) break;
+      if (!started && l.includes(';')) break;
+    }
+    return { line: i + 1, code: out.join('\n') };
+  }
+  return null;
+}
+
+/** DATABASE_URL from env, or the local docker default (mirrors tools/seed.ts). */
+function resolveDatabaseUrl(): string {
+  return (
+    process.env['DATABASE_URL'] ?? 'postgresql://postgres:postgres@localhost:5432/oss_casino'
+  );
+}
+
+const READONLY_SQL_PREFIXES = ['select', 'with', 'explain', 'show', 'table', 'values'];
 
 // ---------------------------------------------------------------------------
 // MCP server
@@ -126,26 +205,50 @@ server.tool(
 // --- describe-module --------------------------------------------------------
 server.tool(
   'describe-module',
-  "Read a module's AGENTS.md, its schemas, and router surface.",
-  { name: z.string().describe('Module name (kebab-case)') },
-  async ({ name }) => {
-    const base = repoPath('packages', 'modules', name);
+  "Everything you need to edit a module in one call: its AGENTS.md, Drizzle tables, Zod schemas, and router surface. Prefer this over reading the files individually.",
+  {
+    name: z.string().describe('Module name (kebab-case)'),
+    response_format: z
+      .enum(['concise', 'detailed'])
+      .optional()
+      .describe(
+        'concise (default): AGENTS.md + table/schema/route names only. detailed: full source of every file.',
+      ),
+  },
+  async ({ name, response_format }) => {
+    const detailed = response_format === 'detailed';
     const overlayBase = repoPath('apps', 'extensions', name);
-    const dir = existsSync(base) ? base : existsSync(overlayBase) ? overlayBase : null;
+    const dir = findModuleDir(name) ?? (existsSync(overlayBase) ? overlayBase : null);
 
     if (!dir) {
-      return { content: [{ type: 'text', text: `Module "${name}" not found.` }] };
+      return {
+        content: [
+          {
+            type: 'text',
+            text: `Module "${name}" not found. Run list-modules to see registered modules.`,
+          },
+        ],
+      };
     }
 
-    const parts: string[] = [];
-    parts.push(`=== Module: ${name} ===\n`);
-    parts.push(readFile(join(dir, 'AGENTS.md')) || '(no AGENTS.md)');
-    parts.push('\n--- Schemas ---');
-    parts.push(readFile(join(dir, 'src', 'schemas', 'index.ts')) || '(empty)');
-    parts.push('\n--- Router ---');
-    parts.push(readFile(join(dir, 'src', 'router', 'index.ts')) || '(empty)');
-    parts.push('\n--- Prisma partial ---');
-    parts.push(readFile(join(dir, 'prisma.partial.prisma')) || '(empty)');
+    const schemaSrc = readFile(join(dir, 'src', 'schema', 'index.ts'));
+    const zodSrc = readFile(join(dir, 'src', 'schemas', 'index.ts'));
+    const routerSrc = readFile(join(dir, 'src', 'router', 'index.ts'));
+    const parts: string[] = [`=== Module: ${name} ===\n`, readFile(join(dir, 'AGENTS.md')) || '(no AGENTS.md)'];
+
+    if (detailed) {
+      parts.push('\n--- Drizzle tables (src/schema/index.ts) ---', schemaSrc || '(no tables)');
+      parts.push('\n--- Zod schemas (src/schemas/index.ts) ---', zodSrc || '(empty)');
+      parts.push('\n--- Router ---', routerSrc || '(empty)');
+    } else {
+      const tables = [...schemaSrc.matchAll(/pgTable\(\s*'([^']+)'/g)].map((m) => m[1]);
+      const zods = [...zodSrc.matchAll(/export const (\w+Schema)\b/g)].map((m) => m[1]);
+      const routes = [...routerSrc.matchAll(/^\s{2,}(\w+):\s*os\b/gm)].map((m) => `${name}.${m[1]}`);
+      parts.push(`\n--- Tables ---\n${tables.join(', ') || '(none)'}`);
+      parts.push(`\n--- Schemas ---\n${zods.join(', ') || '(none)'}`);
+      parts.push(`\n--- Routes ---\n${routes.join(', ') || '(none)'}`);
+      parts.push('\n(Pass response_format: "detailed" for full source.)');
+    }
 
     return { content: [{ type: 'text', text: parts.join('\n') }] };
   },
@@ -157,15 +260,15 @@ server.tool(
   'List all oRPC route namespaces across modules. Pass module name to filter.',
   { module: z.string().optional() },
   async ({ module: mod }) => {
-    const modulesDir = repoPath('packages', 'modules');
-    const dirs = mod ? [mod] : listDirs(modulesDir);
+    const all = listAllModules();
+    const modules = mod ? all.filter((m) => m.name === mod) : all;
     const lines: string[] = [];
-    for (const d of dirs) {
-      const routerFile = join(modulesDir, d, 'src', 'router', 'index.ts');
+    for (const { name, dir } of modules) {
+      const routerFile = join(dir, 'src', 'router', 'index.ts');
       if (!existsSync(routerFile)) continue;
       const src = readFileSync(routerFile, 'utf8');
-      const procedures = [...src.matchAll(/^\s{2,}(\w+):\s*os\b/gm)].map((m) => `  ${d}.${m[1]}`);
-      if (procedures.length > 0) lines.push(`${d}:\n${procedures.join('\n')}`);
+      const procedures = [...src.matchAll(/^\s{2,}(\w+):\s*os\b/gm)].map((m) => `  ${name}.${m[1]}`);
+      if (procedures.length > 0) lines.push(`${name}:\n${procedures.join('\n')}`);
     }
     return { content: [{ type: 'text', text: lines.join('\n\n') || 'No routes defined yet.' }] };
   },
@@ -179,33 +282,52 @@ server.tool(
   async () => {
     const parts: string[] = [];
 
-    // UI slots from provider-contract
-    const contractIndex = repoPath('packages', 'ui', 'provider-contract', 'src', 'index.ts');
-    if (existsSync(contractIndex)) {
-      const src = readFileSync(contractIndex, 'utf8');
-      const slots = [...src.matchAll(/['"]([a-z]+-[a-z-]+)['"]/g)].map((m) => m[1]);
+    // Named UI slots from react-sdk/src/ui-plugin/slots.ts (the SLOTS constant)
+    const slotsFile = repoPath(
+      'packages', 'sdks', 'react-sdk', 'src', 'ui-plugin', 'slots.ts',
+    );
+    if (existsSync(slotsFile)) {
+      const src = readFileSync(slotsFile, 'utf8');
+      // Extract JSDoc + slot name pairs. Format: /** ...comment */ \n key: 'slot:name'
+      const slotLines: string[] = [];
+      const lines = src.split('\n');
+      let pending = '';
+      for (const line of lines) {
+        const jsdoc = line.match(/\/\*\*\s*(.+?)\s*\*\//);
+        if (jsdoc) { pending = (jsdoc[1] ?? '').trim(); continue; }
+        const slot = line.match(/:\s*'([a-z:]+)'/);
+        if (slot) {
+          slotLines.push(pending ? `- ${slot[1]}  # ${pending}` : `- ${slot[1]}`);
+          pending = '';
+        }
+      }
       parts.push(
-        `=== UI slots ===\n${[...new Set(slots)].map((s) => `- ${s}`).join('\n') || '(none defined yet)'}`,
+        `=== Named UI slots (import SLOTS from @oss/react-sdk) ===\n` +
+        `Fill with ctx.slots.fill(name, options, render) or ctx.slots.column(name, colDef).\n` +
+        `Declare in pages with <Slot name={SLOTS.x.y} subject={entity}>.\n\n` +
+        (slotLines.join('\n') || '(none defined yet)'),
       );
     }
 
-    // Events from platform/events
-    const eventsFile = repoPath('packages', 'platform', 'events', 'src', 'types.ts');
+    // Events from @oss/core
+    const eventsFile = repoPath('packages', 'platform', 'core', 'src', 'event-bus.ts');
     if (existsSync(eventsFile)) {
-      parts.push(`\n=== Events ===\n${readFile(eventsFile)}`);
+      parts.push(`\n=== Events (EventBus from @oss/core) ===\n${readFile(eventsFile)}`);
     } else {
-      parts.push('\n=== Events ===\n(types.ts not defined yet)');
+      parts.push('\n=== Events ===\n(event-bus.ts not found)');
     }
 
-    // Ports from each module
-    const moduleDirs = listDirs(repoPath('packages', 'modules'));
-    parts.push('\n=== Ports (adapter interfaces) ===');
-    for (const d of moduleDirs) {
-      const portsFile = repoPath('packages', 'modules', d, 'src', 'service', 'ports.ts');
-      if (existsSync(portsFile)) {
-        const src = readFileSync(portsFile, 'utf8');
+    // Vendor adapter interfaces from @oss/adapters (the single home for the swap seams)
+    const adaptersDir = repoPath('packages', 'contracts', 'adapters', 'src');
+    parts.push('\n=== Adapter interfaces (@oss/adapters) ===');
+    if (existsSync(adaptersDir)) {
+      for (const f of readdirSync(adaptersDir)) {
+        if (!f.endsWith('.ts') || f === 'index.ts') continue;
+        const src = readFileSync(join(adaptersDir, f), 'utf8');
         const interfaces = [...src.matchAll(/^export interface (\w+)/gm)].map((m) => m[1]);
-        if (interfaces.length > 0) parts.push(`${d}: ${interfaces.join(', ')}`);
+        const tokens = [...src.matchAll(/^export const (\w+) = Symbol/gm)].map((m) => m[1]);
+        const label = [...interfaces, ...tokens.map((t) => `${t} (token)`)].join(', ');
+        if (label) parts.push(`${f.replace(/\.ts$/, '')}: ${label}`);
       }
     }
 
@@ -253,23 +375,32 @@ server.tool(
 );
 
 // --- scaffold-* (delegating to tools/scaffold.ts) ---------------------------
-for (const [toolName, args] of [
-  ['scaffold-module', 'module {{name}}'],
-  ['scaffold-plugin', 'plugin {{name}}'],
-] as const) {
-  server.tool(
-    toolName,
-    `Run pnpm ${toolName} (delegates to tools/scaffold.ts)`,
-    { name: z.string() },
-    async ({ name }) => {
-      const cmd = `pnpm scaffold ${args.replace('{{name}}', name)}`;
-      const result = run(cmd);
-      return {
-        content: [{ type: 'text', text: result.output || (result.ok ? 'Done.' : 'Failed.') }],
-      };
-    },
-  );
-}
+server.tool(
+  'scaffold-module',
+  'Scaffold a new business module under packages/modules/<group>/<name>.',
+  {
+    group: z.enum(['player', 'backoffice', 'platform']),
+    name: z.string(),
+  },
+  async ({ group, name }) => {
+    const result = run(`pnpm scaffold module ${group} ${name}`);
+    return {
+      content: [{ type: 'text', text: result.output || (result.ok ? 'Done.' : 'Failed.') }],
+    };
+  },
+);
+
+server.tool(
+  'scaffold-plugin',
+  'Scaffold a new overlay extension under apps/extensions/<name>.',
+  { name: z.string() },
+  async ({ name }) => {
+    const result = run(`pnpm scaffold plugin ${name}`);
+    return {
+      content: [{ type: 'text', text: result.output || (result.ok ? 'Done.' : 'Failed.') }],
+    };
+  },
+);
 
 server.tool(
   'scaffold-route',
@@ -309,7 +440,7 @@ server.tool(
 // --- regen ------------------------------------------------------------------
 server.tool(
   'regen',
-  'Run pnpm regen: merges Prisma partials, generates client, emits OpenAPI spec.',
+  'Run pnpm regen: drizzle-kit generate (migrations from pgTable schemas) + emit OpenAPI spec + regenerate the typed SDK.',
   {},
   async () => {
     const result = run('pnpm regen');
@@ -324,59 +455,213 @@ server.tool(
   },
 );
 
-// --- get-prisma-model-graph -------------------------------------------------
+// --- get-drizzle-schema -----------------------------------------------------
 server.tool(
-  'get-prisma-model-graph',
-  'Return the merged Prisma schema with model definitions and relations.',
-  {},
-  async () => {
-    const schemaPath = repoPath('infra', 'prisma', 'schema.prisma');
-    const content = readFile(schemaPath);
+  'get-drizzle-schema',
+  'Return the Drizzle table definitions (pgTable) across all modules. Pass a module name to scope to one. Source of truth for the DB shape - read this instead of grepping schema files.',
+  {
+    module: z.string().optional().describe('Module name (kebab-case) to scope to'),
+    response_format: z
+      .enum(['concise', 'detailed'])
+      .optional()
+      .describe('concise (default): table names + columns. detailed: full pgTable source.'),
+  },
+  async ({ module: mod, response_format }) => {
+    const detailed = response_format === 'detailed';
+    const all = listAllModules();
+    const modules = mod ? all.filter((m) => m.name === mod) : all;
+    if (mod && modules.length === 0) {
+      return {
+        content: [
+          {
+            type: 'text',
+            text: `Module "${mod}" not found. Run list-modules to see available modules.`,
+          },
+        ],
+      };
+    }
+    const parts: string[] = [];
+    for (const { group, name, dir } of modules) {
+      const schemaFile = join(dir, 'src', 'schema', 'index.ts');
+      if (!existsSync(schemaFile)) continue;
+      const src = readFileSync(schemaFile, 'utf8');
+      const tables = [...src.matchAll(/export const (\w+)\s*=\s*pgTable\(\s*'([^']+)'/g)];
+      if (tables.length === 0) continue;
+      if (detailed) {
+        parts.push(`=== ${group}/${name} (src/schema/index.ts) ===\n${src.trim()}`);
+      } else {
+        const summary = tables.map(([, constName, tableName]) => `  ${constName} -> '${tableName}'`);
+        parts.push(`${group}/${name}:\n${summary.join('\n')}`);
+      }
+    }
+    const text = parts.join('\n\n') || 'No Drizzle tables found.';
     return {
       content: [
-        { type: 'text', text: content || 'schema.prisma not found. Run `pnpm regen` first.' },
+        {
+          type: 'text',
+          text: detailed
+            ? text
+            : `${text}\n\n(Pass response_format: "detailed" for full pgTable source, or scope with module.)`,
+        },
       ],
     };
   },
 );
 
-// --- propose-prisma-change --------------------------------------------------
+// --- propose-table-change ---------------------------------------------------
 server.tool(
-  'propose-prisma-change',
-  'Validate a proposed model name against the merged schema. Checks for table name collisions.',
-  { model: z.string().describe('PascalCase model name to check') },
-  async ({ model }) => {
-    const schemaPath = repoPath('infra', 'prisma', 'schema.prisma');
-    const content = readFile(schemaPath);
-    const regex = new RegExp(`^model\\s+${model}\\s+\\{`, 'm');
-    if (regex.test(content)) {
+  'propose-table-change',
+  'Check a proposed Drizzle table name for collisions across all module schemas before you add a pgTable. Returns [OK] or [COLLISION] with the owning module.',
+  { table: z.string().describe("snake_case pgTable name, e.g. 'tournament_entry'") },
+  async ({ table }) => {
+    const want = table.trim();
+    for (const { group, name, dir } of listAllModules()) {
+      const schemaFile = join(dir, 'src', 'schema', 'index.ts');
+      if (!existsSync(schemaFile)) continue;
+      const src = readFileSync(schemaFile, 'utf8');
+      for (const [, , tableName] of src.matchAll(/pgTable\(\s*'([^']+)'/g)) {
+        if (tableName === want) {
+          return {
+            content: [
+              {
+                type: 'text',
+                text: `[COLLISION] Table '${want}' already defined in packages/modules/${group}/${name}/src/schema/index.ts. Pick a different name or add a column to the existing table.`,
+              },
+            ],
+          };
+        }
+      }
+    }
+    return {
+      content: [
+        {
+          type: 'text',
+          text: `[OK] Table name '${want}' is available. Add the pgTable to your module's src/schema/index.ts, then run pnpm regen to generate the migration.`,
+        },
+      ],
+    };
+  },
+);
+
+// --- schema-get -------------------------------------------------------------
+server.tool(
+  'schema-get',
+  'Find a Zod domain schema by name and return its definition with file location. Searches packages/contracts/*.',
+  { name: z.string().describe('Schema name, e.g. "WalletBalance" or "WalletBalanceSchema"') },
+  async ({ name }) => {
+    const candidates = name.endsWith('Schema') ? [name] : [`${name}Schema`, name];
+    const files = walkFiles(repoPath('packages', 'contracts'), '.ts').filter(
+      (f) => !f.endsWith('.d.ts'),
+    );
+    for (const file of files) {
+      const src = readFileSync(file, 'utf8');
+      for (const cand of candidates) {
+        const decl = extractDeclaration(src, cand);
+        if (decl) {
+          const rel = file.replace(`${repoRoot}/`, '');
+          return {
+            content: [{ type: 'text', text: `${rel}:${decl.line}\n\n${decl.code}` }],
+          };
+        }
+      }
+    }
+    // Not found: list available schema names to help the caller.
+    const names = new Set<string>();
+    for (const file of files) {
+      for (const m of readFileSync(file, 'utf8').matchAll(/export const (\w+Schema)\b/g)) {
+        names.add(m[1]!);
+      }
+    }
+    const list = [...names].sort().join(', ');
+    return {
+      content: [
+        { type: 'text', text: `Schema "${name}" not found.\n\nAvailable schemas:\n${list}` },
+      ],
+    };
+  },
+);
+
+// --- docs-search ------------------------------------------------------------
+server.tool(
+  'docs-search',
+  'Search markdown docs (docs/, README, AGENTS.md, ADRs, per-package AGENTS.md) for a keyword. Returns matching lines with locations.',
+  {
+    query: z.string().describe('Case-insensitive substring to search for'),
+    limit: z.number().optional().describe('Max matching lines to return (default 60)'),
+  },
+  async ({ query, limit }) => {
+    const max = limit ?? 60;
+    const roots = [repoPath('docs'), repoPath('packages'), repoPath('apps')];
+    const files = new Set<string>([repoPath('README.md'), repoPath('AGENTS.md')]);
+    for (const root of roots) for (const f of walkFiles(root, '.md')) files.add(f);
+
+    const needle = query.toLowerCase();
+    const hits: string[] = [];
+    for (const file of [...files].sort()) {
+      if (!existsSync(file)) continue;
+      const lines = readFileSync(file, 'utf8').split('\n');
+      const rel = file.replace(`${repoRoot}/`, '');
+      for (let i = 0; i < lines.length; i++) {
+        if (lines[i]!.toLowerCase().includes(needle)) {
+          hits.push(`${rel}:${i + 1}: ${lines[i]!.trim()}`);
+          if (hits.length >= max) break;
+        }
+      }
+      if (hits.length >= max) break;
+    }
+    return {
+      content: [
+        {
+          type: 'text',
+          text:
+            hits.length > 0
+              ? `${hits.length} match(es) for "${query}":\n${hits.join('\n')}`
+              : `No docs match "${query}".`,
+        },
+      ],
+    };
+  },
+);
+
+// --- db-query-readonly ------------------------------------------------------
+server.tool(
+  'db-query-readonly',
+  'Run a read-only SQL query against the dev database (wrapped in a READ ONLY transaction). Only SELECT/WITH/EXPLAIN/SHOW/TABLE/VALUES are allowed; results capped at 200 rows.',
+  { sql: z.string().describe('A single read-only SQL statement') },
+  async ({ sql }) => {
+    const trimmed = sql.trim().replace(/;\s*$/, '');
+    const lower = trimmed.toLowerCase();
+    if (trimmed.includes(';')) {
+      return { content: [{ type: 'text', text: 'Only a single statement is allowed (no `;`).' }] };
+    }
+    if (!READONLY_SQL_PREFIXES.some((p) => lower.startsWith(p))) {
       return {
         content: [
           {
             type: 'text',
-            text: `[COLLISION] Model "${model}" already exists in the merged schema.`,
+            text: `Read-only queries only. Allowed prefixes: ${READONLY_SQL_PREFIXES.join(', ')}.`,
           },
         ],
       };
     }
-
-    // Also check partial files
-    const moduleDirs = listDirs(repoPath('packages', 'modules'));
-    for (const d of moduleDirs) {
-      const partial = repoPath('packages', 'modules', d, 'prisma.partial.prisma');
-      if (existsSync(partial) && regex.test(readFileSync(partial, 'utf8'))) {
-        return {
-          content: [
-            {
-              type: 'text',
-              text: `[COLLISION] Model "${model}" already defined in packages/modules/${d}/prisma.partial.prisma.`,
-            },
-          ],
-        };
-      }
+    const client = new pg.Client({ connectionString: resolveDatabaseUrl() });
+    try {
+      await client.connect();
+      await client.query('BEGIN TRANSACTION READ ONLY');
+      await client.query("SET LOCAL statement_timeout = '10s'");
+      const res = await client.query(trimmed);
+      await client.query('ROLLBACK');
+      const rows = res.rows.slice(0, 200);
+      const text =
+        rows.length === 0
+          ? '(0 rows)'
+          : `${res.rowCount} row(s)${res.rowCount && res.rowCount > 200 ? ' (showing 200)' : ''}:\n${JSON.stringify(rows, null, 2)}`;
+      return { content: [{ type: 'text', text }] };
+    } catch (e: unknown) {
+      return { content: [{ type: 'text', text: `Query failed: ${(e as Error).message}` }] };
+    } finally {
+      await client.end().catch(() => undefined);
     }
-
-    return { content: [{ type: 'text', text: `[OK] Model name "${model}" is available.` }] };
   },
 );
 

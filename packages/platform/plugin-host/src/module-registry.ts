@@ -7,7 +7,6 @@ export class ModuleRegistryImpl implements ModuleRegistry {
   private _routers = new Map<string, unknown>();
   private _slots = new Map<string, unknown>();
   private _events = new Map<string, Array<(payload: unknown) => void | Promise<void>>>();
-  private _prismaExtensions = new Map<string, string[]>();
   private _mcpTools: McpToolDefinition[] = [];
   private _imports: Array<Type | DynamicModule> = [];
 
@@ -46,15 +45,6 @@ export class ModuleRegistryImpl implements ModuleRegistry {
       this._events.set(event, handlers);
     },
     getAll: () => this._events,
-  };
-
-  prisma = {
-    extend: (modelName: string, fields: string) => {
-      const existing = this._prismaExtensions.get(modelName) ?? [];
-      existing.push(fields);
-      this._prismaExtensions.set(modelName, existing);
-    },
-    getExtensions: () => this._prismaExtensions,
   };
 
   mcp = {

@@ -35,7 +35,7 @@ The OSS ships 12 modules covering the full table-stakes surface: identity, walle
 2. As a platform operator, I want to add a new feature (eg "VIP tiers") by dropping a single folder under `apps/extensions/` or `plugins/`, so that I never have to modify or fork OSS core code.
 3. As a platform operator, I want to remove a built-in module (eg "chat") by deleting one line from `extensions.config.ts`, so that I only ship the surface area my product actually needs.
 4. As a platform operator, I want to override the mock game provider with my real game engine by registering a Nest DI token in my plugin, so that the OSS gaming module works against my proprietary engine without code changes.
-5. As a platform operator, I want to add columns to the OSS `User` table (eg `kycLevel`, `referralCode`) via a sanctioned extension API, so that I don't have to fork the Prisma schema and lose upgrade compatibility.
+5. As a platform operator, I want to add fields to the OSS player data without forking core, so I keep upgrade compatibility. (Post-Drizzle: the sanctioned path is a derivative `pgTable` in my own overlay's `src/schema/index.ts` with a plain ID reference to the OSS `user`; there is no longer a column-injection extension API.)
 6. As a platform operator, I want to skin the entire admin UI by writing a new UI adapter package, so that I can match my brand without touching the module code.
 7. As a platform operator, I want to upgrade to a new OSS version by bumping a single dependency, so that I get bug fixes and new modules without merge conflicts.
 8. As a platform operator, I want to consume the OSS as an npm package (not a fork), so that the OSS team can iterate independently.
@@ -45,10 +45,10 @@ The OSS ships 12 modules covering the full table-stakes surface: identity, walle
 ### Module author (someone extending the platform)
 
 11. As a module author, I want one canonical `definePlugin({ id, dependsOn, register })` contract for everything that extends the system, so that I don't have to learn three different extension mechanisms.
-12. As a module author, I want my plugin's `register(ctx)` function to receive a typed `ModuleRegistry` with explicit hooks (`ctx.providers.add`, `ctx.controllers.add`, `ctx.routers.add`, `ctx.slots.fill`, `ctx.events.on`, `ctx.prisma.extend`, `ctx.mcp.tool`), so that every extension point is greppable and discoverable.
+12. As a module author, I want my plugin's `register(ctx)` function to receive a typed `ModuleRegistry` with explicit hooks (`ctx.providers.add`, `ctx.controllers.add`, `ctx.routers.add`, `ctx.slots.fill`, `ctx.events.on`, `ctx.mcp.tool`, `ctx.imports.add`), so that every extension point is greppable and discoverable. (The Drizzle migration removed `ctx.prisma.extend`; overlays add their own `pgTable` in their module's `src/schema/index.ts`.)
 13. As a module author, I want to define my routes as Zod-validated oRPC procedures, so that the OpenAPI spec, TS client types, and runtime validation all come from the same source.
 14. As a module author, I want to subscribe to events from other modules (eg `wallet.deposit.completed`), so that I can react to cross-module activity without coupling to their implementation.
-15. As a module author, I want to add Prisma tables in my own `prisma.partial.prisma` file, so that I don't have to coordinate schema changes across teams.
+15. As a module author, I want to add Drizzle tables in my own module's `src/schema/index.ts` (`pgTable` defs), so that I don't have to coordinate schema changes across teams.
 16. As a module author, I want a topological dependency resolver to load my plugin after its declared `dependsOn` plugins, so that I can rely on their providers existing at registration time.
 17. As a module author, I want a per-module `AGENTS.md` to document my extension points, ports, events, and forbidden patterns, so that other engineers (and AI agents) can extend or compose with my module without reading the source.
 
@@ -70,7 +70,7 @@ The OSS ships 12 modules covering the full table-stakes surface: identity, walle
 
 24. As an AI agent, I want a single top-level `AGENTS.md` declaring architecture pillars, the "where does X go" decision tree, dependency rules, and forbidden patterns, so that I make the same decisions a senior engineer would.
 25. As an AI agent, I want `/scaffold-module <name>`, `/scaffold-plugin <name>`, `/scaffold-route <module> <method> <path>`, `/scaffold-ui-component <Name>`, `/regen`, and `/verify` as repo-local slash commands, so that I generate consistent code without inventing my own conventions.
-26. As an AI agent, I want an MCP dev server (`apps/mcp-server-dev`) exposing `read-agents-md`, `list-modules`, `describe-route`, `list-extension-points`, `propose-prisma-change`, and `query-openapi` tools, so that I can answer "does X already exist?" before adding duplicates.
+26. As an AI agent, I want an MCP dev server (`apps/mcp-server-dev`) exposing `read-agents-md`, `list-modules`, `describe-route`, `list-extension-points`, `propose-table-change`, and `query-openapi` tools, so that I can answer "does X already exist?" before adding duplicates.
 27. As an AI agent, I want a `pnpm setup:agent` command that boots Docker + Postgres + Redis + the MCP server in one step, so that a fresh session can become productive in under a minute.
 28. As an AI agent, given only the prompt "implement the localization module" in a fresh session, I want to ship a complete, buildable module via `/scaffold-module localization` + MCP tools + AGENTS.md, with at most one or two human confirmations.
 
@@ -80,7 +80,7 @@ The OSS ships 12 modules covering the full table-stakes surface: identity, walle
 30. As a downstream consumer, I want a sibling `consumer/` repo to depend on the OSS via `pnpm.overrides` (`link:`) for local dev and via versioned npm tags in production, so that the same dev workflow ships to prod.
 31. As a downstream consumer, I want to compose the OSS oRPC contract with my own contract slices (eg `/consumer/vip/*`), so that my API surface is unified but my code is isolated.
 32. As a downstream consumer, I want a `createApp(config)` factory that accepts my plugins, my contract, my port, my CORS origins, and (optionally) extra Nest providers, so that my repo's API entrypoint is ~15 lines.
-33. As a downstream consumer, I want the OSS schema migrations to flow into my merged `schema.prisma` automatically (via prisma-merge running over both OSS and my partials), so that I never have to manually reconcile DB shape.
+33. As a downstream consumer, I want the OSS schema migrations to apply cleanly alongside my own (drizzle-kit globs every module's `src/schema/index.ts`, including my overlay's), so that I never have to manually reconcile DB shape.
 34. As a downstream consumer, I want a worked example plugin (`examples/consumer-games-plugin/`) showing the Crash game pattern (custom routes + provider override + event subscription + UI slot injection), so that my engineers have a copy-paste-and-modify template.
 
 ### Compliance / security operator
@@ -95,16 +95,16 @@ The OSS ships 12 modules covering the full table-stakes surface: identity, walle
 
 **Platform packages (`packages/platform/*`):**
 
-- `plugin-host` - the loader. Owns `definePlugin`, `ModuleRegistry`, topological resolution, and `prisma-merge`. Exposes the canonical extension surface. Deep module: one entry function (`loadPlugins`), simple interface, all complexity encapsulated.
+- `plugin-host` - the loader. Owns `definePlugin`, `ModuleRegistry`, and topological resolution. Exposes the canonical extension surface. Deep module: one entry function (`loadPlugins`), simple interface, all complexity encapsulated. (Schema is no longer merged here - drizzle-kit globs each module's `src/schema/index.ts` directly.)
 - `api-runtime` - the consumer-facing factory. Exports `createApp(config)`. Wires `InfraModule` + `HealthModule` + `PluginHostModule` + `ORPCModule` and returns an `INestApplication` plus `listen()` / `emitOpenApiSpec()`. Deep module: one entry function, takes a config, returns a running app.
 - `core` - shared primitives: logger, `EVENT_BUS` symbol, `InMemoryEventBus` default.
-- `persistence` - `PrismaService` (Nest-injectable wrapper) + generated Prisma client.
+- `db` (`@oss/db`) - `DrizzleService` (Nest-injectable wrapper) + the Drizzle client, drizzle-kit migrations, the NestJS-free `@oss/db/orm` re-export, and tenant-scoped helpers.
 - `auth` - better-auth integration (used by identity module).
 - `events`, `jobs`, `observability` - thin wrappers / type packages.
 
 **Contract packages (`packages/contracts/*`):**
 
-- `domain-schemas` - the single Zod root. All shared types live here.
+- `shared-schemas` - the single Zod root. All shared types live here.
 - `orpc-contract` - root oRPC contract composing 13 slices (one per module + health). Each slice has its own subpath export (`@oss/orpc-contract/wallet`, etc.) so module routers can import only what they need.
 
 **Feature modules (`packages/modules/*`):**
@@ -112,24 +112,24 @@ The OSS ships 12 modules covering the full table-stakes surface: identity, walle
 | Module            | Owns                                                                         | Key ports                                   |
 | ----------------- | ---------------------------------------------------------------------------- | ------------------------------------------- |
 | identity          | User, Session, Account, Verification tables; register/login/logout/me routes | better-auth, KYC port (future)              |
-| wallet            | Wallet, WalletTransaction; balance/deposit/withdraw/transactions routes      | PaymentProvider port                        |
-| gaming            | Game, GameRound; list/get/start-round/end-round routes                       | GameProvider port, MockGameProvider adapter |
+| wallet            | Wallet, WalletTransaction; balance/deposit/withdraw/transactions routes      | PaymentAdapter port                        |
+| gaming            | Game, GameRound; list/get/start-round/end-round routes                       | GameAdapter port, MockGameAdapter adapter |
 | lobby             | LobbyCategory, FeaturedSlot; categories/featured/search routes               | reads Game table cross-module               |
 | chat              | ChatRoom, ChatMessage; rooms/messages/global routes                          | future: SSE transport                       |
 | bonus             | Bonus, UserBonus; available/claim/user-bonuses routes                        | rollover engine                             |
-| compliance        | UserLimit, GeoRule; limits CRUD + geo-check routes                           | GeoIpPort                                   |
-| notifications     | Notification; list/mark-read/mark-all-read                                   | NotificationDeliveryPort                    |
+| compliance        | UserLimit, GeoRule; limits CRUD + geo-check routes                           | GeoIpAdapter                                   |
+| notifications     | Notification; list/mark-read/mark-all-read                                   | NotificationDeliveryAdapter                    |
 | localization      | Locale, Translation; locales/translations CRUD                               | i18next compatibility                       |
 | cms               | Page, Banner; pages CRUD + banners by placement                              | none                                        |
 | backoffice        | (no owned tables - reads cross-module) stats/users/transactions admin API    | none                                        |
-| casino-aggregator | AggregatorProvider; sync/providers/callback routes                           | AggregatorProvider port                     |
+| casino-aggregator | AggregatorAdapter; sync/providers/callback routes                           | AggregatorAdapter port                     |
 
 **Pillar decisions (documented in ADRs):**
 
 - **ADR-0001:** oRPC + NestJS chosen over tRPC + Nest, ts-rest + Nest, oRPC + Hono, Nest + OpenAPI codegen.
 - **ADR-0002:** `definePlugin` overlay pattern chosen over decorator auto-discovery, file-system magic, or central plugin registry classes.
 - **ADR-0003:** Headless UI provider contract + adapter packages, not direct shadcn coupling.
-- **ADR-0004:** Single Zod root in `domain-schemas`, not schemas co-located per module.
+- **ADR-0004:** Single Zod root in `shared-schemas`, not schemas co-located per module.
 - **ADR-0005:** Backoffice ships as headless page components (consumer mounts them), not a forked app. Later consolidated into `@oss/react-sdk` (see ADR's Update note).
 - **ADR-0006:** Client-side `defineUIPlugin` UI registry, so plugins extend the admin without forking. Mirrors the server `definePlugin` pattern.
 
@@ -138,7 +138,7 @@ The OSS ships 12 modules covering the full table-stakes surface: identity, walle
 - **Plugin contract** (the binding interface for the entire system):
   ```
   definePlugin({ id, dependsOn?, register(ctx) }) -> Plugin
-  register receives ctx: ModuleRegistry { providers, controllers, routers, slots, events, prisma, mcp, imports }
+  register receives ctx: ModuleRegistry { providers, controllers, routers, slots, events, mcp, imports }
   ```
 - **createApp contract** (the consumer-facing factory):
   ```
@@ -151,12 +151,11 @@ The OSS ships 12 modules covering the full table-stakes surface: identity, walle
 
 ### Schema strategy
 
-- Each module owns a `prisma.partial.prisma` file. `tools/prisma-merge.ts` concatenates `infra/prisma/base.prisma` + all partials into `infra/prisma/schema.prisma`. The merged file is generated and must not be edited by hand.
-- Multi-tenancy is row-level: every module-owned table has a `tenantId String` column. The `withTenant` helper in `@oss/persistence` scopes queries.
+- Each module owns its tables as Drizzle `pgTable` defs in `src/schema/index.ts`. `drizzle.config.ts` (in `@oss/db`) globs those files; `pnpm regen` runs drizzle-kit to generate migrations. There is no schema-merge step.
+- Multi-tenancy is row-level: every module-owned table has a `tenantId` text column. The `withTenant` helper in `@oss/db` scopes queries.
 - Decisions about extending OSS tables from a consumer plugin:
-  - **Preferred:** consumer creates a derivative table with a FK to the OSS table (eg `ConsumerUserProfile` FK to `User`).
-  - **Sanctioned:** `ctx.prisma.extend('User', 'kycLevel String?')` registers the column with the prisma-merge step. Honored by the merger (deferred - currently the registry accepts the call but the merger doesn't yet apply it).
-  - **Forbidden:** editing `infra/prisma/schema.prisma` directly.
+  - **Preferred / sanctioned:** consumer creates a derivative `pgTable` in its overlay's `src/schema/index.ts` with a plain ID reference to the OSS table (eg `ConsumerUserProfile` referencing `user` by id). Modules must NOT hold cross-module FK relations; `.references(() => table.id)` is for FKs within a single module only.
+  - **Forbidden:** editing the generated migrations under `packages/platform/db/` by hand - the source of truth is each module's `src/schema/index.ts`.
 
 ### Boundary rules (enforced by lint)
 
@@ -186,15 +185,15 @@ The OSS ships 12 modules covering the full table-stakes surface: identity, walle
 
 ### What makes a good test in this codebase
 
-- **Test external behavior, not implementation.** A `wallet.service.test.ts` asserts that `deposit(userId, 100)` results in a new transaction row with status `completed` and a balance increase of 100. It does NOT assert "the service called prisma.walletTransaction.create with these specific args".
-- **Integration tests use a real Postgres** (via `@oss/infra db:up`). Mocks of the database are forbidden per the architecture pillar "explicit > magic" - mock/prod divergence is a known incident pattern in casino billing systems.
-- **Service-level unit tests** mock only the adapter ports (PaymentProvider, GameProvider, GeoIpPort). Everything else is real.
+- **Test external behavior, not implementation.** A `wallet.service.test.ts` asserts that `deposit(userId, 100)` results in a new transaction row with status `completed` and a balance increase of 100. It does NOT assert "the service called `db.insert(walletTransaction)` with these specific args".
+- **Integration tests use a real Postgres** (via `@oss/db db:up`). Mocks of the database are forbidden per the architecture pillar "explicit > magic" - mock/prod divergence is a known incident pattern in casino billing systems.
+- **Service-level unit tests** mock only the adapter ports (PaymentAdapter, GameAdapter, GeoIpAdapter). Everything else is real.
 - **Router-level tests** assert that an HTTP request producing valid input returns the expected output and that domain errors map to the correct oRPC error codes (NOT_FOUND, FORBIDDEN, CONFLICT).
 - **Contract tests** assert that the emitted OpenAPI spec matches a committed snapshot - any unintended contract drift fails CI.
 
 ### Modules to write tests for (in priority order)
 
-1. **plugin-host** - deepest module, lowest test count today. Topological sort, dependency cycle detection, `register(ctx)` invocation order, prisma-merge file output. Pure functions; ideal for unit testing.
+1. **plugin-host** - deepest module, lowest test count today. Topological sort, dependency cycle detection, `register(ctx)` invocation order. Pure functions; ideal for unit testing.
 2. **api-runtime** - one end-to-end test that boots `createApp({ plugins: [] })`, hits `/health`, and confirms the response shape. Catches regressions in the factory contract.
 3. **wallet** - real-money handling; highest blast radius. Test sufficient-balance enforcement, double-spend race conditions (with real Postgres + transactions), event emission on success.
 4. **bonus** - rollover math. Test that `wageredAmount` accumulates correctly and `claimBonus` doesn't double-award.
@@ -205,16 +204,16 @@ The other 6 modules (gaming, lobby, chat, notifications, localization, cms, back
 
 ### Prior art for tests
 
-- Existing service tests (`packages/modules/*/src/__tests__/*.service.test.ts`) are smoke tests asserting domain error classes throw the right shape. Pattern to copy: pure constructor-injection with mocked PrismaService, test against returned values + thrown error types.
-- No integration tests exist yet. The first integration test should establish the `@oss/infra db:up` + Prisma `migrate dev` + truncate-between-tests pattern; subsequent integration tests follow.
+- Existing service tests (`packages/modules/*/src/__tests__/*.service.test.ts`) are smoke tests asserting domain error classes throw the right shape. Pattern to copy: pure constructor-injection with a mocked `DrizzleService`, test against returned values + thrown error types.
+- No integration tests exist yet. The first integration test should establish the `@oss/db db:up` + drizzle-kit migrate + truncate-between-tests pattern; subsequent integration tests follow.
 - E2E test of the worked example: spin up `examples/consumer-games-plugin/` overlaid on the OSS, confirm `POST /crash/bets` creates a row and `POST /crash/cash-out` settles it. This validates the entire plugin pipeline end-to-end.
 
 ## Out of Scope
 
 The following are intentionally NOT delivered in this PRD and tracked separately:
 
-- **Real payment provider integrations.** OSS ships a mock `PaymentProvider`. Stripe, Worldpay, Coinbase Commerce, etc. live in operator-specific plugin packages.
-- **Real game engine.** OSS ships a `MockGameProvider`. Consumer's PvP games live in `consumer/plugins/*`, not in OSS.
+- **Real payment provider integrations.** OSS ships a mock `PaymentAdapter`. Stripe, Worldpay, Coinbase Commerce, etc. live in operator-specific plugin packages.
+- **Real game engine.** OSS ships a `MockGameAdapter`. Consumer's PvP games live in `consumer/plugins/*`, not in OSS.
 - **Real sportsbook integration.** `examples/sportsbook-plugin/` shows the shape but the Betby/Kambi adapter is a stub.
 - **KYC integration** (Sumsub, Onfido, Jumio). Identity module exposes a hook; the actual adapter is operator-specific.
 - **AML transaction monitoring** (Chainalysis, Elliptic). Future module.
@@ -222,7 +221,7 @@ The following are intentionally NOT delivered in this PRD and tracked separately
 - **Live dealer / streaming integration.** Out of v1 OSS scope.
 - **Multi-currency conversion / FX.** Wallet currency is per-wallet today; FX rate management is operator-specific.
 - **Live chat customer support tools** (Intercom, Zendesk). Notifications module has a delivery port that can be wired up later.
-- **Geo-IP database.** The `GeoIpPort` interface is provided; the actual MaxMind / IP-API integration is operator-specific.
+- **Geo-IP database.** The `GeoIpAdapter` interface is provided; the actual MaxMind / IP-API integration is operator-specific.
 - **Server-side LLM features** (auto-moderation, AI chat assistant). The `packages/llm/*` tree was scoped out of v1.
 - **Runtime feature flags.** Static enable/disable via `extensions.config.ts` exists; dynamic per-tenant flags deferred to v2.
 - **Native multi-tenancy beyond row-level `tenantId`.** Schema-per-tenant and database-per-tenant are out of scope.
@@ -255,7 +254,7 @@ The following are intentionally NOT delivered in this PRD and tracked separately
 
 ### Known follow-ups
 
-- Honor `ctx.prisma.extend()` in `prisma-merge.ts` so downstream consumers can decorate core tables. The registry accepts the calls today; the merger ignores them. (Blocks the backoffice's `role`/`isActive` admin fields, which the better-auth `user` table doesn't yet have.)
+- ~~Honor `ctx.prisma.extend()` so downstream consumers can decorate core tables.~~ - obsolete after the Drizzle migration. There is no column-injection API; consumers add a derivative `pgTable` in their overlay's `src/schema/index.ts` with a plain ID reference to the OSS table. The `user` table now carries `role`/`isActive` directly (see `packages/modules/platform/identity/src/schema/index.ts`).
 - ~~Add a thin `createBackofficeApp({ uiAdapter, ... })` factory~~ - superseded. The admin ships as headless components from `@oss/react-sdk`; the consumer mounts them and swaps the adapter via `<UIProvider>`. No factory needed.
 - Build a second UI adapter (`@oss/ui-provider-mui` or similar) to exercise the adapter-swap path and validate the contract is truly library-agnostic. The Storybook adapter switcher is ready for it.
 - Server-side data prefetch for admin pages (RSC + TanStack Query hydration) - needs cookie-forwarding plumbing in the runtime; pages fetch client-side today.

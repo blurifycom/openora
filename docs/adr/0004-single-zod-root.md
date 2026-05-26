@@ -9,24 +9,24 @@ Type drift between modules, client SDK, and OpenAPI spec is a common source of b
 
 ## Decision
 
-All shared schemas live in `packages/contracts/domain-schemas/`. Types are always `z.infer<typeof Schema>` - never hand-written interfaces that shadow Zod schemas. Module-local schemas live in `packages/modules/<name>/src/schemas/` but re-export from `domain-schemas` wherever types are shared.
+All shared schemas live in `packages/contracts/shared-schemas/`. Types are always `z.infer<typeof Schema>` - never hand-written interfaces that shadow Zod schemas. Module-local schemas live in `packages/modules/<name>/src/schemas/` but re-export from `shared-schemas` wherever types are shared.
 
 The oRPC router uses `.input(Schema).output(Schema)`. The same schemas feed the OpenAPI generator and the client SDK. One source, many derived consumers.
 
-A lint rule bans ad-hoc Zod schema definitions outside `schemas/` or `domain-schemas`.
+A lint rule bans ad-hoc Zod schema definitions outside `schemas/` or `shared-schemas`.
 
 ## Consequences
 
 **Positive:**
 
-- Rename a field in `domain-schemas` and every consumer (route, SDK, OpenAPI, client) fails to compile until updated. Drift is a compile error, not a runtime bug.
-- AI agents can read `domain-schemas` to understand the data model without tracing through controllers.
+- Rename a field in `shared-schemas` and every consumer (route, SDK, OpenAPI, client) fails to compile until updated. Drift is a compile error, not a runtime bug.
+- AI agents can read `shared-schemas` to understand the data model without tracing through controllers.
 - OpenAPI spec is guaranteed to match the runtime validation.
 
 **Negative / trade-offs:**
 
-- `domain-schemas` can become large. Mitigation: namespace by domain (`identity.ts`, `wallet.ts`). Import only what you need.
-- Module-local schemas that graduate to cross-module use must be moved to `domain-schemas`. This is a mechanical refactor but requires touching multiple files.
+- `shared-schemas` can become large. Mitigation: namespace by domain (`identity.ts`, `wallet.ts`). Import only what you need.
+- Module-local schemas that graduate to cross-module use must be moved to `shared-schemas`. This is a mechanical refactor but requires touching multiple files.
 
 **Neutral:**
 

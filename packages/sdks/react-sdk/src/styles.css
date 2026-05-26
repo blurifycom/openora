@@ -1070,3 +1070,107 @@ td code {
   background: var(--bo-accent-dim);
   color: var(--bo-bone);
 }
+
+/* Player surface (apps/web) - lightweight layout on top of the UI provider's
+   components. The provider supplies component look; these are layout only. */
+.player-section {
+  margin-bottom: 2rem;
+}
+.player-section__title {
+  font-size: 0.85rem;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--bo-stone);
+  margin: 0 0 0.75rem;
+}
+.player-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+  gap: 1rem;
+}
+.player-card {
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+.player-card__thumb {
+  width: 100%;
+  aspect-ratio: 16 / 9;
+  object-fit: cover;
+  display: block;
+}
+.player-card__thumb--empty {
+  background: linear-gradient(135deg, var(--bo-ink-2), var(--bo-ink-3));
+}
+.player-card__body {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+  padding: 0.75rem;
+}
+.player-card__title {
+  font-weight: 600;
+  color: var(--bo-bone);
+}
+.player-balance {
+  padding: 1.25rem 1.5rem;
+  margin-bottom: 2rem;
+}
+.player-balance__label {
+  font-size: 0.8rem;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--bo-stone);
+}
+.player-balance__amount {
+  font-size: 2rem;
+  font-weight: 700;
+  color: var(--bo-accent-bright);
+}
+
+/* Player top-nav shell (apps/web chrome). */
+.player-shell {
+  min-height: 100vh;
+  background: var(--bo-paper);
+}
+.player-topbar {
+  display: flex;
+  align-items: center;
+  gap: 2rem;
+  padding: 0 1.5rem;
+  height: 56px;
+  border-bottom: 1px solid var(--bo-hairline);
+  background: var(--bo-ink);
+}
+.player-topbar__brand {
+  font-family: var(--font-display, inherit);
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  color: var(--bo-accent-bright);
+}
+.player-topbar__nav {
+  display: flex;
+  gap: 1.25rem;
+  flex: 1;
+}
+.player-topbar__link {
+  color: var(--bo-stone);
+  text-decoration: none;
+  font-size: 0.9rem;
+}
+.player-topbar__link:hover {
+  color: var(--bo-bone);
+}
+.player-topbar__link--active {
+  color: var(--bo-accent-bright);
+}
+.player-topbar__auth {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+}
+.player-content {
+  max-width: 1100px;
+  margin: 0 auto;
+  padding: 2rem 1.5rem;
+}

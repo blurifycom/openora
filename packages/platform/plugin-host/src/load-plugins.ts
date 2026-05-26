@@ -6,6 +6,37 @@ export interface PluginEntry {
   path: string;
 }
 
+/**
+ * Fail fast with a precise message when extensions.config.ts is malformed, so an
+ * agent that hand-edits the registry gets a structural error here instead of a deep
+ * runtime stack trace later.
+ */
+function validateEntries(entries: unknown): asserts entries is PluginEntry[] {
+  if (!Array.isArray(entries)) {
+    throw new Error(
+      `extensions.config.ts must export \`extensions\` as an array of { id, path }. Got ${typeof entries}.`,
+    );
+  }
+  const seen = new Set<string>();
+  entries.forEach((entry, i) => {
+    const at = `extensions[${i}]`;
+    if (typeof entry !== 'object' || entry === null) {
+      throw new Error(`${at} must be an object { id, path }. Got ${JSON.stringify(entry)}.`);
+    }
+    const { id, path } = entry as Record<string, unknown>;
+    if (typeof id !== 'string' || id.length === 0) {
+      throw new Error(`${at} is missing a non-empty string \`id\`. Got ${JSON.stringify(entry)}.`);
+    }
+    if (typeof path !== 'string' || path.length === 0) {
+      throw new Error(`${at} (id "${id}") is missing a non-empty string \`path\`.`);
+    }
+    if (seen.has(id)) {
+      throw new Error(`Duplicate plugin id "${id}" in extensions.config.ts - each id must be unique.`);
+    }
+    seen.add(id);
+  });
+}
+
 function topoSort(plugins: Plugin[]): Plugin[] {
   const byId = new Map(plugins.map((p) => [p.id, p]));
   const visited = new Set<string>();
@@ -36,6 +67,7 @@ function topoSort(plugins: Plugin[]): Plugin[] {
 }
 
 export async function loadPlugins(entries: PluginEntry[]): Promise<ModuleRegistryImpl> {
+  validateEntries(entries);
   const plugins: Plugin[] = [];
 
   for (const entry of entries) {

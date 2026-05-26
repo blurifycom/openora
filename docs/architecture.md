@@ -12,7 +12,7 @@ agent must follow, see [AGENTS.md](../AGENTS.md).
 ```mermaid
 flowchart TB
   subgraph contracts["Contracts - the source of truth"]
-    zod["domain-schemas<br/>single Zod root"]
+    zod["shared-schemas<br/>single Zod root"]
     orpc["orpc-contract<br/>composed oRPC router"]
     openapi["docs/openapi.json<br/>(emitted)"]
     client["typed client<br/>(zero codegen)"]
@@ -31,17 +31,15 @@ flowchart TB
   end
 
   subgraph platform["Platform services (packages/platform/*)"]
-    persistence["persistence<br/>Prisma + tenant scope"]
-    auth["auth<br/>better-auth"]
-    events["events<br/>EventBus"]
-    jobs["jobs<br/>BullMQ"]
-    core["core<br/>logger, tenant ctx"]
+    db["@oss/db<br/>Drizzle client + migrations + tenant scope"]
+    auth["auth<br/>better-auth + AdminGuard"]
+    core["core<br/>logger, tenant ctx, EventBus"]
   end
 
   subgraph modules["Business modules (packages/modules/*)"]
     mod["identity, wallet, gaming, lobby, bonus,<br/>compliance, chat, cms, backoffice, player ..."]
-    ports["service/ports.ts<br/>vendor interfaces"]
-    mod --> ports
+    adapters["@oss/adapters<br/>vendor adapter interfaces"]
+    mod --> adapters
   end
 
   vendor["Vendor adapters<br/>PSP, KYC, aggregator, chat"]
@@ -49,10 +47,10 @@ flowchart TB
 
   host --> mod
   nest --> auth
-  mod --> persistence
-  mod --> events
-  events --> worker
-  ports -. implemented by .-> vendor
+  mod --> db
+  mod --> core
+  core -. events .-> worker
+  adapters -. implemented by .-> vendor
 
   subgraph ui["Headless UI"]
     uic["ui-provider-contract<br/>component interface"]
@@ -94,20 +92,20 @@ Solid arrows are runtime/build dependencies; dashed arrows are **adapter seams**
 
 **Contracts**
 
-- **domain-schemas** - the single Zod root. Every type is `z.infer`'d from here; nothing is hand-written. ADR-0004.
+- **shared-schemas** - shared Zod schemas (cross-cutting primitives + identity). Per-module request/response schemas live with the router in `orpc-contract`. Every type is `z.infer`'d, never hand-written. ADR-0004.
 - **orpc-contract** - composes each module's router into one contract. From it the build emits `docs/openapi.json` and a fully typed client (no codegen step). ADR-0001.
 
 **API runtime**
 
 - **extensions.config.ts** - the one list of enabled plugins (modules + overlays). The only place wiring is turned on.
-- **plugin-host** - `definePlugin({ id, dependsOn, register })` + `ModuleRegistry`. The bridge that mounts providers, controllers, events, prisma extensions, and MCP tools into the app. ADR-0002.
+- **plugin-host** - `definePlugin({ id, dependsOn, register })` + `ModuleRegistry`. The bridge that mounts providers, controllers, routers, slots, events, imports, and MCP tools into the app. (The Drizzle migration removed the `prisma` extension surface; overlays add their own `pgTable` in their module's `src/schema/index.ts`.) ADR-0002.
 - **NestJS + @orpc/nest** - owns DI, lifecycle, guards, request validation, and OpenAPI emission. `apps/api` is a thin caller of `createApp()` from `@oss/api-runtime`; downstream consumers call the same factory.
 
-**Platform services** (`packages/platform/*`) - shared infrastructure modules may import: `persistence` (Prisma client + tenant-scoped helpers), `auth` (better-auth), `events` (typed EventBus), `jobs` (BullMQ wrappers), `core` (logger, tenant context, observability).
+**Platform services** (`packages/platform/*`) - shared infrastructure modules may import: `db` (`@oss/db` - Drizzle client, drizzle-kit migrations, `DrizzleService`, the NestJS-free `@oss/db/orm` re-export, tenant-scoped helpers), `auth` (better-auth + the shared `AdminGuard`), `core` (logger, tenant context, typed `EventBus`), `plugin-host` (the plugin loader).
 
-**Business modules** (`packages/modules/*`) - one folder per domain. A module may import contracts, platform, UI, and SDK packages, but **never another module** - cross-module communication goes through events or shared contracts. Each declares vendor interfaces in `service/ports.ts`.
+**Business modules** (`packages/modules/*`) - one folder per domain. A module may import contracts, platform, UI, and SDK packages, but **never another module** - cross-module communication goes through events or shared contracts. Each depends on vendor adapter interfaces from `@oss/adapters`.
 
-**Vendor adapters** - concrete implementations of a module's ports (PSP, KYC vendor, casino aggregator, chat), shipped as separate packages. The port is the seam; the adapter is swappable.
+**Vendor adapters** - concrete implementations of a module's adapter interfaces (PSP, KYC vendor, casino aggregator, chat), shipped as separate packages. The interface is the seam; the implementation is swappable.
 
 **worker** (`apps/worker`) - consumes events emitted by modules (e.g. wallet deposit completed) and runs long-running jobs off the request path.
 
@@ -122,7 +120,7 @@ Solid arrows are runtime/build dependencies; dashed arrows are **adapter seams**
 
 **AI dev surface**
 
-- **mcp-server-dev** - a stdio MCP server (registered in `.mcp.json`, not a port) exposing read-only inspection (`list-modules`, `list-routes`, `query-openapi`, `get-prisma-model-graph`, ...) and write tools that delegate to the scaffolder.
+- **mcp-server-dev** - a stdio MCP server (registered in `.mcp.json`, not a port) exposing read-only inspection (`list-modules`, `list-routes`, `query-openapi`, `get-drizzle-schema`, ...) and write tools that delegate to the scaffolder.
 - **tools/scaffold.ts** - deterministic code-mods behind the `/scaffold-*` slash commands (module, plugin, route, ui-component). Consumer adds `/scaffold-feature` for its plugins package.
 - **AGENTS.md** - per-package brief; the first thing an agent reads.
 
@@ -133,7 +131,7 @@ These are the swap points - the reason the platform is "headless" and extensible
 | Seam          | Interface side                    | Implementation side                        | Swap to...                                       |
 | ------------- | --------------------------------- | ------------------------------------------ | ------------------------------------------------ |
 | Plugin host   | `definePlugin` contract           | a module or overlay folder                 | add/remove features without touching core        |
-| Vendor port   | `service/ports.ts`                | adapter package under `adapters/<vendor>/` | a different PSP, KYC, or aggregator              |
+| Vendor adapter | `@oss/adapters` (interface)          | impl package under `modules/<m>/adapters/<vendor>/` | a different PSP, KYC, or aggregator   |
 | UI provider   | `ui-provider-contract`            | `ui-provider-shadcn` (default)             | your own component library                       |
 | UI plugin     | `defineUIPlugin` slots            | a plugin's `ui.tsx`                        | extend the admin without forking the SDK         |
 | Consumer link | `createApp()` + `@oss/*` packages | downstream `apps/api` + `link:` overrides  | publish to npm and bump the tag (no code change) |
@@ -145,7 +143,7 @@ sequenceDiagram
   participant UI as react-sdk (admin)
   participant API as NestJS + @orpc/nest
   participant Mod as Module service
-  participant DB as Prisma (tenant-scoped)
+  participant DB as Drizzle (tenant-scoped)
 
   UI->>API: typed oRPC call (GET /players)
   API->>API: validate against Zod contract + guards

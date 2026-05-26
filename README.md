@@ -31,10 +31,10 @@ Log in to the backoffice with `admin@oss.dev` / `password123` (see `pnpm seed --
 ## Adding a module
 
 ```bash
-pnpm scaffold module <name>
+pnpm scaffold module <group> <name>   # group: player | backoffice | platform
 ```
 
-Generates the full module skeleton under `packages/modules/<name>/` and registers it in `extensions.config.ts`. See [AGENTS.md](./AGENTS.md) for the complete decision tree.
+Generates the full module skeleton under `packages/modules/<group>/<name>/` (part of the single `@oss/modules` package) and registers it in `extensions.config.ts`. See [AGENTS.md](./AGENTS.md) for the complete decision tree.
 
 ## Adding an extension (overlay plugin)
 
@@ -52,7 +52,6 @@ export default definePlugin({
     ctx.controllers.add(MyController); // oRPC @Implement controller
     ctx.slots.fill('sidebar-bottom', MyWidget);
     ctx.events.on('wallet.deposit.completed', handler);
-    ctx.prisma.extend('User', 'myField String?');
     ctx.mcp.tool({ name: 'my-tool', description: '...', handler });
   },
 });
@@ -69,10 +68,11 @@ export const extensions = [
 
 ## Examples
 
-| Example                                                              | What it shows                                                                                         |
-| -------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------- |
-| [`examples/consumer-games-plugin/`](./examples/consumer-games-plugin/) | PvP "Crash" game as a plugin: custom routes, provider override, event subscription, UI slot injection |
-| [`examples/sportsbook-plugin/`](./examples/sportsbook-plugin/)       | Sportsbook (Betby) integration: port-based adapter, webhook callback, large isolated domain as plugin |
+| Example                                                  | What it shows                                                                                  |
+| -------------------------------------------------------- | ---------------------------------------------------------------------------------------------- |
+| [`examples/minimal-casino/`](./examples/minimal-casino/) | A downstream consumer end-to-end: `createApp`, `extensions.config.ts`, a custom vendor adapter binding, and a theme override - the canonical "start here" template. |
+
+See [docs/downstream-consumer.md](./docs/downstream-consumer.md) for the full consumption guide.
 
 ## Architecture
 
@@ -82,6 +82,8 @@ Single Zod root  ->  oRPC contract  ->  NestJS controller  ->  OpenAPI spec
 ```
 
 Full system diagram (plugin host, adapter seams, consumer linking, AI dev surface): [docs/architecture.md](./docs/architecture.md).
+
+New to the terms (operator vs player, KYC, RTP, provably fair, rollover...)? See the [glossary](./docs/glossary.md).
 
 Pillars: [AGENTS.md](./AGENTS.md) | ADRs: [docs/adr/](./docs/adr/)
 
@@ -93,13 +95,13 @@ Module pages consume only `@oss/ui-provider-contract`. Swap the entire look by r
 
 Every module ships an `AGENTS.md`. The MCP dev server (`apps/mcp-server-dev`) exposes the schema registry, route catalog, plugin manifest, and scaffolders as tools - so an agent can extend the platform without re-asking the same questions every session.
 
-It is a **stdio** server registered in [`.mcp.json`](./.mcp.json) (pre-approved via `enabledMcpjsonServers` in `.claude/settings.json`) - the editor launches it; there is no port and no separate `dev` command. Codex reads the same definition from [`.codex/config.toml`](./.codex/config.toml).
+It is a **stdio** server registered in [`.mcp.json`](./.mcp.json) (pre-approved via `enabledMcpjsonServers` in `.claude/settings.json`) - the editor launches it; there is no port and no separate `dev` command.
 
 ```bash
 claude mcp list           # verify the oss-dev server is connected
 ```
 
-Then use `list-modules`, `list-routes`, `query-openapi`, `get-prisma-model-graph`, `propose-prisma-change`, and the `scaffold-*` tools. Write operations go through `/scaffold-module`, `/scaffold-plugin`, `/scaffold-route`, `/scaffold-ui-component` (deterministic code-mods). See [docs/agent-quickstart.md](./docs/agent-quickstart.md).
+Then use `list-modules`, `list-routes`, `query-openapi`, `get-drizzle-schema`, `propose-table-change`, `schema-get`, `docs-search`, `db-query-readonly`, and the `scaffold-*` tools. Write operations go through `/scaffold-module`, `/scaffold-plugin`, `/scaffold-route`, `/scaffold-ui-component` (deterministic code-mods). See [docs/agent-quickstart.md](./docs/agent-quickstart.md).
 
 ## License
 

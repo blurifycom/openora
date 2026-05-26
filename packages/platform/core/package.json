@@ -20,6 +20,7 @@
   },
   "dependencies": {
     "@nestjs/common": "11.1.21",
+    "@orpc/server": "1.14.3",
     "pino": "10.3.1"
   },
   "devDependencies": {

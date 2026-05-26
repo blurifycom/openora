@@ -4,24 +4,16 @@ export {
   RegisteredRoute,
   useUIRegistry,
   useNavItems,
-  useDashboardTiles,
-  useUsersColumns,
-  useUsersToolbar,
-  useUserDetailSections,
-  useUserDetailActions,
-  useGamesColumns,
-  usePlayersColumns,
-  usePlayerDetailSections,
-  usePlayerDetailActions,
   useRegisteredRoutes,
 } from './registry.js';
+export { Slot, useSlotFills, useSlotColumns, defineSlotFill, type SlotProps } from './slot.js';
+export { SLOTS, type SlotName, type ColumnSlotName } from './slots.js';
 export type {
   AppShellNavItem,
-  TileContribution,
-  SectionContribution,
-  ActionContribution,
-  ToolbarContribution,
-  RegisteredRoute as RegisteredRouteDescriptor,
-  UIPluginContext,
+  RegisteredRouteDescriptor,
   UIRegistry,
+  SlotFill,
+  SlotFillMode,
+  SlotContribution,
+  ColumnContribution,
 } from './context.js';

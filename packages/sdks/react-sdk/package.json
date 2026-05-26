@@ -24,11 +24,9 @@
     "test": "vitest run"
   },
   "dependencies": {
-    "@orpc/client": "1.14.3",
-    "@orpc/contract": "1.14.3",
-    "@orpc/openapi-client": "1.14.3",
-    "@oss/domain-schemas": "workspace:*",
+    "@oss/shared-schemas": "workspace:*",
     "@oss/orpc-contract": "workspace:*",
+    "@oss/sdk-core": "workspace:*",
     "@oss/ui-provider-contract": "workspace:*",
     "zod": "4.4.3"
   },

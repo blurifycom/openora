@@ -1,2 +1,0 @@
-// Backoffice module - no owned tables.
-// Reads from: user (identity), wallet_transaction (wallet).
