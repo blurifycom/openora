@@ -5,18 +5,25 @@ import { GameSchema } from '@oss/orpc-contract';
 import type { z } from 'zod';
 import { useOrpcClient } from '../../hooks/use-orpc-client.js';
 import { useUI } from '../../ui-provider.js';
+import type { GamesData } from '../../server/index.js';
 
 type Game = z.infer<typeof GameSchema>;
 
+export type PlayerGamesPageProps = {
+  /** Server-fetched data (RSC / loader). When set, react-query hydrates from it. */
+  initialData?: GamesData;
+};
+
 // Player-facing games catalogue. Browse grid built on the `gaming.listGames`
 // endpoint; "Play" launches a round via the game provider adapter.
-export function PlayerGamesPage() {
+export function PlayerGamesPage({ initialData }: PlayerGamesPageProps = {}) {
   const client = useOrpcClient();
   const { Card, Badge, Button } = useUI();
 
   const { data, isLoading } = useQuery({
     queryKey: ['gaming', 'games'],
     queryFn: () => client.gaming.listGames(),
+    ...(initialData ? { initialData: initialData.games } : {}),
   });
 
   const games: Game[] = (data ?? []) as Game[];

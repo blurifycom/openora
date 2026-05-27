@@ -5,22 +5,30 @@ import { LobbyCategorySchema, FeaturedSlotSchema } from '@oss/orpc-contract';
 import type { z } from 'zod';
 import { useOrpcClient } from '../../hooks/use-orpc-client.js';
 import { useUI } from '../../ui-provider.js';
+import type { LobbyData } from '../../server/index.js';
 
 type Category = z.infer<typeof LobbyCategorySchema>;
 type Featured = z.infer<typeof FeaturedSlotSchema>;
 
+export type PlayerLobbyPageProps = {
+  /** Server-fetched data (RSC / loader). When set, react-query hydrates from it. */
+  initialData?: LobbyData;
+};
+
 // Player lobby home. Reads the public `lobby.*` surface - no auth required.
-export function PlayerLobbyPage() {
+export function PlayerLobbyPage({ initialData }: PlayerLobbyPageProps = {}) {
   const client = useOrpcClient();
   const { Card, Badge } = useUI();
 
   const categories = useQuery({
     queryKey: ['lobby', 'categories'],
     queryFn: () => client.lobby.listCategories(),
+    ...(initialData ? { initialData: initialData.categories } : {}),
   });
   const featured = useQuery({
     queryKey: ['lobby', 'featured'],
     queryFn: () => client.lobby.getFeatured(),
+    ...(initialData ? { initialData: initialData.featured } : {}),
   });
 
   const cats: Category[] = categories.data ?? [];

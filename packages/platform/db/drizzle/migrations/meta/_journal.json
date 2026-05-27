@@ -8,6 +8,13 @@
       "when": 1779878990926,
       "tag": "0000_nasty_chronomancer",
       "breakpoints": true
+    },
+    {
+      "idx": 1,
+      "version": "7",
+      "when": 1779919913586,
+      "tag": "0001_smiling_mandarin",
+      "breakpoints": true
     }
   ]
 }

@@ -85,6 +85,21 @@
       ]
     },
     {
+      "id": "sportsbook",
+      "group": "player",
+      "tables": [
+        "SportsbookBet",
+        "SportsbookEvent",
+        "SportsbookSelection"
+      ],
+      "routes": [
+        "sportsbook.getEvent",
+        "sportsbook.listEvents",
+        "sportsbook.oddsStream",
+        "sportsbook.placeBet"
+      ]
+    },
+    {
       "id": "wallet",
       "group": "player",
       "tables": [
@@ -287,6 +302,8 @@
     "localization.translation.deleted",
     "localization.translation.upserted",
     "notifications.created",
+    "sportsbook.bet.placed",
+    "sportsbook.odds.updated",
     "wallet.deposit.completed",
     "wallet.withdrawal.completed"
   ],
@@ -474,6 +491,10 @@
       "file": "packages/contracts/orpc-contract/src/notifications.ts"
     },
     {
+      "name": "OddsUpdateSchema",
+      "file": "packages/contracts/orpc-contract/src/sportsbook.ts"
+    },
+    {
       "name": "OrganizationSchema",
       "file": "packages/contracts/shared-schemas/src/identity.ts"
     },
@@ -484,6 +505,14 @@
     {
       "name": "PaginationSchema",
       "file": "packages/contracts/shared-schemas/src/common.ts"
+    },
+    {
+      "name": "PlaceBetInputSchema",
+      "file": "packages/contracts/orpc-contract/src/sportsbook.ts"
+    },
+    {
+      "name": "PlaceBetResultSchema",
+      "file": "packages/contracts/orpc-contract/src/sportsbook.ts"
     },
     {
       "name": "PlatformStatsSchema",
@@ -512,6 +541,18 @@
     {
       "name": "RegisterInputSchema",
       "file": "packages/contracts/shared-schemas/src/identity.ts"
+    },
+    {
+      "name": "SportsbookBetSchema",
+      "file": "packages/contracts/orpc-contract/src/sportsbook.ts"
+    },
+    {
+      "name": "SportsbookEventSchema",
+      "file": "packages/contracts/orpc-contract/src/sportsbook.ts"
+    },
+    {
+      "name": "SportsbookSelectionSchema",
+      "file": "packages/contracts/orpc-contract/src/sportsbook.ts"
     },
     {
       "name": "StartRoundInputSchema",

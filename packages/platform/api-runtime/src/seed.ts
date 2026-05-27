@@ -4,6 +4,11 @@ import { user } from '@oss/modules/platform/identity/schema';
 import { player } from '@oss/modules/backoffice/player-management/schema';
 import { wallet, walletTransaction } from '@oss/modules/player/wallet/schema';
 import { game } from '@oss/modules/player/gaming/schema';
+import {
+  sportsbookEvent,
+  sportsbookSelection,
+  sportsbookBet,
+} from '@oss/modules/player/sportsbook/schema';
 
 export type SeedAuth = {
   api: {
@@ -32,6 +37,7 @@ export type SeedResult = {
   players: number;
   games: number;
   transactions: number;
+  sportsbookEvents: number;
 };
 
 function makeRng(seed: number): () => number {
@@ -97,6 +103,14 @@ const KYC_WEIGHTS = [
   ['rejected', 12],
 ] as const;
 
+// [sport, league, homeTeam, awayTeam, daysFromNow, [homeOdds, drawOdds, awayOdds]]
+const SPORTSBOOK_EVENTS = [
+  ['football', 'Premier League', 'Arsenal', 'Chelsea', 2, [2.1, 3.3, 3.5]],
+  ['football', 'La Liga', 'Real Madrid', 'Barcelona', 3, [2.4, 3.4, 2.8]],
+  ['basketball', 'NBA', 'Lakers', 'Celtics', 1, [1.9, 0, 1.95]],
+  ['tennis', 'ATP Tour', 'Alcaraz', 'Sinner', 4, [1.75, 0, 2.05]],
+] as const;
+
 const GAMES = [
   ['Gates of Olympus', 'Pragmatic Play', 'slots'],
   ['Sweet Bonanza', 'Pragmatic Play', 'slots'],
@@ -131,11 +145,14 @@ export async function seedDemoData(options: SeedOptions): Promise<SeedResult> {
   const playerPassword = options.password ?? 'password123';
   const rng = makeRng(0x5eed);
 
-  log('Clearing existing demo content (player, wallet, transaction, game)...');
+  log('Clearing existing demo content (player, wallet, transaction, game, sportsbook)...');
   await db.delete(walletTransaction).where(eq(walletTransaction.tenantId, tenantId));
   await db.delete(wallet).where(eq(wallet.tenantId, tenantId));
   await db.delete(player).where(eq(player.tenantId, tenantId));
   await db.delete(game).where(eq(game.tenantId, tenantId));
+  await db.delete(sportsbookBet).where(eq(sportsbookBet.tenantId, tenantId));
+  // Selections cascade-delete with their event.
+  await db.delete(sportsbookEvent).where(eq(sportsbookEvent.tenantId, tenantId));
 
   const adminUser = await ensureUser(db, auth, {
     email: admin.email,
@@ -156,6 +173,35 @@ export async function seedDemoData(options: SeedOptions): Promise<SeedResult> {
     })),
   );
   log(`Created ${GAMES.length} games.`);
+
+  const seedNow = Date.now();
+  const dayMsConst = 86_400_000;
+  for (const [sport, league, homeTeam, awayTeam, daysFromNow, odds] of SPORTSBOOK_EVENTS) {
+    const [eventRow] = await db
+      .insert(sportsbookEvent)
+      .values({
+        tenantId,
+        sport,
+        league,
+        homeTeam,
+        awayTeam,
+        startsAt: new Date(seedNow + daysFromNow * dayMsConst),
+        status: 'open',
+      })
+      .returning();
+
+    const [homeOdds, drawOdds, awayOdds] = odds;
+    const selections: { label: string; odds: number }[] = [
+      { label: 'home', odds: homeOdds },
+    ];
+    if (drawOdds > 0) selections.push({ label: 'draw', odds: drawOdds });
+    selections.push({ label: 'away', odds: awayOdds });
+
+    await db.insert(sportsbookSelection).values(
+      selections.map((s) => ({ eventId: eventRow!.id, label: s.label, odds: s.odds })),
+    );
+  }
+  log(`Created ${SPORTSBOOK_EVENTS.length} sportsbook events.`);
 
   let userCount = adminUser ? 1 : 0;
   let txCount = 0;
@@ -258,6 +304,7 @@ export async function seedDemoData(options: SeedOptions): Promise<SeedResult> {
     players: playerCount,
     games: GAMES.length,
     transactions: txCount,
+    sportsbookEvents: SPORTSBOOK_EVENTS.length,
   };
 }
 

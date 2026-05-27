@@ -31,6 +31,7 @@ overlay plugin that loads AFTER the default-binding module (last registration wi
 | gaming | player | Game, GameRound | gaming.endRound, gaming.getGame, gaming.listGames, gaming.listRounds, gaming.startRound |
 | leaderboard | player | leaderboard, leaderboard_entry | leaderboard.adminReset, leaderboard.get |
 | lobby | player | FeaturedSlot, LobbyCategory, LobbyCategoryGame | lobby.getCategoryBySlug, lobby.getFeatured, lobby.listCategories, lobby.search |
+| sportsbook | player | SportsbookBet, SportsbookEvent, SportsbookSelection | sportsbook.getEvent, sportsbook.listEvents, sportsbook.oddsStream, sportsbook.placeBet |
 | wallet | player | wallet, wallet_transaction | wallet.deposit, wallet.getBalance, wallet.listTransactions, wallet.withdraw |
 | admin-console | backoffice | - | admin-console.getStats, admin-console.getUser, admin-console.listTransactions, admin-console.listUsers, admin-console.updateUser |
 | cms | backoffice | banner, page | cms.createBanner, cms.createPage, cms.deleteBanner, cms.deletePage, cms.getPage, cms.listBanners, cms.listBannersByPlacement, cms.listPages, cms.updateBanner, cms.updatePage |
@@ -60,6 +61,8 @@ Emit/subscribe via the `EventBus` a service receives in its constructor (built i
 - `localization.translation.deleted`
 - `localization.translation.upserted`
 - `notifications.created`
+- `sportsbook.bet.placed`
+- `sportsbook.odds.updated`
 - `wallet.deposit.completed`
 - `wallet.withdrawal.completed`
 
@@ -103,7 +106,7 @@ Declare with `defineIgamingConfig({...})` from `@oss/shared-schemas`, pass to
 
 ## Zod schemas
 
-56 schemas. Look one up by name with the `schema-get` MCP tool.
+62 schemas. Look one up by name with the `schema-get` MCP tool.
 
 - `AdminTransactionSchema` - packages/contracts/orpc-contract/src/backoffice.ts
 - `AdminUserSchema` - packages/contracts/orpc-contract/src/backoffice.ts
@@ -139,9 +142,12 @@ Declare with `defineIgamingConfig({...})` from `@oss/shared-schemas`, pass to
 - `LoginInputSchema` - packages/contracts/shared-schemas/src/identity.ts
 - `MemberSchema` - packages/contracts/shared-schemas/src/identity.ts
 - `NotificationSchema` - packages/contracts/orpc-contract/src/notifications.ts
+- `OddsUpdateSchema` - packages/contracts/orpc-contract/src/sportsbook.ts
 - `OrganizationSchema` - packages/contracts/shared-schemas/src/identity.ts
 - `PageSchema` - packages/contracts/orpc-contract/src/cms.ts
 - `PaginationSchema` - packages/contracts/shared-schemas/src/common.ts
+- `PlaceBetInputSchema` - packages/contracts/orpc-contract/src/sportsbook.ts
+- `PlaceBetResultSchema` - packages/contracts/orpc-contract/src/sportsbook.ts
 - `PlatformStatsSchema` - packages/contracts/orpc-contract/src/backoffice.ts
 - `PlayerRegistrationPointSchema` - packages/contracts/orpc-contract/src/player.ts
 - `PlayerSchema` - packages/contracts/orpc-contract/src/player.ts
@@ -149,6 +155,9 @@ Declare with `defineIgamingConfig({...})` from `@oss/shared-schemas`, pass to
 - `PlayerSummarySchema` - packages/contracts/orpc-contract/src/player.ts
 - `ProviderSelectionSchema` - packages/contracts/shared-schemas/src/igaming-config.ts
 - `RegisterInputSchema` - packages/contracts/shared-schemas/src/identity.ts
+- `SportsbookBetSchema` - packages/contracts/orpc-contract/src/sportsbook.ts
+- `SportsbookEventSchema` - packages/contracts/orpc-contract/src/sportsbook.ts
+- `SportsbookSelectionSchema` - packages/contracts/orpc-contract/src/sportsbook.ts
 - `StartRoundInputSchema` - packages/contracts/orpc-contract/src/gaming.ts
 - `StartRoundOutputSchema` - packages/contracts/orpc-contract/src/gaming.ts
 - `SyncResultSchema` - packages/contracts/orpc-contract/src/igaming-aggregator.ts

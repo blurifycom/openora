@@ -27,6 +27,12 @@ export {
 
 // Hooks
 export { usePaginatedList, type PaginatedListState } from './hooks/use-paginated-list.js';
+export {
+  useEventStream,
+  type EventStreamStatus,
+  type UseEventStreamOptions,
+  type UseEventStreamResult,
+} from './hooks/use-event-stream.js';
 
 // Admin shell
 export { AppShell, type AppShellNavItem } from './shell/app-shell.js';
@@ -49,9 +55,13 @@ export { PlayerDetailPage } from './pages/admin/player-detail.js';
 export { PlayersDashboardPage } from './pages/admin/players-dashboard.js';
 
 // Player pages (player surface - consumed by apps/web)
-export { PlayerLobbyPage } from './pages/player/lobby.js';
-export { PlayerGamesPage } from './pages/player/games.js';
+export { PlayerLobbyPage, type PlayerLobbyPageProps } from './pages/player/lobby.js';
+export { PlayerGamesPage, type PlayerGamesPageProps } from './pages/player/games.js';
 export { PlayerWalletPage } from './pages/player/wallet.js';
+export {
+  PlayerSportsbookPage,
+  type PlayerSportsbookPageProps,
+} from './pages/player/sportsbook.js';
 
 // UI plugin system (extension points - see ADR-0006)
 export {

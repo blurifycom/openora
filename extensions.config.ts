@@ -20,6 +20,7 @@ export const extensions = [
   { id: 'chat', path: './packages/modules/dist/player/chat/src/plugin.js' },
   { id: 'bonus', path: './packages/modules/dist/player/bonus/src/plugin.js' },
   { id: 'aggregator', path: './packages/modules/dist/player/aggregator/src/plugin.js' },
+  { id: 'sportsbook', path: './packages/modules/dist/player/sportsbook/src/plugin.js' },
 
   // Backoffice - the admin/operator surface
   { id: 'admin-console', path: './packages/modules/dist/backoffice/admin-console/src/plugin.js' },

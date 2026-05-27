@@ -16,6 +16,8 @@ import { igamingAggregatorContract } from './igaming-aggregator.js';
 
 import { leaderboardContract } from './leaderboard.js';
 
+import { sportsbookContract } from './sportsbook.js';
+
 export { healthContract } from './health.js';
 export { identityContract } from './identity.js';
 export { localizationContract } from './localization.js';
@@ -57,6 +59,16 @@ export {
   LeaderboardResponseSchema,
 } from './leaderboard.js';
 
+export {
+  sportsbookContract,
+  SportsbookEventSchema,
+  SportsbookSelectionSchema,
+  SportsbookBetSchema,
+  OddsUpdateSchema,
+  PlaceBetInputSchema,
+  PlaceBetResultSchema,
+} from './sportsbook.js';
+
 export const contract = populateContractRouterPaths({
   health: healthContract,
   identity: identityContract,
@@ -73,6 +85,7 @@ export const contract = populateContractRouterPaths({
   player: playerContract,
   igamingAggregator: igamingAggregatorContract,
   leaderboard: leaderboardContract,
+  sportsbook: sportsbookContract,
 });
 
 export type Contract = typeof contract;

@@ -78,6 +78,18 @@ export const domainEventSchemas = {
     period: z.string(),
     tenantId: z.string(),
   }),
+
+  'sportsbook.odds.updated': z.object({
+    eventId: z.string(),
+    selectionId: z.string(),
+    odds: z.number(),
+  }),
+  'sportsbook.bet.placed': z.object({
+    userId: z.string(),
+    betId: z.string(),
+    selectionId: z.string(),
+    stake: z.number(),
+  }),
 } as const;
 
 export type DomainEventName = keyof typeof domainEventSchemas;
