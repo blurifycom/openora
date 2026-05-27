@@ -28,11 +28,33 @@ build, calls the `enhance-intent` MCP tool to turn the ask into a grounded spec,
 matching scaffold flow. See [mcp-setup.md](./mcp-setup.md#zero-config-setup-pnpm-setupmcp).
 
 This emits everything the sections below describe by hand: `apps/api` (thin `createApp` entry +
-`extensions.config.ts`), `apps/web` + `apps/backoffice` (Next apps mounting react-sdk pages with
-the dedup `next.config.ts`), root `pnpm.overrides` linking every `@oss/*`, `.mcp.json`, the three
-consumer AI agents, and `turbo/generators/` (`pnpm gen plugin|adapter|page`). The CLI lives at
-`tools/create-igaming-app.ts`; the template tree at `tools/templates/consumer/`. Read on to
-understand what it generated and how to extend it.
+`extensions.config.ts`), `apps/web` + `apps/backoffice` (mounting react-sdk pages with the dedup
+config), root `pnpm.overrides` linking every `@oss/*`, `.mcp.json`, the three consumer AI agents,
+and `turbo/generators/` (`pnpm gen plugin|adapter|page`). The CLI lives at
+`tools/create-igaming-app.ts`; the shared base tree at `tools/templates/consumer/` and the
+per-app trees at `tools/templates/variants/`. Read on to understand what it generated and how to
+extend it.
+
+### Choosing the frontend frameworks
+
+The player and admin apps each ship in two flavours, selected by flag:
+
+| Flag | Values | Default | Emits |
+|---|---|---|---|
+| `--web` | `next`, `tanstack` | `next` | `apps/web` as a Next 16 player app, or a TanStack Start (Vite + SSR) player app |
+| `--backoffice` | `next`, `vite` | `vite` | `apps/backoffice` as a Next 16 admin app, or a Vite + TanStack Router client-only SPA |
+
+```bash
+pnpm create:app ../poc --name poc --web=tanstack --backoffice=vite
+```
+
+Defaults keep full backward compatibility for the player app (`--web=next`). The admin default is
+the Vite SPA (`--backoffice=vite`); pass `--backoffice=next` for the original Next admin app. Every
+variant uses the same react/react-dom/@tanstack/react-query dedup (Vite `resolve.dedupe` + alias,
+the Vite equivalent of the Next `next.config.ts` alias - see ADR-0005) so the linked `@oss/*` and
+the app share a single physical React copy. The TanStack Start player routes fetch via the
+`@oss/react-sdk/server` loaders (`fetchLobbyData`, `fetchSportsbookData`), forwarding the request
+cookies; the wallet renders client-only.
 
 ## API entrypoint
 

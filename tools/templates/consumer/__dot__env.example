@@ -12,5 +12,10 @@ REDIS_URL=redis://localhost:6379
 PORT=3001
 CORS_ORIGINS=http://localhost:3000,http://localhost:3002
 
-# Player web app -> API
+# Player web app -> API (Next variant reads NEXT_PUBLIC_*, Vite/TanStack reads VITE_PUBLIC_*)
 NEXT_PUBLIC_API_URL=http://localhost:3001
+VITE_PUBLIC_API_URL=http://localhost:3001
+
+# Server-to-server API URL used by TanStack Start route loaders (falls back to the
+# public URL above). Only relevant for --web=tanstack.
+INTERNAL_API_URL=http://localhost:3001

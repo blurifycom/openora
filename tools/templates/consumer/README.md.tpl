@@ -9,9 +9,9 @@ linked packages and never forked.
 
 ```
 apps/
-  api/          # NestJS + oRPC API (:3001) - thin createApp entry + your extensions.config.ts
-  web/          # Next.js player app (:3000) - mounts @oss/react-sdk player pages
-  backoffice/   # Next.js admin app (:3002) - mounts @oss/react-sdk admin pages
+  api/          # Hono + oRPC API (:3001) - thin createApp entry + your extensions.config.ts
+  web/          # player app (:3000) - Next.js or TanStack Start; mounts @oss/react-sdk player pages
+  backoffice/   # admin app (:3002) - Vite SPA or Next.js; mounts @oss/react-sdk admin pages
 .claude/agents/ # AI agents: igaming-builder, igaming-expert, igaming-qa
 turbo/generators/ # turbo gen: plugin, adapter, page
 ```

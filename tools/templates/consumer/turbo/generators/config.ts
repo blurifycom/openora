@@ -55,8 +55,14 @@ export default function generator(plop: PlopTypes.NodePlopAPI): void {
     ],
   });
 
+  // FOLLOW-UP: this generator emits a Next App Router shim
+  // (apps/<surface>/app/<route>/page.tsx). It is correct for the Next web/backoffice
+  // variants only. For --web=tanstack and --backoffice=vite the right shape is a
+  // TanStack `createFileRoute` module under src/routes/, so this generator should be
+  // made framework-aware (detect the variant, pick the template) before relying on it
+  // in those apps. Tracked as a follow-up; not blocking this scaffolder change.
   plop.setGenerator('page', {
-    description: 'Mount an @oss/react-sdk page component on a route',
+    description: 'Mount an @oss/react-sdk page component on a route (Next variant)',
     prompts: [
       {
         type: 'list',

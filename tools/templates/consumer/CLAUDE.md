@@ -31,9 +31,9 @@ Only return to the user to resolve genuine decisions they alone can make.
 
 ## What this repo is
 
-- `apps/api/` - thin NestJS API entry, your own `extensions.config.ts`
-- `apps/web/` - Next.js player app mounting `@oss/react-sdk` pages
-- `apps/backoffice/` - Next.js admin app mounting `@oss/react-sdk` admin pages
+- `apps/api/` - thin Hono + oRPC API entry, your own `extensions.config.ts`
+- `apps/web/` - player app (Next.js or TanStack Start) mounting `@oss/react-sdk` pages
+- `apps/backoffice/` - admin app (Vite SPA or Next.js) mounting `@oss/react-sdk` admin pages
 - `@oss/*` packages are linked from a sibling OSS checkout via `pnpm.overrides`
 
 ## How to extend
