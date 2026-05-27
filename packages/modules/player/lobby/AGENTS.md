@@ -34,7 +34,7 @@ None - the lobby has no external third-party integrations. If a CMS-driven lobby
 ## Don't
 
 - Import another module's service/runtime code (eg `@oss/modules/player/gaming`) - read its table via the schema subpath, or use events
-- Throw `HttpException` or `ORPCError` from the service - only from the router handler
+- Throw framework HTTP errors or `ORPCError` from the service - only from the router handler
 - Edit the generated migrations under `packages/platform/db/` by hand - edit `src/schema/index.ts` and run `pnpm regen`
 - Add inline Zod schemas in router or service - all schemas live in `src/schemas/` or the contract
 - Use `any` - use `unknown` with explicit type assertions and narrowing

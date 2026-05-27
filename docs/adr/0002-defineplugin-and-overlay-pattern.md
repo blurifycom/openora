@@ -18,7 +18,7 @@ The platform's primary value proposition is extensibility: operators clone the r
 
 **Secondary path - npm package**: Same `definePlugin` contract. Listed in `extensions.config.ts` with an npm package name instead of a path.
 
-The `definePlugin` factory returns a typed `Plugin` object. The `register(ctx: ModuleRegistry)` function receives a registry that exposes typed methods: `ctx.providers.add`, `ctx.controllers.add`, `ctx.routers.add`, `ctx.slots.fill`, `ctx.events.on`, `ctx.mcp.tool`, `ctx.imports.add`.
+The `definePlugin` factory returns a typed `Plugin` object. The `register(ctx: ModuleRegistry)` function receives a registry that exposes typed methods: `ctx.provide`, `ctx.routers.add`, `ctx.slots.fill`, `ctx.events.on`, `ctx.mcp.tool`.
 
 > **Update (2026-05):** the Drizzle migration removed `ctx.prisma.extend`. Overlays now add their own `pgTable` in their module's `src/schema/index.ts`; the plugin registry no longer exposes a `prisma` surface.
 

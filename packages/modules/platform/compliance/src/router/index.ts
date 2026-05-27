@@ -1,57 +1,47 @@
-import { Controller } from '@nestjs/common';
-import { Implement, implement } from '@orpc/nest';
+import { implement } from '@orpc/server';
 import { AdminGuard } from '@oss/auth';
-import { getUserId, mapErrors } from '@oss/core';
+import { getUserId, mapErrors, type OssContext } from '@oss/core';
 import { complianceContract } from '@oss/orpc-contract/compliance';
-import type { Request } from 'express';
 import {
   ComplianceService,
   LimitNotFoundError,
   LimitOwnershipError,
 } from '../service/compliance.service.js';
 
-@Controller()
-export class ComplianceController {
-  constructor(
-    private readonly compliance: ComplianceService,
-    private readonly adminGuard: AdminGuard,
-  ) {}
+export function createComplianceRouter(compliance: ComplianceService, adminGuard: AdminGuard) {
+  const os = implement(complianceContract).$context<OssContext>();
 
-  @Implement(complianceContract)
-  complianceRouter() {
-    return {
-      getLimits: implement(complianceContract.getLimits).handler(({ context }) =>
-        this.compliance.getLimitsForUser(getUserId(context)),
+  return os.router({
+    getLimits: os.getLimits.handler(({ context }) =>
+      compliance.getLimitsForUser(getUserId(context)),
+    ),
+
+    upsertLimit: os.upsertLimit.handler(({ input, context }) =>
+      compliance.upsertLimit(getUserId(context), input),
+    ),
+
+    deleteLimit: os.deleteLimit.handler(({ input, context }) =>
+      mapErrors({ NOT_FOUND: LimitNotFoundError, FORBIDDEN: LimitOwnershipError }, () =>
+        compliance.removeLimit(input.id, getUserId(context)),
       ),
+    ),
 
-      upsertLimit: implement(complianceContract.upsertLimit).handler(({ input, context }) =>
-        this.compliance.upsertLimit(getUserId(context), input),
-      ),
+    geoCheck: os.geoCheck.handler(({ context }) => {
+      const ip =
+        (context.request.headers['x-forwarded-for'] as string | undefined)
+          ?.split(',')[0]
+          ?.trim() ?? '127.0.0.1';
+      return compliance.geoCheck(ip);
+    }),
 
-      deleteLimit: implement(complianceContract.deleteLimit).handler(({ input, context }) =>
-        mapErrors(
-          { NOT_FOUND: LimitNotFoundError, FORBIDDEN: LimitOwnershipError },
-          () => this.compliance.removeLimit(input.id, getUserId(context)),
-        ),
-      ),
+    addGeoRule: os.addGeoRule.handler(async ({ input, context }) => {
+      await adminGuard.assert(context);
+      return compliance.addGeoRule(input);
+    }),
 
-      geoCheck: implement(complianceContract.geoCheck).handler(({ context }) => {
-        const req = (context as { request: Request }).request;
-        const ip =
-          (req.headers['x-forwarded-for'] as string | undefined)?.split(',')[0]?.trim() ??
-          '127.0.0.1';
-        return this.compliance.geoCheck(ip);
-      }),
-
-      addGeoRule: implement(complianceContract.addGeoRule).handler(async ({ input, context }) => {
-        await this.adminGuard.assert(context);
-        return this.compliance.addGeoRule(input);
-      }),
-
-      listGeoRules: implement(complianceContract.listGeoRules).handler(async ({ context }) => {
-        await this.adminGuard.assert(context);
-        return this.compliance.listGeoRules();
-      }),
-    };
-  }
+    listGeoRules: os.listGeoRules.handler(async ({ context }) => {
+      await adminGuard.assert(context);
+      return compliance.listGeoRules();
+    }),
+  });
 }

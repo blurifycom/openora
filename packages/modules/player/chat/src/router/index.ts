@@ -1,7 +1,6 @@
-import { Controller } from '@nestjs/common';
-import { Implement, implement } from '@orpc/nest';
+import { implement } from '@orpc/server';
 import { populateContractRouterPaths } from '@orpc/contract';
-import { mapErrors } from '@oss/core';
+import { mapErrors, type OssContext } from '@oss/core';
 import { chatContract } from '@oss/orpc-contract/chat';
 import {
   ChatService,
@@ -24,48 +23,40 @@ function extractHeader(context: unknown, header: string, fallback: string): stri
   return fallback;
 }
 
-@Controller()
-export class ChatController {
-  constructor(private readonly chatService: ChatService) {}
+export function createChatRouter(chatService: ChatService) {
+  const os = implement(chat).$context<OssContext>();
 
-  @Implement(chat)
-  chat() {
-    return {
-      listRooms: implement(chat.listRooms).handler(() => this.chatService.listRooms()),
+  return os.router({
+    listRooms: os.listRooms.handler(() => chatService.listRooms()),
 
-      getRoomMessages: implement(chat.getRoomMessages).handler(({ input }) =>
-        mapErrors(
-          { NOT_FOUND: ChatRoomNotFoundError },
-          () => this.chatService.getRoomMessages(input.roomId, input.limit, input.before),
-        ),
+    getRoomMessages: os.getRoomMessages.handler(({ input }) =>
+      mapErrors({ NOT_FOUND: ChatRoomNotFoundError }, () =>
+        chatService.getRoomMessages(input.roomId, input.limit, input.before),
       ),
+    ),
 
-      sendRoomMessage: implement(chat.sendRoomMessage).handler(({ input, context }) => {
-        const userId = extractHeader(context, 'x-user-id', 'anonymous');
-        const username = extractHeader(context, 'x-username', 'anonymous');
-        return mapErrors(
-          { NOT_FOUND: ChatRoomNotFoundError },
-          () => this.chatService.sendRoomMessage(userId, username, input.roomId, input.content),
-        );
-      }),
+    sendRoomMessage: os.sendRoomMessage.handler(({ input, context }) => {
+      const userId = extractHeader(context, 'x-user-id', 'anonymous');
+      const username = extractHeader(context, 'x-username', 'anonymous');
+      return mapErrors({ NOT_FOUND: ChatRoomNotFoundError }, () =>
+        chatService.sendRoomMessage(userId, username, input.roomId, input.content),
+      );
+    }),
 
-      deleteMessage: implement(chat.deleteMessage).handler(({ input, context }) => {
-        const userId = extractHeader(context, 'x-user-id', 'anonymous');
-        return mapErrors(
-          { NOT_FOUND: ChatMessageNotFoundError, FORBIDDEN: ChatMessageOwnershipError },
-          () => this.chatService.deleteMessage(input.id, userId),
-        );
-      }),
+    deleteMessage: os.deleteMessage.handler(({ input, context }) => {
+      const userId = extractHeader(context, 'x-user-id', 'anonymous');
+      return mapErrors(
+        { NOT_FOUND: ChatMessageNotFoundError, FORBIDDEN: ChatMessageOwnershipError },
+        () => chatService.deleteMessage(input.id, userId),
+      );
+    }),
 
-      getGlobalMessages: implement(chat.getGlobalMessages).handler(() =>
-        this.chatService.getGlobalMessages(),
-      ),
+    getGlobalMessages: os.getGlobalMessages.handler(() => chatService.getGlobalMessages()),
 
-      sendGlobalMessage: implement(chat.sendGlobalMessage).handler(async ({ input, context }) => {
-        const userId = extractHeader(context, 'x-user-id', 'anonymous');
-        const username = extractHeader(context, 'x-username', 'anonymous');
-        return this.chatService.sendGlobalMessage(userId, username, input.content);
-      }),
-    };
-  }
+    sendGlobalMessage: os.sendGlobalMessage.handler(({ input, context }) => {
+      const userId = extractHeader(context, 'x-user-id', 'anonymous');
+      const username = extractHeader(context, 'x-username', 'anonymous');
+      return chatService.sendGlobalMessage(userId, username, input.content);
+    }),
+  });
 }

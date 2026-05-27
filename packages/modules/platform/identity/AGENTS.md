@@ -12,7 +12,7 @@ Authentication and user management. Wraps better-auth for email+password flows.
 | GET    | /identity/me       | getSession via better-auth  |
 
 Contract slice: `packages/contracts/orpc-contract/src/identity.ts`
-Controller: `src/router/index.ts` (`IdentityController`)
+Router factory: `src/router/index.ts` (`createIdentityRouter`)
 
 ## Drizzle tables
 
@@ -37,7 +37,7 @@ Subscribe via `ctx.events.on('identity.user.registered', handler)` in a plugin.
 ## Ports
 
 `KycAdapter` (token: `KYC_ADAPTER`) - KYC vendor adapter. Not registered by default.
-Implement in `adapters/<vendor>/` and register via `ctx.providers.add({ provide: KYC_ADAPTER, useClass: MyKycAdapter })`.
+Implement in `adapters/<vendor>/` and register via `ctx.provide(KYC_ADAPTER, () => new MyKycAdapter())`.
 
 ## Extension points
 
@@ -49,7 +49,7 @@ Implement in `adapters/<vendor>/` and register via `ctx.providers.add({ provide:
 ## Do
 
 - Inject `DrizzleService` from `@oss/db` for any custom queries beyond what better-auth provides (`this.drizzle.db.select().from(user).where(eq(...))`; operators from `drizzle-orm`, tables from `../schema/index.js`)
-- Use `@Inject(EVENT_BUS)` to receive the event bus
+- Receive the `EventBus` as a constructor argument (plugin.ts passes `c.get(EVENT_BUS)`)
 - Keep business logic in the service, not the controller
 - Call `this.events.emit(...)` AFTER the DB write succeeds
 

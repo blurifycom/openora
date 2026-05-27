@@ -1,8 +1,7 @@
-import { Injectable, Inject } from '@nestjs/common';
-import { type EventBus, EVENT_BUS, createDomainError } from '@oss/core';
+import { type EventBus, createDomainError } from '@oss/core';
 import { DrizzleService } from '@oss/db';
 import { eq, and, asc, desc } from 'drizzle-orm';
-import { type GameAdapter, GAME_ADAPTER } from '@oss/adapters';
+import { type GameAdapter } from '@oss/adapters';
 import { game, gameRound } from '../schema/index.js';
 import type { Game, GameRound } from '../schemas/index.js';
 
@@ -42,12 +41,11 @@ function toGameRound(record: typeof gameRound.$inferSelect): GameRound {
   };
 }
 
-@Injectable()
 export class GamingService {
   constructor(
     private readonly drizzle: DrizzleService,
-    @Inject(EVENT_BUS) private readonly events: EventBus,
-    @Inject(GAME_ADAPTER) private readonly provider: GameAdapter,
+    private readonly events: EventBus,
+    private readonly provider: GameAdapter,
   ) {}
 
   async listGames(tenantId?: string): Promise<Game[]> {

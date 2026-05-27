@@ -2,6 +2,15 @@ import { ORPCError } from '@orpc/server';
 
 type RequestLike = { headers: Record<string, string | string[] | undefined> };
 
+// The context every oRPC handler receives. The Hono adapter builds `request`
+// per request (see @oss/api-runtime createApp) so getUserId / AdminGuard.assert
+// can read the incoming headers. `resHeaders` is injected by oRPC's
+// ResponseHeadersPlugin - handlers append Set-Cookie to it (eg auth login).
+export interface OssContext {
+  request: RequestLike;
+  resHeaders?: Headers;
+}
+
 function resolveHeader(
   context: unknown,
   header: string,

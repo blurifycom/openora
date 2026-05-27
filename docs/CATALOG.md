@@ -13,35 +13,35 @@ overlay plugin that loads AFTER the default-binding module (last registration wi
 
 | Category | Interface | Token | Status | Bound in |
 | --- | --- | --- | --- | --- |
-| aggregator | `AggregatorAdapter` | `AGGREGATOR_ADAPTER` | wired (default impl) | `packages/modules/player/aggregator/src/service/igaming-aggregator.service.ts` |
-| game | `GameAdapter` | `GAME_ADAPTER` | wired (default impl) | `packages/modules/player/gaming/src/plugin.ts`<br>`packages/modules/player/gaming/src/service/gaming.service.ts` |
-| geo-ip | `GeoIpAdapter` | `GEO_IP_ADAPTER` | wired (default impl) | `packages/modules/platform/compliance/src/service/compliance.service.ts` |
+| aggregator | `AggregatorAdapter` | `AGGREGATOR_ADAPTER` | wired (default impl) | `packages/modules/player/aggregator/src/plugin.ts` |
+| game | `GameAdapter` | `GAME_ADAPTER` | wired (default impl) | `packages/modules/player/gaming/src/plugin.ts` |
+| geo-ip | `GeoIpAdapter` | `GEO_IP_ADAPTER` | wired (default impl) | `packages/modules/platform/compliance/src/plugin.ts` |
 | kyc | `KycAdapter` | `KYC_ADAPTER` | wired (default impl) | `packages/modules/platform/identity/src/adapters/mock/mock-kyc-adapter.ts`<br>`packages/modules/platform/identity/src/plugin.ts` |
 | notification | `NotificationDeliveryAdapter` | `NOTIFICATION_DELIVERY_ADAPTER` | wired (default impl) | `packages/modules/platform/notifications/src/plugin.ts` |
-| payment | `PaymentAdapter` | `PAYMENT_ADAPTER` | wired (default impl) | `packages/modules/player/wallet/src/plugin.ts`<br>`packages/modules/player/wallet/src/service/wallet.service.ts` |
+| payment | `PaymentAdapter` | `PAYMENT_ADAPTER` | wired (default impl) | `packages/modules/player/wallet/src/plugin.ts` |
 
 ## Modules
 
 | Module | Group | Tables | Routes |
 | --- | --- | --- | --- |
-| aggregator | player | aggregator_provider | - |
-| bonus | player | bonus, user_bonus | - |
-| chat | player | ChatMessage, ChatRoom | - |
-| gaming | player | Game, GameRound | - |
-| leaderboard | player | leaderboard, leaderboard_entry | - |
-| lobby | player | FeaturedSlot, LobbyCategory, LobbyCategoryGame | - |
-| wallet | player | wallet, wallet_transaction | - |
-| admin-console | backoffice | - | - |
-| cms | backoffice | banner, page | - |
-| player-management | backoffice | player | - |
-| compliance | platform | geo_rule, user_limit | - |
-| identity | platform | account, session, user, verification | - |
-| localization | platform | locale, translation | - |
-| notifications | platform | notification | - |
+| aggregator | player | aggregator_provider | aggregator.callback, aggregator.listProviders, aggregator.sync |
+| bonus | player | bonus, user_bonus | bonus.claimBonus, bonus.getUserBonus, bonus.getUserBonuses, bonus.listBonuses |
+| chat | player | ChatMessage, ChatRoom | chat.deleteMessage, chat.getGlobalMessages, chat.getRoomMessages, chat.listRooms, chat.sendGlobalMessage, chat.sendRoomMessage |
+| gaming | player | Game, GameRound | gaming.endRound, gaming.getGame, gaming.listGames, gaming.listRounds, gaming.startRound |
+| leaderboard | player | leaderboard, leaderboard_entry | leaderboard.adminReset, leaderboard.get |
+| lobby | player | FeaturedSlot, LobbyCategory, LobbyCategoryGame | lobby.getCategoryBySlug, lobby.getFeatured, lobby.listCategories, lobby.search |
+| wallet | player | wallet, wallet_transaction | wallet.deposit, wallet.getBalance, wallet.listTransactions, wallet.withdraw |
+| admin-console | backoffice | - | admin-console.getStats, admin-console.getUser, admin-console.listTransactions, admin-console.listUsers, admin-console.updateUser |
+| cms | backoffice | banner, page | cms.createBanner, cms.createPage, cms.deleteBanner, cms.deletePage, cms.getPage, cms.listBanners, cms.listBannersByPlacement, cms.listPages, cms.updateBanner, cms.updatePage |
+| player-management | backoffice | player | player-management.get, player-management.list, player-management.registrationsOverTime, player-management.remove, player-management.summary, player-management.update |
+| compliance | platform | geo_rule, user_limit | compliance.addGeoRule, compliance.deleteLimit, compliance.geoCheck, compliance.getLimits, compliance.listGeoRules, compliance.upsertLimit |
+| identity | platform | account, session, user, verification | identity.login, identity.logout, identity.me, identity.register |
+| localization | platform | locale, translation | localization.deleteTranslation, localization.getTranslations, localization.listLocales, localization.upsertTranslation |
+| notifications | platform | notification | notifications.list, notifications.markAllRead, notifications.markRead |
 
 ## Domain events
 
-Emit/subscribe via the injected `EventBus` (`@Inject(EVENT_BUS)` from `@oss/core`).
+Emit/subscribe via the `EventBus` a service receives in its constructor (built in `plugin.ts` from `c.get(EVENT_BUS)`, token from `@oss/core`).
 
 - `aggregator.callback.received`
 - `aggregator.sync.completed`
@@ -98,7 +98,7 @@ Declare with `defineIgamingConfig({...})` from `@oss/shared-schemas`, pass to
 
 `definePlugin({ id, register(ctx) })` - `ctx` (ModuleRegistry) exposes:
 
-`ctx.controllers`, `ctx.events`, `ctx.imports`, `ctx.mcp`, `ctx.providers`, `ctx.routers`, `ctx.slots`
+`ctx.events`, `ctx.mcp`, `ctx.routers`, `ctx.slots`
 
 ## Zod schemas
 

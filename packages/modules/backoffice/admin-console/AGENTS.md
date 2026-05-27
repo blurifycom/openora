@@ -27,7 +27,7 @@ None currently. If a reporting or analytics vendor is added, define an interface
 ## Don't
 
 - Import from another module's service/runtime code directly (read its tables via the schema subpath, or use events)
-- Throw `HttpException` or NestJS HTTP errors from service methods
+- Throw `ORPCError` (or a domain error mapped via `mapErrors`) - never framework HTTP errors
 - Add tenanted `pgTable` defs without a `tenantId` text column
 - Edit the generated migrations under `packages/platform/db/` by hand - the source of truth is each module's `src/schema/index.ts`
 

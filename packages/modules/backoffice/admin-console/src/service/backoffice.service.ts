@@ -1,4 +1,3 @@
-import { Injectable } from '@nestjs/common';
 import { createDomainError } from '@oss/core';
 import { DrizzleService } from '@oss/db';
 import { eq, ilike, count, sum, and, desc } from 'drizzle-orm';
@@ -11,7 +10,6 @@ export const UserNotFoundError = createDomainError(
   (userId: string) => `User not found: ${userId}`,
 );
 
-@Injectable()
 export class BackofficeService {
   constructor(private readonly drizzle: DrizzleService) {}
 

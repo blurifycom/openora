@@ -18,12 +18,12 @@ None currently. Chat reads/writes the DB directly via `DrizzleService` (`@oss/db
 
 1. Define an interface in `@oss/adapters`
 2. Implement in `src/adapters/<vendor>/`
-3. Inject via Nest DI token
+3. Resolve via its token from the container (passed into the router factory by plugin.ts)
 
 ## Do
 
 - Add business logic to `service/chat.service.ts` as plain async methods
-- Throw domain errors (`ChatRoomNotFoundError`, etc.) from the service - never `ORPCError` or `HttpException`
+- Throw domain errors (`ChatRoomNotFoundError`, etc.) from the service - never `ORPCError` or framework HTTP errors
 - Map domain errors to `ORPCError` in `router/index.ts`
 - Add `pgTable` defs to `src/schema/index.ts`, then run `pnpm regen`
 - Keep `tenantId` on every new multi-tenant `pgTable`
@@ -32,7 +32,7 @@ None currently. Chat reads/writes the DB directly via `DrizzleService` (`@oss/db
 ## Don't
 
 - Import from other modules directly - use EventBus for cross-module communication
-- Throw `HttpException` or `ORPCError` from services
+- Throw framework HTTP errors or `ORPCError` from services
 - Edit the generated migrations under `packages/platform/db/` by hand - the source of truth is `src/schema/index.ts`
 - Add inline Zod schemas in the router or service - all schemas live in `src/schemas/` or `@oss/orpc-contract/chat`
 - Use `any` - use `unknown` + narrowing

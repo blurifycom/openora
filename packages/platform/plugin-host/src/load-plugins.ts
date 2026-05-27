@@ -1,3 +1,4 @@
+import type { Container } from '@oss/core';
 import type { Plugin } from './define-plugin.js';
 import { ModuleRegistryImpl } from './module-registry.js';
 
@@ -66,7 +67,10 @@ function topoSort(plugins: Plugin[]): Plugin[] {
   return sorted;
 }
 
-export async function loadPlugins(entries: PluginEntry[]): Promise<ModuleRegistryImpl> {
+export async function loadPlugins(
+  entries: PluginEntry[],
+  container: Container,
+): Promise<ModuleRegistryImpl> {
   validateEntries(entries);
   const plugins: Plugin[] = [];
 
@@ -80,7 +84,7 @@ export async function loadPlugins(entries: PluginEntry[]): Promise<ModuleRegistr
   }
 
   const ordered = topoSort(plugins);
-  const registry = new ModuleRegistryImpl();
+  const registry = new ModuleRegistryImpl(container);
 
   for (const plugin of ordered) {
     await plugin.register(registry);

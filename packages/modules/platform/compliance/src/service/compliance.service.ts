@@ -1,10 +1,9 @@
-import { Injectable, Inject, Optional } from '@nestjs/common';
 import { DrizzleService } from '@oss/db';
-import { type EventBus, EVENT_BUS, createDomainError } from '@oss/core';
+import { type EventBus, createDomainError } from '@oss/core';
 import { eq } from 'drizzle-orm';
 import { userLimit, geoRule } from '../schema/index.js';
 import type { UpsertLimitInput, Limit, GeoRule, AddGeoRuleInput } from '../schemas/index.js';
-import { type GeoIpAdapter, GEO_IP_ADAPTER } from '@oss/adapters';
+import { type GeoIpAdapter } from '@oss/adapters';
 
 export const LimitNotFoundError = createDomainError(
   'LimitNotFoundError',
@@ -16,12 +15,11 @@ export const LimitOwnershipError = createDomainError(
   () => 'Limit does not belong to this user',
 );
 
-@Injectable()
 export class ComplianceService {
   constructor(
     private readonly drizzle: DrizzleService,
-    @Inject(EVENT_BUS) private readonly events: EventBus,
-    @Optional() @Inject(GEO_IP_ADAPTER) private readonly geoIp: GeoIpAdapter | null = null,
+    private readonly events: EventBus,
+    private readonly geoIp: GeoIpAdapter | null = null,
   ) {}
 
   async getLimitsForUser(userId: string): Promise<Limit[]> {

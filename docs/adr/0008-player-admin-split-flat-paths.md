@@ -20,7 +20,7 @@ A route-level audit showed the namespace re-prefix would touch ~60 procedures ac
 2. **Express the split where it is navigated, not on the wire:**
    - `@oss/react-sdk` pages are grouped `src/pages/admin/` and `src/pages/player/`.
    - Two reference apps consume the respective surfaces: `apps/backoffice` (admin) and `apps/web` (player).
-3. **Enforce admin access with one shared guard.** `AdminGuard` (in `@oss/auth`, provided globally by api-runtime's `InfraModule`) resolves the better-auth session and asserts `role === 'admin'`, throwing `ORPCError` UNAUTHORIZED/FORBIDDEN. Every admin route calls `await this.adminGuard.assert(context)` as its first line. This is the single enforcement point; modules never re-implement the role check.
+3. **Enforce admin access with one shared guard.** `AdminGuard` (in `@oss/auth`, seeded into the composition container by `createApp`) resolves the better-auth session and asserts `role === 'admin'`, throwing `ORPCError` UNAUTHORIZED/FORBIDDEN. Every admin route calls `await adminGuard.assert(context)` as its first line. This is the single enforcement point; modules never re-implement the role check.
 
 ## Consequences
 

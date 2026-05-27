@@ -13,8 +13,7 @@
   "dependencies": {
     "@oss/api-runtime": "workspace:*",
     "@oss/orpc-contract": "workspace:*",
-    "@oss/plugin-host": "workspace:*",
-    "reflect-metadata": "0.2.2"
+    "@oss/plugin-host": "workspace:*"
   },
   "devDependencies": {
     "@oss/tsconfig": "workspace:*",

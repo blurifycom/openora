@@ -1,15 +1,20 @@
-import 'reflect-metadata';
-import { NestFactory } from '@nestjs/core';
-import type { INestApplication, DynamicModule, Provider, Type } from '@nestjs/common';
 import { OpenAPIGenerator } from '@orpc/openapi';
+import { OpenAPIHandler } from '@orpc/openapi/fetch';
+import { implement, onError, ORPCError, type AnyRouter } from '@orpc/server';
+import { ResponseHeadersPlugin } from '@orpc/server/plugins';
 import { ZodToJsonSchemaConverter } from '@orpc/zod/zod4';
 import type { ContractRouter } from '@orpc/contract';
-import type { PluginEntry } from '@oss/plugin-host';
-import { contract as defaultContract } from '@oss/orpc-contract';
-import { IGAMING_CONFIG, type IgamingConfig } from '@oss/shared-schemas';
+import { Hono } from 'hono';
+import { cors } from 'hono/cors';
+import { serve, type ServerType } from '@hono/node-server';
 import { writeFile, mkdir } from 'node:fs/promises';
 import { dirname, resolve } from 'node:path';
-import { AppModule } from './app.module.js';
+import { Container, InMemoryEventBus, EVENT_BUS, type OssContext } from '@oss/core';
+import { DrizzleService, DRIZZLE } from '@oss/db';
+import { AdminGuard, ADMIN_GUARD } from '@oss/auth';
+import { loadPlugins, type PluginEntry } from '@oss/plugin-host';
+import { contract as defaultContract, healthContract } from '@oss/orpc-contract';
+import { IGAMING_CONFIG, type IgamingConfig } from '@oss/shared-schemas';
 
 export interface CreateAppConfig {
   // Plugins to load. Each module/extension exposes a definePlugin() entry.
@@ -18,9 +23,9 @@ export interface CreateAppConfig {
   // Port to listen on. Defaults to env PORT_API, then 3001.
   port?: number;
 
-  // CORS configuration. `true` enables permissive defaults, `false` disables,
-  // or pass an explicit origins list. Defaults to `true`.
-  cors?: boolean | { origins?: string | string[] | RegExp | RegExp[] };
+  // CORS configuration. `true` reflects the request origin with credentials,
+  // `false` disables, or pass explicit origins. Defaults to `true`.
+  cors?: boolean | { origins?: string | string[] };
 
   // Override DATABASE_URL at runtime (otherwise read from env).
   databaseUrl?: string;
@@ -38,23 +43,32 @@ export interface CreateAppConfig {
 
   // Declarative igaming configuration (currencies, jurisdictions, limits, provider
   // selection, branding). Build it with defineIgamingConfig() from @oss/shared-schemas.
-  // Injected app-wide via the IGAMING_CONFIG token.
+  // Resolvable app-wide via the IGAMING_CONFIG token.
   igaming?: IgamingConfig;
 
-  // Extra Nest modules/providers to wire in (advanced).
-  extraImports?: Array<Type | DynamicModule>;
-  extraProviders?: Provider[];
+  // Advanced: rebind/seed the composition container after plugins have registered
+  // (eg an operator that wants to override an infra provider directly).
+  configure?: (container: Container) => void | Promise<void>;
 
-  // Skip the built-in HealthController (rarely needed - default false).
+  // Skip the built-in health route (rarely needed - default false).
   disableHealthModule?: boolean;
 }
 
 export interface CreatedApp {
-  app: INestApplication;
+  app: Hono;
+  container: Container;
   port: number;
   listen(): Promise<void>;
   emitOpenApiSpec(): Promise<string | null>;
   close(): Promise<void>;
+}
+
+function headersToRecord(headers: Headers): Record<string, string> {
+  const out: Record<string, string> = {};
+  headers.forEach((value, key) => {
+    out[key] = value;
+  });
+  return out;
 }
 
 export async function createApp(config: CreateAppConfig): Promise<CreatedApp> {
@@ -62,37 +76,81 @@ export async function createApp(config: CreateAppConfig): Promise<CreatedApp> {
     process.env['DATABASE_URL'] = config.databaseUrl;
   }
 
-  const igamingProvider: Provider[] = config.igaming
-    ? [{ provide: IGAMING_CONFIG, useValue: config.igaming }]
-    : [];
-  const extraProviders = [...igamingProvider, ...(config.extraProviders ?? [])];
-
-  const appModule = await AppModule.create({
-    plugins: config.plugins,
-    ...(config.extraImports ? { extraImports: config.extraImports } : {}),
-    ...(extraProviders.length > 0 ? { extraProviders } : {}),
-    ...(config.disableHealthModule !== undefined
-      ? { disableHealthModule: config.disableHealthModule }
-      : {}),
+  // Compose the container: explicit factories, no decorators. Infra is seeded
+  // first; plugins then register their services + adapters (last binding wins).
+  const container = new Container();
+  container.register(DRIZZLE, () => {
+    const svc = new DrizzleService();
+    container.onDispose(() => svc.dispose());
+    return svc;
   });
-
-  const app = await NestFactory.create(appModule);
-
-  if (config.cors !== false) {
-    if (config.cors === true || config.cors === undefined) {
-      app.enableCors({ credentials: true });
-    } else {
-      app.enableCors({ origin: config.cors.origins, credentials: true });
-    }
+  container.register(EVENT_BUS, () => new InMemoryEventBus());
+  container.register(ADMIN_GUARD, (c) => new AdminGuard(c.get(DRIZZLE)));
+  if (config.igaming) {
+    const igaming = config.igaming;
+    container.register(IGAMING_CONFIG, () => igaming);
   }
 
+  const registry = await loadPlugins(config.plugins, container);
+  await config.configure?.(container);
+
+  // Assemble the root oRPC router from each plugin's router factory, keyed by the
+  // module's contract namespace. Built once, after every plugin has registered.
+  const router: Record<string, AnyRouter> = {};
+  for (const [namespace, factory] of registry.routers.getAll()) {
+    if (namespace in router) {
+      throw new Error(`Router namespace "${namespace}" is registered by more than one plugin`);
+    }
+    router[namespace] = factory(container) as AnyRouter;
+  }
+
+  if (!config.disableHealthModule) {
+    const os = implement(healthContract).$context<OssContext>();
+    router['health'] = os.router({
+      ping: os.ping.handler(() => ({ status: 'ok' as const, timestamp: new Date().toISOString() })),
+    }) as AnyRouter;
+  }
+
+  const handler = new OpenAPIHandler(router, {
+    plugins: [new ResponseHeadersPlugin()],
+    interceptors: [
+      onError((error) => {
+        if (!(error instanceof ORPCError)) {
+          console.error('[oRPC unhandled]', error);
+        }
+      }),
+    ],
+  });
+
+  const app = new Hono();
+
+  if (config.cors !== false) {
+    const origins =
+      config.cors === true || config.cors === undefined ? undefined : config.cors.origins;
+    app.use(
+      '/*',
+      cors({ origin: origins ?? ((origin) => origin), credentials: true }),
+    );
+  }
+
+  app.use('/*', async (c, next) => {
+    const context: OssContext = { request: { headers: headersToRecord(c.req.raw.headers) } };
+    const { matched, response } = await handler.handle(c.req.raw, { context });
+    if (matched) {
+      return c.newResponse(response.body, response);
+    }
+    await next();
+  });
+
   const port = config.port ?? Number(process.env['PORT_API'] ?? 3001);
+  let server: ServerType | undefined;
 
   return {
     app,
+    container,
     port,
     async listen() {
-      await app.listen(port);
+      server = serve({ fetch: app.fetch, port });
       process.stdout.write(`API listening on :${port}\n`);
     },
     async emitOpenApiSpec() {
@@ -114,7 +172,8 @@ export async function createApp(config: CreateAppConfig): Promise<CreatedApp> {
       return outPath;
     },
     async close() {
-      await app.close();
+      server?.close();
+      await container.dispose();
     },
   };
 }

@@ -17,7 +17,7 @@ All routes require `x-user-id` header.
 
 ## Extension points
 
-- **Ports**: `PaymentAdapter` lives in `@oss/adapters` and is injected into `WalletService` (`@Inject(PAYMENT_ADAPTER)`). The default binding is `MockPaymentAdapter` (bound in `src/plugin.ts`). Implement it for a real PSP and override the binding via an overlay plugin.
+- **Ports**: `PaymentAdapter` lives in `@oss/adapters` and is passed into `WalletService` (the constructor takes a `PaymentAdapter`; `plugin.ts` resolves `PAYMENT_ADAPTER` from the container). The default binding is `MockPaymentAdapter` (bound in `src/plugin.ts`). Implement it for a real PSP and override the binding via an overlay plugin.
 - **Events emitted**:
   - `wallet.deposit.completed` - `{ userId, amount, currency, transactionId }`
   - `wallet.withdrawal.completed` - `{ userId, amount, currency, transactionId }`
@@ -31,7 +31,7 @@ All routes require `x-user-id` header.
 To use a real PSP, implement `PaymentAdapter` under `adapters/<vendor>/` and bind it in an overlay plugin that loads AFTER the wallet module in `extensions.config.ts` - last registration to the `PAYMENT_ADAPTER` token wins, so the overlay's binding overrides `MockPaymentAdapter` with no fork:
 
 ```ts
-ctx.providers.add({ provide: PAYMENT_ADAPTER, useClass: StripePaymentAdapter });
+ctx.provide(PAYMENT_ADAPTER, () => new StripePaymentAdapter());
 ```
 
 ## Do
@@ -44,7 +44,7 @@ ctx.providers.add({ provide: PAYMENT_ADAPTER, useClass: StripePaymentAdapter });
 ## Don't
 
 - Import from other modules directly
-- Throw `HttpException` from services - throw domain errors instead
+- Throw framework HTTP errors from services - throw domain errors instead
 - Edit the generated migrations under `packages/platform/db/` by hand - the source of truth is `src/schema/index.ts`
 - Use floating-point for money calculations - money columns are `decimal(...)` (strings); read with `Number(record.balance)`, write as a string
 - Add inline Zod schemas in the router - all schemas live in `schemas/` or the contract

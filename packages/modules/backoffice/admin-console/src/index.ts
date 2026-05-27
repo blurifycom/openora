@@ -1,2 +1,2 @@
 export { BackofficeService, UserNotFoundError } from './service/backoffice.service.js';
-export { BackofficeController } from './router/index.js';
+export { createBackofficeRouter } from './router/index.js';

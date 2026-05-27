@@ -1,37 +1,24 @@
-import { Controller } from '@nestjs/common';
-import { Implement, implement } from '@orpc/nest';
+import { implement } from '@orpc/server';
+import { type OssContext } from '@oss/core';
 import { contract } from '@oss/orpc-contract';
 import { IdentityService } from '../service/identity.service.js';
-import type { Request, Response } from 'express';
 
-type Ctx = { request: Request; response: Response };
+export function createIdentityRouter(identity: IdentityService) {
+  const os = implement(contract.identity).$context<OssContext>();
 
-@Controller()
-export class IdentityController {
-  constructor(private readonly identity: IdentityService) {}
+  return os.router({
+    register: os.register.handler(({ input, context }) =>
+      identity.register(input, context.request.headers, context.resHeaders ?? new Headers()),
+    ),
 
-  @Implement(contract.identity)
-  identityRoutes() {
-    return {
-      register: implement(contract.identity.register).handler(({ input, context }) => {
-        const { request, response } = context as Ctx;
-        return this.identity.register(input, request.headers as Record<string, string>, response);
-      }),
+    login: os.login.handler(({ input, context }) =>
+      identity.login(input, context.request.headers, context.resHeaders ?? new Headers()),
+    ),
 
-      login: implement(contract.identity.login).handler(({ input, context }) => {
-        const { request, response } = context as Ctx;
-        return this.identity.login(input, request.headers as Record<string, string>, response);
-      }),
+    logout: os.logout.handler(({ context }) =>
+      identity.logout(context.request.headers, context.resHeaders ?? new Headers()),
+    ),
 
-      logout: implement(contract.identity.logout).handler(({ context }) => {
-        const { request, response } = context as Ctx;
-        return this.identity.logout(request.headers as Record<string, string>, response);
-      }),
-
-      me: implement(contract.identity.me).handler(({ context }) => {
-        const { request } = context as Ctx;
-        return this.identity.me(request.headers as Record<string, string>);
-      }),
-    };
-  }
+    me: os.me.handler(({ context }) => identity.me(context.request.headers)),
+  });
 }

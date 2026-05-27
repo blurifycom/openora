@@ -1,32 +1,32 @@
-import type { Type, DynamicModule } from '@nestjs/common';
-import type { ModuleRegistry, McpToolDefinition } from './define-plugin.js';
+import type { Container, Factory } from '@oss/core';
+import type { Token } from '@oss/adapters';
+import type {
+  ModuleRegistry,
+  McpToolDefinition,
+  RouterFactory,
+  EventHandler,
+} from './define-plugin.js';
 
 export class ModuleRegistryImpl implements ModuleRegistry {
-  private _providers: unknown[] = [];
-  private _controllers: Type[] = [];
-  private _routers = new Map<string, unknown>();
+  private _routers = new Map<string, RouterFactory>();
   private _slots = new Map<string, unknown>();
-  private _events = new Map<string, Array<(payload: unknown) => void | Promise<void>>>();
+  private _events = new Map<string, EventHandler[]>();
   private _mcpTools: McpToolDefinition[] = [];
-  private _imports: Array<Type | DynamicModule> = [];
 
-  providers = {
-    add: (provider: unknown) => {
-      this._providers.push(provider);
-    },
-    getAll: () => this._providers,
-  };
+  constructor(private readonly container: Container) {}
 
-  controllers = {
-    add: (controller: Type) => {
-      this._controllers.push(controller);
-    },
-    getAll: () => this._controllers,
+  // Provider bindings go straight into the container. Lazy + last-wins, so an
+  // overlay loaded after a module can rebind that module's adapter token.
+  provide = <T>(token: Token<T>, factory: Factory<T>): void => {
+    this.container.register(token, factory);
   };
 
   routers = {
-    add: (namespace: string, router: unknown) => {
-      this._routers.set(namespace, router);
+    add: (namespace: string, factory: RouterFactory) => {
+      if (this._routers.has(namespace)) {
+        throw new Error(`Router namespace "${namespace}" is already registered`);
+      }
+      this._routers.set(namespace, factory);
     },
     getAll: () => this._routers,
   };
@@ -39,7 +39,7 @@ export class ModuleRegistryImpl implements ModuleRegistry {
   };
 
   events = {
-    on: (event: string, handler: (payload: unknown) => void | Promise<void>) => {
+    on: (event: string, handler: EventHandler) => {
       const handlers = this._events.get(event) ?? [];
       handlers.push(handler);
       this._events.set(event, handlers);
@@ -52,12 +52,5 @@ export class ModuleRegistryImpl implements ModuleRegistry {
       this._mcpTools.push(definition);
     },
     getAll: () => this._mcpTools,
-  };
-
-  imports = {
-    add: (module: Type | DynamicModule) => {
-      this._imports.push(module);
-    },
-    getAll: () => this._imports,
   };
 }

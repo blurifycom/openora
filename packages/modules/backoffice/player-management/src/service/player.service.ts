@@ -1,4 +1,3 @@
-import { Injectable } from '@nestjs/common';
 import { createDomainError } from '@oss/core';
 import { DrizzleService } from '@oss/db';
 import { eq, ilike, count, or, and, gte, asc, desc } from 'drizzle-orm';
@@ -41,7 +40,6 @@ function toDateKey(d: Date): string {
   return d.toISOString().slice(0, 10);
 }
 
-@Injectable()
 export class PlayerService {
   constructor(private readonly drizzle: DrizzleService) {}
 

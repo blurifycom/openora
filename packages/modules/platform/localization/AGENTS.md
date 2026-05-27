@@ -12,7 +12,7 @@ DB-backed i18n. Operators load translation strings per locale. Frontend fetches 
 | DELETE | /localization/translations/{id}                 | Delete a translation by id               |
 
 Contract slice: `packages/contracts/orpc-contract/src/localization.ts`
-Controller: `src/router/index.ts` (`LocalizationController`)
+Router factory: `src/router/index.ts` (`createLocalizationRouter`)
 
 ## Drizzle tables
 

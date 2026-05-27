@@ -1,7 +1,5 @@
-import { Injectable } from '@nestjs/common';
 import type { GameAdapter } from '@oss/adapters';
 
-@Injectable()
 export class MockGameAdapter implements GameAdapter {
   async launchGame(
     gameId: string,

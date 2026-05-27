@@ -1,9 +1,10 @@
-import { Injectable, OnModuleDestroy } from '@nestjs/common';
+import { createToken, type Token } from '@oss/adapters';
 import { Pool } from 'pg';
 import { drizzle, type NodePgDatabase } from 'drizzle-orm/node-postgres';
 
-@Injectable()
-export class DrizzleService implements OnModuleDestroy {
+export const DRIZZLE: Token<DrizzleService> = createToken('DRIZZLE');
+
+export class DrizzleService {
   readonly db: NodePgDatabase;
   private readonly pool: Pool;
 
@@ -14,7 +15,7 @@ export class DrizzleService implements OnModuleDestroy {
     this.db = drizzle(this.pool);
   }
 
-  async onModuleDestroy() {
+  async dispose(): Promise<void> {
     await this.pool.end();
   }
 }

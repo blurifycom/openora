@@ -1,6 +1,5 @@
-import { Injectable, Inject } from '@nestjs/common';
-import { type EventBus, EVENT_BUS, createDomainError } from '@oss/core';
-import { type PaymentAdapter, PAYMENT_ADAPTER } from '@oss/adapters';
+import { type EventBus, createDomainError } from '@oss/core';
+import { type PaymentAdapter } from '@oss/adapters';
 import { DrizzleService } from '@oss/db';
 import { eq, desc, sql } from 'drizzle-orm';
 import { wallet, walletTransaction } from '../schema/index.js';
@@ -16,12 +15,11 @@ export const InsufficientBalanceError = createDomainError(
   (available, requested) => `Insufficient balance: available ${available}, requested ${requested}`,
 );
 
-@Injectable()
 export class WalletService {
   constructor(
     private readonly drizzle: DrizzleService,
-    @Inject(EVENT_BUS) private readonly events: EventBus,
-    @Inject(PAYMENT_ADAPTER) private readonly payment: PaymentAdapter,
+    private readonly events: EventBus,
+    private readonly payment: PaymentAdapter,
   ) {}
 
   async getBalance(userId: string): Promise<WalletBalance> {

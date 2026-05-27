@@ -1,4 +1,3 @@
-import 'reflect-metadata';
 import { createApp } from '@oss/api-runtime';
 import { contract } from '@oss/orpc-contract';
 import { defineIgamingConfig } from '@oss/shared-schemas';

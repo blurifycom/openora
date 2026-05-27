@@ -21,7 +21,7 @@ Responsible gambling and geo-compliance.
 | ------------- | ----------- | -------------------- |
 | `GEO_IP_ADAPTER` | `GeoIpAdapter` | IP-to-country lookup |
 
-Implement adapters under `packages/modules/compliance/adapters/<vendor>/` and register via `ctx.providers.add({ provide: GEO_IP_ADAPTER, useClass: MyAdapter })` in an overlay plugin.
+Implement adapters under `packages/modules/compliance/adapters/<vendor>/` and register via `ctx.provide(GEO_IP_ADAPTER, () => new MyAdapter())` in an overlay plugin.
 
 ## Do
 
@@ -33,7 +33,7 @@ Implement adapters under `packages/modules/compliance/adapters/<vendor>/` and re
 ## Don't
 
 - Import from other modules directly - use EventBus for cross-module communication.
-- Throw `ORPCError` or `HttpException` from service methods.
+- Throw `ORPCError` or framework HTTP errors from service methods.
 - Edit the generated migrations under `packages/platform/db/` by hand - the source of truth is `src/schema/index.ts`.
 - Add inline Zod schemas in controllers or services - all schemas live in `src/schemas/` or `@oss/orpc-contract`.
 

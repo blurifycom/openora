@@ -19,16 +19,12 @@
     "test": "vitest run"
   },
   "dependencies": {
-    "@nestjs/common": "11.1.21",
-    "@nestjs/core": "11.1.21"
+    "@oss/adapters": "workspace:*",
+    "@oss/core": "workspace:*"
   },
   "devDependencies": {
     "@oss/tsconfig": "workspace:*",
     "@types/node": "25.9.0",
-    "reflect-metadata": "^0.2.2",
     "typescript": "6.0.3"
-  },
-  "peerDependencies": {
-    "reflect-metadata": ">=0.1.0"
   }
 }

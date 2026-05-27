@@ -1,11 +1,9 @@
-import { Injectable, Inject } from '@nestjs/common';
 import { createAuth } from '@oss/auth';
-import { type EventBus, EVENT_BUS } from '@oss/core';
+import { type EventBus } from '@oss/core';
 import { DrizzleService } from '@oss/db';
 import { user, session, account, verification } from '../schema/index.js';
 import type { User } from '@oss/shared-schemas';
 import type { LoginInput, RegisterInput } from '@oss/shared-schemas';
-import type { Response } from 'express';
 
 function nodeHeadersToHeaders(nodeHeaders: Record<string, string | string[] | undefined>): Headers {
   const headers = new Headers();
@@ -43,31 +41,22 @@ function toUser(u: BetterAuthUser): User {
   return u.image !== undefined ? { ...base, image: u.image } : base;
 }
 
-// Forward every Set-Cookie header better-auth produced into the Express response,
-// so the browser stores the session cookie and subsequent requests authenticate.
-function forwardCookies(authResponse: globalThis.Response, expressRes: Response): void {
-  const cookies: string[] = [];
-  authResponse.headers.forEach((value, key) => {
-    if (key.toLowerCase() === 'set-cookie') cookies.push(value);
-  });
-  if (cookies.length > 0) {
-    const existing = expressRes.getHeader('set-cookie');
-    const merged: string[] = Array.isArray(existing)
-      ? [...existing, ...cookies]
-      : existing
-        ? [String(existing), ...cookies]
-        : cookies;
-    expressRes.setHeader('set-cookie', merged);
+// Forward every Set-Cookie header better-auth produced onto the oRPC response
+// headers (injected by ResponseHeadersPlugin), so the browser stores the session
+// cookie and subsequent requests authenticate.
+function forwardCookies(authResponse: globalThis.Response, resHeaders: Headers): void {
+  const cookies = authResponse.headers.getSetCookie?.() ?? [];
+  for (const cookie of cookies) {
+    resHeaders.append('set-cookie', cookie);
   }
 }
 
-@Injectable()
 export class IdentityService {
   private readonly auth: ReturnType<typeof createAuth>;
 
   constructor(
     private readonly drizzle: DrizzleService,
-    @Inject(EVENT_BUS) private readonly events: EventBus,
+    private readonly events: EventBus,
   ) {
     this.auth = createAuth({ db: this.drizzle.db, schema: { user, session, account, verification } });
   }
@@ -75,7 +64,7 @@ export class IdentityService {
   async register(
     input: RegisterInput,
     reqHeaders: Record<string, string | string[] | undefined>,
-    res: Response,
+    resHeaders: Headers,
   ) {
     const headers = nodeHeadersToHeaders(reqHeaders);
     const authResponse = await this.auth.api.signUpEmail({
@@ -83,7 +72,7 @@ export class IdentityService {
       headers,
       asResponse: true,
     });
-    forwardCookies(authResponse, res);
+    forwardCookies(authResponse, resHeaders);
     const body = (await authResponse.json()) as { user: BetterAuthUser };
     this.events.emit('identity.user.registered', { userId: body.user.id });
     return { user: toUser(body.user) };
@@ -92,7 +81,7 @@ export class IdentityService {
   async login(
     input: LoginInput,
     reqHeaders: Record<string, string | string[] | undefined>,
-    res: Response,
+    resHeaders: Headers,
   ) {
     const headers = nodeHeadersToHeaders(reqHeaders);
     const authResponse = await this.auth.api.signInEmail({
@@ -100,7 +89,7 @@ export class IdentityService {
       headers,
       asResponse: true,
     });
-    forwardCookies(authResponse, res);
+    forwardCookies(authResponse, resHeaders);
     const body = (await authResponse.json()) as {
       user: BetterAuthUser;
       token: string;
@@ -119,10 +108,10 @@ export class IdentityService {
     };
   }
 
-  async logout(reqHeaders: Record<string, string | string[] | undefined>, res: Response) {
+  async logout(reqHeaders: Record<string, string | string[] | undefined>, resHeaders: Headers) {
     const headers = nodeHeadersToHeaders(reqHeaders);
     const authResponse = await this.auth.api.signOut({ headers, asResponse: true });
-    forwardCookies(authResponse, res);
+    forwardCookies(authResponse, resHeaders);
     return { success: true as const };
   }
 

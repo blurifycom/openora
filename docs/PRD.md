@@ -21,7 +21,7 @@ A monorepo containing an OSS, headless, plugin-based igaming platform that any t
 
 - **Headless.** UI providers are swappable via a contract package (`@oss/ui-provider-contract`). The default adapter is shadcn (`@oss/ui-provider-shadcn`); operators write their own adapter (MUI, Antd, ...) by implementing the same `UIProvider` interface, enforced at compile time. The React platform (`@oss/react-sdk`) ships the typed client, hooks, admin shell, pages, a CSS-variable theme system (per-tenant overridable), and a UI plugin registry - all adapter-agnostic via `useUI()`. The admin is consumed as components mounted in a consumer's own Next.js `app/` directory, not as a forked app.
 - **Plugin-based.** Every piece of functionality enters the system through a single `definePlugin({ id, register })` contract. The same contract works for in-tree overlays (`apps/extensions/<name>/`) and externally-published npm packages. Operators never fork core - they drop folders.
-- **End-to-end typed.** Zod schemas in one root package are the source of truth. oRPC + NestJS turn them into validated routes, OpenAPI spec, TS-inferred clients, and (optionally) generated REST SDKs for non-TS consumers. There is no manual codegen step for TypeScript callers.
+- **End-to-end typed.** Zod schemas in one root package are the source of truth. oRPC turns them into validated routes, OpenAPI spec, TS-inferred clients, and (optionally) generated REST SDKs for non-TS consumers. There is no manual codegen step for TypeScript callers.
 - **AI-native.** Every module ships an `AGENTS.md`. An MCP dev server exposes the schema registry, route catalog, plugin manifest, and code scaffolders as tools. Repo-local slash commands (`/scaffold-module`, `/scaffold-plugin`, `/regen`, `/verify`) call the same code path humans use.
 - **Library-shaped for downstream consumers.** A downstream repo (eg `consumer/`) imports `@oss/api-runtime`, calls `createApp({ plugins, contract, ... })`, and gets a fully-configured Nest app. No forking of the OSS API entrypoint. Plugin-host overrides let consumers replace providers (eg swap the mock game provider for Consumer's real engine) without touching OSS code.
 
@@ -34,7 +34,7 @@ The OSS ships 12 modules covering the full table-stakes surface: identity, walle
 1. As a platform operator, I want to clone a working igaming backend with auth + wallet + lobby + chat + bonus + compliance + CMS already implemented, so that I can focus on my differentiating IP instead of re-implementing table stakes.
 2. As a platform operator, I want to add a new feature (eg "VIP tiers") by dropping a single folder under `apps/extensions/` or `plugins/`, so that I never have to modify or fork OSS core code.
 3. As a platform operator, I want to remove a built-in module (eg "chat") by deleting one line from `extensions.config.ts`, so that I only ship the surface area my product actually needs.
-4. As a platform operator, I want to override the mock game provider with my real game engine by registering a Nest DI token in my plugin, so that the OSS gaming module works against my proprietary engine without code changes.
+4. As a platform operator, I want to override the mock game provider with my real game engine by binding an adapter token in my plugin via ctx.provide, so that the OSS gaming module works against my proprietary engine without code changes.
 5. As a platform operator, I want to add fields to the OSS player data without forking core, so I keep upgrade compatibility. (Post-Drizzle: the sanctioned path is a derivative `pgTable` in my own overlay's `src/schema/index.ts` with a plain ID reference to the OSS `user`; there is no longer a column-injection extension API.)
 6. As a platform operator, I want to skin the entire admin UI by writing a new UI adapter package, so that I can match my brand without touching the module code.
 7. As a platform operator, I want to upgrade to a new OSS version by bumping a single dependency, so that I get bug fixes and new modules without merge conflicts.
@@ -45,7 +45,7 @@ The OSS ships 12 modules covering the full table-stakes surface: identity, walle
 ### Module author (someone extending the platform)
 
 11. As a module author, I want one canonical `definePlugin({ id, dependsOn, register })` contract for everything that extends the system, so that I don't have to learn three different extension mechanisms.
-12. As a module author, I want my plugin's `register(ctx)` function to receive a typed `ModuleRegistry` with explicit hooks (`ctx.providers.add`, `ctx.controllers.add`, `ctx.routers.add`, `ctx.slots.fill`, `ctx.events.on`, `ctx.mcp.tool`, `ctx.imports.add`), so that every extension point is greppable and discoverable. (The Drizzle migration removed `ctx.prisma.extend`; overlays add their own `pgTable` in their module's `src/schema/index.ts`.)
+12. As a module author, I want my plugin's `register(ctx)` function to receive a typed `ModuleRegistry` with explicit hooks (`ctx.provide`, `ctx.routers.add`, `ctx.slots.fill`, `ctx.events.on`, `ctx.mcp.tool`), so that every extension point is greppable and discoverable. (The Drizzle migration removed `ctx.prisma.extend`; overlays add their own `pgTable` in their module's `src/schema/index.ts`.)
 13. As a module author, I want to define my routes as Zod-validated oRPC procedures, so that the OpenAPI spec, TS client types, and runtime validation all come from the same source.
 14. As a module author, I want to subscribe to events from other modules (eg `wallet.deposit.completed`), so that I can react to cross-module activity without coupling to their implementation.
 15. As a module author, I want to add Drizzle tables in my own module's `src/schema/index.ts` (`pgTable` defs), so that I don't have to coordinate schema changes across teams.
@@ -96,9 +96,9 @@ The OSS ships 12 modules covering the full table-stakes surface: identity, walle
 **Platform packages (`packages/platform/*`):**
 
 - `plugin-host` - the loader. Owns `definePlugin`, `ModuleRegistry`, and topological resolution. Exposes the canonical extension surface. Deep module: one entry function (`loadPlugins`), simple interface, all complexity encapsulated. (Schema is no longer merged here - drizzle-kit globs each module's `src/schema/index.ts` directly.)
-- `api-runtime` - the consumer-facing factory. Exports `createApp(config)`. Wires `InfraModule` + `HealthModule` + `PluginHostModule` + `ORPCModule` and returns an `INestApplication` plus `listen()` / `emitOpenApiSpec()`. Deep module: one entry function, takes a config, returns a running app.
+- `api-runtime` - the consumer-facing factory. Exports `createApp(config)`. Builds the composition container, loads plugins, mounts the oRPC OpenAPIHandler on a Hono app, and returns it plus `listen()` / `emitOpenApiSpec()` / `close()`. Deep module: one entry function, takes a config, returns a running app.
 - `core` - shared primitives: logger, `EVENT_BUS` symbol, `InMemoryEventBus` default.
-- `db` (`@oss/db`) - `DrizzleService` (Nest-injectable wrapper) + the Drizzle client, drizzle-kit migrations, the NestJS-free `@oss/db/orm` re-export, and tenant-scoped helpers.
+- `db` (`@oss/db`) - `DrizzleService` (a plain class) + the Drizzle client, drizzle-kit migrations, the framework-free `@oss/db/orm` re-export, and tenant-scoped helpers.
 - `auth` - better-auth integration (used by identity module).
 - `events`, `jobs`, `observability` - thin wrappers / type packages.
 
@@ -126,7 +126,7 @@ The OSS ships 12 modules covering the full table-stakes surface: identity, walle
 
 **Pillar decisions (documented in ADRs):**
 
-- **ADR-0001:** oRPC + NestJS chosen over tRPC + Nest, ts-rest + Nest, oRPC + Hono, Nest + OpenAPI codegen.
+- **ADR-0001/0009:** oRPC kept; the API host moved from NestJS to Hono + a functional composition container (ADR-0009 supersedes ADR-0001).
 - **ADR-0002:** `definePlugin` overlay pattern chosen over decorator auto-discovery, file-system magic, or central plugin registry classes.
 - **ADR-0003:** Headless UI provider contract + adapter packages, not direct shadcn coupling.
 - **ADR-0004:** Single Zod root in `shared-schemas`, not schemas co-located per module.
@@ -146,7 +146,7 @@ The OSS ships 12 modules covering the full table-stakes surface: identity, walle
   config: { plugins, port?, cors?, databaseUrl?, contract?, openapi?, extraImports?, extraProviders?, disableHealthModule? }
   returns: { app, port, listen(), emitOpenApiSpec(), close() }
   ```
-- **Module router contract**: every module exports a Nest `@Controller` decorated with `@Implement(<moduleContract>)` from `@orpc/nest`. Handlers use `implement(<contract>.<procedure>).handler(...)`. No raw `@Get`/`@Post` decorators.
+- **Module router contract**: every module exports a `create<Name>Router(deps)` factory that builds the router with `implement(<moduleContract>).$context<OssContext>()` and `.handler(...)` per procedure. No decorators; the plugin mounts it via `ctx.routers.add(namespace, (c) => create<Name>Router(...))`.
 - **Module event namespacing**: every emitted event is prefixed with `<module-id>.*` (eg `wallet.deposit.completed`, `gaming.round.started`). Downstream consumers prefix with their own namespace (`consumer.vip.promoted`).
 
 ### Schema strategy

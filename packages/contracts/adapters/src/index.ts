@@ -3,6 +3,9 @@
 // a concrete implementation to its DI token in the module's plugin.ts. One file
 // per service category. See AGENTS.md "third-party integration" in the decision tree.
 
+export type { Token } from './token.js';
+export { createToken } from './token.js';
+
 export type { GameAdapter } from './game.js';
 export { GAME_ADAPTER } from './game.js';
 

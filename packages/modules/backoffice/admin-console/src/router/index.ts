@@ -1,59 +1,40 @@
-import { Controller } from '@nestjs/common';
-import { Implement, implement } from '@orpc/nest';
+import { implement } from '@orpc/server';
 import { AdminGuard } from '@oss/auth';
-import { mapErrors } from '@oss/core';
+import { mapErrors, type OssContext } from '@oss/core';
 import { contract } from '@oss/orpc-contract';
 import { BackofficeService, UserNotFoundError } from '../service/backoffice.service.js';
 
-@Controller()
-export class BackofficeController {
-  constructor(
-    private readonly backofficeService: BackofficeService,
-    private readonly adminGuard: AdminGuard,
-  ) {}
+export function createBackofficeRouter(backofficeService: BackofficeService, adminGuard: AdminGuard) {
+  const os = implement(contract.backoffice).$context<OssContext>();
 
-  @Implement(contract.backoffice)
-  backofficeRouter() {
-    return {
-      getStats: implement(contract.backoffice.getStats).handler(async ({ context }) => {
-        await this.adminGuard.assert(context, 'report', 'view');
-        return this.backofficeService.getStats();
-      }),
+  return os.router({
+    getStats: os.getStats.handler(async ({ context }) => {
+      await adminGuard.assert(context, 'report', 'view');
+      return backofficeService.getStats();
+    }),
 
-      listUsers: implement(contract.backoffice.listUsers).handler(async ({ input, context }) => {
-        await this.adminGuard.assert(context, 'player', 'view');
-        return this.backofficeService.listUsers(input.page ?? 1, input.limit ?? 20, input.search);
-      }),
+    listUsers: os.listUsers.handler(async ({ input, context }) => {
+      await adminGuard.assert(context, 'player', 'view');
+      return backofficeService.listUsers(input.page ?? 1, input.limit ?? 20, input.search);
+    }),
 
-      getUser: implement(contract.backoffice.getUser).handler(async ({ input, context }) => {
-        await this.adminGuard.assert(context, 'player', 'view');
-        return mapErrors(
-          { NOT_FOUND: UserNotFoundError },
-          () => this.backofficeService.getUser(input.userId),
-        );
-      }),
+    getUser: os.getUser.handler(async ({ input, context }) => {
+      await adminGuard.assert(context, 'player', 'view');
+      return mapErrors({ NOT_FOUND: UserNotFoundError }, () =>
+        backofficeService.getUser(input.userId),
+      );
+    }),
 
-      updateUser: implement(contract.backoffice.updateUser).handler(async ({ input, context }) => {
-        await this.adminGuard.assert(context, 'player', 'update');
-        return mapErrors(
-          { NOT_FOUND: UserNotFoundError },
-          () => this.backofficeService.updateUser(input.userId, {
-            isActive: input.isActive,
-            role: input.role,
-          }),
-        );
-      }),
+    updateUser: os.updateUser.handler(async ({ input, context }) => {
+      await adminGuard.assert(context, 'player', 'update');
+      return mapErrors({ NOT_FOUND: UserNotFoundError }, () =>
+        backofficeService.updateUser(input.userId, { isActive: input.isActive, role: input.role }),
+      );
+    }),
 
-      listTransactions: implement(contract.backoffice.listTransactions).handler(
-        async ({ input, context }) => {
-          await this.adminGuard.assert(context, 'transaction', 'view');
-          return this.backofficeService.listTransactions(
-            input.page ?? 1,
-            input.limit ?? 20,
-            input.userId,
-          );
-        },
-      ),
-    };
-  }
+    listTransactions: os.listTransactions.handler(async ({ input, context }) => {
+      await adminGuard.assert(context, 'transaction', 'view');
+      return backofficeService.listTransactions(input.page ?? 1, input.limit ?? 20, input.userId);
+    }),
+  });
 }

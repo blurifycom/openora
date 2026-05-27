@@ -1,17 +1,15 @@
-import { Injectable } from '@nestjs/common';
-import type { GameAdapter } from '@oss/module-gaming';
+import type { GameAdapter } from '@oss/adapters';
 
 /**
  * Consumer's real game provider implementation.
  *
  * Replaces the OSS MockGameAdapter at DI resolution time via:
- *   ctx.providers.add({ provide: GAME_ADAPTER, useClass: ConsumerGameAdapter })
+ *   ctx.provide(GAME_ADAPTER, () => new ConsumerGameAdapter())
  *
  * A real implementation would call an internal game engine or a licensed
  * aggregator's SDK here - never a raw fetch/axios call (use a port adapter
  * injected via the constructor instead).
  */
-@Injectable()
 export class ConsumerGameAdapter implements GameAdapter {
   async launchGame(
     gameId: string,

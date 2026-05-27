@@ -84,10 +84,12 @@ function collectAdapters(): AdapterInfo[] {
     // Prefer the primary *Adapter interface over helper interfaces in the same file.
     const iface =
       src.match(/export interface (\w*Adapter)\b/)?.[1] ?? src.match(/export interface (\w+)/)?.[1] ?? '';
-    const token = src.match(/export const (\w+) = Symbol/)?.[1] ?? '';
+    const token = src.match(/export const (\w+)(?::\s*Token<[^>]*>)?\s*=\s*(?:createToken|Symbol)/)?.[1] ?? '';
     if (!token) continue;
     const boundIn = moduleSrc
-      .filter(({ src }) => new RegExp(`(@Inject\\(\\s*${token}\\s*\\)|provide:\\s*${token}\\b)`).test(src))
+      .filter(({ src }) =>
+        new RegExp(`(provide\\(\\s*${token}\\b|provide:\\s*${token}\\b|\\.get\\(\\s*${token}\\b|@Inject\\(\\s*${token}\\s*\\))`).test(src),
+      )
       .map(({ f }) => f.replace(`${repoRoot}/`, ''))
       .sort();
     out.push({
@@ -226,7 +228,7 @@ function md(): string {
 
   L.push('## Domain events');
   L.push('');
-  L.push('Emit/subscribe via the injected `EventBus` (`@Inject(EVENT_BUS)` from `@oss/core`).');
+  L.push('Emit/subscribe via the `EventBus` a service receives in its constructor (built in `plugin.ts` from `c.get(EVENT_BUS)`, token from `@oss/core`).');
   L.push('');
   for (const e of catalog.events) L.push(`- \`${e}\``);
   L.push('');

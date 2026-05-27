@@ -37,7 +37,7 @@ Routes:
 To provide a real adapter:
 
 1. Create `packages/modules/gaming/src/adapters/<vendor>/<vendor>-game-provider.ts` implementing `GameAdapter`.
-2. Register it in your overlay plugin: `ctx.providers.add({ provide: GAME_ADAPTER, useClass: RealProvider })`.
+2. Register it in your overlay plugin: `ctx.provide(GAME_ADAPTER, () => new RealProvider())`.
 
 ## Events emitted
 
@@ -56,7 +56,7 @@ To provide a real adapter:
 ## Don't
 
 - Import from other modules directly - emit events instead.
-- Throw `HttpException` or `ORPCError` from services - catch domain errors in the router.
+- Throw framework HTTP errors or `ORPCError` from services - catch domain errors in the router.
 - Edit the generated migrations under `packages/platform/db/` by hand - the source of truth is `src/schema/index.ts`.
 - Add inline Zod schemas in handlers - all schemas live in `src/schemas/` or `@oss/orpc-contract/gaming`.
 

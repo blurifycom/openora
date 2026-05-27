@@ -18,14 +18,12 @@
     "clean": "rm -rf dist"
   },
   "dependencies": {
-    "@nestjs/common": "11.1.21",
-    "@nestjs/core": "11.1.21",
-    "@nestjs/platform-express": "11.1.21",
+    "@hono/node-server": "2.0.4",
     "@orpc/contract": "1.14.3",
-    "@orpc/nest": "1.14.3",
     "@orpc/openapi": "1.14.3",
     "@orpc/server": "1.14.3",
     "@orpc/zod": "1.14.3",
+    "@oss/adapters": "workspace:*",
     "@oss/auth": "workspace:*",
     "@oss/core": "workspace:*",
     "@oss/orpc-contract": "workspace:*",
@@ -34,11 +32,10 @@
     "@oss/plugin-host": "workspace:*",
     "@oss/modules": "workspace:*",
     "drizzle-orm": "0.45.2",
-    "reflect-metadata": "0.2.2"
+    "hono": "4.12.23"
   },
   "devDependencies": {
     "@oss/tsconfig": "workspace:*",
-    "@types/express": "5.0.6",
     "typescript": "6.0.3"
   }
 }

@@ -1,4 +1,5 @@
-import type { Type, DynamicModule } from '@nestjs/common';
+import type { Container, Factory } from '@oss/core';
+import type { Token } from '@oss/adapters';
 
 export interface McpToolDefinition {
   name: string;
@@ -7,44 +8,32 @@ export interface McpToolDefinition {
   handler: (input: unknown) => unknown | Promise<unknown>;
 }
 
+// A router factory builds the module's oRPC router from the resolved container
+// (services + adapters). It runs once at boot, after every plugin has registered
+// its providers, so adapter overrides (last registration wins) are in effect.
+export type RouterFactory = (c: Container) => unknown;
+
+export type EventHandler = (payload: unknown) => void | Promise<void>;
+
 export interface ModuleRegistry {
-  providers: {
-    add(
-      provider:
-        | Type
-        | {
-            provide: unknown;
-            useClass?: Type;
-            useValue?: unknown;
-            useFactory?: (...args: unknown[]) => unknown;
-            inject?: unknown[];
-          },
-    ): void;
-    getAll(): unknown[];
-  };
+  // Bind a provider factory to a token. Last registration wins, so an overlay
+  // loaded after a module can rebind that module's adapter token.
+  provide<T>(token: Token<T>, factory: Factory<T>): void;
   routers: {
-    add(namespace: string, router: unknown): void;
-    getAll(): Map<string, unknown>;
+    add(namespace: string, factory: RouterFactory): void;
+    getAll(): Map<string, RouterFactory>;
   };
   slots: {
     fill(slotName: string, component: unknown): void;
     getAll(): Map<string, unknown>;
   };
   events: {
-    on(event: string, handler: (payload: unknown) => void | Promise<void>): void;
-    getAll(): Map<string, Array<(payload: unknown) => void | Promise<void>>>;
+    on(event: string, handler: EventHandler): void;
+    getAll(): Map<string, EventHandler[]>;
   };
   mcp: {
     tool(definition: McpToolDefinition): void;
     getAll(): McpToolDefinition[];
-  };
-  controllers: {
-    add(controller: Type): void;
-    getAll(): Type[];
-  };
-  imports: {
-    add(module: Type | DynamicModule): void;
-    getAll(): Array<Type | DynamicModule>;
   };
 }
 

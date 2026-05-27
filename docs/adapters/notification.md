@@ -51,7 +51,7 @@ export default definePlugin({
   id: 'email-delivery',
   dependsOn: ['notifications'],
   register(ctx) {
-    ctx.providers.add({ provide: NOTIFICATION_DELIVERY_ADAPTER, useClass: MyEmailAdapter });
+    ctx.provide(NOTIFICATION_DELIVERY_ADAPTER, () => new MyEmailAdapter());
   },
 });
 ```

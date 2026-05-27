@@ -68,7 +68,7 @@ If a shared schema exists in `@oss/contracts/shared-schemas`, re-export it inste
 
 Edit `packages/modules/<group>/<name>/src/service/<name>.service.ts`. Business logic only. Rules:
 
-- Inject `DrizzleService` (from `@oss/db`) + `EventBus` (`@Inject(EVENT_BUS)`) via the constructor. Query with `this.drizzle.db.select().from(<table>).where(eq(...))`; import operators (`eq`, `desc`, `sql`) from `drizzle-orm` and tables from `../schema/index.js`.
+- Take `DrizzleService` (from `@oss/db`) + `EventBus` as constructor arguments (the module plugin builds the service from the container). Query with `this.drizzle.db.select().from(<table>).where(eq(...))`; import operators (`eq`, `desc`, `sql`) from `drizzle-orm` and tables from `../schema/index.js`.
 - Throw domain errors via `createDomainError(...)` from `@oss/core`.
 - Never call external HTTP APIs directly - use an adapter interface from `@oss/adapters`.
 

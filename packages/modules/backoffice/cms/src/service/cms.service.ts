@@ -1,5 +1,4 @@
-import { Injectable, Inject } from '@nestjs/common';
-import { type EventBus, EVENT_BUS, createDomainError } from '@oss/core';
+import { type EventBus, createDomainError } from '@oss/core';
 import { DrizzleService } from '@oss/db';
 import { eq, and, asc, desc } from 'drizzle-orm';
 import { page as pageTable, banner as bannerTable } from '../schema/index.js';
@@ -55,11 +54,10 @@ function toBanner(record: {
   };
 }
 
-@Injectable()
 export class CmsService {
   constructor(
     private readonly drizzle: DrizzleService,
-    @Inject(EVENT_BUS) private readonly events: EventBus,
+    private readonly events: EventBus,
   ) {}
 
   async listPages(): Promise<Omit<Page, 'content'>[]> {

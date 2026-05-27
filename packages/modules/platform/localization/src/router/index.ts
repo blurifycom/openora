@@ -1,7 +1,6 @@
-import { Controller } from '@nestjs/common';
-import { Implement, implement } from '@orpc/nest';
+import { implement } from '@orpc/server';
 import { AdminGuard } from '@oss/auth';
-import { mapErrors } from '@oss/core';
+import { mapErrors, type OssContext } from '@oss/core';
 import { localizationContract } from '@oss/orpc-contract/localization';
 import {
   LocalizationService,
@@ -9,43 +8,28 @@ import {
   TranslationNotFoundError,
 } from '../service/localization.service.js';
 
-@Controller()
-export class LocalizationController {
-  constructor(
-    private readonly localization: LocalizationService,
-    private readonly adminGuard: AdminGuard,
-  ) {}
+export function createLocalizationRouter(localization: LocalizationService, adminGuard: AdminGuard) {
+  const os = implement(localizationContract).$context<OssContext>();
 
-  @Implement(localizationContract)
-  router() {
-    return {
-      listLocales: implement(localizationContract.listLocales).handler(() =>
-        this.localization.listLocales(),
-      ),
+  return os.router({
+    listLocales: os.listLocales.handler(() => localization.listLocales()),
 
-      getTranslations: implement(localizationContract.getTranslations).handler(({ input }) =>
-        this.localization.getTranslations(input.locale, input.namespace),
-      ),
+    getTranslations: os.getTranslations.handler(({ input }) =>
+      localization.getTranslations(input.locale, input.namespace),
+    ),
 
-      upsertTranslation: implement(localizationContract.upsertTranslation).handler(
-        async ({ input, context }) => {
-          await this.adminGuard.assert(context);
-          return mapErrors(
-            { NOT_FOUND: LocaleNotFoundError },
-            () => this.localization.upsertTranslation(input),
-          );
-        },
-      ),
+    upsertTranslation: os.upsertTranslation.handler(async ({ input, context }) => {
+      await adminGuard.assert(context);
+      return mapErrors({ NOT_FOUND: LocaleNotFoundError }, () =>
+        localization.upsertTranslation(input),
+      );
+    }),
 
-      deleteTranslation: implement(localizationContract.deleteTranslation).handler(
-        async ({ input, context }) => {
-          await this.adminGuard.assert(context);
-          return mapErrors(
-            { NOT_FOUND: TranslationNotFoundError },
-            () => this.localization.deleteTranslation(input.id),
-          );
-        },
-      ),
-    };
-  }
+    deleteTranslation: os.deleteTranslation.handler(async ({ input, context }) => {
+      await adminGuard.assert(context);
+      return mapErrors({ NOT_FOUND: TranslationNotFoundError }, () =>
+        localization.deleteTranslation(input.id),
+      );
+    }),
+  });
 }

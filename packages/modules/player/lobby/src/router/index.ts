@@ -1,30 +1,22 @@
-import { Controller } from '@nestjs/common';
-import { Implement, implement } from '@orpc/nest';
-import { mapErrors } from '@oss/core';
+import { implement } from '@orpc/server';
+import { mapErrors, type OssContext } from '@oss/core';
 import { lobbyContract } from '@oss/orpc-contract/lobby';
 import { LobbyService, LobbyCategoryNotFoundError } from '../service/lobby.service.js';
 
-@Controller()
-export class LobbyController {
-  constructor(private readonly lobby: LobbyService) {}
+export function createLobbyRouter(lobby: LobbyService) {
+  const os = implement(lobbyContract).$context<OssContext>();
 
-  @Implement(lobbyContract)
-  lobbyRouter() {
-    return {
-      listCategories: implement(lobbyContract.listCategories).handler(() =>
-        this.lobby.listCategories(),
+  return os.router({
+    listCategories: os.listCategories.handler(() => lobby.listCategories()),
+
+    getCategoryBySlug: os.getCategoryBySlug.handler(({ input }) =>
+      mapErrors({ NOT_FOUND: LobbyCategoryNotFoundError }, () =>
+        lobby.getCategoryGames(input.slug),
       ),
+    ),
 
-      getCategoryBySlug: implement(lobbyContract.getCategoryBySlug).handler(({ input }) =>
-        mapErrors(
-          { NOT_FOUND: LobbyCategoryNotFoundError },
-          () => this.lobby.getCategoryGames(input.slug),
-        ),
-      ),
+    getFeatured: os.getFeatured.handler(() => lobby.getFeatured()),
 
-      getFeatured: implement(lobbyContract.getFeatured).handler(() => this.lobby.getFeatured()),
-
-      search: implement(lobbyContract.search).handler(({ input }) => this.lobby.search(input.q)),
-    };
-  }
+    search: os.search.handler(({ input }) => lobby.search(input.q)),
+  });
 }

@@ -1,4 +1,3 @@
-import { Injectable } from '@nestjs/common';
 import { createDomainError } from '@oss/core';
 import { DrizzleService } from '@oss/db';
 import { eq, and, ilike, count, asc, inArray } from 'drizzle-orm';
@@ -32,7 +31,6 @@ function toGameSummary(record: {
   };
 }
 
-@Injectable()
 export class LobbyService {
   constructor(private readonly drizzle: DrizzleService) {}
 

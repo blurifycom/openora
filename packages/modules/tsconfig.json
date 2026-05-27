@@ -1,5 +1,5 @@
 {
-  "extends": "@oss/tsconfig/nestjs.json",
+  "extends": "@oss/tsconfig/node-service.json",
   "compilerOptions": {
     "rootDir": ".",
     "outDir": "dist",

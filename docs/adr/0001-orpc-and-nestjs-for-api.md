@@ -1,7 +1,7 @@
 # ADR-0001: oRPC + NestJS for the API layer
 
 **Date**: 2026-05-18
-**Status**: Accepted
+**Status**: Superseded by [ADR-0009](./0009-replace-nestjs-with-hono.md) (2026-05-27) - NestJS replaced by Hono + a functional composition container. oRPC and the Zod-first contract decision still stand; only the framework/DI host changed.
 
 ## Context
 

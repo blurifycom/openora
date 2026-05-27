@@ -12,7 +12,7 @@ Open-source, headless, plugin-based, AI-native igaming platform. Anyone clones t
 ## Architecture pillars
 
 1. Zod-first contracts. Every shape is a Zod schema; types are `z.infer`'d, never hand-written. Cross-cutting schemas live in `packages/contracts/shared-schemas`; per-module request/response schemas live in `packages/contracts/orpc-contract`, and module-local ones in the module's `schemas/`.
-2. oRPC + NestJS. `@orpc/nest` owns route registration + validation + OpenAPI emit. Nest owns DI, lifecycle, guards, and the module system used to load plugins.
+2. oRPC + Hono. oRPC owns route definition + Zod validation + OpenAPI emit; its `OpenAPIHandler` is mounted on a Hono server (`@hono/node-server`, Bun-ready later). Dependency wiring is a small functional composition container (`Container` in `@oss/core`) - explicit factory functions keyed by typed tokens, no decorators, no `reflect-metadata`. See ADR-0009.
 3. Plugin host. `definePlugin({ id, dependsOn, register })` is the only way new functionality enters the system. Overlays (in-tree under `apps/extensions/<name>/`) are the primary path; npm-published plugins use the same contract.
 4. Headless UI. `@oss/ui-provider-contract` declares component contracts and named slots. `@oss/ui-provider-shadcn` is the default adapter. Module UI never imports a UI library directly.
 5. Explicit > magic. No auto-discovery, no decorator soup. Everything is greppable; every wiring point is a typed function call.
@@ -22,7 +22,7 @@ Open-source, headless, plugin-based, AI-native igaming platform. Anyone clones t
 
 ```
 apps/
-  api/            # NestJS + oRPC HTTP API (port 3001) - thin consumer of createApp
+  api/            # Hono + oRPC HTTP API (port 3001) - thin consumer of createApp
   backoffice/     # Next.js admin app (reference consumer of the admin surface)
   web/            # Next.js player app (reference consumer of the player surface)
   mcp-server-dev/ # MCP dev server (stdio) - agents connect via .mcp.json
@@ -35,7 +35,7 @@ packages/
     orpc-contract/  # Root oRPC contract composing module routers
     adapters/       # @oss/adapters - vendor adapter interfaces + DI tokens (the swap seams)
   platform/
-    core/         # logger, event bus (EventBus + EVENT_BUS), tenant context
+    core/         # logger, event bus (EventBus + EVENT_BUS), composition Container, tenant context
     auth/         # better-auth integration + shared AdminGuard
     db/           # @oss/db - Drizzle client (DrizzleService) + drizzle-kit migrations
     plugin-host/  # definePlugin, ModuleRegistry, loader
@@ -49,7 +49,8 @@ packages/
     react-sdk/    # @oss/react-sdk - React hooks + context + admin shell + pages
   ui/
     provider-contract/ # UIProvider type shape (Button, Input, DataTable, ...)
-    provider-shadcn/   # default adapter
+    provider-shadcn/   # default adapter (headless HTML + data-attrs)
+    provider-daisyui/  # DaisyUI adapter (semantic Tailwind classes) - used by Consumer's player web
 docs/
   adr/            # Architecture decision records
   architecture.md, glossary.md, agent-quickstart.md, downstream-consumer.md
@@ -63,15 +64,15 @@ extensions.config.ts # the single registry of enabled plugins
 - A new business domain (eg "tournaments") -> new module under `packages/modules/<group>/<name>/` (group: `player`, `backoffice`, `platform`). Use `/scaffold-module <group> <name>`.
 - A behavior that extends/overrides an existing module -> overlay plugin under `apps/extensions/<name>/`. Use `/scaffold-plugin <name>`.
 - A new HTTP route -> add to the module's `router/index.ts`. Use `/scaffold-route <module> <method> <path>`. Player routes resolve the caller from the `x-user-id` header; admin routes MUST be guarded (next line).
-- An admin-only route -> inject `AdminGuard` from `@oss/auth` and `await this.adminGuard.assert(context)` as the first line of the handler (throws `ORPCError`). `AdminGuard` is provided globally by api-runtime's `InfraModule`. This is the single admin-enforcement point - never re-implement the role check.
+- An admin-only route -> the module's `plugin.ts` resolves `AdminGuard` from the container (`c.get(ADMIN_GUARD)`) and passes it into the router factory; call `await adminGuard.assert(context)` as the first line of the handler (throws `ORPCError`). `ADMIN_GUARD` is seeded into the container by `createApp`. This is the single admin-enforcement point - never re-implement the role check.
 - A new database table -> add a Drizzle `pgTable` to the module's `src/schema/index.ts`. Run `pnpm regen` (drizzle-kit) to generate the migration.
 - A reusable Zod schema -> `packages/contracts/shared-schemas/src/<namespace>.ts`. Module-local schemas live in the module's `schemas/`.
-- A cross-module event -> declare the event type in `@oss/core` (`event-bus.ts`), emit via the injected `EventBus` (`@Inject(EVENT_BUS)`).
+- A cross-module event -> declare the event type in `@oss/core` (`event-bus.ts`), emit via the `EventBus` the service received in its constructor (built in `plugin.ts` from `c.get(EVENT_BUS)`). See ADR-0010 for the event-driven direction and broker seam.
 - A UI component -> `/scaffold-ui-component <name>` creates both the contract entry and the shadcn impl.
 - A backoffice (admin) page -> add a component to `packages/sdks/react-sdk/src/pages/admin/`, export from `src/index.ts`, then add a Next route shim in `apps/backoffice/app/(authed)/<route>/page.tsx`. A player page goes in `src/pages/player/` with a shim in `apps/web/app/<route>/page.tsx`. See `packages/sdks/react-sdk/AGENTS.md`.
 - A design token -> a `--bo-*` CSS variable in `react-sdk/src/styles.css` + a typed entry in `Theme` (`react-sdk/src/theme.tsx`). Override per-tenant via `<ThemeProvider theme={...}>`.
 - A plugin-contributed admin UI extension (nav item, column, tile, section, route) -> a client-side `defineUIPlugin({ register(ctx) { ctx.<slot>.add(...) } })`. See ADR-0006 and `react-sdk/AGENTS.md`.
-- A third-party integration (PSP, KYC, aggregator, chat) -> define the adapter interface + DI token in `@oss/adapters` (`packages/contracts/adapters/src/<category>.ts`), implement it under `packages/modules/<module>/adapters/<vendor>/`, and bind it to the token in the module's `plugin.ts`. Never inline. All vendor adapter interfaces live in `@oss/adapters` so the swap seams are findable in one place.
+- A third-party integration (PSP, KYC, aggregator, chat) -> define the adapter interface + token (`createToken<Adapter>(...)`) in `@oss/adapters` (`packages/contracts/adapters/src/<category>.ts`), implement it under `packages/modules/<module>/adapters/<vendor>/`, and bind it in the module's `plugin.ts` via `ctx.provide(TOKEN, () => new Impl())`. Never inline. All vendor adapter interfaces live in `@oss/adapters` so the swap seams are findable in one place.
 - A long-running task -> emit an event; handle it in a BullMQ worker overlay plugin (scaffold with `/scaffold-plugin <name>-worker`, add a BullMQ processor, bind it in the plugin's `register(ctx)`).
 
 ## Naming
@@ -96,8 +97,8 @@ extensions.config.ts # the single registry of enabled plugins
 
 - `any` outside `*.test.ts`. Use `unknown` + narrowing.
 - Inline `fetch`/`axios`. Use the SDK or a vendor adapter.
-- Ad-hoc Zod schemas inside controllers/services. All schemas live in `schemas/` or `shared-schemas`.
-- Decorators for business rules. Decorators are for transport wiring only (Nest guards/interceptors).
+- Ad-hoc Zod schemas inside routers/services. All schemas live in `schemas/` or `shared-schemas`.
+- Decorators, anywhere. There is no decorator/DI framework - wire dependencies with explicit factory functions through the composition container.
 - Re-exporting types just to "be nice". Import from where it's defined.
 - TODOs without a tracking issue.
 - A per-module `package.json`/`tsconfig.json` - all feature modules share `@oss/modules`. New deps go in `packages/modules/package.json`.
@@ -118,7 +119,7 @@ Generates `packages/modules/<group>/<name>/` (a folder inside `@oss/modules`) wi
 /scaffold-plugin <name>
 ```
 
-Generates `apps/extensions/<name>/plugin.ts` exporting `definePlugin`. In `register(ctx)`: `ctx.routers.add(...)`, `ctx.providers.add(...)`, `ctx.controllers.add(...)`, `ctx.slots.fill(...)`, `ctx.events.on(...)`, `ctx.mcp.tool(...)`, `ctx.imports.add(...)`. To add tables, put your own `pgTable` in the overlay's schema (additive). To override a vendor adapter, bind your impl to its token AND ensure the overlay loads after the default-binding module in `extensions.config.ts` (last registration wins). See `apps/extensions/AGENTS.md`.
+Generates `apps/extensions/<name>/plugin.ts` exporting `definePlugin`. In `register(ctx)`: `ctx.provide(token, factory)`, `ctx.routers.add(namespace, (c) => router)`, `ctx.slots.fill(...)`, `ctx.events.on(...)`, `ctx.mcp.tool(...)`. To add tables, put your own `pgTable` in the overlay's schema (additive). To override a vendor adapter, `ctx.provide` your impl to its token AND ensure the overlay loads after the default-binding module in `extensions.config.ts` (last registration wins). See `apps/extensions/AGENTS.md`.
 
 ## How to add an oRPC route
 

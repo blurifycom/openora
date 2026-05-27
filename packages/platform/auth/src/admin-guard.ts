@@ -1,5 +1,5 @@
-import { Injectable } from '@nestjs/common';
 import { ORPCError } from '@orpc/server';
+import { createToken, type Token } from '@oss/adapters';
 import { DrizzleService } from '@oss/db';
 import { sql } from 'drizzle-orm';
 import { createAuth, type Auth } from './auth.js';
@@ -7,7 +7,8 @@ import { roles, type ResourceName, type ActionOf } from './permissions.js';
 
 type RequestLike = { headers: Record<string, string | string[] | undefined> };
 
-@Injectable()
+export const ADMIN_GUARD: Token<AdminGuard> = createToken('ADMIN_GUARD');
+
 export class AdminGuard {
   private readonly auth: Auth;
 

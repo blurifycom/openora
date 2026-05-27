@@ -24,10 +24,12 @@ flowchart TB
   subgraph runtime["API runtime - apps/api calls createApp()"]
     cfg["extensions.config.ts<br/>plugin registry"]
     host["plugin-host<br/>definePlugin / ModuleRegistry"]
-    nest["NestJS + @orpc/nest<br/>DI, guards, validation, OpenAPI emit"]
+    container["Container<br/>functional composition (tokens -> factories)"]
+    hono["Hono + oRPC OpenAPIHandler<br/>validation, OpenAPI emit"]
     cfg --> host
-    host --> nest
-    orpc --> nest
+    host --> container
+    container --> hono
+    orpc --> hono
   end
 
   subgraph platform["Platform services (packages/platform/*)"]
@@ -45,7 +47,7 @@ flowchart TB
   vendor["Vendor adapters<br/>PSP, KYC, aggregator, chat"]
 
   host --> mod
-  nest --> auth
+  container --> auth
   mod --> db
   mod --> core
   adapters -. implemented by .-> vendor
@@ -69,7 +71,7 @@ flowchart TB
     bplug --> bcfg
     bcfg --> bapi
   end
-  nest -. createApp + link .-> bapi
+  hono -. createApp + link .-> bapi
   sdk --> bweb
   shad --> bweb
   uiplug --> bweb
@@ -96,10 +98,10 @@ Solid arrows are runtime/build dependencies; dashed arrows are **adapter seams**
 **API runtime**
 
 - **extensions.config.ts** - the one list of enabled plugins (modules + overlays). The only place wiring is turned on.
-- **plugin-host** - `definePlugin({ id, dependsOn, register })` + `ModuleRegistry`. The bridge that mounts providers, controllers, routers, slots, events, imports, and MCP tools into the app. (The Drizzle migration removed the `prisma` extension surface; overlays add their own `pgTable` in their module's `src/schema/index.ts`.) ADR-0002.
-- **NestJS + @orpc/nest** - owns DI, lifecycle, guards, request validation, and OpenAPI emission. `apps/api` is a thin caller of `createApp()` from `@oss/api-runtime`; downstream consumers call the same factory.
+- **plugin-host** - `definePlugin({ id, dependsOn, register })` + `ModuleRegistry`. In `register(ctx)` a plugin binds providers (`ctx.provide(token, factory)`), mounts routers (`ctx.routers.add(namespace, (c) => router)`), fills UI slots, subscribes to events, and registers MCP tools. Overlays add their own `pgTable` in their module's `src/schema/index.ts`. ADR-0002.
+- **Hono + oRPC** - oRPC defines routes and validates I/O against the Zod contract; its `OpenAPIHandler` is mounted on a Hono server and emits `docs/openapi.json`. Dependency wiring is a small **functional composition `Container`** (`@oss/core`): typed-token factories, lazy + last-wins, no decorators. `apps/api` is a thin caller of `createApp()` from `@oss/api-runtime`; downstream consumers call the same factory. ADR-0009.
 
-**Platform services** (`packages/platform/*`) - shared infrastructure modules may import: `db` (`@oss/db` - Drizzle client, drizzle-kit migrations, `DrizzleService`, the NestJS-free `@oss/db/orm` re-export, tenant-scoped helpers), `auth` (better-auth + the shared `AdminGuard`), `core` (logger, tenant context, typed `EventBus`), `plugin-host` (the plugin loader).
+**Platform services** (`packages/platform/*`) - shared infrastructure modules may import: `db` (`@oss/db` - Drizzle client, drizzle-kit migrations, `DrizzleService`, the framework-free `@oss/db/orm` re-export, tenant-scoped helpers), `auth` (better-auth + the shared `AdminGuard`), `core` (logger, tenant context, typed `EventBus`, composition `Container`), `plugin-host` (the plugin loader).
 
 **Business modules** (`packages/modules/*`) - one folder per domain. A module may import contracts, platform, UI, and SDK packages, but **never another module** - cross-module communication goes through events or shared contracts. Each depends on vendor adapter interfaces from `@oss/adapters`.
 
@@ -139,15 +141,42 @@ These are the swap points - the reason the platform is "headless" and extensible
 ```mermaid
 sequenceDiagram
   participant UI as react-sdk (admin)
-  participant API as NestJS + @orpc/nest
+  participant API as Hono + oRPC
   participant Mod as Module service
   participant DB as Drizzle (tenant-scoped)
 
   UI->>API: typed oRPC call (GET /players)
-  API->>API: validate against Zod contract + guards
-  API->>Mod: delegate to service
+  API->>API: validate against Zod contract + AdminGuard.assert
+  API->>Mod: delegate to service (built by the container)
   Mod->>DB: withTenant query
   DB-->>Mod: rows
   Mod-->>API: domain objects (Zod-shaped)
   API-->>UI: typed response
 ```
+
+## Inter-module communication & scalability
+
+The API layer is a backend-for-frontend: it triggers commands and serves reads.
+Modules do **not** call each other - they couple to **topics**, not to each
+other's routes. See [ADR-0010](./adr/0010-event-driven-broker-and-microservices.md)
+for the full direction; the shape:
+
+- **Events for side effects.** A module emits an event via the typed `EventBus`;
+  any number of modules subscribe (fan-out). Bonuses, AML checks, leaderboards,
+  notifications, and personalization react this way. Consumers are idempotent
+  (delivery is at-least-once once a real broker is bound).
+- **Synchronous + atomic for money.** Placing a bet (wallet debit, balance check,
+  RGS result) and pre-action gates (KYC/jurisdiction) run inside a single
+  service/transaction - never "emit and hope". Events record what already
+  happened; they never move funds.
+- **Broker behind a seam.** The default `EventBus` is in-process. A
+  `MessageBrokerAdapter` (`MESSAGE_BROKER` token) will let an operator bind a
+  durable driver - **Redpanda** (Kafka API) for the regulated audit/ledger/replay
+  stream, NATS JetStream for lighter fan-out - without touching module code.
+- **Client push is separate.** WebSockets/SSE are client-facing only (chat,
+  balance/bonus toasts), never the transport between modules.
+- **Modular monolith now, microservices later.** The no-cross-module-imports rule
+  plus the broker seam make a hot module (eg `bonus`, `aggregator`) extractable
+  into its own deployable: point its broker at the shared stream and its events
+  keep flowing. Scale the stateless Hono API horizontally; scale async work by
+  moving consumers to their own services.

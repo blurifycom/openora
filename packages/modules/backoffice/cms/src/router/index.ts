@@ -1,65 +1,57 @@
-import { Controller } from '@nestjs/common';
-import { Implement, implement } from '@orpc/nest';
+import { implement } from '@orpc/server';
 import { AdminGuard } from '@oss/auth';
-import { mapErrors } from '@oss/core';
+import { mapErrors, type OssContext } from '@oss/core';
 import { contract } from '@oss/orpc-contract';
 import { CmsService, PageNotFoundError, BannerNotFoundError } from '../service/cms.service.js';
 
-@Controller()
-export class CmsController {
-  constructor(
-    private readonly cms: CmsService,
-    private readonly adminGuard: AdminGuard,
-  ) {}
+export function createCmsRouter(cms: CmsService, adminGuard: AdminGuard) {
+  const os = implement(contract.cms).$context<OssContext>();
 
-  @Implement(contract.cms)
-  cmsRoutes() {
-    return {
-      // Public reads.
-      listPages: implement(contract.cms.listPages).handler(() => this.cms.listPages()),
+  return os.router({
+    // Public reads.
+    listPages: os.listPages.handler(() => cms.listPages()),
 
-      getPage: implement(contract.cms.getPage).handler(({ input }) =>
-        mapErrors({ NOT_FOUND: PageNotFoundError }, () => this.cms.getPage(input.slug)),
-      ),
+    getPage: os.getPage.handler(({ input }) =>
+      mapErrors({ NOT_FOUND: PageNotFoundError }, () => cms.getPage(input.slug)),
+    ),
 
-      // Admin writes.
-      createPage: implement(contract.cms.createPage).handler(async ({ input, context }) => {
-        await this.adminGuard.assert(context, 'content', 'create');
-        return this.cms.createPage(input);
-      }),
+    // Admin writes.
+    createPage: os.createPage.handler(async ({ input, context }) => {
+      await adminGuard.assert(context, 'content', 'create');
+      return cms.createPage(input);
+    }),
 
-      updatePage: implement(contract.cms.updatePage).handler(async ({ input, context }) => {
-        await this.adminGuard.assert(context, 'content', 'update');
-        return mapErrors({ NOT_FOUND: PageNotFoundError }, () => this.cms.updatePage(input));
-      }),
+    updatePage: os.updatePage.handler(async ({ input, context }) => {
+      await adminGuard.assert(context, 'content', 'update');
+      return mapErrors({ NOT_FOUND: PageNotFoundError }, () => cms.updatePage(input));
+    }),
 
-      deletePage: implement(contract.cms.deletePage).handler(async ({ input, context }) => {
-        await this.adminGuard.assert(context, 'content', 'delete');
-        return mapErrors({ NOT_FOUND: PageNotFoundError }, () => this.cms.deletePage(input.id));
-      }),
+    deletePage: os.deletePage.handler(async ({ input, context }) => {
+      await adminGuard.assert(context, 'content', 'delete');
+      return mapErrors({ NOT_FOUND: PageNotFoundError }, () => cms.deletePage(input.id));
+    }),
 
-      // Public reads.
-      listBanners: implement(contract.cms.listBanners).handler(() => this.cms.listBanners()),
+    // Public reads.
+    listBanners: os.listBanners.handler(() => cms.listBanners()),
 
-      listBannersByPlacement: implement(contract.cms.listBannersByPlacement).handler(({ input }) =>
-        this.cms.listBannersByPlacement(input.placement),
-      ),
+    listBannersByPlacement: os.listBannersByPlacement.handler(({ input }) =>
+      cms.listBannersByPlacement(input.placement),
+    ),
 
-      // Admin writes.
-      createBanner: implement(contract.cms.createBanner).handler(async ({ input, context }) => {
-        await this.adminGuard.assert(context, 'content', 'create');
-        return this.cms.createBanner(input);
-      }),
+    // Admin writes.
+    createBanner: os.createBanner.handler(async ({ input, context }) => {
+      await adminGuard.assert(context, 'content', 'create');
+      return cms.createBanner(input);
+    }),
 
-      updateBanner: implement(contract.cms.updateBanner).handler(async ({ input, context }) => {
-        await this.adminGuard.assert(context, 'content', 'update');
-        return mapErrors({ NOT_FOUND: BannerNotFoundError }, () => this.cms.updateBanner(input));
-      }),
+    updateBanner: os.updateBanner.handler(async ({ input, context }) => {
+      await adminGuard.assert(context, 'content', 'update');
+      return mapErrors({ NOT_FOUND: BannerNotFoundError }, () => cms.updateBanner(input));
+    }),
 
-      deleteBanner: implement(contract.cms.deleteBanner).handler(async ({ input, context }) => {
-        await this.adminGuard.assert(context, 'content', 'delete');
-        return mapErrors({ NOT_FOUND: BannerNotFoundError }, () => this.cms.deleteBanner(input.id));
-      }),
-    };
-  }
+    deleteBanner: os.deleteBanner.handler(async ({ input, context }) => {
+      await adminGuard.assert(context, 'content', 'delete');
+      return mapErrors({ NOT_FOUND: BannerNotFoundError }, () => cms.deleteBanner(input.id));
+    }),
+  });
 }

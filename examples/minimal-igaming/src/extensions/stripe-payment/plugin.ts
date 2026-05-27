@@ -39,11 +39,9 @@ export default definePlugin({
   // registry is reordered. Ordering still resolves correctly via list order too.
   dependsOn: ['wallet'],
   register(ctx) {
-    // Rebind the token. useClass means Nest instantiates one StripePaymentAdapter and
-    // injects it wherever PAYMENT_ADAPTER is requested (eg WalletService).
-    ctx.providers.add({
-      provide: PAYMENT_ADAPTER,
-      useClass: StripePaymentAdapter,
-    });
+    // Rebind the token. The factory builds one StripePaymentAdapter; the container
+    // resolves it wherever PAYMENT_ADAPTER is requested (eg WalletService). Because
+    // this overlay registers after wallet, this binding wins.
+    ctx.provide(PAYMENT_ADAPTER, () => new StripePaymentAdapter());
   },
 });

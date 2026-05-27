@@ -1,7 +1,5 @@
-import { Injectable } from '@nestjs/common';
 import type { PaymentAdapter } from '@oss/adapters';
 
-@Injectable()
 export class MockPaymentAdapter implements PaymentAdapter {
   async processDeposit(
     amount: number,

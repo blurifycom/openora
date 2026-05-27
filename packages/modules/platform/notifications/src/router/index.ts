@@ -1,6 +1,5 @@
-import { Controller } from '@nestjs/common';
-import { Implement, implement } from '@orpc/nest';
-import { getUserId, mapErrors } from '@oss/core';
+import { implement } from '@orpc/server';
+import { getUserId, mapErrors, type OssContext } from '@oss/core';
 import { notificationsContract } from '@oss/orpc-contract/notifications';
 import {
   NotificationsService,
@@ -8,34 +7,30 @@ import {
   NotificationOwnershipError,
 } from '../service/notifications.service.js';
 
-@Controller()
-export class NotificationsController {
-  constructor(private readonly notifications: NotificationsService) {}
+export function createNotificationsRouter(notifications: NotificationsService) {
+  const os = implement(notificationsContract).$context<OssContext>();
 
-  @Implement(notificationsContract)
-  notificationsRouter() {
-    return {
-      list: implement(notificationsContract.list).handler(({ context }) =>
-        this.notifications.listForUser(getUserId(context)).then((items) =>
-          items.map((n) => ({
-            ...n,
-            readAt: n.readAt ? n.readAt.toISOString() : null,
-            createdAt: n.createdAt.toISOString(),
-          })),
-        ),
+  return os.router({
+    list: os.list.handler(({ context }) =>
+      notifications.listForUser(getUserId(context)).then((items) =>
+        items.map((n) => ({
+          ...n,
+          readAt: n.readAt ? n.readAt.toISOString() : null,
+          createdAt: n.createdAt.toISOString(),
+        })),
       ),
+    ),
 
-      markRead: implement(notificationsContract.markRead).handler(async ({ input, context }) => {
-        await mapErrors(
-          { NOT_FOUND: NotificationNotFoundError, FORBIDDEN: NotificationOwnershipError },
-          () => this.notifications.markRead(input.id, getUserId(context)),
-        );
-        return { success: true as const };
-      }),
+    markRead: os.markRead.handler(async ({ input, context }) => {
+      await mapErrors(
+        { NOT_FOUND: NotificationNotFoundError, FORBIDDEN: NotificationOwnershipError },
+        () => notifications.markRead(input.id, getUserId(context)),
+      );
+      return { success: true as const };
+    }),
 
-      markAllRead: implement(notificationsContract.markAllRead).handler(({ context }) =>
-        this.notifications.markAllRead(getUserId(context)),
-      ),
-    };
-  }
+    markAllRead: os.markAllRead.handler(({ context }) =>
+      notifications.markAllRead(getUserId(context)),
+    ),
+  });
 }

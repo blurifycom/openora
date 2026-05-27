@@ -1,4 +1,4 @@
-import { Injectable } from '@nestjs/common';
+import { createToken, type Token } from '@oss/adapters';
 
 export type EventHandler<T = unknown> = (payload: T) => void | Promise<void>;
 
@@ -7,9 +7,8 @@ export type EventBus = {
   on(event: string, handler: EventHandler): void;
 };
 
-export const EVENT_BUS = Symbol('EVENT_BUS');
+export const EVENT_BUS: Token<EventBus> = createToken('EVENT_BUS');
 
-@Injectable()
 export class InMemoryEventBus implements EventBus {
   private handlers = new Map<string, EventHandler[]>();
 

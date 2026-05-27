@@ -48,8 +48,8 @@ export default definePlugin({
   id: 'my-feature',
   dependsOn: ['identity', 'wallet'], // optional load-order hint
   register(ctx) {
-    ctx.providers.add(MyService);
-    ctx.controllers.add(MyController); // oRPC @Implement controller
+    ctx.provide(MY_ADAPTER, () => new MyAdapter()); // bind a vendor seam
+    ctx.routers.add('myFeature', (c) => createMyRouter(new MyService(c.get(DRIZZLE)))); // oRPC router
     ctx.slots.fill('sidebar-bottom', MyWidget);
     ctx.events.on('wallet.deposit.completed', handler);
     ctx.mcp.tool({ name: 'my-tool', description: '...', handler });
@@ -92,7 +92,7 @@ See [docs/downstream-consumer.md](./docs/downstream-consumer.md) for the full co
 ## Architecture
 
 ```
-Single Zod root  ->  oRPC contract  ->  NestJS controller  ->  OpenAPI spec
+Single Zod root  ->  oRPC contract  ->  Hono + oRPC handler  ->  OpenAPI spec
                                     ->  TypeScript client (zero codegen)
 ```
 

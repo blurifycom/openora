@@ -53,7 +53,7 @@ my-igaming/
      id: 'my-kyc',
      dependsOn: ['identity'],  // always load after the default-binding module
      register(ctx) {
-       ctx.providers.add({ provide: KYC_ADAPTER, useClass: MyKycAdapter });
+       ctx.provide(KYC_ADAPTER, () => new MyKycAdapter());
      },
    });
    ```

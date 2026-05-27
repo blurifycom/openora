@@ -26,8 +26,7 @@
     "push": "drizzle-kit push"
   },
   "dependencies": {
-    "@nestjs/common": "11.1.21",
-    "@nestjs/core": "11.1.21",
+    "@oss/adapters": "workspace:*",
     "dotenv": "17.4.2",
     "drizzle-orm": "0.45.2",
     "pg": "8.21.0"
@@ -36,10 +35,6 @@
     "@oss/tsconfig": "workspace:*",
     "@types/pg": "8.20.0",
     "drizzle-kit": "0.31.10",
-    "reflect-metadata": "^0.2.2",
     "typescript": "6.0.3"
-  },
-  "peerDependencies": {
-    "reflect-metadata": ">=0.1.0"
   }
 }

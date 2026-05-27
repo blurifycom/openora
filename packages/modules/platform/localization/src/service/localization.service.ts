@@ -1,6 +1,5 @@
-import { Injectable, Inject } from '@nestjs/common';
 import { DrizzleService } from '@oss/db';
-import { type EventBus, EVENT_BUS, createDomainError } from '@oss/core';
+import { type EventBus, createDomainError } from '@oss/core';
 import { eq, and } from 'drizzle-orm';
 import { locale, translation } from '../schema/index.js';
 
@@ -30,11 +29,10 @@ export interface TranslationRecord {
   updatedAt: string;
 }
 
-@Injectable()
 export class LocalizationService {
   constructor(
     private readonly drizzle: DrizzleService,
-    @Inject(EVENT_BUS) private readonly events: EventBus,
+    private readonly events: EventBus,
   ) {}
 
   async listLocales() {

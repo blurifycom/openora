@@ -5,7 +5,7 @@
 
 ## Context
 
-The platform already has a server-side plugin host: `definePlugin({ id, register(ctx) { ctx.routers.add(...); ctx.providers.add(...); ctx.events.on(...) } })` (ADR-0002). It runs at API startup; each module / overlay contributes routers, services, event handlers, prisma extensions.
+The platform already has a server-side plugin host: `definePlugin({ id, register(ctx) { ctx.routers.add(...); ctx.provide(...); ctx.events.on(...) } })` (ADR-0002). It runs at API startup; each module / overlay contributes routers, providers, event handlers, and additive tables.
 
 > **Update (2026-05):** the Drizzle migration removed `ctx.prisma.extend`. Overlays now add their own `pgTable` in their module's `src/schema/index.ts`; the plugin registry no longer exposes a `prisma` surface. References to "prisma extensions" / `prisma.partial.prisma` below are historical.
 

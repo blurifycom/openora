@@ -6,7 +6,11 @@
       "tables": [
         "aggregator_provider"
       ],
-      "routes": []
+      "routes": [
+        "aggregator.callback",
+        "aggregator.listProviders",
+        "aggregator.sync"
+      ]
     },
     {
       "id": "bonus",
@@ -15,7 +19,12 @@
         "bonus",
         "user_bonus"
       ],
-      "routes": []
+      "routes": [
+        "bonus.claimBonus",
+        "bonus.getUserBonus",
+        "bonus.getUserBonuses",
+        "bonus.listBonuses"
+      ]
     },
     {
       "id": "chat",
@@ -24,7 +33,14 @@
         "ChatMessage",
         "ChatRoom"
       ],
-      "routes": []
+      "routes": [
+        "chat.deleteMessage",
+        "chat.getGlobalMessages",
+        "chat.getRoomMessages",
+        "chat.listRooms",
+        "chat.sendGlobalMessage",
+        "chat.sendRoomMessage"
+      ]
     },
     {
       "id": "gaming",
@@ -33,7 +49,13 @@
         "Game",
         "GameRound"
       ],
-      "routes": []
+      "routes": [
+        "gaming.endRound",
+        "gaming.getGame",
+        "gaming.listGames",
+        "gaming.listRounds",
+        "gaming.startRound"
+      ]
     },
     {
       "id": "leaderboard",
@@ -42,7 +64,10 @@
         "leaderboard",
         "leaderboard_entry"
       ],
-      "routes": []
+      "routes": [
+        "leaderboard.adminReset",
+        "leaderboard.get"
+      ]
     },
     {
       "id": "lobby",
@@ -52,7 +77,12 @@
         "LobbyCategory",
         "LobbyCategoryGame"
       ],
-      "routes": []
+      "routes": [
+        "lobby.getCategoryBySlug",
+        "lobby.getFeatured",
+        "lobby.listCategories",
+        "lobby.search"
+      ]
     },
     {
       "id": "wallet",
@@ -61,13 +91,24 @@
         "wallet",
         "wallet_transaction"
       ],
-      "routes": []
+      "routes": [
+        "wallet.deposit",
+        "wallet.getBalance",
+        "wallet.listTransactions",
+        "wallet.withdraw"
+      ]
     },
     {
       "id": "admin-console",
       "group": "backoffice",
       "tables": [],
-      "routes": []
+      "routes": [
+        "admin-console.getStats",
+        "admin-console.getUser",
+        "admin-console.listTransactions",
+        "admin-console.listUsers",
+        "admin-console.updateUser"
+      ]
     },
     {
       "id": "cms",
@@ -76,7 +117,18 @@
         "banner",
         "page"
       ],
-      "routes": []
+      "routes": [
+        "cms.createBanner",
+        "cms.createPage",
+        "cms.deleteBanner",
+        "cms.deletePage",
+        "cms.getPage",
+        "cms.listBanners",
+        "cms.listBannersByPlacement",
+        "cms.listPages",
+        "cms.updateBanner",
+        "cms.updatePage"
+      ]
     },
     {
       "id": "player-management",
@@ -84,7 +136,14 @@
       "tables": [
         "player"
       ],
-      "routes": []
+      "routes": [
+        "player-management.get",
+        "player-management.list",
+        "player-management.registrationsOverTime",
+        "player-management.remove",
+        "player-management.summary",
+        "player-management.update"
+      ]
     },
     {
       "id": "compliance",
@@ -93,7 +152,14 @@
         "geo_rule",
         "user_limit"
       ],
-      "routes": []
+      "routes": [
+        "compliance.addGeoRule",
+        "compliance.deleteLimit",
+        "compliance.geoCheck",
+        "compliance.getLimits",
+        "compliance.listGeoRules",
+        "compliance.upsertLimit"
+      ]
     },
     {
       "id": "identity",
@@ -104,7 +170,12 @@
         "user",
         "verification"
       ],
-      "routes": []
+      "routes": [
+        "identity.login",
+        "identity.logout",
+        "identity.me",
+        "identity.register"
+      ]
     },
     {
       "id": "localization",
@@ -113,7 +184,12 @@
         "locale",
         "translation"
       ],
-      "routes": []
+      "routes": [
+        "localization.deleteTranslation",
+        "localization.getTranslations",
+        "localization.listLocales",
+        "localization.upsertTranslation"
+      ]
     },
     {
       "id": "notifications",
@@ -121,7 +197,11 @@
       "tables": [
         "notification"
       ],
-      "routes": []
+      "routes": [
+        "notifications.list",
+        "notifications.markAllRead",
+        "notifications.markRead"
+      ]
     }
   ],
   "adapters": [
@@ -131,7 +211,7 @@
       "token": "AGGREGATOR_ADAPTER",
       "status": "wired",
       "boundIn": [
-        "packages/modules/player/aggregator/src/service/igaming-aggregator.service.ts"
+        "packages/modules/player/aggregator/src/plugin.ts"
       ]
     },
     {
@@ -140,8 +220,7 @@
       "token": "GAME_ADAPTER",
       "status": "wired",
       "boundIn": [
-        "packages/modules/player/gaming/src/plugin.ts",
-        "packages/modules/player/gaming/src/service/gaming.service.ts"
+        "packages/modules/player/gaming/src/plugin.ts"
       ]
     },
     {
@@ -150,7 +229,7 @@
       "token": "GEO_IP_ADAPTER",
       "status": "wired",
       "boundIn": [
-        "packages/modules/platform/compliance/src/service/compliance.service.ts"
+        "packages/modules/platform/compliance/src/plugin.ts"
       ]
     },
     {
@@ -178,8 +257,7 @@
       "token": "PAYMENT_ADAPTER",
       "status": "wired",
       "boundIn": [
-        "packages/modules/player/wallet/src/plugin.ts",
-        "packages/modules/player/wallet/src/service/wallet.service.ts"
+        "packages/modules/player/wallet/src/plugin.ts"
       ]
     }
   ],
@@ -506,11 +584,8 @@
     ]
   },
   "pluginContract": [
-    "controllers",
     "events",
-    "imports",
     "mcp",
-    "providers",
     "routers",
     "slots"
   ],

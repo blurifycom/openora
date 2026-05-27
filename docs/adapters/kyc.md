@@ -70,7 +70,7 @@ export default definePlugin({
   id: 'sumsub-kyc',
   dependsOn: ['identity'],
   register(ctx) {
-    ctx.providers.add({ provide: KYC_ADAPTER, useClass: SumsubKycAdapter });
+    ctx.provide(KYC_ADAPTER, () => new SumsubKycAdapter());
   },
 });
 ```

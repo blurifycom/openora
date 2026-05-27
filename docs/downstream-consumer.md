@@ -108,7 +108,7 @@ For the same reason, a linked consumer's own Drizzle code (tables + operators) m
 `@oss/db/orm`, NOT from `drizzle-orm` directly. A direct `drizzle-orm` import resolves to the
 consumer's own physical copy; drizzle's protected-member classes then fail nominal type checks
 against `DrizzleService.db` (which uses `@oss/db`'s copy). `@oss/db/orm` re-exports the
-NestJS-free drizzle surface from the single shared instance.
+framework-free drizzle surface from the single shared instance.
 
 Full UI guide: `packages/sdks/react-sdk/AGENTS.md`.
 

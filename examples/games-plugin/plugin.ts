@@ -10,8 +10,8 @@
  */
 
 import { definePlugin } from '@oss/plugin-host';
-import { GAME_ADAPTER } from '@oss/module-gaming';
-import { CrashController } from './src/router/crash.router.js';
+import { GAME_ADAPTER } from '@oss/adapters';
+import { createCrashRouter } from './src/router/crash.router.js';
 import { ConsumerGameAdapter } from './src/provider/consumer-game-provider.js';
 
 export default definePlugin({
@@ -19,14 +19,14 @@ export default definePlugin({
   dependsOn: ['gaming', 'wallet'],
 
   register(ctx) {
-    // 1. Override the OSS mock game provider with Consumer's real one.
-    //    Any code that injects GAME_ADAPTER will now get ConsumerGameAdapter.
-    ctx.providers.add({ provide: GAME_ADAPTER, useClass: ConsumerGameAdapter });
+    // 1. Override the OSS mock game provider with Consumer's real one. Because this
+    //    plugin loads after `gaming`, this rebinding of GAME_ADAPTER wins.
+    ctx.provide(GAME_ADAPTER, () => new ConsumerGameAdapter());
 
-    // 2. Mount the Crash game controller.
+    // 2. Mount the Crash game router.
     //    Adds: POST /crash/rounds, POST /crash/bets,
     //          POST /crash/cash-out, GET /crash/rounds/current
-    ctx.controllers.add(CrashController);
+    ctx.routers.add('crash', () => createCrashRouter());
 
     // 3. Listen for wallet deposits - award 10 free spins on deposits >= $10.
     ctx.events.on('wallet.deposit.completed', async (payload: unknown) => {
@@ -55,18 +55,7 @@ export default definePlugin({
       path: '/crash',
     });
 
-    // 5. Extend the Prisma schema with Crash-specific tables.
-    //    Run `pnpm regen` after enabling this plugin to apply migrations.
-    ctx.prisma.extend(
-      'CrashRound',
-      `
-      id         String   @id @default(cuid())
-      tenantId   String
-      multiplier Float
-      bustedAt   DateTime
-      status     String   @default("active")
-      createdAt  DateTime @default(now())
-    `,
-    );
+    // 5. Crash-specific tables: add your own `pgTable`s in this overlay's schema
+    //    (additive) and run `pnpm regen` to generate the migration.
   },
 });

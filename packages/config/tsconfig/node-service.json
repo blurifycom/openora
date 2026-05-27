@@ -22,8 +22,6 @@
     "declarationMap": true,
     "sourceMap": true,
     "composite": true,
-    "experimentalDecorators": true,
-    "emitDecoratorMetadata": true,
     "strictPropertyInitialization": false
   },
   "exclude": ["node_modules", "dist", "coverage", ".turbo"]

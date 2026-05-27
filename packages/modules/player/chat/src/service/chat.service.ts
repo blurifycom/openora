@@ -1,5 +1,4 @@
-import { Injectable, Inject } from '@nestjs/common';
-import { type EventBus, EVENT_BUS, createDomainError } from '@oss/core';
+import { type EventBus, createDomainError } from '@oss/core';
 import { DrizzleService } from '@oss/db';
 import { eq, and, isNull, lt, desc, asc } from 'drizzle-orm';
 import { chatRoom, chatMessage } from '../schema/index.js';
@@ -42,11 +41,10 @@ function toMessage(record: typeof chatMessage.$inferSelect): ChatMessage {
   };
 }
 
-@Injectable()
 export class ChatService {
   constructor(
     private readonly drizzle: DrizzleService,
-    @Inject(EVENT_BUS) private readonly events: EventBus,
+    private readonly events: EventBus,
   ) {}
 
   async listRooms(tenantId?: string): Promise<ChatRoom[]> {

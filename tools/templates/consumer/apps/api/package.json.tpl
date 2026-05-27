@@ -15,8 +15,7 @@
     "@oss/plugin-host": "link:{{ossFromApp}}/packages/platform/plugin-host",
     "@oss/shared-schemas": "link:{{ossFromApp}}/packages/contracts/shared-schemas",
     "@oss/adapters": "link:{{ossFromApp}}/packages/contracts/adapters",
-    "@oss/modules": "link:{{ossFromApp}}/packages/modules",
-    "reflect-metadata": "0.2.2"
+    "@oss/modules": "link:{{ossFromApp}}/packages/modules"
   },
   "devDependencies": {
     "@oss/tsconfig": "link:{{ossFromApp}}/packages/config/tsconfig",

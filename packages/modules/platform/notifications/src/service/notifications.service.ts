@@ -1,5 +1,4 @@
-import { Injectable, Inject } from '@nestjs/common';
-import { type EventBus, EVENT_BUS, createDomainError } from '@oss/core';
+import { type EventBus, createDomainError } from '@oss/core';
 import { DrizzleService } from '@oss/db';
 import { eq, and, isNull, desc } from 'drizzle-orm';
 import { notification } from '../schema/index.js';
@@ -15,11 +14,10 @@ export const NotificationOwnershipError = createDomainError(
   (id: string) => `Notification ${id} does not belong to the requesting user`,
 );
 
-@Injectable()
 export class NotificationsService {
   constructor(
     private readonly drizzle: DrizzleService,
-    @Inject(EVENT_BUS) private readonly events: EventBus,
+    private readonly events: EventBus,
   ) {}
 
   async create(input: CreateNotificationInput) {
