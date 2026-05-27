@@ -28,6 +28,7 @@ overlay plugin that loads AFTER the default-binding module (last registration wi
 | bonus | player | bonus, user_bonus | - |
 | chat | player | ChatMessage, ChatRoom | - |
 | gaming | player | Game, GameRound | - |
+| leaderboard | player | leaderboard, leaderboard_entry | - |
 | lobby | player | FeaturedSlot, LobbyCategory, LobbyCategoryGame | - |
 | wallet | player | wallet, wallet_transaction | - |
 | admin-console | backoffice | - | - |
@@ -53,6 +54,8 @@ Emit/subscribe via the injected `EventBus` (`@Inject(EVENT_BUS)` from `@oss/core
 - `gaming.round.started`
 - `identity.user.login`
 - `identity.user.registered`
+- `leaderboard.reset`
+- `leaderboard.score.recorded`
 - `localization.translation.deleted`
 - `localization.translation.upserted`
 - `notifications.created`
@@ -77,9 +80,9 @@ Fill from a `defineUIPlugin` via `ctx.<slot>.add(...)`. See ADR-0006.
 | `users:columns` | - |
 | `users:toolbar` | Toolbar controls above the users DataTable. Subject: void |
 
-## iGaming config
+## Igaming config
 
-Declare with `defineiGamingConfig({...})` from `@oss/shared-schemas`, pass to
+Declare with `defineIgamingConfig({...})` from `@oss/shared-schemas`, pass to
 `createApp({ igaming })`. Injected app-wide via the `IGAMING_CONFIG` token.
 
 | Field | Notes |
@@ -99,7 +102,7 @@ Declare with `defineiGamingConfig({...})` from `@oss/shared-schemas`, pass to
 
 ## Zod schemas
 
-52 schemas. Look one up by name with the `schema-get` MCP tool.
+56 schemas. Look one up by name with the `schema-get` MCP tool.
 
 - `AdminTransactionSchema` - packages/contracts/orpc-contract/src/backoffice.ts
 - `AdminUserSchema` - packages/contracts/orpc-contract/src/backoffice.ts
@@ -110,7 +113,6 @@ Declare with `defineiGamingConfig({...})` from `@oss/shared-schemas`, pass to
 - `BrandingSchema` - packages/contracts/shared-schemas/src/igaming-config.ts
 - `CallbackInputSchema` - packages/contracts/orpc-contract/src/igaming-aggregator.ts
 - `CallbackResultSchema` - packages/contracts/orpc-contract/src/igaming-aggregator.ts
-- `iGamingConfigSchema` - packages/contracts/shared-schemas/src/igaming-config.ts
 - `ChatMessageSchema` - packages/contracts/orpc-contract/src/chat.ts
 - `ChatRoomSchema` - packages/contracts/orpc-contract/src/chat.ts
 - `CountryCodeSchema` - packages/contracts/shared-schemas/src/igaming-config.ts
@@ -123,7 +125,12 @@ Declare with `defineiGamingConfig({...})` from `@oss/shared-schemas`, pass to
 - `GameSchema` - packages/contracts/orpc-contract/src/gaming.ts
 - `GameSummarySchema` - packages/contracts/orpc-contract/src/lobby.ts
 - `GeoRuleSchema` - packages/contracts/orpc-contract/src/compliance.ts
+- `IgamingConfigSchema` - packages/contracts/shared-schemas/src/igaming-config.ts
 - `KycStatusSchema` - packages/contracts/orpc-contract/src/player.ts
+- `LeaderboardEntrySchema` - packages/contracts/orpc-contract/src/leaderboard.ts
+- `LeaderboardMetricSchema` - packages/contracts/orpc-contract/src/leaderboard.ts
+- `LeaderboardPeriodSchema` - packages/contracts/orpc-contract/src/leaderboard.ts
+- `LeaderboardResponseSchema` - packages/contracts/orpc-contract/src/leaderboard.ts
 - `LimitSchema` - packages/contracts/orpc-contract/src/compliance.ts
 - `LimitsSchema` - packages/contracts/shared-schemas/src/igaming-config.ts
 - `LobbyCategoryDetailSchema` - packages/contracts/orpc-contract/src/lobby.ts
@@ -153,3 +160,71 @@ Declare with `defineiGamingConfig({...})` from `@oss/shared-schemas`, pass to
 - `WalletBalanceSchema` - packages/contracts/orpc-contract/src/wallet.ts
 - `WalletTransactionSchema` - packages/contracts/orpc-contract/src/wallet.ts
 - `WithdrawInputSchema` - packages/contracts/orpc-contract/src/wallet.ts
+
+## HTTP routes (from OpenAPI)
+
+- DELETE /chat/messages/{id}
+- DELETE /cms/banners/{id}
+- DELETE /cms/pages/{id}
+- DELETE /compliance/limits/{id}
+- DELETE /localization/translations/{id}
+- DELETE /players/{playerId}
+- GET /backoffice/stats
+- GET /backoffice/transactions
+- GET /backoffice/users
+- GET /backoffice/users/{userId}
+- GET /bonus/bonuses
+- GET /bonus/user-bonuses
+- GET /bonus/user-bonuses/{id}
+- GET /chat/global
+- GET /chat/rooms
+- GET /chat/rooms/{roomId}/messages
+- GET /cms/banners
+- GET /cms/banners/{placement}
+- GET /cms/pages
+- GET /cms/pages/{slug}
+- GET /compliance/geo-check
+- GET /compliance/geo-rules
+- GET /compliance/limits
+- GET /gaming/games
+- GET /gaming/games/{id}
+- GET /gaming/rounds
+- GET /health
+- GET /identity/me
+- GET /igaming-aggregator/providers
+- GET /lobby/categories
+- GET /lobby/categories/{slug}
+- GET /lobby/featured
+- GET /lobby/search
+- GET /localization/locales
+- GET /localization/translations/{locale}/{namespace}
+- GET /notifications
+- GET /players
+- GET /players/stats/registrations
+- GET /players/stats/summary
+- GET /players/{playerId}
+- GET /wallet/balance
+- GET /wallet/transactions
+- PATCH /backoffice/users/{userId}
+- PATCH /players/{playerId}
+- POST /bonus/claim/{bonusId}
+- POST /chat/global
+- POST /chat/rooms/{roomId}/messages
+- POST /cms/banners
+- POST /cms/pages
+- POST /compliance/geo-rules
+- POST /gaming/rounds/start
+- POST /gaming/rounds/{roundId}/end
+- POST /identity/login
+- POST /identity/logout
+- POST /identity/register
+- POST /igaming-aggregator/callback
+- POST /igaming-aggregator/sync
+- POST /localization/translations
+- POST /notifications/read-all
+- POST /notifications/{id}/read
+- POST /wallet/deposit
+- POST /wallet/withdraw
+- PUT /cms/banners/{id}
+- PUT /cms/pages/{id}
+- PUT /compliance/limits

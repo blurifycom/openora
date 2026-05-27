@@ -19,6 +19,11 @@ const repoRoot = join(here, '..');
 
 const [, , type, ...args] = process.argv;
 
+// ---------------------------------------------------------------------------
+// Module
+// ---------------------------------------------------------------------------
+const MODULE_GROUPS = ['player', 'backoffice', 'platform'] as const;
+
 const scaffolders: Record<string, (...args: string[]) => void> = {
   module: scaffoldModule,
   plugin: scaffoldPlugin,
@@ -35,11 +40,6 @@ if (!fn) {
 }
 
 fn(...args);
-
-// ---------------------------------------------------------------------------
-// Module
-// ---------------------------------------------------------------------------
-const MODULE_GROUPS = ['player', 'backoffice', 'platform'] as const;
 
 function scaffoldModule(rawGroup?: string, rawName?: string) {
   if (!rawGroup || !rawName) {

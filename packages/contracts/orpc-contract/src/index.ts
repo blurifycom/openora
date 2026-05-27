@@ -14,6 +14,8 @@ import { backofficeContract } from './backoffice.js';
 import { playerContract } from './player.js';
 import { igamingAggregatorContract } from './igaming-aggregator.js';
 
+import { leaderboardContract } from './leaderboard.js';
+
 export { healthContract } from './health.js';
 export { identityContract } from './identity.js';
 export { localizationContract } from './localization.js';
@@ -47,6 +49,14 @@ export {
 } from './player.js';
 export { igamingAggregatorContract } from './igaming-aggregator.js';
 
+export {
+  leaderboardContract,
+  LeaderboardMetricSchema,
+  LeaderboardPeriodSchema,
+  LeaderboardEntrySchema,
+  LeaderboardResponseSchema,
+} from './leaderboard.js';
+
 export const contract = populateContractRouterPaths({
   health: healthContract,
   identity: identityContract,
@@ -62,6 +72,7 @@ export const contract = populateContractRouterPaths({
   backoffice: backofficeContract,
   player: playerContract,
   igamingAggregator: igamingAggregatorContract,
+  leaderboard: leaderboardContract,
 });
 
 export type Contract = typeof contract;

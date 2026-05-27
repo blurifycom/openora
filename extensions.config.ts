@@ -6,6 +6,7 @@
 // compiled into the single @oss/modules package (dist/<group>/<name>/src/plugin.js).
 
 export const extensions = [
+  { id: 'leaderboard', path: './packages/modules/dist/player/leaderboard/src/plugin.js' },
   // Platform - shared substrate used by both surfaces
   { id: 'identity', path: './packages/modules/dist/platform/identity/src/plugin.js' },
   { id: 'notifications', path: './packages/modules/dist/platform/notifications/src/plugin.js' },
