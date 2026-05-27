@@ -16,17 +16,17 @@ export class BackofficeController {
   backofficeRouter() {
     return {
       getStats: implement(contract.backoffice.getStats).handler(async ({ context }) => {
-        await this.adminGuard.assert(context);
+        await this.adminGuard.assert(context, 'report', 'view');
         return this.backofficeService.getStats();
       }),
 
       listUsers: implement(contract.backoffice.listUsers).handler(async ({ input, context }) => {
-        await this.adminGuard.assert(context);
+        await this.adminGuard.assert(context, 'player', 'view');
         return this.backofficeService.listUsers(input.page ?? 1, input.limit ?? 20, input.search);
       }),
 
       getUser: implement(contract.backoffice.getUser).handler(async ({ input, context }) => {
-        await this.adminGuard.assert(context);
+        await this.adminGuard.assert(context, 'player', 'view');
         return mapErrors(
           { NOT_FOUND: UserNotFoundError },
           () => this.backofficeService.getUser(input.userId),
@@ -34,7 +34,7 @@ export class BackofficeController {
       }),
 
       updateUser: implement(contract.backoffice.updateUser).handler(async ({ input, context }) => {
-        await this.adminGuard.assert(context);
+        await this.adminGuard.assert(context, 'player', 'update');
         return mapErrors(
           { NOT_FOUND: UserNotFoundError },
           () => this.backofficeService.updateUser(input.userId, {
@@ -46,7 +46,7 @@ export class BackofficeController {
 
       listTransactions: implement(contract.backoffice.listTransactions).handler(
         async ({ input, context }) => {
-          await this.adminGuard.assert(context);
+          await this.adminGuard.assert(context, 'transaction', 'view');
           return this.backofficeService.listTransactions(
             input.page ?? 1,
             input.limit ?? 20,

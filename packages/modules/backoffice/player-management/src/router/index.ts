@@ -16,17 +16,17 @@ export class PlayerController {
   playerRoutes() {
     return {
       list: implement(contract.player.list).handler(async ({ input, context }) => {
-        await this.adminGuard.assert(context);
+        await this.adminGuard.assert(context, 'player', 'view');
         return this.player.list(input.page ?? 1, input.limit ?? 20, input.search, input.status);
       }),
 
       get: implement(contract.player.get).handler(async ({ input, context }) => {
-        await this.adminGuard.assert(context);
+        await this.adminGuard.assert(context, 'player', 'view');
         return mapErrors({ NOT_FOUND: PlayerNotFoundError }, () => this.player.get(input.playerId));
       }),
 
       update: implement(contract.player.update).handler(async ({ input, context }) => {
-        await this.adminGuard.assert(context);
+        await this.adminGuard.assert(context, 'player', 'update');
         return mapErrors(
           { NOT_FOUND: PlayerNotFoundError },
           () => this.player.update(input.playerId, {
@@ -39,7 +39,7 @@ export class PlayerController {
       }),
 
       remove: implement(contract.player.remove).handler(async ({ input, context }) => {
-        await this.adminGuard.assert(context);
+        await this.adminGuard.assert(context, 'player', 'ban');
         return mapErrors(
           { NOT_FOUND: PlayerNotFoundError },
           () => this.player.remove(input.playerId),
@@ -48,13 +48,13 @@ export class PlayerController {
 
       registrationsOverTime: implement(contract.player.registrationsOverTime).handler(
         async ({ input, context }) => {
-          await this.adminGuard.assert(context);
+          await this.adminGuard.assert(context, 'report', 'view');
           return this.player.registrationsOverTime(input.days ?? 30);
         },
       ),
 
       summary: implement(contract.player.summary).handler(async ({ context }) => {
-        await this.adminGuard.assert(context);
+        await this.adminGuard.assert(context, 'report', 'view');
         return this.player.summary();
       }),
     };
