@@ -20,11 +20,15 @@ turbo/generators/ # turbo gen: plugin, adapter, page
 
 ```bash
 pnpm install
+pnpm setup:mcp             # trust the MCP server + install the /start onboarding flow
 pnpm build:oss            # build the linked @oss/* packages once
 cp .env.example .env       # set DATABASE_URL + AUTH_SECRET
 pnpm db:migrate            # apply the OSS schema to your database
 pnpm dev                   # api :3001, web :3000, backoffice :3002
 ```
+
+After `pnpm setup:mcp`, restart your editor and run **`/start`** in Claude Code - it asks what
+you want to build and scaffolds it for you.
 
 `@oss/*` is linked from a sibling OSS checkout (see `pnpm.overrides`). When you change OSS
 source, rebuild it (`pnpm build:oss`) so the linked `dist/` updates. For a hot loop, run a

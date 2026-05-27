@@ -52,27 +52,22 @@ async function main() {
     console.log('\n--- Dependencies: already installed ---');
   }
 
-  // 3. Database service (postgres) must already be running locally.
-  console.log('\n--- Checking database service (expects postgres on :5432) ---');
+  // 3. Start postgres via docker compose and wait for it to be ready.
+  console.log('\n--- Starting dev infra (docker compose up -d) ---');
+  run('docker compose up -d');
 
-  // Wait for postgres to be ready
   await new Promise<void>((resolve) => {
     let attempts = 0;
     const poll = setInterval(() => {
       attempts++;
       try {
-        execSync('docker exec $(docker ps -q -f name=postgres) pg_isready -U postgres', {
-          stdio: 'pipe',
-        });
+        execSync('docker compose exec -T postgres pg_isready -U postgres', { stdio: 'pipe' });
         clearInterval(poll);
         resolve();
       } catch {
-        if (attempts > 20) {
-          clearInterval(poll);
-          resolve();
-        }
+        if (attempts > 20) { clearInterval(poll); resolve(); }
       }
-    }, 1000);
+    }, 1500);
   });
 
   // 4. Migrate

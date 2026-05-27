@@ -1,7 +1,15 @@
 {
   "$schema": "https://json.schemastore.org/tsconfig",
-  "extends": "../../../tsconfig.base.json",
   "compilerOptions": {
+    "strict": true,
+    "exactOptionalPropertyTypes": true,
+    "noUncheckedIndexedAccess": true,
+    "noImplicitOverride": true,
+    "noUnusedLocals": true,
+    "noUnusedParameters": true,
+    "skipLibCheck": true,
+    "esModuleInterop": true,
+    "moduleDetection": "force",
     "target": "ES2022",
     "lib": ["dom", "dom.iterable", "esnext"],
     "module": "ESNext",
@@ -13,5 +21,6 @@
     "isolatedModules": true,
     "noEmit": true,
     "plugins": [{ "name": "next" }]
-  }
+  },
+  "exclude": ["node_modules", "dist", "coverage", ".turbo"]
 }

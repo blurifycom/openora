@@ -11,6 +11,7 @@
     "lint": "oxlint .",
     "db:generate": "pnpm -C {{ossFromRoot}} -F @oss/db generate",
     "db:migrate": "pnpm -C {{ossFromRoot}} -F @oss/db migrate",
+    "setup:mcp": "tsx {{ossFromRoot}}/tools/setup-mcp.ts --target .",
     "gen": "turbo gen"
   },
   "devDependencies": {

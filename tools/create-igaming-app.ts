@@ -121,7 +121,7 @@ function main(): void {
   // Drop in the consumer AI agents (single source of truth: @oss/mcp/agents).
   const claudeAgents = join(targetDir, '.claude', 'agents');
   mkdirSync(claudeAgents, { recursive: true });
-  for (const f of ['igaming-builder.md', 'igaming-expert.md', 'igaming-qa.md']) {
+  for (const f of ['igaming-builder.md', 'igaming-expert.md', 'igaming-qa.md', 'igaming-debugger.md']) {
     const src = join(agentsDir, f);
     if (existsSync(src)) {
       copyFileSync(src, join(claudeAgents, f));

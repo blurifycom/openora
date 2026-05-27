@@ -147,6 +147,157 @@ function resolveDatabaseUrl(): string {
 
 const READONLY_SQL_PREFIXES = ['select', 'with', 'explain', 'show', 'table', 'values'];
 
+// --- intent classification (for enhance-intent) -----------------------------
+type IntentKind = 'feature' | 'adapter' | 'ui-page' | 'route' | 'downstream-app' | 'unsure';
+
+/** Best-effort keyword classification of a fuzzy "what I want to build" ask. */
+function classifyIntent(ask: string): IntentKind {
+  const a = ` ${ask.toLowerCase()} `;
+  const has = (re: RegExp) => re.test(a);
+  if (has(/\b(downstream|consumer repo|new project|new app|new repo|my own|standalone|bootstrap|spin up)\b/))
+    return 'downstream-app';
+  if (has(/\b(payment|psp|stripe|adyen|kyc|onfido|identity check|sms|email|notification|vendor|adapter|gateway|provider integration)\b/))
+    return 'adapter';
+  if (has(/\b(page|screen|dashboard|view|frontend|admin panel|backoffice page|player page)\b/))
+    return 'ui-page';
+  if (has(/\b(endpoint|route|procedure|api method|rpc)\b/)) return 'route';
+  if (has(/\b(module|feature|domain|tournament|leaderboard|jackpot|loyalty|bonus|cashback|mission|quest|reward|system)\b/))
+    return 'feature';
+  return 'unsure';
+}
+
+/** Symbol DI tokens exported from @oss/adapters - the vendor swap seams. */
+function readAdapterTokens(): string[] {
+  const dir = repoPath('packages', 'contracts', 'adapters', 'src');
+  if (!existsSync(dir)) return [];
+  const out: string[] = [];
+  for (const f of readdirSync(dir)) {
+    if (!f.endsWith('.ts') || f === 'index.ts') continue;
+    for (const m of readFileSync(join(dir, f), 'utf8').matchAll(/^export const (\w+) = Symbol/gm)) {
+      out.push(m[1]!);
+    }
+  }
+  return out;
+}
+
+/** Named UI slot identifiers (eg 'nav:item') from react-sdk. */
+function readSlots(): string[] {
+  const file = repoPath('packages', 'sdks', 'react-sdk', 'src', 'ui-plugin', 'slots.ts');
+  if (!existsSync(file)) return [];
+  return [...readFileSync(file, 'utf8').matchAll(/:\s*'([a-z]+:[a-z]+)'/g)].map((m) => m[1]!);
+}
+
+/** Per-kind step-by-step playbook, grounded in live repo state. */
+function buildPlaybook(kind: IntentKind, ctx: { modules: string[]; tokens: string[]; slots: string[] }): string {
+  const moduleList = ctx.modules.length ? ctx.modules.map((m) => `- ${m}`).join('\n') : '- (none yet)';
+  switch (kind) {
+    case 'feature':
+      return [
+        '## Where it goes',
+        'A new business domain -> a new module under `packages/modules/<group>/<name>/` (group: player | backoffice | platform).',
+        '',
+        '## Existing modules (avoid name collisions)',
+        moduleList,
+        '',
+        '## Playbook',
+        '1. Delegate to the `igaming-expert` agent: turn this ask into requirements + acceptance criteria (player lifecycle, edge cases, regulatory).',
+        '2. Pick a group + kebab-case name. Call `propose-table-change` for every table name you intend to add.',
+        '3. Run `scaffold-module <group> <name>` (MCP tool). In a consumer repo, an overlay is `pnpm gen plugin` instead.',
+        '4. Fill the `// AGENT: implement here` regions: src/schema (pgTable), src/schemas (Zod), src/service, src/router. Leave the wiring alone.',
+        '5. Add routes with `scaffold-route <module> <METHOD> <path>`. Admin routes MUST `await this.adminGuard.assert(context)` first.',
+        '6. Run `regen` (drizzle migration + OpenAPI + SDK + catalog), then `run-verify`.',
+        '7. Hand the build to `oss-module-author` (or `igaming-fullstack-dev`) with the spec from step 1.',
+      ].join('\n');
+    case 'adapter':
+      return [
+        '## Where it goes',
+        'A third-party integration -> implement the adapter interface under `packages/modules/<module>/adapters/<vendor>/` and bind it to a DI token in the module/overlay `plugin.ts`. Interfaces + tokens all live in `@oss/adapters`.',
+        '',
+        '## Adapter tokens available to override',
+        ctx.tokens.length ? ctx.tokens.map((t) => `- ${t}`).join('\n') : '- (none found)',
+        '',
+        '## Playbook',
+        '1. Confirm which token from the list above this vendor implements (eg PAYMENT_ADAPTER).',
+        '2. Run `scaffold-plugin <vendor>-<category>` (or in a consumer: `pnpm gen adapter`).',
+        '3. Implement the interface, then bind your impl to the token in `register(ctx)`. Ensure the overlay loads AFTER the default-binding module in extensions.config.ts (last registration wins).',
+        '4. Never inline fetch/axios - all vendor calls go through the adapter.',
+        '5. Run `run-verify`. Delegate the build to the `plugin-author` agent.',
+      ].join('\n');
+    case 'ui-page':
+      return [
+        '## Where it goes',
+        'A page body lives in `packages/sdks/react-sdk/src/pages/{admin|player}/`, is exported from `src/index.ts`, and gets a thin Next route shim in the consumer app. Module UI imports only the UIProvider contract - never a UI library directly.',
+        '',
+        '## Named UI slots you can fill (for plugin-contributed UI)',
+        ctx.slots.length ? ctx.slots.map((s) => `- ${s}`).join('\n') : '- (none found)',
+        '',
+        '## Playbook',
+        '1. Decide surface: player (apps/web) or backoffice (apps/backoffice).',
+        '2. In a consumer repo, mount an existing react-sdk page with `pnpm gen page`. For a brand-new page body, add it to react-sdk and export it.',
+        '3. To extend an existing page without forking it, contribute via `defineUIPlugin` into one of the slots above (see ADR-0006).',
+        '4. Run `run-verify`. Delegate to `igaming-fullstack-dev` (page body) or `ui-provider-author` (component contract).',
+      ].join('\n');
+    case 'route':
+      return [
+        '## Where it goes',
+        "Add to the owning module's `src/router/index.ts`. Do not define ad-hoc Zod - import from the module `schemas/` or add to `shared-schemas`.",
+        '',
+        '## Existing modules',
+        moduleList,
+        '',
+        '## Playbook',
+        '1. Call `query-openapi <keyword>` first to confirm the route does not already exist.',
+        '2. Run `scaffold-route <module> <METHOD> <path>`.',
+        '3. Player routes resolve the caller from the `x-user-id` header; admin routes MUST assert AdminGuard as the first line.',
+        '4. Run `regen` then `run-verify`.',
+      ].join('\n');
+    case 'downstream-app':
+      return [
+        '## Where it goes',
+        'A brand-new operator repo that consumes `@oss/*` via local `link:` - it does NOT fork this repo.',
+        '',
+        '## Playbook',
+        '1. Run `scaffold-app <target-dir>` (MCP tool) or `pnpm create:app ../<name> --name <name>`.',
+        '2. In the new dir: `pnpm install && pnpm build:oss && cp .env.example .env` (set DATABASE_URL + AUTH_SECRET) then `pnpm db:migrate`.',
+        '3. Run `pnpm setup:mcp` in the new repo so its own agents get this same toolbelt, then `/start` there.',
+        '4. `pnpm dev` boots api :3001, web :3000, backoffice :3002.',
+      ].join('\n');
+    default:
+      return [
+        '## Not sure yet',
+        'Ask the user one clarifying question to map the ask onto one of: feature (new module), adapter (vendor swap), ui-page, route, or downstream-app. Then re-run `enhance-intent` with the chosen `kind`.',
+        '',
+        '## What already exists (for grounding)',
+        `Modules: ${ctx.modules.join(', ') || '(none)'}`,
+        `Adapter tokens: ${ctx.tokens.join(', ') || '(none)'}`,
+      ].join('\n');
+  }
+}
+
+/**
+ * The requirements interview. The human answers these; the agent does everything
+ * after. Shared by `start` and `enhance-intent` so requirements-first holds
+ * regardless of entry point.
+ */
+const REQUIREMENTS_INTERVIEW = [
+  'Interview the user with AskUserQuestion in small batches (2-4 questions at a time). Adapt to their answers, dig into anything vague, and keep going until you could hand a stranger a spec they could build from. Cover what applies - skip what does not:',
+  '',
+  '- Goal: what player or operator problem does this solve? what is the desired outcome?',
+  '- Actors: who uses it - players, backoffice admins, affiliates, support?',
+  '- Trigger: when/how does it start - user action, schedule, event, deposit, game round?',
+  '- Data: what does it track? what entities/records/fields?',
+  '- Value flow: does it move money, bonus credits, points, or free spins? which currency? get the exact amounts/rates.',
+  '- Rules: eligibility, limits, caps, wagering requirements, cooldowns, expiry?',
+  '- Lifecycle: what states does the entity move through (eg pending -> active -> settled -> expired)?',
+  '- Compliance: any regulatory or responsible-gaming angle? which jurisdictions/markets?',
+  '- UI: player-facing, backoffice, or both? what does each audience see and do?',
+  '- Edge cases: failure, partial completion, concurrency, refunds/reversals, abuse?',
+  '- Success criteria: how will the user know it works? what must be true?',
+  '- Out of scope: what is explicitly NOT part of this?',
+  '',
+  'Then summarize the requirements back to the user as a short structured list and get an explicit yes before any building starts.',
+].join('\n');
+
 // ---------------------------------------------------------------------------
 // MCP server
 // ---------------------------------------------------------------------------
@@ -418,6 +569,25 @@ server.tool(
   },
 );
 
+// --- scaffold-app (bootstrap a downstream consumer repo) --------------------
+server.tool(
+  'scaffold-app',
+  'Bootstrap a new downstream igaming consumer repo (api + web + backoffice) wired to this OSS checkout via link:. Delegates to tools/create-igaming-app.ts. Does NOT run pnpm install - tell the user to run `pnpm install && pnpm build:oss && pnpm db:migrate` in the new dir next.',
+  {
+    target: z
+      .string()
+      .describe('Target directory for the new repo, relative to this OSS checkout root, e.g. "../my-igaming".'),
+    name: z.string().optional().describe('Project name. Defaults to the target dir basename.'),
+  },
+  async ({ target, name }) => {
+    const nameFlag = name ? ` --name ${name}` : '';
+    const result = run(`pnpm create:app ${target}${nameFlag}`);
+    return {
+      content: [{ type: 'text', text: result.output || (result.ok ? 'Done.' : 'Failed.') }],
+    };
+  },
+);
+
 // --- run-verify -------------------------------------------------------------
 server.tool(
   'run-verify',
@@ -682,6 +852,172 @@ server.tool(
     }
     lines.push('\nNote: use the MCP scaffold-* tools to invoke these from any editor.');
     return { content: [{ type: 'text', text: lines.join('\n') }] };
+  },
+);
+
+// --- enhance-intent ---------------------------------------------------------
+server.tool(
+  'enhance-intent',
+  'Turn a fuzzy "what I want to build" ask into a grounded, structured brief. Classifies the intent against the platform decision tree, injects LIVE repo context (existing modules, adapter tokens, UI slots), and returns an exact step-by-step playbook (which scaffold-* tool to run, which agent to delegate to, propose-table-change + run-verify reminders) plus an acceptance-criteria stub. Call this from the /start onboarding flow, or any time a user describes a feature in vague terms.',
+  {
+    ask: z
+      .string()
+      .describe("The user's raw request in their own words, eg 'add a tournaments feature with leaderboards and prize payouts'"),
+    kind: z
+      .enum(['feature', 'adapter', 'ui-page', 'route', 'downstream-app', 'unsure'])
+      .optional()
+      .describe('Override the auto-classification if you already know the kind of work.'),
+  },
+  async ({ ask, kind }) => {
+    const resolved = kind && kind !== 'unsure' ? kind : classifyIntent(ask);
+    const ctx = {
+      modules: listAllModules().map((m) => `${m.group}/${m.name}`),
+      tokens: readAdapterTokens(),
+      slots: readSlots(),
+    };
+    const tree = parseAgentsMdSection(readFile(repoPath('AGENTS.md')), 'Where does X go? (decision tree)');
+    const detected = kind && kind !== 'unsure' ? '' : ' (auto-detected - correct me if wrong)';
+
+    const text = [
+      '# Enhanced brief',
+      '',
+      '## Restated intent',
+      `> ${ask.trim()}`,
+      '',
+      `## Classification: ${resolved}${detected}`,
+      '',
+      '## Requirements - collect these from the user FIRST (if not already gathered)',
+      'A one-line ask is a starting point, not a spec. Your main job is to gather thorough requirements; delegate the build to the agents.',
+      '',
+      REQUIREMENTS_INTERVIEW,
+      '',
+      buildPlaybook(resolved, ctx),
+      '',
+      '## Acceptance criteria (derive from the requirements above)',
+      '- [ ] Happy path works end to end',
+      '- [ ] Edge cases and failure modes handled',
+      '- [ ] Multi-tenant: every new table carries `tenantId`',
+      '- [ ] `pnpm verify` is green (typecheck + lint + boundaries + tests)',
+      '',
+      '## Decision-tree reference (from AGENTS.md)',
+      tree || '(decision tree section not found)',
+    ].join('\n');
+
+    return { content: [{ type: 'text', text }] };
+  },
+);
+
+// --- dev:infra --------------------------------------------------------------
+server.tool(
+  'dev:infra',
+  'Start (or stop/status) the local dev infrastructure via docker compose. Boots postgres on :5432. Call this before pnpm dev or pnpm db:migrate when the database is not reachable.',
+  {
+    action: z
+      .enum(['up', 'down', 'status'])
+      .optional()
+      .describe('up (default): start containers detached. down: stop and remove. status: show running containers.'),
+  },
+  async ({ action = 'up' }) => {
+    if (action === 'status') {
+      const r = run('docker compose ps');
+      return { content: [{ type: 'text', text: r.output || '(no output)' }] };
+    }
+
+    if (action === 'down') {
+      const r = run('docker compose down');
+      return { content: [{ type: 'text', text: r.ok ? 'Stopped.' : r.output }] };
+    }
+
+    // up - start detached then wait for postgres to be ready
+    const up = run('docker compose up -d');
+    if (!up.ok) {
+      return { content: [{ type: 'text', text: `docker compose up failed:\n${up.output}` }] };
+    }
+
+    // Poll pg_isready up to 30 s
+    const deadline = Date.now() + 30_000;
+    let ready = false;
+    while (Date.now() < deadline) {
+      const probe = run('docker compose exec -T postgres pg_isready -U postgres');
+      if (probe.ok) { ready = true; break; }
+      await new Promise((r) => setTimeout(r, 1_500));
+    }
+
+    const text = ready
+      ? `Postgres is ready on :5432.\n\nNext: pnpm db:migrate (apply schema) then pnpm dev.`
+      : `Containers started but postgres did not become ready within 30 s.\nRun \`docker compose logs postgres\` to investigate.`;
+    return { content: [{ type: 'text', text: text }] };
+  },
+);
+
+// --- start ------------------------------------------------------------------
+server.tool(
+  'start',
+  'Onboarding entry point. Call this when the user opens Claude Code in a fresh consumer repo, says "start", "help me build X", or asks what they can do. Returns a structured onboarding script: questions to ask, options to present, and what to do with the answers. Follow the script exactly - ask the questions via AskUserQuestion, then call enhance-intent with the result.',
+  {
+    ask: z
+      .string()
+      .optional()
+      .describe("Pass the user's raw ask if they already described what they want to build. Omit to get the full interactive onboarding flow."),
+  },
+  async ({ ask }) => {
+    const modules = listAllModules().map((m) => `${m.group}/${m.name}`);
+    const tokens = readAdapterTokens();
+
+    const role = [
+      '## Your role',
+      'You are a requirements interviewer and orchestrator. Your one human-facing job is to collect thorough requirements from the user. Everything after - scaffolding, code, tests - you delegate to the agents (`igaming-expert` for requirements + AC, `oss-module-author` / `igaming-fullstack-dev` to build, `qa-engineer` to test) via the Task tool. Keep the user out of the loop after requirements are confirmed, except for genuine decisions only they can make.',
+    ].join('\n');
+
+    if (ask) {
+      const resolved = classifyIntent(ask);
+      const playbook = buildPlaybook(resolved, { modules, tokens, slots: readSlots() });
+      const text = [
+        '# Onboarding',
+        `The user opened with: **${ask}**  (looks like: ${resolved})`,
+        '',
+        role,
+        '',
+        '## Step 1: gather requirements (the important part)',
+        'That opening line is a starting point, not a spec. Interview the user now:',
+        '',
+        REQUIREMENTS_INTERVIEW,
+        '',
+        '## Step 2: delegate everything',
+        'Once requirements are confirmed, call `enhance-intent` (ask = the confirmed requirements summary, kind = the detected kind), then follow its playbook - which hands the work to the agents. Do not implement directly.',
+        '',
+        playbook,
+      ].join('\n');
+      return { content: [{ type: 'text', text }] };
+    }
+
+    // No ask yet - return the interactive onboarding script for the agent to follow.
+    const text = [
+      '# Onboarding script - follow this exactly',
+      '',
+      role,
+      '',
+      '## Step 1: high-level intent (AskUserQuestion, single-select)',
+      'Present AT MOST 4 options - AskUserQuestion rejects more, and it auto-adds an "Other" for anything else. This only routes the playbook, so keep it light:',
+      'Question: "What do you want to build?"',
+      '- New feature / business module (tournaments, loyalty, jackpots) -> kind: feature',
+      '- Swap a vendor adapter (payment / KYC / notifications) -> kind: adapter',
+      '- Add a UI page (player app or backoffice) -> kind: ui-page',
+      '- Something else (a single route, a new downstream app, or not sure) -> kind: unsure',
+      'Map the free-text answer to feature | adapter | ui-page | route | downstream-app | unsure for enhance-intent (route and downstream-app are valid kinds even though they are not top-level options).',
+      '',
+      '## Step 2: requirements interview (spend most of your effort here)',
+      REQUIREMENTS_INTERVIEW,
+      '',
+      '## Step 3: delegate everything',
+      'Call `enhance-intent` (ask = the confirmed requirements summary, kind = step 1). Then follow its playbook, which delegates to the agents. You orchestrate; you do not write feature code yourself.',
+      '',
+      '## Platform context (for your reference)',
+      `Existing modules: ${modules.join(', ') || '(none yet)'}`,
+      `Adapter tokens: ${tokens.join(', ') || '(none)'}`,
+    ].join('\n');
+
+    return { content: [{ type: 'text', text }] };
   },
 );
 

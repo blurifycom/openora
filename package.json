@@ -24,7 +24,8 @@
     "seed": "tsx tools/seed.ts",
     "verify": "turbo run typecheck test:unit && pnpm run lint && pnpm run verify:shape",
     "verify:drift": "tsx tools/gen-catalog.ts && tsx tools/sync-agent-docs.ts && git diff --exit-code -- docs/catalog.json docs/CATALOG.md CLAUDE.md .cursorrules .github/copilot-instructions.md",
-    "setup:agent": "tsx tools/setup-agent.ts"
+    "setup:agent": "tsx tools/setup-agent.ts",
+    "setup:mcp": "tsx tools/setup-mcp.ts"
   },
   "devDependencies": {
     "@oss/api-runtime": "workspace:*",

@@ -4,6 +4,28 @@ The `oss-dev` MCP server gives any AI agent read-only inspection of the platform
 schemas, modules, events, and Drizzle tables - plus write tools to scaffold and verify. It
 works with any MCP-compatible editor.
 
+## Zero-config setup: `pnpm setup:mcp`
+
+The fastest way to wire MCP for Claude Code. Run it right after `pnpm install`:
+
+```bash
+pnpm setup:mcp
+```
+
+It is idempotent and does three things against the current repo:
+
+1. Ensures `.mcp.json` registers the MCP server (writes the `oss-dev` default if missing).
+2. Adds every server name to `.claude/settings.json#enabledMcpjsonServers` so Claude Code
+   trusts the server without a per-session prompt.
+3. Installs the `/start` onboarding skill.
+
+Then restart your editor (or run `/mcp`) and run **`/start`**: it asks what you want to build,
+calls the `enhance-intent` tool to turn your fuzzy ask into a grounded spec (classified against
+the decision tree, with live module/adapter/slot context), and drives the right scaffold flow.
+
+A `create:app` consumer ships the same script (`pnpm setup:mcp`, delegating to this checkout) -
+run it once in the generated repo so its own agents get the toolbelt.
+
 ## Server config snippet
 
 The server uses stdio transport (no port). Add this to your editor's MCP config:
@@ -48,6 +70,9 @@ The server uses stdio transport (no port). Add this to your editor's MCP config:
 | `docs-search` | Full-text search across all docs/ and AGENTS.md files |
 | `db-query-readonly` | Run a read-only SQL query against the dev database |
 | `list-slash-commands` | List available slash commands (scaffold shortcuts) |
+| `enhance-intent` | Turn a fuzzy "build X" ask into a classified, grounded brief + step-by-step playbook |
+| `start` | Onboarding entry point - call when user asks what to build; returns interactive Q&A script |
+| `dev:infra` | Start / stop / status local docker compose infra (postgres on :5432) |
 
 ### Write / scaffold (delegates to the same scripts humans use)
 
@@ -56,8 +81,39 @@ The server uses stdio transport (no port). Add this to your editor's MCP config:
 | `scaffold-module` | Creates a new module skeleton + registers it |
 | `scaffold-plugin` | Creates a new overlay extension skeleton |
 | `scaffold-route` | Adds an oRPC route stub to a module |
+| `scaffold-app` | Bootstraps a new downstream consumer repo (api + web + backoffice) linked to this checkout |
 | `regen` | Runs drizzle-kit generate + OpenAPI emit + catalog regeneration |
 | `run-verify` | Runs pnpm verify (typecheck + lint + tests) |
+
+## The consumer-facing server (`@oss/mcp`)
+
+`oss-dev` (above) is the full toolkit for working *on* this repo. There is a second,
+read-only server - `@oss/mcp` (`packages/platform/mcp`) - that ships to downstream
+consumers for inspecting the platform surface (catalog-overview, list-adapters, etc.).
+It reads `docs/catalog.json`, resolving it by walking up from `cwd`, then falling back to
+`node_modules/@oss/mcp/docs/catalog.json`.
+
+Until it's published to npm, run it locally from the built `dist/`:
+
+```bash
+pnpm --filter @oss/mcp build   # rebuild after any source change
+```
+
+```json
+{
+  "mcpServers": {
+    "oss": {
+      "type": "stdio",
+      "command": "node",
+      "args": ["/ABSOLUTE/PATH/TO/casino-oss/packages/platform/mcp/dist/main.js"]
+    }
+  }
+}
+```
+
+Note: in a `create:app` consumer running in dev/link mode you don't need this - the
+generated `.mcp.json` already points at the full `oss-dev` server through the sibling
+checkout, which is a superset of `@oss/mcp`.
 
 ## Usage pattern for agents
 

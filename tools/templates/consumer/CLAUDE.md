@@ -1,0 +1,74 @@
+# Agent instructions
+
+This repo is a downstream igaming operator built on the OSS platform (`@oss/*`).
+
+## HARD RULE: never modify OSS core
+
+`@oss/*` is a third-party dependency - treat it like any published npm package. You may READ it for reference, never write to it.
+
+- Do NOT edit anything in `node_modules/**` or in the linked OSS checkout. Edit/Write to those paths is denied in `.claude/settings.json`; do not try to work around it with `sed`, shell redirection, or a script.
+- Locally patching a dependency is an anti-pattern: it is lost on reinstall and diverges from the published package every other operator uses.
+- You extend the platform from the OUTSIDE only - overlay plugins, adapter rebindings, UI plugins, config. Never fork or hand-edit core.
+- If something can only be fixed in core, STOP and report it as an upstream bug/feature request for the OSS repo (describe the problem, expected behavior, where you think it lives). Do not patch it here.
+
+## Getting started
+
+When the user opens Claude Code or asks to build something, call the `start` MCP tool (server: `oss`) and follow the script it returns.
+
+Trigger phrases: "start", "help", "what can I build", "what can I do", "I want to build X", "how do I begin", "getting started".
+
+## How you work here: collect requirements, delegate everything else
+
+Your one human-facing job is to **gather thorough requirements** from the user - interview them (goal, actors, value flow, rules, lifecycle, compliance, UI, edge cases, success criteria, out of scope) until you could hand a stranger a buildable spec. The `start` / `enhance-intent` tools give you the checklist.
+
+Once requirements are confirmed, **delegate the rest to the agents** via the Task tool - you orchestrate, you do not implement feature code yourself:
+
+1. `igaming-expert` - formalizes the requirements into acceptance criteria, flags compliance/gaps.
+2. `igaming-builder` - implements (`pnpm gen ...`, code, wiring).
+3. `igaming-qa` - writes/runs the E2E test against the acceptance criteria.
+
+Only return to the user to resolve genuine decisions they alone can make.
+
+## What this repo is
+
+- `apps/api/` - thin NestJS API entry, your own `extensions.config.ts`
+- `apps/web/` - Next.js player app mounting `@oss/react-sdk` pages
+- `apps/backoffice/` - Next.js admin app mounting `@oss/react-sdk` admin pages
+- `@oss/*` packages are linked from a sibling OSS checkout via `pnpm.overrides`
+
+## How to extend
+
+| What you want | Command |
+|---|---|
+| New behavior / routes | `pnpm gen plugin` |
+| Swap a vendor (payment / KYC / notification) | `pnpm gen adapter` |
+| Mount a react-sdk page on a route | `pnpm gen page` |
+
+Register new plugins in `apps/api/src/extensions.config.ts`. Adapters must be listed AFTER the module that owns the default binding (last registration of a DI token wins).
+
+## Agents (spawn via the Task tool)
+
+Delegate work to these scoped agents - the `start` / `enhance-intent` playbooks tell you when to use each:
+
+- `igaming-expert` - turns a fuzzy product ask into requirements + acceptance criteria (jurisdiction rules, player journey). Advisory, writes no code. Use BEFORE building anything non-obvious.
+- `igaming-builder` - senior fullstack engineer. Implements overlays, swaps adapters, mounts UI pages.
+- `igaming-qa` - writes/runs Playwright E2E tests; triages whether a bug is in OSS core (upstream) or your overlay (local fix).
+- `igaming-debugger` - root-causes failures, build-time (Next/Turbopack, tsc, module resolution) and runtime (Chrome DevTools: console/network/DOM). Spawn it whenever something errors or behaves wrong; it finds the cause and routes the fix.
+
+This repo consumes OSS core as linked packages - never edit `@oss/*` source. If a bug is in core, report it upstream; extend from the outside via plugins.
+
+## MCP tools available (server: `oss`)
+
+This server reads the platform CATALOG (not OSS source) - it tells you what exists so you extend without forking. Call these instead of grepping:
+
+- `start` - onboarding flow (call when the user asks what to build)
+- `enhance-intent` - turn a fuzzy ask into a grounded spec + playbook
+- `dev:infra` - start/stop/status docker compose (postgres :5432)
+- `catalog-overview` - START HERE: counts + adapter seams + config fields
+- `list-adapters` - vendor swap seams (interface + token + status)
+- `list-routes [module]` - oRPC route namespaces
+- `list-events` - cross-module domain events you can subscribe to
+- `list-slots` - named UI slots you can fill from a UI plugin
+- `describe-module <name>` - one module's group, tables, routes
+- `schema-get <name>` - locate a Zod contract schema's file
+- `get-config-schema` - the igaming-config fields a consumer can set

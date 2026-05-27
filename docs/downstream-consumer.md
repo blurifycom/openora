@@ -16,11 +16,16 @@ From this OSS checkout, generate a full consumer turborepo wired to link at it:
 pnpm create:app ../my-igaming --name my-igaming
 cd ../my-igaming
 pnpm install
+pnpm setup:mcp          # trust the MCP server + install the /start onboarding flow
 pnpm build:oss          # build the linked @oss/* packages once
 cp .env.example .env     # set DATABASE_URL + AUTH_SECRET
 pnpm db:migrate          # apply the OSS schema
 pnpm dev                 # api :3001, web :3000, backoffice :3002
 ```
+
+After install, run `pnpm setup:mcp` and then `/start` in Claude Code: it asks what you want to
+build, calls the `enhance-intent` MCP tool to turn the ask into a grounded spec, and drives the
+matching scaffold flow. See [mcp-setup.md](./mcp-setup.md#zero-config-setup-pnpm-setupmcp).
 
 This emits everything the sections below describe by hand: `apps/api` (thin `createApp` entry +
 `extensions.config.ts`), `apps/web` + `apps/backoffice` (Next apps mounting react-sdk pages with
