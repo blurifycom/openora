@@ -6,6 +6,9 @@
 export type { Token } from './token.js';
 export { createToken } from './token.js';
 
+export type { MessageBrokerAdapter, BrokerHandler } from './broker.js';
+export { MESSAGE_BROKER } from './broker.js';
+
 export type { GameAdapter } from './game.js';
 export { GAME_ADAPTER } from './game.js';
 

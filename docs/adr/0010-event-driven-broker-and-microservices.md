@@ -1,7 +1,7 @@
 # ADR-0010: Event-driven module communication, broker seam, and the path to microservices
 
 **Date**: 2026-05-27
-**Status**: Accepted (design); implementation staged - see "Implementation backlog"
+**Status**: Accepted; foundation implemented (typed bus + broker seam + wiring + atomic money). Only a concrete durable driver remains - see "Implementation backlog".
 
 ## Context
 
@@ -37,8 +37,15 @@ Modules must stay decoupled so the platform scales both in load and in team/orga
 
 **Negative / trade-offs:** event-driven flows are harder to trace than direct calls (mitigate with topic documentation per module and correlation IDs); at-least-once delivery pushes idempotency onto every consumer.
 
-## Implementation backlog (not done in this round - documentation only)
+## Implementation status
 
-1. **Wire plugin event handlers.** `ctx.events.on(...)` handlers are collected into the registry but **not yet subscribed to the bus** at boot - cross-module events do not fire today. Wire `registry.events.getAll()` into the resolved `EVENT_BUS` in `createApp`.
-2. **Make wallet ops transactional.** `wallet` deposit/withdraw currently run separate statements around the PSP call; wrap the ledger write + balance update in `db.transaction(...)`.
-3. **Define the `MessageBrokerAdapter` seam** in `@oss/adapters` and a Redpanda/NATS binding behind it; keep `InMemoryEventBus` as the default.
+Done:
+
+1. **Typed event catalog.** `domainEventSchemas` (Zod) in `@oss/shared-schemas` (`events.ts`) is the single source for every cross-module event payload; `DomainEventName`/`DomainEventPayload` are inferred from it.
+2. **Broker seam.** `MessageBrokerAdapter` + `MESSAGE_BROKER` token in `@oss/adapters`. The `EventBus` (`@oss/core`) is a typed facade over it that validates known payloads and isolates subscriber failures. Default binding is `InMemoryBroker` (synchronous in-process fan-out); bind a durable driver to `MESSAGE_BROKER` in an overlay to swap transport - no module change.
+3. **Plugin handlers wired.** `createApp` subscribes every `registry.events.getAll()` handler to the resolved bus at boot, so cross-module `ctx.events.on(...)` handlers now actually fire.
+4. **Atomic money.** `wallet` deposit/withdraw wrap the ledger insert + balance update in `db.transaction(...)` (withdraw re-checks the balance inside the txn to block double-spend) and emit only after commit.
+
+Open:
+
+- **A concrete durable driver** (Redpanda / Kafka API or NATS JetStream) implementing `MessageBrokerAdapter`, plus a docker-compose service - deferred until a real microservice split needs it. Until then the in-process default is correct for the modular monolith.

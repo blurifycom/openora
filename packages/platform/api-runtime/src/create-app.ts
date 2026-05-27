@@ -9,7 +9,15 @@ import { cors } from 'hono/cors';
 import { serve, type ServerType } from '@hono/node-server';
 import { writeFile, mkdir } from 'node:fs/promises';
 import { dirname, resolve } from 'node:path';
-import { Container, InMemoryEventBus, EVENT_BUS, type OssContext } from '@oss/core';
+import {
+  Container,
+  InMemoryBroker,
+  createEventBus,
+  createLogger,
+  EVENT_BUS,
+  type OssContext,
+} from '@oss/core';
+import { MESSAGE_BROKER } from '@oss/adapters';
 import { DrizzleService, DRIZZLE } from '@oss/db';
 import { AdminGuard, ADMIN_GUARD } from '@oss/auth';
 import { loadPlugins, type PluginEntry } from '@oss/plugin-host';
@@ -84,7 +92,13 @@ export async function createApp(config: CreateAppConfig): Promise<CreatedApp> {
     container.onDispose(() => svc.dispose());
     return svc;
   });
-  container.register(EVENT_BUS, () => new InMemoryEventBus());
+  // Inter-module transport: default to the in-process broker; an overlay rebinds
+  // MESSAGE_BROKER to a durable driver (Redpanda/NATS) without touching modules.
+  // The EventBus is the typed facade services depend on.
+  container.register(MESSAGE_BROKER, () => new InMemoryBroker());
+  container.register(EVENT_BUS, (c) =>
+    createEventBus(c.get(MESSAGE_BROKER), createLogger('event-bus')),
+  );
   container.register(ADMIN_GUARD, (c) => new AdminGuard(c.get(DRIZZLE)));
   if (config.igaming) {
     const igaming = config.igaming;
@@ -93,6 +107,15 @@ export async function createApp(config: CreateAppConfig): Promise<CreatedApp> {
 
   const registry = await loadPlugins(config.plugins, container);
   await config.configure?.(container);
+
+  // Subscribe every plugin-registered handler to the resolved bus. Plugins collect
+  // handlers via ctx.events.on(...) during register(); this is where they go live.
+  const bus = container.get(EVENT_BUS);
+  for (const [event, handlers] of registry.events.getAll()) {
+    for (const handler of handlers) {
+      bus.on(event, handler);
+    }
+  }
 
   // Assemble the root oRPC router from each plugin's router factory, keyed by the
   // module's contract namespace. Built once, after every plugin has registered.

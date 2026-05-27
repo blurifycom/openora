@@ -36,7 +36,7 @@ In-app notification inbox. Other modules create notifications by emitting events
 - Throw framework HTTP errors from service methods - throw domain errors and map them to `ORPCError` in the handler.
 - Edit the generated migrations under `packages/platform/db/` by hand - edit the `pgTable` defs in `src/schema/index.ts` and run `pnpm regen`.
 - Define Zod schemas inline in handlers - add them to `src/schemas/index.ts`.
-- Assume `ctx.events.on(...)` handlers fire yet - they are collected at `register()` but not yet wired to the bus (ADR-0010 backlog); for the welcome notification use a worker or a post-boot hook for now.
+- Block in a `ctx.events.on(...)` handler - they fire synchronously on the in-process bus by default, so keep them light and offload slow work (eg sending the welcome email) to a worker. (Handlers are wired to the bus at boot by `createApp` - ADR-0010.)
 
 ## Done when
 

@@ -410,19 +410,31 @@ importers:
       '@oss/adapters':
         specifier: workspace:*
         version: link:../../contracts/adapters
+      '@oss/shared-schemas':
+        specifier: workspace:*
+        version: link:../../contracts/shared-schemas
       pino:
         specifier: 10.3.1
         version: 10.3.1
+      zod:
+        specifier: 4.4.3
+        version: 4.4.3
     devDependencies:
       '@oss/tsconfig':
         specifier: workspace:*
         version: link:../../config/tsconfig
+      '@oss/vitest-config':
+        specifier: workspace:*
+        version: link:../../config/vitest
       '@types/node':
         specifier: 25.9.0
         version: 25.9.0
       typescript:
         specifier: 6.0.3
         version: 6.0.3
+      vitest:
+        specifier: 4.1.6
+        version: 4.1.6(@types/node@25.9.0)(@vitest/coverage-v8@4.1.6)(vite@8.0.13(@types/node@25.9.0)(esbuild@0.28.0)(tsx@4.22.2))
 
   packages/platform/db:
     dependencies:

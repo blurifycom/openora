@@ -215,6 +215,15 @@
       ]
     },
     {
+      "category": "broker",
+      "interface": "MessageBrokerAdapter",
+      "token": "MESSAGE_BROKER",
+      "status": "wired",
+      "boundIn": [
+        "packages/platform/api-runtime/src/create-app.ts"
+      ]
+    },
+    {
       "category": "game",
       "interface": "GameAdapter",
       "token": "GAME_ADAPTER",

@@ -14,6 +14,7 @@ overlay plugin that loads AFTER the default-binding module (last registration wi
 | Category | Interface | Token | Status | Bound in |
 | --- | --- | --- | --- | --- |
 | aggregator | `AggregatorAdapter` | `AGGREGATOR_ADAPTER` | wired (default impl) | `packages/modules/player/aggregator/src/plugin.ts` |
+| broker | `MessageBrokerAdapter` | `MESSAGE_BROKER` | wired (default impl) | `packages/platform/api-runtime/src/create-app.ts` |
 | game | `GameAdapter` | `GAME_ADAPTER` | wired (default impl) | `packages/modules/player/gaming/src/plugin.ts` |
 | geo-ip | `GeoIpAdapter` | `GEO_IP_ADAPTER` | wired (default impl) | `packages/modules/platform/compliance/src/plugin.ts` |
 | kyc | `KycAdapter` | `KYC_ADAPTER` | wired (default impl) | `packages/modules/platform/identity/src/adapters/mock/mock-kyc-adapter.ts`<br>`packages/modules/platform/identity/src/plugin.ts` |

@@ -74,7 +74,12 @@ type AdapterInfo = {
 
 function collectAdapters(): AdapterInfo[] {
   const dir = join(repoRoot, 'packages', 'contracts', 'adapters', 'src');
-  const moduleFiles = GROUPS.flatMap((g) => walk(join(repoRoot, 'packages', 'modules', g), '.ts'));
+  // Scan feature modules plus api-runtime, so platform-level default bindings (eg
+  // the in-process MESSAGE_BROKER seeded in create-app) count as wired.
+  const moduleFiles = [
+    ...GROUPS.flatMap((g) => walk(join(repoRoot, 'packages', 'modules', g), '.ts')),
+    ...walk(join(repoRoot, 'packages', 'platform', 'api-runtime', 'src'), '.ts'),
+  ];
   const moduleSrc = moduleFiles.map((f) => ({ f, src: readFileSync(f, 'utf8') }));
   const out: AdapterInfo[] = [];
   if (!existsSync(dir)) return out;

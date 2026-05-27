@@ -161,18 +161,23 @@ Modules do **not** call each other - they couple to **topics**, not to each
 other's routes. See [ADR-0010](./adr/0010-event-driven-broker-and-microservices.md)
 for the full direction; the shape:
 
-- **Events for side effects.** A module emits an event via the typed `EventBus`;
-  any number of modules subscribe (fan-out). Bonuses, AML checks, leaderboards,
-  notifications, and personalization react this way. Consumers are idempotent
-  (delivery is at-least-once once a real broker is bound).
+- **Events for side effects.** A module emits via the typed `EventBus` (payloads
+  validated against the Zod catalog in `shared-schemas/events.ts`); any number of
+  modules subscribe (fan-out) with `ctx.events.on(...)`, wired to the bus at boot
+  by `createApp`. Bonuses, AML checks, leaderboards, notifications, and
+  personalization react this way. Consumers must be idempotent (delivery is
+  at-least-once once a durable broker is bound). A throwing subscriber is logged
+  and isolated - it never breaks the emitter or its siblings.
 - **Synchronous + atomic for money.** Placing a bet (wallet debit, balance check,
   RGS result) and pre-action gates (KYC/jurisdiction) run inside a single
-  service/transaction - never "emit and hope". Events record what already
+  service/`db.transaction(...)` - never "emit and hope". Wallet deposit/withdraw
+  are transactional and emit only after commit. Events record what already
   happened; they never move funds.
-- **Broker behind a seam.** The default `EventBus` is in-process. A
-  `MessageBrokerAdapter` (`MESSAGE_BROKER` token) will let an operator bind a
-  durable driver - **Redpanda** (Kafka API) for the regulated audit/ledger/replay
-  stream, NATS JetStream for lighter fan-out - without touching module code.
+- **Broker behind a seam.** The `EventBus` is a typed facade over a
+  `MessageBrokerAdapter` (`MESSAGE_BROKER` token); the default binding is an
+  in-process broker. Bind a durable driver - **Redpanda** (Kafka API) for the
+  regulated audit/ledger/replay stream, NATS JetStream for lighter fan-out - in an
+  overlay to swap the transport without touching module code.
 - **Client push is separate.** WebSockets/SSE are client-facing only (chat,
   balance/bonus toasts), never the transport between modules.
 - **Modular monolith now, microservices later.** The no-cross-module-imports rule

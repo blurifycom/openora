@@ -45,50 +45,46 @@ export class WalletService {
     currency: string,
     provider?: string,
   ): Promise<TransactionResult> {
-    const db = this.drizzle.db;
-
-    let [walletRecord] = await db.select().from(wallet).where(eq(wallet.userId, userId));
-
-    if (!walletRecord) {
-      [walletRecord] = await db
-        .insert(wallet)
-        .values({
-          userId,
-          tenantId: '',
-          balance: '0',
-          currency,
-        })
-        .returning();
-    }
-
+    // External PSP call stays outside the DB transaction. Saga compensation for a
+    // PSP-success / ledger-failure split is out of scope here.
     const psp = await this.payment.processDeposit(amount, currency, { userId, provider });
 
-    const [tx] = await db
-      .insert(walletTransaction)
-      .values({
-        walletId: walletRecord!.id,
-        tenantId: walletRecord!.tenantId,
-        type: 'deposit',
-        amount: amount.toString(),
-        currency,
-        status: 'completed',
-        metadata: JSON.stringify({ provider, externalId: psp.externalId }),
-      })
-      .returning();
+    // Ledger insert + balance update are atomic: a mid-flight failure rolls both
+    // back, never leaving an orphan transaction row or a mismatched balance.
+    const transactionId = await this.drizzle.db.transaction(async (txn) => {
+      let [walletRecord] = await txn.select().from(wallet).where(eq(wallet.userId, userId));
+      if (!walletRecord) {
+        [walletRecord] = await txn
+          .insert(wallet)
+          .values({ userId, tenantId: '', balance: '0', currency })
+          .returning();
+      }
 
-    await db
-      .update(wallet)
-      .set({ balance: sql`${wallet.balance} + ${amount}` })
-      .where(eq(wallet.id, walletRecord!.id));
+      const [tx] = await txn
+        .insert(walletTransaction)
+        .values({
+          walletId: walletRecord!.id,
+          tenantId: walletRecord!.tenantId,
+          type: 'deposit',
+          amount: amount.toString(),
+          currency,
+          status: 'completed',
+          metadata: JSON.stringify({ provider, externalId: psp.externalId }),
+        })
+        .returning();
 
-    this.events.emit('wallet.deposit.completed', {
-      userId,
-      amount,
-      currency,
-      transactionId: tx!.id,
+      await txn
+        .update(wallet)
+        .set({ balance: sql`${wallet.balance} + ${amount}` })
+        .where(eq(wallet.id, walletRecord!.id));
+
+      return tx!.id;
     });
 
-    return { transactionId: tx!.id, status: 'completed' };
+    // Emit only after commit, so subscribers never observe uncommitted state.
+    this.events.emit('wallet.deposit.completed', { userId, amount, currency, transactionId });
+
+    return { transactionId, status: 'completed' };
   }
 
   async withdraw(
@@ -109,32 +105,39 @@ export class WalletService {
 
     const psp = await this.payment.processWithdrawal(amount, currency, { userId, provider });
 
-    const [tx] = await db
-      .insert(walletTransaction)
-      .values({
-        walletId: walletRecord.id,
-        tenantId: walletRecord.tenantId,
-        type: 'withdrawal',
-        amount: amount.toString(),
-        currency,
-        status: 'completed',
-        metadata: JSON.stringify({ provider, externalId: psp.externalId }),
-      })
-      .returning();
+    const transactionId = await this.drizzle.db.transaction(async (txn) => {
+      // Re-read inside the transaction and guard the balance again, so concurrent
+      // withdrawals cannot double-spend; an insufficient balance rolls back.
+      const [current] = await txn.select().from(wallet).where(eq(wallet.userId, userId));
+      if (!current) throw new WalletNotFoundError(userId);
+      if (Number(current.balance) < amount) {
+        throw new InsufficientBalanceError(Number(current.balance), amount);
+      }
 
-    await db
-      .update(wallet)
-      .set({ balance: sql`${wallet.balance} - ${amount}` })
-      .where(eq(wallet.id, walletRecord.id));
+      const [tx] = await txn
+        .insert(walletTransaction)
+        .values({
+          walletId: current.id,
+          tenantId: current.tenantId,
+          type: 'withdrawal',
+          amount: amount.toString(),
+          currency,
+          status: 'completed',
+          metadata: JSON.stringify({ provider, externalId: psp.externalId }),
+        })
+        .returning();
 
-    this.events.emit('wallet.withdrawal.completed', {
-      userId,
-      amount,
-      currency,
-      transactionId: tx!.id,
+      await txn
+        .update(wallet)
+        .set({ balance: sql`${wallet.balance} - ${amount}` })
+        .where(eq(wallet.id, current.id));
+
+      return tx!.id;
     });
 
-    return { transactionId: tx!.id, status: 'completed' };
+    this.events.emit('wallet.withdrawal.completed', { userId, amount, currency, transactionId });
+
+    return { transactionId, status: 'completed' };
   }
 
   async getTransactions(userId: string): Promise<WalletTransaction[]> {
