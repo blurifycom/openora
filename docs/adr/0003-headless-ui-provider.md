@@ -36,3 +36,4 @@ Inspired by: Refine's provider pattern, Strapi v5's injection zones.
 **Neutral:**
 
 - Named slots are strings, not typed component overrides. This keeps them easy to enumerate for the MCP server.
+- Most operators ship their own player UI, so the adapter indirection is strictly speaking optional for them. We keep it in core anyway because it earns its place three ways: (1) a working reference UI (`shadcn` default) keeps the repo fully playable out of the box; (2) the contract lets every `@oss/react-sdk` page stay UI-library-agnostic, so a consumer restyles by swapping one provider instead of forking pages; (3) it is the on-ramp - a consumer can ship on the default, then move to its own adapter (eg `daisyuiProvider` for Consumer) when ready. The cost is low: the contract is small and additive-only.

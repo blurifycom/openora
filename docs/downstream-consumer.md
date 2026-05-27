@@ -101,6 +101,35 @@ Per-tenant theming reduces to passing a `Partial<Theme>` from a DB row to
 UI extensions (nav items, table columns, dashboard tiles, etc) come from `defineUIPlugin`
 contributions passed to `UIPluginProvider` - see ADR-0006.
 
+### Using the DaisyUI adapter (Consumer's choice)
+
+shadcn is the OSS default (headless HTML + data-attrs). To brand the whole tree with DaisyUI,
+swap one import - `daisyuiProvider` satisfies the same `@oss/ui-provider-contract`, so no page
+bodies change:
+
+```tsx
+import { UIProvider } from '@oss/react-sdk';
+import { daisyuiProvider } from '@oss/ui-provider-daisyui';
+
+<UIProvider value={daisyuiProvider}>{children}</UIProvider>;
+```
+
+DaisyUI emits semantic Tailwind classes (`btn`, `card`, `modal`, ...) and ships no styles itself,
+so the consuming app enables Tailwind + the DaisyUI plugin in its own CSS. For Tailwind v4:
+
+```css
+/* the app's global stylesheet, imported alongside @oss/react-sdk/styles.css */
+@import "tailwindcss";
+@plugin "daisyui";
+```
+
+The react-sdk's `styles.css` supplies structural/layout classes (`player-card`, `page-header`);
+DaisyUI supplies the component look. They target different elements and coexist.
+
+Both adapters are framework-agnostic React with no browser globals at module scope, so they render
+unchanged under Next RSC/SSR, TanStack Start, or a Vite SPA. The provider is passed inside a client
+component (`providers.tsx`), where `useToast`'s state lives.
+
 Cross-workspace `link:` requires a dedup alias in the consumer's `next.config.ts` for `react`,
 `react-dom`, and `@tanstack/react-query` (single physical path). See ADR-0005.
 
