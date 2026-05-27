@@ -54,7 +54,7 @@ flowchart TB
 
   subgraph ui["Headless UI"]
     uic["ui-provider-contract<br/>component interface"]
-    shad["ui-provider-shadcn<br/>default adapter"]
+    shad["ui-provider-daisyui<br/>shipped adapter"]
     sdk["react-sdk<br/>typed client, hooks, theme, app shell, pages"]
     uiplug["UI plugin registry<br/>defineUIPlugin"]
     shad -. implements .-> uic
@@ -112,7 +112,7 @@ Solid arrows are runtime/build dependencies; dashed arrows are **adapter seams**
 **Headless UI**
 
 - **ui-provider-contract** - the component interface (`Button`, `Input`, `DataTable`, slots). Module UI imports only this. ADR-0003.
-- **ui-provider-shadcn** - the default adapter implementing the contract. Swap it for your own (MUI, Chakra, ...) with no module changes.
+- **ui-provider-daisyui** - the single adapter shipped by the platform (Tailwind v4 + DaisyUI semantic classes), implementing the contract. Swap it for your own (MUI, Chakra, ...) with no module changes.
 - **react-sdk** - the admin surface: typed oRPC client, TanStack Query hooks, theme (`--bo-*` tokens), app shell, page bodies, and the UI plugin registry.
 - **UI plugin registry** - client-side `defineUIPlugin({ register(ctx) })` lets a plugin add nav items, table columns, dashboard tiles, detail sections, and routes to the admin without forking the SDK. ADR-0006.
 
@@ -132,7 +132,7 @@ These are the swap points - the reason the platform is "headless" and extensible
 | ------------- | --------------------------------- | ------------------------------------------ | ------------------------------------------------ |
 | Plugin host   | `definePlugin` contract           | a module or overlay folder                 | add/remove features without touching core        |
 | Vendor adapter | `@oss/adapters` (interface)          | impl package under `modules/<m>/adapters/<vendor>/` | a different PSP, KYC, or aggregator   |
-| UI provider   | `ui-provider-contract`            | `ui-provider-shadcn` (default)             | your own component library                       |
+| UI provider   | `ui-provider-contract`            | `ui-provider-daisyui` (shipped)            | your own component library                       |
 | UI plugin     | `defineUIPlugin` slots            | a plugin's `ui.tsx`                        | extend the admin without forking the SDK         |
 | Consumer link | `createApp()` + `@oss/*` packages | downstream `apps/api` + `link:` overrides  | publish to npm and bump the tag (no code change) |
 

@@ -1,6 +1,7 @@
 import type { Preview } from '@storybook/react';
 import { adapters, adapterNames, defaultAdapter, AdapterProvider } from './adapters';
 import './fonts.css';
+import './tailwind.css';
 import '@oss/react-sdk/styles.css';
 
 const preview: Preview = {

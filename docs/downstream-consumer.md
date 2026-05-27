@@ -82,8 +82,9 @@ The OSS `apps/api` is itself a thin consumer of `createApp` and serves as the re
 Downstream consumers do NOT fork `apps/api` - they create their own thin entrypoint and bring
 their own `extensions.config.ts`.
 
-For the UI side, downstream consumers swap `@oss/ui-provider-shadcn` for their own adapter
-package via the `UIProvider` React Context at the Next.js layout layer. No factory needed.
+For the UI side, the platform ships a single adapter, `@oss/ui-provider-daisyui`. Downstream
+consumers run it as-is, or swap it for their own adapter package via the `UIProvider` React
+Context at the Next.js layout layer. No factory needed.
 
 ## Mounting the backoffice in a downstream Next app
 
@@ -106,12 +107,13 @@ extensions). All except `QueryClientProvider` come from `@oss/react-sdk`:
 ```tsx
 // consumer/apps/web/app/providers.tsx (client component)
 import { ApiClientProvider, UIProvider, ThemeProvider, UIPluginProvider } from '@oss/react-sdk';
-import { shadcnProvider } from '@oss/ui-provider-shadcn';
+import { daisyuiProvider } from '@oss/ui-provider-daisyui';
+import './globals.css'; // Tailwind v4 + the DaisyUI plugin, imported BEFORE the SDK styles
 import '@oss/react-sdk/styles.css';
 
 <ApiClientProvider client={{ baseUrl }}>
   <ThemeProvider preset="editorialBrass">
-    <UIProvider value={shadcnProvider}>
+    <UIProvider value={daisyuiProvider}>
       <UIPluginProvider plugins={[vipTiersUI]}>{children}</UIPluginProvider>
     </UIProvider>
   </ThemeProvider>
@@ -123,11 +125,11 @@ Per-tenant theming reduces to passing a `Partial<Theme>` from a DB row to
 UI extensions (nav items, table columns, dashboard tiles, etc) come from `defineUIPlugin`
 contributions passed to `UIPluginProvider` - see ADR-0006.
 
-### Using the DaisyUI adapter (Consumer's choice)
+### Wiring the DaisyUI adapter (the shipped default)
 
-shadcn is the OSS default (headless HTML + data-attrs). To brand the whole tree with DaisyUI,
-swap one import - `daisyuiProvider` satisfies the same `@oss/ui-provider-contract`, so no page
-bodies change:
+DaisyUI is the single adapter shipped by the platform. `daisyuiProvider` satisfies
+`@oss/ui-provider-contract`, so page bodies stay UI-library-agnostic - to swap in your own
+look later, replace this one import with your adapter:
 
 ```tsx
 import { UIProvider } from '@oss/react-sdk';
@@ -137,18 +139,24 @@ import { daisyuiProvider } from '@oss/ui-provider-daisyui';
 ```
 
 DaisyUI emits semantic Tailwind classes (`btn`, `card`, `modal`, ...) and ships no styles itself,
-so the consuming app enables Tailwind + the DaisyUI plugin in its own CSS. For Tailwind v4:
+so the consuming app MUST enable Tailwind + the DaisyUI plugin in its own CSS build, or those
+classes render unstyled. For Tailwind v4, add a `postcss.config.mjs` (`{ plugins:
+['@tailwindcss/postcss'] }`) and a global stylesheet:
 
 ```css
-/* the app's global stylesheet, imported alongside @oss/react-sdk/styles.css */
+/* the app's global stylesheet, imported BEFORE @oss/react-sdk/styles.css */
 @import "tailwindcss";
 @plugin "daisyui";
 ```
 
+A Vite/TanStack app uses the `@tailwindcss/vite` plugin instead of PostCSS and imports the same
+CSS at the root. The OSS `apps/web`, `apps/backoffice`, and the `pnpm create:app` templates are
+all wired this way - mirror them.
+
 The react-sdk's `styles.css` supplies structural/layout classes (`player-card`, `page-header`);
 DaisyUI supplies the component look. They target different elements and coexist.
 
-Both adapters are framework-agnostic React with no browser globals at module scope, so they render
+The adapter is framework-agnostic React with no browser globals at module scope, so it renders
 unchanged under Next RSC/SSR, TanStack Start, or a Vite SPA. The provider is passed inside a client
 component (`providers.tsx`), where `useToast`'s state lives.
 

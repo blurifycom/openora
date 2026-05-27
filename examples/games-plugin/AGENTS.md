@@ -51,7 +51,7 @@ ctx.slots.fill('game-lobby-extra', {
 ```
 
 Injects an opaque descriptor into the named UI slot. The active UI provider
-(e.g. `@oss/ui-provider-shadcn`) reads the slot map at render time and decides
+(e.g. `@oss/ui-provider-daisyui`) reads the slot map at render time and decides
 how to display it. For a React component, pass a component reference instead of
 a plain object - both are valid `component` values.
 

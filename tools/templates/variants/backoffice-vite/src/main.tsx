@@ -3,6 +3,7 @@ import { createRoot } from 'react-dom/client';
 import { RouterProvider, createRouter } from '@tanstack/react-router';
 import { routeTree } from './routeTree.gen';
 import { Providers } from './providers';
+import './styles.css';
 import '@oss/react-sdk/styles.css';
 
 // Client-only SPA: no SSR. The providers (QueryClient + ApiClient + UI) live above

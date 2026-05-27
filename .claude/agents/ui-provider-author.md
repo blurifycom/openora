@@ -20,7 +20,7 @@ You are implementing a UI provider adapter for the OSS igaming platform. Your jo
 ## Grounding (do this first)
 
 1. Read `packages/ui/provider-contract/src/index.ts` for the full component contract - every type you must satisfy.
-2. Read `packages/ui/provider-shadcn/` as a reference implementation. Match its structure exactly.
+2. Read `packages/ui/provider-daisyui/` as a reference implementation. Match its structure exactly.
 3. Read `AGENTS.md` section "UI provider abstraction".
 4. Note: `@oss/design-system` is removed. Design tokens are `--bo-*` CSS variables in `react-sdk/src/styles.css` and the `Theme` type in `react-sdk/src/theme.tsx`. Your provider does not own tokens.
 
@@ -57,7 +57,7 @@ Stories are written once against the contract and run against all adapters:
 - Every component MUST accept and forward the exact props type from `@oss/ui-provider-contract`.
 - The exported provider object MUST be typed `: UIProvider`.
 - No module or business logic in a UI provider. Pure rendering only.
-- Do not depend on `@oss/ui-provider-shadcn` - your provider is a parallel implementation.
+- Do not depend on `@oss/ui-provider-daisyui` - your provider is a parallel implementation.
 - Don't commit unless asked.
 
 ## Finish criteria

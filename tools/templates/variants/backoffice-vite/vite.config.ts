@@ -1,5 +1,6 @@
 import { defineConfig } from 'vite';
 import viteReact from '@vitejs/plugin-react';
+import tailwindcss from '@tailwindcss/vite';
 import { tanstackRouter } from '@tanstack/router-plugin/vite';
 import { createRequire } from 'node:module';
 import { dirname } from 'node:path';
@@ -25,6 +26,7 @@ export default defineConfig({
   // must be allowed to read source/dist across the link: boundary.
   server: { fs: { allow: ['..', '../..', '../../..'] } },
   plugins: [
+    tailwindcss(),
     tanstackRouter({ target: 'react', autoCodeSplitting: true }),
     viteReact(),
   ],

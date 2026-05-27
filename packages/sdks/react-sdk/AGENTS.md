@@ -14,7 +14,7 @@ This package absorbed the former `@oss/client` (typed transport) and `@oss/backo
 | `ApiClientProvider`, `useApiClient`                                                    | context            | Holds `baseUrl`; provides a raw `.get/.post/.patch/.delete` fetch wrapper.                                               |
 | `useOrpcClient`                                                                        | hook               | Returns a memoized `OssClient` built from `useApiClient().baseUrl`. Prefer this over the raw client for contract routes. |
 | `useSession`, `useLogin`, `useLogout`, `useRegister`, `useCurrentUser`                 | hooks              | Auth, on TanStack Query.                                                                                                 |
-| `UIProvider`, `useUI`                                                                  | context            | Inject a UI adapter (eg `shadcnProvider`). Pages read components via `useUI()`.                                          |
+| `UIProvider`, `useUI`                                                                  | context            | Inject a UI adapter (eg `daisyuiProvider`). Pages read components via `useUI()`.                                         |
 | `ThemeProvider`, `useTheme`, `themeToCssVars`, `defaultTheme`, `themePresets`, `Theme` | theme              | Token system. Override per-tenant.                                                                                       |
 | `AppShell`, `AuthGuard`, `StatCard`                                                    | components         | Admin shell.                                                                                                             |
 | `LoginPage`, `DashboardPage`, `UsersListPage`, `UserDetailPage`, `GamesPage`           | components         | Admin page bodies.                                                                                                       |
@@ -30,11 +30,11 @@ This package absorbed the former `@oss/client` (typed transport) and `@oss/backo
         │ depends on both, NOT on any UI adapter
 @oss/react-sdk            ← this package. Renders via useUI(); adapter-agnostic.
 
-@oss/ui-provider-shadcn   ← one adapter (typed `shadcnProvider: UIProvider`)
+@oss/ui-provider-daisyui  ← the shipped adapter (typed `daisyuiProvider: UIProvider`)
 @oss/ui-provider-mui      ← future adapter, same interface
 ```
 
-- This package depends on `@oss/ui-provider-contract` (the interface), never on a concrete adapter. Don't add `@oss/ui-provider-shadcn` to dependencies. The consumer picks the adapter and passes it to `<UIProvider value={...}>`.
+- This package depends on `@oss/ui-provider-contract` (the interface), never on a concrete adapter. Don't add `@oss/ui-provider-daisyui` to dependencies. The consumer picks the adapter and passes it to `<UIProvider value={...}>`.
 - Types come from `@oss/orpc-contract` via `z.infer`. Don't hand-write a `type X = {...}` for an API response; import the schema.
 - The typed client (`useOrpcClient`) is preferred for contract routes. The raw `useApiClient()` exists for non-contract routes (eg a plugin's own endpoints) and for reading `baseUrl`.
 
@@ -58,7 +58,7 @@ Root providers (client component):
 import { useState } from 'react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { ApiClientProvider, UIProvider, ThemeProvider, UIPluginProvider } from '@oss/react-sdk';
-import { shadcnProvider } from '@oss/ui-provider-shadcn';
+import { daisyuiProvider } from '@oss/ui-provider-daisyui';
 import '@oss/react-sdk/styles.css';
 
 export function Providers({ children }) {
@@ -67,7 +67,7 @@ export function Providers({ children }) {
     <QueryClientProvider client={qc}>
       <ApiClientProvider client={{ baseUrl: process.env.NEXT_PUBLIC_API_URL! }}>
         <ThemeProvider preset="editorialBrass">
-          <UIProvider value={shadcnProvider}>
+          <UIProvider value={daisyuiProvider}>
             <UIPluginProvider
               plugins={
                 [

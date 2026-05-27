@@ -35,7 +35,7 @@ my-igaming/
     my-psp/plugin.ts         # swaps PSP_ADAPTER
     my-theme/ui.tsx          # defineUIPlugin for nav/slots customization
   packages/
-    ui-provider/             # optional: custom UIProvider if not using shadcn default
+    ui-provider/             # optional: custom UIProvider if not using the shipped daisyui adapter
 ```
 
 ## How to add a feature
@@ -84,7 +84,7 @@ export default defineUIPlugin({
 });
 ```
 
-### Override the UI provider (swap shadcn for your design system)
+### Override the UI provider (swap the shipped daisyui adapter for your design system)
 
 Create `packages/ui-provider/src/index.ts` implementing `UIProvider` from `@oss/ui-provider-contract`. Pass it to `<UIProvider provider={myProvider}>` in your app root.
 

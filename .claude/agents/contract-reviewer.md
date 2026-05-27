@@ -50,7 +50,7 @@ Run `git diff main...HEAD --name-only` to see which files changed. Read each cha
 ### UI / extension rules
 
 - [ ] Admin pages live in `@oss/react-sdk` (`packages/sdks/react-sdk/src/pages/`); consumers mount them as thin Next route shims. No forked page bodies.
-- [ ] Components consumed via `useUI()` - no direct `@oss/ui-provider-shadcn` imports in pages/modules.
+- [ ] Components consumed via `useUI()` - no direct `@oss/ui-provider-daisyui` imports in pages/modules.
 - [ ] Plugin-specific admin UI uses `defineUIPlugin` slots (ADR-0006), not edits to core pages.
 - [ ] A new UI adapter has `: UIProvider` annotation (compile-time contract conformance guarantee).
 

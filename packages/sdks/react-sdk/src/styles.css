@@ -620,7 +620,10 @@ code {
 }
 
 /* ============================================================================
- * shadcn-provider component skins (driven by data-* + bare element selectors)
+ * Fallback component skins (driven by data-* + bare element selectors). The
+ * shipped DaisyUI adapter styles its own btn/input/card classes; these rules
+ * remain as a baseline skin for unstyled/native form elements and data-variant
+ * buttons.
  * ============================================================================ */
 
 /* ---- Button ---- */
@@ -731,9 +734,9 @@ label {
   font-family: var(--bo-font-body);
 }
 
-/* Text-like inputs - including bare `<input>` with no type attribute (the
- * shadcn Input forwards no `type` for plain text fields, so `input[type=text]`
- * would miss them and leave default browser chrome). */
+/* Text-like inputs - including bare `<input>` with no type attribute (a plain
+ * text input may forward no `type`, so `input[type=text]` would miss them and
+ * leave default browser chrome). */
 input:not([type]),
 input[type='email'],
 input[type='password'],

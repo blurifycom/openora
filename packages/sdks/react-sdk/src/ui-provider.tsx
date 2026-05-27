@@ -13,7 +13,7 @@ export function useUI(): UIProviderShape {
   const ctx = useContext(UIContext);
   if (!ctx) {
     throw new Error(
-      '@oss/react-sdk: useUI() called without <UIProvider value={...}> ancestor. Wrap your app with a UI adapter (eg @oss/ui-provider-shadcn).',
+      '@oss/react-sdk: useUI() called without <UIProvider value={...}> ancestor. Wrap your app with a UI adapter (eg @oss/ui-provider-daisyui).',
     );
   }
   return ctx;

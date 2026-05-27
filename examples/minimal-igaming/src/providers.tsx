@@ -3,7 +3,8 @@
 import type { ReactNode } from 'react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { ApiClientProvider, UIProvider, ThemeProvider } from '@oss/react-sdk';
-import { shadcnProvider } from '@oss/ui-provider-shadcn';
+import { daisyuiProvider } from '@oss/ui-provider-daisyui';
+import './globals.css';
 import '@oss/react-sdk/styles.css';
 
 // The UI side of a consumer. Drop this into a Next app's app/providers.tsx and wrap
@@ -14,10 +15,15 @@ import '@oss/react-sdk/styles.css';
 //   QueryClientProvider  - TanStack Query cache the SDK hooks use
 //   ApiClientProvider    - the typed client; point baseUrl at your API
 //   ThemeProvider        - design tokens; `preset` is a key from themePresets
-//   UIProvider           - the headless UI adapter (swap shadcn for your own here)
+//   UIProvider           - the headless UI adapter (daisyui is shipped; swap your own here)
 //
 // (UIPluginProvider wraps the innermost layer when you have defineUIPlugin
 // contributions - omitted here for brevity. See ADR-0006.)
+//
+// DaisyUI needs Tailwind v4 + the daisyUI plugin in the app's CSS build, otherwise
+// its btn/card/modal classes render unstyled. Add `postcss.config.mjs` ({ plugins:
+// ['@tailwindcss/postcss'] }) and a `globals.css` (`@import 'tailwindcss'; @plugin
+// "daisyui";`) imported before the react-sdk styles. See globals.css next to this file.
 //
 // Cross-workspace `link:` needs a dedup alias in next.config.ts for react, react-dom,
 // and @tanstack/react-query so React contexts resolve to one physical copy. See
@@ -32,7 +38,7 @@ export function Providers({ children }: { children: ReactNode }) {
     <QueryClientProvider client={queryClient}>
       <ApiClientProvider client={{ baseUrl }}>
         <ThemeProvider preset="midnightSapphire">
-          <UIProvider value={shadcnProvider}>{children}</UIProvider>
+          <UIProvider value={daisyuiProvider}>{children}</UIProvider>
         </ThemeProvider>
       </ApiClientProvider>
     </QueryClientProvider>

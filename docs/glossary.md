@@ -23,7 +23,7 @@ Shared vocabulary for this repo: the **roles** (who's who), the **platform/archi
 | **Adapter** | The vendor-agnostic interface a module depends on (e.g. `KycAdapter`, `PaymentAdapter`) plus its per-vendor implementations. The swap seam: a module declares the interface + DI token in `@oss/adapters`; an operator binds a concrete impl. | `@oss/adapters` + `modules/<m>/adapters/<vendor>/` |
 | **Contract** | The composed oRPC router. Drives request validation, the typed client, and the emitted OpenAPI spec. | `@oss/orpc-contract` |
 | **Domain schema** | A Zod schema - the single source of truth for a shape. Types are `z.infer`'d, never hand-written. | `@oss/shared-schemas`, module `schemas/` |
-| **UI provider** | An adapter implementing the component contract (`Button`, `DataTable`, slots). Default is shadcn; operators can swap it. | `@oss/ui-provider-contract` / `-shadcn` |
+| **UI provider** | An adapter implementing the component contract (`Button`, `DataTable`, slots). The platform ships daisyui; operators can swap it. | `@oss/ui-provider-contract` / `-daisyui` |
 | **UI plugin** | A client-side `defineUIPlugin` that adds nav items, table columns, dashboard tiles, etc. to the admin without forking the SDK. | ADR-0006, `react-sdk` |
 | **Slot** | A named injection point in a UI surface that a plugin can fill. | `react-sdk` shell/pages |
 | **Tenant** / **multi-tenant** | A logical isolation boundary; every scoped row carries `tenantId` and is read via `withTenant`. | `@oss/db` |

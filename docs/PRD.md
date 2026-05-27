@@ -19,7 +19,7 @@ Concretely, Consumer (the first internal consumer) needs to ship five proprietar
 
 A monorepo containing an OSS, headless, plugin-based igaming platform that any team (Consumer first, then external operators) can clone, extend, and deploy. The platform is:
 
-- **Headless.** UI providers are swappable via a contract package (`@oss/ui-provider-contract`). The default adapter is shadcn (`@oss/ui-provider-shadcn`); operators write their own adapter (MUI, Antd, ...) by implementing the same `UIProvider` interface, enforced at compile time. The React platform (`@oss/react-sdk`) ships the typed client, hooks, admin shell, pages, a CSS-variable theme system (per-tenant overridable), and a UI plugin registry - all adapter-agnostic via `useUI()`. The admin is consumed as components mounted in a consumer's own Next.js `app/` directory, not as a forked app.
+- **Headless.** UI providers are swappable via a contract package (`@oss/ui-provider-contract`). The platform ships a single adapter, daisyui (`@oss/ui-provider-daisyui`, Tailwind v4 + DaisyUI); operators write their own adapter (MUI, Antd, ...) by implementing the same `UIProvider` interface, enforced at compile time. The React platform (`@oss/react-sdk`) ships the typed client, hooks, admin shell, pages, a CSS-variable theme system (per-tenant overridable), and a UI plugin registry - all adapter-agnostic via `useUI()`. The admin is consumed as components mounted in a consumer's own Next.js `app/` directory, not as a forked app.
 - **Plugin-based.** Every piece of functionality enters the system through a single `definePlugin({ id, register })` contract. The same contract works for in-tree overlays (`apps/extensions/<name>/`) and externally-published npm packages. Operators never fork core - they drop folders.
 - **End-to-end typed.** Zod schemas in one root package are the source of truth. oRPC turns them into validated routes, OpenAPI spec, TS-inferred clients, and (optionally) generated REST SDKs for non-TS consumers. There is no manual codegen step for TypeScript callers.
 - **AI-native.** Every module ships an `AGENTS.md`. An MCP dev server exposes the schema registry, route catalog, plugin manifest, and code scaffolders as tools. Repo-local slash commands (`/scaffold-module`, `/scaffold-plugin`, `/regen`, `/verify`) call the same code path humans use.
@@ -60,9 +60,9 @@ The OSS ships 12 modules covering the full table-stakes surface: identity, walle
 
 ### UI engineer (working in the backoffice or Consumer frontend)
 
-21. As a UI engineer, I want to import components from `@oss/ui-provider-contract` (a contract-only package), so that my pages work against any UI adapter (shadcn, Material, Chakra) without code changes.
+21. As a UI engineer, I want to import components from `@oss/ui-provider-contract` (a contract-only package), so that my pages work against any UI adapter (daisyui, Material, Chakra) without code changes.
 22. As a UI engineer, I want plugins to extend the admin (nav items, table columns, dashboard tiles, detail sections, routes) via a typed `defineUIPlugin` registry, so that extensions decorate the shell without my page knowing about them and without forking `@oss/react-sdk` (ADR-0006).
-23. As a UI engineer, I want Storybook stories written once against the contract with an adapter switcher in the toolbar, so that the same stories prove every UI adapter (shadcn, MUI, ...) renders correctly - conformance, not duplication.
+23. As a UI engineer, I want Storybook stories written once against the contract with an adapter switcher in the toolbar, so that the same stories prove every UI adapter (daisyui, MUI, ...) renders correctly - conformance, not duplication.
 24. As a UI engineer, I want every visual token exposed as a `--bo-*` CSS variable and a typed `Theme`, so that I can rebrand by passing a `Partial<Theme>` to `<ThemeProvider>` (statically, by named preset, or per-tenant from a DB row) with no rebuild.
 25. As a UI engineer, I want to mount the OSS admin pages (`DashboardPage`, `UsersListPage`, ...) as components in my own Next route files, so that I own routing and layout while reusing the platform's pages.
 
@@ -128,7 +128,7 @@ The OSS ships 12 modules covering the full table-stakes surface: identity, walle
 
 - **ADR-0001/0009:** oRPC kept; the API host moved from NestJS to Hono + a functional composition container (ADR-0009 supersedes ADR-0001).
 - **ADR-0002:** `definePlugin` overlay pattern chosen over decorator auto-discovery, file-system magic, or central plugin registry classes.
-- **ADR-0003:** Headless UI provider contract + adapter packages, not direct shadcn coupling.
+- **ADR-0003:** Headless UI provider contract + adapter packages, not direct UI-library coupling.
 - **ADR-0004:** Single Zod root in `shared-schemas`, not schemas co-located per module.
 - **ADR-0005:** Backoffice ships as headless page components (consumer mounts them), not a forked app. Later consolidated into `@oss/react-sdk` (see ADR's Update note).
 - **ADR-0006:** Client-side `defineUIPlugin` UI registry, so plugins extend the admin without forking. Mirrors the server `definePlugin` pattern.

@@ -4,7 +4,7 @@ import { useState, type ReactNode } from 'react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { ReactQueryDevtools } from '@tanstack/react-query-devtools';
 import { ApiClientProvider, UIProvider, UIPluginProvider, type UIPlugin } from '@oss/react-sdk';
-import { shadcnProvider } from '@oss/ui-provider-shadcn';
+import { daisyuiProvider } from '@oss/ui-provider-daisyui';
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:3001';
 
@@ -18,7 +18,7 @@ export function Providers({ children }: { children: ReactNode }) {
     <QueryClientProvider client={queryClient}>
       <ApiClientProvider client={{ baseUrl: API_URL }}>
         <UIPluginProvider plugins={plugins}>
-          <UIProvider value={shadcnProvider}>{children}</UIProvider>
+          <UIProvider value={daisyuiProvider}>{children}</UIProvider>
         </UIPluginProvider>
       </ApiClientProvider>
       <ReactQueryDevtools initialIsOpen={false} />

@@ -17,7 +17,7 @@ Open-source, headless, plugin-based, AI-native igaming platform. Anyone clones t
 1. Zod-first contracts. Every shape is a Zod schema; types are `z.infer`'d, never hand-written. Cross-cutting schemas live in `packages/contracts/shared-schemas`; per-module request/response schemas live in `packages/contracts/orpc-contract`, and module-local ones in the module's `schemas/`.
 2. oRPC + Hono. oRPC owns route definition + Zod validation + OpenAPI emit; its `OpenAPIHandler` is mounted on a Hono server (`@hono/node-server`, Bun-ready later). Dependency wiring is a small functional composition container (`Container` in `@oss/core`) - explicit factory functions keyed by typed tokens, no decorators, no `reflect-metadata`. See ADR-0009.
 3. Plugin host. `definePlugin({ id, dependsOn, register })` is the only way new functionality enters the system. Overlays (in-tree under `apps/extensions/<name>/`) are the primary path; npm-published plugins use the same contract.
-4. Headless UI. `@oss/ui-provider-contract` declares component contracts and named slots. `@oss/ui-provider-shadcn` is the default adapter. Module UI never imports a UI library directly.
+4. Headless UI. `@oss/ui-provider-contract` declares component contracts and named slots. `@oss/ui-provider-daisyui` is the single adapter shipped by the platform; consumers can swap in their own by implementing the same contract. Module UI never imports a UI library directly.
 5. Explicit > magic. No auto-discovery, no decorator soup. Everything is greppable; every wiring point is a typed function call.
 6. AI-friendly by default. Every module has an `AGENTS.md`. Every scaffold is a slash command. Every contract is queryable via the MCP dev server and the generated `docs/CATALOG.md`.
 
@@ -52,8 +52,7 @@ packages/
     react-sdk/    # @oss/react-sdk - React hooks + context + admin shell + pages
   ui/
     provider-contract/ # UIProvider type shape (Button, Input, DataTable, ...)
-    provider-shadcn/   # default adapter (headless HTML + data-attrs)
-    provider-daisyui/  # DaisyUI adapter (semantic Tailwind classes) - used by Consumer's player web
+    provider-daisyui/  # the shipped adapter (DaisyUI semantic Tailwind classes)
 docs/
   adr/            # Architecture decision records
   architecture.md, glossary.md, agent-quickstart.md, downstream-consumer.md
@@ -71,7 +70,7 @@ extensions.config.ts # the single registry of enabled plugins
 - A new database table -> add a Drizzle `pgTable` to the module's `src/schema/index.ts`. Run `pnpm regen` (drizzle-kit) to generate the migration.
 - A reusable Zod schema -> `packages/contracts/shared-schemas/src/<namespace>.ts`. Module-local schemas live in the module's `schemas/`.
 - A cross-module event -> declare its payload schema in the Zod catalog `packages/contracts/shared-schemas/src/events.ts` (`domainEventSchemas`), then emit via the `EventBus` the service received in its constructor (built in `plugin.ts` from `c.get(EVENT_BUS)`); subscribe in a plugin via `ctx.events.on(name, handler)`. The bus is a typed facade over the `MESSAGE_BROKER` seam (default in-process; swap to Redpanda/NATS without module changes). See ADR-0010.
-- A UI component -> `/scaffold-ui-component <name>` creates both the contract entry and the shadcn impl.
+- A UI component -> `/scaffold-ui-component <name>` creates both the contract entry and the daisyui impl.
 - A backoffice (admin) page -> add a component to `packages/sdks/react-sdk/src/pages/admin/`, export from `src/index.ts`, then add a Next route shim in `apps/backoffice/app/(authed)/<route>/page.tsx`. A player page goes in `src/pages/player/` with a shim in `apps/web/app/<route>/page.tsx`. See `packages/sdks/react-sdk/AGENTS.md`.
 - A design token -> a `--bo-*` CSS variable in `react-sdk/src/styles.css` + a typed entry in `Theme` (`react-sdk/src/theme.tsx`). Override per-tenant via `<ThemeProvider theme={...}>`.
 - A plugin-contributed admin UI extension (nav item, column, tile, section, route) -> a client-side `defineUIPlugin({ register(ctx) { ctx.<slot>.add(...) } })`. See ADR-0006 and `react-sdk/AGENTS.md`.
@@ -142,7 +141,7 @@ Add/edit a `pgTable` in `packages/modules/<group>/<module>/src/schema/index.ts`.
 /scaffold-ui-component <Name>
 ```
 
-Creates the contract entry (`packages/ui/provider-contract/src/components/<name>.ts`), the shadcn impl, and a Storybook story. Module UI may import only the contract type.
+Creates the contract entry (`packages/ui/provider-contract/src/components/<name>.ts`), the daisyui impl, and a Storybook story. Module UI may import only the contract type.
 
 ## How to consume this platform from a downstream repo
 

@@ -13,7 +13,6 @@
     "@oss/react-sdk": "link:{{ossFromApp}}/packages/sdks/react-sdk",
     "@oss/ui-provider-contract": "link:{{ossFromApp}}/packages/ui/provider-contract",
     "@oss/ui-provider-daisyui": "link:{{ossFromApp}}/packages/ui/provider-daisyui",
-    "@oss/ui-provider-shadcn": "link:{{ossFromApp}}/packages/ui/provider-shadcn",
     "@tanstack/react-query": "5.100.11",
     "@tanstack/react-router": "1.135.6",
     "@tanstack/react-start": "1.135.6",
@@ -23,10 +22,13 @@
   },
   "devDependencies": {
     "@oss/tsconfig": "link:{{ossFromApp}}/packages/config/tsconfig",
+    "@tailwindcss/vite": "4.3.0",
     "@types/node": "25.9.0",
     "@types/react": "19.2.14",
     "@types/react-dom": "19.2.3",
     "@vitejs/plugin-react": "5.0.5",
+    "daisyui": "5.5.20",
+    "tailwindcss": "4.3.0",
     "typescript": "6.0.3"
   }
 }

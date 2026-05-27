@@ -21,7 +21,9 @@ machine-readable surface in [`docs/CATALOG.md`](../../docs/CATALOG.md).
   `PaymentAdapter` to `PAYMENT_ADAPTER`, loaded AFTER `wallet` so it wins
   (last registration of a token wins).
 - `src/providers.tsx` - the UI side: wrap a Next app with the `@oss/react-sdk`
-  providers + the shadcn UI adapter.
+  providers + the daisyui UI adapter (the single adapter shipped by the platform).
+  `postcss.config.mjs` + `src/globals.css` wire Tailwind v4 + the daisyUI plugin so
+  the daisyui classes render styled.
 - `package.json` - the `pnpm.overrides` + `link:` block that points every `@oss/*`
   package at this repo's source.
 

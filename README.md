@@ -104,7 +104,7 @@ Pillars: [AGENTS.md](./AGENTS.md) | ADRs: [docs/adr/](./docs/adr/)
 
 ## Extending the UI
 
-Module pages consume only `@oss/ui-provider-contract`. Swap the entire look by replacing `@oss/ui-provider-shadcn` with your own adapter package. No module changes needed.
+Module pages consume only `@oss/ui-provider-contract`. The platform ships a single adapter, `@oss/ui-provider-daisyui` (Tailwind v4 + DaisyUI). Swap the entire look by replacing it with your own adapter package. No module changes needed.
 
 ## AI-first development
 

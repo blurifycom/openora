@@ -42,7 +42,7 @@ try {
 }
 
 const nextConfig: NextConfig = {
-  transpilePackages: ['@oss/react-sdk', '@oss/ui-provider-contract', '@oss/ui-provider-shadcn'],
+  transpilePackages: ['@oss/react-sdk', '@oss/ui-provider-contract', '@oss/ui-provider-daisyui'],
   experimental: { externalDir: true },
   turbopack: {
     root: workspaceRoot,

@@ -41,7 +41,7 @@
       "@oss/modules": "link:{{ossFromRoot}}/packages/modules",
       "@oss/react-sdk": "link:{{ossFromRoot}}/packages/sdks/react-sdk",
       "@oss/ui-provider-contract": "link:{{ossFromRoot}}/packages/ui/provider-contract",
-      "@oss/ui-provider-shadcn": "link:{{ossFromRoot}}/packages/ui/provider-shadcn",
+      "@oss/ui-provider-daisyui": "link:{{ossFromRoot}}/packages/ui/provider-daisyui",
       "@oss/tsconfig": "link:{{ossFromRoot}}/packages/config/tsconfig"
     }
   }

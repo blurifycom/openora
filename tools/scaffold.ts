@@ -178,8 +178,8 @@ function scaffoldUiComponent(rawName?: string) {
     );
   }
 
-  // Shadcn impl stub
-  const implDir = join(repoRoot, 'packages', 'ui', 'provider-shadcn', 'src', 'components');
+  // DaisyUI impl stub
+  const implDir = join(repoRoot, 'packages', 'ui', 'provider-daisyui', 'src', 'components');
   mkdirSync(implDir, { recursive: true });
   const implFile = join(implDir, `${name}.tsx`);
   if (!existsSync(implFile)) {
@@ -206,7 +206,7 @@ function scaffoldUiComponent(rawName?: string) {
       storyFile,
       [
         `import type { Meta, StoryObj } from '@storybook/react';`,
-        `import { ${Name} } from '@oss/ui-provider-shadcn';`,
+        `import { ${Name} } from '@oss/ui-provider-daisyui';`,
         ``,
         `const meta: Meta<typeof ${Name}> = { component: ${Name} };`,
         `export default meta;`,
@@ -218,7 +218,7 @@ function scaffoldUiComponent(rawName?: string) {
   }
 
   console.log(`- contract: packages/ui/provider-contract/src/components/${name}.ts`);
-  console.log(`- shadcn impl: packages/ui/provider-shadcn/src/components/${name}.tsx`);
+  console.log(`- daisyui impl: packages/ui/provider-daisyui/src/components/${name}.tsx`);
   console.log(`- story: apps/storybook/stories/${name}.stories.tsx`);
 }
 

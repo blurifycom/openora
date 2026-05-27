@@ -75,7 +75,7 @@ Extract the OSS backoffice into `@oss/backoffice-ui`:
 ## Implementation
 
 - Package: `packages/ui/backoffice/` (`@oss/backoffice-ui`).
-- Adapter contracts already in place: `@oss/ui-provider-contract`, `@oss/ui-provider-shadcn` (ADR-0003).
+- Adapter contracts already in place: `@oss/ui-provider-contract`, `@oss/ui-provider-daisyui` (ADR-0003).
 - Consumer wiring docs: `packages/ui/backoffice/AGENTS.md`.
 - Cross-workspace dedup setup: `consumer/apps/web/next.config.ts` (alias for `react`, `react-dom`, `@tanstack/react-query` to single physical paths).
 

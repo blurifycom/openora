@@ -7,6 +7,7 @@ import {
 } from '@tanstack/react-router';
 import { Providers } from '../providers';
 import { PlayerShell } from '../components/player-shell';
+import appStyles from '../styles.css?url';
 import ossStyles from '@oss/react-sdk/styles.css?url';
 
 export const Route = createRootRoute({
@@ -16,7 +17,10 @@ export const Route = createRootRoute({
       { name: 'viewport', content: 'width=device-width, initial-scale=1' },
       { title: '{{name}}' },
     ],
-    links: [{ rel: 'stylesheet', href: ossStyles }],
+    links: [
+      { rel: 'stylesheet', href: appStyles },
+      { rel: 'stylesheet', href: ossStyles },
+    ],
   }),
   component: RootComponent,
 });

@@ -7,7 +7,7 @@
     "dev": "node --import tsx --watch --env-file-if-exists=.env src/main.ts",
     "start": "node --import tsx src/main.ts",
     "typecheck": "tsc --noEmit",
-    "build:oss": "pnpm -C ../igaming-oss -F '@oss/api-runtime...' -F '@oss/orpc-contract...' -F '@oss/react-sdk...' -F '@oss/ui-provider-shadcn...' build && pnpm -C ../igaming-oss -F '@oss/modules' build"
+    "build:oss": "pnpm -C ../igaming-oss -F '@oss/api-runtime...' -F '@oss/orpc-contract...' -F '@oss/react-sdk...' -F '@oss/ui-provider-daisyui...' build && pnpm -C ../igaming-oss -F '@oss/modules' build"
   },
   "dependencies": {
     "@oss/api-runtime": "link:../igaming-oss/packages/platform/api-runtime",
@@ -41,7 +41,7 @@
       "@oss/tsconfig": "link:../igaming-oss/packages/config/tsconfig",
       "@oss/react-sdk": "link:../igaming-oss/packages/sdks/react-sdk",
       "@oss/ui-provider-contract": "link:../igaming-oss/packages/ui/provider-contract",
-      "@oss/ui-provider-shadcn": "link:../igaming-oss/packages/ui/provider-shadcn"
+      "@oss/ui-provider-daisyui": "link:../igaming-oss/packages/ui/provider-daisyui"
     }
   }
 }

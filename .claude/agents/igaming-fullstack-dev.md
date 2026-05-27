@@ -40,7 +40,7 @@ Your prompt contains requirements + acceptance criteria from `igaming-expert`. B
 ## Modularity is non-negotiable
 
 - Every third-party integration goes behind a **generic port** in `service/ports.ts`, concrete vendor in `adapters/<vendor>/`. Never hardcode a vendor into core.
-- Module UI consumes only `@oss/ui-provider-contract` via `useUI()`. Never import `@oss/ui-provider-shadcn` directly.
+- Module UI consumes only `@oss/ui-provider-contract` via `useUI()`. Never import `@oss/ui-provider-daisyui` directly.
 - No module imports another module. Cross-module: emit events (`EventBus`) or read via schema subpath.
 - All Zod schemas in `schemas/` or `packages/contracts/`; types are `z.infer`'d, never hand-written.
 - Services throw domain errors via `createDomainError(...)` from `@oss/core`; handlers map them to oRPC errors.
