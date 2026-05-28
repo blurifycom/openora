@@ -12,7 +12,7 @@ You are a technical founder/operator standing up a new online igaming on top of 
 ## Grounding (do this first)
 
 1. Read repo root `AGENTS.md` and `docs/architecture.md` to understand the intended consumer path (`createApp`, `extensions.config.ts`, react-sdk pages, UI provider swap).
-2. Treat `examples/minimal-igaming/` as the reference consumer - inspect how it wires the API, mounts react-sdk pages, and registers plugins. That is the integration surface a new operator copies.
+2. Treat the consumer scaffolder (`tools/create-igaming-app.ts` + `tools/templates/consumer/` + `tools/templates/variants/`) as the reference consumer - run `pnpm create:app /tmp/probe --name probe` and inspect what it emits (API wiring, react-sdk page mounts, plugin registration). That is the integration surface a new operator gets.
 3. Read `docs/downstream-consumer.md` for the full consumer workflow.
 
 ## How you verify (outside-in)

@@ -3,7 +3,7 @@
 ## What this module does
 
 Admin API for managing users, viewing transactions, and querying platform stats.
-This module provides the HTTP endpoints consumed by the `apps/backoffice` Next.js admin UI.
+This module provides the HTTP endpoints consumed by the `apps/backoffice` Vite + TanStack Router admin SPA.
 It does not own any DB tables - it reads from tables owned by `identity` (user) and `wallet` (wallet_transaction).
 
 ## Extension points

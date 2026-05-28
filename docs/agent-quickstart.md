@@ -97,7 +97,7 @@ Edit `packages/modules/<group>/<name>/src/plugin.ts`. Confirm the service is add
 Two kinds of UI in this repo - pick the right one for your change:
 
 - **Module-scoped UI** (a screen tightly coupled to one module's domain) -> `packages/modules/<group>/<name>/ui/`. Import only from `@oss/ui-provider-contract`. Use the DataTable component for lists, Form for create/edit. The module's plugin mounts it via UI slots.
-- **Cross-cutting admin page** (dashboard, users, games) -> add to `packages/sdks/react-sdk/src/pages/admin/`, export from `index.ts`, then add a Next route shim in `apps/backoffice/app/(authed)/<route>/page.tsx`. A **player page** goes in `src/pages/player/` with a shim in `apps/web/app/<route>/page.tsx`. `@oss/react-sdk` is consumed by both reference apps and by downstream consumers. See `packages/sdks/react-sdk/AGENTS.md` and ADR-0005.
+- **Cross-cutting admin page** (dashboard, users, games) -> add to `packages/sdks/react-sdk/src/pages/admin/`, export from `index.ts`, then add a TanStack route file under `apps/backoffice/src/routes/_authed/<route>.tsx` (use `createFileRoute('/_authed/<route>')`). A **player page** goes in `src/pages/player/` with a Next route shim in `apps/web/app/<route>/page.tsx`. `@oss/react-sdk` is consumed by both reference apps and by downstream consumers. See `packages/sdks/react-sdk/AGENTS.md` and ADR-0005.
 - **A plugin-contributed admin extension** (column, tile, nav item, route - not a core page) -> use a client-side `defineUIPlugin` instead of editing react-sdk. See ADR-0006.
 
 ## Step 10: Update AGENTS.md

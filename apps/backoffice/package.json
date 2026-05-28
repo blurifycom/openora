@@ -4,10 +4,11 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "build": "next build",
-    "dev": "next dev",
-    "start": "next start",
-    "typecheck": "tsc --noEmit"
+    "build": "vite build",
+    "dev": "vite dev --port 3002",
+    "preview": "vite preview --port 3002",
+    "routes:generate": "tsr generate",
+    "typecheck": "tsr generate && tsc --noEmit"
   },
   "dependencies": {
     "@oss/react-sdk": "workspace:*",
@@ -15,15 +16,19 @@
     "@oss/ui-provider-daisyui": "workspace:*",
     "@tanstack/react-query": "5.100.11",
     "@tanstack/react-query-devtools": "5.100.11",
-    "next": "16.2.6",
+    "@tanstack/react-router": "1.135.2",
     "react": "19.2.6",
-    "react-dom": "19.2.6"
+    "react-dom": "19.2.6",
+    "vite": "7.3.3"
   },
   "devDependencies": {
     "@oss/tsconfig": "workspace:*",
-    "@tailwindcss/postcss": "4.3.0",
+    "@tailwindcss/vite": "4.3.0",
+    "@tanstack/router-cli": "1.135.2",
+    "@tanstack/router-plugin": "1.135.2",
     "@types/react": "19.2.14",
     "@types/react-dom": "19.2.3",
+    "@vitejs/plugin-react": "5.2.0",
     "daisyui": "5.5.20",
     "tailwindcss": "4.3.0",
     "typescript": "6.0.3"

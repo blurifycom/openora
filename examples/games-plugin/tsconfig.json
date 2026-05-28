@@ -1,8 +1,0 @@
-{
-  "extends": "@oss/tsconfig/nestjs.json",
-  "compilerOptions": {
-    "rootDir": ".",
-    "outDir": "dist"
-  },
-  "include": ["plugin.ts", "src/**/*"]
-}

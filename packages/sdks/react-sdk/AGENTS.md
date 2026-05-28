@@ -1,6 +1,6 @@
 # @oss/react-sdk
 
-The React platform package. Everything a Next.js consumer needs to talk to the OSS API and render the admin: a typed client, query hooks, auth, the UI-adapter context, the theme system, the admin shell + pages, and a UI plugin registry.
+The React platform package. Everything a React consumer (Next.js App Router for the player surface, Vite + TanStack Router SPA for the backoffice) needs to talk to the OSS API and render the admin: a typed client, query hooks, auth, the UI-adapter context, the theme system, the admin shell + pages, and a UI plugin registry.
 
 This package absorbed the former `@oss/client` (typed transport) and `@oss/backoffice-ui` (admin UI). If you're looking for either, it's here now. The reference consumer apps live at `apps/backoffice/` (admin) and `apps/web/` (player).
 
@@ -253,4 +253,4 @@ pnpm -F @oss/react-sdk build       # tsc -> dist/ (ESM)
 pnpm -F @oss/react-sdk typecheck
 ```
 
-CSS ships as raw `src/styles.css` (no PostCSS) so consumers override `--bo-*` vars without a build step. The `examples/` folder is excluded from the package build.
+CSS ships as raw `src/styles.css` (no PostCSS) so consumers override `--bo-*` vars without a build step.

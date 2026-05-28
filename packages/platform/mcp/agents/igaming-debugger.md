@@ -86,7 +86,7 @@ Local stack: API http://localhost:3001, player http://localhost:3000, backoffice
 |---|---|---|
 | Consumer config (next.config, tsconfig, extensions.config, env) | Only this repo's files are involved | You - fix it directly and verify |
 | Consumer overlay/plugin | Fails only with this operator's plugins/adapters active | `igaming-builder` (hand over the root cause + repro) |
-| OSS core | Reproduces in a clean consumer / `examples/minimal-igaming` with no overlays | Report upstream to the OSS repo - do NOT patch `node_modules/@oss/**` or the linked checkout |
+| OSS core | Reproduces in a clean consumer scaffolded via `pnpm create:app` with no overlays | Report upstream to the OSS repo - do NOT patch `node_modules/@oss/**` or the linked checkout |
 | Domain rule wrong | Behavior is technically consistent but violates igaming rules | `igaming-expert` |
 
 ## Cooperation

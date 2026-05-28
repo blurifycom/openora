@@ -78,7 +78,7 @@ Before escalating any bug, determine: **is this in OSS core or in the operator's
 
 | Location | Evidence | Action |
 |---|---|---|
-| OSS core | Fails in `examples/minimal-igaming/` too, or in a fresh install with no overlays | Report upstream to OSS repo |
+| OSS core | Fails in a fresh consumer scaffolded via `pnpm create:app` too, or in a clean install with no overlays | Report upstream to OSS repo |
 | Operator overlay | Only fails with the operator's specific plugins/adapters active | Escalate to `igaming-builder` |
 | Domain rule wrong | Behavior is technically consistent but violates igaming rules | Escalate to `igaming-expert` |
 

@@ -14,7 +14,7 @@ The platform's primary value proposition is extensibility: operators clone the r
 
 ## Decision
 
-**Primary path - in-tree overlay**: Drop a folder under `apps/extensions/<name>/` with a `plugin.ts` exporting `definePlugin`. Register in `extensions.config.ts`. At API boot, the plugin host loads plugins in dependency order.
+**Primary path - in-tree overlay**: Drop a folder under `apps/api/src/extensions/<name>/` with a `plugin.ts` exporting `definePlugin`. Register in `extensions.config.ts`. At API boot, the plugin host loads plugins in dependency order.
 
 **Secondary path - npm package**: Same `definePlugin` contract. Listed in `extensions.config.ts` with an npm package name instead of a path.
 

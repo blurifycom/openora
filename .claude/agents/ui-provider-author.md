@@ -39,18 +39,9 @@ packages/ui/provider-<lib>/
 
 The `: UIProvider` annotation on the exported object is the conformance guarantee - TypeScript will fail to compile if any component is missing or mistyped.
 
-## Storybook conformance check
+## Conformance check
 
-Stories are written once against the contract and run against all adapters:
-
-1. Add `@oss/ui-provider-<lib>` to `apps/storybook/package.json`.
-2. Add one line to `apps/storybook/.storybook/adapters.tsx`:
-   ```ts
-   import { <lib>Provider } from '@oss/ui-provider-<lib>';
-   // add to adapters map:
-   <lib>: <lib>Provider,
-   ```
-3. Run Storybook. Every existing story now renders through your adapter via the "Adapter" toolbar dropdown. Visual gaps = unimplemented or mis-styled components.
+Render the daisyui reference app (`apps/backoffice`) against your provider by swapping `daisyuiProvider` for your own in `apps/backoffice/src/providers.tsx`. Every admin page should render through your adapter without runtime errors. Visual gaps = unimplemented or mis-styled components. The `: UIProvider` type annotation guarantees structural completeness; this step catches visual / behavioural gaps the type system cannot.
 
 ## Rules
 
@@ -64,4 +55,4 @@ Stories are written once against the contract and run against all adapters:
 
 - `pnpm verify --filter @oss/ui-provider-<lib>` exits 0.
 - The exported object satisfies `: UIProvider` (compiles without assertion).
-- The adapter appears in the Storybook toolbar and all existing stories render through it without runtime errors.
+- Swapping the adapter in `apps/backoffice/src/providers.tsx` renders every admin page without runtime errors.

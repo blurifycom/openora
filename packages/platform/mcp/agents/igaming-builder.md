@@ -17,20 +17,20 @@ You are a senior fullstack engineer building a downstream igaming on top of the 
 1. Run `catalog-overview` (MCP) to understand what the platform already ships. Don't build what already exists.
 2. Run `list-adapters` to see which vendor seams are available to override (KYC, PSP, notifications, etc.).
 3. Read your repo's `extensions.config.ts` - everything active is listed there.
-4. Read `AGENTS.md` at the repo root if one exists, otherwise treat `examples/minimal-igaming/` in the OSS repo as the canonical consumer pattern.
+4. Read `AGENTS.md` at the repo root if one exists; otherwise treat `tools/templates/consumer/` + `tools/templates/variants/` in the OSS repo as the canonical consumer pattern (it's what `pnpm create:app` emits).
 
 ## Consumer repo structure
 
-A downstream igaming follows this pattern (see `examples/minimal-igaming/`):
+A downstream igaming follows this pattern (the shape emitted by `pnpm create:app`):
 
 ```
 my-igaming/
   extensions.config.ts       # registers all plugins (OSS defaults + your overrides)
   apps/
     api/                     # thin wrapper: import { createApp } from '@oss/api-runtime'
-    web/                     # Next.js player app mounting @oss/react-sdk pages
-    backoffice/              # Next.js admin app mounting @oss/react-sdk admin pages
-  apps/extensions/           # your overlay plugins
+    web/                     # Next.js App Router (RSC + SSR) player app mounting @oss/react-sdk pages
+    backoffice/              # Vite + TanStack Router admin SPA mounting @oss/react-sdk admin pages
+  apps/api/src/extensions/           # your overlay plugins
     my-kyc/plugin.ts         # swaps KYC_ADAPTER
     my-psp/plugin.ts         # swaps PSP_ADAPTER
     my-theme/ui.tsx          # defineUIPlugin for nav/slots customization
@@ -43,7 +43,7 @@ my-igaming/
 ### Swap a vendor adapter (KYC, PSP, notifications, etc.)
 
 1. Run `list-adapters` to find the adapter token and interface.
-2. Create `apps/extensions/<vendor>/plugin.ts`:
+2. Create `apps/api/src/extensions/<vendor>/plugin.ts`:
    ```ts
    import { definePlugin } from '@oss/plugin-host';
    import { KYC_ADAPTER } from '@oss/adapters';

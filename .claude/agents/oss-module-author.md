@@ -50,7 +50,7 @@ This creates `packages/modules/<group>/<name>/` inside `@oss/modules` with all r
 
 ### Admin UI
 
-- Cross-cutting admin pages -> `packages/sdks/react-sdk/src/pages/admin/`, exported from `index.ts`, mounted as thin Next shims in `apps/backoffice/app/(authed)/<route>/page.tsx`.
+- Cross-cutting admin pages -> `packages/sdks/react-sdk/src/pages/admin/`, exported from `index.ts`, mounted as TanStack route files under `apps/backoffice/src/routes/_authed/<route>.tsx` (use `createFileRoute('/_authed/<route>')`).
 - Module-scoped UI -> `packages/modules/<group>/<name>/ui/`, import only `@oss/ui-provider-contract`.
 - Plugin-contributed extensions (nav items, columns, tiles) -> `defineUIPlugin` slots (ADR-0006), never edit core pages.
 

@@ -28,7 +28,7 @@
 
 ## Context
 
-The OSS repo includes `apps/backoffice` (Next.js admin). Downstream consumers like Consumer want the same admin experience inside their own Next.js app, with their own routing, navigation, theming, and potential per-tenant customization.
+The OSS repo includes `apps/backoffice` (Vite + TanStack Router admin SPA). Downstream consumers like Consumer want the same admin experience inside their own app, with their own routing, navigation, theming, and potential per-tenant customization.
 
 Three paths were considered:
 

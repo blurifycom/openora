@@ -18,7 +18,6 @@
     ".next",
     ".turbo",
     "coverage",
-    "storybook-static",
     "generated",
     "*.generated.ts",
     "packages/platform/db/prisma/migrations",

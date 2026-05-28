@@ -20,19 +20,19 @@ Concretely, Consumer (the first internal consumer) needs to ship five proprietar
 A monorepo containing an OSS, headless, plugin-based igaming platform that any team (Consumer first, then external operators) can clone, extend, and deploy. The platform is:
 
 - **Headless.** UI providers are swappable via a contract package (`@oss/ui-provider-contract`). The platform ships a single adapter, daisyui (`@oss/ui-provider-daisyui`, Tailwind v4 + DaisyUI); operators write their own adapter (MUI, Antd, ...) by implementing the same `UIProvider` interface, enforced at compile time. The React platform (`@oss/react-sdk`) ships the typed client, hooks, admin shell, pages, a CSS-variable theme system (per-tenant overridable), and a UI plugin registry - all adapter-agnostic via `useUI()`. The admin is consumed as components mounted in a consumer's own Next.js `app/` directory, not as a forked app.
-- **Plugin-based.** Every piece of functionality enters the system through a single `definePlugin({ id, register })` contract. The same contract works for in-tree overlays (`apps/extensions/<name>/`) and externally-published npm packages. Operators never fork core - they drop folders.
+- **Plugin-based.** Every piece of functionality enters the system through a single `definePlugin({ id, register })` contract. The same contract works for in-tree overlays (`apps/api/src/extensions/<name>/`) and externally-published npm packages. Operators never fork core - they drop folders.
 - **End-to-end typed.** Zod schemas in one root package are the source of truth. oRPC turns them into validated routes, OpenAPI spec, TS-inferred clients, and (optionally) generated REST SDKs for non-TS consumers. There is no manual codegen step for TypeScript callers.
 - **AI-native.** Every module ships an `AGENTS.md`. An MCP dev server exposes the schema registry, route catalog, plugin manifest, and code scaffolders as tools. Repo-local slash commands (`/scaffold-module`, `/scaffold-plugin`, `/regen`, `/verify`) call the same code path humans use.
 - **Library-shaped for downstream consumers.** A downstream repo (eg `consumer/`) imports `@oss/api-runtime`, calls `createApp({ plugins, contract, ... })`, and gets a fully-configured Nest app. No forking of the OSS API entrypoint. Plugin-host overrides let consumers replace providers (eg swap the mock game provider for Consumer's real engine) without touching OSS code.
 
-The OSS ships 12 modules covering the full table-stakes surface: identity, wallet, gaming, lobby, chat, bonus, compliance, notifications, localization, cms, backoffice, igaming-aggregator. Each is replaceable by a plugin. Two worked examples (`examples/consumer-games-plugin/`, `examples/sportsbook-plugin/`) demonstrate the overlay pattern.
+The OSS ships 12 modules covering the full table-stakes surface: identity, wallet, gaming, lobby, chat, bonus, compliance, notifications, localization, cms, backoffice, igaming-aggregator. Each is replaceable by a plugin. Scaffold a new overlay with `/scaffold-plugin <name>` (drops into `apps/api/src/extensions/<name>/`); see `apps/api/src/extensions/AGENTS.md` for the contract.
 
 ## User Stories
 
 ### Platform operator (the team running a igaming)
 
 1. As a platform operator, I want to clone a working igaming backend with auth + wallet + lobby + chat + bonus + compliance + CMS already implemented, so that I can focus on my differentiating IP instead of re-implementing table stakes.
-2. As a platform operator, I want to add a new feature (eg "VIP tiers") by dropping a single folder under `apps/extensions/` or `plugins/`, so that I never have to modify or fork OSS core code.
+2. As a platform operator, I want to add a new feature (eg "VIP tiers") by dropping a single folder under `apps/api/src/extensions/` or `plugins/`, so that I never have to modify or fork OSS core code.
 3. As a platform operator, I want to remove a built-in module (eg "chat") by deleting one line from `extensions.config.ts`, so that I only ship the surface area my product actually needs.
 4. As a platform operator, I want to override the mock game provider with my real game engine by binding an adapter token in my plugin via ctx.provide, so that the OSS gaming module works against my proprietary engine without code changes.
 5. As a platform operator, I want to add fields to the OSS player data without forking core, so I keep upgrade compatibility. (Post-Drizzle: the sanctioned path is a derivative `pgTable` in my own overlay's `src/schema/index.ts` with a plain ID reference to the OSS `user`; there is no longer a column-injection extension API.)
@@ -81,7 +81,7 @@ The OSS ships 12 modules covering the full table-stakes surface: identity, walle
 31. As a downstream consumer, I want to compose the OSS oRPC contract with my own contract slices (eg `/consumer/vip/*`), so that my API surface is unified but my code is isolated.
 32. As a downstream consumer, I want a `createApp(config)` factory that accepts my plugins, my contract, my port, my CORS origins, and (optionally) extra Nest providers, so that my repo's API entrypoint is ~15 lines.
 33. As a downstream consumer, I want the OSS schema migrations to apply cleanly alongside my own (drizzle-kit globs every module's `src/schema/index.ts`, including my overlay's), so that I never have to manually reconcile DB shape.
-34. As a downstream consumer, I want a worked example plugin (`examples/consumer-games-plugin/`) showing the Crash game pattern (custom routes + provider override + event subscription + UI slot injection), so that my engineers have a copy-paste-and-modify template.
+34. As a downstream consumer, I want `/scaffold-plugin <name>` to drop a complete overlay plugin under `apps/api/src/extensions/<name>/` (custom routes + provider override + event subscription + UI slot injection), so that my engineers have a buildable starting point without copy-pasting a worked example.
 
 ### Compliance / security operator
 
@@ -161,7 +161,7 @@ The OSS ships 12 modules covering the full table-stakes surface: identity, walle
 
 - `packages/modules/*` may not import from each other - cross-module talk goes through `@oss/orpc-contract` (for types) or events.
 - `packages/platform/*` may not import from modules.
-- `apps/extensions/*` and downstream consumer plugins may import any `@oss/*` package, but never another extension.
+- `apps/api/src/extensions/*` and downstream consumer plugins may import any `@oss/*` package, but never another extension.
 - `apps/api` only registers modules via `extensions.config.ts`. A direct module import from `apps/api/src/*` is a lint error.
 
 ### Downstream consumer model (Consumer sibling repo)
@@ -171,7 +171,7 @@ The OSS ships 12 modules covering the full table-stakes surface: identity, walle
 - Consumer has its own `extensions.config.ts` referencing OSS modules by path AND its own plugins (eg `vip-tiers/`).
 - `consumer/apps/api/src/main.ts` is ~15 lines calling `createApp({ plugins, contract, port: 3101, ... })`.
 - In production, the `link:` paths are swapped for versioned npm tags. No code change needed.
-- Worked example `examples/consumer-games-plugin/` (Crash game in OSS examples folder) demonstrates the pattern in the OSS repo itself.
+- The `/scaffold-plugin` slash command drops a complete overlay under `apps/api/src/extensions/<name>/` demonstrating the pattern (custom routes + provider override + event subscription + UI slot injection) in the OSS repo itself.
 
 ### AI agent infrastructure
 
@@ -206,7 +206,7 @@ The other 6 modules (gaming, lobby, chat, notifications, localization, cms, back
 
 - Existing service tests (`packages/modules/*/src/__tests__/*.service.test.ts`) are smoke tests asserting domain error classes throw the right shape. Pattern to copy: pure constructor-injection with a mocked `DrizzleService`, test against returned values + thrown error types.
 - No integration tests exist yet. The first integration test should establish the `@oss/db db:up` + drizzle-kit migrate + truncate-between-tests pattern; subsequent integration tests follow.
-- E2E test of the worked example: spin up `examples/consumer-games-plugin/` overlaid on the OSS, confirm `POST /crash/bets` creates a row and `POST /crash/cash-out` settles it. This validates the entire plugin pipeline end-to-end.
+- E2E test of a scaffolded overlay plugin: `/scaffold-plugin crash-demo` then run the smoke spec - it confirms the plugin's routes register, its provider binds via DI, its events fire, and its UI slot contribution renders. This validates the entire plugin pipeline end-to-end.
 
 ## Out of Scope
 
@@ -214,7 +214,7 @@ The following are intentionally NOT delivered in this PRD and tracked separately
 
 - **Real payment provider integrations.** OSS ships a mock `PaymentAdapter`. Stripe, Worldpay, Coinbase Commerce, etc. live in operator-specific plugin packages.
 - **Real game engine.** OSS ships a `MockGameAdapter`. Consumer's PvP games live in `consumer/plugins/*`, not in OSS.
-- **Real sportsbook integration.** `examples/sportsbook-plugin/` shows the shape but the Betby/Kambi adapter is a stub.
+- **Real sportsbook integration.** The OSS sportsbook module under `packages/modules/player/sportsbook/` ships an in-memory odds feed for the demo; the Betby/Kambi adapter is a stub.
 - **KYC integration** (Sumsub, Onfido, Jumio). Identity module exposes a hook; the actual adapter is operator-specific.
 - **AML transaction monitoring** (Chainalysis, Elliptic). Future module.
 - **Native mobile apps.** OSS provides the API + OpenAPI; mobile teams generate their client.
@@ -269,4 +269,4 @@ The following are intentionally NOT delivered in this PRD and tracked separately
 
 - A fresh Claude Code session, given only the prompt "implement a tournament module" in the igaming-oss repo, ships a buildable module via `/scaffold-module tournament` + MCP tools + AGENTS.md, with at most two human confirmations.
 - `cd consumer && pnpm setup && pnpm dev` brings up the API on `:3101` and the web app on `:3100`, including the OSS modules, the local VIP tiers plugin (server + UI), and the OSS admin mounted at `/admin/*`.
-- An external operator can fork the consumer pattern from `examples/` and have a brand-skinned (via `<ThemeProvider>` + UI adapter), branded-routed, branded-database igaming API + admin running in under a day.
+- An external operator can run `pnpm create:app` and have a brand-skinned (via `<ThemeProvider>` + UI adapter), branded-routed, branded-database igaming API + admin running in under a day.

@@ -1,4 +1,0 @@
-/* Storybook is not a Next app, so it cannot use next/font. Load the same
- * families the design system expects via @import. The Next consumers
- * (consumer/web, examples/backoffice) self-host these through next/font. */
-@import url('https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,200..800&family=Hanken+Grotesk:wght@300..700&family=JetBrains+Mono:wght@400;500;600&display=swap');

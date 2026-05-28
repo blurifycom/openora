@@ -1,11 +1,13 @@
 # ADR-0011: Player-front framework - Next.js vs TanStack Start
 
 **Date**: 2026-05-28
-**Status**: Proposed
+**Status**: Superseded by [ADR-0012](./0012-player-front-next-rsc.md) (2026-05-28)
+
+> **Note:** This ADR was Proposed but never Accepted. After re-evaluation, the player surface is **Next.js App Router only** (RSC-first). The TanStack Start variant has been removed from the scaffolder. See ADR-0012 for the current decision.
 
 ## Context
 
-The player-facing surface (casino lobby, sportsbook, wallet) needs SSR for first-paint and SEO, and must stay light for low-bandwidth / grey markets (a stated business requirement). The backoffice is already a Vite + TanStack Router SPA (no SSR - see the scaffolder variants). The open question was the player app: stay on Next.js (the org knows it) or move to TanStack Start.
+The player-facing surface (casino lobby, sportsbook, wallet) needs SSR for first-paint and SEO, and must stay light for low-bandwidth / grey markets (a stated business requirement). The backoffice is a Vite + TanStack Router SPA (no SSR - see `apps/backoffice/` and the scaffolder's sole backoffice variant). The open question was the player app: stay on Next.js (the org knows it) or move to TanStack Start.
 
 A correction that shaped the comparison: as of 2026-05, TanStack's *RSC* support is still experimental. Its production-ready model is loaders + server functions on Vite, not RSC. So this is "Next App Router (RSC-first)" vs "TanStack Start (loaders + server functions)", not an RSC-vs-RSC race.
 
@@ -38,5 +40,6 @@ This is **Proposed**, not Accepted: org familiarity and time-to-ship are real, n
 ## Consequences
 
 - The OSS default scaffold keeps `--web=next` for back-compat; Consumer's player app uses TanStack Start.
+  (As of 2026-05-28 this is no longer true - the `--web` flag and the TanStack Start variant were removed. See ADR-0012.)
 - TanStack route trees (`routeTree.gen.ts`) are generated on first dev/build (gitignored) - a fresh `tsc --noEmit` fails until `pnpm dev` runs once. Standard TanStack behavior; note it in consumer setup.
 - Follow-up: a rig-measured LCP-on-3G pass and the framework-aware `pnpm gen page` generator (currently Next-shaped only).

@@ -98,9 +98,9 @@ function scaffoldPlugin(rawName?: string) {
 
   const name = toKebab(rawName);
   const Name = toPascal(name);
-  const dest = join(repoRoot, 'apps', 'extensions', name);
+  const dest = join(repoRoot, 'apps', 'api', 'src', 'extensions', name);
 
-  if (existsSync(dest)) die(`apps/extensions/${name} already exists`);
+  if (existsSync(dest)) die(`apps/api/src/extensions/${name} already exists`);
   mkdirSync(dest, { recursive: true });
 
   const tmpl = join(here, 'templates', 'plugin');
@@ -108,7 +108,7 @@ function scaffoldPlugin(rawName?: string) {
 
   appendExtensionConfig(name, { isOverlay: true });
 
-  console.log(`- overlay extension created at apps/extensions/${name}/`);
+  console.log(`- overlay extension created at apps/api/src/extensions/${name}/`);
   console.log(`- registered in extensions.config.ts`);
 }
 
@@ -197,29 +197,8 @@ function scaffoldUiComponent(rawName?: string) {
     );
   }
 
-  // Storybook story
-  const storyDir = join(repoRoot, 'apps', 'storybook', 'stories');
-  mkdirSync(storyDir, { recursive: true });
-  const storyFile = join(storyDir, `${name}.stories.tsx`);
-  if (!existsSync(storyFile)) {
-    writeFileSync(
-      storyFile,
-      [
-        `import type { Meta, StoryObj } from '@storybook/react';`,
-        `import { ${Name} } from '@oss/ui-provider-daisyui';`,
-        ``,
-        `const meta: Meta<typeof ${Name}> = { component: ${Name} };`,
-        `export default meta;`,
-        ``,
-        `export const Default: StoryObj<typeof ${Name}> = { args: {} };`,
-        ``,
-      ].join('\n'),
-    );
-  }
-
   console.log(`- contract: packages/ui/provider-contract/src/components/${name}.ts`);
   console.log(`- daisyui impl: packages/ui/provider-daisyui/src/components/${name}.tsx`);
-  console.log(`- story: apps/storybook/stories/${name}.stories.tsx`);
 }
 
 // ---------------------------------------------------------------------------
@@ -287,7 +266,7 @@ function appendExtensionConfig(name: string, opts?: { isOverlay?: boolean; group
   const configFile = join(repoRoot, 'extensions.config.ts');
   const overlay = opts?.isOverlay ?? false;
   const line = overlay
-    ? `  { id: '${name}', path: './apps/extensions/${name}/plugin.ts' },`
+    ? `  { id: '${name}', path: './apps/api/src/extensions/${name}/plugin.ts' },`
     : `  { id: '${name}', path: './packages/modules/dist/${opts?.group}/${name}/src/plugin.js' },`;
 
   if (!existsSync(configFile)) {

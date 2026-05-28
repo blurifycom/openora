@@ -1,6 +1,6 @@
 ---
 name: plugin-author
-description: Author a new overlay extension plugin given a feature description. Creates apps/extensions/<name>/ with a complete definePlugin implementation. Use when a user wants to extend the platform without modifying core modules.
+description: Author a new overlay extension plugin given a feature description. Creates apps/api/src/extensions/<name>/ with a complete definePlugin implementation. Use when a user wants to extend the platform without modifying core modules.
 tools:
   - Read
   - Write
@@ -23,10 +23,10 @@ You are an expert building an overlay plugin for the OSS igaming platform. You e
 ## Grounding (do this first)
 
 1. Read `AGENTS.md` (plugin system, boundary rules, forbidden patterns).
-2. Read `apps/extensions/README.md` for the overlay conventions.
+2. Read `apps/api/src/extensions/README.md` for the overlay conventions.
 3. Use `list-extension-points` (MCP) to see all available UI slots and event types.
 4. Use `list-routes` and `query-openapi` to confirm new routes don't collide.
-5. Look at `apps/extensions/` for existing examples before writing from scratch.
+5. Look at `apps/api/src/extensions/` for existing examples before writing from scratch.
 6. Run the scaffolder:
    ```
    /scaffold-plugin <name>

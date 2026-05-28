@@ -32,8 +32,8 @@ Only return to the user to resolve genuine decisions they alone can make.
 ## What this repo is
 
 - `apps/api/` - thin Hono + oRPC API entry, your own `extensions.config.ts`
-- `apps/web/` - player app (Next.js or TanStack Start) mounting `@oss/react-sdk` pages
-- `apps/backoffice/` - admin app (Vite SPA or Next.js) mounting `@oss/react-sdk` admin pages
+- `apps/web/` - player app (Next.js App Router, RSC + SSR) mounting `@oss/react-sdk` pages
+- `apps/backoffice/` - admin app (Vite + TanStack Router SPA) mounting `@oss/react-sdk` admin pages
 - `@oss/*` packages are linked from a sibling OSS checkout via `pnpm.overrides`
 
 ## How to extend

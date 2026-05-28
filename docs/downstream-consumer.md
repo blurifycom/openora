@@ -4,9 +4,8 @@ How a downstream operator (eg Consumer) builds their own igaming on top of `@oss
 forking core. The root `AGENTS.md` links here; this is the detail an agent loads only when
 actually wiring a consumer.
 
-See also [`examples/minimal-igaming/`](../examples/minimal-igaming/) for a runnable template and
-[`CATALOG.md`](./CATALOG.md) for the machine-readable surface (routes, schemas, adapter tokens,
-slots, events, config schema) an agent reads instead of grepping `node_modules`.
+See [`CATALOG.md`](./CATALOG.md) for the machine-readable surface (routes, schemas, adapter
+tokens, slots, events, config schema) an agent reads instead of grepping `node_modules`.
 
 ## Fastest path: scaffold the repo
 
@@ -35,26 +34,19 @@ and `turbo/generators/` (`pnpm gen plugin|adapter|page`). The CLI lives at
 per-app trees at `tools/templates/variants/`. Read on to understand what it generated and how to
 extend it.
 
-### Choosing the frontend frameworks
+### Player framework
 
-The player and admin apps each ship in two flavours, selected by flag:
+The player app is **Next.js (App Router, RSC-first)**; the backoffice is **Vite +
+TanStack Router (client-only SPA)**. There are no other variants - see ADR-0013
+for the rationale (RSC + SSR for SEO/first-paint on the player surface; SPA
+behind auth for the admin). The scaffolder takes no `--web` flag.
 
-| Flag | Values | Default | Emits |
-|---|---|---|---|
-| `--web` | `next`, `tanstack` | `next` | `apps/web` as a Next 16 player app, or a TanStack Start (Vite + SSR) player app |
-| `--backoffice` | `next`, `vite` | `vite` | `apps/backoffice` as a Next 16 admin app, or a Vite + TanStack Router client-only SPA |
-
-```bash
-pnpm create:app ../poc --name poc --web=tanstack --backoffice=vite
-```
-
-Defaults keep full backward compatibility for the player app (`--web=next`). The admin default is
-the Vite SPA (`--backoffice=vite`); pass `--backoffice=next` for the original Next admin app. Every
-variant uses the same react/react-dom/@tanstack/react-query dedup (Vite `resolve.dedupe` + alias,
-the Vite equivalent of the Next `next.config.ts` alias - see ADR-0005) so the linked `@oss/*` and
-the app share a single physical React copy. The TanStack Start player routes fetch via the
-`@oss/react-sdk/server` loaders (`fetchLobbyData`, `fetchSportsbookData`), forwarding the request
-cookies; the wallet renders client-only.
+The Next consumer's route files prefetch SSR data via `@oss/react-sdk/server`
+(`prefetchLobby`, `prefetchGames`, `prefetchWallet`, ...) forwarding the request
+cookies, then hydrate the client page with `<HydrationBoundary state={dehydrate(qc)}>`.
+React/react-dom/@tanstack/react-query are deduped via the consumer's
+`next.config.ts` alias (and the Vite equivalent in the backoffice) so the linked
+`@oss/*` and the app share a single physical React copy - see ADR-0005.
 
 ## API entrypoint
 
@@ -157,7 +149,7 @@ The react-sdk's `styles.css` supplies structural/layout classes (`player-card`, 
 DaisyUI supplies the component look. They target different elements and coexist.
 
 The adapter is framework-agnostic React with no browser globals at module scope, so it renders
-unchanged under Next RSC/SSR, TanStack Start, or a Vite SPA. The provider is passed inside a client
+unchanged under Next RSC/SSR or a Vite SPA. The provider is passed inside a client
 component (`providers.tsx`), where `useToast`'s state lives.
 
 Cross-workspace `link:` requires a dedup alias in the consumer's `next.config.ts` for `react`,

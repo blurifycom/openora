@@ -543,7 +543,7 @@ server.tool(
 
 server.tool(
   'scaffold-plugin',
-  'Scaffold a new overlay extension under apps/extensions/<name>.',
+  'Scaffold a new overlay extension under apps/api/src/extensions/<name>.',
   { name: z.string() },
   async ({ name }) => {
     const result = run(`pnpm scaffold plugin ${name}`);

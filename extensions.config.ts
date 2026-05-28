@@ -27,6 +27,6 @@ export const extensions = [
   { id: 'player-management', path: './packages/modules/dist/backoffice/player-management/src/plugin.js' },
   { id: 'cms', path: './packages/modules/dist/backoffice/cms/src/plugin.js' },
 
-  // Overlay extensions (apps/extensions/<name>/plugin.ts)
+  // Overlay extensions (apps/api/src/extensions/<name>/plugin.ts)
   // Add via: pnpm scaffold plugin <name>
 ];

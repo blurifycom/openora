@@ -29,7 +29,7 @@ No vendor is prescribed. Pick whatever fits your stack (SMTP, SES, SendGrid, Pos
 2. Implement `NotificationDeliveryAdapter`:
 
 ```ts
-// apps/extensions/email-delivery/src/my-email-adapter.ts
+// apps/api/src/extensions/email-delivery/src/my-email-adapter.ts
 import type { NotificationDeliveryAdapter } from '@oss/adapters';
 
 export class MyEmailAdapter implements NotificationDeliveryAdapter {
@@ -42,7 +42,7 @@ export class MyEmailAdapter implements NotificationDeliveryAdapter {
 3. Bind it in the plugin, AFTER `notifications` in `extensions.config.ts`:
 
 ```ts
-// apps/extensions/email-delivery/plugin.ts
+// apps/api/src/extensions/email-delivery/plugin.ts
 import { NOTIFICATION_DELIVERY_ADAPTER } from '@oss/adapters';
 import { definePlugin } from '@oss/plugin-host';
 import { MyEmailAdapter } from './src/my-email-adapter.js';

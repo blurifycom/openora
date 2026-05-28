@@ -10,7 +10,6 @@
     "**/dist/**",
     "**/.next/**",
     "**/coverage/**",
-    "**/storybook-static/**",
     "**/generated/**",
     "packages/platform/db/prisma/migrations/**",
     "pnpm-lock.yaml"

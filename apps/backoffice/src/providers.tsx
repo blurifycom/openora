@@ -1,0 +1,19 @@
+import type { ReactNode } from 'react';
+import { ReactQueryDevtools } from '@tanstack/react-query-devtools';
+import { OssProviders, type UIPlugin } from '@oss/react-sdk';
+import { daisyuiProvider } from '@oss/ui-provider-daisyui';
+
+const API_URL = import.meta.env.VITE_PUBLIC_API_URL ?? 'http://localhost:3001';
+
+// Define plugins at module scope - never inline in JSX.
+// A new array reference on every render re-runs buildRegistry and resets error boundaries.
+const plugins: UIPlugin[] = [];
+
+export function Providers({ children }: { children: ReactNode }) {
+  return (
+    <OssProviders apiUrl={API_URL} uiProvider={daisyuiProvider} plugins={plugins}>
+      {children}
+      <ReactQueryDevtools initialIsOpen={false} />
+    </OssProviders>
+  );
+}

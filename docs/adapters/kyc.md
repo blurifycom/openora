@@ -43,7 +43,7 @@ The intended production provider is [SumSub](https://sumsub.com). To wire it:
 2. Implement `KycAdapter` against the SumSub REST API:
 
 ```ts
-// apps/extensions/sumsub-kyc/src/sumsub-kyc-adapter.ts
+// apps/api/src/extensions/sumsub-kyc/src/sumsub-kyc-adapter.ts
 import type { KycAdapter, KycDocument, KycResult, KycStatus } from '@oss/adapters';
 
 export class SumsubKycAdapter implements KycAdapter {
@@ -61,7 +61,7 @@ export class SumsubKycAdapter implements KycAdapter {
 3. Bind it in the plugin, AFTER `identity` in `extensions.config.ts` (last registration wins):
 
 ```ts
-// apps/extensions/sumsub-kyc/plugin.ts
+// apps/api/src/extensions/sumsub-kyc/plugin.ts
 import { KYC_ADAPTER } from '@oss/adapters';
 import { definePlugin } from '@oss/plugin-host';
 import { SumsubKycAdapter } from './src/sumsub-kyc-adapter.js';

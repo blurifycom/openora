@@ -1,13 +1,12 @@
 // Server-side data fetchers for the public player pages.
 //
-// These run on the server only - inside a Next.js RSC (async server component)
-// or a TanStack Start route loader / server function. They build a typed oRPC
-// client via @oss/sdk-core (plain fetch, no React) against the internal API
-// URL and forward the incoming request headers (cookies) so the call is made
-// as the current player. The result is handed to the matching player page as
-// `initialData`, so the first paint is server-rendered and react-query hydrates
-// from it on the client. No `'use client'` here; nothing in this file is bundled
-// into the browser.
+// These run on the server only - inside a Next.js RSC (async server component).
+// They build a typed oRPC client via @oss/sdk-core (plain fetch, no React)
+// against the internal API URL and forward the incoming request headers
+// (cookies) so the call is made as the current player. The result is handed
+// to the matching player page as `initialData`, so the first paint is
+// server-rendered and react-query hydrates from it on the client. No
+// `'use client'` here; nothing in this file is bundled into the browser.
 
 import type { z } from 'zod';
 import {

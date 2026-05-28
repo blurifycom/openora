@@ -4,11 +4,9 @@
  *
  * Usage:
  *   pnpm create:app <target-dir> [--name <project-name>]
- *                                 [--web next|tanstack] [--backoffice next|vite]
  *
- * Examples:
+ * Example:
  *   pnpm create:app ../my-igaming --name my-igaming
- *   pnpm create:app ../poc --web=tanstack --backoffice=vite
  *
  * Scaffolds a full turborepo (apps/api + web + backoffice), wires pnpm.overrides
  * to link at this OSS checkout, drops in the consumer AI agents and turbo gen
@@ -16,9 +14,10 @@
  *
  * The shared base lives in `tools/templates/consumer/` (root config + apps/api +
  * generators + dotfiles). The per-app trees live in `tools/templates/variants/`:
- * `web-next` / `web-tanstack` overlay onto `apps/web`, and `backoffice-next` /
- * `backoffice-vite` overlay onto `apps/backoffice`. Same __dot__/.tpl/substitution
- * rules apply to base and variants alike.
+ * `web-next` overlays onto `apps/web` (Next.js App Router, RSC-first - see
+ * ADR-0013); `backoffice-vite` overlays onto `apps/backoffice` (Vite +
+ * TanStack Router SPA, no SSR). Same __dot__/.tpl/substitution rules apply
+ * to base and variants alike.
  */
 
 import {
@@ -39,16 +38,9 @@ const templateRoot = join(here, 'templates', 'consumer');
 const variantsRoot = join(here, 'templates', 'variants');
 const agentsDir = join(ossRoot, 'packages', 'platform', 'mcp', 'agents');
 
-const WEB_VARIANTS = ['next', 'tanstack'] as const;
-const BACKOFFICE_VARIANTS = ['next', 'vite'] as const;
-type WebVariant = (typeof WEB_VARIANTS)[number];
-type BackofficeVariant = (typeof BACKOFFICE_VARIANTS)[number];
-
 type ParsedArgs = {
   target: string;
   name?: string;
-  web: WebVariant;
-  backoffice: BackofficeVariant;
 };
 
 function die(msg: string): never {
@@ -56,8 +48,7 @@ function die(msg: string): never {
   process.exit(1);
 }
 
-const USAGE =
-  'Usage: pnpm create:app <target-dir> [--name <name>] [--web next|tanstack] [--backoffice next|vite]';
+const USAGE = 'Usage: pnpm create:app <target-dir> [--name <name>]';
 
 // Accepts `--flag value` and `--flag=value`. Returns the raw value or undefined.
 function readFlag(args: string[], i: number): { value: string | undefined; next: number } {
@@ -71,37 +62,18 @@ function parseArgs(argv: string[]): ParsedArgs {
   const args = argv.slice(2);
   let target: string | undefined;
   let name: string | undefined;
-  let web: WebVariant = 'next';
-  let backoffice: BackofficeVariant = 'vite';
   for (let i = 0; i < args.length; i++) {
     const a = args[i];
     if (a === '--name' || a.startsWith('--name=')) {
       const r = readFlag(args, i);
       name = r.value;
       i = r.next;
-    } else if (a === '--web' || a.startsWith('--web=')) {
-      const r = readFlag(args, i);
-      i = r.next;
-      if (r.value === undefined || !(WEB_VARIANTS as readonly string[]).includes(r.value)) {
-        die(`--web must be one of: ${WEB_VARIANTS.join(', ')}.\n  ${USAGE}`);
-      }
-      web = r.value as WebVariant;
-    } else if (a === '--backoffice' || a.startsWith('--backoffice=')) {
-      const r = readFlag(args, i);
-      i = r.next;
-      if (
-        r.value === undefined ||
-        !(BACKOFFICE_VARIANTS as readonly string[]).includes(r.value)
-      ) {
-        die(`--backoffice must be one of: ${BACKOFFICE_VARIANTS.join(', ')}.\n  ${USAGE}`);
-      }
-      backoffice = r.value as BackofficeVariant;
     } else if (!a.startsWith('-') && !target) {
       target = a;
     }
   }
   if (!target) die(`missing target directory.\n  ${USAGE}`);
-  return { target, name, web, backoffice };
+  return { target, name };
 }
 
 function sanitizeName(raw: string): string {
@@ -164,7 +136,7 @@ function emitTree(
 }
 
 function main(): void {
-  const { target, name: nameFlag, web, backoffice } = parseArgs(process.argv);
+  const { target, name: nameFlag } = parseArgs(process.argv);
   const targetDir = resolve(process.cwd(), target);
   const name = sanitizeName(nameFlag ?? basename(targetDir));
 
@@ -173,8 +145,8 @@ function main(): void {
   }
   if (!existsSync(templateRoot)) die(`template missing at ${templateRoot}`);
 
-  const webVariantDir = join(variantsRoot, `web-${web}`);
-  const backofficeVariantDir = join(variantsRoot, `backoffice-${backoffice}`);
+  const webVariantDir = join(variantsRoot, 'web-next');
+  const backofficeVariantDir = join(variantsRoot, 'backoffice-vite');
   if (!existsSync(webVariantDir)) die(`web variant missing at ${webVariantDir}`);
   if (!existsSync(backofficeVariantDir)) {
     die(`backoffice variant missing at ${backofficeVariantDir}`);
@@ -188,14 +160,14 @@ function main(): void {
   };
 
   console.log(`\n  Creating ${name} at ${targetDir}`);
-  console.log(`  web: ${web}   backoffice: ${backoffice}`);
+  console.log(`  web: next (App Router, RSC)   backoffice: vite + tanstack-router (SPA)`);
   console.log(`  Linking @oss/* from ${vars.ossFromRoot}\n`);
 
   // 1) Shared base (root config + apps/api + generators + dotfiles).
   emitTree(templateRoot, vars, targetDir);
-  // 2) Chosen player app overlays onto apps/web.
+  // 2) Player app overlays onto apps/web (Next.js App Router).
   emitTree(webVariantDir, vars, targetDir, join('apps', 'web'));
-  // 3) Chosen admin app overlays onto apps/backoffice.
+  // 3) Backoffice is always a Vite + TanStack Router SPA - overlays onto apps/backoffice.
   emitTree(backofficeVariantDir, vars, targetDir, join('apps', 'backoffice'));
 
   // Drop in the consumer AI agents (single source of truth: @oss/mcp/agents).

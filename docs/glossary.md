@@ -19,7 +19,7 @@ Shared vocabulary for this repo: the **roles** (who's who), the **platform/archi
 | --- | --- | --- |
 | **Headless** | Core ships behavior + contracts but no fixed UI; the operator supplies the look via a UI provider. | `packages/ui/*` |
 | **Module** | A business domain packaged as an independently loadable unit (auth, wallet, gaming...). Never imports another module. | `packages/modules/<name>/` |
-| **Plugin** / **extension** / **overlay** | A drop-in unit that adds or overrides behavior via `definePlugin({ id, register })`. The only way new functionality enters the system. | `apps/extensions/*`, `consumer/plugins/*` |
+| **Plugin** / **extension** / **overlay** | A drop-in unit that adds or overrides behavior via `definePlugin({ id, register })`. The only way new functionality enters the system. | `apps/api/src/extensions/*`, `consumer/plugins/*` |
 | **Adapter** | The vendor-agnostic interface a module depends on (e.g. `KycAdapter`, `PaymentAdapter`) plus its per-vendor implementations. The swap seam: a module declares the interface + DI token in `@oss/adapters`; an operator binds a concrete impl. | `@oss/adapters` + `modules/<m>/adapters/<vendor>/` |
 | **Contract** | The composed oRPC router. Drives request validation, the typed client, and the emitted OpenAPI spec. | `@oss/orpc-contract` |
 | **Domain schema** | A Zod schema - the single source of truth for a shape. Types are `z.infer`'d, never hand-written. | `@oss/shared-schemas`, module `schemas/` |

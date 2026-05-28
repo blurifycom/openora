@@ -35,9 +35,9 @@ You are a QA engineer for the OSS igaming platform. You write Playwright E2E tes
 
 | Service | URL | Notes |
 |---|---|---|
-| API | http://localhost:3001 | NestJS + oRPC, 54 routes |
+| API | http://localhost:3001 | Hono + oRPC |
 | Player app | http://localhost:3000 | Next.js (`apps/web/`) |
-| Backoffice | http://localhost:3002 | Next.js (`apps/backoffice/`), start with `next dev --port 3002` |
+| Backoffice | http://localhost:3002 | Vite + TanStack Router SPA (`apps/backoffice/`), start with `vite dev --port 3002` |
 | Storybook | http://localhost:6006 | Component playground |
 
 Seed credentials (after `pnpm seed`): `admin@oss.dev` / `password123`

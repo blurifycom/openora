@@ -23,7 +23,7 @@ Open-source, headless, plugin-based, AI-native igaming platform. Clone it, exten
 # Requirements: Node 22+, pnpm 10+, Docker
 pnpm setup:agent          # boot Docker (Postgres + Redis) + run migrations
 pnpm seed                 # demo data: admin + players + wallets + transactions + games
-pnpm dev                  # api :3001, backoffice :3000, storybook :6006
+pnpm dev                  # api :3001, backoffice :3002 (Vite + TanStack Router SPA)
 ```
 
 Log in to the backoffice with `admin@oss.dev` / `password123` (see `pnpm seed --help` flags).
@@ -38,10 +38,10 @@ Generates the full module skeleton under `packages/modules/<group>/<name>/` (par
 
 ## Adding an extension (overlay plugin)
 
-Drop a folder under `apps/extensions/<name>/` or point to an npm package. Both paths use the same `definePlugin` contract:
+Drop a folder under `apps/api/src/extensions/<name>/` or point to an npm package. Both paths use the same `definePlugin` contract:
 
 ```typescript
-// apps/extensions/my-feature/plugin.ts
+// apps/api/src/extensions/my-feature/plugin.ts
 import { definePlugin } from '@oss/plugin-host';
 
 export default definePlugin({
@@ -62,7 +62,7 @@ Then register in `extensions.config.ts`:
 ```typescript
 export const extensions = [
   // ...existing modules
-  { id: 'my-feature', path: './apps/extensions/my-feature/plugin.ts' },
+  { id: 'my-feature', path: './apps/api/src/extensions/my-feature/plugin.ts' },
 ];
 ```
 
@@ -82,10 +82,6 @@ The generated repo holds only what's unique to your operation - branding, vendor
 overlay plugins, route shims. Core is consumed as linked `@oss/*` packages, never forked. It
 ships `turbo gen` generators (`pnpm gen plugin|adapter|page`) and three AI agents
 (`igaming-builder`, `igaming-expert`, `igaming-qa`) in `.claude/agents/`.
-
-| Example                                                  | What it shows                                                                                  |
-| -------------------------------------------------------- | ---------------------------------------------------------------------------------------------- |
-| [`examples/minimal-igaming/`](./examples/minimal-igaming/) | The smallest possible single-file consumer: `createApp`, `extensions.config.ts`, a custom vendor adapter binding, and a theme override - read this to understand the wiring the scaffolder generates. |
 
 See [docs/downstream-consumer.md](./docs/downstream-consumer.md) for the full consumption guide.
 

@@ -10,7 +10,7 @@ Open-source, headless, plugin-based, AI-native igaming platform. Anyone clones t
 
 1. Zod-first contracts. Every shape is a Zod schema; types are `z.infer`'d, never hand-written. Cross-cutting schemas live in `packages/contracts/shared-schemas`; per-module request/response schemas live in `packages/contracts/orpc-contract`, and module-local ones in the module's `schemas/`.
 2. oRPC + Hono. oRPC owns route definition + Zod validation + OpenAPI emit; its `OpenAPIHandler` is mounted on a Hono server (`@hono/node-server`, Bun-ready later). Dependency wiring is a small functional composition container (`Container` in `@oss/core`) - explicit factory functions keyed by typed tokens, no decorators, no `reflect-metadata`. See ADR-0009.
-3. Plugin host. `definePlugin({ id, dependsOn, register })` is the only way new functionality enters the system. Overlays (in-tree under `apps/extensions/<name>/`) are the primary path; npm-published plugins use the same contract.
+3. Plugin host. `definePlugin({ id, dependsOn, register })` is the only way new functionality enters the system. Overlays (in-tree under `apps/api/src/extensions/<name>/`) are the primary path; npm-published plugins use the same contract.
 4. Headless UI. `@oss/ui-provider-contract` declares component contracts and named slots. `@oss/ui-provider-daisyui` is the single adapter shipped by the platform; consumers can swap in their own by implementing the same contract. Module UI never imports a UI library directly.
 5. Explicit > magic. No auto-discovery, no decorator soup. Everything is greppable; every wiring point is a typed function call.
 6. AI-friendly by default. Every module has an `AGENTS.md`. Every scaffold is a slash command. Every contract is queryable via the MCP dev server and the generated `docs/CATALOG.md`.
@@ -20,10 +20,9 @@ Open-source, headless, plugin-based, AI-native igaming platform. Anyone clones t
 ```
 apps/
   api/            # Hono + oRPC HTTP API (port 3001) - thin consumer of createApp
-  backoffice/     # Next.js admin app (reference consumer of the admin surface)
+  backoffice/     # Vite + TanStack Router admin SPA (reference consumer of the admin surface)
   web/            # Next.js player app (reference consumer of the player surface)
   mcp-server-dev/ # MCP dev server (stdio) - agents connect via .mcp.json
-  storybook/      # Component playground (port 6006)
   extensions/     # In-tree overlay plugins (drop-in folders)
 packages/
   config/         # tsconfig, vitest, oxlint, eslint-boundaries presets
@@ -58,14 +57,14 @@ extensions.config.ts # the single registry of enabled plugins
 ## Where does X go? (decision tree)
 
 - A new business domain (eg "tournaments") -> new module under `packages/modules/<group>/<name>/` (group: `player`, `backoffice`, `platform`). Use `/scaffold-module <group> <name>`.
-- A behavior that extends/overrides an existing module -> overlay plugin under `apps/extensions/<name>/`. Use `/scaffold-plugin <name>`.
+- A behavior that extends/overrides an existing module -> overlay plugin under `apps/api/src/extensions/<name>/`. Use `/scaffold-plugin <name>`.
 - A new HTTP route -> add to the module's `router/index.ts`. Use `/scaffold-route <module> <method> <path>`. Player routes resolve the caller from the `x-user-id` header; admin routes MUST be guarded (next line).
 - An admin-only route -> the module's `plugin.ts` resolves `AdminGuard` from the container (`c.get(ADMIN_GUARD)`) and passes it into the router factory; call `await adminGuard.assert(context)` as the first line of the handler (throws `ORPCError`). `ADMIN_GUARD` is seeded into the container by `createApp`. This is the single admin-enforcement point - never re-implement the role check.
 - A new database table -> add a Drizzle `pgTable` to the module's `src/schema/index.ts`. Run `pnpm regen` (drizzle-kit) to generate the migration.
 - A reusable Zod schema -> `packages/contracts/shared-schemas/src/<namespace>.ts`. Module-local schemas live in the module's `schemas/`.
 - A cross-module event -> declare its payload schema in the Zod catalog `packages/contracts/shared-schemas/src/events.ts` (`domainEventSchemas`), then emit via the `EventBus` the service received in its constructor (built in `plugin.ts` from `c.get(EVENT_BUS)`); subscribe in a plugin via `ctx.events.on(name, handler)`. The bus is a typed facade over the `MESSAGE_BROKER` seam (default in-process; swap to Redpanda/NATS without module changes). See ADR-0010.
 - A UI component -> `/scaffold-ui-component <name>` creates both the contract entry and the daisyui impl.
-- A backoffice (admin) page -> add a component to `packages/sdks/react-sdk/src/pages/admin/`, export from `src/index.ts`, then add a Next route shim in `apps/backoffice/app/(authed)/<route>/page.tsx`. A player page goes in `src/pages/player/` with a shim in `apps/web/app/<route>/page.tsx`. See `packages/sdks/react-sdk/AGENTS.md`.
+- A backoffice (admin) page -> add a component to `packages/sdks/react-sdk/src/pages/admin/`, export from `src/index.ts`, then add a TanStack route file under `apps/backoffice/src/routes/_authed/<route>.tsx` (use `createFileRoute('/_authed/<route>')` and mount the page). A player page goes in `src/pages/player/` with a Next route shim in `apps/web/app/<route>/page.tsx`. See `packages/sdks/react-sdk/AGENTS.md`.
 - A design token -> a `--bo-*` CSS variable in `react-sdk/src/styles.css` + a typed entry in `Theme` (`react-sdk/src/theme.tsx`). Override per-tenant via `<ThemeProvider theme={...}>`.
 - A plugin-contributed admin UI extension (nav item, column, tile, section, route) -> a client-side `defineUIPlugin({ register(ctx) { ctx.<slot>.add(...) } })`. See ADR-0006 and `react-sdk/AGENTS.md`.
 - A third-party integration (PSP, KYC, aggregator, chat) -> define the adapter interface + token (`createToken<Adapter>(...)`) in `@oss/adapters` (`packages/contracts/adapters/src/<category>.ts`), implement it under `packages/modules/<module>/adapters/<vendor>/`, and bind it in the module's `plugin.ts` via `ctx.provide(TOKEN, () => new Impl())`. Never inline. All vendor adapter interfaces live in `@oss/adapters` so the swap seams are findable in one place.
@@ -85,7 +84,7 @@ extensions.config.ts # the single registry of enabled plugins
 - `packages/modules/**` may import: `@oss/contracts/*`, `@oss/adapters`, `@oss/platform/*`, `@oss/ui/*`, `@oss/sdks/*`. May NOT import another module - cross-module communication goes through events or contracts (read another module's tables via the `@oss/modules/<group>/<name>/schema` subpath).
 - `packages/platform/*` may import other `platform/*` and `@oss/contracts/*`. May NOT import modules or UI.
 - `packages/contracts/*` may only import other contracts and Zod.
-- `apps/extensions/*` may import any package, but never another extension.
+- `apps/api/src/extensions/*` may import any package, but never another extension.
 - `apps/api` registers modules only via `extensions.config.ts`. A direct module-file import from `apps/api/src/*` is a lint error.
 - Consumers (and modules) import the package entry, never a deep `dist/` path.
 
@@ -115,7 +114,7 @@ Generates `packages/modules/<group>/<name>/` (a folder inside `@oss/modules`) wi
 /scaffold-plugin <name>
 ```
 
-Generates `apps/extensions/<name>/plugin.ts` exporting `definePlugin`. In `register(ctx)`: `ctx.provide(token, factory)`, `ctx.routers.add(namespace, (c) => router)`, `ctx.slots.fill(...)`, `ctx.events.on(...)`, `ctx.mcp.tool(...)`. To add tables, put your own `pgTable` in the overlay's schema (additive). To override a vendor adapter, `ctx.provide` your impl to its token AND ensure the overlay loads after the default-binding module in `extensions.config.ts` (last registration wins). See `apps/extensions/AGENTS.md`.
+Generates `apps/api/src/extensions/<name>/plugin.ts` exporting `definePlugin`. In `register(ctx)`: `ctx.provide(token, factory)`, `ctx.routers.add(namespace, (c) => router)`, `ctx.slots.fill(...)`, `ctx.events.on(...)`, `ctx.mcp.tool(...)`. To add tables, put your own `pgTable` in the overlay's schema (additive). To override a vendor adapter, `ctx.provide` your impl to its token AND ensure the overlay loads after the default-binding module in `extensions.config.ts` (last registration wins). See `apps/api/src/extensions/AGENTS.md`.
 
 ## How to add an oRPC route
 
@@ -135,7 +134,7 @@ Add/edit a `pgTable` in `packages/modules/<group>/<module>/src/schema/index.ts`.
 /scaffold-ui-component <Name>
 ```
 
-Creates the contract entry (`packages/ui/provider-contract/src/components/<name>.ts`), the daisyui impl, and a Storybook story. Module UI may import only the contract type.
+Creates the contract entry (`packages/ui/provider-contract/src/components/<name>.ts`) and the daisyui impl. Module UI may import only the contract type.
 
 ## How to consume this platform from a downstream repo
 
@@ -145,13 +144,13 @@ Scaffold a full consumer turborepo (api + web + backoffice) wired to `link:` at 
 pnpm create:app ../my-igaming --name my-igaming
 ```
 
-The generated repo ships `turbo gen` generators (`pnpm gen plugin|adapter|page`) and the three consumer AI agents. CLI: `tools/create-igaming-app.ts`; template: `tools/templates/consumer/`. See [docs/downstream-consumer.md](./docs/downstream-consumer.md) for `createApp`, mounting the backoffice, the `link:` dev workflow, the consumer load pattern, and the `@oss/mcp` + `CATALOG.md` AI surface. The smallest hand-wired reference is [`examples/minimal-igaming/`](./examples/minimal-igaming/).
+The generated repo ships `turbo gen` generators (`pnpm gen plugin|adapter|page`) and the three consumer AI agents. CLI: `tools/create-igaming-app.ts`; template: `tools/templates/consumer/`. See [docs/downstream-consumer.md](./docs/downstream-consumer.md) for `createApp`, mounting the backoffice, the `link:` dev workflow, the consumer load pattern, and the `@oss/mcp` + `CATALOG.md` AI surface.
 
 ## How to run things locally
 
 ```
 pnpm setup:agent   # first time: docker + db + mcp + summary
-pnpm dev           # turbo dev (api, backoffice, mcp, storybook)
+pnpm dev           # turbo dev (api, backoffice, mcp)
 pnpm regen         # drizzle-kit generate + openapi emit + sdk regen + catalog
 pnpm seed          # demo data: admin + players + wallets + txns + games
 pnpm verify        # typecheck + lint (incl. boundaries + module shape) + test
@@ -181,6 +180,7 @@ These agents are for **platform development** (building this OSS repo). Consumer
 | `igaming-operator-verifier` | Consumer readiness auditor | Audit platform from an operator perspective; find launch blockers |
 | `contract-reviewer` | PR / boundary reviewer | Review a diff for breaking changes, boundary violations, schema drift |
 | `qa-engineer` | E2E QA | Write/run Playwright tests; debug with Chrome DevTools; triage bugs |
+| `docs-sync` | Docs drift auditor | Read the code and rewrite the prose docs to match (frameworks, ports, removed modules, route-shim instructions). Edits docs only, then runs `pnpm sync:agent-docs`. |
 
 ## Conventions for agents specifically
 
