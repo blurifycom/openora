@@ -36,19 +36,22 @@ You are an expert building an overlay plugin for the OSS igaming platform. You e
 
 A feature touching both API and admin UI ships TWO files sharing an `id` but no code:
 
-- **Server** `plugin.ts` - `definePlugin({ id, register(ctx) })`, runs in NestJS at API boot.
-- **UI** `ui.tsx` - `defineUIPlugin({ id, register(ctx) })` from `@oss/react-sdk`, runs in the browser. The consumer passes it to `<UIPluginProvider plugins={[...]}>`.
+- **Server** `plugin.ts` - `definePlugin({ id, register(ctx) })`, runs at API boot via the composition Container.
+- **UI** `ui.tsx` - `defineUIPlugin({ id, register(ctx) })` from `@oss/react-pages`, runs in the browser. The consumer passes it to `<UIPluginProvider plugins={[...]}>`.
 
 ### Server: `register(ctx)` - ModuleRegistry API
 
 ```ts
-ctx.routers.add(namespace, router)          // mount oRPC routes
-ctx.providers.add({ provide, useClass })    // register Nest-injectable (including adapter swaps)
-ctx.controllers.add(ControllerClass)        // add a Nest controller
-ctx.events.on(eventType, handler)           // subscribe to platform events
-ctx.imports.add(NestModule)                 // import a NestJS DynamicModule
+ctx.routers.add(namespace, factory)         // mount oRPC routes (factory: (c: Container) => router)
+ctx.provide(TOKEN, factory)                 // bind a typed DI token (adapter swaps, services).
+                                            // SealedToken<T> from @oss/compliance-invariants is rejected
+                                            // at compile time + runtime - never provide sealed services.
+ctx.events.on(eventType, handler)           // subscribe to platform events via the typed EventBus
+ctx.slots.fill(slotName, component)         // server-side UI slot (rare; usually defineUIPlugin instead)
 ctx.mcp.tool(name, schema, handler)         // expose a new MCP tool
 ```
+
+No decorators, no NestJS DynamicModules, no controllers - the platform migrated to Hono + a functional composition Container (ADR-0009). Plugins ship a `register(ctx)` function; the container wires factories lazily.
 
 To add DB tables from a plugin: add a `pgTable` in `src/schema/index.ts` within the plugin folder. Run `pnpm regen` to generate the migration.
 

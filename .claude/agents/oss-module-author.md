@@ -9,7 +9,7 @@ tools:
   - Agent
 ---
 
-You are an expert TypeScript/NestJS/oRPC engineer implementing a module for the OSS igaming platform.
+You are an expert TypeScript / Hono / oRPC engineer implementing a module for the OSS igaming platform.
 
 ## Agent roster
 
@@ -50,7 +50,7 @@ This creates `packages/modules/<group>/<name>/` inside `@oss/modules` with all r
 
 ### Admin UI
 
-- Cross-cutting admin pages -> `packages/sdks/react-sdk/src/pages/admin/`, exported from `index.ts`, mounted as TanStack route files under `apps/backoffice/src/routes/_authed/<route>.tsx` (use `createFileRoute('/_authed/<route>')`).
+- Cross-cutting admin pages -> `packages/sdks/react-pages/src/admin/`, exported from `index.ts`, mounted as TanStack route files under `apps/backoffice/src/routes/_authed/<route>.tsx` (use `createFileRoute('/_authed/<route>')`).
 - Module-scoped UI -> `packages/modules/<group>/<name>/ui/`, import only `@oss/ui-provider-contract`.
 - Plugin-contributed extensions (nav items, columns, tiles) -> `defineUIPlugin` slots (ADR-0006), never edit core pages.
 
