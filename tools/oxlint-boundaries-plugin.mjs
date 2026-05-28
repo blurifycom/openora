@@ -109,6 +109,45 @@ const noDeepDistImport = {
   },
 };
 
+// Layer DAG for the SDK packages (ADR-0013):
+//   @oss/react-pages -> @oss/react-blocks -> @oss/react-hooks
+// react-hooks is the leaf - it must not import @oss/react-blocks or @oss/react-pages.
+// react-blocks may import react-hooks - not react-pages.
+const noSdkLayerInversion = {
+  create(context) {
+    return {
+      ImportDeclaration(node) {
+        const file = filename(context);
+        const spec = node.source.value;
+        if (inPath(file, 'packages/sdks/react-hooks')) {
+          if (
+            spec === '@oss/react-blocks' ||
+            spec.startsWith('@oss/react-blocks/') ||
+            spec === '@oss/react-pages' ||
+            spec.startsWith('@oss/react-pages/')
+          ) {
+            context.report({
+              node,
+              message:
+                'react-hooks must not import react-blocks or react-pages. ' +
+                'Layer DAG: react-pages -> react-blocks -> react-hooks. See ADR-0013.',
+            });
+          }
+        } else if (inPath(file, 'packages/sdks/react-blocks')) {
+          if (spec === '@oss/react-pages' || spec.startsWith('@oss/react-pages/')) {
+            context.report({
+              node,
+              message:
+                'react-blocks must not import react-pages. ' +
+                'Layer DAG: react-pages -> react-blocks -> react-hooks. See ADR-0013.',
+            });
+          }
+        }
+      },
+    };
+  },
+};
+
 export default {
   meta: { name: 'oss-boundaries' },
   rules: {
@@ -116,5 +155,6 @@ export default {
     'no-platform-to-module': noPlatformToModule,
     'no-contracts-to-runtime': noContractsToRuntime,
     'no-deep-dist-import': noDeepDistImport,
+    'no-sdk-layer-inversion': noSdkLayerInversion,
   },
 };
