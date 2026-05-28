@@ -1,8 +1,19 @@
 # @oss/react-pages
 
-The React platform package. Everything a React consumer (Next.js App Router for the player surface, Vite + TanStack Router SPA for the backoffice) needs to talk to the OSS API and render the admin: a typed client, query hooks, auth, the UI-adapter context, the theme system, the admin shell + pages, and a UI plugin registry.
+Top of the layered React SDK (ADR-0013). Houses **composed pages** + the **ui-plugin registry** + **theme** + **OssProviders** + **AppShell**. The root barrel re-exports the union of `@oss/react-hooks` and `@oss/react-blocks` for ergonomic consumer migration.
 
-This package absorbed the former `@oss/client` (typed transport) and `@oss/backoffice-ui` (admin UI). If you're looking for either, it's here now. The reference consumer apps live at `apps/backoffice/` (admin) and `apps/web/` (player).
+Subpaths:
+
+- `.` (convenience barrel) - exports everything below + hooks + blocks via re-export
+- `./admin` - admin page components (`DashboardPage`, `UsersListPage`, ...)
+- `./player` - player page components (`PlayerLobbyPage`, `PlayerWalletPage`, ...)
+- `./ui-plugin` - `defineUIPlugin`, `SLOTS`, `<Slot>`, `<SlotEvaluationContextProvider>`, sealed/page tokens, types
+- `./theme` - `ThemeProvider` (with `brandScope`), tokens, presets
+- `./styles.css` - structural CSS (page-header, player-card, etc - import once at the app root)
+
+For data hooks (`usePlayerLobby`, `useAdminUsers`, ...), cross-cutting helpers (`usePageContext`, `useDataExtension`, `RoleGate`), or server-side RSC prefetchers - see `@oss/react-hooks`. For presentational primitives (`StatCard`, `Skeleton`, ...) - see `@oss/react-blocks`.
+
+This package absorbed the former `@oss/react-sdk` (and before that `@oss/client` + `@oss/backoffice-ui`); the layered split landed via ADR-0013. The reference consumer apps live at `apps/backoffice/` (admin) and `apps/web/` (player).
 
 ## What's in the box
 

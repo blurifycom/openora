@@ -27,7 +27,7 @@ build, calls the `enhance-intent` MCP tool to turn the ask into a grounded spec,
 matching scaffold flow. See [mcp-setup.md](./mcp-setup.md#zero-config-setup-pnpm-setupmcp).
 
 This emits everything the sections below describe by hand: `apps/api` (thin `createApp` entry +
-`extensions.config.ts`), `apps/web` + `apps/backoffice` (mounting react-sdk pages with the dedup
+`extensions.config.ts`), `apps/web` + `apps/backoffice` (mounting react-pages pages with the dedup
 config), root `pnpm.overrides` linking every `@oss/*`, `.mcp.json`, the three consumer AI agents,
 and `turbo/generators/` (`pnpm gen plugin|adapter|page`). The CLI lives at
 `tools/create-igaming-app.ts`; the shared base tree at `tools/templates/consumer/` and the
@@ -41,7 +41,7 @@ TanStack Router (client-only SPA)**. There are no other variants - see ADR-0013
 for the rationale (RSC + SSR for SEO/first-paint on the player surface; SPA
 behind auth for the admin). The scaffolder takes no `--web` flag.
 
-The Next consumer's route files prefetch SSR data via `@oss/react-sdk/server`
+The Next consumer's route files prefetch SSR data via `@oss/react-hooks/server`
 (`prefetchLobby`, `prefetchGames`, `prefetchWallet`, ...) forwarding the request
 cookies, then hydrate the client page with `<HydrationBoundary state={dehydrate(qc)}>`.
 React/react-dom/@tanstack/react-query are deduped via the consumer's
@@ -80,13 +80,13 @@ Context at the Next.js layout layer. No factory needed.
 
 ## Mounting the backoffice in a downstream Next app
 
-`@oss/react-sdk` ships the typed client, hooks, UI/theme context, admin shell, and page bodies.
+`@oss/react-pages` ships the typed client, hooks, UI/theme context, admin shell, and page bodies.
 Consumers mount the pages in their own `app/` directory. The page bodies are interactive client
 components; the route files stay server components.
 
 ```tsx
 // consumer/apps/web/app/admin/(authed)/page.tsx (server component)
-import { DashboardPage } from '@oss/react-sdk';
+import { DashboardPage } from '@oss/react-pages';
 export default function Page() {
   return <DashboardPage />;
 }
@@ -94,14 +94,14 @@ export default function Page() {
 
 Wrap the consumer's root layout with `QueryClientProvider`, `ApiClientProvider`, and
 `UIProvider` (plus optionally `ThemeProvider` for theming and `UIPluginProvider` for plugin
-extensions). All except `QueryClientProvider` come from `@oss/react-sdk`:
+extensions). All except `QueryClientProvider` come from `@oss/react-pages`:
 
 ```tsx
 // consumer/apps/web/app/providers.tsx (client component)
-import { ApiClientProvider, UIProvider, ThemeProvider, UIPluginProvider } from '@oss/react-sdk';
+import { ApiClientProvider, UIProvider, ThemeProvider, UIPluginProvider } from '@oss/react-pages';
 import { daisyuiProvider } from '@oss/ui-provider-daisyui';
 import './globals.css'; // Tailwind v4 + the DaisyUI plugin, imported BEFORE the SDK styles
-import '@oss/react-sdk/styles.css';
+import '@oss/react-pages/styles.css';
 
 <ApiClientProvider client={{ baseUrl }}>
   <ThemeProvider preset="editorialBrass">
@@ -124,7 +124,7 @@ DaisyUI is the single adapter shipped by the platform. `daisyuiProvider` satisfi
 look later, replace this one import with your adapter:
 
 ```tsx
-import { UIProvider } from '@oss/react-sdk';
+import { UIProvider } from '@oss/react-pages';
 import { daisyuiProvider } from '@oss/ui-provider-daisyui';
 
 <UIProvider value={daisyuiProvider}>{children}</UIProvider>;
@@ -136,7 +136,7 @@ classes render unstyled. For Tailwind v4, add a `postcss.config.mjs` (`{ plugins
 ['@tailwindcss/postcss'] }`) and a global stylesheet:
 
 ```css
-/* the app's global stylesheet, imported BEFORE @oss/react-sdk/styles.css */
+/* the app's global stylesheet, imported BEFORE @oss/react-pages/styles.css */
 @import "tailwindcss";
 @plugin "daisyui";
 ```
@@ -145,7 +145,7 @@ A Vite/TanStack app uses the `@tailwindcss/vite` plugin instead of PostCSS and i
 CSS at the root. The OSS `apps/web`, `apps/backoffice`, and the `pnpm create:app` templates are
 all wired this way - mirror them.
 
-The react-sdk's `styles.css` supplies structural/layout classes (`player-card`, `page-header`);
+The react-pages' `styles.css` supplies structural/layout classes (`player-card`, `page-header`);
 DaisyUI supplies the component look. They target different elements and coexist.
 
 The adapter is framework-agnostic React with no browser globals at module scope, so it renders
@@ -161,7 +161,7 @@ consumer's own physical copy; drizzle's protected-member classes then fail nomin
 against `DrizzleService.db` (which uses `@oss/db`'s copy). `@oss/db/orm` re-exports the
 framework-free drizzle surface from the single shared instance.
 
-Full UI guide: `packages/sdks/react-sdk/AGENTS.md`.
+Full UI guide: `packages/sdks/react-pages/AGENTS.md`.
 
 ## Local dev linking to a sibling consumer (eg `../consumer/`)
 

@@ -24,8 +24,14 @@ Shared vocabulary for this repo: the **roles** (who's who), the **platform/archi
 | **Contract** | The composed oRPC router. Drives request validation, the typed client, and the emitted OpenAPI spec. | `@oss/orpc-contract` |
 | **Domain schema** | A Zod schema - the single source of truth for a shape. Types are `z.infer`'d, never hand-written. | `@oss/shared-schemas`, module `schemas/` |
 | **UI provider** | An adapter implementing the component contract (`Button`, `DataTable`, slots). The platform ships daisyui; operators can swap it. | `@oss/ui-provider-contract` / `-daisyui` |
-| **UI plugin** | A client-side `defineUIPlugin` that adds nav items, table columns, dashboard tiles, etc. to the admin without forking the SDK. | ADR-0006, `react-sdk` |
-| **Slot** | A named injection point in a UI surface that a plugin can fill. | `react-sdk` shell/pages |
+| **UI plugin** | A client-side `defineUIPlugin` that adds nav items, table columns, dashboard tiles, sections, ribbons, etc. to the admin + player surface without forking. | ADR-0006, ADR-0013, `react-pages` |
+| **Slot** | A typed injection point in a UI surface that a plugin can fill. Supports `visibleWhen` / `requiresPermission` / `brandScope` / `featureFlag` gating. | `react-pages/ui-plugin` |
+| **Page context** | Typed data the host page exposes to slot contributors via `<PageContextProvider>`. A slot reads it with `usePageContext<T>()` without a re-fetch. | `react-hooks/page-context.tsx`, ADR-0013 |
+| **Data extension** | A plugin-scoped TanStack Query slot keyed `['oss-ext', pluginId, key, ...args]`. Two plugins reading the same `(pluginId, key)` share one fetch. | `react-hooks/data-extension.ts` |
+| **Sealed token** | A `SealedToken<T>` whose backing service operators may never override (RG enforcement, KYC writes, AML/SAR, ledger writes, RNG, etc.). Structurally incompatible with `Token<T>` + runtime-rejected by plugin-host. | `@oss/compliance-invariants` |
+| **Client page token** | `ClientPageToken<P>` - Tier 3 escape hatch for full client-side page replacement. | `@oss/adapters/token.ts` |
+| **Brand scope** | Multi-brand operators define brands in `PlatformConfig.brands`; `<ThemeProvider activeBrand="...">` selects the active one; slot fills with `brandScope: [...]` render only when the active brand matches. | ADR-0013 T0.5 |
+| **Platform config** | Operator-editable Zod-validated YAML/JSON consumed at boot. Controls feature flags, brands, RG defaults per geo. No admin UI in v1. | `@oss/shared-schemas/platform-config.ts`, `@oss/core/loadPlatformConfig` |
 | **Tenant** / **multi-tenant** | A logical isolation boundary; every scoped row carries `tenantId` and is read via `withTenant`. | `@oss/db` |
 | **Scaffold** | A deterministic code-mod that stamps a module/plugin/route/component skeleton. | `tools/scaffold.ts`, `/scaffold-*` |
 | **MCP dev server** | A stdio tool server agents connect to for read-only inspection + scaffolding. | `apps/mcp-server-dev` |

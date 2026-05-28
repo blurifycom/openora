@@ -52,20 +52,26 @@ flowchart TB
   mod --> core
   adapters -. implemented by .-> vendor
 
-  subgraph ui["Headless UI"]
+  subgraph ui["Headless UI (ADR-0013 layered)"]
     uic["ui-provider-contract<br/>component interface"]
     shad["ui-provider-daisyui<br/>shipped adapter"]
-    sdk["react-sdk<br/>typed client, hooks, theme, app shell, pages"]
-    uiplug["UI plugin registry<br/>defineUIPlugin"]
+    hooks["react-hooks<br/>data hooks, transport, UIProvider ctx,<br/>cross-cutting helpers, /server (RSC)"]
+    blocks["react-blocks<br/>presentational primitives<br/>(consume UIProvider)"]
+    pages["react-pages<br/>composed pages, ui-plugin registry,<br/>theme (brandScope), AppShell, OssProviders"]
+    uiplug["UI plugin registry<br/>defineUIPlugin + slots + tokens"]
     shad -. implements .-> uic
-    sdk --> uic
-    uiplug --> sdk
+    pages --> blocks
+    pages --> hooks
+    blocks --> uic
+    blocks --> hooks
+    uiplug --> pages
   end
-  client --> sdk
+  client --> hooks
 
   subgraph consumer["Downstream consumer - Consumer (reference)"]
     bapi["apps/api<br/>thin createApp()"]
-    bweb["apps/web (Next)<br/>mounts react-sdk pages"]
+    bweb["apps/web (Next App Router)<br/>mounts react-pages pages,<br/>prefetches via react-hooks/server"]
+    bbo["apps/backoffice (Vite + TanStack Router SPA)<br/>mounts react-pages admin pages"]
     bplug["@consumer/plugins<br/>one feature per folder"]
     bcfg["extensions.config.ts<br/>+ pnpm link: overrides"]
     bplug --> bcfg
@@ -113,10 +119,14 @@ Solid arrows are runtime/build dependencies; dashed arrows are **adapter seams**
 
 - **ui-provider-contract** - the component interface (`Button`, `Input`, `DataTable`, slots). Module UI imports only this. ADR-0003.
 - **ui-provider-daisyui** - the single adapter shipped by the platform (Tailwind v4 + DaisyUI semantic classes), implementing the contract. Swap it for your own (MUI, Chakra, ...) with no module changes.
-- **react-sdk** - the admin surface: typed oRPC client, TanStack Query hooks, theme (`--bo-*` tokens), app shell, page bodies, and the UI plugin registry.
-- **UI plugin registry** - client-side `defineUIPlugin({ register(ctx) })` lets a plugin add nav items, table columns, dashboard tiles, detail sections, and routes to the admin without forking the SDK. ADR-0006.
+- **react-hooks** - leaf SDK package: data hooks, typed oRPC client, auth, UIProvider context, cross-cutting helpers (`usePageContext`, `useDataExtension`, `RoleGate`). `./server` subpath ships RSC-only prefetchers (`prefetchLobby`, `prefetchGames`, `prefetchWallet`).
+- **react-blocks** - presentational primitives consuming UIProvider (`StatCard`, `Skeleton`, `Pagination`, `TimeSeriesChart`, icons). Subpaths `./admin` + `./player`.
+- **react-pages** - composed pages, theme (with multi-brand `brandScope`), `OssProviders`, `AppShell`, and the ui-plugin registry. Subpaths `./admin`, `./player`, `./ui-plugin`, `./theme`. Root barrel re-exports hooks + blocks for ergonomic consumer migration.
+- **UI plugin registry** - `defineUIPlugin({ slots, columns, nav, routes })` lets a plugin extend the admin + player surface. Slot contributions support `visibleWhen` / `requiresPermission` / `brandScope` / `featureFlag` for declarative gating. ADR-0006 + ADR-0013.
+- **plugin-test-kit** - `validatePlugin()` / `assertValidPlugin()` for operator suites.
+- **compliance-invariants** - canonical list of `SealedToken<T>` services operators may never override (RG enforcement, KYC writes, AML/SAR, ledger writes, RNG, etc.) with regulatory citations.
 
-**Downstream consumer (Consumer, reference)** - does **not** fork. `apps/api` is a thin `createApp()` entry with its own `extensions.config.ts`; `@oss/*` packages resolve via `pnpm` `link:` overrides. `apps/web` (Next) mounts react-sdk page bodies in 4-line route shims and swaps the UI adapter at the layout. Consumer-specific features live in a single `@consumer/plugins` package, one folder per feature. ADR-0005.
+**Downstream consumer (Consumer, reference)** - does **not** fork. `apps/api` is a thin `createApp()` entry with its own `extensions.config.ts`; `@oss/*` packages resolve via `pnpm` workspace overrides (`link:`). `apps/web` (Next.js App Router, RSC + SSR) mounts react-pages player pages in route shims that prefetch via `@oss/react-hooks/server` and hydrate the client. `apps/backoffice` (Vite + TanStack Router SPA) mounts react-pages admin pages directly. Per-operator customization lives in plugins under `apps/api/src/extensions/` + UI plugins via `defineUIPlugin`. ADR-0005 + ADR-0012 + ADR-0013.
 
 **AI dev surface**
 
@@ -140,7 +150,7 @@ These are the swap points - the reason the platform is "headless" and extensible
 
 ```mermaid
 sequenceDiagram
-  participant UI as react-sdk (admin)
+  participant UI as react-pages (admin)
   participant API as Hono + oRPC
   participant Mod as Module service
   participant DB as Drizzle (tenant-scoped)

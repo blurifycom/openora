@@ -4,7 +4,7 @@
  * Wraps `@orpc/openapi-client` against the published `contract` from
  * `@oss/orpc-contract`. Returns a client with method-and-argument types
  * inferred from each route's Zod input/output schemas - no manual `client.get`
- * strings, no response casts. No React: framework SDKs (react-sdk, a future
+ * strings, no response casts. No React: framework SDKs (react-hooks, a future
  * svelte-sdk) wrap this with their own bindings.
  *
  * ```ts

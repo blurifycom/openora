@@ -44,8 +44,18 @@ packages/
     backoffice/   #   admin-console player-management cms
     platform/     #   identity notifications compliance localization
   sdks/
-    sdk-core/     # @oss/sdk-core - framework-agnostic typed client
-    react-sdk/    # @oss/react-sdk - React hooks + context + admin shell + pages
+    sdk-core/     # @oss/sdk-core - framework-agnostic typed client (no React)
+    react-hooks/  # @oss/react-hooks - data hooks, transport, auth, UIProvider context,
+                  #   cross-cutting helpers (usePageContext, useDataExtension, RoleGate),
+                  #   server prefetchers at @oss/react-hooks/server (RSC-only)
+    react-blocks/ # @oss/react-blocks - presentational primitives consuming UIProvider
+                  #   (./admin: StatCard, Skeleton, Pagination, TimeSeriesChart, ...)
+    react-pages/  # @oss/react-pages - composed pages + ui-plugin registry + theme +
+                  #   OssProviders + AppShell. Root barrel re-exports hooks + blocks
+                  #   for ergonomic migration; subpaths: ./admin, ./player, ./ui-plugin,
+                  #   ./theme. SDK layer DAG: react-pages -> react-blocks -> react-hooks
+                  #   (lint-enforced; see ADR-0013)
+    plugin-test-kit/ # @oss/plugin-test-kit - validatePlugin() for operator suites
   ui/
     provider-contract/ # UIProvider type shape (Button, Input, DataTable, ...)
     provider-daisyui/  # the shipped adapter (DaisyUI semantic Tailwind classes)
@@ -67,9 +77,12 @@ extensions.config.ts # the single registry of enabled plugins
 - A reusable Zod schema -> `packages/contracts/shared-schemas/src/<namespace>.ts`. Module-local schemas live in the module's `schemas/`.
 - A cross-module event -> declare its payload schema in the Zod catalog `packages/contracts/shared-schemas/src/events.ts` (`domainEventSchemas`), then emit via the `EventBus` the service received in its constructor (built in `plugin.ts` from `c.get(EVENT_BUS)`); subscribe in a plugin via `ctx.events.on(name, handler)`. The bus is a typed facade over the `MESSAGE_BROKER` seam (default in-process; swap to Redpanda/NATS without module changes). See ADR-0010.
 - A UI component -> `/scaffold-ui-component <name>` creates both the contract entry and the daisyui impl.
-- A backoffice (admin) page -> add a component to `packages/sdks/react-sdk/src/pages/admin/`, export from `src/index.ts`, then add a TanStack route file under `apps/backoffice/src/routes/_authed/<route>.tsx` (use `createFileRoute('/_authed/<route>')` and mount the page). A player page goes in `src/pages/player/` with a Next route shim in `apps/web/app/<route>/page.tsx`. See `packages/sdks/react-sdk/AGENTS.md`.
-- A design token -> a `--bo-*` CSS variable in `react-sdk/src/styles.css` + a typed entry in `Theme` (`react-sdk/src/theme.tsx`). Override per-tenant via `<ThemeProvider theme={...}>`.
-- A plugin-contributed admin UI extension (nav item, column, tile, section, route) -> a client-side `defineUIPlugin({ register(ctx) { ctx.<slot>.add(...) } })`. See ADR-0006 and `react-sdk/AGENTS.md`.
+- A backoffice (admin) page -> add a component to `packages/sdks/react-pages/src/admin/`, export from the `admin/index.ts` barrel (and the top-level `src/index.ts` if convenience-exporting), then add a TanStack route file under `apps/backoffice/src/routes/_authed/<route>.tsx` (use `createFileRoute('/_authed/<route>')` and mount the page). A player page goes in `src/player/` with a Next route shim in `apps/web/app/<route>/page.tsx`. See `packages/sdks/react-pages/AGENTS.md`.
+- A new data hook (eg `useAdminUsers`, `usePlayerWallet`) -> `packages/sdks/react-hooks/src/hooks/` + export from `src/index.ts`. A server prefetcher (RSC-only, used by Next route files for SSR hydration) goes in `packages/sdks/react-hooks/src/server/`. Layer rule: hooks must not import from `@oss/react-blocks` or `@oss/react-pages`.
+- A presentational block (a primitive consuming `UIProvider`, eg a stat card or chart wrapper) -> `packages/sdks/react-blocks/src/admin/` or `src/player/`. Layer rule: blocks may import from `@oss/react-hooks` but not from `@oss/react-pages`.
+- A design token -> a `--bo-*` CSS variable in `packages/sdks/react-pages/src/styles.css` + a typed entry in `Theme` (`packages/sdks/react-pages/src/theme.tsx`). Override per-tenant via `<ThemeProvider theme={...}>`, or per-brand in multi-brand setups via `<ThemeProvider brands={[...]} activeBrand="...">`. See ADR-0013 T0.5.
+- A plugin-contributed UI extension (nav item, column, tile, section, route, ribbon, game-tile decorator) -> a client-side `defineUIPlugin` slot fill. Slot contributions support `visibleWhen`, `requiresPermission`, `brandScope`, `featureFlag` for declarative gating. Plugins may read host-page data via `usePageContext<T>()` and inject shared data via `useDataExtension(pluginId, key, fetcher)`. See ADR-0013 and the reference plugin `@oss/example-vip-tier`.
+- Operator-only config (feature flags, brand definitions, RG defaults per geo) -> a `platform-config.yaml` / `.json` file consumed by `loadPlatformConfig()` (`@oss/core`). Validated by `PlatformConfigSchema` in `@oss/shared-schemas`. Bound via the `PLATFORM_CONFIG` Container token. No admin UI in v1; edit the file. See ADR-0013 T0.
 - A third-party integration (PSP, KYC, aggregator, chat) -> define the adapter interface + token (`createToken<Adapter>(...)`) in `@oss/adapters` (`packages/contracts/adapters/src/<category>.ts`), implement it under `packages/modules/<module>/adapters/<vendor>/`, and bind it in the module's `plugin.ts` via `ctx.provide(TOKEN, () => new Impl())`. Never inline. All vendor adapter interfaces live in `@oss/adapters` so the swap seams are findable in one place.
 - A long-running task -> emit an event; handle it in a BullMQ worker overlay plugin (scaffold with `/scaffold-plugin <name>-worker`, add a BullMQ processor, bind it in the plugin's `register(ctx)`).
 
@@ -84,7 +97,8 @@ extensions.config.ts # the single registry of enabled plugins
 
 ## Dependency rules (enforced by boundary lint in `pnpm verify`)
 
-- `packages/modules/**` may import: `@oss/contracts/*`, `@oss/adapters`, `@oss/platform/*`, `@oss/ui/*`, `@oss/sdks/*`. May NOT import another module - cross-module communication goes through events or contracts (read another module's tables via the `@oss/modules/<group>/<name>/schema` subpath).
+- `packages/modules/**` may import: `@oss/contracts/*`, `@oss/adapters`, `@oss/platform/*`, `@oss/ui-provider-contract`, `@oss/ui-provider-daisyui`, `@oss/sdk-core`, `@oss/react-hooks`, `@oss/react-blocks`, `@oss/react-pages`. May NOT import another module - cross-module communication goes through events or contracts (read another module's tables via the `@oss/modules/<group>/<name>/schema` subpath).
+- `packages/sdks/react-hooks/**` is a leaf - may NOT import `@oss/react-blocks` or `@oss/react-pages`. `packages/sdks/react-blocks/**` may import `@oss/react-hooks` but NOT `@oss/react-pages`. Lint-enforced via `oss-boundaries/no-sdk-layer-inversion`. See ADR-0013.
 - `packages/platform/*` may import other `platform/*` and `@oss/contracts/*`. May NOT import modules or UI.
 - `packages/contracts/*` may only import other contracts and Zod.
 - `apps/api/src/extensions/*` may import any package, but never another extension.
