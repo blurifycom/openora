@@ -147,6 +147,18 @@ export const themePresets = {
 export type ThemePresetName = keyof typeof themePresets;
 
 const ThemeContext = createContext<Theme>(defaultTheme);
+const ActiveBrandContext = createContext<string | null>(null);
+
+/**
+ * Brand definition for multi-brand operators. Matches the `BrandSchema` shape
+ * in `@oss/shared-schemas` `PlatformConfig`. `themeOverrides` is a string-keyed
+ * subset of `Theme` (matches `Record<keyof Theme, string>` partially).
+ */
+export type BrandThemeDescriptor = {
+  id: string;
+  themePreset?: ThemePresetName;
+  themeOverrides?: Partial<Theme>;
+};
 
 /**
  * Wrap your app in `<ThemeProvider>` to override any subset of the design
@@ -160,34 +172,64 @@ const ThemeContext = createContext<Theme>(defaultTheme);
  * // Preset
  * <ThemeProvider preset="midnightSapphire">{children}</ThemeProvider>
  *
- * // DB-driven (future)
- * const { data } = useQuery({ queryKey: ['theme', igamingId], ... });
- * <ThemeProvider theme={data}>{children}</ThemeProvider>
+ * // Multi-brand (resolves the activeBrand's preset + overrides, ADR-0013 T0.5)
+ * <ThemeProvider
+ *   brands={[{ id: 'casino-uk', themePreset: 'editorialBrass', themeOverrides: { accent: '#fff' } }]}
+ *   activeBrand="casino-uk"
+ * >{children}</ThemeProvider>
  * ```
+ *
+ * Resolution order (lowest -> highest precedence):
+ *   defaults -> preset -> brand.themePreset -> brand.themeOverrides -> theme
+ *
+ * The active brand id is exposed via `useActiveBrand()`; slot fills gate on it
+ * via `brandScope` (see ADR-0013 Tier 0.5).
  */
 export function ThemeProvider({
   children,
   theme: themeOverride,
   preset,
+  brands,
+  activeBrand = null,
 }: {
   children: ReactNode;
   theme?: Partial<Theme>;
   preset?: ThemePresetName;
+  brands?: readonly BrandThemeDescriptor[];
+  activeBrand?: string | null;
 }) {
   const resolved = useMemo<Theme>(() => {
     const fromPreset = preset ? themePresets[preset] : {};
-    return { ...defaultTheme, ...fromPreset, ...themeOverride };
-  }, [preset, themeOverride]);
+    const brand = activeBrand && brands ? brands.find((b) => b.id === activeBrand) : undefined;
+    const fromBrandPreset = brand?.themePreset ? themePresets[brand.themePreset] : {};
+    const fromBrandOverrides = brand?.themeOverrides ?? {};
+    return {
+      ...defaultTheme,
+      ...fromPreset,
+      ...fromBrandPreset,
+      ...fromBrandOverrides,
+      ...themeOverride,
+    };
+  }, [preset, themeOverride, brands, activeBrand]);
 
   return (
-    <ThemeContext.Provider value={resolved}>
-      <div style={themeToCssVars(resolved)}>{children}</div>
-    </ThemeContext.Provider>
+    <ActiveBrandContext.Provider value={activeBrand}>
+      <ThemeContext.Provider value={resolved}>
+        <div style={themeToCssVars(resolved)} data-active-brand={activeBrand ?? undefined}>
+          {children}
+        </div>
+      </ThemeContext.Provider>
+    </ActiveBrandContext.Provider>
   );
 }
 
 export function useTheme(): Theme {
   return useContext(ThemeContext);
+}
+
+/** Current active brand id, or null in single-brand mode. */
+export function useActiveBrand(): string | null {
+  return useContext(ActiveBrandContext);
 }
 
 /**

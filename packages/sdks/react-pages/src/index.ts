@@ -61,11 +61,13 @@ export { AppShell, type AppShellNavItem } from './shell/app-shell.js';
 export {
   ThemeProvider,
   useTheme,
+  useActiveBrand,
   themeToCssVars,
   defaultTheme,
   themePresets,
   type Theme,
   type ThemePresetName,
+  type BrandThemeDescriptor,
 } from './theme.js';
 
 // Admin pages
