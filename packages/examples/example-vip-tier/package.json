@@ -1,0 +1,37 @@
+{
+  "name": "@oss/example-vip-tier",
+  "version": "0.0.1",
+  "private": true,
+  "files": ["dist"],
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "import": "./dist/index.js",
+      "require": "./dist/index.js",
+      "types": "./dist/index.d.ts"
+    }
+  },
+  "scripts": {
+    "build": "tsc",
+    "typecheck": "tsc --noEmit",
+    "clean": "rm -rf dist",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "@oss/react-hooks": "workspace:*",
+    "@oss/react-pages": "workspace:*",
+    "@oss/plugin-test-kit": "workspace:*",
+    "@oss/adapters": "workspace:*",
+    "@oss/compliance-invariants": "workspace:*"
+  },
+  "devDependencies": {
+    "@oss/tsconfig": "workspace:*",
+    "@types/react": "19.2.14",
+    "typescript": "6.0.3"
+  },
+  "peerDependencies": {
+    "react": ">=19"
+  }
+}

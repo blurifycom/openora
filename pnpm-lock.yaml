@@ -273,6 +273,37 @@ importers:
         specifier: 6.0.3
         version: 6.0.3
 
+  packages/examples/example-vip-tier:
+    dependencies:
+      '@oss/adapters':
+        specifier: workspace:*
+        version: link:../../contracts/adapters
+      '@oss/compliance-invariants':
+        specifier: workspace:*
+        version: link:../../contracts/compliance-invariants
+      '@oss/plugin-test-kit':
+        specifier: workspace:*
+        version: link:../../sdks/plugin-test-kit
+      '@oss/react-hooks':
+        specifier: workspace:*
+        version: link:../../sdks/react-hooks
+      '@oss/react-pages':
+        specifier: workspace:*
+        version: link:../../sdks/react-pages
+      react:
+        specifier: '>=19'
+        version: 19.2.6
+    devDependencies:
+      '@oss/tsconfig':
+        specifier: workspace:*
+        version: link:../../config/tsconfig
+      '@types/react':
+        specifier: 19.2.14
+        version: 19.2.14
+      typescript:
+        specifier: 6.0.3
+        version: 6.0.3
+
   packages/modules:
     dependencies:
       '@orpc/contract':
