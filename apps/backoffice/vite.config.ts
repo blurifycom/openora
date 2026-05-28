@@ -10,7 +10,7 @@ const require = createRequire(import.meta.url);
 // Force one physical copy of each singleton so React contexts (eg the TanStack
 // QueryClient) dedupe. The workspace resolves more than one physical
 // react / react-query (peer-dep version skew); without this the provider inside
-// @oss/react-sdk and the consumer read different module instances -> "No
+// @oss/react-pages and the consumer read different module instances -> "No
 // QueryClient set". Vite equivalent of the Next apps' resolveAlias/webpack alias.
 const SINGLETONS = ['@tanstack/react-query', 'react', 'react-dom'] as const;
 const alias = Object.fromEntries(

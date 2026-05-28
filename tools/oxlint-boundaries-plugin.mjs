@@ -66,7 +66,7 @@ const noPlatformToModule = {
 
 const blocked_by_contracts = [
   '@oss/modules', '@oss/core', '@oss/db', '@oss/auth',
-  '@oss/plugin-host', '@oss/api-runtime', '@oss/sdk-core', '@oss/react-sdk',
+  '@oss/plugin-host', '@oss/api-runtime', '@oss/sdk-core', '@oss/react-pages',
 ];
 
 const noContractsToRuntime = {

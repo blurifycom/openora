@@ -10,8 +10,8 @@ linked packages and never forked.
 ```
 apps/
   api/          # Hono + oRPC API (:3001) - thin createApp entry + your extensions.config.ts
-  web/          # player app (:3000) - Next.js or TanStack Start; mounts @oss/react-sdk player pages
-  backoffice/   # admin app (:3002) - Vite SPA or Next.js; mounts @oss/react-sdk admin pages
+  web/          # player app (:3000) - Next.js or TanStack Start; mounts @oss/react-pages player pages
+  backoffice/   # admin app (:3002) - Vite SPA or Next.js; mounts @oss/react-pages admin pages
 .claude/agents/ # AI agents: igaming-builder, igaming-expert, igaming-qa
 turbo/generators/ # turbo gen: plugin, adapter, page
 ```
@@ -40,7 +40,7 @@ watch build in the OSS checkout in parallel.
 |---|---|
 | Overlay plugin (new behavior/routes) | `pnpm gen plugin` |
 | Swap a vendor adapter (KYC / payment / notification) | `pnpm gen adapter` |
-| Mount an `@oss/react-sdk` page on a route | `pnpm gen page` |
+| Mount an `@oss/react-pages` page on a route | `pnpm gen page` |
 
 Register new plugins in `apps/api/src/extensions.config.ts`. Adapters that override a
 default binding must be listed AFTER the module that owns the default (last registration of

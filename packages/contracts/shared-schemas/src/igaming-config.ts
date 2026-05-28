@@ -43,7 +43,7 @@ export const ProviderSelectionSchema = z
 export const BrandingSchema = z
   .object({
     name: z.string().min(1),
-    themePreset: z.string().optional(), // a key from @oss/react-sdk themePresets
+    themePreset: z.string().optional(), // a key from @oss/react-pages themePresets
     supportEmail: z.string().email().optional(),
   })
   .strict();

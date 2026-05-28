@@ -1,4 +1,4 @@
-import { PlayerWalletPage } from '@oss/react-sdk';
+import { PlayerWalletPage } from '@oss/react-pages';
 
 export default function Page() {
   return <PlayerWalletPage />;

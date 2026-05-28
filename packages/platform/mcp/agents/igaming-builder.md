@@ -28,8 +28,8 @@ my-igaming/
   extensions.config.ts       # registers all plugins (OSS defaults + your overrides)
   apps/
     api/                     # thin wrapper: import { createApp } from '@oss/api-runtime'
-    web/                     # Next.js App Router (RSC + SSR) player app mounting @oss/react-sdk pages
-    backoffice/              # Vite + TanStack Router admin SPA mounting @oss/react-sdk admin pages
+    web/                     # Next.js App Router (RSC + SSR) player app mounting @oss/react-pages pages
+    backoffice/              # Vite + TanStack Router admin SPA mounting @oss/react-pages admin pages
   apps/api/src/extensions/           # your overlay plugins
     my-kyc/plugin.ts         # swaps KYC_ADAPTER
     my-psp/plugin.ts         # swaps PSP_ADAPTER
@@ -71,9 +71,9 @@ my-igaming/
 
 ### Customize the admin UI
 
-Use `defineUIPlugin` (never fork `@oss/react-sdk` pages):
+Use `defineUIPlugin` (never fork `@oss/react-pages` pages):
 ```ts
-import { defineUIPlugin } from '@oss/react-sdk';
+import { defineUIPlugin } from '@oss/react-pages';
 export default defineUIPlugin({
   id: 'my-theme',
   register(ctx) {

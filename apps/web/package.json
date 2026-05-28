@@ -10,7 +10,9 @@
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
-    "@oss/react-sdk": "workspace:*",
+    "@oss/react-hooks": "workspace:*",
+    "@oss/react-blocks": "workspace:*",
+    "@oss/react-pages": "workspace:*",
     "@oss/ui-provider-contract": "workspace:*",
     "@oss/ui-provider-daisyui": "workspace:*",
     "@tanstack/react-query": "5.100.11",

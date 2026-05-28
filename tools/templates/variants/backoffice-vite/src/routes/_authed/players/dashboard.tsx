@@ -1,5 +1,5 @@
 import { createFileRoute } from '@tanstack/react-router';
-import { PlayersDashboardPage } from '@oss/react-sdk';
+import { PlayersDashboardPage } from '@oss/react-pages';
 
 export const Route = createFileRoute('/_authed/players/dashboard')({
   component: PlayersDashboardRoute,

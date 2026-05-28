@@ -195,7 +195,7 @@ function main(): void {
 
     pnpm gen plugin          # new overlay plugin
     pnpm gen adapter         # swap a vendor adapter (KYC / payment / notification)
-    pnpm gen page            # mount an @oss/react-sdk page on a route
+    pnpm gen page            # mount an @oss/react-pages page on a route
 `);
 }
 

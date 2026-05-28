@@ -3,7 +3,7 @@ import type { PlopTypes } from '@turbo/gen';
 // turbo gen generators for this consumer repo. Run with `pnpm gen <name>`.
 //   pnpm gen plugin    - new overlay plugin under apps/api/src/extensions/
 //   pnpm gen adapter   - overlay that rebinds a vendor adapter DI token
-//   pnpm gen page      - mount an @oss/react-sdk page on a route
+//   pnpm gen page      - mount an @oss/react-pages page on a route
 export default function generator(plop: PlopTypes.NodePlopAPI): void {
   plop.setGenerator('plugin', {
     description: 'New overlay plugin (routes / providers / event handlers)',
@@ -61,7 +61,7 @@ export default function generator(plop: PlopTypes.NodePlopAPI): void {
   // under `src/routes/` instead - make this generator surface-aware (detect web vs
   // backoffice, pick the template) before relying on it for the backoffice.
   plop.setGenerator('page', {
-    description: 'Mount an @oss/react-sdk page component on a route (Next variant)',
+    description: 'Mount an @oss/react-pages page component on a route (Next variant)',
     prompts: [
       {
         type: 'list',
@@ -78,7 +78,7 @@ export default function generator(plop: PlopTypes.NodePlopAPI): void {
       {
         type: 'input',
         name: 'component',
-        message: 'Exported @oss/react-sdk page component (eg DashboardPage):',
+        message: 'Exported @oss/react-pages page component (eg DashboardPage):',
         validate: (v: string) => (/^[A-Z][A-Za-z0-9]+$/.test(v) ? true : 'PascalCase export name'),
       },
     ],

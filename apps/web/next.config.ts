@@ -25,7 +25,7 @@ const nextConfig: NextConfig = {
   // 'standalone' emits a minimal node_modules tree under .next/standalone so the
   // Docker image can run `node .next/standalone/apps/web/server.js`.
   output: 'standalone',
-  transpilePackages: ['@oss/react-sdk', '@oss/ui-provider-contract', '@oss/ui-provider-daisyui'],
+  transpilePackages: ['@oss/react-pages', '@oss/ui-provider-contract', '@oss/ui-provider-daisyui'],
   ...(process.env.NEXT_OUTPUT_FILE_TRACING_ROOT
     ? { outputFileTracingRoot: process.env.NEXT_OUTPUT_FILE_TRACING_ROOT }
     : {}),

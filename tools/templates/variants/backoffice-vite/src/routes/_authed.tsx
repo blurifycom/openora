@@ -1,5 +1,5 @@
 import { Outlet, createFileRoute } from '@tanstack/react-router';
-import { AppShell, AuthGuard } from '@oss/react-sdk';
+import { AppShell, AuthGuard } from '@oss/react-pages';
 
 // Pathless layout: every admin page renders inside the auth guard + admin shell.
 // `/login` is a sibling top-level route, so it stays outside this guard.

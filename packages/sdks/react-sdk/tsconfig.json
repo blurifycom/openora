@@ -1,9 +1,0 @@
-{
-  "extends": "@oss/tsconfig/react-lib.json",
-  "compilerOptions": {
-    "rootDir": "src",
-    "outDir": "dist"
-  },
-  "include": ["src/**/*"],
-  "exclude": ["dist", "node_modules", "examples"]
-}

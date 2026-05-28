@@ -453,7 +453,7 @@ server.tool(
         }
       }
       parts.push(
-        `=== Named UI slots (import SLOTS from @oss/react-sdk) ===\n` +
+        `=== Named UI slots (import SLOTS from @oss/react-pages) ===\n` +
         `Fill with ctx.slots.fill(name, options, render) or ctx.slots.column(name, colDef).\n` +
         `Declare in pages with <Slot name={SLOTS.x.y} subject={entity}>.\n\n` +
         (slotLines.join('\n') || '(none defined yet)'),

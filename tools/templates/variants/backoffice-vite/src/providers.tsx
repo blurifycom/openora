@@ -1,6 +1,6 @@
 import type { ReactNode } from 'react';
 import { ReactQueryDevtools } from '@tanstack/react-query-devtools';
-import { OssProviders, type UIPlugin } from '@oss/react-sdk';
+import { OssProviders, type UIPlugin } from '@oss/react-pages';
 import { daisyuiProvider } from '@oss/ui-provider-daisyui';
 
 const API_URL = import.meta.env.VITE_PUBLIC_API_URL ?? 'http://localhost:3001';

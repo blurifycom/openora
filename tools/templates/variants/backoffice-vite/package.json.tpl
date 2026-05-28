@@ -11,7 +11,9 @@
     "typecheck": "tsr generate && tsc --noEmit"
   },
   "dependencies": {
-    "@oss/react-sdk": "link:{{ossFromApp}}/packages/sdks/react-sdk",
+    "@oss/react-hooks": "link:{{ossFromApp}}/packages/sdks/react-hooks",
+    "@oss/react-blocks": "link:{{ossFromApp}}/packages/sdks/react-blocks",
+    "@oss/react-pages": "link:{{ossFromApp}}/packages/sdks/react-pages",
     "@oss/ui-provider-contract": "link:{{ossFromApp}}/packages/ui/provider-contract",
     "@oss/ui-provider-daisyui": "link:{{ossFromApp}}/packages/ui/provider-daisyui",
     "@tanstack/react-query": "5.100.11",

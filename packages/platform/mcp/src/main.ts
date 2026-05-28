@@ -374,7 +374,7 @@ function buildConsumerPlaybook(kind: IntentKind, ctx: { modules: string[]; token
     case 'ui-page':
       return [
         '## Where it goes',
-        'Mount an `@oss/react-sdk` page component on a route in your Next.js apps.',
+        'Mount an `@oss/react-pages` page component on a route in your Next.js apps.',
         '',
         '## Named UI slots you can fill (via defineUIPlugin)',
         ctx.slots.length ? ctx.slots.map((s) => `- ${s}`).join('\n') : '- (run list-slots for details)',
