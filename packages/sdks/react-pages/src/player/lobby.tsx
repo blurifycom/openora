@@ -6,6 +6,7 @@ import type { z } from 'zod';
 import { useOrpcClient } from '@oss/react-hooks';
 import { useUI } from '@oss/react-hooks';
 import type { LobbyData } from '@oss/react-hooks/server';
+import { Slot, SLOTS } from '../ui-plugin/index.js';
 
 type Category = z.infer<typeof LobbyCategorySchema>;
 type Featured = z.infer<typeof FeaturedSlotSchema>;
@@ -46,6 +47,8 @@ export function PlayerLobbyPage({ initialData }: PlayerLobbyPageProps = {}) {
         </div>
       </div>
 
+      <Slot name={SLOTS.playerLobby.ribbon} />
+
       <section className="player-section">
         <h2 className="player-section__title">Featured</h2>
         {slots.length === 0 ? (
@@ -63,6 +66,10 @@ export function PlayerLobbyPage({ initialData }: PlayerLobbyPageProps = {}) {
                   <div className="player-card__title">{slot.gameName}</div>
                   <Badge variant="outline">{slot.placement}</Badge>
                 </div>
+                <Slot<{ id: string; title: string; provider?: string }>
+                  name={SLOTS.playerGameTile.decorator}
+                  subject={{ id: slot.gameId, title: slot.gameName }}
+                />
               </Card>
             ))}
           </div>

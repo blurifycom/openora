@@ -6,6 +6,7 @@ import type { z } from 'zod';
 import { useOrpcClient } from '@oss/react-hooks';
 import { useUI } from '@oss/react-hooks';
 import type { GamesData } from '@oss/react-hooks/server';
+import { Slot, SLOTS } from '../ui-plugin/index.js';
 
 type Game = z.infer<typeof GameSchema>;
 
@@ -59,6 +60,10 @@ export function PlayerGamesPage({ initialData }: PlayerGamesPageProps = {}) {
                   {game.isActive ? 'Play' : 'Unavailable'}
                 </Button>
               </div>
+              <Slot<{ id: string; title: string; provider?: string }>
+                name={SLOTS.playerGameTile.decorator}
+                subject={{ id: game.id, title: game.name, provider: game.provider }}
+              />
             </Card>
           ))}
         </div>

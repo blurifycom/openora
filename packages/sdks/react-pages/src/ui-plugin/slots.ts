@@ -79,6 +79,25 @@ export const SLOTS = {
      */
     columns: 'games:columns',
   },
+
+  /** Player-facing lobby (Next.js App Router; consumed by apps/web). */
+  playerLobby: {
+    /**
+     * Ribbon area above the lobby grid. Use for promo banners, jurisdiction
+     * disclaimers (UKGC 18+, BeGambleAware, Spelpaus), bonus progress widgets.
+     * Subject: void
+     */
+    ribbon: 'player:lobby:ribbon',
+  },
+
+  /** Player-facing game tiles (rendered in lobby + games pages). */
+  playerGameTile: {
+    /**
+     * Decorator rendered over each game tile (jackpot ticker, "exclusive"
+     * badge, RTP pill, jurisdiction lock). Subject: { id, title, provider }.
+     */
+    decorator: 'player:game-tile:decorator',
+  },
 } as const satisfies Record<string, Record<string, string>>;
 
 export type SlotName = (typeof SLOTS)[keyof typeof SLOTS][keyof (typeof SLOTS)[keyof typeof SLOTS]];
