@@ -228,6 +228,19 @@ importers:
         specifier: 6.0.3
         version: 6.0.3
 
+  packages/contracts/compliance-invariants:
+    dependencies:
+      '@oss/adapters':
+        specifier: workspace:*
+        version: link:../adapters
+    devDependencies:
+      '@oss/tsconfig':
+        specifier: workspace:*
+        version: link:../../config/tsconfig
+      typescript:
+        specifier: 6.0.3
+        version: 6.0.3
+
   packages/contracts/orpc-contract:
     dependencies:
       '@orpc/contract':
@@ -503,6 +516,28 @@ importers:
       '@types/node':
         specifier: 25.9.0
         version: 25.9.0
+      typescript:
+        specifier: 6.0.3
+        version: 6.0.3
+
+  packages/sdks/plugin-test-kit:
+    dependencies:
+      '@oss/adapters':
+        specifier: workspace:*
+        version: link:../../contracts/adapters
+      '@oss/react-pages':
+        specifier: workspace:*
+        version: link:../react-pages
+      react:
+        specifier: '>=19'
+        version: 19.2.6
+    devDependencies:
+      '@oss/tsconfig':
+        specifier: workspace:*
+        version: link:../../config/tsconfig
+      '@types/react':
+        specifier: 19.2.14
+        version: 19.2.14
       typescript:
         specifier: 6.0.3
         version: 6.0.3

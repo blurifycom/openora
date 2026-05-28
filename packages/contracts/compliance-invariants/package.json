@@ -1,0 +1,29 @@
+{
+  "name": "@oss/compliance-invariants",
+  "version": "0.0.1",
+  "private": true,
+  "files": ["dist"],
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "import": "./dist/index.js",
+      "require": "./dist/index.js",
+      "types": "./dist/index.d.ts"
+    }
+  },
+  "scripts": {
+    "build": "tsc",
+    "typecheck": "tsc --noEmit",
+    "clean": "rm -rf dist",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "@oss/adapters": "workspace:*"
+  },
+  "devDependencies": {
+    "@oss/tsconfig": "workspace:*",
+    "typescript": "6.0.3"
+  }
+}
