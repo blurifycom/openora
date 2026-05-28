@@ -78,7 +78,7 @@ export { PlayerGamesPage, type PlayerGamesPageProps } from './player/games.js';
 export { PlayerWalletPage } from './player/wallet.js';
 export { PlayerSportsbookPage, type PlayerSportsbookPageProps } from './player/sportsbook.js';
 
-// UI plugin system (extension points - see ADR-0006)
+// UI plugin system (extension points - see ADR-0006 + ADR-0013)
 export {
   defineUIPlugin,
   buildRegistry,
@@ -87,17 +87,24 @@ export {
   useUIRegistry,
   useNavItems,
   useRegisteredRoutes,
+  SlotEvaluationContextProvider,
+  useSlotEvaluationContext,
   Slot,
   useSlotFills,
   useSlotColumns,
   defineSlotFill,
   SLOTS,
+  isFillVisible,
+  defaultSlotEvaluationContext,
   type UIPlugin,
   type UIRegistry,
   type SlotFill,
+  type ColumnFill,
   type SlotFillMode,
   type SlotContribution,
   type ColumnContribution,
+  type SlotGatingProps,
+  type SlotEvaluationContext,
   type SlotProps,
   type SlotName,
   type ColumnSlotName,

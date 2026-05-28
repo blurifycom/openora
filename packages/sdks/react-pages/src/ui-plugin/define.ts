@@ -1,6 +1,7 @@
 import type {
   UIRegistry,
   SlotFill,
+  ColumnFill,
   SlotContribution,
   ColumnContribution,
   AppShellNavItem,
@@ -74,21 +75,33 @@ export function buildRegistry(plugins: UIPlugin[]): UIRegistry {
     for (const s of plugin.slots ?? []) {
       const id = `${plugin.id}:${s.id}`;
       const list = slots.get(s.name) ?? [];
-      list.push({
+      const fill: SlotFill = {
         id,
         pluginId: plugin.id,
         order: s.order ?? 100,
         mode: s.mode ?? 'append',
         render: s.render,
-      });
+      };
+      if (s.visibleWhen) fill.visibleWhen = s.visibleWhen;
+      if (s.requiresPermission !== undefined) fill.requiresPermission = s.requiresPermission;
+      if (s.brandScope) fill.brandScope = s.brandScope;
+      if (s.featureFlag) fill.featureFlag = s.featureFlag;
+      list.push(fill);
       slots.set(s.name, list);
     }
 
     for (const c of plugin.columns ?? []) {
       const list = columns.get(c.name) ?? [];
-      const col = c.render
-        ? { key: c.key as string, header: c.header, render: c.render }
-        : { key: c.key as string, header: c.header };
+      const col: ColumnFill = {
+        pluginId: plugin.id,
+        key: c.key,
+        header: c.header,
+      };
+      if (c.render) col.render = c.render;
+      if (c.visibleWhen) col.visibleWhen = c.visibleWhen;
+      if (c.requiresPermission !== undefined) col.requiresPermission = c.requiresPermission;
+      if (c.brandScope) col.brandScope = c.brandScope;
+      if (c.featureFlag) col.featureFlag = c.featureFlag;
       list.push(col);
       columns.set(c.name, list);
     }

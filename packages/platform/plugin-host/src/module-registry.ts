@@ -17,7 +17,23 @@ export class ModuleRegistryImpl implements ModuleRegistry {
 
   // Provider bindings go straight into the container. Lazy + last-wins, so an
   // overlay loaded after a module can rebind that module's adapter token.
+  //
+  // Runtime guard: tokens created via `createSealedToken` carry a `sealed:`
+  // prefix in their Symbol description. We reject those at registration time
+  // even though `SealedToken<T>` is structurally incompatible with `Token<T>`
+  // at the type level - this catches plain-JS callers and any cast escape.
+  // The canonical sealed list (with regulatory citations per token) lives in
+  // `@oss/compliance-invariants`.
   provide = <T>(token: Token<T>, factory: Factory<T>): void => {
+    const desc = token.description ?? '';
+    if (desc.startsWith('sealed:')) {
+      throw new Error(
+        `[plugin-host] Refusing to bind a sealed token (${desc}). ` +
+          `Sealed services back regulatory invariants (RG enforcement, KYC writes, ` +
+          `AML/SAR, ledger writes, RNG, etc.) and may not be replaced by a plugin. ` +
+          `See @oss/compliance-invariants for the canonical list.`,
+      );
+    }
     this.container.register(token, factory);
   };
 

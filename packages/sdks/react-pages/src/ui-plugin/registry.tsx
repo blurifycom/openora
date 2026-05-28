@@ -3,9 +3,49 @@
 import { createContext, useContext, useMemo, type ReactNode } from 'react';
 import type { UIPlugin } from './define.js';
 import { buildRegistry } from './define.js';
-import { emptyRegistry, type UIRegistry } from './context.js';
+import {
+  emptyRegistry,
+  defaultSlotEvaluationContext,
+  type UIRegistry,
+  type SlotEvaluationContext,
+} from './context.js';
 
 const RegistryContext = createContext<UIRegistry>(emptyRegistry);
+
+const SlotEvalContext = createContext<SlotEvaluationContext>(defaultSlotEvaluationContext);
+
+/**
+ * Seed the runtime context slot fills are gated against. Mount inside
+ * `<UIPluginProvider>` (or anywhere above the pages that render `<Slot>`).
+ *
+ * Single-brand operators can omit `brand`. Permission strings come from the
+ * auth session; feature flags come from T0 `PlatformConfig.features`.
+ */
+export function SlotEvaluationContextProvider({
+  permissions,
+  brand = null,
+  features = {},
+  children,
+}: {
+  permissions: Iterable<string>;
+  brand?: string | null;
+  features?: Record<string, boolean>;
+  children: ReactNode;
+}) {
+  const value = useMemo<SlotEvaluationContext>(
+    () => ({
+      permissions: new Set(permissions),
+      brand,
+      features,
+    }),
+    [permissions, brand, features],
+  );
+  return <SlotEvalContext.Provider value={value}>{children}</SlotEvalContext.Provider>;
+}
+
+export function useSlotEvaluationContext(): SlotEvaluationContext {
+  return useContext(SlotEvalContext);
+}
 
 /**
  * Mount once near the top of your provider tree, above the admin shell.

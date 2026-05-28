@@ -3,7 +3,8 @@
 import { Component, type ReactNode } from 'react';
 import type { TableColumn } from '@oss/ui-provider-contract';
 import type { SlotFill } from './context.js';
-import { useUIRegistry } from './registry.js';
+import { isFillVisible } from './context.js';
+import { useUIRegistry, useSlotEvaluationContext } from './registry.js';
 
 class SlotErrorBoundary extends Component<
   { children: ReactNode; fallback?: ReactNode; fillId: string },
@@ -24,14 +25,32 @@ class SlotErrorBoundary extends Component<
   }
 }
 
-/** All fills registered for a named slot, sorted by order. */
+/**
+ * All fills registered for a named slot, sorted by order and filtered against
+ * the current SlotEvaluationContext (permissions / brand / featureFlag /
+ * visibleWhen). Hidden fills are simply absent from the returned list.
+ */
 export function useSlotFills(name: string): SlotFill[] {
-  return useUIRegistry().slots.get(name) ?? [];
+  const all = useUIRegistry().slots.get(name) ?? [];
+  const evalCtx = useSlotEvaluationContext();
+  return all.filter((f) => isFillVisible(f, evalCtx));
 }
 
-/** Extra DataTable columns registered for a named column slot. */
+/**
+ * Extra DataTable columns registered for a named column slot, filtered against
+ * the current SlotEvaluationContext. Returned shape is `TableColumn` so the
+ * call site can spread them straight into `<DataTable columns={[...]}>`.
+ */
 export function useSlotColumns(name: string): TableColumn<Record<string, unknown>>[] {
-  return useUIRegistry().columns.get(name) ?? [];
+  const all = useUIRegistry().columns.get(name) ?? [];
+  const evalCtx = useSlotEvaluationContext();
+  return all
+    .filter((c) => isFillVisible(c, evalCtx))
+    .map((c) =>
+      c.render
+        ? { key: c.key, header: c.header, render: c.render }
+        : { key: c.key, header: c.header },
+    );
 }
 
 export type SlotProps<T = void> = {
