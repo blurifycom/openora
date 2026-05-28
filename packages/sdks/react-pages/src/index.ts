@@ -34,6 +34,12 @@ export {
   type EventStreamStatus,
   type UseEventStreamOptions,
   type UseEventStreamResult,
+  PageContextProvider,
+  usePageContext,
+  useOptionalPageContext,
+  useDataExtension,
+  dataExtensionKey,
+  RoleGate,
 } from '@oss/react-hooks';
 
 // Re-export the admin shell blocks.

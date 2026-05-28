@@ -19,3 +19,12 @@ export {
   type UseEventStreamOptions,
   type UseEventStreamResult,
 } from './hooks/use-event-stream.js';
+
+// Cross-cutting helpers for slot fills / plugin authors (ADR-0013)
+export {
+  PageContextProvider,
+  usePageContext,
+  useOptionalPageContext,
+} from './page-context.js';
+export { useDataExtension, dataExtensionKey } from './data-extension.js';
+export { RoleGate } from './role-gate.js';
