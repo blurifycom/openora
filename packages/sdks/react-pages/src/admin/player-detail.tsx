@@ -1,16 +1,32 @@
 'use client';
 
-import { useState } from 'react';
+import { useMemo, useState } from 'react';
 import Link from 'next/link';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { PlayerSchema, PlayerStatusSchema, KycStatusSchema } from '@oss/orpc-contract';
 import type { z } from 'zod';
-import { useOrpcClient } from '@oss/react-hooks';
+import { useOrpcClient, PageContextProvider } from '@oss/react-hooks';
 import { useUI } from '@oss/react-hooks';
 import { Slot, SLOTS } from '../ui-plugin/index.js';
 import { SkeletonDetail } from '@oss/react-blocks/admin';
 
 type Player = z.infer<typeof PlayerSchema>;
+
+/**
+ * Page-scoped data exposed to plugin slot contributors via `usePageContext`.
+ *
+ *   const { player } = usePageContext<PlayerDetailPageContext>();
+ *
+ * The `player` is the same object passed to slot fills as `subject`; pulling
+ * it from page context lets a fill access it without a re-fetch and without
+ * having the host page pass it through props.
+ */
+export type PlayerDetailPageContext = {
+  player: Player | null;
+  isLoading: boolean;
+  isError: boolean;
+  refetch: () => void;
+};
 const STATUSES = PlayerStatusSchema.options;
 const KYC = KycStatusSchema.options;
 
@@ -60,6 +76,18 @@ export function PlayerDetailPage({
   });
 
   const player = playerQuery.data;
+  const pageContext = useMemo<PlayerDetailPageContext>(
+    () => ({
+      player: player ?? null,
+      isLoading: playerQuery.isLoading,
+      isError: playerQuery.isError,
+      refetch: () => {
+        void playerQuery.refetch();
+      },
+    }),
+    [player, playerQuery.isLoading, playerQuery.isError, playerQuery.refetch],
+  );
+
   if (playerQuery.isLoading) return <SkeletonDetail />;
   if (playerQuery.isError || !player)
     return (
@@ -72,7 +100,7 @@ export function PlayerDetailPage({
     );
 
   return (
-    <>
+    <PageContextProvider<PlayerDetailPageContext> value={pageContext}>
       <div className="page-header">
         <div>
           <Link href={playersPath} className="muted">
@@ -207,6 +235,6 @@ export function PlayerDetailPage({
           </div>
         </div>
       </Dialog>
-    </>
+    </PageContextProvider>
   );
 }

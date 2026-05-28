@@ -1,16 +1,33 @@
 'use client';
 
-import { useState } from 'react';
+import { useMemo, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { PlayerSchema, PlayerStatusSchema } from '@oss/orpc-contract';
 import type { z } from 'zod';
-import { useOrpcClient } from '@oss/react-hooks';
+import { useOrpcClient, PageContextProvider } from '@oss/react-hooks';
 import { usePaginatedList } from '@oss/react-hooks';
 import { useUI } from '@oss/react-hooks';
-import { useSlotColumns, SLOTS } from '../ui-plugin/index.js';
+import { Slot, useSlotColumns, SLOTS } from '../ui-plugin/index.js';
 import { Pagination } from '@oss/react-blocks/admin';
 
 type Row = z.infer<typeof PlayerSchema> & Record<string, unknown>;
+
+/**
+ * Page-scoped data shape exposed to plugin slot contributors via usePageContext.
+ *
+ *   const { rows, total, statusFilter } = usePageContext<PlayersListPageContext>();
+ *
+ * A `players:toolbar` fill that needs to know what's selected (eg batch
+ * actions on the current filtered set) reads from this context.
+ */
+export type PlayersListPageContext = {
+  rows: Row[];
+  total: number;
+  page: number;
+  isLoading: boolean;
+  search: string;
+  statusFilter: string;
+};
 const STATUSES = PlayerStatusSchema.options;
 const PAGE_SIZE = 20;
 
@@ -96,8 +113,20 @@ export function PlayersListPage({
     ...(pluginColumns as unknown as typeof baseColumns),
   ] as Parameters<typeof DataTable<Row>>[0]['columns'];
 
+  const pageContext = useMemo<PlayersListPageContext>(
+    () => ({
+      rows: items,
+      total,
+      page,
+      isLoading,
+      search,
+      statusFilter: status,
+    }),
+    [items, total, page, isLoading, search, status],
+  );
+
   return (
-    <>
+    <PageContextProvider<PlayersListPageContext> value={pageContext}>
       <div className="page-header">
         <div>
           <h1 className="page-header__title">Players</h1>
@@ -136,6 +165,7 @@ export function PlayersListPage({
             </Button>
           ))}
         </div>
+        <Slot name={SLOTS.players.toolbar} />
       </div>
 
       <DataTable<Row>
@@ -151,6 +181,6 @@ export function PlayersListPage({
         onPrev={() => setPage(page - 1)}
         onNext={() => setPage(page + 1)}
       />
-    </>
+    </PageContextProvider>
   );
 }

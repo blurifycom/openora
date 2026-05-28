@@ -1,12 +1,25 @@
 'use client';
 
+import { useMemo } from 'react';
 import { useQuery } from '@tanstack/react-query';
-import { useOrpcClient } from '@oss/react-hooks';
+import { useOrpcClient, PageContextProvider } from '@oss/react-hooks';
 import { Slot, SLOTS } from '../ui-plugin/index.js';
 import { StatCard } from '@oss/react-blocks/admin';
 
 const money = (n: number): string =>
   n.toLocaleString(undefined, { style: 'currency', currency: 'USD', maximumFractionDigits: 0 });
+
+/**
+ * Page-scoped data shape exposed to plugin slot contributors via usePageContext.
+ * `data` is the upstream stats response; `isLoading` / `isError` mirror the
+ * react-query state of the same fetch so a tile contributor can render its
+ * own skeleton consistently.
+ */
+export type DashboardPageContext = {
+  stats: Awaited<ReturnType<ReturnType<typeof useOrpcClient>['backoffice']['getStats']>> | undefined;
+  isLoading: boolean;
+  isError: boolean;
+};
 
 export function DashboardPage() {
   const client = useOrpcClient();
@@ -15,8 +28,13 @@ export function DashboardPage() {
     queryFn: () => client.backoffice.getStats(),
   });
 
+  const pageContext = useMemo<DashboardPageContext>(
+    () => ({ stats: data, isLoading, isError }),
+    [data, isLoading, isError],
+  );
+
   return (
-    <>
+    <PageContextProvider<DashboardPageContext> value={pageContext}>
       <div className="page-header">
         <div>
           <h1 className="page-header__title">Dashboard</h1>
@@ -56,6 +74,6 @@ export function DashboardPage() {
           />
         </Slot>
       </div>
-    </>
+    </PageContextProvider>
   );
 }
