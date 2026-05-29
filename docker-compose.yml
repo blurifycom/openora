@@ -15,5 +15,72 @@ services:
       timeout: 5s
       retries: 10
 
+  # The services below are OPT-IN. Default `docker compose up` starts only postgres
+  # (library-first - apps run on the host via `pnpm dev`). Run the full reference
+  # stack with: `docker compose --profile full up --build`.
+
+  # One-shot: apply Drizzle migrations, then exit. api waits for it to complete.
+  migrate:
+    profiles: ["full"]
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: api
+    working_dir: /app
+    environment:
+      DATABASE_URL: postgres://postgres:postgres@postgres:5432/oss_igaming
+    command: ["pnpm", "-F", "@oss/db", "migrate"]
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  api:
+    profiles: ["full"]
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: api
+    environment:
+      NODE_ENV: production
+      DATABASE_URL: postgres://postgres:postgres@postgres:5432/oss_igaming
+      PORT_API: "3001"
+      # Reference-only values. Replace BETTER_AUTH_SECRET for any real deployment.
+      BETTER_AUTH_SECRET: dev-only-insecure-secret-change-me
+      BETTER_AUTH_URL: http://localhost:3001
+    ports:
+      - "3001:3001"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
+
+  web:
+    profiles: ["full"]
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: web
+    environment:
+      NODE_ENV: production
+      NEXT_PUBLIC_API_URL: http://localhost:3001
+    ports:
+      - "3000:3000"
+    depends_on:
+      - api
+
+  backoffice:
+    profiles: ["full"]
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: backoffice
+    environment:
+      VITE_PUBLIC_API_URL: http://localhost:3001
+    ports:
+      - "3002:3002"
+    depends_on:
+      - api
+
 volumes:
   postgres_data:

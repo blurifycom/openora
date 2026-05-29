@@ -28,7 +28,7 @@ apps/
   mcp-server-dev/ # MCP dev server (stdio) - agents connect via .mcp.json
   extensions/     # In-tree overlay plugins (drop-in folders)
 packages/
-  config/         # tsconfig, vitest, oxlint, eslint-boundaries presets
+  config/         # tsconfig, vitest, oxlint presets (boundary lint = tools/oxlint-boundaries-plugin.mjs)
   contracts/
     shared-schemas/ # Zod schemas - the source of truth
     orpc-contract/  # Root oRPC contract composing module routers
@@ -39,9 +39,12 @@ packages/
     db/           # @oss/db - Drizzle client (DrizzleService) + drizzle-kit migrations
     plugin-host/  # definePlugin, ModuleRegistry, loader
     mcp/          # @oss/mcp - publishable MCP server consumers run against their own repo
-  modules/        # @oss/modules - ONE package; feature modules grouped by surface:
+  modules/        # @oss/modules - ONE package; BACKEND feature modules (Drizzle +
+                  #   service + oRPC router), grouped by the surface they primarily
+                  #   serve. These are NOT frontend - the front lives in apps/web +
+                  #   apps/backoffice and consumes these routers via the SDK.
     player/       #   wallet gaming lobby chat bonus aggregator
-    backoffice/   #   admin-console player-management cms
+    backoffice/   #   admin-console player-management cms   (admin-surface backend, NOT UI)
     platform/     #   identity notifications compliance localization
   sdks/
     sdk-core/     # @oss/sdk-core - framework-agnostic typed client (no React)
@@ -84,11 +87,13 @@ extensions.config.ts # the single registry of enabled plugins
 - A plugin-contributed UI extension (nav item, column, tile, section, route, ribbon, game-tile decorator) -> a client-side `defineUIPlugin` slot fill. Slot contributions support `visibleWhen`, `requiresPermission`, `brandScope`, `featureFlag` for declarative gating. Plugins may read host-page data via `usePageContext<T>()` and inject shared data via `useDataExtension(pluginId, key, fetcher)`. See ADR-0013 and the reference plugin `@oss/example-vip-tier`.
 - Operator-only config (feature flags, brand definitions, RG defaults per geo) -> a `platform-config.yaml` / `.json` file consumed by `loadPlatformConfig()` (`@oss/core`). Validated by `PlatformConfigSchema` in `@oss/shared-schemas`. Bound via the `PLATFORM_CONFIG` Container token. No admin UI in v1; edit the file. See ADR-0013 T0.
 - A third-party integration (PSP, KYC, aggregator, chat) -> define the adapter interface + token (`createToken<Adapter>(...)`) in `@oss/adapters` (`packages/contracts/adapters/src/<category>.ts`), implement it under `packages/modules/<module>/adapters/<vendor>/`, and bind it in the module's `plugin.ts` via `ctx.provide(TOKEN, () => new Impl())`. Never inline. All vendor adapter interfaces live in `@oss/adapters` so the swap seams are findable in one place.
-- A long-running task -> emit an event; handle it in a BullMQ worker overlay plugin (scaffold with `/scaffold-plugin <name>-worker`, add a BullMQ processor, bind it in the plugin's `register(ctx)`).
+- A long-running / background task -> enqueue a job on the `JOB_QUEUE` seam and process it in a worker. A service resolves `JOB_QUEUE` (from `@oss/adapters`) in its `plugin.ts` and calls `enqueue(queue('name'), payload, { idempotencyKey, delayMs, attempts, backoff, orderingKey })`; a worker overlay registers the handler via `ctx.jobs.worker({ queue, schema, handler, onDeadLetter })` (scaffold with `/scaffold-plugin <name>-worker`). The default driver is an in-process queue (zero deps); the `bullmq` overlay rebinds `JOB_QUEUE` to BullMQ + Redis when `REDIS_URL` is set. Delivery is at-least-once - handlers must be idempotent (a DB guard, not just `idempotencyKey`, for money jobs). See ADR-0014.
+- A live client push (chat message, PvP round state, live odds, big-win feed) -> publish on the `REALTIME_TRANSPORT` seam (`@oss/adapters`) and expose an oRPC `eventIterator(...)` route served as SSE; the client consumes it with `useEventStream` / `useChatStream` (`@oss/react-hooks`). The default is a first-party in-process transport; an overlay rebinds `REALTIME_TRANSPORT` to a managed vendor (Ably/GetStream). This is client-facing only and separate from the inter-module `MESSAGE_BROKER`. See ADR-0007 and ADR-0014. The `chat` module is the reference vertical.
 
 ## Naming
 
 - Packages: `@oss/<kebab>`. Feature modules are NOT separate packages - they live inside `@oss/modules` and are imported by subpath: `@oss/modules/<group>/<name>` and `@oss/modules/<group>/<name>/schema`.
+- Module group (`player` / `backoffice` / `platform`) names the **surface a backend module serves**, not a UI layer. A module exposes API only (no JSX); UI is composed in `apps/*` + the react SDK. A module's public API is its root entry plus the `/schema` subpath - reaching into its internals is a lint error (`no-module-internal-import`).
 - Files: `kebab-case.ts`. One concept per file.
 - Types: `PascalCase`. Schemas: `<Name>Schema`. Inferred: `type <Name> = z.infer<typeof <Name>Schema>`.
 - oRPC routers: namespace by module (`wallet.transactions.list`).
@@ -174,6 +179,8 @@ pnpm verify        # typecheck + lint (incl. boundaries + module shape) + test
 ```
 
 `pnpm seed` is idempotent and deterministic. Logs in with `admin@oss.dev` / `password123`. Flags: `--players=<n>`, `--admin-email=<e>`, `--admin-password=<p>`. The reusable `seedDemoData()` lives in `@oss/api-runtime` so downstream consumers can seed too.
+
+Docker is library-first: `docker compose up` starts only postgres (apps run on the host via `pnpm dev`). To run the whole reference stack in containers instead, use the opt-in `full` profile: `docker compose --profile full up --build` (api :3001, web :3000, backoffice :3002, via the root multi-target `Dockerfile`). This is a reference convenience, not the production deploy path - downstream operators containerize their own apps. The Docker build is not part of `pnpm verify`/CI.
 
 ## How to verify before opening a PR
 

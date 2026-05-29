@@ -1115,6 +1115,42 @@ td code {
   font-weight: 600;
   color: var(--bo-bone);
 }
+/* Chat (PlayerChatPage) - live message list + composer */
+.chat-messages {
+  display: flex;
+  flex-direction: column;
+  gap: 0.4rem;
+  max-height: 24rem;
+  overflow-y: auto;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.chat-messages__item {
+  display: flex;
+  align-items: baseline;
+  gap: 0.5rem;
+}
+.chat-messages__author {
+  font-weight: 600;
+  color: var(--bo-bone);
+}
+.chat-messages__text {
+  flex: 1;
+  word-break: break-word;
+}
+.chat-messages__time {
+  font-size: 0.75rem;
+  white-space: nowrap;
+}
+.chat-composer {
+  flex-direction: row;
+  align-items: flex-end;
+  gap: 0.5rem;
+}
+.chat-composer > :first-child {
+  flex: 1;
+}
 .player-balance {
   padding: 1.25rem 1.5rem;
   margin-bottom: 2rem;

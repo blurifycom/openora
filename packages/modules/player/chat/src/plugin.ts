@@ -1,5 +1,6 @@
 import { definePlugin } from '@oss/plugin-host';
 import { EVENT_BUS } from '@oss/core';
+import { REALTIME_TRANSPORT } from '@oss/adapters';
 import { DRIZZLE } from '@oss/db';
 import { ChatService } from './service/chat.service.js';
 import { createChatRouter } from './router/index.js';
@@ -8,7 +9,9 @@ export default definePlugin({
   id: 'chat',
   register(ctx) {
     ctx.routers.add('chat', (c) =>
-      createChatRouter(new ChatService(c.get(DRIZZLE), c.get(EVENT_BUS))),
+      createChatRouter(
+        new ChatService(c.get(DRIZZLE), c.get(EVENT_BUS), c.get(REALTIME_TRANSPORT)),
+      ),
     );
   },
 });

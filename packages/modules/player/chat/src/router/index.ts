@@ -2,12 +2,60 @@ import { implement } from '@orpc/server';
 import { populateContractRouterPaths } from '@orpc/contract';
 import { mapErrors, type OssContext } from '@oss/core';
 import { chatContract } from '@oss/orpc-contract/chat';
+import type { ChatMessage } from '../schemas/index.js';
 import {
   ChatService,
   ChatRoomNotFoundError,
   ChatMessageNotFoundError,
   ChatMessageOwnershipError,
 } from '../service/chat.service.js';
+
+// Bridge the service's push-style message listener into a pull-style async
+// generator for SSE. A bounded buffer holds messages between yields; a resolver
+// wakes the generator when one arrives. The handler's abort signal tears the
+// subscription down so each connection cleans up after itself. Mirrors the
+// sportsbook odds stream.
+async function* streamMessages(
+  chatService: ChatService,
+  roomId: string | null,
+  signal: AbortSignal | undefined,
+): AsyncGenerator<ChatMessage> {
+  const queue: ChatMessage[] = [];
+  let resolve: (() => void) | undefined;
+  let done = false;
+
+  const wake = () => {
+    resolve?.();
+    resolve = undefined;
+  };
+
+  const unsubscribe = chatService.subscribeMessages(roomId, (message) => {
+    queue.push(message);
+    wake();
+  });
+
+  const onAbort = () => {
+    done = true;
+    wake();
+  };
+  signal?.addEventListener('abort', onAbort);
+
+  try {
+    while (!done && !signal?.aborted) {
+      if (queue.length === 0) {
+        await new Promise<void>((r) => {
+          resolve = r;
+        });
+        continue;
+      }
+      const next = queue.shift();
+      if (next) yield next;
+    }
+  } finally {
+    unsubscribe();
+    signal?.removeEventListener('abort', onAbort);
+  }
+}
 
 const chat = populateContractRouterPaths({ chat: chatContract }).chat;
 
@@ -58,5 +106,9 @@ export function createChatRouter(chatService: ChatService) {
       const username = extractHeader(context, 'x-username', 'anonymous');
       return chatService.sendGlobalMessage(userId, username, input.content);
     }),
+
+    streamMessages: os.streamMessages.handler(({ input, signal }) =>
+      streamMessages(chatService, input.roomId, signal),
+    ),
   });
 }

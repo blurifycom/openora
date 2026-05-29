@@ -16,6 +16,7 @@
     "@oss/react-pages": "workspace:*",
     "@oss/ui-provider-contract": "workspace:*",
     "@oss/ui-provider-daisyui": "workspace:*",
+    "@oss/example-vip-tier": "workspace:*",
     "@tanstack/react-query": "5.100.11",
     "@tanstack/react-query-devtools": "5.100.11",
     "@tanstack/react-router": "1.135.2",

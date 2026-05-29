@@ -9,6 +9,23 @@ export { createToken, createSealedToken, createClientPageToken } from './token.j
 export type { MessageBrokerAdapter, BrokerHandler } from './broker.js';
 export { MESSAGE_BROKER } from './broker.js';
 
+export type {
+  JobQueueAdapter,
+  QueueName,
+  BackoffStrategy,
+  EnqueueOptions,
+  RepeatOptions,
+  JobContext,
+  JobHandler,
+  WorkerOptions,
+  WorkerRegistration,
+  PayloadSchema,
+} from './job-queue.js';
+export { JOB_QUEUE, queue } from './job-queue.js';
+
+export type { RealtimeTransport, RealtimePresence } from './realtime.js';
+export { REALTIME_TRANSPORT } from './realtime.js';
+
 export type { GameAdapter } from './game.js';
 export { GAME_ADAPTER } from './game.js';
 
@@ -26,3 +43,6 @@ export { NOTIFICATION_DELIVERY_ADAPTER } from './notification.js';
 
 export type { AggregatorAdapter, AggregatorGame } from './aggregator.js';
 export { AGGREGATOR_ADAPTER } from './aggregator.js';
+
+export type { RngAdapter } from './rng.js';
+export { RNG_ADAPTER } from './rng.js';

@@ -36,13 +36,13 @@ function commonAncestor(a: string, b: string): string {
 }
 let workspaceRoot = here;
 try {
-  workspaceRoot = commonAncestor(here, require.resolve('@oss/react-sdk'));
+  workspaceRoot = commonAncestor(here, require.resolve('@oss/react-pages'));
 } catch {
   // @oss/* not resolvable yet (run pnpm install + pnpm build:oss); fall back.
 }
 
 const nextConfig: NextConfig = {
-  transpilePackages: ['@oss/react-sdk', '@oss/ui-provider-contract', '@oss/ui-provider-daisyui'],
+  transpilePackages: ['@oss/react-pages', '@oss/ui-provider-contract', '@oss/ui-provider-daisyui'],
   experimental: { externalDir: true },
   turbopack: {
     root: workspaceRoot,

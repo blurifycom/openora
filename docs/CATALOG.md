@@ -17,9 +17,12 @@ overlay plugin that loads AFTER the default-binding module (last registration wi
 | broker | `MessageBrokerAdapter` | `MESSAGE_BROKER` | wired (default impl) | `packages/platform/api-runtime/src/create-app.ts` |
 | game | `GameAdapter` | `GAME_ADAPTER` | wired (default impl) | `packages/modules/player/gaming/src/plugin.ts` |
 | geo-ip | `GeoIpAdapter` | `GEO_IP_ADAPTER` | wired (default impl) | `packages/modules/platform/compliance/src/plugin.ts` |
+| job-queue | `JobQueueAdapter` | `JOB_QUEUE` | wired (default impl) | `packages/platform/api-runtime/src/create-app.ts` |
 | kyc | `KycAdapter` | `KYC_ADAPTER` | wired (default impl) | `packages/modules/platform/identity/src/adapters/mock/mock-kyc-adapter.ts`<br>`packages/modules/platform/identity/src/plugin.ts` |
 | notification | `NotificationDeliveryAdapter` | `NOTIFICATION_DELIVERY_ADAPTER` | wired (default impl) | `packages/modules/platform/notifications/src/plugin.ts` |
 | payment | `PaymentAdapter` | `PAYMENT_ADAPTER` | wired (default impl) | `packages/modules/player/wallet/src/plugin.ts` |
+| realtime | `RealtimePresence` | `REALTIME_TRANSPORT` | wired (default impl) | `packages/modules/player/chat/src/plugin.ts` |
+| rng | `RngAdapter` | `RNG_ADAPTER` | wired (default impl) | `packages/modules/player/gaming/src/plugin.ts` |
 
 ## Modules
 
@@ -27,7 +30,7 @@ overlay plugin that loads AFTER the default-binding module (last registration wi
 | --- | --- | --- | --- |
 | aggregator | player | aggregator_provider | aggregator.callback, aggregator.listProviders, aggregator.sync |
 | bonus | player | bonus, user_bonus | bonus.claimBonus, bonus.getUserBonus, bonus.getUserBonuses, bonus.listBonuses |
-| chat | player | ChatMessage, ChatRoom | chat.deleteMessage, chat.getGlobalMessages, chat.getRoomMessages, chat.listRooms, chat.sendGlobalMessage, chat.sendRoomMessage |
+| chat | player | ChatMessage, ChatRoom | chat.deleteMessage, chat.getGlobalMessages, chat.getRoomMessages, chat.listRooms, chat.sendGlobalMessage, chat.sendRoomMessage, chat.streamMessages |
 | gaming | player | Game, GameRound | gaming.endRound, gaming.getGame, gaming.listGames, gaming.listRounds, gaming.startRound |
 | leaderboard | player | leaderboard, leaderboard_entry | leaderboard.adminReset, leaderboard.get |
 | lobby | player | FeaturedSlot, LobbyCategory, LobbyCategoryGame | lobby.getCategoryBySlug, lobby.getFeatured, lobby.listCategories, lobby.search |
@@ -72,17 +75,6 @@ Fill from a `defineUIPlugin` via `ctx.<slot>.add(...)`. See ADR-0006.
 
 | Slot | Purpose |
 | --- | --- |
-| `append` | - |
-| `dashboard:tiles` | Stat cards in the dashboard grid. Subject: void |
-| `games:columns` | Games list page. |
-| `player:detail:actions` | Action buttons in the player detail page header. Subject: Player |
-| `player:detail:sections` | Collapsible sections in the player detail body. Subject: Player |
-| `players:columns` | - |
-| `players:toolbar` | Toolbar controls above the players DataTable. Subject: void |
-| `user:detail:actions` | Action buttons in the user detail page header. Subject: AdminUser |
-| `user:detail:sections` | Sections in the user detail body. Subject: AdminUser |
-| `users:columns` | - |
-| `users:toolbar` | Toolbar controls above the users DataTable. Subject: void |
 
 ## Igaming config
 
@@ -102,11 +94,11 @@ Declare with `defineIgamingConfig({...})` from `@oss/shared-schemas`, pass to
 
 `definePlugin({ id, register(ctx) })` - `ctx` (ModuleRegistry) exposes:
 
-`ctx.events`, `ctx.mcp`, `ctx.routers`, `ctx.slots`
+`ctx.events`, `ctx.jobs`, `ctx.mcp`, `ctx.routers`, `ctx.slots`
 
 ## Zod schemas
 
-62 schemas. Look one up by name with the `schema-get` MCP tool.
+65 schemas. Look one up by name with the `schema-get` MCP tool.
 
 - `AdminTransactionSchema` - packages/contracts/orpc-contract/src/backoffice.ts
 - `AdminUserSchema` - packages/contracts/orpc-contract/src/backoffice.ts
@@ -115,6 +107,7 @@ Declare with `defineIgamingConfig({...})` from `@oss/shared-schemas`, pass to
 - `BonusSchema` - packages/contracts/orpc-contract/src/bonus.ts
 - `BonusTypeSchema` - packages/contracts/orpc-contract/src/bonus.ts
 - `BrandingSchema` - packages/contracts/shared-schemas/src/igaming-config.ts
+- `BrandSchema` - packages/contracts/shared-schemas/src/platform-config.ts
 - `CallbackInputSchema` - packages/contracts/orpc-contract/src/igaming-aggregator.ts
 - `CallbackResultSchema` - packages/contracts/orpc-contract/src/igaming-aggregator.ts
 - `ChatMessageSchema` - packages/contracts/orpc-contract/src/chat.ts
@@ -125,6 +118,7 @@ Declare with `defineIgamingConfig({...})` from `@oss/shared-schemas`, pass to
 - `EndRoundInputSchema` - packages/contracts/orpc-contract/src/gaming.ts
 - `EndRoundOutputSchema` - packages/contracts/orpc-contract/src/gaming.ts
 - `FeaturedSlotSchema` - packages/contracts/orpc-contract/src/lobby.ts
+- `FeatureFlagsSchema` - packages/contracts/shared-schemas/src/platform-config.ts
 - `GameRoundSchema` - packages/contracts/orpc-contract/src/gaming.ts
 - `GameSchema` - packages/contracts/orpc-contract/src/gaming.ts
 - `GameSummarySchema` - packages/contracts/orpc-contract/src/lobby.ts
@@ -148,6 +142,7 @@ Declare with `defineIgamingConfig({...})` from `@oss/shared-schemas`, pass to
 - `PaginationSchema` - packages/contracts/shared-schemas/src/common.ts
 - `PlaceBetInputSchema` - packages/contracts/orpc-contract/src/sportsbook.ts
 - `PlaceBetResultSchema` - packages/contracts/orpc-contract/src/sportsbook.ts
+- `PlatformConfigSchema` - packages/contracts/shared-schemas/src/platform-config.ts
 - `PlatformStatsSchema` - packages/contracts/orpc-contract/src/backoffice.ts
 - `PlayerRegistrationPointSchema` - packages/contracts/orpc-contract/src/player.ts
 - `PlayerSchema` - packages/contracts/orpc-contract/src/player.ts

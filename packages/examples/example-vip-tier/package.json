@@ -24,7 +24,8 @@
     "@oss/react-pages": "workspace:*",
     "@oss/plugin-test-kit": "workspace:*",
     "@oss/adapters": "workspace:*",
-    "@oss/compliance-invariants": "workspace:*"
+    "@oss/compliance-invariants": "workspace:*",
+    "@oss/plugin-host": "workspace:*"
   },
   "devDependencies": {
     "@oss/tsconfig": "workspace:*",

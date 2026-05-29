@@ -2,7 +2,7 @@
 
 ## What this module does
 
-Provides global chat and room-based chat for the platform. Stores messages in Postgres via Drizzle (`chatRoom` / `chatMessage` `pgTable` defs in `src/schema/index.ts`). Exposes REST endpoints (via oRPC) for listing rooms, fetching message history, sending messages, and soft-deleting messages. Real-time delivery (SSE/WebSocket) is out of scope - this module is the storage and HTTP layer only.
+Provides global chat and room-based chat for the platform. Stores messages in Postgres via Drizzle (`chatRoom` / `chatMessage` `pgTable` defs in `src/schema/index.ts`). Exposes REST endpoints (via oRPC) for listing rooms, fetching message history, sending messages, and soft-deleting messages. Delivers messages live over the `REALTIME_TRANSPORT` seam: `sendRoomMessage`/`sendGlobalMessage` persist then `publish` to a `chat:room:<id>` / `chat:global` channel, and `streamMessages` exposes an `eventIterator` route served as SSE (consume client-side with `useChatStream`). The transport is first-party in-process by default and swappable to a managed vendor (Ably/GetStream) by rebinding the token - see ADR-0007 and ADR-0014.
 
 ## Extension points
 
@@ -10,7 +10,8 @@ Provides global chat and room-based chat for the platform. Stores messages in Po
 - Routes: `src/router/index.ts` - add new oRPC procedures via `/scaffold-route chat <method> <path>`
 - Events emitted:
   - `chat.message.sent` - fired on every new message (room or global), payload: `{ messageId, roomId, userId }`
-- UI slots: none yet
+- Realtime: `subscribeMessages(roomId, listener)` delegates to `REALTIME_TRANSPORT`; the `streamMessages` route bridges it to SSE. Swap transport by rebinding `REALTIME_TRANSPORT` in an overlay.
+- UI: reference `PlayerChatPage` (`@oss/react-pages`) + `useChatStream` (`@oss/react-hooks`); web route shim at `apps/web/app/(shell)/chat/page.tsx`.
 
 ## Ports
 

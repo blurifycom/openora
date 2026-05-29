@@ -1,5 +1,5 @@
 import type { Container, Factory } from '@oss/core';
-import type { Token } from '@oss/adapters';
+import type { Token, WorkerRegistration } from '@oss/adapters';
 
 export interface McpToolDefinition {
   name: string;
@@ -30,6 +30,13 @@ export interface ModuleRegistry {
   events: {
     on(event: string, handler: EventHandler): void;
     getAll(): Map<string, EventHandler[]>;
+  };
+  // Register a background-job worker. Collected during register() and started at
+  // boot against the resolved JOB_QUEUE (after all providers, so an overlay's
+  // durable driver is in effect). Mirrors the events collector. See ADR-0014.
+  jobs: {
+    worker<T>(registration: WorkerRegistration<T>): void;
+    getAll(): WorkerRegistration<unknown>[];
   };
   mcp: {
     tool(definition: McpToolDefinition): void;

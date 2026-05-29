@@ -77,7 +77,7 @@ export { UsersListPage } from './admin/users.js';
 export { UserDetailPage } from './admin/user-detail.js';
 export { GamesPage } from './admin/games.js';
 export { PlayersListPage } from './admin/players.js';
-export { PlayerDetailPage } from './admin/player-detail.js';
+export { PlayerDetailPage, type PlayerDetailPageContext } from './admin/player-detail.js';
 export { PlayersDashboardPage } from './admin/players-dashboard.js';
 
 // Player pages
@@ -85,6 +85,7 @@ export { PlayerLobbyPage, type PlayerLobbyPageProps } from './player/lobby.js';
 export { PlayerGamesPage, type PlayerGamesPageProps } from './player/games.js';
 export { PlayerWalletPage } from './player/wallet.js';
 export { PlayerSportsbookPage, type PlayerSportsbookPageProps } from './player/sportsbook.js';
+export { PlayerChatPage, type PlayerChatPageProps } from './player/chat.js';
 
 // UI plugin system (extension points - see ADR-0006 + ADR-0013)
 export {

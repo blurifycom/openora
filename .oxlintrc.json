@@ -8,10 +8,12 @@
     "no-var": "error",
     "prefer-const": "error",
     "oss-boundaries/no-cross-module-import": "error",
+    "oss-boundaries/no-module-internal-import": "error",
     "oss-boundaries/no-platform-to-module": "error",
     "oss-boundaries/no-contracts-to-runtime": "error",
     "oss-boundaries/no-deep-dist-import": "error",
-    "oss-boundaries/no-sdk-layer-inversion": "error"
+    "oss-boundaries/no-sdk-layer-inversion": "error",
+    "oss-boundaries/no-cross-extension-import": "error"
   },
   "ignorePatterns": [
     "**/node_modules*/**",
@@ -28,7 +30,8 @@
     {
       "files": ["*.test.ts", "*.spec.ts"],
       "rules": {
-        "oss-boundaries/no-cross-module-import": "off"
+        "oss-boundaries/no-cross-module-import": "off",
+        "oss-boundaries/no-module-internal-import": "off"
       }
     }
   ]
