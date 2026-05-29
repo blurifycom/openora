@@ -13,5 +13,13 @@ export default defineConfig({
     hookTimeout: 60_000,
     // All suites share one Postgres test DB, so they must not run concurrently.
     fileParallelism: false,
+    // better-auth needs a secret (token/2FA crypto) and a base URL (to build
+    // password-reset / verification links). CI sets these; default them locally
+    // so the suite is self-contained.
+    env: {
+      BETTER_AUTH_SECRET:
+        process.env['BETTER_AUTH_SECRET'] ?? 'test-secret-not-for-production-0000000000',
+      BETTER_AUTH_URL: process.env['BETTER_AUTH_URL'] ?? 'http://localhost:3001',
+    },
   },
 });

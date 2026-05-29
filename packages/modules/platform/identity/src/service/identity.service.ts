@@ -1,9 +1,23 @@
-import { createAuth } from '@oss/auth';
+import { ORPCError } from '@orpc/server';
+import { createAuth, type SendEmail } from '@oss/auth';
 import { type EventBus } from '@oss/core';
 import { DrizzleService } from '@oss/db';
-import { user, session, account, verification } from '../schema/index.js';
+import { user, session, account, verification, twoFactor } from '../schema/index.js';
 import type { User } from '@oss/shared-schemas';
-import type { LoginInput, RegisterInput } from '@oss/shared-schemas';
+import type {
+  LoginInput,
+  RegisterInput,
+  Enable2faInput,
+  Enable2faResult,
+  Verify2faInput,
+  Disable2faInput,
+  RequestPasswordResetInput,
+  ResetPasswordInput,
+  VerifyEmailInput,
+  UpdateProfileInput,
+  ChangePasswordInput,
+  ChangeEmailInput,
+} from '@oss/shared-schemas';
 
 function nodeHeadersToHeaders(nodeHeaders: Record<string, string | string[] | undefined>): Headers {
   const headers = new Headers();
@@ -27,16 +41,18 @@ type BetterAuthUser = {
   updatedAt: Date | string;
 };
 
+function toIso(value: Date | string): string {
+  return value instanceof Date ? value.toISOString() : value;
+}
+
 function toUser(u: BetterAuthUser): User {
-  const createdAt = u.createdAt instanceof Date ? u.createdAt.toISOString() : u.createdAt;
-  const updatedAt = u.updatedAt instanceof Date ? u.updatedAt.toISOString() : u.updatedAt;
   const base = {
     id: u.id,
     email: u.email,
     name: u.name,
     emailVerified: u.emailVerified,
-    createdAt,
-    updatedAt,
+    createdAt: toIso(u.createdAt),
+    updatedAt: toIso(u.updatedAt),
   };
   return u.image !== undefined ? { ...base, image: u.image } : base;
 }
@@ -51,14 +67,73 @@ function forwardCookies(authResponse: globalThis.Response, resHeaders: Headers):
   }
 }
 
+// createAuth() is cast to the base better-auth `Auth` type (to dodge the Zod v4
+// $strip portability error), so the twoFactor() plugin endpoints are not on the
+// static type. Declare the narrow shapes we call here and route through a typed
+// accessor - no `any`. asResponse:true makes every call return a web Response.
+type AuthCall<B> = (opts: {
+  body?: B;
+  query?: Record<string, string>;
+  headers: Headers;
+  asResponse: true;
+}) => Promise<globalThis.Response>;
+
+interface ExtendedAuthApi {
+  enableTwoFactor: AuthCall<{ password: string }>;
+  verifyTOTP: AuthCall<{ code: string }>;
+  disableTwoFactor: AuthCall<{ password: string }>;
+  requestPasswordReset: AuthCall<{ email: string; redirectTo?: string }>;
+  resetPassword: AuthCall<{ newPassword: string; token: string }>;
+  sendVerificationEmail: AuthCall<{ email: string }>;
+  verifyEmail: AuthCall<{ token: string }>;
+  changePassword: AuthCall<{ currentPassword: string; newPassword: string }>;
+  changeEmail: AuthCall<{ newEmail: string }>;
+  updateUser: AuthCall<{ name?: string; image?: string | null }>;
+}
+
+const SUCCESS = { success: true as const };
+
+// better-auth calls use `asResponse: true`, which returns an error *Response*
+// (4xx/5xx) rather than throwing. Surface those as ORPCErrors so oRPC maps them
+// to the right HTTP status instead of the handler silently returning success.
+// Only reads the body on failure, so a subsequent res.json() on success is safe.
+async function ensureOk(res: globalThis.Response): Promise<void> {
+  if (res.ok) return;
+  let message = `Request failed (${res.status})`;
+  try {
+    const parsed = JSON.parse(await res.text()) as { message?: string };
+    if (parsed.message) message = parsed.message;
+  } catch {
+    // non-JSON body - keep the default message
+  }
+  throw new ORPCError(res.status === 401 ? 'UNAUTHORIZED' : 'BAD_REQUEST', { message });
+}
+
 export class IdentityService {
   private readonly auth: ReturnType<typeof createAuth>;
 
   constructor(
     private readonly drizzle: DrizzleService,
     private readonly events: EventBus,
+    sendEmail?: SendEmail,
   ) {
-    this.auth = createAuth({ db: this.drizzle.db, schema: { user, session, account, verification } });
+    this.auth = createAuth({
+      db: this.drizzle.db,
+      schema: { user, session, account, verification, twoFactor },
+      ...(sendEmail ? { sendEmail } : {}),
+    });
+  }
+
+  // Typed view over the plugin endpoints (see ExtendedAuthApi note above).
+  private get api(): ExtendedAuthApi {
+    return this.auth.api as unknown as ExtendedAuthApi;
+  }
+
+  // Resolve the calling user's id from the session cookie - used to stamp events
+  // for the side-effecting routes that don't echo the user back.
+  private async currentUserId(headers: Headers): Promise<string | null> {
+    const session = await this.auth.api.getSession({ headers });
+    return session?.user?.id ?? null;
   }
 
   async register(
@@ -89,18 +164,25 @@ export class IdentityService {
       headers,
       asResponse: true,
     });
+    // A non-ok response is a real auth failure (bad credentials) - surface it as
+    // a 4xx rather than mistaking the missing session for a 2FA redirect below.
+    await ensureOk(authResponse);
     forwardCookies(authResponse, resHeaders);
     const body = (await authResponse.json()) as {
-      user: BetterAuthUser;
-      token: string;
+      user?: BetterAuthUser;
+      token?: string;
       session?: { expiresAt: string | Date };
+      twoFactorRedirect?: boolean;
     };
+
+    // 2FA-enabled accounts get a 200 with no session; the client must verify2fa.
+    if (body.twoFactorRedirect || !body.user || !body.token) {
+      return { twoFactorRedirect: true };
+    }
+
     this.events.emit('identity.user.login', { userId: body.user.id });
-    const expiresAtRaw = body.session?.expiresAt;
-    const expiresAt = expiresAtRaw
-      ? expiresAtRaw instanceof Date
-        ? expiresAtRaw.toISOString()
-        : new Date(expiresAtRaw).toISOString()
+    const expiresAt = body.session?.expiresAt
+      ? toIso(body.session.expiresAt)
       : new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString();
     return {
       user: toUser(body.user),
@@ -112,7 +194,7 @@ export class IdentityService {
     const headers = nodeHeadersToHeaders(reqHeaders);
     const authResponse = await this.auth.api.signOut({ headers, asResponse: true });
     forwardCookies(authResponse, resHeaders);
-    return { success: true as const };
+    return SUCCESS;
   }
 
   async me(reqHeaders: Record<string, string | string[] | undefined>): Promise<User | null> {
@@ -120,5 +202,174 @@ export class IdentityService {
     const session = await this.auth.api.getSession({ headers });
     if (!session?.user) return null;
     return toUser(session.user as BetterAuthUser);
+  }
+
+  // --- Two-factor (TOTP) ---
+
+  async enableTwoFactor(
+    input: Enable2faInput,
+    reqHeaders: Record<string, string | string[] | undefined>,
+    resHeaders: Headers,
+  ): Promise<Enable2faResult> {
+    const headers = nodeHeadersToHeaders(reqHeaders);
+    const res = await this.api.enableTwoFactor({
+      body: { password: input.password },
+      headers,
+      asResponse: true,
+    });
+    await ensureOk(res);
+    forwardCookies(res, resHeaders);
+    const body = (await res.json()) as { totpURI: string; backupCodes: string[] };
+    return { totpUri: body.totpURI, backupCodes: body.backupCodes };
+  }
+
+  async verifyTwoFactor(
+    input: Verify2faInput,
+    reqHeaders: Record<string, string | string[] | undefined>,
+    resHeaders: Headers,
+  ) {
+    const headers = nodeHeadersToHeaders(reqHeaders);
+    const res = await this.api.verifyTOTP({
+      body: { code: input.code },
+      headers,
+      asResponse: true,
+    });
+    await ensureOk(res);
+    forwardCookies(res, resHeaders);
+    const userId = await this.currentUserId(headers);
+    if (userId) this.events.emit('identity.2fa.enabled', { userId });
+    return SUCCESS;
+  }
+
+  async disableTwoFactor(
+    input: Disable2faInput,
+    reqHeaders: Record<string, string | string[] | undefined>,
+    resHeaders: Headers,
+  ) {
+    const headers = nodeHeadersToHeaders(reqHeaders);
+    const userId = await this.currentUserId(headers);
+    const res = await this.api.disableTwoFactor({
+      body: { password: input.password },
+      headers,
+      asResponse: true,
+    });
+    await ensureOk(res);
+    forwardCookies(res, resHeaders);
+    if (userId) this.events.emit('identity.2fa.disabled', { userId });
+    return SUCCESS;
+  }
+
+  // --- Password reset / change ---
+
+  async requestPasswordReset(input: RequestPasswordResetInput) {
+    // Always returns success - never reveal whether the email exists. The reset
+    // email (if any) is delivered through the sendEmail hook -> notifications.
+    // Any underlying error is swallowed for the same anti-enumeration reason.
+    try {
+      await this.api.requestPasswordReset({
+        body: { email: input.email, redirectTo: '/reset-password' },
+        headers: new Headers(),
+        asResponse: true,
+      });
+    } catch {
+      // intentionally ignored
+    }
+    return SUCCESS;
+  }
+
+  async resetPassword(input: ResetPasswordInput) {
+    const res = await this.api.resetPassword({
+      body: { newPassword: input.newPassword, token: input.token },
+      headers: new Headers(),
+      asResponse: true,
+    });
+    await ensureOk(res);
+    const body = (await res.json().catch(() => ({}))) as { user?: { id: string } };
+    if (body.user?.id) this.events.emit('identity.password.reset', { userId: body.user.id });
+    return SUCCESS;
+  }
+
+  async changePassword(
+    input: ChangePasswordInput,
+    reqHeaders: Record<string, string | string[] | undefined>,
+    resHeaders: Headers,
+  ) {
+    const headers = nodeHeadersToHeaders(reqHeaders);
+    const res = await this.api.changePassword({
+      body: { currentPassword: input.currentPassword, newPassword: input.newPassword },
+      headers,
+      asResponse: true,
+    });
+    await ensureOk(res);
+    forwardCookies(res, resHeaders);
+    return SUCCESS;
+  }
+
+  // --- Email verification / change ---
+
+  async sendEmailVerification(reqHeaders: Record<string, string | string[] | undefined>) {
+    const headers = nodeHeadersToHeaders(reqHeaders);
+    const session = await this.auth.api.getSession({ headers });
+    const email = session?.user?.email;
+    if (email) {
+      await this.api.sendVerificationEmail({ body: { email }, headers, asResponse: true });
+    }
+    return SUCCESS;
+  }
+
+  async verifyEmail(
+    input: VerifyEmailInput,
+    reqHeaders: Record<string, string | string[] | undefined>,
+  ) {
+    const headers = nodeHeadersToHeaders(reqHeaders);
+    const res = await this.api.verifyEmail({
+      query: { token: input.token },
+      headers,
+      asResponse: true,
+    });
+    await ensureOk(res);
+    const userId = await this.currentUserId(headers);
+    if (userId) this.events.emit('identity.email.verified', { userId });
+    return SUCCESS;
+  }
+
+  async changeEmail(
+    input: ChangeEmailInput,
+    reqHeaders: Record<string, string | string[] | undefined>,
+    resHeaders: Headers,
+  ) {
+    const headers = nodeHeadersToHeaders(reqHeaders);
+    const res = await this.api.changeEmail({
+      body: { newEmail: input.newEmail },
+      headers,
+      asResponse: true,
+    });
+    await ensureOk(res);
+    forwardCookies(res, resHeaders);
+    return SUCCESS;
+  }
+
+  // --- Profile ---
+
+  async updateProfile(
+    input: UpdateProfileInput,
+    reqHeaders: Record<string, string | string[] | undefined>,
+    resHeaders: Headers,
+  ): Promise<{ user: User }> {
+    const headers = nodeHeadersToHeaders(reqHeaders);
+    const body: { name?: string; image?: string | null } = {};
+    if (input.name !== undefined) body.name = input.name;
+    if (input.image !== undefined) body.image = input.image;
+    const res = await this.api.updateUser({ body, headers, asResponse: true });
+    await ensureOk(res);
+    forwardCookies(res, resHeaders);
+    // updateUser returns { status } only; re-read the fresh user from session.
+    const session = await this.auth.api.getSession({ headers });
+    const current = session?.user as BetterAuthUser | undefined;
+    if (current) this.events.emit('identity.profile.updated', { userId: current.id });
+    if (!current) {
+      throw new Error('Profile update succeeded but session could not be re-read');
+    }
+    return { user: toUser(current) };
   }
 }

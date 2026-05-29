@@ -12,6 +12,11 @@ import * as z from 'zod';
 export const domainEventSchemas = {
   'identity.user.registered': z.object({ userId: z.string() }),
   'identity.user.login': z.object({ userId: z.string() }),
+  'identity.2fa.enabled': z.object({ userId: z.string() }),
+  'identity.2fa.disabled': z.object({ userId: z.string() }),
+  'identity.password.reset': z.object({ userId: z.string() }),
+  'identity.email.verified': z.object({ userId: z.string() }),
+  'identity.profile.updated': z.object({ userId: z.string() }),
 
   'wallet.deposit.completed': z.object({
     userId: z.string(),

@@ -17,6 +17,7 @@ Open-source, headless, plugin-based, AI-native igaming platform. Anyone clones t
 4. Headless UI. `@oss/ui-provider-contract` declares component contracts and named slots. `@oss/ui-provider-daisyui` is the single adapter shipped by the platform; consumers can swap in their own by implementing the same contract. Module UI never imports a UI library directly.
 5. Explicit > magic. No auto-discovery, no decorator soup. Everything is greppable; every wiring point is a typed function call.
 6. AI-friendly by default. Every module has an `AGENTS.md`. Every scaffold is a slash command. Every contract is queryable via the MCP dev server and the generated `docs/CATALOG.md`.
+7. Declarative + functional by default. Prefer pure functions, immutable data, and composition over imperative mutation and stateful classes - it is easier to test, debug, and reason about. Services hold dependencies but their methods read as data-in/data-out transforms; derive values with `map`/`filter`/`reduce` rather than mutating accumulators; isolate side effects (DB writes, event emits, adapter calls) at the edges. Classes are fine where the runtime expects them (services, guards), but keep their logic functional inside.
 
 ## Repo map
 
@@ -115,6 +116,8 @@ extensions.config.ts # the single registry of enabled plugins
 - `any` outside `*.test.ts`. Use `unknown` + narrowing.
 - Inline `fetch`/`axios`. Use the SDK or a vendor adapter.
 - Ad-hoc Zod schemas inside routers/services. All schemas live in `schemas/` or `shared-schemas`.
+- Hand-written/duplicated types. Never re-declare a shape that already exists. Infer types from the source of truth - `z.infer<typeof XSchema>` for contract/shared schemas, `typeof table.$inferSelect`/`$inferInsert` for Drizzle - and derive variants with helper types (`Pick`, `Omit`, `Partial`, `Required`) instead of copying fields. The only exception is a structural interface describing an external library's untyped surface.
+- Duplicated/redefined Zod schemas. Derive a related schema from the canonical one with schema combinators (`.pick()`, `.omit()`, `.partial()`, `.extend()`, `.merge()`) rather than re-typing its fields.
 - Decorators, anywhere. There is no decorator/DI framework - wire dependencies with explicit factory functions through the composition container.
 - Re-exporting types just to "be nice". Import from where it's defined.
 - TODOs without a tracking issue.

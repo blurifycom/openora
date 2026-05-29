@@ -19,7 +19,7 @@ overlay plugin that loads AFTER the default-binding module (last registration wi
 | geo-ip | `GeoIpAdapter` | `GEO_IP_ADAPTER` | wired (default impl) | `packages/modules/platform/compliance/src/plugin.ts` |
 | job-queue | `JobQueueAdapter` | `JOB_QUEUE` | wired (default impl) | `packages/platform/api-runtime/src/create-app.ts` |
 | kyc | `KycAdapter` | `KYC_ADAPTER` | wired (default impl) | `packages/modules/platform/identity/src/adapters/mock/mock-kyc-adapter.ts`<br>`packages/modules/platform/identity/src/plugin.ts` |
-| notification | `NotificationDeliveryAdapter` | `NOTIFICATION_DELIVERY_ADAPTER` | wired (default impl) | `packages/modules/platform/notifications/src/plugin.ts` |
+| notification | `NotificationDeliveryAdapter` | `NOTIFICATION_DELIVERY_ADAPTER` | wired (default impl) | `packages/modules/platform/identity/src/plugin.ts`<br>`packages/modules/platform/notifications/src/plugin.ts` |
 | payment | `PaymentAdapter` | `PAYMENT_ADAPTER` | wired (default impl) | `packages/modules/player/wallet/src/plugin.ts` |
 | realtime | `RealtimePresence` | `REALTIME_TRANSPORT` | wired (default impl) | `packages/modules/player/chat/src/plugin.ts` |
 | rng | `RngAdapter` | `RNG_ADAPTER` | wired (default impl) | `packages/modules/player/gaming/src/plugin.ts` |
@@ -40,7 +40,7 @@ overlay plugin that loads AFTER the default-binding module (last registration wi
 | cms | backoffice | banner, page | cms.createBanner, cms.createPage, cms.deleteBanner, cms.deletePage, cms.getPage, cms.listBanners, cms.listBannersByPlacement, cms.listPages, cms.updateBanner, cms.updatePage |
 | player-management | backoffice | player | player-management.get, player-management.list, player-management.registrationsOverTime, player-management.remove, player-management.summary, player-management.update |
 | compliance | platform | geo_rule, user_limit | compliance.addGeoRule, compliance.deleteLimit, compliance.geoCheck, compliance.getLimits, compliance.listGeoRules, compliance.upsertLimit |
-| identity | platform | account, session, user, verification | identity.login, identity.logout, identity.me, identity.register |
+| identity | platform | account, session, twoFactor, user, verification | identity.changeEmail, identity.changePassword, identity.disable2fa, identity.enable2fa, identity.login, identity.logout, identity.me, identity.register, identity.requestPasswordReset, identity.resetPassword, identity.sendEmailVerification, identity.updateProfile, identity.verify2fa, identity.verifyEmail |
 | localization | platform | locale, translation | localization.deleteTranslation, localization.getTranslations, localization.listLocales, localization.upsertTranslation |
 | notifications | platform | notification | notifications.list, notifications.markAllRead, notifications.markRead |
 
@@ -57,6 +57,11 @@ Emit/subscribe via the `EventBus` a service receives in its constructor (built i
 - `compliance.limit.upserted`
 - `gaming.round.ended`
 - `gaming.round.started`
+- `identity.2fa.disabled`
+- `identity.2fa.enabled`
+- `identity.email.verified`
+- `identity.password.reset`
+- `identity.profile.updated`
 - `identity.user.login`
 - `identity.user.registered`
 - `leaderboard.reset`
@@ -98,7 +103,7 @@ Declare with `defineIgamingConfig({...})` from `@oss/shared-schemas`, pass to
 
 ## Zod schemas
 
-65 schemas. Look one up by name with the `schema-get` MCP tool.
+77 schemas. Look one up by name with the `schema-get` MCP tool.
 
 - `AdminTransactionSchema` - packages/contracts/orpc-contract/src/backoffice.ts
 - `AdminUserSchema` - packages/contracts/orpc-contract/src/backoffice.ts
@@ -110,11 +115,16 @@ Declare with `defineIgamingConfig({...})` from `@oss/shared-schemas`, pass to
 - `BrandSchema` - packages/contracts/shared-schemas/src/platform-config.ts
 - `CallbackInputSchema` - packages/contracts/orpc-contract/src/igaming-aggregator.ts
 - `CallbackResultSchema` - packages/contracts/orpc-contract/src/igaming-aggregator.ts
+- `ChangeEmailInputSchema` - packages/contracts/shared-schemas/src/identity.ts
+- `ChangePasswordInputSchema` - packages/contracts/shared-schemas/src/identity.ts
 - `ChatMessageSchema` - packages/contracts/orpc-contract/src/chat.ts
 - `ChatRoomSchema` - packages/contracts/orpc-contract/src/chat.ts
 - `CountryCodeSchema` - packages/contracts/shared-schemas/src/igaming-config.ts
 - `CurrencyCodeSchema` - packages/contracts/shared-schemas/src/igaming-config.ts
 - `DepositInputSchema` - packages/contracts/orpc-contract/src/wallet.ts
+- `Disable2faInputSchema` - packages/contracts/shared-schemas/src/identity.ts
+- `Enable2faInputSchema` - packages/contracts/shared-schemas/src/identity.ts
+- `Enable2faResultSchema` - packages/contracts/shared-schemas/src/identity.ts
 - `EndRoundInputSchema` - packages/contracts/orpc-contract/src/gaming.ts
 - `EndRoundOutputSchema` - packages/contracts/orpc-contract/src/gaming.ts
 - `FeaturedSlotSchema` - packages/contracts/orpc-contract/src/lobby.ts
@@ -123,6 +133,7 @@ Declare with `defineIgamingConfig({...})` from `@oss/shared-schemas`, pass to
 - `GameSchema` - packages/contracts/orpc-contract/src/gaming.ts
 - `GameSummarySchema` - packages/contracts/orpc-contract/src/lobby.ts
 - `GeoRuleSchema` - packages/contracts/orpc-contract/src/compliance.ts
+- `IdentitySuccessSchema` - packages/contracts/shared-schemas/src/identity.ts
 - `IgamingConfigSchema` - packages/contracts/shared-schemas/src/igaming-config.ts
 - `KycStatusSchema` - packages/contracts/orpc-contract/src/player.ts
 - `LeaderboardEntrySchema` - packages/contracts/orpc-contract/src/leaderboard.ts
@@ -150,6 +161,8 @@ Declare with `defineIgamingConfig({...})` from `@oss/shared-schemas`, pass to
 - `PlayerSummarySchema` - packages/contracts/orpc-contract/src/player.ts
 - `ProviderSelectionSchema` - packages/contracts/shared-schemas/src/igaming-config.ts
 - `RegisterInputSchema` - packages/contracts/shared-schemas/src/identity.ts
+- `RequestPasswordResetInputSchema` - packages/contracts/shared-schemas/src/identity.ts
+- `ResetPasswordInputSchema` - packages/contracts/shared-schemas/src/identity.ts
 - `SportsbookBetSchema` - packages/contracts/orpc-contract/src/sportsbook.ts
 - `SportsbookEventSchema` - packages/contracts/orpc-contract/src/sportsbook.ts
 - `SportsbookSelectionSchema` - packages/contracts/orpc-contract/src/sportsbook.ts
@@ -158,10 +171,14 @@ Declare with `defineIgamingConfig({...})` from `@oss/shared-schemas`, pass to
 - `SyncResultSchema` - packages/contracts/orpc-contract/src/igaming-aggregator.ts
 - `TimestampSchema` - packages/contracts/shared-schemas/src/common.ts
 - `TransactionResultSchema` - packages/contracts/orpc-contract/src/wallet.ts
+- `UpdatePlayerProfileInputSchema` - packages/contracts/orpc-contract/src/profile.ts
+- `UpdateProfileInputSchema` - packages/contracts/shared-schemas/src/identity.ts
 - `UserBonusSchema` - packages/contracts/orpc-contract/src/bonus.ts
 - `UserBonusStatusSchema` - packages/contracts/orpc-contract/src/bonus.ts
 - `UserSchema` - packages/contracts/shared-schemas/src/identity.ts
 - `UuidSchema` - packages/contracts/shared-schemas/src/common.ts
+- `Verify2faInputSchema` - packages/contracts/shared-schemas/src/identity.ts
+- `VerifyEmailInputSchema` - packages/contracts/shared-schemas/src/identity.ts
 - `WalletBalanceSchema` - packages/contracts/orpc-contract/src/wallet.ts
 - `WalletTransactionSchema` - packages/contracts/orpc-contract/src/wallet.ts
 - `WithdrawInputSchema` - packages/contracts/orpc-contract/src/wallet.ts

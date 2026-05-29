@@ -14,6 +14,9 @@ export const user = pgTable('user', {
   banned: boolean('banned').default(false),
   banReason: text('banReason'),
   banExpires: timestamp('banExpires'),
+  // better-auth twoFactor() plugin field. Required by the drizzle adapter when
+  // the twoFactor plugin is enabled. See @oss/auth createAuth().
+  twoFactorEnabled: boolean('twoFactorEnabled').default(false),
   createdAt: timestamp('createdAt').notNull().defaultNow(),
   updatedAt: timestamp('updatedAt').notNull().$onUpdateFn(() => new Date()),
 });
@@ -54,7 +57,21 @@ export const verification = pgTable('verification', {
   updatedAt: timestamp('updatedAt').notNull().$onUpdateFn(() => new Date()),
 }, (t) => [index('verification_identifier_idx').on(t.identifier)]);
 
+// better-auth twoFactor() plugin model. Field shape mirrors the plugin's own
+// schema (secret, backupCodes, userId, verified). See @oss/auth createAuth().
+export const twoFactor = pgTable('twoFactor', {
+  id: text('id').primaryKey(),
+  secret: text('secret').notNull(),
+  backupCodes: text('backupCodes').notNull(),
+  userId: text('userId').notNull().references(() => user.id, { onDelete: 'cascade' }),
+  verified: boolean('verified').default(true),
+}, (t) => [
+  index('twoFactor_userId_idx').on(t.userId),
+  index('twoFactor_secret_idx').on(t.secret),
+]);
+
 export type User = typeof user.$inferSelect;
 export type Session = typeof session.$inferSelect;
 export type Account = typeof account.$inferSelect;
 export type Verification = typeof verification.$inferSelect;
+export type TwoFactor = typeof twoFactor.$inferSelect;

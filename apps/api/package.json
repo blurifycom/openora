@@ -23,6 +23,7 @@
     "zod": "4.4.3"
   },
   "devDependencies": {
+    "@better-auth/utils": "0.4.0",
     "@oss/modules": "workspace:*",
     "@oss/testing": "workspace:*",
     "@oss/tsconfig": "workspace:*",
