@@ -7,7 +7,7 @@ import './styles.css';
 import '@oss/react-pages/styles.css';
 
 // Client-only SPA: no SSR. The providers (QueryClient + ApiClient + UI) live above
-// the router so every mounted react-sdk page can read them.
+// the router so every mounted react-pages page can read them.
 const router = createRouter({ routeTree, defaultPreload: 'intent' });
 
 declare module '@tanstack/react-router' {

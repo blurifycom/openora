@@ -42,7 +42,7 @@ Only return to the user to resolve genuine decisions they alone can make.
 |---|---|
 | New behavior / routes | `pnpm gen plugin` |
 | Swap a vendor (payment / KYC / notification) | `pnpm gen adapter` |
-| Mount a react-sdk page on a route | `pnpm gen page` |
+| Mount a react-pages page on a route | `pnpm gen page` |
 
 Register new plugins in `apps/api/src/extensions.config.ts`. Adapters must be listed AFTER the module that owns the default binding (last registration of a DI token wins).
 

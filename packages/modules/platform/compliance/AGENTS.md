@@ -13,7 +13,7 @@ Responsible gambling and geo-compliance.
 - **GeoIpAdapter** (`@oss/adapters`) - inject a real IP-geolocation adapter by providing the `GEO_IP_ADAPTER` token. Without it the module defaults all countries to `allowed: true`.
 - Routes: `src/router/index.ts` - add new procedures by extending `complianceContract` in `packages/contracts/orpc-contract/src/compliance.ts` first.
 - Events emitted: `compliance.limit.upserted`, `compliance.limit.removed` - subscribe in other modules via `EventBus`.
-- UI slots: `LimitsPanel` (headless DataTable, swap via UIProvider).
+- UI: none in-module (modules are backend-only); admin UI lives in the react SDK / consumer apps.
 
 ## Ports
 

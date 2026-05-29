@@ -23,7 +23,7 @@ in Postgres. Publishes a `cms.page.published` event whenever a page transitions 
 
 - **New routes** - add to `src/router/index.ts` and extend `cmsContract` in `packages/contracts/orpc-contract/src/cms.ts`.
 - **New events** - emit via `this.events.emit(...)` from `CmsService`. Declare the event type in `@oss/core` (`event-bus.ts`).
-- **UI slots** - add new components in `src/ui/` and fill named slots in an overlay plugin via `ctx.slots.fill(...)`.
+- **UI** - none in-module (modules are backend-only). CMS admin UI lives in the react SDK / consumer apps; plugins fill named slots via `ctx.slots.fill(...)`.
 - **Ports** - if a CDN or image-upload adapter is ever needed, declare an interface in `@oss/adapters` and inject it into `CmsService`.
 
 ## Events emitted
