@@ -12,8 +12,15 @@ export const ADMIN_GUARD: Token<AdminGuard> = createToken('ADMIN_GUARD');
 export class AdminGuard {
   private readonly auth: Auth;
 
-  constructor(private readonly drizzle: DrizzleService) {
-    this.auth = createAuth({ db: drizzle.db });
+  // `schema` carries the better-auth tables (user/session/account/verification).
+  // It MUST be provided - the drizzle adapter resolves models from it, and
+  // getSession() throws "model session not found" without it. @oss/auth can't
+  // import the schema (it lives in @oss/modules), so createApp injects it.
+  constructor(
+    private readonly drizzle: DrizzleService,
+    schema?: Record<string, unknown>,
+  ) {
+    this.auth = createAuth({ db: drizzle.db, ...(schema ? { schema } : {}) });
   }
 
   async assert(context: unknown): Promise<{ userId: string }>;

@@ -15,6 +15,13 @@
       "when": 1779919913586,
       "tag": "0001_smiling_mandarin",
       "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "7",
+      "when": 1780074295438,
+      "tag": "0002_plain_galactus",
+      "breakpoints": true
     }
   ]
 }

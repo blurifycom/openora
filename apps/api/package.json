@@ -8,7 +8,8 @@
     "dev": "node --import tsx --watch src/main.ts",
     "start": "node dist/main.js",
     "typecheck": "tsc --noEmit",
-    "test": "vitest run"
+    "test": "vitest run",
+    "test:integration": "vitest run -c vitest.integration.config.ts"
   },
   "dependencies": {
     "@orpc/server": "1.14.3",
@@ -22,8 +23,12 @@
     "zod": "4.4.3"
   },
   "devDependencies": {
+    "@oss/modules": "workspace:*",
+    "@oss/testing": "workspace:*",
     "@oss/tsconfig": "workspace:*",
+    "@oss/vitest-config": "workspace:*",
     "tsx": "4.22.2",
-    "typescript": "6.0.3"
+    "typescript": "6.0.3",
+    "vitest": "4.1.6"
   }
 }

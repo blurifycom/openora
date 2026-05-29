@@ -13,7 +13,7 @@
 // Rules mirror the enforced classes in AGENTS.md > Dependency rules:
 //   no-cross-module-import     - modules must not import another module's code (schema subpath ok)
 //   no-module-internal-import  - no module may be imported via a non-public subpath (root + /schema only)
-//   no-platform-to-module      - platform/* (except api-runtime) must not import modules or UI
+//   no-platform-to-module      - platform/* (except api-runtime + testing) must not import modules or UI
 //   no-contracts-to-runtime    - contracts/* may import only other contracts and zod
 //   no-deep-dist-import        - never @oss/*/dist/** deep paths
 
@@ -89,8 +89,11 @@ const noPlatformToModule = {
       ImportDeclaration(node) {
         const file = filename(context);
         if (!inPath(file, 'packages/platform')) return;
-        // api-runtime is the composition root - it may import everything
+        // api-runtime is the composition root - it may import everything.
+        // testing is the *test* composition root: it boots the full app and
+        // seeds, so it likewise needs module schemas (it is devDependency-only).
         if (inPath(file, 'packages/platform/api-runtime')) return;
+        if (inPath(file, 'packages/platform/testing')) return;
         const spec = node.source.value;
         if (spec === '@oss/modules' || spec.startsWith('@oss/modules/') || spec.startsWith('@oss/ui-')) {
           context.report({

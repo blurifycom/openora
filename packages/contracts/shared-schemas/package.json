@@ -15,13 +15,17 @@
   "scripts": {
     "build": "tsc",
     "typecheck": "tsc --noEmit",
-    "clean": "rm -rf dist"
+    "clean": "rm -rf dist",
+    "test": "vitest run",
+    "test:unit": "vitest run --passWithNoTests"
   },
   "dependencies": {
     "zod": "4.4.3"
   },
   "devDependencies": {
     "@oss/tsconfig": "workspace:*",
-    "typescript": "6.0.3"
+    "@oss/vitest-config": "workspace:*",
+    "typescript": "6.0.3",
+    "vitest": "4.1.6"
   }
 }

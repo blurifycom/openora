@@ -22,6 +22,7 @@ import {
 import { MESSAGE_BROKER, JOB_QUEUE, REALTIME_TRANSPORT } from '@oss/adapters';
 import { DrizzleService, DRIZZLE } from '@oss/db';
 import { AdminGuard, ADMIN_GUARD } from '@oss/auth';
+import { user, session, account, verification } from '@oss/modules/platform/identity/schema';
 import { loadPlugins, type PluginEntry } from '@oss/plugin-host';
 import { contract as defaultContract, healthContract } from '@oss/orpc-contract';
 import { IGAMING_CONFIG, type IgamingConfig } from '@oss/shared-schemas';
@@ -114,7 +115,10 @@ export async function createApp(config: CreateAppConfig): Promise<CreatedApp> {
     container.onDispose(() => q.close());
     return q;
   });
-  container.register(ADMIN_GUARD, (c) => new AdminGuard(c.get(DRIZZLE)));
+  container.register(
+    ADMIN_GUARD,
+    (c) => new AdminGuard(c.get(DRIZZLE), { user, session, account, verification }),
+  );
   if (config.igaming) {
     const igaming = config.igaming;
     container.register(IGAMING_CONFIG, () => igaming);

@@ -16,7 +16,8 @@
     "build": "tsc",
     "typecheck": "tsc --noEmit",
     "clean": "rm -rf dist",
-    "test": "vitest run"
+    "test": "vitest run",
+    "test:unit": "vitest run --passWithNoTests"
   },
   "dependencies": {
     "@oss/adapters": "workspace:*",

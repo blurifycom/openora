@@ -8,6 +8,12 @@ export const user = pgTable('user', {
   image: text('image'),
   role: text('role').notNull().default('player'),
   isActive: boolean('isActive').notNull().default(true),
+  // better-auth admin() plugin fields (all optional). Required by the drizzle
+  // adapter when the admin plugin is enabled, otherwise user creation throws
+  // "field banned does not exist". See @oss/auth createAuth().
+  banned: boolean('banned').default(false),
+  banReason: text('banReason'),
+  banExpires: timestamp('banExpires'),
   createdAt: timestamp('createdAt').notNull().defaultNow(),
   updatedAt: timestamp('updatedAt').notNull().$onUpdateFn(() => new Date()),
 });

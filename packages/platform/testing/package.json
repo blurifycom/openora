@@ -1,5 +1,5 @@
 {
-  "name": "@oss/plugin-host",
+  "name": "@oss/testing",
   "version": "0.0.1",
   "private": true,
   "type": "module",
@@ -15,19 +15,24 @@
   "scripts": {
     "build": "tsc",
     "typecheck": "tsc --noEmit",
-    "clean": "rm -rf dist",
-    "test": "vitest run",
-    "test:unit": "vitest run --passWithNoTests"
+    "clean": "rm -rf dist"
   },
   "dependencies": {
     "@oss/adapters": "workspace:*",
-    "@oss/core": "workspace:*"
+    "@oss/api-runtime": "workspace:*",
+    "@oss/auth": "workspace:*",
+    "@oss/core": "workspace:*",
+    "@oss/db": "workspace:*",
+    "@oss/modules": "workspace:*",
+    "@oss/plugin-host": "workspace:*",
+    "drizzle-orm": "0.45.2",
+    "hono": "4.12.23",
+    "pg": "8.21.0"
   },
   "devDependencies": {
     "@oss/tsconfig": "workspace:*",
-    "@oss/vitest-config": "workspace:*",
     "@types/node": "25.9.0",
-    "typescript": "6.0.3",
-    "vitest": "4.1.6"
+    "@types/pg": "8.20.0",
+    "typescript": "6.0.3"
   }
 }

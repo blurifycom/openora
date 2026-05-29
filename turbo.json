@@ -24,6 +24,10 @@
       "cache": false
     },
     "test:integration": {
+      "dependsOn": ["^build"],
+      "cache": false
+    },
+    "test:e2e": {
       "cache": false
     },
     "codegen": {
