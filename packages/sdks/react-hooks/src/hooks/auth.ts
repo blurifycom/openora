@@ -14,11 +14,19 @@ export function useSession() {
   });
 }
 
+export type CurrentUser = {
+  id: string;
+  email: string;
+  name: string | null;
+  role?: string;
+  permissions?: readonly string[];
+};
+
 export function useCurrentUser() {
   const client = useApiClient();
   return useQuery({
     queryKey: ['me'],
-    queryFn: () => client.get<{ id: string; email: string; name: string | null }>('/identity/me'),
+    queryFn: () => client.get<CurrentUser>('/identity/me'),
     retry: false,
   });
 }

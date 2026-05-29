@@ -12,12 +12,14 @@ import { dirname, resolve } from 'node:path';
 import {
   Container,
   InMemoryBroker,
+  InProcessJobQueue,
+  InProcessRealtimeTransport,
   createEventBus,
   createLogger,
   EVENT_BUS,
   type OssContext,
 } from '@oss/core';
-import { MESSAGE_BROKER } from '@oss/adapters';
+import { MESSAGE_BROKER, JOB_QUEUE, REALTIME_TRANSPORT } from '@oss/adapters';
 import { DrizzleService, DRIZZLE } from '@oss/db';
 import { AdminGuard, ADMIN_GUARD } from '@oss/auth';
 import { loadPlugins, type PluginEntry } from '@oss/plugin-host';
@@ -99,6 +101,19 @@ export async function createApp(config: CreateAppConfig): Promise<CreatedApp> {
   container.register(EVENT_BUS, (c) =>
     createEventBus(c.get(MESSAGE_BROKER), createLogger('event-bus')),
   );
+  // Client-facing realtime push (chat, live feeds): default in-process fan-out
+  // served as SSE; an overlay rebinds REALTIME_TRANSPORT to a managed vendor
+  // (Ably/GetStream) without touching modules. See ADR-0007.
+  container.register(REALTIME_TRANSPORT, () => new InProcessRealtimeTransport());
+  // Background jobs: default in-process queue (zero deps); an overlay rebinds
+  // JOB_QUEUE to a durable driver (the BullMQ/Redis overlay). The disposer drains
+  // in-flight jobs on shutdown - registered after DRIZZLE's (below) so it runs
+  // first (disposers run in reverse), i.e. workers finish before the DB closes.
+  container.register(JOB_QUEUE, () => {
+    const q = new InProcessJobQueue(createLogger('job-queue'));
+    container.onDispose(() => q.close());
+    return q;
+  });
   container.register(ADMIN_GUARD, (c) => new AdminGuard(c.get(DRIZZLE)));
   if (config.igaming) {
     const igaming = config.igaming;
@@ -115,6 +130,15 @@ export async function createApp(config: CreateAppConfig): Promise<CreatedApp> {
     for (const handler of handlers) {
       bus.on(event, handler);
     }
+  }
+
+  // Start background-job workers collected by plugins (ctx.jobs.worker(...)).
+  // Resolve DRIZZLE first so its dispose runs AFTER the queue's drain (reverse
+  // order); resolve JOB_QUEUE last so an overlay's durable driver is in effect.
+  container.get(DRIZZLE);
+  const jobQueue = container.get(JOB_QUEUE);
+  for (const registration of registry.jobs.getAll()) {
+    jobQueue.registerWorker(registration);
   }
 
   // Assemble the root oRPC router from each plugin's router factory, keyed by the

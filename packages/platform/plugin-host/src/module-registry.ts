@@ -1,5 +1,5 @@
 import type { Container, Factory } from '@oss/core';
-import type { Token } from '@oss/adapters';
+import type { Token, WorkerRegistration } from '@oss/adapters';
 import type {
   ModuleRegistry,
   McpToolDefinition,
@@ -11,6 +11,7 @@ export class ModuleRegistryImpl implements ModuleRegistry {
   private _routers = new Map<string, RouterFactory>();
   private _slots = new Map<string, unknown>();
   private _events = new Map<string, EventHandler[]>();
+  private _jobs: WorkerRegistration<unknown>[] = [];
   private _mcpTools: McpToolDefinition[] = [];
 
   constructor(private readonly container: Container) {}
@@ -61,6 +62,13 @@ export class ModuleRegistryImpl implements ModuleRegistry {
       this._events.set(event, handlers);
     },
     getAll: () => this._events,
+  };
+
+  jobs = {
+    worker: <T>(registration: WorkerRegistration<T>) => {
+      this._jobs.push(registration as WorkerRegistration<unknown>);
+    },
+    getAll: () => this._jobs,
   };
 
   mcp = {

@@ -7,9 +7,22 @@ Run `pnpm scaffold ui-component $ARGUMENTS` in the repo root.
 
 After scaffolding:
 
-1. Define the props type in `packages/ui/provider-contract/src/index.ts` and add the component to the `UIProvider` type.
-2. Implement in `packages/ui/provider-daisyui/src/<name>.tsx` using DaisyUI semantic classes (`btn`, `card`, `modal`, ...). The react-sdk `styles.css` supplies structural/layout classes (driven by `--bo-*` theme variables); DaisyUI supplies the component look.
-3. Export the component from `provider-daisyui/src/index.ts` - it's part of the `daisyuiProvider` object, typed `: UIProvider`, so TS enforces the contract.
-4. Run `pnpm verify`.
+1. Define the props type in `packages/ui/provider-contract/src/index.ts` and add the
+   component to the `UIProvider` type. Module + page code consumes the component via
+   `useUI()` against this contract.
+2. Implement in `packages/ui/provider-daisyui/src/<name>.tsx` using DaisyUI semantic
+   classes (`btn`, `card`, `modal`, ...). Structural / layout classes driven by `--bo-*`
+   theme variables live in `packages/sdks/react-pages/src/styles.css`; DaisyUI supplies the
+   component look.
+3. Export the component from `provider-daisyui/src/index.ts` - it's part of the
+   `daisyuiProvider` object, typed `: UIProvider`, so TS enforces the contract.
+4. If the new component needs design tokens, add `--bo-<name>` CSS variables to
+   `packages/sdks/react-pages/src/styles.css` AND a typed entry in `Theme` so operators can
+   override per-tenant or per-brand via `<ThemeProvider theme={...}>` /
+   `<ThemeProvider brands={[...]} activeBrand="..." />`.
+5. Run `pnpm verify`.
 
-Remind the user: module/admin UI consumes components via `useUI()` (from `@oss/react-sdk`), never `@oss/ui-provider-daisyui` directly. provider-contract is the binding interface; daisyui is the single shipped adapter.
+Remind the user: module / admin UI consumes components via `useUI()` from `@oss/react-hooks`
+(re-exported by `@oss/react-pages` for ergonomic consumer imports), never
+`@oss/ui-provider-daisyui` directly. provider-contract is the binding interface; daisyui is
+the single shipped adapter.

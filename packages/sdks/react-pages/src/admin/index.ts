@@ -4,5 +4,5 @@ export { UsersListPage } from './users.js';
 export { UserDetailPage } from './user-detail.js';
 export { GamesPage } from './games.js';
 export { PlayersListPage } from './players.js';
-export { PlayerDetailPage } from './player-detail.js';
+export { PlayerDetailPage, type PlayerDetailPageContext } from './player-detail.js';
 export { PlayersDashboardPage } from './players-dashboard.js';

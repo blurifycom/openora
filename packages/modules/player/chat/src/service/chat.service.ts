@@ -1,8 +1,15 @@
 import { type EventBus, createDomainError } from '@oss/core';
+import type { RealtimeTransport } from '@oss/adapters';
 import { DrizzleService } from '@oss/db';
 import { eq, and, isNull, lt, desc, asc } from 'drizzle-orm';
 import { chatRoom, chatMessage } from '../schema/index.js';
 import type { ChatRoom, ChatMessage } from '../schemas/index.js';
+
+// Realtime channel for a room (null roomId = the global channel). Keep this the
+// single source of the naming convention so publishers and subscribers align.
+export function chatChannel(roomId: string | null): string {
+  return roomId ? `chat:room:${roomId}` : 'chat:global';
+}
 
 export const ChatRoomNotFoundError = createDomainError(
   'ChatRoomNotFoundError',
@@ -45,7 +52,15 @@ export class ChatService {
   constructor(
     private readonly drizzle: DrizzleService,
     private readonly events: EventBus,
+    private readonly transport: RealtimeTransport,
   ) {}
+
+  // Subscribe to live messages for a room (null = global). Returns an unsubscribe
+  // fn the SSE handler calls on connection abort. Delegates to REALTIME_TRANSPORT,
+  // so swapping to a managed vendor needs no change here.
+  subscribeMessages(roomId: string | null, listener: (message: ChatMessage) => void): () => void {
+    return this.transport.subscribe<ChatMessage>(chatChannel(roomId), listener);
+  }
 
   async listRooms(tenantId?: string): Promise<ChatRoom[]> {
     const rooms = await this.drizzle.db
@@ -97,7 +112,11 @@ export class ChatService {
       userId,
     });
 
-    return toMessage(record!);
+    const message = toMessage(record!);
+    // Push to connected clients over the realtime transport (best-effort, after
+    // the row is committed). The DB remains the system of record for backfill.
+    void this.transport.publish(chatChannel(roomId), message);
+    return message;
   }
 
   async deleteMessage(id: string, userId: string): Promise<{ success: true }> {
@@ -151,6 +170,8 @@ export class ChatService {
       userId,
     });
 
-    return toMessage(record!);
+    const message = toMessage(record!);
+    void this.transport.publish(chatChannel(null), message);
+    return message;
   }
 }

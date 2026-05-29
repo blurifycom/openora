@@ -11,7 +11,8 @@
     "oss-boundaries/no-platform-to-module": "error",
     "oss-boundaries/no-contracts-to-runtime": "error",
     "oss-boundaries/no-deep-dist-import": "error",
-    "oss-boundaries/no-sdk-layer-inversion": "error"
+    "oss-boundaries/no-sdk-layer-inversion": "error",
+    "oss-boundaries/no-cross-extension-import": "error"
   },
   "ignorePatterns": [
     "**/node_modules*/**",

@@ -2,7 +2,7 @@ import type { ReactNode } from 'react';
 import { Bricolage_Grotesque, Hanken_Grotesk, JetBrains_Mono } from 'next/font/google';
 import { Providers } from './providers';
 import './globals.css';
-import '@oss/react-sdk/styles.css';
+import '@oss/react-pages/styles.css';
 
 const display = Bricolage_Grotesque({
   subsets: ['latin'],

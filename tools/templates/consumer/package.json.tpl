@@ -7,6 +7,7 @@
     "dev": "turbo run dev",
     "build": "turbo run build",
     "build:oss": "pnpm -C {{ossFromRoot}} build",
+    "regen": "pnpm -C {{ossFromRoot}} run regen",
     "typecheck": "turbo run typecheck",
     "lint": "oxlint .",
     "db:generate": "pnpm -C {{ossFromRoot}} -F @oss/db generate",

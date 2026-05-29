@@ -1,4 +1,4 @@
-import { PlayerLobbyPage } from '@oss/react-sdk';
+import { PlayerLobbyPage } from '@oss/react-pages';
 
 export default function Page() {
   return <PlayerLobbyPage />;

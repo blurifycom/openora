@@ -16,12 +16,26 @@ apps/
 turbo/generators/ # turbo gen: plugin, adapter, page
 ```
 
+## Prerequisites
+
+The `@oss/*` packages are consumed via `link:` from a sibling OSS checkout (see `pnpm.overrides`).
+Clone both repos side by side BEFORE running `pnpm install`:
+
+```
+parent/
+  igaming-oss/        # the OSS platform checkout
+  {{name}}/           # this repo
+```
+
+Publishing to npm/GitLab is on the roadmap; until then the sibling checkout is required.
+
 ## Dev setup
 
 ```bash
-pnpm install
+pnpm install               # links @oss/* from the sibling checkout
 pnpm setup:mcp             # trust the MCP server + install the /start onboarding flow
-pnpm build:oss            # build the linked @oss/* packages once
+pnpm build:oss             # build the linked @oss/* packages once
+pnpm regen                 # regenerate OpenAPI + catalog + Drizzle client (after schema changes)
 cp .env.example .env       # set DATABASE_URL + AUTH_SECRET
 pnpm db:migrate            # apply the OSS schema to your database
 pnpm dev                   # api :3001, web :3000, backoffice :3002
@@ -30,9 +44,8 @@ pnpm dev                   # api :3001, web :3000, backoffice :3002
 After `pnpm setup:mcp`, restart your editor and run **`/start`** in Claude Code - it asks what
 you want to build and scaffolds it for you.
 
-`@oss/*` is linked from a sibling OSS checkout (see `pnpm.overrides`). When you change OSS
-source, rebuild it (`pnpm build:oss`) so the linked `dist/` updates. For a hot loop, run a
-watch build in the OSS checkout in parallel.
+When you change OSS source, rebuild it (`pnpm build:oss`) so the linked `dist/` updates. For a
+hot loop, run a watch build in the OSS checkout in parallel.
 
 ## Extending
 

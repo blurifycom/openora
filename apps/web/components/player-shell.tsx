@@ -9,6 +9,7 @@ const NAV = [
   { href: '/', label: 'Lobby' },
   { href: '/games', label: 'Games' },
   { href: '/wallet', label: 'Wallet' },
+  { href: '/chat', label: 'Chat' },
 ];
 
 // App-specific player chrome. The SDK supplies page bodies, hooks, and the UI

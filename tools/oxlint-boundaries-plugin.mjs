@@ -148,6 +148,52 @@ const noSdkLayerInversion = {
   },
 };
 
+// An overlay extension under apps/api/src/extensions/<name>/ may import any
+// @oss/* package but never a sibling extension. Cross-extension communication
+// goes through the event bus.
+const noCrossExtensionImport = {
+  create(context) {
+    return {
+      ImportDeclaration(node) {
+        const file = filename(context);
+        const m = file.match(/apps\/api\/src\/extensions\/([^/]+)\//);
+        if (!m) return;
+        const ownExt = m[1];
+        const spec = node.source.value;
+        // Only relative imports can cross-reach into another extension folder.
+        if (!spec.startsWith('.')) return;
+        // Resolve specifier path segments and look for "../<other-ext>/"
+        const segments = spec.split('/').filter(Boolean);
+        // Walk past leading "..": stop once we hit a non-".." segment.
+        let i = 0;
+        while (i < segments.length && segments[i] === '..') i++;
+        if (i === 0) return;
+        // The segment right after the leading ".." should be the target folder
+        // if we crossed the extensions/<name> boundary. If that target equals a
+        // sibling extension name, flag it.
+        const target = segments[i];
+        if (!target) return;
+        if (target !== ownExt && target !== 'extensions' && target.length > 0) {
+          // Heuristic: anything reaching outside the current extension folder
+          // is suspicious; only allow imports that traverse OUT of the
+          // extensions/ tree entirely (i.e. land in apps/api/src/ or beyond).
+          // We treat "../<sibling>" (one ".." then a name that is NOT 'extensions')
+          // as the cross-extension case.
+          if (i === 1) {
+            context.report({
+              node,
+              message:
+                'An overlay extension must not import another extension. ' +
+                'Cross-extension communication goes through the event bus. ' +
+                'See apps/api/src/extensions/AGENTS.md.',
+            });
+          }
+        }
+      },
+    };
+  },
+};
+
 export default {
   meta: { name: 'oss-boundaries' },
   rules: {
@@ -156,5 +202,6 @@ export default {
     'no-contracts-to-runtime': noContractsToRuntime,
     'no-deep-dist-import': noDeepDistImport,
     'no-sdk-layer-inversion': noSdkLayerInversion,
+    'no-cross-extension-import': noCrossExtensionImport,
   },
 };

@@ -19,6 +19,12 @@ export {
   type UseEventStreamOptions,
   type UseEventStreamResult,
 } from './hooks/use-event-stream.js';
+export {
+  useChatStream,
+  type ChatMessage,
+  type UseChatStreamOptions,
+  type UseChatStreamResult,
+} from './hooks/use-chat-stream.js';
 
 // Cross-cutting helpers for slot fills / plugin authors (ADR-0013)
 export {

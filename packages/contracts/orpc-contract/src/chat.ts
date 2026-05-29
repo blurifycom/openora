@@ -1,4 +1,4 @@
-import { oc } from '@orpc/contract';
+import { oc, eventIterator } from '@orpc/contract';
 import * as z from 'zod';
 
 export const ChatRoomSchema = z.object({
@@ -51,4 +51,15 @@ export const chatContract = {
     .route({ method: 'POST', path: '/chat/global' })
     .input(z.object({ content: z.string() }))
     .output(ChatMessageSchema),
+
+  // Live message feed delivered as Server-Sent Events. `roomId: null` streams the
+  // global channel; a room id streams that room. The OpenAPIHandler in
+  // @oss/api-runtime serves an event-iterator output as SSE; the client consumes
+  // it as an async iterable (see @oss/react-hooks useChatStream). Backed by the
+  // REALTIME_TRANSPORT seam - first-party in-process by default, swappable to a
+  // managed vendor (Ably/GetStream) downstream. See ADR-0007.
+  streamMessages: oc
+    .route({ method: 'GET', path: '/chat/stream' })
+    .input(z.object({ roomId: z.string().nullable() }))
+    .output(eventIterator(ChatMessageSchema)),
 };

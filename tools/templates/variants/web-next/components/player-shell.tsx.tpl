@@ -3,7 +3,7 @@
 import Link from 'next/link';
 import { usePathname, useRouter } from 'next/navigation';
 import type { ReactNode } from 'react';
-import { useCurrentUser, useLogout, useUI } from '@oss/react-sdk';
+import { useCurrentUser, useLogout, useUI } from '@oss/react-pages';
 
 const NAV = [
   { href: '/', label: 'Lobby' },
