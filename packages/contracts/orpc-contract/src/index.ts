@@ -12,6 +12,7 @@ import { chatContract } from './chat.js';
 import { lobbyContract } from './lobby.js';
 import { backofficeContract } from './backoffice.js';
 import { playerContract } from './player.js';
+import { profileContract } from './profile.js';
 import { igamingAggregatorContract } from './igaming-aggregator.js';
 
 import { leaderboardContract } from './leaderboard.js';
@@ -49,6 +50,11 @@ export {
   PlayerRegistrationPointSchema,
   PlayerSummarySchema,
 } from './player.js';
+export {
+  profileContract,
+  UpdatePlayerProfileInputSchema,
+  type UpdatePlayerProfileInput,
+} from './profile.js';
 export { igamingAggregatorContract } from './igaming-aggregator.js';
 
 export {
@@ -83,6 +89,7 @@ export const contract = populateContractRouterPaths({
   lobby: lobbyContract,
   backoffice: backofficeContract,
   player: playerContract,
+  profile: profileContract,
   igamingAggregator: igamingAggregatorContract,
   leaderboard: leaderboardContract,
   sportsbook: sportsbookContract,

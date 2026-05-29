@@ -66,15 +66,30 @@ importers:
         specifier: 4.4.3
         version: 4.4.3
     devDependencies:
+      '@better-auth/utils':
+        specifier: 0.4.0
+        version: 0.4.0
+      '@oss/modules':
+        specifier: workspace:*
+        version: link:../../packages/modules
+      '@oss/testing':
+        specifier: workspace:*
+        version: link:../../packages/platform/testing
       '@oss/tsconfig':
         specifier: workspace:*
         version: link:../../packages/config/tsconfig
+      '@oss/vitest-config':
+        specifier: workspace:*
+        version: link:../../packages/config/vitest
       tsx:
         specifier: 4.22.2
         version: 4.22.2
       typescript:
         specifier: 6.0.3
         version: 6.0.3
+      vitest:
+        specifier: 4.1.6
+        version: 4.1.6(@types/node@25.9.0)(@vitest/coverage-v8@4.1.6)(vite@8.0.13(@types/node@25.9.0)(esbuild@0.28.0)(jiti@2.7.0)(tsx@4.22.2))
 
   apps/backoffice:
     dependencies:
@@ -146,6 +161,36 @@ importers:
         specifier: 6.0.3
         version: 6.0.3
 
+  apps/e2e:
+    devDependencies:
+      '@oss/api-runtime':
+        specifier: workspace:*
+        version: link:../../packages/platform/api-runtime
+      '@oss/auth':
+        specifier: workspace:*
+        version: link:../../packages/platform/auth
+      '@oss/db':
+        specifier: workspace:*
+        version: link:../../packages/platform/db
+      '@oss/modules':
+        specifier: workspace:*
+        version: link:../../packages/modules
+      '@oss/testing':
+        specifier: workspace:*
+        version: link:../../packages/platform/testing
+      '@playwright/test':
+        specifier: 1.52.0
+        version: 1.52.0
+      '@types/pg':
+        specifier: 8.20.0
+        version: 8.20.0
+      drizzle-orm:
+        specifier: 0.45.2
+        version: 0.45.2(@types/pg@8.20.0)(kysely@0.28.17)(pg@8.21.0)
+      pg:
+        specifier: 8.21.0
+        version: 8.21.0
+
   apps/mcp-server-dev:
     dependencies:
       '@modelcontextprotocol/sdk':
@@ -196,7 +241,7 @@ importers:
         version: 5.100.11(react@19.2.6)
       next:
         specifier: 16.2.6
-        version: 16.2.6(react-dom@19.2.6(react@19.2.6))(react@19.2.6)
+        version: 16.2.6(@playwright/test@1.52.0)(react-dom@19.2.6(react@19.2.6))(react@19.2.6)
       react:
         specifier: 19.2.6
         version: 19.2.6
@@ -293,9 +338,15 @@ importers:
       '@oss/tsconfig':
         specifier: workspace:*
         version: link:../../config/tsconfig
+      '@oss/vitest-config':
+        specifier: workspace:*
+        version: link:../../config/vitest
       typescript:
         specifier: 6.0.3
         version: 6.0.3
+      vitest:
+        specifier: 4.1.6
+        version: 4.1.6(@types/node@25.9.0)(@vitest/coverage-v8@4.1.6)(vite@8.0.13(@types/node@25.9.0)(esbuild@0.28.0)(jiti@2.7.0)(tsx@4.22.2))
 
   packages/examples/example-vip-tier:
     dependencies:
@@ -368,7 +419,7 @@ importers:
         version: 2.2.2
       better-auth:
         specifier: 1.6.11
-        version: 1.6.11(drizzle-kit@0.31.10)(drizzle-orm@0.45.2(@types/pg@8.20.0)(kysely@0.28.17)(pg@8.21.0))(next@16.2.6(react-dom@19.2.6(react@19.2.6))(react@19.2.6))(pg@8.21.0)(react-dom@19.2.6(react@19.2.6))(react@19.2.6)(vitest@4.1.6)
+        version: 1.6.11(drizzle-kit@0.31.10)(drizzle-orm@0.45.2(@types/pg@8.20.0)(kysely@0.28.17)(pg@8.21.0))(next@16.2.6(@playwright/test@1.52.0)(react-dom@19.2.6(react@19.2.6))(react@19.2.6))(pg@8.21.0)(react-dom@19.2.6(react@19.2.6))(react@19.2.6)(vitest@4.1.6)
       drizzle-orm:
         specifier: 0.45.2
         version: 0.45.2(@types/pg@8.20.0)(kysely@0.28.17)(pg@8.21.0)
@@ -466,7 +517,7 @@ importers:
         version: link:../db
       better-auth:
         specifier: 1.6.11
-        version: 1.6.11(drizzle-kit@0.31.10)(drizzle-orm@0.45.2(@types/pg@8.20.0)(kysely@0.28.17)(pg@8.21.0))(next@16.2.6(react-dom@19.2.6(react@19.2.6))(react@19.2.6))(pg@8.21.0)(react-dom@19.2.6(react@19.2.6))(react@19.2.6)(vitest@4.1.6)
+        version: 1.6.11(drizzle-kit@0.31.10)(drizzle-orm@0.45.2(@types/pg@8.20.0)(kysely@0.28.17)(pg@8.21.0))(next@16.2.6(@playwright/test@1.52.0)(react-dom@19.2.6(react@19.2.6))(react@19.2.6))(pg@8.21.0)(react-dom@19.2.6(react@19.2.6))(react@19.2.6)(vitest@4.1.6)
       drizzle-orm:
         specifier: 0.45.2
         version: 0.45.2(@types/pg@8.20.0)(kysely@0.28.17)(pg@8.21.0)
@@ -571,9 +622,61 @@ importers:
       '@oss/tsconfig':
         specifier: workspace:*
         version: link:../../config/tsconfig
+      '@oss/vitest-config':
+        specifier: workspace:*
+        version: link:../../config/vitest
       '@types/node':
         specifier: 25.9.0
         version: 25.9.0
+      typescript:
+        specifier: 6.0.3
+        version: 6.0.3
+      vitest:
+        specifier: 4.1.6
+        version: 4.1.6(@types/node@25.9.0)(@vitest/coverage-v8@4.1.6)(vite@8.0.13(@types/node@25.9.0)(esbuild@0.28.0)(jiti@2.7.0)(tsx@4.22.2))
+
+  packages/platform/testing:
+    dependencies:
+      '@oss/adapters':
+        specifier: workspace:*
+        version: link:../../contracts/adapters
+      '@oss/api-runtime':
+        specifier: workspace:*
+        version: link:../api-runtime
+      '@oss/auth':
+        specifier: workspace:*
+        version: link:../auth
+      '@oss/core':
+        specifier: workspace:*
+        version: link:../core
+      '@oss/db':
+        specifier: workspace:*
+        version: link:../db
+      '@oss/modules':
+        specifier: workspace:*
+        version: link:../../modules
+      '@oss/plugin-host':
+        specifier: workspace:*
+        version: link:../plugin-host
+      drizzle-orm:
+        specifier: 0.45.2
+        version: 0.45.2(@types/pg@8.20.0)(kysely@0.28.17)(pg@8.21.0)
+      hono:
+        specifier: 4.12.23
+        version: 4.12.23
+      pg:
+        specifier: 8.21.0
+        version: 8.21.0
+    devDependencies:
+      '@oss/tsconfig':
+        specifier: workspace:*
+        version: link:../../config/tsconfig
+      '@types/node':
+        specifier: 25.9.0
+        version: 25.9.0
+      '@types/pg':
+        specifier: 8.20.0
+        version: 8.20.0
       typescript:
         specifier: 6.0.3
         version: 6.0.3
@@ -610,7 +713,7 @@ importers:
         version: link:../../ui/provider-contract
       next:
         specifier: '>=15'
-        version: 16.2.6(react-dom@19.2.6(react@19.2.6))(react@19.2.6)
+        version: 16.2.6(@playwright/test@1.52.0)(react-dom@19.2.6(react@19.2.6))(react@19.2.6)
       react:
         specifier: '>=19'
         version: 19.2.6
@@ -696,7 +799,7 @@ importers:
         version: 5.100.11(react@19.2.6)
       next:
         specifier: '>=15'
-        version: 16.2.6(react-dom@19.2.6(react@19.2.6))(react@19.2.6)
+        version: 16.2.6(@playwright/test@1.52.0)(react-dom@19.2.6(react@19.2.6))(react@19.2.6)
       react:
         specifier: '>=19'
         version: 19.2.6
@@ -2304,6 +2407,11 @@ packages:
   '@pinojs/redact@0.4.0':
     resolution: {integrity: sha512-k2ENnmBugE/rzQfEcdWHcCY+/FM3VLzH9cYEsbdsoqrvzAKRhUZeRNhAZvB8OitQJ1TBed3yqWtdjzS6wJKBwg==}
 
+  '@playwright/test@1.52.0':
+    resolution: {integrity: sha512-uh6W7sb55hl7D6vsAeA+V2p5JnlAqzhqFyF0VcJkKZXkgnFcVG9PziERRHQfPLfNGx1C292a4JqbWzhR8L4R1g==}
+    engines: {node: '>=18'}
+    hasBin: true
+
   '@rolldown/binding-android-arm64@1.0.1':
     resolution: {integrity: sha512-fJI3I0r3C3Oj/zdBCpaCmBRZYf07xpaq4yCfDDoSFm+beWNzbIl26puW8RraUdugoJw/95zerNOn6jasAhzSmg==}
     engines: {node: ^20.19.0 || >=22.12.0}
@@ -3347,6 +3455,11 @@ packages:
     resolution: {integrity: sha512-Rx/WycZ60HOaqLKAi6cHRKKI7zxWbJ31MhntmtwMoaTeF7XFH9hhBp8vITaMidfljRQ6eYWCKkaTK+ykVJHP2A==}
     engines: {node: '>= 0.8'}
 
+  fsevents@2.3.2:
+    resolution: {integrity: sha512-xiqMQR4xAeHTuB9uWm+fFRcIOgKBMiOBP+eXiyT7jsgVCq1bkVygt00oASowB7EdtpOHaaPgKt812P9ab+DDKA==}
+    engines: {node: ^8.16.0 || ^10.6.0 || >=11.0.0}
+    os: [darwin]
+
   fsevents@2.3.3:
     resolution: {integrity: sha512-5xoDfX+fL7faATnagmWPpbFtwh/R77WmMMqqHGS65C3vvB0YHrgF+B1YmZ3441tMj5n63k0212XNoJwzlhffQw==}
     engines: {node: ^8.16.0 || ^10.6.0 || >=11.0.0}
@@ -3798,6 +3911,16 @@ packages:
   pkce-challenge@5.0.1:
     resolution: {integrity: sha512-wQ0b/W4Fr01qtpHlqSqspcj3EhBvimsdh0KlHhH8HRZnMsEa0ea2fTULOXOS9ccQr3om+GcGRk4e+isrZWV8qQ==}
     engines: {node: '>=16.20.0'}
+
+  playwright-core@1.52.0:
+    resolution: {integrity: sha512-l2osTgLXSMeuLZOML9qYODUQoPPnUsKsb5/P6LJ2e6uPKXUdPK5WYhN4z03G+YNbWmGDY4YENauNu4ZKczreHg==}
+    engines: {node: '>=18'}
+    hasBin: true
+
+  playwright@1.52.0:
+    resolution: {integrity: sha512-JAwMNMBlxJ2oD1kce4KPtMkDeKGHQstdpFPcPH3maElAXon/QZeTvtsfXmTMRyO9TslfoYOXkSsvao2nE1ilTw==}
+    engines: {node: '>=18'}
+    hasBin: true
 
   postcss@8.4.31:
     resolution: {integrity: sha512-PS08Iboia9mts/2ygV3eLpY5ghnUcfLV/EXTOW1E2qYxJKGGBUtNjN76FYHnMs36RmARn41bC0AZmn+rR0OVpQ==}
@@ -5448,6 +5571,10 @@ snapshots:
 
   '@pinojs/redact@0.4.0': {}
 
+  '@playwright/test@1.52.0':
+    dependencies:
+      playwright: 1.52.0
+
   '@rolldown/binding-android-arm64@1.0.1':
     optional: true
 
@@ -5959,7 +6086,7 @@ snapshots:
 
   baseline-browser-mapping@2.10.31: {}
 
-  better-auth@1.6.11(drizzle-kit@0.31.10)(drizzle-orm@0.45.2(@types/pg@8.20.0)(kysely@0.28.17)(pg@8.21.0))(next@16.2.6(react-dom@19.2.6(react@19.2.6))(react@19.2.6))(pg@8.21.0)(react-dom@19.2.6(react@19.2.6))(react@19.2.6)(vitest@4.1.6):
+  better-auth@1.6.11(drizzle-kit@0.31.10)(drizzle-orm@0.45.2(@types/pg@8.20.0)(kysely@0.28.17)(pg@8.21.0))(next@16.2.6(@playwright/test@1.52.0)(react-dom@19.2.6(react@19.2.6))(react@19.2.6))(pg@8.21.0)(react-dom@19.2.6(react@19.2.6))(react@19.2.6)(vitest@4.1.6):
     dependencies:
       '@better-auth/core': 1.6.11(@better-auth/utils@0.4.0)(@better-fetch/fetch@1.1.21)(better-call@1.3.5(zod@4.4.3))(jose@6.2.3)(kysely@0.28.17)(nanostores@1.3.0)
       '@better-auth/drizzle-adapter': 1.6.11(@better-auth/core@1.6.11(@better-auth/utils@0.4.0)(@better-fetch/fetch@1.1.21)(better-call@1.3.5(zod@4.4.3))(jose@6.2.3)(kysely@0.28.17)(nanostores@1.3.0))(@better-auth/utils@0.4.0)(drizzle-orm@0.45.2(@types/pg@8.20.0)(kysely@0.28.17)(pg@8.21.0))
@@ -5981,7 +6108,7 @@ snapshots:
     optionalDependencies:
       drizzle-kit: 0.31.10
       drizzle-orm: 0.45.2(@types/pg@8.20.0)(kysely@0.28.17)(pg@8.21.0)
-      next: 16.2.6(react-dom@19.2.6(react@19.2.6))(react@19.2.6)
+      next: 16.2.6(@playwright/test@1.52.0)(react-dom@19.2.6(react@19.2.6))(react@19.2.6)
       pg: 8.21.0
       react: 19.2.6
       react-dom: 19.2.6(react@19.2.6)
@@ -6376,6 +6503,9 @@ snapshots:
 
   fresh@2.0.0: {}
 
+  fsevents@2.3.2:
+    optional: true
+
   fsevents@2.3.3:
     optional: true
 
@@ -6621,7 +6751,7 @@ snapshots:
 
   negotiator@1.0.0: {}
 
-  next@16.2.6(react-dom@19.2.6(react@19.2.6))(react@19.2.6):
+  next@16.2.6(@playwright/test@1.52.0)(react-dom@19.2.6(react@19.2.6))(react@19.2.6):
     dependencies:
       '@next/env': 16.2.6
       '@swc/helpers': 0.5.15
@@ -6640,6 +6770,7 @@ snapshots:
       '@next/swc-linux-x64-musl': 16.2.6
       '@next/swc-win32-arm64-msvc': 16.2.6
       '@next/swc-win32-x64-msvc': 16.2.6
+      '@playwright/test': 1.52.0
       sharp: 0.34.5
     transitivePeerDependencies:
       - '@babel/core'
@@ -6790,6 +6921,14 @@ snapshots:
       thread-stream: 4.2.0
 
   pkce-challenge@5.0.1: {}
+
+  playwright-core@1.52.0: {}
+
+  playwright@1.52.0:
+    dependencies:
+      playwright-core: 1.52.0
+    optionalDependencies:
+      fsevents: 2.3.2
 
   postcss@8.4.31:
     dependencies:

@@ -12,6 +12,7 @@
 import { createAuth } from '@oss/auth';
 import { createDrizzleDb } from '@oss/db';
 import { seedDemoData } from '@oss/api-runtime';
+import { user, session, account, verification, twoFactor } from '@oss/modules/platform/identity/schema';
 
 function arg(name: string): string | undefined {
   const hit = process.argv.find((a) => a.startsWith(`--${name}=`));
@@ -22,7 +23,9 @@ async function main() {
   const databaseUrl =
     process.env['DATABASE_URL'] ?? 'postgresql://postgres:postgres@localhost:5432/oss_igaming';
   const db = createDrizzleDb(databaseUrl);
-  const auth = createAuth({ db });
+  // better-auth's drizzle adapter needs the auth tables passed as schema, else
+  // user creation throws "model user not found". See @oss/auth createAuth().
+  const auth = createAuth({ db, schema: { user, session, account, verification, twoFactor } });
 
   const result = await seedDemoData({
     db,

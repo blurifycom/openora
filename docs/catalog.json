@@ -183,14 +183,25 @@
       "tables": [
         "account",
         "session",
+        "twoFactor",
         "user",
         "verification"
       ],
       "routes": [
+        "identity.changeEmail",
+        "identity.changePassword",
+        "identity.disable2fa",
+        "identity.enable2fa",
         "identity.login",
         "identity.logout",
         "identity.me",
-        "identity.register"
+        "identity.register",
+        "identity.requestPasswordReset",
+        "identity.resetPassword",
+        "identity.sendEmailVerification",
+        "identity.updateProfile",
+        "identity.verify2fa",
+        "identity.verifyEmail"
       ]
     },
     {
@@ -282,6 +293,7 @@
       "token": "NOTIFICATION_DELIVERY_ADAPTER",
       "status": "wired",
       "boundIn": [
+        "packages/modules/platform/identity/src/plugin.ts",
         "packages/modules/platform/notifications/src/plugin.ts"
       ]
     },
@@ -323,6 +335,11 @@
     "compliance.limit.upserted",
     "gaming.round.ended",
     "gaming.round.started",
+    "identity.2fa.disabled",
+    "identity.2fa.enabled",
+    "identity.email.verified",
+    "identity.password.reset",
+    "identity.profile.updated",
     "identity.user.login",
     "identity.user.registered",
     "leaderboard.reset",
@@ -378,6 +395,14 @@
       "file": "packages/contracts/orpc-contract/src/igaming-aggregator.ts"
     },
     {
+      "name": "ChangeEmailInputSchema",
+      "file": "packages/contracts/shared-schemas/src/identity.ts"
+    },
+    {
+      "name": "ChangePasswordInputSchema",
+      "file": "packages/contracts/shared-schemas/src/identity.ts"
+    },
+    {
       "name": "ChatMessageSchema",
       "file": "packages/contracts/orpc-contract/src/chat.ts"
     },
@@ -396,6 +421,18 @@
     {
       "name": "DepositInputSchema",
       "file": "packages/contracts/orpc-contract/src/wallet.ts"
+    },
+    {
+      "name": "Disable2faInputSchema",
+      "file": "packages/contracts/shared-schemas/src/identity.ts"
+    },
+    {
+      "name": "Enable2faInputSchema",
+      "file": "packages/contracts/shared-schemas/src/identity.ts"
+    },
+    {
+      "name": "Enable2faResultSchema",
+      "file": "packages/contracts/shared-schemas/src/identity.ts"
     },
     {
       "name": "EndRoundInputSchema",
@@ -428,6 +465,10 @@
     {
       "name": "GeoRuleSchema",
       "file": "packages/contracts/orpc-contract/src/compliance.ts"
+    },
+    {
+      "name": "IdentitySuccessSchema",
+      "file": "packages/contracts/shared-schemas/src/identity.ts"
     },
     {
       "name": "IgamingConfigSchema",
@@ -538,6 +579,14 @@
       "file": "packages/contracts/shared-schemas/src/identity.ts"
     },
     {
+      "name": "RequestPasswordResetInputSchema",
+      "file": "packages/contracts/shared-schemas/src/identity.ts"
+    },
+    {
+      "name": "ResetPasswordInputSchema",
+      "file": "packages/contracts/shared-schemas/src/identity.ts"
+    },
+    {
       "name": "SportsbookBetSchema",
       "file": "packages/contracts/orpc-contract/src/sportsbook.ts"
     },
@@ -570,6 +619,14 @@
       "file": "packages/contracts/orpc-contract/src/wallet.ts"
     },
     {
+      "name": "UpdatePlayerProfileInputSchema",
+      "file": "packages/contracts/orpc-contract/src/profile.ts"
+    },
+    {
+      "name": "UpdateProfileInputSchema",
+      "file": "packages/contracts/shared-schemas/src/identity.ts"
+    },
+    {
       "name": "UserBonusSchema",
       "file": "packages/contracts/orpc-contract/src/bonus.ts"
     },
@@ -584,6 +641,14 @@
     {
       "name": "UuidSchema",
       "file": "packages/contracts/shared-schemas/src/common.ts"
+    },
+    {
+      "name": "Verify2faInputSchema",
+      "file": "packages/contracts/shared-schemas/src/identity.ts"
+    },
+    {
+      "name": "VerifyEmailInputSchema",
+      "file": "packages/contracts/shared-schemas/src/identity.ts"
     },
     {
       "name": "WalletBalanceSchema",

@@ -7,6 +7,21 @@ export { ApiClientProvider, useApiClient } from './context/api-client.js';
 export { useOrpcClient } from './hooks/use-orpc-client.js';
 export { useSession, useLogin, useLogout, useRegister } from './hooks/auth.js';
 export { useCurrentUser } from './hooks/user.js';
+export {
+  useEnable2fa,
+  useVerify2fa,
+  useDisable2fa,
+  useRequestPasswordReset,
+  useResetPassword,
+  useChangePassword,
+  useSendEmailVerification,
+  useVerifyEmail,
+  useUpdateProfile,
+  usePlayerProfile,
+  useUpdatePlayerProfile,
+  type Enable2faResult,
+  type PlayerProfile,
+} from './hooks/account.js';
 
 // UI provider context (consumer-facing access to Button/DataTable/etc primitives)
 export { UIProvider, useUI } from './ui-provider.js';

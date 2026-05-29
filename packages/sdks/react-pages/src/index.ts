@@ -86,6 +86,8 @@ export { PlayerGamesPage, type PlayerGamesPageProps } from './player/games.js';
 export { PlayerWalletPage } from './player/wallet.js';
 export { PlayerSportsbookPage, type PlayerSportsbookPageProps } from './player/sportsbook.js';
 export { PlayerChatPage, type PlayerChatPageProps } from './player/chat.js';
+export { ForgotPasswordPage, ResetPasswordPage } from './player/auth.js';
+export { PlayerSettingsPage } from './player/settings.js';
 
 // UI plugin system (extension points - see ADR-0006 + ADR-0013)
 export {

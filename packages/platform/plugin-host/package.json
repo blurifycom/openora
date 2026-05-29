@@ -16,7 +16,8 @@
     "build": "tsc",
     "typecheck": "tsc --noEmit",
     "clean": "rm -rf dist",
-    "test": "vitest run"
+    "test": "vitest run",
+    "test:unit": "vitest run --passWithNoTests"
   },
   "dependencies": {
     "@oss/adapters": "workspace:*",
@@ -24,7 +25,9 @@
   },
   "devDependencies": {
     "@oss/tsconfig": "workspace:*",
+    "@oss/vitest-config": "workspace:*",
     "@types/node": "25.9.0",
-    "typescript": "6.0.3"
+    "typescript": "6.0.3",
+    "vitest": "4.1.6"
   }
 }
