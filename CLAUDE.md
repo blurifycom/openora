@@ -31,7 +31,7 @@ apps/
   mcp-server-dev/ # MCP dev server (stdio) - agents connect via .mcp.json
   extensions/     # In-tree overlay plugins (drop-in folders)
 packages/
-  config/         # tsconfig, vitest, oxlint, eslint-boundaries presets
+  config/         # tsconfig, vitest, oxlint presets (boundary lint = tools/oxlint-boundaries-plugin.mjs)
   contracts/
     shared-schemas/ # Zod schemas - the source of truth
     orpc-contract/  # Root oRPC contract composing module routers
@@ -42,9 +42,12 @@ packages/
     db/           # @oss/db - Drizzle client (DrizzleService) + drizzle-kit migrations
     plugin-host/  # definePlugin, ModuleRegistry, loader
     mcp/          # @oss/mcp - publishable MCP server consumers run against their own repo
-  modules/        # @oss/modules - ONE package; feature modules grouped by surface:
+  modules/        # @oss/modules - ONE package; BACKEND feature modules (Drizzle +
+                  #   service + oRPC router), grouped by the surface they primarily
+                  #   serve. These are NOT frontend - the front lives in apps/web +
+                  #   apps/backoffice and consumes these routers via the SDK.
     player/       #   wallet gaming lobby chat bonus aggregator
-    backoffice/   #   admin-console player-management cms
+    backoffice/   #   admin-console player-management cms   (admin-surface backend, NOT UI)
     platform/     #   identity notifications compliance localization
   sdks/
     sdk-core/     # @oss/sdk-core - framework-agnostic typed client (no React)
@@ -93,6 +96,7 @@ extensions.config.ts # the single registry of enabled plugins
 ## Naming
 
 - Packages: `@oss/<kebab>`. Feature modules are NOT separate packages - they live inside `@oss/modules` and are imported by subpath: `@oss/modules/<group>/<name>` and `@oss/modules/<group>/<name>/schema`.
+- Module group (`player` / `backoffice` / `platform`) names the **surface a backend module serves**, not a UI layer. A module exposes API only (no JSX); UI is composed in `apps/*` + the react SDK. A module's public API is its root entry plus the `/schema` subpath - reaching into its internals is a lint error (`no-module-internal-import`).
 - Files: `kebab-case.ts`. One concept per file.
 - Types: `PascalCase`. Schemas: `<Name>Schema`. Inferred: `type <Name> = z.infer<typeof <Name>Schema>`.
 - oRPC routers: namespace by module (`wallet.transactions.list`).
@@ -178,6 +182,8 @@ pnpm verify        # typecheck + lint (incl. boundaries + module shape) + test
 ```
 
 `pnpm seed` is idempotent and deterministic. Logs in with `admin@oss.dev` / `password123`. Flags: `--players=<n>`, `--admin-email=<e>`, `--admin-password=<p>`. The reusable `seedDemoData()` lives in `@oss/api-runtime` so downstream consumers can seed too.
+
+Docker is library-first: `docker compose up` starts only postgres (apps run on the host via `pnpm dev`). To run the whole reference stack in containers instead, use the opt-in `full` profile: `docker compose --profile full up --build` (api :3001, web :3000, backoffice :3002, via the root multi-target `Dockerfile`). This is a reference convenience, not the production deploy path - downstream operators containerize their own apps. The Docker build is not part of `pnpm verify`/CI.
 
 ## How to verify before opening a PR
 

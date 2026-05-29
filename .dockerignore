@@ -1,0 +1,12 @@
+# Optional reference-image build context (see Dockerfile). Keep the build lean.
+**/node_modules
+**/dist
+**/.next
+**/.turbo
+**/coverage
+**/*.tsbuildinfo
+.git
+.github
+docs
+*.md
+postgres_data

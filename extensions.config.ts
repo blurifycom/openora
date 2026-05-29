@@ -33,9 +33,9 @@ export const extensions = [
   // Durable job-queue driver. Self-disabling: rebinds JOB_QUEUE to BullMQ only
   // when REDIS_URL is set, otherwise leaves the in-process default (safe for
   // dev/test/CI). See ADR-0014.
-  { id: 'bullmq', path: './apps/api/dist/src/extensions/bullmq/plugin.js' },
+  { id: 'bullmq', path: './apps/api/dist/extensions/bullmq/plugin.js' },
   //
   // Reference overlay - registered LAST so it can react to wallet.deposit.completed.
   // Paired with @oss/example-vip-tier (client UI plugin).
-  { id: 'vip-tier-server', path: './apps/api/dist/src/extensions/vip-tier-server/plugin.js' },
+  { id: 'vip-tier-server', path: './apps/api/dist/extensions/vip-tier-server/plugin.js' },
 ];

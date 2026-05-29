@@ -1,11 +1,21 @@
 // Architectural boundary enforcement for oxlint (replaces eslint-plugin-boundaries).
 // Loaded via jsPlugins in .oxlintrc.json. API is ESLint v9-compatible.
 //
-// Rules mirror the four enforced classes in AGENTS.md > Dependency rules:
-//   no-cross-module-import  - modules must not import another module's code (schema subpath ok)
-//   no-platform-to-module   - platform/* (except api-runtime) must not import modules or UI
-//   no-contracts-to-runtime - contracts/* may import only other contracts and zod
-//   no-deep-dist-import     - never @oss/*/dist/** deep paths
+// Why a hand-written plugin and not eslint-plugin-boundaries:
+//   oxlint CAN load eslint-plugin-boundaries as a jsPlugin (settings are honored),
+//   so the "no oxlint equivalent" concern is moot. But boundaries enforces nothing
+//   unless every @oss/* import resolves to a file - which means a native import
+//   resolver (unrs-resolver) plus a maintained lint-only tsconfig mapping all ~24
+//   @oss/* packages to src (pnpm otherwise resolves them to dist and misclassifies
+//   elements). This plugin matches specifier strings directly: zero deps, zero
+//   resolution, fast. We deliberately keep it. See ADR-0015.
+//
+// Rules mirror the enforced classes in AGENTS.md > Dependency rules:
+//   no-cross-module-import     - modules must not import another module's code (schema subpath ok)
+//   no-module-internal-import  - no module may be imported via a non-public subpath (root + /schema only)
+//   no-platform-to-module      - platform/* (except api-runtime) must not import modules or UI
+//   no-contracts-to-runtime    - contracts/* may import only other contracts and zod
+//   no-deep-dist-import        - never @oss/*/dist/** deep paths
 
 function filename(context) {
   return (context.filename ?? context.getFilename?.() ?? '').replace(/\\/g, '/');
@@ -36,6 +46,37 @@ const noCrossModuleImport = {
             "Modules must not import another module's code. " +
             'Use events (@Inject(EVENT_BUS)) or the schema subpath ' +
             '(@oss/modules/<group>/<name>/schema). See AGENTS.md > Dependency rules.',
+        });
+      },
+    };
+  },
+};
+
+// A module's public API is its root entry (@oss/modules/<group>/<name>) plus the
+// read-only schema subpath (@oss/modules/<group>/<name>/schema). Any deeper path
+// reaches into a module's internals (service/, router/, schemas/, ui/, ...) and is
+// forbidden from anywhere - the bare cross-module case is handled by
+// no-cross-module-import; this rule closes the "barrel" gap for subpath imports.
+function isDisallowedModuleSubpath(spec) {
+  if (!spec.startsWith('@oss/modules/')) return false;
+  const tail = spec.slice('@oss/modules/'.length).split('/').filter(Boolean);
+  if (tail.length <= 2) return false; // bare <group>/<name> -> no-cross-module-import
+  if (tail.length === 3 && tail[2] === 'schema') return false; // public schema subpath
+  return true;
+}
+
+const noModuleInternalImport = {
+  create(context) {
+    return {
+      ImportDeclaration(node) {
+        if (!isDisallowedModuleSubpath(node.source.value)) return;
+        context.report({
+          node,
+          message:
+            'Import a module only through its public entry ' +
+            '(@oss/modules/<group>/<name>) or its schema subpath ' +
+            '(@oss/modules/<group>/<name>/schema). Reaching into a module ' +
+            "(service/, router/, ui/, ...) is forbidden. See AGENTS.md > Dependency rules.",
         });
       },
     };
@@ -198,6 +239,7 @@ export default {
   meta: { name: 'oss-boundaries' },
   rules: {
     'no-cross-module-import': noCrossModuleImport,
+    'no-module-internal-import': noModuleInternalImport,
     'no-platform-to-module': noPlatformToModule,
     'no-contracts-to-runtime': noContractsToRuntime,
     'no-deep-dist-import': noDeepDistImport,
