@@ -1,11 +1,7 @@
 'use client';
 
-import { useRouter, usePathname } from 'next/navigation';
-import Link from 'next/link';
 import type { ReactNode } from 'react';
-import { useUI } from '@oss/react-hooks';
-import { useCurrentUser } from '@oss/react-hooks';
-import { useLogout } from '@oss/react-hooks';
+import { Link, useCurrentUser, useLogout, useNavigate, usePathname, useUI } from '@oss/react-hooks';
 import { useNavItems } from '../ui-plugin/registry.js';
 import type { AppShellNavItem } from '../ui-plugin/context.js';
 import {
@@ -44,7 +40,7 @@ export function AppShell({
   loginPath?: string;
 }) {
   const pathname = usePathname();
-  const router = useRouter();
+  const navigate = useNavigate();
   const { Button } = useUI();
   const { data: user } = useCurrentUser() as { data: CurrentUser };
   const logout = useLogout();
@@ -64,7 +60,7 @@ export function AppShell({
 
   const onLogout = async (): Promise<void> => {
     await logout.mutateAsync(undefined as never).catch(() => undefined);
-    router.replace(loginPath);
+    navigate.replace(loginPath);
   };
 
   return (

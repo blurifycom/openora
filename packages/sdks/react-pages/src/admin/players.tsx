@@ -1,12 +1,9 @@
 'use client';
 
 import { useMemo, useState } from 'react';
-import { useRouter } from 'next/navigation';
 import { PlayerSchema, PlayerStatusSchema } from '@oss/orpc-contract';
 import type { z } from 'zod';
-import { useOrpcClient, PageContextProvider } from '@oss/react-hooks';
-import { usePaginatedList } from '@oss/react-hooks';
-import { useUI } from '@oss/react-hooks';
+import { useNavigate, useOrpcClient, PageContextProvider, usePaginatedList, useUI } from '@oss/react-hooks';
 import { Slot, useSlotColumns, SLOTS } from '../ui-plugin/index.js';
 import { Pagination } from '@oss/react-blocks/admin';
 
@@ -42,7 +39,7 @@ export function PlayersListPage({
   basePath = '/players',
   analyticsHref,
 }: { basePath?: string; analyticsHref?: string } = {}) {
-  const router = useRouter();
+  const navigate = useNavigate();
   const client = useOrpcClient();
   const { Input, Button, Badge, DataTable } = useUI();
   const pluginColumns = useSlotColumns(SLOTS.players.columns);
@@ -101,7 +98,7 @@ export function PlayersListPage({
       key: 'id',
       header: '',
       render: (v: unknown) => (
-        <Button size="sm" variant="ghost" onClick={() => router.push(`${basePath}/${v as string}`)}>
+        <Button size="sm" variant="ghost" onClick={() => navigate.push(`${basePath}/${v as string}`)}>
           View
         </Button>
       ),
@@ -133,7 +130,7 @@ export function PlayersListPage({
           <div className="page-header__hint">{total} total</div>
         </div>
         {analyticsHref && (
-          <Button variant="outline" size="sm" onClick={() => router.push(analyticsHref)}>
+          <Button variant="outline" size="sm" onClick={() => navigate.push(analyticsHref)}>
             Analytics →
           </Button>
         )}

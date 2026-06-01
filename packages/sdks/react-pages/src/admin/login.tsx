@@ -1,9 +1,7 @@
 'use client';
 
 import { useState, type FormEvent } from 'react';
-import { useRouter } from 'next/navigation';
-import { useLogin } from '@oss/react-hooks';
-import { useUI } from '@oss/react-hooks';
+import { useLogin, useNavigate, useUI } from '@oss/react-hooks';
 
 export function LoginPage({
   title = 'Sign in',
@@ -16,7 +14,7 @@ export function LoginPage({
   subtitle?: string;
   redirectTo?: string;
 }) {
-  const router = useRouter();
+  const navigate = useNavigate();
   const { Card, Input, Button } = useUI();
   const login = useLogin();
 
@@ -27,7 +25,7 @@ export function LoginPage({
     e.preventDefault();
     try {
       await login.mutateAsync({ email, password });
-      router.replace(redirectTo);
+      navigate.replace(redirectTo);
     } catch {
       // surfaced via login.error
     }

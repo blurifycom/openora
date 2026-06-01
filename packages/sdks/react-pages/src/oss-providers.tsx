@@ -3,7 +3,13 @@
 import { useMemo, useState, type ReactNode } from 'react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import type { UIProvider as UIProviderShape } from '@oss/ui-provider-contract';
-import { ApiClientProvider, useCurrentUser, UIProvider } from '@oss/react-hooks';
+import {
+  ApiClientProvider,
+  NavigationProvider,
+  useCurrentUser,
+  UIProvider,
+  type NavigationAdapter,
+} from '@oss/react-hooks';
 import { ThemeProvider, useActiveBrand, type ThemePresetName, type Theme } from './theme.js';
 import { SlotEvaluationContextProvider, UIPluginProvider, type UIPlugin } from './ui-plugin/index.js';
 
@@ -19,6 +25,12 @@ export type OssProvidersProps = {
    * a `/platform/config/public` endpoint - not shipped yet).
    */
   features?: Record<string, boolean>;
+  /**
+   * Host navigation adapter. The Next `web` app passes a `next/navigation`-backed
+   * adapter; the Vite + TanStack Router `backoffice` passes a router-backed one.
+   * Without it, pages that navigate (`useNavigate`, `<Link>`) throw on first use.
+   */
+  navigationAdapter?: NavigationAdapter;
   queryClient?: QueryClient;
   children: ReactNode;
 };
@@ -51,13 +63,14 @@ export function OssProviders({
   theme,
   plugins = [],
   features = {},
+  navigationAdapter,
   queryClient: externalQC,
   children,
 }: OssProvidersProps) {
   const [defaultQC] = useState(() => new QueryClient());
   const qc = externalQC ?? defaultQC;
 
-  return (
+  const tree = (
     <QueryClientProvider client={qc}>
       <ApiClientProvider client={{ baseUrl: apiUrl }}>
         <ThemeProvider {...(themePreset ? { preset: themePreset } : {})} {...(theme ? { theme } : {})}>
@@ -69,5 +82,11 @@ export function OssProviders({
         </ThemeProvider>
       </ApiClientProvider>
     </QueryClientProvider>
+  );
+
+  return navigationAdapter ? (
+    <NavigationProvider adapter={navigationAdapter}>{tree}</NavigationProvider>
+  ) : (
+    tree
   );
 }

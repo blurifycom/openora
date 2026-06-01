@@ -4,6 +4,7 @@ import type { ReactNode } from 'react';
 import { OssProviders, type UIPlugin } from '@oss/react-pages';
 import { daisyuiProvider } from '@oss/ui-provider-daisyui';
 import { vipTierPlugin } from '@oss/example-vip-tier';
+import { nextNavigationAdapter } from './navigation-adapter';
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:3001';
 
@@ -15,7 +16,13 @@ const features: Record<string, boolean> = isDev ? { vipTier: true } : {};
 
 export function Providers({ children }: { children: ReactNode }) {
   return (
-    <OssProviders apiUrl={API_URL} uiProvider={daisyuiProvider} plugins={plugins} features={features}>
+    <OssProviders
+      apiUrl={API_URL}
+      uiProvider={daisyuiProvider}
+      plugins={plugins}
+      features={features}
+      navigationAdapter={nextNavigationAdapter}
+    >
       {children}
     </OssProviders>
   );

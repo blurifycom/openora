@@ -1,10 +1,8 @@
 'use client';
 
 import { useState } from 'react';
-import { useRouter } from 'next/navigation';
 import { useQuery } from '@tanstack/react-query';
-import { useOrpcClient } from '@oss/react-hooks';
-import { useUI } from '@oss/react-hooks';
+import { useNavigate, useOrpcClient, useUI } from '@oss/react-hooks';
 import { StatCard } from '@oss/react-blocks/admin';
 import { Skeleton } from '@oss/react-blocks/admin';
 import { TimeSeriesChart } from '@oss/react-blocks/admin';
@@ -21,7 +19,7 @@ const WINDOWS = [
  */
 export function PlayersDashboardPage({ listHref }: { listHref?: string } = {}) {
   const client = useOrpcClient();
-  const router = useRouter();
+  const navigate = useNavigate();
   const { Button } = useUI();
   const [days, setDays] = useState(30);
 
@@ -43,7 +41,7 @@ export function PlayersDashboardPage({ listHref }: { listHref?: string } = {}) {
           <div className="page-header__hint">Acquisition & lifecycle overview</div>
         </div>
         {listHref && (
-          <Button variant="outline" size="sm" onClick={() => router.push(listHref)}>
+          <Button variant="outline" size="sm" onClick={() => navigate.push(listHref)}>
             All players →
           </Button>
         )}

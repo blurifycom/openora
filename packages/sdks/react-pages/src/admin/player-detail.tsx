@@ -1,12 +1,10 @@
 'use client';
 
 import { useMemo, useState } from 'react';
-import Link from 'next/link';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { PlayerSchema, PlayerStatusSchema, KycStatusSchema } from '@oss/orpc-contract';
 import type { z } from 'zod';
-import { useOrpcClient, PageContextProvider } from '@oss/react-hooks';
-import { useUI } from '@oss/react-hooks';
+import { Link, useOrpcClient, PageContextProvider, useUI } from '@oss/react-hooks';
 import { Slot, SLOTS } from '../ui-plugin/index.js';
 import { SkeletonDetail } from '@oss/react-blocks/admin';
 

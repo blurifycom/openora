@@ -1,8 +1,7 @@
 'use client';
 
 import { useEffect, type ReactNode } from 'react';
-import { useRouter } from 'next/navigation';
-import { useSession } from '@oss/react-hooks';
+import { useNavigate, useSession } from '@oss/react-hooks';
 
 type SessionResponse = { id?: string; user?: { id?: string } } | null | undefined;
 
@@ -13,7 +12,7 @@ export function AuthGuard({
   children: ReactNode;
   loginPath?: string;
 }) {
-  const router = useRouter();
+  const navigate = useNavigate();
   const { data, isLoading, isError } = useSession() as {
     data: SessionResponse;
     isLoading: boolean;
@@ -26,9 +25,9 @@ export function AuthGuard({
 
   useEffect(() => {
     if (!isLoading && (isError || !hasSession)) {
-      router.replace(loginPath);
+      navigate.replace(loginPath);
     }
-  }, [isLoading, isError, hasSession, router, loginPath]);
+  }, [isLoading, isError, hasSession, navigate, loginPath]);
 
   if (isLoading || !hasSession) {
     return (

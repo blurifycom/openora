@@ -1,8 +1,13 @@
 'use client';
 
 import { useState, type FormEvent } from 'react';
-import { useRouter, useSearchParams } from 'next/navigation';
-import { useRequestPasswordReset, useResetPassword, useUI } from '@oss/react-hooks';
+import {
+  useNavigate,
+  useRequestPasswordReset,
+  useResetPassword,
+  useSearchParam,
+  useUI,
+} from '@oss/react-hooks';
 
 function errorOf(e: unknown): string | undefined {
   return e instanceof Error ? e.message : undefined;
@@ -72,9 +77,8 @@ export function ResetPasswordPage({
   title?: string;
   redirectTo?: string;
 }) {
-  const router = useRouter();
-  const params = useSearchParams();
-  const token = params.get('token') ?? '';
+  const navigate = useNavigate();
+  const token = useSearchParam('token') ?? '';
   const { Card, Input, Button } = useUI();
   const reset = useResetPassword();
   const [newPassword, setNewPassword] = useState('');
@@ -83,7 +87,7 @@ export function ResetPasswordPage({
     e.preventDefault();
     try {
       await reset.mutateAsync({ token, newPassword });
-      router.replace(redirectTo);
+      navigate.replace(redirectTo);
     } catch {
       // surfaced via reset.error
     }

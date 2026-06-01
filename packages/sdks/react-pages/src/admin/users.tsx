@@ -1,11 +1,8 @@
 'use client';
 
-import { useRouter } from 'next/navigation';
 import { AdminUserSchema } from '@oss/orpc-contract';
 import type { z } from 'zod';
-import { useOrpcClient } from '@oss/react-hooks';
-import { usePaginatedList } from '@oss/react-hooks';
-import { useUI } from '@oss/react-hooks';
+import { useNavigate, useOrpcClient, usePaginatedList, useUI } from '@oss/react-hooks';
 import { useSlotColumns, Slot, SLOTS } from '../ui-plugin/index.js';
 import { Pagination } from '@oss/react-blocks/admin';
 
@@ -14,7 +11,7 @@ type Row = z.infer<typeof AdminUserSchema> & Record<string, unknown>;
 const PAGE_SIZE = 20;
 
 export function UsersListPage({ basePath = '/users' }: { basePath?: string } = {}) {
-  const router = useRouter();
+  const navigate = useNavigate();
   const client = useOrpcClient();
   const { Input, Button, Badge, DataTable } = useUI();
   const pluginColumns = useSlotColumns(SLOTS.users.columns);
@@ -56,7 +53,7 @@ export function UsersListPage({ basePath = '/users' }: { basePath?: string } = {
       key: 'id',
       header: '',
       render: (v: unknown) => (
-        <Button size="sm" variant="ghost" onClick={() => router.push(`${basePath}/${v as string}`)}>
+        <Button size="sm" variant="ghost" onClick={() => navigate.push(`${basePath}/${v as string}`)}>
           View
         </Button>
       ),

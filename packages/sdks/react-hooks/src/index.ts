@@ -26,6 +26,18 @@ export {
 // UI provider context (consumer-facing access to Button/DataTable/etc primitives)
 export { UIProvider, useUI } from './ui-provider.js';
 
+// Framework-agnostic navigation seam (host injects a Next or TanStack adapter)
+export {
+  NavigationProvider,
+  Link,
+  usePathname,
+  useNavigate,
+  useSearchParam,
+  type NavigationAdapter,
+  type NavLinkProps,
+  type Navigate,
+} from './navigation.js';
+
 // Data hooks
 export { usePaginatedList, type PaginatedListState } from './hooks/use-paginated-list.js';
 export {
