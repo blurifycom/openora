@@ -9,11 +9,12 @@ stages:
   - integration
   - e2e
 
-# Run on merge requests and on the default branch (mirrors GitHub on: push to main + pull_request).
+# Run on merge requests and on the long-lived branches (default + env branches).
 workflow:
   rules:
     - if: $CI_PIPELINE_SOURCE == "merge_request_event"
     - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
+    - if: $CI_COMMIT_BRANCH =~ /^(dev|stage)$/
 
 # Global env - matches the GitHub workflow `env:` block.
 variables:

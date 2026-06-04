@@ -2,7 +2,7 @@ name: CI
 
 on:
   push:
-    branches: [main]
+    branches: [main, stage, dev]
   pull_request:
 
 # Cancel superseded runs on the same ref.
