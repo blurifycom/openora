@@ -22,7 +22,7 @@ export const tanstackNavigationAdapter: NavigationAdapter = {
   useSearchParam: (key) => {
     const search = useRouterState({ select: (s) => s.location.search }) as Record<string, unknown>;
     const value = search[key];
-    return value == null ? null : String(value);
+    return value === null || value === undefined ? null : String(value);
   },
   // SDK pages only ever pass `className` to <Link>; forward that and drop the
   // other anchor attrs rather than fight TanStack's strict typed-link props.
