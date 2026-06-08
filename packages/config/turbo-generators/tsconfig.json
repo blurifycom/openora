@@ -1,0 +1,9 @@
+{
+  "extends": "@oss/tsconfig/node.json",
+  "compilerOptions": {
+    "rootDir": "src",
+    "noEmit": true,
+    "jsx": "preserve"
+  },
+  "include": ["src"]
+}
