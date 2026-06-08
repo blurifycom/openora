@@ -1,0 +1,24 @@
+// rulesync config - single source of truth for all AI-agent instruction files.
+// Source lives in .rulesync/ (rules, subagents, commands, mcp.json).
+// Regenerate with `pnpm sync:agents`; CI checks with `pnpm sync:agents:check`.
+{
+  "$schema": "https://github.com/dyoshikawa/rulesync/releases/latest/download/config-schema.json",
+
+  // Agents this repo targets, with per-target features. agentsmd is rules-only so
+  // AGENTS.md stays a clean human brief (no simulated-command boilerplate).
+  // Hooks + permissions are NOT managed here - .claude/settings.json is hand-maintained
+  // (it holds the guard hooks), so rulesync never clobbers it.
+  "targets": {
+    "agentsmd": ["rules"],
+    "claudecode": ["rules", "mcp", "subagents", "commands"],
+    "copilot": ["rules", "mcp", "subagents", "commands", "hooks"],
+    "geminicli": ["rules", "mcp", "subagents", "commands", "hooks"]
+  },
+
+  // rulesync emits Copilot agents/prompts natively - no simulation needed.
+  "simulateCommands": false,
+  "simulateSubagents": false,
+
+  // Never bulk-delete output dirs (eg .github also holds workflows).
+  "delete": false
+}

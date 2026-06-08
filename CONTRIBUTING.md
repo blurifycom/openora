@@ -32,7 +32,7 @@ Backoffice login: `admin@oss.dev` / `password123` (see `pnpm seed --help` for fl
 | `pnpm verify` | typecheck + lint (incl. boundaries + module shape) + unit tests |
 | `pnpm test:integration` | service/router tests against real Postgres |
 | `pnpm test:e2e` | Playwright against the reference apps |
-| `pnpm sync:agent-docs` | regenerate CLAUDE.md / .cursorrules from AGENTS.md |
+| `pnpm sync:agents` | regenerate the per-tool agent files (AGENTS.md / CLAUDE.md / GEMINI.md / Copilot) from `.rulesync/` via rulesync |
 
 ## Scaffolding (don't hand-roll)
 
@@ -77,7 +77,9 @@ generator and fails on an uncommitted diff. So if you touched schemas or routes,
 - New functionality enters only via `definePlugin`. No auto-discovery, no magic.
 - ASCII only in code. Short dashes (-) only.
 - Don't hand-edit generated files: drizzle migrations, `docs/openapi.json`, `docs/CATALOG.md`,
-  `CLAUDE.md`, `.cursorrules`.
+  and the rulesync-generated agent files (`AGENTS.md`, `CLAUDE.md`, `GEMINI.md`,
+  `.github/copilot-instructions.md`, and the `.claude/`, `.github/`, `.gemini/` mirrors) - edit
+  `.rulesync/` and run `pnpm sync:agents`.
 
 ## Working with AI agents
 

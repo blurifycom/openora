@@ -1,0 +1,11 @@
+{
+  "version": 1,
+  "hooks": {
+    "preToolUse": [
+      { "type": "command", "command": "node .rulesync/hooks/guard-generated.mjs" }
+    ],
+    "postToolUse": [
+      { "type": "command", "command": "node .rulesync/hooks/post-edit.mjs" }
+    ]
+  }
+}

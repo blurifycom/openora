@@ -18,11 +18,10 @@ Severity legend: **P0** = blocks real-money launch / breaks documented flow, **P
 
 | # | Severity | Gap | Fix sketch |
 |---|---|---|---|
-| 2.1 | P1 | `.claude/skills/scaffold-module.md` references Prisma (`prisma partial`, `*.partial.prisma`) - project is on Drizzle | rewrite for Drizzle + `pnpm regen` |
-| 2.2 | P1 | `.claude/skills/scaffold-plugin.md` imports from `@oss/react-sdk` (removed) | replace with `@oss/react-pages` / `@oss/react-hooks` |
-| 2.3 | P1 | `.claude/skills/scaffold-ui-component.md` references `@oss/react-sdk` | same fix |
-| 2.4 | P1 | `.claude/skills/regen.md` is an entire Prisma workflow description | rewrite for `drizzle-kit generate` + `pnpm -F @oss/db generate` |
-| 2.5 | P2 | Root `AGENTS.md` mentions "slash commands" `/scaffold-*` but they live under `.claude/skills/`, not `.claude/commands/` | align terminology |
+| 2.1 | P1 | `.rulesync/commands/scaffold-module.md` references Prisma (`prisma partial`, `*.partial.prisma`) - project is on Drizzle | rewrite for Drizzle + `pnpm regen`, then `pnpm sync:agents` |
+| 2.2 | P1 | `.rulesync/commands/scaffold-plugin.md` imports from `@oss/react-sdk` (removed) | replace with `@oss/react-pages` / `@oss/react-hooks`, then `pnpm sync:agents` |
+| 2.3 | P1 | `.rulesync/commands/scaffold-ui-component.md` references `@oss/react-sdk` | same fix |
+| 2.4 | P1 | `.rulesync/commands/regen.md` is an entire Prisma workflow description | rewrite for `drizzle-kit generate` + `pnpm -F @oss/db generate`, then `pnpm sync:agents` |
 | 2.6 | P2 | No `AGENTS.md` in `apps/api`, `apps/web`, `apps/backoffice`, `packages/sdks/sdk-core`, `packages/sdks/plugin-test-kit` | add minimal AGENTS.md briefs |
 
 ## 3. UI extensibility (v1.1 wiring)

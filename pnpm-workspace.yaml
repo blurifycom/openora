@@ -6,3 +6,6 @@ allowBuilds:
   esbuild: true
   msgpackr-extract: true
   sharp: true
+  tldjs: false
+minimumReleaseAgeExclude:
+  - rulesync@8.25.0

@@ -1,8 +1,8 @@
 ---
-name: verify
-description: Run full verification - typecheck, lint, unit tests. Equivalent to what CI runs. Optional filter: /verify --filter @oss/modules
+targets:
+  - '*'
+description: "Run full verification - typecheck, lint, unit tests. Equivalent to what CI runs. Optional filter: /verify --filter @oss/modules"
 ---
-
 Parse $ARGUMENTS for an optional `--filter <package>` flag.
 
 If filter provided, run: `pnpm verify --filter <package>`

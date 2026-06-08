@@ -8,5 +8,38 @@
       "Edit({{ossFromRoot}}/**)",
       "Write({{ossFromRoot}}/**)"
     ]
+  },
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "Bash|Edit|Write",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node .rulesync/hooks/guard-core.mjs"
+          }
+        ]
+      },
+      {
+        "matcher": "Edit|Write",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node .rulesync/hooks/guard-generated.mjs"
+          }
+        ]
+      }
+    ],
+    "PostToolUse": [
+      {
+        "matcher": "Edit|Write",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node .rulesync/hooks/post-edit.mjs"
+          }
+        ]
+      }
+    ]
   }
 }

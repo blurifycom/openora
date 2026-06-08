@@ -1,8 +1,8 @@
 ---
-name: scaffold-route
-description: Add an oRPC route stub to an existing module. Args: <module> <GET|POST|PUT|PATCH|DELETE> <path>. Example: /scaffold-route wallet GET /transactions
+targets:
+  - '*'
+description: "Add an oRPC route stub to an existing module. Args: <module> <GET|POST|PUT|PATCH|DELETE> <path>. Example: /scaffold-route wallet GET /transactions"
 ---
-
 Parse $ARGUMENTS as: <module> <method> <path>.
 
 Before adding, call the MCP dev server tool `query-openapi` with the path to confirm the route doesn't already exist.

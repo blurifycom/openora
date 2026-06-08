@@ -140,9 +140,7 @@ function extractDeclaration(src: string, name: string): { line: number; code: st
 
 /** DATABASE_URL from env, or the local docker default (mirrors tools/seed.ts). */
 function resolveDatabaseUrl(): string {
-  return (
-    process.env['DATABASE_URL'] ?? 'postgresql://postgres:postgres@localhost:5432/oss_igaming'
-  );
+  return process.env['DATABASE_URL'] ?? 'postgresql://postgres:postgres@localhost:5432/oss_igaming';
 }
 
 const READONLY_SQL_PREFIXES = ['select', 'with', 'explain', 'show', 'table', 'values'];
@@ -154,14 +152,26 @@ type IntentKind = 'feature' | 'adapter' | 'ui-page' | 'route' | 'downstream-app'
 function classifyIntent(ask: string): IntentKind {
   const a = ` ${ask.toLowerCase()} `;
   const has = (re: RegExp) => re.test(a);
-  if (has(/\b(downstream|consumer repo|new project|new app|new repo|my own|standalone|bootstrap|spin up)\b/))
+  if (
+    has(
+      /\b(downstream|consumer repo|new project|new app|new repo|my own|standalone|bootstrap|spin up)\b/,
+    )
+  )
     return 'downstream-app';
-  if (has(/\b(payment|psp|stripe|adyen|kyc|onfido|identity check|sms|email|notification|vendor|adapter|gateway|provider integration)\b/))
+  if (
+    has(
+      /\b(payment|psp|stripe|adyen|kyc|onfido|identity check|sms|email|notification|vendor|adapter|gateway|provider integration)\b/,
+    )
+  )
     return 'adapter';
   if (has(/\b(page|screen|dashboard|view|frontend|admin panel|backoffice page|player page)\b/))
     return 'ui-page';
   if (has(/\b(endpoint|route|procedure|api method|rpc)\b/)) return 'route';
-  if (has(/\b(module|feature|domain|tournament|leaderboard|jackpot|loyalty|bonus|cashback|mission|quest|reward|system)\b/))
+  if (
+    has(
+      /\b(module|feature|domain|tournament|leaderboard|jackpot|loyalty|bonus|cashback|mission|quest|reward|system)\b/,
+    )
+  )
     return 'feature';
   return 'unsure';
 }
@@ -188,8 +198,13 @@ function readSlots(): string[] {
 }
 
 /** Per-kind step-by-step playbook, grounded in live repo state. */
-function buildPlaybook(kind: IntentKind, ctx: { modules: string[]; tokens: string[]; slots: string[] }): string {
-  const moduleList = ctx.modules.length ? ctx.modules.map((m) => `- ${m}`).join('\n') : '- (none yet)';
+function buildPlaybook(
+  kind: IntentKind,
+  ctx: { modules: string[]; tokens: string[]; slots: string[] },
+): string {
+  const moduleList = ctx.modules.length
+    ? ctx.modules.map((m) => `- ${m}`).join('\n')
+    : '- (none yet)';
   switch (kind) {
     case 'feature':
       return [
@@ -356,7 +371,7 @@ server.tool(
 // --- describe-module --------------------------------------------------------
 server.tool(
   'describe-module',
-  "Everything you need to edit a module in one call: its AGENTS.md, Drizzle tables, Zod schemas, and router surface. Prefer this over reading the files individually.",
+  'Everything you need to edit a module in one call: its AGENTS.md, Drizzle tables, Zod schemas, and router surface. Prefer this over reading the files individually.',
   {
     name: z.string().describe('Module name (kebab-case)'),
     response_format: z
@@ -385,7 +400,10 @@ server.tool(
     const schemaSrc = readFile(join(dir, 'src', 'schema', 'index.ts'));
     const zodSrc = readFile(join(dir, 'src', 'schemas', 'index.ts'));
     const routerSrc = readFile(join(dir, 'src', 'router', 'index.ts'));
-    const parts: string[] = [`=== Module: ${name} ===\n`, readFile(join(dir, 'AGENTS.md')) || '(no AGENTS.md)'];
+    const parts: string[] = [
+      `=== Module: ${name} ===\n`,
+      readFile(join(dir, 'AGENTS.md')) || '(no AGENTS.md)',
+    ];
 
     if (detailed) {
       parts.push('\n--- Drizzle tables (src/schema/index.ts) ---', schemaSrc || '(no tables)');
@@ -394,7 +412,9 @@ server.tool(
     } else {
       const tables = [...schemaSrc.matchAll(/pgTable\(\s*'([^']+)'/g)].map((m) => m[1]);
       const zods = [...zodSrc.matchAll(/export const (\w+Schema)\b/g)].map((m) => m[1]);
-      const routes = [...routerSrc.matchAll(/^\s{2,}(\w+):\s*os\b/gm)].map((m) => `${name}.${m[1]}`);
+      const routes = [...routerSrc.matchAll(/^\s{2,}(\w+):\s*os\b/gm)].map(
+        (m) => `${name}.${m[1]}`,
+      );
       parts.push(`\n--- Tables ---\n${tables.join(', ') || '(none)'}`);
       parts.push(`\n--- Schemas ---\n${zods.join(', ') || '(none)'}`);
       parts.push(`\n--- Routes ---\n${routes.join(', ') || '(none)'}`);
@@ -418,7 +438,9 @@ server.tool(
       const routerFile = join(dir, 'src', 'router', 'index.ts');
       if (!existsSync(routerFile)) continue;
       const src = readFileSync(routerFile, 'utf8');
-      const procedures = [...src.matchAll(/^\s{2,}(\w+):\s*os\b/gm)].map((m) => `  ${name}.${m[1]}`);
+      const procedures = [...src.matchAll(/^\s{2,}(\w+):\s*os\b/gm)].map(
+        (m) => `  ${name}.${m[1]}`,
+      );
       if (procedures.length > 0) lines.push(`${name}:\n${procedures.join('\n')}`);
     }
     return { content: [{ type: 'text', text: lines.join('\n\n') || 'No routes defined yet.' }] };
@@ -434,9 +456,7 @@ server.tool(
     const parts: string[] = [];
 
     // Named UI slots from react-sdk/src/ui-plugin/slots.ts (the SLOTS constant)
-    const slotsFile = repoPath(
-      'packages', 'sdks', 'react-sdk', 'src', 'ui-plugin', 'slots.ts',
-    );
+    const slotsFile = repoPath('packages', 'sdks', 'react-sdk', 'src', 'ui-plugin', 'slots.ts');
     if (existsSync(slotsFile)) {
       const src = readFileSync(slotsFile, 'utf8');
       // Extract JSDoc + slot name pairs. Format: /** ...comment */ \n key: 'slot:name'
@@ -445,7 +465,10 @@ server.tool(
       let pending = '';
       for (const line of lines) {
         const jsdoc = line.match(/\/\*\*\s*(.+?)\s*\*\//);
-        if (jsdoc) { pending = (jsdoc[1] ?? '').trim(); continue; }
+        if (jsdoc) {
+          pending = (jsdoc[1] ?? '').trim();
+          continue;
+        }
         const slot = line.match(/:\s*'([a-z:]+)'/);
         if (slot) {
           slotLines.push(pending ? `- ${slot[1]}  # ${pending}` : `- ${slot[1]}`);
@@ -454,9 +477,9 @@ server.tool(
       }
       parts.push(
         `=== Named UI slots (import SLOTS from @oss/react-pages) ===\n` +
-        `Fill with ctx.slots.fill(name, options, render) or ctx.slots.column(name, colDef).\n` +
-        `Declare in pages with <Slot name={SLOTS.x.y} subject={entity}>.\n\n` +
-        (slotLines.join('\n') || '(none defined yet)'),
+          `Fill with ctx.slots.fill(name, options, render) or ctx.slots.column(name, colDef).\n` +
+          `Declare in pages with <Slot name={SLOTS.x.y} subject={entity}>.\n\n` +
+          (slotLines.join('\n') || '(none defined yet)'),
       );
     }
 
@@ -576,7 +599,9 @@ server.tool(
   {
     target: z
       .string()
-      .describe('Target directory for the new repo, relative to this OSS checkout root, e.g. "../my-igaming".'),
+      .describe(
+        'Target directory for the new repo, relative to this OSS checkout root, e.g. "../my-igaming".',
+      ),
     name: z.string().optional().describe('Project name. Defaults to the target dir basename.'),
   },
   async ({ target, name }) => {
@@ -660,7 +685,9 @@ server.tool(
       if (detailed) {
         parts.push(`=== ${group}/${name} (src/schema/index.ts) ===\n${src.trim()}`);
       } else {
-        const summary = tables.map(([, constName, tableName]) => `  ${constName} -> '${tableName}'`);
+        const summary = tables.map(
+          ([, constName, tableName]) => `  ${constName} -> '${tableName}'`,
+        );
         parts.push(`${group}/${name}:\n${summary.join('\n')}`);
       }
     }
@@ -837,17 +864,25 @@ server.tool(
 
 server.tool(
   'list-slash-commands',
-  'List all available slash commands (scaffold shortcuts) with their one-line descriptions. These are repo-local commands auto-loaded by Claude Code from .claude/skills/; other editors can invoke the equivalent MCP scaffold tools directly.',
+  'List all available slash commands (scaffold shortcuts) with their one-line descriptions. These are repo-local commands generated by rulesync into .claude/commands/ (source: .rulesync/commands/); other editors can invoke the equivalent MCP scaffold tools directly.',
   {},
   async () => {
-    const skillsDir = join(repoRoot, '.claude', 'skills');
-    if (!existsSync(skillsDir)) return { content: [{ type: 'text', text: 'No .claude/skills/ directory found.' }] };
+    const commandsDir = join(repoRoot, '.claude', 'commands');
+    if (!existsSync(commandsDir))
+      return { content: [{ type: 'text', text: 'No .claude/commands/ directory found.' }] };
     const lines: string[] = ['Available slash commands:\n'];
-    for (const file of readdirSync(skillsDir).sort()) {
+    for (const file of readdirSync(commandsDir).sort()) {
       if (!file.endsWith('.md')) continue;
       const name = '/' + file.replace(/\.md$/, '');
-      const content = readFileSync(join(skillsDir, file), 'utf8');
-      const desc = content.split('\n').find(l => l.trim() && !l.startsWith('#'))?.trim() ?? '';
+      const content = readFileSync(join(commandsDir, file), 'utf8');
+      // Pull the `description:` field from the frontmatter, stripping any quotes.
+      const descLine = content.split('\n').find((l) => l.startsWith('description:'));
+      const desc = descLine
+        ? descLine
+            .slice('description:'.length)
+            .trim()
+            .replace(/^["']|["']$/g, '')
+        : '';
       lines.push(`  ${name.padEnd(28)} ${desc}`);
     }
     lines.push('\nNote: use the MCP scaffold-* tools to invoke these from any editor.');
@@ -862,7 +897,9 @@ server.tool(
   {
     ask: z
       .string()
-      .describe("The user's raw request in their own words, eg 'add a tournaments feature with leaderboards and prize payouts'"),
+      .describe(
+        "The user's raw request in their own words, eg 'add a tournaments feature with leaderboards and prize payouts'",
+      ),
     kind: z
       .enum(['feature', 'adapter', 'ui-page', 'route', 'downstream-app', 'unsure'])
       .optional()
@@ -875,7 +912,10 @@ server.tool(
       tokens: readAdapterTokens(),
       slots: readSlots(),
     };
-    const tree = parseAgentsMdSection(readFile(repoPath('AGENTS.md')), 'Where does X go? (decision tree)');
+    const tree = parseAgentsMdSection(
+      readFile(repoPath('AGENTS.md')),
+      'Where does X go? (decision tree)',
+    );
     const detected = kind && kind !== 'unsure' ? '' : ' (auto-detected - correct me if wrong)';
 
     const text = [
@@ -915,7 +955,9 @@ server.tool(
     action: z
       .enum(['up', 'down', 'status'])
       .optional()
-      .describe('up (default): start containers detached. down: stop and remove. status: show running containers.'),
+      .describe(
+        'up (default): start containers detached. down: stop and remove. status: show running containers.',
+      ),
   },
   async ({ action = 'up' }) => {
     if (action === 'status') {
@@ -939,7 +981,10 @@ server.tool(
     let ready = false;
     while (Date.now() < deadline) {
       const probe = run('docker compose exec -T postgres pg_isready -U postgres');
-      if (probe.ok) { ready = true; break; }
+      if (probe.ok) {
+        ready = true;
+        break;
+      }
       await new Promise((r) => setTimeout(r, 1_500));
     }
 
@@ -958,7 +1003,9 @@ server.tool(
     ask: z
       .string()
       .optional()
-      .describe("Pass the user's raw ask if they already described what they want to build. Omit to get the full interactive onboarding flow."),
+      .describe(
+        "Pass the user's raw ask if they already described what they want to build. Omit to get the full interactive onboarding flow.",
+      ),
   },
   async ({ ask }) => {
     const modules = listAllModules().map((m) => `${m.group}/${m.name}`);

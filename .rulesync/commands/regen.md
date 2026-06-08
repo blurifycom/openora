@@ -1,8 +1,8 @@
 ---
-name: regen
-description: Regenerate all derived artifacts - oRPC OpenAPI spec, Drizzle client, and the machine-readable docs/CATALOG.md. Run after any change to Drizzle tables or oRPC contracts.
+targets:
+  - '*'
+description: "Regenerate all derived artifacts - oRPC OpenAPI spec, Drizzle client, and the machine-readable docs/CATALOG.md. Run after any change to Drizzle tables or oRPC contracts."
 ---
-
 Run `pnpm regen` in the repo root.
 
 This runs in order (see root `package.json`):

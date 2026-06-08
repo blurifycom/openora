@@ -1,8 +1,8 @@
 ---
-name: scaffold-plugin
-description: Generate a new overlay extension plugin under apps/api/src/extensions/<name>/. The plugin can add routes, providers, UI slots, event handlers, and MCP tools without modifying core modules.
+targets:
+  - '*'
+description: "Generate a new overlay extension plugin under apps/api/src/extensions/<name>/. The plugin can add routes, providers, UI slots, event handlers, and MCP tools without modifying core modules."
 ---
-
 Run `pnpm scaffold plugin $ARGUMENTS` in the repo root.
 
 After the scaffolder finishes:

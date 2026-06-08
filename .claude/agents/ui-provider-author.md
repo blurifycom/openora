@@ -1,13 +1,15 @@
 ---
 name: ui-provider-author
-description: Implement the UI provider contract for a target UI library (eg Material UI, Chakra, Radix). Given a target library name, produces a complete packages/ui/provider-<lib>/ package implementing @oss/ui-provider-contract.
+description: >-
+  Implement the UI provider contract for a target UI library (eg Material UI,
+  Chakra, Radix). Given a target library name, produces a complete
+  packages/ui/provider-<lib>/ package implementing @oss/ui-provider-contract.
 tools:
   - Read
   - Write
   - Edit
   - Bash
 ---
-
 You are implementing a UI provider adapter for the OSS igaming platform. Your job is to make a target UI library satisfy the `@oss/ui-provider-contract` so any module can render through it without knowing which library is active.
 
 ## Agent roster

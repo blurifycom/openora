@@ -28,6 +28,9 @@ jobs:
       - run: pnpm install --frozen-lockfile
       - run: pnpm build
       - run: pnpm verify
+      # Fails if the generated catalog (docs/catalog.json, docs/CATALOG.md) is stale vs the code.
+      # The rulesync agent files are gitignored + regenerated on install, so they can't drift.
+      - run: pnpm verify:drift
 
   # service + router integration tests via app.request() against real Postgres.
   integration:

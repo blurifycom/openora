@@ -10,6 +10,8 @@
     "regen": "pnpm -C {{ossFromRoot}} run regen",
     "typecheck": "turbo run typecheck",
     "lint": "oxlint .",
+    "sync:agents": "rulesync generate",
+    "prepare": "rulesync generate",
     "db:generate": "pnpm -C {{ossFromRoot}} -F @oss/db generate",
     "db:migrate": "pnpm -C {{ossFromRoot}} -F @oss/db migrate",
     "setup:mcp": "tsx {{ossFromRoot}}/tools/setup-mcp.ts --target .",
@@ -17,9 +19,11 @@
   },
   "devDependencies": {
     "@oss/tsconfig": "link:{{ossFromRoot}}/packages/config/tsconfig",
+    "@oss/turbo-generators": "link:{{ossFromRoot}}/packages/config/turbo-generators",
     "@turbo/gen": "2.9.14",
     "@types/node": "25.9.0",
     "oxlint": "^1.64.0",
+    "rulesync": "8.25.0",
     "tsx": "4.22.2",
     "turbo": "2.9.14",
     "typescript": "6.0.3"
@@ -45,7 +49,8 @@
       "@oss/react-pages": "link:{{ossFromRoot}}/packages/sdks/react-pages",
       "@oss/ui-provider-contract": "link:{{ossFromRoot}}/packages/ui/provider-contract",
       "@oss/ui-provider-daisyui": "link:{{ossFromRoot}}/packages/ui/provider-daisyui",
-      "@oss/tsconfig": "link:{{ossFromRoot}}/packages/config/tsconfig"
+      "@oss/tsconfig": "link:{{ossFromRoot}}/packages/config/tsconfig",
+      "@oss/turbo-generators": "link:{{ossFromRoot}}/packages/config/turbo-generators"
     }
   }
 }

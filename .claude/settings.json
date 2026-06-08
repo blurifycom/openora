@@ -31,13 +31,24 @@
   "enableAllProjectMcpServers": false,
   "enabledMcpjsonServers": ["oss-dev"],
   "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "Edit|Write",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node .rulesync/hooks/guard-generated.mjs"
+          }
+        ]
+      }
+    ],
     "PostToolUse": [
       {
         "matcher": "Edit|Write",
         "hooks": [
           {
             "type": "command",
-            "command": "pnpm exec tsx .claude/hooks/post-edit.ts"
+            "command": "node .rulesync/hooks/post-edit.mjs"
           }
         ]
       }

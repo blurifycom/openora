@@ -1,8 +1,8 @@
 ---
-name: scaffold-module
-description: Generate a new OSS module from template. Creates schema, service, router, plugin.ts, AGENTS.md and registers in extensions.config.ts.
+targets:
+  - '*'
+description: "Generate a new OSS module from template. Creates schema, service, router, plugin.ts, AGENTS.md and registers in extensions.config.ts."
 ---
-
 Run `pnpm scaffold module $ARGUMENTS` in the repo root. Modules are grouped, so the args are
 `<group> <name>` where group is `player`, `backoffice`, or `platform` (player-facing / admin /
 shared substrate). Example: `pnpm scaffold module player tournaments`.

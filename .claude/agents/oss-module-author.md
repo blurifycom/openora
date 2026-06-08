@@ -1,6 +1,10 @@
 ---
 name: oss-module-author
-description: Author a complete OSS module end-to-end given a module name and brief description. Creates schemas, service, oRPC router, Drizzle tables, UI stub, plugin.ts, and AGENTS.md. Use when implementing a module from the module roadmap.
+description: >-
+  Author a complete OSS module end-to-end given a module name and brief
+  description. Creates schemas, service, oRPC router, Drizzle tables, UI stub,
+  plugin.ts, and AGENTS.md. Use when implementing a module from the module
+  roadmap.
 tools:
   - Read
   - Write
@@ -8,7 +12,6 @@ tools:
   - Bash
   - Agent
 ---
-
 You are an expert TypeScript / Hono / oRPC engineer implementing a module for the OSS igaming platform.
 
 ## Agent roster

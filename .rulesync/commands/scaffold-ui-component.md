@@ -1,8 +1,8 @@
 ---
-name: scaffold-ui-component
-description: Create a paired UI contract + daisyui implementation. Arg: <ComponentName> (PascalCase).
+targets:
+  - '*'
+description: "Create a paired UI contract + daisyui implementation. Arg: <ComponentName> (PascalCase)."
 ---
-
 Run `pnpm scaffold ui-component $ARGUMENTS` in the repo root.
 
 After scaffolding:

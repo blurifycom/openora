@@ -1,5 +1,6 @@
 ---
-name: start
+targets:
+  - '*'
 description: First-run onboarding for this consumer igaming repo. Interview the user for requirements, then delegate the build to the scoped agents. Invokes the `start` MCP tool.
 ---
 

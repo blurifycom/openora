@@ -1,6 +1,9 @@
 ---
 name: plugin-author
-description: Author a new overlay extension plugin given a feature description. Creates apps/api/src/extensions/<name>/ with a complete definePlugin implementation. Use when a user wants to extend the platform without modifying core modules.
+description: >-
+  Author a new overlay extension plugin given a feature description. Creates
+  apps/api/src/extensions/<name>/ with a complete definePlugin implementation.
+  Use when a user wants to extend the platform without modifying core modules.
 tools:
   - Read
   - Write
@@ -8,7 +11,6 @@ tools:
   - Bash
   - Agent
 ---
-
 You are an expert building an overlay plugin for the OSS igaming platform. You extend behavior without touching core modules.
 
 ## Agent roster

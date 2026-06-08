@@ -77,10 +77,12 @@ function parseArgs(argv: string[]): ParsedArgs {
 }
 
 function sanitizeName(raw: string): string {
-  return raw
-    .toLowerCase()
-    .replace(/[^a-z0-9-_]/g, '-')
-    .replace(/^-+|-+$/g, '') || 'igaming-app';
+  return (
+    raw
+      .toLowerCase()
+      .replace(/[^a-z0-9-_]/g, '-')
+      .replace(/^-+|-+$/g, '') || 'igaming-app'
+  );
 }
 
 // Forward slashes for use inside package.json / TS string literals on every OS.
@@ -124,7 +126,7 @@ function emitTree(
     if (destPrefix) outRel = join(destPrefix, outRel);
 
     // Only .tpl files get {{var}} substitution. Everything else is copied verbatim so
-    // that, eg, turbo generator .hbs files keep their own {{name}} Plop placeholders.
+    // that, eg, files carrying their own {{name}} Plop placeholders survive untouched.
     const raw = readFileSync(file, 'utf8');
     const content = file.endsWith('.tpl') ? substitute(raw, vars) : raw;
 
@@ -170,14 +172,21 @@ function main(): void {
   // 3) Backoffice is always a Vite + TanStack Router SPA - overlays onto apps/backoffice.
   emitTree(backofficeVariantDir, vars, targetDir, join('apps', 'backoffice'));
 
-  // Drop in the consumer AI agents (single source of truth: @oss/mcp/agents).
-  const claudeAgents = join(targetDir, '.claude', 'agents');
-  mkdirSync(claudeAgents, { recursive: true });
-  for (const f of ['igaming-builder.md', 'igaming-expert.md', 'igaming-qa.md', 'igaming-debugger.md']) {
+  // Drop in the consumer AI agents as rulesync subagent sources (single source of
+  // truth: @oss/mcp/agents, already in rulesync format). `pnpm sync:agents`
+  // generates the per-tool mirrors (.claude/agents, .github/agents, .gemini/agents).
+  const rulesyncSubagents = join(targetDir, '.rulesync', 'subagents');
+  mkdirSync(rulesyncSubagents, { recursive: true });
+  for (const f of [
+    'igaming-builder.md',
+    'igaming-expert.md',
+    'igaming-qa.md',
+    'igaming-debugger.md',
+  ]) {
     const src = join(agentsDir, f);
     if (existsSync(src)) {
-      copyFileSync(src, join(claudeAgents, f));
-      console.log(`  + .claude/agents/${f}`);
+      copyFileSync(src, join(rulesyncSubagents, f));
+      console.log(`  + .rulesync/subagents/${f}`);
     }
   }
 
@@ -185,7 +194,7 @@ function main(): void {
   Done. Next steps:
 
     cd ${posix(relative(process.cwd(), targetDir)) || '.'}
-    pnpm install
+    pnpm install            # also generates the agent files (CLAUDE.md / AGENTS.md / GEMINI.md / Copilot) from .rulesync/ via the prepare hook
     pnpm build:oss          # build the linked @oss/* packages once
     cp .env.example .env     # then set DATABASE_URL / AUTH_SECRET
     pnpm db:migrate          # apply the OSS schema to your database
