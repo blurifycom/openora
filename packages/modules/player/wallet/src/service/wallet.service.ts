@@ -1,14 +1,11 @@
-import { type EventBus, createDomainError } from '@oss/core';
+import { type EventBus, makeNotFoundError, createDomainError } from '@oss/core';
 import { type PaymentAdapter } from '@oss/adapters';
-import { DrizzleService } from '@oss/db';
+import { DrizzleService, findOneOrThrow } from '@oss/db';
 import { eq, desc, sql } from 'drizzle-orm';
 import { wallet, walletTransaction } from '../schema/index.js';
 import type { WalletBalance, WalletTransaction, TransactionResult } from '../schemas/index.js';
 
-export const WalletNotFoundError = createDomainError(
-  'WalletNotFoundError',
-  (userId) => `Wallet not found for user: ${userId}`,
-);
+export const WalletNotFoundError = makeNotFoundError('Wallet');
 
 export const InsufficientBalanceError = createDomainError(
   'InsufficientBalanceError',
@@ -23,10 +20,7 @@ export class WalletService {
   ) {}
 
   async getBalance(userId: string): Promise<WalletBalance> {
-    const [record] = await this.drizzle.db
-      .select()
-      .from(wallet)
-      .where(eq(wallet.userId, userId));
+    const [record] = await this.drizzle.db.select().from(wallet).where(eq(wallet.userId, userId));
 
     if (!record) {
       return { balance: 0, currency: 'USD', tenantId: '' };
@@ -95,8 +89,10 @@ export class WalletService {
   ): Promise<TransactionResult> {
     const db = this.drizzle.db;
 
-    const [walletRecord] = await db.select().from(wallet).where(eq(wallet.userId, userId));
-    if (!walletRecord) throw new WalletNotFoundError(userId);
+    const walletRecord = findOneOrThrow(
+      await db.select().from(wallet).where(eq(wallet.userId, userId)),
+      new WalletNotFoundError(userId),
+    );
 
     const currentBalance = Number(walletRecord.balance);
     if (currentBalance < amount) {
@@ -108,8 +104,10 @@ export class WalletService {
     const transactionId = await this.drizzle.db.transaction(async (txn) => {
       // Re-read inside the transaction and guard the balance again, so concurrent
       // withdrawals cannot double-spend; an insufficient balance rolls back.
-      const [current] = await txn.select().from(wallet).where(eq(wallet.userId, userId));
-      if (!current) throw new WalletNotFoundError(userId);
+      const current = findOneOrThrow(
+        await txn.select().from(wallet).where(eq(wallet.userId, userId)),
+        new WalletNotFoundError(userId),
+      );
       if (Number(current.balance) < amount) {
         throw new InsufficientBalanceError(Number(current.balance), amount);
       }

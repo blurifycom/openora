@@ -62,6 +62,9 @@ importers:
       '@oss/shared-schemas':
         specifier: workspace:*
         version: link:../../packages/contracts/shared-schemas
+      amqplib:
+        specifier: ^2.0.1
+        version: 2.0.1
       bullmq:
         specifier: ^5.77.6
         version: 5.77.6
@@ -596,6 +599,9 @@ importers:
       '@oss/tsconfig':
         specifier: workspace:*
         version: link:../../config/tsconfig
+      '@oss/vitest-config':
+        specifier: workspace:*
+        version: link:../../config/vitest
       '@types/pg':
         specifier: 8.20.0
         version: 8.20.0
@@ -605,6 +611,9 @@ importers:
       typescript:
         specifier: 6.0.3
         version: 6.0.3
+      vitest:
+        specifier: 4.1.6
+        version: 4.1.6(@types/node@25.9.0)(@vitest/coverage-v8@4.1.6)(vite@8.0.13(@types/node@25.9.0)(esbuild@0.28.0)(jiti@2.7.0)(tsx@4.22.2))
 
   packages/platform/mcp:
     dependencies:
@@ -3227,6 +3236,10 @@ packages:
 
   ajv@8.20.0:
     resolution: {integrity: sha512-Thbli+OlOj+iMPYFBVBfJ3OmCAnaSyNn4M1vz9T6Gka5Jt9ba/HIR56joy65tY6kx/FCF5VXNB819Y7/GUrBGA==}
+
+  amqplib@2.0.1:
+    resolution: {integrity: sha512-a3P2MgfCf9nzVis12VxWEn0dS6hcqve7dlEAhXDtIWR27BlhtMkILOc+H9aeHjDi6i6r94dYKc2Kx2OFe3avvg==}
+    engines: {node: '>=18'}
 
   ansi-regex@5.0.1:
     resolution: {integrity: sha512-quJQXlTSUGL2LH9SUXo8VwsY4soanhgo6LNSm84E1LBcE8s3O0wpdiRzyR9z/ZZJMlMWv37qOOb9pdJlMUEKFQ==}
@@ -7041,6 +7054,8 @@ snapshots:
       json-schema-traverse: 1.0.0
       require-from-string: 2.0.2
 
+  amqplib@2.0.1: {}
+
   ansi-regex@5.0.1: {}
 
   ansi-regex@6.2.2: {}
@@ -7593,7 +7608,7 @@ snapshots:
       strict-event-emitter-types: 2.0.0
       undici: 7.27.2
       uri-templates: 0.2.0
-      xsschema: 0.4.4(@valibot/to-json-schema@1.6.0(valibot@1.4.1(typescript@6.0.3)))(effect@3.20.0)(sury@10.0.4)(zod-to-json-schema@3.25.2(zod@4.3.6))(zod@4.4.3)
+      xsschema: 0.4.4(@valibot/to-json-schema@1.6.0(valibot@1.4.1(typescript@6.0.3)))(effect@3.20.0)(sury@10.0.4)(zod-to-json-schema@3.25.2(zod@4.4.3))(zod@4.4.3)
       yargs: 18.0.0
       zod: 4.4.3
       zod-to-json-schema: 3.25.2(zod@4.4.3)
@@ -8848,7 +8863,7 @@ snapshots:
 
   wrappy@1.0.2: {}
 
-  xsschema@0.4.4(@valibot/to-json-schema@1.6.0(valibot@1.4.1(typescript@6.0.3)))(effect@3.20.0)(sury@10.0.4)(zod-to-json-schema@3.25.2(zod@4.3.6))(zod@4.4.3):
+  xsschema@0.4.4(@valibot/to-json-schema@1.6.0(valibot@1.4.1(typescript@6.0.3)))(effect@3.20.0)(sury@10.0.4)(zod-to-json-schema@3.25.2(zod@4.4.3))(zod@4.4.3):
     optionalDependencies:
       '@valibot/to-json-schema': 1.6.0(valibot@1.4.1(typescript@6.0.3))
       effect: 3.20.0

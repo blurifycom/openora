@@ -22,7 +22,13 @@ import {
 import { MESSAGE_BROKER, JOB_QUEUE, REALTIME_TRANSPORT } from '@oss/adapters';
 import { DrizzleService, DRIZZLE } from '@oss/db';
 import { AdminGuard, ADMIN_GUARD } from '@oss/auth';
-import { user, session, account, verification, twoFactor } from '@oss/modules/platform/identity/schema';
+import {
+  user,
+  session,
+  account,
+  verification,
+  twoFactor,
+} from '@oss/modules/platform/identity/schema';
 import { loadPlugins, type PluginEntry } from '@oss/plugin-host';
 import { contract as defaultContract, healthContract } from '@oss/orpc-contract';
 import { IGAMING_CONFIG, type IgamingConfig } from '@oss/shared-schemas';
@@ -98,7 +104,11 @@ export async function createApp(config: CreateAppConfig): Promise<CreatedApp> {
   // Inter-module transport: default to the in-process broker; an overlay rebinds
   // MESSAGE_BROKER to a durable driver (Redpanda/NATS) without touching modules.
   // The EventBus is the typed facade services depend on.
-  container.register(MESSAGE_BROKER, () => new InMemoryBroker());
+  container.register(MESSAGE_BROKER, () => {
+    const broker = new InMemoryBroker();
+    container.onDispose(() => broker.close());
+    return broker;
+  });
   container.register(EVENT_BUS, (c) =>
     createEventBus(c.get(MESSAGE_BROKER), createLogger('event-bus')),
   );
@@ -178,10 +188,7 @@ export async function createApp(config: CreateAppConfig): Promise<CreatedApp> {
   if (config.cors !== false) {
     const origins =
       config.cors === true || config.cors === undefined ? undefined : config.cors.origins;
-    app.use(
-      '/*',
-      cors({ origin: origins ?? ((origin) => origin), credentials: true }),
-    );
+    app.use('/*', cors({ origin: origins ?? ((origin) => origin), credentials: true }));
   }
 
   app.use('/*', async (c, next) => {

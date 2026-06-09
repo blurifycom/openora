@@ -67,15 +67,59 @@ function round2(n: number): number {
 }
 
 const FIRST_NAMES = [
-  'Alex', 'Maria', 'Liam', 'Sofia', 'Noah', 'Emma', 'Lucas', 'Olivia', 'Mateo', 'Ava',
-  'Hugo', 'Mia', 'Leon', 'Elena', 'Adam', 'Chloe', 'Jonas', 'Nora', 'Daniel', 'Lea',
-  'Ivan', 'Sara', 'Felix', 'Anna', 'Oscar', 'Lina', 'Theo', 'Zoe', 'Max', 'Iris',
+  'Alex',
+  'Maria',
+  'Liam',
+  'Sofia',
+  'Noah',
+  'Emma',
+  'Lucas',
+  'Olivia',
+  'Mateo',
+  'Ava',
+  'Hugo',
+  'Mia',
+  'Leon',
+  'Elena',
+  'Adam',
+  'Chloe',
+  'Jonas',
+  'Nora',
+  'Daniel',
+  'Lea',
+  'Ivan',
+  'Sara',
+  'Felix',
+  'Anna',
+  'Oscar',
+  'Lina',
+  'Theo',
+  'Zoe',
+  'Max',
+  'Iris',
 ] as const;
 
 const LAST_NAMES = [
-  'Novak', 'Kowalski', 'Muller', 'Rossi', 'Garcia', 'Andersen', 'Silva', 'Dubois',
-  'Horvath', 'Petrov', 'Nilsson', 'Fischer', 'Costa', 'Larsen', 'Weber', 'Romano',
-  'Schmidt', 'Lopez', 'Jensen', 'Moreau',
+  'Novak',
+  'Kowalski',
+  'Muller',
+  'Rossi',
+  'Garcia',
+  'Andersen',
+  'Silva',
+  'Dubois',
+  'Horvath',
+  'Petrov',
+  'Nilsson',
+  'Fischer',
+  'Costa',
+  'Larsen',
+  'Weber',
+  'Romano',
+  'Schmidt',
+  'Lopez',
+  'Jensen',
+  'Moreau',
 ] as const;
 
 const LOCALES = [
@@ -191,15 +235,13 @@ export async function seedDemoData(options: SeedOptions): Promise<SeedResult> {
       .returning();
 
     const [homeOdds, drawOdds, awayOdds] = odds;
-    const selections: { label: string; odds: number }[] = [
-      { label: 'home', odds: homeOdds },
-    ];
+    const selections: { label: string; odds: number }[] = [{ label: 'home', odds: homeOdds }];
     if (drawOdds > 0) selections.push({ label: 'draw', odds: drawOdds });
     selections.push({ label: 'away', odds: awayOdds });
 
-    await db.insert(sportsbookSelection).values(
-      selections.map((s) => ({ eventId: eventRow!.id, label: s.label, odds: s.odds })),
-    );
+    await db
+      .insert(sportsbookSelection)
+      .values(selections.map((s) => ({ eventId: eventRow!.id, label: s.label, odds: s.odds })));
   }
   log(`Created ${SPORTSBOOK_EVENTS.length} sportsbook events.`);
 
@@ -257,19 +299,23 @@ export async function seedDemoData(options: SeedOptions): Promise<SeedResult> {
       createdAt,
     });
 
-    const [walletRow] = await db.insert(wallet).values({
-      userId: playerUser.id,
-      tenantId,
-      balance: String(round2(rng() * 1500)),
-      currency,
-    }).returning();
+    const [walletRow] = await db
+      .insert(wallet)
+      .values({
+        userId: playerUser.id,
+        tenantId,
+        balance: String(round2(rng() * 1500)),
+        currency,
+      })
+      .returning();
 
     const deposits = 1 + Math.floor(rng() * 4);
     let depositSum = 0;
+    const txRows: (typeof walletTransaction.$inferInsert)[] = [];
     for (let d = 0; d < deposits; d++) {
       const amount = round2(20 + rng() * 600);
       depositSum += amount;
-      await db.insert(walletTransaction).values({
+      txRows.push({
         walletId: walletRow!.id,
         tenantId,
         type: 'deposit',
@@ -278,10 +324,9 @@ export async function seedDemoData(options: SeedOptions): Promise<SeedResult> {
         status: 'completed',
         createdAt: new Date(createdAt.getTime() + (d + 1) * dayMs),
       });
-      txCount++;
     }
     if (kycStatus === 'verified' && rng() > 0.5) {
-      await db.insert(walletTransaction).values({
+      txRows.push({
         walletId: walletRow!.id,
         tenantId,
         type: 'withdrawal',
@@ -290,7 +335,10 @@ export async function seedDemoData(options: SeedOptions): Promise<SeedResult> {
         status: 'completed',
         createdAt: new Date(now - Math.floor(rng() * 14) * dayMs),
       });
-      txCount++;
+    }
+    if (txRows.length > 0) {
+      await db.insert(walletTransaction).values(txRows);
+      txCount += txRows.length;
     }
   }
 

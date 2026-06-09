@@ -15,13 +15,14 @@ overlay plugin that loads AFTER the default-binding module (last registration wi
 | --- | --- | --- | --- | --- |
 | aggregator | `AggregatorAdapter` | `AGGREGATOR_ADAPTER` | wired (default impl) | `packages/modules/player/aggregator/src/plugin.ts` |
 | broker | `MessageBrokerAdapter` | `MESSAGE_BROKER` | wired (default impl) | `packages/platform/api-runtime/src/create-app.ts` |
+| email | `SendEmailPort` | `SEND_EMAIL` | wired (default impl) | `packages/modules/platform/identity/src/plugin.ts` |
 | game | `GameAdapter` | `GAME_ADAPTER` | wired (default impl) | `packages/modules/player/gaming/src/plugin.ts` |
 | geo-ip | `GeoIpAdapter` | `GEO_IP_ADAPTER` | wired (default impl) | `packages/modules/platform/compliance/src/plugin.ts` |
 | job-queue | `JobQueueAdapter` | `JOB_QUEUE` | wired (default impl) | `packages/platform/api-runtime/src/create-app.ts` |
 | kyc | `KycAdapter` | `KYC_ADAPTER` | wired (default impl) | `packages/modules/platform/identity/src/adapters/mock/mock-kyc-adapter.ts`<br>`packages/modules/platform/identity/src/plugin.ts` |
 | notification | `NotificationDeliveryAdapter` | `NOTIFICATION_DELIVERY_ADAPTER` | wired (default impl) | `packages/modules/platform/identity/src/plugin.ts`<br>`packages/modules/platform/notifications/src/plugin.ts` |
 | payment | `PaymentAdapter` | `PAYMENT_ADAPTER` | wired (default impl) | `packages/modules/player/wallet/src/plugin.ts` |
-| realtime | `RealtimePresence` | `REALTIME_TRANSPORT` | wired (default impl) | `packages/modules/player/chat/src/plugin.ts` |
+| realtime | `RealtimePresence` | `REALTIME_TRANSPORT` | wired (default impl) | `packages/modules/player/chat/src/plugin.ts`<br>`packages/modules/player/sportsbook/src/plugin.ts` |
 | rng | `RngAdapter` | `RNG_ADAPTER` | wired (default impl) | `packages/modules/player/gaming/src/plugin.ts` |
 
 ## Modules
@@ -103,7 +104,7 @@ Declare with `defineIgamingConfig({...})` from `@oss/shared-schemas`, pass to
 
 ## Zod schemas
 
-77 schemas. Look one up by name with the `schema-get` MCP tool.
+81 schemas. Look one up by name with the `schema-get` MCP tool.
 
 - `AdminTransactionSchema` - packages/contracts/orpc-contract/src/backoffice.ts
 - `AdminUserSchema` - packages/contracts/orpc-contract/src/backoffice.ts
@@ -134,6 +135,7 @@ Declare with `defineIgamingConfig({...})` from `@oss/shared-schemas`, pass to
 - `GameSummarySchema` - packages/contracts/orpc-contract/src/lobby.ts
 - `GeoRuleSchema` - packages/contracts/orpc-contract/src/compliance.ts
 - `IdentitySuccessSchema` - packages/contracts/shared-schemas/src/identity.ts
+- `IdInputSchema` - packages/contracts/shared-schemas/src/common.ts
 - `IgamingConfigSchema` - packages/contracts/shared-schemas/src/igaming-config.ts
 - `KycStatusSchema` - packages/contracts/orpc-contract/src/player.ts
 - `LeaderboardEntrySchema` - packages/contracts/orpc-contract/src/leaderboard.ts
@@ -150,6 +152,7 @@ Declare with `defineIgamingConfig({...})` from `@oss/shared-schemas`, pass to
 - `OddsUpdateSchema` - packages/contracts/orpc-contract/src/sportsbook.ts
 - `OrganizationSchema` - packages/contracts/shared-schemas/src/identity.ts
 - `PageSchema` - packages/contracts/orpc-contract/src/cms.ts
+- `PaginationInputSchema` - packages/contracts/shared-schemas/src/common.ts
 - `PaginationSchema` - packages/contracts/shared-schemas/src/common.ts
 - `PlaceBetInputSchema` - packages/contracts/orpc-contract/src/sportsbook.ts
 - `PlaceBetResultSchema` - packages/contracts/orpc-contract/src/sportsbook.ts
@@ -164,6 +167,7 @@ Declare with `defineIgamingConfig({...})` from `@oss/shared-schemas`, pass to
 - `RequestPasswordResetInputSchema` - packages/contracts/shared-schemas/src/identity.ts
 - `ResetPasswordInputSchema` - packages/contracts/shared-schemas/src/identity.ts
 - `SportsbookBetSchema` - packages/contracts/orpc-contract/src/sportsbook.ts
+- `SportsbookConfigSchema` - packages/contracts/shared-schemas/src/platform-config.ts
 - `SportsbookEventSchema` - packages/contracts/orpc-contract/src/sportsbook.ts
 - `SportsbookSelectionSchema` - packages/contracts/orpc-contract/src/sportsbook.ts
 - `StartRoundInputSchema` - packages/contracts/orpc-contract/src/gaming.ts
@@ -175,6 +179,7 @@ Declare with `defineIgamingConfig({...})` from `@oss/shared-schemas`, pass to
 - `UpdateProfileInputSchema` - packages/contracts/shared-schemas/src/identity.ts
 - `UserBonusSchema` - packages/contracts/orpc-contract/src/bonus.ts
 - `UserBonusStatusSchema` - packages/contracts/orpc-contract/src/bonus.ts
+- `UserIdInputSchema` - packages/contracts/shared-schemas/src/common.ts
 - `UserSchema` - packages/contracts/shared-schemas/src/identity.ts
 - `UuidSchema` - packages/contracts/shared-schemas/src/common.ts
 - `Verify2faInputSchema` - packages/contracts/shared-schemas/src/identity.ts

@@ -1,6 +1,6 @@
-import { type EventBus, createDomainError } from '@oss/core';
+import { type EventBus, createDomainError, assertOwnership } from '@oss/core';
 import type { RealtimeTransport } from '@oss/adapters';
-import { DrizzleService } from '@oss/db';
+import { DrizzleService, findOneOrThrow } from '@oss/db';
 import { eq, and, isNull, lt, desc, asc } from 'drizzle-orm';
 import { chatRoom, chatMessage } from '../schema/index.js';
 import type { ChatRoom, ChatMessage } from '../schemas/index.js';
@@ -89,11 +89,10 @@ export class ChatService {
     roomId: string,
     content: string,
   ): Promise<ChatMessage> {
-    const [room] = await this.drizzle.db
-      .select()
-      .from(chatRoom)
-      .where(eq(chatRoom.id, roomId));
-    if (!room) throw new ChatRoomNotFoundError(roomId);
+    const room = findOneOrThrow(
+      await this.drizzle.db.select().from(chatRoom).where(eq(chatRoom.id, roomId)),
+      new ChatRoomNotFoundError(roomId),
+    );
 
     const [record] = await this.drizzle.db
       .insert(chatMessage)
@@ -120,12 +119,11 @@ export class ChatService {
   }
 
   async deleteMessage(id: string, userId: string): Promise<{ success: true }> {
-    const [message] = await this.drizzle.db
-      .select()
-      .from(chatMessage)
-      .where(eq(chatMessage.id, id));
-    if (!message) throw new ChatMessageNotFoundError(id);
-    if (message.userId !== userId) throw new ChatMessageOwnershipError(id);
+    const message = findOneOrThrow(
+      await this.drizzle.db.select().from(chatMessage).where(eq(chatMessage.id, id)),
+      new ChatMessageNotFoundError(id),
+    );
+    assertOwnership(message.userId, userId, new ChatMessageOwnershipError(id));
 
     await this.drizzle.db
       .update(chatMessage)

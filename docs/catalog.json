@@ -251,6 +251,15 @@
       ]
     },
     {
+      "category": "email",
+      "interface": "SendEmailPort",
+      "token": "SEND_EMAIL",
+      "status": "wired",
+      "boundIn": [
+        "packages/modules/platform/identity/src/plugin.ts"
+      ]
+    },
+    {
       "category": "game",
       "interface": "GameAdapter",
       "token": "GAME_ADAPTER",
@@ -312,7 +321,8 @@
       "token": "REALTIME_TRANSPORT",
       "status": "wired",
       "boundIn": [
-        "packages/modules/player/chat/src/plugin.ts"
+        "packages/modules/player/chat/src/plugin.ts",
+        "packages/modules/player/sportsbook/src/plugin.ts"
       ]
     },
     {
@@ -471,6 +481,10 @@
       "file": "packages/contracts/shared-schemas/src/identity.ts"
     },
     {
+      "name": "IdInputSchema",
+      "file": "packages/contracts/shared-schemas/src/common.ts"
+    },
+    {
       "name": "IgamingConfigSchema",
       "file": "packages/contracts/shared-schemas/src/igaming-config.ts"
     },
@@ -535,6 +549,10 @@
       "file": "packages/contracts/orpc-contract/src/cms.ts"
     },
     {
+      "name": "PaginationInputSchema",
+      "file": "packages/contracts/shared-schemas/src/common.ts"
+    },
+    {
       "name": "PaginationSchema",
       "file": "packages/contracts/shared-schemas/src/common.ts"
     },
@@ -591,6 +609,10 @@
       "file": "packages/contracts/orpc-contract/src/sportsbook.ts"
     },
     {
+      "name": "SportsbookConfigSchema",
+      "file": "packages/contracts/shared-schemas/src/platform-config.ts"
+    },
+    {
       "name": "SportsbookEventSchema",
       "file": "packages/contracts/orpc-contract/src/sportsbook.ts"
     },
@@ -633,6 +655,10 @@
     {
       "name": "UserBonusStatusSchema",
       "file": "packages/contracts/orpc-contract/src/bonus.ts"
+    },
+    {
+      "name": "UserIdInputSchema",
+      "file": "packages/contracts/shared-schemas/src/common.ts"
     },
     {
       "name": "UserSchema",

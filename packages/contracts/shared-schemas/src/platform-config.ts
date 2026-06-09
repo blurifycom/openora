@@ -28,6 +28,26 @@ export const BrandSchema = z
   })
   .strict();
 
+export const SportsbookConfigSchema = z
+  .object({
+    /**
+     * How often (ms) the in-memory live odds ticker fires per open selection.
+     * Default: 2000 ms.
+     */
+    oddsTickMs: z.number().int().positive().optional(),
+    /**
+     * Minimum odds value. Selection odds are clamped to this lower bound.
+     * Default: 1.01.
+     */
+    minOdds: z.number().positive().optional(),
+    /**
+     * Maximum odds value. Selection odds are clamped to this upper bound.
+     * Default: 50.
+     */
+    maxOdds: z.number().positive().optional(),
+  })
+  .strict();
+
 export const PlatformConfigSchema = z
   .object({
     /**
@@ -65,6 +85,11 @@ export const PlatformConfigSchema = z
           .strict(),
       )
       .default({}),
+    /**
+     * Operator-tunable sportsbook knobs. All fields are optional; absent keys
+     * fall back to the service defaults (oddsTickMs=2000, minOdds=1.01, maxOdds=50).
+     */
+    sportsbook: SportsbookConfigSchema.optional(),
   })
   .strict()
   .superRefine((cfg, ctx) => {

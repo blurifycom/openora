@@ -1,5 +1,6 @@
 import { oc } from '@orpc/contract';
 import * as z from 'zod';
+import { IdInputSchema } from '@oss/shared-schemas';
 
 export const NotificationSchema = z.object({
   id: z.string(),
@@ -16,7 +17,7 @@ export const notificationsContract = {
 
   markRead: oc
     .route({ method: 'POST', path: '/notifications/{id}/read' })
-    .input(z.object({ id: z.string() }))
+    .input(IdInputSchema)
     .output(z.object({ success: z.literal(true) })),
 
   markAllRead: oc

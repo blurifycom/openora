@@ -1,5 +1,6 @@
 import { oc } from '@orpc/contract';
 import * as z from 'zod';
+import { UserIdInputSchema } from '@oss/shared-schemas';
 
 export const PlatformStatsSchema = z.object({
   totalUsers: z.number().int(),
@@ -44,7 +45,7 @@ export const backofficeContract = {
 
   getUser: oc
     .route({ method: 'GET', path: '/backoffice/users/{userId}' })
-    .input(z.object({ userId: z.string() }))
+    .input(UserIdInputSchema)
     .output(AdminUserSchema),
 
   updateUser: oc

@@ -1,8 +1,7 @@
 import { implement } from '@orpc/server';
 import { populateContractRouterPaths } from '@orpc/contract';
-import { mapErrors, type OssContext } from '@oss/core';
+import { mapErrors, createEventStreamGenerator, getUserId, type OssContext } from '@oss/core';
 import { chatContract } from '@oss/orpc-contract/chat';
-import type { ChatMessage } from '../schemas/index.js';
 import {
   ChatService,
   ChatRoomNotFoundError,
@@ -10,65 +9,12 @@ import {
   ChatMessageOwnershipError,
 } from '../service/chat.service.js';
 
-// Bridge the service's push-style message listener into a pull-style async
-// generator for SSE. A bounded buffer holds messages between yields; a resolver
-// wakes the generator when one arrives. The handler's abort signal tears the
-// subscription down so each connection cleans up after itself. Mirrors the
-// sportsbook odds stream.
-async function* streamMessages(
-  chatService: ChatService,
-  roomId: string | null,
-  signal: AbortSignal | undefined,
-): AsyncGenerator<ChatMessage> {
-  const queue: ChatMessage[] = [];
-  let resolve: (() => void) | undefined;
-  let done = false;
-
-  const wake = () => {
-    resolve?.();
-    resolve = undefined;
-  };
-
-  const unsubscribe = chatService.subscribeMessages(roomId, (message) => {
-    queue.push(message);
-    wake();
-  });
-
-  const onAbort = () => {
-    done = true;
-    wake();
-  };
-  signal?.addEventListener('abort', onAbort);
-
-  try {
-    while (!done && !signal?.aborted) {
-      if (queue.length === 0) {
-        await new Promise<void>((r) => {
-          resolve = r;
-        });
-        continue;
-      }
-      const next = queue.shift();
-      if (next) yield next;
-    }
-  } finally {
-    unsubscribe();
-    signal?.removeEventListener('abort', onAbort);
-  }
-}
-
 const chat = populateContractRouterPaths({ chat: chatContract }).chat;
 
-function extractHeader(context: unknown, header: string, fallback: string): string {
-  const ctx = context as Record<string, unknown>;
-  const req = ctx['request'] as Record<string, unknown> | undefined;
-  if (!req) return fallback;
-  const headers = req['headers'] as Record<string, unknown> | undefined;
-  if (!headers) return fallback;
-  const val = headers[header];
-  if (Array.isArray(val)) return String(val[0] ?? fallback);
-  if (typeof val === 'string') return val;
-  return fallback;
+function resolveUsername(context: OssContext, fallback = 'anonymous'): string {
+  const val = context.request.headers['x-username'];
+  if (Array.isArray(val)) return val[0] ?? fallback;
+  return typeof val === 'string' ? val : fallback;
 }
 
 export function createChatRouter(chatService: ChatService) {
@@ -84,15 +30,15 @@ export function createChatRouter(chatService: ChatService) {
     ),
 
     sendRoomMessage: os.sendRoomMessage.handler(({ input, context }) => {
-      const userId = extractHeader(context, 'x-user-id', 'anonymous');
-      const username = extractHeader(context, 'x-username', 'anonymous');
+      const userId = getUserId(context);
+      const username = resolveUsername(context);
       return mapErrors({ NOT_FOUND: ChatRoomNotFoundError }, () =>
         chatService.sendRoomMessage(userId, username, input.roomId, input.content),
       );
     }),
 
     deleteMessage: os.deleteMessage.handler(({ input, context }) => {
-      const userId = extractHeader(context, 'x-user-id', 'anonymous');
+      const userId = getUserId(context);
       return mapErrors(
         { NOT_FOUND: ChatMessageNotFoundError, FORBIDDEN: ChatMessageOwnershipError },
         () => chatService.deleteMessage(input.id, userId),
@@ -102,13 +48,15 @@ export function createChatRouter(chatService: ChatService) {
     getGlobalMessages: os.getGlobalMessages.handler(() => chatService.getGlobalMessages()),
 
     sendGlobalMessage: os.sendGlobalMessage.handler(({ input, context }) => {
-      const userId = extractHeader(context, 'x-user-id', 'anonymous');
-      const username = extractHeader(context, 'x-username', 'anonymous');
+      const userId = getUserId(context);
+      const username = resolveUsername(context);
       return chatService.sendGlobalMessage(userId, username, input.content);
     }),
 
     streamMessages: os.streamMessages.handler(({ input, signal }) =>
-      streamMessages(chatService, input.roomId, signal),
+      createEventStreamGenerator((push) => chatService.subscribeMessages(input.roomId, push), {
+        signal,
+      }),
     ),
   });
 }

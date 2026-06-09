@@ -1,6 +1,6 @@
-import { createDomainError } from '@oss/core';
-import { DrizzleService } from '@oss/db';
-import { eq, ilike, count, or, and, gte, asc, desc } from 'drizzle-orm';
+import { makeNotFoundError } from '@oss/core';
+import { DrizzleService, findOneOrThrow, pageToOffset } from '@oss/db';
+import { eq, ilike, count, or, and, gte, desc, sql } from 'drizzle-orm';
 import { player } from '../schema/index.js';
 import { user } from '@oss/modules/platform/identity/schema';
 import type { UpdatePlayerProfileInput } from '@oss/orpc-contract';
@@ -12,10 +12,7 @@ import type {
   KycStatus,
 } from '../schemas/index.js';
 
-export const PlayerNotFoundError = createDomainError(
-  'PlayerNotFoundError',
-  (playerId: string) => `Player not found: ${playerId}`,
-);
+export const PlayerNotFoundError = makeNotFoundError('Player');
 
 function toPlayer(p: typeof player.$inferSelect, email: string): Player {
   return {
@@ -58,10 +55,7 @@ export class PlayerService {
   // Registration only creates the auth `user`; the `player` profile row is
   // materialised lazily here so a freshly-registered user always has a profile.
   private async ensureProfile(userId: string): Promise<Player> {
-    const [existing] = await this.drizzle.db
-      .select()
-      .from(player)
-      .where(eq(player.userId, userId));
+    const [existing] = await this.drizzle.db.select().from(player).where(eq(player.userId, userId));
     if (existing) return toPlayer(existing, await this.emailFor(userId));
 
     const [u] = await this.drizzle.db
@@ -109,28 +103,28 @@ export class PlayerService {
       );
     }
     const whereClause = conditions.length > 0 ? and(...conditions) : undefined;
-    const [records, [{ n }]] = await Promise.all([
+    // Page rows joined to their email in ONE query (LEFT JOIN, many players ->
+    // one user, so the limit is not multiplied), plus a single COUNT for total.
+    const [rows, [{ n }]] = await Promise.all([
       db
-        .select()
+        .select({ player, email: user.email })
         .from(player)
+        .leftJoin(user, eq(user.id, player.userId))
         .where(whereClause)
         .orderBy(desc(player.createdAt))
         .limit(limit)
-        .offset((page - 1) * limit),
+        .offset(pageToOffset(page, limit)),
       db.select({ n: count() }).from(player).where(whereClause),
     ]);
-    const players = await Promise.all(
-      records.map(async (r) => toPlayer(r, await this.emailFor(r.userId))),
-    );
+    const players = rows.map((r) => toPlayer(r.player, r.email ?? ''));
     return { players, total: Number(n) };
   }
 
   async get(playerId: string): Promise<Player> {
-    const [record] = await this.drizzle.db
-      .select()
-      .from(player)
-      .where(eq(player.id, playerId));
-    if (!record) throw new PlayerNotFoundError(playerId);
+    const record = findOneOrThrow(
+      await this.drizzle.db.select().from(player).where(eq(player.id, playerId)),
+      new PlayerNotFoundError(playerId),
+    );
     return toPlayer(record, await this.emailFor(record.userId));
   }
 
@@ -143,11 +137,10 @@ export class PlayerService {
       level?: number;
     },
   ): Promise<Player> {
-    const [existing] = await this.drizzle.db
-      .select()
-      .from(player)
-      .where(eq(player.id, playerId));
-    if (!existing) throw new PlayerNotFoundError(playerId);
+    findOneOrThrow(
+      await this.drizzle.db.select().from(player).where(eq(player.id, playerId)),
+      new PlayerNotFoundError(playerId),
+    );
     const patch: Partial<typeof player.$inferInsert> = {};
     if (data.displayName !== undefined) patch.displayName = data.displayName;
     if (data.status !== undefined) patch.status = data.status;
@@ -162,11 +155,10 @@ export class PlayerService {
   }
 
   async remove(playerId: string): Promise<{ success: boolean }> {
-    const [existing] = await this.drizzle.db
-      .select()
-      .from(player)
-      .where(eq(player.id, playerId));
-    if (!existing) throw new PlayerNotFoundError(playerId);
+    findOneOrThrow(
+      await this.drizzle.db.select().from(player).where(eq(player.id, playerId)),
+      new PlayerNotFoundError(playerId),
+    );
     await this.drizzle.db.delete(player).where(eq(player.id, playerId));
     return { success: true };
   }
@@ -175,22 +167,22 @@ export class PlayerService {
     const since = new Date();
     since.setUTCHours(0, 0, 0, 0);
     since.setUTCDate(since.getUTCDate() - (days - 1));
-    const records = await this.drizzle.db
-      .select()
+    // Aggregate at the DB (GROUP BY day) - returns at most `days` rows, never
+    // the full player set. The day key matches toDateKey (UTC YYYY-MM-DD).
+    const dayKey = sql<string>`to_char(date_trunc('day', ${player.createdAt}), 'YYYY-MM-DD')`;
+    const rows = await this.drizzle.db
+      .select({ date: dayKey, n: count() })
       .from(player)
       .where(gte(player.createdAt, since))
-      .orderBy(asc(player.createdAt));
-    const buckets = new Map<string, number>();
-    for (let i = 0; i < days; i++) {
+      .groupBy(dayKey);
+    const countByDay = new Map(rows.map((r) => [r.date, Number(r.n)]));
+    // Fill the contiguous day series (bounded by `days`, not by row count).
+    return Array.from({ length: days }, (_, i) => {
       const d = new Date(since);
       d.setUTCDate(since.getUTCDate() + i);
-      buckets.set(toDateKey(d), 0);
-    }
-    for (const r of records) {
-      const key = toDateKey(r.createdAt);
-      if (buckets.has(key)) buckets.set(key, (buckets.get(key) ?? 0) + 1);
-    }
-    return [...buckets.entries()].map(([date, count]) => ({ date, count }));
+      const date = toDateKey(d);
+      return { date, count: countByDay.get(date) ?? 0 };
+    });
   }
 
   async summary(): Promise<PlayerSummary> {
@@ -198,7 +190,10 @@ export class PlayerService {
     weekAgo.setUTCDate(weekAgo.getUTCDate() - 7);
     const db = this.drizzle.db;
     const [total, active, newLastWeek, selfExcluded] = await Promise.all([
-      db.select({ n: count() }).from(player).then(([r]) => Number(r?.n ?? 0)),
+      db
+        .select({ n: count() })
+        .from(player)
+        .then(([r]) => Number(r?.n ?? 0)),
       db
         .select({ n: count() })
         .from(player)

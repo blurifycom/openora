@@ -1,14 +1,11 @@
-import { createDomainError } from '@oss/core';
-import { DrizzleService } from '@oss/db';
+import { makeNotFoundError } from '@oss/core';
+import { DrizzleService, findOneOrThrow, pageToOffset } from '@oss/db';
 import { eq, ilike, count, sum, and, desc } from 'drizzle-orm';
 import { user } from '@oss/modules/platform/identity/schema';
 import { wallet, walletTransaction } from '@oss/modules/player/wallet/schema';
 import type { PlatformStats, AdminUser, AdminTransaction } from '../schemas/index.js';
 
-export const UserNotFoundError = createDomainError(
-  'UserNotFoundError',
-  (userId: string) => `User not found: ${userId}`,
-);
+export const UserNotFoundError = makeNotFoundError('User');
 
 export class BackofficeService {
   constructor(private readonly drizzle: DrizzleService) {}
@@ -16,25 +13,22 @@ export class BackofficeService {
   async getStats(): Promise<PlatformStats> {
     const db = this.drizzle.db;
     const [userCount, depositSum, withdrawalSum] = await Promise.all([
-      db.select({ n: count() }).from(user).then(([r]) => Number(r?.n ?? 0)),
+      db
+        .select({ n: count() })
+        .from(user)
+        .then(([r]) => Number(r?.n ?? 0)),
       db
         .select({ total: sum(walletTransaction.amount) })
         .from(walletTransaction)
         .where(
-          and(
-            eq(walletTransaction.type, 'deposit'),
-            eq(walletTransaction.status, 'completed'),
-          ),
+          and(eq(walletTransaction.type, 'deposit'), eq(walletTransaction.status, 'completed')),
         )
         .then(([r]) => Number(r?.total ?? 0)),
       db
         .select({ total: sum(walletTransaction.amount) })
         .from(walletTransaction)
         .where(
-          and(
-            eq(walletTransaction.type, 'withdrawal'),
-            eq(walletTransaction.status, 'completed'),
-          ),
+          and(eq(walletTransaction.type, 'withdrawal'), eq(walletTransaction.status, 'completed')),
         )
         .then(([r]) => Number(r?.total ?? 0)),
     ]);
@@ -61,7 +55,7 @@ export class BackofficeService {
         .where(whereClause)
         .orderBy(desc(user.createdAt))
         .limit(limit)
-        .offset((page - 1) * limit),
+        .offset(pageToOffset(page, limit)),
       db.select({ n: count() }).from(user).where(whereClause),
     ]);
     return {
@@ -78,8 +72,10 @@ export class BackofficeService {
   }
 
   async getUser(userId: string): Promise<AdminUser> {
-    const [record] = await this.drizzle.db.select().from(user).where(eq(user.id, userId));
-    if (!record) throw new UserNotFoundError(userId);
+    const record = findOneOrThrow(
+      await this.drizzle.db.select().from(user).where(eq(user.id, userId)),
+      new UserNotFoundError(userId),
+    );
     return {
       id: record.id,
       email: record.email,
@@ -94,8 +90,10 @@ export class BackofficeService {
     userId: string,
     data: { isActive?: boolean; role?: string },
   ): Promise<AdminUser> {
-    const [existing] = await this.drizzle.db.select().from(user).where(eq(user.id, userId));
-    if (!existing) throw new UserNotFoundError(userId);
+    findOneOrThrow(
+      await this.drizzle.db.select().from(user).where(eq(user.id, userId)),
+      new UserNotFoundError(userId),
+    );
     const patch: Partial<typeof user.$inferInsert> = {};
     if (data.isActive !== undefined) patch.isActive = data.isActive;
     if (data.role !== undefined) patch.role = data.role;
@@ -129,7 +127,7 @@ export class BackofficeService {
         .where(whereClause)
         .orderBy(desc(walletTransaction.createdAt))
         .limit(limit)
-        .offset((page - 1) * limit),
+        .offset(pageToOffset(page, limit)),
       db
         .select({ n: count() })
         .from(walletTransaction)

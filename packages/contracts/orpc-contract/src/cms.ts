@@ -1,5 +1,6 @@
 import { oc } from '@orpc/contract';
 import * as z from 'zod';
+import { IdInputSchema } from '@oss/shared-schemas';
 
 export const PageSchema = z.object({
   id: z.string(),
@@ -58,7 +59,7 @@ export const cmsContract = {
 
   deletePage: oc
     .route({ method: 'DELETE', path: '/cms/pages/{id}' })
-    .input(z.object({ id: z.string() }))
+    .input(IdInputSchema)
     .output(z.object({ success: z.literal(true) })),
 
   listBanners: oc.route({ method: 'GET', path: '/cms/banners' }).output(z.array(BannerSchema)),
@@ -98,6 +99,6 @@ export const cmsContract = {
 
   deleteBanner: oc
     .route({ method: 'DELETE', path: '/cms/banners/{id}' })
-    .input(z.object({ id: z.string() }))
+    .input(IdInputSchema)
     .output(z.object({ success: z.literal(true) })),
 };

@@ -1,17 +1,11 @@
-import { DrizzleService } from '@oss/db';
-import { type EventBus, createDomainError } from '@oss/core';
+import { DrizzleService, findOneOrThrow } from '@oss/db';
+import { type EventBus, makeNotFoundError, serializeRow } from '@oss/core';
 import { eq, and } from 'drizzle-orm';
 import { locale, translation } from '../schema/index.js';
 
-export const LocaleNotFoundError = createDomainError(
-  'LocaleNotFoundError',
-  (code: string) => `Locale not found: ${code}`,
-);
+export const LocaleNotFoundError = makeNotFoundError('Locale');
 
-export const TranslationNotFoundError = createDomainError(
-  'TranslationNotFoundError',
-  (id: string) => `Translation not found: ${id}`,
-);
+export const TranslationNotFoundError = makeNotFoundError('Translation');
 
 export interface UpsertTranslationInput {
   locale: string;
@@ -49,13 +43,10 @@ export class LocalizationService {
   }
 
   async upsertTranslation(input: UpsertTranslationInput): Promise<TranslationRecord> {
-    const [localeRow] = await this.drizzle.db
-      .select()
-      .from(locale)
-      .where(eq(locale.code, input.locale));
-    if (!localeRow) {
-      throw new LocaleNotFoundError(input.locale);
-    }
+    const localeRow = findOneOrThrow(
+      await this.drizzle.db.select().from(locale).where(eq(locale.code, input.locale)),
+      new LocaleNotFoundError(input.locale),
+    );
 
     const [row] = await this.drizzle.db
       .insert(translation)
@@ -77,17 +68,14 @@ export class LocalizationService {
       key: input.key,
     });
 
-    return { ...row!, updatedAt: row!.updatedAt.toISOString() };
+    return serializeRow(row!, { dateFields: ['updatedAt'] }) as TranslationRecord;
   }
 
   async deleteTranslation(id: string): Promise<{ success: true }> {
-    const [existing] = await this.drizzle.db
-      .select()
-      .from(translation)
-      .where(eq(translation.id, id));
-    if (!existing) {
-      throw new TranslationNotFoundError(id);
-    }
+    findOneOrThrow(
+      await this.drizzle.db.select().from(translation).where(eq(translation.id, id)),
+      new TranslationNotFoundError(id),
+    );
     await this.drizzle.db.delete(translation).where(eq(translation.id, id));
     this.events.emit('localization.translation.deleted', { id });
     return { success: true };

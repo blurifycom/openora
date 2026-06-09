@@ -1,18 +1,11 @@
-import { type EventBus, createDomainError } from '@oss/core';
-import { DrizzleService } from '@oss/db';
+import { type EventBus, makeNotFoundError } from '@oss/core';
+import { DrizzleService, findOneOrThrow } from '@oss/db';
 import { eq, and, asc, desc } from 'drizzle-orm';
 import { page as pageTable, banner as bannerTable } from '../schema/index.js';
 import type { Page, Banner } from '../schemas/index.js';
 
-export const PageNotFoundError = createDomainError(
-  'PageNotFoundError',
-  (identifier: string) => `Page not found: ${identifier}`,
-);
-
-export const BannerNotFoundError = createDomainError(
-  'BannerNotFoundError',
-  (id: string) => `Banner not found: ${id}`,
-);
+export const PageNotFoundError = makeNotFoundError('Page');
+export const BannerNotFoundError = makeNotFoundError('Banner');
 
 function toPage(record: {
   id: string;
@@ -81,11 +74,10 @@ export class CmsService {
   }
 
   async getPage(slug: string): Promise<Page> {
-    const [record] = await this.drizzle.db
-      .select()
-      .from(pageTable)
-      .where(eq(pageTable.slug, slug));
-    if (!record) throw new PageNotFoundError(slug);
+    const record = findOneOrThrow(
+      await this.drizzle.db.select().from(pageTable).where(eq(pageTable.slug, slug)),
+      new PageNotFoundError(slug),
+    );
     return toPage(record);
   }
 
@@ -117,11 +109,10 @@ export class CmsService {
     content?: unknown;
     publishedAt?: string | null;
   }): Promise<Page> {
-    const [existing] = await this.drizzle.db
-      .select()
-      .from(pageTable)
-      .where(eq(pageTable.id, input.id));
-    if (!existing) throw new PageNotFoundError(input.id);
+    const existing = findOneOrThrow(
+      await this.drizzle.db.select().from(pageTable).where(eq(pageTable.id, input.id)),
+      new PageNotFoundError(input.id),
+    );
 
     const wasPublished = existing.publishedAt !== null;
 
@@ -147,11 +138,10 @@ export class CmsService {
   }
 
   async deletePage(id: string): Promise<{ success: true }> {
-    const [existing] = await this.drizzle.db
-      .select()
-      .from(pageTable)
-      .where(eq(pageTable.id, id));
-    if (!existing) throw new PageNotFoundError(id);
+    findOneOrThrow(
+      await this.drizzle.db.select().from(pageTable).where(eq(pageTable.id, id)),
+      new PageNotFoundError(id),
+    );
     await this.drizzle.db.delete(pageTable).where(eq(pageTable.id, id));
     return { success: true };
   }
@@ -202,11 +192,10 @@ export class CmsService {
     isActive?: boolean;
     sortOrder?: number;
   }): Promise<Banner> {
-    const [existing] = await this.drizzle.db
-      .select()
-      .from(bannerTable)
-      .where(eq(bannerTable.id, input.id));
-    if (!existing) throw new BannerNotFoundError(input.id);
+    findOneOrThrow(
+      await this.drizzle.db.select().from(bannerTable).where(eq(bannerTable.id, input.id)),
+      new BannerNotFoundError(input.id),
+    );
 
     const patch: Partial<typeof bannerTable.$inferInsert> = {};
     if (input.placement !== undefined) patch.placement = input.placement;
@@ -225,11 +214,10 @@ export class CmsService {
   }
 
   async deleteBanner(id: string): Promise<{ success: true }> {
-    const [existing] = await this.drizzle.db
-      .select()
-      .from(bannerTable)
-      .where(eq(bannerTable.id, id));
-    if (!existing) throw new BannerNotFoundError(id);
+    findOneOrThrow(
+      await this.drizzle.db.select().from(bannerTable).where(eq(bannerTable.id, id)),
+      new BannerNotFoundError(id),
+    );
     await this.drizzle.db.delete(bannerTable).where(eq(bannerTable.id, id));
     return { success: true };
   }

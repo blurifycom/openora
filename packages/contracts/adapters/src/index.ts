@@ -6,7 +6,12 @@
 export type { Token, SealedToken, ClientPageToken } from './token.js';
 export { createToken, createSealedToken, createClientPageToken } from './token.js';
 
-export type { MessageBrokerAdapter, BrokerHandler } from './broker.js';
+export type {
+  EventEnvelope,
+  MessageBrokerAdapter,
+  BrokerHandler,
+  SubscribeOptions,
+} from './broker.js';
 export { MESSAGE_BROKER } from './broker.js';
 
 export type {
@@ -46,3 +51,6 @@ export { AGGREGATOR_ADAPTER } from './aggregator.js';
 
 export type { RngAdapter } from './rng.js';
 export { RNG_ADAPTER } from './rng.js';
+
+export type { SendEmailPort } from './email.js';
+export { SEND_EMAIL } from './email.js';

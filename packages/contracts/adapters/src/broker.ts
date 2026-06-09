@@ -1,16 +1,46 @@
 // Message-broker seam. The EventBus (@oss/core) publishes/subscribes through this
 // adapter, so the inter-module transport is swappable: the default binding is an
-// in-process broker; a downstream operator binds a durable driver (Redpanda /
-// Kafka API, NATS JetStream, RabbitMQ) to MESSAGE_BROKER in an overlay and every
+// in-process broker; a downstream operator binds a durable driver (RabbitMQ,
+// Redpanda / Kafka API, NATS JetStream) to MESSAGE_BROKER in an overlay and every
 // event flows through it - no module change. Delivery is at-least-once once a real
-// broker is bound, so consumers must be idempotent. See ADR-0010.
+// broker is bound, so consumers must be idempotent. See ADR-0010 and ADR-0016.
 import { createToken, type Token } from './token.js';
 
-export type BrokerHandler = (payload: unknown) => void | Promise<void>;
+// On-the-wire envelope that every remote adapter serializes. The EventBus
+// builds this internally; module code never sees it (only the typed payload).
+// Fields:
+//   eventId       - consumer-side idempotency/dedup key (UUID per emission)
+//   topic         - domain event name (eg "wallet.deposit.completed")
+//   payload       - the validated event payload (matches domainEventSchemas)
+//   occurredAt    - ISO-8601 timestamp of the emission
+//   schemaVersion - monotonic integer for forward-compat payload evolution
+//   tenantId      - optional; pulled from the tenant AsyncLocalStorage when present
+//   orderingKey   - optional; maps to Kafka partition key / RabbitMQ routing key
+//                   for per-tenant or per-user ordering guarantees
+//   traceId       - optional; distributed trace correlation ID
+export interface EventEnvelope<T = unknown> {
+  eventId: string;
+  topic: string;
+  payload: T;
+  occurredAt: string;
+  schemaVersion: number;
+  tenantId?: string;
+  orderingKey?: string;
+  traceId?: string;
+}
+
+export type BrokerHandler = (envelope: EventEnvelope) => void | Promise<void>;
+
+// Forward hint for grouped consumers: Kafka consumer group / RabbitMQ queue group.
+// When omitted, the adapter creates an exclusive per-process queue (fan-out).
+export interface SubscribeOptions {
+  consumerGroup?: string;
+}
 
 export interface MessageBrokerAdapter {
-  publish(topic: string, payload: unknown): void | Promise<void>;
-  subscribe(topic: string, handler: BrokerHandler): void;
+  publish(envelope: EventEnvelope): void | Promise<void>;
+  subscribe(topic: string, handler: BrokerHandler, options?: SubscribeOptions): () => void;
+  close(): Promise<void>;
 }
 
 export const MESSAGE_BROKER: Token<MessageBrokerAdapter> = createToken('MESSAGE_BROKER');

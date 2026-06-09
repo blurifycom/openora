@@ -1,18 +1,12 @@
-import { type EventBus, createDomainError } from '@oss/core';
-import { DrizzleService } from '@oss/db';
+import { type EventBus, makeNotFoundError, makeOwnershipError, assertOwnership } from '@oss/core';
+import { DrizzleService, findOneOrThrow } from '@oss/db';
 import { eq, and, isNull, desc } from 'drizzle-orm';
 import { notification } from '../schema/index.js';
 import type { CreateNotificationInput } from '../schemas/index.js';
 
-export const NotificationNotFoundError = createDomainError(
-  'NotificationNotFoundError',
-  (id: string) => `Notification not found: ${id}`,
-);
+export const NotificationNotFoundError = makeNotFoundError('Notification');
 
-export const NotificationOwnershipError = createDomainError(
-  'NotificationOwnershipError',
-  (id: string) => `Notification ${id} does not belong to the requesting user`,
-);
+export const NotificationOwnershipError = makeOwnershipError('Notification');
 
 export class NotificationsService {
   constructor(
@@ -47,16 +41,11 @@ export class NotificationsService {
   }
 
   async markRead(id: string, userId: string) {
-    const [record] = await this.drizzle.db
-      .select()
-      .from(notification)
-      .where(eq(notification.id, id));
-    if (!record) {
-      throw new NotificationNotFoundError(id);
-    }
-    if (record.userId !== userId) {
-      throw new NotificationOwnershipError(id);
-    }
+    const record = findOneOrThrow(
+      await this.drizzle.db.select().from(notification).where(eq(notification.id, id)),
+      new NotificationNotFoundError(id),
+    );
+    assertOwnership(record.userId, userId, new NotificationOwnershipError());
     const [updated] = await this.drizzle.db
       .update(notification)
       .set({ readAt: new Date() })

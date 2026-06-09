@@ -1,6 +1,7 @@
 import { ORPCError } from '@orpc/server';
-import { createAuth, type SendEmail } from '@oss/auth';
+import { createAuth } from '@oss/auth';
 import { type EventBus } from '@oss/core';
+import type { SendEmailPort } from '@oss/adapters';
 import { DrizzleService } from '@oss/db';
 import { user, session, account, verification, twoFactor } from '../schema/index.js';
 import type { User } from '@oss/shared-schemas';
@@ -115,12 +116,12 @@ export class IdentityService {
   constructor(
     private readonly drizzle: DrizzleService,
     private readonly events: EventBus,
-    sendEmail?: SendEmail,
+    private readonly email?: SendEmailPort,
   ) {
     this.auth = createAuth({
       db: this.drizzle.db,
       schema: { user, session, account, verification, twoFactor },
-      ...(sendEmail ? { sendEmail } : {}),
+      ...(email ? { sendEmail: (args) => email.send(args) } : {}),
     });
   }
 

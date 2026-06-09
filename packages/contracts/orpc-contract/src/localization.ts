@@ -1,5 +1,6 @@
 import { oc } from '@orpc/contract';
 import * as z from 'zod';
+import { IdInputSchema } from '@oss/shared-schemas';
 
 const LocaleSchema = z.object({
   id: z.string(),
@@ -41,6 +42,6 @@ export const localizationContract = {
 
   deleteTranslation: oc
     .route({ method: 'DELETE', path: '/localization/translations/{id}' })
-    .input(z.object({ id: z.string() }))
+    .input(IdInputSchema)
     .output(z.object({ success: z.literal(true) })),
 };

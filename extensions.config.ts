@@ -24,7 +24,10 @@ export const extensions = [
 
   // Backoffice - the admin/operator surface
   { id: 'admin-console', path: './packages/modules/dist/backoffice/admin-console/src/plugin.js' },
-  { id: 'player-management', path: './packages/modules/dist/backoffice/player-management/src/plugin.js' },
+  {
+    id: 'player-management',
+    path: './packages/modules/dist/backoffice/player-management/src/plugin.js',
+  },
   { id: 'cms', path: './packages/modules/dist/backoffice/cms/src/plugin.js' },
 
   // Overlay extensions (apps/api/src/extensions/<name>/plugin.ts)
@@ -34,6 +37,12 @@ export const extensions = [
   // when REDIS_URL is set, otherwise leaves the in-process default (safe for
   // dev/test/CI). See ADR-0014.
   { id: 'bullmq', path: './apps/api/dist/extensions/bullmq/plugin.js' },
+  //
+  // Durable inter-module broker. Self-disabling: rebinds MESSAGE_BROKER to
+  // RabbitMQ only when AMQP_URL is set, otherwise leaves the in-process default
+  // (safe for dev/test/CI). The EventBus owns the wire envelope, so this is a
+  // zero-module-change swap and the migration path to Kafka. See ADR-0016.
+  { id: 'rabbitmq', path: './apps/api/dist/extensions/rabbitmq/plugin.js' },
   //
   // Reference overlay - registered LAST so it can react to wallet.deposit.completed.
   // Paired with @oss/example-vip-tier (client UI plugin).

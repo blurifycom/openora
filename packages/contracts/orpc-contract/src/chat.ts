@@ -1,5 +1,6 @@
 import { oc, eventIterator } from '@orpc/contract';
 import * as z from 'zod';
+import { IdInputSchema } from '@oss/shared-schemas';
 
 export const ChatRoomSchema = z.object({
   id: z.string(),
@@ -40,7 +41,7 @@ export const chatContract = {
 
   deleteMessage: oc
     .route({ method: 'DELETE', path: '/chat/messages/{id}' })
-    .input(z.object({ id: z.string() }))
+    .input(IdInputSchema)
     .output(z.object({ success: z.literal(true) })),
 
   getGlobalMessages: oc

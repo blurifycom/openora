@@ -1,5 +1,6 @@
 import { oc } from '@orpc/contract';
 import * as z from 'zod';
+import { IdInputSchema } from '@oss/shared-schemas';
 
 export const GameSchema = z.object({
   id: z.string(),
@@ -48,7 +49,7 @@ export const gamingContract = {
 
   getGame: oc
     .route({ method: 'GET', path: '/gaming/games/{id}' })
-    .input(z.object({ id: z.string() }))
+    .input(IdInputSchema)
     .output(GameSchema),
 
   startRound: oc

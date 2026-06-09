@@ -1,19 +1,13 @@
-import { type EventBus, createDomainError } from '@oss/core';
-import { DrizzleService } from '@oss/db';
+import { type EventBus, makeNotFoundError } from '@oss/core';
+import { DrizzleService, findOneOrThrow } from '@oss/db';
 import { eq, and, asc, desc } from 'drizzle-orm';
 import { type GameAdapter } from '@oss/adapters';
 import { game, gameRound } from '../schema/index.js';
 import type { Game, GameRound } from '../schemas/index.js';
 
-export const GameNotFoundError = createDomainError(
-  'GameNotFoundError',
-  (id: string) => `Game not found: ${id}`,
-);
+export const GameNotFoundError = makeNotFoundError('Game');
 
-export const GameRoundNotFoundError = createDomainError(
-  'GameRoundNotFoundError',
-  (id: string) => `Game round not found: ${id}`,
-);
+export const GameRoundNotFoundError = makeNotFoundError('GameRound');
 
 function toGame(record: typeof game.$inferSelect): Game {
   return {
@@ -58,8 +52,10 @@ export class GamingService {
   }
 
   async getGame(id: string): Promise<Game> {
-    const [record] = await this.drizzle.db.select().from(game).where(eq(game.id, id));
-    if (!record) throw new GameNotFoundError(id);
+    const record = findOneOrThrow(
+      await this.drizzle.db.select().from(game).where(eq(game.id, id)),
+      new GameNotFoundError(id),
+    );
     return toGame(record);
   }
 
@@ -94,11 +90,10 @@ export class GamingService {
   }
 
   async endRound(userId: string, roundId: string): Promise<{ success: true; outcome?: unknown }> {
-    const [round] = await this.drizzle.db
-      .select()
-      .from(gameRound)
-      .where(eq(gameRound.id, roundId));
-    if (!round) throw new GameRoundNotFoundError(roundId);
+    const round = findOneOrThrow(
+      await this.drizzle.db.select().from(gameRound).where(eq(gameRound.id, roundId)),
+      new GameRoundNotFoundError(roundId),
+    );
 
     await this.provider.endRound(roundId);
 

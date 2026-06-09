@@ -1,7 +1,9 @@
 import { describe, it, expect, vi } from 'vitest';
 import { PlayerService, PlayerNotFoundError } from '../service/player.service.js';
 
-type DateRow = { createdAt: Date };
+// Day-count rows as returned by the DB GROUP BY (aggregation happens in SQL,
+// not in the service), eg { date: '2026-06-09', n: 1 }.
+type DayCountRow = { date: string; n: number };
 
 function chain(result: unknown): any {
   const proxy: any = new Proxy(function () {}, {
@@ -14,8 +16,8 @@ function chain(result: unknown): any {
   return proxy;
 }
 
-function makeService(playerRows: DateRow[] = []): PlayerService {
-  const db = { select: vi.fn(() => chain(playerRows)) };
+function makeService(dayCounts: DayCountRow[] = []): PlayerService {
+  const db = { select: vi.fn(() => chain(dayCounts)) };
   return new PlayerService({ db } as never);
 }
 
@@ -40,11 +42,13 @@ describe('PlayerService.registrationsOverTime', () => {
     expect(dates[0]).toMatch(/^\d{4}-\d{2}-\d{2}$/);
   });
 
-  it('counts a registration into its day bucket', async () => {
-    const today = new Date();
-    const svc = makeService([{ createdAt: today }]);
+  it('places the DB day-count into its matching day bucket', async () => {
+    const todayKey = new Date().toISOString().slice(0, 10);
+    const svc = makeService([{ date: todayKey, n: 3 }]);
     const points = await svc.registrationsOverTime(7);
-    const total = points.reduce((sum, p) => sum + p.count, 0);
-    expect(total).toBe(1);
+    const today = points.find((p) => p.date === todayKey);
+    expect(today?.count).toBe(3);
+    // days with no DB row stay zero-filled
+    expect(points.filter((p) => p.date !== todayKey).every((p) => p.count === 0)).toBe(true);
   });
 });

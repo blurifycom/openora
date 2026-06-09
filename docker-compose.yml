@@ -47,6 +47,8 @@ services:
       # Reference-only values. Replace BETTER_AUTH_SECRET for any real deployment.
       BETTER_AUTH_SECRET: dev-only-insecure-secret-change-me
       BETTER_AUTH_URL: http://localhost:3001
+      # Activates the rabbitmq MESSAGE_BROKER overlay in the full reference stack.
+      AMQP_URL: amqp://guest:guest@rabbitmq:5672
     ports:
       - "3001:3001"
     depends_on:
@@ -54,6 +56,8 @@ services:
         condition: service_healthy
       migrate:
         condition: service_completed_successfully
+      rabbitmq:
+        condition: service_healthy
 
   web:
     profiles: ["full"]
@@ -81,6 +85,22 @@ services:
       - "3002:3002"
     depends_on:
       - api
+
+  # Durable inter-module broker (MESSAGE_BROKER overlay). OPT-IN: in the `broker`
+  # profile it starts alongside postgres for local broker testing; in `full` it
+  # backs the reference api. Set AMQP_URL=amqp://guest:guest@rabbitmq:5672 to
+  # activate the rabbitmq overlay. Management UI on :15672 (guest/guest). ADR-0016.
+  rabbitmq:
+    profiles: ["full", "broker"]
+    image: rabbitmq:3-management
+    ports:
+      - "5672:5672"
+      - "15672:15672"
+    healthcheck:
+      test: ["CMD", "rabbitmq-diagnostics", "-q", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
 
 volumes:
   postgres_data:

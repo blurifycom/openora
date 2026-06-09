@@ -1,5 +1,5 @@
 import { createDomainError } from '@oss/core';
-import { DrizzleService } from '@oss/db';
+import { DrizzleService, findOneOrThrow } from '@oss/db';
 import { eq, and, ilike, count, asc, inArray } from 'drizzle-orm';
 import { lobbyCategory, lobbyCategoryGame, featuredSlot } from '../schema/index.js';
 import { game } from '@oss/modules/player/gaming/schema';
@@ -36,27 +36,27 @@ export class LobbyService {
 
   async listCategories(tenantId?: string): Promise<LobbyCategory[]> {
     const db = this.drizzle.db;
-    const categories = await db
-      .select()
-      .from(lobbyCategory)
-      .where(tenantId ? eq(lobbyCategory.tenantId, tenantId) : undefined)
-      .orderBy(asc(lobbyCategory.sortOrder));
+    const [categories, counts] = await Promise.all([
+      db
+        .select()
+        .from(lobbyCategory)
+        .where(tenantId ? eq(lobbyCategory.tenantId, tenantId) : undefined)
+        .orderBy(asc(lobbyCategory.sortOrder)),
+      db
+        .select({ categoryId: lobbyCategoryGame.categoryId, n: count() })
+        .from(lobbyCategoryGame)
+        .groupBy(lobbyCategoryGame.categoryId),
+    ]);
 
-    return Promise.all(
-      categories.map(async (cat) => {
-        const [{ n }] = await db
-          .select({ n: count() })
-          .from(lobbyCategoryGame)
-          .where(eq(lobbyCategoryGame.categoryId, cat.id));
-        return {
-          id: cat.id,
-          name: cat.name,
-          slug: cat.slug,
-          sortOrder: cat.sortOrder,
-          gameCount: Number(n),
-        };
-      }),
-    );
+    const countMap = new Map(counts.map((r) => [r.categoryId, Number(r.n)]));
+
+    return categories.map((cat) => ({
+      id: cat.id,
+      name: cat.name,
+      slug: cat.slug,
+      sortOrder: cat.sortOrder,
+      gameCount: countMap.get(cat.id) ?? 0,
+    }));
   }
 
   async getCategoryGames(slug: string, tenantId?: string): Promise<LobbyCategoryDetail> {
@@ -65,8 +65,10 @@ export class LobbyService {
       ? and(eq(lobbyCategory.tenantId, tenantId), eq(lobbyCategory.slug, slug))
       : eq(lobbyCategory.slug, slug);
 
-    const [category] = await db.select().from(lobbyCategory).where(whereClause);
-    if (!category) throw new LobbyCategoryNotFoundError(slug);
+    const category = findOneOrThrow(
+      await db.select().from(lobbyCategory).where(whereClause),
+      new LobbyCategoryNotFoundError(slug),
+    );
 
     const links = await db
       .select()
@@ -77,9 +79,7 @@ export class LobbyService {
     const gameIds = links.map((l) => l.gameId);
 
     const games =
-      gameIds.length > 0
-        ? await db.select().from(game).where(inArray(game.id, gameIds))
-        : [];
+      gameIds.length > 0 ? await db.select().from(game).where(inArray(game.id, gameIds)) : [];
 
     const gameMap = new Map(games.map((g) => [g.id, g]));
 
@@ -108,9 +108,7 @@ export class LobbyService {
 
     const gameIds = [...new Set(slots.map((s) => s.gameId))];
     const games =
-      gameIds.length > 0
-        ? await db.select().from(game).where(inArray(game.id, gameIds))
-        : [];
+      gameIds.length > 0 ? await db.select().from(game).where(inArray(game.id, gameIds)) : [];
 
     const gameMap = new Map(games.map((g) => [g.id, g]));
 
@@ -134,12 +132,7 @@ export class LobbyService {
       ? and(ilike(game.name, `%${query}%`), eq(game.isActive, true), eq(game.tenantId, tenantId))
       : and(ilike(game.name, `%${query}%`), eq(game.isActive, true));
 
-    const games = await db
-      .select()
-      .from(game)
-      .where(whereClause)
-      .orderBy(asc(game.name))
-      .limit(50);
+    const games = await db.select().from(game).where(whereClause).orderBy(asc(game.name)).limit(50);
 
     return games.map(toGameSummary);
   }

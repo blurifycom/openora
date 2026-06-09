@@ -1,19 +1,19 @@
-import { DrizzleService } from '@oss/db';
-import { type EventBus, createDomainError } from '@oss/core';
+import { DrizzleService, findOneOrThrow } from '@oss/db';
+import {
+  type EventBus,
+  makeNotFoundError,
+  makeOwnershipError,
+  assertOwnership,
+  serializeRow,
+} from '@oss/core';
 import { eq } from 'drizzle-orm';
 import { userLimit, geoRule } from '../schema/index.js';
 import type { UpsertLimitInput, Limit, GeoRule, AddGeoRuleInput } from '../schemas/index.js';
 import { type GeoIpAdapter } from '@oss/adapters';
 
-export const LimitNotFoundError = createDomainError(
-  'LimitNotFoundError',
-  (id: string) => `Limit not found: ${id}`,
-);
+export const LimitNotFoundError = makeNotFoundError('Limit');
 
-export const LimitOwnershipError = createDomainError(
-  'LimitOwnershipError',
-  () => 'Limit does not belong to this user',
-);
+export const LimitOwnershipError = makeOwnershipError('Limit');
 
 export class ComplianceService {
   constructor(
@@ -23,10 +23,7 @@ export class ComplianceService {
   ) {}
 
   async getLimitsForUser(userId: string): Promise<Limit[]> {
-    const rows = await this.drizzle.db
-      .select()
-      .from(userLimit)
-      .where(eq(userLimit.userId, userId));
+    const rows = await this.drizzle.db.select().from(userLimit).where(eq(userLimit.userId, userId));
     return rows.map((r) => ({
       id: r.id,
       userId: r.userId,
@@ -58,12 +55,11 @@ export class ComplianceService {
   }
 
   async removeLimit(id: string, userId: string): Promise<{ success: true }> {
-    const [existing] = await this.drizzle.db
-      .select()
-      .from(userLimit)
-      .where(eq(userLimit.id, id));
-    if (!existing) throw new LimitNotFoundError(id);
-    if (existing.userId !== userId) throw new LimitOwnershipError();
+    const existing = findOneOrThrow(
+      await this.drizzle.db.select().from(userLimit).where(eq(userLimit.id, id)),
+      new LimitNotFoundError(id),
+    );
+    assertOwnership(existing.userId, userId, new LimitOwnershipError());
     await this.drizzle.db.delete(userLimit).where(eq(userLimit.id, id));
     this.events.emit('compliance.limit.removed', { userId, limitId: id });
     return { success: true };
@@ -110,21 +106,11 @@ export class ComplianceService {
         set: { action: input.action },
       })
       .returning();
-    return {
-      id: row!.id,
-      countryCode: row!.countryCode,
-      action: row!.action as GeoRule['action'],
-      createdAt: row!.createdAt.toISOString(),
-    };
+    return serializeRow(row!, { dateFields: ['createdAt'] }) as GeoRule;
   }
 
   async listGeoRules(): Promise<GeoRule[]> {
     const rows = await this.drizzle.db.select().from(geoRule);
-    return rows.map((r) => ({
-      id: r.id,
-      countryCode: r.countryCode,
-      action: r.action as GeoRule['action'],
-      createdAt: r.createdAt.toISOString(),
-    }));
+    return rows.map((r) => serializeRow(r, { dateFields: ['createdAt'] }) as GeoRule);
   }
 }
