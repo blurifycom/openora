@@ -22,7 +22,6 @@
       "Bash(git stash *)"
     ],
     "deny": [
-      "Bash(git push *)",
       "Bash(git reset --hard *)",
       "Bash(npm *)",
       "Bash(yarn *)"
