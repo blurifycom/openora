@@ -99,3 +99,27 @@ export const domainEventSchemas = {
 
 export type DomainEventName = keyof typeof domainEventSchemas;
 export type DomainEventPayload<K extends DomainEventName> = z.infer<(typeof domainEventSchemas)[K]>;
+
+// Per-event schema version. Every event starts at 1; bump an entry here only when
+// its payload shape changes in a non-additive way, in the SAME commit that edits
+// the schema above. The EventBus stamps this onto the envelope's `schemaVersion`
+// so a consumer (in another service, possibly deployed at a different version)
+// can branch or upcast. Events not listed default to version 1 - keep the map
+// sparse so it records only real evolutions, not noise.
+export const domainEventVersions: Partial<Record<DomainEventName, number>> = {
+  // 'wallet.deposit.completed': 2,  // example: bumped when `fee` was added
+};
+
+export function getEventVersion(event: string): number {
+  return domainEventVersions[event as DomainEventName] ?? 1;
+}
+
+// Machine-readable catalog of every cross-module topic and its current version.
+// Useful for provisioning broker topics (Kafka/RabbitMQ), docs, and asserting
+// producer/consumer version agreement across services. Pure - no side effects.
+export function eventCatalog(): ReadonlyArray<{ topic: DomainEventName; version: number }> {
+  return (Object.keys(domainEventSchemas) as DomainEventName[]).map((topic) => ({
+    topic,
+    version: getEventVersion(topic),
+  }));
+}

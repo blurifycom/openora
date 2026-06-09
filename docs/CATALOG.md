@@ -21,9 +21,11 @@ overlay plugin that loads AFTER the default-binding module (last registration wi
 | job-queue | `JobQueueAdapter` | `JOB_QUEUE` | wired (default impl) | `packages/platform/api-runtime/src/create-app.ts` |
 | kyc | `KycAdapter` | `KYC_ADAPTER` | wired (default impl) | `packages/modules/platform/identity/src/adapters/mock/mock-kyc-adapter.ts`<br>`packages/modules/platform/identity/src/plugin.ts` |
 | notification | `NotificationDeliveryAdapter` | `NOTIFICATION_DELIVERY_ADAPTER` | wired (default impl) | `packages/modules/platform/identity/src/plugin.ts`<br>`packages/modules/platform/notifications/src/plugin.ts` |
+| outbox | `OutboxWriter` | `OUTBOX` | wired (default impl) | `packages/platform/api-runtime/src/create-app.ts` |
 | payment | `PaymentAdapter` | `PAYMENT_ADAPTER` | wired (default impl) | `packages/modules/player/wallet/src/plugin.ts` |
 | realtime | `RealtimePresence` | `REALTIME_TRANSPORT` | wired (default impl) | `packages/modules/player/chat/src/plugin.ts`<br>`packages/modules/player/sportsbook/src/plugin.ts` |
 | rng | `RngAdapter` | `RNG_ADAPTER` | wired (default impl) | `packages/modules/player/gaming/src/plugin.ts` |
+| wallet-commands | `WalletDebitArgs` | `WALLET_COMMANDS` | wired (default impl) | `packages/modules/player/sportsbook/src/plugin.ts`<br>`packages/modules/player/wallet/src/plugin.ts` |
 
 ## Modules
 

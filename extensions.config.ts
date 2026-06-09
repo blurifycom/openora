@@ -36,11 +36,11 @@ export const extensions = [
   // Durable job-queue driver. Self-disabling: rebinds JOB_QUEUE to BullMQ only
   // when REDIS_URL is set, otherwise leaves the in-process default (safe for
   // dev/test/CI). See ADR-0014.
-  { id: 'bullmq', path: './apps/api/dist/extensions/bullmq/plugin.js' },
+  { id: 'bullmq', path: './apps/api/dist/extensions/bullmq/plugin.js', kind: 'infra' },
   //
   // Durable inter-module broker. Self-disabling: rebinds MESSAGE_BROKER to
   // RabbitMQ only when AMQP_URL is set, otherwise leaves the in-process default
   // (safe for dev/test/CI). The EventBus owns the wire envelope, so this is a
   // zero-module-change swap and the migration path to Kafka. See ADR-0016.
-  { id: 'rabbitmq', path: './apps/api/dist/extensions/rabbitmq/plugin.js' },
+  { id: 'rabbitmq', path: './apps/api/dist/extensions/rabbitmq/plugin.js', kind: 'infra' },
 ];

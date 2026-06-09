@@ -2,11 +2,13 @@ import {
   createToken,
   type Token,
   type MessageBrokerAdapter,
+  type OutboxWriter,
   type EventEnvelope,
   type SubscribeOptions,
 } from '@oss/adapters';
 import {
   domainEventSchemas,
+  getEventVersion,
   type DomainEventName,
   type DomainEventPayload,
 } from '@oss/shared-schemas';
@@ -29,6 +31,20 @@ export type EventHandler<T = unknown> = (
 export interface EventBus {
   emit<K extends DomainEventName>(event: K, payload: DomainEventPayload<K>): void;
   emit(event: string, payload: unknown): void;
+  // Durable, transaction-atomic emit. Call INSIDE a db.transaction, passing the
+  // transaction handle, when the event must never be lost relative to its state
+  // change (money, anything a separate service depends on). The envelope is
+  // written to the outbox within `tx`; a relay publishes it after commit. Requires
+  // the outbox to be bound (OUTBOX_ENABLED / a durable broker) - otherwise throws,
+  // so a money path can't silently degrade to best-effort delivery. Prefer this
+  // over emit() for cross-service-critical events; emit() stays for best-effort
+  // post-commit fan-out within a single process.
+  emitInTransaction<K extends DomainEventName>(
+    tx: unknown,
+    event: K,
+    payload: DomainEventPayload<K>,
+  ): Promise<void>;
+  emitInTransaction(tx: unknown, event: string, payload: unknown): Promise<void>;
   on<K extends DomainEventName>(event: K, handler: EventHandler<DomainEventPayload<K>>): void;
   on(event: string, handler: EventHandler): void;
 }
@@ -82,7 +98,7 @@ function buildEnvelope(event: string, payload: unknown): EventEnvelope {
     topic: event,
     payload,
     occurredAt: new Date().toISOString(),
-    schemaVersion: 1,
+    schemaVersion: getEventVersion(event),
     ...(tenant?.tenantId !== undefined ? { tenantId: tenant.tenantId } : {}),
     ...(tenant?.traceId !== undefined ? { traceId: tenant.traceId } : {}),
   };
@@ -96,19 +112,36 @@ function buildEnvelope(event: string, payload: unknown): EventEnvelope {
 export function createEventBus(
   broker: MessageBrokerAdapter,
   logger: Logger = createLogger('event-bus'),
+  outbox?: OutboxWriter,
 ): EventBus {
+  function validate(event: string, payload: unknown): void {
+    if (isKnownEvent(event)) {
+      const schema = domainEventSchemas[event] as ZodType<unknown>;
+      const result = schema.safeParse(payload);
+      if (!result.success) {
+        // Log loudly but still deliver - a schema lag must not silently drop events.
+        logger.error({ event, issues: result.error.issues }, 'event payload failed validation');
+      }
+    }
+  }
+
   return {
     emit(event: string, payload: unknown): void {
-      if (isKnownEvent(event)) {
-        const schema = domainEventSchemas[event] as ZodType<unknown>;
-        const result = schema.safeParse(payload);
-        if (!result.success) {
-          // Log loudly but still deliver - a schema lag must not silently drop events.
-          logger.error({ event, issues: result.error.issues }, 'event payload failed validation');
-        }
-      }
+      validate(event, payload);
       const envelope = buildEnvelope(event, payload);
       void broker.publish(envelope);
+    },
+
+    async emitInTransaction(tx: unknown, event: string, payload: unknown): Promise<void> {
+      if (!outbox) {
+        throw new Error(
+          `emitInTransaction('${event}') requires the transactional outbox, which is not bound. ` +
+            `Enable it (set OUTBOX_ENABLED=1 or a durable broker via AMQP_URL) so the event is ` +
+            `published reliably, or use emit() for best-effort post-commit delivery.`,
+        );
+      }
+      validate(event, payload);
+      await outbox.write(tx, buildEnvelope(event, payload));
     },
 
     on(event: string, handler: EventHandler): void {

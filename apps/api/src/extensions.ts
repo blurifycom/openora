@@ -1,4 +1,4 @@
-import type { PluginEntry } from '@oss/plugin-host';
+import { applyServiceManifest, parseServiceManifest, type PluginEntry } from '@oss/plugin-host';
 import { resolve, dirname, isAbsolute } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { accessSync } from 'node:fs';
@@ -24,10 +24,22 @@ export async function loadExtensions(): Promise<PluginEntry[]> {
 
   // Plugin entries use paths relative to the config file (typically the
   // workspace root), so resolve against the config's directory.
-  return mod.extensions.map((entry) => ({
+  const entries = mod.extensions.map((entry) => ({
     ...entry,
     path: isAbsolute(entry.path) ? entry.path : resolve(configDir, entry.path),
   }));
+
+  // Deployable-topology seam: SERVICE_MANIFEST selects which modules this process
+  // boots. Unset -> the full monolith. A subset (eg "identity,wallet") boots a
+  // single-purpose service from the same codebase; infra overlays always load.
+  const manifest = parseServiceManifest(process.env['SERVICE_MANIFEST']);
+  const selected = applyServiceManifest(entries, manifest);
+  if (manifest !== null) {
+    process.stdout.write(
+      `SERVICE_MANIFEST active: booting ${selected.map((e) => e.id).join(', ')}\n`,
+    );
+  }
+  return selected;
 }
 
 function findConfigUpwards(start: string): string {

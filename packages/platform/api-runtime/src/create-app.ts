@@ -19,8 +19,8 @@ import {
   EVENT_BUS,
   type OssContext,
 } from '@oss/core';
-import { MESSAGE_BROKER, JOB_QUEUE, REALTIME_TRANSPORT } from '@oss/adapters';
-import { DrizzleService, DRIZZLE } from '@oss/db';
+import { MESSAGE_BROKER, JOB_QUEUE, REALTIME_TRANSPORT, OUTBOX } from '@oss/adapters';
+import { DrizzleService, DRIZZLE, DrizzleOutboxWriter, OutboxRelay } from '@oss/db';
 import { AdminGuard, ADMIN_GUARD } from '@oss/auth';
 import {
   user,
@@ -109,8 +109,22 @@ export async function createApp(config: CreateAppConfig): Promise<CreatedApp> {
     container.onDispose(() => broker.close());
     return broker;
   });
+  // Transactional outbox: durable, transaction-atomic event publication. Enabled
+  // when OUTBOX_ENABLED is set or a durable broker is configured (AMQP_URL) - a
+  // distributed deployment wants events that survive a crash between commit and
+  // publish. In the default in-process monolith it stays off, so emit() keeps its
+  // synchronous fan-out and emitInTransaction() guides callers to enable it.
+  const outboxEnabled =
+    !!process.env['OUTBOX_ENABLED'] || !!process.env['AMQP_URL'] || !!process.env['RABBITMQ_URL'];
+  if (outboxEnabled) {
+    container.register(OUTBOX, () => new DrizzleOutboxWriter());
+  }
   container.register(EVENT_BUS, (c) =>
-    createEventBus(c.get(MESSAGE_BROKER), createLogger('event-bus')),
+    createEventBus(
+      c.get(MESSAGE_BROKER),
+      createLogger('event-bus'),
+      outboxEnabled ? c.get(OUTBOX) : undefined,
+    ),
   );
   // Client-facing realtime push (chat, live feeds): default in-process fan-out
   // served as SSE; an overlay rebinds REALTIME_TRANSPORT to a managed vendor
@@ -149,10 +163,20 @@ export async function createApp(config: CreateAppConfig): Promise<CreatedApp> {
   // Start background-job workers collected by plugins (ctx.jobs.worker(...)).
   // Resolve DRIZZLE first so its dispose runs AFTER the queue's drain (reverse
   // order); resolve JOB_QUEUE last so an overlay's durable driver is in effect.
-  container.get(DRIZZLE);
+  const drizzle = container.get(DRIZZLE);
   const jobQueue = container.get(JOB_QUEUE);
   for (const registration of registry.jobs.getAll()) {
     jobQueue.registerWorker(registration);
+  }
+
+  // Start the outbox relay (when enabled): it polls pending event_outbox rows and
+  // publishes them to the broker. Disposed before the DB closes (reverse order).
+  if (outboxEnabled) {
+    const relay = new OutboxRelay(drizzle.db, container.get(MESSAGE_BROKER), {
+      onError: (err) => createLogger('outbox-relay').error({ err }, 'outbox drain failed'),
+    });
+    relay.start();
+    container.onDispose(() => relay.stop());
   }
 
   // Assemble the root oRPC router from each plugin's router factory, keyed by the

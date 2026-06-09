@@ -14,6 +14,12 @@ export type {
 } from './broker.js';
 export { MESSAGE_BROKER } from './broker.js';
 
+export type { OutboxWriter } from './outbox.js';
+export { OUTBOX } from './outbox.js';
+
+export type { WalletCommands, WalletDebitArgs, WalletDebitOutcome } from './wallet-commands.js';
+export { WALLET_COMMANDS } from './wallet-commands.js';
+
 export type {
   JobQueueAdapter,
   QueueName,

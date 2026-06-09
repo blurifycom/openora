@@ -5,6 +5,11 @@ import { ModuleRegistryImpl } from './module-registry.js';
 export interface PluginEntry {
   id: string;
   path: string;
+  // 'module' (default) = a domain module, selectable by a service manifest.
+  // 'infra' = a broker/queue driver overlay that always loads, even for a
+  // single-module service, because a standalone process still needs its
+  // durable transport. See applyServiceManifest.
+  kind?: 'module' | 'infra';
 }
 
 /**
@@ -32,7 +37,9 @@ function validateEntries(entries: unknown): asserts entries is PluginEntry[] {
       throw new Error(`${at} (id "${id}") is missing a non-empty string \`path\`.`);
     }
     if (seen.has(id)) {
-      throw new Error(`Duplicate plugin id "${id}" in extensions.config.ts - each id must be unique.`);
+      throw new Error(
+        `Duplicate plugin id "${id}" in extensions.config.ts - each id must be unique.`,
+      );
     }
     seen.add(id);
   });
