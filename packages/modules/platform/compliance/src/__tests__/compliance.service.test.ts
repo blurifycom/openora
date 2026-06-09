@@ -45,15 +45,17 @@ describe('ComplianceService', () => {
     });
 
     it('throws LimitOwnershipError when limit belongs to another user', async () => {
-      const drizzle = makeDrizzle([{
-        id: 'limit-1',
-        userId: 'user-other',
-        type: 'deposit',
-        amount: 100,
-        period: 'daily',
-        createdAt: new Date(),
-        updatedAt: new Date(),
-      }]);
+      const drizzle = makeDrizzle([
+        {
+          id: 'limit-1',
+          userId: 'user-other',
+          type: 'deposit',
+          amount: 100,
+          period: 'daily',
+          createdAt: new Date(),
+          updatedAt: new Date(),
+        },
+      ]);
       // oxlint-disable-next-line typescript/no-explicit-any
       const svc = new ComplianceService(drizzle as any, makeEvents() as any);
       await expect(svc.removeLimit('limit-1', 'user-1')).rejects.toBeInstanceOf(
@@ -72,12 +74,14 @@ describe('ComplianceService', () => {
     });
 
     it('returns allowed: false for blocked country', async () => {
-      const drizzle = makeDrizzle([{
-        id: 'rule-1',
-        countryCode: 'US',
-        action: 'block',
-        createdAt: new Date(),
-      }]);
+      const drizzle = makeDrizzle([
+        {
+          id: 'rule-1',
+          countryCode: 'US',
+          action: 'block',
+          createdAt: new Date(),
+        },
+      ]);
       const geoIp = { lookup: vi.fn().mockResolvedValue({ countryCode: 'US' }) };
       // oxlint-disable-next-line typescript/no-explicit-any
       const svc = new ComplianceService(drizzle as any, makeEvents() as any, geoIp);
@@ -87,12 +91,14 @@ describe('ComplianceService', () => {
     });
 
     it('returns allowed: true for allowed country rule', async () => {
-      const drizzle = makeDrizzle([{
-        id: 'rule-2',
-        countryCode: 'DE',
-        action: 'allow',
-        createdAt: new Date(),
-      }]);
+      const drizzle = makeDrizzle([
+        {
+          id: 'rule-2',
+          countryCode: 'DE',
+          action: 'allow',
+          createdAt: new Date(),
+        },
+      ]);
       const geoIp = { lookup: vi.fn().mockResolvedValue({ countryCode: 'DE' }) };
       // oxlint-disable-next-line typescript/no-explicit-any
       const svc = new ComplianceService(drizzle as any, makeEvents() as any, geoIp);

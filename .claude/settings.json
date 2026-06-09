@@ -1,26 +1,5 @@
 {
   "permissions": {
-    "allow": [
-      "Bash(pnpm *)",
-      "Bash(turbo *)",
-      "Bash(docker *)",
-      "Bash(docker-compose *)",
-      "Bash(node *)",
-      "Bash(tsx *)",
-      "Bash(ls *)",
-      "Bash(find *)",
-      "Bash(grep *)",
-      "Bash(cat *)",
-      "Bash(mkdir *)",
-      "Bash(cp *)",
-      "Bash(mv *)",
-      "Bash(rm *)",
-      "Bash(git status)",
-      "Bash(git diff *)",
-      "Bash(git log *)",
-      "Bash(git branch *)",
-      "Bash(git stash *)"
-    ],
     "deny": [
       "Bash(git reset --hard *)",
       "Bash(npm *)",
@@ -28,11 +7,12 @@
     ]
   },
   "enableAllProjectMcpServers": false,
-  "enabledMcpjsonServers": ["oss-dev"],
+  "enabledMcpjsonServers": [
+    "oss-dev"
+  ],
   "hooks": {
     "PreToolUse": [
       {
-        "matcher": "Edit|Write",
         "hooks": [
           {
             "type": "command",
@@ -43,7 +23,6 @@
     ],
     "PostToolUse": [
       {
-        "matcher": "Edit|Write",
         "hooks": [
           {
             "type": "command",

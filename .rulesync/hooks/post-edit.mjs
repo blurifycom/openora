@@ -14,7 +14,7 @@ const CAP_CHARS = 2000;
 
 const filePath = extractFilePath(readPayload());
 if (!filePath) process.exit(0);
-if (!/\.(ts|tsx)$/.test(filePath) || /\.d\.ts$/.test(filePath)) process.exit(0);
+if (!/\.(ts|tsx)$/.test(filePath) || filePath.endsWith('d.ts')) process.exit(0);
 if (filePath.includes('/templates/') || filePath.includes('/generated/')) process.exit(0);
 
 // Format (best effort - never block on the formatter).
