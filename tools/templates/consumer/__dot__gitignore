@@ -20,10 +20,9 @@ coverage
 # Regenerated on `pnpm install` (prepare) or `pnpm sync:agents`. Do not commit.
 /AGENTS.md
 /CLAUDE.md
-/GEMINI.md
 /.mcp.json
 .vscode/mcp.json
-.gemini/
+.codex/
 .claude/agents/
 .claude/commands/
 .github/copilot-instructions.md

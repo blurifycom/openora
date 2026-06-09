@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-// PostToolUse hook (Claude / Copilot CLI / Codex CLI / Gemini CLI).
+// PostToolUse hook (Claude / Copilot CLI / Codex CLI).
 // Formats the edited file (oxfmt), then typechecks the package that owns it and
 // reports (exit 2) only if the error is in the file just edited. Output is capped
 // so a failure can't balloon the model context. Fail-open on anything unexpected.

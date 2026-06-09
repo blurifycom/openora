@@ -174,7 +174,7 @@ function main(): void {
 
   // Drop in the consumer AI agents as rulesync subagent sources (single source of
   // truth: @oss/mcp/agents, already in rulesync format). `pnpm sync:agents`
-  // generates the per-tool mirrors (.claude/agents, .github/agents, .gemini/agents).
+  // generates the per-tool mirrors (.claude/agents, .github/agents).
   const rulesyncSubagents = join(targetDir, '.rulesync', 'subagents');
   mkdirSync(rulesyncSubagents, { recursive: true });
   for (const f of [
@@ -194,7 +194,7 @@ function main(): void {
   Done. Next steps:
 
     cd ${posix(relative(process.cwd(), targetDir)) || '.'}
-    pnpm install            # also generates the agent files (CLAUDE.md / AGENTS.md / GEMINI.md / Copilot) from .rulesync/ via the prepare hook
+    pnpm install            # also generates the agent files (CLAUDE.md / AGENTS.md / .codex/config.toml / Copilot) from .rulesync/ via the prepare hook
     pnpm build:oss          # build the linked @oss/* packages once
     cp .env.example .env     # then set DATABASE_URL / AUTH_SECRET
     pnpm db:migrate          # apply the OSS schema to your database

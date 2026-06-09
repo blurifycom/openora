@@ -11,7 +11,7 @@ This repo has no `verify` script - typecheck and lint are separate. Run them in 
 
 If you have added a test runner (eg `vitest`), also run your test script.
 
-The generated agent files (AGENTS.md, CLAUDE.md, GEMINI.md, Copilot/Gemini mirrors) are gitignored and regenerated from `.rulesync/` on `pnpm install` - there is nothing to drift-check. If you changed agent instructions, edit `.rulesync/` and run `pnpm sync:agents`.
+The generated agent files (AGENTS.md, CLAUDE.md, .codex/config.toml, Copilot mirrors) are gitignored and regenerated from `.rulesync/` on `pnpm install` - there is nothing to drift-check. If you changed agent instructions, edit `.rulesync/` and run `pnpm sync:agents`.
 
 After running:
 

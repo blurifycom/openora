@@ -1,10 +1,9 @@
 // Shared helpers for the cross-CLI hook guards.
 //
-// One script serves Claude Code, Copilot CLI, Codex CLI, and Gemini CLI. Each
+// One script serves Claude Code, Copilot CLI, and Codex CLI. Each
 // passes the tool call as JSON on stdin but with a slightly different shape:
 //   Claude / Codex : { tool_name, tool_input: { command?, file_path? } }
 //   Copilot        : { toolName,  toolArgs: "<json-string>" | object }
-//   Gemini         : { toolName/tool_name, ... } (best-effort)
 //
 // Deny is universal: exit code 2 + a message on stderr. Every other path exits 0
 // (allow). We FAIL OPEN on any parse error or uncertainty - Copilot's preToolUse
@@ -51,7 +50,7 @@ export function extractFilePath(payload) {
   );
 }
 
-/** Deny the tool call (works on Claude, Copilot, Codex, Gemini). */
+/** Deny the tool call (works on Claude, Copilot, Codex). */
 export function deny(message) {
   process.stderr.write(message.endsWith('\n') ? message : message + '\n');
   process.exit(2);

@@ -175,10 +175,10 @@ The OSS ships 12 modules covering the full table-stakes surface: identity, walle
 
 ### AI agent infrastructure
 
-- `.rulesync/` is the canonical agent source; `AGENTS.md`, `CLAUDE.md`, `GEMINI.md`, `.github/copilot-instructions.md` and the per-tool subagent/command mirrors are generated from it via rulesync (`pnpm sync:agents`).
+- `.rulesync/` is the canonical agent source; `AGENTS.md`, `CLAUDE.md`, `.codex/config.toml`, `.github/copilot-instructions.md` and the per-tool subagent/command mirrors are generated from it via rulesync (`pnpm sync:agents`).
 - Per-module `AGENTS.md` documents extension points, ports, events, do/don't.
 - `apps/mcp-server-dev` exposes the schema registry, route catalog, plugin manifest, and scaffolders as MCP tools.
-- `.rulesync/commands/*` are repo-local slash commands. `.rulesync/subagents/*` are repo-local subagent personalities (`oss-module-author`, `plugin-author`, `contract-reviewer`, `ui-provider-author`). rulesync mirrors both into `.claude/`, `.github/`, and `.gemini/`.
+- `.rulesync/commands/*` are repo-local slash commands. `.rulesync/subagents/*` are repo-local subagent personalities (`oss-module-author`, `plugin-author`, `contract-reviewer`, `ui-provider-author`). rulesync mirrors both into `.claude/` and `.github/` (Codex commands/subagents are simulation-only and stay off).
 - 4 ADRs at `docs/adr/` document settled questions so agents don't re-litigate them.
 
 ## Testing Decisions

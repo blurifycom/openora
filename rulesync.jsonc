@@ -6,19 +6,21 @@
 
   // Agents this repo targets, with per-target features. agentsmd is rules-only so
   // AGENTS.md stays a clean human brief (no simulated-command boilerplate).
-  // hooks: generated for copilot + geminicli from .rulesync/hooks.json (-> .rulesync/hooks/*.mjs).
+  // hooks: generated for copilot from .rulesync/hooks.json (-> .rulesync/hooks/*.mjs).
   // Claude's hooks stay hand-written in .claude/settings.json (which also holds
   // enabledMcpjsonServers - not in rulesync's model), pointing at the same .mjs scripts.
   // permissions are NOT managed here (hand-kept in settings.json).
+  // codexcli: rules (AGENTS.md) + mcp (config.toml) only - its commands/subagents
+  // are simulation-only (we keep simulation off) and it has no hooks system.
   "targets": {
     "agentsmd": ["rules"],
     "claudecode": ["rules", "mcp", "subagents", "commands"],
     "copilot": ["rules", "mcp", "subagents", "commands", "hooks"],
-    "geminicli": ["rules", "mcp", "subagents", "commands", "hooks"]
+    "codexcli": ["rules", "mcp"]
   },
 
   // rulesync emits Copilot agents/prompts natively - no simulation needed, and
-  // leaving these off keeps AGENTS.md / GEMINI.md free of simulation boilerplate.
+  // leaving these off keeps AGENTS.md free of simulation boilerplate.
   "simulateCommands": false,
   "simulateSubagents": false,
 
