@@ -43,8 +43,4 @@ export const extensions = [
   // (safe for dev/test/CI). The EventBus owns the wire envelope, so this is a
   // zero-module-change swap and the migration path to Kafka. See ADR-0016.
   { id: 'rabbitmq', path: './apps/api/dist/extensions/rabbitmq/plugin.js' },
-  //
-  // Reference overlay - registered LAST so it can react to wallet.deposit.completed.
-  // Paired with @oss/example-vip-tier (client UI plugin).
-  { id: 'vip-tier-server', path: './apps/api/dist/extensions/vip-tier-server/plugin.js' },
 ];

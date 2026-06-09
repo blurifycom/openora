@@ -99,9 +99,6 @@ importers:
 
   apps/backoffice:
     dependencies:
-      '@oss/example-vip-tier':
-        specifier: workspace:*
-        version: link:../../packages/examples/example-vip-tier
       '@oss/react-blocks':
         specifier: workspace:*
         version: link:../../packages/sdks/react-blocks
@@ -224,9 +221,6 @@ importers:
 
   apps/web:
     dependencies:
-      '@oss/example-vip-tier':
-        specifier: workspace:*
-        version: link:../../packages/examples/example-vip-tier
       '@oss/react-blocks':
         specifier: workspace:*
         version: link:../../packages/sdks/react-blocks
@@ -365,40 +359,6 @@ importers:
       vitest:
         specifier: 4.1.6
         version: 4.1.6(@types/node@25.9.0)(@vitest/coverage-v8@4.1.6)(vite@8.0.13(@types/node@25.9.0)(esbuild@0.28.0)(jiti@2.7.0)(tsx@4.22.2))
-
-  packages/examples/example-vip-tier:
-    dependencies:
-      '@oss/adapters':
-        specifier: workspace:*
-        version: link:../../contracts/adapters
-      '@oss/compliance-invariants':
-        specifier: workspace:*
-        version: link:../../contracts/compliance-invariants
-      '@oss/plugin-host':
-        specifier: workspace:*
-        version: link:../../platform/plugin-host
-      '@oss/plugin-test-kit':
-        specifier: workspace:*
-        version: link:../../sdks/plugin-test-kit
-      '@oss/react-hooks':
-        specifier: workspace:*
-        version: link:../../sdks/react-hooks
-      '@oss/react-pages':
-        specifier: workspace:*
-        version: link:../../sdks/react-pages
-      react:
-        specifier: '>=19'
-        version: 19.2.6
-    devDependencies:
-      '@oss/tsconfig':
-        specifier: workspace:*
-        version: link:../../config/tsconfig
-      '@types/react':
-        specifier: 19.2.14
-        version: 19.2.14
-      typescript:
-        specifier: 6.0.3
-        version: 6.0.3
 
   packages/modules:
     dependencies:

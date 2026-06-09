@@ -29,10 +29,6 @@ Severity legend: **P0** = blocks real-money launch / breaks documented flow, **P
 | # | Severity | Gap | Fix sketch |
 |---|---|---|---|
 | 3.1 | **P0** | `SlotEvaluationContextProvider` is never mounted in `packages/sdks/react-pages/src/oss-providers.tsx`. Every fill with `featureFlag` / `requiresPermission` / `brandScope` falls back to the empty default and is silently invisible. The entire v1.1 gating model is inert. | wrap children in `SlotEvaluationContextProvider` inside `OssProviders`; accept `permissions` / `brand` / `features` props or derive them from session + theme + PlatformConfig |
-| 3.2 | P1 | `@oss/example-vip-tier` does not call `usePageContext` or `useDataExtension` - only mentioned in JSDoc. `VipSection` takes `playerId` as a prop. | rewrite `VipSection` to consume `usePageContext<PlayerDetailContext>()`; add a real `useDataExtension('vip-tier', 'tier', fetcher)` call |
-| 3.3 | P1 | The reference plugin is not registered anywhere - not in `extensions.config.ts`, not in `apps/backoffice/src/providers.tsx` (`plugins: UIPlugin[] = []`), not in `apps/web/app/providers.tsx` | wire it in both providers behind a `NODE_ENV !== 'production'` guard so default builds aren't polluted but the demo path is live |
-| 3.4 | P2 | `sealed-fail-demo.ts.skip` is referenced in the reference plugin header but does not exist | add the file with `@ts-expect-error - sealed` + a comment, as ADR-0013 verification step calls out |
-| 3.5 | P2 | `ClientPageToken<P>` type exists in `packages/contracts/adapters/src/token.ts` but is unused - no T3 reference override | ship at least one toy `ADMIN_USERS_PAGE` override in the example plugin |
 | 3.6 | P2 | Boundary lint missing rules: `no-cross-extension-import` (claimed in `apps/api/src/extensions/README.md`) and an `@oss/ui-provider-daisyui`-import-in-modules rule | add both to `tools/oxlint-boundaries-plugin.mjs` |
 
 ## 4. API extensibility
@@ -40,7 +36,6 @@ Severity legend: **P0** = blocks real-money launch / breaks documented flow, **P
 | # | Severity | Gap | Fix sketch |
 |---|---|---|---|
 | 4.1 | P0 | No RNG adapter token, despite ADR-0013 and audits requiring an RNG swap seam. Sealed token exists; swappable adapter contract does not. | add `packages/contracts/adapters/src/rng.ts` with `RngAdapter` + `RNG_ADAPTER` token + default deterministic mock |
-| 4.2 | P1 | `apps/api/src/extensions/` is empty of real overlays - only README + AGENTS.md. No working example of route addition, adapter swap, event subscription, or table contribution. | port `example-vip-tier` server half into `apps/api/src/extensions/vip-tier/plugin.ts` as a smoke-tested overlay |
 | 4.3 | P1 | `packages/modules/player/aggregator/src/plugin.ts` does not bind a default `AGGREGATOR_ADAPTER` - any caller crashes at boot unless an overlay binds one | provide a `MockAggregatorAdapter` default |
 | 4.4 | P2 | Server-side `ctx.slots.fill(slotName, component)` on `ModuleRegistry` overwrites prior value, is unused anywhere, and is distinct from the React `Slot` system - dead surface | remove or document why it exists |
 
