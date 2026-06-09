@@ -9,7 +9,7 @@
 # downstream operators containerize their own apps. One multi-target build keeps
 # the install + monorepo build in a single shared layer.
 
-FROM node:22-alpine AS base
+FROM node:26-alpine AS base
 RUN corepack enable
 WORKDIR /app
 ENV CI=1

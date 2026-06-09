@@ -5,7 +5,7 @@
 #   verify         -> build + typecheck + unit + module-shape + boundaries + catalog drift
 # integration / e2e are gated behind quality (don't spin a DB if lint fails).
 
-image: node:22
+image: node:26
 
 stages:
   - quality
