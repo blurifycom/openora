@@ -13,9 +13,5 @@ export default definePlugin({
     ctx.routers.add('notifications', (c) =>
       createNotificationsRouter(new NotificationsService(c.get(DRIZZLE), c.get(EVENT_BUS))),
     );
-    ctx.events.on('identity.user.registered', async (payload) => {
-      const { userId } = payload as { userId: string };
-      void userId;
-    });
   },
 });

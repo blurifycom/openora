@@ -80,7 +80,7 @@ Shared vocabulary for this repo: the **roles** (who's who), the **platform/archi
 | --- | --- | --- |
 | **Bonus** | Promotional credit (welcome bonus, deposit match, free spins). | `bonus` module |
 | **Wagering requirement** / **rollover** | How many times bonus (or gifted) funds must be wagered before they can be withdrawn (e.g. 30x). | `bonus` |
-| **VIP tiers** | Loyalty levels granting perks based on activity (a Consumer extension, not core). | `consumer/plugins/vip-tiers` |
+| **VIP tiers** | Loyalty levels granting perks based on activity (a downstream extension, not core). | consumer overlay under `extensions/` |
 | **Affiliate** | A partner who refers players for a revenue share. | operator concern |
 
 ### Responsible gaming

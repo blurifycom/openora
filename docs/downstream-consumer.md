@@ -106,7 +106,9 @@ import '@oss/react-pages/styles.css';
 <ApiClientProvider client={{ baseUrl }}>
   <ThemeProvider preset="editorialBrass">
     <UIProvider value={daisyuiProvider}>
-      <UIPluginProvider plugins={[vipTiersUI]}>{children}</UIPluginProvider>
+      <UIPluginProvider plugins={[/* your defineUIPlugin slot fills - see ADR-0013 */]}>
+        {children}
+      </UIPluginProvider>
     </UIProvider>
   </ThemeProvider>
 </ApiClientProvider>;
