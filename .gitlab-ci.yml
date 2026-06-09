@@ -1,11 +1,14 @@
-# GitLab CI - mirror of .github/workflows/ci.yml
-# Three stages: verify (no DB), integration (Postgres), e2e (Postgres + Playwright).
-# Reuses the same pnpm scripts as the GitHub workflow.
+# GitLab CI for igaming-oss (the platform core).
+#
+# quality stage runs fast, granular, parallel jobs (each reports its own red/green):
+#   lint + format  -> source-only, no build, seconds of feedback
+#   verify         -> build + typecheck + unit + module-shape + boundaries + catalog drift
+# integration / e2e are gated behind quality (don't spin a DB if lint fails).
 
 image: node:22
 
 stages:
-  - verify
+  - quality
   - integration
   - e2e
 
@@ -16,39 +19,58 @@ workflow:
     - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
     - if: $CI_COMMIT_BRANCH =~ /^(dev|stage)$/
 
-# Global env - matches the GitHub workflow `env:` block.
 variables:
   BETTER_AUTH_SECRET: ci-secret-not-for-production-0000000000
   BETTER_AUTH_URL: http://localhost:3001
-  # pnpm store inside the project dir so GitLab cache can pick it up.
   PNPM_STORE_DIR: $CI_PROJECT_DIR/.pnpm-store
 
-# Cancel superseded runs (mirrors GitHub concurrency cancel-in-progress).
 default:
   interruptible: true
-  # Shared pnpm setup: enable corepack, pin pnpm, point store at the cached dir.
   before_script:
     - corepack enable
     - corepack prepare pnpm@11.1.3 --activate
     - pnpm config set store-dir "$PNPM_STORE_DIR"
     - pnpm install --frozen-lockfile
 
-# Cache pnpm store + node_modules across jobs, keyed on the lockfile.
+# Two cache entries:
+#  - pnpm content-addressable store, keyed on the lockfile (fast relink on install).
+#  - Turbo local cache, keyed per branch with a main fallback so branches warm-start.
 cache:
-  key:
-    files:
-      - pnpm-lock.yaml
-  paths:
-    - .pnpm-store
-    - node_modules
-    - "**/node_modules"
+  - key:
+      files:
+        - pnpm-lock.yaml
+    paths:
+      - .pnpm-store
+  - key: "turbo-$CI_COMMIT_REF_SLUG"
+    fallback_keys:
+      - "turbo-main"
+    paths:
+      - .turbo
 
-# typecheck + unit tests + lint + module-shape. No database needed.
+# --- quality (parallel, DAG) -------------------------------------------------
+
+lint:
+  stage: quality
+  needs: []
+  script:
+    - pnpm lint
+
+format:
+  stage: quality
+  needs: []
+  script:
+    - pnpm format:check
+
+# Comprehensive gate. Catalog drift fails if generated docs are stale vs the code.
 verify:
-  stage: verify
+  stage: quality
+  needs: []
   script:
     - pnpm build
     - pnpm verify
+    - pnpm verify:drift
+
+# --- integration (Postgres) --------------------------------------------------
 
 # service + router integration tests via app.request() against real Postgres.
 integration:
@@ -66,8 +88,10 @@ integration:
     - pnpm build
     - pnpm test:integration
 
-# browser E2E against the reference apps. Playwright boots the stack itself
-# (E2E_WEBSERVER=1 -> turbo dev) and global-setup migrates + seeds.
+# --- e2e (Postgres + Playwright) ---------------------------------------------
+
+# Playwright boots the stack itself (E2E_WEBSERVER=1 -> turbo dev); global-setup
+# migrates + seeds.
 e2e:
   stage: e2e
   timeout: 30m
