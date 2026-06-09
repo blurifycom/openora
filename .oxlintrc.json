@@ -8,6 +8,7 @@
     "no-var": "error",
     "prefer-const": "error",
     "oss-boundaries/no-cross-module-import": "error",
+    "oss-boundaries/no-cross-module-schema-read": "warn",
     "oss-boundaries/no-module-internal-import": "error",
     "oss-boundaries/no-platform-to-module": "error",
     "oss-boundaries/no-contracts-to-runtime": "error",
@@ -31,6 +32,7 @@
       "files": ["*.test.ts", "*.spec.ts"],
       "rules": {
         "oss-boundaries/no-cross-module-import": "off",
+        "oss-boundaries/no-cross-module-schema-read": "off",
         "oss-boundaries/no-module-internal-import": "off"
       }
     }

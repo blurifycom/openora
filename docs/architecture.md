@@ -178,20 +178,31 @@ for the full direction; the shape:
   personalization react this way. Consumers must be idempotent (delivery is
   at-least-once once a durable broker is bound). A throwing subscriber is logged
   and isolated - it never breaks the emitter or its siblings.
-- **Synchronous + atomic for money.** Placing a bet (wallet debit, balance check,
-  RGS result) and pre-action gates (KYC/jurisdiction) run inside a single
-  service/`db.transaction(...)` - never "emit and hope". Wallet deposit/withdraw
-  are transactional and emit only after commit. Events record what already
-  happened; they never move funds.
+- **Synchronous + atomic for money - via command ports.** Placing a bet (wallet
+  debit, balance check, RGS result) and pre-action gates (KYC/jurisdiction) run
+  inside a single `db.transaction(...)` - never "emit and hope". A module that must
+  mutate another synchronously calls the owner's **command port** passing its own
+  `tx` (eg sportsbook -> `WALLET_COMMANDS.debit(tx, ...)`): atomic in-process, yet
+  decoupled enough to split later (a remote impl runs a saga). Events record what
+  already happened; they never move funds.
 - **Broker behind a seam.** The `EventBus` is a typed facade over a
   `MessageBrokerAdapter` (`MESSAGE_BROKER` token); the default binding is an
   in-process broker. Bind a durable driver - **Redpanda** (Kafka API) for the
   regulated audit/ledger/replay stream, NATS JetStream for lighter fan-out - in an
   overlay to swap the transport without touching module code.
+- **Durable events via the outbox.** When an event must survive a crash or a
+  process boundary, a service emits it inside its transaction with
+  `events.emitInTransaction(tx, ...)`: the envelope is written to `event_outbox`
+  atomically with the state change, and the `OutboxRelay` publishes it after commit
+  (at-least-once; consumers dedup on `eventId`). Opt-in via `OUTBOX_ENABLED` / a
+  durable broker; off in the in-process monolith.
 - **Client push is separate.** WebSockets/SSE are client-facing only (chat,
   balance/bonus toasts), never the transport between modules.
-- **Modular monolith now, microservices later.** The no-cross-module-imports rule
-  plus the broker seam make a hot module (eg `bonus`, `aggregator`) extractable
-  into its own deployable: point its broker at the shared stream and its events
-  keep flowing. Scale the stateless Hono API horizontally; scale async work by
-  moving consumers to their own services.
+- **Modular monolith now, microservices later.** The no-cross-module-imports rule,
+  the broker seam, and the outbox make a hot module (eg `bonus`, `aggregator`)
+  extractable into its own deployable. The same codebase boots a subset via
+  `SERVICE_MANIFEST` (`pnpm create:service` scaffolds a thin host); point its broker
+  at the shared stream and its events keep flowing. The `no-cross-module-schema-read`
+  lint warning flags the remaining shared-table couplings to retire first. Scale the
+  stateless Hono API horizontally; scale async work by moving consumers to their own
+  services. See [ADR-0017](./adr/0017-extraction-readiness-manifest-outbox-command-ports.md).

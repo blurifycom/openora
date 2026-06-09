@@ -37,7 +37,9 @@ Ports = interfaces + tokens in `@oss/adapters` (`PAYMENT_ADAPTER`, `KYC_ADAPTER`
 
 ## Cross-module communication (lint-enforced)
 
-Only three sanctioned paths: domain **events** (`EventBus`), shared **contracts** (`@oss/shared-schemas` / oRPC), and read-only table reads via the `@oss/modules/<group>/<name>/schema` subpath. Never import another module's root. Money operations stay synchronous/transactional (a service may debit `wallet` inside its own `db.transaction` via the schema subpath) - never move money over events.
+Sanctioned paths: domain **events** (`EventBus`), synchronous **command ports** (a `@oss/adapters` token the owning module binds, eg `WALLET_COMMANDS`), shared **contracts** (`@oss/shared-schemas` / oRPC), and read-only table reads via the `@oss/modules/<group>/<name>/schema` subpath. Never import another module's root or internals (`no-cross-module-import` / `no-module-internal-import` are errors).
+
+Money and any needed-now mutation stay synchronous/transactional. Prefer a **command port**: the consumer calls the owner's port passing its own `tx` handle (eg sportsbook -> `WALLET_COMMANDS.debit(tx, ...)`), so the write is atomic in-process AND the modules are decoupled enough to split later (a remote impl runs a saga). Declare `dependsOn: ['<owner>']`. The legacy in-`db.transaction` debit via the `/schema` subpath still works, but `no-cross-module-schema-read` now flags every cross-module schema import as a **warning** - it is a sanctioned-but-coupling extraction blocker; migrate writes to a command port and reporting reads to an event-fed read model before extracting a module to its own DB. Never move money over events. See ADR-0017.
 
 ## Explicit > magic
 

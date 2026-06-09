@@ -83,6 +83,45 @@ const noModuleInternalImport = {
   },
 };
 
+// A cross-module read via the sanctioned `/schema` subpath is ALLOWED (money stays
+// transactional, reporting reads are pragmatic) - but it couples the two modules at
+// the data layer, so neither can move to its own database without first replacing
+// the read. This rule is a WARNING (not an error): it surfaces every such coupling
+// as an extraction-readiness checklist, without blocking. Prefer a command port
+// (eg WALLET_COMMANDS) for writes or an event-fed read model for reporting. ADR-0017.
+function importingModule(file) {
+  const m = file.match(/packages\/modules\/([a-z-]+)\/([a-z0-9-]+)\//);
+  return m ? `${m[1]}/${m[2]}` : null;
+}
+
+function crossModuleSchemaTarget(spec) {
+  if (!spec.startsWith('@oss/modules/')) return null;
+  const tail = spec.slice('@oss/modules/'.length).split('/').filter(Boolean);
+  if (tail.length === 3 && tail[2] === 'schema') return `${tail[0]}/${tail[1]}`;
+  return null;
+}
+
+const noCrossModuleSchemaRead = {
+  create(context) {
+    return {
+      ImportDeclaration(node) {
+        const self = importingModule(filename(context));
+        if (!self) return;
+        const target = crossModuleSchemaTarget(node.source.value);
+        if (!target || target === self) return;
+        context.report({
+          node,
+          message:
+            `Cross-module table read (${node.source.value}). Sanctioned, but it ` +
+            'couples the two modules at the data layer and blocks extracting either ' +
+            'to its own database. Prefer a command port (eg WALLET_COMMANDS) or an ' +
+            'event-fed read model before extraction. See ADR-0017.',
+        });
+      },
+    };
+  },
+};
+
 const noPlatformToModule = {
   create(context) {
     return {
@@ -242,6 +281,7 @@ export default {
   meta: { name: 'oss-boundaries' },
   rules: {
     'no-cross-module-import': noCrossModuleImport,
+    'no-cross-module-schema-read': noCrossModuleSchemaRead,
     'no-module-internal-import': noModuleInternalImport,
     'no-platform-to-module': noPlatformToModule,
     'no-contracts-to-runtime': noContractsToRuntime,
