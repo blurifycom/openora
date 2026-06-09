@@ -1,5 +1,10 @@
 export type { TenantContext, TenantStorage } from './tenant-context.js';
-export { tenantStorage, getCurrentTenant, withTenant } from './tenant-context.js';
+export {
+  tenantStorage,
+  getCurrentTenant,
+  getCurrentTenantId,
+  withTenant,
+} from './tenant-context.js';
 
 export type { EventBus, EventHandler } from './event-bus.js';
 export { EVENT_BUS, InMemoryBroker, createEventBus } from './event-bus.js';

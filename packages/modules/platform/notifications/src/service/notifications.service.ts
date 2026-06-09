@@ -1,4 +1,10 @@
-import { type EventBus, makeNotFoundError, makeOwnershipError, assertOwnership } from '@oss/core';
+import {
+  type EventBus,
+  makeNotFoundError,
+  makeOwnershipError,
+  assertOwnership,
+  getCurrentTenantId,
+} from '@oss/core';
 import { DrizzleService, findOneOrThrow } from '@oss/db';
 import { eq, and, isNull, desc } from 'drizzle-orm';
 import { notification } from '../schema/index.js';
@@ -15,9 +21,15 @@ export class NotificationsService {
   ) {}
 
   async create(input: CreateNotificationInput) {
+    // Stamp the request tenant so the RLS WITH CHECK policy accepts the write
+    // (ADR-0018). When called from a per-tenant event handler / worker, that code
+    // must run inside runWithTenant(envelope.tenantId, ...) so the GUC and this
+    // value agree; otherwise the insert lands under the 'default' tenant.
+    const tenantId = getCurrentTenantId() ?? 'default';
     const [record] = await this.drizzle.db
       .insert(notification)
       .values({
+        tenantId,
         userId: input.userId,
         type: input.type,
         title: input.title,

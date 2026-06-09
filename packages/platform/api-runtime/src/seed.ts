@@ -40,6 +40,11 @@ export type SeedResult = {
   sportsbookEvents: number;
 };
 
+// The demo tenant every seeded row belongs to. The seeded admin/players get this
+// on user.tenantId so login resolves a tenant (ADR-0018) and the RLS app role then
+// sees their seeded wallet/player/game rows (which carry the same tenantId).
+export const DEMO_TENANT_ID = 'default';
+
 function makeRng(seed: number): () => number {
   let s = seed >>> 0;
   return () => {
@@ -204,6 +209,7 @@ export async function seedDemoData(options: SeedOptions): Promise<SeedResult> {
     name: admin.name,
     role: 'admin',
     isActive: true,
+    tenantId,
   });
   if (adminUser) log(`Admin ready: ${admin.email} / ${admin.password}`);
 
@@ -270,6 +276,7 @@ export async function seedDemoData(options: SeedOptions): Promise<SeedResult> {
       role: 'player',
       isActive,
       createdAt,
+      tenantId,
     });
     if (!playerUser) continue;
     userCount++;
@@ -363,6 +370,7 @@ type EnsureUserInput = {
   role: string;
   isActive: boolean;
   createdAt?: Date;
+  tenantId?: string;
 };
 
 async function ensureUser(
@@ -383,6 +391,9 @@ async function ensureUser(
     role: input.role,
     isActive: input.isActive,
   };
+  // Stamp the demo tenant explicitly so login resolves it (ADR-0018) rather than
+  // relying on the schema column default.
+  if (input.tenantId) patch.tenantId = input.tenantId;
   if (input.createdAt) patch.createdAt = input.createdAt;
   await db.update(user).set(patch).where(eq(user.id, existing.id));
   return { id: existing.id };

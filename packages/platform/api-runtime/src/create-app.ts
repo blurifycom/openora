@@ -16,9 +16,12 @@ import {
   InProcessRealtimeTransport,
   createEventBus,
   createLogger,
+  withTenant,
   EVENT_BUS,
   type OssContext,
 } from '@oss/core';
+import { resolveTenantFromRequest } from './tenant-resolver.js';
+import { randomUUID } from 'node:crypto';
 import { MESSAGE_BROKER, JOB_QUEUE, REALTIME_TRANSPORT, OUTBOX } from '@oss/adapters';
 import { DrizzleService, DRIZZLE, DrizzleOutboxWriter, OutboxRelay } from '@oss/db';
 import { AdminGuard, ADMIN_GUARD } from '@oss/auth';
@@ -172,7 +175,9 @@ export async function createApp(config: CreateAppConfig): Promise<CreatedApp> {
   // Start the outbox relay (when enabled): it polls pending event_outbox rows and
   // publishes them to the broker. Disposed before the DB closes (reverse order).
   if (outboxEnabled) {
-    const relay = new OutboxRelay(drizzle.db, container.get(MESSAGE_BROKER), {
+    // System path: the relay scans event_outbox across all tenants, so it uses
+    // the BYPASSRLS admin db and never sets app.tenant_id (ADR-0018).
+    const relay = new OutboxRelay(drizzle.adminDb, container.get(MESSAGE_BROKER), {
       onError: (err) => createLogger('outbox-relay').error({ err }, 'outbox drain failed'),
     });
     relay.start();
@@ -216,12 +221,33 @@ export async function createApp(config: CreateAppConfig): Promise<CreatedApp> {
   }
 
   app.use('/*', async (c, next) => {
-    const context: OssContext = { request: { headers: headersToRecord(c.req.raw.headers) } };
-    const { matched, response } = await handler.handle(c.req.raw, { context });
-    if (matched) {
-      return c.newResponse(response.body, response);
+    const headers = headersToRecord(c.req.raw.headers);
+    const context: OssContext = { request: { headers } };
+
+    // Resolve the tenant server-side from the authenticated user (never a client
+    // header) and run the whole request inside both the tenant AsyncLocalStorage
+    // (for event correlation) AND a request-pinned RLS connection (so every
+    // this.db query is scoped by Postgres RLS). See ADR-0018.
+    const resolved = await resolveTenantFromRequest(drizzle, headers);
+
+    const runHandler = async (): Promise<Response> => {
+      const { matched, response } = await handler.handle(c.req.raw, { context });
+      if (matched) return c.newResponse(response.body, response);
+      await next();
+      return c.res;
+    };
+
+    if (!resolved) {
+      // No authenticated user: no tenant GUC is set, so the RLS app role sees zero
+      // rows on any scoped table (fail-closed). Auth/public routes only touch
+      // non-scoped tables on the admin path, so they still work.
+      return runHandler();
     }
-    await next();
+
+    const traceId = headers['x-trace-id'] ?? randomUUID();
+    return withTenant({ userId: resolved.userId, tenantId: resolved.tenantId, traceId }, () =>
+      drizzle.runWithTenant(resolved.tenantId, runHandler),
+    );
   });
 
   const port = config.port ?? Number(process.env['PORT_API'] ?? 3001);

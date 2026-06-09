@@ -1,4 +1,4 @@
-import { type EventBus, makeNotFoundError } from '@oss/core';
+import { type EventBus, makeNotFoundError, getCurrentTenantId } from '@oss/core';
 import { DrizzleService, findOneOrThrow } from '@oss/db';
 import { eq, and, asc, desc } from 'drizzle-orm';
 import { type GameAdapter } from '@oss/adapters';
@@ -75,7 +75,8 @@ export class GamingService {
         userId,
         currency,
         status: 'active',
-        tenantId: 'default',
+        // Request tenant (ADR-0018) - satisfies the RLS WITH CHECK policy.
+        tenantId: getCurrentTenantId() ?? 'default',
       })
       .returning();
 

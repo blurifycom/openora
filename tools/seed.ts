@@ -7,7 +7,9 @@
  *   pnpm seed --players=60          # more players
  *   pnpm seed --admin-email=me@x.io --admin-password=secret123
  *
- * Requires DATABASE_URL (falls back to the local docker default).
+ * Requires DATABASE_URL (falls back to the local docker default). Seed is a
+ * system path: it writes across tenants, so it connects with the BYPASSRLS role
+ * (DATABASE_ADMIN_URL when set, else DATABASE_URL). See ADR-0018.
  */
 import { createAuth } from '@oss/auth';
 import { createDrizzleDb } from '@oss/db';
@@ -21,7 +23,9 @@ function arg(name: string): string | undefined {
 
 async function main() {
   const databaseUrl =
-    process.env['DATABASE_URL'] ?? 'postgresql://postgres:postgres@localhost:5432/oss_igaming';
+    process.env['DATABASE_ADMIN_URL'] ??
+    process.env['DATABASE_URL'] ??
+    'postgresql://postgres:postgres@localhost:5432/oss_igaming';
   const db = createDrizzleDb(databaseUrl);
   // better-auth's drizzle adapter needs the auth tables passed as schema, else
   // user creation throws "model user not found". See @oss/auth createAuth().

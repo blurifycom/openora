@@ -1,7 +1,7 @@
 export { createApp } from './create-app.js';
 export type { CreateAppConfig, CreatedApp } from './create-app.js';
 
-export { seedDemoData } from './seed.js';
+export { seedDemoData, DEMO_TENANT_ID } from './seed.js';
 export type { SeedAuth, SeedOptions, SeedResult } from './seed.js';
 
 // Re-export plugin-host + composition primitives so consumers only need one import.

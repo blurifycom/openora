@@ -1,5 +1,6 @@
 export { DrizzleService, DRIZZLE } from './drizzle.service.js';
-export { createDrizzleDb, setTenantId, type DrizzleDb } from './drizzle.js';
+export { createDrizzleDb, type DrizzleDb } from './drizzle.js';
+export { getRequestDb, runWithTenantConnection, type PinnedDb } from './tenant-connection.js';
 export { findOneOrThrow, pageToOffset } from './query-helpers.js';
 
 // Transactional outbox: the durable bridge that lets domain events survive a

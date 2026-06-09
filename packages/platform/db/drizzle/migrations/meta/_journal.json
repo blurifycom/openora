@@ -36,6 +36,27 @@
       "when": 1781002863034,
       "tag": "0004_mighty_omega_flight",
       "breakpoints": true
+    },
+    {
+      "idx": 5,
+      "version": "7",
+      "when": 1781013262466,
+      "tag": "0005_sharp_vindicator",
+      "breakpoints": true
+    },
+    {
+      "idx": 6,
+      "version": "7",
+      "when": 1781013262467,
+      "tag": "0006_rls_tenant_isolation",
+      "breakpoints": true
+    },
+    {
+      "idx": 7,
+      "version": "7",
+      "when": 1781014272282,
+      "tag": "0007_slimy_wrecking_crew",
+      "breakpoints": true
     }
   ]
 }

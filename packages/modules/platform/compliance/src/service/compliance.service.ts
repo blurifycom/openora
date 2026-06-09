@@ -5,6 +5,7 @@ import {
   makeOwnershipError,
   assertOwnership,
   serializeRow,
+  getCurrentTenantId,
 } from '@oss/core';
 import { eq } from 'drizzle-orm';
 import { userLimit, geoRule } from '../schema/index.js';
@@ -35,9 +36,12 @@ export class ComplianceService {
   }
 
   async upsertLimit(userId: string, input: UpsertLimitInput): Promise<Limit> {
+    // Stamp the request tenant so the RLS WITH CHECK policy accepts the write
+    // (ADR-0018). The GUC is pinned to this same value for the request.
+    const tenantId = getCurrentTenantId() ?? 'default';
     const [row] = await this.drizzle.db
       .insert(userLimit)
-      .values({ userId, type: input.type, amount: input.amount, period: input.period })
+      .values({ tenantId, userId, type: input.type, amount: input.amount, period: input.period })
       .onConflictDoUpdate({
         target: [userLimit.userId, userLimit.type, userLimit.period],
         set: { amount: input.amount },

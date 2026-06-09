@@ -1,4 +1,4 @@
-import { makeNotFoundError } from '@oss/core';
+import { makeNotFoundError, getCurrentTenantId } from '@oss/core';
 import { DrizzleService, findOneOrThrow, pageToOffset } from '@oss/db';
 import { eq, ilike, count, or, and, gte, desc, sql } from 'drizzle-orm';
 import { player } from '../schema/index.js';
@@ -64,7 +64,11 @@ export class PlayerService {
       .where(eq(user.id, userId));
     const [created] = await this.drizzle.db
       .insert(player)
-      .values({ userId, displayName: u?.name ?? 'Player' })
+      .values({
+        userId,
+        displayName: u?.name ?? 'Player',
+        tenantId: getCurrentTenantId() ?? 'default',
+      })
       .returning();
     return toPlayer(created!, u?.email ?? '');
   }

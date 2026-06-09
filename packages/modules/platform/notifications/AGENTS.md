@@ -25,7 +25,7 @@ In-app notification inbox. Other modules create notifications by emitting events
 
 ## Do
 
-- Call `NotificationsService.create()` from event handlers or worker jobs to fan out to users.
+- Call `NotificationsService.create()` from event handlers or worker jobs to fan out to users. `notification` is RLS-scoped (ADR-0018): `create()` stamps `getCurrentTenantId()`, so a per-tenant handler/worker MUST run inside `runWithTenant(envelope.tenantId, ...)` or the row lands under the `default` tenant.
 - Throw domain errors (`NotificationNotFoundError`, `NotificationOwnershipError`) from the service; map them to `ORPCError` in the handler.
 - Add new routes via `/scaffold-route notifications <method> <path>`.
 - Keep `tenantId` on any new multi-tenant models you add.

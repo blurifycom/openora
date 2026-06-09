@@ -1,0 +1,1 @@
+ALTER TABLE "user" ADD COLUMN "tenantId" text DEFAULT 'default' NOT NULL;

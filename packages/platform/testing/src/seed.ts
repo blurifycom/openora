@@ -35,7 +35,10 @@ export async function seedMinimal(
 
   try {
     return await seedDemoData({
-      db: drizzleSvc.db,
+      // Seed is a cross-tenant system path - use the BYPASSRLS admin db so RLS
+      // does not filter out its writes/reads (ADR-0018). Outside a request there
+      // is no tenant GUC, so the RLS app path would see zero rows on scoped tables.
+      db: drizzleSvc.adminDb,
       auth,
       playerCount: options.playerCount ?? 4,
       admin: options.admin ?? {

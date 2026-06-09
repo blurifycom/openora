@@ -1,4 +1,4 @@
-import { type EventBus, createDomainError, assertOwnership } from '@oss/core';
+import { type EventBus, createDomainError, assertOwnership, getCurrentTenantId } from '@oss/core';
 import type { RealtimeTransport } from '@oss/adapters';
 import { DrizzleService, findOneOrThrow } from '@oss/db';
 import { eq, and, isNull, lt, desc, asc } from 'drizzle-orm';
@@ -149,12 +149,15 @@ export class ChatService {
     userId: string,
     username: string,
     content: string,
-    tenantId = 'default',
+    tenantId?: string,
   ): Promise<ChatMessage> {
+    // Default to the request tenant (ADR-0018) so the RLS WITH CHECK policy
+    // accepts the write; an explicit arg (system paths) still wins when passed.
+    const effectiveTenantId = tenantId ?? getCurrentTenantId() ?? 'default';
     const [record] = await this.drizzle.db
       .insert(chatMessage)
       .values({
-        tenantId,
+        tenantId: effectiveTenantId,
         roomId: null,
         userId,
         username,

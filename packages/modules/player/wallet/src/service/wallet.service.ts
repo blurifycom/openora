@@ -1,4 +1,4 @@
-import { type EventBus, makeNotFoundError, createDomainError } from '@oss/core';
+import { type EventBus, makeNotFoundError, createDomainError, getCurrentTenantId } from '@oss/core';
 import { type PaymentAdapter } from '@oss/adapters';
 import { DrizzleService, findOneOrThrow } from '@oss/db';
 import { eq, desc, sql } from 'drizzle-orm';
@@ -45,12 +45,17 @@ export class WalletService {
 
     // Ledger insert + balance update are atomic: a mid-flight failure rolls both
     // back, never leaving an orphan transaction row or a mismatched balance.
+    // Derive the tenant from the active request (ADR-0018). On first deposit the
+    // wallet row is created with this tenant so the RLS WITH CHECK policy accepts
+    // it - the old hard-coded '' rejected the insert under the enforced app role.
+    const tenantId = getCurrentTenantId() ?? 'default';
+
     const transactionId = await this.drizzle.db.transaction(async (txn) => {
       let [walletRecord] = await txn.select().from(wallet).where(eq(wallet.userId, userId));
       if (!walletRecord) {
         [walletRecord] = await txn
           .insert(wallet)
-          .values({ userId, tenantId: '', balance: '0', currency })
+          .values({ userId, tenantId, balance: '0', currency })
           .returning();
       }
 
