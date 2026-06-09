@@ -7,7 +7,5 @@
     "no-var": "error",
     "prefer-const": "error"
   },
-  "ignore": {
-    "patterns": ["node_modules", "dist", ".next", "coverage", "*.generated.ts"]
-  }
+  "ignorePatterns": ["node_modules", "dist", ".next", "coverage", "*.generated.ts"]
 }
