@@ -3,8 +3,8 @@ import { getUserId, type OssContext } from '@oss/core';
 import { contract } from '@oss/orpc-contract';
 import { PlayerService } from '../service/player.service.js';
 
-// Player-facing self-profile router. Caller resolved from x-user-id (via
-// getUserId); never admin-guarded. The admin PAM surface is createPlayerRouter.
+// Player-facing self-profile router. Caller resolved from the verified session
+// (via getUserId); never admin-guarded. The admin PAM surface is createPlayerRouter.
 export function createProfileRouter(player: PlayerService) {
   const os = implement(contract.profile).$context<OssContext>();
 

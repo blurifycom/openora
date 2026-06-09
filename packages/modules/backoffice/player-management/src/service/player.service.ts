@@ -49,7 +49,7 @@ export class PlayerService {
     return record?.email ?? '';
   }
 
-  // --- Player-facing self profile (resolved from x-user-id, not admin) ---
+  // --- Player-facing self profile (resolved from the verified session, not admin) ---
 
   // Return the caller's player row, creating a default one on first access.
   // Registration only creates the auth `user`; the `player` profile row is

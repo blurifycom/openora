@@ -2,7 +2,7 @@ import { ORPCError } from '@orpc/server';
 import { createToken, type Token } from '@oss/adapters';
 import { DrizzleService } from '@oss/db';
 import { sql } from 'drizzle-orm';
-import { createAuth, type Auth } from './auth.js';
+import { SessionResolver } from './session-resolver.js';
 import { roles, type ResourceName, type ActionOf } from './permissions.js';
 
 type RequestLike = { headers: Record<string, string | string[] | undefined> };
@@ -10,18 +10,13 @@ type RequestLike = { headers: Record<string, string | string[] | undefined> };
 export const ADMIN_GUARD: Token<AdminGuard> = createToken('ADMIN_GUARD');
 
 export class AdminGuard {
-  private readonly auth: Auth;
-
-  // `schema` carries the better-auth tables (user/session/account/verification).
-  // It MUST be provided - the drizzle adapter resolves models from it, and
-  // getSession() throws "model session not found" without it. @oss/auth can't
-  // import the schema (it lives in @oss/modules), so createApp injects it.
+  // The guard verifies the session through the SHARED SessionResolver (one
+  // better-auth init for the whole app) rather than building a second createAuth
+  // over the same DB. createApp binds both the resolver and the guard.
   constructor(
     private readonly drizzle: DrizzleService,
-    schema?: Record<string, unknown>,
-  ) {
-    this.auth = createAuth({ db: drizzle.db, ...(schema ? { schema } : {}) });
-  }
+    private readonly sessions: SessionResolver,
+  ) {}
 
   async assert(context: unknown): Promise<{ userId: string }>;
   async assert<R extends ResourceName>(
@@ -45,8 +40,7 @@ export class AdminGuard {
       headers.set(k, Array.isArray(v) ? v.join(', ') : v);
     }
 
-    const session = await this.auth.api.getSession({ headers });
-    const userId = session?.user?.id;
+    const userId = await this.sessions.resolveUserId(headers);
     if (!userId) {
       throw new ORPCError('UNAUTHORIZED', { message: 'Authentication required' });
     }

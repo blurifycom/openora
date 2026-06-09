@@ -263,7 +263,7 @@ function buildPlaybook(
         '## Playbook',
         '1. Call `query-openapi <keyword>` first to confirm the route does not already exist.',
         '2. Run `scaffold-route <module> <METHOD> <path>`.',
-        '3. Player routes resolve the caller from the `x-user-id` header; admin routes MUST assert AdminGuard as the first line.',
+        '3. Player routes resolve the caller from the verified better-auth session (getUserId); admin routes MUST assert AdminGuard as the first line.',
         '4. Run `regen` then `run-verify`.',
       ].join('\n');
     case 'downstream-app':

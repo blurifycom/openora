@@ -13,11 +13,11 @@ interface and are injected via the `GAME_ADAPTER` symbol.
 
 Routes:
 
-- `GET /gaming/games` - list active games (optionally filtered by tenantId via x-tenant-id header)
+- `GET /gaming/games` - list active games (filtered by the caller's verified tenant when authenticated; public list otherwise)
 - `GET /gaming/games/{id}` - get single game or 404
 - `POST /gaming/rounds/start` - create a round, call provider.launchGame(), emit gaming.round.started
 - `POST /gaming/rounds/{roundId}/end` - complete a round, emit gaming.round.ended
-- `GET /gaming/rounds` - last 50 rounds for the requesting user (x-user-id header)
+- `GET /gaming/rounds` - last 50 rounds for the verified caller (getUserId)
 
 ## Extension points
 

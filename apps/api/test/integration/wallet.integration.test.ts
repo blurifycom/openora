@@ -11,7 +11,7 @@ describe('wallet (integration)', () => {
   });
 
   it('GET /wallet/balance returns the seeded player balance', async () => {
-    const res = await h.asPlayer().get('/wallet/balance');
+    const res = await (await h.asPlayer()).get('/wallet/balance');
     expect(res.status).toBe(200);
     const body = (await res.json()) as { balance: number; currency: string };
     expect(typeof body.balance).toBe('number');
@@ -19,7 +19,7 @@ describe('wallet (integration)', () => {
   });
 
   it('POST /wallet/deposit increases the balance by the deposited amount', async () => {
-    const client = h.asPlayer();
+    const client = await h.asPlayer();
     const before = (await (await client.get('/wallet/balance')).json()) as { balance: number };
 
     const dep = await client.post('/wallet/deposit', { amount: 100, currency: 'USD' });
@@ -33,7 +33,9 @@ describe('wallet (integration)', () => {
   });
 
   it('POST /wallet/withdraw beyond balance is rejected with a 4xx (InsufficientBalance)', async () => {
-    const res = await h.asPlayer().post('/wallet/withdraw', {
+    const res = await (
+      await h.asPlayer()
+    ).post('/wallet/withdraw', {
       amount: 1_000_000_000,
       currency: 'USD',
     });
@@ -41,8 +43,19 @@ describe('wallet (integration)', () => {
     expect(res.status).toBeLessThan(500);
   });
 
-  it('rejects an unauthenticated caller (no x-user-id)', async () => {
+  it('rejects an unauthenticated caller (no session cookie)', async () => {
     const res = await h.app.request('/wallet/balance', { method: 'GET' });
     expect(res.ok).toBe(false);
+  });
+
+  it('rejects a FORGED x-user-id header with no session cookie (W1)', async () => {
+    // The pre-W1 impersonation hole: a raw x-user-id used to authenticate the
+    // caller. With session-based auth it is ignored, so this must 401 and never
+    // leak another user's wallet.
+    const res = await h.app.request('/wallet/balance', {
+      method: 'GET',
+      headers: { 'x-user-id': h.playerId },
+    });
+    expect(res.status).toBe(401);
   });
 });

@@ -12,11 +12,15 @@ export function createGamingRouter(gaming: GamingService) {
 
   return os.router({
     listGames: os.listGames.handler(({ context }) => {
+      // Public lobby: an unauthenticated caller has no verified tenant. getTenantId
+      // throws UNAUTHORIZED in that case, so guard it and pass undefined (the
+      // service then lists the publicly visible games). Authenticated callers get
+      // their verified tenant.
       let tenantId: string | undefined;
       try {
         tenantId = getTenantId(context);
       } catch {
-        /* optional */
+        /* unauthenticated - list public games */
       }
       return gaming.listGames(tenantId);
     }),
@@ -37,8 +41,6 @@ export function createGamingRouter(gaming: GamingService) {
       ),
     ),
 
-    listRounds: os.listRounds.handler(({ context }) =>
-      gaming.getUserRounds(getUserId(context)),
-    ),
+    listRounds: os.listRounds.handler(({ context }) => gaming.getUserRounds(getUserId(context))),
   });
 }

@@ -20,11 +20,11 @@ import {
   EVENT_BUS,
   type OssContext,
 } from '@oss/core';
-import { resolveTenantFromRequest } from './tenant-resolver.js';
+import { resolveTenantForUser } from './tenant-resolver.js';
 import { randomUUID } from 'node:crypto';
 import { MESSAGE_BROKER, JOB_QUEUE, REALTIME_TRANSPORT, OUTBOX } from '@oss/adapters';
 import { DrizzleService, DRIZZLE, DrizzleOutboxWriter, OutboxRelay } from '@oss/db';
-import { AdminGuard, ADMIN_GUARD } from '@oss/auth';
+import { AdminGuard, ADMIN_GUARD, SessionResolver, AUTH_SESSION } from '@oss/auth';
 import {
   user,
   session,
@@ -142,10 +142,15 @@ export async function createApp(config: CreateAppConfig): Promise<CreatedApp> {
     container.onDispose(() => q.close());
     return q;
   });
+  // One shared better-auth instance verifies the session cookie for both the
+  // per-request identity middleware (below) and the AdminGuard - no second
+  // createAuth() over the same DB. The better-auth schema lives in @oss/modules,
+  // so it is injected here where it is already imported.
   container.register(
-    ADMIN_GUARD,
-    (c) => new AdminGuard(c.get(DRIZZLE), { user, session, account, verification, twoFactor }),
+    AUTH_SESSION,
+    (c) => new SessionResolver(c.get(DRIZZLE), { user, session, account, verification, twoFactor }),
   );
+  container.register(ADMIN_GUARD, (c) => new AdminGuard(c.get(DRIZZLE), c.get(AUTH_SESSION)));
   if (config.igaming) {
     const igaming = config.igaming;
     container.register(IGAMING_CONFIG, () => igaming);
@@ -220,15 +225,20 @@ export async function createApp(config: CreateAppConfig): Promise<CreatedApp> {
     app.use('/*', cors({ origin: origins ?? ((origin) => origin), credentials: true }));
   }
 
+  // The shared session resolver verifies the better-auth cookie once per request.
+  const sessions = container.get(AUTH_SESSION);
+
   app.use('/*', async (c, next) => {
     const headers = headersToRecord(c.req.raw.headers);
     const context: OssContext = { request: { headers } };
 
-    // Resolve the tenant server-side from the authenticated user (never a client
-    // header) and run the whole request inside both the tenant AsyncLocalStorage
-    // (for event correlation) AND a request-pinned RLS connection (so every
-    // this.db query is scoped by Postgres RLS). See ADR-0018.
-    const resolved = await resolveTenantFromRequest(drizzle, headers);
+    // Identify the caller from the VERIFIED better-auth session cookie - never from
+    // a client-supplied `x-user-id` header (W1, ADR-0019). Then resolve the tenant
+    // server-side from that verified user (ADR-0018) and run the whole request
+    // inside both the tenant AsyncLocalStorage (for event correlation) AND a
+    // request-pinned RLS connection (so every this.db query is scoped by RLS).
+    const userId = await sessions.resolveUserId(c.req.raw.headers);
+    const tenantId = userId ? await resolveTenantForUser(drizzle, userId) : undefined;
 
     const runHandler = async (): Promise<Response> => {
       const { matched, response } = await handler.handle(c.req.raw, { context });
@@ -237,16 +247,20 @@ export async function createApp(config: CreateAppConfig): Promise<CreatedApp> {
       return c.res;
     };
 
-    if (!resolved) {
-      // No authenticated user: no tenant GUC is set, so the RLS app role sees zero
-      // rows on any scoped table (fail-closed). Auth/public routes only touch
-      // non-scoped tables on the admin path, so they still work.
+    if (!userId || !tenantId) {
+      // No valid session (or no resolvable tenant): context.auth stays undefined,
+      // so getUserId/getTenantId 401, and no tenant GUC is set, so the RLS app role
+      // sees zero rows on any scoped table (fail-closed). Auth/public routes only
+      // touch non-scoped tables on the admin path, so they still work.
       return runHandler();
     }
 
+    // Publish the VERIFIED identity onto the oRPC context for getUserId/getTenantId.
+    context.auth = { userId, tenantId };
+
     const traceId = headers['x-trace-id'] ?? randomUUID();
-    return withTenant({ userId: resolved.userId, tenantId: resolved.tenantId, traceId }, () =>
-      drizzle.runWithTenant(resolved.tenantId, runHandler),
+    return withTenant({ userId, tenantId, traceId }, () =>
+      drizzle.runWithTenant(tenantId, runHandler),
     );
   });
 

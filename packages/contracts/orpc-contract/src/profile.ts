@@ -4,8 +4,9 @@ import { PlayerSchema } from './player.js';
 
 /**
  * Player-facing self-profile contract. Distinct from the admin PAM surface
- * (`playerContract`): these routes resolve the caller from the `x-user-id`
- * header and are NOT admin-guarded. Covers the preference fields the player
+ * (`playerContract`): these routes resolve the caller from the VERIFIED
+ * better-auth session (getUserId) and are NOT admin-guarded. Covers the
+ * preference fields the player
  * owns (display name, country, display currency, language). Auth-bound fields
  * (email, password, avatar, 2FA) live on the identity contract.
  */

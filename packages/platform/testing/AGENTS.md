@@ -13,8 +13,8 @@ network listener.
 |---|---|
 | `setupTestDb()` | Apply platform migrations to `TEST_DATABASE_URL` (default `oss_igaming_test`); returns `{ url, truncateAll(), dispose() }`. |
 | `bootTestApp({ plugins, contract?, databaseUrl })` | Wrap `@oss/api-runtime` `createApp` for tests (OpenAPI off); returns `{ app, container, close }`. Drive `app` with `app.request()`. |
-| `asPlayer(app, userId)` | `TestClient` that sets `x-user-id` on every call. |
-| `asAdmin(app, creds?)` | Logs in via `/identity/login`, returns a `TestClient` carrying the session cookie. Defaults to `admin@oss.dev` / `password123`. |
+| `asPlayer(app, { email, password? })` | Logs in a seeded player via `/identity/login` (verified session cookie - no `x-user-id` trust, ADR-0019). Seeded players: `player.<n>@demo.igaming.dev` / `password123`. Returns a `Promise<TestClient>`. |
+| `asAdmin(app, creds?)` | Logs in via `/identity/login`, returns a `Promise<TestClient>` carrying the session cookie. Defaults to `admin@oss.dev` / `password123`. |
 | `seedMinimal(container, opts?)` | Thin wrapper over `seedDemoData` (admin + a few players + wallets). |
 
 ## Usage (integration test)

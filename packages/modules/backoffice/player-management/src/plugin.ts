@@ -12,7 +12,7 @@ export default definePlugin({
     ctx.routers.add('player', (c) =>
       createPlayerRouter(new PlayerService(c.get(DRIZZLE)), c.get(ADMIN_GUARD)),
     );
-    // Player-facing self-profile surface (x-user-id, not guarded).
+    // Player-facing self-profile surface (verified session, not guarded).
     ctx.routers.add('profile', (c) => createProfileRouter(new PlayerService(c.get(DRIZZLE))));
   },
 });

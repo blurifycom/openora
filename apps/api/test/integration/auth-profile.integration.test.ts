@@ -56,8 +56,8 @@ describe('profile + password change (integration)', () => {
     expect(bad.status).toBeGreaterThanOrEqual(400);
   });
 
-  it('gets and updates the player profile preferences (x-user-id)', async () => {
-    const player = h.asPlayer();
+  it('gets and updates the player profile preferences (verified session)', async () => {
+    const player = await h.asPlayer();
 
     const got = await player.get('/profile');
     expect(got.status).toBe(200);

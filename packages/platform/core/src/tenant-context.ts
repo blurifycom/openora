@@ -18,9 +18,10 @@ export function getCurrentTenant(): TenantContext | undefined {
  * The active request's tenant id from the AsyncLocalStorage frame, or undefined
  * when there is no tenant context (system/background paths). This is the SAME
  * value `create-app` pins as the RLS `app.tenant_id` GUC (ADR-0018), so a service
- * stamping it on an insert satisfies the table's WITH CHECK policy. Prefer this
- * over the `x-tenant-id` header accessor (`getTenantId`) - the request tenant is
- * resolved server-side from the authenticated user, never trusted from a client.
+ * stamping it on an insert satisfies the table's WITH CHECK policy. It is the same
+ * tenant `getTenantId(context)` returns - both derive from the verified session,
+ * never from a client header. Use this accessor inside a service (no oRPC context);
+ * use `getTenantId(context)` in a router handler.
  */
 export function getCurrentTenantId(): string | undefined {
   return tenantStorage.getStore()?.tenantId;

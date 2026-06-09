@@ -28,7 +28,7 @@ None currently. Chat reads/writes the DB directly via `DrizzleService` (`@oss/db
 - Map domain errors to `ORPCError` in `router/index.ts`
 - Add `pgTable` defs to `src/schema/index.ts`, then run `pnpm regen`
 - Keep `tenantId` on every new multi-tenant `pgTable`
-- Extract userId/username from `x-user-id` / `x-username` request headers
+- Resolve the caller's userId from the verified session (`getUserId`, ADR-0019); the cosmetic display `x-username` header is read separately and is never an auth/tenant trust path
 
 ## Don't
 

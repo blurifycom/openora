@@ -18,7 +18,7 @@ export type { Factory } from './container.js';
 export { createLogger } from './logger.js';
 
 export { getUserId, getTenantId } from './router-utils.js';
-export type { OssContext } from './router-utils.js';
+export type { OssContext, AuthContext } from './router-utils.js';
 export {
   createDomainError,
   makeNotFoundError,

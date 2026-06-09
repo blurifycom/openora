@@ -13,7 +13,7 @@ Manages user balances, deposits, and withdrawals. Ships with `MockPaymentAdapter
 | POST   | /wallet/withdraw     | Debit funds if balance allows   |
 | GET    | /wallet/transactions | Last 100 transactions for user  |
 
-All routes require `x-user-id` header.
+All routes require an authenticated caller (verified better-auth session via `getUserId`, ADR-0019).
 
 ## Extension points
 

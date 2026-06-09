@@ -11,14 +11,14 @@ describe('compliance (integration)', () => {
   });
 
   it('GET /compliance/geo-check allows by default (no GeoIpAdapter bound)', async () => {
-    const res = await h.asPlayer().get('/compliance/geo-check');
+    const res = await (await h.asPlayer()).get('/compliance/geo-check');
     expect(res.status).toBe(200);
     const body = (await res.json()) as { allowed: boolean };
     expect(body.allowed).toBe(true);
   });
 
   it('PUT /compliance/limits upserts a limit, then GET reads it back', async () => {
-    const client = h.asPlayer();
+    const client = await h.asPlayer();
     const upsert = await client.put('/compliance/limits', {
       type: 'deposit',
       period: 'daily',

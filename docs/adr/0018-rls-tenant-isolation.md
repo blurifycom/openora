@@ -74,12 +74,14 @@ tenant-scoped connection - no service signature changed.
 
 **4. Server-side tenant resolution.** `tenantId` is resolved from the authenticated
 user, never trusted from a client header. The `user` table gained a `tenantId` column
-(the seam). `create-app.ts`'s Hono middleware reads `x-user-id`, looks up the user's
-`tenantId` on the BYPASSRLS `adminDb` (the `user` table is not RLS-scoped - auth must
-resolve a user before a tenant is known), then runs the whole request inside both
-`withTenant(...)` (for event correlation) and `runWithTenant(...)` (the pinned RLS
-connection). Unauthenticated requests run with no GUC and are fail-closed on scoped
-tables; public/auth routes only touch non-scoped tables on the admin path.
+(the seam). `create-app.ts`'s Hono middleware identifies the caller from the VERIFIED
+better-auth session cookie (ADR-0019, the shared `SessionResolver`), looks up that
+verified user's `tenantId` on the BYPASSRLS `adminDb` (the `user` table is not
+RLS-scoped - auth must resolve a user before a tenant is known), then runs the whole
+request inside both `withTenant(...)` (for event correlation) and `runWithTenant(...)`
+(the pinned RLS connection). Unauthenticated requests run with no GUC and are
+fail-closed on scoped tables; public/auth routes only touch non-scoped tables on the
+admin path.
 
 ## Why the binding cannot leak
 
@@ -115,13 +117,17 @@ so they were fixed to the request tenant.
   current_user`) and logs a loud warning if it is a superuser or BYPASSRLS - because RLS
   is then inert for per-request traffic. It does not hard-fail (local/CI run a single
   superuser legitimately); production must point `DATABASE_URL` at `oss_app`.
-- **Trusted boundary - the `x-user-id` header (W1, out of scope here).** RLS resolves
-  the tenant from the authenticated user, but the platform's current auth model trusts
-  the `x-user-id` request header to identify that user (see `getUserId`). RLS therefore
-  inherits that trust boundary: a caller that can forge `x-user-id` for a user in another
-  tenant resolves that tenant. Hardening the auth model (signed sessions only, drop the
-  raw header) is a separate decision, not part of this ADR. RLS is defense-in-depth
-  against a *forgotten WHERE clause*, not against a forged identity.
+- **Trusted boundary - the caller's identity (W1, now FIXED in ADR-0019).** RLS resolves
+  the tenant from the authenticated user. Originally the platform trusted a raw
+  `x-user-id` request header to identify that user, so a forged header resolved another
+  tenant - RLS inherited that hole. ADR-0019 closed it: the caller is now resolved from
+  the VERIFIED better-auth session cookie once per request (a shared `SessionResolver`
+  in `@oss/auth`), the verified userId is published onto the oRPC context, and
+  `tenant-resolver.ts` maps that verified userId to its tenant before `runWithTenant`
+  pins the GUC. `getUserId`/`getTenantId` read the verified context field, never a
+  header; a request with no valid session sets no GUC and is fail-closed (zero rows).
+  RLS remains defense-in-depth against a *forgotten WHERE clause*; ADR-0019 removes the
+  forged-identity gap that previously undermined it.
 - **Background workers and the ALS frame (W3).** RLS scoping rides the AsyncLocalStorage
   frame `create-app` opens per request. Code that runs OUTSIDE a request (job-queue
   workers, the outbox relay, scheduled tasks) has no tenant GUC and so the app role sees
