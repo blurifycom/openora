@@ -26,12 +26,12 @@
     "@oss/modules": "workspace:*",
     "@oss/plugin-host": "workspace:*",
     "drizzle-orm": "0.45.2",
-    "hono": "4.12.23",
+    "hono": "4.12.25",
     "pg": "8.21.0"
   },
   "devDependencies": {
     "@oss/tsconfig": "workspace:*",
-    "@types/node": "25.9.0",
+    "@types/node": "25.9.2",
     "@types/pg": "8.20.0",
     "typescript": "6.0.3"
   }

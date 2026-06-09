@@ -6,6 +6,6 @@
     "*.json"
   ],
   "devDependencies": {
-    "oxlint": "1.66.0"
+    "oxlint": "1.69.0"
   }
 }

@@ -34,12 +34,12 @@
     "@oss/api-runtime": "workspace:*",
     "@oss/auth": "workspace:*",
     "@oss/db": "workspace:*",
-    "@types/node": "25.9.0",
-    "oxfmt": "0.51.0",
-    "oxlint": "^1.64.0",
-    "rulesync": "8.25.0",
-    "tsx": "4.22.2",
-    "turbo": "2.9.14",
+    "@types/node": "25.9.2",
+    "oxfmt": "0.54.0",
+    "oxlint": "1.69.0",
+    "rulesync": "8.26.0",
+    "tsx": "4.22.4",
+    "turbo": "2.9.16",
     "typescript": "6.0.3"
   },
   "engines": {

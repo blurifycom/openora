@@ -3,7 +3,11 @@
   "version": "0.0.1",
   "type": "module",
   "bin": "./dist/main.js",
-  "files": ["dist", "docs", "agents"],
+  "files": [
+    "dist",
+    "docs",
+    "agents"
+  ],
   "scripts": {
     "build": "tsc",
     "typecheck": "tsc --noEmit",
@@ -15,7 +19,7 @@
   },
   "devDependencies": {
     "@oss/tsconfig": "workspace:*",
-    "@types/node": "25.9.0",
+    "@types/node": "25.9.2",
     "typescript": "6.0.3"
   }
 }

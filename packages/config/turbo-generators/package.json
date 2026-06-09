@@ -17,7 +17,7 @@
   },
   "devDependencies": {
     "@oss/tsconfig": "workspace:*",
-    "@turbo/gen": "2.9.14",
+    "@turbo/gen": "2.9.16",
     "typescript": "6.0.3"
   }
 }

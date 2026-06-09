@@ -83,7 +83,7 @@
     "clean": "rm -rf dist"
   },
   "dependencies": {
-    "@orpc/contract": "1.14.3",
+    "@orpc/contract": "1.14.5",
     "@oss/shared-schemas": "workspace:*",
     "zod": "4.4.3"
   },

@@ -18,9 +18,9 @@
     "clean": "rm -rf dist"
   },
   "dependencies": {
-    "@orpc/client": "1.14.3",
-    "@orpc/contract": "1.14.3",
-    "@orpc/openapi-client": "1.14.3",
+    "@orpc/client": "1.14.5",
+    "@orpc/contract": "1.14.5",
+    "@orpc/openapi-client": "1.14.5",
     "@oss/orpc-contract": "workspace:*"
   },
   "devDependencies": {

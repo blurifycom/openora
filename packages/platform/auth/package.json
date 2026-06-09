@@ -19,10 +19,10 @@
     "test": "vitest run"
   },
   "dependencies": {
-    "@orpc/server": "1.14.3",
+    "@orpc/server": "1.14.5",
     "@oss/adapters": "workspace:*",
     "@oss/db": "workspace:*",
-    "better-auth": "1.6.11",
+    "better-auth": "1.6.15",
     "drizzle-orm": "0.45.2"
   },
   "devDependencies": {

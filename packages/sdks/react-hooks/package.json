@@ -2,7 +2,9 @@
   "name": "@oss/react-hooks",
   "version": "0.0.1",
   "private": true,
-  "files": ["dist"],
+  "files": [
+    "dist"
+  ],
   "type": "module",
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
@@ -25,15 +27,15 @@
     "test": "vitest run"
   },
   "dependencies": {
-    "@oss/shared-schemas": "workspace:*",
     "@oss/orpc-contract": "workspace:*",
     "@oss/sdk-core": "workspace:*",
+    "@oss/shared-schemas": "workspace:*",
     "@oss/ui-provider-contract": "workspace:*",
     "zod": "4.4.3"
   },
   "devDependencies": {
     "@oss/tsconfig": "workspace:*",
-    "@types/react": "19.2.14",
+    "@types/react": "19.2.17",
     "@types/react-dom": "19.2.3",
     "typescript": "6.0.3"
   },
@@ -43,8 +45,14 @@
     "react-dom": ">=19"
   },
   "peerDependenciesMeta": {
-    "@tanstack/react-query": { "optional": true },
-    "react": { "optional": true },
-    "react-dom": { "optional": true }
+    "@tanstack/react-query": {
+      "optional": true
+    },
+    "react": {
+      "optional": true
+    },
+    "react-dom": {
+      "optional": true
+    }
   }
 }
