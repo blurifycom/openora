@@ -156,6 +156,32 @@ so they were fixed to the request tenant.
 - Per-request connection check-out adds one acquire + two `set_config` round-trips per
   request. Acceptable; the connection is pinned for the whole request anyway.
 
+## Pre-auth tenant (the default/public tenant)
+
+Tenant is resolved from the verified user, so a PRE-authentication request has no tenant
+context and fail-closes to zero rows on every scoped table. Two pre-auth paths need
+data anyway: the anonymous public game lobby and self-registration. Both use a single
+server-side constant, `DEFAULT_TENANT_ID = 'default'` (`@oss/shared-schemas`), matching
+the existing convention (scoped tables default `tenantId` to `'default'`; the seed's
+`DEMO_TENANT_ID` now points at this constant - one source of truth).
+
+- **Anonymous public reads** (gaming `listPublicGames`): read-only catalog only. Because
+  the tenant is the constant (never client input) and the data is public, the read goes
+  through the BYPASSRLS `adminDb` with an EXPLICIT `tenantId = DEFAULT_TENANT_ID` filter -
+  the explicit filter, not RLS, is the cross-tenant guard here. The authenticated lobby
+  path stays on the RLS-enforced `db` (defense-in-depth unchanged).
+- **Self-registration** (identity `register`): better-auth's `signUpEmail` creates the
+  `user` row without a tenant, so after sign-up we stamp `user.tenantId = DEFAULT_TENANT_ID`
+  (the `user` table is the documented RLS exemption, so a plain update is fine). No
+  client-supplied tenant/brand field is accepted - that would reintroduce a spoofable
+  tenant source.
+
+We deliberately do NOT set a default GUC for anonymous requests in the middleware: that
+would make every protected route silently return default-tenant data instead of failing
+closed. Anonymous stays GUC-less everywhere except these explicit, server-controlled
+reads. Multi-brand operators that need a real tenant before auth override this by
+resolving the pre-auth tenant from host/brand - a documented extension seam, not built.
+
 ## Implementation status
 
 - Migration: `packages/platform/db/drizzle/migrations/0006_rls_tenant_isolation.sql`

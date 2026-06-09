@@ -12,17 +12,16 @@ export function createGamingRouter(gaming: GamingService) {
 
   return os.router({
     listGames: os.listGames.handler(({ context }) => {
-      // Public lobby: an unauthenticated caller has no verified tenant. getTenantId
-      // throws UNAUTHORIZED in that case, so guard it and pass undefined (the
-      // service then lists the publicly visible games). Authenticated callers get
-      // their verified tenant.
-      let tenantId: string | undefined;
-      try {
-        tenantId = getTenantId(context);
-      } catch {
-        /* unauthenticated - list public games */
+      // Authenticated callers list their verified tenant's games on the RLS-enforced
+      // db (ADR-0018/0019). A pre-auth caller has no verified tenant - getTenantId
+      // would throw UNAUTHORIZED. We only treat the MISSING-session case as public
+      // (no leaking of unexpected errors): if auth is present, getTenantId yields the
+      // verified tenant; otherwise we serve the read-only public catalog for the
+      // server-side default tenant via listPublicGames (BYPASSRLS, explicit filter).
+      if (context.auth?.userId) {
+        return gaming.listGames(getTenantId(context));
       }
-      return gaming.listGames(tenantId);
+      return gaming.listPublicGames();
     }),
 
     getGame: os.getGame.handler(({ input }) =>

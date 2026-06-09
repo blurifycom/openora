@@ -1,5 +1,13 @@
 import { z } from 'zod';
 
+// The canonical default/public tenant for pre-authentication paths (ADR-0018/0019).
+// Requests with no verified user have no tenant context, so anonymous public reads
+// (eg the game lobby) and self-registration fall back to this server-side constant.
+// It matches the existing 'default' convention (Drizzle tables default tenantId here;
+// the seed stamps it as DEMO_TENANT_ID). Multi-brand operators that need a real tenant
+// before auth resolve it from host/brand - a documented extension seam, not built here.
+export const DEFAULT_TENANT_ID = 'default';
+
 export const UuidSchema = z.string().uuid();
 export const TimestampSchema = z.string().datetime();
 export const PaginationSchema = z.object({

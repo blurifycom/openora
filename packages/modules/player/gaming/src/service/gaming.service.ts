@@ -2,6 +2,7 @@ import { type EventBus, makeNotFoundError, getCurrentTenantId } from '@oss/core'
 import { DrizzleService, findOneOrThrow } from '@oss/db';
 import { eq, and, asc, desc } from 'drizzle-orm';
 import { type GameAdapter } from '@oss/adapters';
+import { DEFAULT_TENANT_ID } from '@oss/shared-schemas';
 import { game, gameRound } from '../schema/index.js';
 import type { Game, GameRound } from '../schemas/index.js';
 
@@ -42,12 +43,30 @@ export class GamingService {
     private readonly provider: GameAdapter,
   ) {}
 
-  async listGames(tenantId?: string): Promise<Game[]> {
-    const db = this.drizzle.db;
-    const whereClause = tenantId
-      ? and(eq(game.isActive, true), eq(game.tenantId, tenantId))
-      : eq(game.isActive, true);
-    const games = await db.select().from(game).where(whereClause).orderBy(asc(game.name));
+  // Authenticated lobby: the caller's tenant is verified server-side (ADR-0018/0019)
+  // and passed in. Runs on the RLS-enforced `this.drizzle.db`; the explicit tenant
+  // filter is defense-in-depth on top of the policy.
+  async listGames(tenantId: string): Promise<Game[]> {
+    const games = await this.drizzle.db
+      .select()
+      .from(game)
+      .where(and(eq(game.isActive, true), eq(game.tenantId, tenantId)))
+      .orderBy(asc(game.name));
+    return games.map(toGame);
+  }
+
+  // Public/anonymous lobby: a pre-auth caller has no tenant GUC, so the RLS app role
+  // would return zero rows (fail-closed). The public catalog is read-only and the
+  // tenant is the server-side DEFAULT_TENANT_ID constant (never client input), so we
+  // read it through the BYPASSRLS adminDb with an EXPLICIT tenant filter. This is the
+  // single sanctioned pre-auth read; the authenticated path stays on the RLS db.
+  // Multi-brand operators override the pre-auth tenant by resolving it from host/brand.
+  async listPublicGames(): Promise<Game[]> {
+    const games = await this.drizzle.adminDb
+      .select()
+      .from(game)
+      .where(and(eq(game.isActive, true), eq(game.tenantId, DEFAULT_TENANT_ID)))
+      .orderBy(asc(game.name));
     return games.map(toGame);
   }
 

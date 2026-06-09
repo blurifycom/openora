@@ -1,4 +1,5 @@
 import type { DrizzleDb } from '@oss/db';
+import { DEFAULT_TENANT_ID } from '@oss/shared-schemas';
 import { eq } from 'drizzle-orm';
 import { user } from '@oss/modules/platform/identity/schema';
 import { player } from '@oss/modules/backoffice/player-management/schema';
@@ -42,8 +43,9 @@ export type SeedResult = {
 
 // The demo tenant every seeded row belongs to. The seeded admin/players get this
 // on user.tenantId so login resolves a tenant (ADR-0018) and the RLS app role then
-// sees their seeded wallet/player/game rows (which carry the same tenantId).
-export const DEMO_TENANT_ID = 'default';
+// sees their seeded wallet/player/game rows (which carry the same tenantId). It is
+// the canonical DEFAULT_TENANT_ID (single source of truth in @oss/shared-schemas).
+export const DEMO_TENANT_ID = DEFAULT_TENANT_ID;
 
 function makeRng(seed: number): () => number {
   let s = seed >>> 0;

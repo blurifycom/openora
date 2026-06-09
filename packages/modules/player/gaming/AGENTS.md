@@ -19,6 +19,15 @@ Routes:
 - `POST /gaming/rounds/{roundId}/end` - complete a round, emit gaming.round.ended
 - `GET /gaming/rounds` - last 50 rounds for the verified caller (getUserId)
 
+## Pre-auth tenant (default/public tenant)
+
+`GET /gaming/games` serves two paths (ADR-0018/0019):
+
+- **Authenticated** caller -> `listGames(verifiedTenantId)` on the RLS-enforced `this.drizzle.db`. The tenant comes from the verified session (`getTenantId(context)`), never a header.
+- **Anonymous** caller -> `listPublicGames()`. A pre-auth request has no tenant GUC, so the RLS app role would fail-closed to zero rows. The public catalog is read-only and the tenant is the server-side `DEFAULT_TENANT_ID` constant (`@oss/shared-schemas`, never client input), so this path reads the BYPASSRLS `adminDb` with an EXPLICIT `isActive AND tenantId = DEFAULT_TENANT_ID` filter. This is the single sanctioned pre-auth read.
+
+Multi-brand operators that need a real tenant before auth resolve it from host/brand for pre-auth requests - a documented extension seam, not built here. Do NOT set a default GUC for anonymous requests in the middleware (that would make protected routes return default-tenant data instead of failing closed).
+
 ## Extension points
 
 - **GameAdapter interface** (`@oss/adapters`): implement the `GameAdapter` interface to swap in a
