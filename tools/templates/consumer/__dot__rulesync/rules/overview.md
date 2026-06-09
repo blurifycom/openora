@@ -47,8 +47,7 @@ Only return to the user to resolve genuine decisions they alone can make.
 ## What this repo is
 
 - `apps/api/` - thin Hono + oRPC API entry, your own `extensions.config.ts`
-- `apps/web/` - player app (Next.js App Router, RSC + SSR) mounting `@oss/react-pages` pages
-- `apps/backoffice/` - admin app (Vite + TanStack Router SPA) mounting `@oss/react-pages` admin pages
+- this is a headless api consumer; build your frontend in its own repo and consume the api over HTTP via `@oss/sdk-core` / `@oss/react-hooks`
 - `@oss/*` packages are linked from a sibling OSS checkout via `pnpm.overrides`
 
 ## How to extend
@@ -57,7 +56,6 @@ Only return to the user to resolve genuine decisions they alone can make.
 |---|---|
 | New behavior / routes | `pnpm gen plugin` |
 | Swap a vendor (payment / KYC / notification) | `pnpm gen adapter` |
-| Mount a react-pages page on a route | `pnpm gen page` |
 
 Register new plugins in `apps/api/src/extensions.config.ts`. Adapters must be listed AFTER the module that owns the default binding (last registration of a DI token wins).
 

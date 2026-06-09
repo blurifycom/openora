@@ -450,38 +450,13 @@ server.tool(
 // --- list-extension-points --------------------------------------------------
 server.tool(
   'list-extension-points',
-  'List all named UI slots, exported event types, and port interfaces across the platform.',
+  'List the exported event types and port interfaces (adapter swap seams) across the platform.',
   {},
   async () => {
     const parts: string[] = [];
 
-    // Named UI slots from react-sdk/src/ui-plugin/slots.ts (the SLOTS constant)
-    const slotsFile = repoPath('packages', 'sdks', 'react-sdk', 'src', 'ui-plugin', 'slots.ts');
-    if (existsSync(slotsFile)) {
-      const src = readFileSync(slotsFile, 'utf8');
-      // Extract JSDoc + slot name pairs. Format: /** ...comment */ \n key: 'slot:name'
-      const slotLines: string[] = [];
-      const lines = src.split('\n');
-      let pending = '';
-      for (const line of lines) {
-        const jsdoc = line.match(/\/\*\*\s*(.+?)\s*\*\//);
-        if (jsdoc) {
-          pending = (jsdoc[1] ?? '').trim();
-          continue;
-        }
-        const slot = line.match(/:\s*'([a-z:]+)'/);
-        if (slot) {
-          slotLines.push(pending ? `- ${slot[1]}  # ${pending}` : `- ${slot[1]}`);
-          pending = '';
-        }
-      }
-      parts.push(
-        `=== Named UI slots (import SLOTS from @oss/react-pages) ===\n` +
-          `Fill with ctx.slots.fill(name, options, render) or ctx.slots.column(name, colDef).\n` +
-          `Declare in pages with <Slot name={SLOTS.x.y} subject={entity}>.\n\n` +
-          (slotLines.join('\n') || '(none defined yet)'),
-      );
-    }
+    // The page/block SDK layer (and its named UI slot catalog) was removed - the
+    // platform is headless and the frontend lives in the downstream consumer repo.
 
     // Events from @oss/core
     const eventsFile = repoPath('packages', 'platform', 'core', 'src', 'event-bus.ts');

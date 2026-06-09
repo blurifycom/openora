@@ -261,8 +261,12 @@ server.tool(
       };
     }
     const lines: string[] = [`=== Module: ${m.id} (${m.group}) ===`];
-    lines.push(`\n--- Tables ---\n${m.tables.length > 0 ? m.tables.map((t) => `- ${t}`).join('\n') : '(none)'}`);
-    lines.push(`\n--- Routes ---\n${m.routes.length > 0 ? m.routes.map((r) => `- ${r}`).join('\n') : '(none)'}`);
+    lines.push(
+      `\n--- Tables ---\n${m.tables.length > 0 ? m.tables.map((t) => `- ${t}`).join('\n') : '(none)'}`,
+    );
+    lines.push(
+      `\n--- Routes ---\n${m.routes.length > 0 ? m.routes.map((r) => `- ${r}`).join('\n') : '(none)'}`,
+    );
     return { content: [{ type: 'text' as const, text: lines.join('\n') }] };
   },
 );
@@ -287,7 +291,10 @@ server.tool(
       .join(', ');
     return {
       content: [
-        { type: 'text' as const, text: `Schema "${name}" not found.\n\nAvailable schemas:\n${list}` },
+        {
+          type: 'text' as const,
+          text: `Schema "${name}" not found.\n\nAvailable schemas:\n${list}`,
+        },
       ],
     };
   },
@@ -319,18 +326,27 @@ type IntentKind = 'feature' | 'adapter' | 'ui-page' | 'route' | 'unsure';
 function classifyIntent(ask: string): IntentKind {
   const a = ` ${ask.toLowerCase()} `;
   const has = (re: RegExp) => re.test(a);
-  if (has(/\b(payment|psp|stripe|adyen|kyc|onfido|sms|email|notification|vendor|adapter|gateway)\b/))
+  if (
+    has(/\b(payment|psp|stripe|adyen|kyc|onfido|sms|email|notification|vendor|adapter|gateway)\b/)
+  )
     return 'adapter';
   if (has(/\b(page|screen|dashboard|view|frontend|admin panel|backoffice page|player page)\b/))
     return 'ui-page';
   if (has(/\b(endpoint|route|procedure|api method|rpc)\b/)) return 'route';
-  if (has(/\b(feature|module|tournament|leaderboard|jackpot|loyalty|bonus|cashback|mission|reward)\b/))
+  if (
+    has(/\b(feature|module|tournament|leaderboard|jackpot|loyalty|bonus|cashback|mission|reward)\b/)
+  )
     return 'feature';
   return 'unsure';
 }
 
-function buildConsumerPlaybook(kind: IntentKind, ctx: { modules: string[]; tokens: string[]; slots: string[] }): string {
-  const moduleList = ctx.modules.length ? ctx.modules.map((m) => `- ${m}`).join('\n') : '- (none yet)';
+function buildConsumerPlaybook(
+  kind: IntentKind,
+  ctx: { modules: string[]; tokens: string[]; slots: string[] },
+): string {
+  const moduleList = ctx.modules.length
+    ? ctx.modules.map((m) => `- ${m}`).join('\n')
+    : '- (none yet)';
   switch (kind) {
     case 'feature':
       return [
@@ -359,7 +375,9 @@ function buildConsumerPlaybook(kind: IntentKind, ctx: { modules: string[]; token
         'Swap a vendor implementation by implementing the adapter interface and binding it to the DI token.',
         '',
         '## Available adapter tokens',
-        ctx.tokens.length ? ctx.tokens.map((t) => `- ${t}`).join('\n') : '- (run list-adapters for details)',
+        ctx.tokens.length
+          ? ctx.tokens.map((t) => `- ${t}`).join('\n')
+          : '- (run list-adapters for details)',
         '',
         '## Playbook',
         '1. If the adapter is compliance-sensitive (KYC/AML, PSP, geo), spawn the `igaming-expert` agent first to confirm jurisdiction requirements.',
@@ -374,13 +392,15 @@ function buildConsumerPlaybook(kind: IntentKind, ctx: { modules: string[]; token
     case 'ui-page':
       return [
         '## Where it goes',
-        'Mount an `@oss/react-pages` page component on a route in your Next.js apps.',
+        'The platform is headless - pages live in your own frontend repo and consume the api via `@oss/sdk-core` / `@oss/react-hooks`. Fill named UI slots from a client-side UI plugin.',
         '',
         '## Named UI slots you can fill (via defineUIPlugin)',
-        ctx.slots.length ? ctx.slots.map((s) => `- ${s}`).join('\n') : '- (run list-slots for details)',
+        ctx.slots.length
+          ? ctx.slots.map((s) => `- ${s}`).join('\n')
+          : '- (run list-slots for details)',
         '',
         '## Playbook',
-        '1. Spawn the `igaming-builder` agent to implement: `pnpm gen page` (prompts for app, route, component), or extend an existing page via `defineUIPlugin` into a slot above.',
+        '1. Spawn the `igaming-builder` agent to implement the page in your frontend repo, or extend an existing surface via `defineUIPlugin` into a slot above.',
         '2. Spawn the `igaming-qa` agent to verify the page renders and behaves in a browser.',
         '3. Run `pnpm typecheck`.',
         '',
@@ -426,7 +446,10 @@ function runShell(cmd: string): { ok: boolean; output: string } {
     return { ok: true, output };
   } catch (e: unknown) {
     const err = e as { stdout?: Buffer; stderr?: Buffer; message: string };
-    return { ok: false, output: (err.stdout?.toString() ?? '') + (err.stderr?.toString() ?? '') + err.message };
+    return {
+      ok: false,
+      output: (err.stdout?.toString() ?? '') + (err.stderr?.toString() ?? '') + err.message,
+    };
   }
 }
 
@@ -459,7 +482,9 @@ server.tool(
   'enhance-intent',
   'Turn a fuzzy "I want to build X" ask into a grounded, consumer-context brief. Uses the platform catalog (live module/adapter/slot list) to return a classified intent, a requirements checklist to collect from the user, a step-by-step playbook using the consumer pnpm gen commands, and an acceptance-criteria stub.',
   {
-    ask: z.string().describe("The user's raw request, eg 'add a VIP loyalty tier with point tracking'"),
+    ask: z
+      .string()
+      .describe("The user's raw request, eg 'add a VIP loyalty tier with point tracking'"),
     kind: z
       .enum(['feature', 'adapter', 'ui-page', 'route', 'unsure'])
       .optional()
@@ -504,7 +529,10 @@ server.tool(
   'start',
   'Onboarding entry point. Call when the user opens Claude Code in a fresh consumer repo, says "start", "help me build X", or asks what they can do. Returns a structured onboarding script to follow: questions to ask, options to present, what to do with answers.',
   {
-    ask: z.string().optional().describe("Pass the user's raw ask if already known. Omit to get the full interactive flow."),
+    ask: z
+      .string()
+      .optional()
+      .describe("Pass the user's raw ask if already known. Omit to get the full interactive flow."),
   },
   async ({ ask }) => {
     const loaded = loadCatalog();
@@ -519,60 +547,68 @@ server.tool(
 
     if (ask) {
       const resolved = classifyIntent(ask);
-      const playbook = buildConsumerPlaybook(resolved, { modules, tokens, slots: catalog?.uiSlots.map((s) => s.name) ?? [] });
+      const playbook = buildConsumerPlaybook(resolved, {
+        modules,
+        tokens,
+        slots: catalog?.uiSlots.map((s) => s.name) ?? [],
+      });
       return {
-        content: [{
-          type: 'text' as const,
-          text: [
-            '# Onboarding',
-            `The user opened with: **${ask}**  (looks like: ${resolved})`,
-            '',
-            role,
-            '',
-            '## Step 1: gather requirements (the important part)',
-            'That opening line is a starting point, not a spec. Interview the user now:',
-            '',
-            REQUIREMENTS_INTERVIEW,
-            '',
-            '## Step 2: delegate everything',
-            'Once requirements are confirmed, call `enhance-intent` (ask = the confirmed requirements summary, kind = the detected kind), then follow its playbook - which hands the work to the agents. Do not implement directly.',
-            '',
-            playbook,
-          ].join('\n'),
-        }],
+        content: [
+          {
+            type: 'text' as const,
+            text: [
+              '# Onboarding',
+              `The user opened with: **${ask}**  (looks like: ${resolved})`,
+              '',
+              role,
+              '',
+              '## Step 1: gather requirements (the important part)',
+              'That opening line is a starting point, not a spec. Interview the user now:',
+              '',
+              REQUIREMENTS_INTERVIEW,
+              '',
+              '## Step 2: delegate everything',
+              'Once requirements are confirmed, call `enhance-intent` (ask = the confirmed requirements summary, kind = the detected kind), then follow its playbook - which hands the work to the agents. Do not implement directly.',
+              '',
+              playbook,
+            ].join('\n'),
+          },
+        ],
       };
     }
 
     return {
-      content: [{
-        type: 'text' as const,
-        text: [
-          '# Onboarding - follow this script',
-          '',
-          role,
-          '',
-          '## Step 1: high-level intent (AskUserQuestion, single-select)',
-          'Present AT MOST 4 options - AskUserQuestion rejects more, and it auto-adds an "Other" for anything else. This only routes the playbook, so keep it light:',
-          'Question: "What do you want to build?"',
-          '- New feature or behavior (bonus, campaign, player flow) -> kind: feature',
-          '- Swap a vendor adapter (payment / KYC / notifications) -> kind: adapter',
-          '- Add a UI page (player or backoffice) -> kind: ui-page',
-          '- Explore / not sure -> kind: unsure',
-          'A one-off API route or anything else: map the free-text answer to the closest kind (route -> feature, or unsure); enhance-intent will refine it.',
-          '',
-          '## Step 2: requirements interview (spend most of your effort here)',
-          REQUIREMENTS_INTERVIEW,
-          '',
-          '## Step 3: delegate everything',
-          'Call `enhance-intent` (ask = the confirmed requirements summary, kind = step 1). Then follow its playbook, which delegates to the agents:',
-          '- `igaming-expert` formalizes requirements + acceptance criteria (and may surface gaps - if so, ask the user those, then continue).',
-          '- `igaming-builder` implements (`pnpm gen ...`, code).',
-          '- `igaming-qa` writes/runs the E2E test.',
-          'You orchestrate; you do not write feature code yourself.',
-          '',
-          `Platform modules: ${modules.join(', ') || '(catalog not loaded - run pnpm build:oss first)'}`,
-        ].join('\n'),
-      }],
+      content: [
+        {
+          type: 'text' as const,
+          text: [
+            '# Onboarding - follow this script',
+            '',
+            role,
+            '',
+            '## Step 1: high-level intent (AskUserQuestion, single-select)',
+            'Present AT MOST 4 options - AskUserQuestion rejects more, and it auto-adds an "Other" for anything else. This only routes the playbook, so keep it light:',
+            'Question: "What do you want to build?"',
+            '- New feature or behavior (bonus, campaign, player flow) -> kind: feature',
+            '- Swap a vendor adapter (payment / KYC / notifications) -> kind: adapter',
+            '- Add a UI page (player or backoffice) -> kind: ui-page',
+            '- Explore / not sure -> kind: unsure',
+            'A one-off API route or anything else: map the free-text answer to the closest kind (route -> feature, or unsure); enhance-intent will refine it.',
+            '',
+            '## Step 2: requirements interview (spend most of your effort here)',
+            REQUIREMENTS_INTERVIEW,
+            '',
+            '## Step 3: delegate everything',
+            'Call `enhance-intent` (ask = the confirmed requirements summary, kind = step 1). Then follow its playbook, which delegates to the agents:',
+            '- `igaming-expert` formalizes requirements + acceptance criteria (and may surface gaps - if so, ask the user those, then continue).',
+            '- `igaming-builder` implements (`pnpm gen ...`, code).',
+            '- `igaming-qa` writes/runs the E2E test.',
+            'You orchestrate; you do not write feature code yourself.',
+            '',
+            `Platform modules: ${modules.join(', ') || '(catalog not loaded - run pnpm build:oss first)'}`,
+          ].join('\n'),
+        },
+      ],
     };
   },
 );
@@ -585,7 +621,9 @@ server.tool(
     action: z
       .enum(['up', 'down', 'status'])
       .optional()
-      .describe('up (default): start containers. down: stop and remove. status: show running containers.'),
+      .describe(
+        'up (default): start containers. down: stop and remove. status: show running containers.',
+      ),
   },
   async ({ action = 'up' }) => {
     if (action === 'status') {
@@ -597,12 +635,18 @@ server.tool(
       return { content: [{ type: 'text' as const, text: r.ok ? 'Stopped.' : r.output }] };
     }
     const up = runShell('docker compose up -d');
-    if (!up.ok) return { content: [{ type: 'text' as const, text: `docker compose up failed:\n${up.output}` }] };
+    if (!up.ok)
+      return {
+        content: [{ type: 'text' as const, text: `docker compose up failed:\n${up.output}` }],
+      };
 
     const deadline = Date.now() + 30_000;
     let ready = false;
     while (Date.now() < deadline) {
-      if (runShell('docker compose exec -T postgres pg_isready -U postgres').ok) { ready = true; break; }
+      if (runShell('docker compose exec -T postgres pg_isready -U postgres').ok) {
+        ready = true;
+        break;
+      }
       await new Promise((r) => setTimeout(r, 1_500));
     }
     const text = ready

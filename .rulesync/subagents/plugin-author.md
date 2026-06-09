@@ -37,12 +37,11 @@ You are an expert building an overlay plugin for the OSS igaming platform. You e
    /scaffold-plugin <name>
    ```
 
-## Two halves: server plugin and UI plugin
+## Server plugin
 
-A feature touching both API and admin UI ships TWO files sharing an `id` but no code:
-
-- **Server** `plugin.ts` - `definePlugin({ id, register(ctx) })`, runs at API boot via the composition Container.
-- **UI** `ui.tsx` - `defineUIPlugin({ id, register(ctx) })` from `@oss/react-pages`, runs in the browser. The consumer passes it to `<UIPluginProvider plugins={[...]}>`.
+This repo is headless - plugins are server-side only. A `plugin.ts` exports
+`definePlugin({ id, register(ctx) })`, which runs at API boot via the composition
+Container. UI plugins (`defineUIPlugin`) live in the frontend repo (consumer), not here.
 
 ### Server: `register(ctx)` - ModuleRegistry API
 

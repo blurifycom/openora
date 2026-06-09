@@ -24,21 +24,10 @@ After the scaffolder finishes:
    of a token wins, so an overlay loaded after the default-binding module replaces that
    default - keep the override order intentional in `extensions.config.ts`.
 
-2. For admin / player UI extension, add a separate `ui.tsx` exporting
-   `defineUIPlugin({ id, register(ctx) })` from `@oss/react-pages` and pass it to the
-   consumer's `<OssProviders plugins={[...]} features={{...}}>`. UI slots are typed:
-   `ctx.nav`, `ctx.dashboard.tiles`, `ctx.users.columns/toolbar`,
-   `ctx.userDetail.sections/actions`, `ctx.playerDetail.sections/actions`, `ctx.games.columns`,
-   `ctx.playerLobby.ribbon`, `ctx.playerGameTile.decorator`, `ctx.routes`. Slot fills accept
-   optional gating props: `visibleWhen`, `requiresPermission`, `brandScope`, `featureFlag`.
-   See ADR-0013.
+   This repo is headless - plugins are server-side only. UI extensions (`defineUIPlugin`,
+   nav/column/tile/section slots) live in the frontend repo (consumer), not here.
 
-3. For shared page data, host pages mount `<PageContextProvider value={...}>` and slot fills
-   read it with `usePageContext<T>()` (from `@oss/react-hooks`). For plugin-injected data,
-   use `useDataExtension(pluginId, key, fetcher, args?)` - the cache key is namespaced so
-   two plugins reading the same `(pluginId, key, args)` share one fetch.
+2. Run `pnpm verify` to check the wiring compiles and the boundary lint passes.
 
-4. Run `pnpm verify` to check the wiring compiles and the boundary lint passes.
-
-Explain both the server `ctx` (from `@oss/plugin-host` ModuleRegistry) and the UI `ctx`
-(from the `defineUIPlugin` registry). The two are separate files sharing an `id`.
+Explain the server `ctx` (from `@oss/plugin-host` ModuleRegistry) - the single `plugin.ts`
+surface a server plugin exposes.

@@ -27,11 +27,10 @@ Backoffice login: `admin@oss.dev` / `password123` (see `pnpm seed --help` for fl
 
 | Command | What it does |
 |---|---|
-| `pnpm dev` | turbo dev across api, backoffice, mcp |
+| `pnpm dev` | turbo dev across api, mcp |
 | `pnpm regen` | drizzle-kit generate + openapi emit + sdk regen + catalog |
 | `pnpm verify` | typecheck + lint (incl. boundaries + module shape) + unit tests |
 | `pnpm test:integration` | service/router tests against real Postgres |
-| `pnpm test:e2e` | Playwright against the reference apps |
 | `pnpm sync:agents` | regenerate the per-tool agent files (AGENTS.md / CLAUDE.md / .codex/config.toml / Copilot) from `.rulesync/` via rulesync |
 
 ## Scaffolding (don't hand-roll)
@@ -56,7 +55,7 @@ leave the wiring alone. After scaffolding a module/table: `pnpm regen && pnpm ve
 | `feat/*`, `fix/*`, `chore/*` | Short-lived topic branches. Branch off `main`, open an MR back into `main`. |
 
 Flow: `feat/*` -> MR -> `main` -> promote to `stage` -> promote to release.
-CI (`.gitlab-ci.yml` / `.github/workflows/ci.yml`) runs `verify` -> `integration` -> `e2e`
+CI (`.gitlab-ci.yml`) runs `verify` -> `integration`
 on every MR and on pushes to `main`, `stage`, and `dev`.
 
 ## Before you open an MR

@@ -45,8 +45,6 @@
       "@oss/adapters": "link:{{ossFromRoot}}/packages/contracts/adapters",
       "@oss/modules": "link:{{ossFromRoot}}/packages/modules",
       "@oss/react-hooks": "link:{{ossFromRoot}}/packages/sdks/react-hooks",
-      "@oss/react-blocks": "link:{{ossFromRoot}}/packages/sdks/react-blocks",
-      "@oss/react-pages": "link:{{ossFromRoot}}/packages/sdks/react-pages",
       "@oss/ui-provider-contract": "link:{{ossFromRoot}}/packages/ui/provider-contract",
       "@oss/ui-provider-daisyui": "link:{{ossFromRoot}}/packages/ui/provider-daisyui",
       "@oss/tsconfig": "link:{{ossFromRoot}}/packages/config/tsconfig",

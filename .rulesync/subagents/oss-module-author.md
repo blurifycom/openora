@@ -54,11 +54,10 @@ This creates `packages/modules/<group>/<name>/` inside `@oss/modules` with all r
 | `src/plugin.ts` | Register service + router via `definePlugin`. |
 | `AGENTS.md` | What it does, extension points, ports, do/don't, done-when checklist. |
 
-### Admin UI
+### UI
 
-- Cross-cutting admin pages -> `packages/sdks/react-pages/src/admin/`, exported from `index.ts`, mounted as TanStack route files under `apps/backoffice/src/routes/_authed/<route>.tsx` (use `createFileRoute('/_authed/<route>')`).
-- Module-scoped UI -> `packages/modules/<group>/<name>/ui/`, import only `@oss/ui-provider-contract`.
-- Plugin-contributed extensions (nav items, columns, tiles) -> `defineUIPlugin` slots (ADR-0006), never edit core pages.
+- This repo is headless - frontend pages live in the consumer repo and consume the api over HTTP via `@oss/sdk-core` / `@oss/react-hooks`. Build no pages here.
+- Module-scoped UI primitives -> `packages/modules/<group>/<name>/ui/`, import only `@oss/ui-provider-contract`.
 
 ## After scaffolding
 

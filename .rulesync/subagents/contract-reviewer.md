@@ -54,9 +54,8 @@ Run `git diff main...HEAD --name-only` to see which files changed. Read each cha
 
 ### UI / extension rules
 
-- [ ] Admin pages live in `@oss/react-pages` (`packages/sdks/react-pages/src/`); consumers mount them as thin Next route shims. No forked page bodies.
-- [ ] Components consumed via `useUI()` - no direct `@oss/ui-provider-daisyui` imports in pages/modules.
-- [ ] Plugin-specific admin UI uses `defineUIPlugin` slots (ADR-0006), not edits to core pages.
+- [ ] No frontend pages in this repo - the platform is headless. Pages live in the consumer frontend repo and consume the api over HTTP via `@oss/sdk-core` / `@oss/react-hooks`.
+- [ ] Components consumed via `useUI()` - no direct `@oss/ui-provider-daisyui` imports.
 - [ ] A new UI adapter has `: UIProvider` annotation (compile-time contract conformance guarantee).
 
 ### Tests

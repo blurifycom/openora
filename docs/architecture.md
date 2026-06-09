@@ -52,35 +52,27 @@ flowchart TB
   mod --> core
   adapters -. implemented by .-> vendor
 
-  subgraph ui["Headless UI (ADR-0013 layered)"]
+  subgraph ui["Headless UI consumption surface"]
     uic["ui-provider-contract<br/>component interface"]
     shad["ui-provider-daisyui<br/>shipped adapter"]
     hooks["react-hooks<br/>data hooks, transport, UIProvider ctx,<br/>cross-cutting helpers, /server (RSC)"]
-    blocks["react-blocks<br/>presentational primitives<br/>(consume UIProvider)"]
-    pages["react-pages<br/>composed pages, ui-plugin registry,<br/>theme (brandScope), AppShell, OssProviders"]
-    uiplug["UI plugin registry<br/>defineUIPlugin + slots + tokens"]
     shad -. implements .-> uic
-    pages --> blocks
-    pages --> hooks
-    blocks --> uic
-    blocks --> hooks
-    uiplug --> pages
+    hooks --> uic
   end
   client --> hooks
 
   subgraph consumer["Downstream consumer - Consumer (reference)"]
     bapi["apps/api<br/>thin createApp()"]
-    bweb["apps/web (Next App Router)<br/>mounts react-pages pages,<br/>prefetches via react-hooks/server"]
-    bbo["apps/backoffice (Vite + TanStack Router SPA)<br/>mounts react-pages admin pages"]
+    bfront["frontend (consumer repo)<br/>own pages, consumes api over HTTP<br/>via react-hooks / sdk-core"]
     bplug["@consumer/plugins<br/>one feature per folder"]
     bcfg["extensions.config.ts<br/>+ pnpm link: overrides"]
     bplug --> bcfg
     bcfg --> bapi
   end
   hono -. createApp + link .-> bapi
-  sdk --> bweb
-  shad --> bweb
-  uiplug --> bweb
+  sdk --> bfront
+  hooks --> bfront
+  shad --> bfront
 
   subgraph ai["AI dev surface"]
     mcp["mcp-server-dev<br/>stdio, via .mcp.json"]
@@ -119,14 +111,11 @@ Solid arrows are runtime/build dependencies; dashed arrows are **adapter seams**
 
 - **ui-provider-contract** - the component interface (`Button`, `Input`, `DataTable`, slots). Module UI imports only this. ADR-0003.
 - **ui-provider-daisyui** - the single adapter shipped by the platform (Tailwind v4 + DaisyUI semantic classes), implementing the contract. Swap it for your own (MUI, Chakra, ...) with no module changes.
-- **react-hooks** - leaf SDK package: data hooks, typed oRPC client, auth, UIProvider context, cross-cutting helpers (`usePageContext`, `useDataExtension`, `RoleGate`). `./server` subpath ships RSC-only prefetchers (`prefetchLobby`, `prefetchGames`, `prefetchWallet`).
-- **react-blocks** - presentational primitives consuming UIProvider (`StatCard`, `Skeleton`, `Pagination`, `TimeSeriesChart`, icons). Subpaths `./admin` + `./player`.
-- **react-pages** - composed pages, theme (with multi-brand `brandScope`), `OssProviders`, `AppShell`, and the ui-plugin registry. Subpaths `./admin`, `./player`, `./ui-plugin`, `./theme`. Root barrel re-exports hooks + blocks for ergonomic consumer migration.
-- **UI plugin registry** - `defineUIPlugin({ slots, columns, nav, routes })` lets a plugin extend the admin + player surface. Slot contributions support `visibleWhen` / `requiresPermission` / `brandScope` / `featureFlag` for declarative gating. ADR-0006 + ADR-0013.
+- **react-hooks** - leaf SDK package and the supported frontend consumption surface: data hooks, typed oRPC client, auth, UIProvider context, cross-cutting helpers (`usePageContext`, `useDataExtension`, `RoleGate`). `./server` subpath ships RSC-only prefetchers (`prefetchLobby`, `prefetchGames`, `prefetchWallet`). The page/block SDK layer (`@oss/react-pages` / `@oss/react-blocks`) that once sat above it was removed (2026-06-09, ADR-0013); the platform is headless and the frontend lives in consumer.
 - **plugin-test-kit** - `validatePlugin()` / `assertValidPlugin()` for operator suites.
 - **compliance-invariants** - canonical list of `SealedToken<T>` services operators may never override (RG enforcement, KYC writes, AML/SAR, ledger writes, RNG, etc.) with regulatory citations.
 
-**Downstream consumer (Consumer, reference)** - does **not** fork. `apps/api` is a thin `createApp()` entry with its own `extensions.config.ts`; `@oss/*` packages resolve via `pnpm` workspace overrides (`link:`). `apps/web` (Next.js App Router, RSC + SSR) mounts react-pages player pages in route shims that prefetch via `@oss/react-hooks/server` and hydrate the client. `apps/backoffice` (Vite + TanStack Router SPA) mounts react-pages admin pages directly. Per-operator customization lives in plugins under `apps/api/src/extensions/` + UI plugins via `defineUIPlugin`. ADR-0005 + ADR-0012 + ADR-0013.
+**Downstream consumer (Consumer, reference)** - does **not** fork. `apps/api` is a thin `createApp()` entry with its own `extensions.config.ts`; `@oss/*` packages resolve via `pnpm` workspace overrides (`link:`). The platform is headless: the frontend lives in the consumer repo and consumes the api over HTTP via `@oss/react-hooks` / `@oss/sdk-core` (Next App Router route files prefetch SSR data via `@oss/react-hooks/server` and hydrate the client). Per-operator backend customization lives in plugins under `apps/api/src/extensions/`. ADR-0005 + ADR-0012 + ADR-0013.
 
 **AI dev surface**
 
@@ -143,14 +132,13 @@ These are the swap points - the reason the platform is "headless" and extensible
 | Plugin host   | `definePlugin` contract           | a module or overlay folder                 | add/remove features without touching core        |
 | Vendor adapter | `@oss/adapters` (interface)          | impl package under `modules/<m>/adapters/<vendor>/` | a different PSP, KYC, or aggregator   |
 | UI provider   | `ui-provider-contract`            | `ui-provider-daisyui` (shipped)            | your own component library                       |
-| UI plugin     | `defineUIPlugin` slots            | a plugin's `ui.tsx`                        | extend the admin without forking the SDK         |
 | Consumer link | `createApp()` + `@oss/*` packages | downstream `apps/api` + `link:` overrides  | publish to npm and bump the tag (no code change) |
 
 ## Request flow (a typical read)
 
 ```mermaid
 sequenceDiagram
-  participant UI as react-pages (admin)
+  participant UI as consumer frontend (react-hooks)
   participant API as Hono + oRPC
   participant Mod as Module service
   participant DB as Drizzle (tenant-scoped)

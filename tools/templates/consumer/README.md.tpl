@@ -1,19 +1,20 @@
 # {{name}}
 
 An igaming platform built on the open-source `@oss/*` packages. This repo holds only
-what is unique to your operation - branding, vendor adapters, overlay plugins, and route
-shims. The core (auth, wallet, gaming, lobby, compliance, backoffice, CMS) is consumed as
-linked packages and never forked.
+what is unique to your operation - branding, vendor adapters, and overlay plugins. The
+core (auth, wallet, gaming, lobby, compliance, backoffice, CMS) is consumed as linked
+packages and never forked.
+
+This is a headless api consumer. Build your frontend (player web + admin backoffice)
+in its own repo and talk to this api over HTTP via `@oss/sdk-core` / `@oss/react-hooks`.
 
 ## Layout
 
 ```
 apps/
   api/          # Hono + oRPC API (:3001) - thin createApp entry + your extensions.config.ts
-  web/          # player app (:3000) - Next.js or TanStack Start; mounts @oss/react-pages player pages
-  backoffice/   # admin app (:3002) - Vite SPA or Next.js; mounts @oss/react-pages admin pages
 .claude/agents/ # AI agents: igaming-builder, igaming-expert, igaming-qa
-turbo/generators/ # turbo gen: plugin, adapter, page
+turbo/generators/ # turbo gen: plugin, adapter
 ```
 
 ## Prerequisites
@@ -38,7 +39,7 @@ pnpm build:oss             # build the linked @oss/* packages once
 pnpm regen                 # regenerate OpenAPI + catalog + Drizzle client (after schema changes)
 cp .env.example .env       # set DATABASE_URL + AUTH_SECRET
 pnpm db:migrate            # apply the OSS schema to your database
-pnpm dev                   # api :3001, web :3000, backoffice :3002
+pnpm dev                   # api :3001
 ```
 
 After `pnpm setup:mcp`, restart your editor and run **`/start`** in Claude Code - it asks what
@@ -53,7 +54,6 @@ hot loop, run a watch build in the OSS checkout in parallel.
 |---|---|
 | Overlay plugin (new behavior/routes) | `pnpm gen plugin` |
 | Swap a vendor adapter (KYC / payment / notification) | `pnpm gen adapter` |
-| Mount an `@oss/react-pages` page on a route | `pnpm gen page` |
 
 Register new plugins in `apps/api/src/extensions.config.ts`. Adapters that override a
 default binding must be listed AFTER the module that owns the default (last registration of

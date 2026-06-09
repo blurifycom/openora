@@ -19,7 +19,7 @@ A `Player` row is the igaming-side profile for a player-role user. Admins manage
 
 ## Extension points
 
-- The players dashboard and detail pages live in `@oss/react-pages` (`PlayersDashboardPage`, `PlayersListPage`, `PlayerDetailPage`). Plugins extend the player detail page via the `playerDetail` UI slots (`ctx.playerDetail.sections` / `.actions`) - see ADR-0006. Consumer's `player-badges` plugin is the reference consumer (it adds a "Badges" section to the player detail page).
+- The platform is headless - the players dashboard and detail pages live in the consumer frontend, consuming this module's routes over HTTP. UI slot extensions (`playerDetail` sections/actions) live in that frontend repo too.
 - No vendor adapters today. KYC/AML provider integration would be added as an adapter in `@oss/adapters` (a `KycAdapter` already exists there).
 
 ## Ports

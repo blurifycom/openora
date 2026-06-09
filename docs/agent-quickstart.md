@@ -94,13 +94,14 @@ Edit `packages/modules/<group>/<name>/src/plugin.ts`. Confirm the service is add
 
 ## Step 9: Add UI (backoffice pages)
 
-Two kinds of UI in this repo - pick the right one for your change:
+The platform is headless - frontend pages live in the consumer repo, not here. The
+page/block SDK layer (`@oss/react-pages` / `@oss/react-blocks`) and the reference apps
+(`apps/web` / `apps/backoffice`) were removed (2026-06-09) and will be re-extracted from
+consumer later. What you can still touch here:
 
-- **Module-scoped UI** (a screen tightly coupled to one module's domain) -> `packages/modules/<group>/<name>/ui/`. Import only from `@oss/ui-provider-contract`. Use the DataTable component for lists, Form for create/edit. The module's plugin mounts it via UI slots.
-- **Cross-cutting admin page** (dashboard, users, games) -> add to `packages/sdks/react-pages/src/admin/`, export from `admin/index.ts`, then add a TanStack route file under `apps/backoffice/src/routes/_authed/<route>.tsx` (use `createFileRoute('/_authed/<route>')`). A **player page** goes in `src/player/` with a Next route shim in `apps/web/app/<route>/page.tsx`. `@oss/react-pages` is consumed by both reference apps and by downstream consumers. See `packages/sdks/react-pages/AGENTS.md`, ADR-0005, and ADR-0013.
-- **A plugin-contributed UI extension** (column, tile, nav item, section, ribbon, route - not a core page) -> use a client-side `defineUIPlugin` instead of editing react-pages. Slot fills support `visibleWhen` / `requiresPermission` / `brandScope` / `featureFlag` for declarative gating. See ADR-0006 and ADR-0013.
-- **A new data hook** (eg `useAdminUsers`, `usePlayerWallet`) -> `packages/sdks/react-hooks/src/hooks/`. A **server prefetcher** for RSC SSR hydration goes in `packages/sdks/react-hooks/src/server/` and is imported via the `@oss/react-hooks/server` subpath (RSC-only, no client React tree).
-- **A presentational block primitive** (chart, badge, stat card) -> `packages/sdks/react-blocks/src/admin/` or `src/player/`. Consumes `useUI()` from `@oss/react-hooks`. Layer rule: blocks must not import from `@oss/react-pages`.
+- **Module-scoped UI primitives** (a small component tightly coupled to one module's domain) -> `packages/modules/<group>/<name>/ui/`. Import only from `@oss/ui-provider-contract`.
+- **A new data hook** (eg `useAdminUsers`, `usePlayerWallet`) -> `packages/sdks/react-hooks/src/hooks/`. A **server prefetcher** for RSC SSR hydration goes in `packages/sdks/react-hooks/src/server/` and is imported via the `@oss/react-hooks/server` subpath (RSC-only, no client React tree). `@oss/react-hooks` is the supported frontend consumption surface.
+- **A UI component contract** -> `/scaffold-ui-component <Name>` adds the contract entry + the daisyui impl. The consumer frontend consumes it via `useUI()`.
 
 ## Step 10: Update AGENTS.md
 

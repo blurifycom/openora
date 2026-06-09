@@ -8,16 +8,16 @@
  * Example:
  *   pnpm create:app ../my-igaming --name my-igaming
  *
- * Scaffolds a full turborepo (apps/api + web + backoffice), wires pnpm.overrides
- * to link at this OSS checkout, drops in the consumer AI agents and turbo gen
- * generators, then prints next steps.
+ * Scaffolds a headless api-only turborepo (apps/api), wires pnpm.overrides to link
+ * at this OSS checkout, drops in the consumer AI agents and turbo gen generators,
+ * then prints next steps.
  *
- * The shared base lives in `tools/templates/consumer/` (root config + apps/api +
- * generators + dotfiles). The per-app trees live in `tools/templates/variants/`:
- * `web-next` overlays onto `apps/web` (Next.js App Router, RSC-first - see
- * ADR-0013); `backoffice-vite` overlays onto `apps/backoffice` (Vite +
- * TanStack Router SPA, no SSR). Same __dot__/.tpl/substitution rules apply
- * to base and variants alike.
+ * The platform is headless: the frontend (player web + backoffice admin) lives in
+ * the downstream consumer's own repo and talks to this api over HTTP via the SDK
+ * (`@oss/sdk-core` / `@oss/react-hooks`). The scaffold ships only the backend.
+ *
+ * The base lives in `tools/templates/consumer/` (root config + apps/api +
+ * generators + dotfiles). The __dot__/.tpl/substitution rules apply throughout.
  */
 
 import {
@@ -35,7 +35,6 @@ import { fileURLToPath } from 'node:url';
 const here = dirname(fileURLToPath(import.meta.url));
 const ossRoot = resolve(here, '..');
 const templateRoot = join(here, 'templates', 'consumer');
-const variantsRoot = join(here, 'templates', 'variants');
 const agentsDir = join(ossRoot, 'packages', 'platform', 'mcp', 'agents');
 
 type ParsedArgs = {
@@ -109,21 +108,13 @@ function undotSegment(seg: string): string {
   return seg.startsWith('__dot__') ? `.${seg.slice('__dot__'.length)}` : seg;
 }
 
-// Copy a template tree (base or variant) into the target, mapping each file's
-// relative path through the __dot__ / .tpl rules and substituting {{vars}} in .tpl
-// files only. `destPrefix` rebases the output (eg a variant tree lands under
-// `apps/web`).
-function emitTree(
-  srcRoot: string,
-  vars: Record<string, string>,
-  targetDir: string,
-  destPrefix = '',
-): void {
+// Copy a template tree into the target, mapping each file's relative path through
+// the __dot__ / .tpl rules and substituting {{vars}} in .tpl files only.
+function emitTree(srcRoot: string, vars: Record<string, string>, targetDir: string): void {
   for (const file of walk(srcRoot)) {
     const rel = relative(srcRoot, file);
     let outRel = rel.split(sep).map(undotSegment).join(sep);
     if (outRel.endsWith('.tpl')) outRel = outRel.slice(0, -'.tpl'.length);
-    if (destPrefix) outRel = join(destPrefix, outRel);
 
     // Only .tpl files get {{var}} substitution. Everything else is copied verbatim so
     // that, eg, files carrying their own {{name}} Plop placeholders survive untouched.
@@ -147,13 +138,6 @@ function main(): void {
   }
   if (!existsSync(templateRoot)) die(`template missing at ${templateRoot}`);
 
-  const webVariantDir = join(variantsRoot, 'web-next');
-  const backofficeVariantDir = join(variantsRoot, 'backoffice-vite');
-  if (!existsSync(webVariantDir)) die(`web variant missing at ${webVariantDir}`);
-  if (!existsSync(backofficeVariantDir)) {
-    die(`backoffice variant missing at ${backofficeVariantDir}`);
-  }
-
   const vars: Record<string, string> = {
     name,
     ossFromRoot: posix(relative(targetDir, ossRoot)),
@@ -162,15 +146,11 @@ function main(): void {
   };
 
   console.log(`\n  Creating ${name} at ${targetDir}`);
-  console.log(`  web: next (App Router, RSC)   backoffice: vite + tanstack-router (SPA)`);
+  console.log(`  headless api-only consumer (frontend lives in your own repo)`);
   console.log(`  Linking @oss/* from ${vars.ossFromRoot}\n`);
 
-  // 1) Shared base (root config + apps/api + generators + dotfiles).
+  // Base consumer repo (root config + apps/api + generators + dotfiles).
   emitTree(templateRoot, vars, targetDir);
-  // 2) Player app overlays onto apps/web (Next.js App Router).
-  emitTree(webVariantDir, vars, targetDir, join('apps', 'web'));
-  // 3) Backoffice is always a Vite + TanStack Router SPA - overlays onto apps/backoffice.
-  emitTree(backofficeVariantDir, vars, targetDir, join('apps', 'backoffice'));
 
   // Drop in the consumer AI agents as rulesync subagent sources (single source of
   // truth: @oss/mcp/agents, already in rulesync format). `pnpm sync:agents`
@@ -198,13 +178,15 @@ function main(): void {
     pnpm build:oss          # build the linked @oss/* packages once
     cp .env.example .env     # then set DATABASE_URL / AUTH_SECRET
     pnpm db:migrate          # apply the OSS schema to your database
-    pnpm dev                 # api :3001, web :3000, backoffice :3002
+    pnpm dev                 # api :3001
 
   Add features with turbo gen:
 
     pnpm gen plugin          # new overlay plugin
     pnpm gen adapter         # swap a vendor adapter (KYC / payment / notification)
-    pnpm gen page            # mount an @oss/react-pages page on a route
+
+  This is a headless api. Build your frontend in its own repo and consume the
+  api over HTTP with @oss/sdk-core / @oss/react-hooks.
 `);
 }
 

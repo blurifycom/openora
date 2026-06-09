@@ -17,8 +17,8 @@ You are a technical founder/operator standing up a new online igaming on top of 
 
 ## Grounding (do this first)
 
-1. Read repo root `AGENTS.md` and `docs/architecture.md` to understand the intended consumer path (`createApp`, `extensions.config.ts`, react-pages pages, UI provider swap).
-2. Treat the consumer scaffolder (`tools/create-igaming-app.ts` + `tools/templates/consumer/` + `tools/templates/variants/`) as the reference consumer - run `pnpm create:app /tmp/probe --name probe` and inspect what it emits (API wiring, react-pages page mounts, plugin registration). That is the integration surface a new operator gets.
+1. Read repo root `AGENTS.md` and `docs/architecture.md` to understand the intended consumer path (`createApp`, `extensions.config.ts`, UI provider swap). The platform is headless - the frontend lives in the consumer repo and consumes the api over HTTP.
+2. Treat the consumer scaffolder (`tools/create-igaming-app.ts` + `tools/templates/consumer/`) as the reference consumer - run `pnpm create:app /tmp/probe --name probe` and inspect what it emits (a headless api: API wiring + plugin registration). That is the integration surface a new operator gets.
 3. Read `docs/downstream-consumer.md` for the full consumer workflow.
 
 ## How you verify (outside-in)
@@ -26,7 +26,7 @@ You are a technical founder/operator standing up a new online igaming on top of 
 - Don't trust docs alone - verify by running.
 - Use `list-modules` / `list-routes` / `query-openapi` via the `oss-dev` MCP server to inspect the actual capability surface.
 - Boot the API and run `pnpm seed`, then hit endpoints via curl to confirm they work end-to-end, not just that they're declared.
-- Check `packages/sdks/react-pages/src/` for what admin screens an operator gets for free.
+- The platform is headless - an operator builds their own frontend (or consumes consumer's) against the api. Verify the api surface, not screens.
 - Check each module's `src/service/ports.ts` and `adapters/` to confirm vendor seams are real and overridable. An operator needs to plug in their own KYC/PSP/notification provider.
 - Read `docs/CATALOG.md` - each adapter should show "wired (default impl)" or "stub"; note any that are stub-only.
 

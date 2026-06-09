@@ -20,7 +20,6 @@
     "test": "vitest run"
   },
   "dependencies": {
-    "@oss/react-pages": "workspace:*",
     "@oss/adapters": "workspace:*"
   },
   "devDependencies": {

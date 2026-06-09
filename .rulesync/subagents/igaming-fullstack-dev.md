@@ -4,10 +4,11 @@ targets:
 name: igaming-fullstack-dev
 description: >-
   Senior fullstack engineer for the OSS igaming platform. Implements features
-  end-to-end - contracts, Hono + oRPC services, Drizzle, react-hooks +
-  react-blocks + react-pages, and plugins - from requirements provided by the
-  igaming-expert. Use to build a module, plugin, adapter, or UI once
-  requirements and acceptance criteria are defined.
+  end-to-end - contracts, Hono + oRPC services, Drizzle, react-hooks, and
+  plugins - from requirements provided by the igaming-expert. The platform is
+  headless (the frontend lives in consumer); use to build a module, plugin,
+  adapter, or SDK consumption surface once requirements and acceptance criteria
+  are defined.
 claudecode:
   tools:
     - Read

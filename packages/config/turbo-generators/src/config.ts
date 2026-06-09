@@ -8,7 +8,6 @@ import type { PlopTypes } from '@turbo/gen';
 //
 //   pnpm gen plugin   - new overlay plugin under apps/api/src/extensions/
 //   pnpm gen adapter  - overlay that rebinds a vendor adapter DI token
-//   pnpm gen page     - mount an @oss/react-pages page on a route (surface-aware)
 
 // turbo gen bundles this config into a CJS file inside the *consumer* repo, so
 // import.meta.url / __dirname point at the consumer, not here, and the .hbs files are
@@ -20,8 +19,6 @@ const pkgDir = dirname(require.resolve('@oss/turbo-generators/package.json'));
 const tpl = (name: string): string => join(pkgDir, 'src', 'templates', name);
 
 const kebabRe = /^[a-z][a-z0-9-]*$/;
-const pascalRe = /^[A-Z][A-Za-z0-9]+$/;
-const routeRe = /^[a-z0-9/-]+$/;
 
 export default function generator(plop: PlopTypes.NodePlopAPI): void {
   plop.setGenerator('plugin', {
@@ -72,44 +69,5 @@ export default function generator(plop: PlopTypes.NodePlopAPI): void {
         templateFile: tpl('adapter.hbs'),
       },
     ],
-  });
-
-  // Surface-aware: `web` is Next App Router (apps/web/app/<route>/page.tsx); `backoffice`
-  // is a Vite + TanStack Router SPA and needs a `createFileRoute` module under
-  // src/routes/_authed/ instead (see ADR-0013).
-  plop.setGenerator('page', {
-    description: 'Mount an @oss/react-pages page component on a route',
-    prompts: [
-      {
-        type: 'list',
-        name: 'surface',
-        message: 'Which app?',
-        choices: ['web', 'backoffice'],
-      },
-      {
-        type: 'input',
-        name: 'route',
-        message: 'Route segment (eg promotions, players/vip):',
-        validate: (v: string) => (routeRe.test(v) ? true : 'lowercase path segments'),
-      },
-      {
-        type: 'input',
-        name: 'component',
-        message: 'Exported @oss/react-pages page component (eg DashboardPage):',
-        validate: (v: string) => (pascalRe.test(v) ? true : 'PascalCase export name'),
-      },
-    ],
-    actions: (data) => {
-      const backoffice = data?.surface === 'backoffice';
-      return [
-        {
-          type: 'add',
-          path: backoffice
-            ? 'apps/backoffice/src/routes/_authed/{{route}}.tsx'
-            : 'apps/web/app/{{route}}/page.tsx',
-          templateFile: backoffice ? tpl('page-backoffice.hbs') : tpl('page-next.hbs'),
-        },
-      ];
-    },
   });
 }

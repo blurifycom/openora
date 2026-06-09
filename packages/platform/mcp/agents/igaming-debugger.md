@@ -60,14 +60,14 @@ Common consumer-side causes (this stack links `@oss/*` from a sibling checkout):
 
 | Symptom | Likely cause | Fix |
 |---|---|---|
-| `Module not found: Can't resolve '@oss/...'` but `node -e "require.resolve(...)"` works | Turbopack won't compile across the link: boundary (packages live outside the project root) | `turbopack.root` must point at the common ancestor of this repo and the OSS checkout; `experimental.externalDir: true`. See `apps/web/next.config.ts`. |
+| `Module not found: Can't resolve '@oss/...'` but `node -e "require.resolve(...)"` works | A bundler won't compile across the link: boundary (packages live outside the project root) | point the bundler's project root at the common ancestor of your frontend repo and the OSS checkout, and allow imports from outside the root (eg Next.js `turbopack.root` + `experimental.externalDir: true`). |
 | `extends "@oss/tsconfig/..." doesn't resolve` | An `extends` chain through a symlinked tsconfig | the `@oss/tsconfig` configs must be self-contained (no `extends`) |
 | Resolves but won't import | `@oss/*` not built | run `pnpm build:oss` |
 | Stale error after a fix | Turbopack cache | `rm -rf apps/*/.next` and rebuild |
 
 To confirm a resolution issue is the bundler (not a missing dep):
 ```bash
-node --input-type=module -e "import {createRequire} from 'node:module'; const r=createRequire(process.cwd()+'/'); console.log(r.resolve('@oss/react-pages'))"
+node --input-type=module -e "import {createRequire} from 'node:module'; const r=createRequire(process.cwd()+'/'); console.log(r.resolve('@oss/react-hooks'))"
 ```
 If Node resolves it but the bundler does not, it is a bundler-root/boundary problem.
 

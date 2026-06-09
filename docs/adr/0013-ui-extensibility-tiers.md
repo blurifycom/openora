@@ -1,8 +1,17 @@
 # ADR-0013: UI extensibility tiers + layered react packages
 
 **Date**: 2026-05-28
-**Status**: Accepted
+**Status**: Partially superseded (2026-06-09)
 **Supersedes (partially)**: nothing - extends ADR-0006 (UI plugin registry)
+
+> **Superseded note (2026-06-09).** The page/block SDK layer described below
+> (`@oss/react-pages` / `@oss/react-blocks`) and the reference frontend apps
+> (`apps/web` / `apps/backoffice`) were removed from the OSS repo. The platform is
+> now headless: the frontend lives in the consumer repo and will be re-extracted from
+> it later. `@oss/react-hooks` and `@oss/sdk-core` remain the supported frontend
+> consumption surface; the `no-sdk-layer-inversion` boundary lint and the `pnpm gen
+> page` generator were removed with the layer. The historical design below is kept
+> for context and will inform the re-extraction.
 
 ## Context
 

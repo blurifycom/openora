@@ -3,14 +3,13 @@
 # quality stage runs fast, granular, parallel jobs (each reports its own red/green):
 #   lint + format  -> source-only, no build, seconds of feedback
 #   verify         -> build + typecheck + unit + module-shape + boundaries + catalog drift
-# integration / e2e are gated behind quality (don't spin a DB if lint fails).
+# integration is gated behind quality (don't spin a DB if lint fails).
 
 image: node:26
 
 stages:
   - quality
   - integration
-  - e2e
 
 # Run on merge requests and on the long-lived branches (default + env branches).
 workflow:
@@ -87,30 +86,3 @@ integration:
   script:
     - pnpm build
     - pnpm test:integration
-
-# --- e2e (Postgres + Playwright) ---------------------------------------------
-
-# Playwright boots the stack itself (E2E_WEBSERVER=1 -> turbo dev); global-setup
-# migrates + seeds.
-e2e:
-  stage: e2e
-  timeout: 30m
-  services:
-    - name: postgres:16
-      alias: postgres
-  variables:
-    POSTGRES_USER: postgres
-    POSTGRES_PASSWORD: postgres
-    POSTGRES_DB: oss_igaming
-    DATABASE_URL: postgres://postgres:postgres@postgres:5432/oss_igaming
-    E2E_WEBSERVER: "1"
-  script:
-    - pnpm build
-    - pnpm -F @oss/e2e exec playwright install --with-deps chromium
-    - pnpm test:e2e
-  artifacts:
-    name: playwright-report
-    when: on_failure
-    paths:
-      - apps/e2e/playwright-report/
-    expire_in: 7 days

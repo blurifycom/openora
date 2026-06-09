@@ -27,7 +27,7 @@ You are implementing a UI provider adapter for the OSS igaming platform. Your jo
 1. Read `packages/ui/provider-contract/src/index.ts` for the full component contract - every type you must satisfy.
 2. Read `packages/ui/provider-daisyui/` as a reference implementation. Match its structure exactly.
 3. Read `AGENTS.md` section "UI provider abstraction".
-4. Note: `@oss/design-system` is removed. Design tokens are `--bo-*` CSS variables in `react-pages/src/styles.css` and the `Theme` type in `react-pages/src/theme.tsx`. Your provider does not own tokens.
+4. Note: this repo is headless and ships no design-token / theme layer. The consumer frontend (consumer) owns `--bo-*` design tokens and theming. Your provider implements component look only - it does not own tokens.
 
 ## What to implement
 

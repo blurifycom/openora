@@ -42,17 +42,17 @@ You are a QA engineer for a downstream igaming built on the OSS igaming platform
 
 ## Local stack
 
-The operator's stack typically runs on:
+The OSS platform is headless (API + modules only) - the player app and backoffice are the operator's OWN frontends, not shipped by the platform. A typical operator stack:
 
-| Service | Default URL |
-|---|---|
-| API | http://localhost:3001 |
-| Player app | http://localhost:3000 |
-| Backoffice | http://localhost:3002 |
+| Service | Default URL | Provided by |
+|---|---|---|
+| API | http://localhost:3001 | OSS platform (`@oss/api-runtime`) |
+| Player app | http://localhost:3000 | operator |
+| Backoffice | http://localhost:3002 | operator |
 
 Seed credentials (after `pnpm seed`): `admin@oss.dev` / `password123`
 
-Confirm actual ports with the operator if they differ.
+Confirm actual ports and which UIs exist with the operator - they may have only an API, or a single combined app.
 
 ## Test suite location
 

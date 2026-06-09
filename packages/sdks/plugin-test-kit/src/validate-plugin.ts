@@ -1,18 +1,28 @@
-import type { UIPlugin } from '@oss/react-pages';
-import { SLOTS, type SlotName, type ColumnSlotName } from '@oss/react-pages';
+// Structural validation for a UI plugin descriptor. The platform is headless: the
+// page/block SDK layer (and its `SLOTS` contract) was removed (2026-06-09) and will
+// be re-extracted from the downstream frontend. Until then this kit validates the
+// structural invariants every UI plugin must hold regardless of the slot catalog -
+// non-empty id, unique slot ids, unique column keys, present render functions. A
+// host that owns a slot catalog can layer a name-allow-list check on top.
 
-const KNOWN_SLOT_NAMES = new Set<string>(flattenSlotNames(SLOTS));
+// Minimal structural shape of a UI plugin descriptor. Kept local so the kit has no
+// dependency on the (removed) page/block SDK layer.
+export type UIPluginSlot = {
+  id: string;
+  name: string;
+  render?: unknown;
+};
 
-function flattenSlotNames(obj: unknown, acc: string[] = []): string[] {
-  if (typeof obj === 'string') {
-    acc.push(obj);
-  } else if (obj && typeof obj === 'object') {
-    for (const v of Object.values(obj as Record<string, unknown>)) {
-      flattenSlotNames(v, acc);
-    }
-  }
-  return acc;
-}
+export type UIPluginColumn = {
+  name: string;
+  key: string;
+};
+
+export type UIPlugin = {
+  id: string;
+  slots?: UIPluginSlot[];
+  columns?: UIPluginColumn[];
+};
 
 export type ValidationIssue = {
   severity: 'error' | 'warning';
@@ -26,13 +36,12 @@ export type ValidationResult = {
 };
 
 /**
- * Static-validate a UI plugin descriptor against the OSS slot contract.
+ * Static-validate a UI plugin descriptor's structural invariants.
  * Checks:
- *  - declared slot names exist in `SLOTS`
- *  - declared column slot names exist in `SLOTS`
- *  - slot/column ids are unique within the plugin
- *  - render functions are present (warn if a slot contributor forgot one)
- *  - no slot fill targets a sealed token (sealed services are not slots)
+ *  - a non-empty string `id`
+ *  - slot ids are unique within the plugin
+ *  - column keys are unique per slot within the plugin
+ *  - render functions are present (a slot contributor must render something)
  *
  * Operators run this in their own test suite (eg `validatePlugin(myPlugin)`
  * inside vitest) to catch contract drift before runtime.
@@ -58,13 +67,6 @@ export function validatePlugin(plugin: UIPlugin): ValidationResult {
       });
     }
     slotIds.add(s.id);
-    if (!KNOWN_SLOT_NAMES.has(s.name as SlotName | ColumnSlotName)) {
-      issues.push({
-        severity: 'error',
-        path: `slots[${i}].name`,
-        message: `Unknown slot name "${s.name}". Use a value from SLOTS.`,
-      });
-    }
     if (typeof s.render !== 'function') {
       issues.push({
         severity: 'error',
@@ -85,13 +87,6 @@ export function validatePlugin(plugin: UIPlugin): ValidationResult {
       });
     }
     columnIds.add(ck);
-    if (!KNOWN_SLOT_NAMES.has(c.name as SlotName | ColumnSlotName)) {
-      issues.push({
-        severity: 'error',
-        path: `columns[${i}].name`,
-        message: `Unknown column slot name "${c.name}". Use a value from SLOTS.`,
-      });
-    }
   }
 
   return { ok: issues.every((i) => i.severity !== 'error'), issues };

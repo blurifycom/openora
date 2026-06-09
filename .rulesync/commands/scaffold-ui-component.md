@@ -11,18 +11,12 @@ After scaffolding:
    component to the `UIProvider` type. Module + page code consumes the component via
    `useUI()` against this contract.
 2. Implement in `packages/ui/provider-daisyui/src/<name>.tsx` using DaisyUI semantic
-   classes (`btn`, `card`, `modal`, ...). Structural / layout classes driven by `--bo-*`
-   theme variables live in `packages/sdks/react-pages/src/styles.css`; DaisyUI supplies the
-   component look.
+   classes (`btn`, `card`, `modal`, ...). DaisyUI supplies the component look; the
+   consumer frontend owns layout / `--bo-*` design tokens (this repo is headless).
 3. Export the component from `provider-daisyui/src/index.ts` - it's part of the
    `daisyuiProvider` object, typed `: UIProvider`, so TS enforces the contract.
-4. If the new component needs design tokens, add `--bo-<name>` CSS variables to
-   `packages/sdks/react-pages/src/styles.css` AND a typed entry in `Theme` so operators can
-   override per-tenant or per-brand via `<ThemeProvider theme={...}>` /
-   `<ThemeProvider brands={[...]} activeBrand="..." />`.
-5. Run `pnpm verify`.
+4. Run `pnpm verify`.
 
-Remind the user: module / admin UI consumes components via `useUI()` from `@oss/react-hooks`
-(re-exported by `@oss/react-pages` for ergonomic consumer imports), never
+Remind the user: UI consumes components via `useUI()` from `@oss/react-hooks`, never
 `@oss/ui-provider-daisyui` directly. provider-contract is the binding interface; daisyui is
 the single shipped adapter.

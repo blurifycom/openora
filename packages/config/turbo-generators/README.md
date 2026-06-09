@@ -16,11 +16,6 @@ export { default } from '@oss/turbo-generators';
 | --------- | --------------------------------------------------------------------- |
 | `plugin`  | overlay plugin under `apps/api/src/extensions/<name>/plugin.ts`        |
 | `adapter` | overlay that rebinds a vendor adapter DI token (payment / KYC / notif) |
-| `page`    | mounts an `@oss/react-pages` page on a route (surface-aware)           |
-
-`page` is surface-aware: `web` emits a Next.js App Router shim
-(`apps/web/app/<route>/page.tsx`); `backoffice` emits a TanStack Router file route
-(`apps/backoffice/src/routes/_authed/<route>.tsx`) per ADR-0013.
 
 ## How it resolves
 

@@ -19,34 +19,33 @@ pnpm setup:mcp          # trust the MCP server + install the /start onboarding f
 pnpm build:oss          # build the linked @oss/* packages once
 cp .env.example .env     # set DATABASE_URL + AUTH_SECRET
 pnpm db:migrate          # apply the OSS schema
-pnpm dev                 # api :3001, web :3000, backoffice :3002
+pnpm dev                 # api :3001
 ```
+
+The platform is **headless** - it ships the backend only. Build your frontend (player web +
+admin backoffice) in your own repo and consume the api over HTTP via `@oss/sdk-core` /
+`@oss/react-hooks`. The page/block SDK layer and the reference frontend apps were removed
+(2026-06-09); the frontend lives in the consumer repo and will be re-extracted later.
 
 After install, run `pnpm setup:mcp` and then `/start` in Claude Code: it asks what you want to
 build, calls the `enhance-intent` MCP tool to turn the ask into a grounded spec, and drives the
 matching scaffold flow. See [mcp-setup.md](./mcp-setup.md#zero-config-setup-pnpm-setupmcp).
 
-This emits everything the sections below describe by hand: `apps/api` (thin `createApp` entry +
-`extensions.config.ts`), `apps/web` + `apps/backoffice` (mounting react-pages pages with the dedup
-config), root `pnpm.overrides` linking every `@oss/*`, `.mcp.json`, the three consumer AI agents,
-and `turbo/generators/` (`pnpm gen plugin|adapter|page`). The CLI lives at
-`tools/create-igaming-app.ts`; the shared base tree at `tools/templates/consumer/` and the
-per-app trees at `tools/templates/variants/`. Read on to understand what it generated and how to
-extend it.
+This emits a headless api consumer: `apps/api` (thin `createApp` entry +
+`extensions.config.ts`), root `pnpm.overrides` linking every `@oss/*`, `.mcp.json`, the three
+consumer AI agents, and `turbo/generators/` (`pnpm gen plugin|adapter`). The CLI lives at
+`tools/create-igaming-app.ts`; the base tree at `tools/templates/consumer/`. Read on to
+understand what it generated and how to extend it.
 
-### Player framework
+### Frontend
 
-The player app is **Next.js (App Router, RSC-first)**; the backoffice is **Vite +
-TanStack Router (client-only SPA)**. There are no other variants - see ADR-0013
-for the rationale (RSC + SSR for SEO/first-paint on the player surface; SPA
-behind auth for the admin). The scaffolder takes no `--web` flag.
-
-The Next consumer's route files prefetch SSR data via `@oss/react-hooks/server`
-(`prefetchLobby`, `prefetchGames`, `prefetchWallet`, ...) forwarding the request
-cookies, then hydrate the client page with `<HydrationBoundary state={dehydrate(qc)}>`.
-React/react-dom/@tanstack/react-query are deduped via the consumer's
-`next.config.ts` alias (and the Vite equivalent in the backoffice) so the linked
-`@oss/*` and the app share a single physical React copy - see ADR-0005.
+The frontend lives in your own repo (the platform is headless). It consumes the api over
+HTTP through `@oss/react-hooks` (and the framework-agnostic `@oss/sdk-core`). A Next App
+Router consumer's route files prefetch SSR data via `@oss/react-hooks/server`
+(`prefetchLobby`, `prefetchGames`, `prefetchWallet`, ...) forwarding the request cookies,
+then hydrate the client tree with `<HydrationBoundary state={dehydrate(qc)}>`.
+React/react-dom/@tanstack/react-query are deduped via the consumer's bundler alias so the
+linked `@oss/*` and the app share a single physical React copy - see ADR-0005.
 
 ## API entrypoint
 
@@ -78,83 +77,48 @@ For the UI side, the platform ships a single adapter, `@oss/ui-provider-daisyui`
 consumers run it as-is, or swap it for their own adapter package via the `UIProvider` React
 Context at the Next.js layout layer. No factory needed.
 
-## Mounting the backoffice in a downstream Next app
+## Building the frontend (in your own repo)
 
-`@oss/react-pages` ships the typed client, hooks, UI/theme context, admin shell, and page bodies.
-Consumers mount the pages in their own `app/` directory. The page bodies are interactive client
-components; the route files stay server components.
+The platform is headless. Your frontend repo consumes the api over HTTP through
+`@oss/react-hooks` (typed client, data hooks, auth, `UIProvider` context, RSC prefetchers at
+`@oss/react-hooks/server`) and the framework-agnostic `@oss/sdk-core`. Pages, the admin shell,
+theme, and the `defineUIPlugin` slot registry are owned by the frontend (they were removed
+from this repo on 2026-06-09 and will be re-extracted from consumer later).
 
-```tsx
-// consumer/apps/web/app/admin/(authed)/page.tsx (server component)
-import { DashboardPage } from '@oss/react-pages';
-export default function Page() {
-  return <DashboardPage />;
-}
-```
-
-Wrap the consumer's root layout with `QueryClientProvider`, `ApiClientProvider`, and
-`UIProvider` (plus optionally `ThemeProvider` for theming and `UIPluginProvider` for plugin
-extensions). All except `QueryClientProvider` come from `@oss/react-pages`:
+Wrap your root layout with `QueryClientProvider`, `ApiClientProvider`, and `UIProvider` (all
+but `QueryClientProvider` come from `@oss/react-hooks`):
 
 ```tsx
-// consumer/apps/web/app/providers.tsx (client component)
-import { ApiClientProvider, UIProvider, ThemeProvider, UIPluginProvider } from '@oss/react-pages';
+// your-frontend/app/providers.tsx (client component)
+import { ApiClientProvider, UIProvider } from '@oss/react-hooks';
 import { daisyuiProvider } from '@oss/ui-provider-daisyui';
-import './globals.css'; // Tailwind v4 + the DaisyUI plugin, imported BEFORE the SDK styles
-import '@oss/react-pages/styles.css';
+import './globals.css'; // Tailwind v4 + the DaisyUI plugin
 
 <ApiClientProvider client={{ baseUrl }}>
-  <ThemeProvider preset="editorialBrass">
-    <UIProvider value={daisyuiProvider}>
-      <UIPluginProvider plugins={[/* your defineUIPlugin slot fills - see ADR-0013 */]}>
-        {children}
-      </UIPluginProvider>
-    </UIProvider>
-  </ThemeProvider>
+  <UIProvider value={daisyuiProvider}>{children}</UIProvider>
 </ApiClientProvider>;
 ```
 
-Per-tenant theming reduces to passing a `Partial<Theme>` from a DB row to
-`<ThemeProvider theme={...}>`. The package exports `Theme`, `defaultTheme`, and `themePresets`.
-UI extensions (nav items, table columns, dashboard tiles, etc) come from `defineUIPlugin`
-contributions passed to `UIPluginProvider` - see ADR-0006.
-
 ### Wiring the DaisyUI adapter (the shipped default)
 
-DaisyUI is the single adapter shipped by the platform. `daisyuiProvider` satisfies
-`@oss/ui-provider-contract`, so page bodies stay UI-library-agnostic - to swap in your own
-look later, replace this one import with your adapter:
-
-```tsx
-import { UIProvider } from '@oss/react-pages';
-import { daisyuiProvider } from '@oss/ui-provider-daisyui';
-
-<UIProvider value={daisyuiProvider}>{children}</UIProvider>;
-```
-
-DaisyUI emits semantic Tailwind classes (`btn`, `card`, `modal`, ...) and ships no styles itself,
-so the consuming app MUST enable Tailwind + the DaisyUI plugin in its own CSS build, or those
-classes render unstyled. For Tailwind v4, add a `postcss.config.mjs` (`{ plugins:
-['@tailwindcss/postcss'] }`) and a global stylesheet:
+DaisyUI is the single UI adapter shipped by the platform. `daisyuiProvider` satisfies
+`@oss/ui-provider-contract`, so your components stay UI-library-agnostic - to swap in your own
+look later, replace this one import with your adapter. DaisyUI emits semantic Tailwind classes
+(`btn`, `card`, `modal`, ...) and ships no styles itself, so your app MUST enable Tailwind +
+the DaisyUI plugin in its own CSS build. For Tailwind v4, add a `postcss.config.mjs`
+(`{ plugins: ['@tailwindcss/postcss'] }`) and a global stylesheet:
 
 ```css
-/* the app's global stylesheet, imported BEFORE @oss/react-pages/styles.css */
 @import "tailwindcss";
 @plugin "daisyui";
 ```
 
-A Vite/TanStack app uses the `@tailwindcss/vite` plugin instead of PostCSS and imports the same
-CSS at the root. The OSS `apps/web`, `apps/backoffice`, and the `pnpm create:app` templates are
-all wired this way - mirror them.
+A Vite/TanStack app uses the `@tailwindcss/vite` plugin instead of PostCSS. The adapter is
+framework-agnostic React with no browser globals at module scope, so it renders unchanged
+under Next RSC/SSR or a Vite SPA (pass the provider inside a client component, where
+`useToast`'s state lives).
 
-The react-pages' `styles.css` supplies structural/layout classes (`player-card`, `page-header`);
-DaisyUI supplies the component look. They target different elements and coexist.
-
-The adapter is framework-agnostic React with no browser globals at module scope, so it renders
-unchanged under Next RSC/SSR or a Vite SPA. The provider is passed inside a client
-component (`providers.tsx`), where `useToast`'s state lives.
-
-Cross-workspace `link:` requires a dedup alias in the consumer's `next.config.ts` for `react`,
+Cross-workspace `link:` requires a dedup alias in your frontend bundler config for `react`,
 `react-dom`, and `@tanstack/react-query` (single physical path). See ADR-0005.
 
 For the same reason, a linked consumer's own Drizzle code (tables + operators) must import from
@@ -163,7 +127,7 @@ consumer's own physical copy; drizzle's protected-member classes then fail nomin
 against `DrizzleService.db` (which uses `@oss/db`'s copy). `@oss/db/orm` re-exports the
 framework-free drizzle surface from the single shared instance.
 
-Full UI guide: `packages/sdks/react-pages/AGENTS.md`.
+Full hooks guide: `packages/sdks/react-hooks/AGENTS.md`.
 
 ## Local dev linking to a sibling consumer (eg `../consumer/`)
 
