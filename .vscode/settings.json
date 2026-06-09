@@ -1,0 +1,36 @@
+{
+  // Shared workspace settings for contributors. Personal preferences (fonts,
+  // theme, keybindings, AI tooling) belong in your User settings, not here.
+
+  // --- Code style: match the repo's tooling (oxlint + oxfmt via the oxc ext) ---
+  "editor.tabSize": 2,
+  "editor.formatOnSave": true,
+  "editor.defaultFormatter": "oxc.oxc-vscode",
+  "editor.codeActionsOnSave": {
+    "source.fixAll.oxc": "explicit"
+  },
+  "[typescript]": { "editor.defaultFormatter": "oxc.oxc-vscode" },
+  "[typescriptreact]": { "editor.defaultFormatter": "oxc.oxc-vscode" },
+  "[javascript]": { "editor.defaultFormatter": "oxc.oxc-vscode" },
+  "[javascriptreact]": { "editor.defaultFormatter": "oxc.oxc-vscode" },
+
+  // --- Whitespace hygiene (CI/oxfmt expect a trailing newline, no trailing ws) ---
+  "files.insertFinalNewline": true,
+  "files.trimTrailingWhitespace": true,
+  "files.trimTrailingWhitespaceInRegexAndStrings": false,
+
+  // --- TypeScript in a pnpm/turbo monorepo ---
+  // Use the workspace TS (6.0.3) rather than VS Code's bundled version.
+  "typescript.tsdk": "node_modules/typescript/lib",
+  "typescript.enablePromptUseWorkspaceTsdk": true,
+  "typescript.preferences.includePackageJsonAutoImports": "on",
+  "typescript.updateImportsOnFileMove.enabled": "always",
+  "javascript.updateImportsOnFileMove.enabled": "always",
+
+  // --- Search/editor niceties ---
+  "search.smartCase": true,
+  "markdown.updateLinksOnFileMove.enabled": "always",
+
+  // Don't phone home from the YAML/RedHat extension.
+  "redhat.telemetry.enabled": false
+}
