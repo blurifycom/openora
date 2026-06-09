@@ -14,9 +14,25 @@
   // are simulation-only (we keep simulation off) and it has no hooks system.
   "targets": {
     "agentsmd": ["rules"],
-    "claudecode": ["rules", "mcp", "subagents", "commands"],
+    "claudecode": [
+      "rules",
+      "mcp",
+      "subagents",
+      "commands",
+      "hooks",
+      "permissions",
+      "ignore",
+    ],
     "copilot": ["rules", "mcp", "subagents", "commands", "hooks"],
-    "codexcli": ["rules", "mcp"]
+    "codexcli": [
+      "rules",
+      "mcp",
+      "subagents",
+      "commands",
+      "hooks",
+      "permissions",
+      "ignore",
+    ],
   },
 
   // rulesync emits Copilot agents/prompts natively - no simulation needed, and
@@ -25,5 +41,5 @@
   "simulateSubagents": false,
 
   // Never bulk-delete output dirs (eg .github also holds workflows).
-  "delete": false
+  "delete": false,
 }
