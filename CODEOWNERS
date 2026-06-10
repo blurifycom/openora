@@ -10,6 +10,4 @@
 
 # Frontend SDK + UI provider
 /packages/sdks/react-hooks/   @klaudia.blazyczek @volod
-/packages/sdks/react-blocks/  @klaudia.blazyczek @volod
-/packages/sdks/react-pages/   @klaudia.blazyczek @volod
 /packages/ui/                 @klaudia.blazyczek @volod

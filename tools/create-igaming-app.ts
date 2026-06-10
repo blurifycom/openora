@@ -162,6 +162,7 @@ function main(): void {
     'igaming-expert.md',
     'igaming-qa.md',
     'igaming-debugger.md',
+    'igaming-deployer.md',
   ]) {
     const src = join(agentsDir, f);
     if (existsSync(src)) {

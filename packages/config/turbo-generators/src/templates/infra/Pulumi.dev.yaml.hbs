@@ -1,0 +1,12 @@
+config:
+  aws:region: {{region}}
+  {{kebabCase name}}-infra:region: {{region}}
+  {{kebabCase name}}-infra:webDomain: {{kebabCase name}}-dev.{{domainBase}}
+  {{kebabCase name}}-infra:apiDomain: api.{{kebabCase name}}-dev.{{domainBase}}
+  {{kebabCase name}}-infra:adminDomain: admin.{{kebabCase name}}-dev.{{domainBase}}
+  {{kebabCase name}}-infra:desiredCount: "1"
+  {{kebabCase name}}-infra:dbInstanceClass: db.t4g.micro
+  {{kebabCase name}}-infra:redisNodeType: cache.t4g.micro
+  # Secrets - set these before `pulumi up` (NOT stored in plaintext here):
+  # pulumi config set --secret {{kebabCase name}}-infra:authSecret <32+ chars>
+  # pulumi config set --secret {{kebabCase name}}-infra:dbPassword <pw>

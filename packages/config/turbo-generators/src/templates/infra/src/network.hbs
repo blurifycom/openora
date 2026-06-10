@@ -1,0 +1,49 @@
+import * as aws from "@pulumi/aws";
+import * as awsx from "@pulumi/awsx";
+
+// Network layer: a 2-AZ VPC plus the four security groups that gate traffic between
+// the ALB, the Fargate apps, and the data stores. Everything below is pure wiring -
+// no business logic - and exported for the data + services layers to consume.
+
+export const vpc = new awsx.ec2.Vpc("vpc", {
+  numberOfAvailabilityZones: 2,
+});
+
+// ALB SG: public ingress on 80 (redirected to 443) and 443.
+export const albSg = new aws.ec2.SecurityGroup("alb-sg", {
+  vpcId: vpc.vpcId,
+  description: "ALB - public web ingress",
+  ingress: [
+    { protocol: "tcp", fromPort: 80, toPort: 80, cidrBlocks: ["0.0.0.0/0"] },
+    { protocol: "tcp", fromPort: 443, toPort: 443, cidrBlocks: ["0.0.0.0/0"] },
+  ],
+  egress: [{ protocol: "-1", fromPort: 0, toPort: 0, cidrBlocks: ["0.0.0.0/0"] }],
+});
+
+// App SG: the Fargate tasks. Ingress only from the ALB SG, on the app ports.
+export const appSg = new aws.ec2.SecurityGroup("app-sg", {
+  vpcId: vpc.vpcId,
+  description: "Fargate apps - ingress from ALB only",
+  ingress: [
+    { protocol: "tcp", fromPort: 3001, toPort: 3001, securityGroups: [albSg.id] },
+    { protocol: "tcp", fromPort: 3000, toPort: 3000, securityGroups: [albSg.id] },
+    { protocol: "tcp", fromPort: 80, toPort: 80, securityGroups: [albSg.id] },
+  ],
+  egress: [{ protocol: "-1", fromPort: 0, toPort: 0, cidrBlocks: ["0.0.0.0/0"] }],
+});
+
+// DB SG: Postgres 5432, ingress only from the app SG.
+export const dbSg = new aws.ec2.SecurityGroup("db-sg", {
+  vpcId: vpc.vpcId,
+  description: "RDS Postgres - ingress from apps only",
+  ingress: [{ protocol: "tcp", fromPort: 5432, toPort: 5432, securityGroups: [appSg.id] }],
+  egress: [{ protocol: "-1", fromPort: 0, toPort: 0, cidrBlocks: ["0.0.0.0/0"] }],
+});
+
+// Redis SG: 6379, ingress only from the app SG.
+export const redisSg = new aws.ec2.SecurityGroup("redis-sg", {
+  vpcId: vpc.vpcId,
+  description: "ElastiCache Redis - ingress from apps only",
+  ingress: [{ protocol: "tcp", fromPort: 6379, toPort: 6379, securityGroups: [appSg.id] }],
+  egress: [{ protocol: "-1", fromPort: 0, toPort: 0, cidrBlocks: ["0.0.0.0/0"] }],
+});

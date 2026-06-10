@@ -1,0 +1,25 @@
+// {{kebabCase name}} - Pulumi AWS deploy entrypoint.
+// Orchestration only: read config, then pull resources from the layered modules and
+// re-export the useful outputs. All actual resource wiring lives in ./src/*.
+
+import { settings } from "./src/config";
+import { vpc } from "./src/network";
+import { dbEndpoint, redisEndpoint } from "./src/data";
+import {
+  albDnsName,
+  apiServiceUrl,
+  webServiceUrl,
+  adminServiceUrl,
+  certValidationRecords,
+} from "./src/services";
+
+export const region = settings.region;
+export const vpcId = vpc.vpcId;
+export { dbEndpoint, redisEndpoint, albDnsName };
+export const apiUrl = apiServiceUrl;
+export const webUrl = webServiceUrl;
+export const adminUrl = adminServiceUrl;
+
+// AGENT: add these DNS validation CNAMEs to the {{domainBase}} zone, then point the
+// app hostnames (CNAME/ALIAS) at `albDnsName`.
+export const acmValidationRecords = certValidationRecords;

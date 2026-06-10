@@ -1,0 +1,35 @@
+# syntax=docker/dockerfile:1
+# Next.js 16 web app (output: 'standalone'). Build context holds BOTH repos:
+#   <context>/igaming-oss  +  <context>/{{kebabCase name}}
+# NEXT_PUBLIC_API_URL is baked at BUILD time (public env), so it is a build arg.
+
+FROM node:26-slim AS base
+ENV PNPM_HOME="/pnpm"
+ENV PATH="$PNPM_HOME:$PATH"
+RUN corepack enable && corepack prepare pnpm@11.5.2 --activate
+WORKDIR /app
+
+# --- build -------------------------------------------------------------------
+FROM base AS build
+ARG NEXT_PUBLIC_API_URL
+ENV NEXT_PUBLIC_API_URL=${NEXT_PUBLIC_API_URL}
+
+COPY igaming-oss/ ./igaming-oss/
+COPY {{kebabCase name}}/ ./{{kebabCase name}}/
+
+WORKDIR /app/{{kebabCase name}}
+RUN pnpm install --frozen-lockfile
+RUN pnpm -C ../igaming-oss install --frozen-lockfile && pnpm build:oss
+RUN pnpm -F web build
+
+# --- runtime (standalone) ----------------------------------------------------
+FROM node:26-slim AS runtime
+ENV NODE_ENV=production
+ENV PORT=3000
+WORKDIR /app
+# Next standalone output bundles its own minimal node_modules + server.js.
+COPY --from=build /app/{{kebabCase name}}/apps/web/.next/standalone ./
+COPY --from=build /app/{{kebabCase name}}/apps/web/.next/static ./apps/web/.next/static
+COPY --from=build /app/{{kebabCase name}}/apps/web/public ./apps/web/public
+EXPOSE 3000
+CMD ["node", "apps/web/server.js"]

@@ -1,0 +1,34 @@
+name: {{kebabCase name}}-infra
+runtime: nodejs
+description: AWS deploy for {{kebabCase name}} - ECS Fargate (api/web/backoffice) + RDS Postgres + ElastiCache Redis + ALB
+main: index.ts
+
+config:
+  region:
+    type: string
+    description: AWS region for all resources
+    default: {{region}}
+  webDomain:
+    type: string
+    description: Public hostname for the web (Next.js) app
+  apiDomain:
+    type: string
+    description: Public hostname for the api (Hono/oRPC) app
+  adminDomain:
+    type: string
+    description: Public hostname for the backoffice (Vite SPA) app
+  desiredCount:
+    type: string
+    description: Fargate desired task count per service
+    default: "1"
+  dbInstanceClass:
+    type: string
+    description: RDS instance class
+    default: db.t4g.micro
+  redisNodeType:
+    type: string
+    description: ElastiCache node type
+    default: cache.t4g.micro
+  # Secrets (set via `pulumi config set --secret`):
+  #   authSecret  - better-auth signing secret (32+ chars)
+  #   dbPassword  - RDS master password
