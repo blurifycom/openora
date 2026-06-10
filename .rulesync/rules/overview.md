@@ -38,7 +38,7 @@ apps/
   mcp-server-dev/ # MCP dev server (stdio) - agents connect via .mcp.json
   extensions/     # In-tree overlay plugins (drop-in folders)
 packages/
-  config/         # tsconfig, vitest, oxlint presets (boundary lint = tools/oxlint-boundaries-plugin.mjs)
+  config/         # tsconfig, vitest, oxlint presets (boundary lint: tools/oxlint-boundaries-plugin.mjs specifier-level + .dependency-cruiser.cjs whole-graph)
   contracts/
     shared-schemas/ # Zod schemas - the source of truth
     orpc-contract/  # Root oRPC contract composing module routers
@@ -102,14 +102,22 @@ extensions.config.ts # the single registry of enabled plugins
 - Drizzle tables: snake_case `pgTable('table_name', ...)`; exported const is camelCase; row type is `typeof <const>.$inferSelect`.
 - Tenant column: `tenantId` on every multi-tenant table.
 
-## Dependency rules (enforced by boundary lint in `pnpm verify`)
+## Dependency rules (two-layer enforcement, both in `pnpm verify`)
+
+Boundaries are enforced by two complementary gates - keep them in sync:
+
+1. **oxlint `oss-boundaries/*` plugin** (`tools/oxlint-boundaries-plugin.mjs`) - fast per-edit, per-file string matching on import specifiers (no module resolution). Runs via `pnpm lint` and the post-edit agent hook. See ADR-0015.
+2. **dependency-cruiser whole-graph gate** (`.dependency-cruiser.cjs`, `pnpm boundaries`) - runs on the RESOLVED dependency graph, so it also catches what the string matcher cannot: transitive edges, re-export/barrel laundering, dynamic `import()`, and relative paths that dodge the `@oss/` prefix. Rules: `no-circular`, `no-cross-module`, `no-platform-to-module`, `no-contracts-to-runtime`, `no-cross-extension`, `no-app-into-module-internals`.
+
+The rules both layers enforce:
 
 - `packages/modules/**` may import: `@oss/contracts/*`, `@oss/adapters`, `@oss/platform/*`, `@oss/ui-provider-contract`, `@oss/ui-provider-daisyui`, `@oss/sdk-core`, `@oss/react-hooks`. May NOT import another module - cross-module communication goes through events or contracts (read another module's tables via the `@oss/modules/<group>/<name>/schema` subpath).
-- `packages/platform/*` may import other `platform/*` and `@oss/contracts/*`. May NOT import modules or UI.
+- `packages/platform/*` may import other `platform/*` and `@oss/contracts/*`. May NOT import modules or UI (`api-runtime` and `testing`, the composition roots, are the only exceptions).
 - `packages/contracts/*` may only import other contracts and Zod.
 - `apps/api/src/extensions/*` may import any package, but never another extension.
 - `apps/api` registers modules only via `extensions.config.ts`. A direct module-file import from `apps/api/src/*` is a lint error.
 - Consumers (and modules) import the package entry, never a deep `dist/` path.
+- No circular dependencies - `import/no-cycle` (oxlint, includes type-only edges) plus `no-circular` (whole-graph). Break a cycle by extracting a shared module, inverting a dependency, or moving the type to a contracts package.
 
 ## Forbidden patterns
 
@@ -119,6 +127,8 @@ extensions.config.ts # the single registry of enabled plugins
 - Hand-written/duplicated types. Never re-declare a shape that already exists. Infer types from the source of truth - `z.infer<typeof XSchema>` for contract/shared schemas, `typeof table.$inferSelect`/`$inferInsert` for Drizzle - and derive variants with helper types (`Pick`, `Omit`, `Partial`, `Required`) instead of copying fields. The only exception is a structural interface describing an external library's untyped surface.
 - Duplicated/redefined Zod schemas. Derive a related schema from the canonical one with schema combinators (`.pick()`, `.omit()`, `.partial()`, `.extend()`, `.merge()`) rather than re-typing its fields.
 - Decorators, anywhere. There is no decorator/DI framework - wire dependencies with explicit factory functions through the composition container.
+- `interface` declarations. Use `type` everywhere - lint-enforced (`typescript/consistent-type-definitions: ["error", "type"]`).
+- Import cycles. Lint-enforced (`import/no-cycle` + the whole-graph `no-circular` gate).
 - Re-exporting types just to "be nice". Import from where it's defined.
 - TODOs without a tracking issue.
 - A per-module `package.json`/`tsconfig.json` - all feature modules share `@oss/modules`. New deps go in `packages/modules/package.json`.
@@ -178,7 +188,8 @@ pnpm setup:agent   # first time: docker + db + mcp + summary
 pnpm dev           # turbo dev (api, backoffice, mcp)
 pnpm regen         # drizzle-kit generate + openapi emit + sdk regen + catalog
 pnpm seed          # demo data: admin + players + wallets + txns + games
-pnpm verify        # typecheck + lint (incl. boundaries + module shape) + test
+pnpm boundaries    # whole-graph boundary + cycle gate (dependency-cruiser)
+pnpm verify        # typecheck + test:unit + lint + module shape + boundaries
 ```
 
 `pnpm seed` is idempotent and deterministic. Logs in with `admin@oss.dev` / `password123`. Flags: `--players=<n>`, `--admin-email=<e>`, `--admin-password=<p>`. The reusable `seedDemoData()` lives in `@oss/api-runtime` so downstream consumers can seed too.
@@ -191,7 +202,7 @@ Docker is library-first: `docker compose up` starts only postgres (apps run on t
 pnpm verify
 ```
 
-Must pass for every PR. CI runs the same plus a "no drift" check that re-runs drizzle-kit + the catalog generator and fails on an uncommitted diff.
+Runs typecheck + unit tests + lint + module-shape + the whole-graph boundary/cycle gate (`pnpm boundaries`). Must pass for every PR. CI runs the same plus a "no drift" check that re-runs drizzle-kit + the catalog generator and fails on an uncommitted diff. The pre-commit hook also runs `pnpm boundaries`.
 
 ## Agent roster
 

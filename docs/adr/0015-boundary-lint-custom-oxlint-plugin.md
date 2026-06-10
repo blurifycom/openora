@@ -4,6 +4,8 @@
 **Status**: Accepted
 **Relates to**: the dependency rules in AGENTS.md and `tools/oxlint-boundaries-plugin.mjs`
 
+> **Update (2026-06-10)**: The oxlint plugin remains the fast per-edit, specifier-string enforcer. A second, complementary whole-graph gate was added - `.dependency-cruiser.cjs` (dependency-cruiser), run via `pnpm boundaries` (in `pnpm verify`, the pre-commit hook, and CI). It runs on the RESOLVED dependency graph, so it catches what specifier-string matching cannot: transitive edges, re-export/barrel laundering, dynamic `import()`, relative paths that dodge the `@oss/` prefix, and import cycles (`no-circular`). It does NOT replace the oxlint plugin; the two are kept in sync (a rule in one should have a twin in the other). This is the "resolved-file relationships" need anticipated in Consequences below - met with dependency-cruiser, not `eslint-plugin-boundaries`.
+
 ## Context
 
 A reviewer noted that `eslint-plugin-boundaries` "has no oxlint equivalent" and suggested the architecture boundaries should be enforced by it. The repo already enforces them with a hand-written oxlint JS plugin (`tools/oxlint-boundaries-plugin.mjs`, loaded via `jsPlugins`). We spiked whether to replace it with the real `eslint-plugin-boundaries`.

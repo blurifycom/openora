@@ -27,6 +27,8 @@ Run `git diff main...HEAD --name-only` to see which files changed. Read each cha
 - [ ] No extension imports another extension.
 - [ ] New modules/extensions registered only via `extensions.config.ts`.
 - [ ] No deep `dist/` path imports (`@oss/*/dist/**`).
+- [ ] No import cycles (`import/no-cycle` + the whole-graph `no-circular` gate).
+- [ ] Boundaries are enforced two ways: the oxlint `oss-boundaries/*` plugin (specifier strings) and the whole-graph `pnpm boundaries` gate (`.dependency-cruiser.cjs`) which also catches transitive / re-export / dynamic-import / relative-path violations. Run `pnpm boundaries` if unsure.
 
 ### Contract rules
 
@@ -49,6 +51,7 @@ Run `git diff main...HEAD --name-only` to see which files changed. Read each cha
 
 - [ ] Services throw domain errors (via `createDomainError` from `@oss/core`), not HTTP exceptions.
 - [ ] No `any` outside `*.test.ts` files.
+- [ ] `type` aliases, not `interface` (lint-enforced via `typescript/consistent-type-definitions`).
 - [ ] No inline `fetch`/`axios` - use the SDK or a vendor adapter.
 - [ ] TODOs have a tracking issue reference.
 - [ ] `AGENTS.md` updated if the module's extension points, ports, or routes changed.

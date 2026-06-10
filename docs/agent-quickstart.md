@@ -138,7 +138,9 @@ curl -X POST http://localhost:3001/<name>s -H "Content-Type: application/json" -
 ## Common pitfalls
 
 - Forgetting `pnpm regen` after editing `src/schema/index.ts` - the migration and generated types will be stale.
-- Importing from another module directly - use events or read its tables via the `@oss/modules/<group>/<name>/schema` subpath. Boundary lint will reject a cross-module source import.
+- Importing from another module directly - use events or read its tables via the `@oss/modules/<group>/<name>/schema` subpath. Both boundary gates reject it: the oxlint `oss-boundaries/*` plugin (per-edit, specifier strings) and the whole-graph `pnpm boundaries` gate (catches transitive / re-export / dynamic-import / relative-path dodges too).
+- Introducing an import cycle - rejected by `import/no-cycle` and the whole-graph `no-circular` gate. Break it by extracting a shared module, inverting a dependency, or moving the type to a contracts package.
+- Declaring `interface` - use `type` (lint-enforced).
 - Defining schemas inline in handlers - they must live in `schemas/`.
 - Hand-editing the generated migrations under `packages/platform/db/` - they are produced by `pnpm regen` (drizzle-kit). The source of truth is each module's `src/schema/index.ts`.
 - Opening a PR with a failing `pnpm verify` - CI will reject it.
