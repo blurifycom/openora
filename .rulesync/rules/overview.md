@@ -220,6 +220,8 @@ These agents are for **platform development** (building this OSS repo). Consumer
 | `qa-engineer`               | E2E QA                     | Write/run Playwright tests; debug with Chrome DevTools; triage bugs                                                                                             |
 | `docs-sync`                 | Docs drift auditor         | Read the code and rewrite the prose docs to match (frameworks, ports, removed modules, route-shim instructions). Edits docs only, then runs `pnpm sync:agents`. |
 
+**Delegation is mandatory, not optional.** When a task matches a roster agent, spawn THAT agent (`Task` with `subagent_type: <name>`) - do NOT fall back to `general-purpose`/`claude` for work a roster agent owns. Each roster agent is pre-scoped (tools + model + brief) for its job, so it is both cheaper and more accurate. A deterministic `preToolUse` hook (`.rulesync/hooks/guard-subagent.mjs`) backstops this: it rejects a generic-agent `Task` whose description clearly fits a roster agent and tells you which one to use. `general-purpose` is only for genuinely cross-cutting work no roster agent covers.
+
 ## Conventions for agents specifically
 
 - Read this file first, then the module's `AGENTS.md`, then ADRs. Don't reopen settled questions.

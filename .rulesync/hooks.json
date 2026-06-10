@@ -6,6 +6,11 @@
         "type": "command",
         "matcher": "Bash|Edit|Write|MultiEdit|NotebookEdit",
         "command": "node \"${CLAUDE_PROJECT_DIR:-.}/.rulesync/hooks/guard-generated.mjs\""
+      },
+      {
+        "type": "command",
+        "matcher": "Task",
+        "command": "node \"${CLAUDE_PROJECT_DIR:-.}/.rulesync/hooks/guard-subagent.mjs\""
       }
     ],
     "postToolUse": [
