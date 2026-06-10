@@ -22,7 +22,7 @@
     "@oss/turbo-generators": "link:{{ossFromRoot}}/packages/config/turbo-generators",
     "@turbo/gen": "2.9.14",
     "@types/node": "25.9.0",
-    "oxlint": "^1.64.0",
+    "oxlint": "1.64.0",
     "rulesync": "8.25.0",
     "tsx": "4.22.2",
     "turbo": "2.9.14",
