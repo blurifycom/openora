@@ -1,3 +1,4 @@
 pnpm lint:fix
+pnpm boundaries
 pnpm format
 pnpm typecheck

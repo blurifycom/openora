@@ -1,14 +1,14 @@
 import type { Hono } from 'hono';
 
 /** A thin wrapper over `app.request` that injects auth headers on every call. */
-export interface TestClient {
+export type TestClient = {
   request(path: string, init?: RequestInit): Promise<Response>;
   get(path: string): Promise<Response>;
   post(path: string, body?: unknown): Promise<Response>;
   put(path: string, body?: unknown): Promise<Response>;
   patch(path: string, body?: unknown): Promise<Response>;
   del(path: string): Promise<Response>;
-}
+};
 
 function makeClient(app: Hono, baseHeaders: Record<string, string>): TestClient {
   const call = async (path: string, init: RequestInit = {}): Promise<Response> => {
@@ -33,10 +33,10 @@ function makeClient(app: Hono, baseHeaders: Record<string, string>): TestClient 
   };
 }
 
-export interface LoginCreds {
+export type LoginCreds = {
   email?: string;
   password?: string;
-}
+};
 
 /**
  * Log in via `/identity/login` (better-auth) and return a client carrying the

@@ -13,13 +13,13 @@ import { createToken, type Token } from './token.js';
 // Optional presence capability. A first-party transport can offer a simple
 // connected-member count; managed vendors provide richer presence. Kept optional
 // (a capability flag, per ADR-0007) so the base port is the common denominator.
-export interface RealtimePresence {
+export type RealtimePresence = {
   join(channel: string, memberId: string): void;
   leave(channel: string, memberId: string): void;
   count(channel: string): number;
-}
+};
 
-export interface RealtimeTransport {
+export type RealtimeTransport = {
   // Fan a message out to every subscriber of `channel`. Best-effort, at-most-once
   // for late joiners (the transport is not a system of record - persist first).
   publish<T>(channel: string, event: T): void | Promise<void>;
@@ -27,6 +27,6 @@ export interface RealtimeTransport {
   // invoke on teardown (eg an SSE handler on request abort).
   subscribe<T>(channel: string, handler: (event: T) => void): () => void;
   presence?: RealtimePresence;
-}
+};
 
 export const REALTIME_TRANSPORT: Token<RealtimeTransport> = createToken('REALTIME_TRANSPORT');

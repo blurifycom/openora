@@ -9,10 +9,10 @@
  * `prime` events (eg the latest known snapshot) are yielded before live events
  * so a fresh client paints immediately instead of waiting for the next tick.
  */
-export interface EventStreamOptions<T> {
+export type EventStreamOptions<T> = {
   signal?: AbortSignal;
   prime?: readonly T[];
-}
+};
 
 export async function* createEventStreamGenerator<T>(
   subscribe: (push: (event: T) => void) => () => void,

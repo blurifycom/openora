@@ -12,43 +12,43 @@ const here = dirname(fileURLToPath(import.meta.url));
 // Catalog shape (docs/catalog.json - generated upstream by tools/gen-catalog.ts)
 // ---------------------------------------------------------------------------
 
-interface CatalogModule {
+type CatalogModule = {
   id: string;
   group: string;
   tables: string[];
   routes: string[];
-}
+};
 
-interface CatalogAdapter {
+type CatalogAdapter = {
   category: string;
   interface: string;
   token: string;
   status: string;
   boundIn: string[];
-}
+};
 
-interface CatalogUiSlot {
+type CatalogUiSlot = {
   name: string;
   description: string;
-}
+};
 
-interface CatalogSchema {
+type CatalogSchema = {
   name: string;
   file: string;
-}
+};
 
-interface CatalogConfigField {
+type CatalogConfigField = {
   key: string;
   note: string;
-}
+};
 
-interface CatalogConfig {
+type CatalogConfig = {
   token: string;
   source: string;
   fields: CatalogConfigField[];
-}
+};
 
-interface Catalog {
+type Catalog = {
   modules: CatalogModule[];
   adapters: CatalogAdapter[];
   events: string[];
@@ -57,7 +57,7 @@ interface Catalog {
   config: CatalogConfig;
   pluginContract: string[];
   httpRoutes: string[];
-}
+};
 
 const NOT_FOUND_MESSAGE =
   'catalog.json not found - run `pnpm regen` in the platform repo, or set OSS_CATALOG to its path.';

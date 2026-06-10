@@ -6,11 +6,11 @@ import { DRIZZLE, type DrizzleDb } from '@oss/db';
 import type { Container } from '@oss/core';
 import { user, session, account, verification } from '@oss/modules/platform/identity/schema';
 
-export interface SeedMinimalOptions {
+export type SeedMinimalOptions = {
   /** Number of demo players to create. Keep small for fast tests. Default 4. */
   playerCount?: number;
   admin?: { email: string; password: string; name: string };
-}
+};
 
 /**
  * Seed a small, deterministic fixture (admin + a few players + wallets + games).

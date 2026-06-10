@@ -22,11 +22,11 @@ import type {
 import type { Channel, ChannelModel, ConsumeMessage } from 'amqplib';
 
 // Minimal logger shape - the pino Logger passed in by the plugin satisfies it.
-interface OverlayLogger {
+type OverlayLogger = {
   debug(obj: unknown, msg?: string): void;
   info(obj: unknown, msg?: string): void;
   error(obj: unknown, msg?: string): void;
-}
+};
 
 const EXCHANGE = 'oss.events';
 

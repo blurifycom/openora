@@ -17,12 +17,12 @@ import { sql } from 'drizzle-orm';
 // Leak-safety invariant: a client returned to the pool must NEVER carry a residual
 // `app.tenant_id`. See ADR-0018.
 
-export interface PinnedDb {
+export type PinnedDb = {
   /** The tenant whose GUC is set on the pinned client. */
   tenantId: string;
   /** Drizzle bound to the single pinned client (not the pool). */
   db: NodePgDatabase;
-}
+};
 
 const requestDbStorage = new AsyncLocalStorage<PinnedDb>();
 

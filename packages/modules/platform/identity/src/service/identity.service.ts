@@ -81,7 +81,7 @@ type AuthCall<B> = (opts: {
   asResponse: true;
 }) => Promise<globalThis.Response>;
 
-interface ExtendedAuthApi {
+type ExtendedAuthApi = {
   enableTwoFactor: AuthCall<{ password: string }>;
   verifyTOTP: AuthCall<{ code: string }>;
   disableTwoFactor: AuthCall<{ password: string }>;
@@ -92,7 +92,7 @@ interface ExtendedAuthApi {
   changePassword: AuthCall<{ currentPassword: string; newPassword: string }>;
   changeEmail: AuthCall<{ newEmail: string }>;
   updateUser: AuthCall<{ name?: string; image?: string | null }>;
-}
+};
 
 const SUCCESS = { success: true as const };
 

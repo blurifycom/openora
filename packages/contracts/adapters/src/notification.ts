@@ -5,9 +5,9 @@
 // See docs/adapters/notification.md for the full binding guide.
 import { createToken, type Token } from './token.js';
 
-export interface NotificationDeliveryAdapter {
+export type NotificationDeliveryAdapter = {
   sendEmail(to: string, subject: string, body: string): Promise<void>;
-}
+};
 
 export const NOTIFICATION_DELIVERY_ADAPTER: Token<NotificationDeliveryAdapter> = createToken(
   'NOTIFICATION_DELIVERY_ADAPTER',

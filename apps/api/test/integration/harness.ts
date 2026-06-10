@@ -7,7 +7,7 @@ import { player } from '@oss/modules/backoffice/player-management/schema';
 import { user } from '@oss/modules/platform/identity/schema';
 import { loadExtensions } from '../../src/extensions.js';
 
-export interface IntegrationHarness {
+export type IntegrationHarness = {
   app: TestApp['app'];
   container: Container;
   /** A seeded player's userId (for asserting ownership / building fixtures). */
@@ -22,7 +22,7 @@ export interface IntegrationHarness {
   asPlayer(email?: string): Promise<TestClient>;
   asAdmin(): Promise<TestClient>;
   stop(): Promise<void>;
-}
+};
 
 /**
  * Boot the full app against the test DB, wipe it, and seed a small fixture.

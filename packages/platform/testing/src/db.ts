@@ -42,14 +42,14 @@ export async function applyMigrations(url: string): Promise<void> {
   }
 }
 
-export interface TestDb {
+export type TestDb = {
   /** The connection string the app under test must use. */
   url: string;
   /** Delete all rows from every table (keeps the schema). Call between suites. */
   truncateAll(): Promise<void>;
   /** Close the migration pool. Call once in global teardown. */
   dispose(): Promise<void>;
-}
+};
 
 /**
  * Prepare a real Postgres test database: apply the platform migrations, then

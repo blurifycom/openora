@@ -18,18 +18,18 @@ import type {
 
 // Minimal logger shape so this overlay needn't depend on pino directly; the
 // pino Logger passed in by the plugin satisfies it structurally.
-interface OverlayLogger {
+type OverlayLogger = {
   error(obj: unknown, msg?: string): void;
   warn(obj: unknown, msg?: string): void;
-}
+};
 
 // The envelope put on every job: the typed payload plus tracing metadata and the
 // ordering key, so a worker can rebuild the JobContext.
-interface JobEnvelope {
+type JobEnvelope = {
   payload: unknown;
   meta: Record<string, string | undefined>;
   orderingKey?: string;
-}
+};
 
 // Parse a redis[s]:// URL into BullMQ connection options. Passing options (not a
 // shared IORedis instance) sidesteps cross-version ioredis type clashes and lets

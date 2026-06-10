@@ -1,7 +1,9 @@
 {
   "$schema": "./node_modules/oxlint/configuration_schema.json",
   "jsPlugins": ["./tools/oxlint-boundaries-plugin.mjs"],
+  "plugins": ["unicorn", "typescript", "oxc", "import"],
   "rules": {
+    "import/no-cycle": ["error", { "ignoreTypes": false }],
     "no-unused-vars": "warn",
     "no-console": "warn",
     "eqeqeq": "error",
@@ -15,7 +17,8 @@
     "oss-boundaries/no-platform-to-module": "error",
     "oss-boundaries/no-contracts-to-runtime": "error",
     "oss-boundaries/no-deep-dist-import": "error",
-    "oss-boundaries/no-cross-extension-import": "error"
+    "oss-boundaries/no-cross-extension-import": "error",
+    "typescript/consistent-type-definitions": ["error", "type"]
   },
   "ignorePatterns": [
     "**/node_modules*/**",

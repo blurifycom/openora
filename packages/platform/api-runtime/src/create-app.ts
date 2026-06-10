@@ -34,7 +34,7 @@ import { loadPlugins, type PluginEntry } from '@oss/plugin-host';
 import { contract as defaultContract, healthContract } from '@oss/orpc-contract';
 import { IGAMING_CONFIG, type IgamingConfig } from '@oss/shared-schemas';
 
-export interface CreateAppConfig {
+export type CreateAppConfig = {
   // Plugins to load. Each module/extension exposes a definePlugin() entry.
   plugins: PluginEntry[];
 
@@ -73,16 +73,16 @@ export interface CreateAppConfig {
 
   // Skip the built-in health route (rarely needed - default false).
   disableHealthModule?: boolean;
-}
+};
 
-export interface CreatedApp {
+export type CreatedApp = {
   app: Hono;
   container: Container;
   port: number;
   listen(): Promise<void>;
   emitOpenApiSpec(): Promise<string | null>;
   close(): Promise<void>;
-}
+};
 
 function headersToRecord(headers: Headers): Record<string, string> {
   const out: Record<string, string> = {};

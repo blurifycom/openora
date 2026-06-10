@@ -16,7 +16,7 @@ export const queue = (name: string): QueueName => name as QueueName;
 
 export type BackoffStrategy = { type: 'fixed' | 'exponential'; delayMs: number };
 
-export interface EnqueueOptions {
+export type EnqueueOptions = {
   // Stable key -> at most one active job with this key (dedupe / idempotency).
   // Drivers map this to BullMQ's jobId. Required-by-convention for money jobs;
   // the handler must STILL guard duplicate execution with a DB unique constraint
@@ -32,17 +32,17 @@ export interface EnqueueOptions {
   ttlMs?: number; // drop the job if not started within this window
   // Tracing/correlation metadata carried verbatim onto JobContext.meta.
   meta?: Record<string, string | undefined>;
-}
+};
 
-export interface RepeatOptions {
+export type RepeatOptions = {
   cron?: string; // eg '0 * * * *' (durable drivers only)
   everyMs?: number; // OR a fixed interval
   timezone?: string;
-}
+};
 
 // Context handed to a worker handler. `payload` has already been validated by
 // the registration's schema before the handler runs.
-export interface JobContext<T> {
+export type JobContext<T> = {
   id: string;
   name: QueueName;
   payload: T;
@@ -50,26 +50,26 @@ export interface JobContext<T> {
   enqueuedAt: Date;
   // Carried metadata (correlationId, tenantId, idempotencyKey) for tracing.
   meta: Record<string, string | undefined>;
-}
+};
 
 export type JobHandler<T> = (ctx: JobContext<T>) => void | Promise<void>;
 
-export interface WorkerOptions {
+export type WorkerOptions = {
   concurrency?: number; // per-worker parallelism
   // Strict per-orderingKey serialization even when concurrency > 1.
   serializeByOrderingKey?: boolean;
-}
+};
 
 // A minimal structural validator. A Zod schema (`ZodType<T>`) satisfies this, so
 // callers pass their schema directly - but @oss/adapters stays zod-free (every
 // other seam here imports nothing but ./token).
-export interface PayloadSchema<T> {
+export type PayloadSchema<T> = {
   parse(data: unknown): T;
-}
+};
 
 // What an overlay registers to start consuming a queue. The schema is the
 // payload contract - validated before the handler runs, no vendor type leaks.
-export interface WorkerRegistration<T> {
+export type WorkerRegistration<T> = {
   queue: QueueName;
   schema: PayloadSchema<T>;
   handler: JobHandler<T>;
@@ -77,9 +77,9 @@ export interface WorkerRegistration<T> {
   // Invoked after attempts are exhausted (post-dead-letter hook): alert, persist
   // the poison job, or trigger a compensating action. Never throws into the queue.
   onDeadLetter?: (ctx: JobContext<T>, error: Error) => void | Promise<void>;
-}
+};
 
-export interface JobQueueAdapter {
+export type JobQueueAdapter = {
   enqueue<T>(queue: QueueName, payload: T, opts?: EnqueueOptions): Promise<{ id: string }>;
   // Idempotent registration of a recurring schedule (keyed by queue + scheduleId).
   schedule<T>(
@@ -93,6 +93,6 @@ export interface JobQueueAdapter {
   registerWorker<T>(registration: WorkerRegistration<T>): void;
   // Graceful drain: stop accepting, finish in-flight, close connections.
   close(): Promise<void>;
-}
+};
 
 export const JOB_QUEUE: Token<JobQueueAdapter> = createToken('JOB_QUEUE');

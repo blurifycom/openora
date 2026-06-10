@@ -11,9 +11,9 @@ import { SEALED_TOKENS } from './sealed.js';
  *
  * Throws on first sealed token with a bound provider, listing the offender.
  */
-export interface SealedContainerView {
+export type SealedContainerView = {
   has(token: symbol): boolean;
-}
+};
 
 export function assertNoSealedProviders(container: SealedContainerView): void {
   const violations: string[] = [];

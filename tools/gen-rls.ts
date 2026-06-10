@@ -105,18 +105,18 @@ function rlsBlock(table: string): string {
   ].join('\n');
 }
 
-interface JournalEntry {
+type JournalEntry = {
   idx: number;
   version: string;
   when: number;
   tag: string;
   breakpoints: boolean;
-}
-interface Journal {
+};
+type Journal = {
   version: string;
   dialect: string;
   entries: JournalEntry[];
-}
+};
 
 function main(): void {
   const tables = collectTenantTables();

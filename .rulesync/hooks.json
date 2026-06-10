@@ -1,7 +1,19 @@
 {
   "version": 1,
   "hooks": {
-    "preToolUse": [{ "type": "command", "command": "node .rulesync/hooks/guard-generated.mjs" }],
-    "postToolUse": [{ "type": "command", "command": "node .rulesync/hooks/post-edit.mjs" }]
+    "preToolUse": [
+      {
+        "type": "command",
+        "matcher": "Bash|Edit|Write|MultiEdit|NotebookEdit",
+        "command": "node \"${CLAUDE_PROJECT_DIR:-.}/.rulesync/hooks/guard-generated.mjs\""
+      }
+    ],
+    "postToolUse": [
+      {
+        "type": "command",
+        "matcher": "Edit|Write|MultiEdit|NotebookEdit",
+        "command": "node \"${CLAUDE_PROJECT_DIR:-.}/.rulesync/hooks/post-edit.mjs\""
+      }
+    ]
   }
 }

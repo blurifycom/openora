@@ -2,7 +2,7 @@ import type { Container } from '@oss/core';
 import type { Plugin } from './define-plugin.js';
 import { ModuleRegistryImpl } from './module-registry.js';
 
-export interface PluginEntry {
+export type PluginEntry = {
   id: string;
   path: string;
   // 'module' (default) = a domain module, selectable by a service manifest.
@@ -10,7 +10,7 @@ export interface PluginEntry {
   // single-module service, because a standalone process still needs its
   // durable transport. See applyServiceManifest.
   kind?: 'module' | 'infra';
-}
+};
 
 /**
  * Fail fast with a precise message when extensions.config.ts is malformed, so an

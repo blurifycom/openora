@@ -7,21 +7,21 @@ export const LocaleNotFoundError = makeNotFoundError('Locale');
 
 export const TranslationNotFoundError = makeNotFoundError('Translation');
 
-export interface UpsertTranslationInput {
+export type UpsertTranslationInput = {
   locale: string;
   namespace: string;
   key: string;
   value: string;
-}
+};
 
-export interface TranslationRecord {
+export type TranslationRecord = {
   id: string;
   localeId: string;
   namespace: string;
   key: string;
   value: string;
   updatedAt: string;
-}
+};
 
 export class LocalizationService {
   constructor(

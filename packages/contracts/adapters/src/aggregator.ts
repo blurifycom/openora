@@ -3,18 +3,18 @@
 // igaming-aggregator module's plugin.ts.
 import { createToken, type Token } from './token.js';
 
-export interface AggregatorGame {
+export type AggregatorGame = {
   externalId: string;
   name: string;
   provider: string;
   category: string;
   thumbnailUrl?: string;
   metadata?: Record<string, unknown>;
-}
+};
 
-export interface AggregatorAdapter {
+export type AggregatorAdapter = {
   syncGameCatalog(): Promise<{ games: AggregatorGame[] }>;
   handleCallback(event: string, payload: unknown): Promise<void>;
-}
+};
 
 export const AGGREGATOR_ADAPTER: Token<AggregatorAdapter> = createToken('AGGREGATOR_ADAPTER');

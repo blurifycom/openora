@@ -55,6 +55,7 @@ lint:
   needs: []
   script:
     - pnpm lint
+    - pnpm boundaries
 
 format:
   stage: quality

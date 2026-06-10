@@ -7,20 +7,22 @@
   "hooks": {
     "PreToolUse": [
       {
+        "matcher": "Bash|Edit|Write|MultiEdit|NotebookEdit",
         "hooks": [
           {
             "type": "command",
-            "command": "node .rulesync/hooks/guard-generated.mjs"
+            "command": "node \"${CLAUDE_PROJECT_DIR:-.}/.rulesync/hooks/guard-generated.mjs\""
           }
         ]
       }
     ],
     "PostToolUse": [
       {
+        "matcher": "Edit|Write|MultiEdit|NotebookEdit",
         "hooks": [
           {
             "type": "command",
-            "command": "node .rulesync/hooks/post-edit.mjs"
+            "command": "node \"${CLAUDE_PROJECT_DIR:-.}/.rulesync/hooks/post-edit.mjs\""
           }
         ]
       }

@@ -5,7 +5,7 @@ import { useQuery, keepPreviousData } from '@tanstack/react-query';
 
 const DEFAULT_PAGE_SIZE = 20;
 
-export interface PaginatedListState<T> {
+export type PaginatedListState<T> = {
   items: T[];
   total: number;
   page: number;
@@ -14,7 +14,7 @@ export interface PaginatedListState<T> {
   setSearch: (search: string) => void;
   isLoading: boolean;
   totalPages: number;
-}
+};
 
 export function usePaginatedList<T>(opts: {
   queryKey: unknown[];

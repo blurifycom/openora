@@ -9,20 +9,20 @@ type RequestLike = { headers: Record<string, string | string[] | undefined> };
 // `x-user-id` cannot reach this field. Absent when the request has no valid
 // session (public/auth routes); handlers that require a caller call getUserId,
 // which 401s when it is absent.
-export interface AuthContext {
+export type AuthContext = {
   userId: string;
   tenantId: string;
-}
+};
 
 // The context every oRPC handler receives. The Hono adapter builds `request`
 // per request (see @oss/api-runtime createApp). `auth` carries the verified
 // identity (above). `resHeaders` is injected by oRPC's ResponseHeadersPlugin -
 // handlers append Set-Cookie to it (eg auth login).
-export interface OssContext {
+export type OssContext = {
   request: RequestLike;
   auth?: AuthContext;
   resHeaders?: Headers;
-}
+};
 
 function resolveAuth(context: unknown): AuthContext {
   if (

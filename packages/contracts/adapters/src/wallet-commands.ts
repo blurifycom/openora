@@ -10,10 +10,10 @@
 // events. See ADR-0010 / ADR-0016.
 import { createToken, type Token } from './token.js';
 
-export interface WalletDebitArgs {
+export type WalletDebitArgs = {
   userId: string;
   amount: number;
-}
+};
 
 // Outcome instead of a thrown error, so the caller keeps ownership of its own
 // domain error (and its router error mapping) rather than catching a wallet error.
@@ -21,8 +21,8 @@ export type WalletDebitOutcome =
   | { ok: true; tenantId: string; newBalance: number }
   | { ok: false; available: number };
 
-export interface WalletCommands {
+export type WalletCommands = {
   debit(tx: unknown, args: WalletDebitArgs): Promise<WalletDebitOutcome>;
-}
+};
 
 export const WALLET_COMMANDS: Token<WalletCommands> = createToken('WALLET_COMMANDS');

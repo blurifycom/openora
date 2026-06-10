@@ -2,14 +2,14 @@ import { createApp, type CreateAppConfig } from '@oss/api-runtime';
 import type { Container } from '@oss/core';
 import type { Hono } from 'hono';
 
-export interface TestApp {
+export type TestApp = {
   /** The Hono app - drive it directly with `app.request(path, init)`. */
   app: Hono;
   /** The composition container, for resolving services/tokens in assertions. */
   container: Container;
   /** Dispose the container (closes the DB pool, drains workers). */
   close(): Promise<void>;
-}
+};
 
 export type BootTestAppConfig = Pick<CreateAppConfig, 'plugins' | 'contract' | 'igaming'> & {
   databaseUrl: string;

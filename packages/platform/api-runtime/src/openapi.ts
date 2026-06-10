@@ -4,10 +4,10 @@ import type { ContractRouter } from '@orpc/contract';
 import { writeFile, mkdir } from 'node:fs/promises';
 import { dirname } from 'node:path';
 
-export interface GenerateOpenApiSpecOptions {
+export type GenerateOpenApiSpecOptions = {
   info?: { title?: string; version?: string };
   outputPath: string;
-}
+};
 
 /**
  * Generate the OpenAPI spec from a contract and write it to disk.

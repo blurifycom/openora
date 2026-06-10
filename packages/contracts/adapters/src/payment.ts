@@ -2,7 +2,7 @@
 // concrete adapter to PAYMENT_ADAPTER in the wallet module's plugin.ts.
 import { createToken, type Token } from './token.js';
 
-export interface PaymentAdapter {
+export type PaymentAdapter = {
   processDeposit(
     amount: number,
     currency: string,
@@ -14,6 +14,6 @@ export interface PaymentAdapter {
     currency: string,
     metadata: Record<string, unknown>,
   ): Promise<{ externalId: string; status: string }>;
-}
+};
 
 export const PAYMENT_ADAPTER: Token<PaymentAdapter> = createToken('PAYMENT_ADAPTER');

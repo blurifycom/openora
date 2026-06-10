@@ -28,7 +28,7 @@ export type EventHandler<T = unknown> = (
 // The optional second argument to handlers exposes the full envelope (eventId,
 // tenantId, traceId, orderingKey) to callers that need it; existing handlers
 // that only accept (payload) continue to work unchanged.
-export interface EventBus {
+export type EventBus = {
   emit<K extends DomainEventName>(event: K, payload: DomainEventPayload<K>): void;
   emit(event: string, payload: unknown): void;
   // Durable, transaction-atomic emit. Call INSIDE a db.transaction, passing the
@@ -47,7 +47,7 @@ export interface EventBus {
   emitInTransaction(tx: unknown, event: string, payload: unknown): Promise<void>;
   on<K extends DomainEventName>(event: K, handler: EventHandler<DomainEventPayload<K>>): void;
   on(event: string, handler: EventHandler): void;
-}
+};
 
 export const EVENT_BUS: Token<EventBus> = createToken('EVENT_BUS');
 

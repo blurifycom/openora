@@ -21,7 +21,20 @@ if (filePath.includes('/templates/') || filePath.includes('/generated/')) proces
 try {
   execSync(`pnpm exec oxfmt "${filePath}"`, { stdio: 'pipe' });
 } catch {
-  /* oxfmt unavailable or errored - fall through to typecheck */
+  /* oxfmt unavailable or errored - fall through to lint */
+}
+
+// Lint the edited file (no --fix). oxlint exits non-zero only on error-severity
+// diagnostics - so a freshly introduced import cycle (import/no-cycle) or boundary
+// violation is rejected (exit 2) and the capped report is fed back to the agent.
+try {
+  execSync(`pnpm exec oxlint "${filePath}"`, { stdio: 'pipe' });
+} catch (e) {
+  const output = (e.stdout?.toString() ?? '') + (e.stderr?.toString() ?? '');
+  if (/error/i.test(output)) {
+    process.stderr.write(`oxlint reported an error after editing ${filePath}:\n${cap(output)}`);
+    process.exit(2);
+  }
 }
 
 // Resolve the owning workspace package (apps/<x> or packages/<group>/<x>).

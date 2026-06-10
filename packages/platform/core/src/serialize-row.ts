@@ -7,14 +7,14 @@ export type SerializedRow<
   StringifiedK extends keyof T = never,
 > = Omit<T, StringifiedK> & { [P in StringifiedK]: string };
 
-export interface SerializeRowOptions<
+export type SerializeRowOptions<
   T extends Record<string, unknown>,
   DK extends keyof T,
   CK extends keyof T,
-> {
+> = {
   dateFields?: readonly DK[];
   decimalFields?: readonly CK[];
-}
+};
 
 /**
  * serializeRow - shallow-clones a DB row, converting Date fields via

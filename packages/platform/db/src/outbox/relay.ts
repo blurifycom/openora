@@ -3,11 +3,11 @@ import { asc, eq, isNull } from 'drizzle-orm';
 import { eventOutbox } from './schema.js';
 import type { DrizzleDb } from '../drizzle.js';
 
-export interface OutboxRelayOptions {
+export type OutboxRelayOptions = {
   intervalMs?: number; // poll cadence; default 1000
   batchSize?: number; // rows per drain; default 100
   onError?: (err: unknown) => void;
-}
+};
 
 // Publishes pending outbox rows to the MESSAGE_BROKER. Runs as a background poll
 // loop (start/stop) and is also drainable on demand (drainOnce) for tests and for

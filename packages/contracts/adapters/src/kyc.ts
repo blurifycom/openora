@@ -5,22 +5,22 @@
 // See docs/adapters/kyc.md for the full binding guide.
 import { createToken, type Token } from './token.js';
 
-export interface KycDocument {
+export type KycDocument = {
   type: 'passport' | 'drivers_license' | 'national_id';
   frontUrl: string;
   backUrl?: string;
-}
+};
 
 export type KycStatus = 'pending' | 'approved' | 'rejected' | 'not_started';
 
-export interface KycResult {
+export type KycResult = {
   referenceId: string;
   status: KycStatus;
-}
+};
 
-export interface KycAdapter {
+export type KycAdapter = {
   submit(userId: string, documents: KycDocument[]): Promise<KycResult>;
   getStatus(userId: string): Promise<KycStatus>;
-}
+};
 
 export const KYC_ADAPTER: Token<KycAdapter> = createToken('KYC_ADAPTER');

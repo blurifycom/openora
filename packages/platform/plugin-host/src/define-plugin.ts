@@ -1,12 +1,12 @@
 import type { Container, Factory } from '@oss/core';
 import type { Token, WorkerRegistration } from '@oss/adapters';
 
-export interface McpToolDefinition {
+export type McpToolDefinition = {
   name: string;
   description: string;
   inputSchema: Record<string, unknown>;
   handler: (input: unknown) => unknown | Promise<unknown>;
-}
+};
 
 // A router factory builds the module's oRPC router from the resolved container
 // (services + adapters). It runs once at boot, after every plugin has registered
@@ -15,7 +15,7 @@ export type RouterFactory = (c: Container) => unknown;
 
 export type EventHandler = (payload: unknown) => void | Promise<void>;
 
-export interface ModuleRegistry {
+export type ModuleRegistry = {
   // Bind a provider factory to a token. Last registration wins, so an overlay
   // loaded after a module can rebind that module's adapter token.
   provide<T>(token: Token<T>, factory: Factory<T>): void;
@@ -42,19 +42,19 @@ export interface ModuleRegistry {
     tool(definition: McpToolDefinition): void;
     getAll(): McpToolDefinition[];
   };
-}
+};
 
-export interface Plugin {
+export type Plugin = {
   id: string;
   dependsOn?: string[];
   register: (ctx: ModuleRegistry) => void | Promise<void>;
-}
+};
 
-export interface PluginDefinition {
+export type PluginDefinition = {
   id: string;
   dependsOn?: string[];
   register: (ctx: ModuleRegistry) => void | Promise<void>;
-}
+};
 
 export function definePlugin(definition: PluginDefinition): Plugin {
   return definition;

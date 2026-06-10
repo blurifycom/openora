@@ -18,7 +18,7 @@ import { createToken, type Token } from './token.js';
 //   orderingKey   - optional; maps to Kafka partition key / RabbitMQ routing key
 //                   for per-tenant or per-user ordering guarantees
 //   traceId       - optional; distributed trace correlation ID
-export interface EventEnvelope<T = unknown> {
+export type EventEnvelope<T = unknown> = {
   eventId: string;
   topic: string;
   payload: T;
@@ -27,20 +27,20 @@ export interface EventEnvelope<T = unknown> {
   tenantId?: string;
   orderingKey?: string;
   traceId?: string;
-}
+};
 
 export type BrokerHandler = (envelope: EventEnvelope) => void | Promise<void>;
 
 // Forward hint for grouped consumers: Kafka consumer group / RabbitMQ queue group.
 // When omitted, the adapter creates an exclusive per-process queue (fan-out).
-export interface SubscribeOptions {
+export type SubscribeOptions = {
   consumerGroup?: string;
-}
+};
 
-export interface MessageBrokerAdapter {
+export type MessageBrokerAdapter = {
   publish(envelope: EventEnvelope): void | Promise<void>;
   subscribe(topic: string, handler: BrokerHandler, options?: SubscribeOptions): () => void;
   close(): Promise<void>;
-}
+};
 
 export const MESSAGE_BROKER: Token<MessageBrokerAdapter> = createToken('MESSAGE_BROKER');

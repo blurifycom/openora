@@ -17,13 +17,13 @@ import type {
 
 type AnyWorker = WorkerRegistration<unknown>;
 
-interface InternalJob {
+type InternalJob = {
   id: string;
   queue: QueueName;
   payload: unknown;
   opts: EnqueueOptions;
   enqueuedAt: Date;
-}
+};
 
 function computeBackoffMs(opts: EnqueueOptions, attempt: number): number {
   const backoff = opts.backoff;
