@@ -10,6 +10,7 @@ description: >-
   licensing/jurisdictions, bonuses, aggregators, sportsbook), and answer domain
   questions raised by the implementer. Advisory only - produces specs, not code.
 claudecode:
+  model: opus
   tools:
     - Read
     - Bash

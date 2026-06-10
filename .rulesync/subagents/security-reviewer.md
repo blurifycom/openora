@@ -7,6 +7,7 @@ description: >-
   money-handling, authz, tenant-isolation, secret/PII, and auth-flow risks
   specific to real-money gaming. Reports findings only - makes no changes.
 claudecode:
+  model: opus
   tools:
     - Read
     - Bash

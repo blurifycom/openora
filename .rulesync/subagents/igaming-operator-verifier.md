@@ -8,6 +8,7 @@ description: >-
   launch a typical real-money online igaming and reports the gaps. Read/run only
   - reports findings, makes no changes to core.
 claudecode:
+  model: sonnet
   tools:
     - Read
     - Bash

@@ -7,6 +7,7 @@ description: >-
   apps/api/src/extensions/<name>/ with a complete definePlugin implementation.
   Use when a user wants to extend the platform without modifying core modules.
 claudecode:
+  model: sonnet
   tools:
     - Read
     - Write

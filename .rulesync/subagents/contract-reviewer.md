@@ -7,6 +7,7 @@ description: >-
   breaking changes, boundary violations, schema drift, and pattern deviations.
   Does not make changes - reports findings only.
 claudecode:
+  model: sonnet
   tools:
     - Read
     - Bash

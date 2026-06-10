@@ -14,6 +14,7 @@ description: >-
   CLAUDE.md, .codex/config.toml, .github/copilot-instructions.md, and the
   .claude/.github subagent+command files).
 claudecode:
+  model: haiku
   tools:
     - Read
     - Edit

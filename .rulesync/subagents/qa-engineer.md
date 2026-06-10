@@ -11,6 +11,7 @@ description: >-
   to validate a player or admin flow end-to-end, or need to triage whether a
   runtime anomaly is a real bug.
 claudecode:
+  model: sonnet
   tools:
     - Read
     - Write

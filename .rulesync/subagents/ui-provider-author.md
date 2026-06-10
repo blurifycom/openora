@@ -7,6 +7,7 @@ description: >-
   Chakra, Radix). Given a target library name, produces a complete
   packages/ui/provider-<lib>/ package implementing @oss/ui-provider-contract.
 claudecode:
+  model: sonnet
   tools:
     - Read
     - Write

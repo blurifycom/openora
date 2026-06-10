@@ -10,6 +10,7 @@ description: >-
   adapter, or SDK consumption surface once requirements and acceptance criteria
   are defined.
 claudecode:
+  model: opus
   tools:
     - Read
     - Write

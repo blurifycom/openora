@@ -8,6 +8,7 @@ description: >-
   plugin.ts, and AGENTS.md. Use when implementing a module from the module
   roadmap.
 claudecode:
+  model: sonnet
   tools:
     - Read
     - Write
