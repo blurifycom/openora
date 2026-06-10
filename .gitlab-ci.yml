@@ -42,9 +42,9 @@ cache:
         - pnpm-lock.yaml
     paths:
       - .pnpm-store
-  - key: "turbo-$CI_COMMIT_REF_SLUG"
+  - key: 'turbo-$CI_COMMIT_REF_SLUG'
     fallback_keys:
-      - "turbo-main"
+      - 'turbo-main'
     paths:
       - .turbo
 
