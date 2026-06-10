@@ -161,7 +161,6 @@ Adds a route stub with input/output schemas to the module's `router/index.ts`. D
 
 Add/edit a `pgTable` in `packages/modules/<group>/<module>/src/schema/index.ts`. Check collisions with `propose-table-change` first. Run `pnpm regen` to produce the migration. Read another module's tables via the subpath import `@oss/modules/<group>/<module>/schema`.
 
-
 ## How to consume this platform from a downstream repo
 
 Scaffold a full consumer turborepo (api + web + backoffice) wired to `link:` at this checkout:
@@ -202,7 +201,7 @@ These agents are for **platform development** (building this OSS repo). Consumer
 | Agent                       | Role                       | When to use                                                                                                                                                     |
 | --------------------------- | -------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `igaming-expert`            | Domain/product expert      | Turn a fuzzy ask into requirements + AC; answer regulatory/rules questions                                                                                      |
-| `igaming-fullstack-dev`     | Senior fullstack engineer  | Implement a module, plugin, or adapter from a given spec                                                                                                       |
+| `igaming-fullstack-dev`     | Senior fullstack engineer  | Implement a module, plugin, or adapter from a given spec                                                                                                        |
 | `oss-module-author`         | Module scaffolder          | Author a complete module end-to-end from the roadmap                                                                                                            |
 | `plugin-author`             | Extension author           | Create an overlay plugin that extends without touching core                                                                                                     |
 | `igaming-operator-verifier` | Consumer readiness auditor | Audit platform from an operator perspective; find launch blockers                                                                                               |

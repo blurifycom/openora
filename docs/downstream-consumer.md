@@ -75,9 +75,7 @@ Wrap your root layout with `QueryClientProvider` and `ApiClientProvider` (from `
 import { ApiClientProvider } from '@oss/react-hooks';
 import './globals.css'; // your own styling and design system
 
-<ApiClientProvider client={{ baseUrl }}>
-  {children}
-</ApiClientProvider>;
+<ApiClientProvider client={{ baseUrl }}>{children}</ApiClientProvider>;
 ```
 
 ### Styling and components
