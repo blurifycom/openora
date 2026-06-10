@@ -87,10 +87,12 @@ function collectAdapters(): AdapterInfo[] {
   for (const file of readdirSync(dir).sort()) {
     if (!file.endsWith('.ts') || file === 'index.ts') continue;
     const src = readFileSync(join(dir, file), 'utf8');
-    // Prefer the primary *Adapter interface over helper interfaces in the same file.
+    // Prefer the primary *Adapter type over helper types in the same file.
+    // Ports are declared as `export type XAdapter = { ... }` (interface is
+    // lint-banned in favour of type aliases - see .oxlintrc.json).
     const iface =
-      src.match(/export interface (\w*Adapter)\b/)?.[1] ??
-      src.match(/export interface (\w+)/)?.[1] ??
+      src.match(/export (?:interface|type) (\w*Adapter)\b/)?.[1] ??
+      src.match(/export (?:interface|type) (\w+)/)?.[1] ??
       '';
     const token =
       src.match(/export const (\w+)(?::\s*Token<[^>]*>)?\s*=\s*(?:createToken|Symbol)/)?.[1] ?? '';
@@ -190,7 +192,8 @@ function collectPluginSurface(): string[] {
   const src = read(
     join(repoRoot, 'packages', 'platform', 'plugin-host', 'src', 'define-plugin.ts'),
   );
-  const body = src.match(/export interface ModuleRegistry \{([\s\S]*?)\n\}/)?.[1] ?? '';
+  const body =
+    src.match(/export (?:interface|type) ModuleRegistry (?:= )?\{([\s\S]*?)\n\}/)?.[1] ?? '';
   return [...body.matchAll(/^\s{2}(\w+):/gm)].map((m) => m[1]!).sort();
 }
 
