@@ -12,47 +12,47 @@ via the `SEND_EMAIL` port and emits `iam.invitation.accepted` after token accept
 
 ## Layout (one folder under `packages/modules/backoffice/iam/src/`)
 
-| Layer | File | Holds |
-|---|---|---|
-| schema | `schema/index.ts` | Drizzle `pgTable`s + row types (`$inferSelect`). Every table carries `tenantId`. |
-| schemas | `schemas/index.ts` | re-exports from the contract slice; module-local Zod only |
-| service | `service/iam.service.ts` | ALL business logic; emits events after DB commit |
-| router | `router/index.ts` | thin oRPC wiring: resolve caller, call service, `mapErrors` |
-| plugin | `plugin.ts` | DI wiring only: `ctx.routers.add(...)`, `ctx.provide(...)` |
+| Layer   | File                     | Holds                                                                            |
+| ------- | ------------------------ | -------------------------------------------------------------------------------- |
+| schema  | `schema/index.ts`        | Drizzle `pgTable`s + row types (`$inferSelect`). Every table carries `tenantId`. |
+| schemas | `schemas/index.ts`       | re-exports from the contract slice; module-local Zod only                        |
+| service | `service/iam.service.ts` | ALL business logic; emits events after DB commit                                 |
+| router  | `router/index.ts`        | thin oRPC wiring: resolve caller, call service, `mapErrors`                      |
+| plugin  | `plugin.ts`              | DI wiring only: `ctx.routers.add(...)`, `ctx.provide(...)`                       |
 
 Contract slice: `packages/contracts/orpc-contract/src/iam.ts`.
 
 ## Extension points
 
-| Point | How |
-|---|---|
-| Override email sender | `ctx.provide(SEND_EMAIL, ...)` in an overlay loaded after this module |
-| React to accepted invitation | `ctx.events.on('iam.invitation.accepted', handler)` in an overlay |
-| Add permission resources | Edit `packages/platform/auth/src/permissions.ts` `statement` - catalog and validation derive from it |
+| Point                        | How                                                                                                  |
+| ---------------------------- | ---------------------------------------------------------------------------------------------------- |
+| Override email sender        | `ctx.provide(SEND_EMAIL, ...)` in an overlay loaded after this module                                |
+| React to accepted invitation | `ctx.events.on('iam.invitation.accepted', handler)` in an overlay                                    |
+| Add permission resources     | Edit `packages/platform/auth/src/permissions.ts` `statement` - catalog and validation derive from it |
 
 ## Ports consumed
 
-| Interface | Token | Purpose |
-|---|---|---|
-| `SendEmailPort` | `SEND_EMAIL` | Deliver invitation emails |
-| `DrizzleService` | `DRIZZLE` | All DB reads/writes |
-| `EventBus` | `EVENT_BUS` | Emit `iam.invitation.accepted` |
-| `AdminGuard` | `ADMIN_GUARD` | Guard every admin route |
+| Interface        | Token         | Purpose                        |
+| ---------------- | ------------- | ------------------------------ |
+| `SendEmailPort`  | `SEND_EMAIL`  | Deliver invitation emails      |
+| `DrizzleService` | `DRIZZLE`     | All DB reads/writes            |
+| `EventBus`       | `EVENT_BUS`   | Emit `iam.invitation.accepted` |
+| `AdminGuard`     | `ADMIN_GUARD` | Guard every admin route        |
 
 ## Port provided
 
-| Interface | Token | Impl |
-|---|---|---|
+| Interface                 | Token                       | Impl                        |
+| ------------------------- | --------------------------- | --------------------------- |
 | `AdminPermissionResolver` | `ADMIN_PERMISSION_RESOLVER` | `DbAdminPermissionResolver` |
 
 ## Tables
 
-| Table | Description |
-|---|---|
-| `admin_role` | Named roles per tenant |
+| Table                   | Description                                                            |
+| ----------------------- | ---------------------------------------------------------------------- |
+| `admin_role`            | Named roles per tenant                                                 |
 | `admin_role_permission` | Resource/action grants per role; carries `tenantId` so RLS isolates it |
-| `admin_role_assignment` | Maps a userId to a roleId per tenant (no cross-module FK) |
-| `admin_invitation` | Pending/accepted/revoked invite tokens |
+| `admin_role_assignment` | Maps a userId to a roleId per tenant (no cross-module FK)              |
+| `admin_invitation`      | Pending/accepted/revoked invite tokens                                 |
 
 ## Security invariants
 
@@ -64,24 +64,24 @@ Contract slice: `packages/contracts/orpc-contract/src/iam.ts`.
 
 ## Routes (`iam.*`)
 
-| Procedure | Method | Path | Guard |
-|---|---|---|---|
-| `iam.listCatalog` | GET | `/iam/catalog` | `admin:view` |
-| `iam.listRoles` | GET | `/iam/roles` | `admin:view` |
-| `iam.getRole` | GET | `/iam/roles/{roleId}` | `admin:view` |
-| `iam.createRole` | POST | `/iam/roles` | `admin:create` |
-| `iam.updateRole` | PATCH | `/iam/roles/{roleId}` | `admin:update` |
-| `iam.deleteRole` | DELETE | `/iam/roles/{roleId}` | `admin:delete` |
-| `iam.setRolePermissions` | PUT | `/iam/roles/{roleId}/permissions` | `admin:update` + no-escalation (grant subset) |
-| `iam.assignRole` | POST | `/iam/assignments` | `admin:update` + no-escalation (role grants subset) |
-| `iam.listInvitations` | GET | `/iam/invitations` | `admin:view` |
-| `iam.inviteAdmin` | POST | `/iam/invitations` | `admin:create` |
-| `iam.acceptInvitation` | POST | `/iam/invitations/accept` | none (public) |
+| Procedure                | Method | Path                              | Guard                                               |
+| ------------------------ | ------ | --------------------------------- | --------------------------------------------------- |
+| `iam.listCatalog`        | GET    | `/iam/catalog`                    | `admin:view`                                        |
+| `iam.listRoles`          | GET    | `/iam/roles`                      | `admin:view`                                        |
+| `iam.getRole`            | GET    | `/iam/roles/{roleId}`             | `admin:view`                                        |
+| `iam.createRole`         | POST   | `/iam/roles`                      | `admin:create`                                      |
+| `iam.updateRole`         | PATCH  | `/iam/roles/{roleId}`             | `admin:update`                                      |
+| `iam.deleteRole`         | DELETE | `/iam/roles/{roleId}`             | `admin:delete`                                      |
+| `iam.setRolePermissions` | PUT    | `/iam/roles/{roleId}/permissions` | `admin:update` + no-escalation (grant subset)       |
+| `iam.assignRole`         | POST   | `/iam/assignments`                | `admin:update` + no-escalation (role grants subset) |
+| `iam.listInvitations`    | GET    | `/iam/invitations`                | `admin:view`                                        |
+| `iam.inviteAdmin`        | POST   | `/iam/invitations`                | `admin:create`                                      |
+| `iam.acceptInvitation`   | POST   | `/iam/invitations/accept`         | none (public)                                       |
 
 ## Events emitted
 
-| Topic | Payload | When |
-|---|---|---|
+| Topic                     | Payload                           | When                                                   |
+| ------------------------- | --------------------------------- | ------------------------------------------------------ |
 | `iam.invitation.accepted` | `{ email, roleId, invitationId }` | After token accepted; consumer provisions user account |
 
 Note: the `userId` linkage to `admin_role_assignment` is completed by the consumer

@@ -15,13 +15,13 @@ modules can record entries explicitly without importing this module's internals.
 
 ## Layout
 
-| Layer   | File                              | Holds                                                         |
-| ------- | --------------------------------- | ------------------------------------------------------------- |
-| schema  | `schema/index.ts`                 | `audit_log` pgTable + `actorTypeEnum`. Append-only by design. |
-| schemas | `schemas/index.ts`                | Re-exports from `@oss/orpc-contract/audit`; inferred types.  |
-| service | `service/audit.service.ts`        | `record`, `list`, `exportCsv`, `verifyChain`.                |
-| router  | `router/index.ts`                 | `audit.list` (audit:view), `audit.exportCsv` (audit:export). |
-| plugin  | `plugin.ts`                       | DI wiring, AUDIT_WRITER port, event subscriptions.           |
+| Layer   | File                       | Holds                                                         |
+| ------- | -------------------------- | ------------------------------------------------------------- |
+| schema  | `schema/index.ts`          | `audit_log` pgTable + `actorTypeEnum`. Append-only by design. |
+| schemas | `schemas/index.ts`         | Re-exports from `@oss/orpc-contract/audit`; inferred types.   |
+| service | `service/audit.service.ts` | `record`, `list`, `exportCsv`, `verifyChain`.                 |
+| router  | `router/index.ts`          | `audit.list` (audit:view), `audit.exportCsv` (audit:export).  |
+| plugin  | `plugin.ts`                | DI wiring, AUDIT_WRITER port, event subscriptions.            |
 
 Contract slice: `packages/contracts/orpc-contract/src/audit.ts`.
 
@@ -48,6 +48,7 @@ only. See `packages/contracts/adapters/src/audit.ts` for the full rationale comm
 ## Hash chain approach
 
 Each `record()` call:
+
 1. Reads the latest row's `hash` for the tenant (or null for the first row).
 2. Inserts the row with `prevHash` = that value and a placeholder `hash = 'pending'`.
 3. Computes `sha256(JSON.stringify({ id, tenantId, actorId, actorType, action, resourceType, resourceId, seq, createdAt, prevHash: prevHash ?? '' }))` - stable key order.
@@ -66,9 +67,9 @@ windows, or use `verifyChain` for full-chain integrity.
 
 ### Ports
 
-| Interface       | Token          | File                              | Purpose                                    |
-| --------------- | -------------- | --------------------------------- | ------------------------------------------ |
-| `AuditWritePort` | `AUDIT_WRITER` | `@oss/adapters` `audit.ts`        | Write path other modules call explicitly.  |
+| Interface        | Token          | File                       | Purpose                                   |
+| ---------------- | -------------- | -------------------------- | ----------------------------------------- |
+| `AuditWritePort` | `AUDIT_WRITER` | `@oss/adapters` `audit.ts` | Write path other modules call explicitly. |
 
 ### Events subscribed (existing `domainEventSchemas` topics only)
 
@@ -84,10 +85,10 @@ otherwise `actorType='system'`. The event topic becomes the `action` column valu
 
 ### oRPC routes
 
-| Procedure         | Method | Path           | Guard             |
-| ----------------- | ------ | -------------- | ----------------- |
-| `audit.list`      | GET    | `/audit/logs`  | `audit:view`      |
-| `audit.exportCsv` | GET    | `/audit/export`| `audit:export`    |
+| Procedure         | Method | Path            | Guard          |
+| ----------------- | ------ | --------------- | -------------- |
+| `audit.list`      | GET    | `/audit/logs`   | `audit:view`   |
+| `audit.exportCsv` | GET    | `/audit/export` | `audit:export` |
 
 No create/update/delete routes. Writes happen only via `record()` (called by the
 event subscribers in `plugin.ts` or by callers of the `AUDIT_WRITER` port).
