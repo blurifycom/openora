@@ -19,6 +19,10 @@ import { leaderboardContract } from './leaderboard.js';
 
 import { sportsbookContract } from './sportsbook.js';
 
+import { iamContract } from './iam.js';
+
+import { auditContract } from './audit.js';
+
 export { healthContract } from './health.js';
 export { identityContract } from './identity.js';
 export { localizationContract } from './localization.js';
@@ -75,6 +79,25 @@ export {
   PlaceBetResultSchema,
 } from './sportsbook.js';
 
+export {
+  iamContract,
+  AdminRoleSchema,
+  AdminRolePermissionSchema,
+  AdminRoleWithGrantsSchema,
+  AdminRoleAssignmentSchema,
+  AdminInvitationSchema,
+  CatalogEntrySchema,
+  GrantInputSchema,
+} from './iam.js';
+
+export {
+  auditContract,
+  AuditLogEntrySchema,
+  AuditActorTypeSchema,
+  AuditListFiltersSchema,
+  AuditExportFiltersSchema,
+} from './audit.js';
+
 export const contract = populateContractRouterPaths({
   health: healthContract,
   identity: identityContract,
@@ -93,6 +116,8 @@ export const contract = populateContractRouterPaths({
   igamingAggregator: igamingAggregatorContract,
   leaderboard: leaderboardContract,
   sportsbook: sportsbookContract,
+  iam: iamContract,
+  audit: auditContract,
 });
 
 export type Contract = typeof contract;

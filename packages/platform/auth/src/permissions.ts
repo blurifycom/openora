@@ -7,6 +7,12 @@ export const statement = {
   content: ['create', 'update', 'delete', 'publish'] as const,
   compliance: ['view', 'override-limit'] as const,
   report: ['view'] as const,
+  withdrawal: ['view', 'approve', 'reject', 'hold'] as const,
+  bonus: ['view', 'create', 'update', 'pause', 'cancel'] as const,
+  audit: ['view', 'export'] as const,
+  admin: ['view', 'create', 'update', 'disable', 'delete'] as const,
+  'game-config': ['view', 'update', 'schedule'] as const,
+  analytics: ['view'] as const,
 } as const;
 
 export const ac = createAccessControl(statement);
@@ -18,6 +24,12 @@ export const adminRole = ac.newRole({
   content: ['create', 'update', 'delete', 'publish'],
   compliance: ['view', 'override-limit'],
   report: ['view'],
+  withdrawal: ['view', 'approve', 'reject', 'hold'],
+  bonus: ['view', 'create', 'update', 'pause', 'cancel'],
+  audit: ['view', 'export'],
+  admin: ['view', 'create', 'update', 'disable', 'delete'],
+  'game-config': ['view', 'update', 'schedule'],
+  analytics: ['view'],
 });
 
 export const supportRole = ac.newRole({
@@ -25,6 +37,7 @@ export const supportRole = ac.newRole({
   transaction: ['view'],
   compliance: ['view'],
   report: ['view'],
+  analytics: ['view'],
 });
 
 export const contentManagerRole = ac.newRole({

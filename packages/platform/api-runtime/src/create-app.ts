@@ -20,7 +20,13 @@ import {
 } from '@oss/core';
 import { resolveTenantForUser } from './tenant-resolver.js';
 import { randomUUID } from 'node:crypto';
-import { MESSAGE_BROKER, JOB_QUEUE, REALTIME_TRANSPORT, OUTBOX } from '@oss/adapters';
+import {
+  MESSAGE_BROKER,
+  JOB_QUEUE,
+  REALTIME_TRANSPORT,
+  OUTBOX,
+  ADMIN_PERMISSION_RESOLVER,
+} from '@oss/adapters';
 import { DrizzleService, DRIZZLE, DrizzleOutboxWriter, OutboxRelay } from '@oss/db';
 import { AdminGuard, ADMIN_GUARD, SessionResolver, AUTH_SESSION } from '@oss/auth';
 import {
@@ -151,7 +157,17 @@ export async function createApp(config: CreateAppConfig): Promise<CreatedApp> {
     AUTH_SESSION,
     (c) => new SessionResolver(c.get(DRIZZLE), { user, session, account, verification, twoFactor }),
   );
-  container.register(ADMIN_GUARD, (c) => new AdminGuard(c.get(DRIZZLE), c.get(AUTH_SESSION)));
+  container.register(
+    ADMIN_GUARD,
+    (c) =>
+      new AdminGuard(
+        c.get(DRIZZLE),
+        c.get(AUTH_SESSION),
+        // Optional: bound only when a backoffice iam module registers it. has()
+        // avoids throwing on an unbound token so boot works without the module.
+        c.has(ADMIN_PERMISSION_RESOLVER) ? c.get(ADMIN_PERMISSION_RESOLVER) : undefined,
+      ),
+  );
   if (config.igaming) {
     const igaming = config.igaming;
     container.register(IGAMING_CONFIG, () => igaming);

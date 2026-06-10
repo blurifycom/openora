@@ -36,12 +36,12 @@ export function createPlayerRouter(player: PlayerService, adminGuard: AdminGuard
     }),
 
     registrationsOverTime: os.registrationsOverTime.handler(async ({ input, context }) => {
-      await adminGuard.assert(context, 'report', 'view');
+      await adminGuard.assert(context, 'analytics', 'view');
       return player.registrationsOverTime(input.days ?? 30);
     }),
 
     summary: os.summary.handler(async ({ context }) => {
-      await adminGuard.assert(context, 'report', 'view');
+      await adminGuard.assert(context, 'analytics', 'view');
       return player.summary();
     }),
   });

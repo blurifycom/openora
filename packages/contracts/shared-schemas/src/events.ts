@@ -95,6 +95,15 @@ export const domainEventSchemas = {
     selectionId: z.string(),
     stake: z.number(),
   }),
+
+  // Emitted when an admin invitation token is accepted. The consumer (identity
+  // module or an overlay) provisions the user account and completes the role
+  // assignment by resolving the userId from the email.
+  'iam.invitation.accepted': z.object({
+    email: z.string(),
+    roleId: z.string(),
+    invitationId: z.string(),
+  }),
 } as const;
 
 export type DomainEventName = keyof typeof domainEventSchemas;

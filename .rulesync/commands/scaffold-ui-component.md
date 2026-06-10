@@ -4,8 +4,7 @@ targets:
 description: 'Create a paired UI contract + daisyui implementation. Arg: <ComponentName> (PascalCase).'
 ---
 
-Run `pnpm gen ui-component $ARGUMENTS` in the repo root (`pnpm scaffold ui-component ...` still
-works as an alias).
+Run `pnpm gen ui-component $ARGUMENTS` in the repo root.
 
 After scaffolding:
 

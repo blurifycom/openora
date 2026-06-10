@@ -66,7 +66,7 @@ const ossOnly = (gen: string): void => {
   }
 };
 
-// --- auto-wiring actions (ported from tools/scaffold.ts) --------------------
+// --- auto-wiring actions ----------------------------------------------------
 function registerExtension(id: string, importPath: string): string {
   const file = extensionsConfigPath();
   const line = `  { id: '${id}', path: '${importPath}' },`;

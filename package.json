@@ -28,7 +28,6 @@
     "sync:agents": "rulesync generate",
     "prepare": "rulesync generate && husky",
     "gen": "tsx tools/gen.ts",
-    "scaffold": "tsx tools/gen.ts",
     "create:app": "tsx tools/create-igaming-app.ts",
     "create:service": "tsx tools/create-service.ts",
     "regen": "turbo run codegen && pnpm -F @oss/db generate && pnpm run gen:rls && pnpm run gen:catalog",

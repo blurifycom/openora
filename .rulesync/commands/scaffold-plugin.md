@@ -4,8 +4,7 @@ targets:
 description: 'Generate a new overlay extension plugin under apps/api/src/extensions/<name>/. The plugin can add routes, providers, UI slots, event handlers, and MCP tools without modifying core modules.'
 ---
 
-Run `pnpm gen plugin $ARGUMENTS` in the repo root (`pnpm scaffold plugin ...` still works as
-an alias). For a vendor-adapter swap use `pnpm gen adapter <name> <TOKEN> <dependsOn>`; for a
+Run `pnpm gen plugin $ARGUMENTS` in the repo root. For a vendor-adapter swap use `pnpm gen adapter <name> <TOKEN> <dependsOn>`; for a
 background-job worker use `pnpm gen job-worker <name>`.
 
 After the generator finishes:

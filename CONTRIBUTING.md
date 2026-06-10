@@ -36,10 +36,10 @@ Backoffice login: `admin@oss.dev` / `password123` (see `pnpm seed --help` for fl
 ## Scaffolding (don't hand-roll)
 
 ```bash
-pnpm scaffold module <group> <name>   # group: player | backoffice | platform
-pnpm scaffold plugin <name>           # overlay extension under apps/api/src/extensions/
-pnpm scaffold route <module> <method> <path>
-pnpm scaffold ui-component <Name>
+pnpm gen module <group> <name>   # group: player | backoffice | platform
+pnpm gen plugin <name>           # overlay extension under apps/api/src/extensions/
+pnpm gen route <module> <method> <path>
+pnpm gen ui-component <Name>
 ```
 
 Each scaffolded file marks editable regions with `// AGENT: implement here` - fill those,

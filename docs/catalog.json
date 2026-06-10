@@ -127,6 +127,17 @@
       ]
     },
     {
+      "id": "audit",
+      "group": "backoffice",
+      "tables": [
+        "audit_log"
+      ],
+      "routes": [
+        "audit.exportCsv",
+        "audit.list"
+      ]
+    },
+    {
       "id": "cms",
       "group": "backoffice",
       "tables": [
@@ -144,6 +155,29 @@
         "cms.listPages",
         "cms.updateBanner",
         "cms.updatePage"
+      ]
+    },
+    {
+      "id": "iam",
+      "group": "backoffice",
+      "tables": [
+        "admin_invitation",
+        "admin_role",
+        "admin_role_assignment",
+        "admin_role_permission"
+      ],
+      "routes": [
+        "iam.acceptInvitation",
+        "iam.assignRole",
+        "iam.createRole",
+        "iam.deleteRole",
+        "iam.getRole",
+        "iam.inviteAdmin",
+        "iam.listCatalog",
+        "iam.listInvitations",
+        "iam.listRoles",
+        "iam.setRolePermissions",
+        "iam.updateRole"
       ]
     },
     {
@@ -233,12 +267,31 @@
   ],
   "adapters": [
     {
+      "category": "admin-permission",
+      "interface": "AdminGrant",
+      "token": "ADMIN_PERMISSION_RESOLVER",
+      "status": "wired",
+      "boundIn": [
+        "packages/modules/backoffice/iam/src/plugin.ts",
+        "packages/platform/api-runtime/src/create-app.ts"
+      ]
+    },
+    {
       "category": "aggregator",
       "interface": "AggregatorAdapter",
       "token": "AGGREGATOR_ADAPTER",
       "status": "wired",
       "boundIn": [
         "packages/modules/player/aggregator/src/plugin.ts"
+      ]
+    },
+    {
+      "category": "audit",
+      "interface": "AuditWritePort",
+      "token": "AUDIT_WRITER",
+      "status": "wired",
+      "boundIn": [
+        "packages/modules/backoffice/audit/src/plugin.ts"
       ]
     },
     {
@@ -256,6 +309,7 @@
       "token": "SEND_EMAIL",
       "status": "wired",
       "boundIn": [
+        "packages/modules/backoffice/iam/src/plugin.ts",
         "packages/modules/platform/identity/src/plugin.ts"
       ]
     },
@@ -364,6 +418,7 @@
     "compliance.limit.upserted",
     "gaming.round.ended",
     "gaming.round.started",
+    "iam.invitation.accepted",
     "identity.2fa.disabled",
     "identity.2fa.enabled",
     "identity.email.verified",
@@ -384,6 +439,26 @@
   "uiSlots": [],
   "schemas": [
     {
+      "name": "AdminInvitationSchema",
+      "file": "packages/contracts/orpc-contract/src/iam.ts"
+    },
+    {
+      "name": "AdminRoleAssignmentSchema",
+      "file": "packages/contracts/orpc-contract/src/iam.ts"
+    },
+    {
+      "name": "AdminRolePermissionSchema",
+      "file": "packages/contracts/orpc-contract/src/iam.ts"
+    },
+    {
+      "name": "AdminRoleSchema",
+      "file": "packages/contracts/orpc-contract/src/iam.ts"
+    },
+    {
+      "name": "AdminRoleWithGrantsSchema",
+      "file": "packages/contracts/orpc-contract/src/iam.ts"
+    },
+    {
       "name": "AdminTransactionSchema",
       "file": "packages/contracts/orpc-contract/src/backoffice.ts"
     },
@@ -394,6 +469,22 @@
     {
       "name": "AggregatorProviderSummarySchema",
       "file": "packages/contracts/orpc-contract/src/igaming-aggregator.ts"
+    },
+    {
+      "name": "AuditActorTypeSchema",
+      "file": "packages/contracts/orpc-contract/src/audit.ts"
+    },
+    {
+      "name": "AuditExportFiltersSchema",
+      "file": "packages/contracts/orpc-contract/src/audit.ts"
+    },
+    {
+      "name": "AuditListFiltersSchema",
+      "file": "packages/contracts/orpc-contract/src/audit.ts"
+    },
+    {
+      "name": "AuditLogEntrySchema",
+      "file": "packages/contracts/orpc-contract/src/audit.ts"
     },
     {
       "name": "BannerSchema",
@@ -422,6 +513,10 @@
     {
       "name": "CallbackResultSchema",
       "file": "packages/contracts/orpc-contract/src/igaming-aggregator.ts"
+    },
+    {
+      "name": "CatalogEntrySchema",
+      "file": "packages/contracts/orpc-contract/src/iam.ts"
     },
     {
       "name": "ChangeEmailInputSchema",
@@ -494,6 +589,10 @@
     {
       "name": "GeoRuleSchema",
       "file": "packages/contracts/orpc-contract/src/compliance.ts"
+    },
+    {
+      "name": "GrantInputSchema",
+      "file": "packages/contracts/orpc-contract/src/iam.ts"
     },
     {
       "name": "IdentitySuccessSchema",
@@ -750,8 +849,11 @@
     "DELETE /cms/banners/{id}",
     "DELETE /cms/pages/{id}",
     "DELETE /compliance/limits/{id}",
+    "DELETE /iam/roles/{roleId}",
     "DELETE /localization/translations/{id}",
     "DELETE /players/{playerId}",
+    "GET /audit/export",
+    "GET /audit/logs",
     "GET /backoffice/stats",
     "GET /backoffice/transactions",
     "GET /backoffice/users",
@@ -774,6 +876,10 @@
     "GET /gaming/games/{id}",
     "GET /gaming/rounds",
     "GET /health",
+    "GET /iam/catalog",
+    "GET /iam/invitations",
+    "GET /iam/roles",
+    "GET /iam/roles/{roleId}",
     "GET /identity/me",
     "GET /igaming-aggregator/providers",
     "GET /leaderboard/{metric}/{period}",
@@ -795,6 +901,7 @@
     "GET /wallet/balance",
     "GET /wallet/transactions",
     "PATCH /backoffice/users/{userId}",
+    "PATCH /iam/roles/{roleId}",
     "PATCH /identity/profile",
     "PATCH /players/{playerId}",
     "PATCH /profile",
@@ -806,6 +913,10 @@
     "POST /compliance/geo-rules",
     "POST /gaming/rounds/start",
     "POST /gaming/rounds/{roundId}/end",
+    "POST /iam/assignments",
+    "POST /iam/invitations",
+    "POST /iam/invitations/accept",
+    "POST /iam/roles",
     "POST /identity/2fa/disable",
     "POST /identity/2fa/enable",
     "POST /identity/2fa/verify",
@@ -829,6 +940,7 @@
     "POST /wallet/withdraw",
     "PUT /cms/banners/{id}",
     "PUT /cms/pages/{id}",
-    "PUT /compliance/limits"
+    "PUT /compliance/limits",
+    "PUT /iam/roles/{roleId}/permissions"
   ]
 }

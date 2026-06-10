@@ -8,8 +8,7 @@ Parse $ARGUMENTS as: <module> <method> <path>.
 
 Before adding, call the MCP dev server tool `query-openapi` with the path to confirm the route doesn't already exist.
 
-Run `pnpm gen route <module> <method> <path>` in the repo root (`pnpm scaffold route ...` still
-works as an alias). The generator adds BOTH a contract procedure (to the module's
+Run `pnpm gen route <module> <method> <path>` in the repo root. The generator adds BOTH a contract procedure (to the module's
 `@oss/orpc-contract` slice) and a matching router handler - no inline Zod in the router.
 
 After the generator adds the procedure:

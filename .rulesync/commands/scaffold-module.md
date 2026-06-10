@@ -4,8 +4,7 @@ targets:
 description: 'Generate a new OSS module via turbo gen. Creates schema, service, router, plugin.ts, a working `list` route + contract slice, AGENTS.md, and registers in extensions.config.ts.'
 ---
 
-Run `pnpm gen module $ARGUMENTS` in the repo root (the single `turbo gen` surface; `pnpm
-scaffold module ...` still works as an alias). Modules are grouped, so the args are
+Run `pnpm gen module $ARGUMENTS` in the repo root (the single `turbo gen` surface). Modules are grouped, so the args are
 `<group> <name>` where group is `player`, `backoffice`, or `platform` (player-facing / admin /
 shared substrate). Example: `pnpm gen module player tournaments`.
 

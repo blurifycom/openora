@@ -75,6 +75,16 @@
       "import": "./dist/sportsbook.js",
       "require": "./dist/sportsbook.js",
       "types": "./dist/sportsbook.d.ts"
+    },
+    "./iam": {
+      "import": "./dist/iam.js",
+      "require": "./dist/iam.js",
+      "types": "./dist/iam.d.ts"
+    },
+    "./audit": {
+      "import": "./dist/audit.js",
+      "require": "./dist/audit.js",
+      "types": "./dist/audit.d.ts"
     }
   },
   "scripts": {

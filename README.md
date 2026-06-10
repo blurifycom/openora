@@ -31,7 +31,7 @@ The API starts at `http://localhost:3001`. Demo credentials: `admin@oss.dev` / `
 ## Adding a module
 
 ```bash
-pnpm scaffold module <group> <name>   # group: player | backoffice | platform
+pnpm gen module <group> <name>   # group: player | backoffice | platform
 ```
 
 Generates the full module skeleton under `packages/modules/<group>/<name>/` (part of the single `@oss/modules` package) and registers it in `extensions.config.ts`. See [AGENTS.md](./AGENTS.md) for the complete decision tree.

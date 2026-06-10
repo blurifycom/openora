@@ -1,11 +1,13 @@
 // Plugin registry. Every module and overlay extension must be listed here.
 // The plugin-host loads these at API boot, in top-to-bottom order (respecting dependsOn).
-// Add entries via `pnpm scaffold module <group> <name>` or `pnpm scaffold plugin <name>`.
+// Add entries via `pnpm gen module <group> <name>` or `pnpm gen plugin <name>`.
 //
 // Modules are grouped under packages/modules/{player,backoffice,platform}/ and
 // compiled into the single @oss/modules package (dist/<group>/<name>/src/plugin.js).
 
 export const extensions = [
+  { id: 'audit', path: './packages/modules/dist/backoffice/audit/src/plugin.js' },
+  { id: 'iam', path: './packages/modules/dist/backoffice/iam/src/plugin.js' },
   { id: 'leaderboard', path: './packages/modules/dist/player/leaderboard/src/plugin.js' },
   // Platform - shared substrate used by both surfaces
   { id: 'identity', path: './packages/modules/dist/platform/identity/src/plugin.js' },
@@ -31,7 +33,7 @@ export const extensions = [
   { id: 'cms', path: './packages/modules/dist/backoffice/cms/src/plugin.js' },
 
   // Overlay extensions (apps/api/src/extensions/<name>/plugin.ts)
-  // Add via: pnpm scaffold plugin <name>
+  // Add via: pnpm gen plugin <name>
   //
   // Durable job-queue driver. Self-disabling: rebinds JOB_QUEUE to BullMQ only
   // when REDIS_URL is set, otherwise leaves the in-process default (safe for

@@ -519,7 +519,7 @@ server.tool(
   },
 );
 
-// --- scaffold-* (delegating to tools/scaffold.ts) ---------------------------
+// --- scaffold-* (delegating to `pnpm gen` -> tools/gen.ts) ------------------
 server.tool(
   'scaffold-module',
   'Scaffold a new business module under packages/modules/<group>/<name>.',
@@ -528,7 +528,7 @@ server.tool(
     name: z.string(),
   },
   async ({ group, name }) => {
-    const result = run(`pnpm scaffold module ${group} ${name}`);
+    const result = run(`pnpm gen module ${group} ${name}`);
     return {
       content: [{ type: 'text', text: result.output || (result.ok ? 'Done.' : 'Failed.') }],
     };
@@ -540,7 +540,7 @@ server.tool(
   'Scaffold a new overlay extension under apps/api/src/extensions/<name>.',
   { name: z.string() },
   async ({ name }) => {
-    const result = run(`pnpm scaffold plugin ${name}`);
+    const result = run(`pnpm gen plugin ${name}`);
     return {
       content: [{ type: 'text', text: result.output || (result.ok ? 'Done.' : 'Failed.') }],
     };
@@ -556,7 +556,7 @@ server.tool(
     path: z.string(),
   },
   async ({ module: mod, method, path }) => {
-    const result = run(`pnpm scaffold route ${mod} ${method} ${path}`);
+    const result = run(`pnpm gen route ${mod} ${method} ${path}`);
     return {
       content: [{ type: 'text', text: result.output || (result.ok ? 'Done.' : 'Failed.') }],
     };

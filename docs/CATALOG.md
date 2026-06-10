@@ -13,9 +13,11 @@ overlay plugin that loads AFTER the default-binding module (last registration wi
 
 | Category | Interface | Token | Status | Bound in |
 | --- | --- | --- | --- | --- |
+| admin-permission | `AdminGrant` | `ADMIN_PERMISSION_RESOLVER` | wired (default impl) | `packages/modules/backoffice/iam/src/plugin.ts`<br>`packages/platform/api-runtime/src/create-app.ts` |
 | aggregator | `AggregatorAdapter` | `AGGREGATOR_ADAPTER` | wired (default impl) | `packages/modules/player/aggregator/src/plugin.ts` |
+| audit | `AuditWritePort` | `AUDIT_WRITER` | wired (default impl) | `packages/modules/backoffice/audit/src/plugin.ts` |
 | broker | `MessageBrokerAdapter` | `MESSAGE_BROKER` | wired (default impl) | `packages/platform/api-runtime/src/create-app.ts` |
-| email | `SendEmailPort` | `SEND_EMAIL` | wired (default impl) | `packages/modules/platform/identity/src/plugin.ts` |
+| email | `SendEmailPort` | `SEND_EMAIL` | wired (default impl) | `packages/modules/backoffice/iam/src/plugin.ts`<br>`packages/modules/platform/identity/src/plugin.ts` |
 | game | `GameAdapter` | `GAME_ADAPTER` | wired (default impl) | `packages/modules/player/gaming/src/plugin.ts` |
 | geo-ip | `GeoIpAdapter` | `GEO_IP_ADAPTER` | wired (default impl) | `packages/modules/platform/compliance/src/plugin.ts` |
 | job-queue | `JobQueueAdapter` | `JOB_QUEUE` | wired (default impl) | `packages/platform/api-runtime/src/create-app.ts` |
@@ -40,7 +42,9 @@ overlay plugin that loads AFTER the default-binding module (last registration wi
 | sportsbook | player | SportsbookBet, SportsbookEvent, SportsbookSelection | sportsbook.getEvent, sportsbook.listEvents, sportsbook.oddsStream, sportsbook.placeBet |
 | wallet | player | wallet, wallet_transaction | wallet.deposit, wallet.getBalance, wallet.listTransactions, wallet.withdraw |
 | admin-console | backoffice | - | admin-console.getStats, admin-console.getUser, admin-console.listTransactions, admin-console.listUsers, admin-console.updateUser |
+| audit | backoffice | audit_log | audit.exportCsv, audit.list |
 | cms | backoffice | banner, page | cms.createBanner, cms.createPage, cms.deleteBanner, cms.deletePage, cms.getPage, cms.listBanners, cms.listBannersByPlacement, cms.listPages, cms.updateBanner, cms.updatePage |
+| iam | backoffice | admin_invitation, admin_role, admin_role_assignment, admin_role_permission | iam.acceptInvitation, iam.assignRole, iam.createRole, iam.deleteRole, iam.getRole, iam.inviteAdmin, iam.listCatalog, iam.listInvitations, iam.listRoles, iam.setRolePermissions, iam.updateRole |
 | player-management | backoffice | player | player-management.get, player-management.list, player-management.registrationsOverTime, player-management.remove, player-management.summary, player-management.update |
 | compliance | platform | geo_rule, user_limit | compliance.addGeoRule, compliance.deleteLimit, compliance.geoCheck, compliance.getLimits, compliance.listGeoRules, compliance.upsertLimit |
 | identity | platform | account, session, twoFactor, user, verification | identity.changeEmail, identity.changePassword, identity.disable2fa, identity.enable2fa, identity.login, identity.logout, identity.me, identity.register, identity.requestPasswordReset, identity.resetPassword, identity.sendEmailVerification, identity.updateProfile, identity.verify2fa, identity.verifyEmail |
@@ -60,6 +64,7 @@ Emit/subscribe via the `EventBus` a service receives in its constructor (built i
 - `compliance.limit.upserted`
 - `gaming.round.ended`
 - `gaming.round.started`
+- `iam.invitation.accepted`
 - `identity.2fa.disabled`
 - `identity.2fa.enabled`
 - `identity.email.verified`
@@ -106,11 +111,20 @@ Declare with `defineIgamingConfig({...})` from `@oss/shared-schemas`, pass to
 
 ## Zod schemas
 
-81 schemas. Look one up by name with the `schema-get` MCP tool.
+92 schemas. Look one up by name with the `schema-get` MCP tool.
 
+- `AdminInvitationSchema` - packages/contracts/orpc-contract/src/iam.ts
+- `AdminRoleAssignmentSchema` - packages/contracts/orpc-contract/src/iam.ts
+- `AdminRolePermissionSchema` - packages/contracts/orpc-contract/src/iam.ts
+- `AdminRoleSchema` - packages/contracts/orpc-contract/src/iam.ts
+- `AdminRoleWithGrantsSchema` - packages/contracts/orpc-contract/src/iam.ts
 - `AdminTransactionSchema` - packages/contracts/orpc-contract/src/backoffice.ts
 - `AdminUserSchema` - packages/contracts/orpc-contract/src/backoffice.ts
 - `AggregatorProviderSummarySchema` - packages/contracts/orpc-contract/src/igaming-aggregator.ts
+- `AuditActorTypeSchema` - packages/contracts/orpc-contract/src/audit.ts
+- `AuditExportFiltersSchema` - packages/contracts/orpc-contract/src/audit.ts
+- `AuditListFiltersSchema` - packages/contracts/orpc-contract/src/audit.ts
+- `AuditLogEntrySchema` - packages/contracts/orpc-contract/src/audit.ts
 - `BannerSchema` - packages/contracts/orpc-contract/src/cms.ts
 - `BonusSchema` - packages/contracts/orpc-contract/src/bonus.ts
 - `BonusTypeSchema` - packages/contracts/orpc-contract/src/bonus.ts
@@ -118,6 +132,7 @@ Declare with `defineIgamingConfig({...})` from `@oss/shared-schemas`, pass to
 - `BrandSchema` - packages/contracts/shared-schemas/src/platform-config.ts
 - `CallbackInputSchema` - packages/contracts/orpc-contract/src/igaming-aggregator.ts
 - `CallbackResultSchema` - packages/contracts/orpc-contract/src/igaming-aggregator.ts
+- `CatalogEntrySchema` - packages/contracts/orpc-contract/src/iam.ts
 - `ChangeEmailInputSchema` - packages/contracts/shared-schemas/src/identity.ts
 - `ChangePasswordInputSchema` - packages/contracts/shared-schemas/src/identity.ts
 - `ChatMessageSchema` - packages/contracts/orpc-contract/src/chat.ts
@@ -136,6 +151,7 @@ Declare with `defineIgamingConfig({...})` from `@oss/shared-schemas`, pass to
 - `GameSchema` - packages/contracts/orpc-contract/src/gaming.ts
 - `GameSummarySchema` - packages/contracts/orpc-contract/src/lobby.ts
 - `GeoRuleSchema` - packages/contracts/orpc-contract/src/compliance.ts
+- `GrantInputSchema` - packages/contracts/orpc-contract/src/iam.ts
 - `IdentitySuccessSchema` - packages/contracts/shared-schemas/src/identity.ts
 - `IdInputSchema` - packages/contracts/shared-schemas/src/common.ts
 - `IgamingConfigSchema` - packages/contracts/shared-schemas/src/igaming-config.ts
@@ -196,8 +212,11 @@ Declare with `defineIgamingConfig({...})` from `@oss/shared-schemas`, pass to
 - DELETE /cms/banners/{id}
 - DELETE /cms/pages/{id}
 - DELETE /compliance/limits/{id}
+- DELETE /iam/roles/{roleId}
 - DELETE /localization/translations/{id}
 - DELETE /players/{playerId}
+- GET /audit/export
+- GET /audit/logs
 - GET /backoffice/stats
 - GET /backoffice/transactions
 - GET /backoffice/users
@@ -220,6 +239,10 @@ Declare with `defineIgamingConfig({...})` from `@oss/shared-schemas`, pass to
 - GET /gaming/games/{id}
 - GET /gaming/rounds
 - GET /health
+- GET /iam/catalog
+- GET /iam/invitations
+- GET /iam/roles
+- GET /iam/roles/{roleId}
 - GET /identity/me
 - GET /igaming-aggregator/providers
 - GET /leaderboard/{metric}/{period}
@@ -241,6 +264,7 @@ Declare with `defineIgamingConfig({...})` from `@oss/shared-schemas`, pass to
 - GET /wallet/balance
 - GET /wallet/transactions
 - PATCH /backoffice/users/{userId}
+- PATCH /iam/roles/{roleId}
 - PATCH /identity/profile
 - PATCH /players/{playerId}
 - PATCH /profile
@@ -252,6 +276,10 @@ Declare with `defineIgamingConfig({...})` from `@oss/shared-schemas`, pass to
 - POST /compliance/geo-rules
 - POST /gaming/rounds/start
 - POST /gaming/rounds/{roundId}/end
+- POST /iam/assignments
+- POST /iam/invitations
+- POST /iam/invitations/accept
+- POST /iam/roles
 - POST /identity/2fa/disable
 - POST /identity/2fa/enable
 - POST /identity/2fa/verify
@@ -276,3 +304,4 @@ Declare with `defineIgamingConfig({...})` from `@oss/shared-schemas`, pass to
 - PUT /cms/banners/{id}
 - PUT /cms/pages/{id}
 - PUT /compliance/limits
+- PUT /iam/roles/{roleId}/permissions

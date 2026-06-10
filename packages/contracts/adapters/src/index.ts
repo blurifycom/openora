@@ -60,3 +60,9 @@ export { RNG_ADAPTER } from './rng.js';
 
 export type { SendEmailPort } from './email.js';
 export { SEND_EMAIL } from './email.js';
+
+export type { AdminGrant, AdminPermissionResolver } from './admin-permission.js';
+export { ADMIN_PERMISSION_RESOLVER } from './admin-permission.js';
+
+export type { AuditWritePort } from './audit.js';
+export { AUDIT_WRITER } from './audit.js';

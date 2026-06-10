@@ -57,6 +57,55 @@
       "when": 1781014272282,
       "tag": "0007_slimy_wrecking_crew",
       "breakpoints": true
+    },
+    {
+      "idx": 8,
+      "version": "7",
+      "when": 1781112613728,
+      "tag": "0008_fixed_rockslide",
+      "breakpoints": true
+    },
+    {
+      "idx": 9,
+      "version": "7",
+      "when": 1781112614385,
+      "tag": "0009_rls_admin_invitation_plus_2",
+      "breakpoints": true
+    },
+    {
+      "idx": 10,
+      "version": "7",
+      "when": 1781113142696,
+      "tag": "0010_workable_ogun",
+      "breakpoints": true
+    },
+    {
+      "idx": 11,
+      "version": "7",
+      "when": 1781113143329,
+      "tag": "0011_rls_audit_log",
+      "breakpoints": true
+    },
+    {
+      "idx": 12,
+      "version": "7",
+      "when": 1781113143330,
+      "tag": "0012_audit_log_append_only",
+      "breakpoints": true
+    },
+    {
+      "idx": 13,
+      "version": "7",
+      "when": 1781114751637,
+      "tag": "0013_lively_old_lace",
+      "breakpoints": true
+    },
+    {
+      "idx": 14,
+      "version": "7",
+      "when": 1781114752106,
+      "tag": "0014_rls_admin_role_permission",
+      "breakpoints": true
     }
   ]
 }

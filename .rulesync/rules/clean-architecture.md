@@ -22,7 +22,7 @@ These are the conventions this repo already follows. Keep to them; do not reopen
 | plugin   | `plugin.ts`                 | DI wiring only: `ctx.provide(...)`, `ctx.routers.add(...)`                  | logic                            |
 | adapters | `adapters/<vendor>/`        | concrete impls of `@oss/adapters` ports                                     | being imported by another module |
 
-Service methods read as data-in/data-out transforms. Derive with `map`/`filter`/`reduce`; isolate side effects (DB writes, event emits, adapter calls) at the edges. Classes are fine for services/guards; keep their internals functional.
+Functional and declarative by default (a strong preference). Service methods read as data-in/data-out transforms - derive with `map`/`filter`/`reduce`, never mutate accumulators; isolate side effects (DB writes, event emits, adapter calls) at the edges. Prefer exported pure functions that take their deps as arguments; use a `class` only as a thin shell when the composition root needs an instance to hold injected deps (services, guards), with every method delegating to pure functions. No inheritance for code reuse - compose. Imperative mutation, stateful helper classes, and class hierarchies are smells to refactor.
 
 ## Dependency injection (no decorators, no reflect-metadata)
 
