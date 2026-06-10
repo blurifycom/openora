@@ -32,7 +32,7 @@
     "node": ">=22.0.0",
     "pnpm": ">=10.0.0"
   },
-  "packageManager": "pnpm@11.1.3",
+  "packageManager": "pnpm@11.5.2",
   "pnpm": {
     "overrides": {
       "@oss/api-runtime": "link:{{ossFromRoot}}/packages/platform/api-runtime",
