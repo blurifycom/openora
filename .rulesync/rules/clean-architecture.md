@@ -9,9 +9,9 @@ globs:
 
 # Clean architecture
 
-These are the conventions this repo already follows. Keep to them; do not reopen them.
+Settled conventions - keep to them, do not reopen. Style/syntax rules live in `overview.md` (pillar 7 + Forbidden patterns) and global rules; this file is structure + the syntax that prevents recurring mistakes.
 
-## Module layering (one folder under `packages/modules/<group>/<name>/src/`)
+## Module layering (`packages/modules/<group>/<name>/src/`)
 
 | Layer    | File                        | Holds                                                                       | Must NOT hold                    |
 | -------- | --------------------------- | --------------------------------------------------------------------------- | -------------------------------- |
@@ -22,32 +22,30 @@ These are the conventions this repo already follows. Keep to them; do not reopen
 | plugin   | `plugin.ts`                 | DI wiring only: `ctx.provide(...)`, `ctx.routers.add(...)`                  | logic                            |
 | adapters | `adapters/<vendor>/`        | concrete impls of `@oss/adapters` ports                                     | being imported by another module |
 
-Functional and declarative by default (a strong preference). Service methods read as data-in/data-out transforms - derive with `map`/`filter`/`reduce`, never mutate accumulators; isolate side effects (DB writes, event emits, adapter calls) at the edges. Prefer exported pure functions that take their deps as arguments; use a `class` only as a thin shell when the composition root needs an instance to hold injected deps (services, guards), with every method delegating to pure functions. No inheritance for code reuse - compose. Imperative mutation, stateful helper classes, and class hierarchies are smells to refactor.
+Service methods are data-in/data-out; side effects (DB writes, event emits, adapter calls) at the edges. (Functional/declarative rationale: `overview.md`.)
 
 ## Dependency injection (no decorators, no reflect-metadata)
 
 - Tokens are typed symbols: `createToken<T>('NAME')` in `@oss/adapters`.
-- The functional `Container` (`@oss/core`) wires factories: `register(token, factory)` (last registration wins - the overlay rebind mechanism), `get(token)` (lazy singleton), `onDispose(fn)`.
-- Services receive deps by INTERFACE through their constructor; they never touch the container. `plugin.ts` builds the service: `ctx.routers.add('wallet', (c) => createWalletRouter(new WalletService(c.get(DRIZZLE), c.get(EVENT_BUS), c.get(PAYMENT_ADAPTER))))`.
-- A hidden dependency captured in a closure is a smell - make it an explicit port + token (see the `SEND_EMAIL` seam in identity for the canonical fix).
+- `Container` (`@oss/core`) wires factories: `register(token, factory)` (last-wins = the overlay rebind), `get(token)` (lazy singleton), `onDispose(fn)`.
+- Services take deps by INTERFACE via constructor; never touch the container. `plugin.ts` builds them: `ctx.routers.add('wallet', (c) => createWalletRouter(new WalletService(c.get(DRIZZLE), c.get(EVENT_BUS), c.get(PAYMENT_ADAPTER))))`.
+- A dep captured in a closure is a smell - make it an explicit port + token (canonical fix: the `SEND_EMAIL` seam in identity).
 
 ## Ports & adapters (hexagonal)
 
-Ports = interfaces + tokens in `@oss/adapters` (`PAYMENT_ADAPTER`, `KYC_ADAPTER`, `MESSAGE_BROKER`, `JOB_QUEUE`, `REALTIME_TRANSPORT`, `SEND_EMAIL`, ...). Adapters = concrete impls in modules, bound in `plugin.ts`, swapped by an overlay that loads later and re-`provide`s the token. Services depend only on the port. Add a third-party integration as a port + impl, never inline `fetch`/SDK calls.
+Ports = interfaces + tokens in `@oss/adapters` (`PAYMENT_ADAPTER`, `KYC_ADAPTER`, `MESSAGE_BROKER`, `JOB_QUEUE`, `REALTIME_TRANSPORT`, `SEND_EMAIL`, ...). Adapters = impls in modules, bound in `plugin.ts`, swapped by a later-loading overlay re-`provide`ing the token. Services depend only on the port. A third-party integration is always a port + impl, never an inline `fetch`/SDK call.
 
 ## Cross-module communication (lint-enforced)
 
-Sanctioned paths: domain **events** (`EventBus`), synchronous **command ports** (a `@oss/adapters` token the owning module binds, eg `WALLET_COMMANDS`), shared **contracts** (`@oss/shared-schemas` / oRPC), and read-only table reads via the `@oss/modules/<group>/<name>/schema` subpath. Never import another module's root or internals (`no-cross-module-import` / `no-module-internal-import` are errors). Enforcement is two-layer: the oxlint `oss-boundaries/*` plugin (per-file specifier strings) plus the whole-graph `.dependency-cruiser.cjs` gate (`pnpm boundaries`), which also catches transitive / re-export / dynamic-import / relative-path violations the string matcher misses. See AGENTS.md > Dependency rules and ADR-0015.
+Sanctioned paths only: domain **events** (`EventBus`), **command ports** (a `@oss/adapters` token the owner binds, eg `WALLET_COMMANDS`), shared **contracts**, and read-only table reads via `@oss/modules/<group>/<name>/schema`. Never import another module's root/internals (`no-cross-module-import` / `no-module-internal-import` = errors). Two-layer gate: oxlint `oss-boundaries/*` + whole-graph `.dependency-cruiser.cjs` (`pnpm boundaries`). See ADR-0015.
 
-Money and any needed-now mutation stay synchronous/transactional. Prefer a **command port**: the consumer calls the owner's port passing its own `tx` handle (eg sportsbook -> `WALLET_COMMANDS.debit(tx, ...)`), so the write is atomic in-process AND the modules are decoupled enough to split later (a remote impl runs a saga). Declare `dependsOn: ['<owner>']`. The legacy in-`db.transaction` debit via the `/schema` subpath still works, but `no-cross-module-schema-read` now flags every cross-module schema import as a **warning** - it is a sanctioned-but-coupling extraction blocker; migrate writes to a command port and reporting reads to an event-fed read model before extracting a module to its own DB. Never move money over events. See ADR-0017.
+Money + any needed-now mutation stay synchronous/transactional - never over events. Prefer a command port: caller passes its own `tx` (eg `WALLET_COMMANDS.debit(tx, ...)`), atomic in-process yet splittable later; declare `dependsOn: ['<owner>']`. `no-cross-module-schema-read` warns on every cross-module schema import - sanctioned but a coupling/extraction blocker. See ADR-0017.
 
 ## Explicit > magic
 
-Every wiring point is a greppable function call. We deliberately do NOT auto-discover or centralize adapter defaults into a registry - each `plugin.ts` binds its own defaults explicitly. Prefer a named factory over a clever abstraction.
+Every wiring point is a greppable call. No auto-discovery, no central adapter-default registry - each `plugin.ts` binds its own defaults. Named factory over clever abstraction.
 
 ## Reuse these shared helpers (do not re-roll)
-
-Before hand-writing a guard, mapper, or pagination math, use the platform helper:
 
 | Need                                         | Use                                                                                             | From                  |
 | -------------------------------------------- | ----------------------------------------------------------------------------------------------- | --------------------- |
@@ -59,8 +57,8 @@ Before hand-writing a guard, mapper, or pagination math, use the platform helper
 | push subscription -> SSE async generator     | `createEventStreamGenerator((push) => svc.subscribe(push), { signal, prime })`                  | `@oss/core`           |
 | canonical id/userId/pagination input         | `IdInputSchema` / `UserIdInputSchema` / `PaginationInputSchema`                                 | `@oss/shared-schemas` |
 
-Error factories keep the SAME exported const identifier (`export const WalletNotFoundError = makeNotFoundError('Wallet')`) because routers import the class and `mapErrors` keys off it.
+Error factories keep the SAME exported const identifier (`export const WalletNotFoundError = makeNotFoundError('Wallet')`) - routers import the class and `mapErrors` keys off it.
 
 ## Testing
 
-Co-locate as `src/__tests__/<name>.test.ts` (Vitest). Service tests use a vi-mocked Drizzle (`compliance.service.test.ts` is the reference). Platform primitives have their own unit tests. Keep new logic covered.
+Co-locate as `src/__tests__/<name>.test.ts` (Vitest). Service tests use a vi-mocked Drizzle (`compliance.service.test.ts` is the reference). Keep new logic covered.
