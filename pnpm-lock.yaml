@@ -252,9 +252,6 @@ importers:
       '@oss/shared-schemas':
         specifier: workspace:*
         version: link:../contracts/shared-schemas
-      '@oss/ui-provider-contract':
-        specifier: workspace:*
-        version: link:../ui/provider-contract
       '@paralleldrive/cuid2':
         specifier: 3.3.0
         version: 3.3.0
@@ -558,9 +555,6 @@ importers:
       '@oss/shared-schemas':
         specifier: workspace:*
         version: link:../../contracts/shared-schemas
-      '@oss/ui-provider-contract':
-        specifier: workspace:*
-        version: link:../../ui/provider-contract
       '@tanstack/react-query':
         specifier: '>=5'
         version: 5.100.11(react@19.2.6)
@@ -605,46 +599,6 @@ importers:
       '@oss/tsconfig':
         specifier: workspace:*
         version: link:../../config/tsconfig
-      typescript:
-        specifier: 6.0.3
-        version: 6.0.3
-
-  packages/ui/provider-contract:
-    devDependencies:
-      '@oss/tsconfig':
-        specifier: workspace:*
-        version: link:../../config/tsconfig
-      '@types/react':
-        specifier: 19.2.17
-        version: 19.2.17
-      react:
-        specifier: 19.2.7
-        version: 19.2.7
-      typescript:
-        specifier: 6.0.3
-        version: 6.0.3
-
-  packages/ui/provider-daisyui:
-    dependencies:
-      '@oss/ui-provider-contract':
-        specifier: workspace:*
-        version: link:../provider-contract
-    devDependencies:
-      '@oss/tsconfig':
-        specifier: workspace:*
-        version: link:../../config/tsconfig
-      '@types/react':
-        specifier: 19.2.17
-        version: 19.2.17
-      '@types/react-dom':
-        specifier: 19.2.3
-        version: 19.2.3(@types/react@19.2.17)
-      react:
-        specifier: 19.2.7
-        version: 19.2.7
-      react-dom:
-        specifier: 19.2.7
-        version: 19.2.7(react@19.2.7)
       typescript:
         specifier: 6.0.3
         version: 6.0.3
@@ -6204,6 +6158,7 @@ snapshots:
     dependencies:
       react: 19.2.7
       scheduler: 0.27.0
+    optional: true
 
   react@19.2.6: {}
 

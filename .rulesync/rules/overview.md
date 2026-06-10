@@ -12,14 +12,14 @@ Canonical brief for AI agents (Claude Code, GitHub Copilot, Codex, Cursor, etc.)
 
 ## Mission
 
-Open-source, headless, plugin-based, AI-native igaming platform. Anyone clones the repo and extends it with their own modules, UI provider, and adapters. The default surface is fully playable (auth, wallet, lobby, chat, bonus, compliance, backoffice, CMS, aggregator). Consumer is the first downstream consumer; nothing Consumer-specific lives in this repo.
+Open-source, headless, plugin-based, AI-native igaming platform. Anyone clones the repo and extends it with their own modules, plugins, and adapters; the frontend lives in their own consumer repo. The default backend surface is fully featured (auth, wallet, lobby, chat, bonus, compliance, backoffice, CMS, aggregator). Consumer is the first downstream consumer; nothing Consumer-specific lives in this repo.
 
 ## Architecture pillars
 
 1. Zod-first contracts. Every shape is a Zod schema; types are `z.infer`'d, never hand-written. Cross-cutting schemas live in `packages/contracts/shared-schemas`; per-module request/response schemas live in `packages/contracts/orpc-contract`, and module-local ones in the module's `schemas/`.
 2. oRPC + Hono. oRPC owns route definition + Zod validation + OpenAPI emit; its `OpenAPIHandler` is mounted on a Hono server (`@hono/node-server`, Bun-ready later). Dependency wiring is a small functional composition container (`Container` in `@oss/core`) - explicit factory functions keyed by typed tokens, no decorators, no `reflect-metadata`. See ADR-0009.
 3. Plugin host. `definePlugin({ id, dependsOn, register })` is the only way new functionality enters the system. Overlays (in-tree under `apps/api/src/extensions/<name>/`) are the primary path; npm-published plugins use the same contract.
-4. Headless UI. `@oss/ui-provider-contract` declares component contracts and named slots. `@oss/ui-provider-daisyui` is the single adapter shipped by the platform; consumers can swap in their own by implementing the same contract. Module UI never imports a UI library directly.
+4. Headless backend only. The platform ships backend modules + contracts + SDK consumption surface only. The frontend - all components, styling, and theme - lives in the downstream consumer (consumer). Consumers import `@oss/react-hooks` (data hooks, typed client, auth context, cross-cutting helpers) and `@oss/sdk-core` (framework-agnostic typed client) and own their entire UI layer. No UI packages ship here.
 5. Explicit > magic. No auto-discovery, no decorator soup. Everything is greppable; every wiring point is a typed function call.
 6. AI-friendly by default. Every module has an `AGENTS.md`. Every scaffold is a slash command. Every contract is queryable via the MCP dev server and the generated `docs/CATALOG.md`.
 7. Functional and declarative by default - a strong preference, not a stylistic nicety. Prefer pure functions, immutable data, and composition over imperative mutation and stateful classes - it is easier to test, debug, and reason about. Default to a module of exported functions that take their dependencies as arguments. Reach for a `class` ONLY when the runtime or composition root needs a single instance to hold injected dependencies (services, guards) - and even then the class is a thin shell whose methods delegate to pure, testable functions. Methods read as data-in/data-out transforms; derive values with `map`/`filter`/`reduce` rather than mutating accumulators; isolate side effects (DB writes, event emits, adapter calls) at the edges. No decorators, and no inheritance for code reuse - compose instead. Imperative loops with mutation, stateful helper classes, and class hierarchies are smells: flag and refactor them.
@@ -58,15 +58,12 @@ packages/
     platform/     #   identity notifications compliance localization
   sdks/
     sdk-core/     # @oss/sdk-core - framework-agnostic typed client (no React)
-    react-hooks/  # @oss/react-hooks - data hooks, transport, auth, UIProvider context,
-                  #   cross-cutting helpers (usePageContext, useDataExtension, RoleGate),
-                  #   server prefetchers at @oss/react-hooks/server (RSC-only). The
-                  #   supported frontend consumption surface (the page/block layer that
-                  #   sat above it was removed; re-extracted from consumer later).
+    react-hooks/  # @oss/react-hooks - data hooks, transport, auth, cross-cutting helpers
+                  #   (usePageContext, useDataExtension, RoleGate), server prefetchers at
+                  #   @oss/react-hooks/server (RSC-only). The supported frontend consumption
+                  #   surface. No UI components ship here - the frontend lives in the
+                  #   downstream consumer repo (consumer).
     plugin-test-kit/ # @oss/plugin-test-kit - validatePlugin() for operator suites
-  ui/
-    provider-contract/ # UIProvider type shape (Button, Input, DataTable, ...)
-    provider-daisyui/  # the shipped adapter (DaisyUI semantic Tailwind classes)
 docs/
   adr/            # Architecture decision records
   architecture.md, glossary.md, agent-quickstart.md, downstream-consumer.md
@@ -84,8 +81,7 @@ extensions.config.ts # the single registry of enabled plugins
 - A new database table -> add a Drizzle `pgTable` to the module's `src/schema/index.ts`. Run `pnpm regen` (drizzle-kit) to generate the migration.
 - A reusable Zod schema -> `packages/contracts/shared-schemas/src/<namespace>.ts`. Module-local schemas live in the module's `schemas/`.
 - A cross-module event -> declare its payload schema in the Zod catalog `packages/contracts/shared-schemas/src/events.ts` (`domainEventSchemas`), then emit via the `EventBus` the service received in its constructor (built in `plugin.ts` from `c.get(EVENT_BUS)`); subscribe in a plugin via `ctx.events.on(name, handler)`. The bus is a typed facade over the `MESSAGE_BROKER` seam (default in-process; swap to Redpanda/NATS without module changes). See ADR-0010.
-- A UI component -> `/scaffold-ui-component <name>` creates both the contract entry and the daisyui impl.
-- A page (player or admin) -> NOT in this repo. The platform is headless; the frontend lives in the consumer repo and consumes these routers over HTTP via `@oss/sdk-core` / `@oss/react-hooks`. The page/block SDK layer (`@oss/react-pages` / `@oss/react-blocks`) and the reference apps (`apps/web` / `apps/backoffice`) were removed (2026-06-09) and will be re-extracted from consumer later.
+- A page, component, or any frontend UI -> NOT in this repo. The platform is headless backend only. The frontend - all components, styling, pages, and theme - lives in the downstream consumer repo (consumer) and consumes the backend over HTTP via `@oss/sdk-core` / `@oss/react-hooks`. The reference apps and page/block SDK layer were removed (2026-06-09) and will be re-extracted from consumer later.
 - A new data hook (eg `useAdminUsers`, `usePlayerWallet`) -> `packages/sdks/react-hooks/src/hooks/` + export from `src/index.ts`. A server prefetcher (RSC-only, used by consumer Next route files for SSR hydration) goes in `packages/sdks/react-hooks/src/server/`. `@oss/react-hooks` is a leaf SDK package.
 - Operator-only config (feature flags, brand definitions, RG defaults per geo) -> a `platform-config.yaml` / `.json` file consumed by `loadPlatformConfig()` (`@oss/core`). Validated by `PlatformConfigSchema` in `@oss/shared-schemas`. Bound via the `PLATFORM_CONFIG` Container token. No admin UI in v1; edit the file. See ADR-0013 T0.
 - A third-party integration (PSP, KYC, aggregator, chat) -> define the adapter interface + token (`createToken<Adapter>(...)`) in `@oss/adapters` (`packages/contracts/adapters/src/<category>.ts`), implement it under `packages/modules/<module>/adapters/<vendor>/`, and bind it in the module's `plugin.ts` via `ctx.provide(TOKEN, () => new Impl())`. Never inline. All vendor adapter interfaces live in `@oss/adapters` so the swap seams are findable in one place.
@@ -111,8 +107,8 @@ Boundaries are enforced by two complementary gates - keep them in sync:
 
 The rules both layers enforce:
 
-- `packages/modules/**` may import: `@oss/contracts/*`, `@oss/adapters`, `@oss/platform/*`, `@oss/ui-provider-contract`, `@oss/ui-provider-daisyui`, `@oss/sdk-core`, `@oss/react-hooks`. May NOT import another module - cross-module communication goes through events or contracts (read another module's tables via the `@oss/modules/<group>/<name>/schema` subpath).
-- `packages/platform/*` may import other `platform/*` and `@oss/contracts/*`. May NOT import modules or UI (`api-runtime` and `testing`, the composition roots, are the only exceptions).
+- `packages/modules/**` may import: `@oss/contracts/*`, `@oss/adapters`, `@oss/platform/*`, `@oss/sdk-core`, `@oss/react-hooks`. May NOT import another module - cross-module communication goes through events or contracts (read another module's tables via the `@oss/modules/<group>/<name>/schema` subpath).
+- `packages/platform/*` may import other `platform/*` and `@oss/contracts/*`. May NOT import modules (`api-runtime` and `testing`, the composition roots, are the only exceptions).
 - `packages/contracts/*` may only import other contracts and Zod.
 - `apps/api/src/extensions/*` may import any package, but never another extension.
 - `apps/api` registers modules only via `extensions.config.ts`. A direct module-file import from `apps/api/src/*` is a lint error.
@@ -165,13 +161,6 @@ Adds a route stub with input/output schemas to the module's `router/index.ts`. D
 
 Add/edit a `pgTable` in `packages/modules/<group>/<module>/src/schema/index.ts`. Check collisions with `propose-table-change` first. Run `pnpm regen` to produce the migration. Read another module's tables via the subpath import `@oss/modules/<group>/<module>/schema`.
 
-## How to add a UI component contract
-
-```
-/scaffold-ui-component <Name>
-```
-
-Creates the contract entry (`packages/ui/provider-contract/src/components/<name>.ts`) and the daisyui impl. Module UI may import only the contract type.
 
 ## How to consume this platform from a downstream repo
 
@@ -213,10 +202,9 @@ These agents are for **platform development** (building this OSS repo). Consumer
 | Agent                       | Role                       | When to use                                                                                                                                                     |
 | --------------------------- | -------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `igaming-expert`            | Domain/product expert      | Turn a fuzzy ask into requirements + AC; answer regulatory/rules questions                                                                                      |
-| `igaming-fullstack-dev`     | Senior fullstack engineer  | Implement a module, plugin, adapter, or UI from a given spec                                                                                                    |
+| `igaming-fullstack-dev`     | Senior fullstack engineer  | Implement a module, plugin, or adapter from a given spec                                                                                                       |
 | `oss-module-author`         | Module scaffolder          | Author a complete module end-to-end from the roadmap                                                                                                            |
 | `plugin-author`             | Extension author           | Create an overlay plugin that extends without touching core                                                                                                     |
-| `ui-provider-author`        | UI adapter author          | Implement `@oss/ui-provider-contract` for a target library                                                                                                      |
 | `igaming-operator-verifier` | Consumer readiness auditor | Audit platform from an operator perspective; find launch blockers                                                                                               |
 | `contract-reviewer`         | PR / boundary reviewer     | Review a diff for breaking changes, boundary violations, schema drift                                                                                           |
 | `qa-engineer`               | E2E QA                     | Write/run Playwright tests; debug with Chrome DevTools; triage bugs                                                                                             |

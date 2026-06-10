@@ -56,10 +56,9 @@ This creates `packages/modules/<group>/<name>/` inside `@oss/modules` with all r
 | `src/plugin.ts`                 | Register service + router via `definePlugin`.                                                                                                           |
 | `AGENTS.md`                     | What it does, extension points, ports, do/don't, done-when checklist.                                                                                   |
 
-### UI
+### Frontend
 
-- This repo is headless - frontend pages live in the consumer repo and consume the api over HTTP via `@oss/sdk-core` / `@oss/react-hooks`. Build no pages here.
-- Module-scoped UI primitives -> `packages/modules/<group>/<name>/ui/`, import only `@oss/ui-provider-contract`.
+- This repo is headless backend only. Frontend pages, components, and styling live in the consumer repo and consume the api over HTTP via `@oss/sdk-core` / `@oss/react-hooks`. Build no UI here.
 
 ## After scaffolding
 

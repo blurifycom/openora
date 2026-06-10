@@ -57,11 +57,9 @@ Run `git diff main...HEAD --name-only` to see which files changed. Read each cha
 - [ ] TODOs have a tracking issue reference.
 - [ ] `AGENTS.md` updated if the module's extension points, ports, or routes changed.
 
-### UI / extension rules
+### Frontend rules
 
-- [ ] No frontend pages in this repo - the platform is headless. Pages live in the consumer frontend repo and consume the api over HTTP via `@oss/sdk-core` / `@oss/react-hooks`.
-- [ ] Components consumed via `useUI()` - no direct `@oss/ui-provider-daisyui` imports.
-- [ ] A new UI adapter has `: UIProvider` annotation (compile-time contract conformance guarantee).
+- [ ] No frontend pages, components, or styling in this repo - the platform is headless backend only. All UI lives in the consumer frontend repo and consumes the api over HTTP via `@oss/sdk-core` / `@oss/react-hooks`.
 
 ### Tests
 

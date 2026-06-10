@@ -1,30 +1,9 @@
 # ADR-0005: Backoffice ships as headless page components
 
 **Date**: 2026-05-20
-**Status**: Accepted (superseded in part - see Update below)
+**Status**: Superseded (2026-06-10)
 
-> **Update (2026-05-20)**: The original decision created a dedicated package
-> `@oss/backoffice-ui` and kept `apps/backoffice` as the reference consumer.
-> Shortly after, both were consolidated:
->
-> - `@oss/backoffice-ui` and `@oss/client` were merged into `@oss/react-sdk`.
->   The pages, shell, theme, `UIProvider`, and typed oRPC client now all live
->   there. Rationale: the "data hooks vs UI components" split was artificial
->   when both ship together and both are React-only (cf. `@stripe/react-stripe-js`,
->   `@auth0/auth0-react`).
-> - `apps/backoffice` moved to `packages/sdks/react-sdk/examples/backoffice`
->   (`@oss/example-backoffice`) - it's a reference/dev-sandbox, not a product app.
-> - `@oss/design-system` was deleted (unused; tokens now live in `theme.tsx`).
-> - Plugin-driven UI extension (the "extend without forking" gap this ADR's
->   monolithic pages left open) is addressed by ADR-0006.
->
-> **Update (2026-05-22)**: The reference consumer apps moved back under `apps/`
-> when the platform split into two surfaces: `apps/backoffice` (`@oss/backoffice`,
-> admin) and `apps/web` (`@oss/web`, player). The react-sdk pages are now grouped
-> as `src/pages/admin/` and `src/pages/player/`. The `examples/` dir was removed.
->
-> Everywhere this ADR says `@oss/backoffice-ui`, read `@oss/react-sdk`.
-> Everywhere it says `packages/ui/backoffice/`, read `packages/sdks/react-sdk/`.
+> **Superseded (2026-06-10):** All reference frontend apps (`apps/backoffice`, `apps/web`) and the associated UI packages (`@oss/react-sdk`, `@oss/backoffice-ui`, the pages layer) were removed. The platform is now headless backend only. The admin experience (pages, components, theming) now lives entirely in the consumer repo. This ADR is preserved as historical record of the architectural exploration.
 
 ## Context
 

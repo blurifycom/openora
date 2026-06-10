@@ -23,8 +23,17 @@ export {
   type PlayerProfile,
 } from './hooks/account.js';
 
-// UI provider context (consumer-facing access to Button/DataTable/etc primitives)
-export { UIProvider, useUI } from './ui-provider.js';
+// PAM (Player Account Management) admin hooks over the typed player.* contract
+export {
+  useAdminPlayers,
+  useAdminPlayer,
+  useUpdateAdminPlayer,
+  useRemoveAdminPlayer,
+  type Player,
+  type PlayerStatus,
+  type KycStatus,
+  type AdminPlayersQuery,
+} from './hooks/admin-players.js';
 
 // Framework-agnostic navigation seam (host injects a Next or TanStack adapter)
 export {

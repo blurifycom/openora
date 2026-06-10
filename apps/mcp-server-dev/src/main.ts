@@ -241,12 +241,12 @@ function buildPlaybook(
     case 'ui-page':
       return [
         '## Where it goes',
-        'The platform is headless - pages live in your own frontend repo and consume the api via `@oss/sdk-core` / `@oss/react-hooks`. Module UI imports only the UIProvider contract - never a UI library directly.',
+        'The platform is headless and ships no UI - pages live in your own frontend repo and consume the api via `@oss/sdk-core` / `@oss/react-hooks`. The frontend owns all components and styling.',
         '',
         '## Playbook',
         '1. Implement the page in your frontend repo using `@oss/react-hooks` data hooks.',
         '2. To extend an existing surface without forking it, fill a named slot via your frontend UI plugin (ADR-0006).',
-        '3. Run `run-verify`. Delegate to `igaming-fullstack-dev` (backend routes) or `ui-provider-author` (component contract).',
+        '3. Run `run-verify`. Delegate backend routes to `igaming-fullstack-dev`.',
       ].join('\n');
     case 'route':
       return [

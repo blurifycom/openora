@@ -1,7 +1,9 @@
 # ADR-0003: Headless UI via provider contract + adapter packages
 
 **Date**: 2026-05-18
-**Status**: Accepted
+**Status**: Superseded (2026-06-10)
+
+> **Superseded (2026-06-10):** The UI provider contract (`@oss/ui-provider-contract`) and the shipped daisyUI adapter (`@oss/ui-provider-daisyui`) were removed. The platform is now headless backend only - all UI lives in the downstream consumer (consumer). Modules no longer declare UI components, and no UI packages ship from this repo. Frontend development is entirely out-of-tree. This ADR is preserved as historical record of the exploration.
 
 ## Context
 

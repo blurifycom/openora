@@ -13,7 +13,6 @@ import type { PlopTypes } from '@turbo/gen';
 //   pnpm gen route <module> <M> <p>  - oRPC procedure + contract entry
 //   pnpm gen plugin <name>           - overlay plugin
 //   pnpm gen adapter <name> <token>  - overlay that rebinds a vendor adapter token
-//   pnpm gen ui-component <Name>     - UI contract + daisyui impl
 //   pnpm gen config <name>           - operator config schema block
 //   pnpm gen event <topic>           - domain event payload in the catalog
 //   pnpm gen job-worker <name>       - JOB_QUEUE worker overlay
@@ -104,19 +103,6 @@ function wireContractIndex(name: string): string {
   src = src.replace(/^(\}\);)/m, `  ${camel}: ${contractName},\n$1`);
   writeFileSync(indexFile, src);
   return `wired '${camel}' into orpc-contract index`;
-}
-
-function wireUiContract(name: string): string {
-  const indexFile = join(root(), 'packages', 'ui', 'provider-contract', 'src', 'index.ts');
-  if (!existsSync(indexFile)) return 'no provider-contract index (skipped)';
-  const kebab = toKebab(name);
-  const Pascal = `${toCamel(name).charAt(0).toUpperCase()}${toCamel(name).slice(1)}`;
-  const line = `export type { ${Pascal}Props, ${Pascal}Component } from './components/${kebab}.js';`;
-  const src = readFileSync(indexFile, 'utf8');
-  if (src.includes(`/components/${kebab}.js`))
-    return `contract index already re-exports '${kebab}'`;
-  writeFileSync(indexFile, `${src.replace(/\s*$/, '')}\n${line}\n`);
-  return `re-exported '${Pascal}Props' from the provider-contract index`;
 }
 
 function appendEventSchema(topic: string): string {
@@ -329,36 +315,6 @@ export default function generator(plop: PlopTypes.NodePlopAPI): void {
           `./apps/api/src/extensions/${toKebab(s(a, 'name'))}/plugin.ts`,
         ),
     ],
-  });
-
-  // --- ui-component --------------------------------------------------------
-  plop.setGenerator('ui-component', {
-    description: 'UI contract entry + daisyui implementation',
-    prompts: [
-      {
-        type: 'input',
-        name: 'name',
-        message: 'Component name (PascalCase):',
-        validate: (v: string) => (v ? true : 'required'),
-      },
-    ],
-    actions: (data?: Answers): PlopTypes.ActionType[] => {
-      ossOnly('ui-component');
-      const a = data ?? {};
-      return [
-        {
-          type: 'add',
-          path: 'packages/ui/provider-contract/src/components/{{kebabCase name}}.ts',
-          templateFile: tpl('ui-contract.hbs'),
-        },
-        {
-          type: 'add',
-          path: 'packages/ui/provider-daisyui/src/components/{{kebabCase name}}.tsx',
-          templateFile: tpl('ui-impl.hbs'),
-        },
-        () => wireUiContract(s(a, 'name')),
-      ];
-    },
   });
 
   // --- config --------------------------------------------------------------

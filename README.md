@@ -78,10 +78,7 @@ pnpm build:oss      # build the linked @oss/* packages once
 pnpm dev            # api :3001
 ```
 
-The generated repo holds only what's unique to your operation - branding, vendor adapters,
-overlay plugins. Core is consumed as linked `@oss/*` packages, never forked. It ships
-`turbo gen` generators (`pnpm gen plugin|adapter`) and AI agents
-(`igaming-builder`, `igaming-expert`, `igaming-qa`) in `.claude/agents/`.
+The generated repo holds only what's unique to your operation - frontend (pages, components, styling, theme), branding, vendor adapters, and overlay plugins. Core is consumed as linked `@oss/*` packages, never forked. It ships `turbo gen` generators (`pnpm gen plugin|adapter`) and AI agents in `.claude/agents/`.
 
 See [docs/downstream-consumer.md](./docs/downstream-consumer.md) for the full consumption guide.
 
@@ -98,9 +95,9 @@ New to the terms (operator vs player, KYC, RTP, provably fair, rollover...)? See
 
 Pillars: [AGENTS.md](./AGENTS.md) | ADRs: [docs/adr/](./docs/adr/)
 
-## Extending the UI
+## Frontend
 
-Module pages consume only `@oss/ui-provider-contract`. The platform ships a single adapter, `@oss/ui-provider-daisyui` (Tailwind v4 + DaisyUI). Swap the entire look by replacing it with your own adapter package. No module changes needed.
+The platform is headless and ships no UI - it exposes backend modules + contracts + the SDK consumption surface only. The frontend (all pages, components, styling, theme) lives in your downstream consumer repo and talks to the api over HTTP via `@oss/react-hooks` (data hooks, auth, navigation) and `@oss/sdk-core` (typed client). Use whatever UI stack you like.
 
 ## AI-first development
 
@@ -112,7 +109,7 @@ It is a **stdio** server registered in [`.mcp.json`](./.mcp.json) (pre-approved 
 claude mcp list           # verify the oss-dev server is connected
 ```
 
-Then use `list-modules`, `list-routes`, `query-openapi`, `get-drizzle-schema`, `propose-table-change`, `schema-get`, `docs-search`, `db-query-readonly`, and the `scaffold-*` tools. Write operations go through `/scaffold-module`, `/scaffold-plugin`, `/scaffold-route`, `/scaffold-ui-component` (deterministic code-mods). See [docs/agent-quickstart.md](./docs/agent-quickstart.md).
+Then use `list-modules`, `list-routes`, `query-openapi`, `get-drizzle-schema`, `propose-table-change`, `schema-get`, `docs-search`, `db-query-readonly`, and the `scaffold-*` tools. Write operations go through `/scaffold-module`, `/scaffold-plugin`, `/scaffold-route` (deterministic code-mods). See [docs/agent-quickstart.md](./docs/agent-quickstart.md).
 
 ## License
 

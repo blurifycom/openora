@@ -92,16 +92,11 @@ list-routes module=<name>
 
 Edit `packages/modules/<group>/<name>/src/plugin.ts`. Confirm the service is added to `ctx.providers` and the router is added to `ctx.routers`. The registry surface is: `providers`, `controllers`, `routers`, `slots`, `events`, `mcp`, `imports`.
 
-## Step 9: Add UI (backoffice pages)
+## Step 9: Add frontend consumption layer
 
-The platform is headless - frontend pages live in the consumer repo, not here. The
-page/block SDK layer (`@oss/react-pages` / `@oss/react-blocks`) and the reference apps
-(`apps/web` / `apps/backoffice`) were removed (2026-06-09) and will be re-extracted from
-consumer later. What you can still touch here:
+The platform is headless backend only - pages, components, and styling live in the consumer repo. What you can add to the OSS:
 
-- **Module-scoped UI primitives** (a small component tightly coupled to one module's domain) -> `packages/modules/<group>/<name>/ui/`. Import only from `@oss/ui-provider-contract`.
-- **A new data hook** (eg `useAdminUsers`, `usePlayerWallet`) -> `packages/sdks/react-hooks/src/hooks/`. A **server prefetcher** for RSC SSR hydration goes in `packages/sdks/react-hooks/src/server/` and is imported via the `@oss/react-hooks/server` subpath (RSC-only, no client React tree). `@oss/react-hooks` is the supported frontend consumption surface.
-- **A UI component contract** -> `/scaffold-ui-component <Name>` adds the contract entry + the daisyui impl. The consumer frontend consumes it via `useUI()`.
+- **A new data hook** (eg `useAdminUsers`, `usePlayerWallet`) -> `packages/sdks/react-hooks/src/hooks/`. A **server prefetcher** for RSC SSR hydration goes in `packages/sdks/react-hooks/src/server/` and is imported via the `@oss/react-hooks/server` subpath (RSC-only, no client React tree). `@oss/react-hooks` is the supported frontend consumption surface (data hooks, auth, transport, cross-cutting helpers only - no components).
 
 ## Step 10: Update AGENTS.md
 

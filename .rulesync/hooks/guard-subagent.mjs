@@ -51,10 +51,6 @@ const ROUTES = [
     re: /\b(overlay plugin|defineplugin|extension plugin)\b|\bscaffold (a |the )?plugin\b/,
   },
   {
-    agent: 'ui-provider-author',
-    re: /\bui[- ]provider\b|\bui-provider-contract\b|\bcomponent contract\b|\bdaisyui adapter\b/,
-  },
-  {
     agent: 'igaming-operator-verifier',
     re: /\b(operator readiness|launch blocker|readiness audit)\b|\bas an? operator\b/,
   },

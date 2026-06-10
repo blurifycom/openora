@@ -52,27 +52,17 @@ flowchart TB
   mod --> core
   adapters -. implemented by .-> vendor
 
-  subgraph ui["Headless UI consumption surface"]
-    uic["ui-provider-contract<br/>component interface"]
-    shad["ui-provider-daisyui<br/>shipped adapter"]
-    hooks["react-hooks<br/>data hooks, transport, UIProvider ctx,<br/>cross-cutting helpers, /server (RSC)"]
-    shad -. implements .-> uic
-    hooks --> uic
-  end
-  client --> hooks
-
   subgraph consumer["Downstream consumer - Consumer (reference)"]
     bapi["apps/api<br/>thin createApp()"]
-    bfront["frontend (consumer repo)<br/>own pages, consumes api over HTTP<br/>via react-hooks / sdk-core"]
+    bfront["frontend (consumer repo)<br/>own pages, components, styling<br/>consumes api over HTTP via react-hooks / sdk-core"]
     bplug["@consumer/plugins<br/>one feature per folder"]
     bcfg["extensions.config.ts<br/>+ pnpm link: overrides"]
     bplug --> bcfg
     bcfg --> bapi
   end
   hono -. createApp + link .-> bapi
-  sdk --> bfront
+  client --> bfront
   hooks --> bfront
-  shad --> bfront
 
   subgraph ai["AI dev surface"]
     mcp["mcp-server-dev<br/>stdio, via .mcp.json"]
@@ -96,22 +86,21 @@ Solid arrows are runtime/build dependencies; dashed arrows are **adapter seams**
 **API runtime**
 
 - **extensions.config.ts** - the one list of enabled plugins (modules + overlays). The only place wiring is turned on.
-- **plugin-host** - `definePlugin({ id, dependsOn, register })` + `ModuleRegistry`. In `register(ctx)` a plugin binds providers (`ctx.provide(token, factory)`), mounts routers (`ctx.routers.add(namespace, (c) => router)`), fills UI slots, subscribes to events, and registers MCP tools. Overlays add their own `pgTable` in their module's `src/schema/index.ts`. ADR-0002.
+- **plugin-host** - `definePlugin({ id, dependsOn, register })` + `ModuleRegistry`. In `register(ctx)` a plugin binds providers (`ctx.provide(token, factory)`), mounts routers (`ctx.routers.add(namespace, (c) => router)`), subscribes to events, and registers MCP tools. Overlays add their own `pgTable` in their module's `src/schema/index.ts`. ADR-0002.
 - **Hono + oRPC** - oRPC defines routes and validates I/O against the Zod contract; its `OpenAPIHandler` is mounted on a Hono server and emits `docs/openapi.json`. Dependency wiring is a small **functional composition `Container`** (`@oss/core`): typed-token factories, lazy + last-wins, no decorators. `apps/api` is a thin caller of `createApp()` from `@oss/api-runtime`; downstream consumers call the same factory. ADR-0009.
 
 **Platform services** (`packages/platform/*`) - shared infrastructure modules may import: `db` (`@oss/db` - Drizzle client, drizzle-kit migrations, `DrizzleService`, the framework-free `@oss/db/orm` re-export, tenant-scoped helpers), `auth` (better-auth + the shared `AdminGuard`), `core` (logger, tenant context, typed `EventBus`, composition `Container`), `plugin-host` (the plugin loader).
 
-**Business modules** (`packages/modules/*`) - one folder per domain. A module may import contracts, platform, UI, and SDK packages, but **never another module** - cross-module communication goes through events or shared contracts. Each depends on vendor adapter interfaces from `@oss/adapters`.
+**Business modules** (`packages/modules/*`) - one folder per domain. A module may import contracts, platform, and SDK packages, but **never another module** - cross-module communication goes through events or shared contracts. Each depends on vendor adapter interfaces from `@oss/adapters`.
 
 **Vendor adapters** - concrete implementations of a module's adapter interfaces (PSP, KYC vendor, igaming aggregator, chat), shipped as separate packages. The interface is the seam; the implementation is swappable.
 
 **Background jobs** - long-running work runs off the request path in a BullMQ worker shipped as an overlay plugin (`/scaffold-plugin <name>-worker`): a module emits an event via the typed `EventBus`, the worker plugin subscribes in `register(ctx)` and processes the job. There is no standalone worker app.
 
-**Headless UI**
+**SDK & consumption surface**
 
-- **ui-provider-contract** - the component interface (`Button`, `Input`, `DataTable`, slots). Module UI imports only this. ADR-0003.
-- **ui-provider-daisyui** - the single adapter shipped by the platform (Tailwind v4 + DaisyUI semantic classes), implementing the contract. Swap it for your own (MUI, Chakra, ...) with no module changes.
-- **react-hooks** - leaf SDK package and the supported frontend consumption surface: data hooks, typed oRPC client, auth, UIProvider context, cross-cutting helpers (`usePageContext`, `useDataExtension`, `RoleGate`). `./server` subpath ships RSC-only prefetchers (`prefetchLobby`, `prefetchGames`, `prefetchWallet`). The page/block SDK layer (`@oss/react-pages` / `@oss/react-blocks`) that once sat above it was removed (2026-06-09, ADR-0013); the platform is headless and the frontend lives in consumer.
+- **react-hooks** - leaf SDK package and the supported frontend consumption surface: data hooks, typed oRPC client, auth, cross-cutting helpers (`usePageContext`, `useDataExtension`, `RoleGate`). `./server` subpath ships RSC-only prefetchers (`prefetchLobby`, `prefetchGames`, `prefetchWallet`). The platform is headless backend only; the frontend lives in the consumer repo.
+- **sdk-core** - framework-agnostic typed client for any JavaScript runtime.
 - **plugin-test-kit** - `validatePlugin()` / `assertValidPlugin()` for operator suites.
 - **compliance-invariants** - canonical list of `SealedToken<T>` services operators may never override (RG enforcement, KYC writes, AML/SAR, ledger writes, RNG, etc.) with regulatory citations.
 
@@ -120,7 +109,7 @@ Solid arrows are runtime/build dependencies; dashed arrows are **adapter seams**
 **AI dev surface**
 
 - **mcp-server-dev** - a stdio MCP server (registered in `.mcp.json`, not a port) exposing read-only inspection (`list-modules`, `list-routes`, `query-openapi`, `get-drizzle-schema`, ...) and write tools that delegate to the scaffolder.
-- **tools/gen.ts** (-> `@oss/turbo-generators`) - deterministic code-mods behind the `/scaffold-*` slash commands (module, plugin, route, ui-component). Consumer adds `/scaffold-feature` for its plugins package.
+- **tools/gen.ts** (-> `@oss/turbo-generators`) - deterministic code-mods behind the `/scaffold-*` slash commands (module, plugin, route). Consumer adds `/scaffold-feature` for its plugins package.
 - **AGENTS.md** - per-package brief; the first thing an agent reads.
 
 ## Adapter / bridge seams
@@ -131,7 +120,6 @@ These are the swap points - the reason the platform is "headless" and extensible
 | -------------- | --------------------------------- | --------------------------------------------------- | ------------------------------------------------ |
 | Plugin host    | `definePlugin` contract           | a module or overlay folder                          | add/remove features without touching core        |
 | Vendor adapter | `@oss/adapters` (interface)       | impl package under `modules/<m>/adapters/<vendor>/` | a different PSP, KYC, or aggregator              |
-| UI provider    | `ui-provider-contract`            | `ui-provider-daisyui` (shipped)                     | your own component library                       |
 | Consumer link  | `createApp()` + `@oss/*` packages | downstream `apps/api` + `link:` overrides           | publish to npm and bump the tag (no code change) |
 
 ## Request flow (a typical read)

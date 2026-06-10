@@ -22,10 +22,7 @@ pnpm db:migrate          # apply the OSS schema
 pnpm dev                 # api :3001
 ```
 
-The platform is **headless** - it ships the backend only. Build your frontend (player web +
-admin backoffice) in your own repo and consume the api over HTTP via `@oss/sdk-core` /
-`@oss/react-hooks`. The page/block SDK layer and the reference frontend apps were removed
-(2026-06-09); the frontend lives in the consumer repo and will be re-extracted later.
+The platform is **headless backend only** - it ships modules, contracts, and SDK consumption surface only. Build your entire frontend (player web, admin backoffice, components, styling, theme) in your own repo and consume the api over HTTP via `@oss/sdk-core` / `@oss/react-hooks`.
 
 After install, run `pnpm setup:mcp` and then `/start` in Claude Code: it asks what you want to
 build, calls the `enhance-intent` MCP tool to turn the ask into a grounded spec, and drives the
@@ -39,13 +36,7 @@ understand what it generated and how to extend it.
 
 ### Frontend
 
-The frontend lives in your own repo (the platform is headless). It consumes the api over
-HTTP through `@oss/react-hooks` (and the framework-agnostic `@oss/sdk-core`). A Next App
-Router consumer's route files prefetch SSR data via `@oss/react-hooks/server`
-(`prefetchLobby`, `prefetchGames`, `prefetchWallet`, ...) forwarding the request cookies,
-then hydrate the client tree with `<HydrationBoundary state={dehydrate(qc)}>`.
-React/react-dom/@tanstack/react-query are deduped via the consumer's bundler alias so the
-linked `@oss/*` and the app share a single physical React copy - see ADR-0005.
+Your entire frontend lives in your own repo (the platform is headless backend only). It consumes the api over HTTP through `@oss/react-hooks` (data hooks, auth, transport, cross-cutting helpers) and the framework-agnostic `@oss/sdk-core`. A Next App Router consumer's route files prefetch SSR data via `@oss/react-hooks/server` (`prefetchLobby`, `prefetchGames`, `prefetchWallet`, ...) forwarding the request cookies, then hydrate the client tree with `<HydrationBoundary state={dehydrate(qc)}>`. React/react-dom/@tanstack/react-query are deduped via the consumer's bundler alias so the linked `@oss/*` and the app share a single physical React copy.
 
 ## API entrypoint
 
@@ -73,50 +64,34 @@ The OSS `apps/api` is itself a thin consumer of `createApp` and serves as the re
 Downstream consumers do NOT fork `apps/api` - they create their own thin entrypoint and bring
 their own `extensions.config.ts`.
 
-For the UI side, the platform ships a single adapter, `@oss/ui-provider-daisyui`. Downstream
-consumers run it as-is, or swap it for their own adapter package via the `UIProvider` React
-Context at the Next.js layout layer. No factory needed.
-
 ## Building the frontend (in your own repo)
 
-The platform is headless. Your frontend repo consumes the api over HTTP through
-`@oss/react-hooks` (typed client, data hooks, auth, `UIProvider` context, RSC prefetchers at
-`@oss/react-hooks/server`) and the framework-agnostic `@oss/sdk-core`. Pages, the admin shell,
-theme, and the `defineUIPlugin` slot registry are owned by the frontend (they were removed
-from this repo on 2026-06-09 and will be re-extracted from consumer later).
+Your entire frontend repo is built from scratch - pages, components, admin shell, theme, styling. It consumes the api over HTTP through `@oss/react-hooks` (typed client, data hooks, auth, cross-cutting helpers, RSC prefetchers at `@oss/react-hooks/server`) and the framework-agnostic `@oss/sdk-core`.
 
-Wrap your root layout with `QueryClientProvider`, `ApiClientProvider`, and `UIProvider` (all
-but `QueryClientProvider` come from `@oss/react-hooks`):
+Wrap your root layout with `QueryClientProvider` and `ApiClientProvider` (from `@oss/react-hooks`):
 
 ```tsx
 // your-frontend/app/providers.tsx (client component)
-import { ApiClientProvider, UIProvider } from '@oss/react-hooks';
-import { daisyuiProvider } from '@oss/ui-provider-daisyui';
-import './globals.css'; // Tailwind v4 + the DaisyUI plugin
+import { ApiClientProvider } from '@oss/react-hooks';
+import './globals.css'; // your own styling and design system
 
 <ApiClientProvider client={{ baseUrl }}>
-  <UIProvider value={daisyuiProvider}>{children}</UIProvider>
+  {children}
 </ApiClientProvider>;
 ```
 
-### Wiring the DaisyUI adapter (the shipped default)
+### Styling and components
 
-DaisyUI is the single UI adapter shipped by the platform. `daisyuiProvider` satisfies
-`@oss/ui-provider-contract`, so your components stay UI-library-agnostic - to swap in your own
-look later, replace this one import with your adapter. DaisyUI emits semantic Tailwind classes
-(`btn`, `card`, `modal`, ...) and ships no styles itself, so your app MUST enable Tailwind +
-the DaisyUI plugin in its own CSS build. For Tailwind v4, add a `postcss.config.mjs`
-(`{ plugins: ['@tailwindcss/postcss'] }`) and a global stylesheet:
+The platform ships no UI - your frontend owns all components, styling, and theme. Pick whatever
+you like (Tailwind + DaisyUI, MUI, your own design system); OSS only feeds you data via the
+hooks. If you use Tailwind v4 + DaisyUI, enable it in your own CSS build with a
+`postcss.config.mjs` (`{ plugins: ['@tailwindcss/postcss'] }`) - or the `@tailwindcss/vite`
+plugin for a Vite/TanStack app - and a global stylesheet:
 
 ```css
 @import 'tailwindcss';
 @plugin "daisyui";
 ```
-
-A Vite/TanStack app uses the `@tailwindcss/vite` plugin instead of PostCSS. The adapter is
-framework-agnostic React with no browser globals at module scope, so it renders unchanged
-under Next RSC/SSR or a Vite SPA (pass the provider inside a client component, where
-`useToast`'s state lives).
 
 Cross-workspace `link:` requires a dedup alias in your frontend bundler config for `react`,
 `react-dom`, and `@tanstack/react-query` (single physical path). See ADR-0005.

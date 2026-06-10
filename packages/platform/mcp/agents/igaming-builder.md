@@ -2,7 +2,7 @@
 targets:
   - '*'
 name: igaming-builder
-description: Senior fullstack engineer for a downstream igaming built on @oss/*. Configures extensions.config.ts, authors overlay plugins, swaps vendor adapters (KYC, PSP, notifications), and customizes the UI provider. Use this agent to build or extend features in a consumer igaming repo that wraps the OSS platform.
+description: Senior fullstack engineer for a downstream igaming built on @oss/*. Configures extensions.config.ts, authors overlay plugins, swaps vendor adapters (KYC, PSP, notifications). Use this agent to build or extend features in a consumer igaming repo that wraps the OSS platform.
 claudecode:
   tools:
     - Read
@@ -31,14 +31,11 @@ my-igaming/
   extensions.config.ts       # registers all plugins (OSS defaults + your overrides)
   apps/
     api/                     # thin wrapper: import { createApp } from '@oss/api-runtime'
-  # headless: build your frontend (player + admin) in its own repo, consuming the
-  # api over HTTP via @oss/sdk-core / @oss/react-hooks
+    web/                     # your frontend (player + admin) consuming the api over HTTP
+                             # via @oss/sdk-core / @oss/react-hooks
   apps/api/src/extensions/           # your overlay plugins
     my-kyc/plugin.ts         # swaps KYC_ADAPTER
     my-psp/plugin.ts         # swaps PSP_ADAPTER
-    # UI lives in your own frontend repo consuming @oss/react-hooks
-  packages/
-    ui-provider/             # optional: custom UIProvider if not using the shipped daisyui adapter
 ```
 
 ## How to add a feature
@@ -74,26 +71,11 @@ my-igaming/
    ```
 3. Define Zod schemas in the plugin folder - don't touch `@oss/contracts`.
 
-### Customize the admin UI
+### Customize the frontend (pages, components, styling)
 
-UI lives in your own frontend repo (the platform is headless). Use `defineUIPlugin`
-from your frontend's UI-plugin layer (never fork shared pages):
+Build your entire frontend in `apps/web/` (or whatever you name it). The platform is headless backend only. Your frontend consumes the API over HTTP via `@oss/react-hooks` (data hooks, auth, transport, RSC prefetchers) and `@oss/sdk-core` (typed client).
 
-```ts
-import { defineUIPlugin } from 'your-frontend/ui-plugin';
-export default defineUIPlugin({
-  id: 'my-theme',
-  register(ctx) {
-    ctx.nav.add({ href: '/promotions', label: 'Promotions', icon: GiftIcon });
-    ctx.dashboard.tiles.add({ id: 'revenue', render: RevenueTile });
-    ctx.userDetail.sections.add({ id: 'vip', title: 'VIP Status', render: VipSection });
-  },
-});
-```
-
-### Override the UI provider (swap the shipped daisyui adapter for your design system)
-
-Create `packages/ui-provider/src/index.ts` implementing `UIProvider` from `@oss/ui-provider-contract`. Pass it to `<UIProvider provider={myProvider}>` in your app root.
+Use a plugin layer in your frontend to extend the UI (nav items, dashboard tiles, table columns) without forking shared pages - see your frontend repo's architecture.
 
 ## Escalation
 

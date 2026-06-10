@@ -1,9 +1,9 @@
 # ADR-0011: Player-front framework - Next.js vs TanStack Start
 
 **Date**: 2026-05-28
-**Status**: Superseded by [ADR-0012](./0012-player-front-next-rsc.md) (2026-05-28)
+**Status**: Superseded (2026-06-10)
 
-> **Note:** This ADR was Proposed but never Accepted. After re-evaluation, the player surface is **Next.js App Router only** (RSC-first). The TanStack Start variant has been removed from the scaffolder. See ADR-0012 for the current decision.
+> **Superseded (2026-06-10):** The entire frontend - all reference apps, player-facing pages, and framework choices - was removed from the OSS repo. The platform is now headless backend only. The frontend exploration (Next.js vs TanStack Start) and its decision are now managed in the consumer repo. This ADR is preserved as historical record.
 
 ## Context
 

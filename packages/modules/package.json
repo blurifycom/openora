@@ -33,7 +33,6 @@
     "@oss/orpc-contract": "workspace:*",
     "@oss/plugin-host": "workspace:*",
     "@oss/shared-schemas": "workspace:*",
-    "@oss/ui-provider-contract": "workspace:*",
     "@paralleldrive/cuid2": "3.3.0",
     "better-auth": "1.6.15",
     "drizzle-orm": "0.45.2",

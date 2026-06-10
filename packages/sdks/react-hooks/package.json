@@ -30,7 +30,6 @@
     "@oss/orpc-contract": "workspace:*",
     "@oss/sdk-core": "workspace:*",
     "@oss/shared-schemas": "workspace:*",
-    "@oss/ui-provider-contract": "workspace:*",
     "zod": "4.4.3"
   },
   "devDependencies": {

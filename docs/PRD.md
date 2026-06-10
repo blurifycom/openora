@@ -19,7 +19,7 @@ Concretely, Consumer (the first internal consumer) needs to ship five proprietar
 
 A monorepo containing an OSS, headless, plugin-based igaming platform that any team (Consumer first, then external operators) can clone, extend, and deploy. The platform is:
 
-- **Headless.** The platform ships the backend only; the frontend lives in the downstream consumer's own repo (currently consumer) and consumes the api over HTTP. The supported frontend surface is `@oss/react-hooks` (typed client, data hooks, auth, `useUI()` context, cross-cutting helpers `usePageContext`/`useDataExtension`/`RoleGate`, RSC prefetchers at `./server`) over the framework-agnostic `@oss/sdk-core`. UI providers are swappable via a contract package (`@oss/ui-provider-contract`); the platform ships a single adapter, daisyui (`@oss/ui-provider-daisyui`, Tailwind v4 + DaisyUI), and operators write their own (MUI, Antd, ...) by implementing the same `UIProvider` interface, enforced at compile time. The page/block SDK layer (`@oss/react-pages` / `@oss/react-blocks`) and the reference frontend apps were removed (2026-06-09, ADR-0013) and will be re-extracted from consumer later.
+- **Headless backend only.** The platform ships modules, contracts, API, and SDK consumption surface. The frontend (all pages, components, styling, theme) lives entirely in the downstream consumer's own repo. The supported frontend consumption surface is `@oss/react-hooks` (typed client, data hooks, auth, cross-cutting helpers `usePageContext`/`useDataExtension`/`RoleGate`, RSC prefetchers at `./server`) over the framework-agnostic `@oss/sdk-core`. No UI packages, adapters, or components ship from this repo.
 - **Plugin-based.** Every piece of functionality enters the system through a single `definePlugin({ id, register })` contract. The same contract works for in-tree overlays (`apps/api/src/extensions/<name>/`) and externally-published npm packages. Operators never fork core - they drop folders.
 - **End-to-end typed.** Zod schemas in one root package are the source of truth. oRPC turns them into validated routes, OpenAPI spec, TS-inferred clients, and (optionally) generated REST SDKs for non-TS consumers. There is no manual codegen step for TypeScript callers.
 - **AI-native.** Every module ships an `AGENTS.md`. An MCP dev server exposes the schema registry, route catalog, plugin manifest, and code scaffolders as tools. Repo-local slash commands (`/scaffold-module`, `/scaffold-plugin`, `/regen`, `/verify`) call the same code path humans use.
@@ -58,18 +58,16 @@ The OSS ships 12 modules covering the full table-stakes surface: identity, walle
 19. As a non-TS service consumer (Go, Python, mobile native), I want an always-current OpenAPI spec at `docs/openapi.json`, so that I can generate a typed client in my language.
 20. As a service consumer, I want every endpoint validated at the boundary against the same Zod schema that produced the OpenAPI spec, so that I never receive a response shape that contradicts the spec.
 
-### UI engineer (working in the backoffice or Consumer frontend)
+### Frontend engineer (working in the consumer's frontend repo)
 
-21. As a UI engineer, I want to import components from `@oss/ui-provider-contract` (a contract-only package), so that my pages work against any UI adapter (daisyui, Material, Chakra) without code changes.
-22. As a UI engineer, I want plugins to extend the admin + player surface (nav items, table columns, dashboard tiles, detail sections, lobby ribbons, game-tile decorators, routes) via a typed `defineUIPlugin` registry with declarative gating (`visibleWhen` / `requiresPermission` / `brandScope` / `featureFlag`), so that extensions decorate the shell without my page knowing about them and without forking core (ADR-0006 + ADR-0013). NOTE: the page/block SDK layer this depended on was removed from the OSS repo (2026-06-09) and now lives in the consumer frontend; this story is served there.
-23. As a UI engineer, I want Storybook stories written once against the contract with an adapter switcher in the toolbar, so that the same stories prove every UI adapter (daisyui, MUI, ...) renders correctly - conformance, not duplication.
-24. As a UI engineer, I want every visual token exposed as a `--bo-*` CSS variable and a typed `Theme`, so that I can rebrand by passing a `Partial<Theme>` to `<ThemeProvider>` (statically, by named preset, or per-tenant from a DB row) with no rebuild.
-25. As a UI engineer, I want to mount the OSS admin pages (`DashboardPage`, `UsersListPage`, ...) as components in my own Next route files, so that I own routing and layout while reusing the platform's pages.
+21. As a frontend engineer, I want to build the entire UI (pages, components, theme, styling) in my own repo, so that I control all design decisions.
+22. As a frontend engineer, I want to consume the backend API through `@oss/react-hooks` (data hooks, auth, transport, RSC prefetchers) and `@oss/sdk-core` (typed client), so that I stay coupled only to the API contract, not implementation details.
+23. As a frontend engineer, I want my admin and player UIs to be plugin-extensible (nav items, table columns, dashboard tiles, detail sections, lobby ribbons) via a typed plugin registry with declarative gating, so that operator teams can extend without forking.
 
 ### AI agent (Claude Code, Codex, Cursor)
 
 24. As an AI agent, I want a single top-level `AGENTS.md` declaring architecture pillars, the "where does X go" decision tree, dependency rules, and forbidden patterns, so that I make the same decisions a senior engineer would.
-25. As an AI agent, I want `/scaffold-module <name>`, `/scaffold-plugin <name>`, `/scaffold-route <module> <method> <path>`, `/scaffold-ui-component <Name>`, `/regen`, and `/verify` as repo-local slash commands, so that I generate consistent code without inventing my own conventions.
+25. As an AI agent, I want `/scaffold-module <name>`, `/scaffold-plugin <name>`, `/scaffold-route <module> <method> <path>`, `/regen`, and `/verify` as repo-local slash commands, so that I generate consistent code without inventing my own conventions.
 26. As an AI agent, I want an MCP dev server (`apps/mcp-server-dev`) exposing `read-agents-md`, `list-modules`, `describe-route`, `list-extension-points`, `propose-table-change`, and `query-openapi` tools, so that I can answer "does X already exist?" before adding duplicates.
 27. As an AI agent, I want a `pnpm setup:agent` command that boots Docker + Postgres + Redis + the MCP server in one step, so that a fresh session can become productive in under a minute.
 28. As an AI agent, given only the prompt "implement the localization module" in a fresh session, I want to ship a complete, buildable module via `/scaffold-module localization` + MCP tools + AGENTS.md, with at most one or two human confirmations.
@@ -178,7 +176,7 @@ The OSS ships 12 modules covering the full table-stakes surface: identity, walle
 - `.rulesync/` is the canonical agent source; `AGENTS.md`, `CLAUDE.md`, `.codex/config.toml`, `.github/copilot-instructions.md` and the per-tool subagent/command mirrors are generated from it via rulesync (`pnpm sync:agents`).
 - Per-module `AGENTS.md` documents extension points, ports, events, do/don't.
 - `apps/mcp-server-dev` exposes the schema registry, route catalog, plugin manifest, and scaffolders as MCP tools.
-- `.rulesync/commands/*` are repo-local slash commands. `.rulesync/subagents/*` are repo-local subagent personalities (`oss-module-author`, `plugin-author`, `contract-reviewer`, `ui-provider-author`). rulesync mirrors both into `.claude/` and `.github/` (Codex commands/subagents are simulation-only and stay off).
+- `.rulesync/commands/*` are repo-local slash commands. `.rulesync/subagents/*` are repo-local subagent personalities (`oss-module-author`, `plugin-author`, `contract-reviewer`). rulesync mirrors both into `.claude/` and `.github/` (Codex commands/subagents are simulation-only and stay off).
 - 4 ADRs at `docs/adr/` document settled questions so agents don't re-litigate them.
 
 ## Testing Decisions
@@ -255,8 +253,8 @@ The following are intentionally NOT delivered in this PRD and tracked separately
 ### Known follow-ups
 
 - ~~Honor `ctx.prisma.extend()` so downstream consumers can decorate core tables.~~ - obsolete after the Drizzle migration. There is no column-injection API; consumers add a derivative `pgTable` in their overlay's `src/schema/index.ts` with a plain ID reference to the OSS table. The `user` table now carries `role`/`isActive` directly (see `packages/modules/platform/identity/src/schema/index.ts`).
-- ~~Add a thin `createBackofficeApp({ uiAdapter, ... })` factory~~ - superseded. The admin ships as headless components from `@oss/react-sdk`; the consumer mounts them and swaps the adapter via `<UIProvider>`. No factory needed.
-- Build a second UI adapter (`@oss/ui-provider-mui` or similar) to exercise the adapter-swap path and validate the contract is truly library-agnostic. The Storybook adapter switcher is ready for it.
+- ~~Add a thin `createBackofficeApp({ uiAdapter, ... })` factory~~ - obsolete. The UI layer was removed; the frontend lives in the consumer repo.
+- ~~Build a second UI adapter (`@oss/ui-provider-mui` or similar)~~ - obsolete. No UI packages ship from OSS.
 - Server-side data prefetch for admin pages (RSC + TanStack Query hydration) - needs cookie-forwarding plumbing in the runtime; pages fetch client-side today.
 - Per-tenant theme persistence: a `theme` API/table returning a `Partial<Theme>` per igaming, wired to `<ThemeProvider theme={...}>`.
 - Typed client for consumer-defined routes: let a downstream consumer compose its own oRPC contract with the OSS one so plugin routes (eg `/consumer/vip/*`) get the same `z.infer` typing the core routes have. Today plugin UI calls those via the raw `useApiClient()`.
