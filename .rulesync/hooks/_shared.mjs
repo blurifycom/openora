@@ -46,7 +46,14 @@ export function extractFilePath(payload) {
   const ti = payload.tool_input ?? {};
   const ca = toolArgsObject(payload);
   return String(
-    ti.file_path ?? ti.path ?? ca.path ?? ca.filePath ?? ca.file ?? ca.targetFile ?? ca.target_file ?? '',
+    ti.file_path ??
+      ti.path ??
+      ca.path ??
+      ca.filePath ??
+      ca.file ??
+      ca.targetFile ??
+      ca.target_file ??
+      '',
   );
 }
 

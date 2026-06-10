@@ -12,13 +12,12 @@
  * /start onboarding skill, and drops a CLAUDE.md if the repo does not have one.
  */
 
-import { readFileSync, writeFileSync, existsSync, mkdirSync, copyFileSync } from 'node:fs';
+import { readFileSync, writeFileSync, existsSync, mkdirSync } from 'node:fs';
 import { join, dirname, resolve, relative, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const here = dirname(fileURLToPath(import.meta.url));
 const ossRoot = resolve(here, '..');
-const consumerTpl = join(ossRoot, 'tools', 'templates', 'consumer');
 
 function parseTarget(argv: string[]): string {
   const args = argv.slice(2);
@@ -42,7 +41,7 @@ function writeJson(p: string, data: unknown): void {
 
 const posix = (p: string): string => p.split(sep).join('/');
 
-const DEFAULT_MCP = {
+const OSS_MCP = {
   mcpServers: {
     'oss-dev': {
       type: 'stdio',
@@ -52,18 +51,31 @@ const DEFAULT_MCP = {
   },
 };
 
+function consumerMcp(ossRel: string) {
+  return {
+    mcpServers: {
+      oss: {
+        type: 'stdio',
+        command: 'pnpm',
+        args: ['exec', 'tsx', `${ossRel}/packages/platform/mcp/src/main.ts`],
+      },
+    },
+  };
+}
+
 function main(): void {
   const target = parseTarget(process.argv);
   const isOss = target === ossRoot;
+  const ossRel = posix(relative(target, ossRoot)) || '..';
   const log: string[] = [];
 
   // 1. .mcp.json - ensure at least one server is registered.
   const mcpPath = join(target, '.mcp.json');
   let mcp = readJson<{ mcpServers?: Record<string, unknown> }>(mcpPath, {});
   if (!mcp.mcpServers || Object.keys(mcp.mcpServers).length === 0) {
-    mcp = DEFAULT_MCP;
+    mcp = isOss ? OSS_MCP : consumerMcp(ossRel);
     writeJson(mcpPath, mcp);
-    log.push('wrote .mcp.json (oss-dev server)');
+    log.push(`wrote .mcp.json (${isOss ? 'oss-dev' : 'oss'} server)`);
   } else {
     log.push(`.mcp.json present (servers: ${Object.keys(mcp.mcpServers).join(', ')})`);
   }
@@ -80,7 +92,11 @@ function main(): void {
   let changed = false;
 
   const enabled = new Set(settings.enabledMcpjsonServers ?? []);
-  for (const name of serverNames) if (!enabled.has(name)) { enabled.add(name); changed = true; }
+  for (const name of serverNames)
+    if (!enabled.has(name)) {
+      enabled.add(name);
+      changed = true;
+    }
   if (settings.enableAllProjectMcpServers === undefined) {
     settings.enableAllProjectMcpServers = false;
     changed = true;
@@ -88,7 +104,6 @@ function main(): void {
 
   // Consumer guardrail: never let the agent edit the consumed @oss/* source.
   if (!isOss) {
-    const ossRel = posix(relative(target, ossRoot)) || '..';
     const wanted = [
       'Edit(./node_modules/**)',
       'Write(./node_modules/**)',
@@ -97,37 +112,31 @@ function main(): void {
     ];
     settings.permissions ??= {};
     const deny = new Set(settings.permissions.deny ?? []);
-    for (const d of wanted) if (!deny.has(d)) { deny.add(d); changed = true; }
+    for (const d of wanted)
+      if (!deny.has(d)) {
+        deny.add(d);
+        changed = true;
+      }
     settings.permissions.deny = [...deny];
   }
 
   if (changed) {
     settings.enabledMcpjsonServers = [...enabled];
     writeJson(settingsPath, settings);
-    log.push(`updated .claude/settings.json (trust: ${[...enabled].join(', ')}${isOss ? '' : ' + core-edit guardrail'})`);
+    log.push(
+      `updated .claude/settings.json (trust: ${[...enabled].join(', ')}${isOss ? '' : ' + core-edit guardrail'})`,
+    );
   } else {
     log.push('.claude/settings.json already up to date');
   }
 
-  // 3. Consumer onboarding files: /start skill + CLAUDE.md (install if missing).
+  // 3. Consumer: regenerate agent files from .rulesync/ (CLAUDE.md, AGENTS.md, etc.)
   if (!isOss) {
-    const skillSrc = join(consumerTpl, '__dot__claude', 'skills', 'start.md');
-    const skillDst = join(target, '.claude', 'skills', 'start.md');
-    if (existsSync(skillDst)) {
-      log.push('/start skill already present');
-    } else if (existsSync(skillSrc)) {
-      mkdirSync(dirname(skillDst), { recursive: true });
-      copyFileSync(skillSrc, skillDst);
-      log.push('installed /start onboarding skill');
-    }
-
-    const claudeSrc = join(consumerTpl, 'CLAUDE.md');
-    const claudeDst = join(target, 'CLAUDE.md');
-    if (existsSync(claudeDst)) {
-      log.push('CLAUDE.md already present (left as is)');
-    } else if (existsSync(claudeSrc)) {
-      copyFileSync(claudeSrc, claudeDst);
-      log.push('installed CLAUDE.md (agent instructions)');
+    const rulesyncCfg = join(target, 'rulesync.jsonc');
+    if (existsSync(rulesyncCfg)) {
+      log.push(
+        'run `pnpm sync:agents` in your repo to regenerate CLAUDE.md + agent files from .rulesync/',
+      );
     }
   }
 
@@ -135,7 +144,7 @@ function main(): void {
   for (const l of log) console.log(`  - ${l}`);
   console.log(`
   Next:
-    1. Restart your editor (or run /mcp) so it picks up .mcp.json + skills.
+    1. Restart your editor (or run /mcp) so it picks up .mcp.json.
     2. In Claude Code, run /start (or say "help me build X").
 `);
 }

@@ -1,7 +1,4 @@
 {
   // Extensions that make the workspace settings (formatOnSave, fixAll.oxc) work.
-  "recommendations": [
-    "oxc.oxc-vscode",
-    "bradlc.vscode-tailwindcss"
-  ]
+  "recommendations": ["oxc.oxc-vscode", "bradlc.vscode-tailwindcss"]
 }

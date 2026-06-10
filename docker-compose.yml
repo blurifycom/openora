@@ -6,11 +6,11 @@ services:
       POSTGRES_PASSWORD: postgres
       POSTGRES_DB: oss_igaming
     ports:
-      - "5432:5432"
+      - '5432:5432'
     volumes:
       - postgres_data:/var/lib/postgresql/data
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      test: ['CMD-SHELL', 'pg_isready -U postgres']
       interval: 5s
       timeout: 5s
       retries: 10
@@ -21,7 +21,7 @@ services:
 
   # One-shot: apply Drizzle migrations, then exit. api waits for it to complete.
   migrate:
-    profiles: ["full"]
+    profiles: ['full']
     build:
       context: .
       dockerfile: Dockerfile
@@ -29,13 +29,13 @@ services:
     working_dir: /app
     environment:
       DATABASE_URL: postgres://postgres:postgres@postgres:5432/oss_igaming
-    command: ["pnpm", "-F", "@oss/db", "migrate"]
+    command: ['pnpm', '-F', '@oss/db', 'migrate']
     depends_on:
       postgres:
         condition: service_healthy
 
   api:
-    profiles: ["full"]
+    profiles: ['full']
     build:
       context: .
       dockerfile: Dockerfile
@@ -43,14 +43,14 @@ services:
     environment:
       NODE_ENV: production
       DATABASE_URL: postgres://postgres:postgres@postgres:5432/oss_igaming
-      PORT_API: "3001"
+      PORT_API: '3001'
       # Reference-only values. Replace BETTER_AUTH_SECRET for any real deployment.
       BETTER_AUTH_SECRET: dev-only-insecure-secret-change-me
       BETTER_AUTH_URL: http://localhost:3001
       # Activates the rabbitmq MESSAGE_BROKER overlay in the full reference stack.
       AMQP_URL: amqp://guest:guest@rabbitmq:5672
     ports:
-      - "3001:3001"
+      - '3001:3001'
     depends_on:
       postgres:
         condition: service_healthy
@@ -60,7 +60,7 @@ services:
         condition: service_healthy
 
   web:
-    profiles: ["full"]
+    profiles: ['full']
     build:
       context: .
       dockerfile: Dockerfile
@@ -69,12 +69,12 @@ services:
       NODE_ENV: production
       NEXT_PUBLIC_API_URL: http://localhost:3001
     ports:
-      - "3000:3000"
+      - '3000:3000'
     depends_on:
       - api
 
   backoffice:
-    profiles: ["full"]
+    profiles: ['full']
     build:
       context: .
       dockerfile: Dockerfile
@@ -82,7 +82,7 @@ services:
     environment:
       VITE_PUBLIC_API_URL: http://localhost:3001
     ports:
-      - "3002:3002"
+      - '3002:3002'
     depends_on:
       - api
 
@@ -91,13 +91,13 @@ services:
   # backs the reference api. Set AMQP_URL=amqp://guest:guest@rabbitmq:5672 to
   # activate the rabbitmq overlay. Management UI on :15672 (guest/guest). ADR-0016.
   rabbitmq:
-    profiles: ["full", "broker"]
+    profiles: ['full', 'broker']
     image: rabbitmq:3-management
     ports:
-      - "5672:5672"
-      - "15672:15672"
+      - '5672:5672'
+      - '15672:15672'
     healthcheck:
-      test: ["CMD", "rabbitmq-diagnostics", "-q", "ping"]
+      test: ['CMD', 'rabbitmq-diagnostics', '-q', 'ping']
       interval: 10s
       timeout: 5s
       retries: 10

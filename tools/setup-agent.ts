@@ -65,7 +65,10 @@ async function main() {
         clearInterval(poll);
         resolve();
       } catch {
-        if (attempts > 20) { clearInterval(poll); resolve(); }
+        if (attempts > 20) {
+          clearInterval(poll);
+          resolve();
+        }
       }
     }, 1500);
   });
@@ -81,10 +84,7 @@ async function main() {
 
   // 5. Summary
   const pkg = JSON.parse(readFileSync(join(root, 'package.json'), 'utf8'));
-  const envExample = readFileSync(
-    join(root, 'packages', 'platform', 'db', '.env.example'),
-    'utf8',
-  );
+  const envExample = readFileSync(join(root, 'packages', 'platform', 'db', '.env.example'), 'utf8');
   const ports: Record<string, string> = {};
   for (const line of envExample.split('\n')) {
     const m = line.match(/^(PORT_\w+)=(\d+)/);
@@ -100,7 +100,9 @@ async function main() {
   console.log('Services:');
   console.log(`  API          http://localhost:${ports['PORT_API'] ?? '3001'}`);
   console.log(`  Backoffice   http://localhost:3000`);
-  console.log(`  MCP server   oss-dev (stdio, via .mcp.json - see docs/mcp-setup.md for per-editor setup)`);
+  console.log(
+    `  MCP server   oss-dev (stdio, via .mcp.json - see docs/mcp-setup.md for per-editor setup)`,
+  );
   console.log(`  Storybook    http://localhost:6006`);
   console.log('');
   console.log('Start everything: pnpm dev');

@@ -2,7 +2,9 @@
   "name": "@oss/compliance-invariants",
   "version": "0.0.1",
   "private": true,
-  "files": ["dist"],
+  "files": [
+    "dist"
+  ],
   "type": "module",
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",

@@ -20,13 +20,13 @@ Open-source, headless, plugin-based, AI-native igaming platform. Clone it, exten
 ## Quick start
 
 ```bash
-# Requirements: Node 22+, pnpm 10+, Docker
-pnpm setup:agent          # boot Docker (Postgres + Redis) + run migrations
+# Requirements: Node 26+, pnpm 11+, Docker
+pnpm setup:agent          # boot Docker (Postgres) + run migrations
 pnpm seed                 # demo data: admin + players + wallets + transactions + games
-pnpm dev                  # api :3001, backoffice :3002 (Vite + TanStack Router SPA)
+pnpm dev                  # api :3001
 ```
 
-Log in to the backoffice with `admin@oss.dev` / `password123` (see `pnpm seed --help` flags).
+The API starts at `http://localhost:3001`. Demo credentials: `admin@oss.dev` / `password123` (see `pnpm seed --help` flags).
 
 ## Adding a module
 
@@ -68,19 +68,19 @@ export const extensions = [
 
 ## Building your own igaming on top (downstream consumer)
 
-Scaffold a full consumer turborepo (api + player web + backoffice) that links this checkout:
+Scaffold a consumer turborepo that links this checkout:
 
 ```bash
 pnpm create:app ../my-igaming --name my-igaming
 cd ../my-igaming
 pnpm install
 pnpm build:oss      # build the linked @oss/* packages once
-pnpm dev            # api :3001, web :3000, backoffice :3002
+pnpm dev            # api :3001
 ```
 
 The generated repo holds only what's unique to your operation - branding, vendor adapters,
-overlay plugins, route shims. Core is consumed as linked `@oss/*` packages, never forked. It
-ships `turbo gen` generators (`pnpm gen plugin|adapter|page`) and three AI agents
+overlay plugins. Core is consumed as linked `@oss/*` packages, never forked. It ships
+`turbo gen` generators (`pnpm gen plugin|adapter`) and AI agents
 (`igaming-builder`, `igaming-expert`, `igaming-qa`) in `.claude/agents/`.
 
 See [docs/downstream-consumer.md](./docs/downstream-consumer.md) for the full consumption guide.

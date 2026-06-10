@@ -33,8 +33,8 @@ Enforced rules: `no-cross-module-import`, `no-module-internal-import`, `no-platf
 
 ## Alternatives considered
 
-| Option | Verdict |
-|---|---|
-| Hand-written oxlint plugin (specifier-string matching) | **chosen** |
+| Option                                                                     | Verdict                                                                         |
+| -------------------------------------------------------------------------- | ------------------------------------------------------------------------------- |
+| Hand-written oxlint plugin (specifier-string matching)                     | **chosen**                                                                      |
 | Full migration to `eslint-plugin-boundaries` + TS resolver + lint tsconfig | rejected - native dep + maintained path map + slower lint for no added coverage |
-| Hybrid (boundaries for some rules, custom for the rest) | rejected - two overlapping mechanisms, more config surface |
+| Hybrid (boundaries for some rules, custom for the rest)                    | rejected - two overlapping mechanisms, more config surface                      |

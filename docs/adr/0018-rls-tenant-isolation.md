@@ -35,6 +35,7 @@ connection with no tenant set sees ZERO rows - **fail-closed**, never an error.
 `event_outbox` (nullable tenantId, system-written) additionally allows `tenantId IS NULL`.
 
 **2. Two connection paths / two roles.**
+
 - `oss_app` - a plain role (NOT superuser, NOT BYPASSRLS) for per-request traffic.
   RLS applies to it. `DATABASE_URL` points here in production.
 - `oss_system` - a `BYPASSRLS` role for system paths that legitimately cross tenants:
@@ -109,12 +110,12 @@ so they were fixed to the request tenant.
 - **Migrations need owner/superuser (not `oss_app`).** 0006/0007 run `CREATE ROLE`,
   `ALTER DEFAULT PRIVILEGES`, `ENABLE`/`FORCE ROW LEVEL SECURITY`, and `CREATE POLICY` -
   privileged DDL the RLS-enforced `oss_app` role cannot execute. Run `drizzle-kit
-  migrate` under `DATABASE_ADMIN_URL` (the owner / `oss_system` role); `drizzle.config.ts`
+migrate` under `DATABASE_ADMIN_URL` (the owner / `oss_system` role); `drizzle.config.ts`
   prefers `DATABASE_ADMIN_URL` and falls back to `DATABASE_URL` for single-role local/CI.
   Pointing migrate at `oss_app` fails.
 - **Boot-time role guard (W2).** `DrizzleService` probes the app pool's role on
   construction (`SELECT rolsuper, rolbypassrls FROM pg_roles WHERE rolname =
-  current_user`) and logs a loud warning if it is a superuser or BYPASSRLS - because RLS
+current_user`) and logs a loud warning if it is a superuser or BYPASSRLS - because RLS
   is then inert for per-request traffic. It does not hard-fail (local/CI run a single
   superuser legitimately); production must point `DATABASE_URL` at `oss_app`.
 - **Trusted boundary - the caller's identity (W1, now FIXED in ADR-0019).** RLS resolves
@@ -126,7 +127,7 @@ so they were fixed to the request tenant.
   `tenant-resolver.ts` maps that verified userId to its tenant before `runWithTenant`
   pins the GUC. `getUserId`/`getTenantId` read the verified context field, never a
   header; a request with no valid session sets no GUC and is fail-closed (zero rows).
-  RLS remains defense-in-depth against a *forgotten WHERE clause*; ADR-0019 removes the
+  RLS remains defense-in-depth against a _forgotten WHERE clause_; ADR-0019 removes the
   forged-identity gap that previously undermined it.
 - **Background workers and the ALS frame (W3).** RLS scoping rides the AsyncLocalStorage
   frame `create-app` opens per request. Code that runs OUTSIDE a request (job-queue

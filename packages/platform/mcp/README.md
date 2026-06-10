@@ -12,16 +12,16 @@ shipped in the published package, or a catalog you point it at.
 
 ## Tools
 
-| Tool | Args | Purpose |
-| --- | --- | --- |
-| `catalog-overview` | - | Start here: counts + adapter table + config fields. |
-| `list-adapters` | - | Vendor swap-seams: interface, token, wired-vs-stub. |
-| `list-routes` | `module?` | oRPC route namespaces, optionally scoped to one module. |
-| `list-events` | - | Cross-module domain events to subscribe to. |
-| `list-slots` | - | Named UI slots for extending the backoffice. |
-| `describe-module` | `name` | One module's tables + routes. |
-| `schema-get` | `name` | Where a Zod contract schema is defined. |
-| `get-config-schema` | - | iGaming-config token, source, and fields. |
+| Tool                | Args      | Purpose                                                 |
+| ------------------- | --------- | ------------------------------------------------------- |
+| `catalog-overview`  | -         | Start here: counts + adapter table + config fields.     |
+| `list-adapters`     | -         | Vendor swap-seams: interface, token, wired-vs-stub.     |
+| `list-routes`       | `module?` | oRPC route namespaces, optionally scoped to one module. |
+| `list-events`       | -         | Cross-module domain events to subscribe to.             |
+| `list-slots`        | -         | Named UI slots for extending the backoffice.            |
+| `describe-module`   | `name`    | One module's tables + routes.                           |
+| `schema-get`        | `name`    | Where a Zod contract schema is defined.                 |
+| `get-config-schema` | -         | iGaming-config token, source, and fields.               |
 
 All tools are read-only. If the catalog cannot be located, every tool returns a
 helpful message instead of crashing.
@@ -46,10 +46,10 @@ order:
       "command": "npx",
       "args": ["@oss/mcp"],
       "env": {
-        "OSS_CATALOG": "./node_modules/@oss/mcp/docs/catalog.json"
-      }
-    }
-  }
+        "OSS_CATALOG": "./node_modules/@oss/mcp/docs/catalog.json",
+      },
+    },
+  },
 }
 ```
 

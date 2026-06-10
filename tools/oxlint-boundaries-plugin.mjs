@@ -76,7 +76,7 @@ const noModuleInternalImport = {
             'Import a module only through its public entry ' +
             '(@oss/modules/<group>/<name>) or its schema subpath ' +
             '(@oss/modules/<group>/<name>/schema). Reaching into a module ' +
-            "(service/, router/, ui/, ...) is forbidden. See AGENTS.md > Dependency rules.",
+            '(service/, router/, ui/, ...) is forbidden. See AGENTS.md > Dependency rules.',
         });
       },
     };
@@ -134,7 +134,11 @@ const noPlatformToModule = {
         if (inPath(file, 'packages/platform/api-runtime')) return;
         if (inPath(file, 'packages/platform/testing')) return;
         const spec = node.source.value;
-        if (spec === '@oss/modules' || spec.startsWith('@oss/modules/') || spec.startsWith('@oss/ui-')) {
+        if (
+          spec === '@oss/modules' ||
+          spec.startsWith('@oss/modules/') ||
+          spec.startsWith('@oss/ui-')
+        ) {
           context.report({
             node,
             message:
@@ -148,8 +152,13 @@ const noPlatformToModule = {
 };
 
 const blocked_by_contracts = [
-  '@oss/modules', '@oss/core', '@oss/db', '@oss/auth',
-  '@oss/plugin-host', '@oss/api-runtime', '@oss/sdk-core',
+  '@oss/modules',
+  '@oss/core',
+  '@oss/db',
+  '@oss/auth',
+  '@oss/plugin-host',
+  '@oss/api-runtime',
+  '@oss/sdk-core',
 ];
 
 const noContractsToRuntime = {
@@ -238,6 +247,54 @@ const noCrossExtensionImport = {
   },
 };
 
+// A router (src/router/*.ts) is thin oRPC wiring: resolve the caller, call the
+// service, map errors. The canonical request/response shapes live in the contract
+// slice (@oss/orpc-contract/<module>) - the single source of truth that also emits
+// OpenAPI + the typed client. Defining a Zod schema inline in a router (`z.object`,
+// `z.array`, ...) forks that source of truth and drifts the spec. Flag every
+// schema-constructing `z.<method>(...)` call in a router file. See clean-architecture.md.
+const ZOD_BUILDERS = new Set([
+  'object',
+  'array',
+  'string',
+  'number',
+  'boolean',
+  'enum',
+  'nativeEnum',
+  'union',
+  'discriminatedUnion',
+  'record',
+  'tuple',
+  'literal',
+  'intersection',
+]);
+const noAdhocZodInRouter = {
+  create(context) {
+    return {
+      CallExpression(node) {
+        const file = filename(context);
+        if (!inPath(file, 'src/router')) return;
+        const callee = node.callee;
+        if (
+          callee?.type === 'MemberExpression' &&
+          callee.object?.type === 'Identifier' &&
+          callee.object.name === 'z' &&
+          callee.property?.type === 'Identifier' &&
+          ZOD_BUILDERS.has(callee.property.name)
+        ) {
+          context.report({
+            node,
+            message:
+              `Ad-hoc Zod (z.${callee.property.name}(...)) in a router. Define the shape in ` +
+              'the contract slice (@oss/orpc-contract/<module>) - the source of truth for ' +
+              'validation + OpenAPI + the typed client - and reference it. See clean-architecture.md.',
+          });
+        }
+      },
+    };
+  },
+};
+
 export default {
   meta: { name: 'oss-boundaries' },
   rules: {
@@ -248,5 +305,6 @@ export default {
     'no-contracts-to-runtime': noContractsToRuntime,
     'no-deep-dist-import': noDeepDistImport,
     'no-cross-extension-import': noCrossExtensionImport,
+    'no-adhoc-zod-in-router': noAdhocZodInRouter,
   },
 };

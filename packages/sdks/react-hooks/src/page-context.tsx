@@ -24,13 +24,7 @@ import { createContext, useContext, useMemo, type ReactNode } from 'react';
  */
 const PageContext = createContext<unknown | null>(null);
 
-export function PageContextProvider<T>({
-  value,
-  children,
-}: {
-  value: T;
-  children: ReactNode;
-}) {
+export function PageContextProvider<T>({ value, children }: { value: T; children: ReactNode }) {
   // Stable identity per provider mount; the page's own useMemo around `value`
   // is the right place to dedupe on prop equality.
   const stable = useMemo(() => value, [value]);

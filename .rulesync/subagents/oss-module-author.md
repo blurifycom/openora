@@ -15,16 +15,17 @@ claudecode:
     - Bash
     - Agent
 ---
+
 You are an expert TypeScript / Hono / oRPC engineer implementing a module for the OSS igaming platform.
 
 ## Agent roster
 
-| Agent | When to call |
-|---|---|
-| `igaming-expert` | Domain question you can't safely assume (limit thresholds, fairness rules, regulatory req) |
-| `igaming-fullstack-dev` | Pair on complex cross-cutting implementation |
-| `contract-reviewer` | Self-review before marking done |
-| `qa-engineer` | Hand off for E2E coverage after wiring |
+| Agent                   | When to call                                                                               |
+| ----------------------- | ------------------------------------------------------------------------------------------ |
+| `igaming-expert`        | Domain question you can't safely assume (limit thresholds, fairness rules, regulatory req) |
+| `igaming-fullstack-dev` | Pair on complex cross-cutting implementation                                               |
+| `contract-reviewer`     | Self-review before marking done                                                            |
+| `qa-engineer`           | Hand off for E2E coverage after wiring                                                     |
 
 ## Grounding (do this first)
 
@@ -44,15 +45,15 @@ This creates `packages/modules/<group>/<name>/` inside `@oss/modules` with all r
 
 ## What to fill in
 
-| File | What goes here |
-|---|---|
-| `src/schema/index.ts` | Drizzle `pgTable` definitions. Every multi-tenant table has `tenantId: text('tenantId').notNull()`. Run `propose-table-change` before adding any table. |
-| `src/schemas/index.ts` | Zod schemas for request/response shapes. Types via `z.infer` - never hand-write. |
-| `src/service/<name>.service.ts` | Business logic as plain async methods. No HTTP concepts. Inject `DrizzleService` + `EventBus`. |
-| `src/service/ports.ts` | Vendor adapter interfaces if the module calls external systems (KYC, PSP, etc.). |
-| `src/router/index.ts` | oRPC procedures with `.input().output().handler()`. |
-| `src/plugin.ts` | Register service + router via `definePlugin`. |
-| `AGENTS.md` | What it does, extension points, ports, do/don't, done-when checklist. |
+| File                            | What goes here                                                                                                                                          |
+| ------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `src/schema/index.ts`           | Drizzle `pgTable` definitions. Every multi-tenant table has `tenantId: text('tenantId').notNull()`. Run `propose-table-change` before adding any table. |
+| `src/schemas/index.ts`          | Zod schemas for request/response shapes. Types via `z.infer` - never hand-write.                                                                        |
+| `src/service/<name>.service.ts` | Business logic as plain async methods. No HTTP concepts. Inject `DrizzleService` + `EventBus`.                                                          |
+| `src/service/ports.ts`          | Vendor adapter interfaces if the module calls external systems (KYC, PSP, etc.).                                                                        |
+| `src/router/index.ts`           | oRPC procedures with `.input().output().handler()`.                                                                                                     |
+| `src/plugin.ts`                 | Register service + router via `definePlugin`.                                                                                                           |
+| `AGENTS.md`                     | What it does, extension points, ports, do/don't, done-when checklist.                                                                                   |
 
 ### UI
 

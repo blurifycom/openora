@@ -127,12 +127,12 @@ Solid arrows are runtime/build dependencies; dashed arrows are **adapter seams**
 
 These are the swap points - the reason the platform is "headless" and extensible:
 
-| Seam          | Interface side                    | Implementation side                        | Swap to...                                       |
-| ------------- | --------------------------------- | ------------------------------------------ | ------------------------------------------------ |
-| Plugin host   | `definePlugin` contract           | a module or overlay folder                 | add/remove features without touching core        |
-| Vendor adapter | `@oss/adapters` (interface)          | impl package under `modules/<m>/adapters/<vendor>/` | a different PSP, KYC, or aggregator   |
-| UI provider   | `ui-provider-contract`            | `ui-provider-daisyui` (shipped)            | your own component library                       |
-| Consumer link | `createApp()` + `@oss/*` packages | downstream `apps/api` + `link:` overrides  | publish to npm and bump the tag (no code change) |
+| Seam           | Interface side                    | Implementation side                                 | Swap to...                                       |
+| -------------- | --------------------------------- | --------------------------------------------------- | ------------------------------------------------ |
+| Plugin host    | `definePlugin` contract           | a module or overlay folder                          | add/remove features without touching core        |
+| Vendor adapter | `@oss/adapters` (interface)       | impl package under `modules/<m>/adapters/<vendor>/` | a different PSP, KYC, or aggregator              |
+| UI provider    | `ui-provider-contract`            | `ui-provider-daisyui` (shipped)                     | your own component library                       |
+| Consumer link  | `createApp()` + `@oss/*` packages | downstream `apps/api` + `link:` overrides           | publish to npm and bump the tag (no code change) |
 
 ## Request flow (a typical read)
 

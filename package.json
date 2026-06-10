@@ -2,6 +2,13 @@
   "name": "oss-igaming-platform",
   "version": "0.0.1",
   "private": true,
+  "description": "Open-source, headless, plugin-based, AI-native igaming platform",
+  "homepage": "https://github.com/oss-igaming/igaming-oss",
+  "author": "OSS iGaming contributors",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/oss-igaming/igaming-oss.git"
+  },
   "scripts": {
     "build": "turbo run build",
     "dev": "turbo run dev",
@@ -19,14 +26,17 @@
     "format:check": "oxfmt --check",
     "sync:agents": "rulesync generate",
     "prepare": "rulesync generate",
-    "scaffold": "tsx tools/scaffold.ts",
+    "gen": "tsx tools/gen.ts",
+    "scaffold": "tsx tools/gen.ts",
     "create:app": "tsx tools/create-igaming-app.ts",
     "create:service": "tsx tools/create-service.ts",
-    "regen": "turbo run codegen && pnpm -F @oss/db generate && pnpm run gen:catalog",
+    "regen": "turbo run codegen && pnpm -F @oss/db generate && pnpm run gen:rls && pnpm run gen:catalog",
     "gen:catalog": "tsx tools/gen-catalog.ts",
+    "gen:rls": "tsx tools/gen-rls.ts",
     "seed": "tsx tools/seed.ts",
     "verify": "turbo run typecheck test:unit && pnpm run lint && pnpm run verify:shape",
-    "verify:drift": "tsx tools/gen-catalog.ts && git diff --exit-code -- docs/catalog.json docs/CATALOG.md",
+    "verify:drift": "turbo run codegen && tsx tools/gen-catalog.ts && git diff --exit-code -- docs/catalog.json docs/CATALOG.md docs/openapi.json",
+    "eval:scaffold": "tsx tools/eval-scaffold.ts",
     "setup:agent": "tsx tools/setup-agent.ts",
     "setup:mcp": "tsx tools/setup-mcp.ts"
   },
@@ -34,6 +44,8 @@
     "@oss/api-runtime": "workspace:*",
     "@oss/auth": "workspace:*",
     "@oss/db": "workspace:*",
+    "@oss/turbo-generators": "workspace:*",
+    "@turbo/gen": "2.9.16",
     "@types/node": "25.9.2",
     "oxfmt": "0.54.0",
     "oxlint": "1.69.0",
@@ -44,7 +56,7 @@
   },
   "engines": {
     "node": ">=26.0.0",
-    "pnpm": ">=10.0.0"
+    "pnpm": ">=11.0.0"
   },
   "packageManager": "pnpm@11.1.3"
 }

@@ -39,8 +39,8 @@ Multi-brand operators that need a real tenant before auth resolve it from host/b
 
 ## Ports
 
-| Symbol          | Interface      | Default impl               |
-| --------------- | -------------- | -------------------------- |
+| Symbol         | Interface     | Default impl              |
+| -------------- | ------------- | ------------------------- |
 | `GAME_ADAPTER` | `GameAdapter` | `MockGameAdapter` (no-op) |
 
 To provide a real adapter:

@@ -84,9 +84,7 @@ export class BullMqJobQueue implements JobQueueAdapter {
       jobId: opts.idempotencyKey, // dedupe: a second add with the same id is a no-op
       delay: opts.delayMs,
       attempts: opts.attempts,
-      backoff: opts.backoff
-        ? { type: opts.backoff.type, delay: opts.backoff.delayMs }
-        : undefined,
+      backoff: opts.backoff ? { type: opts.backoff.type, delay: opts.backoff.delayMs } : undefined,
       priority: opts.priority,
       removeOnComplete: true,
       removeOnFail: false, // keep failed jobs for inspection / DLQ visibility

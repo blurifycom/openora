@@ -2,16 +2,16 @@
   "name": "@oss/turbo-generators",
   "version": "0.0.1",
   "private": true,
-  "type": "module",
   "description": "Shared turbo gen generators for downstream igaming consumers (plugin / adapter / page).",
+  "files": [
+    "src"
+  ],
+  "type": "module",
+  "main": "./src/config.ts",
   "exports": {
     ".": "./src/config.ts",
     "./package.json": "./package.json"
   },
-  "main": "./src/config.ts",
-  "files": [
-    "src"
-  ],
   "scripts": {
     "typecheck": "tsc --noEmit"
   },

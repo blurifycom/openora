@@ -1,0 +1,4 @@
+// Public surface of the {{pascalCase name}} module. Export only what other packages
+// may consume; internal implementation details stay private. Cross-module table
+// reads go through the `@oss/modules/{{group}}/{{kebabCase name}}/schema` subpath.
+export { {{pascalCase name}}Service } from './service/{{kebabCase name}}.service.js';

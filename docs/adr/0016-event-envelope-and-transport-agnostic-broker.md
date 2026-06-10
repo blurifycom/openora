@@ -35,14 +35,14 @@ still emits and subscribes through the `EventBus`, which owns the envelope.
 
 ```ts
 export interface EventEnvelope<T = unknown> {
-  eventId: string;        // UUID per emission - consumer-side idempotency/dedup
-  topic: string;          // domain event name, eg "wallet.deposit.completed"
-  payload: T;             // validated payload (matches domainEventSchemas)
-  occurredAt: string;     // ISO-8601 emission timestamp
-  schemaVersion: number;  // monotonic - forward-compatible payload evolution
-  tenantId?: string;      // pulled from tenant AsyncLocalStorage when present
-  orderingKey?: string;   // Kafka partition key / RabbitMQ routing for ordering
-  traceId?: string;       // distributed-trace correlation
+  eventId: string; // UUID per emission - consumer-side idempotency/dedup
+  topic: string; // domain event name, eg "wallet.deposit.completed"
+  payload: T; // validated payload (matches domainEventSchemas)
+  occurredAt: string; // ISO-8601 emission timestamp
+  schemaVersion: number; // monotonic - forward-compatible payload evolution
+  tenantId?: string; // pulled from tenant AsyncLocalStorage when present
+  orderingKey?: string; // Kafka partition key / RabbitMQ routing for ordering
+  traceId?: string; // distributed-trace correlation
 }
 
 export interface MessageBrokerAdapter {
@@ -76,13 +76,13 @@ export interface MessageBrokerAdapter {
 The envelope and `SubscribeOptions` were chosen so a Kafka adapter is a drop-in
 overlay with zero module changes:
 
-| Envelope / option | RabbitMQ overlay | Kafka / Redpanda |
-|---|---|---|
-| `topic` | routing key on the `oss.events` topic exchange | Kafka topic |
-| `orderingKey` | (routing only today) | partition key - preserves per-tenant/user order |
-| `consumerGroup` | durable shared queue name | consumer group id |
-| `eventId` | `messageId` property | idempotent-consumer dedup key |
-| `payload` + `schemaVersion` | JSON body | JSON/Avro body; version gates schema-registry evolution |
+| Envelope / option           | RabbitMQ overlay                               | Kafka / Redpanda                                        |
+| --------------------------- | ---------------------------------------------- | ------------------------------------------------------- |
+| `topic`                     | routing key on the `oss.events` topic exchange | Kafka topic                                             |
+| `orderingKey`               | (routing only today)                           | partition key - preserves per-tenant/user order         |
+| `consumerGroup`             | durable shared queue name                      | consumer group id                                       |
+| `eventId`                   | `messageId` property                           | idempotent-consumer dedup key                           |
+| `payload` + `schemaVersion` | JSON body                                      | JSON/Avro body; version gates schema-registry evolution |
 
 ## Consequences
 

@@ -109,7 +109,7 @@ the DaisyUI plugin in its own CSS build. For Tailwind v4, add a `postcss.config.
 (`{ plugins: ['@tailwindcss/postcss'] }`) and a global stylesheet:
 
 ```css
-@import "tailwindcss";
+@import 'tailwindcss';
 @plugin "daisyui";
 ```
 

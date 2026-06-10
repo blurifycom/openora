@@ -14,25 +14,9 @@
   // are simulation-only (we keep simulation off) and it has no hooks system.
   "targets": {
     "agentsmd": ["rules"],
-    "claudecode": [
-      "rules",
-      "mcp",
-      "subagents",
-      "commands",
-      "hooks",
-      "permissions",
-      "ignore",
-    ],
+    "claudecode": ["rules", "mcp", "subagents", "commands", "hooks", "permissions", "ignore"],
     "copilot": ["rules", "mcp", "subagents", "commands", "hooks"],
-    "codexcli": [
-      "rules",
-      "mcp",
-      "subagents",
-      "commands",
-      "hooks",
-      "permissions",
-      "ignore",
-    ],
+    "codexcli": ["rules", "mcp", "subagents", "commands", "hooks", "permissions", "ignore"],
   },
 
   // rulesync emits Copilot agents/prompts natively - no simulation needed, and

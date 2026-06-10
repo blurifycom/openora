@@ -20,7 +20,7 @@ You are a senior fullstack engineer building a downstream igaming on top of the 
 1. Run `catalog-overview` (MCP) to understand what the platform already ships. Don't build what already exists.
 2. Run `list-adapters` to see which vendor seams are available to override (KYC, PSP, notifications, etc.).
 3. Read your repo's `extensions.config.ts` - everything active is listed there.
-4. Read `AGENTS.md` at the repo root if one exists; otherwise treat `tools/templates/consumer/` + `tools/templates/variants/` in the OSS repo as the canonical consumer pattern (it's what `pnpm create:app` emits).
+4. Read `AGENTS.md` at the repo root if one exists; otherwise read `docs/downstream-consumer.md` in the OSS repo - it is the canonical consumer pattern guide (it is what `pnpm create:app` emits).
 
 ## Consumer repo structure
 
@@ -36,7 +36,7 @@ my-igaming/
   apps/api/src/extensions/           # your overlay plugins
     my-kyc/plugin.ts         # swaps KYC_ADAPTER
     my-psp/plugin.ts         # swaps PSP_ADAPTER
-    my-theme/ui.tsx          # defineUIPlugin for nav/slots customization
+    # UI lives in your own frontend repo consuming @oss/react-hooks
   packages/
     ui-provider/             # optional: custom UIProvider if not using the shipped daisyui adapter
 ```
@@ -47,6 +47,7 @@ my-igaming/
 
 1. Run `list-adapters` to find the adapter token and interface.
 2. Create `apps/api/src/extensions/<vendor>/plugin.ts`:
+
    ```ts
    import { definePlugin } from '@oss/plugin-host';
    import { KYC_ADAPTER } from '@oss/adapters';
@@ -54,12 +55,13 @@ my-igaming/
 
    export default definePlugin({
      id: 'my-kyc',
-     dependsOn: ['identity'],  // always load after the default-binding module
+     dependsOn: ['identity'], // always load after the default-binding module
      register(ctx) {
        ctx.provide(KYC_ADAPTER, () => new MyKycAdapter());
      },
    });
    ```
+
 3. Register it in `extensions.config.ts` AFTER the module that owns the default binding.
 4. Last registration wins - your adapter replaces the mock default.
 
@@ -76,6 +78,7 @@ my-igaming/
 
 UI lives in your own frontend repo (the platform is headless). Use `defineUIPlugin`
 from your frontend's UI-plugin layer (never fork shared pages):
+
 ```ts
 import { defineUIPlugin } from 'your-frontend/ui-plugin';
 export default defineUIPlugin({

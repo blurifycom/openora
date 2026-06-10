@@ -9,7 +9,7 @@
 
 The player-facing surface (casino lobby, sportsbook, wallet) needs SSR for first-paint and SEO, and must stay light for low-bandwidth / grey markets (a stated business requirement). The backoffice is a Vite + TanStack Router SPA (no SSR - see `apps/backoffice/` and the scaffolder's sole backoffice variant). The open question was the player app: stay on Next.js (the org knows it) or move to TanStack Start.
 
-A correction that shaped the comparison: as of 2026-05, TanStack's *RSC* support is still experimental. Its production-ready model is loaders + server functions on Vite, not RSC. So this is "Next App Router (RSC-first)" vs "TanStack Start (loaders + server functions)", not an RSC-vs-RSC race.
+A correction that shaped the comparison: as of 2026-05, TanStack's _RSC_ support is still experimental. Its production-ready model is loaders + server functions on Vite, not RSC. So this is "Next App Router (RSC-first)" vs "TanStack Start (loaders + server functions)", not an RSC-vs-RSC race.
 
 ## Method
 
@@ -19,15 +19,15 @@ That both shells run the same page bodies unchanged is itself the key finding: t
 
 ## Results
 
-| Criterion | Next.js 16 (Turbopack) | TanStack Start (Vite) | Winner |
-|---|---|---|---|
-| Total client JS (gzip) | ~281 KB | ~185 KB | TanStack (~34% smaller) |
-| Lobby first-load JS (gzip) | ~270 KB (large shared baseline, split across 99/69/48/39 KB chunks) | ~183 KB (one 175 KB vendor chunk + ~1-3 KB route chunks) | TanStack |
-| Production build | compile ~2.2s + tsc ~1.6s | client ~1.5s + nitro ~1.8s | comparable |
-| Real-time (live-odds SSE) | works (client page) | works (client page) | tie |
-| SSR data path | RSC server component awaits the fetcher | route `loader` calls the same fetcher | tie (same seam) |
-| Debugging ergonomics | RSC couples routing/fetching/render; opaque cache directives | explicit server functions, no implicit RSC execution | TanStack (per current community reports) |
-| Org familiarity / time-to-ship | ~90% of the org knows Next | new to the org | Next |
+| Criterion                      | Next.js 16 (Turbopack)                                              | TanStack Start (Vite)                                    | Winner                                   |
+| ------------------------------ | ------------------------------------------------------------------- | -------------------------------------------------------- | ---------------------------------------- |
+| Total client JS (gzip)         | ~281 KB                                                             | ~185 KB                                                  | TanStack (~34% smaller)                  |
+| Lobby first-load JS (gzip)     | ~270 KB (large shared baseline, split across 99/69/48/39 KB chunks) | ~183 KB (one 175 KB vendor chunk + ~1-3 KB route chunks) | TanStack                                 |
+| Production build               | compile ~2.2s + tsc ~1.6s                                           | client ~1.5s + nitro ~1.8s                               | comparable                               |
+| Real-time (live-odds SSE)      | works (client page)                                                 | works (client page)                                      | tie                                      |
+| SSR data path                  | RSC server component awaits the fetcher                             | route `loader` calls the same fetcher                    | tie (same seam)                          |
+| Debugging ergonomics           | RSC couples routing/fetching/render; opaque cache directives        | explicit server functions, no implicit RSC execution     | TanStack (per current community reports) |
+| Org familiarity / time-to-ship | ~90% of the org knows Next                                          | new to the org                                           | Next                                     |
 
 LCP on throttled 3G was not rig-measured here; it tracks first-load JS, so the ~90 KB gzip delta predicts a meaningful TanStack advantage on slow links - exactly the low-bandwidth case that motivated the question.
 

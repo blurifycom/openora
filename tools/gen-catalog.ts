@@ -26,7 +26,8 @@ const read = (p: string): string => (existsSync(p) ? readFileSync(p, 'utf8') : '
 function walk(dir: string, ext: string, acc: string[] = []): string[] {
   if (!existsSync(dir)) return acc;
   for (const e of readdirSync(dir)) {
-    if (e.startsWith('node_modules') || ['dist', '.next', '.turbo', 'coverage'].includes(e)) continue;
+    if (e.startsWith('node_modules') || ['dist', '.next', '.turbo', 'coverage'].includes(e))
+      continue;
     const full = join(dir, e);
     let st;
     try {
@@ -88,12 +89,17 @@ function collectAdapters(): AdapterInfo[] {
     const src = readFileSync(join(dir, file), 'utf8');
     // Prefer the primary *Adapter interface over helper interfaces in the same file.
     const iface =
-      src.match(/export interface (\w*Adapter)\b/)?.[1] ?? src.match(/export interface (\w+)/)?.[1] ?? '';
-    const token = src.match(/export const (\w+)(?::\s*Token<[^>]*>)?\s*=\s*(?:createToken|Symbol)/)?.[1] ?? '';
+      src.match(/export interface (\w*Adapter)\b/)?.[1] ??
+      src.match(/export interface (\w+)/)?.[1] ??
+      '';
+    const token =
+      src.match(/export const (\w+)(?::\s*Token<[^>]*>)?\s*=\s*(?:createToken|Symbol)/)?.[1] ?? '';
     if (!token) continue;
     const boundIn = moduleSrc
       .filter(({ src }) =>
-        new RegExp(`(provide\\(\\s*${token}\\b|provide:\\s*${token}\\b|\\.get\\(\\s*${token}\\b|@Inject\\(\\s*${token}\\s*\\))`).test(src),
+        new RegExp(
+          `(provide\\(\\s*${token}\\b|provide:\\s*${token}\\b|\\.get\\(\\s*${token}\\b|@Inject\\(\\s*${token}\\s*\\))`,
+        ).test(src),
       )
       .map(({ f }) => f.replace(`${repoRoot}/`, ''))
       .sort();
@@ -113,7 +119,8 @@ function collectEvents(): string[] {
   const set = new Set<string>();
   for (const group of GROUPS) {
     for (const f of walk(join(repoRoot, 'packages', 'modules', group), '.ts')) {
-      for (const m of readFileSync(f, 'utf8').matchAll(/\.emit\(\s*'([a-z][\w.:-]+)'/g)) set.add(m[1]!);
+      for (const m of readFileSync(f, 'utf8').matchAll(/\.emit\(\s*'([a-z][\w.:-]+)'/g))
+        set.add(m[1]!);
     }
   }
   return [...set].sort();
@@ -127,9 +134,15 @@ function collectSlots(): Array<{ name: string; description: string }> {
   let pending = '';
   for (const line of src.split('\n')) {
     const jsdoc = line.match(/\/\*\*\s*(.+?)\s*\*\//);
-    if (jsdoc) { pending = (jsdoc[1] ?? '').trim(); continue; }
+    if (jsdoc) {
+      pending = (jsdoc[1] ?? '').trim();
+      continue;
+    }
     const slot = line.match(/:\s*'([a-z][a-z:]+)'/);
-    if (slot) { out.push({ name: slot[1]!, description: pending }); pending = ''; }
+    if (slot) {
+      out.push({ name: slot[1]!, description: pending });
+      pending = '';
+    }
   }
   return out.sort((a, b) => a.name.localeCompare(b.name));
 }
@@ -149,23 +162,34 @@ function collectSchemas(): Array<{ name: string; file: string }> {
 
 // --- igaming config shape (parse top-level keys + leading comment) ----------
 function collectConfigFields(): Array<{ key: string; note: string }> {
-  const src = read(join(repoRoot, 'packages', 'contracts', 'shared-schemas', 'src', 'igaming-config.ts'));
-  const body = src.match(/export const IgamingConfigSchema = z\s*\.object\(\{([\s\S]*?)\}\)/)?.[1] ?? '';
+  const src = read(
+    join(repoRoot, 'packages', 'contracts', 'shared-schemas', 'src', 'igaming-config.ts'),
+  );
+  const body =
+    src.match(/export const IgamingConfigSchema = z\s*\.object\(\{([\s\S]*?)\}\)/)?.[1] ?? '';
   const out: Array<{ key: string; note: string }> = [];
   const lines = body.split('\n');
   let note = '';
   for (const line of lines) {
     const c = line.match(/^\s*\/\/\s?(.*)/);
-    if (c) { note = note ? `${note} ${c[1]!.trim()}` : c[1]!.trim(); continue; }
+    if (c) {
+      note = note ? `${note} ${c[1]!.trim()}` : c[1]!.trim();
+      continue;
+    }
     const key = line.match(/^\s*(\w+):\s/);
-    if (key) { out.push({ key: key[1]!, note }); note = ''; }
+    if (key) {
+      out.push({ key: key[1]!, note });
+      note = '';
+    }
   }
   return out;
 }
 
 // --- plugin contract surface ------------------------------------------------
 function collectPluginSurface(): string[] {
-  const src = read(join(repoRoot, 'packages', 'platform', 'plugin-host', 'src', 'define-plugin.ts'));
+  const src = read(
+    join(repoRoot, 'packages', 'platform', 'plugin-host', 'src', 'define-plugin.ts'),
+  );
   const body = src.match(/export interface ModuleRegistry \{([\s\S]*?)\n\}/)?.[1] ?? '';
   return [...body.matchAll(/^\s{2}(\w+):/gm)].map((m) => m[1]!).sort();
 }
@@ -194,7 +218,11 @@ const catalog = {
   events: collectEvents(),
   uiSlots: collectSlots(),
   schemas: collectSchemas(),
-  config: { token: 'IGAMING_CONFIG', source: 'packages/contracts/shared-schemas/src/igaming-config.ts', fields: collectConfigFields() },
+  config: {
+    token: 'IGAMING_CONFIG',
+    source: 'packages/contracts/shared-schemas/src/igaming-config.ts',
+    fields: collectConfigFields(),
+  },
   pluginContract: collectPluginSurface(),
   httpRoutes: collectOpenApiRoutes(),
 };
@@ -218,7 +246,9 @@ function md(): string {
   L.push('| Category | Interface | Token | Status | Bound in |');
   L.push('| --- | --- | --- | --- | --- |');
   for (const a of catalog.adapters) {
-    L.push(`| ${a.category} | \`${a.interface}\` | \`${a.token}\` | ${a.status === 'wired' ? 'wired (default impl)' : 'STUB - not yet injected'} | ${a.boundIn.map((b) => `\`${b}\``).join('<br>') || '-'} |`);
+    L.push(
+      `| ${a.category} | \`${a.interface}\` | \`${a.token}\` | ${a.status === 'wired' ? 'wired (default impl)' : 'STUB - not yet injected'} | ${a.boundIn.map((b) => `\`${b}\``).join('<br>') || '-'} |`,
+    );
   }
   L.push('');
 
@@ -227,13 +257,17 @@ function md(): string {
   L.push('| Module | Group | Tables | Routes |');
   L.push('| --- | --- | --- | --- |');
   for (const m of catalog.modules) {
-    L.push(`| ${m.id} | ${m.group} | ${m.tables.join(', ') || '-'} | ${m.routes.join(', ') || '-'} |`);
+    L.push(
+      `| ${m.id} | ${m.group} | ${m.tables.join(', ') || '-'} | ${m.routes.join(', ') || '-'} |`,
+    );
   }
   L.push('');
 
   L.push('## Domain events');
   L.push('');
-  L.push('Emit/subscribe via the `EventBus` a service receives in its constructor (built in `plugin.ts` from `c.get(EVENT_BUS)`, token from `@oss/core`).');
+  L.push(
+    'Emit/subscribe via the `EventBus` a service receives in its constructor (built in `plugin.ts` from `c.get(EVENT_BUS)`, token from `@oss/core`).',
+  );
   L.push('');
   for (const e of catalog.events) L.push(`- \`${e}\``);
   L.push('');
@@ -266,7 +300,9 @@ function md(): string {
 
   L.push('## Zod schemas');
   L.push('');
-  L.push(`${catalog.schemas.length} schemas. Look one up by name with the \`schema-get\` MCP tool.`);
+  L.push(
+    `${catalog.schemas.length} schemas. Look one up by name with the \`schema-get\` MCP tool.`,
+  );
   L.push('');
   for (const s of catalog.schemas) L.push(`- \`${s.name}\` - ${s.file}`);
   L.push('');

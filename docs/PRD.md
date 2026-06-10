@@ -23,7 +23,7 @@ A monorepo containing an OSS, headless, plugin-based igaming platform that any t
 - **Plugin-based.** Every piece of functionality enters the system through a single `definePlugin({ id, register })` contract. The same contract works for in-tree overlays (`apps/api/src/extensions/<name>/`) and externally-published npm packages. Operators never fork core - they drop folders.
 - **End-to-end typed.** Zod schemas in one root package are the source of truth. oRPC turns them into validated routes, OpenAPI spec, TS-inferred clients, and (optionally) generated REST SDKs for non-TS consumers. There is no manual codegen step for TypeScript callers.
 - **AI-native.** Every module ships an `AGENTS.md`. An MCP dev server exposes the schema registry, route catalog, plugin manifest, and code scaffolders as tools. Repo-local slash commands (`/scaffold-module`, `/scaffold-plugin`, `/regen`, `/verify`) call the same code path humans use.
-- **Library-shaped for downstream consumers.** A downstream repo (eg `consumer/`) imports `@oss/api-runtime`, calls `createApp({ plugins, contract, ... })`, and gets a fully-configured Nest app. No forking of the OSS API entrypoint. Plugin-host overrides let consumers replace providers (eg swap the mock game provider for Consumer's real engine) without touching OSS code.
+- **Library-shaped for downstream consumers.** A downstream repo (eg `consumer/`) imports `@oss/api-runtime`, calls `createApp({ plugins, contract, ... })`, and gets a fully-configured Hono app. No forking of the OSS API entrypoint. Plugin-host overrides let consumers replace providers (eg swap the mock game provider for Consumer's real engine) without touching OSS code.
 
 The OSS ships 12 modules covering the full table-stakes surface: identity, wallet, gaming, lobby, chat, bonus, compliance, notifications, localization, cms, backoffice, igaming-aggregator. Each is replaceable by a plugin. Scaffold a new overlay with `/scaffold-plugin <name>` (drops into `apps/api/src/extensions/<name>/`); see `apps/api/src/extensions/AGENTS.md` for the contract.
 
@@ -109,20 +109,20 @@ The OSS ships 12 modules covering the full table-stakes surface: identity, walle
 
 **Feature modules (`packages/modules/*`):**
 
-| Module            | Owns                                                                         | Key ports                                   |
-| ----------------- | ---------------------------------------------------------------------------- | ------------------------------------------- |
-| identity          | User, Session, Account, Verification tables; register/login/logout/me routes | better-auth, KYC port (future)              |
-| wallet            | Wallet, WalletTransaction; balance/deposit/withdraw/transactions routes      | PaymentAdapter port                        |
-| gaming            | Game, GameRound; list/get/start-round/end-round routes                       | GameAdapter port, MockGameAdapter adapter |
-| lobby             | LobbyCategory, FeaturedSlot; categories/featured/search routes               | reads Game table cross-module               |
-| chat              | ChatRoom, ChatMessage; rooms/messages/global routes                          | future: SSE transport                       |
-| bonus             | Bonus, UserBonus; available/claim/user-bonuses routes                        | rollover engine                             |
-| compliance        | UserLimit, GeoRule; limits CRUD + geo-check routes                           | GeoIpAdapter                                   |
-| notifications     | Notification; list/mark-read/mark-all-read                                   | NotificationDeliveryAdapter                    |
-| localization      | Locale, Translation; locales/translations CRUD                               | i18next compatibility                       |
-| cms               | Page, Banner; pages CRUD + banners by placement                              | none                                        |
-| backoffice        | (no owned tables - reads cross-module) stats/users/transactions admin API    | none                                        |
-| igaming-aggregator | AggregatorAdapter; sync/providers/callback routes                           | AggregatorAdapter port                     |
+| Module             | Owns                                                                         | Key ports                                 |
+| ------------------ | ---------------------------------------------------------------------------- | ----------------------------------------- |
+| identity           | User, Session, Account, Verification tables; register/login/logout/me routes | better-auth, KYC port (future)            |
+| wallet             | Wallet, WalletTransaction; balance/deposit/withdraw/transactions routes      | PaymentAdapter port                       |
+| gaming             | Game, GameRound; list/get/start-round/end-round routes                       | GameAdapter port, MockGameAdapter adapter |
+| lobby              | LobbyCategory, FeaturedSlot; categories/featured/search routes               | reads Game table cross-module             |
+| chat               | ChatRoom, ChatMessage; rooms/messages/global routes                          | future: SSE transport                     |
+| bonus              | Bonus, UserBonus; available/claim/user-bonuses routes                        | rollover engine                           |
+| compliance         | UserLimit, GeoRule; limits CRUD + geo-check routes                           | GeoIpAdapter                              |
+| notifications      | Notification; list/mark-read/mark-all-read                                   | NotificationDeliveryAdapter               |
+| localization       | Locale, Translation; locales/translations CRUD                               | i18next compatibility                     |
+| cms                | Page, Banner; pages CRUD + banners by placement                              | none                                      |
+| backoffice         | (no owned tables - reads cross-module) stats/users/transactions admin API    | none                                      |
+| igaming-aggregator | AggregatorAdapter; sync/providers/callback routes                            | AggregatorAdapter port                    |
 
 **Pillar decisions (documented in ADRs):**
 
@@ -138,12 +138,12 @@ The OSS ships 12 modules covering the full table-stakes surface: identity, walle
 - **Plugin contract** (the binding interface for the entire system):
   ```
   definePlugin({ id, dependsOn?, register(ctx) }) -> Plugin
-  register receives ctx: ModuleRegistry { providers, controllers, routers, slots, events, mcp, imports }
+  register receives ctx: ModuleRegistry { provide, routers, slots, events, jobs, mcp }
   ```
 - **createApp contract** (the consumer-facing factory):
   ```
   createApp(config: CreateAppConfig) -> Promise<CreatedApp>
-  config: { plugins, port?, cors?, databaseUrl?, contract?, openapi?, extraImports?, extraProviders?, disableHealthModule? }
+  config: { plugins, port?, cors?, databaseUrl?, contract?, openapi?, igaming?, configure? }
   returns: { app, port, listen(), emitOpenApiSpec(), close() }
   ```
 - **Module router contract**: every module exports a `create<Name>Router(deps)` factory that builds the router with `implement(<moduleContract>).$context<OssContext>()` and `.handler(...)` per procedure. No decorators; the plugin mounts it via `ctx.routers.add(namespace, (c) => create<Name>Router(...))`.

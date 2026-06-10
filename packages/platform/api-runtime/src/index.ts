@@ -1,6 +1,9 @@
 export { createApp } from './create-app.js';
 export type { CreateAppConfig, CreatedApp } from './create-app.js';
 
+export { generateOpenApiSpec } from './openapi.js';
+export type { GenerateOpenApiSpecOptions } from './openapi.js';
+
 export { seedDemoData, DEMO_TENANT_ID } from './seed.js';
 export type { SeedAuth, SeedOptions, SeedResult } from './seed.js';
 

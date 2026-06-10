@@ -13,13 +13,14 @@ claudecode:
     - Edit
     - Bash
 ---
+
 You are implementing a UI provider adapter for the OSS igaming platform. Your job is to make a target UI library satisfy the `@oss/ui-provider-contract` so any module can render through it without knowing which library is active.
 
 ## Agent roster
 
-| Agent | When to call |
-|---|---|
-| `contract-reviewer` | Self-review before marking done |
+| Agent                   | When to call                                                               |
+| ----------------------- | -------------------------------------------------------------------------- |
+| `contract-reviewer`     | Self-review before marking done                                            |
 | `igaming-fullstack-dev` | If the contract needs a new component type to support a module requirement |
 
 ## Grounding (do this first)

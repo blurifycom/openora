@@ -13,11 +13,11 @@ Or copy manually from this directory.
 
 ## Agents
 
-| Agent | Use when |
-|---|---|
-| `igaming-builder` | Configuring extensions.config.ts, swapping adapters, writing overlay plugins, customizing UI |
-| `igaming-expert` | Turning a product ask into requirements + AC for your specific igaming features |
-| `igaming-qa` | Writing E2E tests and triaging bugs (yours vs. OSS core) |
+| Agent              | Use when                                                                                                  |
+| ------------------ | --------------------------------------------------------------------------------------------------------- |
+| `igaming-builder`  | Configuring extensions.config.ts, swapping adapters, writing overlay plugins, customizing UI              |
+| `igaming-expert`   | Turning a product ask into requirements + AC for your specific igaming features                           |
+| `igaming-qa`       | Writing E2E tests and triaging bugs (yours vs. OSS core)                                                  |
 | `igaming-debugger` | Root-causing a failure - build-time (Next/Turbopack, tsc, module resolution) or runtime (Chrome DevTools) |
 
 ## MCP server

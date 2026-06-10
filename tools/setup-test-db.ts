@@ -12,7 +12,8 @@
 import { Client } from 'pg';
 
 const TEST_URL =
-  process.env['TEST_DATABASE_URL'] ?? 'postgres://postgres:postgres@localhost:5432/oss_igaming_test';
+  process.env['TEST_DATABASE_URL'] ??
+  'postgres://postgres:postgres@localhost:5432/oss_igaming_test';
 
 async function main() {
   const url = new URL(TEST_URL);

@@ -1,0 +1,34 @@
+import { definePlugin } from '@oss/plugin-host';
+import { queue } from '@oss/adapters';
+import * as z from 'zod';
+
+// Background-job worker overlay for the '{{kebabCase name}}' queue. A service enqueues
+// work with `jobQueue.enqueue(queue('{{kebabCase name}}'), payload, { idempotencyKey })`
+// (resolve JOB_QUEUE from @oss/adapters in its plugin.ts); this overlay consumes it.
+// Delivery is AT-LEAST-ONCE - the handler MUST be idempotent (a DB unique-row guard,
+// not just idempotencyKey, for money). The default driver is in-process; the bullmq
+// overlay rebinds JOB_QUEUE to Redis when REDIS_URL is set. See ADR-0014.
+const {{camelCase name}}Payload = z.object({
+  // AGENT: define the job payload
+  id: z.string(),
+});
+
+export default definePlugin({
+  id: '{{kebabCase name}}-worker',
+  register(ctx) {
+    ctx.jobs.worker({
+      queue: queue('{{kebabCase name}}'),
+      schema: {{camelCase name}}Payload,
+      handler: async ({ payload, attempt }) => {
+        void attempt;
+        // AGENT: process the job idempotently.
+        void payload;
+      },
+      onDeadLetter: (ctx, error) => {
+        void ctx;
+        void error;
+        // AGENT: alert / persist the poison job after retries are exhausted.
+      },
+    });
+  },
+});

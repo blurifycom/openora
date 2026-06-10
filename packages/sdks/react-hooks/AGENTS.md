@@ -4,26 +4,26 @@ Leaf SDK package - data hooks, transport, auth, UIProvider context, and cross-cu
 
 ## Subpaths
 
-| Entry | What | Bundled in |
-|---|---|---|
-| `.` (root) | client-only data hooks + helpers; safe wherever React runs | client bundle |
+| Entry      | What                                                                                                       | Bundled in      |
+| ---------- | ---------------------------------------------------------------------------------------------------------- | --------------- |
+| `.` (root) | client-only data hooks + helpers; safe wherever React runs                                                 | client bundle   |
 | `./server` | RSC-only prefetchers (`prefetchLobby`, `prefetchGames`, `prefetchWallet`). No `'use client'`, no React-DOM | RSC server only |
 
 A consumer's Next App Router route file imports `prefetch*` from `./server` to seed the cache, then renders its own page component (from the frontend repo) to hydrate the client tree.
 
 ## What lives here
 
-| Export | Purpose |
-|---|---|
-| `createClient`, `useOrpcClient`, `ApiClientProvider`, `useApiClient` | typed oRPC client wiring |
-| `useSession`, `useLogin`, `useLogout`, `useRegister`, `useCurrentUser` | auth hooks via `@oss/auth` better-auth integration |
-| `useUI`, `UIProvider` | UIProvider context (provides `Button`/`DataTable`/etc primitives to the consumer frontend) |
-| `usePaginatedList` | generic paginated query wrapper |
-| `useEventStream` | SSE subscription for real-time surfaces (sportsbook odds, etc) |
-| `usePageContext<T>`, `PageContextProvider<T>`, `useOptionalPageContext<T>` | typed page-scoped data sharing - host page exposes its loaded data; slot fills read it. Throws if used outside any provider. |
-| `useDataExtension(pluginId, key, fetcher, args?)` | namespaced TanStack Query slot for plugin-injected data. Two plugins reading the same `(pluginId, key, args)` share one fetch. |
-| `RoleGate` | declarative role / permission / predicate-gated rendering. UI hiding only - server-side `AdminGuard` is the real authority. |
-| `prefetchLobby`, `prefetchGames`, `prefetchWallet`, `prefetchSportsbook` (`./server`) | RSC server-only prefetchers; build an oRPC client with forwarded cookies and seed a `QueryClient` |
+| Export                                                                                | Purpose                                                                                                                        |
+| ------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------ |
+| `createClient`, `useOrpcClient`, `ApiClientProvider`, `useApiClient`                  | typed oRPC client wiring                                                                                                       |
+| `useSession`, `useLogin`, `useLogout`, `useRegister`, `useCurrentUser`                | auth hooks via `@oss/auth` better-auth integration                                                                             |
+| `useUI`, `UIProvider`                                                                 | UIProvider context (provides `Button`/`DataTable`/etc primitives to the consumer frontend)                                     |
+| `usePaginatedList`                                                                    | generic paginated query wrapper                                                                                                |
+| `useEventStream`                                                                      | SSE subscription for real-time surfaces (sportsbook odds, etc)                                                                 |
+| `usePageContext<T>`, `PageContextProvider<T>`, `useOptionalPageContext<T>`            | typed page-scoped data sharing - host page exposes its loaded data; slot fills read it. Throws if used outside any provider.   |
+| `useDataExtension(pluginId, key, fetcher, args?)`                                     | namespaced TanStack Query slot for plugin-injected data. Two plugins reading the same `(pluginId, key, args)` share one fetch. |
+| `RoleGate`                                                                            | declarative role / permission / predicate-gated rendering. UI hiding only - server-side `AdminGuard` is the real authority.    |
+| `prefetchLobby`, `prefetchGames`, `prefetchWallet`, `prefetchSportsbook` (`./server`) | RSC server-only prefetchers; build an oRPC client with forwarded cookies and seed a `QueryClient`                              |
 
 ## Hard rules
 

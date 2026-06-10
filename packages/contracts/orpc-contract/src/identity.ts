@@ -42,9 +42,7 @@ export const identityContract = {
       }),
     ),
 
-  logout: oc
-    .route({ method: 'POST', path: '/identity/logout' })
-    .output(IdentitySuccessSchema),
+  logout: oc.route({ method: 'POST', path: '/identity/logout' }).output(IdentitySuccessSchema),
 
   me: oc.route({ method: 'GET', path: '/identity/me' }).output(UserSchema.nullable()),
 

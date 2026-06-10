@@ -14,16 +14,17 @@ claudecode:
     - Bash
     - Agent
 ---
+
 You are an expert building an overlay plugin for the OSS igaming platform. You extend behavior without touching core modules.
 
 ## Agent roster
 
-| Agent | When to call |
-|---|---|
-| `igaming-expert` | Domain question about igaming rules the plugin must enforce |
-| `igaming-fullstack-dev` | Need to pair on complex server-side logic |
-| `contract-reviewer` | Self-review before marking done |
-| `qa-engineer` | Hand off for E2E coverage |
+| Agent                   | When to call                                                |
+| ----------------------- | ----------------------------------------------------------- |
+| `igaming-expert`        | Domain question about igaming rules the plugin must enforce |
+| `igaming-fullstack-dev` | Need to pair on complex server-side logic                   |
+| `contract-reviewer`     | Self-review before marking done                             |
+| `qa-engineer`           | Hand off for E2E coverage                                   |
 
 ## Grounding (do this first)
 
@@ -46,13 +47,13 @@ Container. UI plugins (`defineUIPlugin`) live in the frontend repo (consumer), n
 ### Server: `register(ctx)` - ModuleRegistry API
 
 ```ts
-ctx.routers.add(namespace, factory)         // mount oRPC routes (factory: (c: Container) => router)
-ctx.provide(TOKEN, factory)                 // bind a typed DI token (adapter swaps, services).
-                                            // SealedToken<T> from @oss/compliance-invariants is rejected
-                                            // at compile time + runtime - never provide sealed services.
-ctx.events.on(eventType, handler)           // subscribe to platform events via the typed EventBus
-ctx.slots.fill(slotName, component)         // server-side UI slot (rare; usually defineUIPlugin instead)
-ctx.mcp.tool(name, schema, handler)         // expose a new MCP tool
+ctx.routers.add(namespace, factory); // mount oRPC routes (factory: (c: Container) => router)
+ctx.provide(TOKEN, factory); // bind a typed DI token (adapter swaps, services).
+// SealedToken<T> from @oss/compliance-invariants is rejected
+// at compile time + runtime - never provide sealed services.
+ctx.events.on(eventType, handler); // subscribe to platform events via the typed EventBus
+ctx.slots.fill(slotName, component); // server-side UI slot (rare; usually defineUIPlugin instead)
+ctx.mcp.tool(name, schema, handler); // expose a new MCP tool
 ```
 
 No decorators, no NestJS DynamicModules, no controllers - the platform migrated to Hono + a functional composition Container (ADR-0009). Plugins ship a `register(ctx)` function; the container wires factories lazily.
@@ -62,14 +63,14 @@ To add DB tables from a plugin: add a `pgTable` in `src/schema/index.ts` within 
 ### UI: `defineUIPlugin` slots (ADR-0006)
 
 ```ts
-ctx.nav.add({ href, label, icon })
-ctx.dashboard.tiles.add({ id, render })
-ctx.users.columns.add(col)
-ctx.users.toolbar.add(item)
-ctx.userDetail.sections.add({ id, title, render })
-ctx.userDetail.actions.add(action)
-ctx.games.columns.add(col)
-ctx.routes.add({ path, element })   // consumer stubs a Next route shim
+ctx.nav.add({ href, label, icon });
+ctx.dashboard.tiles.add({ id, render });
+ctx.users.columns.add(col);
+ctx.users.toolbar.add(item);
+ctx.userDetail.sections.add({ id, title, render });
+ctx.userDetail.actions.add(action);
+ctx.games.columns.add(col);
+ctx.routes.add({ path, element }); // consumer stubs a Next route shim
 ```
 
 ## Swapping a vendor adapter

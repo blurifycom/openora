@@ -13,11 +13,11 @@ This is a modular monolith today, designed so high-impact modules can be extract
 
 ## The three seams (all in `@oss/adapters`, default impls in `@oss/core`)
 
-| Seam | Token | For | Default | Durable overlay |
-|---|---|---|---|---|
-| Inter-module domain events | `MESSAGE_BROKER` | one module reacts to another | in-process `InMemoryBroker` | RabbitMQ (`AMQP_URL`) |
-| Background jobs | `JOB_QUEUE` | durable/retryable/scheduled work | in-process `InProcessJobQueue` | BullMQ + Redis (`REDIS_URL`) |
-| Client push | `REALTIME_TRANSPORT` | SSE/WS to the browser | in-process transport | managed vendor (Ably/GetStream) |
+| Seam                       | Token                | For                              | Default                        | Durable overlay                 |
+| -------------------------- | -------------------- | -------------------------------- | ------------------------------ | ------------------------------- |
+| Inter-module domain events | `MESSAGE_BROKER`     | one module reacts to another     | in-process `InMemoryBroker`    | RabbitMQ (`AMQP_URL`)           |
+| Background jobs            | `JOB_QUEUE`          | durable/retryable/scheduled work | in-process `InProcessJobQueue` | BullMQ + Redis (`REDIS_URL`)    |
+| Client push                | `REALTIME_TRANSPORT` | SSE/WS to the browser            | in-process transport           | managed vendor (Ably/GetStream) |
 
 `MESSAGE_BROKER` is module-to-module. `REALTIME_TRANSPORT` is server-to-client. Do not conflate them.
 
@@ -31,17 +31,17 @@ The same codebase boots as the full monolith or as a single-purpose service. `SE
 
 ## Choose the channel: command vs event vs job
 
-| Need | Channel | How |
-|---|---|---|
+| Need                                              | Channel                      | How                                                                          |
+| ------------------------------------------------- | ---------------------------- | ---------------------------------------------------------------------------- |
 | "I need an answer / a mutation now" (incl. money) | **synchronous command port** | a `@oss/adapters` port (eg `WALLET_COMMANDS`), called in-process - see below |
-| "this happened, others may react" | **domain event** | `EventBus` (`MESSAGE_BROKER`) |
-| "do this reliably later" | **background job** | `JOB_QUEUE` |
+| "this happened, others may react"                 | **domain event**             | `EventBus` (`MESSAGE_BROKER`)                                                |
+| "do this reliably later"                          | **background job**           | `JOB_QUEUE`                                                                  |
 
 Never move money or a needed-now answer over events.
 
 ## Synchronous cross-module commands - command ports (ADR-0017)
 
-When module A must mutate or query module B *synchronously* (money, a value it needs now), it goes through a **command port** that B owns - not by importing B's tables. Reference: sportsbook debits the wallet via `WALLET_COMMANDS.debit(tx, { userId, amount })`, passing its own transaction handle, so bet-insert + debit stay atomic in-process. The wallet module binds the default `WalletCommandsService`; a remote wallet service later binds an implementation that runs a saga - the caller is unchanged. Declare `dependsOn: ['<owner>']` in the consumer's plugin so the port is registered first and load order is pinned for a future split.
+When module A must mutate or query module B _synchronously_ (money, a value it needs now), it goes through a **command port** that B owns - not by importing B's tables. Reference: sportsbook debits the wallet via `WALLET_COMMANDS.debit(tx, { userId, amount })`, passing its own transaction handle, so bet-insert + debit stay atomic in-process. The wallet module binds the default `WalletCommandsService`; a remote wallet service later binds an implementation that runs a saga - the caller is unchanged. Declare `dependsOn: ['<owner>']` in the consumer's plugin so the port is registered first and load order is pinned for a future split.
 
 ## Domain events - always through `EventBus`, never the broker directly
 
@@ -73,12 +73,12 @@ Because the envelope and the EventBus boundary isolate transport from domain log
 
 ### Migration path: in-process -> RabbitMQ -> Kafka
 
-| Envelope / option | RabbitMQ overlay | Kafka / Redpanda |
-|---|---|---|
-| `topic` | routing key on the `oss.events` topic exchange | Kafka topic |
-| `orderingKey` | (routing) | partition key |
-| `consumerGroup` (`SubscribeOptions`) | durable shared queue (competing consumers) | consumer group id |
-| `eventId` | `messageId` | idempotent-consumer dedup |
+| Envelope / option                    | RabbitMQ overlay                               | Kafka / Redpanda          |
+| ------------------------------------ | ---------------------------------------------- | ------------------------- |
+| `topic`                              | routing key on the `oss.events` topic exchange | Kafka topic               |
+| `orderingKey`                        | (routing)                                      | partition key             |
+| `consumerGroup` (`SubscribeOptions`) | durable shared queue (competing consumers)     | consumer group id         |
+| `eventId`                            | `messageId`                                    | idempotent-consumer dedup |
 
 Activate RabbitMQ by setting `AMQP_URL` (eg `amqp://guest:guest@localhost:5672`); `docker compose --profile broker up` starts it. A Kafka adapter is a new overlay implementing `MessageBrokerAdapter` - no module change.
 

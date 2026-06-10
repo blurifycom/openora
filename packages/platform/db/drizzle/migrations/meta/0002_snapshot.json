@@ -41,9 +41,7 @@
         "geo_rule_countryCode_unique": {
           "name": "geo_rule_countryCode_unique",
           "nullsNotDistinct": false,
-          "columns": [
-            "countryCode"
-          ]
+          "columns": ["countryCode"]
         }
       },
       "policies": {},
@@ -255,12 +253,8 @@
           "name": "account_userId_user_id_fk",
           "tableFrom": "account",
           "tableTo": "user",
-          "columnsFrom": [
-            "userId"
-          ],
-          "columnsTo": [
-            "id"
-          ],
+          "columnsFrom": ["userId"],
+          "columnsTo": ["id"],
           "onDelete": "cascade",
           "onUpdate": "no action"
         }
@@ -347,12 +341,8 @@
           "name": "session_userId_user_id_fk",
           "tableFrom": "session",
           "tableTo": "user",
-          "columnsFrom": [
-            "userId"
-          ],
-          "columnsTo": [
-            "id"
-          ],
+          "columnsFrom": ["userId"],
+          "columnsTo": ["id"],
           "onDelete": "cascade",
           "onUpdate": "no action"
         }
@@ -362,9 +352,7 @@
         "session_token_unique": {
           "name": "session_token_unique",
           "nullsNotDistinct": false,
-          "columns": [
-            "token"
-          ]
+          "columns": ["token"]
         }
       },
       "policies": {},
@@ -460,9 +448,7 @@
         "user_email_unique": {
           "name": "user_email_unique",
           "nullsNotDistinct": false,
-          "columns": [
-            "email"
-          ]
+          "columns": ["email"]
         }
       },
       "policies": {},
@@ -579,9 +565,7 @@
         "locale_code_unique": {
           "name": "locale_code_unique",
           "nullsNotDistinct": false,
-          "columns": [
-            "code"
-          ]
+          "columns": ["code"]
         }
       },
       "policies": {},
@@ -663,12 +647,8 @@
           "name": "translation_localeId_locale_id_fk",
           "tableFrom": "translation",
           "tableTo": "locale",
-          "columnsFrom": [
-            "localeId"
-          ],
-          "columnsTo": [
-            "id"
-          ],
+          "columnsFrom": ["localeId"],
+          "columnsTo": ["id"],
           "onDelete": "cascade",
           "onUpdate": "no action"
         }
@@ -1060,12 +1040,8 @@
           "name": "user_bonus_bonusId_bonus_id_fk",
           "tableFrom": "user_bonus",
           "tableTo": "bonus",
-          "columnsFrom": [
-            "bonusId"
-          ],
-          "columnsTo": [
-            "id"
-          ],
+          "columnsFrom": ["bonusId"],
+          "columnsTo": ["id"],
           "onDelete": "no action",
           "onUpdate": "no action"
         }
@@ -1180,12 +1156,8 @@
           "name": "ChatMessage_roomId_ChatRoom_id_fk",
           "tableFrom": "ChatMessage",
           "tableTo": "ChatRoom",
-          "columnsFrom": [
-            "roomId"
-          ],
-          "columnsTo": [
-            "id"
-          ],
+          "columnsFrom": ["roomId"],
+          "columnsTo": ["id"],
           "onDelete": "no action",
           "onUpdate": "no action"
         }
@@ -1461,12 +1433,8 @@
           "name": "GameRound_gameId_Game_id_fk",
           "tableFrom": "GameRound",
           "tableTo": "Game",
-          "columnsFrom": [
-            "gameId"
-          ],
-          "columnsTo": [
-            "id"
-          ],
+          "columnsFrom": ["gameId"],
+          "columnsTo": ["id"],
           "onDelete": "no action",
           "onUpdate": "no action"
         }
@@ -1658,12 +1626,8 @@
           "name": "leaderboard_entry_leaderboardId_leaderboard_id_fk",
           "tableFrom": "leaderboard_entry",
           "tableTo": "leaderboard",
-          "columnsFrom": [
-            "leaderboardId"
-          ],
-          "columnsTo": [
-            "id"
-          ],
+          "columnsFrom": ["leaderboardId"],
+          "columnsTo": ["id"],
           "onDelete": "no action",
           "onUpdate": "no action"
         }
@@ -1894,12 +1858,8 @@
           "name": "LobbyCategoryGame_categoryId_LobbyCategory_id_fk",
           "tableFrom": "LobbyCategoryGame",
           "tableTo": "LobbyCategory",
-          "columnsFrom": [
-            "categoryId"
-          ],
-          "columnsTo": [
-            "id"
-          ],
+          "columnsFrom": ["categoryId"],
+          "columnsTo": ["id"],
           "onDelete": "cascade",
           "onUpdate": "no action"
         }
@@ -2159,12 +2119,8 @@
           "name": "SportsbookSelection_eventId_SportsbookEvent_id_fk",
           "tableFrom": "SportsbookSelection",
           "tableTo": "SportsbookEvent",
-          "columnsFrom": [
-            "eventId"
-          ],
-          "columnsTo": [
-            "id"
-          ],
+          "columnsFrom": ["eventId"],
+          "columnsTo": ["id"],
           "onDelete": "cascade",
           "onUpdate": "no action"
         }
@@ -2241,9 +2197,7 @@
         "wallet_userId_unique": {
           "name": "wallet_userId_unique",
           "nullsNotDistinct": false,
-          "columns": [
-            "userId"
-          ]
+          "columns": ["userId"]
         }
       },
       "policies": {},
@@ -2350,12 +2304,8 @@
           "name": "wallet_transaction_walletId_wallet_id_fk",
           "tableFrom": "wallet_transaction",
           "tableTo": "wallet",
-          "columnsFrom": [
-            "walletId"
-          ],
-          "columnsTo": [
-            "id"
-          ],
+          "columnsFrom": ["walletId"],
+          "columnsTo": ["id"],
           "onDelete": "no action",
           "onUpdate": "no action"
         }
@@ -2514,9 +2464,7 @@
         "page_slug_unique": {
           "name": "page_slug_unique",
           "nullsNotDistinct": false,
-          "columns": [
-            "slug"
-          ]
+          "columns": ["slug"]
         }
       },
       "policies": {},
@@ -2680,9 +2628,7 @@
         "player_userId_unique": {
           "name": "player_userId_unique",
           "nullsNotDistinct": false,
-          "columns": [
-            "userId"
-          ]
+          "columns": ["userId"]
         }
       },
       "policies": {},
@@ -2694,67 +2640,37 @@
     "public.BonusType": {
       "name": "BonusType",
       "schema": "public",
-      "values": [
-        "welcome",
-        "deposit_match",
-        "free_spins",
-        "custom"
-      ]
+      "values": ["welcome", "deposit_match", "free_spins", "custom"]
     },
     "public.UserBonusStatus": {
       "name": "UserBonusStatus",
       "schema": "public",
-      "values": [
-        "pending",
-        "active",
-        "completed",
-        "expired",
-        "cancelled"
-      ]
+      "values": ["pending", "active", "completed", "expired", "cancelled"]
     },
     "public.GameRoundStatus": {
       "name": "GameRoundStatus",
       "schema": "public",
-      "values": [
-        "active",
-        "completed",
-        "cancelled"
-      ]
+      "values": ["active", "completed", "cancelled"]
     },
     "public.LeaderboardMetric": {
       "name": "LeaderboardMetric",
       "schema": "public",
-      "values": [
-        "wagers",
-        "wins"
-      ]
+      "values": ["wagers", "wins"]
     },
     "public.LeaderboardPeriod": {
       "name": "LeaderboardPeriod",
       "schema": "public",
-      "values": [
-        "daily",
-        "weekly"
-      ]
+      "values": ["daily", "weekly"]
     },
     "public.WalletTransactionStatus": {
       "name": "WalletTransactionStatus",
       "schema": "public",
-      "values": [
-        "pending",
-        "completed",
-        "failed"
-      ]
+      "values": ["pending", "completed", "failed"]
     },
     "public.WalletTransactionType": {
       "name": "WalletTransactionType",
       "schema": "public",
-      "values": [
-        "deposit",
-        "withdrawal",
-        "bet",
-        "win"
-      ]
+      "values": ["deposit", "withdrawal", "bet", "win"]
     }
   },
   "schemas": {},

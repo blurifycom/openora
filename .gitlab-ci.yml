@@ -26,6 +26,8 @@ variables:
 default:
   interruptible: true
   before_script:
+    # node:26 no longer bundles corepack on PATH; install it before enabling.
+    - npm install -g corepack@latest
     - corepack enable
     - corepack prepare pnpm@11.1.3 --activate
     - pnpm config set store-dir "$PNPM_STORE_DIR"
@@ -40,9 +42,9 @@ cache:
         - pnpm-lock.yaml
     paths:
       - .pnpm-store
-  - key: "turbo-$CI_COMMIT_REF_SLUG"
+  - key: 'turbo-$CI_COMMIT_REF_SLUG'
     fallback_keys:
-      - "turbo-main"
+      - 'turbo-main'
     paths:
       - .turbo
 

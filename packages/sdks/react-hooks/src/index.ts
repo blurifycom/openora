@@ -54,10 +54,6 @@ export {
 } from './hooks/use-chat-stream.js';
 
 // Cross-cutting helpers for slot fills / plugin authors (ADR-0013)
-export {
-  PageContextProvider,
-  usePageContext,
-  useOptionalPageContext,
-} from './page-context.js';
+export { PageContextProvider, usePageContext, useOptionalPageContext } from './page-context.js';
 export { useDataExtension, dataExtensionKey } from './data-extension.js';
 export { RoleGate } from './role-gate.js';

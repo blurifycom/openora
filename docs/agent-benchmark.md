@@ -31,20 +31,20 @@ feature, before vs after the hardening pass that fixed doc/code drift, added the
 
 ## Results
 
-| Task | BEFORE tokens | BEFORE tool calls | AFTER tokens | AFTER tool calls | Token Δ | Tool Δ |
-|---|---|---|---|---|---|---|
-| Stripe PaymentAdapter overlay | 54,561 | 29 | 46,485 | 17 | -14.8% | -41% |
-| `tournaments` module | 73,659 | 37 | 45,090 | 20 | -38.8% | -46% |
-| **Total** | **128,220** | **66** | **91,575** | **37** | **-28.6%** | **-44%** |
+| Task                          | BEFORE tokens | BEFORE tool calls | AFTER tokens | AFTER tool calls | Token Δ    | Tool Δ   |
+| ----------------------------- | ------------- | ----------------- | ------------ | ---------------- | ---------- | -------- |
+| Stripe PaymentAdapter overlay | 54,561        | 29                | 46,485       | 17               | -14.8%     | -41%     |
+| `tournaments` module          | 73,659        | 37                | 45,090       | 20               | -38.8%     | -46%     |
+| **Total**                     | **128,220**   | **66**            | **91,575**   | **37**           | **-28.6%** | **-44%** |
 
 ## The qualitative finding (the real point)
 
-Tokens are secondary to *correctness*. On the unpolished repo the agents repeatedly hit the
+Tokens are secondary to _correctness_. On the unpolished repo the agents repeatedly hit the
 doc/code-drift trap this effort set out to eliminate:
 
-- **BEFORE / module task** concluded, verbatim: *"the prose docs describe Drizzle + a single
+- **BEFORE / module task** concluded, verbatim: _"the prose docs describe Drizzle + a single
   `@oss/modules` package, but the actual buildable code uses Prisma + per-module packages...
-  I followed the real code."* It then produced a **Prisma-based** module with per-package
+  I followed the real code."_ It then produced a **Prisma-based** module with per-package
   `package.json` - the wrong target end-state - and even flagged that `@oss/db` exports a
   "stale DrizzleService." The drift didn't just cost tokens; it steered the agent to the
   wrong answer.

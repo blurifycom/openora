@@ -30,7 +30,11 @@ export function createIdentityRouter(identity: IdentityService) {
     ),
 
     disable2fa: os.disable2fa.handler(({ input, context }) =>
-      identity.disableTwoFactor(input, context.request.headers, context.resHeaders ?? new Headers()),
+      identity.disableTwoFactor(
+        input,
+        context.request.headers,
+        context.resHeaders ?? new Headers(),
+      ),
     ),
 
     requestPasswordReset: os.requestPasswordReset.handler(({ input }) =>

@@ -5,15 +5,15 @@ import other `platform/*` and `@oss/contracts/*`; never modules or UI.
 
 ## What lives here
 
-| File | Purpose |
-|---|---|
-| `drizzle.service.ts` | `DrizzleService` + `DRIZZLE` token. Two pg pools (app/RLS + admin/BYPASSRLS), the tenant-aware `db` proxy, `adminDb`, `runWithTenant`. |
-| `tenant-connection.ts` | `runWithTenantConnection` + `getRequestDb` - the leak-safe per-request GUC binding (AsyncLocalStorage). |
-| `drizzle.ts` | `createDrizzleDb` (raw pool, for CLIs/seed). The unsafe `setTenantId` was REMOVED (ADR-0018). |
-| `query-helpers.ts` | `findOneOrThrow`, `pageToOffset`. |
-| `outbox/` | transactional outbox writer + relay (ADR-0016/0017). |
-| `orm.ts` | the NestJS-free drizzle surface (`@oss/db/orm`) - tables + operators for cross-workspace consumers. |
-| `drizzle/migrations/` | drizzle-kit migrations. Hand-authored RLS migration is `0006`. |
+| File                   | Purpose                                                                                                                                |
+| ---------------------- | -------------------------------------------------------------------------------------------------------------------------------------- |
+| `drizzle.service.ts`   | `DrizzleService` + `DRIZZLE` token. Two pg pools (app/RLS + admin/BYPASSRLS), the tenant-aware `db` proxy, `adminDb`, `runWithTenant`. |
+| `tenant-connection.ts` | `runWithTenantConnection` + `getRequestDb` - the leak-safe per-request GUC binding (AsyncLocalStorage).                                |
+| `drizzle.ts`           | `createDrizzleDb` (raw pool, for CLIs/seed). The unsafe `setTenantId` was REMOVED (ADR-0018).                                          |
+| `query-helpers.ts`     | `findOneOrThrow`, `pageToOffset`.                                                                                                      |
+| `outbox/`              | transactional outbox writer + relay (ADR-0016/0017).                                                                                   |
+| `orm.ts`               | the NestJS-free drizzle surface (`@oss/db/orm`) - tables + operators for cross-workspace consumers.                                    |
+| `drizzle/migrations/`  | drizzle-kit migrations. Hand-authored RLS migration is `0006`.                                                                         |
 
 ## RLS tenant isolation (ADR-0018) - read before touching tenant data
 

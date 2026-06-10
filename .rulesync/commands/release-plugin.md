@@ -1,8 +1,9 @@
 ---
 targets:
   - '*'
-description: "Validate an overlay plugin against the definePlugin contract, build it, and optionally publish to npm. Arg: path to the plugin directory (e.g. apps/api/src/extensions/my-plugin)."
+description: 'Validate an overlay plugin against the definePlugin contract, build it, and optionally publish to npm. Arg: path to the plugin directory (e.g. apps/api/src/extensions/my-plugin).'
 ---
+
 Given the plugin path from $ARGUMENTS:
 
 1. Read the `plugin.ts` to verify it exports `default definePlugin({ id, register })`.

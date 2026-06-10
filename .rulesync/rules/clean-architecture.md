@@ -13,14 +13,14 @@ These are the conventions this repo already follows. Keep to them; do not reopen
 
 ## Module layering (one folder under `packages/modules/<group>/<name>/src/`)
 
-| Layer | File | Holds | Must NOT hold |
-|---|---|---|---|
-| schema | `schema/index.ts` | Drizzle `pgTable`s, row types via `$inferSelect`/`$inferInsert` | logic |
-| schemas | `schemas/index.ts` | Zod input/output (mostly re-export from `@oss/orpc-contract/<module>`) | ad-hoc inline schemas |
-| service | `service/<name>.service.ts` | ALL business logic; emits events after DB commit; money in `db.transaction` | HTTP/transport knowledge |
-| router | `router/index.ts` | thin oRPC wiring: resolve caller (`getUserId`), call service, `mapErrors` | business rules, SSE plumbing |
-| plugin | `plugin.ts` | DI wiring only: `ctx.provide(...)`, `ctx.routers.add(...)` | logic |
-| adapters | `adapters/<vendor>/` | concrete impls of `@oss/adapters` ports | being imported by another module |
+| Layer    | File                        | Holds                                                                       | Must NOT hold                    |
+| -------- | --------------------------- | --------------------------------------------------------------------------- | -------------------------------- |
+| schema   | `schema/index.ts`           | Drizzle `pgTable`s, row types via `$inferSelect`/`$inferInsert`             | logic                            |
+| schemas  | `schemas/index.ts`          | Zod input/output (mostly re-export from `@oss/orpc-contract/<module>`)      | ad-hoc inline schemas            |
+| service  | `service/<name>.service.ts` | ALL business logic; emits events after DB commit; money in `db.transaction` | HTTP/transport knowledge         |
+| router   | `router/index.ts`           | thin oRPC wiring: resolve caller (`getUserId`), call service, `mapErrors`   | business rules, SSE plumbing     |
+| plugin   | `plugin.ts`                 | DI wiring only: `ctx.provide(...)`, `ctx.routers.add(...)`                  | logic                            |
+| adapters | `adapters/<vendor>/`        | concrete impls of `@oss/adapters` ports                                     | being imported by another module |
 
 Service methods read as data-in/data-out transforms. Derive with `map`/`filter`/`reduce`; isolate side effects (DB writes, event emits, adapter calls) at the edges. Classes are fine for services/guards; keep their internals functional.
 
@@ -49,15 +49,15 @@ Every wiring point is a greppable function call. We deliberately do NOT auto-dis
 
 Before hand-writing a guard, mapper, or pagination math, use the platform helper:
 
-| Need | Use | From |
-|---|---|---|
-| first-row-or-throw | `findOneOrThrow(await db.select()..., new XNotFoundError(id))` | `@oss/db` |
-| page offset | `pageToOffset(page, limit)` | `@oss/db` |
-| ownership guard | `assertOwnership(row.userId, callerId, error)` | `@oss/core` |
-| row -> DTO (Date/Decimal -> string) | `serializeRow(row, { dateFields: [...], decimalFields: [...] })` | `@oss/core` |
-| not-found / ownership / conflict error class | `makeNotFoundError('Entity')` / `makeOwnershipError('Entity')` / `makeConflictError(name, msg)` | `@oss/core` |
-| push subscription -> SSE async generator | `createEventStreamGenerator((push) => svc.subscribe(push), { signal, prime })` | `@oss/core` |
-| canonical id/userId/pagination input | `IdInputSchema` / `UserIdInputSchema` / `PaginationInputSchema` | `@oss/shared-schemas` |
+| Need                                         | Use                                                                                             | From                  |
+| -------------------------------------------- | ----------------------------------------------------------------------------------------------- | --------------------- |
+| first-row-or-throw                           | `findOneOrThrow(await db.select()..., new XNotFoundError(id))`                                  | `@oss/db`             |
+| page offset                                  | `pageToOffset(page, limit)`                                                                     | `@oss/db`             |
+| ownership guard                              | `assertOwnership(row.userId, callerId, error)`                                                  | `@oss/core`           |
+| row -> DTO (Date/Decimal -> string)          | `serializeRow(row, { dateFields: [...], decimalFields: [...] })`                                | `@oss/core`           |
+| not-found / ownership / conflict error class | `makeNotFoundError('Entity')` / `makeOwnershipError('Entity')` / `makeConflictError(name, msg)` | `@oss/core`           |
+| push subscription -> SSE async generator     | `createEventStreamGenerator((push) => svc.subscribe(push), { signal, prime })`                  | `@oss/core`           |
+| canonical id/userId/pagination input         | `IdInputSchema` / `UserIdInputSchema` / `PaginationInputSchema`                                 | `@oss/shared-schemas` |
 
 Error factories keep the SAME exported const identifier (`export const WalletNotFoundError = makeNotFoundError('Wallet')`) because routers import the class and `mapErrors` keys off it.
 

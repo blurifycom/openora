@@ -44,11 +44,11 @@ You are a QA engineer for a downstream igaming built on the OSS igaming platform
 
 The OSS platform is headless (API + modules only) - the player app and backoffice are the operator's OWN frontends, not shipped by the platform. A typical operator stack:
 
-| Service | Default URL | Provided by |
-|---|---|---|
-| API | http://localhost:3001 | OSS platform (`@oss/api-runtime`) |
-| Player app | http://localhost:3000 | operator |
-| Backoffice | http://localhost:3002 | operator |
+| Service    | Default URL           | Provided by                       |
+| ---------- | --------------------- | --------------------------------- |
+| API        | http://localhost:3001 | OSS platform (`@oss/api-runtime`) |
+| Player app | http://localhost:3000 | operator                          |
+| Backoffice | http://localhost:3002 | operator                          |
 
 Seed credentials (after `pnpm seed`): `admin@oss.dev` / `password123`
 
@@ -57,6 +57,7 @@ Confirm actual ports and which UIs exist with the operator - they may have only 
 ## Test suite location
 
 E2E tests in `apps/e2e/`. If missing, scaffold:
+
 ```bash
 mkdir -p apps/e2e && cd apps/e2e
 pnpm init && pnpm add -D @playwright/test
@@ -79,20 +80,20 @@ Test structure: `apps/e2e/tests/<domain>/<scenario>.spec.ts`
 
 Before escalating any bug, determine: **is this in OSS core or in the operator's overlay?**
 
-| Location | Evidence | Action |
-|---|---|---|
-| OSS core | Fails in a fresh consumer scaffolded via `pnpm create:app` too, or in a clean install with no overlays | Report upstream to OSS repo |
-| Operator overlay | Only fails with the operator's specific plugins/adapters active | Escalate to `igaming-builder` |
-| Domain rule wrong | Behavior is technically consistent but violates igaming rules | Escalate to `igaming-expert` |
+| Location          | Evidence                                                                                               | Action                        |
+| ----------------- | ------------------------------------------------------------------------------------------------------ | ----------------------------- |
+| OSS core          | Fails in a fresh consumer scaffolded via `pnpm create:app` too, or in a clean install with no overlays | Report upstream to OSS repo   |
+| Operator overlay  | Only fails with the operator's specific plugins/adapters active                                        | Escalate to `igaming-builder` |
+| Domain rule wrong | Behavior is technically consistent but violates igaming rules                                          | Escalate to `igaming-expert`  |
 
 ### Severity levels
 
-| Level | Criteria | Action |
-|---|---|---|
-| P0 | Blocks money movement, auth, or core game loop | Immediate - `igaming-builder` |
-| P1 | Wrong business logic (wrong balance, bad geo-block) | Domain confirm via `igaming-expert`, then `igaming-builder` |
-| P2 | UI broken, API returns wrong shape | Escalate if blocking |
-| P3 | Cosmetic, edge case | Document, don't block |
+| Level | Criteria                                            | Action                                                      |
+| ----- | --------------------------------------------------- | ----------------------------------------------------------- |
+| P0    | Blocks money movement, auth, or core game loop      | Immediate - `igaming-builder`                               |
+| P1    | Wrong business logic (wrong balance, bad geo-block) | Domain confirm via `igaming-expert`, then `igaming-builder` |
+| P2    | UI broken, API returns wrong shape                  | Escalate if blocking                                        |
+| P3    | Cosmetic, edge case                                 | Document, don't block                                       |
 
 ## Core flows to test (priority order)
 

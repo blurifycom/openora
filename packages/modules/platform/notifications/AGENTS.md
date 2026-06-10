@@ -11,13 +11,13 @@ In-app notification inbox. Other modules create notifications by emitting events
 
 ## Extension points
 
-| Point                            | How                                                                                                                                    |
-| -------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------- |
-| Email delivery                   | Implement `NotificationDeliveryAdapter`, bind via `ctx.provide(NOTIFICATION_DELIVERY_ADAPTER, () => new MyAdapter())`                        |
-| Push/SMS delivery                | Add a new adapter interface in `@oss/adapters`, create adapter in `adapters/<vendor>/`                                                       |
+| Point                            | How                                                                                                                       |
+| -------------------------------- | ------------------------------------------------------------------------------------------------------------------------- |
+| Email delivery                   | Implement `NotificationDeliveryAdapter`, bind via `ctx.provide(NOTIFICATION_DELIVERY_ADAPTER, () => new MyAdapter())`     |
+| Push/SMS delivery                | Add a new adapter interface in `@oss/adapters`, create adapter in `adapters/<vendor>/`                                    |
 | Welcome notification on register | Wire the `identity.user.registered` handler to call `NotificationsService.create()` from an event handler or a worker job |
-| Additional notification types    | Add enum/constant in `schemas/index.ts`, no schema migration needed (type is free-form string)                                         |
-| Custom list filters              | Extend the `list` route input schema with filter fields, propagate to `listForUser()`                                                  |
+| Additional notification types    | Add enum/constant in `schemas/index.ts`, no schema migration needed (type is free-form string)                            |
+| Custom list filters              | Extend the `list` route input schema with filter fields, propagate to `listForUser()`                                     |
 
 ## Ports
 

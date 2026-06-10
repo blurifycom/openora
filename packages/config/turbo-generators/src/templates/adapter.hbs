@@ -1,21 +1,19 @@
 import { definePlugin } from '@oss/plugin-host';
 import { {{token}}, type {{pascalCase token}} } from '@oss/adapters';
 
-// Swaps the {{token}} binding. Register AFTER `{{dependsOn}}` in
-// apps/api/src/extensions.config.ts so this binding wins (last registration of a DI
-// token wins):
-//   { id: '{{kebabCase name}}', path: `${LOCAL}/{{kebabCase name}}/plugin.ts` }
-//
-// Implement the interface from @oss/adapters against your vendor. This stub throws
-// until you wire it up.
-class {{pascalCase name}}Adapter implements {{pascalCase token}} {
-  // AGENT: implement the {{pascalCase token}} interface methods here.
+// Overlay that swaps the {{token}} binding. Registered AFTER `{{dependsOn}}` (which
+// owns the default binding) so this one wins - last registration of a DI token wins.
+// Implement every method of {{pascalCase token}} against your vendor. The factory's
+// declared return type keeps you honest at compile time; it throws until implemented.
+function create{{pascalCase name}}Adapter(): {{pascalCase token}} {
+  // AGENT: implement the {{pascalCase token}} interface here, then remove the throw.
+  throw new Error('{{kebabCase name}} adapter is not implemented yet');
 }
 
 export default definePlugin({
   id: '{{kebabCase name}}',
   dependsOn: ['{{dependsOn}}'],
   register(ctx) {
-    ctx.providers.add({ provide: {{token}}, useClass: {{pascalCase name}}Adapter });
+    ctx.provide({{token}}, () => create{{pascalCase name}}Adapter());
   },
 });

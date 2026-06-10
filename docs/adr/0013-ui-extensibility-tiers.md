@@ -10,7 +10,7 @@
 > now headless: the frontend lives in the consumer repo and will be re-extracted from
 > it later. `@oss/react-hooks` and `@oss/sdk-core` remain the supported frontend
 > consumption surface; the `no-sdk-layer-inversion` boundary lint and the `pnpm gen
-> page` generator were removed with the layer. The historical design below is kept
+page` generator were removed with the layer. The historical design below is kept
 > for context and will inform the re-extraction.
 
 ## Context
@@ -19,13 +19,13 @@
 
 We re-evaluated what an operator-extensible UI actually needs (see [Slack canvas: OSS UI Extensibility](https://example.slack.com/docs/T8EUWEKE2/F0B7JNZ6J48) for the alternative options weighed). Five tiers cover the real shape of the work:
 
-| Tier | Owner | Mechanism |
-|---|---|---|
-| T0 - config | ops / compliance | Zod `PlatformConfig` + file loader |
-| T0.5 - theme | design | brand-scoped `ThemeProvider` |
-| T1 - typed slots | plugin dev | `defineUIPlugin` extension points with `visibleWhen` / `requiresPermission` / `brandScope` / `featureFlag` |
-| T2 - block composition | app dev | operator writes own page from OSS blocks + hooks |
-| T3 - page override | app dev | `ctx.provide(ClientPageToken, MyImpl)` full replacement |
+| Tier                   | Owner            | Mechanism                                                                                                  |
+| ---------------------- | ---------------- | ---------------------------------------------------------------------------------------------------------- |
+| T0 - config            | ops / compliance | Zod `PlatformConfig` + file loader                                                                         |
+| T0.5 - theme           | design           | brand-scoped `ThemeProvider`                                                                               |
+| T1 - typed slots       | plugin dev       | `defineUIPlugin` extension points with `visibleWhen` / `requiresPermission` / `brandScope` / `featureFlag` |
+| T2 - block composition | app dev          | operator writes own page from OSS blocks + hooks                                                           |
+| T3 - page override     | app dev          | `ctx.provide(ClientPageToken, MyImpl)` full replacement                                                    |
 
 Plus cross-cutting helpers (`usePageContext`, `useDataExtension`, `<RoleGate>`) and a compliance ceiling (`SealedToken<T>`) for regulator-mandated services operators may never override.
 
@@ -37,11 +37,11 @@ Three architectural changes:
 
 `@oss/react-sdk` is deleted. Three layered packages take its place:
 
-| Package | Contents | Subpaths |
-|---|---|---|
-| `@oss/react-hooks` | data hooks, transport, auth, UIProvider context, cross-cutting helpers, server prefetchers | `.` (client), `./server` (RSC-only) |
-| `@oss/react-blocks` | presentational primitives consuming UIProvider | `./admin`, `./player` |
-| `@oss/react-pages` | composed pages, ui-plugin registry, theme, OssProviders | `.` (convenience barrel), `./admin`, `./player`, `./ui-plugin`, `./theme` |
+| Package             | Contents                                                                                   | Subpaths                                                                  |
+| ------------------- | ------------------------------------------------------------------------------------------ | ------------------------------------------------------------------------- |
+| `@oss/react-hooks`  | data hooks, transport, auth, UIProvider context, cross-cutting helpers, server prefetchers | `.` (client), `./server` (RSC-only)                                       |
+| `@oss/react-blocks` | presentational primitives consuming UIProvider                                             | `./admin`, `./player`                                                     |
+| `@oss/react-pages`  | composed pages, ui-plugin registry, theme, OssProviders                                    | `.` (convenience barrel), `./admin`, `./player`, `./ui-plugin`, `./theme` |
 
 The `@oss/react-pages` root barrel re-exports the union of hooks + blocks + ui-plugin for ergonomic migration; subpath imports are required to keep RSC + client cleanly separated (`@oss/react-hooks/server` is the only entry safe to import from a Next RSC). Layer DAG enforced by `oss-boundaries/no-sdk-layer-inversion` lint rule.
 
@@ -78,14 +78,14 @@ All gating props are optional with backwards-safe defaults: existing fills keep 
 
 ## Alternatives considered (summary)
 
-| Option | Verdict |
-|---|---|
-| **Layered packages + three-tier model** | **chosen** |
-| Page-as-plugin (every page replaceable via token) | rejected for now - fights Next RSC; revisit when RSC matures |
-| Per-feature packages (`@oss/page-lobby`, ...) | rejected - 20+ packages, premature at current scale |
-| Headless-only (no JSX in OSS) | rejected - violates "fully playable default surface" mission |
-| Schema-driven UI (pages-as-data) | rejected - DSL expressivity wall; revisit if admin explodes to 50+ resources |
-| Status quo + targeted polish | rejected - doesn't solve "80% of this page" pain |
+| Option                                            | Verdict                                                                      |
+| ------------------------------------------------- | ---------------------------------------------------------------------------- |
+| **Layered packages + three-tier model**           | **chosen**                                                                   |
+| Page-as-plugin (every page replaceable via token) | rejected for now - fights Next RSC; revisit when RSC matures                 |
+| Per-feature packages (`@oss/page-lobby`, ...)     | rejected - 20+ packages, premature at current scale                          |
+| Headless-only (no JSX in OSS)                     | rejected - violates "fully playable default surface" mission                 |
+| Schema-driven UI (pages-as-data)                  | rejected - DSL expressivity wall; revisit if admin explodes to 50+ resources |
+| Status quo + targeted polish                      | rejected - doesn't solve "80% of this page" pain                             |
 
 Full sizing in [Slack canvas](https://example.slack.com/docs/T8EUWEKE2/F0B7JNZ6J48).
 

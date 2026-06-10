@@ -8,6 +8,7 @@
     "dev": "node --import tsx --watch src/main.ts",
     "start": "node dist/main.js",
     "typecheck": "tsc --noEmit",
+    "codegen": "tsx src/emit-openapi.ts",
     "test": "vitest run",
     "test:integration": "vitest run -c vitest.integration.config.ts"
   },

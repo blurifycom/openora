@@ -11,6 +11,14 @@ function fakeLogger() {
 const flush = () => new Promise((r) => setTimeout(r, 0));
 const wait = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
+// Poll until `predicate` holds or the deadline passes. Deterministic alternative
+// to a fixed sleep: returns as soon as the condition is met, so it does not flake
+// under CI scheduling jitter (a fixed `wait` can fire before the last retry runs).
+async function waitFor(predicate: () => boolean, timeoutMs = 2000): Promise<void> {
+  const deadline = Date.now() + timeoutMs;
+  while (!predicate() && Date.now() < deadline) await wait(5);
+}
+
 const Payload = z.object({ value: z.string() });
 type Payload = z.infer<typeof Payload>;
 
@@ -67,11 +75,15 @@ describe('InProcessJobQueue', () => {
       onDeadLetter: dead,
     });
 
-    await q.enqueue(queue('flaky'), { value: 'x' }, {
-      attempts: 3,
-      backoff: { type: 'fixed', delayMs: 1 },
-    });
-    await wait(20);
+    await q.enqueue(
+      queue('flaky'),
+      { value: 'x' },
+      {
+        attempts: 3,
+        backoff: { type: 'fixed', delayMs: 1 },
+      },
+    );
+    await waitFor(() => dead.mock.calls.length > 0);
 
     expect(attempts).toEqual([1, 2, 3]);
     expect(dead).toHaveBeenCalledOnce();

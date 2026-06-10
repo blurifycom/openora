@@ -4,7 +4,10 @@ import { mapErrors, type OssContext } from '@oss/core';
 import { contract } from '@oss/orpc-contract';
 import { BackofficeService, UserNotFoundError } from '../service/backoffice.service.js';
 
-export function createBackofficeRouter(backofficeService: BackofficeService, adminGuard: AdminGuard) {
+export function createBackofficeRouter(
+  backofficeService: BackofficeService,
+  adminGuard: AdminGuard,
+) {
   const os = implement(contract.backoffice).$context<OssContext>();
 
   return os.router({

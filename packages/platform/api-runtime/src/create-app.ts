@@ -1,14 +1,12 @@
-import { OpenAPIGenerator } from '@orpc/openapi';
 import { OpenAPIHandler } from '@orpc/openapi/fetch';
 import { implement, onError, ORPCError, type AnyRouter } from '@orpc/server';
 import { ResponseHeadersPlugin } from '@orpc/server/plugins';
-import { ZodToJsonSchemaConverter } from '@orpc/zod/zod4';
 import type { ContractRouter } from '@orpc/contract';
 import { Hono } from 'hono';
 import { cors } from 'hono/cors';
 import { serve, type ServerType } from '@hono/node-server';
-import { writeFile, mkdir } from 'node:fs/promises';
-import { dirname, resolve } from 'node:path';
+import { resolve } from 'node:path';
+import { generateOpenApiSpec } from './openapi.js';
 import {
   Container,
   InMemoryBroker,
@@ -51,7 +49,10 @@ export interface CreateAppConfig {
   databaseUrl?: string;
 
   // Override the oRPC root contract used for OpenAPI emit.
-  // Consumers can compose the OSS contract with their own extensions.
+  // Consumers can compose the OSS contract with their own extensions. The shape is
+  // genuinely unknown at this factory boundary (an external oRPC generic) - the
+  // documented `any` exception for an external library's untyped surface.
+  // oxlint-disable-next-line typescript/no-explicit-any
   contract?: ContractRouter<any>;
 
   // OpenAPI spec emission settings.
@@ -277,19 +278,10 @@ export async function createApp(config: CreateAppConfig): Promise<CreatedApp> {
     },
     async emitOpenApiSpec() {
       if (config.openapi?.enabled === false) return null;
-      const contract = config.contract ?? defaultContract;
-      const generator = new OpenAPIGenerator({
-        schemaConverters: [new ZodToJsonSchemaConverter()],
+      const outPath = await generateOpenApiSpec(config.contract ?? defaultContract, {
+        info: config.openapi?.info,
+        outputPath: config.openapi?.outputPath ?? resolve(process.cwd(), 'docs/openapi.json'),
       });
-      const spec = await generator.generate(contract, {
-        info: {
-          title: config.openapi?.info?.title ?? 'OSS Igaming API',
-          version: config.openapi?.info?.version ?? '0.0.1',
-        },
-      });
-      const outPath = config.openapi?.outputPath ?? resolve(process.cwd(), 'docs/openapi.json');
-      await mkdir(dirname(outPath), { recursive: true });
-      await writeFile(outPath, JSON.stringify(spec, null, 2) + '\n', 'utf8');
       process.stdout.write(`OpenAPI spec written to ${outPath}\n`);
       return outPath;
     },

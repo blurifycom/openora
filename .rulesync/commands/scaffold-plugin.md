@@ -1,11 +1,14 @@
 ---
 targets:
   - '*'
-description: "Generate a new overlay extension plugin under apps/api/src/extensions/<name>/. The plugin can add routes, providers, UI slots, event handlers, and MCP tools without modifying core modules."
+description: 'Generate a new overlay extension plugin under apps/api/src/extensions/<name>/. The plugin can add routes, providers, UI slots, event handlers, and MCP tools without modifying core modules.'
 ---
-Run `pnpm scaffold plugin $ARGUMENTS` in the repo root.
 
-After the scaffolder finishes:
+Run `pnpm gen plugin $ARGUMENTS` in the repo root (`pnpm scaffold plugin ...` still works as
+an alias). For a vendor-adapter swap use `pnpm gen adapter <name> <TOKEN> <dependsOn>`; for a
+background-job worker use `pnpm gen job-worker <name>`.
+
+After the generator finishes:
 
 1. Open `apps/api/src/extensions/<name>/plugin.ts` and implement the server `register(ctx)`:
    - `ctx.provide(TOKEN, factory)` to bind an adapter or service (sealed compliance tokens

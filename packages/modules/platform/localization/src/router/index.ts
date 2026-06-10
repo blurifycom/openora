@@ -8,7 +8,10 @@ import {
   TranslationNotFoundError,
 } from '../service/localization.service.js';
 
-export function createLocalizationRouter(localization: LocalizationService, adminGuard: AdminGuard) {
+export function createLocalizationRouter(
+  localization: LocalizationService,
+  adminGuard: AdminGuard,
+) {
   const os = implement(localizationContract).$context<OssContext>();
 
   return os.router({

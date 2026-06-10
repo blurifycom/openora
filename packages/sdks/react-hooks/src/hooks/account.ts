@@ -57,8 +57,7 @@ export function useDisable2fa() {
 export function useRequestPasswordReset() {
   const client = useApiClient();
   return useMutation({
-    mutationFn: (data: RequestPasswordResetInput) =>
-      client.post('/identity/password/forgot', data),
+    mutationFn: (data: RequestPasswordResetInput) => client.post('/identity/password/forgot', data),
   });
 }
 

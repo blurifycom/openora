@@ -51,9 +51,12 @@ try {
   process.exit(0);
 } catch (e) {
   const output = (e.stdout?.toString() ?? '') + (e.stderr?.toString() ?? '');
-  const basename = (isAbsolute(filePath) ? relative(process.cwd(), filePath) : filePath).split('/').pop() ?? '';
+  const basename =
+    (isAbsolute(filePath) ? relative(process.cwd(), filePath) : filePath).split('/').pop() ?? '';
   if (basename && output.includes(basename)) {
-    process.stderr.write(`Typecheck failed for ${owner} after editing ${basename}:\n${cap(output)}`);
+    process.stderr.write(
+      `Typecheck failed for ${owner} after editing ${basename}:\n${cap(output)}`,
+    );
     process.exit(2);
   }
   process.exit(0);

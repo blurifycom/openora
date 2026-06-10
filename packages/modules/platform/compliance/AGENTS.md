@@ -17,8 +17,8 @@ Responsible gambling and geo-compliance.
 
 ## Ports
 
-| Symbol        | Interface   | Purpose              |
-| ------------- | ----------- | -------------------- |
+| Symbol           | Interface      | Purpose              |
+| ---------------- | -------------- | -------------------- |
 | `GEO_IP_ADAPTER` | `GeoIpAdapter` | IP-to-country lookup |
 
 Implement adapters under `packages/modules/platform/compliance/adapters/<vendor>/` and register via `ctx.provide(GEO_IP_ADAPTER, () => new MyAdapter())` in an overlay plugin.

@@ -9,5 +9,6 @@ export interface NotificationDeliveryAdapter {
   sendEmail(to: string, subject: string, body: string): Promise<void>;
 }
 
-export const NOTIFICATION_DELIVERY_ADAPTER: Token<NotificationDeliveryAdapter> =
-  createToken('NOTIFICATION_DELIVERY_ADAPTER');
+export const NOTIFICATION_DELIVERY_ADAPTER: Token<NotificationDeliveryAdapter> = createToken(
+  'NOTIFICATION_DELIVERY_ADAPTER',
+);

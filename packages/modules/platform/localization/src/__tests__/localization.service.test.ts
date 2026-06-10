@@ -39,7 +39,10 @@ describe('LocalizationService', () => {
   describe('listLocales', () => {
     it('returns all locales from db', async () => {
       const locales = [{ id: '1', code: 'en', name: 'English', isDefault: true }];
-      const service = new LocalizationService(makeDrizzle({ select: locales }) as never, events as never);
+      const service = new LocalizationService(
+        makeDrizzle({ select: locales }) as never,
+        events as never,
+      );
       const result = await service.listLocales();
       expect(result).toEqual(locales);
     });
@@ -56,9 +59,17 @@ describe('LocalizationService', () => {
 
   describe('upsertTranslation', () => {
     it('throws LocaleNotFoundError when locale does not exist', async () => {
-      const service = new LocalizationService(makeDrizzle({ select: [] }) as never, events as never);
+      const service = new LocalizationService(
+        makeDrizzle({ select: [] }) as never,
+        events as never,
+      );
       await expect(
-        service.upsertTranslation({ locale: 'xx', namespace: 'common', key: 'hello', value: 'Hello' }),
+        service.upsertTranslation({
+          locale: 'xx',
+          namespace: 'common',
+          key: 'hello',
+          value: 'Hello',
+        }),
       ).rejects.toBeInstanceOf(LocaleNotFoundError);
     });
 
@@ -67,7 +78,14 @@ describe('LocalizationService', () => {
       const drizzle = makeDrizzle({
         select: [{ id: 'l1', code: 'en', name: 'English', isDefault: true }],
         insert: [
-          { id: 't1', localeId: 'l1', namespace: 'common', key: 'hello', value: 'Hello', updatedAt: now },
+          {
+            id: 't1',
+            localeId: 'l1',
+            namespace: 'common',
+            key: 'hello',
+            value: 'Hello',
+            updatedAt: now,
+          },
         ],
       });
       const service = new LocalizationService(drizzle as never, events as never);
@@ -88,7 +106,10 @@ describe('LocalizationService', () => {
 
   describe('deleteTranslation', () => {
     it('throws TranslationNotFoundError when translation does not exist', async () => {
-      const service = new LocalizationService(makeDrizzle({ select: [] }) as never, events as never);
+      const service = new LocalizationService(
+        makeDrizzle({ select: [] }) as never,
+        events as never,
+      );
       await expect(service.deleteTranslation('missing-id')).rejects.toBeInstanceOf(
         TranslationNotFoundError,
       );

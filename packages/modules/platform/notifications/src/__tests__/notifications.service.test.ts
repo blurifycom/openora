@@ -40,12 +40,25 @@ describe('NotificationsService', () => {
     const now = new Date();
     const drizzle = makeDrizzle({
       insert: [
-        { id: 'n1', userId: 'u1', type: 'info', title: 'Hello', body: 'World', readAt: null, createdAt: now },
+        {
+          id: 'n1',
+          userId: 'u1',
+          type: 'info',
+          title: 'Hello',
+          body: 'World',
+          readAt: null,
+          createdAt: now,
+        },
       ],
     });
     const service = new NotificationsService(drizzle as never, events as never);
 
-    const result = await service.create({ userId: 'u1', type: 'info', title: 'Hello', body: 'World' });
+    const result = await service.create({
+      userId: 'u1',
+      type: 'info',
+      title: 'Hello',
+      body: 'World',
+    });
 
     expect(result.id).toBe('n1');
     expect(events.emit).toHaveBeenCalledWith('notifications.created', {

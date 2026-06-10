@@ -183,18 +183,18 @@ function readAdapterTokens(): string[] {
   const out: string[] = [];
   for (const f of readdirSync(dir)) {
     if (!f.endsWith('.ts') || f === 'index.ts') continue;
-    for (const m of readFileSync(join(dir, f), 'utf8').matchAll(/^export const (\w+) = Symbol/gm)) {
+    for (const m of readFileSync(join(dir, f), 'utf8').matchAll(
+      /^export const (\w+)(?::\s*Token<[^>]*>)?\s*=\s*(?:createToken|Symbol)/gm,
+    )) {
       out.push(m[1]!);
     }
   }
   return out;
 }
 
-/** Named UI slot identifiers (eg 'nav:item') from react-sdk. */
+/** Named UI slot identifiers - the platform is headless; slots live in the consumer frontend. */
 function readSlots(): string[] {
-  const file = repoPath('packages', 'sdks', 'react-sdk', 'src', 'ui-plugin', 'slots.ts');
-  if (!existsSync(file)) return [];
-  return [...readFileSync(file, 'utf8').matchAll(/:\s*'([a-z]+:[a-z]+)'/g)].map((m) => m[1]!);
+  return [];
 }
 
 /** Per-kind step-by-step playbook, grounded in live repo state. */
@@ -241,16 +241,12 @@ function buildPlaybook(
     case 'ui-page':
       return [
         '## Where it goes',
-        'A page body lives in `packages/sdks/react-sdk/src/pages/{admin|player}/`, is exported from `src/index.ts`, and gets a thin Next route shim in the consumer app. Module UI imports only the UIProvider contract - never a UI library directly.',
-        '',
-        '## Named UI slots you can fill (for plugin-contributed UI)',
-        ctx.slots.length ? ctx.slots.map((s) => `- ${s}`).join('\n') : '- (none found)',
+        'The platform is headless - pages live in your own frontend repo and consume the api via `@oss/sdk-core` / `@oss/react-hooks`. Module UI imports only the UIProvider contract - never a UI library directly.',
         '',
         '## Playbook',
-        '1. Decide surface: player (apps/web) or backoffice (apps/backoffice).',
-        '2. In a consumer repo, mount an existing react-sdk page with `pnpm gen page`. For a brand-new page body, add it to react-sdk and export it.',
-        '3. To extend an existing page without forking it, contribute via `defineUIPlugin` into one of the slots above (see ADR-0006).',
-        '4. Run `run-verify`. Delegate to `igaming-fullstack-dev` (page body) or `ui-provider-author` (component contract).',
+        '1. Implement the page in your frontend repo using `@oss/react-hooks` data hooks.',
+        '2. To extend an existing surface without forking it, fill a named slot via your frontend UI plugin (ADR-0006).',
+        '3. Run `run-verify`. Delegate to `igaming-fullstack-dev` (backend routes) or `ui-provider-author` (component contract).',
       ].join('\n');
     case 'route':
       return [
@@ -275,7 +271,7 @@ function buildPlaybook(
         '1. Run `scaffold-app <target-dir>` (MCP tool) or `pnpm create:app ../<name> --name <name>`.',
         '2. In the new dir: `pnpm install && pnpm build:oss && cp .env.example .env` (set DATABASE_URL + AUTH_SECRET) then `pnpm db:migrate`.',
         '3. Run `pnpm setup:mcp` in the new repo so its own agents get this same toolbelt, then `/start` there.',
-        '4. `pnpm dev` boots api :3001, web :3000, backoffice :3002.',
+        '4. `pnpm dev` boots api :3001. The frontend lives in your own repo consuming `@oss/react-hooks`.',
       ].join('\n');
     default:
       return [

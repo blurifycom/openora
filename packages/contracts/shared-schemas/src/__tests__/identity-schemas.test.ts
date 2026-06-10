@@ -16,7 +16,8 @@ describe('identity schemas', () => {
 
   it('RegisterInputSchema requires a non-empty name', () => {
     expect(
-      RegisterInputSchema.safeParse({ email: 'a@b.dev', password: 'password123', name: '' }).success,
+      RegisterInputSchema.safeParse({ email: 'a@b.dev', password: 'password123', name: '' })
+        .success,
     ).toBe(false);
   });
 

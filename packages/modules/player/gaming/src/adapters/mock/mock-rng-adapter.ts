@@ -28,7 +28,9 @@ export class MockRngAdapter implements RngAdapter {
 
   nextInt(min: number, maxExclusive: number): number {
     if (maxExclusive <= min) {
-      throw new Error(`MockRngAdapter.nextInt: maxExclusive (${maxExclusive}) must be > min (${min})`);
+      throw new Error(
+        `MockRngAdapter.nextInt: maxExclusive (${maxExclusive}) must be > min (${min})`,
+      );
     }
     return min + Math.floor(this.nextFloat() * (maxExclusive - min));
   }

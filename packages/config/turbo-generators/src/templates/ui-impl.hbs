@@ -1,0 +1,8 @@
+'use client';
+import type { {{pascalCase name}}Props } from '@oss/ui-provider-contract';
+
+// DaisyUI implementation of the {{pascalCase name}} contract. Style with DaisyUI
+// semantic Tailwind classes; keep the public surface identical to the contract.
+export function {{pascalCase name}}({ className, ...props }: {{pascalCase name}}Props) {
+  return <div className={className} {...props} />;
+}

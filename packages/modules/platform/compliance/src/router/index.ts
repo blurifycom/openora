@@ -28,9 +28,8 @@ export function createComplianceRouter(compliance: ComplianceService, adminGuard
 
     geoCheck: os.geoCheck.handler(({ context }) => {
       const ip =
-        (context.request.headers['x-forwarded-for'] as string | undefined)
-          ?.split(',')[0]
-          ?.trim() ?? '127.0.0.1';
+        (context.request.headers['x-forwarded-for'] as string | undefined)?.split(',')[0]?.trim() ??
+        '127.0.0.1';
       return compliance.geoCheck(ip);
     }),
 

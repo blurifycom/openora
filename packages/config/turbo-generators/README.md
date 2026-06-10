@@ -12,8 +12,8 @@ export { default } from '@oss/turbo-generators';
 
 ## Generators
 
-| Name      | Emits                                                                 |
-| --------- | --------------------------------------------------------------------- |
+| Name      | Emits                                                                  |
+| --------- | ---------------------------------------------------------------------- |
 | `plugin`  | overlay plugin under `apps/api/src/extensions/<name>/plugin.ts`        |
 | `adapter` | overlay that rebinds a vendor adapter DI token (payment / KYC / notif) |
 

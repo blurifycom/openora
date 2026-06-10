@@ -72,9 +72,8 @@ export const AUDIT_LOG_WRITER: SealedToken<unknown> = createSealedToken('audit-l
  * RGS / lab-certified (GLI, eCOGRA, BMM, iTechLabs). Operators cannot alter
  * outcomes, payouts, or RTP from the backoffice.
  */
-export const GAME_OUTCOME_AUTHORITY: SealedToken<unknown> = createSealedToken(
-  'game-outcome-authority',
-);
+export const GAME_OUTCOME_AUTHORITY: SealedToken<unknown> =
+  createSealedToken('game-outcome-authority');
 
 /**
  * Bonus wagering math.
@@ -83,9 +82,8 @@ export const GAME_OUTCOME_AUTHORITY: SealedToken<unknown> = createSealedToken(
  * expiry); the calculation engine is sealed - regulators ask to see the
  * formula and there must be one canonical impl.
  */
-export const BONUS_WAGERING_ENGINE: SealedToken<unknown> = createSealedToken(
-  'bonus-wagering-engine',
-);
+export const BONUS_WAGERING_ENGINE: SealedToken<unknown> =
+  createSealedToken('bonus-wagering-engine');
 
 /**
  * RG limit-increase cooling timer.
@@ -93,18 +91,16 @@ export const BONUS_WAGERING_ENGINE: SealedToken<unknown> = createSealedToken(
  * UKGC customer-interaction guidance (24h cool-off on UK deposit limit
  * increases) / DE GlüStV (7d). Operators cannot bypass the timer.
  */
-export const RG_LIMIT_COOLING_TIMER: SealedToken<unknown> = createSealedToken(
-  'rg-limit-cooling-timer',
-);
+export const RG_LIMIT_COOLING_TIMER: SealedToken<unknown> =
+  createSealedToken('rg-limit-cooling-timer');
 
 /**
  * Age verification gate.
  *
  * Cannot be conditionally skipped by a plugin.
  */
-export const AGE_VERIFICATION_GATE: SealedToken<unknown> = createSealedToken(
-  'age-verification-gate',
-);
+export const AGE_VERIFICATION_GATE: SealedToken<unknown> =
+  createSealedToken('age-verification-gate');
 
 /**
  * Geo-blocking platform-level deny.
@@ -112,9 +108,8 @@ export const AGE_VERIFICATION_GATE: SealedToken<unknown> = createSealedToken(
  * Operators can add jurisdictions to deny; they cannot remove a platform-level
  * deny (eg US, sanctions list - OFAC, EU restrictive measures).
  */
-export const GEO_PLATFORM_DENY_LIST: SealedToken<unknown> = createSealedToken(
-  'geo-platform-deny-list',
-);
+export const GEO_PLATFORM_DENY_LIST: SealedToken<unknown> =
+  createSealedToken('geo-platform-deny-list');
 
 /**
  * GDPR Art. 15 / 17 player data export + right-to-be-forgotten workflow.

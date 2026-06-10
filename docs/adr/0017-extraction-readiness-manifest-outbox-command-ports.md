@@ -6,7 +6,7 @@
 
 ## Context
 
-ADR-0010/0016 made the inter-module *event* transport swappable so a module can be
+ADR-0010/0016 made the inter-module _event_ transport swappable so a module can be
 extracted to its own service. Three gaps remained before extraction is actually
 mechanical rather than a rewrite:
 

@@ -19,16 +19,16 @@ stays in effect - so this entry is safe to leave in `extensions.config.ts` for
 
 ## Mapping (seam -> BullMQ)
 
-| Seam concept | BullMQ |
-|---|---|
-| `enqueue(queue, payload, opts)` | `queue.add(name, envelope, { jobId, delay, attempts, backoff, priority })` |
-| `idempotencyKey` | `jobId` (a second add with the same id is a no-op) |
-| `attempts` + `backoff` (fixed/exponential) | native `attempts` + `backoff` |
-| `delayMs` | `delay` |
-| `schedule(cron/everyMs)` | `upsertJobScheduler(scheduleId, { pattern, every, tz })` |
-| `registerWorker` | `new Worker(name, processor, { concurrency })` |
-| `onDeadLetter` | `worker.on('failed')` once attempts are exhausted |
-| `close()` | `worker.close()` (drains active jobs) then `queue.close()` |
+| Seam concept                               | BullMQ                                                                     |
+| ------------------------------------------ | -------------------------------------------------------------------------- |
+| `enqueue(queue, payload, opts)`            | `queue.add(name, envelope, { jobId, delay, attempts, backoff, priority })` |
+| `idempotencyKey`                           | `jobId` (a second add with the same id is a no-op)                         |
+| `attempts` + `backoff` (fixed/exponential) | native `attempts` + `backoff`                                              |
+| `delayMs`                                  | `delay`                                                                    |
+| `schedule(cron/everyMs)`                   | `upsertJobScheduler(scheduleId, { pattern, every, tz })`                   |
+| `registerWorker`                           | `new Worker(name, processor, { concurrency })`                             |
+| `onDeadLetter`                             | `worker.on('failed')` once attempts are exhausted                          |
+| `close()`                                  | `worker.close()` (drains active jobs) then `queue.close()`                 |
 
 ## Caveats
 

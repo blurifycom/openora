@@ -21,15 +21,15 @@ TanStack Start's RSC support is still experimental as of 2026-05; its production
 
 ## Why
 
-| Constraint | Next.js App Router | TanStack Start |
-|---|---|---|
-| Production RSC support | mature (the reference implementation) | experimental as of 2026-05 |
-| Server-rendered first paint for SEO surfaces (lobby, promo, sportsbook landing) | RSC + streaming + suspense | SSR via loader (works), no RSC |
-| Eliminate JS for non-interactive components | yes, RSC excludes them from the bundle | no, everything ships to the client |
-| Image / font optimization | built in | manual |
-| Org familiarity | ~90% of the team | new to the team |
-| Server actions / form posts without a separate API roundtrip | yes | not first-class |
-| Bundle size (gzipped client JS, head-to-head from ADR-0011) | ~281 KB | ~185 KB |
+| Constraint                                                                      | Next.js App Router                     | TanStack Start                     |
+| ------------------------------------------------------------------------------- | -------------------------------------- | ---------------------------------- |
+| Production RSC support                                                          | mature (the reference implementation)  | experimental as of 2026-05         |
+| Server-rendered first paint for SEO surfaces (lobby, promo, sportsbook landing) | RSC + streaming + suspense             | SSR via loader (works), no RSC     |
+| Eliminate JS for non-interactive components                                     | yes, RSC excludes them from the bundle | no, everything ships to the client |
+| Image / font optimization                                                       | built in                               | manual                             |
+| Org familiarity                                                                 | ~90% of the team                       | new to the team                    |
+| Server actions / form posts without a separate API roundtrip                    | yes                                    | not first-class                    |
+| Bundle size (gzipped client JS, head-to-head from ADR-0011)                     | ~281 KB                                | ~185 KB                            |
 
 Bundle size is the one real cost of this decision. We accept it for the RSC mandate; the Next bundle is reducible with route-level code-splitting and a `loading.tsx` skeleton if first-load JS becomes a measured problem on the grey-market low-bandwidth target.
 

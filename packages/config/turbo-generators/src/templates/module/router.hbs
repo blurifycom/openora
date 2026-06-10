@@ -1,0 +1,19 @@
+import { implement } from '@orpc/server';
+import { type OssContext } from '@oss/core';
+import { contract } from '@oss/orpc-contract';
+import { {{pascalCase name}}Service } from '../service/{{kebabCase name}}.service.js';
+
+// oRPC router factory for {{pascalCase name}}. plugin.ts builds the service from the
+// container and passes it here; each procedure delegates to the service. Keep this
+// thin: resolve the caller, call the service, map domain errors - no business rules.
+// Admin-only procedures MUST `await adminGuard.assert(context)` first (lint: require-admin-guard).
+export function create{{pascalCase name}}Router({{camelCase name}}: {{pascalCase name}}Service) {
+  const os = implement(contract.{{camelCase name}}).$context<OssContext>();
+
+  return os.router({
+    list: os.list.handler(() => {{camelCase name}}.list()),
+
+    // AGENT: add more procedures here. Define their shapes in the contract slice
+    // (packages/contracts/orpc-contract/src/{{kebabCase name}}.ts), never inline Zod here.
+  });
+}

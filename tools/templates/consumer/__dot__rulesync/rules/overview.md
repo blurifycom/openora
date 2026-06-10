@@ -5,6 +5,7 @@ targets:
 globs:
   - '**/*'
 ---
+
 # Agent instructions
 
 Canonical brief for AI agents (Claude Code, GitHub Copilot, Codex) and humans working on
@@ -52,9 +53,9 @@ Only return to the user to resolve genuine decisions they alone can make.
 
 ## How to extend
 
-| What you want | Command |
-|---|---|
-| New behavior / routes | `pnpm gen plugin` |
+| What you want                                | Command            |
+| -------------------------------------------- | ------------------ |
+| New behavior / routes                        | `pnpm gen plugin`  |
 | Swap a vendor (payment / KYC / notification) | `pnpm gen adapter` |
 
 Register new plugins in `apps/api/src/extensions.config.ts`. Adapters must be listed AFTER the module that owns the default binding (last registration of a DI token wins).

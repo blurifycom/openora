@@ -25,11 +25,18 @@
     },
     "test:integration": {
       "dependsOn": ["^build"],
-      "cache": false
+      "cache": false,
+      "passThroughEnv": [
+        "TEST_DATABASE_URL",
+        "DATABASE_URL",
+        "DATABASE_ADMIN_URL",
+        "BETTER_AUTH_SECRET",
+        "BETTER_AUTH_URL"
+      ]
     },
     "codegen": {
       "dependsOn": ["^build"],
-      "outputs": ["src/generated/**", "generated/**"]
+      "cache": false
     },
     "clean": {
       "cache": false

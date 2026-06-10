@@ -1,0 +1,18 @@
+import { oc } from '@orpc/contract';
+import * as z from 'zod';
+
+// Canonical request/response shapes for the {{pascalCase name}} module. This is the
+// single source of truth - the router validates against it, OpenAPI + the typed
+// client are emitted from it. Derive related shapes with .pick()/.omit()/.extend()
+// rather than re-typing fields. Promote anything shared across modules to
+// @oss/shared-schemas.
+export const {{pascalCase name}}Schema = z.object({
+  id: z.string(),
+  tenantId: z.string(),
+});
+
+export type {{pascalCase name}} = z.infer<typeof {{pascalCase name}}Schema>;
+
+export const {{camelCase name}}Contract = {
+  list: oc.route({ method: 'GET', path: '/{{kebabCase name}}' }).output(z.array({{pascalCase name}}Schema)),
+};

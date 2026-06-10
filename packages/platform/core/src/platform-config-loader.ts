@@ -49,7 +49,9 @@ export function loadPlatformConfig(path?: string): PlatformConfig {
  * Resolve the platform config path from env, defaulting to
  * `./platform-config.{yaml,json}` in cwd. Returns undefined if nothing is found.
  */
-export function resolvePlatformConfigPath(env: NodeJS.ProcessEnv = process.env): string | undefined {
+export function resolvePlatformConfigPath(
+  env: NodeJS.ProcessEnv = process.env,
+): string | undefined {
   if (env.PLATFORM_CONFIG_PATH) return env.PLATFORM_CONFIG_PATH;
   for (const candidate of ['platform-config.yaml', 'platform-config.yml', 'platform-config.json']) {
     const abs = resolve(candidate);
@@ -67,7 +69,13 @@ export function resolvePlatformConfigPath(env: NodeJS.ProcessEnv = process.env):
 function parseTrivialYaml(input: string): unknown {
   // Defer to JSON.parse-on-best-effort: convert each leaf scalar. This is
   // intentionally limited - operators with complex needs should bring js-yaml.
-  type Node = { indent: number; key?: string; value?: string; isListItem?: boolean; children: Node[] };
+  type Node = {
+    indent: number;
+    key?: string;
+    value?: string;
+    isListItem?: boolean;
+    children: Node[];
+  };
   const root: Node = { indent: -1, children: [] };
   const stack: Node[] = [root];
   const lines = input.split('\n');
