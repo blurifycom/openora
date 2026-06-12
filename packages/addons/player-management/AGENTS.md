@@ -1,16 +1,16 @@
-# player-management - AGENTS.md (premium package)
+# player-management - AGENTS.md (add-on package)
 
 ## What this is
 
-`@oss-premium/player-management` - the **premium** admin Player Account Management
-(PAM) surface. NOT part of the free OSS edition; the composition root loads it only
-when `player-management` is in the `OSS_PREMIUM` allowlist (see
+`@oss-addons/player-management` - the **add-on** admin Player Account Management
+(PAM) surface. NOT part of the default OSS build; the composition root loads it only
+when `player-management` is in the `OSS_ADDONS` allowlist (see
 `apps/api/src/editions.ts`). Structurally a plain `definePlugin`, so it lifts into
-its own npm package with no code change. See `docs/adr/ADR-0020-editions-premium-modules.md`.
+its own npm package with no code change. See `docs/adr/ADR-0020-editions-and-add-on-modules.md`.
 
 It owns **no tables**. The `player` table lives in the core `profile` module
 (`packages/modules/player/profile/`); this package reads it via the
-`@oss/modules/player/profile/schema` subpath (a premium->core read, allowed).
+`@oss/modules/player/profile/schema` subpath (an add-on->core read, allowed).
 
 ## Surface
 
@@ -36,6 +36,6 @@ is the igaming-side profile for a player-role user.
 
 ## Don't
 
-- Import another premium package (`no-cross-premium`).
-- Cause any core package to import this one (`no-core-to-premium` blocks it).
+- Import another add-on package (`no-cross-addon`).
+- Cause any core package to import this one (`no-core-to-addon` blocks it).
 - Re-add the player self-profile here - that is the free core `profile` module.

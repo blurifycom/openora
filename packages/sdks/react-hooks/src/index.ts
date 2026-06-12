@@ -23,9 +23,9 @@ export {
   type PlayerProfile,
 } from './hooks/account.js';
 
-// PAM (Player Account Management) admin hooks are a PREMIUM surface (the player.*
-// admin contract lives in @oss-premium/player-management). They are not part of the
-// free SDK; a consumer that licenses PAM builds its admin hooks against the merged
+// PAM (Player Account Management) admin hooks are a ADDONS surface (the player.*
+// admin contract lives in @oss-addons/player-management). They are not part of the
+// free SDK; a consumer that enables PAM builds its admin hooks against the merged
 // contract. See ADR-0020.
 
 // Framework-agnostic navigation seam (host injects a Next or TanStack adapter)

@@ -122,11 +122,11 @@ const noCrossModuleSchemaRead = {
   },
 };
 
-// The free OSS core must never reach into a premium (sellable, extract-later)
+// The core OSS build must never reach into an add-on (optional, extract-later)
 // package. Anything under packages/{modules,platform,contracts,sdks}/ importing an
-// `@oss-premium/*` specifier is forbidden - only the composition roots under apps/*
-// (and premium packages themselves) may. This string-level twin gives per-edit
-// feedback; the whole-graph `no-core-to-premium` rule catches transitive/dynamic
+// `@oss-addons/*` specifier is forbidden - only the composition roots under apps/*
+// (and add-on packages themselves) may. This string-level twin gives per-edit
+// feedback; the whole-graph `no-core-to-addon` rule catches transitive/dynamic
 // edges. See ADR-0020.
 function isCoreFile(file) {
   return (
@@ -137,54 +137,54 @@ function isCoreFile(file) {
   );
 }
 
-function isPremiumSpecifier(spec) {
-  return spec === '@oss-premium' || spec.startsWith('@oss-premium/');
+function isAddonSpecifier(spec) {
+  return spec === '@oss-addons' || spec.startsWith('@oss-addons/');
 }
 
-const noCoreToPremium = {
+const noCoreToAddon = {
   create(context) {
     return {
       ImportDeclaration(node) {
         if (!isCoreFile(filename(context))) return;
-        if (!isPremiumSpecifier(node.source.value)) return;
+        if (!isAddonSpecifier(node.source.value)) return;
         context.report({
           node,
           message:
-            'The free OSS core must not import a premium package (@oss-premium/*). ' +
-            'Premium is wired only by the composition roots under apps/* (extensions.config.ts + ' +
-            'the createApp contract merge). This keeps premium modules extractable. See ADR-0020.',
+            'The core OSS build must not import an add-on package (@oss-addons/*). ' +
+            'Add-on is wired only by the composition roots under apps/* (extensions.config.ts + ' +
+            'the createApp contract merge). This keeps add-on modules extractable. See ADR-0020.',
         });
       },
     };
   },
 };
 
-// A premium package under packages/premium/<name>/ may import core (@oss/*) but
-// never a sibling premium package - same rule as no-cross-module, so each premium
-// module stays independently sellable/extractable.
-function importingPremium(file) {
-  const m = file.match(/packages\/premium\/([a-z0-9-]+)\//);
+// An add-on package under packages/addons/<name>/ may import core (@oss/*) but
+// never a sibling add-on package - same rule as no-cross-module, so each add-on
+// module stays independently optional/extractable.
+function importingAddon(file) {
+  const m = file.match(/packages\/add-on\/([a-z0-9-]+)\//);
   return m ? m[1] : null;
 }
 
-function premiumSpecifierTarget(spec) {
-  if (!spec.startsWith('@oss-premium/')) return null;
-  const tail = spec.slice('@oss-premium/'.length).split('/').filter(Boolean);
+function addonSpecifierTarget(spec) {
+  if (!spec.startsWith('@oss-addons/')) return null;
+  const tail = spec.slice('@oss-addons/'.length).split('/').filter(Boolean);
   return tail[0] ?? null;
 }
 
-const noCrossPremium = {
+const noCrossAddon = {
   create(context) {
     return {
       ImportDeclaration(node) {
-        const self = importingPremium(filename(context));
+        const self = importingAddon(filename(context));
         if (!self) return;
-        const target = premiumSpecifierTarget(node.source.value);
+        const target = addonSpecifierTarget(node.source.value);
         if (!target || target === self) return;
         context.report({
           node,
           message:
-            `A premium package must not import another premium package (${node.source.value}). ` +
+            `An add-on package must not import another add-on package (${node.source.value}). ` +
             'Communicate via events, a command port, or the read-only /schema subpath. See ADR-0020.',
         });
       },
@@ -371,8 +371,8 @@ export default {
     'no-cross-module-import': noCrossModuleImport,
     'no-cross-module-schema-read': noCrossModuleSchemaRead,
     'no-module-internal-import': noModuleInternalImport,
-    'no-core-to-premium': noCoreToPremium,
-    'no-cross-premium': noCrossPremium,
+    'no-core-to-addon': noCoreToAddon,
+    'no-cross-addon': noCrossAddon,
     'no-platform-to-module': noPlatformToModule,
     'no-contracts-to-runtime': noContractsToRuntime,
     'no-deep-dist-import': noDeepDistImport,

@@ -57,22 +57,22 @@ module.exports = {
       to: { path: '^(apps/|packages/)', pathNot: '^packages/contracts/' },
     },
     {
-      name: 'no-core-to-premium',
+      name: 'no-core-to-addon',
       severity: 'error',
       comment:
-        'The free OSS core must never depend on a premium package. packages/{modules,platform,contracts,sdks}/* may not import packages/premium/* (@oss-premium/*). Only the composition roots under apps/* wire premium in (via extensions.config.ts + the createApp contract merge). This is the guarantee that a premium module can be extracted without breaking core. See docs/adr/ADR-0020-editions-premium-modules.md.',
+        'The core OSS build must never depend on an add-on package. packages/{modules,platform,contracts,sdks}/* may not import packages/addons/* (@oss-addons/*). Only the composition roots under apps/* wire add-on in (via extensions.config.ts + the createApp contract merge). This is the guarantee that an add-on module can be extracted without breaking core. See docs/adr/ADR-0020-editions-and-add-on-modules.md.',
       from: { path: '^packages/(modules|platform|contracts|sdks)/' },
-      to: { path: '^packages/premium/' },
+      to: { path: '^packages/addons/' },
     },
     {
-      name: 'no-cross-premium',
+      name: 'no-cross-addon',
       severity: 'error',
       comment:
-        "A premium package must not depend on another premium package (same rule as no-cross-module). Communicate via events, a command port, or the read-only /schema subpath. Keeping premium packages mutually independent is what lets each one be sold/extracted on its own.",
-      from: { path: '^packages/premium/([^/]+)/' },
+        'An add-on package must not depend on another add-on package (same rule as no-cross-module). Communicate via events, a command port, or the read-only /schema subpath. Keeping add-on packages mutually independent is what lets each one be shipped separately/extracted on its own.',
+      from: { path: '^packages/addons/([^/]+)/' },
       to: {
-        path: '^packages/premium/[^/]+/',
-        pathNot: ['^packages/premium/$1/', '/src/schema/'],
+        path: '^packages/addons/[^/]+/',
+        pathNot: ['^packages/addons/$1/', '/src/schema/'],
       },
     },
     {

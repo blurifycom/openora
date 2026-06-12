@@ -21,28 +21,28 @@ export const extensions = [
   { id: 'chat', path: './packages/modules/dist/player/chat/src/plugin.js' },
   { id: 'bonus', path: './packages/modules/dist/player/bonus/src/plugin.js' },
   // Player self-profile (owns the `player` table). The admin PAM surface is the
-  // premium player-management package below.
+  // add-on player-management package below.
   { id: 'profile', path: './packages/modules/dist/player/profile/src/plugin.js' },
 
   // Backoffice - the admin/operator surface
   { id: 'admin-console', path: './packages/modules/dist/backoffice/admin-console/src/plugin.js' },
   { id: 'cms', path: './packages/modules/dist/backoffice/cms/src/plugin.js' },
 
-  // --- PREMIUM (sellable, extract-later packages under packages/premium/*) ---
-  // kind: 'premium' -> loaded by the composition root ONLY when the id is in the
-  // OSS_PREMIUM allowlist (apps/api/src/editions.ts). Free edition omits them
+  // --- ADDONS (optional, extract-later packages under packages/addons/*) ---
+  // kind: 'addon' -> loaded by the composition root ONLY when the id is in the
+  // OSS_ADDONS allowlist (apps/api/src/editions.ts). Default build omits them
   // entirely (no routes, no OpenAPI). Each ships its own contract slice +
   // migrations and can be lifted to its own npm package. See ADR-0020.
-  { id: 'leaderboard', path: './packages/premium/leaderboard/dist/plugin.js', kind: 'premium' },
-  { id: 'sportsbook', path: './packages/premium/sportsbook/dist/plugin.js', kind: 'premium' },
+  { id: 'leaderboard', path: './packages/addons/leaderboard/dist/plugin.js', kind: 'addon' },
+  { id: 'sportsbook', path: './packages/addons/sportsbook/dist/plugin.js', kind: 'addon' },
   // sportsbook debits the core wallet via WALLET_COMMANDS (dependsOn: ['wallet']).
-  { id: 'aggregator', path: './packages/premium/aggregator/dist/plugin.js', kind: 'premium' },
+  { id: 'aggregator', path: './packages/addons/aggregator/dist/plugin.js', kind: 'addon' },
   // Admin PAM. Reads the core `player` table (owned by the profile module) via the
   // /schema subpath; the player-facing profile stays free.
   {
     id: 'player-management',
-    path: './packages/premium/player-management/dist/plugin.js',
-    kind: 'premium',
+    path: './packages/addons/player-management/dist/plugin.js',
+    kind: 'addon',
   },
 
   // Overlay extensions (apps/api/src/extensions/<name>/plugin.ts)

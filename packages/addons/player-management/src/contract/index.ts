@@ -1,7 +1,7 @@
 import { oc, populateContractRouterPaths } from '@orpc/contract';
 import * as z from 'zod';
 // The canonical player shape + lifecycle/KYC enums live in core (the free profile
-// surface uses them too). Premium imports them - a premium->core dependency, which
+// surface uses them too). Add-on imports them - an add-on->core dependency, which
 // the boundary rules allow. See ADR-0020.
 import { PlayerSchema, PlayerStatusSchema, KycStatusSchema } from '@oss/orpc-contract';
 
@@ -30,7 +30,7 @@ const PaginationInputSchema = z.object({
 
 /**
  * Player Account Management (PAM) contract - the admin-facing surface for managing
- * igaming players. Premium: lives here, not in the core root contract. Populated so
+ * igaming players. Add-on: lives here, not in the core root contract. Populated so
  * the router implements against it and the app merges it as-is.
  */
 export const playerContract = populateContractRouterPaths({

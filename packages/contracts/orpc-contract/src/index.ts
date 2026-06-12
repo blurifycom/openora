@@ -40,9 +40,9 @@ export {
   AdminUserSchema,
   AdminTransactionSchema,
 } from './backoffice.js';
-// Shared player shape (used by the core profile surface and the premium PAM
+// Shared player shape (used by the core profile surface and the add-on PAM
 // package). The admin PAM route contract + stats schemas moved to
-// @oss-premium/player-management. See ADR-0019.
+// @oss-addons/player-management. See ADR-0020.
 export { PlayerSchema, PlayerStatusSchema, KycStatusSchema } from './player.js';
 export {
   profileContract,

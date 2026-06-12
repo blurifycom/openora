@@ -11,12 +11,12 @@ along a fixed chain - never open an MR straight to `main` from a feature/dev bra
 
 ## Promotion chain
 
-| Source (current) branch | MR target | Notes |
-| ----------------------- | --------- | ----- |
-| `dev` (default working) | `stage`   | Promote accumulated work to the staging env |
-| `stage`                 | `main`    | Release candidate -> main |
+| Source (current) branch | MR target | Notes                                          |
+| ----------------------- | --------- | ---------------------------------------------- |
+| `dev` (default working) | `stage`   | Promote accumulated work to the staging env    |
+| `stage`                 | `main`    | Release candidate -> main                      |
 | `main`                  | (git tag) | Cut a release tag, no MR (see "Release" below) |
-| any `feat/*` / `fix/*`  | `dev`     | Feature work merges into dev first |
+| any `feat/*` / `fix/*`  | `dev`     | Feature work merges into dev first             |
 
 If the current branch isn't in the table, target `dev`.
 
@@ -32,8 +32,11 @@ If the current branch isn't in the table, target `dev`.
 3. **Commit.** Conventional-commit message (`feat:`, `fix:`, `docs:`, `refactor:`,
    `chore:`). End the body with the Co-Authored-By trailer the global rules require.
 4. **Verify before pushing** (cheap insurance): `pnpm verify`. Don't push a red tree.
-5. **Push** the current branch: `git push -u origin <current>`.
-6. **Open the MR** with glab:
+5. **Push** the current branch - but STOP and get an explicit per-action "yes push"
+   from the user FIRST. Report the commit SHA, then ask. Invoking this skill is NOT
+   push authorization. Pushing to a shared/env branch (`dev`, `stage`, `main`)
+   without that explicit yes is forbidden. Only after the yes: `git push -u origin <current>`.
+6. **Open the MR** with glab (only after the push is confirmed + done):
    ```
    glab mr create --source-branch <current> --target-branch <target> \
      --title "<type>: <summary>" --description "<body>" --yes --remove-source-branch=false
@@ -51,7 +54,7 @@ asks to cut a release, and confirm the version first.
 
 ## Rules
 
-- Never push without the user having asked to (this skill being invoked counts as
-  asking). Report the commit SHA and the MR URL.
+- NEVER push without an explicit per-action "yes push" from the user. Invoking this
+  skill does NOT authorize a push. Report the commit SHA, ask, then push only on yes.
 - `pnpm verify` must pass before the push.
 - Keep the MR scoped to one concern; split unrelated changes into separate MRs.

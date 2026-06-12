@@ -30,8 +30,8 @@ export async function loadExtensions(): Promise<PluginEntry[]> {
     path: isAbsolute(entry.path) ? entry.path : resolve(configDir, entry.path),
   }));
 
-  // Edition gate: drop premium (kind:'premium') entries this edition does not
-  // enable (OSS_PREMIUM). Free edition = no premium entries load. See editions.ts.
+  // Edition gate: drop add-on (kind:'addon') entries this edition does not
+  // enable (OSS_ADDONS). Default build = no add-on entries load. See editions.ts.
   const entries = applyEdition(resolved);
 
   // Deployable-topology seam: SERVICE_MANIFEST selects which modules this process

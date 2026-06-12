@@ -209,8 +209,8 @@ export async function seedDemoData(options: SeedOptions): Promise<SeedResult> {
   );
   log(`Created ${GAMES.length} games.`);
 
-  // Premium surfaces (sportsbook, leaderboard, ...) seed their own demo data and
-  // are not part of the core seed - the free edition does not ship their tables.
+  // Add-on surfaces (sportsbook, leaderboard, ...) seed their own demo data and
+  // are not part of the core seed - the default build does not ship their tables.
   // See ADR-0020.
 
   let userCount = adminUser ? 1 : 0;

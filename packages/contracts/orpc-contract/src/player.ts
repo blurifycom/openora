@@ -2,12 +2,12 @@ import * as z from 'zod';
 
 /**
  * The canonical igaming `player` shape + lifecycle / KYC enums. Shared by the core
- * player-facing profile surface (profileContract) and the premium admin PAM package
- * (@oss-premium/player-management), which imports these from here.
+ * player-facing profile surface (profileContract) and the add-on admin PAM package
+ * (@oss-addons/player-management), which imports these from here.
  *
  * The admin PAM route contract (list/get/update/remove/stats) is NOT here - it moved
- * to the premium package so the free edition's root contract carries no PAM surface.
- * See ADR-0019.
+ * to the add-on package so the default build's root contract carries no PAM surface.
+ * See ADR-0020.
  */
 
 export const PlayerStatusSchema = z.enum([

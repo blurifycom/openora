@@ -2,9 +2,9 @@ import { pgTable, text, integer, decimal, timestamp, index } from 'drizzle-orm/p
 import { randomUUID } from 'node:crypto';
 
 // The igaming `player` profile. Owned by the core profile module (every edition
-// has players). The premium PAM admin package (@oss-premium/player-management)
+// has players). The add-on PAM admin package (@oss-addons/player-management)
 // reads this table via the @oss/modules/player/profile/schema subpath - a
-// premium->core read, which the boundary rules allow. See ADR-0020.
+// add-on->core read, which the boundary rules allow. See ADR-0020.
 export const player = pgTable(
   'player',
   {

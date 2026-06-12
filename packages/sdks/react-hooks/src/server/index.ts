@@ -48,7 +48,7 @@ export async function fetchGamesData(options: ServerFetchOptions): Promise<Games
   return { games };
 }
 
-// Note: prefetchers for premium surfaces (sportsbook, leaderboard, ...) intentionally
-// do NOT live in the core SDK - the free edition's typed client has no such namespace.
-// A consumer that licenses a premium module builds its own prefetcher against the
+// Note: prefetchers for add-on surfaces (sportsbook, leaderboard, ...) intentionally
+// do NOT live in the core SDK - the default build's typed client has no such namespace.
+// A consumer that enables an add-on module builds its own prefetcher against the
 // merged contract. See ADR-0020.

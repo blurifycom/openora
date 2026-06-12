@@ -9,11 +9,11 @@ export type PluginEntry = {
   // 'infra' = a broker/queue driver overlay that always loads, even for a
   // single-module service, because a standalone process still needs its
   // durable transport. See applyServiceManifest.
-  // 'premium' = a sellable, extract-later package under packages/premium/*. The
-  // composition root loads it only when its id is in the OSS_PREMIUM allowlist
+  // 'addon' = a optional, extract-later package under packages/addons/*. The
+  // composition root loads it only when its id is in the OSS_ADDONS allowlist
   // (edition gate); for a service manifest it behaves like a normal module. See
   // apps/api/src/editions.ts and ADR-0020.
-  kind?: 'module' | 'infra' | 'premium';
+  kind?: 'module' | 'infra' | 'addon';
 };
 
 /**

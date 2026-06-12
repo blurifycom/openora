@@ -31,7 +31,7 @@ function toPlayer(p: typeof player.$inferSelect, email: string): Player {
 }
 
 // Player-facing self-profile service. Owns the `player` table. The admin PAM
-// surface lives in the premium @oss-premium/player-management package.
+// surface lives in the add-on @oss-addons/player-management package.
 export class ProfileService {
   constructor(private readonly drizzle: DrizzleService) {}
 

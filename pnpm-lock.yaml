@@ -59,18 +59,18 @@ importers:
       '@orpc/server':
         specifier: 1.14.5
         version: 1.14.5
-      '@oss-premium/aggregator':
+      '@oss-addons/aggregator':
         specifier: workspace:*
-        version: link:../../packages/premium/aggregator
-      '@oss-premium/leaderboard':
+        version: link:../../packages/addons/aggregator
+      '@oss-addons/leaderboard':
         specifier: workspace:*
-        version: link:../../packages/premium/leaderboard
-      '@oss-premium/player-management':
+        version: link:../../packages/addons/leaderboard
+      '@oss-addons/player-management':
         specifier: workspace:*
-        version: link:../../packages/premium/player-management
-      '@oss-premium/sportsbook':
+        version: link:../../packages/addons/player-management
+      '@oss-addons/sportsbook':
         specifier: workspace:*
-        version: link:../../packages/premium/sportsbook
+        version: link:../../packages/addons/sportsbook
       '@oss/adapters':
         specifier: workspace:*
         version: link:../../packages/contracts/adapters
@@ -148,6 +148,217 @@ importers:
       typescript:
         specifier: 6.0.3
         version: 6.0.3
+
+  packages/addons/aggregator:
+    dependencies:
+      '@orpc/contract':
+        specifier: 1.14.5
+        version: 1.14.5
+      '@orpc/server':
+        specifier: 1.14.5
+        version: 1.14.5
+      '@oss/adapters':
+        specifier: workspace:*
+        version: link:../../contracts/adapters
+      '@oss/auth':
+        specifier: workspace:*
+        version: link:../../platform/auth
+      '@oss/core':
+        specifier: workspace:*
+        version: link:../../platform/core
+      '@oss/db':
+        specifier: workspace:*
+        version: link:../../platform/db
+      '@oss/modules':
+        specifier: workspace:*
+        version: link:../../modules
+      '@oss/plugin-host':
+        specifier: workspace:*
+        version: link:../../platform/plugin-host
+      '@paralleldrive/cuid2':
+        specifier: 3.3.0
+        version: 3.3.0
+      drizzle-orm:
+        specifier: 0.45.2
+        version: 0.45.2(@types/pg@8.20.0)(kysely@0.29.2)(pg@8.21.0)
+      zod:
+        specifier: 4.4.3
+        version: 4.4.3
+    devDependencies:
+      '@oss/tsconfig':
+        specifier: workspace:*
+        version: link:../../config/tsconfig
+      '@oss/vitest-config':
+        specifier: workspace:*
+        version: link:../../config/vitest
+      '@types/node':
+        specifier: 25.9.2
+        version: 25.9.2
+      drizzle-kit:
+        specifier: 0.31.10
+        version: 0.31.10
+      typescript:
+        specifier: 6.0.3
+        version: 6.0.3
+      vitest:
+        specifier: 4.1.8
+        version: 4.1.8(@types/node@25.9.2)(@vitest/coverage-v8@4.1.8)(vite@8.0.16(@types/node@25.9.2)(esbuild@0.28.0)(tsx@4.22.4))
+
+  packages/addons/leaderboard:
+    dependencies:
+      '@orpc/contract':
+        specifier: 1.14.5
+        version: 1.14.5
+      '@orpc/server':
+        specifier: 1.14.5
+        version: 1.14.5
+      '@oss/adapters':
+        specifier: workspace:*
+        version: link:../../contracts/adapters
+      '@oss/auth':
+        specifier: workspace:*
+        version: link:../../platform/auth
+      '@oss/core':
+        specifier: workspace:*
+        version: link:../../platform/core
+      '@oss/db':
+        specifier: workspace:*
+        version: link:../../platform/db
+      '@oss/plugin-host':
+        specifier: workspace:*
+        version: link:../../platform/plugin-host
+      '@oss/shared-schemas':
+        specifier: workspace:*
+        version: link:../../contracts/shared-schemas
+      '@paralleldrive/cuid2':
+        specifier: 3.3.0
+        version: 3.3.0
+      drizzle-orm:
+        specifier: 0.45.2
+        version: 0.45.2(@types/pg@8.20.0)(kysely@0.29.2)(pg@8.21.0)
+      zod:
+        specifier: 4.4.3
+        version: 4.4.3
+    devDependencies:
+      '@oss/tsconfig':
+        specifier: workspace:*
+        version: link:../../config/tsconfig
+      '@oss/vitest-config':
+        specifier: workspace:*
+        version: link:../../config/vitest
+      '@types/node':
+        specifier: 25.9.2
+        version: 25.9.2
+      drizzle-kit:
+        specifier: 0.31.10
+        version: 0.31.10
+      typescript:
+        specifier: 6.0.3
+        version: 6.0.3
+      vitest:
+        specifier: 4.1.8
+        version: 4.1.8(@types/node@25.9.2)(@vitest/coverage-v8@4.1.8)(vite@8.0.16(@types/node@25.9.2)(esbuild@0.28.0)(tsx@4.22.4))
+
+  packages/addons/player-management:
+    dependencies:
+      '@orpc/contract':
+        specifier: 1.14.5
+        version: 1.14.5
+      '@orpc/server':
+        specifier: 1.14.5
+        version: 1.14.5
+      '@oss/auth':
+        specifier: workspace:*
+        version: link:../../platform/auth
+      '@oss/core':
+        specifier: workspace:*
+        version: link:../../platform/core
+      '@oss/db':
+        specifier: workspace:*
+        version: link:../../platform/db
+      '@oss/modules':
+        specifier: workspace:*
+        version: link:../../modules
+      '@oss/orpc-contract':
+        specifier: workspace:*
+        version: link:../../contracts/orpc-contract
+      '@oss/plugin-host':
+        specifier: workspace:*
+        version: link:../../platform/plugin-host
+      drizzle-orm:
+        specifier: 0.45.2
+        version: 0.45.2(@types/pg@8.20.0)(kysely@0.29.2)(pg@8.21.0)
+      zod:
+        specifier: 4.4.3
+        version: 4.4.3
+    devDependencies:
+      '@oss/tsconfig':
+        specifier: workspace:*
+        version: link:../../config/tsconfig
+      '@oss/vitest-config':
+        specifier: workspace:*
+        version: link:../../config/vitest
+      '@types/node':
+        specifier: 25.9.2
+        version: 25.9.2
+      typescript:
+        specifier: 6.0.3
+        version: 6.0.3
+      vitest:
+        specifier: 4.1.8
+        version: 4.1.8(@types/node@25.9.2)(@vitest/coverage-v8@4.1.8)(vite@8.0.16(@types/node@25.9.2)(esbuild@0.28.0)(tsx@4.22.4))
+
+  packages/addons/sportsbook:
+    dependencies:
+      '@orpc/contract':
+        specifier: 1.14.5
+        version: 1.14.5
+      '@orpc/server':
+        specifier: 1.14.5
+        version: 1.14.5
+      '@oss/adapters':
+        specifier: workspace:*
+        version: link:../../contracts/adapters
+      '@oss/core':
+        specifier: workspace:*
+        version: link:../../platform/core
+      '@oss/db':
+        specifier: workspace:*
+        version: link:../../platform/db
+      '@oss/plugin-host':
+        specifier: workspace:*
+        version: link:../../platform/plugin-host
+      '@oss/shared-schemas':
+        specifier: workspace:*
+        version: link:../../contracts/shared-schemas
+      '@paralleldrive/cuid2':
+        specifier: 3.3.0
+        version: 3.3.0
+      drizzle-orm:
+        specifier: 0.45.2
+        version: 0.45.2(@types/pg@8.20.0)(kysely@0.29.2)(pg@8.21.0)
+      zod:
+        specifier: 4.4.3
+        version: 4.4.3
+    devDependencies:
+      '@oss/tsconfig':
+        specifier: workspace:*
+        version: link:../../config/tsconfig
+      '@oss/vitest-config':
+        specifier: workspace:*
+        version: link:../../config/vitest
+      '@types/node':
+        specifier: 25.9.2
+        version: 25.9.2
+      drizzle-kit:
+        specifier: 0.31.10
+        version: 0.31.10
+      typescript:
+        specifier: 6.0.3
+        version: 6.0.3
+      vitest:
+        specifier: 4.1.8
+        version: 4.1.8(@types/node@25.9.2)(@vitest/coverage-v8@4.1.8)(vite@8.0.16(@types/node@25.9.2)(esbuild@0.28.0)(tsx@4.22.4))
 
   packages/config/oxlint:
     devDependencies:
@@ -539,217 +750,6 @@ importers:
       typescript:
         specifier: 6.0.3
         version: 6.0.3
-
-  packages/premium/aggregator:
-    dependencies:
-      '@orpc/contract':
-        specifier: 1.14.5
-        version: 1.14.5
-      '@orpc/server':
-        specifier: 1.14.5
-        version: 1.14.5
-      '@oss/adapters':
-        specifier: workspace:*
-        version: link:../../contracts/adapters
-      '@oss/auth':
-        specifier: workspace:*
-        version: link:../../platform/auth
-      '@oss/core':
-        specifier: workspace:*
-        version: link:../../platform/core
-      '@oss/db':
-        specifier: workspace:*
-        version: link:../../platform/db
-      '@oss/modules':
-        specifier: workspace:*
-        version: link:../../modules
-      '@oss/plugin-host':
-        specifier: workspace:*
-        version: link:../../platform/plugin-host
-      '@paralleldrive/cuid2':
-        specifier: 3.3.0
-        version: 3.3.0
-      drizzle-orm:
-        specifier: 0.45.2
-        version: 0.45.2(@types/pg@8.20.0)(kysely@0.29.2)(pg@8.21.0)
-      zod:
-        specifier: 4.4.3
-        version: 4.4.3
-    devDependencies:
-      '@oss/tsconfig':
-        specifier: workspace:*
-        version: link:../../config/tsconfig
-      '@oss/vitest-config':
-        specifier: workspace:*
-        version: link:../../config/vitest
-      '@types/node':
-        specifier: 25.9.2
-        version: 25.9.2
-      drizzle-kit:
-        specifier: 0.31.10
-        version: 0.31.10
-      typescript:
-        specifier: 6.0.3
-        version: 6.0.3
-      vitest:
-        specifier: 4.1.8
-        version: 4.1.8(@types/node@25.9.2)(@vitest/coverage-v8@4.1.8)(vite@8.0.16(@types/node@25.9.2)(esbuild@0.28.0)(tsx@4.22.4))
-
-  packages/premium/leaderboard:
-    dependencies:
-      '@orpc/contract':
-        specifier: 1.14.5
-        version: 1.14.5
-      '@orpc/server':
-        specifier: 1.14.5
-        version: 1.14.5
-      '@oss/adapters':
-        specifier: workspace:*
-        version: link:../../contracts/adapters
-      '@oss/auth':
-        specifier: workspace:*
-        version: link:../../platform/auth
-      '@oss/core':
-        specifier: workspace:*
-        version: link:../../platform/core
-      '@oss/db':
-        specifier: workspace:*
-        version: link:../../platform/db
-      '@oss/plugin-host':
-        specifier: workspace:*
-        version: link:../../platform/plugin-host
-      '@oss/shared-schemas':
-        specifier: workspace:*
-        version: link:../../contracts/shared-schemas
-      '@paralleldrive/cuid2':
-        specifier: 3.3.0
-        version: 3.3.0
-      drizzle-orm:
-        specifier: 0.45.2
-        version: 0.45.2(@types/pg@8.20.0)(kysely@0.29.2)(pg@8.21.0)
-      zod:
-        specifier: 4.4.3
-        version: 4.4.3
-    devDependencies:
-      '@oss/tsconfig':
-        specifier: workspace:*
-        version: link:../../config/tsconfig
-      '@oss/vitest-config':
-        specifier: workspace:*
-        version: link:../../config/vitest
-      '@types/node':
-        specifier: 25.9.2
-        version: 25.9.2
-      drizzle-kit:
-        specifier: 0.31.10
-        version: 0.31.10
-      typescript:
-        specifier: 6.0.3
-        version: 6.0.3
-      vitest:
-        specifier: 4.1.8
-        version: 4.1.8(@types/node@25.9.2)(@vitest/coverage-v8@4.1.8)(vite@8.0.16(@types/node@25.9.2)(esbuild@0.28.0)(tsx@4.22.4))
-
-  packages/premium/player-management:
-    dependencies:
-      '@orpc/contract':
-        specifier: 1.14.5
-        version: 1.14.5
-      '@orpc/server':
-        specifier: 1.14.5
-        version: 1.14.5
-      '@oss/auth':
-        specifier: workspace:*
-        version: link:../../platform/auth
-      '@oss/core':
-        specifier: workspace:*
-        version: link:../../platform/core
-      '@oss/db':
-        specifier: workspace:*
-        version: link:../../platform/db
-      '@oss/modules':
-        specifier: workspace:*
-        version: link:../../modules
-      '@oss/orpc-contract':
-        specifier: workspace:*
-        version: link:../../contracts/orpc-contract
-      '@oss/plugin-host':
-        specifier: workspace:*
-        version: link:../../platform/plugin-host
-      drizzle-orm:
-        specifier: 0.45.2
-        version: 0.45.2(@types/pg@8.20.0)(kysely@0.29.2)(pg@8.21.0)
-      zod:
-        specifier: 4.4.3
-        version: 4.4.3
-    devDependencies:
-      '@oss/tsconfig':
-        specifier: workspace:*
-        version: link:../../config/tsconfig
-      '@oss/vitest-config':
-        specifier: workspace:*
-        version: link:../../config/vitest
-      '@types/node':
-        specifier: 25.9.2
-        version: 25.9.2
-      typescript:
-        specifier: 6.0.3
-        version: 6.0.3
-      vitest:
-        specifier: 4.1.8
-        version: 4.1.8(@types/node@25.9.2)(@vitest/coverage-v8@4.1.8)(vite@8.0.16(@types/node@25.9.2)(esbuild@0.28.0)(tsx@4.22.4))
-
-  packages/premium/sportsbook:
-    dependencies:
-      '@orpc/contract':
-        specifier: 1.14.5
-        version: 1.14.5
-      '@orpc/server':
-        specifier: 1.14.5
-        version: 1.14.5
-      '@oss/adapters':
-        specifier: workspace:*
-        version: link:../../contracts/adapters
-      '@oss/core':
-        specifier: workspace:*
-        version: link:../../platform/core
-      '@oss/db':
-        specifier: workspace:*
-        version: link:../../platform/db
-      '@oss/plugin-host':
-        specifier: workspace:*
-        version: link:../../platform/plugin-host
-      '@oss/shared-schemas':
-        specifier: workspace:*
-        version: link:../../contracts/shared-schemas
-      '@paralleldrive/cuid2':
-        specifier: 3.3.0
-        version: 3.3.0
-      drizzle-orm:
-        specifier: 0.45.2
-        version: 0.45.2(@types/pg@8.20.0)(kysely@0.29.2)(pg@8.21.0)
-      zod:
-        specifier: 4.4.3
-        version: 4.4.3
-    devDependencies:
-      '@oss/tsconfig':
-        specifier: workspace:*
-        version: link:../../config/tsconfig
-      '@oss/vitest-config':
-        specifier: workspace:*
-        version: link:../../config/vitest
-      '@types/node':
-        specifier: 25.9.2
-        version: 25.9.2
-      drizzle-kit:
-        specifier: 0.31.10
-        version: 0.31.10
-      typescript:
-        specifier: 6.0.3
-        version: 6.0.3
-      vitest:
-        specifier: 4.1.8
-        version: 4.1.8(@types/node@25.9.2)(@vitest/coverage-v8@4.1.8)(vite@8.0.16(@types/node@25.9.2)(esbuild@0.28.0)(tsx@4.22.4))
 
   packages/sdks/plugin-test-kit:
     dependencies:
