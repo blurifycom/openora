@@ -1,9 +1,11 @@
-import { makeNotFoundError, getCurrentTenantId } from '@oss/core';
+import { makeNotFoundError } from '@oss/core';
 import { DrizzleService, findOneOrThrow, pageToOffset } from '@oss/db';
 import { eq, ilike, count, or, and, gte, desc, sql } from 'drizzle-orm';
-import { player } from '../schema/index.js';
+// Reads the core-owned `player` table + identity `user` via the public /schema
+// subpaths (premium->core reads, allowed by the boundary rules). PAM owns no
+// tables of its own. See ADR-0020.
+import { player } from '@oss/modules/player/profile/schema';
 import { user } from '@oss/modules/platform/identity/schema';
-import type { UpdatePlayerProfileInput } from '@oss/orpc-contract';
 import type {
   Player,
   PlayerRegistrationPoint,
@@ -38,6 +40,8 @@ function toDateKey(d: Date): string {
   return d.toISOString().slice(0, 10);
 }
 
+// Admin Player Account Management. All methods back the admin-guarded player.*
+// routes. Self-service profile lives in the core profile module.
 export class PlayerService {
   constructor(private readonly drizzle: DrizzleService) {}
 
@@ -47,49 +51,6 @@ export class PlayerService {
       .from(user)
       .where(eq(user.id, userId));
     return record?.email ?? '';
-  }
-
-  // --- Player-facing self profile (resolved from the verified session, not admin) ---
-
-  // Return the caller's player row, creating a default one on first access.
-  // Registration only creates the auth `user`; the `player` profile row is
-  // materialised lazily here so a freshly-registered user always has a profile.
-  private async ensureProfile(userId: string): Promise<Player> {
-    const [existing] = await this.drizzle.db.select().from(player).where(eq(player.userId, userId));
-    if (existing) return toPlayer(existing, await this.emailFor(userId));
-
-    const [u] = await this.drizzle.db
-      .select({ name: user.name, email: user.email })
-      .from(user)
-      .where(eq(user.id, userId));
-    const [created] = await this.drizzle.db
-      .insert(player)
-      .values({
-        userId,
-        displayName: u?.name ?? 'Player',
-        tenantId: getCurrentTenantId() ?? 'default',
-      })
-      .returning();
-    return toPlayer(created!, u?.email ?? '');
-  }
-
-  async getMyProfile(userId: string): Promise<Player> {
-    return this.ensureProfile(userId);
-  }
-
-  async updateMyProfile(userId: string, data: UpdatePlayerProfileInput): Promise<Player> {
-    await this.ensureProfile(userId);
-    const patch: Partial<typeof player.$inferInsert> = {};
-    if (data.displayName !== undefined) patch.displayName = data.displayName;
-    if (data.country !== undefined) patch.country = data.country;
-    if (data.currency !== undefined) patch.currency = data.currency;
-    if (data.language !== undefined) patch.language = data.language;
-    const [record] = await this.drizzle.db
-      .update(player)
-      .set(patch)
-      .where(eq(player.userId, userId))
-      .returning();
-    return toPlayer(record!, await this.emailFor(userId));
   }
 
   async list(

@@ -4,7 +4,7 @@ import {
   KycStatusSchema,
   PlayerRegistrationPointSchema,
   PlayerSummarySchema,
-} from '@oss/orpc-contract/player';
+} from '../contract/index.js';
 import type { z } from 'zod';
 
 export {

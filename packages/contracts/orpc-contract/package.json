@@ -56,12 +56,7 @@
       "require": "./dist/chat.js",
       "types": "./dist/chat.d.ts"
     },
-    "./igaming-aggregator": {
-      "import": "./dist/igaming-aggregator.js",
-      "require": "./dist/igaming-aggregator.js",
-      "types": "./dist/igaming-aggregator.d.ts"
-    },
-    "./backoffice": {
+      "./backoffice": {
       "import": "./dist/backoffice.js",
       "require": "./dist/backoffice.js",
       "types": "./dist/backoffice.d.ts"
@@ -71,12 +66,7 @@
       "require": "./dist/player.js",
       "types": "./dist/player.d.ts"
     },
-    "./sportsbook": {
-      "import": "./dist/sportsbook.js",
-      "require": "./dist/sportsbook.js",
-      "types": "./dist/sportsbook.d.ts"
-    },
-    "./iam": {
+      "./iam": {
       "import": "./dist/iam.js",
       "require": "./dist/iam.js",
       "types": "./dist/iam.d.ts"

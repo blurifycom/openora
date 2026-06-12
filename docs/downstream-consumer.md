@@ -64,6 +64,34 @@ The OSS `apps/api` is itself a thin consumer of `createApp` and serves as the re
 Downstream consumers do NOT fork `apps/api` - they create their own thin entrypoint and bring
 their own `extensions.config.ts`.
 
+## Premium (paid) packages
+
+Some modules are not part of the free OSS edition - they ship as separately licensed
+`@oss-premium/*` packages (e.g. `@oss-premium/player-management` for admin PAM,
+`@oss-premium/sportsbook`, `@oss-premium/leaderboard`, `@oss-premium/aggregator`). A
+premium package is a normal `definePlugin` module that also ships its own contract
+slice and migrations. To enable one you bought:
+
+1. `pnpm add @oss-premium/<name>`.
+2. Register its plugin in your `extensions.config.ts` (it exports a default plugin).
+3. Merge its contract slice into the contract you pass to `createApp`, so OpenAPI +
+   the typed client expose its routes:
+
+   ```typescript
+   import { contract as coreContract } from '@oss/orpc-contract';
+   import { playerContract } from '@oss-premium/player-management/contract';
+
+   const contract = { ...coreContract, player: playerContract };
+   ```
+
+4. If the package owns tables, run its migrations after the core set
+   (`pnpm -F @oss-premium/<name> db:migrate`, or the platform's `pnpm db:migrate:all`,
+   which discovers every premium package's migration set).
+
+The free OSS core never references premium packages (a lint boundary,
+`no-core-to-premium`, enforces it), so you only ever pull in what you license. See
+[ADR-0020](./adr/ADR-0020-editions-premium-modules.md).
+
 ## Building the frontend (in your own repo)
 
 Your entire frontend repo is built from scratch - pages, components, admin shell, theme, styling. It consumes the api over HTTP through `@oss/react-hooks` (typed client, data hooks, auth, cross-cutting helpers, RSC prefetchers at `@oss/react-hooks/server`) and the framework-agnostic `@oss/sdk-core`.

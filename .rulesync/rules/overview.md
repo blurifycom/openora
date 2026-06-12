@@ -64,6 +64,11 @@ packages/
                   #   surface. No UI components ship here - the frontend lives in the
                   #   downstream consumer repo (consumer).
     plugin-test-kit/ # @oss/plugin-test-kit - validatePlugin() for operator suites
+  premium/        # @oss-premium/* - sellable, extract-later packages (NOT in the free
+                  #   edition). Each is a standalone package (own package.json, contract
+                  #   slice, migrations) shaped like its published form. Core may never
+                  #   import these; apps/* gate them via OSS_PREMIUM. leaderboard,
+                  #   sportsbook, aggregator, player-management (admin PAM). See ADR-0020.
 docs/
   adr/            # Architecture decision records
   architecture.md, glossary.md, agent-quickstart.md, downstream-consumer.md
@@ -75,6 +80,7 @@ extensions.config.ts # the single registry of enabled plugins
 ## Where does X go? (decision tree)
 
 - A new business domain (eg "tournaments") -> new module under `packages/modules/<group>/<name>/` (group: `player`, `backoffice`, `platform`). Use `/scaffold-module <group> <name>`.
+- A sellable / paid (non-free-edition) module -> a standalone `@oss-premium/<name>` package under `packages/premium/<name>/` (own `package.json`, contract slice, migrations). The free OSS core must NEVER import it (`no-core-to-premium`); only `apps/*` wire it via `extensions.config.ts` (`kind: 'premium'`) + the `OSS_PREMIUM` edition gate in `apps/api/src/editions.ts`. Reference packages: `leaderboard`, `sportsbook`, `aggregator`, `player-management`. See ADR-0020.
 - A behavior that extends/overrides an existing module -> overlay plugin under `apps/api/src/extensions/<name>/`. Use `/scaffold-plugin <name>`.
 - A new HTTP route -> add to the module's `router/index.ts`. Use `/scaffold-route <module> <method> <path>`. Player routes resolve the caller from the `x-user-id` header; admin routes MUST be guarded (next line).
 - An admin-only route -> the module's `plugin.ts` resolves `AdminGuard` from the container (`c.get(ADMIN_GUARD)`) and passes it into the router factory; call `await adminGuard.assert(context)` as the first line of the handler (throws `ORPCError`). `ADMIN_GUARD` is seeded into the container by `createApp`. This is the single admin-enforcement point - never re-implement the role check.
@@ -110,6 +116,7 @@ The rules both layers enforce:
 - `packages/modules/**` may import: `@oss/contracts/*`, `@oss/adapters`, `@oss/platform/*`, `@oss/sdk-core`, `@oss/react-hooks`. May NOT import another module - cross-module communication goes through events or contracts (read another module's tables via the `@oss/modules/<group>/<name>/schema` subpath).
 - `packages/platform/*` may import other `platform/*` and `@oss/contracts/*`. May NOT import modules (`api-runtime` and `testing`, the composition roots, are the only exceptions).
 - `packages/contracts/*` may only import other contracts and Zod.
+- `packages/premium/*` (sellable `@oss-premium/*` packages) may import core exactly like a module (`@oss/contracts/*`, `@oss/adapters`, `@oss/platform/*`, `@oss/modules/<g>/<n>/schema`). May NOT import another premium package (`no-cross-premium`). The free core (`packages/{modules,platform,contracts,sdks}/**`) may NEVER import `@oss-premium/*` (`no-core-to-premium`) - only `apps/*` may. This keeps premium modules extractable. See ADR-0020.
 - `apps/api/src/extensions/*` may import any package, but never another extension.
 - `apps/api` registers modules only via `extensions.config.ts`. A direct module-file import from `apps/api/src/*` is a lint error.
 - Consumers (and modules) import the package entry, never a deep `dist/` path.

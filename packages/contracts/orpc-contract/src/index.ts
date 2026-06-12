@@ -11,13 +11,7 @@ import { bonusContract } from './bonus.js';
 import { chatContract } from './chat.js';
 import { lobbyContract } from './lobby.js';
 import { backofficeContract } from './backoffice.js';
-import { playerContract } from './player.js';
 import { profileContract } from './profile.js';
-import { igamingAggregatorContract } from './igaming-aggregator.js';
-
-import { leaderboardContract } from './leaderboard.js';
-
-import { sportsbookContract } from './sportsbook.js';
 
 import { iamContract } from './iam.js';
 
@@ -46,38 +40,15 @@ export {
   AdminUserSchema,
   AdminTransactionSchema,
 } from './backoffice.js';
-export {
-  playerContract,
-  PlayerSchema,
-  PlayerStatusSchema,
-  KycStatusSchema,
-  PlayerRegistrationPointSchema,
-  PlayerSummarySchema,
-} from './player.js';
+// Shared player shape (used by the core profile surface and the premium PAM
+// package). The admin PAM route contract + stats schemas moved to
+// @oss-premium/player-management. See ADR-0019.
+export { PlayerSchema, PlayerStatusSchema, KycStatusSchema } from './player.js';
 export {
   profileContract,
   UpdatePlayerProfileInputSchema,
   type UpdatePlayerProfileInput,
 } from './profile.js';
-export { igamingAggregatorContract } from './igaming-aggregator.js';
-
-export {
-  leaderboardContract,
-  LeaderboardMetricSchema,
-  LeaderboardPeriodSchema,
-  LeaderboardEntrySchema,
-  LeaderboardResponseSchema,
-} from './leaderboard.js';
-
-export {
-  sportsbookContract,
-  SportsbookEventSchema,
-  SportsbookSelectionSchema,
-  SportsbookBetSchema,
-  OddsUpdateSchema,
-  PlaceBetInputSchema,
-  PlaceBetResultSchema,
-} from './sportsbook.js';
 
 export {
   iamContract,
@@ -111,11 +82,7 @@ export const contract = populateContractRouterPaths({
   chat: chatContract,
   lobby: lobbyContract,
   backoffice: backofficeContract,
-  player: playerContract,
   profile: profileContract,
-  igamingAggregator: igamingAggregatorContract,
-  leaderboard: leaderboardContract,
-  sportsbook: sportsbookContract,
   iam: iamContract,
   audit: auditContract,
 });

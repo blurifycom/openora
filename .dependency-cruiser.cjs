@@ -57,6 +57,25 @@ module.exports = {
       to: { path: '^(apps/|packages/)', pathNot: '^packages/contracts/' },
     },
     {
+      name: 'no-core-to-premium',
+      severity: 'error',
+      comment:
+        'The free OSS core must never depend on a premium package. packages/{modules,platform,contracts,sdks}/* may not import packages/premium/* (@oss-premium/*). Only the composition roots under apps/* wire premium in (via extensions.config.ts + the createApp contract merge). This is the guarantee that a premium module can be extracted without breaking core. See docs/adr/ADR-0020-editions-premium-modules.md.',
+      from: { path: '^packages/(modules|platform|contracts|sdks)/' },
+      to: { path: '^packages/premium/' },
+    },
+    {
+      name: 'no-cross-premium',
+      severity: 'error',
+      comment:
+        "A premium package must not depend on another premium package (same rule as no-cross-module). Communicate via events, a command port, or the read-only /schema subpath. Keeping premium packages mutually independent is what lets each one be sold/extracted on its own.",
+      from: { path: '^packages/premium/([^/]+)/' },
+      to: {
+        path: '^packages/premium/[^/]+/',
+        pathNot: ['^packages/premium/$1/', '/src/schema/'],
+      },
+    },
+    {
       name: 'no-cross-extension',
       severity: 'error',
       comment:

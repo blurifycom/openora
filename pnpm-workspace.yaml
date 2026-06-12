@@ -1,6 +1,6 @@
 packages:
   - 'apps/*'
-  - 'packages/*/*'
+  - 'packages/*/*' # includes packages/premium/* (sellable, extract-later modules)
   - 'packages/modules'
 allowBuilds:
   esbuild: true

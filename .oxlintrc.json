@@ -14,6 +14,8 @@
     "oss-boundaries/no-cross-module-import": "error",
     "oss-boundaries/no-cross-module-schema-read": "warn",
     "oss-boundaries/no-module-internal-import": "error",
+    "oss-boundaries/no-core-to-premium": "error",
+    "oss-boundaries/no-cross-premium": "error",
     "oss-boundaries/no-platform-to-module": "error",
     "oss-boundaries/no-contracts-to-runtime": "error",
     "oss-boundaries/no-deep-dist-import": "error",

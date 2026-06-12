@@ -8,7 +8,6 @@
 export const extensions = [
   { id: 'audit', path: './packages/modules/dist/backoffice/audit/src/plugin.js' },
   { id: 'iam', path: './packages/modules/dist/backoffice/iam/src/plugin.js' },
-  { id: 'leaderboard', path: './packages/modules/dist/player/leaderboard/src/plugin.js' },
   // Platform - shared substrate used by both surfaces
   { id: 'identity', path: './packages/modules/dist/platform/identity/src/plugin.js' },
   { id: 'notifications', path: './packages/modules/dist/platform/notifications/src/plugin.js' },
@@ -21,16 +20,30 @@ export const extensions = [
   { id: 'lobby', path: './packages/modules/dist/player/lobby/src/plugin.js' },
   { id: 'chat', path: './packages/modules/dist/player/chat/src/plugin.js' },
   { id: 'bonus', path: './packages/modules/dist/player/bonus/src/plugin.js' },
-  { id: 'aggregator', path: './packages/modules/dist/player/aggregator/src/plugin.js' },
-  { id: 'sportsbook', path: './packages/modules/dist/player/sportsbook/src/plugin.js' },
+  // Player self-profile (owns the `player` table). The admin PAM surface is the
+  // premium player-management package below.
+  { id: 'profile', path: './packages/modules/dist/player/profile/src/plugin.js' },
 
   // Backoffice - the admin/operator surface
   { id: 'admin-console', path: './packages/modules/dist/backoffice/admin-console/src/plugin.js' },
+  { id: 'cms', path: './packages/modules/dist/backoffice/cms/src/plugin.js' },
+
+  // --- PREMIUM (sellable, extract-later packages under packages/premium/*) ---
+  // kind: 'premium' -> loaded by the composition root ONLY when the id is in the
+  // OSS_PREMIUM allowlist (apps/api/src/editions.ts). Free edition omits them
+  // entirely (no routes, no OpenAPI). Each ships its own contract slice +
+  // migrations and can be lifted to its own npm package. See ADR-0020.
+  { id: 'leaderboard', path: './packages/premium/leaderboard/dist/plugin.js', kind: 'premium' },
+  { id: 'sportsbook', path: './packages/premium/sportsbook/dist/plugin.js', kind: 'premium' },
+  // sportsbook debits the core wallet via WALLET_COMMANDS (dependsOn: ['wallet']).
+  { id: 'aggregator', path: './packages/premium/aggregator/dist/plugin.js', kind: 'premium' },
+  // Admin PAM. Reads the core `player` table (owned by the profile module) via the
+  // /schema subpath; the player-facing profile stays free.
   {
     id: 'player-management',
-    path: './packages/modules/dist/backoffice/player-management/src/plugin.js',
+    path: './packages/premium/player-management/dist/plugin.js',
+    kind: 'premium',
   },
-  { id: 'cms', path: './packages/modules/dist/backoffice/cms/src/plugin.js' },
 
   // Overlay extensions (apps/api/src/extensions/<name>/plugin.ts)
   // Add via: pnpm gen plugin <name>

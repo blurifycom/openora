@@ -9,22 +9,15 @@
 // `'use client'` here; nothing in this file is bundled into the browser.
 
 import type { z } from 'zod';
-import {
-  LobbyCategorySchema,
-  FeaturedSlotSchema,
-  GameSchema,
-  SportsbookEventSchema,
-} from '@oss/orpc-contract';
+import { LobbyCategorySchema, FeaturedSlotSchema, GameSchema } from '@oss/orpc-contract';
 import { createClient } from '@oss/sdk-core';
 
 export type LobbyCategory = z.infer<typeof LobbyCategorySchema>;
 export type FeaturedSlot = z.infer<typeof FeaturedSlotSchema>;
 export type Game = z.infer<typeof GameSchema>;
-export type SportsbookEvent = z.infer<typeof SportsbookEventSchema>;
 
 export type LobbyData = { categories: LobbyCategory[]; featured: FeaturedSlot[] };
 export type GamesData = { games: Game[] };
-export type SportsbookData = { events: SportsbookEvent[] };
 
 export type ServerFetchOptions = {
   /** Internal API base URL (eg `http://localhost:3101`). No trailing slash. */
@@ -55,8 +48,7 @@ export async function fetchGamesData(options: ServerFetchOptions): Promise<Games
   return { games };
 }
 
-export async function fetchSportsbookData(options: ServerFetchOptions): Promise<SportsbookData> {
-  const client = serverClient(options);
-  const events = await client.sportsbook.listEvents();
-  return { events };
-}
+// Note: prefetchers for premium surfaces (sportsbook, leaderboard, ...) intentionally
+// do NOT live in the core SDK - the free edition's typed client has no such namespace.
+// A consumer that licenses a premium module builds its own prefetcher against the
+// merged contract. See ADR-0020.

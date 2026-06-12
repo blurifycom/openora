@@ -1,11 +1,11 @@
 import { implement } from '@orpc/server';
 import { AdminGuard } from '@oss/auth';
 import { mapErrors, type OssContext } from '@oss/core';
-import { contract } from '@oss/orpc-contract';
+import { playerContract } from '../contract/index.js';
 import { PlayerService, PlayerNotFoundError } from '../service/player.service.js';
 
 export function createPlayerRouter(player: PlayerService, adminGuard: AdminGuard) {
-  const os = implement(contract.player).$context<OssContext>();
+  const os = implement(playerContract).$context<OssContext>();
 
   return os.router({
     list: os.list.handler(async ({ input, context }) => {
