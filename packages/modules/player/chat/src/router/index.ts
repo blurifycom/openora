@@ -1,9 +1,11 @@
 import { implement } from '@orpc/server';
 import { populateContractRouterPaths } from '@orpc/contract';
 import { mapErrors, createEventStreamGenerator, getUserId, type OssContext } from '@oss/core';
+import type { RealtimeClientAuthorizer } from '@oss/adapters';
 import { chatContract } from '@oss/orpc-contract/chat';
 import {
   ChatService,
+  chatChannel,
   ChatRoomNotFoundError,
   ChatMessageNotFoundError,
   ChatMessageOwnershipError,
@@ -17,7 +19,7 @@ function resolveUsername(context: OssContext, fallback = 'anonymous'): string {
   return typeof val === 'string' ? val : fallback;
 }
 
-export function createChatRouter(chatService: ChatService) {
+export function createChatRouter(chatService: ChatService, authorizer: RealtimeClientAuthorizer) {
   const os = implement(chat).$context<OssContext>();
 
   return os.router({
@@ -51,6 +53,19 @@ export function createChatRouter(chatService: ChatService) {
       const userId = getUserId(context);
       const username = resolveUsername(context);
       return chatService.sendGlobalMessage(userId, username, input.content);
+    }),
+
+    getConnection: os.getConnection.handler(({ input, context }) => {
+      const userId = getUserId(context);
+      // A grant carries a per-player, single-use token (nonce) - never cache it.
+      context.resHeaders?.set('cache-control', 'no-store');
+      // Channels the caller may receive. This pass exposes the global channel; a
+      // later pass adds the player's rooms. The server is authoritative - it never
+      // trusts a client-supplied channel list for what is granted.
+      const channels = [chatChannel(null)];
+      return Promise.resolve(
+        authorizer.issueGrant({ userId, clientId: input.clientId ?? userId, channels }),
+      );
     }),
 
     streamMessages: os.streamMessages.handler(({ input, signal }) =>

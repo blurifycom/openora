@@ -2,6 +2,10 @@ import { type EventBus, createDomainError, assertOwnership, getCurrentTenantId }
 import type { RealtimeTransport } from '@oss/adapters';
 import { DrizzleService, findOneOrThrow } from '@oss/db';
 import { eq, and, isNull, lt, desc, asc } from 'drizzle-orm';
+// Sanctioned read-only cross-module table read (display name lives in identity).
+// The username shown on a message is resolved server-side from the verified user,
+// never from a client-supplied header - so it cannot be spoofed.
+import { user } from '@oss/modules/platform/identity/schema';
 import { chatRoom, chatMessage } from '../schema/index.js';
 import type { ChatRoom, ChatMessage } from '../schemas/index.js';
 
@@ -62,6 +66,18 @@ export class ChatService {
     return this.transport.subscribe<ChatMessage>(chatChannel(roomId), listener);
   }
 
+  // The display name shown on a message, resolved from the verified user record.
+  // `fallback` (the router's header-derived value) is used only if the user row is
+  // somehow missing, then 'anonymous' as a last resort.
+  private async resolveDisplayName(userId: string, fallback: string): Promise<string> {
+    const [row] = await this.drizzle.db
+      .select({ name: user.name })
+      .from(user)
+      .where(eq(user.id, userId))
+      .limit(1);
+    return row?.name?.trim() || fallback || 'anonymous';
+  }
+
   async listRooms(tenantId?: string): Promise<ChatRoom[]> {
     const rooms = await this.drizzle.db
       .select()
@@ -94,13 +110,14 @@ export class ChatService {
       new ChatRoomNotFoundError(roomId),
     );
 
+    const displayName = await this.resolveDisplayName(userId, username);
     const [record] = await this.drizzle.db
       .insert(chatMessage)
       .values({
         tenantId: room.tenantId,
         roomId,
         userId,
-        username,
+        username: displayName,
         content,
       })
       .returning();
@@ -154,13 +171,14 @@ export class ChatService {
     // Default to the request tenant (ADR-0018) so the RLS WITH CHECK policy
     // accepts the write; an explicit arg (system paths) still wins when passed.
     const effectiveTenantId = tenantId ?? getCurrentTenantId() ?? 'default';
+    const displayName = await this.resolveDisplayName(userId, username);
     const [record] = await this.drizzle.db
       .insert(chatMessage)
       .values({
         tenantId: effectiveTenantId,
         roomId: null,
         userId,
-        username,
+        username: displayName,
         content,
       })
       .returning();

@@ -23,6 +23,7 @@
       ],
       "routes": [
         "chat.deleteMessage",
+        "chat.getConnection",
         "chat.getGlobalMessages",
         "chat.getRoomMessages",
         "chat.listRooms",
@@ -462,6 +463,10 @@
       "file": "packages/contracts/shared-schemas/src/identity.ts"
     },
     {
+      "name": "ChatConnectionGrantSchema",
+      "file": "packages/contracts/orpc-contract/src/chat.ts"
+    },
+    {
       "name": "ChatMessageSchema",
       "file": "packages/contracts/orpc-contract/src/chat.ts"
     },
@@ -743,6 +748,7 @@
     "GET /bonus/bonuses",
     "GET /bonus/user-bonuses",
     "GET /bonus/user-bonuses/{id}",
+    "GET /chat/connection",
     "GET /chat/global",
     "GET /chat/rooms",
     "GET /chat/rooms/{roomId}/messages",

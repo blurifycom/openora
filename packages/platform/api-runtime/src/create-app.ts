@@ -12,6 +12,7 @@ import {
   InMemoryBroker,
   InProcessJobQueue,
   InProcessRealtimeTransport,
+  SseClientAuthorizer,
   createEventBus,
   createLogger,
   withTenant,
@@ -24,6 +25,7 @@ import {
   MESSAGE_BROKER,
   JOB_QUEUE,
   REALTIME_TRANSPORT,
+  REALTIME_CLIENT_AUTHORIZER,
   OUTBOX,
   ADMIN_PERMISSION_RESOLVER,
 } from '@oss/adapters';
@@ -140,6 +142,11 @@ export async function createApp(config: CreateAppConfig): Promise<CreatedApp> {
   // served as SSE; an overlay rebinds REALTIME_TRANSPORT to a managed vendor
   // (Ably/GetStream) without touching modules. See ADR-0007.
   container.register(REALTIME_TRANSPORT, () => new InProcessRealtimeTransport());
+  // Client connection provisioning - the complement to REALTIME_TRANSPORT. The
+  // default is first-party SSE (no token; the session cookie authorizes the
+  // event-iterator stream). A managed-vendor overlay (Ably/GetStream) rebinds
+  // REALTIME_CLIENT_AUTHORIZER to mint a per-player scoped token. See ADR-0007.
+  container.register(REALTIME_CLIENT_AUTHORIZER, () => new SseClientAuthorizer());
   // Background jobs: default in-process queue (zero deps); an overlay rebinds
   // JOB_QUEUE to a durable driver (the BullMQ/Redis overlay). The disposer drains
   // in-flight jobs on shutdown - registered after DRIZZLE's (below) so it runs

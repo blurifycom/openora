@@ -11,6 +11,7 @@ export { EVENT_BUS, InMemoryBroker, createEventBus } from './event-bus.js';
 
 export { InProcessJobQueue } from './job-queue.js';
 export { InProcessRealtimeTransport } from './realtime-transport.js';
+export { SseClientAuthorizer, type SseClientAuthorizerOptions } from './realtime-authorizer.js';
 
 export { Container } from './container.js';
 export type { Factory } from './container.js';

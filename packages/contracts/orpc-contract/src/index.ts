@@ -26,7 +26,12 @@ export { notificationsContract, NotificationSchema } from './notifications.js';
 export { walletContract, WalletBalanceSchema, WalletTransactionSchema } from './wallet.js';
 export { gamingContract, GameSchema, GameRoundSchema } from './gaming.js';
 export { bonusContract, BonusSchema, UserBonusSchema } from './bonus.js';
-export { chatContract, ChatRoomSchema, ChatMessageSchema } from './chat.js';
+export {
+  chatContract,
+  ChatRoomSchema,
+  ChatMessageSchema,
+  ChatConnectionGrantSchema,
+} from './chat.js';
 export {
   lobbyContract,
   GameSummarySchema,

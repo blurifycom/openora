@@ -34,8 +34,14 @@ export type {
 } from './job-queue.js';
 export { JOB_QUEUE, queue } from './job-queue.js';
 
-export type { RealtimeTransport, RealtimePresence } from './realtime.js';
-export { REALTIME_TRANSPORT } from './realtime.js';
+export type {
+  RealtimeTransport,
+  RealtimePresence,
+  RealtimeConnectionGrant,
+  RealtimeClientAuthorizer,
+  RealtimeClientAuthorizerInput,
+} from './realtime.js';
+export { REALTIME_TRANSPORT, REALTIME_CLIENT_AUTHORIZER } from './realtime.js';
 
 export type { GameAdapter } from './game.js';
 export { GAME_ADAPTER } from './game.js';

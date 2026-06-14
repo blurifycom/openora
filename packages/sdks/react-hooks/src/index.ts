@@ -54,6 +54,15 @@ export {
   type UseChatStreamOptions,
   type UseChatStreamResult,
 } from './hooks/use-chat-stream.js';
+// Pluggable client-side realtime transport (consumer injects Ably/GetStream; the
+// default is built-in SSE). See ADR-0007.
+export {
+  RealtimeClientProvider,
+  useOptionalRealtimeClient,
+  type RealtimeClientAdapter,
+  type RealtimeClientStatus,
+  type RealtimeSubscribeHandlers,
+} from './context/realtime-client.js';
 
 // Cross-cutting helpers for slot fills / plugin authors (ADR-0013)
 export { PageContextProvider, usePageContext, useOptionalPageContext } from './page-context.js';

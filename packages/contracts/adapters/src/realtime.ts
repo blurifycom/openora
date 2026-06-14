@@ -30,3 +30,51 @@ export type RealtimeTransport = {
 };
 
 export const REALTIME_TRANSPORT: Token<RealtimeTransport> = createToken('REALTIME_TRANSPORT');
+
+// Client connection provisioning - the complement to REALTIME_TRANSPORT.
+//
+// REALTIME_TRANSPORT is how the SERVER fans a message out. This seam is how a
+// CLIENT learns to CONNECT and receive. The two models differ by provider:
+//   - first-party (default): the client pulls from our own API over SSE, so the
+//     "grant" is just the stream path - no secret, the session cookie authorizes.
+//   - managed vendor (Ably/GetStream/PubNub): the client connects DIRECTLY to the
+//     vendor edge, so the backend must mint a per-player, capability-scoped token
+//     (never ship the vendor API key to the browser). The grant carries that token.
+// A downstream operator binds this token to its provider's authorizer without any
+// module change; the chat module just hands the grant to the caller. See ADR-0007.
+
+// What the client needs to start receiving, tagged by `provider` so a pluggable
+// client-side adapter can pick the right transport. Open union - a new vendor adds
+// its own variant without editing core.
+export type RealtimeConnectionGrant =
+  // First-party SSE: subscribe by opening this event-iterator path on our API.
+  | { provider: 'sse'; streamPath: string; channels: string[] }
+  // Ably: a signed TokenRequest the browser exchanges for a scoped token, plus the
+  // channels the player may subscribe to. `tokenRequest` is opaque here (the Ably
+  // SDK shape lives in the consumer, not in vendor-neutral core).
+  | { provider: 'ably'; tokenRequest: unknown; channels: string[] }
+  // Escape hatch for any other vendor (GetStream, PubNub, ...).
+  | { provider: string; channels: string[]; [key: string]: unknown };
+
+export type RealtimeClientAuthorizerInput = {
+  // The authenticated caller; becomes the vendor `clientId` so presence/identity
+  // is bound server-side and cannot be spoofed by the browser.
+  userId: string;
+  // A stable per-connection id from the client (defaults to userId when absent).
+  clientId: string;
+  // The channels the caller is allowed to subscribe to (the module computes these
+  // from the player's access - eg the global channel plus their rooms).
+  channels: string[];
+};
+
+export type RealtimeClientAuthorizer = {
+  // Mint a connection grant for an authenticated caller. Async because a managed
+  // vendor signs a token request over its SDK.
+  issueGrant(
+    input: RealtimeClientAuthorizerInput,
+  ): RealtimeConnectionGrant | Promise<RealtimeConnectionGrant>;
+};
+
+export const REALTIME_CLIENT_AUTHORIZER: Token<RealtimeClientAuthorizer> = createToken(
+  'REALTIME_CLIENT_AUTHORIZER',
+);
