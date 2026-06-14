@@ -33,11 +33,11 @@
   "dependencies": {
     "@orpc/contract": "1.14.5",
     "@orpc/server": "1.14.5",
+    "@oss-addons/identity": "workspace:*",
+    "@oss-addons/profile": "workspace:*",
     "@oss/auth": "workspace:*",
     "@oss/core": "workspace:*",
     "@oss/db": "workspace:*",
-    "@oss-addons/identity": "workspace:*",
-    "@oss-addons/profile": "workspace:*",
     "@oss/orpc-contract": "workspace:*",
     "@oss/plugin-host": "workspace:*",
     "drizzle-orm": "0.45.2",

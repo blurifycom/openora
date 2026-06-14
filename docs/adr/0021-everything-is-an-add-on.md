@@ -21,18 +21,21 @@ Two tiers **by registration**, not by packaging:
 2. **GATED add-ons** (4 features: leaderboard, sportsbook, aggregator, player-management) - registered with **`kind: 'addon'`**, loaded only when listed in `OSS_ADDONS` allowlist, carry their own `src/contract/` slice and `drizzle.config.ts` + `migrations/`, never imported by core (enforced by `no-core-to-addon` lint).
 
 Consequence: the composition root (`@oss/api-runtime`) is now a **facade that knows about core add-on `/schema` subpaths ONLY** (for plugin host, DI container bootstrap). It does NOT import `@oss-addons/<name>` roots or any gated add-on. The platform builds in two editions:
+
 - OSS_ADDONS unset (default): loads 14 core add-ons, omits gated contracts and routes entirely.
 - OSS_ADDONS=leaderboard,sportsbook,... (optional): adds gated contracts to the root oRPC export, loads their routes, runs their migrations.
 
 ## Consequences
 
 ### Packaging & structure
+
 - New features start as `@oss-addons/<name>` with own `package.json` (no need to decide "core or gated" upfront - default is core, opt-in to `kind: 'addon'` later).
 - Groups (`player` / `backoffice` / `platform`) are **metadata only** - used in docs/roadmap to describe _which surface a feature serves_, not _where code lives_. The scaffold prompts for the name, not a group.
 - All 18 add-on contracts index from `packages/contracts/orpc-contract/<name>.ts` (core) or `src/contract/<name>.ts` (gated).
 - Core add-on migrations are **appended to a single history** in `packages/platform/db/migrations/`, so drift and ordering are a single-instance problem; gated add-ons have their own migration folders (each with `drizzle.config.ts`), so they can be extracted/versioned independently.
 
 ### Imports & cross-add-on talk
+
 - Add-ons import each other ONLY via read-only `/schema` subpaths: `import { wallet } from '@oss-addons/wallet/schema'`.
 - Root imports: `@oss-addons/<name>` is forbidden in `packages/{platform,contracts,sdks}/**` and `@oss/api-runtime` (only allowed in `apps/*` composition roots, which load add-ons into `extensions.config.ts`).
 - Events, command ports, and gated read-only schema subpaths remain the only sanctioned cross-add-on comms.
@@ -43,17 +46,20 @@ Consequence: the composition root (`@oss/api-runtime`) is now a **facade that kn
   - New rule `no-core-to-addon` strictly forbids `packages/{platform,contracts,sdks}/**` importing `@oss-addons/*` (breaks the "composition root is the add-on wiring boundary" invariant).
 
 ### Scaffolding
+
 - `pnpm gen module <name>` now generates `packages/addons/<name>/` as a standalone core add-on (registered in `extensions.config.ts` with no `kind`, contract in `@oss/orpc-contract`).
 - `pnpm gen addon <name> --gated` (future) would register with `kind: 'addon'`, own contract slice, own migrations folder.
 - For now, a gated add-on is scaffolded the same way and manually moved to `kind: 'addon'` in config + its migration folder created.
 
 ### Edition gates
+
 - `apps/api/src/editions.ts` contains `OSS_ADDONS: ('leaderboard' | 'sportsbook' | 'aggregator' | 'player-management')[]` (env-driven, case-sensitive list).
 - `createApp` filters `extensions.config.ts` by edition: skip entries with `kind: 'addon'` if not in `OSS_ADDONS`.
 - OpenAPI + React client types are **edition-aware**: unset `OSS_ADDONS` emits routes + schemas for 14 core features only; set it includes gated contracts + routes.
 - CI runs two matrix builds: one with OSS_ADDONS unset (default), one with all gated add-ons enabled (full platform).
 
 ### Migration & extraction
+
 - A core add-on (free build) can be promoted to optional later:
   1. Move its `packages/addons/<name>` to a separate repo / npm package (or keep it checked in as a submodule).
   2. Add a `drizzle.config.ts` + `migrations/` folder if not already there.

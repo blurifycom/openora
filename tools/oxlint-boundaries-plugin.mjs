@@ -131,9 +131,7 @@ const noContractsToRuntime = {
         const file = filename(context);
         if (!inPath(file, 'packages/contracts')) return;
         const spec = node.source.value;
-        const blocked = blocked_by_contracts.some(
-          (b) => spec === b || spec.startsWith(b + '/'),
-        );
+        const blocked = blocked_by_contracts.some((b) => spec === b || spec.startsWith(b + '/'));
         if (blocked) {
           context.report({
             node,
