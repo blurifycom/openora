@@ -1,8 +1,4 @@
-import {
-  PlatformStatsSchema,
-  AdminUserSchema,
-  AdminTransactionSchema,
-} from '../contract/index.js';
+import { PlatformStatsSchema, AdminUserSchema, AdminTransactionSchema } from '../contract/index.js';
 import type { z } from 'zod';
 
 export { PlatformStatsSchema, AdminUserSchema, AdminTransactionSchema };

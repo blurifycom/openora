@@ -131,10 +131,13 @@ const server = new McpServer({
 });
 
 // --- catalog-overview -------------------------------------------------------
-server.tool(
+server.registerTool(
   'catalog-overview',
-  'START HERE. A concise "what can I extend" summary of the OSS igaming platform you are consuming: counts of modules/events/slots/schemas, the adapter swap-seam table (category/interface/token/status), and the igaming-config fields. Read this first to orient before drilling into the other tools.',
-  {},
+  {
+    description:
+      'START HERE. A concise "what can I extend" summary of the OSS igaming platform you are consuming: counts of modules/events/slots/schemas, the adapter swap-seam table (category/interface/token/status), and the igaming-config fields. Read this first to orient before drilling into the other tools.',
+    inputSchema: {},
+  },
   withCatalog((c) => {
     const lines: string[] = ['=== OSS igaming platform catalog ==='];
     lines.push(
@@ -161,10 +164,13 @@ server.tool(
 );
 
 // --- list-adapters ----------------------------------------------------------
-server.tool(
+server.registerTool(
   'list-adapters',
-  'List the vendor adapter swap-seams (PSP/KYC/game/aggregator/geo-ip/notification). For each: the interface to implement, the DI token to bind it to, whether it is already wired or a stub awaiting an implementation, and where it is bound. Use this to find the integration point for a third-party vendor.',
-  {},
+  {
+    description:
+      'List the vendor adapter swap-seams (PSP/KYC/game/aggregator/geo-ip/notification). For each: the interface to implement, the DI token to bind it to, whether it is already wired or a stub awaiting an implementation, and where it is bound. Use this to find the integration point for a third-party vendor.',
+    inputSchema: {},
+  },
   withCatalog((c) => {
     if (c.adapters.length === 0) return 'No adapters in the catalog.';
     const lines: string[] = ['=== Adapter seams ==='];
@@ -180,10 +186,15 @@ server.tool(
 );
 
 // --- list-routes ------------------------------------------------------------
-server.tool(
+server.registerTool(
   'list-routes',
-  'List oRPC route namespaces exposed by the platform modules. Pass `module` to scope to a single module. Includes top-level httpRoutes when present.',
-  { module: z.string().optional().describe('Module id to filter by (e.g. "wallet")') },
+  {
+    description:
+      'List oRPC route namespaces exposed by the platform modules. Pass `module` to scope to a single module. Includes top-level httpRoutes when present.',
+    inputSchema: {
+      module: z.string().optional().describe('Module id to filter by (e.g. "wallet")'),
+    },
+  },
   async ({ module: mod }) => {
     const loaded = loadCatalog();
     if (!loaded) return { content: [{ type: 'text' as const, text: NOT_FOUND_MESSAGE }] };
@@ -214,10 +225,13 @@ server.tool(
 );
 
 // --- list-events ------------------------------------------------------------
-server.tool(
+server.registerTool(
   'list-events',
-  'List the cross-module domain events you can subscribe to (via ctx.events.on in a plugin) or that signal platform activity. Use this to find the event to hook into for side effects.',
-  {},
+  {
+    description:
+      'List the cross-module domain events you can subscribe to (via ctx.events.on in a plugin) or that signal platform activity. Use this to find the event to hook into for side effects.',
+    inputSchema: {},
+  },
   withCatalog((c) => {
     if (c.events.length === 0) return 'No events in the catalog.';
     return `=== Domain events (${c.events.length}) ===\n${c.events.map((e) => `- ${e}`).join('\n')}`;
@@ -225,10 +239,13 @@ server.tool(
 );
 
 // --- list-slots -------------------------------------------------------------
-server.tool(
+server.registerTool(
   'list-slots',
-  'List the named UI slots you can fill from a client-side UI plugin (ctx.<slot>.add(...)) to extend the backoffice without forking: nav items, table columns, dashboard tiles, detail sections. Includes each slot description and subject type.',
-  {},
+  {
+    description:
+      'List the named UI slots you can fill from a client-side UI plugin (ctx.<slot>.add(...)) to extend the backoffice without forking: nav items, table columns, dashboard tiles, detail sections. Includes each slot description and subject type.',
+    inputSchema: {},
+  },
   withCatalog((c) => {
     if (c.uiSlots.length === 0) return 'No UI slots in the catalog.';
     const lines: string[] = ['=== UI slots ==='];
@@ -240,10 +257,13 @@ server.tool(
 );
 
 // --- describe-module --------------------------------------------------------
-server.tool(
+server.registerTool(
   'describe-module',
-  "Describe one platform module from the catalog: its group (player/backoffice/platform), Drizzle tables, and oRPC routes. Use this to understand a module's surface before extending or integrating with it.",
-  { name: z.string().describe('Module id (e.g. "wallet", "gaming")') },
+  {
+    description:
+      "Describe one platform module from the catalog: its group (player/backoffice/platform), Drizzle tables, and oRPC routes. Use this to understand a module's surface before extending or integrating with it.",
+    inputSchema: { name: z.string().describe('Module id (e.g. "wallet", "gaming")') },
+  },
   async ({ name }) => {
     const loaded = loadCatalog();
     if (!loaded) return { content: [{ type: 'text' as const, text: NOT_FOUND_MESSAGE }] };
@@ -272,10 +292,15 @@ server.tool(
 );
 
 // --- schema-get -------------------------------------------------------------
-server.tool(
+server.registerTool(
   'schema-get',
-  'Locate a Zod contract schema by name and return the file that defines it. The actual shape is read from the package types you have installed; this tells you WHERE the schema lives so you can import it.',
-  { name: z.string().describe('Schema name, e.g. "WalletBalance" or "WalletBalanceSchema"') },
+  {
+    description:
+      'Locate a Zod contract schema by name and return the file that defines it. The actual shape is read from the package types you have installed; this tells you WHERE the schema lives so you can import it.',
+    inputSchema: {
+      name: z.string().describe('Schema name, e.g. "WalletBalance" or "WalletBalanceSchema"'),
+    },
+  },
   async ({ name }) => {
     const loaded = loadCatalog();
     if (!loaded) return { content: [{ type: 'text' as const, text: NOT_FOUND_MESSAGE }] };
@@ -301,10 +326,13 @@ server.tool(
 );
 
 // --- get-config-schema ------------------------------------------------------
-server.tool(
+server.registerTool(
   'get-config-schema',
-  'Return the igaming-config surface: the DI token, the source file that defines it, and each configurable field with its note. Use this to learn what a consumer can configure (branding, currencies, jurisdictions, enabled modules, limits, ...).',
-  {},
+  {
+    description:
+      'Return the igaming-config surface: the DI token, the source file that defines it, and each configurable field with its note. Use this to learn what a consumer can configure (branding, currencies, jurisdictions, enabled modules, limits, ...).',
+    inputSchema: {},
+  },
   withCatalog((c) => {
     const lines: string[] = ['=== Igaming config ==='];
     lines.push(`token:  ${c.config.token}`);
@@ -478,17 +506,20 @@ const REQUIREMENTS_INTERVIEW = [
 ].join('\n');
 
 // --- enhance-intent ---------------------------------------------------------
-server.tool(
+server.registerTool(
   'enhance-intent',
-  'Turn a fuzzy "I want to build X" ask into a grounded, consumer-context brief. Uses the platform catalog (live module/adapter/slot list) to return a classified intent, a requirements checklist to collect from the user, a step-by-step playbook using the consumer pnpm gen commands, and an acceptance-criteria stub.',
   {
-    ask: z
-      .string()
-      .describe("The user's raw request, eg 'add a VIP loyalty tier with point tracking'"),
-    kind: z
-      .enum(['feature', 'adapter', 'ui-page', 'route', 'unsure'])
-      .optional()
-      .describe('Override auto-classification if you already know the kind.'),
+    description:
+      'Turn a fuzzy "I want to build X" ask into a grounded, consumer-context brief. Uses the platform catalog (live module/adapter/slot list) to return a classified intent, a requirements checklist to collect from the user, a step-by-step playbook using the consumer pnpm gen commands, and an acceptance-criteria stub.',
+    inputSchema: {
+      ask: z
+        .string()
+        .describe("The user's raw request, eg 'add a VIP loyalty tier with point tracking'"),
+      kind: z
+        .enum(['feature', 'adapter', 'ui-page', 'route', 'unsure'])
+        .optional()
+        .describe('Override auto-classification if you already know the kind.'),
+    },
   },
   async ({ ask, kind }) => {
     const loaded = loadCatalog();
@@ -525,14 +556,19 @@ server.tool(
 );
 
 // --- start ------------------------------------------------------------------
-server.tool(
+server.registerTool(
   'start',
-  'Onboarding entry point. Call when the user opens Claude Code in a fresh consumer repo, says "start", "help me build X", or asks what they can do. Returns a structured onboarding script to follow: questions to ask, options to present, what to do with answers.',
   {
-    ask: z
-      .string()
-      .optional()
-      .describe("Pass the user's raw ask if already known. Omit to get the full interactive flow."),
+    description:
+      'Onboarding entry point. Call when the user opens Claude Code in a fresh consumer repo, says "start", "help me build X", or asks what they can do. Returns a structured onboarding script to follow: questions to ask, options to present, what to do with answers.',
+    inputSchema: {
+      ask: z
+        .string()
+        .optional()
+        .describe(
+          "Pass the user's raw ask if already known. Omit to get the full interactive flow.",
+        ),
+    },
   },
   async ({ ask }) => {
     const loaded = loadCatalog();
@@ -614,16 +650,19 @@ server.tool(
 );
 
 // --- dev:infra --------------------------------------------------------------
-server.tool(
+server.registerTool(
   'dev:infra',
-  'Start / stop / status local dev infrastructure via docker compose (postgres on :5432). Call before pnpm db:migrate or pnpm dev when the database is not reachable.',
   {
-    action: z
-      .enum(['up', 'down', 'status'])
-      .optional()
-      .describe(
-        'up (default): start containers. down: stop and remove. status: show running containers.',
-      ),
+    description:
+      'Start / stop / status local dev infrastructure via docker compose (postgres on :5432). Call before pnpm db:migrate or pnpm dev when the database is not reachable.',
+    inputSchema: {
+      action: z
+        .enum(['up', 'down', 'status'])
+        .optional()
+        .describe(
+          'up (default): start containers. down: stop and remove. status: show running containers.',
+        ),
+    },
   },
   async ({ action = 'up' }) => {
     if (action === 'status') {

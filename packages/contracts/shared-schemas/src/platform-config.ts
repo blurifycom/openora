@@ -95,7 +95,7 @@ export const PlatformConfigSchema = z
   .superRefine((cfg, ctx) => {
     if (cfg.activeBrand && !cfg.brands.some((b) => b.id === cfg.activeBrand)) {
       ctx.addIssue({
-        code: z.ZodIssueCode.custom,
+        code: 'custom',
         message: `activeBrand "${cfg.activeBrand}" does not match any brands[*].id`,
         path: ['activeBrand'],
       });

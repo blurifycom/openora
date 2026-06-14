@@ -110,7 +110,7 @@ export const iamContract = {
 
   inviteAdmin: oc
     .route({ method: 'POST', path: '/iam/invitations' })
-    .input(z.object({ email: z.string().email(), roleId: z.string() }))
+    .input(z.object({ email: z.email(), roleId: z.string() }))
     .output(AdminInvitationSchema),
 
   acceptInvitation: oc

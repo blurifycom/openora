@@ -328,15 +328,17 @@ const server = new McpServer({
 });
 
 // --- read-agents-md ---------------------------------------------------------
-server.tool(
+server.registerTool(
   'read-agents-md',
-  'Read a section of AGENTS.md (or a package-level AGENTS.md) by heading name.',
   {
-    section: z.string().optional().describe('H2 heading to read (omit for the full file)'),
-    package: z
-      .string()
-      .optional()
-      .describe('Package name or path relative to repo root (omit for root AGENTS.md)'),
+    description: 'Read a section of AGENTS.md (or a package-level AGENTS.md) by heading name.',
+    inputSchema: {
+      section: z.string().optional().describe('H2 heading to read (omit for the full file)'),
+      package: z
+        .string()
+        .optional()
+        .describe('Package name or path relative to repo root (omit for root AGENTS.md)'),
+    },
   },
   async ({ section, package: pkg }) => {
     const filePath = pkg
@@ -352,10 +354,12 @@ server.tool(
 );
 
 // --- list-modules -----------------------------------------------------------
-server.tool(
+server.registerTool(
   'list-modules',
-  'List all registered modules/extensions from extensions.config.ts.',
-  {},
+  {
+    description: 'List all registered modules/extensions from extensions.config.ts.',
+    inputSchema: {},
+  },
   async () => {
     const modules = listModulesFromConfig();
     if (modules.length === 0) {
@@ -374,17 +378,20 @@ server.tool(
 );
 
 // --- describe-module --------------------------------------------------------
-server.tool(
+server.registerTool(
   'describe-module',
-  'Everything you need to edit a module in one call: its AGENTS.md, Drizzle tables, Zod schemas, and router surface. Prefer this over reading the files individually.',
   {
-    name: z.string().describe('Module name (kebab-case)'),
-    response_format: z
-      .enum(['concise', 'detailed'])
-      .optional()
-      .describe(
-        'concise (default): AGENTS.md + table/schema/route names only. detailed: full source of every file.',
-      ),
+    description:
+      'Everything you need to edit a module in one call: its AGENTS.md, Drizzle tables, Zod schemas, and router surface. Prefer this over reading the files individually.',
+    inputSchema: {
+      name: z.string().describe('Module name (kebab-case)'),
+      response_format: z
+        .enum(['concise', 'detailed'])
+        .optional()
+        .describe(
+          'concise (default): AGENTS.md + table/schema/route names only. detailed: full source of every file.',
+        ),
+    },
   },
   async ({ name, response_format }) => {
     const detailed = response_format === 'detailed';
@@ -431,10 +438,12 @@ server.tool(
 );
 
 // --- list-routes ------------------------------------------------------------
-server.tool(
+server.registerTool(
   'list-routes',
-  'List all oRPC route namespaces across modules. Pass module name to filter.',
-  { module: z.string().optional() },
+  {
+    description: 'List all oRPC route namespaces across modules. Pass module name to filter.',
+    inputSchema: { module: z.string().optional() },
+  },
   async ({ module: mod }) => {
     const all = listAllModules();
     const modules = mod ? all.filter((m) => m.name === mod) : all;
@@ -453,10 +462,13 @@ server.tool(
 );
 
 // --- list-extension-points --------------------------------------------------
-server.tool(
+server.registerTool(
   'list-extension-points',
-  'List the exported event types and port interfaces (adapter swap seams) across the platform.',
-  {},
+  {
+    description:
+      'List the exported event types and port interfaces (adapter swap seams) across the platform.',
+    inputSchema: {},
+  },
   async () => {
     const parts: string[] = [];
 
@@ -490,10 +502,12 @@ server.tool(
 );
 
 // --- query-openapi ----------------------------------------------------------
-server.tool(
+server.registerTool(
   'query-openapi',
-  'Search the generated OpenAPI spec for paths or operations matching a keyword.',
-  { keyword: z.string() },
+  {
+    description: 'Search the generated OpenAPI spec for paths or operations matching a keyword.',
+    inputSchema: { keyword: z.string() },
+  },
   async ({ keyword }) => {
     const specPath = repoPath('docs', 'openapi.json');
     if (!existsSync(specPath)) {
@@ -529,12 +543,15 @@ server.tool(
 );
 
 // --- scaffold-* (delegating to `pnpm gen` -> tools/gen.ts) ------------------
-server.tool(
+server.registerTool(
   'scaffold-module',
-  'Scaffold a new business module as a standalone @oss-addons/<name> package under packages/addons/<name>.',
   {
-    group: z.enum(['player', 'backoffice', 'platform']),
-    name: z.string(),
+    description:
+      'Scaffold a new business module as a standalone @oss-addons/<name> package under packages/addons/<name>.',
+    inputSchema: {
+      group: z.enum(['player', 'backoffice', 'platform']),
+      name: z.string(),
+    },
   },
   async ({ group, name }) => {
     const result = run(`pnpm gen module ${group} ${name}`);
@@ -544,10 +561,12 @@ server.tool(
   },
 );
 
-server.tool(
+server.registerTool(
   'scaffold-plugin',
-  'Scaffold a new overlay extension under apps/api/src/extensions/<name>.',
-  { name: z.string() },
+  {
+    description: 'Scaffold a new overlay extension under apps/api/src/extensions/<name>.',
+    inputSchema: { name: z.string() },
+  },
   async ({ name }) => {
     const result = run(`pnpm gen plugin ${name}`);
     return {
@@ -556,13 +575,15 @@ server.tool(
   },
 );
 
-server.tool(
+server.registerTool(
   'scaffold-route',
-  'Add an oRPC route stub to a module',
   {
-    module: z.string(),
-    method: z.enum(['GET', 'POST', 'PUT', 'PATCH', 'DELETE']),
-    path: z.string(),
+    description: 'Add an oRPC route stub to a module',
+    inputSchema: {
+      module: z.string(),
+      method: z.enum(['GET', 'POST', 'PUT', 'PATCH', 'DELETE']),
+      path: z.string(),
+    },
   },
   async ({ module: mod, method, path }) => {
     const result = run(`pnpm gen route ${mod} ${method} ${path}`);
@@ -573,16 +594,19 @@ server.tool(
 );
 
 // --- scaffold-app (bootstrap a downstream consumer repo) --------------------
-server.tool(
+server.registerTool(
   'scaffold-app',
-  'Bootstrap a new downstream igaming consumer repo (api + web + backoffice) wired to this OSS checkout via link:. Delegates to tools/create-igaming-app.ts. Does NOT run pnpm install - tell the user to run `pnpm install && pnpm build:oss && pnpm db:migrate` in the new dir next.',
   {
-    target: z
-      .string()
-      .describe(
-        'Target directory for the new repo, relative to this OSS checkout root, e.g. "../my-igaming".',
-      ),
-    name: z.string().optional().describe('Project name. Defaults to the target dir basename.'),
+    description:
+      'Bootstrap a new downstream igaming consumer repo (api + web + backoffice) wired to this OSS checkout via link:. Delegates to tools/create-igaming-app.ts. Does NOT run pnpm install - tell the user to run `pnpm install && pnpm build:oss && pnpm db:migrate` in the new dir next.',
+    inputSchema: {
+      target: z
+        .string()
+        .describe(
+          'Target directory for the new repo, relative to this OSS checkout root, e.g. "../my-igaming".',
+        ),
+      name: z.string().optional().describe('Project name. Defaults to the target dir basename.'),
+    },
   },
   async ({ target, name }) => {
     const nameFlag = name ? ` --name ${name}` : '';
@@ -594,10 +618,13 @@ server.tool(
 );
 
 // --- run-verify -------------------------------------------------------------
-server.tool(
+server.registerTool(
   'run-verify',
-  'Run pnpm verify (typecheck + lint + unit tests). Pass filter to scope to one package.',
-  { filter: z.string().optional() },
+  {
+    description:
+      'Run pnpm verify (typecheck + lint + unit tests). Pass filter to scope to one package.',
+    inputSchema: { filter: z.string().optional() },
+  },
   async ({ filter }) => {
     const cmd = filter ? `pnpm verify --filter "${filter}"` : 'pnpm verify';
     const result = run(cmd);
@@ -613,10 +640,13 @@ server.tool(
 );
 
 // --- regen ------------------------------------------------------------------
-server.tool(
+server.registerTool(
   'regen',
-  'Run pnpm regen: drizzle-kit generate (migrations from pgTable schemas) + emit OpenAPI spec + regenerate the typed SDK.',
-  {},
+  {
+    description:
+      'Run pnpm regen: drizzle-kit generate (migrations from pgTable schemas) + emit OpenAPI spec + regenerate the typed SDK.',
+    inputSchema: {},
+  },
   async () => {
     const result = run('pnpm regen');
     return {
@@ -631,15 +661,18 @@ server.tool(
 );
 
 // --- get-drizzle-schema -----------------------------------------------------
-server.tool(
+server.registerTool(
   'get-drizzle-schema',
-  'Return the Drizzle table definitions (pgTable) across all modules. Pass a module name to scope to one. Source of truth for the DB shape - read this instead of grepping schema files.',
   {
-    module: z.string().optional().describe('Module name (kebab-case) to scope to'),
-    response_format: z
-      .enum(['concise', 'detailed'])
-      .optional()
-      .describe('concise (default): table names + columns. detailed: full pgTable source.'),
+    description:
+      'Return the Drizzle table definitions (pgTable) across all modules. Pass a module name to scope to one. Source of truth for the DB shape - read this instead of grepping schema files.',
+    inputSchema: {
+      module: z.string().optional().describe('Module name (kebab-case) to scope to'),
+      response_format: z
+        .enum(['concise', 'detailed'])
+        .optional()
+        .describe('concise (default): table names + columns. detailed: full pgTable source.'),
+    },
   },
   async ({ module: mod, response_format }) => {
     const detailed = response_format === 'detailed';
@@ -686,10 +719,13 @@ server.tool(
 );
 
 // --- propose-table-change ---------------------------------------------------
-server.tool(
+server.registerTool(
   'propose-table-change',
-  'Check a proposed Drizzle table name for collisions across all module schemas before you add a pgTable. Returns [OK] or [COLLISION] with the owning module.',
-  { table: z.string().describe("snake_case pgTable name, e.g. 'tournament_entry'") },
+  {
+    description:
+      'Check a proposed Drizzle table name for collisions across all module schemas before you add a pgTable. Returns [OK] or [COLLISION] with the owning module.',
+    inputSchema: { table: z.string().describe("snake_case pgTable name, e.g. 'tournament_entry'") },
+  },
   async ({ table }) => {
     const want = table.trim();
     for (const { group, name, dir } of listAllModules()) {
@@ -721,10 +757,15 @@ server.tool(
 );
 
 // --- schema-get -------------------------------------------------------------
-server.tool(
+server.registerTool(
   'schema-get',
-  'Find a Zod domain schema by name and return its definition with file location. Searches packages/contracts/*.',
-  { name: z.string().describe('Schema name, e.g. "WalletBalance" or "WalletBalanceSchema"') },
+  {
+    description:
+      'Find a Zod domain schema by name and return its definition with file location. Searches packages/contracts/*.',
+    inputSchema: {
+      name: z.string().describe('Schema name, e.g. "WalletBalance" or "WalletBalanceSchema"'),
+    },
+  },
   async ({ name }) => {
     const candidates = name.endsWith('Schema') ? [name] : [`${name}Schema`, name];
     const files = walkFiles(repoPath('packages', 'contracts'), '.ts').filter(
@@ -759,12 +800,15 @@ server.tool(
 );
 
 // --- docs-search ------------------------------------------------------------
-server.tool(
+server.registerTool(
   'docs-search',
-  'Search markdown docs (docs/, README, AGENTS.md, ADRs, per-package AGENTS.md) for a keyword. Returns matching lines with locations.',
   {
-    query: z.string().describe('Case-insensitive substring to search for'),
-    limit: z.number().optional().describe('Max matching lines to return (default 60)'),
+    description:
+      'Search markdown docs (docs/, README, AGENTS.md, ADRs, per-package AGENTS.md) for a keyword. Returns matching lines with locations.',
+    inputSchema: {
+      query: z.string().describe('Case-insensitive substring to search for'),
+      limit: z.number().optional().describe('Max matching lines to return (default 60)'),
+    },
   },
   async ({ query, limit }) => {
     const max = limit ?? 60;
@@ -801,10 +845,13 @@ server.tool(
 );
 
 // --- db-query-readonly ------------------------------------------------------
-server.tool(
+server.registerTool(
   'db-query-readonly',
-  'Run a read-only SQL query against the dev database (wrapped in a READ ONLY transaction). Only SELECT/WITH/EXPLAIN/SHOW/TABLE/VALUES are allowed; results capped at 200 rows.',
-  { sql: z.string().describe('A single read-only SQL statement') },
+  {
+    description:
+      'Run a read-only SQL query against the dev database (wrapped in a READ ONLY transaction). Only SELECT/WITH/EXPLAIN/SHOW/TABLE/VALUES are allowed; results capped at 200 rows.',
+    inputSchema: { sql: z.string().describe('A single read-only SQL statement') },
+  },
   async ({ sql }) => {
     const trimmed = sql.trim().replace(/;\s*$/, '');
     const lower = trimmed.toLowerCase();
@@ -842,10 +889,13 @@ server.tool(
   },
 );
 
-server.tool(
+server.registerTool(
   'list-slash-commands',
-  'List all available slash commands (scaffold shortcuts) with their one-line descriptions. These are repo-local commands generated by rulesync into .claude/commands/ (source: .rulesync/commands/); other editors can invoke the equivalent MCP scaffold tools directly.',
-  {},
+  {
+    description:
+      'List all available slash commands (scaffold shortcuts) with their one-line descriptions. These are repo-local commands generated by rulesync into .claude/commands/ (source: .rulesync/commands/); other editors can invoke the equivalent MCP scaffold tools directly.',
+    inputSchema: {},
+  },
   async () => {
     const commandsDir = join(repoRoot, '.claude', 'commands');
     if (!existsSync(commandsDir))
@@ -871,19 +921,22 @@ server.tool(
 );
 
 // --- enhance-intent ---------------------------------------------------------
-server.tool(
+server.registerTool(
   'enhance-intent',
-  'Turn a fuzzy "what I want to build" ask into a grounded, structured brief. Classifies the intent against the platform decision tree, injects LIVE repo context (existing modules, adapter tokens, UI slots), and returns an exact step-by-step playbook (which scaffold-* tool to run, which agent to delegate to, propose-table-change + run-verify reminders) plus an acceptance-criteria stub. Call this from the /start onboarding flow, or any time a user describes a feature in vague terms.',
   {
-    ask: z
-      .string()
-      .describe(
-        "The user's raw request in their own words, eg 'add a tournaments feature with leaderboards and prize payouts'",
-      ),
-    kind: z
-      .enum(['feature', 'adapter', 'ui-page', 'route', 'downstream-app', 'unsure'])
-      .optional()
-      .describe('Override the auto-classification if you already know the kind of work.'),
+    description:
+      'Turn a fuzzy "what I want to build" ask into a grounded, structured brief. Classifies the intent against the platform decision tree, injects LIVE repo context (existing modules, adapter tokens, UI slots), and returns an exact step-by-step playbook (which scaffold-* tool to run, which agent to delegate to, propose-table-change + run-verify reminders) plus an acceptance-criteria stub. Call this from the /start onboarding flow, or any time a user describes a feature in vague terms.',
+    inputSchema: {
+      ask: z
+        .string()
+        .describe(
+          "The user's raw request in their own words, eg 'add a tournaments feature with leaderboards and prize payouts'",
+        ),
+      kind: z
+        .enum(['feature', 'adapter', 'ui-page', 'route', 'downstream-app', 'unsure'])
+        .optional()
+        .describe('Override the auto-classification if you already know the kind of work.'),
+    },
   },
   async ({ ask, kind }) => {
     const resolved = kind && kind !== 'unsure' ? kind : classifyIntent(ask);
@@ -928,16 +981,19 @@ server.tool(
 );
 
 // --- dev:infra --------------------------------------------------------------
-server.tool(
+server.registerTool(
   'dev:infra',
-  'Start (or stop/status) the local dev infrastructure via docker compose. Boots postgres on :5432. Call this before pnpm dev or pnpm db:migrate when the database is not reachable.',
   {
-    action: z
-      .enum(['up', 'down', 'status'])
-      .optional()
-      .describe(
-        'up (default): start containers detached. down: stop and remove. status: show running containers.',
-      ),
+    description:
+      'Start (or stop/status) the local dev infrastructure via docker compose. Boots postgres on :5432. Call this before pnpm dev or pnpm db:migrate when the database is not reachable.',
+    inputSchema: {
+      action: z
+        .enum(['up', 'down', 'status'])
+        .optional()
+        .describe(
+          'up (default): start containers detached. down: stop and remove. status: show running containers.',
+        ),
+    },
   },
   async ({ action = 'up' }) => {
     if (action === 'status') {
@@ -976,16 +1032,19 @@ server.tool(
 );
 
 // --- start ------------------------------------------------------------------
-server.tool(
+server.registerTool(
   'start',
-  'Onboarding entry point. Call this when the user opens Claude Code in a fresh consumer repo, says "start", "help me build X", or asks what they can do. Returns a structured onboarding script: questions to ask, options to present, and what to do with the answers. Follow the script exactly - ask the questions via AskUserQuestion, then call enhance-intent with the result.',
   {
-    ask: z
-      .string()
-      .optional()
-      .describe(
-        "Pass the user's raw ask if they already described what they want to build. Omit to get the full interactive onboarding flow.",
-      ),
+    description:
+      'Onboarding entry point. Call this when the user opens Claude Code in a fresh consumer repo, says "start", "help me build X", or asks what they can do. Returns a structured onboarding script: questions to ask, options to present, and what to do with the answers. Follow the script exactly - ask the questions via AskUserQuestion, then call enhance-intent with the result.',
+    inputSchema: {
+      ask: z
+        .string()
+        .optional()
+        .describe(
+          "Pass the user's raw ask if they already described what they want to build. Omit to get the full interactive onboarding flow.",
+        ),
+    },
   },
   async ({ ask }) => {
     const modules = listAllModules().map((m) => `${m.group}/${m.name}`);

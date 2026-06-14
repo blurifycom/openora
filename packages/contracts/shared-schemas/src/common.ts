@@ -8,8 +8,8 @@ import { z } from 'zod';
 // before auth resolve it from host/brand - a documented extension seam, not built here.
 export const DEFAULT_TENANT_ID = 'default';
 
-export const UuidSchema = z.string().uuid();
-export const TimestampSchema = z.string().datetime();
+export const UuidSchema = z.uuid();
+export const TimestampSchema = z.iso.datetime();
 export const PaginationSchema = z.object({
   limit: z.number().int().min(1).max(100).default(20),
   cursor: z.string().optional(),

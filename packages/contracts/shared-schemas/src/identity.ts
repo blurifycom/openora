@@ -8,7 +8,7 @@ export const UserSchema = z.object({
   email: z.email(),
   name: z.string().min(1).max(255),
   emailVerified: z.boolean(),
-  image: z.string().url().nullable().optional(),
+  image: z.url().nullable().optional(),
   createdAt: TimestampSchema,
   updatedAt: TimestampSchema,
 });
@@ -17,7 +17,7 @@ export const OrganizationSchema = z.object({
   id: UuidSchema,
   name: z.string().min(1).max(255),
   slug: z.string().min(1).max(100),
-  logo: z.string().url().optional(),
+  logo: z.url().optional(),
   createdAt: TimestampSchema,
   metadata: z.record(z.string(), z.unknown()).optional(),
 });
@@ -79,7 +79,7 @@ export const VerifyEmailInputSchema = z.object({
 export const UpdateProfileInputSchema = z
   .object({
     name: z.string().min(1).max(255).optional(),
-    image: z.string().url().nullable().optional(),
+    image: z.url().nullable().optional(),
   })
   .refine((v) => v.name !== undefined || v.image !== undefined, {
     message: 'Provide at least one field to update',

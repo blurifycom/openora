@@ -44,7 +44,7 @@ export const BrandingSchema = z
   .object({
     name: z.string().min(1),
     themePreset: z.string().optional(), // a theme-preset key the consumer frontend resolves
-    supportEmail: z.string().email().optional(),
+    supportEmail: z.email().optional(),
   })
   .strict();
 
@@ -66,7 +66,7 @@ export const IgamingConfigSchema = z
   .superRefine((cfg, ctx) => {
     if (!cfg.jurisdictions.every((j) => !cfg.blockedCountries.includes(j))) {
       ctx.addIssue({
-        code: z.ZodIssueCode.custom,
+        code: 'custom',
         message: 'A jurisdiction cannot also be in blockedCountries.',
         path: ['blockedCountries'],
       });
