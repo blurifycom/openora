@@ -68,7 +68,7 @@ export const chatContract = {
   // Mint a connection grant for the authenticated caller so the client knows how
   // to receive live messages. Default (first-party) returns an SSE descriptor;
   // an Ably/GetStream overlay returns a per-player, capability-scoped token. The
-  // client picks a transport off `grant.provider` (see @oss/react-hooks
+  // client picks a transport off `grant.provider` (see @oss/react
   // RealtimeClientProvider). `channels` is optional - the server computes the
   // allowed set when omitted (this pass: the global channel).
   getConnection: oc
@@ -79,7 +79,7 @@ export const chatContract = {
   // Live message feed delivered as Server-Sent Events. `roomId: null` streams the
   // global channel; a room id streams that room. The OpenAPIHandler in
   // @oss/api-runtime serves an event-iterator output as SSE; the client consumes
-  // it as an async iterable (see @oss/react-hooks useChatStream). Backed by the
+  // it as an async iterable (see @oss/react useChatStream). Backed by the
   // REALTIME_TRANSPORT seam - first-party in-process by default, swappable to a
   // managed vendor (Ably/GetStream) downstream. See ADR-0007.
   streamMessages: oc

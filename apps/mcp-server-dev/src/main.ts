@@ -241,10 +241,10 @@ function buildPlaybook(
     case 'ui-page':
       return [
         '## Where it goes',
-        'The platform is headless and ships no UI - pages live in your own frontend repo and consume the api via `@oss/sdk-core` / `@oss/react-hooks`. The frontend owns all components and styling.',
+        'The platform is headless and ships no UI - pages live in your own frontend repo and consume the api via `@oss/react`. The frontend owns all components and styling.',
         '',
         '## Playbook',
-        '1. Implement the page in your frontend repo using `@oss/react-hooks` data hooks.',
+        '1. Implement the page in your frontend repo using `@oss/react` data hooks.',
         '2. To extend an existing surface without forking it, fill a named slot via your frontend UI plugin (ADR-0006).',
         '3. Run `run-verify`. Delegate backend routes to `igaming-fullstack-dev`.',
       ].join('\n');
@@ -271,7 +271,7 @@ function buildPlaybook(
         '1. Run `scaffold-app <target-dir>` (MCP tool) or `pnpm create:app ../<name> --name <name>`.',
         '2. In the new dir: `pnpm install && pnpm build:oss && cp .env.example .env` (set DATABASE_URL + AUTH_SECRET) then `pnpm db:migrate`.',
         '3. Run `pnpm setup:mcp` in the new repo so its own agents get this same toolbelt, then `/start` there.',
-        '4. `pnpm dev` boots api :3001. The frontend lives in your own repo consuming `@oss/react-hooks`.',
+        '4. `pnpm dev` boots api :3001. The frontend lives in your own repo consuming `@oss/react`.',
       ].join('\n');
     default:
       return [

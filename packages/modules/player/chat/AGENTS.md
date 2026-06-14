@@ -11,7 +11,7 @@ Provides global chat and room-based chat for the platform. Stores messages in Po
 - Events emitted:
   - `chat.message.sent` - fired on every new message (room or global), payload: `{ messageId, roomId, userId }`
 - Realtime: `subscribeMessages(roomId, listener)` delegates to `REALTIME_TRANSPORT`; the `streamMessages` route bridges it to SSE. Swap transport by rebinding `REALTIME_TRANSPORT` in an overlay.
-- UI: the platform is headless - the chat page lives in the consumer frontend; the client consumes this module's SSE via `useChatStream` (`@oss/react-hooks`).
+- UI: the platform is headless - the chat page lives in the consumer frontend; the client consumes this module's SSE via `useChatStream` (`@oss/react`).
 
 ## Ports
 

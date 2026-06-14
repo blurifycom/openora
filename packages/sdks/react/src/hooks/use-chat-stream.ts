@@ -34,7 +34,7 @@ export type UseChatStreamResult = {
 // The realtime channel for a room (null = global). MUST mirror `chatChannel` in
 // the chat module's service (the canonical naming convention) so the injected
 // transport subscribes to the same channel the server publishes to. Kept local
-// because react-hooks cannot import a module's internals (boundary rule).
+// because @oss/react cannot import a module's internals (boundary rule).
 function chatChannel(roomId: string | null): string {
   return roomId ? `chat:room:${roomId}` : 'chat:global';
 }

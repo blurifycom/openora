@@ -1,5 +1,5 @@
 {
-  "name": "@oss/react-hooks",
+  "name": "@oss/react",
   "version": "0.0.1",
   "private": true,
   "files": [
@@ -13,11 +13,6 @@
       "import": "./dist/index.js",
       "require": "./dist/index.js",
       "types": "./dist/index.d.ts"
-    },
-    "./server": {
-      "import": "./dist/server/index.js",
-      "require": "./dist/server/index.js",
-      "types": "./dist/server/index.d.ts"
     }
   },
   "scripts": {
@@ -27,8 +22,10 @@
     "test": "vitest run"
   },
   "dependencies": {
+    "@orpc/client": "1.14.5",
+    "@orpc/contract": "1.14.5",
+    "@orpc/openapi-client": "1.14.5",
     "@oss/orpc-contract": "workspace:*",
-    "@oss/sdk-core": "workspace:*",
     "@oss/shared-schemas": "workspace:*",
     "zod": "4.4.3"
   },

@@ -5,8 +5,7 @@ export { contract } from '@oss/orpc-contract';
 // React bindings - client + auth + user
 export { ApiClientProvider, useApiClient } from './context/api-client.js';
 export { useOrpcClient } from './hooks/use-orpc-client.js';
-export { useSession, useLogin, useLogout, useRegister } from './hooks/auth.js';
-export { useCurrentUser } from './hooks/user.js';
+export { useSession, useLogin, useLogout, useRegister, useCurrentUser } from './hooks/auth.js';
 export {
   useEnable2fa,
   useVerify2fa,
@@ -27,18 +26,6 @@ export {
 // admin contract lives in @oss-addons/player-management). They are not part of the
 // free SDK; a consumer that enables PAM builds its admin hooks against the merged
 // contract. See ADR-0020.
-
-// Framework-agnostic navigation seam (host injects a Next or TanStack adapter)
-export {
-  NavigationProvider,
-  Link,
-  usePathname,
-  useNavigate,
-  useSearchParam,
-  type NavigationAdapter,
-  type NavLinkProps,
-  type Navigate,
-} from './navigation.js';
 
 // Data hooks
 export { usePaginatedList, type PaginatedListState } from './hooks/use-paginated-list.js';
@@ -63,8 +50,3 @@ export {
   type RealtimeClientStatus,
   type RealtimeSubscribeHandlers,
 } from './context/realtime-client.js';
-
-// Cross-cutting helpers for slot fills / plugin authors (ADR-0013)
-export { PageContextProvider, usePageContext, useOptionalPageContext } from './page-context.js';
-export { useDataExtension, dataExtensionKey } from './data-extension.js';
-export { RoleGate } from './role-gate.js';

@@ -8,7 +8,7 @@
 > (`@oss/react-pages` / `@oss/react-blocks`) and the reference frontend apps
 > (`apps/web` / `apps/backoffice`) were removed from the OSS repo. The platform is
 > now headless: the frontend lives in the consumer repo and will be re-extracted from
-> it later. `@oss/react-hooks` and `@oss/sdk-core` remain the supported frontend
+> it later. `@oss/react` remains the supported frontend
 > consumption surface; the `no-sdk-layer-inversion` boundary lint and the `pnpm gen
 page` generator were removed with the layer. The historical design below is kept
 > for context and will inform the re-extraction.
@@ -39,11 +39,11 @@ Three architectural changes:
 
 | Package             | Contents                                                                                   | Subpaths                                                                  |
 | ------------------- | ------------------------------------------------------------------------------------------ | ------------------------------------------------------------------------- |
-| `@oss/react-hooks`  | data hooks, transport, auth, UIProvider context, cross-cutting helpers, server prefetchers | `.` (client), `./server` (RSC-only)                                       |
+| `@oss/react`        | data hooks, transport, auth, UIProvider context, cross-cutting helpers, server prefetchers | `.` (client), `./server` (RSC-only)                                       |
 | `@oss/react-blocks` | presentational primitives consuming UIProvider                                             | `./admin`, `./player`                                                     |
 | `@oss/react-pages`  | composed pages, ui-plugin registry, theme, OssProviders                                    | `.` (convenience barrel), `./admin`, `./player`, `./ui-plugin`, `./theme` |
 
-The `@oss/react-pages` root barrel re-exports the union of hooks + blocks + ui-plugin for ergonomic migration; subpath imports are required to keep RSC + client cleanly separated (`@oss/react-hooks/server` is the only entry safe to import from a Next RSC). Layer DAG enforced by `oss-boundaries/no-sdk-layer-inversion` lint rule.
+The `@oss/react-pages` root barrel re-exports the union of hooks + blocks + ui-plugin for ergonomic migration; subpath imports are required to keep RSC + client cleanly separated (`@oss/react/server` is the only entry safe to import from a Next RSC). Layer DAG enforced by `oss-boundaries/no-sdk-layer-inversion` lint rule.
 
 ### 2. Grow the slot contract
 
@@ -73,7 +73,7 @@ All gating props are optional with backwards-safe defaults: existing fills keep 
 - Atomic migration: `@oss/react-sdk` was dropped in one coordinated commit. Downstream operators (Consumer, my-igaming) must update imports in lockstep with the OSS release.
 - T0 config admin UI is **deferred to v2**. v1 ships Zod schema + file loader only. 60% of operator "customization" tickets are still actionable via the file.
 - T3 page override **seam is shipped but no reference override** is provided in v1 - the contract exists, the demo doesn't.
-- The `@oss/plugin-test-kit` and `@oss/compliance-invariants` packages are first-class. Operators import them in their own test suites.
+- The `@oss/compliance-invariants` package is first-class. Operators import it in their own test suites.
 - `pnpm verify` boundary lint now enforces the SDK layer DAG.
 
 ## Alternatives considered (summary)

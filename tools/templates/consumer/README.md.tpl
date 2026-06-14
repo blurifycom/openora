@@ -6,7 +6,7 @@ core (auth, wallet, gaming, lobby, compliance, backoffice, CMS) is consumed as l
 packages and never forked.
 
 This is a headless api consumer. Build your frontend (player web + admin backoffice)
-in its own repo and talk to this api over HTTP via `@oss/sdk-core` / `@oss/react-hooks`.
+in its own repo and talk to this api over HTTP via `@oss/react`.
 
 ## Layout
 

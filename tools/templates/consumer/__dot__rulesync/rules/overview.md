@@ -48,7 +48,7 @@ Only return to the user to resolve genuine decisions they alone can make.
 ## What this repo is
 
 - `apps/api/` - thin Hono + oRPC API entry, your own `extensions.config.ts`
-- this is a headless api consumer; build your frontend in its own repo and consume the api over HTTP via `@oss/sdk-core` / `@oss/react-hooks`
+- this is a headless api consumer; build your frontend in its own repo and consume the api over HTTP via `@oss/react`
 - `@oss/*` packages are linked from a sibling OSS checkout via `pnpm.overrides`
 
 ## How to extend

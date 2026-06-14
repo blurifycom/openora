@@ -392,7 +392,7 @@ function buildConsumerPlaybook(
     case 'ui-page':
       return [
         '## Where it goes',
-        'The platform is headless - pages live in your own frontend repo and consume the api via `@oss/sdk-core` / `@oss/react-hooks`. Fill named UI slots from a client-side UI plugin.',
+        'The platform is headless - pages live in your own frontend repo and consume the api via `@oss/react`. Fill named UI slots from a client-side UI plugin.',
         '',
         '## Named UI slots you can fill (via defineUIPlugin)',
         ctx.slots.length

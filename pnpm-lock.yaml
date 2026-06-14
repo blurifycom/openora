@@ -751,63 +751,7 @@ importers:
         specifier: 6.0.3
         version: 6.0.3
 
-  packages/sdks/plugin-test-kit:
-    dependencies:
-      '@oss/adapters':
-        specifier: workspace:*
-        version: link:../../contracts/adapters
-      react:
-        specifier: '>=19'
-        version: 19.2.6
-    devDependencies:
-      '@oss/tsconfig':
-        specifier: workspace:*
-        version: link:../../config/tsconfig
-      '@types/react':
-        specifier: 19.2.17
-        version: 19.2.17
-      typescript:
-        specifier: 6.0.3
-        version: 6.0.3
-
-  packages/sdks/react-hooks:
-    dependencies:
-      '@oss/orpc-contract':
-        specifier: workspace:*
-        version: link:../../contracts/orpc-contract
-      '@oss/sdk-core':
-        specifier: workspace:*
-        version: link:../sdk-core
-      '@oss/shared-schemas':
-        specifier: workspace:*
-        version: link:../../contracts/shared-schemas
-      '@tanstack/react-query':
-        specifier: '>=5'
-        version: 5.100.11(react@19.2.6)
-      react:
-        specifier: '>=19'
-        version: 19.2.6
-      react-dom:
-        specifier: '>=19'
-        version: 19.2.6(react@19.2.6)
-      zod:
-        specifier: 4.4.3
-        version: 4.4.3
-    devDependencies:
-      '@oss/tsconfig':
-        specifier: workspace:*
-        version: link:../../config/tsconfig
-      '@types/react':
-        specifier: 19.2.17
-        version: 19.2.17
-      '@types/react-dom':
-        specifier: 19.2.3
-        version: 19.2.3(@types/react@19.2.17)
-      typescript:
-        specifier: 6.0.3
-        version: 6.0.3
-
-  packages/sdks/sdk-core:
+  packages/sdks/react:
     dependencies:
       '@orpc/client':
         specifier: 1.14.5
@@ -821,10 +765,31 @@ importers:
       '@oss/orpc-contract':
         specifier: workspace:*
         version: link:../../contracts/orpc-contract
+      '@oss/shared-schemas':
+        specifier: workspace:*
+        version: link:../../contracts/shared-schemas
+      '@tanstack/react-query':
+        specifier: '>=5'
+        version: 5.100.11(react@19.2.7)
+      react:
+        specifier: '>=19'
+        version: 19.2.7
+      react-dom:
+        specifier: '>=19'
+        version: 19.2.7(react@19.2.7)
+      zod:
+        specifier: 4.4.3
+        version: 4.4.3
     devDependencies:
       '@oss/tsconfig':
         specifier: workspace:*
         version: link:../../config/tsconfig
+      '@types/react':
+        specifier: 19.2.17
+        version: 19.2.17
+      '@types/react-dom':
+        specifier: 19.2.3
+        version: 19.2.3(@types/react@19.2.17)
       typescript:
         specifier: 6.0.3
         version: 6.0.3
@@ -3527,19 +3492,10 @@ packages:
     resolution: {integrity: sha512-K5zQjDllxWkf7Z5xJdV0/B0WTNqx6vxG70zJE4N0kBs4LovmEYWJzQGxC9bS9RAKu3bgM40lrd5zoLJ12MQ5BA==}
     engines: {node: '>= 0.10'}
 
-  react-dom@19.2.6:
-    resolution: {integrity: sha512-0prMI+hvBbPjsWnxDLxlCGyM8PN6UuWjEUCYmZhO67xIV9Xasa/r/vDnq+Xyq4Lo27g8QSbO5YzARu0D1Sps3g==}
-    peerDependencies:
-      react: ^19.2.6
-
   react-dom@19.2.7:
     resolution: {integrity: sha512-t0BRVXvbiE/o20Hfw669rLbMCDWtYZLvmJigy2f0MxsXF+71pxhR3xOkspmsO8h3ZlNzyibAmtCa3l4lYKk6gQ==}
     peerDependencies:
       react: ^19.2.7
-
-  react@19.2.6:
-    resolution: {integrity: sha512-sfWGGfavi0xr8Pg0sVsyHMAOziVYKgPLNrS7ig+ivMNb3wbCBw3KxtflsGBAwD3gYQlE/AEZsTLgToRrSCjb0Q==}
-    engines: {node: '>=0.10.0'}
 
   react@19.2.7:
     resolution: {integrity: sha512-HNe9WslTbXmFK8o8cmwgAeJFSBvt1bPdHCVKtaaV+WlAN36mpT4hcRpwbf3fY56ar2oIXzsBpOAiIRHAdY0OlQ==}
@@ -5019,10 +4975,10 @@ snapshots:
 
   '@tanstack/query-core@5.100.11': {}
 
-  '@tanstack/react-query@5.100.11(react@19.2.6)':
+  '@tanstack/react-query@5.100.11(react@19.2.7)':
     dependencies:
       '@tanstack/query-core': 5.100.11
-      react: 19.2.6
+      react: 19.2.7
 
   '@tokenizer/inflate@0.4.1':
     dependencies:
@@ -6375,18 +6331,10 @@ snapshots:
       iconv-lite: 0.7.2
       unpipe: 1.0.0
 
-  react-dom@19.2.6(react@19.2.6):
-    dependencies:
-      react: 19.2.6
-      scheduler: 0.27.0
-
   react-dom@19.2.7(react@19.2.7):
     dependencies:
       react: 19.2.7
       scheduler: 0.27.0
-    optional: true
-
-  react@19.2.6: {}
 
   react@19.2.7: {}
 

@@ -114,7 +114,7 @@ applying - the add-on baseline migration files are staged but not yet applied.
   `extensions.config` entries). No add-on code is referenced by core.
 - Extracting a module = publish `packages/addons/<name>/`, move one registry line +
   one extensions entry into the consumer. No code change inside.
-- The core SDK (`@oss/react-hooks`) no longer ships add-on hooks/prefetchers (PAM
+- The core SDK (`@oss/react`) no longer ships add-on hooks/prefetchers (PAM
   admin hooks, sportsbook prefetcher). A consumer that enables a module builds those
   against the merged contract.
 - Adding/removing a module from the add-on set is a config change (the registry +

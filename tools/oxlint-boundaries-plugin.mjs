@@ -228,7 +228,6 @@ const blocked_by_contracts = [
   '@oss/auth',
   '@oss/plugin-host',
   '@oss/api-runtime',
-  '@oss/sdk-core',
 ];
 
 const noContractsToRuntime = {

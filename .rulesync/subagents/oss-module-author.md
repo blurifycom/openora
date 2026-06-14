@@ -58,7 +58,7 @@ This creates `packages/modules/<group>/<name>/` inside `@oss/modules` with all r
 
 ### Frontend
 
-- This repo is headless backend only. Frontend pages, components, and styling live in the consumer repo and consume the api over HTTP via `@oss/sdk-core` / `@oss/react-hooks`. Build no UI here.
+- This repo is headless backend only. Frontend pages, components, and styling live in the consumer repo and consume the api over HTTP via `@oss/react`. Build no UI here.
 
 ## After scaffolding
 

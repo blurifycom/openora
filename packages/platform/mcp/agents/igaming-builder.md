@@ -32,7 +32,7 @@ my-igaming/
   apps/
     api/                     # thin wrapper: import { createApp } from '@oss/api-runtime'
     web/                     # your frontend (player + admin) consuming the api over HTTP
-                             # via @oss/sdk-core / @oss/react-hooks
+                             # via @oss/react
   apps/api/src/extensions/           # your overlay plugins
     my-kyc/plugin.ts         # swaps KYC_ADAPTER
     my-psp/plugin.ts         # swaps PSP_ADAPTER
@@ -73,7 +73,7 @@ my-igaming/
 
 ### Customize the frontend (pages, components, styling)
 
-Build your entire frontend in `apps/web/` (or whatever you name it). The platform is headless backend only. Your frontend consumes the API over HTTP via `@oss/react-hooks` (data hooks, auth, transport, RSC prefetchers) and `@oss/sdk-core` (typed client).
+Build your entire frontend in `apps/web/` (or whatever you name it). The platform is headless backend only. Your frontend consumes the API over HTTP via `@oss/react` (data hooks, auth, realtime transport, typed client).
 
 Use a plugin layer in your frontend to extend the UI (nav items, dashboard tiles, table columns) without forking shared pages - see your frontend repo's architecture.
 

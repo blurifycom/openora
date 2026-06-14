@@ -22,7 +22,7 @@ pnpm db:migrate          # apply the OSS schema
 pnpm dev                 # api :3001
 ```
 
-The platform is **headless backend only** - it ships modules, contracts, and SDK consumption surface only. Build your entire frontend (player web, admin backoffice, components, styling, theme) in your own repo and consume the api over HTTP via `@oss/sdk-core` / `@oss/react-hooks`.
+The platform is **headless backend only** - it ships modules, contracts, and SDK consumption surface only. Build your entire frontend (player web, admin backoffice, components, styling, theme) in your own repo and consume the api over HTTP via `@oss/react`.
 
 After install, run `pnpm setup:mcp` and then `/start` in Claude Code: it asks what you want to
 build, calls the `enhance-intent` MCP tool to turn the ask into a grounded spec, and drives the
@@ -36,7 +36,7 @@ understand what it generated and how to extend it.
 
 ### Frontend
 
-Your entire frontend lives in your own repo (the platform is headless backend only). It consumes the api over HTTP through `@oss/react-hooks` (data hooks, auth, transport, cross-cutting helpers) and the framework-agnostic `@oss/sdk-core`. A Next App Router consumer's route files prefetch SSR data via `@oss/react-hooks/server` (`prefetchLobby`, `prefetchGames`, `prefetchWallet`, ...) forwarding the request cookies, then hydrate the client tree with `<HydrationBoundary state={dehydrate(qc)}>`. React/react-dom/@tanstack/react-query are deduped via the consumer's bundler alias so the linked `@oss/*` and the app share a single physical React copy.
+Your entire frontend lives in your own repo (the platform is headless backend only). It consumes the api over HTTP through `@oss/react` (data hooks, auth, transport, cross-cutting helpers). A consumer fetches data through these hooks and manages its own SSR/hydration. React/react-dom/@tanstack/react-query are deduped via the consumer's bundler alias so the linked `@oss/*` and the app share a single physical React copy.
 
 ## API entrypoint
 
@@ -94,13 +94,13 @@ The core OSS build never references add-on packages (a lint boundary,
 
 ## Building the frontend (in your own repo)
 
-Your entire frontend repo is built from scratch - pages, components, admin shell, theme, styling. It consumes the api over HTTP through `@oss/react-hooks` (typed client, data hooks, auth, cross-cutting helpers, RSC prefetchers at `@oss/react-hooks/server`) and the framework-agnostic `@oss/sdk-core`.
+Your entire frontend repo is built from scratch - pages, components, admin shell, theme, styling. It consumes the api over HTTP through `@oss/react` (typed client, data hooks, auth, realtime transport).
 
-Wrap your root layout with `QueryClientProvider` and `ApiClientProvider` (from `@oss/react-hooks`):
+Wrap your root layout with `QueryClientProvider` and `ApiClientProvider` (from `@oss/react`):
 
 ```tsx
 // your-frontend/app/providers.tsx (client component)
-import { ApiClientProvider } from '@oss/react-hooks';
+import { ApiClientProvider } from '@oss/react';
 import './globals.css'; // your own styling and design system
 
 <ApiClientProvider client={{ baseUrl }}>{children}</ApiClientProvider>;
@@ -128,7 +128,7 @@ consumer's own physical copy; drizzle's protected-member classes then fail nomin
 against `DrizzleService.db` (which uses `@oss/db`'s copy). `@oss/db/orm` re-exports the
 framework-free drizzle surface from the single shared instance.
 
-Full hooks guide: `packages/sdks/react-hooks/AGENTS.md`.
+Full hooks guide: `packages/sdks/react/AGENTS.md`.
 
 ## Local dev linking to a sibling consumer (eg `../consumer/`)
 

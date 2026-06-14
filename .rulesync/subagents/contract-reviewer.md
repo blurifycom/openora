@@ -59,7 +59,7 @@ Run `git diff main...HEAD --name-only` to see which files changed. Read each cha
 
 ### Frontend rules
 
-- [ ] No frontend pages, components, or styling in this repo - the platform is headless backend only. All UI lives in the consumer frontend repo and consumes the api over HTTP via `@oss/sdk-core` / `@oss/react-hooks`.
+- [ ] No frontend pages, components, or styling in this repo - the platform is headless backend only. All UI lives in the consumer frontend repo and consumes the api over HTTP via `@oss/react`.
 
 ### Tests
 

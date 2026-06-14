@@ -19,7 +19,7 @@ Open-source, headless, plugin-based, AI-native igaming platform. Anyone clones t
 1. Zod-first contracts. Every shape is a Zod schema; types are `z.infer`'d, never hand-written. Cross-cutting schemas live in `packages/contracts/shared-schemas`; per-module request/response schemas live in `packages/contracts/orpc-contract`, and module-local ones in the module's `schemas/`.
 2. oRPC + Hono. oRPC owns route definition + Zod validation + OpenAPI emit; its `OpenAPIHandler` is mounted on a Hono server (`@hono/node-server`, Bun-ready later). Dependency wiring is a small functional composition container (`Container` in `@oss/core`) - explicit factory functions keyed by typed tokens, no decorators, no `reflect-metadata`. See ADR-0009.
 3. Plugin host. `definePlugin({ id, dependsOn, register })` is the only way new functionality enters the system. Overlays (in-tree under `apps/api/src/extensions/<name>/`) are the primary path; npm-published plugins use the same contract.
-4. Headless backend only. The platform ships backend modules + contracts + SDK consumption surface only. The frontend - all components, styling, and theme - lives in the downstream consumer (consumer). Consumers import `@oss/react-hooks` (data hooks, typed client, auth context, cross-cutting helpers) and `@oss/sdk-core` (framework-agnostic typed client) and own their entire UI layer. No UI packages ship here.
+4. Headless backend only. The platform ships backend modules + contracts + SDK consumption surface only. The frontend - all components, styling, and theme - lives in the downstream consumer (consumer). Consumers import `@oss/react` (data hooks, typed client, auth context, cross-cutting helpers) and own their entire UI layer. No UI packages ship here.
 5. Explicit > magic. No auto-discovery, no decorator soup. Everything is greppable; every wiring point is a typed function call.
 6. AI-friendly by default. Every module has an `AGENTS.md`. Every scaffold is a slash command. Every contract is queryable via the MCP dev server (`describe-module`, `list-routes`, `query-openapi`) and the generated `docs/catalog.json` (consumed by the published `@oss/mcp` server).
 7. Functional and declarative by default - a strong preference, not a stylistic nicety. Prefer pure functions, immutable data, and composition over imperative mutation and stateful classes - it is easier to test, debug, and reason about. Default to a module of exported functions that take their dependencies as arguments. Reach for a `class` ONLY when the runtime or composition root needs a single instance to hold injected dependencies (services, guards) - and even then the class is a thin shell whose methods delegate to pure, testable functions. Methods read as data-in/data-out transforms; derive values with `map`/`filter`/`reduce` rather than mutating accumulators; isolate side effects (DB writes, event emits, adapter calls) at the edges. No decorators, and no inheritance for code reuse - compose instead. Imperative loops with mutation, stateful helper classes, and class hierarchies are smells: flag and refactor them.
@@ -29,8 +29,8 @@ Open-source, headless, plugin-based, AI-native igaming platform. Anyone clones t
 The platform is headless: it ships the backend (api + modules + SDK consumption layer)
 only. The reference frontend apps and the page/block SDK layer were removed (2026-06-09)
 
-- the frontend lives in the consumer repo and will be re-extracted later. `@oss/react-hooks`
-  and `@oss/sdk-core` remain the supported frontend consumption surface.
+- the frontend lives in the consumer repo and will be re-extracted later. `@oss/react`
+  remains the supported frontend consumption surface.
 
 ```
 apps/
@@ -57,13 +57,10 @@ packages/
     backoffice/   #   admin-console player-management cms   (admin-surface backend, NOT UI)
     platform/     #   identity notifications compliance localization
   sdks/
-    sdk-core/     # @oss/sdk-core - framework-agnostic typed client (no React)
-    react-hooks/  # @oss/react-hooks - data hooks, transport, auth, cross-cutting helpers
-                  #   (usePageContext, useDataExtension, RoleGate), server prefetchers at
-                  #   @oss/react-hooks/server (RSC-only). The supported frontend consumption
-                  #   surface. No UI components ship here - the frontend lives in the
-                  #   downstream consumer repo (consumer).
-    plugin-test-kit/ # @oss/plugin-test-kit - validatePlugin() for operator suites
+    react/        # @oss/react - data hooks, typed client, auth, realtime transport.
+                  #   The supported frontend consumption surface. No UI components
+                  #   ship here - the frontend lives in the downstream consumer repo
+                  #   (consumer).
   add-on/        # @oss-addons/* - optional, extract-later packages (NOT in the free
                   #   edition). Each is a standalone package (own package.json, contract
                   #   slice, migrations) shaped like its published form. Core may never
@@ -87,12 +84,12 @@ extensions.config.ts # the single registry of enabled plugins
 - A new database table -> add a Drizzle `pgTable` to the module's `src/schema/index.ts`. Run `pnpm regen` (drizzle-kit) to generate the migration.
 - A reusable Zod schema -> `packages/contracts/shared-schemas/src/<namespace>.ts`. Module-local schemas live in the module's `schemas/`.
 - A cross-module event -> declare its payload schema in the Zod catalog `packages/contracts/shared-schemas/src/events.ts` (`domainEventSchemas`), then emit via the `EventBus` the service received in its constructor (built in `plugin.ts` from `c.get(EVENT_BUS)`); subscribe in a plugin via `ctx.events.on(name, handler)`. The bus is a typed facade over the `MESSAGE_BROKER` seam (default in-process; swap to Redpanda/NATS without module changes). See ADR-0010.
-- A page, component, or any frontend UI -> NOT in this repo. The platform is headless backend only. The frontend - all components, styling, pages, and theme - lives in the downstream consumer repo (consumer) and consumes the backend over HTTP via `@oss/sdk-core` / `@oss/react-hooks`. The reference apps and page/block SDK layer were removed (2026-06-09) and will be re-extracted from consumer later.
-- A new data hook (eg `useAdminUsers`, `usePlayerWallet`) -> `packages/sdks/react-hooks/src/hooks/` + export from `src/index.ts`. A server prefetcher (RSC-only, used by consumer Next route files for SSR hydration) goes in `packages/sdks/react-hooks/src/server/`. `@oss/react-hooks` is a leaf SDK package.
+- A page, component, or any frontend UI -> NOT in this repo. The platform is headless backend only. The frontend - all components, styling, pages, and theme - lives in the downstream consumer repo (consumer) and consumes the backend over HTTP via `@oss/react`. The reference apps and page/block SDK layer were removed (2026-06-09) and will be re-extracted from consumer later.
+- A new data hook (eg `useAdminUsers`, `usePlayerWallet`) -> `packages/sdks/react/src/hooks/` + export from `src/index.ts`. `@oss/react` is a leaf SDK package.
 - Operator-only config (feature flags, brand definitions, RG defaults per geo) -> a `platform-config.yaml` / `.json` file consumed by `loadPlatformConfig()` (`@oss/core`). Validated by `PlatformConfigSchema` in `@oss/shared-schemas`. Bound via the `PLATFORM_CONFIG` Container token. No admin UI in v1; edit the file. See ADR-0013 T0.
 - A third-party integration (PSP, KYC, aggregator, chat) -> define the adapter interface + token (`createToken<Adapter>(...)`) in `@oss/adapters` (`packages/contracts/adapters/src/<category>.ts`), implement it under `packages/modules/<module>/adapters/<vendor>/`, and bind it in the module's `plugin.ts` via `ctx.provide(TOKEN, () => new Impl())`. Never inline. All vendor adapter interfaces live in `@oss/adapters` so the swap seams are findable in one place.
 - A long-running / background task -> enqueue a job on the `JOB_QUEUE` seam and process it in a worker. A service resolves `JOB_QUEUE` (from `@oss/adapters`) in its `plugin.ts` and calls `enqueue(queue('name'), payload, { idempotencyKey, delayMs, attempts, backoff, orderingKey })`; a worker overlay registers the handler via `ctx.jobs.worker({ queue, schema, handler, onDeadLetter })` (scaffold with `/scaffold-plugin <name>-worker`). The default driver is an in-process queue (zero deps); the `bullmq` overlay rebinds `JOB_QUEUE` to BullMQ + Redis when `REDIS_URL` is set. Delivery is at-least-once - handlers must be idempotent (a DB guard, not just `idempotencyKey`, for money jobs). See ADR-0014.
-- A live client push (chat message, PvP round state, live odds, big-win feed) -> publish on the `REALTIME_TRANSPORT` seam (`@oss/adapters`) and expose an oRPC `eventIterator(...)` route served as SSE; the client consumes it with `useEventStream` / `useChatStream` (`@oss/react-hooks`). The default is a first-party in-process transport; an overlay rebinds `REALTIME_TRANSPORT` to a managed vendor (Ably/GetStream). This is client-facing only and separate from the inter-module `MESSAGE_BROKER`. See ADR-0007 and ADR-0014. The `chat` module is the reference vertical.
+- A live client push (chat message, PvP round state, live odds, big-win feed) -> publish on the `REALTIME_TRANSPORT` seam (`@oss/adapters`) and expose an oRPC `eventIterator(...)` route served as SSE; the client consumes it with `useEventStream` / `useChatStream` (`@oss/react`). The default is a first-party in-process transport; an overlay rebinds `REALTIME_TRANSPORT` to a managed vendor (Ably/GetStream). This is client-facing only and separate from the inter-module `MESSAGE_BROKER`. See ADR-0007 and ADR-0014. The `chat` module is the reference vertical.
 
 ## Naming
 
@@ -113,7 +110,7 @@ Boundaries are enforced by two complementary gates - keep them in sync:
 
 The rules both layers enforce:
 
-- `packages/modules/**` may import: `@oss/contracts/*`, `@oss/adapters`, `@oss/platform/*`, `@oss/sdk-core`, `@oss/react-hooks`. May NOT import another module - cross-module communication goes through events or contracts (read another module's tables via the `@oss/modules/<group>/<name>/schema` subpath).
+- `packages/modules/**` may import: `@oss/contracts/*`, `@oss/adapters`, `@oss/platform/*`, `@oss/react`. May NOT import another module - cross-module communication goes through events or contracts (read another module's tables via the `@oss/modules/<group>/<name>/schema` subpath).
 - `packages/platform/*` may import other `platform/*` and `@oss/contracts/*`. May NOT import modules (`api-runtime` and `testing`, the composition roots, are the only exceptions).
 - `packages/contracts/*` may only import other contracts and Zod.
 - `packages/addons/*` (optional `@oss-addons/*` packages) may import core exactly like a module (`@oss/contracts/*`, `@oss/adapters`, `@oss/platform/*`, `@oss/modules/<g>/<n>/schema`). May NOT import another add-on package (`no-cross-addon`). The free core (`packages/{modules,platform,contracts,sdks}/**`) may NEVER import `@oss-addons/*` (`no-core-to-addon`) - only `apps/*` may. This keeps add-on modules extractable. See ADR-0020.

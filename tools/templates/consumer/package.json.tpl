@@ -44,7 +44,7 @@
       "@oss/shared-schemas": "link:{{ossFromRoot}}/packages/contracts/shared-schemas",
       "@oss/adapters": "link:{{ossFromRoot}}/packages/contracts/adapters",
       "@oss/modules": "link:{{ossFromRoot}}/packages/modules",
-      "@oss/react-hooks": "link:{{ossFromRoot}}/packages/sdks/react-hooks",
+      "@oss/react": "link:{{ossFromRoot}}/packages/sdks/react",
       "@oss/tsconfig": "link:{{ossFromRoot}}/packages/config/tsconfig",
       "@oss/turbo-generators": "link:{{ossFromRoot}}/packages/config/turbo-generators"
     }

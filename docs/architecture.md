@@ -54,7 +54,7 @@ flowchart TB
 
   subgraph consumer["Downstream consumer - Consumer (reference)"]
     bapi["apps/api<br/>thin createApp()"]
-    bfront["frontend (consumer repo)<br/>own pages, components, styling<br/>consumes api over HTTP via react-hooks / sdk-core"]
+    bfront["frontend (consumer repo)<br/>own pages, components, styling<br/>consumes api over HTTP via @oss/react"]
     bplug["@consumer/plugins<br/>one feature per folder"]
     bcfg["extensions.config.ts<br/>+ pnpm link: overrides"]
     bplug --> bcfg
@@ -99,12 +99,10 @@ Solid arrows are runtime/build dependencies; dashed arrows are **adapter seams**
 
 **SDK & consumption surface**
 
-- **react-hooks** - leaf SDK package and the supported frontend consumption surface: data hooks, typed oRPC client, auth, cross-cutting helpers (`usePageContext`, `useDataExtension`, `RoleGate`). `./server` subpath ships RSC-only prefetchers (`prefetchLobby`, `prefetchGames`, `prefetchWallet`). The platform is headless backend only; the frontend lives in the consumer repo.
-- **sdk-core** - framework-agnostic typed client for any JavaScript runtime.
-- **plugin-test-kit** - `validatePlugin()` / `assertValidPlugin()` for operator suites.
+- **react** - leaf SDK package and the supported frontend consumption surface: data hooks, typed oRPC client, auth, and client-side realtime transport. The platform is headless backend only; the frontend lives in the consumer repo.
 - **compliance-invariants** - canonical list of `SealedToken<T>` services operators may never override (RG enforcement, KYC writes, AML/SAR, ledger writes, RNG, etc.) with regulatory citations.
 
-**Downstream consumer (Consumer, reference)** - does **not** fork. `apps/api` is a thin `createApp()` entry with its own `extensions.config.ts`; `@oss/*` packages resolve via `pnpm` workspace overrides (`link:`). The platform is headless: the frontend lives in the consumer repo and consumes the api over HTTP via `@oss/react-hooks` / `@oss/sdk-core` (Next App Router route files prefetch SSR data via `@oss/react-hooks/server` and hydrate the client). Per-operator backend customization lives in plugins under `apps/api/src/extensions/`. ADR-0005 + ADR-0012 + ADR-0013.
+**Downstream consumer (Consumer, reference)** - does **not** fork. `apps/api` is a thin `createApp()` entry with its own `extensions.config.ts`; `@oss/*` packages resolve via `pnpm` workspace overrides (`link:`). The platform is headless: the frontend lives in the consumer repo and consumes the api over HTTP via `@oss/react`. Per-operator backend customization lives in plugins under `apps/api/src/extensions/`. ADR-0005 + ADR-0012 + ADR-0013.
 
 **AI dev surface**
 
@@ -126,7 +124,7 @@ These are the swap points - the reason the platform is "headless" and extensible
 
 ```mermaid
 sequenceDiagram
-  participant UI as consumer frontend (react-hooks)
+  participant UI as consumer frontend (@oss/react)
   participant API as Hono + oRPC
   participant Mod as Module service
   participant DB as Drizzle (tenant-scoped)

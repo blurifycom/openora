@@ -97,7 +97,7 @@ Pillars: [AGENTS.md](./AGENTS.md) | ADRs: [docs/adr/](./docs/adr/)
 
 ## Frontend
 
-The platform is headless and ships no UI - it exposes backend modules + contracts + the SDK consumption surface only. The frontend (all pages, components, styling, theme) lives in your downstream consumer repo and talks to the api over HTTP via `@oss/react-hooks` (data hooks, auth, navigation) and `@oss/sdk-core` (typed client). Use whatever UI stack you like.
+The platform is headless and ships no UI - it exposes backend modules + contracts + the SDK consumption surface only. The frontend (all pages, components, styling, theme) lives in your downstream consumer repo and talks to the api over HTTP via `@oss/react` (data hooks, auth, navigation, typed client). Use whatever UI stack you like.
 
 ## AI-first development
 

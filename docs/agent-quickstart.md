@@ -96,7 +96,7 @@ Edit `packages/modules/<group>/<name>/src/plugin.ts`. Confirm the service is add
 
 The platform is headless backend only - pages, components, and styling live in the consumer repo. What you can add to the OSS:
 
-- **A new data hook** (eg `useAdminUsers`, `usePlayerWallet`) -> `packages/sdks/react-hooks/src/hooks/`. A **server prefetcher** for RSC SSR hydration goes in `packages/sdks/react-hooks/src/server/` and is imported via the `@oss/react-hooks/server` subpath (RSC-only, no client React tree). `@oss/react-hooks` is the supported frontend consumption surface (data hooks, auth, transport, cross-cutting helpers only - no components).
+- **A new data hook** (eg `useAdminUsers`, `usePlayerWallet`) -> `packages/sdks/react/src/hooks/`. `@oss/react` is the supported frontend consumption surface (data hooks, auth, realtime transport - no components).
 
 ## Step 10: Update AGENTS.md
 

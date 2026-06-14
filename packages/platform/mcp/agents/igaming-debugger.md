@@ -68,7 +68,7 @@ Common consumer-side causes (this stack links `@oss/*` from a sibling checkout):
 To confirm a resolution issue is the bundler (not a missing dep):
 
 ```bash
-node --input-type=module -e "import {createRequire} from 'node:module'; const r=createRequire(process.cwd()+'/'); console.log(r.resolve('@oss/react-hooks'))"
+node --input-type=module -e "import {createRequire} from 'node:module'; const r=createRequire(process.cwd()+'/'); console.log(r.resolve('@oss/react'))"
 ```
 
 If Node resolves it but the bundler does not, it is a bundler-root/boundary problem.
