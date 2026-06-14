@@ -17,16 +17,16 @@ ADR-0021 deliberately makes every feature a standalone, isolated `@oss-addons/<n
 
 ## Decision
 
-### 1. The published surface is six domain *distribution* packages
+### 1. The published surface is six domain _distribution_ packages
 
-| Package | Rolls up (shared-IP source) | Owns its admin API |
-|---|---|---|
-| `@oss/platform` | core, db, api-runtime, plugin-host, contracts aggregator, auth, i18n, audit, iam/RBAC, settings | - |
-| `@oss/account` | identity, profile, player-management, compliance/RG | players, KYC, limits |
-| `@oss/wallet` | wallet (fiat + crypto), transactions | payments, approvals |
-| `@oss/casino` | gaming, aggregator, lobby | catalog, providers |
-| `@oss/sportsbook` | sportsbook, odds adapter | events, markets, risk |
-| `@oss/engagement` | chat, notifications, bonus, friends, leaderboard, cms | campaigns, content, moderation |
+| Package           | Rolls up (shared-IP source)                                                                     | Owns its admin API             |
+| ----------------- | ----------------------------------------------------------------------------------------------- | ------------------------------ |
+| `@oss/platform`   | core, db, api-runtime, plugin-host, contracts aggregator, auth, i18n, audit, iam/RBAC, settings | -                              |
+| `@oss/account`    | identity, profile, player-management, compliance/RG                                             | players, KYC, limits           |
+| `@oss/wallet`     | wallet (fiat + crypto), transactions                                                            | payments, approvals            |
+| `@oss/casino`     | gaming, aggregator, lobby                                                                       | catalog, providers             |
+| `@oss/sportsbook` | sportsbook, odds adapter                                                                        | events, markets, risk          |
+| `@oss/engagement` | chat, notifications, bonus, friends, leaderboard, cms                                           | campaigns, content, moderation |
 
 One **fixed** version across all six (Changesets `fixed` group); consumers pin a single range.
 
@@ -40,10 +40,10 @@ The six are thin **facade** packages. Source structure stays exactly as ADR-0021
 - exposes runtime-split subpath exports so server code never reaches the browser:
 
 ```ts
-import { walletPlugin }  from '@oss/wallet/server'        // node
-import { useWallet }     from '@oss/wallet/react'         // browser, headless hooks
-import { walletSchemas } from '@oss/wallet/contracts'     // isomorphic
-import { walletAdmin }   from '@oss/wallet/server/admin'  // backoffice routes
+import { walletPlugin } from '@oss/wallet/server'; // node
+import { useWallet } from '@oss/wallet/react'; // browser, headless hooks
+import { walletSchemas } from '@oss/wallet/contracts'; // isomorphic
+import { walletAdmin } from '@oss/wallet/server/admin'; // backoffice routes
 ```
 
 Internal modularity is preserved; the public surface is six.

@@ -290,26 +290,26 @@ flowchart TB
 
 ## Reference — domain → modules → tables → routes
 
-| Domain | Modules (core / **gated**) | Tables | Routes |
-|---|---|---|---|
-| `@oss/platform` | audit · iam | audit_log, admin_role / admin_role_assignment / admin_role_permission / admin_invitation | 13 |
-| `@oss/account` | identity · profile · **player-management** · compliance | user / session / account / twoFactor / verification, player, geo_rule / user_limit | 28 |
-| `@oss/wallet` | wallet | wallet, wallet_transaction | 4 |
-| `@oss/casino` | gaming · lobby · **aggregator** | Game / GameRound, LobbyCategory / FeaturedSlot, aggregator_provider | 12 |
-| `@oss/sportsbook` | **sportsbook** | SportsbookEvent / SportsbookSelection / SportsbookBet | 4 |
-| `@oss/engagement` | chat · notifications · bonus · cms · admin-console · **leaderboard** | ChatRoom / ChatMessage, notification, bonus / user_bonus, page / banner, leaderboard / leaderboard_entry | 18 |
+| Domain            | Modules (core / **gated**)                                           | Tables                                                                                                   | Routes |
+| ----------------- | -------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------- | ------ |
+| `@oss/platform`   | audit · iam                                                          | audit_log, admin_role / admin_role_assignment / admin_role_permission / admin_invitation                 | 13     |
+| `@oss/account`    | identity · profile · **player-management** · compliance              | user / session / account / twoFactor / verification, player, geo_rule / user_limit                       | 28     |
+| `@oss/wallet`     | wallet                                                               | wallet, wallet_transaction                                                                               | 4      |
+| `@oss/casino`     | gaming · lobby · **aggregator**                                      | Game / GameRound, LobbyCategory / FeaturedSlot, aggregator_provider                                      | 12     |
+| `@oss/sportsbook` | **sportsbook**                                                       | SportsbookEvent / SportsbookSelection / SportsbookBet                                                    | 4      |
+| `@oss/engagement` | chat · notifications · bonus · cms · admin-console · **leaderboard** | ChatRoom / ChatMessage, notification, bonus / user_bonus, page / banner, leaderboard / leaderboard_entry | 18     |
 
 **bold** = gated add-on (`kind: 'addon'`, loads only when listed in `OSS_ADDONS`).
 
 ## Cross-domain edges (lint-enforced — ADR-0015)
 
-| From → To | Channel |
-|---|---|
-| iam → identity | `dependsOn` (load order) |
-| sportsbook → wallet | `WALLET_COMMANDS` synchronous command port (same `tx`, atomic) |
-| player-management → profile | read-only `@oss-addons/profile/schema` |
-| lobby → gaming | read-only `@oss-addons/gaming/schema` |
-| any → any | domain **events** via `EventBus` (24 topics) — never money |
+| From → To                   | Channel                                                        |
+| --------------------------- | -------------------------------------------------------------- |
+| iam → identity              | `dependsOn` (load order)                                       |
+| sportsbook → wallet         | `WALLET_COMMANDS` synchronous command port (same `tx`, atomic) |
+| player-management → profile | read-only `@oss-addons/profile/schema`                         |
+| lobby → gaming              | read-only `@oss-addons/gaming/schema`                          |
+| any → any                   | domain **events** via `EventBus` (24 topics) — never money     |
 
 15 adapter ports and 3 async seams (`MESSAGE_BROKER`, `JOB_QUEUE`, `REALTIME_TRANSPORT`) plus
 the transactional `OUTBOX` carry everything else. Money and needed-now reads stay synchronous

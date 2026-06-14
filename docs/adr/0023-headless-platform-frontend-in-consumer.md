@@ -12,7 +12,7 @@ frontend: a UI provider contract, headless backoffice pages, a client-side UI pl
 registry, layered react SDK packages (`@oss/react-sdk` → `@oss/react-pages` /
 `@oss/react-blocks`), reference apps (`apps/web`, `apps/backoffice`), and a player-front
 framework choice (Next.js RSC). Each was retired piecemeal via superseded-notes (mostly
-dated 2026-06-09/06-10), but the underlying **decision** — *why* the OSS repo no longer
+dated 2026-06-09/06-10), but the underlying **decision** — _why_ the OSS repo no longer
 owns any frontend — was never recorded as its own ADR. That left the strategic call
 implicit and scattered, even though it underpins ADR-0022 (what gets published) and the
 whole shared-IP / Tier-2 split.
