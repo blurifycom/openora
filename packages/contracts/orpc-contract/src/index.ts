@@ -29,11 +29,7 @@ export { identityContract } from '@oss/pam/contracts/identity';
 export { cmsContract, PageSchema, BannerSchema } from '@oss/cms/contracts';
 export { complianceContract, LimitSchema, GeoRuleSchema } from '@oss/pam/contracts/compliance';
 export { notificationsContract, NotificationSchema } from '@oss/engagement/contracts/notifications';
-export {
-  walletContract,
-  WalletBalanceSchema,
-  WalletTransactionSchema,
-} from '@oss/wallet/contract';
+export { walletContract, WalletBalanceSchema, WalletTransactionSchema } from '@oss/wallet/contract';
 export { gamingContract, GameSchema, GameRoundSchema } from '@oss/casino/contracts/gaming';
 export { bonusContract, BonusSchema, UserBonusSchema } from '@oss/engagement/contracts/bonus';
 export {

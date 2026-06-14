@@ -35,7 +35,11 @@ export const extensions = [
   // OSS_ADDONS allowlist (apps/api/src/editions.ts). Default build omits them
   // entirely (no routes, no OpenAPI). Each ships its own contract slice +
   // migrations and can be lifted to its own npm package. See ADR-0020/ADR-0021.
-  { id: 'leaderboard', path: './packages/domains/engagement/dist/leaderboard/plugin.js', kind: 'addon' },
+  {
+    id: 'leaderboard',
+    path: './packages/domains/engagement/dist/leaderboard/plugin.js',
+    kind: 'addon',
+  },
   { id: 'sportsbook', path: './packages/domains/sportsbook/dist/plugin.js', kind: 'addon' },
   // sportsbook debits the core wallet via WALLET_COMMANDS (dependsOn: ['wallet']).
   { id: 'aggregator', path: './packages/domains/casino/dist/aggregator/plugin.js', kind: 'addon' },

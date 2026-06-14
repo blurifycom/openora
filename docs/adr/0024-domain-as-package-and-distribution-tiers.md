@@ -21,11 +21,11 @@ Two **independent** axes. Conflating them is what made ADR-0022 muddy.
 
 Three shapes, **all identical in surface** (`./server` node, `./react` browser, `./contracts` isomorphic, `./migrate` when it owns tables; `react`/`react-dom`/`@tanstack/react-query` are optional peerDeps so the consumer owns the singletons):
 
-| Shape          | What it is                                  | Depends on                                  |
-| -------------- | ------------------------------------------- | ------------------------------------------- |
-| **foundation** | the framework kernel - required by all      | nothing (or each other within foundation)   |
-| **domain**     | a self-contained business capability        | foundation only - **never another domain**  |
-| **add-on**     | extends one domain through its public seam  | foundation + that domain's published `/server` seam |
+| Shape          | What it is                                 | Depends on                                          |
+| -------------- | ------------------------------------------ | --------------------------------------------------- |
+| **foundation** | the framework kernel - required by all     | nothing (or each other within foundation)           |
+| **domain**     | a self-contained business capability       | foundation only - **never another domain**          |
+| **add-on**     | extends one domain through its public seam | foundation + that domain's published `/server` seam |
 
 Foundation (3): `@oss/contracts` (zod root, adapter tokens, contract kit), `@oss/runtime` (createApp, plugin-host, DI Container, db, auth), `@oss/react` (typed client, provider, base hooks).
 
@@ -43,19 +43,19 @@ This collapses ADR-0022's facade+members into one real package per domain: same 
 
 Tier is an `.npmrc` scope + an entitlement, **not** a code structure. The same package shape ships at any tier:
 
-| Tier               | Registry / location              | Example                                       |
-| ------------------ | -------------------------------- | --------------------------------------------- |
-| **public**         | GitLab `@oss`, npm later         | `@oss/runtime`, `@oss/pam`, `@oss/casino`     |
-| **private/premium**| premium registry, licensed token | `@oss/casino-jackpots`, `@oss/pam-aml-pro`    |
-| **consumer-local** | the operator's own repo/scope    | `@consumer/jackpot-wheel`, `@consumer/fireblocks` |
+| Tier                | Registry / location              | Example                                         |
+| ------------------- | -------------------------------- | ----------------------------------------------- |
+| **public**          | GitLab `@oss`, npm later         | `@oss/runtime`, `@oss/pam`, `@oss/casino`       |
+| **private/premium** | premium registry, licensed token | `@oss/casino-jackpots`, `@oss/pam-aml-pro`      |
+| **consumer-local**  | the operator's own repo/scope    | `@consumer/jackpot-wheel`, `@consumer/fireblocks` |
 
 A premium plugin is just **shape=add-on, tier=private**. The consumer wires all three tiers identically - registry origin is invisible to code:
 
 ```ts
-import { createApp }          from '@oss/runtime';
-import { casinoPlugin }       from '@oss/casino/server';          // public domain
-import { jackpotsPlugin }     from '@oss/casino-jackpots/server'; // private premium add-on
-import { jackpotWheelPlugin } from '@consumer/jackpot-wheel';      // consumer-local Tier-2
+import { createApp } from '@oss/runtime';
+import { casinoPlugin } from '@oss/casino/server'; // public domain
+import { jackpotsPlugin } from '@oss/casino-jackpots/server'; // private premium add-on
+import { jackpotWheelPlugin } from '@consumer/jackpot-wheel'; // consumer-local Tier-2
 
 createApp({ plugins: [casinoPlugin, jackpotsPlugin, jackpotWheelPlugin] });
 ```
@@ -81,6 +81,7 @@ The facade subpaths (`@oss/<domain>/server|react|contracts|migrate`) are the sta
 Target tree: `packages/foundation/{contracts,runtime,react}`, `packages/domains/<name>/`, `packages/addons/<name>/` (only gated/premium add-ons remain). The `packages/*/*` workspace glob already covers the new roots. Boundary gate (`.dependency-cruiser.cjs`): `foundation` joins the core group of `no-core-to-addon`; new `no-core-to-domain` (core may not import `packages/domains/*` except composition roots reading `/schema` + the aggregator reading `/contract`) and `no-cross-domain` (a domain may not import another domain at all - stricter than `no-cross-addon`, which still allows `/schema` reads). The string-level oxlint twin can't yet tell a domain `@oss/<x>` from a foundation `@oss/<x>`; dependency-cruiser is the authoritative domain gate until oxlint gets a domain-specifier list (follow-up).
 
 Per-domain fold steps (proven on wallet, 2026-06-14, full `pnpm verify` green):
+
 1. `git mv packages/addons/<m> packages/domains/<domain>`; delete the old `packages/facades/<domain>` shell.
 2. Rename the package `@oss-addons/<m>` -> `@oss/<domain>`, add `private: false`, expand `exports` with the domain subpaths (`/server`, `/contracts`, `/plugins/<m>`) aliasing the existing internal ones (`/plugin`, `/contract`, `/schema`) so importers stay byte-stable.
 3. Rewire every `@oss-addons/<m>` importer -> `@oss/<domain>` (source + `package.json` deps, re-sorted): the aggregator (`@oss/orpc-contract`), composition roots (`api-runtime` seed, `testing`), `apps/api` (+ integration tests), and any add-on `/schema` reader.
@@ -93,7 +94,7 @@ Per-domain fold steps (proven on wallet, 2026-06-14, full `pnpm verify` green):
 - **One stable public API per domain** - internal refactors inside a domain stay non-breaking; the member-vs-facade split disappears.
 - **Premium + third-party ecosystem with zero new architecture** - add-on-shape on a private scope. `@acme/igaming-poker` and `@oss/casino-jackpots` are the same shape as a free domain.
 - **One restructure cost** - member code gets absorbed into domains; needs a real port-binding check (fail-fast on unbound `WALLET_COMMANDS` etc.).
-- **ADR-0021 source isolation is preserved within each domain** (schema/contract/service/router/plugin layering, boundary lint) - the change is the *distribution* unit, not the internal module model.
+- **ADR-0021 source isolation is preserved within each domain** (schema/contract/service/router/plugin layering, boundary lint) - the change is the _distribution_ unit, not the internal module model.
 - **ADR-0020 editions** still apply: a domain can be gated; the free core boots without it.
 
 ## Open items

@@ -5,7 +5,6 @@
 ### Minor Changes
 
 - ADR-0024: restructure the published surface into a small framework foundation + self-contained domain packages.
-
   - Foundation: `@oss/contracts`, `@oss/runtime`, `@oss/react` (`packages/foundation/`).
   - Domains: `@oss/pam`, `@oss/wallet`, `@oss/casino`, `@oss/sportsbook`, `@oss/cms`, `@oss/engagement` (`packages/domains/`) - each self-contained, no hidden member packages, exposing `/server`, `/contracts`, `/schema`, `/plugins/*`, and (gated) `/migrate`.
   - Renames vs the ADR-0022 facades: `@oss/account` -> `@oss/pam`; `cms` extracted out of `@oss/engagement` into `@oss/cms`. Same-name domains keep byte-stable subpaths.
