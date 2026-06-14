@@ -25,21 +25,44 @@ const addonsRoot = join(repoRoot, 'packages', 'addons');
 
 const read = (p: string): string => (existsSync(p) ? readFileSync(p, 'utf8') : '');
 
-/** Every add-on dir (one level under packages/addons) that has a plugin.ts. */
-function addonDirs(): string[] {
-  if (!existsSync(addonsRoot)) return [];
-  return readdirSync(addonsRoot)
-    .filter((name) => {
-      const dir = join(addonsRoot, name);
-      let st;
-      try {
-        st = statSync(dir);
-      } catch {
-        return false;
+// Every module's source dir + its catalog id, across both layouts (ADR-0024):
+//   packages/addons/<name>/src              -> id = <name>            (flat add-on)
+//   packages/domains/<d>/src                -> id = <d>               (single-member domain, eg wallet/cms)
+//   packages/domains/<d>/src/<member>        -> id = <member>          (multi-member domain, eg pam/casino)
+// The id matches the plugin id in extensions.config.ts so `group` resolves.
+type ModuleSrc = { id: string; srcDir: string };
+function moduleSrcDirs(): ModuleSrc[] {
+  const out: ModuleSrc[] = [];
+  const hasPlugin = (srcDir: string): boolean => existsSync(join(srcDir, 'plugin.ts'));
+  const isDir = (p: string): boolean => {
+    try {
+      return statSync(p).isDirectory();
+    } catch {
+      return false;
+    }
+  };
+  if (existsSync(addonsRoot)) {
+    for (const name of readdirSync(addonsRoot)) {
+      const srcDir = join(addonsRoot, name, 'src');
+      if (isDir(join(addonsRoot, name)) && hasPlugin(srcDir)) out.push({ id: name, srcDir });
+    }
+  }
+  const domainsRoot = join(repoRoot, 'packages', 'domains');
+  if (existsSync(domainsRoot)) {
+    for (const d of readdirSync(domainsRoot)) {
+      const dsrc = join(domainsRoot, d, 'src');
+      if (!isDir(join(domainsRoot, d)) || !existsSync(dsrc)) continue;
+      if (hasPlugin(dsrc)) {
+        out.push({ id: d, srcDir: dsrc }); // single-member domain
+      } else {
+        for (const member of readdirSync(dsrc)) {
+          const msrc = join(dsrc, member);
+          if (isDir(msrc) && hasPlugin(msrc)) out.push({ id: member, srcDir: msrc });
+        }
       }
-      return st.isDirectory() && existsSync(join(dir, 'src', 'plugin.ts'));
-    })
-    .sort();
+    }
+  }
+  return out.sort((a, b) => a.id.localeCompare(b.id));
 }
 
 function walk(dir: string, ext: string, acc: string[] = []): string[] {
@@ -82,15 +105,14 @@ function readAddonKinds(): Map<string, string> {
 function collectModules(): ModuleInfo[] {
   const out: ModuleInfo[] = [];
   const kinds = readAddonKinds();
-  for (const name of addonDirs()) {
-    const dir = join(addonsRoot, name);
-    const schema = read(join(dir, 'src', 'schema', 'index.ts'));
-    const router = read(join(dir, 'src', 'router', 'index.ts'));
+  for (const { id, srcDir } of moduleSrcDirs()) {
+    const schema = read(join(srcDir, 'schema', 'index.ts'));
+    const router = read(join(srcDir, 'router', 'index.ts'));
     const tables = [...schema.matchAll(/pgTable\(\s*'([^']+)'/g)].map((m) => m[1]!).sort();
     const routes = [...router.matchAll(/^\s{2,}(\w+):\s*os\b/gm)]
-      .map((m) => `${name}.${m[1]}`)
+      .map((m) => `${id}.${m[1]}`)
       .sort();
-    out.push({ id: name, group: kinds.get(name) ?? 'core', tables, routes });
+    out.push({ id, group: kinds.get(id) ?? 'core', tables, routes });
   }
   return out;
 }
@@ -109,7 +131,7 @@ function collectAdapters(): AdapterInfo[] {
   // Scan add-on packages plus api-runtime, so platform-level default bindings (eg
   // the in-process MESSAGE_BROKER seeded in create-app) count as wired.
   const moduleFiles = [
-    ...addonDirs().flatMap((name) => walk(join(addonsRoot, name, 'src'), '.ts')),
+    ...moduleSrcDirs().flatMap(({ srcDir }) => walk(srcDir, '.ts')),
     ...walk(join(repoRoot, 'packages', 'platform', 'api-runtime', 'src'), '.ts'),
   ];
   const moduleSrc = moduleFiles.map((f) => ({ f, src: readFileSync(f, 'utf8') }));
@@ -150,8 +172,8 @@ function collectAdapters(): AdapterInfo[] {
 // --- events ----------------------------------------------------------------
 function collectEvents(): string[] {
   const set = new Set<string>();
-  for (const name of addonDirs()) {
-    for (const f of walk(join(addonsRoot, name, 'src'), '.ts')) {
+  for (const { srcDir } of moduleSrcDirs()) {
+    for (const f of walk(srcDir, '.ts')) {
       for (const m of readFileSync(f, 'utf8').matchAll(/\.emit\(\s*'([a-z][\w.:-]+)'/g))
         set.add(m[1]!);
     }
@@ -187,8 +209,8 @@ function collectSlots(): Array<{ name: string; description: string }> {
 function collectSchemas(): Array<{ name: string; file: string }> {
   const out: Array<{ name: string; file: string }> = [];
   const roots = [join(repoRoot, 'packages', 'contracts')];
-  for (const entry of readdirSync(addonsRoot)) {
-    const contractDir = join(addonsRoot, entry, 'src', 'contract');
+  for (const { srcDir } of moduleSrcDirs()) {
+    const contractDir = join(srcDir, 'contract');
     if (existsSync(contractDir)) roots.push(contractDir);
   }
   for (const root of roots) {
