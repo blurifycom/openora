@@ -52,6 +52,11 @@ async function main() {
     console.log('\n--- Dependencies: already installed ---');
   }
 
+  // 2b. Generate the OpenAPI spec (not committed - the MCP query-openapi tool and
+  // gen-catalog read docs/openapi.json from disk).
+  console.log('\n--- Generating OpenAPI spec (pnpm codegen) ---');
+  run('pnpm codegen');
+
   // 3. Start postgres via docker compose and wait for it to be ready.
   console.log('\n--- Starting dev infra (docker compose up -d) ---');
   run('docker compose up -d');

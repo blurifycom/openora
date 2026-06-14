@@ -4,7 +4,7 @@ How a downstream operator (eg Consumer) builds their own igaming on top of `@oss
 forking core. The root `AGENTS.md` links here; this is the detail an agent loads only when
 actually wiring a consumer.
 
-See [`CATALOG.md`](./CATALOG.md) for the machine-readable surface (routes, schemas, adapter
+See [`catalog.json`](./catalog.json) for the machine-readable surface (routes, schemas, adapter
 tokens, slots, events, config schema) an agent reads instead of grepping `node_modules`.
 
 ## Fastest path: scaffold the repo
@@ -195,4 +195,4 @@ directory.
 - `pnpm-workspace.yaml#allowBuilds` (pnpm 11 syntax) replaces the legacy
   `pnpm.onlyBuiltDependencies` in package.json.
 - A consumer gets the same AI surface this repo has by running the published `@oss/mcp` server
-  against their own repo (see its README) and reading the generated `CATALOG.md`.
+  against their own repo (see its README) and reading the generated `catalog.json`.

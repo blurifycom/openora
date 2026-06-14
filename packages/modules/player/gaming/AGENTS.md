@@ -74,5 +74,5 @@ To provide a real adapter:
 - `pnpm verify` passes (typecheck + lint + boundaries + module-shape + tests).
 - `list-routes module=gaming` shows the new/changed route(s) (e.g. `gaming.startRound`).
 - No `boundaries/dependencies` lint errors (no cross-module code imports; read other modules' tables only via the `@oss/modules/<group>/<name>/schema` subpath).
-- If you changed the `GameAdapter` contract, `pnpm regen` then check `docs/CATALOG.md` shows the `GAME_ADAPTER` seam still wired.
+- If you changed the `GameAdapter` contract, `pnpm regen` then check `docs/catalog.json` shows the `GAME_ADAPTER` seam still wired.
 - New tables: added to `src/schema/index.ts`, `pnpm regen` run, migration committed.

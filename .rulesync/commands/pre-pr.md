@@ -7,7 +7,7 @@ description: 'Run the full pre-PR gate locally - `pnpm verify` plus the drift ch
 Run the same gate CI enforces, in order. Stop at the first failure and report it.
 
 1. `pnpm verify` - typecheck + unit tests + lint + module shape.
-2. `pnpm verify:drift` - regenerates the catalog and fails on an uncommitted diff to `docs/catalog.json` / `docs/CATALOG.md`.
+2. `pnpm verify:drift` - regenerates the catalog and fails on an uncommitted diff to `docs/catalog.json`.
 
 The rulesync-generated agent files (AGENTS.md, CLAUDE.md, .codex/config.toml, Copilot mirrors) are gitignored and regenerated from `.rulesync/` on `pnpm install` - they can't drift, so there's nothing to check. If you changed agent instructions, edit `.rulesync/` and run `pnpm sync:agents`.
 

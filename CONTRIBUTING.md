@@ -75,7 +75,7 @@ generator and fails on an uncommitted diff. So if you touched schemas or routes,
 - Cross-module talk goes through events or contracts - never import another module's internals.
 - New functionality enters only via `definePlugin`. No auto-discovery, no magic.
 - ASCII only in code. Short dashes (-) only.
-- Don't hand-edit generated files: drizzle migrations, `docs/openapi.json`, `docs/CATALOG.md`,
+- Don't hand-edit generated files: drizzle migrations, `docs/openapi.json`, `docs/catalog.json`,
   and the rulesync-generated agent files (`AGENTS.md`, `CLAUDE.md`, `.codex/config.toml`,
   `.github/copilot-instructions.md`, and the `.claude/`, `.github/` mirrors) - edit
   `.rulesync/` and run `pnpm sync:agents`.

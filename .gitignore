@@ -9,8 +9,10 @@ coverage
 .env.*
 !.env.example
 *.tsbuildinfo
-# stray OpenAPI spec emitted when the API boots with cwd=apps/api (the canonical
-# one is docs/openapi.json at the repo root, read by gen-catalog)
+# OpenAPI spec is generated, not committed. Emitted by `pnpm codegen` (apps/api
+# emit-openapi) and on API boot. Read by gen-catalog + the @oss/mcp query-openapi
+# tool, which regenerate/expect it locally (pnpm setup:agent runs codegen).
+docs/openapi.json
 apps/*/docs/openapi.json
 .cache
 .claude/worktrees

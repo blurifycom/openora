@@ -13,7 +13,6 @@
     "**/generated/**",
     "**/*.hbs",
     "**/catalog.json",
-    "**/CATALOG.md",
     "docs/openapi.json",
     "packages/platform/db/prisma/migrations/**",
     "pnpm-lock.yaml"

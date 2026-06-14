@@ -1,7 +1,7 @@
 ---
 targets:
   - '*'
-description: 'Regenerate all derived artifacts - oRPC OpenAPI spec, Drizzle client, and the machine-readable docs/CATALOG.md. Run after any change to Drizzle tables or oRPC contracts.'
+description: 'Regenerate all derived artifacts - oRPC OpenAPI spec, Drizzle client, and the machine-readable docs/catalog.json. Run after any change to Drizzle tables or oRPC contracts.'
 ---
 
 Run `pnpm regen` in the repo root.
@@ -12,7 +12,7 @@ This runs in order (see root `package.json`):
    regenerates any per-package codegen registered with turbo.
 2. `pnpm -F @oss/db generate` - regenerates the Drizzle client from the live schema files
    under `packages/modules/<group>/<name>/src/schema/index.ts`.
-3. `pnpm run gen:catalog` (`tsx tools/gen-catalog.ts`) - emits `docs/CATALOG.md`: the
+3. `pnpm run gen:catalog` (`tsx tools/gen-catalog.ts`) - emits `docs/catalog.json`: the
    machine-readable surface listing routes / schemas / adapters / slots / events. The MCP
    dev server and AI catalogs read from this file.
 

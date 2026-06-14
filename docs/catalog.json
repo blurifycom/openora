@@ -1,18 +1,6 @@
 {
   "modules": [
     {
-      "id": "aggregator",
-      "group": "player",
-      "tables": [
-        "aggregator_provider"
-      ],
-      "routes": [
-        "aggregator.callback",
-        "aggregator.listProviders",
-        "aggregator.sync"
-      ]
-    },
-    {
       "id": "bonus",
       "group": "player",
       "tables": [
@@ -59,18 +47,6 @@
       ]
     },
     {
-      "id": "leaderboard",
-      "group": "player",
-      "tables": [
-        "leaderboard",
-        "leaderboard_entry"
-      ],
-      "routes": [
-        "leaderboard.adminReset",
-        "leaderboard.get"
-      ]
-    },
-    {
       "id": "lobby",
       "group": "player",
       "tables": [
@@ -86,18 +62,14 @@
       ]
     },
     {
-      "id": "sportsbook",
+      "id": "profile",
       "group": "player",
       "tables": [
-        "SportsbookBet",
-        "SportsbookEvent",
-        "SportsbookSelection"
+        "player"
       ],
       "routes": [
-        "sportsbook.getEvent",
-        "sportsbook.listEvents",
-        "sportsbook.oddsStream",
-        "sportsbook.placeBet"
+        "profile.get",
+        "profile.update"
       ]
     },
     {
@@ -178,21 +150,6 @@
         "iam.listRoles",
         "iam.setRolePermissions",
         "iam.updateRole"
-      ]
-    },
-    {
-      "id": "player-management",
-      "group": "backoffice",
-      "tables": [
-        "player"
-      ],
-      "routes": [
-        "player-management.get",
-        "player-management.list",
-        "player-management.registrationsOverTime",
-        "player-management.remove",
-        "player-management.summary",
-        "player-management.update"
       ]
     },
     {
@@ -280,10 +237,8 @@
       "category": "aggregator",
       "interface": "AggregatorAdapter",
       "token": "AGGREGATOR_ADAPTER",
-      "status": "wired",
-      "boundIn": [
-        "packages/modules/player/aggregator/src/plugin.ts"
-      ]
+      "status": "stub",
+      "boundIn": []
     },
     {
       "category": "audit",
@@ -384,8 +339,7 @@
       "token": "REALTIME_TRANSPORT",
       "status": "wired",
       "boundIn": [
-        "packages/modules/player/chat/src/plugin.ts",
-        "packages/modules/player/sportsbook/src/plugin.ts"
+        "packages/modules/player/chat/src/plugin.ts"
       ]
     },
     {
@@ -403,14 +357,11 @@
       "token": "WALLET_COMMANDS",
       "status": "wired",
       "boundIn": [
-        "packages/modules/player/sportsbook/src/plugin.ts",
         "packages/modules/player/wallet/src/plugin.ts"
       ]
     }
   ],
   "events": [
-    "aggregator.callback.received",
-    "aggregator.sync.completed",
     "bonus.claimed",
     "chat.message.sent",
     "cms.page.published",
@@ -426,13 +377,9 @@
     "identity.profile.updated",
     "identity.user.login",
     "identity.user.registered",
-    "leaderboard.reset",
-    "leaderboard.score.recorded",
     "localization.translation.deleted",
     "localization.translation.upserted",
     "notifications.created",
-    "sportsbook.bet.placed",
-    "sportsbook.odds.updated",
     "wallet.deposit.completed",
     "wallet.withdrawal.completed"
   ],
@@ -465,10 +412,6 @@
     {
       "name": "AdminUserSchema",
       "file": "packages/contracts/orpc-contract/src/backoffice.ts"
-    },
-    {
-      "name": "AggregatorProviderSummarySchema",
-      "file": "packages/contracts/orpc-contract/src/igaming-aggregator.ts"
     },
     {
       "name": "AuditActorTypeSchema",
@@ -505,14 +448,6 @@
     {
       "name": "BrandSchema",
       "file": "packages/contracts/shared-schemas/src/platform-config.ts"
-    },
-    {
-      "name": "CallbackInputSchema",
-      "file": "packages/contracts/orpc-contract/src/igaming-aggregator.ts"
-    },
-    {
-      "name": "CallbackResultSchema",
-      "file": "packages/contracts/orpc-contract/src/igaming-aggregator.ts"
     },
     {
       "name": "CatalogEntrySchema",
@@ -611,22 +546,6 @@
       "file": "packages/contracts/orpc-contract/src/player.ts"
     },
     {
-      "name": "LeaderboardEntrySchema",
-      "file": "packages/contracts/orpc-contract/src/leaderboard.ts"
-    },
-    {
-      "name": "LeaderboardMetricSchema",
-      "file": "packages/contracts/orpc-contract/src/leaderboard.ts"
-    },
-    {
-      "name": "LeaderboardPeriodSchema",
-      "file": "packages/contracts/orpc-contract/src/leaderboard.ts"
-    },
-    {
-      "name": "LeaderboardResponseSchema",
-      "file": "packages/contracts/orpc-contract/src/leaderboard.ts"
-    },
-    {
       "name": "LimitSchema",
       "file": "packages/contracts/orpc-contract/src/compliance.ts"
     },
@@ -655,10 +574,6 @@
       "file": "packages/contracts/orpc-contract/src/notifications.ts"
     },
     {
-      "name": "OddsUpdateSchema",
-      "file": "packages/contracts/orpc-contract/src/sportsbook.ts"
-    },
-    {
       "name": "OrganizationSchema",
       "file": "packages/contracts/shared-schemas/src/identity.ts"
     },
@@ -675,14 +590,6 @@
       "file": "packages/contracts/shared-schemas/src/common.ts"
     },
     {
-      "name": "PlaceBetInputSchema",
-      "file": "packages/contracts/orpc-contract/src/sportsbook.ts"
-    },
-    {
-      "name": "PlaceBetResultSchema",
-      "file": "packages/contracts/orpc-contract/src/sportsbook.ts"
-    },
-    {
       "name": "PlatformConfigSchema",
       "file": "packages/contracts/shared-schemas/src/platform-config.ts"
     },
@@ -691,19 +598,11 @@
       "file": "packages/contracts/orpc-contract/src/backoffice.ts"
     },
     {
-      "name": "PlayerRegistrationPointSchema",
-      "file": "packages/contracts/orpc-contract/src/player.ts"
-    },
-    {
       "name": "PlayerSchema",
       "file": "packages/contracts/orpc-contract/src/player.ts"
     },
     {
       "name": "PlayerStatusSchema",
-      "file": "packages/contracts/orpc-contract/src/player.ts"
-    },
-    {
-      "name": "PlayerSummarySchema",
       "file": "packages/contracts/orpc-contract/src/player.ts"
     },
     {
@@ -723,20 +622,8 @@
       "file": "packages/contracts/shared-schemas/src/identity.ts"
     },
     {
-      "name": "SportsbookBetSchema",
-      "file": "packages/contracts/orpc-contract/src/sportsbook.ts"
-    },
-    {
       "name": "SportsbookConfigSchema",
       "file": "packages/contracts/shared-schemas/src/platform-config.ts"
-    },
-    {
-      "name": "SportsbookEventSchema",
-      "file": "packages/contracts/orpc-contract/src/sportsbook.ts"
-    },
-    {
-      "name": "SportsbookSelectionSchema",
-      "file": "packages/contracts/orpc-contract/src/sportsbook.ts"
     },
     {
       "name": "StartRoundInputSchema",
@@ -745,10 +632,6 @@
     {
       "name": "StartRoundOutputSchema",
       "file": "packages/contracts/orpc-contract/src/gaming.ts"
-    },
-    {
-      "name": "SyncResultSchema",
-      "file": "packages/contracts/orpc-contract/src/igaming-aggregator.ts"
     },
     {
       "name": "TimestampSchema",
@@ -851,7 +734,6 @@
     "DELETE /compliance/limits/{id}",
     "DELETE /iam/roles/{roleId}",
     "DELETE /localization/translations/{id}",
-    "DELETE /players/{playerId}",
     "GET /audit/export",
     "GET /audit/logs",
     "GET /backoffice/stats",
@@ -881,8 +763,6 @@
     "GET /iam/roles",
     "GET /iam/roles/{roleId}",
     "GET /identity/me",
-    "GET /igaming-aggregator/providers",
-    "GET /leaderboard/{metric}/{period}",
     "GET /lobby/categories",
     "GET /lobby/categories/{slug}",
     "GET /lobby/featured",
@@ -890,20 +770,12 @@
     "GET /localization/locales",
     "GET /localization/translations/{locale}/{namespace}",
     "GET /notifications",
-    "GET /players",
-    "GET /players/stats/registrations",
-    "GET /players/stats/summary",
-    "GET /players/{playerId}",
     "GET /profile",
-    "GET /sportsbook/events",
-    "GET /sportsbook/events/{id}",
-    "GET /sportsbook/odds/stream",
     "GET /wallet/balance",
     "GET /wallet/transactions",
     "PATCH /backoffice/users/{userId}",
     "PATCH /iam/roles/{roleId}",
     "PATCH /identity/profile",
-    "PATCH /players/{playerId}",
     "PATCH /profile",
     "POST /bonus/claim/{bonusId}",
     "POST /chat/global",
@@ -929,13 +801,9 @@
     "POST /identity/password/forgot",
     "POST /identity/password/reset",
     "POST /identity/register",
-    "POST /igaming-aggregator/callback",
-    "POST /igaming-aggregator/sync",
-    "POST /leaderboard/admin/reset",
     "POST /localization/translations",
     "POST /notifications/read-all",
     "POST /notifications/{id}/read",
-    "POST /sportsbook/bets",
     "POST /wallet/deposit",
     "POST /wallet/withdraw",
     "PUT /cms/banners/{id}",

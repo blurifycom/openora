@@ -30,7 +30,7 @@ You are a technical founder/operator standing up a new online igaming on top of 
 - Boot the API and run `pnpm seed`, then hit endpoints via curl to confirm they work end-to-end, not just that they're declared.
 - The platform is headless - an operator builds their own frontend (or consumes consumer's) against the api. Verify the api surface, not screens.
 - Check each module's `src/service/ports.ts` and `adapters/` to confirm vendor seams are real and overridable. An operator needs to plug in their own KYC/PSP/notification provider.
-- Read `docs/CATALOG.md` - each adapter should show "wired (default impl)" or "stub"; note any that are stub-only.
+- Read `docs/catalog.json` - each adapter should show "wired (default impl)" or "stub"; note any that are stub-only.
 
 ## Operator readiness checklist
 

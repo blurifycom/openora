@@ -39,6 +39,4 @@ for (const name of addonPackages) {
   run(`@oss-addons/${name}`, 'db:migrate');
 }
 
-process.stdout.write(
-  `\nDone: core + ${addonPackages.length} add-on migration set(s) applied.\n`,
-);
+process.stdout.write(`\nDone: core + ${addonPackages.length} add-on migration set(s) applied.\n`);

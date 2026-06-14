@@ -4,7 +4,7 @@ import { z } from 'zod';
 // declares one of these and passes it to `createApp({ igaming })`; it is the single
 // declarative home for the things an operator (or their agent) sets to shape a
 // igaming - currencies, jurisdictions, limits, provider selection, branding.
-// It feeds the generated CATALOG.md so an agent can see the exact shape to fill.
+// It feeds the generated catalog.json so an agent can see the exact shape to fill.
 
 export const CurrencyCodeSchema = z
   .string()
@@ -31,7 +31,7 @@ export const ProviderSelectionSchema = z
   .object({
     // Which vendor adapter each swap seam should bind to. The string is the
     // operator's own label for the implementation they registered in a plugin;
-    // the platform resolves it via the DI token. See docs/CATALOG.md > adapters.
+    // the platform resolves it via the DI token. See docs/catalog.json > adapters.
     payment: z.string().optional(),
     kyc: z.string().optional(),
     geoIp: z.string().optional(),

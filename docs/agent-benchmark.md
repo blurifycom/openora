@@ -2,7 +2,7 @@
 
 Measures how many tokens an AI agent (acting for a downstream operator) burns to add a
 feature, before vs after the hardening pass that fixed doc/code drift, added the generated
-`CATALOG.md`, enforced boundaries, and centralized config.
+`catalog.json`, enforced boundaries, and centralized config.
 
 ## Method
 
@@ -19,7 +19,7 @@ feature, before vs after the hardening pass that fixed doc/code drift, added the
 ### Important caveats (read before trusting the absolute numbers)
 
 1. **Sub-agents had no access to the `oss-dev` MCP server.** So this measures the
-   docs / `CATALOG.md` / structure / example improvements only - NOT the MCP tool hardening
+   docs / `catalog.json` / structure / example improvements only - NOT the MCP tool hardening
    (response_format, guiding errors, the new `@oss/mcp`). Real sessions with the MCP server
    would save more.
 2. **The baseline tag under-represents the immediate pre-session tree.** It was created with
@@ -50,7 +50,7 @@ doc/code-drift trap this effort set out to eliminate:
   wrong answer.
 - **BEFORE / adapter task** concluded the payment seam was a no-op with "docs out of sync,"
   spending 29 tool calls confirming `@oss/adapters` and the `wallet` module were absent.
-- **AFTER / both tasks** found `AGENTS.md` -> the decision tree, `CATALOG.md` (adapter seam
+- **AFTER / both tasks** found `AGENTS.md` -> the decision tree, `catalog.json` (adapter seam
   table showing payment **wired**, module list, config schema), and the existing modules, and
   produced **correct, confident** implementations (Drizzle, single package, real token/seam)
   with fewer tool calls and no "docs contradict code" reconciliation.

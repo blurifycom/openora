@@ -21,7 +21,7 @@ Open-source, headless, plugin-based, AI-native igaming platform. Anyone clones t
 3. Plugin host. `definePlugin({ id, dependsOn, register })` is the only way new functionality enters the system. Overlays (in-tree under `apps/api/src/extensions/<name>/`) are the primary path; npm-published plugins use the same contract.
 4. Headless backend only. The platform ships backend modules + contracts + SDK consumption surface only. The frontend - all components, styling, and theme - lives in the downstream consumer (consumer). Consumers import `@oss/react-hooks` (data hooks, typed client, auth context, cross-cutting helpers) and `@oss/sdk-core` (framework-agnostic typed client) and own their entire UI layer. No UI packages ship here.
 5. Explicit > magic. No auto-discovery, no decorator soup. Everything is greppable; every wiring point is a typed function call.
-6. AI-friendly by default. Every module has an `AGENTS.md`. Every scaffold is a slash command. Every contract is queryable via the MCP dev server and the generated `docs/CATALOG.md`.
+6. AI-friendly by default. Every module has an `AGENTS.md`. Every scaffold is a slash command. Every contract is queryable via the MCP dev server (`describe-module`, `list-routes`, `query-openapi`) and the generated `docs/catalog.json` (consumed by the published `@oss/mcp` server).
 7. Functional and declarative by default - a strong preference, not a stylistic nicety. Prefer pure functions, immutable data, and composition over imperative mutation and stateful classes - it is easier to test, debug, and reason about. Default to a module of exported functions that take their dependencies as arguments. Reach for a `class` ONLY when the runtime or composition root needs a single instance to hold injected dependencies (services, guards) - and even then the class is a thin shell whose methods delegate to pure, testable functions. Methods read as data-in/data-out transforms; derive values with `map`/`filter`/`reduce` rather than mutating accumulators; isolate side effects (DB writes, event emits, adapter calls) at the edges. No decorators, and no inheritance for code reuse - compose instead. Imperative loops with mutation, stateful helper classes, and class hierarchies are smells: flag and refactor them.
 
 ## Repo map
@@ -72,7 +72,7 @@ packages/
 docs/
   adr/            # Architecture decision records
   architecture.md, glossary.md, agent-quickstart.md, downstream-consumer.md
-  CATALOG.md      # generated machine-readable surface (routes/schemas/adapters/slots/events)
+  catalog.json    # generated machine-readable surface (routes/schemas/adapters/slots/events); read by @oss/mcp
 tools/            # scaffold.ts, gen-catalog.ts, verify-module-shape.ts (agent docs: rulesync)
 extensions.config.ts # the single registry of enabled plugins
 ```
@@ -138,7 +138,7 @@ The rules both layers enforce:
 - TODOs without a tracking issue.
 - A per-module `package.json`/`tsconfig.json` - all feature modules share `@oss/modules`. New deps go in `packages/modules/package.json`.
 - Hand-editing generated drizzle migrations under `packages/platform/db/` - regenerate via `pnpm regen`.
-- Hand-editing `docs/openapi.json` or `docs/CATALOG.md` - both are emitted at build time.
+- Hand-editing `docs/openapi.json` or `docs/catalog.json` - both are emitted at build time.
 
 ## How to add a module
 
@@ -176,7 +176,7 @@ Scaffold a full consumer turborepo (api + web + backoffice) wired to `link:` at 
 pnpm create:app ../my-igaming --name my-igaming
 ```
 
-The generated repo ships `turbo gen` generators (`pnpm gen plugin|adapter|page`) and the three consumer AI agents. CLI: `tools/create-igaming-app.ts`; template: `tools/templates/consumer/`. See [docs/downstream-consumer.md](./docs/downstream-consumer.md) for `createApp`, mounting the backoffice, the `link:` dev workflow, the consumer load pattern, and the `@oss/mcp` + `CATALOG.md` AI surface.
+The generated repo ships `turbo gen` generators (`pnpm gen plugin|adapter|page`) and the three consumer AI agents. CLI: `tools/create-igaming-app.ts`; template: `tools/templates/consumer/`. See [docs/downstream-consumer.md](./docs/downstream-consumer.md) for `createApp`, mounting the backoffice, the `link:` dev workflow, the consumer load pattern, and the `@oss/mcp` + `catalog.json` AI surface.
 
 ## How to run things locally
 

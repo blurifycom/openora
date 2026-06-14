@@ -108,7 +108,7 @@ Use network inspection to confirm: correct HTTP status, right request payload, e
 Not every anomaly is a bug. Before escalating:
 
 1. **Reproduce it** - run the same flow twice. Flaky = not a confirmed bug.
-2. **Check if it's a known gap** - read `docs/CATALOG.md` and the relevant module's `AGENTS.md`. If the feature is marked stub/partial, it's expected.
+2. **Check if it's a known gap** - read `docs/catalog.json` and the relevant module's `AGENTS.md`. If the feature is marked stub/partial, it's expected.
 3. **Domain question** - if you're unsure whether the behavior violates a igaming business rule (KYC threshold, wagering math, geo-block logic), spawn `igaming-expert`:
    ```
    Agent({ subagent_type: 'igaming-expert', prompt: '...' })

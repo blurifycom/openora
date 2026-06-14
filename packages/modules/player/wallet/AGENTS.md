@@ -54,5 +54,5 @@ ctx.provide(PAYMENT_ADAPTER, () => new StripePaymentAdapter());
 - `pnpm verify` passes (typecheck + lint + boundaries + module-shape + tests).
 - `list-routes module=wallet` shows the new/changed route(s) (e.g. `wallet.deposit`).
 - No `boundaries/dependencies` lint errors (no cross-module code imports; read other modules' tables only via the `@oss/modules/<group>/<name>/schema` subpath).
-- If you changed the `PaymentAdapter` contract, `pnpm regen` then check `docs/CATALOG.md` shows the `PAYMENT_ADAPTER` seam still wired.
+- If you changed the `PaymentAdapter` contract, `pnpm regen` then check `docs/catalog.json` shows the `PAYMENT_ADAPTER` seam still wired.
 - New tables: added to `src/schema/index.ts`, `pnpm regen` run, migration committed.

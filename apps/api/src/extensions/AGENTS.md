@@ -24,14 +24,14 @@ Creates `apps/api/src/extensions/<name>/plugin.ts` and appends an entry to `exte
 | `ctx.provide(TOKEN, factory)`               | Bind a vendor / service factory to a typed token. **Last registration wins** - so an overlay loaded after a module can rebind that module's adapter token. |
 | `ctx.routers.add(namespace, (c) => router)` | Mount new oRPC routes under a namespace. The factory receives the resolved `Container` so it can pull services / adapters by token.                        |
 | `ctx.slots.fill(slotName, component)`       | Inject server-declared UI into a named admin shell slot.                                                                                                   |
-| `ctx.events.on(event, handler)`             | Subscribe to a domain event (see `docs/CATALOG.md` for the catalogue).                                                                                     |
+| `ctx.events.on(event, handler)`             | Subscribe to a domain event (see `docs/catalog.json` for the catalogue).                                                                                   |
 | `ctx.mcp.tool(definition)`                  | Expose a new MCP dev tool to the agent surface.                                                                                                            |
 
 There is no `ctx.providers.add`, no `ctx.imports`, no `ctx.prisma`. The platform is built on the functional composition `Container` from `@oss/core`, not NestJS - those Nest-era hooks are gone. Tables live in your overlay's own `src/schema/index.ts` (Drizzle `pgTable`); run `pnpm regen` after.
 
 ## Binding / overriding a vendor adapter
 
-Implement an interface from `@oss/adapters` (see `docs/CATALOG.md` > Adapter seams for the list and which are wired vs stub), then in `register(ctx)`:
+Implement an interface from `@oss/adapters` (see `docs/catalog.json` > Adapter seams for the list and which are wired vs stub), then in `register(ctx)`:
 
 ```ts
 import { PAYMENT_ADAPTER } from '@oss/adapters';
@@ -56,4 +56,4 @@ Put a `pgTable` in the overlay's `src/schema/index.ts`. Run `pnpm regen` to gene
 
 - `pnpm verify` passes (typecheck + lint + boundaries + module-shape + tests).
 - The overlay is listed by `list-modules` and its routes by `list-routes` (via the MCP dev server).
-- If you bound an adapter, `docs/CATALOG.md` (after `pnpm regen`) shows the seam wired.
+- If you bound an adapter, `docs/catalog.json` (after `pnpm regen`) shows the seam wired.

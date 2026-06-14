@@ -92,15 +92,15 @@ run('pnpm', ['regen']);
 run('pnpm', ['verify']);
 
 // 4. Assert the new module surfaces in the catalog
-const catalogPath = join(root, 'docs', 'CATALOG.md');
+const catalogPath = join(root, 'docs', 'catalog.json');
 if (existsSync(catalogPath)) {
   const catalog = readFileSync(catalogPath, 'utf8');
   if (!catalog.includes(MODULE)) {
-    console.error(`\nFAIL: "${MODULE}" not found in docs/CATALOG.md after regen`);
+    console.error(`\nFAIL: "${MODULE}" not found in docs/catalog.json after regen`);
     if (!keep) cleanup(before);
     process.exit(1);
   }
-  console.log(`\nPASS: "${MODULE}" appears in CATALOG.md`);
+  console.log(`\nPASS: "${MODULE}" appears in catalog.json`);
 }
 
 console.log('\n=== eval:scaffold PASSED ===\n');
