@@ -90,7 +90,7 @@ slice and migrations. To enable one you want:
 
 The core OSS build never references add-on packages (a lint boundary,
 `no-core-to-addon`, enforces it), so you only ever pull in what you enable. See
-[ADR-0020](./adr/ADR-0020-editions-and-add-on-modules.md).
+[ADR-0020](./adr/0020-editions-and-add-on-modules.md).
 
 ## Building the frontend (in your own repo)
 

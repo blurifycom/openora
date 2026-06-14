@@ -8,7 +8,7 @@
 // no drizzle.config (e.g. player-management, which reads the core `player` table and
 // owns no tables) is skipped automatically.
 //
-// See docs/adr/ADR-0020-editions-and-add-on-modules.md. NOTE: activating the add-on
+// See docs/adr/0020-editions-and-add-on-modules.md. NOTE: activating the add-on
 // sets on an existing DB requires the one-time re-baseline described in the ADR
 // (the core history still creates the add-on tables until then).
 import { execFileSync } from 'node:child_process';

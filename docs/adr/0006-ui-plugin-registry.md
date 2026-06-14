@@ -1,7 +1,15 @@
 # ADR-0006: UI plugin registry (client-side `defineUIPlugin`)
 
 **Date**: 2026-05-20
-**Status**: Accepted
+**Status**: Superseded (2026-06-14)
+
+> **Superseded note (2026-06-14).** The client-side UI plugin registry described here
+> lived in `@oss/react-sdk`, which was deleted when the platform went headless (see the
+> superseded note in [ADR-0013](./0013-ui-extensibility-tiers.md)). The OSS repo no longer
+> ships an admin shell, pages, or a slot/registry surface — the frontend lives in the
+> consumer (Consumer) repo and `@oss/react` is the only supported consumption surface. A
+> UI-extension model will be re-designed if/when the frontend is re-extracted into OSS.
+> The original design is kept below for the record.
 
 ## Context
 
