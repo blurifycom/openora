@@ -47,12 +47,19 @@ export type ModuleRegistry = {
 export type Plugin = {
   id: string;
   dependsOn?: string[];
+  // Command/adapter port tokens this plugin needs another package to have bound
+  // by boot (eg sportsbook needs WALLET_COMMANDS from @oss/wallet). Verified once,
+  // after every plugin has registered, so a missing domain fails fast with an
+  // actionable message instead of a generic "No provider" deep in a request. The
+  // single rule of ADR-0024: domains couple only through ports, never imports.
+  requiresPorts?: Token<unknown>[];
   register: (ctx: ModuleRegistry) => void | Promise<void>;
 };
 
 export type PluginDefinition = {
   id: string;
   dependsOn?: string[];
+  requiresPorts?: Token<unknown>[];
   register: (ctx: ModuleRegistry) => void | Promise<void>;
 };
 

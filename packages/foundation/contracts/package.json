@@ -1,0 +1,54 @@
+{
+  "name": "@oss/contracts",
+  "version": "0.2.0",
+  "private": false,
+  "files": [
+    "dist"
+  ],
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js",
+      "default": "./dist/index.js"
+    },
+    "./contract": {
+      "types": "./dist/contract.d.ts",
+      "import": "./dist/contract.js",
+      "default": "./dist/contract.js"
+    },
+    "./schemas": {
+      "types": "./dist/schemas.d.ts",
+      "import": "./dist/schemas.js",
+      "default": "./dist/schemas.js"
+    },
+    "./adapters": {
+      "types": "./dist/adapters.d.ts",
+      "import": "./dist/adapters.js",
+      "default": "./dist/adapters.js"
+    },
+    "./compliance-invariants": {
+      "types": "./dist/compliance-invariants.d.ts",
+      "import": "./dist/compliance-invariants.js",
+      "default": "./dist/compliance-invariants.js"
+    }
+  },
+  "scripts": {
+    "build": "tsc",
+    "typecheck": "tsc --noEmit",
+    "clean": "rm -rf dist"
+  },
+  "dependencies": {
+    "@oss/adapters": "workspace:*",
+    "@oss/compliance-invariants": "workspace:*",
+    "@oss/orpc-contract": "workspace:*",
+    "@oss/shared-schemas": "workspace:*"
+  },
+  "devDependencies": {
+    "@oss/tsconfig": "workspace:*",
+    "@types/node": "25.9.2",
+    "typescript": "6.0.3"
+  }
+}

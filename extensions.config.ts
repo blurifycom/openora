@@ -12,38 +12,38 @@ export const extensions = [
   { id: 'audit', path: './packages/addons/audit/dist/plugin.js' },
   { id: 'iam', path: './packages/addons/iam/dist/plugin.js' },
   // Platform - shared substrate used by both surfaces
-  { id: 'identity', path: './packages/addons/identity/dist/plugin.js' },
-  { id: 'notifications', path: './packages/addons/notifications/dist/plugin.js' },
-  { id: 'compliance', path: './packages/addons/compliance/dist/plugin.js' },
+  { id: 'identity', path: './packages/domains/pam/dist/identity/plugin.js' },
+  { id: 'notifications', path: './packages/domains/engagement/dist/notifications/plugin.js' },
+  { id: 'compliance', path: './packages/domains/pam/dist/compliance/plugin.js' },
 
   // Player - the player-facing igaming surface
-  { id: 'wallet', path: './packages/addons/wallet/dist/plugin.js' },
-  { id: 'gaming', path: './packages/addons/gaming/dist/plugin.js' },
-  { id: 'lobby', path: './packages/addons/lobby/dist/plugin.js' },
-  { id: 'chat', path: './packages/addons/chat/dist/plugin.js' },
-  { id: 'bonus', path: './packages/addons/bonus/dist/plugin.js' },
+  { id: 'wallet', path: './packages/domains/wallet/dist/plugin.js' },
+  { id: 'gaming', path: './packages/domains/casino/dist/gaming/plugin.js' },
+  { id: 'lobby', path: './packages/domains/casino/dist/lobby/plugin.js' },
+  { id: 'chat', path: './packages/domains/engagement/dist/chat/plugin.js' },
+  { id: 'bonus', path: './packages/domains/engagement/dist/bonus/plugin.js' },
   // Player self-profile (owns the `player` table). The admin PAM surface is the
   // gated player-management add-on below.
-  { id: 'profile', path: './packages/addons/profile/dist/plugin.js' },
+  { id: 'profile', path: './packages/domains/pam/dist/profile/plugin.js' },
 
   // Backoffice - the admin/operator surface
   { id: 'admin-console', path: './packages/addons/admin-console/dist/plugin.js' },
-  { id: 'cms', path: './packages/addons/cms/dist/plugin.js' },
+  { id: 'cms', path: './packages/domains/cms/dist/plugin.js' },
 
   // --- GATED ADD-ONS (optional, extract-later packages under packages/addons/*) ---
   // kind: 'addon' -> loaded by the composition root ONLY when the id is in the
   // OSS_ADDONS allowlist (apps/api/src/editions.ts). Default build omits them
   // entirely (no routes, no OpenAPI). Each ships its own contract slice +
   // migrations and can be lifted to its own npm package. See ADR-0020/ADR-0021.
-  { id: 'leaderboard', path: './packages/addons/leaderboard/dist/plugin.js', kind: 'addon' },
-  { id: 'sportsbook', path: './packages/addons/sportsbook/dist/plugin.js', kind: 'addon' },
+  { id: 'leaderboard', path: './packages/domains/engagement/dist/leaderboard/plugin.js', kind: 'addon' },
+  { id: 'sportsbook', path: './packages/domains/sportsbook/dist/plugin.js', kind: 'addon' },
   // sportsbook debits the core wallet via WALLET_COMMANDS (dependsOn: ['wallet']).
-  { id: 'aggregator', path: './packages/addons/aggregator/dist/plugin.js', kind: 'addon' },
+  { id: 'aggregator', path: './packages/domains/casino/dist/aggregator/plugin.js', kind: 'addon' },
   // Admin PAM. Reads the core `player` table (owned by the profile module) via the
   // /schema subpath; the player-facing profile stays free.
   {
     id: 'player-management',
-    path: './packages/addons/player-management/dist/plugin.js',
+    path: './packages/domains/pam/dist/player-management/plugin.js',
     kind: 'addon',
   },
 

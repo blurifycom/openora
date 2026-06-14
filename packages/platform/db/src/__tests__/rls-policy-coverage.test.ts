@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { existsSync, readdirSync, readFileSync, statSync } from 'node:fs';
+import { readdirSync, readFileSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -13,20 +13,15 @@ import { fileURLToPath } from 'node:url';
 const here = dirname(fileURLToPath(import.meta.url));
 // .../packages/platform/db/src/__tests__ -> repo root is five levels up.
 const repoRoot = resolve(here, '../../../../..');
-const addonsRoot = join(repoRoot, 'packages/addons');
-const migrationsDir = join(repoRoot, 'packages/platform/db/drizzle/migrations');
-const outboxSchema = join(repoRoot, 'packages/platform/db/src/outbox/schema.ts');
-
-function walk(dir: string): string[] {
-  const out: string[] = [];
-  for (const entry of readdirSync(dir)) {
-    if (entry === 'node_modules' || entry === 'dist') continue;
-    const full = join(dir, entry);
-    if (statSync(full).isDirectory()) out.push(...walk(full));
-    else if (entry.endsWith('.ts')) out.push(full);
-  }
-  return out;
-}
+const dbRoot = join(repoRoot, 'packages/platform/db');
+const migrationsDir = join(dbRoot, 'drizzle/migrations');
+// The authoritative list of schema files in the CENTRAL migration history is the
+// `schema:` array of the central drizzle.config.ts. Driving the scan from it (rather
+// than walking add-on/domain dirs and guessing gated-ness) is correct regardless of
+// layout - flat add-ons, single-member domains (src/schema), or multi-member domains
+// (src/<member>/schema). Gated histories own their own config and are excluded by
+// construction. See ADR-0020 / ADR-0024.
+const centralDrizzleConfig = join(dbRoot, 'drizzle.config.ts');
 
 // Extract `pgTable('name', { ... })` blocks that declare a tenantId column. We
 // scan the brace-balanced body of each pgTable call so a tenantId in one table
@@ -67,23 +62,20 @@ function tenantTablesInFile(source: string): string[] {
 // ever touched on the admin/system path during request bootstrap (ADR-0018).
 const RLS_EXEMPT = new Set<string>(['user']);
 
-// Core add-ons share the central migration history covered by this test. Gated
-// add-ons own their own drizzle.config + migration history (their own RLS), so
-// they are skipped - the marker is a drizzle.config.ts at the package root.
-function coreAddonSchemaFiles(): string[] {
-  const out: string[] = [];
-  for (const entry of readdirSync(addonsRoot)) {
-    const pkgDir = join(addonsRoot, entry);
-    if (!statSync(pkgDir).isDirectory()) continue;
-    if (existsSync(join(pkgDir, 'drizzle.config.ts'))) continue; // gated add-on
-    const schemaDir = join(pkgDir, 'src/schema');
-    if (existsSync(schemaDir)) out.push(...walk(schemaDir));
-  }
-  return out;
+// The schema files in the central migration history = the `schema:` array of the
+// central drizzle.config.ts, resolved relative to the db package root. This is the
+// source of truth: a core add-on or domain that ships tables is listed there; gated
+// histories are not. Far more robust than walking dirs and inferring gated-ness.
+function centralSchemaFiles(): string[] {
+  const config = readFileSync(centralDrizzleConfig, 'utf8');
+  const arrayMatch = config.match(/schema:\s*\[([\s\S]*?)\]/);
+  if (!arrayMatch) throw new Error('Could not find the `schema:` array in drizzle.config.ts');
+  const rels = [...arrayMatch[1]!.matchAll(/['"]([^'"]+)['"]/g)].map((m) => m[1]!);
+  return rels.map((rel) => resolve(dbRoot, rel));
 }
 
 function collectTenantTables(): string[] {
-  const files = [...coreAddonSchemaFiles(), outboxSchema];
+  const files = centralSchemaFiles();
   const tables = new Set<string>();
   for (const file of files) {
     const source = readFileSync(file, 'utf8');

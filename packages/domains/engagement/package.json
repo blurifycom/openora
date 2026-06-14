@@ -1,0 +1,126 @@
+{
+  "name": "@oss/engagement",
+  "version": "0.2.0",
+  "private": false,
+  "files": [
+    "dist",
+    "drizzle"
+  ],
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js",
+      "default": "./dist/index.js"
+    },
+    "./server": {
+      "types": "./dist/server.d.ts",
+      "import": "./dist/server.js",
+      "default": "./dist/server.js"
+    },
+    "./contracts": {
+      "types": "./dist/contracts.d.ts",
+      "import": "./dist/contracts.js",
+      "default": "./dist/contracts.js"
+    },
+    "./contracts/chat": {
+      "types": "./dist/chat/contract/index.d.ts",
+      "import": "./dist/chat/contract/index.js",
+      "default": "./dist/chat/contract/index.js"
+    },
+    "./contracts/notifications": {
+      "types": "./dist/notifications/contract/index.d.ts",
+      "import": "./dist/notifications/contract/index.js",
+      "default": "./dist/notifications/contract/index.js"
+    },
+    "./contracts/bonus": {
+      "types": "./dist/bonus/contract/index.d.ts",
+      "import": "./dist/bonus/contract/index.js",
+      "default": "./dist/bonus/contract/index.js"
+    },
+    "./contracts/leaderboard": {
+      "types": "./dist/leaderboard/contract/index.d.ts",
+      "import": "./dist/leaderboard/contract/index.js",
+      "default": "./dist/leaderboard/contract/index.js"
+    },
+    "./schema/chat": {
+      "types": "./dist/chat/schema/index.d.ts",
+      "import": "./dist/chat/schema/index.js",
+      "default": "./dist/chat/schema/index.js"
+    },
+    "./schema/notifications": {
+      "types": "./dist/notifications/schema/index.d.ts",
+      "import": "./dist/notifications/schema/index.js",
+      "default": "./dist/notifications/schema/index.js"
+    },
+    "./schema/bonus": {
+      "types": "./dist/bonus/schema/index.d.ts",
+      "import": "./dist/bonus/schema/index.js",
+      "default": "./dist/bonus/schema/index.js"
+    },
+    "./schema/leaderboard": {
+      "types": "./dist/leaderboard/schema/index.d.ts",
+      "import": "./dist/leaderboard/schema/index.js",
+      "default": "./dist/leaderboard/schema/index.js"
+    },
+    "./plugins/chat": {
+      "types": "./dist/chat/plugin.d.ts",
+      "import": "./dist/chat/plugin.js",
+      "default": "./dist/chat/plugin.js"
+    },
+    "./plugins/notifications": {
+      "types": "./dist/notifications/plugin.d.ts",
+      "import": "./dist/notifications/plugin.js",
+      "default": "./dist/notifications/plugin.js"
+    },
+    "./plugins/bonus": {
+      "types": "./dist/bonus/plugin.d.ts",
+      "import": "./dist/bonus/plugin.js",
+      "default": "./dist/bonus/plugin.js"
+    },
+    "./plugins/leaderboard": {
+      "types": "./dist/leaderboard/plugin.d.ts",
+      "import": "./dist/leaderboard/plugin.js",
+      "default": "./dist/leaderboard/plugin.js"
+    },
+    "./migrate": {
+      "types": "./dist/leaderboard/migrate.d.ts",
+      "import": "./dist/leaderboard/migrate.js",
+      "default": "./dist/leaderboard/migrate.js"
+    }
+  },
+  "scripts": {
+    "build": "tsc",
+    "typecheck": "tsc --noEmit",
+    "clean": "rm -rf dist",
+    "test": "vitest run",
+    "test:unit": "vitest run --passWithNoTests",
+    "test:integration": "vitest run --passWithNoTests",
+    "db:generate": "drizzle-kit generate",
+    "db:migrate": "drizzle-kit migrate"
+  },
+  "dependencies": {
+    "@orpc/contract": "1.14.5",
+    "@orpc/server": "1.14.5",
+    "@oss/adapters": "workspace:*",
+    "@oss/auth": "workspace:*",
+    "@oss/core": "workspace:*",
+    "@oss/db": "workspace:*",
+    "@oss/pam": "workspace:*",
+    "@oss/plugin-host": "workspace:*",
+    "@oss/shared-schemas": "workspace:*",
+    "@paralleldrive/cuid2": "3.3.0",
+    "drizzle-orm": "0.45.2",
+    "zod": "4.4.3"
+  },
+  "devDependencies": {
+    "@oss/tsconfig": "workspace:*",
+    "@oss/vitest-config": "workspace:*",
+    "@types/node": "25.9.2",
+    "drizzle-kit": "0.31.10",
+    "typescript": "6.0.3",
+    "vitest": "4.1.8"
+  }
+}

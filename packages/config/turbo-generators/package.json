@@ -1,6 +1,6 @@
 {
   "name": "@oss/turbo-generators",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Shared turbo gen generators for downstream igaming consumers (plugin / adapter / page).",
   "files": [
     "src"
