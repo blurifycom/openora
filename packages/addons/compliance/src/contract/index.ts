@@ -2,8 +2,8 @@ import { oc } from '@orpc/contract';
 import * as z from 'zod';
 
 export const LimitSchema = z.object({
-  id: z.string(),
-  userId: z.string(),
+  id: z.uuid(),
+  userId: z.uuid(),
   type: z.enum(['deposit', 'wager', 'loss']),
   amount: z.number(),
   period: z.enum(['daily', 'weekly', 'monthly']),
@@ -11,7 +11,7 @@ export const LimitSchema = z.object({
 });
 
 export const GeoRuleSchema = z.object({
-  id: z.string(),
+  id: z.uuid(),
   countryCode: z.string(),
   action: z.enum(['allow', 'block']),
   createdAt: z.string(),
@@ -24,7 +24,7 @@ const UpsertLimitInputSchema = z.object({
 });
 
 const DeleteLimitInputSchema = z.object({
-  id: z.string(),
+  id: z.uuid(),
 });
 
 const AddGeoRuleInputSchema = z.object({

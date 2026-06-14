@@ -11,7 +11,7 @@ export const PlatformStatsSchema = z.object({
 });
 
 export const AdminUserSchema = z.object({
-  id: z.string(),
+  id: z.uuid(),
   email: z.string(),
   name: z.string().nullable(),
   createdAt: z.string(),
@@ -20,8 +20,8 @@ export const AdminUserSchema = z.object({
 });
 
 export const AdminTransactionSchema = z.object({
-  id: z.string(),
-  userId: z.string(),
+  id: z.uuid(),
+  userId: z.uuid(),
   type: z.string(),
   amount: z.number(),
   currency: z.string(),
@@ -52,7 +52,7 @@ export const backofficeContract = {
     .route({ method: 'PATCH', path: '/backoffice/users/{userId}' })
     .input(
       z.object({
-        userId: z.string(),
+        userId: z.uuid(),
         isActive: z.boolean().optional(),
         role: z.string().optional(),
       }),
@@ -61,6 +61,6 @@ export const backofficeContract = {
 
   listTransactions: oc
     .route({ method: 'GET', path: '/backoffice/transactions' })
-    .input(PaginationInputSchema.extend({ userId: z.string().optional() }))
+    .input(PaginationInputSchema.extend({ userId: z.uuid().optional() }))
     .output(z.object({ transactions: z.array(AdminTransactionSchema), total: z.number().int() })),
 };

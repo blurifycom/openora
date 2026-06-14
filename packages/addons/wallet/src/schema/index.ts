@@ -1,5 +1,4 @@
-import { pgTable, text, decimal, timestamp, pgEnum, index } from 'drizzle-orm/pg-core';
-import { createId } from '@paralleldrive/cuid2';
+import { pgTable, uuid, text, decimal, timestamp, pgEnum, index } from 'drizzle-orm/pg-core';
 
 export const walletTransactionTypeEnum = pgEnum('WalletTransactionType', [
   'deposit',
@@ -17,10 +16,8 @@ export const walletTransactionStatusEnum = pgEnum('WalletTransactionStatus', [
 export const wallet = pgTable(
   'wallet',
   {
-    id: text('id')
-      .primaryKey()
-      .$defaultFn(() => createId()),
-    userId: text('userId').notNull().unique(),
+    id: uuid('id').primaryKey().defaultRandom(),
+    userId: uuid('userId').notNull().unique(),
     tenantId: text('tenantId').notNull(),
     balance: decimal('balance').notNull().default('0'),
     currency: text('currency').notNull().default('USD'),
@@ -34,10 +31,8 @@ export const wallet = pgTable(
 export const walletTransaction = pgTable(
   'wallet_transaction',
   {
-    id: text('id')
-      .primaryKey()
-      .$defaultFn(() => createId()),
-    walletId: text('walletId')
+    id: uuid('id').primaryKey().defaultRandom(),
+    walletId: uuid('walletId')
       .notNull()
       .references(() => wallet.id),
     tenantId: text('tenantId').notNull(),

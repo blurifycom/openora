@@ -1,5 +1,4 @@
-import { pgTable, text, integer, decimal, timestamp, index } from 'drizzle-orm/pg-core';
-import { randomUUID } from 'node:crypto';
+import { pgTable, uuid, text, integer, decimal, timestamp, index } from 'drizzle-orm/pg-core';
 
 // The igaming `player` profile. Owned by the core profile module (every edition
 // has players). The add-on PAM admin package (@oss-addons/player-management)
@@ -8,10 +7,8 @@ import { randomUUID } from 'node:crypto';
 export const player = pgTable(
   'player',
   {
-    id: text('id')
-      .primaryKey()
-      .$defaultFn(() => randomUUID()),
-    userId: text('userId').notNull().unique(),
+    id: uuid('id').primaryKey().defaultRandom(),
+    userId: uuid('userId').notNull().unique(),
     displayName: text('displayName').notNull(),
     country: text('country'),
     currency: text('currency').notNull().default('USD'),

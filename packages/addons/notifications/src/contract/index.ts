@@ -3,8 +3,8 @@ import * as z from 'zod';
 import { IdInputSchema } from '@oss/shared-schemas';
 
 export const NotificationSchema = z.object({
-  id: z.string(),
-  userId: z.string(),
+  id: z.uuid(),
+  userId: z.uuid(),
   type: z.string(),
   title: z.string(),
   body: z.string(),

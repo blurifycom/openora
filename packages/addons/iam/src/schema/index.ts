@@ -1,12 +1,9 @@
-import { pgTable, text, timestamp, index, foreignKey } from 'drizzle-orm/pg-core';
-import { createId } from '@paralleldrive/cuid2';
+import { pgTable, uuid, text, timestamp, index, foreignKey } from 'drizzle-orm/pg-core';
 
 export const adminRole = pgTable(
   'admin_role',
   {
-    id: text('id')
-      .primaryKey()
-      .$defaultFn(() => createId()),
+    id: uuid('id').primaryKey().defaultRandom(),
     tenantId: text('tenantId').notNull(),
     name: text('name').notNull(),
     description: text('description'),
@@ -18,11 +15,9 @@ export const adminRole = pgTable(
 export const adminRolePermission = pgTable(
   'admin_role_permission',
   {
-    id: text('id')
-      .primaryKey()
-      .$defaultFn(() => createId()),
+    id: uuid('id').primaryKey().defaultRandom(),
     tenantId: text('tenantId').notNull(),
-    roleId: text('roleId').notNull(),
+    roleId: uuid('roleId').notNull(),
     resource: text('resource').notNull(),
     action: text('action').notNull(),
     createdAt: timestamp('createdAt').notNull().defaultNow(),
@@ -37,13 +32,11 @@ export const adminRolePermission = pgTable(
 export const adminRoleAssignment = pgTable(
   'admin_role_assignment',
   {
-    id: text('id')
-      .primaryKey()
-      .$defaultFn(() => createId()),
+    id: uuid('id').primaryKey().defaultRandom(),
     tenantId: text('tenantId').notNull(),
     // Reference to identity user by id - no cross-module FK.
-    userId: text('userId').notNull(),
-    roleId: text('roleId').notNull(),
+    userId: uuid('userId').notNull(),
+    roleId: uuid('roleId').notNull(),
     createdAt: timestamp('createdAt').notNull().defaultNow(),
   },
   (t) => [
@@ -55,12 +48,10 @@ export const adminRoleAssignment = pgTable(
 export const adminInvitation = pgTable(
   'admin_invitation',
   {
-    id: text('id')
-      .primaryKey()
-      .$defaultFn(() => createId()),
+    id: uuid('id').primaryKey().defaultRandom(),
     tenantId: text('tenantId').notNull(),
     email: text('email').notNull(),
-    roleId: text('roleId').notNull(),
+    roleId: uuid('roleId').notNull(),
     token: text('token').notNull().unique(),
     status: text('status', { enum: ['pending', 'accepted', 'revoked'] })
       .notNull()

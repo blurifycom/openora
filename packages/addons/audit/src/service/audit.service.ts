@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto';
-import { createId } from '@paralleldrive/cuid2';
+import { randomUUID } from 'node:crypto';
 import { DrizzleService, pageToOffset } from '@oss/db';
 import { type EventBus, getCurrentTenantId } from '@oss/core';
 import { eq, and, gte, lte, desc, sql } from 'drizzle-orm';
@@ -131,7 +131,7 @@ export class AuditService {
 
       // id + createdAt are known at insert time (generated here, not DB-defaulted)
       // so the hash input matches the persisted row exactly.
-      const id = createId();
+      const id = randomUUID();
       const createdAt = new Date();
 
       const hash = computeHash({

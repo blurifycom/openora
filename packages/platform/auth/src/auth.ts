@@ -1,3 +1,4 @@
+import { randomUUID } from 'node:crypto';
 import { betterAuth } from 'better-auth';
 import type { Auth as BetterAuthType } from 'better-auth';
 import { drizzleAdapter } from 'better-auth/adapters/drizzle';
@@ -29,6 +30,14 @@ export function createAuth(options: AuthOptions): BetterAuthType {
       provider: 'pg',
       schema: options.schema,
     }),
+    // Generate UUID ids for every auth model (user/session/account/verification),
+    // matching the platform-wide uuid id convention. Our id columns are `text`
+    // without a DB default, so better-auth must supply the value itself.
+    advanced: {
+      database: {
+        generateId: () => randomUUID(),
+      },
+    },
     emailAndPassword: {
       enabled: true,
       sendResetPassword: async ({ user, url, token }) => {

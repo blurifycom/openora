@@ -4,7 +4,7 @@ import * as z from 'zod';
 // --- Shared output shapes ---
 
 export const AdminRoleSchema = z.object({
-  id: z.string(),
+  id: z.uuid(),
   tenantId: z.string(),
   name: z.string(),
   description: z.string().nullable(),
@@ -12,8 +12,8 @@ export const AdminRoleSchema = z.object({
 });
 
 export const AdminRolePermissionSchema = z.object({
-  id: z.string(),
-  roleId: z.string(),
+  id: z.uuid(),
+  roleId: z.uuid(),
   resource: z.string(),
   action: z.string(),
   createdAt: z.string(),
@@ -24,18 +24,18 @@ export const AdminRoleWithGrantsSchema = AdminRoleSchema.extend({
 });
 
 export const AdminRoleAssignmentSchema = z.object({
-  id: z.string(),
+  id: z.uuid(),
   tenantId: z.string(),
-  userId: z.string(),
-  roleId: z.string(),
+  userId: z.uuid(),
+  roleId: z.uuid(),
   createdAt: z.string(),
 });
 
 export const AdminInvitationSchema = z.object({
-  id: z.string(),
+  id: z.uuid(),
   tenantId: z.string(),
   email: z.string(),
-  roleId: z.string(),
+  roleId: z.uuid(),
   token: z.string(),
   status: z.enum(['pending', 'accepted', 'revoked']),
   expiresAt: z.string(),
@@ -65,7 +65,7 @@ export const iamContract = {
 
   getRole: oc
     .route({ method: 'GET', path: '/iam/roles/{roleId}' })
-    .input(z.object({ roleId: z.string() }))
+    .input(z.object({ roleId: z.uuid() }))
     .output(AdminRoleWithGrantsSchema),
 
   createRole: oc
@@ -77,7 +77,7 @@ export const iamContract = {
     .route({ method: 'PATCH', path: '/iam/roles/{roleId}' })
     .input(
       z.object({
-        roleId: z.string(),
+        roleId: z.uuid(),
         name: z.string().optional(),
         description: z.string().nullable().optional(),
       }),
@@ -86,14 +86,14 @@ export const iamContract = {
 
   deleteRole: oc
     .route({ method: 'DELETE', path: '/iam/roles/{roleId}' })
-    .input(z.object({ roleId: z.string() }))
+    .input(z.object({ roleId: z.uuid() }))
     .output(z.object({ success: z.literal(true) })),
 
   setRolePermissions: oc
     .route({ method: 'PUT', path: '/iam/roles/{roleId}/permissions' })
     .input(
       z.object({
-        roleId: z.string(),
+        roleId: z.uuid(),
         grants: z.array(GrantInputSchema),
       }),
     )
@@ -101,7 +101,7 @@ export const iamContract = {
 
   assignRole: oc
     .route({ method: 'POST', path: '/iam/assignments' })
-    .input(z.object({ userId: z.string(), roleId: z.string() }))
+    .input(z.object({ userId: z.uuid(), roleId: z.uuid() }))
     .output(AdminRoleAssignmentSchema),
 
   listInvitations: oc
@@ -110,7 +110,7 @@ export const iamContract = {
 
   inviteAdmin: oc
     .route({ method: 'POST', path: '/iam/invitations' })
-    .input(z.object({ email: z.email(), roleId: z.string() }))
+    .input(z.object({ email: z.email(), roleId: z.uuid() }))
     .output(AdminInvitationSchema),
 
   acceptInvitation: oc

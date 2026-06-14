@@ -1,12 +1,9 @@
-import { pgTable, text, boolean, timestamp, uniqueIndex, index } from 'drizzle-orm/pg-core';
-import { createId } from '@paralleldrive/cuid2';
+import { pgTable, uuid, text, boolean, timestamp, uniqueIndex, index } from 'drizzle-orm/pg-core';
 
 export const chatRoom = pgTable(
   'ChatRoom',
   {
-    id: text('id')
-      .primaryKey()
-      .$defaultFn(() => createId()),
+    id: uuid('id').primaryKey().defaultRandom(),
     tenantId: text('tenantId').notNull(),
     name: text('name').notNull(),
     slug: text('slug').notNull(),
@@ -19,12 +16,10 @@ export const chatRoom = pgTable(
 export const chatMessage = pgTable(
   'ChatMessage',
   {
-    id: text('id')
-      .primaryKey()
-      .$defaultFn(() => createId()),
+    id: uuid('id').primaryKey().defaultRandom(),
     tenantId: text('tenantId').notNull(),
-    roomId: text('roomId').references(() => chatRoom.id),
-    userId: text('userId').notNull(),
+    roomId: uuid('roomId').references(() => chatRoom.id),
+    userId: uuid('userId').notNull(),
     username: text('username').notNull(),
     content: text('content').notNull(),
     isDeleted: boolean('isDeleted').notNull().default(false),

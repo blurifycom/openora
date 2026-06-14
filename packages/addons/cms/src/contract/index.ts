@@ -3,7 +3,7 @@ import * as z from 'zod';
 import { IdInputSchema } from '@oss/shared-schemas';
 
 export const PageSchema = z.object({
-  id: z.string(),
+  id: z.uuid(),
   slug: z.string(),
   title: z.string(),
   content: z.unknown(),
@@ -12,7 +12,7 @@ export const PageSchema = z.object({
 });
 
 export const BannerSchema = z.object({
-  id: z.string(),
+  id: z.uuid(),
   placement: z.string(),
   title: z.string(),
   imageUrl: z.string(),
@@ -48,7 +48,7 @@ export const cmsContract = {
     .route({ method: 'PUT', path: '/cms/pages/{id}' })
     .input(
       z.object({
-        id: z.string(),
+        id: z.uuid(),
         slug: z.string().optional(),
         title: z.string().optional(),
         content: z.unknown().optional(),
@@ -86,7 +86,7 @@ export const cmsContract = {
     .route({ method: 'PUT', path: '/cms/banners/{id}' })
     .input(
       z.object({
-        id: z.string(),
+        id: z.uuid(),
         placement: z.string().optional(),
         title: z.string().optional(),
         imageUrl: z.string().optional(),

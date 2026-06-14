@@ -1,2 +1,0 @@
-ALTER TABLE "admin_role_permission" ADD COLUMN "tenantId" text NOT NULL;--> statement-breakpoint
-CREATE INDEX "admin_role_permission_tenantId_roleId_idx" ON "admin_role_permission" USING btree ("tenantId","roleId");

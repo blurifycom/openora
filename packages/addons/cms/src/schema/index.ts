@@ -1,10 +1,16 @@
-import { pgTable, text, boolean, integer, timestamp, jsonb, index } from 'drizzle-orm/pg-core';
-import { createId } from '@paralleldrive/cuid2';
+import {
+  pgTable,
+  uuid,
+  text,
+  boolean,
+  integer,
+  timestamp,
+  jsonb,
+  index,
+} from 'drizzle-orm/pg-core';
 
 export const page = pgTable('page', {
-  id: text('id')
-    .primaryKey()
-    .$defaultFn(() => createId()),
+  id: uuid('id').primaryKey().defaultRandom(),
   slug: text('slug').notNull().unique(),
   title: text('title').notNull(),
   content: jsonb('content').notNull().default({}),
@@ -18,9 +24,7 @@ export const page = pgTable('page', {
 export const banner = pgTable(
   'banner',
   {
-    id: text('id')
-      .primaryKey()
-      .$defaultFn(() => createId()),
+    id: uuid('id').primaryKey().defaultRandom(),
     placement: text('placement').notNull(),
     title: text('title').notNull(),
     imageUrl: text('imageUrl').notNull(),

@@ -2,7 +2,7 @@ import { oc } from '@orpc/contract';
 import * as z from 'zod';
 
 export const GameSummarySchema = z.object({
-  id: z.string(),
+  id: z.uuid(),
   name: z.string(),
   provider: z.string(),
   category: z.string(),
@@ -10,7 +10,7 @@ export const GameSummarySchema = z.object({
 });
 
 export const LobbyCategorySchema = z.object({
-  id: z.string(),
+  id: z.uuid(),
   name: z.string(),
   slug: z.string(),
   sortOrder: z.number(),
@@ -18,16 +18,16 @@ export const LobbyCategorySchema = z.object({
 });
 
 export const LobbyCategoryDetailSchema = z.object({
-  id: z.string(),
+  id: z.uuid(),
   name: z.string(),
   slug: z.string(),
   games: z.array(GameSummarySchema),
 });
 
 export const FeaturedSlotSchema = z.object({
-  id: z.string(),
+  id: z.uuid(),
   title: z.string(),
-  gameId: z.string(),
+  gameId: z.uuid(),
   gameName: z.string(),
   thumbnailUrl: z.string().nullable(),
   placement: z.string(),

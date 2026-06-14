@@ -1,5 +1,13 @@
-import { pgTable, pgEnum, text, timestamp, jsonb, index, bigserial } from 'drizzle-orm/pg-core';
-import { createId } from '@paralleldrive/cuid2';
+import {
+  pgTable,
+  uuid,
+  pgEnum,
+  text,
+  timestamp,
+  jsonb,
+  index,
+  bigserial,
+} from 'drizzle-orm/pg-core';
 
 export const actorTypeEnum = pgEnum('audit_actor_type', ['player', 'admin', 'system']);
 
@@ -8,9 +16,7 @@ export const actorTypeEnum = pgEnum('audit_actor_type', ['player', 'admin', 'sys
 export const auditLog = pgTable(
   'audit_log',
   {
-    id: text('id')
-      .primaryKey()
-      .$defaultFn(() => createId()),
+    id: uuid('id').primaryKey().defaultRandom(),
     tenantId: text('tenantId').notNull(),
     actorId: text('actorId'),
     actorType: actorTypeEnum('actorType').notNull(),

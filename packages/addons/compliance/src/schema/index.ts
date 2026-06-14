@@ -1,16 +1,13 @@
-import { pgTable, text, real, timestamp, uniqueIndex, index } from 'drizzle-orm/pg-core';
-import { createId } from '@paralleldrive/cuid2';
+import { pgTable, uuid, text, real, timestamp, uniqueIndex, index } from 'drizzle-orm/pg-core';
 
 export const userLimit = pgTable(
   'user_limit',
   {
-    id: text('id')
-      .primaryKey()
-      .$defaultFn(() => createId()),
+    id: uuid('id').primaryKey().defaultRandom(),
     // Tenant scope for RLS isolation (ADR-0018). Responsible-gaming / AML data is
     // tenant-confidential, so this table is RLS-enforced like every scoped table.
     tenantId: text('tenantId').notNull().default('default'),
-    userId: text('userId').notNull(),
+    userId: uuid('userId').notNull(),
     type: text('type').notNull(),
     amount: real('amount').notNull(),
     period: text('period').notNull(),
@@ -27,9 +24,7 @@ export const userLimit = pgTable(
 );
 
 export const geoRule = pgTable('geo_rule', {
-  id: text('id')
-    .primaryKey()
-    .$defaultFn(() => createId()),
+  id: uuid('id').primaryKey().defaultRandom(),
   countryCode: text('countryCode').notNull().unique(),
   action: text('action').notNull(),
   createdAt: timestamp('createdAt').notNull().defaultNow(),

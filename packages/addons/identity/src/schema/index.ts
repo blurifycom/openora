@@ -1,7 +1,7 @@
-import { pgTable, text, boolean, timestamp, index } from 'drizzle-orm/pg-core';
+import { pgTable, uuid, text, boolean, timestamp, index } from 'drizzle-orm/pg-core';
 
 export const user = pgTable('user', {
-  id: text('id').primaryKey(),
+  id: uuid('id').primaryKey().defaultRandom(),
   name: text('name').notNull(),
   email: text('email').notNull().unique(),
   emailVerified: boolean('emailVerified').notNull().default(false),
@@ -32,7 +32,7 @@ export const user = pgTable('user', {
 export const session = pgTable(
   'session',
   {
-    id: text('id').primaryKey(),
+    id: uuid('id').primaryKey().defaultRandom(),
     expiresAt: timestamp('expiresAt').notNull(),
     token: text('token').notNull().unique(),
     createdAt: timestamp('createdAt').notNull().defaultNow(),
@@ -41,7 +41,7 @@ export const session = pgTable(
       .$onUpdateFn(() => new Date()),
     ipAddress: text('ipAddress'),
     userAgent: text('userAgent'),
-    userId: text('userId')
+    userId: uuid('userId')
       .notNull()
       .references(() => user.id, { onDelete: 'cascade' }),
   },
@@ -51,10 +51,10 @@ export const session = pgTable(
 export const account = pgTable(
   'account',
   {
-    id: text('id').primaryKey(),
+    id: uuid('id').primaryKey().defaultRandom(),
     accountId: text('accountId').notNull(),
     providerId: text('providerId').notNull(),
-    userId: text('userId')
+    userId: uuid('userId')
       .notNull()
       .references(() => user.id, { onDelete: 'cascade' }),
     accessToken: text('accessToken'),
@@ -75,7 +75,7 @@ export const account = pgTable(
 export const verification = pgTable(
   'verification',
   {
-    id: text('id').primaryKey(),
+    id: uuid('id').primaryKey().defaultRandom(),
     identifier: text('identifier').notNull(),
     value: text('value').notNull(),
     expiresAt: timestamp('expiresAt').notNull(),
@@ -92,10 +92,10 @@ export const verification = pgTable(
 export const twoFactor = pgTable(
   'twoFactor',
   {
-    id: text('id').primaryKey(),
+    id: uuid('id').primaryKey().defaultRandom(),
     secret: text('secret').notNull(),
     backupCodes: text('backupCodes').notNull(),
-    userId: text('userId')
+    userId: uuid('userId')
       .notNull()
       .references(() => user.id, { onDelete: 'cascade' }),
     verified: boolean('verified').default(true),

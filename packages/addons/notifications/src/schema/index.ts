@@ -1,16 +1,13 @@
-import { pgTable, text, timestamp, index } from 'drizzle-orm/pg-core';
-import { createId } from '@paralleldrive/cuid2';
+import { pgTable, uuid, text, timestamp, index } from 'drizzle-orm/pg-core';
 
 export const notification = pgTable(
   'notification',
   {
-    id: text('id')
-      .primaryKey()
-      .$defaultFn(() => createId()),
+    id: uuid('id').primaryKey().defaultRandom(),
     // Tenant scope for RLS isolation (ADR-0018). Notifications carry PII (title /
     // body), so this table is RLS-enforced like every other scoped table.
     tenantId: text('tenantId').notNull().default('default'),
-    userId: text('userId').notNull(),
+    userId: uuid('userId').notNull(),
     type: text('type').notNull(),
     title: text('title').notNull(),
     body: text('body').notNull(),

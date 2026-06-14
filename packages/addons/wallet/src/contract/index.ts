@@ -8,7 +8,7 @@ export const WalletBalanceSchema = z.object({
 });
 
 export const WalletTransactionSchema = z.object({
-  id: z.string(),
+  id: z.uuid(),
   type: z.enum(['deposit', 'withdrawal', 'bet', 'win']),
   amount: z.number(),
   currency: z.string(),
@@ -29,7 +29,7 @@ export const WithdrawInputSchema = z.object({
 });
 
 export const TransactionResultSchema = z.object({
-  transactionId: z.string(),
+  transactionId: z.uuid(),
   status: z.enum(['pending', 'completed', 'failed']),
 });
 

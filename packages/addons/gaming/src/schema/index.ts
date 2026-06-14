@@ -1,5 +1,6 @@
 import {
   pgTable,
+  uuid,
   text,
   boolean,
   decimal,
@@ -8,16 +9,13 @@ import {
   index,
   jsonb,
 } from 'drizzle-orm/pg-core';
-import { createId } from '@paralleldrive/cuid2';
 
 export const gameRoundStatusEnum = pgEnum('GameRoundStatus', ['active', 'completed', 'cancelled']);
 
 export const game = pgTable(
   'Game',
   {
-    id: text('id')
-      .primaryKey()
-      .$defaultFn(() => createId()),
+    id: uuid('id').primaryKey().defaultRandom(),
     tenantId: text('tenantId').notNull(),
     name: text('name').notNull(),
     provider: text('provider').notNull(),
@@ -33,14 +31,12 @@ export const game = pgTable(
 export const gameRound = pgTable(
   'GameRound',
   {
-    id: text('id')
-      .primaryKey()
-      .$defaultFn(() => createId()),
+    id: uuid('id').primaryKey().defaultRandom(),
     tenantId: text('tenantId').notNull(),
-    gameId: text('gameId')
+    gameId: uuid('gameId')
       .notNull()
       .references(() => game.id),
-    userId: text('userId').notNull(),
+    userId: uuid('userId').notNull(),
     status: gameRoundStatusEnum('status').notNull().default('active'),
     betAmount: decimal('betAmount').notNull().default('0'),
     winAmount: decimal('winAmount').notNull().default('0'),

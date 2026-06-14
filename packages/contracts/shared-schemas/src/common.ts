@@ -18,10 +18,10 @@ export const PaginationSchema = z.object({
 export type Uuid = z.infer<typeof UuidSchema>;
 export type Pagination = z.infer<typeof PaginationSchema>;
 
-export const IdInputSchema = z.object({ id: z.string() });
+export const IdInputSchema = z.object({ id: UuidSchema });
 export type IdInput = z.infer<typeof IdInputSchema>;
 
-export const UserIdInputSchema = z.object({ userId: z.string() });
+export const UserIdInputSchema = z.object({ userId: UuidSchema });
 export type UserIdInput = z.infer<typeof UserIdInputSchema>;
 
 // Offset-based pagination (page + limit). Distinct from cursor-based PaginationSchema.

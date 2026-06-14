@@ -3,7 +3,7 @@ import * as z from 'zod';
 import { IdInputSchema } from '@oss/shared-schemas';
 
 export const GameSchema = z.object({
-  id: z.string(),
+  id: z.uuid(),
   name: z.string(),
   provider: z.string(),
   category: z.string(),
@@ -13,9 +13,9 @@ export const GameSchema = z.object({
 });
 
 export const GameRoundSchema = z.object({
-  id: z.string(),
-  gameId: z.string(),
-  userId: z.string(),
+  id: z.uuid(),
+  gameId: z.uuid(),
+  userId: z.uuid(),
   status: z.enum(['active', 'completed', 'cancelled']),
   betAmount: z.string(),
   winAmount: z.string(),
@@ -25,18 +25,18 @@ export const GameRoundSchema = z.object({
 });
 
 export const StartRoundInputSchema = z.object({
-  gameId: z.string(),
+  gameId: z.uuid(),
   currency: z.string(),
 });
 
 export const StartRoundOutputSchema = z.object({
-  roundId: z.string(),
+  roundId: z.uuid(),
   launchUrl: z.string(),
   token: z.string(),
 });
 
 export const EndRoundInputSchema = z.object({
-  roundId: z.string(),
+  roundId: z.uuid(),
 });
 
 export const EndRoundOutputSchema = z.object({

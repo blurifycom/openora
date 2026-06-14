@@ -45,14 +45,14 @@ export const playerContract = populateContractRouterPaths({
 
   get: oc
     .route({ method: 'GET', path: '/players/{playerId}' })
-    .input(z.object({ playerId: z.string() }))
+    .input(z.object({ playerId: z.uuid() }))
     .output(PlayerSchema),
 
   update: oc
     .route({ method: 'PATCH', path: '/players/{playerId}' })
     .input(
       z.object({
-        playerId: z.string(),
+        playerId: z.uuid(),
         displayName: z.string().min(1).max(120).optional(),
         status: PlayerStatusSchema.optional(),
         kycStatus: KycStatusSchema.optional(),
@@ -63,7 +63,7 @@ export const playerContract = populateContractRouterPaths({
 
   remove: oc
     .route({ method: 'DELETE', path: '/players/{playerId}' })
-    .input(z.object({ playerId: z.string() }))
+    .input(z.object({ playerId: z.uuid() }))
     .output(z.object({ success: z.boolean() })),
 
   registrationsOverTime: oc

@@ -3,7 +3,7 @@ import * as z from 'zod';
 import { IdInputSchema } from '@oss/shared-schemas';
 
 export const ChatRoomSchema = z.object({
-  id: z.string(),
+  id: z.uuid(),
   name: z.string(),
   slug: z.string(),
   isPublic: z.boolean(),
@@ -11,9 +11,9 @@ export const ChatRoomSchema = z.object({
 });
 
 export const ChatMessageSchema = z.object({
-  id: z.string(),
-  roomId: z.string().nullable(),
-  userId: z.string(),
+  id: z.uuid(),
+  roomId: z.uuid().nullable(),
+  userId: z.uuid(),
   username: z.string(),
   content: z.string(),
   isDeleted: z.boolean(),
@@ -39,7 +39,7 @@ export const chatContract = {
     .route({ method: 'GET', path: '/chat/rooms/{roomId}/messages' })
     .input(
       z.object({
-        roomId: z.string(),
+        roomId: z.uuid(),
         limit: z.number().optional(),
         before: z.string().optional(),
       }),
@@ -48,7 +48,7 @@ export const chatContract = {
 
   sendRoomMessage: oc
     .route({ method: 'POST', path: '/chat/rooms/{roomId}/messages' })
-    .input(z.object({ roomId: z.string(), content: z.string() }))
+    .input(z.object({ roomId: z.uuid(), content: z.string() }))
     .output(ChatMessageSchema),
 
   deleteMessage: oc
@@ -84,6 +84,6 @@ export const chatContract = {
   // managed vendor (Ably/GetStream) downstream. See ADR-0007.
   streamMessages: oc
     .route({ method: 'GET', path: '/chat/stream' })
-    .input(z.object({ roomId: z.string().nullable() }))
+    .input(z.object({ roomId: z.uuid().nullable() }))
     .output(eventIterator(ChatMessageSchema)),
 };

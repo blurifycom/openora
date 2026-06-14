@@ -23,7 +23,7 @@ describe('identity schemas', () => {
 
   it('UserSchema allows an absent or null image', () => {
     const base = {
-      id: 'u1',
+      id: '550e8400-e29b-41d4-a716-446655440000',
       email: 'a@b.dev',
       name: 'Alice',
       emailVerified: true,

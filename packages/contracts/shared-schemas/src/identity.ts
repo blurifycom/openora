@@ -1,10 +1,11 @@
 import { z } from 'zod';
 import { UuidSchema, TimestampSchema } from './common.js';
 
-// id is a plain string (better-auth uses random 32-char ids by default, not UUIDs).
+// id is a uuid: better-auth is configured with advanced.database.generateId to
+// emit uuids (see @oss/auth), matching the platform-wide uuid id convention.
 // image may be null in storage; the schema accepts string | null | absent.
 export const UserSchema = z.object({
-  id: z.string().min(1),
+  id: UuidSchema,
   email: z.email(),
   name: z.string().min(1).max(255),
   emailVerified: z.boolean(),
