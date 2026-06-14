@@ -47,7 +47,7 @@ Score each as **Have / Partial / Missing**, with the specific gap and where it w
 | Bonuses                 | Welcome/deposit bonus, wagering/rollover tracking                                                              |
 | Responsible gaming      | Deposit/loss/wager limits, self-exclusion, geo-blocking                                                        |
 | Backoffice              | Player management, withdrawal approval, analytics, audit logs, roles                                           |
-| CMS + localization      | Static pages/banners, multi-language                                                                           |
+| CMS                     | Static pages/banners (translations live in the frontend consumer, not the platform)                            |
 | Chat + notifications    | Global/room chat with moderation, in-app + email notifications                                                 |
 | Real-time               | Live updates for balance, lobby, chat, live game state                                                         |
 | Consumer integration    | `createApp` wiring, route shims, UI provider swap, `@oss/mcp` AI surface                                       |

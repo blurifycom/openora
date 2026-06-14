@@ -56,13 +56,6 @@ export const domainEventSchemas = {
 
   'notifications.created': z.object({ notificationId: z.string(), userId: z.string() }),
 
-  'localization.translation.upserted': z.object({
-    locale: z.string(),
-    namespace: z.string(),
-    key: z.string(),
-  }),
-  'localization.translation.deleted': z.object({ id: z.string() }),
-
   'cms.page.published': z.object({ pageId: z.string(), slug: z.string() }),
 
   'aggregator.sync.completed': z.object({

@@ -15,7 +15,6 @@ export const extensions = [
   { id: 'identity', path: './packages/addons/identity/dist/plugin.js' },
   { id: 'notifications', path: './packages/addons/notifications/dist/plugin.js' },
   { id: 'compliance', path: './packages/addons/compliance/dist/plugin.js' },
-  { id: 'localization', path: './packages/addons/localization/dist/plugin.js' },
 
   // Player - the player-facing igaming surface
   { id: 'wallet', path: './packages/addons/wallet/dist/plugin.js' },

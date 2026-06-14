@@ -196,20 +196,6 @@
       ]
     },
     {
-      "id": "localization",
-      "group": "core",
-      "tables": [
-        "locale",
-        "translation"
-      ],
-      "routes": [
-        "localization.deleteTranslation",
-        "localization.getTranslations",
-        "localization.listLocales",
-        "localization.upsertTranslation"
-      ]
-    },
-    {
       "id": "notifications",
       "group": "core",
       "tables": [
@@ -438,8 +424,6 @@
     "identity.user.registered",
     "leaderboard.reset",
     "leaderboard.score.recorded",
-    "localization.translation.deleted",
-    "localization.translation.upserted",
     "notifications.created",
     "sportsbook.bet.placed",
     "sportsbook.odds.updated",
@@ -800,7 +784,6 @@
     "DELETE /cms/pages/{id}",
     "DELETE /compliance/limits/{id}",
     "DELETE /iam/roles/{roleId}",
-    "DELETE /localization/translations/{id}",
     "GET /audit/export",
     "GET /audit/logs",
     "GET /backoffice/stats",
@@ -835,8 +818,6 @@
     "GET /lobby/categories/{slug}",
     "GET /lobby/featured",
     "GET /lobby/search",
-    "GET /localization/locales",
-    "GET /localization/translations/{locale}/{namespace}",
     "GET /notifications",
     "GET /profile",
     "GET /wallet/balance",
@@ -869,7 +850,6 @@
     "POST /identity/password/forgot",
     "POST /identity/password/reset",
     "POST /identity/register",
-    "POST /localization/translations",
     "POST /notifications/read-all",
     "POST /notifications/{id}/read",
     "POST /wallet/deposit",

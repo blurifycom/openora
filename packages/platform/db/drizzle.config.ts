@@ -17,7 +17,6 @@ export default defineConfig({
     '../../addons/gaming/src/schema/index.ts',
     '../../addons/iam/src/schema/index.ts',
     '../../addons/identity/src/schema/index.ts',
-    '../../addons/localization/src/schema/index.ts',
     '../../addons/lobby/src/schema/index.ts',
     '../../addons/notifications/src/schema/index.ts',
     '../../addons/profile/src/schema/index.ts',

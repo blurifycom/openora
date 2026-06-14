@@ -51,9 +51,9 @@ packages/
     mcp/          # @oss/mcp - publishable MCP server consumers run against their own repo
   addons/         # Every feature is a standalone @oss-addons/<name> package under
                   #   packages/addons/<name>/ (own package.json, tsconfig, src/{schema,schemas,
-                  #   service,router,plugin}). Core add-ons (14) always load: admin-console,
+                  #   service,router,plugin}). Core add-ons (13) always load: admin-console,
                   #   audit, bonus, chat, cms, compliance, gaming, iam, identity,
-                  #   localization, lobby, notifications, profile, wallet. Their route
+                  #   lobby, notifications, profile, wallet. Their route
                   #   contracts STAY in @oss/orpc-contract + central migrations. Gated
                   #   add-ons (4, OSS_ADDONS) own contract slices + migrations: leaderboard,
                   #   sportsbook, aggregator, player-management. See ADR-0021.

@@ -1,7 +1,6 @@
 import { populateContractRouterPaths } from '@orpc/contract';
 import { healthContract } from './health.js';
 import { identityContract } from './identity.js';
-import { localizationContract } from './localization.js';
 import { cmsContract } from './cms.js';
 import { complianceContract } from './compliance.js';
 import { notificationsContract } from './notifications.js';
@@ -19,7 +18,6 @@ import { auditContract } from './audit.js';
 
 export { healthContract } from './health.js';
 export { identityContract } from './identity.js';
-export { localizationContract } from './localization.js';
 export { cmsContract, PageSchema, BannerSchema } from './cms.js';
 export { complianceContract, LimitSchema, GeoRuleSchema } from './compliance.js';
 export { notificationsContract, NotificationSchema } from './notifications.js';
@@ -77,7 +75,6 @@ export {
 export const contract = populateContractRouterPaths({
   health: healthContract,
   identity: identityContract,
-  localization: localizationContract,
   cms: cmsContract,
   compliance: complianceContract,
   notifications: notificationsContract,

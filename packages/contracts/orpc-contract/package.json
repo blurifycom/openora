@@ -21,11 +21,6 @@
       "require": "./dist/notifications.js",
       "types": "./dist/notifications.d.ts"
     },
-    "./localization": {
-      "import": "./dist/localization.js",
-      "require": "./dist/localization.js",
-      "types": "./dist/localization.d.ts"
-    },
     "./compliance": {
       "import": "./dist/compliance.js",
       "require": "./dist/compliance.js",
