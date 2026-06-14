@@ -1,7 +1,7 @@
 ---
 targets:
   - '*'
-description: 'Run full verification - typecheck, lint, unit tests. Equivalent to what CI runs. Optional filter: /verify --filter @oss/modules'
+description: 'Run full verification - typecheck, lint, unit tests. Equivalent to what CI runs. Optional filter: /verify --filter @oss-addons/wallet'
 ---
 
 Parse $ARGUMENTS for an optional `--filter <package>` flag.

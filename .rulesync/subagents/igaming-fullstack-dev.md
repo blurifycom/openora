@@ -36,10 +36,10 @@ Your prompt contains requirements + acceptance criteria from `igaming-expert`. B
 ## Before writing code
 
 1. Read repo root `AGENTS.md` (decision tree, naming, boundary rules, forbidden patterns). Follow exactly.
-2. Read the relevant module's `AGENTS.md` and any related `docs/adr/`.
+2. Read the relevant add-on's `AGENTS.md` and any related `docs/adr/`.
 3. Use MCP tools to inspect current state:
    - `list-modules` - what already exists
-   - `describe-module <name>` - one-call dump of a module's surface
+   - `describe-module <name>` - one-call dump of an add-on's surface
    - `list-routes module=<name>` - route collision check
    - `query-openapi keyword=<entity>` - OpenAPI surface check
    - `get-drizzle-schema module=<name>` - existing table definitions
@@ -47,16 +47,16 @@ Your prompt contains requirements + acceptance criteria from `igaming-expert`. B
    - `schema-get name=<Entity>` - existing Zod schemas
 4. Pick the right home via the decision tree in `AGENTS.md`. Use scaffolders - don't hand-write skeletons.
 
-## Modularity is non-negotiable
+## Add-on isolation is non-negotiable
 
 - Every third-party integration goes behind a **generic port** in `service/ports.ts`, concrete vendor in `adapters/<vendor>/`. Never hardcode a vendor into core.
-- No module imports another module. Cross-module: emit events (`EventBus`) or read via schema subpath.
+- No add-on imports another add-on. Cross-add-on: emit events (`EventBus`) or read via schema subpath.
 - All Zod schemas in `schemas/` or `packages/contracts/`; types are `z.infer`'d, never hand-written.
 - Services throw domain errors via `createDomainError(...)` from `@oss/core`; handlers map them to oRPC errors.
 
 ## Drizzle workflow
 
-- Add tables to `packages/modules/<group>/<name>/src/schema/index.ts`.
+- Add tables to `packages/addons/<name>/src/schema/index.ts`.
 - Every multi-tenant table: `tenantId: text('tenantId').notNull()`.
 - No FK references across module boundaries (plain ID strings only).
 - After editing schema: `pnpm regen` (drizzle-kit generates migration + emits updated OpenAPI + catalog).

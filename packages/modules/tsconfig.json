@@ -1,9 +1,0 @@
-{
-  "extends": "@oss/tsconfig/node-service.json",
-  "compilerOptions": {
-    "rootDir": ".",
-    "outDir": "dist",
-    "composite": false
-  },
-  "include": ["player/*/src", "platform/*/src", "backoffice/*/src"]
-}

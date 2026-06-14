@@ -11,12 +11,8 @@
     "prefer-const": "error",
     "typescript/no-explicit-any": "error",
     "oss-boundaries/no-adhoc-zod-in-router": "error",
-    "oss-boundaries/no-cross-module-import": "error",
-    "oss-boundaries/no-cross-module-schema-read": "warn",
-    "oss-boundaries/no-module-internal-import": "error",
     "oss-boundaries/no-core-to-addon": "error",
     "oss-boundaries/no-cross-addon": "error",
-    "oss-boundaries/no-platform-to-module": "error",
     "oss-boundaries/no-contracts-to-runtime": "error",
     "oss-boundaries/no-deep-dist-import": "error",
     "oss-boundaries/no-cross-extension-import": "error",
@@ -38,9 +34,7 @@
       "files": ["*.test.ts", "*.spec.ts"],
       "rules": {
         "typescript/no-explicit-any": "off",
-        "oss-boundaries/no-cross-module-import": "off",
-        "oss-boundaries/no-cross-module-schema-read": "off",
-        "oss-boundaries/no-module-internal-import": "off"
+        "oss-boundaries/no-cross-addon": "off"
       }
     }
   ]

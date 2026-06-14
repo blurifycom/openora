@@ -11,9 +11,9 @@
 //   resolution, fast. We deliberately keep it. See ADR-0015.
 //
 // Rules mirror the enforced classes in AGENTS.md > Dependency rules:
-//   no-cross-module-import     - modules must not import another module's code (schema subpath ok)
-//   no-module-internal-import  - no module may be imported via a non-public subpath (root + /schema only)
-//   no-platform-to-module      - platform/* (except api-runtime + testing) must not import modules or UI
+//   no-cross-addon             - an add-on must not import another add-on's code (schema subpath ok)
+//   no-addon-internal-import   - no add-on may be imported via a non-public subpath (root + /schema only)
+//   no-core-to-addon           - core (platform/contracts/sdks, except the two composition roots) must not import add-ons
 //   no-contracts-to-runtime    - contracts/* may import only other contracts and zod
 //   no-deep-dist-import        - never @oss/*/dist/** deep paths
 
@@ -25,112 +25,19 @@ function inPath(file, segment) {
   return file.includes('/' + segment + '/') || file.includes('/' + segment);
 }
 
-// @oss/modules/<group>/<name>  ->  2 extra segments (bare cross-module, blocked)
-// @oss/modules/<group>/<name>/schema ->  3+ extra segments (subpath, allowed)
-function isBareModuleImport(spec) {
-  if (!spec.startsWith('@oss/modules/')) return false;
-  const tail = spec.slice('@oss/modules/'.length);
-  return tail.split('/').filter(Boolean).length === 2;
-}
-
-const noCrossModuleImport = {
-  create(context) {
-    return {
-      ImportDeclaration(node) {
-        const file = filename(context);
-        if (!inPath(file, 'packages/modules')) return;
-        if (!isBareModuleImport(node.source.value)) return;
-        context.report({
-          node,
-          message:
-            "Modules must not import another module's code. " +
-            'Use events (@Inject(EVENT_BUS)) or the schema subpath ' +
-            '(@oss/modules/<group>/<name>/schema). See AGENTS.md > Dependency rules.',
-        });
-      },
-    };
-  },
-};
-
-// A module's public API is its root entry (@oss/modules/<group>/<name>) plus the
-// read-only schema subpath (@oss/modules/<group>/<name>/schema). Any deeper path
-// reaches into a module's internals (service/, router/, schemas/, ui/, ...) and is
-// forbidden from anywhere - the bare cross-module case is handled by
-// no-cross-module-import; this rule closes the "barrel" gap for subpath imports.
-function isDisallowedModuleSubpath(spec) {
-  if (!spec.startsWith('@oss/modules/')) return false;
-  const tail = spec.slice('@oss/modules/'.length).split('/').filter(Boolean);
-  if (tail.length <= 2) return false; // bare <group>/<name> -> no-cross-module-import
-  if (tail.length === 3 && tail[2] === 'schema') return false; // public schema subpath
-  return true;
-}
-
-const noModuleInternalImport = {
-  create(context) {
-    return {
-      ImportDeclaration(node) {
-        if (!isDisallowedModuleSubpath(node.source.value)) return;
-        context.report({
-          node,
-          message:
-            'Import a module only through its public entry ' +
-            '(@oss/modules/<group>/<name>) or its schema subpath ' +
-            '(@oss/modules/<group>/<name>/schema). Reaching into a module ' +
-            '(service/, router/, ui/, ...) is forbidden. See AGENTS.md > Dependency rules.',
-        });
-      },
-    };
-  },
-};
-
-// A cross-module read via the sanctioned `/schema` subpath is ALLOWED (money stays
-// transactional, reporting reads are pragmatic) - but it couples the two modules at
-// the data layer, so neither can move to its own database without first replacing
-// the read. This rule is a WARNING (not an error): it surfaces every such coupling
-// as an extraction-readiness checklist, without blocking. Prefer a command port
-// (eg WALLET_COMMANDS) for writes or an event-fed read model for reporting. ADR-0017.
-function importingModule(file) {
-  const m = file.match(/packages\/modules\/([a-z-]+)\/([a-z0-9-]+)\//);
-  return m ? `${m[1]}/${m[2]}` : null;
-}
-
-function crossModuleSchemaTarget(spec) {
-  if (!spec.startsWith('@oss/modules/')) return null;
-  const tail = spec.slice('@oss/modules/'.length).split('/').filter(Boolean);
-  if (tail.length === 3 && tail[2] === 'schema') return `${tail[0]}/${tail[1]}`;
-  return null;
-}
-
-const noCrossModuleSchemaRead = {
-  create(context) {
-    return {
-      ImportDeclaration(node) {
-        const self = importingModule(filename(context));
-        if (!self) return;
-        const target = crossModuleSchemaTarget(node.source.value);
-        if (!target || target === self) return;
-        context.report({
-          node,
-          message:
-            `Cross-module table read (${node.source.value}). Sanctioned, but it ` +
-            'couples the two modules at the data layer and blocks extracting either ' +
-            'to its own database. Prefer a command port (eg WALLET_COMMANDS) or an ' +
-            'event-fed read model before extraction. See ADR-0017.',
-        });
-      },
-    };
-  },
-};
-
 // The core OSS build must never reach into an add-on (optional, extract-later)
-// package. Anything under packages/{modules,platform,contracts,sdks}/ importing an
+// package. Anything under packages/{platform,contracts,sdks}/ importing an
 // `@oss-addons/*` specifier is forbidden - only the composition roots under apps/*
-// (and add-on packages themselves) may. This string-level twin gives per-edit
+// (and add-on packages themselves) may. The two in-tree composition roots
+// packages/platform/(api-runtime|testing)/ are exempt: their seed + tenant-resolver
+// code reads add-on /schema subpaths. This string-level twin gives per-edit
 // feedback; the whole-graph `no-core-to-addon` rule catches transitive/dynamic
 // edges. See ADR-0020.
 function isCoreFile(file) {
+  // The composition roots are NOT core for this rule - they wire add-ons in.
+  if (inPath(file, 'packages/platform/api-runtime')) return false;
+  if (inPath(file, 'packages/platform/testing')) return false;
   return (
-    inPath(file, 'packages/modules') ||
     inPath(file, 'packages/platform') ||
     inPath(file, 'packages/contracts') ||
     inPath(file, 'packages/sdks')
@@ -151,8 +58,10 @@ const noCoreToAddon = {
           node,
           message:
             'The core OSS build must not import an add-on package (@oss-addons/*). ' +
-            'Add-on is wired only by the composition roots under apps/* (extensions.config.ts + ' +
-            'the createApp contract merge). This keeps add-on modules extractable. See ADR-0020.',
+            'The only exceptions are the two composition roots under ' +
+            'packages/platform/(api-runtime|testing)/; elsewhere add-on is wired only by the ' +
+            'composition roots under apps/* (extensions.config.ts + the createApp contract merge). ' +
+            'This keeps add-on packages extractable. See ADR-0020.',
         });
       },
     };
@@ -160,17 +69,25 @@ const noCoreToAddon = {
 };
 
 // An add-on package under packages/addons/<name>/ may import core (@oss/*) but
-// never a sibling add-on package - same rule as no-cross-module, so each add-on
-// module stays independently optional/extractable.
+// never a sibling add-on package. The sole sanctioned cross-add-on coupling is a
+// read-only `@oss-addons/<name>/schema` subpath import; reaching the bare root
+// (@oss-addons/<name>) or any other internal subpath of a sibling is forbidden, so
+// each add-on package stays independently optional/extractable.
 function importingAddon(file) {
-  const m = file.match(/packages\/add-on\/([a-z0-9-]+)\//);
+  const m = file.match(/packages\/addons\/([a-z0-9-]+)\//);
   return m ? m[1] : null;
 }
 
-function addonSpecifierTarget(spec) {
+// @oss-addons/<name>            -> bare root import of a sibling = blocked
+// @oss-addons/<name>/schema     -> sanctioned read-only subpath = allowed
+// @oss-addons/<name>/<other>    -> reaching into internals = blocked
+function addonImportTarget(spec) {
   if (!spec.startsWith('@oss-addons/')) return null;
   const tail = spec.slice('@oss-addons/'.length).split('/').filter(Boolean);
-  return tail[0] ?? null;
+  if (tail.length === 0) return null;
+  const name = tail[0];
+  const isSchemaSubpath = tail.length === 2 && tail[1] === 'schema';
+  return { name, isSchemaSubpath, segments: tail.length };
 }
 
 const noCrossAddon = {
@@ -179,50 +96,27 @@ const noCrossAddon = {
       ImportDeclaration(node) {
         const self = importingAddon(filename(context));
         if (!self) return;
-        const target = addonSpecifierTarget(node.source.value);
-        if (!target || target === self) return;
+        const target = addonImportTarget(node.source.value);
+        if (!target || target.name === self) return;
+        // The read-only /schema subpath of a sibling add-on is the one sanctioned
+        // cross-add-on coupling (money stays transactional; reporting reads are
+        // pragmatic). Allowed, but it couples the two packages at the data layer.
+        if (target.isSchemaSubpath) return;
         context.report({
           node,
           message:
             `An add-on package must not import another add-on package (${node.source.value}). ` +
-            'Communicate via events, a command port, or the read-only /schema subpath. See ADR-0020.',
+            'Import a sibling only through its read-only /schema subpath ' +
+            '(@oss-addons/<name>/schema); communicate otherwise via events or a command port. ' +
+            'See ADR-0020.',
         });
       },
     };
   },
 };
 
-const noPlatformToModule = {
-  create(context) {
-    return {
-      ImportDeclaration(node) {
-        const file = filename(context);
-        if (!inPath(file, 'packages/platform')) return;
-        // api-runtime is the composition root - it may import everything.
-        // testing is the *test* composition root: it boots the full app and
-        // seeds, so it likewise needs module schemas (it is devDependency-only).
-        if (inPath(file, 'packages/platform/api-runtime')) return;
-        if (inPath(file, 'packages/platform/testing')) return;
-        const spec = node.source.value;
-        if (
-          spec === '@oss/modules' ||
-          spec.startsWith('@oss/modules/') ||
-          spec.startsWith('@oss/ui-')
-        ) {
-          context.report({
-            node,
-            message:
-              'platform/* must not import feature modules or UI. ' +
-              'Import only other @oss/platform/* or @oss/contracts/*. See AGENTS.md > Dependency rules.',
-          });
-        }
-      },
-    };
-  },
-};
-
 const blocked_by_contracts = [
-  '@oss/modules',
+  '@oss-addons',
   '@oss/core',
   '@oss/db',
   '@oss/auth',
@@ -237,9 +131,9 @@ const noContractsToRuntime = {
         const file = filename(context);
         if (!inPath(file, 'packages/contracts')) return;
         const spec = node.source.value;
-        const blocked =
-          blocked_by_contracts.some((b) => spec === b || spec.startsWith(b + '/')) ||
-          spec.startsWith('@oss/ui-');
+        const blocked = blocked_by_contracts.some(
+          (b) => spec === b || spec.startsWith(b + '/'),
+        );
         if (blocked) {
           context.report({
             node,
@@ -262,7 +156,7 @@ const noDeepDistImport = {
             node,
             message:
               'Never import a deep dist/ path. Use the package entry instead ' +
-              '(e.g. @oss/modules/player/wallet/schema).',
+              '(e.g. @oss-addons/wallet/schema).',
           });
         }
       },
@@ -367,12 +261,8 @@ const noAdhocZodInRouter = {
 export default {
   meta: { name: 'oss-boundaries' },
   rules: {
-    'no-cross-module-import': noCrossModuleImport,
-    'no-cross-module-schema-read': noCrossModuleSchemaRead,
-    'no-module-internal-import': noModuleInternalImport,
-    'no-core-to-addon': noCoreToAddon,
     'no-cross-addon': noCrossAddon,
-    'no-platform-to-module': noPlatformToModule,
+    'no-core-to-addon': noCoreToAddon,
     'no-contracts-to-runtime': noContractsToRuntime,
     'no-deep-dist-import': noDeepDistImport,
     'no-cross-extension-import': noCrossExtensionImport,

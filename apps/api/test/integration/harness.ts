@@ -3,8 +3,8 @@ import type { TestApp, TestClient } from '@oss/testing';
 import type { Container } from '@oss/core';
 import { DRIZZLE } from '@oss/db';
 import { eq } from '@oss/db/orm';
-import { player } from '@oss/modules/player/profile/schema';
-import { user } from '@oss/modules/platform/identity/schema';
+import { player } from '@oss-addons/profile/schema';
+import { user } from '@oss-addons/identity/schema';
 import { loadExtensions } from '../../src/extensions.js';
 
 export type IntegrationHarness = {

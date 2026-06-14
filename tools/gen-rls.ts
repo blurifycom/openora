@@ -13,13 +13,13 @@
  *
  * Run via `pnpm gen:rls` (wired into `pnpm regen` after drizzle-kit generate).
  */
-import { readdirSync, readFileSync, statSync, writeFileSync } from 'node:fs';
+import { existsSync, readdirSync, readFileSync, statSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const here = dirname(fileURLToPath(import.meta.url));
 const repoRoot = join(here, '..');
-const modulesRoot = join(repoRoot, 'packages/modules');
+const addonsRoot = join(repoRoot, 'packages/addons');
 const migrationsDir = join(repoRoot, 'packages/platform/db/drizzle/migrations');
 const journalFile = join(migrationsDir, 'meta/_journal.json');
 const outboxSchema = join(repoRoot, 'packages/platform/db/src/outbox/schema.ts');
@@ -66,8 +66,24 @@ function tenantTablesInFile(source: string): string[] {
   return tables;
 }
 
+// Core add-ons share the central migration history (this RLS pass). Gated add-ons
+// own their own drizzle.config + migration history, so they are skipped here -
+// they generate their own RLS. The marker for a gated add-on is a drizzle.config.ts
+// at the package root.
+function coreAddonSchemaFiles(): string[] {
+  const out: string[] = [];
+  for (const entry of readdirSync(addonsRoot)) {
+    const pkgDir = join(addonsRoot, entry);
+    if (!statSync(pkgDir).isDirectory()) continue;
+    if (existsSync(join(pkgDir, 'drizzle.config.ts'))) continue; // gated add-on
+    const schemaDir = join(pkgDir, 'src/schema');
+    if (existsSync(schemaDir)) out.push(...walk(schemaDir));
+  }
+  return out;
+}
+
 function collectTenantTables(): string[] {
-  const files = [...walk(modulesRoot), outboxSchema];
+  const files = [...coreAddonSchemaFiles(), outboxSchema];
   const tables = new Set<string>();
   for (const file of files) {
     for (const t of tenantTablesInFile(readFileSync(file, 'utf8'))) {

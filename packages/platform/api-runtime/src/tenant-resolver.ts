@@ -1,6 +1,6 @@
 import type { DrizzleService } from '@oss/db';
 import { eq } from 'drizzle-orm';
-import { user } from '@oss/modules/platform/identity/schema';
+import { user } from '@oss-addons/identity/schema';
 
 // Resolves the request's tenant server-side from the ALREADY-VERIFIED user id
 // (ADR-0018/0019). The caller is identified upstream by verifying the better-auth

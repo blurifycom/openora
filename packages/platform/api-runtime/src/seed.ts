@@ -1,10 +1,10 @@
 import type { DrizzleDb } from '@oss/db';
 import { DEFAULT_TENANT_ID } from '@oss/shared-schemas';
 import { eq } from 'drizzle-orm';
-import { user } from '@oss/modules/platform/identity/schema';
-import { player } from '@oss/modules/player/profile/schema';
-import { wallet, walletTransaction } from '@oss/modules/player/wallet/schema';
-import { game } from '@oss/modules/player/gaming/schema';
+import { user } from '@oss-addons/identity/schema';
+import { player } from '@oss-addons/profile/schema';
+import { wallet, walletTransaction } from '@oss-addons/wallet/schema';
+import { game } from '@oss-addons/gaming/schema';
 
 export type SeedAuth = {
   api: {

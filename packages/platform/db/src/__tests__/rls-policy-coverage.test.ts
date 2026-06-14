@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { readdirSync, readFileSync, statSync } from 'node:fs';
+import { existsSync, readdirSync, readFileSync, statSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -13,7 +13,7 @@ import { fileURLToPath } from 'node:url';
 const here = dirname(fileURLToPath(import.meta.url));
 // .../packages/platform/db/src/__tests__ -> repo root is five levels up.
 const repoRoot = resolve(here, '../../../../..');
-const modulesRoot = join(repoRoot, 'packages/modules');
+const addonsRoot = join(repoRoot, 'packages/addons');
 const migrationsDir = join(repoRoot, 'packages/platform/db/drizzle/migrations');
 const outboxSchema = join(repoRoot, 'packages/platform/db/src/outbox/schema.ts');
 
@@ -67,8 +67,23 @@ function tenantTablesInFile(source: string): string[] {
 // ever touched on the admin/system path during request bootstrap (ADR-0018).
 const RLS_EXEMPT = new Set<string>(['user']);
 
+// Core add-ons share the central migration history covered by this test. Gated
+// add-ons own their own drizzle.config + migration history (their own RLS), so
+// they are skipped - the marker is a drizzle.config.ts at the package root.
+function coreAddonSchemaFiles(): string[] {
+  const out: string[] = [];
+  for (const entry of readdirSync(addonsRoot)) {
+    const pkgDir = join(addonsRoot, entry);
+    if (!statSync(pkgDir).isDirectory()) continue;
+    if (existsSync(join(pkgDir, 'drizzle.config.ts'))) continue; // gated add-on
+    const schemaDir = join(pkgDir, 'src/schema');
+    if (existsSync(schemaDir)) out.push(...walk(schemaDir));
+  }
+  return out;
+}
+
 function collectTenantTables(): string[] {
-  const files = [...walk(modulesRoot), outboxSchema];
+  const files = [...coreAddonSchemaFiles(), outboxSchema];
   const tables = new Set<string>();
   for (const file of files) {
     const source = readFileSync(file, 'utf8');

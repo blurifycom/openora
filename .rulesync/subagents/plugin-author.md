@@ -88,9 +88,9 @@ When the plugin's job is replacing a default adapter (KYC, notifications, PSP):
 ## Rules
 
 - The plugin must NOT import from other extensions.
-- For data from a core module: use the oRPC typed client for routes, or read the module's schema via `@oss/modules/<group>/<name>/schema` subpath import.
+- For data from a core add-on: use the oRPC typed client for routes, or read the add-on's schema via `@oss-addons/<name>/schema` subpath import.
 - All Zod schemas live in the plugin folder - don't add to `@oss/contracts`.
-- Never edit `packages/modules/**` or `packages/platform/**` to make the plugin work - that's not an overlay.
+- Never edit `packages/addons/**` or `packages/platform/**` to make the plugin work - that's not an overlay.
 - Don't commit unless asked.
 
 ## Finish criteria

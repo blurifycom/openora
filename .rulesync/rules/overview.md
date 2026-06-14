@@ -26,7 +26,7 @@ Open-source, headless, plugin-based, AI-native igaming platform. Anyone clones t
 
 ## Repo map
 
-The platform is headless: it ships the backend (api + modules + SDK consumption layer)
+The platform is headless: it ships the backend (api + add-ons + SDK consumption layer)
 only. The reference frontend apps and the page/block SDK layer were removed (2026-06-09)
 
 - the frontend lives in the consumer repo and will be re-extracted later. `@oss/react`
@@ -41,31 +41,27 @@ packages/
   config/         # tsconfig, vitest, oxlint presets (boundary lint: tools/oxlint-boundaries-plugin.mjs specifier-level + .dependency-cruiser.cjs whole-graph)
   contracts/
     shared-schemas/ # Zod schemas - the source of truth
-    orpc-contract/  # Root oRPC contract composing module routers
+    orpc-contract/  # Root oRPC contract composing CORE add-on routers
     adapters/       # @oss/adapters - vendor adapter interfaces + DI tokens (the swap seams)
   platform/
     core/         # logger, event bus (EventBus + EVENT_BUS), composition Container, tenant context
     auth/         # better-auth integration + shared AdminGuard
-    db/           # @oss/db - Drizzle client (DrizzleService) + drizzle-kit migrations
+    db/           # @oss/db - Drizzle client (DrizzleService) + central drizzle-kit migrations
     plugin-host/  # definePlugin, ModuleRegistry, loader
     mcp/          # @oss/mcp - publishable MCP server consumers run against their own repo
-  modules/        # @oss/modules - ONE package; BACKEND feature modules (Drizzle +
-                  #   service + oRPC router), grouped by the surface they primarily
-                  #   serve. These are NOT frontend - the front lives in the consumer
-                  #   repo and consumes these routers via the SDK.
-    player/       #   wallet gaming lobby chat bonus aggregator
-    backoffice/   #   admin-console player-management cms   (admin-surface backend, NOT UI)
-    platform/     #   identity notifications compliance localization
+  addons/         # Every feature is a standalone @oss-addons/<name> package under
+                  #   packages/addons/<name>/ (own package.json, tsconfig, src/{schema,schemas,
+                  #   service,router,plugin}). Core add-ons (14) always load: admin-console,
+                  #   audit, bonus, chat, cms, compliance, gaming, iam, identity,
+                  #   localization, lobby, notifications, profile, wallet. Their route
+                  #   contracts STAY in @oss/orpc-contract + central migrations. Gated
+                  #   add-ons (4, OSS_ADDONS) own contract slices + migrations: leaderboard,
+                  #   sportsbook, aggregator, player-management. See ADR-0021.
   sdks/
     react/        # @oss/react - data hooks, typed client, auth, realtime transport.
                   #   The supported frontend consumption surface. No UI components
                   #   ship here - the frontend lives in the downstream consumer repo
                   #   (consumer).
-  add-on/        # @oss-addons/* - optional, extract-later packages (NOT in the free
-                  #   edition). Each is a standalone package (own package.json, contract
-                  #   slice, migrations) shaped like its published form. Core may never
-                  #   import these; apps/* gate them via OSS_ADDONS. leaderboard,
-                  #   sportsbook, aggregator, player-management (admin PAM). See ADR-0020.
 docs/
   adr/            # Architecture decision records
   architecture.md, glossary.md, agent-quickstart.md, downstream-consumer.md
@@ -76,28 +72,27 @@ extensions.config.ts # the single registry of enabled plugins
 
 ## Where does X go? (decision tree)
 
-- A new business domain (eg "tournaments") -> new module under `packages/modules/<group>/<name>/` (group: `player`, `backoffice`, `platform`). Use `/scaffold-module <group> <name>`.
-- An optional add-on module (not built into the default OSS distribution) -> a standalone `@oss-addons/<name>` package under `packages/addons/<name>/` (own `package.json`, contract slice, migrations). The core OSS build must NEVER import it (`no-core-to-addon`); only `apps/*` wire it via `extensions.config.ts` (`kind: 'addon'`) + the `OSS_ADDONS` edition gate in `apps/api/src/editions.ts`. Reference packages: `leaderboard`, `sportsbook`, `aggregator`, `player-management`. See ADR-0020.
-- A behavior that extends/overrides an existing module -> overlay plugin under `apps/api/src/extensions/<name>/`. Use `/scaffold-plugin <name>`.
-- A new HTTP route -> add to the module's `router/index.ts`. Use `/scaffold-route <module> <method> <path>`. Player routes resolve the caller from the `x-user-id` header; admin routes MUST be guarded (next line).
-- An admin-only route -> the module's `plugin.ts` resolves `AdminGuard` from the container (`c.get(ADMIN_GUARD)`) and passes it into the router factory; call `await adminGuard.assert(context)` as the first line of the handler (throws `ORPCError`). `ADMIN_GUARD` is seeded into the container by `createApp`. This is the single admin-enforcement point - never re-implement the role check.
-- A new database table -> add a Drizzle `pgTable` to the module's `src/schema/index.ts`. Run `pnpm regen` (drizzle-kit) to generate the migration.
-- A reusable Zod schema -> `packages/contracts/shared-schemas/src/<namespace>.ts`. Module-local schemas live in the module's `schemas/`.
-- A cross-module event -> declare its payload schema in the Zod catalog `packages/contracts/shared-schemas/src/events.ts` (`domainEventSchemas`), then emit via the `EventBus` the service received in its constructor (built in `plugin.ts` from `c.get(EVENT_BUS)`); subscribe in a plugin via `ctx.events.on(name, handler)`. The bus is a typed facade over the `MESSAGE_BROKER` seam (default in-process; swap to Redpanda/NATS without module changes). See ADR-0010.
+- A new business domain (eg "tournaments") -> a new core add-on if it ships in the free edition, or a gated add-on if optional. Use `pnpm gen module <name>` (creates `@oss-addons/<name>` standalone package with own `package.json`, tsconfig, schemas, service, router, plugin). It registers in `extensions.config.ts` with no `kind` (core) or `kind: 'addon'` (gated); core add-on routes stay in `@oss/orpc-contract` (typed client + central migrations); gated add-ons own their contract slice + migrations. See ADR-0021.
+- A behavior that extends/overrides an existing add-on -> overlay plugin under `apps/api/src/extensions/<name>/`. Use `/scaffold-plugin <name>`.
+- A new HTTP route -> add to the add-on's `src/router/index.ts`. Use `/scaffold-route <addon-name> <method> <path>`. Player routes resolve the caller from the `x-user-id` header; admin routes MUST be guarded (next line).
+- An admin-only route -> the add-on's `plugin.ts` resolves `AdminGuard` from the container (`c.get(ADMIN_GUARD)`) and passes it into the router factory; call `await adminGuard.assert(context)` as the first line of the handler (throws `ORPCError`). `ADMIN_GUARD` is seeded into the container by `createApp`. This is the single admin-enforcement point - never re-implement the role check.
+- A new database table -> add a Drizzle `pgTable` to the add-on's `src/schema/index.ts`. Run `pnpm regen` (drizzle-kit) to generate the migration. Core add-ons' schemas are included in the central `packages/platform/db/drizzle.config.ts`; gated add-ons own their `drizzle.config.ts`.
+- A reusable Zod schema -> `packages/contracts/shared-schemas/src/<namespace>.ts`. Add-on-local schemas live in the add-on's `schemas/`.
+- A cross-add-on event -> declare its payload schema in the Zod catalog `packages/contracts/shared-schemas/src/events.ts` (`domainEventSchemas`), then emit via the `EventBus` the service received in its constructor (built in `plugin.ts` from `c.get(EVENT_BUS)`); subscribe in a plugin via `ctx.events.on(name, handler)`. The bus is a typed facade over the `MESSAGE_BROKER` seam (default in-process; swap to Redpanda/NATS without module changes). See ADR-0010.
 - A page, component, or any frontend UI -> NOT in this repo. The platform is headless backend only. The frontend - all components, styling, pages, and theme - lives in the downstream consumer repo (consumer) and consumes the backend over HTTP via `@oss/react`. The reference apps and page/block SDK layer were removed (2026-06-09) and will be re-extracted from consumer later.
 - A new data hook (eg `useAdminUsers`, `usePlayerWallet`) -> `packages/sdks/react/src/hooks/` + export from `src/index.ts`. `@oss/react` is a leaf SDK package.
 - Operator-only config (feature flags, brand definitions, RG defaults per geo) -> a `platform-config.yaml` / `.json` file consumed by `loadPlatformConfig()` (`@oss/core`). Validated by `PlatformConfigSchema` in `@oss/shared-schemas`. Bound via the `PLATFORM_CONFIG` Container token. No admin UI in v1; edit the file. See ADR-0013 T0.
-- A third-party integration (PSP, KYC, aggregator, chat) -> define the adapter interface + token (`createToken<Adapter>(...)`) in `@oss/adapters` (`packages/contracts/adapters/src/<category>.ts`), implement it under `packages/modules/<module>/adapters/<vendor>/`, and bind it in the module's `plugin.ts` via `ctx.provide(TOKEN, () => new Impl())`. Never inline. All vendor adapter interfaces live in `@oss/adapters` so the swap seams are findable in one place.
+- A third-party integration (PSP, KYC, aggregator, chat) -> define the adapter interface + token (`createToken<Adapter>(...)`) in `@oss/adapters` (`packages/contracts/adapters/src/<category>.ts`), implement it under `packages/addons/<addon-name>/adapters/<vendor>/`, and bind it in the add-on's `plugin.ts` via `ctx.provide(TOKEN, () => new Impl())`. Never inline. All vendor adapter interfaces live in `@oss/adapters` so the swap seams are findable in one place.
 - A long-running / background task -> enqueue a job on the `JOB_QUEUE` seam and process it in a worker. A service resolves `JOB_QUEUE` (from `@oss/adapters`) in its `plugin.ts` and calls `enqueue(queue('name'), payload, { idempotencyKey, delayMs, attempts, backoff, orderingKey })`; a worker overlay registers the handler via `ctx.jobs.worker({ queue, schema, handler, onDeadLetter })` (scaffold with `/scaffold-plugin <name>-worker`). The default driver is an in-process queue (zero deps); the `bullmq` overlay rebinds `JOB_QUEUE` to BullMQ + Redis when `REDIS_URL` is set. Delivery is at-least-once - handlers must be idempotent (a DB guard, not just `idempotencyKey`, for money jobs). See ADR-0014.
-- A live client push (chat message, PvP round state, live odds, big-win feed) -> publish on the `REALTIME_TRANSPORT` seam (`@oss/adapters`) and expose an oRPC `eventIterator(...)` route served as SSE; the client consumes it with `useEventStream` / `useChatStream` (`@oss/react`). The default is a first-party in-process transport; an overlay rebinds `REALTIME_TRANSPORT` to a managed vendor (Ably/GetStream). This is client-facing only and separate from the inter-module `MESSAGE_BROKER`. See ADR-0007 and ADR-0014. The `chat` module is the reference vertical.
+- A live client push (chat message, PvP round state, live odds, big-win feed) -> publish on the `REALTIME_TRANSPORT` seam (`@oss/adapters`) and expose an oRPC `eventIterator(...)` route served as SSE; the client consumes it with `useEventStream` / `useChatStream` (`@oss/react`). The default is a first-party in-process transport; an overlay rebinds `REALTIME_TRANSPORT` to a managed vendor (Ably/GetStream). This is client-facing only and separate from the inter-module `MESSAGE_BROKER`. See ADR-0007 and ADR-0014. The `chat` add-on is the reference vertical.
 
 ## Naming
 
-- Packages: `@oss/<kebab>`. Feature modules are NOT separate packages - they live inside `@oss/modules` and are imported by subpath: `@oss/modules/<group>/<name>` and `@oss/modules/<group>/<name>/schema`.
-- Module group (`player` / `backoffice` / `platform`) names the **surface a backend module serves**, not a UI layer. A module exposes API only (no JSX); UI is composed in `apps/*` + the react SDK. A module's public API is its root entry plus the `/schema` subpath - reaching into its internals is a lint error (`no-module-internal-import`).
+- Packages: `@oss/<kebab>` for platform; `@oss-addons/<kebab>` for add-ons. Every feature is a standalone `@oss-addons/<name>` package (own `package.json`, tsconfig) under `packages/addons/<name>/` and is imported by its package name (`@oss-addons/wallet`) and read-only subpath (`@oss-addons/wallet/schema`).
+- Add-on role (`player` / `backoffice` / `platform`) names the **surface a backend add-on serves** (descriptive metadata), not a directory. An add-on exposes API only (no JSX); UI is composed in `apps/*` + the react SDK. An add-on's public API is its root entry plus the `/schema` subpath - reaching into its internals is a lint error (`no-addon-internal-import`).
 - Files: `kebab-case.ts`. One concept per file.
 - Types: `PascalCase`. Schemas: `<Name>Schema`. Inferred: `type <Name> = z.infer<typeof <Name>Schema>`.
-- oRPC routers: namespace by module (`wallet.transactions.list`).
+- oRPC routers: namespace by add-on (`wallet.transactions.list`).
 - Drizzle tables: snake_case `pgTable('table_name', ...)`; exported const is camelCase; row type is `typeof <const>.$inferSelect`.
 - Tenant column: `tenantId` on every multi-tenant table.
 
@@ -106,18 +101,18 @@ extensions.config.ts # the single registry of enabled plugins
 Boundaries are enforced by two complementary gates - keep them in sync:
 
 1. **oxlint `oss-boundaries/*` plugin** (`tools/oxlint-boundaries-plugin.mjs`) - fast per-edit, per-file string matching on import specifiers (no module resolution). Runs via `pnpm lint` and the post-edit agent hook. See ADR-0015.
-2. **dependency-cruiser whole-graph gate** (`.dependency-cruiser.cjs`, `pnpm boundaries`) - runs on the RESOLVED dependency graph, so it also catches what the string matcher cannot: transitive edges, re-export/barrel laundering, dynamic `import()`, and relative paths that dodge the `@oss/` prefix. Rules: `no-circular`, `no-cross-module`, `no-platform-to-module`, `no-contracts-to-runtime`, `no-cross-extension`, `no-app-into-module-internals`.
+2. **dependency-cruiser whole-graph gate** (`.dependency-cruiser.cjs`, `pnpm boundaries`) - runs on the RESOLVED dependency graph, so it also catches what the string matcher cannot: transitive edges, re-export/barrel laundering, dynamic `import()`, and relative paths that dodge the `@oss-` prefix. Rules: `no-circular`, `no-cross-addon`, `no-contracts-to-runtime`, `no-cross-extension`, `no-app-into-addon-internals`, `no-core-to-addon`.
 
 The rules both layers enforce:
 
-- `packages/modules/**` may import: `@oss/contracts/*`, `@oss/adapters`, `@oss/platform/*`, `@oss/react`. May NOT import another module - cross-module communication goes through events or contracts (read another module's tables via the `@oss/modules/<group>/<name>/schema` subpath).
-- `packages/platform/*` may import other `platform/*` and `@oss/contracts/*`. May NOT import modules (`api-runtime` and `testing`, the composition roots, are the only exceptions).
+- `packages/addons/**` (all `@oss-addons/*` packages) may import: `@oss/contracts/*`, `@oss/adapters`, `@oss/platform/*`, `@oss/react`, and read-only `/schema` subpath imports from other add-ons. May NOT import another add-on's root/internals - cross-add-on communication goes through events or contracts (`no-cross-addon`).
+- `packages/platform/*` may import other `platform/*` and `@oss/contracts/*`. May NOT import add-ons (`api-runtime` and `testing`, the composition roots, are the only exceptions; they wire all add-ons and may read their `/schema` subpaths).
 - `packages/contracts/*` may only import other contracts and Zod.
-- `packages/addons/*` (optional `@oss-addons/*` packages) may import core exactly like a module (`@oss/contracts/*`, `@oss/adapters`, `@oss/platform/*`, `@oss/modules/<g>/<n>/schema`). May NOT import another add-on package (`no-cross-addon`). The free core (`packages/{modules,platform,contracts,sdks}/**`) may NEVER import `@oss-addons/*` (`no-core-to-addon`) - only `apps/*` may. This keeps add-on modules extractable. See ADR-0020.
+- The free core (`packages/{platform,contracts,sdks}/**`) may NEVER directly import `@oss-addons/*` (`no-core-to-addon`) - only `apps/*` may. This keeps add-ons extractable. See ADR-0021.
 - `apps/api/src/extensions/*` may import any package, but never another extension.
-- `apps/api` registers modules only via `extensions.config.ts`. A direct module-file import from `apps/api/src/*` is a lint error.
-- Consumers (and modules) import the package entry, never a deep `dist/` path.
-- No circular dependencies - `import/no-cycle` (oxlint, includes type-only edges) plus `no-circular` (whole-graph). Break a cycle by extracting a shared module, inverting a dependency, or moving the type to a contracts package.
+- `apps/api` registers add-ons only via `extensions.config.ts`. A direct add-on file import from `apps/api/src/*` is a lint error.
+- Consumers (and add-ons) import the package entry, never a deep `dist/` path.
+- No circular dependencies - `import/no-cycle` (oxlint, includes type-only edges) plus `no-circular` (whole-graph). Break a cycle by extracting a shared package, inverting a dependency, or moving the type to a contracts package.
 
 ## Forbidden patterns
 
@@ -133,17 +128,17 @@ The rules both layers enforce:
 - Import cycles. Lint-enforced (`import/no-cycle` + the whole-graph `no-circular` gate).
 - Re-exporting types just to "be nice". Import from where it's defined.
 - TODOs without a tracking issue.
-- A per-module `package.json`/`tsconfig.json` - all feature modules share `@oss/modules`. New deps go in `packages/modules/package.json`.
+- A per-add-on `package.json` import of `@oss/modules` - each add-on is a standalone package with its own `package.json` and `tsconfig.json` under `packages/addons/<name>/`.
 - Hand-editing generated drizzle migrations under `packages/platform/db/` - regenerate via `pnpm regen`.
 - Hand-editing `docs/openapi.json` or `docs/catalog.json` - both are emitted at build time.
 
-## How to add a module
+## How to add a module (add-on)
 
 ```
-/scaffold-module <group> <name>   (group: player | backoffice | platform)
+pnpm gen module <name>
 ```
 
-Generates `packages/modules/<group>/<name>/` (a folder inside `@oss/modules`) with `src/schema/index.ts` (Drizzle tables), `src/schemas/index.ts` (Zod), `src/service/<name>.service.ts`, `src/router/index.ts`, `src/plugin.ts` (`definePlugin`), and `AGENTS.md`. The scaffolder registers the plugin in `extensions.config.ts` and wires the contract index. Run `pnpm regen && pnpm verify`. Each scaffolded file marks the regions you may edit with `// AGENT: implement here` - fill those; leave the wiring alone.
+Generates `packages/addons/<name>/` as a standalone `@oss-addons/<name>` package with `package.json`, `tsconfig.json`, `src/{schema,schemas,service,router,plugin}`, and `AGENTS.md`. If the add-on is core (always loaded), the scaffolder registers it in `extensions.config.ts` with no `kind` and wires its contract index into `@oss/orpc-contract`. If gated (optional, OSS_ADDONS), it registers with `kind: 'addon'` and owns its own `src/contract/` slice + `drizzle.config.ts`. Run `pnpm regen && pnpm verify`. Each scaffolded file marks the regions you may edit with `// AGENT: implement here` - fill those; leave the wiring alone.
 
 ## How to add an extension (overlay plugin)
 
@@ -156,14 +151,14 @@ Generates `apps/api/src/extensions/<name>/plugin.ts` exporting `definePlugin`. I
 ## How to add an oRPC route
 
 ```
-/scaffold-route <module> <method> <path>
+/scaffold-route <add-on> <method> <path>
 ```
 
-Adds a route stub with input/output schemas to the module's `router/index.ts`. Don't define ad-hoc schemas - import from `schemas/` or add to `shared-schemas`.
+Adds a route stub with input/output schemas to the add-on's `src/router/index.ts`. Don't define ad-hoc schemas - import from `schemas/` or add to `shared-schemas`.
 
 ## How to extend the database schema (Drizzle)
 
-Add/edit a `pgTable` in `packages/modules/<group>/<module>/src/schema/index.ts`. Check collisions with `propose-table-change` first. Run `pnpm regen` to produce the migration. Read another module's tables via the subpath import `@oss/modules/<group>/<module>/schema`.
+Add/edit a `pgTable` in `packages/addons/<add-on>/src/schema/index.ts`. Check collisions with `propose-table-change` first. Run `pnpm regen` to produce the migration. For core add-ons, migrations go to the central `packages/platform/db/`; for gated add-ons, to their own `packages/addons/<add-on>/migrations/`. Read another add-on's tables via the subpath import `@oss-addons/<add-on>/schema`.
 
 ## How to consume this platform from a downstream repo
 

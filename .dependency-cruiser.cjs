@@ -25,30 +25,6 @@ module.exports = {
       to: { circular: true },
     },
     {
-      name: 'no-cross-module',
-      severity: 'error',
-      comment:
-        "A feature module must not depend on another module's code. Communicate via events (EVENT_BUS), a synchronous command port, or the read-only @oss/modules/<group>/<name>/schema subpath. See AGENTS.md > Dependency rules.",
-      from: { path: '^packages/modules/([^/]+/[^/]+)/' },
-      to: {
-        path: '^packages/modules/[^/]+/[^/]+/',
-        // same module is fine; the sanctioned cross-module /schema read is
-        // allowed here (it is a WARNING in the oxlint twin, not a hard error).
-        pathNot: ['^packages/modules/$1/', '/src/schema/'],
-      },
-    },
-    {
-      name: 'no-platform-to-module',
-      severity: 'error',
-      comment:
-        'platform/* must not import feature modules or UI. api-runtime (composition root) and testing (test composition root) are the only exceptions. See AGENTS.md > Dependency rules.',
-      from: {
-        path: '^packages/platform/',
-        pathNot: '^packages/platform/(api-runtime|testing)/',
-      },
-      to: { path: '^(packages/modules/|packages/ui/)' },
-    },
-    {
       name: 'no-contracts-to-runtime',
       severity: 'error',
       comment:
@@ -60,8 +36,11 @@ module.exports = {
       name: 'no-core-to-addon',
       severity: 'error',
       comment:
-        'The core OSS build must never depend on an add-on package. packages/{modules,platform,contracts,sdks}/* may not import packages/addons/* (@oss-addons/*). Only the composition roots under apps/* wire add-on in (via extensions.config.ts + the createApp contract merge). This is the guarantee that an add-on module can be extracted without breaking core. See docs/adr/ADR-0020-editions-and-add-on-modules.md.',
-      from: { path: '^packages/(modules|platform|contracts|sdks)/' },
+        'The core OSS build must never depend on an add-on package. packages/{platform,contracts,sdks}/* may not import packages/addons/* (@oss-addons/*). The only exceptions are the two composition roots under packages/platform/(api-runtime|testing)/, which read add-on /schema subpaths for seeding + tenant resolution; everything else wires add-on in only through the composition roots under apps/* (via extensions.config.ts + the createApp contract merge). This is the guarantee that an add-on package can be extracted without breaking core. See docs/adr/ADR-0020-editions-and-add-on-modules.md.',
+      from: {
+        path: '^packages/(platform|contracts|sdks)/',
+        pathNot: '^packages/platform/(api-runtime|testing)/',
+      },
       to: { path: '^packages/addons/' },
     },
     {
@@ -87,22 +66,22 @@ module.exports = {
       },
     },
     {
-      name: 'no-app-into-module-internals',
+      name: 'no-app-into-addon-internals',
       severity: 'error',
       comment:
-        'apps/api wires modules only through extensions.config.ts (the plugin registry). A direct module-file import from apps/api/src/* is forbidden. See AGENTS.md > Dependency rules.',
+        'apps/api wires add-ons only through extensions.config.ts (the plugin registry). A direct add-on-file import from apps/api/src/* is forbidden. See AGENTS.md > Dependency rules.',
       from: {
         path: '^apps/api/src/',
         pathNot: '^apps/api/src/extensions/',
       },
-      to: { path: '^packages/modules/[^/]+/[^/]+/' },
+      to: { path: '^packages/addons/[^/]+/' },
     },
   ],
   options: {
     doNotFollow: { path: 'node_modules' },
     // Scan first-party source only; skip compiled output and (test|spec) files -
-    // tests legitimately wire several modules together (the oxlint twin disables
-    // the cross-module rules for *.test.ts / *.spec.ts for the same reason).
+    // tests legitimately wire several add-ons together (the oxlint twin disables
+    // the cross-addon rules for *.test.ts / *.spec.ts for the same reason).
     exclude: { path: '(/dist/|/node_modules/|[.](test|spec)[.]ts$)' },
     includeOnly: '^(apps|packages)/',
     tsPreCompilationDeps: true,

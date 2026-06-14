@@ -4,8 +4,8 @@ import { eq, ilike, count, or, and, gte, desc, sql } from 'drizzle-orm';
 // Reads the core-owned `player` table + identity `user` via the public /schema
 // subpaths (add-on->core reads, allowed by the boundary rules). PAM owns no
 // tables of its own. See ADR-0020.
-import { player } from '@oss/modules/player/profile/schema';
-import { user } from '@oss/modules/platform/identity/schema';
+import { player } from '@oss-addons/profile/schema';
+import { user } from '@oss-addons/identity/schema';
 import type {
   Player,
   PlayerRegistrationPoint,

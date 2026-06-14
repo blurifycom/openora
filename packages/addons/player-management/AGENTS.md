@@ -2,15 +2,15 @@
 
 ## What this is
 
-`@oss-addons/player-management` - the **add-on** admin Player Account Management
+`@oss-addons/player-management` - the **gated add-on** admin Player Account Management
 (PAM) surface. NOT part of the default OSS build; the composition root loads it only
 when `player-management` is in the `OSS_ADDONS` allowlist (see
 `apps/api/src/editions.ts`). Structurally a plain `definePlugin`, so it lifts into
-its own npm package with no code change. See `docs/adr/ADR-0020-editions-and-add-on-modules.md`.
+its own npm package with no code change. See `docs/adr/ADR-0021-everything-is-an-add-on.md`.
 
-It owns **no tables**. The `player` table lives in the core `profile` module
-(`packages/modules/player/profile/`); this package reads it via the
-`@oss/modules/player/profile/schema` subpath (an add-on->core read, allowed).
+It owns **no tables**. The `player` table lives in the core `profile` add-on
+(`packages/addons/profile/`); this package reads it via the
+`@oss-addons/profile/schema` subpath (an add-on->core read, allowed).
 
 ## Surface
 

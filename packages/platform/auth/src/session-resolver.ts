@@ -20,7 +20,7 @@ export class SessionResolver {
   // `schema` carries the better-auth tables (user/session/account/verification).
   // It MUST be provided - the drizzle adapter resolves models from it, and
   // getSession() throws "model session not found" without it. @oss/auth can't
-  // import the schema (it lives in @oss/modules), so createApp injects it.
+  // import the schema (it lives in the @oss-addons/identity add-on), so createApp injects it.
   constructor(drizzle: DrizzleService, schema?: Record<string, unknown>) {
     this.auth = createAuth({ db: drizzle.db, ...(schema ? { schema } : {}) });
   }

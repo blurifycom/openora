@@ -28,26 +28,35 @@ function listDirs(p: string): string[] {
   return readdirSync(p).filter((f) => statSync(join(p, f)).isDirectory());
 }
 
-// Modules live under packages/modules/<group>/<name>/ (one @oss/modules package).
-const MODULE_GROUPS = ['player', 'backoffice', 'platform'] as const;
+// Every feature is a standalone @oss-addons/<name> package under packages/addons/<name>/.
+// `group` is no longer a directory; it labels core vs gated add-ons, read from
+// extensions.config.ts (`kind: 'addon'` -> gated, otherwise core).
+const ADDONS_DIR = ['packages', 'addons'] as const;
 
-/** Resolve a module's source dir by name across the grouped layout. */
-function findModuleDir(name: string): string | null {
-  for (const group of MODULE_GROUPS) {
-    const dir = repoPath('packages', 'modules', group, name);
-    if (existsSync(dir)) return dir;
+/** Map add-on id -> 'core' | 'addon', parsed from extensions.config.ts. */
+function readAddonKinds(): Map<string, string> {
+  const src = readFile(repoPath('extensions.config.ts'));
+  const out = new Map<string, string>();
+  for (const m of src.matchAll(/\{[^}]*id:\s*'([^']+)'[^}]*\}/g)) {
+    out.set(m[1]!, /kind:\s*'addon'/.test(m[0]!) ? 'addon' : 'core');
   }
-  return null;
+  return out;
 }
 
-/** Every module across all groups, with a plugin.ts. */
+/** Resolve an add-on's source dir by name. */
+function findModuleDir(name: string): string | null {
+  const dir = repoPath(...ADDONS_DIR, name);
+  return existsSync(dir) ? dir : null;
+}
+
+/** Every add-on package with a plugin.ts. */
 function listAllModules(): Array<{ group: string; name: string; dir: string }> {
+  const kinds = readAddonKinds();
   const out: Array<{ group: string; name: string; dir: string }> = [];
-  for (const group of MODULE_GROUPS) {
-    const groupDir = repoPath('packages', 'modules', group);
-    for (const name of listDirs(groupDir)) {
-      const dir = join(groupDir, name);
-      if (existsSync(join(dir, 'src', 'plugin.ts'))) out.push({ group, name, dir });
+  for (const name of listDirs(repoPath(...ADDONS_DIR))) {
+    const dir = repoPath(...ADDONS_DIR, name);
+    if (existsSync(join(dir, 'src', 'plugin.ts'))) {
+      out.push({ group: kinds.get(name) ?? 'core', name, dir });
     }
   }
   return out;
@@ -209,7 +218,7 @@ function buildPlaybook(
     case 'feature':
       return [
         '## Where it goes',
-        'A new business domain -> a new module under `packages/modules/<group>/<name>/` (group: player | backoffice | platform).',
+        'A new business domain -> a new standalone @oss-addons/<name> package under `packages/addons/<name>/` (registered as a core add-on in extensions.config.ts).',
         '',
         '## Existing modules (avoid name collisions)',
         moduleList,
@@ -226,7 +235,7 @@ function buildPlaybook(
     case 'adapter':
       return [
         '## Where it goes',
-        'A third-party integration -> implement the adapter interface under `packages/modules/<module>/adapters/<vendor>/` and bind it to a DI token in the module/overlay `plugin.ts`. Interfaces + tokens all live in `@oss/adapters`.',
+        'A third-party integration -> implement the adapter interface under `packages/addons/<name>/src/adapters/<vendor>/` and bind it to a DI token in the add-on/overlay `plugin.ts`. Interfaces + tokens all live in `@oss/adapters`.',
         '',
         '## Adapter tokens available to override',
         ctx.tokens.length ? ctx.tokens.map((t) => `- ${t}`).join('\n') : '- (none found)',
@@ -522,7 +531,7 @@ server.tool(
 // --- scaffold-* (delegating to `pnpm gen` -> tools/gen.ts) ------------------
 server.tool(
   'scaffold-module',
-  'Scaffold a new business module under packages/modules/<group>/<name>.',
+  'Scaffold a new business module as a standalone @oss-addons/<name> package under packages/addons/<name>.',
   {
     group: z.enum(['player', 'backoffice', 'platform']),
     name: z.string(),
@@ -693,7 +702,7 @@ server.tool(
             content: [
               {
                 type: 'text',
-                text: `[COLLISION] Table '${want}' already defined in packages/modules/${group}/${name}/src/schema/index.ts. Pick a different name or add a column to the existing table.`,
+                text: `[COLLISION] Table '${want}' already defined in packages/addons/${name}/src/schema/index.ts (${group} add-on). Pick a different name or add a column to the existing table.`,
               },
             ],
           };

@@ -54,6 +54,13 @@ if (existsSync(appDir)) {
 
 const pkgName = `@oss/${name}-service`;
 
+// Each module in the manifest is a standalone @oss-addons/<id> package. The host
+// depends on exactly the ones it bakes, so the manifest and the dependency graph
+// stay in sync (no blanket @oss/modules dep anymore).
+const addonDeps = Object.fromEntries(
+  manifest.map((id) => [`@oss-addons/${id}`, 'workspace:*'] as const).sort(),
+);
+
 // Reuse the api host's manifest-aware extensions loader verbatim, so the module
 // list stays single-sourced in the root extensions.config.ts.
 const extensionsLoader = readFileSync(join(repoRoot, 'apps/api/src/extensions.ts'), 'utf8');
@@ -80,12 +87,12 @@ const files: Record<string, string> = {
           '@oss/orpc-contract': 'workspace:*',
           '@oss/plugin-host': 'workspace:*',
           '@oss/shared-schemas': 'workspace:*',
+          ...addonDeps,
           amqplib: '^2.0.1',
           bullmq: '^5.77.6',
           zod: '4.4.3',
         },
         devDependencies: {
-          '@oss/modules': 'workspace:*',
           '@oss/tsconfig': 'workspace:*',
           tsx: '4.22.2',
           typescript: '6.0.3',

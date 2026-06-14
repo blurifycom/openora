@@ -31,13 +31,7 @@ import {
 } from '@oss/adapters';
 import { DrizzleService, DRIZZLE, DrizzleOutboxWriter, OutboxRelay } from '@oss/db';
 import { AdminGuard, ADMIN_GUARD, SessionResolver, AUTH_SESSION } from '@oss/auth';
-import {
-  user,
-  session,
-  account,
-  verification,
-  twoFactor,
-} from '@oss/modules/platform/identity/schema';
+import { user, session, account, verification, twoFactor } from '@oss-addons/identity/schema';
 import { loadPlugins, type PluginEntry } from '@oss/plugin-host';
 import { contract as defaultContract, healthContract } from '@oss/orpc-contract';
 import { IGAMING_CONFIG, type IgamingConfig } from '@oss/shared-schemas';
@@ -158,8 +152,8 @@ export async function createApp(config: CreateAppConfig): Promise<CreatedApp> {
   });
   // One shared better-auth instance verifies the session cookie for both the
   // per-request identity middleware (below) and the AdminGuard - no second
-  // createAuth() over the same DB. The better-auth schema lives in @oss/modules,
-  // so it is injected here where it is already imported.
+  // createAuth() over the same DB. The better-auth schema lives in the
+  // @oss-addons/identity add-on, so it is injected here where it is already imported.
   container.register(
     AUTH_SESSION,
     (c) => new SessionResolver(c.get(DRIZZLE), { user, session, account, verification, twoFactor }),

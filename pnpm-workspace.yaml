@@ -1,7 +1,6 @@
 packages:
   - 'apps/*'
-  - 'packages/*/*' # includes packages/addons/* (optional, extract-later modules)
-  - 'packages/modules'
+  - 'packages/*/*' # includes packages/addons/* (every feature is a standalone add-on package)
 allowBuilds:
   esbuild: true
   msgpackr-extract: true

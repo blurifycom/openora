@@ -20,7 +20,7 @@ import {
   account,
   verification,
   twoFactor,
-} from '@oss/modules/platform/identity/schema';
+} from '@oss-addons/identity/schema';
 
 function arg(name: string): string | undefined {
   const hit = process.argv.find((a) => a.startsWith(`--${name}=`));

@@ -8,7 +8,7 @@ import * as z from 'zod';
 // existing shared-schema here if a future event carries a full entity.
 //
 // Keep this in sync with the `events.emit(...)` call sites in
-// packages/modules/**/src/service/*.service.ts.
+// packages/addons/*/src/service/*.service.ts.
 export const domainEventSchemas = {
   'identity.user.registered': z.object({ userId: z.string() }),
   'identity.user.login': z.object({ userId: z.string() }),

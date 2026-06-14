@@ -1,8 +1,43 @@
 {
   "modules": [
     {
+      "id": "admin-console",
+      "group": "core",
+      "tables": [],
+      "routes": [
+        "admin-console.getStats",
+        "admin-console.getUser",
+        "admin-console.listTransactions",
+        "admin-console.listUsers",
+        "admin-console.updateUser"
+      ]
+    },
+    {
+      "id": "aggregator",
+      "group": "addon",
+      "tables": [
+        "aggregator_provider"
+      ],
+      "routes": [
+        "aggregator.callback",
+        "aggregator.listProviders",
+        "aggregator.sync"
+      ]
+    },
+    {
+      "id": "audit",
+      "group": "core",
+      "tables": [
+        "audit_log"
+      ],
+      "routes": [
+        "audit.exportCsv",
+        "audit.list"
+      ]
+    },
+    {
       "id": "bonus",
-      "group": "player",
+      "group": "core",
       "tables": [
         "bonus",
         "user_bonus"
@@ -16,7 +51,7 @@
     },
     {
       "id": "chat",
-      "group": "player",
+      "group": "core",
       "tables": [
         "ChatMessage",
         "ChatRoom"
@@ -33,86 +68,8 @@
       ]
     },
     {
-      "id": "gaming",
-      "group": "player",
-      "tables": [
-        "Game",
-        "GameRound"
-      ],
-      "routes": [
-        "gaming.endRound",
-        "gaming.getGame",
-        "gaming.listGames",
-        "gaming.listRounds",
-        "gaming.startRound"
-      ]
-    },
-    {
-      "id": "lobby",
-      "group": "player",
-      "tables": [
-        "FeaturedSlot",
-        "LobbyCategory",
-        "LobbyCategoryGame"
-      ],
-      "routes": [
-        "lobby.getCategoryBySlug",
-        "lobby.getFeatured",
-        "lobby.listCategories",
-        "lobby.search"
-      ]
-    },
-    {
-      "id": "profile",
-      "group": "player",
-      "tables": [
-        "player"
-      ],
-      "routes": [
-        "profile.get",
-        "profile.update"
-      ]
-    },
-    {
-      "id": "wallet",
-      "group": "player",
-      "tables": [
-        "wallet",
-        "wallet_transaction"
-      ],
-      "routes": [
-        "wallet.deposit",
-        "wallet.getBalance",
-        "wallet.listTransactions",
-        "wallet.withdraw"
-      ]
-    },
-    {
-      "id": "admin-console",
-      "group": "backoffice",
-      "tables": [],
-      "routes": [
-        "admin-console.getStats",
-        "admin-console.getUser",
-        "admin-console.listTransactions",
-        "admin-console.listUsers",
-        "admin-console.updateUser"
-      ]
-    },
-    {
-      "id": "audit",
-      "group": "backoffice",
-      "tables": [
-        "audit_log"
-      ],
-      "routes": [
-        "audit.exportCsv",
-        "audit.list"
-      ]
-    },
-    {
       "id": "cms",
-      "group": "backoffice",
+      "group": "core",
       "tables": [
         "banner",
         "page"
@@ -131,8 +88,39 @@
       ]
     },
     {
+      "id": "compliance",
+      "group": "core",
+      "tables": [
+        "geo_rule",
+        "user_limit"
+      ],
+      "routes": [
+        "compliance.addGeoRule",
+        "compliance.deleteLimit",
+        "compliance.geoCheck",
+        "compliance.getLimits",
+        "compliance.listGeoRules",
+        "compliance.upsertLimit"
+      ]
+    },
+    {
+      "id": "gaming",
+      "group": "core",
+      "tables": [
+        "Game",
+        "GameRound"
+      ],
+      "routes": [
+        "gaming.endRound",
+        "gaming.getGame",
+        "gaming.listGames",
+        "gaming.listRounds",
+        "gaming.startRound"
+      ]
+    },
+    {
       "id": "iam",
-      "group": "backoffice",
+      "group": "core",
       "tables": [
         "admin_invitation",
         "admin_role",
@@ -154,24 +142,8 @@
       ]
     },
     {
-      "id": "compliance",
-      "group": "platform",
-      "tables": [
-        "geo_rule",
-        "user_limit"
-      ],
-      "routes": [
-        "compliance.addGeoRule",
-        "compliance.deleteLimit",
-        "compliance.geoCheck",
-        "compliance.getLimits",
-        "compliance.listGeoRules",
-        "compliance.upsertLimit"
-      ]
-    },
-    {
       "id": "identity",
-      "group": "platform",
+      "group": "core",
       "tables": [
         "account",
         "session",
@@ -197,8 +169,35 @@
       ]
     },
     {
+      "id": "leaderboard",
+      "group": "addon",
+      "tables": [
+        "leaderboard",
+        "leaderboard_entry"
+      ],
+      "routes": [
+        "leaderboard.adminReset",
+        "leaderboard.get"
+      ]
+    },
+    {
+      "id": "lobby",
+      "group": "core",
+      "tables": [
+        "FeaturedSlot",
+        "LobbyCategory",
+        "LobbyCategoryGame"
+      ],
+      "routes": [
+        "lobby.getCategoryBySlug",
+        "lobby.getFeatured",
+        "lobby.listCategories",
+        "lobby.search"
+      ]
+    },
+    {
       "id": "localization",
-      "group": "platform",
+      "group": "core",
       "tables": [
         "locale",
         "translation"
@@ -212,7 +211,7 @@
     },
     {
       "id": "notifications",
-      "group": "platform",
+      "group": "core",
       "tables": [
         "notification"
       ],
@@ -220,6 +219,59 @@
         "notifications.list",
         "notifications.markAllRead",
         "notifications.markRead"
+      ]
+    },
+    {
+      "id": "player-management",
+      "group": "addon",
+      "tables": [],
+      "routes": [
+        "player-management.get",
+        "player-management.list",
+        "player-management.registrationsOverTime",
+        "player-management.remove",
+        "player-management.summary",
+        "player-management.update"
+      ]
+    },
+    {
+      "id": "profile",
+      "group": "core",
+      "tables": [
+        "player"
+      ],
+      "routes": [
+        "profile.get",
+        "profile.update"
+      ]
+    },
+    {
+      "id": "sportsbook",
+      "group": "addon",
+      "tables": [
+        "SportsbookBet",
+        "SportsbookEvent",
+        "SportsbookSelection"
+      ],
+      "routes": [
+        "sportsbook.getEvent",
+        "sportsbook.listEvents",
+        "sportsbook.oddsStream",
+        "sportsbook.placeBet"
+      ]
+    },
+    {
+      "id": "wallet",
+      "group": "core",
+      "tables": [
+        "wallet",
+        "wallet_transaction"
+      ],
+      "routes": [
+        "wallet.deposit",
+        "wallet.getBalance",
+        "wallet.listTransactions",
+        "wallet.withdraw"
       ]
     }
   ],
@@ -230,7 +282,7 @@
       "token": "ADMIN_PERMISSION_RESOLVER",
       "status": "wired",
       "boundIn": [
-        "packages/modules/backoffice/iam/src/plugin.ts",
+        "packages/addons/iam/src/plugin.ts",
         "packages/platform/api-runtime/src/create-app.ts"
       ]
     },
@@ -238,8 +290,10 @@
       "category": "aggregator",
       "interface": "AggregatorAdapter",
       "token": "AGGREGATOR_ADAPTER",
-      "status": "stub",
-      "boundIn": []
+      "status": "wired",
+      "boundIn": [
+        "packages/addons/aggregator/src/plugin.ts"
+      ]
     },
     {
       "category": "audit",
@@ -247,7 +301,7 @@
       "token": "AUDIT_WRITER",
       "status": "wired",
       "boundIn": [
-        "packages/modules/backoffice/audit/src/plugin.ts"
+        "packages/addons/audit/src/plugin.ts"
       ]
     },
     {
@@ -265,8 +319,8 @@
       "token": "SEND_EMAIL",
       "status": "wired",
       "boundIn": [
-        "packages/modules/backoffice/iam/src/plugin.ts",
-        "packages/modules/platform/identity/src/plugin.ts"
+        "packages/addons/iam/src/plugin.ts",
+        "packages/addons/identity/src/plugin.ts"
       ]
     },
     {
@@ -275,7 +329,7 @@
       "token": "GAME_ADAPTER",
       "status": "wired",
       "boundIn": [
-        "packages/modules/player/gaming/src/plugin.ts"
+        "packages/addons/gaming/src/plugin.ts"
       ]
     },
     {
@@ -284,7 +338,7 @@
       "token": "GEO_IP_ADAPTER",
       "status": "wired",
       "boundIn": [
-        "packages/modules/platform/compliance/src/plugin.ts"
+        "packages/addons/compliance/src/plugin.ts"
       ]
     },
     {
@@ -302,8 +356,8 @@
       "token": "KYC_ADAPTER",
       "status": "wired",
       "boundIn": [
-        "packages/modules/platform/identity/src/adapters/mock/mock-kyc-adapter.ts",
-        "packages/modules/platform/identity/src/plugin.ts"
+        "packages/addons/identity/src/adapters/mock/mock-kyc-adapter.ts",
+        "packages/addons/identity/src/plugin.ts"
       ]
     },
     {
@@ -312,8 +366,8 @@
       "token": "NOTIFICATION_DELIVERY_ADAPTER",
       "status": "wired",
       "boundIn": [
-        "packages/modules/platform/identity/src/plugin.ts",
-        "packages/modules/platform/notifications/src/plugin.ts"
+        "packages/addons/identity/src/plugin.ts",
+        "packages/addons/notifications/src/plugin.ts"
       ]
     },
     {
@@ -331,7 +385,7 @@
       "token": "PAYMENT_ADAPTER",
       "status": "wired",
       "boundIn": [
-        "packages/modules/player/wallet/src/plugin.ts"
+        "packages/addons/wallet/src/plugin.ts"
       ]
     },
     {
@@ -340,7 +394,8 @@
       "token": "REALTIME_TRANSPORT",
       "status": "wired",
       "boundIn": [
-        "packages/modules/player/chat/src/plugin.ts"
+        "packages/addons/chat/src/plugin.ts",
+        "packages/addons/sportsbook/src/plugin.ts"
       ]
     },
     {
@@ -349,7 +404,7 @@
       "token": "RNG_ADAPTER",
       "status": "wired",
       "boundIn": [
-        "packages/modules/player/gaming/src/plugin.ts"
+        "packages/addons/gaming/src/plugin.ts"
       ]
     },
     {
@@ -358,11 +413,14 @@
       "token": "WALLET_COMMANDS",
       "status": "wired",
       "boundIn": [
-        "packages/modules/player/wallet/src/plugin.ts"
+        "packages/addons/sportsbook/src/plugin.ts",
+        "packages/addons/wallet/src/plugin.ts"
       ]
     }
   ],
   "events": [
+    "aggregator.callback.received",
+    "aggregator.sync.completed",
     "bonus.claimed",
     "chat.message.sent",
     "cms.page.published",
@@ -378,9 +436,13 @@
     "identity.profile.updated",
     "identity.user.login",
     "identity.user.registered",
+    "leaderboard.reset",
+    "leaderboard.score.recorded",
     "localization.translation.deleted",
     "localization.translation.upserted",
     "notifications.created",
+    "sportsbook.bet.placed",
+    "sportsbook.odds.updated",
     "wallet.deposit.completed",
     "wallet.withdrawal.completed"
   ],

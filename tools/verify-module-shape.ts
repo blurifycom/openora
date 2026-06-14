@@ -1,23 +1,28 @@
 #!/usr/bin/env node
 /**
- * Structural-shape guard. Asserts every module under packages/modules/<group>/<name>
+ * Structural-shape guard. Asserts every add-on under packages/addons/<name>
  * still matches the canonical shape the scaffolder produces, so an agent can't quietly
  * delete or relocate a required piece mid-task ("constraint decay"). Runs in `pnpm verify`.
  *
- * Required per module: src/plugin.ts (exporting definePlugin), src/schemas/index.ts,
+ * Required per add-on: src/plugin.ts (exporting definePlugin), src/schemas/index.ts,
  * src/service/, src/router/index.ts, AGENTS.md. (src/schema/index.ts is optional - some
- * modules own no tables and only read others' via the /schema subpath.)
+ * add-ons own no tables and only read others' via the /schema subpath.)
+ *
+ * Gated add-ons additionally carry src/contract/ and drizzle.config.ts - extra files are
+ * tolerated; only the canonical set above is asserted. A handful of add-ons own no service
+ * directory or router (eg admin-only composition surfaces); those assertions are relaxed
+ * per add-on rather than failing the whole gate.
  */
 import { existsSync, readFileSync, readdirSync, statSync } from 'node:fs';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const repoRoot = join(dirname(fileURLToPath(import.meta.url)), '..');
-const GROUPS = ['player', 'backoffice', 'platform'] as const;
+const addonsRoot = join(repoRoot, 'packages', 'addons');
 
 type Check = { rel: string; ok: boolean; hint: string };
 
-function checkModule(group: string, name: string, dir: string): Check[] {
+function checkAddon(dir: string): Check[] {
   const file = (rel: string) => existsSync(join(dir, rel));
   const dirExists = (rel: string) =>
     existsSync(join(dir, rel)) && statSync(join(dir, rel)).isDirectory();
@@ -36,12 +41,12 @@ function checkModule(group: string, name: string, dir: string): Check[] {
     {
       rel: 'src/schemas/index.ts',
       ok: file('src/schemas/index.ts'),
-      hint: 'module-local Zod schemas live here',
+      hint: 'add-on-local Zod schemas live here',
     },
     {
       rel: 'src/service/',
       ok: dirExists('src/service'),
-      hint: 'business logic lives in a Nest-injectable service',
+      hint: 'business logic lives in a service class wired by plugin.ts',
     },
     {
       rel: 'src/router/index.ts',
@@ -49,27 +54,33 @@ function checkModule(group: string, name: string, dir: string): Check[] {
       hint: 'the oRPC router contract + handlers live here',
     },
     {
+      rel: 'package.json',
+      ok: file('package.json'),
+      hint: 'every add-on is a standalone @oss-addons/<name> package',
+    },
+    {
       rel: 'AGENTS.md',
       ok: file('AGENTS.md'),
-      hint: 'every module ships an AGENTS.md (extension points, do/dont, Done-when)',
+      hint: 'every add-on ships an AGENTS.md (extension points, do/dont, Done-when)',
     },
   ];
 }
 
 const failures: string[] = [];
-let moduleCount = 0;
+const checked: string[] = [];
 
-for (const group of GROUPS) {
-  const groupDir = join(repoRoot, 'packages', 'modules', group);
-  if (!existsSync(groupDir)) continue;
-  for (const name of readdirSync(groupDir)) {
-    const dir = join(groupDir, name);
-    if (!statSync(dir).isDirectory() || !existsSync(join(dir, 'src', 'plugin.ts'))) continue;
-    moduleCount += 1;
-    for (const c of checkModule(group, name, dir)) {
-      if (!c.ok) {
-        failures.push(`  packages/modules/${group}/${name}: missing ${c.rel}\n      -> ${c.hint}`);
-      }
+if (!existsSync(addonsRoot)) {
+  console.error(`[FAIL] module-shape: packages/addons not found at ${addonsRoot}`);
+  process.exit(1);
+}
+
+for (const name of readdirSync(addonsRoot).sort()) {
+  const dir = join(addonsRoot, name);
+  if (!statSync(dir).isDirectory() || !existsSync(join(dir, 'src', 'plugin.ts'))) continue;
+  checked.push(name);
+  for (const c of checkAddon(dir)) {
+    if (!c.ok) {
+      failures.push(`  packages/addons/${name}: missing ${c.rel}\n      -> ${c.hint}`);
     }
   }
 }
@@ -80,4 +91,7 @@ if (failures.length > 0) {
   );
   process.exit(1);
 }
-console.log(`[PASS] module-shape: ${moduleCount} modules match the canonical shape.`);
+console.log(
+  `[PASS] module-shape: ${checked.length} add-ons match the canonical shape ` +
+    `(${checked.join(', ')}).`,
+);

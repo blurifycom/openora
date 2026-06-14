@@ -21,9 +21,26 @@ import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const repoRoot = join(dirname(fileURLToPath(import.meta.url)), '..');
-const GROUPS = ['player', 'backoffice', 'platform'] as const;
+const addonsRoot = join(repoRoot, 'packages', 'addons');
 
 const read = (p: string): string => (existsSync(p) ? readFileSync(p, 'utf8') : '');
+
+/** Every add-on dir (one level under packages/addons) that has a plugin.ts. */
+function addonDirs(): string[] {
+  if (!existsSync(addonsRoot)) return [];
+  return readdirSync(addonsRoot)
+    .filter((name) => {
+      const dir = join(addonsRoot, name);
+      let st;
+      try {
+        st = statSync(dir);
+      } catch {
+        return false;
+      }
+      return st.isDirectory() && existsSync(join(dir, 'src', 'plugin.ts'));
+    })
+    .sort();
+}
 
 function walk(dir: string, ext: string, acc: string[] = []): string[] {
   if (!existsSync(dir)) return acc;
@@ -44,24 +61,36 @@ function walk(dir: string, ext: string, acc: string[] = []): string[] {
 }
 
 // --- modules (+ tables + routes) -------------------------------------------
+// Every feature is now a standalone @oss-addons/<name> package under
+// packages/addons/<name>/. `group` is no longer a directory; it labels whether the
+// add-on is core (always loaded) or gated (kind: 'addon' in extensions.config.ts),
+// read from the registry so the catalog stays informative for the @oss/mcp consumer.
 type ModuleInfo = { id: string; group: string; tables: string[]; routes: string[] };
+
+/** Map add-on id -> 'core' | 'addon', parsed from extensions.config.ts. */
+function readAddonKinds(): Map<string, string> {
+  const src = read(join(repoRoot, 'extensions.config.ts'));
+  const out = new Map<string, string>();
+  for (const m of src.matchAll(/\{[^}]*id:\s*'([^']+)'[^}]*\}/g)) {
+    const entry = m[0]!;
+    const id = m[1]!;
+    out.set(id, /kind:\s*'addon'/.test(entry) ? 'addon' : 'core');
+  }
+  return out;
+}
 
 function collectModules(): ModuleInfo[] {
   const out: ModuleInfo[] = [];
-  for (const group of GROUPS) {
-    const groupDir = join(repoRoot, 'packages', 'modules', group);
-    if (!existsSync(groupDir)) continue;
-    for (const name of readdirSync(groupDir).sort()) {
-      const dir = join(groupDir, name);
-      if (!existsSync(join(dir, 'src', 'plugin.ts'))) continue;
-      const schema = read(join(dir, 'src', 'schema', 'index.ts'));
-      const router = read(join(dir, 'src', 'router', 'index.ts'));
-      const tables = [...schema.matchAll(/pgTable\(\s*'([^']+)'/g)].map((m) => m[1]!).sort();
-      const routes = [...router.matchAll(/^\s{2,}(\w+):\s*os\b/gm)]
-        .map((m) => `${name}.${m[1]}`)
-        .sort();
-      out.push({ id: name, group, tables, routes });
-    }
+  const kinds = readAddonKinds();
+  for (const name of addonDirs()) {
+    const dir = join(addonsRoot, name);
+    const schema = read(join(dir, 'src', 'schema', 'index.ts'));
+    const router = read(join(dir, 'src', 'router', 'index.ts'));
+    const tables = [...schema.matchAll(/pgTable\(\s*'([^']+)'/g)].map((m) => m[1]!).sort();
+    const routes = [...router.matchAll(/^\s{2,}(\w+):\s*os\b/gm)]
+      .map((m) => `${name}.${m[1]}`)
+      .sort();
+    out.push({ id: name, group: kinds.get(name) ?? 'core', tables, routes });
   }
   return out;
 }
@@ -77,10 +106,10 @@ type AdapterInfo = {
 
 function collectAdapters(): AdapterInfo[] {
   const dir = join(repoRoot, 'packages', 'contracts', 'adapters', 'src');
-  // Scan feature modules plus api-runtime, so platform-level default bindings (eg
+  // Scan add-on packages plus api-runtime, so platform-level default bindings (eg
   // the in-process MESSAGE_BROKER seeded in create-app) count as wired.
   const moduleFiles = [
-    ...GROUPS.flatMap((g) => walk(join(repoRoot, 'packages', 'modules', g), '.ts')),
+    ...addonDirs().flatMap((name) => walk(join(addonsRoot, name, 'src'), '.ts')),
     ...walk(join(repoRoot, 'packages', 'platform', 'api-runtime', 'src'), '.ts'),
   ];
   const moduleSrc = moduleFiles.map((f) => ({ f, src: readFileSync(f, 'utf8') }));
@@ -121,8 +150,8 @@ function collectAdapters(): AdapterInfo[] {
 // --- events ----------------------------------------------------------------
 function collectEvents(): string[] {
   const set = new Set<string>();
-  for (const group of GROUPS) {
-    for (const f of walk(join(repoRoot, 'packages', 'modules', group), '.ts')) {
+  for (const name of addonDirs()) {
+    for (const f of walk(join(addonsRoot, name, 'src'), '.ts')) {
       for (const m of readFileSync(f, 'utf8').matchAll(/\.emit\(\s*'([a-z][\w.:-]+)'/g))
         set.add(m[1]!);
     }

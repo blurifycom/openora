@@ -48,8 +48,8 @@ const toCamel = (v: string): string =>
 
 // --- repo context -----------------------------------------------------------
 const root = (): string => process.cwd();
-// OSS monorepo has packages/modules; a consumer repo only has overlays.
-const isOssRepo = (): boolean => existsSync(join(root(), 'packages', 'modules'));
+// OSS monorepo has packages/addons; a consumer repo only has overlays.
+const isOssRepo = (): boolean => existsSync(join(root(), 'packages', 'addons'));
 // extensions.config.ts lives at the OSS root, or under apps/api/src in a consumer.
 const extensionsConfigPath = (): string => {
   const ossPath = join(root(), 'extensions.config.ts');
@@ -88,6 +88,24 @@ function registerExtension(id: string, importPath: string): string {
   return `registered '${id}' in extensions.config.ts`;
 }
 
+// Add the add-on's schema file to the central drizzle.config glob so its tables
+// land in the shared core migration history. Idempotent. Only relevant in the OSS
+// monorepo (a consumer has no platform/db drizzle.config).
+function registerAddonSchema(name: string): string {
+  const file = join(root(), 'packages', 'platform', 'db', 'drizzle.config.ts');
+  if (!existsSync(file)) return 'no platform/db drizzle.config.ts (skipped)';
+  const line = `    '../../addons/${name}/src/schema/index.ts',`;
+  const src = readFileSync(file, 'utf8');
+  if (src.includes(`addons/${name}/src/schema/index.ts`)) {
+    return `drizzle.config already globs '${name}' schema`;
+  }
+  // Append before the closing `]` of the `schema: [ ... ]` array.
+  const next = src.replace(/(\n\s*\],\n\s*out:)/, `\n${line}$1`);
+  if (next === src) return `could not patch drizzle.config (add '${line.trim()}' manually)`;
+  writeFileSync(file, next);
+  return `globbed '${name}' schema into platform/db drizzle.config.ts`;
+}
+
 function wireContractIndex(name: string): string {
   const indexFile = join(root(), 'packages', 'contracts', 'orpc-contract', 'src', 'index.ts');
   if (!existsSync(indexFile)) return 'no orpc-contract index (skipped)';
@@ -118,12 +136,10 @@ function appendEventSchema(topic: string): string {
 
 function appendRoute(moduleName: string, method: string, routePath: string): string {
   const name = toKebab(moduleName);
-  let moduleDir = '';
-  for (const g of MODULE_GROUPS) {
-    const d = join(root(), 'packages', 'modules', g, name);
-    if (existsSync(d)) moduleDir = d;
+  const moduleDir = join(root(), 'packages', 'addons', name);
+  if (!existsSync(moduleDir)) {
+    throw new Error(`add-on '${name}' not found under packages/addons/`);
   }
-  if (!moduleDir) throw new Error(`module '${name}' not found under packages/modules/`);
   const proc = routePath
     .replace(/^\//, '')
     .replace(/\/:(\w+)/g, 'By$1')
@@ -157,26 +173,39 @@ function appendRoute(moduleName: string, method: string, routePath: string): str
 export default function generator(plop: PlopTypes.NodePlopAPI): void {
   // --- module --------------------------------------------------------------
   plop.setGenerator('module', {
-    description: 'New business module (schema + service + router + plugin)',
+    description: 'New business module - a standalone @oss-addons/<name> core add-on package',
     prompts: [
       {
         type: 'list',
         name: 'group',
-        message: 'Module group:',
+        // The group no longer maps to a directory (every add-on lives flat under
+        // packages/addons/<name>). It is kept purely as descriptive metadata in the
+        // generated AGENTS.md / scaffold message.
+        message: 'Surface this add-on serves (metadata only):',
         choices: MODULE_GROUPS as unknown as string[],
       },
       {
         type: 'input',
         name: 'name',
-        message: 'Module name (kebab-case):',
+        message: 'Add-on name (kebab-case):',
         validate: (v: string) => (kebabRe.test(v) ? true : 'use kebab-case'),
       },
     ],
     actions: (data?: Answers): PlopTypes.ActionType[] => {
       ossOnly('module');
       const a = data ?? {};
-      const base = 'packages/modules/{{group}}/{{kebabCase name}}';
+      const base = 'packages/addons/{{kebabCase name}}';
       return [
+        {
+          type: 'add',
+          path: `${base}/package.json`,
+          templateFile: tpl('module/package.json.hbs'),
+        },
+        {
+          type: 'add',
+          path: `${base}/tsconfig.json`,
+          templateFile: tpl('module/tsconfig.json.hbs'),
+        },
         {
           type: 'add',
           path: `${base}/src/schema/index.ts`,
@@ -205,13 +234,15 @@ export default function generator(plop: PlopTypes.NodePlopAPI): void {
           path: 'packages/contracts/orpc-contract/src/{{kebabCase name}}.ts',
           templateFile: tpl('contract.hbs'),
         },
+        // Core add-on: no `kind`, always loaded. Path points at the compiled plugin.
         () =>
           registerExtension(
             toKebab(s(a, 'name')),
-            `./packages/modules/dist/${s(a, 'group')}/${toKebab(s(a, 'name'))}/src/plugin.js`,
+            `./packages/addons/${toKebab(s(a, 'name'))}/dist/plugin.js`,
           ),
         () => wireContractIndex(toKebab(s(a, 'name'))),
-        () => 'next: pnpm regen && pnpm verify',
+        () => registerAddonSchema(toKebab(s(a, 'name'))),
+        () => 'next: pnpm install (link the new package) && pnpm regen && pnpm verify',
       ];
     },
   });

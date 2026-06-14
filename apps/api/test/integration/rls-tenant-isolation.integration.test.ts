@@ -1,8 +1,8 @@
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import { DrizzleService, getRequestDb } from '@oss/db';
 import { orm } from '@oss/db';
-import { wallet } from '@oss/modules/player/wallet/schema';
-import { WalletService } from '@oss/modules/player/wallet';
+import { wallet } from '@oss-addons/wallet/schema';
+import { WalletService } from '@oss-addons/wallet';
 import { withTenant, createEventBus, InMemoryBroker, createLogger } from '@oss/core';
 import type { PaymentAdapter } from '@oss/adapters';
 import { setupTestDb, type TestDb } from '@oss/testing';
