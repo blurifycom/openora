@@ -63,6 +63,14 @@ format:
   script:
     - pnpm format:check
 
+# Non-blocking warning: surfaces @deprecated API usage without failing the pipeline.
+deprecations:
+  stage: quality
+  needs: []
+  allow_failure: true
+  script:
+    - pnpm deprecations
+
 # Comprehensive gate. Catalog drift fails if generated docs are stale vs the code.
 verify:
   stage: quality
