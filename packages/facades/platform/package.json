@@ -1,0 +1,127 @@
+{
+  "name": "@oss/platform",
+  "version": "0.1.0",
+  "private": false,
+  "files": [
+    "dist"
+  ],
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js",
+      "default": "./dist/index.js"
+    },
+    "./server": {
+      "types": "./dist/server.d.ts",
+      "import": "./dist/server.js",
+      "default": "./dist/server.js"
+    },
+    "./plugin-host": {
+      "types": "./dist/plugin-host.d.ts",
+      "import": "./dist/plugin-host.js",
+      "default": "./dist/plugin-host.js"
+    },
+    "./auth": {
+      "types": "./dist/auth.d.ts",
+      "import": "./dist/auth.js",
+      "default": "./dist/auth.js"
+    },
+    "./adapters": {
+      "types": "./dist/adapters.d.ts",
+      "import": "./dist/adapters.js",
+      "default": "./dist/adapters.js"
+    },
+    "./db": {
+      "types": "./dist/db.d.ts",
+      "import": "./dist/db.js",
+      "default": "./dist/db.js"
+    },
+    "./db/orm": {
+      "types": "./dist/db/orm.d.ts",
+      "import": "./dist/db/orm.js",
+      "default": "./dist/db/orm.js"
+    },
+    "./migrate": {
+      "types": "./dist/migrate.d.ts",
+      "import": "./dist/migrate.js",
+      "default": "./dist/migrate.js"
+    },
+    "./contract": {
+      "types": "./dist/contract.d.ts",
+      "import": "./dist/contract.js",
+      "default": "./dist/contract.js"
+    },
+    "./schemas": {
+      "types": "./dist/schemas.d.ts",
+      "import": "./dist/schemas.js",
+      "default": "./dist/schemas.js"
+    },
+    "./compliance-invariants": {
+      "types": "./dist/compliance-invariants.d.ts",
+      "import": "./dist/compliance-invariants.js",
+      "default": "./dist/compliance-invariants.js"
+    },
+    "./react": {
+      "types": "./dist/react.d.ts",
+      "import": "./dist/react.js",
+      "default": "./dist/react.js"
+    },
+    "./plugins/audit": {
+      "types": "./dist/plugins/audit.d.ts",
+      "import": "./dist/plugins/audit.js",
+      "default": "./dist/plugins/audit.js"
+    },
+    "./plugins/iam": {
+      "types": "./dist/plugins/iam.d.ts",
+      "import": "./dist/plugins/iam.js",
+      "default": "./dist/plugins/iam.js"
+    }
+  },
+  "scripts": {
+    "build": "tsc",
+    "typecheck": "tsc --noEmit",
+    "clean": "rm -rf dist"
+  },
+  "dependencies": {
+    "@oss-addons/audit": "workspace:*",
+    "@oss-addons/iam": "workspace:*",
+    "@oss/adapters": "workspace:*",
+    "@oss/api-runtime": "workspace:*",
+    "@oss/auth": "workspace:*",
+    "@oss/compliance-invariants": "workspace:*",
+    "@oss/core": "workspace:*",
+    "@oss/db": "workspace:*",
+    "@oss/orpc-contract": "workspace:*",
+    "@oss/plugin-host": "workspace:*",
+    "@oss/react": "workspace:*",
+    "@oss/shared-schemas": "workspace:*"
+  },
+  "devDependencies": {
+    "@oss/tsconfig": "workspace:*",
+    "@tanstack/react-query": "5.69.0",
+    "@types/node": "25.9.2",
+    "@types/react": "19.2.2",
+    "react": "19.2.0",
+    "react-dom": "19.2.0",
+    "typescript": "6.0.3"
+  },
+  "peerDependencies": {
+    "@tanstack/react-query": ">=5",
+    "react": ">=19",
+    "react-dom": ">=19"
+  },
+  "peerDependenciesMeta": {
+    "react": {
+      "optional": true
+    },
+    "react-dom": {
+      "optional": true
+    },
+    "@tanstack/react-query": {
+      "optional": true
+    }
+  }
+}

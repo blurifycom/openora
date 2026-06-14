@@ -40,9 +40,13 @@
     "verify:drift": "turbo run codegen && tsx tools/gen-catalog.ts && git diff --exit-code -- docs/catalog.json",
     "eval:scaffold": "tsx tools/eval-scaffold.ts",
     "setup:agent": "tsx tools/setup-agent.ts",
-    "setup:mcp": "tsx tools/setup-mcp.ts"
+    "setup:mcp": "tsx tools/setup-mcp.ts",
+    "changeset": "changeset",
+    "version": "changeset version",
+    "release": "pnpm build && changeset publish"
   },
   "devDependencies": {
+    "@changesets/cli": "^2.31.0",
     "@oss/api-runtime": "workspace:*",
     "@oss/auth": "workspace:*",
     "@oss/db": "workspace:*",
