@@ -20,22 +20,13 @@
  * generators + dotfiles). The __dot__/.tpl/substitution rules apply throughout.
  */
 
-import {
-  readdirSync,
-  readFileSync,
-  writeFileSync,
-  mkdirSync,
-  existsSync,
-  statSync,
-  copyFileSync,
-} from 'node:fs';
+import { readdirSync, readFileSync, writeFileSync, mkdirSync, existsSync, statSync } from 'node:fs';
 import { join, dirname, relative, resolve, sep, basename } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const here = dirname(fileURLToPath(import.meta.url));
 const ossRoot = resolve(here, '..');
 const templateRoot = join(here, 'templates', 'consumer');
-const agentsDir = join(ossRoot, 'packages', 'platform', 'mcp', 'agents');
 
 type ParsedArgs = {
   target: string;
@@ -149,27 +140,10 @@ function main(): void {
   console.log(`  headless api-only consumer (frontend lives in your own repo)`);
   console.log(`  Linking @oss/* from ${vars.ossFromRoot}\n`);
 
-  // Base consumer repo (root config + apps/api + generators + dotfiles).
+  // Base consumer repo (root config + apps/api + generators + dotfiles). This
+  // includes the consumer AI agents under .rulesync/subagents/ (rulesync sources);
+  // `pnpm sync:agents` generates the per-tool mirrors (.claude/agents, .github/agents).
   emitTree(templateRoot, vars, targetDir);
-
-  // Drop in the consumer AI agents as rulesync subagent sources (single source of
-  // truth: @oss/mcp/agents, already in rulesync format). `pnpm sync:agents`
-  // generates the per-tool mirrors (.claude/agents, .github/agents).
-  const rulesyncSubagents = join(targetDir, '.rulesync', 'subagents');
-  mkdirSync(rulesyncSubagents, { recursive: true });
-  for (const f of [
-    'igaming-builder.md',
-    'igaming-expert.md',
-    'igaming-qa.md',
-    'igaming-debugger.md',
-    'igaming-deployer.md',
-  ]) {
-    const src = join(agentsDir, f);
-    if (existsSync(src)) {
-      copyFileSync(src, join(rulesyncSubagents, f));
-      console.log(`  + .rulesync/subagents/${f}`);
-    }
-  }
 
   console.log(`
   Done. Next steps:

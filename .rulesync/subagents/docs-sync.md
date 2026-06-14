@@ -66,8 +66,8 @@ Source docs (edit these directly):
 - `docs/adr/*.md` - only update with a dated "Update (YYYY-MM-DD)" block; never rewrite the original decision
 - `packages/**/AGENTS.md`, `apps/**/AGENTS.md` (per-package briefs - these stay hand-written, not rulesync-managed)
 - `.rulesync/subagents/*.md`, `.rulesync/commands/*.md` (internal agents + commands - including this file)
-- `packages/platform/mcp/agents/*.md` (consumer agents shipped to scaffolded repos)
-- `tools/templates/consumer/.rulesync/**` (consumer template source - see the template's own rulesync setup)
+- `tools/templates/consumer/__dot__rulesync/subagents/*.md` (consumer agents shipped to scaffolded repos)
+- `tools/templates/consumer/__dot__rulesync/**` (consumer template source - see the template's own rulesync setup)
 
 Do NOT edit:
 

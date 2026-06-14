@@ -197,7 +197,7 @@ Runs typecheck + unit tests + lint + module-shape + the whole-graph boundary/cyc
 
 ## Agent roster
 
-These agents are for **platform development** (building this OSS repo). Consumer igaming agents ship separately in `packages/platform/mcp/agents/`.
+These agents are for **platform development** (building this OSS repo). Consumer igaming agents ship separately in `tools/templates/consumer/__dot__rulesync/subagents/` (copied into scaffolded consumer repos).
 
 | Agent                       | Role                       | When to use                                                                                                                                                     |
 | --------------------------- | -------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------- |
