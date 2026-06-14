@@ -28,8 +28,14 @@ describe('RLS tenant isolation (integration)', () => {
   let testDb: TestDb;
   let svc: DrizzleService;
 
+  // tenantId is a text column (a tenant slug), so these stay human-readable.
   const TENANT_A = 'rls-tenant-a';
   const TENANT_B = 'rls-tenant-b';
+  // userId is a native uuid column (ADR-0022), so user fixtures must be valid uuids.
+  const USER_A = '11111111-1111-4111-8111-111111111111';
+  const USER_B = '22222222-2222-4222-8222-222222222222';
+  const USER_SMUGGLED = '33333333-3333-4333-8333-333333333333';
+  const USER_DEPOSIT = '44444444-4444-4444-8444-444444444444';
 
   beforeAll(async () => {
     testDb = await setupTestDb();
@@ -66,16 +72,16 @@ describe('RLS tenant isolation (integration)', () => {
   }
 
   it("tenant A's connection cannot read tenant B's rows", async () => {
-    await insertWallet(TENANT_A, 'user-a');
-    await insertWallet(TENANT_B, 'user-b');
+    await insertWallet(TENANT_A, USER_A);
+    await insertWallet(TENANT_B, USER_B);
 
     const seenByA = await userIdsSeenBy(TENANT_A);
     const seenByB = await userIdsSeenBy(TENANT_B);
 
-    expect(seenByA).toContain('user-a');
-    expect(seenByA).not.toContain('user-b');
-    expect(seenByB).toContain('user-b');
-    expect(seenByB).not.toContain('user-a');
+    expect(seenByA).toContain(USER_A);
+    expect(seenByA).not.toContain(USER_B);
+    expect(seenByB).toContain(USER_B);
+    expect(seenByB).not.toContain(USER_A);
   });
 
   it('the admin (BYPASSRLS) db sees every tenant', async () => {
@@ -93,18 +99,18 @@ describe('RLS tenant isolation (integration)', () => {
       svc.runWithTenant(TENANT_A, async () => {
         await svc.db
           .insert(wallet)
-          .values({ userId: 'smuggled', tenantId: TENANT_B, balance: '999', currency: 'USD' });
+          .values({ userId: USER_SMUGGLED, tenantId: TENANT_B, balance: '999', currency: 'USD' });
       }),
     ).rejects.toThrow();
   });
 
   it('runWithTenant cannot delete another tenant rows', async () => {
     await svc.runWithTenant(TENANT_A, async () => {
-      await svc.db.delete(wallet).where(eq(wallet.userId, 'user-b'));
+      await svc.db.delete(wallet).where(eq(wallet.userId, USER_B));
     });
     // user-b still exists - the delete matched zero rows under tenant A's policy.
     const seenByB = await userIdsSeenBy(TENANT_B);
-    expect(seenByB).toContain('user-b');
+    expect(seenByB).toContain(USER_B);
   });
 
   it('clears the request db store after the scope ends (no residual binding)', async () => {
@@ -123,7 +129,7 @@ describe('RLS tenant isolation (integration)', () => {
   it('first deposit through WalletService creates a wallet under the request tenant', async () => {
     const events = createEventBus(new InMemoryBroker(), createLogger('test'));
     const service = new WalletService(svc, events, fakePayment);
-    const userId = 'rls-deposit-user';
+    const userId = USER_DEPOSIT;
 
     await withTenant({ userId, tenantId: TENANT_A, traceId: 't' }, () =>
       svc.runWithTenant(TENANT_A, async () => {
