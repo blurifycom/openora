@@ -1,6 +1,6 @@
 import { implement } from '@orpc/server';
 import { getUserId, getTenantId, mapErrors, type OssContext } from '@oss/core';
-import { gamingContract } from '@oss/orpc-contract/gaming';
+import { gamingContract } from '../contract/index.js';
 import {
   GamingService,
   GameNotFoundError,

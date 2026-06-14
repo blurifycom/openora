@@ -16,7 +16,7 @@ Open-source, headless, plugin-based, AI-native igaming platform. Anyone clones t
 
 ## Architecture pillars
 
-1. Zod-first contracts. Every shape is a Zod schema; types are `z.infer`'d, never hand-written. Cross-cutting schemas live in `packages/contracts/shared-schemas`; per-module request/response schemas live in `packages/contracts/orpc-contract`, and module-local ones in the module's `schemas/`.
+1. Zod-first contracts. Every shape is a Zod schema; types are `z.infer`'d, never hand-written. Cross-cutting schemas live in `packages/contracts/shared-schemas`; each add-on OWNS its route contract + request/response schemas in its own `src/contract/` (the single source of truth, co-located with the service + router that implement it), and module-local helper schemas in `schemas/`. `@oss/orpc-contract` is the AGGREGATOR: it composes the always-loaded core add-on contracts into the one runtime `contract` the SDK typed client links against (it owns only `health`). See ADR-0021.
 2. oRPC + Hono. oRPC owns route definition + Zod validation + OpenAPI emit; its `OpenAPIHandler` is mounted on a Hono server (`@hono/node-server`, Bun-ready later). Dependency wiring is a small functional composition container (`Container` in `@oss/core`) - explicit factory functions keyed by typed tokens, no decorators, no `reflect-metadata`. See ADR-0009.
 3. Plugin host. `definePlugin({ id, dependsOn, register })` is the only way new functionality enters the system. Overlays (in-tree under `apps/api/src/extensions/<name>/`) are the primary path; npm-published plugins use the same contract.
 4. Headless backend only. The platform ships backend modules + contracts + SDK consumption surface only. The frontend - all components, styling, and theme - lives in the downstream consumer (consumer). Consumers import `@oss/react` (data hooks, typed client, auth context, cross-cutting helpers) and own their entire UI layer. No UI packages ship here.
@@ -41,7 +41,7 @@ packages/
   config/         # tsconfig, vitest, oxlint presets (boundary lint: tools/oxlint-boundaries-plugin.mjs specifier-level + .dependency-cruiser.cjs whole-graph)
   contracts/
     shared-schemas/ # Zod schemas - the source of truth
-    orpc-contract/  # Root oRPC contract composing CORE add-on routers
+    orpc-contract/  # Aggregator: composes each core add-on's owned contract (+ health) into the SDK typed client
     adapters/       # @oss/adapters - vendor adapter interfaces + DI tokens (the swap seams)
   platform/
     core/         # logger, event bus (EventBus + EVENT_BUS), composition Container, tenant context
@@ -51,12 +51,14 @@ packages/
     mcp/          # @oss/mcp - publishable MCP server consumers run against their own repo
   addons/         # Every feature is a standalone @oss-addons/<name> package under
                   #   packages/addons/<name>/ (own package.json, tsconfig, src/{schema,schemas,
-                  #   service,router,plugin}). Core add-ons (13) always load: admin-console,
-                  #   audit, bonus, chat, cms, compliance, gaming, iam, identity,
-                  #   lobby, notifications, profile, wallet. Their route
-                  #   contracts STAY in @oss/orpc-contract + central migrations. Gated
-                  #   add-ons (4, OSS_ADDONS) own contract slices + migrations: leaderboard,
-                  #   sportsbook, aggregator, player-management. See ADR-0021.
+                  #   contract,service,router,plugin}). EVERY add-on owns its contract slice
+                  #   (src/contract, exported as @oss-addons/<name>/contract). Core add-ons (13)
+                  #   always load: admin-console, audit, bonus, chat, cms, compliance, gaming,
+                  #   iam, identity, lobby, notifications, profile, wallet - @oss/orpc-contract
+                  #   AGGREGATES their contracts into the SDK typed client; their tables use
+                  #   central migrations. Gated add-ons (4, OSS_ADDONS) own contract slices +
+                  #   migrations and merge conditionally in apps/api: leaderboard, sportsbook,
+                  #   aggregator, player-management. See ADR-0021.
   sdks/
     react/        # @oss/react - data hooks, typed client, auth, realtime transport.
                   #   The supported frontend consumption surface. No UI components
@@ -72,7 +74,7 @@ extensions.config.ts # the single registry of enabled plugins
 
 ## Where does X go? (decision tree)
 
-- A new business domain (eg "tournaments") -> a new core add-on if it ships in the free edition, or a gated add-on if optional. Use `pnpm gen module <name>` (creates `@oss-addons/<name>` standalone package with own `package.json`, tsconfig, schemas, service, router, plugin). It registers in `extensions.config.ts` with no `kind` (core) or `kind: 'addon'` (gated); core add-on routes stay in `@oss/orpc-contract` (typed client + central migrations); gated add-ons own their contract slice + migrations. See ADR-0021.
+- A new business domain (eg "tournaments") -> a new core add-on if it ships in the free edition, or a gated add-on if optional. Use `pnpm gen module <name>` (creates `@oss-addons/<name>` standalone package with own `package.json`, tsconfig, schemas, service, router, plugin). It registers in `extensions.config.ts` with no `kind` (core) or `kind: 'addon'` (gated). Every add-on owns its route contract in `src/contract/` (exported as `@oss-addons/<name>/contract`); for a core add-on the `@oss/orpc-contract` aggregator imports that slice into the SDK typed client and its tables use central migrations; a gated add-on's contract merges conditionally in `apps/api` and it owns its own migrations. See ADR-0021.
 - A behavior that extends/overrides an existing add-on -> overlay plugin under `apps/api/src/extensions/<name>/`. Use `/scaffold-plugin <name>`.
 - A new HTTP route -> add to the add-on's `src/router/index.ts`. Use `/scaffold-route <addon-name> <method> <path>`. Player routes resolve the caller from the `x-user-id` header; admin routes MUST be guarded (next line).
 - An admin-only route -> the add-on's `plugin.ts` resolves `AdminGuard` from the container (`c.get(ADMIN_GUARD)`) and passes it into the router factory; call `await adminGuard.assert(context)` as the first line of the handler (throws `ORPCError`). `ADMIN_GUARD` is seeded into the container by `createApp`. This is the single admin-enforcement point - never re-implement the role check.
@@ -107,8 +109,8 @@ The rules both layers enforce:
 
 - `packages/addons/**` (all `@oss-addons/*` packages) may import: `@oss/contracts/*`, `@oss/adapters`, `@oss/platform/*`, `@oss/react`, and read-only `/schema` subpath imports from other add-ons. May NOT import another add-on's root/internals - cross-add-on communication goes through events or contracts (`no-cross-addon`).
 - `packages/platform/*` may import other `platform/*` and `@oss/contracts/*`. May NOT import add-ons (`api-runtime` and `testing`, the composition roots, are the only exceptions; they wire all add-ons and may read their `/schema` subpaths).
-- `packages/contracts/*` may only import other contracts and Zod.
-- The free core (`packages/{platform,contracts,sdks}/**`) may NEVER directly import `@oss-addons/*` (`no-core-to-addon`) - only `apps/*` may. This keeps add-ons extractable. See ADR-0021.
+- `packages/contracts/*` may only import other contracts and Zod. The ONE exception is the `@oss/orpc-contract` aggregator, which may import each core add-on's read-only `@oss-addons/<name>/contract` subpath to compose the SDK typed client (oxlint pins this carve-out to orpc-contract + the `/contract` subpath only). See ADR-0021.
+- The free core (`packages/{platform,contracts,sdks}/**`) may NEVER directly import `@oss-addons/*` (`no-core-to-addon`) - exceptions are the composition roots (`api-runtime`, `testing`, reading `/schema`) and the `@oss/orpc-contract` aggregator (reading `/contract`). Everything else wires add-ons in only through `apps/*`. This keeps add-ons extractable. See ADR-0021.
 - `apps/api/src/extensions/*` may import any package, but never another extension.
 - `apps/api` registers add-ons only via `extensions.config.ts`. A direct add-on file import from `apps/api/src/*` is a lint error.
 - Consumers (and add-ons) import the package entry, never a deep `dist/` path.
@@ -138,7 +140,7 @@ The rules both layers enforce:
 pnpm gen module <name>
 ```
 
-Generates `packages/addons/<name>/` as a standalone `@oss-addons/<name>` package with `package.json`, `tsconfig.json`, `src/{schema,schemas,service,router,plugin}`, and `AGENTS.md`. If the add-on is core (always loaded), the scaffolder registers it in `extensions.config.ts` with no `kind` and wires its contract index into `@oss/orpc-contract`. If gated (optional, OSS_ADDONS), it registers with `kind: 'addon'` and owns its own `src/contract/` slice + `drizzle.config.ts`. Run `pnpm regen && pnpm verify`. Each scaffolded file marks the regions you may edit with `// AGENT: implement here` - fill those; leave the wiring alone.
+Generates `packages/addons/<name>/` as a standalone `@oss-addons/<name>` package with `package.json`, `tsconfig.json`, `src/{schema,schemas,service,router,plugin}`, and `AGENTS.md`. Every add-on owns its `src/contract/` slice. If the add-on is core (always loaded), the scaffolder registers it in `extensions.config.ts` with no `kind` and adds its contract to the `@oss/orpc-contract` aggregator (so it joins the SDK typed client). If gated (optional, OSS_ADDONS), it registers with `kind: 'addon'`, merges its contract conditionally in `apps/api`, and owns its own `drizzle.config.ts`. Run `pnpm regen && pnpm verify`. Each scaffolded file marks the regions you may edit with `// AGENT: implement here` - fill those; leave the wiring alone.
 
 ## How to add an extension (overlay plugin)
 

@@ -1,9 +1,8 @@
 import { oc, populateContractRouterPaths } from '@orpc/contract';
 import * as z from 'zod';
-// The canonical player shape + lifecycle/KYC enums live in core (the free profile
-// surface uses them too). Add-on imports them - an add-on->core dependency, which
-// the boundary rules allow. See ADR-0020.
-import { PlayerSchema, PlayerStatusSchema, KycStatusSchema } from '@oss/orpc-contract';
+// The canonical player shape + lifecycle/KYC enums are cross-cutting (the free
+// profile add-on derives from them too), so they live in shared-schemas. See ADR-0021.
+import { PlayerSchema, PlayerStatusSchema, KycStatusSchema } from '@oss/shared-schemas';
 
 export { PlayerSchema, PlayerStatusSchema, KycStatusSchema };
 

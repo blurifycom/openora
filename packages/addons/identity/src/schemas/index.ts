@@ -6,4 +6,4 @@ export {
   type LoginInput,
   type RegisterInput,
 } from '@oss/shared-schemas';
-export { identityContract } from '@oss/orpc-contract';
+export { identityContract } from '../contract/index.js';

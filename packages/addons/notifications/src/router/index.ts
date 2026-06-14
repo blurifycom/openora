@@ -1,6 +1,6 @@
 import { implement } from '@orpc/server';
 import { getUserId, mapErrors, type OssContext } from '@oss/core';
-import { notificationsContract } from '@oss/orpc-contract/notifications';
+import { notificationsContract } from '../contract/index.js';
 import {
   NotificationsService,
   NotificationNotFoundError,

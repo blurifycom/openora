@@ -1,11 +1,11 @@
 import { implement } from '@orpc/server';
 import { AdminGuard } from '@oss/auth';
 import { mapErrors, type OssContext } from '@oss/core';
-import { contract } from '@oss/orpc-contract';
+import { auditContract } from '../contract/index.js';
 import { AuditService } from '../service/audit.service.js';
 
 export function createAuditRouter(svc: AuditService, adminGuard: AdminGuard) {
-  const os = implement(contract.audit).$context<OssContext>();
+  const os = implement(auditContract).$context<OssContext>();
 
   return os.router({
     list: os.list.handler(async ({ input, context }) => {

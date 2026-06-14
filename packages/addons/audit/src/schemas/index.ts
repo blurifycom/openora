@@ -4,14 +4,14 @@ export {
   AuditActorTypeSchema,
   AuditListFiltersSchema,
   AuditExportFiltersSchema,
-} from '@oss/orpc-contract/audit';
+} from '../contract/index.js';
 import type { z } from 'zod';
 import type {
   AuditLogEntrySchema,
   AuditActorTypeSchema,
   AuditListFiltersSchema,
   AuditExportFiltersSchema,
-} from '@oss/orpc-contract/audit';
+} from '../contract/index.js';
 
 export type AuditLogEntry = z.infer<typeof AuditLogEntrySchema>;
 export type AuditActorType = z.infer<typeof AuditActorTypeSchema>;

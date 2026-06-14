@@ -28,20 +28,26 @@ module.exports = {
       name: 'no-contracts-to-runtime',
       severity: 'error',
       comment:
-        'contracts/* may import only other contracts (and zod). No modules, platform runtime, sdks, ui, or apps. See AGENTS.md > Dependency rules.',
+        'contracts/* may import only other contracts (and zod). No modules, platform runtime, sdks, ui, or apps. The one exception is the @oss/orpc-contract aggregator reading add-on `/contract` slices (the read-only subpath that owns each route contract), which it composes into the SDK`s typed client. See AGENTS.md > Dependency rules and ADR-0021.',
       from: { path: '^packages/contracts/' },
-      to: { path: '^(apps/|packages/)', pathNot: '^packages/contracts/' },
+      to: {
+        path: '^(apps/|packages/)',
+        pathNot: '^packages/contracts/|^packages/addons/[^/]+/src/contract(/|$)',
+      },
     },
     {
       name: 'no-core-to-addon',
       severity: 'error',
       comment:
-        'The core OSS build must never depend on an add-on package. packages/{platform,contracts,sdks}/* may not import packages/addons/* (@oss-addons/*). The only exceptions are the two composition roots under packages/platform/(api-runtime|testing)/, which read add-on /schema subpaths for seeding + tenant resolution; everything else wires add-on in only through the composition roots under apps/* (via extensions.config.ts + the createApp contract merge). This is the guarantee that an add-on package can be extracted without breaking core. See docs/adr/ADR-0020-editions-and-add-on-modules.md.',
+        'The core OSS build must never depend on an add-on package. packages/{platform,contracts,sdks}/* may not import packages/addons/* (@oss-addons/*). Exceptions: (1) the two composition roots under packages/platform/(api-runtime|testing)/, which read add-on /schema subpaths for seeding + tenant resolution; (2) the @oss/orpc-contract aggregator reading add-on `/contract` slices to compose the SDK typed client (oxlint pins this to orpc-contract only). Everything else wires add-on in only through the composition roots under apps/*. This keeps an add-on package extractable. See ADR-0021.',
       from: {
         path: '^packages/(platform|contracts|sdks)/',
         pathNot: '^packages/platform/(api-runtime|testing)/',
       },
-      to: { path: '^packages/addons/' },
+      to: {
+        path: '^packages/addons/',
+        pathNot: '^packages/addons/[^/]+/src/contract(/|$)',
+      },
     },
     {
       name: 'no-cross-addon',

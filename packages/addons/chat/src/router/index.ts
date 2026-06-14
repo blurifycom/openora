@@ -2,7 +2,7 @@ import { implement } from '@orpc/server';
 import { populateContractRouterPaths } from '@orpc/contract';
 import { mapErrors, createEventStreamGenerator, getUserId, type OssContext } from '@oss/core';
 import type { RealtimeClientAuthorizer } from '@oss/adapters';
-import { chatContract } from '@oss/orpc-contract/chat';
+import { chatContract } from '../contract/index.js';
 import {
   ChatService,
   chatChannel,

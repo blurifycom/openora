@@ -1,6 +1,6 @@
 import { implement } from '@orpc/server';
 import { mapErrors, type OssContext } from '@oss/core';
-import { lobbyContract } from '@oss/orpc-contract/lobby';
+import { lobbyContract } from '../contract/index.js';
 import { LobbyService, LobbyCategoryNotFoundError } from '../service/lobby.service.js';
 
 export function createLobbyRouter(lobby: LobbyService) {

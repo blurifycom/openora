@@ -1,7 +1,7 @@
 import { implement } from '@orpc/server';
 import { AdminGuard } from '@oss/auth';
 import { mapErrors, type OssContext } from '@oss/core';
-import { contract } from '@oss/orpc-contract';
+import { iamContract } from '../contract/index.js';
 import {
   IamService,
   RoleNotFoundError,
@@ -12,7 +12,7 @@ import {
 } from '../service/iam.service.js';
 
 export function createIamRouter(svc: IamService, adminGuard: AdminGuard) {
-  const os = implement(contract.iam).$context<OssContext>();
+  const os = implement(iamContract).$context<OssContext>();
 
   return os.router({
     listCatalog: os.listCatalog.handler(async ({ context }) => {

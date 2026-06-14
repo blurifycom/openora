@@ -7,7 +7,7 @@ export {
   AdminInvitationSchema,
   CatalogEntrySchema,
   GrantInputSchema,
-} from '@oss/orpc-contract/iam';
+} from '../contract/index.js';
 import type { z } from 'zod';
 import type {
   AdminRoleSchema,
@@ -15,7 +15,7 @@ import type {
   AdminRoleAssignmentSchema,
   AdminInvitationSchema,
   CatalogEntrySchema,
-} from '@oss/orpc-contract/iam';
+} from '../contract/index.js';
 
 export type AdminRole = z.infer<typeof AdminRoleSchema>;
 export type AdminRoleWithGrants = z.infer<typeof AdminRoleWithGrantsSchema>;

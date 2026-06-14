@@ -2,7 +2,7 @@ import {
   PlatformStatsSchema,
   AdminUserSchema,
   AdminTransactionSchema,
-} from '@oss/orpc-contract/backoffice';
+} from '../contract/index.js';
 import type { z } from 'zod';
 
 export { PlatformStatsSchema, AdminUserSchema, AdminTransactionSchema };

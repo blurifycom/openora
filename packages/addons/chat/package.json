@@ -20,6 +20,11 @@
       "types": "./dist/plugin.d.ts",
       "import": "./dist/plugin.js",
       "default": "./dist/plugin.js"
+    },
+    "./contract": {
+      "types": "./dist/contract/index.d.ts",
+      "import": "./dist/contract/index.js",
+      "default": "./dist/contract/index.js"
     }
   },
   "scripts": {
@@ -38,7 +43,6 @@
     "@oss/auth": "workspace:*",
     "@oss/core": "workspace:*",
     "@oss/db": "workspace:*",
-    "@oss/orpc-contract": "workspace:*",
     "@oss/plugin-host": "workspace:*",
     "@oss/shared-schemas": "workspace:*",
     "@paralleldrive/cuid2": "3.3.0",

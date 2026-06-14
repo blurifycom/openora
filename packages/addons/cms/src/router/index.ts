@@ -1,11 +1,11 @@
 import { implement } from '@orpc/server';
 import { AdminGuard } from '@oss/auth';
 import { mapErrors, type OssContext } from '@oss/core';
-import { contract } from '@oss/orpc-contract';
+import { cmsContract } from '../contract/index.js';
 import { CmsService, PageNotFoundError, BannerNotFoundError } from '../service/cms.service.js';
 
 export function createCmsRouter(cms: CmsService, adminGuard: AdminGuard) {
-  const os = implement(contract.cms).$context<OssContext>();
+  const os = implement(cmsContract).$context<OssContext>();
 
   return os.router({
     // Public reads.

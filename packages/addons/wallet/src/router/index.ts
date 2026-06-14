@@ -1,6 +1,6 @@
 import { implement } from '@orpc/server';
 import { getUserId, mapErrors, type OssContext } from '@oss/core';
-import { walletContract } from '@oss/orpc-contract/wallet';
+import { walletContract } from '../contract/index.js';
 import {
   WalletService,
   WalletNotFoundError,

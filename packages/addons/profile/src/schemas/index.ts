@@ -1,9 +1,5 @@
-import {
-  PlayerSchema,
-  PlayerStatusSchema,
-  KycStatusSchema,
-  UpdatePlayerProfileInputSchema,
-} from '@oss/orpc-contract';
+import { PlayerSchema, PlayerStatusSchema, KycStatusSchema } from '@oss/shared-schemas';
+import { UpdatePlayerProfileInputSchema } from '../contract/index.js';
 import type { z } from 'zod';
 
 export { PlayerSchema, PlayerStatusSchema, KycStatusSchema, UpdatePlayerProfileInputSchema };

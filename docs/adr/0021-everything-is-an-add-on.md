@@ -4,6 +4,16 @@
 **Status**: Accepted; implemented.
 **Relates to**: ADR-0020 (gated add-on editions and isolation), ADR-0002 (plugin system).
 
+## Update (2026-06-14): contracts inverted - every add-on owns its contract
+
+The original decision below kept CORE add-on route contracts in `@oss/orpc-contract` (to avoid a core->add-on import) while only GATED add-ons owned an in-package `src/contract/` slice. That left a feature's contract in one package and its service/router in another - two locations for one source of truth.
+
+This is now inverted so the model is uniform: **every add-on owns its contract in `src/contract/` (exported as `@oss-addons/<name>/contract`)** - core and gated alike, structurally identical. `@oss/orpc-contract` becomes a pure **aggregator**: it imports each core add-on's `/contract` slice, composes the single runtime `contract` the `@oss/react` typed client links against, and re-exports their schemas for back-compat. It owns only `health` (not an add-on). Gated add-on contracts still merge conditionally in `apps/api` (`editions.ts`), so the default typed client carries no gated surface.
+
+Consequence: this inverts the dependency - `@oss/orpc-contract` (and transitively `@oss/react`) now depends on the core add-on packages. A narrow carve-out lets the aggregator import the read-only `@oss-addons/<name>/contract` subpath only (oxlint pins the exception to `orpc-contract`; dependency-cruiser exempts add-on `/contract` dirs). The cross-cutting `PlayerSchema` family moved to `@oss/shared-schemas` (it is shared by the `profile` and `player-management` add-ons). The count below is now **13 core add-ons** (localization was removed - translations live in the frontend consumer).
+
+The original decision text is retained below for the record.
+
 ## Context
 
 Previously the platform had two tiers: "modules" (14 features colocated in `packages/modules/<group>/<name>/`, sharing one `@oss/modules` package entry and central Drizzle migrations) and "add-ons" (4 optional `@oss-addons/<name>` packages with own migrations, gated by `OSS_ADDONS`). The group folders (`player`, `backoffice`, `platform`) existed only as organizational structure in prose; the codebase had no way to cleanly add a NEW feature to core or distinguish packaging at build time.

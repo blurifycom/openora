@@ -181,13 +181,23 @@ function collectSlots(): Array<{ name: string; description: string }> {
 }
 
 // --- Zod schema index ------------------------------------------------------
+// Each add-on now OWNS its route contract under src/contract (the inversion in
+// ADR-0021), so the schema index spans the cross-cutting contracts packages plus
+// every add-on's contract dir, not just packages/contracts.
 function collectSchemas(): Array<{ name: string; file: string }> {
   const out: Array<{ name: string; file: string }> = [];
-  for (const file of walk(join(repoRoot, 'packages', 'contracts'), '.ts')) {
-    if (file.endsWith('.d.ts')) continue;
-    const rel = file.replace(`${repoRoot}/`, '');
-    for (const m of readFileSync(file, 'utf8').matchAll(/export const (\w+Schema)\b/g)) {
-      out.push({ name: m[1]!, file: rel });
+  const roots = [join(repoRoot, 'packages', 'contracts')];
+  for (const entry of readdirSync(addonsRoot)) {
+    const contractDir = join(addonsRoot, entry, 'src', 'contract');
+    if (existsSync(contractDir)) roots.push(contractDir);
+  }
+  for (const root of roots) {
+    for (const file of walk(root, '.ts')) {
+      if (file.endsWith('.d.ts')) continue;
+      const rel = file.replace(`${repoRoot}/`, '');
+      for (const m of readFileSync(file, 'utf8').matchAll(/export const (\w+Schema)\b/g)) {
+        out.push({ name: m[1]!, file: rel });
+      }
     }
   }
   return out.sort((a, b) => a.name.localeCompare(b.name));

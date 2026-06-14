@@ -1,10 +1,10 @@
 import { implement } from '@orpc/server';
 import { type OssContext } from '@oss/core';
-import { contract } from '@oss/orpc-contract';
+import { identityContract } from '../contract/index.js';
 import { IdentityService } from '../service/identity.service.js';
 
 export function createIdentityRouter(identity: IdentityService) {
-  const os = implement(contract.identity).$context<OssContext>();
+  const os = implement(identityContract).$context<OssContext>();
 
   return os.router({
     register: os.register.handler(({ input, context }) =>

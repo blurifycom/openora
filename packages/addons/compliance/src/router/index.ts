@@ -1,7 +1,7 @@
 import { implement } from '@orpc/server';
 import { AdminGuard } from '@oss/auth';
 import { getUserId, mapErrors, type OssContext } from '@oss/core';
-import { complianceContract } from '@oss/orpc-contract/compliance';
+import { complianceContract } from '../contract/index.js';
 import {
   ComplianceService,
   LimitNotFoundError,

@@ -1,5 +1,5 @@
 import * as z from 'zod';
-import { GameSchema, GameRoundSchema } from '@oss/orpc-contract/gaming';
+import { GameSchema, GameRoundSchema } from '../contract/index.js';
 
 export { GameSchema, GameRoundSchema };
 

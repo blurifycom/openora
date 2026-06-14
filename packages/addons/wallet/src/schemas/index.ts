@@ -5,7 +5,7 @@ import {
   DepositInputSchema,
   WithdrawInputSchema,
   TransactionResultSchema,
-} from '@oss/orpc-contract/wallet';
+} from '../contract/index.js';
 
 export {
   WalletBalanceSchema,
@@ -14,7 +14,7 @@ export {
   WithdrawInputSchema,
   TransactionResultSchema,
   walletContract,
-} from '@oss/orpc-contract/wallet';
+} from '../contract/index.js';
 
 export type WalletBalance = z.infer<typeof WalletBalanceSchema>;
 export type WalletTransaction = z.infer<typeof WalletTransactionSchema>;

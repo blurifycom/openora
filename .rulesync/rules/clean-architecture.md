@@ -16,7 +16,8 @@ Settled conventions - keep to them, do not reopen. Style/syntax rules live in `o
 | Layer    | File                        | Holds                                                                       | Must NOT hold                    |
 | -------- | --------------------------- | --------------------------------------------------------------------------- | -------------------------------- |
 | schema   | `schema/index.ts`           | Drizzle `pgTable`s, row types via `$inferSelect`/`$inferInsert`             | logic                            |
-| schemas  | `schemas/index.ts`          | Zod input/output (mostly re-export from contracts)                          | ad-hoc inline schemas            |
+| contract | `contract/index.ts`         | the add-on's oRPC route contract + request/response Zod schemas - the source of truth, exported as `@oss-addons/<name>/contract` | logic, transport wiring          |
+| schemas  | `schemas/index.ts`          | Zod input/output (mostly re-export from `../contract` + shared-schemas)      | ad-hoc inline schemas            |
 | service  | `service/<name>.service.ts` | ALL business logic; emits events after DB commit; money in `db.transaction` | HTTP/transport knowledge         |
 | router   | `router/index.ts`           | thin oRPC wiring: resolve caller (`getUserId`), call service, `mapErrors`   | business rules, SSE plumbing     |
 | plugin   | `plugin.ts`                 | DI wiring only: `ctx.provide(...)`, `ctx.routers.add(...)`                  | logic                            |

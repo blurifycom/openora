@@ -1,4 +1,4 @@
-import { ChatRoomSchema, ChatMessageSchema, chatContract } from '@oss/orpc-contract/chat';
+import { ChatRoomSchema, ChatMessageSchema, chatContract } from '../contract/index.js';
 import type { z } from 'zod';
 
 export { ChatRoomSchema, ChatMessageSchema, chatContract };

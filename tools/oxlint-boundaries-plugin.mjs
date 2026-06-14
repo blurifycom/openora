@@ -48,12 +48,24 @@ function isAddonSpecifier(spec) {
   return spec === '@oss-addons' || spec.startsWith('@oss-addons/');
 }
 
+// The @oss/orpc-contract aggregator is the one sanctioned core->add-on edge: it
+// composes the always-loaded core add-on contracts into the single runtime
+// `contract` the SDK links against. It may import ONLY the read-only
+// `@oss-addons/<name>/contract` subpath (never an add-on root, /schema, or
+// internals), so the inversion is contracts-only and every add-on still owns its
+// contract as the single source of truth. See ADR-0021.
+function isAggregatorImportingAddonContract(file, spec) {
+  if (!inPath(file, 'packages/contracts/orpc-contract')) return false;
+  return /^@oss-addons\/[a-z0-9-]+\/contract$/.test(spec);
+}
+
 const noCoreToAddon = {
   create(context) {
     return {
       ImportDeclaration(node) {
         if (!isCoreFile(filename(context))) return;
         if (!isAddonSpecifier(node.source.value)) return;
+        if (isAggregatorImportingAddonContract(filename(context), node.source.value)) return;
         context.report({
           node,
           message:
@@ -131,6 +143,8 @@ const noContractsToRuntime = {
         const file = filename(context);
         if (!inPath(file, 'packages/contracts')) return;
         const spec = node.source.value;
+        // The orpc-contract aggregator may pull add-on /contract subpaths (above).
+        if (isAggregatorImportingAddonContract(file, spec)) return;
         const blocked = blocked_by_contracts.some((b) => spec === b || spec.startsWith(b + '/'));
         if (blocked) {
           context.report({

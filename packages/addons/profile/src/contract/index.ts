@@ -1,6 +1,6 @@
 import { oc } from '@orpc/contract';
 import * as z from 'zod';
-import { PlayerSchema } from './player.js';
+import { PlayerSchema } from '@oss/shared-schemas';
 
 /**
  * Player-facing self-profile contract. Distinct from the admin PAM surface
