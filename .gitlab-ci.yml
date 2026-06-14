@@ -10,13 +10,16 @@ image: node:26
 stages:
   - quality
   - integration
+  - release
 
-# Run on merge requests and on the long-lived branches (default + env branches).
+# Run on merge requests, the long-lived branches (default + env branches), and
+# release tags (v1.2.3) which trigger the publish stage.
 workflow:
   rules:
     - if: $CI_PIPELINE_SOURCE == "merge_request_event"
     - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
     - if: $CI_COMMIT_BRANCH =~ /^(dev|stage)$/
+    - if: $CI_COMMIT_TAG =~ /^v\d+\.\d+\.\d+$/
 
 variables:
   BETTER_AUTH_SECRET: ci-secret-not-for-production-0000000000
@@ -97,3 +100,28 @@ integration:
   script:
     - pnpm build
     - pnpm test:integration
+
+# --- release (publish to the GitLab npm registry) ----------------------------
+
+# Publishes every @oss/* + @oss-addons/* package (one fixed version, Changesets)
+# to THIS project's npm registry. Triggered by a release tag (v1.2.3). The
+# consumer (Consumer) installs from the same registry. See ADR-0022.
+#
+# CI_API_V4_URL / CI_PROJECT_ID / CI_JOB_TOKEN are predefined - no hardcoded
+# project id or PAT. The job token can read+write this project's registry.
+publish:
+  stage: release
+  rules:
+    - if: $CI_COMMIT_TAG =~ /^v\d+\.\d+\.\d+$/
+  script:
+    - |
+      {
+        echo "@oss:registry=${CI_API_V4_URL}/projects/${CI_PROJECT_ID}/packages/npm/"
+        echo "@oss-addons:registry=${CI_API_V4_URL}/projects/${CI_PROJECT_ID}/packages/npm/"
+        echo "//${CI_SERVER_HOST}/api/v4/projects/${CI_PROJECT_ID}/packages/npm/:_authToken=${CI_JOB_TOKEN}"
+      } >> .npmrc
+    # changeset publish skips any package whose version already exists in the
+    # registry, so re-running a tag is safe. workspace:* is rewritten to the
+    # fixed version in each published tarball.
+    - pnpm build
+    - pnpm changeset publish

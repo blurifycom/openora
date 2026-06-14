@@ -1,0 +1,64 @@
+{
+  "name": "@oss/account",
+  "version": "0.1.0",
+  "private": false,
+  "files": [
+    "dist"
+  ],
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js",
+      "default": "./dist/index.js"
+    },
+    "./contracts": {
+      "types": "./dist/contracts.d.ts",
+      "import": "./dist/contracts.js",
+      "default": "./dist/contracts.js"
+    },
+    "./contracts/player": {
+      "types": "./dist/contracts/player.d.ts",
+      "import": "./dist/contracts/player.js",
+      "default": "./dist/contracts/player.js"
+    },
+    "./plugins/identity": {
+      "types": "./dist/plugins/identity.d.ts",
+      "import": "./dist/plugins/identity.js",
+      "default": "./dist/plugins/identity.js"
+    },
+    "./plugins/profile": {
+      "types": "./dist/plugins/profile.d.ts",
+      "import": "./dist/plugins/profile.js",
+      "default": "./dist/plugins/profile.js"
+    },
+    "./plugins/compliance": {
+      "types": "./dist/plugins/compliance.d.ts",
+      "import": "./dist/plugins/compliance.js",
+      "default": "./dist/plugins/compliance.js"
+    },
+    "./plugins/player-management": {
+      "types": "./dist/plugins/player-management.d.ts",
+      "import": "./dist/plugins/player-management.js",
+      "default": "./dist/plugins/player-management.js"
+    }
+  },
+  "scripts": {
+    "build": "tsc",
+    "typecheck": "tsc --noEmit",
+    "clean": "rm -rf dist"
+  },
+  "dependencies": {
+    "@oss-addons/compliance": "workspace:*",
+    "@oss-addons/identity": "workspace:*",
+    "@oss-addons/player-management": "workspace:*",
+    "@oss-addons/profile": "workspace:*"
+  },
+  "devDependencies": {
+    "@oss/tsconfig": "workspace:*",
+    "@types/node": "25.9.2",
+    "typescript": "6.0.3"
+  }
+}
