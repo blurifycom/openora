@@ -1,7 +1,7 @@
 # ADR-0024: Domain-as-package + distribution tiers
 
 **Date**: 2026-06-14
-**Status**: Accepted; supersedes the packaging decision in ADR-0022. **OSS side implemented 2026-06-15** (`pnpm verify` green): 3 foundation packages (`packages/foundation/{contracts,runtime,react}`), 6 domain packages (`packages/domains/{pam,wallet,casino,sportsbook,cms,engagement}`), `packages/addons/` reduced to the 3 platform-internal/consumer-composed add-ons (admin-console, audit, iam). `@oss/platform` kept as a compat facade. Remaining: publish to registry + Consumer consumer rewire.
+**Status**: Accepted + **IMPLEMENTED & PUBLISHED 2026-06-15**, supersedes the packaging decision in ADR-0022. 3 foundation packages (`packages/foundation/{contracts,runtime,react}`), 6 domain packages (`packages/domains/{pam,wallet,casino,sportsbook,cms,engagement}`), `packages/addons/` reduced to the 3 platform-internal/consumer-composed add-ons (admin-console, audit, iam). `@oss/platform` kept as a compat facade. Published at **v0.2.0** to the GitLab registry (the private registry, tag-triggered CI); Consumer migrated (account->pam, cms extracted) and verified (typecheck + build green); the 14 folded `@oss-addons/*` member packages + the `@oss/account` facade deleted from the registry.
 **Relates to**: ADR-0021 (everything is a standalone add-on), ADR-0020 (gated add-on editions), ADR-0023 (headless platform), ADR-0002/0014 (plugin + adapter/port seams), ADR-0010/0017 (events + command ports).
 
 ## Context
