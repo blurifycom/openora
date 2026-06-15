@@ -43,10 +43,10 @@ This collapses ADR-0022's facade+members into one real package per domain: same 
 
 Tier is an `.npmrc` scope + an entitlement, **not** a code structure. The same package shape ships at any tier:
 
-| Tier                | Registry / location              | Example                                         |
-| ------------------- | -------------------------------- | ----------------------------------------------- |
-| **public**          | GitLab `@oss`, npm later         | `@oss/runtime`, `@oss/pam`, `@oss/casino`       |
-| **private/premium** | premium registry, licensed token | `@oss/casino-jackpots`, `@oss/pam-aml-pro`      |
+| Tier                | Registry / location              | Example                                               |
+| ------------------- | -------------------------------- | ----------------------------------------------------- |
+| **public**          | GitLab `@oss`, npm later         | `@oss/runtime`, `@oss/pam`, `@oss/casino`             |
+| **private/premium** | premium registry, licensed token | `@oss/casino-jackpots`, `@oss/pam-aml-pro`            |
 | **consumer-local**  | the operator's own repo/scope    | `@my-igaming/jackpot-wheel`, `@my-igaming/fireblocks` |
 
 A premium plugin is just **shape=add-on, tier=private**. The consumer wires all three tiers identically - registry origin is invisible to code:
