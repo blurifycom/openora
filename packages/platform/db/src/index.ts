@@ -12,6 +12,6 @@ export { OutboxRelay, type OutboxRelayOptions } from './outbox/relay.js';
 
 // The drizzle surface (tables + operators) lives at the `@oss/db/orm` subpath -
 // a framework-free leaf so drizzle-kit can bundle module schemas without pulling
-// in DrizzleService. Cross-workspace consumers (eg consumer, linked via `link:`)
+// in DrizzleService. Cross-workspace consumers (eg a linked consumer via `link:`)
 // import drizzle from there to share @oss/db's single physical drizzle-orm copy.
 export * as orm from './orm.js';

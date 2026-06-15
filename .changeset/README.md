@@ -2,7 +2,7 @@
 
 This folder drives versioning + publishing of the `@oss/*` and `@oss-addons/*` packages
 to the GitLab package registry. The whole set shares **one fixed version** (see
-`config.json` `fixed`), so a downstream consumer (Consumer) pins a single range. See
+`config.json` `fixed`), so a downstream consumer pins a single range. See
 [ADR-0022](../docs/adr/0022-domain-distribution-packages.md).
 
 - Add a changeset for a publishable change: `pnpm changeset` (pick bump, write summary).

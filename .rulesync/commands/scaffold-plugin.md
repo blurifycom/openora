@@ -27,7 +27,7 @@ After the generator finishes:
    default - keep the override order intentional in `extensions.config.ts`.
 
    This repo is headless - plugins are server-side only. UI extensions (`defineUIPlugin`,
-   nav/column/tile/section slots) live in the frontend repo (consumer), not here.
+   nav/column/tile/section slots) live in the frontend repo, not here.
 
 2. Run `pnpm verify` to check the wiring compiles and the boundary lint passes.
 

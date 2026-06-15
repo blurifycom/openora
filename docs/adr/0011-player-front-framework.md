@@ -13,7 +13,7 @@ A correction that shaped the comparison: as of 2026-05, TanStack's _RSC_ support
 
 ## Method
 
-Built the comparison in the `consumer` consumer (`apps/web` = Next 16, `apps/web-tanstack` = TanStack Start). Both mount the **same** `@oss/react-sdk` pages (lobby, games, sportsbook, wallet, login) with the **same** `daisyuiProvider`, so the only variable is the framework shell. Both fetch SSR data through the identical `@oss/react-sdk/server` fetchers (`fetchLobbyData`, `fetchSportsbookData`), forwarding the player's cookies; the sportsbook page exercises the real-time path (live odds over SSE via `useEventStream`). Bundle sizes are gzipped client JS measured on disk from a production build.
+Built the comparison in the consumer (`apps/web` = Next 16, `apps/web-tanstack` = TanStack Start). Both mount the **same** `@oss/react-sdk` pages (lobby, games, sportsbook, wallet, login) with the **same** `daisyuiProvider`, so the only variable is the framework shell. Both fetch SSR data through the identical `@oss/react-sdk/server` fetchers (`fetchLobbyData`, `fetchSportsbookData`), forwarding the player's cookies; the sportsbook page exercises the real-time path (live odds over SSE via `useEventStream`). Bundle sizes are gzipped client JS measured on disk from a production build.
 
 That both shells run the same page bodies unchanged is itself the key finding: the framework choice is low-risk and reversible because the data/page layer (`sdk-core` + react-query + the server fetchers) is framework-agnostic.
 
@@ -39,7 +39,7 @@ This is **Proposed**, not Accepted: org familiarity and time-to-ship are real, n
 
 ## Consequences
 
-- The OSS default scaffold keeps `--web=next` for back-compat; Consumer's player app uses TanStack Start.
+- The OSS default scaffold keeps `--web=next` for back-compat; the reference consumer uses TanStack Start.
   (As of 2026-05-28 this is no longer true - the `--web` flag and the TanStack Start variant were removed. See ADR-0012.)
 - TanStack route trees (`routeTree.gen.ts`) are generated on first dev/build (gitignored) - a fresh `tsc --noEmit` fails until `pnpm dev` runs once. Standard TanStack behavior; note it in consumer setup.
 - Follow-up: a rig-measured LCP-on-3G pass and the framework-aware `pnpm gen page` generator (currently Next-shaped only).

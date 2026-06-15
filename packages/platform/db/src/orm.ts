@@ -1,5 +1,5 @@
 // NestJS-free drizzle surface. Modules define tables with these builders, and
-// cross-workspace consumers (eg consumer, linked via `link:`) import tables +
+// cross-workspace consumers (eg a linked consumer via `link:`) import tables +
 // operators from here so they share @oss/db's single physical drizzle-orm copy.
 // Importing `drizzle-orm` directly in a linked consumer pulls a second physical
 // copy, and drizzle's protected-member classes then fail nominal type checks

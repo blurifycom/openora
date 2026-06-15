@@ -43,7 +43,7 @@ You are an expert building an overlay plugin for the OSS igaming platform. You e
 
 This repo is headless - plugins are server-side only. A `plugin.ts` exports
 `definePlugin({ id, register(ctx) })`, which runs at API boot via the composition
-Container. UI plugins (`defineUIPlugin`) live in the frontend repo (consumer), not here.
+Container. UI plugins (`defineUIPlugin`) live in the frontend repo, not here.
 
 ### Server: `register(ctx)` - ModuleRegistry API
 

@@ -3,9 +3,8 @@
 ## What this package does
 
 Shared test harness for integration suites, used by this repo's `apps/api`
-integration tests and by downstream consumers (eg Consumer). It boots the real
-Hono + oRPC app in-process against a real Postgres test database - no mocks, no
-network listener.
+integration tests and by downstream consumers. It boots the real Hono + oRPC app
+in-process against a real Postgres test database - no mocks, no network listener.
 
 ## Exports
 

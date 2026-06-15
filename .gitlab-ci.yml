@@ -105,7 +105,7 @@ integration:
 
 # Publishes every @oss/* + @oss-addons/* package (one fixed version, Changesets)
 # to THIS project's npm registry. Triggered by a release tag (v1.2.3). The
-# consumer (Consumer) installs from the same registry. See ADR-0022.
+# downstream consumer installs from the same registry. See ADR-0022.
 #
 # CI_API_V4_URL / CI_PROJECT_ID / CI_JOB_TOKEN are predefined - no hardcoded
 # project id or PAT. The job token can read+write this project's registry.

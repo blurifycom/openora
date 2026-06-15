@@ -58,7 +58,7 @@ This creates `packages/addons/<name>/` as a standalone `@oss-addons/<name>` pack
 
 ### Frontend
 
-- This repo is headless backend only. Frontend pages, components, and styling live in the consumer repo and consume the api over HTTP via `@oss/react`. Build no UI here.
+- This repo is headless backend only. Frontend pages, components, and styling live in the downstream consumer repo and consume the api over HTTP via `@oss/react`. Build no UI here.
 
 ## After scaffolding
 

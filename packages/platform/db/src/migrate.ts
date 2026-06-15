@@ -1,7 +1,7 @@
 // Runtime migration runner — applies a drizzle migration set using drizzle-orm's
 // migrator (NOT drizzle-kit, which is a dev-only authoring tool). Each migration
 // set ships its compiled SQL in the package tarball (`files: ["drizzle"]`), so a
-// registry consumer (eg consumer) runs migrations straight from node_modules with
+// registry consumer runs migrations straight from node_modules with
 // no source checkout. The core history here is shared by every core add-on; gated
 // add-ons ship their own `migrate` that calls `runMigrations` with their own
 // tracking table. See ADR-0022 / ADR-0020 / ADR-0018 (RLS rides in the SQL files).

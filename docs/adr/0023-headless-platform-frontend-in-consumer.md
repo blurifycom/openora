@@ -27,7 +27,7 @@ transport, cross-cutting helpers — no presentational components, no pages, no 
 shell, no slot/registry). The OSS repo contains **no** player web app, **no** backoffice
 app, and **no** UI framework choice.
 
-The **entire frontend is the consumer's** (Consumer): player web, admin/backoffice UI,
+The **entire frontend is the consumer's**: player web, admin/backoffice UI,
 component library, design system, theme, styling, SSR/hydration strategy, and the
 framework decision (Next.js / TanStack / other) all live in the consumer repo and
 consume the OSS API over HTTP through the typed oRPC client in `@oss/react`.

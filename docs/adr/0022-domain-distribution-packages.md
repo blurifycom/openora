@@ -6,12 +6,12 @@
 
 ## Context
 
-The platform is headless backend + a headless React SDK, consumed by a downstream operator (Consumer) that builds all UI in its own repo (see `docs/downstream-consumer.md`). Today the consumer wires the platform through pnpm workspace **links** to ~30 fine-grained, `private: true` packages (`@oss/core`, `@oss/db`, `@oss-addons/sportsbook`, ...). We want to publish to the GitLab project registry (`consumer/igaming-oss`) now, and to npm later, so the consumer installs versioned artifacts instead of linking a sibling checkout.
+The platform is headless backend + a headless React SDK, consumed by a downstream operator that builds all UI in its own repo (see `docs/downstream-consumer.md`). Today the consumer wires the platform through pnpm workspace **links** to ~30 fine-grained, `private: true` packages (`@oss/core`, `@oss/db`, `@oss-addons/sportsbook`, ...). We want to publish to the GitLab project registry now, and to npm later, so the consumer installs versioned artifacts instead of linking a sibling checkout.
 
 Two problems with publishing the source graph as-is:
 
 1. **Granularity** - ~30 published packages is high version/release overhead and leaks internal structure as public API. We do not want every internal refactor to be a breaking change for consumers.
-2. **IP boundary** - not everything is open. The Consumer estimations tag every feature **Shared IP** vs **Non-shared IP**. Custom games (Jackpot Wheel, CoinFlip, Mines, Russian Roulette, Dice Duel, Gifts, Rain), all custom UI, and every vendor adapter (Fireblocks, Sumsub, EveryMatrix, Ably, Betby) are proprietary and must never land in the OSS registry.
+2. **IP boundary** - not everything is open. Features are tagged **Shared IP** vs **Non-shared IP**. Custom games (Jackpot Wheel, CoinFlip, Mines, Russian Roulette, Dice Duel, Gifts, Rain), all custom UI, and every vendor adapter (Fireblocks, Sumsub, EveryMatrix, Ably, Betby) are proprietary and must never land in the OSS registry.
 
 ADR-0021 deliberately makes every feature a standalone, isolated `@oss-addons/<name>` package. That isolation is load-bearing and is **not** changed here.
 
@@ -51,7 +51,7 @@ Internal modularity is preserved; the public surface is six.
 ### 3. Shared-IP boundary = publish boundary (two tiers)
 
 - **Tier 1** - the six `@oss/*` domain packages. Shared IP only. GitLab registry, later npm.
-- **Tier 2** - everything proprietary (custom games, all custom UI, vendor adapters). Lives in the Consumer repo / `@consumer/*` scope, its own cadence, **never** published to the OSS registry. Extends a domain through its existing plugin/adapter seams (ADR-0002, ADR-0014). Custom games plug into `@oss/casino`'s game-integration seam (sessions, provably-fair, round balances - which is shared).
+- **Tier 2** - everything proprietary (custom games, all custom UI, vendor adapters). Lives in the consumer repo / `@my-igaming/*` scope, its own cadence, **never** published to the OSS registry. Extends a domain through its existing plugin/adapter seams (ADR-0002, ADR-0014). Custom games plug into `@oss/casino`'s game-integration seam (sessions, provably-fair, round balances - which is shared).
 
 ### 4. Domain topology
 
@@ -75,7 +75,7 @@ platform  <-  account, wallet, casino, sportsbook, engagement
 
 - **Build complexity** - each facade needs a bundler (tsup/rollup) that inlines its private members and emits the subpath entrypoints; migrations must be collected and shipped. This is the bulk of the work.
 - **Public API is coarser** - consumers import `@oss/casino` not `@oss-addons/gaming`. Internal moves between member packages are non-breaking.
-- **Consumer migration** - Consumer's imports and `pnpm-workspace.yaml` overrides change from ~15 fine-grained entries to six; stale entries (`@oss/modules`, `react-hooks`, `sdk-core`, `ui-provider-*`) are dropped.
+- **Consumer migration** - the consumer's imports and `pnpm-workspace.yaml` overrides change from ~15 fine-grained entries to six; stale entries (`@oss/modules`, `react-hooks`, `sdk-core`, `ui-provider-*`) are dropped.
 - **One version** - the whole platform releases together; no cross-package version matrix.
 - **ADR-0021 unchanged** - this is a packaging/distribution layer on top of the standalone-add-on source model, not a replacement.
 

@@ -2,7 +2,7 @@
 
 How the platform fits together: the contract spine, the plugin host that loads
 everything, the adapter seams that keep it swappable, and how a downstream
-consumer (Consumer) reuses it without forking.
+consumer reuses it without forking.
 
 For the rationale behind each choice, see the [ADRs](./adr/). For the rules an
 agent must follow, see [AGENTS.md](../AGENTS.md).
@@ -52,10 +52,10 @@ flowchart TB
   mod --> core
   adapters -. implemented by .-> vendor
 
-  subgraph consumer["Downstream consumer - Consumer (reference)"]
+  subgraph consumer["Downstream consumer (reference)"]
     bapi["apps/api<br/>thin createApp()"]
     bfront["frontend (consumer repo)<br/>own pages, components, styling<br/>consumes api over HTTP via @oss/react"]
-    bplug["@consumer/plugins<br/>one feature per folder"]
+    bplug["consumer plugins<br/>one feature per folder"]
     bcfg["extensions.config.ts<br/>+ pnpm link: overrides"]
     bplug --> bcfg
     bcfg --> bapi
@@ -99,15 +99,15 @@ Solid arrows are runtime/build dependencies; dashed arrows are **adapter seams**
 
 **SDK & consumption surface**
 
-- **react** - leaf SDK package and the supported frontend consumption surface: data hooks, typed oRPC client, auth, and client-side realtime transport. The platform is headless backend only; the frontend lives in the consumer repo.
+- **react** - leaf SDK package and the supported frontend consumption surface: data hooks, typed oRPC client, auth, and client-side realtime transport. The platform is headless backend only; the frontend lives in the downstream consumer repo.
 - **compliance-invariants** - canonical list of `SealedToken<T>` services operators may never override (RG enforcement, KYC writes, AML/SAR, ledger writes, RNG, etc.) with regulatory citations.
 
-**Downstream consumer (Consumer, reference)** - does **not** fork. `apps/api` is a thin `createApp()` entry with its own `extensions.config.ts`; `@oss/*` packages resolve via `pnpm` workspace overrides (`link:`). The platform is headless: the frontend lives in the consumer repo and consumes the api over HTTP via `@oss/react`. Per-operator backend customization lives in plugins under `apps/api/src/extensions/`. ADR-0005 + ADR-0012 + ADR-0013.
+**Downstream consumer (reference)** - does **not** fork. `apps/api` is a thin `createApp()` entry with its own `extensions.config.ts`; `@oss/*` packages resolve via `pnpm` workspace overrides (`link:`). The platform is headless: the frontend lives in the downstream consumer repo and consumes the api over HTTP via `@oss/react`. Per-operator backend customization lives in plugins under `apps/api/src/extensions/`. ADR-0005 + ADR-0012 + ADR-0013.
 
 **AI dev surface**
 
 - **mcp-server-dev** - a stdio MCP server (registered in `.mcp.json`, not a port) exposing read-only inspection (`list-modules`, `list-routes`, `query-openapi`, `get-drizzle-schema`, ...) and write tools that delegate to the scaffolder.
-- **tools/gen.ts** (-> `@oss/turbo-generators`) - deterministic code-mods behind the `/scaffold-*` slash commands (module, plugin, route). Consumer adds `/scaffold-feature` for its plugins package.
+- **tools/gen.ts** (-> `@oss/turbo-generators`) - deterministic code-mods behind the `/scaffold-*` slash commands (module, plugin, route).
 - **AGENTS.md** - per-package brief; the first thing an agent reads.
 
 ## Adapter / bridge seams

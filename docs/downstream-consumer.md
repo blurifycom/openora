@@ -1,6 +1,6 @@
 # Consuming the platform from a downstream repo
 
-How a downstream operator (eg Consumer) builds their own igaming on top of `@oss/*` without
+How a downstream operator builds their own igaming on top of `@oss/*` without
 forking core. The root `AGENTS.md` links here; this is the detail an agent loads only when
 actually wiring a consumer.
 
@@ -43,7 +43,7 @@ Your entire frontend lives in your own repo (the platform is headless backend on
 A downstream consumer imports `@oss/api-runtime` and creates an API instance:
 
 ```typescript
-// consumer/apps/api/src/main.ts
+// my-igaming/apps/api/src/main.ts
 import { createApp } from '@oss/api-runtime';
 import { contract } from '@oss/orpc-contract';
 import { extensions } from './extensions.config.js'; // their own plugin list
@@ -52,8 +52,8 @@ const { listen, emitOpenApiSpec } = await createApp({
   plugins: extensions,
   contract, // pass a composed contract if extended
   port: 3001,
-  cors: { origins: ['https://consumer.com'] },
-  openapi: { info: { title: 'Consumer API', version: '1.0.0' } },
+  cors: { origins: ['https://my-igaming.example'] },
+  openapi: { info: { title: 'my-igaming API', version: '1.0.0' } },
 });
 
 await listen();
@@ -130,7 +130,7 @@ framework-free drizzle surface from the single shared instance.
 
 Full hooks guide: `packages/sdks/react/AGENTS.md`.
 
-## Local dev linking to a sibling consumer (eg `../consumer/`)
+## Local dev linking to a sibling consumer
 
 Until OSS packages are published to npm, downstream consumers point at this workspace via
 `pnpm.overrides` + `link:`. From the consumer's `package.json`:

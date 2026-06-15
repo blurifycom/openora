@@ -8,7 +8,7 @@
 > no player front and no consumer frontend scaffold (see the superseded note in
 > [ADR-0013](./0013-ui-extensibility-tiers.md); `apps/web` / `apps/backoffice` and the
 > `@oss/react-sdk` pages were removed). The player-front framework is therefore the
-> **consumer's** decision (Consumer builds its own frontend and consumes `@oss/react`),
+> **consumer's** decision (the consumer builds its own frontend and consumes `@oss/react`),
 > not an OSS-level ADR. The Next.js-vs-TanStack analysis below is retained as historical
 > input that may inform a downstream choice.
 

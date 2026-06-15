@@ -70,7 +70,7 @@ All gating props are optional with backwards-safe defaults: existing fills keep 
 ## Consequences
 
 - Operators ship feature plugins covering ~80%+ of common scenarios without forking. The reference plugin `@oss/example-vip-tier` exercises every v1 surface as a starter.
-- Atomic migration: `@oss/react-sdk` was dropped in one coordinated commit. Downstream operators (Consumer, my-igaming) must update imports in lockstep with the OSS release.
+- Atomic migration: `@oss/react-sdk` was dropped in one coordinated commit. Downstream operators must update imports in lockstep with the OSS release.
 - T0 config admin UI is **deferred to v2**. v1 ships Zod schema + file loader only. 60% of operator "customization" tickets are still actionable via the file.
 - T3 page override **seam is shipped but no reference override** is provided in v1 - the contract exists, the demo doesn't.
 - The `@oss/compliance-invariants` package is first-class. Operators import it in their own test suites.

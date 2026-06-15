@@ -5,7 +5,7 @@
 
 ## Context
 
-Two foundational capabilities were missing as the first downstream consumer (Consumer)
+Two foundational capabilities were missing as the first downstream consumer
 began selecting vendors (EveryMatrix, Fireblocks, Ably/GetStream, Text.com, SumSub):
 
 1. **No background-job/worker queue.** Cross-module side effects that must be durable,

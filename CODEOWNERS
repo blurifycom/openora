@@ -4,7 +4,7 @@
 # Ownership by area, not by person - team can change:
 #   - Core (contracts, modules, platform, tooling) -> platform maintainer
 #   - Frontend SDK (react/blocks/pages, UI provider) -> frontend owner, reviewed with the maintainer
-# Consumers (e.g. consumer) read this repo as upstream; they don't edit it.
+# Consumers read this repo as upstream; they don't edit it.
 
 * @volod
 

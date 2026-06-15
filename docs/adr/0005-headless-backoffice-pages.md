@@ -7,7 +7,7 @@
 
 ## Context
 
-The OSS repo includes `apps/backoffice` (Vite + TanStack Router admin SPA). Downstream consumers like Consumer want the same admin experience inside their own app, with their own routing, navigation, theming, and potential per-tenant customization.
+The OSS repo includes `apps/backoffice` (Vite + TanStack Router admin SPA). Downstream consumers want the same admin experience inside their own app, with their own routing, navigation, theming, and potential per-tenant customization.
 
 Three paths were considered:
 
@@ -34,7 +34,7 @@ Extract the OSS backoffice into `@oss/backoffice-ui`:
 - **Visual layer**: a single `styles.css` driven by `--bo-*` CSS custom properties. Override via `ThemeProvider` (which emits inline `style="--bo-*: ..."` on a wrapping div). Per-tenant theming reduces to fetching a `Partial<Theme>` from the API.
 - **Types**: page components consume `z.infer<typeof Schema>` from `@oss/orpc-contract`. No local type duplication.
 
-`apps/backoffice` in this repo is itself the first consumer - it imports from `@oss/backoffice-ui`. Consumer's `consumer/apps/web/app/admin/` is the second.
+`apps/backoffice` in this repo is itself the first consumer - it imports from `@oss/backoffice-ui`. A consumer's `apps/web/app/admin/` is the second.
 
 ## Consequences
 
@@ -56,7 +56,7 @@ Extract the OSS backoffice into `@oss/backoffice-ui`:
 - Package: `packages/ui/backoffice/` (`@oss/backoffice-ui`).
 - Adapter contracts already in place: `@oss/ui-provider-contract`, `@oss/ui-provider-daisyui` (ADR-0003).
 - Consumer wiring docs: `packages/ui/backoffice/AGENTS.md`.
-- Cross-workspace dedup setup: `consumer/apps/web/next.config.ts` (alias for `react`, `react-dom`, `@tanstack/react-query` to single physical paths).
+- Cross-workspace dedup setup: the consumer's `apps/web/next.config.ts` (alias for `react`, `react-dom`, `@tanstack/react-query` to single physical paths).
 
 ## When to fork instead
 

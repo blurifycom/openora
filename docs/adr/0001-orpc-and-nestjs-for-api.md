@@ -5,7 +5,7 @@
 
 ## Context
 
-We need end-to-end TypeScript type inference from the server to every client (backoffice, Consumer frontend, third-party builders) without locking non-TS consumers out. We also need a robust DI container and lifecycle management for the plugin system. Candidates evaluated:
+We need end-to-end TypeScript type inference from the server to every client (backoffice, consumer frontend, third-party builders) without locking non-TS consumers out. We also need a robust DI container and lifecycle management for the plugin system. Candidates evaluated:
 
 - tRPC + NestJS - type inference is great but clients must use the tRPC client; breaks non-TS or non-JS consumers.
 - ts-rest + NestJS - contract-first with a separate contract object; good, but slightly more boilerplate and less active maintenance vs oRPC.

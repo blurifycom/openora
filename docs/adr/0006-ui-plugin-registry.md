@@ -7,7 +7,7 @@
 > lived in `@oss/react-sdk`, which was deleted when the platform went headless (see the
 > superseded note in [ADR-0013](./0013-ui-extensibility-tiers.md)). The OSS repo no longer
 > ships an admin shell, pages, or a slot/registry surface — the frontend lives in the
-> consumer (Consumer) repo and `@oss/react` is the only supported consumption surface. A
+> consumer repo and `@oss/react` is the only supported consumption surface. A
 > UI-extension model will be re-designed if/when the frontend is re-extracted into OSS.
 > The original design is kept below for the record.
 
@@ -116,7 +116,7 @@ If this becomes painful (consumers having to write shims for every plugin route)
 The server-side `definePlugin` (ADR-0002) is unchanged. A feature like vip-tiers becomes:
 
 ```
-consumer/plugins/vip-tiers/
+my-igaming/plugins/vip-tiers/
 ├── plugin.ts          # server (definePlugin) - existing
 ├── ui.tsx             # client (defineUIPlugin) - NEW
 └── prisma.partial.prisma

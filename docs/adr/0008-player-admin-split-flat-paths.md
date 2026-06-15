@@ -12,7 +12,7 @@ Two problems were intertwined:
 1. **Security gap.** Only the `player` module enforced an admin check (`assertAdmin`). 16 admin-capable routes were completely unguarded: all of `backoffice.*`, the `cms` write routes, `compliance.addGeoRule`/`listGeoRules`, `igaming-aggregator.sync`/`listProviders`, and the `localization` write routes.
 2. **How to express the player/admin division.** The tempting option was to nest the contract into `player.*` and `admin.*` namespaces.
 
-A route-level audit showed the namespace re-prefix would touch ~60 procedures across 13 contract files, force 4 straddling modules (`cms`, `compliance`, `localization`, `igaming-aggregator`) to be split in two, and ripple to the typed client, every react-sdk page, the Consumer app + plugins, the MCP `query-openapi` expectations, the emitted OpenAPI, and the docs. It is a one-way, high-churn change.
+A route-level audit showed the namespace re-prefix would touch ~60 procedures across 13 contract files, force 4 straddling modules (`cms`, `compliance`, `localization`, `igaming-aggregator`) to be split in two, and ripple to the typed client, every react-sdk page, the consumer app + plugins, the MCP `query-openapi` expectations, the emitted OpenAPI, and the docs. It is a one-way, high-churn change.
 
 ## Decision
 
@@ -27,7 +27,7 @@ A route-level audit showed the namespace re-prefix would touch ~60 procedures ac
 **Positive:**
 
 - The 16 unguarded admin routes are now closed - the security win is delivered without a contract rewrite.
-- Near-zero blast radius: Consumer and every existing call site keep working unchanged.
+- Near-zero blast radius: the consumer and every existing call site keep working unchanged.
 - The player/admin distinction is obvious exactly where a developer looks for it - the SDK page folders and the two apps.
 - One auditable admin gate (`AdminGuard`), not a per-module reimplementation.
 

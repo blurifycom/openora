@@ -94,7 +94,7 @@ Edit `packages/modules/<group>/<name>/src/plugin.ts`. Confirm the service is add
 
 ## Step 9: Add frontend consumption layer
 
-The platform is headless backend only - pages, components, and styling live in the consumer repo. What you can add to the OSS:
+The platform is headless backend only - pages, components, and styling live in the downstream consumer repo. What you can add to the OSS:
 
 - **A new data hook** (eg `useAdminUsers`, `usePlayerWallet`) -> `packages/sdks/react/src/hooks/`. `@oss/react` is the supported frontend consumption surface (data hooks, auth, realtime transport - no components).
 

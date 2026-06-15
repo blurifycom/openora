@@ -1,7 +1,7 @@
 # ADR-0024: Domain-as-package + distribution tiers
 
 **Date**: 2026-06-14
-**Status**: Accepted + **IMPLEMENTED & PUBLISHED 2026-06-15**, supersedes the packaging decision in ADR-0022. 3 foundation packages (`packages/foundation/{contracts,runtime,react}`), 6 domain packages (`packages/domains/{pam,wallet,casino,sportsbook,cms,engagement}`), `packages/addons/` reduced to the 3 platform-internal/consumer-composed add-ons (admin-console, audit, iam). `@oss/platform` kept as a compat facade. Published at **v0.2.0** to the GitLab registry (the private registry, tag-triggered CI); Consumer migrated (account->pam, cms extracted) and verified (typecheck + build green); the 14 folded `@oss-addons/*` member packages + the `@oss/account` facade deleted from the registry.
+**Status**: Accepted + **IMPLEMENTED & PUBLISHED 2026-06-15**, supersedes the packaging decision in ADR-0022. 3 foundation packages (`packages/foundation/{contracts,runtime,react}`), 6 domain packages (`packages/domains/{pam,wallet,casino,sportsbook,cms,engagement}`), `packages/addons/` reduced to the 3 platform-internal/consumer-composed add-ons (admin-console, audit, iam). `@oss/platform` kept as a compat facade. Published at **v0.2.0** to the GitLab registry (the private registry, tag-triggered CI); the consumer migrated (account->pam, cms extracted) and verified (typecheck + build green); the 14 folded `@oss-addons/*` member packages + the `@oss/account` facade deleted from the registry.
 **Relates to**: ADR-0021 (everything is a standalone add-on), ADR-0020 (gated add-on editions), ADR-0023 (headless platform), ADR-0002/0014 (plugin + adapter/port seams), ADR-0010/0017 (events + command ports).
 
 ## Context
@@ -47,7 +47,7 @@ Tier is an `.npmrc` scope + an entitlement, **not** a code structure. The same p
 | ------------------- | -------------------------------- | ----------------------------------------------- |
 | **public**          | GitLab `@oss`, npm later         | `@oss/runtime`, `@oss/pam`, `@oss/casino`       |
 | **private/premium** | premium registry, licensed token | `@oss/casino-jackpots`, `@oss/pam-aml-pro`      |
-| **consumer-local**  | the operator's own repo/scope    | `@consumer/jackpot-wheel`, `@consumer/fireblocks` |
+| **consumer-local**  | the operator's own repo/scope    | `@my-igaming/jackpot-wheel`, `@my-igaming/fireblocks` |
 
 A premium plugin is just **shape=add-on, tier=private**. The consumer wires all three tiers identically - registry origin is invisible to code:
 
@@ -55,7 +55,7 @@ A premium plugin is just **shape=add-on, tier=private**. The consumer wires all 
 import { createApp } from '@oss/runtime';
 import { casinoPlugin } from '@oss/casino/server'; // public domain
 import { jackpotsPlugin } from '@oss/casino-jackpots/server'; // private premium add-on
-import { jackpotWheelPlugin } from '@consumer/jackpot-wheel'; // consumer-local Tier-2
+import { jackpotWheelPlugin } from '@my-igaming/jackpot-wheel'; // consumer-local Tier-2
 
 createApp({ plugins: [casinoPlugin, jackpotsPlugin, jackpotWheelPlugin] });
 ```
@@ -69,12 +69,12 @@ createApp({ plugins: [casinoPlugin, jackpotsPlugin, jackpotWheelPlugin] });
 
 ## Migration from ADR-0022 (incremental, consumer-non-breaking)
 
-The facade subpaths (`@oss/<domain>/server|react|contracts|migrate`) are the stable contract. Keep them identical and the fold-in is invisible to Consumer:
+The facade subpaths (`@oss/<domain>/server|react|contracts|migrate`) are the stable contract. Keep them identical and the fold-in is invisible to the consumer:
 
 1. Stand up the 3 foundation packages (`@oss/contracts`, `@oss/runtime`, `@oss/react`) - mostly a rename/re-home of today's `@oss/platform` kernel split by runtime.
 2. Fold each domain's member packages **into** its domain package, one domain at a time, keeping `@oss/<domain>/<subpath>` paths byte-stable. Re-home the grab-bags: split `account` into `@oss/pam` (identity + profile + player-management + compliance/RG) ; split `engagement` cleanly (chat/notifications/bonus/leaderboard stay `@oss/engagement`, `cms` becomes `@oss/cms`); promote `@oss/admin` from the per-domain `/server/admin` routes (admin stays a composing surface, not a god-dependency).
 3. Drop the member packages from the registry **last**, once nothing re-exports them.
-4. Consumer changes only when a domain name changes (`@oss/account` -> `@oss/pam`); same-name domains need no consumer edit.
+4. The consumer changes only when a domain name changes (`@oss/account` -> `@oss/pam`); same-name domains need no consumer edit.
 
 ## Layout + fold procedure (as implemented)
 
@@ -101,4 +101,4 @@ Per-domain fold steps (proven on wallet, 2026-06-14, full `pnpm verify` green):
 
 - Exact home for `compliance/RG` (inside `@oss/pam` vs its own `@oss/compliance`) - leaning PAM since RG limits are player-scoped.
 - ~~Whether `@oss/admin` is a published domain or stays a consumer-composed Tier-2 surface.~~ **Resolved 2026-06-14:** stays consumer-composed. Each domain owns its `/server/admin` routes; the back office composes them gated by platform RBAC. No standalone `@oss/admin` domain package - a package depending on every domain inverts the one rule (domains depend only on the foundation) and creates an ever-growing roof. So `@oss/admin` is dropped from the target domain list; the target is **6 domains** (`@oss/pam`, `@oss/wallet`, `@oss/casino`, `@oss/sportsbook`, `@oss/cms`, `@oss/engagement`) + 3 foundation. Revisit only if a published cross-domain admin surface becomes a hard consumer requirement.
-- ~~Foundation naming: `@oss/runtime` vs keeping `@oss/platform`.~~ **Resolved 2026-06-14:** foundation is `@oss/runtime` (node kernel) + `@oss/contracts` (isomorphic) + `@oss/react` (browser, already exists). Stood up additively; `@oss/platform` is kept as a compat alias for the migration window and removed with the member packages (task #14), so apps/api + Consumer keep building unchanged until they migrate their imports.
+- ~~Foundation naming: `@oss/runtime` vs keeping `@oss/platform`.~~ **Resolved 2026-06-14:** foundation is `@oss/runtime` (node kernel) + `@oss/contracts` (isomorphic) + `@oss/react` (browser, already exists). Stood up additively; `@oss/platform` is kept as a compat alias for the migration window and removed with the member packages (task #14), so apps/api and the consumer keep building unchanged until they migrate their imports.

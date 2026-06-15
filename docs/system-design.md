@@ -2,7 +2,7 @@
 
 The whole platform in one place: the six published domains, the contract spine, the
 plugin host, the 15 adapter ports, the three async seams, and how a downstream consumer
-(Consumer) overlays proprietary code. Generated from `docs/catalog.json` (17 modules,
+overlays proprietary code. Generated from `docs/catalog.json` (17 modules,
 15 adapters, 24 events, 79 HTTP routes), `extensions.config.ts`, and the package graph.
 
 For rationale see the [ADRs](./adr/) — especially [ADR-0022](./adr/0022-domain-distribution-packages.md)
@@ -202,7 +202,7 @@ flowchart LR
   subgraph CONS["Consumers"]
     BFREG["Consumer — committed default:<br/>.npmrc scope map + ^version"]
     BFLINK["Consumer local dev:<br/>link:oss + git skip-worktree"]
-    T2X["Tier-2 @consumer/* overlays<br/>games · vendor adapters · UI"]
+    T2X["Tier-2 consumer overlays<br/>games · vendor adapters · UI"]
   end
 
   KP --> F1
@@ -240,7 +240,7 @@ flowchart LR
     d1["MockPaymentAdapter"]; d2["MockKycAdapter"]; d3["MockGameAdapter"]; d4["DefaultRng"]
     d5["StubGeoIp"]; d6["MockAggregator"]; d7["InProcessTransport"]; d8["ConsoleEmail"]
   end
-  subgraph OVERLAY["Vendor overlay (Consumer rebinds token — last-wins)"]
+  subgraph OVERLAY["Vendor overlay (consumer rebinds token — last-wins)"]
     v1["Fireblocks crypto"]; v2["Sumsub"]; v6["EveryMatrix"]; v7["Ably"]; v8["SendGrid/Twilio"]
   end
 

@@ -5,7 +5,7 @@
 
 ## Context
 
-The reference consumer (Consumer) needs a live community chat with money-moving commands: `/tip` (player-to-player transfer), `/gift` (a claimable drop one player wins), and `/rain` (a balance split across many online players). Received gift/rain funds carry a wagering/rollover requirement before withdrawal.
+The reference consumer needs a live community chat with money-moving commands: `/tip` (player-to-player transfer), `/gift` (a claimable drop one player wins), and `/rain` (a balance split across many online players). Received gift/rain funds carry a wagering/rollover requirement before withdrawal.
 
 Two options were weighed: integrate a managed live-chat SaaS (Stream, Sendbird, PubNub) behind an adapter, or build chat as a first-party module.
 
