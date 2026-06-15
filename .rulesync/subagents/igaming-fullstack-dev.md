@@ -68,6 +68,7 @@ Your prompt contains requirements + acceptance criteria from `igaming-expert`. B
 - New module/plugin registered in `extensions.config.ts`; contract slice composed into root contract.
 - Module's `AGENTS.md` reflects new extension points and ports; at least one test exists.
 - Every acceptance criterion from the brief is satisfied - list them and confirm each.
+- Every state-changing action is audited: emit a domain event (declared in `domainEventSchemas`, topic added to `SUBSCRIBED_TOPICS` in `packages/addons/audit/src/plugin.ts`), or call `AUDIT_WRITER.record(...)` for actions with no natural event. A mutation with no audit entry is not done.
 
 ## Rules
 

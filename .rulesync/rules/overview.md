@@ -191,6 +191,15 @@ pnpm verify
 
 Runs typecheck + unit tests + lint + module-shape + the whole-graph boundary/cycle gate (`pnpm boundaries`). Must pass for every PR. CI runs the same plus a "no drift" check that re-runs drizzle-kit + the catalog generator and fails on an uncommitted diff. The pre-commit hook also runs `pnpm boundaries`.
 
+## Definition of done - audit every new action
+
+The platform ships a regulatory audit log (the `audit` core add-on: append-only, sha256 hash-chained, per-tenant). When an agent adds a new **state-changing action** - a mutation route, an admin operation, a money / KYC / config / withdrawal change - that action MUST leave an audit-log entry. The audit trail grows with the feature, it never lags behind it. Two sanctioned, decoupled-first ways:
+
+1. **Domain event (preferred).** Emit the event from the service AFTER the DB commit. Declare its payload in `domainEventSchemas` (`@oss/shared-schemas/events.ts`), then add the topic to `SUBSCRIBED_TOPICS` in `packages/addons/audit/src/plugin.ts` so the audit add-on records it automatically - no cross-add-on coupling.
+2. **Direct record (when there is no natural event).** Resolve the `AUDIT_WRITER` port (`@oss/adapters`) in the module's `plugin.ts` and call `record({ actorId, actorType, action, resourceType, resourceId, before, after, ip, ... })`. Use this for admin actions and outcomes that are not domain events.
+
+Capture `actorId` / `actorType` (player vs admin vs system), `resourceType` / `resourceId`, and `before` / `after` for mutations. A state-changing action with no audit entry is not done. Pure reads, docs, tests, and chores need no audit entry.
+
 ## Agent roster
 
 These agents are for **platform development** (building this OSS repo). Consumer igaming agents ship separately in `tools/templates/consumer/__dot__rulesync/subagents/` (copied into scaffolded consumer repos).
@@ -215,6 +224,7 @@ These agents are for **platform development** (building this OSS repo). Consumer
 - Use the MCP dev server for read-only inspection: `read-agents-md`, `list-modules`, `describe-module`, `list-routes`, `list-extension-points`, `query-openapi`, `get-drizzle-schema`, `propose-table-change`, `schema-get`, `docs-search`, `db-query-readonly`. It's faster than grep and reflects current state. Write ops (`scaffold-*`, `regen`, `run-verify`) delegate to the same scripts humans use.
 - Before adding a route, call `query-openapi` to check it doesn't already exist. Before adding a table, call `propose-table-change`.
 - After any change, run `pnpm verify` for the affected package. Fix failures before continuing.
+- Before reporting a state-changing action done, wire it into the audit log (domain event + `SUBSCRIBED_TOPICS`, or `AUDIT_WRITER.record`) - see "Definition of done" above. Mandatory, not optional.
 - Prefer small PRs scoped to one module. Cross-module changes need explicit human approval.
 - Don't commit unless asked. Don't push without confirmation.
 - ASCII only in code. Short dashes (-) only, never long dashes.

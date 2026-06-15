@@ -9,8 +9,20 @@ image: node:26
 
 stages:
   - quality
+  - security
   - integration
   - release
+
+# GitLab-managed scanners (SCA + SAST + secrets). Execution runs on any tier;
+# the MR security widget + vulnerability dashboard need Ultimate, but the JSON
+# reports are emitted as artifacts regardless. See the `# --- security ---`
+# section below for the stage/before_script overrides that fit them into this
+# pipeline (the analyzer images have no node/pnpm, so our default before_script
+# must be cleared on each).
+include:
+  - template: Jobs/Dependency-Scanning.gitlab-ci.yml
+  - template: Jobs/SAST.gitlab-ci.yml
+  - template: Jobs/Secret-Detection.gitlab-ci.yml
 
 # Run on merge requests, the long-lived branches (default + env branches), and
 # release tags (v1.2.3) which trigger the publish stage.
@@ -82,6 +94,46 @@ verify:
     - pnpm build
     - pnpm verify
     - pnpm verify:drift
+
+# --- security (SCA + SAST + secrets) -----------------------------------------
+#
+# Three layers, all non-blocking for now (allow_failure: true) so they surface
+# findings without wedging the pipeline - flip to blocking once the baseline is
+# clean. The included GitLab analyzers run in their own images, so each override
+# clears our node/pnpm before_script (which would otherwise fail in them) and
+# moves the job into the `security` stage with no upstream needs.
+
+# Gemnasium SCA over the lockfile. The exact equivalent of the consumer Code
+# Review Bot's esbuild finding. Note: full pnpm-lock.yaml support lives in the
+# newer analyzer - if findings look thin, the `dependency_audit` job below is a
+# tier/analyzer-independent backstop.
+gemnasium-dependency_scanning:
+  stage: security
+  needs: []
+  before_script: []
+  allow_failure: true
+
+semgrep-sast:
+  stage: security
+  needs: []
+  before_script: []
+  allow_failure: true
+
+secret_detection:
+  stage: security
+  needs: []
+  before_script: []
+  allow_failure: true
+
+# Guaranteed-working SCA net: `pnpm audit` against the registry advisory DB.
+# Independent of GitLab edition and analyzer pnpm support, so it always catches
+# the esbuild-class CVE. Non-blocking at `high`; tighten the level to gate.
+dependency_audit:
+  stage: security
+  needs: []
+  allow_failure: true
+  script:
+    - pnpm audit --audit-level=high
 
 # --- integration (Postgres) --------------------------------------------------
 

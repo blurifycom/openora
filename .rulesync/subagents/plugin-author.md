@@ -98,3 +98,4 @@ When the plugin's job is replacing a default adapter (KYC, notifications, PSP):
 - Plugin boots without errors (`pnpm dev` or smoke-test via API health check).
 - `AGENTS.md` inside the plugin folder documents what it does + which slots it fills + which adapters it swaps.
 - `pnpm verify` exits 0.
+- Every state-changing action the plugin adds is audited: emit a domain event the `audit` add-on subscribes to, or resolve `AUDIT_WRITER` and call `record(...)`. A mutation with no audit entry is not done.
