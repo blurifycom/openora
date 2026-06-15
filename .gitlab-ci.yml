@@ -10,6 +10,7 @@ image: node:26
 stages:
   - quality
   - security
+  - test # safety net: GitLab scanner templates default to `test`; keep it valid
   - integration
   - release
 
@@ -103,11 +104,11 @@ verify:
 # clears our node/pnpm before_script (which would otherwise fail in them) and
 # moves the job into the `security` stage with no upstream needs.
 
-# Gemnasium SCA over the lockfile. The exact equivalent of the consumer Code
-# Review Bot's esbuild finding. Note: full pnpm-lock.yaml support lives in the
-# newer analyzer - if findings look thin, the `dependency_audit` job below is a
-# tier/analyzer-independent backstop.
-gemnasium-dependency_scanning:
+# SCA over the lockfile. The exact equivalent of the consumer Code Review Bot's
+# esbuild finding. Job name is `dependency_scanning` in the current analyzer
+# (older Gemnasium templates used `gemnasium-dependency_scanning`). The
+# `dependency_audit` job below is a tier/analyzer-independent backstop.
+dependency_scanning:
   stage: security
   needs: []
   before_script: []
