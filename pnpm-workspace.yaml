@@ -1,6 +1,11 @@
 packages:
   - 'apps/*'
   - 'packages/*/*' # includes packages/addons/* (every feature is a standalone add-on package)
+# Pin a single React version across the workspace - the SDK peer-deps `>=19`, so
+# without this transitive deps drift across patch releases (19.2.0/19.2.6/...).
+overrides:
+  react: 19.2.7
+  react-dom: 19.2.7
 allowBuilds:
   esbuild: true
   msgpackr-extract: true
