@@ -14,7 +14,7 @@
 import { createAuth } from '@oss/auth';
 import { createDrizzleDb } from '@oss/db';
 import { seedDemoData } from '@oss/api-runtime';
-import { user, session, account, verification, twoFactor } from '@oss-addons/identity/schema';
+import { user, session, account, verification, twoFactor } from '@oss/pam/schema/identity';
 
 function arg(name: string): string | undefined {
   const hit = process.argv.find((a) => a.startsWith(`--${name}=`));
