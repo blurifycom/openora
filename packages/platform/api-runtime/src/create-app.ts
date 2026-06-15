@@ -31,7 +31,7 @@ import {
 } from '@oss/adapters';
 import { DrizzleService, DRIZZLE, DrizzleOutboxWriter, OutboxRelay } from '@oss/db';
 import { AdminGuard, ADMIN_GUARD, SessionResolver, AUTH_SESSION } from '@oss/auth';
-import { user, session, account, verification, twoFactor } from '@oss-addons/identity/schema';
+import { user, session, account, verification, twoFactor } from '@oss/pam/schema/identity';
 import { loadPlugins, type PluginEntry } from '@oss/plugin-host';
 import { contract as defaultContract, healthContract } from '@oss/orpc-contract';
 import { IGAMING_CONFIG, type IgamingConfig } from '@oss/shared-schemas';

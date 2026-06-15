@@ -1,0 +1,112 @@
+{
+  "name": "@oss/pam",
+  "version": "0.2.0",
+  "private": false,
+  "files": [
+    "dist"
+  ],
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js",
+      "default": "./dist/index.js"
+    },
+    "./server": {
+      "types": "./dist/server.d.ts",
+      "import": "./dist/server.js",
+      "default": "./dist/server.js"
+    },
+    "./contracts": {
+      "types": "./dist/contracts.d.ts",
+      "import": "./dist/contracts.js",
+      "default": "./dist/contracts.js"
+    },
+    "./contracts/identity": {
+      "types": "./dist/identity/contract/index.d.ts",
+      "import": "./dist/identity/contract/index.js",
+      "default": "./dist/identity/contract/index.js"
+    },
+    "./contracts/profile": {
+      "types": "./dist/profile/contract/index.d.ts",
+      "import": "./dist/profile/contract/index.js",
+      "default": "./dist/profile/contract/index.js"
+    },
+    "./contracts/compliance": {
+      "types": "./dist/compliance/contract/index.d.ts",
+      "import": "./dist/compliance/contract/index.js",
+      "default": "./dist/compliance/contract/index.js"
+    },
+    "./contracts/player": {
+      "types": "./dist/player-management/contract/index.d.ts",
+      "import": "./dist/player-management/contract/index.js",
+      "default": "./dist/player-management/contract/index.js"
+    },
+    "./schema/identity": {
+      "types": "./dist/identity/schema/index.d.ts",
+      "import": "./dist/identity/schema/index.js",
+      "default": "./dist/identity/schema/index.js"
+    },
+    "./schema/profile": {
+      "types": "./dist/profile/schema/index.d.ts",
+      "import": "./dist/profile/schema/index.js",
+      "default": "./dist/profile/schema/index.js"
+    },
+    "./schema/compliance": {
+      "types": "./dist/compliance/schema/index.d.ts",
+      "import": "./dist/compliance/schema/index.js",
+      "default": "./dist/compliance/schema/index.js"
+    },
+    "./plugins/identity": {
+      "types": "./dist/identity/plugin.d.ts",
+      "import": "./dist/identity/plugin.js",
+      "default": "./dist/identity/plugin.js"
+    },
+    "./plugins/profile": {
+      "types": "./dist/profile/plugin.d.ts",
+      "import": "./dist/profile/plugin.js",
+      "default": "./dist/profile/plugin.js"
+    },
+    "./plugins/compliance": {
+      "types": "./dist/compliance/plugin.d.ts",
+      "import": "./dist/compliance/plugin.js",
+      "default": "./dist/compliance/plugin.js"
+    },
+    "./plugins/player-management": {
+      "types": "./dist/player-management/plugin.d.ts",
+      "import": "./dist/player-management/plugin.js",
+      "default": "./dist/player-management/plugin.js"
+    }
+  },
+  "scripts": {
+    "build": "tsc",
+    "typecheck": "tsc --noEmit",
+    "clean": "rm -rf dist",
+    "test": "vitest run",
+    "test:unit": "vitest run --passWithNoTests",
+    "test:integration": "vitest run --passWithNoTests"
+  },
+  "dependencies": {
+    "@orpc/contract": "1.14.5",
+    "@orpc/server": "1.14.5",
+    "@oss/adapters": "workspace:*",
+    "@oss/auth": "workspace:*",
+    "@oss/core": "workspace:*",
+    "@oss/db": "workspace:*",
+    "@oss/plugin-host": "workspace:*",
+    "@oss/shared-schemas": "workspace:*",
+    "@paralleldrive/cuid2": "3.3.0",
+    "better-auth": "1.6.15",
+    "drizzle-orm": "0.45.2",
+    "zod": "4.4.3"
+  },
+  "devDependencies": {
+    "@oss/tsconfig": "workspace:*",
+    "@oss/vitest-config": "workspace:*",
+    "@types/node": "25.9.2",
+    "typescript": "6.0.3",
+    "vitest": "4.1.8"
+  }
+}

@@ -278,7 +278,7 @@
       "token": "AGGREGATOR_ADAPTER",
       "status": "wired",
       "boundIn": [
-        "packages/addons/aggregator/src/plugin.ts"
+        "packages/domains/casino/src/aggregator/plugin.ts"
       ]
     },
     {
@@ -306,7 +306,7 @@
       "status": "wired",
       "boundIn": [
         "packages/addons/iam/src/plugin.ts",
-        "packages/addons/identity/src/plugin.ts"
+        "packages/domains/pam/src/identity/plugin.ts"
       ]
     },
     {
@@ -315,7 +315,7 @@
       "token": "GAME_ADAPTER",
       "status": "wired",
       "boundIn": [
-        "packages/addons/gaming/src/plugin.ts"
+        "packages/domains/casino/src/gaming/plugin.ts"
       ]
     },
     {
@@ -324,7 +324,7 @@
       "token": "GEO_IP_ADAPTER",
       "status": "wired",
       "boundIn": [
-        "packages/addons/compliance/src/plugin.ts"
+        "packages/domains/pam/src/compliance/plugin.ts"
       ]
     },
     {
@@ -342,8 +342,8 @@
       "token": "KYC_ADAPTER",
       "status": "wired",
       "boundIn": [
-        "packages/addons/identity/src/adapters/mock/mock-kyc-adapter.ts",
-        "packages/addons/identity/src/plugin.ts"
+        "packages/domains/pam/src/identity/adapters/mock/mock-kyc-adapter.ts",
+        "packages/domains/pam/src/identity/plugin.ts"
       ]
     },
     {
@@ -352,8 +352,8 @@
       "token": "NOTIFICATION_DELIVERY_ADAPTER",
       "status": "wired",
       "boundIn": [
-        "packages/addons/identity/src/plugin.ts",
-        "packages/addons/notifications/src/plugin.ts"
+        "packages/domains/engagement/src/notifications/plugin.ts",
+        "packages/domains/pam/src/identity/plugin.ts"
       ]
     },
     {
@@ -371,7 +371,7 @@
       "token": "PAYMENT_ADAPTER",
       "status": "wired",
       "boundIn": [
-        "packages/addons/wallet/src/plugin.ts"
+        "packages/domains/wallet/src/plugin.ts"
       ]
     },
     {
@@ -380,8 +380,8 @@
       "token": "REALTIME_TRANSPORT",
       "status": "wired",
       "boundIn": [
-        "packages/addons/chat/src/plugin.ts",
-        "packages/addons/sportsbook/src/plugin.ts"
+        "packages/domains/engagement/src/chat/plugin.ts",
+        "packages/domains/sportsbook/src/plugin.ts"
       ]
     },
     {
@@ -390,7 +390,7 @@
       "token": "RNG_ADAPTER",
       "status": "wired",
       "boundIn": [
-        "packages/addons/gaming/src/plugin.ts"
+        "packages/domains/casino/src/gaming/plugin.ts"
       ]
     },
     {
@@ -399,8 +399,8 @@
       "token": "WALLET_COMMANDS",
       "status": "wired",
       "boundIn": [
-        "packages/addons/sportsbook/src/plugin.ts",
-        "packages/addons/wallet/src/plugin.ts"
+        "packages/domains/sportsbook/src/plugin.ts",
+        "packages/domains/wallet/src/plugin.ts"
       ]
     }
   ],
@@ -462,7 +462,7 @@
     },
     {
       "name": "AggregatorProviderSummarySchema",
-      "file": "packages/addons/aggregator/src/contract/index.ts"
+      "file": "packages/domains/casino/src/aggregator/contract/index.ts"
     },
     {
       "name": "AuditActorTypeSchema",
@@ -482,15 +482,15 @@
     },
     {
       "name": "BannerSchema",
-      "file": "packages/addons/cms/src/contract/index.ts"
+      "file": "packages/domains/cms/src/contract/index.ts"
     },
     {
       "name": "BonusSchema",
-      "file": "packages/addons/bonus/src/contract/index.ts"
+      "file": "packages/domains/engagement/src/bonus/contract/index.ts"
     },
     {
       "name": "BonusTypeSchema",
-      "file": "packages/addons/bonus/src/contract/index.ts"
+      "file": "packages/domains/engagement/src/bonus/contract/index.ts"
     },
     {
       "name": "BrandingSchema",
@@ -502,11 +502,11 @@
     },
     {
       "name": "CallbackInputSchema",
-      "file": "packages/addons/aggregator/src/contract/index.ts"
+      "file": "packages/domains/casino/src/aggregator/contract/index.ts"
     },
     {
       "name": "CallbackResultSchema",
-      "file": "packages/addons/aggregator/src/contract/index.ts"
+      "file": "packages/domains/casino/src/aggregator/contract/index.ts"
     },
     {
       "name": "CatalogEntrySchema",
@@ -522,15 +522,15 @@
     },
     {
       "name": "ChatConnectionGrantSchema",
-      "file": "packages/addons/chat/src/contract/index.ts"
+      "file": "packages/domains/engagement/src/chat/contract/index.ts"
     },
     {
       "name": "ChatMessageSchema",
-      "file": "packages/addons/chat/src/contract/index.ts"
+      "file": "packages/domains/engagement/src/chat/contract/index.ts"
     },
     {
       "name": "ChatRoomSchema",
-      "file": "packages/addons/chat/src/contract/index.ts"
+      "file": "packages/domains/engagement/src/chat/contract/index.ts"
     },
     {
       "name": "CountryCodeSchema",
@@ -542,7 +542,7 @@
     },
     {
       "name": "DepositInputSchema",
-      "file": "packages/addons/wallet/src/contract/index.ts"
+      "file": "packages/domains/wallet/src/contract/index.ts"
     },
     {
       "name": "Disable2faInputSchema",
@@ -558,15 +558,15 @@
     },
     {
       "name": "EndRoundInputSchema",
-      "file": "packages/addons/gaming/src/contract/index.ts"
+      "file": "packages/domains/casino/src/gaming/contract/index.ts"
     },
     {
       "name": "EndRoundOutputSchema",
-      "file": "packages/addons/gaming/src/contract/index.ts"
+      "file": "packages/domains/casino/src/gaming/contract/index.ts"
     },
     {
       "name": "FeaturedSlotSchema",
-      "file": "packages/addons/lobby/src/contract/index.ts"
+      "file": "packages/domains/casino/src/lobby/contract/index.ts"
     },
     {
       "name": "FeatureFlagsSchema",
@@ -574,19 +574,19 @@
     },
     {
       "name": "GameRoundSchema",
-      "file": "packages/addons/gaming/src/contract/index.ts"
+      "file": "packages/domains/casino/src/gaming/contract/index.ts"
     },
     {
       "name": "GameSchema",
-      "file": "packages/addons/gaming/src/contract/index.ts"
+      "file": "packages/domains/casino/src/gaming/contract/index.ts"
     },
     {
       "name": "GameSummarySchema",
-      "file": "packages/addons/lobby/src/contract/index.ts"
+      "file": "packages/domains/casino/src/lobby/contract/index.ts"
     },
     {
       "name": "GeoRuleSchema",
-      "file": "packages/addons/compliance/src/contract/index.ts"
+      "file": "packages/domains/pam/src/compliance/contract/index.ts"
     },
     {
       "name": "GrantInputSchema",
@@ -610,23 +610,23 @@
     },
     {
       "name": "LeaderboardEntrySchema",
-      "file": "packages/addons/leaderboard/src/contract/index.ts"
+      "file": "packages/domains/engagement/src/leaderboard/contract/index.ts"
     },
     {
       "name": "LeaderboardMetricSchema",
-      "file": "packages/addons/leaderboard/src/contract/index.ts"
+      "file": "packages/domains/engagement/src/leaderboard/contract/index.ts"
     },
     {
       "name": "LeaderboardPeriodSchema",
-      "file": "packages/addons/leaderboard/src/contract/index.ts"
+      "file": "packages/domains/engagement/src/leaderboard/contract/index.ts"
     },
     {
       "name": "LeaderboardResponseSchema",
-      "file": "packages/addons/leaderboard/src/contract/index.ts"
+      "file": "packages/domains/engagement/src/leaderboard/contract/index.ts"
     },
     {
       "name": "LimitSchema",
-      "file": "packages/addons/compliance/src/contract/index.ts"
+      "file": "packages/domains/pam/src/compliance/contract/index.ts"
     },
     {
       "name": "LimitsSchema",
@@ -634,11 +634,11 @@
     },
     {
       "name": "LobbyCategoryDetailSchema",
-      "file": "packages/addons/lobby/src/contract/index.ts"
+      "file": "packages/domains/casino/src/lobby/contract/index.ts"
     },
     {
       "name": "LobbyCategorySchema",
-      "file": "packages/addons/lobby/src/contract/index.ts"
+      "file": "packages/domains/casino/src/lobby/contract/index.ts"
     },
     {
       "name": "LoginInputSchema",
@@ -650,11 +650,11 @@
     },
     {
       "name": "NotificationSchema",
-      "file": "packages/addons/notifications/src/contract/index.ts"
+      "file": "packages/domains/engagement/src/notifications/contract/index.ts"
     },
     {
       "name": "OddsUpdateSchema",
-      "file": "packages/addons/sportsbook/src/contract/index.ts"
+      "file": "packages/domains/sportsbook/src/contract/index.ts"
     },
     {
       "name": "OrganizationSchema",
@@ -662,7 +662,7 @@
     },
     {
       "name": "PageSchema",
-      "file": "packages/addons/cms/src/contract/index.ts"
+      "file": "packages/domains/cms/src/contract/index.ts"
     },
     {
       "name": "PaginationInputSchema",
@@ -674,11 +674,11 @@
     },
     {
       "name": "PlaceBetInputSchema",
-      "file": "packages/addons/sportsbook/src/contract/index.ts"
+      "file": "packages/domains/sportsbook/src/contract/index.ts"
     },
     {
       "name": "PlaceBetResultSchema",
-      "file": "packages/addons/sportsbook/src/contract/index.ts"
+      "file": "packages/domains/sportsbook/src/contract/index.ts"
     },
     {
       "name": "PlatformConfigSchema",
@@ -690,7 +690,7 @@
     },
     {
       "name": "PlayerRegistrationPointSchema",
-      "file": "packages/addons/player-management/src/contract/index.ts"
+      "file": "packages/domains/pam/src/player-management/contract/index.ts"
     },
     {
       "name": "PlayerSchema",
@@ -702,7 +702,7 @@
     },
     {
       "name": "PlayerSummarySchema",
-      "file": "packages/addons/player-management/src/contract/index.ts"
+      "file": "packages/domains/pam/src/player-management/contract/index.ts"
     },
     {
       "name": "ProviderSelectionSchema",
@@ -722,7 +722,7 @@
     },
     {
       "name": "SportsbookBetSchema",
-      "file": "packages/addons/sportsbook/src/contract/index.ts"
+      "file": "packages/domains/sportsbook/src/contract/index.ts"
     },
     {
       "name": "SportsbookConfigSchema",
@@ -730,23 +730,23 @@
     },
     {
       "name": "SportsbookEventSchema",
-      "file": "packages/addons/sportsbook/src/contract/index.ts"
+      "file": "packages/domains/sportsbook/src/contract/index.ts"
     },
     {
       "name": "SportsbookSelectionSchema",
-      "file": "packages/addons/sportsbook/src/contract/index.ts"
+      "file": "packages/domains/sportsbook/src/contract/index.ts"
     },
     {
       "name": "StartRoundInputSchema",
-      "file": "packages/addons/gaming/src/contract/index.ts"
+      "file": "packages/domains/casino/src/gaming/contract/index.ts"
     },
     {
       "name": "StartRoundOutputSchema",
-      "file": "packages/addons/gaming/src/contract/index.ts"
+      "file": "packages/domains/casino/src/gaming/contract/index.ts"
     },
     {
       "name": "SyncResultSchema",
-      "file": "packages/addons/aggregator/src/contract/index.ts"
+      "file": "packages/domains/casino/src/aggregator/contract/index.ts"
     },
     {
       "name": "TimestampSchema",
@@ -754,11 +754,11 @@
     },
     {
       "name": "TransactionResultSchema",
-      "file": "packages/addons/wallet/src/contract/index.ts"
+      "file": "packages/domains/wallet/src/contract/index.ts"
     },
     {
       "name": "UpdatePlayerProfileInputSchema",
-      "file": "packages/addons/profile/src/contract/index.ts"
+      "file": "packages/domains/pam/src/profile/contract/index.ts"
     },
     {
       "name": "UpdateProfileInputSchema",
@@ -766,11 +766,11 @@
     },
     {
       "name": "UserBonusSchema",
-      "file": "packages/addons/bonus/src/contract/index.ts"
+      "file": "packages/domains/engagement/src/bonus/contract/index.ts"
     },
     {
       "name": "UserBonusStatusSchema",
-      "file": "packages/addons/bonus/src/contract/index.ts"
+      "file": "packages/domains/engagement/src/bonus/contract/index.ts"
     },
     {
       "name": "UserIdInputSchema",
@@ -794,15 +794,15 @@
     },
     {
       "name": "WalletBalanceSchema",
-      "file": "packages/addons/wallet/src/contract/index.ts"
+      "file": "packages/domains/wallet/src/contract/index.ts"
     },
     {
       "name": "WalletTransactionSchema",
-      "file": "packages/addons/wallet/src/contract/index.ts"
+      "file": "packages/domains/wallet/src/contract/index.ts"
     },
     {
       "name": "WithdrawInputSchema",
-      "file": "packages/addons/wallet/src/contract/index.ts"
+      "file": "packages/domains/wallet/src/contract/index.ts"
     }
   ],
   "config": {

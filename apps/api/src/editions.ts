@@ -1,9 +1,9 @@
 import type { PluginEntry } from '@oss/plugin-host';
 import type { ContractRouter } from '@orpc/contract';
-import { leaderboardContract } from '@oss-addons/leaderboard/contract';
-import { sportsbookContract } from '@oss-addons/sportsbook/contract';
-import { igamingAggregatorContract } from '@oss-addons/aggregator/contract';
-import { playerContract } from '@oss-addons/player-management/contract';
+import { leaderboardContract } from '@oss/engagement/contracts/leaderboard';
+import { sportsbookContract } from '@oss/sportsbook/contract';
+import { igamingAggregatorContract } from '@oss/casino/contracts/aggregator';
+import { playerContract } from '@oss/pam/contracts/player';
 
 // Edition gate for add-on (optional, extract-later) packages.
 //

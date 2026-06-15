@@ -1,6 +1,6 @@
 {
   "name": "@oss/testing",
-  "version": "0.0.1",
+  "version": "0.2.0",
   "private": true,
   "type": "module",
   "main": "./dist/index.js",
@@ -18,12 +18,12 @@
     "clean": "rm -rf dist"
   },
   "dependencies": {
-    "@oss-addons/identity": "workspace:*",
     "@oss/adapters": "workspace:*",
     "@oss/api-runtime": "workspace:*",
     "@oss/auth": "workspace:*",
     "@oss/core": "workspace:*",
     "@oss/db": "workspace:*",
+    "@oss/pam": "workspace:*",
     "@oss/plugin-host": "workspace:*",
     "drizzle-orm": "0.45.2",
     "hono": "4.12.25",

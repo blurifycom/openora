@@ -1,6 +1,6 @@
 {
   "name": "@oss/mcp",
-  "version": "0.0.1",
+  "version": "0.2.0",
   "private": true,
   "bin": "./dist/main.js",
   "files": [

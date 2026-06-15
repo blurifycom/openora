@@ -1,8 +1,8 @@
 import { makeNotFoundError } from '@oss/core';
 import { DrizzleService, findOneOrThrow, pageToOffset } from '@oss/db';
 import { eq, ilike, count, sum, and, desc } from 'drizzle-orm';
-import { user } from '@oss-addons/identity/schema';
-import { wallet, walletTransaction } from '@oss-addons/wallet/schema';
+import { user } from '@oss/pam/schema/identity';
+import { wallet, walletTransaction } from '@oss/wallet/schema';
 import type { PlatformStats, AdminUser, AdminTransaction } from '../schemas/index.js';
 
 export const UserNotFoundError = makeNotFoundError('User');

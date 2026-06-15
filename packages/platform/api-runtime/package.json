@@ -1,6 +1,6 @@
 {
   "name": "@oss/api-runtime",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "files": [
     "dist"
   ],
@@ -25,17 +25,16 @@
     "@orpc/openapi": "1.14.5",
     "@orpc/server": "1.14.5",
     "@orpc/zod": "1.14.5",
-    "@oss-addons/gaming": "workspace:*",
-    "@oss-addons/identity": "workspace:*",
-    "@oss-addons/profile": "workspace:*",
-    "@oss-addons/wallet": "workspace:*",
     "@oss/adapters": "workspace:*",
     "@oss/auth": "workspace:*",
+    "@oss/casino": "workspace:*",
     "@oss/core": "workspace:*",
     "@oss/db": "workspace:*",
     "@oss/orpc-contract": "workspace:*",
+    "@oss/pam": "workspace:*",
     "@oss/plugin-host": "workspace:*",
     "@oss/shared-schemas": "workspace:*",
+    "@oss/wallet": "workspace:*",
     "drizzle-orm": "0.45.2",
     "hono": "4.12.25"
   },

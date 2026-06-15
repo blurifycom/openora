@@ -1,6 +1,6 @@
 {
   "name": "@oss/orpc-contract",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "files": [
     "dist"
   ],
@@ -23,18 +23,13 @@
     "@orpc/contract": "1.14.5",
     "@oss-addons/admin-console": "workspace:*",
     "@oss-addons/audit": "workspace:*",
-    "@oss-addons/bonus": "workspace:*",
-    "@oss-addons/chat": "workspace:*",
-    "@oss-addons/cms": "workspace:*",
-    "@oss-addons/compliance": "workspace:*",
-    "@oss-addons/gaming": "workspace:*",
     "@oss-addons/iam": "workspace:*",
-    "@oss-addons/identity": "workspace:*",
-    "@oss-addons/lobby": "workspace:*",
-    "@oss-addons/notifications": "workspace:*",
-    "@oss-addons/profile": "workspace:*",
-    "@oss-addons/wallet": "workspace:*",
+    "@oss/casino": "workspace:*",
+    "@oss/cms": "workspace:*",
+    "@oss/engagement": "workspace:*",
+    "@oss/pam": "workspace:*",
     "@oss/shared-schemas": "workspace:*",
+    "@oss/wallet": "workspace:*",
     "zod": "4.4.3"
   },
   "devDependencies": {

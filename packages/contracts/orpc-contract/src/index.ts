@@ -10,45 +10,41 @@ import { healthContract } from './health.js';
 // aggregated here - they merge conditionally in apps/api (editions.ts), so the
 // default typed client carries no gated surface. `health` is the only contract
 // owned here (it is not an add-on). See ADR-0021.
-import { identityContract } from '@oss-addons/identity/contract';
-import { cmsContract } from '@oss-addons/cms/contract';
-import { complianceContract } from '@oss-addons/compliance/contract';
-import { notificationsContract } from '@oss-addons/notifications/contract';
-import { walletContract } from '@oss-addons/wallet/contract';
-import { gamingContract } from '@oss-addons/gaming/contract';
-import { bonusContract } from '@oss-addons/bonus/contract';
-import { chatContract } from '@oss-addons/chat/contract';
-import { lobbyContract } from '@oss-addons/lobby/contract';
+import { identityContract } from '@oss/pam/contracts/identity';
+import { cmsContract } from '@oss/cms/contracts';
+import { complianceContract } from '@oss/pam/contracts/compliance';
+import { notificationsContract } from '@oss/engagement/contracts/notifications';
+import { walletContract } from '@oss/wallet/contract';
+import { gamingContract } from '@oss/casino/contracts/gaming';
+import { bonusContract } from '@oss/engagement/contracts/bonus';
+import { chatContract } from '@oss/engagement/contracts/chat';
+import { lobbyContract } from '@oss/casino/contracts/lobby';
 import { backofficeContract } from '@oss-addons/admin-console/contract';
-import { profileContract } from '@oss-addons/profile/contract';
+import { profileContract } from '@oss/pam/contracts/profile';
 import { iamContract } from '@oss-addons/iam/contract';
 import { auditContract } from '@oss-addons/audit/contract';
 
 export { healthContract } from './health.js';
-export { identityContract } from '@oss-addons/identity/contract';
-export { cmsContract, PageSchema, BannerSchema } from '@oss-addons/cms/contract';
-export { complianceContract, LimitSchema, GeoRuleSchema } from '@oss-addons/compliance/contract';
-export { notificationsContract, NotificationSchema } from '@oss-addons/notifications/contract';
-export {
-  walletContract,
-  WalletBalanceSchema,
-  WalletTransactionSchema,
-} from '@oss-addons/wallet/contract';
-export { gamingContract, GameSchema, GameRoundSchema } from '@oss-addons/gaming/contract';
-export { bonusContract, BonusSchema, UserBonusSchema } from '@oss-addons/bonus/contract';
+export { identityContract } from '@oss/pam/contracts/identity';
+export { cmsContract, PageSchema, BannerSchema } from '@oss/cms/contracts';
+export { complianceContract, LimitSchema, GeoRuleSchema } from '@oss/pam/contracts/compliance';
+export { notificationsContract, NotificationSchema } from '@oss/engagement/contracts/notifications';
+export { walletContract, WalletBalanceSchema, WalletTransactionSchema } from '@oss/wallet/contract';
+export { gamingContract, GameSchema, GameRoundSchema } from '@oss/casino/contracts/gaming';
+export { bonusContract, BonusSchema, UserBonusSchema } from '@oss/engagement/contracts/bonus';
 export {
   chatContract,
   ChatRoomSchema,
   ChatMessageSchema,
   ChatConnectionGrantSchema,
-} from '@oss-addons/chat/contract';
+} from '@oss/engagement/contracts/chat';
 export {
   lobbyContract,
   GameSummarySchema,
   LobbyCategorySchema,
   LobbyCategoryDetailSchema,
   FeaturedSlotSchema,
-} from '@oss-addons/lobby/contract';
+} from '@oss/casino/contracts/lobby';
 export {
   backofficeContract,
   PlatformStatsSchema,
@@ -63,7 +59,7 @@ export {
   profileContract,
   UpdatePlayerProfileInputSchema,
   type UpdatePlayerProfileInput,
-} from '@oss-addons/profile/contract';
+} from '@oss/pam/contracts/profile';
 export {
   iamContract,
   AdminRoleSchema,

@@ -40,7 +40,8 @@ function isCoreFile(file) {
   return (
     inPath(file, 'packages/platform') ||
     inPath(file, 'packages/contracts') ||
-    inPath(file, 'packages/sdks')
+    inPath(file, 'packages/sdks') ||
+    inPath(file, 'packages/foundation')
   );
 }
 

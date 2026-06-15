@@ -4,7 +4,7 @@ import { seedDemoData, type SeedResult } from '@oss/api-runtime';
 import { createAuth } from '@oss/auth';
 import { DRIZZLE, type DrizzleDb } from '@oss/db';
 import type { Container } from '@oss/core';
-import { user, session, account, verification } from '@oss-addons/identity/schema';
+import { user, session, account, verification } from '@oss/pam/schema/identity';
 
 export type SeedMinimalOptions = {
   /** Number of demo players to create. Keep small for fast tests. Default 4. */

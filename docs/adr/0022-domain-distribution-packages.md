@@ -1,7 +1,7 @@
 # ADR-0022: Six domain distribution packages for downstream publishing
 
 **Date**: 2026-06-14
-**Status**: Accepted; not yet implemented.
+**Status**: Superseded by ADR-0024 (domain-as-package + distribution tiers). The six-facade surface shipped (registry the private registry, v0.1.0) and remains the live stepping-stone; the long-term target is now domain-as-package - the facade subpaths (`@oss/<domain>/server|react|contracts|migrate`) are kept stable so the fold-in is consumer-non-breaking. Sections below describe the as-shipped facade model.
 **Relates to**: ADR-0021 (everything is a standalone add-on), ADR-0020 (gated add-on editions and isolation), ADR-0013 (platform is headless; frontend lives in the consumer), ADR-0007/0014 (transport/job seams).
 
 ## Context

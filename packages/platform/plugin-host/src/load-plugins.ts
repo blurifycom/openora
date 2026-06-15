@@ -101,5 +101,35 @@ export async function loadPlugins(
     await plugin.register(registry);
   }
 
+  assertRequiredPorts(ordered, container);
+
   return registry;
+}
+
+/**
+ * Boot-time fail-fast for cross-domain ports (ADR-0024). A domain depends ONLY on
+ * the foundation and reaches another domain through a port token the other domain
+ * binds - never an import. So when a domain package is left out of the install, its
+ * port is simply unbound; without this check the app would boot and only blow up on
+ * the first request that resolves the token, with a generic "No provider" message.
+ * Here we verify every declared `requiresPorts` token is bound right after
+ * registration and throw one actionable error naming the plugin, the port, and the
+ * likely-missing package.
+ */
+export function assertRequiredPorts(plugins: Plugin[], container: Container): void {
+  const unbound = plugins.flatMap((plugin) =>
+    (plugin.requiresPorts ?? [])
+      .filter((token) => !container.has(token))
+      .map(
+        (token) => `  - plugin "${plugin.id}" requires port ${String(token.description ?? token)}`,
+      ),
+  );
+  if (unbound.length > 0) {
+    throw new Error(
+      `[plugin-host] Required ports are unbound at boot:\n${unbound.join('\n')}\n` +
+        `A domain reaches another domain only through a port the other domain binds. ` +
+        `Install the package that provides each port (eg @oss/wallet binds WALLET_COMMANDS) ` +
+        `or remove the plugin that requires it. See ADR-0024.`,
+    );
+  }
 }
