@@ -178,3 +178,38 @@ publish:
     # fixed version in each published tarball.
     - pnpm build
     - pnpm changeset publish
+
+# After a successful publish, kick consumer's auto-bump pipeline so it opens an MR
+# bumping @oss/* to the just-published version (push-trigger, ADR-0022). Reads the
+# new version from the release tag (v0.3.0 -> 0.3.0). Requires a consumer pipeline
+# TRIGGER token stored here as the masked CI var CONSUMER_BUMP_TRIGGER_TOKEN
+# (Settings > CI/CD > Variables); consumer is the private registry. If the var is unset the
+# job no-ops (allow_failure) so a publish is never blocked on the downstream hook.
+trigger-consumer-bump:
+  stage: release
+  needs: ['publish']
+  rules:
+    - if: $CI_COMMIT_TAG =~ /^v\d+\.\d+\.\d+$/
+  allow_failure: true
+  before_script: []
+  script:
+    - |
+      if [ -z "$CONSUMER_BUMP_TRIGGER_TOKEN" ]; then
+        echo "CONSUMER_BUMP_TRIGGER_TOKEN unset - skipping downstream bump trigger"; exit 0
+      fi
+    - |
+      node -e '
+        const version = (process.env.CI_COMMIT_TAG || "").replace(/^v/, "");
+        const url = `${process.env.CI_API_V4_URL}/projects/299/trigger/pipeline`;
+        const body = new URLSearchParams({
+          token: process.env.CONSUMER_BUMP_TRIGGER_TOKEN,
+          ref: "dev",
+          "variables[OSS_BUMP]": "true",
+          "variables[OSS_VERSION]": version,
+        });
+        fetch(url, { method: "POST", body }).then(async (r) => {
+          const text = await r.text();
+          if (!r.ok) { console.error("trigger failed", r.status, text); process.exit(1); }
+          console.log("triggered consumer bump for", version, "->", r.status);
+        }).catch((e) => { console.error(e); process.exit(1); });
+      '
