@@ -9,6 +9,9 @@ packages:
 overrides:
   react: 19.2.7
   react-dom: 19.2.7
+  # Security pins (transitive, high-severity - dependency_audit gates at `high`).
+  esbuild@<0.28.1: '>=0.28.1' # GHSA-gv7w-rqvm-qjhr (also clears its moderate + low)
+  form-data@<4.0.6: '>=4.0.6' # GHSA-hmw2-7cc7-3qxx (via rulesync>fastmcp>...>axios)
 allowBuilds:
   esbuild: true
   msgpackr-extract: true
