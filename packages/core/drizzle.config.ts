@@ -1,0 +1,39 @@
+import 'dotenv/config';
+import { defineConfig } from 'drizzle-kit';
+
+export default defineConfig({
+  dialect: 'postgresql',
+  // The core add-ons share this one central migration history. Gated add-ons
+  // (leaderboard, sportsbook, aggregator, player-management) own their own
+  // drizzle.config + history and are intentionally NOT globbed here. Each new
+  // core add-on with tables must be listed below (the scaffolder adds it).
+  // Paths are relative to packages/core (the engine + outbox live in ./src/server/db).
+  schema: [
+    './src/server/db/outbox/schema.ts',
+    './src/audit/schema/index.ts',
+    './src/engagement/bonus/schema/index.ts',
+    './src/engagement/chat/schema/index.ts',
+    './src/cms/schema/index.ts',
+    './src/compliance/schema/index.ts',
+    './src/casino/gaming/schema/index.ts',
+    './src/iam/schema/index.ts',
+    './src/pam/identity/schema/index.ts',
+    './src/casino/lobby/schema/index.ts',
+    './src/engagement/notifications/schema/index.ts',
+    './src/pam/profile/schema/index.ts',
+    './src/wallet/schema/index.ts',
+  ],
+  out: './drizzle/migrations',
+  dbCredentials: {
+    // Migrations run DDL that needs owner/superuser privileges: CREATE ROLE,
+    // ALTER DEFAULT PRIVILEGES, ENABLE/FORCE ROW LEVEL SECURITY, CREATE POLICY
+    // (ADR-0018, migrations 0006/0007). The RLS-enforced `oss_app` role
+    // (DATABASE_URL in production) cannot run these - drizzle-kit migrate would
+    // fail. Prefer DATABASE_ADMIN_URL (the owner / oss_system role) and fall back
+    // to DATABASE_URL for single-role local/CI setups.
+    url:
+      process.env['DATABASE_ADMIN_URL'] ??
+      process.env['DATABASE_URL'] ??
+      'postgresql://postgres:postgres@localhost:5432/oss_igaming',
+  },
+});

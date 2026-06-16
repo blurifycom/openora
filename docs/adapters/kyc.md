@@ -3,10 +3,10 @@
 ## Interface
 
 ```ts
-// packages/contracts/adapters/src/kyc.ts
+// packages/core/src/contracts/adapters/src/kyc.ts
 export interface KycAdapter {
   submit(userId: string, documents: KycDocument[]): Promise<KycResult>;
-  getStatus(userId: string): Promise<KycStatus>;
+  getStatus(userId: string): Promise<KycVendorStatus>;
 }
 
 export interface KycDocument {
@@ -15,11 +15,11 @@ export interface KycDocument {
   backUrl?: string;
 }
 
-export type KycStatus = 'pending' | 'approved' | 'rejected' | 'not_started';
+export type KycVendorStatus = 'pending' | 'approved' | 'rejected' | 'not_started';
 
 export interface KycResult {
   referenceId: string;
-  status: KycStatus;
+  status: KycVendorStatus;
 }
 
 export const KYC_ADAPTER = Symbol('KYC_ADAPTER');
@@ -44,7 +44,7 @@ The intended production provider is [SumSub](https://sumsub.com). To wire it:
 
 ```ts
 // apps/api/src/extensions/sumsub-kyc/src/sumsub-kyc-adapter.ts
-import type { KycAdapter, KycDocument, KycResult, KycStatus } from '@oss/adapters';
+import type { KycAdapter, KycDocument, KycResult, KycVendorStatus } from '@oss/core/contracts';
 
 export class SumsubKycAdapter implements KycAdapter {
   async submit(userId: string, documents: KycDocument[]): Promise<KycResult> {
@@ -52,7 +52,7 @@ export class SumsubKycAdapter implements KycAdapter {
     // https://developers.sumsub.com/api-reference/#creating-an-applicant
   }
 
-  async getStatus(userId: string): Promise<KycStatus> {
+  async getStatus(userId: string): Promise<KycVendorStatus> {
     // GET applicant review status from SumSub
   }
 }
@@ -62,8 +62,8 @@ export class SumsubKycAdapter implements KycAdapter {
 
 ```ts
 // apps/api/src/extensions/sumsub-kyc/plugin.ts
-import { KYC_ADAPTER } from '@oss/adapters';
-import { definePlugin } from '@oss/plugin-host';
+import { KYC_ADAPTER } from '@oss/core/contracts';
+import { definePlugin } from '@oss/core/server';
 import { SumsubKycAdapter } from './src/sumsub-kyc-adapter.js';
 
 export default definePlugin({

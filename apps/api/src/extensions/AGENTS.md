@@ -17,7 +17,7 @@ Creates `apps/api/src/extensions/<name>/plugin.ts` and appends an entry to `exte
 
 ## The `register(ctx)` surface
 
-`definePlugin({ id, dependsOn?, register(ctx) })`. `ctx` is a `ModuleRegistry` (see `packages/platform/plugin-host/src/define-plugin.ts`):
+`definePlugin({ id, dependsOn?, register(ctx) })`. `ctx` is a `ModuleRegistry` (see `packages/core/src/server/plugin-host/define-plugin.ts`):
 
 | Hook                                        | Use                                                                                                                                                        |
 | ------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------- |

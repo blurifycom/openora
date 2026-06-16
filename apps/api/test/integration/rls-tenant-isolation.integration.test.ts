@@ -1,10 +1,10 @@
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
-import { DrizzleService, getRequestDb } from '@oss/db';
-import { orm } from '@oss/db';
-import { wallet } from '@oss/wallet/schema';
-import { WalletService } from '@oss/wallet';
-import { withTenant, createEventBus, InMemoryBroker, createLogger } from '@oss/core';
-import type { PaymentAdapter } from '@oss/adapters';
+import { DrizzleService, getRequestDb } from '@oss/core/server';
+import { orm } from '@oss/core/server';
+import { wallet } from '@oss/core/wallet/schema';
+import { WalletService } from '@oss/core/wallet';
+import { withTenant, createEventBus, InMemoryBroker, createLogger } from '@oss/core/server';
+import type { PaymentAdapter } from '@oss/core/contracts';
 import { setupTestDb, type TestDb } from '@oss/testing';
 
 const { eq } = orm;

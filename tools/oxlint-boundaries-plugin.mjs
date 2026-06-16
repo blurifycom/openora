@@ -25,39 +25,18 @@ function inPath(file, segment) {
   return file.includes('/' + segment + '/') || file.includes('/' + segment);
 }
 
-// The core OSS build must never reach into an add-on (optional, extract-later)
-// package. Anything under packages/{platform,contracts,sdks}/ importing an
+// The published core (@oss/core = packages/core) must never reach into an add-on
+// (optional, extract-later) package. Anything under packages/core/ importing an
 // `@oss-addons/*` specifier is forbidden - only the composition roots under apps/*
-// (and add-on packages themselves) may. The two in-tree composition roots
-// packages/platform/(api-runtime|testing)/ are exempt: their seed + tenant-resolver
-// code reads add-on /schema subpaths. This string-level twin gives per-edit
-// feedback; the whole-graph `no-core-to-addon` rule catches transitive/dynamic
-// edges. See ADR-0020.
+// (and the @oss/testing harness, and add-on packages themselves) may. This
+// string-level twin gives per-edit feedback; the whole-graph `no-core-to-addon`
+// rule catches transitive/dynamic edges. See ADR-0021/0025.
 function isCoreFile(file) {
-  // The composition roots are NOT core for this rule - they wire add-ons in.
-  if (inPath(file, 'packages/platform/api-runtime')) return false;
-  if (inPath(file, 'packages/platform/testing')) return false;
-  return (
-    inPath(file, 'packages/platform') ||
-    inPath(file, 'packages/contracts') ||
-    inPath(file, 'packages/sdks') ||
-    inPath(file, 'packages/foundation')
-  );
+  return inPath(file, 'packages/core');
 }
 
 function isAddonSpecifier(spec) {
   return spec === '@oss-addons' || spec.startsWith('@oss-addons/');
-}
-
-// The @oss/orpc-contract aggregator is the one sanctioned core->add-on edge: it
-// composes the always-loaded core add-on contracts into the single runtime
-// `contract` the SDK links against. It may import ONLY the read-only
-// `@oss-addons/<name>/contract` subpath (never an add-on root, /schema, or
-// internals), so the inversion is contracts-only and every add-on still owns its
-// contract as the single source of truth. See ADR-0021.
-function isAggregatorImportingAddonContract(file, spec) {
-  if (!inPath(file, 'packages/contracts/orpc-contract')) return false;
-  return /^@oss-addons\/[a-z0-9-]+\/contract$/.test(spec);
 }
 
 const noCoreToAddon = {
@@ -66,15 +45,13 @@ const noCoreToAddon = {
       ImportDeclaration(node) {
         if (!isCoreFile(filename(context))) return;
         if (!isAddonSpecifier(node.source.value)) return;
-        if (isAggregatorImportingAddonContract(filename(context), node.source.value)) return;
         context.report({
           node,
           message:
-            'The core OSS build must not import an add-on package (@oss-addons/*). ' +
-            'The only exceptions are the two composition roots under ' +
-            'packages/platform/(api-runtime|testing)/; elsewhere add-on is wired only by the ' +
-            'composition roots under apps/* (extensions.config.ts + the createApp contract merge). ' +
-            'This keeps add-on packages extractable. See ADR-0020.',
+            'The published core (@oss/core) must not import an add-on package (@oss-addons/*). ' +
+            'Add-on is wired in only by the composition roots under apps/* ' +
+            '(extensions.config.ts + the editions contract merge) and the @oss/testing harness. ' +
+            'This keeps add-on packages extractable. See ADR-0021/0025.',
         });
       },
     };
@@ -128,30 +105,43 @@ const noCrossAddon = {
   },
 };
 
-const blocked_by_contracts = [
-  '@oss-addons',
-  '@oss/core',
-  '@oss/db',
-  '@oss/auth',
-  '@oss/plugin-host',
-  '@oss/api-runtime',
-];
+// Server/runtime specifiers that must never reach a browser bundle (the react
+// zone) or leak into a contracts zone - each transitively pulls Drizzle/Hono/
+// node-only code. `@oss/core/server` is the umbrella server subpath. See ADR-0025.
+const RUNTIME_SPECIFIERS = ['@oss/core/server'];
+
+function isRuntimeSpecifier(spec) {
+  return RUNTIME_SPECIFIERS.some((b) => spec === b || spec.startsWith(b + '/'));
+}
+
+const blocked_by_contracts = ['@oss-addons', ...RUNTIME_SPECIFIERS];
+
+// The contracts zone (@oss/core/contracts) and the react zone (@oss/core/react)
+// are the browser-safe / isomorphic subpaths of @oss/core. Both must stay
+// server-free so a browser bundle never pulls the node engine (@oss/core/server
+// = Drizzle/Hono/node). See ADR-0025.
+function isContractsZone(file) {
+  return file.includes('packages/core/src/contracts');
+}
+function isReactZone(file) {
+  return file.includes('packages/core/src/react');
+}
 
 const noContractsToRuntime = {
   create(context) {
     return {
       ImportDeclaration(node) {
         const file = filename(context);
-        if (!inPath(file, 'packages/contracts')) return;
+        if (!isContractsZone(file)) return;
         const spec = node.source.value;
-        // The orpc-contract aggregator may pull add-on /contract subpaths (above).
-        if (isAggregatorImportingAddonContract(file, spec)) return;
         const blocked = blocked_by_contracts.some((b) => spec === b || spec.startsWith(b + '/'));
         if (blocked) {
           context.report({
             node,
             message:
-              'contracts/* may import only other contracts and zod. See AGENTS.md > Dependency rules.',
+              'The @oss/core/contracts zone is isomorphic - it must not import the engine ' +
+              '(@oss/core/server) or an add-on. Keep it to contracts, base schemas, ports + zod. ' +
+              'See AGENTS.md > Dependency rules / ADR-0025.',
           });
         }
       },
@@ -225,7 +215,7 @@ const noCrossExtensionImport = {
 
 // A router (src/router/*.ts) is thin oRPC wiring: resolve the caller, call the
 // service, map errors. The canonical request/response shapes live in the contract
-// slice (@oss/orpc-contract/<module>) - the single source of truth that also emits
+// slice (the module's /contract dir, @oss/<module>/contracts) - the single source of truth that also emits
 // OpenAPI + the typed client. Defining a Zod schema inline in a router (`z.object`,
 // `z.array`, ...) forks that source of truth and drifts the spec. Flag every
 // schema-constructing `z.<method>(...)` call in a router file. See clean-architecture.md.
@@ -262,10 +252,108 @@ const noAdhocZodInRouter = {
             node,
             message:
               `Ad-hoc Zod (z.${callee.property.name}(...)) in a router. Define the shape in ` +
-              'the contract slice (@oss/orpc-contract/<module>) - the source of truth for ' +
-              'validation + OpenAPI + the typed client - and reference it. See clean-architecture.md.',
+              "the module's contract slice (its /contract dir, exported as @oss/<module>/contracts) - " +
+              'the source of truth for validation + OpenAPI + the typed client - and reference it. ' +
+              'See clean-architecture.md.',
           });
         }
+      },
+    };
+  },
+};
+
+// The react zone (@oss/core/react) is browser glue (createClient, provider, query
+// hooks). Importing the node engine (@oss/core/server) or an add-on pulls
+// Drizzle/Hono/node into the client bundle. Keep it domain-free + server-free.
+// See ADR-0025.
+const noReactToRuntime = {
+  create(context) {
+    return {
+      ImportDeclaration(node) {
+        const file = filename(context);
+        if (!isReactZone(file)) return;
+        const spec = node.source.value;
+        if (isRuntimeSpecifier(spec) || isAddonSpecifier(spec)) {
+          context.report({
+            node,
+            message:
+              'The @oss/core/react zone must not import the engine (@oss/core/server) or an ' +
+              'add-on - it would pull Drizzle/Hono/node into the browser bundle. ' +
+              'Keep client glue domain-free + server-free. See ADR-0025.',
+          });
+        }
+      },
+    };
+  },
+};
+
+// --- intra-core domain isolation (post-fold, ADR-0025) ----------------------
+// After the domains fold into @oss/core, a "domain" is any dir under
+// packages/core/src/<name>/ that is NOT one of the engine zones below. The
+// source-isolation invariant (ADR-0024/0025 rule 1: a domain never imports a
+// sibling domain's internals) is now enforced INTRA-package by these string
+// twins - the old whole-graph packages/domains/* rules went dead when that
+// directory vanished. See AGENTS.md > Dependency rules.
+const ENGINE_ZONES = ['contracts', 'server', 'react', 'scripts'];
+
+// The domain a core file belongs to (null for engine zones / non-core files).
+function coreDomainOf(file) {
+  const m = file.match(/packages\/core\/src\/([a-z0-9-]+)\//);
+  if (!m || ENGINE_ZONES.includes(m[1])) return null;
+  return m[1];
+}
+
+// The target domain of an `@oss/core/<x>/...` specifier (null when <x> is an
+// engine zone, or the bare `@oss/core/compliance` engine sealed-token util - the
+// compliance DOMAIN is only reachable via subpaths like /contracts, /schema).
+function coreDomainTarget(spec) {
+  if (!spec.startsWith('@oss/core/')) return null;
+  const tail = spec.slice('@oss/core/'.length).split('/').filter(Boolean);
+  if (tail.length === 0 || ENGINE_ZONES.includes(tail[0])) return null;
+  if (tail[0] === 'compliance' && tail.length === 1) return null;
+  return { name: tail[0], isSchema: tail[1] === 'schema' };
+}
+
+const noCrossCoreDomain = {
+  create(context) {
+    return {
+      ImportDeclaration(node) {
+        const self = coreDomainOf(filename(context));
+        if (!self) return;
+        const target = coreDomainTarget(node.source.value);
+        if (!target || target.name === self) return;
+        // The read-only /schema subpath is the one sanctioned cross-domain seam
+        // (same carve-out as no-cross-addon). Everything else couples internals.
+        if (target.isSchema) return;
+        context.report({
+          node,
+          message:
+            `A folded domain (packages/core/src/${self}) must not import a sibling domain ` +
+            `(${node.source.value}). Couple only through a sibling's read-only /schema subpath, ` +
+            'a command/adapter port, a domain event, or a shared contract via the composition ' +
+            'root - never a direct internal import. This is the ADR-0024/0025 source-isolation ' +
+            'invariant that keeps each domain extractable. See AGENTS.md > Dependency rules.',
+        });
+      },
+    };
+  },
+};
+
+const noEngineToDomain = {
+  create(context) {
+    return {
+      ImportDeclaration(node) {
+        if (!/packages\/core\/src\/(contracts|server|react)\//.test(filename(context))) return;
+        const target = coreDomainTarget(node.source.value);
+        if (!target) return;
+        context.report({
+          node,
+          message:
+            `The @oss/core engine (contracts/server/react) must not import a domain ` +
+            `(${node.source.value}). createApp is domain-agnostic (DI: the consumer injects ` +
+            'PAM identity + the tenant resolver); a domain is wired in only through apps/* and ' +
+            'the @oss/testing harness. See ADR-0024/0025.',
+        });
       },
     };
   },
@@ -277,8 +365,11 @@ export default {
     'no-cross-addon': noCrossAddon,
     'no-core-to-addon': noCoreToAddon,
     'no-contracts-to-runtime': noContractsToRuntime,
+    'no-react-to-runtime': noReactToRuntime,
     'no-deep-dist-import': noDeepDistImport,
     'no-cross-extension-import': noCrossExtensionImport,
     'no-adhoc-zod-in-router': noAdhocZodInRouter,
+    'no-cross-core-domain': noCrossCoreDomain,
+    'no-engine-to-domain': noEngineToDomain,
   },
 };

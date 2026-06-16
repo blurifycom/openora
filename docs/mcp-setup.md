@@ -88,7 +88,7 @@ The server uses stdio transport (no port). Add this to your editor's MCP config:
 ## The consumer-facing server (`@oss/mcp`)
 
 `oss-dev` (above) is the full toolkit for working _on_ this repo. There is a second,
-read-only server - `@oss/mcp` (`packages/platform/mcp`) - that ships to downstream
+read-only server - `@oss/mcp` (`packages/mcp`) - that ships to downstream
 consumers for inspecting the platform surface (catalog-overview, list-adapters, etc.).
 It reads `docs/catalog.json`, resolving it by walking up from `cwd`, then falling back to
 `node_modules/@oss/mcp/docs/catalog.json`.

@@ -9,9 +9,9 @@
 // routes/schemas. Modules never see the change; they emit/subscribe through the
 // EventBus, which owns the envelope. See ADR-0016.
 
-import { definePlugin } from '@oss/plugin-host';
-import { createLogger } from '@oss/core';
-import { MESSAGE_BROKER } from '@oss/adapters';
+import { definePlugin } from '@oss/core/server';
+import { createLogger } from '@oss/core/server';
+import { MESSAGE_BROKER } from '@oss/core/contracts';
 import { RabbitMqBroker } from './rabbitmq-broker.js';
 
 const log = createLogger('rabbitmq-overlay');

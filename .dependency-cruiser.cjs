@@ -28,51 +28,43 @@ module.exports = {
       name: 'no-contracts-to-runtime',
       severity: 'error',
       comment:
-        'contracts/* may import only other contracts (and zod). No modules, platform runtime, sdks, ui, or apps. The one exception is the @oss/orpc-contract aggregator reading add-on `/contract` slices (the read-only subpath that owns each route contract), which it composes into the SDK`s typed client. See AGENTS.md > Dependency rules and ADR-0021.',
-      from: { path: '^packages/contracts/' },
-      to: {
-        path: '^(apps/|packages/)',
-        pathNot:
-          '^packages/contracts/|^packages/addons/[^/]+/src/contract(/|$)|^packages/domains/[^/]+/src/contract(/|$)',
-      },
+        'The contracts zone (@oss/core/contracts = packages/core/src/contracts) is isomorphic - it must not depend on the node engine (@oss/core/server) or an add-on (a folded domain is covered by no-core-to-domain). It holds only composeContract/healthContract, base zod schemas, and ports/tokens. See AGENTS.md > Dependency rules and ADR-0021/0025.',
+      from: { path: '^packages/core/src/contracts' },
+      to: { path: '^(packages/core/src/server|packages/addons/)' },
+    },
+    {
+      name: 'no-react-to-runtime',
+      severity: 'error',
+      comment:
+        'The react zone (@oss/core/react = packages/core/src/react) is browser glue - it must not depend on the node engine (@oss/core/server = packages/core/src/server). Importing it pulls Drizzle/Hono/node into the client bundle. Keep it domain-free + server-free. See ADR-0025.',
+      from: { path: '^packages/core/src/react' },
+      to: { path: '^packages/core/src/server' },
     },
     {
       name: 'no-core-to-addon',
       severity: 'error',
       comment:
-        'The core OSS build must never depend on an add-on package. packages/{platform,contracts,sdks}/* may not import packages/addons/* (@oss-addons/*). Exceptions: (1) the two composition roots under packages/platform/(api-runtime|testing)/, which read add-on /schema subpaths for seeding + tenant resolution; (2) the @oss/orpc-contract aggregator reading add-on `/contract` slices to compose the SDK typed client (oxlint pins this to orpc-contract only). Everything else wires add-on in only through the composition roots under apps/*. This keeps an add-on package extractable. See ADR-0021.',
-      from: {
-        path: '^packages/(platform|contracts|sdks|foundation)/',
-        pathNot: '^packages/platform/(api-runtime|testing)/',
-      },
-      to: {
-        path: '^packages/addons/',
-        pathNot: '^packages/addons/[^/]+/src/contract(/|$)',
-      },
+        'The published core (@oss/core = packages/core) must never depend on an add-on package (packages/addons/*). Add-on is wired in only by the composition roots under apps/* (extensions.config.ts + the editions contract merge) and the @oss/testing harness. This keeps every add-on extractable. See ADR-0021/0025.',
+      from: { path: '^packages/core/' },
+      to: { path: '^packages/addons/' },
     },
     {
       name: 'no-core-to-domain',
       severity: 'error',
       comment:
-        'The core OSS build must never depend on a domain package. packages/{platform,contracts,sdks,foundation}/* may not import packages/domains/* (@oss/<domain>). Exceptions mirror no-core-to-addon: (1) the composition roots under packages/platform/(api-runtime|testing)/ read a domain`s /schema for seeding + tenant resolution; (2) the @oss/orpc-contract aggregator reads a domain`s /contract slice to compose the SDK typed client. A domain stays independently installable - everything else wires it in only through apps/*. See ADR-0024.',
-      from: {
-        path: '^packages/(platform|contracts|sdks|foundation)/',
-        pathNot: '^packages/platform/(api-runtime|testing)/',
-      },
-      to: {
-        path: '^packages/domains/',
-        pathNot: '^packages/domains/[^/]+/src/contract(/|$)',
-      },
+        'The @oss/core engine zones (contracts/server/react) must never depend on a folded domain (packages/core/src/<domain> = any core/src dir other than the engine zones). createApp is domain-agnostic (DI: the consumer injects PAM identity + the tenant resolver); demo seeding lives in @oss/testing. Post-fold twin of the old packages/core -> packages/domains rule. See ADR-0024/0025.',
+      from: { path: '^packages/core/src/(contracts|server|react)/' },
+      to: { path: '^packages/core/src/(?!contracts/|server/|react/|scripts/)[^/]+/' },
     },
     {
       name: 'no-cross-domain',
       severity: 'error',
       comment:
-        'A domain package must not depend on another domain package - the single rule of ADR-0024. Domains couple only through the foundation: a command/adapter port (eg WALLET_COMMANDS), a domain event, or a shared contract - never a direct import, not even a /schema read. This is what lets any subset of domains install on its own (PAM-only, casino-only). Stricter than no-cross-addon, which still allows /schema reads.',
-      from: { path: '^packages/domains/([^/]+)/' },
+        'A folded domain (packages/core/src/<domain>) must not depend on a sibling domain - the single rule of ADR-0024, now enforced intra-package. Couple only through the foundation: a read-only /schema subpath, a command/adapter port (eg WALLET_COMMANDS), a domain event, or a shared contract via the composition root. This whole-graph twin catches relative-path / barrel laundering the oxlint string rule (no-cross-core-domain) cannot.',
+      from: { path: '^packages/core/src/(?!contracts/|server/|react/|scripts/)([^/]+)/' },
       to: {
-        path: '^packages/domains/[^/]+/',
-        pathNot: '^packages/domains/$1/',
+        path: '^packages/core/src/(?!contracts/|server/|react/|scripts/)[^/]+/',
+        pathNot: ['^packages/core/src/$1/', '/schema/'],
       },
     },
     {

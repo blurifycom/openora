@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
-import { NOTIFICATION_DELIVERY_ADAPTER } from '@oss/adapters';
+import { NOTIFICATION_DELIVERY_ADAPTER } from '@oss/core/contracts';
 import { startHarness, type IntegrationHarness } from './harness.js';
 
 const EMAIL = 'player.1@demo.igaming.dev';

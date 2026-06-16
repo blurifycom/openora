@@ -57,7 +57,7 @@ function consumerMcp(ossRel: string) {
       oss: {
         type: 'stdio',
         command: 'pnpm',
-        args: ['exec', 'tsx', `${ossRel}/packages/platform/mcp/src/main.ts`],
+        args: ['exec', 'tsx', `${ossRel}/packages/mcp/src/main.ts`],
       },
     },
   };

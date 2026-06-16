@@ -81,12 +81,7 @@ const files: Record<string, string> = {
         },
         dependencies: {
           '@orpc/server': '1.14.3',
-          '@oss/adapters': 'workspace:*',
-          '@oss/api-runtime': 'workspace:*',
           '@oss/core': 'workspace:*',
-          '@oss/orpc-contract': 'workspace:*',
-          '@oss/plugin-host': 'workspace:*',
-          '@oss/shared-schemas': 'workspace:*',
           ...addonDeps,
           amqplib: '^2.0.1',
           bullmq: '^5.77.6',
@@ -115,8 +110,7 @@ const files: Record<string, string> = {
 
   'src/extensions.ts': extensionsLoader,
 
-  'src/main.ts': `import { createApp } from '@oss/api-runtime';
-import { contract } from '@oss/orpc-contract';
+  'src/main.ts': `import { createApp } from '@oss/core/server';
 import { loadExtensions } from './extensions.js';
 
 // ${name} service: boots only the modules it owns. The module code is shared with
@@ -126,7 +120,10 @@ process.env['SERVICE_MANIFEST'] ??= '${manifest.join(',')}';
 
 async function bootstrap() {
   const plugins = await loadExtensions();
-  const { listen } = await createApp({ plugins, contract });
+  // Routes come from the loaded plugins. To emit an OpenAPI spec for this
+  // service, compose its slices with composeContract({ ... }) from
+  // @oss/core/contracts and pass it as \`contract\`. See apps/api/src/editions.ts.
+  const { listen } = await createApp({ plugins });
   await listen();
 }
 

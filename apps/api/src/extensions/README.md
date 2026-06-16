@@ -23,7 +23,7 @@ apps/api/src/extensions/<name>/
 ## How it works
 
 1. Register the overlay in repo-root `extensions.config.ts` (append at the bottom under the "Overlay extensions" comment).
-2. `packages/platform/plugin-host` loads every registered entry at API boot, in top-to-bottom order (respecting `dependsOn`).
+2. `packages/core/src/server/plugin-host` loads every registered entry at API boot, in top-to-bottom order (respecting `dependsOn`).
 3. `register(ctx)` receives a `ModuleRegistry`. Use it to bind providers, mount routers, fill UI slots, subscribe to events, expose MCP tools.
 
 See `AGENTS.md` in this directory for the full `ctx` surface and the do/don't.

@@ -1,9 +1,27 @@
-import type { PluginEntry } from '@oss/plugin-host';
+import type { PluginEntry } from '@oss/core/server';
 import type { ContractRouter } from '@orpc/contract';
-import { leaderboardContract } from '@oss/engagement/contracts/leaderboard';
-import { sportsbookContract } from '@oss/sportsbook/contract';
-import { igamingAggregatorContract } from '@oss/casino/contracts/aggregator';
-import { playerContract } from '@oss/pam/contracts/player';
+import { composeContract } from '@oss/core/contracts';
+// Core (always-loaded) contract slices. Each module OWNS its slice; this
+// composition root is the ONE place that assembles them into the runtime
+// contract - aggregation never lives in a shared package. See ADR-0021.
+import { identityContract } from '@oss/core/pam/contracts/identity';
+import { complianceContract } from '@oss/core/compliance/contracts';
+import { profileContract } from '@oss/core/pam/contracts/profile';
+import { cmsContract } from '@oss/core/cms/contracts';
+import { notificationsContract } from '@oss/core/engagement/contracts/notifications';
+import { bonusContract } from '@oss/core/engagement/contracts/bonus';
+import { chatContract } from '@oss/core/engagement/contracts/chat';
+import { walletContract } from '@oss/core/wallet/contract';
+import { gamingContract } from '@oss/core/casino/contracts/gaming';
+import { lobbyContract } from '@oss/core/casino/contracts/lobby';
+import { backofficeContract } from '@oss/core/admin-console/contract';
+import { iamContract } from '@oss/core/iam/contract';
+import { auditContract } from '@oss/core/audit/contract';
+// Gated (optional, extract-later) contract slices.
+import { leaderboardContract } from '@oss/core/engagement/contracts/leaderboard';
+import { sportsbookContract } from '@oss/core/sportsbook/contract';
+import { igamingAggregatorContract } from '@oss/core/casino/contracts/aggregator';
+import { playerContract } from '@oss/core/pam/contracts/player';
 
 // Edition gate for add-on (optional, extract-later) packages.
 //
@@ -18,6 +36,25 @@ import { playerContract } from '@oss/pam/contracts/player';
 //
 // oxlint-disable-next-line typescript/no-explicit-any -- root contract is an external oRPC generic
 type AnyContract = ContractRouter<any>;
+
+// The always-loaded core slices, keyed by their root-contract namespace
+// (= OpenAPI/typed-client namespace). `health` is added first by composeContract.
+// Order mirrors the historical aggregate so the emitted OpenAPI paths stay stable.
+const CORE: Record<string, AnyContract> = {
+  identity: identityContract,
+  cms: cmsContract,
+  compliance: complianceContract,
+  notifications: notificationsContract,
+  wallet: walletContract,
+  gaming: gamingContract,
+  bonus: bonusContract,
+  chat: chatContract,
+  lobby: lobbyContract,
+  backoffice: backofficeContract,
+  profile: profileContract,
+  iam: iamContract,
+  audit: auditContract,
+};
 
 // Keyed by the extensions.config plugin id (what applyEdition filters on, what the
 // operator lists in OSS_ADDONS). `namespace` is the key the slice merges under in
@@ -59,13 +96,20 @@ export function applyEdition(entries: PluginEntry[]): PluginEntry[] {
   return entries.filter((e) => e.kind !== 'addon' || enabled.has(e.id));
 }
 
-// Merge the enabled add-on contract slices into the core contract so the emitted
-// OpenAPI spec advertises exactly the routes this edition actually serves.
-export function withAddonContracts(core: AnyContract): AnyContract {
-  const enabled = enabledAddons();
-  const merged: Record<string, AnyContract> = { ...(core as Record<string, AnyContract>) };
-  for (const [id, entry] of Object.entries(ADDONS)) {
-    if (enabled.has(id)) merged[entry.namespace] = entry.contract;
+// Assemble the runtime contract for this edition: health + core slices, plus the
+// gated add-on slices this process enables (OSS_ADDONS) when `includeAddons`. This
+// is the single aggregation point - the consumer's composition root. The running
+// server includes enabled add-ons (so served routes match); the committed
+// docs/openapi.json stays the canonical CORE surface (no gated/premium routes).
+export function buildContract({
+  includeAddons = true,
+}: { includeAddons?: boolean } = {}): AnyContract {
+  const slices: Record<string, AnyContract> = { ...CORE };
+  if (includeAddons) {
+    const enabled = enabledAddons();
+    for (const [id, entry] of Object.entries(ADDONS)) {
+      if (enabled.has(id)) slices[entry.namespace] = entry.contract;
+    }
   }
-  return merged as AnyContract;
+  return composeContract(slices);
 }

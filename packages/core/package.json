@@ -1,0 +1,499 @@
+{
+  "name": "@oss/core",
+  "version": "0.2.0",
+  "files": [
+    "dist",
+    "drizzle"
+  ],
+  "type": "module",
+  "exports": {
+    "./contracts": {
+      "import": "./dist/contracts/index.js",
+      "require": "./dist/contracts/index.js",
+      "types": "./dist/contracts/index.d.ts"
+    },
+    "./react": {
+      "import": "./dist/react/index.js",
+      "require": "./dist/react/index.js",
+      "types": "./dist/react/index.d.ts"
+    },
+    "./server": {
+      "import": "./dist/server/index.js",
+      "require": "./dist/server/index.js",
+      "types": "./dist/server/index.d.ts"
+    },
+    "./server/orm": {
+      "import": "./dist/server/db/orm.js",
+      "types": "./dist/server/db/orm.d.ts"
+    },
+    "./server/migrate": {
+      "import": "./dist/server/db/migrate.js",
+      "types": "./dist/server/db/migrate.d.ts"
+    },
+    "./compliance": {
+      "import": "./dist/compliance.js",
+      "require": "./dist/compliance.js",
+      "types": "./dist/compliance.d.ts"
+    },
+    "./compliance/sealed": {
+      "import": "./dist/compliance/sealed.js",
+      "require": "./dist/compliance/sealed.js",
+      "types": "./dist/compliance/sealed.d.ts"
+    },
+    "./admin-console": {
+      "types": "./dist/admin-console/index.d.ts",
+      "import": "./dist/admin-console/index.js",
+      "default": "./dist/admin-console/index.js"
+    },
+    "./admin-console/plugin": {
+      "types": "./dist/admin-console/plugin.d.ts",
+      "import": "./dist/admin-console/plugin.js",
+      "default": "./dist/admin-console/plugin.js"
+    },
+    "./admin-console/contract": {
+      "types": "./dist/admin-console/contract/index.d.ts",
+      "import": "./dist/admin-console/contract/index.js",
+      "default": "./dist/admin-console/contract/index.js"
+    },
+    "./audit": {
+      "types": "./dist/audit/index.d.ts",
+      "import": "./dist/audit/index.js",
+      "default": "./dist/audit/index.js"
+    },
+    "./audit/schema": {
+      "types": "./dist/audit/schema/index.d.ts",
+      "import": "./dist/audit/schema/index.js",
+      "default": "./dist/audit/schema/index.js"
+    },
+    "./audit/plugin": {
+      "types": "./dist/audit/plugin.d.ts",
+      "import": "./dist/audit/plugin.js",
+      "default": "./dist/audit/plugin.js"
+    },
+    "./audit/contract": {
+      "types": "./dist/audit/contract/index.d.ts",
+      "import": "./dist/audit/contract/index.js",
+      "default": "./dist/audit/contract/index.js"
+    },
+    "./casino": {
+      "types": "./dist/casino/index.d.ts",
+      "import": "./dist/casino/index.js",
+      "default": "./dist/casino/index.js"
+    },
+    "./casino/server": {
+      "types": "./dist/casino/server.d.ts",
+      "import": "./dist/casino/server.js",
+      "default": "./dist/casino/server.js"
+    },
+    "./casino/contracts": {
+      "types": "./dist/casino/contracts.d.ts",
+      "import": "./dist/casino/contracts.js",
+      "default": "./dist/casino/contracts.js"
+    },
+    "./casino/contracts/gaming": {
+      "types": "./dist/casino/gaming/contract/index.d.ts",
+      "import": "./dist/casino/gaming/contract/index.js",
+      "default": "./dist/casino/gaming/contract/index.js"
+    },
+    "./casino/contracts/lobby": {
+      "types": "./dist/casino/lobby/contract/index.d.ts",
+      "import": "./dist/casino/lobby/contract/index.js",
+      "default": "./dist/casino/lobby/contract/index.js"
+    },
+    "./casino/contracts/aggregator": {
+      "types": "./dist/casino/aggregator/contract/index.d.ts",
+      "import": "./dist/casino/aggregator/contract/index.js",
+      "default": "./dist/casino/aggregator/contract/index.js"
+    },
+    "./casino/schema/gaming": {
+      "types": "./dist/casino/gaming/schema/index.d.ts",
+      "import": "./dist/casino/gaming/schema/index.js",
+      "default": "./dist/casino/gaming/schema/index.js"
+    },
+    "./casino/schema/lobby": {
+      "types": "./dist/casino/lobby/schema/index.d.ts",
+      "import": "./dist/casino/lobby/schema/index.js",
+      "default": "./dist/casino/lobby/schema/index.js"
+    },
+    "./casino/schema/aggregator": {
+      "types": "./dist/casino/aggregator/schema/index.d.ts",
+      "import": "./dist/casino/aggregator/schema/index.js",
+      "default": "./dist/casino/aggregator/schema/index.js"
+    },
+    "./casino/plugins/gaming": {
+      "types": "./dist/casino/gaming/plugin.d.ts",
+      "import": "./dist/casino/gaming/plugin.js",
+      "default": "./dist/casino/gaming/plugin.js"
+    },
+    "./casino/plugins/lobby": {
+      "types": "./dist/casino/lobby/plugin.d.ts",
+      "import": "./dist/casino/lobby/plugin.js",
+      "default": "./dist/casino/lobby/plugin.js"
+    },
+    "./casino/plugins/aggregator": {
+      "types": "./dist/casino/aggregator/plugin.d.ts",
+      "import": "./dist/casino/aggregator/plugin.js",
+      "default": "./dist/casino/aggregator/plugin.js"
+    },
+    "./casino/migrate": {
+      "types": "./dist/casino/aggregator/migrate.d.ts",
+      "import": "./dist/casino/aggregator/migrate.js",
+      "default": "./dist/casino/aggregator/migrate.js"
+    },
+    "./cms": {
+      "types": "./dist/cms/index.d.ts",
+      "import": "./dist/cms/index.js",
+      "default": "./dist/cms/index.js"
+    },
+    "./cms/server": {
+      "types": "./dist/cms/plugin.d.ts",
+      "import": "./dist/cms/plugin.js",
+      "default": "./dist/cms/plugin.js"
+    },
+    "./cms/schema": {
+      "types": "./dist/cms/schema/index.d.ts",
+      "import": "./dist/cms/schema/index.js",
+      "default": "./dist/cms/schema/index.js"
+    },
+    "./cms/plugin": {
+      "types": "./dist/cms/plugin.d.ts",
+      "import": "./dist/cms/plugin.js",
+      "default": "./dist/cms/plugin.js"
+    },
+    "./cms/plugins/cms": {
+      "types": "./dist/cms/plugin.d.ts",
+      "import": "./dist/cms/plugin.js",
+      "default": "./dist/cms/plugin.js"
+    },
+    "./cms/contract": {
+      "types": "./dist/cms/contract/index.d.ts",
+      "import": "./dist/cms/contract/index.js",
+      "default": "./dist/cms/contract/index.js"
+    },
+    "./cms/contracts": {
+      "types": "./dist/cms/contract/index.d.ts",
+      "import": "./dist/cms/contract/index.js",
+      "default": "./dist/cms/contract/index.js"
+    },
+    "./compliance/server": {
+      "types": "./dist/compliance/plugin.d.ts",
+      "import": "./dist/compliance/plugin.js",
+      "default": "./dist/compliance/plugin.js"
+    },
+    "./compliance/schema": {
+      "types": "./dist/compliance/schema/index.d.ts",
+      "import": "./dist/compliance/schema/index.js",
+      "default": "./dist/compliance/schema/index.js"
+    },
+    "./compliance/plugin": {
+      "types": "./dist/compliance/plugin.d.ts",
+      "import": "./dist/compliance/plugin.js",
+      "default": "./dist/compliance/plugin.js"
+    },
+    "./compliance/plugins/compliance": {
+      "types": "./dist/compliance/plugin.d.ts",
+      "import": "./dist/compliance/plugin.js",
+      "default": "./dist/compliance/plugin.js"
+    },
+    "./compliance/contract": {
+      "types": "./dist/compliance/contract/index.d.ts",
+      "import": "./dist/compliance/contract/index.js",
+      "default": "./dist/compliance/contract/index.js"
+    },
+    "./compliance/contracts": {
+      "types": "./dist/compliance/contract/index.d.ts",
+      "import": "./dist/compliance/contract/index.js",
+      "default": "./dist/compliance/contract/index.js"
+    },
+    "./engagement": {
+      "types": "./dist/engagement/index.d.ts",
+      "import": "./dist/engagement/index.js",
+      "default": "./dist/engagement/index.js"
+    },
+    "./engagement/server": {
+      "types": "./dist/engagement/server.d.ts",
+      "import": "./dist/engagement/server.js",
+      "default": "./dist/engagement/server.js"
+    },
+    "./engagement/react": {
+      "types": "./dist/engagement/react.d.ts",
+      "import": "./dist/engagement/react.js",
+      "default": "./dist/engagement/react.js"
+    },
+    "./engagement/contracts": {
+      "types": "./dist/engagement/contracts.d.ts",
+      "import": "./dist/engagement/contracts.js",
+      "default": "./dist/engagement/contracts.js"
+    },
+    "./engagement/contracts/chat": {
+      "types": "./dist/engagement/chat/contract/index.d.ts",
+      "import": "./dist/engagement/chat/contract/index.js",
+      "default": "./dist/engagement/chat/contract/index.js"
+    },
+    "./engagement/contracts/notifications": {
+      "types": "./dist/engagement/notifications/contract/index.d.ts",
+      "import": "./dist/engagement/notifications/contract/index.js",
+      "default": "./dist/engagement/notifications/contract/index.js"
+    },
+    "./engagement/contracts/bonus": {
+      "types": "./dist/engagement/bonus/contract/index.d.ts",
+      "import": "./dist/engagement/bonus/contract/index.js",
+      "default": "./dist/engagement/bonus/contract/index.js"
+    },
+    "./engagement/contracts/leaderboard": {
+      "types": "./dist/engagement/leaderboard/contract/index.d.ts",
+      "import": "./dist/engagement/leaderboard/contract/index.js",
+      "default": "./dist/engagement/leaderboard/contract/index.js"
+    },
+    "./engagement/schema/chat": {
+      "types": "./dist/engagement/chat/schema/index.d.ts",
+      "import": "./dist/engagement/chat/schema/index.js",
+      "default": "./dist/engagement/chat/schema/index.js"
+    },
+    "./engagement/schema/notifications": {
+      "types": "./dist/engagement/notifications/schema/index.d.ts",
+      "import": "./dist/engagement/notifications/schema/index.js",
+      "default": "./dist/engagement/notifications/schema/index.js"
+    },
+    "./engagement/schema/bonus": {
+      "types": "./dist/engagement/bonus/schema/index.d.ts",
+      "import": "./dist/engagement/bonus/schema/index.js",
+      "default": "./dist/engagement/bonus/schema/index.js"
+    },
+    "./engagement/schema/leaderboard": {
+      "types": "./dist/engagement/leaderboard/schema/index.d.ts",
+      "import": "./dist/engagement/leaderboard/schema/index.js",
+      "default": "./dist/engagement/leaderboard/schema/index.js"
+    },
+    "./engagement/plugins/chat": {
+      "types": "./dist/engagement/chat/plugin.d.ts",
+      "import": "./dist/engagement/chat/plugin.js",
+      "default": "./dist/engagement/chat/plugin.js"
+    },
+    "./engagement/plugins/notifications": {
+      "types": "./dist/engagement/notifications/plugin.d.ts",
+      "import": "./dist/engagement/notifications/plugin.js",
+      "default": "./dist/engagement/notifications/plugin.js"
+    },
+    "./engagement/plugins/bonus": {
+      "types": "./dist/engagement/bonus/plugin.d.ts",
+      "import": "./dist/engagement/bonus/plugin.js",
+      "default": "./dist/engagement/bonus/plugin.js"
+    },
+    "./engagement/plugins/leaderboard": {
+      "types": "./dist/engagement/leaderboard/plugin.d.ts",
+      "import": "./dist/engagement/leaderboard/plugin.js",
+      "default": "./dist/engagement/leaderboard/plugin.js"
+    },
+    "./engagement/migrate": {
+      "types": "./dist/engagement/leaderboard/migrate.d.ts",
+      "import": "./dist/engagement/leaderboard/migrate.js",
+      "default": "./dist/engagement/leaderboard/migrate.js"
+    },
+    "./iam": {
+      "types": "./dist/iam/index.d.ts",
+      "import": "./dist/iam/index.js",
+      "default": "./dist/iam/index.js"
+    },
+    "./iam/schema": {
+      "types": "./dist/iam/schema/index.d.ts",
+      "import": "./dist/iam/schema/index.js",
+      "default": "./dist/iam/schema/index.js"
+    },
+    "./iam/plugin": {
+      "types": "./dist/iam/plugin.d.ts",
+      "import": "./dist/iam/plugin.js",
+      "default": "./dist/iam/plugin.js"
+    },
+    "./iam/contract": {
+      "types": "./dist/iam/contract/index.d.ts",
+      "import": "./dist/iam/contract/index.js",
+      "default": "./dist/iam/contract/index.js"
+    },
+    "./pam": {
+      "types": "./dist/pam/index.d.ts",
+      "import": "./dist/pam/index.js",
+      "default": "./dist/pam/index.js"
+    },
+    "./pam/server": {
+      "types": "./dist/pam/server.d.ts",
+      "import": "./dist/pam/server.js",
+      "default": "./dist/pam/server.js"
+    },
+    "./pam/contracts": {
+      "types": "./dist/pam/contracts.d.ts",
+      "import": "./dist/pam/contracts.js",
+      "default": "./dist/pam/contracts.js"
+    },
+    "./pam/contracts/identity": {
+      "types": "./dist/pam/identity/contract/index.d.ts",
+      "import": "./dist/pam/identity/contract/index.js",
+      "default": "./dist/pam/identity/contract/index.js"
+    },
+    "./pam/contracts/profile": {
+      "types": "./dist/pam/profile/contract/index.d.ts",
+      "import": "./dist/pam/profile/contract/index.js",
+      "default": "./dist/pam/profile/contract/index.js"
+    },
+    "./pam/contracts/player": {
+      "types": "./dist/pam/player-management/contract/index.d.ts",
+      "import": "./dist/pam/player-management/contract/index.js",
+      "default": "./dist/pam/player-management/contract/index.js"
+    },
+    "./pam/schema/identity": {
+      "types": "./dist/pam/identity/schema/index.d.ts",
+      "import": "./dist/pam/identity/schema/index.js",
+      "default": "./dist/pam/identity/schema/index.js"
+    },
+    "./pam/schema/profile": {
+      "types": "./dist/pam/profile/schema/index.d.ts",
+      "import": "./dist/pam/profile/schema/index.js",
+      "default": "./dist/pam/profile/schema/index.js"
+    },
+    "./pam/plugins/identity": {
+      "types": "./dist/pam/identity/plugin.d.ts",
+      "import": "./dist/pam/identity/plugin.js",
+      "default": "./dist/pam/identity/plugin.js"
+    },
+    "./pam/plugins/profile": {
+      "types": "./dist/pam/profile/plugin.d.ts",
+      "import": "./dist/pam/profile/plugin.js",
+      "default": "./dist/pam/profile/plugin.js"
+    },
+    "./pam/plugins/player-management": {
+      "types": "./dist/pam/player-management/plugin.d.ts",
+      "import": "./dist/pam/player-management/plugin.js",
+      "default": "./dist/pam/player-management/plugin.js"
+    },
+    "./sportsbook": {
+      "types": "./dist/sportsbook/index.d.ts",
+      "import": "./dist/sportsbook/index.js",
+      "default": "./dist/sportsbook/index.js"
+    },
+    "./sportsbook/server": {
+      "types": "./dist/sportsbook/plugin.d.ts",
+      "import": "./dist/sportsbook/plugin.js",
+      "default": "./dist/sportsbook/plugin.js"
+    },
+    "./sportsbook/schema": {
+      "types": "./dist/sportsbook/schema/index.d.ts",
+      "import": "./dist/sportsbook/schema/index.js",
+      "default": "./dist/sportsbook/schema/index.js"
+    },
+    "./sportsbook/contract": {
+      "types": "./dist/sportsbook/contract/index.d.ts",
+      "import": "./dist/sportsbook/contract/index.js",
+      "default": "./dist/sportsbook/contract/index.js"
+    },
+    "./sportsbook/contracts": {
+      "types": "./dist/sportsbook/contract/index.d.ts",
+      "import": "./dist/sportsbook/contract/index.js",
+      "default": "./dist/sportsbook/contract/index.js"
+    },
+    "./sportsbook/plugin": {
+      "types": "./dist/sportsbook/plugin.d.ts",
+      "import": "./dist/sportsbook/plugin.js",
+      "default": "./dist/sportsbook/plugin.js"
+    },
+    "./sportsbook/plugins/sportsbook": {
+      "types": "./dist/sportsbook/plugin.d.ts",
+      "import": "./dist/sportsbook/plugin.js",
+      "default": "./dist/sportsbook/plugin.js"
+    },
+    "./sportsbook/migrate": {
+      "types": "./dist/sportsbook/migrate.d.ts",
+      "import": "./dist/sportsbook/migrate.js",
+      "default": "./dist/sportsbook/migrate.js"
+    },
+    "./wallet": {
+      "types": "./dist/wallet/index.d.ts",
+      "import": "./dist/wallet/index.js",
+      "default": "./dist/wallet/index.js"
+    },
+    "./wallet/server": {
+      "types": "./dist/wallet/plugin.d.ts",
+      "import": "./dist/wallet/plugin.js",
+      "default": "./dist/wallet/plugin.js"
+    },
+    "./wallet/schema": {
+      "types": "./dist/wallet/schema/index.d.ts",
+      "import": "./dist/wallet/schema/index.js",
+      "default": "./dist/wallet/schema/index.js"
+    },
+    "./wallet/plugin": {
+      "types": "./dist/wallet/plugin.d.ts",
+      "import": "./dist/wallet/plugin.js",
+      "default": "./dist/wallet/plugin.js"
+    },
+    "./wallet/plugins/wallet": {
+      "types": "./dist/wallet/plugin.d.ts",
+      "import": "./dist/wallet/plugin.js",
+      "default": "./dist/wallet/plugin.js"
+    },
+    "./wallet/contract": {
+      "types": "./dist/wallet/contract/index.d.ts",
+      "import": "./dist/wallet/contract/index.js",
+      "default": "./dist/wallet/contract/index.js"
+    },
+    "./wallet/contracts": {
+      "types": "./dist/wallet/contract/index.d.ts",
+      "import": "./dist/wallet/contract/index.js",
+      "default": "./dist/wallet/contract/index.js"
+    }
+  },
+  "scripts": {
+    "build": "tsc && node scripts/copy-drizzle.mjs",
+    "typecheck": "tsc --noEmit",
+    "clean": "rm -rf dist",
+    "test": "vitest run",
+    "test:unit": "vitest run --passWithNoTests",
+    "test:integration": "vitest run --passWithNoTests",
+    "generate": "drizzle-kit generate",
+    "migrate": "drizzle-kit migrate",
+    "push": "drizzle-kit push"
+  },
+  "dependencies": {
+    "@hono/node-server": "2.0.4",
+    "@orpc/client": "1.14.5",
+    "@orpc/contract": "1.14.5",
+    "@orpc/openapi": "1.14.5",
+    "@orpc/openapi-client": "1.14.5",
+    "@orpc/server": "1.14.5",
+    "@orpc/zod": "1.14.5",
+    "@paralleldrive/cuid2": "3.3.0",
+    "better-auth": "1.6.15",
+    "dotenv": "17.4.2",
+    "drizzle-orm": "0.45.2",
+    "hono": "4.12.25",
+    "pg": "8.21.0",
+    "pino": "10.3.1",
+    "zod": "4.4.3"
+  },
+  "devDependencies": {
+    "@oss/tsconfig": "workspace:*",
+    "@oss/vitest-config": "workspace:*",
+    "@types/node": "25.9.2",
+    "@types/pg": "8.20.0",
+    "@types/react": "19.2.17",
+    "@types/react-dom": "19.2.3",
+    "drizzle-kit": "0.31.10",
+    "typescript": "6.0.3",
+    "vitest": "4.1.8"
+  },
+  "peerDependencies": {
+    "@tanstack/react-query": ">=5",
+    "react": ">=19.2.7",
+    "react-dom": ">=19.2.7"
+  },
+  "peerDependenciesMeta": {
+    "@tanstack/react-query": {
+      "optional": true
+    },
+    "react": {
+      "optional": true
+    },
+    "react-dom": {
+      "optional": true
+    }
+  }
+}

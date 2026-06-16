@@ -22,7 +22,7 @@ pnpm db:migrate          # apply the OSS schema
 pnpm dev                 # api :3001
 ```
 
-The platform is **headless backend only** - it ships modules, contracts, and SDK consumption surface only. Build your entire frontend (player web, admin backoffice, components, styling, theme) in your own repo and consume the api over HTTP via `@oss/react`.
+The platform is **headless backend only** - it ships modules, contracts, and SDK consumption surface only. Build your entire frontend (player web, admin backoffice, components, styling, theme) in your own repo and consume the api over HTTP via `@oss/core/react`.
 
 After install, run `pnpm setup:mcp` and then `/start` in Claude Code: it asks what you want to
 build, calls the `enhance-intent` MCP tool to turn the ask into a grounded spec, and drives the
@@ -36,21 +36,31 @@ understand what it generated and how to extend it.
 
 ### Frontend
 
-Your entire frontend lives in your own repo (the platform is headless backend only). It consumes the api over HTTP through `@oss/react` (data hooks, auth, transport, cross-cutting helpers). A consumer fetches data through these hooks and manages its own SSR/hydration. React/react-dom/@tanstack/react-query are deduped via the consumer's bundler alias so the linked `@oss/*` and the app share a single physical React copy.
+Your entire frontend lives in your own repo (the platform is headless backend only). It consumes the api over HTTP through `@oss/core/react` (data hooks, auth, transport, cross-cutting helpers). A consumer fetches data through these hooks and manages its own SSR/hydration. React/react-dom/@tanstack/react-query are deduped via the consumer's bundler alias so the linked `@oss/*` and the app share a single physical React copy.
 
 ## API entrypoint
 
-A downstream consumer imports `@oss/api-runtime` and creates an API instance:
+A downstream consumer imports `@oss/core/server` + `@oss/core/contracts` and creates an API
+instance. `createApp` is domain-agnostic - the consumer composes its own contract and injects
+its PAM identity tables + a tenant resolver (ADR-0025):
 
 ```typescript
 // my-igaming/apps/api/src/main.ts
-import { createApp } from '@oss/api-runtime';
-import { contract } from '@oss/orpc-contract';
+import { createApp, resolveTenantForUser } from '@oss/core/server';
+import { composeContract } from '@oss/core/contracts';
+import { user, session, account, verification, twoFactor } from '@oss/pam/schema/identity';
+import { identityContract } from '@oss/pam/contracts/identity';
+import { walletContract } from '@oss/wallet/contract';
 import { extensions } from './extensions.config.js'; // their own plugin list
+
+// Compose only the modules you enable (composeContract adds `health` itself).
+const contract = composeContract({ identity: identityContract, wallet: walletContract });
 
 const { listen, emitOpenApiSpec } = await createApp({
   plugins: extensions,
-  contract, // pass a composed contract if extended
+  contract,
+  authSchema: { user, session, account, verification, twoFactor },
+  resolveTenant: (db, userId) => resolveTenantForUser(db, userId, user),
   port: 3001,
   cors: { origins: ['https://my-igaming.example'] },
   openapi: { info: { title: 'my-igaming API', version: '1.0.0' } },
@@ -78,10 +88,11 @@ slice and migrations. To enable one you want:
    the typed client expose its routes:
 
    ```typescript
-   import { contract as coreContract } from '@oss/orpc-contract';
+   import { composeContract } from '@oss/core/contracts';
+   import { walletContract } from '@oss/wallet/contract';
    import { playerContract } from '@oss-addons/player-management/contract';
 
-   const contract = { ...coreContract, player: playerContract };
+   const contract = composeContract({ wallet: walletContract, player: playerContract });
    ```
 
 4. If the package owns tables, run its migrations after the core set
@@ -94,13 +105,13 @@ The core OSS build never references add-on packages (a lint boundary,
 
 ## Building the frontend (in your own repo)
 
-Your entire frontend repo is built from scratch - pages, components, admin shell, theme, styling. It consumes the api over HTTP through `@oss/react` (typed client, data hooks, auth, realtime transport).
+Your entire frontend repo is built from scratch - pages, components, admin shell, theme, styling. It consumes the api over HTTP through `@oss/core/react` (typed client, data hooks, auth, realtime transport).
 
-Wrap your root layout with `QueryClientProvider` and `ApiClientProvider` (from `@oss/react`):
+Wrap your root layout with `QueryClientProvider` and `ApiClientProvider` (from `@oss/core/react`):
 
 ```tsx
 // your-frontend/app/providers.tsx (client component)
-import { ApiClientProvider } from '@oss/react';
+import { ApiClientProvider } from '@oss/core/react';
 import './globals.css'; // your own styling and design system
 
 <ApiClientProvider client={{ baseUrl }}>{children}</ApiClientProvider>;
@@ -123,12 +134,12 @@ Cross-workspace `link:` requires a dedup alias in your frontend bundler config f
 `react-dom`, and `@tanstack/react-query` (single physical path). See ADR-0005.
 
 For the same reason, a linked consumer's own Drizzle code (tables + operators) must import from
-`@oss/db/orm`, NOT from `drizzle-orm` directly. A direct `drizzle-orm` import resolves to the
+`@oss/core/server/orm`, NOT from `drizzle-orm` directly. A direct `drizzle-orm` import resolves to the
 consumer's own physical copy; drizzle's protected-member classes then fail nominal type checks
-against `DrizzleService.db` (which uses `@oss/db`'s copy). `@oss/db/orm` re-exports the
+against `DrizzleService.db` (which uses `@oss/core/server`'s copy). `@oss/core/server/orm` re-exports the
 framework-free drizzle surface from the single shared instance.
 
-Full hooks guide: `packages/sdks/react/AGENTS.md`.
+Full hooks guide: `packages/core/src/react/AGENTS.md`.
 
 ## Local dev linking to a sibling consumer
 
@@ -138,12 +149,11 @@ Until OSS packages are published to npm, downstream consumers point at this work
 ```jsonc
 "pnpm": {
   "overrides": {
-    "@oss/api-runtime":    "link:../igaming-oss/packages/platform/api-runtime",
-    "@oss/plugin-host":    "link:../igaming-oss/packages/platform/plugin-host",
-    "@oss/core":           "link:../igaming-oss/packages/platform/core",
-    "@oss/db":             "link:../igaming-oss/packages/platform/db",
-    "@oss/orpc-contract":  "link:../igaming-oss/packages/contracts/orpc-contract",
-    "@oss/shared-schemas": "link:../igaming-oss/packages/contracts/shared-schemas",
+    // Everything folded into one package (ADR-0025) - link @oss/core, plus the
+    // domain/add-on packages you install, plus the dev configs.
+    "@oss/core":           "link:../igaming-oss/packages/core",
+    "@oss/pam":            "link:../igaming-oss/packages/domains/pam",
+    "@oss/wallet":         "link:../igaming-oss/packages/domains/wallet",
     "@oss/tsconfig":       "link:../igaming-oss/packages/config/tsconfig"
   }
 }
@@ -154,12 +164,10 @@ To keep the link hot during dev, run a watch build here in parallel with the con
 process:
 
 ```bash
-pnpm -F @oss/api-runtime -F @oss/core -F @oss/db \
-       -F @oss/plugin-host -F @oss/orpc-contract -F @oss/shared-schemas \
-       --parallel build --watch
+pnpm -F @oss/core -F @oss/pam -F @oss/wallet --parallel build --watch
 ```
 
-Modules under `packages/modules/*` are loaded by the consumer via `extensions.config.ts` paths
+Modules under `packages/domains/*` are loaded by the consumer via `extensions.config.ts` paths
 pointing at built plugin files - see the load pattern below.
 
 Rejected alternatives: `pnpm link --global` (legacy, leaks state), `yalc` (extra publish step
@@ -168,7 +176,7 @@ on every change), `file:` (snapshot copy on install, no live source).
 ## Consumer load pattern
 
 Consumer `extensions.config.ts` points at the built plugin files inside `@oss/modules`
-(`.../packages/modules/dist/<group>/<name>/src/plugin.js`), not source, because tsx in the
+(`.../packages/domains/dist/<group>/<name>/src/plugin.js`), not source, because tsx in the
 consumer's API entry can't reliably resolve the tsconfig (decorator metadata gets dropped).
 Always build `@oss/modules` before booting the consumer:
 
@@ -187,11 +195,11 @@ directory.
 
 ## Tooling notes
 
-- Drizzle tables live in each module's `src/schema/index.ts`. `drizzle.config.ts` (in `@oss/db`)
+- Drizzle tables live in each module's `src/schema/index.ts`. `drizzle.config.ts` (in `@oss/core/server`)
   globs those files; `pnpm regen` runs drizzle-kit to generate migrations. There is no
   schema-merge step.
 - All feature modules compile together as the single `@oss/modules` package (`tsc`, rootDir
-  `packages/modules`, emitting `dist/<group>/<name>/src/...`).
+  `packages/domains`, emitting `dist/<group>/<name>/src/...`).
 - `pnpm-workspace.yaml#allowBuilds` (pnpm 11 syntax) replaces the legacy
   `pnpm.onlyBuiltDependencies` in package.json.
 - A consumer gets the same AI surface this repo has by running the published `@oss/mcp` server

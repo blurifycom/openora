@@ -1,0 +1,39 @@
+import { implement } from '@orpc/server';
+import { AdminGuard } from '@oss/core/server';
+import { getCurrentTenantId, getUserId, mapErrors, type OssContext } from '@oss/core/server';
+import { auditContract } from '../contract/index.js';
+import { AuditService } from '../service/audit.service.js';
+
+export function createAuditRouter(svc: AuditService, adminGuard: AdminGuard) {
+  const os = implement(auditContract).$context<OssContext>();
+
+  return os.router({
+    list: os.list.handler(async ({ input, context }) => {
+      await adminGuard.assert(context, 'audit', 'view');
+      return mapErrors({}, () => svc.list(input));
+    }),
+
+    exportCsv: os.exportCsv.handler(async ({ input, context }) => {
+      await adminGuard.assert(context, 'audit', 'export');
+      const csv = await svc.exportCsv(input);
+      // The export is itself an auditable admin action (regulatory). Record it
+      // AFTER producing the CSV so an export failure is not logged as a success.
+      const ip =
+        (context.request.headers['x-forwarded-for'] as string | undefined)?.split(',')[0]?.trim() ??
+        null;
+      const userAgent = (context.request.headers['user-agent'] as string | undefined) ?? null;
+      await svc.record({
+        tenantId: getCurrentTenantId() ?? 'default',
+        actorId: getUserId(context),
+        actorType: 'admin',
+        action: 'audit.export',
+        resourceType: 'audit',
+        after: { filters: input },
+        ip,
+        userAgent,
+        result: 'success',
+      });
+      return { csv };
+    }),
+  });
+}

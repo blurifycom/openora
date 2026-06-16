@@ -14,7 +14,7 @@
  *
  * The platform is headless: the frontend (player web + backoffice admin) lives in
  * the downstream consumer's own repo and talks to this api over HTTP via the SDK
- * (`@oss/react`). The scaffold ships only the backend.
+ * (`@oss/core/react`). The scaffold ships only the backend.
  *
  * The base lives in `tools/templates/consumer/` (root config + apps/api +
  * generators + dotfiles). The __dot__/.tpl/substitution rules apply throughout.
@@ -161,7 +161,7 @@ function main(): void {
     pnpm gen adapter         # swap a vendor adapter (KYC / payment / notification)
 
   This is a headless api. Build your frontend in its own repo and consume the
-  api over HTTP with @oss/react.
+  api over HTTP with @oss/core/react.
 `);
 }
 

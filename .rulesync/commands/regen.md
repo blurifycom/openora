@@ -24,7 +24,7 @@ pnpm -F @oss/db exec drizzle-kit generate --name <change-summary>
 ```
 
 Ship the migration file - downstream consumers run it too. Never hand-edit a migration under
-`packages/platform/db/` (core add-ons) or `packages/addons/<name>/migrations/` (gated add-ons); rerun `drizzle-kit generate` instead.
+`packages/core/drizzle/` (core add-ons) or `packages/addons/<name>/migrations/` (gated add-ons); rerun `drizzle-kit generate` instead.
 
 Watch for:
 

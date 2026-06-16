@@ -18,7 +18,7 @@ import type {
   BrokerHandler,
   MessageBrokerAdapter,
   SubscribeOptions,
-} from '@oss/adapters';
+} from '@oss/core/contracts';
 import type { Channel, ChannelModel, ConsumeMessage } from 'amqplib';
 
 // Minimal logger shape - the pino Logger passed in by the plugin satisfies it.

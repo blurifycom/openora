@@ -1,0 +1,77 @@
+import {
+  type EventBus,
+  makeNotFoundError,
+  makeOwnershipError,
+  assertOwnership,
+  getCurrentTenantId,
+} from '@oss/core/server';
+import { DrizzleService, findOneOrThrow } from '@oss/core/server';
+import { eq, and, isNull, desc } from 'drizzle-orm';
+import { notification } from '../schema/index.js';
+import type { CreateNotificationInput } from '../schemas/index.js';
+
+export const NotificationNotFoundError = makeNotFoundError('Notification');
+
+export const NotificationOwnershipError = makeOwnershipError('Notification');
+
+export class NotificationsService {
+  constructor(
+    private readonly drizzle: DrizzleService,
+    private readonly events: EventBus,
+  ) {}
+
+  async create(input: CreateNotificationInput) {
+    // Stamp the request tenant so the RLS WITH CHECK policy accepts the write
+    // (ADR-0018). When called from a per-tenant event handler / worker, that code
+    // must run inside runWithTenant(envelope.tenantId, ...) so the GUC and this
+    // value agree; otherwise the insert lands under the 'default' tenant.
+    const tenantId = getCurrentTenantId() ?? 'default';
+    const [record] = await this.drizzle.db
+      .insert(notification)
+      .values({
+        tenantId,
+        userId: input.userId,
+        type: input.type,
+        title: input.title,
+        body: input.body,
+      })
+      .returning();
+    this.events.emit('notifications.created', {
+      notificationId: record!.id,
+      userId: input.userId,
+    });
+    return record!;
+  }
+
+  async listForUser(userId: string) {
+    return this.drizzle.db
+      .select()
+      .from(notification)
+      .where(eq(notification.userId, userId))
+      .orderBy(desc(notification.createdAt))
+      .limit(50);
+  }
+
+  async markRead(id: string, userId: string) {
+    const record = findOneOrThrow(
+      await this.drizzle.db.select().from(notification).where(eq(notification.id, id)),
+      new NotificationNotFoundError(id),
+    );
+    assertOwnership(record.userId, userId, new NotificationOwnershipError());
+    const [updated] = await this.drizzle.db
+      .update(notification)
+      .set({ readAt: new Date() })
+      .where(eq(notification.id, id))
+      .returning();
+    return updated!;
+  }
+
+  async markAllRead(userId: string): Promise<{ count: number }> {
+    const rows = await this.drizzle.db
+      .update(notification)
+      .set({ readAt: new Date() })
+      .where(and(eq(notification.userId, userId), isNull(notification.readAt)))
+      .returning({ id: notification.id });
+    return { count: rows.length };
+  }
+}

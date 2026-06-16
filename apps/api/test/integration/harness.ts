@@ -1,10 +1,10 @@
 import { setupTestDb, bootTestApp, seedMinimal, asPlayer, asAdmin } from '@oss/testing';
 import type { TestApp, TestClient } from '@oss/testing';
-import type { Container } from '@oss/core';
-import { DRIZZLE } from '@oss/db';
-import { eq } from '@oss/db/orm';
-import { player } from '@oss/pam/schema/profile';
-import { user } from '@oss/pam/schema/identity';
+import type { Container } from '@oss/core/server';
+import { DRIZZLE } from '@oss/core/server';
+import { eq } from '@oss/core/server/orm';
+import { player } from '@oss/core/pam/schema/profile';
+import { user } from '@oss/core/pam/schema/identity';
 import { loadExtensions } from '../../src/extensions.js';
 
 export type IntegrationHarness = {

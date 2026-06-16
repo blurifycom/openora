@@ -1,42 +1,33 @@
 #!/usr/bin/env node
-// Unified migration runner across the core history + every add-on package's own
-// history. Each set tracks its applied migrations in its own table
+// Unified migration runner across the core central history + every gated add-on's
+// own history. Each set tracks its applied migrations in its own table
 // (__drizzle_migrations[_addon_<name>]) so the sets never collide on one DB.
 //
-// Order: core first (it owns the shared substrate - identity/user, wallet, the
-// `player` table, etc.), then each present add-on package. An add-on package with
-// no drizzle.config (e.g. player-management, which reads the core `player` table and
-// owns no tables) is skipped automatically.
+// Order: core central first (it owns the shared substrate - identity/user, wallet,
+// the `player` table, etc.), then each gated add-on history. The add-ons fold into
+// @oss/core as subpaths (ADR-0025), each exposing a runtime migrate() entry; the
+// ones that own tables are sportsbook, casino (aggregator) and engagement
+// (leaderboard). player-management reads the core `player` table and owns none, so
+// has no migrate entry and is skipped.
 //
-// See docs/adr/0020-editions-and-add-on-modules.md. NOTE: activating the add-on
-// sets on an existing DB requires the one-time re-baseline described in the ADR
-// (the core history still creates the add-on tables until then).
+// Requires @oss/core to be built (the migrate entries resolve to dist) and
+// DATABASE_ADMIN_URL or DATABASE_URL set. See docs/adr/0020 + ADR-0025.
 import { execFileSync } from 'node:child_process';
-import { readdirSync, existsSync } from 'node:fs';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const repoRoot = join(dirname(fileURLToPath(import.meta.url)), '..');
-const addonDir = join(repoRoot, 'packages', 'addons');
 
-function run(filter, script) {
-  process.stdout.write(`\n> migrate ${filter} (${script})\n`);
-  execFileSync('pnpm', ['-F', filter, script], { cwd: repoRoot, stdio: 'inherit' });
+// 1) Core central history (drizzle-kit migrate against the central drizzle.config).
+process.stdout.write('\n> migrate @oss/core (central history)\n');
+execFileSync('pnpm', ['-F', '@oss/core', 'migrate'], { cwd: repoRoot, stdio: 'inherit' });
+
+// 2) Gated add-on histories folded into @oss/core (own tracking table + SQL).
+const gated = ['sportsbook', 'casino', 'engagement']; // sportsbook, aggregator, leaderboard
+for (const name of gated) {
+  process.stdout.write(`\n> migrate @oss/core/${name} (gated history)\n`);
+  const { migrate } = await import(`@oss/core/${name}/migrate`);
+  await migrate();
 }
 
-// 1) Core history.
-run('@oss/db', 'migrate');
-
-// 2) Each add-on package that owns tables (has a drizzle.config.ts).
-const addonPackages = existsSync(addonDir)
-  ? readdirSync(addonDir, { withFileTypes: true })
-      .filter((d) => d.isDirectory())
-      .filter((d) => existsSync(join(addonDir, d.name, 'drizzle.config.ts')))
-      .map((d) => d.name)
-  : [];
-
-for (const name of addonPackages) {
-  run(`@oss-addons/${name}`, 'db:migrate');
-}
-
-process.stdout.write(`\nDone: core + ${addonPackages.length} add-on migration set(s) applied.\n`);
+process.stdout.write(`\nDone: core + ${gated.length} gated migration set(s) applied.\n`);

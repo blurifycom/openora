@@ -3,32 +3,32 @@
 // Add entries via `pnpm gen module <name>` or `pnpm gen plugin <name>`.
 //
 // Every feature is a standalone @oss-addons/<name> package under packages/addons/<name>/
-// (compiled to dist/plugin.js). Core add-ons (no `kind`) always load and keep their route
-// contracts in @oss/orpc-contract; gated add-ons (`kind: 'addon'`) load only when listed in
-// the OSS_ADDONS allowlist and carry their own contract slice. See ADR-0021.
+// (compiled to dist/plugin.js). Core add-ons (no `kind`) always load and own their route
+// contract slice (its /contract dir), composed in apps/api/editions.ts; gated add-ons
+// (`kind: 'addon'`) load only when listed in the OSS_ADDONS allowlist. See ADR-0021/0025.
 
 export const extensions = [
-  // --- CORE ADD-ONS (always loaded; contracts live in @oss/orpc-contract) ---
-  { id: 'audit', path: './packages/addons/audit/dist/plugin.js' },
-  { id: 'iam', path: './packages/addons/iam/dist/plugin.js' },
+  // --- CORE ADD-ONS (always loaded; contracts composed in apps/api/editions.ts) ---
+  { id: 'audit', path: './packages/core/dist/audit/plugin.js' },
+  { id: 'iam', path: './packages/core/dist/iam/plugin.js' },
   // Platform - shared substrate used by both surfaces
-  { id: 'identity', path: './packages/domains/pam/dist/identity/plugin.js' },
-  { id: 'notifications', path: './packages/domains/engagement/dist/notifications/plugin.js' },
-  { id: 'compliance', path: './packages/domains/pam/dist/compliance/plugin.js' },
+  { id: 'identity', path: './packages/core/dist/pam/identity/plugin.js' },
+  { id: 'notifications', path: './packages/core/dist/engagement/notifications/plugin.js' },
+  { id: 'compliance', path: './packages/core/dist/compliance/plugin.js' },
 
   // Player - the player-facing igaming surface
-  { id: 'wallet', path: './packages/domains/wallet/dist/plugin.js' },
-  { id: 'gaming', path: './packages/domains/casino/dist/gaming/plugin.js' },
-  { id: 'lobby', path: './packages/domains/casino/dist/lobby/plugin.js' },
-  { id: 'chat', path: './packages/domains/engagement/dist/chat/plugin.js' },
-  { id: 'bonus', path: './packages/domains/engagement/dist/bonus/plugin.js' },
+  { id: 'wallet', path: './packages/core/dist/wallet/plugin.js' },
+  { id: 'gaming', path: './packages/core/dist/casino/gaming/plugin.js' },
+  { id: 'lobby', path: './packages/core/dist/casino/lobby/plugin.js' },
+  { id: 'chat', path: './packages/core/dist/engagement/chat/plugin.js' },
+  { id: 'bonus', path: './packages/core/dist/engagement/bonus/plugin.js' },
   // Player self-profile (owns the `player` table). The admin PAM surface is the
   // gated player-management add-on below.
-  { id: 'profile', path: './packages/domains/pam/dist/profile/plugin.js' },
+  { id: 'profile', path: './packages/core/dist/pam/profile/plugin.js' },
 
   // Backoffice - the admin/operator surface
-  { id: 'admin-console', path: './packages/addons/admin-console/dist/plugin.js' },
-  { id: 'cms', path: './packages/domains/cms/dist/plugin.js' },
+  { id: 'admin-console', path: './packages/core/dist/admin-console/plugin.js' },
+  { id: 'cms', path: './packages/core/dist/cms/plugin.js' },
 
   // --- GATED ADD-ONS (optional, extract-later packages under packages/addons/*) ---
   // kind: 'addon' -> loaded by the composition root ONLY when the id is in the
@@ -37,17 +37,17 @@ export const extensions = [
   // migrations and can be lifted to its own npm package. See ADR-0020/ADR-0021.
   {
     id: 'leaderboard',
-    path: './packages/domains/engagement/dist/leaderboard/plugin.js',
+    path: './packages/core/dist/engagement/leaderboard/plugin.js',
     kind: 'addon',
   },
-  { id: 'sportsbook', path: './packages/domains/sportsbook/dist/plugin.js', kind: 'addon' },
+  { id: 'sportsbook', path: './packages/core/dist/sportsbook/plugin.js', kind: 'addon' },
   // sportsbook debits the core wallet via WALLET_COMMANDS (dependsOn: ['wallet']).
-  { id: 'aggregator', path: './packages/domains/casino/dist/aggregator/plugin.js', kind: 'addon' },
+  { id: 'aggregator', path: './packages/core/dist/casino/aggregator/plugin.js', kind: 'addon' },
   // Admin PAM. Reads the core `player` table (owned by the profile module) via the
   // /schema subpath; the player-facing profile stays free.
   {
     id: 'player-management',
-    path: './packages/domains/pam/dist/player-management/plugin.js',
+    path: './packages/core/dist/pam/player-management/plugin.js',
     kind: 'addon',
   },
 

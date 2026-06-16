@@ -1,0 +1,46 @@
+import { createApp, resolveTenantForUser, type CreateAppConfig } from '@oss/core/server';
+import { user, session, account, verification, twoFactor } from '@oss/core/pam/schema/identity';
+import type { Container } from '@oss/core/server';
+import type { Hono } from 'hono';
+
+export type TestApp = {
+  /** The Hono app - drive it directly with `app.request(path, init)`. */
+  app: Hono;
+  /** The composition container, for resolving services/tokens in assertions. */
+  container: Container;
+  /** Dispose the container (closes the DB pool, drains workers). */
+  close(): Promise<void>;
+};
+
+export type BootTestAppConfig = Pick<CreateAppConfig, 'plugins' | 'contract' | 'igaming'> & {
+  databaseUrl: string;
+};
+
+/**
+ * Boot the full Hono + oRPC app in-process against a test database. No network
+ * listener is opened - exercise routes with `app.request()` (the canonical Hono
+ * test approach). OpenAPI emission is disabled; CORS is left at the default.
+ *
+ * Pass the same `plugins` + `contract` the real entrypoint uses (in OSS that is
+ * `loadExtensions()` + `@oss/core/contracts`; a consumer passes its own).
+ */
+export async function bootTestApp(config: BootTestAppConfig): Promise<TestApp> {
+  const created = await createApp({
+    plugins: config.plugins,
+    ...(config.contract ? { contract: config.contract } : {}),
+    ...(config.igaming ? { igaming: config.igaming } : {}),
+    databaseUrl: config.databaseUrl,
+    // This is the OSS test harness, so it knows the PAM identity schema and injects
+    // it for session verification + tenant resolution (the engine itself stays
+    // domain-agnostic; the consumer composition root does the same). See ADR-0025.
+    authSchema: { user, session, account, verification, twoFactor },
+    resolveTenant: (db, userId) => resolveTenantForUser(db, userId, user),
+    openapi: { enabled: false },
+  });
+
+  return {
+    app: created.app,
+    container: created.container,
+    close: created.close,
+  };
+}

@@ -13,30 +13,20 @@
  *
  * Run via `pnpm gen:rls` (wired into `pnpm regen` after drizzle-kit generate).
  */
-import { existsSync, readdirSync, readFileSync, statSync, writeFileSync } from 'node:fs';
-import { dirname, join } from 'node:path';
+import { readdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const here = dirname(fileURLToPath(import.meta.url));
 const repoRoot = join(here, '..');
-const addonsRoot = join(repoRoot, 'packages/addons');
-const migrationsDir = join(repoRoot, 'packages/platform/db/drizzle/migrations');
+// The engine + central migration history live in @oss/core (ADR-0025).
+const coreRoot = join(repoRoot, 'packages/core');
+const centralDrizzleConfig = join(coreRoot, 'drizzle.config.ts');
+const migrationsDir = join(coreRoot, 'drizzle/migrations');
 const journalFile = join(migrationsDir, 'meta/_journal.json');
-const outboxSchema = join(repoRoot, 'packages/platform/db/src/outbox/schema.ts');
 
 // Deliberately non-RLS tenant tables (must match the coverage test's exemptions).
 const RLS_EXEMPT = new Set<string>(['user']);
-
-function walk(dir: string): string[] {
-  const out: string[] = [];
-  for (const entry of readdirSync(dir)) {
-    if (entry === 'node_modules' || entry === 'dist') continue;
-    const full = join(dir, entry);
-    if (statSync(full).isDirectory()) out.push(...walk(full));
-    else if (entry.endsWith('.ts')) out.push(full);
-  }
-  return out;
-}
 
 // Match the coverage test: pgTable blocks that declare a `tenantId: text('tenantId')`.
 function tenantTablesInFile(source: string): string[] {
@@ -66,26 +56,21 @@ function tenantTablesInFile(source: string): string[] {
   return tables;
 }
 
-// Core add-ons share the central migration history (this RLS pass). Gated add-ons
-// own their own drizzle.config + migration history, so they are skipped here -
-// they generate their own RLS. The marker for a gated add-on is a drizzle.config.ts
-// at the package root.
-function coreAddonSchemaFiles(): string[] {
-  const out: string[] = [];
-  for (const entry of readdirSync(addonsRoot)) {
-    const pkgDir = join(addonsRoot, entry);
-    if (!statSync(pkgDir).isDirectory()) continue;
-    if (existsSync(join(pkgDir, 'drizzle.config.ts'))) continue; // gated add-on
-    const schemaDir = join(pkgDir, 'src/schema');
-    if (existsSync(schemaDir)) out.push(...walk(schemaDir));
-  }
-  return out;
+// The schema files in the central migration history = the `schema:` array of the
+// central drizzle.config.ts (resolved relative to packages/core). This is the same
+// source of truth the rls-policy-coverage test uses - a core add-on/domain that
+// ships tables is listed there; gated histories own their own config and are
+// excluded by construction. See ADR-0018/0024/0025.
+function centralSchemaFiles(): string[] {
+  const config = readFileSync(centralDrizzleConfig, 'utf8');
+  const arrayMatch = config.match(/schema:\s*\[([\s\S]*?)\]/);
+  if (!arrayMatch) throw new Error('Could not find the `schema:` array in drizzle.config.ts');
+  return [...arrayMatch[1]!.matchAll(/['"]([^'"]+)['"]/g)].map((m) => resolve(coreRoot, m[1]!));
 }
 
 function collectTenantTables(): string[] {
-  const files = [...coreAddonSchemaFiles(), outboxSchema];
   const tables = new Set<string>();
-  for (const file of files) {
+  for (const file of centralSchemaFiles()) {
     for (const t of tenantTablesInFile(readFileSync(file, 'utf8'))) {
       if (!RLS_EXEMPT.has(t)) tables.add(t);
     }

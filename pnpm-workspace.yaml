@@ -1,5 +1,8 @@
 packages:
   - 'apps/*'
+  - 'packages/core' # @oss/core - the single published umbrella (ADR-0025); modules fold in as subpaths
+  - 'packages/mcp' # @oss/mcp - publishable MCP dev server (not part of core)
+  - 'packages/testing' # @oss/testing - dev/test harness (not published)
   - 'packages/*/*' # includes packages/addons/* (every feature is a standalone add-on package)
 # Pin a single React version across the workspace - the SDK peer-deps `>=19`, so
 # without this transitive deps drift across patch releases (19.2.0/19.2.6/...).

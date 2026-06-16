@@ -16,10 +16,10 @@ Open-source, headless, plugin-based, AI-native igaming platform. Anyone clones t
 
 ## Architecture pillars
 
-1. Zod-first contracts. Every shape is a Zod schema; types are `z.infer`'d, never hand-written. Cross-cutting schemas live in `packages/contracts/shared-schemas`; each add-on OWNS its route contract + request/response schemas in its own `src/contract/` (the single source of truth, co-located with the service + router that implement it), and module-local helper schemas in `schemas/`. `@oss/orpc-contract` is the AGGREGATOR: it composes the always-loaded core add-on contracts into the one runtime `contract` the SDK typed client links against (it owns only `health`). See ADR-0021.
-2. oRPC + Hono. oRPC owns route definition + Zod validation + OpenAPI emit; its `OpenAPIHandler` is mounted on a Hono server (`@hono/node-server`, Bun-ready later). Dependency wiring is a small functional composition container (`Container` in `@oss/core`) - explicit factory functions keyed by typed tokens, no decorators, no `reflect-metadata`. See ADR-0009.
+1. Zod-first contracts. Every shape is a Zod schema; types are `z.infer`'d, never hand-written. Cross-cutting schemas live in `packages/core/src/contracts/schemas`; each add-on OWNS its route contract + request/response schemas in its own `src/contract/` (the single source of truth, co-located with the service + router that implement it), and module-local helper schemas in `schemas/`. `@oss/core/contracts` is NOT an aggregator: its `composeContract` helper owns only `health` (zero domain deps); the composition root (`apps/api/src/editions.ts`) composes each enabled module's `/contract` slice into the one runtime `contract` the SDK typed client links against. See ADR-0021/0025.
+2. oRPC + Hono. oRPC owns route definition + Zod validation + OpenAPI emit; its `OpenAPIHandler` is mounted on a Hono server (`@hono/node-server`, Bun-ready later). Dependency wiring is a small functional composition container (`Container` in `@oss/core/server`) - explicit factory functions keyed by typed tokens, no decorators, no `reflect-metadata`. See ADR-0009.
 3. Plugin host. `definePlugin({ id, dependsOn, register })` is the only way new functionality enters the system. Overlays (in-tree under `apps/api/src/extensions/<name>/`) are the primary path; npm-published plugins use the same contract.
-4. Headless backend only. The platform ships backend modules + contracts + SDK consumption surface only. The frontend - all components, styling, and theme - lives in the downstream consumer. Consumers import `@oss/react` (data hooks, typed client, auth context, cross-cutting helpers) and own their entire UI layer. No UI packages ship here.
+4. Headless backend only. The platform ships backend modules + contracts + SDK consumption surface only. The frontend - all components, styling, and theme - lives in the downstream consumer. Consumers import `@oss/core/react` (data hooks, typed client, auth context, cross-cutting helpers) and own their entire UI layer. No UI packages ship here.
 5. Explicit > magic. No auto-discovery, no decorator soup. Everything is greppable; every wiring point is a typed function call.
 6. AI-friendly by default. Every module has an `AGENTS.md`. Every scaffold is a slash command. Every contract is queryable via the MCP dev server (`describe-module`, `list-routes`, `query-openapi`) and the generated `docs/catalog.json` (consumed by the published `@oss/mcp` server).
 7. Functional and declarative by default - a strong preference, not a stylistic nicety. Prefer pure functions, immutable data, and composition over imperative mutation and stateful classes - it is easier to test, debug, and reason about. Default to a module of exported functions that take their dependencies as arguments. Reach for a `class` ONLY when the runtime or composition root needs a single instance to hold injected dependencies (services, guards) - and even then the class is a thin shell whose methods delegate to pure, testable functions. Methods read as data-in/data-out transforms; derive values with `map`/`filter`/`reduce` rather than mutating accumulators; isolate side effects (DB writes, event emits, adapter calls) at the edges. No decorators, and no inheritance for code reuse - compose instead. Imperative loops with mutation, stateful helper classes, and class hierarchies are smells: flag and refactor them.
@@ -27,7 +27,7 @@ Open-source, headless, plugin-based, AI-native igaming platform. Anyone clones t
 ## Repo map
 
 The platform is headless: it ships the backend (api + add-ons + SDK consumption layer)
-only. The reference frontend apps and the page/block SDK layer were removed (2026-06-09) — the frontend lives in the downstream consumer repo and will be re-extracted later. `@oss/react` remains the supported frontend consumption surface.
+only. The reference frontend apps and the page/block SDK layer were removed (2026-06-09) — the frontend lives in the downstream consumer repo and will be re-extracted later. `@oss/core/react` remains the supported frontend consumption surface.
 
 ```
 apps/
@@ -36,30 +36,33 @@ apps/
   extensions/     # In-tree overlay plugins (drop-in folders)
 packages/
   config/         # tsconfig, vitest, oxlint presets (boundary lint: tools/oxlint-boundaries-plugin.mjs specifier-level + .dependency-cruiser.cjs whole-graph)
-  contracts/
-    shared-schemas/ # Zod schemas - the source of truth
-    orpc-contract/  # Aggregator: composes each core add-on's owned contract (+ health) into the SDK typed client
-    adapters/       # @oss/adapters - vendor adapter interfaces + DI tokens (the swap seams)
-  platform/
-    core/         # logger, event bus (EventBus + EVENT_BUS), composition Container, tenant context
-    auth/         # better-auth integration + shared AdminGuard
-    db/           # @oss/db - Drizzle client (DrizzleService) + central drizzle-kit migrations
-    plugin-host/  # definePlugin, ModuleRegistry, loader
-    mcp/          # @oss/mcp - publishable MCP server consumers run against their own repo
-  addons/         # Every feature is a standalone @oss-addons/<name> package under
-                  #   packages/addons/<name>/ (own package.json, tsconfig, src/{schema,schemas,
-                  #   contract,service,router,plugin}). EVERY add-on owns its contract slice
-                  #   (src/contract, exported as @oss-addons/<name>/contract). Core add-ons (13)
-                  #   always load: admin-console, audit, bonus, chat, cms, compliance, gaming,
-                  #   iam, identity, lobby, notifications, profile, wallet - @oss/orpc-contract
-                  #   AGGREGATES their contracts into the SDK typed client; their tables use
-                  #   central migrations. Gated add-ons (4, OSS_ADDONS) own contract slices +
-                  #   migrations and merge conditionally in apps/api: leaderboard, sportsbook,
-                  #   aggregator, player-management. See ADR-0021.
-  sdks/
-    react/        # @oss/react - data hooks, typed client, auth, realtime transport.
-                  #   The supported frontend consumption surface. No UI components
-                  #   ship here - the frontend lives in the downstream consumer repo.
+  core/           # @oss/core - THE single published package (ADR-0025). One package, subpaths:
+    src/contracts/  # @oss/core/contracts - isomorphic: composeContract + healthContract (orpc/),
+                  #   base zod schemas (schemas/), vendor adapter interfaces + DI tokens (adapters/).
+                  #   composeContract owns only `health`; it is NOT an aggregator - the composition
+                  #   root (apps/api/src/editions.ts) composes each module's /contract slice.
+    src/react/    # @oss/core/react - thin, domain-agnostic SDK: generic createClient, typed client,
+                  #   auth, realtime transport. Supported frontend consumption surface. No UI here.
+    src/server/   # @oss/core/server - the node engine: kernel (logger, EventBus + EVENT_BUS,
+                  #   Container, tenant ctx), plugin-host (definePlugin, ModuleRegistry, loader),
+                  #   db (DrizzleService), auth (better-auth + AdminGuard), runtime (createApp -
+                  #   domain-agnostic; the consumer injects PAM identity + resolveTenant).
+                  #   Subpaths: @oss/core/server/orm, @oss/core/server/migrate.
+    src/compliance/ # @oss/core/compliance - sealed-token list + assertNoSealedProviders (engine);
+                  #   also hosts the compliance DOMAIN (its /contracts, /schema, /plugins subpaths).
+    src/<domain>/ # the 10 folded domains (casino, cms, compliance, engagement, pam, sportsbook,
+                  #   wallet, iam, audit, admin-console) - exposed as @oss/core/<domain>/{contracts,
+                  #   schema,plugins,server,react} subpaths (ADR-0025 phase 2). A domain imports only
+                  #   the engine zones + a sibling's read-only /schema; NEVER a sibling's internals
+                  #   (no-cross-core-domain). Cross-module needs go through a port (eg
+                  #   ADMIN_USER_DIRECTORY / ADMIN_WALLET_REPORTING), a domain event, or a contract.
+    drizzle/      # central drizzle-kit migration history (core domain tables); drizzle.config.ts
+  addons/         # Premium/gated add-on packages (@oss-addons/<name>) - the gating + extraction
+                  #   machinery (OSS_ADDONS, no-cross-addon, scaffolder) stays for future premium
+                  #   modules; the tree currently ships none (the former admin/audit/iam are now
+                  #   plain domains). A premium module is add-on shape on a private scope. ADR-0025.
+  mcp/            # @oss/mcp - publishable MCP server consumers run against their own repo (dev)
+  testing/        # @oss/testing - dev/test harness (bootTestApp, seedDemoData); composes domains
 docs/
   adr/            # Architecture decision records
   architecture.md, glossary.md, agent-quickstart.md, downstream-consumer.md
@@ -70,19 +73,19 @@ extensions.config.ts # the single registry of enabled plugins
 
 ## Where does X go? (decision tree)
 
-- A new business domain (eg "tournaments") -> a new core add-on if it ships in the free edition, or a gated add-on if optional. Use `pnpm gen module <name>` (creates `@oss-addons/<name>` standalone package with own `package.json`, tsconfig, schemas, service, router, plugin). It registers in `extensions.config.ts` with no `kind` (core) or `kind: 'addon'` (gated). Every add-on owns its route contract in `src/contract/` (exported as `@oss-addons/<name>/contract`); for a core add-on the `@oss/orpc-contract` aggregator imports that slice into the SDK typed client and its tables use central migrations; a gated add-on's contract merges conditionally in `apps/api` and it owns its own migrations. See ADR-0021.
+- A new business domain (eg "tournaments") -> a new core add-on if it ships in the free edition, or a gated add-on if optional. Use `pnpm gen module <name>` (creates `@oss-addons/<name>` standalone package with own `package.json`, tsconfig, schemas, service, router, plugin). It registers in `extensions.config.ts` with no `kind` (core) or `kind: 'addon'` (gated). Every module owns its route contract in `src/contract/` (exported as `@oss-addons/<name>/contract` or `@oss/<domain>/contracts/<slice>`); for a core module the composition root (`apps/api/src/editions.ts`) composes that slice into the runtime contract via `composeContract` and its tables use central migrations; a gated add-on's contract merges conditionally in `apps/api` and it owns its own migrations. See ADR-0021/0024.
 - A behavior that extends/overrides an existing add-on -> overlay plugin under `apps/api/src/extensions/<name>/`. Use `/scaffold-plugin <name>`.
 - A new HTTP route -> add to the add-on's `src/router/index.ts`. Use `/scaffold-route <addon-name> <method> <path>`. Player routes resolve the caller from the `x-user-id` header; admin routes MUST be guarded (next line).
 - An admin-only route -> the add-on's `plugin.ts` resolves `AdminGuard` from the container (`c.get(ADMIN_GUARD)`) and passes it into the router factory; call `await adminGuard.assert(context)` as the first line of the handler (throws `ORPCError`). `ADMIN_GUARD` is seeded into the container by `createApp`. This is the single admin-enforcement point - never re-implement the role check.
-- A new database table -> add a Drizzle `pgTable` to the add-on's `src/schema/index.ts`. Run `pnpm regen` (drizzle-kit) to generate the migration. Core add-ons' schemas are included in the central `packages/platform/db/drizzle.config.ts`; gated add-ons own their `drizzle.config.ts`.
-- A reusable Zod schema -> `packages/contracts/shared-schemas/src/<namespace>.ts`. Add-on-local schemas live in the add-on's `schemas/`.
-- A cross-add-on event -> declare its payload schema in the Zod catalog `packages/contracts/shared-schemas/src/events.ts` (`domainEventSchemas`), then emit via the `EventBus` the service received in its constructor (built in `plugin.ts` from `c.get(EVENT_BUS)`); subscribe in a plugin via `ctx.events.on(name, handler)`. The bus is a typed facade over the `MESSAGE_BROKER` seam (default in-process; swap to Redpanda/NATS without module changes). See ADR-0010.
-- A page, component, or any frontend UI -> NOT in this repo. The platform is headless backend only. The frontend - all components, styling, pages, and theme - lives in the downstream consumer repo and consumes the backend over HTTP via `@oss/react`. The reference apps and page/block SDK layer were removed (2026-06-09) and will be re-extracted later.
-- A new data hook (eg `useAdminUsers`, `usePlayerWallet`) -> `packages/sdks/react/src/hooks/` + export from `src/index.ts`. `@oss/react` is a leaf SDK package. NOTE on memoization: consumers build with the React Compiler, but it does NOT reprocess pre-built `node_modules`, so `@oss/react` is NOT auto-memoized in the consumer. Therefore the SDK must hand-write `useMemo`/`useCallback` wherever a returned value/function is part of the hook's stability contract (eg a client instance or object a consumer drops into `useEffect`/query deps) - the opposite of the consumer-app rule where the compiler handles it. Keep SDK hooks Rules-of-React compliant (pure render, stable returns) so the consumer's compiler can optimize the components that call them.
-- Operator-only config (feature flags, brand definitions, RG defaults per geo) -> a `platform-config.yaml` / `.json` file consumed by `loadPlatformConfig()` (`@oss/core`). Validated by `PlatformConfigSchema` in `@oss/shared-schemas`. Bound via the `PLATFORM_CONFIG` Container token. No admin UI in v1; edit the file. See ADR-0013 T0.
-- A third-party integration (PSP, KYC, aggregator, chat) -> define the adapter interface + token (`createToken<Adapter>(...)`) in `@oss/adapters` (`packages/contracts/adapters/src/<category>.ts`), implement it under `packages/addons/<addon-name>/adapters/<vendor>/`, and bind it in the add-on's `plugin.ts` via `ctx.provide(TOKEN, () => new Impl())`. Never inline. All vendor adapter interfaces live in `@oss/adapters` so the swap seams are findable in one place.
-- A long-running / background task -> enqueue a job on the `JOB_QUEUE` seam and process it in a worker. A service resolves `JOB_QUEUE` (from `@oss/adapters`) in its `plugin.ts` and calls `enqueue(queue('name'), payload, { idempotencyKey, delayMs, attempts, backoff, orderingKey })`; a worker overlay registers the handler via `ctx.jobs.worker({ queue, schema, handler, onDeadLetter })` (scaffold with `/scaffold-plugin <name>-worker`). The default driver is an in-process queue (zero deps); the `bullmq` overlay rebinds `JOB_QUEUE` to BullMQ + Redis when `REDIS_URL` is set. Delivery is at-least-once - handlers must be idempotent (a DB guard, not just `idempotencyKey`, for money jobs). See ADR-0014.
-- A live client push (chat message, PvP round state, live odds, big-win feed) -> publish on the `REALTIME_TRANSPORT` seam (`@oss/adapters`) and expose an oRPC `eventIterator(...)` route served as SSE; the client consumes it with `useEventStream` / `useChatStream` (`@oss/react`). The default is a first-party in-process transport; an overlay rebinds `REALTIME_TRANSPORT` to a managed vendor (Ably/GetStream). This is client-facing only and separate from the inter-module `MESSAGE_BROKER`. See ADR-0007 and ADR-0014. The `chat` add-on is the reference vertical.
+- A new database table -> add a Drizzle `pgTable` to the add-on's `src/schema/index.ts`. Run `pnpm regen` (drizzle-kit) to generate the migration. Core add-ons' schemas are included in the central `packages/core/drizzle.config.ts`; gated add-ons own their `drizzle.config.ts`.
+- A reusable Zod schema -> `packages/core/src/contracts/schemas/src/<namespace>.ts`. Add-on-local schemas live in the add-on's `schemas/`.
+- A cross-add-on event -> declare its payload schema in the Zod catalog `packages/core/src/contracts/schemas/src/events.ts` (`domainEventSchemas`), then emit via the `EventBus` the service received in its constructor (built in `plugin.ts` from `c.get(EVENT_BUS)`); subscribe in a plugin via `ctx.events.on(name, handler)`. The bus is a typed facade over the `MESSAGE_BROKER` seam (default in-process; swap to Redpanda/NATS without module changes). See ADR-0010.
+- A page, component, or any frontend UI -> NOT in this repo. The platform is headless backend only. The frontend - all components, styling, pages, and theme - lives in the downstream consumer repo and consumes the backend over HTTP via `@oss/core/react`. The reference apps and page/block SDK layer were removed (2026-06-09) and will be re-extracted later.
+- A new data hook (eg `useAdminUsers`, `usePlayerWallet`) -> `packages/core/src/react/src/hooks/` + export from `src/index.ts` (domain-specific hooks live in that domain's `/react` subpath, eg `@oss/engagement/react`). `@oss/core/react` is a leaf SDK package. NOTE on memoization: consumers build with the React Compiler, but it does NOT reprocess pre-built `node_modules`, so `@oss/core/react` is NOT auto-memoized in the consumer. Therefore the SDK must hand-write `useMemo`/`useCallback` wherever a returned value/function is part of the hook's stability contract (eg a client instance or object a consumer drops into `useEffect`/query deps) - the opposite of the consumer-app rule where the compiler handles it. Keep SDK hooks Rules-of-React compliant (pure render, stable returns) so the consumer's compiler can optimize the components that call them.
+- Operator-only config (feature flags, brand definitions, RG defaults per geo) -> a `platform-config.yaml` / `.json` file consumed by `loadPlatformConfig()` (`@oss/core/server`). Validated by `PlatformConfigSchema` in `@oss/core/contracts`. Bound via the `PLATFORM_CONFIG` Container token. No admin UI in v1; edit the file. See ADR-0013 T0.
+- A third-party integration (PSP, KYC, aggregator, chat) -> define the adapter interface + token (`createToken<Adapter>(...)`) in `@oss/core/contracts` (`packages/core/src/contracts/adapters/src/<category>.ts`), implement it under `packages/addons/<addon-name>/adapters/<vendor>/`, and bind it in the add-on's `plugin.ts` via `ctx.provide(TOKEN, () => new Impl())`. Never inline. All vendor adapter interfaces live in `@oss/core/contracts` so the swap seams are findable in one place.
+- A long-running / background task -> enqueue a job on the `JOB_QUEUE` seam and process it in a worker. A service resolves `JOB_QUEUE` (from `@oss/core/contracts`) in its `plugin.ts` and calls `enqueue(queue('name'), payload, { idempotencyKey, delayMs, attempts, backoff, orderingKey })`; a worker overlay registers the handler via `ctx.jobs.worker({ queue, schema, handler, onDeadLetter })` (scaffold with `/scaffold-plugin <name>-worker`). The default driver is an in-process queue (zero deps); the `bullmq` overlay rebinds `JOB_QUEUE` to BullMQ + Redis when `REDIS_URL` is set. Delivery is at-least-once - handlers must be idempotent (a DB guard, not just `idempotencyKey`, for money jobs). See ADR-0014.
+- A live client push (chat message, PvP round state, live odds, big-win feed) -> publish on the `REALTIME_TRANSPORT` seam (`@oss/core/contracts`) and expose an oRPC `eventIterator(...)` route served as SSE; the client consumes it with `useEventStream` (`@oss/core/react`) / `useChatStream` (`@oss/engagement/react`). The default is a first-party in-process transport; an overlay rebinds `REALTIME_TRANSPORT` to a managed vendor (Ably/GetStream). This is client-facing only and separate from the inter-module `MESSAGE_BROKER`. See ADR-0007 and ADR-0014. The `chat` module (in `@oss/engagement`) is the reference vertical.
 
 ## Naming
 
@@ -99,14 +102,15 @@ extensions.config.ts # the single registry of enabled plugins
 Boundaries are enforced by two complementary gates - keep them in sync:
 
 1. **oxlint `oss-boundaries/*` plugin** (`tools/oxlint-boundaries-plugin.mjs`) - fast per-edit, per-file string matching on import specifiers (no module resolution). Runs via `pnpm lint` and the post-edit agent hook. See ADR-0015.
-2. **dependency-cruiser whole-graph gate** (`.dependency-cruiser.cjs`, `pnpm boundaries`) - runs on the RESOLVED dependency graph, so it also catches what the string matcher cannot: transitive edges, re-export/barrel laundering, dynamic `import()`, and relative paths that dodge the `@oss-` prefix. Rules: `no-circular`, `no-cross-addon`, `no-contracts-to-runtime`, `no-cross-extension`, `no-app-into-addon-internals`, `no-core-to-addon`.
+2. **dependency-cruiser whole-graph gate** (`.dependency-cruiser.cjs`, `pnpm boundaries`) - runs on the RESOLVED dependency graph, so it also catches what the string matcher cannot: transitive edges, re-export/barrel laundering, dynamic `import()`, and relative paths that dodge the `@oss-` prefix. Rules: `no-circular`, `no-cross-domain`, `no-core-to-domain`, `no-cross-addon`, `no-contracts-to-runtime`, `no-cross-extension`, `no-app-into-addon-internals`, `no-core-to-addon`.
 
 The rules both layers enforce:
 
-- `packages/addons/**` (all `@oss-addons/*` packages) may import: `@oss/contracts/*`, `@oss/adapters`, `@oss/platform/*`, `@oss/react`, and read-only `/schema` subpath imports from other add-ons. May NOT import another add-on's root/internals - cross-add-on communication goes through events or contracts (`no-cross-addon`).
-- `packages/platform/*` may import other `platform/*` and `@oss/contracts/*`. May NOT import add-ons (`api-runtime` and `testing`, the composition roots, are the only exceptions; they wire all add-ons and may read their `/schema` subpaths).
-- `packages/contracts/*` may only import other contracts and Zod. The ONE exception is the `@oss/orpc-contract` aggregator, which may import each core add-on's read-only `@oss-addons/<name>/contract` subpath to compose the SDK typed client (oxlint pins this carve-out to orpc-contract + the `/contract` subpath only). See ADR-0021.
-- The free core (`packages/{platform,contracts,sdks}/**`) may NEVER directly import `@oss-addons/*` (`no-core-to-addon`) - exceptions are the composition roots (`api-runtime`, `testing`, reading `/schema`) and the `@oss/orpc-contract` aggregator (reading `/contract`). Everything else wires add-ons in only through `apps/*`. This keeps add-ons extractable. See ADR-0021.
+- `packages/addons/**` (all `@oss-addons/*` packages) may import: `@oss/core/contracts`, `@oss/core/server`, `@oss/core/react`, and read-only `/schema` subpath imports from other add-ons. May NOT import another add-on's root/internals - cross-add-on communication goes through events or contracts (`no-cross-addon`).
+- A folded domain (`packages/core/src/<domain>` = any `core/src` dir other than the `contracts`/`server`/`react` engine zones) may import the engine zones (`@oss/core/{contracts,server,react}`) + a sibling domain's read-only `/schema` subpath only - NEVER a sibling's internals (`no-cross-core-domain` oxlint string twin + `no-cross-domain` whole-graph). Domains couple through a command/adapter port, a domain event, or a shared contract via the composition root. This is the ADR-0024/0025 source-isolation invariant, now enforced intra-`@oss/core` after the fold.
+- `@oss/core/contracts` (`packages/core/src/contracts`) is isomorphic: it may import only other contracts + Zod, never `@oss/core/server` or any module (`no-contracts-to-runtime`). `composeContract` owns only `health` and is NOT an aggregator - the composition root (`apps/api/src/editions.ts`) composes each module's `/contract` slice into the runtime contract.
+- `@oss/core/react` (`packages/core/src/react`) is browser glue: it may NOT import `@oss/core/server` or an add-on (`no-react-to-runtime`) - that would pull Drizzle/Hono/node into the client bundle.
+- The `@oss/core` ENGINE zones (`packages/core/src/{contracts,server,react}`) may NEVER import a folded domain (`no-core-to-domain` whole-graph + `no-engine-to-domain` oxlint twin), and core may never import `@oss-addons/*` (`no-core-to-addon`). createApp is domain-agnostic (DI); domains/add-ons are wired in only through `apps/*` (and the `@oss/testing` dev harness). This keeps each module extractable. See ADR-0021/0024/0025.
 - `apps/api/src/extensions/*` may import any package, but never another extension.
 - `apps/api` registers add-ons only via `extensions.config.ts`. A direct add-on file import from `apps/api/src/*` is a lint error.
 - Consumers (and add-ons) import the package entry, never a deep `dist/` path.
@@ -127,7 +131,7 @@ The rules both layers enforce:
 - Re-exporting types just to "be nice". Import from where it's defined.
 - TODOs without a tracking issue.
 - A per-add-on `package.json` import of `@oss/modules` - each add-on is a standalone package with its own `package.json` and `tsconfig.json` under `packages/addons/<name>/`.
-- Hand-editing generated drizzle migrations under `packages/platform/db/` - regenerate via `pnpm regen`.
+- Hand-editing generated drizzle migrations under `packages/core/drizzle/` - regenerate via `pnpm regen`.
 - Hand-editing `docs/openapi.json` or `docs/catalog.json` - both are emitted at build time.
 
 ## How to add a module (add-on)
@@ -136,7 +140,7 @@ The rules both layers enforce:
 pnpm gen module <name>
 ```
 
-Generates `packages/addons/<name>/` as a standalone `@oss-addons/<name>` package with `package.json`, `tsconfig.json`, `src/{schema,schemas,service,router,plugin}`, and `AGENTS.md`. Every add-on owns its `src/contract/` slice. If the add-on is core (always loaded), the scaffolder registers it in `extensions.config.ts` with no `kind` and adds its contract to the `@oss/orpc-contract` aggregator (so it joins the SDK typed client). If gated (optional, OSS_ADDONS), it registers with `kind: 'addon'`, merges its contract conditionally in `apps/api`, and owns its own `drizzle.config.ts`. Run `pnpm regen && pnpm verify`. Each scaffolded file marks the regions you may edit with `// AGENT: implement here` - fill those; leave the wiring alone.
+Generates `packages/addons/<name>/` as a standalone `@oss-addons/<name>` package with `package.json`, `tsconfig.json`, `src/{schema,schemas,service,router,plugin}`, and `AGENTS.md`. Every add-on owns its `src/contract/` slice. If the add-on is core (always loaded), the scaffolder registers it in `extensions.config.ts` with no `kind` and adds its contract slice to the composition root (`apps/api/src/editions.ts`, composed via `composeContract`). If gated (optional, OSS_ADDONS), it registers with `kind: 'addon'`, merges its contract conditionally in `apps/api`, and owns its own `drizzle.config.ts`. Run `pnpm regen && pnpm verify`. Each scaffolded file marks the regions you may edit with `// AGENT: implement here` - fill those; leave the wiring alone.
 
 ## How to add an extension (overlay plugin)
 
@@ -156,7 +160,7 @@ Adds a route stub with input/output schemas to the add-on's `src/router/index.ts
 
 ## How to extend the database schema (Drizzle)
 
-Add/edit a `pgTable` in `packages/addons/<add-on>/src/schema/index.ts`. Check collisions with `propose-table-change` first. Run `pnpm regen` to produce the migration. For core add-ons, migrations go to the central `packages/platform/db/`; for gated add-ons, to their own `packages/addons/<add-on>/migrations/`. Read another add-on's tables via the subpath import `@oss-addons/<add-on>/schema`.
+Add/edit a `pgTable` in `packages/addons/<add-on>/src/schema/index.ts`. Check collisions with `propose-table-change` first. Run `pnpm regen` to produce the migration. For core add-ons, migrations go to the central `packages/core/drizzle/`; for gated add-ons, to their own `packages/addons/<add-on>/migrations/`. Read another add-on's tables via the subpath import `@oss-addons/<add-on>/schema`.
 
 ## How to consume this platform from a downstream repo
 
@@ -179,7 +183,7 @@ pnpm boundaries    # whole-graph boundary + cycle gate (dependency-cruiser)
 pnpm verify        # typecheck + test:unit + lint + module shape + boundaries
 ```
 
-`pnpm seed` is idempotent and deterministic. Logs in with `admin@oss.dev` / `password123`. Flags: `--players=<n>`, `--admin-email=<e>`, `--admin-password=<p>`. The reusable `seedDemoData()` lives in `@oss/api-runtime` so downstream consumers can seed too.
+`pnpm seed` is idempotent and deterministic. Logs in with `admin@oss.dev` / `password123`. Flags: `--players=<n>`, `--admin-email=<e>`, `--admin-password=<p>`. The reusable `seedDemoData()` lives in `@oss/testing` (dev/test harness) so downstream consumers can seed too.
 
 Docker is library-first: `docker compose up` starts only postgres (apps run on the host via `pnpm dev`). To run the whole reference stack in containers instead, use the opt-in `full` profile: `docker compose --profile full up --build` (api :3001, web :3000, backoffice :3002, via the root multi-target `Dockerfile`). This is a reference convenience, not the production deploy path - downstream operators containerize their own apps. The Docker build is not part of `pnpm verify`/CI.
 
@@ -195,8 +199,8 @@ Runs typecheck + unit tests + lint + module-shape + the whole-graph boundary/cyc
 
 The platform ships a regulatory audit log (the `audit` core add-on: append-only, sha256 hash-chained, per-tenant). When an agent adds a new **state-changing action** - a mutation route, an admin operation, a money / KYC / config / withdrawal change - that action MUST leave an audit-log entry. The audit trail grows with the feature, it never lags behind it. Two sanctioned, decoupled-first ways:
 
-1. **Domain event (preferred).** Emit the event from the service AFTER the DB commit. Declare its payload in `domainEventSchemas` (`@oss/shared-schemas/events.ts`), then add the topic to `SUBSCRIBED_TOPICS` in `packages/addons/audit/src/plugin.ts` so the audit add-on records it automatically - no cross-add-on coupling.
-2. **Direct record (when there is no natural event).** Resolve the `AUDIT_WRITER` port (`@oss/adapters`) in the module's `plugin.ts` and call `record({ actorId, actorType, action, resourceType, resourceId, before, after, ip, ... })`. Use this for admin actions and outcomes that are not domain events.
+1. **Domain event (preferred).** Emit the event from the service AFTER the DB commit. Declare its payload in `domainEventSchemas` (`@oss/core/contracts/events.ts`), then add the topic to `SUBSCRIBED_TOPICS` in `packages/addons/audit/src/plugin.ts` so the audit add-on records it automatically - no cross-add-on coupling.
+2. **Direct record (when there is no natural event).** Resolve the `AUDIT_WRITER` port (`@oss/core/contracts`) in the module's `plugin.ts` and call `record({ actorId, actorType, action, resourceType, resourceId, before, after, ip, ... })`. Use this for admin actions and outcomes that are not domain events.
 
 Capture `actorId` / `actorType` (player vs admin vs system), `resourceType` / `resourceId`, and `before` / `after` for mutations. A state-changing action with no audit entry is not done. Pure reads, docs, tests, and chores need no audit entry.
 

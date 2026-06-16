@@ -1,5 +1,5 @@
 import { describe, expect, it, vi, beforeEach } from 'vitest';
-import type { EventEnvelope } from '@oss/adapters';
+import type { EventEnvelope } from '@oss/core/contracts';
 
 // Mock amqplib with an in-memory channel so we can assert publish wiring without
 // a live broker.

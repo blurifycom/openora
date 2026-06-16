@@ -1,4 +1,4 @@
-import { applyServiceManifest, parseServiceManifest, type PluginEntry } from '@oss/plugin-host';
+import { applyServiceManifest, parseServiceManifest, type PluginEntry } from '@oss/core/server';
 import { resolve, dirname, isAbsolute } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { accessSync } from 'node:fs';

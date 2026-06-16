@@ -11,6 +11,7 @@
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "1.29.0",
+    "@oss/core": "workspace:*",
     "pg": "8.21.0",
     "zod": "4.4.3"
   },

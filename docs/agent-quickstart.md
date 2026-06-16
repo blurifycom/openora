@@ -31,11 +31,11 @@ If the module is listed, use `describe-module <name>` to understand its current 
 /scaffold-module <group> <name>   # group: player | backoffice | platform
 ```
 
-This creates `packages/modules/<group>/<name>/` (a folder inside the single `@oss/modules` package - NOT its own package) with all required files and registers it in `extensions.config.ts`.
+This creates `packages/domains/<group>/<name>/` (a folder inside the single `@oss/modules` package - NOT its own package) with all required files and registers it in `extensions.config.ts`.
 
 ## Step 4: Define the Drizzle tables
 
-Edit `packages/modules/<group>/<name>/src/schema/index.ts`. Add `pgTable` definitions following these rules:
+Edit `packages/domains/<group>/<name>/src/schema/index.ts`. Add `pgTable` definitions following these rules:
 
 - Every multi-tenant table has a `tenantId: text('tenantId').notNull()` column.
 - No FK references to tables owned by other modules (use plain ID columns). Within your own module, `.references(() => table.id)` is fine.
@@ -55,7 +55,7 @@ Inspect the existing DB shape any time with `get-drizzle-schema` (pass `module=<
 
 ## Step 5: Define schemas
 
-Edit `packages/modules/<group>/<name>/src/schemas/index.ts`. Define Zod schemas for the module's entities. Check if a shared schema already exists:
+Edit `packages/domains/<group>/<name>/src/schemas/index.ts`. Define Zod schemas for the module's entities. Check if a shared schema already exists:
 
 ```
 schema-get name=<EntityName>
@@ -66,11 +66,11 @@ If a shared schema exists in `@oss/contracts/shared-schemas`, re-export it inste
 
 ## Step 6: Implement the service
 
-Edit `packages/modules/<group>/<name>/src/service/<name>.service.ts`. Business logic only. Rules:
+Edit `packages/domains/<group>/<name>/src/service/<name>.service.ts`. Business logic only. Rules:
 
-- Take `DrizzleService` (from `@oss/db`) + `EventBus` as constructor arguments (the module plugin builds the service from the container). Query with `this.drizzle.db.select().from(<table>).where(eq(...))`; import operators (`eq`, `desc`, `sql`) from `drizzle-orm` and tables from `../schema/index.js`.
+- Take `DrizzleService` (from `@oss/core/server`) + `EventBus` as constructor arguments (the module plugin builds the service from the container). Query with `this.drizzle.db.select().from(<table>).where(eq(...))`; import operators (`eq`, `desc`, `sql`) from `drizzle-orm` and tables from `../schema/index.js`.
 - Throw domain errors via `createDomainError(...)` from `@oss/core`.
-- Never call external HTTP APIs directly - use an adapter interface from `@oss/adapters`.
+- Never call external HTTP APIs directly - use an adapter interface from `@oss/core/contracts`.
 
 ## Step 7: Add routes
 
@@ -90,17 +90,17 @@ list-routes module=<name>
 
 ## Step 8: Wire the plugin
 
-Edit `packages/modules/<group>/<name>/src/plugin.ts`. Confirm the service is added to `ctx.providers` and the router is added to `ctx.routers`. The registry surface is: `providers`, `controllers`, `routers`, `slots`, `events`, `mcp`, `imports`.
+Edit `packages/domains/<group>/<name>/src/plugin.ts`. Confirm the service is added to `ctx.providers` and the router is added to `ctx.routers`. The registry surface is: `providers`, `controllers`, `routers`, `slots`, `events`, `mcp`, `imports`.
 
 ## Step 9: Add frontend consumption layer
 
 The platform is headless backend only - pages, components, and styling live in the downstream consumer repo. What you can add to the OSS:
 
-- **A new data hook** (eg `useAdminUsers`, `usePlayerWallet`) -> `packages/sdks/react/src/hooks/`. `@oss/react` is the supported frontend consumption surface (data hooks, auth, realtime transport - no components).
+- **A new data hook** (eg `useAdminUsers`, `usePlayerWallet`) -> `packages/core/src/react/src/hooks/`. `@oss/core/react` is the supported frontend consumption surface (data hooks, auth, realtime transport - no components).
 
 ## Step 10: Update AGENTS.md
 
-Edit `packages/modules/<group>/<name>/AGENTS.md`. Fill in:
+Edit `packages/domains/<group>/<name>/AGENTS.md`. Fill in:
 
 - What the module does (one paragraph).
 - Extension points (ports, events emitted/consumed, UI slots, routes).
@@ -137,5 +137,5 @@ curl -X POST http://localhost:3001/<name>s -H "Content-Type: application/json" -
 - Introducing an import cycle - rejected by `import/no-cycle` and the whole-graph `no-circular` gate. Break it by extracting a shared module, inverting a dependency, or moving the type to a contracts package.
 - Declaring `interface` - use `type` (lint-enforced).
 - Defining schemas inline in handlers - they must live in `schemas/`.
-- Hand-editing the generated migrations under `packages/platform/db/` - they are produced by `pnpm regen` (drizzle-kit). The source of truth is each module's `src/schema/index.ts`.
+- Hand-editing the generated migrations under `packages/core/` - they are produced by `pnpm regen` (drizzle-kit). The source of truth is each module's `src/schema/index.ts`.
 - Opening a PR with a failing `pnpm verify` - CI will reject it.

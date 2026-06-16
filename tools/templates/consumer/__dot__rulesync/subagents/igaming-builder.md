@@ -69,7 +69,7 @@ my-igaming/
    ```ts
    ctx.routers.add('my-feature', myFeatureRouter);
    ```
-3. Define Zod schemas in the plugin folder - don't touch `@oss/contracts`.
+3. Define Zod schemas in the plugin folder - don't touch core schema packages (`@oss/shared-schemas`).
 
 ### Customize the frontend (pages, components, styling)
 
@@ -88,6 +88,6 @@ Use a plugin layer in your frontend to extend the UI (nav items, dashboard tiles
 - Never modify `@oss/*` source - not in `node_modules/**`, not in the linked OSS checkout. Edit/Write to those paths is denied in `.claude/settings.json`; don't route around it with `sed` or shell redirection. Locally patching a published dependency is lost on reinstall and diverges from every other operator.
 - Never copy-paste core module source into your repo - depend on the package.
 - If a change is only possible in core, STOP and report it upstream (problem + expected behavior + suspected location). Don't patch core here.
-- All your Zod schemas live in your plugin folder, not in `@oss/contracts`.
+- All your Zod schemas live in your plugin folder, not in core schema packages (`@oss/shared-schemas`).
 - `extensions.config.ts` is the single registry - no auto-discovery.
 - Don't commit unless asked. Don't push without confirmation.

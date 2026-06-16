@@ -1,11 +1,11 @@
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
-import { DrizzleService } from '@oss/db';
-import { orm } from '@oss/db';
-import { DEFAULT_TENANT_ID } from '@oss/shared-schemas';
-import { game } from '@oss/casino/schema/gaming';
-import { wallet } from '@oss/wallet/schema';
-import { user } from '@oss/pam/schema/identity';
-import { DRIZZLE } from '@oss/db';
+import { DrizzleService } from '@oss/core/server';
+import { orm } from '@oss/core/server';
+import { DEFAULT_TENANT_ID } from '@oss/core/contracts';
+import { game } from '@oss/core/casino/schema/gaming';
+import { wallet } from '@oss/core/wallet/schema';
+import { user } from '@oss/core/pam/schema/identity';
+import { DRIZZLE } from '@oss/core/server';
 import { startHarness, type IntegrationHarness } from './harness.js';
 import { setupTestDb } from '@oss/testing';
 

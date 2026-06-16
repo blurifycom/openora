@@ -81,8 +81,8 @@ async function main() {
   // 4. Migrate
   console.log('\n--- Running Drizzle migrations ---');
   try {
-    run('pnpm -F @oss/db generate');
-    run('pnpm -F @oss/db migrate');
+    run('pnpm -F @oss/core/server generate');
+    run('pnpm -F @oss/core/server migrate');
   } catch (e) {
     console.warn('  [warn] Migration step skipped (schema may be empty - normal on first run)');
   }

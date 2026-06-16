@@ -11,10 +11,10 @@
  * system path: it writes across tenants, so it connects with the BYPASSRLS role
  * (DATABASE_ADMIN_URL when set, else DATABASE_URL). See ADR-0018.
  */
-import { createAuth } from '@oss/auth';
-import { createDrizzleDb } from '@oss/db';
-import { seedDemoData } from '@oss/api-runtime';
-import { user, session, account, verification, twoFactor } from '@oss/pam/schema/identity';
+import { createAuth } from '@oss/core/server';
+import { createDrizzleDb } from '@oss/core/server';
+import { seedDemoData } from '@oss/testing';
+import { user, session, account, verification, twoFactor } from '@oss/core/pam/schema/identity';
 
 function arg(name: string): string | undefined {
   const hit = process.argv.find((a) => a.startsWith(`--${name}=`));
@@ -28,7 +28,7 @@ async function main() {
     'postgresql://postgres:postgres@localhost:5432/oss_igaming';
   const db = createDrizzleDb(databaseUrl);
   // better-auth's drizzle adapter needs the auth tables passed as schema, else
-  // user creation throws "model user not found". See @oss/auth createAuth().
+  // user creation throws "model user not found". See @oss/core/server createAuth().
   const auth = createAuth({ db, schema: { user, session, account, verification, twoFactor } });
 
   const result = await seedDemoData({

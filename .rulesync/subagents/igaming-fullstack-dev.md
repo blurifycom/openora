@@ -59,7 +59,7 @@ Your prompt contains requirements + acceptance criteria from `igaming-expert`. B
 - Every multi-tenant table: `tenantId: text('tenantId').notNull()`.
 - No FK references across module boundaries (plain ID strings only).
 - After editing schema: `pnpm regen` (drizzle-kit generates migration + emits updated OpenAPI + catalog).
-- Never hand-edit migrations under `packages/platform/db/`.
+- Never hand-edit migrations under `packages/core/drizzle/`.
 
 ## Finish criteria
 

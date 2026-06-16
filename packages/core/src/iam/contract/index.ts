@@ -1,0 +1,120 @@
+import { oc } from '@orpc/contract';
+import * as z from 'zod';
+
+// --- Shared output shapes ---
+
+export const AdminRoleSchema = z.object({
+  id: z.uuid(),
+  tenantId: z.string(),
+  name: z.string(),
+  description: z.string().nullable(),
+  createdAt: z.iso.datetime(),
+});
+
+export const AdminRolePermissionSchema = z.object({
+  id: z.uuid(),
+  roleId: z.uuid(),
+  resource: z.string(),
+  action: z.string(),
+  createdAt: z.iso.datetime(),
+});
+
+export const AdminRoleWithGrantsSchema = AdminRoleSchema.extend({
+  permissions: z.array(AdminRolePermissionSchema),
+});
+
+export const AdminRoleAssignmentSchema = z.object({
+  id: z.uuid(),
+  tenantId: z.string(),
+  userId: z.uuid(),
+  roleId: z.uuid(),
+  createdAt: z.iso.datetime(),
+});
+
+export const AdminInvitationSchema = z.object({
+  id: z.uuid(),
+  tenantId: z.string(),
+  email: z.string(),
+  roleId: z.uuid(),
+  token: z.string(),
+  status: z.enum(['pending', 'accepted', 'revoked']),
+  expiresAt: z.string(),
+  acceptedAt: z.string().nullable(),
+  createdAt: z.iso.datetime(),
+});
+
+export const CatalogEntrySchema = z.object({
+  resource: z.string(),
+  actions: z.array(z.string()),
+});
+
+// --- Grant item used for setRolePermissions ---
+export const GrantInputSchema = z.object({
+  resource: z.string(),
+  action: z.string(),
+});
+
+// --- Contract ---
+
+export const iamContract = {
+  listCatalog: oc
+    .route({ method: 'GET', path: '/iam/catalog' })
+    .output(z.array(CatalogEntrySchema)),
+
+  listRoles: oc.route({ method: 'GET', path: '/iam/roles' }).output(z.array(AdminRoleSchema)),
+
+  getRole: oc
+    .route({ method: 'GET', path: '/iam/roles/{roleId}' })
+    .input(z.object({ roleId: z.uuid() }))
+    .output(AdminRoleWithGrantsSchema),
+
+  createRole: oc
+    .route({ method: 'POST', path: '/iam/roles' })
+    .input(z.object({ name: z.string(), description: z.string().optional() }))
+    .output(AdminRoleSchema),
+
+  updateRole: oc
+    .route({ method: 'PATCH', path: '/iam/roles/{roleId}' })
+    .input(
+      z.object({
+        roleId: z.uuid(),
+        name: z.string().optional(),
+        description: z.string().nullable().optional(),
+      }),
+    )
+    .output(AdminRoleSchema),
+
+  deleteRole: oc
+    .route({ method: 'DELETE', path: '/iam/roles/{roleId}' })
+    .input(z.object({ roleId: z.uuid() }))
+    .output(z.object({ success: z.literal(true) })),
+
+  setRolePermissions: oc
+    .route({ method: 'PUT', path: '/iam/roles/{roleId}/permissions' })
+    .input(
+      z.object({
+        roleId: z.uuid(),
+        grants: z.array(GrantInputSchema),
+      }),
+    )
+    .output(AdminRoleWithGrantsSchema),
+
+  assignRole: oc
+    .route({ method: 'POST', path: '/iam/assignments' })
+    .input(z.object({ userId: z.uuid(), roleId: z.uuid() }))
+    .output(AdminRoleAssignmentSchema),
+
+  listInvitations: oc
+    .route({ method: 'GET', path: '/iam/invitations' })
+    .output(z.array(AdminInvitationSchema)),
+
+  inviteAdmin: oc
+    .route({ method: 'POST', path: '/iam/invitations' })
+    .input(z.object({ email: z.email(), roleId: z.uuid() }))
+    .output(AdminInvitationSchema),
+
+  acceptInvitation: oc
+    .route({ method: 'POST', path: '/iam/invitations/accept' })
+    .input(z.object({ token: z.string() }))
+    .output(z.object({ success: z.literal(true), email: z.string() })),
+};

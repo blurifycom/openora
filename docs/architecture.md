@@ -7,13 +7,21 @@ consumer reuses it without forking.
 For the rationale behind each choice, see the [ADRs](./adr/). For the rules an
 agent must follow, see [AGENTS.md](../AGENTS.md).
 
+> **Packaging note (ADR-0025, 2026-06-16):** the foundation, engine, and free domains
+> now ship as ONE published package, `@oss/core`, with subpaths - `@oss/core/contracts`
+> (isomorphic), `@oss/core/react` (browser), `@oss/core/server` (node engine: kernel +
+> plugin-host + db + auth + createApp), `@oss/core/compliance`, and per-module subpaths.
+> The logical structure described below is unchanged; specifier names like `@oss/adapters`,
+> `@oss/db`, `@oss/orpc-contract`, `@oss/react` are now `@oss/core/*` subpaths. Premium
+> features stay separate `@oss-addons/*` packages. See [ADR-0025](./adr/0025-single-core-package-with-module-subpaths.md).
+
 ## System overview
 
 ```mermaid
 flowchart TB
-  subgraph contracts["Contracts - the source of truth"]
-    zod["shared-schemas<br/>single Zod root"]
-    orpc["orpc-contract<br/>composed oRPC router"]
+  subgraph contracts["@oss/core/contracts - the source of truth (isomorphic)"]
+    zod["/contracts schemas<br/>single Zod root"]
+    orpc["/contracts composeContract<br/>(health only; no aggregation)"]
     openapi["docs/openapi.json<br/>(emitted)"]
     client["typed client<br/>(zero codegen)"]
     zod --> orpc
@@ -32,15 +40,15 @@ flowchart TB
     orpc --> hono
   end
 
-  subgraph platform["Platform services (packages/platform/*)"]
-    db["@oss/db<br/>Drizzle client + migrations + tenant scope"]
-    auth["auth<br/>better-auth + AdminGuard"]
-    core["core<br/>logger, tenant ctx, EventBus"]
+  subgraph platform["@oss/core/server - node engine"]
+    db["/server db<br/>Drizzle client + migrations + tenant scope"]
+    auth["/server auth<br/>better-auth + AdminGuard"]
+    core["/server kernel<br/>logger, tenant ctx, EventBus, Container"]
   end
 
-  subgraph modules["Business modules (packages/modules/*)"]
-    mod["identity, wallet, gaming, lobby, bonus,<br/>compliance, chat, cms, backoffice, player ..."]
-    adapters["@oss/adapters<br/>vendor adapter interfaces"]
+  subgraph modules["Domains (packages/domains/* - each deps @oss/core)"]
+    mod["pam (identity·profile·player-mgmt), compliance,<br/>wallet, casino (gaming·lobby·aggregator),<br/>sportsbook, engagement (chat·notifications·bonus·leaderboard), cms"]
+    adapters["@oss/core/contracts<br/>vendor adapter interfaces (ports)"]
     mod --> adapters
   end
 
@@ -54,7 +62,7 @@ flowchart TB
 
   subgraph consumer["Downstream consumer (reference)"]
     bapi["apps/api<br/>thin createApp()"]
-    bfront["frontend (consumer repo)<br/>own pages, components, styling<br/>consumes api over HTTP via @oss/react"]
+    bfront["frontend (consumer repo)<br/>own pages, components, styling<br/>consumes api over HTTP via @oss/core/react"]
     bplug["consumer plugins<br/>one feature per folder"]
     bcfg["extensions.config.ts<br/>+ pnpm link: overrides"]
     bplug --> bcfg
@@ -87,11 +95,11 @@ Solid arrows are runtime/build dependencies; dashed arrows are **adapter seams**
 
 - **extensions.config.ts** - the one list of enabled plugins (modules + overlays). The only place wiring is turned on.
 - **plugin-host** - `definePlugin({ id, dependsOn, register })` + `ModuleRegistry`. In `register(ctx)` a plugin binds providers (`ctx.provide(token, factory)`), mounts routers (`ctx.routers.add(namespace, (c) => router)`), subscribes to events, and registers MCP tools. Overlays add their own `pgTable` in their module's `src/schema/index.ts`. ADR-0002.
-- **Hono + oRPC** - oRPC defines routes and validates I/O against the Zod contract; its `OpenAPIHandler` is mounted on a Hono server and emits `docs/openapi.json`. Dependency wiring is a small **functional composition `Container`** (`@oss/core`): typed-token factories, lazy + last-wins, no decorators. `apps/api` is a thin caller of `createApp()` from `@oss/api-runtime`; downstream consumers call the same factory. ADR-0009.
+- **Hono + oRPC** - oRPC defines routes and validates I/O against the Zod contract; its `OpenAPIHandler` is mounted on a Hono server and emits `docs/openapi.json`. Dependency wiring is a small **functional composition `Container`** (`@oss/core/server`): typed-token factories, lazy + last-wins, no decorators. `apps/api` is a thin caller of `createApp()` from `@oss/core/server`; downstream consumers call the same factory. ADR-0009.
 
-**Platform services** (`packages/platform/*`) - shared infrastructure modules may import: `db` (`@oss/db` - Drizzle client, drizzle-kit migrations, `DrizzleService`, the framework-free `@oss/db/orm` re-export, tenant-scoped helpers), `auth` (better-auth + the shared `AdminGuard`), `core` (logger, tenant context, typed `EventBus`, composition `Container`), `plugin-host` (the plugin loader).
+**Engine** (`@oss/core/server`) - the node runtime, all under one subpath: `db` (Drizzle client, drizzle-kit migrations, `DrizzleService`, the framework-free `@oss/core/server/orm` re-export, tenant-scoped helpers), `auth` (better-auth + the shared `AdminGuard`), `kernel` (logger, tenant context, typed `EventBus`, composition `Container`), `plugin-host` (the plugin loader), and `createApp()` - which is domain-agnostic (the consumer injects the PAM identity schema + a `resolveTenant`, ADR-0025).
 
-**Business modules** (`packages/modules/*`) - one folder per domain. A module may import contracts, platform, and SDK packages, but **never another module** - cross-module communication goes through events or shared contracts. Each depends on vendor adapter interfaces from `@oss/adapters`.
+**Domains** (`packages/domains/*`) - one package per domain (`@oss/<domain>`), each depending on `@oss/core` only. A domain may import `@oss/core/*` but **never another domain** - cross-domain communication goes through events, command ports, or shared contracts. Vendor adapter interfaces come from `@oss/core/contracts`.
 
 **Vendor adapters** - concrete implementations of a module's adapter interfaces (PSP, KYC vendor, igaming aggregator, chat), shipped as separate packages. The interface is the seam; the implementation is swappable.
 
@@ -99,10 +107,10 @@ Solid arrows are runtime/build dependencies; dashed arrows are **adapter seams**
 
 **SDK & consumption surface**
 
-- **react** - leaf SDK package and the supported frontend consumption surface: data hooks, typed oRPC client, auth, and client-side realtime transport. The platform is headless backend only; the frontend lives in the downstream consumer repo.
-- **compliance-invariants** - canonical list of `SealedToken<T>` services operators may never override (RG enforcement, KYC writes, AML/SAR, ledger writes, RNG, etc.) with regulatory citations.
+- **`@oss/core/react`** - the supported frontend consumption surface: data hooks, typed oRPC client, auth, and client-side realtime transport. The platform is headless backend only; the frontend lives in the downstream consumer repo.
+- **`@oss/core/compliance`** - canonical list of `SealedToken<T>` services operators may never override (RG enforcement, KYC writes, AML/SAR, ledger writes, RNG, etc.) with regulatory citations.
 
-**Downstream consumer (reference)** - does **not** fork. `apps/api` is a thin `createApp()` entry with its own `extensions.config.ts`; `@oss/*` packages resolve via `pnpm` workspace overrides (`link:`). The platform is headless: the frontend lives in the downstream consumer repo and consumes the api over HTTP via `@oss/react`. Per-operator backend customization lives in plugins under `apps/api/src/extensions/`. ADR-0005 + ADR-0012 + ADR-0013.
+**Downstream consumer (reference)** - does **not** fork. `apps/api` is a thin `createApp()` entry with its own `extensions.config.ts`; `@oss/*` packages resolve via `pnpm` workspace overrides (`link:`). The platform is headless: the frontend lives in the downstream consumer repo and consumes the api over HTTP via `@oss/core/react`. Per-operator backend customization lives in plugins under `apps/api/src/extensions/`. ADR-0005 + ADR-0012 + ADR-0013.
 
 **AI dev surface**
 
@@ -114,17 +122,17 @@ Solid arrows are runtime/build dependencies; dashed arrows are **adapter seams**
 
 These are the swap points - the reason the platform is "headless" and extensible:
 
-| Seam           | Interface side                    | Implementation side                                 | Swap to...                                       |
-| -------------- | --------------------------------- | --------------------------------------------------- | ------------------------------------------------ |
-| Plugin host    | `definePlugin` contract           | a module or overlay folder                          | add/remove features without touching core        |
-| Vendor adapter | `@oss/adapters` (interface)       | impl package under `modules/<m>/adapters/<vendor>/` | a different PSP, KYC, or aggregator              |
-| Consumer link  | `createApp()` + `@oss/*` packages | downstream `apps/api` + `link:` overrides           | publish to npm and bump the tag (no code change) |
+| Seam           | Interface side                    | Implementation side                                        | Swap to...                                       |
+| -------------- | --------------------------------- | ---------------------------------------------------------- | ------------------------------------------------ |
+| Plugin host    | `definePlugin` contract           | a module or overlay folder                                 | add/remove features without touching core        |
+| Vendor adapter | `@oss/core/contracts` (interface) | impl under `domains/<m>/adapters/<vendor>/` (or an add-on) | a different PSP, KYC, or aggregator              |
+| Consumer link  | `createApp()` + `@oss/*` packages | downstream `apps/api` + `link:` overrides                  | publish to npm and bump the tag (no code change) |
 
 ## Request flow (a typical read)
 
 ```mermaid
 sequenceDiagram
-  participant UI as consumer frontend (@oss/react)
+  participant UI as consumer frontend (@oss/core/react)
   participant API as Hono + oRPC
   participant Mod as Module service
   participant DB as Drizzle (tenant-scoped)

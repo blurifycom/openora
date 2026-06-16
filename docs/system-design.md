@@ -1,12 +1,22 @@
 # System design
 
-The whole platform in one place: the six published domains, the contract spine, the
-plugin host, the 15 adapter ports, the three async seams, and how a downstream consumer
+The whole platform in one place: the single `@oss/core` package, the seven domains, the contract spine, the
+plugin host, the adapter ports, the three async seams, and how a downstream consumer
 overlays proprietary code. Generated from `docs/catalog.json` (17 modules,
-15 adapters, 24 events, 79 HTTP routes), `extensions.config.ts`, and the package graph.
+17 adapters, 26 events, 79 HTTP routes), `extensions.config.ts`, and the package graph.
 
-For rationale see the [ADRs](./adr/) — especially [ADR-0022](./adr/0022-domain-distribution-packages.md)
-(six domain distribution packages), [ADR-0021](./adr/0021-everything-is-an-add-on.md)
+> **Packaging note (ADR-0025, 2026-06-16):** the foundation + engine + free domains
+> now ship as ONE published package, `@oss/core`, with subpaths (`@oss/core/contracts`,
+> `@oss/core/react`, `@oss/core/server`, `@oss/core/compliance`, and per-module subpaths).
+> The diagrams below show the LOGICAL module layout (contract spine, plugin host, adapters,
+> domains) which is unchanged - only the distribution unit collapsed. The diagram specifier
+> names (`@oss/orpc-contract`, `@oss/shared-schemas`, `@oss/adapters`, `@oss/db`, `@oss/auth`,
+> `@oss/api-runtime`, `@oss/plugin-host`, `@oss/react`) are now subpaths of `@oss/core`.
+> Premium add-ons stay separate `@oss-addons/*` packages.
+
+For rationale see the [ADRs](./adr/) — especially [ADR-0025](./adr/0025-single-core-package-with-module-subpaths.md)
+(single `@oss/core` package, supersedes ADR-0024 packaging), [ADR-0024](./adr/0024-domain-as-package-and-distribution-tiers.md)
+(domain-as-package + distribution, supersedes ADR-0022), [ADR-0021](./adr/0021-everything-is-an-add-on.md)
 (standalone add-ons), [ADR-0020](./adr/0020-editions-and-add-on-modules.md) (editions),
 [ADR-0014/0016/0017](./adr/) (seams, envelope, outbox). Consumer wiring: [downstream-consumer.md](./downstream-consumer.md).
 
@@ -30,7 +40,7 @@ flowchart TB
       DD["Dice Duel"]:::game
       GR["Gifts + Rain"]:::game
     end
-    subgraph T2VEND["Vendor adapters (implement @oss/adapters ports)"]
+    subgraph T2VEND["Vendor adapters (implement @oss/core/contracts ports)"]
       FB["Fireblocks<br/>crypto wallet"]:::vend
       SS["Sumsub<br/>KYC"]:::vend
       EM["EveryMatrix<br/>casino aggregator"]:::vend
@@ -43,39 +53,42 @@ flowchart TB
   end
 
   %% ============ SDK ============
-  subgraph SDK["@oss/react · headless SDK (browser, shared IP)"]
+  subgraph SDK["@oss/core/react · headless SDK (browser)"]
     HOOKS["data hooks · auth · transport"]
     TC["typed oRPC client<br/>(zero codegen)"]
     OAPI["docs/openapi.json (emitted)"]
   end
 
-  %% ============ API RUNTIME ============
-  subgraph RT["@oss/api-runtime · createApp() (node, shared IP)"]
-    PH["@oss/plugin-host<br/>definePlugin · ModuleRegistry · applyServiceManifest"]
-    DI["@oss/core Container<br/>tokens to factories (last-wins overlay)"]
+  %% ============ ENGINE (@oss/core/server) ============
+  subgraph RT["@oss/core/server · createApp() (node engine)"]
+    PH["plugin-host<br/>definePlugin · ModuleRegistry · applyServiceManifest"]
+    DI["Container<br/>tokens to factories (last-wins overlay)"]
     HONO["Hono + oRPC OpenAPIHandler<br/>validation · OpenAPI emit · RLS tenant ALS"]
     GATE["editions: OSS_ADDONS allowlist<br/>SERVICE_MANIFEST module filter"]
   end
 
-  %% ============ CONTRACT SPINE ============
-  subgraph SPINE["Contract spine (isomorphic, shared IP)"]
-    ZOD["@oss/shared-schemas<br/>single Zod root · events.ts · igaming-config"]
-    OC["@oss/orpc-contract<br/>aggregates every add-on /contract slice"]
-    ADP["@oss/adapters<br/>port tokens (createToken)"]
-    CINV["@oss/compliance-invariants"]
+  %% ============ CONTRACT SPINE (@oss/core/contracts + /compliance) ============
+  subgraph SPINE["@oss/core/contracts + /compliance (isomorphic)"]
+    ZOD["/contracts<br/>Zod schemas · events.ts · igaming-config"]
+    OC["/contracts<br/>composeContract + health (no aggregation)"]
+    ADP["/contracts<br/>adapter port tokens (createToken)"]
+    CINV["/compliance<br/>sealed tokens + invariants"]
   end
 
-  %% ============ THE 6 DOMAINS (17 modules) ============
-  subgraph D1["@oss/platform · kernel + cross-cutting"]
-    AUDIT["audit ⟨audit_log⟩"]:::core
-    IAM["iam ⟨roles·perms·invites⟩"]:::core
-    DBPKG["@oss/db Drizzle + RLS · migrate-all"]:::kern
-    AUTHPKG["@oss/auth better-auth"]:::kern
+  %% ============ DOMAINS (separate packages, each deps @oss/core) ============
+  subgraph D1["@oss/core/server (engine) + admin/audit domains"]
+    AUDIT["audit ⟨audit_log⟩ · @oss/audit"]:::core
+    IAM["iam ⟨roles·perms·invites⟩ · @oss/iam"]:::core
+    ADMC["admin-console (read API via ports) · @oss/admin-console"]:::core
+    DBPKG["@oss/core/server: db (Drizzle+RLS · migrate)"]:::kern
+    AUTHPKG["@oss/core/server: auth (better-auth)"]:::kern
   end
-  subgraph D2["@oss/account · player account"]
+  subgraph D2["@oss/pam · player account mgmt"]
     IDENT["identity ⟨user·session·2fa⟩"]:::core
     PROF["profile ⟨player⟩"]:::core
     PM["player-management (PAM)"]:::gated
+  end
+  subgraph DCOMP["@oss/compliance · RG/KYC"]
     COMP["compliance ⟨geo_rule·user_limit⟩"]:::core
   end
   subgraph D3["@oss/wallet · money"]
@@ -95,11 +108,10 @@ flowchart TB
     BON["bonus ⟨bonus·user_bonus⟩"]:::core
     LB["leaderboard"]:::gated
     CMS["cms ⟨page·banner⟩"]:::core
-    ADMC["admin-console (read API)"]:::core
   end
 
   %% ============ PORTS / SEAMS ============
-  subgraph PORTS["Ports (15 tokens · hexagonal seams)"]
+  subgraph PORTS["Ports (hexagonal seams · core set shown)"]
     P_PAY["PAYMENT_ADAPTER"]:::port
     P_KYC["KYC_ADAPTER"]:::port
     P_GEO["GEO_IP_ADAPTER"]:::port
@@ -142,7 +154,7 @@ flowchart TB
   OC --> TC
   ZOD --> OC
 
-  D1 & D2 & D3 & D4 & D5 & D6 --> DI
+  D1 & D2 & DCOMP & D3 & D4 & D5 & D6 --> DI
   WAL ==>|owns| P_WCMD
   SB ==>|debit tx| P_WCMD
   IAM -->|dependsOn| IDENT
@@ -179,48 +191,45 @@ flowchart TB
   classDef data fill:#fcf3cf,stroke:#9a7d0a,color:#000
 ```
 
-## 2. Publishing & distribution model (ADR-0022)
+## 2. Publishing & distribution model (ADR-0024)
+
+~19 consumer-facing packages publish to the GitLab registry under ONE fixed version
+(Changesets, no cross-domain version skew) - but each is its own npm package, never a
+bundle. A consumer installs only the subset its edition licenses (PAM-only, or +premium
+domains). There is NO facade/aggregator package: the runtime contract is composed only
+in the consumer's `apps/api` (`composeContract`). That is what keeps any subset
+independently installable.
 
 ```mermaid
 flowchart LR
-  subgraph SRC["Source (unchanged · ADR-0021) — ~30 private workspace packages"]
+  subgraph SRC["Workspace packages (ONE published core + domains + premium addons)"]
     direction TB
-    KP["platform pkgs<br/>core·db·auth·api-runtime·plugin-host<br/>adapters·orpc-contract·shared-schemas·react"]
-    A1["14 core add-ons"]
-    A2["4 gated add-ons"]
-  end
-  subgraph FAC["6 distribution facades (bundle members · ship migrations · subpath exports)"]
-    direction TB
-    F1["@oss/platform"]
-    F2["@oss/account"]
-    F3["@oss/wallet"]
-    F4["@oss/casino"]
-    F5["@oss/sportsbook"]
-    F6["@oss/engagement"]
+    CORE["@oss/core — THE published package (ADR-0025)<br/>/contracts · /react · /server · /server/orm · /server/migrate · /compliance"]
+    DOM["domains (each deps @oss/core): pam · compliance · wallet · casino · sportsbook · engagement · cms · iam · audit · admin-console"]
+    ADD["premium add-ons (separate repo + private registry; none in tree yet)"]
+    DEV["dev/tooling (not part of core): @oss/mcp · @oss/testing · @oss/config"]
   end
   REG[["GitLab Package Registry<br/>consumer/igaming-oss<br/>1 fixed version (Changesets)"]]
   subgraph CONS["Consumers"]
-    BFREG["Consumer — committed default:<br/>.npmrc scope map + ^version"]
-    BFLINK["Consumer local dev:<br/>link:oss + git skip-worktree"]
-    T2X["Tier-2 consumer overlays<br/>games · vendor adapters · UI"]
+    INST["install @oss/core + chosen domains<br/>(eg core + @oss/pam, or + premium addons)"]
+    BFLINK["local dev: link:oss + git skip-worktree"]
+    T2X["Tier-2 overlays: games · vendor adapters · UI"]
   end
 
-  KP --> F1
-  A1 --> F1 & F2 & F4 & F6
-  A2 --> F2 & F4 & F5 & F6
-  F1 & F2 & F3 & F4 & F5 & F6 -->|"changeset publish (CI_JOB_TOKEN)"| REG
-  REG --> BFREG
+  CORE & DOM -->|"changeset publish (CI_JOB_TOKEN)"| REG
+  ADD -.->|"private registry (future)"| REG
+  REG --> INST
   REG -. dev override .-> BFLINK
-  BFREG --> T2X
-  T2X -.->|"plugin/adapter seams"| BFREG
+  INST --> T2X
+  T2X -.->|"plugin/adapter seams"| INST
 
-  subgraph EXPORTS["each facade exposes"]
-    E1["/server (node)"]
+  subgraph EXPORTS["each domain package exposes subpaths"]
+    E1["/server (node plugins)"]
     E2["/react (headless hooks)"]
-    E3["/contracts (isomorphic)"]
-    E4["/server/admin (backoffice)"]
+    E3["/contracts (isomorphic Zod slices)"]
+    E4["/schema (Drizzle)"]
   end
-  F3 --- EXPORTS
+  DOM --- EXPORTS
 ```
 
 ## 3. Ports & adapters — default (mock) ↔ vendor overlay
@@ -231,7 +240,7 @@ flowchart LR
     wal2["wallet"]; idn2["identity"]; gam2["gaming"]; cmp2["compliance"]
     agg2["aggregator"]; cht2["chat"]; sb2["sportsbook"]; iam2["iam"]; aud2["audit"]
   end
-  subgraph TOKENS["@oss/adapters tokens"]
+  subgraph TOKENS["@oss/core/contracts adapter tokens"]
     t1["PAYMENT_ADAPTER"]; t2["KYC_ADAPTER"]; t3["GAME_ADAPTER"]; t4["RNG_ADAPTER"]
     t5["GEO_IP_ADAPTER"]; t6["AGGREGATOR_ADAPTER"]; t7["REALTIME_TRANSPORT"]
     t8["SEND_EMAIL"]; t9["NOTIFICATION_DELIVERY_ADAPTER"]; t10["ADMIN_PERMISSION_RESOLVER"]; t11["AUDIT_WRITER"]
@@ -290,14 +299,17 @@ flowchart TB
 
 ## Reference — domain → modules → tables → routes
 
-| Domain            | Modules (core / **gated**)                                           | Tables                                                                                                   | Routes |
-| ----------------- | -------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------- | ------ |
-| `@oss/platform`   | audit · iam                                                          | audit_log, admin_role / admin_role_assignment / admin_role_permission / admin_invitation                 | 13     |
-| `@oss/account`    | identity · profile · **player-management** · compliance              | user / session / account / twoFactor / verification, player, geo_rule / user_limit                       | 28     |
-| `@oss/wallet`     | wallet                                                               | wallet, wallet_transaction                                                                               | 4      |
-| `@oss/casino`     | gaming · lobby · **aggregator**                                      | Game / GameRound, LobbyCategory / FeaturedSlot, aggregator_provider                                      | 12     |
-| `@oss/sportsbook` | **sportsbook**                                                       | SportsbookEvent / SportsbookSelection / SportsbookBet                                                    | 4      |
-| `@oss/engagement` | chat · notifications · bonus · cms · admin-console · **leaderboard** | ChatRoom / ChatMessage, notification, bonus / user_bonus, page / banner, leaderboard / leaderboard_entry | 18     |
+| Domain               | Modules (core / **gated**)                                           | Tables                                                                                                   | Routes |
+| -------------------- | -------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------- | ------ |
+| `@oss/iam`           | iam (admin roles · perms · invites)                                  | admin_role / admin_role_assignment / admin_role_permission / admin_invitation                            | 9      |
+| `@oss/audit`         | audit (append-only log)                                              | audit_log                                                                                                | 2      |
+| `@oss/admin-console` | backoffice read API (via pam + wallet ports)                         | (owns none - reads via ADMIN_USER_DIRECTORY + ADMIN_WALLET_REPORTING)                                    | 2      |
+| `@oss/pam`           | identity · profile · **player-management**                           | user / session / account / twoFactor / verification, player                                              | 24     |
+| `@oss/compliance`    | compliance (RG/KYC, sealed)                                          | geo_rule, user_limit                                                                                     | 4      |
+| `@oss/wallet`        | wallet                                                               | wallet, wallet_transaction                                                                               | 4      |
+| `@oss/casino`        | gaming · lobby · **aggregator**                                      | Game / GameRound, LobbyCategory / FeaturedSlot, aggregator_provider                                      | 12     |
+| `@oss/sportsbook`    | **sportsbook**                                                       | SportsbookEvent / SportsbookSelection / SportsbookBet                                                    | 4      |
+| `@oss/engagement`    | chat · notifications · bonus · cms · admin-console · **leaderboard** | ChatRoom / ChatMessage, notification, bonus / user_bonus, page / banner, leaderboard / leaderboard_entry | 18     |
 
 **bold** = gated add-on (`kind: 'addon'`, loads only when listed in `OSS_ADDONS`).
 
@@ -307,8 +319,8 @@ flowchart TB
 | --------------------------- | -------------------------------------------------------------- |
 | iam → identity              | `dependsOn` (load order)                                       |
 | sportsbook → wallet         | `WALLET_COMMANDS` synchronous command port (same `tx`, atomic) |
-| player-management → profile | read-only `@oss-addons/profile/schema`                         |
-| lobby → gaming              | read-only `@oss-addons/gaming/schema`                          |
+| player-management → profile | read-only `@oss/pam/schema/profile`                            |
+| lobby → gaming              | read-only `@oss/casino/schema/gaming`                          |
 | any → any                   | domain **events** via `EventBus` (24 topics) — never money     |
 
 15 adapter ports and 3 async seams (`MESSAGE_BROKER`, `JOB_QUEUE`, `REALTIME_TRANSPORT`) plus

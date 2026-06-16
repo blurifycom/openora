@@ -1,0 +1,34 @@
+{
+  "version": "7",
+  "dialect": "postgresql",
+  "entries": [
+    {
+      "idx": 0,
+      "version": "7",
+      "when": 1781452252503,
+      "tag": "0000_greedy_freak",
+      "breakpoints": true
+    },
+    {
+      "idx": 1,
+      "version": "7",
+      "when": 1781452252504,
+      "tag": "0001_rls_foundation",
+      "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "7",
+      "when": 1781452322694,
+      "tag": "0002_rls_ChatMessage_plus_16",
+      "breakpoints": true
+    },
+    {
+      "idx": 3,
+      "version": "7",
+      "when": 1781550895098,
+      "tag": "0003_yellow_silver_centurion",
+      "breakpoints": true
+    }
+  ]
+}

@@ -6,7 +6,7 @@ import type {
   RepeatOptions,
   JobContext,
   WorkerRegistration,
-} from '@oss/adapters';
+} from '@oss/core/contracts';
 
 // Durable JobQueueAdapter backed by BullMQ + Redis - the reference real driver.
 // Bound to JOB_QUEUE by the bullmq overlay only when REDIS_URL is set, so the

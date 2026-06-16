@@ -47,13 +47,16 @@ function moduleSrcDirs(): ModuleSrc[] {
       if (isDir(join(addonsRoot, name)) && hasPlugin(srcDir)) out.push({ id: name, srcDir });
     }
   }
-  const domainsRoot = join(repoRoot, 'packages', 'domains');
-  if (existsSync(domainsRoot)) {
-    for (const d of readdirSync(domainsRoot)) {
-      const dsrc = join(domainsRoot, d, 'src');
-      if (!isDir(join(domainsRoot, d)) || !existsSync(dsrc)) continue;
+  // Domains fold into @oss/core as subpaths (ADR-0025): each lives at
+  // packages/core/src/<domain>/ (no nested src/). Skip the engine zones.
+  const coreSrc = join(repoRoot, 'packages', 'core', 'src');
+  const engineDirs = new Set(['contracts', 'server', 'react']);
+  if (existsSync(coreSrc)) {
+    for (const d of readdirSync(coreSrc)) {
+      const dsrc = join(coreSrc, d);
+      if (!isDir(dsrc) || engineDirs.has(d)) continue;
       if (hasPlugin(dsrc)) {
-        out.push({ id: d, srcDir: dsrc }); // single-member domain
+        out.push({ id: d, srcDir: dsrc }); // single-member domain (incl. compliance)
       } else {
         for (const member of readdirSync(dsrc)) {
           const msrc = join(dsrc, member);
@@ -127,12 +130,12 @@ type AdapterInfo = {
 };
 
 function collectAdapters(): AdapterInfo[] {
-  const dir = join(repoRoot, 'packages', 'contracts', 'adapters', 'src');
-  // Scan add-on packages plus api-runtime, so platform-level default bindings (eg
-  // the in-process MESSAGE_BROKER seeded in create-app) count as wired.
+  const dir = join(repoRoot, 'packages', 'core', 'src', 'contracts', 'adapters');
+  // Scan add-on packages plus the engine app factory, so platform-level default
+  // bindings (eg the in-process MESSAGE_BROKER seeded in create-app) count as wired.
   const moduleFiles = [
     ...moduleSrcDirs().flatMap(({ srcDir }) => walk(srcDir, '.ts')),
-    ...walk(join(repoRoot, 'packages', 'platform', 'api-runtime', 'src'), '.ts'),
+    ...walk(join(repoRoot, 'packages', 'core', 'src', 'server', 'runtime'), '.ts'),
   ];
   const moduleSrc = moduleFiles.map((f) => ({ f, src: readFileSync(f, 'utf8') }));
   const out: AdapterInfo[] = [];
@@ -208,7 +211,7 @@ function collectSlots(): Array<{ name: string; description: string }> {
 // every add-on's contract dir, not just packages/contracts.
 function collectSchemas(): Array<{ name: string; file: string }> {
   const out: Array<{ name: string; file: string }> = [];
-  const roots = [join(repoRoot, 'packages', 'contracts')];
+  const roots = [join(repoRoot, 'packages', 'core', 'src', 'contracts')];
   for (const { srcDir } of moduleSrcDirs()) {
     const contractDir = join(srcDir, 'contract');
     if (existsSync(contractDir)) roots.push(contractDir);
@@ -228,7 +231,7 @@ function collectSchemas(): Array<{ name: string; file: string }> {
 // --- igaming config shape (parse top-level keys + leading comment) ----------
 function collectConfigFields(): Array<{ key: string; note: string }> {
   const src = read(
-    join(repoRoot, 'packages', 'contracts', 'shared-schemas', 'src', 'igaming-config.ts'),
+    join(repoRoot, 'packages', 'core', 'src', 'contracts', 'schemas', 'igaming-config.ts'),
   );
   const body =
     src.match(/export const IgamingConfigSchema = z\s*\.object\(\{([\s\S]*?)\}\)/)?.[1] ?? '';
@@ -253,7 +256,7 @@ function collectConfigFields(): Array<{ key: string; note: string }> {
 // --- plugin contract surface ------------------------------------------------
 function collectPluginSurface(): string[] {
   const src = read(
-    join(repoRoot, 'packages', 'platform', 'plugin-host', 'src', 'define-plugin.ts'),
+    join(repoRoot, 'packages', 'core', 'src', 'server', 'plugin-host', 'define-plugin.ts'),
   );
   const body =
     src.match(/export (?:interface|type) ModuleRegistry (?:= )?\{([\s\S]*?)\n\}/)?.[1] ?? '';
@@ -286,7 +289,7 @@ const catalog = {
   schemas: collectSchemas(),
   config: {
     token: 'IGAMING_CONFIG',
-    source: 'packages/contracts/shared-schemas/src/igaming-config.ts',
+    source: 'packages/core/src/contracts/schemas/igaming-config.ts',
     fields: collectConfigFields(),
   },
   pluginContract: collectPluginSurface(),

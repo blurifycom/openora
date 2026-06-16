@@ -7,9 +7,9 @@
 // Registered LATE in extensions.config.ts so its JOB_QUEUE binding wins over the
 // default (last registration wins). It rebinds infra only - no routes/schemas.
 
-import { definePlugin } from '@oss/plugin-host';
-import { createLogger } from '@oss/core';
-import { JOB_QUEUE } from '@oss/adapters';
+import { definePlugin } from '@oss/core/server';
+import { createLogger } from '@oss/core/server';
+import { JOB_QUEUE } from '@oss/core/contracts';
 import { BullMqJobQueue } from './bullmq-job-queue.js';
 
 const log = createLogger('bullmq-overlay');
