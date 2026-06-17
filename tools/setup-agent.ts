@@ -81,15 +81,16 @@ async function main() {
   // 4. Migrate
   console.log('\n--- Running Drizzle migrations ---');
   try {
-    run('pnpm -F @oss/core/server generate');
-    run('pnpm -F @oss/core/server migrate');
+    run('pnpm -F @oss/core generate');
+    run('pnpm -F @oss/core migrate');
   } catch (e) {
     console.warn('  [warn] Migration step skipped (schema may be empty - normal on first run)');
   }
 
   // 5. Summary
   const pkg = JSON.parse(readFileSync(join(root, 'package.json'), 'utf8'));
-  const envExample = readFileSync(join(root, 'packages', 'platform', 'db', '.env.example'), 'utf8');
+  const envExamplePath = join(root, 'packages', 'core', '.env.example');
+  const envExample = existsSync(envExamplePath) ? readFileSync(envExamplePath, 'utf8') : '';
   const ports: Record<string, string> = {};
   for (const line of envExample.split('\n')) {
     const m = line.match(/^(PORT_\w+)=(\d+)/);

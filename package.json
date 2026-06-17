@@ -32,7 +32,7 @@
     "gen": "tsx tools/gen.ts",
     "create:app": "tsx tools/create-igaming-app.ts",
     "create:service": "tsx tools/create-service.ts",
-    "regen": "turbo run codegen && pnpm -F @oss/db generate && pnpm run gen:rls && pnpm run gen:catalog",
+    "regen": "turbo run codegen && pnpm -F @oss/core generate && pnpm run gen:rls && pnpm run gen:catalog",
     "gen:catalog": "tsx tools/gen-catalog.ts",
     "gen:rls": "tsx tools/gen-rls.ts",
     "seed": "tsx tools/seed.ts",
