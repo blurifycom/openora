@@ -1,5 +1,6 @@
 ---
 name: create-pr
+targets: ['claudecode']
 description: Commit, push, and open a GitLab Merge Request following this repo's promotion chain (dev -> stage -> main/tag). Use on "create pr", "create mr", "open a pr/mr", "/create-pr", or "promote <branch>".
 ---
 
