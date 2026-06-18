@@ -84,11 +84,10 @@ describe('ChatService.sendGlobalMessage username resolution', () => {
         }),
       }),
       insert: () => ({
-        values: (v: { tenantId: string; userId: string; username: string; content: string }) => ({
+        values: (v: { userId: string; username: string; content: string }) => ({
           returning: async () => [
             {
               id: 'm1',
-              tenantId: v.tenantId,
               roomId: null,
               userId: v.userId,
               username: v.username,
@@ -110,7 +109,7 @@ describe('ChatService.sendGlobalMessage username resolution', () => {
       transport,
     );
 
-    const msg = await service.sendGlobalMessage('u1', 'spoofed-header-name', 'hi', 't1');
+    const msg = await service.sendGlobalMessage('u1', 'spoofed-header-name', 'hi');
     expect(msg.username).toBe('Platform Admin');
   });
 
@@ -120,9 +119,7 @@ describe('ChatService.sendGlobalMessage username resolution', () => {
       { emit: () => undefined } as unknown as EventBus,
       new InProcessRealtimeTransport(),
     );
-    expect((await service.sendGlobalMessage('u1', 'fallback', 'hi', 't1')).username).toBe(
-      'fallback',
-    );
-    expect((await service.sendGlobalMessage('u1', '', 'hi', 't1')).username).toBe('anonymous');
+    expect((await service.sendGlobalMessage('u1', 'fallback', 'hi')).username).toBe('fallback');
+    expect((await service.sendGlobalMessage('u1', '', 'hi')).username).toBe('anonymous');
   });
 });

@@ -28,7 +28,6 @@ None currently. If a reporting or analytics vendor is added, define an interface
 
 - Import from another add-on's service/runtime code directly (read its tables via the schema subpath, or use events)
 - Throw `ORPCError` (or a domain error mapped via `mapErrors`) - never framework HTTP errors
-- Add tenanted `pgTable` defs without a `tenantId` text column
 - Edit the generated migrations under `packages/core/drizzle/` by hand - the source of truth is `src/schema/index.ts`
 
 ## Sample: add a new admin route

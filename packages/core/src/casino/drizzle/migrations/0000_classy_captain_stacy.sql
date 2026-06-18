@@ -1,6 +1,5 @@
 CREATE TABLE "aggregator_provider" (
-	"id" text PRIMARY KEY NOT NULL,
-	"tenantId" text NOT NULL,
+	"id" uuid PRIMARY KEY DEFAULT gen_random_uuid() NOT NULL,
 	"name" text NOT NULL,
 	"slug" text NOT NULL,
 	"isActive" boolean DEFAULT true NOT NULL,
@@ -8,4 +7,4 @@ CREATE TABLE "aggregator_provider" (
 	"createdAt" timestamp DEFAULT now() NOT NULL
 );
 --> statement-breakpoint
-CREATE UNIQUE INDEX "aggregator_provider_tenantId_slug_key" ON "aggregator_provider" USING btree ("tenantId","slug");
+CREATE UNIQUE INDEX "aggregator_provider_slug_key" ON "aggregator_provider" USING btree ("slug");

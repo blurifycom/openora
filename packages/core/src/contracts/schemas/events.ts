@@ -70,7 +70,6 @@ export const domainEventSchemas = {
   'aggregator.sync.completed': z.object({
     synced: z.number(),
     failed: z.number(),
-    tenantId: z.string(),
   }),
   'aggregator.callback.received': z.object({ provider: z.string(), event: z.string() }),
 
@@ -78,12 +77,10 @@ export const domainEventSchemas = {
     userId: z.uuid(),
     metric: z.string(),
     amount: z.number(),
-    tenantId: z.string(),
   }),
   'leaderboard.reset': z.object({
     metric: z.string(),
     period: z.string(),
-    tenantId: z.string(),
   }),
 
   'sportsbook.odds.updated': z.object({

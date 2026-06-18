@@ -8,7 +8,7 @@ import { defineConfig } from 'drizzle-kit';
 // with it. See docs/adr/0020-editions-and-add-on-modules.md.
 export default defineConfig({
   dialect: 'postgresql',
-  schema: ['./src/leaderboard/schema/index.ts'],
+  schema: ['./leaderboard/schema/index.ts'],
   out: './drizzle/migrations',
   migrations: {
     table: '__drizzle_migrations_addon_leaderboard',

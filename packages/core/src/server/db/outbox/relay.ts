@@ -67,7 +67,6 @@ export class OutboxRelay {
           payload: row.payload,
           occurredAt: row.occurredAt.toISOString(),
           schemaVersion: row.schemaVersion,
-          ...(row.tenantId ? { tenantId: row.tenantId } : {}),
           ...(row.traceId ? { traceId: row.traceId } : {}),
           ...(row.orderingKey ? { orderingKey: row.orderingKey } : {}),
         };

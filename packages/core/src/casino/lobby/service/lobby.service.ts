@@ -34,14 +34,10 @@ function toGameSummary(record: {
 export class LobbyService {
   constructor(private readonly drizzle: DrizzleService) {}
 
-  async listCategories(tenantId?: string): Promise<LobbyCategory[]> {
+  async listCategories(): Promise<LobbyCategory[]> {
     const db = this.drizzle.db;
     const [categories, counts] = await Promise.all([
-      db
-        .select()
-        .from(lobbyCategory)
-        .where(tenantId ? eq(lobbyCategory.tenantId, tenantId) : undefined)
-        .orderBy(asc(lobbyCategory.sortOrder)),
+      db.select().from(lobbyCategory).orderBy(asc(lobbyCategory.sortOrder)),
       db
         .select({ categoryId: lobbyCategoryGame.categoryId, n: count() })
         .from(lobbyCategoryGame)
@@ -59,14 +55,11 @@ export class LobbyService {
     }));
   }
 
-  async getCategoryGames(slug: string, tenantId?: string): Promise<LobbyCategoryDetail> {
+  async getCategoryGames(slug: string): Promise<LobbyCategoryDetail> {
     const db = this.drizzle.db;
-    const whereClause = tenantId
-      ? and(eq(lobbyCategory.tenantId, tenantId), eq(lobbyCategory.slug, slug))
-      : eq(lobbyCategory.slug, slug);
 
     const category = findOneOrThrow(
-      await db.select().from(lobbyCategory).where(whereClause),
+      await db.select().from(lobbyCategory).where(eq(lobbyCategory.slug, slug)),
       new LobbyCategoryNotFoundError(slug),
     );
 
@@ -94,16 +87,13 @@ export class LobbyService {
     };
   }
 
-  async getFeatured(tenantId?: string): Promise<FeaturedSlot[]> {
+  async getFeatured(): Promise<FeaturedSlot[]> {
     const db = this.drizzle.db;
-    const whereClause = tenantId
-      ? and(eq(featuredSlot.isActive, true), eq(featuredSlot.tenantId, tenantId))
-      : eq(featuredSlot.isActive, true);
 
     const slots = await db
       .select()
       .from(featuredSlot)
-      .where(whereClause)
+      .where(eq(featuredSlot.isActive, true))
       .orderBy(asc(featuredSlot.placement), asc(featuredSlot.sortOrder));
 
     const gameIds = [...new Set(slots.map((s) => s.gameId))];
@@ -126,11 +116,9 @@ export class LobbyService {
     });
   }
 
-  async search(query: string, tenantId?: string): Promise<GameSummary[]> {
+  async search(query: string): Promise<GameSummary[]> {
     const db = this.drizzle.db;
-    const whereClause = tenantId
-      ? and(ilike(game.name, `%${query}%`), eq(game.isActive, true), eq(game.tenantId, tenantId))
-      : and(ilike(game.name, `%${query}%`), eq(game.isActive, true));
+    const whereClause = and(ilike(game.name, `%${query}%`), eq(game.isActive, true));
 
     const games = await db.select().from(game).where(whereClause).orderBy(asc(game.name)).limit(50);
 

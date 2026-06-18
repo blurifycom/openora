@@ -8,7 +8,6 @@ import { AuditService } from '../service/audit.service.js';
 
 function computeHash(fields: {
   id: string;
-  tenantId: string;
   actorId: string | null;
   actorType: string;
   action: string;
@@ -22,7 +21,6 @@ function computeHash(fields: {
     .update(
       JSON.stringify({
         id: fields.id,
-        tenantId: fields.tenantId,
         actorId: fields.actorId,
         actorType: fields.actorType,
         action: fields.action,
@@ -57,13 +55,11 @@ function makeEvents(): import('@oss/core/server').EventBus {
   return { emit: vi.fn(), on: vi.fn() } as unknown as import('@oss/core/server').EventBus;
 }
 
-const TENANT = 'tenant-test';
 const CREATED_AT = new Date('2024-01-01T00:00:00.000Z');
 
 function makeRow(
   overrides: {
     id?: string;
-    tenantId?: string;
     actorId?: string | null;
     actorType?: 'player' | 'admin' | 'system';
     action?: string;
@@ -82,7 +78,6 @@ function makeRow(
 ) {
   return {
     id: 'row-1',
-    tenantId: TENANT,
     actorId: null,
     actorType: 'system' as const,
     action: 'identity.user.registered',
@@ -157,16 +152,16 @@ function makeManualDrizzle(db: Record<string, unknown>): import('@oss/core/serve
 // record() - atomic single-insert, advisory-locked, hash chaining
 // ---------------------------------------------------------------------------
 
-// A persistent in-memory store of audit rows keyed by tenant, with a shared seq
-// counter that stands in for the DB serial sequence. Builds a Drizzle mock whose
-// `transaction(cb)` runs cb against a `tx` handle that:
+// A persistent in-memory store of audit rows with a shared seq counter that stands
+// in for the DB serial sequence. Builds a Drizzle mock whose `transaction(cb)` runs
+// cb against a `tx` handle that:
 //   - tx.execute(advisory lock)  -> no-op resolve
 //   - tx.execute(nextval)        -> increments and returns the shared seq
-//   - tx.select(...tip...)       -> returns the latest row hash for the tenant
+//   - tx.select(...tip...)       -> returns the latest row hash
 //   - tx.insert(...).returning() -> appends the row and returns it
 // No update method is provided, so any UPDATE attempt throws.
 function makeChainStore() {
-  const rowsByTenant = new Map<string, ReturnType<typeof makeRow>[]>();
+  const rows: ReturnType<typeof makeRow>[] = [];
   let seqCounter = 0;
   let executeCall = 0;
 
@@ -183,17 +178,10 @@ function makeChainStore() {
       return Promise.resolve({ rows: [{}] });
     }),
     select: vi.fn().mockImplementation(() => {
-      // Captures the tenant from .where() then resolves at .limit().
-      let tenant: string | undefined;
       const chain = {
         from: vi.fn().mockReturnThis(),
-        where: vi.fn().mockImplementation((cond: { __tenant?: string }) => {
-          tenant = cond?.__tenant;
-          return chain;
-        }),
         orderBy: vi.fn().mockReturnThis(),
         limit: vi.fn().mockImplementation(() => {
-          const rows = rowsByTenant.get(tenant ?? '') ?? [];
           const latest = rows[rows.length - 1];
           return Promise.resolve(latest ? [{ hash: latest.hash }] : []);
         }),
@@ -203,9 +191,7 @@ function makeChainStore() {
     insert: vi.fn().mockImplementation(() => ({
       values: vi.fn().mockImplementation((vals: ReturnType<typeof makeRow>) => ({
         returning: vi.fn().mockImplementation(() => {
-          const list = rowsByTenant.get(vals.tenantId) ?? [];
-          list.push(vals);
-          rowsByTenant.set(vals.tenantId, list);
+          rows.push(vals);
           return Promise.resolve([vals]);
         }),
       })),
@@ -216,22 +202,8 @@ function makeChainStore() {
     transaction: vi.fn().mockImplementation((cb: (t: typeof tx) => Promise<unknown>) => cb(tx)),
   };
 
-  return { drizzle: makeManualDrizzle(db), tx, getRows: (t: string) => rowsByTenant.get(t) ?? [] };
+  return { drizzle: makeManualDrizzle(db), tx, getRows: () => rows };
 }
-
-// Override eq()'s shape so the select mock can read the tenant being filtered.
-// The real eq returns an opaque SQL object; here we only need the value.
-vi.mock('drizzle-orm', async (importOriginal) => {
-  const actual = await importOriginal<typeof import('drizzle-orm')>();
-  return {
-    ...actual,
-    eq: vi.fn((col: unknown, val: unknown) => {
-      // Tag tenant-equality so the mock select can route by tenant.
-      const colName = (col as { name?: string })?.name;
-      return colName === 'tenantId' ? { __tenant: val } : { col, val };
-    }),
-  };
-});
 
 describe('AuditService.record()', () => {
   it('inserts with prevHash=null for the first row and stores a real sha256 hash (no UPDATE)', async () => {
@@ -239,18 +211,15 @@ describe('AuditService.record()', () => {
     const svc = new AuditService(store.drizzle, makeEvents());
 
     const result = await svc.record({
-      tenantId: TENANT,
       actorType: 'system',
       action: 'identity.user.registered',
       resourceType: 'identity',
     });
 
-    expect(result.tenantId).toBe(TENANT);
     expect(result.prevHash).toBeNull();
 
     const expected = computeHash({
       id: result.id,
-      tenantId: result.tenantId,
       actorId: result.actorId,
       actorType: result.actorType,
       action: result.action,
@@ -271,13 +240,11 @@ describe('AuditService.record()', () => {
     const svc = new AuditService(store.drizzle, makeEvents());
 
     const first = await svc.record({
-      tenantId: TENANT,
       actorType: 'system',
       action: 'identity.user.registered',
       resourceType: 'identity',
     });
     const second = await svc.record({
-      tenantId: TENANT,
       actorType: 'system',
       action: 'wallet.deposit.completed',
       resourceType: 'wallet',
@@ -290,7 +257,7 @@ describe('AuditService.record()', () => {
 
     // Run verifyChain over the produced rows: the chain must validate end to end,
     // proving no 'pending' hash leaked and the links are intact.
-    const persisted = store.getRows(TENANT);
+    const persisted = store.getRows();
     const verifySvc = new AuditService(
       makeManualDrizzle({
         select: vi.fn().mockReturnValue({
@@ -301,7 +268,7 @@ describe('AuditService.record()', () => {
       }),
       makeEvents(),
     );
-    expect(await verifySvc.verifyChain(TENANT)).toEqual({ valid: true });
+    expect(await verifySvc.verifyChain()).toEqual({ valid: true });
   });
 });
 
@@ -324,13 +291,12 @@ describe('AuditService.verifyChain()', () => {
 
   it('returns valid:true for an empty chain', async () => {
     const svc = new AuditService(makeVerifyDb([]), makeEvents());
-    expect(await svc.verifyChain(TENANT)).toEqual({ valid: true });
+    expect(await svc.verifyChain()).toEqual({ valid: true });
   });
 
   it('returns valid:true when hash chain is intact across two rows', async () => {
     const hash1 = computeHash({
       id: 'r1',
-      tenantId: TENANT,
       actorId: null,
       actorType: 'system',
       action: 'identity.user.registered',
@@ -342,7 +308,6 @@ describe('AuditService.verifyChain()', () => {
     });
     const hash2 = computeHash({
       id: 'r2',
-      tenantId: TENANT,
       actorId: null,
       actorType: 'system',
       action: 'wallet.deposit.completed',
@@ -366,14 +331,14 @@ describe('AuditService.verifyChain()', () => {
     ];
 
     const svc = new AuditService(makeVerifyDb(rows), makeEvents());
-    expect(await svc.verifyChain(TENANT)).toEqual({ valid: true });
+    expect(await svc.verifyChain()).toEqual({ valid: true });
   });
 
   it('detects a tampered row - wrong hash value', async () => {
     const rows = [makeRow({ id: 'r1', seq: 1, prevHash: null, hash: 'tampered-wrong-hash' })];
 
     const svc = new AuditService(makeVerifyDb(rows), makeEvents());
-    const result = await svc.verifyChain(TENANT);
+    const result = await svc.verifyChain();
 
     expect(result.valid).toBe(false);
     if (!result.valid) {
@@ -386,7 +351,6 @@ describe('AuditService.verifyChain()', () => {
     // Row 1 has a valid hash.
     const hash1 = computeHash({
       id: 'r1',
-      tenantId: TENANT,
       actorId: null,
       actorType: 'system',
       action: 'identity.user.registered',
@@ -404,7 +368,7 @@ describe('AuditService.verifyChain()', () => {
     ];
 
     const svc = new AuditService(makeVerifyDb(rows), makeEvents());
-    const result = await svc.verifyChain(TENANT);
+    const result = await svc.verifyChain();
 
     expect(result.valid).toBe(false);
     if (!result.valid) {
@@ -505,7 +469,6 @@ describe('AuditService.exportCsv()', () => {
     const lines = csv.split('\n').filter(Boolean);
     expect(lines).toHaveLength(3); // 1 header + 2 data
     expect(lines[0]).toContain('id');
-    expect(lines[0]).toContain('tenantId');
     expect(lines[0]).toContain('hash');
   });
 
@@ -515,7 +478,6 @@ describe('AuditService.exportCsv()', () => {
     const csv = await svc.exportCsv({});
 
     expect(csv).toContain('row-1');
-    expect(csv).toContain(TENANT);
     expect(csv).toContain('player');
   });
 

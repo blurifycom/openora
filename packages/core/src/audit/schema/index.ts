@@ -11,13 +11,12 @@ import {
 
 export const actorTypeEnum = pgEnum('audit_actor_type', ['player', 'admin', 'system']);
 
-// Append-only tamper-evident audit log. Hash-chained per tenant.
+// Append-only tamper-evident audit log. Hash-chained.
 // Do NOT expose update/delete routes - this table is write-once.
 export const auditLog = pgTable(
   'audit_log',
   {
     id: uuid('id').primaryKey().defaultRandom(),
-    tenantId: text('tenantId').notNull(),
     actorId: text('actorId'),
     actorType: actorTypeEnum('actorType').notNull(),
     action: text('action').notNull(),
@@ -39,12 +38,11 @@ export const auditLog = pgTable(
     createdAt: timestamp('createdAt').notNull().defaultNow(),
   },
   (t) => [
-    index('audit_log_tenantId_idx').on(t.tenantId),
     index('audit_log_actorId_idx').on(t.actorId),
     index('audit_log_action_idx').on(t.action),
     index('audit_log_resourceType_idx').on(t.resourceType),
     index('audit_log_createdAt_idx').on(t.createdAt),
-    index('audit_log_tenant_seq_idx').on(t.tenantId, t.seq),
+    index('audit_log_seq_idx').on(t.seq),
   ],
 );
 

@@ -19,7 +19,6 @@ import { createToken, type Token } from './token.js';
 
 export type AuditWritePort = {
   record(entry: {
-    tenantId: string;
     actorId?: string | null;
     actorType: 'player' | 'admin' | 'system';
     action: string;

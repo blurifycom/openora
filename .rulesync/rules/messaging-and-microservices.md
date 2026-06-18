@@ -62,12 +62,12 @@ When module A must mutate or query module B _synchronously_ (money, a value it n
 
 The `EventBus` wraps every emission in a serializable envelope at the broker boundary; module code never builds or sees it:
 
-`EventEnvelope` = `{ eventId, topic, payload, occurredAt, schemaVersion }` + optional `{ tenantId, orderingKey, traceId }`.
+`EventEnvelope` = `{ eventId, topic, payload, occurredAt, schemaVersion }` + optional `{ orderingKey, traceId }`.
 
 - `eventId` - consumer-side idempotency/dedup key (a real broker is at-least-once).
-- `orderingKey` - Kafka partition key / RabbitMQ routing for per-tenant or per-user ordering.
+- `orderingKey` - Kafka partition key / RabbitMQ routing for per-user ordering.
 - `schemaVersion` - forward-compatible payload evolution.
-- `tenantId`/`traceId` - lifted from the tenant `AsyncLocalStorage` for correlation.
+- `traceId` - lifted from the trace context for correlation (ADR-0026: tenantId removed).
 
 Because the envelope and the EventBus boundary isolate transport from domain logic, binding a durable broker is an overlay swap (`apps/api/src/extensions/rabbitmq/`) and extracting a module to its own service needs no module edits.
 

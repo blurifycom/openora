@@ -41,9 +41,9 @@ flowchart TB
   end
 
   subgraph platform["@oss/core/server - node engine"]
-    db["/server db<br/>Drizzle client + migrations + tenant scope"]
+    db["/server db<br/>Drizzle client + migrations"]
     auth["/server auth<br/>better-auth + AdminGuard"]
-    core["/server kernel<br/>logger, tenant ctx, EventBus, Container"]
+    core["/server kernel<br/>logger, EventBus, Container"]
   end
 
   subgraph modules["Domains (packages/domains/* - each deps @oss/core)"]
@@ -97,7 +97,7 @@ Solid arrows are runtime/build dependencies; dashed arrows are **adapter seams**
 - **plugin-host** - `definePlugin({ id, dependsOn, register })` + `ModuleRegistry`. In `register(ctx)` a plugin binds providers (`ctx.provide(token, factory)`), mounts routers (`ctx.routers.add(namespace, (c) => router)`), subscribes to events, and registers MCP tools. Overlays add their own `pgTable` in their module's `src/schema/index.ts`. ADR-0002.
 - **Hono + oRPC** - oRPC defines routes and validates I/O against the Zod contract; its `OpenAPIHandler` is mounted on a Hono server and emits `docs/openapi.json`. Dependency wiring is a small **functional composition `Container`** (`@oss/core/server`): typed-token factories, lazy + last-wins, no decorators. `apps/api` is a thin caller of `createApp()` from `@oss/core/server`; downstream consumers call the same factory. ADR-0009.
 
-**Engine** (`@oss/core/server`) - the node runtime, all under one subpath: `db` (Drizzle client, drizzle-kit migrations, `DrizzleService`, the framework-free `@oss/core/server/orm` re-export, tenant-scoped helpers), `auth` (better-auth + the shared `AdminGuard`), `kernel` (logger, tenant context, typed `EventBus`, composition `Container`), `plugin-host` (the plugin loader), and `createApp()` - which is domain-agnostic (the consumer injects the PAM identity schema + a `resolveTenant`, ADR-0025).
+**Engine** (`@oss/core/server`) - the node runtime, all under one subpath: `db` (Drizzle client, drizzle-kit migrations, `DrizzleService`, the framework-free `@oss/core/server/orm` re-export), `auth` (better-auth + the shared `AdminGuard`), `kernel` (logger, typed `EventBus`, composition `Container`), `plugin-host` (the plugin loader), and `createApp()` - which is domain-agnostic (the consumer injects the PAM identity schema, ADR-0025/0026: single-tenant, no resolveTenant).
 
 **Domains** (`packages/domains/*`) - one package per domain (`@oss/<domain>`), each depending on `@oss/core` only. A domain may import `@oss/core/*` but **never another domain** - cross-domain communication goes through events, command ports, or shared contracts. Vendor adapter interfaces come from `@oss/core/contracts`.
 
@@ -135,12 +135,12 @@ sequenceDiagram
   participant UI as consumer frontend (@oss/core/react)
   participant API as Hono + oRPC
   participant Mod as Module service
-  participant DB as Drizzle (tenant-scoped)
+  participant DB as Drizzle
 
   UI->>API: typed oRPC call (GET /players)
   API->>API: validate against Zod contract + AdminGuard.assert
   API->>Mod: delegate to service (built by the container)
-  Mod->>DB: withTenant query
+  Mod->>DB: query
   DB-->>Mod: rows
   Mod-->>API: domain objects (Zod-shaped)
   API-->>UI: typed response

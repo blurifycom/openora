@@ -3,7 +3,6 @@ import {
   makeNotFoundError,
   makeConflictError,
   createDomainError,
-  getCurrentTenantId,
 } from '@oss/core/server';
 import { DrizzleService, findOneOrThrow } from '@oss/core/server';
 import { eq, and, gt } from 'drizzle-orm';
@@ -93,7 +92,6 @@ function isSubset(
 function toRoleDto(row: typeof adminRole.$inferSelect): AdminRole {
   return {
     id: row.id,
-    tenantId: row.tenantId,
     name: row.name,
     description: row.description ?? null,
     createdAt: row.createdAt.toISOString(),
@@ -113,7 +111,6 @@ function toPermissionDto(row: typeof adminRolePermission.$inferSelect) {
 function toAssignmentDto(row: typeof adminRoleAssignment.$inferSelect): AdminRoleAssignment {
   return {
     id: row.id,
-    tenantId: row.tenantId,
     userId: row.userId,
     roleId: row.roleId,
     createdAt: row.createdAt.toISOString(),
@@ -123,7 +120,6 @@ function toAssignmentDto(row: typeof adminRoleAssignment.$inferSelect): AdminRol
 function toInvitationDto(row: typeof adminInvitation.$inferSelect): AdminInvitation {
   return {
     id: row.id,
-    tenantId: row.tenantId,
     email: row.email,
     roleId: row.roleId,
     token: row.token,
@@ -142,16 +138,11 @@ export class DbAdminPermissionResolver implements AdminPermissionResolver {
 
   async getGrants(userId: string): Promise<AdminGrant[] | null> {
     const db = this.drizzle.db;
-    // Resolve tenant per call - factories run once at boot outside any request
-    // ALS frame, so a constructor-captured tenant would freeze to 'default'.
-    const tenantId = getCurrentTenantId() ?? 'default';
 
     const assignments = await db
       .select({ roleId: adminRoleAssignment.roleId })
       .from(adminRoleAssignment)
-      .where(
-        and(eq(adminRoleAssignment.userId, userId), eq(adminRoleAssignment.tenantId, tenantId)),
-      );
+      .where(eq(adminRoleAssignment.userId, userId));
 
     if (assignments.length === 0) {
       return null;
@@ -183,13 +174,6 @@ export class IamService {
     private readonly email: SendEmailPort,
   ) {}
 
-  // Resolve the tenant per call - never in the constructor. Factories run once at
-  // app assembly (outside any request ALS frame) and the Container caches the
-  // result, so a captured tenant would freeze to 'default' for every tenant.
-  private tenant(): string {
-    return getCurrentTenantId() ?? 'default';
-  }
-
   // The caller's EFFECTIVE grants: DB-backed assignment if present, otherwise the
   // static grants for their `user.role` (the bootstrap admin has no DB row). Used
   // for the no-escalation subset check below.
@@ -204,20 +188,13 @@ export class IamService {
   }
 
   async listRoles(): Promise<AdminRole[]> {
-    const rows = await this.drizzle.db
-      .select()
-      .from(adminRole)
-      .where(eq(adminRole.tenantId, this.tenant()));
+    const rows = await this.drizzle.db.select().from(adminRole);
     return rows.map(toRoleDto);
   }
 
   async getRole(roleId: string): Promise<AdminRoleWithGrants> {
-    const tenantId = this.tenant();
     const row = findOneOrThrow(
-      await this.drizzle.db
-        .select()
-        .from(adminRole)
-        .where(and(eq(adminRole.id, roleId), eq(adminRole.tenantId, tenantId))),
+      await this.drizzle.db.select().from(adminRole).where(eq(adminRole.id, roleId)),
       new RoleNotFoundError(roleId),
     );
     const permissions = await this.drizzle.db
@@ -234,7 +211,6 @@ export class IamService {
     const [row] = await this.drizzle.db
       .insert(adminRole)
       .values({
-        tenantId: this.tenant(),
         name: input.name,
         description: input.description ?? null,
       })
@@ -247,12 +223,8 @@ export class IamService {
     name?: string;
     description?: string | null;
   }): Promise<AdminRole> {
-    const tenantId = this.tenant();
     findOneOrThrow(
-      await this.drizzle.db
-        .select()
-        .from(adminRole)
-        .where(and(eq(adminRole.id, input.roleId), eq(adminRole.tenantId, tenantId))),
+      await this.drizzle.db.select().from(adminRole).where(eq(adminRole.id, input.roleId)),
       new RoleNotFoundError(input.roleId),
     );
 
@@ -263,24 +235,18 @@ export class IamService {
     const [row] = await this.drizzle.db
       .update(adminRole)
       .set(patch)
-      .where(and(eq(adminRole.id, input.roleId), eq(adminRole.tenantId, tenantId)))
+      .where(eq(adminRole.id, input.roleId))
       .returning();
     return toRoleDto(row!);
   }
 
   async deleteRole(roleId: string): Promise<{ success: true }> {
-    const tenantId = this.tenant();
     findOneOrThrow(
-      await this.drizzle.db
-        .select()
-        .from(adminRole)
-        .where(and(eq(adminRole.id, roleId), eq(adminRole.tenantId, tenantId))),
+      await this.drizzle.db.select().from(adminRole).where(eq(adminRole.id, roleId)),
       new RoleNotFoundError(roleId),
     );
     await this.drizzle.db.delete(adminRolePermission).where(eq(adminRolePermission.roleId, roleId));
-    await this.drizzle.db
-      .delete(adminRole)
-      .where(and(eq(adminRole.id, roleId), eq(adminRole.tenantId, tenantId)));
+    await this.drizzle.db.delete(adminRole).where(eq(adminRole.id, roleId));
     return { success: true };
   }
 
@@ -289,12 +255,8 @@ export class IamService {
     grants: ReadonlyArray<{ resource: string; action: string }>;
     caller: { userId: string; role: string };
   }): Promise<AdminRoleWithGrants> {
-    const tenantId = this.tenant();
     findOneOrThrow(
-      await this.drizzle.db
-        .select()
-        .from(adminRole)
-        .where(and(eq(adminRole.id, input.roleId), eq(adminRole.tenantId, tenantId))),
+      await this.drizzle.db.select().from(adminRole).where(eq(adminRole.id, input.roleId)),
       new RoleNotFoundError(input.roleId),
     );
 
@@ -316,7 +278,6 @@ export class IamService {
     if (input.grants.length > 0) {
       await this.drizzle.db.insert(adminRolePermission).values(
         input.grants.map((g) => ({
-          tenantId,
           roleId: input.roleId,
           resource: g.resource,
           action: g.action,
@@ -332,12 +293,8 @@ export class IamService {
     roleId: string;
     caller: { userId: string; role: string };
   }): Promise<AdminRoleAssignment> {
-    const tenantId = this.tenant();
     findOneOrThrow(
-      await this.drizzle.db
-        .select()
-        .from(adminRole)
-        .where(and(eq(adminRole.id, input.roleId), eq(adminRole.tenantId, tenantId))),
+      await this.drizzle.db.select().from(adminRole).where(eq(adminRole.id, input.roleId)),
       new RoleNotFoundError(input.roleId),
     );
 
@@ -356,7 +313,6 @@ export class IamService {
     const [row] = await this.drizzle.db
       .insert(adminRoleAssignment)
       .values({
-        tenantId,
         userId: input.userId,
         roleId: input.roleId,
       })
@@ -365,20 +321,13 @@ export class IamService {
   }
 
   async listInvitations(): Promise<AdminInvitation[]> {
-    const rows = await this.drizzle.db
-      .select()
-      .from(adminInvitation)
-      .where(eq(adminInvitation.tenantId, this.tenant()));
+    const rows = await this.drizzle.db.select().from(adminInvitation);
     return rows.map(toInvitationDto);
   }
 
   async inviteAdmin(input: { email: string; roleId: string }): Promise<AdminInvitation> {
-    const tenantId = this.tenant();
     findOneOrThrow(
-      await this.drizzle.db
-        .select()
-        .from(adminRole)
-        .where(and(eq(adminRole.id, input.roleId), eq(adminRole.tenantId, tenantId))),
+      await this.drizzle.db.select().from(adminRole).where(eq(adminRole.id, input.roleId)),
       new RoleNotFoundError(input.roleId),
     );
 
@@ -388,7 +337,6 @@ export class IamService {
     const [row] = await this.drizzle.db
       .insert(adminInvitation)
       .values({
-        tenantId,
         email: input.email,
         roleId: input.roleId,
         token,

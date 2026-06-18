@@ -15,7 +15,7 @@ import {
 import type { ZodType } from 'zod';
 import type { Logger } from 'pino';
 import { createLogger } from './logger.js';
-import { getCurrentTenant } from './tenant-context.js';
+import { getCurrentTraceId } from './request-context.js';
 
 export type EventHandler<T = unknown> = (
   payload: T,
@@ -26,7 +26,7 @@ export type EventHandler<T = unknown> = (
 // payload-checked at compile time; the string overload stays open for events an
 // overlay or consumer defines. Services depend on this - never on the broker.
 // The optional second argument to handlers exposes the full envelope (eventId,
-// tenantId, traceId, orderingKey) to callers that need it; existing handlers
+// traceId, orderingKey) to callers that need it; existing handlers
 // that only accept (payload) continue to work unchanged.
 export type EventBus = {
   emit<K extends DomainEventName>(event: K, payload: DomainEventPayload<K>): void;
@@ -92,15 +92,14 @@ function isKnownEvent(event: string): event is DomainEventName {
 }
 
 function buildEnvelope(event: string, payload: unknown): EventEnvelope {
-  const tenant = getCurrentTenant();
+  const traceId = getCurrentTraceId();
   return {
     eventId: crypto.randomUUID(),
     topic: event,
     payload,
     occurredAt: new Date().toISOString(),
     schemaVersion: getEventVersion(event),
-    ...(tenant?.tenantId !== undefined ? { tenantId: tenant.tenantId } : {}),
-    ...(tenant?.traceId !== undefined ? { traceId: tenant.traceId } : {}),
+    ...(traceId !== undefined ? { traceId } : {}),
   };
 }
 

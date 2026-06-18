@@ -1,9 +1,4 @@
-import {
-  type EventBus,
-  makeNotFoundError,
-  createDomainError,
-  getCurrentTenantId,
-} from '@oss/core/server';
+import { type EventBus, makeNotFoundError, createDomainError } from '@oss/core/server';
 import { type PaymentAdapter } from '@oss/core/contracts';
 import { DrizzleService, findOneOrThrow } from '@oss/core/server';
 import { eq, desc, sql } from 'drizzle-orm';
@@ -28,13 +23,12 @@ export class WalletService {
     const [record] = await this.drizzle.db.select().from(wallet).where(eq(wallet.userId, userId));
 
     if (!record) {
-      return { balance: 0, currency: 'USD', tenantId: '' };
+      return { balance: 0, currency: 'USD' };
     }
 
     return {
       balance: Number(record.balance),
       currency: record.currency,
-      tenantId: record.tenantId,
     };
   }
 
@@ -50,17 +44,12 @@ export class WalletService {
 
     // Ledger insert + balance update are atomic: a mid-flight failure rolls both
     // back, never leaving an orphan transaction row or a mismatched balance.
-    // Derive the tenant from the active request (ADR-0018). On first deposit the
-    // wallet row is created with this tenant so the RLS WITH CHECK policy accepts
-    // it - the old hard-coded '' rejected the insert under the enforced app role.
-    const tenantId = getCurrentTenantId() ?? 'default';
-
     const transactionId = await this.drizzle.db.transaction(async (txn) => {
       let [walletRecord] = await txn.select().from(wallet).where(eq(wallet.userId, userId));
       if (!walletRecord) {
         [walletRecord] = await txn
           .insert(wallet)
-          .values({ userId, tenantId, balance: '0', currency })
+          .values({ userId, balance: '0', currency })
           .returning();
       }
 
@@ -68,7 +57,6 @@ export class WalletService {
         .insert(walletTransaction)
         .values({
           walletId: walletRecord!.id,
-          tenantId: walletRecord!.tenantId,
           type: 'deposit',
           amount: amount.toString(),
           currency,
@@ -126,7 +114,6 @@ export class WalletService {
         .insert(walletTransaction)
         .values({
           walletId: current.id,
-          tenantId: current.tenantId,
           type: 'withdrawal',
           amount: amount.toString(),
           currency,

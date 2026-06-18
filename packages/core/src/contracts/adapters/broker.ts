@@ -14,9 +14,8 @@ import { createToken, type Token } from './token.js';
 //   payload       - the validated event payload (matches domainEventSchemas)
 //   occurredAt    - ISO-8601 timestamp of the emission
 //   schemaVersion - monotonic integer for forward-compat payload evolution
-//   tenantId      - optional; pulled from the tenant AsyncLocalStorage when present
 //   orderingKey   - optional; maps to Kafka partition key / RabbitMQ routing key
-//                   for per-tenant or per-user ordering guarantees
+//                   for per-user ordering guarantees
 //   traceId       - optional; distributed trace correlation ID
 export type EventEnvelope<T = unknown> = {
   eventId: string;
@@ -24,7 +23,6 @@ export type EventEnvelope<T = unknown> = {
   payload: T;
   occurredAt: string;
   schemaVersion: number;
-  tenantId?: string;
   orderingKey?: string;
   traceId?: string;
 };

@@ -6,7 +6,7 @@ import { defineConfig } from 'drizzle-kit';
 // but owns only its own tables here.
 export default defineConfig({
   dialect: 'postgresql',
-  schema: ['./src/aggregator/schema/index.ts'],
+  schema: ['./aggregator/schema/index.ts'],
   out: './drizzle/migrations',
   migrations: {
     table: '__drizzle_migrations_addon_aggregator',

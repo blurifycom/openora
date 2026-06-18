@@ -12,13 +12,13 @@ via the `SEND_EMAIL` port and emits `iam.invitation.accepted` after token accept
 
 ## Layout (one folder under `packages/addons/iam/src/`)
 
-| Layer   | File                     | Holds                                                                            |
-| ------- | ------------------------ | -------------------------------------------------------------------------------- |
-| schema  | `schema/index.ts`        | Drizzle `pgTable`s + row types (`$inferSelect`). Every table carries `tenantId`. |
-| schemas | `schemas/index.ts`       | re-exports from the contract slice; module-local Zod only                        |
-| service | `service/iam.service.ts` | ALL business logic; emits events after DB commit                                 |
-| router  | `router/index.ts`        | thin oRPC wiring: resolve caller, call service, `mapErrors`                      |
-| plugin  | `plugin.ts`              | DI wiring only: `ctx.routers.add(...)`, `ctx.provide(...)`                       |
+| Layer   | File                     | Holds                                                       |
+| ------- | ------------------------ | ----------------------------------------------------------- |
+| schema  | `schema/index.ts`        | Drizzle `pgTable`s + row types (`$inferSelect`).            |
+| schemas | `schemas/index.ts`       | re-exports from the contract slice; module-local Zod only   |
+| service | `service/iam.service.ts` | ALL business logic; emits events after DB commit            |
+| router  | `router/index.ts`        | thin oRPC wiring: resolve caller, call service, `mapErrors` |
+| plugin  | `plugin.ts`              | DI wiring only: `ctx.routers.add(...)`, `ctx.provide(...)`  |
 
 Contract slice: `packages/contracts/orpc-contract/src/iam.ts`.
 
@@ -47,16 +47,15 @@ Contract slice: `packages/contracts/orpc-contract/src/iam.ts`.
 
 ## Tables
 
-| Table                   | Description                                                            |
-| ----------------------- | ---------------------------------------------------------------------- |
-| `admin_role`            | Named roles per tenant                                                 |
-| `admin_role_permission` | Resource/action grants per role; carries `tenantId` so RLS isolates it |
-| `admin_role_assignment` | Maps a userId to a roleId per tenant (no cross-module FK)              |
-| `admin_invitation`      | Pending/accepted/revoked invite tokens                                 |
+| Table                   | Description                                    |
+| ----------------------- | ---------------------------------------------- |
+| `admin_role`            | Named roles                                    |
+| `admin_role_permission` | Resource/action grants per role                |
+| `admin_role_assignment` | Maps a userId to a roleId (no cross-module FK) |
+| `admin_invitation`      | Pending/accepted/revoked invite tokens         |
 
 ## Security invariants
 
-- Tenant is resolved per request (`getCurrentTenantId()`) INSIDE every service/resolver method - never captured in a constructor (factories run once at boot outside the request ALS frame).
 - No privilege escalation: `setRolePermissions` rejects any grant the caller does not already hold; `assignRole` rejects assigning a role whose grant set exceeds the caller's. The caller's effective grants are their DB assignment, or the static grants for `user.role` when they have none (bootstrap admin). Throws `GrantEscalationError` -> FORBIDDEN.
 - Unknown (resource, action) -> `InvalidGrantError` -> BAD_REQUEST.
 - `acceptInvitation` is a single atomic conditional UPDATE (`token + status='pending' + not expired`); a replay updates zero rows and emits no event (no double-provisioning).
@@ -89,7 +88,6 @@ of `iam.invitation.accepted` (typically an identity overlay), not by this module
 
 ## Do
 
-- Keep `tenantId` filters on every query.
 - Derive resource/action lists from `statement` (never hardcode).
 - Read identity `user` rows via `@oss-addons/identity/schema` subpath if needed.
 

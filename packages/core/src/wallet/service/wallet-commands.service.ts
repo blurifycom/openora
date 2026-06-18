@@ -22,7 +22,6 @@ export class WalletCommandsService implements WalletCommands {
 
     return {
       ok: true,
-      tenantId: row.tenantId,
       newBalance: Math.round((available - amount) * 100) / 100,
     };
   }

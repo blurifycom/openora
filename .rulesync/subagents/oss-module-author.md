@@ -46,15 +46,15 @@ This creates `packages/addons/<name>/` as a standalone `@oss-addons/<name>` pack
 
 ## What to fill in
 
-| File                            | What goes here                                                                                                                                          |
-| ------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `src/schema/index.ts`           | Drizzle `pgTable` definitions. Every multi-tenant table has `tenantId: text('tenantId').notNull()`. Run `propose-table-change` before adding any table. |
-| `src/schemas/index.ts`          | Zod schemas for request/response shapes. Types via `z.infer` - never hand-write.                                                                        |
-| `src/service/<name>.service.ts` | Business logic as plain async methods. No HTTP concepts. Inject `DrizzleService` + `EventBus`.                                                          |
-| `src/service/ports.ts`          | Vendor adapter interfaces if the module calls external systems (KYC, PSP, etc.).                                                                        |
-| `src/router/index.ts`           | oRPC procedures with `.input().output().handler()`.                                                                                                     |
-| `src/plugin.ts`                 | Register service + router via `definePlugin`.                                                                                                           |
-| `AGENTS.md`                     | What it does, extension points, ports, do/don't, done-when checklist.                                                                                   |
+| File                            | What goes here                                                                                 |
+| ------------------------------- | ---------------------------------------------------------------------------------------------- |
+| `src/schema/index.ts`           | Drizzle `pgTable` definitions. Run `propose-table-change` before adding any table.             |
+| `src/schemas/index.ts`          | Zod schemas for request/response shapes. Types via `z.infer` - never hand-write.               |
+| `src/service/<name>.service.ts` | Business logic as plain async methods. No HTTP concepts. Inject `DrizzleService` + `EventBus`. |
+| `src/service/ports.ts`          | Vendor adapter interfaces if the module calls external systems (KYC, PSP, etc.).               |
+| `src/router/index.ts`           | oRPC procedures with `.input().output().handler()`.                                            |
+| `src/plugin.ts`                 | Register service + router via `definePlugin`.                                                  |
+| `AGENTS.md`                     | What it does, extension points, ports, do/don't, done-when checklist.                          |
 
 ### Frontend
 

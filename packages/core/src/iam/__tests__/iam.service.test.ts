@@ -1,5 +1,4 @@
 import { describe, it, expect, vi } from 'vitest';
-import * as core from '@oss/core/server';
 import {
   IamService,
   DbAdminPermissionResolver,
@@ -8,18 +7,6 @@ import {
   GrantEscalationError,
   InvitationConflictError,
 } from '../service/iam.service.js';
-
-// Tag tenant-equality predicates so the mock `where` can read the active tenant.
-vi.mock('drizzle-orm', async (importOriginal) => {
-  const actual = await importOriginal<typeof import('drizzle-orm')>();
-  return {
-    ...actual,
-    eq: vi.fn((col: unknown, val: unknown) => {
-      const colName = (col as { name?: string })?.name;
-      return colName === 'tenantId' ? { __tenant: val } : { col, val };
-    }),
-  };
-});
 
 // Minimal drizzle mock that chains select/from/where/insert/values/returning.
 function makeDrizzle(overrides: Record<string, unknown> = {}) {
@@ -48,13 +35,6 @@ function makeEmail() {
   } as unknown as import('@oss/core/contracts').SendEmailPort;
 }
 
-const TENANT = 'test-tenant';
-
-// Run fn inside a tenant ALS frame so getCurrentTenantId() resolves per-call.
-function inTenant<T>(tenantId: string, fn: () => T): T {
-  return core.withTenant({ tenantId, userId: 'caller', traceId: 't' }, fn);
-}
-
 // A full-admin caller (holds the entire catalog via the static 'admin' role).
 const ADMIN_CALLER = { userId: 'admin-1', role: 'admin' };
 
@@ -64,7 +44,7 @@ describe('DbAdminPermissionResolver', () => {
   it('returns null when user has no assignment', async () => {
     const drizzle = makeDrizzle();
     const resolver = new DbAdminPermissionResolver(drizzle);
-    const result = await inTenant(TENANT, () => resolver.getGrants('user-no-role'));
+    const result = await resolver.getGrants('user-no-role');
     expect(result).toBeNull();
   });
 
@@ -89,36 +69,10 @@ describe('DbAdminPermissionResolver', () => {
     };
     const drizzle = { db: chain } as unknown as import('@oss/core/server').DrizzleService;
     const resolver = new DbAdminPermissionResolver(drizzle);
-    const grants = await inTenant(TENANT, () => resolver.getGrants('user-with-role'));
+    const grants = await resolver.getGrants('user-with-role');
     expect(grants).not.toBeNull();
     expect(grants).toHaveLength(2);
     expect(grants![0]).toEqual({ resource: 'player', action: 'view' });
-  });
-
-  it('resolves the tenant per call (not frozen) - filters assignments by the active frame', async () => {
-    const { eq } = await import('drizzle-orm');
-    const eqMock = vi.mocked(eq);
-    const chain = {
-      select: vi.fn().mockReturnThis(),
-      from: vi.fn().mockReturnThis(),
-      where: vi.fn().mockResolvedValue([]),
-    };
-    const drizzle = { db: chain } as unknown as import('@oss/core/server').DrizzleService;
-    const resolver = new DbAdminPermissionResolver(drizzle);
-
-    // The tagged tenant predicate (`{ __tenant }`) is produced by the mocked eq()
-    // for the tenantId column. Reading the latest one proves getGrants resolved the
-    // tenant from the ACTIVE frame on each call, not a constructor-frozen value.
-    const lastTenant = () =>
-      eqMock.mock.results
-        .map((r) => r.value as { __tenant?: string })
-        .filter((v) => v && '__tenant' in v)
-        .at(-1)?.__tenant;
-
-    await inTenant('tenant-A', () => resolver.getGrants('u'));
-    expect(lastTenant()).toBe('tenant-A');
-    await inTenant('tenant-B', () => resolver.getGrants('u'));
-    expect(lastTenant()).toBe('tenant-B');
   });
 });
 
@@ -127,7 +81,6 @@ describe('DbAdminPermissionResolver', () => {
 // Role row used by the role-exists check.
 const ROLE_ROW = {
   id: 'role-1',
-  tenantId: TENANT,
   name: 'Ops',
   description: null,
   createdAt: new Date(),
@@ -139,13 +92,11 @@ describe('IamService', () => {
       const drizzle = makeDrizzle();
       const svc = new IamService(drizzle, makeEvents(), makeEmail());
       await expect(
-        inTenant(TENANT, () =>
-          svc.setRolePermissions({
-            roleId: 'missing',
-            grants: [{ resource: 'player', action: 'view' }],
-            caller: ADMIN_CALLER,
-          }),
-        ),
+        svc.setRolePermissions({
+          roleId: 'missing',
+          grants: [{ resource: 'player', action: 'view' }],
+          caller: ADMIN_CALLER,
+        }),
       ).rejects.toBeInstanceOf(RoleNotFoundError);
     });
 
@@ -159,13 +110,11 @@ describe('IamService', () => {
       const drizzle = { db: chain } as unknown as import('@oss/core/server').DrizzleService;
       const svc = new IamService(drizzle, makeEvents(), makeEmail());
       await expect(
-        inTenant(TENANT, () =>
-          svc.setRolePermissions({
-            roleId: 'role-1',
-            grants: [{ resource: 'nonexistent', action: 'fly' }],
-            caller: ADMIN_CALLER,
-          }),
-        ),
+        svc.setRolePermissions({
+          roleId: 'role-1',
+          grants: [{ resource: 'nonexistent', action: 'fly' }],
+          caller: ADMIN_CALLER,
+        }),
       ).rejects.toBeInstanceOf(InvalidGrantError);
     });
 
@@ -186,13 +135,11 @@ describe('IamService', () => {
       const drizzle = { db: chain } as unknown as import('@oss/core/server').DrizzleService;
       const svc = new IamService(drizzle, makeEvents(), makeEmail());
       await expect(
-        inTenant(TENANT, () =>
-          svc.setRolePermissions({
-            roleId: 'role-1',
-            grants: [{ resource: 'withdrawal', action: 'approve' }],
-            caller: { userId: 'sup-1', role: 'support' },
-          }),
-        ),
+        svc.setRolePermissions({
+          roleId: 'role-1',
+          grants: [{ resource: 'withdrawal', action: 'approve' }],
+          caller: { userId: 'sup-1', role: 'support' },
+        }),
       ).rejects.toBeInstanceOf(GrantEscalationError);
     });
 
@@ -230,13 +177,11 @@ describe('IamService', () => {
       };
       const drizzle = { db: chain } as unknown as import('@oss/core/server').DrizzleService;
       const svc = new IamService(drizzle, makeEvents(), makeEmail());
-      const result = await inTenant(TENANT, () =>
-        svc.setRolePermissions({
-          roleId: 'role-1',
-          grants: [{ resource: 'withdrawal', action: 'approve' }],
-          caller: ADMIN_CALLER,
-        }),
-      );
+      const result = await svc.setRolePermissions({
+        roleId: 'role-1',
+        grants: [{ resource: 'withdrawal', action: 'approve' }],
+        caller: ADMIN_CALLER,
+      });
       expect(result.permissions).toHaveLength(1);
     });
   });
@@ -258,13 +203,11 @@ describe('IamService', () => {
       const drizzle = { db: chain } as unknown as import('@oss/core/server').DrizzleService;
       const svc = new IamService(drizzle, makeEvents(), makeEmail());
       await expect(
-        inTenant(TENANT, () =>
-          svc.assignRole({
-            userId: 'target',
-            roleId: 'role-1',
-            caller: { userId: 'sup-1', role: 'support' },
-          }),
-        ),
+        svc.assignRole({
+          userId: 'target',
+          roleId: 'role-1',
+          caller: { userId: 'sup-1', role: 'support' },
+        }),
       ).rejects.toBeInstanceOf(GrantEscalationError);
     });
   });
@@ -281,7 +224,7 @@ describe('IamService', () => {
       (chain.where as ReturnType<typeof vi.fn>).mockResolvedValue([ROLE_ROW]);
       const drizzle = { db: chain } as unknown as import('@oss/core/server').DrizzleService;
       const svc = new IamService(drizzle, makeEvents(), makeEmail());
-      const result = await inTenant(TENANT, () => svc.deleteRole('role-1'));
+      const result = await svc.deleteRole('role-1');
       expect(result).toEqual({ success: true });
       expect(chain.delete).toHaveBeenCalledTimes(2);
     });
@@ -291,7 +234,6 @@ describe('IamService', () => {
     it('accepts once via a single conditional UPDATE and emits exactly one event', async () => {
       const invRow = {
         id: 'inv-1',
-        tenantId: TENANT,
         email: 'who@admin.com',
         roleId: 'role-1',
         token: 'tok',
@@ -325,7 +267,6 @@ describe('IamService', () => {
     it('creates a pending invitation and calls SEND_EMAIL', async () => {
       const invitationRow = {
         id: 'inv-1',
-        tenantId: TENANT,
         email: 'new@admin.com',
         roleId: 'role-1',
         token: 'tok-abc',
@@ -346,7 +287,6 @@ describe('IamService', () => {
             return Promise.resolve([
               {
                 id: 'role-1',
-                tenantId: TENANT,
                 name: 'Ops',
                 description: null,
                 createdAt: new Date(),
@@ -363,9 +303,7 @@ describe('IamService', () => {
       const email = makeEmail();
       const svc = new IamService(drizzle, makeEvents(), email);
 
-      const result = await inTenant(TENANT, () =>
-        svc.inviteAdmin({ email: 'new@admin.com', roleId: 'role-1' }),
-      );
+      const result = await svc.inviteAdmin({ email: 'new@admin.com', roleId: 'role-1' });
 
       expect(result.status).toBe('pending');
       expect(result.email).toBe('new@admin.com');

@@ -70,7 +70,7 @@ After approval (Task tool). Pick the implementer that fits the slice:
 Run in parallel before the gate; both report only, no edits:
 
 - `contract-reviewer` - boundary rules, contract/schema drift, breaking changes, forbidden patterns.
-- `security-reviewer` - money handling (idempotency/atomicity), authz, tenant isolation, PII/secrets.
+- `security-reviewer` - money handling (idempotency/atomicity), authz, PII/secrets.
 
 Address findings by looping back to the Step 4 implementer. Re-review if the surface changed.
 

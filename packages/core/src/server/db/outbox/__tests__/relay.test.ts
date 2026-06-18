@@ -8,7 +8,6 @@ type Row = {
   topic: string;
   payload: unknown;
   schemaVersion: number;
-  tenantId: string | null;
   traceId: string | null;
   orderingKey: string | null;
   occurredAt: Date;
@@ -21,7 +20,6 @@ function row(id: string, topic: string): Row {
     topic,
     payload: { id },
     schemaVersion: 1,
-    tenantId: 't1',
     traceId: null,
     orderingKey: null,
     occurredAt: new Date('2026-01-01T00:00:00.000Z'),
@@ -74,7 +72,6 @@ describe('OutboxRelay.drainOnce', () => {
     expect((broker.publish as ReturnType<typeof vi.fn>).mock.calls[0][0]).toMatchObject({
       eventId: 'a',
       topic: 'wallet.deposit.completed',
-      tenantId: 't1',
     });
     expect(rows.every((r) => r.publishedAt !== null)).toBe(true);
   });

@@ -42,11 +42,11 @@ Your entire frontend lives in your own repo (the platform is headless backend on
 
 A downstream consumer imports `@oss/core/server` + `@oss/core/contracts` and creates an API
 instance. `createApp` is domain-agnostic - the consumer composes its own contract and injects
-its PAM identity tables + a tenant resolver (ADR-0025):
+its PAM identity tables (ADR-0025/0026: single-tenant):
 
 ```typescript
 // my-igaming/apps/api/src/main.ts
-import { createApp, resolveTenantForUser } from '@oss/core/server';
+import { createApp } from '@oss/core/server';
 import { composeContract } from '@oss/core/contracts';
 import { user, session, account, verification, twoFactor } from '@oss/pam/schema/identity';
 import { identityContract } from '@oss/pam/contracts/identity';
@@ -60,7 +60,6 @@ const { listen, emitOpenApiSpec } = await createApp({
   plugins: extensions,
   contract,
   authSchema: { user, session, account, verification, twoFactor },
-  resolveTenant: (db, userId) => resolveTenantForUser(db, userId, user),
   port: 3001,
   cors: { origins: ['https://my-igaming.example'] },
   openapi: { info: { title: 'my-igaming API', version: '1.0.0' } },

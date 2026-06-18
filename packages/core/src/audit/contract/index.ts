@@ -7,7 +7,6 @@ export const AuditActorTypeSchema = z.enum(['player', 'admin', 'system']);
 
 export const AuditLogEntrySchema = z.object({
   id: z.uuid(),
-  tenantId: z.string(),
   actorId: z.string().nullable(),
   actorType: AuditActorTypeSchema,
   action: z.string(),

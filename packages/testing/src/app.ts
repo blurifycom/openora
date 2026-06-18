@@ -1,4 +1,4 @@
-import { createApp, resolveTenantForUser, type CreateAppConfig } from '@oss/core/server';
+import { createApp, type CreateAppConfig } from '@oss/core/server';
 import { user, session, account, verification, twoFactor } from '@oss/core/pam/schema/identity';
 import type { Container } from '@oss/core/server';
 import type { Hono } from 'hono';
@@ -31,10 +31,9 @@ export async function bootTestApp(config: BootTestAppConfig): Promise<TestApp> {
     ...(config.igaming ? { igaming: config.igaming } : {}),
     databaseUrl: config.databaseUrl,
     // This is the OSS test harness, so it knows the PAM identity schema and injects
-    // it for session verification + tenant resolution (the engine itself stays
-    // domain-agnostic; the consumer composition root does the same). See ADR-0025.
+    // it for session verification (the engine itself stays domain-agnostic; the
+    // consumer composition root does the same). See ADR-0025.
     authSchema: { user, session, account, verification, twoFactor },
-    resolveTenant: (db, userId) => resolveTenantForUser(db, userId, user),
     openapi: { enabled: false },
   });
 

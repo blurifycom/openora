@@ -1,5 +1,5 @@
 {
-  "id": "44aba16f-624d-46a4-adb0-23301a3594f9",
+  "id": "bf733be7-1f0e-424f-9ad1-288f1943193a",
   "prevId": "00000000-0000-0000-0000-000000000000",
   "version": "7",
   "dialect": "postgresql",
@@ -32,12 +32,6 @@
           "primaryKey": false,
           "notNull": true,
           "default": 1
-        },
-        "tenantId": {
-          "name": "tenantId",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": false
         },
         "traceId": {
           "name": "traceId",
@@ -119,12 +113,6 @@
           "notNull": true,
           "default": "gen_random_uuid()"
         },
-        "tenantId": {
-          "name": "tenantId",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true
-        },
         "actorId": {
           "name": "actorId",
           "type": "text",
@@ -186,6 +174,12 @@
           "primaryKey": false,
           "notNull": false
         },
+        "result": {
+          "name": "result",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
         "seq": {
           "name": "seq",
           "type": "bigserial",
@@ -213,21 +207,6 @@
         }
       },
       "indexes": {
-        "audit_log_tenantId_idx": {
-          "name": "audit_log_tenantId_idx",
-          "columns": [
-            {
-              "expression": "tenantId",
-              "isExpression": false,
-              "asc": true,
-              "nulls": "last"
-            }
-          ],
-          "isUnique": false,
-          "concurrently": false,
-          "method": "btree",
-          "with": {}
-        },
         "audit_log_actorId_idx": {
           "name": "audit_log_actorId_idx",
           "columns": [
@@ -288,15 +267,9 @@
           "method": "btree",
           "with": {}
         },
-        "audit_log_tenant_seq_idx": {
-          "name": "audit_log_tenant_seq_idx",
+        "audit_log_seq_idx": {
+          "name": "audit_log_seq_idx",
           "columns": [
-            {
-              "expression": "tenantId",
-              "isExpression": false,
-              "asc": true,
-              "nulls": "last"
-            },
             {
               "expression": "seq",
               "isExpression": false,
@@ -327,12 +300,6 @@
           "primaryKey": true,
           "notNull": true,
           "default": "gen_random_uuid()"
-        },
-        "tenantId": {
-          "name": "tenantId",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true
         },
         "type": {
           "name": "type",
@@ -401,15 +368,9 @@
         }
       },
       "indexes": {
-        "bonus_tenantId_isActive_idx": {
-          "name": "bonus_tenantId_isActive_idx",
+        "bonus_isActive_idx": {
+          "name": "bonus_isActive_idx",
           "columns": [
-            {
-              "expression": "tenantId",
-              "isExpression": false,
-              "asc": true,
-              "nulls": "last"
-            },
             {
               "expression": "isActive",
               "isExpression": false,
@@ -440,12 +401,6 @@
           "primaryKey": true,
           "notNull": true,
           "default": "gen_random_uuid()"
-        },
-        "tenantId": {
-          "name": "tenantId",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true
         },
         "userId": {
           "name": "userId",
@@ -507,15 +462,9 @@
         }
       },
       "indexes": {
-        "user_bonus_tenantId_userId_idx": {
-          "name": "user_bonus_tenantId_userId_idx",
+        "user_bonus_userId_idx": {
+          "name": "user_bonus_userId_idx",
           "columns": [
-            {
-              "expression": "tenantId",
-              "isExpression": false,
-              "asc": true,
-              "nulls": "last"
-            },
             {
               "expression": "userId",
               "isExpression": false,
@@ -549,8 +498,12 @@
           "name": "user_bonus_bonusId_bonus_id_fk",
           "tableFrom": "user_bonus",
           "tableTo": "bonus",
-          "columnsFrom": ["bonusId"],
-          "columnsTo": ["id"],
+          "columnsFrom": [
+            "bonusId"
+          ],
+          "columnsTo": [
+            "id"
+          ],
           "onDelete": "no action",
           "onUpdate": "no action"
         }
@@ -571,12 +524,6 @@
           "primaryKey": true,
           "notNull": true,
           "default": "gen_random_uuid()"
-        },
-        "tenantId": {
-          "name": "tenantId",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true
         },
         "roomId": {
           "name": "roomId",
@@ -639,15 +586,9 @@
           "method": "btree",
           "with": {}
         },
-        "chat_msg_tenantId_createdAt_idx": {
-          "name": "chat_msg_tenantId_createdAt_idx",
+        "chat_msg_createdAt_idx": {
+          "name": "chat_msg_createdAt_idx",
           "columns": [
-            {
-              "expression": "tenantId",
-              "isExpression": false,
-              "asc": true,
-              "nulls": "last"
-            },
             {
               "expression": "createdAt",
               "isExpression": false,
@@ -666,8 +607,12 @@
           "name": "ChatMessage_roomId_ChatRoom_id_fk",
           "tableFrom": "ChatMessage",
           "tableTo": "ChatRoom",
-          "columnsFrom": ["roomId"],
-          "columnsTo": ["id"],
+          "columnsFrom": [
+            "roomId"
+          ],
+          "columnsTo": [
+            "id"
+          ],
           "onDelete": "no action",
           "onUpdate": "no action"
         }
@@ -688,12 +633,6 @@
           "primaryKey": true,
           "notNull": true,
           "default": "gen_random_uuid()"
-        },
-        "tenantId": {
-          "name": "tenantId",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true
         },
         "name": {
           "name": "name",
@@ -723,15 +662,9 @@
         }
       },
       "indexes": {
-        "chat_room_tenantId_slug_key": {
-          "name": "chat_room_tenantId_slug_key",
+        "chat_room_slug_key": {
+          "name": "chat_room_slug_key",
           "columns": [
-            {
-              "expression": "tenantId",
-              "isExpression": false,
-              "asc": true,
-              "nulls": "last"
-            },
             {
               "expression": "slug",
               "isExpression": false,
@@ -902,7 +835,9 @@
         "page_slug_unique": {
           "name": "page_slug_unique",
           "nullsNotDistinct": false,
-          "columns": ["slug"]
+          "columns": [
+            "slug"
+          ]
         }
       },
       "policies": {},
@@ -947,7 +882,9 @@
         "geo_rule_countryCode_unique": {
           "name": "geo_rule_countryCode_unique",
           "nullsNotDistinct": false,
-          "columns": ["countryCode"]
+          "columns": [
+            "countryCode"
+          ]
         }
       },
       "policies": {},
@@ -964,13 +901,6 @@
           "primaryKey": true,
           "notNull": true,
           "default": "gen_random_uuid()"
-        },
-        "tenantId": {
-          "name": "tenantId",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true,
-          "default": "'default'"
         },
         "userId": {
           "name": "userId",
@@ -1052,21 +982,6 @@
           "concurrently": false,
           "method": "btree",
           "with": {}
-        },
-        "user_limit_tenantId_idx": {
-          "name": "user_limit_tenantId_idx",
-          "columns": [
-            {
-              "expression": "tenantId",
-              "isExpression": false,
-              "asc": true,
-              "nulls": "last"
-            }
-          ],
-          "isUnique": false,
-          "concurrently": false,
-          "method": "btree",
-          "with": {}
         }
       },
       "foreignKeys": {},
@@ -1086,12 +1001,6 @@
           "primaryKey": true,
           "notNull": true,
           "default": "gen_random_uuid()"
-        },
-        "tenantId": {
-          "name": "tenantId",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true
         },
         "name": {
           "name": "name",
@@ -1138,23 +1047,7 @@
           "default": "now()"
         }
       },
-      "indexes": {
-        "game_tenantId_idx": {
-          "name": "game_tenantId_idx",
-          "columns": [
-            {
-              "expression": "tenantId",
-              "isExpression": false,
-              "asc": true,
-              "nulls": "last"
-            }
-          ],
-          "isUnique": false,
-          "concurrently": false,
-          "method": "btree",
-          "with": {}
-        }
-      },
+      "indexes": {},
       "foreignKeys": {},
       "compositePrimaryKeys": {},
       "uniqueConstraints": {},
@@ -1172,12 +1065,6 @@
           "primaryKey": true,
           "notNull": true,
           "default": "gen_random_uuid()"
-        },
-        "tenantId": {
-          "name": "tenantId",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true
         },
         "gameId": {
           "name": "gameId",
@@ -1234,21 +1121,6 @@
         }
       },
       "indexes": {
-        "game_round_tenantId_idx": {
-          "name": "game_round_tenantId_idx",
-          "columns": [
-            {
-              "expression": "tenantId",
-              "isExpression": false,
-              "asc": true,
-              "nulls": "last"
-            }
-          ],
-          "isUnique": false,
-          "concurrently": false,
-          "method": "btree",
-          "with": {}
-        },
         "game_round_userId_idx": {
           "name": "game_round_userId_idx",
           "columns": [
@@ -1270,8 +1142,12 @@
           "name": "GameRound_gameId_Game_id_fk",
           "tableFrom": "GameRound",
           "tableTo": "Game",
-          "columnsFrom": ["gameId"],
-          "columnsTo": ["id"],
+          "columnsFrom": [
+            "gameId"
+          ],
+          "columnsTo": [
+            "id"
+          ],
           "onDelete": "no action",
           "onUpdate": "no action"
         }
@@ -1292,12 +1168,6 @@
           "primaryKey": true,
           "notNull": true,
           "default": "gen_random_uuid()"
-        },
-        "tenantId": {
-          "name": "tenantId",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true
         },
         "email": {
           "name": "email",
@@ -1345,21 +1215,6 @@
         }
       },
       "indexes": {
-        "admin_invitation_tenantId_idx": {
-          "name": "admin_invitation_tenantId_idx",
-          "columns": [
-            {
-              "expression": "tenantId",
-              "isExpression": false,
-              "asc": true,
-              "nulls": "last"
-            }
-          ],
-          "isUnique": false,
-          "concurrently": false,
-          "method": "btree",
-          "with": {}
-        },
         "admin_invitation_token_idx": {
           "name": "admin_invitation_token_idx",
           "columns": [
@@ -1381,8 +1236,12 @@
           "name": "admin_invitation_roleId_admin_role_id_fk",
           "tableFrom": "admin_invitation",
           "tableTo": "admin_role",
-          "columnsFrom": ["roleId"],
-          "columnsTo": ["id"],
+          "columnsFrom": [
+            "roleId"
+          ],
+          "columnsTo": [
+            "id"
+          ],
           "onDelete": "no action",
           "onUpdate": "no action"
         }
@@ -1392,7 +1251,9 @@
         "admin_invitation_token_unique": {
           "name": "admin_invitation_token_unique",
           "nullsNotDistinct": false,
-          "columns": ["token"]
+          "columns": [
+            "token"
+          ]
         }
       },
       "policies": {},
@@ -1409,12 +1270,6 @@
           "primaryKey": true,
           "notNull": true,
           "default": "gen_random_uuid()"
-        },
-        "tenantId": {
-          "name": "tenantId",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true
         },
         "name": {
           "name": "name",
@@ -1436,23 +1291,7 @@
           "default": "now()"
         }
       },
-      "indexes": {
-        "admin_role_tenantId_idx": {
-          "name": "admin_role_tenantId_idx",
-          "columns": [
-            {
-              "expression": "tenantId",
-              "isExpression": false,
-              "asc": true,
-              "nulls": "last"
-            }
-          ],
-          "isUnique": false,
-          "concurrently": false,
-          "method": "btree",
-          "with": {}
-        }
-      },
+      "indexes": {},
       "foreignKeys": {},
       "compositePrimaryKeys": {},
       "uniqueConstraints": {},
@@ -1470,12 +1309,6 @@
           "primaryKey": true,
           "notNull": true,
           "default": "gen_random_uuid()"
-        },
-        "tenantId": {
-          "name": "tenantId",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true
         },
         "userId": {
           "name": "userId",
@@ -1498,15 +1331,9 @@
         }
       },
       "indexes": {
-        "admin_role_assignment_tenantId_userId_idx": {
-          "name": "admin_role_assignment_tenantId_userId_idx",
+        "admin_role_assignment_userId_idx": {
+          "name": "admin_role_assignment_userId_idx",
           "columns": [
-            {
-              "expression": "tenantId",
-              "isExpression": false,
-              "asc": true,
-              "nulls": "last"
-            },
             {
               "expression": "userId",
               "isExpression": false,
@@ -1525,8 +1352,12 @@
           "name": "admin_role_assignment_roleId_admin_role_id_fk",
           "tableFrom": "admin_role_assignment",
           "tableTo": "admin_role",
-          "columnsFrom": ["roleId"],
-          "columnsTo": ["id"],
+          "columnsFrom": [
+            "roleId"
+          ],
+          "columnsTo": [
+            "id"
+          ],
           "onDelete": "no action",
           "onUpdate": "no action"
         }
@@ -1547,12 +1378,6 @@
           "primaryKey": true,
           "notNull": true,
           "default": "gen_random_uuid()"
-        },
-        "tenantId": {
-          "name": "tenantId",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true
         },
         "roleId": {
           "name": "roleId",
@@ -1595,27 +1420,6 @@
           "concurrently": false,
           "method": "btree",
           "with": {}
-        },
-        "admin_role_permission_tenantId_roleId_idx": {
-          "name": "admin_role_permission_tenantId_roleId_idx",
-          "columns": [
-            {
-              "expression": "tenantId",
-              "isExpression": false,
-              "asc": true,
-              "nulls": "last"
-            },
-            {
-              "expression": "roleId",
-              "isExpression": false,
-              "asc": true,
-              "nulls": "last"
-            }
-          ],
-          "isUnique": false,
-          "concurrently": false,
-          "method": "btree",
-          "with": {}
         }
       },
       "foreignKeys": {
@@ -1623,8 +1427,12 @@
           "name": "admin_role_permission_roleId_admin_role_id_fk",
           "tableFrom": "admin_role_permission",
           "tableTo": "admin_role",
-          "columnsFrom": ["roleId"],
-          "columnsTo": ["id"],
+          "columnsFrom": [
+            "roleId"
+          ],
+          "columnsTo": [
+            "id"
+          ],
           "onDelete": "no action",
           "onUpdate": "no action"
         }
@@ -1742,8 +1550,12 @@
           "name": "account_userId_user_id_fk",
           "tableFrom": "account",
           "tableTo": "user",
-          "columnsFrom": ["userId"],
-          "columnsTo": ["id"],
+          "columnsFrom": [
+            "userId"
+          ],
+          "columnsTo": [
+            "id"
+          ],
           "onDelete": "cascade",
           "onUpdate": "no action"
         }
@@ -1831,8 +1643,12 @@
           "name": "session_userId_user_id_fk",
           "tableFrom": "session",
           "tableTo": "user",
-          "columnsFrom": ["userId"],
-          "columnsTo": ["id"],
+          "columnsFrom": [
+            "userId"
+          ],
+          "columnsTo": [
+            "id"
+          ],
           "onDelete": "cascade",
           "onUpdate": "no action"
         }
@@ -1842,7 +1658,9 @@
         "session_token_unique": {
           "name": "session_token_unique",
           "nullsNotDistinct": false,
-          "columns": ["token"]
+          "columns": [
+            "token"
+          ]
         }
       },
       "policies": {},
@@ -1923,8 +1741,12 @@
           "name": "twoFactor_userId_user_id_fk",
           "tableFrom": "twoFactor",
           "tableTo": "user",
-          "columnsFrom": ["userId"],
-          "columnsTo": ["id"],
+          "columnsFrom": [
+            "userId"
+          ],
+          "columnsTo": [
+            "id"
+          ],
           "onDelete": "cascade",
           "onUpdate": "no action"
         }
@@ -1985,13 +1807,6 @@
           "notNull": true,
           "default": true
         },
-        "tenantId": {
-          "name": "tenantId",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true,
-          "default": "'default'"
-        },
         "banned": {
           "name": "banned",
           "type": "boolean",
@@ -2039,7 +1854,9 @@
         "user_email_unique": {
           "name": "user_email_unique",
           "nullsNotDistinct": false,
-          "columns": ["email"]
+          "columns": [
+            "email"
+          ]
         }
       },
       "policies": {},
@@ -2124,12 +1941,6 @@
           "notNull": true,
           "default": "gen_random_uuid()"
         },
-        "tenantId": {
-          "name": "tenantId",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true
-        },
         "gameId": {
           "name": "gameId",
           "type": "uuid",
@@ -2170,23 +1981,7 @@
           "default": "now()"
         }
       },
-      "indexes": {
-        "featured_slot_tenantId_idx": {
-          "name": "featured_slot_tenantId_idx",
-          "columns": [
-            {
-              "expression": "tenantId",
-              "isExpression": false,
-              "asc": true,
-              "nulls": "last"
-            }
-          ],
-          "isUnique": false,
-          "concurrently": false,
-          "method": "btree",
-          "with": {}
-        }
-      },
+      "indexes": {},
       "foreignKeys": {},
       "compositePrimaryKeys": {},
       "uniqueConstraints": {},
@@ -2204,12 +1999,6 @@
           "primaryKey": true,
           "notNull": true,
           "default": "gen_random_uuid()"
-        },
-        "tenantId": {
-          "name": "tenantId",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true
         },
         "name": {
           "name": "name",
@@ -2239,15 +2028,9 @@
         }
       },
       "indexes": {
-        "lobby_cat_tenantId_slug_key": {
-          "name": "lobby_cat_tenantId_slug_key",
+        "lobby_cat_slug_key": {
+          "name": "lobby_cat_slug_key",
           "columns": [
-            {
-              "expression": "tenantId",
-              "isExpression": false,
-              "asc": true,
-              "nulls": "last"
-            },
             {
               "expression": "slug",
               "isExpression": false,
@@ -2256,21 +2039,6 @@
             }
           ],
           "isUnique": true,
-          "concurrently": false,
-          "method": "btree",
-          "with": {}
-        },
-        "lobby_cat_tenantId_idx": {
-          "name": "lobby_cat_tenantId_idx",
-          "columns": [
-            {
-              "expression": "tenantId",
-              "isExpression": false,
-              "asc": true,
-              "nulls": "last"
-            }
-          ],
-          "isUnique": false,
           "concurrently": false,
           "method": "btree",
           "with": {}
@@ -2336,8 +2104,12 @@
           "name": "LobbyCategoryGame_categoryId_LobbyCategory_id_fk",
           "tableFrom": "LobbyCategoryGame",
           "tableTo": "LobbyCategory",
-          "columnsFrom": ["categoryId"],
-          "columnsTo": ["id"],
+          "columnsFrom": [
+            "categoryId"
+          ],
+          "columnsTo": [
+            "id"
+          ],
           "onDelete": "cascade",
           "onUpdate": "no action"
         }
@@ -2358,13 +2130,6 @@
           "primaryKey": true,
           "notNull": true,
           "default": "gen_random_uuid()"
-        },
-        "tenantId": {
-          "name": "tenantId",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true,
-          "default": "'default'"
         },
         "userId": {
           "name": "userId",
@@ -2410,21 +2175,6 @@
           "columns": [
             {
               "expression": "userId",
-              "isExpression": false,
-              "asc": true,
-              "nulls": "last"
-            }
-          ],
-          "isUnique": false,
-          "concurrently": false,
-          "method": "btree",
-          "with": {}
-        },
-        "notification_tenantId_idx": {
-          "name": "notification_tenantId_idx",
-          "columns": [
-            {
-              "expression": "tenantId",
               "isExpression": false,
               "asc": true,
               "nulls": "last"
@@ -2527,13 +2277,6 @@
           "primaryKey": false,
           "notNull": false
         },
-        "tenantId": {
-          "name": "tenantId",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true,
-          "default": "'default'"
-        },
         "createdAt": {
           "name": "createdAt",
           "type": "timestamp",
@@ -2554,21 +2297,6 @@
           "columns": [
             {
               "expression": "status",
-              "isExpression": false,
-              "asc": true,
-              "nulls": "last"
-            }
-          ],
-          "isUnique": false,
-          "concurrently": false,
-          "method": "btree",
-          "with": {}
-        },
-        "player_tenantId_idx": {
-          "name": "player_tenantId_idx",
-          "columns": [
-            {
-              "expression": "tenantId",
               "isExpression": false,
               "asc": true,
               "nulls": "last"
@@ -2601,7 +2329,9 @@
         "player_userId_unique": {
           "name": "player_userId_unique",
           "nullsNotDistinct": false,
-          "columns": ["userId"]
+          "columns": [
+            "userId"
+          ]
         }
       },
       "policies": {},
@@ -2622,12 +2352,6 @@
         "userId": {
           "name": "userId",
           "type": "uuid",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "tenantId": {
-          "name": "tenantId",
-          "type": "text",
           "primaryKey": false,
           "notNull": true
         },
@@ -2652,30 +2376,16 @@
           "notNull": true
         }
       },
-      "indexes": {
-        "wallet_tenantId_idx": {
-          "name": "wallet_tenantId_idx",
-          "columns": [
-            {
-              "expression": "tenantId",
-              "isExpression": false,
-              "asc": true,
-              "nulls": "last"
-            }
-          ],
-          "isUnique": false,
-          "concurrently": false,
-          "method": "btree",
-          "with": {}
-        }
-      },
+      "indexes": {},
       "foreignKeys": {},
       "compositePrimaryKeys": {},
       "uniqueConstraints": {
         "wallet_userId_unique": {
           "name": "wallet_userId_unique",
           "nullsNotDistinct": false,
-          "columns": ["userId"]
+          "columns": [
+            "userId"
+          ]
         }
       },
       "policies": {},
@@ -2696,12 +2406,6 @@
         "walletId": {
           "name": "walletId",
           "type": "uuid",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "tenantId": {
-          "name": "tenantId",
-          "type": "text",
           "primaryKey": false,
           "notNull": true
         },
@@ -2761,21 +2465,6 @@
           "concurrently": false,
           "method": "btree",
           "with": {}
-        },
-        "wallet_transaction_tenantId_idx": {
-          "name": "wallet_transaction_tenantId_idx",
-          "columns": [
-            {
-              "expression": "tenantId",
-              "isExpression": false,
-              "asc": true,
-              "nulls": "last"
-            }
-          ],
-          "isUnique": false,
-          "concurrently": false,
-          "method": "btree",
-          "with": {}
         }
       },
       "foreignKeys": {
@@ -2783,8 +2472,12 @@
           "name": "wallet_transaction_walletId_wallet_id_fk",
           "tableFrom": "wallet_transaction",
           "tableTo": "wallet",
-          "columnsFrom": ["walletId"],
-          "columnsTo": ["id"],
+          "columnsFrom": [
+            "walletId"
+          ],
+          "columnsTo": [
+            "id"
+          ],
           "onDelete": "no action",
           "onUpdate": "no action"
         }
@@ -2800,32 +2493,60 @@
     "public.audit_actor_type": {
       "name": "audit_actor_type",
       "schema": "public",
-      "values": ["player", "admin", "system"]
+      "values": [
+        "player",
+        "admin",
+        "system"
+      ]
     },
     "public.BonusType": {
       "name": "BonusType",
       "schema": "public",
-      "values": ["welcome", "deposit_match", "free_spins", "custom"]
+      "values": [
+        "welcome",
+        "deposit_match",
+        "free_spins",
+        "custom"
+      ]
     },
     "public.UserBonusStatus": {
       "name": "UserBonusStatus",
       "schema": "public",
-      "values": ["pending", "active", "completed", "expired", "cancelled"]
+      "values": [
+        "pending",
+        "active",
+        "completed",
+        "expired",
+        "cancelled"
+      ]
     },
     "public.GameRoundStatus": {
       "name": "GameRoundStatus",
       "schema": "public",
-      "values": ["active", "completed", "cancelled"]
+      "values": [
+        "active",
+        "completed",
+        "cancelled"
+      ]
     },
     "public.WalletTransactionStatus": {
       "name": "WalletTransactionStatus",
       "schema": "public",
-      "values": ["pending", "completed", "failed"]
+      "values": [
+        "pending",
+        "completed",
+        "failed"
+      ]
     },
     "public.WalletTransactionType": {
       "name": "WalletTransactionType",
       "schema": "public",
-      "values": ["deposit", "withdrawal", "bet", "win"]
+      "values": [
+        "deposit",
+        "withdrawal",
+        "bet",
+        "win"
+      ]
     }
   },
   "schemas": {},

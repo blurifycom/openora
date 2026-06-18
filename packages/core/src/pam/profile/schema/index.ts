@@ -19,17 +19,12 @@ export const player = pgTable(
     totalWagered: decimal('totalWagered', { precision: 18, scale: 2 }).notNull().default('0'),
     totalDeposits: decimal('totalDeposits', { precision: 18, scale: 2 }).notNull().default('0'),
     lastSeenAt: timestamp('lastSeenAt'),
-    tenantId: text('tenantId').notNull().default('default'),
     createdAt: timestamp('createdAt').notNull().defaultNow(),
     updatedAt: timestamp('updatedAt')
       .notNull()
       .$onUpdateFn(() => new Date()),
   },
-  (t) => [
-    index('player_status_idx').on(t.status),
-    index('player_tenantId_idx').on(t.tenantId),
-    index('player_createdAt_idx').on(t.createdAt),
-  ],
+  (t) => [index('player_status_idx').on(t.status), index('player_createdAt_idx').on(t.createdAt)],
 );
 
 export type Player = typeof player.$inferSelect;

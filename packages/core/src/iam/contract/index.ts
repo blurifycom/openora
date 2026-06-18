@@ -5,7 +5,6 @@ import * as z from 'zod';
 
 export const AdminRoleSchema = z.object({
   id: z.uuid(),
-  tenantId: z.string(),
   name: z.string(),
   description: z.string().nullable(),
   createdAt: z.iso.datetime(),
@@ -25,7 +24,6 @@ export const AdminRoleWithGrantsSchema = AdminRoleSchema.extend({
 
 export const AdminRoleAssignmentSchema = z.object({
   id: z.uuid(),
-  tenantId: z.string(),
   userId: z.uuid(),
   roleId: z.uuid(),
   createdAt: z.iso.datetime(),
@@ -33,7 +31,6 @@ export const AdminRoleAssignmentSchema = z.object({
 
 export const AdminInvitationSchema = z.object({
   id: z.uuid(),
-  tenantId: z.string(),
   email: z.string(),
   roleId: z.uuid(),
   token: z.string(),

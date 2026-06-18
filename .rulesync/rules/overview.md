@@ -44,9 +44,9 @@ packages/
     src/react/    # @oss/core/react - thin, domain-agnostic SDK: generic createClient, typed client,
                   #   auth, realtime transport. Supported frontend consumption surface. No UI here.
     src/server/   # @oss/core/server - the node engine: kernel (logger, EventBus + EVENT_BUS,
-                  #   Container, tenant ctx), plugin-host (definePlugin, ModuleRegistry, loader),
+                  #   Container), plugin-host (definePlugin, ModuleRegistry, loader),
                   #   db (DrizzleService), auth (better-auth + AdminGuard), runtime (createApp -
-                  #   domain-agnostic; the consumer injects PAM identity + resolveTenant).
+                  #   domain-agnostic; single-tenant, no resolveTenant).
                   #   Subpaths: @oss/core/server/orm, @oss/core/server/migrate.
     src/compliance/ # @oss/core/compliance - sealed-token list + assertNoSealedProviders (engine);
                   #   also hosts the compliance DOMAIN (its /contracts, /schema, /plugins subpaths).
@@ -95,7 +95,6 @@ extensions.config.ts # the single registry of enabled plugins
 - Types: `PascalCase`. Schemas: `<Name>Schema`. Inferred: `type <Name> = z.infer<typeof <Name>Schema>`.
 - oRPC routers: namespace by add-on (`wallet.transactions.list`).
 - Drizzle tables: snake_case `pgTable('table_name', ...)`; exported const is camelCase; row type is `typeof <const>.$inferSelect`.
-- Tenant column: `tenantId` on every multi-tenant table.
 
 ## Dependency rules (two-layer enforcement, both in `pnpm verify`)
 
@@ -197,7 +196,7 @@ Runs typecheck + unit tests + lint + module-shape + the whole-graph boundary/cyc
 
 ## Definition of done - audit every new action
 
-The platform ships a regulatory audit log (the `audit` core add-on: append-only, sha256 hash-chained, per-tenant). When an agent adds a new **state-changing action** - a mutation route, an admin operation, a money / KYC / config / withdrawal change - that action MUST leave an audit-log entry. The audit trail grows with the feature, it never lags behind it. Two sanctioned, decoupled-first ways:
+The platform ships a regulatory audit log (the `audit` core add-on: append-only, sha256 hash-chained). When an agent adds a new **state-changing action** - a mutation route, an admin operation, a money / KYC / config / withdrawal change - that action MUST leave an audit-log entry. The audit trail grows with the feature, it never lags behind it. Two sanctioned, decoupled-first ways:
 
 1. **Domain event (preferred).** Emit the event from the service AFTER the DB commit. Declare its payload in `domainEventSchemas` (`@oss/core/contracts/events.ts`), then add the topic to `SUBSCRIBED_TOPICS` in `packages/addons/audit/src/plugin.ts` so the audit add-on records it automatically - no cross-add-on coupling.
 2. **Direct record (when there is no natural event).** Resolve the `AUDIT_WRITER` port (`@oss/core/contracts`) in the module's `plugin.ts` and call `record({ actorId, actorType, action, resourceType, resourceId, before, after, ip, ... })`. Use this for admin actions and outcomes that are not domain events.

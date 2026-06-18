@@ -4,20 +4,18 @@ export const chatRoom = pgTable(
   'ChatRoom',
   {
     id: uuid('id').primaryKey().defaultRandom(),
-    tenantId: text('tenantId').notNull(),
     name: text('name').notNull(),
     slug: text('slug').notNull(),
     isPublic: boolean('isPublic').notNull().default(true),
     createdAt: timestamp('createdAt').notNull().defaultNow(),
   },
-  (t) => [uniqueIndex('chat_room_tenantId_slug_key').on(t.tenantId, t.slug)],
+  (t) => [uniqueIndex('chat_room_slug_key').on(t.slug)],
 );
 
 export const chatMessage = pgTable(
   'ChatMessage',
   {
     id: uuid('id').primaryKey().defaultRandom(),
-    tenantId: text('tenantId').notNull(),
     roomId: uuid('roomId').references(() => chatRoom.id),
     userId: uuid('userId').notNull(),
     username: text('username').notNull(),
@@ -27,7 +25,7 @@ export const chatMessage = pgTable(
   },
   (t) => [
     index('chat_msg_roomId_createdAt_idx').on(t.roomId, t.createdAt),
-    index('chat_msg_tenantId_createdAt_idx').on(t.tenantId, t.createdAt),
+    index('chat_msg_createdAt_idx').on(t.createdAt),
   ],
 );
 

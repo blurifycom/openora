@@ -18,7 +18,7 @@ export type WalletDebitArgs = {
 // Outcome instead of a thrown error, so the caller keeps ownership of its own
 // domain error (and its router error mapping) rather than catching a wallet error.
 export type WalletDebitOutcome =
-  | { ok: true; tenantId: string; newBalance: number }
+  | { ok: true; newBalance: number }
   | { ok: false; available: number };
 
 export type WalletCommands = {

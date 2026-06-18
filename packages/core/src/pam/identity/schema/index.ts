@@ -8,12 +8,6 @@ export const user = pgTable('user', {
   image: text('image'),
   role: text('role').notNull().default('player'),
   isActive: boolean('isActive').notNull().default(true),
-  // The tenant this user belongs to. This is the server-side source of truth for
-  // RLS scoping (ADR-0018): a request's tenant is resolved from the authenticated
-  // user, never trusted from a client header. The `user` table itself is NOT
-  // RLS-scoped (auth must resolve a user before a tenant is known) - it is read on
-  // the admin/system path during request bootstrap.
-  tenantId: text('tenantId').notNull().default('default'),
   // better-auth admin() plugin fields (all optional). Required by the drizzle
   // adapter when the admin plugin is enabled, otherwise user creation throws
   // "field banned does not exist". See @oss/core/server createAuth().

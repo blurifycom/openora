@@ -4,8 +4,6 @@ import { type EventBus } from '@oss/core/server';
 import type { SendEmailPort } from '@oss/core/contracts';
 import { DrizzleService } from '@oss/core/server';
 import { user, session, account, verification, twoFactor } from '../schema/index.js';
-import { eq } from 'drizzle-orm';
-import { DEFAULT_TENANT_ID } from '@oss/core/contracts';
 import type { User } from '@oss/core/contracts';
 import type {
   LoginInput,
@@ -152,19 +150,6 @@ export class IdentityService {
     });
     forwardCookies(authResponse, resHeaders);
     const body = (await authResponse.json()) as { user: BetterAuthUser };
-
-    // better-auth's signUpEmail creates the user row without a tenantId, so
-    // resolveTenantForUser would return undefined and every scoped table would
-    // fail-closed to zero rows under RLS (ADR-0018/0019). Stamp the canonical
-    // DEFAULT_TENANT_ID server-side. We do NOT accept a client-supplied tenant
-    // here - that would reintroduce a spoofable tenant source; multi-brand
-    // operators resolve a pre-auth tenant from host/brand (a documented seam).
-    // The `user` table is not RLS-scoped (exempt in rls-policy-coverage), so a
-    // plain update on the same db identity already writes through is correct.
-    await this.drizzle.db
-      .update(user)
-      .set({ tenantId: DEFAULT_TENANT_ID })
-      .where(eq(user.id, body.user.id));
 
     this.events.emit('identity.user.registered', { userId: body.user.id });
     return { user: toUser(body.user) };

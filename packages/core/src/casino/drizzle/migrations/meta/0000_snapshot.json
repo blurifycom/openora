@@ -1,5 +1,5 @@
 {
-  "id": "1e633a49-8e1a-451d-9a6b-e0761f94f37d",
+  "id": "dd28d220-2bc1-4ec4-9285-c975a396989a",
   "prevId": "00000000-0000-0000-0000-000000000000",
   "version": "7",
   "dialect": "postgresql",
@@ -10,15 +10,10 @@
       "columns": {
         "id": {
           "name": "id",
-          "type": "text",
+          "type": "uuid",
           "primaryKey": true,
-          "notNull": true
-        },
-        "tenantId": {
-          "name": "tenantId",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true
+          "notNull": true,
+          "default": "gen_random_uuid()"
         },
         "name": {
           "name": "name",
@@ -54,15 +49,9 @@
         }
       },
       "indexes": {
-        "aggregator_provider_tenantId_slug_key": {
-          "name": "aggregator_provider_tenantId_slug_key",
+        "aggregator_provider_slug_key": {
+          "name": "aggregator_provider_slug_key",
           "columns": [
-            {
-              "expression": "tenantId",
-              "isExpression": false,
-              "asc": true,
-              "nulls": "last"
-            },
             {
               "expression": "slug",
               "isExpression": false,

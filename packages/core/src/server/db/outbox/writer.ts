@@ -15,7 +15,6 @@ export class DrizzleOutboxWriter implements OutboxWriter {
         topic: envelope.topic,
         payload: envelope.payload as Record<string, unknown>,
         schemaVersion: envelope.schemaVersion,
-        tenantId: envelope.tenantId ?? null,
         traceId: envelope.traceId ?? null,
         orderingKey: envelope.orderingKey ?? null,
         occurredAt: new Date(envelope.occurredAt),

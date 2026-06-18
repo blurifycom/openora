@@ -1,5 +1,5 @@
 import { definePlugin } from '@oss/core/server';
-import { EVENT_BUS, getCurrentTenantId } from '@oss/core/server';
+import { EVENT_BUS } from '@oss/core/server';
 import { DRIZZLE } from '@oss/core/server';
 import { ADMIN_GUARD } from '@oss/core/server';
 import { AUDIT_WRITER } from '@oss/core/contracts';
@@ -7,14 +7,13 @@ import { AuditService, type RecordInput } from './service/audit.service.js';
 import { createAuditRouter } from './router/index.js';
 
 // Pure mapping: domain event topic + payload -> RecordInput.
-function mapEventToRecord(topic: string, payload: unknown, tenantId: string): RecordInput {
+function mapEventToRecord(topic: string, payload: unknown): RecordInput {
   const p = payload as Record<string, unknown>;
   // Only completed/successful actions are emitted today; a failure/rejection topic
   // suffix records the outcome so the `result` column is meaningful as those land.
   const result = /\.(failed|rejected|declined)$/.test(topic) ? 'failure' : 'success';
 
   const base: RecordInput = {
-    tenantId,
     actorType: 'system',
     action: topic,
     resourceType: topic.split('.')[0] ?? topic,
@@ -90,8 +89,7 @@ export default definePlugin({
     for (const topic of SUBSCRIBED_TOPICS) {
       ctx.events.on(topic, (payload) => {
         if (!svcRef) return;
-        const tenantId = getCurrentTenantId() ?? 'default';
-        void svcRef.record(mapEventToRecord(topic, payload, tenantId));
+        void svcRef.record(mapEventToRecord(topic, payload));
       });
     }
 

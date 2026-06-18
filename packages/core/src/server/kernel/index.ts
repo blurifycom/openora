@@ -1,10 +1,10 @@
-export type { TenantContext, TenantStorage } from './tenant-context.js';
+export type { RequestContext, RequestStorage } from './request-context.js';
 export {
-  tenantStorage,
-  getCurrentTenant,
-  getCurrentTenantId,
-  withTenant,
-} from './tenant-context.js';
+  requestStorage,
+  getCurrentRequestContext,
+  getCurrentTraceId,
+  withRequestContext,
+} from './request-context.js';
 
 export type { EventBus, EventHandler } from './event-bus.js';
 export { EVENT_BUS, InMemoryBroker, createEventBus } from './event-bus.js';
@@ -18,7 +18,7 @@ export type { Factory } from './container.js';
 
 export { createLogger } from './logger.js';
 
-export { getUserId, getTenantId } from './router-utils.js';
+export { getUserId } from './router-utils.js';
 export type { OssContext, AuthContext } from './router-utils.js';
 export {
   createDomainError,

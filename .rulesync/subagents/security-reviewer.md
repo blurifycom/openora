@@ -35,11 +35,6 @@ Run `git diff main...HEAD --name-only` to see which files changed, then read eac
 - [ ] Player routes resolve the caller from `x-user-id` server-side and never trust a client-supplied user/account id in the body for ownership decisions.
 - [ ] No privilege escalation: a player cannot reach an admin namespace or another player's resource.
 
-### Tenant isolation (multi-tenant)
-
-- [ ] Every query against a multi-tenant table filters by `tenantId`. A missing `tenantId` predicate is a cross-tenant data leak - flag as `[BLOCK]`.
-- [ ] New multi-tenant tables declare `tenantId` and it is populated on insert.
-
 ### Secrets & PII
 
 - [ ] No secrets, API keys, or connection strings committed in source or templates. Adapter credentials come from env / config, never inlined.

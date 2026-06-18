@@ -2,7 +2,8 @@
 
 **Date**: 2026-06-09
 **Status**: Accepted; implemented.
-**Relates to**: ADR-0018 (RLS tenant isolation - this closes its W1 trust boundary), ADR-0009 (oRPC + Hono + functional container).
+**Amended by ADR-0026 (2026-06-18)**: the platform is now single-tenant - the per-request tenant resolution this ADR fed (`resolveTenant`, `getTenantId`) was removed. Session-based caller identification (`getUserId` from the verified cookie) is unchanged.
+**Relates to**: ADR-0018 (RLS tenant isolation - this closed its W1 trust boundary, now superseded by ADR-0026), ADR-0009 (oRPC + Hono + functional container).
 
 ## Context
 

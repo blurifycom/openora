@@ -37,12 +37,11 @@ export async function startHarness(): Promise<IntegrationHarness> {
   await db.truncateAll();
   await seedMinimal(booted.container, { playerCount: 4 });
 
-  // Seed/admin reads cross tenants, so use the BYPASSRLS admin db (no request GUC).
-  const adminDb = booted.container.get(DRIZZLE).adminDb;
-  const rows = await adminDb.select().from(player).limit(1);
+  const db_ = booted.container.get(DRIZZLE).db;
+  const rows = await db_.select().from(player).limit(1);
   const playerId = rows[0]?.userId;
   if (!playerId) throw new Error('startHarness: seed produced no players');
-  const userRows = await adminDb
+  const userRows = await db_
     .select({ email: user.email })
     .from(user)
     .where(eq(user.id, playerId))

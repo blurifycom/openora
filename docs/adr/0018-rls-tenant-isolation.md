@@ -1,7 +1,10 @@
 # ADR-0018: Row-Level Security tenant isolation
 
 **Date**: 2026-06-09
-**Status**: Accepted; implemented (RLS migration + leak-safe per-request GUC binding + two-role connection paths + server-side tenant resolution).
+**Status**: SUPERSEDED by ADR-0026 (2026-06-18). The platform is now single-tenant: the
+`tenantId` column, the RLS policies/roles, the two connection paths, and server-side tenant
+resolution were all removed. The text below is retained for history only - none of it is in
+the codebase anymore.
 **Relates to**: ADR-0010 (event-driven broker / multitenancy + extraction direction), the `tenantId`-on-every-multi-tenant-table convention (AGENTS.md), ADR-0016/0017 (outbox + system paths).
 
 ## Context

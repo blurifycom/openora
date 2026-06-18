@@ -4,7 +4,6 @@ import * as z from 'zod';
 export const WalletBalanceSchema = z.object({
   balance: z.number(),
   currency: z.string(),
-  tenantId: z.string(),
 });
 
 export const WalletTransactionSchema = z.object({

@@ -7,9 +7,8 @@
  *   pnpm seed --players=60          # more players
  *   pnpm seed --admin-email=me@x.io --admin-password=secret123
  *
- * Requires DATABASE_URL (falls back to the local docker default). Seed is a
- * system path: it writes across tenants, so it connects with the BYPASSRLS role
- * (DATABASE_ADMIN_URL when set, else DATABASE_URL). See ADR-0018.
+ * Requires DATABASE_URL (falls back to the local docker default). Single-tenant
+ * since ADR-0026 - one DB role, no RLS.
  */
 import { createAuth } from '@oss/core/server';
 import { createDrizzleDb } from '@oss/core/server';

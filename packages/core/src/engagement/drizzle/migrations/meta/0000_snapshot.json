@@ -1,5 +1,5 @@
 {
-  "id": "6c0beddc-4c5c-4de0-b37b-55df4d3e0dd0",
+  "id": "5f132b4f-a7b6-460b-b188-40da87860427",
   "prevId": "00000000-0000-0000-0000-000000000000",
   "version": "7",
   "dialect": "postgresql",
@@ -10,15 +10,10 @@
       "columns": {
         "id": {
           "name": "id",
-          "type": "text",
+          "type": "uuid",
           "primaryKey": true,
-          "notNull": true
-        },
-        "tenantId": {
-          "name": "tenantId",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true
+          "notNull": true,
+          "default": "gen_random_uuid()"
         },
         "metric": {
           "name": "metric",
@@ -49,30 +44,9 @@
         }
       },
       "indexes": {
-        "leaderboard_tenantId_idx": {
-          "name": "leaderboard_tenantId_idx",
+        "leaderboard_metric_period_idx": {
+          "name": "leaderboard_metric_period_idx",
           "columns": [
-            {
-              "expression": "tenantId",
-              "isExpression": false,
-              "asc": true,
-              "nulls": "last"
-            }
-          ],
-          "isUnique": false,
-          "concurrently": false,
-          "method": "btree",
-          "with": {}
-        },
-        "leaderboard_tenant_metric_period_idx": {
-          "name": "leaderboard_tenant_metric_period_idx",
-          "columns": [
-            {
-              "expression": "tenantId",
-              "isExpression": false,
-              "asc": true,
-              "nulls": "last"
-            },
             {
               "expression": "metric",
               "isExpression": false,
@@ -105,25 +79,20 @@
       "columns": {
         "id": {
           "name": "id",
-          "type": "text",
+          "type": "uuid",
           "primaryKey": true,
-          "notNull": true
-        },
-        "tenantId": {
-          "name": "tenantId",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true
+          "notNull": true,
+          "default": "gen_random_uuid()"
         },
         "leaderboardId": {
           "name": "leaderboardId",
-          "type": "text",
+          "type": "uuid",
           "primaryKey": false,
           "notNull": true
         },
         "userId": {
           "name": "userId",
-          "type": "text",
+          "type": "uuid",
           "primaryKey": false,
           "notNull": true
         },

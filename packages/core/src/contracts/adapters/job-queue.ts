@@ -48,7 +48,7 @@ export type JobContext<T> = {
   payload: T;
   attempt: number; // 1-based
   enqueuedAt: Date;
-  // Carried metadata (correlationId, tenantId, idempotencyKey) for tracing.
+  // Carried metadata (correlationId, idempotencyKey) for tracing.
   meta: Record<string, string | undefined>;
 };
 

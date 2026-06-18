@@ -15,7 +15,7 @@ import {
   SseClientAuthorizer,
   createEventBus,
   createLogger,
-  withTenant,
+  withRequestContext,
   EVENT_BUS,
   type OssContext,
 } from '../kernel/index.js';
@@ -44,14 +44,6 @@ export type CreateAppConfig = {
   // SessionResolver can verify the session cookie. Omit for a no-auth edition
   // (session verification is then disabled). See ADR-0019/0025.
   authSchema?: Record<string, unknown>;
-
-  // Maps a VERIFIED userId to its tenant (ADR-0018). Injected because the lookup
-  // reads the consumer's `user` table; the engine owns no domain schema. Build it
-  // with the exported `resolveTenantForUser` helper:
-  //   resolveTenant: (db, uid) => resolveTenantForUser(db, uid, userTable)
-  // Omit to run single-/no-tenant: every request resolves no tenant, so RLS-scoped
-  // tables fail closed (zero rows). See ADR-0025.
-  resolveTenant?: (drizzle: DrizzleService, userId: string) => Promise<string | undefined>;
 
   // Port to listen on. Defaults to env PORT_API, then 3001.
   port?: number;
@@ -209,9 +201,7 @@ export async function createApp(config: CreateAppConfig): Promise<CreatedApp> {
   // Start the outbox relay (when enabled): it polls pending event_outbox rows and
   // publishes them to the broker. Disposed before the DB closes (reverse order).
   if (outboxEnabled) {
-    // System path: the relay scans event_outbox across all tenants, so it uses
-    // the BYPASSRLS admin db and never sets app.tenant_id (ADR-0018).
-    const relay = new OutboxRelay(drizzle.adminDb, container.get(MESSAGE_BROKER), {
+    const relay = new OutboxRelay(drizzle.db, container.get(MESSAGE_BROKER), {
       onError: (err) => createLogger('outbox-relay').error({ err }, 'outbox drain failed'),
     });
     relay.start();
@@ -262,13 +252,8 @@ export async function createApp(config: CreateAppConfig): Promise<CreatedApp> {
     const context: OssContext = { request: { headers } };
 
     // Identify the caller from the VERIFIED better-auth session cookie - never from
-    // a client-supplied `x-user-id` header (W1, ADR-0019). Then resolve the tenant
-    // server-side from that verified user (ADR-0018) and run the whole request
-    // inside both the tenant AsyncLocalStorage (for event correlation) AND a
-    // request-pinned RLS connection (so every this.db query is scoped by RLS).
+    // a client-supplied `x-user-id` header (W1, ADR-0019).
     const userId = await sessions.resolveUserId(c.req.raw.headers);
-    const tenantId =
-      userId && config.resolveTenant ? await config.resolveTenant(drizzle, userId) : undefined;
 
     const runHandler = async (): Promise<Response> => {
       const { matched, response } = await handler.handle(c.req.raw, { context });
@@ -277,21 +262,18 @@ export async function createApp(config: CreateAppConfig): Promise<CreatedApp> {
       return c.res;
     };
 
-    if (!userId || !tenantId) {
-      // No valid session (or no resolvable tenant): context.auth stays undefined,
-      // so getUserId/getTenantId 401, and no tenant GUC is set, so the RLS app role
-      // sees zero rows on any scoped table (fail-closed). Auth/public routes only
-      // touch non-scoped tables on the admin path, so they still work.
-      return runHandler();
+    const traceId = headers['x-trace-id'] ?? randomUUID();
+
+    if (!userId) {
+      // No valid session: context.auth stays undefined, so getUserId 401s. Auth and
+      // public routes still work. Run inside the request context for trace correlation.
+      return withRequestContext({ traceId }, runHandler);
     }
 
-    // Publish the VERIFIED identity onto the oRPC context for getUserId/getTenantId.
-    context.auth = { userId, tenantId };
+    // Publish the VERIFIED identity onto the oRPC context for getUserId.
+    context.auth = { userId };
 
-    const traceId = headers['x-trace-id'] ?? randomUUID();
-    return withTenant({ userId, tenantId, traceId }, () =>
-      drizzle.runWithTenant(tenantId, runHandler),
-    );
+    return withRequestContext({ userId, traceId }, runHandler);
   });
 
   const port = config.port ?? Number(process.env['PORT_API'] ?? 3001);

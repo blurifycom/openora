@@ -1,4 +1,3 @@
-import { getCurrentTenantId } from '@oss/core/server';
 import { DrizzleService } from '@oss/core/server';
 import { eq } from 'drizzle-orm';
 import { player } from '../schema/index.js';
@@ -59,7 +58,6 @@ export class ProfileService {
       .values({
         userId,
         displayName: u?.name ?? 'Player',
-        tenantId: getCurrentTenantId() ?? 'default',
       })
       .returning();
     return toPlayer(created!, u?.email ?? '');

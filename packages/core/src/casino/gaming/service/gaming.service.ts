@@ -1,8 +1,7 @@
-import { type EventBus, makeNotFoundError, getCurrentTenantId } from '@oss/core/server';
+import { type EventBus, makeNotFoundError } from '@oss/core/server';
 import { DrizzleService, findOneOrThrow } from '@oss/core/server';
 import { eq, and, asc, desc } from 'drizzle-orm';
 import { type GameAdapter } from '@oss/core/contracts';
-import { DEFAULT_TENANT_ID } from '@oss/core/contracts';
 import { game, gameRound } from '../schema/index.js';
 import type { Game, GameRound } from '../schemas/index.js';
 
@@ -43,29 +42,11 @@ export class GamingService {
     private readonly provider: GameAdapter,
   ) {}
 
-  // Authenticated lobby: the caller's tenant is verified server-side (ADR-0018/0019)
-  // and passed in. Runs on the RLS-enforced `this.drizzle.db`; the explicit tenant
-  // filter is defense-in-depth on top of the policy.
-  async listGames(tenantId: string): Promise<Game[]> {
+  async listGames(): Promise<Game[]> {
     const games = await this.drizzle.db
       .select()
       .from(game)
-      .where(and(eq(game.isActive, true), eq(game.tenantId, tenantId)))
-      .orderBy(asc(game.name));
-    return games.map(toGame);
-  }
-
-  // Public/anonymous lobby: a pre-auth caller has no tenant GUC, so the RLS app role
-  // would return zero rows (fail-closed). The public catalog is read-only and the
-  // tenant is the server-side DEFAULT_TENANT_ID constant (never client input), so we
-  // read it through the BYPASSRLS adminDb with an EXPLICIT tenant filter. This is the
-  // single sanctioned pre-auth read; the authenticated path stays on the RLS db.
-  // Multi-brand operators override the pre-auth tenant by resolving it from host/brand.
-  async listPublicGames(): Promise<Game[]> {
-    const games = await this.drizzle.adminDb
-      .select()
-      .from(game)
-      .where(and(eq(game.isActive, true), eq(game.tenantId, DEFAULT_TENANT_ID)))
+      .where(eq(game.isActive, true))
       .orderBy(asc(game.name));
     return games.map(toGame);
   }
@@ -94,8 +75,6 @@ export class GamingService {
         userId,
         currency,
         status: 'active',
-        // Request tenant (ADR-0018) - satisfies the RLS WITH CHECK policy.
-        tenantId: getCurrentTenantId() ?? 'default',
       })
       .returning();
 
@@ -110,8 +89,13 @@ export class GamingService {
   }
 
   async endRound(userId: string, roundId: string): Promise<{ success: true; outcome?: unknown }> {
-    const round = findOneOrThrow(
-      await this.drizzle.db.select().from(gameRound).where(eq(gameRound.id, roundId)),
+    // Scope by the caller: a round can only be ended by its owner. With RLS gone
+    // (ADR-0026, single-tenant) this userId filter is the access guard.
+    findOneOrThrow(
+      await this.drizzle.db
+        .select()
+        .from(gameRound)
+        .where(and(eq(gameRound.id, roundId), eq(gameRound.userId, userId))),
       new GameRoundNotFoundError(roundId),
     );
 
@@ -120,7 +104,7 @@ export class GamingService {
     await this.drizzle.db
       .update(gameRound)
       .set({ status: 'completed', endedAt: new Date() })
-      .where(eq(gameRound.id, roundId));
+      .where(and(eq(gameRound.id, roundId), eq(gameRound.userId, userId)));
 
     this.events.emit('gaming.round.ended', { roundId, userId });
 

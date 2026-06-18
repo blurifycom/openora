@@ -1,4 +1,4 @@
-import { createApp, resolveTenantForUser } from '@oss/core/server';
+import { createApp } from '@oss/core/server';
 import { user, session, account, verification, twoFactor } from '@oss/core/pam/schema/identity';
 import { loadExtensions } from './extensions.js';
 import { buildContract } from './editions.js';
@@ -13,9 +13,8 @@ async function bootstrap() {
     // default build emits OpenAPI for core only. See editions.ts / ADR-0019.
     contract: buildContract(),
     // The engine is domain-agnostic: the consumer injects its PAM identity tables
-    // for session verification and the verified-userId -> tenant lookup. See ADR-0025.
+    // for session verification. See ADR-0025.
     authSchema: { user, session, account, verification, twoFactor },
-    resolveTenant: (db, userId) => resolveTenantForUser(db, userId, user),
     openapi: { info: { title: 'OSS Igaming API', version: '0.0.1' } },
   });
 

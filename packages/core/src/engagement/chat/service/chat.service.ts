@@ -1,9 +1,4 @@
-import {
-  type EventBus,
-  createDomainError,
-  assertOwnership,
-  getCurrentTenantId,
-} from '@oss/core/server';
+import { type EventBus, createDomainError, assertOwnership } from '@oss/core/server';
 import type { RealtimeTransport } from '@oss/core/contracts';
 import { DrizzleService, findOneOrThrow } from '@oss/core/server';
 import { eq, and, isNull, lt, desc, asc } from 'drizzle-orm';
@@ -83,12 +78,8 @@ export class ChatService {
     return row?.name?.trim() || fallback || 'anonymous';
   }
 
-  async listRooms(tenantId?: string): Promise<ChatRoom[]> {
-    const rooms = await this.drizzle.db
-      .select()
-      .from(chatRoom)
-      .where(tenantId ? eq(chatRoom.tenantId, tenantId) : undefined)
-      .orderBy(asc(chatRoom.createdAt));
+  async listRooms(): Promise<ChatRoom[]> {
+    const rooms = await this.drizzle.db.select().from(chatRoom).orderBy(asc(chatRoom.createdAt));
     return rooms.map(toRoom);
   }
 
@@ -110,7 +101,7 @@ export class ChatService {
     roomId: string,
     content: string,
   ): Promise<ChatMessage> {
-    const room = findOneOrThrow(
+    findOneOrThrow(
       await this.drizzle.db.select().from(chatRoom).where(eq(chatRoom.id, roomId)),
       new ChatRoomNotFoundError(roomId),
     );
@@ -119,7 +110,6 @@ export class ChatService {
     const [record] = await this.drizzle.db
       .insert(chatMessage)
       .values({
-        tenantId: room.tenantId,
         roomId,
         userId,
         username: displayName,
@@ -155,9 +145,8 @@ export class ChatService {
     return { success: true };
   }
 
-  async getGlobalMessages(tenantId?: string, limit = 50): Promise<ChatMessage[]> {
+  async getGlobalMessages(limit = 50): Promise<ChatMessage[]> {
     const conditions = [isNull(chatMessage.roomId), eq(chatMessage.isDeleted, false)];
-    if (tenantId) conditions.push(eq(chatMessage.tenantId, tenantId));
     const messages = await this.drizzle.db
       .select()
       .from(chatMessage)
@@ -167,20 +156,11 @@ export class ChatService {
     return messages.map(toMessage);
   }
 
-  async sendGlobalMessage(
-    userId: string,
-    username: string,
-    content: string,
-    tenantId?: string,
-  ): Promise<ChatMessage> {
-    // Default to the request tenant (ADR-0018) so the RLS WITH CHECK policy
-    // accepts the write; an explicit arg (system paths) still wins when passed.
-    const effectiveTenantId = tenantId ?? getCurrentTenantId() ?? 'default';
+  async sendGlobalMessage(userId: string, username: string, content: string): Promise<ChatMessage> {
     const displayName = await this.resolveDisplayName(userId, username);
     const [record] = await this.drizzle.db
       .insert(chatMessage)
       .values({
-        tenantId: effectiveTenantId,
         roomId: null,
         userId,
         username: displayName,

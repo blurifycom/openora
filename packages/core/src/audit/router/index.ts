@@ -1,6 +1,6 @@
 import { implement } from '@orpc/server';
 import { AdminGuard } from '@oss/core/server';
-import { getCurrentTenantId, getUserId, mapErrors, type OssContext } from '@oss/core/server';
+import { getUserId, mapErrors, type OssContext } from '@oss/core/server';
 import { auditContract } from '../contract/index.js';
 import { AuditService } from '../service/audit.service.js';
 
@@ -23,7 +23,6 @@ export function createAuditRouter(svc: AuditService, adminGuard: AdminGuard) {
         null;
       const userAgent = (context.request.headers['user-agent'] as string | undefined) ?? null;
       await svc.record({
-        tenantId: getCurrentTenantId() ?? 'default',
         actorId: getUserId(context),
         actorType: 'admin',
         action: 'audit.export',

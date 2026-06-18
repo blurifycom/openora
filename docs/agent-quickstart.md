@@ -37,7 +37,6 @@ This creates `packages/domains/<group>/<name>/` (a folder inside the single `@os
 
 Edit `packages/domains/<group>/<name>/src/schema/index.ts`. Add `pgTable` definitions following these rules:
 
-- Every multi-tenant table has a `tenantId: text('tenantId').notNull()` column.
 - No FK references to tables owned by other modules (use plain ID columns). Within your own module, `.references(() => table.id)` is fine.
 - Table names are snake_case (`pgTable('tournament_entry', ...)`); the exported const is camelCase; the row type is `typeof <const>.$inferSelect`.
 
@@ -127,7 +126,7 @@ pnpm dev
 Call a route manually to confirm end-to-end wiring:
 
 ```
-curl -X POST http://localhost:3001/<name>s -H "Content-Type: application/json" -d '{"tenantId":"test"}'
+curl -X POST http://localhost:3001/<name>s -H "Content-Type: application/json" -d '{}'
 ```
 
 ## Common pitfalls

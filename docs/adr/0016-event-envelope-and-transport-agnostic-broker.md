@@ -2,6 +2,7 @@
 
 **Date**: 2026-06-09
 **Status**: Accepted; implemented (envelope at the `MESSAGE_BROKER` boundary, EventBus owns it, RabbitMQ overlay as the reference durable driver, in-process default unchanged).
+**Amended by ADR-0026 (2026-06-18)**: the envelope's `tenantId` field was removed when the platform went single-tenant. `eventId`/`topic`/`payload`/`occurredAt`/`schemaVersion` + optional `orderingKey`/`traceId` remain.
 
 ## Context
 

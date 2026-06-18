@@ -1,7 +1,7 @@
 import { createHash } from 'node:crypto';
 import { randomUUID } from 'node:crypto';
 import { DrizzleService, pageToOffset } from '@oss/core/server';
-import { type EventBus, getCurrentTenantId } from '@oss/core/server';
+import { type EventBus } from '@oss/core/server';
 import { eq, and, gte, lte, desc, sql } from 'drizzle-orm';
 import { auditLog, type AuditLog } from '../schema/index.js';
 import type { AuditLogEntry, AuditListFilters, AuditExportFilters } from '../schemas/index.js';
@@ -15,7 +15,6 @@ import type { AuditLogEntry, AuditListFilters, AuditExportFilters } from '../sch
 // so treat this as an append-only list.
 function canonicalHashInput(fields: {
   id: string;
-  tenantId: string;
   actorId: string | null;
   actorType: string;
   action: string;
@@ -27,7 +26,6 @@ function canonicalHashInput(fields: {
 }): string {
   return JSON.stringify({
     id: fields.id,
-    tenantId: fields.tenantId,
     actorId: fields.actorId,
     actorType: fields.actorType,
     action: fields.action,
@@ -50,7 +48,6 @@ function computeHash(fields: Parameters<typeof canonicalHashInput>[0]): string {
 function toDto(row: AuditLog): AuditLogEntry {
   return {
     id: row.id,
-    tenantId: row.tenantId,
     actorId: row.actorId ?? null,
     actorType: row.actorType as AuditLogEntry['actorType'],
     action: row.action,
@@ -74,7 +71,6 @@ function toDto(row: AuditLog): AuditLogEntry {
 // ---------------------------------------------------------------------------
 
 export type RecordInput = {
-  tenantId: string;
   actorId?: string | null;
   actorType: 'player' | 'admin' | 'system';
   action: string;
@@ -100,25 +96,21 @@ export class AuditService {
 
   // Single write path. Computes prevHash/hash and inserts the row with its
   // final hash in ONE statement - no read-back UPDATE, so a crash can never
-  // leave a 'pending' hash. The whole append is atomic and serialized per
-  // tenant via a transaction-level advisory lock, so concurrent record() calls
-  // cannot read the same chain tip and fork the chain.
+  // leave a 'pending' hash. The whole append is atomic and serialized via a
+  // transaction-level advisory lock, so concurrent record() calls cannot read
+  // the same chain tip and fork the chain.
   // Append-only: no update/delete methods exposed.
   async record(input: RecordInput): Promise<AuditLogEntry> {
     const row = await this.drizzle.db.transaction(async (tx) => {
-      // Serialize all appends for this tenant. pg_advisory_xact_lock (two-int
-      // form) is held until the transaction commits/rolls back; concurrent
-      // appends for the same tenant queue here, so read-tip -> compute -> insert
-      // is atomic without locking the whole table. Other tenants are unaffected.
-      await tx.execute(
-        sql`SELECT pg_advisory_xact_lock(hashtext('audit_log'), hashtext(${input.tenantId}))`,
-      );
+      // Serialize all appends. pg_advisory_xact_lock is held until the
+      // transaction commits/rolls back; concurrent appends queue here, so
+      // read-tip -> compute -> insert is atomic without locking the whole table.
+      await tx.execute(sql`SELECT pg_advisory_xact_lock(hashtext('audit_log'))`);
 
       // Read the chain tip INSIDE the lock so no other append can race past us.
       const [latest] = await tx
         .select({ hash: auditLog.hash })
         .from(auditLog)
-        .where(eq(auditLog.tenantId, input.tenantId))
         .orderBy(desc(auditLog.seq))
         .limit(1);
       const prevHash = latest?.hash ?? null;
@@ -138,7 +130,6 @@ export class AuditService {
 
       const hash = computeHash({
         id,
-        tenantId: input.tenantId,
         actorId: input.actorId ?? null,
         actorType: input.actorType,
         action: input.action,
@@ -153,7 +144,6 @@ export class AuditService {
         .insert(auditLog)
         .values({
           id,
-          tenantId: input.tenantId,
           actorId: input.actorId ?? null,
           actorType: input.actorType,
           action: input.action,
@@ -190,8 +180,6 @@ export class AuditService {
     const offset = pageToOffset(page, limit);
 
     const conditions = [
-      // Defense-in-depth: explicit tenant scope alongside RLS, resolved per call.
-      eq(auditLog.tenantId, getCurrentTenantId() ?? 'default'),
       actorId !== undefined ? eq(auditLog.actorId, actorId) : undefined,
       actorType !== undefined
         ? eq(auditLog.actorType, actorType as AuditLog['actorType'])
@@ -232,15 +220,12 @@ export class AuditService {
   // truncated to the most relevant (latest) rows.
   static readonly EXPORT_MAX_ROWS = 50_000;
 
-  // Export matching rows as CSV text for regulatory submission. Tenant-scoped and
-  // capped at EXPORT_MAX_ROWS.
+  // Export matching rows as CSV text for regulatory submission. Capped at EXPORT_MAX_ROWS.
   async exportCsv(filters: AuditExportFilters): Promise<string> {
     const db = this.drizzle.db;
     const { actorId, actorType, action, resourceType, fromDate, toDate } = filters;
 
     const conditions = [
-      // Defense-in-depth: explicit tenant scope alongside RLS, resolved per call.
-      eq(auditLog.tenantId, getCurrentTenantId() ?? 'default'),
       actorId !== undefined ? eq(auditLog.actorId, actorId) : undefined,
       actorType !== undefined
         ? eq(auditLog.actorType, actorType as AuditLog['actorType'])
@@ -251,7 +236,7 @@ export class AuditService {
       toDate !== undefined ? lte(auditLog.createdAt, new Date(toDate)) : undefined,
     ].filter((c): c is NonNullable<typeof c> => c !== undefined);
 
-    const where = and(...conditions);
+    const where = conditions.length > 0 ? and(...conditions) : undefined;
 
     const rows = await db
       .select()
@@ -261,11 +246,10 @@ export class AuditService {
       .limit(AuditService.EXPORT_MAX_ROWS);
 
     const header =
-      'id,tenantId,actorId,actorType,action,resourceType,resourceId,ip,correlationId,result,seq,prevHash,hash,createdAt';
+      'id,actorId,actorType,action,resourceType,resourceId,ip,correlationId,result,seq,prevHash,hash,createdAt';
     const lines = rows.map((r) =>
       [
         r.id,
-        r.tenantId,
         r.actorId ?? '',
         r.actorType,
         r.action,
@@ -286,16 +270,12 @@ export class AuditService {
     return [header, ...lines].join('\n');
   }
 
-  // Recompute every row's hash in tenant order and return the first broken link.
-  // Returns null when the chain is intact.
-  async verifyChain(
-    tenantId: string,
-  ): Promise<{ valid: true } | { valid: false; firstBrokenSeq: number; rowId: string }> {
-    const rows = await this.drizzle.db
-      .select()
-      .from(auditLog)
-      .where(eq(auditLog.tenantId, tenantId))
-      .orderBy(auditLog.seq);
+  // Recompute every row's hash in seq order and return the first broken link.
+  // Returns { valid: true } when the chain is intact.
+  async verifyChain(): Promise<
+    { valid: true } | { valid: false; firstBrokenSeq: number; rowId: string }
+  > {
+    const rows = await this.drizzle.db.select().from(auditLog).orderBy(auditLog.seq);
 
     let expectedPrevHash: string | null = null;
 
@@ -306,7 +286,6 @@ export class AuditService {
 
       const expected = computeHash({
         id: row.id,
-        tenantId: row.tenantId,
         actorId: row.actorId ?? null,
         actorType: row.actorType,
         action: row.action,

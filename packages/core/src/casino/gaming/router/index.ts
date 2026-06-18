@@ -1,5 +1,5 @@
 import { implement } from '@orpc/server';
-import { getUserId, getTenantId, mapErrors, type OssContext } from '@oss/core/server';
+import { getUserId, mapErrors, type OssContext } from '@oss/core/server';
 import { gamingContract } from '../contract/index.js';
 import {
   GamingService,
@@ -11,18 +11,7 @@ export function createGamingRouter(gaming: GamingService) {
   const os = implement(gamingContract).$context<OssContext>();
 
   return os.router({
-    listGames: os.listGames.handler(({ context }) => {
-      // Authenticated callers list their verified tenant's games on the RLS-enforced
-      // db (ADR-0018/0019). A pre-auth caller has no verified tenant - getTenantId
-      // would throw UNAUTHORIZED. We only treat the MISSING-session case as public
-      // (no leaking of unexpected errors): if auth is present, getTenantId yields the
-      // verified tenant; otherwise we serve the read-only public catalog for the
-      // server-side default tenant via listPublicGames (BYPASSRLS, explicit filter).
-      if (context.auth?.userId) {
-        return gaming.listGames(getTenantId(context));
-      }
-      return gaming.listPublicGames();
-    }),
+    listGames: os.listGames.handler(() => gaming.listGames()),
 
     getGame: os.getGame.handler(({ input }) =>
       mapErrors({ NOT_FOUND: GameNotFoundError }, () => gaming.getGame(input.id)),

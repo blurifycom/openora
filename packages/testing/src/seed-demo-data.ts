@@ -1,5 +1,4 @@
 import type { DrizzleDb } from '@oss/core/server';
-import { DEFAULT_TENANT_ID } from '@oss/core/contracts';
 import { eq } from 'drizzle-orm';
 import { user } from '@oss/core/pam/schema/identity';
 import { player } from '@oss/core/pam/schema/profile';
@@ -21,7 +20,6 @@ export type SeedOptions = {
   password?: string;
   playerCount?: number;
   windowDays?: number;
-  tenantId?: string;
   log?: (msg: string) => void;
 };
 
@@ -34,12 +32,6 @@ export type SeedResult = {
   games: number;
   transactions: number;
 };
-
-// The demo tenant every seeded row belongs to. The seeded admin/players get this
-// on user.tenantId so login resolves a tenant (ADR-0018) and the RLS app role then
-// sees their seeded wallet/player/game rows (which carry the same tenantId). It is
-// the canonical DEFAULT_TENANT_ID (single source of truth in @oss/core/contracts).
-export const DEMO_TENANT_ID = DEFAULT_TENANT_ID;
 
 function makeRng(seed: number): () => number {
   let s = seed >>> 0;
@@ -166,14 +158,7 @@ const GAMES = [
 ] as const;
 
 export async function seedDemoData(options: SeedOptions): Promise<SeedResult> {
-  const {
-    db,
-    auth,
-    playerCount = 36,
-    windowDays = 90,
-    tenantId = 'default',
-    log = () => {},
-  } = options;
+  const { db, auth, playerCount = 36, windowDays = 90, log = () => {} } = options;
   const admin = options.admin ?? {
     email: 'admin@oss.dev',
     password: 'password123',
@@ -183,10 +168,10 @@ export async function seedDemoData(options: SeedOptions): Promise<SeedResult> {
   const rng = makeRng(0x5eed);
 
   log('Clearing existing demo content (player, wallet, transaction, game)...');
-  await db.delete(walletTransaction).where(eq(walletTransaction.tenantId, tenantId));
-  await db.delete(wallet).where(eq(wallet.tenantId, tenantId));
-  await db.delete(player).where(eq(player.tenantId, tenantId));
-  await db.delete(game).where(eq(game.tenantId, tenantId));
+  await db.delete(walletTransaction);
+  await db.delete(wallet);
+  await db.delete(player);
+  await db.delete(game);
 
   const adminUser = await ensureUser(db, auth, {
     email: admin.email,
@@ -194,13 +179,11 @@ export async function seedDemoData(options: SeedOptions): Promise<SeedResult> {
     name: admin.name,
     role: 'admin',
     isActive: true,
-    tenantId,
   });
   if (adminUser) log(`Admin ready: ${admin.email} / ${admin.password}`);
 
   await db.insert(game).values(
     GAMES.map(([name, provider, category]) => ({
-      tenantId,
       name,
       provider,
       category,
@@ -238,7 +221,6 @@ export async function seedDemoData(options: SeedOptions): Promise<SeedResult> {
       role: 'player',
       isActive,
       createdAt,
-      tenantId,
     });
     if (!playerUser) continue;
     userCount++;
@@ -264,7 +246,6 @@ export async function seedDemoData(options: SeedOptions): Promise<SeedResult> {
       totalWagered: String(totalWagered),
       totalDeposits: String(totalDeposits),
       lastSeenAt,
-      tenantId,
       createdAt,
     });
 
@@ -272,7 +253,6 @@ export async function seedDemoData(options: SeedOptions): Promise<SeedResult> {
       .insert(wallet)
       .values({
         userId: playerUser.id,
-        tenantId,
         balance: String(round2(rng() * 1500)),
         currency,
       })
@@ -286,7 +266,6 @@ export async function seedDemoData(options: SeedOptions): Promise<SeedResult> {
       depositSum += amount;
       txRows.push({
         walletId: walletRow!.id,
-        tenantId,
         type: 'deposit',
         amount: String(amount),
         currency,
@@ -297,7 +276,6 @@ export async function seedDemoData(options: SeedOptions): Promise<SeedResult> {
     if (kycStatus === 'verified' && rng() > 0.5) {
       txRows.push({
         walletId: walletRow!.id,
-        tenantId,
         type: 'withdrawal',
         amount: String(round2(depositSum * (0.2 + rng() * 0.3))),
         currency,
@@ -331,7 +309,6 @@ type EnsureUserInput = {
   role: string;
   isActive: boolean;
   createdAt?: Date;
-  tenantId?: string;
 };
 
 async function ensureUser(
@@ -352,9 +329,6 @@ async function ensureUser(
     role: input.role,
     isActive: input.isActive,
   };
-  // Stamp the demo tenant explicitly so login resolves it (ADR-0018) rather than
-  // relying on the schema column default.
-  if (input.tenantId) patch.tenantId = input.tenantId;
   if (input.createdAt) patch.createdAt = input.createdAt;
   await db.update(user).set(patch).where(eq(user.id, existing.id));
   return { id: existing.id };

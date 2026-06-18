@@ -63,7 +63,7 @@ flowchart TB
   subgraph RT["@oss/core/server · createApp() (node engine)"]
     PH["plugin-host<br/>definePlugin · ModuleRegistry · applyServiceManifest"]
     DI["Container<br/>tokens to factories (last-wins overlay)"]
-    HONO["Hono + oRPC OpenAPIHandler<br/>validation · OpenAPI emit · RLS tenant ALS"]
+    HONO["Hono + oRPC OpenAPIHandler<br/>validation · OpenAPI emit"]
     GATE["editions: OSS_ADDONS allowlist<br/>SERVICE_MANIFEST module filter"]
   end
 
@@ -80,7 +80,7 @@ flowchart TB
     AUDIT["audit ⟨audit_log⟩ · @oss/audit"]:::core
     IAM["iam ⟨roles·perms·invites⟩ · @oss/iam"]:::core
     ADMC["admin-console (read API via ports) · @oss/admin-console"]:::core
-    DBPKG["@oss/core/server: db (Drizzle+RLS · migrate)"]:::kern
+    DBPKG["@oss/core/server: db (Drizzle · migrate)"]:::kern
     AUTHPKG["@oss/core/server: auth (better-auth)"]:::kern
   end
   subgraph D2["@oss/pam · player account mgmt"]
@@ -131,7 +131,7 @@ flowchart TB
 
   %% ============ DATA + INFRA ============
   subgraph DATA["Stores + infra overlays"]
-    PG[("PostgreSQL 16<br/>RLS tenant isolation")]:::data
+    PG[("PostgreSQL 16")]:::data
     REDIS[("Redis to BullMQ<br/>(REDIS_URL)")]:::data
     RMQ[("RabbitMQ to Kafka<br/>(AMQP_URL)")]:::data
     BUS["EventBus envelope<br/>24 domain events"]:::seam
@@ -294,7 +294,7 @@ flowchart TB
   SPLIT --> S2["wallet svc"]
   SPLIT --> S3["casino svc"]
   S1 & S2 & S3 ---|"durable broker (AMQP_URL)<br/>events cross process · outbox at-least-once"| RMQ[("RabbitMQ/Kafka")]
-  S1 & S2 & S3 --- PG[("PostgreSQL · RLS")]
+  S1 & S2 & S3 --- PG[("PostgreSQL")]
 ```
 
 ## Reference — domain → modules → tables → routes

@@ -969,7 +969,6 @@ server.registerTool(
       '## Acceptance criteria (derive from the requirements above)',
       '- [ ] Happy path works end to end',
       '- [ ] Edge cases and failure modes handled',
-      '- [ ] Multi-tenant: every new table carries `tenantId`',
       '- [ ] `pnpm verify` is green (typecheck + lint + boundaries + tests)',
       '',
       '## Decision-tree reference (from AGENTS.md)',
