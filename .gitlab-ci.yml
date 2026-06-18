@@ -203,13 +203,83 @@ trigger-consumer-bump:
         const url = `${process.env.CI_API_V4_URL}/projects/299/trigger/pipeline`;
         const body = new URLSearchParams({
           token: process.env.CONSUMER_BUMP_TRIGGER_TOKEN,
-          ref: "dev",
+          ref: "main",
           "variables[OSS_BUMP]": "true",
           "variables[OSS_VERSION]": version,
+          "variables[OSS_BUMP_TARGET]": "main",
         });
         fetch(url, { method: "POST", body }).then(async (r) => {
           const text = await r.text();
           if (!r.ok) { console.error("trigger failed", r.status, text); process.exit(1); }
           console.log("triggered consumer bump for", version, "->", r.status);
+        }).catch((e) => { console.error(e); process.exit(1); });
+      '
+
+# --- prerelease channels: dev -> alpha, stage -> beta (snapshot publishes) ----
+# Each push to dev/stage snapshot-publishes an immutable 0.4.0-<channel>-<datetime>
+# under the matching npm dist-tag, then triggers consumer's auto-bump on the
+# matching branch (dev<-alpha, stage<-beta). Stable is the tag-driven `publish`
+# job above (main<-latest). The snapshot bases on the pending changesets' next
+# version via snapshot.useCalculatedVersion in .changeset/config.json. allow_failure
+# so a publish hiccup never blocks dev/stage CI. See ADR-0022.
+publish-prerelease:
+  stage: release
+  # Gate on the build/test + lint gates only (DAG) so an alpha publishes as soon
+  # as those pass, instead of waiting on the whole pipeline (esp. the slow
+  # integration-DB job). `pnpm build` below is a Turbo cache hit from `verify`.
+  needs: ['verify', 'lint']
+  rules:
+    - if: $CI_COMMIT_BRANCH == "dev"
+      variables:
+        CHANNEL: alpha
+    - if: $CI_COMMIT_BRANCH == "stage"
+      variables:
+        CHANNEL: beta
+  allow_failure: true
+  script:
+    - |
+      {
+        echo "@oss:registry=${CI_API_V4_URL}/projects/${CI_PROJECT_ID}/packages/npm/"
+        echo "@oss-addons:registry=${CI_API_V4_URL}/projects/${CI_PROJECT_ID}/packages/npm/"
+        echo "//${CI_SERVER_HOST}/api/v4/projects/${CI_PROJECT_ID}/packages/npm/:_authToken=${CI_JOB_TOKEN}"
+      } >> .npmrc
+    - pnpm build
+    - pnpm changeset version --snapshot "$CHANNEL"
+    - pnpm changeset publish --no-git-tag --tag "$CHANNEL"
+    - echo "OSS_PRERELEASE_VERSION=$(node -p "require('./packages/core/package.json').version")" >> bump.env
+    - echo "CONSUMER_REF=$CI_COMMIT_BRANCH" >> bump.env
+    - cat bump.env
+  artifacts:
+    reports:
+      dotenv: bump.env
+
+trigger-consumer-prerelease:
+  stage: release
+  needs: ['publish-prerelease']
+  rules:
+    - if: $CI_COMMIT_BRANCH == "dev" || $CI_COMMIT_BRANCH == "stage"
+  allow_failure: true
+  before_script: []
+  script:
+    - |
+      if [ -z "$CONSUMER_BUMP_TRIGGER_TOKEN" ] || [ -z "$OSS_PRERELEASE_VERSION" ]; then
+        echo "missing trigger token or prerelease version - skipping"; exit 0
+      fi
+    - |
+      node -e '
+        const version = process.env.OSS_PRERELEASE_VERSION;
+        const ref = process.env.CONSUMER_REF;
+        const url = `${process.env.CI_API_V4_URL}/projects/299/trigger/pipeline`;
+        const body = new URLSearchParams({
+          token: process.env.CONSUMER_BUMP_TRIGGER_TOKEN,
+          ref,
+          "variables[OSS_BUMP]": "true",
+          "variables[OSS_VERSION]": version,
+          "variables[OSS_BUMP_TARGET]": ref,
+        });
+        fetch(url, { method: "POST", body }).then(async (r) => {
+          const text = await r.text();
+          if (!r.ok) { console.error("trigger failed", r.status, text); process.exit(1); }
+          console.log("triggered consumer prerelease bump", version, "->", ref, r.status);
         }).catch((e) => { console.error(e); process.exit(1); });
       '
