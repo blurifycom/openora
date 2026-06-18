@@ -18,7 +18,7 @@ export function createBackofficeRouter(
 
     listUsers: os.listUsers.handler(async ({ input, context }) => {
       await adminGuard.assert(context, 'player', 'view');
-      return backofficeService.listUsers(input.page ?? 1, input.limit ?? 20, input.search);
+      return backofficeService.listUsers(input.page, input.limit, input.search);
     }),
 
     getUser: os.getUser.handler(async ({ input, context }) => {
@@ -37,7 +37,7 @@ export function createBackofficeRouter(
 
     listTransactions: os.listTransactions.handler(async ({ input, context }) => {
       await adminGuard.assert(context, 'transaction', 'view');
-      return backofficeService.listTransactions(input.page ?? 1, input.limit ?? 20, input.userId);
+      return backofficeService.listTransactions(input.page, input.limit, input.userId);
     }),
   });
 }

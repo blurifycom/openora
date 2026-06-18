@@ -56,9 +56,9 @@ export class BackofficeService {
     page: number,
     limit: number,
     search?: string,
-  ): Promise<{ users: AdminUser[]; total: number }> {
+  ): Promise<{ items: AdminUser[]; total: number; page: number; limit: number }> {
     const { rows, total } = await this.users.list({ page, limit, search });
-    return { users: rows.map(toAdminUser), total };
+    return { items: rows.map(toAdminUser), total, page, limit };
   }
 
   async getUser(userId: string): Promise<AdminUser> {
@@ -80,8 +80,8 @@ export class BackofficeService {
     page: number,
     limit: number,
     userId?: string,
-  ): Promise<{ transactions: AdminTransaction[]; total: number }> {
+  ): Promise<{ items: AdminTransaction[]; total: number; page: number; limit: number }> {
     const { rows, total } = await this.reporting.listTransactions({ page, limit, userId });
-    return { transactions: rows.map(toAdminTransaction), total };
+    return { items: rows.map(toAdminTransaction), total, page, limit };
   }
 }

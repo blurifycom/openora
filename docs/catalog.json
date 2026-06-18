@@ -683,12 +683,12 @@
       "file": "packages/core/src/contracts/schemas/identity.ts"
     },
     {
-      "name": "PageSchema",
-      "file": "packages/core/src/cms/contract/index.ts"
+      "name": "PageQuerySchema",
+      "file": "packages/core/src/contracts/kit.ts"
     },
     {
-      "name": "PaginationInputSchema",
-      "file": "packages/core/src/contracts/schemas/common.ts"
+      "name": "PageSchema",
+      "file": "packages/core/src/cms/contract/index.ts"
     },
     {
       "name": "PaginationSchema",

@@ -7,6 +7,7 @@
 export * from './orpc/index.js';
 export * from './schemas/index.js';
 export * from './adapters/index.js';
+export * from './kit.js';
 // Note: the player-domain KycStatus ('verified'...) lives in ./schemas; the KYC
 // vendor-adapter enum ('approved'...) is exported as KycVendorStatus from
 // ./adapters so the two no longer collide. See ADR-0025.

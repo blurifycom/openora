@@ -1,6 +1,7 @@
 import { oc } from '@orpc/contract';
 import * as z from 'zod';
 import { UserIdInputSchema } from '@oss/core/contracts';
+import { PageQuerySchema, paginated } from '@oss/core/contracts/kit';
 
 export const PlatformStatsSchema = z.object({
   totalUsers: z.number().int(),
@@ -29,19 +30,13 @@ export const AdminTransactionSchema = z.object({
   createdAt: z.iso.datetime(),
 });
 
-// Query params arrive as strings over HTTP - coerce so list endpoints validate.
-const PaginationInputSchema = z.object({
-  page: z.coerce.number().int().min(1).optional(),
-  limit: z.coerce.number().int().min(1).max(100).optional(),
-});
-
 export const backofficeContract = {
   getStats: oc.route({ method: 'GET', path: '/backoffice/stats' }).output(PlatformStatsSchema),
 
   listUsers: oc
     .route({ method: 'GET', path: '/backoffice/users' })
-    .input(PaginationInputSchema.extend({ search: z.string().optional() }))
-    .output(z.object({ users: z.array(AdminUserSchema), total: z.number().int() })),
+    .input(PageQuerySchema.extend({ search: z.string().optional() }))
+    .output(paginated(AdminUserSchema)),
 
   getUser: oc
     .route({ method: 'GET', path: '/backoffice/users/{userId}' })
@@ -61,6 +56,6 @@ export const backofficeContract = {
 
   listTransactions: oc
     .route({ method: 'GET', path: '/backoffice/transactions' })
-    .input(PaginationInputSchema.extend({ userId: z.uuid().optional() }))
-    .output(z.object({ transactions: z.array(AdminTransactionSchema), total: z.number().int() })),
+    .input(PageQuerySchema.extend({ userId: z.uuid().optional() }))
+    .output(paginated(AdminTransactionSchema)),
 };

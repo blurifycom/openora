@@ -10,7 +10,7 @@ export function createPlayerRouter(player: PlayerService, adminGuard: AdminGuard
   return os.router({
     list: os.list.handler(async ({ input, context }) => {
       await adminGuard.assert(context, 'player', 'view');
-      return player.list(input.page ?? 1, input.limit ?? 20, input.search, input.status);
+      return player.list(input.page, input.limit, input.search, input.status);
     }),
 
     get: os.get.handler(async ({ input, context }) => {

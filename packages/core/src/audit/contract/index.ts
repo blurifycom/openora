@@ -1,5 +1,6 @@
 import { oc } from '@orpc/contract';
 import * as z from 'zod';
+import { PageQuerySchema, paginated } from '@oss/core/contracts/kit';
 
 // --- Output shapes ---
 
@@ -26,17 +27,13 @@ export const AuditLogEntrySchema = z.object({
 
 // --- Input shapes ---
 
-export const AuditListFiltersSchema = z.object({
+export const AuditListFiltersSchema = PageQuerySchema.extend({
   actorId: z.string().optional(),
   actorType: AuditActorTypeSchema.optional(),
   action: z.string().optional(),
   resourceType: z.string().optional(),
   fromDate: z.string().optional(),
   toDate: z.string().optional(),
-  // Coerce: page/limit arrive as query-string values over HTTP GET, so they must
-  // parse from strings (matches PAM, leaderboard, and admin-console pagination).
-  page: z.coerce.number().int().min(1).default(1),
-  limit: z.coerce.number().int().min(1).max(200).default(50),
 });
 
 export const AuditExportFiltersSchema = AuditListFiltersSchema.omit({ page: true, limit: true });
@@ -47,14 +44,7 @@ export const auditContract = {
   list: oc
     .route({ method: 'GET', path: '/audit/logs' })
     .input(AuditListFiltersSchema)
-    .output(
-      z.object({
-        items: z.array(AuditLogEntrySchema),
-        total: z.number(),
-        page: z.number(),
-        limit: z.number(),
-      }),
-    ),
+    .output(paginated(AuditLogEntrySchema)),
 
   exportCsv: oc
     .route({ method: 'GET', path: '/audit/export' })

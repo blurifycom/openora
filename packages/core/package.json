@@ -12,6 +12,11 @@
       "require": "./dist/contracts/index.js",
       "types": "./dist/contracts/index.d.ts"
     },
+    "./contracts/kit": {
+      "import": "./dist/contracts/kit.js",
+      "require": "./dist/contracts/kit.js",
+      "types": "./dist/contracts/kit.d.ts"
+    },
     "./react": {
       "import": "./dist/react/index.js",
       "require": "./dist/react/index.js",

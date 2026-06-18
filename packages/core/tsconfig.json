@@ -40,6 +40,7 @@
       "@oss/core/compliance/sealed": ["./src/compliance/sealed.ts"],
       "@oss/core/compliance/server": ["./src/compliance/plugin.ts"],
       "@oss/core/contracts": ["./src/contracts/index.ts"],
+      "@oss/core/contracts/kit": ["./src/contracts/kit.ts"],
       "@oss/core/engagement": ["./src/engagement/index.ts"],
       "@oss/core/engagement/contracts": ["./src/engagement/contracts.ts"],
       "@oss/core/engagement/contracts/bonus": ["./src/engagement/bonus/contract/index.ts"],

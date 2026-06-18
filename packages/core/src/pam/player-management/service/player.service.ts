@@ -61,7 +61,7 @@ export class PlayerService {
     limit: number,
     search?: string,
     status?: PlayerStatus,
-  ): Promise<{ players: Player[]; total: number }> {
+  ): Promise<{ items: Player[]; total: number; page: number; limit: number }> {
     const db = this.drizzle.db;
     const conditions = [];
     if (status) conditions.push(eq(player.status, status));
@@ -84,8 +84,8 @@ export class PlayerService {
         .offset(pageToOffset(page, limit)),
       db.select({ n: count() }).from(player).where(whereClause),
     ]);
-    const players = rows.map((r) => toPlayer(r.player, r.email ?? ''));
-    return { players, total: Number(n) };
+    const items = rows.map((r) => toPlayer(r.player, r.email ?? ''));
+    return { items, total: Number(n), page, limit };
   }
 
   async get(playerId: string): Promise<Player> {
