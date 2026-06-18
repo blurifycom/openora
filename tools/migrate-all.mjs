@@ -10,17 +10,17 @@
 // (leaderboard). player-management reads the core `player` table and owns none, so
 // has no migrate entry and is skipped.
 //
+// Every set uses the runtime migrator (drizzle-orm, @oss/core/server/migrate) - the
+// same path a published consumer runs from node_modules - NOT the drizzle-kit `migrate`
+// CLI (dev-only authoring tool, and it crashes on Node >=26). One code path for all.
+//
 // Requires @oss/core to be built (the migrate entries resolve to dist) and
 // DATABASE_ADMIN_URL or DATABASE_URL set. See docs/adr/0020 + ADR-0025.
-import { execFileSync } from 'node:child_process';
-import { join, dirname } from 'node:path';
-import { fileURLToPath } from 'node:url';
 
-const repoRoot = join(dirname(fileURLToPath(import.meta.url)), '..');
-
-// 1) Core central history (drizzle-kit migrate against the central drizzle.config).
+// 1) Core central history.
 process.stdout.write('\n> migrate @oss/core (central history)\n');
-execFileSync('pnpm', ['-F', '@oss/core', 'migrate'], { cwd: repoRoot, stdio: 'inherit' });
+const { migrate: migrateCore } = await import('@oss/core/server/migrate');
+await migrateCore();
 
 // 2) Gated add-on histories folded into @oss/core (own tracking table + SQL).
 const gated = ['sportsbook', 'casino', 'engagement']; // sportsbook, aggregator, leaderboard

@@ -24,10 +24,12 @@
     },
     "./server/orm": {
       "import": "./dist/server/db/orm.js",
+      "require": "./dist/server/db/orm.js",
       "types": "./dist/server/db/orm.d.ts"
     },
     "./server/migrate": {
       "import": "./dist/server/db/migrate.js",
+      "require": "./dist/server/db/migrate.js",
       "types": "./dist/server/db/migrate.d.ts"
     },
     "./compliance": {
