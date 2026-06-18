@@ -6,10 +6,8 @@ import { organization, admin as adminPlugin, twoFactor } from 'better-auth/plugi
 import type { DrizzleDb } from '../db/index.js';
 import { ac, roles } from './permissions.js';
 
-// Transport-agnostic mail hook. The identity plugin supplies an implementation
-// backed by NOTIFICATION_DELIVERY_ADAPTER; @oss/core/server never imports a mailer or
-// the notifications module directly (boundary). When omitted, password-reset /
-// verification emails are silently skipped (e.g. in unit tests).
+// Transport-agnostic mail hook; identity plugin binds the implementation via
+// NOTIFICATION_DELIVERY_ADAPTER. When omitted, emails are silently skipped (eg in tests).
 export type SendEmail = (args: {
   to: string;
   subject: string;
@@ -22,7 +20,7 @@ export type AuthOptions = {
   sendEmail?: SendEmail;
 };
 
-// Return type is explicit to avoid TS2883 (Zod v4 $strip portability issue with admin plugin)
+// Explicit return type avoids TS2883 (Zod v4 $strip portability issue with admin plugin).
 export function createAuth(options: AuthOptions): BetterAuthType {
   const sendEmail: SendEmail = options.sendEmail ?? (() => {});
   return betterAuth({
@@ -30,9 +28,7 @@ export function createAuth(options: AuthOptions): BetterAuthType {
       provider: 'pg',
       schema: options.schema,
     }),
-    // Generate UUID ids for every auth model (user/session/account/verification),
-    // matching the platform-wide uuid id convention. Our id columns are `text`
-    // without a DB default, so better-auth must supply the value itself.
+    // id columns are `text` without a DB default, so better-auth must supply the value.
     advanced: {
       database: {
         generateId: () => randomUUID(),

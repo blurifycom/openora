@@ -1,19 +1,16 @@
+// Shared so the profile add-on can derive from them too. See ADR-0021.
 import { oc, populateContractRouterPaths } from '@orpc/contract';
 import * as z from 'zod';
-// The canonical player shape + lifecycle/KYC enums are cross-cutting (the free
-// profile add-on derives from them too), so they live in shared-schemas. See ADR-0021.
 import { PlayerSchema, PlayerStatusSchema, KycStatusSchema } from '@oss/core/contracts';
 import { PageQuerySchema, paginated } from '@oss/core/contracts/kit';
 
 export { PlayerSchema, PlayerStatusSchema, KycStatusSchema };
 
-/** One bucket of the registrations-over-time chart. */
 export const PlayerRegistrationPointSchema = z.object({
   date: z.string(), // YYYY-MM-DD
   count: z.number().int(),
 });
 
-/** Headline numbers for the players dashboard. */
 export const PlayerSummarySchema = z.object({
   total: z.number().int(),
   active: z.number().int(),
@@ -21,11 +18,6 @@ export const PlayerSummarySchema = z.object({
   selfExcluded: z.number().int(),
 });
 
-/**
- * Player Account Management (PAM) contract - the admin-facing surface for managing
- * igaming players. Add-on: lives here, not in the core root contract. Populated so
- * the router implements against it and the app merges it as-is.
- */
 export const playerContract = populateContractRouterPaths({
   list: oc
     .route({ method: 'GET', path: '/players' })

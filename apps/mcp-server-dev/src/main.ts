@@ -10,10 +10,6 @@ import pg from 'pg';
 const here = dirname(fileURLToPath(import.meta.url));
 const repoRoot = join(here, '..', '..', '..');
 
-// ---------------------------------------------------------------------------
-// Helpers
-// ---------------------------------------------------------------------------
-
 function repoPath(...parts: string[]): string {
   return join(repoRoot, ...parts);
 }
@@ -28,9 +24,6 @@ function listDirs(p: string): string[] {
   return readdirSync(p).filter((f) => statSync(join(p, f)).isDirectory());
 }
 
-// Every feature is a standalone @oss-addons/<name> package under packages/addons/<name>/.
-// `group` is no longer a directory; it labels core vs gated add-ons, read from
-// extensions.config.ts (`kind: 'addon'` -> gated, otherwise core).
 const ADDONS_DIR = ['packages', 'addons'] as const;
 
 /** Map add-on id -> 'core' | 'addon', parsed from extensions.config.ts. */
@@ -154,7 +147,6 @@ function resolveDatabaseUrl(): string {
 
 const READONLY_SQL_PREFIXES = ['select', 'with', 'explain', 'show', 'table', 'values'];
 
-// --- intent classification (for enhance-intent) -----------------------------
 type IntentKind = 'feature' | 'adapter' | 'ui-page' | 'route' | 'downstream-app' | 'unsure';
 
 /** Best-effort keyword classification of a fuzzy "what I want to build" ask. */
@@ -318,16 +310,11 @@ const REQUIREMENTS_INTERVIEW = [
   'Then summarize the requirements back to the user as a short structured list and get an explicit yes before any building starts.',
 ].join('\n');
 
-// ---------------------------------------------------------------------------
-// MCP server
-// ---------------------------------------------------------------------------
-
 const server = new McpServer({
   name: 'oss-dev',
   version: '0.1.0',
 });
 
-// --- read-agents-md ---------------------------------------------------------
 server.registerTool(
   'read-agents-md',
   {
@@ -353,7 +340,6 @@ server.registerTool(
   },
 );
 
-// --- list-modules -----------------------------------------------------------
 server.registerTool(
   'list-modules',
   {
@@ -377,7 +363,6 @@ server.registerTool(
   },
 );
 
-// --- describe-module --------------------------------------------------------
 server.registerTool(
   'describe-module',
   {
@@ -437,7 +422,6 @@ server.registerTool(
   },
 );
 
-// --- list-routes ------------------------------------------------------------
 server.registerTool(
   'list-routes',
   {
@@ -461,7 +445,6 @@ server.registerTool(
   },
 );
 
-// --- list-extension-points --------------------------------------------------
 server.registerTool(
   'list-extension-points',
   {
@@ -472,10 +455,6 @@ server.registerTool(
   async () => {
     const parts: string[] = [];
 
-    // The page/block SDK layer (and its named UI slot catalog) was removed - the
-    // platform is headless and the frontend lives in the downstream consumer repo.
-
-    // Events from @oss/core/server
     const eventsFile = repoPath('packages', 'platform', 'core', 'src', 'event-bus.ts');
     if (existsSync(eventsFile)) {
       parts.push(`\n=== Events (EventBus from @oss/core/server) ===\n${readFile(eventsFile)}`);
@@ -483,7 +462,6 @@ server.registerTool(
       parts.push('\n=== Events ===\n(event-bus.ts not found)');
     }
 
-    // Vendor adapter interfaces from @oss/core/contracts (the single home for the swap seams)
     const adaptersDir = repoPath('packages', 'contracts', 'adapters', 'src');
     parts.push('\n=== Adapter interfaces (@oss/core/contracts) ===');
     if (existsSync(adaptersDir)) {
@@ -501,7 +479,6 @@ server.registerTool(
   },
 );
 
-// --- query-openapi ----------------------------------------------------------
 server.registerTool(
   'query-openapi',
   {
@@ -542,7 +519,6 @@ server.registerTool(
   },
 );
 
-// --- scaffold-* (delegating to `pnpm gen` -> tools/gen.ts) ------------------
 server.registerTool(
   'scaffold-module',
   {
@@ -593,7 +569,6 @@ server.registerTool(
   },
 );
 
-// --- scaffold-app (bootstrap a downstream consumer repo) --------------------
 server.registerTool(
   'scaffold-app',
   {
@@ -617,7 +592,6 @@ server.registerTool(
   },
 );
 
-// --- run-verify -------------------------------------------------------------
 server.registerTool(
   'run-verify',
   {
@@ -639,7 +613,6 @@ server.registerTool(
   },
 );
 
-// --- regen ------------------------------------------------------------------
 server.registerTool(
   'regen',
   {
@@ -660,7 +633,6 @@ server.registerTool(
   },
 );
 
-// --- get-drizzle-schema -----------------------------------------------------
 server.registerTool(
   'get-drizzle-schema',
   {
@@ -718,7 +690,6 @@ server.registerTool(
   },
 );
 
-// --- propose-table-change ---------------------------------------------------
 server.registerTool(
   'propose-table-change',
   {
@@ -756,7 +727,6 @@ server.registerTool(
   },
 );
 
-// --- schema-get -------------------------------------------------------------
 server.registerTool(
   'schema-get',
   {
@@ -783,7 +753,6 @@ server.registerTool(
         }
       }
     }
-    // Not found: list available schema names to help the caller.
     const names = new Set<string>();
     for (const file of files) {
       for (const m of readFileSync(file, 'utf8').matchAll(/export const (\w+Schema)\b/g)) {
@@ -799,7 +768,6 @@ server.registerTool(
   },
 );
 
-// --- docs-search ------------------------------------------------------------
 server.registerTool(
   'docs-search',
   {
@@ -844,7 +812,6 @@ server.registerTool(
   },
 );
 
-// --- db-query-readonly ------------------------------------------------------
 server.registerTool(
   'db-query-readonly',
   {
@@ -905,7 +872,6 @@ server.registerTool(
       if (!file.endsWith('.md')) continue;
       const name = '/' + file.replace(/\.md$/, '');
       const content = readFileSync(join(commandsDir, file), 'utf8');
-      // Pull the `description:` field from the frontmatter, stripping any quotes.
       const descLine = content.split('\n').find((l) => l.startsWith('description:'));
       const desc = descLine
         ? descLine
@@ -920,7 +886,6 @@ server.registerTool(
   },
 );
 
-// --- enhance-intent ---------------------------------------------------------
 server.registerTool(
   'enhance-intent',
   {
@@ -979,7 +944,6 @@ server.registerTool(
   },
 );
 
-// --- dev:infra --------------------------------------------------------------
 server.registerTool(
   'dev:infra',
   {
@@ -1005,13 +969,11 @@ server.registerTool(
       return { content: [{ type: 'text', text: r.ok ? 'Stopped.' : r.output }] };
     }
 
-    // up - start detached then wait for postgres to be ready
     const up = run('docker compose up -d');
     if (!up.ok) {
       return { content: [{ type: 'text', text: `docker compose up failed:\n${up.output}` }] };
     }
 
-    // Poll pg_isready up to 30 s
     const deadline = Date.now() + 30_000;
     let ready = false;
     while (Date.now() < deadline) {
@@ -1030,7 +992,6 @@ server.registerTool(
   },
 );
 
-// --- start ------------------------------------------------------------------
 server.registerTool(
   'start',
   {
@@ -1076,7 +1037,6 @@ server.registerTool(
       return { content: [{ type: 'text', text }] };
     }
 
-    // No ask yet - return the interactive onboarding script for the agent to follow.
     const text = [
       '# Onboarding script - follow this exactly',
       '',
@@ -1106,8 +1066,5 @@ server.registerTool(
   },
 );
 
-// ---------------------------------------------------------------------------
-// Start (stdio transport - works with Claude Code, Cursor, Windsurf, VS Code, any MCP client)
-// ---------------------------------------------------------------------------
 const transport = new StdioServerTransport();
 await server.connect(transport);

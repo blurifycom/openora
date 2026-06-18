@@ -1,14 +1,8 @@
 import * as z from 'zod';
 
-// The cross-module domain event catalog: one Zod schema per event topic. This is
-// the single source of truth for both the runtime payload validation and the
-// inferred payload type (`DomainEventPayload`). A module that emits or subscribes
-// to a cross-module event declares its shape here so producers and consumers share
-// one contract. Payloads are intentionally small (ids + primitives); compose an
-// existing shared-schema here if a future event carries a full entity.
-//
-// Keep this in sync with the `events.emit(...)` call sites in
-// packages/addons/*/src/service/*.service.ts.
+const iamRoleEventBase = z.object({ roleId: z.string(), actorId: z.string() });
+const permissionLevelEntries = z.array(z.object({ resource: z.string(), level: z.string() }));
+
 export const domainEventSchemas = {
   'identity.user.registered': z.object({ userId: z.uuid() }),
   'identity.user.login': z.object({ userId: z.uuid() }),
@@ -103,17 +97,33 @@ export const domainEventSchemas = {
     roleId: z.string(),
     invitationId: z.string(),
   }),
+
+  // Backoffice RBAC mutations. The envelope does NOT carry the
+  // caller, so every payload carries an explicit `actorId` (the admin who acted)
+  // for the audit trail. `before`/`after` carry the level matrix for permission
+  // changes so the audit log records the transition.
+  'iam.role.created': iamRoleEventBase.extend({
+    name: z.string(),
+    description: z.string().optional(),
+  }),
+  'iam.role.updated': iamRoleEventBase.extend({
+    name: z.string().optional(),
+    description: z.string().nullable().optional(),
+  }),
+  'iam.role.deleted': iamRoleEventBase,
+  'iam.role.permissions.changed': iamRoleEventBase.extend({
+    before: permissionLevelEntries,
+    after: permissionLevelEntries,
+  }),
+  'iam.role.assigned': iamRoleEventBase.extend({ userId: z.string() }),
+  'iam.role.revoked': iamRoleEventBase.extend({ userId: z.string() }),
 } as const;
 
 export type DomainEventName = keyof typeof domainEventSchemas;
 export type DomainEventPayload<K extends DomainEventName> = z.infer<(typeof domainEventSchemas)[K]>;
 
-// Per-event schema version. Every event starts at 1; bump an entry here only when
-// its payload shape changes in a non-additive way, in the SAME commit that edits
-// the schema above. The EventBus stamps this onto the envelope's `schemaVersion`
-// so a consumer (in another service, possibly deployed at a different version)
-// can branch or upcast. Events not listed default to version 1 - keep the map
-// sparse so it records only real evolutions, not noise.
+// Bump an entry only when its payload shape changes in a non-additive way, in the SAME commit
+// that edits the schema above. Events not listed default to version 1.
 export const domainEventVersions: Partial<Record<DomainEventName, number>> = {
   // 'wallet.deposit.completed': 2,  // example: bumped when `fee` was added
 };
@@ -122,9 +132,7 @@ export function getEventVersion(event: string): number {
   return domainEventVersions[event as DomainEventName] ?? 1;
 }
 
-// Machine-readable catalog of every cross-module topic and its current version.
-// Useful for provisioning broker topics (Kafka/RabbitMQ), docs, and asserting
-// producer/consumer version agreement across services. Pure - no side effects.
+/** Returns every cross-module topic and its current schema version for broker provisioning and producer/consumer agreement checks. */
 export function eventCatalog(): ReadonlyArray<{ topic: DomainEventName; version: number }> {
   return (Object.keys(domainEventSchemas) as DomainEventName[]).map((topic) => ({
     topic,

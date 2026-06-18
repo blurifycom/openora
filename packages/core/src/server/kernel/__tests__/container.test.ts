@@ -12,8 +12,8 @@ describe('Container', () => {
     const a = c.get(TOKEN);
     const b = c.get(TOKEN);
 
-    expect(a).toBe(b); // same cached instance
-    expect(factory).toHaveBeenCalledTimes(1); // lazy + memoized
+    expect(a).toBe(b);
+    expect(factory).toHaveBeenCalledTimes(1);
   });
 
   it('last registration wins and drops the cached instance', () => {
@@ -22,7 +22,7 @@ describe('Container', () => {
     c.register(TOKEN, () => 'first');
     expect(c.get(TOKEN)).toBe('first');
 
-    c.register(TOKEN, () => 'second'); // overlay rebinds after first resolve
+    c.register(TOKEN, () => 'second');
     expect(c.get(TOKEN)).toBe('second');
   });
 

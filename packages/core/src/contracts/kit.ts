@@ -1,9 +1,6 @@
-// Domain-free leaf primitives (zod only): the shared pagination vocabulary every
-// module - in-tree or extracted - links against. Per ADR-0024/0025 it must import
-// no domain.
+// Per ADR-0024/0025 the runtime contract every module links against must import only contracts.
 import { z } from 'zod';
 
-// Offset page query, coerced for HTTP GET query strings.
 export const PageQuerySchema = z.object({
   page: z.coerce.number().int().min(1).default(1),
   limit: z.coerce.number().int().min(1).max(50).default(50),

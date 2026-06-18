@@ -13,36 +13,23 @@ import { chatContract, ChatMessageSchema } from '../contract/index.js';
 
 export type ChatMessage = z.infer<typeof ChatMessageSchema>;
 
-// The chat slice mounted under its server namespace, so client.chat.* resolves
-// the same paths the API serves. Built once - the SDK client is generic over
-// whatever contract the caller supplies (@oss/core/react owns no contract).
 const chatRootContract = populateContractRouterPaths({ chat: chatContract });
 
-// Cap the in-memory buffer so a long-lived session does not grow the array (and
-// the DOM) without bound. Oldest messages drop first.
 const DEFAULT_MAX_MESSAGES = 500;
 
 export type UseChatStreamOptions = {
-  // Messages already loaded (eg from an initial getRoomMessages/getGlobalMessages
-  // fetch) to seed the list before the live stream attaches.
   initialMessages?: ChatMessage[];
-  // When false, the stream is not opened.
   enabled?: boolean;
-  // Maximum messages retained in memory (oldest dropped first). Default 500.
   maxMessages?: number;
 };
 
 export type UseChatStreamResult = {
   messages: ChatMessage[];
   status: EventStreamStatus;
-  // The React state setter (accepts a value or updater) - eg to merge a backfill
-  // query result into the live list.
   setMessages: Dispatch<SetStateAction<ChatMessage[]>>;
 };
 
-// The realtime channel for a room (null = global). MUST mirror `chatChannel` in
-// the chat module's service (the canonical naming convention) so the injected
-// transport subscribes to the same channel the server publishes to.
+// MUST mirror `chatChannel` in the chat service so the injected transport subscribes to the same channel the server publishes to.
 function chatChannel(roomId: string | null): string {
   return roomId ? `chat:room:${roomId}` : 'chat:global';
 }
@@ -78,7 +65,6 @@ export function useChatStream(
     [maxMessages],
   );
 
-  // Built-in SSE transport - only active when no client adapter is injected.
   const subscribe = useCallback(
     (signal: AbortSignal) => client.chat.streamMessages({ roomId }, { signal }),
     [client, roomId],
@@ -88,7 +74,6 @@ export function useChatStream(
     onEvent: onMessage,
   });
 
-  // Injected transport (eg Ably): subscribe to the channel directly.
   useEffect(() => {
     if (!adapter || !enabled) return;
     return adapter.subscribe<ChatMessage>(chatChannel(roomId), {
@@ -97,8 +82,6 @@ export function useChatStream(
     });
   }, [adapter, enabled, roomId, onMessage]);
 
-  // When the adapter is injected but the feed is disabled (eg a closed panel), the
-  // last connection state is stale - report 'idle' so the UI does not show "Live".
   const status = adapter ? (enabled ? adapterStatus : 'idle') : sseStatus;
   return { messages, status, setMessages };
 }

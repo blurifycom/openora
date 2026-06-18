@@ -1,10 +1,7 @@
 import type { Token } from '../../contracts/adapters/index.js';
 
-// Functional composition container - the explicit replacement for Nest DI.
-// No decorators, no reflection: a provider is just a factory that names its own
-// dependencies by resolving them from the container. Resolution is lazy and
-// cached; the last `register` for a token wins (so an overlay can rebind an
-// adapter by registering after the module that owns the default binding).
+// Functional DI container. Resolution is lazy and cached; last `register` for a
+// token wins - overlays rebind adapters by registering after the default binding.
 
 export type Factory<T> = (c: Container) => T;
 
@@ -43,7 +40,6 @@ export class Container {
     return instance;
   }
 
-  // Register teardown (eg closing a DB pool). Run in reverse order on dispose().
   onDispose(fn: () => void | Promise<void>): void {
     this.disposers.push(fn);
   }

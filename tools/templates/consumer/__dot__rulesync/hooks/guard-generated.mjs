@@ -11,10 +11,8 @@ const payload = readPayload();
 const filePath = extractFilePath(payload);
 if (!filePath) process.exit(0);
 
-// Repo-relative (hooks run with cwd = repo root) - name-agnostic.
 const rel = isAbsolute(filePath) ? relative(process.cwd(), filePath) : filePath;
 
-// Everything rulesync generates from .rulesync/.
 const generated = [
   /^AGENTS\.md$/,
   /^CLAUDE\.md$/,

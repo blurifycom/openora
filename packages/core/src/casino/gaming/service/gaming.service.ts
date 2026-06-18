@@ -89,8 +89,7 @@ export class GamingService {
   }
 
   async endRound(userId: string, roundId: string): Promise<{ success: true; outcome?: unknown }> {
-    // Scope by the caller: a round can only be ended by its owner. With RLS gone
-    // (ADR-0026, single-tenant) this userId filter is the access guard.
+    // Without RLS (ADR-0026, single-tenant) this userId filter is the sole access guard.
     findOneOrThrow(
       await this.drizzle.db
         .select()

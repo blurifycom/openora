@@ -14,14 +14,11 @@ type RequestLike = { headers: Record<string, string | string[] | undefined> };
 export const ADMIN_GUARD: Token<AdminGuard> = createToken('ADMIN_GUARD');
 
 export class AdminGuard {
-  // The guard verifies the session through the SHARED SessionResolver (one
-  // better-auth init for the whole app) rather than building a second createAuth
-  // over the same DB. createApp binds both the resolver and the guard.
+  // Uses the shared SessionResolver (one better-auth init for the whole app) rather than a second createAuth over the same DB.
   constructor(
     private readonly drizzle: DrizzleService,
     private readonly sessions: SessionResolver,
-    // Optional DB-backed RBAC. When bound (the iam module is loaded), effective
-    // grants come from the DB; otherwise the guard falls back to static roles.
+    // When bound (iam module loaded), grants come from DB; otherwise falls back to static roles.
     private readonly permissionResolver?: AdminPermissionResolver,
   ) {}
 
@@ -66,7 +63,6 @@ export class AdminGuard {
         : null;
 
       if (grants !== null) {
-        // DB-backed role assignment present - authorize against the grants.
         const allowed = grants.some((g) => g.resource === resource && g.action === action);
         if (!allowed) {
           throw new ORPCError('FORBIDDEN', {
@@ -74,11 +70,7 @@ export class AdminGuard {
           });
         }
       } else {
-        // No DB role (or no resolver bound) - fall back to static roles.
-        // INTENTIONAL bootstrap path: the seed/bootstrap admin has user.role='admin'
-        // but no DB assignment row and must not be locked out. As a consequence, DB
-        // revocation is NOT authoritative while a static admin role still grants the
-        // permission - revoke the static role to fully deny such a user.
+        // Bootstrap path: seed admin has user.role='admin' but no DB assignment row. DB revocation is NOT authoritative while a static role still grants - revoke the static role to fully deny.
         const userRole = roles[userRecord.role as keyof typeof roles];
         if (!userRole) {
           throw new ORPCError('FORBIDDEN', { message: 'Admin access required' });
@@ -91,9 +83,6 @@ export class AdminGuard {
         }
       }
     } else {
-      // Bare assert (no resource/action): fail closed. Only an entry in the admin
-      // allow-list (`roles`) may pass - any other non-null role (player, support
-      // with no static admin grant, unknown/empty) is rejected.
       if (!roles[userRecord.role as keyof typeof roles]) {
         throw new ORPCError('FORBIDDEN', { message: 'Admin access required' });
       }

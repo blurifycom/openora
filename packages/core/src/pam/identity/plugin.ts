@@ -17,12 +17,9 @@ export default definePlugin({
   id: 'identity',
   register(ctx) {
     ctx.provide(KYC_ADAPTER, () => new MockKycAdapter());
-    // Admin/back-office view of the user directory (read + role/active write).
-    // The back-office depends on this port, not on the identity schema.
+    // The back-office depends on this port, not on the identity schema directly.
     ctx.provide(ADMIN_USER_DIRECTORY, (c) => new DrizzleAdminUserDirectory(c.get(DRIZZLE)));
-    // Reset/verification emails go through the platform delivery seam (mock by
-    // default; overlay swaps in SES/SendGrid). Resolved lazily so identity does
-    // not depend on the notifications plugin's load order.
+    // Resolved lazily so identity does not depend on the notifications plugin's load order.
     ctx.provide(
       SEND_EMAIL,
       (c): SendEmailPort => ({

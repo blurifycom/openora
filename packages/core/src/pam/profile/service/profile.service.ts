@@ -29,8 +29,6 @@ function toPlayer(p: typeof player.$inferSelect, email: string): Player {
   };
 }
 
-// Player-facing self-profile service. Owns the `player` table. The admin PAM
-// surface lives in the add-on @oss-addons/player-management package.
 export class ProfileService {
   constructor(private readonly drizzle: DrizzleService) {}
 
@@ -42,9 +40,8 @@ export class ProfileService {
     return record?.email ?? '';
   }
 
-  // Return the caller's player row, creating a default one on first access.
-  // Registration only creates the auth `user`; the `player` profile row is
-  // materialised lazily here so a freshly-registered user always has a profile.
+  // Registration only creates the auth `user`; the `player` row is materialised
+  // lazily so a freshly-registered user always has a profile.
   private async ensureProfile(userId: string): Promise<Player> {
     const [existing] = await this.drizzle.db.select().from(player).where(eq(player.userId, userId));
     if (existing) return toPlayer(existing, await this.emailFor(userId));

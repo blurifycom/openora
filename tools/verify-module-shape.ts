@@ -25,9 +25,7 @@ import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const repoRoot = join(dirname(fileURLToPath(import.meta.url)), '..');
-// Domains fold into @oss/core as subpaths (ADR-0025): each lives at
-// packages/core/src/<domain>/ and is published as a subpath of @oss/core, not a
-// standalone package. The engine zones below are not domains.
+// Domains fold into @oss/core as subpaths. See ADR-0025.
 const coreSrc = join(repoRoot, 'packages', 'core', 'src');
 const engineDirs = new Set(['contracts', 'server', 'react', 'scripts']);
 const addonsRoot = join(repoRoot, 'packages', 'addons');
@@ -45,7 +43,6 @@ const readPkg = (dir: string): Pkg | null => {
   }
 };
 
-// @oss/core's exports map - the single published surface every domain folds into.
 const coreExports = (readPkg(join(repoRoot, 'packages', 'core'))?.exports ?? {}) as Record<
   string,
   unknown

@@ -3,9 +3,8 @@ import { DrizzleService, pageToOffset } from '@oss/core/server';
 import { count, desc, eq, ilike } from 'drizzle-orm';
 import { user } from './schema/index.js';
 
-// Identity owns the `user` table, so it owns the admin directory port. The
-// back-office (admin-console) depends only on ADMIN_USER_DIRECTORY - never on this
-// schema - so it stays a clean, extractable module. See ADR-0017/0025.
+// Identity owns the `user` table, so it owns the admin directory port.
+// admin-console depends only on ADMIN_USER_DIRECTORY - never on this schema. See ADR-0017/0025.
 function toRow(r: typeof user.$inferSelect): AdminUserRow {
   return {
     id: r.id,

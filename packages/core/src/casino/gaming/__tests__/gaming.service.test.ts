@@ -24,8 +24,6 @@ describe('GamingService domain errors', () => {
   });
 });
 
-// A query-chain spy: records that select/from/where/orderBy were called and resolves
-// to `rows`. orderBy is the awaited terminal in listGames.
 function makeQueryChain(rows: unknown[]) {
   const calls = { where: undefined as unknown };
   const chain = {
@@ -63,7 +61,6 @@ describe('GamingService lobby', () => {
 
     expect(games).toHaveLength(1);
     expect(query.chain.select).toHaveBeenCalledOnce();
-    // Filters on isActive only (no tenant scope).
     expect(query.chain.where).toHaveBeenCalledOnce();
     expect(query.calls.where).toBeDefined();
   });

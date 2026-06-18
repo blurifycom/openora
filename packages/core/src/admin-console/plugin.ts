@@ -6,7 +6,6 @@ import { createBackofficeRouter } from './router/index.js';
 
 export default definePlugin({
   id: 'admin-console',
-  // The directory + reporting ports are bound by identity + wallet; load after them.
   dependsOn: ['identity', 'wallet'],
   register(ctx) {
     ctx.routers.add('backoffice', (c) =>

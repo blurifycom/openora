@@ -62,11 +62,9 @@ export function createChatRouter(chatService: ChatService, authorizer: RealtimeC
 
     getConnection: os.getConnection.handler(({ input, context }) => {
       const userId = getUserId(context);
-      // A grant carries a per-player, single-use token (nonce) - never cache it.
+      // Grant is a per-player single-use nonce - must never be cached.
       context.resHeaders?.set('cache-control', 'no-store');
-      // Channels the caller may receive. This pass exposes the global channel; a
-      // later pass adds the player's rooms. The server is authoritative - it never
-      // trusts a client-supplied channel list for what is granted.
+      // Server is authoritative on channel scope; never trusts a client-supplied list.
       const channels = [chatChannel(null)];
       return Promise.resolve(
         authorizer.issueGrant({ userId, clientId: input.clientId ?? userId, channels }),

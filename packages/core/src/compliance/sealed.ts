@@ -1,19 +1,6 @@
 import { createSealedToken, type SealedToken } from '../contracts/adapters/index.js';
 
 /**
- * Canonical list of regulator-mandated services that operators MAY NOT override.
- *
- * Each sealed token backs an invariant that lives in the compliance domain
- * (`@oss/pam` compliance, or its sibling sealed services). Plugins may *observe* via events but never
- * *replace*. Attempting `ctx.provide(SEALED_TOKEN, ...)` is a TypeScript error
- * (`SealedToken<T>` is structurally distinct from `Token<T>`); the plugin-host
- * also runtime-rejects any token whose Symbol description starts with `sealed:`.
- *
- * Maintainer note: add a token here ONLY when an external regulator mandates
- * non-replaceability. Cite the source in the doc-comment.
- */
-
-/**
  * Self-exclusion + cool-off enforcement.
  *
  * UKGC LCCP Social Responsibility Code 3.5.3 / MGA Player Protection Directive /
@@ -120,11 +107,6 @@ export const GDPR_DATA_RIGHTS_WORKFLOW: SealedToken<unknown> = createSealedToken
   'gdpr-data-rights-workflow',
 );
 
-/**
- * Canonical sealed-token list. The invariant test asserts no provider has
- * bound any of these in the assembled registry. Add new entries to this
- * array when adding a new sealed token above.
- */
 export const SEALED_TOKENS: readonly SealedToken<unknown>[] = [
   RG_SELF_EXCLUSION_SERVICE,
   NATIONAL_SE_REGISTRY,

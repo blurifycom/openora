@@ -20,11 +20,7 @@ export const ChatMessageSchema = z.object({
   createdAt: z.iso.datetime(),
 });
 
-// What the client needs to start receiving live messages, tagged by `provider`.
-// `.loose()` keeps it an open union so a managed-vendor overlay (eg Ably, which
-// adds a `tokenRequest`) can return extra fields without a contract change - the
-// vendor-neutral REALTIME_CLIENT_AUTHORIZER seam in @oss/core/contracts owns the shape.
-// Default first-party value: { provider: 'sse', streamPath: '/chat/stream' }.
+// `.loose()` keeps this an open union so a managed-vendor overlay (eg Ably) can return extra fields without a contract change.
 export const ChatConnectionGrantSchema = z
   .object({
     provider: z.string(),
@@ -32,6 +28,7 @@ export const ChatConnectionGrantSchema = z
   })
   .loose();
 
+// Default first-party SSE; swappable for a managed vendor (Ably/GetStream) downstream. See ADR-0007.
 export const chatContract = {
   listRooms: oc.route({ method: 'GET', path: '/chat/rooms' }).output(z.array(ChatRoomSchema)),
 
@@ -65,23 +62,11 @@ export const chatContract = {
     .input(z.object({ content: z.string() }))
     .output(ChatMessageSchema),
 
-  // Mint a connection grant for the authenticated caller so the client knows how
-  // to receive live messages. Default (first-party) returns an SSE descriptor;
-  // an Ably/GetStream overlay returns a per-player, capability-scoped token. The
-  // client picks a transport off `grant.provider` (see @oss/core/react
-  // RealtimeClientProvider). `channels` is optional - the server computes the
-  // allowed set when omitted (this pass: the global channel).
   getConnection: oc
     .route({ method: 'GET', path: '/chat/connection' })
     .input(z.object({ clientId: z.string().optional(), channels: z.array(z.string()).optional() }))
     .output(ChatConnectionGrantSchema),
 
-  // Live message feed delivered as Server-Sent Events. `roomId: null` streams the
-  // global channel; a room id streams that room. The OpenAPIHandler in
-  // @oss/core/server serves an event-iterator output as SSE; the client consumes
-  // it as an async iterable (see @oss/core/react useChatStream). Backed by the
-  // REALTIME_TRANSPORT seam - first-party in-process by default, swappable to a
-  // managed vendor (Ably/GetStream) downstream. See ADR-0007.
   streamMessages: oc
     .route({ method: 'GET', path: '/chat/stream' })
     .input(z.object({ roomId: z.uuid().nullable() }))

@@ -2,20 +2,11 @@
 // Loaded via jsPlugins in .oxlintrc.json. API is ESLint v9-compatible.
 //
 // Why a hand-written plugin and not eslint-plugin-boundaries:
-//   oxlint CAN load eslint-plugin-boundaries as a jsPlugin (settings are honored),
-//   so the "no oxlint equivalent" concern is moot. But boundaries enforces nothing
-//   unless every @oss/* import resolves to a file - which means a native import
-//   resolver (unrs-resolver) plus a maintained lint-only tsconfig mapping all ~24
-//   @oss/* packages to src (pnpm otherwise resolves them to dist and misclassifies
-//   elements). This plugin matches specifier strings directly: zero deps, zero
-//   resolution, fast. We deliberately keep it. See ADR-0015.
-//
-// Rules mirror the enforced classes in AGENTS.md > Dependency rules:
-//   no-cross-addon             - an add-on must not import another add-on's code (schema subpath ok)
-//   no-addon-internal-import   - no add-on may be imported via a non-public subpath (root + /schema only)
-//   no-core-to-addon           - core (platform/contracts/sdks, except the two composition roots) must not import add-ons
-//   no-contracts-to-runtime    - contracts/* may import only other contracts and zod
-//   no-deep-dist-import        - never @oss/*/dist/** deep paths
+//   eslint-plugin-boundaries enforces nothing unless every @oss/* import resolves to
+//   a file - which means a native import resolver (unrs-resolver) plus a maintained
+//   lint-only tsconfig mapping all ~24 @oss/* packages to src (pnpm otherwise
+//   resolves them to dist and misclassifies elements). This plugin matches specifier
+//   strings directly: zero deps, zero resolution, fast. See ADR-0015.
 
 function filename(context) {
   return (context.filename ?? context.getFilename?.() ?? '').replace(/\\/g, '/');
@@ -25,12 +16,6 @@ function inPath(file, segment) {
   return file.includes('/' + segment + '/') || file.includes('/' + segment);
 }
 
-// The published core (@oss/core = packages/core) must never reach into an add-on
-// (optional, extract-later) package. Anything under packages/core/ importing an
-// `@oss-addons/*` specifier is forbidden - only the composition roots under apps/*
-// (and the @oss/testing harness, and add-on packages themselves) may. This
-// string-level twin gives per-edit feedback; the whole-graph `no-core-to-addon`
-// rule catches transitive/dynamic edges. See ADR-0021/0025.
 function isCoreFile(file) {
   return inPath(file, 'packages/core');
 }
@@ -58,19 +43,11 @@ const noCoreToAddon = {
   },
 };
 
-// An add-on package under packages/addons/<name>/ may import core (@oss/*) but
-// never a sibling add-on package. The sole sanctioned cross-add-on coupling is a
-// read-only `@oss-addons/<name>/schema` subpath import; reaching the bare root
-// (@oss-addons/<name>) or any other internal subpath of a sibling is forbidden, so
-// each add-on package stays independently optional/extractable.
 function importingAddon(file) {
   const m = file.match(/packages\/addons\/([a-z0-9-]+)\//);
   return m ? m[1] : null;
 }
 
-// @oss-addons/<name>            -> bare root import of a sibling = blocked
-// @oss-addons/<name>/schema     -> sanctioned read-only subpath = allowed
-// @oss-addons/<name>/<other>    -> reaching into internals = blocked
 function addonImportTarget(spec) {
   if (!spec.startsWith('@oss-addons/')) return null;
   const tail = spec.slice('@oss-addons/'.length).split('/').filter(Boolean);
@@ -88,9 +65,6 @@ const noCrossAddon = {
         if (!self) return;
         const target = addonImportTarget(node.source.value);
         if (!target || target.name === self) return;
-        // The read-only /schema subpath of a sibling add-on is the one sanctioned
-        // cross-add-on coupling (money stays transactional; reporting reads are
-        // pragmatic). Allowed, but it couples the two packages at the data layer.
         if (target.isSchemaSubpath) return;
         context.report({
           node,
@@ -105,9 +79,6 @@ const noCrossAddon = {
   },
 };
 
-// Server/runtime specifiers that must never reach a browser bundle (the react
-// zone) or leak into a contracts zone - each transitively pulls Drizzle/Hono/
-// node-only code. `@oss/core/server` is the umbrella server subpath. See ADR-0025.
 const RUNTIME_SPECIFIERS = ['@oss/core/server'];
 
 function isRuntimeSpecifier(spec) {
@@ -116,10 +87,6 @@ function isRuntimeSpecifier(spec) {
 
 const blocked_by_contracts = ['@oss-addons', ...RUNTIME_SPECIFIERS];
 
-// The contracts zone (@oss/core/contracts) and the react zone (@oss/core/react)
-// are the browser-safe / isomorphic subpaths of @oss/core. Both must stay
-// server-free so a browser bundle never pulls the node engine (@oss/core/server
-// = Drizzle/Hono/node). See ADR-0025.
 function isContractsZone(file) {
   return file.includes('packages/core/src/contracts');
 }
@@ -167,9 +134,6 @@ const noDeepDistImport = {
   },
 };
 
-// An overlay extension under apps/api/src/extensions/<name>/ may import any
-// @oss/* package but never a sibling extension. Cross-extension communication
-// goes through the event bus.
 const noCrossExtensionImport = {
   create(context) {
     return {
@@ -179,25 +143,14 @@ const noCrossExtensionImport = {
         if (!m) return;
         const ownExt = m[1];
         const spec = node.source.value;
-        // Only relative imports can cross-reach into another extension folder.
         if (!spec.startsWith('.')) return;
-        // Resolve specifier path segments and look for "../<other-ext>/"
         const segments = spec.split('/').filter(Boolean);
-        // Walk past leading "..": stop once we hit a non-".." segment.
         let i = 0;
         while (i < segments.length && segments[i] === '..') i++;
         if (i === 0) return;
-        // The segment right after the leading ".." should be the target folder
-        // if we crossed the extensions/<name> boundary. If that target equals a
-        // sibling extension name, flag it.
         const target = segments[i];
         if (!target) return;
         if (target !== ownExt && target !== 'extensions' && target.length > 0) {
-          // Heuristic: anything reaching outside the current extension folder
-          // is suspicious; only allow imports that traverse OUT of the
-          // extensions/ tree entirely (i.e. land in apps/api/src/ or beyond).
-          // We treat "../<sibling>" (one ".." then a name that is NOT 'extensions')
-          // as the cross-extension case.
           if (i === 1) {
             context.report({
               node,
@@ -213,12 +166,6 @@ const noCrossExtensionImport = {
   },
 };
 
-// A router (src/router/*.ts) is thin oRPC wiring: resolve the caller, call the
-// service, map errors. The canonical request/response shapes live in the contract
-// slice (the module's /contract dir, @oss/<module>/contracts) - the single source of truth that also emits
-// OpenAPI + the typed client. Defining a Zod schema inline in a router (`z.object`,
-// `z.array`, ...) forks that source of truth and drifts the spec. Flag every
-// schema-constructing `z.<method>(...)` call in a router file. See clean-architecture.md.
 const ZOD_BUILDERS = new Set([
   'object',
   'array',
@@ -262,10 +209,6 @@ const noAdhocZodInRouter = {
   },
 };
 
-// The react zone (@oss/core/react) is browser glue (createClient, provider, query
-// hooks). Importing the node engine (@oss/core/server) or an add-on pulls
-// Drizzle/Hono/node into the client bundle. Keep it domain-free + server-free.
-// See ADR-0025.
 const noReactToRuntime = {
   create(context) {
     return {
@@ -287,25 +230,19 @@ const noReactToRuntime = {
   },
 };
 
-// --- intra-core domain isolation (post-fold, ADR-0025) ----------------------
-// After the domains fold into @oss/core, a "domain" is any dir under
-// packages/core/src/<name>/ that is NOT one of the engine zones below. The
-// source-isolation invariant (ADR-0024/0025 rule 1: a domain never imports a
-// sibling domain's internals) is now enforced INTRA-package by these string
-// twins - the old whole-graph packages/domains/* rules went dead when that
-// directory vanished. See AGENTS.md > Dependency rules.
+// Intra-core domain isolation (post-fold, ADR-0025): a domain is any dir under
+// packages/core/src/<name>/ that is NOT one of the engine zones. Source-isolation
+// invariant (ADR-0024/0025): a domain never imports a sibling domain's internals.
 const ENGINE_ZONES = ['contracts', 'server', 'react', 'scripts'];
 
-// The domain a core file belongs to (null for engine zones / non-core files).
 function coreDomainOf(file) {
   const m = file.match(/packages\/core\/src\/([a-z0-9-]+)\//);
   if (!m || ENGINE_ZONES.includes(m[1])) return null;
   return m[1];
 }
 
-// The target domain of an `@oss/core/<x>/...` specifier (null when <x> is an
-// engine zone, or the bare `@oss/core/compliance` engine sealed-token util - the
-// compliance DOMAIN is only reachable via subpaths like /contracts, /schema).
+// The bare `@oss/core/compliance` (sealed-token util) is an engine zone; the
+// compliance DOMAIN is only reachable via subpaths like /contracts, /schema.
 function coreDomainTarget(spec) {
   if (!spec.startsWith('@oss/core/')) return null;
   const tail = spec.slice('@oss/core/'.length).split('/').filter(Boolean);
@@ -322,8 +259,6 @@ const noCrossCoreDomain = {
         if (!self) return;
         const target = coreDomainTarget(node.source.value);
         if (!target || target.name === self) return;
-        // The read-only /schema subpath is the one sanctioned cross-domain seam
-        // (same carve-out as no-cross-addon). Everything else couples internals.
         if (target.isSchema) return;
         context.report({
           node,
@@ -359,6 +294,7 @@ const noEngineToDomain = {
   },
 };
 
+// Whole-graph rule catches transitive/dynamic edges. See ADR-0021/0025.
 export default {
   meta: { name: 'oss-boundaries' },
   rules: {

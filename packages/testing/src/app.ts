@@ -24,15 +24,13 @@ export type BootTestAppConfig = Pick<CreateAppConfig, 'plugins' | 'contract' | '
  * Pass the same `plugins` + `contract` the real entrypoint uses (in OSS that is
  * `loadExtensions()` + `@oss/core/contracts`; a consumer passes its own).
  */
+// Mirrors what the consumer composition root does. See ADR-0025.
 export async function bootTestApp(config: BootTestAppConfig): Promise<TestApp> {
   const created = await createApp({
     plugins: config.plugins,
     ...(config.contract ? { contract: config.contract } : {}),
     ...(config.igaming ? { igaming: config.igaming } : {}),
     databaseUrl: config.databaseUrl,
-    // This is the OSS test harness, so it knows the PAM identity schema and injects
-    // it for session verification (the engine itself stays domain-agnostic; the
-    // consumer composition root does the same). See ADR-0025.
     authSchema: { user, session, account, verification, twoFactor },
     openapi: { enabled: false },
   });

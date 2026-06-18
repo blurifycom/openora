@@ -1,6 +1,4 @@
-// MockNotificationDeliveryAdapter - logs to stdout, never sends real email.
-// Replace via overlay with your own SMTP/SES/SendGrid/Postmark implementation.
-// See docs/adapters/notification.md for the binding pattern and interface shape.
+// Logs to stdout only; replace via overlay. See docs/adapters/notification.md.
 import type { NotificationDeliveryAdapter } from '@oss/core/contracts';
 
 export class MockNotificationDeliveryAdapter implements NotificationDeliveryAdapter {

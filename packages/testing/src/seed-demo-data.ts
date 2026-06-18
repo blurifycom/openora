@@ -1,4 +1,6 @@
+// See ADR-0020.
 import type { DrizzleDb } from '@oss/core/server';
+import { ensureDefaultRoles } from '@oss/core/iam';
 import { eq } from 'drizzle-orm';
 import { user } from '@oss/core/pam/schema/identity';
 import { player } from '@oss/core/pam/schema/profile';
@@ -182,6 +184,9 @@ export async function seedDemoData(options: SeedOptions): Promise<SeedResult> {
   });
   if (adminUser) log(`Admin ready: ${admin.email} / ${admin.password}`);
 
+  const seededRoles = await ensureDefaultRoles(db);
+  log(`Ensured ${seededRoles.length} predefined admin roles.`);
+
   await db.insert(game).values(
     GAMES.map(([name, provider, category]) => ({
       name,
@@ -191,10 +196,6 @@ export async function seedDemoData(options: SeedOptions): Promise<SeedResult> {
     })),
   );
   log(`Created ${GAMES.length} games.`);
-
-  // Add-on surfaces (sportsbook, leaderboard, ...) seed their own demo data and
-  // are not part of the core seed - the default build does not ship their tables.
-  // See ADR-0020.
 
   let userCount = adminUser ? 1 : 0;
   let txCount = 0;

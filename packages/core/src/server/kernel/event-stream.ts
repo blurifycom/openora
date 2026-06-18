@@ -1,13 +1,7 @@
 /**
- * createEventStreamGenerator - turns a push-style subscription into a pull-style
- * async generator for oRPC SSE / event-iterator routes. A bounded buffer holds
- * events between yields; a resolver wakes the generator when one arrives. The
- * subscription is torn down (and the abort listener removed) when the consumer
- * stops or `signal` aborts, so each connection cleans up after itself.
- *
- * `subscribe` receives a `push` callback and returns its unsubscribe fn.
- * `prime` events (eg the latest known snapshot) are yielded before live events
- * so a fresh client paints immediately instead of waiting for the next tick.
+ * Turns a push-style subscription into a pull-style async generator for oRPC SSE routes.
+ * `prime` events are yielded first so a fresh client paints immediately.
+ * Cleans up the subscription and abort listener when the consumer stops or `signal` fires.
  */
 export type EventStreamOptions<T> = {
   signal?: AbortSignal;

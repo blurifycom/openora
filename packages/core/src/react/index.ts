@@ -1,8 +1,5 @@
-// Transport - generic over the contract the consumer composes (the SDK does not
-// aggregate domains; see createClient docs).
 export { createClient, type OssClient, type CreateClientOptions } from './client.js';
 
-// React bindings - client + auth + user
 export { ApiClientProvider, useApiClient } from './context/api-client.js';
 export { useOrpcClient } from './hooks/use-orpc-client.js';
 export { useSession, useLogin, useLogout, useRegister, useCurrentUser } from './hooks/auth.js';
@@ -22,12 +19,6 @@ export {
   type PlayerProfile,
 } from './hooks/account.js';
 
-// PAM (Player Account Management) admin hooks are a ADDONS surface (the player.*
-// admin contract lives in @oss/pam player-management). They are not part of the
-// free SDK; a consumer that enables PAM builds its admin hooks against the merged
-// contract. See ADR-0020.
-
-// Data hooks
 export { usePaginatedList, type PaginatedListState } from './hooks/use-paginated-list.js';
 export {
   useEventStream,
@@ -35,10 +26,9 @@ export {
   type UseEventStreamOptions,
   type UseEventStreamResult,
 } from './hooks/use-event-stream.js';
-// useChatStream is a domain hook - it lives in @oss/engagement/react (it uses the
-// chat contract slice + the typed client). The base SDK stays domain-agnostic.
-// Pluggable client-side realtime transport (consumer injects Ably/GetStream; the
-// default is built-in SSE). See ADR-0007.
+// useChatStream lives in @oss/engagement/react - the base SDK stays domain-agnostic.
+// Consumer injects Ably/GetStream; default is built-in SSE. See ADR-0007.
+// See ADR-0020.
 export {
   RealtimeClientProvider,
   useOptionalRealtimeClient,

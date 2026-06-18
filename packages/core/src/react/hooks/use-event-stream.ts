@@ -58,9 +58,9 @@ export function useEventStream<T>(
           setLast(event);
         }
       } catch (err) {
-        // An abort (unmount / disable) is expected teardown, not an error.
+        // An AbortError on unmount/disable is expected teardown - swallow it.
         if (!cancelled && (err as Error)?.name !== 'AbortError') {
-          // Swallow - the stream simply closed. Status reflects it below.
+          // Stream closed; status is updated in finally.
         }
       } finally {
         if (!cancelled) setStatus('closed');

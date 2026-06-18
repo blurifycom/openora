@@ -16,8 +16,7 @@ export function createAuditRouter(svc: AuditService, adminGuard: AdminGuard) {
     exportCsv: os.exportCsv.handler(async ({ input, context }) => {
       await adminGuard.assert(context, 'audit', 'export');
       const csv = await svc.exportCsv(input);
-      // The export is itself an auditable admin action (regulatory). Record it
-      // AFTER producing the CSV so an export failure is not logged as a success.
+      // Record AFTER producing the CSV so an export failure is not logged as a success.
       const ip =
         (context.request.headers['x-forwarded-for'] as string | undefined)?.split(',')[0]?.trim() ??
         null;

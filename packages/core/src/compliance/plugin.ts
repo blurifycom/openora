@@ -9,7 +9,6 @@ import { createComplianceRouter } from './router/index.js';
 export default definePlugin({
   id: 'compliance',
   register(ctx) {
-    // GEO_IP_ADAPTER is optional - bind a real vendor (eg MaxMind) via overlay.
     ctx.routers.add('compliance', (c) =>
       createComplianceRouter(
         new ComplianceService(

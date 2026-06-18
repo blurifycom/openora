@@ -60,15 +60,7 @@ export function resolvePlatformConfigPath(
   return undefined;
 }
 
-/**
- * Tiny YAML subset just sufficient for the shape PlatformConfig allows. Handles
- * scalar mappings, lists of mappings, nested scalars, and the boolean / number
- * literals operators put in `features` / `rgLimits`. For anything richer, the
- * caller should parse YAML themselves and call `definePlatformConfig` directly.
- */
 function parseTrivialYaml(input: string): unknown {
-  // Defer to JSON.parse-on-best-effort: convert each leaf scalar. This is
-  // intentionally limited - operators with complex needs should bring js-yaml.
   type Node = {
     indent: number;
     key?: string;

@@ -1,16 +1,4 @@
 #!/usr/bin/env node
-/**
- * Bring a repo's AI onboarding surface up to date for Claude Code. Idempotent.
- *
- * Usage:
- *   pnpm setup:mcp                      # operate on this OSS repo
- *   tsx tools/setup-mcp.ts --target .   # operate on the cwd (consumers call this)
- *
- * In the OSS repo: ensures .mcp.json and trusts the oss-dev server.
- * In a consumer repo (target is not this checkout): also writes the editor
- * guardrail (deny edits to node_modules + the linked OSS checkout), installs the
- * /start onboarding skill, and drops a CLAUDE.md if the repo does not have one.
- */
 
 import { readFileSync, writeFileSync, existsSync, mkdirSync } from 'node:fs';
 import { join, dirname, resolve, relative, sep } from 'node:path';
@@ -69,7 +57,6 @@ function main(): void {
   const ossRel = posix(relative(target, ossRoot)) || '..';
   const log: string[] = [];
 
-  // 1. .mcp.json - ensure at least one server is registered.
   const mcpPath = join(target, '.mcp.json');
   let mcp = readJson<{ mcpServers?: Record<string, unknown> }>(mcpPath, {});
   if (!mcp.mcpServers || Object.keys(mcp.mcpServers).length === 0) {
@@ -81,7 +68,6 @@ function main(): void {
   }
   const serverNames = Object.keys(mcp.mcpServers ?? {});
 
-  // 2. .claude/settings.json - trust the servers + (consumer) deny edits to core.
   const settingsPath = join(target, '.claude', 'settings.json');
   const settings = readJson<{
     enabledMcpjsonServers?: string[];
@@ -102,7 +88,6 @@ function main(): void {
     changed = true;
   }
 
-  // Consumer guardrail: never let the agent edit the consumed @oss/* source.
   if (!isOss) {
     const wanted = [
       'Edit(./node_modules/**)',
@@ -130,7 +115,6 @@ function main(): void {
     log.push('.claude/settings.json already up to date');
   }
 
-  // 3. Consumer: regenerate agent files from .rulesync/ (CLAUDE.md, AGENTS.md, etc.)
   if (!isOss) {
     const rulesyncCfg = join(target, 'rulesync.jsonc');
     if (existsSync(rulesyncCfg)) {

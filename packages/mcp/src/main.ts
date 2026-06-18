@@ -8,10 +8,6 @@ import { fileURLToPath } from 'node:url';
 
 const here = dirname(fileURLToPath(import.meta.url));
 
-// ---------------------------------------------------------------------------
-// Catalog shape (docs/catalog.json - generated upstream by tools/gen-catalog.ts)
-// ---------------------------------------------------------------------------
-
 type CatalogModule = {
   id: string;
   group: string;
@@ -62,25 +58,17 @@ type Catalog = {
 const NOT_FOUND_MESSAGE =
   'catalog.json not found - run `pnpm regen` in the platform repo, or set OSS_CATALOG to its path.';
 
-// ---------------------------------------------------------------------------
-// Catalog resolution + loading (runtime fs read - never `import` the JSON)
-// ---------------------------------------------------------------------------
-
-/** Candidate paths to probe, in priority order. */
 function catalogCandidates(): string[] {
   const candidates: string[] = [];
 
-  // 1. Explicit override.
   const override = process.env['OSS_CATALOG'];
   if (override) candidates.push(override);
 
   const cwd = process.cwd();
 
-  // 2a. cwd-relative common locations.
   candidates.push(join(cwd, 'docs', 'catalog.json'));
   candidates.push(join(cwd, 'node_modules', '@oss', 'mcp', 'docs', 'catalog.json'));
 
-  // 2b. Walk up from cwd looking for docs/catalog.json.
   let dir = cwd;
   for (;;) {
     candidates.push(join(dir, 'docs', 'catalog.json'));
@@ -89,13 +77,11 @@ function catalogCandidates(): string[] {
     dir = parent;
   }
 
-  // 2c. The package's own bundled snapshot (relative to compiled main.js).
   candidates.push(join(here, '..', 'docs', 'catalog.json'));
 
   return candidates;
 }
 
-/** Locate and read the catalog. Returns null (never throws) if not found/invalid. */
 function loadCatalog(): { catalog: Catalog; path: string } | null {
   for (const candidate of catalogCandidates()) {
     if (!candidate || !existsSync(candidate)) continue;
@@ -103,14 +89,12 @@ function loadCatalog(): { catalog: Catalog; path: string } | null {
       const catalog = JSON.parse(readFileSync(candidate, 'utf8')) as Catalog;
       return { catalog, path: candidate };
     } catch {
-      // Corrupt file at this path - keep probing.
+      // corrupt file - keep probing
     }
   }
   return null;
 }
 
-/** Wrap a handler so it loads the catalog once and short-circuits with a helpful
- * message when the catalog is missing. */
 function withCatalog(fn: (catalog: Catalog) => string) {
   return async () => {
     const loaded = loadCatalog();
@@ -121,16 +105,11 @@ function withCatalog(fn: (catalog: Catalog) => string) {
   };
 }
 
-// ---------------------------------------------------------------------------
-// MCP server
-// ---------------------------------------------------------------------------
-
 const server = new McpServer({
   name: 'oss',
   version: '0.1.0',
 });
 
-// --- catalog-overview -------------------------------------------------------
 server.registerTool(
   'catalog-overview',
   {
@@ -163,7 +142,6 @@ server.registerTool(
   }),
 );
 
-// --- list-adapters ----------------------------------------------------------
 server.registerTool(
   'list-adapters',
   {
@@ -185,7 +163,6 @@ server.registerTool(
   }),
 );
 
-// --- list-routes ------------------------------------------------------------
 server.registerTool(
   'list-routes',
   {
@@ -224,7 +201,6 @@ server.registerTool(
   },
 );
 
-// --- list-events ------------------------------------------------------------
 server.registerTool(
   'list-events',
   {
@@ -238,7 +214,6 @@ server.registerTool(
   }),
 );
 
-// --- list-slots -------------------------------------------------------------
 server.registerTool(
   'list-slots',
   {
@@ -256,7 +231,6 @@ server.registerTool(
   }),
 );
 
-// --- describe-module --------------------------------------------------------
 server.registerTool(
   'describe-module',
   {
@@ -291,7 +265,6 @@ server.registerTool(
   },
 );
 
-// --- schema-get -------------------------------------------------------------
 server.registerTool(
   'schema-get',
   {
@@ -325,7 +298,6 @@ server.registerTool(
   },
 );
 
-// --- get-config-schema ------------------------------------------------------
 server.registerTool(
   'get-config-schema',
   {
@@ -344,10 +316,6 @@ server.registerTool(
     return lines.join('\n');
   }),
 );
-
-// ---------------------------------------------------------------------------
-// Consumer helpers
-// ---------------------------------------------------------------------------
 
 type IntentKind = 'feature' | 'adapter' | 'ui-page' | 'route' | 'unsure';
 
@@ -481,11 +449,6 @@ function runShell(cmd: string): { ok: boolean; output: string } {
   }
 }
 
-/**
- * The requirements interview. The human's job is to answer these; the agent's
- * job is everything after. Shared by `start` and `enhance-intent` so the
- * requirements-first principle holds regardless of entry point.
- */
 const REQUIREMENTS_INTERVIEW = [
   'Interview the user with AskUserQuestion in small batches (2-4 questions at a time). Adapt to their answers, dig into anything vague, and keep going until you could hand a stranger a spec they could build from. Cover what applies - skip what does not:',
   '',
@@ -505,7 +468,6 @@ const REQUIREMENTS_INTERVIEW = [
   'Then summarize the requirements back to the user as a short structured list and get an explicit yes before any building starts.',
 ].join('\n');
 
-// --- enhance-intent ---------------------------------------------------------
 server.registerTool(
   'enhance-intent',
   {
@@ -555,7 +517,6 @@ server.registerTool(
   },
 );
 
-// --- start ------------------------------------------------------------------
 server.registerTool(
   'start',
   {
@@ -649,7 +610,6 @@ server.registerTool(
   },
 );
 
-// --- dev:infra --------------------------------------------------------------
 server.registerTool(
   'dev:infra',
   {
@@ -695,8 +655,5 @@ server.registerTool(
   },
 );
 
-// ---------------------------------------------------------------------------
-// Start (stdio transport)
-// ---------------------------------------------------------------------------
 const transport = new StdioServerTransport();
 await server.connect(transport);

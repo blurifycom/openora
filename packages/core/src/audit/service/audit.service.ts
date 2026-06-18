@@ -6,13 +6,8 @@ import { eq, and, gte, lte, desc, sql } from 'drizzle-orm';
 import { auditLog, type AuditLog } from '../schema/index.js';
 import type { AuditLogEntry, AuditListFilters, AuditExportFilters } from '../schemas/index.js';
 
-// ---------------------------------------------------------------------------
-// Hash chaining helpers
-// ---------------------------------------------------------------------------
-
-// Stable canonical representation of the fields that form the hash input.
-// Key order is deterministic - changes here BREAK the chain for existing rows,
-// so treat this as an append-only list.
+// Key order is deterministic - changes here BREAK the chain for existing rows.
+// Treat this as an append-only list.
 function canonicalHashInput(fields: {
   id: string;
   actorId: string | null;
@@ -41,10 +36,6 @@ function computeHash(fields: Parameters<typeof canonicalHashInput>[0]): string {
   return createHash('sha256').update(canonicalHashInput(fields)).digest('hex');
 }
 
-// ---------------------------------------------------------------------------
-// Row -> DTO
-// ---------------------------------------------------------------------------
-
 function toDto(row: AuditLog): AuditLogEntry {
   return {
     id: row.id,
@@ -66,10 +57,6 @@ function toDto(row: AuditLog): AuditLogEntry {
   };
 }
 
-// ---------------------------------------------------------------------------
-// Record input shape (what callers / event subscribers pass in)
-// ---------------------------------------------------------------------------
-
 export type RecordInput = {
   actorId?: string | null;
   actorType: 'player' | 'admin' | 'system';
@@ -84,30 +71,20 @@ export type RecordInput = {
   result?: string | null;
 };
 
-// ---------------------------------------------------------------------------
-// AuditService
-// ---------------------------------------------------------------------------
-
 export class AuditService {
   constructor(
     private readonly drizzle: DrizzleService,
     private readonly events: EventBus,
   ) {}
 
-  // Single write path. Computes prevHash/hash and inserts the row with its
-  // final hash in ONE statement - no read-back UPDATE, so a crash can never
-  // leave a 'pending' hash. The whole append is atomic and serialized via a
-  // transaction-level advisory lock, so concurrent record() calls cannot read
-  // the same chain tip and fork the chain.
-  // Append-only: no update/delete methods exposed.
+  // Hash computed and inserted in a single statement - no read-back UPDATE, so a
+  // crash can never leave a 'pending' hash. Serialized via pg advisory lock so
+  // concurrent record() calls cannot fork the chain. Append-only.
   async record(input: RecordInput): Promise<AuditLogEntry> {
     const row = await this.drizzle.db.transaction(async (tx) => {
-      // Serialize all appends. pg_advisory_xact_lock is held until the
-      // transaction commits/rolls back; concurrent appends queue here, so
-      // read-tip -> compute -> insert is atomic without locking the whole table.
+      // pg_advisory_xact_lock serializes appends without locking the whole table.
       await tx.execute(sql`SELECT pg_advisory_xact_lock(hashtext('audit_log'))`);
 
-      // Read the chain tip INSIDE the lock so no other append can race past us.
       const [latest] = await tx
         .select({ hash: auditLog.hash })
         .from(auditLog)
@@ -115,16 +92,13 @@ export class AuditService {
         .limit(1);
       const prevHash = latest?.hash ?? null;
 
-      // Reserve the seq value BEFORE insert by pulling from the serial's backing
-      // sequence, so the hash can be computed over the final seq and the row
-      // inserted with its real hash in a single INSERT.
+      // Reserve the seq BEFORE insert so the hash covers the final seq value.
       const seqResult = await tx.execute<{ seq: string | number }>(
         sql`SELECT nextval(pg_get_serial_sequence('audit_log', 'seq')) AS seq`,
       );
       const seq = Number((seqResult.rows[0] as { seq: string | number }).seq);
 
-      // id + createdAt are known at insert time (generated here, not DB-defaulted)
-      // so the hash input matches the persisted row exactly.
+      // Generated here (not DB-defaulted) so the hash input matches the persisted row.
       const id = randomUUID();
       const createdAt = new Date();
 
@@ -168,7 +142,6 @@ export class AuditService {
     return toDto(row);
   }
 
-  // List with filters and cursor-style pagination.
   async list(filters: AuditListFilters): Promise<{
     items: AuditLogEntry[];
     total: number;
@@ -214,13 +187,10 @@ export class AuditService {
     };
   }
 
-  // Hard cap on a single export so it cannot be used for unbounded bulk
-  // extraction / OOM. Filter by date range and paginate (or call verifyChain for
-  // full-chain integrity) for larger windows; an export exceeding the cap is
-  // truncated to the most relevant (latest) rows.
+  // Hard cap to prevent unbounded bulk extraction / OOM; exports exceeding it are
+  // truncated to the latest rows. Use verifyChain for full-chain integrity.
   static readonly EXPORT_MAX_ROWS = 50_000;
 
-  // Export matching rows as CSV text for regulatory submission. Capped at EXPORT_MAX_ROWS.
   async exportCsv(filters: AuditExportFilters): Promise<string> {
     const db = this.drizzle.db;
     const { actorId, actorType, action, resourceType, fromDate, toDate } = filters;
@@ -270,8 +240,6 @@ export class AuditService {
     return [header, ...lines].join('\n');
   }
 
-  // Recompute every row's hash in seq order and return the first broken link.
-  // Returns { valid: true } when the chain is intact.
   async verifyChain(): Promise<
     { valid: true } | { valid: false; firstBrokenSeq: number; rowId: string }
   > {

@@ -8,14 +8,12 @@ export const user = pgTable('user', {
   image: text('image'),
   role: text('role').notNull().default('player'),
   isActive: boolean('isActive').notNull().default(true),
-  // better-auth admin() plugin fields (all optional). Required by the drizzle
-  // adapter when the admin plugin is enabled, otherwise user creation throws
-  // "field banned does not exist". See @oss/core/server createAuth().
+  // Required by the drizzle adapter when better-auth admin() plugin is enabled;
+  // omitting these causes "field banned does not exist" on user creation.
   banned: boolean('banned').default(false),
   banReason: text('banReason'),
   banExpires: timestamp('banExpires'),
-  // better-auth twoFactor() plugin field. Required by the drizzle adapter when
-  // the twoFactor plugin is enabled. See @oss/core/server createAuth().
+  // Required by the drizzle adapter when better-auth twoFactor() plugin is enabled.
   twoFactorEnabled: boolean('twoFactorEnabled').default(false),
   createdAt: timestamp('createdAt').notNull().defaultNow(),
   updatedAt: timestamp('updatedAt')
@@ -81,8 +79,7 @@ export const verification = pgTable(
   (t) => [index('verification_identifier_idx').on(t.identifier)],
 );
 
-// better-auth twoFactor() plugin model. Field shape mirrors the plugin's own
-// schema (secret, backupCodes, userId, verified). See @oss/core/server createAuth().
+// Field shape mirrors better-auth twoFactor() plugin schema. See @oss/core/server createAuth().
 export const twoFactor = pgTable(
   'twoFactor',
   {

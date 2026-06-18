@@ -16,15 +16,10 @@ export class ModuleRegistryImpl implements ModuleRegistry {
 
   constructor(private readonly container: Container) {}
 
-  // Provider bindings go straight into the container. Lazy + last-wins, so an
-  // overlay loaded after a module can rebind that module's adapter token.
-  //
-  // Runtime guard: tokens created via `createSealedToken` carry a `sealed:`
-  // prefix in their Symbol description. We reject those at registration time
-  // even though `SealedToken<T>` is structurally incompatible with `Token<T>`
-  // at the type level - this catches plain-JS callers and any cast escape.
-  // The canonical sealed list (with regulatory citations per token) lives in
-  // `@oss/core/compliance`.
+  // Last-wins, so an overlay loaded after a module can rebind its adapter token.
+  // Sealed tokens (Symbol description prefixed `sealed:`) are rejected at runtime
+  // even though the type system already blocks them - catches plain-JS callers and cast escapes.
+  // Canonical sealed list lives in `@oss/core/compliance`.
   provide = <T>(token: Token<T>, factory: Factory<T>): void => {
     const desc = token.description ?? '';
     if (desc.startsWith('sealed:')) {

@@ -16,11 +16,6 @@ export type PluginEntry = {
   kind?: 'module' | 'infra' | 'addon';
 };
 
-/**
- * Fail fast with a precise message when extensions.config.ts is malformed, so an
- * agent that hand-edits the registry gets a structural error here instead of a deep
- * runtime stack trace later.
- */
 function validateEntries(entries: unknown): asserts entries is PluginEntry[] {
   if (!Array.isArray(entries)) {
     throw new Error(

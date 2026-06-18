@@ -74,8 +74,6 @@ describe('ChatService realtime wiring', () => {
 });
 
 describe('ChatService.sendGlobalMessage username resolution', () => {
-  // Mock drizzle: the select chain (resolveDisplayName) returns the user row; the
-  // insert chain echoes the values back as the stored row.
   function makeDb(userName: string | null) {
     return {
       select: () => ({

@@ -59,18 +59,14 @@ function cleanup(before: Set<string>): void {
 
   console.log(`\nCleaning up (${added.length} new, ${modified.length} modified)...`);
 
-  // Restore tracked modifications (extensions.config.ts, contract index, catalog, etc.)
   if (modified.length > 0) {
     spawnSync('git', ['checkout', '--', ...modified], { stdio: 'inherit', cwd: root });
   }
 
-  // Remove new untracked paths
   for (const f of added) {
     spawnSync('git', ['clean', '-fd', '--', f], { stdio: 'inherit', cwd: root });
   }
 }
-
-// ---- main ----
 
 const before = untrackedAndModified();
 if (!keep && before.size > 0) {
@@ -82,16 +78,12 @@ if (!keep && before.size > 0) {
 
 console.log(`\n=== eval:scaffold ${GROUP}/${MODULE} ===\n`);
 
-// 1. Scaffold the module
 run('pnpm', ['gen', 'module', GROUP, MODULE]);
 
-// 2. Regen (drizzle migrations + RLS policies + OpenAPI + catalog)
 run('pnpm', ['regen']);
 
-// 3. Full verify (typecheck + boundaries lint + unit tests)
 run('pnpm', ['verify']);
 
-// 4. Assert the new module surfaces in the catalog
 const catalogPath = join(root, 'docs', 'catalog.json');
 if (existsSync(catalogPath)) {
   const catalog = readFileSync(catalogPath, 'utf8');

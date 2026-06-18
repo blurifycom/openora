@@ -1,8 +1,7 @@
 import { z } from 'zod';
 import { UuidSchema, TimestampSchema } from './common.js';
 
-// id is a uuid: better-auth is configured with advanced.database.generateId to
-// emit uuids (see @oss/core/server), matching the platform-wide uuid id convention.
+// better-auth emits uuid ids via advanced.database.generateId (see @oss/core/server).
 // image may be null in storage; the schema accepts string | null | absent.
 export const UserSchema = z.object({
   id: UuidSchema,
@@ -42,16 +41,11 @@ export const RegisterInputSchema = z.object({
   name: z.string().min(1).max(255),
 });
 
-// --- Two-factor (TOTP), password reset, email verification, profile ---
-// Inputs/outputs for the better-auth-backed identity routes. Password fields
-// reuse the min(8) rule from LoginInputSchema.
-
 export const Enable2faInputSchema = z.object({
   password: z.string().min(8),
 });
 
 export const Enable2faResultSchema = z.object({
-  // otpauth:// URI to render as a QR code in an authenticator app.
   totpUri: z.string().min(1),
   backupCodes: z.array(z.string()),
 });
@@ -95,7 +89,6 @@ export const ChangeEmailInputSchema = z.object({
   newEmail: z.email(),
 });
 
-// Generic success envelope shared by the side-effecting identity routes.
 export const IdentitySuccessSchema = z.object({ success: z.literal(true) });
 
 export type User = z.infer<typeof UserSchema>;

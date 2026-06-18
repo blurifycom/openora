@@ -1,6 +1,4 @@
-// MockKycAdapter - auto-approves all submissions in dev/test.
-// Replace via overlay: ctx.provide(KYC_ADAPTER, () => new SumsubKycAdapter())
-// Intended real provider: SumSub (https://sumsub.com). See docs/adapters/kyc.md.
+// Replace via overlay: ctx.provide(KYC_ADAPTER, () => new SumsubKycAdapter()) - see docs/adapters/kyc.md.
 import type { KycAdapter, KycDocument, KycResult, KycVendorStatus } from '@oss/core/contracts';
 
 export class MockKycAdapter implements KycAdapter {

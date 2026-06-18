@@ -1,10 +1,8 @@
-// Runtime migration runner — applies a drizzle migration set using drizzle-orm's
-// migrator (NOT drizzle-kit, which is a dev-only authoring tool). Each migration
+// Uses drizzle-orm's migrator, NOT drizzle-kit (dev-only authoring tool). Each migration
 // set ships its compiled SQL in the package tarball (`files: ["drizzle"]`), so a
-// registry consumer runs migrations straight from node_modules with
-// no source checkout. The core history here is shared by every core add-on; gated
-// add-ons ship their own `migrate` that calls `runMigrations` with their own
-// tracking table. See ADR-0022 / ADR-0020.
+// consumer runs migrations straight from node_modules with no source checkout.
+// The core history is shared by every core add-on; gated add-ons ship their own
+// `migrate` that calls `runMigrations` with their own tracking table. See ADR-0022/0020.
 import 'dotenv/config';
 import { fileURLToPath } from 'node:url';
 import { drizzle } from 'drizzle-orm/node-postgres';
@@ -30,10 +28,7 @@ function migrateUrl(override?: string): string {
   return url;
 }
 
-/**
- * Apply one migration set against the admin connection, then close the pool.
- * Idempotent: drizzle skips migrations already recorded in `migrationsTable`.
- */
+/** Apply one migration set against the admin connection. Idempotent: drizzle skips already-recorded migrations. */
 export async function runMigrations(opts: RunMigrationsOptions): Promise<void> {
   const pool = new Pool({ connectionString: migrateUrl(opts.databaseUrl) });
   try {
@@ -48,14 +43,11 @@ export async function runMigrations(opts: RunMigrationsOptions): Promise<void> {
   }
 }
 
-/**
- * The core (platform) migration set — every core add-on shares this history,
- * tracked in drizzle's default `__drizzle_migrations`.
- */
+/** Core migration set shared by all core add-ons, tracked in drizzle's default `__drizzle_migrations`. */
 export function migrate(databaseUrl?: string): Promise<void> {
   return runMigrations({
-    // compiled to core/dist/server/db/migrate.js; the migration set ships at the
-    // package root (core/drizzle/migrations), so climb out of dist/server/db.
+    // compiled to core/dist/server/db/migrate.js; migrations ship at the package root
+    // (core/drizzle/migrations), so climb out of dist/server/db.
     migrationsFolder: fileURLToPath(new URL('../../../drizzle/migrations', import.meta.url)),
     ...(databaseUrl ? { databaseUrl } : {}),
   });

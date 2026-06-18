@@ -1,9 +1,7 @@
 import 'dotenv/config';
 import { defineConfig } from 'drizzle-kit';
 
-// Own migration history + own tracking table - see ADR-0020. Reads the core
-// `gaming` tables at runtime via the @oss/casino/schema/gaming subpath,
-// but owns only its own tables here.
+// Own migration history + own tracking table (ADR-0020).
 export default defineConfig({
   dialect: 'postgresql',
   schema: ['./aggregator/schema/index.ts'],

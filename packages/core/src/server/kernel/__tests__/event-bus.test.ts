@@ -50,7 +50,7 @@ describe('createEventBus', () => {
     expect(envelopes).toHaveLength(1);
     const env = envelopes[0];
     expect(typeof env?.eventId).toBe('string');
-    expect(env?.eventId).toHaveLength(36); // UUID
+    expect(env?.eventId).toHaveLength(36);
     expect(env?.topic).toBe('wallet.deposit.completed');
     expect(env?.schemaVersion).toBe(1);
     expect(typeof env?.occurredAt).toBe('string');
@@ -112,7 +112,6 @@ describe('createEventBus', () => {
       received.push(p);
     });
 
-    // userId should be a string - send a number to trip validation.
     bus.emit('identity.user.registered', { userId: 123 } as never);
     await flush();
 
@@ -120,7 +119,7 @@ describe('createEventBus', () => {
       expect.objectContaining({ event: 'identity.user.registered' }),
       'event payload failed validation',
     );
-    expect(received).toHaveLength(1); // delivered despite the validation warning
+    expect(received).toHaveLength(1);
   });
 
   it('delegates transport to the bound broker (the swap seam)', () => {

@@ -38,12 +38,9 @@ export class WalletService {
     currency: string,
     provider?: string,
   ): Promise<TransactionResult> {
-    // External PSP call stays outside the DB transaction. Saga compensation for a
-    // PSP-success / ledger-failure split is out of scope here.
+    // PSP call stays outside the DB transaction; saga compensation for a PSP-success/ledger-failure split is out of scope.
     const psp = await this.payment.processDeposit(amount, currency, { userId, provider });
 
-    // Ledger insert + balance update are atomic: a mid-flight failure rolls both
-    // back, never leaving an orphan transaction row or a mismatched balance.
     const transactionId = await this.drizzle.db.transaction(async (txn) => {
       let [walletRecord] = await txn.select().from(wallet).where(eq(wallet.userId, userId));
       if (!walletRecord) {
@@ -73,7 +70,6 @@ export class WalletService {
       return tx!.id;
     });
 
-    // Emit only after commit, so subscribers never observe uncommitted state.
     this.events.emit('wallet.deposit.completed', { userId, amount, currency, transactionId });
 
     return { transactionId, status: 'completed' };
@@ -100,8 +96,7 @@ export class WalletService {
     const psp = await this.payment.processWithdrawal(amount, currency, { userId, provider });
 
     const transactionId = await this.drizzle.db.transaction(async (txn) => {
-      // Re-read inside the transaction and guard the balance again, so concurrent
-      // withdrawals cannot double-spend; an insufficient balance rolls back.
+      // Re-read inside the transaction so concurrent withdrawals cannot double-spend.
       const current = findOneOrThrow(
         await txn.select().from(wallet).where(eq(wallet.userId, userId)),
         new WalletNotFoundError(userId),

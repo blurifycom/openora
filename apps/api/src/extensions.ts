@@ -4,14 +4,8 @@ import { fileURLToPath } from 'node:url';
 import { accessSync } from 'node:fs';
 import { applyEdition } from './editions.js';
 
-// Loads extensions.config.js (compiled) from the workspace root at runtime.
-//
-// Resolution order:
-//   1. EXTENSIONS_CONFIG env var (absolute path, or path relative to cwd)
-//   2. Walk up from this file's location looking for extensions.config.js
-//
-// In dev, tsx resolves .js -> .ts. In Docker builds, extensions.config.ts is
-// pre-compiled to extensions.config.js by api.Dockerfile.
+// Resolution order: EXTENSIONS_CONFIG env var, then walk up looking for extensions.config.js.
+// In dev, tsx resolves .js -> .ts; in Docker it is pre-compiled by api.Dockerfile.
 export async function loadExtensions(): Promise<PluginEntry[]> {
   const fromEnv = process.env['EXTENSIONS_CONFIG'];
   const configPath = fromEnv
@@ -23,20 +17,13 @@ export async function loadExtensions(): Promise<PluginEntry[]> {
   const mod = (await import(configPath)) as { extensions: PluginEntry[] };
   const configDir = dirname(configPath);
 
-  // Plugin entries use paths relative to the config file (typically the
-  // workspace root), so resolve against the config's directory.
   const resolved = mod.extensions.map((entry) => ({
     ...entry,
     path: isAbsolute(entry.path) ? entry.path : resolve(configDir, entry.path),
   }));
 
-  // Edition gate: drop add-on (kind:'addon') entries this edition does not
-  // enable (OSS_ADDONS). Default build = no add-on entries load. See editions.ts.
   const entries = applyEdition(resolved);
 
-  // Deployable-topology seam: SERVICE_MANIFEST selects which modules this process
-  // boots. Unset -> the full monolith. A subset (eg "identity,wallet") boots a
-  // single-purpose service from the same codebase; infra overlays always load.
   const manifest = parseServiceManifest(process.env['SERVICE_MANIFEST']);
   const selected = applyServiceManifest(entries, manifest);
   if (manifest !== null) {

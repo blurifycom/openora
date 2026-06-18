@@ -25,11 +25,6 @@ const addonsRoot = join(repoRoot, 'packages', 'addons');
 
 const read = (p: string): string => (existsSync(p) ? readFileSync(p, 'utf8') : '');
 
-// Every module's source dir + its catalog id, across both layouts (ADR-0024):
-//   packages/addons/<name>/src              -> id = <name>            (flat add-on)
-//   packages/domains/<d>/src                -> id = <d>               (single-member domain, eg wallet/cms)
-//   packages/domains/<d>/src/<member>        -> id = <member>          (multi-member domain, eg pam/casino)
-// The id matches the plugin id in extensions.config.ts so `group` resolves.
 type ModuleSrc = { id: string; srcDir: string };
 function moduleSrcDirs(): ModuleSrc[] {
   const out: ModuleSrc[] = [];
@@ -47,8 +42,7 @@ function moduleSrcDirs(): ModuleSrc[] {
       if (isDir(join(addonsRoot, name)) && hasPlugin(srcDir)) out.push({ id: name, srcDir });
     }
   }
-  // Domains fold into @oss/core as subpaths (ADR-0025): each lives at
-  // packages/core/src/<domain>/ (no nested src/). Skip the engine zones.
+  // Domains fold into @oss/core as subpaths. See ADR-0024/0025.
   const coreSrc = join(repoRoot, 'packages', 'core', 'src');
   const engineDirs = new Set(['contracts', 'server', 'react']);
   if (existsSync(coreSrc)) {
@@ -86,14 +80,8 @@ function walk(dir: string, ext: string, acc: string[] = []): string[] {
   return acc;
 }
 
-// --- modules (+ tables + routes) -------------------------------------------
-// Every feature is now a standalone @oss-addons/<name> package under
-// packages/addons/<name>/. `group` is no longer a directory; it labels whether the
-// add-on is core (always loaded) or gated (kind: 'addon' in extensions.config.ts),
-// read from the registry so the catalog stays informative for the @oss/mcp consumer.
 type ModuleInfo = { id: string; group: string; tables: string[]; routes: string[] };
 
-/** Map add-on id -> 'core' | 'addon', parsed from extensions.config.ts. */
 function readAddonKinds(): Map<string, string> {
   const src = read(join(repoRoot, 'extensions.config.ts'));
   const out = new Map<string, string>();
@@ -120,7 +108,6 @@ function collectModules(): ModuleInfo[] {
   return out;
 }
 
-// --- adapter seams (+ wired/stub) ------------------------------------------
 type AdapterInfo = {
   category: string;
   interface: string;
@@ -143,9 +130,6 @@ function collectAdapters(): AdapterInfo[] {
   for (const file of readdirSync(dir).sort()) {
     if (!file.endsWith('.ts') || file === 'index.ts') continue;
     const src = readFileSync(join(dir, file), 'utf8');
-    // Prefer the primary *Adapter type over helper types in the same file.
-    // Ports are declared as `export type XAdapter = { ... }` (interface is
-    // lint-banned in favour of type aliases - see .oxlintrc.json).
     const iface =
       src.match(/export (?:interface|type) (\w*Adapter)\b/)?.[1] ??
       src.match(/export (?:interface|type) (\w+)/)?.[1] ??
@@ -172,7 +156,6 @@ function collectAdapters(): AdapterInfo[] {
   return out.sort((a, b) => a.category.localeCompare(b.category));
 }
 
-// --- events ----------------------------------------------------------------
 function collectEvents(): string[] {
   const set = new Set<string>();
   for (const { srcDir } of moduleSrcDirs()) {
@@ -184,7 +167,6 @@ function collectEvents(): string[] {
   return [...set].sort();
 }
 
-// --- UI slots --------------------------------------------------------------
 function collectSlots(): Array<{ name: string; description: string }> {
   const file = join(repoRoot, 'packages', 'sdks', 'react-sdk', 'src', 'ui-plugin', 'slots.ts');
   const src = read(file);
@@ -205,10 +187,7 @@ function collectSlots(): Array<{ name: string; description: string }> {
   return out.sort((a, b) => a.name.localeCompare(b.name));
 }
 
-// --- Zod schema index ------------------------------------------------------
-// Each add-on now OWNS its route contract under src/contract (the inversion in
-// ADR-0021), so the schema index spans the cross-cutting contracts packages plus
-// every add-on's contract dir, not just packages/contracts.
+// Each add-on owns its route contract under src/contract, so the schema index spans both the cross-cutting contracts packages and every add-on contract dir. See ADR-0021.
 function collectSchemas(): Array<{ name: string; file: string }> {
   const out: Array<{ name: string; file: string }> = [];
   const roots = [join(repoRoot, 'packages', 'core', 'src', 'contracts')];
@@ -228,7 +207,6 @@ function collectSchemas(): Array<{ name: string; file: string }> {
   return out.sort((a, b) => a.name.localeCompare(b.name));
 }
 
-// --- igaming config shape (parse top-level keys + leading comment) ----------
 function collectConfigFields(): Array<{ key: string; note: string }> {
   const src = read(
     join(repoRoot, 'packages', 'core', 'src', 'contracts', 'schemas', 'igaming-config.ts'),
@@ -253,7 +231,6 @@ function collectConfigFields(): Array<{ key: string; note: string }> {
   return out;
 }
 
-// --- plugin contract surface ------------------------------------------------
 function collectPluginSurface(): string[] {
   const src = read(
     join(repoRoot, 'packages', 'core', 'src', 'server', 'plugin-host', 'define-plugin.ts'),
@@ -263,7 +240,6 @@ function collectPluginSurface(): string[] {
   return [...body.matchAll(/^\s{2}(\w+):/gm)].map((m) => m[1]!).sort();
 }
 
-// --- routes from emitted OpenAPI (if present) ------------------------------
 function collectOpenApiRoutes(): string[] {
   const spec = read(join(repoRoot, 'docs', 'openapi.json'));
   if (!spec) return [];
@@ -280,7 +256,6 @@ function collectOpenApiRoutes(): string[] {
   }
 }
 
-// --- build + render --------------------------------------------------------
 const catalog = {
   modules: collectModules(),
   adapters: collectAdapters(),

@@ -46,7 +46,7 @@ describe('InProcessRealtimeTransport', () => {
     const t = new InProcessRealtimeTransport();
     t.presence.join('room', 'u1');
     t.presence.join('room', 'u2');
-    t.presence.join('room', 'u2'); // idempotent
+    t.presence.join('room', 'u2');
     expect(t.presence.count('room')).toBe(2);
     t.presence.leave('room', 'u1');
     expect(t.presence.count('room')).toBe(1);

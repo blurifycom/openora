@@ -8,16 +8,13 @@ export type McpToolDefinition = {
   handler: (input: unknown) => unknown | Promise<unknown>;
 };
 
-// A router factory builds the module's oRPC router from the resolved container
-// (services + adapters). It runs once at boot, after every plugin has registered
-// its providers, so adapter overrides (last registration wins) are in effect.
+// Runs once at boot, after every plugin has registered its providers, so adapter overrides (last registration wins) are in effect.
 export type RouterFactory = (c: Container) => unknown;
 
 export type EventHandler = (payload: unknown) => void | Promise<void>;
 
 export type ModuleRegistry = {
-  // Bind a provider factory to a token. Last registration wins, so an overlay
-  // loaded after a module can rebind that module's adapter token.
+  // Last registration wins - an overlay loaded after a module can rebind its adapter token.
   provide<T>(token: Token<T>, factory: Factory<T>): void;
   routers: {
     add(namespace: string, factory: RouterFactory): void;
@@ -31,9 +28,7 @@ export type ModuleRegistry = {
     on(event: string, handler: EventHandler): void;
     getAll(): Map<string, EventHandler[]>;
   };
-  // Register a background-job worker. Collected during register() and started at
-  // boot against the resolved JOB_QUEUE (after all providers, so an overlay's
-  // durable driver is in effect). Mirrors the events collector. See ADR-0014.
+  // Started at boot against the resolved JOB_QUEUE (after all providers, so an overlay's durable driver is in effect). See ADR-0014.
   jobs: {
     worker<T>(registration: WorkerRegistration<T>): void;
     getAll(): WorkerRegistration<unknown>[];
@@ -47,11 +42,7 @@ export type ModuleRegistry = {
 export type Plugin = {
   id: string;
   dependsOn?: string[];
-  // Command/adapter port tokens this plugin needs another package to have bound
-  // by boot (eg sportsbook needs WALLET_COMMANDS from @oss/wallet). Verified once,
-  // after every plugin has registered, so a missing domain fails fast with an
-  // actionable message instead of a generic "No provider" deep in a request. The
-  // single rule of ADR-0024: domains couple only through ports, never imports.
+  // Verified once after all plugins register - a missing port fails fast. See ADR-0024.
   requiresPorts?: Token<unknown>[];
   register: (ctx: ModuleRegistry) => void | Promise<void>;
 };

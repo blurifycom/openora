@@ -11,9 +11,7 @@ function fakeLogger() {
 const flush = () => new Promise((r) => setTimeout(r, 0));
 const wait = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
-// Poll until `predicate` holds or the deadline passes. Deterministic alternative
-// to a fixed sleep: returns as soon as the condition is met, so it does not flake
-// under CI scheduling jitter (a fixed `wait` can fire before the last retry runs).
+// Returns as soon as predicate holds rather than sleeping a fixed amount, avoiding CI scheduling jitter.
 async function waitFor(predicate: () => boolean, timeoutMs = 2000): Promise<void> {
   const deadline = Date.now() + timeoutMs;
   while (!predicate() && Date.now() < deadline) await wait(5);
@@ -47,7 +45,7 @@ describe('InProcessJobQueue', () => {
 
     await q.enqueue(queue('late'), { value: 'a' });
     await flush();
-    expect(seen).toEqual([]); // no worker yet -> buffered
+    expect(seen).toEqual([]);
 
     q.registerWorker({
       queue: queue('late'),
@@ -100,7 +98,6 @@ describe('InProcessJobQueue', () => {
       options: { serializeByOrderingKey: true },
       handler: async (ctx) => {
         order.push(`start:${ctx.payload.value}`);
-        // First job sleeps longer; if not serialized it would finish last.
         await wait(ctx.payload.value === 'first' ? 10 : 1);
         order.push(`end:${ctx.payload.value}`);
       },
@@ -129,10 +126,10 @@ describe('InProcessJobQueue', () => {
     });
 
     const a = await q.enqueue(queue('money'), { value: 'p' }, { idempotencyKey: 'pay-1' });
-    await flush(); // first job is now in-flight, key still active
+    await flush();
     const b = await q.enqueue(queue('money'), { value: 'p' }, { idempotencyKey: 'pay-1' });
 
-    expect(b.id).toBe(a.id); // deduped to the same job
+    expect(b.id).toBe(a.id);
     release();
     await flush();
     expect(calls).toBe(1);
@@ -152,8 +149,8 @@ describe('InProcessJobQueue', () => {
     });
 
     await q.enqueue(queue('drain'), { value: 'z' });
-    await flush(); // ensure the job started
-    await q.close(); // must await the in-flight handler
+    await flush();
+    await q.close();
     expect(finished).toBe(true);
   });
 });

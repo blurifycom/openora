@@ -38,13 +38,11 @@ function check(label: string, cmd: string, minVersion?: string) {
 async function main() {
   console.log('\n=== OSS Igaming Platform - Agent Setup ===\n');
 
-  // 1. Prerequisites
   console.log('--- Checking prerequisites ---');
   check('node', 'node --version');
   check('pnpm', 'pnpm --version');
   check('docker', 'docker --version');
 
-  // 2. Install deps if needed
   if (!existsSync(join(root, 'node_modules'))) {
     console.log('\n--- Installing dependencies ---');
     run('pnpm install');
@@ -52,12 +50,9 @@ async function main() {
     console.log('\n--- Dependencies: already installed ---');
   }
 
-  // 2b. Generate the OpenAPI spec (not committed - the MCP query-openapi tool and
-  // gen-catalog read docs/openapi.json from disk).
   console.log('\n--- Generating OpenAPI spec (pnpm codegen) ---');
   run('pnpm codegen');
 
-  // 3. Start postgres via docker compose and wait for it to be ready.
   console.log('\n--- Starting dev infra (docker compose up -d) ---');
   run('docker compose up -d');
 
@@ -78,7 +73,6 @@ async function main() {
     }, 1500);
   });
 
-  // 4. Migrate
   console.log('\n--- Running Drizzle migrations ---');
   try {
     run('pnpm -F @oss/core generate');
@@ -87,7 +81,6 @@ async function main() {
     console.warn('  [warn] Migration step skipped (schema may be empty - normal on first run)');
   }
 
-  // 5. Summary
   const pkg = JSON.parse(readFileSync(join(root, 'package.json'), 'utf8'));
   const envExamplePath = join(root, 'packages', 'core', '.env.example');
   const envExample = existsSync(envExamplePath) ? readFileSync(envExamplePath, 'utf8') : '';

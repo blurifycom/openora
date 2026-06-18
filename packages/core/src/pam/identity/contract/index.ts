@@ -28,9 +28,7 @@ export const identityContract = {
     .input(RegisterInputSchema)
     .output(z.object({ user: UserSchema })),
 
-  // When the caller has 2FA enabled, better-auth withholds the session and
-  // signals `twoFactorRedirect`; the client must then call verify2fa. Hence
-  // user/session are optional on this output.
+  // When 2FA is enabled, better-auth withholds the session and signals `twoFactorRedirect`; client must then call verify2fa.
   login: oc
     .route({ method: 'POST', path: '/identity/login' })
     .input(LoginInputSchema)
@@ -46,7 +44,6 @@ export const identityContract = {
 
   me: oc.route({ method: 'GET', path: '/identity/me' }).output(UserSchema.nullable()),
 
-  // --- Two-factor (TOTP) ---
   enable2fa: oc
     .route({ method: 'POST', path: '/identity/2fa/enable' })
     .input(Enable2faInputSchema)
@@ -62,7 +59,6 @@ export const identityContract = {
     .input(Disable2faInputSchema)
     .output(IdentitySuccessSchema),
 
-  // --- Password reset ---
   requestPasswordReset: oc
     .route({ method: 'POST', path: '/identity/password/forgot' })
     .input(RequestPasswordResetInputSchema)
@@ -78,7 +74,6 @@ export const identityContract = {
     .input(ChangePasswordInputSchema)
     .output(IdentitySuccessSchema),
 
-  // --- Email verification + change ---
   sendEmailVerification: oc
     .route({ method: 'POST', path: '/identity/email/verify/send' })
     .output(IdentitySuccessSchema),
@@ -93,7 +88,6 @@ export const identityContract = {
     .input(ChangeEmailInputSchema)
     .output(IdentitySuccessSchema),
 
-  // --- Profile ---
   updateProfile: oc
     .route({ method: 'PATCH', path: '/identity/profile' })
     .input(UpdateProfileInputSchema)

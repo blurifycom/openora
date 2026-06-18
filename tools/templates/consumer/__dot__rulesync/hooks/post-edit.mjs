@@ -1,9 +1,4 @@
 #!/usr/bin/env node
-// PostToolUse hook (Claude / Copilot CLI / Codex CLI / Gemini CLI).
-// Lint-fixes the edited file, then typechecks the app that owns it and reports
-// (exit 2) only if the error is in the file just edited. Output is capped so a
-// failure can't balloon the model context. Fail-open on anything unexpected.
-
 import { execSync } from 'node:child_process';
 import { readFileSync } from 'node:fs';
 import { join, isAbsolute, relative } from 'node:path';
@@ -24,7 +19,6 @@ try {
   /* oxlint unavailable or errored - fall through to typecheck */
 }
 
-// Resolve the owning workspace app (apps/<x> or packages/<group>/<x>).
 function packageNameFor(fp) {
   const m = fp.match(/(.*?\/(?:apps\/[^/]+|packages\/[^/]+\/[^/]+))\//);
   if (!m) return null;

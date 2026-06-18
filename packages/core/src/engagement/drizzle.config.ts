@@ -1,11 +1,8 @@
 import 'dotenv/config';
 import { defineConfig } from 'drizzle-kit';
 
-// Each add-on package owns its own migration history, kept in its own folder and
-// tracked in its own `__drizzle_migrations_*` table so it never collides with the
-// core history (packages/core) or other add-on packages. This is what lets
-// the package be lifted out and published without dragging the core migration log
-// with it. See docs/adr/0020-editions-and-add-on-modules.md.
+// Own migration history + own tracking table so it never collides with core or
+// other add-on packages, and can be lifted out independently. See ADR-0020.
 export default defineConfig({
   dialect: 'postgresql',
   schema: ['./leaderboard/schema/index.ts'],

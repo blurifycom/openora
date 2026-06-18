@@ -1,9 +1,6 @@
-// NestJS-free drizzle surface. Modules define tables with these builders, and
-// cross-workspace consumers (eg a linked consumer via `link:`) import tables +
-// operators from here so they share @oss/core/server's single physical drizzle-orm copy.
-// Importing `drizzle-orm` directly in a linked consumer pulls a second physical
-// copy, and drizzle's protected-member classes then fail nominal type checks
-// against DrizzleService.db.
+// Consumers must import from here rather than `drizzle-orm` directly to share the same
+// physical copy; a second copy causes drizzle's protected-member classes to fail nominal
+// type checks against DrizzleService.db.
 export * from 'drizzle-orm/pg-core';
 export {
   eq,

@@ -8,39 +8,30 @@ import type {
   WorkerRegistration,
 } from '@oss/core/contracts';
 
-// Durable JobQueueAdapter backed by BullMQ + Redis - the reference real driver.
-// Bound to JOB_QUEUE by the bullmq overlay only when REDIS_URL is set, so the
-// in-process default stays in effect for `pnpm dev`, seed, tests and CI. Gives
-// persistence, cross-process workers, native delayed/repeatable jobs, retry +
-// backoff and dead-letter. Delivery is at-least-once - handlers MUST be
-// idempotent (the seam's idempotencyKey maps to BullMQ's jobId, but a DB guard
-// is still required for money jobs). See ADR-0014.
+// Durable JobQueueAdapter backed by BullMQ + Redis. Bound to JOB_QUEUE only when
+// REDIS_URL is set; the in-process default stays in effect for dev/seed/CI.
+// Delivery is at-least-once - a DB guard is still required for money jobs (ADR-0014).
 
-// Minimal logger shape so this overlay needn't depend on pino directly; the
-// pino Logger passed in by the plugin satisfies it structurally.
+// Minimal logger shape; pino Logger satisfies it structurally.
 type OverlayLogger = {
   error(obj: unknown, msg?: string): void;
   warn(obj: unknown, msg?: string): void;
 };
 
-// The envelope put on every job: the typed payload plus tracing metadata and the
-// ordering key, so a worker can rebuild the JobContext.
 type JobEnvelope = {
   payload: unknown;
   meta: Record<string, string | undefined>;
   orderingKey?: string;
 };
 
-// Parse a redis[s]:// URL into BullMQ connection options. Passing options (not a
-// shared IORedis instance) sidesteps cross-version ioredis type clashes and lets
-// BullMQ own connection lifecycle - closed via worker.close()/queue.close().
+// Passing options (not a shared IORedis instance) sidesteps cross-version ioredis
+// type clashes and lets BullMQ own the connection lifecycle.
 function parseRedisUrl(redisUrl: string): RedisOptions {
   const u = new URL(redisUrl);
   const opts: RedisOptions = {
     host: u.hostname,
     port: u.port ? Number(u.port) : 6379,
-    // Required by BullMQ for its blocking commands.
-    maxRetriesPerRequest: null,
+    maxRetriesPerRequest: null, // required by BullMQ for blocking commands
   };
   if (u.password) opts.password = decodeURIComponent(u.password);
   if (u.username) opts.username = decodeURIComponent(u.username);
@@ -81,13 +72,13 @@ export class BullMqJobQueue implements JobQueueAdapter {
       orderingKey: opts.orderingKey,
     };
     const job = await this.getQueue(name).add(name, envelope, {
-      jobId: opts.idempotencyKey, // dedupe: a second add with the same id is a no-op
+      jobId: opts.idempotencyKey, // second add with the same id is a no-op
       delay: opts.delayMs,
       attempts: opts.attempts,
       backoff: opts.backoff ? { type: opts.backoff.type, delay: opts.backoff.delayMs } : undefined,
       priority: opts.priority,
       removeOnComplete: true,
-      removeOnFail: false, // keep failed jobs for inspection / DLQ visibility
+      removeOnFail: false, // keep failed jobs for inspection
     });
     return { id: job.id ?? opts.idempotencyKey ?? '' };
   }
@@ -158,8 +149,7 @@ export class BullMqJobQueue implements JobQueueAdapter {
   }
 
   async close(): Promise<void> {
-    // Workers first: worker.close() waits for active jobs to finish (drain),
-    // then queues. BullMQ owns and closes the underlying connections.
+    // Workers first: worker.close() drains in-flight jobs before queues close.
     await Promise.all(this.workers.map((w) => w.close()));
     await Promise.all([...this.queues.values()].map((q) => q.close()));
   }

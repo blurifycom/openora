@@ -40,8 +40,6 @@ function toDateKey(d: Date): string {
   return d.toISOString().slice(0, 10);
 }
 
-// Admin Player Account Management. All methods back the admin-guarded player.*
-// routes. Self-service profile lives in the core profile module.
 export class PlayerService {
   constructor(
     private readonly drizzle: DrizzleService,
@@ -71,8 +69,6 @@ export class PlayerService {
       );
     }
     const whereClause = conditions.length > 0 ? and(...conditions) : undefined;
-    // Page rows joined to their email in ONE query (LEFT JOIN, many players ->
-    // one user, so the limit is not multiplied), plus a single COUNT for total.
     const [rows, [{ n }]] = await Promise.all([
       db
         .select({ player, email: user.email })
@@ -143,8 +139,6 @@ export class PlayerService {
     const since = new Date();
     since.setUTCHours(0, 0, 0, 0);
     since.setUTCDate(since.getUTCDate() - (days - 1));
-    // Aggregate at the DB (GROUP BY day) - returns at most `days` rows, never
-    // the full player set. The day key matches toDateKey (UTC YYYY-MM-DD).
     const dayKey = sql<string>`to_char(date_trunc('day', ${player.createdAt}), 'YYYY-MM-DD')`;
     const rows = await this.drizzle.db
       .select({ date: dayKey, n: count() })
@@ -152,7 +146,6 @@ export class PlayerService {
       .where(gte(player.createdAt, since))
       .groupBy(dayKey);
     const countByDay = new Map(rows.map((r) => [r.date, Number(r.n)]));
-    // Fill the contiguous day series (bounded by `days`, not by row count).
     return Array.from({ length: days }, (_, i) => {
       const d = new Date(since);
       d.setUTCDate(since.getUTCDate() + i);

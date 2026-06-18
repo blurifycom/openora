@@ -12,11 +12,8 @@ export default definePlugin({
   id: 'wallet',
   register(ctx) {
     ctx.provide(PAYMENT_ADAPTER, () => new MockPaymentAdapter());
-    // Wallet owns money mutation: other modules debit through this port (within
-    // their own transaction) instead of importing wallet's tables. See ADR-0016.
+    // Other modules debit through this port within their own transaction (never importing wallet tables). See ADR-0016.
     ctx.provide(WALLET_COMMANDS, () => new WalletCommandsService());
-    // Admin/back-office reporting over money movement - the back-office depends on
-    // this port, not on the wallet schema.
     ctx.provide(ADMIN_WALLET_REPORTING, (c) => new DrizzleAdminWalletReporting(c.get(DRIZZLE)));
     ctx.routers.add('wallet', (c) =>
       createWalletRouter(

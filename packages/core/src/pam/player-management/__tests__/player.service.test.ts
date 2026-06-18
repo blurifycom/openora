@@ -1,8 +1,6 @@
 import { describe, it, expect, vi } from 'vitest';
 import { PlayerService, PlayerNotFoundError } from '../service/player.service.js';
 
-// Day-count rows as returned by the DB GROUP BY (aggregation happens in SQL,
-// not in the service), eg { date: '2026-06-09', n: 1 }.
 type DayCountRow = { date: string; n: number };
 
 function chain(result: unknown): any {
@@ -49,7 +47,6 @@ describe('PlayerService.registrationsOverTime', () => {
     const points = await svc.registrationsOverTime(7);
     const today = points.find((p) => p.date === todayKey);
     expect(today?.count).toBe(3);
-    // days with no DB row stay zero-filled
     expect(points.filter((p) => p.date !== todayKey).every((p) => p.count === 0)).toBe(true);
   });
 });

@@ -35,7 +35,6 @@ import { composeContract, healthContract } from '../../contracts/orpc/index.js';
 import { IGAMING_CONFIG, type IgamingConfig } from '../../contracts/schemas/index.js';
 
 export type CreateAppConfig = {
-  // Plugins to load. Each module/extension exposes a definePlugin() entry.
   plugins: PluginEntry[];
 
   // The better-auth identity tables (user/session/account/verification/twoFactor),
@@ -45,40 +44,27 @@ export type CreateAppConfig = {
   // (session verification is then disabled). See ADR-0019/0025.
   authSchema?: Record<string, unknown>;
 
-  // Port to listen on. Defaults to env PORT_API, then 3001.
   port?: number;
 
-  // CORS configuration. `true` reflects the request origin with credentials,
-  // `false` disables, or pass explicit origins. Defaults to `true`.
   cors?: boolean | { origins?: string | string[] };
 
-  // Override DATABASE_URL at runtime (otherwise read from env).
   databaseUrl?: string;
 
-  // Override the oRPC root contract used for OpenAPI emit.
-  // Consumers can compose the OSS contract with their own extensions. The shape is
-  // genuinely unknown at this factory boundary (an external oRPC generic) - the
-  // documented `any` exception for an external library's untyped surface.
+  // The shape is genuinely unknown at this factory boundary (an external oRPC generic) -
+  // the documented `any` exception for an external library's untyped surface.
   // oxlint-disable-next-line typescript/no-explicit-any
   contract?: ContractRouter<any>;
 
-  // OpenAPI spec emission settings.
   openapi?: {
-    enabled?: boolean; // default true
+    enabled?: boolean;
     info?: { title?: string; version?: string };
-    outputPath?: string; // absolute path, default docs/openapi.json next to cwd
+    outputPath?: string;
   };
 
-  // Declarative igaming configuration (currencies, jurisdictions, limits, provider
-  // selection, branding). Build it with defineIgamingConfig() from @oss/core/contracts.
-  // Resolvable app-wide via the IGAMING_CONFIG token.
   igaming?: IgamingConfig;
 
-  // Advanced: rebind/seed the composition container after plugins have registered
-  // (eg an operator that wants to override an infra provider directly).
   configure?: (container: Container) => void | Promise<void>;
 
-  // Skip the built-in health route (rarely needed - default false).
   disableHealthModule?: boolean;
 };
 
@@ -104,25 +90,19 @@ export async function createApp(config: CreateAppConfig): Promise<CreatedApp> {
     process.env['DATABASE_URL'] = config.databaseUrl;
   }
 
-  // Compose the container: explicit factories, no decorators. Infra is seeded
-  // first; plugins then register their services + adapters (last binding wins).
   const container = new Container();
   container.register(DRIZZLE, () => {
     const svc = new DrizzleService();
     container.onDispose(() => svc.dispose());
     return svc;
   });
-  // Inter-module transport: default to the in-process broker; an overlay rebinds
-  // MESSAGE_BROKER to a durable driver (Redpanda/NATS) without touching modules.
-  // The EventBus is the typed facade services depend on.
   container.register(MESSAGE_BROKER, () => {
     const broker = new InMemoryBroker();
     container.onDispose(() => broker.close());
     return broker;
   });
-  // Transactional outbox: durable, transaction-atomic event publication. Enabled
-  // when OUTBOX_ENABLED is set or a durable broker is configured (AMQP_URL) - a
-  // distributed deployment wants events that survive a crash between commit and
+  // Enabled when OUTBOX_ENABLED is set or a durable broker is configured (AMQP_URL) -
+  // a distributed deployment wants events that survive a crash between commit and
   // publish. In the default in-process monolith it stays off, so emit() keeps its
   // synchronous fan-out and emitInTransaction() guides callers to enable it.
   const outboxEnabled =
@@ -137,29 +117,22 @@ export async function createApp(config: CreateAppConfig): Promise<CreatedApp> {
       outboxEnabled ? c.get(OUTBOX) : undefined,
     ),
   );
-  // Client-facing realtime push (chat, live feeds): default in-process fan-out
-  // served as SSE; an overlay rebinds REALTIME_TRANSPORT to a managed vendor
-  // (Ably/GetStream) without touching modules. See ADR-0007.
+  // Default in-process fan-out served as SSE; an overlay rebinds to a managed
+  // vendor (Ably/GetStream) without touching modules. See ADR-0007.
   container.register(REALTIME_TRANSPORT, () => new InProcessRealtimeTransport());
-  // Client connection provisioning - the complement to REALTIME_TRANSPORT. The
-  // default is first-party SSE (no token; the session cookie authorizes the
-  // event-iterator stream). A managed-vendor overlay (Ably/GetStream) rebinds
-  // REALTIME_CLIENT_AUTHORIZER to mint a per-player scoped token. See ADR-0007.
+  // Default is first-party SSE (no token; the session cookie authorizes the stream).
+  // A managed-vendor overlay rebinds this to mint a per-player scoped token. See ADR-0007.
   container.register(REALTIME_CLIENT_AUTHORIZER, () => new SseClientAuthorizer());
-  // Background jobs: default in-process queue (zero deps); an overlay rebinds
-  // JOB_QUEUE to a durable driver (the BullMQ/Redis overlay). The disposer drains
-  // in-flight jobs on shutdown - registered after DRIZZLE's (below) so it runs
-  // first (disposers run in reverse), i.e. workers finish before the DB closes.
+  // Default in-process queue (zero deps); an overlay rebinds to BullMQ/Redis.
+  // Disposer drains in-flight jobs before the DB closes (disposers run in reverse).
   container.register(JOB_QUEUE, () => {
     const q = new InProcessJobQueue(createLogger('job-queue'));
     container.onDispose(() => q.close());
     return q;
   });
-  // One shared better-auth instance verifies the session cookie for both the
-  // per-request identity middleware (below) and the AdminGuard - no second
-  // createAuth() over the same DB. The better-auth schema lives in the consumer's
-  // identity module (@oss/pam); the engine is domain-agnostic, so it takes the
-  // tables via config.authSchema rather than importing them.
+  // One shared better-auth instance for both the per-request middleware and AdminGuard -
+  // no second createAuth() over the same DB. authSchema is injected (not imported) because
+  // the engine is domain-agnostic (ADR-0019/0025).
   container.register(AUTH_SESSION, (c) => new SessionResolver(c.get(DRIZZLE), config.authSchema));
   container.register(
     ADMIN_GUARD,
@@ -167,8 +140,7 @@ export async function createApp(config: CreateAppConfig): Promise<CreatedApp> {
       new AdminGuard(
         c.get(DRIZZLE),
         c.get(AUTH_SESSION),
-        // Optional: bound only when a backoffice iam module registers it. has()
-        // avoids throwing on an unbound token so boot works without the module.
+        // has() avoids throwing on an unbound token so boot works without the iam module.
         c.has(ADMIN_PERMISSION_RESOLVER) ? c.get(ADMIN_PERMISSION_RESOLVER) : undefined,
       ),
   );
@@ -180,8 +152,6 @@ export async function createApp(config: CreateAppConfig): Promise<CreatedApp> {
   const registry = await loadPlugins(config.plugins, container);
   await config.configure?.(container);
 
-  // Subscribe every plugin-registered handler to the resolved bus. Plugins collect
-  // handlers via ctx.events.on(...) during register(); this is where they go live.
   const bus = container.get(EVENT_BUS);
   for (const [event, handlers] of registry.events.getAll()) {
     for (const handler of handlers) {
@@ -189,17 +159,14 @@ export async function createApp(config: CreateAppConfig): Promise<CreatedApp> {
     }
   }
 
-  // Start background-job workers collected by plugins (ctx.jobs.worker(...)).
-  // Resolve DRIZZLE first so its dispose runs AFTER the queue's drain (reverse
-  // order); resolve JOB_QUEUE last so an overlay's durable driver is in effect.
+  // Resolve DRIZZLE before JOB_QUEUE so disposers run in the right order (workers
+  // drain before the DB closes, since disposers run in reverse).
   const drizzle = container.get(DRIZZLE);
   const jobQueue = container.get(JOB_QUEUE);
   for (const registration of registry.jobs.getAll()) {
     jobQueue.registerWorker(registration);
   }
 
-  // Start the outbox relay (when enabled): it polls pending event_outbox rows and
-  // publishes them to the broker. Disposed before the DB closes (reverse order).
   if (outboxEnabled) {
     const relay = new OutboxRelay(drizzle.db, container.get(MESSAGE_BROKER), {
       onError: (err) => createLogger('outbox-relay').error({ err }, 'outbox drain failed'),
@@ -208,8 +175,6 @@ export async function createApp(config: CreateAppConfig): Promise<CreatedApp> {
     container.onDispose(() => relay.stop());
   }
 
-  // Assemble the root oRPC router from each plugin's router factory, keyed by the
-  // module's contract namespace. Built once, after every plugin has registered.
   const router: Record<string, AnyRouter> = {};
   for (const [namespace, factory] of registry.routers.getAll()) {
     if (namespace in router) {
@@ -244,15 +209,13 @@ export async function createApp(config: CreateAppConfig): Promise<CreatedApp> {
     app.use('/*', cors({ origin: origins ?? ((origin) => origin), credentials: true }));
   }
 
-  // The shared session resolver verifies the better-auth cookie once per request.
   const sessions = container.get(AUTH_SESSION);
 
   app.use('/*', async (c, next) => {
     const headers = headersToRecord(c.req.raw.headers);
     const context: OssContext = { request: { headers } };
 
-    // Identify the caller from the VERIFIED better-auth session cookie - never from
-    // a client-supplied `x-user-id` header (W1, ADR-0019).
+    // Never identify from a client-supplied `x-user-id` header (W1, ADR-0019).
     const userId = await sessions.resolveUserId(c.req.raw.headers);
 
     const runHandler = async (): Promise<Response> => {
@@ -265,12 +228,11 @@ export async function createApp(config: CreateAppConfig): Promise<CreatedApp> {
     const traceId = headers['x-trace-id'] ?? randomUUID();
 
     if (!userId) {
-      // No valid session: context.auth stays undefined, so getUserId 401s. Auth and
+      // No valid session - context.auth stays undefined so getUserId 401s. Auth and
       // public routes still work. Run inside the request context for trace correlation.
       return withRequestContext({ traceId }, runHandler);
     }
 
-    // Publish the VERIFIED identity onto the oRPC context for getUserId.
     context.auth = { userId };
 
     return withRequestContext({ userId, traceId }, runHandler);
@@ -289,8 +251,6 @@ export async function createApp(config: CreateAppConfig): Promise<CreatedApp> {
     },
     async emitOpenApiSpec() {
       if (config.openapi?.enabled === false) return null;
-      // The consumer composes its edition's contract and passes it in. With none
-      // provided, emit a health-only spec (the runtime owns no domain contract).
       const outPath = await generateOpenApiSpec(config.contract ?? composeContract({}), {
         info: config.openapi?.info,
         outputPath: config.openapi?.outputPath ?? resolve(process.cwd(), 'docs/openapi.json'),

@@ -2,8 +2,6 @@ import { oc } from '@orpc/contract';
 import * as z from 'zod';
 import { PageQuerySchema, paginated } from '@oss/core/contracts/kit';
 
-// --- Output shapes ---
-
 export const AuditActorTypeSchema = z.enum(['player', 'admin', 'system']);
 
 export const AuditLogEntrySchema = z.object({
@@ -25,8 +23,6 @@ export const AuditLogEntrySchema = z.object({
   createdAt: z.iso.datetime(),
 });
 
-// --- Input shapes ---
-
 export const AuditListFiltersSchema = PageQuerySchema.extend({
   actorId: z.string().optional(),
   actorType: AuditActorTypeSchema.optional(),
@@ -37,8 +33,6 @@ export const AuditListFiltersSchema = PageQuerySchema.extend({
 });
 
 export const AuditExportFiltersSchema = AuditListFiltersSchema.omit({ page: true, limit: true });
-
-// --- Contract ---
 
 export const auditContract = {
   list: oc

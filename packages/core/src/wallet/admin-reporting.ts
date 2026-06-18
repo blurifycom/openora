@@ -3,8 +3,6 @@ import { DrizzleService, pageToOffset } from '@oss/core/server';
 import { and, count, desc, eq, sum } from 'drizzle-orm';
 import { wallet, walletTransaction } from './schema/index.js';
 
-// Wallet owns money movement, so it owns the admin reporting port. The back-office
-// (admin-console) depends only on ADMIN_WALLET_REPORTING - never on this schema.
 // See ADR-0017/0025.
 export class DrizzleAdminWalletReporting implements AdminWalletReporting {
   constructor(private readonly drizzle: DrizzleService) {}

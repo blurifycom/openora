@@ -2,10 +2,6 @@ import { describe, it, expect, vi } from 'vitest';
 import { createHash } from 'node:crypto';
 import { AuditService } from '../service/audit.service.js';
 
-// ---------------------------------------------------------------------------
-// Hash helper - mirrors the private one in the service exactly
-// ---------------------------------------------------------------------------
-
 function computeHash(fields: {
   id: string;
   actorId: string | null;
@@ -33,23 +29,6 @@ function computeHash(fields: {
     )
     .digest('hex');
 }
-
-// ---------------------------------------------------------------------------
-// Drizzle mock factories
-// record() now runs inside db.transaction(tx => ...) and issues, in order:
-//   1. tx.execute(SELECT pg_advisory_xact_lock(...))   (serialize per tenant)
-//   2. tx.select..where..orderBy..limit                (read chain tip)
-//   3. tx.execute(SELECT nextval(...))                 (reserve seq)
-//   4. tx.insert..values..returning                    (single final-hash insert)
-// There is NO update - the row is inserted with its real hash.
-//
-// For list() it runs two parallel queries via Promise.all:
-//   A. select..from..where..orderBy..limit..offset  (rows)
-//   B. select..from..where                          (count)
-//
-// For exportCsv() / verifyChain():
-//   select..from..where..orderBy  (all rows, ordered)
-// ---------------------------------------------------------------------------
 
 function makeEvents(): import('@oss/core/server').EventBus {
   return { emit: vi.fn(), on: vi.fn() } as unknown as import('@oss/core/server').EventBus;
@@ -96,9 +75,6 @@ function makeRow(
   };
 }
 
-// Build a Drizzle mock whose `select()` returns a fresh chain object each call.
-// Each chain queues responses via `mockResolvedValueOnce` on the terminal method.
-// `callIndex` lets callers configure which call returns what.
 function makeDrizzleWithSelectQueue(
   ...selectResults: Array<() => Promise<unknown[]>>
 ): import('@oss/core/server').DrizzleService {
@@ -113,13 +89,8 @@ function makeDrizzleWithSelectQueue(
         orderBy: vi.fn().mockReturnThis(),
         limit: vi.fn().mockReturnThis(),
         offset: vi.fn().mockImplementation(() => resolver()),
-        // Some queries don't call offset - resolve at orderBy or where instead.
       };
-      // Make orderBy and where also potentially terminal (used by verifyChain / exportCsv).
-      // The last chained call resolves. We detect "no further call" by checking
-      // whether offset gets called; if not, fall through to orderBy / where.
       (chain.orderBy as ReturnType<typeof vi.fn>).mockImplementation(function () {
-        // Return a thenable that resolves unless offset is called next.
         const result = resolver();
         const thenableChain = {
           ...chain,
@@ -143,23 +114,10 @@ function makeDrizzleWithSelectQueue(
   return { db } as unknown as import('@oss/core/server').DrizzleService;
 }
 
-// Simpler mock for scenarios where we control exact call sequences manually.
 function makeManualDrizzle(db: Record<string, unknown>): import('@oss/core/server').DrizzleService {
   return { db } as unknown as import('@oss/core/server').DrizzleService;
 }
 
-// ---------------------------------------------------------------------------
-// record() - atomic single-insert, advisory-locked, hash chaining
-// ---------------------------------------------------------------------------
-
-// A persistent in-memory store of audit rows with a shared seq counter that stands
-// in for the DB serial sequence. Builds a Drizzle mock whose `transaction(cb)` runs
-// cb against a `tx` handle that:
-//   - tx.execute(advisory lock)  -> no-op resolve
-//   - tx.execute(nextval)        -> increments and returns the shared seq
-//   - tx.select(...tip...)       -> returns the latest row hash
-//   - tx.insert(...).returning() -> appends the row and returns it
-// No update method is provided, so any UPDATE attempt throws.
 function makeChainStore() {
   const rows: ReturnType<typeof makeRow>[] = [];
   let seqCounter = 0;
@@ -167,14 +125,11 @@ function makeChainStore() {
 
   const tx = {
     execute: vi.fn().mockImplementation(() => {
-      // Order within a record() tx: 1st execute = advisory lock, 2nd = nextval.
       const call = executeCall++;
       if (call % 2 === 1) {
-        // nextval
         seqCounter += 1;
         return Promise.resolve({ rows: [{ seq: seqCounter }] });
       }
-      // advisory lock
       return Promise.resolve({ rows: [{}] });
     }),
     select: vi.fn().mockImplementation(() => {
@@ -231,7 +186,6 @@ describe('AuditService.record()', () => {
     });
     expect(result.hash).toBe(expected);
     expect(result.hash).not.toBe('pending');
-    // The tx handle exposes no update method - the write path is INSERT only.
     expect('update' in store.tx).toBe(false);
   });
 
@@ -255,8 +209,6 @@ describe('AuditService.record()', () => {
     expect(second.prevHash).toBe(first.hash);
     expect(second.seq).toBe(2);
 
-    // Run verifyChain over the produced rows: the chain must validate end to end,
-    // proving no 'pending' hash leaked and the links are intact.
     const persisted = store.getRows();
     const verifySvc = new AuditService(
       makeManualDrizzle({
@@ -272,13 +224,8 @@ describe('AuditService.record()', () => {
   });
 });
 
-// ---------------------------------------------------------------------------
-// verifyChain()
-// ---------------------------------------------------------------------------
-
 describe('AuditService.verifyChain()', () => {
   function makeVerifyDb(rows: ReturnType<typeof makeRow>[]) {
-    // verifyChain does: select().from().where().orderBy()
     const db = {
       select: vi.fn().mockReturnValue({
         from: vi.fn().mockReturnThis(),
@@ -348,7 +295,6 @@ describe('AuditService.verifyChain()', () => {
   });
 
   it('detects a broken prevHash link between rows', async () => {
-    // Row 1 has a valid hash.
     const hash1 = computeHash({
       id: 'r1',
       actorId: null,
@@ -361,7 +307,6 @@ describe('AuditService.verifyChain()', () => {
       prevHash: null,
     });
 
-    // Row 2 claims prevHash = 'wrong' (not hash1), making the link broken.
     const rows = [
       makeRow({ id: 'r1', seq: 1, prevHash: null, hash: hash1 }),
       makeRow({ id: 'r2', seq: 2, prevHash: 'wrong-prev-hash', hash: 'anything' }),
@@ -378,20 +323,13 @@ describe('AuditService.verifyChain()', () => {
   });
 });
 
-// ---------------------------------------------------------------------------
-// list()
-// ---------------------------------------------------------------------------
-
 describe('AuditService.list()', () => {
   function makeListDb(rows: ReturnType<typeof makeRow>[], count: number) {
-    // list() runs Promise.all with two independent select chains.
-    // We return different results per select() call index.
     let selectCall = 0;
     const db = {
       select: vi.fn().mockImplementation(() => {
         const call = selectCall++;
         if (call === 0) {
-          // Rows query: select..from..where..orderBy..limit..offset
           return {
             from: vi.fn().mockReturnThis(),
             where: vi.fn().mockReturnThis(),
@@ -400,7 +338,6 @@ describe('AuditService.list()', () => {
             offset: vi.fn().mockResolvedValueOnce(rows),
           };
         }
-        // Count query: select..from..where
         return {
           from: vi.fn().mockReturnThis(),
           where: vi.fn().mockResolvedValueOnce([{ count }]),
@@ -431,7 +368,6 @@ describe('AuditService.list()', () => {
 
   it('respects page and limit for offset calculation', async () => {
     const svc = new AuditService(makeListDb([], 50), makeEvents());
-    // page 3, limit 10 -> offset 20 (pageToOffset(3,10) = (3-1)*10 = 20)
     const result = await svc.list({ page: 3, limit: 10 });
 
     expect(result.page).toBe(3);
@@ -440,13 +376,8 @@ describe('AuditService.list()', () => {
   });
 });
 
-// ---------------------------------------------------------------------------
-// exportCsv()
-// ---------------------------------------------------------------------------
-
 describe('AuditService.exportCsv()', () => {
   function makeExportDb(rows: ReturnType<typeof makeRow>[]) {
-    // exportCsv does: select().from().where().orderBy().limit()
     const db = {
       select: vi.fn().mockReturnValue({
         from: vi.fn().mockReturnThis(),

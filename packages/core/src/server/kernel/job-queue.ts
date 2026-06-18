@@ -8,12 +8,7 @@ import type {
   WorkerRegistration,
 } from '../../contracts/adapters/index.js';
 
-// Zero-dependency in-process JobQueueAdapter. This is the DEFAULT binding so the
-// platform boots, seeds and tests with no Redis. A downstream operator binds a
-// durable driver (the reference BullMQ overlay) to JOB_QUEUE to get persistence,
-// cross-process workers and real cron. Behaviour parity with the durable driver:
-// at-least-once, attempts + backoff, per-orderingKey serialization, dead-letter
-// hook, graceful drain. See ADR-0014.
+// Zero-dependency in-process default. Swap to BullMQ overlay for persistence/cron. See ADR-0014.
 
 type AnyWorker = WorkerRegistration<unknown>;
 
@@ -29,7 +24,6 @@ function computeBackoffMs(opts: EnqueueOptions, attempt: number): number {
   const backoff = opts.backoff;
   if (!backoff) return 0;
   if (backoff.type === 'fixed') return backoff.delayMs;
-  // exponential: delayMs * 2^(attempt-1)
   return backoff.delayMs * 2 ** (attempt - 1);
 }
 
@@ -38,14 +32,12 @@ const sleep = (ms: number): Promise<void> =>
 
 export class InProcessJobQueue implements JobQueueAdapter {
   private readonly workers = new Map<string, AnyWorker>();
-  // Jobs enqueued before their worker registered are buffered, then flushed on
-  // registerWorker (worker registration happens at boot, after providers).
+  // Buffered until registerWorker fires (registration happens at boot, after providers).
   private readonly pending = new Map<string, InternalJob[]>();
-  // Per-orderingKey serial lanes: a job chains onto the prior job for its key.
   private readonly lanes = new Map<string, Promise<void>>();
-  // Active idempotency keys -> the job id holding them (dedupe duplicate enqueues).
+  // job id per idempotency key - dedupes duplicate enqueues.
   private readonly activeKeys = new Map<string, string>();
-  // In-flight work to await on close() for a clean drain.
+  // Awaited on close() for a clean drain.
   private readonly inFlight = new Set<Promise<void>>();
   private readonly timers = new Set<ReturnType<typeof setTimeout>>();
   private readonly schedules = new Map<string, ReturnType<typeof setInterval>>();
@@ -57,7 +49,6 @@ export class InProcessJobQueue implements JobQueueAdapter {
   enqueue<T>(queue: QueueName, payload: T, opts: EnqueueOptions = {}): Promise<{ id: string }> {
     if (this.closed) throw new Error('[job-queue] enqueue after close()');
 
-    // Dedupe: an active idempotency key short-circuits to the existing job.
     if (opts.idempotencyKey) {
       const existing = this.activeKeys.get(opts.idempotencyKey);
       if (existing) return Promise.resolve({ id: existing });
@@ -109,9 +100,8 @@ export class InProcessJobQueue implements JobQueueAdapter {
       interval.unref?.();
       this.schedules.set(key, interval);
     } else if (repeat.cron) {
-      // Cron parsing is intentionally not bundled into the zero-dep default.
-      // A durable driver (BullMQ) provides real cron; here we no-op with a warn
-      // so a misconfigured dev environment is loud, not silently broken.
+      // Cron not supported in-process; a durable driver (BullMQ) provides real cron.
+      // Warn so a misconfigured dev environment is loud, not silently broken.
       this.logger.warn(
         { queue, scheduleId, cron: repeat.cron },
         '[job-queue] cron schedules require a durable driver (BullMQ overlay); ignored in-process',
@@ -136,7 +126,6 @@ export class InProcessJobQueue implements JobQueueAdapter {
     this.timers.clear();
     for (const interval of this.schedules.values()) clearInterval(interval);
     this.schedules.clear();
-    // Drain in-flight handlers (and their lane chains) before resolving.
     await Promise.allSettled([...this.inFlight, ...this.lanes.values()]);
   }
 
@@ -151,11 +140,10 @@ export class InProcessJobQueue implements JobQueueAdapter {
 
     const orderingKey = job.opts.orderingKey;
     if (orderingKey) {
-      // Chain onto the prior job for this key so same-key jobs never interleave.
       const laneKey = `${job.queue}:${orderingKey}`;
       const prev = this.lanes.get(laneKey) ?? Promise.resolve();
       const next = prev.then(() => this.runJob(worker, job));
-      // Swallow on the stored lane so one failure doesn't poison the chain.
+      // Swallow so one lane failure doesn't poison subsequent jobs on the same key.
       this.lanes.set(
         laneKey,
         next.then(
@@ -191,8 +179,6 @@ export class InProcessJobQueue implements JobQueueAdapter {
         meta: { ...job.opts.meta, idempotencyKey: job.opts.idempotencyKey },
       };
       try {
-        // Validate at the boundary (parse may coerce/narrow); a schema failure
-        // is a normal failure that retries, then dead-letters.
         ctx.payload = worker.schema.parse(job.payload);
         await worker.handler(ctx);
         this.releaseKey(job);

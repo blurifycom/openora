@@ -2,8 +2,6 @@ import { describe, it, expect, vi } from 'vitest';
 import { IdentityService } from '../service/identity.service.js';
 import type { SendEmailPort } from '@oss/core/contracts';
 
-// Stub out better-auth createAuth - this test only exercises the seam wiring,
-// not the full auth flow (that lives in integration tests).
 vi.mock('@oss/core/server', () => ({
   createAuth: vi.fn(() => ({
     api: {

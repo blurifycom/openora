@@ -5,9 +5,7 @@ import { ADMIN_GUARD } from '@oss/core/server';
 import { PlayerService } from './service/player.service.js';
 import { createPlayerRouter } from './router/index.js';
 
-// Add-on admin PAM surface (admin-guarded). The player-facing self-profile and
-// the `player` table live in the core profile module; this package reads that
-// table via the /schema subpath. See ADR-0020.
+// Reads the identity table via the /schema subpath. See ADR-0020.
 export default definePlugin({
   id: 'player-management',
   register(ctx) {

@@ -22,12 +22,9 @@ export type EventHandler<T = unknown> = (
   envelope?: EventEnvelope,
 ) => void | Promise<void>;
 
-// Typed app-facing event API. Known events (in the shared-schemas catalog) are
-// payload-checked at compile time; the string overload stays open for events an
-// overlay or consumer defines. Services depend on this - never on the broker.
-// The optional second argument to handlers exposes the full envelope (eventId,
-// traceId, orderingKey) to callers that need it; existing handlers
-// that only accept (payload) continue to work unchanged.
+// Typed app-facing event API. Services depend on this, never on the broker directly.
+// The optional second arg to handlers exposes the full envelope; existing (payload)-only
+// handlers continue to work unchanged.
 export type EventBus = {
   emit<K extends DomainEventName>(event: K, payload: DomainEventPayload<K>): void;
   emit(event: string, payload: unknown): void;
@@ -51,8 +48,7 @@ export type EventBus = {
 
 export const EVENT_BUS: Token<EventBus> = createToken('EVENT_BUS');
 
-// Default in-process transport: synchronous fan-out via a topic->handlers map.
-// Swap by binding a durable MessageBrokerAdapter to MESSAGE_BROKER in an overlay.
+// Default in-process transport. Swap by binding a durable MessageBrokerAdapter to MESSAGE_BROKER in an overlay.
 export class InMemoryBroker implements MessageBrokerAdapter {
   private readonly handlers = new Map<
     string,
@@ -103,11 +99,7 @@ function buildEnvelope(event: string, payload: unknown): EventEnvelope {
   };
 }
 
-// Typed facade over a MessageBrokerAdapter. Single responsibility: validate known
-// payloads against the catalog, isolate subscriber failures (one throwing handler
-// never breaks the emitter or its siblings), build the envelope, and delegate
-// delivery to the broker. Module handlers receive (payload, envelope?) - the
-// envelope is optional so no existing handler signature breaks.
+/** Typed facade over a MessageBrokerAdapter. Validates known payloads, isolates subscriber failures, and builds the envelope. */
 export function createEventBus(
   broker: MessageBrokerAdapter,
   logger: Logger = createLogger('event-bus'),

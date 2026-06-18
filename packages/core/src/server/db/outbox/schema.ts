@@ -9,7 +9,6 @@ import { pgTable, text, jsonb, integer, timestamp, index } from 'drizzle-orm/pg-
 export const eventOutbox = pgTable(
   'event_outbox',
   {
-    // The envelope eventId (UUID) - also the consumer-side idempotency key.
     eventId: text('eventId').primaryKey(),
     topic: text('topic').notNull(),
     payload: jsonb('payload').notNull(),
@@ -17,7 +16,6 @@ export const eventOutbox = pgTable(
     traceId: text('traceId'),
     orderingKey: text('orderingKey'),
     occurredAt: timestamp('occurredAt', { withTimezone: true }).notNull(),
-    // null = pending publication; set once the relay has published it.
     publishedAt: timestamp('publishedAt', { withTimezone: true }),
     attempts: integer('attempts').notNull().default(0),
     createdAt: timestamp('createdAt', { withTimezone: true }).notNull().defaultNow(),

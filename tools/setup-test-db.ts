@@ -1,14 +1,4 @@
 #!/usr/bin/env node
-/**
- * Create the integration-test database if it doesn't exist. Idempotent.
- *
- *   pnpm db:test:setup
- *
- * Connects to the `postgres` maintenance DB on the same server as
- * TEST_DATABASE_URL (default postgres://postgres:postgres@localhost:5432/oss_igaming_test)
- * and runs CREATE DATABASE. Migrations are applied by the test harness
- * (@oss/testing setupTestDb), not here.
- */
 import { Client } from 'pg';
 
 const TEST_URL =

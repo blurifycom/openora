@@ -13,7 +13,6 @@
 
 import { readFileSync } from 'node:fs';
 
-/** Read the hook payload from stdin; {} on any error. */
 export function readPayload() {
   try {
     return JSON.parse(readFileSync(0, 'utf8') || '{}');
@@ -22,7 +21,6 @@ export function readPayload() {
   }
 }
 
-/** Copilot's toolArgs may be a JSON string; normalize to an object. */
 function toolArgsObject(payload) {
   const a = payload.toolArgs;
   if (typeof a === 'string') {
@@ -35,14 +33,12 @@ function toolArgsObject(payload) {
   return a && typeof a === 'object' ? a : {};
 }
 
-/** The shell command string for this tool call, across tool shapes ('' if none). */
 export function extractCommand(payload) {
   const ti = payload.tool_input ?? {};
   const ca = toolArgsObject(payload);
   return String(ti.command ?? ca.command ?? '');
 }
 
-/** The target file path for an edit/write tool call, across tool shapes ('' if none). */
 export function extractFilePath(payload) {
   const ti = payload.tool_input ?? {};
   const ca = toolArgsObject(payload);
@@ -58,7 +54,6 @@ export function extractFilePath(payload) {
   );
 }
 
-/** Deny the tool call (works on Claude, Copilot, Codex, Gemini). */
 export function deny(message) {
   process.stderr.write(message.endsWith('\n') ? message : message + '\n');
   process.exit(2);

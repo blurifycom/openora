@@ -1,7 +1,3 @@
-/**
- * SerializedRow - `T` with the `StringifiedK` keys widened to `string` (the
- * shape after Date/Decimal fields are converted for the wire).
- */
 export type SerializedRow<
   T extends Record<string, unknown>,
   StringifiedK extends keyof T = never,
@@ -16,16 +12,6 @@ export type SerializeRowOptions<
   decimalFields?: readonly CK[];
 };
 
-/**
- * serializeRow - shallow-clones a DB row, converting Date fields via
- * `.toISOString()` and Decimal/numeric object fields via `String(...)`. Pure;
- * never mutates the original row. The `dateFields`/`decimalFields` keys are
- * inferred from the passed arrays, so the return type widens exactly those keys
- * to `string` - no cast needed at the call site:
- *
- *   serializeRow(row, { dateFields: ['createdAt'], decimalFields: ['amount'] })
- *   // -> Omit<Row,'createdAt'|'amount'> & { createdAt: string; amount: string }
- */
 export function serializeRow<
   T extends Record<string, unknown>,
   DK extends keyof T = never,

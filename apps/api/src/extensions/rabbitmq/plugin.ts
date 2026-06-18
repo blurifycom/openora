@@ -1,13 +1,6 @@
-// Opt-in overlay: swap the in-process MESSAGE_BROKER for a durable RabbitMQ
-// driver. SELF-DISABLING - if neither AMQP_URL nor RABBITMQ_URL is set it leaves
-// the in-process default in place and logs a notice, so this entry is safe to
-// keep registered in extensions.config.ts for `pnpm dev`, tests and CI (which
-// have no broker). Set AMQP_URL (eg amqp://localhost:5672) to activate.
-//
-// Registered LATE in extensions.config.ts so its MESSAGE_BROKER binding wins
-// over the default (last registration wins). Rebinds infra only - no
-// routes/schemas. Modules never see the change; they emit/subscribe through the
-// EventBus, which owns the envelope. See ADR-0016.
+// Self-disabling overlay: if neither AMQP_URL nor RABBITMQ_URL is set it leaves
+// the in-process default in place. Registered LATE so its MESSAGE_BROKER binding
+// wins (last registration wins). See ADR-0016.
 
 import { definePlugin } from '@oss/core/server';
 import { createLogger } from '@oss/core/server';

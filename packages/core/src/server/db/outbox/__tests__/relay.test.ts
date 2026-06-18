@@ -27,9 +27,8 @@ function row(id: string, topic: string): Row {
   };
 }
 
-// Minimal fake of the drizzle chain the relay uses: select().from().where()
-// .orderBy().limit() resolves to pending rows; update().set().where() marks the
-// just-published row (coordinated via the broker spy, which records the last id).
+// Fake drizzle chain: update().set().where() identifies the row via lastPublishedId
+// captured by the broker spy, so select and update stay coordinated without real DB.
 function harness(rows: Row[]) {
   let lastPublishedId: string | null = null;
   const broker: MessageBrokerAdapter = {

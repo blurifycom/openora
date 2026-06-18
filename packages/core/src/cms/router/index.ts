@@ -8,14 +8,12 @@ export function createCmsRouter(cms: CmsService, adminGuard: AdminGuard) {
   const os = implement(cmsContract).$context<OssContext>();
 
   return os.router({
-    // Public reads.
     listPages: os.listPages.handler(() => cms.listPages()),
 
     getPage: os.getPage.handler(({ input }) =>
       mapErrors({ NOT_FOUND: PageNotFoundError }, () => cms.getPage(input.slug)),
     ),
 
-    // Admin writes.
     createPage: os.createPage.handler(async ({ input, context }) => {
       await adminGuard.assert(context, 'content', 'create');
       return cms.createPage(input);
@@ -31,14 +29,12 @@ export function createCmsRouter(cms: CmsService, adminGuard: AdminGuard) {
       return mapErrors({ NOT_FOUND: PageNotFoundError }, () => cms.deletePage(input.id));
     }),
 
-    // Public reads.
     listBanners: os.listBanners.handler(() => cms.listBanners()),
 
     listBannersByPlacement: os.listBannersByPlacement.handler(({ input }) =>
       cms.listBannersByPlacement(input.placement),
     ),
 
-    // Admin writes.
     createBanner: os.createBanner.handler(async ({ input, context }) => {
       await adminGuard.assert(context, 'content', 'create');
       return cms.createBanner(input);

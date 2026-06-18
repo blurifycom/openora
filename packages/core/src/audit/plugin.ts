@@ -6,11 +6,13 @@ import { AUDIT_WRITER } from '@oss/core/contracts';
 import { AuditService, type RecordInput } from './service/audit.service.js';
 import { createAuditRouter } from './router/index.js';
 
-// Pure mapping: domain event topic + payload -> RecordInput.
-function mapEventToRecord(topic: string, payload: unknown): RecordInput {
-  const p = payload as Record<string, unknown>;
-  // Only completed/successful actions are emitted today; a failure/rejection topic
-  // suffix records the outcome so the `result` column is meaningful as those land.
+const str = (v: unknown): string | null => (typeof v === 'string' ? v : null);
+
+function isRecord(v: unknown): v is Record<string, unknown> {
+  return typeof v === 'object' && v !== null;
+}
+
+function mapEventToRecord(topic: string, p: Record<string, unknown>): RecordInput {
   const result = /\.(failed|rejected|declined)$/.test(topic) ? 'failure' : 'success';
 
   const base: RecordInput = {
@@ -22,16 +24,35 @@ function mapEventToRecord(topic: string, payload: unknown): RecordInput {
     result,
   };
 
-  // Admin changed a player's KYC status: the `userId` in the payload is the SUBJECT
-  // player, not the actor. Record the player as the resource and the actor as admin.
+  // payload `userId` is the SUBJECT player here, not the actor (an admin changed it).
   if (topic === 'compliance.kyc.updated') {
     return {
       ...base,
       actorType: 'admin',
       resourceType: 'player',
-      resourceId: typeof p['userId'] === 'string' ? (p['userId'] as string) : null,
+      resourceId: str(p['userId']),
       before: { kycStatus: p['previousStatus'] ?? null },
       after: { kycStatus: p['status'] ?? null },
+    };
+  }
+
+  // actorId = acting admin; resourceId = subject role. permissions.changed/updated
+  // carries the matrix diff; assigned/revoked carries the target user in after.userId.
+  if (topic.startsWith('iam.role.')) {
+    const carriesMatrix = topic === 'iam.role.permissions.changed' || topic === 'iam.role.updated';
+    const carriesTarget = topic === 'iam.role.assigned' || topic === 'iam.role.revoked';
+    return {
+      ...base,
+      actorType: 'admin',
+      actorId: str(p['actorId']),
+      resourceType: 'role',
+      resourceId: str(p['roleId']),
+      before: carriesMatrix ? (p['before'] ?? null) : null,
+      after: carriesMatrix
+        ? (p['after'] ?? null)
+        : carriesTarget
+          ? { userId: str(p['userId']) }
+          : null,
     };
   }
 
@@ -42,7 +63,7 @@ function mapEventToRecord(topic: string, payload: unknown): RecordInput {
   return base;
 }
 
-// Topics that exist in domainEventSchemas. Do not invent new ones.
+// Each topic must exist in domainEventSchemas - do not invent topics here.
 const SUBSCRIBED_TOPICS = [
   'identity.user.registered',
   'identity.user.login',
@@ -62,20 +83,21 @@ const SUBSCRIBED_TOPICS = [
   'compliance.kyc.updated',
   'cms.page.published',
   'iam.invitation.accepted',
+  'iam.role.created',
+  'iam.role.updated',
+  'iam.role.deleted',
+  'iam.role.permissions.changed',
+  'iam.role.assigned',
+  'iam.role.revoked',
 ] as const;
 
 export default definePlugin({
   id: 'audit',
   register(ctx) {
-    // Mutable ref set by the router factory after the container is resolved.
-    // Event handlers close over this ref so they can call the service once it is
-    // built. In normal boot order (create-app.ts) event subscriptions are wired
-    // to the bus BEFORE router factories run, so the ref is null when registered
-    // but populated before any real event can arrive.
+    // Subscriptions are wired before router factories run (create-app.ts boot order),
+    // so svcRef is null at registration but set before any real event arrives.
     let svcRef: AuditService | null = null;
 
-    // Bind the AUDIT_WRITER port so other modules / overlays can record audit
-    // entries without importing this module's internals.
     ctx.provide(AUDIT_WRITER, (c) => {
       const svc = new AuditService(c.get(DRIZZLE), c.get(EVENT_BUS));
       return {
@@ -83,18 +105,13 @@ export default definePlugin({
       };
     });
 
-    // Register event subscribers. Handlers are wired to the live EventBus by
-    // create-app.ts after all plugins have registered. At event-fire time the
-    // router factory will have already run and svcRef will be populated.
     for (const topic of SUBSCRIBED_TOPICS) {
       ctx.events.on(topic, (payload) => {
-        if (!svcRef) return;
+        if (!svcRef || !isRecord(payload)) return;
         void svcRef.record(mapEventToRecord(topic, payload));
       });
     }
 
-    // Router factory - runs after all plugins register, giving us the resolved
-    // container. Sets svcRef so the event handlers above become functional.
     ctx.routers.add('audit', (c) => {
       const svc = new AuditService(c.get(DRIZZLE), c.get(EVENT_BUS));
       svcRef = svc;

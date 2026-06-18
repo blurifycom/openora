@@ -9,8 +9,7 @@ import { user } from '@oss/core/pam/schema/identity';
 import { chatRoom, chatMessage } from '../schema/index.js';
 import type { ChatRoom, ChatMessage } from '../schemas/index.js';
 
-// Realtime channel for a room (null roomId = the global channel). Keep this the
-// single source of the naming convention so publishers and subscribers align.
+/** Single source for channel names so publishers and subscribers always align. */
 export function chatChannel(roomId: string | null): string {
   return roomId ? `chat:room:${roomId}` : 'chat:global';
 }
@@ -59,16 +58,10 @@ export class ChatService {
     private readonly transport: RealtimeTransport,
   ) {}
 
-  // Subscribe to live messages for a room (null = global). Returns an unsubscribe
-  // fn the SSE handler calls on connection abort. Delegates to REALTIME_TRANSPORT,
-  // so swapping to a managed vendor needs no change here.
   subscribeMessages(roomId: string | null, listener: (message: ChatMessage) => void): () => void {
     return this.transport.subscribe<ChatMessage>(chatChannel(roomId), listener);
   }
 
-  // The display name shown on a message, resolved from the verified user record.
-  // `fallback` (the router's header-derived value) is used only if the user row is
-  // somehow missing, then 'anonymous' as a last resort.
   private async resolveDisplayName(userId: string, fallback: string): Promise<string> {
     const [row] = await this.drizzle.db
       .select({ name: user.name })
@@ -124,8 +117,7 @@ export class ChatService {
     });
 
     const message = toMessage(record!);
-    // Push to connected clients over the realtime transport (best-effort, after
-    // the row is committed). The DB remains the system of record for backfill.
+    // Best-effort push after commit; DB is the system of record for backfill.
     void this.transport.publish(chatChannel(roomId), message);
     return message;
   }

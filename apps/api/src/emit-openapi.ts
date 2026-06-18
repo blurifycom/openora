@@ -11,9 +11,7 @@ import { fileURLToPath } from 'node:url';
 const here = dirname(fileURLToPath(import.meta.url));
 const outputPath = resolve(here, '../../../docs/openapi.json');
 
-// Emit the canonical CORE surface only - the committed spec must not advertise
-// gated/premium add-on routes. The running server (main.ts) includes enabled
-// add-ons; this artifact stays edition-stable.
+// Committed spec advertises only the core surface; gated add-on routes are excluded so the artifact stays edition-stable.
 const outPath = await generateOpenApiSpec(buildContract({ includeAddons: false }), {
   info: { title: 'OSS Igaming API', version: '0.0.1' },
   outputPath,

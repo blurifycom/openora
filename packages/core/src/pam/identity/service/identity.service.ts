@@ -29,9 +29,7 @@ function nodeHeadersToHeaders(nodeHeaders: Record<string, string | string[] | un
   return headers;
 }
 
-// better-auth returns Dates for createdAt/updatedAt and may omit image. The
-// public UserSchema requires ISO strings, so coerce here before handing the
-// object back to oRPC for output validation.
+// better-auth returns Date objects; the public UserSchema requires ISO strings.
 type BetterAuthUser = {
   id: string;
   email: string;
@@ -58,9 +56,6 @@ function toUser(u: BetterAuthUser): User {
   return u.image !== undefined ? { ...base, image: u.image } : base;
 }
 
-// Forward every Set-Cookie header better-auth produced onto the oRPC response
-// headers (injected by ResponseHeadersPlugin), so the browser stores the session
-// cookie and subsequent requests authenticate.
 function forwardCookies(authResponse: globalThis.Response, resHeaders: Headers): void {
   const cookies = authResponse.headers.getSetCookie?.() ?? [];
   for (const cookie of cookies) {
@@ -69,8 +64,8 @@ function forwardCookies(authResponse: globalThis.Response, resHeaders: Headers):
 }
 
 // createAuth() is cast to the base better-auth `Auth` type (to dodge the Zod v4
-// $strip portability error), so the twoFactor() plugin endpoints are not on the
-// static type. Declare the narrow shapes we call here and route through a typed
+// $strip portability error), so the twoFactor() plugin endpoints are absent from
+// the static type. We declare the narrow shapes we call and route through a typed
 // accessor - no `any`. asResponse:true makes every call return a web Response.
 type AuthCall<B> = (opts: {
   body?: B;
@@ -125,13 +120,10 @@ export class IdentityService {
     });
   }
 
-  // Typed view over the plugin endpoints (see ExtendedAuthApi note above).
   private get api(): ExtendedAuthApi {
     return this.auth.api as unknown as ExtendedAuthApi;
   }
 
-  // Resolve the calling user's id from the session cookie - used to stamp events
-  // for the side-effecting routes that don't echo the user back.
   private async currentUserId(headers: Headers): Promise<string | null> {
     const session = await this.auth.api.getSession({ headers });
     return session?.user?.id ?? null;
@@ -166,8 +158,6 @@ export class IdentityService {
       headers,
       asResponse: true,
     });
-    // A non-ok response is a real auth failure (bad credentials) - surface it as
-    // a 4xx rather than mistaking the missing session for a 2FA redirect below.
     await ensureOk(authResponse);
     forwardCookies(authResponse, resHeaders);
     const body = (await authResponse.json()) as {
@@ -177,7 +167,6 @@ export class IdentityService {
       twoFactorRedirect?: boolean;
     };
 
-    // 2FA-enabled accounts get a 200 with no session; the client must verify2fa.
     if (body.twoFactorRedirect || !body.user || !body.token) {
       return { twoFactorRedirect: true };
     }
@@ -209,8 +198,6 @@ export class IdentityService {
     if (!session?.user) return null;
     return toUser(session.user as BetterAuthUser);
   }
-
-  // --- Two-factor (TOTP) ---
 
   async enableTwoFactor(
     input: Enable2faInput,
@@ -265,8 +252,6 @@ export class IdentityService {
     return SUCCESS;
   }
 
-  // --- Password reset / change ---
-
   async requestPasswordReset(input: RequestPasswordResetInput) {
     // Always returns success - never reveal whether the email exists. The reset
     // email (if any) is delivered through the sendEmail hook -> notifications.
@@ -311,8 +296,6 @@ export class IdentityService {
     return SUCCESS;
   }
 
-  // --- Email verification / change ---
-
   async sendEmailVerification(reqHeaders: Record<string, string | string[] | undefined>) {
     const headers = nodeHeadersToHeaders(reqHeaders);
     const session = await this.auth.api.getSession({ headers });
@@ -355,8 +338,6 @@ export class IdentityService {
     return SUCCESS;
   }
 
-  // --- Profile ---
-
   async updateProfile(
     input: UpdateProfileInput,
     reqHeaders: Record<string, string | string[] | undefined>,
@@ -369,7 +350,7 @@ export class IdentityService {
     const res = await this.api.updateUser({ body, headers, asResponse: true });
     await ensureOk(res);
     forwardCookies(res, resHeaders);
-    // updateUser returns { status } only; re-read the fresh user from session.
+    // updateUser returns { status } only - re-read from session to get the full user.
     const session = await this.auth.api.getSession({ headers });
     const current = session?.user as BetterAuthUser | undefined;
     if (current) this.events.emit('identity.profile.updated', { userId: current.id });

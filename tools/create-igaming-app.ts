@@ -1,24 +1,4 @@
 #!/usr/bin/env node
-/**
- * Bootstrap a downstream igaming project that consumes @oss/* via local `link:`.
- *
- * Usage:
- *   pnpm create:app <target-dir> [--name <project-name>]
- *
- * Example:
- *   pnpm create:app ../my-igaming --name my-igaming
- *
- * Scaffolds a headless api-only turborepo (apps/api), wires pnpm.overrides to link
- * at this OSS checkout, drops in the consumer AI agents and turbo gen generators,
- * then prints next steps.
- *
- * The platform is headless: the frontend (player web + backoffice admin) lives in
- * the downstream consumer's own repo and talks to this api over HTTP via the SDK
- * (`@oss/core/react`). The scaffold ships only the backend.
- *
- * The base lives in `tools/templates/consumer/` (root config + apps/api +
- * generators + dotfiles). The __dot__/.tpl/substitution rules apply throughout.
- */
 
 import { readdirSync, readFileSync, writeFileSync, mkdirSync, existsSync, statSync } from 'node:fs';
 import { join, dirname, relative, resolve, sep, basename } from 'node:path';
@@ -40,7 +20,6 @@ function die(msg: string): never {
 
 const USAGE = 'Usage: pnpm create:app <target-dir> [--name <name>]';
 
-// Accepts `--flag value` and `--flag=value`. Returns the raw value or undefined.
 function readFlag(args: string[], i: number): { value: string | undefined; next: number } {
   const a = args[i];
   const eq = a.indexOf('=');
@@ -75,7 +54,6 @@ function sanitizeName(raw: string): string {
   );
 }
 
-// Forward slashes for use inside package.json / TS string literals on every OS.
 function posix(p: string): string {
   return p.split(sep).join('/');
 }
@@ -94,21 +72,16 @@ function walk(dir: string): string[] {
   return out;
 }
 
-// __dot__foo -> .foo  (lets us store dotfiles in-repo without them taking effect here)
 function undotSegment(seg: string): string {
   return seg.startsWith('__dot__') ? `.${seg.slice('__dot__'.length)}` : seg;
 }
 
-// Copy a template tree into the target, mapping each file's relative path through
-// the __dot__ / .tpl rules and substituting {{vars}} in .tpl files only.
 function emitTree(srcRoot: string, vars: Record<string, string>, targetDir: string): void {
   for (const file of walk(srcRoot)) {
     const rel = relative(srcRoot, file);
     let outRel = rel.split(sep).map(undotSegment).join(sep);
     if (outRel.endsWith('.tpl')) outRel = outRel.slice(0, -'.tpl'.length);
 
-    // Only .tpl files get {{var}} substitution. Everything else is copied verbatim so
-    // that, eg, files carrying their own {{name}} Plop placeholders survive untouched.
     const raw = readFileSync(file, 'utf8');
     const content = file.endsWith('.tpl') ? substitute(raw, vars) : raw;
 
@@ -140,9 +113,6 @@ function main(): void {
   console.log(`  headless api-only consumer (frontend lives in your own repo)`);
   console.log(`  Linking @oss/* from ${vars.ossFromRoot}\n`);
 
-  // Base consumer repo (root config + apps/api + generators + dotfiles). This
-  // includes the consumer AI agents under .rulesync/subagents/ (rulesync sources);
-  // `pnpm sync:agents` generates the per-tool mirrors (.claude/agents, .github/agents).
   emitTree(templateRoot, vars, targetDir);
 
   console.log(`

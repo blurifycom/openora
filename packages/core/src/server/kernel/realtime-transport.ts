@@ -1,13 +1,5 @@
 import type { RealtimeTransport, RealtimePresence } from '../../contracts/adapters/index.js';
 
-// Zero-dependency in-process RealtimeTransport. This is the DEFAULT binding:
-// publish fans out synchronously to every subscriber in this process, which is
-// exactly what the oRPC event-iterator SSE handlers consume. A downstream
-// operator binds a managed transport (Ably / GetStream) to REALTIME_TRANSPORT
-// for cross-process fan-out and edge connections - module code is unchanged.
-// Generalizes the per-connection listener pattern previously inlined in the
-// sportsbook service. See ADR-0007.
-
 type Handler = (event: unknown) => void;
 
 class InProcessPresence implements RealtimePresence {
@@ -31,6 +23,7 @@ class InProcessPresence implements RealtimePresence {
   }
 }
 
+// Reference adoption: sportsbook odds. See ADR-0007.
 export class InProcessRealtimeTransport implements RealtimeTransport {
   private readonly channels = new Map<string, Set<Handler>>();
   readonly presence: RealtimePresence = new InProcessPresence();
@@ -43,7 +36,7 @@ export class InProcessRealtimeTransport implements RealtimeTransport {
       try {
         handler(event);
       } catch {
-        // A failing subscriber must not break fan-out to the others.
+        // failing subscriber must not break fan-out to others
       }
     }
   }

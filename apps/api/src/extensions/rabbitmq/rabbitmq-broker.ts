@@ -1,17 +1,9 @@
-// RabbitMQ MessageBrokerAdapter. Implements the broker seam using a single
-// topic exchange (oss.events). publish() serializes the EventEnvelope to JSON
-// and routes by topic. subscribe() creates a durable named queue when a
-// consumerGroup is given (competing-consumer, shared across instances) or an
-// exclusive per-process queue for fan-out. Delivery is at-least-once - consumers
-// must be idempotent (use envelope.eventId for dedup). See ADR-0016.
+// RabbitMQ MessageBrokerAdapter. Topic exchange `oss.events`; delivery is at-least-once,
+// consumers must be idempotent (use envelope.eventId for dedup). See ADR-0016.
 //
-// connect() returns a ChannelModel (not a Connection) in amqplib; createChannel
-// lives on ChannelModel. close() also lives on ChannelModel.
-//
-// subscribe() returns a synchronous unsubscribe fn (matching the broker
-// interface contract). The AMQP consumer setup is async and runs in the
-// background; the `cancelled` flag ensures the consumer is torn down immediately
-// if unsubscribe is called before setup completes.
+// amqplib connect() returns a ChannelModel (not Connection); createChannel/close live on it.
+// subscribe() is synchronous; AMQP setup runs in the background - `cancelled` handles the
+// race if unsubscribe is called before setup completes.
 
 import type {
   EventEnvelope,
@@ -21,7 +13,6 @@ import type {
 } from '@oss/core/contracts';
 import type { Channel, ChannelModel, ConsumeMessage } from 'amqplib';
 
-// Minimal logger shape - the pino Logger passed in by the plugin satisfies it.
 type OverlayLogger = {
   debug(obj: unknown, msg?: string): void;
   info(obj: unknown, msg?: string): void;
@@ -65,8 +56,6 @@ export class RabbitMqBroker implements MessageBrokerAdapter {
     });
   }
 
-  // Returns a synchronous unsubscribe fn. AMQP setup runs in the background;
-  // the `cancelled` flag handles the race between setup and early unsubscribe.
   subscribe(topic: string, handler: BrokerHandler, options?: SubscribeOptions): () => void {
     let cancelled = false;
     let resolvedTag: string | null = null;
@@ -77,8 +66,6 @@ export class RabbitMqBroker implements MessageBrokerAdapter {
         const ch = this.channel;
         if (!ch || cancelled) return;
 
-        // Named durable queue -> competing consumers (instances share it).
-        // Exclusive auto-delete queue -> fan-out (one per process).
         const queueName = options?.consumerGroup ?? '';
         const queueOpts = options?.consumerGroup
           ? ({ durable: true, exclusive: false, autoDelete: false } as const)
@@ -113,7 +100,6 @@ export class RabbitMqBroker implements MessageBrokerAdapter {
         this.activeConsumers.add(consumerTag);
 
         if (cancelled) {
-          // unsubscribe was called before setup finished - cancel immediately.
           void ch.cancel(consumerTag);
           this.activeConsumers.delete(consumerTag);
         }

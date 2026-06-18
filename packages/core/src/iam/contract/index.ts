@@ -1,25 +1,27 @@
 import { oc } from '@orpc/contract';
 import * as z from 'zod';
+import { PageQuerySchema, paginated } from '@oss/core/contracts/kit';
 
-// --- Shared output shapes ---
+export const PermissionLevelSchema = z.enum(['no_access', 'read', 'read_write']);
 
 export const AdminRoleSchema = z.object({
   id: z.uuid(),
+  key: z.string().nullable(),
   name: z.string(),
   description: z.string().nullable(),
+  isSystem: z.boolean(),
+  isSuperAdmin: z.boolean(),
   createdAt: z.iso.datetime(),
 });
 
-export const AdminRolePermissionSchema = z.object({
-  id: z.uuid(),
-  roleId: z.uuid(),
+// A missing module entry means no_access; only non-no_access cells are stored.
+export const RolePermissionLevelSchema = z.object({
   resource: z.string(),
-  action: z.string(),
-  createdAt: z.iso.datetime(),
+  level: PermissionLevelSchema,
 });
 
 export const AdminRoleWithGrantsSchema = AdminRoleSchema.extend({
-  permissions: z.array(AdminRolePermissionSchema),
+  permissions: z.array(RolePermissionLevelSchema),
 });
 
 export const AdminRoleAssignmentSchema = z.object({
@@ -27,6 +29,11 @@ export const AdminRoleAssignmentSchema = z.object({
   userId: z.uuid(),
   roleId: z.uuid(),
   createdAt: z.iso.datetime(),
+});
+
+export const AdminRoleAssignmentDetailSchema = AdminRoleAssignmentSchema.extend({
+  roleName: z.string(),
+  roleKey: z.string().nullable(),
 });
 
 export const AdminInvitationSchema = z.object({
@@ -43,22 +50,30 @@ export const AdminInvitationSchema = z.object({
 export const CatalogEntrySchema = z.object({
   resource: z.string(),
   actions: z.array(z.string()),
+  readActions: z.array(z.string()),
 });
 
-// --- Grant item used for setRolePermissions ---
+export const CatalogSchema = z.object({
+  modules: z.array(CatalogEntrySchema),
+  levels: z.array(PermissionLevelSchema),
+});
+
 export const GrantInputSchema = z.object({
   resource: z.string(),
-  action: z.string(),
+  level: PermissionLevelSchema,
 });
 
-// --- Contract ---
+export const EffectivePermissionsSchema = z.object({
+  permissions: z.array(RolePermissionLevelSchema),
+});
 
 export const iamContract = {
-  listCatalog: oc
-    .route({ method: 'GET', path: '/iam/catalog' })
-    .output(z.array(CatalogEntrySchema)),
+  listCatalog: oc.route({ method: 'GET', path: '/iam/catalog' }).output(CatalogSchema),
 
-  listRoles: oc.route({ method: 'GET', path: '/iam/roles' }).output(z.array(AdminRoleSchema)),
+  listRoles: oc
+    .route({ method: 'GET', path: '/iam/roles' })
+    .input(PageQuerySchema)
+    .output(paginated(AdminRoleWithGrantsSchema)),
 
   getRole: oc
     .route({ method: 'GET', path: '/iam/roles/{roleId}' })
@@ -101,9 +116,25 @@ export const iamContract = {
     .input(z.object({ userId: z.uuid(), roleId: z.uuid() }))
     .output(AdminRoleAssignmentSchema),
 
+  unassignRole: oc
+    .route({ method: 'DELETE', path: '/iam/assignments' })
+    .input(z.object({ userId: z.uuid(), roleId: z.uuid() }))
+    .output(z.object({ success: z.literal(true) })),
+
+  listAssignments: oc
+    .route({ method: 'GET', path: '/iam/assignments' })
+    .input(PageQuerySchema.extend({ userId: z.uuid().optional() }))
+    .output(paginated(AdminRoleAssignmentDetailSchema)),
+
+  previewEffectivePermissions: oc
+    .route({ method: 'POST', path: '/iam/effective-permissions' })
+    .input(z.union([z.object({ userId: z.uuid() }), z.object({ roleIds: z.array(z.uuid()) })]))
+    .output(EffectivePermissionsSchema),
+
   listInvitations: oc
     .route({ method: 'GET', path: '/iam/invitations' })
-    .output(z.array(AdminInvitationSchema)),
+    .input(PageQuerySchema)
+    .output(paginated(AdminInvitationSchema)),
 
   inviteAdmin: oc
     .route({ method: 'POST', path: '/iam/invitations' })

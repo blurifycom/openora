@@ -63,11 +63,8 @@ async function loginAs(
 }
 
 /**
- * A client that authenticates as a player by logging in with the player's REAL
- * credentials (verified better-auth session cookie) - no more trusting an
- * `x-user-id` header (W1, ADR-0019). Seeded players use `player.<n>@demo.igaming.dev`
- * / `password123` (see seedDemoData). Pass the seeded player's email; defaults to
- * the standard player password.
+ * Authenticates as a player via a real better-auth session cookie (ADR-0019). Defaults
+ * to `password123`; seeded players use `player.<n>@demo.igaming.dev`.
  */
 export async function asPlayer(
   app: Hono,

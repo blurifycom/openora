@@ -1,9 +1,6 @@
 import { pgTable, uuid, text, integer, decimal, timestamp, index } from 'drizzle-orm/pg-core';
 
-// The igaming `player` profile. Owned by the core profile module (every edition
-// has players). The add-on PAM admin package (@oss-addons/player-management)
-// reads this table via the @oss-addons/profile/schema subpath - a
-// add-on->core read, which the boundary rules allow. See ADR-0020.
+// Read by @oss-addons/player-management via the /schema subpath (add-on->core read, allowed per ADR-0020).
 export const player = pgTable(
   'player',
   {

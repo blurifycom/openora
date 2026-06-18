@@ -37,7 +37,6 @@ const manifest = rawManifest
   .map((s) => s.trim())
   .filter(Boolean);
 
-// Validate the chosen modules against the registry so a typo fails here, not at boot.
 const configSrc = readFileSync(join(repoRoot, 'extensions.config.ts'), 'utf8');
 const knownIds = [...configSrc.matchAll(/id:\s*'([^']+)'/g)].map((m) => m[1]);
 const unknown = manifest.filter((m) => !knownIds.includes(m));
@@ -54,15 +53,10 @@ if (existsSync(appDir)) {
 
 const pkgName = `@oss/${name}-service`;
 
-// Each module in the manifest is a standalone @oss-addons/<id> package. The host
-// depends on exactly the ones it bakes, so the manifest and the dependency graph
-// stay in sync (no blanket @oss/modules dep anymore).
 const addonDeps = Object.fromEntries(
   manifest.map((id) => [`@oss-addons/${id}`, 'workspace:*'] as const).sort(),
 );
 
-// Reuse the api host's manifest-aware extensions loader verbatim, so the module
-// list stays single-sourced in the root extensions.config.ts.
 const extensionsLoader = readFileSync(join(repoRoot, 'apps/api/src/extensions.ts'), 'utf8');
 
 const files: Record<string, string> = {

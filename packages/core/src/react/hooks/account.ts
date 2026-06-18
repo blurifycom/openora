@@ -15,17 +15,8 @@ import type {
 } from '../../contracts/schemas/index.js';
 import { useApiClient } from '../context/api-client.js';
 
-// Account-management hooks over the identity + profile contract routes:
-// two-factor (TOTP), password reset/change, email verification, and the
-// player-facing self profile. Inputs/outputs are inferred from the contract
-// and shared schemas - no hand-written shapes. Like the auth hooks, these call
-// the stable contract paths rather than reaching into better-auth directly.
-
-// The canonical player shape, inferred from the contract output schema.
 export type PlayerProfile = z.infer<typeof PlayerSchema>;
 export type { Enable2faResult };
-
-// --- Two-factor (TOTP) ---
 
 export function useEnable2fa() {
   const client = useApiClient();
@@ -53,8 +44,6 @@ export function useDisable2fa() {
   });
 }
 
-// --- Password reset / change ---
-
 export function useRequestPasswordReset() {
   const client = useApiClient();
   return useMutation({
@@ -76,8 +65,6 @@ export function useChangePassword() {
   });
 }
 
-// --- Email verification ---
-
 export function useSendEmailVerification() {
   const client = useApiClient();
   return useMutation({
@@ -94,8 +81,6 @@ export function useVerifyEmail() {
   });
 }
 
-// --- Profile (identity: name/avatar) ---
-
 export function useUpdateProfile() {
   const client = useApiClient();
   const queryClient = useQueryClient();
@@ -104,8 +89,6 @@ export function useUpdateProfile() {
     onSuccess: () => queryClient.invalidateQueries({ queryKey: ['me'] }),
   });
 }
-
-// --- Player profile preferences (display name / country / currency / language) ---
 
 export function usePlayerProfile() {
   const client = useApiClient();

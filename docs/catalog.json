@@ -134,10 +134,13 @@
         "iam.deleteRole",
         "iam.getRole",
         "iam.inviteAdmin",
+        "iam.listAssignments",
         "iam.listCatalog",
         "iam.listInvitations",
         "iam.listRoles",
+        "iam.previewEffectivePermissions",
         "iam.setRolePermissions",
+        "iam.unassignRole",
         "iam.updateRole"
       ]
     },
@@ -436,6 +439,12 @@
     "gaming.round.ended",
     "gaming.round.started",
     "iam.invitation.accepted",
+    "iam.role.assigned",
+    "iam.role.created",
+    "iam.role.deleted",
+    "iam.role.permissions.changed",
+    "iam.role.revoked",
+    "iam.role.updated",
     "identity.2fa.disabled",
     "identity.2fa.enabled",
     "identity.email.verified",
@@ -459,11 +468,11 @@
       "file": "packages/core/src/iam/contract/index.ts"
     },
     {
-      "name": "AdminRoleAssignmentSchema",
+      "name": "AdminRoleAssignmentDetailSchema",
       "file": "packages/core/src/iam/contract/index.ts"
     },
     {
-      "name": "AdminRolePermissionSchema",
+      "name": "AdminRoleAssignmentSchema",
       "file": "packages/core/src/iam/contract/index.ts"
     },
     {
@@ -535,6 +544,10 @@
       "file": "packages/core/src/iam/contract/index.ts"
     },
     {
+      "name": "CatalogSchema",
+      "file": "packages/core/src/iam/contract/index.ts"
+    },
+    {
       "name": "ChangeEmailInputSchema",
       "file": "packages/core/src/contracts/schemas/identity.ts"
     },
@@ -569,6 +582,10 @@
     {
       "name": "Disable2faInputSchema",
       "file": "packages/core/src/contracts/schemas/identity.ts"
+    },
+    {
+      "name": "EffectivePermissionsSchema",
+      "file": "packages/core/src/iam/contract/index.ts"
     },
     {
       "name": "Enable2faInputSchema",
@@ -695,6 +712,10 @@
       "file": "packages/core/src/contracts/schemas/common.ts"
     },
     {
+      "name": "PermissionLevelSchema",
+      "file": "packages/core/src/iam/contract/index.ts"
+    },
+    {
       "name": "PlaceBetInputSchema",
       "file": "packages/core/src/sportsbook/contract/index.ts"
     },
@@ -741,6 +762,10 @@
     {
       "name": "ResetPasswordInputSchema",
       "file": "packages/core/src/contracts/schemas/identity.ts"
+    },
+    {
+      "name": "RolePermissionLevelSchema",
+      "file": "packages/core/src/iam/contract/index.ts"
     },
     {
       "name": "SportsbookBetSchema",
@@ -869,6 +894,7 @@
     "DELETE /cms/banners/{id}",
     "DELETE /cms/pages/{id}",
     "DELETE /compliance/limits/{id}",
+    "DELETE /iam/assignments",
     "DELETE /iam/roles/{roleId}",
     "GET /audit/export",
     "GET /audit/logs",
@@ -895,6 +921,7 @@
     "GET /gaming/games/{id}",
     "GET /gaming/rounds",
     "GET /health",
+    "GET /iam/assignments",
     "GET /iam/catalog",
     "GET /iam/invitations",
     "GET /iam/roles",
@@ -921,6 +948,7 @@
     "POST /gaming/rounds/start",
     "POST /gaming/rounds/{roundId}/end",
     "POST /iam/assignments",
+    "POST /iam/effective-permissions",
     "POST /iam/invitations",
     "POST /iam/invitations/accept",
     "POST /iam/roles",

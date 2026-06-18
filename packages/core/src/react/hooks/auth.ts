@@ -1,10 +1,6 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useApiClient } from '../context/api-client.js';
 
-// Endpoints exposed by the OSS identity module. Better-auth lives behind these
-// routes server-side; clients call these stable contract paths instead of
-// reaching directly into better-auth.
-
 export function useSession() {
   const client = useApiClient();
   return useQuery({

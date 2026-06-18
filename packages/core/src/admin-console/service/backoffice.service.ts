@@ -9,9 +9,6 @@ import type { AdminTransaction, AdminUser, PlatformStats } from '../schemas/inde
 
 export const UserNotFoundError = makeNotFoundError('User');
 
-// The back-office aggregates read/write across modules through their owned ports
-// (ADMIN_USER_DIRECTORY = identity, ADMIN_WALLET_REPORTING = wallet) - never their
-// schemas. That keeps it a clean, extractable module. See ADR-0017/0025.
 function toAdminUser(r: AdminUserRow): AdminUser {
   return {
     id: r.id,
@@ -35,6 +32,7 @@ function toAdminTransaction(r: AdminTxRow): AdminTransaction {
   };
 }
 
+// Reads peer modules only via /schema + ports - keeps it a clean, extractable module. See ADR-0017/0025.
 export class BackofficeService {
   constructor(
     private readonly users: AdminUserDirectory,
