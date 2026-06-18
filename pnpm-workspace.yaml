@@ -12,6 +12,7 @@ overrides:
   # Security pins (transitive, high-severity - dependency_audit gates at `high`).
   esbuild@<0.28.1: '>=0.28.1' # GHSA-gv7w-rqvm-qjhr (also clears its moderate + low)
   form-data@<4.0.6: '>=4.0.6' # GHSA-hmw2-7cc7-3qxx (via rulesync>fastmcp>...>axios)
+  undici@>=7.23.0 <7.28.0: '>=7.28.0 <8' # GHSA-vmh5-mc38-953g (TLS cert validation bypass, via rulesync>fastmcp>undici); stay on the 7.x major fastmcp expects
 allowBuilds:
   esbuild: true
   msgpackr-extract: true
