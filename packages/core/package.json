@@ -5,11 +5,13 @@
   "files": [
     "dist",
     "drizzle",
+    "tsconfig",
     "LICENSE",
     "LICENSE-COMMERCIAL.md"
   ],
   "type": "module",
   "exports": {
+    "./tsconfig/*": "./tsconfig/*",
     "./contracts": {
       "import": "./dist/contracts/index.js",
       "require": "./dist/contracts/index.js",
@@ -480,7 +482,6 @@
     "zod": "4.4.3"
   },
   "devDependencies": {
-    "@oss/tsconfig": "workspace:*",
     "@oss/vitest-config": "workspace:*",
     "@types/node": "25.9.2",
     "@types/pg": "8.20.0",

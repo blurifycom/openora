@@ -1,5 +1,5 @@
 {
-  "extends": "@oss/tsconfig/node.json",
+  "extends": "@oss/core/tsconfig/node.json",
   "compilerOptions": {
     "rootDir": "src",
     "noEmit": true,

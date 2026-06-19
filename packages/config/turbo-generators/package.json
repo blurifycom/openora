@@ -16,7 +16,7 @@
     "typecheck": "tsc --noEmit"
   },
   "devDependencies": {
-    "@oss/tsconfig": "workspace:*",
+    "@oss/core": "workspace:*",
     "@turbo/gen": "2.9.16",
     "typescript": "6.0.3"
   }

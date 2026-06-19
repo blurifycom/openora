@@ -1,5 +1,5 @@
 {
-  "extends": "@oss/tsconfig/node-service.json",
+  "extends": "@oss/core/tsconfig/node-service.json",
   "compilerOptions": {
     "rootDir": "src",
     "outDir": "dist"

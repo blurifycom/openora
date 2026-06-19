@@ -88,9 +88,6 @@ importers:
       '@oss/testing':
         specifier: workspace:*
         version: link:../../packages/testing
-      '@oss/tsconfig':
-        specifier: workspace:*
-        version: link:../../packages/config/tsconfig
       '@oss/vitest-config':
         specifier: workspace:*
         version: link:../../packages/config/vitest
@@ -119,9 +116,6 @@ importers:
         specifier: 4.4.3
         version: 4.4.3
     devDependencies:
-      '@oss/tsconfig':
-        specifier: workspace:*
-        version: link:../../packages/config/tsconfig
       '@types/node':
         specifier: 25.9.2
         version: 25.9.2
@@ -138,13 +132,11 @@ importers:
         specifier: 1.69.0
         version: 1.69.0
 
-  packages/config/tsconfig: {}
-
   packages/config/turbo-generators:
     devDependencies:
-      '@oss/tsconfig':
+      '@oss/core':
         specifier: workspace:*
-        version: link:../tsconfig
+        version: link:../../core
       '@turbo/gen':
         specifier: 2.9.16
         version: 2.9.16(@types/node@25.9.2)
@@ -218,9 +210,6 @@ importers:
         specifier: 4.4.3
         version: 4.4.3
     devDependencies:
-      '@oss/tsconfig':
-        specifier: workspace:*
-        version: link:../config/tsconfig
       '@oss/vitest-config':
         specifier: workspace:*
         version: link:../config/vitest
@@ -258,9 +247,6 @@ importers:
         specifier: 4.4.3
         version: 4.4.3
     devDependencies:
-      '@oss/tsconfig':
-        specifier: workspace:*
-        version: link:../config/tsconfig
       '@types/node':
         specifier: 25.9.2
         version: 25.9.2
@@ -283,9 +269,6 @@ importers:
         specifier: 8.21.0
         version: 8.21.0
     devDependencies:
-      '@oss/tsconfig':
-        specifier: workspace:*
-        version: link:../config/tsconfig
       '@types/node':
         specifier: 25.9.2
         version: 25.9.2

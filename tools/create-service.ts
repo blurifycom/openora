@@ -82,7 +82,6 @@ const files: Record<string, string> = {
           zod: '4.4.3',
         },
         devDependencies: {
-          '@oss/tsconfig': 'workspace:*',
           tsx: '4.22.2',
           typescript: '6.0.3',
         },
@@ -94,7 +93,7 @@ const files: Record<string, string> = {
   'tsconfig.json':
     JSON.stringify(
       {
-        extends: '@oss/tsconfig/node-service.json',
+        extends: '@oss/core/tsconfig/node-service.json',
         compilerOptions: { rootDir: 'src', outDir: 'dist' },
         include: ['src'],
       },
