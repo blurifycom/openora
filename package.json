@@ -45,7 +45,7 @@
     "release": "pnpm build && changeset publish"
   },
   "devDependencies": {
-    "@changesets/cli": "^2.31.0",
+    "@changesets/cli": "2.31.0",
     "@oss/core": "workspace:*",
     "@oss/testing": "workspace:*",
     "@oss/turbo-generators": "workspace:*",
@@ -65,5 +65,5 @@
     "node": ">=26.0.0",
     "pnpm": ">=11.0.0"
   },
-  "packageManager": "pnpm@11.5.2"
+  "packageManager": "pnpm@11.8.0"
 }

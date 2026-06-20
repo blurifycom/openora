@@ -12,6 +12,7 @@ stages:
   - security
   - test # safety net: GitLab scanner templates default to `test`; keep it valid
   - integration
+  - review
   - release
 
 # GitLab-managed scanners (SCA + SAST + secrets). Execution runs on any tier;
@@ -24,6 +25,8 @@ include:
   - template: Jobs/Dependency-Scanning.gitlab-ci.yml
   - template: Jobs/SAST.gitlab-ci.yml
   - template: Jobs/Secret-Detection.gitlab-ci.yml
+  # AI code review (gpt-oss:20b on the [Licensor] Ollama gateway) - advisory MR review.
+  - component: git.example.com/devops/pipeline-catalog/ai-code-review@main
 
 # Run on merge requests, the long-lived branches (default + env branches), and
 # release tags (v1.2.3) which trigger the publish stage.
@@ -45,7 +48,7 @@ default:
     # node:26 no longer bundles corepack on PATH; install it before enabling.
     - npm install -g corepack@latest
     - corepack enable
-    - corepack prepare pnpm@11.5.2 --activate
+    - corepack prepare pnpm@11.8.0 --activate
     - pnpm config set store-dir "$PNPM_STORE_DIR"
     - pnpm install --frozen-lockfile
 

@@ -16,7 +16,7 @@ importers:
   .:
     devDependencies:
       '@changesets/cli':
-        specifier: ^2.31.0
+        specifier: 2.31.0
         version: 2.31.0(@types/node@25.9.2)
       '@oss/core':
         specifier: workspace:*
