@@ -1,6 +1,6 @@
 import { pgTable, uuid, text, integer, decimal, timestamp, index } from 'drizzle-orm/pg-core';
 
-// Read by @oss-addons/player-management via the /schema subpath (add-on->core read, allowed per ADR-0020).
+// Read by @blurifycom-addons/player-management via the /schema subpath (add-on->core read, allowed per ADR-0020).
 export const player = pgTable(
   'player',
   {

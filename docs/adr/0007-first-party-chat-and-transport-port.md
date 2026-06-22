@@ -1,7 +1,7 @@
 # ADR-0007: First-party chat over an own realtime transport, with a ChatTransportPort seam
 
 **Date**: 2026-05-21 (accepted 2026-05-29)
-**Status**: Accepted. The `ChatTransportPort` is realized as the generic `REALTIME_TRANSPORT` seam (`@oss/adapters` `realtime.ts`), with a first-party in-process default and the `chat` module streaming live over SSE - see ADR-0014. Economy commands (`/tip`/`/rain`/`/gift`) remain open.
+**Status**: Accepted. The `ChatTransportPort` is realized as the generic `REALTIME_TRANSPORT` seam (`@blurifycom/adapters` `realtime.ts`), with a first-party in-process default and the `chat` module streaming live over SSE - see ADR-0014. Economy commands (`/tip`/`/rain`/`/gift`) remain open.
 
 ## Context
 

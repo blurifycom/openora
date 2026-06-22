@@ -1,6 +1,6 @@
-import { type EventBus, makeNotFoundError, createDomainError } from '@oss/core/server';
-import { type PaymentAdapter } from '@oss/core/contracts';
-import { DrizzleService, findOneOrThrow } from '@oss/core/server';
+import { type EventBus, makeNotFoundError, createDomainError } from '@blurifycom/core/server';
+import { type PaymentAdapter } from '@blurifycom/core/contracts';
+import { DrizzleService, findOneOrThrow } from '@blurifycom/core/server';
 import { eq, desc, sql } from 'drizzle-orm';
 import { wallet, walletTransaction } from '../schema/index.js';
 import type { WalletBalance, WalletTransaction, TransactionResult } from '../schemas/index.js';

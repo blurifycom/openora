@@ -14,7 +14,7 @@ import {
   ChangePasswordInputSchema,
   ChangeEmailInputSchema,
   IdentitySuccessSchema,
-} from '@oss/core/contracts';
+} from '@blurifycom/core/contracts';
 import * as z from 'zod';
 
 const SessionSchema = z.object({

@@ -1,4 +1,4 @@
-import type { PluginEntry } from '@oss/plugin-host';
+import type { PluginEntry } from '@blurifycom/plugin-host';
 import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -7,7 +7,7 @@ import { fileURLToPath } from 'node:url';
 // the bottom. Adapter overrides MUST come after the module that owns the default
 // binding - last registration of a DI token wins.
 //
-// Paths point at BUILT plugin dist inside the linked @oss/modules, not source: tsx in
+// Paths point at BUILT plugin dist inside the linked @blurifycom/modules, not source: tsx in
 // this API entry can't reliably resolve the OSS tsconfig (decorator metadata drops).
 // Run `pnpm build:oss` before booting. Local overlays under src/extensions/ are loaded
 // from .ts source directly.

@@ -6,7 +6,7 @@ import type {
   RepeatOptions,
   JobContext,
   WorkerRegistration,
-} from '@oss/core/contracts';
+} from '@blurifycom/core/contracts';
 
 // Durable JobQueueAdapter backed by BullMQ + Redis. Bound to JOB_QUEUE only when
 // REDIS_URL is set; the in-process default stays in effect for dev/seed/CI.

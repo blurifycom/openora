@@ -2,9 +2,9 @@
 // registered in extensions.config.ts for dev/test. Registered LATE so its binding wins (last wins).
 // Set REDIS_URL to activate. See ADR-0014.
 
-import { definePlugin } from '@oss/core/server';
-import { createLogger } from '@oss/core/server';
-import { JOB_QUEUE } from '@oss/core/contracts';
+import { definePlugin } from '@blurifycom/core/server';
+import { createLogger } from '@blurifycom/core/server';
+import { JOB_QUEUE } from '@blurifycom/core/contracts';
 import { BullMqJobQueue } from './bullmq-job-queue.js';
 
 const log = createLogger('bullmq-overlay');

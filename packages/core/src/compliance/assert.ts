@@ -7,7 +7,7 @@ import { SEALED_TOKENS } from './sealed.js';
  * (in plain JS) to slip past the typed contract.
  *
  * The argument shape is intentionally minimal - any container exposing a
- * boolean `has(token)` works. `@oss/core/server` `Container.has(token)` satisfies it.
+ * boolean `has(token)` works. `@blurifycom/core/server` `Container.has(token)` satisfies it.
  *
  * Throws on first sealed token with a bound provider, listing the offender.
  */
@@ -26,7 +26,7 @@ export function assertNoSealedProviders(container: SealedContainerView): void {
     throw new Error(
       `[compliance-invariants] sealed services must not be bound by a plugin:\n` +
         violations.map((v) => `  - ${v}`).join('\n') +
-        `\nSee @oss/core/compliance/sealed.ts for the regulatory citations.`,
+        `\nSee @blurifycom/core/compliance/sealed.ts for the regulatory citations.`,
     );
   }
 }

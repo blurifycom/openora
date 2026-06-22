@@ -2,16 +2,16 @@
  * Framework-agnostic typed client factory for the OSS platform.
  *
  * Wraps `@orpc/openapi-client` against a contract the CALLER supplies. The
- * platform is headless and modular: each consumer (or each `@oss/<domain>/react`
+ * platform is headless and modular: each consumer (or each `@blurifycom/<domain>/react`
  * package) composes exactly the contract slices its edition enables and passes
  * it here - the SDK never aggregates domains itself (the no-core-to-domain
  * boundary). Returns a client whose method-and-argument types are inferred from
  * each route's Zod input/output schemas - no manual `client.get` strings.
  *
  * ```ts
- * import { createClient } from '@oss/core/react';
+ * import { createClient } from '@blurifycom/core/react';
  * import { composeContract } from '../contracts/orpc/index.js';
- * import { gamingContract } from '@oss/core/casino/contracts/gaming';
+ * import { gamingContract } from '@blurifycom/core/casino/contracts/gaming';
  *
  * const contract = composeContract({ gaming: gamingContract });
  * const client = createClient(contract, { baseUrl: 'http://localhost:3001' });

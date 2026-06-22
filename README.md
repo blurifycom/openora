@@ -33,8 +33,8 @@ Then use `list-modules`, `list-routes`, `query-openapi`, `get-drizzle-schema`, `
 ```bash
 pnpm install                                  # install workspace deps
 docker compose up -d                          # start Postgres (library-first: only the db)
-pnpm -F @oss/core/server generate             # generate Drizzle migrations
-pnpm -F @oss/core/server migrate              # apply them
+pnpm -F @blurifycom/core/server generate             # generate Drizzle migrations
+pnpm -F @blurifycom/core/server migrate              # apply them
 pnpm seed                                     # demo data
 pnpm dev                                      # api :3001
 ```
@@ -49,7 +49,7 @@ To run the whole reference stack in containers instead of on the host, use the o
 pnpm gen module <name>
 ```
 
-Generates a standalone `@oss-addons/<name>` package under `packages/addons/<name>/` and registers it in `extensions.config.ts`. Run `pnpm regen && pnpm verify`. See [AGENTS.md](./AGENTS.md) for the full decision tree.
+Generates a standalone `@blurifycom-addons/<name>` package under `packages/addons/<name>/` and registers it in `extensions.config.ts`. Run `pnpm regen && pnpm verify`. See [AGENTS.md](./AGENTS.md) for the full decision tree.
 
 ## Adding an extension (overlay plugin)
 
@@ -57,7 +57,7 @@ Drop a folder under `apps/api/src/extensions/<name>/` or point to an npm package
 
 ```typescript
 // apps/api/src/extensions/my-feature/plugin.ts
-import { definePlugin } from '@oss/plugin-host';
+import { definePlugin } from '@blurifycom/plugin-host';
 
 export default definePlugin({
   id: 'my-feature',
@@ -75,7 +75,7 @@ Then register it in `extensions.config.ts`.
 
 ## Building your own igaming on top
 
-Scaffold a consumer turborepo that links this checkout - it holds only what's unique to your operation (frontend, branding, vendor adapters, overlay plugins). Core is consumed as linked `@oss/*` packages, never forked.
+Scaffold a consumer turborepo that links this checkout - it holds only what's unique to your operation (frontend, branding, vendor adapters, overlay plugins). Core is consumed as linked `@blurifycom/*` packages, never forked.
 
 ```bash
 pnpm create:app ../my-igaming --name my-igaming
@@ -86,7 +86,7 @@ See [docs/downstream-consumer.md](./docs/downstream-consumer.md) for the full gu
 
 ## Frontend
 
-The platform is headless and ships no UI - backend modules + contracts + the SDK consumption surface only. The frontend (pages, components, styling, theme) lives in your consumer repo and talks to the api over HTTP via `@oss/core/react` (data hooks, auth, navigation, typed client). Use whatever UI stack you like.
+The platform is headless and ships no UI - backend modules + contracts + the SDK consumption surface only. The frontend (pages, components, styling, theme) lives in your consumer repo and talks to the api over HTTP via `@blurifycom/core/react` (data hooks, auth, navigation, typed client). Use whatever UI stack you like.
 
 ## Docs
 

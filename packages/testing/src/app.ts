@@ -1,6 +1,12 @@
-import { createApp, type CreateAppConfig } from '@oss/core/server';
-import { user, session, account, verification, twoFactor } from '@oss/core/pam/schema/identity';
-import type { Container } from '@oss/core/server';
+import { createApp, type CreateAppConfig } from '@blurifycom/core/server';
+import {
+  user,
+  session,
+  account,
+  verification,
+  twoFactor,
+} from '@blurifycom/core/pam/schema/identity';
+import type { Container } from '@blurifycom/core/server';
 import type { Hono } from 'hono';
 
 export type TestApp = {
@@ -22,7 +28,7 @@ export type BootTestAppConfig = Pick<CreateAppConfig, 'plugins' | 'contract' | '
  * test approach). OpenAPI emission is disabled; CORS is left at the default.
  *
  * Pass the same `plugins` + `contract` the real entrypoint uses (in OSS that is
- * `loadExtensions()` + `@oss/core/contracts`; a consumer passes its own).
+ * `loadExtensions()` + `@blurifycom/core/contracts`; a consumer passes its own).
  */
 // Mirrors what the consumer composition root does. See ADR-0025.
 export async function bootTestApp(config: BootTestAppConfig): Promise<TestApp> {

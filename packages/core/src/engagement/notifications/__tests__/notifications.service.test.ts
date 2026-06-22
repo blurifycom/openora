@@ -22,7 +22,7 @@ function makeDrizzle(r: { select?: unknown; insert?: unknown; update?: unknown }
     insert: vi.fn(() => chain(r.insert ?? [])),
     update: vi.fn(() => chain(r.update ?? [])),
   };
-  return { db } as unknown as import('@oss/core/server').DrizzleService;
+  return { db } as unknown as import('@blurifycom/core/server').DrizzleService;
 }
 
 function makeEvents() {

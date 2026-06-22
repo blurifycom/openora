@@ -30,8 +30,8 @@ function computeHash(fields: {
     .digest('hex');
 }
 
-function makeEvents(): import('@oss/core/server').EventBus {
-  return { emit: vi.fn(), on: vi.fn() } as unknown as import('@oss/core/server').EventBus;
+function makeEvents(): import('@blurifycom/core/server').EventBus {
+  return { emit: vi.fn(), on: vi.fn() } as unknown as import('@blurifycom/core/server').EventBus;
 }
 
 const CREATED_AT = new Date('2024-01-01T00:00:00.000Z');
@@ -77,7 +77,7 @@ function makeRow(
 
 function makeDrizzleWithSelectQueue(
   ...selectResults: Array<() => Promise<unknown[]>>
-): import('@oss/core/server').DrizzleService {
+): import('@blurifycom/core/server').DrizzleService {
   let callCount = 0;
   const db = {
     select: vi.fn().mockImplementation(() => {
@@ -111,11 +111,13 @@ function makeDrizzleWithSelectQueue(
     set: vi.fn().mockReturnThis(),
     where: vi.fn().mockReturnThis(),
   };
-  return { db } as unknown as import('@oss/core/server').DrizzleService;
+  return { db } as unknown as import('@blurifycom/core/server').DrizzleService;
 }
 
-function makeManualDrizzle(db: Record<string, unknown>): import('@oss/core/server').DrizzleService {
-  return { db } as unknown as import('@oss/core/server').DrizzleService;
+function makeManualDrizzle(
+  db: Record<string, unknown>,
+): import('@blurifycom/core/server').DrizzleService {
+  return { db } as unknown as import('@blurifycom/core/server').DrizzleService;
 }
 
 function makeChainStore() {

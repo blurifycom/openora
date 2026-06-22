@@ -5,7 +5,7 @@ import * as z from 'zod';
 // single source of truth - the router validates against it, OpenAPI + the typed
 // client are emitted from it. Derive related shapes with .pick()/.omit()/.extend()
 // rather than re-typing fields. Promote anything shared across modules to
-// @oss/shared-schemas.
+// @blurifycom/shared-schemas.
 export const {{pascalCase name}}Schema = z.object({
   id: z.string(),
   tenantId: z.string(),

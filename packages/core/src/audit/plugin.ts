@@ -1,8 +1,8 @@
-import { definePlugin } from '@oss/core/server';
-import { EVENT_BUS } from '@oss/core/server';
-import { DRIZZLE } from '@oss/core/server';
-import { ADMIN_GUARD } from '@oss/core/server';
-import { AUDIT_WRITER } from '@oss/core/contracts';
+import { definePlugin } from '@blurifycom/core/server';
+import { EVENT_BUS } from '@blurifycom/core/server';
+import { DRIZZLE } from '@blurifycom/core/server';
+import { ADMIN_GUARD } from '@blurifycom/core/server';
+import { AUDIT_WRITER } from '@blurifycom/core/contracts';
 import { AuditService, type RecordInput } from './service/audit.service.js';
 import { createAuditRouter } from './router/index.js';
 

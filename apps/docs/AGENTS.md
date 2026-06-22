@@ -26,16 +26,16 @@ The generator:
 - **scrubs vendor/brand names** and fails loudly if any survive - the published OSS site must
   stay vendor-neutral.
 
-`docs/openapi.json` is emitted by `pnpm --filter @oss/api codegen`; run it before building so
+`docs/openapi.json` is emitted by `pnpm --filter @blurifycom/api codegen`; run it before building so
 the API reference is current.
 
 ## Commands
 
 ```
-pnpm --filter @oss/docs docs:gen   # regenerate content from /docs (+ openapi)
-pnpm --filter @oss/docs dev        # local dev server (runs docs:gen first)
-pnpm --filter @oss/docs build      # static export to apps/docs/out
-pnpm --filter @oss/docs typecheck  # fumadocs-mdx + next typegen + tsc
+pnpm --filter @blurifycom/docs docs:gen   # regenerate content from /docs (+ openapi)
+pnpm --filter @blurifycom/docs dev        # local dev server (runs docs:gen first)
+pnpm --filter @blurifycom/docs build      # static export to apps/docs/out
+pnpm --filter @blurifycom/docs typecheck  # fumadocs-mdx + next typegen + tsc
 ```
 
 ## Mermaid
@@ -47,5 +47,5 @@ plugin (configured in `source.config.ts`) + the `Mermaid` component. No per-file
 
 `next.config.mjs` sets `output: 'export'`, so `build` emits a static site to `apps/docs/out`
 deployable to any static host. A GitHub Pages workflow is intentionally NOT wired yet; when it
-lands it should run `pnpm --filter @oss/api codegen` then `pnpm --filter @oss/docs build`, set
+lands it should run `pnpm --filter @blurifycom/api codegen` then `pnpm --filter @blurifycom/docs build`, set
 `DOCS_BASE_PATH` to the project sub-path, and publish `apps/docs/out`.

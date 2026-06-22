@@ -1,6 +1,6 @@
 import { oc } from '@orpc/contract';
 import * as z from 'zod';
-import { PageQuerySchema, paginated } from '@oss/core/contracts/kit';
+import { PageQuerySchema, paginated } from '@blurifycom/core/contracts/kit';
 
 export const AuditActorTypeSchema = z.enum(['player', 'admin', 'system']);
 

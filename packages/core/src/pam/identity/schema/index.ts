@@ -79,7 +79,7 @@ export const verification = pgTable(
   (t) => [index('verification_identifier_idx').on(t.identifier)],
 );
 
-// Field shape mirrors better-auth twoFactor() plugin schema. See @oss/core/server createAuth().
+// Field shape mirrors better-auth twoFactor() plugin schema. See @blurifycom/core/server createAuth().
 export const twoFactor = pgTable(
   'twoFactor',
   {

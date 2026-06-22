@@ -1,6 +1,6 @@
 import { oc, eventIterator } from '@orpc/contract';
 import * as z from 'zod';
-import { IdInputSchema } from '@oss/core/contracts';
+import { IdInputSchema } from '@blurifycom/core/contracts';
 
 export const ChatRoomSchema = z.object({
   id: z.uuid(),

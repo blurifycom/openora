@@ -15,18 +15,18 @@ importers:
 
   .:
     devDependencies:
+      '@blurifycom/core':
+        specifier: workspace:*
+        version: link:packages/core
+      '@blurifycom/testing':
+        specifier: workspace:*
+        version: link:packages/testing
+      '@blurifycom/turbo-generators':
+        specifier: workspace:*
+        version: link:packages/config/turbo-generators
       '@changesets/cli':
         specifier: 2.31.0
         version: 2.31.0(@types/node@25.9.2)
-      '@oss/core':
-        specifier: workspace:*
-        version: link:packages/core
-      '@oss/testing':
-        specifier: workspace:*
-        version: link:packages/testing
-      '@oss/turbo-generators':
-        specifier: workspace:*
-        version: link:packages/config/turbo-generators
       '@turbo/gen':
         specifier: 2.9.16
         version: 2.9.16(@types/node@25.9.2)
@@ -63,15 +63,15 @@ importers:
 
   apps/api:
     dependencies:
+      '@blurifycom/core':
+        specifier: workspace:*
+        version: link:../../packages/core
       '@orpc/contract':
         specifier: 1.14.5
         version: 1.14.5
       '@orpc/server':
         specifier: 1.14.5
         version: 1.14.5
-      '@oss/core':
-        specifier: workspace:*
-        version: link:../../packages/core
       amqplib:
         specifier: 2.0.1
         version: 2.0.1
@@ -85,10 +85,10 @@ importers:
       '@better-auth/utils':
         specifier: 0.4.1
         version: 0.4.1
-      '@oss/testing':
+      '@blurifycom/testing':
         specifier: workspace:*
         version: link:../../packages/testing
-      '@oss/vitest-config':
+      '@blurifycom/vitest-config':
         specifier: workspace:*
         version: link:../../packages/config/vitest
       tsx:
@@ -170,12 +170,12 @@ importers:
 
   apps/mcp-server-dev:
     dependencies:
+      '@blurifycom/core':
+        specifier: workspace:*
+        version: link:../../packages/core
       '@modelcontextprotocol/sdk':
         specifier: 1.29.0
         version: 1.29.0(zod@4.4.3)
-      '@oss/core':
-        specifier: workspace:*
-        version: link:../../packages/core
       pg:
         specifier: 8.21.0
         version: 8.21.0
@@ -201,7 +201,7 @@ importers:
 
   packages/config/turbo-generators:
     devDependencies:
-      '@oss/core':
+      '@blurifycom/core':
         specifier: workspace:*
         version: link:../../core
       '@turbo/gen':
@@ -277,7 +277,7 @@ importers:
         specifier: 4.4.3
         version: 4.4.3
     devDependencies:
-      '@oss/vitest-config':
+      '@blurifycom/vitest-config':
         specifier: workspace:*
         version: link:../config/vitest
       '@types/node':
@@ -304,12 +304,12 @@ importers:
 
   packages/mcp:
     dependencies:
+      '@blurifycom/core':
+        specifier: workspace:*
+        version: link:../core
       '@modelcontextprotocol/sdk':
         specifier: 1.29.0
         version: 1.29.0(zod@4.4.3)
-      '@oss/core':
-        specifier: workspace:*
-        version: link:../core
       zod:
         specifier: 4.4.3
         version: 4.4.3
@@ -323,7 +323,7 @@ importers:
 
   packages/testing:
     dependencies:
-      '@oss/core':
+      '@blurifycom/core':
         specifier: workspace:*
         version: link:../core
       drizzle-orm:

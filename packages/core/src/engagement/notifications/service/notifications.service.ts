@@ -3,8 +3,8 @@ import {
   makeNotFoundError,
   makeOwnershipError,
   assertOwnership,
-} from '@oss/core/server';
-import { DrizzleService, findOneOrThrow } from '@oss/core/server';
+} from '@blurifycom/core/server';
+import { DrizzleService, findOneOrThrow } from '@blurifycom/core/server';
 import { eq, and, isNull, desc } from 'drizzle-orm';
 import { notification } from '../schema/index.js';
 import type { CreateNotificationInput } from '../schemas/index.js';

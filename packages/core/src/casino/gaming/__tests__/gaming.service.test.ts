@@ -1,7 +1,7 @@
 import { describe, it, expect, vi } from 'vitest';
-import type { DrizzleService } from '@oss/core/server';
-import type { EventBus } from '@oss/core/server';
-import type { GameAdapter } from '@oss/core/contracts';
+import type { DrizzleService } from '@blurifycom/core/server';
+import type { EventBus } from '@blurifycom/core/server';
+import type { GameAdapter } from '@blurifycom/core/contracts';
 import {
   GamingService,
   GameNotFoundError,

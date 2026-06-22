@@ -50,7 +50,7 @@ Container. UI plugins (`defineUIPlugin`) live in the frontend repo, not here.
 ```ts
 ctx.routers.add(namespace, factory); // mount oRPC routes (factory: (c: Container) => router)
 ctx.provide(TOKEN, factory); // bind a typed DI token (adapter swaps, services).
-// SealedToken<T> from @oss/compliance-invariants is rejected
+// SealedToken<T> from @blurifycom/compliance-invariants is rejected
 // at compile time + runtime - never provide sealed services.
 ctx.events.on(eventType, handler); // subscribe to platform events via the typed EventBus
 ctx.slots.fill(slotName, component); // server-side UI slot (rare; usually defineUIPlugin instead)
@@ -88,8 +88,8 @@ When the plugin's job is replacing a default adapter (KYC, notifications, PSP):
 ## Rules
 
 - The plugin must NOT import from other extensions.
-- For data from a core add-on: use the oRPC typed client for routes, or read the add-on's schema via `@oss-addons/<name>/schema` subpath import.
-- All Zod schemas live in the plugin folder - don't add to `@oss/contracts`.
+- For data from a core add-on: use the oRPC typed client for routes, or read the add-on's schema via `@blurifycom-addons/<name>/schema` subpath import.
+- All Zod schemas live in the plugin folder - don't add to `@blurifycom/contracts`.
 - Never edit `packages/addons/**` or `packages/core/**` to make the plugin work - that's not an overlay.
 - Don't commit unless asked.
 

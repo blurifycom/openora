@@ -1,5 +1,9 @@
-import type { WalletCommands, WalletDebitArgs, WalletDebitOutcome } from '@oss/core/contracts';
-import type { DrizzleDb } from '@oss/core/server';
+import type {
+  WalletCommands,
+  WalletDebitArgs,
+  WalletDebitOutcome,
+} from '@blurifycom/core/contracts';
+import type { DrizzleDb } from '@blurifycom/core/server';
 import { and, eq, sql } from 'drizzle-orm';
 import { wallet } from '../schema/index.js';
 

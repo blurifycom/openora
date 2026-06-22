@@ -1,4 +1,4 @@
-// `@oss/engagement/react` - domain-owned hooks, keeping the base @oss/core/react SDK domain-agnostic.
+// `@blurifycom/engagement/react` - domain-owned hooks, keeping the base @blurifycom/core/react SDK domain-agnostic.
 export {
   useChatStream,
   type ChatMessage,

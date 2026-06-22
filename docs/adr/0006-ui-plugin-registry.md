@@ -4,10 +4,10 @@
 **Status**: Superseded (2026-06-14)
 
 > **Superseded note (2026-06-14).** The client-side UI plugin registry described here
-> lived in `@oss/react-sdk`, which was deleted when the platform went headless (see the
+> lived in `@blurifycom/react-sdk`, which was deleted when the platform went headless (see the
 > superseded note in [ADR-0013](./0013-ui-extensibility-tiers.md)). The OSS repo no longer
 > ships an admin shell, pages, or a slot/registry surface — the frontend lives in the
-> consumer repo and `@oss/react` is the only supported consumption surface. A
+> consumer repo and `@blurifycom/react` is the only supported consumption surface. A
 > UI-extension model will be re-designed if/when the frontend is re-extracted into OSS.
 > The original design is kept below for the record.
 
@@ -17,16 +17,16 @@ The platform already has a server-side plugin host: `definePlugin({ id, register
 
 > **Update (2026-05):** the Drizzle migration removed `ctx.prisma.extend`. Overlays now add their own `pgTable` in their module's `src/schema/index.ts`; the plugin registry no longer exposes a `prisma` surface. References to "prisma extensions" / `prisma.partial.prisma` below are historical.
 
-After ADR-0005 (headless backoffice pages in `@oss/react-sdk`), every consumer mounts the same admin shell + pages. There is no clean way for a plugin to add a column to the Users table, a tile to the dashboard, a tab to the user detail page, or a route to the admin nav. A consumer that wants any of these would have to fork the page component.
+After ADR-0005 (headless backoffice pages in `@blurifycom/react-sdk`), every consumer mounts the same admin shell + pages. There is no clean way for a plugin to add a column to the Users table, a tile to the dashboard, a tab to the user detail page, or a route to the admin nav. A consumer that wants any of these would have to fork the page component.
 
 Forking is the antithesis of the plugin model the rest of the codebase uses.
 
 ## Decision
 
-Introduce a **client-side UI plugin registry** in `@oss/react-sdk`. New API:
+Introduce a **client-side UI plugin registry** in `@blurifycom/react-sdk`. New API:
 
 ```tsx
-import { defineUIPlugin, UIPluginProvider } from '@oss/react-sdk';
+import { defineUIPlugin, UIPluginProvider } from '@blurifycom/react-sdk';
 
 export const vipTiersUI = defineUIPlugin({
   id: 'vip-tiers',
@@ -52,7 +52,7 @@ export const vipTiersUI = defineUIPlugin({
 <UIPluginProvider plugins={[vipTiersUI, kycUI, supportUI]}>...</UIPluginProvider>;
 ```
 
-Each page in `@oss/react-sdk` reads from the registry at render time via internal hooks (`useNavItems`, `useUserColumns`, etc.) and renders the registered contributions inline alongside its own defaults.
+Each page in `@blurifycom/react-sdk` reads from the registry at render time via internal hooks (`useNavItems`, `useUserColumns`, etc.) and renders the registered contributions inline alongside its own defaults.
 
 ### Why client-side (not the server `definePlugin`)
 
@@ -87,7 +87,7 @@ This list is intentionally small. Adding a slot is cheap; over-designing them up
 
 `defineUIPlugin` is typed; the `ctx` object is generated from the slot taxonomy. Adding a slot requires:
 
-1. Extending the `UIPluginContext` interface in `@oss/react-sdk/src/ui-plugin/context.ts`.
+1. Extending the `UIPluginContext` interface in `@blurifycom/react-sdk/src/ui-plugin/context.ts`.
 2. Adding the corresponding `useXxx()` hook for pages to read from.
 3. Calling that hook from the relevant page.
 
@@ -99,7 +99,7 @@ No code generation; pure TS types.
 
 ```tsx
 // consumer's app/admin/(authed)/vip/page.tsx
-import { renderRegisteredRoute } from '@oss/react-sdk';
+import { renderRegisteredRoute } from '@blurifycom/react-sdk';
 export default function Page() {
   return renderRegisteredRoute('/admin/vip');
 }
@@ -128,7 +128,7 @@ The consumer's `extensions.config.ts` references both; `apps/api/main.ts` loads 
 
 **Positive:**
 
-- Plugins extend the admin without forking. The promise of "extend without changing @oss/react-sdk" becomes real.
+- Plugins extend the admin without forking. The promise of "extend without changing @blurifycom/react-sdk" becomes real.
 - Slots are small and explicit. No magic component scanning.
 - TypeScript catches missing slot args; no runtime stringly-typed registry.
 - Mirrors the existing API plugin pattern. One mental model for contributors.

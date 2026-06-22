@@ -1,5 +1,5 @@
-import { type EventBus, makeNotFoundError } from '@oss/core/server';
-import { DrizzleService, findOneOrThrow } from '@oss/core/server';
+import { type EventBus, makeNotFoundError } from '@blurifycom/core/server';
+import { DrizzleService, findOneOrThrow } from '@blurifycom/core/server';
 import { eq, and, asc, desc } from 'drizzle-orm';
 import { page as pageTable, banner as bannerTable } from '../schema/index.js';
 import type { Page, Banner } from '../schemas/index.js';

@@ -16,9 +16,9 @@ Code boundaries were already clean (no module imports another module's code; tal
 goes through events/contracts/command ports). The blockers to extraction were
 purely packaging:
 
-1. All feature modules compiled into the single `@oss/modules` package - an add-on
+1. All feature modules compiled into the single `@blurifycom/modules` package - an add-on
    module could not be a paywalled subpath.
-2. The root contract `@oss/orpc-contract` statically imported every module's slice,
+2. The root contract `@blurifycom/orpc-contract` statically imported every module's slice,
    and each module's router did `implement(contract.<slice>)` against it. Removing a
    module broke the contract build.
 3. Migrations were centralized in one drizzle history - an add-on module's tables
@@ -27,11 +27,11 @@ purely packaging:
 ## Decision
 
 An add-on module is a **real standalone workspace package** under
-`packages/addons/<name>/` named `@oss-addons/<name>`, shaped exactly like its
+`packages/addons/<name>/` named `@blurifycom-addons/<name>`, shaped exactly like its
 eventual published form:
 
-- Own `package.json` + `tsconfig.json` (extends `@oss/tsconfig/node-service.json`).
-- Own contract slice in `src/contract/` (moved OUT of `@oss/orpc-contract`); the
+- Own `package.json` + `tsconfig.json` (extends `@blurifycom/tsconfig/node-service.json`).
+- Own contract slice in `src/contract/` (moved OUT of `@blurifycom/orpc-contract`); the
   router does `implement(localContract)`. The slice is populated in place
   (`populateContractRouterPaths`) so it is self-contained.
 - Owns its tables in `src/schema/` with its **own** `drizzle.config.ts` ->
@@ -42,8 +42,8 @@ eventual published form:
 - Plain `definePlugin` in `src/plugin.ts` - identical to a core module plugin, so it
   is portable as-is.
 
-Add-on modules may import core (`@oss/contracts/*`, `@oss/adapters`,
-`@oss/platform/*`, `@oss/modules/<g>/<n>/schema`) exactly like a core module. They
+Add-on modules may import core (`@blurifycom/contracts/*`, `@blurifycom/adapters`,
+`@blurifycom/platform/*`, `@blurifycom/modules/<g>/<n>/schema`) exactly like a core module. They
 may **not** import a sibling add-on package.
 
 ### The isolation guarantee (two-layer boundary gate)
@@ -52,7 +52,7 @@ Mirroring the existing pattern (oxlint specifier twin + dependency-cruiser whole
 graph):
 
 - `no-core-to-addon`: nothing under `packages/{modules,platform,contracts,sdks}/`
-  may import `@oss-addons/*`. Only composition roots under `apps/*` may.
+  may import `@blurifycom-addons/*`. Only composition roots under `apps/*` may.
 - `no-cross-addon`: an add-on package may not import another add-on package.
 
 Because core can never reference add-on, removing/extracting a
@@ -61,7 +61,7 @@ That is the guarantee, enforced by CI.
 
 ### Composition root wiring (apps/api)
 
-The free core contract (`@oss/orpc-contract`) carries no add-on slice. The
+The free core contract (`@blurifycom/orpc-contract`) carries no add-on slice. The
 composition root composes editions in `apps/api/src/editions.ts`:
 
 - A single registry maps each add-on plugin id to its `{ namespace, contract }`.
@@ -86,9 +86,9 @@ Nothing inside the package changes.
 - The `player` table + the self-profile surface moved to a new **core** module
   `packages/modules/player/profile/` (every edition has players). The `profile`
   contract slice + the shared `PlayerSchema`/`PlayerStatusSchema`/`KycStatusSchema`
-  stay in core `@oss/orpc-contract`.
-- The admin surface moved to `@oss-addons/player-management`, which reads the core
-  `player` table via `@oss/modules/player/profile/schema` (add-on -> core) and owns
+  stay in core `@blurifycom/orpc-contract`.
+- The admin surface moved to `@blurifycom-addons/player-management`, which reads the core
+  `player` table via `@blurifycom/modules/player/profile/schema` (add-on -> core) and owns
   the admin `playerContract` (importing the shared player schemas from core).
 
 ## Migrations (the sensitive step)
@@ -114,7 +114,7 @@ applying - the add-on baseline migration files are staged but not yet applied.
   `extensions.config` entries). No add-on code is referenced by core.
 - Extracting a module = publish `packages/addons/<name>/`, move one registry line +
   one extensions entry into the consumer. No code change inside.
-- The core SDK (`@oss/react`) no longer ships add-on hooks/prefetchers (PAM
+- The core SDK (`@blurifycom/react`) no longer ships add-on hooks/prefetchers (PAM
   admin hooks, sportsbook prefetcher). A consumer that enables a module builds those
   against the merged contract.
 - Adding/removing a module from the add-on set is a config change (the registry +

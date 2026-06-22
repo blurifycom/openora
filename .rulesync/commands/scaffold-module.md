@@ -5,7 +5,7 @@ description: 'Generate a new OSS add-on via turbo gen. Creates schema, service, 
 ---
 
 Run `pnpm gen module $ARGUMENTS` in the repo root (the single `turbo gen` surface). The args are
-`<name>` (eg `tournaments`). The add-on is automatically registered as a core add-on (always loaded, contract in `@oss/orpc-contract`).
+`<name>` (eg `tournaments`). The add-on is automatically registered as a core add-on (always loaded, contract in `@blurifycom/orpc-contract`).
 
 The scaffold ships a buildable add-on - a `list` route wired end to end (contract slice ->
 router -> service) over a sample table - so `pnpm regen && pnpm verify` is green

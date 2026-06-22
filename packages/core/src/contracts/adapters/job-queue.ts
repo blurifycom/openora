@@ -61,7 +61,7 @@ export type WorkerOptions = {
 };
 
 // A minimal structural validator. A Zod schema (`ZodType<T>`) satisfies this, so
-// callers pass their schema directly - but @oss/core/contracts stays zod-free (every
+// callers pass their schema directly - but @blurifycom/core/contracts stays zod-free (every
 // other seam here imports nothing but ./token).
 export type PayloadSchema<T> = {
   parse(data: unknown): T;

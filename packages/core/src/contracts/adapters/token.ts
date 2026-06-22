@@ -1,7 +1,7 @@
 // Typed DI token. A token is a plain Symbol at runtime; the phantom `__token`
 // field only carries the resolved type so the composition container can infer
 // what `container.get(TOKEN)` returns. No decorators, no reflection - the type
-// travels with the symbol. See @oss/core/server `Container`.
+// travels with the symbol. See @blurifycom/core/server `Container`.
 
 // The `__sealed?: never` brand makes Token<T> structurally incompatible with
 // SealedToken<T> (which has `__sealed: true`). That mismatch is what lets the
@@ -25,7 +25,7 @@ export function createToken<T>(description: string): Token<T> {
  * Belt-and-braces: the plugin host also runtime-checks token identity against
  * the sealed list at registration time.
  *
- * See `@oss/core/compliance` for the canonical list and the regulatory
+ * See `@blurifycom/core/compliance` for the canonical list and the regulatory
  * citation per token.
  */
 export type SealedToken<T> = symbol & {

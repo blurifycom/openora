@@ -15,13 +15,13 @@ without importing this module's internals.
 
 ## Layout
 
-| Layer   | File                       | Holds                                                         |
-| ------- | -------------------------- | ------------------------------------------------------------- |
-| schema  | `schema/index.ts`          | `audit_log` pgTable + `actorTypeEnum`. Append-only by design. |
-| schemas | `schemas/index.ts`         | Re-exports from `@oss/orpc-contract/audit`; inferred types.   |
-| service | `service/audit.service.ts` | `record`, `list`, `exportCsv`, `verifyChain`.                 |
-| router  | `router/index.ts`          | `audit.list` (audit:view), `audit.exportCsv` (audit:export).  |
-| plugin  | `plugin.ts`                | DI wiring, AUDIT_WRITER port, event subscriptions.            |
+| Layer   | File                       | Holds                                                              |
+| ------- | -------------------------- | ------------------------------------------------------------------ |
+| schema  | `schema/index.ts`          | `audit_log` pgTable + `actorTypeEnum`. Append-only by design.      |
+| schemas | `schemas/index.ts`         | Re-exports from `@blurifycom/orpc-contract/audit`; inferred types. |
+| service | `service/audit.service.ts` | `record`, `list`, `exportCsv`, `verifyChain`.                      |
+| router  | `router/index.ts`          | `audit.list` (audit:view), `audit.exportCsv` (audit:export).       |
+| plugin  | `plugin.ts`                | DI wiring, AUDIT_WRITER port, event subscriptions.                 |
 
 Contract slice: `packages/contracts/orpc-contract/src/audit.ts`.
 
@@ -66,9 +66,9 @@ extraction / OOM - narrow the date range and paginate for larger windows, or use
 
 ### Ports
 
-| Interface        | Token          | File                       | Purpose                                   |
-| ---------------- | -------------- | -------------------------- | ----------------------------------------- |
-| `AuditWritePort` | `AUDIT_WRITER` | `@oss/adapters` `audit.ts` | Write path other modules call explicitly. |
+| Interface        | Token          | File                              | Purpose                                   |
+| ---------------- | -------------- | --------------------------------- | ----------------------------------------- |
+| `AuditWritePort` | `AUDIT_WRITER` | `@blurifycom/adapters` `audit.ts` | Write path other modules call explicitly. |
 
 ### Events subscribed (existing `domainEventSchemas` topics only)
 
@@ -94,7 +94,7 @@ event subscribers in `plugin.ts` or by callers of the `AUDIT_WRITER` port).
 
 ## Do
 
-- Use `AUDIT_WRITER` from `@oss/adapters` to record entries from other modules/overlays.
+- Use `AUDIT_WRITER` from `@blurifycom/adapters` to record entries from other modules/overlays.
 - Call `verifyChain()` in a scheduled job or admin tool to detect tampering.
 - Add new event subscriptions in `plugin.ts` only for topics declared in
   `domainEventSchemas` - never invent topics.
@@ -113,7 +113,7 @@ event subscribers in `plugin.ts` or by callers of the `AUDIT_WRITER` port).
 - [x] `pnpm verify` exits 0.
 - [x] `audit_log` table in Drizzle schema with all required columns.
 - [x] `audit_log` migration generated (single-tenant, no RLS).
-- [x] `AUDIT_WRITER` token declared in `@oss/adapters`.
+- [x] `AUDIT_WRITER` token declared in `@blurifycom/adapters`.
 - [x] `audit.list` and `audit.exportCsv` routes guarded with `audit:view` / `audit:export`.
 - [x] `verifyChain` helper implemented and tested.
 - [x] 12 unit tests covering: record() hash chaining, verifyChain() tamper detection, list() pagination, exportCsv() format.

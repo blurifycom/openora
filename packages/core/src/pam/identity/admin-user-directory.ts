@@ -1,5 +1,9 @@
-import type { AdminUserDirectory, AdminUserListOptions, AdminUserRow } from '@oss/core/contracts';
-import { DrizzleService, pageToOffset } from '@oss/core/server';
+import type {
+  AdminUserDirectory,
+  AdminUserListOptions,
+  AdminUserRow,
+} from '@blurifycom/core/contracts';
+import { DrizzleService, pageToOffset } from '@blurifycom/core/server';
 import { count, desc, eq, ilike } from 'drizzle-orm';
 import { user } from './schema/index.js';
 

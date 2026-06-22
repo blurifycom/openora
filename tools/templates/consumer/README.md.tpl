@@ -1,12 +1,12 @@
 # {{name}}
 
-An igaming platform built on the open-source `@oss/*` packages. This repo holds only
+An igaming platform built on the open-source `@blurifycom/*` packages. This repo holds only
 what is unique to your operation - branding, vendor adapters, and overlay plugins. The
 core (auth, wallet, gaming, lobby, compliance, backoffice, CMS) is consumed as linked
 packages and never forked.
 
 This is a headless api consumer. Build your frontend (player web + admin backoffice)
-in its own repo and talk to this api over HTTP via `@oss/react`.
+in its own repo and talk to this api over HTTP via `@blurifycom/react`.
 
 ## Layout
 
@@ -19,7 +19,7 @@ turbo/generators/ # turbo gen: plugin, adapter
 
 ## Prerequisites
 
-The `@oss/*` packages are consumed via `link:` from a sibling OSS checkout (see `pnpm.overrides`).
+The `@blurifycom/*` packages are consumed via `link:` from a sibling OSS checkout (see `pnpm.overrides`).
 Clone both repos side by side BEFORE running `pnpm install`:
 
 ```
@@ -33,9 +33,9 @@ Publishing to npm/GitLab is on the roadmap; until then the sibling checkout is r
 ## Dev setup
 
 ```bash
-pnpm install               # links @oss/* from the sibling checkout
+pnpm install               # links @blurifycom/* from the sibling checkout
 pnpm setup:mcp             # trust the MCP server + install the /start onboarding flow
-pnpm build:oss             # build the linked @oss/* packages once
+pnpm build:oss             # build the linked @blurifycom/* packages once
 pnpm regen                 # regenerate OpenAPI + catalog + Drizzle client (after schema changes)
 cp .env.example .env       # set DATABASE_URL + AUTH_SECRET
 pnpm db:migrate            # apply the OSS schema to your database

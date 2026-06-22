@@ -1,7 +1,7 @@
 # {{kebabCase name}} infra (Pulumi AWS)
 
 Deploys the three apps (api, web, backoffice) to AWS as ECS Fargate services behind a
-single ALB, with RDS Postgres and ElastiCache Redis. The platform (`@oss/*`) is consumed
+single ALB, with RDS Postgres and ElastiCache Redis. The platform (`@blurifycom/*`) is consumed
 as linked packages from the sibling `../igaming-oss` checkout, so Docker builds use a
 combined context containing BOTH repos.
 

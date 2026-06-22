@@ -1,4 +1,4 @@
-# @oss/turbo-generators
+# @blurifycom/turbo-generators
 
 ## 0.3.0
 

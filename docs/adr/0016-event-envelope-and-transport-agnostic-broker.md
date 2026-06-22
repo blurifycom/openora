@@ -53,7 +53,7 @@ export interface MessageBrokerAdapter {
 }
 ```
 
-- The **EventBus** (`@oss/core`) builds the envelope on `emit` (generates
+- The **EventBus** (`@blurifycom/core`) builds the envelope on `emit` (generates
   `eventId`, stamps `occurredAt`, sets `schemaVersion: 1`, lifts `tenantId`/
   `traceId` from the tenant `AsyncLocalStorage`), validates `payload` against
   `domainEventSchemas` (logs on mismatch but never drops), and on `subscribe`
@@ -96,7 +96,7 @@ overlay with zero module changes:
 - Synchronous same-tick delivery is an in-process-only property. Tests that relied
   on a subscriber observing a side effect before `emit` returns must not assume it
   under a remote broker. The EventBus already fires publish as fire-and-forget.
-- `amqplib` is added as a dependency of `@oss/api` (alongside `bullmq`), used only
+- `amqplib` is added as a dependency of `@blurifycom/api` (alongside `bullmq`), used only
   by the opt-in overlay. It ships its own types; no `@types/amqplib`.
 
 ## References

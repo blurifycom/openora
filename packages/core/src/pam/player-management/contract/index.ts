@@ -1,8 +1,8 @@
 // Shared so the profile add-on can derive from them too. See ADR-0021.
 import { oc, populateContractRouterPaths } from '@orpc/contract';
 import * as z from 'zod';
-import { PlayerSchema, PlayerStatusSchema, KycStatusSchema } from '@oss/core/contracts';
-import { PageQuerySchema, paginated } from '@oss/core/contracts/kit';
+import { PlayerSchema, PlayerStatusSchema, KycStatusSchema } from '@blurifycom/core/contracts';
+import { PageQuerySchema, paginated } from '@blurifycom/core/contracts/kit';
 
 export { PlayerSchema, PlayerStatusSchema, KycStatusSchema };
 

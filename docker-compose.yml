@@ -29,7 +29,7 @@ services:
     working_dir: /app
     environment:
       DATABASE_URL: postgres://postgres:postgres@postgres:5432/oss_igaming
-    command: ['pnpm', '-F', '@oss/db', 'migrate']
+    command: ['pnpm', '-F', '@blurifycom/db', 'migrate']
     depends_on:
       postgres:
         condition: service_healthy

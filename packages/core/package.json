@@ -1,5 +1,5 @@
 {
-  "name": "@oss/core",
+  "name": "@blurifycom/core",
   "version": "0.3.0",
   "license": "AGPL-3.0-only",
   "files": [
@@ -453,6 +453,9 @@
       "default": "./dist/wallet/contract/index.js"
     }
   },
+  "publishConfig": {
+    "registry": "https://npm.pkg.github.com"
+  },
   "scripts": {
     "build": "tsc && node scripts/copy-drizzle.mjs",
     "typecheck": "tsc --noEmit",
@@ -482,7 +485,7 @@
     "zod": "4.4.3"
   },
   "devDependencies": {
-    "@oss/vitest-config": "workspace:*",
+    "@blurifycom/vitest-config": "workspace:*",
     "@types/node": "25.9.2",
     "@types/pg": "8.20.0",
     "@types/react": "19.2.17",

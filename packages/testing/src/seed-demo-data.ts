@@ -1,11 +1,11 @@
 // See ADR-0020.
-import type { DrizzleDb } from '@oss/core/server';
-import { ensureDefaultRoles } from '@oss/core/iam';
+import type { DrizzleDb } from '@blurifycom/core/server';
+import { ensureDefaultRoles } from '@blurifycom/core/iam';
 import { eq } from 'drizzle-orm';
-import { user } from '@oss/core/pam/schema/identity';
-import { player } from '@oss/core/pam/schema/profile';
-import { wallet, walletTransaction } from '@oss/core/wallet/schema';
-import { game } from '@oss/core/casino/schema/gaming';
+import { user } from '@blurifycom/core/pam/schema/identity';
+import { player } from '@blurifycom/core/pam/schema/profile';
+import { wallet, walletTransaction } from '@blurifycom/core/wallet/schema';
+import { game } from '@blurifycom/core/casino/schema/gaming';
 
 export type SeedAuth = {
   api: {

@@ -1,11 +1,11 @@
-import { type EventBus, createDomainError, assertOwnership } from '@oss/core/server';
-import type { RealtimeTransport } from '@oss/core/contracts';
-import { DrizzleService, findOneOrThrow } from '@oss/core/server';
+import { type EventBus, createDomainError, assertOwnership } from '@blurifycom/core/server';
+import type { RealtimeTransport } from '@blurifycom/core/contracts';
+import { DrizzleService, findOneOrThrow } from '@blurifycom/core/server';
 import { eq, and, isNull, lt, desc, asc } from 'drizzle-orm';
 // Sanctioned read-only cross-module table read (display name lives in identity).
 // The username shown on a message is resolved server-side from the verified user,
 // never from a client-supplied header - so it cannot be spoofed.
-import { user } from '@oss/core/pam/schema/identity';
+import { user } from '@blurifycom/core/pam/schema/identity';
 import { chatRoom, chatMessage } from '../schema/index.js';
 import type { ChatRoom, ChatMessage } from '../schemas/index.js';
 

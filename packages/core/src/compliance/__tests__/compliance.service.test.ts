@@ -18,7 +18,7 @@ function makeDrizzle(selectResult: unknown[] = [], insertResult: unknown[] = [])
     set: vi.fn().mockReturnThis(),
     delete: vi.fn().mockReturnThis(),
   };
-  return { db } as unknown as import('@oss/core/server').DrizzleService;
+  return { db } as unknown as import('@blurifycom/core/server').DrizzleService;
 }
 
 function makeEvents() {

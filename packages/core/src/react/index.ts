@@ -26,7 +26,7 @@ export {
   type UseEventStreamOptions,
   type UseEventStreamResult,
 } from './hooks/use-event-stream.js';
-// useChatStream lives in @oss/engagement/react - the base SDK stays domain-agnostic.
+// useChatStream lives in @blurifycom/engagement/react - the base SDK stays domain-agnostic.
 // Consumer injects Ably/GetStream; default is built-in SSE. See ADR-0007.
 // See ADR-0020.
 export {

@@ -5,15 +5,11 @@
 #   push to stage -> snapshot publish under dist-tag `beta`   (0.x.y-beta-<ts>)
 #   tag    v*.*.* -> stable publish under dist-tag `latest`   (cut tags from prod/main)
 #
-# PREREQUISITE - NOT YET MET: GitHub Packages requires the npm scope to match the
-# owning org, so this only publishes once the workspace is renamed `@oss/*` ->
-# `@blurifycom/*` (scope + registry-url below already target that). Until then the
-# publish step errors with a 4xx scope mismatch. The rename is a separate change.
-#
-# Required repo setup once the rename lands:
-#   - each published package.json: "publishConfig": { "registry": "https://npm.pkg.github.com" }
-#   - consumers install with a .npmrc: @blurifycom:registry=https://npm.pkg.github.com
-#   - GITHUB_TOKEN (auto-provided) needs packages:write (set below)
+# Packages are scoped `@blurifycom/*` to match the GitHub org (GitHub Packages
+# requires scope == owner). Each published package.json carries
+# "publishConfig": { "registry": "https://npm.pkg.github.com" }; consumers install
+# with a .npmrc mapping `@blurifycom:registry=https://npm.pkg.github.com`. Auth uses
+# the built-in GITHUB_TOKEN (packages:write, set below).
 name: Release
 
 on:

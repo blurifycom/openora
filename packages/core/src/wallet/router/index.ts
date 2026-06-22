@@ -1,5 +1,5 @@
 import { implement } from '@orpc/server';
-import { getUserId, mapErrors, type OssContext } from '@oss/core/server';
+import { getUserId, mapErrors, type OssContext } from '@blurifycom/core/server';
 import { walletContract } from '../contract/index.js';
 import {
   WalletService,

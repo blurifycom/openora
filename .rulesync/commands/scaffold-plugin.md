@@ -11,7 +11,7 @@ After the generator finishes:
 
 1. Open `apps/api/src/extensions/<name>/plugin.ts` and implement the server `register(ctx)`:
    - `ctx.provide(TOKEN, factory)` to bind an adapter or service (sealed compliance tokens
-     are rejected at compile time + runtime - see `@oss/compliance-invariants`).
+     are rejected at compile time + runtime - see `@blurifycom/compliance-invariants`).
    - `ctx.routers.add(namespace, (c) => router)` to mount oRPC routes.
    - `ctx.events.on(event, handler)` to subscribe to the typed `EventBus`.
    - `ctx.jobs.worker({ queue, schema, handler, options?, onDeadLetter? })` to process
@@ -31,5 +31,5 @@ After the generator finishes:
 
 2. Run `pnpm verify` to check the wiring compiles and the boundary lint passes.
 
-Explain the server `ctx` (from `@oss/plugin-host` ModuleRegistry) - the single `plugin.ts`
+Explain the server `ctx` (from `@blurifycom/plugin-host` ModuleRegistry) - the single `plugin.ts`
 surface a server plugin exposes.

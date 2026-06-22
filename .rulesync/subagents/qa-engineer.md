@@ -56,7 +56,7 @@ Browser/UI E2E (player + backoffice flows) lives in the downstream consumer repo
 
 ## Test suite location
 
-API-level integration tests live next to the code they exercise (`apps/api` integration tests use `@oss/testing`, which boots the real Hono + oRPC app in-process against a real Postgres test db - no network listener). For black-box API E2E against a running server, write Playwright `request`-context specs (no browser):
+API-level integration tests live next to the code they exercise (`apps/api` integration tests use `@blurifycom/testing`, which boots the real Hono + oRPC app in-process against a real Postgres test db - no network listener). For black-box API E2E against a running server, write Playwright `request`-context specs (no browser):
 
 ```ts
 import { defineConfig } from '@playwright/test';

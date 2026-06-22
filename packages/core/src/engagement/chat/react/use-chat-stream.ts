@@ -8,7 +8,7 @@ import {
   useEventStream,
   useOptionalRealtimeClient,
   type EventStreamStatus,
-} from '@oss/core/react';
+} from '@blurifycom/core/react';
 import { chatContract, ChatMessageSchema } from '../contract/index.js';
 
 export type ChatMessage = z.infer<typeof ChatMessageSchema>;

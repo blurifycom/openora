@@ -10,15 +10,15 @@
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
-    "@oss/api-runtime": "link:{{ossFromApp}}/packages/platform/api-runtime",
-    "@oss/orpc-contract": "link:{{ossFromApp}}/packages/contracts/orpc-contract",
-    "@oss/plugin-host": "link:{{ossFromApp}}/packages/platform/plugin-host",
-    "@oss/shared-schemas": "link:{{ossFromApp}}/packages/contracts/shared-schemas",
-    "@oss/adapters": "link:{{ossFromApp}}/packages/contracts/adapters",
-    "@oss/modules": "link:{{ossFromApp}}/packages/modules"
+    "@blurifycom/api-runtime": "link:{{ossFromApp}}/packages/platform/api-runtime",
+    "@blurifycom/orpc-contract": "link:{{ossFromApp}}/packages/contracts/orpc-contract",
+    "@blurifycom/plugin-host": "link:{{ossFromApp}}/packages/platform/plugin-host",
+    "@blurifycom/shared-schemas": "link:{{ossFromApp}}/packages/contracts/shared-schemas",
+    "@blurifycom/adapters": "link:{{ossFromApp}}/packages/contracts/adapters",
+    "@blurifycom/modules": "link:{{ossFromApp}}/packages/modules"
   },
   "devDependencies": {
-    "@oss/tsconfig": "link:{{ossFromApp}}/packages/config/tsconfig",
+    "@blurifycom/tsconfig": "link:{{ossFromApp}}/packages/config/tsconfig",
     "tsx": "4.22.2",
     "typescript": "6.0.3"
   }

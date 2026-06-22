@@ -26,7 +26,7 @@ import type { PlopTypes } from '@turbo/gen';
 // is CJS, so `require.resolve` is the real Node resolver) and read templates by
 // absolute path.
 declare const require: NodeJS.Require;
-const pkgDir = dirname(require.resolve('@oss/turbo-generators/package.json'));
+const pkgDir = dirname(require.resolve('@blurifycom/turbo-generators/package.json'));
 const tpl = (name: string): string => join(pkgDir, 'src', 'templates', name);
 
 const kebabRe = /^[a-z][a-z0-9-]*$/;
@@ -173,7 +173,7 @@ function appendRoute(moduleName: string, method: string, routePath: string): str
 export default function generator(plop: PlopTypes.NodePlopAPI): void {
   // --- module --------------------------------------------------------------
   plop.setGenerator('module', {
-    description: 'New business module - a standalone @oss-addons/<name> core add-on package',
+    description: 'New business module - a standalone @blurifycom-addons/<name> core add-on package',
     prompts: [
       {
         type: 'list',

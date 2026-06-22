@@ -1,10 +1,10 @@
 import { Pool } from 'pg';
 import { drizzle } from 'drizzle-orm/node-postgres';
 import { seedDemoData, type SeedResult } from './seed-demo-data.js';
-import { createAuth } from '@oss/core/server';
-import { DRIZZLE, type DrizzleDb } from '@oss/core/server';
-import type { Container } from '@oss/core/server';
-import { user, session, account, verification } from '@oss/core/pam/schema/identity';
+import { createAuth } from '@blurifycom/core/server';
+import { DRIZZLE, type DrizzleDb } from '@blurifycom/core/server';
+import type { Container } from '@blurifycom/core/server';
+import { user, session, account, verification } from '@blurifycom/core/pam/schema/identity';
 
 export type SeedMinimalOptions = {
   /** Number of demo players to create. Keep small for fast tests. Default 4. */

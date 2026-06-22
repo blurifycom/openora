@@ -1,4 +1,4 @@
-import { PlayerSchema, PlayerStatusSchema, KycStatusSchema } from '@oss/core/contracts';
+import { PlayerSchema, PlayerStatusSchema, KycStatusSchema } from '@blurifycom/core/contracts';
 import { UpdatePlayerProfileInputSchema } from '../contract/index.js';
 import type { z } from 'zod';
 

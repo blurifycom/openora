@@ -24,7 +24,7 @@ repo and talks to the API over HTTP.
 A module exposes typed routes; a consumer calls them with a fully typed client - zero codegen:
 
 ```ts
-import { createClient } from '@oss/core/react';
+import { createClient } from '@blurifycom/core/react';
 
 const client = createClient({ baseUrl: 'http://localhost:3001' });
 

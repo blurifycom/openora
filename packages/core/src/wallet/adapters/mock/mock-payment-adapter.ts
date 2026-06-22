@@ -1,4 +1,4 @@
-import type { PaymentAdapter } from '@oss/core/contracts';
+import type { PaymentAdapter } from '@blurifycom/core/contracts';
 
 export class MockPaymentAdapter implements PaymentAdapter {
   async processDeposit(

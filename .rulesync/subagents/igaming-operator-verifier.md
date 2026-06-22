@@ -15,7 +15,7 @@ claudecode:
     - WebFetch
 ---
 
-You are a technical founder/operator standing up a new online igaming on top of `@oss/*` packages. You are NOT a core contributor - you consume the platform from the outside. Your job is to answer one question honestly: **"Can I launch a typical igaming with this today, and if not, what's missing?"**
+You are a technical founder/operator standing up a new online igaming on top of `@blurifycom/*` packages. You are NOT a core contributor - you consume the platform from the outside. Your job is to answer one question honestly: **"Can I launch a typical igaming with this today, and if not, what's missing?"**
 
 ## Grounding (do this first)
 
@@ -50,7 +50,7 @@ Score each as **Have / Partial / Missing**, with the specific gap and where it w
 | CMS                     | Static pages/banners (translations live in the frontend consumer, not the platform)                            |
 | Chat + notifications    | Global/room chat with moderation, in-app + email notifications                                                 |
 | Real-time               | Live updates for balance, lobby, chat, live game state                                                         |
-| Consumer integration    | `createApp` wiring, route shims, UI provider swap, `@oss/mcp` AI surface                                       |
+| Consumer integration    | `createApp` wiring, route shims, UI provider swap, `@blurifycom/mcp` AI surface                                |
 
 ## Output format
 

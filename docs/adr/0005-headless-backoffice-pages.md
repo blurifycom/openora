@@ -3,7 +3,7 @@
 **Date**: 2026-05-20
 **Status**: Superseded (2026-06-10)
 
-> **Superseded (2026-06-10):** All reference frontend apps (`apps/backoffice`, `apps/web`) and the associated UI packages (`@oss/react-sdk`, `@oss/backoffice-ui`, the pages layer) were removed. The platform is now headless backend only. The admin experience (pages, components, theming) now lives entirely in the consumer repo. This ADR is preserved as historical record of the architectural exploration.
+> **Superseded (2026-06-10):** All reference frontend apps (`apps/backoffice`, `apps/web`) and the associated UI packages (`@blurifycom/react-sdk`, `@blurifycom/backoffice-ui`, the pages layer) were removed. The platform is now headless backend only. The admin experience (pages, components, theming) now lives entirely in the consumer repo. This ADR is preserved as historical record of the architectural exploration.
 
 ## Context
 
@@ -27,14 +27,14 @@ The "headless components" pattern is the dominant one for "one admin embedded in
 
 ## Decision
 
-Extract the OSS backoffice into `@oss/backoffice-ui`:
+Extract the OSS backoffice into `@blurifycom/backoffice-ui`:
 
 - **What ships**: shell components (`AppShell`, `AuthGuard`, `StatCard`), page bodies (`LoginPage`, `DashboardPage`, `UsersListPage`, `UserDetailPage`, `GamesPage`), a UI-adapter context (`UIProvider`, `useUI`), and a theme system (`ThemeProvider`, `Theme`, presets).
 - **What the consumer owns**: the Next App Router files. Each route file is a 4-line shim that renders a page component. Consumer routing prefix, nav config, brand, and theme are all props.
 - **Visual layer**: a single `styles.css` driven by `--bo-*` CSS custom properties. Override via `ThemeProvider` (which emits inline `style="--bo-*: ..."` on a wrapping div). Per-tenant theming reduces to fetching a `Partial<Theme>` from the API.
-- **Types**: page components consume `z.infer<typeof Schema>` from `@oss/orpc-contract`. No local type duplication.
+- **Types**: page components consume `z.infer<typeof Schema>` from `@blurifycom/orpc-contract`. No local type duplication.
 
-`apps/backoffice` in this repo is itself the first consumer - it imports from `@oss/backoffice-ui`. A consumer's `apps/web/app/admin/` is the second.
+`apps/backoffice` in this repo is itself the first consumer - it imports from `@blurifycom/backoffice-ui`. A consumer's `apps/web/app/admin/` is the second.
 
 ## Consequences
 
@@ -53,8 +53,8 @@ Extract the OSS backoffice into `@oss/backoffice-ui`:
 
 ## Implementation
 
-- Package: `packages/ui/backoffice/` (`@oss/backoffice-ui`).
-- Adapter contracts already in place: `@oss/ui-provider-contract`, `@oss/ui-provider-daisyui` (ADR-0003).
+- Package: `packages/ui/backoffice/` (`@blurifycom/backoffice-ui`).
+- Adapter contracts already in place: `@blurifycom/ui-provider-contract`, `@blurifycom/ui-provider-daisyui` (ADR-0003).
 - Consumer wiring docs: `packages/ui/backoffice/AGENTS.md`.
 - Cross-workspace dedup setup: the consumer's `apps/web/next.config.ts` (alias for `react`, `react-dom`, `@tanstack/react-query` to single physical paths).
 

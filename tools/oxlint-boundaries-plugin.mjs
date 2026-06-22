@@ -2,9 +2,9 @@
 // Loaded via jsPlugins in .oxlintrc.json. API is ESLint v9-compatible.
 //
 // Why a hand-written plugin and not eslint-plugin-boundaries:
-//   eslint-plugin-boundaries enforces nothing unless every @oss/* import resolves to
+//   eslint-plugin-boundaries enforces nothing unless every @blurifycom/* import resolves to
 //   a file - which means a native import resolver (unrs-resolver) plus a maintained
-//   lint-only tsconfig mapping all ~24 @oss/* packages to src (pnpm otherwise
+//   lint-only tsconfig mapping all ~24 @blurifycom/* packages to src (pnpm otherwise
 //   resolves them to dist and misclassifies elements). This plugin matches specifier
 //   strings directly: zero deps, zero resolution, fast. See ADR-0015.
 
@@ -21,7 +21,7 @@ function isCoreFile(file) {
 }
 
 function isAddonSpecifier(spec) {
-  return spec === '@oss-addons' || spec.startsWith('@oss-addons/');
+  return spec === '@blurifycom-addons' || spec.startsWith('@blurifycom-addons/');
 }
 
 const noCoreToAddon = {
@@ -33,9 +33,9 @@ const noCoreToAddon = {
         context.report({
           node,
           message:
-            'The published core (@oss/core) must not import an add-on package (@oss-addons/*). ' +
+            'The published core (@blurifycom/core) must not import an add-on package (@blurifycom-addons/*). ' +
             'Add-on is wired in only by the composition roots under apps/* ' +
-            '(extensions.config.ts + the editions contract merge) and the @oss/testing harness. ' +
+            '(extensions.config.ts + the editions contract merge) and the @blurifycom/testing harness. ' +
             'This keeps add-on packages extractable. See ADR-0021/0025.',
         });
       },
@@ -49,8 +49,8 @@ function importingAddon(file) {
 }
 
 function addonImportTarget(spec) {
-  if (!spec.startsWith('@oss-addons/')) return null;
-  const tail = spec.slice('@oss-addons/'.length).split('/').filter(Boolean);
+  if (!spec.startsWith('@blurifycom-addons/')) return null;
+  const tail = spec.slice('@blurifycom-addons/'.length).split('/').filter(Boolean);
   if (tail.length === 0) return null;
   const name = tail[0];
   const isSchemaSubpath = tail.length === 2 && tail[1] === 'schema';
@@ -71,7 +71,7 @@ const noCrossAddon = {
           message:
             `An add-on package must not import another add-on package (${node.source.value}). ` +
             'Import a sibling only through its read-only /schema subpath ' +
-            '(@oss-addons/<name>/schema); communicate otherwise via events or a command port. ' +
+            '(@blurifycom-addons/<name>/schema); communicate otherwise via events or a command port. ' +
             'See ADR-0020.',
         });
       },
@@ -79,13 +79,13 @@ const noCrossAddon = {
   },
 };
 
-const RUNTIME_SPECIFIERS = ['@oss/core/server'];
+const RUNTIME_SPECIFIERS = ['@blurifycom/core/server'];
 
 function isRuntimeSpecifier(spec) {
   return RUNTIME_SPECIFIERS.some((b) => spec === b || spec.startsWith(b + '/'));
 }
 
-const blocked_by_contracts = ['@oss-addons', ...RUNTIME_SPECIFIERS];
+const blocked_by_contracts = ['@blurifycom-addons', ...RUNTIME_SPECIFIERS];
 
 function isContractsZone(file) {
   return file.includes('packages/core/src/contracts');
@@ -106,8 +106,8 @@ const noContractsToRuntime = {
           context.report({
             node,
             message:
-              'The @oss/core/contracts zone is isomorphic - it must not import the engine ' +
-              '(@oss/core/server) or an add-on. Keep it to contracts, base schemas, ports + zod. ' +
+              'The @blurifycom/core/contracts zone is isomorphic - it must not import the engine ' +
+              '(@blurifycom/core/server) or an add-on. Keep it to contracts, base schemas, ports + zod. ' +
               'See AGENTS.md > Dependency rules / ADR-0025.',
           });
         }
@@ -121,12 +121,12 @@ const noDeepDistImport = {
     return {
       ImportDeclaration(node) {
         const spec = node.source.value;
-        if (/^@oss\/[^/]+\/dist\/|^@oss\/.+\/dist\//.test(spec)) {
+        if (/^@blurifycom\/[^/]+\/dist\/|^@blurifycom\/.+\/dist\//.test(spec)) {
           context.report({
             node,
             message:
               'Never import a deep dist/ path. Use the package entry instead ' +
-              '(e.g. @oss-addons/wallet/schema).',
+              '(e.g. @blurifycom-addons/wallet/schema).',
           });
         }
       },
@@ -199,7 +199,7 @@ const noAdhocZodInRouter = {
             node,
             message:
               `Ad-hoc Zod (z.${callee.property.name}(...)) in a router. Define the shape in ` +
-              "the module's contract slice (its /contract dir, exported as @oss/<module>/contracts) - " +
+              "the module's contract slice (its /contract dir, exported as @blurifycom/<module>/contracts) - " +
               'the source of truth for validation + OpenAPI + the typed client - and reference it. ' +
               'See clean-architecture.md.',
           });
@@ -220,7 +220,7 @@ const noReactToRuntime = {
           context.report({
             node,
             message:
-              'The @oss/core/react zone must not import the engine (@oss/core/server) or an ' +
+              'The @blurifycom/core/react zone must not import the engine (@blurifycom/core/server) or an ' +
               'add-on - it would pull Drizzle/Hono/node into the browser bundle. ' +
               'Keep client glue domain-free + server-free. See ADR-0025.',
           });
@@ -241,11 +241,11 @@ function coreDomainOf(file) {
   return m[1];
 }
 
-// The bare `@oss/core/compliance` (sealed-token util) is an engine zone; the
+// The bare `@blurifycom/core/compliance` (sealed-token util) is an engine zone; the
 // compliance DOMAIN is only reachable via subpaths like /contracts, /schema.
 function coreDomainTarget(spec) {
-  if (!spec.startsWith('@oss/core/')) return null;
-  const tail = spec.slice('@oss/core/'.length).split('/').filter(Boolean);
+  if (!spec.startsWith('@blurifycom/core/')) return null;
+  const tail = spec.slice('@blurifycom/core/'.length).split('/').filter(Boolean);
   if (tail.length === 0 || ENGINE_ZONES.includes(tail[0])) return null;
   if (tail[0] === 'compliance' && tail.length === 1) return null;
   return { name: tail[0], isSchema: tail[1] === 'schema' };
@@ -284,10 +284,10 @@ const noEngineToDomain = {
         context.report({
           node,
           message:
-            `The @oss/core engine (contracts/server/react) must not import a domain ` +
+            `The @blurifycom/core engine (contracts/server/react) must not import a domain ` +
             `(${node.source.value}). createApp is domain-agnostic (DI: the consumer injects ` +
             'PAM identity + the tenant resolver); a domain is wired in only through apps/* and ' +
-            'the @oss/testing harness. See ADR-0024/0025.',
+            'the @blurifycom/testing harness. See ADR-0024/0025.',
         });
       },
     };

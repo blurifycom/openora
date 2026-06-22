@@ -1,5 +1,9 @@
-import type { AdminTxListOptions, AdminTxRow, AdminWalletReporting } from '@oss/core/contracts';
-import { DrizzleService, pageToOffset } from '@oss/core/server';
+import type {
+  AdminTxListOptions,
+  AdminTxRow,
+  AdminWalletReporting,
+} from '@blurifycom/core/contracts';
+import { DrizzleService, pageToOffset } from '@blurifycom/core/server';
 import { and, count, desc, eq, sum } from 'drizzle-orm';
 import { wallet, walletTransaction } from './schema/index.js';
 

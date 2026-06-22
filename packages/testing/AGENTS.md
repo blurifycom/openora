@@ -1,4 +1,4 @@
-# @oss/testing - AGENTS.md
+# @blurifycom/testing - AGENTS.md
 
 ## What this package does
 
@@ -11,7 +11,7 @@ in-process against a real Postgres test database - no mocks, no network listener
 | Symbol                                             | Purpose                                                                                                                                                                                                   |
 | -------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `setupTestDb()`                                    | Apply platform migrations to `TEST_DATABASE_URL` (default `oss_igaming_test`); returns `{ url, truncateAll(), dispose() }`.                                                                               |
-| `bootTestApp({ plugins, contract?, databaseUrl })` | Wrap `@oss/api-runtime` `createApp` for tests (OpenAPI off); returns `{ app, container, close }`. Drive `app` with `app.request()`.                                                                       |
+| `bootTestApp({ plugins, contract?, databaseUrl })` | Wrap `@blurifycom/api-runtime` `createApp` for tests (OpenAPI off); returns `{ app, container, close }`. Drive `app` with `app.request()`.                                                                |
 | `asPlayer(app, { email, password? })`              | Logs in a seeded player via `/identity/login` (verified session cookie - no `x-user-id` trust, ADR-0019). Seeded players: `player.<n>@demo.igaming.dev` / `password123`. Returns a `Promise<TestClient>`. |
 | `asAdmin(app, creds?)`                             | Logs in via `/identity/login`, returns a `Promise<TestClient>` carrying the session cookie. Defaults to `admin@oss.dev` / `password123`.                                                                  |
 | `seedMinimal(container, opts?)`                    | Thin wrapper over `seedDemoData` (admin + a few players + wallets).                                                                                                                                       |
@@ -19,9 +19,9 @@ in-process against a real Postgres test database - no mocks, no network listener
 ## Usage (integration test)
 
 ```ts
-import { setupTestDb, bootTestApp, asPlayer, asAdmin, seedMinimal } from '@oss/testing';
+import { setupTestDb, bootTestApp, asPlayer, asAdmin, seedMinimal } from '@blurifycom/testing';
 import { loadExtensions } from '../../src/extensions.js';
-import { contract } from '@oss/orpc-contract';
+import { contract } from '@blurifycom/orpc-contract';
 
 let db, testApp;
 beforeAll(async () => {

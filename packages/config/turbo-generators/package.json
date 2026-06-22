@@ -1,8 +1,8 @@
 {
-  "name": "@oss/turbo-generators",
+  "name": "@blurifycom/turbo-generators",
   "version": "0.3.0",
-  "license": "AGPL-3.0-only",
   "description": "Shared turbo gen generators for downstream igaming consumers (plugin / adapter / page).",
+  "license": "AGPL-3.0-only",
   "files": [
     "src"
   ],
@@ -12,11 +12,14 @@
     ".": "./src/config.ts",
     "./package.json": "./package.json"
   },
+  "publishConfig": {
+    "registry": "https://npm.pkg.github.com"
+  },
   "scripts": {
     "typecheck": "tsc --noEmit"
   },
   "devDependencies": {
-    "@oss/core": "workspace:*",
+    "@blurifycom/core": "workspace:*",
     "@turbo/gen": "2.9.16",
     "typescript": "6.0.3"
   }

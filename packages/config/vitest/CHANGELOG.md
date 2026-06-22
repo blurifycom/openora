@@ -1,4 +1,4 @@
-# @oss/vitest-config
+# @blurifycom/vitest-config
 
 ## 0.3.0
 

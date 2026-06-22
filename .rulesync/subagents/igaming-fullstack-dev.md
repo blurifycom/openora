@@ -51,7 +51,7 @@ Your prompt contains requirements + acceptance criteria from `igaming-expert`. B
 - Every third-party integration goes behind a **generic port** in `service/ports.ts`, concrete vendor in `adapters/<vendor>/`. Never hardcode a vendor into core.
 - No add-on imports another add-on. Cross-add-on: emit events (`EventBus`) or read via schema subpath.
 - All Zod schemas in `schemas/` or `packages/contracts/`; types are `z.infer`'d, never hand-written.
-- Services throw domain errors via `createDomainError(...)` from `@oss/core`; handlers map them to oRPC errors.
+- Services throw domain errors via `createDomainError(...)` from `@blurifycom/core`; handlers map them to oRPC errors.
 
 ## Drizzle workflow
 
@@ -62,7 +62,7 @@ Your prompt contains requirements + acceptance criteria from `igaming-expert`. B
 
 ## Finish criteria
 
-- `pnpm verify --filter @oss/modules` exits 0 (typecheck + lint + tests).
+- `pnpm verify --filter @blurifycom/modules` exits 0 (typecheck + lint + tests).
 - Schema changes went through `pnpm regen` and a Drizzle migration exists.
 - New module/plugin registered in `extensions.config.ts`; contract slice composed into root contract.
 - Module's `AGENTS.md` reflects new extension points and ports; at least one test exists.

@@ -123,7 +123,7 @@ export function assertRequiredPorts(plugins: Plugin[], container: Container): vo
     throw new Error(
       `[plugin-host] Required ports are unbound at boot:\n${unbound.join('\n')}\n` +
         `A domain reaches another domain only through a port the other domain binds. ` +
-        `Install the package that provides each port (eg @oss/wallet binds WALLET_COMMANDS) ` +
+        `Install the package that provides each port (eg @blurifycom/wallet binds WALLET_COMMANDS) ` +
         `or remove the plugin that requires it. See ADR-0024.`,
     );
   }

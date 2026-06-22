@@ -1,5 +1,5 @@
-import { makeNotFoundError, type EventBus } from '@oss/core/server';
-import { DrizzleService, findOneOrThrow, pageToOffset } from '@oss/core/server';
+import { makeNotFoundError, type EventBus } from '@blurifycom/core/server';
+import { DrizzleService, findOneOrThrow, pageToOffset } from '@blurifycom/core/server';
 import { eq, ilike, count, or, and, gte, desc, sql } from 'drizzle-orm';
 // Reads the core-owned `player` table + identity `user` via the public /schema
 // subpaths (add-on->core reads, allowed by the boundary rules). PAM owns no

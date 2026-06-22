@@ -1,7 +1,7 @@
 import { oc } from '@orpc/contract';
 import * as z from 'zod';
-import { UserIdInputSchema } from '@oss/core/contracts';
-import { PageQuerySchema, paginated } from '@oss/core/contracts/kit';
+import { UserIdInputSchema } from '@blurifycom/core/contracts';
+import { PageQuerySchema, paginated } from '@blurifycom/core/contracts/kit';
 
 export const PlatformStatsSchema = z.object({
   totalUsers: z.number().int(),

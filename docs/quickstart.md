@@ -19,8 +19,8 @@ Prefer the explicit steps?
 ```bash
 pnpm install
 docker compose up -d                  # Postgres only (library-first)
-pnpm -F @oss/core/server generate     # generate Drizzle migrations
-pnpm -F @oss/core/server migrate      # apply them
+pnpm -F @blurifycom/core/server generate     # generate Drizzle migrations
+pnpm -F @blurifycom/core/server migrate      # apply them
 pnpm seed
 pnpm dev
 ```
@@ -42,7 +42,7 @@ Scaffold a standalone module - schema, service, router, contract slice, and `plu
 generated and registered for you:
 
 ```bash
-pnpm gen module tournaments   # creates @oss-addons/tournaments + registers it
+pnpm gen module tournaments   # creates @blurifycom-addons/tournaments + registers it
 pnpm regen && pnpm verify
 ```
 

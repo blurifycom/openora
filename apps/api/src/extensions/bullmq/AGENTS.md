@@ -1,14 +1,14 @@
 # bullmq overlay
 
 Durable `JOB_QUEUE` driver (BullMQ + Redis) - the reference real implementation of
-the `JobQueueAdapter` seam (`@oss/adapters`, `job-queue.ts`). See ADR-0014.
+the `JobQueueAdapter` seam (`@blurifycom/adapters`, `job-queue.ts`). See ADR-0014.
 
 ## What it does
 
 Rebinds the `JOB_QUEUE` token to `BullMqJobQueue`, giving the platform durable,
 cross-process background jobs: persistence, native delayed + repeatable (cron) jobs,
 retry + backoff, dead-letter, and concurrency. Replaces the zero-dependency
-`InProcessJobQueue` default bound in `@oss/api-runtime`'s `create-app.ts`.
+`InProcessJobQueue` default bound in `@blurifycom/api-runtime`'s `create-app.ts`.
 
 ## Self-disabling
 

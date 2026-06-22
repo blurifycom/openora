@@ -20,7 +20,7 @@ events.
 Three levels, totally ordered: `no_access` < `read` < `read_write`. A role's matrix
 is `permissions: Array<{ resource, level }>` and stores only non-`no_access` cells
 (sparse - a missing module means `no_access`; deleting a row downgrades to
-`no_access`). Levels live in `@oss/core/server` (`permission-levels.ts`):
+`no_access`). Levels live in `@blurifycom/core/server` (`permission-levels.ts`):
 
 | Helper                           | Purpose                                                              |
 | -------------------------------- | -------------------------------------------------------------------- |
@@ -45,7 +45,7 @@ identically.
 | router   | `router/index.ts`        | thin oRPC wiring: resolve caller, call service, `mapErrors`                 |
 | plugin   | `plugin.ts`              | DI wiring only: `ctx.routers.add(...)`, `ctx.provide(...)`                  |
 
-Contract slice: `@oss/core/iam/contract`.
+Contract slice: `@blurifycom/core/iam/contract`.
 
 ## Extension points
 

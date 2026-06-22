@@ -1,6 +1,6 @@
 // Port for DB-backed admin RBAC. A backoffice iam module binds a concrete
 // resolver that reads role assignments + grants from its own tables; the
-// AdminGuard (in @oss/core/server) depends only on this interface so the platform
+// AdminGuard (in @blurifycom/core/server) depends only on this interface so the platform
 // keeps working - falling back to the static roles - when no resolver is bound.
 import { createToken, type Token } from './token.js';
 

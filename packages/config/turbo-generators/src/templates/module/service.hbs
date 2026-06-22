@@ -1,11 +1,11 @@
-import { DrizzleService } from '@oss/db';
-import { type EventBus } from '@oss/core';
+import { DrizzleService } from '@blurifycom/db';
+import { type EventBus } from '@blurifycom/core';
 import { {{camelCase name}} } from '../schema/index.js';
 
 // Pure business logic for {{pascalCase name}}. A plain class wired by plugin.ts via
 // the composition container (no decorators). Methods read as data-in/data-out
 // transforms; isolate side effects (DB writes, event emits) at the edges. Throw
-// domain errors (makeNotFoundError from @oss/core), never HTTP/transport errors.
+// domain errors (makeNotFoundError from @blurifycom/core), never HTTP/transport errors.
 // Money mutations MUST run inside `this.drizzle.db.transaction(...)` (lint: money-in-transaction).
 export class {{pascalCase name}}Service {
   constructor(

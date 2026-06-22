@@ -3,7 +3,7 @@
  * docs/openapi.json at the repo root from the contract alone - no server
  * boot, no DB. Keeps the spec fresh so `verify:drift` can catch staleness.
  */
-import { generateOpenApiSpec } from '@oss/core/server';
+import { generateOpenApiSpec } from '@blurifycom/core/server';
 import { buildContract } from './editions.js';
 import { resolve, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';

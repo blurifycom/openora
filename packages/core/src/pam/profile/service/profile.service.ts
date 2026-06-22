@@ -1,4 +1,4 @@
-import { DrizzleService } from '@oss/core/server';
+import { DrizzleService } from '@blurifycom/core/server';
 import { eq } from 'drizzle-orm';
 import { player } from '../schema/index.js';
 import { user } from '../../identity/schema/index.js';

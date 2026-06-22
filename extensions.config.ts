@@ -2,7 +2,7 @@
 // The plugin-host loads these at API boot, in top-to-bottom order (respecting dependsOn).
 // Add entries via `pnpm gen module <name>` or `pnpm gen plugin <name>`.
 //
-// Every feature is a standalone @oss-addons/<name> package under packages/addons/<name>/
+// Every feature is a standalone @blurifycom-addons/<name> package under packages/addons/<name>/
 // (compiled to dist/plugin.js). Core add-ons (no `kind`) always load and own their route
 // contract slice (its /contract dir), composed in apps/api/editions.ts; gated add-ons
 // (`kind: 'addon'`) load only when listed in the OSS_ADDONS allowlist. See ADR-0021/0025.

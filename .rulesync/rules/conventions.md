@@ -310,16 +310,16 @@ in `overview` > Dependency rules and `clean-architecture`. The principles those 
 
   ```ts
   // bad
-  import { x } from '@oss/core/dist/server/db';
+  import { x } from '@blurifycom/core/dist/server/db';
   // good
-  import { DrizzleService } from '@oss/core/server';
+  import { DrizzleService } from '@blurifycom/core/server';
   ```
 
 - **No import cycles** - extract a shared module or move the type to a contracts package.
 
 ---
 
-## 7. React SDK (`@oss/core/react` + domain `/react` subpaths)
+## 7. React SDK (`@blurifycom/core/react` + domain `/react` subpaths)
 
 This repo is **headless** - it ships no UI, no styling, no component library (those live in
 the consumer). Only the SDK consumption layer (hooks, typed client, auth, realtime) lives

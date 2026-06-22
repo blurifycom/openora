@@ -3,8 +3,8 @@
 // The canonical request/response shapes live in the oRPC contract slice
 // (packages/contracts/orpc-contract/src/{{kebabCase name}}.ts) - re-export from there
 // rather than redefining. Promote anything shared across modules to
-// @oss/shared-schemas. Never define ad-hoc Zod inside router/ (lint: no-adhoc-zod-in-router).
+// @blurifycom/shared-schemas. Never define ad-hoc Zod inside router/ (lint: no-adhoc-zod-in-router).
 //
 // Example:
-// export { {{pascalCase name}}Schema } from '@oss/orpc-contract/{{kebabCase name}}';
+// export { {{pascalCase name}}Schema } from '@blurifycom/orpc-contract/{{kebabCase name}}';
 export {};

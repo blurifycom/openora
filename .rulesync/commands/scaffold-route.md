@@ -9,7 +9,7 @@ Parse $ARGUMENTS as: <add-on> <method> <path>.
 Before adding, call the MCP dev server tool `query-openapi` with the path to confirm the route doesn't already exist.
 
 Run `pnpm gen route <add-on> <method> <path>` in the repo root. The generator adds BOTH a contract procedure (to the add-on's
-`@oss/orpc-contract` slice if core, or `src/contract/` if gated) and a matching router handler - no inline Zod in the router.
+`@blurifycom/orpc-contract` slice if core, or `src/contract/` if gated) and a matching router handler - no inline Zod in the router.
 
 After the generator adds the procedure:
 

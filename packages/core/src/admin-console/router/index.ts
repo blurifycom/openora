@@ -1,6 +1,6 @@
 import { implement } from '@orpc/server';
-import { AdminGuard } from '@oss/core/server';
-import { mapErrors, type OssContext } from '@oss/core/server';
+import { AdminGuard } from '@blurifycom/core/server';
+import { mapErrors, type OssContext } from '@blurifycom/core/server';
 import { backofficeContract } from '../contract/index.js';
 import { BackofficeService, UserNotFoundError } from '../service/backoffice.service.js';
 

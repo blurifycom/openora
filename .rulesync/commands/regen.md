@@ -10,7 +10,7 @@ This runs in order (see root `package.json`):
 
 1. `turbo run codegen` - emits `docs/openapi.json` from the composed oRPC contract and
    regenerates any per-package codegen registered with turbo.
-2. `pnpm -F @oss/core generate` - regenerates the Drizzle client from the live schema files
+2. `pnpm -F @blurifycom/core generate` - regenerates the Drizzle client from the live schema files
    under `packages/addons/<name>/src/schema/index.ts` (core add-ons; central migration) and each gated add-on's own schema.
 3. `pnpm run gen:catalog` (`tsx tools/gen-catalog.ts`) - emits `docs/catalog.json`: the
    machine-readable surface listing routes / schemas / adapters / slots / events. The MCP
@@ -20,7 +20,7 @@ This runs in order (see root `package.json`):
 generate a real migration:
 
 ```bash
-pnpm -F @oss/core exec drizzle-kit generate --name <change-summary>
+pnpm -F @blurifycom/core exec drizzle-kit generate --name <change-summary>
 ```
 
 Ship the migration file - downstream consumers run it too. Never hand-edit a migration under
@@ -31,6 +31,6 @@ Watch for:
 - `verify:drift` failures in CI - means `regen` was not run after a schema or contract change.
 - Type errors in the API after regen - usually a route's output schema no longer matches the model.
 - Boundary lint errors - add-on imported another add-on directly instead of via the
-  `@oss-addons/<name>/schema` subpath or an event.
+  `@blurifycom-addons/<name>/schema` subpath or an event.
 
 Report what changed and whether any follow-up is needed.

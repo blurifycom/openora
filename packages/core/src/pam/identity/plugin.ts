@@ -3,11 +3,11 @@ import {
   KYC_ADAPTER,
   NOTIFICATION_DELIVERY_ADAPTER,
   SEND_EMAIL,
-} from '@oss/core/contracts';
-import type { SendEmailPort } from '@oss/core/contracts';
-import { definePlugin } from '@oss/core/server';
-import { EVENT_BUS } from '@oss/core/server';
-import { DRIZZLE } from '@oss/core/server';
+} from '@blurifycom/core/contracts';
+import type { SendEmailPort } from '@blurifycom/core/contracts';
+import { definePlugin } from '@blurifycom/core/server';
+import { EVENT_BUS } from '@blurifycom/core/server';
+import { DRIZZLE } from '@blurifycom/core/server';
 import { MockKycAdapter } from './adapters/mock/mock-kyc-adapter.js';
 import { DrizzleAdminUserDirectory } from './admin-user-directory.js';
 import { createIdentityRouter } from './router/index.js';

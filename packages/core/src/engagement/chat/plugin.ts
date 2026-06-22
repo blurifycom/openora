@@ -1,7 +1,7 @@
-import { definePlugin } from '@oss/core/server';
-import { EVENT_BUS } from '@oss/core/server';
-import { REALTIME_TRANSPORT, REALTIME_CLIENT_AUTHORIZER } from '@oss/core/contracts';
-import { DRIZZLE } from '@oss/core/server';
+import { definePlugin } from '@blurifycom/core/server';
+import { EVENT_BUS } from '@blurifycom/core/server';
+import { REALTIME_TRANSPORT, REALTIME_CLIENT_AUTHORIZER } from '@blurifycom/core/contracts';
+import { DRIZZLE } from '@blurifycom/core/server';
 import { ChatService } from './service/chat.service.js';
 import { createChatRouter } from './router/index.js';
 

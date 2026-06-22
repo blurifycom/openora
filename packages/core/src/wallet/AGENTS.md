@@ -17,7 +17,7 @@ All routes require an authenticated caller (verified better-auth session via `ge
 
 ## Extension points
 
-- **Ports**: `PaymentAdapter` lives in `@oss/adapters` and is passed into `WalletService` (the constructor takes a `PaymentAdapter`; `plugin.ts` resolves `PAYMENT_ADAPTER` from the container). The default binding is `MockPaymentAdapter` (bound in `src/plugin.ts`). Implement it for a real PSP and override the binding via an overlay plugin.
+- **Ports**: `PaymentAdapter` lives in `@blurifycom/adapters` and is passed into `WalletService` (the constructor takes a `PaymentAdapter`; `plugin.ts` resolves `PAYMENT_ADAPTER` from the container). The default binding is `MockPaymentAdapter` (bound in `src/plugin.ts`). Implement it for a real PSP and override the binding via an overlay plugin.
 - **Events emitted**:
   - `wallet.deposit.completed` - `{ userId, amount, currency, transactionId }`
   - `wallet.withdrawal.completed` - `{ userId, amount, currency, transactionId }`
@@ -36,7 +36,7 @@ ctx.provide(PAYMENT_ADAPTER, () => new StripePaymentAdapter());
 
 ## Do
 
-- Add business logic to `service/wallet.service.ts` (inject `DrizzleService` from `@oss/db`; query via `this.drizzle.db.select().from(wallet).where(eq(...))`)
+- Add business logic to `service/wallet.service.ts` (inject `DrizzleService` from `@blurifycom/db`; query via `this.drizzle.db.select().from(wallet).where(eq(...))`)
 - Add or edit `pgTable` defs in `src/schema/index.ts`, then run `pnpm regen`
 - Implement `PaymentAdapter` in `adapters/<vendor>/` for real payment processing
 - Emit cross-module events via `EventBus` - never import other modules directly
@@ -53,6 +53,6 @@ ctx.provide(PAYMENT_ADAPTER, () => new StripePaymentAdapter());
 
 - `pnpm verify` passes (typecheck + lint + boundaries + module-shape + tests).
 - `list-routes module=wallet` shows the new/changed route(s) (e.g. `wallet.deposit`).
-- No `boundaries/dependencies` lint errors (no cross-add-on code imports; read other add-ons' tables only via the `@oss-addons/<name>/schema` subpath).
+- No `boundaries/dependencies` lint errors (no cross-add-on code imports; read other add-ons' tables only via the `@blurifycom-addons/<name>/schema` subpath).
 - If you changed the `PaymentAdapter` contract, `pnpm regen` then check `docs/catalog.json` shows the `PAYMENT_ADAPTER` seam still wired.
 - New tables: added to `src/schema/index.ts`, `pnpm regen` run, migration committed.

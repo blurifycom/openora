@@ -10,7 +10,7 @@ coverage
 !.env.example
 *.tsbuildinfo
 # OpenAPI spec is generated, not committed. Emitted by `pnpm codegen` (apps/api
-# emit-openapi) and on API boot. Read by gen-catalog + the @oss/mcp query-openapi
+# emit-openapi) and on API boot. Read by gen-catalog + the @blurifycom/mcp query-openapi
 # tool, which regenerate/expect it locally (pnpm setup:agent runs codegen).
 docs/openapi.json
 apps/*/docs/openapi.json

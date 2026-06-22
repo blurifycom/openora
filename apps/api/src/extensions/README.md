@@ -30,6 +30,6 @@ See `AGENTS.md` in this directory for the full `ctx` surface and the do/don't.
 
 ## Boundary rules
 
-- An overlay may import any `@oss/*` package.
+- An overlay may import any `@blurifycom/*` package.
 - An overlay may NOT import another extension. Cross-extension communication goes through the event bus.
-- Import a package entry (eg `@oss/modules/player/wallet/schema`), never a deep `dist/` path.
+- Import a package entry (eg `@blurifycom/modules/player/wallet/schema`), never a deep `dist/` path.

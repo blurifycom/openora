@@ -4,7 +4,7 @@ import * as z from 'zod';
 // etc). To activate it:
 //   1. Merge {{pascalCase name}}ConfigSchema into PlatformConfigSchema
 //      (packages/contracts/shared-schemas/src/platform-config.ts) via `.extend(...)`.
-//   2. Read it through `loadPlatformConfig()` (@oss/core), bound on the
+//   2. Read it through `loadPlatformConfig()` (@blurifycom/core), bound on the
 //      PLATFORM_CONFIG container token.
 // No admin UI in v1 - operators edit platform-config.yaml/.json. See ADR-0013 T0.
 export const {{pascalCase name}}ConfigSchema = z.object({

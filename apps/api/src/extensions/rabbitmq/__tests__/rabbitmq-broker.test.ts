@@ -1,5 +1,5 @@
 import { describe, expect, it, vi, beforeEach } from 'vitest';
-import type { EventEnvelope } from '@oss/core/contracts';
+import type { EventEnvelope } from '@blurifycom/core/contracts';
 
 const channel = {
   assertExchange: vi.fn().mockResolvedValue({}),

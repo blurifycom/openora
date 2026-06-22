@@ -24,16 +24,16 @@ Run `git diff main...HEAD --name-only` to see which files changed. Read each cha
 ### Boundary rules
 
 - [ ] No add-on imports another add-on (`packages/addons/X` must not import from `packages/addons/Y`). Cross-add-on: events or schema subpath only.
-- [ ] The `@oss/core` engine zones (`packages/core/src/{contracts,server,react}`) import no folded domain (`packages/core/src/<domain>`) and no add-on (`packages/addons/*`); a folded domain imports no sibling domain's internals (only its read-only `/schema`).
+- [ ] The `@blurifycom/core` engine zones (`packages/core/src/{contracts,server,react}`) import no folded domain (`packages/core/src/<domain>`) and no add-on (`packages/addons/*`); a folded domain imports no sibling domain's internals (only its read-only `/schema`).
 - [ ] No extension imports another extension.
 - [ ] New modules/extensions registered only via `extensions.config.ts`.
-- [ ] No deep `dist/` path imports (`@oss/*/dist/**`).
+- [ ] No deep `dist/` path imports (`@blurifycom/*/dist/**`).
 - [ ] No import cycles (`import/no-cycle` + the whole-graph `no-circular` gate).
 - [ ] Boundaries are enforced two ways: the oxlint `oss-boundaries/*` plugin (specifier strings) and the whole-graph `pnpm boundaries` gate (`.dependency-cruiser.cjs`) which also catches transitive / re-export / dynamic-import / relative-path violations. Run `pnpm boundaries` if unsure.
 
 ### Contract rules
 
-- [ ] All Zod schemas in `schemas/` or `@oss/contracts/shared-schemas`. No ad-hoc schemas in handlers.
+- [ ] All Zod schemas in `schemas/` or `@blurifycom/contracts/shared-schemas`. No ad-hoc schemas in handlers.
 - [ ] oRPC procedures all have `.input()` and `.output()` (typed, no missing schema).
 - [ ] No `z.any()` or `z.unknown()` in public contracts.
 - [ ] No hand-written response types - all types are `z.infer`'d from the contract schema.
@@ -49,7 +49,7 @@ Run `git diff main...HEAD --name-only` to see which files changed. Read each cha
 
 ### Pattern rules
 
-- [ ] Services throw domain errors (via `createDomainError` from `@oss/core`), not HTTP exceptions.
+- [ ] Services throw domain errors (via `createDomainError` from `@blurifycom/core`), not HTTP exceptions.
 - [ ] No `any` outside `*.test.ts` files.
 - [ ] `type` aliases, not `interface` (lint-enforced via `typescript/consistent-type-definitions`).
 - [ ] No inline `fetch`/`axios` - use the SDK or a vendor adapter.
@@ -58,7 +58,7 @@ Run `git diff main...HEAD --name-only` to see which files changed. Read each cha
 
 ### Frontend rules
 
-- [ ] No frontend pages, components, or styling in this repo - the platform is headless backend only. All UI lives in the downstream consumer frontend repo and consumes the api over HTTP via `@oss/react`.
+- [ ] No frontend pages, components, or styling in this repo - the platform is headless backend only. All UI lives in the downstream consumer frontend repo and consumes the api over HTTP via `@blurifycom/react`.
 
 ### Tests
 

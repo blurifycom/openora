@@ -75,8 +75,8 @@ async function main() {
 
   console.log('\n--- Running Drizzle migrations ---');
   try {
-    run('pnpm -F @oss/core generate');
-    run('pnpm -F @oss/core migrate');
+    run('pnpm -F @blurifycom/core generate');
+    run('pnpm -F @blurifycom/core migrate');
   } catch (e) {
     console.warn('  [warn] Migration step skipped (schema may be empty - normal on first run)');
   }

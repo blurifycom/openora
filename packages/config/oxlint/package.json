@@ -1,10 +1,13 @@
 {
-  "name": "@oss/oxlint-config",
+  "name": "@blurifycom/oxlint-config",
   "version": "0.3.0",
   "license": "AGPL-3.0-only",
   "files": [
     "*.json"
   ],
+  "publishConfig": {
+    "registry": "https://npm.pkg.github.com"
+  },
   "devDependencies": {
     "oxlint": "1.69.0"
   }

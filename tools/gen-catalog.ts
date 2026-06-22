@@ -2,7 +2,7 @@
 /**
  * Generates the platform CATALOG - the machine-readable surface a downstream
  * consumer's AI agent reads INSTEAD of grepping node_modules. Emits:
- *   docs/catalog.json  - structured, consumed at runtime by the published @oss/mcp
+ *   docs/catalog.json  - structured, consumed at runtime by the published @blurifycom/mcp
  *                        server (a consumer's node_modules has no platform source).
  * Human/agent-readable access is the MCP dev server (describe-module, list-routes,
  * query-openapi) and each module's AGENTS.md - no monolithic markdown dump.
@@ -42,7 +42,7 @@ function moduleSrcDirs(): ModuleSrc[] {
       if (isDir(join(addonsRoot, name)) && hasPlugin(srcDir)) out.push({ id: name, srcDir });
     }
   }
-  // Domains fold into @oss/core as subpaths. See ADR-0024/0025.
+  // Domains fold into @blurifycom/core as subpaths. See ADR-0024/0025.
   const coreSrc = join(repoRoot, 'packages', 'core', 'src');
   const engineDirs = new Set(['contracts', 'server', 'react']);
   if (existsSync(coreSrc)) {

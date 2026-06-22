@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
-import { asAdmin } from '@oss/testing';
+import { asAdmin } from '@blurifycom/testing';
 import { startHarness, type IntegrationHarness } from './harness.js';
 
 const ADMIN_ROUTE = '/compliance/geo-rules'; // guarded by adminGuard.assert(context)

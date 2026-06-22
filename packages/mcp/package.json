@@ -1,8 +1,8 @@
 {
-  "name": "@oss/mcp",
+  "name": "@blurifycom/mcp",
   "version": "0.3.0",
-  "license": "AGPL-3.0-only",
   "private": true,
+  "license": "AGPL-3.0-only",
   "bin": "./dist/main.js",
   "files": [
     "dist",
@@ -16,8 +16,8 @@
     "clean": "rm -rf dist"
   },
   "dependencies": {
+    "@blurifycom/core": "workspace:*",
     "@modelcontextprotocol/sdk": "1.29.0",
-    "@oss/core": "workspace:*",
     "zod": "4.4.3"
   },
   "devDependencies": {

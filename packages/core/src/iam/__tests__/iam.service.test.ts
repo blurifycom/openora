@@ -1,6 +1,11 @@
 import { describe, it, expect, vi } from 'vitest';
-import * as core from '@oss/core/server';
-import { levelToActions, actionsToLevel, statement, type ResourceName } from '@oss/core/server';
+import * as core from '@blurifycom/core/server';
+import {
+  levelToActions,
+  actionsToLevel,
+  statement,
+  type ResourceName,
+} from '@blurifycom/core/server';
 import {
   IamService,
   DbAdminPermissionResolver,
@@ -25,13 +30,13 @@ vi.mock('drizzle-orm', async (importOriginal) => {
 });
 
 function makeEvents() {
-  return { emit: vi.fn(), on: vi.fn() } as unknown as import('@oss/core/server').EventBus;
+  return { emit: vi.fn(), on: vi.fn() } as unknown as import('@blurifycom/core/server').EventBus;
 }
 
 function makeEmail() {
   return {
     send: vi.fn().mockResolvedValue(undefined),
-  } as unknown as import('@oss/core/contracts').SendEmailPort;
+  } as unknown as import('@blurifycom/core/contracts').SendEmailPort;
 }
 
 function inContext<T>(fn: () => T): T {
@@ -97,7 +102,7 @@ function routingDrizzle(byTable: {
     returning: vi.fn().mockResolvedValue([]),
     transaction: vi.fn().mockImplementation((fn: (txn: unknown) => unknown) => fn(chain)),
   };
-  return { db: chain } as unknown as import('@oss/core/server').DrizzleService;
+  return { db: chain } as unknown as import('@blurifycom/core/server').DrizzleService;
 }
 
 const ROLE_ROW = {
@@ -481,7 +486,7 @@ describe('IamService.unassignRole', () => {
       delete: vi.fn().mockReturnThis(),
       transaction: vi.fn().mockImplementation((fn: (txn: unknown) => unknown) => fn(chain)),
     };
-    const drizzle = { db: chain } as unknown as import('@oss/core/server').DrizzleService;
+    const drizzle = { db: chain } as unknown as import('@blurifycom/core/server').DrizzleService;
     const svc = new IamService(drizzle, makeEvents(), makeEmail());
     await expect(
       inContext(() =>
@@ -614,7 +619,7 @@ describe('IamService.ensureDefaultRoles', () => {
         ),
     };
 
-    const drizzle = { db: chain } as unknown as import('@oss/core/server').DrizzleService;
+    const drizzle = { db: chain } as unknown as import('@blurifycom/core/server').DrizzleService;
     const svc = new IamService(drizzle, makeEvents(), makeEmail());
 
     const first = await svc.ensureDefaultRoles();
@@ -663,7 +668,7 @@ describe('IamService.acceptInvitation', () => {
       where: vi.fn().mockReturnThis(),
       returning,
     };
-    const drizzle = { db: chain } as unknown as import('@oss/core/server').DrizzleService;
+    const drizzle = { db: chain } as unknown as import('@blurifycom/core/server').DrizzleService;
     const events = makeEvents();
     const svc = new IamService(drizzle, events, makeEmail());
 
@@ -699,7 +704,7 @@ describe('IamService.inviteAdmin', () => {
       values: vi.fn().mockReturnThis(),
       returning: vi.fn().mockResolvedValue([invitationRow]),
     };
-    const drizzle = { db: chain } as unknown as import('@oss/core/server').DrizzleService;
+    const drizzle = { db: chain } as unknown as import('@blurifycom/core/server').DrizzleService;
     const email = makeEmail();
     const svc = new IamService(drizzle, makeEvents(), email);
     const result = await inContext(() =>
@@ -727,7 +732,7 @@ function paginatedDrizzle(rows: unknown[], total: number) {
       return chain;
     }),
   };
-  return { db } as unknown as import('@oss/core/server').DrizzleService;
+  return { db } as unknown as import('@blurifycom/core/server').DrizzleService;
 }
 
 describe('IamService paginated lists', () => {

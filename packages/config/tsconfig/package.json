@@ -1,8 +1,0 @@
-{
-  "name": "@oss/tsconfig",
-  "version": "0.3.0",
-  "license": "AGPL-3.0-only",
-  "files": [
-    "*.json"
-  ]
-}

@@ -27,14 +27,14 @@ Creates `apps/api/src/extensions/<name>/plugin.ts` and appends an entry to `exte
 | `ctx.events.on(event, handler)`             | Subscribe to a domain event (see `docs/catalog.json` for the catalogue).                                                                                   |
 | `ctx.mcp.tool(definition)`                  | Expose a new MCP dev tool to the agent surface.                                                                                                            |
 
-There is no `ctx.providers.add`, no `ctx.imports`, no `ctx.prisma`. The platform is built on the functional composition `Container` from `@oss/core`, not NestJS - those Nest-era hooks are gone. Tables live in your overlay's own `src/schema/index.ts` (Drizzle `pgTable`); run `pnpm regen` after.
+There is no `ctx.providers.add`, no `ctx.imports`, no `ctx.prisma`. The platform is built on the functional composition `Container` from `@blurifycom/core`, not NestJS - those Nest-era hooks are gone. Tables live in your overlay's own `src/schema/index.ts` (Drizzle `pgTable`); run `pnpm regen` after.
 
 ## Binding / overriding a vendor adapter
 
-Implement an interface from `@oss/adapters` (see `docs/catalog.json` > Adapter seams for the list and which are wired vs stub), then in `register(ctx)`:
+Implement an interface from `@blurifycom/adapters` (see `docs/catalog.json` > Adapter seams for the list and which are wired vs stub), then in `register(ctx)`:
 
 ```ts
-import { PAYMENT_ADAPTER } from '@oss/adapters';
+import { PAYMENT_ADAPTER } from '@blurifycom/adapters';
 import { MyStripeAdapter } from './my-stripe-adapter';
 
 ctx.provide(PAYMENT_ADAPTER, () => new MyStripeAdapter());
@@ -44,13 +44,13 @@ ctx.provide(PAYMENT_ADAPTER, () => new MyStripeAdapter());
 
 ## Adding tables (optional)
 
-Put a `pgTable` in the overlay's `src/schema/index.ts`. Run `pnpm regen` to generate the migration. Read another module's tables via the subpath import `@oss/modules/<group>/<name>/schema` - never a deep `dist/` path.
+Put a `pgTable` in the overlay's `src/schema/index.ts`. Run `pnpm regen` to generate the migration. Read another module's tables via the subpath import `@blurifycom/modules/<group>/<name>/schema` - never a deep `dist/` path.
 
 ## Boundary rules (enforced by `pnpm verify`)
 
-- An overlay may import any `@oss/*` package.
+- An overlay may import any `@blurifycom/*` package.
 - An overlay may NOT import another extension. Cross-extension comms go through `ctx.events`.
-- Import a package entry (eg `@oss/modules/player/wallet/schema`), never a deep `dist/` path.
+- Import a package entry (eg `@blurifycom/modules/player/wallet/schema`), never a deep `dist/` path.
 
 ## Done when
 

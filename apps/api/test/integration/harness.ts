@@ -1,10 +1,10 @@
-import { setupTestDb, bootTestApp, seedMinimal, asPlayer, asAdmin } from '@oss/testing';
-import type { TestApp, TestClient } from '@oss/testing';
-import type { Container } from '@oss/core/server';
-import { DRIZZLE } from '@oss/core/server';
-import { eq } from '@oss/core/server/orm';
-import { player } from '@oss/core/pam/schema/profile';
-import { user } from '@oss/core/pam/schema/identity';
+import { setupTestDb, bootTestApp, seedMinimal, asPlayer, asAdmin } from '@blurifycom/testing';
+import type { TestApp, TestClient } from '@blurifycom/testing';
+import type { Container } from '@blurifycom/core/server';
+import { DRIZZLE } from '@blurifycom/core/server';
+import { eq } from '@blurifycom/core/server/orm';
+import { player } from '@blurifycom/core/pam/schema/profile';
+import { user } from '@blurifycom/core/pam/schema/identity';
 import { loadExtensions } from '../../src/extensions.js';
 
 export type IntegrationHarness = {

@@ -1,6 +1,6 @@
 import { oc } from '@orpc/contract';
 import * as z from 'zod';
-import { IdInputSchema } from '@oss/core/contracts';
+import { IdInputSchema } from '@blurifycom/core/contracts';
 
 export const PageSchema = z.object({
   id: z.uuid(),

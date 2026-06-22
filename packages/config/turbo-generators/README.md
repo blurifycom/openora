@@ -1,11 +1,11 @@
-# @oss/turbo-generators
+# @blurifycom/turbo-generators
 
 Shared `turbo gen` generators for downstream igaming consumers. The generator logic and
 templates live here once, so each consumer repo's `turbo/generators/config.ts` is a
 one-line re-export instead of a maintained copy:
 
 ```ts
-export { default } from '@oss/turbo-generators';
+export { default } from '@blurifycom/turbo-generators';
 ```
 
 `pnpm gen <name>` then works in the consumer with no drift against the platform.

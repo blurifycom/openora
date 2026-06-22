@@ -1,15 +1,15 @@
-import { DrizzleService, findOneOrThrow } from '@oss/core/server';
+import { DrizzleService, findOneOrThrow } from '@blurifycom/core/server';
 import {
   type EventBus,
   makeNotFoundError,
   makeOwnershipError,
   assertOwnership,
   serializeRow,
-} from '@oss/core/server';
+} from '@blurifycom/core/server';
 import { eq } from 'drizzle-orm';
 import { userLimit, geoRule } from '../schema/index.js';
 import type { UpsertLimitInput, Limit, GeoRule, AddGeoRuleInput } from '../schemas/index.js';
-import { type GeoIpAdapter } from '@oss/core/contracts';
+import { type GeoIpAdapter } from '@blurifycom/core/contracts';
 
 export const LimitNotFoundError = makeNotFoundError('Limit');
 

@@ -56,7 +56,7 @@ rules live here.
 
 ```ts
 import { implement } from '@orpc/server';
-import { getUserId, mapErrors, type OssContext } from '@oss/core/server';
+import { getUserId, mapErrors, type OssContext } from '@blurifycom/core/server';
 import { walletContract } from '../contract/index.js';
 
 export function createWalletRouter(wallet: WalletService) {
@@ -77,8 +77,8 @@ export function createWalletRouter(wallet: WalletService) {
 adapters, add routers, subscribe to events, and register MCP tools.
 
 ```ts
-import { definePlugin, EVENT_BUS, DRIZZLE } from '@oss/core/server';
-import { PAYMENT_ADAPTER } from '@oss/core/contracts';
+import { definePlugin, EVENT_BUS, DRIZZLE } from '@blurifycom/core/server';
+import { PAYMENT_ADAPTER } from '@blurifycom/core/contracts';
 import { WalletService } from './service/wallet.service.js';
 import { createWalletRouter } from './router/index.js';
 import { MockPaymentAdapter } from './adapters/mock/mock-payment-adapter.js';

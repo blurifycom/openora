@@ -85,18 +85,18 @@ The server uses stdio transport (no port). Add this to your editor's MCP config:
 | `regen`           | Runs drizzle-kit generate + OpenAPI emit + catalog regeneration                            |
 | `run-verify`      | Runs pnpm verify (typecheck + lint + tests)                                                |
 
-## The consumer-facing server (`@oss/mcp`)
+## The consumer-facing server (`@blurifycom/mcp`)
 
 `oss-dev` (above) is the full toolkit for working _on_ this repo. There is a second,
-read-only server - `@oss/mcp` (`packages/mcp`) - that ships to downstream
+read-only server - `@blurifycom/mcp` (`packages/mcp`) - that ships to downstream
 consumers for inspecting the platform surface (catalog-overview, list-adapters, etc.).
 It reads `docs/catalog.json`, resolving it by walking up from `cwd`, then falling back to
-`node_modules/@oss/mcp/docs/catalog.json`.
+`node_modules/@blurifycom/mcp/docs/catalog.json`.
 
 Until it's published to npm, run it locally from the built `dist/`:
 
 ```bash
-pnpm --filter @oss/mcp build   # rebuild after any source change
+pnpm --filter @blurifycom/mcp build   # rebuild after any source change
 ```
 
 ```json
@@ -113,7 +113,7 @@ pnpm --filter @oss/mcp build   # rebuild after any source change
 
 Note: in a `create:app` consumer running in dev/link mode you don't need this - the
 generated `.mcp.json` already points at the full `oss-dev` server through the sibling
-checkout, which is a superset of `@oss/mcp`.
+checkout, which is a superset of `@blurifycom/mcp`.
 
 ## Usage pattern for agents
 

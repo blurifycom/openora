@@ -1,7 +1,7 @@
 import { createHash } from 'node:crypto';
 import { randomUUID } from 'node:crypto';
-import { DrizzleService, pageToOffset } from '@oss/core/server';
-import { type EventBus } from '@oss/core/server';
+import { DrizzleService, pageToOffset } from '@blurifycom/core/server';
+import { type EventBus } from '@blurifycom/core/server';
 import { eq, and, gte, lte, desc, sql } from 'drizzle-orm';
 import { auditLog, type AuditLog } from '../schema/index.js';
 import type { AuditLogEntry, AuditListFilters, AuditExportFilters } from '../schemas/index.js';

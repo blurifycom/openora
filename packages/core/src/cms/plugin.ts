@@ -1,7 +1,7 @@
-import { definePlugin } from '@oss/core/server';
-import { EVENT_BUS } from '@oss/core/server';
-import { DRIZZLE } from '@oss/core/server';
-import { ADMIN_GUARD } from '@oss/core/server';
+import { definePlugin } from '@blurifycom/core/server';
+import { EVENT_BUS } from '@blurifycom/core/server';
+import { DRIZZLE } from '@blurifycom/core/server';
+import { ADMIN_GUARD } from '@blurifycom/core/server';
 import { CmsService } from './service/cms.service.js';
 import { createCmsRouter } from './router/index.js';
 

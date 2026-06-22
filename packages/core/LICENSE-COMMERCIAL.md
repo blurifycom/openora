@@ -54,13 +54,13 @@ respond with the applicable commercial terms.
 
 ## Which license applies to you?
 
-| Your situation                                                              | License        |
-| --------------------------------------------------------------------------- | -------------- |
-| Self-hosting for internal use, willing to comply with AGPL-3.0              | AGPL-3.0-only  |
-| Modifying and redistributing under AGPL-3.0, publishing your source         | AGPL-3.0-only  |
-| Running a hosted/SaaS service and publishing your modified source (AGPL §13)| AGPL-3.0-only  |
-| Running a hosted/SaaS service WITHOUT publishing your source                | Commercial     |
-| Embedding in a closed-source product or redistributing under other terms    | Commercial     |
-| Need a warranty, indemnity, or commercial SLA                               | Commercial     |
+| Your situation                                                               | License       |
+| ---------------------------------------------------------------------------- | ------------- |
+| Self-hosting for internal use, willing to comply with AGPL-3.0               | AGPL-3.0-only |
+| Modifying and redistributing under AGPL-3.0, publishing your source          | AGPL-3.0-only |
+| Running a hosted/SaaS service and publishing your modified source (AGPL §13) | AGPL-3.0-only |
+| Running a hosted/SaaS service WITHOUT publishing your source                 | Commercial    |
+| Embedding in a closed-source product or redistributing under other terms     | Commercial    |
+| Need a warranty, indemnity, or commercial SLA                                | Commercial    |
 
 When in doubt, contact licensing@example.com.

@@ -24,19 +24,19 @@ client push separate from the inter-module broker) and realizes ADR-0007.
 
 **1. Two new adapter seams, vendor-neutral, default to zero-dependency in-process impls.**
 
-- `JOB_QUEUE` (`@oss/adapters` `job-queue.ts`) - `JobQueueAdapter`: `enqueue`, `schedule`,
+- `JOB_QUEUE` (`@blurifycom/adapters` `job-queue.ts`) - `JobQueueAdapter`: `enqueue`, `schedule`,
   `unschedule`, `registerWorker`, `close`. Supports `idempotencyKey`, `orderingKey`,
   `delayMs`, `attempts` + `backoff`, `priority`, `ttlMs`, and a per-worker Zod `schema`
-  validated before the handler runs. Default binding `InProcessJobQueue` (`@oss/core`):
+  validated before the handler runs. Default binding `InProcessJobQueue` (`@blurifycom/core`):
   microtask/`setTimeout` dispatch, retry+backoff, per-`orderingKey` serial lanes,
   dead-letter hook, drain-on-`close`.
-- `REALTIME_TRANSPORT` (`@oss/adapters` `realtime.ts`) - `RealtimeTransport`: `publish`,
+- `REALTIME_TRANSPORT` (`@blurifycom/adapters` `realtime.ts`) - `RealtimeTransport`: `publish`,
   `subscribe` (returns unsubscribe), optional `presence`. Default binding
-  `InProcessRealtimeTransport` (`@oss/core`): in-process channel fan-out consumed by oRPC
+  `InProcessRealtimeTransport` (`@blurifycom/core`): in-process channel fan-out consumed by oRPC
   `eventIterator` SSE handlers. Realizes ADR-0007's `ChatTransportPort` as a generic
   primitive (gaming PvP will reuse it).
 
-Both are wired in `@oss/api-runtime` `create-app.ts` next to `MESSAGE_BROKER`/`EVENT_BUS`.
+Both are wired in `@blurifycom/api-runtime` `create-app.ts` next to `MESSAGE_BROKER`/`EVENT_BUS`.
 Workers are collected via a new `ctx.jobs.worker(...)` plugin-host collector (mirrors
 `ctx.events.on`) and started at boot against the resolved `JOB_QUEUE`.
 
@@ -81,8 +81,8 @@ reconnection) is owned by the operator unless they bind a managed vendor.
 
 ## Implementation status
 
-Done: both seams + tokens (`@oss/adapters`); in-process defaults + barrel exports
-(`@oss/core`); `ctx.jobs.worker` collector (`@oss/plugin-host`); `create-app.ts` bindings +
+Done: both seams + tokens (`@blurifycom/adapters`); in-process defaults + barrel exports
+(`@blurifycom/core`); `ctx.jobs.worker` collector (`@blurifycom/plugin-host`); `create-app.ts` bindings +
 worker-registration loop + drain ordering; BullMQ overlay (`apps/api/src/extensions/bullmq/`,
 self-disabling, registered in `extensions.config.ts`); chat realtime vertical
 (`chat.streamMessages` SSE route, service publish, `useChatStream` hook, `PlayerChatPage`);

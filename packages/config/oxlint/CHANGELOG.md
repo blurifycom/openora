@@ -1,4 +1,4 @@
-# @oss/oxlint-config
+# @blurifycom/oxlint-config
 
 ## 0.3.0
 

@@ -7,9 +7,9 @@ import { migrate } from 'drizzle-orm/node-postgres/migrator';
 import { sql } from 'drizzle-orm';
 // Each gated domain owns its own migration tracking table (ADR-0025); a full test
 // DB must apply all three or integration tests hit "relation does not exist".
-import { migrate as migrateSportsbook } from '@oss/core/sportsbook/migrate';
-import { migrate as migrateAggregator } from '@oss/core/casino/migrate';
-import { migrate as migrateLeaderboard } from '@oss/core/engagement/migrate';
+import { migrate as migrateSportsbook } from '@blurifycom/core/sportsbook/migrate';
+import { migrate as migrateAggregator } from '@blurifycom/core/casino/migrate';
+import { migrate as migrateLeaderboard } from '@blurifycom/core/engagement/migrate';
 
 const DEFAULT_TEST_URL = 'postgres://postgres:postgres@localhost:5432/oss_igaming_test';
 
@@ -27,10 +27,10 @@ async function applyAllMigrations(url: string): Promise<void> {
 
 /** Resolves the drizzle migrations folder regardless of install location (workspace or linked consumer). */
 function migrationsFolder(): string {
-  // `@oss/core/server` doesn't expose ./package.json via its exports map, so resolve its
+  // `@blurifycom/core/server` doesn't expose ./package.json via its exports map, so resolve its
   // entry instead and walk up until we find the drizzle migrations directory.
   const require = createRequire(import.meta.url);
-  let dir = dirname(require.resolve('@oss/core/server'));
+  let dir = dirname(require.resolve('@blurifycom/core/server'));
   for (let i = 0; i < 6; i++) {
     const candidate = resolve(dir, 'drizzle/migrations');
     if (existsSync(candidate)) return candidate;
@@ -38,7 +38,7 @@ function migrationsFolder(): string {
     if (parent === dir) break;
     dir = parent;
   }
-  throw new Error('Could not locate @oss/core/server drizzle/migrations folder');
+  throw new Error('Could not locate @blurifycom/core/server drizzle/migrations folder');
 }
 
 export async function applyMigrations(url: string): Promise<void> {

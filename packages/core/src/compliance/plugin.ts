@@ -1,8 +1,8 @@
-import { definePlugin } from '@oss/core/server';
-import { GEO_IP_ADAPTER } from '@oss/core/contracts';
-import { EVENT_BUS } from '@oss/core/server';
-import { DRIZZLE } from '@oss/core/server';
-import { ADMIN_GUARD } from '@oss/core/server';
+import { definePlugin } from '@blurifycom/core/server';
+import { GEO_IP_ADAPTER } from '@blurifycom/core/contracts';
+import { EVENT_BUS } from '@blurifycom/core/server';
+import { DRIZZLE } from '@blurifycom/core/server';
+import { ADMIN_GUARD } from '@blurifycom/core/server';
 import { ComplianceService } from './service/compliance.service.js';
 import { createComplianceRouter } from './router/index.js';
 

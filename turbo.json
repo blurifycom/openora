@@ -6,12 +6,12 @@
       "dependsOn": ["^build"],
       "outputs": ["dist/**", ".next/**", "!.next/cache/**"]
     },
-    "@oss/docs#build": {
-      "dependsOn": ["@oss/api#codegen"],
+    "@blurifycom/docs#build": {
+      "dependsOn": ["@blurifycom/api#codegen"],
       "outputs": ["out/**", ".next/**", "!.next/cache/**"]
     },
-    "@oss/docs#typecheck": {
-      "dependsOn": ["@oss/api#codegen"]
+    "@blurifycom/docs#typecheck": {
+      "dependsOn": ["@blurifycom/api#codegen"]
     },
     "dev": {
       "cache": false,

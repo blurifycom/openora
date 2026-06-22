@@ -1,4 +1,8 @@
-import { applyServiceManifest, parseServiceManifest, type PluginEntry } from '@oss/core/server';
+import {
+  applyServiceManifest,
+  parseServiceManifest,
+  type PluginEntry,
+} from '@blurifycom/core/server';
 import { resolve, dirname, isAbsolute } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { accessSync } from 'node:fs';

@@ -8,7 +8,7 @@
 ## Context
 
 The platform identified the request's caller from a raw `x-user-id` HTTP header
-(`getUserId` in `@oss/core`), and likewise the tenant from `x-tenant-id`
+(`getUserId` in `@blurifycom/core`), and likewise the tenant from `x-tenant-id`
 (`getTenantId`). Nothing verified those headers, so any client could set
 `x-user-id: <someone-else>` and act as that user - and because ADR-0018 resolves the
 RLS tenant from the caller, a forged `x-user-id` for a user in another tenant also
@@ -20,7 +20,7 @@ server-side shortcut / test seam, not a production requirement.
 
 ## Decision
 
-**1. One shared verified-session resolver.** `SessionResolver` (`@oss/auth`,
+**1. One shared verified-session resolver.** `SessionResolver` (`@blurifycom/auth`,
 `session-resolver.ts`) wraps a single better-auth `Auth` instance and exposes
 `resolveUserId(headers): Promise<string | undefined>` - it calls
 `auth.api.getSession({ headers })` and returns the verified `session.user.id`, or
@@ -41,7 +41,7 @@ the RLS app role sees zero rows - fail-closed.
 
 **3. `getUserId`/`getTenantId` read the verified context, not headers.** Both now read
 `context.auth.{userId,tenantId}` (a new optional `AuthContext` field on `OssContext`)
-and throw `ORPCError('UNAUTHORIZED')` when absent. `@oss/core` cannot import `@oss/auth`
+and throw `ORPCError('UNAUTHORIZED')` when absent. `@blurifycom/core` cannot import `@blurifycom/auth`
 (it would create a cycle and pull better-auth into the leaf platform package), so the
 verification happens in the api-runtime middleware and core only reads the field the
 middleware populated. The `x-user-id` / `x-tenant-id` trust paths are removed entirely -
@@ -63,5 +63,5 @@ player sees only its own tenant's data under RLS. A regression test asserts a fo
   duplicate `createAuth`).
 - Player routes require a real session cookie. The SDK already sends one; the in-tree
   `x-user-id` shortcut is gone, including from tests (which now log in).
-- `@oss/core` stays free of an `@oss/auth` dependency - the verified identity is passed
+- `@blurifycom/core` stays free of an `@blurifycom/auth` dependency - the verified identity is passed
   through the oRPC context, not resolved inside core.

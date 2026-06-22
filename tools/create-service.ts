@@ -11,8 +11,8 @@
  *   pnpm create:service wallet identity,wallet
  *
  * After scaffolding: `pnpm install`, build deps, then
- *   pnpm -F @oss/<name>-service dev          # uses the baked-in manifest
- *   SERVICE_MANIFEST=identity,wallet,bonus pnpm -F @oss/<name>-service dev   # override
+ *   pnpm -F @blurifycom/<name>-service dev          # uses the baked-in manifest
+ *   SERVICE_MANIFEST=identity,wallet,bonus pnpm -F @blurifycom/<name>-service dev   # override
  */
 import { existsSync, mkdirSync, writeFileSync, readFileSync } from 'node:fs';
 import { join, dirname } from 'node:path';
@@ -51,10 +51,10 @@ if (existsSync(appDir)) {
   process.exit(1);
 }
 
-const pkgName = `@oss/${name}-service`;
+const pkgName = `@blurifycom/${name}-service`;
 
 const addonDeps = Object.fromEntries(
-  manifest.map((id) => [`@oss-addons/${id}`, 'workspace:*'] as const).sort(),
+  manifest.map((id) => [`@blurifycom-addons/${id}`, 'workspace:*'] as const).sort(),
 );
 
 const extensionsLoader = readFileSync(join(repoRoot, 'apps/api/src/extensions.ts'), 'utf8');
@@ -75,7 +75,7 @@ const files: Record<string, string> = {
         },
         dependencies: {
           '@orpc/server': '1.14.3',
-          '@oss/core': 'workspace:*',
+          '@blurifycom/core': 'workspace:*',
           ...addonDeps,
           amqplib: '^2.0.1',
           bullmq: '^5.77.6',
@@ -93,7 +93,7 @@ const files: Record<string, string> = {
   'tsconfig.json':
     JSON.stringify(
       {
-        extends: '@oss/core/tsconfig/node-service.json',
+        extends: '@blurifycom/core/tsconfig/node-service.json',
         compilerOptions: { rootDir: 'src', outDir: 'dist' },
         include: ['src'],
       },
@@ -103,7 +103,7 @@ const files: Record<string, string> = {
 
   'src/extensions.ts': extensionsLoader,
 
-  'src/main.ts': `import { createApp } from '@oss/core/server';
+  'src/main.ts': `import { createApp } from '@blurifycom/core/server';
 import { loadExtensions } from './extensions.js';
 
 // ${name} service: boots only the modules it owns. The module code is shared with
@@ -115,7 +115,7 @@ async function bootstrap() {
   const plugins = await loadExtensions();
   // Routes come from the loaded plugins. To emit an OpenAPI spec for this
   // service, compose its slices with composeContract({ ... }) from
-  // @oss/core/contracts and pass it as \`contract\`. See apps/api/src/editions.ts.
+  // @blurifycom/core/contracts and pass it as \`contract\`. See apps/api/src/editions.ts.
   const { listen } = await createApp({ plugins });
   await listen();
 }

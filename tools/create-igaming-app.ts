@@ -111,7 +111,7 @@ function main(): void {
 
   console.log(`\n  Creating ${name} at ${targetDir}`);
   console.log(`  headless api-only consumer (frontend lives in your own repo)`);
-  console.log(`  Linking @oss/* from ${vars.ossFromRoot}\n`);
+  console.log(`  Linking @blurifycom/* from ${vars.ossFromRoot}\n`);
 
   emitTree(templateRoot, vars, targetDir);
 
@@ -120,7 +120,7 @@ function main(): void {
 
     cd ${posix(relative(process.cwd(), targetDir)) || '.'}
     pnpm install            # also generates the agent files (CLAUDE.md / AGENTS.md / .codex/config.toml / Copilot) from .rulesync/ via the prepare hook
-    pnpm build:oss          # build the linked @oss/* packages once
+    pnpm build:oss          # build the linked @blurifycom/* packages once
     cp .env.example .env     # then set DATABASE_URL / AUTH_SECRET
     pnpm db:migrate          # apply the OSS schema to your database
     pnpm dev                 # api :3001
@@ -131,7 +131,7 @@ function main(): void {
     pnpm gen adapter         # swap a vendor adapter (KYC / payment / notification)
 
   This is a headless api. Build your frontend in its own repo and consume the
-  api over HTTP with @oss/core/react.
+  api over HTTP with @blurifycom/core/react.
 `);
 }
 

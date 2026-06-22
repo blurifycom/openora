@@ -1,6 +1,12 @@
-import { createApp } from '@oss/core/server';
+import { createApp } from '@blurifycom/core/server';
 // for session verification. See ADR-0025.
-import { user, session, account, verification, twoFactor } from '@oss/core/pam/schema/identity';
+import {
+  user,
+  session,
+  account,
+  verification,
+  twoFactor,
+} from '@blurifycom/core/pam/schema/identity';
 import { loadExtensions } from './extensions.js';
 import { buildContract } from './editions.js';
 

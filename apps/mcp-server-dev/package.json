@@ -1,8 +1,8 @@
 {
-  "name": "@oss/mcp-server-dev",
+  "name": "@blurifycom/mcp-server-dev",
   "version": "0.3.0",
-  "license": "AGPL-3.0-only",
   "private": true,
+  "license": "AGPL-3.0-only",
   "type": "module",
   "scripts": {
     "build": "tsc",
@@ -11,8 +11,8 @@
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
+    "@blurifycom/core": "workspace:*",
     "@modelcontextprotocol/sdk": "1.29.0",
-    "@oss/core": "workspace:*",
     "pg": "8.21.0",
     "zod": "4.4.3"
   },

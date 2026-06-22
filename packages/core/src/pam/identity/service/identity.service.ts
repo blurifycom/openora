@@ -1,10 +1,10 @@
 import { ORPCError } from '@orpc/server';
-import { createAuth } from '@oss/core/server';
-import { type EventBus } from '@oss/core/server';
-import type { SendEmailPort } from '@oss/core/contracts';
-import { DrizzleService } from '@oss/core/server';
+import { createAuth } from '@blurifycom/core/server';
+import { type EventBus } from '@blurifycom/core/server';
+import type { SendEmailPort } from '@blurifycom/core/contracts';
+import { DrizzleService } from '@blurifycom/core/server';
 import { user, session, account, verification, twoFactor } from '../schema/index.js';
-import type { User } from '@oss/core/contracts';
+import type { User } from '@blurifycom/core/contracts';
 import type {
   LoginInput,
   RegisterInput,
@@ -18,7 +18,7 @@ import type {
   UpdateProfileInput,
   ChangePasswordInput,
   ChangeEmailInput,
-} from '@oss/core/contracts';
+} from '@blurifycom/core/contracts';
 
 function nodeHeadersToHeaders(nodeHeaders: Record<string, string | string[] | undefined>): Headers {
   const headers = new Headers();

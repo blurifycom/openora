@@ -19,7 +19,7 @@ export class ModuleRegistryImpl implements ModuleRegistry {
   // Last-wins, so an overlay loaded after a module can rebind its adapter token.
   // Sealed tokens (Symbol description prefixed `sealed:`) are rejected at runtime
   // even though the type system already blocks them - catches plain-JS callers and cast escapes.
-  // Canonical sealed list lives in `@oss/core/compliance`.
+  // Canonical sealed list lives in `@blurifycom/core/compliance`.
   provide = <T>(token: Token<T>, factory: Factory<T>): void => {
     const desc = token.description ?? '';
     if (desc.startsWith('sealed:')) {
@@ -27,7 +27,7 @@ export class ModuleRegistryImpl implements ModuleRegistry {
         `[plugin-host] Refusing to bind a sealed token (${desc}). ` +
           `Sealed services back regulatory invariants (RG enforcement, KYC writes, ` +
           `AML/SAR, ledger writes, RNG, etc.) and may not be replaced by a plugin. ` +
-          `See @oss/core/compliance for the canonical list.`,
+          `See @blurifycom/core/compliance for the canonical list.`,
       );
     }
     this.container.register(token, factory);

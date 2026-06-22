@@ -1,8 +1,8 @@
 import { describe, it, expect, vi } from 'vitest';
 import { IdentityService } from '../service/identity.service.js';
-import type { SendEmailPort } from '@oss/core/contracts';
+import type { SendEmailPort } from '@blurifycom/core/contracts';
 
-vi.mock('@oss/core/server', () => ({
+vi.mock('@blurifycom/core/server', () => ({
   createAuth: vi.fn(() => ({
     api: {
       getSession: vi.fn().mockResolvedValue(null),
@@ -14,7 +14,7 @@ vi.mock('@oss/core/server', () => ({
 }));
 
 function makeDrizzle() {
-  return { db: {} } as unknown as import('@oss/core/server').DrizzleService;
+  return { db: {} } as unknown as import('@blurifycom/core/server').DrizzleService;
 }
 
 function makeEvents() {

@@ -31,7 +31,7 @@ If the module is listed, use `describe-module <name>` to understand its current 
 /scaffold-module <group> <name>   # group: player | backoffice | platform
 ```
 
-This creates `packages/domains/<group>/<name>/` (a folder inside the single `@oss/modules` package - NOT its own package) with all required files and registers it in `extensions.config.ts`.
+This creates `packages/domains/<group>/<name>/` (a folder inside the single `@blurifycom/modules` package - NOT its own package) with all required files and registers it in `extensions.config.ts`.
 
 ## Step 4: Define the Drizzle tables
 
@@ -61,15 +61,15 @@ schema-get name=<EntityName>
 query-openapi keyword="<entity>"
 ```
 
-If a shared schema exists in `@oss/contracts/shared-schemas`, re-export it instead of duplicating.
+If a shared schema exists in `@blurifycom/contracts/shared-schemas`, re-export it instead of duplicating.
 
 ## Step 6: Implement the service
 
 Edit `packages/domains/<group>/<name>/src/service/<name>.service.ts`. Business logic only. Rules:
 
-- Take `DrizzleService` (from `@oss/core/server`) + `EventBus` as constructor arguments (the module plugin builds the service from the container). Query with `this.drizzle.db.select().from(<table>).where(eq(...))`; import operators (`eq`, `desc`, `sql`) from `drizzle-orm` and tables from `../schema/index.js`.
-- Throw domain errors via `createDomainError(...)` from `@oss/core`.
-- Never call external HTTP APIs directly - use an adapter interface from `@oss/core/contracts`.
+- Take `DrizzleService` (from `@blurifycom/core/server`) + `EventBus` as constructor arguments (the module plugin builds the service from the container). Query with `this.drizzle.db.select().from(<table>).where(eq(...))`; import operators (`eq`, `desc`, `sql`) from `drizzle-orm` and tables from `../schema/index.js`.
+- Throw domain errors via `createDomainError(...)` from `@blurifycom/core`.
+- Never call external HTTP APIs directly - use an adapter interface from `@blurifycom/core/contracts`.
 
 ## Step 7: Add routes
 
@@ -95,7 +95,7 @@ Edit `packages/domains/<group>/<name>/src/plugin.ts`. Confirm the service is add
 
 The platform is headless backend only - pages, components, and styling live in the downstream consumer repo. What you can add to the OSS:
 
-- **A new data hook** (eg `useAdminUsers`, `usePlayerWallet`) -> `packages/core/src/react/src/hooks/`. `@oss/core/react` is the supported frontend consumption surface (data hooks, auth, realtime transport - no components).
+- **A new data hook** (eg `useAdminUsers`, `usePlayerWallet`) -> `packages/core/src/react/src/hooks/`. `@blurifycom/core/react` is the supported frontend consumption surface (data hooks, auth, realtime transport - no components).
 
 ## Step 10: Update AGENTS.md
 
@@ -110,7 +110,7 @@ Edit `packages/domains/<group>/<name>/AGENTS.md`. Fill in:
 ## Step 11: Verify
 
 ```
-/verify --filter @oss/modules
+/verify --filter @blurifycom/modules
 ```
 
 Fix any typecheck, lint, boundary, or test failures before considering the work done.
@@ -132,7 +132,7 @@ curl -X POST http://localhost:3001/<name>s -H "Content-Type: application/json" -
 ## Common pitfalls
 
 - Forgetting `pnpm regen` after editing `src/schema/index.ts` - the migration and generated types will be stale.
-- Importing from another module directly - use events or read its tables via the `@oss/modules/<group>/<name>/schema` subpath. Both boundary gates reject it: the oxlint `oss-boundaries/*` plugin (per-edit, specifier strings) and the whole-graph `pnpm boundaries` gate (catches transitive / re-export / dynamic-import / relative-path dodges too).
+- Importing from another module directly - use events or read its tables via the `@blurifycom/modules/<group>/<name>/schema` subpath. Both boundary gates reject it: the oxlint `oss-boundaries/*` plugin (per-edit, specifier strings) and the whole-graph `pnpm boundaries` gate (catches transitive / re-export / dynamic-import / relative-path dodges too).
 - Introducing an import cycle - rejected by `import/no-cycle` and the whole-graph `no-circular` gate. Break it by extracting a shared module, inverting a dependency, or moving the type to a contracts package.
 - Declaring `interface` - use `type` (lint-enforced).
 - Defining schemas inline in handlers - they must live in `schemas/`.

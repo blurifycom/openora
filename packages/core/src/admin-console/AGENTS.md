@@ -10,19 +10,19 @@ It does not own any DB tables - it reads from tables owned by `identity` (user) 
 
 - Routes: `src/router/index.ts` - add new admin endpoints here
 - Service: `src/service/backoffice.service.ts` - add new query/mutation methods
-- Ports: add adapter interfaces for external analytics/reporting systems to `@oss/adapters`
+- Ports: add adapter interfaces for external analytics/reporting systems to `@blurifycom/adapters`
 - Events: emit `backoffice.*` events via the injected `EventBus` for audit logging
 
 ## Ports
 
-None currently. If a reporting or analytics vendor is added, define an interface in `@oss/adapters` and implement under `adapters/<vendor>/`.
+None currently. If a reporting or analytics vendor is added, define an interface in `@blurifycom/adapters` and implement under `adapters/<vendor>/`.
 
 ## Do
 
-- Read another add-on's tables by importing them via the subpath (`import { user } from '@oss-addons/identity/schema'`, `import { wallet, walletTransaction } from '@oss-addons/wallet/schema'`) and querying with `DrizzleService` - no casts needed
+- Read another add-on's tables by importing them via the subpath (`import { user } from '@blurifycom-addons/identity/schema'`, `import { wallet, walletTransaction } from '@blurifycom-addons/wallet/schema'`) and querying with `DrizzleService` - no casts needed
 - Throw domain errors (`UserNotFoundError`) from the service, map to `ORPCError` in the router
 - Return all dates as ISO strings
-- Import contracts from `@oss/orpc-contract/backoffice` (subpath export)
+- Import contracts from `@blurifycom/orpc-contract/backoffice` (subpath export)
 
 ## Don't
 
@@ -42,4 +42,4 @@ None currently. If a reporting or analytics vendor is added, define an interface
 - `pnpm verify` passes (typecheck + lint + boundaries + module-shape + tests).
 - `list-routes module=admin-console` shows the new/changed route(s) (e.g. `backoffice.listUsers`).
 - Every admin route guards first: `await this.adminGuard.assert(context)` as the handler's first line.
-- No `boundaries/dependencies` lint errors (no cross-add-on code imports; read other add-ons' tables only via the `@oss-addons/<name>/schema` subpath).
+- No `boundaries/dependencies` lint errors (no cross-add-on code imports; read other add-ons' tables only via the `@blurifycom-addons/<name>/schema` subpath).

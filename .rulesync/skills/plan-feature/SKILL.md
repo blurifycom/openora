@@ -14,7 +14,7 @@ description: >
 # plan-feature (igaming-oss)
 
 Platform-core twin of the consumer `plan-feature` skill. Use it in the `igaming-oss` repo when a
-consumer feature needs `@oss/*` core changes (handed off via a work-order), or for a standalone
+consumer feature needs `@blurifycom/*` core changes (handed off via a work-order), or for a standalone
 core feature. It owns the **whole development + delivery cycle** end to end.
 
 ## The full cycle (what this skill guarantees)
@@ -51,7 +51,7 @@ acceptance), then gather context in parallel:
 
 | Source              | How                                                                                                                       |
 | ------------------- | ------------------------------------------------------------------------------------------------------------------------- |
-| Work-order / ticket | the spec from consumer, or `getJiraIssue`                                                                                  |
+| Work-order / ticket | the spec from consumer, or `getJiraIssue`                                                                                 |
 | OSS docs            | `docs/` ADRs, `architecture.md`, `glossary.md`, `system-design.md`, machine-readable `docs/catalog.json` + `openapi.json` |
 | Architecture rules  | `.claude/rules/clean-architecture.md`, `messaging-and-microservices.md`, `CLAUDE.md`                                      |
 | Codebase            | `oss-dev` MCP + Explore - find the exact modules/contracts/seams to touch                                                 |

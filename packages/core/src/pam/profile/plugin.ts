@@ -1,5 +1,5 @@
-import { definePlugin } from '@oss/core/server';
-import { DRIZZLE } from '@oss/core/server';
+import { definePlugin } from '@blurifycom/core/server';
+import { DRIZZLE } from '@blurifycom/core/server';
 import { ProfileService } from './service/profile.service.js';
 import { createProfileRouter } from './router/index.js';
 

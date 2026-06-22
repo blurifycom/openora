@@ -1,7 +1,11 @@
-import { definePlugin } from '@oss/core/server';
-import { ADMIN_WALLET_REPORTING, PAYMENT_ADAPTER, WALLET_COMMANDS } from '@oss/core/contracts';
-import { EVENT_BUS } from '@oss/core/server';
-import { DRIZZLE } from '@oss/core/server';
+import { definePlugin } from '@blurifycom/core/server';
+import {
+  ADMIN_WALLET_REPORTING,
+  PAYMENT_ADAPTER,
+  WALLET_COMMANDS,
+} from '@blurifycom/core/contracts';
+import { EVENT_BUS } from '@blurifycom/core/server';
+import { DRIZZLE } from '@blurifycom/core/server';
 import { WalletService } from './service/wallet.service.js';
 import { WalletCommandsService } from './service/wallet-commands.service.js';
 import { DrizzleAdminWalletReporting } from './admin-reporting.js';

@@ -1,6 +1,6 @@
-import { createApp } from '@oss/api-runtime';
-import { contract } from '@oss/orpc-contract';
-import { defineIgamingConfig } from '@oss/shared-schemas';
+import { createApp } from '@blurifycom/api-runtime';
+import { contract } from '@blurifycom/orpc-contract';
+import { defineIgamingConfig } from '@blurifycom/shared-schemas';
 import { extensions } from './extensions.config.js';
 
 // Declarative platform config, validated at the boundary by defineIgamingConfig.

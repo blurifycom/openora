@@ -10,7 +10,7 @@ import type {
   BrokerHandler,
   MessageBrokerAdapter,
   SubscribeOptions,
-} from '@oss/core/contracts';
+} from '@blurifycom/core/contracts';
 import type { Channel, ChannelModel, ConsumeMessage } from 'amqplib';
 
 type OverlayLogger = {

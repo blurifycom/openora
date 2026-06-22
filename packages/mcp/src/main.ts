@@ -67,7 +67,7 @@ function catalogCandidates(): string[] {
   const cwd = process.cwd();
 
   candidates.push(join(cwd, 'docs', 'catalog.json'));
-  candidates.push(join(cwd, 'node_modules', '@oss', 'mcp', 'docs', 'catalog.json'));
+  candidates.push(join(cwd, 'node_modules', '@blurifycom', 'mcp', 'docs', 'catalog.json'));
 
   let dir = cwd;
   for (;;) {
@@ -388,7 +388,7 @@ function buildConsumerPlaybook(
     case 'ui-page':
       return [
         '## Where it goes',
-        'The platform is headless - pages live in your own frontend repo and consume the api via `@oss/core/react`. Fill named UI slots from a client-side UI plugin.',
+        'The platform is headless - pages live in your own frontend repo and consume the api via `@blurifycom/core/react`. Fill named UI slots from a client-side UI plugin.',
         '',
         '## Named UI slots you can fill (via defineUIPlugin)',
         ctx.slots.length

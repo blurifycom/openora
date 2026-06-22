@@ -1,4 +1,4 @@
-import type { GameAdapter } from '@oss/core/contracts';
+import type { GameAdapter } from '@blurifycom/core/contracts';
 
 export class MockGameAdapter implements GameAdapter {
   async launchGame(

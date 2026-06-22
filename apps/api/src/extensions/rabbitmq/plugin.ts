@@ -2,9 +2,9 @@
 // the in-process default in place. Registered LATE so its MESSAGE_BROKER binding
 // wins (last registration wins). See ADR-0016.
 
-import { definePlugin } from '@oss/core/server';
-import { createLogger } from '@oss/core/server';
-import { MESSAGE_BROKER } from '@oss/core/contracts';
+import { definePlugin } from '@blurifycom/core/server';
+import { createLogger } from '@blurifycom/core/server';
+import { MESSAGE_BROKER } from '@blurifycom/core/contracts';
 import { RabbitMqBroker } from './rabbitmq-broker.js';
 
 const log = createLogger('rabbitmq-overlay');

@@ -1,7 +1,7 @@
 import { z } from 'zod';
 import { UuidSchema, TimestampSchema } from './common.js';
 
-// better-auth emits uuid ids via advanced.database.generateId (see @oss/core/server).
+// better-auth emits uuid ids via advanced.database.generateId (see @blurifycom/core/server).
 // image may be null in storage; the schema accepts string | null | absent.
 export const UserSchema = z.object({
   id: UuidSchema,

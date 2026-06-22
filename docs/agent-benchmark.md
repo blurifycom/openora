@@ -20,11 +20,11 @@ feature, before vs after the hardening pass that fixed doc/code drift, added the
 
 1. **Sub-agents had no access to the `oss-dev` MCP server.** So this measures the
    docs / `catalog.json` / structure / example improvements only - NOT the MCP tool hardening
-   (response_format, guiding errors, the new `@oss/mcp`). Real sessions with the MCP server
+   (response_format, guiding errors, the new `@blurifycom/mcp`). Real sessions with the MCP server
    would save more.
 2. **The baseline tag under-represents the immediate pre-session tree.** It was created with
    `git stash create`, which excludes untracked files; at snapshot time large parts of the
-   codebase (`@oss/adapters`, the `wallet` module, the Drizzle layer) were untracked, so the
+   codebase (`@blurifycom/adapters`, the `wallet` module, the Drizzle layer) were untracked, so the
    baseline reflects an older committed state. The absolute deltas therefore conflate
    "completing the Drizzle migration" with "this session's doc/catalog polish." The
    directional result and the qualitative behavior below are robust regardless.
@@ -43,13 +43,13 @@ Tokens are secondary to _correctness_. On the unpolished repo the agents repeate
 doc/code-drift trap this effort set out to eliminate:
 
 - **BEFORE / module task** concluded, verbatim: _"the prose docs describe Drizzle + a single
-  `@oss/modules` package, but the actual buildable code uses Prisma + per-module packages...
+  `@blurifycom/modules` package, but the actual buildable code uses Prisma + per-module packages...
   I followed the real code."_ It then produced a **Prisma-based** module with per-package
-  `package.json` - the wrong target end-state - and even flagged that `@oss/db` exports a
+  `package.json` - the wrong target end-state - and even flagged that `@blurifycom/db` exports a
   "stale DrizzleService." The drift didn't just cost tokens; it steered the agent to the
   wrong answer.
 - **BEFORE / adapter task** concluded the payment seam was a no-op with "docs out of sync,"
-  spending 29 tool calls confirming `@oss/adapters` and the `wallet` module were absent.
+  spending 29 tool calls confirming `@blurifycom/adapters` and the `wallet` module were absent.
 - **AFTER / both tasks** found `AGENTS.md` -> the decision tree, `catalog.json` (adapter seam
   table showing payment **wired**, module list, config schema), and the existing modules, and
   produced **correct, confident** implementations (Drizzle, single package, real token/seam)
@@ -61,5 +61,5 @@ The hardening reduced exploration tokens ~29% and tool calls ~44% on these tasks
 decisive win is that the agent stops fighting a lying source of truth: after the pass, the
 docs match the code and the generated catalog gives a single deterministic place to learn
 "what can I extend," so the agent reaches the right answer instead of a plausible-but-wrong
-one. Re-run with `pnpm regen` current and the `oss-dev` / `@oss/mcp` servers connected to
+one. Re-run with `pnpm regen` current and the `oss-dev` / `@blurifycom/mcp` servers connected to
 capture the MCP-tool savings this read-only harness could not measure.

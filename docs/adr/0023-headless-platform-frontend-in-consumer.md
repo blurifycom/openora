@@ -9,8 +9,8 @@
 
 A run of earlier ADRs (0003, 0005, 0006, 0011, 0012, 0013) designed an OSS-shipped
 frontend: a UI provider contract, headless backoffice pages, a client-side UI plugin
-registry, layered react SDK packages (`@oss/react-sdk` → `@oss/react-pages` /
-`@oss/react-blocks`), reference apps (`apps/web`, `apps/backoffice`), and a player-front
+registry, layered react SDK packages (`@blurifycom/react-sdk` → `@blurifycom/react-pages` /
+`@blurifycom/react-blocks`), reference apps (`apps/web`, `apps/backoffice`), and a player-front
 framework choice (Next.js RSC). Each was retired piecemeal via superseded-notes (mostly
 dated 2026-06-09/06-10), but the underlying **decision** — _why_ the OSS repo no longer
 owns any frontend — was never recorded as its own ADR. That left the strategic call
@@ -22,7 +22,7 @@ This ADR records that decision explicitly.
 ## Decision
 
 **The OSS platform is headless backend only.** It ships modules, contracts, adapter
-seams, and a single **headless** consumption SDK (`@oss/react`: data hooks, auth,
+seams, and a single **headless** consumption SDK (`@blurifycom/react`: data hooks, auth,
 transport, cross-cutting helpers — no presentational components, no pages, no admin
 shell, no slot/registry). The OSS repo contains **no** player web app, **no** backoffice
 app, and **no** UI framework choice.
@@ -30,12 +30,12 @@ app, and **no** UI framework choice.
 The **entire frontend is the consumer's**: player web, admin/backoffice UI,
 component library, design system, theme, styling, SSR/hydration strategy, and the
 framework decision (Next.js / TanStack / other) all live in the consumer repo and
-consume the OSS API over HTTP through the typed oRPC client in `@oss/react`.
+consume the OSS API over HTTP through the typed oRPC client in `@blurifycom/react`.
 
 Consequences for the removed surface:
 
-- `@oss/react-sdk`, `@oss/react-pages`, `@oss/react-blocks`, `@oss/ui-provider-*`, and
-  the reference `apps/web` / `apps/backoffice` are removed. `@oss/react` is the only
+- `@blurifycom/react-sdk`, `@blurifycom/react-pages`, `@blurifycom/react-blocks`, `@blurifycom/ui-provider-*`, and
+  the reference `apps/web` / `apps/backoffice` are removed. `@blurifycom/react` is the only
   supported frontend surface.
 - The client-side UI plugin registry (`defineUIPlugin`, slots, RBAC-scoped UI extension)
   is **not** part of OSS today. If a shared UI layer is ever re-extracted from the
@@ -58,4 +58,4 @@ Consequences for the removed surface:
 
 Cheap to extend, not to undo. Re-introducing an OSS-owned UI layer later is an additive
 re-extraction from the consumer (new packages + a fresh ADR), not a reversal — the
-headless API and `@oss/react` contract stay valid either way.
+headless API and `@blurifycom/react` contract stay valid either way.

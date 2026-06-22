@@ -3,9 +3,9 @@ import {
   makeNotFoundError,
   makeConflictError,
   createDomainError,
-} from '@oss/core/server';
-import { DrizzleService, findOneOrThrow, pageToOffset } from '@oss/core/server';
-import type { DrizzleDb } from '@oss/core/server';
+} from '@blurifycom/core/server';
+import { DrizzleService, findOneOrThrow, pageToOffset } from '@blurifycom/core/server';
+import type { DrizzleDb } from '@blurifycom/core/server';
 import { eq, and, gt, inArray, sql } from 'drizzle-orm';
 import {
   statement,
@@ -18,10 +18,10 @@ import {
   type ResourceName,
   type RoleName,
   type PermissionLevel,
-} from '@oss/core/server';
-import type { SendEmailPort } from '@oss/core/contracts';
-import type { AdminPermissionResolver, AdminGrant } from '@oss/core/contracts';
-import { DEFAULT_ADMIN_ROLES } from '@oss/core/server';
+} from '@blurifycom/core/server';
+import type { SendEmailPort } from '@blurifycom/core/contracts';
+import type { AdminPermissionResolver, AdminGrant } from '@blurifycom/core/contracts';
+import { DEFAULT_ADMIN_ROLES } from '@blurifycom/core/server';
 import {
   adminRole,
   adminRolePermission,

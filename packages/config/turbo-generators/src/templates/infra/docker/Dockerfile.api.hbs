@@ -17,7 +17,7 @@ COPY igaming-oss/ ./igaming-oss/
 COPY {{kebabCase name}}/ ./{{kebabCase name}}/
 
 WORKDIR /app/{{kebabCase name}}
-# Resolves @oss/* links into ../igaming-oss via pnpm-workspace overrides.
+# Resolves @blurifycom/* links into ../igaming-oss via pnpm-workspace overrides.
 RUN pnpm install --frozen-lockfile
 # Build the linked platform packages the api imports at runtime.
 RUN pnpm -C ../igaming-oss install --frozen-lockfile && pnpm build:oss

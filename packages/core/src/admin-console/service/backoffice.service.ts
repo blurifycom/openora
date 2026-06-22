@@ -3,8 +3,8 @@ import type {
   AdminUserDirectory,
   AdminUserRow,
   AdminWalletReporting,
-} from '@oss/core/contracts';
-import { makeNotFoundError } from '@oss/core/server';
+} from '@blurifycom/core/contracts';
+import { makeNotFoundError } from '@blurifycom/core/server';
 import type { AdminTransaction, AdminUser, PlatformStats } from '../schemas/index.js';
 
 export const UserNotFoundError = makeNotFoundError('User');

@@ -1,7 +1,7 @@
-import { type EventBus, makeNotFoundError } from '@oss/core/server';
-import { DrizzleService, findOneOrThrow } from '@oss/core/server';
+import { type EventBus, makeNotFoundError } from '@blurifycom/core/server';
+import { DrizzleService, findOneOrThrow } from '@blurifycom/core/server';
 import { eq, and, asc, desc } from 'drizzle-orm';
-import { type GameAdapter } from '@oss/core/contracts';
+import { type GameAdapter } from '@blurifycom/core/contracts';
 import { game, gameRound } from '../schema/index.js';
 import type { Game, GameRound } from '../schemas/index.js';
 

@@ -1,6 +1,6 @@
-import { ADMIN_USER_DIRECTORY, ADMIN_WALLET_REPORTING } from '@oss/core/contracts';
-import { definePlugin } from '@oss/core/server';
-import { ADMIN_GUARD } from '@oss/core/server';
+import { ADMIN_USER_DIRECTORY, ADMIN_WALLET_REPORTING } from '@blurifycom/core/contracts';
+import { definePlugin } from '@blurifycom/core/server';
+import { ADMIN_GUARD } from '@blurifycom/core/server';
 import { BackofficeService } from './service/backoffice.service.js';
 import { createBackofficeRouter } from './router/index.js';
 
