@@ -32,7 +32,7 @@ jobs:
 
       - uses: actions/setup-node@v4
         with:
-          node-version: 22
+          node-version: 26
           registry-url: https://npm.pkg.github.com
           scope: '@blurifycom'
 
@@ -43,7 +43,9 @@ jobs:
           corepack prepare pnpm@11.8.0 --activate
 
       - run: pnpm install --frozen-lockfile
-      - run: pnpm build
+      # Build only the publishable packages - the apps (api, docs) are private and
+      # never published, and the docs site is a separate deploy.
+      - run: pnpm exec turbo run build --filter='!./apps/*'
 
       # Stable: a v*.*.* tag publishes the current versions under `latest`.
       # changeset publish skips any package+version already in the registry, so
