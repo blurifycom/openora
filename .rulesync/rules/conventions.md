@@ -247,6 +247,18 @@ Each rule carries a short example. `// bad` shows the smell, `// good` the conve
 
 - **Short, single-purpose functions.** If you comment "// step 2" inside a function, extract it.
 
+- **Named exports only - no default exports.**
+
+  ```ts
+  // bad
+  export default function fetchInvoice() { ... }
+  export default router;
+
+  // good
+  export function fetchInvoice() { ... }
+  export const router = createRouter();
+  ```
+
 ---
 
 ## 5. Comments and documentation
