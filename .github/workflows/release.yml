@@ -57,13 +57,14 @@ jobs:
           NODE_AUTH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
       # Prerelease: dev -> alpha, stage -> beta. Each push snapshot-publishes an
-      # immutable 0.x.y-<channel>-<datetime> under the matching dist-tag. The
+      # immutable 0.x.y-<channel>-<shortsha> under the matching dist-tag. The
       # version bump is ephemeral (not committed); --no-git-tag avoids tagging.
       - name: Publish snapshot (alpha/beta)
         if: github.ref == 'refs/heads/dev' || github.ref == 'refs/heads/stage'
         run: |
           if [ "${{ github.ref_name }}" = "dev" ]; then CHANNEL=alpha; else CHANNEL=beta; fi
-          pnpm changeset version --snapshot "$CHANNEL"
+          SHORT=$(git rev-parse --short HEAD)
+          pnpm changeset version --snapshot "$CHANNEL" --snapshot-prerelease-template "{tag}-$SHORT"
           pnpm changeset publish --no-git-tag --tag "$CHANNEL"
         env:
           NODE_AUTH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
