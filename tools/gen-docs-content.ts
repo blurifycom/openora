@@ -28,7 +28,6 @@ import {
   readdirSync,
   readFileSync,
   rmSync,
-  statSync,
   writeFileSync,
 } from 'node:fs';
 import { dirname, join, posix, relative } from 'node:path';
@@ -45,10 +44,10 @@ const forbiddenBrands = ['consumer', 'examplebrand'];
 type Doc = { rel: string; title: string; description?: string; body: string };
 
 function listMarkdown(dir: string, base = dir): string[] {
-  return readdirSync(dir).flatMap((name) => {
-    const full = join(dir, name);
-    if (statSync(full).isDirectory()) return listMarkdown(full, base);
-    return name.endsWith('.md') ? [relative(base, full)] : [];
+  return readdirSync(dir, { withFileTypes: true }).flatMap((entry) => {
+    const full = join(dir, entry.name);
+    if (entry.isDirectory()) return listMarkdown(full, base);
+    return entry.name.endsWith('.md') ? [relative(base, full)] : [];
   });
 }
 
@@ -57,12 +56,16 @@ function yamlString(value: string): string {
 }
 
 function deriveDescription(lines: string[]): string | undefined {
-  const skip = (l: string) =>
-    l.trim() === '' ||
-    /^[#>|]/.test(l.trim()) ||
-    /^[-*+]\s/.test(l.trim()) ||
-    l.trim().startsWith('```') ||
-    l.trim().startsWith('![');
+  const skip = (l: string) => {
+    const t = l.trim();
+    return (
+      t === '' ||
+      /^[#>|]/.test(t) ||
+      /^[-*+]\s/.test(t) ||
+      t.startsWith('```') ||
+      t.startsWith('![')
+    );
+  };
   const first = lines.find((l) => !skip(l));
   if (!first) return undefined;
   const text = first
@@ -89,7 +92,8 @@ function toDoc(rel: string): Doc {
   const raw = readFileSync(join(docsDir, rel), 'utf8');
   const lines = raw.split('\n');
   const h1Index = lines.findIndex((l) => /^#\s+/.test(l));
-  const title = h1Index >= 0 ? lines[h1Index]!.replace(/^#\s+/, '').trim() : rel;
+  const h1Line = h1Index >= 0 ? lines[h1Index] : undefined;
+  const title = h1Line ? h1Line.replace(/^#\s+/, '').trim() : rel;
   const rest = h1Index >= 0 ? lines.slice(h1Index + 1) : lines;
   const description = deriveDescription(rest);
   const body = rewriteEscapingLinks(rel, rest.join('\n').replace(/^\n+/, ''));
