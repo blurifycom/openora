@@ -1,0 +1,71 @@
+# Package publishing (Changesets -> GitHub Packages).
+#
+# Channels:
+#   push to dev   -> snapshot publish under dist-tag `alpha`  (0.x.y-alpha-<ts>)
+#   push to stage -> snapshot publish under dist-tag `beta`   (0.x.y-beta-<ts>)
+#   tag    v*.*.* -> stable publish under dist-tag `latest`   (cut tags from prod/main)
+#
+# PREREQUISITE - NOT YET MET: GitHub Packages requires the npm scope to match the
+# owning org, so this only publishes once the workspace is renamed `@oss/*` ->
+# `@blurifycom/*` (scope + registry-url below already target that). Until then the
+# publish step errors with a 4xx scope mismatch. The rename is a separate change.
+#
+# Required repo setup once the rename lands:
+#   - each published package.json: "publishConfig": { "registry": "https://npm.pkg.github.com" }
+#   - consumers install with a .npmrc: @blurifycom:registry=https://npm.pkg.github.com
+#   - GITHUB_TOKEN (auto-provided) needs packages:write (set below)
+name: Release
+
+on:
+  push:
+    branches: [dev, stage]
+    tags: ['v*.*.*']
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          registry-url: https://npm.pkg.github.com
+          scope: '@blurifycom'
+
+      - name: Enable corepack (pnpm)
+        run: |
+          npm install -g corepack@latest
+          corepack enable
+          corepack prepare pnpm@11.8.0 --activate
+
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm build
+
+      # Stable: a v*.*.* tag publishes the current versions under `latest`.
+      # changeset publish skips any package+version already in the registry, so
+      # re-running a tag is safe.
+      - name: Publish stable (latest)
+        if: startsWith(github.ref, 'refs/tags/v')
+        run: pnpm changeset publish
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      # Prerelease: dev -> alpha, stage -> beta. Each push snapshot-publishes an
+      # immutable 0.x.y-<channel>-<datetime> under the matching dist-tag. The
+      # version bump is ephemeral (not committed); --no-git-tag avoids tagging.
+      - name: Publish snapshot (alpha/beta)
+        if: github.ref == 'refs/heads/dev' || github.ref == 'refs/heads/stage'
+        run: |
+          if [ "${{ github.ref_name }}" = "dev" ]; then CHANNEL=alpha; else CHANNEL=beta; fi
+          pnpm changeset version --snapshot "$CHANNEL"
+          pnpm changeset publish --no-git-tag --tag "$CHANNEL"
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
