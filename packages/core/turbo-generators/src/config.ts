@@ -26,8 +26,8 @@ import type { PlopTypes } from '@turbo/gen';
 // is CJS, so `require.resolve` is the real Node resolver) and read templates by
 // absolute path.
 declare const require: NodeJS.Require;
-const pkgDir = dirname(require.resolve('@blurifycom/turbo-generators/package.json'));
-const tpl = (name: string): string => join(pkgDir, 'src', 'templates', name);
+const pkgDir = dirname(require.resolve('@blurifycom/core/package.json'));
+const tpl = (name: string): string => join(pkgDir, 'turbo-generators', 'src', 'templates', name);
 
 const kebabRe = /^[a-z][a-z0-9-]*$/;
 const MODULE_GROUPS = ['player', 'backoffice', 'platform'] as const;

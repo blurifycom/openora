@@ -21,9 +21,6 @@ importers:
       '@blurifycom/testing':
         specifier: workspace:*
         version: link:packages/testing
-      '@blurifycom/turbo-generators':
-        specifier: workspace:*
-        version: link:packages/config/turbo-generators
       '@changesets/cli':
         specifier: 2.31.0
         version: 2.31.0(@types/node@25.9.2)
@@ -153,24 +150,6 @@ importers:
         specifier: 6.0.3
         version: 6.0.3
 
-  packages/config/oxlint:
-    devDependencies:
-      oxlint:
-        specifier: 1.69.0
-        version: 1.69.0
-
-  packages/config/turbo-generators:
-    devDependencies:
-      '@blurifycom/core':
-        specifier: workspace:*
-        version: link:../../core
-      '@turbo/gen':
-        specifier: 2.9.16
-        version: 2.9.16(@types/node@25.9.2)
-      typescript:
-        specifier: 6.0.3
-        version: 6.0.3
-
   packages/config/vitest:
     dependencies:
       '@vitest/coverage-v8':
@@ -240,6 +219,9 @@ importers:
       '@blurifycom/vitest-config':
         specifier: workspace:*
         version: link:../config/vitest
+      '@turbo/gen':
+        specifier: 2.9.16
+        version: 2.9.16(@types/node@25.9.2)
       '@types/node':
         specifier: 25.9.2
         version: 25.9.2
@@ -255,6 +237,9 @@ importers:
       drizzle-kit:
         specifier: 0.31.10
         version: 0.31.10
+      oxlint:
+        specifier: 1.69.0
+        version: 1.69.0
       typescript:
         specifier: 6.0.3
         version: 6.0.3

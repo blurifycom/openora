@@ -6,12 +6,17 @@
     "dist",
     "drizzle",
     "tsconfig",
+    "oxlint",
+    "turbo-generators",
     "LICENSE",
     "LICENSE-COMMERCIAL.md"
   ],
   "type": "module",
   "exports": {
+    "./package.json": "./package.json",
     "./tsconfig/*": "./tsconfig/*",
+    "./oxlint/*": "./oxlint/*",
+    "./turbo-generators": "./turbo-generators/src/config.ts",
     "./contracts": {
       "import": "./dist/contracts/index.js",
       "require": "./dist/contracts/index.js",
@@ -486,11 +491,13 @@
   },
   "devDependencies": {
     "@blurifycom/vitest-config": "workspace:*",
+    "@turbo/gen": "2.9.16",
     "@types/node": "25.9.2",
     "@types/pg": "8.20.0",
     "@types/react": "19.2.17",
     "@types/react-dom": "19.2.3",
     "drizzle-kit": "0.31.10",
+    "oxlint": "1.69.0",
     "typescript": "6.0.3",
     "vitest": "4.1.8"
   },
