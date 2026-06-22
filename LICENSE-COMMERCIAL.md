@@ -1,6 +1,6 @@
 # Commercial License
 
-Copyright (c) 2026 [Licensor]. All rights reserved.
+Copyright (c) 2026 Blurify. All rights reserved.
 
 This software is dual-licensed.
 
@@ -30,7 +30,7 @@ with many commercial deployments - for example, running a closed-source
 operator platform on top of this code without publishing your modifications and
 proprietary extensions.
 
-For those cases, [Licensor] offers a **separate commercial license** that releases
+For those cases, Blurify offers a **separate commercial license** that releases
 you from the AGPL-3.0 copyleft and Section 13 obligations under negotiated
 terms. A commercial license is required if you want to:
 
@@ -41,15 +41,15 @@ terms. A commercial license is required if you want to:
 - Obtain a warranty, indemnification, or commercial support beyond the
   "as is" terms of the AGPL-3.0.
 
-The commercial license is a private agreement between you and [Licensor]; its
+The commercial license is a private agreement between you and Blurify; its
 terms (scope, fees, support, indemnification) are set in that agreement and are
 not covered by this file.
 
 ## How to obtain a commercial license
 
-Contact: **licensing@example.com**
+Contact: **licensing@blurify.com**
 
-Include your company name, intended use, and deployment model. [Licensor] will
+Include your company name, intended use, and deployment model. Blurify will
 respond with the applicable commercial terms.
 
 ## Which license applies to you?
@@ -63,4 +63,4 @@ respond with the applicable commercial terms.
 | Embedding in a closed-source product or redistributing under other terms     | Commercial    |
 | Need a warranty, indemnity, or commercial SLA                                | Commercial    |
 
-When in doubt, contact licensing@example.com.
+When in doubt, contact licensing@blurify.com.

@@ -83,14 +83,14 @@ generator and fails on an uncommitted diff. So if you touched schemas or routes,
 ## License and contributions
 
 This project is dual-licensed: **AGPL-3.0-only** ([LICENSE](./LICENSE)) or a
-commercial license from [Licensor] ([LICENSE-COMMERCIAL.md](./LICENSE-COMMERCIAL.md)).
+commercial license from Blurify ([LICENSE-COMMERCIAL.md](./LICENSE-COMMERCIAL.md)).
 
 For the dual-license model to work, contributions must be available under both.
 By submitting a contribution (a commit, patch, or MR), you:
 
 - License your contribution to the project and its users under the AGPL-3.0-only
   (inbound = outbound), and
-- Grant [Licensor] a perpetual, worldwide, non-exclusive, royalty-free right to use,
+- Grant Blurify a perpetual, worldwide, non-exclusive, royalty-free right to use,
   relicense, and sublicense your contribution - including under the commercial
   license above - so it can be offered to commercial licensees.
 

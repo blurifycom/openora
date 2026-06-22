@@ -1,5 +1,11 @@
 # OSS iGaming Platform
 
+[![CI](https://github.com/blurifycom/oss/actions/workflows/ci.yml/badge.svg?branch=dev)](https://github.com/blurifycom/oss/actions/workflows/ci.yml)
+[![License: AGPL v3](https://img.shields.io/badge/license-AGPL--3.0-blue.svg)](./LICENSE)
+[![Node](https://img.shields.io/badge/node-26%2B-339933?logo=node.js&logoColor=white)](#requirements)
+[![pnpm](https://img.shields.io/badge/pnpm-11%2B-F69220?logo=pnpm&logoColor=white)](#requirements)
+[![PRs welcome](https://img.shields.io/badge/PRs-welcome-brightgreen.svg)](./CONTRIBUTING.md)
+
 Open-source, headless, plugin-based, AI-native igaming platform. Clone it, extend it, deploy it - without forking core.
 
 ## Requirements
@@ -90,6 +96,8 @@ The platform is headless and ships no UI - backend modules + contracts + the SDK
 
 ## Docs
 
+<!-- TODO: add a link to the hosted docs site (Fumadocs, apps/docs) once it is deployed; also set it as the repo homepage. -->
+
 - Architecture: [docs/architecture.md](./docs/architecture.md)
 - Glossary (operator vs player, KYC, RTP, provably fair, rollover...): [docs/glossary.md](./docs/glossary.md)
 - Pillars & decision tree: [AGENTS.md](./AGENTS.md)
@@ -100,6 +108,6 @@ The platform is headless and ships no UI - backend modules + contracts + the SDK
 Dual-licensed: **AGPL-3.0-only** OR a **commercial license**.
 
 - Open source: [GNU AGPL v3](./LICENSE). If you self-host, modify, or redistribute, you must make your complete corresponding source available under the same terms. **Section 13** extends this to network/SaaS use - running a modified version as a hosted service obliges you to offer its source to users.
-- Commercial: for closed-source/SaaS deployments that cannot meet the AGPL's copyleft and network-use obligations, [Licensor] offers a separate commercial license. See [LICENSE-COMMERCIAL.md](./LICENSE-COMMERCIAL.md) - contact `licensing@example.com`.
+- Commercial: for closed-source/SaaS deployments that cannot meet the AGPL's copyleft and network-use obligations, Blurify offers a separate commercial license. See [LICENSE-COMMERCIAL.md](./LICENSE-COMMERCIAL.md) - contact `licensing@blurify.com`.
 
-Copyright (c) 2026 [Licensor] and contributors.
+Copyright (c) 2026 Blurify and contributors.
