@@ -202,7 +202,6 @@ function main(): void {
       'downstream-consumer',
       'mcp-setup',
       'agent-quickstart',
-      'agent-benchmark',
       '---Reference---',
       'architecture',
       'system-design',

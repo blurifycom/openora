@@ -5,14 +5,44 @@
 [![Node](https://img.shields.io/badge/node-26%2B-339933?logo=node.js&logoColor=white)](#requirements)
 [![pnpm](https://img.shields.io/badge/pnpm-11%2B-F69220?logo=pnpm&logoColor=white)](#requirements)
 [![PRs welcome](https://img.shields.io/badge/PRs-welcome-brightgreen.svg)](./CONTRIBUTING.md)
+[![Code of Conduct](https://img.shields.io/badge/code%20of%20conduct-v2.1-ff69b4.svg)](./CODE_OF_CONDUCT.md)
 
-Open-source, headless, plugin-based, AI-native igaming platform. Clone it, extend it, deploy it - without forking core.
+> Open-source, headless, plugin-based, AI-native iGaming platform. Clone it, extend it, deploy it - without forking core.
+
+The platform ships the full backend surface (auth, wallet, lobby, chat, bonus, compliance, backoffice, CMS, aggregator) as composable modules and a typed SDK. Your frontend, branding, and vendor adapters live in your own consumer repo and talk to it over HTTP. Nothing operator-specific lives here.
+
+> [!WARNING]
+> **Status: alpha (pre-1.0).** Contracts, package layout, and APIs may change between releases. Not yet recommended for production without your own review. See the [roadmap](#roadmap).
+
+## Highlights
+
+- **Headless by design** - backend modules, contracts, and an SDK consumption surface only. No UI ships here; you own the frontend.
+- **Plugin host** - `definePlugin({ id, dependsOn, register })` is the single way new functionality enters the system. Overlay a folder or install an npm package; same contract.
+- **Zod-first contracts** - every shape is a Zod schema; types are inferred, never hand-written. Routes are oRPC on Hono with OpenAPI emitted at build time.
+- **Explicit wiring** - a small functional DI container with typed tokens. No decorators, no auto-discovery; everything is greppable.
+- **Swappable vendor seams** - PSP, KYC, aggregator, chat, realtime transport, job queue, and message broker are ports with default in-process drivers and adapter overrides.
+- **Regulatory audit log** - append-only, sha256 hash-chained. Every state-changing action leaves a trail.
+- **AI-native** - an `AGENTS.md` in every module, scaffolders as slash commands, a queryable MCP dev server, and a generated machine-readable `catalog.json`.
+
+## Table of contents
+
+- [Requirements](#requirements)
+- [Quick start](#quick-start)
+- [How it fits together](#how-it-fits-together)
+- [Extending the platform](#extending-the-platform)
+- [Build your own iGaming on top](#build-your-own-igaming-on-top)
+- [Frontend](#frontend)
+- [Roadmap](#roadmap)
+- [Documentation](#documentation)
+- [Contributing](#contributing)
+- [Security](#security)
+- [License](#license)
 
 ## Requirements
 
 Node 26+, pnpm 11+, Docker.
 
-## Installation & Run
+## Quick start
 
 Two ways to get the API up at `http://localhost:3001`. Demo credentials after seeding: `admin@oss.dev` / `password123`.
 
@@ -39,8 +69,8 @@ Then use `list-modules`, `list-routes`, `query-openapi`, `get-drizzle-schema`, `
 ```bash
 pnpm install                                  # install workspace deps
 docker compose up -d                          # start Postgres (library-first: only the db)
-pnpm -F @blurifycom/core/server generate             # generate Drizzle migrations
-pnpm -F @blurifycom/core/server migrate              # apply them
+pnpm -F @blurifycom/core/server generate      # generate Drizzle migrations
+pnpm -F @blurifycom/core/server migrate       # apply them
 pnpm seed                                     # demo data
 pnpm dev                                      # api :3001
 ```
@@ -49,7 +79,23 @@ pnpm dev                                      # api :3001
 
 To run the whole reference stack in containers instead of on the host, use the opt-in profile: `docker compose --profile full up --build` (api :3001, web :3000, backoffice :3002).
 
-## Adding a module
+## How it fits together
+
+The platform is a pnpm + Turbo monorepo. `@blurifycom/core` is the single published package, exposing subpaths (`/contracts`, `/server`, `/react`, and one per domain). Domains are wired into a domain-agnostic runtime through the composition root; add-ons and overlays extend it without touching core.
+
+```text
+apps/api            # Hono + oRPC HTTP API (the runtime)
+apps/mcp-server-dev # MCP dev server (stdio) for agents
+packages/core       # @blurifycom/core - contracts, server engine, react SDK, domains
+packages/addons     # @blurifycom-addons/* - optional/gated modules
+extensions.config.ts# the single registry of enabled plugins
+```
+
+See [docs/architecture.md](./docs/architecture.md) and the pillars + decision tree in [AGENTS.md](./AGENTS.md).
+
+## Extending the platform
+
+### Add a module
 
 ```bash
 pnpm gen module <name>
@@ -57,7 +103,7 @@ pnpm gen module <name>
 
 Generates a standalone `@blurifycom-addons/<name>` package under `packages/addons/<name>/` and registers it in `extensions.config.ts`. Run `pnpm regen && pnpm verify`. See [AGENTS.md](./AGENTS.md) for the full decision tree.
 
-## Adding an extension (overlay plugin)
+### Add an extension (overlay plugin)
 
 Drop a folder under `apps/api/src/extensions/<name>/` or point to an npm package. Both use the same `definePlugin` contract:
 
@@ -79,7 +125,7 @@ export default definePlugin({
 
 Then register it in `extensions.config.ts`.
 
-## Building your own igaming on top
+## Build your own iGaming on top
 
 Scaffold a consumer turborepo that links this checkout - it holds only what's unique to your operation (frontend, branding, vendor adapters, overlay plugins). Core is consumed as linked `@blurifycom/*` packages, never forked.
 
@@ -94,20 +140,37 @@ See [docs/downstream-consumer.md](./docs/downstream-consumer.md) for the full gu
 
 The platform is headless and ships no UI - backend modules + contracts + the SDK consumption surface only. The frontend (pages, components, styling, theme) lives in your consumer repo and talks to the api over HTTP via `@blurifycom/core/react` (data hooks, auth, navigation, typed client). Use whatever UI stack you like.
 
-## Docs
+## Roadmap
+
+Planned work and progress live on the public board: **[blurifycom/oss roadmap](https://github.com/orgs/blurifycom/projects/1)**. Have a request or found a gap? [Open an issue](https://github.com/blurifycom/oss/issues/new/choose) and we triage it onto the board.
+
+## Documentation
 
 <!-- TODO: add a link to the hosted docs site (Fumadocs, apps/docs) once it is deployed; also set it as the repo homepage. -->
 
 - Architecture: [docs/architecture.md](./docs/architecture.md)
+- System design: [docs/system-design.md](./docs/system-design.md)
+- Core concepts: [docs/core-concepts.md](./docs/core-concepts.md)
 - Glossary (operator vs player, KYC, RTP, provably fair, rollover...): [docs/glossary.md](./docs/glossary.md)
 - Pillars & decision tree: [AGENTS.md](./AGENTS.md)
 - ADRs: [docs/adr/](./docs/adr/)
+
+## Contributing
+
+Contributions are welcome. Read [CONTRIBUTING.md](./CONTRIBUTING.md) for the workflow, then run `pnpm verify` (typecheck + unit tests + lint + module-shape + boundary gate) before opening a PR. By participating you agree to the [Code of Conduct](./CODE_OF_CONDUCT.md).
+
+## Security
+
+Please do not file public issues for vulnerabilities. See [SECURITY.md](./SECURITY.md) for private reporting.
 
 ## License
 
 Dual-licensed: **AGPL-3.0-only** OR a **commercial license**.
 
-- Open source: [GNU AGPL v3](./LICENSE). If you self-host, modify, or redistribute, you must make your complete corresponding source available under the same terms. **Section 13** extends this to network/SaaS use - running a modified version as a hosted service obliges you to offer its source to users.
-- Commercial: for closed-source/SaaS deployments that cannot meet the AGPL's copyleft and network-use obligations, Blurify offers a separate commercial license. See [LICENSE-COMMERCIAL.md](./LICENSE-COMMERCIAL.md) - contact `licensing@blurify.com`.
+- **Open source:** [GNU AGPL v3](./LICENSE). If you self-host, modify, or redistribute, you must make your complete corresponding source available under the same terms. **Section 13** extends this to network/SaaS use - running a modified version as a hosted service obliges you to offer its source to users.
+- **Commercial:** for closed-source/SaaS deployments that cannot meet the AGPL's copyleft and network-use obligations, Blurify offers a separate commercial license. See [LICENSE-COMMERCIAL.md](./LICENSE-COMMERCIAL.md) - contact `licensing@blurify.com`.
+
+> [!NOTE]
+> This is software, not legal advice. Operating a real-money gambling service is heavily regulated - you are solely responsible for obtaining the required licenses and complying with the laws of every jurisdiction you serve. The software is provided "as is", without warranty of any kind.
 
 Copyright (c) 2026 Blurify and contributors.
