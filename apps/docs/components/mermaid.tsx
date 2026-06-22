@@ -70,7 +70,7 @@ export function Mermaid({ chart }: { chart: string }) {
       <TransformWrapper
         minScale={0.3}
         maxScale={5}
-        initialScale={1.8}
+        initialScale={2.8}
         centerOnInit
         limitToBounds={false}
         wheel={{ step: 0.12 }}
