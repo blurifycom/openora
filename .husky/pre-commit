@@ -1,4 +1,14 @@
+# Capture the staged set first: lint:fix/format rewrite files, and we must re-add
+# ONLY these so the fixes land in this commit without dragging in unrelated
+# unstaged changes.
+staged=$(git diff --cached --name-only --diff-filter=ACMR)
+
 pnpm lint:fix
-pnpm boundaries
 pnpm format
+
+if [ -n "$staged" ]; then
+  printf '%s\n' "$staged" | tr '\n' '\0' | xargs -0 git add --
+fi
+
+pnpm boundaries
 pnpm typecheck
