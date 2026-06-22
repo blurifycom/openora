@@ -1,14 +1,14 @@
 {
   "name": "oss-igaming-platform",
   "version": "0.0.1",
-  "license": "AGPL-3.0-only",
   "private": true,
   "description": "Open-source, headless, plugin-based, AI-native igaming platform",
-  "homepage": "https://github.com/oss-igaming/igaming-oss",
+  "homepage": "https://github.com/blurifycom/oss",
+  "license": "AGPL-3.0-only",
   "author": "OSS iGaming contributors",
   "repository": {
     "type": "git",
-    "url": "https://github.com/oss-igaming/igaming-oss.git"
+    "url": "https://github.com/blurifycom/oss.git"
   },
   "scripts": {
     "build": "turbo run build",
@@ -35,6 +35,8 @@
     "create:service": "tsx tools/create-service.ts",
     "regen": "turbo run codegen && pnpm -F @oss/core generate && pnpm run gen:catalog",
     "gen:catalog": "tsx tools/gen-catalog.ts",
+    "docs": "pnpm --filter @oss/docs dev",
+    "docs:build": "pnpm --filter @oss/api codegen && pnpm --filter @oss/docs build",
     "seed": "tsx tools/seed.ts",
     "verify": "turbo run typecheck test:unit && pnpm run lint && pnpm run verify:shape && pnpm run boundaries",
     "verify:drift": "turbo run codegen && tsx tools/gen-catalog.ts && git diff --exit-code -- docs/catalog.json",

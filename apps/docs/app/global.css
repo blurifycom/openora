@@ -1,0 +1,107 @@
+@import 'tailwindcss';
+@import 'fumadocs-ui/css/neutral.css';
+@import 'fumadocs-ui/css/preset.css';
+@import 'fumadocs-openapi/css/preset.css';
+
+@theme inline {
+  --font-sans: var(--font-sans-doc), ui-sans-serif, system-ui, sans-serif;
+  --font-mono: var(--font-mono-doc), ui-monospace, SFMono-Regular, monospace;
+}
+
+/* Amber-gold accent over a warm neutral - premium igaming, restrained. */
+:root {
+  --color-fd-primary: oklch(0.58 0.12 72);
+  --color-fd-primary-foreground: oklch(0.99 0.01 85);
+  --color-fd-ring: oklch(0.58 0.12 72);
+}
+
+.dark {
+  --color-fd-primary: oklch(0.84 0.14 84);
+  --color-fd-primary-foreground: oklch(0.22 0.04 84);
+  --color-fd-ring: oklch(0.84 0.14 84);
+}
+
+html {
+  scrollbar-gutter: stable;
+}
+
+html > body[data-scroll-locked] {
+  margin-right: 0px !important;
+  --removed-body-scroll-bar-size: 0px !important;
+}
+
+body {
+  font-family: var(--font-sans-doc), ui-sans-serif, system-ui, sans-serif;
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+}
+
+/* Distinctive display face for every heading + the nav title. */
+h1,
+h2,
+h3,
+h4,
+h5,
+h6,
+.font-display {
+  font-family: var(--font-display), var(--font-sans-doc), system-ui, sans-serif;
+  letter-spacing: -0.02em;
+}
+
+#nd-page article h1 {
+  letter-spacing: -0.03em;
+}
+
+code,
+pre,
+kbd,
+samp {
+  font-family: var(--font-mono-doc), ui-monospace, SFMono-Regular, monospace;
+  font-feature-settings: 'liga' 0;
+}
+
+::selection {
+  background: color-mix(in oklch, var(--color-fd-primary) 32%, transparent);
+}
+
+/* Atmosphere: faint accent glow top-right + base wash, fixed behind content. */
+body::before {
+  content: '';
+  position: fixed;
+  inset: 0;
+  z-index: -1;
+  pointer-events: none;
+  background:
+    radial-gradient(
+      60rem 40rem at 88% -8%,
+      color-mix(in oklch, var(--color-fd-primary) 9%, transparent),
+      transparent 60%
+    ),
+    radial-gradient(
+      50rem 50rem at 0% 100%,
+      color-mix(in oklch, var(--color-fd-primary) 5%, transparent),
+      transparent 55%
+    );
+}
+
+/* Framed, responsive diagrams - the fix for overflowing Mermaid SVGs. */
+.mermaid-figure {
+  margin: 1.75rem 0;
+  padding: 1.25rem;
+  border: 1px solid var(--color-fd-border);
+  border-radius: 0.85rem;
+  background: linear-gradient(
+    to bottom,
+    color-mix(in oklch, var(--color-fd-card) 70%, transparent),
+    var(--color-fd-card)
+  );
+  overflow-x: auto;
+}
+
+.mermaid-figure svg {
+  display: block;
+  margin-inline: auto;
+  width: 100% !important;
+  max-width: 100% !important;
+  height: auto !important;
+}

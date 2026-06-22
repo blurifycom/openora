@@ -51,7 +51,7 @@ Make the platform **single-tenant** and delete the tenant-isolation subsystem en
    `db`/`adminDb` split in `DrizzleService` (one pool, one `db`).
 
 4. **Breaking API change to `createApp`.** `createApp` no longer accepts or calls
-   `resolveTenant`. This is a breaking change for consumers (consumer's `apps/api` injects it
+   `resolveTenant`. This is a breaking change for consumers (a consumer's `apps/api` injects it
    today) and requires a new `@oss/core` major + a coordinated consumer update.
 
 5. **Drop the envelope `tenantId` (amend ADR-0016).** `EventEnvelope` loses `tenantId`;
@@ -69,7 +69,7 @@ Make the platform **single-tenant** and delete the tenant-isolation subsystem en
 - **No multi-brand/skin support out of the box.** An operator that later needs multiple
   brands on one deployment must reintroduce a discriminator - a deliberate future ADR, not
   a default carried by everyone. (A second brand can also just be a second deployment.)
-- **Breaking release.** `@oss/core` majors; the consumer template and consumer `apps/api`
+- **Breaking release.** `@oss/core` majors; the consumer template and a consumer's `apps/api`
   drop the `resolveTenant` wiring. Downstream must bump in lockstep.
 - **Auth/RLS defense-in-depth is gone** - acceptable because there is no second tenant to
   leak to; correctness of business `WHERE` clauses is unchanged (they were never the
@@ -96,11 +96,11 @@ Make the platform **single-tenant** and delete the tenant-isolation subsystem en
 | 5     | Services/contracts: strip `tenantId` from queries/inserts/payloads + envelope.                                                                         |
 | 6     | `pnpm regen` -> the drop migration; `pnpm seed` no longer stamps tenant.                                                                               |
 | 7     | Tests updated; rules/docs (`overview`, `clean-architecture`, `architecture.md`, glossary) drop the tenant convention.                                  |
-| 8     | Cross-repo: `@oss/core` major publish; consumer `apps/api` + consumer template drop `resolveTenant`.                                                    |
+| 8     | Cross-repo: `@oss/core` major publish; a consumer's `apps/api` + consumer template drop `resolveTenant`.                                               |
 
 ## Implementation status
 
 Implemented (2026-06-18). `tenantId`/RLS removed across ~120 files; fresh single-tenant
 migration baselines generated; `pnpm verify` green; `pnpm regen` clean. `gaming.endRound`
 gained an explicit caller-ownership filter (RLS was previously its only guard). Cross-repo:
-consumer `apps/api` dropped `resolveTenant` (separate change).
+the consumer's `apps/api` dropped `resolveTenant` (separate change).

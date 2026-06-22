@@ -6,6 +6,13 @@
       "dependsOn": ["^build"],
       "outputs": ["dist/**", ".next/**", "!.next/cache/**"]
     },
+    "@oss/docs#build": {
+      "dependsOn": ["@oss/api#codegen"],
+      "outputs": ["out/**", ".next/**", "!.next/cache/**"]
+    },
+    "@oss/docs#typecheck": {
+      "dependsOn": ["@oss/api#codegen"]
+    },
     "dev": {
       "cache": false,
       "persistent": true

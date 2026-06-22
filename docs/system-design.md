@@ -209,7 +209,7 @@ flowchart LR
     ADD["premium add-ons (separate repo + private registry; none in tree yet)"]
     DEV["dev/tooling (not part of core): @oss/mcp · @oss/testing · @oss/config"]
   end
-  REG[["GitLab Package Registry<br/>consumer/igaming-oss<br/>1 fixed version (Changesets)"]]
+  REG[["Package Registry<br/>your-org/igaming-oss<br/>1 fixed version (Changesets)"]]
   subgraph CONS["Consumers"]
     INST["install @oss/core + chosen domains<br/>(eg core + @oss/pam, or + premium addons)"]
     BFLINK["local dev: link:oss + git skip-worktree"]
