@@ -3,23 +3,24 @@
  * Generates the Fumadocs content tree for apps/docs from the repo-root `docs/`
  * Markdown - the SINGLE SOURCE OF TRUTH (same pattern as docs/catalog.json).
  *
- * For every docs/**.md it:
+ * For every included docs/**.md it:
  *   - injects `title`/`description` frontmatter from the leading `# H1`,
  *   - strips that duplicate H1 (Fumadocs renders the title itself),
- *   - rewrites links that escape docs/ into GitHub blob URLs (so they don't 404),
+ *   - strips packaging/superseded/status meta-note callouts (noise for newcomers),
+ *   - rewrites links to pages we don't generate into GitHub URLs (so they don't 404),
  *   - mirrors the directory layout under apps/docs/content/docs (preserves internal links),
- *   - emits meta.json nav ordering and a /docs landing page,
+ *   - emits meta.json nav ordering; introduction.md becomes the /docs landing page,
  *   - copies docs/openapi.json next to the app for the API reference.
+ *
+ * The ADR section is CURATED: only the key, still-current decisions are shipped (see KEY_ADRS).
  *
  * Files stay `.md` (not `.mdx`) so raw `<`/`{` in prose are literal, not parsed as
  * JSX/expressions; ```mermaid fences still render via the remarkMdxMermaid plugin.
  *
- * VENDOR-NEUTRALITY GUARD: throws if any brand token survives into the generated
- * output - the published OSS site must never name a downstream consumer.
+ * VENDOR-NEUTRALITY GUARD: throws if any brand token survives into the generated output.
  *
- * Pure node fs - no package imports - so it runs from the repo root via tsx.
- * The OpenAPI reference is generated separately by apps/docs/scripts/generate-openapi.ts
- * (it needs the fumadocs-openapi dependency, resolved from the app's node_modules).
+ * Pure node fs - no package imports - so it runs from the repo root via tsx. The OpenAPI
+ * reference is generated separately by apps/docs/scripts/generate-openapi.ts.
  */
 import {
   cpSync,
@@ -39,7 +40,24 @@ const appDir = join(repoRoot, 'apps', 'docs');
 const outDir = join(appDir, 'content', 'docs');
 
 const gitBlob = 'https://github.com/blurifycom/oss/blob/dev';
+const gitTree = 'https://github.com/blurifycom/oss/tree/dev';
 const forbiddenBrands = ['consumer', 'examplebrand'];
+
+// The key, still-current decisions a newcomer should read. Other ADRs stay in the repo
+// (and links to them resolve to GitHub) but are not shipped as site pages.
+const KEY_ADRS = new Set([
+  '0002', // definePlugin + overlay pattern
+  '0009', // Hono + oRPC for the API
+  '0010', // event-driven broker + microservices
+  '0014', // job queue + realtime transport seams
+  '0015', // boundary lint
+  '0021', // everything is an add-on
+  '0023', // headless platform, frontend in consumer
+  '0025', // single core package with module subpaths
+  '0026', // single-tenant
+]);
+
+const metaNoteRe = /^>\s*\*\*(packaging note|superseded|current state)/i;
 
 type Doc = { rel: string; title: string; description?: string; body: string };
 
@@ -49,6 +67,13 @@ function listMarkdown(dir: string, base = dir): string[] {
     if (entry.isDirectory()) return listMarkdown(full, base);
     return entry.name.endsWith('.md') ? [relative(base, full)] : [];
   });
+}
+
+const toPosix = (rel: string): string => rel.split(/[\\/]/).join('/');
+
+function isIncluded(rel: string): boolean {
+  const adr = toPosix(rel).match(/^adr\/(\d{4})-/);
+  return adr ? KEY_ADRS.has(adr[1]!) : true;
 }
 
 function yamlString(value: string): string {
@@ -75,20 +100,46 @@ function deriveDescription(lines: string[]): string | undefined {
   return text.length > 200 ? `${text.slice(0, 197)}...` : text;
 }
 
-/** Rewrites relative links that resolve outside docs/ into absolute GitHub URLs. */
-function rewriteEscapingLinks(rel: string, body: string): string {
+/** Drops blockquote callouts that are packaging/superseded/status meta-notes. */
+function stripMetaNotes(body: string): string {
+  const lines = body.split('\n');
+  const out: string[] = [];
+  let i = 0;
+  while (i < lines.length) {
+    const line = lines[i] ?? '';
+    if (!line.startsWith('>')) {
+      out.push(line);
+      i += 1;
+      continue;
+    }
+    let j = i;
+    while (j < lines.length && (lines[j] ?? '').startsWith('>')) j += 1;
+    if (metaNoteRe.test(line)) {
+      if (j < lines.length && (lines[j] ?? '').trim() === '') j += 1; // swallow the trailing blank
+    } else {
+      out.push(...lines.slice(i, j));
+    }
+    i = j;
+  }
+  return out.join('\n');
+}
+
+/** Rewrites relative links to pages we don't generate (excluded ADRs, repo files) to GitHub. */
+function rewriteLinks(rel: string, body: string, kept: Set<string>): string {
   return body.replace(/\]\(([^)]+)\)/g, (match, target: string) => {
     if (/^(https?:|mailto:|#|\/)/.test(target)) return match;
-    const [path, anchor = ''] = target.split('#');
+    const [path = '', anchor = ''] = target.split('#');
     if (!path) return match;
-    const repoRel = posix.normalize(posix.join('docs', posix.dirname(rel), path));
-    if (repoRel.startsWith('..') || repoRel.startsWith('docs/') || repoRel === 'docs') return match;
+    const isDir = path.endsWith('/');
+    const repoRel = posix.normalize(posix.join('docs', posix.dirname(toPosix(rel)), path));
+    if (repoRel.startsWith('..')) return match;
+    if (!isDir && kept.has(repoRel)) return match;
     const suffix = anchor ? `#${anchor}` : '';
-    return `](${gitBlob}/${repoRel}${suffix})`;
+    return `](${isDir ? gitTree : gitBlob}/${repoRel.replace(/\/$/, '')}${suffix})`;
   });
 }
 
-function toDoc(rel: string): Doc {
+function toDoc(rel: string, kept: Set<string>): Doc {
   const raw = readFileSync(join(docsDir, rel), 'utf8');
   const lines = raw.split('\n');
   const h1Index = lines.findIndex((l) => /^#\s+/.test(l));
@@ -96,7 +147,7 @@ function toDoc(rel: string): Doc {
   const title = h1Line ? h1Line.replace(/^#\s+/, '').trim() : rel;
   const rest = h1Index >= 0 ? lines.slice(h1Index + 1) : lines;
   const description = deriveDescription(rest);
-  const body = rewriteEscapingLinks(rel, rest.join('\n').replace(/^\n+/, ''));
+  const body = rewriteLinks(rel, stripMetaNotes(rest.join('\n').replace(/^\n+/, '')), kept);
   return { rel, title, description, body };
 }
 
@@ -123,27 +174,6 @@ function assertVendorNeutral(): void {
   }
 }
 
-const indexPage = `---
-title: "OSS iGaming Platform"
-description: "Open-source, headless, plugin-based, AI-native igaming platform."
----
-
-Open-source, headless, plugin-based, AI-native igaming platform. The default backend
-surface is fully featured (auth, wallet, lobby, chat, bonus, compliance, backoffice, CMS,
-aggregator); the frontend lives in your own consumer repo.
-
-## Start here
-
-<Cards>
-  <Card title="Architecture" href="/docs/architecture" />
-  <Card title="System design" href="/docs/system-design" />
-  <Card title="Glossary" href="/docs/glossary" />
-  <Card title="Agent quickstart" href="/docs/agent-quickstart" />
-  <Card title="Consuming the platform" href="/docs/downstream-consumer" />
-  <Card title="API reference" href="/docs/api" />
-</Cards>
-`;
-
 function writeMeta(dir: string, meta: object): void {
   writeFileSync(join(dir, 'meta.json'), `${JSON.stringify(meta, null, 2)}\n`);
 }
@@ -152,27 +182,30 @@ function main(): void {
   rmSync(outDir, { recursive: true, force: true });
   mkdirSync(outDir, { recursive: true });
 
-  for (const rel of listMarkdown(docsDir)) {
-    const dest = join(outDir, rel);
-    mkdirSync(dirname(dest), { recursive: true });
-    writeFileSync(dest, render(toDoc(rel)));
-  }
+  const kept = listMarkdown(docsDir).filter(isIncluded);
+  const keptSet = new Set(kept.map((r) => `docs/${toPosix(r)}`));
 
-  writeFileSync(join(outDir, 'index.md'), indexPage);
+  for (const rel of kept) {
+    const dest = join(outDir, rel === 'introduction.md' ? 'index.md' : rel);
+    mkdirSync(dirname(dest), { recursive: true });
+    writeFileSync(dest, render(toDoc(rel, keptSet)));
+  }
 
   writeMeta(outDir, {
     pages: [
       'index',
-      '---Overview---',
+      '---Get started---',
+      'quickstart',
+      'core-concepts',
+      '---Guides---',
+      'downstream-consumer',
+      'mcp-setup',
+      'agent-quickstart',
+      'agent-benchmark',
+      '---Reference---',
       'architecture',
       'system-design',
       'glossary',
-      '---Guides---',
-      'agent-quickstart',
-      'downstream-consumer',
-      'mcp-setup',
-      'agent-benchmark',
-      '---Reference---',
       'adapters',
       'adr',
       'api',

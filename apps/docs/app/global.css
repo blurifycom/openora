@@ -84,10 +84,10 @@ body::before {
     );
 }
 
-/* Framed, responsive diagrams - the fix for overflowing Mermaid SVGs. */
+/* Framed Mermaid diagrams in a pan/zoom viewport (official mermaid renderer). */
 .mermaid-figure {
+  position: relative;
   margin: 1.75rem 0;
-  padding: 1.25rem;
   border: 1px solid var(--color-fd-border);
   border-radius: 0.85rem;
   background: linear-gradient(
@@ -95,13 +95,71 @@ body::before {
     color-mix(in oklch, var(--color-fd-card) 70%, transparent),
     var(--color-fd-card)
   );
-  overflow-x: auto;
+  overflow: hidden;
 }
 
-.mermaid-figure svg {
-  display: block;
-  margin-inline: auto;
+.mermaid-loading,
+.mermaid-fallback {
+  padding: 1.25rem;
+}
+
+.mermaid-loading {
+  color: var(--color-fd-muted-foreground);
+  font-size: 0.9rem;
+}
+
+.mermaid-fallback {
+  margin: 0;
+  overflow-x: auto;
+  font-size: 0.85rem;
+}
+
+.mermaid-viewport {
   width: 100% !important;
-  max-width: 100% !important;
-  height: auto !important;
+  height: min(68vh, 540px) !important;
+  cursor: grab;
+}
+
+.mermaid-viewport:active {
+  cursor: grabbing;
+}
+
+.mermaid-content svg {
+  max-width: none;
+  height: auto;
+}
+
+.mermaid-controls {
+  position: absolute;
+  top: 0.6rem;
+  right: 0.6rem;
+  z-index: 2;
+  display: flex;
+  gap: 0.35rem;
+}
+
+.mermaid-controls button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 1.9rem;
+  height: 1.9rem;
+  padding: 0 0.55rem;
+  font-size: 0.85rem;
+  font-weight: 600;
+  line-height: 1;
+  color: var(--color-fd-muted-foreground);
+  background: color-mix(in oklch, var(--color-fd-card) 80%, transparent);
+  border: 1px solid var(--color-fd-border);
+  border-radius: 0.5rem;
+  cursor: pointer;
+  backdrop-filter: blur(6px);
+  transition:
+    color 0.15s,
+    border-color 0.15s;
+}
+
+.mermaid-controls button:hover {
+  color: var(--color-fd-primary);
+  border-color: var(--color-fd-primary);
 }
