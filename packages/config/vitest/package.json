@@ -1,6 +1,7 @@
 {
   "name": "@oss/vitest-config",
   "version": "0.3.0",
+  "license": "AGPL-3.0-only",
   "private": true,
   "files": [
     "index.ts"

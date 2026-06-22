@@ -1,6 +1,7 @@
 {
   "name": "@oss/testing",
   "version": "0.3.0",
+  "license": "AGPL-3.0-only",
   "private": true,
   "type": "module",
   "main": "./dist/index.js",

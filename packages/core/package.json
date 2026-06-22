@@ -1,9 +1,12 @@
 {
   "name": "@oss/core",
   "version": "0.3.0",
+  "license": "AGPL-3.0-only",
   "files": [
     "dist",
-    "drizzle"
+    "drizzle",
+    "LICENSE",
+    "LICENSE-COMMERCIAL.md"
   ],
   "type": "module",
   "exports": {

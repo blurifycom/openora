@@ -1,6 +1,7 @@
 {
   "name": "@oss/turbo-generators",
   "version": "0.3.0",
+  "license": "AGPL-3.0-only",
   "description": "Shared turbo gen generators for downstream igaming consumers (plugin / adapter / page).",
   "files": [
     "src"
