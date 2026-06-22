@@ -10,70 +10,24 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  build:
-    name: Build (warm cache)
+  verify:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
       - uses: ./.github/actions/bootstrap
-      - run: pnpm build
-
-  typecheck:
-    needs: build
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - uses: ./.github/actions/bootstrap
-      - run: pnpm typecheck
-
-  test:
-    needs: build
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - uses: ./.github/actions/bootstrap
-      # test:unit is cache:false with no ^build dep, so it needs built deps present first.
-      - run: pnpm build
-      - run: pnpm test:unit
-
-  lint:
-    needs: build
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - uses: ./.github/actions/bootstrap
-      - run: pnpm lint
-      - run: pnpm format:check
-
-  boundaries:
-    needs: build
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - uses: ./.github/actions/bootstrap
-      - run: pnpm verify:shape
-      - run: pnpm boundaries
-
-  drift:
-    needs: build
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - uses: ./.github/actions/bootstrap
-      # verify:drift runs the codegen tools, which import the built @blurifycom/core/server.
-      - run: pnpm build
-      - run: pnpm verify:drift
-
-  ci:
-    name: CI
-    if: always()
-    needs: [typecheck, test, lint, boundaries, drift]
-    runs-on: ubuntu-latest
-    steps:
-      - name: Fail if any check failed
-        run: |
-          if [[ "${{ contains(needs.*.result, 'failure') || contains(needs.*.result, 'cancelled') }}" == "true" ]]; then
-            echo "One or more checks failed."
-            exit 1
-          fi
-          echo "All checks passed."
+      - name: Build
+        run: pnpm build
+      - name: Typecheck
+        run: pnpm typecheck
+      - name: Unit tests
+        run: pnpm test:unit
+      - name: Lint
+        run: pnpm lint
+      - name: Format check
+        run: pnpm format:check
+      - name: Module shape
+        run: pnpm verify:shape
+      - name: Boundaries
+        run: pnpm boundaries
+      - name: Drift check
+        run: pnpm verify:drift
