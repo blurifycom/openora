@@ -1,0 +1,29 @@
+OSS iGaming Platform
+Copyright (c) 2026 Blurify and contributors
+
+This product is dual-licensed. You may use it under EITHER:
+
+  1. The GNU Affero General Public License, version 3.0 only (AGPL-3.0-only),
+     as published by the Free Software Foundation. A copy is provided in the
+     LICENSE file at the root of this repository. The AGPL's Section 13
+     network-use clause applies: running a modified version as a hosted
+     service obliges you to offer its complete corresponding source to its
+     users.
+
+  2. A separate commercial license from Blurify, for closed-source or SaaS
+     deployments that cannot meet the AGPL's copyleft and network-use
+     obligations. See LICENSE-COMMERCIAL.md, or contact licensing@blurify.com.
+
+Unless required by applicable law or agreed to in writing, this software is
+distributed on an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND.
+
+Operating a real-money gambling service is heavily regulated. You are solely
+responsible for obtaining the licenses and meeting the legal and compliance
+requirements of every jurisdiction in which you operate.
+
+----------------------------------------------------------------------------
+
+Third-party components distributed with or depended upon by this software
+remain under their own respective licenses, held by their respective authors.
+See the dependencies declared in the package manifests and their accompanying
+license files under node_modules for details.

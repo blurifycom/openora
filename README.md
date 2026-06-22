@@ -170,6 +170,8 @@ Dual-licensed: **AGPL-3.0-only** OR a **commercial license**.
 - **Open source:** [GNU AGPL v3](./LICENSE). If you self-host, modify, or redistribute, you must make your complete corresponding source available under the same terms. **Section 13** extends this to network/SaaS use - running a modified version as a hosted service obliges you to offer its source to users.
 - **Commercial:** for closed-source/SaaS deployments that cannot meet the AGPL's copyleft and network-use obligations, Blurify offers a separate commercial license. See [LICENSE-COMMERCIAL.md](./LICENSE-COMMERCIAL.md) - contact `licensing@blurify.com`.
 
+See [NOTICE](./NOTICE) for the attribution and dual-license summary.
+
 > [!NOTE]
 > This is software, not legal advice. Operating a real-money gambling service is heavily regulated - you are solely responsible for obtaining the required licenses and complying with the laws of every jurisdiction you serve. The software is provided "as is", without warranty of any kind.
 
