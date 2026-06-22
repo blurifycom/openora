@@ -5,22 +5,75 @@ on:
     branches: [dev]
   pull_request:
 
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
-  verify:
+  build:
+    name: Build (warm cache)
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
-        with:
-          node-version: 26
-      - name: Enable corepack (pnpm)
+      - uses: ./.github/actions/bootstrap
+      - run: pnpm build
+
+  typecheck:
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/bootstrap
+      - run: pnpm typecheck
+
+  test:
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/bootstrap
+      # test:unit is cache:false with no ^build dep, so it needs built deps present first.
+      - run: pnpm build
+      - run: pnpm test:unit
+
+  lint:
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/bootstrap
+      - run: pnpm lint
+      - run: pnpm format:check
+
+  boundaries:
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/bootstrap
+      - run: pnpm verify:shape
+      - run: pnpm boundaries
+
+  drift:
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/bootstrap
+      # verify:drift runs the codegen tools, which import the built @blurifycom/core/server.
+      - run: pnpm build
+      - run: pnpm verify:drift
+
+  ci:
+    name: CI
+    if: always()
+    needs: [typecheck, test, lint, boundaries, drift]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Fail if any check failed
         run: |
-          npm install -g corepack@latest
-          corepack enable
-          corepack prepare pnpm@11.8.0 --activate
-      - name: Install
-        run: pnpm install --frozen-lockfile
-      - name: Build
-        run: pnpm build
-      - name: Verify (typecheck + unit + lint + boundaries)
-        run: pnpm verify
+          if [[ "${{ contains(needs.*.result, 'failure') || contains(needs.*.result, 'cancelled') }}" == "true" ]]; then
+            echo "One or more checks failed."
+            exit 1
+          fi
+          echo "All checks passed."

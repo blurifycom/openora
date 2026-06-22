@@ -1,0 +1,39 @@
+name: Bootstrap
+description: Set up Node + pnpm, install dependencies, and restore the turbo cache.
+
+runs:
+  using: composite
+  steps:
+    - uses: actions/setup-node@v4
+      with:
+        node-version: 26
+
+    - name: Enable corepack (pnpm)
+      shell: bash
+      run: |
+        npm install -g corepack@latest
+        corepack enable
+        corepack prepare pnpm@11.8.0 --activate
+
+    - name: Resolve pnpm store path
+      shell: bash
+      run: echo "STORE_PATH=$(pnpm store path --silent)" >> "$GITHUB_ENV"
+
+    - name: Cache pnpm store
+      uses: actions/cache@v4
+      with:
+        path: ${{ env.STORE_PATH }}
+        key: pnpm-store-${{ runner.os }}-${{ hashFiles('**/pnpm-lock.yaml') }}
+        restore-keys: pnpm-store-${{ runner.os }}-
+
+    - name: Install
+      shell: bash
+      run: pnpm install --frozen-lockfile
+
+    # Same key per commit -> the build job's cache is an exact hit for every downstream job.
+    - name: Cache turbo
+      uses: actions/cache@v4
+      with:
+        path: node_modules/.cache/turbo
+        key: turbo-${{ runner.os }}-${{ github.sha }}
+        restore-keys: turbo-${{ runner.os }}-
