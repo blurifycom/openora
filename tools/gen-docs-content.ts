@@ -41,7 +41,8 @@ const outDir = join(appDir, 'content', 'docs');
 
 const gitBlob = 'https://github.com/blurifycom/oss/blob/dev';
 const gitTree = 'https://github.com/blurifycom/oss/tree/dev';
-const forbiddenBrands = ['consumer', 'examplebrand'];
+// Downstream operators add their own brand names here to keep them out of generated public docs.
+const forbiddenBrands: string[] = [];
 
 // The key, still-current decisions a newcomer should read. Other ADRs stay in the repo
 // (and links to them resolve to GitHub) but are not shipped as site pages.
