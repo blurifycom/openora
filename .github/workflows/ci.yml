@@ -1,0 +1,26 @@
+name: CI
+
+on:
+  push:
+    branches: [dev]
+  pull_request:
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Enable corepack (pnpm)
+        run: |
+          npm install -g corepack@latest
+          corepack enable
+          corepack prepare pnpm@11.8.0 --activate
+      - name: Install
+        run: pnpm install --frozen-lockfile
+      - name: Build
+        run: pnpm build
+      - name: Verify (typecheck + unit + lint + boundaries)
+        run: pnpm verify

@@ -55,8 +55,8 @@ leave the wiring alone. After scaffolding a module/table: `pnpm regen && pnpm ve
 | `feat/*`, `fix/*`, `chore/*` | Short-lived topic branches. Branch off `main`, open an MR back into `main`. |
 
 Flow: `feat/*` -> MR -> `main` -> promote to `stage` -> promote to release.
-CI (`.gitlab-ci.yml`) runs `verify` -> `integration`
-on every MR and on pushes to `main`, `stage`, and `dev`.
+CI (`.github/workflows/ci.yml`) runs `verify` on every pull request and on
+pushes to `dev`.
 
 ## Before you open an MR
 
