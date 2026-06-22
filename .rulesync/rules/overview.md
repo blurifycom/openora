@@ -23,9 +23,9 @@ Open-source, headless, plugin-based, AI-native igaming platform. Anyone clones t
 
 ## Architecture pillars
 
-1. Zod-first contracts. Every shape is a Zod schema; types are `z.infer`'d, never hand-written. Cross-cutting schemas live in `packages/core/src/contracts/schemas`; each add-on OWNS its route contract + request/response schemas in its own `src/contract/` (the single source of truth, co-located with the service + router that implement it), and module-local helper schemas in `schemas/`. `@blurifycom/core/contracts` is NOT an aggregator: its `composeContract` helper owns only `health` (zero domain deps); the composition root (`apps/api/src/editions.ts`) composes each enabled module's `/contract` slice into the one runtime `contract` the SDK typed client links against. See ADR-0021/0025.
+1. Zod-first contracts. Every shape is a Zod schema; types are `z.infer`'d, never hand-written. Cross-cutting schemas live in `packages/core/src/contracts/schemas`; each add-on OWNS its route contract + request/response schemas in its own `src/contract/` (the single source of truth, co-located with the service + router that implement it), and module-local helper schemas in `schemas/`. `@blurifycom/core/contracts` is NOT an aggregator: its `composeContract` helper owns only `health` (zero domain deps); the composition root (`tools/build-contract.ts` for this repo; the consumer's own entry for deployed apps) composes each enabled module's `/contract` slice into the one runtime `contract` the SDK typed client links against. See ADR-0021/0025.
 2. oRPC + Hono. oRPC owns route definition + Zod validation + OpenAPI emit; its `OpenAPIHandler` is mounted on a Hono server (`@hono/node-server`, Bun-ready later). Dependency wiring is a small functional composition container (`Container` in `@blurifycom/core/server`) - explicit factory functions keyed by typed tokens, no decorators, no `reflect-metadata`. See ADR-0009.
-3. Plugin host. `definePlugin({ id, dependsOn, register })` is the only way new functionality enters the system. Overlays (in-tree under `apps/api/src/extensions/<name>/`) are the primary path; npm-published plugins use the same contract.
+3. Plugin host. `definePlugin({ id, dependsOn, register })` is the only way new functionality enters the system. The consumer owns the API entry - overlays live in their `apps/<name>/src/extensions/<name>/`; npm-published plugins use the same contract.
 4. Headless backend only. The platform ships backend modules + contracts + SDK consumption surface only. The frontend - all components, styling, and theme - lives in the downstream consumer. Consumers import `@blurifycom/core/react` (data hooks, typed client, auth context, cross-cutting helpers) and own their entire UI layer. No UI packages ship here.
 5. Explicit > magic. No auto-discovery, no decorator soup. Everything is greppable; every wiring point is a typed function call.
 6. AI-friendly by default. Every module has an `AGENTS.md`. Every scaffold is a slash command. Every contract is queryable via the MCP dev server (`describe-module`, `list-routes`, `query-openapi`) and the generated `docs/catalog.json` (consumed by the published `@blurifycom/mcp` server).
@@ -33,21 +33,20 @@ Open-source, headless, plugin-based, AI-native igaming platform. Anyone clones t
 
 ## Repo map
 
-The platform is headless: it ships the backend (api + add-ons + SDK consumption layer)
-only. The reference frontend apps and the page/block SDK layer were removed (2026-06-09) — the frontend lives in the downstream consumer repo and will be re-extracted later. `@blurifycom/core/react` remains the supported frontend consumption surface.
+The platform is headless: it ships `@blurifycom/core` (domains + engine), the SDK, and tooling.
+The API server lives in the downstream consumer; `apps/api` was removed (2026-06-22). The reference frontend apps and the page/block SDK layer were removed (2026-06-09). `@blurifycom/core/react` remains the supported frontend consumption surface.
 
 ```
 apps/
-  api/            # Hono + oRPC HTTP API (port 3001) - thin consumer of createApp
+  docs/           # Fumadocs documentation site
   mcp-server-dev/ # MCP dev server (stdio) - agents connect via .mcp.json
-  extensions/     # In-tree overlay plugins (drop-in folders)
 packages/
   config/         # tsconfig, vitest, oxlint presets (boundary lint: tools/oxlint-boundaries-plugin.mjs specifier-level + .dependency-cruiser.cjs whole-graph)
   core/           # @blurifycom/core - THE single published package (ADR-0025). One package, subpaths:
     src/contracts/  # @blurifycom/core/contracts - isomorphic: composeContract + healthContract (orpc/),
                   #   base zod schemas (schemas/), vendor adapter interfaces + DI tokens (adapters/).
-                  #   composeContract owns only `health`; it is NOT an aggregator - the composition
-                  #   root (apps/api/src/editions.ts) composes each module's /contract slice.
+                  #   composeContract owns only `health`; it is NOT an aggregator - the consumer's
+                  #   composition root composes each module's /contract slice (see tools/build-contract.ts).
     src/react/    # @blurifycom/core/react - thin, domain-agnostic SDK: generic createClient, typed client,
                   #   auth, realtime transport. Supported frontend consumption surface. No UI here.
     src/server/   # @blurifycom/core/server - the node engine: kernel (logger, EventBus + EVENT_BUS,
@@ -74,14 +73,14 @@ docs/
   adr/            # Architecture decision records
   architecture.md, glossary.md, agent-quickstart.md, downstream-consumer.md
   catalog.json    # generated machine-readable surface (routes/schemas/adapters/slots/events); read by @blurifycom/mcp
-tools/            # scaffold.ts, gen-catalog.ts, verify-module-shape.ts (agent docs: rulesync)
-extensions.config.ts # the single registry of enabled plugins
+tools/            # scaffold.ts, gen-catalog.ts, verify-module-shape.ts, build-contract.ts, gen-openapi.ts
+extensions.config.ts # the single registry of enabled plugins (reference for consumer apps)
 ```
 
 ## Where does X go? (decision tree)
 
-- A new business domain (eg "tournaments") -> a new core add-on if it ships in the free edition, or a gated add-on if optional. Use `pnpm gen module <name>` (creates `@blurifycom-addons/<name>` standalone package with own `package.json`, tsconfig, schemas, service, router, plugin). It registers in `extensions.config.ts` with no `kind` (core) or `kind: 'addon'` (gated). Every module owns its route contract in `src/contract/` (exported as `@blurifycom-addons/<name>/contract` or `@blurifycom/<domain>/contracts/<slice>`); for a core module the composition root (`apps/api/src/editions.ts`) composes that slice into the runtime contract via `composeContract` and its tables use central migrations; a gated add-on's contract merges conditionally in `apps/api` and it owns its own migrations. See ADR-0021/0024.
-- A behavior that extends/overrides an existing add-on -> overlay plugin under `apps/api/src/extensions/<name>/`. Use `/scaffold-plugin <name>`.
+- A new business domain (eg "tournaments") -> a new core add-on if it ships in the free edition, or a gated add-on if optional. Use `pnpm gen module <name>` (creates `@blurifycom-addons/<name>` standalone package with own `package.json`, tsconfig, schemas, service, router, plugin). It registers in `extensions.config.ts` with no `kind` (core) or `kind: 'addon'` (gated). Every module owns its route contract in `src/contract/` (exported as `@blurifycom-addons/<name>/contract` or `@blurifycom/<domain>/contracts/<slice>`); for a core module add its contract slice to `tools/build-contract.ts` and its tables use central migrations; a gated add-on conditionally merges its contract and owns its own `drizzle.config.ts`. See ADR-0021/0024.
+- A behavior that extends/overrides an existing add-on -> overlay plugin in the consumer's app under `extensions/<name>/plugin.ts`. Use `/scaffold-plugin <name>`.
 - A new HTTP route -> add to the add-on's `src/router/index.ts`. Use `/scaffold-route <addon-name> <method> <path>`. Player routes resolve the caller from the `x-user-id` header; admin routes MUST be guarded (next line).
 - An admin-only route -> the add-on's `plugin.ts` resolves `AdminGuard` from the container (`c.get(ADMIN_GUARD)`) and passes it into the router factory; call `await adminGuard.assert(context)` as the first line of the handler (throws `ORPCError`). `ADMIN_GUARD` is seeded into the container by `createApp`. This is the single admin-enforcement point - never re-implement the role check.
 - A new database table -> add a Drizzle `pgTable` to the add-on's `src/schema/index.ts`. Run `pnpm regen` (drizzle-kit) to generate the migration. Core add-ons' schemas are included in the central `packages/core/drizzle.config.ts`; gated add-ons own their `drizzle.config.ts`.
@@ -91,7 +90,7 @@ extensions.config.ts # the single registry of enabled plugins
 - A new data hook (eg `useAdminUsers`, `usePlayerWallet`) -> `packages/core/src/react/src/hooks/` + export from `src/index.ts` (domain-specific hooks live in that domain's `/react` subpath, eg `@blurifycom/engagement/react`). `@blurifycom/core/react` is a leaf SDK package. NOTE on memoization: consumers build with the React Compiler, but it does NOT reprocess pre-built `node_modules`, so `@blurifycom/core/react` is NOT auto-memoized in the consumer. Therefore the SDK must hand-write `useMemo`/`useCallback` wherever a returned value/function is part of the hook's stability contract (eg a client instance or object a consumer drops into `useEffect`/query deps) - the opposite of the consumer-app rule where the compiler handles it. Keep SDK hooks Rules-of-React compliant (pure render, stable returns) so the consumer's compiler can optimize the components that call them.
 - Operator-only config (feature flags, brand definitions, RG defaults per geo) -> a `platform-config.yaml` / `.json` file consumed by `loadPlatformConfig()` (`@blurifycom/core/server`). Validated by `PlatformConfigSchema` in `@blurifycom/core/contracts`. Bound via the `PLATFORM_CONFIG` Container token. No admin UI in v1; edit the file. See ADR-0013 T0.
 - A third-party integration (PSP, KYC, aggregator, chat) -> define the adapter interface + token (`createToken<Adapter>(...)`) in `@blurifycom/core/contracts` (`packages/core/src/contracts/adapters/src/<category>.ts`), implement it under `packages/addons/<addon-name>/adapters/<vendor>/`, and bind it in the add-on's `plugin.ts` via `ctx.provide(TOKEN, () => new Impl())`. Never inline. All vendor adapter interfaces live in `@blurifycom/core/contracts` so the swap seams are findable in one place.
-- A long-running / background task -> enqueue a job on the `JOB_QUEUE` seam and process it in a worker. A service resolves `JOB_QUEUE` (from `@blurifycom/core/contracts`) in its `plugin.ts` and calls `enqueue(queue('name'), payload, { idempotencyKey, delayMs, attempts, backoff, orderingKey })`; a worker overlay registers the handler via `ctx.jobs.worker({ queue, schema, handler, onDeadLetter })` (scaffold with `/scaffold-plugin <name>-worker`). The default driver is an in-process queue (zero deps); the `bullmq` overlay rebinds `JOB_QUEUE` to BullMQ + Redis when `REDIS_URL` is set. Delivery is at-least-once - handlers must be idempotent (a DB guard, not just `idempotencyKey`, for money jobs). See ADR-0014.
+- A long-running / background task -> enqueue a job on the `JOB_QUEUE` seam and process it in a worker. A service resolves `JOB_QUEUE` (from `@blurifycom/core/contracts`) in its `plugin.ts` and calls `enqueue(queue('name'), payload, { idempotencyKey, delayMs, attempts, backoff, orderingKey })`; a worker overlay registers the handler via `ctx.jobs.worker({ queue, schema, handler, onDeadLetter })` (scaffold with `/scaffold-plugin <name>-worker`). The default driver is an in-process queue (zero deps); consumer apps add a BullMQ overlay (rebinds `JOB_QUEUE` to Redis when `REDIS_URL` is set) or another driver of their choice. Delivery is at-least-once - handlers must be idempotent (a DB guard, not just `idempotencyKey`, for money jobs). See ADR-0014.
 - A live client push (chat message, PvP round state, live odds, big-win feed) -> publish on the `REALTIME_TRANSPORT` seam (`@blurifycom/core/contracts`) and expose an oRPC `eventIterator(...)` route served as SSE; the client consumes it with `useEventStream` (`@blurifycom/core/react`) / `useChatStream` (`@blurifycom/engagement/react`). The default is a first-party in-process transport; an overlay rebinds `REALTIME_TRANSPORT` to a managed vendor (Ably/GetStream). This is client-facing only and separate from the inter-module `MESSAGE_BROKER`. See ADR-0007 and ADR-0014. The `chat` module (in `@blurifycom/engagement`) is the reference vertical.
 
 ## Naming
@@ -109,17 +108,15 @@ Cross-cutting basics (files `kebab-case.ts`, types `PascalCase`, `<Name>Schema` 
 Boundaries are enforced by two complementary gates - keep them in sync:
 
 1. **oxlint `oss-boundaries/*` plugin** (`tools/oxlint-boundaries-plugin.mjs`) - fast per-edit, per-file string matching on import specifiers (no module resolution). Runs via `pnpm lint` and the post-edit agent hook. See ADR-0015.
-2. **dependency-cruiser whole-graph gate** (`.dependency-cruiser.cjs`, `pnpm boundaries`) - runs on the RESOLVED dependency graph, so it also catches what the string matcher cannot: transitive edges, re-export/barrel laundering, dynamic `import()`, and relative paths that dodge the `@blurifycom-` prefix. Rules: `no-circular`, `no-cross-domain`, `no-core-to-domain`, `no-cross-addon`, `no-contracts-to-runtime`, `no-cross-extension`, `no-app-into-addon-internals`, `no-core-to-addon`.
+2. **dependency-cruiser whole-graph gate** (`.dependency-cruiser.cjs`, `pnpm boundaries`) - runs on the RESOLVED dependency graph, so it also catches what the string matcher cannot: transitive edges, re-export/barrel laundering, dynamic `import()`, and relative paths that dodge the `@blurifycom-` prefix. Rules: `no-circular`, `no-cross-domain`, `no-core-to-domain`, `no-cross-addon`, `no-contracts-to-runtime`, `no-core-to-addon`.
 
 The rules both layers enforce:
 
 - `packages/addons/**` (all `@blurifycom-addons/*` packages) may import: `@blurifycom/core/contracts`, `@blurifycom/core/server`, `@blurifycom/core/react`, and read-only `/schema` subpath imports from other add-ons. May NOT import another add-on's root/internals - cross-add-on communication goes through events or contracts (`no-cross-addon`).
 - A folded domain (`packages/core/src/<domain>` = any `core/src` dir other than the `contracts`/`server`/`react` engine zones) may import the engine zones (`@blurifycom/core/{contracts,server,react}`) + a sibling domain's read-only `/schema` subpath only - NEVER a sibling's internals (`no-cross-core-domain` oxlint string twin + `no-cross-domain` whole-graph). Domains couple through a command/adapter port, a domain event, or a shared contract via the composition root. This is the ADR-0024/0025 source-isolation invariant, now enforced intra-`@blurifycom/core` after the fold.
-- `@blurifycom/core/contracts` (`packages/core/src/contracts`) is isomorphic: it may import only other contracts + Zod, never `@blurifycom/core/server` or any module (`no-contracts-to-runtime`). `composeContract` owns only `health` and is NOT an aggregator - the composition root (`apps/api/src/editions.ts`) composes each module's `/contract` slice into the runtime contract.
+- `@blurifycom/core/contracts` (`packages/core/src/contracts`) is isomorphic: it may import only other contracts + Zod, never `@blurifycom/core/server` or any module (`no-contracts-to-runtime`). `composeContract` owns only `health` and is NOT an aggregator - the consumer's composition root composes each module's `/contract` slice into the runtime contract.
 - `@blurifycom/core/react` (`packages/core/src/react`) is browser glue: it may NOT import `@blurifycom/core/server` or an add-on (`no-react-to-runtime`) - that would pull Drizzle/Hono/node into the client bundle.
-- The `@blurifycom/core` ENGINE zones (`packages/core/src/{contracts,server,react}`) may NEVER import a folded domain (`no-core-to-domain` whole-graph + `no-engine-to-domain` oxlint twin), and core may never import `@blurifycom-addons/*` (`no-core-to-addon`). createApp is domain-agnostic (DI); domains/add-ons are wired in only through `apps/*` (and the `@blurifycom/testing` dev harness). This keeps each module extractable. See ADR-0021/0024/0025.
-- `apps/api/src/extensions/*` may import any package, but never another extension.
-- `apps/api` registers add-ons only via `extensions.config.ts`. A direct add-on file import from `apps/api/src/*` is a lint error.
+- The `@blurifycom/core` ENGINE zones (`packages/core/src/{contracts,server,react}`) may NEVER import a folded domain (`no-core-to-domain` whole-graph + `no-engine-to-domain` oxlint twin), and core may never import `@blurifycom-addons/*` (`no-core-to-addon`). createApp is domain-agnostic (DI); domains/add-ons are wired in only through the consumer's app (and the `@blurifycom/testing` dev harness). This keeps each module extractable. See ADR-0021/0024/0025.
 - Consumers (and add-ons) import the package entry, never a deep `dist/` path.
 - No circular dependencies - `import/no-cycle` (oxlint, includes type-only edges) plus `no-circular` (whole-graph). Break a cycle by extracting a shared package, inverting a dependency, or moving the type to a contracts package.
 
@@ -141,7 +138,7 @@ The cross-cutting bans are in the `conventions` rule and lint-enforced here: `an
 pnpm gen module <name>
 ```
 
-Generates `packages/addons/<name>/` as a standalone `@blurifycom-addons/<name>` package with `package.json`, `tsconfig.json`, `src/{schema,schemas,service,router,plugin}`, and `AGENTS.md`. Every add-on owns its `src/contract/` slice. If the add-on is core (always loaded), the scaffolder registers it in `extensions.config.ts` with no `kind` and adds its contract slice to the composition root (`apps/api/src/editions.ts`, composed via `composeContract`). If gated (optional, OSS_ADDONS), it registers with `kind: 'addon'`, merges its contract conditionally in `apps/api`, and owns its own `drizzle.config.ts`. Run `pnpm regen && pnpm verify`. Each scaffolded file marks the regions you may edit with `// AGENT: implement here` - fill those; leave the wiring alone.
+Generates `packages/addons/<name>/` as a standalone `@blurifycom-addons/<name>` package with `package.json`, `tsconfig.json`, `src/{schema,schemas,service,router,plugin}`, and `AGENTS.md`. Every add-on owns its `src/contract/` slice. If the add-on is core (always loaded), the scaffolder registers it in `extensions.config.ts` with no `kind` and adds its contract slice to `tools/build-contract.ts` (composed via `composeContract`). If gated (optional, OSS_ADDONS), it registers with `kind: 'addon'` and owns its own `drizzle.config.ts`. Run `pnpm regen && pnpm verify`. Each scaffolded file marks the regions you may edit with `// AGENT: implement here` - fill those; leave the wiring alone.
 
 ## How to add an extension (overlay plugin)
 
@@ -149,7 +146,7 @@ Generates `packages/addons/<name>/` as a standalone `@blurifycom-addons/<name>` 
 /scaffold-plugin <name>
 ```
 
-Generates `apps/api/src/extensions/<name>/plugin.ts` exporting `definePlugin`. In `register(ctx)`: `ctx.provide(token, factory)`, `ctx.routers.add(namespace, (c) => router)`, `ctx.slots.fill(...)`, `ctx.events.on(...)`, `ctx.mcp.tool(...)`. To add tables, put your own `pgTable` in the overlay's schema (additive). To override a vendor adapter, `ctx.provide` your impl to its token AND ensure the overlay loads after the default-binding module in `extensions.config.ts` (last registration wins). See `apps/api/src/extensions/AGENTS.md`.
+Generates `extensions/<name>/plugin.ts` in the consumer's app, exporting `definePlugin`. In `register(ctx)`: `ctx.provide(token, factory)`, `ctx.routers.add(namespace, (c) => router)`, `ctx.slots.fill(...)`, `ctx.events.on(...)`, `ctx.mcp.tool(...)`. To add tables, put your own `pgTable` in the overlay's schema (additive). To override a vendor adapter, `ctx.provide` your impl to its token AND ensure the overlay loads after the default-binding module in `extensions.config.ts` (last registration wins).
 
 ## How to add an oRPC route
 
@@ -177,8 +174,8 @@ The generated repo ships `turbo gen` generators (`pnpm gen plugin|adapter|page`)
 
 ```
 pnpm setup:agent   # first time: docker + db + mcp + summary
-pnpm dev           # turbo dev (api, backoffice, mcp)
-pnpm regen         # drizzle-kit generate + openapi emit + sdk regen + catalog
+pnpm dev           # turbo dev (docs, mcp)
+pnpm regen         # openapi emit + drizzle-kit generate + sdk regen + catalog
 pnpm seed          # demo data: admin + players + wallets + txns + games
 pnpm boundaries    # whole-graph boundary + cycle gate (dependency-cruiser)
 pnpm verify        # typecheck + test:unit + lint + module shape + boundaries
@@ -186,7 +183,7 @@ pnpm verify        # typecheck + test:unit + lint + module shape + boundaries
 
 `pnpm seed` is idempotent and deterministic. Logs in with `admin@oss.dev` / `password123`. Flags: `--players=<n>`, `--admin-email=<e>`, `--admin-password=<p>`. The reusable `seedDemoData()` lives in `@blurifycom/testing` (dev/test harness) so downstream consumers can seed too.
 
-Docker is library-first: `docker compose up` starts only postgres (apps run on the host via `pnpm dev`). To run the whole reference stack in containers instead, use the opt-in `full` profile: `docker compose --profile full up --build` (api :3001, web :3000, backoffice :3002, via the root multi-target `Dockerfile`). This is a reference convenience, not the production deploy path - downstream operators containerize their own apps. The Docker build is not part of `pnpm verify`/CI.
+Docker is library-first: `docker compose up` starts only postgres (apps run on the host via `pnpm dev`). The API server lives in the consumer's app - this repo ships the packages, not a runnable server. The Docker build is not part of `pnpm verify`/CI.
 
 ## How to verify before opening a PR
 

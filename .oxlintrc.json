@@ -16,7 +16,6 @@
     "oss-boundaries/no-contracts-to-runtime": "error",
     "oss-boundaries/no-react-to-runtime": "error",
     "oss-boundaries/no-deep-dist-import": "error",
-    "oss-boundaries/no-cross-extension-import": "error",
     "oss-boundaries/no-cross-core-domain": "error",
     "oss-boundaries/no-engine-to-domain": "error",
     "typescript/consistent-type-definitions": ["error", "type"]

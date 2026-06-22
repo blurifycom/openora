@@ -11,3 +11,4 @@ export { ModuleRegistryImpl } from './module-registry.js';
 export { loadPlugins } from './load-plugins.js';
 export type { PluginEntry } from './load-plugins.js';
 export { applyServiceManifest, parseServiceManifest } from './service-manifest.js';
+export { loadExtensions } from './load-extensions.js';

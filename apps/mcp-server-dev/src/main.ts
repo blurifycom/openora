@@ -542,7 +542,7 @@ server.registerTool(
 server.registerTool(
   'scaffold-plugin',
   {
-    description: 'Scaffold a new overlay extension under apps/api/src/extensions/<name>.',
+    description: 'Scaffold a new overlay extension under extensions/<name>.',
     inputSchema: { name: z.string() },
   },
   async ({ name }) => {

@@ -15,83 +15,13 @@ services:
       timeout: 5s
       retries: 10
 
-  # The services below are OPT-IN. Default `docker compose up` starts only postgres
-  # (library-first - apps run on the host via `pnpm dev`). Run the full reference
-  # stack with: `docker compose --profile full up --build`.
-
-  # One-shot: apply Drizzle migrations, then exit. api waits for it to complete.
-  migrate:
-    profiles: ['full']
-    build:
-      context: .
-      dockerfile: Dockerfile
-      target: api
-    working_dir: /app
-    environment:
-      DATABASE_URL: postgres://postgres:postgres@postgres:5432/oss_igaming
-    command: ['pnpm', '-F', '@blurifycom/db', 'migrate']
-    depends_on:
-      postgres:
-        condition: service_healthy
-
-  api:
-    profiles: ['full']
-    build:
-      context: .
-      dockerfile: Dockerfile
-      target: api
-    environment:
-      NODE_ENV: production
-      DATABASE_URL: postgres://postgres:postgres@postgres:5432/oss_igaming
-      PORT_API: '3001'
-      # Reference-only values. Replace BETTER_AUTH_SECRET for any real deployment.
-      BETTER_AUTH_SECRET: dev-only-insecure-secret-change-me
-      BETTER_AUTH_URL: http://localhost:3001
-      # Activates the rabbitmq MESSAGE_BROKER overlay in the full reference stack.
-      AMQP_URL: amqp://guest:guest@rabbitmq:5672
-    ports:
-      - '3001:3001'
-    depends_on:
-      postgres:
-        condition: service_healthy
-      migrate:
-        condition: service_completed_successfully
-      rabbitmq:
-        condition: service_healthy
-
-  web:
-    profiles: ['full']
-    build:
-      context: .
-      dockerfile: Dockerfile
-      target: web
-    environment:
-      NODE_ENV: production
-      NEXT_PUBLIC_API_URL: http://localhost:3001
-    ports:
-      - '3000:3000'
-    depends_on:
-      - api
-
-  backoffice:
-    profiles: ['full']
-    build:
-      context: .
-      dockerfile: Dockerfile
-      target: backoffice
-    environment:
-      VITE_PUBLIC_API_URL: http://localhost:3001
-    ports:
-      - '3002:3002'
-    depends_on:
-      - api
-
-  # Durable inter-module broker (MESSAGE_BROKER overlay). OPT-IN: in the `broker`
-  # profile it starts alongside postgres for local broker testing; in `full` it
-  # backs the reference api. Set AMQP_URL=amqp://guest:guest@rabbitmq:5672 to
-  # activate the rabbitmq overlay. Management UI on :15672 (guest/guest). ADR-0016.
+  # Durable inter-module broker (MESSAGE_BROKER overlay). OPT-IN via the `broker`
+  # profile for local broker testing: `docker compose --profile broker up`. The
+  # platform is headless - it ships no runnable API; a consumer app binds the
+  # broker by setting AMQP_URL and adding its own overlay. Management UI on
+  # :15672 (guest/guest). See ADR-0016.
   rabbitmq:
-    profiles: ['full', 'broker']
+    profiles: ['broker']
     image: rabbitmq:3-management
     ports:
       - '5672:5672'

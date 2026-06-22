@@ -34,8 +34,8 @@ const noCoreToAddon = {
           node,
           message:
             'The published core (@blurifycom/core) must not import an add-on package (@blurifycom-addons/*). ' +
-            'Add-on is wired in only by the composition roots under apps/* ' +
-            '(extensions.config.ts + the editions contract merge) and the @blurifycom/testing harness. ' +
+            "Add-on is wired in only by the consumer's composition root " +
+            '(extensions.config.ts + the build-contract slice merge) and the @blurifycom/testing harness. ' +
             'This keeps add-on packages extractable. See ADR-0021/0025.',
         });
       },
@@ -128,38 +128,6 @@ const noDeepDistImport = {
               'Never import a deep dist/ path. Use the package entry instead ' +
               '(e.g. @blurifycom-addons/wallet/schema).',
           });
-        }
-      },
-    };
-  },
-};
-
-const noCrossExtensionImport = {
-  create(context) {
-    return {
-      ImportDeclaration(node) {
-        const file = filename(context);
-        const m = file.match(/apps\/api\/src\/extensions\/([^/]+)\//);
-        if (!m) return;
-        const ownExt = m[1];
-        const spec = node.source.value;
-        if (!spec.startsWith('.')) return;
-        const segments = spec.split('/').filter(Boolean);
-        let i = 0;
-        while (i < segments.length && segments[i] === '..') i++;
-        if (i === 0) return;
-        const target = segments[i];
-        if (!target) return;
-        if (target !== ownExt && target !== 'extensions' && target.length > 0) {
-          if (i === 1) {
-            context.report({
-              node,
-              message:
-                'An overlay extension must not import another extension. ' +
-                'Cross-extension communication goes through the event bus. ' +
-                'See apps/api/src/extensions/AGENTS.md.',
-            });
-          }
         }
       },
     };
@@ -286,8 +254,8 @@ const noEngineToDomain = {
           message:
             `The @blurifycom/core engine (contracts/server/react) must not import a domain ` +
             `(${node.source.value}). createApp is domain-agnostic (DI: the consumer injects ` +
-            'PAM identity + the tenant resolver); a domain is wired in only through apps/* and ' +
-            'the @blurifycom/testing harness. See ADR-0024/0025.',
+            "PAM identity + the tenant resolver); a domain is wired in only through the consumer's " +
+            'app and the @blurifycom/testing harness. See ADR-0024/0025.',
         });
       },
     };
@@ -303,7 +271,7 @@ export default {
     'no-contracts-to-runtime': noContractsToRuntime,
     'no-react-to-runtime': noReactToRuntime,
     'no-deep-dist-import': noDeepDistImport,
-    'no-cross-extension-import': noCrossExtensionImport,
+
     'no-adhoc-zod-in-router': noAdhocZodInRouter,
     'no-cross-core-domain': noCrossCoreDomain,
     'no-engine-to-domain': noEngineToDomain,

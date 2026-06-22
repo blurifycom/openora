@@ -50,12 +50,8 @@ const toCamel = (v: string): string =>
 const root = (): string => process.cwd();
 // OSS monorepo has packages/addons; a consumer repo only has overlays.
 const isOssRepo = (): boolean => existsSync(join(root(), 'packages', 'addons'));
-// extensions.config.ts lives at the OSS root, or under apps/api/src in a consumer.
-const extensionsConfigPath = (): string => {
-  const ossPath = join(root(), 'extensions.config.ts');
-  const consumerPath = join(root(), 'apps', 'api', 'src', 'extensions.config.ts');
-  return existsSync(consumerPath) && !existsSync(ossPath) ? consumerPath : ossPath;
-};
+// extensions.config.ts lives at the repo root (both OSS and consumer repos).
+const extensionsConfigPath = (): string => join(root(), 'extensions.config.ts');
 const ossOnly = (gen: string): void => {
   if (!isOssRepo()) {
     throw new Error(
@@ -291,14 +287,11 @@ export default function generator(plop: PlopTypes.NodePlopAPI): void {
     actions: [
       {
         type: 'add',
-        path: 'apps/api/src/extensions/{{kebabCase name}}/plugin.ts',
+        path: 'extensions/{{kebabCase name}}/plugin.ts',
         templateFile: tpl('plugin.hbs'),
       },
       (a: Answers) =>
-        registerExtension(
-          toKebab(s(a, 'name')),
-          `./apps/api/src/extensions/${toKebab(s(a, 'name'))}/plugin.ts`,
-        ),
+        registerExtension(toKebab(s(a, 'name')), `./extensions/${toKebab(s(a, 'name'))}/plugin.ts`),
     ],
   });
 
@@ -337,14 +330,11 @@ export default function generator(plop: PlopTypes.NodePlopAPI): void {
     actions: [
       {
         type: 'add',
-        path: 'apps/api/src/extensions/{{kebabCase name}}/plugin.ts',
+        path: 'extensions/{{kebabCase name}}/plugin.ts',
         templateFile: tpl('adapter.hbs'),
       },
       (a: Answers) =>
-        registerExtension(
-          toKebab(s(a, 'name')),
-          `./apps/api/src/extensions/${toKebab(s(a, 'name'))}/plugin.ts`,
-        ),
+        registerExtension(toKebab(s(a, 'name')), `./extensions/${toKebab(s(a, 'name'))}/plugin.ts`),
     ],
   });
 
@@ -403,13 +393,13 @@ export default function generator(plop: PlopTypes.NodePlopAPI): void {
     actions: [
       {
         type: 'add',
-        path: 'apps/api/src/extensions/{{kebabCase name}}-worker/plugin.ts',
+        path: 'extensions/{{kebabCase name}}-worker/plugin.ts',
         templateFile: tpl('job-worker.hbs'),
       },
       (a: Answers) =>
         registerExtension(
           `${toKebab(s(a, 'name'))}-worker`,
-          `./apps/api/src/extensions/${toKebab(s(a, 'name'))}-worker/plugin.ts`,
+          `./extensions/${toKebab(s(a, 'name'))}-worker/plugin.ts`,
         ),
     ],
   });

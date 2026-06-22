@@ -1,22 +1,23 @@
-import {
-  applyServiceManifest,
-  parseServiceManifest,
-  type PluginEntry,
-} from '@blurifycom/core/server';
 import { resolve, dirname, isAbsolute } from 'node:path';
-import { fileURLToPath } from 'node:url';
 import { accessSync } from 'node:fs';
-import { applyEdition } from './editions.js';
+import { applyServiceManifest, parseServiceManifest } from './service-manifest.js';
+import type { PluginEntry } from './load-plugins.js';
 
-// Resolution order: EXTENSIONS_CONFIG env var, then walk up looking for extensions.config.js.
-// In dev, tsx resolves .js -> .ts; in Docker it is pre-compiled by api.Dockerfile.
-export async function loadExtensions(): Promise<PluginEntry[]> {
+/**
+ * Load the extensions.config.ts registry from disk and resolve plugin paths.
+ * Resolves via EXTENSIONS_CONFIG env var or walks up from process.cwd().
+ * Optional `filter` lets callers apply edition gating (eg OSS_ADDONS) before
+ * the service manifest is applied.
+ */
+export async function loadExtensions(
+  filter?: (entries: PluginEntry[]) => PluginEntry[],
+): Promise<PluginEntry[]> {
   const fromEnv = process.env['EXTENSIONS_CONFIG'];
   const configPath = fromEnv
     ? isAbsolute(fromEnv)
       ? fromEnv
       : resolve(process.cwd(), fromEnv)
-    : findConfigUpwards(dirname(fileURLToPath(import.meta.url)));
+    : findConfigUpwards(process.cwd());
 
   const mod = (await import(configPath)) as { extensions: PluginEntry[] };
   const configDir = dirname(configPath);
@@ -26,10 +27,10 @@ export async function loadExtensions(): Promise<PluginEntry[]> {
     path: isAbsolute(entry.path) ? entry.path : resolve(configDir, entry.path),
   }));
 
-  const entries = applyEdition(resolved);
+  const filtered = filter ? filter(resolved) : resolved;
 
   const manifest = parseServiceManifest(process.env['SERVICE_MANIFEST']);
-  const selected = applyServiceManifest(entries, manifest);
+  const selected = applyServiceManifest(filtered, manifest);
   if (manifest !== null) {
     process.stdout.write(
       `SERVICE_MANIFEST active: booting ${selected.map((e) => e.id).join(', ')}\n`,
@@ -47,7 +48,7 @@ function findConfigUpwards(start: string): string {
         accessSync(candidate);
         return candidate;
       } catch {
-        // not here
+        // not here - try parent
       }
     }
     const parent = dirname(dir);

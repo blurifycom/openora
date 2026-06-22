@@ -78,28 +78,6 @@ module.exports = {
         pathNot: ['^packages/addons/$1/', '/src/schema/'],
       },
     },
-    {
-      name: 'no-cross-extension',
-      severity: 'error',
-      comment:
-        'An overlay extension must not import another extension. Cross-extension communication goes through the event bus. See apps/api/src/extensions/AGENTS.md.',
-      from: { path: '^apps/api/src/extensions/([^/]+)/' },
-      to: {
-        path: '^apps/api/src/extensions/[^/]+/',
-        pathNot: '^apps/api/src/extensions/$1/',
-      },
-    },
-    {
-      name: 'no-app-into-addon-internals',
-      severity: 'error',
-      comment:
-        'apps/api wires add-ons only through extensions.config.ts (the plugin registry). A direct add-on-file import from apps/api/src/* is forbidden. See AGENTS.md > Dependency rules.',
-      from: {
-        path: '^apps/api/src/',
-        pathNot: '^apps/api/src/extensions/',
-      },
-      to: { path: '^packages/addons/[^/]+/' },
-    },
   ],
   options: {
     doNotFollow: { path: 'node_modules' },

@@ -356,7 +356,7 @@ function buildConsumerPlaybook(
         '## Playbook',
         '1. Spawn the `igaming-expert` agent (Task tool) to turn this ask into requirements + acceptance criteria (player journey, jurisdiction rules, edge cases). Skip only for a trivial change.',
         '2. Spawn the `igaming-builder` agent to implement: `pnpm gen plugin`, then in `register(ctx)` add routes (`ctx.routers.add`), subscribe to events (`ctx.events.on`), fill slots (`ctx.slots.fill`).',
-        '3. Register the plugin in `apps/api/src/extensions.config.ts`.',
+        '3. Register the plugin in `extensions.config.ts` at the repo root.',
         '4. Spawn the `igaming-qa` agent to write/run a Playwright E2E test for the acceptance criteria.',
         '5. Run `pnpm typecheck && pnpm lint`.',
         '',

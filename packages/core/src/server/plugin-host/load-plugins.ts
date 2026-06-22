@@ -12,7 +12,7 @@ export type PluginEntry = {
   // 'addon' = a optional, extract-later package under packages/addons/*. The
   // composition root loads it only when its id is in the OSS_ADDONS allowlist
   // (edition gate); for a service manifest it behaves like a normal module. See
-  // apps/api/src/editions.ts and ADR-0020.
+  // tools/build-contract.ts and ADR-0020.
   kind?: 'module' | 'infra' | 'addon';
 };
 

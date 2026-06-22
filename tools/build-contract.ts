@@ -1,5 +1,10 @@
-// Each module owns its contract slice; this root assembles the runtime contract - aggregation never lives in a shared package. See ADR-0021.
-import type { PluginEntry } from '@blurifycom/core/server';
+#!/usr/bin/env node
+/**
+ * Assembles the full runtime contract from all domain + add-on slices.
+ * Used by gen-openapi.ts and as a reference for consumer composition roots.
+ * Each domain owns its own /contracts slice; this file is the only place that
+ * stitches them together. See ADR-0021/0025.
+ */
 import type { ContractRouter } from '@orpc/contract';
 import { composeContract } from '@blurifycom/core/contracts';
 import { identityContract } from '@blurifycom/core/pam/contracts/identity';
@@ -40,10 +45,9 @@ const CORE: Record<string, AnyContract> = {
   audit: auditContract,
 };
 
-// `namespace` is the root-contract key - usually equals the id, but aggregator historically used `igamingAggregator`.
 type AddonEntry = { namespace: string; contract: AnyContract };
 
-// composition root (apps/*) is the only place allowed to import @blurifycom-addons/*. See ADR-0020.
+// namespace is the root-contract key; aggregator historically diverged from its id.
 const ADDONS: Record<string, AddonEntry> = {
   leaderboard: { namespace: 'leaderboard', contract: leaderboardContract },
   sportsbook: { namespace: 'sportsbook', contract: sportsbookContract },
@@ -51,6 +55,7 @@ const ADDONS: Record<string, AddonEntry> = {
   'player-management': { namespace: 'player', contract: playerContract },
 };
 
+/** Returns the set of add-on ids enabled by OSS_ADDONS (default: all). */
 export function enabledAddons(): Set<string> {
   const all = new Set(Object.keys(ADDONS));
   const raw = process.env['OSS_ADDONS'];
@@ -66,11 +71,7 @@ export function enabledAddons(): Set<string> {
   );
 }
 
-export function applyEdition(entries: PluginEntry[]): PluginEntry[] {
-  const enabled = enabledAddons();
-  return entries.filter((e) => e.kind !== 'addon' || enabled.has(e.id));
-}
-
+/** Compose the full runtime contract from core + enabled add-on slices. */
 export function buildContract({
   includeAddons = true,
 }: { includeAddons?: boolean } = {}): AnyContract {

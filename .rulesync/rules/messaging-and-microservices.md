@@ -23,9 +23,9 @@ This is a modular monolith today, designed so high-impact modules can be extract
 
 ## Deployable topology - the service manifest (ADR-0017)
 
-The same codebase boots as the full monolith or as a single-purpose service. `SERVICE_MANIFEST` (comma-separated module ids) selects which modules a process loads; unset = all (monolith). Infra overlays (broker/queue drivers, marked `kind: 'infra'` in `extensions.config.ts`) always load. Filtering lives in `applyServiceManifest` (`@blurifycom/plugin-host`), applied in `apps/api/src/extensions.ts`.
+The same codebase boots as the full monolith or as a single-purpose service. `SERVICE_MANIFEST` (comma-separated module ids) selects which modules a process loads; unset = all (monolith). Infra overlays (broker/queue drivers, marked `kind: 'infra'` in `extensions.config.ts`) always load. Filtering lives in `applyServiceManifest` (`@blurifycom/core/server`), applied inside `loadExtensions` (`@blurifycom/core/server`).
 
-- Run a subset on the existing host: `SERVICE_MANIFEST=identity,wallet pnpm -F @blurifycom/api dev`.
+- Run a subset: `SERVICE_MANIFEST=identity,wallet <your-app-dev-cmd>`.
 - Scaffold a dedicated thin host: `pnpm create:service <name> <modules>` -> `apps/<name>/` that bakes the manifest and reuses the root `extensions.config.ts` (module code is never copied).
 - A manifest must include a module's `dependsOn` deps (topo-sort fails fast otherwise). To run two split services that still exchange events, bind a durable broker (`AMQP_URL`) so events cross the process boundary.
 
@@ -69,7 +69,7 @@ The `EventBus` wraps every emission in a serializable envelope at the broker bou
 - `schemaVersion` - forward-compatible payload evolution.
 - `traceId` - lifted from the trace context for correlation (ADR-0026: tenantId removed).
 
-Because the envelope and the EventBus boundary isolate transport from domain logic, binding a durable broker is an overlay swap (`apps/api/src/extensions/rabbitmq/`) and extracting a module to its own service needs no module edits.
+Because the envelope and the EventBus boundary isolate transport from domain logic, binding a durable broker is an overlay swap (a `definePlugin` that re-provides `MESSAGE_BROKER`) and extracting a module to its own service needs no module edits.
 
 ### Migration path: in-process -> RabbitMQ -> Kafka
 
@@ -86,5 +86,5 @@ Activate RabbitMQ by setting `AMQP_URL` (eg `amqp://guest:guest@localhost:5672`)
 
 - A real broker/queue is **at-least-once** - handlers MUST be idempotent. For money-adjacent handlers/jobs use a DB guard (a unique row / status check), not just `eventId`/`idempotencyKey`.
 - Money never flows over events - keep it synchronous and transactional.
-- Background work: resolve `JOB_QUEUE`, `enqueue(queue('name'), payload, { idempotencyKey, attempts, backoff, orderingKey })`; a worker overlay registers the handler. BullMQ activates on `REDIS_URL`.
+- Background work: resolve `JOB_QUEUE`, `enqueue(queue('name'), payload, { idempotencyKey, attempts, backoff, orderingKey })`; a worker overlay registers the handler. Consumer apps add a BullMQ plugin (or another driver) to activate durable queues.
 - Client push: publish on `REALTIME_TRANSPORT` and expose an oRPC `eventIterator` served as SSE; bridge push->pull with `createEventStreamGenerator`. Do NOT keep a private listener `Set` in a service - go through the transport seam so a managed vendor fans out across instances (sportsbook odds is the reference adoption).

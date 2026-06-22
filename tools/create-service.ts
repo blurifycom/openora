@@ -57,8 +57,6 @@ const addonDeps = Object.fromEntries(
   manifest.map((id) => [`@blurifycom-addons/${id}`, 'workspace:*'] as const).sort(),
 );
 
-const extensionsLoader = readFileSync(join(repoRoot, 'apps/api/src/extensions.ts'), 'utf8');
-
 const files: Record<string, string> = {
   'package.json':
     JSON.stringify(
@@ -101,10 +99,7 @@ const files: Record<string, string> = {
       2,
     ) + '\n',
 
-  'src/extensions.ts': extensionsLoader,
-
-  'src/main.ts': `import { createApp } from '@blurifycom/core/server';
-import { loadExtensions } from './extensions.js';
+  'src/main.ts': `import { createApp, loadExtensions } from '@blurifycom/core/server';
 
 // ${name} service: boots only the modules it owns. The module code is shared with
 // the monolith (root extensions.config.ts) - this host just narrows it via the
@@ -115,7 +110,7 @@ async function bootstrap() {
   const plugins = await loadExtensions();
   // Routes come from the loaded plugins. To emit an OpenAPI spec for this
   // service, compose its slices with composeContract({ ... }) from
-  // @blurifycom/core/contracts and pass it as \`contract\`. See apps/api/src/editions.ts.
+  // @blurifycom/core/contracts and pass it as \`contract\`. See tools/build-contract.ts.
   const { listen } = await createApp({ plugins });
   await listen();
 }
