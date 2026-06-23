@@ -1,6 +1,6 @@
 import { makeNotFoundError, type EventBus } from '@blurifycom/core/server';
 import { DrizzleService, findOneOrThrow, pageToOffset } from '@blurifycom/core/server';
-import { eq, ilike, count, or, and, gte, desc, sql } from 'drizzle-orm';
+import { eq, ilike, count, or, and, gte, desc, sql, like } from 'drizzle-orm';
 // Reads the core-owned `player` table + identity `user` via the public /schema
 // subpaths (add-on->core reads, allowed by the boundary rules). PAM owns no
 // tables of its own. See ADR-0020.
@@ -65,7 +65,11 @@ export class PlayerService {
     if (status) conditions.push(eq(player.status, status));
     if (search) {
       conditions.push(
-        or(ilike(player.displayName, `%${search}%`), ilike(player.userId, `%${search}%`))!,
+        or(
+          ilike(player.displayName, `%${search}%`),
+          ilike(sql`${player.userId}::text`, search),
+          ilike(user.email, `%${search}%`),
+        )!,
       );
     }
     const whereClause = conditions.length > 0 ? and(...conditions) : undefined;
@@ -78,7 +82,11 @@ export class PlayerService {
         .orderBy(desc(player.createdAt))
         .limit(limit)
         .offset(pageToOffset(page, limit)),
-      db.select({ n: count() }).from(player).where(whereClause),
+      db
+        .select({ n: count() })
+        .from(player)
+        .leftJoin(user, eq(user.id, player.userId))
+        .where(whereClause),
     ]);
     const items = rows.map((r) => toPlayer(r.player, r.email ?? ''));
     return { items, total: Number(n), page, limit };
