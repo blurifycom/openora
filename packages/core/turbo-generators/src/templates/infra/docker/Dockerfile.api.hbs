@@ -1,6 +1,6 @@
 # syntax=docker/dockerfile:1
 # Build context = the dir holding BOTH repos side by side:
-#   <context>/igaming-oss   (the platform, linked via pnpm-workspace overrides)
+#   <context>/oss   (the platform, linked via pnpm-workspace overrides)
 #   <context>/{{kebabCase name}}        (this consumer repo)
 # The api runs TypeScript directly via tsx - no compile step, only deps + the OSS build.
 
@@ -13,14 +13,14 @@ WORKDIR /app
 # --- deps + oss build --------------------------------------------------------
 FROM base AS build
 # Copy both repos. Order: platform first so consumer links resolve.
-COPY igaming-oss/ ./igaming-oss/
+COPY oss/ ./oss/
 COPY {{kebabCase name}}/ ./{{kebabCase name}}/
 
 WORKDIR /app/{{kebabCase name}}
-# Resolves @blurifycom/* links into ../igaming-oss via pnpm-workspace overrides.
+# Resolves @blurifycom/* links into ../oss via pnpm-workspace overrides.
 RUN pnpm install --frozen-lockfile
 # Build the linked platform packages the api imports at runtime.
-RUN pnpm -C ../igaming-oss install --frozen-lockfile && pnpm build:oss
+RUN pnpm -C ../oss install --frozen-lockfile && pnpm build:oss
 
 # --- runtime -----------------------------------------------------------------
 # api runs from source with tsx; we keep the whole built workspace.

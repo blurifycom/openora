@@ -3,6 +3,6 @@ export const docsRoute = '/docs';
 
 export const gitConfig = {
   user: 'blurifycom',
-  repo: 'igaming-oss',
+  repo: 'oss',
   branch: 'dev',
 };

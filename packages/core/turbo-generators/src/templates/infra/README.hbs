@@ -2,7 +2,7 @@
 
 Deploys the three apps (api, web, backoffice) to AWS as ECS Fargate services behind a
 single ALB, with RDS Postgres and ElastiCache Redis. The platform (`@blurifycom/*`) is consumed
-as linked packages from the sibling `../igaming-oss` checkout, so Docker builds use a
+as linked packages from the sibling `../oss` checkout, so Docker builds use a
 combined context containing BOTH repos.
 
 ## Architecture
@@ -25,7 +25,7 @@ combined context containing BOTH repos.
 | Pulumi CLI | `brew install pulumi` (or see pulumi.com/docs) |
 | AWS credentials | `aws configure` / env vars with deploy permissions |
 | State backend | an S3 bucket you own for Pulumi state |
-| Both repos checked out | `../igaming-oss` next to this consumer (CI does this) |
+| Both repos checked out | `../oss` next to this consumer (CI does this) |
 
 ## First deploy
 
