@@ -59,7 +59,7 @@ awsx.ec2.Vpc (public + private subnets, NAT)
 
 ### Images + migrations
 
-- Images build from a **combined context** (the consumer repo + the sibling `igaming-oss` checkout, since the app builds via `pnpm -C ../igaming-oss build`). `awsx.ecr.Image.context` points at the parent dir holding both.
+- Images build from a **combined context** (the consumer repo + the sibling `oss` checkout, since the app builds via `pnpm -C ../oss build`). `awsx.ecr.Image.context` points at the parent dir holding both.
 - DB migrations run as a one-shot **ECS run-task** (api image, command override `pnpm db:migrate`) inside the VPC, after RDS is up and before api rolls. Migrations are not part of the app container start.
 
 ### CI

@@ -1,6 +1,6 @@
 # syntax=docker/dockerfile:1
 # Next.js 16 web app (output: 'standalone'). Build context holds BOTH repos:
-#   <context>/igaming-oss  +  <context>/{{kebabCase name}}
+#   <context>/oss  +  <context>/{{kebabCase name}}
 # NEXT_PUBLIC_API_URL is baked at BUILD time (public env), so it is a build arg.
 
 FROM node:26-slim AS base
@@ -14,12 +14,12 @@ FROM base AS build
 ARG NEXT_PUBLIC_API_URL
 ENV NEXT_PUBLIC_API_URL=${NEXT_PUBLIC_API_URL}
 
-COPY igaming-oss/ ./igaming-oss/
+COPY oss/ ./oss/
 COPY {{kebabCase name}}/ ./{{kebabCase name}}/
 
 WORKDIR /app/{{kebabCase name}}
 RUN pnpm install --frozen-lockfile
-RUN pnpm -C ../igaming-oss install --frozen-lockfile && pnpm build:oss
+RUN pnpm -C ../oss install --frozen-lockfile && pnpm build:oss
 RUN pnpm -F web build
 
 # --- runtime (standalone) ----------------------------------------------------

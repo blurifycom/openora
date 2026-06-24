@@ -1,13 +1,12 @@
-# Code owners for igaming-oss (the platform core).
-# GitLab uses this to require/suggest reviewers on MRs into protected branches.
+# Code owners for oss (the platform core).
+# GitHub uses this to request reviewers on PRs into protected branches.
 #
 # Ownership by area, not by person - team can change:
-#   - Core (contracts, modules, platform, tooling) -> platform maintainer
-#   - Frontend SDK (react/blocks/pages, UI provider) -> frontend owner, reviewed with the maintainer
+#   - Backend core (contracts, domains, server, tooling) -> platform maintainer + backend dev
+#   - Frontend SDK (react consumption layer) -> frontend owner, reviewed with the maintainer
 # Consumers read this repo as upstream; they don't edit it.
 
-* @volod
+* @zaxovaiko @agniev-a-hub
 
-# Frontend SDK + UI provider
-/packages/sdks/react/   @klaudia.blazyczek @volod
-/packages/ui/                 @klaudia.blazyczek @volod
+# Frontend SDK (react consumption layer)
+/packages/core/src/react/   @klaudia-blazyczek-blurify @zaxovaiko

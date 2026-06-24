@@ -24,7 +24,7 @@ Clone both repos side by side BEFORE running `pnpm install`:
 
 ```
 parent/
-  igaming-oss/        # the OSS platform checkout
+  oss/        # the OSS platform checkout
   {{name}}/           # this repo
 ```
 

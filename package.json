@@ -51,6 +51,8 @@
     "@blurifycom/core": "workspace:*",
     "@blurifycom/testing": "workspace:*",
     "@changesets/cli": "2.31.0",
+    "@commitlint/cli": "21.1.0",
+    "@commitlint/config-conventional": "21.1.0",
     "@turbo/gen": "2.9.16",
     "@types/node": "25.9.2",
     "dependency-cruiser": "17.4.3",

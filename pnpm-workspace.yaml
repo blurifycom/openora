@@ -61,3 +61,16 @@ minimumReleaseAgeExclude:
   - hono@4.12.25
   - oxfmt@0.54.0
   - oxlint@1.69.0
+  - '@commitlint/cli@21.1.0'
+  - '@commitlint/config-conventional@21.1.0'
+  - '@commitlint/config-validator@21.1.0'
+  - '@commitlint/ensure@21.1.0'
+  - '@commitlint/format@21.1.0'
+  - '@commitlint/is-ignored@21.1.0'
+  - '@commitlint/lint@21.1.0'
+  - '@commitlint/load@21.1.0'
+  - '@commitlint/parse@21.1.0'
+  - '@commitlint/read@21.1.0'
+  - '@commitlint/resolve-extends@21.1.0'
+  - '@commitlint/rules@21.1.0'
+  - '@commitlint/types@21.1.0'

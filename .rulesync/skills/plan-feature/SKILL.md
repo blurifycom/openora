@@ -2,7 +2,7 @@
 name: plan-feature
 targets: ['claudecode']
 description: >
-  Deliver an igaming-oss platform-core feature end-to-end - the full development + delivery
+  Deliver an oss platform-core feature end-to-end - the full development + delivery
   cycle: context collection -> plan + approval -> implementation -> unit/integration tests ->
   prepare e2e test cases -> e2e tests -> fixes -> create-pr -> Jira status transition -> Slack
   notice. Fed by an OSS work-order (from the consumer plan-feature handoff) or an OSS ticket.
@@ -11,9 +11,9 @@ description: >
   Read-only until the plan is approved; never pushes without explicit OK.
 ---
 
-# plan-feature (igaming-oss)
+# plan-feature (oss)
 
-Platform-core twin of the consumer `plan-feature` skill. Use it in the `igaming-oss` repo when a
+Platform-core twin of the consumer `plan-feature` skill. Use it in the `oss` repo when a
 consumer feature needs `@blurifycom/*` core changes (handed off via a work-order), or for a standalone
 core feature. It owns the **whole development + delivery cycle** end to end.
 
@@ -27,7 +27,7 @@ core feature. It owns the **whole development + delivery cycle** end to end.
 
 ## Coordinates
 
-- Repo: `consumer/igaming-oss` on GitLab. MR target: `dev`. Chain `dev -> stage -> main` + tags.
+- Repo: `consumer/oss` on GitLab. MR target: `dev`. Chain `dev -> stage -> main` + tags.
   Tool: `glab` CLI.
 - Codebase inspection: `oss-dev` MCP (read-only). Headless backend - contracts + Hono + oRPC +
   Drizzle, plus the react SDK and plugins. No UI app here.
@@ -117,8 +117,10 @@ for "yes push"**, pushes, and `glab mr create`s. Don't bypass the push-consent g
 
 ### 10. Reviewers from CODEOWNERS
 
-Parse `igaming-oss/CODEOWNERS`, match changed globs to owners (strip `@`); set the MR description
-to the plan summary + AC + the originating BF link:
+Parse `oss/CODEOWNERS`, match changed globs to owners (strip `@`); set the MR description
+to the plan summary + AC + the originating BF ticket KEY only (e.g. `ABC-45`, never the URL). No
+internal links (Jira/Confluence/Slack), hostnames, secrets, or PII in the title/description -
+see `create-pr` > "No sensitive data":
 
 ```
 glab mr update <iid> --reviewer volod,klaudia.blazyczek

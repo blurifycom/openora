@@ -150,10 +150,10 @@ Until OSS packages are published to npm, downstream consumers point at this work
   "overrides": {
     // Everything folded into one package (ADR-0025) - link @blurifycom/core, plus the
     // domain/add-on packages you install, plus the dev configs.
-    "@blurifycom/core":           "link:../igaming-oss/packages/core",
-    "@blurifycom/pam":            "link:../igaming-oss/packages/domains/pam",
-    "@blurifycom/wallet":         "link:../igaming-oss/packages/domains/wallet",
-    "@blurifycom/tsconfig":       "link:../igaming-oss/packages/config/tsconfig"
+    "@blurifycom/core":           "link:../oss/packages/core",
+    "@blurifycom/pam":            "link:../oss/packages/domains/pam",
+    "@blurifycom/wallet":         "link:../oss/packages/domains/wallet",
+    "@blurifycom/tsconfig":       "link:../oss/packages/config/tsconfig"
   }
 }
 ```

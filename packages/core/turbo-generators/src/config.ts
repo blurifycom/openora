@@ -55,7 +55,7 @@ const extensionsConfigPath = (): string => join(root(), 'extensions.config.ts');
 const ossOnly = (gen: string): void => {
   if (!isOssRepo()) {
     throw new Error(
-      `'gen ${gen}' is an OSS-core generator and only runs inside the igaming-oss monorepo. ` +
+      `'gen ${gen}' is an OSS-core generator and only runs inside the oss monorepo. ` +
         `In a consumer repo, extend via 'gen plugin' / 'gen adapter' overlays instead.`,
     );
   }

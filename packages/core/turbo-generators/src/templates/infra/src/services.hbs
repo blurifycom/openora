@@ -92,7 +92,7 @@ new aws.lb.ListenerRule("admin-rule", {
 // --- Cluster + images --------------------------------------------------------
 const cluster = new aws.ecs.Cluster("cluster", {});
 
-// `context` is the dir holding BOTH repos (igaming-oss + the consumer). From apps/infra
+// `context` is the dir holding BOTH repos (oss + the consumer). From apps/infra
 // that is three levels up. The Dockerfiles COPY both and build the linked workspace.
 const buildContext = "../../..";
 
