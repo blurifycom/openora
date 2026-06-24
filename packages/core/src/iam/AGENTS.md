@@ -28,7 +28,6 @@ is `permissions: Array<{ resource, level }>` and stores only non-`no_access` cel
 | `actionsToLevel(resource, [..])` | Read-back: collapse a concrete action set to its level (legacy/edge) |
 | `readActions[resource]`          | The READ action set; `['view']` by default, `[]` for `content`       |
 | `isLevelSufficient(have, req)`   | Ordered comparison (used by the no-escalation check)                 |
-| `DEFAULT_ADMIN_ROLES`            | The 15 predefined backoffice roles (operator-editable defaults)      |
 
 `content` has no `view` action -> it is read-or-nothing (`read` expands to `[]`).
 For single-action modules (`report`, `analytics`) `read` and `read_write` expand
@@ -49,12 +48,12 @@ Contract slice: `@blurifycom/core/iam/contract`.
 
 ## Extension points
 
-| Point                        | How                                                                                                  |
-| ---------------------------- | ---------------------------------------------------------------------------------------------------- |
-| Override email sender        | `ctx.provide(SEND_EMAIL, ...)` in an overlay loaded after this module                                |
-| React to accepted invitation | `ctx.events.on('iam.invitation.accepted', handler)` in an overlay                                    |
-| Add permission modules       | Edit `packages/core/src/server/auth/permissions.ts` `statement` - catalog, levels, validation derive |
-| Reprovision default roles    | `IamService.ensureDefaultRoles()` (idempotent; called by `seedDemoData`)                             |
+| Point                        | How                                                                                                                                                             |
+| ---------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Override email sender        | `ctx.provide(SEND_EMAIL, ...)` in an overlay loaded after this module                                                                                           |
+| React to accepted invitation | `ctx.events.on('iam.invitation.accepted', handler)` in an overlay                                                                                               |
+| Add permission modules       | Edit `packages/core/src/server/auth/permissions.ts` `statement` - catalog, levels, validation derive                                                            |
+| Change default roles         | Edit `DEFAULT_ADMIN_ROLES` (`iam/seed/default-admin-roles.ts`) and re-run the seeder (`seedRoles`, `@blurifycom/core/iam/seed`); migrations stay structure-only |
 
 ## Ports consumed / provided
 
@@ -80,7 +79,7 @@ Contract slice: `@blurifycom/core/iam/contract`.
 - **Super-admin** = a role with `isSuperAdmin=true`. The resolver returns ALL grants for any user holding one. The bootstrap admin (`user.role='admin'`, no DB assignment) also counts as super-admin via the static fallback, so it is never locked out.
 - **Admin-management routes require super-admin**: `createRole`, `updateRole`, `deleteRole`, `setRolePermissions`, `assignRole`, `unassignRole` throw `NotSuperAdminError` -> FORBIDDEN otherwise.
 - **No privilege escalation**: `setRolePermissions` rejects granting a level above the caller's own effective level per module (super-admin caller passes). Throws `GrantEscalationError` -> FORBIDDEN.
-- **Protected-role guards**: system (`isSystem`) roles cannot be DELETED, but predefined non-super roles MAY be renamed/redescribed. The **super-admin role cannot be edited or deleted** at all (`updateRole`/`deleteRole`/`setRolePermissions` throw `ProtectedRoleError` -> CONFLICT - it is always full access). And you cannot unassign the final user holding any super-admin role (`LastSuperAdminError` -> CONFLICT); the count + delete run in one transaction with the holder rows locked `FOR UPDATE`, so concurrent unassigns cannot both strip the last super admin.
+- **Protected-role guards**: system (`isSystem`) roles cannot be DELETED, but predefined non-super roles MAY be renamed (and their permissions edited). The **super-admin role cannot be edited or deleted** at all (`updateRole`/`deleteRole`/`setRolePermissions` throw `ProtectedRoleError` -> CONFLICT - it is always full access). And you cannot unassign the final user holding any super-admin role (`LastSuperAdminError` -> CONFLICT); the count + delete run in one transaction with the holder rows locked `FOR UPDATE`, so concurrent unassigns cannot both strip the last super admin.
 - The `admin` module (role/admin management) is NOT in the operator-editable catalog: it is omitted from `listCatalog` and a grant targeting it is rejected (`InvalidGrantError`). Admin capability comes ONLY from `isSuperAdmin`.
 - Unknown module/level (or the non-assignable `admin` module) -> `InvalidGrantError` -> BAD_REQUEST.
 - `assignRole` dedupes on the unique index (returns the existing row, no 500).
@@ -111,15 +110,15 @@ returns the max level per module across those roles (a pure preview, no writes).
 
 ## Events emitted
 
-| Topic                          | Payload                                    |
-| ------------------------------ | ------------------------------------------ |
-| `iam.invitation.accepted`      | `{ email, roleId, invitationId }`          |
-| `iam.role.created`             | `{ roleId, name, description?, actorId }`  |
-| `iam.role.updated`             | `{ roleId, name?, description?, actorId }` |
-| `iam.role.deleted`             | `{ roleId, actorId }`                      |
-| `iam.role.permissions.changed` | `{ roleId, before[], after[], actorId }`   |
-| `iam.role.assigned`            | `{ roleId, userId, actorId }`              |
-| `iam.role.revoked`             | `{ roleId, userId, actorId }`              |
+| Topic                          | Payload                                  |
+| ------------------------------ | ---------------------------------------- |
+| `iam.invitation.accepted`      | `{ email, roleId, invitationId }`        |
+| `iam.role.created`             | `{ roleId, name, actorId }`              |
+| `iam.role.updated`             | `{ roleId, name?, actorId }`             |
+| `iam.role.deleted`             | `{ roleId, actorId }`                    |
+| `iam.role.permissions.changed` | `{ roleId, before[], after[], actorId }` |
+| `iam.role.assigned`            | `{ roleId, userId, actorId }`            |
+| `iam.role.revoked`             | `{ roleId, userId, actorId }`            |
 
 Each `iam.role.*` payload carries an explicit `actorId` (the envelope does not).
 The `audit` add-on subscribes to all six (`SUBSCRIBED_TOPICS`) and records them
@@ -129,7 +128,7 @@ with `actorType:'admin'`, `resourceType:'role'`, `resourceId:roleId`, carrying
 ## Do
 
 - Derive modules/levels from `statement` + `permission-levels.ts` (never hardcode).
-- Treat `DEFAULT_ADMIN_ROLES` as operator-editable defaults: `ensureDefaultRoles` fills missing cells but never clobbers operator edits.
+- Treat `DEFAULT_ADMIN_ROLES` (`iam/seed/default-admin-roles.ts`) as the canonical spec: `seedRoles` is a convergent upsert keyed on `key`, so re-seeding reconciles names/levels back to the spec (it does not drop grants removed from it). Roles are seeded by a script, never a migration.
 
 ## Don't
 
@@ -142,4 +141,4 @@ with `actorType:'admin'`, `resourceType:'role'`, `resourceId:roleId`, carrying
 - [x] `pnpm regen` generated a migration (`0001_abc100_rbac_levels.sql`).
 - [x] `pnpm verify` exits 0.
 - [x] `ADMIN_PERMISSION_RESOLVER` bound in `plugin.ts`; super-admin bypass + level expansion.
-- [x] Unit tests cover level helpers, resolver bypass/expansion, escalation + protected-role blocks, last-super-admin guard, `ensureDefaultRoles` idempotency, preview union, `iam.role.*` emits.
+- [x] Unit tests cover level helpers, resolver bypass/expansion, escalation + protected-role blocks, last-super-admin guard, assign-to-admin-only guard, preview union, `iam.role.*` emits.

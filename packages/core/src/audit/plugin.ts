@@ -36,6 +36,30 @@ function mapEventToRecord(topic: string, p: Record<string, unknown>): RecordInpu
     };
   }
 
+  // Admin-triggered game-catalogue sync. actorId = acting admin (may be absent on
+  // system-triggered syncs, in which case it stays a system entry).
+  if (topic === 'aggregator.sync.completed') {
+    return {
+      ...base,
+      actorType: typeof p['actorId'] === 'string' ? 'admin' : 'system',
+      actorId: str(p['actorId']),
+      resourceType: 'game',
+      after: { synced: p['synced'] ?? null, failed: p['failed'] ?? null },
+    };
+  }
+
+  // Admin added/changed a geo (country) rule. resourceId = the country code.
+  if (topic === 'compliance.geo-rule.added') {
+    return {
+      ...base,
+      actorType: typeof p['actorId'] === 'string' ? 'admin' : 'system',
+      actorId: str(p['actorId']),
+      resourceType: 'geo-rule',
+      resourceId: str(p['countryCode']),
+      after: { action: p['action'] ?? null },
+    };
+  }
+
   // actorId = acting admin; resourceId = subject role. permissions.changed/updated
   // carries the matrix diff; assigned/revoked carries the target user in after.userId.
   if (topic.startsWith('iam.role.')) {
@@ -81,6 +105,8 @@ const SUBSCRIBED_TOPICS = [
   'compliance.limit.upserted',
   'compliance.limit.removed',
   'compliance.kyc.updated',
+  'compliance.geo-rule.added',
+  'aggregator.sync.completed',
   'cms.page.published',
   'iam.invitation.accepted',
   'iam.role.created',

@@ -16,8 +16,9 @@ export const adminRole = pgTable(
     // Stable slug for predefined roles; null for operator-created roles.
     // In Postgres NULL != NULL, so this unique index only deduplicates predefined slugs.
     key: text('key'),
+    // English fallback label; operators set it for custom roles. Localized display
+    // copy for predefined roles is resolved by `key` in the consumer (i18n), not stored.
     name: text('name').notNull(),
-    description: text('description'),
     // System roles cannot be deleted; super-admin roles bypass all authz checks and cannot be stripped.
     isSystem: boolean('isSystem').notNull().default(false),
     isSuperAdmin: boolean('isSuperAdmin').notNull().default(false),

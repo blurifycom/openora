@@ -5,7 +5,6 @@ import {
   createDomainError,
 } from '@blurifycom/core/server';
 import { DrizzleService, findOneOrThrow, pageToOffset } from '@blurifycom/core/server';
-import type { DrizzleDb } from '@blurifycom/core/server';
 import { eq, and, gt, inArray, sql } from 'drizzle-orm';
 import {
   statement,
@@ -21,13 +20,14 @@ import {
 } from '@blurifycom/core/server';
 import type { SendEmailPort } from '@blurifycom/core/contracts';
 import type { AdminPermissionResolver, AdminGrant } from '@blurifycom/core/contracts';
-import { DEFAULT_ADMIN_ROLES } from '@blurifycom/core/server';
 import {
   adminRole,
   adminRolePermission,
   adminRoleAssignment,
   adminInvitation,
 } from '../schema/index.js';
+// Read-only cross-domain schema import (sanctioned): assignRole verifies the target is an admin user.
+import { user } from '@blurifycom/core/pam/schema/identity';
 import type {
   AdminRole,
   AdminRoleWithGrants,
@@ -57,6 +57,12 @@ export const GrantEscalationError = createDomainError(
 export const NotSuperAdminError = createDomainError(
   'NotSuperAdminError',
   () => 'Super-admin access required',
+);
+export const AdminUserNotFoundError = makeNotFoundError('AdminUser');
+// Guards against assigning a backoffice role to a player account (privilege escalation).
+export const NotAnAdminUserError = createDomainError(
+  'NotAnAdminUserError',
+  () => 'Roles can only be assigned to admin users',
 );
 export const ProtectedRoleError = makeConflictError(
   'AdminRole',
@@ -138,7 +144,6 @@ function toRoleDto(row: typeof adminRole.$inferSelect): AdminRole {
     id: row.id,
     key: row.key ?? null,
     name: row.name,
-    description: row.description ?? null,
     isSystem: row.isSystem,
     isSuperAdmin: row.isSuperAdmin,
     createdAt: row.createdAt.toISOString(),
@@ -304,49 +309,32 @@ export class IamService {
     return { ...toRoleDto(row), permissions: await this.rolePermissions(roleId) };
   }
 
-  async createRole(input: {
-    name: string;
-    description?: string;
-    caller: Caller;
-  }): Promise<AdminRole> {
+  async createRole(input: { name: string; caller: Caller }): Promise<AdminRole> {
     await this.assertSuperAdmin(input.caller);
-    const [row] = await this.drizzle.db
-      .insert(adminRole)
-      .values({
-        name: input.name,
-        description: input.description ?? null,
-      })
-      .returning();
+    const [row] = await this.drizzle.db.insert(adminRole).values({ name: input.name }).returning();
     const dto = toRoleDto(row!);
     this.events.emit('iam.role.created', {
       roleId: dto.id,
       name: dto.name,
-      description: dto.description ?? undefined,
       actorId: input.caller.userId,
     });
     return dto;
   }
 
-  async updateRole(input: {
-    roleId: string;
-    name?: string;
-    description?: string | null;
-    caller: Caller;
-  }): Promise<AdminRole> {
+  async updateRole(input: { roleId: string; name?: string; caller: Caller }): Promise<AdminRole> {
     await this.assertSuperAdmin(input.caller);
     const existing = findOneOrThrow(
       await this.drizzle.db.select().from(adminRole).where(eq(adminRole.id, input.roleId)),
       new RoleNotFoundError(input.roleId),
     );
 
-    // The super-admin role bypasses authz and must never be renamed or redescribed.
+    // The super-admin role bypasses authz and must never be renamed.
     if (existing.isSuperAdmin) {
       throw new ProtectedRoleError();
     }
 
     const patch: Partial<typeof adminRole.$inferInsert> = {};
     if (input.name !== undefined) patch.name = input.name;
-    if (input.description !== undefined) patch.description = input.description;
 
     const [row] = await this.drizzle.db
       .update(adminRole)
@@ -357,7 +345,6 @@ export class IamService {
     this.events.emit('iam.role.updated', {
       roleId: dto.id,
       name: input.name,
-      description: input.description,
       actorId: input.caller.userId,
     });
     return dto;
@@ -481,6 +468,16 @@ export class IamService {
       await this.drizzle.db.select().from(adminRole).where(eq(adminRole.id, input.roleId)),
       new RoleNotFoundError(input.roleId),
     );
+
+    // The target must be an admin account - the resolver grants admin access to anyone with
+    // an assignment row, so assigning to a player would silently escalate them.
+    const target = findOneOrThrow(
+      await this.drizzle.db.select({ role: user.role }).from(user).where(eq(user.id, input.userId)),
+      new AdminUserNotFoundError(input.userId),
+    );
+    if (target.role !== 'admin') {
+      throw new NotAnAdminUserError();
+    }
 
     // Return the existing row rather than 500-ing on the unique (userId, roleId) index.
     const existing = await this.drizzle.db
@@ -651,10 +648,6 @@ export class IamService {
     };
   }
 
-  async ensureDefaultRoles(): Promise<AdminRole[]> {
-    return ensureDefaultRoles(this.drizzle.db);
-  }
-
   async listInvitations({ page, limit }: Page): Promise<Paginated<AdminInvitation>> {
     const offset = pageToOffset(page, limit);
     const [rows, countResult] = await Promise.all([
@@ -664,7 +657,15 @@ export class IamService {
     return { items: rows.map(toInvitationDto), total: countResult[0]?.count ?? 0, page, limit };
   }
 
-  async inviteAdmin(input: { email: string; roleId: string }): Promise<AdminInvitation> {
+  async inviteAdmin(input: {
+    email: string;
+    roleId: string;
+    caller: Caller;
+  }): Promise<AdminInvitation> {
+    // Inviting to a role is a role grant by another name, so it is super-admin-only -
+    // consistent with assignRole. A non-super admin must not invite to a role
+    // exceeding their own (esp. super-admin).
+    await this.assertSuperAdmin(input.caller);
     findOneOrThrow(
       await this.drizzle.db.select().from(adminRole).where(eq(adminRole.id, input.roleId)),
       new RoleNotFoundError(input.roleId),
@@ -723,49 +724,4 @@ export class IamService {
 
     return { success: true, email: row.email };
   }
-}
-
-/** Idempotent provisioning of the 15 predefined roles. Inserts missing roles by key; never clobbers existing operator edits. Standalone so seeding needs only a Drizzle handle - no EventBus or email. */
-export async function ensureDefaultRoles(db: DrizzleDb): Promise<AdminRole[]> {
-  const result: AdminRole[] = [];
-  for (const def of DEFAULT_ADMIN_ROLES) {
-    const existing = await db.select().from(adminRole).where(eq(adminRole.key, def.key));
-
-    let roleRow = existing[0];
-    if (!roleRow) {
-      const [inserted] = await db
-        .insert(adminRole)
-        .values({
-          key: def.key,
-          name: def.name,
-          description: def.description,
-          isSystem: def.isSystem,
-          isSuperAdmin: def.isSuperAdmin,
-        })
-        .returning();
-      roleRow = inserted!;
-    }
-
-    if (!def.isSuperAdmin) {
-      const present = await db
-        .select({ resource: adminRolePermission.resource })
-        .from(adminRolePermission)
-        .where(eq(adminRolePermission.roleId, roleRow.id));
-      const presentSet = new Set(present.map((p) => p.resource));
-
-      const toInsert = Object.entries(def.matrix)
-        .filter(([resource, level]) => level !== 'no_access' && !presentSet.has(resource))
-        .map(([resource, level]) => ({
-          roleId: roleRow!.id,
-          resource,
-          level: level as PermissionLevel,
-        }));
-      if (toInsert.length > 0) {
-        await db.insert(adminRolePermission).values(toInsert);
-      }
-    }
-
-    result.push(toRoleDto(roleRow));
-  }
-  return result;
 }

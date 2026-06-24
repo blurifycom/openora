@@ -85,6 +85,39 @@ function headersToRecord(headers: Headers): Record<string, string> {
   return out;
 }
 
+// Webhook signature schemes (eg aggregator callbacks) must hash the verbatim body,
+// so the runtime captures it before oRPC parses the request. Bounded to keep an
+// oversized payload from buffering into memory - past the cap rawBody stays unset
+// and the signature check fails closed (401).
+const MAX_CAPTURED_BODY_BYTES = 1_048_576;
+
+async function captureRawBody(req: Request): Promise<string | undefined> {
+  if (!req.body) return undefined;
+  const declaredLength = req.headers.get('content-length');
+  if (declaredLength && Number(declaredLength) > MAX_CAPTURED_BODY_BYTES) return undefined;
+  // content-length can be absent (chunked) or lie, so bound the actual stream rather
+  // than trusting the header: stop and bail past the cap so memory stays bounded and
+  // the signature check fails closed.
+  const reader = req.clone().body!.getReader();
+  const chunks: Uint8Array[] = [];
+  let total = 0;
+  try {
+    for (;;) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      total += value.byteLength;
+      if (total > MAX_CAPTURED_BODY_BYTES) {
+        await reader.cancel();
+        return undefined;
+      }
+      chunks.push(value);
+    }
+  } finally {
+    reader.releaseLock();
+  }
+  return Buffer.concat(chunks).toString('utf8');
+}
+
 export async function createApp(config: CreateAppConfig): Promise<CreatedApp> {
   if (config.databaseUrl) {
     process.env['DATABASE_URL'] = config.databaseUrl;
@@ -213,7 +246,10 @@ export async function createApp(config: CreateAppConfig): Promise<CreatedApp> {
 
   app.use('/*', async (c, next) => {
     const headers = headersToRecord(c.req.raw.headers);
-    const context: OssContext = { request: { headers } };
+    const context: OssContext = {
+      request: { headers },
+      rawBody: await captureRawBody(c.req.raw),
+    };
 
     // Never identify from a client-supplied `x-user-id` header (W1, ADR-0019).
     const userId = await sessions.resolveUserId(c.req.raw.headers);

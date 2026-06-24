@@ -15,6 +15,8 @@ import {
   ProtectedRoleError,
   LastSuperAdminError,
   InvitationConflictError,
+  AdminUserNotFoundError,
+  NotAnAdminUserError,
 } from '../service/iam.service.js';
 
 vi.mock('drizzle-orm', async (importOriginal) => {
@@ -52,6 +54,8 @@ function routingDrizzle(byTable: {
   // The caller's own assignment rows, read by isSuperAdmin(caller) (select { roleId }).
   callerAssignment?: unknown[];
   superRole?: unknown[];
+  // The target-user row read by assignRole to verify the account is an admin.
+  user?: unknown[];
 }) {
   let table: Record<string, unknown> = {};
   let lastSelect: Record<string, unknown> | undefined;
@@ -67,6 +71,7 @@ function routingDrizzle(byTable: {
     innerJoin: vi.fn().mockReturnThis(),
     where: vi.fn().mockImplementation(() => {
       const route = (): unknown[] => {
+        if ('emailVerified' in table) return byTable.user ?? [];
         if ('level' in table) return byTable.permission ?? [];
         // adminRoleAssignment has `userId` column. A { roleId }-only select is the
         // assignment read used by both getGrants and isSuperAdmin(caller); a
@@ -109,7 +114,6 @@ const ROLE_ROW = {
   id: 'role-1',
   key: null,
   name: 'Ops',
-  description: null,
   isSystem: false,
   isSuperAdmin: false,
   createdAt: new Date(),
@@ -432,6 +436,7 @@ describe('IamService.assignRole', () => {
     };
     const drizzle = routingDrizzle({
       role: [ROLE_ROW],
+      user: [{ role: 'admin' }],
       callerAssignment: [],
       assignment: [existingAssignment],
       superRole: [],
@@ -443,6 +448,34 @@ describe('IamService.assignRole', () => {
     );
     expect(result.id).toBe('a1');
     expect(events.emit).not.toHaveBeenCalledWith('iam.role.assigned', expect.anything());
+  });
+
+  it('rejects assigning a role to a non-admin (player) account', async () => {
+    const drizzle = routingDrizzle({
+      role: [ROLE_ROW],
+      user: [{ role: 'player' }],
+      callerAssignment: [],
+      superRole: [],
+    });
+    const svc = new IamService(drizzle, makeEvents(), makeEmail());
+    await expect(
+      inContext(() =>
+        svc.assignRole({ userId: 'player-1', roleId: 'role-1', caller: ADMIN_CALLER }),
+      ),
+    ).rejects.toThrow(NotAnAdminUserError);
+  });
+
+  it('rejects assigning a role to an unknown user', async () => {
+    const drizzle = routingDrizzle({
+      role: [ROLE_ROW],
+      user: [],
+      callerAssignment: [],
+      superRole: [],
+    });
+    const svc = new IamService(drizzle, makeEvents(), makeEmail());
+    await expect(
+      inContext(() => svc.assignRole({ userId: 'ghost', roleId: 'role-1', caller: ADMIN_CALLER })),
+    ).rejects.toThrow(AdminUserNotFoundError);
   });
 });
 
@@ -566,89 +599,6 @@ describe('IamService.previewEffectivePermissions', () => {
   });
 });
 
-describe('IamService.ensureDefaultRoles', () => {
-  it('inserts missing roles and fills missing cells; never duplicates existing', async () => {
-    // Stateful in-memory store: roles keyed by `key`, perms by roleId.
-    const roleStore = new Map<string, { id: string; key: string }>();
-    const permStore = new Map<string, Set<string>>();
-    let insertCount = 0;
-    let lastRoleId = '';
-
-    let table: Record<string, unknown> = {};
-    let pendingInsert: 'role' | 'permission' | null = null;
-
-    const chain: Record<string, unknown> = {
-      select: vi.fn().mockReturnThis(),
-      from: vi.fn().mockImplementation((tbl: Record<string, unknown>) => {
-        table = tbl ?? {};
-        return chain;
-      }),
-      where: vi.fn().mockImplementation((pred: unknown) => {
-        if ('level' in table) {
-          const present = permStore.get(lastRoleId) ?? new Set<string>();
-          return Promise.resolve([...present].map((resource) => ({ resource })));
-        }
-        const key = extractKey(pred);
-        const existing = key ? roleStore.get(key) : undefined;
-        if (existing) lastRoleId = existing.id;
-        return Promise.resolve(existing ? [{ ...ROLE_ROW, ...existing }] : []);
-      }),
-      insert: vi.fn().mockImplementation((tbl: Record<string, unknown>) => {
-        pendingInsert = 'level' in tbl ? 'permission' : 'role';
-        return chain;
-      }),
-      values: vi.fn().mockImplementation((vals: unknown) => {
-        if (pendingInsert === 'role') {
-          const v = vals as { key: string };
-          const id = `id-${v.key}`;
-          roleStore.set(v.key, { id, key: v.key });
-          lastRoleId = id;
-          insertCount++;
-        } else if (pendingInsert === 'permission') {
-          for (const row of vals as Array<{ roleId: string; resource: string }>) {
-            if (!permStore.has(row.roleId)) permStore.set(row.roleId, new Set());
-            permStore.get(row.roleId)!.add(row.resource);
-          }
-        }
-        return chain;
-      }),
-      returning: vi
-        .fn()
-        .mockImplementation(() =>
-          Promise.resolve([{ ...ROLE_ROW, id: lastRoleId, key: lastRoleId.replace('id-', '') }]),
-        ),
-    };
-
-    const drizzle = { db: chain } as unknown as import('@blurifycom/core/server').DrizzleService;
-    const svc = new IamService(drizzle, makeEvents(), makeEmail());
-
-    const first = await svc.ensureDefaultRoles();
-    expect(first).toHaveLength(15);
-    const rolesAfterFirst = roleStore.size;
-    const insertsAfterFirst = insertCount;
-    const permSnapshot = new Map([...permStore].map(([k, v]) => [k, new Set(v)]));
-
-    const second = await svc.ensureDefaultRoles();
-    expect(second).toHaveLength(15);
-    expect(roleStore.size).toBe(rolesAfterFirst);
-    expect(insertCount).toBe(insertsAfterFirst);
-    for (const [roleId, resources] of permStore) {
-      expect([...resources].sort()).toEqual([...(permSnapshot.get(roleId) ?? [])].sort());
-    }
-  });
-});
-
-function extractKey(pred: unknown): string | undefined {
-  const direct = pred as { __col?: string; val?: unknown };
-  if (direct.__col === 'key' && typeof direct.val === 'string') return direct.val;
-  const args = (pred as { __and?: unknown[] })?.__and ?? [];
-  for (const a of args) {
-    const o = a as { __col?: string; val?: unknown };
-    if (o.__col === 'key' && typeof o.val === 'string') return o.val;
-  }
-  return undefined;
-}
-
 describe('IamService.acceptInvitation', () => {
   it('accepts once and emits exactly one event', async () => {
     const invRow = {
@@ -680,25 +630,38 @@ describe('IamService.acceptInvitation', () => {
 });
 
 describe('IamService.inviteAdmin', () => {
-  it('creates a pending invitation and calls SEND_EMAIL', async () => {
-    const invitationRow = {
-      id: 'inv-1',
-      email: 'new@admin.com',
-      roleId: 'role-1',
-      token: 'tok-abc',
-      status: 'pending',
-      expiresAt: new Date(Date.now() + 86400000),
-      acceptedAt: null,
-      createdAt: new Date(),
-    };
-    let callCount = 0;
-    const chain = {
-      select: vi.fn().mockReturnThis(),
-      from: vi.fn().mockReturnThis(),
+  const invitationRow = {
+    id: 'inv-1',
+    email: 'new@admin.com',
+    roleId: 'role-1',
+    token: 'tok-abc',
+    status: 'pending',
+    expiresAt: new Date(Date.now() + 86400000),
+    acceptedAt: null,
+    createdAt: new Date(),
+  };
+
+  it('creates a pending invitation and calls SEND_EMAIL when caller is super-admin', async () => {
+    let table: Record<string, unknown> = {};
+    let lastSelect: Record<string, unknown> | undefined;
+    const chain: Record<string, unknown> = {
+      select: vi.fn().mockImplementation((sel?: Record<string, unknown>) => {
+        lastSelect = sel;
+        return chain;
+      }),
+      from: vi.fn().mockImplementation((tbl: Record<string, unknown>) => {
+        table = tbl ?? {};
+        return chain;
+      }),
       where: vi.fn().mockImplementation(() => {
-        callCount++;
-        if (callCount === 1) return Promise.resolve([ROLE_ROW]);
-        return Promise.resolve([invitationRow]);
+        // adminRoleAssignment (has userId col): caller's assignment for isSuperAdmin.
+        if ('userId' in table) return Promise.resolve([{ roleId: 'role-super' }]);
+        // adminRole id-only probe: the super-admin check.
+        if (lastSelect && 'id' in lastSelect && Object.keys(lastSelect).length === 1) {
+          return Promise.resolve([{ id: 'role-super' }]);
+        }
+        // adminRole full row: role-existence lookup.
+        return Promise.resolve([ROLE_ROW]);
       }),
       insert: vi.fn().mockReturnThis(),
       values: vi.fn().mockReturnThis(),
@@ -708,12 +671,32 @@ describe('IamService.inviteAdmin', () => {
     const email = makeEmail();
     const svc = new IamService(drizzle, makeEvents(), email);
     const result = await inContext(() =>
-      svc.inviteAdmin({ email: 'new@admin.com', roleId: 'role-1' }),
+      svc.inviteAdmin({ email: 'new@admin.com', roleId: 'role-1', caller: ADMIN_CALLER }),
     );
     expect(result.status).toBe('pending');
     expect(result.email).toBe('new@admin.com');
     expect(email.send).toHaveBeenCalledOnce();
     expect(email.send).toHaveBeenCalledWith(expect.objectContaining({ to: 'new@admin.com' }));
+  });
+
+  it('rejects a non-super-admin caller', async () => {
+    const drizzle = routingDrizzle({
+      role: [ROLE_ROW],
+      callerAssignment: [{ roleId: 'role-x' }],
+      superRole: [],
+    });
+    const email = makeEmail();
+    const svc = new IamService(drizzle, makeEvents(), email);
+    await expect(
+      inContext(() =>
+        svc.inviteAdmin({
+          email: 'new@admin.com',
+          roleId: 'role-1',
+          caller: { userId: 'sup-1', role: 'support' },
+        }),
+      ),
+    ).rejects.toBeInstanceOf(NotSuperAdminError);
+    expect(email.send).not.toHaveBeenCalled();
   });
 });
 

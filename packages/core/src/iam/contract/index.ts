@@ -1,14 +1,16 @@
 import { oc } from '@orpc/contract';
 import * as z from 'zod';
 import { PageQuerySchema, paginated } from '@blurifycom/core/contracts/kit';
+import { UuidSchema } from '@blurifycom/core/contracts';
 
 export const PermissionLevelSchema = z.enum(['no_access', 'read', 'read_write']);
 
 export const AdminRoleSchema = z.object({
-  id: z.uuid(),
+  id: UuidSchema,
+  // Stable slug for predefined roles (null for custom); the consumer maps it to
+  // localized display copy. `name` is an English fallback / custom-role label.
   key: z.string().nullable(),
   name: z.string(),
-  description: z.string().nullable(),
   isSystem: z.boolean(),
   isSuperAdmin: z.boolean(),
   createdAt: z.iso.datetime(),
@@ -25,9 +27,9 @@ export const AdminRoleWithGrantsSchema = AdminRoleSchema.extend({
 });
 
 export const AdminRoleAssignmentSchema = z.object({
-  id: z.uuid(),
-  userId: z.uuid(),
-  roleId: z.uuid(),
+  id: UuidSchema,
+  userId: UuidSchema,
+  roleId: UuidSchema,
   createdAt: z.iso.datetime(),
 });
 
@@ -37,9 +39,9 @@ export const AdminRoleAssignmentDetailSchema = AdminRoleAssignmentSchema.extend(
 });
 
 export const AdminInvitationSchema = z.object({
-  id: z.uuid(),
+  id: UuidSchema,
   email: z.string(),
-  roleId: z.uuid(),
+  roleId: UuidSchema,
   token: z.string(),
   status: z.enum(['pending', 'accepted', 'revoked']),
   expiresAt: z.string(),
@@ -77,35 +79,29 @@ export const iamContract = {
 
   getRole: oc
     .route({ method: 'GET', path: '/iam/roles/{roleId}' })
-    .input(z.object({ roleId: z.uuid() }))
+    .input(z.object({ roleId: UuidSchema }))
     .output(AdminRoleWithGrantsSchema),
 
   createRole: oc
     .route({ method: 'POST', path: '/iam/roles' })
-    .input(z.object({ name: z.string(), description: z.string().optional() }))
+    .input(z.object({ name: z.string() }))
     .output(AdminRoleSchema),
 
   updateRole: oc
     .route({ method: 'PATCH', path: '/iam/roles/{roleId}' })
-    .input(
-      z.object({
-        roleId: z.uuid(),
-        name: z.string().optional(),
-        description: z.string().nullable().optional(),
-      }),
-    )
+    .input(z.object({ roleId: UuidSchema, name: z.string().optional() }))
     .output(AdminRoleSchema),
 
   deleteRole: oc
     .route({ method: 'DELETE', path: '/iam/roles/{roleId}' })
-    .input(z.object({ roleId: z.uuid() }))
+    .input(z.object({ roleId: UuidSchema }))
     .output(z.object({ success: z.literal(true) })),
 
   setRolePermissions: oc
     .route({ method: 'PUT', path: '/iam/roles/{roleId}/permissions' })
     .input(
       z.object({
-        roleId: z.uuid(),
+        roleId: UuidSchema,
         grants: z.array(GrantInputSchema),
       }),
     )
@@ -113,22 +109,22 @@ export const iamContract = {
 
   assignRole: oc
     .route({ method: 'POST', path: '/iam/assignments' })
-    .input(z.object({ userId: z.uuid(), roleId: z.uuid() }))
+    .input(z.object({ userId: UuidSchema, roleId: UuidSchema }))
     .output(AdminRoleAssignmentSchema),
 
   unassignRole: oc
     .route({ method: 'DELETE', path: '/iam/assignments' })
-    .input(z.object({ userId: z.uuid(), roleId: z.uuid() }))
+    .input(z.object({ userId: UuidSchema, roleId: UuidSchema }))
     .output(z.object({ success: z.literal(true) })),
 
   listAssignments: oc
     .route({ method: 'GET', path: '/iam/assignments' })
-    .input(PageQuerySchema.extend({ userId: z.uuid().optional() }))
+    .input(PageQuerySchema.extend({ userId: UuidSchema.optional() }))
     .output(paginated(AdminRoleAssignmentDetailSchema)),
 
   previewEffectivePermissions: oc
     .route({ method: 'POST', path: '/iam/effective-permissions' })
-    .input(z.union([z.object({ userId: z.uuid() }), z.object({ roleIds: z.array(z.uuid()) })]))
+    .input(z.union([z.object({ userId: UuidSchema }), z.object({ roleIds: z.array(UuidSchema) })]))
     .output(EffectivePermissionsSchema),
 
   listInvitations: oc
@@ -138,7 +134,7 @@ export const iamContract = {
 
   inviteAdmin: oc
     .route({ method: 'POST', path: '/iam/invitations' })
-    .input(z.object({ email: z.email(), roleId: z.uuid() }))
+    .input(z.object({ email: z.email(), roleId: UuidSchema }))
     .output(AdminInvitationSchema),
 
   acceptInvitation: oc

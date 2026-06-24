@@ -1,7 +1,15 @@
 #!/usr/bin/env node
 /**
- * Populate the local database with demo data so the backoffice has something
- * realistic to show. Run via `pnpm seed`. Idempotent - safe to re-run.
+ * Populate the local database so the backoffice has something realistic to show.
+ * Run via `pnpm seed`. Idempotent - safe to re-run.
+ *
+ * Two phases, both idempotent:
+ *   1. Reference data - IAM's predefined roles (seedRoles, convergent upsert). Safe on any env.
+ *   2. Demo data - admin + fake players + games + transactions (dev/local only).
+ *
+ * Seeding is a standalone one-shot script (mirrors tools/migrate-all.mjs) - it needs only a
+ * DB connection, never boots the app. Reference seeders are composed explicitly here; the
+ * consumer's own seed script does the same with the modules it enables.
  *
  *   pnpm seed                       # 36 players, admin@oss.dev / password123
  *   pnpm seed --players=60          # more players
@@ -10,8 +18,8 @@
  * Requires DATABASE_URL (falls back to the local docker default). Single-tenant
  * since ADR-0026 - one DB role, no RLS.
  */
-import { createAuth } from '@blurifycom/core/server';
-import { createDrizzleDb } from '@blurifycom/core/server';
+import { createAuth, createDrizzleDb } from '@blurifycom/core/server';
+import { seedRoles } from '@blurifycom/core/iam/seed';
 import { seedDemoData } from '@blurifycom/testing';
 import {
   user,
@@ -35,6 +43,9 @@ async function main() {
   // better-auth's drizzle adapter needs the auth tables passed as schema, else
   // user creation throws "model user not found". See @blurifycom/core/server createAuth().
   const auth = createAuth({ db, schema: { user, session, account, verification, twoFactor } });
+
+  await seedRoles(db);
+  console.log('  Reference roles ready.');
 
   const result = await seedDemoData({
     db,

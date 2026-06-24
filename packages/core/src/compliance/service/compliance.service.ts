@@ -97,7 +97,7 @@ export class ComplianceService {
     return { allowed: true, countryCode, reason: null };
   }
 
-  async addGeoRule(input: AddGeoRuleInput): Promise<GeoRule> {
+  async addGeoRule(input: AddGeoRuleInput, actorId?: string): Promise<GeoRule> {
     const [row] = await this.drizzle.db
       .insert(geoRule)
       .values({ countryCode: input.countryCode, action: input.action })
@@ -106,6 +106,11 @@ export class ComplianceService {
         set: { action: input.action },
       })
       .returning();
+    this.events.emit('compliance.geo-rule.added', {
+      countryCode: input.countryCode,
+      action: input.action,
+      actorId,
+    });
     return serializeRow(row!, { dateFields: ['createdAt'] }) as GeoRule;
   }
 

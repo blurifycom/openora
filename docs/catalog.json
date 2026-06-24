@@ -310,6 +310,7 @@
       "token": "AUDIT_WRITER",
       "status": "wired",
       "boundIn": [
+        "packages/core/src/admin-console/plugin.ts",
         "packages/core/src/audit/plugin.ts"
       ]
     },
@@ -433,6 +434,7 @@
     "bonus.claimed",
     "chat.message.sent",
     "cms.page.published",
+    "compliance.geo-rule.added",
     "compliance.kyc.updated",
     "compliance.limit.removed",
     "compliance.limit.upserted",
@@ -822,6 +824,10 @@
     {
       "name": "UserIdInputSchema",
       "file": "packages/core/src/contracts/schemas/common.ts"
+    },
+    {
+      "name": "UserRoleSchema",
+      "file": "packages/core/src/admin-console/contract/index.ts"
     },
     {
       "name": "UserSchema",

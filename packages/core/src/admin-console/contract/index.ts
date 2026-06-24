@@ -11,6 +11,11 @@ export const PlatformStatsSchema = z.object({
   totalBonusClaimed: z.number(),
 });
 
+// Closed set of values the `user.role` column legitimately holds. `admin` is the
+// super-admin bootstrap role (IamService.isSuperAdmin), so writing it is gated to
+// super-admins in the router; arbitrary strings must never reach the directory.
+export const UserRoleSchema = z.enum(['player', 'admin']);
+
 export const AdminUserSchema = z.object({
   id: z.uuid(),
   email: z.string(),
@@ -49,7 +54,7 @@ export const backofficeContract = {
       z.object({
         userId: z.uuid(),
         isActive: z.boolean().optional(),
-        role: z.string().optional(),
+        role: UserRoleSchema.optional(),
       }),
     )
     .output(AdminUserSchema),

@@ -12,6 +12,8 @@ import {
   NotSuperAdminError,
   ProtectedRoleError,
   LastSuperAdminError,
+  AdminUserNotFoundError,
+  NotAnAdminUserError,
 } from '../service/iam.service.js';
 
 export function createIamRouter(svc: IamService, adminGuard: AdminGuard) {
@@ -20,8 +22,8 @@ export function createIamRouter(svc: IamService, adminGuard: AdminGuard) {
   // Error map for the super-admin-only mutation routes. NotSuperAdminError and
   // GrantEscalationError -> FORBIDDEN; protected/last-super-admin -> CONFLICT.
   const adminMgmtErrors = {
-    NOT_FOUND: RoleNotFoundError,
-    BAD_REQUEST: InvalidGrantError,
+    NOT_FOUND: [RoleNotFoundError, AdminUserNotFoundError],
+    BAD_REQUEST: [InvalidGrantError, NotAnAdminUserError],
     FORBIDDEN: [NotSuperAdminError, GrantEscalationError],
     CONFLICT: [ProtectedRoleError, LastSuperAdminError],
   };
@@ -50,12 +52,7 @@ export function createIamRouter(svc: IamService, adminGuard: AdminGuard) {
     updateRole: os.updateRole.handler(async ({ input, context }) => {
       const caller = await adminGuard.assert(context, 'admin', 'update');
       return mapErrors(adminMgmtErrors, () =>
-        svc.updateRole({
-          roleId: input.roleId,
-          name: input.name,
-          description: input.description,
-          caller,
-        }),
+        svc.updateRole({ roleId: input.roleId, name: input.name, caller }),
       );
     }),
 
@@ -97,8 +94,8 @@ export function createIamRouter(svc: IamService, adminGuard: AdminGuard) {
     }),
 
     inviteAdmin: os.inviteAdmin.handler(async ({ input, context }) => {
-      await adminGuard.assert(context, 'admin', 'create');
-      return mapErrors({ NOT_FOUND: RoleNotFoundError }, () => svc.inviteAdmin(input));
+      const caller = await adminGuard.assert(context, 'admin', 'create');
+      return mapErrors(adminMgmtErrors, () => svc.inviteAdmin({ ...input, caller }));
     }),
 
     // Public - invitee is not yet an admin.

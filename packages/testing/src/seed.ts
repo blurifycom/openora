@@ -4,16 +4,18 @@ import { seedDemoData, type SeedResult } from './seed-demo-data.js';
 import { createAuth } from '@blurifycom/core/server';
 import { DRIZZLE, type DrizzleDb } from '@blurifycom/core/server';
 import type { Container } from '@blurifycom/core/server';
+import { seedRoles } from '@blurifycom/core/iam/seed';
 import { user, session, account, verification } from '@blurifycom/core/pam/schema/identity';
 
 export type SeedMinimalOptions = {
-  /** Number of demo players to create. Keep small for fast tests. Default 4. */
+  /** Keep small for fast tests. */
   playerCount?: number;
   admin?: { email: string; password: string; name: string };
 };
 
 /**
- * Seed a small, deterministic fixture (admin + a few players + wallets + games).
+ * Seed a small, deterministic fixture: IAM reference roles + a demo fixture
+ * (admin + a few players + wallets + games) for tests.
  *
  * better-auth's drizzle adapter resolves models from the db's relational schema
  * (`db._.fullSchema`), so we build a schema-aware connection just for auth -
@@ -34,6 +36,7 @@ export async function seedMinimal(
   const auth = createAuth({ db: authDb as unknown as DrizzleDb });
 
   try {
+    await seedRoles(drizzleSvc.db);
     return await seedDemoData({
       db: drizzleSvc.db,
       auth,

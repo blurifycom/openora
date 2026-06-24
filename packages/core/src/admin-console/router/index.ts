@@ -1,12 +1,14 @@
 import { implement } from '@orpc/server';
 import { AdminGuard } from '@blurifycom/core/server';
 import { mapErrors, type OssContext } from '@blurifycom/core/server';
+import type { AuditWritePort } from '@blurifycom/core/contracts';
 import { backofficeContract } from '../contract/index.js';
 import { BackofficeService, UserNotFoundError } from '../service/backoffice.service.js';
 
 export function createBackofficeRouter(
   backofficeService: BackofficeService,
   adminGuard: AdminGuard,
+  audit: AuditWritePort,
 ) {
   const os = implement(backofficeContract).$context<OssContext>();
 
@@ -29,10 +31,29 @@ export function createBackofficeRouter(
     }),
 
     updateUser: os.updateUser.handler(async ({ input, context }) => {
-      await adminGuard.assert(context, 'player', 'update');
-      return mapErrors({ NOT_FOUND: UserNotFoundError }, () =>
+      const caller = await adminGuard.assert(context, 'player', 'update');
+      // Writing `user.role` (esp. 'admin') grants super-admin via the bootstrap path
+      // (IamService.isSuperAdmin), so a role change is super-admin-only - the `admin`
+      // resource is held only by super-admins.
+      if (input.role !== undefined) {
+        await adminGuard.assert(context, 'admin', 'update');
+      }
+      const before = await mapErrors({ NOT_FOUND: UserNotFoundError }, () =>
+        backofficeService.getUser(input.userId),
+      );
+      const updated = await mapErrors({ NOT_FOUND: UserNotFoundError }, () =>
         backofficeService.updateUser(input.userId, { isActive: input.isActive, role: input.role }),
       );
+      await audit.record({
+        actorId: caller.userId,
+        actorType: 'admin',
+        action: 'admin.user.updated',
+        resourceType: 'user',
+        resourceId: input.userId,
+        before: { isActive: before.isActive, role: before.role },
+        after: { isActive: updated.isActive, role: updated.role },
+      });
+      return updated;
     }),
 
     listTransactions: os.listTransactions.handler(async ({ input, context }) => {

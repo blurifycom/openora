@@ -1,26 +1,27 @@
 import * as z from 'zod';
+import { UuidSchema } from './common.js';
 
-const iamRoleEventBase = z.object({ roleId: z.string(), actorId: z.string() });
+const iamRoleEventBase = z.object({ roleId: UuidSchema, actorId: UuidSchema });
 const permissionLevelEntries = z.array(z.object({ resource: z.string(), level: z.string() }));
 
 export const domainEventSchemas = {
-  'identity.user.registered': z.object({ userId: z.uuid() }),
-  'identity.user.login': z.object({ userId: z.uuid() }),
-  'identity.user.logout': z.object({ userId: z.uuid() }),
-  'identity.2fa.enabled': z.object({ userId: z.uuid() }),
-  'identity.2fa.disabled': z.object({ userId: z.uuid() }),
-  'identity.password.reset': z.object({ userId: z.uuid() }),
-  'identity.email.verified': z.object({ userId: z.uuid() }),
-  'identity.profile.updated': z.object({ userId: z.uuid() }),
+  'identity.user.registered': z.object({ userId: UuidSchema }),
+  'identity.user.login': z.object({ userId: UuidSchema }),
+  'identity.user.logout': z.object({ userId: UuidSchema }),
+  'identity.2fa.enabled': z.object({ userId: UuidSchema }),
+  'identity.2fa.disabled': z.object({ userId: UuidSchema }),
+  'identity.password.reset': z.object({ userId: UuidSchema }),
+  'identity.email.verified': z.object({ userId: UuidSchema }),
+  'identity.profile.updated': z.object({ userId: UuidSchema }),
 
   'wallet.deposit.completed': z.object({
-    userId: z.uuid(),
+    userId: UuidSchema,
     amount: z.number(),
     currency: z.string(),
     transactionId: z.string(),
   }),
   'wallet.withdrawal.completed': z.object({
-    userId: z.uuid(),
+    userId: UuidSchema,
     amount: z.number(),
     currency: z.string(),
     transactionId: z.string(),
@@ -29,13 +30,13 @@ export const domainEventSchemas = {
   'gaming.round.started': z.object({
     roundId: z.string(),
     gameId: z.string(),
-    userId: z.uuid(),
+    userId: UuidSchema,
     currency: z.string(),
   }),
-  'gaming.round.ended': z.object({ roundId: z.string(), userId: z.uuid() }),
+  'gaming.round.ended': z.object({ roundId: z.string(), userId: UuidSchema }),
 
   'bonus.claimed': z.object({
-    userId: z.uuid(),
+    userId: UuidSchema,
     bonusId: z.string(),
     userBonusId: z.string(),
   }),
@@ -43,32 +44,43 @@ export const domainEventSchemas = {
   'chat.message.sent': z.object({
     messageId: z.string(),
     roomId: z.string(),
-    userId: z.uuid(),
+    userId: UuidSchema,
   }),
 
-  'compliance.limit.upserted': z.object({ userId: z.uuid(), limitId: z.string() }),
-  'compliance.limit.removed': z.object({ userId: z.uuid(), limitId: z.string() }),
+  'compliance.limit.upserted': z.object({ userId: UuidSchema, limitId: z.string() }),
+  'compliance.limit.removed': z.object({ userId: UuidSchema, limitId: z.string() }),
+
+  // An admin added or changed a geo (country) rule (regulatory). `actorId` is the
+  // acting admin so the audit log can attribute the mutation.
+  'compliance.geo-rule.added': z.object({
+    countryCode: z.string(),
+    action: z.string(),
+    actorId: UuidSchema.optional(),
+  }),
 
   // An admin changed a player's KYC status (player-management update). Carries the
   // subject player + the before/after status so the audit log records the transition.
   'compliance.kyc.updated': z.object({
-    userId: z.uuid(),
+    userId: UuidSchema,
     status: z.string(),
     previousStatus: z.string(),
   }),
 
-  'notifications.created': z.object({ notificationId: z.string(), userId: z.uuid() }),
+  'notifications.created': z.object({ notificationId: z.string(), userId: UuidSchema }),
 
   'cms.page.published': z.object({ pageId: z.string(), slug: z.string() }),
 
+  // An admin triggered a game-catalogue sync. `actorId` is the acting admin (the
+  // envelope carries no caller) so the audit log can attribute the mutation.
   'aggregator.sync.completed': z.object({
     synced: z.number(),
     failed: z.number(),
+    actorId: UuidSchema.optional(),
   }),
   'aggregator.callback.received': z.object({ provider: z.string(), event: z.string() }),
 
   'leaderboard.score.recorded': z.object({
-    userId: z.uuid(),
+    userId: UuidSchema,
     metric: z.string(),
     amount: z.number(),
   }),
@@ -83,7 +95,7 @@ export const domainEventSchemas = {
     odds: z.number(),
   }),
   'sportsbook.bet.placed': z.object({
-    userId: z.uuid(),
+    userId: UuidSchema,
     betId: z.string(),
     selectionId: z.string(),
     stake: z.number(),
@@ -94,7 +106,7 @@ export const domainEventSchemas = {
   // assignment by resolving the userId from the email.
   'iam.invitation.accepted': z.object({
     email: z.string(),
-    roleId: z.string(),
+    roleId: UuidSchema,
     invitationId: z.string(),
   }),
 
@@ -104,19 +116,17 @@ export const domainEventSchemas = {
   // changes so the audit log records the transition.
   'iam.role.created': iamRoleEventBase.extend({
     name: z.string(),
-    description: z.string().optional(),
   }),
   'iam.role.updated': iamRoleEventBase.extend({
     name: z.string().optional(),
-    description: z.string().nullable().optional(),
   }),
   'iam.role.deleted': iamRoleEventBase,
   'iam.role.permissions.changed': iamRoleEventBase.extend({
     before: permissionLevelEntries,
     after: permissionLevelEntries,
   }),
-  'iam.role.assigned': iamRoleEventBase.extend({ userId: z.string() }),
-  'iam.role.revoked': iamRoleEventBase.extend({ userId: z.string() }),
+  'iam.role.assigned': iamRoleEventBase.extend({ userId: UuidSchema }),
+  'iam.role.revoked': iamRoleEventBase.extend({ userId: UuidSchema }),
 } as const;
 
 export type DomainEventName = keyof typeof domainEventSchemas;

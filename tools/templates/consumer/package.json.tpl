@@ -12,14 +12,12 @@
     "lint": "oxlint .",
     "sync:agents": "rulesync generate",
     "prepare": "rulesync generate",
-    "db:generate": "pnpm -C {{ossFromRoot}} -F @blurifycom/db generate",
-    "db:migrate": "pnpm -C {{ossFromRoot}} -F @blurifycom/db migrate",
+    "db:migrate": "pnpm -C {{ossFromRoot}} db:migrate:all",
+    "db:seed": "pnpm -F @{{name}}/api db:seed",
     "setup:mcp": "tsx {{ossFromRoot}}/tools/setup-mcp.ts --target .",
     "gen": "turbo gen"
   },
   "devDependencies": {
-    "@blurifycom/tsconfig": "link:{{ossFromRoot}}/packages/config/tsconfig",
-    "@blurifycom/turbo-generators": "link:{{ossFromRoot}}/packages/config/turbo-generators",
     "@turbo/gen": "2.9.14",
     "@types/node": "25.9.0",
     "oxlint": "1.64.0",
@@ -35,18 +33,7 @@
   "packageManager": "pnpm@11.5.2",
   "pnpm": {
     "overrides": {
-      "@blurifycom/api-runtime": "link:{{ossFromRoot}}/packages/platform/api-runtime",
-      "@blurifycom/auth": "link:{{ossFromRoot}}/packages/platform/auth",
-      "@blurifycom/core": "link:{{ossFromRoot}}/packages/platform/core",
-      "@blurifycom/db": "link:{{ossFromRoot}}/packages/platform/db",
-      "@blurifycom/plugin-host": "link:{{ossFromRoot}}/packages/platform/plugin-host",
-      "@blurifycom/orpc-contract": "link:{{ossFromRoot}}/packages/contracts/orpc-contract",
-      "@blurifycom/shared-schemas": "link:{{ossFromRoot}}/packages/contracts/shared-schemas",
-      "@blurifycom/adapters": "link:{{ossFromRoot}}/packages/contracts/adapters",
-      "@blurifycom/modules": "link:{{ossFromRoot}}/packages/modules",
-      "@blurifycom/react": "link:{{ossFromRoot}}/packages/sdks/react",
-      "@blurifycom/tsconfig": "link:{{ossFromRoot}}/packages/config/tsconfig",
-      "@blurifycom/turbo-generators": "link:{{ossFromRoot}}/packages/config/turbo-generators"
+      "@blurifycom/core": "link:{{ossFromRoot}}/packages/core"
     }
   }
 }

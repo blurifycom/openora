@@ -58,8 +58,8 @@ export { GEO_IP_ADAPTER } from './geo-ip.js';
 export type { NotificationDeliveryAdapter } from './notification.js';
 export { NOTIFICATION_DELIVERY_ADAPTER } from './notification.js';
 
-export type { AggregatorAdapter, AggregatorGame } from './aggregator.js';
-export { AGGREGATOR_ADAPTER } from './aggregator.js';
+export type { AggregatorAdapter, AggregatorGame, AggregatorWebhookVerifier } from './aggregator.js';
+export { AGGREGATOR_ADAPTER, AGGREGATOR_WEBHOOK_VERIFIER } from './aggregator.js';
 
 export type { RngAdapter } from './rng.js';
 export { RNG_ADAPTER } from './rng.js';

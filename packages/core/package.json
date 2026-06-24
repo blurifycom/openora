@@ -327,6 +327,11 @@
       "import": "./dist/iam/contract/index.js",
       "default": "./dist/iam/contract/index.js"
     },
+    "./iam/seed": {
+      "types": "./dist/iam/seed/index.d.ts",
+      "import": "./dist/iam/seed/index.js",
+      "default": "./dist/iam/seed/index.js"
+    },
     "./pam": {
       "types": "./dist/pam/index.d.ts",
       "import": "./dist/pam/index.js",

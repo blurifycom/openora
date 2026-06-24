@@ -15,6 +15,13 @@
       "when": 1781794452198,
       "tag": "0001_abc100_rbac_levels",
       "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "7",
+      "when": 1782262881679,
+      "tag": "0002_drop_role_description",
+      "breakpoints": true
     }
   ]
 }

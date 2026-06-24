@@ -1,0 +1,79 @@
+import { describe, it, expect, vi } from 'vitest';
+import { call, ORPCError } from '@orpc/server';
+import type { AdminGuard } from '@blurifycom/core/server';
+import type { AuditWritePort } from '@blurifycom/core/contracts';
+import { createBackofficeRouter } from '../router/index.js';
+import type { BackofficeService } from '../service/backoffice.service.js';
+
+const CTX = { request: { headers: {} } };
+const USER_ID = '63d3c264-3bf4-4d08-9b92-ea3eaf40a440';
+
+const USER = {
+  id: USER_ID,
+  email: 'p@example.com',
+  name: null,
+  createdAt: '2026-01-01T00:00:00.000Z',
+  isActive: true,
+  role: 'player',
+};
+
+/** AdminGuard that only super-admins clear the `admin` resource; everyone clears `player`. */
+function fakeGuard(opts: { isSuper: boolean }): AdminGuard {
+  return {
+    assert: vi.fn(async (_ctx: unknown, resource?: string) => {
+      if (resource === 'admin' && !opts.isSuper) {
+        throw new ORPCError('FORBIDDEN', { message: 'Missing permission: admin:update' });
+      }
+      return { userId: 'caller-1', role: opts.isSuper ? 'admin' : 'support' };
+    }),
+  } as unknown as AdminGuard;
+}
+
+function fakeService(): BackofficeService {
+  return {
+    getUser: vi.fn().mockResolvedValue(USER),
+    updateUser: vi.fn().mockResolvedValue({ ...USER, role: 'admin' }),
+  } as unknown as BackofficeService;
+}
+
+function fakeAudit(): AuditWritePort {
+  return { record: vi.fn().mockResolvedValue(undefined) };
+}
+
+describe('backoffice router updateUser authz', () => {
+  it('rejects a role change from a non-super-admin', async () => {
+    const guard = fakeGuard({ isSuper: false });
+    const router = createBackofficeRouter(fakeService(), guard, fakeAudit());
+    await expect(
+      call(router.updateUser, { userId: USER_ID, role: 'admin' }, { context: CTX }),
+    ).rejects.toBeInstanceOf(ORPCError);
+  });
+
+  it('allows a super-admin to change a role and writes an audit entry', async () => {
+    const guard = fakeGuard({ isSuper: true });
+    const audit = fakeAudit();
+    const router = createBackofficeRouter(fakeService(), guard, audit);
+    const result = await call(
+      router.updateUser,
+      { userId: USER_ID, role: 'admin' },
+      { context: CTX },
+    );
+    expect(result.role).toBe('admin');
+    expect(audit.record).toHaveBeenCalledWith(
+      expect.objectContaining({
+        actorType: 'admin',
+        action: 'admin.user.updated',
+        resourceType: 'user',
+        resourceId: USER_ID,
+      }),
+    );
+  });
+
+  it('allows an isActive-only change without the super-admin gate and audits it', async () => {
+    const guard = fakeGuard({ isSuper: false });
+    const audit = fakeAudit();
+    const router = createBackofficeRouter(fakeService(), guard, audit);
+    await call(router.updateUser, { userId: USER_ID, isActive: false }, { context: CTX });
+    expect(audit.record).toHaveBeenCalledOnce();
+  });
+});
