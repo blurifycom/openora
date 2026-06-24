@@ -9,14 +9,12 @@ description: Engineering code conventions (TS, headless backend) - apply all of 
 
 # Engineering Conventions
 
-The portable code standard, scoped to this headless backend repo. Stack-agnostic
-principles first, then the TypeScript and backend specifics that implement them.
-Structure/DI/boundaries live in `clean-architecture`; async/seams in
-`messaging-and-microservices`; OSS-specific naming, forbidden patterns, and the
-decision tree in `overview`. This file is the code-style baseline shared with the
-consumer repo - keep it portable; put OSS-only rules in those other files.
+The portable code standard for this headless backend repo - stack-agnostic principles, then the
+TS/backend specifics. Structure/DI/boundaries: `clean-architecture`. Async seams: `messaging-and-microservices`.
+OSS naming, forbidden patterns, decision tree: `overview`. Keep this file portable (shared with the
+consumer repo); put OSS-only rules elsewhere.
 
-Each rule carries a short example. `// bad` shows the smell, `// good` the convention.
+Each rule carries a short example: `// bad` is the smell, `// good` the convention.
 
 > The goal: code that is clean, separated, scalable, customizable, and extendible -
 > and that stays easy to understand and cheap to change as the team and codebase grow.
@@ -177,6 +175,17 @@ Each rule carries a short example. `// bad` shows the smell, `// good` the conve
   type Props = { title: string };
   ```
 
+- **Type entity ids through their owning type, never a bare primitive.** Reference
+  `User['id']`/`Wallet['id']` instead of `string` so the id's representation lives in one
+  place - when it changes (eg `string` -> `number`), every signature follows automatically.
+
+  ```ts
+  // bad - the id shape is duplicated everywhere and silently rots if it changes
+  function unblockUser(blockerId: string, blockedId: string) { ... }
+  // good - one source of truth for what a user id is
+  function unblockUser(blockerId: User['id'], blockedId: User['id']) { ... }
+  ```
+
 - **Derive related schemas, never re-type fields** - `.pick()`/`.omit()`/`.partial()`/`.extend()`/`.merge()`.
 
   ```ts
@@ -246,6 +255,23 @@ Each rule carries a short example. `// bad` shows the smell, `// good` the conve
   ```
 
 - **Short, single-purpose functions.** If you comment "// step 2" inside a function, extract it.
+
+- **Don't annotate a return type TypeScript can infer** - the body is the single source of truth,
+  so the type can't drift. Annotate only when inference can't (recursion) or shouldn't (widen/narrow,
+  or pin a published package's public API). Argument types stay explicit.
+
+  ```ts
+  // bad - redundant annotation that has to be kept in sync by hand
+  async function unblockUser(id: User['id']): Promise<{ success: true }> {
+    await this.repo.remove(id);
+    return { success: true };
+  }
+  // good - inferred from the body
+  async function unblockUser(id: User['id']) {
+    await this.repo.remove(id);
+    return { success: true };
+  }
+  ```
 
 - **Named exports only - no default exports.**
 
@@ -348,11 +374,10 @@ here. So the React rules reduce to:
   }
   ```
 
-- **Hand-write `useMemo`/`useCallback` in the SDK** wherever a returned value/function is part
-  of a hook's stability contract. This is the OPPOSITE of the consumer-app rule: the consumer
-  builds with the React Compiler, but it does NOT reprocess pre-built `node_modules`, so the
-  SDK is not auto-memoized downstream. Keep hooks Rules-of-React compliant (pure render,
-  stable returns) so the consumer's compiler can optimize the components that call them.
+- **Hand-write `useMemo`/`useCallback` in the SDK** wherever a returned value/function is part of a
+  hook's stability contract - the OPPOSITE of the consumer-app rule. The consumer's React Compiler
+  does NOT reprocess pre-built `node_modules`, so the SDK is not auto-memoized downstream. Keep hooks
+  Rules-of-React compliant (pure render, stable returns) so the consumer's compiler can optimize callers.
 
   ```ts
   // good - stable client the consumer can drop into deps
@@ -494,7 +519,11 @@ here. So the React rules reduce to:
   git switch -c feat/internal-wallet-command dev
   ```
 
-- **MR description carries intent:** what / why / acceptance criteria / ticket link.
+- **MR description carries intent:** what / why / acceptance criteria / ticket key.
+- **No sensitive/internal data in titles, descriptions, or commit messages.** They are the
+  public-facing record. Reference a ticket by its bare key (`ABC-45`), never the URL. No
+  Jira/Confluence/Slack/Notion links, dashboards, internal hostnames, secrets, tokens,
+  customer/operator names, PII, or internal IPs. When in doubt, leave it out.
 
 ---
 

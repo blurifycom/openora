@@ -1,6 +1,6 @@
 # syntax=docker/dockerfile:1
 # Vite 8 React SPA. Build context holds BOTH repos:
-#   <context>/igaming-oss  +  <context>/{{kebabCase name}}
+#   <context>/oss  +  <context>/{{kebabCase name}}
 # VITE_PUBLIC_API_URL is baked at BUILD time (public env), so it is a build arg.
 # Runtime is nginx serving the static dist/.
 
@@ -15,12 +15,12 @@ FROM base AS build
 ARG VITE_PUBLIC_API_URL
 ENV VITE_PUBLIC_API_URL=${VITE_PUBLIC_API_URL}
 
-COPY igaming-oss/ ./igaming-oss/
+COPY oss/ ./oss/
 COPY {{kebabCase name}}/ ./{{kebabCase name}}/
 
 WORKDIR /app/{{kebabCase name}}
 RUN pnpm install --frozen-lockfile
-RUN pnpm -C ../igaming-oss install --frozen-lockfile && pnpm build:oss
+RUN pnpm -C ../oss install --frozen-lockfile && pnpm build:oss
 RUN pnpm -F backoffice build
 
 # --- runtime (nginx static) --------------------------------------------------
