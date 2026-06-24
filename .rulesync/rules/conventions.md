@@ -491,11 +491,15 @@ here. So the React rules reduce to:
 
 ## 12. Git and delivery
 
-- **Conventional commits.**
+- **Conventional commits - mandatory and enforced.** Every commit message MUST follow the
+  [Conventional Commits](https://www.conventionalcommits.org/) spec. `commitlint` runs on
+  every local commit (husky `commit-msg` hook) and in CI - a non-conforming message blocks
+  the merge. Common types: `feat`, `fix`, `refactor`, `chore`, `docs`, `test`, `ci`, `perf`.
 
   ```
   feat(wallet): atomic debit command port
   fix(audit): guard double-record on retry
+  chore(deps): bump zod to 3.24.0
   ```
 
 - **One MR = one concern; split unrelated changes.** Never bundle foreign changes - stage explicitly.
