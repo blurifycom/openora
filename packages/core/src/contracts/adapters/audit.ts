@@ -24,8 +24,8 @@ export type AuditWritePort = {
     action: string;
     resourceType: string;
     resourceId?: string | null;
-    before?: unknown;
-    after?: unknown;
+    before?: Record<string, unknown> | null;
+    after?: Record<string, unknown> | null;
     ip?: string | null;
     userAgent?: string | null;
     correlationId?: string | null;

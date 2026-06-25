@@ -31,6 +31,8 @@ export const chatMessage = pgTable(
 
 // A directional mute: `blockerId` no longer sees messages from `blockedId`.
 // Scoped to the blocker only - the blocked player is unaffected (ABC-45 AC11).
+// A directional mute: `blockerId` no longer sees messages from `blockedId`.
+// Scoped to the blocker only - the blocked player is unaffected (ABC-45 AC11).
 export const chatUserBlock = pgTable(
   'chat_user_block',
   {

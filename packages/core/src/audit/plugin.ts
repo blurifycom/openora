@@ -29,6 +29,7 @@ function mapEventToRecord(topic: string, p: Record<string, unknown>): RecordInpu
     return {
       ...base,
       actorType: 'admin',
+      actorId: str(p['actorId']),
       resourceType: 'player',
       resourceId: str(p['userId']),
       before: { kycStatus: p['previousStatus'] ?? null },
@@ -71,9 +72,11 @@ function mapEventToRecord(topic: string, p: Record<string, unknown>): RecordInpu
       actorId: str(p['actorId']),
       resourceType: 'role',
       resourceId: str(p['roleId']),
-      before: carriesMatrix ? (p['before'] ?? null) : null,
+      before: carriesMatrix && isRecord(p['before']) ? p['before'] : null,
       after: carriesMatrix
-        ? (p['after'] ?? null)
+        ? isRecord(p['after'])
+          ? p['after']
+          : null
         : carriesTarget
           ? { userId: str(p['userId']) }
           : null,
@@ -103,6 +106,19 @@ function mapEventToRecord(topic: string, p: Record<string, unknown>): RecordInpu
       resourceId: str(p['userId']),
       before: { isActive: !isActive },
       after: { isActive },
+    };
+  }
+
+  // Wallet events carry the txn ref in transactionId; surface it as resourceId so
+  // a transaction reference is searchable (it otherwise stays buried in `after`).
+  if (topic.startsWith('wallet.')) {
+    return {
+      ...base,
+      actorType: 'player',
+      actorId: str(p['userId']),
+      resourceType: 'transaction',
+      resourceId: str(p['transactionId']),
+      after: p,
     };
   }
 

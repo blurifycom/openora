@@ -100,6 +100,7 @@ export class PlayerService {
       kycStatus?: KycStatus;
       level?: number;
     },
+    actorId: string,
   ): Promise<Player> {
     const existing = findOneOrThrow(
       await this.drizzle.db.select().from(player).where(eq(player.id, playerId)),
@@ -119,6 +120,7 @@ export class PlayerService {
     if (data.kycStatus !== undefined && data.kycStatus !== existing.kycStatus) {
       this.events.emit('compliance.kyc.updated', {
         userId: existing.userId,
+        actorId,
         status: data.kycStatus,
         previousStatus: existing.kycStatus,
       });

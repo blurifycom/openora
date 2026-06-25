@@ -59,6 +59,7 @@ describe('player router update KYC authz', () => {
     expect(svc.update).toHaveBeenCalledWith(
       PLAYER_ID,
       expect.objectContaining({ kycStatus: 'verified' }),
+      'admin-1',
     );
   });
 

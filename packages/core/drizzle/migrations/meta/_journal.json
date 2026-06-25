@@ -36,6 +36,13 @@
       "when": 1782331692872,
       "tag": "0004_snake_case_identifiers",
       "breakpoints": true
+    },
+    {
+      "idx": 5,
+      "version": "7",
+      "when": 1782382768214,
+      "tag": "0005_audit_resource_id_index",
+      "breakpoints": true
     }
   ]
 }

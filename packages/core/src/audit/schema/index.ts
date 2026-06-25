@@ -21,8 +21,8 @@ export const auditLog = pgTable(
     action: text().notNull(),
     resourceType: text().notNull(),
     resourceId: text(),
-    before: jsonb(),
-    after: jsonb(),
+    before: jsonb().$type<Record<string, unknown>>(),
+    after: jsonb().$type<Record<string, unknown>>(),
     ip: text(),
     userAgent: text(),
     correlationId: text(),
@@ -36,6 +36,7 @@ export const auditLog = pgTable(
   },
   (t) => [
     index('audit_log_actor_id_idx').on(t.actorId),
+    index('audit_log_resource_id_idx').on(t.resourceId),
     index('audit_log_action_idx').on(t.action),
     index('audit_log_resource_type_idx').on(t.resourceType),
     index('audit_log_created_at_idx').on(t.createdAt),

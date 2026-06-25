@@ -58,9 +58,6 @@ export const domainEventSchemas = {
   'chat.user.blocked': z.object({ blockerId: UuidSchema, blockedId: UuidSchema }),
   'chat.user.unblocked': z.object({ blockerId: UuidSchema, blockedId: UuidSchema }),
 
-  'compliance.limit.upserted': z.object({ userId: UuidSchema, limitId: UuidSchema }),
-  'compliance.limit.removed': z.object({ userId: UuidSchema, limitId: UuidSchema }),
-
   // An admin added or changed a geo (country) rule (regulatory). `actorId` is the
   // acting admin so the audit log can attribute the mutation.
   'compliance.geo-rule.added': z.object({
@@ -69,10 +66,15 @@ export const domainEventSchemas = {
     actorId: UuidSchema.optional(),
   }),
 
-  // An admin changed a player's KYC status (player-management update). Carries the
-  // subject player + the before/after status so the audit log records the transition.
+  'compliance.limit.upserted': z.object({ userId: UuidSchema, limitId: UuidSchema }),
+  'compliance.limit.removed': z.object({ userId: UuidSchema, limitId: UuidSchema }),
+
+  // An admin changed a player's KYC status (player-management update). userId =
+  // subject player, actorId = the admin who acted; before/after status records the
+  // transition for the audit log.
   'compliance.kyc.updated': z.object({
     userId: UuidSchema,
+    actorId: UuidSchema,
     status: z.string(),
     previousStatus: z.string(),
   }),

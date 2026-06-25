@@ -368,6 +368,44 @@ describe('AuditService.list()', () => {
     expect(result.total).toBe(0);
   });
 
+  it('q matches a row by actorId', async () => {
+    const rows = [makeRow({ actorId: 'subject-1', actorType: 'player' })];
+    const svc = new AuditService(makeListDb(rows, 1), makeEvents());
+    const result = await svc.list({ q: 'subject-1', page: 1, limit: 10 });
+
+    expect(result.items).toHaveLength(1);
+    expect(result.items[0]?.actorId).toBe('subject-1');
+    expect(result.total).toBe(1);
+  });
+
+  it('q matches a row by resourceId', async () => {
+    const rows = [makeRow({ resourceType: 'transaction', resourceId: 'txn-9' })];
+    const svc = new AuditService(makeListDb(rows, 1), makeEvents());
+    const result = await svc.list({ q: 'txn-9', page: 1, limit: 10 });
+
+    expect(result.items).toHaveLength(1);
+    expect(result.items[0]?.resourceId).toBe('txn-9');
+    expect(result.total).toBe(1);
+  });
+
+  it('applies explicit resourceId filter', async () => {
+    const rows = [makeRow({ resourceType: 'transaction', resourceId: 'txn-42' })];
+    const svc = new AuditService(makeListDb(rows, 1), makeEvents());
+    const result = await svc.list({ resourceId: 'txn-42', page: 1, limit: 10 });
+
+    expect(result.items).toHaveLength(1);
+    expect(result.items[0]?.resourceId).toBe('txn-42');
+  });
+
+  it('q combined with actorType still ANDs correctly', async () => {
+    const rows = [makeRow({ actorId: 'subject-1', actorType: 'player' })];
+    const svc = new AuditService(makeListDb(rows, 1), makeEvents());
+    const result = await svc.list({ q: 'subject-1', actorType: 'player', page: 1, limit: 10 });
+
+    expect(result.items).toHaveLength(1);
+    expect(result.items[0]?.actorType).toBe('player');
+  });
+
   it('respects page and limit for offset calculation', async () => {
     const svc = new AuditService(makeListDb([], 50), makeEvents());
     const result = await svc.list({ page: 3, limit: 10 });
