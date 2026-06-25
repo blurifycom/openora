@@ -29,10 +29,71 @@ function mapEventToRecord(topic: string, p: Record<string, unknown>): RecordInpu
     return {
       ...base,
       actorType: 'admin',
+      actorId: str(p['actorId']),
       resourceType: 'player',
       resourceId: str(p['userId']),
       before: { kycStatus: p['previousStatus'] ?? null },
       after: { kycStatus: p['status'] ?? null },
+    };
+  }
+
+  // Admin-triggered game-catalogue sync. actorId = acting admin (may be absent on
+  // system-triggered syncs, in which case it stays a system entry).
+  if (topic === 'aggregator.sync.completed') {
+    return {
+      ...base,
+      actorType: typeof p['actorId'] === 'string' ? 'admin' : 'system',
+      actorId: str(p['actorId']),
+      resourceType: 'game',
+      after: { synced: p['synced'] ?? null, failed: p['failed'] ?? null },
+    };
+  }
+
+  // Admin added/changed a geo (country) rule. resourceId = the country code.
+  if (topic === 'compliance.geo-rule.added') {
+    return {
+      ...base,
+      actorType: typeof p['actorId'] === 'string' ? 'admin' : 'system',
+      actorId: str(p['actorId']),
+      resourceType: 'geo-rule',
+      resourceId: str(p['countryCode']),
+      after: { action: p['action'] ?? null },
+    };
+  }
+
+  // Player requested a withdrawal (funds held). actorId = the player; resourceId =
+  // the withdrawal transaction.
+  if (topic === 'wallet.withdrawal.requested') {
+    return {
+      ...base,
+      actorType: 'player',
+      actorId: str(p['userId']),
+      resourceType: 'withdrawal',
+      resourceId: str(p['transactionId']),
+      after: { amount: p['amount'], currency: p['currency'] },
+    };
+  }
+
+  // Admin approve/reject of a withdrawal, or a PSP-rail failure on an approved one.
+  // actorId = the reviewing admin; resourceId = the withdrawal transaction; reason
+  // carried on reject.
+  if (
+    topic === 'wallet.withdrawal.approved' ||
+    topic === 'wallet.withdrawal.rejected' ||
+    topic === 'wallet.withdrawal.failed'
+  ) {
+    return {
+      ...base,
+      actorType: 'admin',
+      actorId: str(p['adminId']),
+      resourceType: 'withdrawal',
+      resourceId: str(p['transactionId']),
+      after: {
+        userId: str(p['userId']),
+        amount: p['amount'],
+        currency: p['currency'],
+        reason: p['reason'] ?? null,
+      },
     };
   }
 
@@ -47,12 +108,53 @@ function mapEventToRecord(topic: string, p: Record<string, unknown>): RecordInpu
       actorId: str(p['actorId']),
       resourceType: 'role',
       resourceId: str(p['roleId']),
-      before: carriesMatrix ? (p['before'] ?? null) : null,
+      before: carriesMatrix && isRecord(p['before']) ? p['before'] : null,
       after: carriesMatrix
-        ? (p['after'] ?? null)
+        ? isRecord(p['after'])
+          ? p['after']
+          : null
         : carriesTarget
           ? { userId: str(p['userId']) }
           : null,
+    };
+  }
+
+  // actorId = the player who (un)blocked; resource = the blocked player.
+  if (topic === 'chat.user.blocked' || topic === 'chat.user.unblocked') {
+    return {
+      ...base,
+      actorType: 'player',
+      actorId: str(p['blockerId']),
+      resourceType: 'player',
+      resourceId: str(p['blockedId']),
+    };
+  }
+
+  // actorType = admin (the only path flipping isActive is the back-office route);
+  // resource = the subject user. after carries the new active state.
+  if (topic === 'identity.user.deactivated' || topic === 'identity.user.reactivated') {
+    const isActive = topic === 'identity.user.reactivated';
+    return {
+      ...base,
+      actorType: 'admin',
+      actorId: str(p['actorId']),
+      resourceType: 'user',
+      resourceId: str(p['userId']),
+      before: { isActive: !isActive },
+      after: { isActive },
+    };
+  }
+
+  // Wallet events carry the txn ref in transactionId; surface it as resourceId so
+  // a transaction reference is searchable (it otherwise stays buried in `after`).
+  if (topic.startsWith('wallet.')) {
+    return {
+      ...base,
+      actorType: 'player',
+      actorId: str(p['userId']),
+      resourceType: 'transaction',
+      resourceId: str(p['transactionId']),
+      after: p,
     };
   }
 
@@ -73,14 +175,26 @@ const SUBSCRIBED_TOPICS = [
   'identity.password.reset',
   'identity.email.verified',
   'identity.profile.updated',
+  'identity.user.deactivated',
+  'identity.user.reactivated',
   'wallet.deposit.completed',
   'wallet.withdrawal.completed',
+  'wallet.withdrawal.requested',
+  'wallet.withdrawal.approved',
+  'wallet.withdrawal.rejected',
+  'wallet.withdrawal.failed',
   'gaming.round.started',
   'gaming.round.ended',
   'bonus.claimed',
+  // chat.message.sent is intentionally NOT audited: it is high-volume content
+  // already persisted in chatMessage; the moderation/block actions are what we audit.
+  'chat.user.blocked',
+  'chat.user.unblocked',
   'compliance.limit.upserted',
   'compliance.limit.removed',
   'compliance.kyc.updated',
+  'compliance.geo-rule.added',
+  'aggregator.sync.completed',
   'cms.page.published',
   'iam.invitation.accepted',
   'iam.role.created',

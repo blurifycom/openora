@@ -11,6 +11,9 @@ export type OssContext = {
   request: RequestLike;
   auth?: AuthContext;
   resHeaders?: Headers;
+  // The verbatim request body, captured by the runtime for signature verification
+  // (eg aggregator webhooks). Present only for signed, bounded-size bodies.
+  rawBody?: string;
 };
 
 function resolveAuth(context: unknown): AuthContext {

@@ -1,6 +1,5 @@
 export {
   IamService,
-  ensureDefaultRoles,
   DbAdminPermissionResolver,
   RoleNotFoundError,
   InvitationNotFoundError,
@@ -10,6 +9,8 @@ export {
   NotSuperAdminError,
   ProtectedRoleError,
   LastSuperAdminError,
+  AdminUserNotFoundError,
+  NotAnAdminUserError,
 } from './service/iam.service.js';
 export { createIamRouter } from './router/index.js';
 export type {

@@ -167,6 +167,9 @@ importers:
 
   packages/core:
     dependencies:
+      '@2toad/profanity':
+        specifier: 3.3.0
+        version: 3.3.0
       '@hono/node-server':
         specifier: 2.0.4
         version: 2.0.4(hono@4.12.25)
@@ -298,6 +301,10 @@ importers:
         version: 6.0.3
 
 packages:
+
+  '@2toad/profanity@3.3.0':
+    resolution: {integrity: sha512-hBptHbB6Regs5AgtHiLr/WfgHRh6ZGdA9EexOWU14n2eNjQekvK9/gg18iFUYvL2WrNb4X3Ci0bzgzJXhzmpNQ==}
+    engines: {node: '>=12'}
 
   '@alloc/quick-lru@5.2.0':
     resolution: {integrity: sha512-UrcABB+4bUrFABwbluTIBErXwvbsU/V7TZWfmbgJfbkwiBuziS9gxdODUyuiecfdGQ85jglMW6juS3+z5TsKLw==}
@@ -5737,6 +5744,8 @@ packages:
     resolution: {integrity: sha512-bXE4cR/kVZhKZX/RjPEflHaKVhUVl85noU3v6b8apfQEc1x4A+zBxjZ4lN8LqGd6WZ3dl98pY4o717VFmoPp+A==}
 
 snapshots:
+
+  '@2toad/profanity@3.3.0': {}
 
   '@alloc/quick-lru@5.2.0': {}
 

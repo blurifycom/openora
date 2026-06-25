@@ -32,7 +32,7 @@ function migrateUrl(override?: string): string {
 export async function runMigrations(opts: RunMigrationsOptions): Promise<void> {
   const pool = new Pool({ connectionString: migrateUrl(opts.databaseUrl) });
   try {
-    const db = drizzle(pool);
+    const db = drizzle(pool, { casing: 'snake_case' });
     await drizzleMigrate(db, {
       migrationsFolder: opts.migrationsFolder,
       ...(opts.migrationsTable ? { migrationsTable: opts.migrationsTable } : {}),

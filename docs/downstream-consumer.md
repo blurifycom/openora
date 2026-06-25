@@ -102,6 +102,61 @@ The core OSS build never references add-on packages (a lint boundary,
 `no-core-to-addon`, enforces it), so you only ever pull in what you enable. See
 [ADR-0020](./adr/0020-editions-and-add-on-modules.md).
 
+## Seeding reference data (production)
+
+Migrations carry **structure only** (DDL: tables, indexes, constraints) - never data.
+Reference data a module needs to function (e.g. IAM's predefined backoffice roles) is seeded
+separately by **module seeders** - a function each module exports from its `/seed` subpath
+(e.g. `seedRoles` from `@blurifycom/core/iam/seed`). They are **convergent upserts**
+(`ON CONFLICT ... DO UPDATE`), so editing the declared data and re-running reconciles existing
+rows - safe to run on every deploy.
+
+Seeding is a **standalone one-shot script**, exactly like migrations (`tools/migrate-all.mjs`
+imports `migrate()` callables and runs them). It needs only a DB connection - it never boots the
+app (no HTTP, no auth, no plugin host), so it is cheap and carries zero footprint in the running
+server. You compose the seeders you want explicitly, then run it after migrations:
+
+```typescript
+// my-igaming/apps/api/src/seed.ts  - run after `db:migrate`, before/at release
+import { createDrizzleDb } from '@blurifycom/core/server';
+import { seedRoles } from '@blurifycom/core/iam/seed';
+// import additional module seeders here as you enable them
+
+const db = createDrizzleDb(process.env.DATABASE_URL!);
+
+await seedRoles(db);
+// await seedOtherModule(db);
+console.log('Reference data seeded.');
+```
+
+Wire it as its own command (e.g. `"db:seed": "tsx src/seed.ts"`) and run it in your release
+pipeline right after `pnpm db:migrate`. Because the seeders are idempotent upserts, re-running on
+each deploy is the intended pattern. Composition is explicit (like `extensions.config.ts`): enable
+a module's seeder by adding its one import + call - the same trade-off the migration runner makes.
+
+### Running a single module's seeder
+
+Each seeder is a plain `(db) => Promise<void>` function with no runtime coupling, so you can run
+any one in isolation, in any order - you are never forced to seed everything at once. Drive this
+however suits your pipeline:
+
+```typescript
+import { createDrizzleDb } from '@blurifycom/core/server';
+import { seedRoles } from '@blurifycom/core/iam/seed';
+
+const db = createDrizzleDb(process.env.DATABASE_URL!);
+await seedRoles(db); // only IAM roles
+```
+
+Common orchestration patterns:
+
+- **One script per module** - `db:seed:iam`, `db:seed:casino`, ... each importing a single seeder.
+- **One script with a flag** - `pnpm db:seed --only=iam` branches on the arg.
+- **One combined script** - imports and runs them all (the default `apps/api/src/seed.ts` above).
+
+**Demo/fake data** (sample players, transactions) is a separate, dev-only concern - it lives in
+`@blurifycom/testing` (`seedDemoData` / `seedMinimal`) and must never run on production.
+
 ## Building the frontend (in your own repo)
 
 Your entire frontend repo is built from scratch - pages, components, admin shell, theme, styling. It consumes the api over HTTP through `@blurifycom/core/react` (typed client, data hooks, auth, realtime transport).

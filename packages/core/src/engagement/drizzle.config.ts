@@ -5,6 +5,7 @@ import { defineConfig } from 'drizzle-kit';
 // other add-on packages, and can be lifted out independently. See ADR-0020.
 export default defineConfig({
   dialect: 'postgresql',
+  casing: 'snake_case',
   schema: ['./leaderboard/schema/index.ts'],
   out: './drizzle/migrations',
   migrations: {

@@ -34,12 +34,12 @@ export function createComplianceRouter(compliance: ComplianceService, adminGuard
     }),
 
     addGeoRule: os.addGeoRule.handler(async ({ input, context }) => {
-      await adminGuard.assert(context);
-      return compliance.addGeoRule(input);
+      const caller = await adminGuard.assert(context, 'compliance', 'override-limit');
+      return compliance.addGeoRule(input, caller.userId);
     }),
 
     listGeoRules: os.listGeoRules.handler(async ({ context }) => {
-      await adminGuard.assert(context);
+      await adminGuard.assert(context, 'compliance', 'view');
       return compliance.listGeoRules();
     }),
   });

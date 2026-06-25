@@ -5,6 +5,12 @@ import {
   DepositInputSchema,
   WithdrawInputSchema,
   TransactionResultSchema,
+  WithdrawalQueueItemSchema,
+  WithdrawalQueueFilterSchema,
+  ApproveWithdrawalInputSchema,
+  RejectWithdrawalInputSchema,
+  WalletRailSchema,
+  WalletTransactionStatusSchema,
 } from '../contract/index.js';
 
 export {
@@ -13,6 +19,12 @@ export {
   DepositInputSchema,
   WithdrawInputSchema,
   TransactionResultSchema,
+  WithdrawalQueueItemSchema,
+  WithdrawalQueueFilterSchema,
+  ApproveWithdrawalInputSchema,
+  RejectWithdrawalInputSchema,
+  WalletRailSchema,
+  WalletTransactionStatusSchema,
   walletContract,
 } from '../contract/index.js';
 
@@ -21,3 +33,9 @@ export type WalletTransaction = z.infer<typeof WalletTransactionSchema>;
 export type DepositInput = z.infer<typeof DepositInputSchema>;
 export type WithdrawInput = z.infer<typeof WithdrawInputSchema>;
 export type TransactionResult = z.infer<typeof TransactionResultSchema>;
+export type WithdrawalQueueItem = z.infer<typeof WithdrawalQueueItemSchema>;
+export type WithdrawalQueueFilter = z.infer<typeof WithdrawalQueueFilterSchema>;
+export type ApproveWithdrawalInput = z.infer<typeof ApproveWithdrawalInputSchema>;
+export type RejectWithdrawalInput = z.infer<typeof RejectWithdrawalInputSchema>;
+export type WalletRail = z.infer<typeof WalletRailSchema>;
+export type WalletTransactionStatus = z.infer<typeof WalletTransactionStatusSchema>;

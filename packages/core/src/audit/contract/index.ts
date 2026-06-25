@@ -1,18 +1,19 @@
 import { oc } from '@orpc/contract';
 import * as z from 'zod';
+import { UuidSchema } from '@blurifycom/core/contracts';
 import { PageQuerySchema, paginated } from '@blurifycom/core/contracts/kit';
 
 export const AuditActorTypeSchema = z.enum(['player', 'admin', 'system']);
 
 export const AuditLogEntrySchema = z.object({
-  id: z.uuid(),
+  id: UuidSchema,
   actorId: z.string().nullable(),
   actorType: AuditActorTypeSchema,
   action: z.string(),
   resourceType: z.string(),
   resourceId: z.string().nullable(),
-  before: z.unknown().nullable(),
-  after: z.unknown().nullable(),
+  before: z.record(z.string(), z.unknown()).nullable(),
+  after: z.record(z.string(), z.unknown()).nullable(),
   ip: z.string().nullable(),
   userAgent: z.string().nullable(),
   correlationId: z.string().nullable(),
@@ -28,6 +29,9 @@ export const AuditListFiltersSchema = PageQuerySchema.extend({
   actorType: AuditActorTypeSchema.optional(),
   action: z.string().optional(),
   resourceType: z.string().optional(),
+  resourceId: z.string().optional(),
+  // Single search box: exact-match the subject against actorId OR resourceId.
+  q: z.string().trim().min(1).optional(),
   fromDate: z.string().optional(),
   toDate: z.string().optional(),
 });

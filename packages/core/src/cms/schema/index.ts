@@ -10,13 +10,13 @@ import {
 } from 'drizzle-orm/pg-core';
 
 export const page = pgTable('page', {
-  id: uuid('id').primaryKey().defaultRandom(),
-  slug: text('slug').notNull().unique(),
-  title: text('title').notNull(),
-  content: jsonb('content').notNull().default({}),
-  publishedAt: timestamp('publishedAt'),
-  createdAt: timestamp('createdAt').notNull().defaultNow(),
-  updatedAt: timestamp('updatedAt')
+  id: uuid().primaryKey().defaultRandom(),
+  slug: text().notNull().unique(),
+  title: text().notNull(),
+  content: jsonb().notNull().default({}),
+  publishedAt: timestamp(),
+  createdAt: timestamp().notNull().defaultNow(),
+  updatedAt: timestamp()
     .notNull()
     .$onUpdateFn(() => new Date()),
 });
@@ -24,19 +24,19 @@ export const page = pgTable('page', {
 export const banner = pgTable(
   'banner',
   {
-    id: uuid('id').primaryKey().defaultRandom(),
-    placement: text('placement').notNull(),
-    title: text('title').notNull(),
-    imageUrl: text('imageUrl').notNull(),
-    linkUrl: text('linkUrl'),
-    isActive: boolean('isActive').notNull().default(true),
-    sortOrder: integer('sortOrder').notNull().default(0),
-    createdAt: timestamp('createdAt').notNull().defaultNow(),
-    updatedAt: timestamp('updatedAt')
+    id: uuid().primaryKey().defaultRandom(),
+    placement: text().notNull(),
+    title: text().notNull(),
+    imageUrl: text().notNull(),
+    linkUrl: text(),
+    isActive: boolean().notNull().default(true),
+    sortOrder: integer().notNull().default(0),
+    createdAt: timestamp().notNull().defaultNow(),
+    updatedAt: timestamp()
       .notNull()
       .$onUpdateFn(() => new Date()),
   },
-  (t) => [index('banner_placement_isActive_idx').on(t.placement, t.isActive)],
+  (t) => [index('banner_placement_is_active_idx').on(t.placement, t.isActive)],
 );
 
 export type Page = typeof page.$inferSelect;

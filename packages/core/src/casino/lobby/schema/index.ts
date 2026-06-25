@@ -10,38 +10,38 @@ import {
 } from 'drizzle-orm/pg-core';
 
 export const lobbyCategory = pgTable(
-  'LobbyCategory',
+  'lobby_category',
   {
-    id: uuid('id').primaryKey().defaultRandom(),
-    name: text('name').notNull(),
-    slug: text('slug').notNull(),
-    sortOrder: integer('sortOrder').notNull().default(0),
-    createdAt: timestamp('createdAt').notNull().defaultNow(),
+    id: uuid().primaryKey().defaultRandom(),
+    name: text().notNull(),
+    slug: text().notNull(),
+    sortOrder: integer().notNull().default(0),
+    createdAt: timestamp().notNull().defaultNow(),
   },
   (t) => [uniqueIndex('lobby_cat_slug_key').on(t.slug)],
 );
 
 export const lobbyCategoryGame = pgTable(
-  'LobbyCategoryGame',
+  'lobby_category_game',
   {
-    id: uuid('id').primaryKey().defaultRandom(),
-    categoryId: uuid('categoryId')
+    id: uuid().primaryKey().defaultRandom(),
+    categoryId: uuid()
       .notNull()
       .references(() => lobbyCategory.id, { onDelete: 'cascade' }),
-    gameId: uuid('gameId').notNull(),
-    sortOrder: integer('sortOrder').notNull().default(0),
+    gameId: uuid().notNull(),
+    sortOrder: integer().notNull().default(0),
   },
-  (t) => [index('lobby_cat_game_categoryId_idx').on(t.categoryId)],
+  (t) => [index('lobby_cat_game_category_id_idx').on(t.categoryId)],
 );
 
-export const featuredSlot = pgTable('FeaturedSlot', {
-  id: uuid('id').primaryKey().defaultRandom(),
-  gameId: uuid('gameId').notNull(),
-  title: text('title').notNull(),
-  placement: text('placement').notNull(),
-  sortOrder: integer('sortOrder').notNull().default(0),
-  isActive: boolean('isActive').notNull().default(true),
-  createdAt: timestamp('createdAt').notNull().defaultNow(),
+export const featuredSlot = pgTable('featured_slot', {
+  id: uuid().primaryKey().defaultRandom(),
+  gameId: uuid().notNull(),
+  title: text().notNull(),
+  placement: text().notNull(),
+  sortOrder: integer().notNull().default(0),
+  isActive: boolean().notNull().default(true),
+  createdAt: timestamp().notNull().defaultNow(),
 });
 
 export type LobbyCategory = typeof lobbyCategory.$inferSelect;

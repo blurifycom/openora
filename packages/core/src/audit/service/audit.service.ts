@@ -2,7 +2,7 @@ import { createHash } from 'node:crypto';
 import { randomUUID } from 'node:crypto';
 import { DrizzleService, pageToOffset } from '@blurifycom/core/server';
 import { type EventBus } from '@blurifycom/core/server';
-import { eq, and, gte, lte, desc, sql } from 'drizzle-orm';
+import { eq, and, or, gte, lte, desc, sql } from 'drizzle-orm';
 import { auditLog, type AuditLog } from '../schema/index.js';
 import type { AuditLogEntry, AuditListFilters, AuditExportFilters } from '../schemas/index.js';
 
@@ -63,8 +63,8 @@ export type RecordInput = {
   action: string;
   resourceType: string;
   resourceId?: string | null;
-  before?: unknown;
-  after?: unknown;
+  before?: Record<string, unknown> | null;
+  after?: Record<string, unknown> | null;
   ip?: string | null;
   userAgent?: string | null;
   correlationId?: string | null;
@@ -149,7 +149,18 @@ export class AuditService {
     limit: number;
   }> {
     const db = this.drizzle.db;
-    const { actorId, actorType, action, resourceType, fromDate, toDate, page, limit } = filters;
+    const {
+      actorId,
+      actorType,
+      action,
+      resourceType,
+      resourceId,
+      q,
+      fromDate,
+      toDate,
+      page,
+      limit,
+    } = filters;
     const offset = pageToOffset(page, limit);
 
     const conditions = [
@@ -159,6 +170,8 @@ export class AuditService {
         : undefined,
       action !== undefined ? eq(auditLog.action, action) : undefined,
       resourceType !== undefined ? eq(auditLog.resourceType, resourceType) : undefined,
+      resourceId !== undefined ? eq(auditLog.resourceId, resourceId) : undefined,
+      q !== undefined ? or(eq(auditLog.actorId, q), eq(auditLog.resourceId, q)) : undefined,
       fromDate !== undefined ? gte(auditLog.createdAt, new Date(fromDate)) : undefined,
       toDate !== undefined ? lte(auditLog.createdAt, new Date(toDate)) : undefined,
     ].filter((c): c is NonNullable<typeof c> => c !== undefined);
@@ -193,7 +206,7 @@ export class AuditService {
 
   async exportCsv(filters: AuditExportFilters): Promise<string> {
     const db = this.drizzle.db;
-    const { actorId, actorType, action, resourceType, fromDate, toDate } = filters;
+    const { actorId, actorType, action, resourceType, resourceId, q, fromDate, toDate } = filters;
 
     const conditions = [
       actorId !== undefined ? eq(auditLog.actorId, actorId) : undefined,
@@ -202,6 +215,8 @@ export class AuditService {
         : undefined,
       action !== undefined ? eq(auditLog.action, action) : undefined,
       resourceType !== undefined ? eq(auditLog.resourceType, resourceType) : undefined,
+      resourceId !== undefined ? eq(auditLog.resourceId, resourceId) : undefined,
+      q !== undefined ? or(eq(auditLog.actorId, q), eq(auditLog.resourceId, q)) : undefined,
       fromDate !== undefined ? gte(auditLog.createdAt, new Date(fromDate)) : undefined,
       toDate !== undefined ? lte(auditLog.createdAt, new Date(toDate)) : undefined,
     ].filter((c): c is NonNullable<typeof c> => c !== undefined);

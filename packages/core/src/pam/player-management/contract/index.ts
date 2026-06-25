@@ -1,7 +1,12 @@
 // Shared so the profile add-on can derive from them too. See ADR-0021.
 import { oc, populateContractRouterPaths } from '@orpc/contract';
 import * as z from 'zod';
-import { PlayerSchema, PlayerStatusSchema, KycStatusSchema } from '@blurifycom/core/contracts';
+import {
+  PlayerSchema,
+  PlayerStatusSchema,
+  KycStatusSchema,
+  UuidSchema,
+} from '@blurifycom/core/contracts';
 import { PageQuerySchema, paginated } from '@blurifycom/core/contracts/kit';
 
 export { PlayerSchema, PlayerStatusSchema, KycStatusSchema };
@@ -43,7 +48,7 @@ export const playerContract = populateContractRouterPaths({
     .route({ method: 'PATCH', path: '/players/{playerId}' })
     .input(
       z.object({
-        playerId: z.uuid(),
+        playerId: UuidSchema,
         displayName: z.string().min(1).max(120).optional(),
         status: PlayerStatusSchema.optional(),
         kycStatus: KycStatusSchema.optional(),
@@ -54,7 +59,7 @@ export const playerContract = populateContractRouterPaths({
 
   remove: oc
     .route({ method: 'DELETE', path: '/players/{playerId}' })
-    .input(z.object({ playerId: z.uuid() }))
+    .input(z.object({ playerId: UuidSchema }))
     .output(z.object({ success: z.boolean() })),
 
   registrationsOverTime: oc

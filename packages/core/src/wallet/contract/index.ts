@@ -1,17 +1,29 @@
 import { oc } from '@orpc/contract';
 import * as z from 'zod';
+import { KycStatusSchema, UuidSchema } from '@blurifycom/core/contracts';
+import { PageQuerySchema, paginated } from '@blurifycom/core/contracts/kit';
 
 export const WalletBalanceSchema = z.object({
   balance: z.number(),
   currency: z.string(),
 });
 
+export const WalletTransactionStatusSchema = z.enum([
+  'pending',
+  'processing',
+  'completed',
+  'failed',
+  'rejected',
+]);
+
+export const WalletRailSchema = z.enum(['fireblocks', 'psp']);
+
 export const WalletTransactionSchema = z.object({
-  id: z.uuid(),
+  id: UuidSchema,
   type: z.enum(['deposit', 'withdrawal', 'bet', 'win']),
   amount: z.number(),
   currency: z.string(),
-  status: z.enum(['pending', 'completed', 'failed']),
+  status: WalletTransactionStatusSchema,
   createdAt: z.iso.datetime(),
 });
 
@@ -28,8 +40,38 @@ export const WithdrawInputSchema = z.object({
 });
 
 export const TransactionResultSchema = z.object({
-  transactionId: z.uuid(),
-  status: z.enum(['pending', 'completed', 'failed']),
+  transactionId: UuidSchema,
+  status: WalletTransactionStatusSchema,
+});
+
+export const WithdrawalQueueItemSchema = z.object({
+  transactionId: UuidSchema,
+  userId: UuidSchema,
+  username: z.string(),
+  amount: z.number(),
+  currency: z.string(),
+  rail: WalletRailSchema.nullable(),
+  status: WalletTransactionStatusSchema,
+  kycStatus: KycStatusSchema.nullable(),
+  riskTags: z.array(z.string()),
+  requestedAt: z.iso.datetime(),
+});
+
+export const WithdrawalQueueFilterSchema = PageQuerySchema.extend({
+  currency: z.string().optional(),
+  rail: WalletRailSchema.optional(),
+  minAmount: z.coerce.number().nonnegative().optional(),
+  maxAmount: z.coerce.number().nonnegative().optional(),
+  kycStatus: KycStatusSchema.optional(),
+  dateFrom: z.iso.datetime().optional(),
+  dateTo: z.iso.datetime().optional(),
+});
+
+export const ApproveWithdrawalInputSchema = z.object({ withdrawalId: UuidSchema });
+
+export const RejectWithdrawalInputSchema = z.object({
+  withdrawalId: UuidSchema,
+  reason: z.string().min(1),
 });
 
 export const walletContract = {
@@ -48,4 +90,21 @@ export const walletContract = {
   listTransactions: oc
     .route({ method: 'GET', path: '/wallet/transactions' })
     .output(z.array(WalletTransactionSchema)),
+
+  withdrawals: {
+    list: oc
+      .route({ method: 'GET', path: '/wallet/withdrawals' })
+      .input(WithdrawalQueueFilterSchema)
+      .output(paginated(WithdrawalQueueItemSchema)),
+
+    approve: oc
+      .route({ method: 'POST', path: '/wallet/withdrawals/{withdrawalId}/approve' })
+      .input(ApproveWithdrawalInputSchema)
+      .output(TransactionResultSchema),
+
+    reject: oc
+      .route({ method: 'POST', path: '/wallet/withdrawals/{withdrawalId}/reject' })
+      .input(RejectWithdrawalInputSchema)
+      .output(TransactionResultSchema),
+  },
 };

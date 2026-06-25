@@ -9,28 +9,28 @@ globs:
 
 # Clean architecture
 
-Settled conventions - keep to them, do not reopen. Style/syntax rules live in `overview.md` (pillar 7 + Forbidden patterns) and global rules; this file is structure + the syntax that prevents recurring mistakes.
+Settled conventions - don't reopen. Style/syntax: `overview.md` (pillar 7 + Forbidden patterns) + global rules. Here: structure + the syntax that prevents recurring mistakes.
 
 ## Add-on layering (`packages/addons/<name>/src/`)
 
-| Layer    | File                        | Holds                                                                                                                                      | Must NOT hold                    |
-| -------- | --------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------ | -------------------------------- |
-| schema   | `schema/index.ts`           | Drizzle `pgTable`s (datetimes ALWAYS `timestamp(name, { withTimezone: true })` = timestamptz), row types via `$inferSelect`/`$inferInsert` | logic                            |
-| contract | `contract/index.ts`         | the add-on's oRPC route contract + request/response Zod schemas - the source of truth, exported as `@blurifycom-addons/<name>/contract`    | logic, transport wiring          |
-| schemas  | `schemas/index.ts`          | Zod input/output (mostly re-export from `../contract` + shared-schemas)                                                                    | ad-hoc inline schemas            |
-| service  | `service/<name>.service.ts` | ALL business logic; emits events after DB commit; money in `db.transaction`                                                                | HTTP/transport knowledge         |
-| router   | `router/index.ts`           | thin oRPC wiring: resolve caller (`getUserId`), call service, `mapErrors`                                                                  | business rules, SSE plumbing     |
-| plugin   | `plugin.ts`                 | DI wiring only: `ctx.provide(...)`, `ctx.routers.add(...)`                                                                                 | logic                            |
-| adapters | `adapters/<vendor>/`        | concrete impls of `@blurifycom/adapters` ports                                                                                             | being imported by another add-on |
+| Layer    | File                        | Holds                                                                                                                                                                                                                 | Must NOT hold                    |
+| -------- | --------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------- |
+| schema   | `schema/index.ts`           | Drizzle `pgTable`s, snake_case SQL identifiers via `casing: 'snake_case'` (drop column name strings); datetimes ALWAYS `timestamp({ withTimezone: true })` = timestamptz; row types via `$inferSelect`/`$inferInsert` | logic                            |
+| contract | `contract/index.ts`         | oRPC route contract + req/resp Zod schemas - the source of truth, exported `@blurifycom-addons/<name>/contract`                                                                                                       | logic, transport wiring          |
+| schemas  | `schemas/index.ts`          | Zod input/output (mostly re-export `../contract` + shared-schemas)                                                                                                                                                    | ad-hoc inline schemas            |
+| service  | `service/<name>.service.ts` | ALL business logic; emits events after DB commit; money in `db.transaction`                                                                                                                                           | HTTP/transport knowledge         |
+| router   | `router/index.ts`           | thin oRPC wiring: `getUserId`, call service, `mapErrors`                                                                                                                                                              | business rules, SSE plumbing     |
+| plugin   | `plugin.ts`                 | DI wiring only: `ctx.provide(...)`, `ctx.routers.add(...)`                                                                                                                                                            | logic                            |
+| adapters | `adapters/<vendor>/`        | concrete impls of `@blurifycom/adapters` ports                                                                                                                                                                        | being imported by another add-on |
 
-Service methods are data-in/data-out; side effects (DB writes, event emits, adapter calls) at the edges. (Functional/declarative rationale: `overview.md`.)
+Service methods are data-in/data-out; side effects (DB writes, event emits, adapter calls) at the edges (rationale: `overview.md`).
 
 ## Dependency injection (no decorators, no reflect-metadata)
 
 - Tokens are typed symbols: `createToken<T>('NAME')` in `@blurifycom/adapters`.
-- `Container` (`@blurifycom/core`) wires factories: `register(token, factory)` (last-wins = the overlay rebind), `get(token)` (lazy singleton), `onDispose(fn)`.
+- `Container` (`@blurifycom/core`) wires factories: `register(token, factory)` (last-wins = overlay rebind), `get(token)` (lazy singleton), `onDispose(fn)`.
 - Services take deps by INTERFACE via constructor; never touch the container. `plugin.ts` builds them: `ctx.routers.add('wallet', (c) => createWalletRouter(new WalletService(c.get(DRIZZLE), c.get(EVENT_BUS), c.get(PAYMENT_ADAPTER))))`.
-- A dep captured in a closure is a smell - make it an explicit port + token (canonical fix: the `SEND_EMAIL` seam in identity).
+- A dep captured in a closure is a smell - make it a port + token (canonical fix: `SEND_EMAIL` in identity).
 
 ## Ports & adapters (hexagonal)
 
@@ -38,9 +38,13 @@ Ports = interfaces + tokens in `@blurifycom/adapters` (`PAYMENT_ADAPTER`, `KYC_A
 
 ## Cross-add-on communication (lint-enforced)
 
-Sanctioned paths only: domain **events** (`EventBus`), **command ports** (a `@blurifycom/adapters` token the owner binds, eg `WALLET_COMMANDS`), shared **contracts**, and read-only table reads via `@blurifycom-addons/<name>/schema`. Never import another add-on's root/internals (`no-cross-addon-import` / `no-addon-internal-import` = errors). Two-layer gate: oxlint `oss-boundaries/*` + whole-graph `.dependency-cruiser.cjs` (`pnpm boundaries`). See ADR-0015.
+Sanctioned paths only: domain **events** (`EventBus`), **command ports** (a `@blurifycom/adapters` token the owner binds, eg `WALLET_COMMANDS`), shared **contracts**, read-only table reads via `@blurifycom-addons/<name>/schema`. Never import another add-on's root/internals (`no-cross-addon-import`/`no-addon-internal-import` = errors). Gate: oxlint `oss-boundaries/*` + whole-graph `.dependency-cruiser.cjs` (`pnpm boundaries`). ADR-0015.
 
-Money + any needed-now mutation stay synchronous/transactional - never over events. Prefer a command port: caller passes its own `tx` (eg `WALLET_COMMANDS.debit(tx, ...)`), atomic in-process yet splittable later; declare `dependsOn: ['<owner>']`. `no-cross-addon-schema-read` warns on every cross-add-on schema import - sanctioned but a coupling/extraction blocker. See ADR-0017.
+Money + any needed-now mutation stay synchronous/transactional, never over events - prefer a command port: caller passes its own `tx` (`WALLET_COMMANDS.debit(tx, ...)`), atomic in-process yet splittable later; declare `dependsOn: ['<owner>']`. `no-cross-addon-schema-read` warns on every cross-add-on schema import (sanctioned but a coupling/extraction blocker). ADR-0017.
+
+## Database foreign keys - within a module only
+
+`.references(...)` FKs only between tables the SAME module owns (eg `chatMessage.roomId -> chatRoom.id`). A column pointing at another module's row (typically `userId -> user.id`, owned by identity) stays a bare `uuid().notNull()` - no `.references` (match `chatMessage.userId` / `wallet.userId`). A FK is a correctness constraint, not a perf feature (indexes give read speed - Postgres doesn't auto-index the child column; FKs add write cost), and a cross-module FK is unenforceable once tables split across shards/services, blocking the ADR-0017 extraction invariant. Cross-module integrity goes through a lifecycle event (eg a future `identity.user.purged`) owners subscribe to - don't pre-wire orphan cleanup (YAGNI: users are deactivated, never hard-deleted; GDPR erasure is sealed).
 
 ## Explicit > magic
 
@@ -62,4 +66,4 @@ Error factories keep the SAME exported const identifier (`export const WalletNot
 
 ## Testing
 
-Co-locate as `src/__tests__/<name>.test.ts` (Vitest). Service tests use a vi-mocked Drizzle (`compliance.service.test.ts` is the reference). Keep new logic covered.
+Co-locate as `src/__tests__/<name>.test.ts` (Vitest); service tests use a vi-mocked Drizzle (ref: `compliance.service.test.ts`). Keep new logic covered.

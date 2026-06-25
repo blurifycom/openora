@@ -1,22 +1,22 @@
 import { pgTable, uuid, text, boolean, timestamp, index } from 'drizzle-orm/pg-core';
 
 export const user = pgTable('user', {
-  id: uuid('id').primaryKey().defaultRandom(),
-  name: text('name').notNull(),
-  email: text('email').notNull().unique(),
-  emailVerified: boolean('emailVerified').notNull().default(false),
-  image: text('image'),
-  role: text('role').notNull().default('player'),
-  isActive: boolean('isActive').notNull().default(true),
+  id: uuid().primaryKey().defaultRandom(),
+  name: text().notNull(),
+  email: text().notNull().unique(),
+  emailVerified: boolean().notNull().default(false),
+  image: text(),
+  role: text().notNull().default('player'),
+  isActive: boolean().notNull().default(true),
   // Required by the drizzle adapter when better-auth admin() plugin is enabled;
   // omitting these causes "field banned does not exist" on user creation.
-  banned: boolean('banned').default(false),
-  banReason: text('banReason'),
-  banExpires: timestamp('banExpires'),
+  banned: boolean().default(false),
+  banReason: text(),
+  banExpires: timestamp(),
   // Required by the drizzle adapter when better-auth twoFactor() plugin is enabled.
-  twoFactorEnabled: boolean('twoFactorEnabled').default(false),
-  createdAt: timestamp('createdAt').notNull().defaultNow(),
-  updatedAt: timestamp('updatedAt')
+  twoFactorEnabled: boolean().default(false),
+  createdAt: timestamp().notNull().defaultNow(),
+  updatedAt: timestamp()
     .notNull()
     .$onUpdateFn(() => new Date()),
 });
@@ -24,55 +24,55 @@ export const user = pgTable('user', {
 export const session = pgTable(
   'session',
   {
-    id: uuid('id').primaryKey().defaultRandom(),
-    expiresAt: timestamp('expiresAt').notNull(),
-    token: text('token').notNull().unique(),
-    createdAt: timestamp('createdAt').notNull().defaultNow(),
-    updatedAt: timestamp('updatedAt')
+    id: uuid().primaryKey().defaultRandom(),
+    expiresAt: timestamp().notNull(),
+    token: text().notNull().unique(),
+    createdAt: timestamp().notNull().defaultNow(),
+    updatedAt: timestamp()
       .notNull()
       .$onUpdateFn(() => new Date()),
-    ipAddress: text('ipAddress'),
-    userAgent: text('userAgent'),
-    userId: uuid('userId')
+    ipAddress: text(),
+    userAgent: text(),
+    userId: uuid()
       .notNull()
       .references(() => user.id, { onDelete: 'cascade' }),
   },
-  (t) => [index('session_userId_idx').on(t.userId)],
+  (t) => [index('session_user_id_idx').on(t.userId)],
 );
 
 export const account = pgTable(
   'account',
   {
-    id: uuid('id').primaryKey().defaultRandom(),
-    accountId: text('accountId').notNull(),
-    providerId: text('providerId').notNull(),
-    userId: uuid('userId')
+    id: uuid().primaryKey().defaultRandom(),
+    accountId: text().notNull(),
+    providerId: text().notNull(),
+    userId: uuid()
       .notNull()
       .references(() => user.id, { onDelete: 'cascade' }),
-    accessToken: text('accessToken'),
-    refreshToken: text('refreshToken'),
-    idToken: text('idToken'),
-    accessTokenExpiresAt: timestamp('accessTokenExpiresAt'),
-    refreshTokenExpiresAt: timestamp('refreshTokenExpiresAt'),
-    scope: text('scope'),
-    password: text('password'),
-    createdAt: timestamp('createdAt').notNull().defaultNow(),
-    updatedAt: timestamp('updatedAt')
+    accessToken: text(),
+    refreshToken: text(),
+    idToken: text(),
+    accessTokenExpiresAt: timestamp(),
+    refreshTokenExpiresAt: timestamp(),
+    scope: text(),
+    password: text(),
+    createdAt: timestamp().notNull().defaultNow(),
+    updatedAt: timestamp()
       .notNull()
       .$onUpdateFn(() => new Date()),
   },
-  (t) => [index('account_userId_idx').on(t.userId)],
+  (t) => [index('account_user_id_idx').on(t.userId)],
 );
 
 export const verification = pgTable(
   'verification',
   {
-    id: uuid('id').primaryKey().defaultRandom(),
-    identifier: text('identifier').notNull(),
-    value: text('value').notNull(),
-    expiresAt: timestamp('expiresAt').notNull(),
-    createdAt: timestamp('createdAt').notNull().defaultNow(),
-    updatedAt: timestamp('updatedAt')
+    id: uuid().primaryKey().defaultRandom(),
+    identifier: text().notNull(),
+    value: text().notNull(),
+    expiresAt: timestamp().notNull(),
+    createdAt: timestamp().notNull().defaultNow(),
+    updatedAt: timestamp()
       .notNull()
       .$onUpdateFn(() => new Date()),
   },
@@ -81,17 +81,20 @@ export const verification = pgTable(
 
 // Field shape mirrors better-auth twoFactor() plugin schema. See @blurifycom/core/server createAuth().
 export const twoFactor = pgTable(
-  'twoFactor',
+  'two_factor',
   {
-    id: uuid('id').primaryKey().defaultRandom(),
-    secret: text('secret').notNull(),
-    backupCodes: text('backupCodes').notNull(),
-    userId: uuid('userId')
+    id: uuid().primaryKey().defaultRandom(),
+    secret: text().notNull(),
+    backupCodes: text().notNull(),
+    userId: uuid()
       .notNull()
       .references(() => user.id, { onDelete: 'cascade' }),
-    verified: boolean('verified').default(true),
+    verified: boolean().default(true),
   },
-  (t) => [index('twoFactor_userId_idx').on(t.userId), index('twoFactor_secret_idx').on(t.secret)],
+  (t) => [
+    index('two_factor_user_id_idx').on(t.userId),
+    index('two_factor_secret_idx').on(t.secret),
+  ],
 );
 
 export type User = typeof user.$inferSelect;

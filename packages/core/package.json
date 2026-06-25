@@ -327,6 +327,11 @@
       "import": "./dist/iam/contract/index.js",
       "default": "./dist/iam/contract/index.js"
     },
+    "./iam/seed": {
+      "types": "./dist/iam/seed/index.d.ts",
+      "import": "./dist/iam/seed/index.js",
+      "default": "./dist/iam/seed/index.js"
+    },
     "./pam": {
       "types": "./dist/pam/index.d.ts",
       "import": "./dist/pam/index.js",
@@ -474,6 +479,7 @@
     "push": "drizzle-kit push"
   },
   "dependencies": {
+    "@2toad/profanity": "3.3.0",
     "@hono/node-server": "2.0.4",
     "@orpc/client": "1.14.5",
     "@orpc/contract": "1.14.5",

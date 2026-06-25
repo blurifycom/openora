@@ -7,18 +7,13 @@
     "build": "tsc",
     "dev": "node --import tsx --watch --env-file-if-exists=../../.env src/main.ts",
     "start": "node --import tsx --env-file-if-exists=../../.env src/main.ts",
+    "db:seed": "node --import tsx --env-file-if-exists=../../.env src/seed.ts",
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
-    "@blurifycom/api-runtime": "link:{{ossFromApp}}/packages/platform/api-runtime",
-    "@blurifycom/orpc-contract": "link:{{ossFromApp}}/packages/contracts/orpc-contract",
-    "@blurifycom/plugin-host": "link:{{ossFromApp}}/packages/platform/plugin-host",
-    "@blurifycom/shared-schemas": "link:{{ossFromApp}}/packages/contracts/shared-schemas",
-    "@blurifycom/adapters": "link:{{ossFromApp}}/packages/contracts/adapters",
-    "@blurifycom/modules": "link:{{ossFromApp}}/packages/modules"
+    "@blurifycom/core": "link:{{ossFromApp}}/packages/core"
   },
   "devDependencies": {
-    "@blurifycom/tsconfig": "link:{{ossFromApp}}/packages/config/tsconfig",
     "tsx": "4.22.2",
     "typescript": "6.0.3"
   }

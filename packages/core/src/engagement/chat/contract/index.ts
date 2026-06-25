@@ -1,9 +1,13 @@
 import { oc, eventIterator } from '@orpc/contract';
 import * as z from 'zod';
-import { IdInputSchema } from '@blurifycom/core/contracts';
+import { IdInputSchema, UuidSchema } from '@blurifycom/core/contracts';
+
+export const MAX_MESSAGE_LENGTH = 500;
+
+export const MessageContentSchema = z.string().trim().min(1).max(MAX_MESSAGE_LENGTH);
 
 export const ChatRoomSchema = z.object({
-  id: z.uuid(),
+  id: UuidSchema,
   name: z.string(),
   slug: z.string(),
   isPublic: z.boolean(),
@@ -11,12 +15,20 @@ export const ChatRoomSchema = z.object({
 });
 
 export const ChatMessageSchema = z.object({
-  id: z.uuid(),
-  roomId: z.uuid().nullable(),
-  userId: z.uuid(),
+  id: UuidSchema,
+  roomId: UuidSchema.nullable(),
+  userId: UuidSchema,
   username: z.string(),
+  // UNTRUSTED user text. Profanity-gated and dangerous-URL-defanged server-side
+  // (best-effort), but NOT HTML-escaped. Consumers MUST render it as text or
+  // HTML-escape it - never inject it as raw HTML. See moderation/sanitize-urls.ts.
   content: z.string(),
   isDeleted: z.boolean(),
+  createdAt: z.iso.datetime(),
+});
+
+export const BlockedUserSchema = z.object({
+  blockedId: UuidSchema,
   createdAt: z.iso.datetime(),
 });
 
@@ -36,8 +48,9 @@ export const chatContract = {
     .route({ method: 'GET', path: '/chat/rooms/{roomId}/messages' })
     .input(
       z.object({
-        roomId: z.uuid(),
-        limit: z.number().optional(),
+        roomId: UuidSchema,
+        // Bounded so a caller cannot request an unbounded page (matches the 50 default).
+        limit: z.number().int().min(1).max(50).optional(),
         before: z.string().optional(),
       }),
     )
@@ -45,7 +58,7 @@ export const chatContract = {
 
   sendRoomMessage: oc
     .route({ method: 'POST', path: '/chat/rooms/{roomId}/messages' })
-    .input(z.object({ roomId: z.uuid(), content: z.string() }))
+    .input(z.object({ roomId: UuidSchema, content: MessageContentSchema }))
     .output(ChatMessageSchema),
 
   deleteMessage: oc
@@ -59,7 +72,7 @@ export const chatContract = {
 
   sendGlobalMessage: oc
     .route({ method: 'POST', path: '/chat/global' })
-    .input(z.object({ content: z.string() }))
+    .input(z.object({ content: MessageContentSchema }))
     .output(ChatMessageSchema),
 
   getConnection: oc
@@ -69,6 +82,20 @@ export const chatContract = {
 
   streamMessages: oc
     .route({ method: 'GET', path: '/chat/stream' })
-    .input(z.object({ roomId: z.uuid().nullable() }))
+    .input(z.object({ roomId: UuidSchema.nullable() }))
     .output(eventIterator(ChatMessageSchema)),
+
+  listBlockedUsers: oc
+    .route({ method: 'GET', path: '/chat/blocks' })
+    .output(z.array(BlockedUserSchema)),
+
+  blockUser: oc
+    .route({ method: 'POST', path: '/chat/blocks' })
+    .input(z.object({ blockedId: UuidSchema }))
+    .output(z.object({ success: z.literal(true) })),
+
+  unblockUser: oc
+    .route({ method: 'DELETE', path: '/chat/blocks/{blockedId}' })
+    .input(z.object({ blockedId: UuidSchema }))
+    .output(z.object({ success: z.literal(true) })),
 };

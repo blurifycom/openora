@@ -1,6 +1,5 @@
 // See ADR-0020.
 import type { DrizzleDb } from '@blurifycom/core/server';
-import { ensureDefaultRoles } from '@blurifycom/core/iam';
 import { eq } from 'drizzle-orm';
 import { user } from '@blurifycom/core/pam/schema/identity';
 import { player } from '@blurifycom/core/pam/schema/profile';
@@ -183,9 +182,6 @@ export async function seedDemoData(options: SeedOptions): Promise<SeedResult> {
     isActive: true,
   });
   if (adminUser) log(`Admin ready: ${admin.email} / ${admin.password}`);
-
-  const seededRoles = await ensureDefaultRoles(db);
-  log(`Ensured ${seededRoles.length} predefined admin roles.`);
 
   await db.insert(game).values(
     GAMES.map(([name, provider, category]) => ({

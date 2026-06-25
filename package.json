@@ -26,7 +26,7 @@
     "db:migrate:all": "node tools/migrate-all.mjs",
     "codegen": "turbo run codegen",
     "clean": "turbo run clean && rm -rf node_modules",
-    "format": "oxfmt",
+    "format": "oxfmt && node tools/ensure-final-newline.mjs",
     "format:check": "oxfmt --check",
     "sync:agents": "rulesync generate",
     "prepare": "rulesync generate && husky",

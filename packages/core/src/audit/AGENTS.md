@@ -79,8 +79,11 @@ extraction / OOM - narrow the date range and paginate for larger windows, or use
 `bonus.claimed`, `compliance.limit.upserted`, `compliance.limit.removed`,
 `cms.page.published`, `iam.invitation.accepted`.
 
-Mapping: if the payload has a `userId` field the row uses `actorType='player'`;
-otherwise `actorType='system'`. The event topic becomes the `action` column value.
+Mapping: `wallet.*` events record `actorType='player'`, `actorId=userId`,
+`resourceType='transaction'`, `resourceId=transactionId` (so a transaction
+reference is searchable, not buried in `after`). Otherwise, if the payload has a
+`userId` field the row uses `actorType='player'`; failing that, `actorType='system'`.
+The event topic becomes the `action` column value.
 
 ### oRPC routes
 
@@ -91,6 +94,12 @@ otherwise `actorType='system'`. The event topic becomes the `action` column valu
 
 No create/update/delete routes. Writes happen only via `record()` (called by the
 event subscribers in `plugin.ts` or by callers of the `AUDIT_WRITER` port).
+
+`audit.list` / `audit.exportCsv` accept optional filters `actorId`, `actorType`,
+`action`, `resourceType`, `resourceId`, `fromDate`, `toDate`, plus a single search
+param `q` that exact-matches `actorId` OR `resourceId` (covers player ID, admin
+identity, and transaction reference). Filters combine with AND; `q` is the grouped
+OR within that AND. Exact-match only - keeps the `actorId`/`resourceId` indexes usable.
 
 ## Do
 

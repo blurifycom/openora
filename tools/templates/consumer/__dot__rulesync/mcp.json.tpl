@@ -4,7 +4,7 @@
     "oss": {
       "type": "stdio",
       "command": "pnpm",
-      "args": ["exec", "tsx", "{{ossFromRoot}}/packages/platform/mcp/src/main.ts"]
+      "args": ["exec", "tsx", "{{ossFromRoot}}/apps/mcp-server-dev/src/main.ts"]
     }
   }
 }

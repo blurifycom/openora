@@ -1,7 +1,8 @@
 import * as z from 'zod';
+import { UuidSchema } from '@blurifycom/core/contracts';
 
 export const CreateNotificationInputSchema = z.object({
-  userId: z.uuid(),
+  userId: UuidSchema,
   type: z.string(),
   title: z.string(),
   body: z.string(),

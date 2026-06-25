@@ -1,4 +1,5 @@
 import { createToken, type Token } from './token.js';
+import type { KycStatus } from '../schemas/player.js';
 
 // Admin/back-office view of the user directory. Owned + bound by the identity
 // module (it owns the `user` table); the back-office (admin-console) depends only
@@ -16,11 +17,27 @@ export type AdminUserRow = {
 
 export type AdminUserListOptions = { page: number; limit: number; search?: string };
 
+// Player-facing back-office enrichment (username + KYC). Lets a back-office
+// consumer label a player row without reaching into the player/profile tables.
+export type AdminPlayerSummary = {
+  userId: string;
+  username: string;
+  kycStatus: KycStatus | null;
+};
+
 export type AdminUserDirectory = {
   count(): Promise<number>;
   list(opts: AdminUserListOptions): Promise<{ rows: AdminUserRow[]; total: number }>;
   get(id: string): Promise<AdminUserRow | null>;
-  update(id: string, patch: { isActive?: boolean; role?: string }): Promise<AdminUserRow | null>;
+  // actorId = the admin performing the change (for audit attribution on an isActive flip).
+  update(
+    id: string,
+    patch: { isActive?: boolean; role?: string },
+    actorId: string,
+  ): Promise<AdminUserRow | null>;
+  // Batch enrichment for back-office lists (eg the withdrawal queue). Returns one
+  // entry per resolvable id; unknown ids are omitted.
+  lookupPlayers(userIds: readonly string[]): Promise<AdminPlayerSummary[]>;
 };
 
 export const ADMIN_USER_DIRECTORY: Token<AdminUserDirectory> = createToken('ADMIN_USER_DIRECTORY');

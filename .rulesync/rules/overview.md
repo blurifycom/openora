@@ -76,8 +76,8 @@ Cross-cutting basics (kebab files, PascalCase types, `<Name>Schema` + inferred `
 - Packages: `@blurifycom/<kebab>` (platform), `@blurifycom-addons/<kebab>` (add-ons - standalone under `packages/addons/<name>/`, imported by package name + read-only `/schema` subpath).
 - Add-on role (`player`/`backoffice`/`platform`) is descriptive metadata, not a directory. An add-on exposes API only (no JSX). Public API = root entry + `/schema`; reaching internals is a lint error (`no-addon-internal-import`).
 - oRPC routers: namespace by add-on (`wallet.transactions.list`).
-- Drizzle tables: snake_case `pgTable('table_name', ...)`; camelCase const; row type `typeof <const>.$inferSelect`.
-- **Timestamps: ALWAYS `timestamp('col', { withTimezone: true })` (Postgres timestamptz), never bare `timestamp`.** Store UTC; let the column carry the zone. Every datetime column (`createdAt`, `updatedAt`, `expiresAt`, `*At`).
+- Drizzle SQL identifiers are snake_case everywhere - table names, columns, `pgEnum` types, and index/constraint names. Every drizzle instance + drizzle-kit config sets `casing: 'snake_case'`, so a column derives its SQL name from the camelCase key: write `userId: uuid()` (-> `user_id` column), never `uuid('userId')` or `uuid('user_id')`. Pass an explicit snake_case name only where casing can't derive it: `pgTable('chat_room', ...)`, `pgEnum('wallet_transaction_type', [...])`, and index names (`index('chat_msg_room_id_idx')`). The exported const stays camelCase; row type is `typeof <const>.$inferSelect`.
+- Timestamps: ALWAYS `timestamp({ withTimezone: true })` (Postgres `timestamptz`), never bare `timestamp()`. Store UTC; let the column carry the zone. Applies to every datetime column (`createdAt`, `updatedAt`, `expiresAt`, `*At`).
 
 ## Dependency rules (two-layer enforcement, both in `pnpm verify`)
 
@@ -99,6 +99,7 @@ Cross-cutting bans (lint-enforced) live in `conventions`: `any` outside tests, `
 - Re-exporting types "to be nice" - import from where defined.
 - A per-add-on `package.json` importing `@blurifycom/modules` - each add-on is standalone.
 - Bare `timestamp(...)` columns - always timestamptz.
+- CamelCase/PascalCase SQL identifiers - tables, columns, enums, and indexes are snake_case (relies on `casing: 'snake_case'`); never pass an explicit camelCase column name like `uuid('userId')`.
 - Hand-editing generated drizzle migrations, `docs/openapi.json`, or `docs/catalog.json` - regenerate via `pnpm regen`.
 
 ## How-tos

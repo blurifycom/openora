@@ -4,6 +4,7 @@ import { defineConfig } from 'drizzle-kit';
 // Own migration history + own tracking table (ADR-0020).
 export default defineConfig({
   dialect: 'postgresql',
+  casing: 'snake_case',
   schema: ['./aggregator/schema/index.ts'],
   out: './drizzle/migrations',
   migrations: {

@@ -12,6 +12,5 @@ export {
   isLevelSufficient,
   levelToActions,
   actionsToLevel,
-  DEFAULT_ADMIN_ROLES,
 } from './permission-levels.js';
-export type { PermissionLevel, ModuleKey, DefaultAdminRole } from './permission-levels.js';
+export type { PermissionLevel } from './permission-levels.js';

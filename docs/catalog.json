@@ -53,18 +53,22 @@
       "id": "chat",
       "group": "core",
       "tables": [
-        "ChatMessage",
-        "ChatRoom"
+        "chat_message",
+        "chat_room",
+        "chat_user_block"
       ],
       "routes": [
+        "chat.blockUser",
         "chat.deleteMessage",
         "chat.getConnection",
         "chat.getGlobalMessages",
         "chat.getRoomMessages",
+        "chat.listBlockedUsers",
         "chat.listRooms",
         "chat.sendGlobalMessage",
         "chat.sendRoomMessage",
-        "chat.streamMessages"
+        "chat.streamMessages",
+        "chat.unblockUser"
       ]
     },
     {
@@ -107,8 +111,8 @@
       "id": "gaming",
       "group": "core",
       "tables": [
-        "Game",
-        "GameRound"
+        "game",
+        "game_round"
       ],
       "routes": [
         "gaming.endRound",
@@ -150,7 +154,7 @@
       "tables": [
         "account",
         "session",
-        "twoFactor",
+        "two_factor",
         "user",
         "verification"
       ],
@@ -187,9 +191,9 @@
       "id": "lobby",
       "group": "core",
       "tables": [
-        "FeaturedSlot",
-        "LobbyCategory",
-        "LobbyCategoryGame"
+        "featured_slot",
+        "lobby_category",
+        "lobby_category_game"
       ],
       "routes": [
         "lobby.getCategoryBySlug",
@@ -238,9 +242,9 @@
       "id": "sportsbook",
       "group": "addon",
       "tables": [
-        "SportsbookBet",
-        "SportsbookEvent",
-        "SportsbookSelection"
+        "sportsbook_bet",
+        "sportsbook_event",
+        "sportsbook_selection"
       ],
       "routes": [
         "sportsbook.getEvent",
@@ -257,9 +261,12 @@
         "wallet_transaction"
       ],
       "routes": [
+        "wallet.approve",
         "wallet.deposit",
         "wallet.getBalance",
+        "wallet.list",
         "wallet.listTransactions",
+        "wallet.reject",
         "wallet.withdraw"
       ]
     }
@@ -282,7 +289,8 @@
       "status": "wired",
       "boundIn": [
         "packages/core/src/admin-console/plugin.ts",
-        "packages/core/src/pam/identity/plugin.ts"
+        "packages/core/src/pam/identity/plugin.ts",
+        "packages/core/src/wallet/plugin.ts"
       ]
     },
     {
@@ -310,6 +318,7 @@
       "token": "AUDIT_WRITER",
       "status": "wired",
       "boundIn": [
+        "packages/core/src/admin-console/plugin.ts",
         "packages/core/src/audit/plugin.ts"
       ]
     },
@@ -432,7 +441,10 @@
     "aggregator.sync.completed",
     "bonus.claimed",
     "chat.message.sent",
+    "chat.user.blocked",
+    "chat.user.unblocked",
     "cms.page.published",
+    "compliance.geo-rule.added",
     "compliance.kyc.updated",
     "compliance.limit.removed",
     "compliance.limit.upserted",
@@ -450,8 +462,10 @@
     "identity.email.verified",
     "identity.password.reset",
     "identity.profile.updated",
+    "identity.user.deactivated",
     "identity.user.login",
     "identity.user.logout",
+    "identity.user.reactivated",
     "identity.user.registered",
     "leaderboard.reset",
     "leaderboard.score.recorded",
@@ -459,7 +473,11 @@
     "sportsbook.bet.placed",
     "sportsbook.odds.updated",
     "wallet.deposit.completed",
-    "wallet.withdrawal.completed"
+    "wallet.withdrawal.approved",
+    "wallet.withdrawal.completed",
+    "wallet.withdrawal.failed",
+    "wallet.withdrawal.rejected",
+    "wallet.withdrawal.requested"
   ],
   "uiSlots": [],
   "schemas": [
@@ -496,6 +514,10 @@
       "file": "packages/core/src/casino/aggregator/contract/index.ts"
     },
     {
+      "name": "ApproveWithdrawalInputSchema",
+      "file": "packages/core/src/wallet/contract/index.ts"
+    },
+    {
       "name": "AuditActorTypeSchema",
       "file": "packages/core/src/audit/contract/index.ts"
     },
@@ -514,6 +536,10 @@
     {
       "name": "BannerSchema",
       "file": "packages/core/src/cms/contract/index.ts"
+    },
+    {
+      "name": "BlockedUserSchema",
+      "file": "packages/core/src/engagement/chat/contract/index.ts"
     },
     {
       "name": "BonusSchema",
@@ -688,6 +714,10 @@
       "file": "packages/core/src/contracts/schemas/identity.ts"
     },
     {
+      "name": "MessageContentSchema",
+      "file": "packages/core/src/engagement/chat/contract/index.ts"
+    },
+    {
       "name": "NotificationSchema",
       "file": "packages/core/src/engagement/notifications/contract/index.ts"
     },
@@ -754,6 +784,10 @@
     {
       "name": "RegisterInputSchema",
       "file": "packages/core/src/contracts/schemas/identity.ts"
+    },
+    {
+      "name": "RejectWithdrawalInputSchema",
+      "file": "packages/core/src/wallet/contract/index.ts"
     },
     {
       "name": "RequestPasswordResetInputSchema",
@@ -824,6 +858,10 @@
       "file": "packages/core/src/contracts/schemas/common.ts"
     },
     {
+      "name": "UserRoleSchema",
+      "file": "packages/core/src/admin-console/contract/index.ts"
+    },
+    {
       "name": "UserSchema",
       "file": "packages/core/src/contracts/schemas/identity.ts"
     },
@@ -844,7 +882,23 @@
       "file": "packages/core/src/wallet/contract/index.ts"
     },
     {
+      "name": "WalletRailSchema",
+      "file": "packages/core/src/wallet/contract/index.ts"
+    },
+    {
       "name": "WalletTransactionSchema",
+      "file": "packages/core/src/wallet/contract/index.ts"
+    },
+    {
+      "name": "WalletTransactionStatusSchema",
+      "file": "packages/core/src/wallet/contract/index.ts"
+    },
+    {
+      "name": "WithdrawalQueueFilterSchema",
+      "file": "packages/core/src/wallet/contract/index.ts"
+    },
+    {
+      "name": "WithdrawalQueueItemSchema",
       "file": "packages/core/src/wallet/contract/index.ts"
     },
     {
@@ -890,6 +944,7 @@
     "slots"
   ],
   "httpRoutes": [
+    "DELETE /chat/blocks/{blockedId}",
     "DELETE /chat/messages/{id}",
     "DELETE /cms/banners/{id}",
     "DELETE /cms/pages/{id}",
@@ -905,6 +960,7 @@
     "GET /bonus/bonuses",
     "GET /bonus/user-bonuses",
     "GET /bonus/user-bonuses/{id}",
+    "GET /chat/blocks",
     "GET /chat/connection",
     "GET /chat/global",
     "GET /chat/rooms",
@@ -935,11 +991,13 @@
     "GET /profile",
     "GET /wallet/balance",
     "GET /wallet/transactions",
+    "GET /wallet/withdrawals",
     "PATCH /backoffice/users/{userId}",
     "PATCH /iam/roles/{roleId}",
     "PATCH /identity/profile",
     "PATCH /profile",
     "POST /bonus/claim/{bonusId}",
+    "POST /chat/blocks",
     "POST /chat/global",
     "POST /chat/rooms/{roomId}/messages",
     "POST /cms/banners",
@@ -968,6 +1026,8 @@
     "POST /notifications/{id}/read",
     "POST /wallet/deposit",
     "POST /wallet/withdraw",
+    "POST /wallet/withdrawals/{withdrawalId}/approve",
+    "POST /wallet/withdrawals/{withdrawalId}/reject",
     "PUT /cms/banners/{id}",
     "PUT /cms/pages/{id}",
     "PUT /compliance/limits",
