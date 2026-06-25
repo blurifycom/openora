@@ -31,7 +31,12 @@ export const playerContract = populateContractRouterPaths({
 
   get: oc
     .route({ method: 'GET', path: '/players/{playerId}' })
-    .input(z.object({ playerId: z.uuid() }))
+    .input(
+      z.object({
+        playerId: z.uuid(),
+        include: z.array(z.enum(['wallet_transactions', 'tags', 'balances', 'notes'])).optional(),
+      }),
+    )
     .output(PlayerSchema),
 
   update: oc

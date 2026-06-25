@@ -101,7 +101,8 @@
       "@blurifycom/core/wallet/plugin": ["./src/wallet/plugin.ts"],
       "@blurifycom/core/wallet/plugins/wallet": ["./src/wallet/plugin.ts"],
       "@blurifycom/core/wallet/schema": ["./src/wallet/schema/index.ts"],
-      "@blurifycom/core/wallet/server": ["./src/wallet/plugin.ts"]
+      "@blurifycom/core/wallet/server": ["./src/wallet/plugin.ts"],
+      "@blurifycom/core/common/errors": ["./src/common/errors/index.ts"]
     }
   },
   "include": ["src/**/*"],

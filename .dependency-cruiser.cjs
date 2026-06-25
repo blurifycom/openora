@@ -63,7 +63,7 @@ module.exports = {
         'A folded domain (packages/core/src/<domain>) must not depend on a sibling domain - the single rule of ADR-0024, now enforced intra-package. Couple only through the foundation: a read-only /schema subpath, a command/adapter port (eg WALLET_COMMANDS), a domain event, or a shared contract via the composition root. This whole-graph twin catches relative-path / barrel laundering the oxlint string rule (no-cross-core-domain) cannot.',
       from: { path: '^packages/core/src/(?!contracts/|server/|react/|scripts/)([^/]+)/' },
       to: {
-        path: '^packages/core/src/(?!contracts/|server/|react/|scripts/)[^/]+/',
+        path: '^packages/core/src/(?!contracts/|server/|react/|scripts/|common/)[^/]+/',
         pathNot: ['^packages/core/src/$1/', '/schema/'],
       },
     },

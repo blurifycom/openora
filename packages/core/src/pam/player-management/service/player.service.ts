@@ -1,6 +1,6 @@
 import { makeNotFoundError, type EventBus } from '@blurifycom/core/server';
 import { DrizzleService, findOneOrThrow, pageToOffset } from '@blurifycom/core/server';
-import { eq, ilike, count, or, and, gte, desc, sql, like } from 'drizzle-orm';
+import { eq, ilike, count, or, and, gte, desc, sql } from 'drizzle-orm';
 // Reads the core-owned `player` table + identity `user` via the public /schema
 // subpaths (add-on->core reads, allowed by the boundary rules). PAM owns no
 // tables of its own. See ADR-0020.
@@ -93,6 +93,14 @@ export class PlayerService {
   }
 
   async get(playerId: string): Promise<Player> {
+    const record = findOneOrThrow(
+      await this.drizzle.db.select().from(player).where(eq(player.id, playerId)),
+      new PlayerNotFoundError(playerId),
+    );
+    return toPlayer(record, await this.emailFor(record.userId));
+  }
+
+  async getExtended(playerId: string): Promise<Player> {
     const record = findOneOrThrow(
       await this.drizzle.db.select().from(player).where(eq(player.id, playerId)),
       new PlayerNotFoundError(playerId),
