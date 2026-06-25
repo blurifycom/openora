@@ -16,7 +16,9 @@ const DEFAULT_TEST_URL = 'postgres://postgres:postgres@localhost:5432/oss_igamin
 async function applyAllMigrations(url: string): Promise<void> {
   const pool = new Pool({ connectionString: url });
   try {
-    await migrate(drizzle(pool), { migrationsFolder: migrationsFolder() });
+    await migrate(drizzle(pool, { casing: 'snake_case' }), {
+      migrationsFolder: migrationsFolder(),
+    });
   } finally {
     await pool.end();
   }
@@ -67,7 +69,7 @@ export async function setupTestDb(): Promise<TestDb> {
   await applyAllMigrations(url);
 
   const pool = new Pool({ connectionString: url });
-  const db = drizzle(pool);
+  const db = drizzle(pool, { casing: 'snake_case' });
 
   return {
     url,

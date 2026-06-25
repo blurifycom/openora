@@ -4,6 +4,7 @@ import type {
   AdminUserRow,
 } from '@blurifycom/core/contracts';
 import { DrizzleService, pageToOffset } from '@blurifycom/core/server';
+import type { EventBus } from '@blurifycom/core/server';
 import { count, desc, eq, ilike } from 'drizzle-orm';
 import { user } from './schema/index.js';
 
@@ -21,7 +22,10 @@ function toRow(r: typeof user.$inferSelect): AdminUserRow {
 }
 
 export class DrizzleAdminUserDirectory implements AdminUserDirectory {
-  constructor(private readonly drizzle: DrizzleService) {}
+  constructor(
+    private readonly drizzle: DrizzleService,
+    private readonly events: EventBus,
+  ) {}
 
   async count(): Promise<number> {
     const [r] = await this.drizzle.db.select({ n: count() }).from(user);
@@ -52,6 +56,7 @@ export class DrizzleAdminUserDirectory implements AdminUserDirectory {
   async update(
     id: string,
     patch: { isActive?: boolean; role?: string },
+    actorId: string,
   ): Promise<AdminUserRow | null> {
     const [existing] = await this.drizzle.db.select().from(user).where(eq(user.id, id));
     if (!existing) return null;
@@ -59,6 +64,14 @@ export class DrizzleAdminUserDirectory implements AdminUserDirectory {
     if (patch.isActive !== undefined) set.isActive = patch.isActive;
     if (patch.role !== undefined) set.role = patch.role;
     const [r] = await this.drizzle.db.update(user).set(set).where(eq(user.id, id)).returning();
-    return r ? toRow(r) : null;
+    if (!r) return null;
+
+    // Emit only on an actual active-status flip, after the commit. Literal topics
+    // (not a ternary) so the catalog generator's emit-scanner picks them up.
+    if (patch.isActive !== undefined && patch.isActive !== existing.isActive) {
+      if (patch.isActive) this.events.emit('identity.user.reactivated', { userId: id, actorId });
+      else this.events.emit('identity.user.deactivated', { userId: id, actorId });
+    }
+    return toRow(r);
   }
 }

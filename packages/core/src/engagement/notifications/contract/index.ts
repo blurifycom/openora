@@ -1,10 +1,10 @@
 import { oc } from '@orpc/contract';
 import * as z from 'zod';
-import { IdInputSchema } from '@blurifycom/core/contracts';
+import { IdInputSchema, UuidSchema } from '@blurifycom/core/contracts';
 
 export const NotificationSchema = z.object({
-  id: z.uuid(),
-  userId: z.uuid(),
+  id: UuidSchema,
+  userId: UuidSchema,
   type: z.string(),
   title: z.string(),
   body: z.string(),

@@ -14,41 +14,52 @@ export const domainEventSchemas = {
   'identity.email.verified': z.object({ userId: UuidSchema }),
   'identity.profile.updated': z.object({ userId: UuidSchema }),
 
+  // An admin toggled a user's active status (the only user-lifecycle flow today;
+  // users are deactivated, never hard-deleted). userId = subject, actorId = the
+  // admin who acted (for a complete audit trail).
+  'identity.user.deactivated': z.object({ userId: UuidSchema, actorId: UuidSchema }),
+  'identity.user.reactivated': z.object({ userId: UuidSchema, actorId: UuidSchema }),
+
   'wallet.deposit.completed': z.object({
     userId: UuidSchema,
     amount: z.number(),
     currency: z.string(),
-    transactionId: z.string(),
+    transactionId: UuidSchema,
   }),
   'wallet.withdrawal.completed': z.object({
     userId: UuidSchema,
     amount: z.number(),
     currency: z.string(),
-    transactionId: z.string(),
+    transactionId: UuidSchema,
   }),
 
   'gaming.round.started': z.object({
-    roundId: z.string(),
-    gameId: z.string(),
+    roundId: UuidSchema,
+    gameId: UuidSchema,
     userId: UuidSchema,
     currency: z.string(),
   }),
-  'gaming.round.ended': z.object({ roundId: z.string(), userId: UuidSchema }),
+  'gaming.round.ended': z.object({ roundId: UuidSchema, userId: UuidSchema }),
 
   'bonus.claimed': z.object({
     userId: UuidSchema,
-    bonusId: z.string(),
-    userBonusId: z.string(),
+    bonusId: UuidSchema,
+    userBonusId: UuidSchema,
   }),
 
   'chat.message.sent': z.object({
-    messageId: z.string(),
-    roomId: z.string(),
+    messageId: UuidSchema,
+    // null for global-chat messages (no room); a room id otherwise.
+    roomId: UuidSchema.nullable(),
     userId: UuidSchema,
   }),
 
-  'compliance.limit.upserted': z.object({ userId: UuidSchema, limitId: z.string() }),
-  'compliance.limit.removed': z.object({ userId: UuidSchema, limitId: z.string() }),
+  // A player muted/unmuted another player's messages for themselves (ABC-45 AC11).
+  'chat.user.blocked': z.object({ blockerId: UuidSchema, blockedId: UuidSchema }),
+  'chat.user.unblocked': z.object({ blockerId: UuidSchema, blockedId: UuidSchema }),
+
+  'compliance.limit.upserted': z.object({ userId: UuidSchema, limitId: UuidSchema }),
+  'compliance.limit.removed': z.object({ userId: UuidSchema, limitId: UuidSchema }),
 
   // An admin added or changed a geo (country) rule (regulatory). `actorId` is the
   // acting admin so the audit log can attribute the mutation.
@@ -66,9 +77,9 @@ export const domainEventSchemas = {
     previousStatus: z.string(),
   }),
 
-  'notifications.created': z.object({ notificationId: z.string(), userId: UuidSchema }),
+  'notifications.created': z.object({ notificationId: UuidSchema, userId: UuidSchema }),
 
-  'cms.page.published': z.object({ pageId: z.string(), slug: z.string() }),
+  'cms.page.published': z.object({ pageId: UuidSchema, slug: z.string() }),
 
   // An admin triggered a game-catalogue sync. `actorId` is the acting admin (the
   // envelope carries no caller) so the audit log can attribute the mutation.
@@ -90,14 +101,14 @@ export const domainEventSchemas = {
   }),
 
   'sportsbook.odds.updated': z.object({
-    eventId: z.string(),
-    selectionId: z.string(),
+    eventId: UuidSchema,
+    selectionId: UuidSchema,
     odds: z.number(),
   }),
   'sportsbook.bet.placed': z.object({
     userId: UuidSchema,
-    betId: z.string(),
-    selectionId: z.string(),
+    betId: UuidSchema,
+    selectionId: UuidSchema,
     stake: z.number(),
   }),
 
@@ -107,7 +118,7 @@ export const domainEventSchemas = {
   'iam.invitation.accepted': z.object({
     email: z.string(),
     roleId: UuidSchema,
-    invitationId: z.string(),
+    invitationId: UuidSchema,
   }),
 
   // Backoffice RBAC mutations. The envelope does NOT carry the

@@ -42,7 +42,11 @@ export function createBackofficeRouter(
         backofficeService.getUser(input.userId),
       );
       const updated = await mapErrors({ NOT_FOUND: UserNotFoundError }, () =>
-        backofficeService.updateUser(input.userId, { isActive: input.isActive, role: input.role }),
+        backofficeService.updateUser(
+          input.userId,
+          { isActive: input.isActive, role: input.role },
+          caller.userId,
+        ),
       );
       await audit.record({
         actorId: caller.userId,

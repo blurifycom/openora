@@ -1,5 +1,6 @@
 import { oc } from '@orpc/contract';
 import * as z from 'zod';
+import { UuidSchema } from '@blurifycom/core/contracts';
 
 export const WalletBalanceSchema = z.object({
   balance: z.number(),
@@ -7,7 +8,7 @@ export const WalletBalanceSchema = z.object({
 });
 
 export const WalletTransactionSchema = z.object({
-  id: z.uuid(),
+  id: UuidSchema,
   type: z.enum(['deposit', 'withdrawal', 'bet', 'win']),
   amount: z.number(),
   currency: z.string(),
@@ -28,7 +29,7 @@ export const WithdrawInputSchema = z.object({
 });
 
 export const TransactionResultSchema = z.object({
-  transactionId: z.uuid(),
+  transactionId: UuidSchema,
   status: z.enum(['pending', 'completed', 'failed']),
 });
 

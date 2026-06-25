@@ -1,9 +1,10 @@
 import { oc } from '@orpc/contract';
 import * as z from 'zod';
+import { UuidSchema } from '@blurifycom/core/contracts';
 
 export const LimitSchema = z.object({
-  id: z.uuid(),
-  userId: z.uuid(),
+  id: UuidSchema,
+  userId: UuidSchema,
   type: z.enum(['deposit', 'wager', 'loss']),
   amount: z.number(),
   period: z.enum(['daily', 'weekly', 'monthly']),
@@ -11,7 +12,7 @@ export const LimitSchema = z.object({
 });
 
 export const GeoRuleSchema = z.object({
-  id: z.uuid(),
+  id: UuidSchema,
   countryCode: z.string(),
   action: z.enum(['allow', 'block']),
   createdAt: z.iso.datetime(),
@@ -24,7 +25,7 @@ const UpsertLimitInputSchema = z.object({
 });
 
 const DeleteLimitInputSchema = z.object({
-  id: z.uuid(),
+  id: UuidSchema,
 });
 
 const AddGeoRuleInputSchema = z.object({

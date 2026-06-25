@@ -1,6 +1,6 @@
 import { oc } from '@orpc/contract';
 import * as z from 'zod';
-import { UserIdInputSchema } from '@blurifycom/core/contracts';
+import { UserIdInputSchema, UuidSchema } from '@blurifycom/core/contracts';
 import { PageQuerySchema, paginated } from '@blurifycom/core/contracts/kit';
 
 export const PlatformStatsSchema = z.object({
@@ -17,7 +17,7 @@ export const PlatformStatsSchema = z.object({
 export const UserRoleSchema = z.enum(['player', 'admin']);
 
 export const AdminUserSchema = z.object({
-  id: z.uuid(),
+  id: UuidSchema,
   email: z.string(),
   name: z.string().nullable(),
   createdAt: z.iso.datetime(),
@@ -26,8 +26,8 @@ export const AdminUserSchema = z.object({
 });
 
 export const AdminTransactionSchema = z.object({
-  id: z.uuid(),
-  userId: z.uuid(),
+  id: UuidSchema,
+  userId: UuidSchema,
   type: z.string(),
   amount: z.number(),
   currency: z.string(),
@@ -52,7 +52,7 @@ export const backofficeContract = {
     .route({ method: 'PATCH', path: '/backoffice/users/{userId}' })
     .input(
       z.object({
-        userId: z.uuid(),
+        userId: UuidSchema,
         isActive: z.boolean().optional(),
         role: UserRoleSchema.optional(),
       }),
@@ -61,6 +61,6 @@ export const backofficeContract = {
 
   listTransactions: oc
     .route({ method: 'GET', path: '/backoffice/transactions' })
-    .input(PageQuerySchema.extend({ userId: z.uuid().optional() }))
+    .input(PageQuerySchema.extend({ userId: UuidSchema.optional() }))
     .output(paginated(AdminTransactionSchema)),
 };

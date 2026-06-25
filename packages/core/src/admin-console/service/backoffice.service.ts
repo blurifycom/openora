@@ -68,8 +68,9 @@ export class BackofficeService {
   async updateUser(
     userId: string,
     data: { isActive?: boolean; role?: string },
+    actorId: string,
   ): Promise<AdminUser> {
-    const row = await this.users.update(userId, data);
+    const row = await this.users.update(userId, data, actorId);
     if (!row) throw new UserNotFoundError(userId);
     return toAdminUser(row);
   }

@@ -8,6 +8,13 @@
       "when": 1781788525647,
       "tag": "0000_classy_captain_stacy",
       "breakpoints": true
+    },
+    {
+      "idx": 1,
+      "version": "7",
+      "when": 1782331728829,
+      "tag": "0001_snake_case_identifiers",
+      "breakpoints": true
     }
   ]
 }

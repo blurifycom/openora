@@ -1,8 +1,9 @@
 import * as z from 'zod';
+import { UuidSchema } from '@blurifycom/core/contracts';
 
 export const LimitSchema = z.object({
   id: z.string(),
-  userId: z.uuid(),
+  userId: UuidSchema,
   type: z.enum(['deposit', 'wager', 'loss']),
   amount: z.number(),
   period: z.enum(['daily', 'weekly', 'monthly']),

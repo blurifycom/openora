@@ -10,35 +10,39 @@ import {
   jsonb,
 } from 'drizzle-orm/pg-core';
 
-export const gameRoundStatusEnum = pgEnum('GameRoundStatus', ['active', 'completed', 'cancelled']);
+export const gameRoundStatusEnum = pgEnum('game_round_status', [
+  'active',
+  'completed',
+  'cancelled',
+]);
 
-export const game = pgTable('Game', {
-  id: uuid('id').primaryKey().defaultRandom(),
-  name: text('name').notNull(),
-  provider: text('provider').notNull(),
-  category: text('category').notNull(),
-  thumbnailUrl: text('thumbnailUrl'),
-  isActive: boolean('isActive').notNull().default(true),
-  metadata: jsonb('metadata'),
-  createdAt: timestamp('createdAt').notNull().defaultNow(),
+export const game = pgTable('game', {
+  id: uuid().primaryKey().defaultRandom(),
+  name: text().notNull(),
+  provider: text().notNull(),
+  category: text().notNull(),
+  thumbnailUrl: text(),
+  isActive: boolean().notNull().default(true),
+  metadata: jsonb(),
+  createdAt: timestamp().notNull().defaultNow(),
 });
 
 export const gameRound = pgTable(
-  'GameRound',
+  'game_round',
   {
-    id: uuid('id').primaryKey().defaultRandom(),
-    gameId: uuid('gameId')
+    id: uuid().primaryKey().defaultRandom(),
+    gameId: uuid()
       .notNull()
       .references(() => game.id),
-    userId: uuid('userId').notNull(),
-    status: gameRoundStatusEnum('status').notNull().default('active'),
-    betAmount: decimal('betAmount').notNull().default('0'),
-    winAmount: decimal('winAmount').notNull().default('0'),
-    currency: text('currency').notNull(),
-    startedAt: timestamp('startedAt').notNull().defaultNow(),
-    endedAt: timestamp('endedAt'),
+    userId: uuid().notNull(),
+    status: gameRoundStatusEnum().notNull().default('active'),
+    betAmount: decimal().notNull().default('0'),
+    winAmount: decimal().notNull().default('0'),
+    currency: text().notNull(),
+    startedAt: timestamp().notNull().defaultNow(),
+    endedAt: timestamp(),
   },
-  (t) => [index('game_round_userId_idx').on(t.userId)],
+  (t) => [index('game_round_user_id_idx').on(t.userId)],
 );
 
 export type Game = typeof game.$inferSelect;

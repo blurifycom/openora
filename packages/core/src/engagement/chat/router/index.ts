@@ -14,14 +14,22 @@ import {
   ChatRoomNotFoundError,
   ChatMessageNotFoundError,
   ChatMessageOwnershipError,
+  ChatMessageBlockedError,
+  ChatSelfBlockError,
 } from '../service/chat.service.js';
 
 const chat = populateContractRouterPaths({ chat: chatContract }).chat;
 
-function resolveUsername(context: OssContext, fallback = 'anonymous'): string {
+function resolveUsername(context: OssContext, fallback = 'anonymous') {
   const val = context.request.headers['x-username'];
   if (Array.isArray(val)) return val[0] ?? fallback;
   return typeof val === 'string' ? val : fallback;
+}
+
+// Reads work for anonymous viewers; when authenticated, the id drives per-viewer
+// block filtering (ABC-45 AC11). Sourced from server-verified `auth`, never a header.
+function resolveViewerId(context: OssContext) {
+  return context.auth?.userId;
 }
 
 export function createChatRouter(chatService: ChatService, authorizer: RealtimeClientAuthorizer) {
@@ -30,17 +38,23 @@ export function createChatRouter(chatService: ChatService, authorizer: RealtimeC
   return os.router({
     listRooms: os.listRooms.handler(() => chatService.listRooms()),
 
-    getRoomMessages: os.getRoomMessages.handler(({ input }) =>
+    getRoomMessages: os.getRoomMessages.handler(({ input, context }) =>
       mapErrors({ NOT_FOUND: ChatRoomNotFoundError }, () =>
-        chatService.getRoomMessages(input.roomId, input.limit, input.before),
+        chatService.getRoomMessages(
+          input.roomId,
+          input.limit,
+          input.before,
+          resolveViewerId(context),
+        ),
       ),
     ),
 
     sendRoomMessage: os.sendRoomMessage.handler(({ input, context }) => {
       const userId = getUserId(context);
       const username = resolveUsername(context);
-      return mapErrors({ NOT_FOUND: ChatRoomNotFoundError }, () =>
-        chatService.sendRoomMessage(userId, username, input.roomId, input.content),
+      return mapErrors(
+        { NOT_FOUND: ChatRoomNotFoundError, BAD_REQUEST: ChatMessageBlockedError },
+        () => chatService.sendRoomMessage(userId, username, input.roomId, input.content),
       );
     }),
 
@@ -52,12 +66,16 @@ export function createChatRouter(chatService: ChatService, authorizer: RealtimeC
       );
     }),
 
-    getGlobalMessages: os.getGlobalMessages.handler(() => chatService.getGlobalMessages()),
+    getGlobalMessages: os.getGlobalMessages.handler(({ context }) =>
+      chatService.getGlobalMessages(undefined, resolveViewerId(context)),
+    ),
 
     sendGlobalMessage: os.sendGlobalMessage.handler(({ input, context }) => {
       const userId = getUserId(context);
       const username = resolveUsername(context);
-      return chatService.sendGlobalMessage(userId, username, input.content);
+      return mapErrors({ BAD_REQUEST: ChatMessageBlockedError }, () =>
+        chatService.sendGlobalMessage(userId, username, input.content),
+      );
     }),
 
     getConnection: os.getConnection.handler(({ input, context }) => {
@@ -71,10 +89,27 @@ export function createChatRouter(chatService: ChatService, authorizer: RealtimeC
       );
     }),
 
-    streamMessages: os.streamMessages.handler(({ input, signal }) =>
-      createEventStreamGenerator((push) => chatService.subscribeMessages(input.roomId, push), {
-        signal,
-      }),
+    streamMessages: os.streamMessages.handler(({ input, signal, context }) => {
+      const viewerId = resolveViewerId(context);
+      return createEventStreamGenerator(
+        (push) => chatService.subscribeMessages(input.roomId, push, viewerId),
+        { signal },
+      );
+    }),
+
+    listBlockedUsers: os.listBlockedUsers.handler(({ context }) =>
+      chatService.listBlockedUsers(getUserId(context)),
+    ),
+
+    blockUser: os.blockUser.handler(({ input, context }) => {
+      const userId = getUserId(context);
+      return mapErrors({ BAD_REQUEST: ChatSelfBlockError }, () =>
+        chatService.blockUser(userId, input.blockedId),
+      );
+    }),
+
+    unblockUser: os.unblockUser.handler(({ input, context }) =>
+      chatService.unblockUser(getUserId(context), input.blockedId),
     ),
   });
 }

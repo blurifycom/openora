@@ -12,9 +12,32 @@ const dirsIn = (rel) => {
   }
 };
 
+// Per-module layer dirs (clean-architecture) are not scopes - exclude them so only
+// real sub-modules (eg engagement/chat -> `chat`, server/db -> `db`) surface.
+const layerDirs = new Set([
+  '__tests__',
+  'adapters',
+  'contract',
+  'contracts',
+  'drizzle',
+  'migrations',
+  'plugin',
+  'react',
+  'router',
+  'schema',
+  'schemas',
+  'seed',
+  'service',
+]);
+
+// Sub-module dirs one level below `rel/*` (eg packages/core/src/engagement/chat -> `chat`).
+const nestedDirsIn = (rel) =>
+  dirsIn(rel).flatMap((top) => dirsIn(`${rel}/${top}`).filter((sub) => !layerDirs.has(sub)));
+
 const metaScopes = [
   'agents',
   'ci',
+  'clean-architecture',
   'deps',
   'hooks',
   'release',
@@ -29,6 +52,7 @@ const scopes = [
   ...new Set([
     ...dirsIn('packages'),
     ...dirsIn('packages/core/src'),
+    ...nestedDirsIn('packages/core/src'),
     ...dirsIn('packages/addons'),
     ...dirsIn('apps'),
     ...metaScopes,

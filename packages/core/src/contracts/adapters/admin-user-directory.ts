@@ -20,7 +20,12 @@ export type AdminUserDirectory = {
   count(): Promise<number>;
   list(opts: AdminUserListOptions): Promise<{ rows: AdminUserRow[]; total: number }>;
   get(id: string): Promise<AdminUserRow | null>;
-  update(id: string, patch: { isActive?: boolean; role?: string }): Promise<AdminUserRow | null>;
+  // actorId = the admin performing the change (for audit attribution on an isActive flip).
+  update(
+    id: string,
+    patch: { isActive?: boolean; role?: string },
+    actorId: string,
+  ): Promise<AdminUserRow | null>;
 };
 
 export const ADMIN_USER_DIRECTORY: Token<AdminUserDirectory> = createToken('ADMIN_USER_DIRECTORY');

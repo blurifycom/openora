@@ -32,7 +32,10 @@ export async function seedMinimal(
   if (!url) throw new Error('seedMinimal: DATABASE_URL is not set (boot the app first)');
 
   const authPool = new Pool({ connectionString: url });
-  const authDb = drizzle(authPool, { schema: { user, session, account, verification } });
+  const authDb = drizzle(authPool, {
+    schema: { user, session, account, verification },
+    casing: 'snake_case',
+  });
   const auth = createAuth({ db: authDb as unknown as DrizzleDb });
 
   try {

@@ -22,6 +22,20 @@
       "when": 1782262881679,
       "tag": "0002_drop_role_description",
       "breakpoints": true
+    },
+    {
+      "idx": 3,
+      "version": "7",
+      "when": 1782300000000,
+      "tag": "0003_lazy_darkhawk",
+      "breakpoints": true
+    },
+    {
+      "idx": 4,
+      "version": "7",
+      "when": 1782331692872,
+      "tag": "0004_snake_case_identifiers",
+      "breakpoints": true
     }
   ]
 }

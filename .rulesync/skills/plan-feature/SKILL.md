@@ -22,7 +22,7 @@ core feature. It owns the **whole development + delivery cycle** end to end.
 ```
 1 context collection  ->  2 plan + approval  ->  3 implement  ->  4 unit/integration tests
 ->  5 prepare e2e test cases  ->  6 e2e tests  ->  7 fix loop  ->  8 verify/regen
-->  9 create-pr (push-gated)  ->  10 reviewers  ->  11 Jira status transition  ->  12 Slack notice
+->  9 create-pr (push-gated)  ->  10 reviewers  ->  11 Jira transition (ONLY if user asks)  ->  12 Slack notice
 ```
 
 ## Coordinates
@@ -38,6 +38,9 @@ core feature. It owns the **whole development + delivery cycle** end to end.
 ## The contract
 
 - **Read-only until the plan is approved.** No edits/commits/pushes/Jira writes before sign-off.
+- **Never write to Jira unless the user explicitly asks for that specific write** (a transition,
+  comment, worklog, or remote link). Running this skill, approving the plan, opening the MR, or
+  saying "create the PR" is NOT Jira authorization. Reading Jira (getJiraIssue) is always fine.
 - Reuse `create-pr` (MR), `/regen`, `/pre-pr`, `/verify`. Delegate to subagents - don't
   hand-write their work.
 
@@ -72,8 +75,8 @@ After approval (Task tool). Pick the implementer that fits the slice:
 - `plugin-author` - an overlay extension (`/scaffold-plugin <name>`).
 - `igaming-fullstack-dev` - cross-module business logic, contracts, services, SDK changes.
 
-Once implementation starts, **transition the Jira ticket to In Progress** (see step 11 for the
-how + the confirm gate).
+Do NOT touch Jira here. A Jira transition happens only if the user explicitly asks for it
+(see step 11).
 
 ### 4. Unit + integration tests
 
@@ -128,13 +131,14 @@ glab mr update <iid> --reviewer volod,klaudia.blazyczek
 
 Owners: `@volod` (core/all), `@klaudia.blazyczek` (`packages/sdks/react`, `packages/ui`).
 
-### 11. Jira status transition (NOT comments)
+### 11. Jira status transition - ONLY on explicit user request
 
-Move the ticket along its workflow - **do NOT post MR-link or status comments on the ticket**
-(the user finds them noise). Typical transitions: **In Progress** when implementation starts
-(step 3), **In Review / Code Review** when the MR opens (step 9). Use
-`getTransitionsForJiraIssue` to find the valid transition id, then `transitionJiraIssue`.
-**Confirm with the user before each transition.**
+**Do NOT write anything to Jira by default** - no status transition, no comment, no worklog, no
+remote link. Perform a Jira write ONLY when the user explicitly asks for that specific action in
+their own words (e.g. "move ABC-210 to Code Review"). Running this skill, approving the plan,
+opening the MR, or saying "create the PR" are NOT Jira authorization. When the user does ask:
+use `getTransitionsForJiraIssue` to find the valid transition id, then `transitionJiraIssue`.
+Never post MR-link or status comments on the ticket (the user finds them noise).
 
 ### 12. Slack notice (one-line draft)
 
@@ -147,7 +151,9 @@ name as a link. NOT a multi-paragraph summary. e.g. `👉 RBAC backend - MR !11`
 - Read-only until the plan is approved.
 - Never push without an explicit per-action "yes push".
 - `/pre-pr` (verify + drift) must be green before push; `/regen` after any contract/schema change.
-- **No Jira comments** for MR/status updates - transition the ticket's status only, and confirm
-  before any transition.
+- **Never write to Jira without an explicit user request** - no transition, comment, worklog, or
+  remote link by default. Only the specific Jira write the user asks for, in their words; running
+  the skill / approving the plan / opening the MR is not authorization. Never post MR-link or
+  status comments.
 - **Slack = one-line draft** (emoji + PR/task name), draft only, channel `the agreed notice channel`.
 - One MR = one concern. Respect clean-architecture boundaries (no cross-addon imports).

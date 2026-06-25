@@ -13,7 +13,7 @@ export class DrizzleService {
     const url = process.env['DATABASE_URL'];
     if (!url) throw new Error('DATABASE_URL is required');
     this.pool = new Pool({ connectionString: url });
-    this.db = drizzle(this.pool);
+    this.db = drizzle(this.pool, { casing: 'snake_case' });
   }
 
   async dispose(): Promise<void> {

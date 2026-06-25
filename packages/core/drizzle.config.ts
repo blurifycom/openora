@@ -3,6 +3,9 @@ import { defineConfig } from 'drizzle-kit';
 
 export default defineConfig({
   dialect: 'postgresql',
+  // Maps camelCase schema keys to snake_case SQL identifiers so generated
+  // migrations match the runtime drizzle() instances (also set to snake_case).
+  casing: 'snake_case',
   // The core add-ons share this one central migration history. Gated add-ons
   // (leaderboard, sportsbook, aggregator, player-management) own their own
   // drizzle.config + history and are intentionally NOT globbed here. Each new

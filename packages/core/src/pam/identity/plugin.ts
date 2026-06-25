@@ -18,7 +18,10 @@ export default definePlugin({
   register(ctx) {
     ctx.provide(KYC_ADAPTER, () => new MockKycAdapter());
     // The back-office depends on this port, not on the identity schema directly.
-    ctx.provide(ADMIN_USER_DIRECTORY, (c) => new DrizzleAdminUserDirectory(c.get(DRIZZLE)));
+    ctx.provide(
+      ADMIN_USER_DIRECTORY,
+      (c) => new DrizzleAdminUserDirectory(c.get(DRIZZLE), c.get(EVENT_BUS)),
+    );
     // Resolved lazily so identity does not depend on the notifications plugin's load order.
     ctx.provide(
       SEND_EMAIL,

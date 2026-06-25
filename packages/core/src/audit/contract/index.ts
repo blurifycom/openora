@@ -1,11 +1,12 @@
 import { oc } from '@orpc/contract';
 import * as z from 'zod';
+import { UuidSchema } from '@blurifycom/core/contracts';
 import { PageQuerySchema, paginated } from '@blurifycom/core/contracts/kit';
 
 export const AuditActorTypeSchema = z.enum(['player', 'admin', 'system']);
 
 export const AuditLogEntrySchema = z.object({
-  id: z.uuid(),
+  id: UuidSchema,
   actorId: z.string().nullable(),
   actorType: AuditActorTypeSchema,
   action: z.string(),

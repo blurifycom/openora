@@ -53,18 +53,22 @@
       "id": "chat",
       "group": "core",
       "tables": [
-        "ChatMessage",
-        "ChatRoom"
+        "chat_message",
+        "chat_room",
+        "chat_user_block"
       ],
       "routes": [
+        "chat.blockUser",
         "chat.deleteMessage",
         "chat.getConnection",
         "chat.getGlobalMessages",
         "chat.getRoomMessages",
+        "chat.listBlockedUsers",
         "chat.listRooms",
         "chat.sendGlobalMessage",
         "chat.sendRoomMessage",
-        "chat.streamMessages"
+        "chat.streamMessages",
+        "chat.unblockUser"
       ]
     },
     {
@@ -107,8 +111,8 @@
       "id": "gaming",
       "group": "core",
       "tables": [
-        "Game",
-        "GameRound"
+        "game",
+        "game_round"
       ],
       "routes": [
         "gaming.endRound",
@@ -150,7 +154,7 @@
       "tables": [
         "account",
         "session",
-        "twoFactor",
+        "two_factor",
         "user",
         "verification"
       ],
@@ -187,9 +191,9 @@
       "id": "lobby",
       "group": "core",
       "tables": [
-        "FeaturedSlot",
-        "LobbyCategory",
-        "LobbyCategoryGame"
+        "featured_slot",
+        "lobby_category",
+        "lobby_category_game"
       ],
       "routes": [
         "lobby.getCategoryBySlug",
@@ -238,9 +242,9 @@
       "id": "sportsbook",
       "group": "addon",
       "tables": [
-        "SportsbookBet",
-        "SportsbookEvent",
-        "SportsbookSelection"
+        "sportsbook_bet",
+        "sportsbook_event",
+        "sportsbook_selection"
       ],
       "routes": [
         "sportsbook.getEvent",
@@ -433,6 +437,8 @@
     "aggregator.sync.completed",
     "bonus.claimed",
     "chat.message.sent",
+    "chat.user.blocked",
+    "chat.user.unblocked",
     "cms.page.published",
     "compliance.geo-rule.added",
     "compliance.kyc.updated",
@@ -452,8 +458,10 @@
     "identity.email.verified",
     "identity.password.reset",
     "identity.profile.updated",
+    "identity.user.deactivated",
     "identity.user.login",
     "identity.user.logout",
+    "identity.user.reactivated",
     "identity.user.registered",
     "leaderboard.reset",
     "leaderboard.score.recorded",
@@ -516,6 +524,10 @@
     {
       "name": "BannerSchema",
       "file": "packages/core/src/cms/contract/index.ts"
+    },
+    {
+      "name": "BlockedUserSchema",
+      "file": "packages/core/src/engagement/chat/contract/index.ts"
     },
     {
       "name": "BonusSchema",
@@ -688,6 +700,10 @@
     {
       "name": "MemberSchema",
       "file": "packages/core/src/contracts/schemas/identity.ts"
+    },
+    {
+      "name": "MessageContentSchema",
+      "file": "packages/core/src/engagement/chat/contract/index.ts"
     },
     {
       "name": "NotificationSchema",
@@ -896,6 +912,7 @@
     "slots"
   ],
   "httpRoutes": [
+    "DELETE /chat/blocks/{blockedId}",
     "DELETE /chat/messages/{id}",
     "DELETE /cms/banners/{id}",
     "DELETE /cms/pages/{id}",
@@ -911,6 +928,7 @@
     "GET /bonus/bonuses",
     "GET /bonus/user-bonuses",
     "GET /bonus/user-bonuses/{id}",
+    "GET /chat/blocks",
     "GET /chat/connection",
     "GET /chat/global",
     "GET /chat/rooms",
@@ -946,6 +964,7 @@
     "PATCH /identity/profile",
     "PATCH /profile",
     "POST /bonus/claim/{bonusId}",
+    "POST /chat/blocks",
     "POST /chat/global",
     "POST /chat/rooms/{roomId}/messages",
     "POST /cms/banners",

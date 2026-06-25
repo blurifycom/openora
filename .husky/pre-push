@@ -1,0 +1,29 @@
+# Block a push whose commit messages don't pass commitlint, instead of letting CI
+# fail after the fact. Lints exactly the range being pushed (mirrors the CI job).
+# Bypass in a true emergency with `git push --no-verify`.
+zero='0000000000000000000000000000000000000000'
+base_branch='dev'
+
+fail=0
+while read -r local_ref local_sha remote_ref remote_sha; do
+  # Branch deletion - nothing to lint.
+  [ "$local_sha" = "$zero" ] && continue
+
+  if [ "$remote_sha" = "$zero" ]; then
+    # New branch on the remote: lint commits since it diverged from the base branch.
+    from=$(git merge-base "origin/$base_branch" "$local_sha" 2>/dev/null)
+  else
+    # Existing branch: lint only the newly pushed commits.
+    from="$remote_sha"
+  fi
+
+  # No common base (eg first push of a root history): lint from the root commit.
+  [ -z "$from" ] && from=$(git rev-list --max-parents=0 "$local_sha" | tail -1)
+
+  # Nothing new to lint (eg up-to-date re-push) - commitlint errors on an empty range.
+  [ "$from" = "$local_sha" ] && continue
+
+  pnpm exec commitlint --from "$from" --to "$local_sha" || fail=1
+done
+
+exit $fail

@@ -1,24 +1,24 @@
 import { pgTable, uuid, text, decimal, timestamp, pgEnum, index } from 'drizzle-orm/pg-core';
 
-export const walletTransactionTypeEnum = pgEnum('WalletTransactionType', [
+export const walletTransactionTypeEnum = pgEnum('wallet_transaction_type', [
   'deposit',
   'withdrawal',
   'bet',
   'win',
 ]);
 
-export const walletTransactionStatusEnum = pgEnum('WalletTransactionStatus', [
+export const walletTransactionStatusEnum = pgEnum('wallet_transaction_status', [
   'pending',
   'completed',
   'failed',
 ]);
 
 export const wallet = pgTable('wallet', {
-  id: uuid('id').primaryKey().defaultRandom(),
-  userId: uuid('userId').notNull().unique(),
-  balance: decimal('balance').notNull().default('0'),
-  currency: text('currency').notNull().default('USD'),
-  updatedAt: timestamp('updatedAt')
+  id: uuid().primaryKey().defaultRandom(),
+  userId: uuid().notNull().unique('wallet_user_id_unique'),
+  balance: decimal().notNull().default('0'),
+  currency: text().notNull().default('USD'),
+  updatedAt: timestamp()
     .notNull()
     .$onUpdateFn(() => new Date()),
 });
@@ -26,18 +26,18 @@ export const wallet = pgTable('wallet', {
 export const walletTransaction = pgTable(
   'wallet_transaction',
   {
-    id: uuid('id').primaryKey().defaultRandom(),
-    walletId: uuid('walletId')
+    id: uuid().primaryKey().defaultRandom(),
+    walletId: uuid()
       .notNull()
       .references(() => wallet.id),
-    type: walletTransactionTypeEnum('type').notNull(),
-    amount: decimal('amount').notNull(),
-    currency: text('currency').notNull(),
-    status: walletTransactionStatusEnum('status').notNull().default('pending'),
-    metadata: text('metadata'),
-    createdAt: timestamp('createdAt').notNull().defaultNow(),
+    type: walletTransactionTypeEnum().notNull(),
+    amount: decimal().notNull(),
+    currency: text().notNull(),
+    status: walletTransactionStatusEnum().notNull().default('pending'),
+    metadata: text(),
+    createdAt: timestamp().notNull().defaultNow(),
   },
-  (t) => [index('wallet_transaction_walletId_idx').on(t.walletId)],
+  (t) => [index('wallet_transaction_wallet_id_idx').on(t.walletId)],
 );
 
 export type Wallet = typeof wallet.$inferSelect;

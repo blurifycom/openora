@@ -1,5 +1,6 @@
 // Shared player schemas the player-management add-on derives from. See ADR-0021.
 import * as z from 'zod';
+import { UuidSchema } from './common.js';
 
 export const PlayerStatusSchema = z.enum([
   'active',
@@ -13,7 +14,7 @@ export const KycStatusSchema = z.enum(['pending', 'verified', 'rejected']);
 
 export const PlayerSchema = z.object({
   id: z.string(),
-  userId: z.uuid(),
+  userId: UuidSchema,
   displayName: z.string(),
   email: z.string(),
   country: z.string().nullable(),

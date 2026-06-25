@@ -3,27 +3,27 @@ import { pgTable, uuid, text, real, timestamp, uniqueIndex, index } from 'drizzl
 export const userLimit = pgTable(
   'user_limit',
   {
-    id: uuid('id').primaryKey().defaultRandom(),
-    userId: uuid('userId').notNull(),
-    type: text('type').notNull(),
-    amount: real('amount').notNull(),
-    period: text('period').notNull(),
-    createdAt: timestamp('createdAt').notNull().defaultNow(),
-    updatedAt: timestamp('updatedAt')
+    id: uuid().primaryKey().defaultRandom(),
+    userId: uuid().notNull(),
+    type: text().notNull(),
+    amount: real().notNull(),
+    period: text().notNull(),
+    createdAt: timestamp().notNull().defaultNow(),
+    updatedAt: timestamp()
       .notNull()
       .$onUpdateFn(() => new Date()),
   },
   (t) => [
-    uniqueIndex('user_limit_userId_type_period_key').on(t.userId, t.type, t.period),
-    index('user_limit_userId_idx').on(t.userId),
+    uniqueIndex('user_limit_user_id_type_period_key').on(t.userId, t.type, t.period),
+    index('user_limit_user_id_idx').on(t.userId),
   ],
 );
 
 export const geoRule = pgTable('geo_rule', {
-  id: uuid('id').primaryKey().defaultRandom(),
-  countryCode: text('countryCode').notNull().unique(),
-  action: text('action').notNull(),
-  createdAt: timestamp('createdAt').notNull().defaultNow(),
+  id: uuid().primaryKey().defaultRandom(),
+  countryCode: text().notNull().unique('geo_rule_country_code_unique'),
+  action: text().notNull(),
+  createdAt: timestamp().notNull().defaultNow(),
 });
 
 export type UserLimit = typeof userLimit.$inferSelect;
