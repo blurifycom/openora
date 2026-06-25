@@ -77,6 +77,7 @@ export type {
   AdminUserRow,
   AdminUserListOptions,
   AdminUserDirectory,
+  AdminPlayerSummary,
 } from './admin-user-directory.js';
 export { ADMIN_USER_DIRECTORY } from './admin-user-directory.js';
 

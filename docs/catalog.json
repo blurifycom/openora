@@ -261,9 +261,12 @@
         "wallet_transaction"
       ],
       "routes": [
+        "wallet.approve",
         "wallet.deposit",
         "wallet.getBalance",
+        "wallet.list",
         "wallet.listTransactions",
+        "wallet.reject",
         "wallet.withdraw"
       ]
     }
@@ -286,7 +289,8 @@
       "status": "wired",
       "boundIn": [
         "packages/core/src/admin-console/plugin.ts",
-        "packages/core/src/pam/identity/plugin.ts"
+        "packages/core/src/pam/identity/plugin.ts",
+        "packages/core/src/wallet/plugin.ts"
       ]
     },
     {
@@ -469,7 +473,11 @@
     "sportsbook.bet.placed",
     "sportsbook.odds.updated",
     "wallet.deposit.completed",
-    "wallet.withdrawal.completed"
+    "wallet.withdrawal.approved",
+    "wallet.withdrawal.completed",
+    "wallet.withdrawal.failed",
+    "wallet.withdrawal.rejected",
+    "wallet.withdrawal.requested"
   ],
   "uiSlots": [],
   "schemas": [
@@ -504,6 +512,10 @@
     {
       "name": "AggregatorProviderSummarySchema",
       "file": "packages/core/src/casino/aggregator/contract/index.ts"
+    },
+    {
+      "name": "ApproveWithdrawalInputSchema",
+      "file": "packages/core/src/wallet/contract/index.ts"
     },
     {
       "name": "AuditActorTypeSchema",
@@ -774,6 +786,10 @@
       "file": "packages/core/src/contracts/schemas/identity.ts"
     },
     {
+      "name": "RejectWithdrawalInputSchema",
+      "file": "packages/core/src/wallet/contract/index.ts"
+    },
+    {
       "name": "RequestPasswordResetInputSchema",
       "file": "packages/core/src/contracts/schemas/identity.ts"
     },
@@ -866,7 +882,23 @@
       "file": "packages/core/src/wallet/contract/index.ts"
     },
     {
+      "name": "WalletRailSchema",
+      "file": "packages/core/src/wallet/contract/index.ts"
+    },
+    {
       "name": "WalletTransactionSchema",
+      "file": "packages/core/src/wallet/contract/index.ts"
+    },
+    {
+      "name": "WalletTransactionStatusSchema",
+      "file": "packages/core/src/wallet/contract/index.ts"
+    },
+    {
+      "name": "WithdrawalQueueFilterSchema",
+      "file": "packages/core/src/wallet/contract/index.ts"
+    },
+    {
+      "name": "WithdrawalQueueItemSchema",
       "file": "packages/core/src/wallet/contract/index.ts"
     },
     {
@@ -959,6 +991,7 @@
     "GET /profile",
     "GET /wallet/balance",
     "GET /wallet/transactions",
+    "GET /wallet/withdrawals",
     "PATCH /backoffice/users/{userId}",
     "PATCH /iam/roles/{roleId}",
     "PATCH /identity/profile",
@@ -993,6 +1026,8 @@
     "POST /notifications/{id}/read",
     "POST /wallet/deposit",
     "POST /wallet/withdraw",
+    "POST /wallet/withdrawals/{withdrawalId}/approve",
+    "POST /wallet/withdrawals/{withdrawalId}/reject",
     "PUT /cms/banners/{id}",
     "PUT /cms/pages/{id}",
     "PUT /compliance/limits",

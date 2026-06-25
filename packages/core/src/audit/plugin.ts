@@ -61,6 +61,42 @@ function mapEventToRecord(topic: string, p: Record<string, unknown>): RecordInpu
     };
   }
 
+  // Player requested a withdrawal (funds held). actorId = the player; resourceId =
+  // the withdrawal transaction.
+  if (topic === 'wallet.withdrawal.requested') {
+    return {
+      ...base,
+      actorType: 'player',
+      actorId: str(p['userId']),
+      resourceType: 'withdrawal',
+      resourceId: str(p['transactionId']),
+      after: { amount: p['amount'], currency: p['currency'] },
+    };
+  }
+
+  // Admin approve/reject of a withdrawal, or a PSP-rail failure on an approved one.
+  // actorId = the reviewing admin; resourceId = the withdrawal transaction; reason
+  // carried on reject.
+  if (
+    topic === 'wallet.withdrawal.approved' ||
+    topic === 'wallet.withdrawal.rejected' ||
+    topic === 'wallet.withdrawal.failed'
+  ) {
+    return {
+      ...base,
+      actorType: 'admin',
+      actorId: str(p['adminId']),
+      resourceType: 'withdrawal',
+      resourceId: str(p['transactionId']),
+      after: {
+        userId: str(p['userId']),
+        amount: p['amount'],
+        currency: p['currency'],
+        reason: p['reason'] ?? null,
+      },
+    };
+  }
+
   // actorId = acting admin; resourceId = subject role. permissions.changed/updated
   // carries the matrix diff; assigned/revoked carries the target user in after.userId.
   if (topic.startsWith('iam.role.')) {
@@ -143,6 +179,10 @@ const SUBSCRIBED_TOPICS = [
   'identity.user.reactivated',
   'wallet.deposit.completed',
   'wallet.withdrawal.completed',
+  'wallet.withdrawal.requested',
+  'wallet.withdrawal.approved',
+  'wallet.withdrawal.rejected',
+  'wallet.withdrawal.failed',
   'gaming.round.started',
   'gaming.round.ended',
   'bonus.claimed',

@@ -1,4 +1,5 @@
 import { pgTable, uuid, text, decimal, timestamp, pgEnum, index } from 'drizzle-orm/pg-core';
+import type { WalletRail, WalletTransactionStatus } from '../schemas/index.js';
 
 export const walletTransactionTypeEnum = pgEnum('wallet_transaction_type', [
   'deposit',
@@ -9,9 +10,13 @@ export const walletTransactionTypeEnum = pgEnum('wallet_transaction_type', [
 
 export const walletTransactionStatusEnum = pgEnum('wallet_transaction_status', [
   'pending',
+  'processing',
   'completed',
   'failed',
+  'rejected',
 ]);
+
+export const walletRailEnum = pgEnum('wallet_rail', ['fireblocks', 'psp']);
 
 export const wallet = pgTable('wallet', {
   id: uuid().primaryKey().defaultRandom(),
@@ -33,7 +38,16 @@ export const walletTransaction = pgTable(
     type: walletTransactionTypeEnum().notNull(),
     amount: decimal().notNull(),
     currency: text().notNull(),
-    status: walletTransactionStatusEnum().notNull().default('pending'),
+    status: walletTransactionStatusEnum()
+      .$type<WalletTransactionStatus>()
+      .notNull()
+      .default('pending'),
+    rail: walletRailEnum().$type<WalletRail>(),
+    // Admin user id (cross-module). Bare uuid, no .references - the user table is
+    // owned by another domain.
+    reviewedBy: uuid(),
+    reviewedAt: timestamp(),
+    reviewReason: text(),
     metadata: text(),
     createdAt: timestamp().notNull().defaultNow(),
   },

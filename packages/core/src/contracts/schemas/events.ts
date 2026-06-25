@@ -32,6 +32,42 @@ export const domainEventSchemas = {
     currency: z.string(),
     transactionId: UuidSchema,
   }),
+  // A player requested a withdrawal; funds are held (balance debited) and the
+  // request enters the back-office approval queue as `pending`.
+  'wallet.withdrawal.requested': z.object({
+    userId: z.uuid(),
+    amount: z.number(),
+    currency: z.string(),
+    transactionId: z.string(),
+  }),
+  // A payments admin approved a pending withdrawal; it moves to `processing` and
+  // is sent to the PSP/Fireblocks rail. `adminId` is the acting reviewer.
+  'wallet.withdrawal.approved': z.object({
+    userId: z.uuid(),
+    amount: z.number(),
+    currency: z.string(),
+    transactionId: z.string(),
+    adminId: z.uuid(),
+  }),
+  // A payments admin rejected a pending withdrawal; held funds are returned to the
+  // player balance. `adminId` is the acting reviewer; `reason` is mandatory.
+  'wallet.withdrawal.rejected': z.object({
+    userId: z.uuid(),
+    amount: z.number(),
+    currency: z.string(),
+    transactionId: z.string(),
+    adminId: z.uuid(),
+    reason: z.string(),
+  }),
+  // An approved withdrawal failed at the PSP/Fireblocks rail; the held funds were
+  // returned to the player balance and the transaction moved to `failed`.
+  'wallet.withdrawal.failed': z.object({
+    userId: z.uuid(),
+    amount: z.number(),
+    currency: z.string(),
+    transactionId: z.string(),
+    adminId: z.uuid(),
+  }),
 
   'gaming.round.started': z.object({
     roundId: UuidSchema,
