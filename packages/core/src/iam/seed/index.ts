@@ -24,8 +24,8 @@ export async function seedRoles(db: DrizzleDb): Promise<void> {
       target: adminRole.key,
       set: {
         name: sql`excluded.name`,
-        isSystem: sql`excluded."isSystem"`,
-        isSuperAdmin: sql`excluded."isSuperAdmin"`,
+        isSystem: sql`excluded."is_system"`,
+        isSuperAdmin: sql`excluded."is_super_admin"`,
       },
     });
 
