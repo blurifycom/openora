@@ -3,7 +3,7 @@ import { z } from 'zod';
 
 export const PageQuerySchema = z.object({
   page: z.coerce.number().int().min(1).default(1),
-  limit: z.coerce.number().int().min(1).max(50).default(50),
+  limit: z.coerce.number().int().min(1).max(100).default(100),
 });
 export type PageQuery = z.infer<typeof PageQuerySchema>;
 

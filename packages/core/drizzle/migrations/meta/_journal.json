@@ -50,6 +50,13 @@
       "when": 1782385627327,
       "tag": "0006_low_captain_america",
       "breakpoints": true
+    },
+    {
+      "idx": 7,
+      "version": "7",
+      "when": 1782458839921,
+      "tag": "0007_cold_polaris",
+      "breakpoints": true
     }
   ]
 }

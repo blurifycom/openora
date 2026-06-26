@@ -10,7 +10,7 @@ import {
   Tag,
   TagAssignSource,
 } from '@blurifycom/core/contracts';
-import { playerTag, tag } from '../schema/database.js';
+import { playerTag, tag } from '../schema/index.js';
 import { mapDbError } from '../../../common/errors/index.js';
 
 export class TagService {

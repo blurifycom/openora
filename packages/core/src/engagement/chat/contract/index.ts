@@ -50,7 +50,7 @@ export const chatContract = {
       z.object({
         roomId: UuidSchema,
         // Bounded so a caller cannot request an unbounded page (matches the 50 default).
-        limit: z.number().int().min(1).max(50).optional(),
+        limit: z.number().int().min(1).max(100).optional(),
         before: z.string().optional(),
       }),
     )

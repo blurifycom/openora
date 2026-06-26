@@ -69,8 +69,8 @@ Then use `list-modules`, `list-routes`, `query-openapi`, `get-drizzle-schema`, `
 ```bash
 pnpm install                                  # install workspace deps
 docker compose up -d                          # start Postgres (library-first: only the db)
-pnpm -F @blurifycom/core/server generate      # generate Drizzle migrations
-pnpm -F @blurifycom/core/server migrate       # apply them
+pnpm -F @blurifycom/core generate             # generate Drizzle migrations
+pnpm -F @blurifycom/core migrate              # apply them
 pnpm seed                                     # demo data
 pnpm dev                                      # api :3001
 ```

@@ -25,6 +25,7 @@ export default defineConfig({
     './src/engagement/notifications/schema/index.ts',
     './src/pam/profile/schema/index.ts',
     './src/wallet/schema/index.ts',
+    './src/pam/tag/schema/index.ts',
   ],
   out: './drizzle/migrations',
   dbCredentials: {
