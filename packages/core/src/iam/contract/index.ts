@@ -40,7 +40,7 @@ export const AdminRoleAssignmentDetailSchema = AdminRoleAssignmentSchema.extend(
 
 export const AdminInvitationSchema = z.object({
   id: UuidSchema,
-  email: z.string(),
+  email: z.email(),
   roleId: UuidSchema,
   token: z.string(),
   status: z.enum(['pending', 'accepted', 'revoked']),
