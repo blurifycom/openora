@@ -3,12 +3,6 @@ import type { DrizzleDb } from '@blurifycom/core/server';
 import { adminRole, adminRolePermission } from '../schema/index.js';
 import { DEFAULT_ADMIN_ROLES } from './data/default-admin-roles.js';
 
-/**
- * Idempotently seeds the predefined backoffice roles and their permission grants
- * from the canonical DEFAULT_ADMIN_ROLES spec. Convergent: re-running reconciles
- * changed names/levels via upsert, so editing the spec and re-seeding propagates
- * to existing databases. Does NOT remove grants dropped from the spec.
- */
 export async function seedRoles(db: DrizzleDb): Promise<void> {
   await db
     .insert(adminRole)
