@@ -57,6 +57,13 @@
       "when": 1782458839921,
       "tag": "0007_cold_polaris",
       "breakpoints": true
+    },
+    {
+      "idx": 8,
+      "version": "7",
+      "when": 1782466509867,
+      "tag": "0008_free_ulik",
+      "breakpoints": true
     }
   ]
 }

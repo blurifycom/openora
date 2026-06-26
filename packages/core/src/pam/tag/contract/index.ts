@@ -3,11 +3,9 @@ import {
   assignPlayerTagSchema,
   createTagSchema,
   deleteTagSchema,
-  PlayerSchema,
   playerTagSchema,
   removePlayerTagSchema,
   tagSchema,
-  UpdatePlayerProfileInputSchema,
 } from '@blurifycom/core/contracts';
 import z from 'zod';
 

@@ -19,7 +19,8 @@
  * since ADR-0026 - one DB role, no RLS.
  */
 import { createAuth, createDrizzleDb } from '@blurifycom/core/server';
-import { seedRoles } from '@blurifycom/core/iam/seed';
+import { seedIam } from '@blurifycom/core/iam/seed';
+import { seedTag } from '@blurifycom/core/pam';
 import { seedDemoData } from '@blurifycom/testing';
 import {
   user,
@@ -44,8 +45,10 @@ async function main() {
   // user creation throws "model user not found". See @blurifycom/core/server createAuth().
   const auth = createAuth({ db, schema: { user, session, account, verification, twoFactor } });
 
-  await seedRoles(db);
+  await seedIam(db);
   console.log('  Reference roles ready.');
+  await seedTag(db);
+  console.log('  Default tags ready.');
 
   const result = await seedDemoData({
     db,

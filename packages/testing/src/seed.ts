@@ -4,7 +4,8 @@ import { seedDemoData, type SeedResult } from './seed-demo-data.js';
 import { createAuth } from '@blurifycom/core/server';
 import { DRIZZLE, type DrizzleDb } from '@blurifycom/core/server';
 import type { Container } from '@blurifycom/core/server';
-import { seedRoles } from '@blurifycom/core/iam/seed';
+import { seedIam } from '@blurifycom/core/iam/seed';
+import { seedTag } from '@blurifycom/core/pam';
 import { user, session, account, verification } from '@blurifycom/core/pam/schema/identity';
 
 export type SeedMinimalOptions = {
@@ -39,7 +40,8 @@ export async function seedMinimal(
   const auth = createAuth({ db: authDb as unknown as DrizzleDb });
 
   try {
-    await seedRoles(drizzleSvc.db);
+    await seedIam(drizzleSvc.db);
+    await seedTag(drizzleSvc.db);
     return await seedDemoData({
       db: drizzleSvc.db,
       auth,

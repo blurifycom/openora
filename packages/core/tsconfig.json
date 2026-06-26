@@ -73,6 +73,8 @@
       "@blurifycom/core/iam/plugin": ["./src/iam/plugin.ts"],
       "@blurifycom/core/iam/schema": ["./src/iam/schema/index.ts"],
       "@blurifycom/core/pam": ["./src/pam/index.ts"],
+      "@blurifycom/core/pam/tag": ["./src/pam/tag/index.ts"],
+      "@blurifycom/core/pam/tag/seed": ["./src/pam/tag/seed/index.ts"],
       "@blurifycom/core/pam/contracts": ["./src/pam/contracts.ts"],
       "@blurifycom/core/pam/contracts/identity": ["./src/pam/identity/contract/index.ts"],
       "@blurifycom/core/pam/contracts/player": ["./src/pam/player-management/contract/index.ts"],

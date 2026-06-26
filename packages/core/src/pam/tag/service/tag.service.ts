@@ -1,6 +1,5 @@
 import { DrizzleService, DrizzleTx, EventBus } from '@blurifycom/core/server';
 import { and, eq, isNotNull } from 'drizzle-orm';
-import { user } from '../../identity/schema/index.js';
 import {
   AssignPlayerTagInput,
   CreateTagInput,
@@ -8,7 +7,6 @@ import {
   PlayerTag,
   RemovePlayerTagInput,
   Tag,
-  TagAssignSource,
 } from '@blurifycom/core/contracts';
 import { playerTag, tag } from '../schema/index.js';
 import { mapDbError } from '../../../common/errors/index.js';

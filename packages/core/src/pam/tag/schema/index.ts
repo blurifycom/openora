@@ -8,7 +8,7 @@ export const tag = pgTable(
   'tag',
   {
     id: uuid('id').primaryKey().defaultRandom(),
-    key: text('key').notNull(),
+    key: text('key').notNull().unique(),
     name: text('name').notNull(),
     color: text('color').notNull(),
     description: text('description'),
