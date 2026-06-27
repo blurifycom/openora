@@ -354,16 +354,16 @@ function buildConsumerPlaybook(
         moduleList,
         '',
         '## Playbook',
-        '1. Spawn the `igaming-expert` agent (Task tool) to turn this ask into requirements + acceptance criteria (player journey, jurisdiction rules, edge cases). Skip only for a trivial change.',
-        '2. Spawn the `igaming-builder` agent to implement: `pnpm gen plugin`, then in `register(ctx)` add routes (`ctx.routers.add`), subscribe to events (`ctx.events.on`), fill slots (`ctx.slots.fill`).',
+        '1. Spawn the `expert` agent (Task tool) to turn this ask into requirements + acceptance criteria (player journey, jurisdiction rules, edge cases). Skip only for a trivial change.',
+        '2. Spawn the `builder` agent to implement: `pnpm gen plugin`, then in `register(ctx)` add routes (`ctx.routers.add`), subscribe to events (`ctx.events.on`), fill slots (`ctx.slots.fill`).',
         '3. Register the plugin in `extensions.config.ts` at the repo root.',
-        '4. Spawn the `igaming-qa` agent to write/run a Playwright E2E test for the acceptance criteria.',
+        '4. Spawn the `qa` agent to write/run a Playwright E2E test for the acceptance criteria.',
         '5. Run `pnpm typecheck && pnpm lint`.',
         '',
         '## Agents',
-        '- `igaming-expert` - requirements + AC (advisory, no code)',
-        '- `igaming-builder` - implements the overlay',
-        '- `igaming-qa` - E2E test + bug triage (OSS-core vs overlay)',
+        '- `expert` - requirements + AC (advisory, no code)',
+        '- `builder` - implements the overlay',
+        '- `qa` - E2E test + bug triage (OSS-core vs overlay)',
       ].join('\n');
     case 'adapter':
       return [
@@ -376,14 +376,14 @@ function buildConsumerPlaybook(
           : '- (run list-adapters for details)',
         '',
         '## Playbook',
-        '1. If the adapter is compliance-sensitive (KYC/AML, PSP, geo), spawn the `igaming-expert` agent first to confirm jurisdiction requirements.',
-        '2. Spawn the `igaming-builder` agent to implement: `pnpm gen adapter` (prompts for name + token), implement the interface, bind it in the generated plugin.',
+        '1. If the adapter is compliance-sensitive (KYC/AML, PSP, geo), spawn the `expert` agent first to confirm jurisdiction requirements.',
+        '2. Spawn the `builder` agent to implement: `pnpm gen adapter` (prompts for name + token), implement the interface, bind it in the generated plugin.',
         '3. Ensure the plugin is listed AFTER the module that owns the default binding in `extensions.config.ts` (last registration wins).',
         '4. Run `pnpm typecheck && pnpm lint`.',
         '',
         '## Agents',
-        '- `igaming-expert` - jurisdiction/compliance requirements (advisory)',
-        '- `igaming-builder` - implements + binds the adapter',
+        '- `expert` - jurisdiction/compliance requirements (advisory)',
+        '- `builder` - implements + binds the adapter',
       ].join('\n');
     case 'ui-page':
       return [
@@ -396,13 +396,13 @@ function buildConsumerPlaybook(
           : '- (run list-slots for details)',
         '',
         '## Playbook',
-        '1. Spawn the `igaming-builder` agent to implement the page in your frontend repo, or extend an existing surface via `defineUIPlugin` into a slot above.',
-        '2. Spawn the `igaming-qa` agent to verify the page renders and behaves in a browser.',
+        '1. Spawn the `builder` agent to implement the page in your frontend repo, or extend an existing surface via `defineUIPlugin` into a slot above.',
+        '2. Spawn the `qa` agent to verify the page renders and behaves in a browser.',
         '3. Run `pnpm typecheck`.',
         '',
         '## Agents',
-        '- `igaming-builder` - mounts/extends the page',
-        '- `igaming-qa` - browser verification',
+        '- `builder` - mounts/extends the page',
+        '- `qa` - browser verification',
       ].join('\n');
     case 'route':
       return [
@@ -413,25 +413,25 @@ function buildConsumerPlaybook(
         moduleList,
         '',
         '## Playbook',
-        '1. Spawn the `igaming-builder` agent to implement: `pnpm gen plugin` if no overlay exists, then add the oRPC route in `register(ctx)`. Admin routes must assert AdminGuard first.',
+        '1. Spawn the `builder` agent to implement: `pnpm gen plugin` if no overlay exists, then add the oRPC route in `register(ctx)`. Admin routes must assert AdminGuard first.',
         '2. Run `pnpm typecheck && pnpm lint`.',
         '',
         '## Agents',
-        '- `igaming-builder` - implements the route',
+        '- `builder` - implements the route',
       ].join('\n');
     default:
       return [
         '## Not sure yet',
-        'Spawn the `igaming-expert` agent to frame the ask in domain terms, or ask one clarifying question to map it to: feature (overlay plugin), adapter (vendor swap), ui-page, or route. Then re-call `enhance-intent` with the chosen kind.',
+        'Spawn the `expert` agent to frame the ask in domain terms, or ask one clarifying question to map it to: feature (overlay plugin), adapter (vendor swap), ui-page, or route. Then re-call `enhance-intent` with the chosen kind.',
         '',
         '## Platform surface',
         `Modules: ${ctx.modules.join(', ') || '(none)'}`,
         `Adapter tokens: ${ctx.tokens.join(', ') || '(none)'}`,
         '',
         '## Agents available in this repo',
-        '- `igaming-expert` - domain/product requirements (advisory)',
-        '- `igaming-builder` - fullstack implementation',
-        '- `igaming-qa` - E2E testing',
+        '- `expert` - domain/product requirements (advisory)',
+        '- `builder` - fullstack implementation',
+        '- `qa` - E2E testing',
       ].join('\n');
   }
 }
@@ -539,7 +539,7 @@ server.registerTool(
 
     const role = [
       '## Your role',
-      'You are a requirements interviewer and orchestrator, NOT the implementer. Your one human-facing job is to collect thorough requirements from the user. Everything after that - scaffolding, code, tests - you delegate to the agents (`igaming-expert`, `igaming-builder`, `igaming-qa`) via the Task tool. Keep the user out of the loop after requirements are confirmed, except to resolve genuine decisions only they can make.',
+      'You are a requirements interviewer and orchestrator, NOT the implementer. Your one human-facing job is to collect thorough requirements from the user. Everything after that - scaffolding, code, tests - you delegate to the agents (`expert`, `builder`, `qa`) via the Task tool. Keep the user out of the loop after requirements are confirmed, except to resolve genuine decisions only they can make.',
     ].join('\n');
 
     if (ask) {
@@ -597,9 +597,9 @@ server.registerTool(
             '',
             '## Step 3: delegate everything',
             'Call `enhance-intent` (ask = the confirmed requirements summary, kind = step 1). Then follow its playbook, which delegates to the agents:',
-            '- `igaming-expert` formalizes requirements + acceptance criteria (and may surface gaps - if so, ask the user those, then continue).',
-            '- `igaming-builder` implements (`pnpm gen ...`, code).',
-            '- `igaming-qa` writes/runs the E2E test.',
+            '- `expert` formalizes requirements + acceptance criteria (and may surface gaps - if so, ask the user those, then continue).',
+            '- `builder` implements (`pnpm gen ...`, code).',
+            '- `qa` writes/runs the E2E test.',
             'You orchestrate; you do not write feature code yourself.',
             '',
             `Platform modules: ${modules.join(', ') || '(catalog not loaded - run pnpm build:oss first)'}`,

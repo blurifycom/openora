@@ -1,7 +1,7 @@
 ---
 targets:
   - '*'
-name: docs-sync
+name: docs
 description: >-
   Audits the OSS platform's prose docs against the actual current state of the
   codebase and edits them to match. Detects drift between documentation and

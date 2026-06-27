@@ -56,14 +56,14 @@ cite them in findings:
 Each dimension maps to a rule doc and, where one exists, a pre-scoped roster subagent. Spawn only the
 dimensions whose files actually changed.
 
-| #   | Dimension              | Covers                                                                                   | Use subagent                |
-| --- | ---------------------- | ---------------------------------------------------------------------------------------- | --------------------------- |
-| 1   | Boundaries & contracts | import-graph rules, oRPC `.input()/.output()`, Zod-first, schema/openapi drift, drizzle  | `contract-reviewer`         |
-| 2   | Security & money       | money idempotency/atomicity, authz/`AdminGuard`, secrets/PII, auth flows, injection      | `security-reviewer`         |
-| 3   | Conventions & quality  | naming, functional/immutable, no `any`/`interface`/default-export, comments WHY, tests   | general (grounded in §3)    |
-| 4   | Messaging seams        | command vs event vs job choice, outbox for must-not-lose events, idempotent handlers     | general (grounded in §3)    |
-| 5   | Audit completeness     | every state-changing action leaves a hash-chained `audit` entry (domain event or writer) | general (grounded in §3)    |
-| 6   | Operator/domain fit    | does the change make igaming sense; launch-blockers (only if business logic changed)     | `igaming-operator-verifier` |
+| #   | Dimension              | Covers                                                                                   | Use subagent             |
+| --- | ---------------------- | ---------------------------------------------------------------------------------------- | ------------------------ |
+| 1   | Boundaries & contracts | import-graph rules, oRPC `.input()/.output()`, Zod-first, schema/openapi drift, drizzle  | `contract-reviewer`      |
+| 2   | Security & money       | money idempotency/atomicity, authz/`AdminGuard`, secrets/PII, auth flows, injection      | `security-reviewer`      |
+| 3   | Conventions & quality  | naming, functional/immutable, no `any`/`interface`/default-export, comments WHY, tests   | general (grounded in §3) |
+| 4   | Messaging seams        | command vs event vs job choice, outbox for must-not-lose events, idempotent handlers     | general (grounded in §3) |
+| 5   | Audit completeness     | every state-changing action leaves a hash-chained `audit` entry (domain event or writer) | general (grounded in §3) |
+| 6   | Operator/domain fit    | does the change make igaming sense; launch-blockers (only if business logic changed)     | `operator`               |
 
 ## 5. Allocate reviewers to `--agents N`
 

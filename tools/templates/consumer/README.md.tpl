@@ -13,7 +13,7 @@ in its own repo and talk to this api over HTTP via `@blurifycom/react`.
 ```
 apps/
   api/          # Hono + oRPC API (:3001) - thin createApp entry + your extensions.config.ts
-.claude/agents/ # AI agents: igaming-builder, igaming-expert, igaming-qa
+.claude/agents/ # AI agents: builder, expert, qa
 turbo/generators/ # turbo gen: plugin, adapter
 ```
 
@@ -63,8 +63,8 @@ a DI token wins).
 
 `.claude/agents/` ships three agents scoped to this repo:
 
-- `igaming-builder` - configure extensions, swap adapters, write overlays, customize UI
-- `igaming-expert` - turn product asks into requirements + acceptance criteria
-- `igaming-qa` - write/run Playwright E2E tests and triage bugs
+- `builder` - configure extensions, swap adapters, write overlays, customize UI
+- `expert` - turn product asks into requirements + acceptance criteria
+- `qa` - write/run Playwright E2E tests and triage bugs
 
 The `oss` MCP server (`.mcp.json`) gives them read-only inspection of the platform surface.

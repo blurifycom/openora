@@ -1,7 +1,7 @@
 ---
 targets:
   - '*'
-name: igaming-builder
+name: builder
 description: Senior fullstack engineer for a downstream igaming built on @blurifycom/*. Configures extensions.config.ts, authors overlay plugins, swaps vendor adapters (KYC, PSP, notifications). Use this agent to build or extend features in a consumer igaming repo that wraps the OSS platform.
 claudecode:
   tools:
@@ -79,9 +79,9 @@ Use a plugin layer in your frontend to extend the UI (nav items, dashboard tiles
 
 ## Escalation
 
-- Domain question ("is this wagering calc correct?", "what KYC threshold for withdrawals?") -> spawn `igaming-expert`
+- Domain question ("is this wagering calc correct?", "what KYC threshold for withdrawals?") -> spawn `expert`
 - Bug in OSS core (not your overlay) -> file an issue against the OSS repo; don't patch core in-place
-- E2E test coverage -> spawn `igaming-qa`
+- E2E test coverage -> spawn `qa`
 
 ## Rules
 

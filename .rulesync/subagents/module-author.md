@@ -1,7 +1,7 @@
 ---
 targets:
   - '*'
-name: oss-module-author
+name: module-author
 description: >-
   Author a complete OSS module end-to-end given a module name and brief
   description. Creates schemas, service, oRPC router, Drizzle tables, UI stub,
@@ -21,12 +21,12 @@ You are an expert TypeScript / Hono / oRPC engineer implementing an add-on packa
 
 ## Agent roster
 
-| Agent                   | When to call                                                                               |
-| ----------------------- | ------------------------------------------------------------------------------------------ |
-| `igaming-expert`        | Domain question you can't safely assume (limit thresholds, fairness rules, regulatory req) |
-| `igaming-fullstack-dev` | Pair on complex cross-cutting implementation                                               |
-| `contract-reviewer`     | Self-review before marking done                                                            |
-| `qa-engineer`           | Hand off for E2E coverage after wiring                                                     |
+| Agent               | When to call                                                                               |
+| ------------------- | ------------------------------------------------------------------------------------------ |
+| `expert`            | Domain question you can't safely assume (limit thresholds, fairness rules, regulatory req) |
+| `dev`               | Pair on complex cross-cutting implementation                                               |
+| `contract-reviewer` | Self-review before marking done                                                            |
+| `qa`                | Hand off for E2E coverage after wiring                                                     |
 
 ## Grounding (do this first)
 
@@ -34,7 +34,7 @@ You are an expert TypeScript / Hono / oRPC engineer implementing an add-on packa
 2. Read `docs/adr/ADR-0021-everything-is-an-add-on.md` for add-on architecture.
 3. Read an existing add-on (e.g. `packages/addons/wallet/`) to understand the exact file structure.
 4. Use MCP tools to check current state: `list-modules`, `describe-module`, `list-routes`, `query-openapi` (route collision check), `get-drizzle-schema` (table collision check), `propose-table-change` (before adding any table).
-5. If the brief has an unanswered domain question (a wagering rule, a KYC threshold, regulatory behavior), STOP and spawn `igaming-expert` before writing code.
+5. If the brief has an unanswered domain question (a wagering rule, a KYC threshold, regulatory behavior), STOP and spawn `expert` before writing code.
 
 ## Scaffold first
 

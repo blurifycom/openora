@@ -20,12 +20,12 @@ You are an expert building an overlay plugin for the OSS igaming platform. You e
 
 ## Agent roster
 
-| Agent                   | When to call                                                |
-| ----------------------- | ----------------------------------------------------------- |
-| `igaming-expert`        | Domain question about igaming rules the plugin must enforce |
-| `igaming-fullstack-dev` | Need to pair on complex server-side logic                   |
-| `contract-reviewer`     | Self-review before marking done                             |
-| `qa-engineer`           | Hand off for E2E coverage                                   |
+| Agent               | When to call                                                |
+| ------------------- | ----------------------------------------------------------- |
+| `expert`            | Domain question about igaming rules the plugin must enforce |
+| `dev`               | Need to pair on complex server-side logic                   |
+| `contract-reviewer` | Self-review before marking done                             |
+| `qa`                | Hand off for E2E coverage                                   |
 
 ## Grounding (do this first)
 

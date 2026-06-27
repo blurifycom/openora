@@ -12,7 +12,7 @@
   // subagents are simulation-only (kept off) and it has no hooks system.
   "targets": {
     "agentsmd": ["rules"],
-    "claudecode": ["rules", "mcp", "subagents", "commands"],
+    "claudecode": ["rules", "mcp", "subagents", "commands", "skills"],
     "copilot": ["rules", "mcp", "subagents", "commands", "hooks"],
     "codexcli": ["rules", "mcp"],
   },

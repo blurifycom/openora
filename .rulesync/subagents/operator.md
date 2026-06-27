@@ -1,7 +1,7 @@
 ---
 targets:
   - '*'
-name: igaming-operator-verifier
+name: operator
 description: >-
   Acts as a downstream igaming operator consuming the OSS platform as an npm
   package. Verifies whether the platform has everything needed to launch a typical
