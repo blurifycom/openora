@@ -77,21 +77,16 @@ jobs:
 
       # Now that the new @blurifycom/* version is on the registry, ask the downstream
       # consumer to open a bump MR. We POST its GitLab pipeline-trigger API (CONSUMER_*
-      # secrets) with the published version + which consumer branch to bump:
-      #   dev push (alpha) -> dev, stage push (beta) -> stage, v*.*.* tag (latest) -> prod.
+      # secrets) with the published version. Only the alpha channel (push to dev)
+      # auto-bumps the consumer dev branch; stage/prod bumps are promoted manually.
       # The consumer CI (OSS_BUMP=true) owns the pin/lockfile/MR. No-op when unset.
       - name: Trigger downstream consumer bump
-        if: env.CONSUMER_TRIGGER_URL != ''
+        if: env.CONSUMER_TRIGGER_URL != '' && github.ref == 'refs/heads/dev'
         run: |
-          case "${{ github.ref_name }}" in
-            dev)   TARGET=dev ;;
-            stage) TARGET=stage ;;
-            *)     TARGET=prod ;;
-          esac
           VERSION=$(node -p "require('./packages/core/package.json').version")
           curl -sf -X POST "$CONSUMER_TRIGGER_URL" \
             -F "token=$CONSUMER_TRIGGER_TOKEN" \
-            -F "ref=$TARGET" \
+            -F "ref=dev" \
             -F "variables[OSS_BUMP]=true" \
             -F "variables[OSS_VERSION]=$VERSION" \
-            -F "variables[OSS_BUMP_TARGET]=$TARGET"
+            -F "variables[OSS_BUMP_TARGET]=dev"
