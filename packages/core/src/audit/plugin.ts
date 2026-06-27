@@ -22,6 +22,8 @@ function mapEventToRecord(topic: string, p: Record<string, unknown>): RecordInpu
     resourceId: null,
     after: p,
     result,
+    ip: typeof p['ip'] === 'string' ? p['ip'] : null,
+    userAgent: typeof p['userAgent'] === 'string' ? p['userAgent'] : null,
   };
 
   // payload `userId` is the SUBJECT player here, not the actor (an admin changed it).
@@ -119,6 +121,36 @@ function mapEventToRecord(topic: string, p: Record<string, unknown>): RecordInpu
     };
   }
 
+  // Admin cleared a lockout. resource = the unlocked user; before/after carry the
+  // failed-attempt + lockout state that was reset.
+  if (topic === 'identity.user.unlocked') {
+    return {
+      ...base,
+      actorType: 'admin',
+      actorId: str(p['actorId']),
+      resourceType: 'user',
+      resourceId: str(p['userId']),
+      before: {
+        failedLoginAttempts: p['previousFailedAttempts'] ?? null,
+        lockoutUntil: p['previousLockoutUntil'] ?? null,
+      },
+      after: { failedLoginAttempts: 0, lockoutUntil: null },
+    };
+  }
+
+  // A lockout is a system-driven security control: the subject is the resource, not the
+  // actor, and it is a failure outcome (the base regex would otherwise mark it success).
+  if (topic === 'identity.user.lockout.triggered') {
+    return {
+      ...base,
+      actorType: 'system',
+      resourceType: 'user',
+      resourceId: str(p['userId']),
+      result: 'failure',
+      after: { lockoutUntil: p['lockoutUntil'] ?? null },
+    };
+  }
+
   // actorId = the player who (un)blocked; resource = the blocked player.
   if (topic === 'chat.user.blocked' || topic === 'chat.user.unblocked') {
     return {
@@ -169,6 +201,9 @@ function mapEventToRecord(topic: string, p: Record<string, unknown>): RecordInpu
 const SUBSCRIBED_TOPICS = [
   'identity.user.registered',
   'identity.user.login',
+  'identity.user.login.failed',
+  'identity.user.lockout.triggered',
+  'identity.user.unlocked',
   'identity.user.logout',
   'identity.2fa.enabled',
   'identity.2fa.disabled',

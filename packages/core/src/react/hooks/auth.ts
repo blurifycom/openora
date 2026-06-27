@@ -1,4 +1,5 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import type { LoginInput, RegisterInput } from '../../contracts/schemas/index.js';
 import { useApiClient } from '../context/api-client.js';
 
 export function useSession() {
@@ -31,7 +32,7 @@ export function useLogin() {
   const client = useApiClient();
   const queryClient = useQueryClient();
   return useMutation({
-    mutationFn: (data: { email: string; password: string }) => client.post('/identity/login', data),
+    mutationFn: (data: LoginInput) => client.post('/identity/login', data),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['session'] });
       queryClient.invalidateQueries({ queryKey: ['me'] });
@@ -55,8 +56,7 @@ export function useRegister() {
   const client = useApiClient();
   const queryClient = useQueryClient();
   return useMutation({
-    mutationFn: (data: { email: string; password: string; name: string }) =>
-      client.post('/identity/register', data),
+    mutationFn: (data: RegisterInput) => client.post('/identity/register', data),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['session'] });
     },

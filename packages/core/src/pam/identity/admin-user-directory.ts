@@ -24,6 +24,8 @@ function toRow(r: typeof user.$inferSelect): AdminUserRow {
     createdAt: r.createdAt,
     isActive: r.isActive,
     role: r.role ?? 'user',
+    failedLoginAttempts: r.failedLoginAttempts,
+    lockoutUntil: r.lockoutUntil,
   };
 }
 

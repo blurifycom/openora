@@ -2,7 +2,7 @@ import * as z from 'zod';
 import { UuidSchema } from '@blurifycom/core/contracts';
 
 export const LimitSchema = z.object({
-  id: z.string(),
+  id: UuidSchema,
   userId: UuidSchema,
   type: z.enum(['deposit', 'wager', 'loss']),
   amount: z.number(),
@@ -11,7 +11,7 @@ export const LimitSchema = z.object({
 });
 
 export const GeoRuleSchema = z.object({
-  id: z.string(),
+  id: UuidSchema,
   countryCode: z.string(),
   action: z.enum(['allow', 'block']),
   createdAt: z.iso.datetime(),
@@ -20,20 +20,11 @@ export const GeoRuleSchema = z.object({
 export type Limit = z.infer<typeof LimitSchema>;
 export type GeoRule = z.infer<typeof GeoRuleSchema>;
 
-export const UpsertLimitInputSchema = z.object({
-  type: z.enum(['deposit', 'wager', 'loss']),
-  amount: z.number(),
-  period: z.enum(['daily', 'weekly', 'monthly']),
-});
+export const UpsertLimitInputSchema = LimitSchema.pick({ type: true, amount: true, period: true });
 
-export const DeleteLimitInputSchema = z.object({
-  id: z.string(),
-});
+export const DeleteLimitInputSchema = LimitSchema.pick({ id: true });
 
-export const AddGeoRuleInputSchema = z.object({
-  countryCode: z.string(),
-  action: z.enum(['allow', 'block']),
-});
+export const AddGeoRuleInputSchema = GeoRuleSchema.pick({ countryCode: true, action: true });
 
 export type UpsertLimitInput = z.infer<typeof UpsertLimitInputSchema>;
 export type AddGeoRuleInput = z.infer<typeof AddGeoRuleInputSchema>;

@@ -13,7 +13,7 @@ export const PlayerStatusSchema = z.enum([
 export const KycStatusSchema = z.enum(['pending', 'verified', 'rejected']);
 
 export const PlayerSchema = z.object({
-  id: z.string(),
+  id: UuidSchema,
   userId: UuidSchema,
   displayName: z.string(),
   email: z.string(),

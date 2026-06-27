@@ -17,6 +17,8 @@ function toAdminUser(r: AdminUserRow): AdminUser {
     createdAt: r.createdAt.toISOString(),
     isActive: r.isActive,
     role: r.role,
+    failedLoginAttempts: r.failedLoginAttempts,
+    lockoutUntil: r.lockoutUntil ? r.lockoutUntil.toISOString() : undefined,
   };
 }
 

@@ -87,3 +87,6 @@ export type {
   AdminWalletReporting,
 } from './admin-wallet-reporting.js';
 export { ADMIN_WALLET_REPORTING } from './admin-wallet-reporting.js';
+
+export type { IdentityServiceOptions, IdentityLockoutOptions } from './identity.js';
+export { IDENTITY_OPTIONS } from './identity.js';

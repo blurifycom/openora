@@ -246,6 +246,13 @@ export async function createApp(config: CreateAppConfig): Promise<CreatedApp> {
 
   app.use('/*', async (c, next) => {
     const headers = headersToRecord(c.req.raw.headers);
+    if (!headers['x-real-ip'] && !headers['x-forwarded-for']) {
+      const remoteAddress = (c.env as { incoming?: { socket?: { remoteAddress?: string } } })
+        ?.incoming?.socket?.remoteAddress;
+      if (remoteAddress) {
+        headers['x-real-ip'] = remoteAddress;
+      }
+    }
     const context: OssContext = {
       request: { headers },
       rawBody: await captureRawBody(c.req.raw),

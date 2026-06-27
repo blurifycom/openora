@@ -170,6 +170,7 @@
         "identity.requestPasswordReset",
         "identity.resetPassword",
         "identity.sendEmailVerification",
+        "identity.unlockUser",
         "identity.updateProfile",
         "identity.verify2fa",
         "identity.verifyEmail"
@@ -360,6 +361,15 @@
       ]
     },
     {
+      "category": "identity",
+      "interface": "IdentityLockoutOptions",
+      "token": "IDENTITY_OPTIONS",
+      "status": "wired",
+      "boundIn": [
+        "packages/core/src/pam/identity/plugin.ts"
+      ]
+    },
+    {
       "category": "job-queue",
       "interface": "JobQueueAdapter",
       "token": "JOB_QUEUE",
@@ -463,10 +473,13 @@
     "identity.password.reset",
     "identity.profile.updated",
     "identity.user.deactivated",
+    "identity.user.lockout.triggered",
     "identity.user.login",
+    "identity.user.login.failed",
     "identity.user.logout",
     "identity.user.reactivated",
     "identity.user.registered",
+    "identity.user.unlocked",
     "leaderboard.reset",
     "leaderboard.score.recorded",
     "notifications.created",
@@ -1022,6 +1035,7 @@
     "POST /identity/password/forgot",
     "POST /identity/password/reset",
     "POST /identity/register",
+    "POST /identity/unlock",
     "POST /notifications/read-all",
     "POST /notifications/{id}/read",
     "POST /wallet/deposit",

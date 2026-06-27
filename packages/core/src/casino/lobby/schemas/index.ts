@@ -1,7 +1,8 @@
 import * as z from 'zod';
+import { UuidSchema } from '@blurifycom/core/contracts';
 
 export const GameSummarySchema = z.object({
-  id: z.string(),
+  id: UuidSchema,
   name: z.string(),
   provider: z.string(),
   category: z.string(),
@@ -9,7 +10,7 @@ export const GameSummarySchema = z.object({
 });
 
 export const LobbyCategorySchema = z.object({
-  id: z.string(),
+  id: UuidSchema,
   name: z.string(),
   slug: z.string(),
   sortOrder: z.number(),
@@ -17,16 +18,16 @@ export const LobbyCategorySchema = z.object({
 });
 
 export const LobbyCategoryDetailSchema = z.object({
-  id: z.string(),
+  id: UuidSchema,
   name: z.string(),
   slug: z.string(),
   games: z.array(GameSummarySchema),
 });
 
 export const FeaturedSlotSchema = z.object({
-  id: z.string(),
+  id: UuidSchema,
   title: z.string(),
-  gameId: z.string(),
+  gameId: UuidSchema,
   gameName: z.string(),
   thumbnailUrl: z.string().nullable(),
   placement: z.string(),

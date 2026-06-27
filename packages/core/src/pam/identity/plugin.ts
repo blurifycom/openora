@@ -3,9 +3,10 @@ import {
   KYC_ADAPTER,
   NOTIFICATION_DELIVERY_ADAPTER,
   SEND_EMAIL,
+  IDENTITY_OPTIONS,
 } from '@blurifycom/core/contracts';
 import type { SendEmailPort } from '@blurifycom/core/contracts';
-import { definePlugin } from '@blurifycom/core/server';
+import { definePlugin, ADMIN_GUARD } from '@blurifycom/core/server';
 import { EVENT_BUS } from '@blurifycom/core/server';
 import { DRIZZLE } from '@blurifycom/core/server';
 import { MockKycAdapter } from './adapters/mock/mock-kyc-adapter.js';
@@ -32,7 +33,13 @@ export default definePlugin({
     );
     ctx.routers.add('identity', (c) =>
       createIdentityRouter(
-        new IdentityService(c.get(DRIZZLE), c.get(EVENT_BUS), c.get(SEND_EMAIL)),
+        new IdentityService({
+          drizzle: c.get(DRIZZLE),
+          events: c.get(EVENT_BUS),
+          email: c.get(SEND_EMAIL),
+          options: c.has(IDENTITY_OPTIONS) ? c.get(IDENTITY_OPTIONS) : undefined,
+        }),
+        c.get(ADMIN_GUARD),
       ),
     );
   },

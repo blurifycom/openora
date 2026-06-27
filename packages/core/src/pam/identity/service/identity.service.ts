@@ -3,6 +3,7 @@ import { createAuth } from '@blurifycom/core/server';
 import { type EventBus } from '@blurifycom/core/server';
 import type { SendEmailPort } from '@blurifycom/core/contracts';
 import { DrizzleService } from '@blurifycom/core/server';
+import { eq, sql } from 'drizzle-orm';
 import { user, session, account, verification, twoFactor } from '../schema/index.js';
 import type { User } from '@blurifycom/core/contracts';
 import type {
@@ -18,6 +19,7 @@ import type {
   UpdateProfileInput,
   ChangePasswordInput,
   ChangeEmailInput,
+  IdentityServiceOptions,
 } from '@blurifycom/core/contracts';
 
 function nodeHeadersToHeaders(nodeHeaders: Record<string, string | string[] | undefined>): Headers {
@@ -105,16 +107,44 @@ async function ensureOk(res: globalThis.Response): Promise<void> {
   throw new ORPCError(res.status === 401 ? 'UNAUTHORIZED' : 'BAD_REQUEST', { message });
 }
 
+const DEFAULT_MAX_LOGIN_ATTEMPTS = 5;
+const DEFAULT_LOCKOUT_DURATION_MS = 15 * 60 * 1000;
+// Mirrors better-auth session.expiresIn (server/auth/auth.ts); used only as a fallback
+// when the sign-in response omits an explicit session expiry.
+const SESSION_TTL_MS = 30 * 24 * 60 * 60 * 1000;
+
+/** Pure lockout decision: does this attempt count trip the lock, and until when. */
+function computeLockoutState(
+  attempts: number,
+  maxAttempts: number,
+  durationMs: number,
+  nowMs: number,
+) {
+  const isLocking = attempts >= maxAttempts;
+  return { isLocking, lockoutUntil: isLocking ? new Date(nowMs + durationMs) : null };
+}
+
+export type IdentityServiceDeps = {
+  drizzle: DrizzleService;
+  events: EventBus;
+  email?: SendEmailPort;
+  options?: IdentityServiceOptions;
+};
+
 export class IdentityService {
   private readonly auth: ReturnType<typeof createAuth>;
+  private readonly drizzle: DrizzleService;
+  private readonly events: EventBus;
+  private readonly email?: SendEmailPort;
+  private readonly options?: IdentityServiceOptions;
 
-  constructor(
-    private readonly drizzle: DrizzleService,
-    private readonly events: EventBus,
-    private readonly email?: SendEmailPort,
-  ) {
+  constructor({ drizzle, events, email, options }: IdentityServiceDeps) {
+    this.drizzle = drizzle;
+    this.events = events;
+    this.email = email;
+    this.options = options;
     this.auth = createAuth({
-      db: this.drizzle.db,
+      db: drizzle.db,
       schema: { user, session, account, verification, twoFactor },
       ...(email ? { sendEmail: (args) => email.send(args) } : {}),
     });
@@ -153,32 +183,160 @@ export class IdentityService {
     resHeaders: Headers,
   ) {
     const headers = nodeHeadersToHeaders(reqHeaders);
-    const authResponse = await this.auth.api.signInEmail({
-      body: { email: input.email, password: input.password },
-      headers,
-      asResponse: true,
-    });
-    await ensureOk(authResponse);
-    forwardCookies(authResponse, resHeaders);
-    const body = (await authResponse.json()) as {
-      user?: BetterAuthUser;
-      token?: string;
-      session?: { expiresAt: string | Date };
-      twoFactorRedirect?: boolean;
-    };
+    const ip =
+      headers.get('x-forwarded-for')?.split(',')[0]?.trim() || headers.get('x-real-ip') || null;
+    const userAgent = headers.get('user-agent') || null;
+    // better-auth lowercases emails on write, so the lockout lookup must match on the same form.
+    const email = input.email.toLowerCase();
 
-    if (body.twoFactorRedirect || !body.user || !body.token) {
-      return { twoFactorRedirect: true };
+    const lockoutEnabled = this.options?.lockout?.enabled ?? true;
+    let existingUser:
+      | Pick<typeof user.$inferSelect, 'id' | 'failedLoginAttempts' | 'lockoutUntil'>
+      | undefined;
+
+    if (lockoutEnabled) {
+      const [dbUser] = await this.drizzle.db
+        .select({
+          id: user.id,
+          failedLoginAttempts: user.failedLoginAttempts,
+          lockoutUntil: user.lockoutUntil,
+        })
+        .from(user)
+        .where(eq(user.email, email))
+        .limit(1);
+      existingUser = dbUser;
+
+      if (existingUser?.lockoutUntil) {
+        if (new Date(existingUser.lockoutUntil) > new Date()) {
+          throw new ORPCError('UNAUTHORIZED', {
+            message: 'Account is temporarily locked. Please try again later.',
+            data: { lockoutUntil: existingUser.lockoutUntil.toISOString() },
+          });
+        }
+        // Lock window elapsed: clear it so the next failure starts from a fresh budget
+        // instead of one more wrong password immediately re-locking the account.
+        await this.clearLockout(existingUser.id);
+        existingUser = { ...existingUser, failedLoginAttempts: 0, lockoutUntil: null };
+      }
     }
 
-    this.events.emit('identity.user.login', { userId: body.user.id });
-    const expiresAt = body.session?.expiresAt
-      ? toIso(body.session.expiresAt)
-      : new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString();
-    return {
-      user: toUser(body.user),
-      session: { token: body.token, expiresAt },
-    };
+    try {
+      const authResponse = await this.auth.api.signInEmail({
+        body: { email, password: input.password, rememberMe: input.rememberMe },
+        headers,
+        asResponse: true,
+      });
+      await ensureOk(authResponse);
+      forwardCookies(authResponse, resHeaders);
+      const body = (await authResponse.json()) as {
+        user?: BetterAuthUser;
+        token?: string;
+        session?: { expiresAt: string | Date };
+        twoFactorRedirect?: boolean;
+      };
+
+      if (body.twoFactorRedirect || !body.user || !body.token) {
+        return { twoFactorRedirect: true };
+      }
+
+      if (lockoutEnabled && existingUser) {
+        await this.clearLockout(existingUser.id);
+      }
+
+      this.events.emit('identity.user.login', { userId: body.user.id, ip, userAgent });
+      const expiresAt = body.session?.expiresAt
+        ? toIso(body.session.expiresAt)
+        : new Date(Date.now() + SESSION_TTL_MS).toISOString();
+      return {
+        user: toUser(body.user),
+        session: { token: body.token, expiresAt },
+      };
+    } catch (error) {
+      // Only a genuine credential rejection counts toward lockout - a transient DB/network
+      // error must never lock the account out.
+      const isCredentialFailure = error instanceof ORPCError && error.code === 'UNAUTHORIZED';
+
+      if (lockoutEnabled && existingUser && isCredentialFailure) {
+        const maxAttempts = this.options?.lockout?.maxAttempts ?? DEFAULT_MAX_LOGIN_ATTEMPTS;
+        const durationMs = this.options?.lockout?.durationMs ?? DEFAULT_LOCKOUT_DURATION_MS;
+        // Atomic increment: concurrent failures can't each read a stale count and slip past
+        // the threshold (the read-modify-write this replaces was bypassable under load).
+        const [row] = await this.drizzle.db
+          .update(user)
+          .set({ failedLoginAttempts: sql`${user.failedLoginAttempts} + 1` })
+          .where(eq(user.id, existingUser.id))
+          .returning({ failedLoginAttempts: user.failedLoginAttempts });
+        const newAttempts = row?.failedLoginAttempts ?? existingUser.failedLoginAttempts + 1;
+        const { isLocking, lockoutUntil } = computeLockoutState(
+          newAttempts,
+          maxAttempts,
+          durationMs,
+          Date.now(),
+        );
+
+        if (isLocking && lockoutUntil) {
+          await this.drizzle.db
+            .update(user)
+            .set({ lockoutUntil })
+            .where(eq(user.id, existingUser.id));
+
+          this.events.emit('identity.user.lockout.triggered', {
+            userId: existingUser.id,
+            email,
+            lockoutUntil: lockoutUntil.toISOString(),
+            ip,
+            userAgent,
+          });
+
+          throw new ORPCError('UNAUTHORIZED', {
+            message: 'Account is temporarily locked. Please try again later.',
+            data: { lockoutUntil: lockoutUntil.toISOString() },
+          });
+        }
+      }
+
+      const reason = isCredentialFailure ? 'invalid_credentials' : 'error';
+      this.events.emit('identity.user.login.failed', { email, reason, ip, userAgent });
+      throw error;
+    }
+  }
+
+  private clearLockout(userId: string) {
+    return this.drizzle.db
+      .update(user)
+      .set({ failedLoginAttempts: 0, lockoutUntil: null })
+      .where(eq(user.id, userId));
+  }
+
+  async unlockUser(userId: string, actorId: string) {
+    const [existingUser] = await this.drizzle.db
+      .select({
+        id: user.id,
+        email: user.email,
+        failedLoginAttempts: user.failedLoginAttempts,
+        lockoutUntil: user.lockoutUntil,
+      })
+      .from(user)
+      .where(eq(user.id, userId))
+      .limit(1);
+
+    if (!existingUser) {
+      throw new ORPCError('NOT_FOUND', { message: 'User not found' });
+    }
+
+    await this.clearLockout(userId);
+
+    this.events.emit('identity.user.unlocked', {
+      userId,
+      email: existingUser.email,
+      actorId,
+      previousFailedAttempts: existingUser.failedLoginAttempts,
+      previousLockoutUntil: existingUser.lockoutUntil
+        ? existingUser.lockoutUntil.toISOString()
+        : null,
+    });
+
+    return SUCCESS;
   }
 
   async logout(reqHeaders: Record<string, string | string[] | undefined>, resHeaders: Headers) {
@@ -276,7 +434,11 @@ export class IdentityService {
     });
     await ensureOk(res);
     const body = (await res.json().catch(() => ({}))) as { user?: { id: string } };
-    if (body.user?.id) this.events.emit('identity.password.reset', { userId: body.user.id });
+    if (body.user?.id) {
+      this.events.emit('identity.password.reset', { userId: body.user.id });
+      // Password reset clears any lockout - the user has proven identity via email/phone.
+      await this.clearLockout(body.user.id);
+    }
     return SUCCESS;
   }
 

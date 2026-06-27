@@ -13,6 +13,8 @@ export type AdminUserRow = {
   createdAt: Date;
   isActive: boolean;
   role: string;
+  failedLoginAttempts?: number;
+  lockoutUntil?: Date | null;
 };
 
 export type AdminUserListOptions = { page: number; limit: number; search?: string };

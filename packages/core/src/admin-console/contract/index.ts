@@ -18,11 +18,13 @@ export const UserRoleSchema = z.enum(['player', 'admin']);
 
 export const AdminUserSchema = z.object({
   id: UuidSchema,
-  email: z.string(),
+  email: z.email(),
   name: z.string().nullable(),
   createdAt: z.iso.datetime(),
   isActive: z.boolean(),
   role: z.string(),
+  failedLoginAttempts: z.number().int().optional(),
+  lockoutUntil: z.iso.datetime().nullable().optional(),
 });
 
 export const AdminTransactionSchema = z.object({

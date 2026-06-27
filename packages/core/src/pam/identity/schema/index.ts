@@ -1,4 +1,4 @@
-import { pgTable, uuid, text, boolean, timestamp, index } from 'drizzle-orm/pg-core';
+import { pgTable, uuid, text, boolean, timestamp, index, integer } from 'drizzle-orm/pg-core';
 
 export const user = pgTable('user', {
   id: uuid().primaryKey().defaultRandom(),
@@ -12,11 +12,15 @@ export const user = pgTable('user', {
   // omitting these causes "field banned does not exist" on user creation.
   banned: boolean().default(false),
   banReason: text(),
-  banExpires: timestamp(),
+  banExpires: timestamp({ withTimezone: true }),
   // Required by the drizzle adapter when better-auth twoFactor() plugin is enabled.
+  // Use logical JS property names only; drizzle.config.ts maps camelCase -> snake_case
+  // for SQL identifiers so migrations and runtime are consistent.
   twoFactorEnabled: boolean().default(false),
-  createdAt: timestamp().notNull().defaultNow(),
-  updatedAt: timestamp()
+  failedLoginAttempts: integer().notNull().default(0),
+  lockoutUntil: timestamp({ withTimezone: true }),
+  createdAt: timestamp({ withTimezone: true }).notNull().defaultNow(),
+  updatedAt: timestamp({ withTimezone: true })
     .notNull()
     .$onUpdateFn(() => new Date()),
 });
@@ -25,10 +29,10 @@ export const session = pgTable(
   'session',
   {
     id: uuid().primaryKey().defaultRandom(),
-    expiresAt: timestamp().notNull(),
+    expiresAt: timestamp({ withTimezone: true }).notNull(),
     token: text().notNull().unique(),
-    createdAt: timestamp().notNull().defaultNow(),
-    updatedAt: timestamp()
+    createdAt: timestamp({ withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp({ withTimezone: true })
       .notNull()
       .$onUpdateFn(() => new Date()),
     ipAddress: text(),
@@ -52,12 +56,12 @@ export const account = pgTable(
     accessToken: text(),
     refreshToken: text(),
     idToken: text(),
-    accessTokenExpiresAt: timestamp(),
-    refreshTokenExpiresAt: timestamp(),
+    accessTokenExpiresAt: timestamp({ withTimezone: true }),
+    refreshTokenExpiresAt: timestamp({ withTimezone: true }),
     scope: text(),
     password: text(),
-    createdAt: timestamp().notNull().defaultNow(),
-    updatedAt: timestamp()
+    createdAt: timestamp({ withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp({ withTimezone: true })
       .notNull()
       .$onUpdateFn(() => new Date()),
   },
@@ -70,9 +74,9 @@ export const verification = pgTable(
     id: uuid().primaryKey().defaultRandom(),
     identifier: text().notNull(),
     value: text().notNull(),
-    expiresAt: timestamp().notNull(),
-    createdAt: timestamp().notNull().defaultNow(),
-    updatedAt: timestamp()
+    expiresAt: timestamp({ withTimezone: true }).notNull(),
+    createdAt: timestamp({ withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp({ withTimezone: true })
       .notNull()
       .$onUpdateFn(() => new Date()),
   },

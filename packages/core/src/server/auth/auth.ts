@@ -34,8 +34,13 @@ export function createAuth(options: AuthOptions): BetterAuthType {
         generateId: () => randomUUID(),
       },
     },
+    session: {
+      expiresIn: 30 * 24 * 60 * 60, // 30 days in seconds
+      updateAge: 24 * 60 * 60, // 1 day
+    },
     emailAndPassword: {
       enabled: true,
+      rememberMeDuration: 30 * 24 * 60 * 60, // 30 days in seconds
       sendResetPassword: async ({ user, url, token }) => {
         await sendEmail({
           to: user.email,
