@@ -42,7 +42,7 @@ packages/
     src/server/      # node engine: kernel (logger, EventBus + EVENT_BUS, Container), plugin-host (definePlugin, ModuleRegistry, loader), db (DrizzleService), auth (better-auth + AdminGuard), runtime (createApp - domain-agnostic, single-tenant). Subpaths: /orm, /migrate
     src/compliance/  # sealed-token list + assertNoSealedProviders (engine); also the compliance domain (/contracts, /schema, /plugins)
     src/<domain>/    # 10 folded domains (casino, cms, compliance, engagement, pam, sportsbook, wallet, iam, audit, admin-console), exposed as @blurifycom/core/<domain>/{contracts,schema,plugins,server,react}. A domain imports engine zones + a sibling's read-only /schema only - never a sibling's internals.
-    drizzle/         # central drizzle-kit migration history (core domain tables); drizzle.config.ts
+    src/<domain>/<module>/drizzle/  # each module owns its drizzle.config.ts + migrations/ history (ADR-0027); scripts/generate-all.mjs runs them all
   addons/          # gated @blurifycom-addons/<name> packages - gating + extraction machinery (OSS_ADDONS, no-cross-addon, scaffolder) kept for future premium modules; none ship today. ADR-0025
   mcp/             # @blurifycom/mcp - publishable MCP server consumers run against their own repo
   testing/         # @blurifycom/testing - dev/test harness (bootTestApp, seedDemoData)
@@ -55,11 +55,11 @@ extensions.config.ts # the single registry of enabled plugins
 
 ## Where does X go? (decision tree)
 
-- **New business domain** (eg "tournaments") -> core add-on (ships free) or gated add-on (optional). `pnpm gen module <name>` creates `@blurifycom-addons/<name>` (own package.json, tsconfig, schema/schemas/service/router/plugin/contract). Registers in `extensions.config.ts` (no `kind` = core, `kind: 'addon'` = gated). Core: add its `/contract` slice to `tools/build-contract.ts`, tables use central migrations. Gated: conditionally merges its contract, owns its `drizzle.config.ts`. ADR-0021/0024.
+- **New business domain** (eg "tournaments") -> core add-on (ships free) or gated add-on (optional). `pnpm gen module <name>` creates `@blurifycom-addons/<name>` (own package.json, tsconfig, schema/schemas/service/router/plugin/contract). Registers in `extensions.config.ts` (no `kind` = core, `kind: 'addon'` = gated). Core: add its `/contract` slice to `tools/build-contract.ts`. Every module (core or gated) owns its `drizzle.config.ts` + co-located migration history. ADR-0021/0024/0027.
 - **Extend/override an existing add-on** -> overlay plugin in the consumer's `extensions/<name>/plugin.ts`. `/scaffold-plugin <name>`.
 - **New HTTP route** -> the add-on's `src/router/index.ts`. `/scaffold-route <addon> <method> <path>`. Player routes resolve the caller from `x-user-id`; admin routes MUST be guarded (next).
 - **Admin-only route** -> `plugin.ts` resolves `AdminGuard` (`c.get(ADMIN_GUARD)`, seeded by `createApp`) and passes it into the router; call `await adminGuard.assert(context)` as the handler's FIRST line (throws `ORPCError`). The single admin-enforcement point - never re-implement the role check.
-- **New DB table** -> a Drizzle `pgTable` in the add-on's `src/schema/index.ts`; `pnpm regen`. Core schemas join central `packages/core/drizzle.config.ts`; gated own theirs. Datetimes are timestamptz (see Naming).
+- **New DB table** -> a Drizzle `pgTable` in the module's `src/schema/index.ts`; `pnpm regen`. Each module owns its `drizzle.config.ts` + migration history; a new module just drops a `drizzle.config.ts` next to its schema (ADR-0027). Datetimes are timestamptz (see Naming).
 - **Reusable Zod schema** -> `packages/core/src/contracts/schemas/src/<namespace>.ts`. Add-on-local schemas in the add-on's `schemas/`.
 - **Cross-add-on event** -> declare the payload in `domainEventSchemas` (`packages/core/src/contracts/schemas/src/events.ts`), emit via the `EventBus` (built in `plugin.ts` from `c.get(EVENT_BUS)`), subscribe in a plugin with `ctx.events.on(...)`. The bus is a facade over the `MESSAGE_BROKER` seam. ADR-0010; detail in `messaging-and-microservices`.
 - **Frontend UI** -> NOT here (headless). Lives in the consumer over HTTP via `@blurifycom/core/react`.

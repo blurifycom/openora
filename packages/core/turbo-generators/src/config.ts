@@ -84,24 +84,6 @@ function registerExtension(id: string, importPath: string): string {
   return `registered '${id}' in extensions.config.ts`;
 }
 
-// Add the add-on's schema file to the central drizzle.config glob so its tables
-// land in the shared core migration history. Idempotent. Only relevant in the OSS
-// monorepo (a consumer has no platform/db drizzle.config).
-function registerAddonSchema(name: string): string {
-  const file = join(root(), 'packages', 'platform', 'db', 'drizzle.config.ts');
-  if (!existsSync(file)) return 'no platform/db drizzle.config.ts (skipped)';
-  const line = `    '../../addons/${name}/src/schema/index.ts',`;
-  const src = readFileSync(file, 'utf8');
-  if (src.includes(`addons/${name}/src/schema/index.ts`)) {
-    return `drizzle.config already globs '${name}' schema`;
-  }
-  // Append before the closing `]` of the `schema: [ ... ]` array.
-  const next = src.replace(/(\n\s*\],\n\s*out:)/, `\n${line}$1`);
-  if (next === src) return `could not patch drizzle.config (add '${line.trim()}' manually)`;
-  writeFileSync(file, next);
-  return `globbed '${name}' schema into platform/db drizzle.config.ts`;
-}
-
 function wireContractIndex(name: string): string {
   const indexFile = join(root(), 'packages', 'contracts', 'orpc-contract', 'src', 'index.ts');
   if (!existsSync(indexFile)) return 'no orpc-contract index (skipped)';
@@ -224,6 +206,16 @@ export default function generator(plop: PlopTypes.NodePlopAPI): void {
         },
         { type: 'add', path: `${base}/src/plugin.ts`, templateFile: tpl('module/plugin.hbs') },
         { type: 'add', path: `${base}/src/index.ts`, templateFile: tpl('module/index.hbs') },
+        {
+          type: 'add',
+          path: `${base}/src/migrate.ts`,
+          templateFile: tpl('module/migrate.hbs'),
+        },
+        {
+          type: 'add',
+          path: `${base}/drizzle.config.ts`,
+          templateFile: tpl('module/drizzle.config.hbs'),
+        },
         { type: 'add', path: `${base}/AGENTS.md`, templateFile: tpl('module/agents.hbs') },
         {
           type: 'add',
@@ -237,8 +229,8 @@ export default function generator(plop: PlopTypes.NodePlopAPI): void {
             `./packages/addons/${toKebab(s(a, 'name'))}/dist/plugin.js`,
           ),
         () => wireContractIndex(toKebab(s(a, 'name'))),
-        () => registerAddonSchema(toKebab(s(a, 'name'))),
-        () => 'next: pnpm install (link the new package) && pnpm regen && pnpm verify',
+        () =>
+          `next: pnpm install (link the new package) && pnpm -F @blurifycom-addons/${toKebab(s(a, 'name'))} generate (its own migration history) && pnpm regen && pnpm verify`,
       ];
     },
   });

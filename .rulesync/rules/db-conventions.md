@@ -10,8 +10,8 @@ description: SQL / Drizzle conventions - snake_case identifiers, timestamptz, ke
 
 # Database conventions (SQL / Drizzle)
 
-The authoritative SQL rule for the platform. Tables live in an add-on's `src/schema/index.ts` (core
-add-ons join central `packages/core/drizzle/`; gated add-ons own their `drizzle.config.ts`). Layering
+The authoritative SQL rule for the platform. Tables live in a module's `src/schema/index.ts`; every
+module owns its own `drizzle.config.ts` + co-located `drizzle/migrations/` history (ADR-0027). Layering
 and DI live in `clean-architecture`; import boundaries in `overview` > Dependency rules. This is SQL only.
 
 ## Identifiers - snake_case everywhere
@@ -82,4 +82,7 @@ await db.transaction(async (t) => {
 
 - Never hand-edit generated migrations (or `docs/openapi.json` / `docs/catalog.json`). Change the
   `pgTable`, then `pnpm regen` (drizzle-kit generates the migration + emits OpenAPI + catalog).
-- Core add-ons use central `packages/core/drizzle/`; gated add-ons own their `migrations/`.
+- Every module owns its own `drizzle/migrations/` + `__drizzle_migrations_<id>` tracking table,
+  co-located with its schema (ADR-0027). One shared database, one journal per module.
+- A Postgres extension an index needs (eg `pg_trgm`) goes in the module `migrate()`'s `extensions`
+  option, never hand-edited into a regenerated migration.

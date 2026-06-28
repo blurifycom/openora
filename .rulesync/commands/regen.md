@@ -10,8 +10,9 @@ This runs in order (see root `package.json`):
 
 1. `turbo run codegen` - emits `docs/openapi.json` from the composed oRPC contract and
    regenerates any per-package codegen registered with turbo.
-2. `pnpm -F @blurifycom/core generate` - regenerates the Drizzle client from the live schema files
-   under `packages/addons/<name>/src/schema/index.ts` (core add-ons; central migration) and each gated add-on's own schema.
+2. `pnpm -F @blurifycom/core generate` (`scripts/generate-all.mjs`) - discovers every module's
+   `src/**/drizzle.config.ts` and runs `drizzle-kit generate` per module, against that module's own
+   co-located `drizzle/migrations/` history (ADR-0027).
 3. `pnpm run gen:catalog` (`tsx tools/gen-catalog.ts`) - emits `docs/catalog.json`: the
    machine-readable surface listing routes / schemas / adapters / slots / events. The MCP
    dev server and AI catalogs read from this file.
@@ -20,11 +21,14 @@ This runs in order (see root `package.json`):
 generate a real migration:
 
 ```bash
-pnpm -F @blurifycom/core exec drizzle-kit generate --name <change-summary>
+# all modules at once
+pnpm -F @blurifycom/core generate
+# or one module (cwd = the module dir holding its drizzle.config.ts)
+cd packages/core/src/<domain>/<module> && pnpm exec drizzle-kit generate --name <change-summary>
 ```
 
-Ship the migration file - downstream consumers run it too. Never hand-edit a migration under
-`packages/core/drizzle/` (core add-ons) or `packages/addons/<name>/migrations/` (gated add-ons); rerun `drizzle-kit generate` instead.
+Ship the migration file - downstream consumers run it too. Never hand-edit a migration under a module's
+`drizzle/migrations/`; rerun `drizzle-kit generate` instead.
 
 Watch for:
 

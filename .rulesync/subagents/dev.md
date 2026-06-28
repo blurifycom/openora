@@ -58,7 +58,7 @@ Your prompt contains requirements + acceptance criteria from `expert`. Build to 
 - Add tables to `packages/addons/<name>/src/schema/index.ts`.
 - No FK references across module boundaries (plain ID strings only).
 - After editing schema: `pnpm regen` (drizzle-kit generates migration + emits updated OpenAPI + catalog).
-- Never hand-edit migrations under `packages/core/drizzle/`.
+- Never hand-edit migrations under a module's own `drizzle/migrations/` (each module owns its history, ADR-0027).
 
 ## Finish criteria
 
