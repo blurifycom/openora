@@ -15,6 +15,13 @@
       "when": 1782331729693,
       "tag": "0001_snake_case_identifiers",
       "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "7",
+      "when": 1782681268296,
+      "tag": "0002_gated_timestamptz",
+      "breakpoints": true
     }
   ]
 }
