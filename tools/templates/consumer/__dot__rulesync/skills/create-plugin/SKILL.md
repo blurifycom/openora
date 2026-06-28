@@ -1,6 +1,6 @@
 ---
 name: create-plugin
-targets: ['claudecode']
+
 description: >
   Guided creation of an extension - the right way to add behavior or swap a vendor without
   touching `@blurifycom/*` core. Interviews for intent, classifies the seam (plugin / adapter /

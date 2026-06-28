@@ -1,29 +1,36 @@
+import { sql } from 'drizzle-orm';
 import { pgTable, uuid, text, boolean, timestamp, index, integer } from 'drizzle-orm/pg-core';
 
-export const user = pgTable('user', {
-  id: uuid().primaryKey().defaultRandom(),
-  name: text().notNull(),
-  email: text().notNull().unique(),
-  emailVerified: boolean().notNull().default(false),
-  image: text(),
-  role: text().notNull().default('player'),
-  isActive: boolean().notNull().default(true),
-  // Required by the drizzle adapter when better-auth admin() plugin is enabled;
-  // omitting these causes "field banned does not exist" on user creation.
-  banned: boolean().default(false),
-  banReason: text(),
-  banExpires: timestamp({ withTimezone: true }),
-  // Required by the drizzle adapter when better-auth twoFactor() plugin is enabled.
-  // Use logical JS property names only; drizzle.config.ts maps camelCase -> snake_case
-  // for SQL identifiers so migrations and runtime are consistent.
-  twoFactorEnabled: boolean().default(false),
-  failedLoginAttempts: integer().notNull().default(0),
-  lockoutUntil: timestamp({ withTimezone: true }),
-  createdAt: timestamp({ withTimezone: true }).notNull().defaultNow(),
-  updatedAt: timestamp({ withTimezone: true })
-    .notNull()
-    .$onUpdateFn(() => new Date()),
-});
+export const user = pgTable(
+  'user',
+  {
+    id: uuid().primaryKey().defaultRandom(),
+    name: text().notNull(),
+    email: text().notNull().unique(),
+    emailVerified: boolean().notNull().default(false),
+    image: text(),
+    role: text().notNull().default('player'),
+    isActive: boolean().notNull().default(true),
+    // Required by the drizzle adapter when better-auth admin() plugin is enabled;
+    // omitting these causes "field banned does not exist" on user creation.
+    banned: boolean().default(false),
+    banReason: text(),
+    banExpires: timestamp({ withTimezone: true }),
+    // Required by the drizzle adapter when better-auth twoFactor() plugin is enabled.
+    // Use logical JS property names only; drizzle.config.ts maps camelCase -> snake_case
+    // for SQL identifiers so migrations and runtime are consistent.
+    twoFactorEnabled: boolean().default(false),
+    failedLoginAttempts: integer().notNull().default(0),
+    lockoutUntil: timestamp({ withTimezone: true }),
+    createdAt: timestamp({ withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp({ withTimezone: true })
+      .notNull()
+      .$onUpdateFn(() => new Date()),
+  },
+  // Trigram GIN index so the back-office player search (`ILIKE '%term%'` on email)
+  // is index-backed instead of a seq scan. Requires the pg_trgm extension.
+  (t) => [index('user_email_trgm_idx').using('gin', sql`${t.email} gin_trgm_ops`)],
+);
 
 export const session = pgTable(
   'session',

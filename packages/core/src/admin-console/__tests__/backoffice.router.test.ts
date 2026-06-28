@@ -33,7 +33,21 @@ function fakeService(): BackofficeService {
   return {
     getUser: vi.fn().mockResolvedValue(USER),
     updateUser: vi.fn().mockResolvedValue({ ...USER, role: 'admin' }),
+    listTransactions: vi.fn().mockResolvedValue({ items: [], total: 0, page: 1, limit: 20 }),
+    getTransaction: vi.fn().mockResolvedValue(null),
   } as unknown as BackofficeService;
+}
+
+/** AdminGuard that grants `player` ops but denies the `transaction` resource. */
+function fakeTransactionDenyingGuard(): AdminGuard {
+  return {
+    assert: vi.fn(async (_ctx: unknown, resource?: string) => {
+      if (resource === 'transaction') {
+        throw new ORPCError('FORBIDDEN', { message: 'Missing permission: transaction:view' });
+      }
+      return { userId: 'caller-1', role: 'support' };
+    }),
+  } as unknown as AdminGuard;
 }
 
 function fakeAudit(): AuditWritePort {
@@ -75,5 +89,29 @@ describe('backoffice router updateUser authz', () => {
     const router = createBackofficeRouter(fakeService(), guard, audit);
     await call(router.updateUser, { userId: USER_ID, isActive: false }, { context: CTX });
     expect(audit.record).toHaveBeenCalledOnce();
+  });
+});
+
+describe('backoffice router transaction:view authz', () => {
+  it('rejects listTransactions for a caller lacking transaction:view', async () => {
+    const router = createBackofficeRouter(
+      fakeService(),
+      fakeTransactionDenyingGuard(),
+      fakeAudit(),
+    );
+    await expect(
+      call(router.listTransactions, { page: 1, limit: 20 }, { context: CTX }),
+    ).rejects.toBeInstanceOf(ORPCError);
+  });
+
+  it('rejects getTransaction for a caller lacking transaction:view', async () => {
+    const router = createBackofficeRouter(
+      fakeService(),
+      fakeTransactionDenyingGuard(),
+      fakeAudit(),
+    );
+    await expect(
+      call(router.getTransaction, { id: USER_ID }, { context: CTX }),
+    ).rejects.toBeInstanceOf(ORPCError);
   });
 });

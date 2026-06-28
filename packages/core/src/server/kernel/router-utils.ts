@@ -1,6 +1,9 @@
 import { ORPCError } from '@orpc/server';
 
-type RequestLike = { headers: Record<string, string | string[] | undefined> };
+// Raw Node `IncomingHttpHeaders`-shaped map, as the runtime hands it to services.
+export type NodeHeaders = Record<string, string | string[] | undefined>;
+
+type RequestLike = { headers: NodeHeaders };
 
 // NEVER sourced from a client-supplied header - a forged `x-user-id` cannot reach this field.
 export type AuthContext = {

@@ -24,7 +24,7 @@ export const game = pgTable('game', {
   thumbnailUrl: text(),
   isActive: boolean().notNull().default(true),
   metadata: jsonb(),
-  createdAt: timestamp().notNull().defaultNow(),
+  createdAt: timestamp({ withTimezone: true }).notNull().defaultNow(),
 });
 
 export const gameRound = pgTable(
@@ -39,8 +39,8 @@ export const gameRound = pgTable(
     betAmount: decimal().notNull().default('0'),
     winAmount: decimal().notNull().default('0'),
     currency: text().notNull(),
-    startedAt: timestamp().notNull().defaultNow(),
-    endedAt: timestamp(),
+    startedAt: timestamp({ withTimezone: true }).notNull().defaultNow(),
+    endedAt: timestamp({ withTimezone: true }),
   },
   (t) => [index('game_round_user_id_idx').on(t.userId)],
 );

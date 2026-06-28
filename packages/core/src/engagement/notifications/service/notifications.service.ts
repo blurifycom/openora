@@ -59,7 +59,7 @@ export class NotificationsService {
     return updated!;
   }
 
-  async markAllRead(userId: string): Promise<{ count: number }> {
+  async markAllRead(userId: string) {
     const rows = await this.drizzle.db
       .update(notification)
       .set({ readAt: new Date() })

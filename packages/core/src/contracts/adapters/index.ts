@@ -70,7 +70,7 @@ export { SEND_EMAIL } from './email.js';
 export type { AdminGrant, AdminPermissionResolver } from './admin-permission.js';
 export { ADMIN_PERMISSION_RESOLVER } from './admin-permission.js';
 
-export type { AuditWritePort } from './audit.js';
+export type { AuditWritePort, AuditAction, DirectAuditAction } from './audit.js';
 export { AUDIT_WRITER } from './audit.js';
 
 export type {
@@ -83,6 +83,7 @@ export { ADMIN_USER_DIRECTORY } from './admin-user-directory.js';
 
 export type {
   AdminTxRow,
+  AdminTxDetail,
   AdminTxListOptions,
   AdminWalletReporting,
 } from './admin-wallet-reporting.js';

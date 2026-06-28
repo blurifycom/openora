@@ -14,9 +14,9 @@ export const page = pgTable('page', {
   slug: text().notNull().unique(),
   title: text().notNull(),
   content: jsonb().notNull().default({}),
-  publishedAt: timestamp(),
-  createdAt: timestamp().notNull().defaultNow(),
-  updatedAt: timestamp()
+  publishedAt: timestamp({ withTimezone: true }),
+  createdAt: timestamp({ withTimezone: true }).notNull().defaultNow(),
+  updatedAt: timestamp({ withTimezone: true })
     .notNull()
     .$onUpdateFn(() => new Date()),
 });
@@ -31,8 +31,8 @@ export const banner = pgTable(
     linkUrl: text(),
     isActive: boolean().notNull().default(true),
     sortOrder: integer().notNull().default(0),
-    createdAt: timestamp().notNull().defaultNow(),
-    updatedAt: timestamp()
+    createdAt: timestamp({ withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp({ withTimezone: true })
       .notNull()
       .$onUpdateFn(() => new Date()),
   },

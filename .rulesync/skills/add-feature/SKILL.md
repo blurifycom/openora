@@ -1,6 +1,5 @@
 ---
 name: add-feature
-targets: ['claudecode']
 description: >
   Deliver an oss platform-core feature end-to-end - the full development + delivery
   cycle: context collection -> plan + approval -> implementation -> unit/integration tests ->

@@ -1,5 +1,4 @@
 ---
-targets: ['claudecode']
 description: 'Add an oRPC route stub to an overlay or local add-on. Args: <target> <GET|POST|PUT|PATCH|DELETE> <path>. Example: /scaffold-route promotions GET /active.'
 ---
 

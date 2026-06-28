@@ -1,6 +1,6 @@
 ---
 name: add-feature
-targets: ['claudecode']
+
 description: >
   Deliver a feature end-to-end in this consumer repo. Aggregates context (Jira + Confluence + Slack +
   Google Drive + Notion + local docs + past sessions + codebase), produces an approved plan, then drives

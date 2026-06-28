@@ -1,5 +1,4 @@
 ---
-targets: ['claudecode']
 description: 'Generate a self-contained local add-on package (schema, service, router, plugin.ts, AGENTS.md) and register it. Args: <name>. Consumers rarely need this - prefer an overlay plugin.'
 ---
 

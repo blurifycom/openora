@@ -3,6 +3,7 @@ import { randomUUID } from 'node:crypto';
 import { DrizzleService, pageToOffset } from '@blurifycom/core/server';
 import { type EventBus } from '@blurifycom/core/server';
 import { eq, and, or, gte, lte, desc, sql } from 'drizzle-orm';
+import type { AuditWritePort } from '@blurifycom/core/contracts';
 import { auditLog, type AuditLog } from '../schema/index.js';
 import type { AuditLogEntry, AuditListFilters, AuditExportFilters } from '../schemas/index.js';
 
@@ -57,17 +58,9 @@ function toDto(row: AuditLog): AuditLogEntry {
   };
 }
 
-export type RecordInput = {
-  actorId?: string | null;
-  actorType: 'player' | 'admin' | 'system';
-  action: string;
-  resourceType: string;
-  resourceId?: string | null;
-  before?: Record<string, unknown> | null;
-  after?: Record<string, unknown> | null;
-  ip?: string | null;
-  userAgent?: string | null;
-  correlationId?: string | null;
+// The audit-write port's entry plus the internal-only `result` outcome flag the
+// event subscriptions set (never part of the public write contract).
+export type RecordInput = Parameters<AuditWritePort['record']>[0] & {
   result?: string | null;
 };
 
@@ -80,7 +73,7 @@ export class AuditService {
   // Hash computed and inserted in a single statement - no read-back UPDATE, so a
   // crash can never leave a 'pending' hash. Serialized via pg advisory lock so
   // concurrent record() calls cannot fork the chain. Append-only.
-  async record(input: RecordInput): Promise<AuditLogEntry> {
+  async record(input: RecordInput) {
     const row = await this.drizzle.db.transaction(async (tx) => {
       // pg_advisory_xact_lock serializes appends without locking the whole table.
       await tx.execute(sql`SELECT pg_advisory_xact_lock(hashtext('audit_log'))`);
@@ -142,12 +135,7 @@ export class AuditService {
     return toDto(row);
   }
 
-  async list(filters: AuditListFilters): Promise<{
-    items: AuditLogEntry[];
-    total: number;
-    page: number;
-    limit: number;
-  }> {
+  async list(filters: AuditListFilters) {
     const db = this.drizzle.db;
     const {
       actorId,
@@ -204,7 +192,7 @@ export class AuditService {
   // truncated to the latest rows. Use verifyChain for full-chain integrity.
   static readonly EXPORT_MAX_ROWS = 50_000;
 
-  async exportCsv(filters: AuditExportFilters): Promise<string> {
+  async exportCsv(filters: AuditExportFilters) {
     const db = this.drizzle.db;
     const { actorId, actorType, action, resourceType, resourceId, q, fromDate, toDate } = filters;
 

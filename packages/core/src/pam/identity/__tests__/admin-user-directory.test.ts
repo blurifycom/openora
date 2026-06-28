@@ -58,3 +58,50 @@ describe('DrizzleAdminUserDirectory.update active-status events', () => {
     expect(emit).not.toHaveBeenCalled();
   });
 });
+
+function makeDirWithSelect(rows: Record<string, unknown>[][]) {
+  const queue = [...rows];
+  const db = {
+    select: () => ({
+      from: () => ({
+        innerJoin: () => ({ where: async () => queue.shift() ?? [] }),
+        where: () => ({ limit: async () => queue.shift() ?? [] }),
+      }),
+    }),
+  };
+  return new DrizzleAdminUserDirectory(
+    { db } as unknown as DrizzleService,
+    { emit: vi.fn() } as unknown as EventBus,
+  );
+}
+
+describe('DrizzleAdminUserDirectory.lookupPlayers', () => {
+  it('returns an empty array for no ids without querying', async () => {
+    const dir = makeDirWithSelect([]);
+    expect(await dir.lookupPlayers([])).toEqual([]);
+  });
+
+  it('includes email joined from the user table and coerces unknown kyc to null', async () => {
+    const dir = makeDirWithSelect([
+      [{ userId: 'u1', username: 'alice', kycStatus: 'bogus', email: 'alice@example.com' }],
+    ]);
+    const [summary] = await dir.lookupPlayers(['u1']);
+    expect(summary).toEqual({
+      userId: 'u1',
+      username: 'alice',
+      email: 'alice@example.com',
+      kycStatus: null,
+    });
+  });
+});
+
+describe('DrizzleAdminUserDirectory.findPlayerIds', () => {
+  it('unions email + displayName matches into a deduped id set', async () => {
+    const dir = makeDirWithSelect([
+      [{ id: 'u1' }, { id: 'u2' }],
+      [{ userId: 'u2' }, { userId: 'u3' }],
+    ]);
+    const ids = await dir.findPlayerIds('a');
+    expect([...ids].sort()).toEqual(['u1', 'u2', 'u3']);
+  });
+});

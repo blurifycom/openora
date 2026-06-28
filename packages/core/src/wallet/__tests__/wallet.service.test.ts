@@ -119,7 +119,7 @@ describe('WalletService.withdraw', () => {
     });
   });
 
-  it('derives the fireblocks rail for crypto currencies', async () => {
+  it('derives the crypto rail for crypto currencies', async () => {
     const drizzle = makeDrizzle({
       select: [[{ id: 'w-1', userId: 'u-1', balance: '5', currency: 'BTC' }]],
       returning: [
@@ -132,7 +132,7 @@ describe('WalletService.withdraw', () => {
 
     await svc.withdraw('u-1', 1, 'BTC');
 
-    expect(valuesSpy).toHaveBeenCalledWith(expect.objectContaining({ rail: 'fireblocks' }));
+    expect(valuesSpy).toHaveBeenCalledWith(expect.objectContaining({ rail: 'crypto' }));
   });
 
   it('throws CurrencyMismatchError when the request currency differs from the wallet', async () => {
@@ -194,7 +194,7 @@ describe('WalletService.approveWithdrawal', () => {
             status: 'processing',
             amount: '40',
             currency: 'USD',
-            rail: 'psp',
+            rail: 'fiat',
           },
         ],
       ],
@@ -207,7 +207,7 @@ describe('WalletService.approveWithdrawal', () => {
     expect(payment.processWithdrawal).toHaveBeenCalledWith(40, 'USD', {
       transactionId: 'tx-1',
       userId: 'u-1',
-      rail: 'psp',
+      rail: 'fiat',
       adminId: 'admin-1',
     });
     expect(events.emit).toHaveBeenNthCalledWith(1, 'wallet.withdrawal.approved', {
@@ -391,7 +391,7 @@ describe('WalletService.listPendingWithdrawals', () => {
       id,
       amount: '40',
       currency: 'USD',
-      rail: 'psp',
+      rail: 'fiat',
       status: 'pending',
       createdAt: new Date('2026-06-01T00:00:00Z'),
     },
@@ -411,7 +411,7 @@ describe('WalletService.listPendingWithdrawals', () => {
       transactionId: 'tx-1',
       username: 'alice',
       kycStatus: 'verified',
-      rail: 'psp',
+      rail: 'fiat',
       riskTags: [],
       requestedAt: '2026-06-01T00:00:00.000Z',
     });

@@ -19,7 +19,7 @@ export type { Factory } from './container.js';
 export { createLogger } from './logger.js';
 
 export { getUserId } from './router-utils.js';
-export type { OssContext, AuthContext } from './router-utils.js';
+export type { OssContext, AuthContext, NodeHeaders } from './router-utils.js';
 export {
   createDomainError,
   makeNotFoundError,

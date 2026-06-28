@@ -1,5 +1,4 @@
 ---
-targets: ['claudecode']
 description: 'Generate an overlay extension under apps/api/src/extensions/<name>/. Adds routes, providers, event handlers, or MCP tools without touching @blurifycom/* core. Args: <name>.'
 ---
 

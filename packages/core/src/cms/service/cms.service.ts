@@ -53,7 +53,7 @@ export class CmsService {
     private readonly events: EventBus,
   ) {}
 
-  async listPages(): Promise<Omit<Page, 'content'>[]> {
+  async listPages() {
     const pages = await this.drizzle.db
       .select({
         id: pageTable.id,
@@ -73,7 +73,7 @@ export class CmsService {
     }));
   }
 
-  async getPage(slug: string): Promise<Page> {
+  async getPage(slug: string) {
     const record = findOneOrThrow(
       await this.drizzle.db.select().from(pageTable).where(eq(pageTable.slug, slug)),
       new PageNotFoundError(slug),
@@ -86,7 +86,7 @@ export class CmsService {
     title: string;
     content?: unknown;
     publishedAt?: string;
-  }): Promise<Page> {
+  }) {
     const [record] = await this.drizzle.db
       .insert(pageTable)
       .values({
@@ -108,7 +108,7 @@ export class CmsService {
     title?: string;
     content?: unknown;
     publishedAt?: string | null;
-  }): Promise<Page> {
+  }) {
     const existing = findOneOrThrow(
       await this.drizzle.db.select().from(pageTable).where(eq(pageTable.id, input.id)),
       new PageNotFoundError(input.id),
@@ -146,7 +146,7 @@ export class CmsService {
     return { success: true };
   }
 
-  async listBanners(): Promise<Banner[]> {
+  async listBanners() {
     const banners = await this.drizzle.db
       .select()
       .from(bannerTable)
@@ -154,7 +154,7 @@ export class CmsService {
     return banners.map(toBanner);
   }
 
-  async listBannersByPlacement(placement: string): Promise<Banner[]> {
+  async listBannersByPlacement(placement: string) {
     const banners = await this.drizzle.db
       .select()
       .from(bannerTable)
@@ -169,7 +169,7 @@ export class CmsService {
     imageUrl: string;
     linkUrl?: string;
     sortOrder?: number;
-  }): Promise<Banner> {
+  }) {
     const [record] = await this.drizzle.db
       .insert(bannerTable)
       .values({
@@ -191,7 +191,7 @@ export class CmsService {
     linkUrl?: string | null;
     isActive?: boolean;
     sortOrder?: number;
-  }): Promise<Banner> {
+  }) {
     findOneOrThrow(
       await this.drizzle.db.select().from(bannerTable).where(eq(bannerTable.id, input.id)),
       new BannerNotFoundError(input.id),

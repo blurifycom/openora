@@ -1,6 +1,6 @@
 import { ORPCError } from '@orpc/server';
 import { createAuth } from '@blurifycom/core/server';
-import { type EventBus } from '@blurifycom/core/server';
+import { type EventBus, type NodeHeaders } from '@blurifycom/core/server';
 import type { SendEmailPort } from '@blurifycom/core/contracts';
 import { DrizzleService } from '@blurifycom/core/server';
 import { eq, sql } from 'drizzle-orm';
@@ -10,7 +10,6 @@ import type {
   LoginInput,
   RegisterInput,
   Enable2faInput,
-  Enable2faResult,
   Verify2faInput,
   Disable2faInput,
   RequestPasswordResetInput,
@@ -22,7 +21,7 @@ import type {
   IdentityServiceOptions,
 } from '@blurifycom/core/contracts';
 
-function nodeHeadersToHeaders(nodeHeaders: Record<string, string | string[] | undefined>): Headers {
+function nodeHeadersToHeaders(nodeHeaders: NodeHeaders): Headers {
   const headers = new Headers();
   for (const [key, value] of Object.entries(nodeHeaders)) {
     if (value === undefined) continue;
@@ -150,20 +149,16 @@ export class IdentityService {
     });
   }
 
-  private get api(): ExtendedAuthApi {
+  private get api() {
     return this.auth.api as unknown as ExtendedAuthApi;
   }
 
-  private async currentUserId(headers: Headers): Promise<string | null> {
+  private async currentUserId(headers: Headers) {
     const session = await this.auth.api.getSession({ headers });
     return session?.user?.id ?? null;
   }
 
-  async register(
-    input: RegisterInput,
-    reqHeaders: Record<string, string | string[] | undefined>,
-    resHeaders: Headers,
-  ) {
+  async register(input: RegisterInput, reqHeaders: NodeHeaders, resHeaders: Headers) {
     const headers = nodeHeadersToHeaders(reqHeaders);
     const authResponse = await this.auth.api.signUpEmail({
       body: { email: input.email, password: input.password, name: input.name },
@@ -177,11 +172,7 @@ export class IdentityService {
     return { user: toUser(body.user) };
   }
 
-  async login(
-    input: LoginInput,
-    reqHeaders: Record<string, string | string[] | undefined>,
-    resHeaders: Headers,
-  ) {
+  async login(input: LoginInput, reqHeaders: NodeHeaders, resHeaders: Headers) {
     const headers = nodeHeadersToHeaders(reqHeaders);
     const ip =
       headers.get('x-forwarded-for')?.split(',')[0]?.trim() || headers.get('x-real-ip') || null;
@@ -339,7 +330,7 @@ export class IdentityService {
     return SUCCESS;
   }
 
-  async logout(reqHeaders: Record<string, string | string[] | undefined>, resHeaders: Headers) {
+  async logout(reqHeaders: NodeHeaders, resHeaders: Headers) {
     const headers = nodeHeadersToHeaders(reqHeaders);
     // Resolve the user BEFORE signOut so the audit log can attribute the logout.
     const session = await this.auth.api.getSession({ headers });
@@ -350,18 +341,14 @@ export class IdentityService {
     return SUCCESS;
   }
 
-  async me(reqHeaders: Record<string, string | string[] | undefined>): Promise<User | null> {
+  async me(reqHeaders: NodeHeaders) {
     const headers = nodeHeadersToHeaders(reqHeaders);
     const session = await this.auth.api.getSession({ headers });
     if (!session?.user) return null;
     return toUser(session.user as BetterAuthUser);
   }
 
-  async enableTwoFactor(
-    input: Enable2faInput,
-    reqHeaders: Record<string, string | string[] | undefined>,
-    resHeaders: Headers,
-  ): Promise<Enable2faResult> {
+  async enableTwoFactor(input: Enable2faInput, reqHeaders: NodeHeaders, resHeaders: Headers) {
     const headers = nodeHeadersToHeaders(reqHeaders);
     const res = await this.api.enableTwoFactor({
       body: { password: input.password },
@@ -374,11 +361,7 @@ export class IdentityService {
     return { totpUri: body.totpURI, backupCodes: body.backupCodes };
   }
 
-  async verifyTwoFactor(
-    input: Verify2faInput,
-    reqHeaders: Record<string, string | string[] | undefined>,
-    resHeaders: Headers,
-  ) {
+  async verifyTwoFactor(input: Verify2faInput, reqHeaders: NodeHeaders, resHeaders: Headers) {
     const headers = nodeHeadersToHeaders(reqHeaders);
     const res = await this.api.verifyTOTP({
       body: { code: input.code },
@@ -392,11 +375,7 @@ export class IdentityService {
     return SUCCESS;
   }
 
-  async disableTwoFactor(
-    input: Disable2faInput,
-    reqHeaders: Record<string, string | string[] | undefined>,
-    resHeaders: Headers,
-  ) {
+  async disableTwoFactor(input: Disable2faInput, reqHeaders: NodeHeaders, resHeaders: Headers) {
     const headers = nodeHeadersToHeaders(reqHeaders);
     const userId = await this.currentUserId(headers);
     const res = await this.api.disableTwoFactor({
@@ -442,11 +421,7 @@ export class IdentityService {
     return SUCCESS;
   }
 
-  async changePassword(
-    input: ChangePasswordInput,
-    reqHeaders: Record<string, string | string[] | undefined>,
-    resHeaders: Headers,
-  ) {
+  async changePassword(input: ChangePasswordInput, reqHeaders: NodeHeaders, resHeaders: Headers) {
     const headers = nodeHeadersToHeaders(reqHeaders);
     const res = await this.api.changePassword({
       body: { currentPassword: input.currentPassword, newPassword: input.newPassword },
@@ -458,7 +433,7 @@ export class IdentityService {
     return SUCCESS;
   }
 
-  async sendEmailVerification(reqHeaders: Record<string, string | string[] | undefined>) {
+  async sendEmailVerification(reqHeaders: NodeHeaders) {
     const headers = nodeHeadersToHeaders(reqHeaders);
     const session = await this.auth.api.getSession({ headers });
     const email = session?.user?.email;
@@ -468,10 +443,7 @@ export class IdentityService {
     return SUCCESS;
   }
 
-  async verifyEmail(
-    input: VerifyEmailInput,
-    reqHeaders: Record<string, string | string[] | undefined>,
-  ) {
+  async verifyEmail(input: VerifyEmailInput, reqHeaders: NodeHeaders) {
     const headers = nodeHeadersToHeaders(reqHeaders);
     const res = await this.api.verifyEmail({
       query: { token: input.token },
@@ -484,11 +456,7 @@ export class IdentityService {
     return SUCCESS;
   }
 
-  async changeEmail(
-    input: ChangeEmailInput,
-    reqHeaders: Record<string, string | string[] | undefined>,
-    resHeaders: Headers,
-  ) {
+  async changeEmail(input: ChangeEmailInput, reqHeaders: NodeHeaders, resHeaders: Headers) {
     const headers = nodeHeadersToHeaders(reqHeaders);
     const res = await this.api.changeEmail({
       body: { newEmail: input.newEmail },
@@ -500,11 +468,7 @@ export class IdentityService {
     return SUCCESS;
   }
 
-  async updateProfile(
-    input: UpdateProfileInput,
-    reqHeaders: Record<string, string | string[] | undefined>,
-    resHeaders: Headers,
-  ): Promise<{ user: User }> {
+  async updateProfile(input: UpdateProfileInput, reqHeaders: NodeHeaders, resHeaders: Headers) {
     const headers = nodeHeadersToHeaders(reqHeaders);
     const body: { name?: string; image?: string | null } = {};
     if (input.name !== undefined) body.name = input.name;

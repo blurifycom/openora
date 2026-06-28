@@ -1,6 +1,6 @@
 ---
 name: create-task
-targets: ['claudecode']
+
 description: Create or rewrite this operator's Jira tickets in a lean, bulleted, easy-to-scan format. Use on "create task", "new ticket", "rewrite ticket", "/create-task", or any ticket-key description work.
 ---
 

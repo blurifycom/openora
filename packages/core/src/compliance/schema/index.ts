@@ -8,8 +8,8 @@ export const userLimit = pgTable(
     type: text().notNull(),
     amount: real().notNull(),
     period: text().notNull(),
-    createdAt: timestamp().notNull().defaultNow(),
-    updatedAt: timestamp()
+    createdAt: timestamp({ withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp({ withTimezone: true })
       .notNull()
       .$onUpdateFn(() => new Date()),
   },
@@ -23,7 +23,7 @@ export const geoRule = pgTable('geo_rule', {
   id: uuid().primaryKey().defaultRandom(),
   countryCode: text().notNull().unique('geo_rule_country_code_unique'),
   action: text().notNull(),
-  createdAt: timestamp().notNull().defaultNow(),
+  createdAt: timestamp({ withTimezone: true }).notNull().defaultNow(),
 });
 
 export type UserLimit = typeof userLimit.$inferSelect;

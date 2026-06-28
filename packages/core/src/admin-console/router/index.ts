@@ -3,7 +3,11 @@ import { AdminGuard } from '@blurifycom/core/server';
 import { mapErrors, type OssContext } from '@blurifycom/core/server';
 import type { AuditWritePort } from '@blurifycom/core/contracts';
 import { backofficeContract } from '../contract/index.js';
-import { BackofficeService, UserNotFoundError } from '../service/backoffice.service.js';
+import {
+  BackofficeService,
+  TransactionNotFoundError,
+  UserNotFoundError,
+} from '../service/backoffice.service.js';
 
 export function createBackofficeRouter(
   backofficeService: BackofficeService,
@@ -62,7 +66,14 @@ export function createBackofficeRouter(
 
     listTransactions: os.listTransactions.handler(async ({ input, context }) => {
       await adminGuard.assert(context, 'transaction', 'view');
-      return backofficeService.listTransactions(input.page, input.limit, input.userId);
+      return backofficeService.listTransactions(input);
+    }),
+
+    getTransaction: os.getTransaction.handler(async ({ input, context }) => {
+      await adminGuard.assert(context, 'transaction', 'view');
+      return mapErrors({ NOT_FOUND: TransactionNotFoundError }, () =>
+        backofficeService.getTransaction(input.id),
+      );
     }),
   });
 }

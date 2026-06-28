@@ -7,7 +7,7 @@ export const chatRoom = pgTable(
     name: text().notNull(),
     slug: text().notNull(),
     isPublic: boolean().notNull().default(true),
-    createdAt: timestamp().notNull().defaultNow(),
+    createdAt: timestamp({ withTimezone: true }).notNull().defaultNow(),
   },
   (t) => [uniqueIndex('chat_room_slug_key').on(t.slug)],
 );
@@ -21,7 +21,7 @@ export const chatMessage = pgTable(
     username: text().notNull(),
     content: text().notNull(),
     isDeleted: boolean().notNull().default(false),
-    createdAt: timestamp().notNull().defaultNow(),
+    createdAt: timestamp({ withTimezone: true }).notNull().defaultNow(),
   },
   (t) => [
     index('chat_msg_room_id_created_at_idx').on(t.roomId, t.createdAt),
