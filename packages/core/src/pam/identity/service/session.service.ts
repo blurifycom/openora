@@ -30,8 +30,8 @@ export class SessionService {
     this.events = events;
   }
 
-  async listSessions(playerId: string, page: number, limit: number) {
-    const where = eq(session.userId, playerId);
+  async listSessions(userId: string, page: number, limit: number) {
+    const where = eq(session.userId, userId);
     const db = this.drizzle.db;
     // Active sessions first (expiresAt > now), newest-first within each group.
     const activeFirst = sql<number>`CASE WHEN ${session.expiresAt} > NOW() THEN 0 ELSE 1 END`;
@@ -60,30 +60,30 @@ export class SessionService {
     };
   }
 
-  async revokeSession(playerId: string, token: string) {
+  async revokeSession(userId: string, token: string) {
     const now = new Date();
     const updated = await this.drizzle.db
       .update(session)
       .set({ expiresAt: now })
-      .where(and(eq(session.token, token), eq(session.userId, playerId)))
+      .where(and(eq(session.token, token), eq(session.userId, userId)))
       .returning({ id: session.id });
 
     if (updated.length === 0) {
       throw new ORPCError('NOT_FOUND', { message: 'Session not found' });
     }
 
-    this.events.emit('identity.session.revoked', { userId: playerId, sessionToken: token });
+    this.events.emit('identity.session.revoked', { userId: userId, sessionToken: token });
     return { success: true as const };
   }
 
-  async revokeAllSessions(playerId: string) {
+  async revokeAllSessions(userId: string) {
     const now = new Date();
     await this.drizzle.db
       .update(session)
       .set({ expiresAt: now })
-      .where(and(eq(session.userId, playerId), gt(session.expiresAt, now)));
+      .where(and(eq(session.userId, userId), gt(session.expiresAt, now)));
 
-    this.events.emit('identity.sessions.revoked_all', { userId: playerId });
+    this.events.emit('identity.sessions.revoked_all', { userId: userId });
     return { success: true as const };
   }
 }

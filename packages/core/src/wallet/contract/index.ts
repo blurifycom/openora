@@ -42,6 +42,10 @@ export const TransactionResultSchema = z.object({
   status: WalletTransactionStatusSchema,
 });
 
+export const ListPlayerTransactionsArgs = PageQuerySchema.extend({
+  userId: z.string(),
+});
+
 export const WithdrawalQueueItemSchema = z.object({
   transactionId: UuidSchema,
   userId: UuidSchema,
@@ -87,7 +91,13 @@ export const walletContract = {
 
   listTransactions: oc
     .route({ method: 'GET', path: '/wallet/transactions' })
-    .output(z.array(WalletTransactionSchema)),
+    .input(PageQuerySchema)
+    .output(paginated(WalletTransactionSchema)),
+
+  listPlayerTransactions: oc
+    .route({ method: 'GET', path: '/wallet/transactions/{userId}' })
+    .input(ListPlayerTransactionsArgs)
+    .output(paginated(WalletTransactionSchema)),
 
   withdrawals: {
     list: oc

@@ -112,17 +112,17 @@ export const identityContract = {
   sessions: {
     list: oc
       .route({ method: 'GET', path: '/identity/sessions' })
-      .input(PageQuerySchema.extend({ playerId: UuidSchema }))
+      .input(PageQuerySchema.extend({ userId: UuidSchema }))
       .output(paginated(SessionItemSchema)),
 
     revoke: oc
       .route({ method: 'POST', path: '/identity/sessions/revoke' })
-      .input(z.object({ playerId: UuidSchema, token: z.string() }))
+      .input(z.object({ userId: UuidSchema, token: z.string() }))
       .output(IdentitySuccessSchema),
 
     revokeAll: oc
       .route({ method: 'POST', path: '/identity/sessions/revoke-all' })
-      .input(z.object({ playerId: UuidSchema }))
+      .input(z.object({ userId: UuidSchema }))
       .output(IdentitySuccessSchema),
   },
 };

@@ -5,8 +5,8 @@ import {
   createDomainError,
 } from '@blurifycom/core/server';
 import { type PaymentAdapter, type AdminUserDirectory } from '@blurifycom/core/contracts';
-import { DrizzleService, findOneOrThrow } from '@blurifycom/core/server';
-import { eq, desc, sql, and, gte, lte } from 'drizzle-orm';
+import { DrizzleService, findOneOrThrow, pageToOffset } from '@blurifycom/core/server';
+import { eq, desc, sql, and, gte, lte, count } from 'drizzle-orm';
 import { wallet, walletTransaction } from '../schema/index.js';
 import type {
   TransactionResult,
@@ -351,27 +351,35 @@ export class WalletService {
     return { transactionId: tx.id, status: 'rejected' };
   }
 
-  async getTransactions(userId: string) {
+  async getTransactions(userId: string, page: number, limit: number) {
     const db = this.drizzle.db;
 
     const [walletRecord] = await db.select().from(wallet).where(eq(wallet.userId, userId));
-    if (!walletRecord) return [];
-
-    const txs = await db
-      .select()
-      .from(walletTransaction)
-      .where(eq(walletTransaction.walletId, walletRecord.id))
-      .orderBy(desc(walletTransaction.createdAt))
-      .limit(100);
-
-    return txs.map((tx) => ({
-      id: tx.id,
-      type: tx.type,
-      amount: Number(tx.amount),
-      currency: tx.currency,
-      status: tx.status,
-      createdAt: tx.createdAt.toISOString(),
-    }));
+    if (!walletRecord) return { items: [], total: 0, page, limit };
+    const where = eq(walletTransaction.walletId, walletRecord.id);
+    const [txs, [{ n }]] = await Promise.all([
+      db
+        .select()
+        .from(walletTransaction)
+        .where(where)
+        .orderBy(desc(walletTransaction.createdAt))
+        .limit(limit)
+        .offset(pageToOffset(page, limit)),
+      db.select({ n: count() }).from(walletTransaction).where(where),
+    ]);
+    return {
+      items: txs.map((tx) => ({
+        id: tx.id,
+        type: tx.type,
+        amount: Number(tx.amount),
+        currency: tx.currency,
+        status: tx.status,
+        createdAt: tx.createdAt.toISOString(),
+      })),
+      total: Number(n),
+      page,
+      limit,
+    };
   }
 
   private async userIdForWallet(walletId: string) {
