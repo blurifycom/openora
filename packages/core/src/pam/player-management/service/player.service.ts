@@ -1,34 +1,12 @@
 import { makeNotFoundError, type EventBus } from '@blurifycom/core/server';
 import { DrizzleService, findOneOrThrow, pageToOffset } from '@blurifycom/core/server';
 import { eq, ilike, count, or, and, gte, desc, sql } from 'drizzle-orm';
-// Reads the core-owned `player` table + identity `user` via the public /schema
-// subpaths (add-on->core reads, allowed by the boundary rules). PAM owns no
-// tables of its own. See ADR-0020.
 import { player } from '../../profile/schema/index.js';
 import { user } from '../../identity/schema/index.js';
-import type { Player, PlayerStatus, KycStatus } from '../schemas/index.js';
+import type { PlayerStatus, KycStatus } from '../schemas/index.js';
+import { toPlayer, fetchEmail } from '../../shared/player-mapper.js';
 
 export const PlayerNotFoundError = makeNotFoundError('Player');
-
-function toPlayer(p: typeof player.$inferSelect, email: string): Player {
-  return {
-    id: p.id,
-    userId: p.userId,
-    displayName: p.displayName,
-    email,
-    country: p.country,
-    currency: p.currency,
-    language: p.language,
-    status: p.status as PlayerStatus,
-    kycStatus: p.kycStatus as KycStatus,
-    level: p.level,
-    totalWagered: Number(p.totalWagered),
-    totalDeposits: Number(p.totalDeposits),
-    lastSeenAt: p.lastSeenAt ? p.lastSeenAt.toISOString() : null,
-    createdAt: p.createdAt.toISOString(),
-    updatedAt: p.updatedAt.toISOString(),
-  };
-}
 
 function toDateKey(d: Date): string {
   return d.toISOString().slice(0, 10);
@@ -39,14 +17,6 @@ export class PlayerService {
     private readonly drizzle: DrizzleService,
     private readonly events: EventBus,
   ) {}
-
-  private async emailFor(userId: string) {
-    const [record] = await this.drizzle.db
-      .select({ email: user.email })
-      .from(user)
-      .where(eq(user.id, userId));
-    return record?.email ?? '';
-  }
 
   async list(page: number, limit: number, search?: string, status?: PlayerStatus) {
     const db = this.drizzle.db;
@@ -86,15 +56,15 @@ export class PlayerService {
       await this.drizzle.db.select().from(player).where(eq(player.id, playerId)),
       new PlayerNotFoundError(playerId),
     );
-    return toPlayer(record, await this.emailFor(record.userId));
+    return toPlayer(record, await fetchEmail(this.drizzle, record.userId));
   }
 
-  async getExtended(playerId: string): Promise<Player> {
+  async getExtended(playerId: string) {
     const record = findOneOrThrow(
       await this.drizzle.db.select().from(player).where(eq(player.id, playerId)),
       new PlayerNotFoundError(playerId),
     );
-    return toPlayer(record, await this.emailFor(record.userId));
+    return toPlayer(record, await fetchEmail(this.drizzle, record.userId));
   }
 
   async update(
@@ -130,7 +100,7 @@ export class PlayerService {
         previousStatus: existing.kycStatus,
       });
     }
-    return toPlayer(record!, await this.emailFor(record!.userId));
+    return toPlayer(record!, await fetchEmail(this.drizzle, record!.userId));
   }
 
   async remove(playerId: string) {
