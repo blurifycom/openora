@@ -13,6 +13,7 @@ import { MockKycAdapter } from './adapters/mock/mock-kyc-adapter.js';
 import { DrizzleAdminUserDirectory } from './admin-user-directory.js';
 import { createIdentityRouter } from './router/index.js';
 import { IdentityService } from './service/identity.service.js';
+import { SessionService } from './service/session.service.js';
 
 export default definePlugin({
   id: 'identity',
@@ -39,6 +40,7 @@ export default definePlugin({
           email: c.get(SEND_EMAIL),
           options: c.has(IDENTITY_OPTIONS) ? c.get(IDENTITY_OPTIONS) : undefined,
         }),
+        new SessionService({ drizzle: c.get(DRIZZLE), events: c.get(EVENT_BUS) }),
         c.get(ADMIN_GUARD),
       ),
     );

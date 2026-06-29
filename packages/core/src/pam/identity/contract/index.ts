@@ -23,6 +23,16 @@ const SessionSchema = z.object({
   expiresAt: z.string(),
 });
 
+const SessionItemSchema = z.object({
+  id: z.string(),
+  token: z.string(),
+  expiresAt: z.string(),
+  createdAt: z.string(),
+  ipAddress: z.string().nullable().optional(),
+  userAgent: z.string().nullable().optional(),
+  isCurrent: z.boolean(),
+});
+
 export const identityContract = {
   register: oc
     .route({ method: 'POST', path: '/identity/register' })
@@ -98,4 +108,19 @@ export const identityContract = {
     .route({ method: 'POST', path: '/identity/unlock' })
     .input(z.object({ userId: UuidSchema }))
     .output(IdentitySuccessSchema),
+
+  sessions: {
+    list: oc
+      .route({ method: 'GET', path: '/identity/sessions' })
+      .output(z.object({ sessions: z.array(SessionItemSchema) })),
+
+    revoke: oc
+      .route({ method: 'POST', path: '/identity/sessions/revoke' })
+      .input(z.object({ token: z.string() }))
+      .output(IdentitySuccessSchema),
+
+    revokeAll: oc
+      .route({ method: 'POST', path: '/identity/sessions/revoke-all' })
+      .output(IdentitySuccessSchema),
+  },
 };

@@ -10,6 +10,7 @@ const sets = [
   ['audit', '@blurifycom/core/audit/migrate'],
   ['iam', '@blurifycom/core/iam/migrate'],
   ['identity', '@blurifycom/core/pam/migrate/identity'],
+  ['tag', '@blurifycom/core/pam/migrate/tag'],
   ['profile', '@blurifycom/core/pam/migrate/profile'],
   ['wallet', '@blurifycom/core/wallet/migrate'],
   ['gaming', '@blurifycom/core/casino/migrate/gaming'],

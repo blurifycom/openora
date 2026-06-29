@@ -520,6 +520,11 @@
       "types": "./dist/pam/profile/migrate.d.ts",
       "import": "./dist/pam/profile/migrate.js",
       "default": "./dist/pam/profile/migrate.js"
+    },
+    "./pam/migrate/tag": {
+      "types": "./dist/pam/tag/migrate.d.ts",
+      "import": "./dist/pam/tag/migrate.js",
+      "default": "./dist/pam/tag/migrate.js"
     }
   },
   "publishConfig": {

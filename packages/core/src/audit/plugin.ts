@@ -151,6 +151,17 @@ function mapEventToRecord(topic: string, p: Record<string, unknown>): RecordInpu
     };
   }
 
+  // Player revoked one or all of their own sessions (security action) - admin
+  if (topic === 'identity.session.revoked' || topic === 'identity.sessions.revoked_all') {
+    return {
+      ...base,
+      actorType: 'admin',
+      actorId: str(p['userId']),
+      resourceType: 'session',
+      resourceId: topic === 'identity.session.revoked' ? str(p['sessionToken']) : null,
+    };
+  }
+
   // actorId = the player who (un)blocked; resource = the blocked player.
   if (topic === 'chat.user.blocked' || topic === 'chat.user.unblocked') {
     return {
@@ -212,6 +223,8 @@ const SUBSCRIBED_TOPICS = [
   'identity.profile.updated',
   'identity.user.deactivated',
   'identity.user.reactivated',
+  'identity.session.revoked',
+  'identity.sessions.revoked_all',
   'wallet.deposit.completed',
   'wallet.withdrawal.completed',
   'wallet.withdrawal.requested',

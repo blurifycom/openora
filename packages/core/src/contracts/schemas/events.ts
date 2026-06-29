@@ -48,6 +48,8 @@ export const domainEventSchemas = {
   // admin who acted (for a complete audit trail).
   'identity.user.deactivated': z.object({ userId: UuidSchema, actorId: UuidSchema }),
   'identity.user.reactivated': z.object({ userId: UuidSchema, actorId: UuidSchema }),
+  'identity.session.revoked': z.object({ userId: UuidSchema, sessionToken: z.string() }),
+  'identity.sessions.revoked_all': z.object({ userId: UuidSchema }),
 
   'wallet.deposit.completed': walletTxnBase,
   'wallet.withdrawal.completed': walletTxnBase,
