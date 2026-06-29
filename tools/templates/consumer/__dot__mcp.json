@@ -1,0 +1,9 @@
+{
+  "mcpServers": {
+    "oss": {
+      "type": "stdio",
+      "command": "node",
+      "args": ["node_modules/@blurifycom/mcp/dist/main.js"]
+    }
+  }
+}

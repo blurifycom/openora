@@ -6,19 +6,16 @@
   "scripts": {
     "dev": "turbo run dev",
     "build": "turbo run build",
-    "build:oss": "pnpm -C {{ossFromRoot}} build",
-    "regen": "pnpm -C {{ossFromRoot}} run regen",
     "typecheck": "turbo run typecheck",
     "lint": "oxlint .",
     "sync:agents": "rulesync generate",
     "prepare": "rulesync generate",
     "db:migrate": "pnpm -F @{{name}}/api db:migrate",
     "db:seed": "pnpm -F @{{name}}/api db:seed",
-    "setup:mcp": "tsx {{ossFromRoot}}/tools/setup-mcp.ts --target .",
     "gen": "turbo gen"
   },
   "devDependencies": {
-    "@blurifycom/mcp": "link:{{ossFromRoot}}/packages/mcp",
+    "@blurifycom/mcp": "alpha",
     "@turbo/gen": "2.9.14",
     "@types/node": "25.9.0",
     "oxlint": "1.64.0",

@@ -12,7 +12,7 @@
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
-    "@blurifycom/core": "link:{{ossFromApp}}/packages/core"
+    "@blurifycom/core": "alpha"
   },
   "devDependencies": {
     "tsx": "4.22.2",
