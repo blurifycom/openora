@@ -1,5 +1,6 @@
 import { oc } from '@orpc/contract';
 import { UuidSchema, TimestampSchema } from '@blurifycom/core/contracts';
+import { PageQuerySchema, paginated } from '@blurifycom/core/contracts/kit';
 import z from 'zod';
 
 export const PlayerNoteSchema = z.object({
@@ -22,8 +23,8 @@ export type CreatePlayerNoteInput = z.infer<typeof CreatePlayerNoteInputSchema>;
 export const playerNoteContract = {
   list: oc
     .route({ method: 'GET', path: '/player/{playerId}/note' })
-    .input(z.object({ playerId: UuidSchema }))
-    .output(z.object({ notes: z.array(PlayerNoteSchema) })),
+    .input(PageQuerySchema.extend({ playerId: UuidSchema }))
+    .output(paginated(PlayerNoteSchema)),
 
   create: oc
     .route({ method: 'POST', path: '/player/{playerId}/note' })

@@ -1,7 +1,6 @@
 import { ORPCError } from '@orpc/server';
-import { type EventBus } from '@blurifycom/core/server';
-import { DrizzleService } from '@blurifycom/core/server';
-import { eq, desc, and, gt } from 'drizzle-orm';
+import { type EventBus, DrizzleService, pageToOffset } from '@blurifycom/core/server';
+import { eq, desc, and, gt, count, sql } from 'drizzle-orm';
 import { session } from '../schema/index.js';
 
 function toIso(value: Date | string): string {
@@ -31,23 +30,34 @@ export class SessionService {
     this.events = events;
   }
 
-  async listSessions(playerId: string) {
-    const rows = await this.drizzle.db
-      .select()
-      .from(session)
-      .where(eq(session.userId, playerId))
-      .orderBy(desc(session.createdAt));
-
-    const sessions: SessionItem[] = rows.map((s) => ({
-      id: s.id,
-      token: s.token,
-      expiresAt: toIso(s.expiresAt),
-      createdAt: toIso(s.createdAt),
-      ipAddress: s.ipAddress,
-      userAgent: s.userAgent,
-    }));
-
-    return { sessions };
+  async listSessions(playerId: string, page: number, limit: number) {
+    const where = eq(session.userId, playerId);
+    const db = this.drizzle.db;
+    // Active sessions first (expiresAt > now), newest-first within each group.
+    const activeFirst = sql<number>`CASE WHEN ${session.expiresAt} > NOW() THEN 0 ELSE 1 END`;
+    const [rows, [{ n }]] = await Promise.all([
+      db
+        .select()
+        .from(session)
+        .where(where)
+        .orderBy(activeFirst, desc(session.createdAt))
+        .limit(limit)
+        .offset(pageToOffset(page, limit)),
+      db.select({ n: count() }).from(session).where(where),
+    ]);
+    return {
+      items: rows.map((s) => ({
+        id: s.id,
+        token: s.token,
+        expiresAt: toIso(s.expiresAt),
+        createdAt: toIso(s.createdAt),
+        ipAddress: s.ipAddress,
+        userAgent: s.userAgent,
+      })),
+      total: Number(n),
+      page,
+      limit,
+    };
   }
 
   async revokeSession(playerId: string, token: string) {

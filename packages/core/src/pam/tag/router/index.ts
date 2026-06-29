@@ -15,6 +15,10 @@ export function createTagRouter(tag: TagService) {
       tag.deleteTag(input, getUserId(context)),
     ),
 
+    listPlayerTags: os.listPlayerTags.handler(({ input }) =>
+      tag.listPlayerTags(input.playerId, input.page, input.limit),
+    ),
+
     assignPlayerTag: os.assignPlayerTag.handler(({ context, input }) =>
       tag.assignPlayerTag({ ...input, assignActorUserId: getUserId(context) }),
     ),

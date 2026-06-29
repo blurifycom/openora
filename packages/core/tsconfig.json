@@ -79,6 +79,8 @@
       "@blurifycom/core/pam/contracts/identity": ["./src/pam/identity/contract/index.ts"],
       "@blurifycom/core/pam/contracts/player": ["./src/pam/player-management/contract/index.ts"],
       "@blurifycom/core/pam/contracts/profile": ["./src/pam/profile/contract/index.ts"],
+      "@blurifycom/core/pam/contracts/player-note": ["./src/pam/player-note/contract/index.ts"],
+      "@blurifycom/core/pam/contracts/tag": ["./src/pam/tag/contract/index.ts"],
       "@blurifycom/core/pam/plugins/identity": ["./src/pam/identity/plugin.ts"],
       "@blurifycom/core/pam/plugins/player-management": ["./src/pam/player-management/plugin.ts"],
       "@blurifycom/core/pam/plugins/profile": ["./src/pam/profile/plugin.ts"],

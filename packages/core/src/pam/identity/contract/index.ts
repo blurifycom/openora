@@ -16,6 +16,7 @@ import {
   ChangeEmailInputSchema,
   IdentitySuccessSchema,
 } from '@blurifycom/core/contracts';
+import { PageQuerySchema, paginated } from '@blurifycom/core/contracts/kit';
 import * as z from 'zod';
 
 const SessionSchema = z.object({
@@ -111,8 +112,8 @@ export const identityContract = {
   sessions: {
     list: oc
       .route({ method: 'GET', path: '/identity/sessions' })
-      .input(z.object({ playerId: UuidSchema }))
-      .output(z.object({ sessions: z.array(SessionItemSchema) })),
+      .input(PageQuerySchema.extend({ playerId: UuidSchema }))
+      .output(paginated(SessionItemSchema)),
 
     revoke: oc
       .route({ method: 'POST', path: '/identity/sessions/revoke' })

@@ -1,55 +1,69 @@
 import { oc } from '@orpc/contract';
 import {
-  assignPlayerTagSchema,
+  UuidSchema,
   createTagSchema,
   deleteTagSchema,
   playerTagSchema,
-  removePlayerTagSchema,
   tagSchema,
+  tagAssignRemoveSource,
 } from '@blurifycom/core/contracts';
+import { PageQuerySchema, paginated } from '@blurifycom/core/contracts/kit';
 import z from 'zod';
 
 export {
   createTagSchema,
   deleteTagSchema,
-  assignPlayerTagSchema,
-  removePlayerTagSchema,
   tagSchema,
   playerTagSchema,
   type Tag,
   type PlayerTag,
 } from '@blurifycom/core/contracts';
 
+const tagAssignRemoveSourceSchema = z.enum(tagAssignRemoveSource);
+
+export const PlayerTagWithTagSchema = playerTagSchema.extend({
+  tag: z.object({
+    key: z.string(),
+    name: z.string(),
+    description: z.string().nullable().optional(),
+  }),
+});
+export type PlayerTagWithTag = z.infer<typeof PlayerTagWithTagSchema>;
+
+const AssignPlayerTagInputSchema = z.object({
+  playerId: UuidSchema,
+  tagKey: z.string().min(1),
+  assignReason: z.string().min(5),
+  assignActor: tagAssignRemoveSourceSchema,
+});
+
+const RemovePlayerTagInputSchema = z.object({
+  playerId: UuidSchema,
+  tagKey: z.string().min(1),
+  removalReason: z.string().min(5),
+  removalActor: tagAssignRemoveSourceSchema,
+});
+
 export const tagContract = {
-  createTag: oc
-    .route({
-      method: 'POST',
-      path: '/tag',
-    })
-    .input(createTagSchema)
-    .output(tagSchema),
+  createTag: oc.route({ method: 'POST', path: '/tag' }).input(createTagSchema).output(tagSchema),
 
   deleteTag: oc
-    .route({
-      method: 'DELETE',
-      path: '/tag/{key}',
-    })
+    .route({ method: 'DELETE', path: '/tag/{key}' })
     .input(deleteTagSchema)
     .output(z.boolean()),
 
+  listPlayerTags: oc
+    .route({ method: 'GET', path: '/player/{playerId}/player-tag' })
+    .input(PageQuerySchema.extend({ playerId: UuidSchema }))
+    .output(paginated(PlayerTagWithTagSchema)),
+
   assignPlayerTag: oc
-    .route({
-      method: 'POST',
-      path: '/player-tag/assign',
-    })
-    .input(assignPlayerTagSchema)
-    .output(playerTagSchema),
+    .route({ method: 'POST', path: '/player/{playerId}/player-tag' })
+    .input(AssignPlayerTagInputSchema)
+    .output(PlayerTagWithTagSchema),
 
   removePlayerTag: oc
-    .route({
-      method: 'PUT',
-      path: '/player-tag/remove',
-    })
-    .input(removePlayerTagSchema)
-    .output(playerTagSchema),
+    .route({ method: 'DELETE', path: '/player/{playerId}/player-tag/{tagKey}' })
+    .input(RemovePlayerTagInputSchema)
+    .output(PlayerTagWithTagSchema),
 };

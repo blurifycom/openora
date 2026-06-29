@@ -1,15 +1,32 @@
-import { DrizzleService, DrizzleTx, EventBus } from '@blurifycom/core/server';
-import { and, eq, isNotNull } from 'drizzle-orm';
-import {
-  AssignPlayerTagInput,
-  CreateTagInput,
-  DeleteTagInput,
-  PlayerTag,
-  RemovePlayerTagInput,
-  Tag,
-} from '@blurifycom/core/contracts';
+import { DrizzleService, DrizzleTx, EventBus, pageToOffset } from '@blurifycom/core/server';
+import { and, count, eq, isNull } from 'drizzle-orm';
+import { CreateTagInput, DeleteTagInput, Tag, TagAssignSource } from '@blurifycom/core/contracts';
 import { playerTag, tag } from '../schema/index.js';
+import { PlayerTagWithTag } from '../contract/index.js';
 import { mapDbError } from '../../../common/errors/index.js';
+
+type AssignInput = {
+  playerId: string;
+  tagKey: string;
+  assignReason: string;
+  assignActor: TagAssignSource;
+  assignActorUserId: string;
+};
+
+type RemoveInput = {
+  playerId: string;
+  tagKey: string;
+  removalReason: string;
+  removalActor: TagAssignSource;
+  removalActorUserId: string;
+};
+
+function toWithTag(
+  pt: typeof playerTag.$inferSelect,
+  t: { key: string; name: string; description?: string | null },
+): PlayerTagWithTag {
+  return { ...pt, tag: { key: t.key, name: t.name, description: t.description } };
+}
 
 export class TagService {
   constructor(
@@ -45,72 +62,95 @@ export class TagService {
     }
   }
 
-  public async assignPlayerTag(args: AssignPlayerTagInput): Promise<PlayerTag> {
+  public async listPlayerTags(playerId: string, page: number, limit: number) {
+    const where = and(eq(playerTag.playerId, playerId), isNull(playerTag.removedAt));
+    const db = this.drizzle.db;
+    const [rows, [{ n }]] = await Promise.all([
+      db
+        .select({
+          pt: playerTag,
+          tagKey: tag.key,
+          tagName: tag.name,
+          tagDescription: tag.description,
+        })
+        .from(playerTag)
+        .innerJoin(tag, eq(playerTag.tagId, tag.id))
+        .where(where)
+        .limit(limit)
+        .offset(pageToOffset(page, limit)),
+      db.select({ n: count() }).from(playerTag).where(where),
+    ]);
+    return {
+      items: rows.map((r) =>
+        toWithTag(r.pt, { key: r.tagKey, name: r.tagName, description: r.tagDescription }),
+      ),
+      total: Number(n),
+      page,
+      limit,
+    };
+  }
+
+  public async assignPlayerTag(args: AssignInput): Promise<PlayerTagWithTag> {
     try {
       const { tagKey, ...restArgs } = args;
       const db = this.drizzle.db;
       return await db.transaction(async (trx) => {
         const foundTag = await this._findTagByKeyOrThrow(tagKey, trx);
-        const foundActivePlayerTag = await trx
+        const [existing] = await trx
           .select()
           .from(playerTag)
           .where(
             and(
               eq(playerTag.tagId, foundTag.id),
               eq(playerTag.playerId, args.playerId),
-              isNotNull(playerTag.removalActor),
-              isNotNull(playerTag.removalReason),
-              isNotNull(playerTag.removedAt),
+              isNull(playerTag.removedAt),
             ),
           )
           .limit(1);
-        if (foundActivePlayerTag.length > 1) {
-          throw new Error(`Duplicate active tag for the player`);
+        if (existing) {
+          throw new Error(`Tag already assigned to player`);
         }
-        const [createdPlayerTag] = await trx
+        const [created] = await trx
           .insert(playerTag)
-          .values({
-            ...restArgs,
-            tagId: foundTag.id,
-          })
+          .values({ ...restArgs, tagId: foundTag.id })
           .returning();
-        return createdPlayerTag;
+        return toWithTag(created, foundTag);
       });
     } catch (e) {
       mapDbError(e);
     }
   }
 
-  public async removePlayerTag(args: RemovePlayerTagInput): Promise<PlayerTag> {
-    const { tagKey, ...rest } = args;
+  public async removePlayerTag(args: RemoveInput): Promise<PlayerTagWithTag> {
     try {
       const db = this.drizzle.db;
       return await db.transaction(async (trx) => {
-        const foundTag = await this._findTagByKeyOrThrow(tagKey, trx);
-        const foundActivePlayerTag = await trx
+        const foundTag = await this._findTagByKeyOrThrow(args.tagKey, trx);
+        const [active] = await trx
           .select()
           .from(playerTag)
           .where(
             and(
               eq(playerTag.tagId, foundTag.id),
               eq(playerTag.playerId, args.playerId),
-              isNotNull(playerTag.removalActor),
-              isNotNull(playerTag.removalReason),
-              isNotNull(playerTag.removedAt),
+              isNull(playerTag.removedAt),
             ),
           )
           .limit(1);
-        if (foundActivePlayerTag.length > 1) {
-          throw new Error(`Duplicate active tag for the player`);
+        if (!active) {
+          throw new Error(`Active tag assignment not found`);
         }
         const [updated] = await trx
           .update(playerTag)
           .set({
-            ...rest,
+            removedAt: new Date(),
+            removalReason: args.removalReason,
+            removalActor: args.removalActor,
+            removalActorUserId: args.removalActorUserId,
           })
-          .where(eq(playerTag.id, foundActivePlayerTag[0].id))
+          .where(eq(playerTag.id, active.id))
           .returning();
-        return updated;
+        return toWithTag(updated, foundTag);
       });
     } catch (e) {
       mapDbError(e);
