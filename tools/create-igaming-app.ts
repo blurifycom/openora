@@ -120,9 +120,9 @@ function main(): void {
 
     cd ${posix(relative(process.cwd(), targetDir)) || '.'}
     pnpm install            # also generates the agent files (CLAUDE.md / AGENTS.md / .codex/config.toml / Copilot) from .rulesync/ via the prepare hook
-    pnpm build:oss          # build the linked @blurifycom/* packages once
+    pnpm build:oss          # while linked to source: compile @blurifycom/* once (drop this once you install from npm)
     cp .env.example .env     # then set DATABASE_URL / AUTH_SECRET
-    pnpm db:migrate          # apply the OSS schema to your database
+    pnpm db:migrate          # apply the schema - runs from node_modules, no platform checkout needed
     pnpm dev                 # api :3001
 
   Add features with turbo gen:
