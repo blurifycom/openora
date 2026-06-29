@@ -24,6 +24,8 @@ import { leaderboardContract } from '@blurifycom/core/engagement/contracts/leade
 import { sportsbookContract } from '@blurifycom/core/sportsbook/contract';
 import { igamingAggregatorContract } from '@blurifycom/core/casino/contracts/aggregator';
 import { playerContract } from '@blurifycom/core/pam/contracts/player';
+import { tagContract } from '@blurifycom/core/pam/contracts/tag';
+import { playerNoteContract } from '@blurifycom/core/pam/contracts/player-note';
 
 // oxlint-disable-next-line typescript/no-explicit-any -- root contract is an external oRPC generic
 type AnyContract = ContractRouter<any>;
@@ -43,6 +45,8 @@ const CORE: Record<string, AnyContract> = {
   profile: profileContract,
   iam: iamContract,
   audit: auditContract,
+  tag: tagContract,
+  'player-note': playerNoteContract,
 };
 
 type AddonEntry = { namespace: string; contract: AnyContract };

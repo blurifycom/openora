@@ -11,6 +11,7 @@ const sets = [
   ['iam', '@blurifycom/core/iam/migrate'],
   ['identity', '@blurifycom/core/pam/migrate/identity'],
   ['tag', '@blurifycom/core/pam/migrate/tag'],
+  ['player-note', '@blurifycom/core/pam/migrate/player-note'],
   ['profile', '@blurifycom/core/pam/migrate/profile'],
   ['wallet', '@blurifycom/core/wallet/migrate'],
   ['gaming', '@blurifycom/core/casino/migrate/gaming'],

@@ -74,15 +74,18 @@ export function createIdentityRouter(
     }),
 
     sessions: {
-      list: os.sessions.list.handler(({ context }) =>
-        sessionSvc.listSessions(context.request.headers),
-      ),
-      revoke: os.sessions.revoke.handler(({ input, context }) =>
-        sessionSvc.revokeSession(input.token, context.request.headers),
-      ),
-      revokeAll: os.sessions.revokeAll.handler(({ context }) =>
-        sessionSvc.revokeAllSessions(context.request.headers),
-      ),
+      list: os.sessions.list.handler(async ({ input, context }) => {
+        await adminGuard.assert(context, 'sessions', 'view');
+        return sessionSvc.listSessions(input.playerId);
+      }),
+      revoke: os.sessions.revoke.handler(async ({ input, context }) => {
+        await adminGuard.assert(context, 'sessions', 'revoke');
+        return sessionSvc.revokeSession(input.playerId, input.token);
+      }),
+      revokeAll: os.sessions.revokeAll.handler(async ({ input, context }) => {
+        await adminGuard.assert(context, 'sessions', 'revoke');
+        return sessionSvc.revokeAllSessions(input.playerId);
+      }),
     },
   });
 }

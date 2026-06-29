@@ -46,6 +46,8 @@ export const DEFAULT_ADMIN_ROLES: readonly DefaultAdminRole[] = [
       analytics: RW,
       sportsbook: R,
       affiliate: R,
+      sessions: RW,
+      'player-note': RW,
     },
   },
   {

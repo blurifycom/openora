@@ -30,7 +30,6 @@ const SessionItemSchema = z.object({
   createdAt: z.string(),
   ipAddress: z.string().nullable().optional(),
   userAgent: z.string().nullable().optional(),
-  isCurrent: z.boolean(),
 });
 
 export const identityContract = {
@@ -112,15 +111,17 @@ export const identityContract = {
   sessions: {
     list: oc
       .route({ method: 'GET', path: '/identity/sessions' })
+      .input(z.object({ playerId: UuidSchema }))
       .output(z.object({ sessions: z.array(SessionItemSchema) })),
 
     revoke: oc
       .route({ method: 'POST', path: '/identity/sessions/revoke' })
-      .input(z.object({ token: z.string() }))
+      .input(z.object({ playerId: UuidSchema, token: z.string() }))
       .output(IdentitySuccessSchema),
 
     revokeAll: oc
       .route({ method: 'POST', path: '/identity/sessions/revoke-all' })
+      .input(z.object({ playerId: UuidSchema }))
       .output(IdentitySuccessSchema),
   },
 };

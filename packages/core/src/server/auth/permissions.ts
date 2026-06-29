@@ -15,6 +15,8 @@ export const statement = {
   analytics: ['view'] as const,
   sportsbook: ['view', 'configure', 'suspend'] as const,
   affiliate: ['view', 'manage'] as const,
+  sessions: ['view', 'revoke'] as const,
+  'player-note': ['view', 'create'] as const,
 } as const;
 
 export const ac = createAccessControl(statement);
@@ -34,6 +36,8 @@ export const adminRole = ac.newRole({
   analytics: ['view'],
   sportsbook: ['view', 'configure', 'suspend'],
   affiliate: ['view', 'manage'],
+  sessions: ['view', 'revoke'],
+  'player-note': ['view', 'create'],
 });
 
 export const supportRole = ac.newRole({
