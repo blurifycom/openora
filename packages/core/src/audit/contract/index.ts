@@ -5,6 +5,13 @@ import { PageQuerySchema, paginated } from '@blurifycom/core/contracts/kit';
 
 export const AuditActorTypeSchema = z.enum(['player', 'admin', 'system']);
 
+// before/after are jsonb snapshots and may hold an object OR an array (eg a role's
+// permission list), so allow both - constraining to a record 500s the list output
+// validation whenever an array snapshot exists.
+const AuditSnapshotSchema = z
+  .union([z.record(z.string(), z.unknown()), z.array(z.unknown())])
+  .nullable();
+
 export const AuditLogEntrySchema = z.object({
   id: UuidSchema,
   actorId: z.string().nullable(),
@@ -12,8 +19,8 @@ export const AuditLogEntrySchema = z.object({
   action: z.string(),
   resourceType: z.string(),
   resourceId: z.string().nullable(),
-  before: z.record(z.string(), z.unknown()).nullable(),
-  after: z.record(z.string(), z.unknown()).nullable(),
+  before: AuditSnapshotSchema,
+  after: AuditSnapshotSchema,
   ip: z.string().nullable(),
   userAgent: z.string().nullable(),
   correlationId: z.string().nullable(),
