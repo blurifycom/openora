@@ -85,6 +85,9 @@ jobs:
       # auto-bumps the consumer dev branch; stage/prod bumps are promoted manually.
       # The consumer CI (OSS_BUMP=true) owns the pin/lockfile/MR. No-op when unset.
       - name: Trigger downstream consumer bump
+        # Best-effort fire-and-forget - a trigger error must not fail the release
+        # (publish already succeeded) or block later trigger steps.
+        continue-on-error: true
         if: env.CONSUMER_TRIGGER_URL != '' && github.ref == 'refs/heads/dev'
         run: |
           VERSION=$(node -p "require('./packages/core/package.json').version")
@@ -100,6 +103,7 @@ jobs:
       # pipeline bumps the @blurifycom/core pin and `railway up`s. Only on the alpha
       # channel (push to dev). No-op when the secrets are unset.
       - name: Trigger example demo deploy
+        continue-on-error: true
         if: env.EXAMPLE_DEPLOY_TRIGGER_URL != '' && github.ref == 'refs/heads/dev'
         run: |
           VERSION=$(node -p "require('./packages/core/package.json').version")
