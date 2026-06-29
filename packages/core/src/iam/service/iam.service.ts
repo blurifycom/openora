@@ -30,13 +30,11 @@ import {
 import { user } from '@blurifycom/core/pam/schema/identity';
 import type {
   AdminRole,
-  AdminRoleWithGrants,
   AdminRoleAssignment,
-  AdminRoleAssignmentDetail,
   AdminInvitation,
   Catalog,
-  RolePermissionLevel,
   EffectivePermissions,
+  RolePermissionLevel,
 } from '../schemas/index.js';
 
 export const RoleNotFoundError = makeNotFoundError('AdminRole');
@@ -77,7 +75,6 @@ export const LastSuperAdminError = makeConflictError(
 type Caller = { userId: string; role: string };
 
 type Page = { page: number; limit: number };
-type Paginated<T> = { items: T[]; total: number; page: number; limit: number };
 
 // The `admin` module is NOT operator-assignable: granting `admin: read_write` to a
 // custom role would pass the router's adminGuard - it must come ONLY from `isSuperAdmin`.
@@ -176,7 +173,7 @@ function toInvitationDto(row: typeof adminInvitation.$inferSelect): AdminInvitat
 export class DbAdminPermissionResolver implements AdminPermissionResolver {
   constructor(private readonly drizzle: DrizzleService) {}
 
-  async getGrants(userId: string): Promise<AdminGrant[] | null> {
+  async getGrants(userId: string) {
     const db = this.drizzle.db;
 
     const assignments = await db
@@ -241,7 +238,7 @@ export class IamService {
     private readonly email: SendEmailPort,
   ) {}
 
-  private async callerGrants(caller: Caller): Promise<AdminGrant[]> {
+  private async callerGrants(caller: Caller) {
     const resolver = new DbAdminPermissionResolver(this.drizzle);
     const dbGrants = await resolver.getGrants(caller.userId);
     return dbGrants ?? staticGrantsForRole(caller.role);
@@ -250,7 +247,7 @@ export class IamService {
   // True for a DB super-admin assignment OR (no DB row AND user.role === 'admin').
   // The second clause keeps the bootstrap admin accessible before any role is seeded.
   // `user.role` is written only by trusted provisioning (seed/IdP), so it is safe here.
-  private async isSuperAdmin(caller: Caller): Promise<boolean> {
+  private async isSuperAdmin(caller: Caller) {
     const assignments = await this.drizzle.db
       .select({ roleId: adminRoleAssignment.roleId })
       .from(adminRoleAssignment)
@@ -268,17 +265,17 @@ export class IamService {
     return superRows.length > 0;
   }
 
-  private async assertSuperAdmin(caller: Caller): Promise<void> {
+  private async assertSuperAdmin(caller: Caller) {
     if (!(await this.isSuperAdmin(caller))) {
       throw new NotSuperAdminError();
     }
   }
 
-  listCatalog(): Catalog {
+  listCatalog() {
     return buildCatalog();
   }
 
-  private async rolePermissions(roleId: string): Promise<RolePermissionLevel[]> {
+  private async rolePermissions(roleId: string) {
     const rows = await this.drizzle.db
       .select({ resource: adminRolePermission.resource, level: adminRolePermission.level })
       .from(adminRolePermission)
@@ -286,7 +283,7 @@ export class IamService {
     return rows.map((r) => ({ resource: r.resource, level: r.level as PermissionLevel }));
   }
 
-  async listRoles({ page, limit }: Page): Promise<Paginated<AdminRoleWithGrants>> {
+  async listRoles({ page, limit }: Page) {
     const offset = pageToOffset(page, limit);
     const [rows, countResult] = await Promise.all([
       this.drizzle.db.select().from(adminRole).limit(limit).offset(offset),
@@ -301,7 +298,7 @@ export class IamService {
     return { items, total: countResult[0]?.count ?? 0, page, limit };
   }
 
-  async getRole(roleId: string): Promise<AdminRoleWithGrants> {
+  async getRole(roleId: string) {
     const row = findOneOrThrow(
       await this.drizzle.db.select().from(adminRole).where(eq(adminRole.id, roleId)),
       new RoleNotFoundError(roleId),
@@ -309,7 +306,7 @@ export class IamService {
     return { ...toRoleDto(row), permissions: await this.rolePermissions(roleId) };
   }
 
-  async createRole(input: { name: string; caller: Caller }): Promise<AdminRole> {
+  async createRole(input: { name: string; caller: Caller }) {
     await this.assertSuperAdmin(input.caller);
     const [row] = await this.drizzle.db.insert(adminRole).values({ name: input.name }).returning();
     const dto = toRoleDto(row!);
@@ -321,7 +318,7 @@ export class IamService {
     return dto;
   }
 
-  async updateRole(input: { roleId: string; name?: string; caller: Caller }): Promise<AdminRole> {
+  async updateRole(input: { roleId: string; name?: string; caller: Caller }) {
     await this.assertSuperAdmin(input.caller);
     const existing = findOneOrThrow(
       await this.drizzle.db.select().from(adminRole).where(eq(adminRole.id, input.roleId)),
@@ -394,7 +391,7 @@ export class IamService {
     roleId: string;
     grants: ReadonlyArray<{ resource: string; level: PermissionLevel }>;
     caller: Caller;
-  }): Promise<AdminRoleWithGrants> {
+  }) {
     await this.assertSuperAdmin(input.caller);
     const role = findOneOrThrow(
       await this.drizzle.db.select().from(adminRole).where(eq(adminRole.id, input.roleId)),
@@ -458,11 +455,7 @@ export class IamService {
     return this.getRole(input.roleId);
   }
 
-  async assignRole(input: {
-    userId: string;
-    roleId: string;
-    caller: Caller;
-  }): Promise<AdminRoleAssignment> {
+  async assignRole(input: { userId: string; roleId: string; caller: Caller }) {
     await this.assertSuperAdmin(input.caller);
     findOneOrThrow(
       await this.drizzle.db.select().from(adminRole).where(eq(adminRole.id, input.roleId)),
@@ -562,9 +555,7 @@ export class IamService {
     return { success: true };
   }
 
-  async listAssignments(
-    input: Page & { userId?: string },
-  ): Promise<Paginated<AdminRoleAssignmentDetail>> {
+  async listAssignments(input: Page & { userId?: string }) {
     const { page, limit, userId } = input;
     const offset = pageToOffset(page, limit);
     const where = userId ? eq(adminRoleAssignment.userId, userId) : undefined;
@@ -648,7 +639,7 @@ export class IamService {
     };
   }
 
-  async listInvitations({ page, limit }: Page): Promise<Paginated<AdminInvitation>> {
+  async listInvitations({ page, limit }: Page) {
     const offset = pageToOffset(page, limit);
     const [rows, countResult] = await Promise.all([
       this.drizzle.db.select().from(adminInvitation).limit(limit).offset(offset),
@@ -657,11 +648,7 @@ export class IamService {
     return { items: rows.map(toInvitationDto), total: countResult[0]?.count ?? 0, page, limit };
   }
 
-  async inviteAdmin(input: {
-    email: string;
-    roleId: string;
-    caller: Caller;
-  }): Promise<AdminInvitation> {
+  async inviteAdmin(input: { email: string; roleId: string; caller: Caller }) {
     // Inviting to a role is a role grant by another name, so it is super-admin-only -
     // consistent with assignRole. A non-super admin must not invite to a role
     // exceeding their own (esp. super-admin).

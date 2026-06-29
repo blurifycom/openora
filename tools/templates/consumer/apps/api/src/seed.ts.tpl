@@ -13,6 +13,11 @@ import { seedRoles } from '@blurifycom/core/iam/seed';
 // import additional module seeders here as you enable them
 
 async function main() {
+  if (process.env['NODE_ENV'] === 'production') {
+    console.error('Refusing to seed in production. This script is dev/local only.');
+    process.exit(1);
+  }
+
   const databaseUrl = process.env['DATABASE_URL'];
   if (!databaseUrl) {
     console.error('DATABASE_URL env var not set');

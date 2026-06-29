@@ -1,9 +1,9 @@
 import { implement } from '@orpc/server';
-import { type OssContext } from '@blurifycom/core/server';
+import { type OssContext, AdminGuard } from '@blurifycom/core/server';
 import { identityContract } from '../contract/index.js';
 import { IdentityService } from '../service/identity.service.js';
 
-export function createIdentityRouter(identity: IdentityService) {
+export function createIdentityRouter(identity: IdentityService, adminGuard: AdminGuard) {
   const os = implement(identityContract).$context<OssContext>();
 
   return os.router({
@@ -62,5 +62,10 @@ export function createIdentityRouter(identity: IdentityService) {
     updateProfile: os.updateProfile.handler(({ input, context }) =>
       identity.updateProfile(input, context.request.headers, context.resHeaders ?? new Headers()),
     ),
+
+    unlockUser: os.unlockUser.handler(async ({ input, context }) => {
+      const caller = await adminGuard.assert(context, 'player', 'update');
+      return identity.unlockUser(input.userId, caller.userId);
+    }),
   });
 }

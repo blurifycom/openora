@@ -29,7 +29,7 @@ const text = `${ti.description ?? ''}\n${ti.prompt ?? ''}`.toLowerCase();
 // High-signal phrase -> the roster agent that owns that work. Keep each pattern
 // SPECIFIC; err toward missing a case over false-blocking a generic task.
 const ROUTES = [
-  { agent: 'qa-engineer', re: /\b(playwright|e2e test|end-to-end test|e2e coverage)\b/ },
+  { agent: 'qa', re: /\b(playwright|e2e test|end-to-end test|e2e coverage)\b/ },
   {
     agent: 'security-reviewer',
     re: /\bsecurity (review|audit)\b|\baudit\b[^.]*\bvulnerabilit|\b(authz|owasp)\b/,
@@ -39,11 +39,11 @@ const ROUTES = [
     re: /\b(breaking change|boundary violation|schema drift)\b|\breview (the )?(pr|diff|changed files)\b/,
   },
   {
-    agent: 'docs-sync',
+    agent: 'docs',
     re: /\b(docs? drift|documentation drift|update (the )?docs|sync the docs)\b|\bagents\.md\b/,
   },
   {
-    agent: 'oss-module-author',
+    agent: 'module-author',
     re: /\bscaffold (a |the )?module\b|\bnew module\b|\bauthor (a |the )?module\b/,
   },
   {
@@ -51,11 +51,11 @@ const ROUTES = [
     re: /\b(overlay plugin|defineplugin|extension plugin)\b|\bscaffold (a |the )?plugin\b/,
   },
   {
-    agent: 'igaming-operator-verifier',
+    agent: 'operator',
     re: /\b(operator readiness|launch blocker|readiness audit)\b|\bas an? operator\b/,
   },
   {
-    agent: 'igaming-expert',
+    agent: 'expert',
     re: /\b(acceptance criteria|responsible gaming|regulatory requirement)\b/,
   },
 ];

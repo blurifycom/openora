@@ -15,13 +15,24 @@
 // platform version could add a first-class `bindSealedToken` hook on
 // ModuleRegistry that bypasses the overlay-rejection guard for the owning module
 // only. Until then this is the safe, pragmatic path. See audit/AGENTS.md.
+import type { DomainEventName } from '../schemas/events.js';
 import { createToken, type Token } from './token.js';
+
+// Admin actions that are recorded directly (not via a domain-event subscription)
+// and so have no entry in `domainEventSchemas`. Add new direct actions here.
+export type DirectAuditAction = 'admin.user.updated' | 'audit.export';
+
+// Every value the audit `action` column legitimately holds: a cross-module domain
+// event topic (recorded by the audit plugin's subscriptions) or a direct admin
+// action. The `string & {}` arm keeps literal autocomplete while still accepting
+// overlay-defined actions, so it constrains nothing at runtime - it just guides.
+export type AuditAction = DomainEventName | DirectAuditAction | (string & {});
 
 export type AuditWritePort = {
   record(entry: {
     actorId?: string | null;
     actorType: 'player' | 'admin' | 'system';
-    action: string;
+    action: AuditAction;
     resourceType: string;
     resourceId?: string | null;
     before?: Record<string, unknown> | null;

@@ -5,6 +5,14 @@ describe('identity schemas', () => {
   it('LoginInputSchema accepts a valid credential pair', () => {
     const parsed = LoginInputSchema.parse({ email: 'a@b.dev', password: 'password123' });
     expect(parsed.email).toBe('a@b.dev');
+    expect(parsed.rememberMe).toBeUndefined();
+
+    const parsedWithRemember = LoginInputSchema.parse({
+      email: 'a@b.dev',
+      password: 'password123',
+      rememberMe: true,
+    });
+    expect(parsedWithRemember.rememberMe).toBe(true);
   });
 
   it('LoginInputSchema rejects a bad email and a short password', () => {

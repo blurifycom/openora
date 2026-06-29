@@ -18,6 +18,8 @@ export async function seedRoles(db: DrizzleDb): Promise<void> {
       target: adminRole.key,
       set: {
         name: sql`excluded.name`,
+        // Postgres column identifiers are snake_case at SQL level (drizzle maps camelCase -> snake_case).
+        // Use the snake_case excluded columns here so the ON CONFLICT DO UPDATE references exist.
         isSystem: sql`excluded."is_system"`,
         isSuperAdmin: sql`excluded."is_super_admin"`,
       },

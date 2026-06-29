@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { LimitsSchema } from './igaming-config.js';
 
 /**
  * Platform-wide T0 configuration consumed by the slot evaluation context and
@@ -68,23 +69,10 @@ export const PlatformConfigSchema = z
      */
     activeBrand: z.string().optional(),
     /**
-     * RG default limits per ISO 3166-1 alpha-2 country code. Each entry mirrors
-     * the LimitsSchema but at the platform-config level (jurisdiction defaults).
+     * RG default limits per ISO 3166-1 alpha-2 country code (jurisdiction
+     * defaults), reusing the shared LimitsSchema shape.
      */
-    rgLimits: z
-      .record(
-        z.string().length(2),
-        z
-          .object({
-            maxDepositPerDay: z.number().nonnegative().optional(),
-            maxDepositPerMonth: z.number().nonnegative().optional(),
-            maxLossPerDay: z.number().nonnegative().optional(),
-            maxStakePerBet: z.number().nonnegative().optional(),
-            sessionReminderMinutes: z.number().int().positive().optional(),
-          })
-          .strict(),
-      )
-      .default({}),
+    rgLimits: z.record(z.string().length(2), LimitsSchema).default({}),
     /**
      * Operator-tunable sportsbook knobs. All fields are optional; absent keys
      * fall back to the service defaults (oddsTickMs=2000, minOdds=1.01, maxOdds=50).

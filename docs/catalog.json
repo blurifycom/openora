@@ -6,6 +6,7 @@
       "tables": [],
       "routes": [
         "admin-console.getStats",
+        "admin-console.getTransaction",
         "admin-console.getUser",
         "admin-console.listTransactions",
         "admin-console.listUsers",
@@ -170,6 +171,7 @@
         "identity.requestPasswordReset",
         "identity.resetPassword",
         "identity.sendEmailVerification",
+        "identity.unlockUser",
         "identity.updateProfile",
         "identity.verify2fa",
         "identity.verifyEmail"
@@ -314,7 +316,7 @@
     },
     {
       "category": "audit",
-      "interface": "AuditWritePort",
+      "interface": "DirectAuditAction",
       "token": "AUDIT_WRITER",
       "status": "wired",
       "boundIn": [
@@ -357,6 +359,15 @@
       "status": "wired",
       "boundIn": [
         "packages/core/src/compliance/plugin.ts"
+      ]
+    },
+    {
+      "category": "identity",
+      "interface": "IdentityLockoutOptions",
+      "token": "IDENTITY_OPTIONS",
+      "status": "wired",
+      "boundIn": [
+        "packages/core/src/pam/identity/plugin.ts"
       ]
     },
     {
@@ -463,10 +474,13 @@
     "identity.password.reset",
     "identity.profile.updated",
     "identity.user.deactivated",
+    "identity.user.lockout.triggered",
     "identity.user.login",
+    "identity.user.login.failed",
     "identity.user.logout",
     "identity.user.reactivated",
     "identity.user.registered",
+    "identity.user.unlocked",
     "leaderboard.reset",
     "leaderboard.score.recorded",
     "notifications.created",
@@ -500,6 +514,10 @@
     {
       "name": "AdminRoleWithGrantsSchema",
       "file": "packages/core/src/iam/contract/index.ts"
+    },
+    {
+      "name": "AdminTransactionDetailSchema",
+      "file": "packages/core/src/admin-console/contract/index.ts"
     },
     {
       "name": "AdminTransactionSchema",
@@ -762,6 +780,10 @@
       "file": "packages/core/src/admin-console/contract/index.ts"
     },
     {
+      "name": "PlayerEmailSchema",
+      "file": "packages/core/src/admin-console/contract/index.ts"
+    },
+    {
       "name": "PlayerRegistrationPointSchema",
       "file": "packages/core/src/pam/player-management/contract/index.ts"
     },
@@ -770,12 +792,20 @@
       "file": "packages/core/src/contracts/schemas/player.ts"
     },
     {
+      "name": "PlayerSearchSchema",
+      "file": "packages/core/src/admin-console/contract/index.ts"
+    },
+    {
       "name": "PlayerStatusSchema",
       "file": "packages/core/src/contracts/schemas/player.ts"
     },
     {
       "name": "PlayerSummarySchema",
       "file": "packages/core/src/pam/player-management/contract/index.ts"
+    },
+    {
+      "name": "PlayerUsernameSchema",
+      "file": "packages/core/src/admin-console/contract/index.ts"
     },
     {
       "name": "ProviderSelectionSchema",
@@ -834,6 +864,10 @@
       "file": "packages/core/src/contracts/schemas/common.ts"
     },
     {
+      "name": "TransactionFilterSchema",
+      "file": "packages/core/src/admin-console/contract/index.ts"
+    },
+    {
       "name": "TransactionResultSchema",
       "file": "packages/core/src/wallet/contract/index.ts"
     },
@@ -883,7 +917,7 @@
     },
     {
       "name": "WalletRailSchema",
-      "file": "packages/core/src/wallet/contract/index.ts"
+      "file": "packages/core/src/contracts/schemas/wallet-tx.ts"
     },
     {
       "name": "WalletTransactionSchema",
@@ -891,7 +925,11 @@
     },
     {
       "name": "WalletTransactionStatusSchema",
-      "file": "packages/core/src/wallet/contract/index.ts"
+      "file": "packages/core/src/contracts/schemas/wallet-tx.ts"
+    },
+    {
+      "name": "WalletTransactionTypeSchema",
+      "file": "packages/core/src/contracts/schemas/wallet-tx.ts"
     },
     {
       "name": "WithdrawalQueueFilterSchema",
@@ -955,6 +993,7 @@
     "GET /audit/logs",
     "GET /backoffice/stats",
     "GET /backoffice/transactions",
+    "GET /backoffice/transactions/{id}",
     "GET /backoffice/users",
     "GET /backoffice/users/{userId}",
     "GET /bonus/bonuses",
@@ -1022,6 +1061,7 @@
     "POST /identity/password/forgot",
     "POST /identity/password/reset",
     "POST /identity/register",
+    "POST /identity/unlock",
     "POST /notifications/read-all",
     "POST /notifications/{id}/read",
     "POST /wallet/deposit",

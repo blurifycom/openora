@@ -32,7 +32,7 @@ export const auditLog = pgTable(
     seq: bigserial({ mode: 'number' }).notNull(),
     prevHash: text(),
     hash: text().notNull(),
-    createdAt: timestamp().notNull().defaultNow(),
+    createdAt: timestamp({ withTimezone: true }).notNull().defaultNow(),
   },
   (t) => [
     index('audit_log_actor_id_idx').on(t.actorId),

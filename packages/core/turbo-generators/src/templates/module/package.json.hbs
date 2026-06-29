@@ -21,12 +21,19 @@
       "types": "./dist/plugin.d.ts",
       "import": "./dist/plugin.js",
       "default": "./dist/plugin.js"
+    },
+    "./migrate": {
+      "types": "./dist/migrate.d.ts",
+      "import": "./dist/migrate.js",
+      "default": "./dist/migrate.js"
     }
   },
+  "files": ["dist", "drizzle"],
   "scripts": {
     "build": "tsc",
     "typecheck": "tsc --noEmit",
     "clean": "rm -rf dist",
+    "generate": "drizzle-kit generate",
     "test": "vitest run",
     "test:unit": "vitest run --passWithNoTests",
     "test:integration": "vitest run --passWithNoTests"
@@ -48,6 +55,7 @@
   "devDependencies": {
     "@blurifycom/vitest-config": "workspace:*",
     "@types/node": "25.9.2",
+    "drizzle-kit": "0.31.10",
     "typescript": "6.0.3",
     "vitest": "4.1.8"
   }

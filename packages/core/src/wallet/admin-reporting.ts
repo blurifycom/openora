@@ -1,10 +1,11 @@
 import type {
+  AdminTxDetail,
   AdminTxListOptions,
   AdminTxRow,
   AdminWalletReporting,
 } from '@blurifycom/core/contracts';
 import { DrizzleService, pageToOffset } from '@blurifycom/core/server';
-import { and, count, desc, eq, sum } from 'drizzle-orm';
+import { and, count, desc, eq, gte, inArray, lte, sum } from 'drizzle-orm';
 import { wallet, walletTransaction } from './schema/index.js';
 
 // See ADR-0017/0025.
@@ -32,14 +33,38 @@ export class DrizzleAdminWalletReporting implements AdminWalletReporting {
     return { deposits, withdrawals };
   }
 
-  async listTransactions({ page, limit, userId }: AdminTxListOptions) {
+  async listTransactions({
+    page,
+    limit,
+    userIds,
+    type,
+    currency,
+    rail,
+    status,
+    dateFrom,
+    dateTo,
+    amountMin,
+    amountMax,
+  }: AdminTxListOptions) {
     const db = this.drizzle.db;
-    const where = userId ? eq(wallet.userId, userId) : undefined;
+    const conditions = [
+      userIds && userIds.length > 0 ? inArray(wallet.userId, userIds) : undefined,
+      type ? eq(walletTransaction.type, type) : undefined,
+      currency ? eq(walletTransaction.currency, currency) : undefined,
+      rail ? eq(walletTransaction.rail, rail) : undefined,
+      status ? eq(walletTransaction.status, status) : undefined,
+      dateFrom ? gte(walletTransaction.createdAt, dateFrom) : undefined,
+      dateTo ? lte(walletTransaction.createdAt, dateTo) : undefined,
+      // `amount` is a numeric column, so the string bound compares numerically.
+      amountMin !== undefined ? gte(walletTransaction.amount, amountMin.toString()) : undefined,
+      amountMax !== undefined ? lte(walletTransaction.amount, amountMax.toString()) : undefined,
+    ].filter(Boolean);
+    const where = conditions.length > 0 ? and(...conditions) : undefined;
     const [rows, [{ n }]] = await Promise.all([
       db
         .select({ tx: walletTransaction, walletUserId: wallet.userId })
         .from(walletTransaction)
-        .leftJoin(wallet, eq(walletTransaction.walletId, wallet.id))
+        .innerJoin(wallet, eq(walletTransaction.walletId, wallet.id))
         .where(where)
         .orderBy(desc(walletTransaction.createdAt))
         .limit(limit)
@@ -47,22 +72,48 @@ export class DrizzleAdminWalletReporting implements AdminWalletReporting {
       db
         .select({ n: count() })
         .from(walletTransaction)
-        .leftJoin(wallet, eq(walletTransaction.walletId, wallet.id))
+        .innerJoin(wallet, eq(walletTransaction.walletId, wallet.id))
         .where(where),
     ]);
     return {
       rows: rows.map(
         ({ tx, walletUserId }): AdminTxRow => ({
           id: tx.id,
-          userId: walletUserId ?? tx.walletId,
+          userId: walletUserId,
           type: tx.type,
           amount: Number(tx.amount),
           currency: tx.currency,
           status: tx.status,
+          rail: tx.rail ?? null,
           createdAt: tx.createdAt,
         }),
       ),
       total: Number(n),
+    };
+  }
+
+  async getTransaction(id: string): Promise<AdminTxDetail | null> {
+    const [row] = await this.drizzle.db
+      .select({ tx: walletTransaction, walletUserId: wallet.userId })
+      .from(walletTransaction)
+      .innerJoin(wallet, eq(walletTransaction.walletId, wallet.id))
+      .where(eq(walletTransaction.id, id));
+    if (!row) return null;
+    const { tx, walletUserId } = row;
+    return {
+      id: tx.id,
+      userId: walletUserId,
+      type: tx.type,
+      amount: Number(tx.amount),
+      currency: tx.currency,
+      status: tx.status,
+      rail: tx.rail ?? null,
+      createdAt: tx.createdAt,
+      providerName: tx.providerName ?? null,
+      providerRefId: tx.providerRefId ?? null,
+      reviewedBy: tx.reviewedBy ?? null,
+      reviewedAt: tx.reviewedAt ?? null,
+      reviewReason: tx.reviewReason ?? null,
     };
   }
 }

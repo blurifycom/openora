@@ -1,26 +1,24 @@
 import { oc } from '@orpc/contract';
 import * as z from 'zod';
-import { KycStatusSchema, UuidSchema } from '@blurifycom/core/contracts';
+import {
+  KycStatusSchema,
+  UuidSchema,
+  WalletRailSchema,
+  WalletTransactionStatusSchema,
+  WalletTransactionTypeSchema,
+} from '@blurifycom/core/contracts';
 import { PageQuerySchema, paginated } from '@blurifycom/core/contracts/kit';
+
+export { WalletRailSchema, WalletTransactionStatusSchema, WalletTransactionTypeSchema };
 
 export const WalletBalanceSchema = z.object({
   balance: z.number(),
   currency: z.string(),
 });
 
-export const WalletTransactionStatusSchema = z.enum([
-  'pending',
-  'processing',
-  'completed',
-  'failed',
-  'rejected',
-]);
-
-export const WalletRailSchema = z.enum(['fireblocks', 'psp']);
-
 export const WalletTransactionSchema = z.object({
   id: UuidSchema,
-  type: z.enum(['deposit', 'withdrawal', 'bet', 'win']),
+  type: WalletTransactionTypeSchema,
   amount: z.number(),
   currency: z.string(),
   status: WalletTransactionStatusSchema,

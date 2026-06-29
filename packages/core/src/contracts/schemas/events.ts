@@ -4,70 +4,68 @@ import { UuidSchema } from './common.js';
 const iamRoleEventBase = z.object({ roleId: UuidSchema, actorId: UuidSchema });
 const permissionLevelEntries = z.array(z.object({ resource: z.string(), level: z.string() }));
 
+// Optional request-origin metadata shared by auth events; both fields may be absent.
+const authContextBase = z.object({
+  ip: z.string().nullable().optional(),
+  userAgent: z.string().nullable().optional(),
+});
+
+// Shared shape for every wallet money-movement event.
+const walletTxnBase = z.object({
+  userId: UuidSchema,
+  amount: z.number(),
+  currency: z.string(),
+  transactionId: UuidSchema,
+});
+
 export const domainEventSchemas = {
   'identity.user.registered': z.object({ userId: UuidSchema }),
-  'identity.user.login': z.object({ userId: UuidSchema }),
+  'identity.user.login': authContextBase.extend({ userId: UuidSchema }),
+  'identity.user.login.failed': authContextBase.extend({
+    email: z.email(),
+    reason: z.string().nullable().optional(),
+  }),
   'identity.user.logout': z.object({ userId: UuidSchema }),
+  'identity.user.lockout.triggered': authContextBase.extend({
+    userId: UuidSchema,
+    email: z.email(),
+    lockoutUntil: z.iso.datetime(),
+  }),
+  'identity.user.unlocked': z.object({
+    userId: UuidSchema,
+    email: z.email(),
+    actorId: UuidSchema,
+    previousFailedAttempts: z.number().int().optional(),
+    previousLockoutUntil: z.iso.datetime().nullable().optional(),
+  }),
   'identity.2fa.enabled': z.object({ userId: UuidSchema }),
   'identity.2fa.disabled': z.object({ userId: UuidSchema }),
   'identity.password.reset': z.object({ userId: UuidSchema }),
   'identity.email.verified': z.object({ userId: UuidSchema }),
   'identity.profile.updated': z.object({ userId: UuidSchema }),
-
   // An admin toggled a user's active status (the only user-lifecycle flow today;
   // users are deactivated, never hard-deleted). userId = subject, actorId = the
   // admin who acted (for a complete audit trail).
   'identity.user.deactivated': z.object({ userId: UuidSchema, actorId: UuidSchema }),
   'identity.user.reactivated': z.object({ userId: UuidSchema, actorId: UuidSchema }),
 
-  'wallet.deposit.completed': z.object({
-    userId: UuidSchema,
-    amount: z.number(),
-    currency: z.string(),
-    transactionId: UuidSchema,
-  }),
-  'wallet.withdrawal.completed': z.object({
-    userId: UuidSchema,
-    amount: z.number(),
-    currency: z.string(),
-    transactionId: UuidSchema,
-  }),
+  'wallet.deposit.completed': walletTxnBase,
+  'wallet.withdrawal.completed': walletTxnBase,
   // A player requested a withdrawal; funds are held (balance debited) and the
   // request enters the back-office approval queue as `pending`.
-  'wallet.withdrawal.requested': z.object({
-    userId: z.uuid(),
-    amount: z.number(),
-    currency: z.string(),
-    transactionId: z.string(),
-  }),
+  'wallet.withdrawal.requested': walletTxnBase,
   // A payments admin approved a pending withdrawal; it moves to `processing` and
   // is sent to the PSP/Fireblocks rail. `adminId` is the acting reviewer.
-  'wallet.withdrawal.approved': z.object({
-    userId: z.uuid(),
-    amount: z.number(),
-    currency: z.string(),
-    transactionId: z.string(),
-    adminId: z.uuid(),
-  }),
+  'wallet.withdrawal.approved': walletTxnBase.extend({ adminId: UuidSchema }),
   // A payments admin rejected a pending withdrawal; held funds are returned to the
   // player balance. `adminId` is the acting reviewer; `reason` is mandatory.
-  'wallet.withdrawal.rejected': z.object({
-    userId: z.uuid(),
-    amount: z.number(),
-    currency: z.string(),
-    transactionId: z.string(),
-    adminId: z.uuid(),
+  'wallet.withdrawal.rejected': walletTxnBase.extend({
+    adminId: UuidSchema,
     reason: z.string(),
   }),
   // An approved withdrawal failed at the PSP/Fireblocks rail; the held funds were
   // returned to the player balance and the transaction moved to `failed`.
-  'wallet.withdrawal.failed': z.object({
-    userId: z.uuid(),
-    amount: z.number(),
-    currency: z.string(),
-    transactionId: z.string(),
-    adminId: z.uuid(),
-  }),
+  'wallet.withdrawal.failed': walletTxnBase.extend({ adminId: UuidSchema }),
 
   'gaming.round.started': z.object({
     roundId: UuidSchema,
@@ -154,7 +152,7 @@ export const domainEventSchemas = {
   // module or an overlay) provisions the user account and completes the role
   // assignment by resolving the userId from the email.
   'iam.invitation.accepted': z.object({
-    email: z.string(),
+    email: z.email(),
     roleId: UuidSchema,
     invitationId: UuidSchema,
   }),

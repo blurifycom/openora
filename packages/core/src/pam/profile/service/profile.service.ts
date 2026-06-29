@@ -32,7 +32,7 @@ function toPlayer(p: typeof player.$inferSelect, email: string): Player {
 export class ProfileService {
   constructor(private readonly drizzle: DrizzleService) {}
 
-  private async emailFor(userId: string): Promise<string> {
+  private async emailFor(userId: string) {
     const [record] = await this.drizzle.db
       .select({ email: user.email })
       .from(user)
@@ -42,7 +42,7 @@ export class ProfileService {
 
   // Registration only creates the auth `user`; the `player` row is materialised
   // lazily so a freshly-registered user always has a profile.
-  private async ensureProfile(userId: string): Promise<Player> {
+  private async ensureProfile(userId: string) {
     const [existing] = await this.drizzle.db.select().from(player).where(eq(player.userId, userId));
     if (existing) return toPlayer(existing, await this.emailFor(userId));
 
@@ -60,11 +60,11 @@ export class ProfileService {
     return toPlayer(created!, u?.email ?? '');
   }
 
-  async getMyProfile(userId: string): Promise<Player> {
+  async getMyProfile(userId: string) {
     return this.ensureProfile(userId);
   }
 
-  async updateMyProfile(userId: string, data: UpdatePlayerProfileInput): Promise<Player> {
+  async updateMyProfile(userId: string, data: UpdatePlayerProfileInput) {
     await this.ensureProfile(userId);
     const patch: Partial<typeof player.$inferInsert> = {};
     if (data.displayName !== undefined) patch.displayName = data.displayName;

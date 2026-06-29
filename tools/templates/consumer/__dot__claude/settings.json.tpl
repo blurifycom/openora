@@ -28,6 +28,15 @@
             "command": "node .rulesync/hooks/guard-generated.mjs"
           }
         ]
+      },
+      {
+        "matcher": "Task",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node .rulesync/hooks/guard-subagent.mjs"
+          }
+        ]
       }
     ],
     "PostToolUse": [

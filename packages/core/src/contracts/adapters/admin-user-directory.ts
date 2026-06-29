@@ -13,6 +13,8 @@ export type AdminUserRow = {
   createdAt: Date;
   isActive: boolean;
   role: string;
+  failedLoginAttempts?: number;
+  lockoutUntil?: Date | null;
 };
 
 export type AdminUserListOptions = { page: number; limit: number; search?: string };
@@ -22,6 +24,7 @@ export type AdminUserListOptions = { page: number; limit: number; search?: strin
 export type AdminPlayerSummary = {
   userId: string;
   username: string;
+  email: string;
   kycStatus: KycStatus | null;
 };
 
@@ -38,6 +41,9 @@ export type AdminUserDirectory = {
   // Batch enrichment for back-office lists (eg the withdrawal queue). Returns one
   // entry per resolvable id; unknown ids are omitted.
   lookupPlayers(userIds: readonly string[]): Promise<AdminPlayerSummary[]>;
+  // Resolves a free-text player filter to a capped set of userIds, matched against
+  // email (user table) OR username/displayName (player table). Empty = no match.
+  findPlayerIds(query: string): Promise<string[]>;
 };
 
 export const ADMIN_USER_DIRECTORY: Token<AdminUserDirectory> = createToken('ADMIN_USER_DIRECTORY');

@@ -3,12 +3,7 @@ import { DrizzleService, findOneOrThrow } from '@blurifycom/core/server';
 import { eq, and, ilike, count, asc, inArray } from 'drizzle-orm';
 import { lobbyCategory, lobbyCategoryGame, featuredSlot } from '../schema/index.js';
 import { game } from '../../gaming/schema/index.js';
-import type {
-  LobbyCategory,
-  LobbyCategoryDetail,
-  FeaturedSlot,
-  GameSummary,
-} from '../schemas/index.js';
+import type { GameSummary } from '../schemas/index.js';
 
 export const LobbyCategoryNotFoundError = createDomainError(
   'LobbyCategoryNotFoundError',
@@ -34,7 +29,7 @@ function toGameSummary(record: {
 export class LobbyService {
   constructor(private readonly drizzle: DrizzleService) {}
 
-  async listCategories(): Promise<LobbyCategory[]> {
+  async listCategories() {
     const db = this.drizzle.db;
     const [categories, counts] = await Promise.all([
       db.select().from(lobbyCategory).orderBy(asc(lobbyCategory.sortOrder)),
@@ -55,7 +50,7 @@ export class LobbyService {
     }));
   }
 
-  async getCategoryGames(slug: string): Promise<LobbyCategoryDetail> {
+  async getCategoryGames(slug: string) {
     const db = this.drizzle.db;
 
     const category = findOneOrThrow(
@@ -87,7 +82,7 @@ export class LobbyService {
     };
   }
 
-  async getFeatured(): Promise<FeaturedSlot[]> {
+  async getFeatured() {
     const db = this.drizzle.db;
 
     const slots = await db
@@ -116,7 +111,7 @@ export class LobbyService {
     });
   }
 
-  async search(query: string): Promise<GameSummary[]> {
+  async search(query: string) {
     const db = this.drizzle.db;
     const whereClause = and(ilike(game.name, `%${query}%`), eq(game.isActive, true));
 

@@ -1,4 +1,3 @@
-// Per ADR-0024/0025 the runtime contract every module links against must import only contracts.
 import { z } from 'zod';
 
 export const PageQuerySchema = z.object({
@@ -7,7 +6,6 @@ export const PageQuerySchema = z.object({
 });
 export type PageQuery = z.infer<typeof PageQuerySchema>;
 
-/** Wrap an item schema in the canonical paginated envelope. */
 export const paginated = <T extends z.ZodType>(item: T) =>
   z.object({
     items: z.array(item),

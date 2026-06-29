@@ -4,7 +4,6 @@
   "license": "AGPL-3.0-only",
   "files": [
     "dist",
-    "drizzle",
     "tsconfig",
     "oxlint",
     "turbo-generators",
@@ -461,6 +460,66 @@
       "types": "./dist/wallet/contract/index.d.ts",
       "import": "./dist/wallet/contract/index.js",
       "default": "./dist/wallet/contract/index.js"
+    },
+    "./audit/migrate": {
+      "types": "./dist/audit/migrate.d.ts",
+      "import": "./dist/audit/migrate.js",
+      "default": "./dist/audit/migrate.js"
+    },
+    "./iam/migrate": {
+      "types": "./dist/iam/migrate.d.ts",
+      "import": "./dist/iam/migrate.js",
+      "default": "./dist/iam/migrate.js"
+    },
+    "./cms/migrate": {
+      "types": "./dist/cms/migrate.d.ts",
+      "import": "./dist/cms/migrate.js",
+      "default": "./dist/cms/migrate.js"
+    },
+    "./compliance/migrate": {
+      "types": "./dist/compliance/migrate.d.ts",
+      "import": "./dist/compliance/migrate.js",
+      "default": "./dist/compliance/migrate.js"
+    },
+    "./wallet/migrate": {
+      "types": "./dist/wallet/migrate.d.ts",
+      "import": "./dist/wallet/migrate.js",
+      "default": "./dist/wallet/migrate.js"
+    },
+    "./casino/migrate/gaming": {
+      "types": "./dist/casino/gaming/migrate.d.ts",
+      "import": "./dist/casino/gaming/migrate.js",
+      "default": "./dist/casino/gaming/migrate.js"
+    },
+    "./casino/migrate/lobby": {
+      "types": "./dist/casino/lobby/migrate.d.ts",
+      "import": "./dist/casino/lobby/migrate.js",
+      "default": "./dist/casino/lobby/migrate.js"
+    },
+    "./engagement/migrate/bonus": {
+      "types": "./dist/engagement/bonus/migrate.d.ts",
+      "import": "./dist/engagement/bonus/migrate.js",
+      "default": "./dist/engagement/bonus/migrate.js"
+    },
+    "./engagement/migrate/chat": {
+      "types": "./dist/engagement/chat/migrate.d.ts",
+      "import": "./dist/engagement/chat/migrate.js",
+      "default": "./dist/engagement/chat/migrate.js"
+    },
+    "./engagement/migrate/notifications": {
+      "types": "./dist/engagement/notifications/migrate.d.ts",
+      "import": "./dist/engagement/notifications/migrate.js",
+      "default": "./dist/engagement/notifications/migrate.js"
+    },
+    "./pam/migrate/identity": {
+      "types": "./dist/pam/identity/migrate.d.ts",
+      "import": "./dist/pam/identity/migrate.js",
+      "default": "./dist/pam/identity/migrate.js"
+    },
+    "./pam/migrate/profile": {
+      "types": "./dist/pam/profile/migrate.d.ts",
+      "import": "./dist/pam/profile/migrate.js",
+      "default": "./dist/pam/profile/migrate.js"
     }
   },
   "publishConfig": {
@@ -474,9 +533,7 @@
     "test": "vitest run",
     "test:unit": "vitest run --passWithNoTests",
     "test:integration": "vitest run --passWithNoTests",
-    "generate": "drizzle-kit generate",
-    "migrate": "drizzle-kit migrate",
-    "push": "drizzle-kit push"
+    "generate": "node scripts/generate-all.mjs"
   },
   "dependencies": {
     "@2toad/profanity": "3.3.0",

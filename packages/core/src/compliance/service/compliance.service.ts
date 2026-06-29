@@ -22,7 +22,7 @@ export class ComplianceService {
     private readonly geoIp: GeoIpAdapter | null = null,
   ) {}
 
-  async getLimitsForUser(userId: string): Promise<Limit[]> {
+  async getLimitsForUser(userId: string) {
     const rows = await this.drizzle.db.select().from(userLimit).where(eq(userLimit.userId, userId));
     return rows.map((r) => ({
       id: r.id,
@@ -34,7 +34,7 @@ export class ComplianceService {
     }));
   }
 
-  async upsertLimit(userId: string, input: UpsertLimitInput): Promise<Limit> {
+  async upsertLimit(userId: string, input: UpsertLimitInput) {
     const [row] = await this.drizzle.db
       .insert(userLimit)
       .values({ userId, type: input.type, amount: input.amount, period: input.period })
@@ -97,7 +97,7 @@ export class ComplianceService {
     return { allowed: true, countryCode, reason: null };
   }
 
-  async addGeoRule(input: AddGeoRuleInput, actorId?: string): Promise<GeoRule> {
+  async addGeoRule(input: AddGeoRuleInput, actorId?: string) {
     const [row] = await this.drizzle.db
       .insert(geoRule)
       .values({ countryCode: input.countryCode, action: input.action })
@@ -114,7 +114,7 @@ export class ComplianceService {
     return serializeRow(row!, { dateFields: ['createdAt'] }) as GeoRule;
   }
 
-  async listGeoRules(): Promise<GeoRule[]> {
+  async listGeoRules() {
     const rows = await this.drizzle.db.select().from(geoRule);
     return rows.map((r) => serializeRow(r, { dateFields: ['createdAt'] }) as GeoRule);
   }

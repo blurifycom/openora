@@ -1,8 +1,8 @@
 // Uses drizzle-orm's migrator, NOT drizzle-kit (dev-only authoring tool). Each migration
-// set ships its compiled SQL in the package tarball (`files: ["drizzle"]`), so a
-// consumer runs migrations straight from node_modules with no source checkout.
-// The core history is shared by every core add-on; gated add-ons ship their own
-// `migrate` that calls `runMigrations` with their own tracking table. See ADR-0022/0020.
+// set ships its compiled SQL in the package tarball (the per-module `drizzle/` dirs land in
+// `dist/**` via copy-drizzle), so a consumer runs migrations straight from node_modules with
+// no source checkout. Every module owns its own journal + tracking table and calls
+// `runMigrations`; this file owns only the engine `outbox` set. See ADR-0022/0020/0027.
 import 'dotenv/config';
 import { fileURLToPath } from 'node:url';
 import { drizzle } from 'drizzle-orm/node-postgres';
@@ -18,6 +18,12 @@ export type RunMigrationsOptions = {
   migrationsSchema?: string;
   /** Override the DB url; defaults to DATABASE_ADMIN_URL ?? DATABASE_URL. */
   databaseUrl?: string;
+  /**
+   * Postgres extensions to `CREATE EXTENSION IF NOT EXISTS` before applying. drizzle-kit can't
+   * express extensions in schema, so a module whose index needs one (eg pg_trgm for a GIN
+   * trgm index) declares it here instead of hand-editing a regenerated migration.
+   */
+  extensions?: string[];
 };
 
 function migrateUrl(override?: string): string {
@@ -32,6 +38,10 @@ function migrateUrl(override?: string): string {
 export async function runMigrations(opts: RunMigrationsOptions): Promise<void> {
   const pool = new Pool({ connectionString: migrateUrl(opts.databaseUrl) });
   try {
+    for (const ext of opts.extensions ?? []) {
+      if (!/^[a-z0-9_]+$/.test(ext)) throw new Error(`Invalid extension name: ${ext}`);
+      await pool.query(`CREATE EXTENSION IF NOT EXISTS ${ext}`);
+    }
     const db = drizzle(pool, { casing: 'snake_case' });
     await drizzleMigrate(db, {
       migrationsFolder: opts.migrationsFolder,
@@ -43,12 +53,12 @@ export async function runMigrations(opts: RunMigrationsOptions): Promise<void> {
   }
 }
 
-/** Core migration set shared by all core add-ons, tracked in drizzle's default `__drizzle_migrations`. */
+/** Apply the engine `outbox` migration set (the only engine-owned table); domain modules ship their own `migrate`. */
 export function migrate(databaseUrl?: string): Promise<void> {
   return runMigrations({
-    // compiled to core/dist/server/db/migrate.js; migrations ship at the package root
-    // (core/drizzle/migrations), so climb out of dist/server/db.
-    migrationsFolder: fileURLToPath(new URL('../../../drizzle/migrations', import.meta.url)),
+    migrationsFolder: fileURLToPath(new URL('./outbox/drizzle/migrations', import.meta.url)),
+    migrationsTable: '__drizzle_migrations_outbox',
+    migrationsSchema: 'drizzle',
     ...(databaseUrl ? { databaseUrl } : {}),
   });
 }

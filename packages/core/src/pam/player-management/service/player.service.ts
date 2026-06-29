@@ -6,13 +6,7 @@ import { eq, ilike, count, or, and, gte, desc, sql } from 'drizzle-orm';
 // tables of its own. See ADR-0020.
 import { player } from '../../profile/schema/index.js';
 import { user } from '../../identity/schema/index.js';
-import type {
-  Player,
-  PlayerRegistrationPoint,
-  PlayerSummary,
-  PlayerStatus,
-  KycStatus,
-} from '../schemas/index.js';
+import type { Player, PlayerStatus, KycStatus } from '../schemas/index.js';
 
 export const PlayerNotFoundError = makeNotFoundError('Player');
 
@@ -46,7 +40,7 @@ export class PlayerService {
     private readonly events: EventBus,
   ) {}
 
-  private async emailFor(userId: string): Promise<string> {
+  private async emailFor(userId: string) {
     const [record] = await this.drizzle.db
       .select({ email: user.email })
       .from(user)
@@ -54,12 +48,7 @@ export class PlayerService {
     return record?.email ?? '';
   }
 
-  async list(
-    page: number,
-    limit: number,
-    search?: string,
-    status?: PlayerStatus,
-  ): Promise<{ items: Player[]; total: number; page: number; limit: number }> {
+  async list(page: number, limit: number, search?: string, status?: PlayerStatus) {
     const db = this.drizzle.db;
     const conditions = [];
     if (status) conditions.push(eq(player.status, status));
@@ -92,7 +81,7 @@ export class PlayerService {
     return { items, total: Number(n), page, limit };
   }
 
-  async get(playerId: string): Promise<Player> {
+  async get(playerId: string) {
     const record = findOneOrThrow(
       await this.drizzle.db.select().from(player).where(eq(player.id, playerId)),
       new PlayerNotFoundError(playerId),
@@ -117,7 +106,7 @@ export class PlayerService {
       level?: number;
     },
     actorId: string,
-  ): Promise<Player> {
+  ) {
     const existing = findOneOrThrow(
       await this.drizzle.db.select().from(player).where(eq(player.id, playerId)),
       new PlayerNotFoundError(playerId),
@@ -144,7 +133,7 @@ export class PlayerService {
     return toPlayer(record!, await this.emailFor(record!.userId));
   }
 
-  async remove(playerId: string): Promise<{ success: boolean }> {
+  async remove(playerId: string) {
     findOneOrThrow(
       await this.drizzle.db.select().from(player).where(eq(player.id, playerId)),
       new PlayerNotFoundError(playerId),
@@ -153,7 +142,7 @@ export class PlayerService {
     return { success: true };
   }
 
-  async registrationsOverTime(days = 30): Promise<PlayerRegistrationPoint[]> {
+  async registrationsOverTime(days = 30) {
     const since = new Date();
     since.setUTCHours(0, 0, 0, 0);
     since.setUTCDate(since.getUTCDate() - (days - 1));
@@ -172,7 +161,7 @@ export class PlayerService {
     });
   }
 
-  async summary(): Promise<PlayerSummary> {
+  async summary() {
     const weekAgo = new Date();
     weekAgo.setUTCDate(weekAgo.getUTCDate() - 7);
     const db = this.drizzle.db;

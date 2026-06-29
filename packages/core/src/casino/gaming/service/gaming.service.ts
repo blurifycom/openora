@@ -42,7 +42,7 @@ export class GamingService {
     private readonly provider: GameAdapter,
   ) {}
 
-  async listGames(): Promise<Game[]> {
+  async listGames() {
     const games = await this.drizzle.db
       .select()
       .from(game)
@@ -51,7 +51,7 @@ export class GamingService {
     return games.map(toGame);
   }
 
-  async getGame(id: string): Promise<Game> {
+  async getGame(id: string) {
     const record = findOneOrThrow(
       await this.drizzle.db.select().from(game).where(eq(game.id, id)),
       new GameNotFoundError(id),
@@ -59,11 +59,7 @@ export class GamingService {
     return toGame(record);
   }
 
-  async startRound(
-    userId: string,
-    gameId: string,
-    currency: string,
-  ): Promise<{ roundId: string; launchUrl: string; token: string }> {
+  async startRound(userId: string, gameId: string, currency: string) {
     await this.getGame(gameId);
 
     const { launchUrl, token } = await this.provider.launchGame(gameId, userId, currency);
@@ -110,7 +106,7 @@ export class GamingService {
     return { success: true };
   }
 
-  async getUserRounds(userId: string): Promise<GameRound[]> {
+  async getUserRounds(userId: string) {
     const rounds = await this.drizzle.db
       .select()
       .from(gameRound)

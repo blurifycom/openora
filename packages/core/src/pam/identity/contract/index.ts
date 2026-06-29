@@ -1,6 +1,7 @@
 import { oc } from '@orpc/contract';
 import {
   UserSchema,
+  UuidSchema,
   LoginInputSchema,
   RegisterInputSchema,
   Enable2faInputSchema,
@@ -92,4 +93,9 @@ export const identityContract = {
     .route({ method: 'PATCH', path: '/identity/profile' })
     .input(UpdateProfileInputSchema)
     .output(z.object({ user: UserSchema })),
+
+  unlockUser: oc
+    .route({ method: 'POST', path: '/identity/unlock' })
+    .input(z.object({ userId: UuidSchema }))
+    .output(IdentitySuccessSchema),
 };

@@ -9,8 +9,6 @@ import { DrizzleService, findOneOrThrow } from '@blurifycom/core/server';
 import { eq, desc, sql, and, gte, lte } from 'drizzle-orm';
 import { wallet, walletTransaction } from '../schema/index.js';
 import type {
-  WalletBalance,
-  WalletTransaction,
   TransactionResult,
   WithdrawalQueueItem,
   WithdrawalQueueFilter,
@@ -36,11 +34,12 @@ export const CurrencyMismatchError = createDomainError(
     `Currency mismatch: requested ${requested}, wallet holds ${walletCurrency}`,
 );
 
-// Crypto currencies route to the Fireblocks rail; everything else to a PSP.
+// Crypto currencies settle on the crypto rail (Fireblocks); everything else on the
+// fiat rail (a PSP). The concrete provider is recorded per transaction, not here.
 const CRYPTO_CURRENCIES = new Set(['BTC', 'ETH', 'USDT']);
 
 function railFor(currency: string): WalletRail {
-  return CRYPTO_CURRENCIES.has(currency.toUpperCase()) ? 'fireblocks' : 'psp';
+  return CRYPTO_CURRENCIES.has(currency.toUpperCase()) ? 'crypto' : 'fiat';
 }
 
 export class WalletService {
@@ -51,7 +50,7 @@ export class WalletService {
     private readonly directory?: AdminUserDirectory,
   ) {}
 
-  async getBalance(userId: string): Promise<WalletBalance> {
+  async getBalance(userId: string) {
     const [record] = await this.drizzle.db.select().from(wallet).where(eq(wallet.userId, userId));
 
     if (!record) {
@@ -90,7 +89,8 @@ export class WalletService {
           amount: amount.toString(),
           currency,
           status: 'completed',
-          metadata: JSON.stringify({ provider, externalId: psp.externalId }),
+          providerName: provider,
+          providerRefId: psp.externalId,
         })
         .returning();
 
@@ -160,9 +160,7 @@ export class WalletService {
     return { transactionId, status: 'pending' };
   }
 
-  async listPendingWithdrawals(
-    filters: WithdrawalQueueFilter,
-  ): Promise<{ items: WithdrawalQueueItem[]; total: number; page: number; limit: number }> {
+  async listPendingWithdrawals(filters: WithdrawalQueueFilter) {
     const db = this.drizzle.db;
     const { page, limit } = filters;
 
@@ -353,7 +351,7 @@ export class WalletService {
     return { transactionId: tx.id, status: 'rejected' };
   }
 
-  async getTransactions(userId: string): Promise<WalletTransaction[]> {
+  async getTransactions(userId: string) {
     const db = this.drizzle.db;
 
     const [walletRecord] = await db.select().from(wallet).where(eq(wallet.userId, userId));
@@ -376,7 +374,7 @@ export class WalletService {
     }));
   }
 
-  private async userIdForWallet(walletId: string): Promise<string> {
+  private async userIdForWallet(walletId: string) {
     const record = findOneOrThrow(
       await this.drizzle.db
         .select({ userId: wallet.userId })

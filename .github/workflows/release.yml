@@ -27,6 +27,12 @@ jobs:
     permissions:
       contents: read
       packages: write
+    env:
+      # The downstream consumer is identified ONLY by these secret VALUES - this repo
+      # is public, so nothing about it (host, project, branch) is committed here.
+      # Unset -> the trigger step is a no-op.
+      CONSUMER_TRIGGER_URL: ${{ secrets.CONSUMER_TRIGGER_URL }}
+      CONSUMER_TRIGGER_TOKEN: ${{ secrets.CONSUMER_TRIGGER_TOKEN }}
     steps:
       - uses: actions/checkout@v4
 
@@ -68,3 +74,19 @@ jobs:
           pnpm changeset publish --no-git-tag --tag "$CHANNEL"
         env:
           NODE_AUTH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      # Now that the new @blurifycom/* version is on the registry, ask the downstream
+      # consumer to open a bump MR. We POST its GitLab pipeline-trigger API (CONSUMER_*
+      # secrets) with the published version. Only the alpha channel (push to dev)
+      # auto-bumps the consumer dev branch; stage/prod bumps are promoted manually.
+      # The consumer CI (OSS_BUMP=true) owns the pin/lockfile/MR. No-op when unset.
+      - name: Trigger downstream consumer bump
+        if: env.CONSUMER_TRIGGER_URL != '' && github.ref == 'refs/heads/dev'
+        run: |
+          VERSION=$(node -p "require('./packages/core/package.json').version")
+          curl -sf -X POST "$CONSUMER_TRIGGER_URL" \
+            -F "token=$CONSUMER_TRIGGER_TOKEN" \
+            -F "ref=dev" \
+            -F "variables[OSS_BUMP]=true" \
+            -F "variables[OSS_VERSION]=$VERSION" \
+            -F "variables[OSS_BUMP_TARGET]=dev"

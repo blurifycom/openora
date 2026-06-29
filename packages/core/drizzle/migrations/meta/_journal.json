@@ -54,15 +54,50 @@
     {
       "idx": 7,
       "version": "7",
-      "when": 1782458839921,
-      "tag": "0007_cold_polaris",
+      "when": 1782400000000,
+      "tag": "0007_add_user_security_fields",
       "breakpoints": true
     },
     {
       "idx": 8,
       "version": "7",
-      "when": 1782466509867,
-      "tag": "0008_free_ulik",
+      "when": 1782514134375,
+      "tag": "0008_auth_timestamps_tz",
+      "breakpoints": true
+    },
+    {
+      "idx": 9,
+      "version": "7",
+      "when": 1782612657124,
+      "tag": "0009_easy_black_tom",
+      "breakpoints": true
+    },
+    {
+      "idx": 10,
+      "version": "7",
+      "when": 1782657639952,
+      "tag": "0010_domain_timestamptz_and_tx_currency_idx",
+      "breakpoints": true
+    },
+    {
+      "idx": 11,
+      "version": "7",
+      "when": 1782658950692,
+      "tag": "0011_player_search_trgm_gin",
+      "breakpoints": true
+    },
+    {
+      "idx": 12,
+      "version": "7",
+      "when": 1782659412049,
+      "tag": "0012_wallet_rail_settlement_category",
+      "breakpoints": true
+    },
+    {
+      "idx": 13,
+      "version": "7",
+      "when": 1782661759052,
+      "tag": "0013_tx_statuses_and_provider_columns",
       "breakpoints": true
     }
   ]

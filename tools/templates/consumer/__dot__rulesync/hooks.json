@@ -3,7 +3,8 @@
   "hooks": {
     "preToolUse": [
       { "type": "command", "command": "node .rulesync/hooks/guard-core.mjs" },
-      { "type": "command", "command": "node .rulesync/hooks/guard-generated.mjs" }
+      { "type": "command", "command": "node .rulesync/hooks/guard-generated.mjs" },
+      { "type": "command", "matcher": "Task", "command": "node .rulesync/hooks/guard-subagent.mjs" }
     ],
     "postToolUse": [{ "type": "command", "command": "node .rulesync/hooks/post-edit.mjs" }]
   }

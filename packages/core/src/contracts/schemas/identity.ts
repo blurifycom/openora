@@ -30,14 +30,16 @@ export const MemberSchema = z.object({
   createdAt: TimestampSchema,
 });
 
-export const LoginInputSchema = z.object({
+const credentialsBase = z.object({
   email: z.email(),
   password: z.string().min(8),
 });
 
-export const RegisterInputSchema = z.object({
-  email: z.email(),
-  password: z.string().min(8),
+export const LoginInputSchema = credentialsBase.extend({
+  rememberMe: z.boolean().optional(),
+});
+
+export const RegisterInputSchema = credentialsBase.extend({
   name: z.string().min(1).max(255),
 });
 

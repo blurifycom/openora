@@ -216,13 +216,13 @@ function buildPlaybook(
         moduleList,
         '',
         '## Playbook',
-        '1. Delegate to the `igaming-expert` agent: turn this ask into requirements + acceptance criteria (player lifecycle, edge cases, regulatory).',
+        '1. Delegate to the `expert` agent: turn this ask into requirements + acceptance criteria (player lifecycle, edge cases, regulatory).',
         '2. Pick a group + kebab-case name. Call `propose-table-change` for every table name you intend to add.',
         '3. Run `scaffold-module <group> <name>` (MCP tool). In a consumer repo, an overlay is `pnpm gen plugin` instead.',
         '4. Fill the `// AGENT: implement here` regions: src/schema (pgTable), src/schemas (Zod), src/service, src/router. Leave the wiring alone.',
         '5. Add routes with `scaffold-route <module> <METHOD> <path>`. Admin routes MUST `await this.adminGuard.assert(context)` first.',
         '6. Run `regen` (drizzle migration + OpenAPI + SDK + catalog), then `run-verify`.',
-        '7. Hand the build to `oss-module-author` (or `igaming-fullstack-dev`) with the spec from step 1.',
+        '7. Hand the build to `module-author` (or `dev`) with the spec from step 1.',
       ].join('\n');
     case 'adapter':
       return [
@@ -247,7 +247,7 @@ function buildPlaybook(
         '## Playbook',
         '1. Implement the page in your frontend repo using `@blurifycom/core/react` data hooks.',
         '2. To extend an existing surface without forking it, fill a named slot via your frontend UI plugin (ADR-0006).',
-        '3. Run `run-verify`. Delegate backend routes to `igaming-fullstack-dev`.',
+        '3. Run `run-verify`. Delegate backend routes to `dev`.',
       ].join('\n');
     case 'route':
       return [
@@ -1014,7 +1014,7 @@ server.registerTool(
 
     const role = [
       '## Your role',
-      'You are a requirements interviewer and orchestrator. Your one human-facing job is to collect thorough requirements from the user. Everything after - scaffolding, code, tests - you delegate to the agents (`igaming-expert` for requirements + AC, `oss-module-author` / `igaming-fullstack-dev` to build, `qa-engineer` to test) via the Task tool. Keep the user out of the loop after requirements are confirmed, except for genuine decisions only they can make.',
+      'You are a requirements interviewer and orchestrator. Your one human-facing job is to collect thorough requirements from the user. Everything after - scaffolding, code, tests - you delegate to the agents (`expert` for requirements + AC, `module-author` / `dev` to build, `qa` to test) via the Task tool. Keep the user out of the loop after requirements are confirmed, except for genuine decisions only they can make.',
     ].join('\n');
 
     if (ask) {

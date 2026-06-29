@@ -1,15 +1,15 @@
 import { ORPCError } from '@orpc/server';
 import { createAuth } from '@blurifycom/core/server';
-import { type EventBus } from '@blurifycom/core/server';
+import { type EventBus, type NodeHeaders } from '@blurifycom/core/server';
 import type { SendEmailPort } from '@blurifycom/core/contracts';
 import { DrizzleService } from '@blurifycom/core/server';
+import { eq, sql } from 'drizzle-orm';
 import { user, session, account, verification, twoFactor } from '../schema/index.js';
 import type { User } from '@blurifycom/core/contracts';
 import type {
   LoginInput,
   RegisterInput,
   Enable2faInput,
-  Enable2faResult,
   Verify2faInput,
   Disable2faInput,
   RequestPasswordResetInput,
@@ -18,9 +18,10 @@ import type {
   UpdateProfileInput,
   ChangePasswordInput,
   ChangeEmailInput,
+  IdentityServiceOptions,
 } from '@blurifycom/core/contracts';
 
-function nodeHeadersToHeaders(nodeHeaders: Record<string, string | string[] | undefined>): Headers {
+function nodeHeadersToHeaders(nodeHeaders: NodeHeaders): Headers {
   const headers = new Headers();
   for (const [key, value] of Object.entries(nodeHeaders)) {
     if (value === undefined) continue;
@@ -105,35 +106,59 @@ async function ensureOk(res: globalThis.Response): Promise<void> {
   throw new ORPCError(res.status === 401 ? 'UNAUTHORIZED' : 'BAD_REQUEST', { message });
 }
 
+const DEFAULT_MAX_LOGIN_ATTEMPTS = 5;
+const DEFAULT_LOCKOUT_DURATION_MS = 15 * 60 * 1000;
+// Mirrors better-auth session.expiresIn (server/auth/auth.ts); used only as a fallback
+// when the sign-in response omits an explicit session expiry.
+const SESSION_TTL_MS = 30 * 24 * 60 * 60 * 1000;
+
+/** Pure lockout decision: does this attempt count trip the lock, and until when. */
+function computeLockoutState(
+  attempts: number,
+  maxAttempts: number,
+  durationMs: number,
+  nowMs: number,
+) {
+  const isLocking = attempts >= maxAttempts;
+  return { isLocking, lockoutUntil: isLocking ? new Date(nowMs + durationMs) : null };
+}
+
+export type IdentityServiceDeps = {
+  drizzle: DrizzleService;
+  events: EventBus;
+  email?: SendEmailPort;
+  options?: IdentityServiceOptions;
+};
+
 export class IdentityService {
   private readonly auth: ReturnType<typeof createAuth>;
+  private readonly drizzle: DrizzleService;
+  private readonly events: EventBus;
+  private readonly email?: SendEmailPort;
+  private readonly options?: IdentityServiceOptions;
 
-  constructor(
-    private readonly drizzle: DrizzleService,
-    private readonly events: EventBus,
-    private readonly email?: SendEmailPort,
-  ) {
+  constructor({ drizzle, events, email, options }: IdentityServiceDeps) {
+    this.drizzle = drizzle;
+    this.events = events;
+    this.email = email;
+    this.options = options;
     this.auth = createAuth({
-      db: this.drizzle.db,
+      db: drizzle.db,
       schema: { user, session, account, verification, twoFactor },
       ...(email ? { sendEmail: (args) => email.send(args) } : {}),
     });
   }
 
-  private get api(): ExtendedAuthApi {
+  private get api() {
     return this.auth.api as unknown as ExtendedAuthApi;
   }
 
-  private async currentUserId(headers: Headers): Promise<string | null> {
+  private async currentUserId(headers: Headers) {
     const session = await this.auth.api.getSession({ headers });
     return session?.user?.id ?? null;
   }
 
-  async register(
-    input: RegisterInput,
-    reqHeaders: Record<string, string | string[] | undefined>,
-    resHeaders: Headers,
-  ) {
+  async register(input: RegisterInput, reqHeaders: NodeHeaders, resHeaders: Headers) {
     const headers = nodeHeadersToHeaders(reqHeaders);
     const authResponse = await this.auth.api.signUpEmail({
       body: { email: input.email, password: input.password, name: input.name },
@@ -147,41 +172,165 @@ export class IdentityService {
     return { user: toUser(body.user) };
   }
 
-  async login(
-    input: LoginInput,
-    reqHeaders: Record<string, string | string[] | undefined>,
-    resHeaders: Headers,
-  ) {
+  async login(input: LoginInput, reqHeaders: NodeHeaders, resHeaders: Headers) {
     const headers = nodeHeadersToHeaders(reqHeaders);
-    const authResponse = await this.auth.api.signInEmail({
-      body: { email: input.email, password: input.password },
-      headers,
-      asResponse: true,
-    });
-    await ensureOk(authResponse);
-    forwardCookies(authResponse, resHeaders);
-    const body = (await authResponse.json()) as {
-      user?: BetterAuthUser;
-      token?: string;
-      session?: { expiresAt: string | Date };
-      twoFactorRedirect?: boolean;
-    };
+    const ip =
+      headers.get('x-forwarded-for')?.split(',')[0]?.trim() || headers.get('x-real-ip') || null;
+    const userAgent = headers.get('user-agent') || null;
+    // better-auth lowercases emails on write, so the lockout lookup must match on the same form.
+    const email = input.email.toLowerCase();
 
-    if (body.twoFactorRedirect || !body.user || !body.token) {
-      return { twoFactorRedirect: true };
+    const lockoutEnabled = this.options?.lockout?.enabled ?? true;
+    let existingUser:
+      | Pick<typeof user.$inferSelect, 'id' | 'failedLoginAttempts' | 'lockoutUntil'>
+      | undefined;
+
+    if (lockoutEnabled) {
+      const [dbUser] = await this.drizzle.db
+        .select({
+          id: user.id,
+          failedLoginAttempts: user.failedLoginAttempts,
+          lockoutUntil: user.lockoutUntil,
+        })
+        .from(user)
+        .where(eq(user.email, email))
+        .limit(1);
+      existingUser = dbUser;
+
+      if (existingUser?.lockoutUntil) {
+        if (new Date(existingUser.lockoutUntil) > new Date()) {
+          throw new ORPCError('UNAUTHORIZED', {
+            message: 'Account is temporarily locked. Please try again later.',
+            data: { lockoutUntil: existingUser.lockoutUntil.toISOString() },
+          });
+        }
+        // Lock window elapsed: clear it so the next failure starts from a fresh budget
+        // instead of one more wrong password immediately re-locking the account.
+        await this.clearLockout(existingUser.id);
+        existingUser = { ...existingUser, failedLoginAttempts: 0, lockoutUntil: null };
+      }
     }
 
-    this.events.emit('identity.user.login', { userId: body.user.id });
-    const expiresAt = body.session?.expiresAt
-      ? toIso(body.session.expiresAt)
-      : new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString();
-    return {
-      user: toUser(body.user),
-      session: { token: body.token, expiresAt },
-    };
+    try {
+      const authResponse = await this.auth.api.signInEmail({
+        body: { email, password: input.password, rememberMe: input.rememberMe },
+        headers,
+        asResponse: true,
+      });
+      await ensureOk(authResponse);
+      forwardCookies(authResponse, resHeaders);
+      const body = (await authResponse.json()) as {
+        user?: BetterAuthUser;
+        token?: string;
+        session?: { expiresAt: string | Date };
+        twoFactorRedirect?: boolean;
+      };
+
+      if (body.twoFactorRedirect || !body.user || !body.token) {
+        return { twoFactorRedirect: true };
+      }
+
+      if (lockoutEnabled && existingUser) {
+        await this.clearLockout(existingUser.id);
+      }
+
+      this.events.emit('identity.user.login', { userId: body.user.id, ip, userAgent });
+      const expiresAt = body.session?.expiresAt
+        ? toIso(body.session.expiresAt)
+        : new Date(Date.now() + SESSION_TTL_MS).toISOString();
+      return {
+        user: toUser(body.user),
+        session: { token: body.token, expiresAt },
+      };
+    } catch (error) {
+      // Only a genuine credential rejection counts toward lockout - a transient DB/network
+      // error must never lock the account out.
+      const isCredentialFailure = error instanceof ORPCError && error.code === 'UNAUTHORIZED';
+
+      if (lockoutEnabled && existingUser && isCredentialFailure) {
+        const maxAttempts = this.options?.lockout?.maxAttempts ?? DEFAULT_MAX_LOGIN_ATTEMPTS;
+        const durationMs = this.options?.lockout?.durationMs ?? DEFAULT_LOCKOUT_DURATION_MS;
+        // Atomic increment: concurrent failures can't each read a stale count and slip past
+        // the threshold (the read-modify-write this replaces was bypassable under load).
+        const [row] = await this.drizzle.db
+          .update(user)
+          .set({ failedLoginAttempts: sql`${user.failedLoginAttempts} + 1` })
+          .where(eq(user.id, existingUser.id))
+          .returning({ failedLoginAttempts: user.failedLoginAttempts });
+        const newAttempts = row?.failedLoginAttempts ?? existingUser.failedLoginAttempts + 1;
+        const { isLocking, lockoutUntil } = computeLockoutState(
+          newAttempts,
+          maxAttempts,
+          durationMs,
+          Date.now(),
+        );
+
+        if (isLocking && lockoutUntil) {
+          await this.drizzle.db
+            .update(user)
+            .set({ lockoutUntil })
+            .where(eq(user.id, existingUser.id));
+
+          this.events.emit('identity.user.lockout.triggered', {
+            userId: existingUser.id,
+            email,
+            lockoutUntil: lockoutUntil.toISOString(),
+            ip,
+            userAgent,
+          });
+
+          throw new ORPCError('UNAUTHORIZED', {
+            message: 'Account is temporarily locked. Please try again later.',
+            data: { lockoutUntil: lockoutUntil.toISOString() },
+          });
+        }
+      }
+
+      const reason = isCredentialFailure ? 'invalid_credentials' : 'error';
+      this.events.emit('identity.user.login.failed', { email, reason, ip, userAgent });
+      throw error;
+    }
   }
 
-  async logout(reqHeaders: Record<string, string | string[] | undefined>, resHeaders: Headers) {
+  private clearLockout(userId: string) {
+    return this.drizzle.db
+      .update(user)
+      .set({ failedLoginAttempts: 0, lockoutUntil: null })
+      .where(eq(user.id, userId));
+  }
+
+  async unlockUser(userId: string, actorId: string) {
+    const [existingUser] = await this.drizzle.db
+      .select({
+        id: user.id,
+        email: user.email,
+        failedLoginAttempts: user.failedLoginAttempts,
+        lockoutUntil: user.lockoutUntil,
+      })
+      .from(user)
+      .where(eq(user.id, userId))
+      .limit(1);
+
+    if (!existingUser) {
+      throw new ORPCError('NOT_FOUND', { message: 'User not found' });
+    }
+
+    await this.clearLockout(userId);
+
+    this.events.emit('identity.user.unlocked', {
+      userId,
+      email: existingUser.email,
+      actorId,
+      previousFailedAttempts: existingUser.failedLoginAttempts,
+      previousLockoutUntil: existingUser.lockoutUntil
+        ? existingUser.lockoutUntil.toISOString()
+        : null,
+    });
+
+    return SUCCESS;
+  }
+
+  async logout(reqHeaders: NodeHeaders, resHeaders: Headers) {
     const headers = nodeHeadersToHeaders(reqHeaders);
     // Resolve the user BEFORE signOut so the audit log can attribute the logout.
     const session = await this.auth.api.getSession({ headers });
@@ -192,18 +341,14 @@ export class IdentityService {
     return SUCCESS;
   }
 
-  async me(reqHeaders: Record<string, string | string[] | undefined>): Promise<User | null> {
+  async me(reqHeaders: NodeHeaders) {
     const headers = nodeHeadersToHeaders(reqHeaders);
     const session = await this.auth.api.getSession({ headers });
     if (!session?.user) return null;
     return toUser(session.user as BetterAuthUser);
   }
 
-  async enableTwoFactor(
-    input: Enable2faInput,
-    reqHeaders: Record<string, string | string[] | undefined>,
-    resHeaders: Headers,
-  ): Promise<Enable2faResult> {
+  async enableTwoFactor(input: Enable2faInput, reqHeaders: NodeHeaders, resHeaders: Headers) {
     const headers = nodeHeadersToHeaders(reqHeaders);
     const res = await this.api.enableTwoFactor({
       body: { password: input.password },
@@ -216,11 +361,7 @@ export class IdentityService {
     return { totpUri: body.totpURI, backupCodes: body.backupCodes };
   }
 
-  async verifyTwoFactor(
-    input: Verify2faInput,
-    reqHeaders: Record<string, string | string[] | undefined>,
-    resHeaders: Headers,
-  ) {
+  async verifyTwoFactor(input: Verify2faInput, reqHeaders: NodeHeaders, resHeaders: Headers) {
     const headers = nodeHeadersToHeaders(reqHeaders);
     const res = await this.api.verifyTOTP({
       body: { code: input.code },
@@ -234,11 +375,7 @@ export class IdentityService {
     return SUCCESS;
   }
 
-  async disableTwoFactor(
-    input: Disable2faInput,
-    reqHeaders: Record<string, string | string[] | undefined>,
-    resHeaders: Headers,
-  ) {
+  async disableTwoFactor(input: Disable2faInput, reqHeaders: NodeHeaders, resHeaders: Headers) {
     const headers = nodeHeadersToHeaders(reqHeaders);
     const userId = await this.currentUserId(headers);
     const res = await this.api.disableTwoFactor({
@@ -276,15 +413,15 @@ export class IdentityService {
     });
     await ensureOk(res);
     const body = (await res.json().catch(() => ({}))) as { user?: { id: string } };
-    if (body.user?.id) this.events.emit('identity.password.reset', { userId: body.user.id });
+    if (body.user?.id) {
+      this.events.emit('identity.password.reset', { userId: body.user.id });
+      // Password reset clears any lockout - the user has proven identity via email/phone.
+      await this.clearLockout(body.user.id);
+    }
     return SUCCESS;
   }
 
-  async changePassword(
-    input: ChangePasswordInput,
-    reqHeaders: Record<string, string | string[] | undefined>,
-    resHeaders: Headers,
-  ) {
+  async changePassword(input: ChangePasswordInput, reqHeaders: NodeHeaders, resHeaders: Headers) {
     const headers = nodeHeadersToHeaders(reqHeaders);
     const res = await this.api.changePassword({
       body: { currentPassword: input.currentPassword, newPassword: input.newPassword },
@@ -296,7 +433,7 @@ export class IdentityService {
     return SUCCESS;
   }
 
-  async sendEmailVerification(reqHeaders: Record<string, string | string[] | undefined>) {
+  async sendEmailVerification(reqHeaders: NodeHeaders) {
     const headers = nodeHeadersToHeaders(reqHeaders);
     const session = await this.auth.api.getSession({ headers });
     const email = session?.user?.email;
@@ -306,10 +443,7 @@ export class IdentityService {
     return SUCCESS;
   }
 
-  async verifyEmail(
-    input: VerifyEmailInput,
-    reqHeaders: Record<string, string | string[] | undefined>,
-  ) {
+  async verifyEmail(input: VerifyEmailInput, reqHeaders: NodeHeaders) {
     const headers = nodeHeadersToHeaders(reqHeaders);
     const res = await this.api.verifyEmail({
       query: { token: input.token },
@@ -322,11 +456,7 @@ export class IdentityService {
     return SUCCESS;
   }
 
-  async changeEmail(
-    input: ChangeEmailInput,
-    reqHeaders: Record<string, string | string[] | undefined>,
-    resHeaders: Headers,
-  ) {
+  async changeEmail(input: ChangeEmailInput, reqHeaders: NodeHeaders, resHeaders: Headers) {
     const headers = nodeHeadersToHeaders(reqHeaders);
     const res = await this.api.changeEmail({
       body: { newEmail: input.newEmail },
@@ -338,11 +468,7 @@ export class IdentityService {
     return SUCCESS;
   }
 
-  async updateProfile(
-    input: UpdateProfileInput,
-    reqHeaders: Record<string, string | string[] | undefined>,
-    resHeaders: Headers,
-  ): Promise<{ user: User }> {
+  async updateProfile(input: UpdateProfileInput, reqHeaders: NodeHeaders, resHeaders: Headers) {
     const headers = nodeHeadersToHeaders(reqHeaders);
     const body: { name?: string; image?: string | null } = {};
     if (input.name !== undefined) body.name = input.name;

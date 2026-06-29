@@ -8,8 +8,7 @@ import { DrizzleService } from '../db/index.js';
 import { sql } from 'drizzle-orm';
 import { SessionResolver } from './session-resolver.js';
 import { roles, type ResourceName, type ActionOf } from './permissions.js';
-
-type RequestLike = { headers: Record<string, string | string[] | undefined> };
+import type { OssContext } from '../kernel/index.js';
 
 export const ADMIN_GUARD: Token<AdminGuard> = createToken('ADMIN_GUARD');
 
@@ -33,7 +32,7 @@ export class AdminGuard {
     resource?: R,
     action?: ActionOf<R>,
   ): Promise<{ userId: string; role: string }> {
-    const request = (context as { request?: RequestLike }).request;
+    const request = (context as { request?: OssContext['request'] }).request;
     if (!request || typeof request.headers !== 'object') {
       throw new ORPCError('UNAUTHORIZED', { message: 'Missing request context' });
     }
