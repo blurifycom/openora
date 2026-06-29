@@ -39,13 +39,15 @@ const OSS_MCP = {
   },
 };
 
-function consumerMcp(ossRel: string) {
+function consumerMcp() {
   return {
     mcpServers: {
       oss: {
         type: 'stdio',
-        command: 'pnpm',
-        args: ['exec', 'tsx', `${ossRel}/packages/mcp/src/main.ts`],
+        // Resolved from node_modules (works with a local link: or a published install) -
+        // @blurifycom/mcp ships its built dist + bundled catalog.json, so no platform checkout.
+        command: 'node',
+        args: ['node_modules/@blurifycom/mcp/dist/main.js'],
       },
     },
   };
@@ -60,7 +62,7 @@ function main(): void {
   const mcpPath = join(target, '.mcp.json');
   let mcp = readJson<{ mcpServers?: Record<string, unknown> }>(mcpPath, {});
   if (!mcp.mcpServers || Object.keys(mcp.mcpServers).length === 0) {
-    mcp = isOss ? OSS_MCP : consumerMcp(ossRel);
+    mcp = isOss ? OSS_MCP : consumerMcp();
     writeJson(mcpPath, mcp);
     log.push(`wrote .mcp.json (${isOss ? 'oss-dev' : 'oss'} server)`);
   } else {

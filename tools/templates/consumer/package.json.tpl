@@ -18,6 +18,7 @@
     "gen": "turbo gen"
   },
   "devDependencies": {
+    "@blurifycom/mcp": "link:{{ossFromRoot}}/packages/mcp",
     "@turbo/gen": "2.9.14",
     "@types/node": "25.9.0",
     "oxlint": "1.64.0",

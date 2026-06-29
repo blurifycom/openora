@@ -5,6 +5,7 @@ packages:
 # Pins every @blurifycom/* import - including transitive ones - to the linked checkout.
 overrides:
   '@blurifycom/core': 'link:{{ossFromRoot}}/packages/core'
+  '@blurifycom/mcp': 'link:{{ossFromRoot}}/packages/mcp'
 
 allowBuilds:
   esbuild: true
