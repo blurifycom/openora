@@ -1,17 +1,16 @@
 #!/usr/bin/env node
 
+// Wires the oss-dev MCP server into this platform repo's .mcp.json + trusts it in
+// .claude/settings.json. OSS-repo only: scaffolded consumers ship their own .mcp.json
+// (pointing at node_modules/@blurifycom/mcp) via `pnpm create:app`, so there is no
+// consumer --target path here anymore.
+
 import { readFileSync, writeFileSync, existsSync, mkdirSync } from 'node:fs';
-import { join, dirname, resolve, relative, sep } from 'node:path';
+import { join, dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const here = dirname(fileURLToPath(import.meta.url));
 const ossRoot = resolve(here, '..');
-
-function parseTarget(argv: string[]): string {
-  const args = argv.slice(2);
-  const i = args.indexOf('--target');
-  return i >= 0 && args[i + 1] ? resolve(process.cwd(), args[i + 1]!) : ossRoot;
-}
 
 function readJson<T>(p: string, fallback: T): T {
   if (!existsSync(p)) return fallback;
@@ -27,8 +26,6 @@ function writeJson(p: string, data: unknown): void {
   writeFileSync(p, `${JSON.stringify(data, null, 2)}\n`);
 }
 
-const posix = (p: string): string => p.split(sep).join('/');
-
 const OSS_MCP = {
   mcpServers: {
     'oss-dev': {
@@ -39,42 +36,24 @@ const OSS_MCP = {
   },
 };
 
-function consumerMcp() {
-  return {
-    mcpServers: {
-      oss: {
-        type: 'stdio',
-        // Resolved from node_modules (works with a local link: or a published install) -
-        // @blurifycom/mcp ships its built dist + bundled catalog.json, so no platform checkout.
-        command: 'node',
-        args: ['node_modules/@blurifycom/mcp/dist/main.js'],
-      },
-    },
-  };
-}
-
 function main(): void {
-  const target = parseTarget(process.argv);
-  const isOss = target === ossRoot;
-  const ossRel = posix(relative(target, ossRoot)) || '..';
   const log: string[] = [];
 
-  const mcpPath = join(target, '.mcp.json');
+  const mcpPath = join(ossRoot, '.mcp.json');
   let mcp = readJson<{ mcpServers?: Record<string, unknown> }>(mcpPath, {});
   if (!mcp.mcpServers || Object.keys(mcp.mcpServers).length === 0) {
-    mcp = isOss ? OSS_MCP : consumerMcp();
+    mcp = OSS_MCP;
     writeJson(mcpPath, mcp);
-    log.push(`wrote .mcp.json (${isOss ? 'oss-dev' : 'oss'} server)`);
+    log.push('wrote .mcp.json (oss-dev server)');
   } else {
     log.push(`.mcp.json present (servers: ${Object.keys(mcp.mcpServers).join(', ')})`);
   }
   const serverNames = Object.keys(mcp.mcpServers ?? {});
 
-  const settingsPath = join(target, '.claude', 'settings.json');
+  const settingsPath = join(ossRoot, '.claude', 'settings.json');
   const settings = readJson<{
     enabledMcpjsonServers?: string[];
     enableAllProjectMcpServers?: boolean;
-    permissions?: { deny?: string[]; [k: string]: unknown };
     [k: string]: unknown;
   }>(settingsPath, {});
   let changed = false;
@@ -90,40 +69,12 @@ function main(): void {
     changed = true;
   }
 
-  if (!isOss) {
-    const wanted = [
-      'Edit(./node_modules/**)',
-      'Write(./node_modules/**)',
-      `Edit(${ossRel}/**)`,
-      `Write(${ossRel}/**)`,
-    ];
-    settings.permissions ??= {};
-    const deny = new Set(settings.permissions.deny ?? []);
-    for (const d of wanted)
-      if (!deny.has(d)) {
-        deny.add(d);
-        changed = true;
-      }
-    settings.permissions.deny = [...deny];
-  }
-
   if (changed) {
     settings.enabledMcpjsonServers = [...enabled];
     writeJson(settingsPath, settings);
-    log.push(
-      `updated .claude/settings.json (trust: ${[...enabled].join(', ')}${isOss ? '' : ' + core-edit guardrail'})`,
-    );
+    log.push(`updated .claude/settings.json (trust: ${[...enabled].join(', ')})`);
   } else {
     log.push('.claude/settings.json already up to date');
-  }
-
-  if (!isOss) {
-    const rulesyncCfg = join(target, 'rulesync.jsonc');
-    if (existsSync(rulesyncCfg)) {
-      log.push(
-        'run `pnpm sync:agents` in your repo to regenerate CLAUDE.md + agent files from .rulesync/',
-      );
-    }
   }
 
   console.log('\n  MCP setup');
