@@ -5,7 +5,6 @@ import { playerContract } from '../contract/index.js';
 import {
   PlayerService,
   PlayerNotFoundError,
-  DuplicateEmailError,
 } from '../service/player.service.js';
 
 export function createPlayerRouter(player: PlayerService, adminGuard: AdminGuard) {
