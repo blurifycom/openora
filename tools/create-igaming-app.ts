@@ -111,7 +111,7 @@ function main(): void {
 
   console.log(`\n  Creating ${name} at ${targetDir}`);
   console.log(`  headless api-only consumer (frontend lives in your own repo)`);
-  console.log(`  Linking @blurifycom/* from ${vars.ossFromRoot}\n`);
+  console.log(`  Installs @blurifycom/* from GitHub Packages (.npmrc) - no platform checkout\n`);
 
   emitTree(templateRoot, vars, targetDir);
 
@@ -119,10 +119,10 @@ function main(): void {
   Done. Next steps:
 
     cd ${posix(relative(process.cwd(), targetDir)) || '.'}
-    pnpm install            # also generates the agent files (CLAUDE.md / AGENTS.md / .codex/config.toml / Copilot) from .rulesync/ via the prepare hook
-    pnpm build:oss          # build the linked @blurifycom/* packages once
+    export GITHUB_PACKAGES_TOKEN=<your token>   # read:packages scope - .npmrc reads it
+    pnpm install            # pulls @blurifycom/* from GitHub Packages + generates agent files
     cp .env.example .env     # then set DATABASE_URL / AUTH_SECRET
-    pnpm db:migrate          # apply the OSS schema to your database
+    pnpm db:migrate          # apply the schema - runs from node_modules
     pnpm dev                 # api :3001
 
   Add features with turbo gen:
@@ -130,8 +130,9 @@ function main(): void {
     pnpm gen plugin          # new overlay plugin
     pnpm gen adapter         # swap a vendor adapter (KYC / payment / notification)
 
-  This is a headless api. Build your frontend in its own repo and consume the
-  api over HTTP with @blurifycom/core/react.
+  MCP is preconfigured (.mcp.json -> node_modules/@blurifycom/mcp). Launch Claude
+  Code and run /start. This is a headless api - build your frontend in this repo
+  and consume the api over HTTP with @blurifycom/core/react.
 `);
 }
 

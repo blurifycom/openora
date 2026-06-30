@@ -4,9 +4,7 @@
   "permissions": {
     "deny": [
       "Edit(./node_modules/**)",
-      "Write(./node_modules/**)",
-      "Edit({{ossFromRoot}}/**)",
-      "Write({{ossFromRoot}}/**)"
+      "Write(./node_modules/**)"
     ]
   },
   "hooks": {

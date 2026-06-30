@@ -33,6 +33,10 @@ jobs:
       # Unset -> the trigger step is a no-op.
       CONSUMER_TRIGGER_URL: ${{ secrets.CONSUMER_TRIGGER_URL }}
       CONSUMER_TRIGGER_TOKEN: ${{ secrets.CONSUMER_TRIGGER_TOKEN }}
+      # The example demo deploy (separate GitLab repo -> Railway). Identified ONLY by
+      # these secret VALUES; unset -> the trigger step is a no-op.
+      EXAMPLE_DEPLOY_TRIGGER_URL: ${{ secrets.EXAMPLE_DEPLOY_TRIGGER_URL }}
+      EXAMPLE_DEPLOY_TRIGGER_TOKEN: ${{ secrets.EXAMPLE_DEPLOY_TRIGGER_TOKEN }}
     steps:
       - uses: actions/checkout@v4
 
@@ -81,6 +85,9 @@ jobs:
       # auto-bumps the consumer dev branch; stage/prod bumps are promoted manually.
       # The consumer CI (OSS_BUMP=true) owns the pin/lockfile/MR. No-op when unset.
       - name: Trigger downstream consumer bump
+        # Best-effort fire-and-forget - a trigger error must not fail the release
+        # (publish already succeeded) or block later trigger steps.
+        continue-on-error: true
         if: env.CONSUMER_TRIGGER_URL != '' && github.ref == 'refs/heads/dev'
         run: |
           VERSION=$(node -p "require('./packages/core/package.json').version")
@@ -90,3 +97,18 @@ jobs:
             -F "variables[OSS_BUMP]=true" \
             -F "variables[OSS_VERSION]=$VERSION" \
             -F "variables[OSS_BUMP_TARGET]=dev"
+
+      # Redeploy the public example demo (separate GitLab repo -> Railway). That repo
+      # builds its own app against the published core; we pass the new version so its
+      # pipeline bumps the @blurifycom/core pin and `railway up`s. Only on the alpha
+      # channel (push to dev). No-op when the secrets are unset.
+      - name: Trigger example demo deploy
+        continue-on-error: true
+        if: env.EXAMPLE_DEPLOY_TRIGGER_URL != '' && github.ref == 'refs/heads/dev'
+        run: |
+          VERSION=$(node -p "require('./packages/core/package.json').version")
+          curl -sf -X POST "$EXAMPLE_DEPLOY_TRIGGER_URL" \
+            -F "token=$EXAMPLE_DEPLOY_TRIGGER_TOKEN" \
+            -F "ref=main" \
+            -F "variables[DEPLOY]=true" \
+            -F "variables[OSS_VERSION]=$VERSION"
