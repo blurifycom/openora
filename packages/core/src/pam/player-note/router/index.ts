@@ -1,5 +1,5 @@
 import { implement } from '@orpc/server';
-import { AdminGuard, getUserId, type OssContext } from '@blurifycom/core/server';
+import { AdminGuard, type OssContext } from '@blurifycom/core/server';
 import { playerNoteContract } from '../contract/index.js';
 import { PlayerNoteService } from '../service/player-note.service.js';
 
