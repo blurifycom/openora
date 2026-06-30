@@ -25,6 +25,7 @@ export const PlayerTagWithTagSchema = playerTagSchema.extend({
   tag: z.object({
     key: z.string(),
     name: z.string(),
+    color: z.string(),
     description: z.string().nullable().optional(),
   }),
 });

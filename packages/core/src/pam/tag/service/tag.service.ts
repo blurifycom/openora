@@ -23,9 +23,9 @@ type RemoveInput = {
 
 function toWithTag(
   pt: typeof playerTag.$inferSelect,
-  t: { key: string; name: string; description?: string | null },
+  t: { key: string; name: string; color: string; description?: string | null },
 ): PlayerTagWithTag {
-  return { ...pt, tag: { key: t.key, name: t.name, description: t.description } };
+  return { ...pt, tag: { key: t.key, name: t.name, color: t.color, description: t.description } };
 }
 
 export class TagService {
@@ -71,6 +71,7 @@ export class TagService {
           pt: playerTag,
           tagKey: tag.key,
           tagName: tag.name,
+          tagColor: tag.color,
           tagDescription: tag.description,
         })
         .from(playerTag)
@@ -82,7 +83,12 @@ export class TagService {
     ]);
     return {
       items: rows.map((r) =>
-        toWithTag(r.pt, { key: r.tagKey, name: r.tagName, description: r.tagDescription }),
+        toWithTag(r.pt, {
+          key: r.tagKey,
+          name: r.tagName,
+          color: r.tagColor,
+          description: r.tagDescription,
+        }),
       ),
       total: Number(n),
       page,
