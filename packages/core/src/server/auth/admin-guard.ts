@@ -42,7 +42,6 @@ export class AdminGuard {
       if (v === undefined) continue;
       headers.set(k, Array.isArray(v) ? v.join(', ') : v);
     }
-    console.log(headers); // NOT FOR DEV
     const userId = await this.sessions.resolveUserId(headers);
     if (!userId) {
       throw new ORPCError('UNAUTHORIZED', { message: 'Authentication required' });

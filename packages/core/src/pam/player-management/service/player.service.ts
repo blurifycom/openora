@@ -1,12 +1,13 @@
-import { makeNotFoundError, type EventBus } from '@blurifycom/core/server';
+import { makeNotFoundError, makeConflictError, type EventBus } from '@blurifycom/core/server';
 import { DrizzleService, findOneOrThrow, pageToOffset } from '@blurifycom/core/server';
-import { eq, ilike, count, or, and, gte, desc, sql } from 'drizzle-orm';
+import { eq, ilike, count, or, and, gte, desc, sql, ne } from 'drizzle-orm';
 import { player } from '../../profile/schema/index.js';
 import { user } from '../../identity/schema/index.js';
 import type { PlayerStatus, KycStatus } from '../schemas/index.js';
 import { toPlayer, fetchEmail } from '../../shared/player-mapper.js';
 
 export const PlayerNotFoundError = makeNotFoundError('Player');
+export const DuplicateEmailError = makeConflictError('DuplicateEmail', 'Email is already in use');
 
 function toDateKey(d: Date): string {
   return d.toISOString().slice(0, 10);
@@ -74,6 +75,7 @@ export class PlayerService {
       status?: PlayerStatus;
       kycStatus?: KycStatus;
       level?: number;
+      email?: string;
     },
     actorId: string,
   ) {
@@ -81,16 +83,34 @@ export class PlayerService {
       await this.drizzle.db.select().from(player).where(eq(player.id, playerId)),
       new PlayerNotFoundError(playerId),
     );
+
+    if (data.email !== undefined) {
+      const clash = await this.drizzle.db
+        .select({ id: user.id })
+        .from(user)
+        .where(and(eq(user.email, data.email), ne(user.id, existing.userId)))
+        .limit(1);
+      if (clash.length > 0) throw new DuplicateEmailError();
+    }
+
     const patch: Partial<typeof player.$inferInsert> = {};
     if (data.displayName !== undefined) patch.displayName = data.displayName;
     if (data.status !== undefined) patch.status = data.status;
     if (data.kycStatus !== undefined) patch.kycStatus = data.kycStatus;
     if (data.level !== undefined) patch.level = data.level;
-    const [record] = await this.drizzle.db
-      .update(player)
-      .set(patch)
-      .where(eq(player.id, playerId))
-      .returning();
+
+    const record = await this.drizzle.db.transaction(async (trx) => {
+      if (data.email !== undefined) {
+        await trx.update(user).set({ email: data.email }).where(eq(user.id, existing.userId));
+      }
+      const [updated] = await trx
+        .update(player)
+        .set(patch)
+        .where(eq(player.id, playerId))
+        .returning();
+      return updated!;
+    });
+
     // Audit KYC transitions (regulatory). Emit AFTER commit, only on a real change.
     if (data.kycStatus !== undefined && data.kycStatus !== existing.kycStatus) {
       this.events.emit('compliance.kyc.updated', {
@@ -100,7 +120,7 @@ export class PlayerService {
         previousStatus: existing.kycStatus,
       });
     }
-    return toPlayer(record!, await fetchEmail(this.drizzle, record!.userId));
+    return toPlayer(record, await fetchEmail(this.drizzle, record.userId));
   }
 
   async remove(playerId: string) {

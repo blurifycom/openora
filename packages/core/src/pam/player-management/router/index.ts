@@ -2,7 +2,11 @@ import { implement } from '@orpc/server';
 import { AdminGuard } from '@blurifycom/core/server';
 import { mapErrors, type OssContext } from '@blurifycom/core/server';
 import { playerContract } from '../contract/index.js';
-import { PlayerService, PlayerNotFoundError } from '../service/player.service.js';
+import {
+  PlayerService,
+  PlayerNotFoundError,
+  DuplicateEmailError,
+} from '../service/player.service.js';
 
 export function createPlayerRouter(player: PlayerService, adminGuard: AdminGuard) {
   const os = implement(playerContract).$context<OssContext>();

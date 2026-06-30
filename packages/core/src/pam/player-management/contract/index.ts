@@ -53,6 +53,7 @@ export const playerContract = populateContractRouterPaths({
         status: PlayerStatusSchema.optional(),
         kycStatus: KycStatusSchema.optional(),
         level: z.number().int().min(0).max(100).optional(),
+        email: z.email().optional(),
       }),
     )
     .output(PlayerSchema),
