@@ -1,31 +1,29 @@
-import { DrizzleService, DrizzleTx, EventBus, pageToOffset } from '@blurifycom/core/server';
+import {
+  DrizzleService,
+  DrizzleTx,
+  EventBus,
+  makeNotFoundError,
+  pageToOffset,
+} from '@blurifycom/core/server';
 import { and, count, eq, isNull } from 'drizzle-orm';
-import { CreateTagInput, DeleteTagInput, Tag, TagAssignSource } from '@blurifycom/core/contracts';
+import {
+  AssignPlayerTagInput,
+  CreateTagInput,
+  DeleteTagInput,
+  RemovePlayerTagInput,
+  Tag,
+} from '@blurifycom/core/contracts';
 import { playerTag, tag } from '../schema/index.js';
 import { PlayerTagWithTag } from '../contract/index.js';
 import { mapDbError } from '../../../common/errors/index.js';
 
-type AssignInput = {
-  playerId: string;
-  tagKey: string;
-  assignReason: string;
-  assignActor: TagAssignSource;
-  assignActorUserId: string;
-};
-
-type RemoveInput = {
-  playerId: string;
-  tagKey: string;
-  removalReason: string;
-  removalActor: TagAssignSource;
-  removalActorUserId: string;
-};
+export const TagNotFoundError = makeNotFoundError('Tag');
 
 function toWithTag(
   pt: typeof playerTag.$inferSelect,
-  t: { key: string; name: string; color: string; description?: string | null },
+  t: Pick<Tag, 'key' | 'color'>,
 ): PlayerTagWithTag {
-  return { ...pt, tag: { key: t.key, name: t.name, color: t.color, description: t.description } };
+  return { ...pt, tag: { key: t.key, color: t.color } };
 }
 
 export class TagService {
@@ -37,7 +35,7 @@ export class TagService {
   private async _findTagByKeyOrThrow(tagKey: string, trx: DrizzleTx): Promise<Tag> {
     const results = await trx.select().from(tag).where(eq(tag.key, tagKey)).limit(1);
     if (!results.length) {
-      throw new Error(`Tag with key: ${tagKey} does not exist`);
+      throw new TagNotFoundError(tagKey);
     }
     return results[0];
   }
@@ -70,9 +68,7 @@ export class TagService {
         .select({
           pt: playerTag,
           tagKey: tag.key,
-          tagName: tag.name,
           tagColor: tag.color,
-          tagDescription: tag.description,
         })
         .from(playerTag)
         .innerJoin(tag, eq(playerTag.tagId, tag.id))
@@ -82,21 +78,14 @@ export class TagService {
       db.select({ n: count() }).from(playerTag).where(where),
     ]);
     return {
-      items: rows.map((r) =>
-        toWithTag(r.pt, {
-          key: r.tagKey,
-          name: r.tagName,
-          color: r.tagColor,
-          description: r.tagDescription,
-        }),
-      ),
+      items: rows.map((r) => toWithTag(r.pt, { key: r.tagKey, color: r.tagColor })),
       total: Number(n),
       page,
       limit,
     };
   }
 
-  public async assignPlayerTag(args: AssignInput): Promise<PlayerTagWithTag> {
+  public async assignPlayerTag(args: AssignPlayerTagInput): Promise<PlayerTagWithTag> {
     try {
       const { tagKey, ...restArgs } = args;
       const db = this.drizzle.db;
@@ -127,7 +116,7 @@ export class TagService {
     }
   }
 
-  public async removePlayerTag(args: RemoveInput): Promise<PlayerTagWithTag> {
+  public async removePlayerTag(args: RemovePlayerTagInput): Promise<PlayerTagWithTag> {
     try {
       const db = this.drizzle.db;
       return await db.transaction(async (trx) => {

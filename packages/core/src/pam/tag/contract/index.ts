@@ -22,12 +22,7 @@ export {
 const tagAssignRemoveSourceSchema = z.enum(tagAssignRemoveSource);
 
 export const PlayerTagWithTagSchema = playerTagSchema.extend({
-  tag: z.object({
-    key: z.string(),
-    name: z.string(),
-    color: z.string(),
-    description: z.string().nullable().optional(),
-  }),
+  tag: tagSchema.pick({ key: true, color: true }),
 });
 export type PlayerTagWithTag = z.infer<typeof PlayerTagWithTagSchema>;
 

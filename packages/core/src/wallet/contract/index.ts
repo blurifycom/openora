@@ -43,7 +43,7 @@ export const TransactionResultSchema = z.object({
 });
 
 export const ListPlayerTransactionsArgs = PageQuerySchema.extend({
-  userId: z.string(),
+  userId: z.uuid(),
 });
 
 export const WithdrawalQueueItemSchema = z.object({

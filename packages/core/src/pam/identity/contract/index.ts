@@ -27,8 +27,8 @@ const SessionSchema = z.object({
 const SessionItemSchema = z.object({
   id: z.string(),
   token: z.string(),
-  expiresAt: z.string(),
-  createdAt: z.string(),
+  expiresAt: z.iso.datetime(),
+  createdAt: z.iso.datetime(),
   ipAddress: z.string().nullable().optional(),
   userAgent: z.string().nullable().optional(),
 });

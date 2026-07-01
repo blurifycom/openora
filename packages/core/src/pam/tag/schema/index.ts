@@ -9,9 +9,7 @@ export const tag = pgTable(
   {
     id: uuid('id').primaryKey().defaultRandom(),
     key: text('key').notNull().unique(),
-    name: text('name').notNull(),
     color: text('color').notNull(),
-    description: text('description'),
     isSticky: boolean('is_sticky').notNull().default(false),
     updatedAt: timestamp('updated_at', { withTimezone: true })
       .notNull()

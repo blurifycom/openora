@@ -9,36 +9,22 @@ export type TagAssignSource = z.infer<typeof tagAssignRemoveSourceSchema>;
 export const tagSchema = z.object({
   id: z.uuid(),
   key: z.string().trim().min(1),
-  name: z.string().trim().min(1),
   color: z.string().regex(hexColorRegex),
-  description: z.string().nullable().optional(),
   isSticky: z.boolean().default(false),
   createdAt: z.coerce.date(),
   updatedAt: z.coerce.date(),
 });
 export type Tag = z.infer<typeof tagSchema>;
 
-export const createTagSchema = z.object({
-  key: z.string().trim().min(1),
-  name: z.string().trim().min(1),
-  color: z.string().regex(hexColorRegex),
-  description: z.string().nullable().optional(),
-  isSticky: z.boolean().optional(),
-});
+export const createTagSchema = tagSchema.omit({ id: true, createdAt: true, updatedAt: true });
 export type CreateTagInput = z.infer<typeof createTagSchema>;
 
-export const updateTagSchema = z.object({
-  key: z.string().trim().min(1),
-  name: z.string().trim().min(1).optional(),
-  color: z.string().regex(hexColorRegex).optional(),
-  description: z.string().nullable().optional(),
-  isSticky: z.boolean().optional(),
-});
+export const updateTagSchema = tagSchema
+  .omit({ id: true, createdAt: true, updatedAt: true })
+  .partial({ color: true });
 export type UpdateTagInput = z.infer<typeof updateTagSchema>;
 
-export const deleteTagSchema = z.object({
-  key: z.string().trim().min(1),
-});
+export const deleteTagSchema = tagSchema.pick({ key: true });
 export type DeleteTagInput = z.infer<typeof deleteTagSchema>;
 
 export const playerTagSchema = z.object({
@@ -57,17 +43,15 @@ export const playerTagSchema = z.object({
 });
 export type PlayerTag = z.infer<typeof playerTagSchema>;
 
-export const assignPlayerTagSchema = z.object({
-  playerId: z.uuid(),
-  tagKey: z.uuid(),
-  assignReason: z.string().min(5),
-  assignActor: tagAssignRemoveSourceSchema,
-  assignActorUserId: z.uuid(),
-});
+export const assignPlayerTagSchema = playerTagSchema
+  .pick({ playerId: true, assignActor: true, assignActorUserId: true })
+  .extend({
+    tagKey: z.uuid(),
+    assignReason: z.string().min(5),
+  });
 export type AssignPlayerTagInput = z.infer<typeof assignPlayerTagSchema>;
 
-export const removePlayerTagSchema = z.object({
-  playerId: z.uuid(),
+export const removePlayerTagSchema = playerTagSchema.pick({ playerId: true }).extend({
   tagKey: z.uuid(),
   removalReason: z.string().min(5),
   removalActor: tagAssignRemoveSourceSchema,

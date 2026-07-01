@@ -13,9 +13,7 @@ export async function seedTags(db: DrizzleDb): Promise<void> {
     .onConflictDoUpdate({
       target: tag.key,
       set: {
-        name: sql`excluded.name`,
         color: sql`excluded.color`,
-        description: sql`excluded.description`,
         isSticky: sql`excluded."is_sticky"`,
         updatedAt: sql`now()`,
       },

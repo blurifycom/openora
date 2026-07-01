@@ -20,8 +20,5 @@
 
   // --- Search/editor niceties ---
   "search.smartCase": true,
-  "markdown.updateLinksOnFileMove.enabled": "always",
-  "[typescript]": {
-    "editor.defaultFormatter": "vscode.typescript-language-features"
-  }
+  "markdown.updateLinksOnFileMove.enabled": "always"
 }
