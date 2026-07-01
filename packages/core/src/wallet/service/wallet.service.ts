@@ -330,7 +330,6 @@ export class WalletService {
         .where(eq(walletTransaction.id, withdrawalId))
         .returning();
 
-      // Return the held funds to the player's balance.
       await txn
         .update(wallet)
         .set({ balance: sql`${wallet.balance} + ${updated!.amount}` })

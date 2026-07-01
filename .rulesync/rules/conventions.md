@@ -289,7 +289,10 @@ Each rule carries a short example: `// bad` is the smell, `// good` the conventi
 
 ## 5. Comments and documentation
 
-- **Comment WHY, never WHAT.** Delete comments that restate a name or the obvious line.
+- **Default to zero comments.** Delete comments that restate a name or the obvious line. Only
+  add one when the code isn't straightforward from reading it alone - it needs deeper
+  architectural context (why this module, why this order, why not the obvious approach), or
+  it's implicit (a hidden constraint, an invariant, a bug workaround - link it, a trade-off).
 
   ```ts
   // bad
@@ -301,7 +304,6 @@ Each rule carries a short example: `// bad` is the smell, `// good` the conventi
   const rounded = bankersRound(amount);
   ```
 
-- **Comment the non-obvious:** hidden constraint, invariant, bug workaround (link it), trade-off.
 - **If a block needs a comment to be understood, rename/extract first.**
 
   ```ts

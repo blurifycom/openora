@@ -13,7 +13,7 @@ export class Container {
 
   register<T>(token: Token<T>, factory: Factory<T>): void {
     this.factories.set(token, factory as Factory<unknown>);
-    this.instances.delete(token); // drop any cached instance from a prior binding
+    this.instances.delete(token);
   }
 
   has(token: Token<unknown>): boolean {
