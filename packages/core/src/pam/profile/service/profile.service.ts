@@ -1,4 +1,5 @@
-import { DrizzleService } from '@blurifycom/core/server';
+import { DrizzleService, createDomainError } from '@blurifycom/core/server';
+import type { PlatformConfig } from '@blurifycom/core/contracts';
 import { eq } from 'drizzle-orm';
 import { player } from '../schema/index.js';
 import { user } from '../../identity/schema/index.js';
@@ -8,6 +9,11 @@ import type {
   KycStatus,
   UpdatePlayerProfileInput,
 } from '../schemas/index.js';
+
+export const UnsupportedLanguageError = createDomainError<[lang: string]>(
+  'UnsupportedLanguageError',
+  (lang) => `Unsupported language: ${lang}`,
+);
 
 function toPlayer(p: typeof player.$inferSelect, email: string): Player {
   return {
@@ -30,7 +36,10 @@ function toPlayer(p: typeof player.$inferSelect, email: string): Player {
 }
 
 export class ProfileService {
-  constructor(private readonly drizzle: DrizzleService) {}
+  constructor(
+    private readonly drizzle: DrizzleService,
+    private readonly platformConfig?: PlatformConfig,
+  ) {}
 
   private async emailFor(userId: string) {
     const [record] = await this.drizzle.db
@@ -65,6 +74,15 @@ export class ProfileService {
   }
 
   async updateMyProfile(userId: string, data: UpdatePlayerProfileInput) {
+    const supportedLanguages = this.platformConfig?.supportedLanguages;
+    if (
+      data.language !== undefined &&
+      supportedLanguages &&
+      supportedLanguages.length > 0 &&
+      !supportedLanguages.includes(data.language)
+    ) {
+      throw new UnsupportedLanguageError(data.language);
+    }
     await this.ensureProfile(userId);
     const patch: Partial<typeof player.$inferInsert> = {};
     if (data.displayName !== undefined) patch.displayName = data.displayName;
