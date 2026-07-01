@@ -19,7 +19,7 @@ core feature. It owns the **whole development + delivery cycle** end to end.
 ## The full cycle (what this skill guarantees)
 
 ```
-1 context collection  ->  2 plan + approval  ->  3 implement  ->  4 unit/integration tests
+1 context collection (+ GRILL)  ->  2 plan + approval  ->  3 implement  ->  4 unit/integration tests
 ->  5 prepare e2e test cases  ->  6 e2e tests  ->  7 fix loop  ->  8 verify/regen
 ->  9 create-pr (push-gated)  ->  10 reviewers  ->  11 Jira transition (ONLY if user asks)  ->  12 Slack notice
 ```
@@ -58,6 +58,25 @@ acceptance), then gather context in parallel:
 | Architecture rules  | `.claude/rules/clean-architecture.md`, `messaging-and-microservices.md`, `CLAUDE.md`                                      |
 | Codebase            | `oss-dev` MCP + Explore - find the exact modules/contracts/seams to touch                                                 |
 | Slack / Confluence  | search the BF key + title for prior design discussion                                                                     |
+
+#### 1a. Grill the user before planning (MANDATORY)
+
+Tickets under-specify. After the read-only context pass and BEFORE writing the plan, **grill the
+user** to surface every decision that changes the build - never assume a default silently. Use
+`AskUserQuestion` (batch up to 4 per call, multiple rounds) and keep going until nothing material
+is unresolved. Each option leads with your recommendation + the trade-off. Cover, at minimum:
+
+- **Scope edges** - what's explicitly in vs out; which struck-through / "later" ACs stay out.
+- **Domain & seam placement** - which module owns it; which ports/tokens to bind or reuse; any
+  boundary (`no-cross-domain`/`no-cross-addon`) risk in the chosen placement.
+- **Data model forks** - enum expansion vs additive; history vs current-record; nullable/defaults.
+- **Real-world / regulatory** - jurisdiction, gating, idempotency, audit actor/resource, retention.
+- **Reuse vs build** - existing helper/port/route that already covers part of it (don't duplicate).
+- **In-flight collisions** - another ticket/agent touching the same files (coordinate first).
+- **Config surface** - what belongs in `platform-config` vs code; per-currency/brand granularity.
+
+Fold every answer into the plan's "Locked decisions". A plan that hides an unasked assumption is
+not ready - grilling is part of the read-only gate, not optional polish.
 
 ### 2. Plan + approval (the gate)
 
@@ -147,6 +166,8 @@ PR/task name as a link. NOT a multi-paragraph summary. e.g. `👉 RBAC backend -
 
 ## Rules
 
+- **Grill before you plan** (step 1a) - exhaust the material unknowns via `AskUserQuestion`; never
+  bury an unasked assumption in the plan. Still read-only.
 - Read-only until the plan is approved.
 - Never push without an explicit per-action "yes push".
 - `/pre-pr` (verify + drift) must be green before push; `/regen` after any contract/schema change.
