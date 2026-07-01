@@ -4,11 +4,9 @@ import {
   NOTIFICATION_DELIVERY_ADAPTER,
   SEND_EMAIL,
   IDENTITY_OPTIONS,
+  type SendEmailPort,
 } from '@blurifycom/core/contracts';
-import type { SendEmailPort } from '@blurifycom/core/contracts';
-import { definePlugin, ADMIN_GUARD } from '@blurifycom/core/server';
-import { EVENT_BUS } from '@blurifycom/core/server';
-import { DRIZZLE } from '@blurifycom/core/server';
+import { definePlugin, ADMIN_GUARD, EVENT_BUS, DRIZZLE } from '@blurifycom/core/server';
 import { MockKycAdapter } from './adapters/mock/mock-kyc-adapter.js';
 import { DrizzleAdminUserDirectory } from './admin-user-directory.js';
 import { createIdentityRouter } from './router/index.js';

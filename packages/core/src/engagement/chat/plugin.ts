@@ -1,7 +1,5 @@
-import { definePlugin } from '@blurifycom/core/server';
-import { EVENT_BUS } from '@blurifycom/core/server';
+import { definePlugin, EVENT_BUS, DRIZZLE } from '@blurifycom/core/server';
 import { REALTIME_TRANSPORT, REALTIME_CLIENT_AUTHORIZER } from '@blurifycom/core/contracts';
-import { DRIZZLE } from '@blurifycom/core/server';
 import { ChatService } from './service/chat.service.js';
 import { createChatRouter } from './router/index.js';
 

@@ -1,8 +1,5 @@
-import { definePlugin } from '@blurifycom/core/server';
+import { definePlugin, EVENT_BUS, DRIZZLE, ADMIN_GUARD } from '@blurifycom/core/server';
 import { GEO_IP_ADAPTER } from '@blurifycom/core/contracts';
-import { EVENT_BUS } from '@blurifycom/core/server';
-import { DRIZZLE } from '@blurifycom/core/server';
-import { ADMIN_GUARD } from '@blurifycom/core/server';
 import { ComplianceService } from './service/compliance.service.js';
 import { createComplianceRouter } from './router/index.js';
 

@@ -1,6 +1,11 @@
-import { type EventBus, createDomainError, assertOwnership } from '@blurifycom/core/server';
+import {
+  type EventBus,
+  createDomainError,
+  assertOwnership,
+  DrizzleService,
+  findOneOrThrow,
+} from '@blurifycom/core/server';
 import type { RealtimeTransport } from '@blurifycom/core/contracts';
-import { DrizzleService, findOneOrThrow } from '@blurifycom/core/server';
 import { eq, and, isNull, lt, desc, asc, notInArray } from 'drizzle-orm';
 // Sanctioned read-only cross-module table read (display name lives in identity).
 // The username shown on a message is resolved server-side from the verified user,

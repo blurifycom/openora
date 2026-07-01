@@ -1,5 +1,4 @@
-import { definePlugin } from '@blurifycom/core/server';
-import { DRIZZLE } from '@blurifycom/core/server';
+import { definePlugin, DRIZZLE } from '@blurifycom/core/server';
 import { LobbyService } from './service/lobby.service.js';
 import { createLobbyRouter } from './router/index.js';
 

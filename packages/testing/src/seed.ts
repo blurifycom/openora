@@ -1,9 +1,7 @@
 import { Pool } from 'pg';
 import { drizzle } from 'drizzle-orm/node-postgres';
 import { seedDemoData, type SeedResult } from './seed-demo-data.js';
-import { createAuth } from '@blurifycom/core/server';
-import { DRIZZLE, type DrizzleDb } from '@blurifycom/core/server';
-import type { Container } from '@blurifycom/core/server';
+import { createAuth, DRIZZLE, type DrizzleDb, type Container } from '@blurifycom/core/server';
 import { seedRoles } from '@blurifycom/core/iam/seed';
 import { user, session, account, verification } from '@blurifycom/core/pam/schema/identity';
 

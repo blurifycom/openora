@@ -1,7 +1,4 @@
-import { definePlugin } from '@blurifycom/core/server';
-import { EVENT_BUS } from '@blurifycom/core/server';
-import { DRIZZLE } from '@blurifycom/core/server';
-import { ADMIN_GUARD } from '@blurifycom/core/server';
+import { definePlugin, EVENT_BUS, DRIZZLE, ADMIN_GUARD } from '@blurifycom/core/server';
 import { PlayerService } from './service/player.service.js';
 import { createPlayerRouter } from './router/index.js';
 

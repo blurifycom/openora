@@ -1,7 +1,5 @@
-import { definePlugin } from '@blurifycom/core/server';
+import { definePlugin, EVENT_BUS, DRIZZLE } from '@blurifycom/core/server';
 import { GAME_ADAPTER, RNG_ADAPTER } from '@blurifycom/core/contracts';
-import { EVENT_BUS } from '@blurifycom/core/server';
-import { DRIZZLE } from '@blurifycom/core/server';
 import { GamingService } from './service/gaming.service.js';
 import { createGamingRouter } from './router/index.js';
 import { MockGameAdapter } from './adapters/mock/mock-game-adapter.js';

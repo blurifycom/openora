@@ -1,7 +1,4 @@
-import { definePlugin } from '@blurifycom/core/server';
-import { EVENT_BUS } from '@blurifycom/core/server';
-import { DRIZZLE } from '@blurifycom/core/server';
-import { ADMIN_GUARD } from '@blurifycom/core/server';
+import { definePlugin, EVENT_BUS, DRIZZLE, ADMIN_GUARD } from '@blurifycom/core/server';
 import { ADMIN_PERMISSION_RESOLVER, SEND_EMAIL } from '@blurifycom/core/contracts';
 import { IamService, DbAdminPermissionResolver } from './service/iam.service.js';
 import { createIamRouter } from './router/index.js';
