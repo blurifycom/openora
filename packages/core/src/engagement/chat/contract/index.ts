@@ -1,6 +1,6 @@
 import { oc, eventIterator } from '@orpc/contract';
 import * as z from 'zod';
-import { IdInputSchema, UuidSchema } from '@blurifycom/core/contracts';
+import { IdInputSchema, TimestampSchema, UuidSchema } from '@blurifycom/core/contracts';
 
 export const MAX_MESSAGE_LENGTH = 500;
 
@@ -11,7 +11,7 @@ export const ChatRoomSchema = z.object({
   name: z.string(),
   slug: z.string(),
   isPublic: z.boolean(),
-  createdAt: z.iso.datetime(),
+  createdAt: TimestampSchema,
 });
 
 export const ChatMessageSchema = z.object({
@@ -24,12 +24,12 @@ export const ChatMessageSchema = z.object({
   // HTML-escape it - never inject it as raw HTML. See moderation/sanitize-urls.ts.
   content: z.string(),
   isDeleted: z.boolean(),
-  createdAt: z.iso.datetime(),
+  createdAt: TimestampSchema,
 });
 
 export const BlockedUserSchema = z.object({
   blockedId: UuidSchema,
-  createdAt: z.iso.datetime(),
+  createdAt: TimestampSchema,
 });
 
 // `.loose()` keeps this an open union so a managed-vendor overlay (eg Ably) can return extra fields without a contract change.

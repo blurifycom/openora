@@ -16,8 +16,11 @@ import {
 import { playerTag, tag } from '../schema/index.js';
 import { PlayerTagWithTag } from '../contract/index.js';
 import { mapDbError } from '../../../common/errors/index.js';
+import { alreadyInUseError } from '../../../server/kernel/domain-error.js';
 
 export const TagNotFoundError = makeNotFoundError('Tag');
+export const TagAlreadyInUseError = alreadyInUseError('Tag');
+export const TagAssignmentNotFoundError = makeNotFoundError('Tag Assignment');
 
 function toWithTag(
   pt: typeof playerTag.$inferSelect,
@@ -103,7 +106,7 @@ export class TagService {
           )
           .limit(1);
         if (existing) {
-          throw new Error(`Tag already assigned to player`);
+          throw new TagAlreadyInUseError();
         }
         const [created] = await trx
           .insert(playerTag)
@@ -133,7 +136,7 @@ export class TagService {
           )
           .limit(1);
         if (!active) {
-          throw new Error(`Active tag assignment not found`);
+          throw new TagAssignmentNotFoundError(args.playerId);
         }
         const [updated] = await trx
           .update(playerTag)

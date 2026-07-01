@@ -1,6 +1,6 @@
 import { oc } from '@orpc/contract';
 import * as z from 'zod';
-import { IdInputSchema, UuidSchema } from '@blurifycom/core/contracts';
+import { IdInputSchema, TimestampSchema, UuidSchema } from '@blurifycom/core/contracts';
 
 export const PageSchema = z.object({
   id: UuidSchema,
@@ -8,7 +8,7 @@ export const PageSchema = z.object({
   title: z.string(),
   content: z.unknown(),
   publishedAt: z.string().nullable(),
-  createdAt: z.iso.datetime(),
+  createdAt: TimestampSchema,
 });
 
 export const BannerSchema = z.object({
@@ -19,7 +19,7 @@ export const BannerSchema = z.object({
   linkUrl: z.string().nullable(),
   isActive: z.boolean(),
   sortOrder: z.number(),
-  createdAt: z.iso.datetime(),
+  createdAt: TimestampSchema,
 });
 
 export const cmsContract = {

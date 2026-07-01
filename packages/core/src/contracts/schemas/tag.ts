@@ -1,4 +1,5 @@
 import z from 'zod';
+import { UuidSchema } from './common.js';
 
 export const tagAssignRemoveSource = ['scheduled', 'manual'] as const;
 export const hexColorRegex = /^#[0-9A-Fa-f]{6}$/;
@@ -7,7 +8,7 @@ const tagAssignRemoveSourceSchema = z.enum(tagAssignRemoveSource);
 export type TagAssignSource = z.infer<typeof tagAssignRemoveSourceSchema>;
 
 export const tagSchema = z.object({
-  id: z.uuid(),
+  id: UuidSchema,
   key: z.string().trim().min(1),
   color: z.string().regex(hexColorRegex),
   isSticky: z.boolean().default(false),
@@ -28,16 +29,16 @@ export const deleteTagSchema = tagSchema.pick({ key: true });
 export type DeleteTagInput = z.infer<typeof deleteTagSchema>;
 
 export const playerTagSchema = z.object({
-  id: z.uuid(),
-  playerId: z.uuid(),
-  tagId: z.uuid(),
+  id: UuidSchema,
+  playerId: UuidSchema,
+  tagId: UuidSchema,
   assignReason: z.string(),
   assignActor: tagAssignRemoveSourceSchema,
-  assignActorUserId: z.uuid(),
+  assignActorUserId: UuidSchema,
   removedAt: z.coerce.date().nullable(),
   removalReason: z.string().nullable(),
   removalActor: tagAssignRemoveSourceSchema.nullable(),
-  removalActorUserId: z.uuid().nullable(),
+  removalActorUserId: UuidSchema.nullable(),
   createdAt: z.coerce.date(),
   updatedAt: z.coerce.date(),
 });
@@ -46,15 +47,15 @@ export type PlayerTag = z.infer<typeof playerTagSchema>;
 export const assignPlayerTagSchema = playerTagSchema
   .pick({ playerId: true, assignActor: true, assignActorUserId: true })
   .extend({
-    tagKey: z.uuid(),
+    tagKey: UuidSchema,
     assignReason: z.string().min(5),
   });
 export type AssignPlayerTagInput = z.infer<typeof assignPlayerTagSchema>;
 
 export const removePlayerTagSchema = playerTagSchema.pick({ playerId: true }).extend({
-  tagKey: z.uuid(),
+  tagKey: UuidSchema,
   removalReason: z.string().min(5),
   removalActor: tagAssignRemoveSourceSchema,
-  removalActorUserId: z.uuid(),
+  removalActorUserId: UuidSchema,
 });
 export type RemovePlayerTagInput = z.infer<typeof removePlayerTagSchema>;

@@ -15,6 +15,7 @@ import {
   ChangePasswordInputSchema,
   ChangeEmailInputSchema,
   IdentitySuccessSchema,
+  TimestampSchema,
 } from '@blurifycom/core/contracts';
 import { PageQuerySchema, paginated } from '@blurifycom/core/contracts/kit';
 import * as z from 'zod';
@@ -27,8 +28,8 @@ const SessionSchema = z.object({
 const SessionItemSchema = z.object({
   id: z.string(),
   token: z.string(),
-  expiresAt: z.iso.datetime(),
-  createdAt: z.iso.datetime(),
+  expiresAt: TimestampSchema,
+  createdAt: TimestampSchema,
   ipAddress: z.string().nullable().optional(),
   userAgent: z.string().nullable().optional(),
 });

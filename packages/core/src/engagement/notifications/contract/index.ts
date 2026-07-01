@@ -1,6 +1,6 @@
 import { oc } from '@orpc/contract';
 import * as z from 'zod';
-import { IdInputSchema, UuidSchema } from '@blurifycom/core/contracts';
+import { IdInputSchema, TimestampSchema, UuidSchema } from '@blurifycom/core/contracts';
 
 export const NotificationSchema = z.object({
   id: UuidSchema,
@@ -9,7 +9,7 @@ export const NotificationSchema = z.object({
   title: z.string(),
   body: z.string(),
   readAt: z.string().nullable(),
-  createdAt: z.iso.datetime(),
+  createdAt: TimestampSchema,
 });
 
 export const notificationsContract = {

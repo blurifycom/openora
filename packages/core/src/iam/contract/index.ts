@@ -1,9 +1,9 @@
 import { oc } from '@orpc/contract';
 import * as z from 'zod';
-import { UuidSchema } from '@blurifycom/core/contracts';
+import { PermissionLevelSchema, TimestampSchema, UuidSchema } from '@blurifycom/core/contracts';
 import { PageQuerySchema, paginated } from '@blurifycom/core/contracts/kit';
 
-export const PermissionLevelSchema = z.enum(['no_access', 'read', 'read_write']);
+export { PermissionLevelSchema } from '@blurifycom/core/contracts';
 
 export const AdminRoleSchema = z.object({
   id: UuidSchema,
@@ -13,7 +13,7 @@ export const AdminRoleSchema = z.object({
   name: z.string(),
   isSystem: z.boolean(),
   isSuperAdmin: z.boolean(),
-  createdAt: z.iso.datetime(),
+  createdAt: TimestampSchema,
 });
 
 // A missing module entry means no_access; only non-no_access cells are stored.
@@ -30,7 +30,7 @@ export const AdminRoleAssignmentSchema = z.object({
   id: UuidSchema,
   userId: UuidSchema,
   roleId: UuidSchema,
-  createdAt: z.iso.datetime(),
+  createdAt: TimestampSchema,
 });
 
 export const AdminRoleAssignmentDetailSchema = AdminRoleAssignmentSchema.extend({
@@ -46,7 +46,7 @@ export const AdminInvitationSchema = z.object({
   status: z.enum(['pending', 'accepted', 'revoked']),
   expiresAt: z.string(),
   acceptedAt: z.string().nullable(),
-  createdAt: z.iso.datetime(),
+  createdAt: TimestampSchema,
 });
 
 export const CatalogEntrySchema = z.object({

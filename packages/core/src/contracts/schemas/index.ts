@@ -1,5 +1,6 @@
 export * from './common.js';
 export * from './identity.js';
+export * from './iam.js';
 export * from './player.js';
 export * from './wallet-tx.js';
 export * from './igaming-config.js';

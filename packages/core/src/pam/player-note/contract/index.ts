@@ -4,9 +4,9 @@ import { PageQuerySchema, paginated } from '@blurifycom/core/contracts/kit';
 import z from 'zod';
 
 export const PlayerNoteSchema = z.object({
-  id: z.uuid(),
-  playerId: z.uuid(),
-  actorId: z.uuid(),
+  id: UuidSchema,
+  playerId: UuidSchema,
+  actorId: UuidSchema,
   content: z.string(),
   createdAt: TimestampSchema,
   updatedAt: TimestampSchema,

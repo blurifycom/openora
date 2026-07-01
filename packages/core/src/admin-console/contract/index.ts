@@ -3,6 +3,7 @@ import * as z from 'zod';
 import {
   CurrencyCodeSchema,
   KycStatusSchema,
+  TimestampSchema,
   UserIdInputSchema,
   UuidSchema,
   WalletRailSchema,
@@ -37,11 +38,11 @@ export const AdminUserSchema = z.object({
   id: UuidSchema,
   email: z.email(),
   name: z.string().nullable(),
-  createdAt: z.iso.datetime(),
+  createdAt: TimestampSchema,
   isActive: z.boolean(),
   role: z.string(),
   failedLoginAttempts: z.number().int().optional(),
-  lockoutUntil: z.iso.datetime().nullable().optional(),
+  lockoutUntil: TimestampSchema.nullable().optional(),
 });
 
 export const TransactionFilterSchema = PageQuerySchema.extend({
@@ -50,8 +51,8 @@ export const TransactionFilterSchema = PageQuerySchema.extend({
   currency: CurrencyCodeSchema.optional(),
   rail: WalletRailSchema.optional(),
   status: WalletTransactionStatusSchema.optional(),
-  dateFrom: z.iso.datetime().optional(),
-  dateTo: z.iso.datetime().optional(),
+  dateFrom: TimestampSchema.optional(),
+  dateTo: TimestampSchema.optional(),
   amountMin: z.number().nonnegative().optional(),
   amountMax: z.number().nonnegative().optional(),
   player: PlayerSearchSchema.optional(),
@@ -68,7 +69,7 @@ export const AdminTransactionSchema = z.object({
   status: WalletTransactionStatusSchema,
   rail: WalletRailSchema.nullable(),
   playerEmail: PlayerEmailSchema.nullable(),
-  createdAt: z.iso.datetime(),
+  createdAt: TimestampSchema,
 });
 
 export const AdminTransactionDetailSchema = AdminTransactionSchema.extend({
@@ -77,7 +78,7 @@ export const AdminTransactionDetailSchema = AdminTransactionSchema.extend({
   providerRefId: z.string().nullable(),
   providerName: z.string().nullable(),
   reviewedBy: z.string().nullable(),
-  reviewedAt: z.iso.datetime().nullable(),
+  reviewedAt: TimestampSchema.nullable(),
   reviewReason: z.string().nullable(),
 });
 
