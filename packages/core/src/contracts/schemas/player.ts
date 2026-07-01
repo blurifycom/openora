@@ -1,6 +1,6 @@
 // Shared player schemas the player-management add-on derives from. See ADR-0021.
 import * as z from 'zod';
-import { UuidSchema } from './common.js';
+import { TimestampSchema, UuidSchema } from './common.js';
 
 export const PlayerStatusSchema = z.enum([
   'active',
@@ -26,7 +26,7 @@ export const PlayerSchema = z.object({
   totalWagered: z.number(),
   totalDeposits: z.number(),
   lastSeenAt: z.string().nullable(),
-  createdAt: z.iso.datetime(),
+  createdAt: TimestampSchema,
   updatedAt: z.string(),
 });
 
