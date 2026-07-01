@@ -103,12 +103,8 @@ export class PlayerService {
       if (data.email !== undefined) {
         await trx.update(user).set({ email: data.email }).where(eq(user.id, existing.userId));
       }
-      const [updated] = await trx
-        .update(player)
-        .set(patch)
-        .where(eq(player.id, playerId))
-        .returning();
-      return updated!;
+      const rows = await trx.update(player).set(patch).where(eq(player.id, playerId)).returning();
+      return findOneOrThrow(rows, new PlayerNotFoundError(playerId));
     });
 
     // Audit KYC transitions (regulatory). Emit AFTER commit, only on a real change.

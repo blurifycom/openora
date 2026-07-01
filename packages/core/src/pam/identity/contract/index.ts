@@ -25,7 +25,7 @@ const SessionSchema = z.object({
   expiresAt: z.string(),
 });
 
-const SessionItemSchema = z.object({
+export const SessionItemSchema = z.object({
   id: z.string(),
   token: z.string(),
   expiresAt: TimestampSchema,
@@ -33,6 +33,7 @@ const SessionItemSchema = z.object({
   ipAddress: z.string().nullable().optional(),
   userAgent: z.string().nullable().optional(),
 });
+export type SessionItem = z.infer<typeof SessionItemSchema>;
 
 export const identityContract = {
   register: oc

@@ -2,19 +2,7 @@ import { ORPCError } from '@orpc/server';
 import { type EventBus, DrizzleService, pageToOffset } from '@blurifycom/core/server';
 import { eq, desc, and, gt, count, sql } from 'drizzle-orm';
 import { session } from '../schema/index.js';
-
-function toIso(value: Date | string): string {
-  return value instanceof Date ? value.toISOString() : value;
-}
-
-export type SessionItem = {
-  id: string;
-  token: string;
-  expiresAt: string;
-  createdAt: string;
-  ipAddress?: string | null;
-  userAgent?: string | null;
-};
+import { type SessionItem } from '../contract/index.js';
 
 export type SessionServiceDeps = {
   drizzle: DrizzleService;
@@ -46,14 +34,16 @@ export class SessionService {
       db.select({ n: count() }).from(session).where(where),
     ]);
     return {
-      items: rows.map((s) => ({
-        id: s.id,
-        token: s.token,
-        expiresAt: toIso(s.expiresAt),
-        createdAt: toIso(s.createdAt),
-        ipAddress: s.ipAddress,
-        userAgent: s.userAgent,
-      })),
+      items: rows.map(
+        (s): SessionItem => ({
+          id: s.id,
+          token: s.token,
+          expiresAt: s.expiresAt.toISOString(),
+          createdAt: s.createdAt.toISOString(),
+          ipAddress: s.ipAddress,
+          userAgent: s.userAgent,
+        }),
+      ),
       total: Number(n),
       page,
       limit,

@@ -1,21 +1,12 @@
-import { DrizzleService, pageToOffset } from '@blurifycom/core/server';
+import { DrizzleService, pageToOffset, serializeRow } from '@blurifycom/core/server';
 import { count, desc, eq } from 'drizzle-orm';
 import { playerNote } from '../schema/index.js';
 import type { CreatePlayerNoteInput, PlayerNoteItem } from '../contract/index.js';
 
-function toIso(d: Date | string): string {
-  return d instanceof Date ? d.toISOString() : d;
-}
+const DATE_FIELDS = ['createdAt', 'updatedAt'] as const;
 
 function toItem(row: typeof playerNote.$inferSelect): PlayerNoteItem {
-  return {
-    id: row.id,
-    playerId: row.playerId,
-    actorId: row.actorId,
-    content: row.content,
-    createdAt: toIso(row.createdAt),
-    updatedAt: toIso(row.updatedAt),
-  };
+  return serializeRow(row, { dateFields: DATE_FIELDS });
 }
 
 export class PlayerNoteService {
