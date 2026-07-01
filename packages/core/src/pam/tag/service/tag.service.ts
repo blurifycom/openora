@@ -22,11 +22,8 @@ export const TagNotFoundError = makeNotFoundError('Tag');
 export const TagAlreadyInUseError = alreadyInUseError('Tag');
 export const TagAssignmentNotFoundError = makeNotFoundError('Tag Assignment');
 
-function toWithTag(
-  pt: typeof playerTag.$inferSelect,
-  t: Pick<Tag, 'key' | 'color'>,
-): PlayerTagWithTag {
-  return { ...pt, tag: { key: t.key, color: t.color } };
+function toWithTag(pt: typeof playerTag.$inferSelect, t: Pick<Tag, 'key'>): PlayerTagWithTag {
+  return { ...pt, tag: { key: t.key } };
 }
 
 export class TagService {
@@ -71,7 +68,6 @@ export class TagService {
         .select({
           pt: playerTag,
           tagKey: tag.key,
-          tagColor: tag.color,
         })
         .from(playerTag)
         .innerJoin(tag, eq(playerTag.tagId, tag.id))
@@ -81,7 +77,7 @@ export class TagService {
       db.select({ n: count() }).from(playerTag).where(where),
     ]);
     return {
-      items: rows.map((r) => toWithTag(r.pt, { key: r.tagKey, color: r.tagColor })),
+      items: rows.map((r) => toWithTag(r.pt, { key: r.tagKey })),
       total: Number(n),
       page,
       limit,

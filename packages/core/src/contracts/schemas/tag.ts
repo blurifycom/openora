@@ -10,7 +10,6 @@ export type TagAssignSource = z.infer<typeof tagAssignRemoveSourceSchema>;
 export const tagSchema = z.object({
   id: UuidSchema,
   key: z.string().trim().min(1),
-  color: z.string().regex(hexColorRegex),
   isSticky: z.boolean().default(false),
   createdAt: z.coerce.date(),
   updatedAt: z.coerce.date(),
@@ -20,9 +19,7 @@ export type Tag = z.infer<typeof tagSchema>;
 export const createTagSchema = tagSchema.omit({ id: true, createdAt: true, updatedAt: true });
 export type CreateTagInput = z.infer<typeof createTagSchema>;
 
-export const updateTagSchema = tagSchema
-  .omit({ id: true, createdAt: true, updatedAt: true })
-  .partial({ color: true });
+export const updateTagSchema = tagSchema.omit({ id: true, createdAt: true, updatedAt: true });
 export type UpdateTagInput = z.infer<typeof updateTagSchema>;
 
 export const deleteTagSchema = tagSchema.pick({ key: true });

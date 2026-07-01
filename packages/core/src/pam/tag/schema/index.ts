@@ -1,6 +1,5 @@
 import { tagAssignRemoveSource } from '@blurifycom/core/contracts';
-import { sql } from 'drizzle-orm';
-import { pgTable, uuid, text, timestamp, index, check, boolean, pgEnum } from 'drizzle-orm/pg-core';
+import { pgTable, uuid, text, timestamp, index, boolean, pgEnum } from 'drizzle-orm/pg-core';
 
 export const tagAssignRemoveSourceEnum = pgEnum('tag_assign_remove_source', tagAssignRemoveSource);
 
@@ -9,18 +8,13 @@ export const tag = pgTable(
   {
     id: uuid('id').primaryKey().defaultRandom(),
     key: text('key').notNull().unique(),
-    color: text('color').notNull(),
     isSticky: boolean('is_sticky').notNull().default(false),
     updatedAt: timestamp('updated_at', { withTimezone: true })
       .notNull()
       .$onUpdateFn(() => new Date()),
     createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
   },
-  (table) => [
-    /* Ensures hex color check: #00ff00 | #0a1b53 as valid examples */
-    check('tag_color_hex_check', sql`${table.color} ~ '^#[0-9A-Fa-f]{6}$'`),
-    index('tag_key_idx').on(table.key),
-  ],
+  (table) => [index('tag_key_idx').on(table.key)],
 );
 
 export const playerTag = pgTable(
