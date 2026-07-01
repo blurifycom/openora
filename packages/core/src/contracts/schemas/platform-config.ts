@@ -78,6 +78,11 @@ export const PlatformConfigSchema = z
      * fall back to the service defaults (oddsTickMs=2000, minOdds=1.01, maxOdds=50).
      */
     sportsbook: SportsbookConfigSchema.optional(),
+    /**
+     * Player-facing language codes the operator supports (eg `['en', 'es']`).
+     * Undefined or empty means no restriction - any value is accepted.
+     */
+    supportedLanguages: z.array(z.string().min(1)).optional(),
   })
   .strict()
   .superRefine((cfg, ctx) => {

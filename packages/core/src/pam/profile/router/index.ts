@@ -1,7 +1,7 @@
 import { implement } from '@orpc/server';
-import { getUserId, type OssContext } from '@blurifycom/core/server';
+import { getUserId, mapErrors, type OssContext } from '@blurifycom/core/server';
 import { profileContract } from '../contract/index.js';
-import { ProfileService } from '../service/profile.service.js';
+import { ProfileService, UnsopportedLanguageError } from '../service/profile.service.js';
 
 export function createProfileRouter(profile: ProfileService) {
   const os = implement(profileContract).$context<OssContext>();
@@ -10,7 +10,9 @@ export function createProfileRouter(profile: ProfileService) {
     get: os.get.handler(({ context }) => profile.getMyProfile(getUserId(context))),
 
     update: os.update.handler(({ input, context }) =>
-      profile.updateMyProfile(getUserId(context), input),
+      mapErrors({ BAD_REQUEST: UnsopportedLanguageError }, () =>
+        profile.updateMyProfile(getUserId(context), input),
+      ),
     ),
   });
 }

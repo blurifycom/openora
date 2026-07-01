@@ -1,7 +1,5 @@
 import { NOTIFICATION_DELIVERY_ADAPTER, domainEventSchemas } from '@blurifycom/core/contracts';
-import { createLogger, definePlugin } from '@blurifycom/core/server';
-import { EVENT_BUS } from '@blurifycom/core/server';
-import { DRIZZLE } from '@blurifycom/core/server';
+import { createLogger, definePlugin, EVENT_BUS, DRIZZLE } from '@blurifycom/core/server';
 import { MockNotificationDeliveryAdapter } from './adapters/mock/mock-notification-adapter.js';
 import { createNotificationsRouter } from './router/index.js';
 import { NotificationsService } from './service/notifications.service.js';

@@ -3,8 +3,7 @@ import {
   ADMIN_WALLET_REPORTING,
   AUDIT_WRITER,
 } from '@blurifycom/core/contracts';
-import { definePlugin } from '@blurifycom/core/server';
-import { ADMIN_GUARD } from '@blurifycom/core/server';
+import { definePlugin, ADMIN_GUARD } from '@blurifycom/core/server';
 import { BackofficeService } from './service/backoffice.service.js';
 import { createBackofficeRouter } from './router/index.js';
 

@@ -1,7 +1,9 @@
 import { describe, it, expect } from 'vitest';
-import { InProcessRealtimeTransport } from '@blurifycom/core/server';
-import type { EventBus } from '@blurifycom/core/server';
-import type { DrizzleService } from '@blurifycom/core/server';
+import {
+  InProcessRealtimeTransport,
+  type EventBus,
+  type DrizzleService,
+} from '@blurifycom/core/server';
 import type { ChatMessage } from '../schemas/index.js';
 import {
   ChatService,

@@ -1,5 +1,4 @@
-import { definePlugin, EVENT_BUS } from '@blurifycom/core/server';
-import { DRIZZLE } from '@blurifycom/core/server';
+import { definePlugin, EVENT_BUS, DRIZZLE } from '@blurifycom/core/server';
 import { TagService } from './service/tag.service.js';
 import { createTagRouter } from './router/index.js';
 

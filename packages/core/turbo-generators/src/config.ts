@@ -36,7 +36,6 @@ const MODULE_GROUPS = ['player', 'backoffice', 'platform'] as const;
 type Answers = Record<string, unknown>;
 const s = (a: Answers, k: string): string => String(a[k] ?? '');
 
-// --- case helpers (JS-side; templates use Handlebars' built-in helpers) -----
 const toKebab = (v: string): string =>
   v
     .replace(/([a-z0-9])([A-Z])/g, '$1-$2')
@@ -46,7 +45,6 @@ const toKebab = (v: string): string =>
 const toCamel = (v: string): string =>
   toKebab(v).replace(/-([a-z0-9])/g, (_, c: string) => c.toUpperCase());
 
-// --- repo context -----------------------------------------------------------
 const root = (): string => process.cwd();
 // OSS monorepo has packages/addons; a consumer repo only has overlays.
 const isOssRepo = (): boolean => existsSync(join(root(), 'packages', 'addons'));
@@ -61,7 +59,6 @@ const ossOnly = (gen: string): void => {
   }
 };
 
-// --- auto-wiring actions ----------------------------------------------------
 function registerExtension(id: string, importPath: string): string {
   const file = extensionsConfigPath();
   const line = `  { id: '${id}', path: '${importPath}' },`;
@@ -125,7 +122,6 @@ function appendRoute(moduleName: string, method: string, routePath: string): str
     .replace(/\//g, '.')
     .replace(/[^a-zA-Z0-9.]/g, '');
 
-  // 1. contract slice: add a procedure to the `<camel>Contract = { ... }` object
   const contractFile = join(root(), 'packages', 'contracts', 'orpc-contract', 'src', `${name}.ts`);
   if (existsSync(contractFile)) {
     let c = readFileSync(contractFile, 'utf8');
@@ -137,7 +133,6 @@ function appendRoute(moduleName: string, method: string, routePath: string): str
     }
   }
 
-  // 2. router: add `proc: os.proc.handler(() => ({}))` before the router's close
   const routerFile = join(moduleDir, 'src', 'router', 'index.ts');
   let r = readFileSync(routerFile, 'utf8');
   if (!r.includes(`${proc}: os.${proc}`)) {
@@ -149,7 +144,6 @@ function appendRoute(moduleName: string, method: string, routePath: string): str
 }
 
 export default function generator(plop: PlopTypes.NodePlopAPI): void {
-  // --- module --------------------------------------------------------------
   plop.setGenerator('module', {
     description: 'New business module - a standalone @blurifycom-addons/<name> core add-on package',
     prompts: [
@@ -235,7 +229,6 @@ export default function generator(plop: PlopTypes.NodePlopAPI): void {
     },
   });
 
-  // --- route ---------------------------------------------------------------
   plop.setGenerator('route', {
     description: 'Add an oRPC procedure (contract entry + router handler) to a module',
     prompts: [
@@ -265,7 +258,6 @@ export default function generator(plop: PlopTypes.NodePlopAPI): void {
     },
   });
 
-  // --- plugin (overlay) ----------------------------------------------------
   plop.setGenerator('plugin', {
     description: 'New overlay plugin (routes / providers / event handlers / jobs)',
     prompts: [
@@ -287,7 +279,6 @@ export default function generator(plop: PlopTypes.NodePlopAPI): void {
     ],
   });
 
-  // --- adapter -------------------------------------------------------------
   plop.setGenerator('adapter', {
     description: 'Overlay that swaps a vendor adapter (rebinds a DI token)',
     prompts: [
@@ -330,7 +321,6 @@ export default function generator(plop: PlopTypes.NodePlopAPI): void {
     ],
   });
 
-  // --- config --------------------------------------------------------------
   plop.setGenerator('config', {
     description: 'Operator config schema block (merge into PlatformConfigSchema)',
     prompts: [
@@ -353,7 +343,6 @@ export default function generator(plop: PlopTypes.NodePlopAPI): void {
     },
   });
 
-  // --- event ---------------------------------------------------------------
   plop.setGenerator('event', {
     description: 'Add a domain event payload to the shared-schemas catalog',
     prompts: [
@@ -371,7 +360,6 @@ export default function generator(plop: PlopTypes.NodePlopAPI): void {
     },
   });
 
-  // --- job-worker ----------------------------------------------------------
   plop.setGenerator('job-worker', {
     description: 'Background-job worker overlay (consumes the JOB_QUEUE seam)',
     prompts: [
@@ -396,7 +384,6 @@ export default function generator(plop: PlopTypes.NodePlopAPI): void {
     ],
   });
 
-  // --- adr -----------------------------------------------------------------
   plop.setGenerator('adr', {
     description: 'New architecture decision record',
     prompts: [
@@ -425,7 +412,6 @@ export default function generator(plop: PlopTypes.NodePlopAPI): void {
     },
   });
 
-  // --- service (thin single-module host) -----------------------------------
   plop.setGenerator('service', {
     description: 'Thin single-purpose service host (bakes SERVICE_MANIFEST)',
     prompts: [
@@ -458,7 +444,6 @@ export default function generator(plop: PlopTypes.NodePlopAPI): void {
     },
   });
 
-  // --- app (downstream consumer repo) --------------------------------------
   plop.setGenerator('app', {
     description: 'Scaffold a downstream consumer repo (api wired to this checkout)',
     prompts: [

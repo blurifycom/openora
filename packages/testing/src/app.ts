@@ -1,4 +1,4 @@
-import { createApp, type CreateAppConfig } from '@blurifycom/core/server';
+import { createApp, type CreateAppConfig, type Container } from '@blurifycom/core/server';
 import {
   user,
   session,
@@ -6,7 +6,6 @@ import {
   verification,
   twoFactor,
 } from '@blurifycom/core/pam/schema/identity';
-import type { Container } from '@blurifycom/core/server';
 import type { Hono } from 'hono';
 
 export type TestApp = {

@@ -1,5 +1,6 @@
-import { DrizzleService, findOneOrThrow } from '@blurifycom/core/server';
 import {
+  DrizzleService,
+  findOneOrThrow,
   type EventBus,
   makeNotFoundError,
   makeOwnershipError,

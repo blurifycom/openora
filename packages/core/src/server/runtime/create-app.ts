@@ -32,7 +32,12 @@ import { DrizzleService, DRIZZLE, DrizzleOutboxWriter, OutboxRelay } from '../db
 import { AdminGuard, ADMIN_GUARD, SessionResolver, AUTH_SESSION } from '../auth/index.js';
 import { loadPlugins, type PluginEntry } from '../plugin-host/index.js';
 import { composeContract, healthContract } from '../../contracts/orpc/index.js';
-import { IGAMING_CONFIG, type IgamingConfig } from '../../contracts/schemas/index.js';
+import {
+  IGAMING_CONFIG,
+  type IgamingConfig,
+  PLATFORM_CONFIG,
+} from '../../contracts/schemas/index.js';
+import { loadPlatformConfig, resolvePlatformConfigPath } from '../kernel/platform-config-loader.js';
 
 export type CreateAppConfig = {
   plugins: PluginEntry[];
@@ -181,6 +186,10 @@ export async function createApp(config: CreateAppConfig): Promise<CreatedApp> {
     const igaming = config.igaming;
     container.register(IGAMING_CONFIG, () => igaming);
   }
+  // Always bound: loadPlatformConfig() falls back to an empty-but-valid config
+  // when no platform-config.{yaml,yml,json} file is present (PLATFORM_CONFIG_PATH
+  // or cwd discovery). See platform-config-loader.ts.
+  container.register(PLATFORM_CONFIG, () => loadPlatformConfig(resolvePlatformConfigPath()));
 
   const registry = await loadPlugins(config.plugins, container);
   await config.configure?.(container);

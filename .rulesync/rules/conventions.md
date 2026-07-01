@@ -289,7 +289,10 @@ Each rule carries a short example: `// bad` is the smell, `// good` the conventi
 
 ## 5. Comments and documentation
 
-- **Comment WHY, never WHAT.** Delete comments that restate a name or the obvious line.
+- **Default to zero comments.** Delete comments that restate a name or the obvious line. Only
+  add one when the code isn't straightforward from reading it alone - it needs deeper
+  architectural context (why this module, why this order, why not the obvious approach), or
+  it's implicit (a hidden constraint, an invariant, a bug workaround - link it, a trade-off).
 
   ```ts
   // bad
@@ -301,7 +304,6 @@ Each rule carries a short example: `// bad` is the smell, `// good` the conventi
   const rounded = bankersRound(amount);
   ```
 
-- **Comment the non-obvious:** hidden constraint, invariant, bug workaround (link it), trade-off.
 - **If a block needs a comment to be understood, rename/extract first.**
 
   ```ts
@@ -310,15 +312,22 @@ Each rule carries a short example: `// bad` is the smell, `// good` the conventi
   ```
 
 - **No section-divider comments** (`// ---`, `// ===`).
-- **A one-line JSDoc comment on every exported function/class that is >~15 lines or has
-  non-obvious params.** One sentence; document the surprising contract, not the name.
+- **A JSDoc comment on every exported function/class that is >~15 lines or has
+  non-obvious params.** Write it as a multiline `/** ... */` block (opening `/**` and
+  closing `*/` on their own lines), not a single-line `/** ... */`. Document the surprising
+  contract, not the name.
 
   ```ts
   // bad - restates the name
   /** Returns the user. */
   export function getUser(id: string) { ... }
-  // good - documents a genuinely surprising contract
-  /** Returns null when the feed is rate-limited (caller should back off). */
+  // bad - single-line block
+  /** Returns null when the feed is rate-limited. */
+  export function pollFeed(): FeedItem[] | null { ... }
+  // good - multiline block documenting a genuinely surprising contract
+  /**
+   * Returns null when the feed is rate-limited (caller should back off).
+   */
   export function pollFeed(): FeedItem[] | null { ... }
   ```
 

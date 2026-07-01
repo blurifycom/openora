@@ -26,7 +26,6 @@ function listDirs(p: string): string[] {
 
 const ADDONS_DIR = ['packages', 'addons'] as const;
 
-/** Map add-on id -> 'core' | 'addon', parsed from extensions.config.ts. */
 function readAddonKinds(): Map<string, string> {
   const src = readFile(repoPath('extensions.config.ts'));
   const out = new Map<string, string>();
@@ -36,13 +35,11 @@ function readAddonKinds(): Map<string, string> {
   return out;
 }
 
-/** Resolve an add-on's source dir by name. */
 function findModuleDir(name: string): string | null {
   const dir = repoPath(...ADDONS_DIR, name);
   return existsSync(dir) ? dir : null;
 }
 
-/** Every add-on package with a plugin.ts. */
 function listAllModules(): Array<{ group: string; name: string; dir: string }> {
   const kinds = readAddonKinds();
   const out: Array<{ group: string; name: string; dir: string }> = [];
@@ -96,7 +93,6 @@ function run(cmd: string): { ok: boolean; output: string } {
   }
 }
 
-/** Recursively collect files under `dir` matching `ext`, skipping build/vendor dirs. */
 function walkFiles(dir: string, ext: string, acc: string[] = []): string[] {
   if (!existsSync(dir)) return acc;
   for (const entry of readdirSync(dir)) {
@@ -198,7 +194,6 @@ function readSlots(): string[] {
   return [];
 }
 
-/** Per-kind step-by-step playbook, grounded in live repo state. */
 function buildPlaybook(
   kind: IntentKind,
   ctx: { modules: string[]; tokens: string[]; slots: string[] },

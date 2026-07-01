@@ -1,6 +1,5 @@
 import { describe, it, expect, vi } from 'vitest';
-import type { DrizzleService } from '@blurifycom/core/server';
-import type { EventBus } from '@blurifycom/core/server';
+import type { DrizzleService, EventBus } from '@blurifycom/core/server';
 import type { GameAdapter } from '@blurifycom/core/contracts';
 import {
   GamingService,

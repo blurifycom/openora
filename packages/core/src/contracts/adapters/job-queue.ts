@@ -25,7 +25,7 @@ export type EnqueueOptions = {
   // Fan-in ordering: jobs sharing a key run in order, never concurrently
   // (per-wallet, per-bet). Cross-key jobs still parallelise.
   orderingKey?: string;
-  delayMs?: number; // schedule this job for later
+  delayMs?: number;
   attempts?: number; // total tries incl. the first (driver default if omitted)
   backoff?: BackoffStrategy;
   priority?: number; // lower = sooner; a driver may ignore it

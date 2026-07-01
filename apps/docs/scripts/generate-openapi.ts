@@ -18,7 +18,6 @@ async function main(): Promise<void> {
     includeDescription: true,
   });
 
-  // Folder title + nav for the API reference section.
   writeFileSync(
     `${output}/meta.json`,
     `${JSON.stringify({ title: 'API reference', pages: ['...'] }, null, 2)}\n`,

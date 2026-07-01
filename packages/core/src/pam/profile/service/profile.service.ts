@@ -1,12 +1,21 @@
-import { DrizzleService } from '@blurifycom/core/server';
+import { createDomainError, DrizzleService } from '@blurifycom/core/server';
+import type { PlatformConfig } from '@blurifycom/core/contracts';
 import { eq } from 'drizzle-orm';
 import { player } from '../schema/index.js';
 import { user } from '../../identity/schema/index.js';
 import type { UpdatePlayerProfileInput } from '../schemas/index.js';
 import { toPlayer, fetchEmail } from '../../shared/player-mapper.js';
 
+export const UnsopportedLanguageError = createDomainError(
+  'UnsopportedLanguageError',
+  (language: string) => `${language} is not supported`,
+);
+
 export class ProfileService {
-  constructor(private readonly drizzle: DrizzleService) {}
+  constructor(
+    private readonly drizzle: DrizzleService,
+    private readonly platformConfig?: PlatformConfig,
+  ) {}
 
   // Registration only creates the auth `user`; the `player` row is materialised
   // lazily so a freshly-registered user always has a profile.
@@ -33,6 +42,15 @@ export class ProfileService {
   }
 
   async updateMyProfile(userId: string, data: UpdatePlayerProfileInput) {
+    const supportedLanguages = this.platformConfig?.supportedLanguages;
+    if (
+      data.language !== undefined &&
+      supportedLanguages &&
+      supportedLanguages.length > 0 &&
+      !supportedLanguages.includes(data.language)
+    ) {
+      throw new UnsopportedLanguageError(data.language);
+    }
     await this.ensureProfile(userId);
     const patch: Partial<typeof player.$inferInsert> = {};
     if (data.displayName !== undefined) patch.displayName = data.displayName;

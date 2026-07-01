@@ -1,12 +1,10 @@
-import { definePlugin } from '@blurifycom/core/server';
+import { definePlugin, ADMIN_GUARD, EVENT_BUS, DRIZZLE } from '@blurifycom/core/server';
 import {
   ADMIN_USER_DIRECTORY,
   ADMIN_WALLET_REPORTING,
   PAYMENT_ADAPTER,
   WALLET_COMMANDS,
 } from '@blurifycom/core/contracts';
-import { ADMIN_GUARD, EVENT_BUS } from '@blurifycom/core/server';
-import { DRIZZLE } from '@blurifycom/core/server';
 import { WalletService } from './service/wallet.service.js';
 import { WalletCommandsService } from './service/wallet-commands.service.js';
 import { DrizzleAdminWalletReporting } from './admin-reporting.js';
