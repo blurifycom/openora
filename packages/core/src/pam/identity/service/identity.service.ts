@@ -9,7 +9,6 @@ import { eq, sql } from 'drizzle-orm';
 import { user, session, account, verification, twoFactor } from '../schema/index.js';
 import type {
   SendEmailPort,
-  User,
   LoginInput,
   RegisterInput,
   Enable2faInput,
@@ -24,7 +23,7 @@ import type {
   IdentityServiceOptions,
 } from '@blurifycom/core/contracts';
 
-function nodeHeadersToHeaders(nodeHeaders: NodeHeaders): Headers {
+function nodeHeadersToHeaders(nodeHeaders: NodeHeaders) {
   const headers = new Headers();
   for (const [key, value] of Object.entries(nodeHeaders)) {
     if (value === undefined) continue;
@@ -48,7 +47,7 @@ function toIso(value: Date | string): string {
   return value instanceof Date ? value.toISOString() : value;
 }
 
-function toUser(u: BetterAuthUser): User {
+function toUser(u: BetterAuthUser) {
   const base = {
     id: u.id,
     email: u.email,
@@ -97,7 +96,7 @@ const SUCCESS = { success: true as const };
 // (4xx/5xx) rather than throwing. Surface those as ORPCErrors so oRPC maps them
 // to the right HTTP status instead of the handler silently returning success.
 // Only reads the body on failure, so a subsequent res.json() on success is safe.
-async function ensureOk(res: globalThis.Response): Promise<void> {
+async function ensureOk(res: globalThis.Response) {
   if (res.ok) return;
   let message = `Request failed (${res.status})`;
   try {

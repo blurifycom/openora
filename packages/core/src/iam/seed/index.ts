@@ -9,7 +9,7 @@ import { DEFAULT_ADMIN_ROLES } from './default-admin-roles.js';
  * changed names/levels via upsert, so editing the spec and re-seeding propagates
  * to existing databases. Does NOT remove grants dropped from the spec.
  */
-export async function seedRoles(db: DrizzleDb): Promise<void> {
+export async function seedRoles(db: DrizzleDb) {
   await db
     .insert(adminRole)
     .values(

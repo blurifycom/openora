@@ -66,11 +66,7 @@ export class ComplianceService {
     return { success: true };
   }
 
-  async geoCheck(ipAddress: string): Promise<{
-    allowed: boolean;
-    countryCode: string | null;
-    reason: string | null;
-  }> {
+  async geoCheck(ipAddress: string) {
     let countryCode: string | null = null;
 
     if (this.geoIp) {

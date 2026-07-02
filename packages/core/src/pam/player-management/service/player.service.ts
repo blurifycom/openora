@@ -11,11 +11,11 @@ import { eq, ilike, count, or, and, gte, desc, sql } from 'drizzle-orm';
 // tables of its own. See ADR-0020.
 import { player } from '../../profile/schema/index.js';
 import { user } from '../../identity/schema/index.js';
-import type { Player, PlayerStatus, KycStatus } from '../schemas/index.js';
+import type { PlayerStatus, KycStatus } from '../schemas/index.js';
 
 export const PlayerNotFoundError = makeNotFoundError('Player');
 
-function toPlayer(p: typeof player.$inferSelect, email: string): Player {
+function toPlayer(p: typeof player.$inferSelect, email: string) {
   return {
     id: p.id,
     userId: p.userId,

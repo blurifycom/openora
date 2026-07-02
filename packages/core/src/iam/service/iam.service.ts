@@ -31,14 +31,7 @@ import {
 } from '../schema/index.js';
 // Read-only cross-domain schema import (sanctioned): assignRole verifies the target is an admin user.
 import { user } from '@blurifycom/core/pam/schema/identity';
-import type {
-  AdminRole,
-  AdminRoleAssignment,
-  AdminInvitation,
-  Catalog,
-  EffectivePermissions,
-  RolePermissionLevel,
-} from '../schemas/index.js';
+import type { AdminInvitation, EffectivePermissions } from '../schemas/index.js';
 
 export const RoleNotFoundError = makeNotFoundError('AdminRole');
 export const InvitationNotFoundError = makeNotFoundError('AdminInvitation');
@@ -83,7 +76,7 @@ type Page = { page: number; limit: number };
 // custom role would pass the router's adminGuard - it must come ONLY from `isSuperAdmin`.
 const NON_ASSIGNABLE_MODULES: ReadonlySet<string> = new Set(['admin']);
 
-function buildCatalog(): Catalog {
+function buildCatalog() {
   return {
     modules: (Object.keys(statement) as ResourceName[])
       .filter((resource) => !NON_ASSIGNABLE_MODULES.has(resource))
@@ -109,7 +102,7 @@ function validateGrants(grants: ReadonlyArray<{ resource: string; level: string 
   }
 }
 
-function staticGrantsForRole(roleName: string): AdminGrant[] {
+function staticGrantsForRole(roleName: string) {
   const role = roles[roleName as RoleName];
   if (!role) return [];
   return (Object.keys(statement) as ResourceName[]).flatMap((resource) =>
@@ -119,7 +112,7 @@ function staticGrantsForRole(roleName: string): AdminGrant[] {
   );
 }
 
-function grantsToLevelMap(grants: readonly AdminGrant[]): Record<string, PermissionLevel> {
+function grantsToLevelMap(grants: readonly AdminGrant[]) {
   const byResource = new Map<string, Set<string>>();
   for (const g of grants) {
     if (!byResource.has(g.resource)) byResource.set(g.resource, new Set());
@@ -139,7 +132,7 @@ function grantsToLevelMap(grants: readonly AdminGrant[]): Record<string, Permiss
   return map;
 }
 
-function toRoleDto(row: typeof adminRole.$inferSelect): AdminRole {
+function toRoleDto(row: typeof adminRole.$inferSelect) {
   return {
     id: row.id,
     key: row.key ?? null,
@@ -150,7 +143,7 @@ function toRoleDto(row: typeof adminRole.$inferSelect): AdminRole {
   };
 }
 
-function toAssignmentDto(row: typeof adminRoleAssignment.$inferSelect): AdminRoleAssignment {
+function toAssignmentDto(row: typeof adminRoleAssignment.$inferSelect) {
   return {
     id: row.id,
     userId: row.userId,
@@ -159,7 +152,7 @@ function toAssignmentDto(row: typeof adminRoleAssignment.$inferSelect): AdminRol
   };
 }
 
-function toInvitationDto(row: typeof adminInvitation.$inferSelect): AdminInvitation {
+function toInvitationDto(row: typeof adminInvitation.$inferSelect) {
   return {
     id: row.id,
     email: row.email,
@@ -225,7 +218,7 @@ export class DbAdminPermissionResolver implements AdminPermissionResolver {
   }
 }
 
-function allGrants(): AdminGrant[] {
+function allGrants() {
   return (Object.keys(statement) as ResourceName[]).flatMap((resource) =>
     (statement[resource] as readonly string[]).map((action) => ({
       resource: resource as string,
@@ -443,7 +436,7 @@ export class IamService {
         .from(adminRolePermission)
         .where(eq(adminRolePermission.roleId, input.roleId));
 
-      const toLevels = (rows: { resource: string; level: string }[]): RolePermissionLevel[] =>
+      const toLevels = (rows: { resource: string; level: string }[]) =>
         rows.map((r) => ({ resource: r.resource, level: r.level as PermissionLevel }));
       return { before: toLevels(beforeRows), after: toLevels(afterRows) };
     });

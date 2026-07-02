@@ -55,7 +55,7 @@ function gateContent(content: string): string {
   return result.content;
 }
 
-function toRoom(record: typeof chatRoom.$inferSelect): ChatRoom {
+function toRoom(record: typeof chatRoom.$inferSelect) {
   return {
     id: record.id,
     name: record.name,
@@ -65,7 +65,7 @@ function toRoom(record: typeof chatRoom.$inferSelect): ChatRoom {
   };
 }
 
-function toMessage(record: typeof chatMessage.$inferSelect): ChatMessage {
+function toMessage(record: typeof chatMessage.$inferSelect) {
   return {
     id: record.id,
     roomId: record.roomId,

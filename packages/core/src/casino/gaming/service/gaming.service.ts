@@ -7,13 +7,13 @@ import {
 import { eq, and, asc, desc } from 'drizzle-orm';
 import { type GameAdapter } from '@blurifycom/core/contracts';
 import { game, gameRound } from '../schema/index.js';
-import type { Game, GameRound } from '../schemas/index.js';
+import type { GameRound } from '../schemas/index.js';
 
 export const GameNotFoundError = makeNotFoundError('Game');
 
 export const GameRoundNotFoundError = makeNotFoundError('GameRound');
 
-function toGame(record: typeof game.$inferSelect): Game {
+function toGame(record: typeof game.$inferSelect) {
   return {
     id: record.id,
     name: record.name,
@@ -25,7 +25,7 @@ function toGame(record: typeof game.$inferSelect): Game {
   };
 }
 
-function toGameRound(record: typeof gameRound.$inferSelect): GameRound {
+function toGameRound(record: typeof gameRound.$inferSelect) {
   return {
     id: record.id,
     gameId: record.gameId,

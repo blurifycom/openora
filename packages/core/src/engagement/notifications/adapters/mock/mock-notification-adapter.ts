@@ -2,7 +2,7 @@
 import type { NotificationDeliveryAdapter } from '@blurifycom/core/contracts';
 
 export class MockNotificationDeliveryAdapter implements NotificationDeliveryAdapter {
-  async sendEmail(to: string, subject: string, _body: string): Promise<void> {
+  async sendEmail(to: string, subject: string, _body: string) {
     process.stdout.write(JSON.stringify({ mock_email: true, to, subject }) + '\n');
   }
 }

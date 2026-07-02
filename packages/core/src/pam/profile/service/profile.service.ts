@@ -3,19 +3,14 @@ import type { PlatformConfig } from '@blurifycom/core/contracts';
 import { eq } from 'drizzle-orm';
 import { player } from '../schema/index.js';
 import { user } from '../../identity/schema/index.js';
-import type {
-  Player,
-  PlayerStatus,
-  KycStatus,
-  UpdatePlayerProfileInput,
-} from '../schemas/index.js';
+import type { PlayerStatus, KycStatus, UpdatePlayerProfileInput } from '../schemas/index.js';
 
 export const UnsupportedLanguageError = createDomainError<[lang: string]>(
   'UnsupportedLanguageError',
   (lang) => `Unsupported language: ${lang}`,
 );
 
-function toPlayer(p: typeof player.$inferSelect, email: string): Player {
+function toPlayer(p: typeof player.$inferSelect, email: string) {
   return {
     id: p.id,
     userId: p.userId,

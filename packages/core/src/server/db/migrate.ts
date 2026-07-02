@@ -35,7 +35,7 @@ function migrateUrl(override?: string): string {
 }
 
 /** Apply one migration set against the admin connection. Idempotent: drizzle skips already-recorded migrations. */
-export async function runMigrations(opts: RunMigrationsOptions): Promise<void> {
+export async function runMigrations(opts: RunMigrationsOptions) {
   const pool = new Pool({ connectionString: migrateUrl(opts.databaseUrl) });
   try {
     for (const ext of opts.extensions ?? []) {
@@ -54,7 +54,7 @@ export async function runMigrations(opts: RunMigrationsOptions): Promise<void> {
 }
 
 /** Apply the engine `outbox` migration set (the only engine-owned table); domain modules ship their own `migrate`. */
-export function migrate(databaseUrl?: string): Promise<void> {
+export function migrate(databaseUrl?: string) {
   return runMigrations({
     migrationsFolder: fileURLToPath(new URL('./outbox/drizzle/migrations', import.meta.url)),
     migrationsTable: '__drizzle_migrations_outbox',

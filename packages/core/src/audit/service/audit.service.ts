@@ -35,7 +35,7 @@ function computeHash(fields: Parameters<typeof canonicalHashInput>[0]): string {
   return createHash('sha256').update(canonicalHashInput(fields)).digest('hex');
 }
 
-function toDto(row: AuditLog): AuditLogEntry {
+function toDto(row: AuditLog) {
   return {
     id: row.id,
     actorId: row.actorId ?? null,

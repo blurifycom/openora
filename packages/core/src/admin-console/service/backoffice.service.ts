@@ -7,17 +7,12 @@ import type {
   AdminWalletReporting,
 } from '@blurifycom/core/contracts';
 import { makeNotFoundError } from '@blurifycom/core/server';
-import type {
-  AdminTransaction,
-  AdminTransactionDetail,
-  AdminUser,
-  TransactionFilter,
-} from '../schemas/index.js';
+import type { TransactionFilter } from '../schemas/index.js';
 
 export const UserNotFoundError = makeNotFoundError('User');
 export const TransactionNotFoundError = makeNotFoundError('Transaction');
 
-function toAdminUser(r: AdminUserRow): AdminUser {
+function toAdminUser(r: AdminUserRow) {
   return {
     id: r.id,
     email: r.email,
@@ -30,7 +25,7 @@ function toAdminUser(r: AdminUserRow): AdminUser {
   };
 }
 
-function toAdminTransaction(r: AdminTxRow, player?: AdminPlayerSummary): AdminTransaction {
+function toAdminTransaction(r: AdminTxRow, player?: AdminPlayerSummary) {
   return {
     id: r.id,
     userId: r.userId,
@@ -44,10 +39,7 @@ function toAdminTransaction(r: AdminTxRow, player?: AdminPlayerSummary): AdminTr
   };
 }
 
-function toAdminTransactionDetail(
-  r: AdminTxDetail,
-  player?: AdminPlayerSummary,
-): AdminTransactionDetail {
+function toAdminTransactionDetail(r: AdminTxDetail, player?: AdminPlayerSummary) {
   return {
     ...toAdminTransaction(r, player),
     playerUsername: player?.username ?? null,

@@ -1,9 +1,4 @@
-import type {
-  AdminTxDetail,
-  AdminTxListOptions,
-  AdminTxRow,
-  AdminWalletReporting,
-} from '@blurifycom/core/contracts';
+import type { AdminTxListOptions, AdminWalletReporting } from '@blurifycom/core/contracts';
 import { DrizzleService, pageToOffset } from '@blurifycom/core/server';
 import { and, count, desc, eq, gte, inArray, lte, sum } from 'drizzle-orm';
 import { wallet, walletTransaction } from './schema/index.js';
@@ -12,7 +7,7 @@ import { wallet, walletTransaction } from './schema/index.js';
 export class DrizzleAdminWalletReporting implements AdminWalletReporting {
   constructor(private readonly drizzle: DrizzleService) {}
 
-  async totals(): Promise<{ deposits: number; withdrawals: number }> {
+  async totals() {
     const db = this.drizzle.db;
     const [deposits, withdrawals] = await Promise.all([
       db
@@ -76,23 +71,21 @@ export class DrizzleAdminWalletReporting implements AdminWalletReporting {
         .where(where),
     ]);
     return {
-      rows: rows.map(
-        ({ tx, walletUserId }): AdminTxRow => ({
-          id: tx.id,
-          userId: walletUserId,
-          type: tx.type,
-          amount: Number(tx.amount),
-          currency: tx.currency,
-          status: tx.status,
-          rail: tx.rail ?? null,
-          createdAt: tx.createdAt,
-        }),
-      ),
+      rows: rows.map(({ tx, walletUserId }) => ({
+        id: tx.id,
+        userId: walletUserId,
+        type: tx.type,
+        amount: Number(tx.amount),
+        currency: tx.currency,
+        status: tx.status,
+        rail: tx.rail ?? null,
+        createdAt: tx.createdAt,
+      })),
       total: Number(n),
     };
   }
 
-  async getTransaction(id: string): Promise<AdminTxDetail | null> {
+  async getTransaction(id: string) {
     const [row] = await this.drizzle.db
       .select({ tx: walletTransaction, walletUserId: wallet.userId })
       .from(walletTransaction)
