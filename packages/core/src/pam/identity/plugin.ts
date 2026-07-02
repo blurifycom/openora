@@ -4,7 +4,6 @@ import {
   NOTIFICATION_DELIVERY_ADAPTER,
   SEND_EMAIL,
   IDENTITY_OPTIONS,
-  type SendEmailPort,
 } from '@blurifycom/core/contracts';
 import { definePlugin, ADMIN_GUARD, EVENT_BUS, DRIZZLE } from '@blurifycom/core/server';
 import { MockKycAdapter } from './adapters/mock/mock-kyc-adapter.js';
@@ -23,13 +22,10 @@ export default definePlugin({
       (c) => new DrizzleAdminUserDirectory(c.get(DRIZZLE), c.get(EVENT_BUS)),
     );
     // Resolved lazily so identity does not depend on the notifications plugin's load order.
-    ctx.provide(
-      SEND_EMAIL,
-      (c): SendEmailPort => ({
-        send: ({ to, subject, body }) =>
-          c.get(NOTIFICATION_DELIVERY_ADAPTER).sendEmail(to, subject, body),
-      }),
-    );
+    ctx.provide(SEND_EMAIL, (c) => ({
+      send: ({ to, subject, body }) =>
+        c.get(NOTIFICATION_DELIVERY_ADAPTER).sendEmail(to, subject, body),
+    }));
     ctx.routers.add('identity', (c) =>
       createIdentityRouter(
         new IdentityService({

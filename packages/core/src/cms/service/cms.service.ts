@@ -6,7 +6,6 @@ import {
 } from '@blurifycom/core/server';
 import { eq, and, asc, desc } from 'drizzle-orm';
 import { page as pageTable, banner as bannerTable } from '../schema/index.js';
-import type { Page, Banner } from '../schemas/index.js';
 
 export const PageNotFoundError = makeNotFoundError('Page');
 export const BannerNotFoundError = makeNotFoundError('Banner');
@@ -18,7 +17,7 @@ function toPage(record: {
   content: unknown;
   publishedAt: Date | null;
   createdAt: Date;
-}): Page {
+}) {
   return {
     id: record.id,
     slug: record.slug,
@@ -38,7 +37,7 @@ function toBanner(record: {
   isActive: boolean;
   sortOrder: number;
   createdAt: Date;
-}): Banner {
+}) {
   return {
     id: record.id,
     placement: record.placement,

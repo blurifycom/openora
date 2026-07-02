@@ -5,7 +5,7 @@ import { fileURLToPath } from 'node:url';
 import { runMigrations } from '@blurifycom/core/server/migrate';
 
 /** Apply the notifications module migrations (idempotent: drizzle skips already-recorded ones). */
-export function migrate(databaseUrl?: string): Promise<void> {
+export function migrate(databaseUrl?: string) {
   return runMigrations({
     migrationsFolder: fileURLToPath(new URL('./drizzle/migrations', import.meta.url)),
     migrationsTable: '__drizzle_migrations_notifications',

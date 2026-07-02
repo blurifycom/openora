@@ -257,19 +257,34 @@ Each rule carries a short example: `// bad` is the smell, `// good` the conventi
 - **Short, single-purpose functions.** If you comment "// step 2" inside a function, extract it.
 
 - **Don't annotate a return type TypeScript can infer** - the body is the single source of truth,
-  so the type can't drift. Annotate only when inference can't (recursion) or shouldn't (widen/narrow,
-  or pin a published package's public API). Argument types stay explicit.
+  so the type can't drift. Annotate the return type ONLY when:
+  - inference can't (recursion), or
+  - you deliberately widen/narrow, or
+  - it's a **published SDK export consumed downstream with no re-checking seam** - `/react` hooks
+    (in every module) + the typed client, and plain-value `/server` helpers/factories - where the
+    explicit type IS the public contract. A consumer in another repo depends on that shape and
+    nothing revalidates it, so an inferred return silently leaks a refactor as a breaking change
+    while the build stays green here.
+
+  Routers, service methods, contracts, schemas, and plugins stay inferred: a seam already re-checks
+  them (oRPC validates each handler's output against its contract) or the type is an unspellable
+  oRPC/Drizzle structure. Argument types always stay explicit.
 
   ```ts
-  // bad - redundant annotation that has to be kept in sync by hand
+  // bad - redundant annotation on an internal method that has to be kept in sync by hand
   async function unblockUser(id: User['id']): Promise<{ success: true }> {
     await this.repo.remove(id);
     return { success: true };
   }
-  // good - inferred from the body
+  // good - internal/service method: inferred from the body (the router re-checks it vs the contract)
   async function unblockUser(id: User['id']) {
     await this.repo.remove(id);
     return { success: true };
+  }
+  // good - published SDK hook: the return type IS the public contract, so pin it
+  function useAuth(): AuthState {
+    const { data } = useQuery({ ... });
+    return { user: data ?? null, isLoading, isAuthenticated: !!data };
   }
   ```
 

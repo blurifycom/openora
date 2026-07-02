@@ -1,9 +1,4 @@
-import type {
-  AdminPlayerSummary,
-  AdminUserDirectory,
-  AdminUserListOptions,
-  AdminUserRow,
-} from '@blurifycom/core/contracts';
+import type { AdminUserDirectory, AdminUserListOptions } from '@blurifycom/core/contracts';
 import { KycStatusSchema } from '@blurifycom/core/contracts';
 import { DrizzleService, pageToOffset } from '@blurifycom/core/server';
 import type { EventBus } from '@blurifycom/core/server';
@@ -16,7 +11,7 @@ import { player } from '../profile/schema/index.js';
 
 // Identity owns the `user` table, so it owns the admin directory port.
 // admin-console depends only on ADMIN_USER_DIRECTORY - never on this schema. See ADR-0017/0025.
-function toRow(r: typeof user.$inferSelect): AdminUserRow {
+function toRow(r: typeof user.$inferSelect) {
   return {
     id: r.id,
     email: r.email,
@@ -35,7 +30,7 @@ export class DrizzleAdminUserDirectory implements AdminUserDirectory {
     private readonly events: EventBus,
   ) {}
 
-  async count(): Promise<number> {
+  async count() {
     const [r] = await this.drizzle.db.select({ n: count() }).from(user);
     return Number(r?.n ?? 0);
   }
@@ -56,16 +51,12 @@ export class DrizzleAdminUserDirectory implements AdminUserDirectory {
     return { rows: rows.map(toRow), total: Number(n) };
   }
 
-  async get(id: string): Promise<AdminUserRow | null> {
+  async get(id: string) {
     const [r] = await this.drizzle.db.select().from(user).where(eq(user.id, id));
     return r ? toRow(r) : null;
   }
 
-  async update(
-    id: string,
-    patch: { isActive?: boolean; role?: string },
-    actorId: string,
-  ): Promise<AdminUserRow | null> {
+  async update(id: string, patch: { isActive?: boolean; role?: string }, actorId: string) {
     const [existing] = await this.drizzle.db.select().from(user).where(eq(user.id, id));
     if (!existing) return null;
     const set: Partial<typeof user.$inferInsert> = {};
@@ -83,7 +74,7 @@ export class DrizzleAdminUserDirectory implements AdminUserDirectory {
     return toRow(r);
   }
 
-  async lookupPlayers(userIds: readonly string[]): Promise<AdminPlayerSummary[]> {
+  async lookupPlayers(userIds: readonly string[]) {
     if (userIds.length === 0) return [];
     const rows = await this.drizzle.db
       .select({
@@ -111,7 +102,7 @@ export class DrizzleAdminUserDirectory implements AdminUserDirectory {
   // Substring search is index-backed by the pg_trgm GIN indexes on user.email and
   // player.display_name; the 1000 cap is a safety bound on the id set, not a perf
   // crutch - it is effectively unreachable for a real admin search term.
-  async findPlayerIds(query: string): Promise<string[]> {
+  async findPlayerIds(query: string) {
     const term = `%${query}%`;
     const cap = 1000;
     const [byEmail, byName] = await Promise.all([
