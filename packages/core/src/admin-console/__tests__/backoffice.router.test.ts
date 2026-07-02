@@ -1,4 +1,5 @@
 import { describe, it, expect, vi } from 'vitest';
+import { mock } from '../../testing/mock.js';
 import { call, ORPCError } from '@orpc/server';
 import type { AdminGuard } from '@blurifycom/core/server';
 import type { AuditWritePort } from '@blurifycom/core/contracts';
@@ -19,35 +20,35 @@ const USER = {
 
 /** AdminGuard that only super-admins clear the `admin` resource; everyone clears `player`. */
 function fakeGuard(opts: { isSuper: boolean }): AdminGuard {
-  return {
+  return mock<AdminGuard>({
     assert: vi.fn(async (_ctx: unknown, resource?: string) => {
       if (resource === 'admin' && !opts.isSuper) {
         throw new ORPCError('FORBIDDEN', { message: 'Missing permission: admin:update' });
       }
       return { userId: 'caller-1', role: opts.isSuper ? 'admin' : 'support' };
     }),
-  } as unknown as AdminGuard;
+  });
 }
 
 function fakeService(): BackofficeService {
-  return {
+  return mock<BackofficeService>({
     getUser: vi.fn().mockResolvedValue(USER),
     updateUser: vi.fn().mockResolvedValue({ ...USER, role: 'admin' }),
     listTransactions: vi.fn().mockResolvedValue({ items: [], total: 0, page: 1, limit: 20 }),
     getTransaction: vi.fn().mockResolvedValue(null),
-  } as unknown as BackofficeService;
+  });
 }
 
 /** AdminGuard that grants `player` ops but denies the `transaction` resource. */
 function fakeTransactionDenyingGuard(): AdminGuard {
-  return {
+  return mock<AdminGuard>({
     assert: vi.fn(async (_ctx: unknown, resource?: string) => {
       if (resource === 'transaction') {
         throw new ORPCError('FORBIDDEN', { message: 'Missing permission: transaction:view' });
       }
       return { userId: 'caller-1', role: 'support' };
     }),
-  } as unknown as AdminGuard;
+  });
 }
 
 function fakeAudit(): AuditWritePort {

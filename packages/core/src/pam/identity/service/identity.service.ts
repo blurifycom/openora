@@ -152,6 +152,8 @@ export class IdentityService {
   }
 
   private get api() {
+    // Library boundary: the admin/organization plugin endpoints aren't on better-auth's
+    // base `api` type. Sanctioned cast, see conventions.
     return this.auth.api as unknown as ExtendedAuthApi;
   }
 

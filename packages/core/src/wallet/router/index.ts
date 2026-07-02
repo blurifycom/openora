@@ -8,6 +8,7 @@ import {
   WithdrawalNotPendingError,
   InsufficientBalanceError,
   CurrencyMismatchError,
+  KycRequiredError,
 } from '../service/wallet.service.js';
 
 export function createWalletRouter(wallet: WalletService, adminGuard: AdminGuard) {
@@ -25,6 +26,7 @@ export function createWalletRouter(wallet: WalletService, adminGuard: AdminGuard
         {
           NOT_FOUND: WalletNotFoundError,
           BAD_REQUEST: [InsufficientBalanceError, CurrencyMismatchError],
+          CONFLICT: KycRequiredError,
         },
         () => wallet.withdraw(getUserId(context), input.amount, input.currency, input.provider),
       ),

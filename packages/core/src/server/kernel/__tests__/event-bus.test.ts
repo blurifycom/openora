@@ -1,4 +1,5 @@
 import { describe, it, expect, vi } from 'vitest';
+import { mock } from '../../../testing/mock.js';
 import type { Logger } from 'pino';
 import type {
   MessageBrokerAdapter,
@@ -8,7 +9,7 @@ import type {
 import { createEventBus, InMemoryBroker } from '../event-bus.js';
 
 function fakeLogger() {
-  return { error: vi.fn(), warn: vi.fn(), info: vi.fn() } as unknown as Logger;
+  return mock<Logger>({ error: vi.fn(), warn: vi.fn(), info: vi.fn() });
 }
 
 const flush = () => new Promise((r) => setTimeout(r, 0));

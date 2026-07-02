@@ -1,4 +1,5 @@
 import { describe, it, expect, vi } from 'vitest';
+import { mock, mockDb } from '../../testing/mock.js';
 import { createHash } from 'node:crypto';
 import { AuditService } from '../service/audit.service.js';
 
@@ -31,7 +32,7 @@ function computeHash(fields: {
 }
 
 function makeEvents(): import('@blurifycom/core/server').EventBus {
-  return { emit: vi.fn(), on: vi.fn() } as unknown as import('@blurifycom/core/server').EventBus;
+  return mock<import('@blurifycom/core/server').EventBus>({ emit: vi.fn(), on: vi.fn() });
 }
 
 const CREATED_AT = new Date('2024-01-01T00:00:00.000Z');
@@ -111,13 +112,13 @@ function makeDrizzleWithSelectQueue(
     set: vi.fn().mockReturnThis(),
     where: vi.fn().mockReturnThis(),
   };
-  return { db } as unknown as import('@blurifycom/core/server').DrizzleService;
+  return mockDb(db);
 }
 
 function makeManualDrizzle(
   db: Record<string, unknown>,
 ): import('@blurifycom/core/server').DrizzleService {
-  return { db } as unknown as import('@blurifycom/core/server').DrizzleService;
+  return mockDb(db);
 }
 
 function makeChainStore() {

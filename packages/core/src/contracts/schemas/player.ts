@@ -10,7 +10,20 @@ export const PlayerStatusSchema = z.enum([
   'closed',
 ]);
 
-export const KycStatusSchema = z.enum(['pending', 'verified', 'rejected']);
+// Additive expansion (no rename, no data migration): `not_started` precedes a first
+// submission, `resubmission_requested` is set by a threshold-triggered re-KYC, and
+// `manually_overridden` records an admin override. Vendor statuses stay separate
+// (`KycVendorStatus`); the adapter maps vendor `approved` -> app `verified`.
+export const KYC_STATUSES = [
+  'not_started',
+  'pending',
+  'verified',
+  'rejected',
+  'resubmission_requested',
+  'manually_overridden',
+] as const;
+
+export const KycStatusSchema = z.enum(KYC_STATUSES);
 
 export const PlayerSchema = z.object({
   id: UuidSchema,

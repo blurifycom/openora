@@ -1,5 +1,6 @@
 import { describe, it, expect, vi } from 'vitest';
-import type { DrizzleService, EventBus } from '@blurifycom/core/server';
+import { mock, mockDb } from '../../../testing/mock.js';
+import type { EventBus } from '@blurifycom/core/server';
 import { DrizzleAdminUserDirectory } from '../admin-user-directory.js';
 
 function makeDir(existing: { isActive: boolean }) {
@@ -20,10 +21,7 @@ function makeDir(existing: { isActive: boolean }) {
     }),
   };
   const emit = vi.fn();
-  const dir = new DrizzleAdminUserDirectory(
-    { db } as unknown as DrizzleService,
-    { emit } as unknown as EventBus,
-  );
+  const dir = new DrizzleAdminUserDirectory(mockDb(db), mock<EventBus>({ emit }));
   return { dir, emit };
 }
 
@@ -69,10 +67,7 @@ function makeDirWithSelect(rows: Record<string, unknown>[][]) {
       }),
     }),
   };
-  return new DrizzleAdminUserDirectory(
-    { db } as unknown as DrizzleService,
-    { emit: vi.fn() } as unknown as EventBus,
-  );
+  return new DrizzleAdminUserDirectory(mockDb(db), mock<EventBus>({ emit: vi.fn() }));
 }
 
 describe('DrizzleAdminUserDirectory.lookupPlayers', () => {

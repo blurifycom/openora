@@ -7,7 +7,12 @@ import {
   findOneOrThrow,
   pageToOffset,
 } from '@blurifycom/core/server';
-import { type PaymentAdapter, type AdminUserDirectory } from '@blurifycom/core/contracts';
+import {
+  type PaymentAdapter,
+  type AdminUserDirectory,
+  type PlatformConfig,
+  type KycStatus,
+} from '@blurifycom/core/contracts';
 import { eq, desc, sql, and, gte, lte, count } from 'drizzle-orm';
 import { wallet, walletTransaction } from '../schema/index.js';
 import type {
@@ -30,6 +35,14 @@ export const WithdrawalNotPendingError = makeConflictError(
   'Withdrawal is not pending and cannot be reviewed',
 );
 
+export const KycRequiredError = makeConflictError(
+  'KycRequiredError',
+  'KYC verification required before withdrawal',
+);
+
+// Statuses that satisfy the withdrawal KYC gate.
+const KYC_PASS_STATUSES: ReadonlySet<KycStatus> = new Set(['verified', 'manually_overridden']);
+
 export const CurrencyMismatchError = createDomainError(
   'CurrencyMismatchError',
   (requested, walletCurrency) =>
@@ -50,7 +63,18 @@ export class WalletService {
     private readonly events: EventBus,
     private readonly payment: PaymentAdapter,
     private readonly directory?: AdminUserDirectory,
+    private readonly platformConfig?: PlatformConfig,
   ) {}
+
+  /** Fail-closed KYC gate: when enabled, a withdrawal needs a passing status (verified|manually_overridden). */
+  private async assertKycForWithdrawal(userId: string) {
+    if (!this.platformConfig?.kyc?.gateWithdrawals) return;
+    const [summary] = this.directory ? await this.directory.lookupPlayers([userId]) : [];
+    const status = summary?.kycStatus ?? null;
+    if (!status || !KYC_PASS_STATUSES.has(status)) {
+      throw new KycRequiredError();
+    }
+  }
 
   async getBalance(userId: string) {
     const [record] = await this.drizzle.db.select().from(wallet).where(eq(wallet.userId, userId));
@@ -116,6 +140,8 @@ export class WalletService {
     currency: string,
     _provider?: string,
   ): Promise<TransactionResult> {
+    await this.assertKycForWithdrawal(userId);
+
     const transactionId = await this.drizzle.db.transaction(async (txn) => {
       // Lock the wallet row so two concurrent withdrawals serialize instead of both
       // reading the same balance and double-debiting (TOCTOU under READ COMMITTED).

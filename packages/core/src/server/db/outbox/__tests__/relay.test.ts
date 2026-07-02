@@ -1,4 +1,5 @@
 import { describe, it, expect, vi } from 'vitest';
+import { mock } from '../../../../testing/mock.js';
 import { OutboxRelay } from '../relay.js';
 import type { DrizzleDb } from '../../drizzle.js';
 import type { MessageBrokerAdapter } from '../../../../contracts/adapters/index.js';
@@ -38,7 +39,7 @@ function harness(rows: Row[]) {
     subscribe: () => () => {},
     close: async () => {},
   };
-  const db = {
+  const db = mock<DrizzleDb>({
     select: () => ({
       from: () => ({
         where: () => ({
@@ -54,7 +55,7 @@ function harness(rows: Row[]) {
         },
       }),
     }),
-  } as unknown as DrizzleDb;
+  });
   return { db, broker };
 }
 

@@ -1,10 +1,7 @@
 import { describe, it, expect } from 'vitest';
-import {
-  InProcessRealtimeTransport,
-  type EventBus,
-  type DrizzleService,
-} from '@blurifycom/core/server';
+import { InProcessRealtimeTransport, type EventBus } from '@blurifycom/core/server';
 import type { ChatMessage } from '../schemas/index.js';
+import { mock, mockDb } from '../../../testing/mock.js';
 import {
   ChatService,
   chatChannel,
@@ -57,8 +54,8 @@ describe('ChatService realtime wiring', () => {
   it('delivers messages published on a room channel to subscribers, then stops on unsubscribe', () => {
     const transport = new InProcessRealtimeTransport();
     const service = new ChatService(
-      {} as DrizzleService,
-      { emit: () => undefined } as unknown as EventBus,
+      mockDb({}),
+      mock<EventBus>({ emit: () => undefined }),
       transport,
     );
 
@@ -90,13 +87,11 @@ describe('ChatService.subscribeMessages per-viewer block filtering (AC11)', () =
 
   // Mocks only the `blockedIdsFor` query: select({ blockedId }).from().where().
   function blockListDb(blockedIds: string[]) {
-    return {
-      db: {
-        select: () => ({
-          from: () => ({ where: async () => blockedIds.map((id) => ({ blockedId: id })) }),
-        }),
-      },
-    } as unknown as DrizzleService;
+    return mockDb({
+      select: () => ({
+        from: () => ({ where: async () => blockedIds.map((id) => ({ blockedId: id })) }),
+      }),
+    });
   }
 
   // Drain the microtask queue so the async block-set load resolves and flushes.
@@ -106,7 +101,7 @@ describe('ChatService.subscribeMessages per-viewer block filtering (AC11)', () =
     const transport = new InProcessRealtimeTransport();
     const service = new ChatService(
       blockListDb(['blocked-user']),
-      { emit: () => undefined } as unknown as EventBus,
+      mock<EventBus>({ emit: () => undefined }),
       transport,
     );
 
@@ -123,7 +118,7 @@ describe('ChatService.subscribeMessages per-viewer block filtering (AC11)', () =
     const transport = new InProcessRealtimeTransport();
     const service = new ChatService(
       blockListDb(['blocked-user']),
-      { emit: () => undefined } as unknown as EventBus,
+      mock<EventBus>({ emit: () => undefined }),
       transport,
     );
 
@@ -141,20 +136,18 @@ describe('ChatService.subscribeMessages per-viewer block filtering (AC11)', () =
 
   it('fails open (delivers all) when the block-list load rejects', async () => {
     const transport = new InProcessRealtimeTransport();
-    const failingDb = {
-      db: {
-        select: () => ({
-          from: () => ({
-            where: async () => {
-              throw new Error('db down');
-            },
-          }),
+    const failingDb = mockDb({
+      select: () => ({
+        from: () => ({
+          where: async () => {
+            throw new Error('db down');
+          },
         }),
-      },
-    } as unknown as DrizzleService;
+      }),
+    });
     const service = new ChatService(
       failingDb,
-      { emit: () => undefined } as unknown as EventBus,
+      mock<EventBus>({ emit: () => undefined }),
       transport,
     );
 
@@ -196,8 +189,8 @@ describe('ChatService.sendGlobalMessage username resolution', () => {
   it('stores the display name from the verified user, ignoring the header-derived fallback', async () => {
     const transport = new InProcessRealtimeTransport();
     const service = new ChatService(
-      { db: makeDb('Platform Admin') } as unknown as DrizzleService,
-      { emit: () => undefined } as unknown as EventBus,
+      mockDb(makeDb('Platform Admin')),
+      mock<EventBus>({ emit: () => undefined }),
       transport,
     );
 
@@ -207,8 +200,8 @@ describe('ChatService.sendGlobalMessage username resolution', () => {
 
   it('falls back to the passed name, then anonymous, when the user row is missing', async () => {
     const service = new ChatService(
-      { db: makeDb(null) } as unknown as DrizzleService,
-      { emit: () => undefined } as unknown as EventBus,
+      mockDb(makeDb(null)),
+      mock<EventBus>({ emit: () => undefined }),
       new InProcessRealtimeTransport(),
     );
     expect((await service.sendGlobalMessage('u1', 'fallback', 'hi')).username).toBe('fallback');
@@ -220,8 +213,8 @@ describe('ChatService.sendGlobalMessage username resolution', () => {
     const delivered: ChatMessage[] = [];
     transport.subscribe<ChatMessage>('chat:global', (m) => delivered.push(m));
     const service = new ChatService(
-      { db: makeDb('Alice') } as unknown as DrizzleService,
-      { emit: () => undefined } as unknown as EventBus,
+      mockDb(makeDb('Alice')),
+      mock<EventBus>({ emit: () => undefined }),
       transport,
     );
 
@@ -233,8 +226,8 @@ describe('ChatService.sendGlobalMessage username resolution', () => {
 
   it('persists URL-sanitized content (AC7)', async () => {
     const service = new ChatService(
-      { db: makeDb('Alice') } as unknown as DrizzleService,
-      { emit: () => undefined } as unknown as EventBus,
+      mockDb(makeDb('Alice')),
+      mock<EventBus>({ emit: () => undefined }),
       new InProcessRealtimeTransport(),
     );
     const msg = await service.sendGlobalMessage('u1', 'Alice', 'click javascript:alert(1)');
@@ -245,8 +238,8 @@ describe('ChatService.sendGlobalMessage username resolution', () => {
 describe('ChatService.blockUser', () => {
   it('rejects blocking yourself', async () => {
     const service = new ChatService(
-      {} as unknown as DrizzleService,
-      { emit: () => undefined } as unknown as EventBus,
+      mockDb({}),
+      mock<EventBus>({ emit: () => undefined }),
       new InProcessRealtimeTransport(),
     );
     await expect(service.blockUser('u1', 'u1')).rejects.toThrow(ChatSelfBlockError);

@@ -1,4 +1,5 @@
 import { describe, it, expect, vi } from 'vitest';
+import { mock, mockDb, readPrivate } from '../../testing/mock.js';
 import * as core from '@blurifycom/core/server';
 import {
   levelToActions,
@@ -32,13 +33,13 @@ vi.mock('drizzle-orm', async (importOriginal) => {
 });
 
 function makeEvents() {
-  return { emit: vi.fn(), on: vi.fn() } as unknown as import('@blurifycom/core/server').EventBus;
+  return mock<import('@blurifycom/core/server').EventBus>({ emit: vi.fn(), on: vi.fn() });
 }
 
 function makeEmail() {
-  return {
+  return mock<import('@blurifycom/core/contracts').SendEmailPort>({
     send: vi.fn().mockResolvedValue(undefined),
-  } as unknown as import('@blurifycom/core/contracts').SendEmailPort;
+  });
 }
 
 function inContext<T>(fn: () => T): T {
@@ -107,7 +108,7 @@ function routingDrizzle(byTable: {
     returning: vi.fn().mockResolvedValue([]),
     transaction: vi.fn().mockImplementation((fn: (txn: unknown) => unknown) => fn(chain)),
   };
-  return { db: chain } as unknown as import('@blurifycom/core/server').DrizzleService;
+  return mockDb(chain);
 }
 
 const ROLE_ROW = {
@@ -336,7 +337,7 @@ describe('IamService.updateRole', () => {
       assignment: [],
       superRole: [],
     });
-    (drizzle.db as unknown as { returning: ReturnType<typeof vi.fn> }).returning.mockResolvedValue([
+    readPrivate<ReturnType<typeof vi.fn>>(drizzle.db, 'returning').mockResolvedValue([
       { ...ROLE_ROW, isSystem: true, name: 'Renamed' },
     ]);
     const events = makeEvents();
@@ -519,7 +520,7 @@ describe('IamService.unassignRole', () => {
       delete: vi.fn().mockReturnThis(),
       transaction: vi.fn().mockImplementation((fn: (txn: unknown) => unknown) => fn(chain)),
     };
-    const drizzle = { db: chain } as unknown as import('@blurifycom/core/server').DrizzleService;
+    const drizzle = mockDb(chain);
     const svc = new IamService(drizzle, makeEvents(), makeEmail());
     await expect(
       inContext(() =>
@@ -535,9 +536,7 @@ describe('IamService.unassignRole', () => {
       assignment: [],
       superRole: [],
     });
-    (drizzle.db as unknown as { returning: ReturnType<typeof vi.fn> }).returning.mockResolvedValue(
-      [],
-    );
+    readPrivate<ReturnType<typeof vi.fn>>(drizzle.db, 'returning').mockResolvedValue([]);
     const events = makeEvents();
     const svc = new IamService(drizzle, events, makeEmail());
     const result = await inContext(() =>
@@ -554,7 +553,7 @@ describe('IamService.unassignRole', () => {
       assignment: [],
       superRole: [],
     });
-    (drizzle.db as unknown as { returning: ReturnType<typeof vi.fn> }).returning.mockResolvedValue([
+    readPrivate<ReturnType<typeof vi.fn>>(drizzle.db, 'returning').mockResolvedValue([
       { id: 'a1' },
     ]);
     const events = makeEvents();
@@ -618,7 +617,7 @@ describe('IamService.acceptInvitation', () => {
       where: vi.fn().mockReturnThis(),
       returning,
     };
-    const drizzle = { db: chain } as unknown as import('@blurifycom/core/server').DrizzleService;
+    const drizzle = mockDb(chain);
     const events = makeEvents();
     const svc = new IamService(drizzle, events, makeEmail());
 
@@ -667,7 +666,7 @@ describe('IamService.inviteAdmin', () => {
       values: vi.fn().mockReturnThis(),
       returning: vi.fn().mockResolvedValue([invitationRow]),
     };
-    const drizzle = { db: chain } as unknown as import('@blurifycom/core/server').DrizzleService;
+    const drizzle = mockDb(chain);
     const email = makeEmail();
     const svc = new IamService(drizzle, makeEvents(), email);
     const result = await inContext(() =>
@@ -715,7 +714,7 @@ function paginatedDrizzle(rows: unknown[], total: number) {
       return chain;
     }),
   };
-  return { db } as unknown as import('@blurifycom/core/server').DrizzleService;
+  return mockDb(db);
 }
 
 describe('IamService paginated lists', () => {

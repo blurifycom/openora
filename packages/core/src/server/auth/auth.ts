@@ -59,6 +59,9 @@ export function createAuth(options: AuthOptions): BetterAuthType {
       },
     },
     plugins: [organization(), adminPlugin({ ac, roles }), twoFactor()],
+    // Library boundary: better-auth infers an options-specific instantiation that isn't
+    // assignable to its own exported `Auth` alias. No way to narrow without matching the
+    // full generic - the one sanctioned cast, see conventions.
   }) as unknown as BetterAuthType;
 }
 

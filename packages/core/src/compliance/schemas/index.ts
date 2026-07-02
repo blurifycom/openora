@@ -1,5 +1,23 @@
 import * as z from 'zod';
 import { TimestampSchema, UuidSchema } from '@blurifycom/core/contracts';
+import {
+  KycVerificationSchema,
+  KycDocumentSchema,
+  SubmitKycInputSchema,
+  PlayerKycViewSchema,
+} from '../contract/index.js';
+
+export {
+  KycVerificationSchema,
+  KycDocumentSchema,
+  SubmitKycInputSchema,
+  PlayerKycViewSchema,
+} from '../contract/index.js';
+
+export type KycVerification = z.infer<typeof KycVerificationSchema>;
+export type KycDocumentInput = z.infer<typeof KycDocumentSchema>;
+export type SubmitKycInput = z.infer<typeof SubmitKycInputSchema>;
+export type PlayerKycView = z.infer<typeof PlayerKycViewSchema>;
 
 export const LimitSchema = z.object({
   id: UuidSchema,

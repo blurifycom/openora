@@ -7,6 +7,8 @@ import type {
 } from '@blurifycom/core/contracts';
 
 export class MockKycAdapter implements KycAdapter {
+  readonly autoApproves = true;
+
   async submit(userId: string, _docs: KycDocument[]): Promise<KycResult> {
     return { referenceId: `mock-${userId}`, status: 'approved' };
   }

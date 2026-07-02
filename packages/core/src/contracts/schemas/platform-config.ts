@@ -1,5 +1,6 @@
 import { z } from 'zod';
 import { LimitsSchema } from './igaming-config.js';
+import { createToken } from '../adapters/token.js';
 
 /**
  * Platform-wide T0 configuration consumed by the slot evaluation context and
@@ -49,6 +50,22 @@ export const SportsbookConfigSchema = z
   })
   .strict();
 
+export const KycConfigSchema = z
+  .object({
+    /** Provider id recorded on each verification record (e.g. 'didit', 'sumsub'). */
+    provider: z.string().optional(),
+    /** Name of the env var holding the webhook HMAC secret. Default: KYC_WEBHOOK_SECRET. */
+    webhookSecretEnv: z.string().optional(),
+    /** When true, withdrawals require a passing KYC status (verified|manually_overridden). */
+    gateWithdrawals: z.boolean().default(false),
+    /**
+     * Per-currency cumulative-deposit thresholds (currency code -> amount) that trigger
+     * a re-KYC of a verified player. Absent currency = no threshold for that currency.
+     */
+    reverifyThresholds: z.record(z.string(), z.number()).optional(),
+  })
+  .strict();
+
 export const PlatformConfigSchema = z
   .object({
     /**
@@ -78,6 +95,11 @@ export const PlatformConfigSchema = z
      * fall back to the service defaults (oddsTickMs=2000, minOdds=1.01, maxOdds=50).
      */
     sportsbook: SportsbookConfigSchema.optional(),
+    /**
+     * KYC verification knobs: provider id, webhook secret env, withdrawal gating,
+     * and per-currency re-KYC deposit thresholds. Absent = KYC ungated, no re-KYC.
+     */
+    kyc: KycConfigSchema.optional(),
     /**
      * Player-facing language codes the operator supports (eg `['en', 'es']`).
      * Undefined or empty means no restriction - any value is accepted.
@@ -117,4 +139,4 @@ export function definePlatformConfig(config: PlatformConfigInput): PlatformConfi
 export const defaultPlatformConfig: PlatformConfig = definePlatformConfig({});
 
 /** DI token to inject the active PlatformConfig into services + slot fills. */
-export const PLATFORM_CONFIG = Symbol('PLATFORM_CONFIG');
+export const PLATFORM_CONFIG = createToken<PlatformConfig>('PLATFORM_CONFIG');

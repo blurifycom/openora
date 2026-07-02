@@ -154,7 +154,7 @@ export default function generator(plop: PlopTypes.NodePlopAPI): void {
         // packages/addons/<name>). It is kept purely as descriptive metadata in the
         // generated AGENTS.md / scaffold message.
         message: 'Surface this add-on serves (metadata only):',
-        choices: MODULE_GROUPS as unknown as string[],
+        choices: [...MODULE_GROUPS],
       },
       {
         type: 'input',

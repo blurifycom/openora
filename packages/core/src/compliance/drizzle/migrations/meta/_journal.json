@@ -8,6 +8,20 @@
       "when": 1782666310309,
       "tag": "0000_absurd_gunslinger",
       "breakpoints": true
+    },
+    {
+      "idx": 1,
+      "version": "7",
+      "when": 1782857755000,
+      "tag": "0001_blushing_golden_guardian",
+      "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "7",
+      "when": 1782891962138,
+      "tag": "0002_strong_proudstar",
+      "breakpoints": true
     }
   ]
 }

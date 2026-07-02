@@ -46,8 +46,16 @@ export { REALTIME_TRANSPORT, REALTIME_CLIENT_AUTHORIZER } from './realtime.js';
 export type { GameAdapter } from './game.js';
 export { GAME_ADAPTER } from './game.js';
 
-export type { KycAdapter, KycVendorStatus, KycDocument, KycResult } from './kyc.js';
-export { KYC_ADAPTER } from './kyc.js';
+export type {
+  KycAdapter,
+  KycVendorStatus,
+  KycDocument,
+  KycResult,
+  KycStatusWriter,
+  KycStatusSource,
+  KycWebhookVerifier,
+} from './kyc.js';
+export { KYC_ADAPTER, KYC_STATUS_WRITER, KYC_WEBHOOK_VERIFIER } from './kyc.js';
 
 export type { PaymentAdapter } from './payment.js';
 export { PAYMENT_ADAPTER } from './payment.js';

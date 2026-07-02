@@ -35,6 +35,8 @@ export async function seedMinimal(
     schema: { user, session, account, verification },
     casing: 'snake_case',
   });
+  // Library boundary: this seed-local drizzle instance carries a different schema generic
+  // than core's DrizzleDb alias. Sanctioned cast, see conventions.
   const auth = createAuth({ db: authDb as unknown as DrizzleDb });
 
   try {

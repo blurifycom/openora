@@ -27,7 +27,7 @@ function mapEventToRecord(topic: string, p: Record<string, unknown>): RecordInpu
   if (topic === 'compliance.kyc.updated') {
     return {
       ...base,
-      actorType: 'admin',
+      actorType: p['actorId'] ? 'admin' : 'system',
       actorId: str(p['actorId']),
       resourceType: 'player',
       resourceId: str(p['userId']),
@@ -45,6 +45,29 @@ function mapEventToRecord(topic: string, p: Record<string, unknown>): RecordInpu
       actorId: str(p['actorId']),
       resourceType: 'game',
       after: { synced: p['synced'] ?? null, failed: p['failed'] ?? null },
+    };
+  }
+
+  // Player submitted KYC documents. actorId = the player; resourceId = the player.
+  if (topic === 'compliance.kyc.submitted') {
+    return {
+      ...base,
+      actorType: 'player',
+      actorId: str(p['userId']),
+      resourceType: 'player',
+      resourceId: str(p['userId']),
+      after: { referenceId: p['referenceId'] ?? null, provider: p['provider'] ?? null },
+    };
+  }
+
+  // System-driven re-KYC trigger. No admin actor; resource = the subject player.
+  if (topic === 'compliance.kyc.reverify_required') {
+    return {
+      ...base,
+      actorType: 'system',
+      resourceType: 'player',
+      resourceId: str(p['userId']),
+      after: { reason: p['reason'] ?? null },
     };
   }
 
@@ -238,6 +261,8 @@ const SUBSCRIBED_TOPICS = [
   'compliance.limit.upserted',
   'compliance.limit.removed',
   'compliance.kyc.updated',
+  'compliance.kyc.submitted',
+  'compliance.kyc.reverify_required',
   'compliance.geo-rule.added',
   'aggregator.sync.completed',
   'cms.page.published',

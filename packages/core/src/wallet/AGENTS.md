@@ -20,6 +20,8 @@ Withdrawals run through a back-office approval queue (ABC-210): a player `withdr
 
 Player routes require an authenticated caller (verified better-auth session via `getUserId`, ADR-0019). The `withdrawals.*` admin routes call `adminGuard.assert(context, 'withdrawal', '...')` as the first line; the queue lists username + KYC status via the `ADMIN_USER_DIRECTORY.lookupPlayers` port (never reading the player/profile tables directly). Queue filters: `currency`, `rail`, `minAmount`/`maxAmount`, `kycStatus`, `dateFrom`/`dateTo`, plus `page`/`limit`. `riskTags` is an empty-array placeholder until ABC-206.
 
+KYC withdrawal gate: when `platformConfig.kyc.gateWithdrawals` is true, `withdraw()` fails closed unless the player's KYC status is in the pass-set (`verified` or `manually_overridden`), throwing `KycRequiredError` (maps to CONFLICT). The status is read through the existing `ADMIN_USER_DIRECTORY.lookupPlayers` port - no new cross-domain coupling. Off by default.
+
 ## Extension points
 
 - **Ports**: `PaymentAdapter` lives in `@blurifycom/adapters` and is passed into `WalletService` (the constructor takes a `PaymentAdapter`; `plugin.ts` resolves `PAYMENT_ADAPTER` from the container). The default binding is `MockPaymentAdapter` (bound in `src/plugin.ts`). Implement it for a real PSP and override the binding via an overlay plugin.

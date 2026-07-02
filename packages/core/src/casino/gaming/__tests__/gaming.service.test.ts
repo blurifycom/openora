@@ -1,5 +1,6 @@
 import { describe, it, expect, vi } from 'vitest';
-import type { DrizzleService, EventBus } from '@blurifycom/core/server';
+import { mock, mockDb } from '../../../testing/mock.js';
+import type { EventBus } from '@blurifycom/core/server';
 import type { GameAdapter } from '@blurifycom/core/contracts';
 import {
   GamingService,
@@ -37,8 +38,8 @@ function makeQueryChain(rows: unknown[]) {
   return { chain, calls };
 }
 
-const noopEvents = { emit: vi.fn(), on: vi.fn() } as unknown as EventBus;
-const noopAdapter = {} as unknown as GameAdapter;
+const noopEvents = mock<EventBus>({ emit: vi.fn(), on: vi.fn() });
+const noopAdapter = mock<GameAdapter>({});
 
 describe('GamingService lobby', () => {
   it('listGames returns the active games', async () => {
@@ -53,7 +54,7 @@ describe('GamingService lobby', () => {
         metadata: null,
       },
     ]);
-    const drizzle = { db: query.chain } as unknown as DrizzleService;
+    const drizzle = mockDb(query.chain);
     const svc = new GamingService(drizzle, noopEvents, noopAdapter);
 
     const games = await svc.listGames();

@@ -160,12 +160,24 @@ Each rule carries a short example: `// bad` is the smell, `// good` the conventi
   ```
 
 - **No type casts (`as`) to silence the compiler - fix the root cause.** (`as const` is fine.)
+  `as unknown as X` is the worst form - it turns off type-checking entirely. If a symbol
+  needs a type (e.g. a DI token), give it one at the source (`createToken<T>()`), don't cast
+  at every use site. Two sanctioned exceptions, and only these: **(1) test doubles** - route
+  them through the `mock` / `mockDb` / `readPrivate` helpers (`packages/core/src/testing/mock.ts`)
+  so the assertion lives in one audited place, never inline in a test; **(2) third-party
+  type-inference boundaries** a library gives you no honest way to satisfy - keep it to one
+  cast with a one-line `// Library boundary:` note saying why.
 
   ```ts
   // bad - hides a wrong/missing type
   const user = data as User;
+  // bad - double-cast switches off the compiler
+  const svc = { db } as unknown as DrizzleService;
+  const TOKEN = SYMBOL as unknown as Token<Config>;
   // good - validate, or fix the source type/import
   const user = UserSchema.parse(data);
+  const TOKEN = createToken<Config>('CONFIG'); // typed at the source
+  const svc = mockDb(db); // test double, cast confined to the helper
   const ROLES = ['admin', 'player'] as const; // ok
   ```
 

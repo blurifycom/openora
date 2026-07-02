@@ -15,8 +15,10 @@ export function createToken<T>(description: string): Token<T> {
 
 /**
  * A sealed token represents a regulator-mandated service operators must NEVER
- * override (responsible-gambling enforcement, KYC verification status writes,
- * AML/SAR audit log writes, ledger writes, RNG/game outcomes, etc.).
+ * override (self-exclusion enforcement, AML/SAR audit log writes, ledger writes,
+ * RNG/game outcomes, etc.). Note KYC status writes are NOT sealed: they need a
+ * concrete pam-bound implementation, so `KYC_STATUS_WRITER` is a regular Token
+ * whose single-writer invariant is enforced structurally (see its doc in kyc.ts).
  *
  * Structurally distinct from `Token<T>` via the `__sealed` brand, so
  * `ctx.provide(token, factory)` - typed `<T>(token: Token<T>, ...)` - will

@@ -16,8 +16,8 @@ function chain(result: unknown): any {
 
 function makeService(dayCounts: DayCountRow[] = []): PlayerService {
   const db = { select: vi.fn(() => chain(dayCounts)) };
-  const events = { emit: vi.fn() } as never;
-  return new PlayerService({ db } as never, events);
+  const writer = { setStatus: vi.fn() } as never;
+  return new PlayerService({ db } as never, writer);
 }
 
 describe('PlayerService domain errors', () => {

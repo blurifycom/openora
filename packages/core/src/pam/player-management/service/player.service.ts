@@ -1,12 +1,15 @@
 import {
   makeNotFoundError,
   makeConflictError,
-  type EventBus,
   DrizzleService,
   findOneOrThrow,
   pageToOffset,
 } from '@blurifycom/core/server';
+import type { KycStatusWriter } from '@blurifycom/core/contracts';
 import { eq, ilike, count, or, and, gte, desc, sql, ne } from 'drizzle-orm';
+// Reads the core-owned `player` table + identity `user` via the public /schema
+// subpaths (add-on->core reads, allowed by the boundary rules). PAM owns no
+// tables of its own. See ADR-0020.
 import { player } from '../../profile/schema/index.js';
 import { user } from '../../identity/schema/index.js';
 import type { PlayerStatus, KycStatus } from '../schemas/index.js';
@@ -22,7 +25,7 @@ function toDateKey(d: Date): string {
 export class PlayerService {
   constructor(
     private readonly drizzle: DrizzleService,
-    private readonly events: EventBus,
+    private readonly kycStatusWriter: KycStatusWriter,
   ) {}
 
   async list(page: number, limit: number, search?: string, status?: PlayerStatus) {
@@ -102,26 +105,34 @@ export class PlayerService {
     const patch: Partial<typeof player.$inferInsert> = {};
     if (data.displayName !== undefined) patch.displayName = data.displayName;
     if (data.status !== undefined) patch.status = data.status;
-    if (data.kycStatus !== undefined) patch.kycStatus = data.kycStatus;
     if (data.level !== undefined) patch.level = data.level;
 
+    const kycChanged = data.kycStatus !== undefined && data.kycStatus !== existing.kycStatus;
+
+    // One transaction so the email/field patch + the KYC write commit or roll back together.
     const record = await this.drizzle.db.transaction(async (trx) => {
       if (data.email !== undefined) {
         await trx.update(user).set({ email: data.email }).where(eq(user.id, existing.userId));
       }
-      const rows = await trx.update(player).set(patch).where(eq(player.id, playerId)).returning();
+      if (Object.keys(patch).length > 0) {
+        await trx.update(player).set(patch).where(eq(player.id, playerId));
+      }
+      // A KYC transition is a regulated single-writer action - route it through the
+      // KYC_STATUS_WRITER seam (it owns the player.kycStatus write + compliance.kyc.updated
+      // emit), so an admin override and a vendor decision share one code path. Runs on this
+      // txn via its optional tx handle.
+      if (kycChanged) {
+        await this.kycStatusWriter.setStatus(
+          existing.userId,
+          data.kycStatus!,
+          { actorId, source: 'manual' },
+          trx,
+        );
+      }
+      const rows = await trx.select().from(player).where(eq(player.id, playerId));
       return findOneOrThrow(rows, new PlayerNotFoundError(playerId));
     });
 
-    // Audit KYC transitions (regulatory). Emit AFTER commit, only on a real change.
-    if (data.kycStatus !== undefined && data.kycStatus !== existing.kycStatus) {
-      this.events.emit('compliance.kyc.updated', {
-        userId: existing.userId,
-        actorId,
-        status: data.kycStatus,
-        previousStatus: existing.kycStatus,
-      });
-    }
     return toPlayer(record, await fetchEmail(this.drizzle, record.userId));
   }
 

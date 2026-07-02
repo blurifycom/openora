@@ -97,6 +97,7 @@
       "group": "core",
       "tables": [
         "geo_rule",
+        "kyc_verification",
         "user_limit"
       ],
       "routes": [
@@ -104,7 +105,10 @@
         "compliance.deleteLimit",
         "compliance.geoCheck",
         "compliance.getLimits",
+        "compliance.getPlayerKyc",
+        "compliance.kycWebhook",
         "compliance.listGeoRules",
+        "compliance.submitKyc",
         "compliance.upsertLimit"
       ]
     },
@@ -164,12 +168,15 @@
         "identity.changePassword",
         "identity.disable2fa",
         "identity.enable2fa",
+        "identity.list",
         "identity.login",
         "identity.logout",
         "identity.me",
         "identity.register",
         "identity.requestPasswordReset",
         "identity.resetPassword",
+        "identity.revoke",
+        "identity.revokeAll",
         "identity.sendEmailVerification",
         "identity.unlockUser",
         "identity.updateProfile",
@@ -230,6 +237,17 @@
       ]
     },
     {
+      "id": "player-note",
+      "group": "core",
+      "tables": [
+        "player_note"
+      ],
+      "routes": [
+        "player-note.create",
+        "player-note.list"
+      ]
+    },
+    {
       "id": "profile",
       "group": "core",
       "tables": [
@@ -256,6 +274,21 @@
       ]
     },
     {
+      "id": "tag",
+      "group": "core",
+      "tables": [
+        "player_tag",
+        "tag"
+      ],
+      "routes": [
+        "tag.assignPlayerTag",
+        "tag.createTag",
+        "tag.deleteTag",
+        "tag.listPlayerTags",
+        "tag.removePlayerTag"
+      ]
+    },
+    {
       "id": "wallet",
       "group": "core",
       "tables": [
@@ -267,6 +300,7 @@
         "wallet.deposit",
         "wallet.getBalance",
         "wallet.list",
+        "wallet.listPlayerTransactions",
         "wallet.listTransactions",
         "wallet.reject",
         "wallet.withdraw"
@@ -385,6 +419,7 @@
       "token": "KYC_ADAPTER",
       "status": "wired",
       "boundIn": [
+        "packages/core/src/compliance/plugin.ts",
         "packages/core/src/pam/identity/adapters/mock/mock-kyc-adapter.ts",
         "packages/core/src/pam/identity/plugin.ts"
       ]
@@ -456,6 +491,8 @@
     "chat.user.unblocked",
     "cms.page.published",
     "compliance.geo-rule.added",
+    "compliance.kyc.reverify_required",
+    "compliance.kyc.submitted",
     "compliance.kyc.updated",
     "compliance.limit.removed",
     "compliance.limit.upserted",
@@ -473,6 +510,8 @@
     "identity.email.verified",
     "identity.password.reset",
     "identity.profile.updated",
+    "identity.session.revoked",
+    "identity.sessions.revoked_all",
     "identity.user.deactivated",
     "identity.user.lockout.triggered",
     "identity.user.login",
@@ -534,6 +573,10 @@
     {
       "name": "ApproveWithdrawalInputSchema",
       "file": "packages/core/src/wallet/contract/index.ts"
+    },
+    {
+      "name": "assignPlayerTagSchema",
+      "file": "packages/core/src/contracts/schemas/tag.ts"
     },
     {
       "name": "AuditActorTypeSchema",
@@ -616,8 +659,20 @@
       "file": "packages/core/src/contracts/schemas/igaming-config.ts"
     },
     {
+      "name": "CreatePlayerNoteInputSchema",
+      "file": "packages/core/src/pam/player-note/contract/index.ts"
+    },
+    {
+      "name": "createTagSchema",
+      "file": "packages/core/src/contracts/schemas/tag.ts"
+    },
+    {
       "name": "CurrencyCodeSchema",
       "file": "packages/core/src/contracts/schemas/igaming-config.ts"
+    },
+    {
+      "name": "deleteTagSchema",
+      "file": "packages/core/src/contracts/schemas/tag.ts"
     },
     {
       "name": "DepositInputSchema",
@@ -688,8 +743,28 @@
       "file": "packages/core/src/contracts/schemas/igaming-config.ts"
     },
     {
+      "name": "KycConfigSchema",
+      "file": "packages/core/src/contracts/schemas/platform-config.ts"
+    },
+    {
+      "name": "KycDocumentSchema",
+      "file": "packages/core/src/compliance/contract/index.ts"
+    },
+    {
+      "name": "KycDocumentTypeSchema",
+      "file": "packages/core/src/compliance/contract/index.ts"
+    },
+    {
       "name": "KycStatusSchema",
       "file": "packages/core/src/contracts/schemas/player.ts"
+    },
+    {
+      "name": "KycTriggeredBySchema",
+      "file": "packages/core/src/compliance/contract/index.ts"
+    },
+    {
+      "name": "KycVerificationSchema",
+      "file": "packages/core/src/compliance/contract/index.ts"
     },
     {
       "name": "LeaderboardEntrySchema",
@@ -761,7 +836,7 @@
     },
     {
       "name": "PermissionLevelSchema",
-      "file": "packages/core/src/iam/contract/index.ts"
+      "file": "packages/core/src/contracts/schemas/iam.ts"
     },
     {
       "name": "PlaceBetInputSchema",
@@ -784,6 +859,14 @@
       "file": "packages/core/src/admin-console/contract/index.ts"
     },
     {
+      "name": "PlayerKycViewSchema",
+      "file": "packages/core/src/compliance/contract/index.ts"
+    },
+    {
+      "name": "PlayerNoteSchema",
+      "file": "packages/core/src/pam/player-note/contract/index.ts"
+    },
+    {
       "name": "PlayerRegistrationPointSchema",
       "file": "packages/core/src/pam/player-management/contract/index.ts"
     },
@@ -804,6 +887,14 @@
       "file": "packages/core/src/pam/player-management/contract/index.ts"
     },
     {
+      "name": "playerTagSchema",
+      "file": "packages/core/src/contracts/schemas/tag.ts"
+    },
+    {
+      "name": "PlayerTagWithTagSchema",
+      "file": "packages/core/src/pam/tag/contract/index.ts"
+    },
+    {
       "name": "PlayerUsernameSchema",
       "file": "packages/core/src/admin-console/contract/index.ts"
     },
@@ -820,6 +911,10 @@
       "file": "packages/core/src/wallet/contract/index.ts"
     },
     {
+      "name": "removePlayerTagSchema",
+      "file": "packages/core/src/contracts/schemas/tag.ts"
+    },
+    {
       "name": "RequestPasswordResetInputSchema",
       "file": "packages/core/src/contracts/schemas/identity.ts"
     },
@@ -830,6 +925,10 @@
     {
       "name": "RolePermissionLevelSchema",
       "file": "packages/core/src/iam/contract/index.ts"
+    },
+    {
+      "name": "SessionItemSchema",
+      "file": "packages/core/src/pam/identity/contract/index.ts"
     },
     {
       "name": "SportsbookBetSchema",
@@ -856,8 +955,20 @@
       "file": "packages/core/src/casino/gaming/contract/index.ts"
     },
     {
+      "name": "SubmitKycInputSchema",
+      "file": "packages/core/src/compliance/contract/index.ts"
+    },
+    {
       "name": "SyncResultSchema",
       "file": "packages/core/src/casino/aggregator/contract/index.ts"
+    },
+    {
+      "name": "TagKeySchema",
+      "file": "packages/core/src/contracts/schemas/tag.ts"
+    },
+    {
+      "name": "tagSchema",
+      "file": "packages/core/src/contracts/schemas/tag.ts"
     },
     {
       "name": "TimestampSchema",
@@ -878,6 +989,10 @@
     {
       "name": "UpdateProfileInputSchema",
       "file": "packages/core/src/contracts/schemas/identity.ts"
+    },
+    {
+      "name": "updateTagSchema",
+      "file": "packages/core/src/contracts/schemas/tag.ts"
     },
     {
       "name": "UserBonusSchema",
@@ -989,6 +1104,8 @@
     "DELETE /compliance/limits/{id}",
     "DELETE /iam/assignments",
     "DELETE /iam/roles/{roleId}",
+    "DELETE /player/{playerId}/player-tag/{tagKey}",
+    "DELETE /tag/{key}",
     "GET /audit/export",
     "GET /audit/logs",
     "GET /backoffice/stats",
@@ -1012,6 +1129,7 @@
     "GET /compliance/geo-check",
     "GET /compliance/geo-rules",
     "GET /compliance/limits",
+    "GET /compliance/players/{userId}/kyc",
     "GET /gaming/games",
     "GET /gaming/games/{id}",
     "GET /gaming/rounds",
@@ -1022,14 +1140,18 @@
     "GET /iam/roles",
     "GET /iam/roles/{roleId}",
     "GET /identity/me",
+    "GET /identity/sessions",
     "GET /lobby/categories",
     "GET /lobby/categories/{slug}",
     "GET /lobby/featured",
     "GET /lobby/search",
     "GET /notifications",
+    "GET /player/{playerId}/note",
+    "GET /player/{playerId}/player-tag",
     "GET /profile",
     "GET /wallet/balance",
     "GET /wallet/transactions",
+    "GET /wallet/transactions/{userId}",
     "GET /wallet/withdrawals",
     "PATCH /backoffice/users/{userId}",
     "PATCH /iam/roles/{roleId}",
@@ -1042,6 +1164,8 @@
     "POST /cms/banners",
     "POST /cms/pages",
     "POST /compliance/geo-rules",
+    "POST /compliance/kyc",
+    "POST /compliance/kyc/webhook",
     "POST /gaming/rounds/start",
     "POST /gaming/rounds/{roundId}/end",
     "POST /iam/assignments",
@@ -1061,9 +1185,14 @@
     "POST /identity/password/forgot",
     "POST /identity/password/reset",
     "POST /identity/register",
+    "POST /identity/sessions/revoke",
+    "POST /identity/sessions/revoke-all",
     "POST /identity/unlock",
     "POST /notifications/read-all",
     "POST /notifications/{id}/read",
+    "POST /player/{playerId}/note",
+    "POST /player/{playerId}/player-tag",
+    "POST /tag",
     "POST /wallet/deposit",
     "POST /wallet/withdraw",
     "POST /wallet/withdrawals/{withdrawalId}/approve",

@@ -1,4 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { mockDb } from '../../../testing/mock.js';
 import {
   NotificationsService,
   NotificationNotFoundError,
@@ -22,7 +23,7 @@ function makeDrizzle(r: { select?: unknown; insert?: unknown; update?: unknown }
     insert: vi.fn(() => chain(r.insert ?? [])),
     update: vi.fn(() => chain(r.update ?? [])),
   };
-  return { db } as unknown as import('@blurifycom/core/server').DrizzleService;
+  return mockDb(db);
 }
 
 function makeEvents() {

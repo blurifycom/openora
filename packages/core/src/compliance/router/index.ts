@@ -1,13 +1,27 @@
-import { implement } from '@orpc/server';
+import { implement, ORPCError } from '@orpc/server';
 import { AdminGuard, getUserId, mapErrors, type OssContext } from '@blurifycom/core/server';
+import type { KycAdapter, KycWebhookVerifier } from '@blurifycom/core/contracts';
 import { complianceContract } from '../contract/index.js';
 import {
   ComplianceService,
   LimitNotFoundError,
   LimitOwnershipError,
 } from '../service/compliance.service.js';
+import { KycVerificationService } from '../service/kyc.service.js';
 
-export function createComplianceRouter(compliance: ComplianceService, adminGuard: AdminGuard) {
+function headerValue(context: OssContext, name: string): string | null {
+  const raw = context.request.headers[name];
+  if (Array.isArray(raw)) return raw[0] ?? null;
+  return raw ?? null;
+}
+
+export function createComplianceRouter(
+  compliance: ComplianceService,
+  adminGuard: AdminGuard,
+  kyc: KycVerificationService,
+  kycAdapter: KycAdapter,
+  webhookVerifier: KycWebhookVerifier,
+) {
   const os = implement(complianceContract).$context<OssContext>();
 
   return os.router({
@@ -40,6 +54,30 @@ export function createComplianceRouter(compliance: ComplianceService, adminGuard
     listGeoRules: os.listGeoRules.handler(async ({ context }) => {
       await adminGuard.assert(context, 'compliance', 'view');
       return compliance.listGeoRules();
+    }),
+
+    getPlayerKyc: os.getPlayerKyc.handler(async ({ input, context }) => {
+      await adminGuard.assert(context, 'compliance', 'view');
+      return kyc.getForPlayer(input.userId);
+    }),
+
+    submitKyc: os.submitKyc.handler(({ input, context }) => kyc.submit(getUserId(context), input)),
+
+    // M2M provider webhook - no admin session. Verify the verbatim bytes against the
+    // signature header or reject (fail closed); never fall back to an empty body.
+    kycWebhook: os.kycWebhook.handler(async ({ context }) => {
+      const rawBody = context.rawBody;
+      if (
+        rawBody === undefined ||
+        !webhookVerifier.verify(rawBody, headerValue(context, 'x-kyc-signature'))
+      ) {
+        throw new ORPCError('UNAUTHORIZED', { message: 'Invalid KYC webhook signature' });
+      }
+      const decision = kycAdapter.parseWebhook?.(rawBody, context.request.headers);
+      if (decision) {
+        await kyc.reconcile(decision.referenceId, decision.status);
+      }
+      return { ok: true as const };
     }),
   });
 }

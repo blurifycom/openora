@@ -4,6 +4,7 @@ import {
   ADMIN_WALLET_REPORTING,
   PAYMENT_ADAPTER,
   WALLET_COMMANDS,
+  PLATFORM_CONFIG,
 } from '@blurifycom/core/contracts';
 import { WalletService } from './service/wallet.service.js';
 import { WalletCommandsService } from './service/wallet-commands.service.js';
@@ -29,6 +30,7 @@ export default definePlugin({
           c.get(EVENT_BUS),
           c.get(PAYMENT_ADAPTER),
           c.get(ADMIN_USER_DIRECTORY),
+          c.has(PLATFORM_CONFIG) ? c.get(PLATFORM_CONFIG) : undefined,
         ),
         c.get(ADMIN_GUARD),
       ),

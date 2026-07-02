@@ -1,4 +1,5 @@
 import { describe, it, expect, vi } from 'vitest';
+import { mock } from '../../../testing/mock.js';
 import { call, ORPCError } from '@orpc/server';
 import type { AdminGuard } from '@blurifycom/core/server';
 import { createPlayerRouter } from '../router/index.js';
@@ -8,14 +9,14 @@ const CTX = { request: { headers: {} } };
 const PLAYER_ID = '63d3c264-3bf4-4d08-9b92-ea3eaf40a440';
 
 function fakeGuard(allowed: ReadonlyArray<`${string}:${string}`>): AdminGuard {
-  return {
+  return mock<AdminGuard>({
     assert: vi.fn(async (_ctx: unknown, resource?: string, action?: string) => {
       if (resource && action && !allowed.includes(`${resource}:${action}`)) {
         throw new ORPCError('FORBIDDEN', { message: `Missing permission: ${resource}:${action}` });
       }
       return { userId: 'admin-1', role: 'admin' };
     }),
-  } as unknown as AdminGuard;
+  });
 }
 
 function fakeService(): PlayerService {
@@ -36,7 +37,7 @@ function fakeService(): PlayerService {
     createdAt: '2026-01-01T00:00:00.000Z',
     updatedAt: '2026-01-01T00:00:00.000Z',
   };
-  return { update: vi.fn().mockResolvedValue(playerDto) } as unknown as PlayerService;
+  return mock<PlayerService>({ update: vi.fn().mockResolvedValue(playerDto) });
 }
 
 describe('player router update KYC authz', () => {

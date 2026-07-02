@@ -1,11 +1,12 @@
 import { describe, it, expect, vi } from 'vitest';
+import { mock } from '../../../testing/mock.js';
 import { z } from 'zod';
 import type { Logger } from 'pino';
 import { queue } from '../../../contracts/adapters/index.js';
 import { InProcessJobQueue } from '../job-queue.js';
 
 function fakeLogger() {
-  return { error: vi.fn(), warn: vi.fn(), info: vi.fn(), debug: vi.fn() } as unknown as Logger;
+  return mock<Logger>({ error: vi.fn(), warn: vi.fn(), info: vi.fn(), debug: vi.fn() });
 }
 
 const flush = () => new Promise((r) => setTimeout(r, 0));

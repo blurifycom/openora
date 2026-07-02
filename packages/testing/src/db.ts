@@ -1,12 +1,23 @@
-import { createRequire } from 'node:module';
-import { dirname, resolve } from 'node:path';
-import { existsSync } from 'node:fs';
 import { Pool } from 'pg';
 import { drizzle } from 'drizzle-orm/node-postgres';
-import { migrate } from 'drizzle-orm/node-postgres/migrator';
 import { sql } from 'drizzle-orm';
-// Each gated domain owns its own migration tracking table (ADR-0025); a full test
-// DB must apply all three or integration tests hit "relation does not exist".
+// Every module owns its own migration tracking table + history (ADR-0027) - a full
+// test DB must apply all of them or integration tests hit "relation does not exist".
+// `server/migrate` covers only the engine-owned `outbox` table; everything else is a
+// domain module. Keep this list in sync with `packages/core/src/**/migrate.ts`.
+import { migrate as migrateOutbox } from '@blurifycom/core/server/migrate';
+import { migrate as migrateIdentity } from '@blurifycom/core/pam/migrate/identity';
+import { migrate as migrateProfile } from '@blurifycom/core/pam/migrate/profile';
+import { migrate as migrateAudit } from '@blurifycom/core/audit/migrate';
+import { migrate as migrateIam } from '@blurifycom/core/iam/migrate';
+import { migrate as migrateCms } from '@blurifycom/core/cms/migrate';
+import { migrate as migrateCompliance } from '@blurifycom/core/compliance/migrate';
+import { migrate as migrateWallet } from '@blurifycom/core/wallet/migrate';
+import { migrate as migrateGaming } from '@blurifycom/core/casino/migrate/gaming';
+import { migrate as migrateLobby } from '@blurifycom/core/casino/migrate/lobby';
+import { migrate as migrateBonus } from '@blurifycom/core/engagement/migrate/bonus';
+import { migrate as migrateChat } from '@blurifycom/core/engagement/migrate/chat';
+import { migrate as migrateNotifications } from '@blurifycom/core/engagement/migrate/notifications';
 import { migrate as migrateSportsbook } from '@blurifycom/core/sportsbook/migrate';
 import { migrate as migrateAggregator } from '@blurifycom/core/casino/migrate';
 import { migrate as migrateLeaderboard } from '@blurifycom/core/engagement/migrate';
@@ -14,33 +25,23 @@ import { migrate as migrateLeaderboard } from '@blurifycom/core/engagement/migra
 const DEFAULT_TEST_URL = 'postgres://postgres:postgres@localhost:5432/oss_igaming_test';
 
 async function applyAllMigrations(url: string): Promise<void> {
-  const pool = new Pool({ connectionString: url });
-  try {
-    await migrate(drizzle(pool, { casing: 'snake_case' }), {
-      migrationsFolder: migrationsFolder(),
-    });
-  } finally {
-    await pool.end();
-  }
+  // No cross-module FKs (db-conventions), so order is only for readability.
+  await migrateOutbox(url);
+  await migrateIdentity(url);
+  await migrateProfile(url);
+  await migrateAudit(url);
+  await migrateIam(url);
+  await migrateCms(url);
+  await migrateCompliance(url);
+  await migrateWallet(url);
+  await migrateGaming(url);
+  await migrateLobby(url);
+  await migrateBonus(url);
+  await migrateChat(url);
+  await migrateNotifications(url);
   await migrateSportsbook(url);
   await migrateAggregator(url);
   await migrateLeaderboard(url);
-}
-
-/** Resolves the drizzle migrations folder regardless of install location (workspace or linked consumer). */
-function migrationsFolder(): string {
-  // `@blurifycom/core/server` doesn't expose ./package.json via its exports map, so resolve its
-  // entry instead and walk up until we find the drizzle migrations directory.
-  const require = createRequire(import.meta.url);
-  let dir = dirname(require.resolve('@blurifycom/core/server'));
-  for (let i = 0; i < 6; i++) {
-    const candidate = resolve(dir, 'drizzle/migrations');
-    if (existsSync(candidate)) return candidate;
-    const parent = dirname(dir);
-    if (parent === dir) break;
-    dir = parent;
-  }
-  throw new Error('Could not locate @blurifycom/core/server drizzle/migrations folder');
 }
 
 export async function applyMigrations(url: string): Promise<void> {

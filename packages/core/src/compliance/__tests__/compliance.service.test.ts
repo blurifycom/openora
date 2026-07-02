@@ -1,4 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { mockDb } from '../../testing/mock.js';
 import {
   ComplianceService,
   LimitNotFoundError,
@@ -18,7 +19,7 @@ function makeDrizzle(selectResult: unknown[] = [], insertResult: unknown[] = [])
     set: vi.fn().mockReturnThis(),
     delete: vi.fn().mockReturnThis(),
   };
-  return { db } as unknown as import('@blurifycom/core/server').DrizzleService;
+  return mockDb(db);
 }
 
 function makeEvents() {

@@ -112,11 +112,29 @@ export const domainEventSchemas = {
   // An admin changed a player's KYC status (player-management update). userId =
   // subject player, actorId = the admin who acted; before/after status records the
   // transition for the audit log.
+  // actorId is a UUID for an admin manual override, or the literal 'system' for a
+  // vendor/webhook/threshold-driven flip (the single KycStatusWriter emits this on
+  // every status change regardless of source).
   'compliance.kyc.updated': z.object({
     userId: UuidSchema,
-    actorId: UuidSchema,
+    actorId: UuidSchema.nullable(),
     status: KycStatusSchema,
     previousStatus: KycStatusSchema,
+  }),
+
+  // A player submitted KYC documents; a verification record was created and sent to
+  // the provider. userId = the submitting player; referenceId = the provider reference.
+  'compliance.kyc.submitted': z.object({
+    userId: UuidSchema,
+    referenceId: z.string(),
+    provider: z.string(),
+  }),
+
+  // A threshold-triggered re-KYC flipped a verified player to resubmission_requested.
+  // System-driven (no admin actor); reason records the metric that crossed.
+  'compliance.kyc.reverify_required': z.object({
+    userId: UuidSchema,
+    reason: z.string(),
   }),
 
   'notifications.created': z.object({ notificationId: UuidSchema, userId: UuidSchema }),
@@ -188,7 +206,8 @@ export type DomainEventPayload<K extends DomainEventName> = z.infer<(typeof doma
 // Bump an entry only when its payload shape changes in a non-additive way, in the SAME commit
 // that edits the schema above. Events not listed default to version 1.
 export const domainEventVersions: Partial<Record<DomainEventName, number>> = {
-  // 'wallet.deposit.completed': 2,  // example: bumped when `fee` was added
+  // v2: actorId widened from UUID to string ('system' for vendor/webhook/reverify flips).
+  'compliance.kyc.updated': 2,
 };
 
 export function getEventVersion(event: string): number {

@@ -22,14 +22,6 @@ export const NATIONAL_SE_REGISTRY: SealedToken<unknown> = createSealedToken(
 );
 
 /**
- * KYC verification status write.
- *
- * 5AMLD / national equivalents (UKGC, MGA, AAMS, Spelinspektionen). UI may
- * trigger re-KYC; only a verified vendor result may flip status to "verified".
- */
-export const KYC_STATUS_WRITER: SealedToken<unknown> = createSealedToken('kyc-status-writer');
-
-/**
  * AML transaction monitoring + SAR/STR write trail.
  *
  * FATF Recommendations (casino sector) / 5AMLD. Immutable, append-only,
@@ -110,7 +102,6 @@ export const GDPR_DATA_RIGHTS_WORKFLOW: SealedToken<unknown> = createSealedToken
 export const SEALED_TOKENS: readonly SealedToken<unknown>[] = [
   RG_SELF_EXCLUSION_SERVICE,
   NATIONAL_SE_REGISTRY,
-  KYC_STATUS_WRITER,
   AML_SAR_WRITER,
   LEDGER_WRITER,
   AUDIT_LOG_WRITER,

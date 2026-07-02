@@ -1,4 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { mockDb, readPrivate } from '../../testing/mock.js';
 import {
   WalletService,
   WalletNotFoundError,
@@ -44,7 +45,7 @@ function makeDrizzle(results: { select?: Row[][]; returning?: Row[][] } = {}) {
     ...builder,
     transaction: vi.fn(async (fn: (txn: unknown) => Promise<unknown>) => fn(builder)),
   };
-  return { db } as unknown as import('@blurifycom/core/server').DrizzleService;
+  return mockDb(db);
 }
 
 function makeEvents() {
@@ -103,7 +104,7 @@ describe('WalletService.withdraw', () => {
         [{ id: 'w-1' }], // guarded debit affected exactly one row
       ],
     });
-    const forSpy = (drizzle.db as unknown as { for: ReturnType<typeof vi.fn> }).for;
+    const forSpy = readPrivate<ReturnType<typeof vi.fn>>(drizzle.db, 'for');
     const svc = svcOf(drizzle, events, payment);
 
     const result = await svc.withdraw('u-1', 40, 'USD');
@@ -127,7 +128,7 @@ describe('WalletService.withdraw', () => {
         [{ id: 'w-1' }],
       ],
     });
-    const valuesSpy = (drizzle.db as unknown as { values: ReturnType<typeof vi.fn> }).values;
+    const valuesSpy = readPrivate<ReturnType<typeof vi.fn>>(drizzle.db, 'values');
     const svc = svcOf(drizzle, events, payment);
 
     await svc.withdraw('u-1', 1, 'BTC');
@@ -256,7 +257,7 @@ describe('WalletService.approveWithdrawal', () => {
       ],
     });
     payment.processWithdrawal.mockRejectedValueOnce(new Error('psp down'));
-    const setSpy = (drizzle.db as unknown as { set: ReturnType<typeof vi.fn> }).set;
+    const setSpy = readPrivate<ReturnType<typeof vi.fn>>(drizzle.db, 'set');
     const svc = svcOf(drizzle, events, payment);
 
     await expect(svc.approveWithdrawal('admin-1', 'tx-1')).rejects.toThrow('psp down');
@@ -344,7 +345,7 @@ describe('WalletService.rejectWithdrawal', () => {
         ],
       ],
     });
-    const setSpy = (drizzle.db as unknown as { set: ReturnType<typeof vi.fn> }).set;
+    const setSpy = readPrivate<ReturnType<typeof vi.fn>>(drizzle.db, 'set');
     const svc = svcOf(drizzle, events, payment);
 
     const result = await svc.rejectWithdrawal('admin-1', 'tx-1', 'AML hold');

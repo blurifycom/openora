@@ -1,5 +1,5 @@
 import { describe, it, expect, vi } from 'vitest';
-import type { DrizzleService } from '@blurifycom/core/server';
+import { mockDb } from '../../testing/mock.js';
 import { DrizzleAdminWalletReporting } from '../admin-reporting.js';
 
 type Row = Record<string, unknown>;
@@ -21,7 +21,7 @@ function makeDrizzle(selectQueues: Row[][]) {
   // oxlint-disable-next-line unicorn/no-thenable -- builder must be awaitable to mimic Drizzle.
   builder['then'] = (resolve: (v: Row[]) => unknown) => resolve(selectQueues.shift() ?? []);
   const db = { ...builder } as unknown;
-  return { drizzle: { db } as unknown as DrizzleService, whereArgs };
+  return { drizzle: mockDb(db), whereArgs };
 }
 
 function txRow(overrides: Row = {}): Row {

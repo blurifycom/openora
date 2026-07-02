@@ -1,4 +1,5 @@
 import { describe, it, expect, vi } from 'vitest';
+import { mock } from '../../testing/mock.js';
 import type {
   AdminTxDetail,
   AdminTxRow,
@@ -12,7 +13,7 @@ import {
 } from '../service/backoffice.service.js';
 
 function makeUsers(over: Partial<AdminUserDirectory> = {}): AdminUserDirectory {
-  return {
+  return mock<AdminUserDirectory>({
     count: vi.fn(),
     list: vi.fn(),
     get: vi.fn(),
@@ -20,16 +21,16 @@ function makeUsers(over: Partial<AdminUserDirectory> = {}): AdminUserDirectory {
     lookupPlayers: vi.fn().mockResolvedValue([]),
     findPlayerIds: vi.fn().mockResolvedValue([]),
     ...over,
-  } as unknown as AdminUserDirectory;
+  });
 }
 
 function makeReporting(over: Partial<AdminWalletReporting> = {}): AdminWalletReporting {
-  return {
+  return mock<AdminWalletReporting>({
     totals: vi.fn(),
     listTransactions: vi.fn().mockResolvedValue({ rows: [], total: 0 }),
     getTransaction: vi.fn().mockResolvedValue(null),
     ...over,
-  } as unknown as AdminWalletReporting;
+  });
 }
 
 function txRow(over: Partial<AdminTxRow> = {}): AdminTxRow {
