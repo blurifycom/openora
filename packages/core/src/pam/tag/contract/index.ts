@@ -1,6 +1,7 @@
 import { oc } from '@orpc/contract';
 import {
   UuidSchema,
+  TagKeySchema,
   createTagSchema,
   deleteTagSchema,
   playerTagSchema,
@@ -28,14 +29,14 @@ export type PlayerTagWithTag = z.infer<typeof PlayerTagWithTagSchema>;
 
 const AssignPlayerTagInputSchema = z.object({
   playerId: UuidSchema,
-  tagKey: z.string().min(1),
+  tagKey: TagKeySchema,
   assignReason: z.string().min(5),
   assignActor: tagAssignRemoveSourceSchema,
 });
 
 const RemovePlayerTagInputSchema = z.object({
   playerId: UuidSchema,
-  tagKey: z.string().min(1),
+  tagKey: TagKeySchema,
   removalReason: z.string().min(5),
   removalActor: tagAssignRemoveSourceSchema,
 });

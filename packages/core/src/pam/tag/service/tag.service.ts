@@ -12,6 +12,7 @@ import {
   DeleteTagInput,
   RemovePlayerTagInput,
   Tag,
+  type TagKey,
 } from '@blurifycom/core/contracts';
 import { playerTag, tag } from '../schema/index.js';
 import { PlayerTagWithTag } from '../contract/index.js';
@@ -32,7 +33,7 @@ export class TagService {
     private readonly event: EventBus,
   ) {}
 
-  private async _findTagByKeyOrThrow(tagKey: string, trx: DrizzleTx): Promise<Tag> {
+  private async _findTagByKeyOrThrow(tagKey: TagKey, trx: DrizzleTx): Promise<Tag> {
     const results = await trx.select().from(tag).where(eq(tag.key, tagKey)).limit(1);
     if (!results.length) {
       throw new TagNotFoundError(tagKey);

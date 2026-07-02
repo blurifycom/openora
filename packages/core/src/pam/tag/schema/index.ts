@@ -1,21 +1,18 @@
-import { tagAssignRemoveSource } from '@blurifycom/core/contracts';
+import { tagAssignRemoveSource, tagKeys } from '@blurifycom/core/contracts';
 import { pgTable, uuid, text, timestamp, index, boolean, pgEnum } from 'drizzle-orm/pg-core';
 
 export const tagAssignRemoveSourceEnum = pgEnum('tag_assign_remove_source', tagAssignRemoveSource);
+export const tagKeyEnum = pgEnum('tag_key', tagKeys);
 
-export const tag = pgTable(
-  'tag',
-  {
-    id: uuid('id').primaryKey().defaultRandom(),
-    key: text('key').notNull().unique(),
-    isSticky: boolean('is_sticky').notNull().default(false),
-    updatedAt: timestamp('updated_at', { withTimezone: true })
-      .notNull()
-      .$onUpdateFn(() => new Date()),
-    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
-  },
-  (table) => [index('tag_key_idx').on(table.key)],
-);
+export const tag = pgTable('tag', {
+  id: uuid('id').primaryKey().defaultRandom(),
+  key: tagKeyEnum('key').notNull().unique(),
+  isSticky: boolean('is_sticky').notNull().default(false),
+  updatedAt: timestamp('updated_at', { withTimezone: true })
+    .notNull()
+    .$onUpdateFn(() => new Date()),
+  createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+});
 
 export const playerTag = pgTable(
   'player_tag',

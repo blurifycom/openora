@@ -44,7 +44,7 @@ export const AdminInvitationSchema = z.object({
   roleId: UuidSchema,
   token: z.string(),
   status: z.enum(['pending', 'accepted', 'revoked']),
-  expiresAt: z.string(),
+  expiresAt: TimestampSchema,
   acceptedAt: z.string().nullable(),
   createdAt: TimestampSchema,
 });

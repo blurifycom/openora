@@ -2,14 +2,27 @@ import z from 'zod';
 import { UuidSchema } from './common.js';
 
 export const tagAssignRemoveSource = ['scheduled', 'manual'] as const;
-export const hexColorRegex = /^#[0-9A-Fa-f]{6}$/;
-
 const tagAssignRemoveSourceSchema = z.enum(tagAssignRemoveSource);
 export type TagAssignSource = z.infer<typeof tagAssignRemoveSourceSchema>;
 
+export const tagKeys = [
+  'high_roller',
+  'vip',
+  'bonus_abuser',
+  'high_risk',
+  'inactive',
+  'large_depositor',
+  'self_excluded',
+  'kyc_pending',
+  'kyc_rejected',
+  'test_account',
+] as const;
+export const TagKeySchema = z.enum(tagKeys);
+export type TagKey = z.infer<typeof TagKeySchema>;
+
 export const tagSchema = z.object({
   id: UuidSchema,
-  key: z.string().trim().min(1),
+  key: TagKeySchema,
   isSticky: z.boolean().default(false),
   createdAt: z.coerce.date(),
   updatedAt: z.coerce.date(),
@@ -44,13 +57,13 @@ export type PlayerTag = z.infer<typeof playerTagSchema>;
 export const assignPlayerTagSchema = playerTagSchema
   .pick({ playerId: true, assignActor: true, assignActorUserId: true })
   .extend({
-    tagKey: UuidSchema,
+    tagKey: TagKeySchema,
     assignReason: z.string().min(5),
   });
 export type AssignPlayerTagInput = z.infer<typeof assignPlayerTagSchema>;
 
 export const removePlayerTagSchema = playerTagSchema.pick({ playerId: true }).extend({
-  tagKey: UuidSchema,
+  tagKey: TagKeySchema,
   removalReason: z.string().min(5),
   removalActor: tagAssignRemoveSourceSchema,
   removalActorUserId: UuidSchema,

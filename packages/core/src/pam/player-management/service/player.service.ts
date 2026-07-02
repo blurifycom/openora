@@ -35,7 +35,7 @@ export class PlayerService {
           ilike(player.displayName, `%${search}%`),
           ilike(sql`${player.userId}::text`, search),
           ilike(user.email, `%${search}%`),
-        )!,
+        ),
       );
     }
     const whereClause = conditions.length > 0 ? and(...conditions) : undefined;

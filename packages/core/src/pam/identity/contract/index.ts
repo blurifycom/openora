@@ -22,11 +22,11 @@ import * as z from 'zod';
 
 const SessionSchema = z.object({
   token: z.string(),
-  expiresAt: z.string(),
+  expiresAt: TimestampSchema,
 });
 
 export const SessionItemSchema = z.object({
-  id: z.string(),
+  id: UuidSchema,
   token: z.string(),
   expiresAt: TimestampSchema,
   createdAt: TimestampSchema,
