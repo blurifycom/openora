@@ -1,8 +1,12 @@
 import * as z from 'zod';
-import { UuidSchema } from './common.js';
+import { TimestampSchema, UuidSchema } from './common.js';
+import { PermissionLevelSchema } from './iam.js';
+import { KycStatusSchema } from './player.js';
 
 const iamRoleEventBase = z.object({ roleId: UuidSchema, actorId: UuidSchema });
-const permissionLevelEntries = z.array(z.object({ resource: z.string(), level: z.string() }));
+const permissionLevelEntries = z.array(
+  z.object({ resource: z.string(), level: PermissionLevelSchema }),
+);
 
 // Optional request-origin metadata shared by auth events; both fields may be absent.
 const authContextBase = z.object({
@@ -29,14 +33,14 @@ export const domainEventSchemas = {
   'identity.user.lockout.triggered': authContextBase.extend({
     userId: UuidSchema,
     email: z.email(),
-    lockoutUntil: z.iso.datetime(),
+    lockoutUntil: TimestampSchema,
   }),
   'identity.user.unlocked': z.object({
     userId: UuidSchema,
     email: z.email(),
     actorId: UuidSchema,
     previousFailedAttempts: z.number().int().optional(),
-    previousLockoutUntil: z.iso.datetime().nullable().optional(),
+    previousLockoutUntil: TimestampSchema.nullable().optional(),
   }),
   'identity.2fa.enabled': z.object({ userId: UuidSchema }),
   'identity.2fa.disabled': z.object({ userId: UuidSchema }),
@@ -48,6 +52,8 @@ export const domainEventSchemas = {
   // admin who acted (for a complete audit trail).
   'identity.user.deactivated': z.object({ userId: UuidSchema, actorId: UuidSchema }),
   'identity.user.reactivated': z.object({ userId: UuidSchema, actorId: UuidSchema }),
+  'identity.session.revoked': z.object({ userId: UuidSchema, sessionToken: z.string() }),
+  'identity.sessions.revoked_all': z.object({ userId: UuidSchema }),
 
   'wallet.deposit.completed': walletTxnBase,
   'wallet.withdrawal.completed': walletTxnBase,
@@ -109,8 +115,8 @@ export const domainEventSchemas = {
   'compliance.kyc.updated': z.object({
     userId: UuidSchema,
     actorId: UuidSchema,
-    status: z.string(),
-    previousStatus: z.string(),
+    status: KycStatusSchema,
+    previousStatus: KycStatusSchema,
   }),
 
   'notifications.created': z.object({ notificationId: UuidSchema, userId: UuidSchema }),

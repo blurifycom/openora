@@ -36,7 +36,11 @@ export const playerContract = populateContractRouterPaths({
 
   get: oc
     .route({ method: 'GET', path: '/players/{playerId}' })
-    .input(z.object({ playerId: UuidSchema }))
+    .input(
+      z.object({
+        playerId: UuidSchema,
+      }),
+    )
     .output(PlayerSchema),
 
   update: oc
@@ -48,6 +52,7 @@ export const playerContract = populateContractRouterPaths({
         status: PlayerStatusSchema.optional(),
         kycStatus: KycStatusSchema.optional(),
         level: z.number().int().min(0).max(100).optional(),
+        email: z.email().optional(),
       }),
     )
     .output(PlayerSchema),

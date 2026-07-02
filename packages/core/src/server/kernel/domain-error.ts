@@ -19,3 +19,6 @@ export const makeOwnershipError = (entity: string) =>
 
 export const makeConflictError = (name: string, message: string) =>
   createDomainError<[]>(name, () => message);
+
+export const alreadyInUseError = (entity: string) =>
+  createDomainError<[]>(`${entity}OwnershipError`, () => `${entity} is already in use`);

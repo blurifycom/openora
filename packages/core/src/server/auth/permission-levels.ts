@@ -1,9 +1,10 @@
 import { statement, type ResourceName } from './permissions.js';
+import { permissionLevels, type PermissionLevel } from '@blurifycom/core/contracts';
+
+export type { PermissionLevel };
 
 // Caller can only grant a level <= their own per module (no-escalation invariant).
-export type PermissionLevel = 'no_access' | 'read' | 'read_write';
-
-export const PERMISSION_LEVELS: readonly PermissionLevel[] = ['no_access', 'read', 'read_write'];
+export const PERMISSION_LEVELS: readonly PermissionLevel[] = permissionLevels;
 
 export const SUPPORTED_LEVELS: readonly PermissionLevel[] = PERMISSION_LEVELS;
 

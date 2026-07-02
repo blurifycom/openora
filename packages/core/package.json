@@ -386,6 +386,26 @@
       "import": "./dist/pam/player-management/plugin.js",
       "default": "./dist/pam/player-management/plugin.js"
     },
+    "./pam/plugins/tag": {
+      "types": "./dist/pam/tag/plugin.d.ts",
+      "import": "./dist/pam/tag/plugin.js",
+      "default": "./dist/pam/tag/plugin.js"
+    },
+    "./pam/contracts/tag": {
+      "types": "./dist/pam/tag/contract/index.d.ts",
+      "import": "./dist/pam/tag/contract/index.js",
+      "default": "./dist/pam/tag/contract/index.js"
+    },
+    "./pam/plugins/player-note": {
+      "types": "./dist/pam/player-note/plugin.d.ts",
+      "import": "./dist/pam/player-note/plugin.js",
+      "default": "./dist/pam/player-note/plugin.js"
+    },
+    "./pam/contracts/player-note": {
+      "types": "./dist/pam/player-note/contract/index.d.ts",
+      "import": "./dist/pam/player-note/contract/index.js",
+      "default": "./dist/pam/player-note/contract/index.js"
+    },
     "./sportsbook": {
       "types": "./dist/sportsbook/index.d.ts",
       "import": "./dist/sportsbook/index.js",
@@ -520,6 +540,16 @@
       "types": "./dist/pam/profile/migrate.d.ts",
       "import": "./dist/pam/profile/migrate.js",
       "default": "./dist/pam/profile/migrate.js"
+    },
+    "./pam/migrate/tag": {
+      "types": "./dist/pam/tag/migrate.d.ts",
+      "import": "./dist/pam/tag/migrate.js",
+      "default": "./dist/pam/tag/migrate.js"
+    },
+    "./pam/migrate/player-note": {
+      "types": "./dist/pam/player-note/migrate.d.ts",
+      "import": "./dist/pam/player-note/migrate.js",
+      "default": "./dist/pam/player-note/migrate.js"
     }
   },
   "publishConfig": {
@@ -527,6 +557,7 @@
   },
   "scripts": {
     "build": "tsc && node scripts/copy-drizzle.mjs",
+    "watch": "tsc --w",
     "typecheck": "tsc --noEmit",
     "clean": "rm -rf dist",
     "test": "vitest run",

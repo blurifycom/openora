@@ -73,10 +73,14 @@
       "@blurifycom/core/iam/plugin": ["./src/iam/plugin.ts"],
       "@blurifycom/core/iam/schema": ["./src/iam/schema/index.ts"],
       "@blurifycom/core/pam": ["./src/pam/index.ts"],
+      "@blurifycom/core/pam/tag": ["./src/pam/tag/index.ts"],
+      "@blurifycom/core/pam/tag/seed": ["./src/pam/tag/seed/index.ts"],
       "@blurifycom/core/pam/contracts": ["./src/pam/contracts.ts"],
       "@blurifycom/core/pam/contracts/identity": ["./src/pam/identity/contract/index.ts"],
       "@blurifycom/core/pam/contracts/player": ["./src/pam/player-management/contract/index.ts"],
       "@blurifycom/core/pam/contracts/profile": ["./src/pam/profile/contract/index.ts"],
+      "@blurifycom/core/pam/contracts/player-note": ["./src/pam/player-note/contract/index.ts"],
+      "@blurifycom/core/pam/contracts/tag": ["./src/pam/tag/contract/index.ts"],
       "@blurifycom/core/pam/plugins/identity": ["./src/pam/identity/plugin.ts"],
       "@blurifycom/core/pam/plugins/player-management": ["./src/pam/player-management/plugin.ts"],
       "@blurifycom/core/pam/plugins/profile": ["./src/pam/profile/plugin.ts"],
@@ -101,7 +105,8 @@
       "@blurifycom/core/wallet/plugin": ["./src/wallet/plugin.ts"],
       "@blurifycom/core/wallet/plugins/wallet": ["./src/wallet/plugin.ts"],
       "@blurifycom/core/wallet/schema": ["./src/wallet/schema/index.ts"],
-      "@blurifycom/core/wallet/server": ["./src/wallet/plugin.ts"]
+      "@blurifycom/core/wallet/server": ["./src/wallet/plugin.ts"],
+      "@blurifycom/core/common/errors": ["./src/common/errors/index.ts"]
     }
   },
   "include": ["src/**/*"],

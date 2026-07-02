@@ -2,8 +2,13 @@ import { implement } from '@orpc/server';
 import { type OssContext, AdminGuard } from '@blurifycom/core/server';
 import { identityContract } from '../contract/index.js';
 import { IdentityService } from '../service/identity.service.js';
+import { SessionService } from '../service/session.service.js';
 
-export function createIdentityRouter(identity: IdentityService, adminGuard: AdminGuard) {
+export function createIdentityRouter(
+  identity: IdentityService,
+  sessionSvc: SessionService,
+  adminGuard: AdminGuard,
+) {
   const os = implement(identityContract).$context<OssContext>();
 
   return os.router({
@@ -67,5 +72,20 @@ export function createIdentityRouter(identity: IdentityService, adminGuard: Admi
       const caller = await adminGuard.assert(context, 'player', 'update');
       return identity.unlockUser(input.userId, caller.userId);
     }),
+
+    sessions: {
+      list: os.sessions.list.handler(async ({ input, context }) => {
+        await adminGuard.assert(context, 'sessions', 'view');
+        return sessionSvc.listSessions(input.userId, input.page, input.limit);
+      }),
+      revoke: os.sessions.revoke.handler(async ({ input, context }) => {
+        await adminGuard.assert(context, 'sessions', 'revoke');
+        return sessionSvc.revokeSession(input.userId, input.token);
+      }),
+      revokeAll: os.sessions.revokeAll.handler(async ({ input, context }) => {
+        await adminGuard.assert(context, 'sessions', 'revoke');
+        return sessionSvc.revokeAllSessions(input.userId);
+      }),
+    },
   });
 }

@@ -1,34 +1,15 @@
-import { DrizzleService, createDomainError } from '@blurifycom/core/server';
+import { createDomainError, DrizzleService } from '@blurifycom/core/server';
 import type { PlatformConfig } from '@blurifycom/core/contracts';
 import { eq } from 'drizzle-orm';
 import { player } from '../schema/index.js';
 import { user } from '../../identity/schema/index.js';
-import type { PlayerStatus, KycStatus, UpdatePlayerProfileInput } from '../schemas/index.js';
+import type { UpdatePlayerProfileInput } from '../schemas/index.js';
+import { toPlayer, fetchEmail } from '../../shared/player-mapper.js';
 
-export const UnsupportedLanguageError = createDomainError<[lang: string]>(
-  'UnsupportedLanguageError',
-  (lang) => `Unsupported language: ${lang}`,
+export const UnsopportedLanguageError = createDomainError(
+  'UnsopportedLanguageError',
+  (language: string) => `${language} is not supported`,
 );
-
-function toPlayer(p: typeof player.$inferSelect, email: string) {
-  return {
-    id: p.id,
-    userId: p.userId,
-    displayName: p.displayName,
-    email,
-    country: p.country,
-    currency: p.currency,
-    language: p.language,
-    status: p.status as PlayerStatus,
-    kycStatus: p.kycStatus as KycStatus,
-    level: p.level,
-    totalWagered: Number(p.totalWagered),
-    totalDeposits: Number(p.totalDeposits),
-    lastSeenAt: p.lastSeenAt ? p.lastSeenAt.toISOString() : null,
-    createdAt: p.createdAt.toISOString(),
-    updatedAt: p.updatedAt.toISOString(),
-  };
-}
 
 export class ProfileService {
   constructor(
@@ -36,19 +17,11 @@ export class ProfileService {
     private readonly platformConfig?: PlatformConfig,
   ) {}
 
-  private async emailFor(userId: string) {
-    const [record] = await this.drizzle.db
-      .select({ email: user.email })
-      .from(user)
-      .where(eq(user.id, userId));
-    return record?.email ?? '';
-  }
-
   // Registration only creates the auth `user`; the `player` row is materialised
   // lazily so a freshly-registered user always has a profile.
   private async ensureProfile(userId: string) {
     const [existing] = await this.drizzle.db.select().from(player).where(eq(player.userId, userId));
-    if (existing) return toPlayer(existing, await this.emailFor(userId));
+    if (existing) return toPlayer(existing, await fetchEmail(this.drizzle, userId));
 
     const [u] = await this.drizzle.db
       .select({ name: user.name, email: user.email })
@@ -76,7 +49,7 @@ export class ProfileService {
       supportedLanguages.length > 0 &&
       !supportedLanguages.includes(data.language)
     ) {
-      throw new UnsupportedLanguageError(data.language);
+      throw new UnsopportedLanguageError(data.language);
     }
     await this.ensureProfile(userId);
     const patch: Partial<typeof player.$inferInsert> = {};
@@ -89,6 +62,6 @@ export class ProfileService {
       .set(patch)
       .where(eq(player.userId, userId))
       .returning();
-    return toPlayer(record!, await this.emailFor(userId));
+    return toPlayer(record!, await fetchEmail(this.drizzle, userId));
   }
 }

@@ -1,5 +1,5 @@
 import { describe, it, expect, vi } from 'vitest';
-import { ProfileService, UnsupportedLanguageError } from '../service/profile.service.js';
+import { ProfileService, UnsopportedLanguageError } from '../service/profile.service.js';
 
 function chain(result: unknown): any {
   const proxy: any = new Proxy(function () {}, {
@@ -57,7 +57,7 @@ describe('ProfileService.updateMyProfile language validation', () => {
   it('rejects a language outside the configured list', async () => {
     const svc = makeService(['en', 'fr']);
     await expect(svc.updateMyProfile('user-1', { language: 'de' })).rejects.toThrow(
-      UnsupportedLanguageError,
+      UnsopportedLanguageError,
     );
   });
 });

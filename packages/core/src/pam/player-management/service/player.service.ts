@@ -1,39 +1,19 @@
 import {
   makeNotFoundError,
+  makeConflictError,
   type EventBus,
   DrizzleService,
   findOneOrThrow,
   pageToOffset,
 } from '@blurifycom/core/server';
-import { eq, ilike, count, or, and, gte, desc, sql } from 'drizzle-orm';
-// Reads the core-owned `player` table + identity `user` via the public /schema
-// subpaths (add-on->core reads, allowed by the boundary rules). PAM owns no
-// tables of its own. See ADR-0020.
+import { eq, ilike, count, or, and, gte, desc, sql, ne } from 'drizzle-orm';
 import { player } from '../../profile/schema/index.js';
 import { user } from '../../identity/schema/index.js';
 import type { PlayerStatus, KycStatus } from '../schemas/index.js';
+import { toPlayer, fetchEmail } from '../../shared/player-mapper.js';
 
 export const PlayerNotFoundError = makeNotFoundError('Player');
-
-function toPlayer(p: typeof player.$inferSelect, email: string) {
-  return {
-    id: p.id,
-    userId: p.userId,
-    displayName: p.displayName,
-    email,
-    country: p.country,
-    currency: p.currency,
-    language: p.language,
-    status: p.status as PlayerStatus,
-    kycStatus: p.kycStatus as KycStatus,
-    level: p.level,
-    totalWagered: Number(p.totalWagered),
-    totalDeposits: Number(p.totalDeposits),
-    lastSeenAt: p.lastSeenAt ? p.lastSeenAt.toISOString() : null,
-    createdAt: p.createdAt.toISOString(),
-    updatedAt: p.updatedAt.toISOString(),
-  };
-}
+export const DuplicateEmailError = makeConflictError('DuplicateEmail', 'Email is already in use');
 
 function toDateKey(d: Date): string {
   return d.toISOString().slice(0, 10);
@@ -45,21 +25,17 @@ export class PlayerService {
     private readonly events: EventBus,
   ) {}
 
-  private async emailFor(userId: string) {
-    const [record] = await this.drizzle.db
-      .select({ email: user.email })
-      .from(user)
-      .where(eq(user.id, userId));
-    return record?.email ?? '';
-  }
-
   async list(page: number, limit: number, search?: string, status?: PlayerStatus) {
     const db = this.drizzle.db;
     const conditions = [];
     if (status) conditions.push(eq(player.status, status));
     if (search) {
       conditions.push(
-        or(ilike(player.displayName, `%${search}%`), ilike(player.userId, `%${search}%`))!,
+        or(
+          ilike(player.displayName, `%${search}%`),
+          ilike(sql`${player.userId}::text`, search),
+          ilike(user.email, `%${search}%`),
+        ),
       );
     }
     const whereClause = conditions.length > 0 ? and(...conditions) : undefined;
@@ -72,7 +48,11 @@ export class PlayerService {
         .orderBy(desc(player.createdAt))
         .limit(limit)
         .offset(pageToOffset(page, limit)),
-      db.select({ n: count() }).from(player).where(whereClause),
+      db
+        .select({ n: count() })
+        .from(player)
+        .leftJoin(user, eq(user.id, player.userId))
+        .where(whereClause),
     ]);
     const items = rows.map((r) => toPlayer(r.player, r.email ?? ''));
     return { items, total: Number(n), page, limit };
@@ -83,7 +63,15 @@ export class PlayerService {
       await this.drizzle.db.select().from(player).where(eq(player.id, playerId)),
       new PlayerNotFoundError(playerId),
     );
-    return toPlayer(record, await this.emailFor(record.userId));
+    return toPlayer(record, await fetchEmail(this.drizzle, record.userId));
+  }
+
+  async getExtended(playerId: string) {
+    const record = findOneOrThrow(
+      await this.drizzle.db.select().from(player).where(eq(player.id, playerId)),
+      new PlayerNotFoundError(playerId),
+    );
+    return toPlayer(record, await fetchEmail(this.drizzle, record.userId));
   }
 
   async update(
@@ -93,6 +81,7 @@ export class PlayerService {
       status?: PlayerStatus;
       kycStatus?: KycStatus;
       level?: number;
+      email?: string;
     },
     actorId: string,
   ) {
@@ -100,16 +89,30 @@ export class PlayerService {
       await this.drizzle.db.select().from(player).where(eq(player.id, playerId)),
       new PlayerNotFoundError(playerId),
     );
+
+    if (data.email !== undefined) {
+      const clash = await this.drizzle.db
+        .select({ id: user.id })
+        .from(user)
+        .where(and(eq(user.email, data.email), ne(user.id, existing.userId)))
+        .limit(1);
+      if (clash.length > 0) throw new DuplicateEmailError();
+    }
+
     const patch: Partial<typeof player.$inferInsert> = {};
     if (data.displayName !== undefined) patch.displayName = data.displayName;
     if (data.status !== undefined) patch.status = data.status;
     if (data.kycStatus !== undefined) patch.kycStatus = data.kycStatus;
     if (data.level !== undefined) patch.level = data.level;
-    const [record] = await this.drizzle.db
-      .update(player)
-      .set(patch)
-      .where(eq(player.id, playerId))
-      .returning();
+
+    const record = await this.drizzle.db.transaction(async (trx) => {
+      if (data.email !== undefined) {
+        await trx.update(user).set({ email: data.email }).where(eq(user.id, existing.userId));
+      }
+      const rows = await trx.update(player).set(patch).where(eq(player.id, playerId)).returning();
+      return findOneOrThrow(rows, new PlayerNotFoundError(playerId));
+    });
+
     // Audit KYC transitions (regulatory). Emit AFTER commit, only on a real change.
     if (data.kycStatus !== undefined && data.kycStatus !== existing.kycStatus) {
       this.events.emit('compliance.kyc.updated', {
@@ -119,7 +122,7 @@ export class PlayerService {
         previousStatus: existing.kycStatus,
       });
     }
-    return toPlayer(record!, await this.emailFor(record!.userId));
+    return toPlayer(record, await fetchEmail(this.drizzle, record.userId));
   }
 
   async remove(playerId: string) {

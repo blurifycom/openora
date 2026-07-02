@@ -1,6 +1,6 @@
 import { oc } from '@orpc/contract';
 import * as z from 'zod';
-import { UuidSchema } from '@blurifycom/core/contracts';
+import { TimestampSchema, UuidSchema } from '@blurifycom/core/contracts';
 import { PageQuerySchema, paginated } from '@blurifycom/core/contracts/kit';
 
 export const AuditActorTypeSchema = z.enum(['player', 'admin', 'system']);
@@ -28,7 +28,7 @@ export const AuditLogEntrySchema = z.object({
   seq: z.number(),
   prevHash: z.string().nullable(),
   hash: z.string(),
-  createdAt: z.iso.datetime(),
+  createdAt: TimestampSchema,
 });
 
 export const AuditListFiltersSchema = PageQuerySchema.extend({

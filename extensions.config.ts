@@ -25,9 +25,11 @@ export const extensions = [
   // Player self-profile (owns the `player` table). The admin PAM surface is the
   // gated player-management add-on below.
   { id: 'profile', path: './packages/core/dist/pam/profile/plugin.js' },
+  { id: 'tag', path: './packages/core/dist/pam/tag/plugin.js' },
 
   // Backoffice - the admin/operator surface
   { id: 'admin-console', path: './packages/core/dist/admin-console/plugin.js' },
+  { id: 'player-note', path: './packages/core/dist/pam/player-note/plugin.js' },
   { id: 'cms', path: './packages/core/dist/cms/plugin.js' },
 
   // --- GATED ADD-ONS (optional, extract-later packages under packages/addons/*) ---

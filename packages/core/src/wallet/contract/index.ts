@@ -2,6 +2,7 @@ import { oc } from '@orpc/contract';
 import * as z from 'zod';
 import {
   KycStatusSchema,
+  TimestampSchema,
   UuidSchema,
   WalletRailSchema,
   WalletTransactionStatusSchema,
@@ -22,7 +23,7 @@ export const WalletTransactionSchema = z.object({
   amount: z.number(),
   currency: z.string(),
   status: WalletTransactionStatusSchema,
-  createdAt: z.iso.datetime(),
+  createdAt: TimestampSchema,
 });
 
 export const DepositInputSchema = z.object({
@@ -42,6 +43,10 @@ export const TransactionResultSchema = z.object({
   status: WalletTransactionStatusSchema,
 });
 
+export const ListPlayerTransactionsArgs = PageQuerySchema.extend({
+  userId: UuidSchema,
+});
+
 export const WithdrawalQueueItemSchema = z.object({
   transactionId: UuidSchema,
   userId: UuidSchema,
@@ -52,7 +57,7 @@ export const WithdrawalQueueItemSchema = z.object({
   status: WalletTransactionStatusSchema,
   kycStatus: KycStatusSchema.nullable(),
   riskTags: z.array(z.string()),
-  requestedAt: z.iso.datetime(),
+  requestedAt: TimestampSchema,
 });
 
 export const WithdrawalQueueFilterSchema = PageQuerySchema.extend({
@@ -61,8 +66,8 @@ export const WithdrawalQueueFilterSchema = PageQuerySchema.extend({
   minAmount: z.coerce.number().nonnegative().optional(),
   maxAmount: z.coerce.number().nonnegative().optional(),
   kycStatus: KycStatusSchema.optional(),
-  dateFrom: z.iso.datetime().optional(),
-  dateTo: z.iso.datetime().optional(),
+  dateFrom: TimestampSchema.optional(),
+  dateTo: TimestampSchema.optional(),
 });
 
 export const ApproveWithdrawalInputSchema = z.object({ withdrawalId: UuidSchema });
@@ -87,7 +92,13 @@ export const walletContract = {
 
   listTransactions: oc
     .route({ method: 'GET', path: '/wallet/transactions' })
-    .output(z.array(WalletTransactionSchema)),
+    .input(PageQuerySchema)
+    .output(paginated(WalletTransactionSchema)),
+
+  listPlayerTransactions: oc
+    .route({ method: 'GET', path: '/wallet/transactions/{userId}' })
+    .input(ListPlayerTransactionsArgs)
+    .output(paginated(WalletTransactionSchema)),
 
   withdrawals: {
     list: oc

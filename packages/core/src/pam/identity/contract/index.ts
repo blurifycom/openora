@@ -15,13 +15,25 @@ import {
   ChangePasswordInputSchema,
   ChangeEmailInputSchema,
   IdentitySuccessSchema,
+  TimestampSchema,
 } from '@blurifycom/core/contracts';
+import { PageQuerySchema, paginated } from '@blurifycom/core/contracts/kit';
 import * as z from 'zod';
 
 const SessionSchema = z.object({
   token: z.string(),
-  expiresAt: z.string(),
+  expiresAt: TimestampSchema,
 });
+
+export const SessionItemSchema = z.object({
+  id: UuidSchema,
+  token: z.string(),
+  expiresAt: TimestampSchema,
+  createdAt: TimestampSchema,
+  ipAddress: z.string().nullable().optional(),
+  userAgent: z.string().nullable().optional(),
+});
+export type SessionItem = z.infer<typeof SessionItemSchema>;
 
 export const identityContract = {
   register: oc
@@ -98,4 +110,21 @@ export const identityContract = {
     .route({ method: 'POST', path: '/identity/unlock' })
     .input(z.object({ userId: UuidSchema }))
     .output(IdentitySuccessSchema),
+
+  sessions: {
+    list: oc
+      .route({ method: 'GET', path: '/identity/sessions' })
+      .input(PageQuerySchema.extend({ userId: UuidSchema }))
+      .output(paginated(SessionItemSchema)),
+
+    revoke: oc
+      .route({ method: 'POST', path: '/identity/sessions/revoke' })
+      .input(z.object({ userId: UuidSchema, token: z.string() }))
+      .output(IdentitySuccessSchema),
+
+    revokeAll: oc
+      .route({ method: 'POST', path: '/identity/sessions/revoke-all' })
+      .input(z.object({ userId: UuidSchema }))
+      .output(IdentitySuccessSchema),
+  },
 };

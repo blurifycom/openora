@@ -30,8 +30,12 @@ export function createWalletRouter(wallet: WalletService, adminGuard: AdminGuard
       ),
     ),
 
-    listTransactions: os.listTransactions.handler(({ context }) =>
-      wallet.getTransactions(getUserId(context)),
+    listTransactions: os.listTransactions.handler(({ context, input }) =>
+      wallet.getTransactions(getUserId(context), input.page, input.limit),
+    ),
+
+    listPlayerTransactions: os.listPlayerTransactions.handler(({ input }) =>
+      wallet.getTransactions(input.userId, input.page, input.limit),
     ),
 
     withdrawals: {
