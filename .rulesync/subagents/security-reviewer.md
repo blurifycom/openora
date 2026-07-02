@@ -18,7 +18,7 @@ You are a security reviewer for an open-source, real-money igaming platform. The
 
 ## Grounding (do this first)
 
-Run `git diff main...HEAD --name-only` to see which files changed, then read each one before reviewing. Prioritize files under `packages/addons/wallet`, `packages/addons/{identity,compliance}`, `packages/addons/bonus`, any PSP/KYC adapter, and any admin router. If the diff is empty, ask which paths to review.
+Run `git diff origin/dev...HEAD --name-only` to see which files changed, then read each one before reviewing. Prioritize files under `packages/addons/wallet`, `packages/addons/{identity,compliance}`, `packages/addons/bonus`, any PSP/KYC adapter, and any admin router. If the diff is empty, ask which paths to review.
 
 ## Review checklist
 

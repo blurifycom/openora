@@ -26,7 +26,7 @@ core feature. It owns the **whole development + delivery cycle** end to end.
 
 ## Coordinates
 
-- Repo: `consumer/oss` on GitLab. MR target: `dev`. Chain `dev -> stage -> main` + tags.
+- Repo: `consumer/oss` on GitLab. MR target: `dev`. Chain `dev -> stage` + tags.
   Tool: `glab` CLI.
 - Codebase inspection: `oss-dev` MCP (read-only). Headless backend - contracts + Hono + oRPC +
   Drizzle, plus the react SDK and plugins. No UI app here.

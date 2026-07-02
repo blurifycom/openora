@@ -1,22 +1,21 @@
 ---
 name: create-pr
 
-description: Commit, push, and open a GitLab Merge Request following this repo's promotion chain (dev -> stage -> main/tag). Use on "create pr", "create mr", "open a pr/mr", "/create-pr", or "promote <branch>".
+description: Commit, push, and open a GitLab Merge Request following this repo's promotion chain (dev -> stage -> tag). Use on "create pr", "create mr", "open a pr/mr", "/create-pr", or "promote <branch>".
 ---
 
 # create-pr (oss)
 
 This repo is on **GitLab** (`git.example.com:consumer/oss`). "PR" = Merge
 Request. Use the `glab` CLI (already installed). Environment branches are promoted
-along a fixed chain - never open an MR straight to `main` from a feature/dev branch.
+along a fixed chain - never open an MR straight to `stage` from a feature branch.
 
 ## Promotion chain
 
 | Source (current) branch | MR target | Notes                                          |
 | ----------------------- | --------- | ---------------------------------------------- |
 | `dev` (default working) | `stage`   | Promote accumulated work to the staging env    |
-| `stage`                 | `main`    | Release candidate -> main                      |
-| `main`                  | (git tag) | Cut a release tag, no MR (see "Release" below) |
+| `stage`                 | (git tag) | Cut a release tag, no MR (see "Release" below) |
 | any `feat/*` / `fix/*`  | `dev`     | Feature work merges into dev first             |
 
 If the current branch isn't in the table, target `dev`.
@@ -36,7 +35,7 @@ If the current branch isn't in the table, target `dev`.
 4. **Verify before pushing** (cheap insurance): `pnpm verify`. Don't push a red tree.
 5. **Push** the current branch - but STOP and get an explicit per-action "yes push"
    from the user FIRST. Report the commit SHA, then ask. Invoking this skill is NOT
-   push authorization. Pushing to a shared/env branch (`dev`, `stage`, `main`)
+   push authorization. Pushing to a shared/env branch (`dev`, `stage`)
    without that explicit yes is forbidden. Only after the yes: `git push -u origin <current>`.
 6. **Open the MR** with glab (only after the push is confirmed + done):
    ```
@@ -50,7 +49,7 @@ If the current branch isn't in the table, target `dev`.
 
 ## Release (oss: the `-> tag` step)
 
-oss has no `prod` branch; production is a git tag cut from `main`:
+oss has no long-lived release branch; production is a git tag cut from `stage`:
 `git tag vX.Y.Z && git push origin vX.Y.Z`. Only do this when the user explicitly
 asks to cut a release, and confirm the version first.
 

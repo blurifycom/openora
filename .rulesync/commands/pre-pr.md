@@ -13,7 +13,7 @@ The rulesync-generated agent files (AGENTS.md, CLAUDE.md, .codex/config.toml, Co
 
 After running:
 
-- All green: report ready for PR, list the changed files (`git diff main...HEAD --name-only`).
+- All green: report ready for PR, list the changed files (`git diff origin/dev...HEAD --name-only`).
 - `verify` fails: show the failing step (typecheck / test / lint / shape) with location, propose a fix.
 - `verify:drift` fails: the catalog is stale - run `pnpm regen`, then re-run the gate.
 

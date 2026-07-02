@@ -47,16 +47,37 @@ leave the wiring alone. After scaffolding a module/table: `pnpm regen && pnpm ve
 
 ## Branch model
 
-| Branch                       | Purpose                                                                     |
-| ---------------------------- | --------------------------------------------------------------------------- |
-| `main`                       | Source of truth. Always green. Protected - changes land via MR.             |
-| `stage`                      | Pre-prod / release-candidate. Promote from `main`.                          |
-| `dev`                        | Shared integration branch for in-flight work.                               |
-| `feat/*`, `fix/*`, `chore/*` | Short-lived topic branches. Branch off `main`, open an MR back into `main`. |
+| Branch                       | Purpose                                                                        |
+| ---------------------------- | ------------------------------------------------------------------------------ |
+| `dev`                        | Shared integration branch - the source of truth. Keep it green; MRs land here. |
+| `stage`                      | Pre-prod / release-candidate. Promoted from `dev`; releases are cut as tags.   |
+| `feat/*`, `fix/*`, `chore/*` | Short-lived topic branches. Branch off `dev`, open an MR back into `dev`.      |
 
-Flow: `feat/*` -> MR -> `main` -> promote to `stage` -> promote to release.
+Flow: `feat/*` -> MR -> `dev` -> promote to `stage` -> release tags.
 CI (`.github/workflows/ci.yml`) runs `verify` on every pull request and on
 pushes to `dev`.
+
+## Commits
+
+Conventional Commits, **enforced** by `commitlint` (local `commit-msg` hook + CI) as
+`type(scope): summary`. A non-conforming message blocks the merge.
+
+- **Types:** `feat`, `fix`, `refactor`, `chore`, `docs`, `test`, `ci`, `perf`, `build`, `style`, `revert`.
+- **Scope is a fixed list, not free-form.** `commitlint.config.cjs` derives a `scope-enum` from the
+  workspace - every `packages/*` and `packages/core/src/*` module dir, add-ons, apps, plus meta scopes
+  (`ci`, `deps`, `rules`, `repo`, `tooling`, ...). An unlisted scope fails the lint; omit the scope if
+  none fits. Check a message with `pnpm commitlint --from HEAD~1`.
+- One MR = one concern; stage explicitly (`git add <paths>`), don't sweep foreign changes with `git add -A`.
+- No sensitive/internal data in messages - reference a ticket by bare key (`ABC-45`), never a URL.
+- Sign off each commit (`git commit -s`) per the DCO (see License below).
+
+```
+feat(wallet): atomic debit command port
+fix(audit): guard double-record on retry
+chore(deps): bump zod to 3.24.0
+```
+
+Full standard: [`.rulesync/rules/conventions.md`](.rulesync/rules/conventions.md) > Git and delivery.
 
 ## Before you open an MR
 

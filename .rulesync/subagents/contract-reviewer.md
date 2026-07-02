@@ -17,7 +17,7 @@ You are a strict code reviewer for the OSS igaming platform. You are NOT the imp
 
 ## Grounding (do this first)
 
-Run `git diff main...HEAD --name-only` to see which files changed. Read each changed file before reviewing it. Check `docs/openapi.json` (committed) against current state to detect route breaking changes.
+Run `git diff origin/dev...HEAD --name-only` to see which files changed. Read each changed file before reviewing it. Check `docs/openapi.json` (committed) against current state to detect route breaking changes.
 
 ## Review checklist
 

@@ -181,6 +181,29 @@ Each rule carries a short example: `// bad` is the smell, `// good` the conventi
   const ROLES = ['admin', 'player'] as const; // ok
   ```
 
+- **Never use `!` non-null assertions - narrow or restructure so the value is provably present.**
+  A `!` silences the exact check that would catch a null; if the value can be absent, handle it,
+  and if it can't, model the data so the type already says so.
+
+  ```ts
+  // bad - asserts away a possible undefined
+  const owner = usersById.get(order.userId)!;
+  // good - narrow explicitly when it can be absent
+  const owner = usersById.get(order.userId);
+  if (!owner) throw new UserNotFoundError(order.userId);
+  // good - or carry the value so a lookup isn't needed at all
+  ```
+
+- **Under `noUncheckedIndexedAccess`, reach for `.at()`, destructuring-with-defaults, or an
+  explicit guard - never `arr[i]!`.** The index access is exactly where the bounds check belongs.
+
+  ```ts
+  // bad
+  const first = parts[0]!.toUpperCase();
+  // good
+  const [first = ''] = parts;
+  ```
+
 - **`type` over `interface`** (lint-enforced).
 
   ```ts
@@ -358,10 +381,22 @@ Each rule carries a short example: `// bad` is the smell, `// good` the conventi
   export function pollFeed(): FeedItem[] | null { ... }
   ```
 
-- **Track deferred work with an issue reference, never a bare `TODO`.**
+- **Track deferred work with `// TODO:` and known-broken code with `// FIXME:`** - both
+  greppable, both carrying enough context (and an issue reference where one exists) to act on
+  later without re-deriving why. `TODO` = not built yet; `FIXME` = built wrong, needs fixing.
+  Never a bare `TODO`/`FIXME` with no explanation.
 
   ```ts
-  // TODO: replace polling with the webhook once BE ships it
+  // TODO: replace polling with the webhook once BE ships it (ABC-312)
+  // FIXME: race - two admins approving the same withdrawal double-credit the player
+  ```
+
+- **Mark placeholder/sample data and stubbed-out behavior with a greppable `// mock:` comment**
+  so throwaway code stays visible and easy to find for later cleanup.
+
+  ```ts
+  // mock: fixed rate until the FX adapter lands
+  const rate = 1.08;
   ```
 
 ---
@@ -531,6 +566,10 @@ here. So the React rules reduce to:
   [Conventional Commits](https://www.conventionalcommits.org/) spec. `commitlint` runs on
   every local commit (husky `commit-msg` hook) and in CI - a non-conforming message blocks
   the merge. Common types: `feat`, `fix`, `refactor`, `chore`, `docs`, `test`, `ci`, `perf`.
+  The **scope is not free-form**: `commitlint.config.cjs` enforces a `scope-enum` derived from
+  the workspace - every `packages/*` and `packages/core/src/*` module dir, add-ons, apps, plus
+  meta scopes (`ci`, `deps`, `rules`, `repo`, `tooling`, ...). An unlisted scope fails the lint;
+  run `pnpm commitlint --from HEAD~1` to check, or omit the scope if none fits.
 
   ```
   feat(wallet): atomic debit command port
@@ -548,8 +587,8 @@ here. So the React rules reduce to:
   ```
 
 - **Green before review:** `pnpm verify` must pass; `pnpm regen` after any contract/schema change.
-- **Branch off `dev`; never commit directly to `dev`/`stage`/`main`.** Promotion chain
-  `dev -> stage -> main` + release tags. Never push without an explicit per-action "yes push".
+- **Branch off `dev`; never commit directly to `dev`/`stage`.** Promotion chain
+  `dev -> stage` + release tags. Never push without an explicit per-action "yes push".
 
   ```bash
   git switch -c feat/internal-wallet-command dev
