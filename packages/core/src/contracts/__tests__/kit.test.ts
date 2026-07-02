@@ -12,7 +12,7 @@ describe('PageQuerySchema', () => {
   });
 
   it('caps limit at 100 and floors page at 1', () => {
-    expect(PageQuerySchema.safeParse({ limit: 51 }).success).toBe(false);
+    expect(PageQuerySchema.safeParse({ limit: 101 }).success).toBe(false);
     expect(PageQuerySchema.safeParse({ page: 0 }).success).toBe(false);
   });
 });
