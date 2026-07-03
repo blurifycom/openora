@@ -1,5 +1,5 @@
 import type { AdminUserDirectory, AdminUserListOptions } from '@blurifycom/core/contracts';
-import { KycStatusSchema } from '@blurifycom/core/contracts';
+import { KycStatusSchema, UserRoleSchema } from '@blurifycom/core/contracts';
 import { DrizzleService, pageToOffset } from '@blurifycom/core/server';
 import type { EventBus } from '@blurifycom/core/server';
 import { count, desc, eq, ilike, inArray } from 'drizzle-orm';
@@ -18,7 +18,7 @@ function toRow(r: typeof user.$inferSelect) {
     name: r.name ?? null,
     createdAt: r.createdAt,
     isActive: r.isActive,
-    role: r.role ?? 'user',
+    role: UserRoleSchema.parse(r.role),
     failedLoginAttempts: r.failedLoginAttempts,
     lockoutUntil: r.lockoutUntil,
   };

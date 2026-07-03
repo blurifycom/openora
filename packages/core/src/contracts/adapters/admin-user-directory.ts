@@ -1,5 +1,6 @@
 import { createToken, type Token } from './token.js';
 import type { KycStatus } from '../schemas/player.js';
+import type { UserRole } from '../schemas/iam.js';
 
 // Admin/back-office view of the user directory. Owned + bound by the identity
 // module (it owns the `user` table); the back-office (admin-console) depends only
@@ -12,7 +13,7 @@ export type AdminUserRow = {
   name: string | null;
   createdAt: Date;
   isActive: boolean;
-  role: string;
+  role: UserRole;
   failedLoginAttempts?: number;
   lockoutUntil?: Date | null;
 };
@@ -35,7 +36,7 @@ export type AdminUserDirectory = {
   // actorId = the admin performing the change (for audit attribution on an isActive flip).
   update(
     id: string,
-    patch: { isActive?: boolean; role?: string },
+    patch: { isActive?: boolean; role?: UserRole },
     actorId: string,
   ): Promise<AdminUserRow | null>;
   // Batch enrichment for back-office lists (eg the withdrawal queue). Returns one

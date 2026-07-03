@@ -1,6 +1,14 @@
 import { oc } from '@orpc/contract';
 import * as z from 'zod';
-import { UuidSchema, KycStatusSchema, TimestampSchema } from '@blurifycom/core/contracts';
+import {
+  UuidSchema,
+  KycStatusSchema,
+  TimestampSchema,
+  LimitTypeSchema,
+  LimitPeriodSchema,
+  CountryCodeSchema,
+  GeoRuleActionSchema,
+} from '@blurifycom/core/contracts';
 import { KYC_DOCUMENT_TYPES, KYC_TRIGGERED_BY } from './enums.js';
 
 export const KycDocumentTypeSchema = z.enum(KYC_DOCUMENT_TYPES);
@@ -40,37 +48,28 @@ export const PlayerKycViewSchema = z.object({
 export const LimitSchema = z.object({
   id: UuidSchema,
   userId: UuidSchema,
-  type: z.enum(['deposit', 'wager', 'loss']),
+  type: LimitTypeSchema,
   amount: z.number(),
-  period: z.enum(['daily', 'weekly', 'monthly']),
+  period: LimitPeriodSchema,
   createdAt: TimestampSchema,
 });
 
 export const GeoRuleSchema = z.object({
   id: UuidSchema,
-  countryCode: z.string(),
-  action: z.enum(['allow', 'block']),
+  countryCode: CountryCodeSchema,
+  action: GeoRuleActionSchema,
   createdAt: TimestampSchema,
 });
 
-const UpsertLimitInputSchema = z.object({
-  type: z.enum(['deposit', 'wager', 'loss']),
-  amount: z.number(),
-  period: z.enum(['daily', 'weekly', 'monthly']),
-});
+const UpsertLimitInputSchema = LimitSchema.pick({ type: true, amount: true, period: true });
 
-const DeleteLimitInputSchema = z.object({
-  id: UuidSchema,
-});
+const DeleteLimitInputSchema = LimitSchema.pick({ id: true });
 
-const AddGeoRuleInputSchema = z.object({
-  countryCode: z.string(),
-  action: z.enum(['allow', 'block']),
-});
+const AddGeoRuleInputSchema = GeoRuleSchema.pick({ countryCode: true, action: true });
 
 const GeoCheckOutputSchema = z.object({
   allowed: z.boolean(),
-  countryCode: z.string().nullable(),
+  countryCode: CountryCodeSchema.nullable(),
   reason: z.string().nullable(),
 });
 

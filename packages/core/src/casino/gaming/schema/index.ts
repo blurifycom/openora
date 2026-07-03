@@ -9,12 +9,10 @@ import {
   index,
   jsonb,
 } from 'drizzle-orm/pg-core';
+import { GAME_ROUND_STATUSES } from '../contract/index.js';
 
-export const gameRoundStatusEnum = pgEnum('game_round_status', [
-  'active',
-  'completed',
-  'cancelled',
-]);
+// Derives from the contract tuple so the Zod schema and DB enum can never drift.
+export const gameRoundStatusEnum = pgEnum('game_round_status', GAME_ROUND_STATUSES);
 
 export const game = pgTable('game', {
   id: uuid().primaryKey().defaultRandom(),

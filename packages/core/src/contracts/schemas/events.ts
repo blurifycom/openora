@@ -1,5 +1,8 @@
 import * as z from 'zod';
 import { TimestampSchema, UuidSchema } from './common.js';
+import { GeoRuleActionSchema } from './compliance.js';
+import { LeaderboardMetricSchema, LeaderboardPeriodSchema } from './engagement.js';
+import { CurrencyCodeSchema, CountryCodeSchema } from './igaming-config.js';
 import { PermissionLevelSchema } from './iam.js';
 import { KycStatusSchema } from './player.js';
 
@@ -18,7 +21,7 @@ const authContextBase = z.object({
 const walletTxnBase = z.object({
   userId: UuidSchema,
   amount: z.number(),
-  currency: z.string(),
+  currency: CurrencyCodeSchema,
   transactionId: UuidSchema,
 });
 
@@ -77,7 +80,7 @@ export const domainEventSchemas = {
     roundId: UuidSchema,
     gameId: UuidSchema,
     userId: UuidSchema,
-    currency: z.string(),
+    currency: CurrencyCodeSchema,
   }),
   'gaming.round.ended': z.object({ roundId: UuidSchema, userId: UuidSchema }),
 
@@ -101,8 +104,8 @@ export const domainEventSchemas = {
   // An admin added or changed a geo (country) rule (regulatory). `actorId` is the
   // acting admin so the audit log can attribute the mutation.
   'compliance.geo-rule.added': z.object({
-    countryCode: z.string(),
-    action: z.string(),
+    countryCode: CountryCodeSchema,
+    action: GeoRuleActionSchema,
     actorId: UuidSchema.optional(),
   }),
 
@@ -112,12 +115,9 @@ export const domainEventSchemas = {
   // An admin changed a player's KYC status (player-management update). userId =
   // subject player, actorId = the admin who acted; before/after status records the
   // transition for the audit log.
-  // actorId is a UUID for an admin manual override, or the literal 'system' for a
-  // vendor/webhook/threshold-driven flip (the single KycStatusWriter emits this on
-  // every status change regardless of source).
   'compliance.kyc.updated': z.object({
     userId: UuidSchema,
-    actorId: UuidSchema.nullable(),
+    actorId: UuidSchema,
     status: KycStatusSchema,
     previousStatus: KycStatusSchema,
   }),
@@ -152,12 +152,12 @@ export const domainEventSchemas = {
 
   'leaderboard.score.recorded': z.object({
     userId: UuidSchema,
-    metric: z.string(),
+    metric: LeaderboardMetricSchema,
     amount: z.number(),
   }),
   'leaderboard.reset': z.object({
-    metric: z.string(),
-    period: z.string(),
+    metric: LeaderboardMetricSchema,
+    period: LeaderboardPeriodSchema,
   }),
 
   'sportsbook.odds.updated': z.object({

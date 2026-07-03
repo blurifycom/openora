@@ -715,12 +715,20 @@
       "file": "packages/core/src/casino/gaming/contract/index.ts"
     },
     {
+      "name": "GameRoundStatusSchema",
+      "file": "packages/core/src/casino/gaming/contract/index.ts"
+    },
+    {
       "name": "GameSchema",
       "file": "packages/core/src/casino/gaming/contract/index.ts"
     },
     {
       "name": "GameSummarySchema",
       "file": "packages/core/src/casino/lobby/contract/index.ts"
+    },
+    {
+      "name": "GeoRuleActionSchema",
+      "file": "packages/core/src/contracts/schemas/compliance.ts"
     },
     {
       "name": "GeoRuleSchema",
@@ -741,6 +749,10 @@
     {
       "name": "IgamingConfigSchema",
       "file": "packages/core/src/contracts/schemas/igaming-config.ts"
+    },
+    {
+      "name": "InvitationStatusSchema",
+      "file": "packages/core/src/contracts/schemas/iam.ts"
     },
     {
       "name": "KycConfigSchema",
@@ -772,15 +784,19 @@
     },
     {
       "name": "LeaderboardMetricSchema",
-      "file": "packages/core/src/engagement/leaderboard/contract/index.ts"
+      "file": "packages/core/src/contracts/schemas/engagement.ts"
     },
     {
       "name": "LeaderboardPeriodSchema",
-      "file": "packages/core/src/engagement/leaderboard/contract/index.ts"
+      "file": "packages/core/src/contracts/schemas/engagement.ts"
     },
     {
       "name": "LeaderboardResponseSchema",
       "file": "packages/core/src/engagement/leaderboard/contract/index.ts"
+    },
+    {
+      "name": "LimitPeriodSchema",
+      "file": "packages/core/src/contracts/schemas/compliance.ts"
     },
     {
       "name": "LimitSchema",
@@ -789,6 +805,10 @@
     {
       "name": "LimitsSchema",
       "file": "packages/core/src/contracts/schemas/igaming-config.ts"
+    },
+    {
+      "name": "LimitTypeSchema",
+      "file": "packages/core/src/contracts/schemas/compliance.ts"
     },
     {
       "name": "LobbyCategoryDetailSchema",
@@ -935,11 +955,19 @@
       "file": "packages/core/src/sportsbook/contract/index.ts"
     },
     {
+      "name": "SportsbookBetStatusSchema",
+      "file": "packages/core/src/sportsbook/contract/index.ts"
+    },
+    {
       "name": "SportsbookConfigSchema",
       "file": "packages/core/src/contracts/schemas/platform-config.ts"
     },
     {
       "name": "SportsbookEventSchema",
+      "file": "packages/core/src/sportsbook/contract/index.ts"
+    },
+    {
+      "name": "SportsbookEventStatusSchema",
       "file": "packages/core/src/sportsbook/contract/index.ts"
     },
     {
@@ -1008,7 +1036,7 @@
     },
     {
       "name": "UserRoleSchema",
-      "file": "packages/core/src/admin-console/contract/index.ts"
+      "file": "packages/core/src/contracts/schemas/iam.ts"
     },
     {
       "name": "UserSchema",

@@ -8,7 +8,7 @@ function makeDir(existing: { isActive: boolean }) {
     id: 'u1',
     email: 'a@b.c',
     name: 'A',
-    role: 'user',
+    role: 'player',
     createdAt: new Date(0),
     isActive: existing.isActive,
   };

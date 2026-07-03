@@ -1,9 +1,14 @@
 import { oc } from '@orpc/contract';
 import * as z from 'zod';
-import { PermissionLevelSchema, TimestampSchema, UuidSchema } from '@blurifycom/core/contracts';
+import {
+  InvitationStatusSchema,
+  PermissionLevelSchema,
+  TimestampSchema,
+  UuidSchema,
+} from '@blurifycom/core/contracts';
 import { PageQuerySchema, paginated } from '@blurifycom/core/contracts/kit';
 
-export { PermissionLevelSchema } from '@blurifycom/core/contracts';
+export { InvitationStatusSchema, PermissionLevelSchema } from '@blurifycom/core/contracts';
 
 export const AdminRoleSchema = z.object({
   id: UuidSchema,
@@ -43,7 +48,7 @@ export const AdminInvitationSchema = z.object({
   email: z.email(),
   roleId: UuidSchema,
   token: z.string(),
-  status: z.enum(['pending', 'accepted', 'revoked']),
+  status: InvitationStatusSchema,
   expiresAt: TimestampSchema,
   acceptedAt: z.string().nullable(),
   createdAt: TimestampSchema,
