@@ -3,7 +3,12 @@ import * as z from 'zod';
 import { TimestampSchema, UuidSchema } from '@blurifycom/core/contracts';
 import { PageQuerySchema, paginated } from '@blurifycom/core/contracts/kit';
 
-export const AuditActorTypeSchema = z.enum(['player', 'admin', 'system']);
+// The value tuple is the single source of truth: `z.enum` derives the contract here
+// and the Drizzle `pgEnum` in audit/schema derives the DB enum from the same tuple,
+// so the two can never drift.
+export const ACTOR_TYPES = ['player', 'admin', 'system'] as const;
+export const AuditActorTypeSchema = z.enum(ACTOR_TYPES);
+export type AuditActorType = z.infer<typeof AuditActorTypeSchema>;
 
 // before/after are jsonb snapshots and may hold an object OR an array (eg a role's
 // permission list), so allow both - constraining to a record 500s the list output

@@ -8,8 +8,10 @@ import {
   index,
   bigserial,
 } from 'drizzle-orm/pg-core';
+import { ACTOR_TYPES } from '../contract/index.js';
 
-export const actorTypeEnum = pgEnum('audit_actor_type', ['player', 'admin', 'system']);
+// Derives from the contract tuple so the Zod schema and DB enum can never drift.
+export const actorTypeEnum = pgEnum('audit_actor_type', ACTOR_TYPES);
 
 // Append-only hash-chained audit log. Do NOT expose update/delete routes.
 export const auditLog = pgTable(
