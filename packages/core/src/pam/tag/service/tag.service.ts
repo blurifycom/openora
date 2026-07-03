@@ -4,6 +4,7 @@ import {
   EventBus,
   makeNotFoundError,
   pageToOffset,
+  alreadyInUseError,
 } from '@blurifycom/core/server';
 import { and, count, eq, isNull } from 'drizzle-orm';
 import {
@@ -16,8 +17,7 @@ import {
 } from '@blurifycom/core/contracts';
 import { playerTag, tag } from '../schema/index.js';
 import { PlayerTagWithTag } from '../contract/index.js';
-import { mapDbError } from '../../../common/errors/index.js';
-import { alreadyInUseError } from '../../../server/kernel/domain-error.js';
+import { mapDbError } from '@blurifycom/core/common/errors';
 
 export const TagNotFoundError = makeNotFoundError('Tag');
 export const TagAlreadyInUseError = alreadyInUseError('Tag');

@@ -7,8 +7,18 @@ import {
   findOneOrThrow,
 } from '@blurifycom/core/server';
 import { eq, and, isNull, desc } from 'drizzle-orm';
+import * as z from 'zod';
+import { UuidSchema } from '@blurifycom/core/contracts';
 import { notification } from '../schema/index.js';
-import type { CreateNotificationInput } from '../schemas/index.js';
+
+// Internal-only - fed by domain-event handlers in plugin.ts, not a wire route.
+const CreateNotificationInputSchema = z.object({
+  userId: UuidSchema,
+  type: z.string(),
+  title: z.string(),
+  body: z.string(),
+});
+export type CreateNotificationInput = z.infer<typeof CreateNotificationInputSchema>;
 
 export const NotificationNotFoundError = makeNotFoundError('Notification');
 

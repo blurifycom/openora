@@ -1,7 +1,7 @@
 import { createDomainError, DrizzleService, findOneOrThrow } from '@blurifycom/core/server';
 import { eq, and, ilike, count, asc, inArray } from 'drizzle-orm';
 import { lobbyCategory, lobbyCategoryGame, featuredSlot } from '../schema/index.js';
-import { game } from '../../gaming/schema/index.js';
+import { game } from '@blurifycom/core/casino/schema/gaming';
 
 export const LobbyCategoryNotFoundError = createDomainError(
   'LobbyCategoryNotFoundError',

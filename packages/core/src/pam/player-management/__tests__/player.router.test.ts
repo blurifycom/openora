@@ -28,6 +28,7 @@ function fakeService(): PlayerService {
     country: 'MT',
     currency: 'EUR',
     language: 'en',
+    theme: 'system',
     status: 'active',
     kycStatus: 'verified',
     level: 1,

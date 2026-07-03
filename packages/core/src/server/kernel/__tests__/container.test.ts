@@ -1,5 +1,5 @@
 import { describe, it, expect, vi } from 'vitest';
-import { createToken } from '../../../contracts/adapters/index.js';
+import { createToken } from '@blurifycom/core/contracts';
 import { Container } from '../container.js';
 
 describe('Container', () => {

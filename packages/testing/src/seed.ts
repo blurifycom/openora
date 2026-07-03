@@ -3,7 +3,7 @@ import { drizzle } from 'drizzle-orm/node-postgres';
 import { seedDemoData, type SeedResult } from './seed-demo-data.js';
 import { createAuth, DRIZZLE, type DrizzleDb, Container } from '@blurifycom/core/server';
 import { seedIam } from '@blurifycom/core/iam/seed';
-import { seedTag } from '@blurifycom/core/pam';
+import { seedTag } from '@blurifycom/core/pam/tag/seed';
 import { user, session, account, verification } from '@blurifycom/core/pam/schema/identity';
 
 export type SeedMinimalOptions = {

@@ -16,7 +16,7 @@ import type {
   KycVerification as KycVerificationDto,
   SubmitKycInput,
   PlayerKycView,
-} from '../schemas/index.js';
+} from '../contract/index.js';
 import { CumulativeDepositReKycTrigger, type ReKycTrigger } from './re-kyc-trigger.js';
 
 const DEFAULT_PROVIDER = 'mock';

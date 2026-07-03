@@ -1,4 +1,4 @@
-import { type CreateTagInput } from '../../../../contracts/schemas/tag.js';
+import { type CreateTagInput } from '@blurifycom/core/contracts';
 
 export const DEFAULT_TAGS: CreateTagInput[] = [
   { key: 'high_roller', isSticky: false },

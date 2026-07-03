@@ -1,4 +1,4 @@
-import { createSealedToken, type SealedToken } from '../contracts/adapters/index.js';
+import { createSealedToken, type SealedToken } from '@blurifycom/core/contracts';
 
 /**
  * Self-exclusion + cool-off enforcement.

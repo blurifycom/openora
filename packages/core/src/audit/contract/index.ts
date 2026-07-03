@@ -35,6 +35,7 @@ export const AuditLogEntrySchema = z.object({
   hash: z.string(),
   createdAt: TimestampSchema,
 });
+export type AuditLogEntry = z.infer<typeof AuditLogEntrySchema>;
 
 export const AuditListFiltersSchema = PageQuerySchema.extend({
   actorId: z.string().optional(),
@@ -47,8 +48,10 @@ export const AuditListFiltersSchema = PageQuerySchema.extend({
   fromDate: z.string().optional(),
   toDate: z.string().optional(),
 });
+export type AuditListFilters = z.infer<typeof AuditListFiltersSchema>;
 
 export const AuditExportFiltersSchema = AuditListFiltersSchema.omit({ page: true, limit: true });
+export type AuditExportFilters = z.infer<typeof AuditExportFiltersSchema>;
 
 export const auditContract = {
   list: oc

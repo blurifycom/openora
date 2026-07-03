@@ -1,4 +1,4 @@
-import type { RealtimeTransport, RealtimePresence } from '../../contracts/adapters/index.js';
+import type { RealtimeTransport, RealtimePresence } from '@blurifycom/core/contracts';
 
 type Handler = (event: unknown) => void;
 

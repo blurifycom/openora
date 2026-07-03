@@ -3,7 +3,7 @@ import { DrizzleService, pageToOffset, type EventBus } from '@blurifycom/core/se
 import { eq, and, or, gte, lte, desc, sql } from 'drizzle-orm';
 import type { AuditWritePort } from '@blurifycom/core/contracts';
 import { auditLog, type AuditLog } from '../schema/index.js';
-import type { AuditLogEntry, AuditListFilters, AuditExportFilters } from '../schemas/index.js';
+import type { AuditLogEntry, AuditListFilters, AuditExportFilters } from '../contract/index.js';
 
 // Key order is deterministic - changes here BREAK the chain for existing rows.
 // Treat this as an append-only list.

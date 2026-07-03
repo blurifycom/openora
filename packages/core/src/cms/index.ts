@@ -1,4 +1,3 @@
-export { CmsService, PageNotFoundError, BannerNotFoundError } from './service/cms.service.js';
-export { createCmsRouter } from './router/index.js';
-export type { Page, Banner } from './schemas/index.js';
-export { default } from './plugin.js';
+// The public consumer surface: the domain's wire contract (schemas, enum triples, types).
+// Isomorphic - safe in the browser. Server wiring lives in './server', tables in './schema'.
+export * from './contract/index.js';

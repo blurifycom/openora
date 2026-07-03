@@ -1,6 +1,6 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import * as z from 'zod';
-import { PlayerSchema } from '../../contracts/schemas/index.js';
+import { PlayerSchema } from '@blurifycom/core/contracts';
 import type {
   Enable2faInput,
   Enable2faResult,
@@ -12,7 +12,7 @@ import type {
   VerifyEmailInput,
   UpdateProfileInput,
   UpdatePlayerProfileInput,
-} from '../../contracts/schemas/index.js';
+} from '@blurifycom/core/contracts';
 import { useApiClient } from '../context/api-client.js';
 
 export type PlayerProfile = z.infer<typeof PlayerSchema>;

@@ -5,7 +5,7 @@ import {
   defaultPlatformConfig,
   type PlatformConfig,
   type PlatformConfigInput,
-} from '../../contracts/schemas/index.js';
+} from '@blurifycom/core/contracts';
 
 /**
  * Load + validate a PlatformConfig from a file at boot. Used by `createApp` to

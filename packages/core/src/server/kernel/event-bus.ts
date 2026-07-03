@@ -5,13 +5,11 @@ import {
   type OutboxWriter,
   type EventEnvelope,
   type SubscribeOptions,
-} from '../../contracts/adapters/index.js';
-import {
   domainEventSchemas,
   getEventVersion,
   type DomainEventName,
   type DomainEventPayload,
-} from '../../contracts/schemas/index.js';
+} from '@blurifycom/core/contracts';
 import type { ZodType } from 'zod';
 import type { Logger } from 'pino';
 import { createLogger } from './logger.js';

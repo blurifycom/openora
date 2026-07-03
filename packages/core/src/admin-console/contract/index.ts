@@ -114,3 +114,5 @@ export const backofficeContract = {
     .input(z.object({ id: UuidSchema }))
     .output(AdminTransactionDetailSchema),
 };
+
+export type TransactionFilter = z.infer<typeof TransactionFilterSchema>;

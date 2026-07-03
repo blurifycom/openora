@@ -1,6 +1,9 @@
 {
   "$schema": "./node_modules/oxlint/configuration_schema.json",
-  "jsPlugins": ["./tools/oxlint-boundaries-plugin.mjs", "./tools/oxlint-module-shape-plugin.mjs"],
+  "jsPlugins": [
+    "./tools/lint/oxlint-boundaries-plugin.mjs",
+    "./tools/lint/oxlint-module-shape-plugin.mjs"
+  ],
   "plugins": ["unicorn", "typescript", "oxc", "import"],
   "rules": {
     "import/no-cycle": [
@@ -20,6 +23,7 @@
     "oss-boundaries/no-core-to-addon": "error",
     "oss-boundaries/no-cross-addon": "error",
     "oss-boundaries/no-contracts-to-runtime": "error",
+    "oss-boundaries/no-module-contract-to-runtime": "error",
     "oss-boundaries/no-react-to-runtime": "error",
     "oss-boundaries/no-deep-dist-import": "error",
     "oss-boundaries/no-cross-core-domain": "error",
@@ -27,6 +31,7 @@
     "oss-module-shape/module-file-placement": "error",
     "oss-module-shape/layer-file-naming": "error",
     "oss-module-shape/no-inline-pg-enum": "error",
+    "oss-module-shape/no-relative-zone-escape": "error",
     "typescript/consistent-type-definitions": ["error", "type"],
     "import/no-duplicates": "error"
   },

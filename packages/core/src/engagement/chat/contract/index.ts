@@ -13,6 +13,7 @@ export const ChatRoomSchema = z.object({
   isPublic: z.boolean(),
   createdAt: TimestampSchema,
 });
+export type ChatRoom = z.infer<typeof ChatRoomSchema>;
 
 export const ChatMessageSchema = z.object({
   id: UuidSchema,
@@ -26,6 +27,7 @@ export const ChatMessageSchema = z.object({
   isDeleted: z.boolean(),
   createdAt: TimestampSchema,
 });
+export type ChatMessage = z.infer<typeof ChatMessageSchema>;
 
 export const BlockedUserSchema = z.object({
   blockedId: UuidSchema,

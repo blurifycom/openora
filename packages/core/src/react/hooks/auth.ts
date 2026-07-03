@@ -1,5 +1,5 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import type { LoginInput, RegisterInput } from '../../contracts/schemas/index.js';
+import type { LoginInput, RegisterInput } from '@blurifycom/core/contracts';
 import { useApiClient } from '../context/api-client.js';
 
 export function useSession() {

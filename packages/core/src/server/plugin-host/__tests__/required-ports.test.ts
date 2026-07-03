@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { Container } from '../../kernel/index.js';
-import { createToken } from '../../../contracts/adapters/index.js';
+import { createToken } from '@blurifycom/core/contracts';
 import { assertRequiredPorts } from '../load-plugins.js';
 import type { Plugin } from '../define-plugin.js';
 

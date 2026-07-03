@@ -1,4 +1,4 @@
-import { createToken, type Token } from '../../contracts/adapters/index.js';
+import { createToken, type Token } from '@blurifycom/core/contracts';
 import type { DrizzleService } from '../db/index.js';
 import { createAuth, type Auth } from './auth.js';
 

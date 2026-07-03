@@ -19,6 +19,7 @@ const playerRow = {
   country: null,
   currency: 'USD',
   language: 'en',
+  theme: 'system',
   status: 'active',
   kycStatus: 'pending',
   level: 1,

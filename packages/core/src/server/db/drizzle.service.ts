@@ -1,4 +1,4 @@
-import { createToken, type Token } from '../../contracts/adapters/index.js';
+import { createToken, type Token } from '@blurifycom/core/contracts';
 import { Pool } from 'pg';
 import { drizzle, type NodePgDatabase } from 'drizzle-orm/node-postgres';
 

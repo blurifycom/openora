@@ -9,7 +9,7 @@ import {
 } from '@blurifycom/core/server';
 import { eq } from 'drizzle-orm';
 import { userLimit, geoRule } from '../schema/index.js';
-import type { UpsertLimitInput, Limit, GeoRule, AddGeoRuleInput } from '../schemas/index.js';
+import type { UpsertLimitInput, Limit, GeoRule, AddGeoRuleInput } from '../contract/index.js';
 import { type GeoIpAdapter } from '@blurifycom/core/contracts';
 
 export const LimitNotFoundError = makeNotFoundError('Limit');

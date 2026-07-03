@@ -1,4 +1,4 @@
-import type { OutboxWriter, EventEnvelope } from '../../../contracts/adapters/index.js';
+import type { OutboxWriter, EventEnvelope } from '@blurifycom/core/contracts';
 import { eventOutbox } from './schema.js';
 import type { DrizzleDb } from '../drizzle.js';
 

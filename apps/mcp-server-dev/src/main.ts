@@ -136,7 +136,7 @@ function extractDeclaration(src: string, name: string): { line: number; code: st
   return null;
 }
 
-/** DATABASE_URL from env, or the local docker default (mirrors tools/seed.ts). */
+/** DATABASE_URL from env, or the local docker default (mirrors tools/db/seed.ts). */
 function resolveDatabaseUrl(): string {
   return process.env['DATABASE_URL'] ?? 'postgresql://postgres:postgres@localhost:5432/oss_igaming';
 }
@@ -390,7 +390,7 @@ server.registerTool(
     }
 
     const schemaSrc = readFile(join(dir, 'src', 'schema', 'index.ts'));
-    const zodSrc = readFile(join(dir, 'src', 'schemas', 'index.ts'));
+    const zodSrc = readFile(join(dir, 'src', 'contract', 'index.ts'));
     const routerSrc = readFile(join(dir, 'src', 'router', 'index.ts'));
     const parts: string[] = [
       `=== Module: ${name} ===\n`,
@@ -399,7 +399,10 @@ server.registerTool(
 
     if (detailed) {
       parts.push('\n--- Drizzle tables (src/schema/index.ts) ---', schemaSrc || '(no tables)');
-      parts.push('\n--- Zod schemas (src/schemas/index.ts) ---', zodSrc || '(empty)');
+      parts.push(
+        '\n--- Contract: Zod schemas + types (src/contract/index.ts) ---',
+        zodSrc || '(empty)',
+      );
       parts.push('\n--- Router ---', routerSrc || '(empty)');
     } else {
       const tables = [...schemaSrc.matchAll(/pgTable\(\s*'([^']+)'/g)].map((m) => m[1]);
@@ -570,7 +573,7 @@ server.registerTool(
   'scaffold-app',
   {
     description:
-      'Bootstrap a new downstream igaming consumer repo (api + web + backoffice) wired to this OSS checkout via link:. Delegates to tools/create-igaming-app.ts. Does NOT run pnpm install - tell the user to run `pnpm install && pnpm build:oss && pnpm db:migrate` in the new dir next.',
+      'Bootstrap a new downstream igaming consumer repo (api + web + backoffice) wired to this OSS checkout via link:. Delegates to tools/create/create-igaming-app.ts. Does NOT run pnpm install - tell the user to run `pnpm install && pnpm build:oss && pnpm db:migrate` in the new dir next.',
     inputSchema: {
       target: z
         .string()

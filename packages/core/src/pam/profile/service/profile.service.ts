@@ -2,8 +2,8 @@ import { createDomainError, DrizzleService } from '@blurifycom/core/server';
 import type { PlatformConfig } from '@blurifycom/core/contracts';
 import { eq } from 'drizzle-orm';
 import { player } from '../schema/index.js';
-import { user } from '../../identity/schema/index.js';
-import type { UpdatePlayerProfileInput } from '../schemas/index.js';
+import { user } from '@blurifycom/core/pam/schema/identity';
+import type { UpdatePlayerProfileInput } from '../contract/index.js';
 import { toPlayer, fetchEmail } from '../../shared/player-mapper.js';
 
 export const UnsopportedLanguageError = createDomainError(
@@ -57,6 +57,7 @@ export class ProfileService {
     if (data.country !== undefined) patch.country = data.country;
     if (data.currency !== undefined) patch.currency = data.currency;
     if (data.language !== undefined) patch.language = data.language;
+    if (data.theme !== undefined) patch.theme = data.theme;
     const [record] = await this.drizzle.db
       .update(player)
       .set(patch)

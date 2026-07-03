@@ -11,6 +11,7 @@ export const player = pgTable(
     country: text(),
     currency: text().notNull().default('USD'),
     language: text().notNull().default('en'),
+    theme: text().notNull().default('system'),
     status: text().notNull().default('active'),
     kycStatus: text().notNull().default('pending'),
     level: integer().notNull().default(1),

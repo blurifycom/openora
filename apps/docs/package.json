@@ -5,7 +5,7 @@
   "license": "AGPL-3.0-only",
   "type": "module",
   "scripts": {
-    "docs:gen": "tsx ../../tools/gen-docs-content.ts && tsx scripts/generate-openapi.ts",
+    "docs:gen": "tsx ../../tools/gen/gen-docs-content.ts && tsx scripts/generate-openapi.ts",
     "dev": "pnpm run docs:gen && next dev",
     "build": "pnpm run docs:gen && next build",
     "start": "serve out",

@@ -56,5 +56,5 @@ order:
 ## Keeping the catalog current
 
 The catalog is regenerated upstream in the platform repo via `pnpm regen`
-(which runs `tools/gen-catalog.ts`). A new `@blurifycom/mcp` release ships the updated
+(which runs `tools/gen/gen-catalog.ts`). A new `@blurifycom/mcp` release ships the updated
 snapshot; pin `OSS_CATALOG` to a freshly generated file to override it locally.

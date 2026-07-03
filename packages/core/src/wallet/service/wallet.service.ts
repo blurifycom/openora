@@ -12,6 +12,7 @@ import {
   type AdminUserDirectory,
   type PlatformConfig,
   type KycStatus,
+  type WalletRail,
 } from '@blurifycom/core/contracts';
 import { eq, desc, sql, and, gte, lte, count } from 'drizzle-orm';
 import { wallet, walletTransaction } from '../schema/index.js';
@@ -19,8 +20,7 @@ import type {
   TransactionResult,
   WithdrawalQueueItem,
   WithdrawalQueueFilter,
-  WalletRail,
-} from '../schemas/index.js';
+} from '../contract/index.js';
 
 export const WalletNotFoundError = makeNotFoundError('Wallet');
 export const WithdrawalNotFoundError = makeNotFoundError('Withdrawal');

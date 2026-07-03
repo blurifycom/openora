@@ -31,7 +31,7 @@ import {
 } from '../schema/index.js';
 // Read-only cross-domain schema import (sanctioned): assignRole verifies the target is an admin user.
 import { user } from '@blurifycom/core/pam/schema/identity';
-import type { AdminInvitation, EffectivePermissions } from '../schemas/index.js';
+import type { AdminInvitation, EffectivePermissions } from '../contract/index.js';
 
 export const RoleNotFoundError = makeNotFoundError('AdminRole');
 export const InvitationNotFoundError = makeNotFoundError('AdminInvitation');

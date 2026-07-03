@@ -10,6 +10,7 @@ export const PageSchema = z.object({
   publishedAt: z.string().nullable(),
   createdAt: TimestampSchema,
 });
+export type Page = z.infer<typeof PageSchema>;
 
 export const BannerSchema = z.object({
   id: UuidSchema,
@@ -21,6 +22,7 @@ export const BannerSchema = z.object({
   sortOrder: z.number(),
   createdAt: TimestampSchema,
 });
+export type Banner = z.infer<typeof BannerSchema>;
 
 export const cmsContract = {
   listPages: oc

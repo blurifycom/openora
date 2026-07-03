@@ -1,5 +1,5 @@
 import type { Container, Factory } from '../kernel/index.js';
-import type { Token, WorkerRegistration } from '../../contracts/adapters/index.js';
+import type { Token, WorkerRegistration } from '@blurifycom/core/contracts';
 
 export type McpToolDefinition = {
   name: string;

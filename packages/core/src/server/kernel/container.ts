@@ -1,4 +1,4 @@
-import type { Token } from '../../contracts/adapters/index.js';
+import type { Token } from '@blurifycom/core/contracts';
 
 // Functional DI container. Resolution is lazy and cached; last `register` for a
 // token wins - overlays rebind adapters by registering after the default binding.

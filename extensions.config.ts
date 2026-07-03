@@ -4,11 +4,11 @@
 //
 // Every feature is a standalone @blurifycom-addons/<name> package under packages/addons/<name>/
 // (compiled to dist/plugin.js). Core add-ons (no `kind`) always load and own their route
-// contract slice (its /contract dir), composed in tools/build-contract.ts; gated add-ons
+// contract slice (its /contract dir), composed in tools/gen/build-contract.ts; gated add-ons
 // (`kind: 'addon'`) load only when listed in the OSS_ADDONS allowlist. See ADR-0021/0025.
 
 export const extensions = [
-  // --- CORE ADD-ONS (always loaded; contracts composed in tools/build-contract.ts) ---
+  // --- CORE ADD-ONS (always loaded; contracts composed in tools/gen/build-contract.ts) ---
   { id: 'audit', path: './packages/core/dist/audit/plugin.js' },
   { id: 'iam', path: './packages/core/dist/iam/plugin.js' },
   // Platform - shared substrate used by both surfaces

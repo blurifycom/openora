@@ -17,8 +17,7 @@ Settled conventions - don't reopen. Style: `conventions`. Here: structure + the 
 | Layer    | File                        | Holds                                                                                                                                                         | Must NOT hold                    |
 | -------- | --------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------- |
 | schema   | `schema/index.ts`           | Drizzle `pgTable`s (snake_case via `casing: 'snake_case'`; datetimes ALWAYS `timestamp({ withTimezone: true })`); row types via `$inferSelect`/`$inferInsert` | logic                            |
-| contract | `contract/index.ts`         | oRPC route contract + req/res Zod schemas - the source of truth, exported as the module's `/contract` subpath                                                 | logic, transport wiring          |
-| schemas  | `schemas/index.ts`          | Zod input/output helpers (mostly re-export `../contract` + core contracts schemas)                                                                            | ad-hoc inline schemas            |
+| contract | `contract/index.ts`         | oRPC route contract + req/res Zod schemas - the single source of wire truth, exported as the module's `/contract` subpath                                     | logic, transport wiring          |
 | service  | `service/<name>.service.ts` | ALL business logic; emits events after DB commit; money in `db.transaction`                                                                                   | HTTP/transport knowledge         |
 | router   | `router/index.ts`           | thin oRPC wiring: resolve caller, call service, `mapErrors`                                                                                                   | business rules, SSE plumbing     |
 | plugin   | `plugin.ts`                 | DI wiring only: `ctx.provide(...)`, `ctx.routers.add(...)`                                                                                                    | logic                            |
@@ -42,6 +41,16 @@ Ports = interfaces + tokens in `packages/core/src/contracts/adapters/` (`PAYMENT
 Sanctioned paths only: domain **events** (`EventBus`), **command ports** (a token the owner binds, eg `WALLET_COMMANDS`), shared **contracts**, read-only table reads via the owner's `/schema` subpath. Never import another module's internals (`no-cross-domain`/`no-cross-addon` = errors; `pnpm boundaries` is the whole-graph gate). ADR-0015.
 
 Money + any needed-now mutation stay synchronous/transactional, never over events - use a command port: caller passes its own `tx` (`WALLET_COMMANDS.debit(tx, ...)`), atomic in-process yet splittable later; declare `dependsOn: ['<owner>']`. Cross-module schema reads are sanctioned but warned (`no-cross-addon-schema-read`) - each one is an extraction blocker. ADR-0017.
+
+**Never write a deep (`../../`+) relative import that leaves your own top-level dir under `packages/core/src/` - reach every other zone through the package's own `@blurifycom/core/*` subpath.** A relative import is only for staying inside your own module/zone (`./schema/index.js`, `../db/index.js`). The moment a `..` would cross into another domain, slice, or engine zone, it's a `@blurifycom/core/*` import instead:
+
+- reaching the contracts zone -> `@blurifycom/core/contracts` (never `../../contracts/...`)
+- reaching engine helpers -> `@blurifycom/core/server` (never `../../../server/kernel/...`)
+- reaching shared errors -> `@blurifycom/core/common/errors`
+- a sibling domain's tables -> `@blurifycom/core/<domain>/schema` (never `../../<domain>/schema`)
+- a sibling slice -> that slice's `@blurifycom/core/<domain>/<schema|contracts|plugins>/<slice>` subpath
+
+Lint-enforced by `oss-module-shape/no-relative-zone-escape` (folded domains AND the contracts/server/react engine zones; only `scripts`/`common`/`testing` are exempt as the importing file). If a target has no subpath yet, add the export - don't reach for `../../../`.
 
 ## Database foreign keys - within a module only
 

@@ -2,7 +2,7 @@ import type {
   RealtimeClientAuthorizer,
   RealtimeClientAuthorizerInput,
   RealtimeConnectionGrant,
-} from '../../contracts/adapters/index.js';
+} from '@blurifycom/core/contracts';
 
 // Default REALTIME_CLIENT_AUTHORIZER binding (first-party SSE). No token to mint:
 // the session cookie already authorizes the chat event-iterator path. An operator

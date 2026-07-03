@@ -43,6 +43,7 @@ export const TransactionResultSchema = z.object({
   transactionId: UuidSchema,
   status: WalletTransactionStatusSchema,
 });
+export type TransactionResult = z.infer<typeof TransactionResultSchema>;
 
 export const ListPlayerTransactionsArgs = PageQuerySchema.extend({
   userId: UuidSchema,
@@ -60,6 +61,7 @@ export const WithdrawalQueueItemSchema = z.object({
   riskTags: z.array(z.string()),
   requestedAt: TimestampSchema,
 });
+export type WithdrawalQueueItem = z.infer<typeof WithdrawalQueueItemSchema>;
 
 export const WithdrawalQueueFilterSchema = PageQuerySchema.extend({
   currency: CurrencyCodeSchema.optional(),
@@ -70,6 +72,7 @@ export const WithdrawalQueueFilterSchema = PageQuerySchema.extend({
   dateFrom: TimestampSchema.optional(),
   dateTo: TimestampSchema.optional(),
 });
+export type WithdrawalQueueFilter = z.infer<typeof WithdrawalQueueFilterSchema>;
 
 export const ApproveWithdrawalInputSchema = z.object({ withdrawalId: UuidSchema });
 

@@ -7,7 +7,7 @@ import {
 import { eq, and, asc, desc } from 'drizzle-orm';
 import { type GameAdapter } from '@blurifycom/core/contracts';
 import { game, gameRound } from '../schema/index.js';
-import type { GameRound } from '../schemas/index.js';
+import type { GameRound } from '../contract/index.js';
 
 export const GameNotFoundError = makeNotFoundError('Game');
 

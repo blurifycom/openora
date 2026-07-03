@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { InProcessRealtimeTransport, type EventBus } from '@blurifycom/core/server';
-import type { ChatMessage } from '../schemas/index.js';
+import type { ChatMessage } from '../contract/index.js';
 import { mock, mockDb } from '../../../testing/mock.js';
 import {
   ChatService,

@@ -19,7 +19,7 @@ You are a technical founder standing up a new online igaming on top of `@blurify
 ## Grounding (do this first)
 
 1. Read root `AGENTS.md` + `docs/architecture.md` + `docs/downstream-consumer.md` for the intended consumer path (`createApp`, `extensions.config.ts`, adapter swaps). Headless - the operator builds their own frontend against `@blurifycom/core/react`.
-2. Treat the scaffolder as the reference consumer: `pnpm create:app /tmp/probe --name probe` and inspect what it emits - that's the integration surface a new operator gets.
+2. Treat the scaffolder (`tools/create/create-igaming-app.ts`) as the reference consumer: `pnpm create:app /tmp/probe --name probe` and inspect what it emits - that's the integration surface a new operator gets.
 
 ## Verify outside-in
 

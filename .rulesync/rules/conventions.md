@@ -104,6 +104,7 @@ Goal: code that is clean, separated, scalable, and extendible - easy to understa
 - **Never import another module's internals.** Cross-module needs go through a command port, a domain event, or a shared contract.
 - **Dependency direction points inward:** router -> service -> contracts; engine never imports a domain.
 - **Public API is the package/subpath entry**, never a deep `dist/`/`src/` path.
+- **No deep (`../../`+) relative import that leaves your own zone/module** - a `..` crossing into another domain, slice, or engine zone is a bug; use the `@blurifycom/core/*` subpath. Relative paths stay inside your own dir (`./x`, `../schema/index.js`). Lint: `oss-module-shape/no-relative-zone-escape`.
 - **No import cycles** - extract a shared module or move the type to contracts.
 
 ## 7. React SDK (`@blurifycom/core/react` + domain `react/` dirs)

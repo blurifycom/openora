@@ -34,6 +34,7 @@ export const PlayerSchema = z.object({
   country: z.string().nullable(),
   currency: CurrencyCodeSchema,
   language: z.string(),
+  theme: z.string(),
   status: PlayerStatusSchema,
   kycStatus: KycStatusSchema,
   level: z.number().int(),
@@ -55,6 +56,7 @@ export const UpdatePlayerProfileInputSchema = PlayerSchema.pick({
   country: true,
   currency: true,
   language: true,
+  theme: true,
 }).partial();
 
 export type UpdatePlayerProfileInput = z.infer<typeof UpdatePlayerProfileInputSchema>;

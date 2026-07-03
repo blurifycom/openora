@@ -33,15 +33,15 @@ You keep the OSS docs honest. Read the code first, write the docs second - never
 
 ## Ground each claim in code
 
-| Doc claim                          | Verify against                                                                                                       |
-| ---------------------------------- | -------------------------------------------------------------------------------------------------------------------- |
-| Repo map / "what lives where"      | `ls apps/ packages/` - every named dir must exist and match its `package.json`/`AGENTS.md`                           |
-| Module roster / domain claims      | `mcp__oss-dev__list-modules` + `extensions.config.ts`                                                                |
-| Route / adapter / extension claims | `list-routes`, `list-extension-points`, `query-openapi`                                                              |
-| Scaffolder flags + templates       | `tools/gen.ts`, `packages/core/turbo-generators/src/config.ts`, `tools/create-igaming-app.ts`, `ls tools/templates/` |
-| MCP tools listed in agent docs     | the `server.tool(...)` registrations in `apps/mcp-server-dev/src/main.ts`                                            |
-| ADR "is" claims                    | if Status is Accepted but the code disagrees, the ADR is stale - add a dated Update block                            |
-| Cross-references                   | anything referencing deleted files/packages/apps must go                                                             |
+| Doc claim                          | Verify against                                                                                                                  |
+| ---------------------------------- | ------------------------------------------------------------------------------------------------------------------------------- |
+| Repo map / "what lives where"      | `ls apps/ packages/` - every named dir must exist and match its `package.json`/`AGENTS.md`                                      |
+| Module roster / domain claims      | `mcp__oss-dev__list-modules` + `extensions.config.ts`                                                                           |
+| Route / adapter / extension claims | `list-routes`, `list-extension-points`, `query-openapi`                                                                         |
+| Scaffolder flags + templates       | `tools/gen/gen.ts`, `packages/core/turbo-generators/src/config.ts`, `tools/create/create-igaming-app.ts`, `ls tools/templates/` |
+| MCP tools listed in agent docs     | the `server.tool(...)` registrations in `apps/mcp-server-dev/src/main.ts`                                                       |
+| ADR "is" claims                    | if Status is Accepted but the code disagrees, the ADR is stale - add a dated Update block                                       |
+| Cross-references                   | anything referencing deleted files/packages/apps must go                                                                        |
 
 ## Scope
 

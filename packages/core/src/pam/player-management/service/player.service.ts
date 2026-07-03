@@ -5,14 +5,13 @@ import {
   findOneOrThrow,
   pageToOffset,
 } from '@blurifycom/core/server';
-import type { KycStatusWriter } from '@blurifycom/core/contracts';
+import type { KycStatusWriter, PlayerStatus, KycStatus } from '@blurifycom/core/contracts';
 import { eq, ilike, count, or, and, gte, desc, sql, ne } from 'drizzle-orm';
 // Reads the core-owned `player` table + identity `user` via the public /schema
 // subpaths (add-on->core reads, allowed by the boundary rules). PAM owns no
 // tables of its own. See ADR-0020.
-import { player } from '../../profile/schema/index.js';
-import { user } from '../../identity/schema/index.js';
-import type { PlayerStatus, KycStatus } from '../schemas/index.js';
+import { player } from '@blurifycom/core/pam/schema/profile';
+import { user } from '@blurifycom/core/pam/schema/identity';
 import { toPlayer, fetchEmail } from '../../shared/player-mapper.js';
 
 export const PlayerNotFoundError = makeNotFoundError('Player');

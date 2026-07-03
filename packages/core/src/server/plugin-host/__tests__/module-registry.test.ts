@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { Container } from '../../kernel/index.js';
-import { createToken, createSealedToken } from '../../../contracts/adapters/index.js';
+import { createToken, createSealedToken } from '@blurifycom/core/contracts';
 import { ModuleRegistryImpl } from '../module-registry.js';
 
 function newRegistry() {

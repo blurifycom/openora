@@ -6,7 +6,7 @@ import type {
   RepeatOptions,
   JobContext,
   WorkerRegistration,
-} from '../../contracts/adapters/index.js';
+} from '@blurifycom/core/contracts';
 
 // Zero-dependency in-process default. Swap to BullMQ overlay for persistence/cron. See ADR-0014.
 

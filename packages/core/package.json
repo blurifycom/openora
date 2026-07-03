@@ -162,9 +162,9 @@
       "default": "./dist/cms/index.js"
     },
     "./cms/server": {
-      "types": "./dist/cms/plugin.d.ts",
-      "import": "./dist/cms/plugin.js",
-      "default": "./dist/cms/plugin.js"
+      "types": "./dist/cms/server.d.ts",
+      "import": "./dist/cms/server.js",
+      "default": "./dist/cms/server.js"
     },
     "./cms/schema": {
       "types": "./dist/cms/schema/index.d.ts",
@@ -192,9 +192,9 @@
       "default": "./dist/cms/contract/index.js"
     },
     "./compliance/server": {
-      "types": "./dist/compliance/plugin.d.ts",
-      "import": "./dist/compliance/plugin.js",
-      "default": "./dist/compliance/plugin.js"
+      "types": "./dist/compliance/server.d.ts",
+      "import": "./dist/compliance/server.js",
+      "default": "./dist/compliance/server.js"
     },
     "./compliance/schema": {
       "types": "./dist/compliance/schema/index.d.ts",
@@ -412,9 +412,9 @@
       "default": "./dist/sportsbook/index.js"
     },
     "./sportsbook/server": {
-      "types": "./dist/sportsbook/plugin.d.ts",
-      "import": "./dist/sportsbook/plugin.js",
-      "default": "./dist/sportsbook/plugin.js"
+      "types": "./dist/sportsbook/server.d.ts",
+      "import": "./dist/sportsbook/server.js",
+      "default": "./dist/sportsbook/server.js"
     },
     "./sportsbook/schema": {
       "types": "./dist/sportsbook/schema/index.d.ts",
@@ -452,9 +452,9 @@
       "default": "./dist/wallet/index.js"
     },
     "./wallet/server": {
-      "types": "./dist/wallet/plugin.d.ts",
-      "import": "./dist/wallet/plugin.js",
-      "default": "./dist/wallet/plugin.js"
+      "types": "./dist/wallet/server.d.ts",
+      "import": "./dist/wallet/server.js",
+      "default": "./dist/wallet/server.js"
     },
     "./wallet/schema": {
       "types": "./dist/wallet/schema/index.d.ts",
@@ -550,6 +550,31 @@
       "types": "./dist/pam/player-note/migrate.d.ts",
       "import": "./dist/pam/player-note/migrate.js",
       "default": "./dist/pam/player-note/migrate.js"
+    },
+    "./iam/server": {
+      "types": "./dist/iam/server.d.ts",
+      "import": "./dist/iam/server.js",
+      "default": "./dist/iam/server.js"
+    },
+    "./audit/server": {
+      "types": "./dist/audit/server.d.ts",
+      "import": "./dist/audit/server.js",
+      "default": "./dist/audit/server.js"
+    },
+    "./admin-console/server": {
+      "types": "./dist/admin-console/server.d.ts",
+      "import": "./dist/admin-console/server.js",
+      "default": "./dist/admin-console/server.js"
+    },
+    "./pam/tag/seed": {
+      "types": "./dist/pam/tag/seed/index.d.ts",
+      "import": "./dist/pam/tag/seed/index.js",
+      "default": "./dist/pam/tag/seed/index.js"
+    },
+    "./common/errors": {
+      "types": "./dist/common/errors/index.d.ts",
+      "import": "./dist/common/errors/index.js",
+      "default": "./dist/common/errors/index.js"
     }
   },
   "publishConfig": {

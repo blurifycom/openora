@@ -27,16 +27,15 @@ import {
   REALTIME_CLIENT_AUTHORIZER,
   OUTBOX,
   ADMIN_PERMISSION_RESOLVER,
-} from '../../contracts/adapters/index.js';
-import { DrizzleService, DRIZZLE, DrizzleOutboxWriter, OutboxRelay } from '../db/index.js';
-import { AdminGuard, ADMIN_GUARD, SessionResolver, AUTH_SESSION } from '../auth/index.js';
-import { loadPlugins, type PluginEntry } from '../plugin-host/index.js';
-import { composeContract, healthContract } from '../../contracts/orpc/index.js';
-import {
+  composeContract,
+  healthContract,
   IGAMING_CONFIG,
   type IgamingConfig,
   PLATFORM_CONFIG,
-} from '../../contracts/schemas/index.js';
+} from '@blurifycom/core/contracts';
+import { DrizzleService, DRIZZLE, DrizzleOutboxWriter, OutboxRelay } from '../db/index.js';
+import { AdminGuard, ADMIN_GUARD, SessionResolver, AUTH_SESSION } from '../auth/index.js';
+import { loadPlugins, type PluginEntry } from '../plugin-host/index.js';
 import { loadPlatformConfig, resolvePlatformConfigPath } from '../kernel/platform-config-loader.js';
 
 export type CreateAppConfig = {

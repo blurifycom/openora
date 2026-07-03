@@ -7,7 +7,7 @@ import { user } from './schema/index.js';
 // Read-only cross-domain read of the player/profile table via the public /schema
 // subpath (allowed per ADR-0020) so back-office lists can label players by
 // username + KYC without leaking the schema to the consumer module.
-import { player } from '../profile/schema/index.js';
+import { player } from '@blurifycom/core/pam/schema/profile';
 
 // Identity owns the `user` table, so it owns the admin directory port.
 // admin-console depends only on ADMIN_USER_DIRECTORY - never on this schema. See ADR-0017/0025.

@@ -3,7 +3,7 @@
  *
  * This complements, it does not replace, the oxlint `oss-boundaries/*` plugin.
  * That plugin matches IMPORT-SPECIFIER STRINGS per file with zero module
- * resolution (by design - see tools/oxlint-boundaries-plugin.mjs). These rules
+ * resolution (by design - see tools/lint/oxlint-boundaries-plugin.mjs). These rules
  * run against the RESOLVED dependency graph, so they also catch what the string
  * matcher cannot: transitive edges, re-export/barrel laundering, dynamic
  * `import()`, and relative paths that dodge the `@blurifycom/` specifier prefix.
@@ -14,6 +14,34 @@
  *
  * @type {import('dependency-cruiser').IConfiguration}
  */
+
+// Package self-reference subpaths (@blurifycom/core/<domain>/...) resolve through the
+// exports map to dist/, which is excluded - without a paths mapping those edges are
+// INVISIBLE to the graph and every rule below silently skips them. Reuse the canonical
+// paths from packages/core/tsconfig.json (rebased onto the repo root, extends dropped -
+// the ts parser can't follow it from here) via a flat tsconfig generated at load time.
+const { mkdirSync, writeFileSync } = require('node:fs');
+const { join } = require('node:path');
+
+const corePaths = require('./packages/core/tsconfig.json').compilerOptions.paths;
+const rebased = Object.fromEntries(
+  Object.entries(corePaths).map(([spec, targets]) => [
+    spec,
+    targets.map((t) => t.replace(/^\.\//, './packages/core/')),
+  ]),
+);
+const generatedTsConfigDir = join(__dirname, 'node_modules', '.cache');
+const generatedTsConfig = join(generatedTsConfigDir, 'dependency-cruiser-tsconfig.json');
+mkdirSync(generatedTsConfigDir, { recursive: true });
+writeFileSync(
+  generatedTsConfig,
+  // files/baseUrl are tsconfig-relative: point back at the repo root from node_modules/.cache
+  JSON.stringify({
+    files: ['../../extensions.config.ts'],
+    compilerOptions: { baseUrl: '../..', paths: rebased },
+  }),
+);
+
 module.exports = {
   forbidden: [
     {
@@ -87,5 +115,9 @@ module.exports = {
     exclude: { path: '(/dist/|/node_modules/|[.](test|spec)[.]ts$)' },
     includeOnly: '^(apps|packages)/',
     tsPreCompilationDeps: true,
+    tsConfig: { fileName: generatedTsConfig },
+    // ~8s cold on 3.3k modules; the cache cuts unchanged re-runs (pre-commit) to <1s.
+    // Invalidates on config, option, or file-set change ('metadata' strategy uses git).
+    cache: true,
   },
 };

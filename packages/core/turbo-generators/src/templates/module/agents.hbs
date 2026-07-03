@@ -13,7 +13,6 @@ sections below before opening a PR.
 | Layer | File | Holds |
 |---|---|---|
 | schema | `src/schema/index.ts` | Drizzle `pgTable`s + row types (`$inferSelect`). Every table carries `tenantId`. |
-| schemas | `src/schemas/index.ts` | re-exports from the contract slice; add-on-local Zod only |
 | service | `src/service/{{kebabCase name}}.service.ts` | ALL business logic; emits events after DB commit; money in `db.transaction` |
 | router | `src/router/index.ts` | thin oRPC wiring: resolve caller, call service, `mapErrors` |
 | plugin | `src/plugin.ts` | DI wiring only: `ctx.routers.add(...)`, `ctx.provide(...)` |

@@ -7,7 +7,7 @@ import type {
   Player,
 } from '@blurifycom/core/contracts';
 import { eq } from 'drizzle-orm';
-import { player } from '../../profile/schema/index.js';
+import { player } from '@blurifycom/core/pam/schema/profile';
 
 /**
  * The single writer of `player.kycStatus` (the KYC_STATUS_WRITER seam). Every status

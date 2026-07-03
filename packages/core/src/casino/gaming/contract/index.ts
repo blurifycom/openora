@@ -27,6 +27,7 @@ export const GameRoundSchema = z.object({
   startedAt: z.string(),
   endedAt: z.string().nullable(),
 });
+export type GameRound = z.infer<typeof GameRoundSchema>;
 
 export const StartRoundInputSchema = z.object({
   gameId: UuidSchema,

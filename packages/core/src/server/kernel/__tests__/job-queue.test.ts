@@ -2,7 +2,7 @@ import { describe, it, expect, vi } from 'vitest';
 import { mock } from '../../../testing/mock.js';
 import { z } from 'zod';
 import type { Logger } from 'pino';
-import { queue } from '../../../contracts/adapters/index.js';
+import { queue } from '@blurifycom/core/contracts';
 import { InProcessJobQueue } from '../job-queue.js';
 
 function fakeLogger() {

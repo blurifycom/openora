@@ -39,11 +39,14 @@ export const KycVerificationSchema = z.object({
 export const SubmitKycInputSchema = z.object({
   documents: z.array(KycDocumentSchema).min(1),
 });
+export type SubmitKycInput = z.infer<typeof SubmitKycInputSchema>;
 
 export const PlayerKycViewSchema = z.object({
   current: KycVerificationSchema.nullable(),
   history: z.array(KycVerificationSchema),
 });
+export type PlayerKycView = z.infer<typeof PlayerKycViewSchema>;
+export type KycVerification = z.infer<typeof KycVerificationSchema>;
 
 export const LimitSchema = z.object({
   id: UuidSchema,
@@ -53,6 +56,7 @@ export const LimitSchema = z.object({
   period: LimitPeriodSchema,
   createdAt: TimestampSchema,
 });
+export type Limit = z.infer<typeof LimitSchema>;
 
 export const GeoRuleSchema = z.object({
   id: UuidSchema,
@@ -60,12 +64,15 @@ export const GeoRuleSchema = z.object({
   action: GeoRuleActionSchema,
   createdAt: TimestampSchema,
 });
+export type GeoRule = z.infer<typeof GeoRuleSchema>;
 
-const UpsertLimitInputSchema = LimitSchema.pick({ type: true, amount: true, period: true });
+export const UpsertLimitInputSchema = LimitSchema.pick({ type: true, amount: true, period: true });
+export type UpsertLimitInput = z.infer<typeof UpsertLimitInputSchema>;
 
 const DeleteLimitInputSchema = LimitSchema.pick({ id: true });
 
-const AddGeoRuleInputSchema = GeoRuleSchema.pick({ countryCode: true, action: true });
+export const AddGeoRuleInputSchema = GeoRuleSchema.pick({ countryCode: true, action: true });
+export type AddGeoRuleInput = z.infer<typeof AddGeoRuleInputSchema>;
 
 const GeoCheckOutputSchema = z.object({
   allowed: z.boolean(),

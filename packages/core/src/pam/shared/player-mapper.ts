@@ -13,6 +13,7 @@ export function toPlayer(row: typeof player.$inferSelect, email: string): Player
     country: row.country,
     currency: row.currency,
     language: row.language,
+    theme: row.theme,
     status: row.status as PlayerStatus,
     kycStatus: row.kycStatus as KycStatus,
     level: row.level,

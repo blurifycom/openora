@@ -185,11 +185,6 @@ export default function generator(plop: PlopTypes.NodePlopAPI): void {
         },
         {
           type: 'add',
-          path: `${base}/src/schemas/index.ts`,
-          templateFile: tpl('module/schemas.hbs'),
-        },
-        {
-          type: 'add',
           path: `${base}/src/service/{{kebabCase name}}.service.ts`,
           templateFile: tpl('module/service.hbs'),
         },
@@ -435,7 +430,7 @@ export default function generator(plop: PlopTypes.NodePlopAPI): void {
         () => {
           execFileSync(
             'pnpm',
-            ['exec', 'tsx', 'tools/create-service.ts', s(a, 'name'), s(a, 'modules')],
+            ['exec', 'tsx', 'tools/create/create-service.ts', s(a, 'name'), s(a, 'modules')],
             { cwd: root(), stdio: 'inherit' },
           );
           return `created apps/${toKebab(s(a, 'name'))}/ (SERVICE_MANIFEST=${s(a, 'modules')})`;
@@ -460,7 +455,7 @@ export default function generator(plop: PlopTypes.NodePlopAPI): void {
       const a = data ?? {};
       return [
         () => {
-          const args = ['exec', 'tsx', 'tools/create-igaming-app.ts', s(a, 'dir')];
+          const args = ['exec', 'tsx', 'tools/create/create-igaming-app.ts', s(a, 'dir')];
           if (s(a, 'appName')) args.push('--name', s(a, 'appName'));
           execFileSync('pnpm', args, { cwd: root(), stdio: 'inherit' });
           return `scaffolded consumer repo at ${s(a, 'dir')}`;

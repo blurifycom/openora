@@ -18,7 +18,7 @@ Open-source, headless, plugin-based, AI-native igaming platform. Consumers clone
 
 ## Architecture pillars
 
-1. **Zod-first contracts.** Every shape is a Zod schema; types are `z.infer`'d, never hand-written. Cross-cutting schemas in `packages/core/src/contracts/schemas/`; each module OWNS its route contract + req/res schemas in its `contract/` dir, module-local helpers in `schemas/`. `composeContract` (`@blurifycom/core/contracts`) owns only `health`; the composition root (`tools/build-contract.ts` here, the consumer's entry when deployed) composes each enabled module's `/contract` slice into the one runtime contract the SDK links against. ADR-0021/0025.
+1. **Zod-first contracts.** Every shape is a Zod schema; types are `z.infer`'d, never hand-written. Cross-cutting schemas in `packages/core/src/contracts/schemas/`; each module OWNS its route contract + req/res schemas + `z.infer`'d types in its `contract/` dir - the single source of wire truth, nothing else re-declares a wire shape. `composeContract` (`@blurifycom/core/contracts`) owns only `health`; the composition root (`tools/gen/build-contract.ts` here, the consumer's entry when deployed) composes each enabled module's `/contract` slice into the one runtime contract the SDK links against. ADR-0021/0025.
 2. **oRPC + Hono.** oRPC owns route definition + Zod validation + OpenAPI emit; its `OpenAPIHandler` mounts on a Hono server. DI is a functional `Container` (`@blurifycom/core/server`) - typed-token factories, no decorators, no `reflect-metadata`. ADR-0009.
 3. **Plugin host.** `definePlugin({ id, dependsOn, register })` is the only way new functionality enters. Everything (core modules included) loads through `extensions.config.ts`.
 4. **Headless.** Backend modules + contracts + SDK surface only. UI lives in the consumer, which imports `@blurifycom/core/react` (hooks, typed client, auth, realtime). No UI packages here.
@@ -39,25 +39,28 @@ packages/
   core/            # @blurifycom/core - THE single published package (ADR-0025). Subpaths:
     src/contracts/   # isomorphic: composeContract + healthContract, base zod schemas (schemas/), adapter interfaces + DI tokens (adapters/)
     src/react/       # domain-agnostic SDK: createClient, typed client, auth, realtime. No UI.
-    src/server/      # node engine: kernel (logger, EventBus, Container), plugin-host, db (DrizzleService), auth (better-auth + AdminGuard), runtime (createApp). Subpaths: /orm, /migrate
-    src/<domain>/    # 10 folded domains (casino, cms, compliance, engagement, pam, sportsbook, wallet, iam, audit, admin-console) -> @blurifycom/core/<domain>/{contracts,schema,plugins,server,react}
-    src/<domain>/<module>/  # module shape: schema/ schemas/ contract/ service/ router/ adapters/ plugin.ts drizzle/ (own drizzle.config.ts + migrations, ADR-0027)
-  addons/          # gated @blurifycom-addons/<name> packages; machinery kept, none ship today. ADR-0025
-  mcp/             # @blurifycom/mcp - publishable MCP server for consumer repos
-  testing/         # @blurifycom/testing - bootTestApp, seedDemoData
-docs/adr/          # decision records   docs/catalog.json  # generated surface (routes/schemas/adapters/slots/events)
-tools/             # gen.ts (scaffolds), gen-catalog.ts, build-contract.ts, gen-openapi.ts
+    src/server/      # node engine: kernel (logger, EventBus + EVENT_BUS, Container), plugin-host (definePlugin, ModuleRegistry, loader), db (DrizzleService), auth (better-auth + AdminGuard), runtime (createApp - domain-agnostic, single-tenant). Subpaths: /orm, /migrate
+    src/compliance/  # sealed-token list + assertNoSealedProviders (engine); also the compliance domain (/contracts, /schema, /plugins)
+    src/<domain>/    # 10 folded domains (casino, cms, compliance, engagement, pam, sportsbook, wallet, iam, audit, admin-console), exposed as @blurifycom/core/<domain>/{contracts,schema,plugins,server,react}. The BARE root (@blurifycom/core/<domain>) is the public consumer surface: an isomorphic contract barrel (schemas, enum triples, z.infer types; multi-slice domains namespace per slice, eg `import { bonus } from '@blurifycom/core/engagement'`) - never server code. Services/routers/plugin live under /server; tables under /schema. A domain imports engine zones + a sibling's read-only /schema only - never a sibling's internals.
+    src/<domain>/<module>/drizzle/  # each module owns its drizzle.config.ts + migrations/ history (ADR-0027); scripts/generate-all.mjs runs them all
+  addons/          # gated @blurifycom-addons/<name> packages - gating + extraction machinery (OSS_ADDONS, no-cross-addon, scaffolder) kept for future premium modules; none ship today. ADR-0025
+  mcp/             # @blurifycom/mcp - publishable MCP server consumers run against their own repo
+  testing/         # @blurifycom/testing - dev/test harness (bootTestApp, seedDemoData)
+docs/
+  adr/             # architecture decision records
+  catalog.json     # generated surface (routes/schemas/adapters/slots/events); read by @blurifycom/mcp
+tools/             # grouped: gen/ (gen.ts scaffolder, build-contract, gen-openapi, gen-catalog), lint/ (oxlint plugins, verify-module-shape), create/, db/ (seed, migrate-all), setup/
 extensions.config.ts # the single registry of enabled plugins
 ```
 
 ## Where does X go? (decision tree)
 
-- **New business domain** (eg "tournaments") -> `pnpm gen module <name>` creates `@blurifycom-addons/<name>` under `packages/addons/<name>/` and registers it in `extensions.config.ts` (no `kind` = core, `kind: 'addon'` = gated). Core: add its `/contract` slice to `tools/build-contract.ts`. Every module owns its `drizzle.config.ts` + migration history. ADR-0021/0024/0027.
+- **New business domain** (eg "tournaments") -> `pnpm gen module <name>` creates `@blurifycom-addons/<name>` under `packages/addons/<name>/` and registers it in `extensions.config.ts` (no `kind` = core, `kind: 'addon'` = gated). Core: add its `/contract` slice to `tools/gen/build-contract.ts`. Every module owns its `drizzle.config.ts` + migration history. ADR-0021/0024/0027.
 - **Extend/override an existing module** -> overlay plugin: `pnpm gen plugin <name>` -> `extensions/<name>/plugin.ts` (repo root here; the consumer's app when deployed).
 - **New HTTP route** -> the module's `router/index.ts` via `pnpm gen route <module> <method> <path>`. Player routes resolve the caller from `x-user-id`; admin routes MUST be guarded (next).
 - **Admin-only route** -> `plugin.ts` resolves `AdminGuard` (`c.get(ADMIN_GUARD)`, seeded by `createApp`) and passes it into the router; `await adminGuard.assert(context)` is the handler's FIRST line. The single admin-enforcement point - never re-implement the role check.
 - **New DB table** -> a Drizzle `pgTable` in the module's `schema/index.ts`; run `propose-table-change` (MCP) first, then `pnpm regen`. See `db-conventions`.
-- **Reusable Zod schema** -> `packages/core/src/contracts/schemas/<namespace>.ts`. Module-local schemas in the module's `schemas/`.
+- **Reusable Zod schema** -> `packages/core/src/contracts/schemas/<namespace>.ts`. Module-local schemas in the module's `contract/`.
 - **Enum / status value set** -> a values + schema + type triple on the contract surface (cross-domain: core `contracts/schemas/`; domain-local: the module's `contract/`), pgEnum derived from the tuple. `conventions` section 3 + `db-conventions` > Enums.
 - **Cross-module event** -> declare the payload in `domainEventSchemas` (`packages/core/src/contracts/schemas/events.ts`), emit via `EventBus`, subscribe with `ctx.events.on(...)`. ADR-0010; detail in `messaging-and-microservices`.
 - **Frontend UI** -> NOT here (headless). Consumer builds it over HTTP via `@blurifycom/core/react`.
@@ -77,7 +80,7 @@ Cross-cutting basics (kebab files, PascalCase types, `<Name>Schema` + inferred `
 
 ## Dependency rules (two-layer enforcement, both in `pnpm verify`)
 
-(1) oxlint `oss-boundaries/*` (`tools/oxlint-boundaries-plugin.mjs`) - fast per-edit specifier matching; (2) dependency-cruiser (`.dependency-cruiser.cjs`, `pnpm boundaries`) - the resolved whole graph, catches transitive edges, barrel laundering, dynamic `import()`, relative-path dodges. ADR-0015.
+Two complementary gates, kept in sync: (1) **oxlint `oss-boundaries/*`** (`tools/lint/oxlint-boundaries-plugin.mjs`) - fast per-edit string matching on import specifiers (runs via `pnpm lint` + the post-edit hook); (2) **dependency-cruiser** (`.dependency-cruiser.cjs`, `pnpm boundaries`) - the resolved whole graph, so it also catches transitive edges, re-export/barrel laundering, dynamic `import()`, and relative paths that dodge the prefix. ADR-0015.
 
 - A folded domain imports engine zones (`contracts`/`server`/`react`) + a sibling's read-only `/schema` only - never a sibling's internals (`no-cross-domain`). Couple via a command port, a domain event, or a shared contract. Same rule for add-ons (`no-cross-addon`).
 - `contracts` is isomorphic: only other contracts + Zod (`no-contracts-to-runtime`). `react` never imports `server` or a module (`no-react-to-runtime`).
@@ -88,7 +91,7 @@ Cross-cutting basics (kebab files, PascalCase types, `<Name>Schema` + inferred `
 
 Lint-enforced cross-cutting bans in `conventions`: `any` outside tests, `interface`, decorators, classes-for-reuse, hand-written duplicate types, cycles, inline `fetch`/`axios`, bare `TODO`s. OSS-specific:
 
-- Ad-hoc/duplicated Zod schemas in routers/services - schemas live in `contract/`, `schemas/`, or core contracts; derive with `.pick/.omit/.partial/.extend/.merge`.
+- Ad-hoc/duplicated Zod schemas in routers/services - schemas live in the module's `contract/` or core contracts; derive with `.pick/.omit/.partial/.extend/.merge`, don't re-type fields.
 - Re-exporting types "to be nice" - import from where defined.
 - SQL anti-patterns (bare `timestamp()`, CamelCase identifiers, hand-edited migrations) - `db-conventions`.
 

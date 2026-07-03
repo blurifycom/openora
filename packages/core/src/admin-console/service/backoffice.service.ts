@@ -8,7 +8,7 @@ import type {
   UserRole,
 } from '@blurifycom/core/contracts';
 import { makeNotFoundError } from '@blurifycom/core/server';
-import type { TransactionFilter } from '../schemas/index.js';
+import type { TransactionFilter } from '../contract/index.js';
 
 export const UserNotFoundError = makeNotFoundError('User');
 export const TransactionNotFoundError = makeNotFoundError('Transaction');

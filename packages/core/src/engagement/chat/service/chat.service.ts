@@ -13,7 +13,7 @@ import { eq, and, isNull, lt, desc, asc, notInArray } from 'drizzle-orm';
 import { user } from '@blurifycom/core/pam/schema/identity';
 import type { User } from '@blurifycom/core/pam/schema/identity';
 import { chatRoom, chatMessage, chatUserBlock } from '../schema/index.js';
-import type { ChatRoom, ChatMessage } from '../schemas/index.js';
+import type { ChatRoom, ChatMessage } from '../contract/index.js';
 import { moderateContent } from '../moderation/index.js';
 
 /** Single source for channel names so publishers and subscribers always align. */

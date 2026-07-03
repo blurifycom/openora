@@ -1,12 +1,3 @@
-export {
-  ComplianceService,
-  LimitNotFoundError,
-  LimitOwnershipError,
-} from './service/compliance.service.js';
-export { KycVerificationService } from './service/kyc.service.js';
-export {
-  CumulativeDepositReKycTrigger,
-  type ReKycTrigger,
-  type ReKycPlayerSnapshot,
-} from './service/re-kyc-trigger.js';
-export { createComplianceRouter } from './router/index.js';
+// The public consumer surface: the domain's wire contract (schemas, enum triples, types).
+// Isomorphic - safe in the browser. Server wiring lives in './server', tables in './schema'.
+export * from './contract/index.js';

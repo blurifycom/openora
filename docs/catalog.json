@@ -535,6 +535,10 @@
   "uiSlots": [],
   "schemas": [
     {
+      "name": "AddGeoRuleInputSchema",
+      "file": "packages/core/src/compliance/contract/index.ts"
+    },
+    {
       "name": "AdminInvitationSchema",
       "file": "packages/core/src/iam/contract/index.ts"
     },
@@ -1021,6 +1025,10 @@
     {
       "name": "updateTagSchema",
       "file": "packages/core/src/contracts/schemas/tag.ts"
+    },
+    {
+      "name": "UpsertLimitInputSchema",
+      "file": "packages/core/src/compliance/contract/index.ts"
     },
     {
       "name": "UserBonusSchema",

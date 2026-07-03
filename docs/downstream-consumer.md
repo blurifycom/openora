@@ -31,7 +31,7 @@ matching scaffold flow. See [mcp-setup.md](./mcp-setup.md#zero-config-setup-pnpm
 This emits a headless api consumer: `apps/api` (thin `createApp` entry +
 `extensions.config.ts`), root `pnpm.overrides` linking every `@blurifycom/*`, `.mcp.json`, the three
 consumer AI agents, and `turbo/generators/` (`pnpm gen plugin|adapter`). The CLI lives at
-`tools/create-igaming-app.ts`; the base tree at `tools/templates/consumer/`. Read on to
+`tools/create/create-igaming-app.ts`; the base tree at `tools/templates/consumer/`. Read on to
 understand what it generated and how to extend it.
 
 ### Frontend
@@ -111,7 +111,7 @@ separately by **module seeders** - a function each module exports from its `/see
 (`ON CONFLICT ... DO UPDATE`), so editing the declared data and re-running reconciles existing
 rows - safe to run on every deploy.
 
-Seeding is a **standalone one-shot script**, exactly like migrations (`tools/migrate-all.mjs`
+Seeding is a **standalone one-shot script**, exactly like migrations (`tools/db/migrate-all.mjs`
 imports `migrate()` callables and runs them). It needs only a DB connection - it never boots the
 app (no HTTP, no auth, no plugin host), so it is cheap and carries zero footprint in the running
 server. You compose the seeders you want explicitly, then run it after migrations:

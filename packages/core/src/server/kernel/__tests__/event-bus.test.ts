@@ -5,7 +5,7 @@ import type {
   MessageBrokerAdapter,
   BrokerHandler,
   EventEnvelope,
-} from '../../../contracts/adapters/index.js';
+} from '@blurifycom/core/contracts';
 import { createEventBus, InMemoryBroker } from '../event-bus.js';
 
 function fakeLogger() {

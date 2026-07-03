@@ -1,9 +1,5 @@
 import { ORPCError } from '@orpc/server';
-import {
-  createToken,
-  type Token,
-  type AdminPermissionResolver,
-} from '../../contracts/adapters/index.js';
+import { createToken, type Token, type AdminPermissionResolver } from '@blurifycom/core/contracts';
 import { DrizzleService } from '../db/index.js';
 import { sql } from 'drizzle-orm';
 import { SessionResolver } from './session-resolver.js';
