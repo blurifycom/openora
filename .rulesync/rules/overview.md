@@ -58,6 +58,7 @@ extensions.config.ts # the single registry of enabled plugins
 - **Admin-only route** -> `plugin.ts` resolves `AdminGuard` (`c.get(ADMIN_GUARD)`, seeded by `createApp`) and passes it into the router; `await adminGuard.assert(context)` is the handler's FIRST line. The single admin-enforcement point - never re-implement the role check.
 - **New DB table** -> a Drizzle `pgTable` in the module's `schema/index.ts`; run `propose-table-change` (MCP) first, then `pnpm regen`. See `db-conventions`.
 - **Reusable Zod schema** -> `packages/core/src/contracts/schemas/<namespace>.ts`. Module-local schemas in the module's `schemas/`.
+- **Enum / status value set** -> a values + schema + type triple on the contract surface (cross-domain: core `contracts/schemas/`; domain-local: the module's `contract/`), pgEnum derived from the tuple. `conventions` section 3 + `db-conventions` > Enums.
 - **Cross-module event** -> declare the payload in `domainEventSchemas` (`packages/core/src/contracts/schemas/events.ts`), emit via `EventBus`, subscribe with `ctx.events.on(...)`. ADR-0010; detail in `messaging-and-microservices`.
 - **Frontend UI** -> NOT here (headless). Consumer builds it over HTTP via `@blurifycom/core/react`.
 - **New data hook** -> `packages/core/src/react/hooks/` (domain-specific: that domain's `react/` dir). Hand-write `useMemo`/`useCallback` for stability-contract returns (consumer's React Compiler skips `node_modules`) - `conventions` section 7.

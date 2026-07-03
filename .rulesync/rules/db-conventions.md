@@ -14,6 +14,10 @@ The authoritative SQL rule for the platform. Tables live in a module's `src/sche
 module owns its own `drizzle.config.ts` + co-located `drizzle/migrations/` history (ADR-0027). Layering
 and DI live in `clean-architecture`; import boundaries in `overview` > Dependency rules. This is SQL only.
 
+## Enums - pgEnum derives from the contract tuple
+
+Never an inline value array (lint error `oss-module-shape/no-inline-pg-enum`). Declare the set once on the contract surface as a tuple + `z.enum` + inferred type (see `conventions` section 3), then `pgEnum('x_status', X_STATUSES)` - the DB enum can never drift from the contract, and consumers import the same values. Reference: `wallet/schema/index.ts`.
+
 ## Identifiers - snake_case everywhere
 
 Every drizzle instance + drizzle-kit config sets `casing: 'snake_case'`, so the SQL name derives from

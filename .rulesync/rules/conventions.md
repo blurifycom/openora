@@ -65,6 +65,7 @@ Goal: code that is clean, separated, scalable, and extendible - easy to understa
 - **`type` over `interface`** (lint-enforced).
 - **Type entity ids through their owning type**: `User['id']`, never a bare `string` - the id's representation lives in one place and every signature follows when it changes.
 - **Derive related schemas, never re-type fields**: `UserSchema.partial().omit({ id: true })`.
+- **Enum-like value sets are a values + schema + type triple, declared once on the contract surface**: `X_STATUSES = [...] as const` -> `XStatusSchema = z.enum(X_STATUSES)` -> inferred `XStatus`. Anything in a route contract is public API - consumers need the runtime values (dropdowns, badge maps), so types alone are not enough. Never TS `enum`; never a second hand-typed copy of the set (in a consumer either - import it).
 - **Make illegal states unrepresentable** - discriminated unions (`{ status: 'loading' } | { status: 'ok'; data } | { status: 'error'; error }`) over optional-flag soup (`{ loading: boolean; data?: T; error?: Error }`).
 
 ## 4. Functions, modules, and classes
@@ -157,5 +158,6 @@ Headless repo - only the SDK consumption layer (hooks, typed client, auth, realt
 
 - `pnpm verify` = typecheck + unit tests + oxlint + module-shape + `pnpm boundaries` (dependency-cruiser).
 - Two-layer boundaries (per-edit oxlint + whole-graph cruiser) - don't work around a violation; fix the import.
+- Module structure + naming are lint-enforced (`oss-module-shape/*` oxlint JS plugin): files sit in a canonical layer dir, `service/` files end `.service.ts`, `__tests__/` files end `.test.ts`, filenames kebab-case, no inline `pgEnum` value arrays.
 - Pre-commit runs `pnpm boundaries`; CI runs `pnpm verify` + the no-drift check.
 - Agent rules mirror this standard - generated from `.rulesync/` via `pnpm sync:agents`.
