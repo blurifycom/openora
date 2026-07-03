@@ -2,16 +2,17 @@
 root: false
 targets:
   - '*'
-description: Messaging seams (broker / job-queue / realtime), the event envelope, and the in-process -> RabbitMQ -> Kafka migration path for extracting microservices.
+description: Messaging seams (broker / job-queue / realtime), command vs event vs job, the event envelope, outbox, and the service-manifest path to microservices.
 globs:
-  - '**/*'
+  - 'packages/**'
+  - 'extensions/**'
 ---
 
 # Messaging and microservices-readiness
 
-This is a modular monolith today, designed so high-impact modules can be extracted into their own services later with zero module-code changes. Three swappable seams carry all async/cross-process traffic, a transactional outbox makes events durable across a process boundary, and a service manifest lets the same codebase boot as the monolith or as a single-module service. See ADR-0010, ADR-0014, ADR-0016, ADR-0017.
+A modular monolith today, designed so high-impact modules extract into their own services later with zero module-code changes. Three swappable seams carry all async/cross-process traffic; a transactional outbox makes events durable; a service manifest boots the same codebase as monolith or single-module service. ADR-0010/0014/0016/0017.
 
-## The three seams (all in `@blurifycom/adapters`, default impls in `@blurifycom/core`)
+## The three seams (ports in `packages/core/src/contracts/adapters/`, default impls in core)
 
 | Seam                       | Token                | For                              | Default                        | Durable overlay                 |
 | -------------------------- | -------------------- | -------------------------------- | ------------------------------ | ------------------------------- |
@@ -21,70 +22,52 @@ This is a modular monolith today, designed so high-impact modules can be extract
 
 `MESSAGE_BROKER` is module-to-module. `REALTIME_TRANSPORT` is server-to-client. Do not conflate them.
 
-## Deployable topology - the service manifest (ADR-0017)
-
-The same codebase boots as the full monolith or as a single-purpose service. `SERVICE_MANIFEST` (comma-separated module ids) selects which modules a process loads; unset = all (monolith). Infra overlays (broker/queue drivers, marked `kind: 'infra'` in `extensions.config.ts`) always load. Filtering lives in `applyServiceManifest` (`@blurifycom/core/server`), applied inside `loadExtensions` (`@blurifycom/core/server`).
-
-- Run a subset: `SERVICE_MANIFEST=identity,wallet <your-app-dev-cmd>`.
-- Scaffold a dedicated thin host: `pnpm create:service <name> <modules>` -> `apps/<name>/` that bakes the manifest and reuses the root `extensions.config.ts` (module code is never copied).
-- A manifest must include a module's `dependsOn` deps (topo-sort fails fast otherwise). To run two split services that still exchange events, bind a durable broker (`AMQP_URL`) so events cross the process boundary.
-
 ## Choose the channel: command vs event vs job
 
-| Need                                              | Channel                      | How                                                                                 |
-| ------------------------------------------------- | ---------------------------- | ----------------------------------------------------------------------------------- |
-| "I need an answer / a mutation now" (incl. money) | **synchronous command port** | a `@blurifycom/adapters` port (eg `WALLET_COMMANDS`), called in-process - see below |
-| "this happened, others may react"                 | **domain event**             | `EventBus` (`MESSAGE_BROKER`)                                                       |
-| "do this reliably later"                          | **background job**           | `JOB_QUEUE`                                                                         |
+| Need                                              | Channel                      | How                                                          |
+| ------------------------------------------------- | ---------------------------- | ------------------------------------------------------------ |
+| "I need an answer / a mutation now" (incl. money) | **synchronous command port** | an adapter-port token the owner binds (eg `WALLET_COMMANDS`) |
+| "this happened, others may react"                 | **domain event**             | `EventBus` (`MESSAGE_BROKER`)                                |
+| "do this reliably later"                          | **background job**           | `JOB_QUEUE`                                                  |
 
 Never move money or a needed-now answer over events.
 
 ## Synchronous cross-module commands - command ports (ADR-0017)
 
-When module A must mutate or query module B _synchronously_ (money, a value it needs now), it goes through a **command port** that B owns - not by importing B's tables. Reference: sportsbook debits the wallet via `WALLET_COMMANDS.debit(tx, { userId, amount })`, passing its own transaction handle, so bet-insert + debit stay atomic in-process. The wallet module binds the default `WalletCommandsService`; a remote wallet service later binds an implementation that runs a saga - the caller is unchanged. Declare `dependsOn: ['<owner>']` in the consumer's plugin so the port is registered first and load order is pinned for a future split.
+When module A must mutate/query module B synchronously, it goes through a command port B owns - never B's tables. Reference: sportsbook debits the wallet via `WALLET_COMMANDS.debit(tx, { userId, amount })`, passing its own transaction handle so bet-insert + debit stay atomic in-process. A remote wallet service later rebinds the port with a saga impl - the caller is unchanged. Declare `dependsOn: ['<owner>']` in the consumer's plugin.
 
 ## Domain events - always through `EventBus`, never the broker directly
 
-- Declare the payload in `domainEventSchemas` (`@blurifycom/shared-schemas/events.ts`).
-- Emit from a service AFTER the DB commit: `this.events.emit('wallet.deposit.completed', { ... })` (best-effort, in-process fan-out), OR emit durably inside the transaction with the outbox (below) when the event must not be lost.
-- Subscribe in a plugin: `ctx.events.on('wallet.deposit.completed', (payload) => ...)`.
-- Handlers receive the typed PAYLOAD. The full `EventEnvelope` is available as an optional 2nd arg for metadata.
-- Versioning: bump the event in `domainEventVersions` (sparse map; default 1) in the SAME commit that changes its payload shape; the envelope carries `getEventVersion(topic)`. `eventCatalog()` lists every topic + version (for broker topic provisioning and producer/consumer agreement).
+- Declare the payload in `domainEventSchemas` (`packages/core/src/contracts/schemas/events.ts`).
+- Emit from a service AFTER the DB commit: `this.events.emit('wallet.deposit.completed', {...})` (best-effort fan-out), OR durably inside the transaction via the outbox (below) when the event must not be lost.
+- Subscribe in a plugin: `ctx.events.on('wallet.deposit.completed', (payload) => ...)`. Handlers receive the typed payload; the full `EventEnvelope` is an optional 2nd arg.
+- Versioning: bump `domainEventVersions` (sparse map; default 1) in the SAME commit that changes a payload shape. `eventCatalog()` lists every topic + version.
 
-### Transactional outbox - durable, transaction-atomic events (ADR-0017)
+### Transactional outbox (ADR-0017)
 
-`emit()` is best-effort fan-out (lost if the broker is down between commit and publish). For an event that must survive a crash - or a process boundary once the module is its own service - use the outbox:
+`emit()` is best-effort (lost if the broker is down between commit and publish). For a must-not-lose event - or across a process boundary - call `await this.events.emitInTransaction(tx, 'topic', payload)` INSIDE `db.transaction`: the envelope is written to `event_outbox` atomically with the state change; the `OutboxRelay` publishes after commit. At-least-once - consumers dedup on `eventId`. Bound only when `OUTBOX_ENABLED=1` or a durable broker is set; in the default in-process monolith `emitInTransaction` throws a guiding error.
 
-- In the service, INSIDE `db.transaction`, call `await this.events.emitInTransaction(tx, 'topic', payload)`. The envelope is written to the `event_outbox` table within the same transaction (atomic with the state change). The `OutboxRelay` publishes pending rows to the broker after commit and stamps `publishedAt`. Delivery is at-least-once; consumers dedup on `eventId`.
-- Bound only when enabled: `OUTBOX_ENABLED=1` or a durable broker (`AMQP_URL`). Off in the default in-process monolith, where `emit()`'s synchronous fan-out is enough and `emitInTransaction` throws a guiding error. Port `OUTBOX` (`@blurifycom/adapters`), impl `DrizzleOutboxWriter` + `OutboxRelay` (`@blurifycom/db`), wired in `create-app`.
+### The event envelope (ADR-0016)
 
-### The event envelope (ADR-0016) - the microservices bridge
+The `EventBus` wraps every emission at the broker boundary; module code never builds or sees it. `EventEnvelope` = `{ eventId, topic, payload, occurredAt, schemaVersion }` + optional `{ orderingKey, traceId }`:
 
-The `EventBus` wraps every emission in a serializable envelope at the broker boundary; module code never builds or sees it:
-
-`EventEnvelope` = `{ eventId, topic, payload, occurredAt, schemaVersion }` + optional `{ orderingKey, traceId }`.
-
-- `eventId` - consumer-side idempotency/dedup key (a real broker is at-least-once).
+- `eventId` - consumer-side idempotency/dedup key (real brokers are at-least-once).
 - `orderingKey` - Kafka partition key / RabbitMQ routing for per-user ordering.
-- `schemaVersion` - forward-compatible payload evolution.
-- `traceId` - lifted from the trace context for correlation (ADR-0026: tenantId removed).
+- `schemaVersion` - forward-compatible payload evolution. `traceId` - correlation.
 
-Because the envelope and the EventBus boundary isolate transport from domain logic, binding a durable broker is an overlay swap (a `definePlugin` that re-provides `MESSAGE_BROKER`) and extracting a module to its own service needs no module edits.
+Because the envelope isolates transport from domain logic, binding a durable broker is an overlay swap (a `definePlugin` re-providing `MESSAGE_BROKER`) and extracting a module needs no module edits. Migration path: in-process -> RabbitMQ (set `AMQP_URL`; `docker compose --profile broker up`) -> Kafka (a new overlay implementing `MessageBrokerAdapter`); `topic` maps to routing key/topic, `orderingKey` to partition key, `consumerGroup` to durable queue/consumer group, `eventId` to dedup.
 
-### Migration path: in-process -> RabbitMQ -> Kafka
+## Deployable topology - the service manifest (ADR-0017)
 
-| Envelope / option                    | RabbitMQ overlay                               | Kafka / Redpanda          |
-| ------------------------------------ | ---------------------------------------------- | ------------------------- |
-| `topic`                              | routing key on the `oss.events` topic exchange | Kafka topic               |
-| `orderingKey`                        | (routing)                                      | partition key             |
-| `consumerGroup` (`SubscribeOptions`) | durable shared queue (competing consumers)     | consumer group id         |
-| `eventId`                            | `messageId`                                    | idempotent-consumer dedup |
+`SERVICE_MANIFEST` (comma-separated module ids) selects which modules a process loads; unset = all (monolith). Infra overlays (`kind: 'infra'` in `extensions.config.ts`) always load; filtering lives in `applyServiceManifest` (`@blurifycom/core/server`).
 
-Activate RabbitMQ by setting `AMQP_URL` (eg `amqp://guest:guest@localhost:5672`); `docker compose --profile broker up` starts it. A Kafka adapter is a new overlay implementing `MessageBrokerAdapter` - no module change.
+- Run a subset: `SERVICE_MANIFEST=identity,wallet <your-app-dev-cmd>`.
+- Scaffold a thin host: `pnpm create:service <name> <modules>` -> `apps/<name>/` baking the manifest, reusing the root `extensions.config.ts`.
+- A manifest must include each module's `dependsOn` deps (topo-sort fails fast). Split services exchanging events need a durable broker (`AMQP_URL`).
 
 ## Rules for async work
 
-- A real broker/queue is **at-least-once** - handlers MUST be idempotent. For money-adjacent handlers/jobs use a DB guard (a unique row / status check), not just `eventId`/`idempotencyKey`.
-- Money never flows over events - keep it synchronous and transactional.
-- Background work: resolve `JOB_QUEUE`, `enqueue(queue('name'), payload, { idempotencyKey, attempts, backoff, orderingKey })`; a worker overlay registers the handler. Consumer apps add a BullMQ plugin (or another driver) to activate durable queues.
-- Client push: publish on `REALTIME_TRANSPORT` and expose an oRPC `eventIterator` served as SSE; bridge push->pull with `createEventStreamGenerator`. Do NOT keep a private listener `Set` in a service - go through the transport seam so a managed vendor fans out across instances (sportsbook odds is the reference adoption).
+- Handlers MUST be idempotent (at-least-once delivery). Money-adjacent handlers/jobs use a DB guard (unique row / status check), not just `eventId`/`idempotencyKey`.
+- Money never flows over events - synchronous and transactional, via a command port.
+- Background work: `enqueue(queue('name'), payload, { idempotencyKey, attempts, backoff, orderingKey })`; a worker overlay registers the handler via `ctx.jobs.worker(...)`.
+- Client push: publish on `REALTIME_TRANSPORT`, expose an oRPC `eventIterator` served as SSE, bridge push->pull with `createEventStreamGenerator`. No private listener `Set`s in services - go through the seam so a managed vendor can fan out across instances.

@@ -1,28 +1,18 @@
 ---
 targets:
   - '*'
-description: 'Generate a new OSS add-on via turbo gen. Creates schema, service, router, plugin.ts, a working `list` route + contract slice, AGENTS.md, and registers in extensions.config.ts.'
+description: 'Generate a new OSS module via turbo gen. Creates schema, contract, service, router, plugin.ts, a working `list` route, AGENTS.md, and registers it in extensions.config.ts.'
 ---
 
-Run `pnpm gen module $ARGUMENTS` in the repo root (the single `turbo gen` surface). The args are
-`<name>` (eg `tournaments`). The add-on is automatically registered as a core add-on (always loaded, contract in `@blurifycom/orpc-contract`).
+Run `pnpm gen module $ARGUMENTS` (arg: `<name>`, eg `tournaments`) in the repo root.
 
-The scaffold ships a buildable add-on - a `list` route wired end to end (contract slice ->
-router -> service) over a sample table - so `pnpm regen && pnpm verify` is green
-immediately. Extend from there. After the generator finishes (add-on at `packages/addons/<name>/`):
+The scaffold ships a buildable module - a `list` route wired end to end (contract -> router -> service) over a sample table - so `pnpm regen && pnpm verify` is green immediately. The generator marks edit regions with `// AGENT: implement here` - fill those, leave the wiring alone:
 
-1. Open `<name>/src/plugin.ts` and verify the module ID + that any default adapter
-   bindings the add-on needs are present (`ctx.provide(SOME_TOKEN, () => new DefaultImpl())`).
-2. Open `<name>/src/schema/index.ts` and define the Drizzle tables (`pgTable(...)`).
-3. Open `<name>/src/schemas/index.ts` (or `shared-schemas`) and define the Zod input
-   and output schemas for the add-on's routes.
-4. Open `<name>/src/service/<name>.service.ts` and sketch the business logic. Inject
-   adapters + `DRIZZLE` + `EVENT_BUS` via the constructor; never inline fetch / SQL.
-5. Open `<name>/src/router/index.ts` and add the oRPC routes (input + output schemas
-   imported from step 3). Admin routes call `await adminGuard.assert(context)` first.
-6. Run `pnpm regen` - regenerates the OpenAPI spec, the Drizzle client, the table migration,
-   and the catalog. No manual drizzle-kit step.
-7. Run `pnpm verify` to check types, lint (boundaries, module shape), and unit tests.
+1. `plugin.ts` - verify the module id + any default adapter bindings (`ctx.provide(TOKEN, () => new DefaultImpl())`).
+2. `schema/index.ts` - Drizzle tables (`propose-table-change` via MCP first; see `db-conventions`).
+3. `contract/index.ts` + `schemas/index.ts` - Zod input/output schemas for the routes.
+4. `service/<name>.service.ts` - business logic; inject `DRIZZLE` + `EVENT_BUS` + adapter ports via the constructor; never inline fetch/SQL. Audit every mutation.
+5. `router/index.ts` - oRPC routes with imported schemas; admin routes call `await adminGuard.assert(context)` first.
+6. `pnpm regen` (OpenAPI + migration + catalog), then `pnpm verify`.
 
-Tell the user what was generated and what they need to fill in next. The generator marks
-edit regions with `// AGENT: implement here` - fill those; leave the wiring alone.
+Tell the user what was generated and what remains to fill in.
