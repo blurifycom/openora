@@ -1,13 +1,17 @@
+import { invitationStatuses } from '@blurifycom/core/contracts';
 import {
+  boolean,
+  foreignKey,
+  index,
+  pgEnum,
   pgTable,
-  uuid,
   text,
   timestamp,
-  boolean,
-  index,
   uniqueIndex,
-  foreignKey,
+  uuid,
 } from 'drizzle-orm/pg-core';
+
+export const invitationStatusEnum = pgEnum('invitation_status', invitationStatuses);
 
 export const adminRole = pgTable(
   'admin_role',
@@ -70,9 +74,7 @@ export const adminInvitation = pgTable(
     email: text().notNull(),
     roleId: uuid().notNull(),
     token: text().notNull().unique(),
-    status: text({ enum: ['pending', 'accepted', 'revoked'] })
-      .notNull()
-      .default('pending'),
+    status: invitationStatusEnum('status').notNull().default('pending'),
     expiresAt: timestamp({ withTimezone: true }).notNull(),
     acceptedAt: timestamp({ withTimezone: true }),
     createdAt: timestamp({ withTimezone: true }).notNull().defaultNow(),

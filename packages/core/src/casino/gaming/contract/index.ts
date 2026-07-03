@@ -1,6 +1,10 @@
 import { oc } from '@orpc/contract';
 import * as z from 'zod';
-import { IdInputSchema, UuidSchema } from '@blurifycom/core/contracts';
+import { CurrencyCodeSchema, IdInputSchema, UuidSchema } from '@blurifycom/core/contracts';
+
+export const GAME_ROUND_STATUSES = ['active', 'completed', 'cancelled'] as const;
+export const GameRoundStatusSchema = z.enum(GAME_ROUND_STATUSES);
+export type GameRoundStatus = z.infer<typeof GameRoundStatusSchema>;
 
 export const GameSchema = z.object({
   id: UuidSchema,
@@ -16,17 +20,17 @@ export const GameRoundSchema = z.object({
   id: UuidSchema,
   gameId: UuidSchema,
   userId: UuidSchema,
-  status: z.enum(['active', 'completed', 'cancelled']),
+  status: GameRoundStatusSchema,
   betAmount: z.string(),
   winAmount: z.string(),
-  currency: z.string(),
+  currency: CurrencyCodeSchema,
   startedAt: z.string(),
   endedAt: z.string().nullable(),
 });
 
 export const StartRoundInputSchema = z.object({
   gameId: UuidSchema,
-  currency: z.string(),
+  currency: CurrencyCodeSchema,
 });
 
 export const StartRoundOutputSchema = z.object({

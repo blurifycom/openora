@@ -1,5 +1,5 @@
 import { definePlugin, EVENT_BUS, DRIZZLE, ADMIN_GUARD } from '@blurifycom/core/server';
-import { AUDIT_WRITER } from '@blurifycom/core/contracts';
+import { AUDIT_WRITER, type DomainEventName } from '@blurifycom/core/contracts';
 import { AuditService, type RecordInput } from './service/audit.service.js';
 import { createAuditRouter } from './router/index.js';
 
@@ -228,8 +228,7 @@ function mapEventToRecord(topic: string, p: Record<string, unknown>): RecordInpu
   return base;
 }
 
-// Each topic must exist in domainEventSchemas - do not invent topics here.
-const SUBSCRIBED_TOPICS = [
+const SUBSCRIBED_TOPICS: DomainEventName[] = [
   'identity.user.registered',
   'identity.user.login',
   'identity.user.login.failed',

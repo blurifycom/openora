@@ -5,6 +5,7 @@ import type {
   AdminUserDirectory,
   AdminUserRow,
   AdminWalletReporting,
+  UserRole,
 } from '@blurifycom/core/contracts';
 import { makeNotFoundError } from '@blurifycom/core/server';
 import type { TransactionFilter } from '../schemas/index.js';
@@ -80,7 +81,7 @@ export class BackofficeService {
     return toAdminUser(row);
   }
 
-  async updateUser(userId: string, data: { isActive?: boolean; role?: string }, actorId: string) {
+  async updateUser(userId: string, data: { isActive?: boolean; role?: UserRole }, actorId: string) {
     const row = await this.users.update(userId, data, actorId);
     if (!row) throw new UserNotFoundError(userId);
     return toAdminUser(row);

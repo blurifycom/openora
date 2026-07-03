@@ -38,6 +38,7 @@ const metaScopes = [
   'agents',
   'ci',
   'clean-architecture',
+  'conventions',
   'deps',
   'hooks',
   'release',

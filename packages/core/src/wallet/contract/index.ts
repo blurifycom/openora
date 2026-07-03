@@ -1,6 +1,7 @@
 import { oc } from '@orpc/contract';
 import * as z from 'zod';
 import {
+  CurrencyCodeSchema,
   KycStatusSchema,
   TimestampSchema,
   UuidSchema,
@@ -14,27 +15,27 @@ export { WalletRailSchema, WalletTransactionStatusSchema, WalletTransactionTypeS
 
 export const WalletBalanceSchema = z.object({
   balance: z.number(),
-  currency: z.string(),
+  currency: CurrencyCodeSchema,
 });
 
 export const WalletTransactionSchema = z.object({
   id: UuidSchema,
   type: WalletTransactionTypeSchema,
   amount: z.number(),
-  currency: z.string(),
+  currency: CurrencyCodeSchema,
   status: WalletTransactionStatusSchema,
   createdAt: TimestampSchema,
 });
 
 export const DepositInputSchema = z.object({
   amount: z.number().positive(),
-  currency: z.string(),
+  currency: CurrencyCodeSchema,
   provider: z.string().optional(),
 });
 
 export const WithdrawInputSchema = z.object({
   amount: z.number().positive(),
-  currency: z.string(),
+  currency: CurrencyCodeSchema,
   provider: z.string().optional(),
 });
 
@@ -52,7 +53,7 @@ export const WithdrawalQueueItemSchema = z.object({
   userId: UuidSchema,
   username: z.string(),
   amount: z.number(),
-  currency: z.string(),
+  currency: CurrencyCodeSchema,
   rail: WalletRailSchema.nullable(),
   status: WalletTransactionStatusSchema,
   kycStatus: KycStatusSchema.nullable(),
@@ -61,7 +62,7 @@ export const WithdrawalQueueItemSchema = z.object({
 });
 
 export const WithdrawalQueueFilterSchema = PageQuerySchema.extend({
-  currency: z.string().optional(),
+  currency: CurrencyCodeSchema.optional(),
   rail: WalletRailSchema.optional(),
   minAmount: z.coerce.number().nonnegative().optional(),
   maxAmount: z.coerce.number().nonnegative().optional(),

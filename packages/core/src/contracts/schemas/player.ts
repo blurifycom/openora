@@ -1,6 +1,7 @@
 // Shared player schemas the player-management add-on derives from. See ADR-0021.
 import * as z from 'zod';
 import { TimestampSchema, UuidSchema } from './common.js';
+import { CurrencyCodeSchema } from './igaming-config.js';
 
 export const PlayerStatusSchema = z.enum([
   'active',
@@ -31,7 +32,7 @@ export const PlayerSchema = z.object({
   displayName: z.string(),
   email: z.string(),
   country: z.string().nullable(),
-  currency: z.string(),
+  currency: CurrencyCodeSchema,
   language: z.string(),
   status: PlayerStatusSchema,
   kycStatus: KycStatusSchema,

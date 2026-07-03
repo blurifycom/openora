@@ -5,6 +5,7 @@ import {
   KycStatusSchema,
   TimestampSchema,
   UserIdInputSchema,
+  UserRoleSchema,
   UuidSchema,
   WalletRailSchema,
   WalletTransactionStatusSchema,
@@ -29,10 +30,7 @@ export const PlatformStatsSchema = z.object({
   totalBonusClaimed: z.number(),
 });
 
-// Closed set of values the `user.role` column legitimately holds. `admin` is the
-// super-admin bootstrap role (IamService.isSuperAdmin), so writing it is gated to
-// super-admins in the router; arbitrary strings must never reach the directory.
-export const UserRoleSchema = z.enum(['player', 'admin']);
+export { UserRoleSchema } from '@blurifycom/core/contracts';
 
 export const AdminUserSchema = z.object({
   id: UuidSchema,
@@ -40,7 +38,7 @@ export const AdminUserSchema = z.object({
   name: z.string().nullable(),
   createdAt: TimestampSchema,
   isActive: z.boolean(),
-  role: z.string(),
+  role: UserRoleSchema,
   failedLoginAttempts: z.number().int().optional(),
   lockoutUntil: TimestampSchema.nullable().optional(),
 });
@@ -77,7 +75,7 @@ export const AdminTransactionDetailSchema = AdminTransactionSchema.extend({
   playerKycStatus: KycStatusSchema.nullable(),
   providerRefId: z.string().nullable(),
   providerName: z.string().nullable(),
-  reviewedBy: z.string().nullable(),
+  reviewedBy: UuidSchema.nullable(),
   reviewedAt: TimestampSchema.nullable(),
   reviewReason: z.string().nullable(),
 });

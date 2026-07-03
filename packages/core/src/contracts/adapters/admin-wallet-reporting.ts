@@ -23,6 +23,7 @@ export type AdminTxRow = {
 export type AdminTxDetail = AdminTxRow & {
   providerRefId: string | null;
   providerName: string | null;
+  // UUID of the admin who reviewed the transaction (matches wallet.reviewedBy column).
   reviewedBy: string | null;
   reviewedAt: Date | null;
   reviewReason: string | null;
