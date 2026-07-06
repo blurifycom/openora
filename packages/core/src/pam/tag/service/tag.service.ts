@@ -14,7 +14,9 @@ import {
   RemovePlayerTagInput,
   Tag,
   type TagKey,
+  type KycStatus,
 } from '@blurifycom/core/contracts';
+import { player } from '@blurifycom/core/pam/schema/profile';
 import { playerTag, tag } from '../schema/index.js';
 import { PlayerTagWithTag } from '../contract/index.js';
 import { mapDbError } from '@blurifycom/core/common/errors';
@@ -149,6 +151,57 @@ export class TagService {
       });
     } catch (e) {
       mapDbError(e);
+    }
+  }
+
+  /**
+   * Keeps the review-triage tags (`kyc_pending` / `kyc_rejected`) in sync with a player's
+   * KYC status. Idempotent under at-least-once delivery: re-adding a present tag or removing
+   * an absent one is swallowed. Maps the auth `userId` (event payload) to the internal
+   * `player.id` that tags are keyed on.
+   */
+  public async syncKycStatusTags(args: { userId: string; actorId: string; status: KycStatus }) {
+    const [found] = await this.drizzle.db
+      .select({ id: player.id })
+      .from(player)
+      .where(eq(player.userId, args.userId))
+      .limit(1);
+    if (!found) return;
+
+    const desired: TagKey | null =
+      args.status === 'pending'
+        ? 'kyc_pending'
+        : args.status === 'rejected'
+          ? 'kyc_rejected'
+          : null;
+    const reason = `KYC status changed to ${args.status}`;
+
+    for (const tagKey of ['kyc_pending', 'kyc_rejected'] as const) {
+      if (tagKey === desired) {
+        await this.assignPlayerTag({
+          playerId: found.id,
+          tagKey,
+          assignActor: 'scheduled',
+          assignActorUserId: args.actorId,
+          assignReason: reason,
+        }).catch((e) => {
+          if (!(e instanceof TagAlreadyInUseError)) throw e;
+        });
+      } else {
+        await this.removePlayerTag({
+          playerId: found.id,
+          tagKey,
+          removalActor: 'scheduled',
+          removalActorUserId: args.actorId,
+          removalReason: reason,
+        }).catch((e) => {
+          // Nothing to clear if the tag was never assigned, or its definition was never
+          // seeded - both mean the player does not carry it.
+          if (!(e instanceof TagAssignmentNotFoundError) && !(e instanceof TagNotFoundError)) {
+            throw e;
+          }
+        });
+      }
     }
   }
 }

@@ -29,6 +29,34 @@ describe('PlayerService domain errors', () => {
   });
 });
 
+describe('PlayerService.remove', () => {
+  function makeRemoveService(existing: unknown[]) {
+    const setArgs: unknown[] = [];
+    const update = vi.fn(() => ({
+      set: vi.fn((patch: unknown) => {
+        setArgs.push(patch);
+        return { where: vi.fn(() => Promise.resolve()) };
+      }),
+    }));
+    const db = { select: vi.fn(() => chain(existing)), update };
+    const svc = new PlayerService({ db } as never, { setStatus: vi.fn() } as never);
+    return { svc, db, setArgs };
+  }
+
+  it('soft-deletes by closing the player, never deletes the row', async () => {
+    const { svc, db, setArgs } = makeRemoveService([{ id: 'p-1' }]);
+    const result = await svc.remove('p-1');
+    expect(result).toEqual({ success: true });
+    expect(setArgs).toEqual([{ status: 'closed' }]);
+    expect((db as { delete?: unknown }).delete).toBeUndefined();
+  });
+
+  it('throws PlayerNotFoundError when the player does not exist', async () => {
+    const { svc } = makeRemoveService([]);
+    await expect(svc.remove('missing')).rejects.toThrow(PlayerNotFoundError);
+  });
+});
+
 describe('PlayerService.registrationsOverTime', () => {
   it('returns one zero-filled bucket per day in the window', async () => {
     const svc = makeService([]);

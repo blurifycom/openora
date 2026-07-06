@@ -30,6 +30,7 @@ export const playerContract = populateContractRouterPaths({
       PageQuerySchema.extend({
         search: z.string().optional(),
         status: PlayerStatusSchema.optional(),
+        kycStatus: KycStatusSchema.optional(),
       }),
     )
     .output(paginated(PlayerSchema)),

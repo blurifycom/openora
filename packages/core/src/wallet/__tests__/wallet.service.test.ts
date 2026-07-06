@@ -23,6 +23,7 @@ function makeQueryBuilder(results: { select: Row[][]; returning: Row[][] }) {
   builder['innerJoin'] = vi.fn(chain);
   builder['leftJoin'] = vi.fn(chain);
   builder['orderBy'] = vi.fn(chain);
+  builder['groupBy'] = vi.fn(chain);
   builder['limit'] = vi.fn(chain);
   builder['offset'] = vi.fn(chain);
   builder['for'] = vi.fn(chain);
@@ -84,6 +85,46 @@ describe('WalletService domain errors', () => {
     const err = new InsufficientBalanceError(50, 100);
     expect(err.message).toContain('50');
     expect(err.message).toContain('100');
+  });
+});
+
+describe('WalletService.deposit', () => {
+  let events: ReturnType<typeof makeEvents>;
+  let payment: ReturnType<typeof makePayment>;
+
+  beforeEach(() => {
+    events = makeEvents();
+    payment = makePayment();
+  });
+
+  it('records the fiat rail for a fiat currency', async () => {
+    const drizzle = makeDrizzle({
+      select: [[{ id: 'w-1', userId: 'u-1', balance: '0', currency: 'USD' }], []],
+      returning: [[{ id: 'tx-1' }]],
+    });
+    const valuesSpy = readPrivate<ReturnType<typeof vi.fn>>(drizzle.db, 'values');
+    const svc = svcOf(drizzle, events, payment);
+
+    await svc.deposit('u-1', 40, 'USD', 'stripe');
+
+    expect(valuesSpy).toHaveBeenCalledWith(
+      expect.objectContaining({ type: 'deposit', rail: 'fiat' }),
+    );
+  });
+
+  it('records the crypto rail for a crypto currency', async () => {
+    const drizzle = makeDrizzle({
+      select: [[{ id: 'w-1', userId: 'u-1', balance: '0', currency: 'BTC' }], []],
+      returning: [[{ id: 'tx-2' }]],
+    });
+    const valuesSpy = readPrivate<ReturnType<typeof vi.fn>>(drizzle.db, 'values');
+    const svc = svcOf(drizzle, events, payment);
+
+    await svc.deposit('u-1', 1, 'BTC', 'fireblocks');
+
+    expect(valuesSpy).toHaveBeenCalledWith(
+      expect.objectContaining({ type: 'deposit', rail: 'crypto' }),
+    );
   });
 });
 
@@ -200,6 +241,7 @@ describe('WalletService.approveWithdrawal', () => {
         ],
       ],
     });
+    const setSpy = readPrivate<ReturnType<typeof vi.fn>>(drizzle.db, 'set');
     const svc = svcOf(drizzle, events, payment);
 
     const result = await svc.approveWithdrawal('admin-1', 'tx-1');
@@ -210,6 +252,12 @@ describe('WalletService.approveWithdrawal', () => {
       userId: 'u-1',
       rail: 'fiat',
       adminId: 'admin-1',
+    });
+    // The PSP reference and derived provider name persist on the completing update.
+    expect(setSpy).toHaveBeenCalledWith({
+      status: 'completed',
+      providerName: 'psp',
+      providerRefId: 'ext-2',
     });
     expect(events.emit).toHaveBeenNthCalledWith(1, 'wallet.withdrawal.approved', {
       userId: 'u-1',
@@ -386,15 +434,17 @@ describe('WalletService.rejectWithdrawal', () => {
   });
 });
 
-describe('WalletService.listPendingWithdrawals', () => {
-  const queueRow = (id: string, userId: string) => ({
+describe('WalletService.listWithdrawals', () => {
+  const queueRow = (id: string, userId: string, overrides: Row = {}) => ({
     tx: {
       id,
+      walletId: 'w-1',
       amount: '40',
       currency: 'USD',
       rail: 'fiat',
       status: 'pending',
       createdAt: new Date('2026-06-01T00:00:00Z'),
+      ...overrides,
     },
     userId,
   });
@@ -404,7 +454,7 @@ describe('WalletService.listPendingWithdrawals', () => {
     const directory = makeDirectory([{ userId: 'u-1', username: 'alice', kycStatus: 'verified' }]);
     const svc = svcOf(drizzle, makeEvents(), makePayment(), directory);
 
-    const result = await svc.listPendingWithdrawals({ page: 1, limit: 50 });
+    const result = await svc.listWithdrawals({ page: 1, limit: 50 });
 
     expect(directory.lookupPlayers).toHaveBeenCalledWith(['u-1']);
     expect(result.total).toBe(1);
@@ -434,7 +484,7 @@ describe('WalletService.listPendingWithdrawals', () => {
     ]);
     const svc = svcOf(drizzle, makeEvents(), makePayment(), directory);
 
-    const result = await svc.listPendingWithdrawals({ page: 1, limit: 2, kycStatus: 'verified' });
+    const result = await svc.listWithdrawals({ page: 1, limit: 2, kycStatus: 'verified' });
 
     // 3 verified rows survive the in-memory filter; total reflects the filtered set, not the page.
     expect(result.total).toBe(3);
@@ -451,9 +501,71 @@ describe('WalletService.listPendingWithdrawals', () => {
     ]);
     const svc = svcOf(drizzle, makeEvents(), makePayment(), directory);
 
-    const result = await svc.listPendingWithdrawals({ page: 2, limit: 1, kycStatus: 'verified' });
+    const result = await svc.listWithdrawals({ page: 2, limit: 1, kycStatus: 'verified' });
 
     expect(result.total).toBe(2);
     expect(result.items.map((i) => i.transactionId)).toEqual(['tx-3']);
+  });
+
+  it('returns rows of any status when no status filter is given (not pending-only)', async () => {
+    const rows = [
+      queueRow('tx-1', 'u-1', { status: 'pending' }),
+      queueRow('tx-2', 'u-2', { status: 'completed' }),
+      queueRow('tx-3', 'u-3', { status: 'rejected' }),
+    ];
+    const drizzle = makeDrizzle({ select: [rows] });
+    const svc = svcOf(drizzle, makeEvents(), makePayment(), makeDirectory());
+
+    const result = await svc.listWithdrawals({ page: 1, limit: 50 });
+
+    expect(result.total).toBe(3);
+    expect(result.items.map((i) => i.status)).toEqual(['pending', 'completed', 'rejected']);
+  });
+
+  it('tags large_amount when the amount is at/above the threshold, not below', async () => {
+    const big = makeDrizzle({ select: [[queueRow('tx-1', 'u-1', { amount: '5000' })], []] });
+    const small = makeDrizzle({ select: [[queueRow('tx-2', 'u-2', { amount: '4999' })], []] });
+
+    const bigResult = await svcOf(
+      big,
+      makeEvents(),
+      makePayment(),
+      makeDirectory(),
+    ).listWithdrawals({ page: 1, limit: 50 });
+    const smallResult = await svcOf(
+      small,
+      makeEvents(),
+      makePayment(),
+      makeDirectory(),
+    ).listWithdrawals({ page: 1, limit: 50 });
+
+    expect(bigResult.items[0]?.riskTags).toContain('large_amount');
+    expect(smallResult.items[0]?.riskTags).not.toContain('large_amount');
+  });
+
+  it('tags high_frequency when the grouped 24h count is >= 3 for the wallet, not below', async () => {
+    // Second select entry = the batched velocity count query result.
+    const frequent = makeDrizzle({
+      select: [[queueRow('tx-1', 'u-1')], [{ walletId: 'w-1', n: 3 }]],
+    });
+    const rare = makeDrizzle({
+      select: [[queueRow('tx-2', 'u-2')], [{ walletId: 'w-1', n: 2 }]],
+    });
+
+    const frequentResult = await svcOf(
+      frequent,
+      makeEvents(),
+      makePayment(),
+      makeDirectory(),
+    ).listWithdrawals({ page: 1, limit: 50 });
+    const rareResult = await svcOf(
+      rare,
+      makeEvents(),
+      makePayment(),
+      makeDirectory(),
+    ).listWithdrawals({ page: 1, limit: 50 });
+
+    expect(frequentResult.items[0]?.riskTags).toContain('high_frequency');
+    expect(rareResult.items[0]?.riskTags).not.toContain('high_frequency');
   });
 });

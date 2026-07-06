@@ -14,11 +14,11 @@ Withdrawals run through a back-office approval queue (ABC-210): a player `withdr
 | POST   | /wallet/deposit                            | player                     | Credit funds, emit domain event                       |
 | POST   | /wallet/withdraw                           | player                     | Hold funds, create a `pending` withdrawal             |
 | GET    | /wallet/transactions                       | player                     | Last 100 transactions for user                        |
-| GET    | /wallet/withdrawals                        | admin `withdrawal:view`    | Filterable, paginated queue of pending withdrawals    |
+| GET    | /wallet/withdrawals                        | admin `withdrawal:view`    | Filterable, paginated withdrawal review queue         |
 | POST   | /wallet/withdrawals/{withdrawalId}/approve | admin `withdrawal:approve` | Approve -> `processing`, send to PSP/Fireblocks       |
 | POST   | /wallet/withdrawals/{withdrawalId}/reject  | admin `withdrawal:reject`  | Reject (mandatory reason) -> `rejected`, return funds |
 
-Player routes require an authenticated caller (verified better-auth session via `getUserId`, ADR-0019). The `withdrawals.*` admin routes call `adminGuard.assert(context, 'withdrawal', '...')` as the first line; the queue lists username + KYC status via the `ADMIN_USER_DIRECTORY.lookupPlayers` port (never reading the player/profile tables directly). Queue filters: `currency`, `rail`, `minAmount`/`maxAmount`, `kycStatus`, `dateFrom`/`dateTo`, plus `page`/`limit`. `riskTags` is an empty-array placeholder until ABC-206.
+Player routes require an authenticated caller (verified better-auth session via `getUserId`, ADR-0019). The `withdrawals.*` admin routes call `adminGuard.assert(context, 'withdrawal', '...')` as the first line; the queue lists username + KYC status via the `ADMIN_USER_DIRECTORY.lookupPlayers` port (never reading the player/profile tables directly). Queue filters: `status` (omit for all statuses, not pending-only), `currency`, `rail`, `minAmount`/`maxAmount`, `kycStatus`, `dateFrom`/`dateTo`, plus `page`/`limit`. `riskTags` are DB-backed heuristics (not a risk engine): `large_amount` (amount >= 5000) and `high_frequency` (>= 3 withdrawals for the wallet in the trailing 24h, one batched grouped-count query).
 
 KYC withdrawal gate: when `platformConfig.kyc.gateWithdrawals` is true, `withdraw()` fails closed unless the player's KYC status is in the pass-set (`verified` or `manually_overridden`), throwing `KycRequiredError` (maps to CONFLICT). The status is read through the existing `ADMIN_USER_DIRECTORY.lookupPlayers` port - no new cross-domain coupling. Off by default.
 

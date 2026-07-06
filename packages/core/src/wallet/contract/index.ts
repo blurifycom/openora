@@ -64,6 +64,7 @@ export const WithdrawalQueueItemSchema = z.object({
 export type WithdrawalQueueItem = z.infer<typeof WithdrawalQueueItemSchema>;
 
 export const WithdrawalQueueFilterSchema = PageQuerySchema.extend({
+  status: WalletTransactionStatusSchema.optional(),
   currency: CurrencyCodeSchema.optional(),
   rail: WalletRailSchema.optional(),
   minAmount: z.coerce.number().nonnegative().optional(),

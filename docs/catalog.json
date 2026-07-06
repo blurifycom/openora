@@ -325,6 +325,7 @@
       "status": "wired",
       "boundIn": [
         "packages/core/src/admin-console/plugin.ts",
+        "packages/core/src/engagement/notifications/plugin.ts",
         "packages/core/src/pam/identity/plugin.ts",
         "packages/core/src/wallet/plugin.ts"
       ]

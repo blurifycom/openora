@@ -43,7 +43,7 @@ export function createWalletRouter(wallet: WalletService, adminGuard: AdminGuard
     withdrawals: {
       list: os.withdrawals.list.handler(async ({ input, context }) => {
         await adminGuard.assert(context, 'withdrawal', 'view');
-        return wallet.listPendingWithdrawals(input);
+        return wallet.listWithdrawals(input);
       }),
 
       approve: os.withdrawals.approve.handler(async ({ input, context }) => {

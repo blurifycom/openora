@@ -14,7 +14,7 @@ import {
   type KycStatus,
   type WalletRail,
 } from '@blurifycom/core/contracts';
-import { eq, desc, sql, and, gte, lte, count } from 'drizzle-orm';
+import { eq, desc, sql, and, gte, lte, count, inArray } from 'drizzle-orm';
 import { wallet, walletTransaction } from '../schema/index.js';
 import type {
   TransactionResult,
@@ -55,6 +55,20 @@ const CRYPTO_CURRENCIES = new Set(['BTC', 'ETH', 'USDT']);
 
 function railFor(currency: string): WalletRail {
   return CRYPTO_CURRENCIES.has(currency.toUpperCase()) ? 'crypto' : 'fiat';
+}
+
+// ponytail: a flat, currency-agnostic threshold - a starter heuristic for the review
+// queue, not a compliance risk engine. Revisit with a real risk service if/when one exists.
+const LARGE_WITHDRAWAL_THRESHOLD = 5000;
+
+// ponytail: >=3 withdrawals in a 24h window flags velocity; a flat count, not a per-tier rule.
+const HIGH_FREQUENCY_WINDOW_MS = 24 * 60 * 60 * 1000;
+const HIGH_FREQUENCY_MIN_COUNT = 3;
+
+// The concrete settlement provider recorded per transaction: the crypto rail settles
+// through Fireblocks, the fiat rail through a PSP.
+function providerNameFor(rail: WalletRail | null): string {
+  return rail === 'crypto' ? 'fireblocks' : 'psp';
 }
 
 export class WalletService {
@@ -115,6 +129,7 @@ export class WalletService {
           amount: amount.toString(),
           currency,
           status: 'completed',
+          rail: railFor(currency),
           providerName: provider,
           providerRefId: psp.externalId,
         })
@@ -188,14 +203,12 @@ export class WalletService {
     return { transactionId, status: 'pending' };
   }
 
-  async listPendingWithdrawals(filters: WithdrawalQueueFilter) {
+  async listWithdrawals(filters: WithdrawalQueueFilter) {
     const db = this.drizzle.db;
     const { page, limit } = filters;
 
-    const conditions = [
-      eq(walletTransaction.type, 'withdrawal'),
-      eq(walletTransaction.status, 'pending'),
-    ];
+    const conditions = [eq(walletTransaction.type, 'withdrawal')];
+    if (filters.status) conditions.push(eq(walletTransaction.status, filters.status));
     if (filters.currency) conditions.push(eq(walletTransaction.currency, filters.currency));
     if (filters.rail) conditions.push(eq(walletTransaction.rail, filters.rail));
     if (filters.minAmount !== undefined) {
@@ -230,8 +243,35 @@ export class WalletService {
       : rows;
 
     const start = (page - 1) * limit;
-    const items: WithdrawalQueueItem[] = matching.slice(start, start + limit).map((r) => {
+    const pageRows = matching.slice(start, start + limit);
+
+    // One batched velocity query for the wallets on this page: withdrawals (any status)
+    // in the trailing 24h, grouped + counted, so high_frequency is not an N+1 per row.
+    const pageWalletIds = [...new Set(pageRows.map((r) => r.tx.walletId))];
+    const frequentWalletIds = new Set<string>();
+    if (pageWalletIds.length > 0) {
+      const since = new Date(Date.now() - HIGH_FREQUENCY_WINDOW_MS);
+      const counts = await db
+        .select({ walletId: walletTransaction.walletId, n: count() })
+        .from(walletTransaction)
+        .where(
+          and(
+            eq(walletTransaction.type, 'withdrawal'),
+            gte(walletTransaction.createdAt, since),
+            inArray(walletTransaction.walletId, pageWalletIds),
+          ),
+        )
+        .groupBy(walletTransaction.walletId);
+      for (const row of counts) {
+        if (Number(row.n) >= HIGH_FREQUENCY_MIN_COUNT) frequentWalletIds.add(row.walletId);
+      }
+    }
+
+    const items: WithdrawalQueueItem[] = pageRows.map((r) => {
       const summary = byUserId.get(r.userId);
+      const riskTags: string[] = [];
+      if (Number(r.tx.amount) >= LARGE_WITHDRAWAL_THRESHOLD) riskTags.push('large_amount');
+      if (frequentWalletIds.has(r.tx.walletId)) riskTags.push('high_frequency');
       return {
         transactionId: r.tx.id,
         userId: r.userId,
@@ -241,7 +281,7 @@ export class WalletService {
         rail: r.tx.rail ?? null,
         status: r.tx.status,
         kycStatus: summary?.kycStatus ?? null,
-        riskTags: [],
+        riskTags,
         requestedAt: r.tx.createdAt.toISOString(),
       };
     });
@@ -289,8 +329,9 @@ export class WalletService {
       adminId,
     });
 
+    let result: Awaited<ReturnType<PaymentAdapter['processWithdrawal']>>;
     try {
-      await this.payment.processWithdrawal(amount, tx.currency, {
+      result = await this.payment.processWithdrawal(amount, tx.currency, {
         transactionId: tx.id,
         userId,
         rail: tx.rail,
@@ -320,7 +361,11 @@ export class WalletService {
 
     await this.drizzle.db
       .update(walletTransaction)
-      .set({ status: 'completed' })
+      .set({
+        status: 'completed',
+        providerName: providerNameFor(tx.rail),
+        providerRefId: result.externalId,
+      })
       .where(eq(walletTransaction.id, tx.id));
     this.events.emit('wallet.withdrawal.completed', {
       userId,

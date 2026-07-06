@@ -67,7 +67,9 @@ export function createAuth(options: AuthOptions): BetterAuthType {
         });
       },
     },
-    plugins: [organization(), adminPlugin({ ac, roles }), twoFactor()],
+    // Without this, better-auth's admin plugin defaults new signups to its own
+    // 'user' role, which UserRoleSchema (player|admin) rejects everywhere downstream.
+    plugins: [organization(), adminPlugin({ ac, roles, defaultRole: 'player' }), twoFactor()],
     // Library boundary: better-auth infers an options-specific instantiation that isn't
     // assignable to its own exported `Auth` alias. No way to narrow without matching the
     // full generic - the one sanctioned cast, see conventions.

@@ -5,11 +5,8 @@ import {
   findOneOrThrow,
   pageToOffset,
 } from '@blurifycom/core/server';
-import type { KycStatusWriter, PlayerStatus, KycStatus } from '@blurifycom/core/contracts';
+import type { KycStatusWriter, PlayerStatus, KycStatus, Player } from '@blurifycom/core/contracts';
 import { eq, ilike, count, or, and, gte, desc, sql, ne } from 'drizzle-orm';
-// Reads the core-owned `player` table + identity `user` via the public /schema
-// subpaths (add-on->core reads, allowed by the boundary rules). PAM owns no
-// tables of its own. See ADR-0020.
 import { player } from '@blurifycom/core/pam/schema/profile';
 import { user } from '@blurifycom/core/pam/schema/identity';
 import { toPlayer, fetchEmailByUserId } from '../../shared/player-mapper.js';
@@ -27,10 +24,23 @@ export class PlayerService {
     private readonly kycStatusWriter: KycStatusWriter,
   ) {}
 
-  async list(page: number, limit: number, search?: string, status?: PlayerStatus) {
+  async list({
+    page,
+    limit,
+    search,
+    status,
+    kycStatus,
+  }: {
+    page: number;
+    limit: number;
+    search?: string;
+    status?: PlayerStatus;
+    kycStatus?: KycStatus;
+  }) {
     const db = this.drizzle.db;
     const conditions = [];
     if (status) conditions.push(eq(player.status, status));
+    if (kycStatus) conditions.push(eq(player.kycStatus, kycStatus));
     if (search) {
       conditions.push(
         or(
@@ -77,14 +87,8 @@ export class PlayerService {
   }
 
   async update(
-    playerId: string,
-    data: {
-      displayName?: string;
-      status?: PlayerStatus;
-      kycStatus?: KycStatus;
-      level?: number;
-      email?: string;
-    },
+    playerId: Player['id'],
+    data: Partial<Pick<Player, 'displayName' | 'status' | 'kycStatus' | 'level' | 'email'>>,
     actorId: string,
   ) {
     const existing = findOneOrThrow(
@@ -135,12 +139,12 @@ export class PlayerService {
     return toPlayer(record, await fetchEmailByUserId(this.drizzle, record.userId));
   }
 
-  async remove(playerId: string) {
+  async remove(playerId: Player['id']) {
     findOneOrThrow(
       await this.drizzle.db.select().from(player).where(eq(player.id, playerId)),
       new PlayerNotFoundError(playerId),
     );
-    await this.drizzle.db.delete(player).where(eq(player.id, playerId));
+    await this.drizzle.db.update(player).set({ status: 'closed' }).where(eq(player.id, playerId));
     return { success: true };
   }
 
