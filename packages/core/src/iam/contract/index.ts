@@ -155,5 +155,6 @@ export type AdminRoleAssignmentDetail = z.infer<typeof AdminRoleAssignmentDetail
 export type AdminInvitation = z.infer<typeof AdminInvitationSchema>;
 export type CatalogEntry = z.infer<typeof CatalogEntrySchema>;
 export type Catalog = z.infer<typeof CatalogSchema>;
+export type GrantInput = z.infer<typeof GrantInputSchema>;
 export type RolePermissionLevel = z.infer<typeof RolePermissionLevelSchema>;
 export type EffectivePermissions = z.infer<typeof EffectivePermissionsSchema>;

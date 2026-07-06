@@ -1003,6 +1003,10 @@
       "file": "packages/core/src/contracts/schemas/tag.ts"
     },
     {
+      "name": "ThemeSchema",
+      "file": "packages/core/src/contracts/schemas/identity.ts"
+    },
+    {
       "name": "TimestampSchema",
       "file": "packages/core/src/contracts/schemas/common.ts"
     },

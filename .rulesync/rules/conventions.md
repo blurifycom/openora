@@ -36,7 +36,7 @@ Goal: code that is clean, separated, scalable, and extendible - easy to understa
 
 - **One source of truth per shape - infer, never hand-write.** `z.infer<typeof UserSchema>`, `typeof users.$inferSelect`, `Omit<User, 'id'>`.
 - **Schema-first at every boundary** (HTTP, config, env, messages, events). Validate once at the edge, trust the type after. oRPC + Zod does this for routes; do the same for config/env/event payloads.
-- **No `any` outside tests** - `unknown` + narrowing.
+- **No `any`, anywhere - tests included.** `unknown` + narrowing, or the real type. Never duplicate a type definition - reuse what already exists: `z.infer<...>` from the module's contract, `$inferSelect`/`$inferInsert` from its schema, a shared `@blurifycom/core/*` type. A hand-rolled copy of a shape that's one import away is the same bug as `any` - it silently drifts from the source of truth.
 - **No type casts (`as`) to silence the compiler - fix the root cause.** (`as const` is fine.) `as unknown as X` turns type-checking off entirely. If a symbol needs a type, give it one at the source (`createToken<T>()`), don't cast at use sites. Exactly two sanctioned exceptions:
   1. **Test doubles** - route through the `mock` / `mockDb` / `readPrivate` helpers (`packages/core/src/testing/mock.ts`) so the cast lives in one audited place, never inline in a test.
   2. **Third-party type-inference boundaries** a library gives you no honest way to satisfy - one cast with a one-line `// Library boundary:` note.

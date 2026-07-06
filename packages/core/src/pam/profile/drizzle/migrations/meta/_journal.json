@@ -15,6 +15,13 @@
       "when": 1783089314233,
       "tag": "0001_famous_red_shift",
       "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "7",
+      "when": 1783247852380,
+      "tag": "0002_flippant_chimera",
+      "breakpoints": true
     }
   ]
 }

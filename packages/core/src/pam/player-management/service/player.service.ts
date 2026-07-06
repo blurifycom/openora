@@ -12,7 +12,7 @@ import { eq, ilike, count, or, and, gte, desc, sql, ne } from 'drizzle-orm';
 // tables of its own. See ADR-0020.
 import { player } from '@blurifycom/core/pam/schema/profile';
 import { user } from '@blurifycom/core/pam/schema/identity';
-import { toPlayer, fetchEmail } from '../../shared/player-mapper.js';
+import { toPlayer, fetchEmailByUserId } from '../../shared/player-mapper.js';
 
 export const PlayerNotFoundError = makeNotFoundError('Player');
 export const DuplicateEmailError = makeConflictError('DuplicateEmail', 'Email is already in use');
@@ -65,7 +65,7 @@ export class PlayerService {
       await this.drizzle.db.select().from(player).where(eq(player.id, playerId)),
       new PlayerNotFoundError(playerId),
     );
-    return toPlayer(record, await fetchEmail(this.drizzle, record.userId));
+    return toPlayer(record, await fetchEmailByUserId(this.drizzle, record.userId));
   }
 
   async getExtended(playerId: string) {
@@ -73,7 +73,7 @@ export class PlayerService {
       await this.drizzle.db.select().from(player).where(eq(player.id, playerId)),
       new PlayerNotFoundError(playerId),
     );
-    return toPlayer(record, await fetchEmail(this.drizzle, record.userId));
+    return toPlayer(record, await fetchEmailByUserId(this.drizzle, record.userId));
   }
 
   async update(
@@ -132,7 +132,7 @@ export class PlayerService {
       return findOneOrThrow(rows, new PlayerNotFoundError(playerId));
     });
 
-    return toPlayer(record, await fetchEmail(this.drizzle, record.userId));
+    return toPlayer(record, await fetchEmailByUserId(this.drizzle, record.userId));
   }
 
   async remove(playerId: string) {

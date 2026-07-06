@@ -1,8 +1,9 @@
 import { implement } from '@orpc/server';
-import { type OssContext, AdminGuard } from '@blurifycom/core/server';
+import { type OssContext, AdminGuard, mapErrors } from '@blurifycom/core/server';
 import { identityContract } from '../contract/index.js';
 import { IdentityService } from '../service/identity.service.js';
 import { SessionService } from '../service/session.service.js';
+import { UnsupportedLanguageError } from '../../shared/language.js';
 
 export function createIdentityRouter(
   identity: IdentityService,
@@ -65,7 +66,9 @@ export function createIdentityRouter(
     ),
 
     updateProfile: os.updateProfile.handler(({ input, context }) =>
-      identity.updateProfile(input, context.request.headers, context.resHeaders ?? new Headers()),
+      mapErrors({ BAD_REQUEST: UnsupportedLanguageError }, () =>
+        identity.updateProfile(input, context.request.headers, context.resHeaders ?? new Headers()),
+      ),
     ),
 
     unlockUser: os.unlockUser.handler(async ({ input, context }) => {

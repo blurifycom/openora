@@ -1,26 +1,29 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { IdentityService } from '../service/identity.service.js';
+import { UnsupportedLanguageError } from '../../shared/language.js';
 import type { SendEmailPort } from '@blurifycom/core/contracts';
 
-const { signInEmailMock, getSessionMock } = vi.hoisted(() => ({
+const { signInEmailMock, getSessionMock, updateUserMock } = vi.hoisted(() => ({
   signInEmailMock: vi.fn(),
   getSessionMock: vi.fn().mockResolvedValue(null),
+  updateUserMock: vi.fn(),
 }));
 
-vi.mock('@blurifycom/core/server', () => ({
+vi.mock('@blurifycom/core/server', async (importOriginal) => ({
+  ...(await importOriginal<object>()),
   createAuth: vi.fn(() => ({
     api: {
       getSession: getSessionMock,
       signUpEmail: vi.fn(),
       signInEmail: signInEmailMock,
       signOut: vi.fn(),
+      updateUser: updateUserMock,
     },
   })),
 }));
 
 type DrizzleRows = { selectRows?: unknown[][]; updateReturning?: unknown[][] };
 
-/** A vi-mocked Drizzle whose select/update chains return the queued rows in order. */
 function makeDrizzle({ selectRows = [], updateReturning = [] }: DrizzleRows = {}) {
   const selectQueue = [...selectRows];
   const returningQueue = [...updateReturning];
@@ -208,5 +211,37 @@ describe('IdentityService - unlockUser', () => {
     const drizzle = makeDrizzle({ selectRows: [[]] });
     const svc = new IdentityService({ drizzle: drizzle as never, events: makeEvents() as never });
     await expect(svc.unlockUser('missing', 'admin1')).rejects.toThrow();
+  });
+});
+
+describe('IdentityService.updateProfile language validation', () => {
+  it('rejects an unsupported language before calling updateUser', async () => {
+    const svc = new IdentityService({
+      drizzle: makeDrizzle() as never,
+      events: makeEvents() as never,
+      platformConfig: { supportedLanguages: ['en', 'fr'] } as never,
+    });
+
+    await expect(svc.updateProfile({ language: 'de' }, {}, new Headers())).rejects.toThrow(
+      UnsupportedLanguageError,
+    );
+    expect(updateUserMock).not.toHaveBeenCalled();
+  });
+
+  it('accepts a supported language and forwards it to updateUser', async () => {
+    updateUserMock.mockResolvedValue(jsonResponse({ status: true }, 200));
+    getSessionMock.mockResolvedValueOnce({ user: { ...betterAuthUser, language: 'fr' } });
+    const svc = new IdentityService({
+      drizzle: makeDrizzle() as never,
+      events: makeEvents() as never,
+      platformConfig: { supportedLanguages: ['en', 'fr'] } as never,
+    });
+
+    const result = await svc.updateProfile({ language: 'fr' }, {}, new Headers());
+
+    expect(updateUserMock).toHaveBeenCalledWith(
+      expect.objectContaining({ body: expect.objectContaining({ language: 'fr' }) }),
+    );
+    expect(result.user.language).toBe('fr');
   });
 });

@@ -1,6 +1,6 @@
 import { eq } from 'drizzle-orm';
 import type { DrizzleService } from '@blurifycom/core/server';
-import type { Player, PlayerStatus, KycStatus } from '@blurifycom/core/contracts';
+import type { Player, User } from '@blurifycom/core/contracts';
 import { player } from '../profile/schema/index.js';
 import { user } from '../identity/schema/index.js';
 
@@ -12,10 +12,8 @@ export function toPlayer(row: typeof player.$inferSelect, email: string): Player
     email,
     country: row.country,
     currency: row.currency,
-    language: row.language,
-    theme: row.theme,
-    status: row.status as PlayerStatus,
-    kycStatus: row.kycStatus as KycStatus,
+    status: row.status,
+    kycStatus: row.kycStatus,
     level: row.level,
     totalWagered: Number(row.totalWagered),
     totalDeposits: Number(row.totalDeposits),
@@ -25,7 +23,10 @@ export function toPlayer(row: typeof player.$inferSelect, email: string): Player
   };
 }
 
-export async function fetchEmail(drizzle: DrizzleService, userId: string): Promise<string> {
+export async function fetchEmailByUserId(
+  drizzle: DrizzleService,
+  userId: User['id'],
+): Promise<string> {
   const [record] = await drizzle.db
     .select({ email: user.email })
     .from(user)

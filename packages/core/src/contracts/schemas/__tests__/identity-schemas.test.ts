@@ -35,6 +35,8 @@ describe('identity schemas', () => {
       email: 'a@b.dev',
       name: 'Alice',
       emailVerified: true,
+      theme: 'system',
+      language: 'en',
       createdAt: new Date().toISOString(),
       updatedAt: new Date().toISOString(),
     };

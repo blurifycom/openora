@@ -4,6 +4,7 @@ import {
   NOTIFICATION_DELIVERY_ADAPTER,
   SEND_EMAIL,
   IDENTITY_OPTIONS,
+  PLATFORM_CONFIG,
 } from '@blurifycom/core/contracts';
 import { definePlugin, ADMIN_GUARD, EVENT_BUS, DRIZZLE } from '@blurifycom/core/server';
 import { MockKycAdapter } from './adapters/mock/mock-kyc-adapter.js';
@@ -33,6 +34,7 @@ export default definePlugin({
           events: c.get(EVENT_BUS),
           email: c.get(SEND_EMAIL),
           options: c.has(IDENTITY_OPTIONS) ? c.get(IDENTITY_OPTIONS) : undefined,
+          platformConfig: c.has(PLATFORM_CONFIG) ? c.get(PLATFORM_CONFIG) : undefined,
         }),
         new SessionService({ drizzle: c.get(DRIZZLE), events: c.get(EVENT_BUS) }),
         c.get(ADMIN_GUARD),

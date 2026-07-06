@@ -1,7 +1,19 @@
 import { sql } from 'drizzle-orm';
-import { pgTable, uuid, text, integer, decimal, timestamp, index } from 'drizzle-orm/pg-core';
+import {
+  pgTable,
+  uuid,
+  text,
+  integer,
+  decimal,
+  timestamp,
+  pgEnum,
+  index,
+} from 'drizzle-orm/pg-core';
+import { PLAYER_STATUSES, KYC_STATUSES } from '@blurifycom/core/contracts';
 
-// Read by @blurifycom-addons/player-management via the /schema subpath (add-on->core read, allowed per ADR-0020).
+export const playerStatusEnum = pgEnum('player_status', PLAYER_STATUSES);
+export const kycStatusEnum = pgEnum('kyc_status', KYC_STATUSES);
+
 export const player = pgTable(
   'player',
   {
@@ -10,10 +22,8 @@ export const player = pgTable(
     displayName: text().notNull(),
     country: text(),
     currency: text().notNull().default('USD'),
-    language: text().notNull().default('en'),
-    theme: text().notNull().default('system'),
-    status: text().notNull().default('active'),
-    kycStatus: text().notNull().default('pending'),
+    status: playerStatusEnum().notNull().default('active'),
+    kycStatus: kycStatusEnum().notNull().default('pending'),
     level: integer().notNull().default(1),
     totalWagered: decimal({ precision: 18, scale: 2 }).notNull().default('0'),
     totalDeposits: decimal({ precision: 18, scale: 2 }).notNull().default('0'),

@@ -1,5 +1,17 @@
 import { sql } from 'drizzle-orm';
-import { pgTable, uuid, text, boolean, timestamp, index, integer } from 'drizzle-orm/pg-core';
+import {
+  pgTable,
+  pgEnum,
+  uuid,
+  text,
+  boolean,
+  timestamp,
+  index,
+  integer,
+} from 'drizzle-orm/pg-core';
+import { THEMES } from '@blurifycom/core/contracts';
+
+export const userThemeEnum = pgEnum('user_theme', THEMES);
 
 export const user = pgTable(
   'user',
@@ -9,10 +21,10 @@ export const user = pgTable(
     email: text().notNull().unique(),
     emailVerified: boolean().notNull().default(false),
     image: text(),
+    theme: userThemeEnum().notNull().default('system'),
+    language: text().notNull().default('en'),
     role: text().notNull().default('player'),
     isActive: boolean().notNull().default(true),
-    // Required by the drizzle adapter when better-auth admin() plugin is enabled;
-    // omitting these causes "field banned does not exist" on user creation.
     banned: boolean().default(false),
     banReason: text(),
     banExpires: timestamp({ withTimezone: true }),

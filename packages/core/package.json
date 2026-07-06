@@ -341,6 +341,11 @@
       "import": "./dist/pam/server.js",
       "default": "./dist/pam/server.js"
     },
+    "./pam/react": {
+      "types": "./dist/pam/react.d.ts",
+      "import": "./dist/pam/react.js",
+      "default": "./dist/pam/react.js"
+    },
     "./pam/contracts": {
       "types": "./dist/pam/contracts.d.ts",
       "import": "./dist/pam/contracts.js",
@@ -598,6 +603,7 @@
     "@orpc/openapi": "1.14.5",
     "@orpc/openapi-client": "1.14.5",
     "@orpc/server": "1.14.5",
+    "@orpc/tanstack-query": "1.14.5",
     "@orpc/zod": "1.14.5",
     "@paralleldrive/cuid2": "3.3.0",
     "better-auth": "1.6.15",
@@ -610,6 +616,7 @@
   },
   "devDependencies": {
     "@blurifycom/vitest-config": "workspace:*",
+    "@tanstack/react-query": "5.101.0",
     "@turbo/gen": "2.9.16",
     "@types/node": "25.9.2",
     "@types/pg": "8.20.0",

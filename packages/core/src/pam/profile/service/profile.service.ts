@@ -1,68 +1,49 @@
-import { createDomainError, DrizzleService } from '@blurifycom/core/server';
-import type { PlatformConfig } from '@blurifycom/core/contracts';
+import { DrizzleService } from '@blurifycom/core/server';
+import type { User } from '@blurifycom/core/contracts';
 import { eq } from 'drizzle-orm';
 import { player } from '../schema/index.js';
 import { user } from '@blurifycom/core/pam/schema/identity';
 import type { UpdatePlayerProfileInput } from '../contract/index.js';
-import { toPlayer, fetchEmail } from '../../shared/player-mapper.js';
-
-export const UnsopportedLanguageError = createDomainError(
-  'UnsopportedLanguageError',
-  (language: string) => `${language} is not supported`,
-);
+import { toPlayer, fetchEmailByUserId } from '../../shared/player-mapper.js';
 
 export class ProfileService {
-  constructor(
-    private readonly drizzle: DrizzleService,
-    private readonly platformConfig?: PlatformConfig,
-  ) {}
+  constructor(private readonly drizzle: DrizzleService) {}
 
   // Registration only creates the auth `user`; the `player` row is materialised
   // lazily so a freshly-registered user always has a profile.
-  private async ensureProfile(userId: string) {
+  private async ensureProfile(userId: User['id']) {
     const [existing] = await this.drizzle.db.select().from(player).where(eq(player.userId, userId));
-    if (existing) return toPlayer(existing, await fetchEmail(this.drizzle, userId));
+    if (existing) return toPlayer(existing, await fetchEmailByUserId(this.drizzle, userId));
 
     const [u] = await this.drizzle.db
       .select({ name: user.name, email: user.email })
       .from(user)
       .where(eq(user.id, userId));
+    // Upsert: a concurrent first-hit may insert the row between our select and
+    // this insert. The no-op set makes the conflict path return the winning row
+    // without overwriting it, so we always get exactly one row back.
     const [created] = await this.drizzle.db
       .insert(player)
       .values({
         userId,
         displayName: u?.name ?? 'Player',
       })
+      .onConflictDoUpdate({ target: player.userId, set: { userId } })
       .returning();
-    return toPlayer(created!, u?.email ?? '');
+    return toPlayer(created, u?.email ?? '');
   }
 
-  async getMyProfile(userId: string) {
+  async getMyProfile(userId: User['id']) {
     return this.ensureProfile(userId);
   }
 
-  async updateMyProfile(userId: string, data: UpdatePlayerProfileInput) {
-    const supportedLanguages = this.platformConfig?.supportedLanguages;
-    if (
-      data.language !== undefined &&
-      supportedLanguages &&
-      supportedLanguages.length > 0 &&
-      !supportedLanguages.includes(data.language)
-    ) {
-      throw new UnsopportedLanguageError(data.language);
-    }
+  async updateMyProfile(userId: User['id'], data: UpdatePlayerProfileInput) {
     await this.ensureProfile(userId);
-    const patch: Partial<typeof player.$inferInsert> = {};
-    if (data.displayName !== undefined) patch.displayName = data.displayName;
-    if (data.country !== undefined) patch.country = data.country;
-    if (data.currency !== undefined) patch.currency = data.currency;
-    if (data.language !== undefined) patch.language = data.language;
-    if (data.theme !== undefined) patch.theme = data.theme;
     const [record] = await this.drizzle.db
       .update(player)
-      .set(patch)
+      .set(data)
       .where(eq(player.userId, userId))
       .returning();
-    return toPlayer(record!, await fetchEmail(this.drizzle, userId));
+    return toPlayer(record, await fetchEmailByUserId(this.drizzle, userId));
   }
 }

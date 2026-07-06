@@ -28,7 +28,6 @@ export function createAuth(options: AuthOptions): BetterAuthType {
       provider: 'pg',
       schema: options.schema,
     }),
-    // id columns are `text` without a DB default, so better-auth must supply the value.
     advanced: {
       database: {
         generateId: () => randomUUID(),
@@ -37,6 +36,16 @@ export function createAuth(options: AuthOptions): BetterAuthType {
     session: {
       expiresIn: 30 * 24 * 60 * 60,
       updateAge: 24 * 60 * 60,
+    },
+    user: {
+      // Surfaces `theme`/`language` on the session/`me` user and lets `updateUser`
+      // write them, so every user (player + admin) syncs a UI theme + locale. Both
+      // are validated at the route (theme against the enum, language against
+      // PlatformConfig.supportedLanguages).
+      additionalFields: {
+        theme: { type: 'string', required: false, input: true, defaultValue: 'system' },
+        language: { type: 'string', required: false, input: true, defaultValue: 'en' },
+      },
     },
     emailAndPassword: {
       enabled: true,

@@ -1,20 +1,16 @@
-// Shared player schemas the player-management add-on derives from. See ADR-0021.
 import * as z from 'zod';
 import { TimestampSchema, UuidSchema } from './common.js';
 import { CurrencyCodeSchema } from './igaming-config.js';
 
-export const PlayerStatusSchema = z.enum([
+export const PLAYER_STATUSES = [
   'active',
   'dormant',
   'self_excluded',
   'suspended',
   'closed',
-]);
+] as const;
+export const PlayerStatusSchema = z.enum(PLAYER_STATUSES);
 
-// Additive expansion (no rename, no data migration): `not_started` precedes a first
-// submission, `resubmission_requested` is set by a threshold-triggered re-KYC, and
-// `manually_overridden` records an admin override. Vendor statuses stay separate
-// (`KycVendorStatus`); the adapter maps vendor `approved` -> app `verified`.
 export const KYC_STATUSES = [
   'not_started',
   'pending',
@@ -23,7 +19,6 @@ export const KYC_STATUSES = [
   'resubmission_requested',
   'manually_overridden',
 ] as const;
-
 export const KycStatusSchema = z.enum(KYC_STATUSES);
 
 export const PlayerSchema = z.object({
@@ -33,8 +28,6 @@ export const PlayerSchema = z.object({
   email: z.string(),
   country: z.string().nullable(),
   currency: CurrencyCodeSchema,
-  language: z.string(),
-  theme: z.string(),
   status: PlayerStatusSchema,
   kycStatus: KycStatusSchema,
   level: z.number().int(),
@@ -49,14 +42,10 @@ export type Player = z.infer<typeof PlayerSchema>;
 export type PlayerStatus = z.infer<typeof PlayerStatusSchema>;
 export type KycStatus = z.infer<typeof KycStatusSchema>;
 
-// Lives in contracts (not pam profile) so the SDK can import it without violating
-// no-core-to-domain. The profile contract re-imports it from here.
 export const UpdatePlayerProfileInputSchema = PlayerSchema.pick({
   displayName: true,
   country: true,
   currency: true,
-  language: true,
-  theme: true,
 }).partial();
 
 export type UpdatePlayerProfileInput = z.infer<typeof UpdatePlayerProfileInputSchema>;

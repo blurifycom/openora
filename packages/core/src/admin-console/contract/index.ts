@@ -116,3 +116,4 @@ export const backofficeContract = {
 };
 
 export type TransactionFilter = z.infer<typeof TransactionFilterSchema>;
+export type AdminUser = z.infer<typeof AdminUserSchema>;

@@ -27,8 +27,6 @@ function fakeService(): PlayerService {
     email: 'p@example.com',
     country: 'MT',
     currency: 'EUR',
-    language: 'en',
-    theme: 'system',
     status: 'active',
     kycStatus: 'verified',
     level: 1,

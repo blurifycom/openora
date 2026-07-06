@@ -18,10 +18,14 @@ import type {
   ResetPasswordInput,
   VerifyEmailInput,
   UpdateProfileInput,
+  Theme,
+  User,
   ChangePasswordInput,
   ChangeEmailInput,
   IdentityServiceOptions,
+  PlatformConfig,
 } from '@blurifycom/core/contracts';
+import { assertSupportedLanguage } from '../../shared/language.js';
 
 function nodeHeadersToHeaders(nodeHeaders: NodeHeaders) {
   const headers = new Headers();
@@ -32,13 +36,11 @@ function nodeHeadersToHeaders(nodeHeaders: NodeHeaders) {
   return headers;
 }
 
-// better-auth returns Date objects; the public UserSchema requires ISO strings.
-type BetterAuthUser = {
-  id: string;
-  email: string;
-  name: string;
-  emailVerified: boolean;
-  image?: string | null;
+// better-auth returns Date objects and may omit theme/language; the public
+// UserSchema requires ISO strings and always-present values.
+type BetterAuthUser = Omit<User, 'theme' | 'language' | 'createdAt' | 'updatedAt'> & {
+  theme?: Theme | null;
+  language?: string | null;
   createdAt: Date | string;
   updatedAt: Date | string;
 };
@@ -53,6 +55,8 @@ function toUser(u: BetterAuthUser) {
     email: u.email,
     name: u.name,
     emailVerified: u.emailVerified,
+    theme: u.theme ?? 'system',
+    language: u.language ?? 'en',
     createdAt: toIso(u.createdAt),
     updatedAt: toIso(u.updatedAt),
   };
@@ -87,7 +91,7 @@ type ExtendedAuthApi = {
   verifyEmail: AuthCall<{ token: string }>;
   changePassword: AuthCall<{ currentPassword: string; newPassword: string }>;
   changeEmail: AuthCall<{ newEmail: string }>;
-  updateUser: AuthCall<{ name?: string; image?: string | null }>;
+  updateUser: AuthCall<{ name?: string; image?: string | null; theme?: Theme; language?: string }>;
 };
 
 const SUCCESS = { success: true as const };
@@ -114,7 +118,6 @@ const DEFAULT_LOCKOUT_DURATION_MS = 15 * 60 * 1000;
 // when the sign-in response omits an explicit session expiry.
 const SESSION_TTL_MS = 30 * 24 * 60 * 60 * 1000;
 
-/** Pure lockout decision: does this attempt count trip the lock, and until when. */
 function computeLockoutState(
   attempts: number,
   maxAttempts: number,
@@ -130,6 +133,7 @@ export type IdentityServiceDeps = {
   events: EventBus;
   email?: SendEmailPort;
   options?: IdentityServiceOptions;
+  platformConfig?: PlatformConfig;
 };
 
 export class IdentityService {
@@ -138,12 +142,14 @@ export class IdentityService {
   private readonly events: EventBus;
   private readonly email?: SendEmailPort;
   private readonly options?: IdentityServiceOptions;
+  private readonly platformConfig?: PlatformConfig;
 
-  constructor({ drizzle, events, email, options }: IdentityServiceDeps) {
+  constructor({ drizzle, events, email, options, platformConfig }: IdentityServiceDeps) {
     this.drizzle = drizzle;
     this.events = events;
     this.email = email;
     this.options = options;
+    this.platformConfig = platformConfig;
     this.auth = createAuth({
       db: drizzle.db,
       schema: { user, session, account, verification, twoFactor },
@@ -473,11 +479,16 @@ export class IdentityService {
   }
 
   async updateProfile(input: UpdateProfileInput, reqHeaders: NodeHeaders, resHeaders: Headers) {
+    if (input.language !== undefined) assertSupportedLanguage(input.language, this.platformConfig);
     const headers = nodeHeadersToHeaders(reqHeaders);
-    const body: { name?: string; image?: string | null } = {};
-    if (input.name !== undefined) body.name = input.name;
-    if (input.image !== undefined) body.image = input.image;
-    const res = await this.api.updateUser({ body, headers, asResponse: true });
+    // better-auth's field parser and drizzle's mapUpdateSet both drop `undefined`
+    // values before the SQL SET clause, so omitted fields are safely no-ops here.
+    const { name, image, theme, language } = input;
+    const res = await this.api.updateUser({
+      body: { name, image, theme, language },
+      headers,
+      asResponse: true,
+    });
     await ensureOk(res);
     forwardCookies(res, resHeaders);
     // updateUser returns { status } only - re-read from session to get the full user.

@@ -1,5 +1,5 @@
 import { describe, it, expect, vi } from 'vitest';
-import { ProfileService, UnsopportedLanguageError } from '../service/profile.service.js';
+import { ProfileService } from '../service/profile.service.js';
 
 function chain(result: unknown): any {
   const proxy: any = new Proxy(function () {}, {
@@ -18,8 +18,6 @@ const playerRow = {
   displayName: 'Player One',
   country: null,
   currency: 'USD',
-  language: 'en',
-  theme: 'system',
   status: 'active',
   kycStatus: 'pending',
   level: 1,
@@ -30,35 +28,22 @@ const playerRow = {
   updatedAt: new Date(),
 };
 
-function makeService(supportedLanguages?: string[]): ProfileService {
+function makeService(): ProfileService {
   const select = vi
     .fn()
     .mockReturnValueOnce(chain([playerRow]))
     .mockReturnValueOnce(chain([{ email: 'player@example.com' }]))
     .mockReturnValueOnce(chain([{ email: 'player@example.com' }]));
-  const update = vi.fn(() => chain([{ ...playerRow, language: 'es' }]));
+  const update = vi.fn(() => chain([{ ...playerRow, country: 'US' }]));
   const db = { select, update };
-  const platformConfig = supportedLanguages ? { supportedLanguages } : undefined;
-  return new ProfileService({ db } as never, platformConfig as never);
+  return new ProfileService({ db } as never);
 }
 
-describe('ProfileService.updateMyProfile language validation', () => {
-  it('accepts any language when no supportedLanguages is configured', async () => {
+describe('ProfileService.updateMyProfile', () => {
+  it('persists profile fields and returns the mapped player', async () => {
     const svc = makeService();
-    const result = await svc.updateMyProfile('user-1', { language: 'es' });
-    expect(result.language).toBe('es');
-  });
-
-  it('accepts a language within the configured list', async () => {
-    const svc = makeService(['en', 'es']);
-    const result = await svc.updateMyProfile('user-1', { language: 'es' });
-    expect(result.language).toBe('es');
-  });
-
-  it('rejects a language outside the configured list', async () => {
-    const svc = makeService(['en', 'fr']);
-    await expect(svc.updateMyProfile('user-1', { language: 'de' })).rejects.toThrow(
-      UnsopportedLanguageError,
-    );
+    const result = await svc.updateMyProfile('user-1', { country: 'US' });
+    expect(result.country).toBe('US');
+    expect(result.email).toBe('player@example.com');
   });
 });

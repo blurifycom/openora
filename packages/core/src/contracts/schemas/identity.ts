@@ -1,14 +1,18 @@
 import { z } from 'zod';
 import { UuidSchema, TimestampSchema } from './common.js';
 
-// better-auth emits uuid ids via advanced.database.generateId (see @blurifycom/core/server).
-// image may be null in storage; the schema accepts string | null | absent.
+export const THEMES = ['light', 'dark', 'system'] as const;
+export const ThemeSchema = z.enum(THEMES);
+export type Theme = z.infer<typeof ThemeSchema>;
+
 export const UserSchema = z.object({
   id: UuidSchema,
   email: z.email(),
   name: z.string().min(1).max(255),
   emailVerified: z.boolean(),
   image: z.url().nullable().optional(),
+  theme: ThemeSchema,
+  language: z.string(),
   createdAt: TimestampSchema,
   updatedAt: TimestampSchema,
 });
@@ -77,8 +81,10 @@ export const UpdateProfileInputSchema = z
   .object({
     name: z.string().min(1).max(255).optional(),
     image: z.url().nullable().optional(),
+    theme: ThemeSchema.optional(),
+    language: z.string().optional(),
   })
-  .refine((v) => v.name !== undefined || v.image !== undefined, {
+  .refine((v) => Object.values(v).some((x) => x !== undefined), {
     message: 'Provide at least one field to update',
   });
 
