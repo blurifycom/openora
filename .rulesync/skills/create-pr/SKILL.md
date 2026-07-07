@@ -24,9 +24,9 @@ Any other branch: target `dev`.
 3. **Commit.** Conventional-commit message with a valid scope (see `conventions` section 12). No AI attribution trailers. Keep the message free of sensitive/internal data (below).
 4. **Verify before pushing:** `pnpm verify`. Don't push a red tree.
 5. **Push - STOP first.** Report the commit SHA, then ask for an explicit per-action "yes push". Invoking this skill is NOT push authorization; shared branches (`dev`, `stage`) especially. Only after the yes: `git push -u origin <current>`.
-6. **Open the PR** (after the confirmed push):
+6. **Open the PR** (after the confirmed push). Fill the repo template (`.github/PULL_REQUEST_TEMPLATE.md`) - don't invent a structure: `Summary` (what, then why - bare ticket key, no URL), `Changes` (a reviewer map per module/area), `Acceptance criteria` (from the ticket), the `Checklist` (tick what actually passed), `Notes` (deferred / out-of-scope), and `Closes <KEY>`.
    ```
-   gh pr create --base <target> --head <current> --title "<type>(<scope>): <summary>" --body "<what / why / AC / ticket key>"
+   gh pr create --base <target> --head <current> --title "<type>(<scope>): <summary>" --body-file <filled-template>
    ```
    Reuse an existing open PR for the same head->base instead of duplicating (`gh pr list --head <current> --base <target>`).
 7. **Report** the PR URL.

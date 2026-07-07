@@ -1,10 +1,18 @@
-## What & why
+## Summary
 
-<!-- What does this change and what problem does it solve? Link the issue/ADR. -->
+<!-- 1-2 sentences: what changes, then why it matters / what it covers. Bare ticket key(s), no URLs. -->
 
-## How
+## Changes
 
-<!-- Key implementation notes. New module/plugin/adapter? New routes or tables? -->
+<!-- A bullet per module/area - a map for the reviewer, not a re-listing of the diff. New module/plugin/adapter? New routes or tables? -->
+
+-
+
+## Acceptance criteria
+
+<!-- Copy from the ticket; tick what this PR satisfies. Delete if not ticket-driven. -->
+
+- [ ]
 
 ## Checklist
 
@@ -14,3 +22,9 @@
 - [ ] New data tables carry `tenantId` and are RLS-covered (`pnpm regen` runs `gen:rls`)
 - [ ] No secrets, real player data, or internal/customer names added
 - [ ] Docs / AGENTS.md updated if behavior or extension points changed
+
+## Notes
+
+<!-- Deferred / out-of-scope work, breaking changes, follow-ups. Delete if none. -->
+
+Closes ANPI-XXX / BF-XXX
