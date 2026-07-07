@@ -2,6 +2,7 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { IdentityService } from '../service/identity.service.js';
 import { UnsupportedLanguageError } from '../../shared/language.js';
 import type { SendEmailPort } from '@blurifycom/core/contracts';
+import { ORPCError } from '@orpc/server';
 
 const { signInEmailMock, getSessionMock, updateUserMock } = vi.hoisted(() => ({
   signInEmailMock: vi.fn(),
@@ -145,9 +146,16 @@ describe('IdentityService - login lockout', () => {
     });
     const svc = new IdentityService({ drizzle: drizzle as never, events: makeEvents() as never });
 
-    await expect(
-      svc.login({ email: 'a@b.dev', password: 'whatever1' }, {}, new Headers()),
-    ).rejects.toThrow();
+    const promise = svc.login({ email: 'a@b.dev', password: 'whatever1' }, {}, new Headers());
+    await expect(promise).rejects.toThrow(ORPCError);
+    await expect(promise).rejects.toMatchObject({
+      code: 'UNAUTHORIZED',
+      message: 'Account is temporarily locked. Please try again later.',
+      data: {
+        code: 'ACCOUNT_LOCKED',
+        lockoutUntil: future.toISOString(),
+      },
+    });
     expect(signInEmailMock).not.toHaveBeenCalled();
   });
 
@@ -172,6 +180,72 @@ describe('IdentityService - login lockout', () => {
       expect.objectContaining({ userId: 'u1' }),
     );
     expect(drizzle.update).toHaveBeenCalled();
+  });
+
+  it('bypasses lockout for admins if configured with bypassForAdmins: true', async () => {
+    const drizzle = makeDrizzle({
+      selectRows: [[{ id: 'u1', failedLoginAttempts: 4, lockoutUntil: null, role: 'admin' }]],
+    });
+    const events = makeEvents();
+    signInEmailMock.mockResolvedValue(jsonResponse({ message: 'Invalid' }, 401));
+    const svc = new IdentityService({
+      drizzle: drizzle as never,
+      events: events as never,
+      options: {
+        lockout: {
+          enabled: true,
+          bypassForAdmins: true,
+        },
+      },
+    });
+
+    await expect(
+      svc.login({ email: 'admin@b.dev', password: 'wrongpass1' }, {}, new Headers()),
+    ).rejects.toThrow();
+
+    // It should not increment the failed attempts or trigger lockout
+    expect(drizzle.update).not.toHaveBeenCalled();
+    expect(events.emit).toHaveBeenCalledWith(
+      'identity.user.login.failed',
+      expect.objectContaining({ email: 'admin@b.dev' }),
+    );
+    expect(events.emit).not.toHaveBeenCalledWith(
+      'identity.user.lockout.triggered',
+      expect.anything(),
+    );
+  });
+
+  it('does not bypass lockout for other backoffice roles if bypassForAdmins is true', async () => {
+    const drizzle = makeDrizzle({
+      selectRows: [
+        [{ id: 'u1', failedLoginAttempts: 4, lockoutUntil: null, role: 'support' }],
+        [{ failedLoginAttempts: 5 }],
+      ],
+    });
+    const events = makeEvents();
+    signInEmailMock.mockResolvedValue(jsonResponse({ message: 'Invalid' }, 401));
+    const svc = new IdentityService({
+      drizzle: drizzle as never,
+      events: events as never,
+      options: {
+        lockout: {
+          enabled: true,
+          bypassForAdmins: true,
+          maxAttempts: 5,
+        },
+      },
+    });
+
+    await expect(
+      svc.login({ email: 'support@b.dev', password: 'wrongpass1' }, {}, new Headers()),
+    ).rejects.toThrow();
+
+    // It should increment the failed attempts and trigger lockout
+    expect(drizzle.update).toHaveBeenCalled();
+    expect(events.emit).toHaveBeenCalledWith(
+      'identity.user.lockout.triggered',
+      expect.objectContaining({ userId: 'u1', email: 'support@b.dev' }),
+    );
   });
 });
 

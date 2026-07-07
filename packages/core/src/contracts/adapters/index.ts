@@ -97,5 +97,9 @@ export type {
 } from './admin-wallet-reporting.js';
 export { ADMIN_WALLET_REPORTING } from './admin-wallet-reporting.js';
 
-export type { IdentityServiceOptions, IdentityLockoutOptions } from './identity.js';
-export { IDENTITY_OPTIONS } from './identity.js';
+export type {
+  IdentityServiceOptions,
+  IdentityLockoutOptions,
+  SessionCommands,
+} from './identity.js';
+export { IDENTITY_OPTIONS, SESSION_COMMANDS } from './identity.js';

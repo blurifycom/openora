@@ -50,11 +50,10 @@ export class SessionService {
     };
   }
 
-  async revokeSession(userId: string, token: string) {
-    const now = new Date();
+  async revokeSession(userId: string, token: string, actorId?: string) {
     const updated = await this.drizzle.db
       .update(session)
-      .set({ expiresAt: now })
+      .set({ expiresAt: sql`now()` })
       .where(and(eq(session.token, token), eq(session.userId, userId)))
       .returning({ id: session.id });
 
@@ -62,18 +61,21 @@ export class SessionService {
       throw new ORPCError('NOT_FOUND', { message: 'Session not found' });
     }
 
-    this.events.emit('identity.session.revoked', { userId: userId, sessionToken: token });
+    this.events.emit('identity.session.revoked', {
+      userId: userId,
+      sessionToken: token,
+      actorId,
+    });
     return { success: true as const };
   }
 
-  async revokeAllSessions(userId: string) {
-    const now = new Date();
+  async revokeAllSessions(userId: string, actorId?: string) {
     await this.drizzle.db
       .update(session)
-      .set({ expiresAt: now })
-      .where(and(eq(session.userId, userId), gt(session.expiresAt, now)));
+      .set({ expiresAt: sql`now()` })
+      .where(and(eq(session.userId, userId), gt(session.expiresAt, sql`now()`)));
 
-    this.events.emit('identity.sessions.revoked_all', { userId: userId });
+    this.events.emit('identity.sessions.revoked_all', { userId: userId, actorId });
     return { success: true as const };
   }
 }

@@ -146,6 +146,15 @@ export const iamContract = {
     .route({ method: 'POST', path: '/iam/invitations/accept' })
     .input(z.object({ token: z.string() }))
     .output(z.object({ success: z.literal(true), email: z.string() })),
+
+  forceLogout: oc
+    .route({ method: 'POST', path: '/iam/assignments/force-logout' })
+    .input(z.object({ userId: UuidSchema }))
+    .output(z.object({ success: z.literal(true) })),
+
+  getMyPermissions: oc
+    .route({ method: 'GET', path: '/iam/my-permissions' })
+    .output(EffectivePermissionsSchema),
 };
 
 export type AdminRole = z.infer<typeof AdminRoleSchema>;

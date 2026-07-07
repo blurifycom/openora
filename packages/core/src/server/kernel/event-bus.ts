@@ -40,8 +40,8 @@ export type EventBus = {
     payload: DomainEventPayload<K>,
   ): Promise<void>;
   emitInTransaction(tx: unknown, event: string, payload: unknown): Promise<void>;
-  on<K extends DomainEventName>(event: K, handler: EventHandler<DomainEventPayload<K>>): void;
-  on(event: string, handler: EventHandler): void;
+  on<K extends DomainEventName>(event: K, handler: EventHandler<DomainEventPayload<K>>): () => void;
+  on(event: string, handler: EventHandler): () => void;
 };
 
 export const EVENT_BUS: Token<EventBus> = createToken('EVENT_BUS');
@@ -133,8 +133,8 @@ export function createEventBus(
       await outbox.write(tx, buildEnvelope(event, payload));
     },
 
-    on(event: string, handler: EventHandler): void {
-      broker.subscribe(event, async (envelope: EventEnvelope) => {
+    on(event: string, handler: EventHandler): () => void {
+      return broker.subscribe(event, async (envelope: EventEnvelope) => {
         try {
           await handler(envelope.payload, envelope);
         } catch (err) {

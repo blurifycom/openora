@@ -179,6 +179,7 @@ export async function createApp(config: CreateAppConfig): Promise<CreatedApp> {
         c.get(AUTH_SESSION),
         // has() avoids throwing on an unbound token so boot works without the iam module.
         c.has(ADMIN_PERMISSION_RESOLVER) ? c.get(ADMIN_PERMISSION_RESOLVER) : undefined,
+        c.get(EVENT_BUS),
       ),
   );
   if (config.igaming) {

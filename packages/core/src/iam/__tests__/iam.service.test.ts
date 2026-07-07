@@ -95,6 +95,7 @@ function routingDrizzle(byTable: {
       const thenable: Record<string, unknown> = {
         then: (res: (v: unknown[]) => unknown) => Promise.resolve(rows).then(res),
         for: () => thenable,
+        limit: () => thenable,
         returning: (...args: unknown[]) =>
           (chain.returning as (...a: unknown[]) => unknown)(...args),
       };
@@ -596,6 +597,19 @@ describe('IamService.previewEffectivePermissions', () => {
     expect(result.permissions).toHaveLength(Object.keys(statement).length);
     expect(result.permissions.every((p) => p.level === 'read_write')).toBe(true);
   });
+
+  it('falls back to static role permissions if the user has no dynamic role assignments', async () => {
+    const drizzle = routingDrizzle({
+      assignment: [], // no dynamic assignments
+      user: [{ role: 'support' }], // static role is 'support'
+    });
+    const svc = new IamService(drizzle, makeEvents(), makeEmail());
+    const result = await inContext(() => svc.previewEffectivePermissions({ userId: 'u1' }));
+    // Support has non-empty permissions
+    expect(result.permissions).not.toHaveLength(0);
+    // For support role, player access is read (view)
+    expect(result.permissions).toContainEqual({ resource: 'player', level: 'read' });
+  });
 });
 
 describe('IamService.acceptInvitation', () => {
@@ -763,5 +777,45 @@ describe('IamService paginated lists', () => {
     expect(result.total).toBe(3);
     expect(result.items).toHaveLength(1);
     expect(result.items[0]!.roleName).toBe('Ops');
+  });
+});
+
+describe('IamService.forceLogout', () => {
+  it('rejects a non-super-admin caller', async () => {
+    const drizzle = routingDrizzle({
+      role: [ROLE_ROW],
+      assignment: [],
+      superRole: [],
+    });
+    const svc = new IamService(drizzle, makeEvents(), makeEmail());
+    await expect(
+      inContext(() =>
+        svc.forceLogout({
+          userId: 'target-user',
+          caller: { userId: 'sup-1', role: 'support' },
+        }),
+      ),
+    ).rejects.toBeInstanceOf(NotSuperAdminError);
+  });
+
+  it('allows a super-admin caller to delete sessions for a user and emits identity.sessions.revoked_all', async () => {
+    const drizzle = routingDrizzle({
+      role: [ROLE_ROW],
+      assignment: [],
+      superRole: [],
+    });
+    const events = makeEvents();
+    const sessionCommands = {
+      revokeAll: vi.fn().mockResolvedValue({ success: true }),
+    };
+    const svc = new IamService(drizzle, events, makeEmail(), sessionCommands);
+    const result = await inContext(() =>
+      svc.forceLogout({
+        userId: 'target-user',
+        caller: ADMIN_CALLER,
+      }),
+    );
+    expect(result).toEqual({ success: true });
+    expect(sessionCommands.revokeAll).toHaveBeenCalledWith('target-user', ADMIN_CALLER.userId);
   });
 });

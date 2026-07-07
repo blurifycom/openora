@@ -35,3 +35,17 @@ export function useRegister() {
     onSuccess: () => queryClient.invalidateQueries({ queryKey: utils.me.key() }),
   });
 }
+
+export function useRequestPasswordReset() {
+  const utils = useOrpcQueryUtils(identityContract);
+  return useMutation({
+    ...utils.requestPasswordReset.mutationOptions(),
+  });
+}
+
+export function useResetPassword() {
+  const utils = useOrpcQueryUtils(identityContract);
+  return useMutation({
+    ...utils.resetPassword.mutationOptions(),
+  });
+}

@@ -10,5 +10,6 @@ if [ -n "$staged" ]; then
   printf '%s\n' "$staged" | tr '\n' '\0' | xargs -0 git add --
 fi
 
+pnpm regen
 pnpm boundaries
 pnpm typecheck

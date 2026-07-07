@@ -5,6 +5,7 @@ import {
   SEND_EMAIL,
   IDENTITY_OPTIONS,
   PLATFORM_CONFIG,
+  SESSION_COMMANDS,
 } from '@blurifycom/core/contracts';
 import { definePlugin, ADMIN_GUARD, EVENT_BUS, DRIZZLE } from '@blurifycom/core/server';
 import { MockKycAdapter } from './adapters/mock/mock-kyc-adapter.js';
@@ -27,6 +28,12 @@ export default definePlugin({
       send: ({ to, subject, body }) =>
         c.get(NOTIFICATION_DELIVERY_ADAPTER).sendEmail(to, subject, body),
     }));
+    ctx.provide(SESSION_COMMANDS, (c) => {
+      const sessionSvc = new SessionService({ drizzle: c.get(DRIZZLE), events: c.get(EVENT_BUS) });
+      return {
+        revokeAll: (userId, actorId) => sessionSvc.revokeAllSessions(userId, actorId),
+      };
+    });
     ctx.routers.add('identity', (c) =>
       createIdentityRouter(
         new IdentityService({
@@ -38,6 +45,7 @@ export default definePlugin({
         }),
         new SessionService({ drizzle: c.get(DRIZZLE), events: c.get(EVENT_BUS) }),
         c.get(ADMIN_GUARD),
+        c.get(EVENT_BUS),
       ),
     );
   },

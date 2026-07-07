@@ -13,6 +13,7 @@ import {
   levelToActions,
   levelRank,
   isLevelSufficient,
+  actionsToLevel,
   type ResourceName,
   type RoleName,
   type PermissionLevel,
@@ -22,6 +23,7 @@ import type {
   SendEmailPort,
   AdminPermissionResolver,
   AdminGrant,
+  SessionCommands,
 } from '@blurifycom/core/contracts';
 import {
   adminRole,
@@ -232,6 +234,7 @@ export class IamService {
     private readonly drizzle: DrizzleService,
     private readonly events: EventBus,
     private readonly email: SendEmailPort,
+    private readonly sessionCommands?: SessionCommands,
   ) {}
 
   private async callerGrants(caller: Caller) {
@@ -602,6 +605,29 @@ export class IamService {
       roleIds = input.roleIds;
     }
 
+    if (roleIds.length === 0 && 'userId' in input) {
+      const [u] = await this.drizzle.db
+        .select({ role: user.role })
+        .from(user)
+        .where(eq(user.id, input.userId))
+        .limit(1);
+      if (u && roles[u.role as keyof typeof roles]) {
+        const staticGrants = staticGrantsForRole(u.role);
+        const byResource = new Map<string, string[]>();
+        for (const g of staticGrants) {
+          if (!byResource.has(g.resource)) byResource.set(g.resource, []);
+          byResource.get(g.resource)!.push(g.action);
+        }
+        const permissions = [...byResource.entries()]
+          .map(([resource, actions]) => ({
+            resource,
+            level: actionsToLevel(resource, actions),
+          }))
+          .filter((p) => p.level !== 'no_access');
+        return { permissions };
+      }
+    }
+
     if (roleIds.length === 0) {
       return { permissions: [] };
     }
@@ -706,5 +732,14 @@ export class IamService {
     });
 
     return { success: true, email: row.email };
+  }
+
+  async forceLogout(input: { userId: string; caller: Caller }) {
+    await this.assertSuperAdmin(input.caller);
+    if (!this.sessionCommands) {
+      throw new Error('SessionCommands adapter not provided');
+    }
+    await this.sessionCommands.revokeAll(input.userId, input.caller.userId);
+    return { success: true as const };
   }
 }

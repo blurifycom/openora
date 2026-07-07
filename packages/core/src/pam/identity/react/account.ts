@@ -47,3 +47,28 @@ export function useUpdateProfile() {
     onSuccess: invalidateMe(utils, queryClient),
   });
 }
+
+export function useEnable2fa() {
+  const utils = useOrpcQueryUtils(identityContract);
+  const queryClient = useQueryClient();
+  return useMutation({
+    ...utils.enable2fa.mutationOptions(),
+    onSuccess: invalidateMe(utils, queryClient),
+  });
+}
+
+export function useChangePassword() {
+  const utils = useOrpcQueryUtils(identityContract);
+  const queryClient = useQueryClient();
+  return useMutation({
+    ...utils.changePassword.mutationOptions(),
+    onSuccess: invalidateMe(utils, queryClient),
+  });
+}
+
+export function useSendEmailVerification() {
+  const utils = useOrpcQueryUtils(identityContract);
+  return useMutation({
+    ...utils.sendEmailVerification.mutationOptions(),
+  });
+}

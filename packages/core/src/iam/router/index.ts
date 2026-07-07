@@ -103,5 +103,15 @@ export function createIamRouter(svc: IamService, adminGuard: AdminGuard) {
         svc.acceptInvitation(input.token),
       ),
     ),
+
+    forceLogout: os.forceLogout.handler(async ({ input, context }) => {
+      const caller = await adminGuard.assert(context, 'admin', 'delete');
+      return mapErrors(adminMgmtErrors, () => svc.forceLogout({ userId: input.userId, caller }));
+    }),
+
+    getMyPermissions: os.getMyPermissions.handler(async ({ context }) => {
+      const caller = await adminGuard.assert(context);
+      return svc.previewEffectivePermissions({ userId: caller.userId });
+    }),
   });
 }

@@ -3,9 +3,10 @@
 import { createToken, type Token } from './token.js';
 
 export type IdentityLockoutOptions = {
-  enabled: boolean;
+  enabled?: boolean;
   maxAttempts?: number;
   durationMs?: number;
+  bypassForAdmins?: boolean;
 };
 
 export type IdentityServiceOptions = {
@@ -14,3 +15,10 @@ export type IdentityServiceOptions = {
 
 export const IDENTITY_OPTIONS: Token<IdentityServiceOptions> =
   createToken<IdentityServiceOptions>('IDENTITY_OPTIONS');
+
+export type SessionCommands = {
+  revokeAll(userId: string, actorId?: string): Promise<{ success: boolean }>;
+};
+
+export const SESSION_COMMANDS: Token<SessionCommands> =
+  createToken<SessionCommands>('SESSION_COMMANDS');

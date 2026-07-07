@@ -1,4 +1,4 @@
-import { oc } from '@orpc/contract';
+import { oc, eventIterator } from '@orpc/contract';
 import {
   UserSchema,
   UuidSchema,
@@ -56,6 +56,10 @@ export const identityContract = {
   logout: oc.route({ method: 'POST', path: '/identity/logout' }).output(IdentitySuccessSchema),
 
   me: oc.route({ method: 'GET', path: '/identity/me' }).output(UserSchema.nullable()),
+
+  streamSession: oc
+    .route({ method: 'GET', path: '/identity/session/stream' })
+    .output(eventIterator(z.object({ type: z.literal('revoked') }))),
 
   enable2fa: oc
     .route({ method: 'POST', path: '/identity/2fa/enable' })

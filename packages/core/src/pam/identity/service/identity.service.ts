@@ -36,6 +36,16 @@ function nodeHeadersToHeaders(nodeHeaders: NodeHeaders) {
   return headers;
 }
 
+export function createAccountLockedError(lockoutUntil: Date) {
+  return new ORPCError('UNAUTHORIZED', {
+    message: 'Account is temporarily locked. Please try again later.',
+    data: {
+      code: 'ACCOUNT_LOCKED',
+      lockoutUntil: lockoutUntil.toISOString(),
+    },
+  });
+}
+
 // better-auth returns Date objects and may omit theme/language; the public
 // UserSchema requires ISO strings and always-present values.
 type BetterAuthUser = Omit<User, 'theme' | 'language' | 'createdAt' | 'updatedAt'> & {
@@ -190,35 +200,37 @@ export class IdentityService {
     // better-auth lowercases emails on write, so the lockout lookup must match on the same form.
     const email = input.email.toLowerCase();
 
-    const lockoutEnabled = this.options?.lockout?.enabled ?? true;
+    const configLockoutEnabled = this.options?.lockout?.enabled ?? true;
     let existingUser:
-      | Pick<typeof user.$inferSelect, 'id' | 'failedLoginAttempts' | 'lockoutUntil'>
+      | Pick<typeof user.$inferSelect, 'id' | 'failedLoginAttempts' | 'lockoutUntil' | 'role'>
       | undefined;
 
-    if (lockoutEnabled) {
+    if (configLockoutEnabled) {
       const [dbUser] = await this.drizzle.db
         .select({
           id: user.id,
           failedLoginAttempts: user.failedLoginAttempts,
           lockoutUntil: user.lockoutUntil,
+          role: user.role,
         })
         .from(user)
         .where(eq(user.email, email))
         .limit(1);
       existingUser = dbUser;
+    }
 
-      if (existingUser?.lockoutUntil) {
-        if (new Date(existingUser.lockoutUntil) > new Date()) {
-          throw new ORPCError('UNAUTHORIZED', {
-            message: 'Account is temporarily locked. Please try again later.',
-            data: { lockoutUntil: existingUser.lockoutUntil.toISOString() },
-          });
-        }
-        // Lock window elapsed: clear it so the next failure starts from a fresh budget
-        // instead of one more wrong password immediately re-locking the account.
-        await this.clearLockout(existingUser.id);
-        existingUser = { ...existingUser, failedLoginAttempts: 0, lockoutUntil: null };
+    const isAdmin = existingUser?.role === 'admin';
+    const bypassForAdmins = this.options?.lockout?.bypassForAdmins ?? false;
+    const lockoutEnabled = configLockoutEnabled && !(isAdmin && bypassForAdmins);
+
+    if (lockoutEnabled && existingUser?.lockoutUntil) {
+      if (new Date(existingUser.lockoutUntil) > new Date()) {
+        throw createAccountLockedError(new Date(existingUser.lockoutUntil));
       }
+      // Lock window elapsed: clear it so the next failure starts from a fresh budget
+      // instead of one more wrong password immediately re-locking the account.
+      await this.clearLockout(existingUser.id);
+      existingUser = { ...existingUser, failedLoginAttempts: 0, lockoutUntil: null };
     }
 
     try {
@@ -289,10 +301,7 @@ export class IdentityService {
             userAgent,
           });
 
-          throw new ORPCError('UNAUTHORIZED', {
-            message: 'Account is temporarily locked. Please try again later.',
-            data: { lockoutUntil: lockoutUntil.toISOString() },
-          });
+          throw createAccountLockedError(lockoutUntil);
         }
       }
 

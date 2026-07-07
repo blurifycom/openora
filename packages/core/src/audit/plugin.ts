@@ -158,6 +158,20 @@ function mapEventToRecord(topic: string, p: Record<string, unknown>): RecordInpu
     };
   }
 
+  if (topic === 'identity.user.unauthorized_access') {
+    const resource = str(p['resource']) ?? 'admin';
+    const action = str(p['action']);
+    const role = p['role'] ? str(p['role']) : undefined;
+    return {
+      ...base,
+      actorType: role === 'player' ? 'player' : 'admin',
+      actorId: str(p['userId']),
+      resourceType: resource,
+      resourceId: action ? `${resource}:${action}` : null,
+      result: 'failure',
+    };
+  }
+
   // A lockout is a system-driven security control: the subject is the resource, not the
   // actor, and it is a failure outcome (the base regex would otherwise mark it success).
   if (topic === 'identity.user.lockout.triggered') {
@@ -171,14 +185,17 @@ function mapEventToRecord(topic: string, p: Record<string, unknown>): RecordInpu
     };
   }
 
-  // Player revoked one or all of their own sessions (security action) - admin
+  // Player/Admin revoked one or all of their own sessions, or an admin forced it.
   if (topic === 'identity.session.revoked' || topic === 'identity.sessions.revoked_all') {
+    const isSingle = topic === 'identity.session.revoked';
+    const actorId = p['actorId'] ? str(p['actorId']) : str(p['userId']);
+    const isForced = !!p['actorId'];
     return {
       ...base,
-      actorType: 'admin',
-      actorId: str(p['userId']),
-      resourceType: 'session',
-      resourceId: topic === 'identity.session.revoked' ? str(p['sessionToken']) : null,
+      actorType: isForced ? 'admin' : 'player',
+      actorId,
+      resourceType: isSingle ? 'session' : 'user',
+      resourceId: isSingle ? str(p['sessionToken']) : str(p['userId']),
     };
   }
 
@@ -244,6 +261,7 @@ const SUBSCRIBED_TOPICS: DomainEventName[] = [
   'identity.user.reactivated',
   'identity.session.revoked',
   'identity.sessions.revoked_all',
+  'identity.user.unauthorized_access',
   'wallet.deposit.completed',
   'wallet.withdrawal.completed',
   'wallet.withdrawal.requested',

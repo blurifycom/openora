@@ -4,7 +4,7 @@ import { DrizzleService } from '../db/index.js';
 import { sql } from 'drizzle-orm';
 import { SessionResolver } from './session-resolver.js';
 import { roles, type ResourceName, type ActionOf } from './permissions.js';
-import type { OssContext } from '../kernel/index.js';
+import type { OssContext, EventBus } from '../kernel/index.js';
 
 export const ADMIN_GUARD: Token<AdminGuard> = createToken('ADMIN_GUARD');
 
@@ -15,6 +15,7 @@ export class AdminGuard {
     private readonly sessions: SessionResolver,
     // When bound (iam module loaded), grants come from DB; otherwise falls back to static roles.
     private readonly permissionResolver?: AdminPermissionResolver,
+    private readonly events?: EventBus,
   ) {}
 
   async assert(context: unknown): Promise<{ userId: string; role: string }>;
@@ -48,6 +49,21 @@ export class AdminGuard {
     );
     const userRecord = result.rows[0] as { id: string; role: string } | undefined;
     if (!userRecord) {
+      if (resource !== undefined && action !== undefined) {
+        this.emitUnauthorized(userId, undefined, resource, action, headers);
+      } else {
+        this.emitUnauthorized(userId, undefined, 'admin', 'access', headers);
+      }
+      throw new ORPCError('FORBIDDEN', { message: 'Admin access required' });
+    }
+
+    const userRole = roles[userRecord.role as keyof typeof roles];
+    if (!userRole) {
+      if (resource !== undefined && action !== undefined) {
+        this.emitUnauthorized(userId, userRecord.role, resource, action, headers);
+      } else {
+        this.emitUnauthorized(userId, userRecord.role, 'admin', 'access', headers);
+      }
       throw new ORPCError('FORBIDDEN', { message: 'Admin access required' });
     }
 
@@ -59,29 +75,43 @@ export class AdminGuard {
       if (grants !== null) {
         const allowed = grants.some((g) => g.resource === resource && g.action === action);
         if (!allowed) {
+          this.emitUnauthorized(userId, userRecord.role, resource, action, headers);
           throw new ORPCError('FORBIDDEN', {
             message: `Missing permission: ${String(resource)}:${String(action)}`,
           });
         }
       } else {
         // Bootstrap path: seed admin has user.role='admin' but no DB assignment row. DB revocation is NOT authoritative while a static role still grants - revoke the static role to fully deny.
-        const userRole = roles[userRecord.role as keyof typeof roles];
-        if (!userRole) {
-          throw new ORPCError('FORBIDDEN', { message: 'Admin access required' });
-        }
         const check = userRole.authorize({ [resource]: [action] });
         if (!check.success) {
+          this.emitUnauthorized(userId, userRecord.role, resource, action, headers);
           throw new ORPCError('FORBIDDEN', {
             message: `Missing permission: ${String(resource)}:${String(action)}`,
           });
         }
       }
-    } else {
-      if (!roles[userRecord.role as keyof typeof roles]) {
-        throw new ORPCError('FORBIDDEN', { message: 'Admin access required' });
-      }
     }
 
     return { userId, role: userRecord.role };
+  }
+
+  private emitUnauthorized(
+    userId: string,
+    role: string | undefined,
+    resource: string,
+    action: string,
+    headers: Headers,
+  ) {
+    const ip =
+      headers.get('x-forwarded-for')?.split(',')[0]?.trim() || headers.get('x-real-ip') || null;
+    const userAgent = headers.get('user-agent') || null;
+    this.events?.emit('identity.user.unauthorized_access', {
+      userId,
+      resource,
+      action,
+      ip,
+      userAgent,
+      role,
+    });
   }
 }

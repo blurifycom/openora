@@ -1,5 +1,12 @@
 import { implement } from '@orpc/server';
-import { type OssContext, AdminGuard, mapErrors } from '@blurifycom/core/server';
+import {
+  type OssContext,
+  AdminGuard,
+  mapErrors,
+  getUserId,
+  createEventStreamGenerator,
+  type EventBus,
+} from '@blurifycom/core/server';
 import { identityContract } from '../contract/index.js';
 import { IdentityService } from '../service/identity.service.js';
 import { SessionService } from '../service/session.service.js';
@@ -9,6 +16,7 @@ export function createIdentityRouter(
   identity: IdentityService,
   sessionSvc: SessionService,
   adminGuard: AdminGuard,
+  eventBus: EventBus,
 ) {
   const os = implement(identityContract).$context<OssContext>();
 
@@ -25,7 +33,32 @@ export function createIdentityRouter(
       identity.logout(context.request.headers, context.resHeaders ?? new Headers()),
     ),
 
-    me: os.me.handler(({ context }) => identity.me(context.request.headers)),
+    me: os.me.handler(({ context }) => {
+      // Disable browser caching for the session state query. This prevents aggressive
+      // heuristic caching (e.g. in Chrome/Safari) from serving a stale logged-in session
+      // state after the session is revoked or logged out.
+      if (context.resHeaders) {
+        context.resHeaders.set('Cache-Control', 'no-store, no-cache, must-revalidate');
+        context.resHeaders.set('Pragma', 'no-cache');
+        context.resHeaders.set('Expires', '0');
+      }
+      return identity.me(context.request.headers);
+    }),
+
+    streamSession: os.streamSession.handler(({ signal, context }) => {
+      const userId = getUserId(context);
+      return createEventStreamGenerator(
+        (push) => {
+          const unsubscribe = eventBus.on('identity.sessions.revoked_all', (event) => {
+            if (event.userId === userId) {
+              push({ type: 'revoked' });
+            }
+          });
+          return unsubscribe;
+        },
+        { signal },
+      );
+    }),
 
     enable2fa: os.enable2fa.handler(({ input, context }) =>
       identity.enableTwoFactor(input, context.request.headers, context.resHeaders ?? new Headers()),
@@ -82,12 +115,12 @@ export function createIdentityRouter(
         return sessionSvc.listSessions(input.userId, input.page, input.limit);
       }),
       revoke: os.sessions.revoke.handler(async ({ input, context }) => {
-        await adminGuard.assert(context, 'sessions', 'revoke');
-        return sessionSvc.revokeSession(input.userId, input.token);
+        const caller = await adminGuard.assert(context, 'sessions', 'revoke');
+        return sessionSvc.revokeSession(input.userId, input.token, caller.userId);
       }),
       revokeAll: os.sessions.revokeAll.handler(async ({ input, context }) => {
-        await adminGuard.assert(context, 'sessions', 'revoke');
-        return sessionSvc.revokeAllSessions(input.userId);
+        const caller = await adminGuard.assert(context, 'sessions', 'revoke');
+        return sessionSvc.revokeAllSessions(input.userId, caller.userId);
       }),
     },
   });

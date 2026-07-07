@@ -1,5 +1,9 @@
 import { definePlugin, EVENT_BUS, DRIZZLE, ADMIN_GUARD } from '@blurifycom/core/server';
-import { ADMIN_PERMISSION_RESOLVER, SEND_EMAIL } from '@blurifycom/core/contracts';
+import {
+  ADMIN_PERMISSION_RESOLVER,
+  SEND_EMAIL,
+  SESSION_COMMANDS,
+} from '@blurifycom/core/contracts';
 import { IamService, DbAdminPermissionResolver } from './service/iam.service.js';
 import { createIamRouter } from './router/index.js';
 
@@ -13,7 +17,12 @@ export default definePlugin({
 
     ctx.routers.add('iam', (c) =>
       createIamRouter(
-        new IamService(c.get(DRIZZLE), c.get(EVENT_BUS), c.get(SEND_EMAIL)),
+        new IamService(
+          c.get(DRIZZLE),
+          c.get(EVENT_BUS),
+          c.get(SEND_EMAIL),
+          c.get(SESSION_COMMANDS),
+        ),
         c.get(ADMIN_GUARD),
       ),
     );
