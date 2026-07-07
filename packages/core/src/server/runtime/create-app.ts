@@ -237,7 +237,7 @@ export async function createApp(config: CreateAppConfig): Promise<CreatedApp> {
     interceptors: [
       onError((error) => {
         if (!(error instanceof ORPCError)) {
-          console.error('[oRPC unhandled]', error);
+          createLogger('orpc').error({ err: error }, 'unhandled error');
         }
       }),
     ],

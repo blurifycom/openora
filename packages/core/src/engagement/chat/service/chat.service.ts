@@ -140,12 +140,17 @@ export class ChatService {
     return rooms.map(toRoom);
   }
 
-  async getRoomMessages(
-    roomId: ChatRoom['id'],
+  async getRoomMessages({
+    roomId,
     limit = 50,
-    before?: string,
-    viewerId?: User['id'],
-  ) {
+    before,
+    viewerId,
+  }: {
+    roomId: ChatRoom['id'];
+    limit?: number;
+    before?: string;
+    viewerId?: User['id'];
+  }) {
     const conditions = [eq(chatMessage.roomId, roomId), eq(chatMessage.isDeleted, false)];
     if (before) conditions.push(lt(chatMessage.createdAt, new Date(before)));
     await this.appendBlockFilter(conditions, viewerId);
@@ -164,12 +169,17 @@ export class ChatService {
     if (blocked.size > 0) conditions.push(notInArray(chatMessage.userId, [...blocked]));
   }
 
-  async sendRoomMessage(
-    userId: User['id'],
-    username: string,
-    roomId: ChatRoom['id'],
-    content: string,
-  ) {
+  async sendRoomMessage({
+    userId,
+    username,
+    roomId,
+    content,
+  }: {
+    userId: User['id'];
+    username: string;
+    roomId: ChatRoom['id'];
+    content: string;
+  }) {
     findOneOrThrow(
       await this.drizzle.db.select().from(chatRoom).where(eq(chatRoom.id, roomId)),
       new ChatRoomNotFoundError(roomId),

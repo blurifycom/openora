@@ -8,6 +8,7 @@ import { sql } from 'drizzle-orm';
 import { migrate as migrateOutbox } from '@blurifycom/core/server/migrate';
 import { migrate as migrateIdentity } from '@blurifycom/core/pam/migrate/identity';
 import { migrate as migrateProfile } from '@blurifycom/core/pam/migrate/profile';
+import { migrate as migrateTag } from '@blurifycom/core/pam/migrate/tag';
 import { migrate as migrateAudit } from '@blurifycom/core/audit/migrate';
 import { migrate as migrateIam } from '@blurifycom/core/iam/migrate';
 import { migrate as migrateCms } from '@blurifycom/core/cms/migrate';
@@ -29,6 +30,7 @@ async function applyAllMigrations(url: string): Promise<void> {
   await migrateOutbox(url);
   await migrateIdentity(url);
   await migrateProfile(url);
+  await migrateTag(url);
   await migrateAudit(url);
   await migrateIam(url);
   await migrateCms(url);

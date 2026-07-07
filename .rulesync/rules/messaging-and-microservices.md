@@ -14,13 +14,15 @@ A modular monolith today, designed so high-impact modules extract into their own
 
 ## The three seams (ports in `packages/core/src/contracts/adapters/`, default impls in core)
 
-| Seam                       | Token                | For                              | Default                        | Durable overlay                 |
+| Seam                       | Token                | For                              | Default                        | Durable driver                  |
 | -------------------------- | -------------------- | -------------------------------- | ------------------------------ | ------------------------------- |
 | Inter-module domain events | `MESSAGE_BROKER`     | one module reacts to another     | in-process `InMemoryBroker`    | RabbitMQ (`AMQP_URL`)           |
 | Background jobs            | `JOB_QUEUE`          | durable/retryable/scheduled work | in-process `InProcessJobQueue` | BullMQ + Redis (`REDIS_URL`)    |
 | Client push                | `REALTIME_TRANSPORT` | SSE/WS to the browser            | in-process transport           | managed vendor (Ably/GetStream) |
 
 `MESSAGE_BROKER` is module-to-module. `REALTIME_TRANSPORT` is server-to-client. Do not conflate them.
+
+The `JOB_QUEUE` BullMQ reference driver (`BullMqJobQueue`) ships in core and auto-binds when `REDIS_URL` is set - jobs survive restarts and cron runs for real, zero consumer code (same auto-bind treatment as the Redis cache/rate-limiter, ADR-0028). The in-process default stays for dev/test; a consumer overlay can still rebind `JOB_QUEUE` (Container last-wins). `orderingKey` is not honoured by this driver (no ordering groups in OSS BullMQ) - restore strict ordering with BullMQ Pro groups or a custom overlay.
 
 ## Choose the channel: command vs event vs job
 

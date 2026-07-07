@@ -1,7 +1,7 @@
 import * as z from 'zod';
 import { PlayerSchema } from '@blurifycom/core/contracts';
 
-export const ReKycSnapshotSchema = PlayerSchema.pick({
+const ReKycSnapshotSchema = PlayerSchema.pick({
   currency: true,
   totalDeposits: true,
 }).extend({ lastTriggeredDeposits: z.number() });

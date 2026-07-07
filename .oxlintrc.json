@@ -43,7 +43,6 @@
     "coverage",
     "generated",
     "*.generated.ts",
-    "packages/core/drizzle/migrations",
     "tools/templates"
   ],
   "overrides": [
@@ -51,8 +50,15 @@
       "files": ["*.test.ts", "*.spec.ts"],
       "rules": {
         "typescript/no-explicit-any": "off",
+        "unicorn/no-thenable": "off",
         "oss-boundaries/no-cross-addon": "off",
         "oss-boundaries/no-cross-core-domain": "off"
+      }
+    },
+    {
+      "files": ["tools/**", "**/scripts/**"],
+      "rules": {
+        "no-console": "off"
       }
     }
   ]

@@ -44,7 +44,7 @@ export const playerTagSchema = z.object({
   tagId: UuidSchema,
   assignReason: z.string(),
   assignActor: tagAssignRemoveSourceSchema,
-  assignActorUserId: UuidSchema,
+  assignActorUserId: UuidSchema.nullable(),
   removedAt: z.coerce.date().nullable(),
   removalReason: z.string().nullable(),
   removalActor: tagAssignRemoveSourceSchema.nullable(),
@@ -66,6 +66,6 @@ export const removePlayerTagSchema = playerTagSchema.pick({ playerId: true }).ex
   tagKey: TagKeySchema,
   removalReason: z.string().min(5),
   removalActor: tagAssignRemoveSourceSchema,
-  removalActorUserId: UuidSchema,
+  removalActorUserId: UuidSchema.nullable(),
 });
 export type RemovePlayerTagInput = z.infer<typeof removePlayerTagSchema>;

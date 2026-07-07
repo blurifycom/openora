@@ -76,45 +76,6 @@ function makeRow(
   };
 }
 
-function makeDrizzleWithSelectQueue(
-  ...selectResults: Array<() => Promise<unknown[]>>
-): import('@blurifycom/core/server').DrizzleService {
-  let callCount = 0;
-  const db = {
-    select: vi.fn().mockImplementation(() => {
-      const idx = callCount++;
-      const resolver = selectResults[idx] ?? (() => Promise.resolve([]));
-      const chain = {
-        from: vi.fn().mockReturnThis(),
-        where: vi.fn().mockReturnThis(),
-        orderBy: vi.fn().mockReturnThis(),
-        limit: vi.fn().mockReturnThis(),
-        offset: vi.fn().mockImplementation(() => resolver()),
-      };
-      (chain.orderBy as ReturnType<typeof vi.fn>).mockImplementation(function () {
-        const result = resolver();
-        const thenableChain = {
-          ...chain,
-          then: (resolve: (v: unknown) => unknown, reject: (e: unknown) => unknown) =>
-            result.then(resolve, reject),
-          offset: vi.fn().mockImplementation(() => resolver()),
-          limit: vi.fn().mockReturnThis(),
-        };
-        (thenableChain.limit as ReturnType<typeof vi.fn>).mockReturnValue(thenableChain);
-        return thenableChain;
-      });
-      return chain;
-    }),
-    insert: vi.fn().mockReturnThis(),
-    values: vi.fn().mockReturnThis(),
-    returning: vi.fn().mockResolvedValue([]),
-    update: vi.fn().mockReturnThis(),
-    set: vi.fn().mockReturnThis(),
-    where: vi.fn().mockReturnThis(),
-  };
-  return mockDb(db);
-}
-
 function makeManualDrizzle(
   db: Record<string, unknown>,
 ): import('@blurifycom/core/server').DrizzleService {

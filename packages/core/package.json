@@ -605,7 +605,6 @@
     "@orpc/server": "1.14.5",
     "@orpc/tanstack-query": "1.14.5",
     "@orpc/zod": "1.14.5",
-    "@paralleldrive/cuid2": "3.3.0",
     "better-auth": "1.6.15",
     "dotenv": "17.4.2",
     "drizzle-orm": "0.45.2",
@@ -615,7 +614,6 @@
     "zod": "4.4.3"
   },
   "devDependencies": {
-    "@blurifycom/vitest-config": "workspace:*",
     "@tanstack/react-query": "5.101.0",
     "@turbo/gen": "2.9.16",
     "@types/node": "25.9.2",
@@ -623,7 +621,6 @@
     "@types/react": "19.2.17",
     "@types/react-dom": "19.2.3",
     "drizzle-kit": "0.31.10",
-    "oxlint": "1.69.0",
     "typescript": "6.0.3",
     "vitest": "4.1.8"
   },

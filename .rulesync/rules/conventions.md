@@ -82,6 +82,30 @@ Goal: code that is clean, separated, scalable, and extendible - easy to understa
 
   Routers, service methods, contracts, schemas, and plugins stay inferred: a seam re-checks them (oRPC validates handler output against the contract) or the type is an unspellable oRPC/Drizzle structure. Argument types always explicit.
 
+- **More than 3 parameters -> a single named-object param.** Four or more positionals are unreadable at the call site (`f(txn, ns, id, key, amt, cur, vals)` - which string is which?) and silently break when two share a type. Pass one object and destructure; a leading handle like a `tx`/`trx` may stay positional. Applies to functions, service methods, and constructors alike.
+
+  ```ts
+  // bad - 7 positionals, three interchangeable strings
+  insertIdempotentTransaction(
+    txn,
+    namespace,
+    walletId,
+    rawIdempotencyKey,
+    amount,
+    currency,
+    values,
+  );
+  // good - named object, self-documenting call site
+  insertIdempotentTransaction(txn, {
+    namespace,
+    walletId,
+    rawIdempotencyKey,
+    amount,
+    currency,
+    values,
+  });
+  ```
+
 - **Named exports only - no default exports.**
 
 ## 5. Comments and documentation

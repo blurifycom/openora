@@ -125,12 +125,12 @@ export const domainEventSchemas = {
   'compliance.limit.upserted': z.object({ userId: UuidSchema, limitId: UuidSchema }),
   'compliance.limit.removed': z.object({ userId: UuidSchema, limitId: UuidSchema }),
 
-  // An admin changed a player's KYC status (player-management update). userId =
-  // subject player, actorId = the admin who acted; before/after status records the
-  // transition for the audit log.
+  // A player's KYC status changed. userId = subject player; actorId = the admin who
+  // acted, or null for system-driven changes (vendor decision, webhook, threshold
+  // re-KYC). before/after status records the transition for the audit log.
   'compliance.kyc.updated': z.object({
     userId: UuidSchema,
-    actorId: UuidSchema,
+    actorId: UuidSchema.nullable(),
     status: KycStatusSchema,
     previousStatus: KycStatusSchema,
   }),
@@ -219,8 +219,9 @@ export type DomainEventPayload<K extends DomainEventName> = z.infer<(typeof doma
 // Bump an entry only when its payload shape changes in a non-additive way, in the SAME commit
 // that edits the schema above. Events not listed default to version 1.
 export const domainEventVersions: Partial<Record<DomainEventName, number>> = {
-  // v2: actorId widened from UUID to string ('system' for vendor/webhook/reverify flips).
-  'compliance.kyc.updated': 2,
+  // v3: actorId is nullable - null marks a system-driven flip (vendor/webhook/reverify),
+  // which the audit writer records as actorType 'system'.
+  'compliance.kyc.updated': 3,
 };
 
 export function getEventVersion(event: string): number {

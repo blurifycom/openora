@@ -15,6 +15,7 @@ import {
   Tag,
   type TagKey,
   type KycStatus,
+  type User,
 } from '@blurifycom/core/contracts';
 import { player } from '@blurifycom/core/pam/schema/profile';
 import { playerTag, tag } from '../schema/index.js';
@@ -43,7 +44,7 @@ export class TagService {
     return results[0];
   }
 
-  public async createTag(args: CreateTagInput, actorUserId: string): Promise<Tag> {
+  public async createTag(args: CreateTagInput): Promise<Tag> {
     try {
       const db = this.drizzle.db;
       const [created] = await db.insert(tag).values(args).returning();
@@ -53,7 +54,7 @@ export class TagService {
     }
   }
 
-  public async deleteTag(args: DeleteTagInput, actorUserId: string): Promise<boolean> {
+  public async deleteTag(args: DeleteTagInput): Promise<boolean> {
     try {
       const db = this.drizzle.db;
       await db.delete(tag).where(eq(tag.key, args.key));
@@ -160,7 +161,11 @@ export class TagService {
    * an absent one is swallowed. Maps the auth `userId` (event payload) to the internal
    * `player.id` that tags are keyed on.
    */
-  public async syncKycStatusTags(args: { userId: string; actorId: string; status: KycStatus }) {
+  public async syncKycStatusTags(args: {
+    userId: User['id'];
+    actorId: User['id'] | null;
+    status: KycStatus;
+  }) {
     const [found] = await this.drizzle.db
       .select({ id: player.id })
       .from(player)

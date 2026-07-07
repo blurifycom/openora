@@ -63,17 +63,17 @@ export default definePlugin({
         platformConfig,
       });
       kycRef = kyc;
-      return createComplianceRouter(
-        new ComplianceService(
+      return createComplianceRouter({
+        compliance: new ComplianceService(
           c.get(DRIZZLE),
           c.get(EVENT_BUS),
           c.has(GEO_IP_ADAPTER) ? c.get(GEO_IP_ADAPTER) : null,
         ),
-        c.get(ADMIN_GUARD),
+        adminGuard: c.get(ADMIN_GUARD),
         kyc,
         kycAdapter,
-        c.get(KYC_WEBHOOK_VERIFIER),
-      );
+        webhookVerifier: c.get(KYC_WEBHOOK_VERIFIER),
+      });
     });
   },
 });

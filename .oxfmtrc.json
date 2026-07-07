@@ -14,7 +14,6 @@
     "**/*.hbs",
     "**/catalog.json",
     "docs/openapi.json",
-    "packages/core/drizzle/migrations/**",
     "pnpm-lock.yaml"
   ]
 }

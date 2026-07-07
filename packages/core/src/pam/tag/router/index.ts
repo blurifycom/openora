@@ -7,13 +7,9 @@ export function createTagRouter(tag: TagService) {
   const os = implement(tagContract).$context<OssContext>();
 
   return os.router({
-    createTag: os.createTag.handler(({ context, input }) =>
-      tag.createTag(input, getUserId(context)),
-    ),
+    createTag: os.createTag.handler(({ input }) => tag.createTag(input)),
 
-    deleteTag: os.deleteTag.handler(({ context, input }) =>
-      tag.deleteTag(input, getUserId(context)),
-    ),
+    deleteTag: os.deleteTag.handler(({ input }) => tag.deleteTag(input)),
 
     listPlayerTags: os.listPlayerTags.handler(({ input }) =>
       tag.listPlayerTags(input.playerId, input.page, input.limit),

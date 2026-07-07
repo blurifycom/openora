@@ -15,13 +15,19 @@ function headerValue(context: OssContext, name: string): string | null {
   return raw ?? null;
 }
 
-export function createComplianceRouter(
-  compliance: ComplianceService,
-  adminGuard: AdminGuard,
-  kyc: KycVerificationService,
-  kycAdapter: KycAdapter,
-  webhookVerifier: KycWebhookVerifier,
-) {
+export function createComplianceRouter({
+  compliance,
+  adminGuard,
+  kyc,
+  kycAdapter,
+  webhookVerifier,
+}: {
+  compliance: ComplianceService;
+  adminGuard: AdminGuard;
+  kyc: KycVerificationService;
+  kycAdapter: KycAdapter;
+  webhookVerifier: KycWebhookVerifier;
+}) {
   const os = implement(complianceContract).$context<OssContext>();
 
   return os.router({

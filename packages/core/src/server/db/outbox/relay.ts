@@ -14,6 +14,12 @@ export type OutboxRelayOptions = {
 // a synchronous flush. A row is marked published only AFTER broker.publish
 // resolves, so a crash mid-publish leaves it pending and it is retried -
 // at-least-once; consumers dedup on eventId.
+//
+// ponytail: claim-then-publish (no `claimed_at` migration) - the SKIP LOCKED select
+// commits in its own short transaction, then each row publishes and is marked in its own
+// transaction outside that lock, so a publish failure only retries the failing row. The
+// tradeoff: two relays on the same tick can both grab a row - fine under at-least-once
+// (consumers dedup on eventId); add a `claimed_at` claim-update if that ever needs closing.
 export class OutboxRelay {
   private timer: ReturnType<typeof setInterval> | undefined;
   private draining = false;
@@ -52,12 +58,15 @@ export class OutboxRelay {
     if (this.draining) return 0;
     this.draining = true;
     try {
-      const batch = await this.db
-        .select()
-        .from(eventOutbox)
-        .where(isNull(eventOutbox.publishedAt))
-        .orderBy(asc(eventOutbox.occurredAt))
-        .limit(this.opts.batchSize ?? 100);
+      const batch = await this.db.transaction((txn) =>
+        txn
+          .select()
+          .from(eventOutbox)
+          .where(isNull(eventOutbox.publishedAt))
+          .orderBy(asc(eventOutbox.occurredAt))
+          .limit(this.opts.batchSize ?? 100)
+          .for('update', { skipLocked: true }),
+      );
 
       let published = 0;
       for (const row of batch) {

@@ -4,7 +4,7 @@
  * Checks prerequisites, boots infra, migrates DB, starts MCP dev server, prints summary.
  */
 
-import { execSync, spawn } from 'node:child_process';
+import { execSync } from 'node:child_process';
 import { existsSync, readFileSync } from 'node:fs';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -24,7 +24,7 @@ function run(cmd: string, opts?: { cwd?: string; silent?: boolean }): string {
   }
 }
 
-function check(label: string, cmd: string, minVersion?: string) {
+function check(label: string, cmd: string) {
   try {
     const out = execSync(cmd, { encoding: 'utf8', stdio: 'pipe' }).trim();
     console.log(`  [ok] ${label}: ${out}`);
@@ -77,7 +77,7 @@ async function main() {
   try {
     run('pnpm -F @blurifycom/core generate');
     run('pnpm db:migrate:all');
-  } catch (e) {
+  } catch {
     console.warn('  [warn] Migration step skipped (schema may be empty - normal on first run)');
   }
 

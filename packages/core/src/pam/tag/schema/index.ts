@@ -27,7 +27,8 @@ export const playerTag = pgTable(
     /* Assign data (assignedAt -> createdAt used) */
     assignReason: text('assign_reason').notNull(),
     assignActor: tagAssignRemoveSourceEnum('assign_actor').notNull(),
-    assignActorUserId: uuid('assign_actor_user_id').notNull() /* Potential FKey - user */,
+    assignActorUserId:
+      uuid('assign_actor_user_id') /* Potential FKey - user; null = system actor */,
     /* Removal data */
     removedAt: timestamp('removed_at', { withTimezone: true }),
     removalReason: text('removal_reason'),

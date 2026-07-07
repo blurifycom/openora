@@ -32,7 +32,7 @@ export class InProcessRealtimeTransport implements RealtimeTransport {
     const subscribers = this.channels.get(channel);
     if (!subscribers) return;
     // Snapshot so a handler that unsubscribes mid-iteration can't corrupt the loop.
-    for (const handler of [...subscribers]) {
+    for (const handler of Array.from(subscribers)) {
       try {
         handler(event);
       } catch {

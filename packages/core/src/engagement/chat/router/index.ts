@@ -40,12 +40,12 @@ export function createChatRouter(chatService: ChatService, authorizer: RealtimeC
 
     getRoomMessages: os.getRoomMessages.handler(({ input, context }) =>
       mapErrors({ NOT_FOUND: ChatRoomNotFoundError }, () =>
-        chatService.getRoomMessages(
-          input.roomId,
-          input.limit,
-          input.before,
-          resolveViewerId(context),
-        ),
+        chatService.getRoomMessages({
+          roomId: input.roomId,
+          limit: input.limit,
+          before: input.before,
+          viewerId: resolveViewerId(context),
+        }),
       ),
     ),
 
@@ -54,7 +54,13 @@ export function createChatRouter(chatService: ChatService, authorizer: RealtimeC
       const username = resolveUsername(context);
       return mapErrors(
         { NOT_FOUND: ChatRoomNotFoundError, BAD_REQUEST: ChatMessageBlockedError },
-        () => chatService.sendRoomMessage(userId, username, input.roomId, input.content),
+        () =>
+          chatService.sendRoomMessage({
+            userId,
+            username,
+            roomId: input.roomId,
+            content: input.content,
+          }),
       );
     }),
 
