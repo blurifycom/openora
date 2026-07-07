@@ -79,7 +79,14 @@ extraction / OOM - narrow the date range and paginate for larger windows, or use
 `bonus.claimed`, `compliance.limit.upserted`, `compliance.limit.removed`,
 `compliance.kyc.updated`, `compliance.kyc.submitted`,
 `compliance.kyc.reverify_required`, `compliance.geo-rule.added`,
+`rg.limit.set`, `rg.cooling_off.activated`, `rg.self_exclusion.activated`,
+`rg.self_exclusion.lifted`, `rg.exclusion.login_blocked`,
 `cms.page.published`, `iam.invitation.accepted`.
+
+The RG activity log / change history reuses this module: `list`/`exportCsv` take an
+optional `actionPrefix` filter (`like(action, 'rg.%')`); the four admin RG events map
+to `actorType='admin'`, `resourceType='player'`, `resourceId=userId`, and
+`rg.exclusion.login_blocked` maps to a system `result='failure'` entry.
 
 Mapping: `wallet.*` events record `actorType='player'`, `actorId=userId`,
 `resourceType='transaction'`, `resourceId=transactionId` (so a transaction

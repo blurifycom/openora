@@ -68,7 +68,12 @@ const ROOT_ALLOWED_FILES = new Set([
   'assert.ts',
 ]);
 
-const SERVICE_FILE_ALLOWLIST = new Set(['ports.ts', 're-kyc-trigger.ts', 'kyc-status-writer.ts']);
+const SERVICE_FILE_ALLOWLIST = new Set([
+  'ports.ts',
+  're-kyc-trigger.ts',
+  'kyc-status-writer.ts',
+  'rg-eval.ts',
+]);
 
 function filename(context) {
   return (context.filename ?? context.getFilename?.() ?? '').replace(/\\/g, '/');

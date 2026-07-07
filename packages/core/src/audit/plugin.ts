@@ -225,6 +225,43 @@ function mapEventToRecord(topic: string, p: Record<string, unknown>): RecordInpu
     };
   }
 
+  // RG admin actions. `userId` = subject player (resource), `actorId` = acting admin.
+  // limit.set + lifted carry a before-snapshot so the regulatory export is diffable.
+  if (
+    topic === 'rg.limit.set' ||
+    topic === 'rg.cooling_off.activated' ||
+    topic === 'rg.self_exclusion.activated' ||
+    topic === 'rg.self_exclusion.lifted'
+  ) {
+    const before =
+      topic === 'rg.limit.set'
+        ? { amount: p['previousAmount'] ?? null }
+        : topic === 'rg.self_exclusion.lifted'
+          ? { status: 'active' }
+          : null;
+    return {
+      ...base,
+      actorType: 'admin',
+      actorId: str(p['actorId']),
+      resourceType: 'player',
+      resourceId: str(p['userId']),
+      before,
+      after: p,
+    };
+  }
+
+  // A blocked/self-excluded player attempted login: system-driven, failure outcome,
+  // subject = the player.
+  if (topic === 'rg.exclusion.login_blocked') {
+    return {
+      ...base,
+      actorType: 'system',
+      resourceType: 'player',
+      resourceId: str(p['userId']),
+      result: 'failure',
+    };
+  }
+
   // Wallet events carry the txn ref in transactionId; surface it as resourceId so
   // a transaction reference is searchable (it otherwise stays buried in `after`).
   if (topic.startsWith('wallet.')) {
@@ -277,6 +314,11 @@ const SUBSCRIBED_TOPICS: DomainEventName[] = [
   'chat.user.unblocked',
   'compliance.limit.upserted',
   'compliance.limit.removed',
+  'rg.limit.set',
+  'rg.cooling_off.activated',
+  'rg.self_exclusion.activated',
+  'rg.self_exclusion.lifted',
+  'rg.exclusion.login_blocked',
   'compliance.kyc.updated',
   'compliance.kyc.submitted',
   'compliance.kyc.reverify_required',

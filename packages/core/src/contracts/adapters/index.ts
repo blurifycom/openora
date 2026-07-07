@@ -103,3 +103,6 @@ export type {
   SessionCommands,
 } from './identity.js';
 export { IDENTITY_OPTIONS, SESSION_COMMANDS } from './identity.js';
+
+export type { LoginEnforcementPort } from './login-enforcement.js';
+export { LOGIN_ENFORCEMENT } from './login-enforcement.js';

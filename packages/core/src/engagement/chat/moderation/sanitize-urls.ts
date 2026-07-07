@@ -11,7 +11,6 @@
 // it. Documented on ChatMessageSchema.content.
 const DANGEROUS_SCHEME = /\b(javascript|data|vbscript|file|blob)\s*:/gi;
 
-/** Best-effort: splits dangerous URL schemes so they can't be auto-linkified. Not an XSS boundary - see ChatMessageSchema.content. */
 export function sanitizeUrls(content: string): string {
   return content.replace(DANGEROUS_SCHEME, '$1 ');
 }

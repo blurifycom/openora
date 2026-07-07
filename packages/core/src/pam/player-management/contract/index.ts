@@ -44,6 +44,13 @@ export const playerContract = populateContractRouterPaths({
     )
     .output(PlayerSchema),
 
+  // Resolve a player by their identity userId - the id every other module (compliance
+  // RG flags, audit, wallet) carries, since none of them know the PAM playerId.
+  getByUserId: oc
+    .route({ method: 'GET', path: '/players/by-user/{userId}' })
+    .input(z.object({ userId: UuidSchema }))
+    .output(PlayerSchema),
+
   update: oc
     .route({ method: 'PATCH', path: '/players/{playerId}' })
     .input(

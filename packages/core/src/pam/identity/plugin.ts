@@ -1,6 +1,7 @@
 import {
   ADMIN_USER_DIRECTORY,
   KYC_ADAPTER,
+  LOGIN_ENFORCEMENT,
   NOTIFICATION_DELIVERY_ADAPTER,
   SEND_EMAIL,
   IDENTITY_OPTIONS,
@@ -13,6 +14,7 @@ import { DrizzleAdminUserDirectory } from './admin-user-directory.js';
 import { createIdentityRouter } from './router/index.js';
 import { IdentityService } from './service/identity.service.js';
 import { SessionService } from './service/session.service.js';
+import { LoginEnforcementService } from './service/login-enforcement.service.js';
 
 export default definePlugin({
   id: 'identity',
@@ -28,6 +30,15 @@ export default definePlugin({
       send: ({ to, subject, body }) =>
         c.get(NOTIFICATION_DELIVERY_ADAPTER).sendEmail(to, subject, body),
     }));
+    // RG login-block writer. compliance drives it through the port, never the schema.
+    ctx.provide(
+      LOGIN_ENFORCEMENT,
+      (c) =>
+        new LoginEnforcementService(
+          c.get(DRIZZLE),
+          new SessionService({ drizzle: c.get(DRIZZLE), events: c.get(EVENT_BUS) }),
+        ),
+    );
     ctx.provide(SESSION_COMMANDS, (c) => {
       const sessionSvc = new SessionService({ drizzle: c.get(DRIZZLE), events: c.get(EVENT_BUS) });
       return {

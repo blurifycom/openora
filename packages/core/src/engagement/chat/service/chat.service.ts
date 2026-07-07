@@ -7,16 +7,12 @@ import {
 } from '@blurifycom/core/server';
 import type { RealtimeTransport } from '@blurifycom/core/contracts';
 import { eq, and, isNull, lt, desc, asc, notInArray } from 'drizzle-orm';
-// Sanctioned read-only cross-module table read (display name lives in identity).
-// The username shown on a message is resolved server-side from the verified user,
-// never from a client-supplied header - so it cannot be spoofed.
 import { user } from '@blurifycom/core/pam/schema/identity';
 import type { User } from '@blurifycom/core/pam/schema/identity';
 import { chatRoom, chatMessage, chatUserBlock } from '../schema/index.js';
 import type { ChatRoom, ChatMessage } from '../contract/index.js';
 import { moderateContent } from '../moderation/index.js';
 
-/** Single source for channel names so publishers and subscribers always align. */
 export function chatChannel(roomId: ChatRoom['id'] | null) {
   return roomId ? `chat:room:${roomId}` : 'chat:global';
 }
@@ -36,8 +32,6 @@ export const ChatMessageOwnershipError = createDomainError(
   (id: string) => `Not authorized to delete message: ${id}`,
 );
 
-// Surfaced to the sender (mapped to BAD_REQUEST) so they learn the message was
-// withheld and never delivered to other players (ABC-45 AC8/AC9).
 export const ChatMessageBlockedError = createDomainError(
   'ChatMessageBlockedError',
   () => 'Message blocked: it contains prohibited language',
@@ -48,7 +42,6 @@ export const ChatSelfBlockError = createDomainError(
   () => 'You cannot block yourself',
 );
 
-/** Rejects profane content (never delivered) and returns URL-sanitized text safe to persist. */
 function gateContent(content: string): string {
   const result = moderateContent(content);
   if (!result.ok) throw new ChatMessageBlockedError();
@@ -84,20 +77,11 @@ export class ChatService {
     private readonly transport: RealtimeTransport,
   ) {}
 
-  /**
-   * Live feed for `viewerId`. Messages from users the viewer has blocked are
-   * dropped client-bound only - the sender and everyone else still receive them
-   * (ABC-45 AC11). The block set is loaded once at subscribe time.
-   */
   subscribeMessages(
     roomId: ChatRoom['id'] | null,
     listener: (message: ChatMessage) => void,
     viewerId?: User['id'],
   ) {
-    // `null` until the block set loads. Messages arriving before then are buffered
-    // (not dropped, not leaked) and flushed once it resolves - closes the window
-    // where a blocked sender's message could slip through. Muting is best-effort
-    // UX, so a load failure fails open (empty set) rather than freezing the feed.
     let blocked: ReadonlySet<User['id']> | null = viewerId ? null : new Set();
     const pending: ChatMessage[] = [];
     const deliver = (message: ChatMessage) => {
@@ -198,13 +182,12 @@ export class ChatService {
       .returning();
 
     this.events.emit('chat.message.sent', {
-      messageId: record!.id,
+      messageId: record.id,
       roomId,
       userId,
     });
 
-    const message = toMessage(record!);
-    // Best-effort push after commit; DB is the system of record for backfill.
+    const message = toMessage(record);
     void this.transport.publish(chatChannel(roomId), message);
     return message;
   }
@@ -250,12 +233,12 @@ export class ChatService {
       .returning();
 
     this.events.emit('chat.message.sent', {
-      messageId: record!.id,
+      messageId: record.id,
       roomId: null,
       userId,
     });
 
-    const message = toMessage(record!);
+    const message = toMessage(record);
     void this.transport.publish(chatChannel(null), message);
     return message;
   }

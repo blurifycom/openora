@@ -98,16 +98,24 @@
       "tables": [
         "geo_rule",
         "kyc_verification",
+        "rg_exclusion",
+        "rg_flag",
         "user_limit"
       ],
       "routes": [
+        "compliance.activateCoolingOff",
+        "compliance.activateSelfExclusion",
         "compliance.addGeoRule",
         "compliance.deleteLimit",
         "compliance.geoCheck",
         "compliance.getLimits",
         "compliance.getPlayerKyc",
+        "compliance.getRgSection",
         "compliance.kycWebhook",
+        "compliance.liftSelfExclusion",
         "compliance.listGeoRules",
+        "compliance.listRgFlags",
+        "compliance.setPlayerLimit",
         "compliance.submitKyc",
         "compliance.upsertLimit"
       ]
@@ -232,6 +240,7 @@
       "tables": [],
       "routes": [
         "player-management.get",
+        "player-management.getByUserId",
         "player-management.list",
         "player-management.registrationsOverTime",
         "player-management.remove",
@@ -328,6 +337,7 @@
       "status": "wired",
       "boundIn": [
         "packages/core/src/admin-console/plugin.ts",
+        "packages/core/src/compliance/plugin.ts",
         "packages/core/src/engagement/notifications/plugin.ts",
         "packages/core/src/pam/identity/plugin.ts",
         "packages/core/src/wallet/plugin.ts"
@@ -377,6 +387,7 @@
       "token": "SEND_EMAIL",
       "status": "wired",
       "boundIn": [
+        "packages/core/src/compliance/plugin.ts",
         "packages/core/src/iam/plugin.ts",
         "packages/core/src/pam/identity/plugin.ts"
       ]
@@ -414,6 +425,7 @@
       "token": "JOB_QUEUE",
       "status": "wired",
       "boundIn": [
+        "packages/core/src/compliance/plugin.ts",
         "packages/core/src/server/runtime/create-app.ts"
       ]
     },
@@ -425,6 +437,16 @@
       "boundIn": [
         "packages/core/src/compliance/plugin.ts",
         "packages/core/src/pam/identity/adapters/mock/mock-kyc-adapter.ts",
+        "packages/core/src/pam/identity/plugin.ts"
+      ]
+    },
+    {
+      "category": "login-enforcement",
+      "interface": "LoginEnforcementPort",
+      "token": "LOGIN_ENFORCEMENT",
+      "status": "wired",
+      "boundIn": [
+        "packages/core/src/compliance/plugin.ts",
         "packages/core/src/pam/identity/plugin.ts"
       ]
     },
@@ -527,6 +549,11 @@
     "leaderboard.reset",
     "leaderboard.score.recorded",
     "notifications.created",
+    "rg.cooling_off.activated",
+    "rg.exclusion.login_blocked",
+    "rg.limit.set",
+    "rg.self_exclusion.activated",
+    "rg.self_exclusion.lifted",
     "sportsbook.bet.placed",
     "sportsbook.odds.updated",
     "wallet.deposit.completed",
@@ -538,6 +565,14 @@
   ],
   "uiSlots": [],
   "schemas": [
+    {
+      "name": "ActivateCoolingOffInputSchema",
+      "file": "packages/core/src/compliance/contract/rg.ts"
+    },
+    {
+      "name": "ActivateSelfExclusionInputSchema",
+      "file": "packages/core/src/compliance/contract/rg.ts"
+    },
     {
       "name": "AddGeoRuleInputSchema",
       "file": "packages/core/src/compliance/contract/index.ts"
@@ -711,6 +746,14 @@
       "file": "packages/core/src/casino/gaming/contract/index.ts"
     },
     {
+      "name": "ExclusionKindSchema",
+      "file": "packages/core/src/contracts/schemas/compliance.ts"
+    },
+    {
+      "name": "ExclusionStatusSchema",
+      "file": "packages/core/src/contracts/schemas/compliance.ts"
+    },
+    {
       "name": "FeaturedSlotSchema",
       "file": "packages/core/src/casino/lobby/contract/index.ts"
     },
@@ -803,20 +846,32 @@
       "file": "packages/core/src/engagement/leaderboard/contract/index.ts"
     },
     {
+      "name": "LiftSelfExclusionInputSchema",
+      "file": "packages/core/src/compliance/contract/rg.ts"
+    },
+    {
       "name": "LimitPeriodSchema",
       "file": "packages/core/src/contracts/schemas/compliance.ts"
     },
     {
       "name": "LimitSchema",
-      "file": "packages/core/src/compliance/contract/index.ts"
+      "file": "packages/core/src/compliance/contract/limits.ts"
     },
     {
       "name": "LimitsSchema",
       "file": "packages/core/src/contracts/schemas/igaming-config.ts"
     },
     {
+      "name": "LimitThresholdDetailSchema",
+      "file": "packages/core/src/compliance/contract/rg.ts"
+    },
+    {
       "name": "LimitTypeSchema",
       "file": "packages/core/src/contracts/schemas/compliance.ts"
+    },
+    {
+      "name": "ListRgFlagsInputSchema",
+      "file": "packages/core/src/compliance/contract/rg.ts"
     },
     {
       "name": "LobbyCategoryDetailSchema",
@@ -951,12 +1006,48 @@
       "file": "packages/core/src/contracts/schemas/identity.ts"
     },
     {
+      "name": "RgExclusionSchema",
+      "file": "packages/core/src/compliance/contract/rg.ts"
+    },
+    {
+      "name": "RgFlagDetailSchema",
+      "file": "packages/core/src/compliance/contract/rg.ts"
+    },
+    {
+      "name": "RgFlagListItemSchema",
+      "file": "packages/core/src/compliance/contract/rg.ts"
+    },
+    {
+      "name": "RgFlagStatusSchema",
+      "file": "packages/core/src/contracts/schemas/compliance.ts"
+    },
+    {
+      "name": "RgFlagTypeSchema",
+      "file": "packages/core/src/contracts/schemas/compliance.ts"
+    },
+    {
+      "name": "RgSectionSchema",
+      "file": "packages/core/src/compliance/contract/rg.ts"
+    },
+    {
       "name": "RolePermissionLevelSchema",
       "file": "packages/core/src/iam/contract/index.ts"
     },
     {
+      "name": "SelfExcludedLoginDetailSchema",
+      "file": "packages/core/src/compliance/contract/rg.ts"
+    },
+    {
       "name": "SessionItemSchema",
       "file": "packages/core/src/pam/identity/contract/index.ts"
+    },
+    {
+      "name": "SessionTimeDetailSchema",
+      "file": "packages/core/src/compliance/contract/rg.ts"
+    },
+    {
+      "name": "SetPlayerLimitInputSchema",
+      "file": "packages/core/src/compliance/contract/rg.ts"
     },
     {
       "name": "SportsbookBetSchema",
@@ -1036,7 +1127,7 @@
     },
     {
       "name": "UpsertLimitInputSchema",
-      "file": "packages/core/src/compliance/contract/index.ts"
+      "file": "packages/core/src/compliance/contract/limits.ts"
     },
     {
       "name": "UserBonusSchema",
@@ -1174,6 +1265,8 @@
     "GET /compliance/geo-rules",
     "GET /compliance/limits",
     "GET /compliance/players/{userId}/kyc",
+    "GET /compliance/players/{userId}/rg",
+    "GET /compliance/rg-flags",
     "GET /gaming/games",
     "GET /gaming/games/{id}",
     "GET /gaming/rounds",
@@ -1212,6 +1305,9 @@
     "POST /compliance/geo-rules",
     "POST /compliance/kyc",
     "POST /compliance/kyc/webhook",
+    "POST /compliance/players/{userId}/cooling-off",
+    "POST /compliance/players/{userId}/self-exclusion",
+    "POST /compliance/players/{userId}/self-exclusion/lift",
     "POST /gaming/rounds/start",
     "POST /gaming/rounds/{roundId}/end",
     "POST /iam/assignments",
@@ -1247,6 +1343,7 @@
     "PUT /cms/banners/{id}",
     "PUT /cms/pages/{id}",
     "PUT /compliance/limits",
+    "PUT /compliance/players/{userId}/limits",
     "PUT /iam/roles/{roleId}/permissions"
   ]
 }

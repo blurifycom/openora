@@ -249,6 +249,75 @@ describe('IdentityService - login lockout', () => {
   });
 });
 
+describe('IdentityService - RG login gate', () => {
+  it('blocks a self-excluded login AFTER credentials verify and emits rg.exclusion.login_blocked', async () => {
+    const drizzle = makeDrizzle({
+      selectRows: [
+        [
+          {
+            id: 'u1',
+            failedLoginAttempts: 0,
+            lockoutUntil: null,
+            rgBlocked: true,
+            rgBlockedUntil: null,
+          },
+        ],
+      ],
+    });
+    const events = makeEvents();
+    // Valid credentials (200) - the gate must still block.
+    signInEmailMock.mockResolvedValue(
+      jsonResponse({ user: betterAuthUser, token: 'tok', session: {} }, 200),
+    );
+    const svc = new IdentityService({ drizzle: drizzle as never, events: events as never });
+
+    await expect(
+      svc.login({ email: 'a@b.dev', password: 'rightpass1' }, {}, new Headers()),
+    ).rejects.toMatchObject({ code: 'FORBIDDEN' });
+
+    expect(signInEmailMock).toHaveBeenCalled();
+    expect(events.emit).toHaveBeenCalledWith(
+      'rg.exclusion.login_blocked',
+      expect.objectContaining({ userId: 'u1' }),
+    );
+    expect(events.emit).not.toHaveBeenCalledWith('identity.user.login', expect.anything());
+    expect(events.emit).not.toHaveBeenCalledWith('identity.user.login.failed', expect.anything());
+    // The just-issued session is revoked.
+    expect(drizzle.update).toHaveBeenCalled();
+  });
+
+  it('allows login once a lapsed cooling-off block has elapsed', async () => {
+    const past = new Date(Date.now() - 60_000);
+    const drizzle = makeDrizzle({
+      selectRows: [
+        [
+          {
+            id: 'u1',
+            failedLoginAttempts: 0,
+            lockoutUntil: null,
+            rgBlocked: true,
+            rgBlockedUntil: past,
+          },
+        ],
+      ],
+    });
+    const events = makeEvents();
+    signInEmailMock.mockResolvedValue(
+      jsonResponse({ user: betterAuthUser, token: 'tok', session: {} }, 200),
+    );
+    const svc = new IdentityService({ drizzle: drizzle as never, events: events as never });
+
+    const result = await svc.login({ email: 'a@b.dev', password: 'rightpass1' }, {}, new Headers());
+
+    expect(result).toMatchObject({ session: { token: 'tok' } });
+    expect(events.emit).toHaveBeenCalledWith(
+      'identity.user.login',
+      expect.objectContaining({ userId: 'u1' }),
+    );
+    expect(events.emit).not.toHaveBeenCalledWith('rg.exclusion.login_blocked', expect.anything());
+  });
+});
+
 describe('IdentityService - unlockUser', () => {
   it('clears the lockout and emits unlocked with the prior state', async () => {
     const drizzle = makeDrizzle({

@@ -4,12 +4,12 @@ import {
   UuidSchema,
   KycStatusSchema,
   TimestampSchema,
-  LimitTypeSchema,
-  LimitPeriodSchema,
   CountryCodeSchema,
   GeoRuleActionSchema,
 } from '@blurifycom/core/contracts';
 import { KYC_DOCUMENT_TYPES, KYC_TRIGGERED_BY } from './enums.js';
+import { LimitSchema, UpsertLimitInputSchema } from './limits.js';
+import { rgContract } from './rg.js';
 
 export const KycDocumentTypeSchema = z.enum(KYC_DOCUMENT_TYPES);
 
@@ -48,16 +48,6 @@ export const PlayerKycViewSchema = z.object({
 export type PlayerKycView = z.infer<typeof PlayerKycViewSchema>;
 export type KycVerification = z.infer<typeof KycVerificationSchema>;
 
-export const LimitSchema = z.object({
-  id: UuidSchema,
-  userId: UuidSchema,
-  type: LimitTypeSchema,
-  amount: z.number(),
-  period: LimitPeriodSchema,
-  createdAt: TimestampSchema,
-});
-export type Limit = z.infer<typeof LimitSchema>;
-
 export const GeoRuleSchema = z.object({
   id: UuidSchema,
   countryCode: CountryCodeSchema,
@@ -65,9 +55,6 @@ export const GeoRuleSchema = z.object({
   createdAt: TimestampSchema,
 });
 export type GeoRule = z.infer<typeof GeoRuleSchema>;
-
-export const UpsertLimitInputSchema = LimitSchema.pick({ type: true, amount: true, period: true });
-export type UpsertLimitInput = z.infer<typeof UpsertLimitInputSchema>;
 
 const DeleteLimitInputSchema = LimitSchema.pick({ id: true });
 
@@ -118,4 +105,9 @@ export const complianceContract = {
     .route({ method: 'POST', path: '/compliance/kyc/webhook' })
     .input(z.record(z.string(), z.unknown()))
     .output(z.object({ ok: z.literal(true) })),
+
+  ...rgContract,
 };
+
+export * from './limits.js';
+export * from './rg.js';

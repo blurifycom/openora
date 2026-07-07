@@ -41,6 +41,8 @@ export const AuditListFiltersSchema = PageQuerySchema.extend({
   actorId: z.string().optional(),
   actorType: AuditActorTypeSchema.optional(),
   action: z.string().optional(),
+  // Prefix match on action (eg 'rg.' for the RG activity log / change history).
+  actionPrefix: z.string().trim().min(1).optional(),
   resourceType: z.string().optional(),
   resourceId: z.string().optional(),
   // Single search box: exact-match the subject against actorId OR resourceId.

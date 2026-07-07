@@ -57,6 +57,14 @@ describe('PlayerService.remove', () => {
   });
 });
 
+describe('PlayerService.getByUserId', () => {
+  it('throws PlayerNotFoundError when no player owns the userId', async () => {
+    const db = { select: vi.fn(() => chain([])) };
+    const svc = new PlayerService({ db } as never, { setStatus: vi.fn() } as never);
+    await expect(svc.getByUserId('u-missing')).rejects.toThrow(PlayerNotFoundError);
+  });
+});
+
 describe('PlayerService.registrationsOverTime', () => {
   it('returns one zero-filled bucket per day in the window', async () => {
     const svc = makeService([]);

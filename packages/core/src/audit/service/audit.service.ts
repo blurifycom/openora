@@ -1,6 +1,6 @@
 import { createHash, randomUUID } from 'node:crypto';
 import { DrizzleService, pageToOffset, type EventBus } from '@blurifycom/core/server';
-import { eq, and, or, gte, lte, desc, sql } from 'drizzle-orm';
+import { eq, and, or, gte, lte, like, desc, sql } from 'drizzle-orm';
 import type { AuditWritePort } from '@blurifycom/core/contracts';
 import { auditLog, type AuditLog } from '../schema/index.js';
 import type { AuditLogEntry, AuditListFilters, AuditExportFilters } from '../contract/index.js';
@@ -33,6 +33,12 @@ function canonicalHashInput(fields: {
 
 function computeHash(fields: Parameters<typeof canonicalHashInput>[0]): string {
   return createHash('sha256').update(canonicalHashInput(fields)).digest('hex');
+}
+
+// Escape LIKE wildcards so a caller-supplied prefix ('rg.') matches literally and a
+// stray % or _ can't widen the match. Backslash is the default PG escape char.
+function likePrefix(prefix: string): string {
+  return `${prefix.replace(/[\\%_]/g, '\\$&')}%`;
 }
 
 function toDto(row: AuditLog) {
@@ -139,6 +145,7 @@ export class AuditService {
       actorId,
       actorType,
       action,
+      actionPrefix,
       resourceType,
       resourceId,
       q,
@@ -155,6 +162,7 @@ export class AuditService {
         ? eq(auditLog.actorType, actorType as AuditLog['actorType'])
         : undefined,
       action !== undefined ? eq(auditLog.action, action) : undefined,
+      actionPrefix !== undefined ? like(auditLog.action, likePrefix(actionPrefix)) : undefined,
       resourceType !== undefined ? eq(auditLog.resourceType, resourceType) : undefined,
       resourceId !== undefined ? eq(auditLog.resourceId, resourceId) : undefined,
       q !== undefined ? or(eq(auditLog.actorId, q), eq(auditLog.resourceId, q)) : undefined,
@@ -192,7 +200,17 @@ export class AuditService {
 
   async exportCsv(filters: AuditExportFilters) {
     const db = this.drizzle.db;
-    const { actorId, actorType, action, resourceType, resourceId, q, fromDate, toDate } = filters;
+    const {
+      actorId,
+      actorType,
+      action,
+      actionPrefix,
+      resourceType,
+      resourceId,
+      q,
+      fromDate,
+      toDate,
+    } = filters;
 
     const conditions = [
       actorId !== undefined ? eq(auditLog.actorId, actorId) : undefined,
@@ -200,6 +218,7 @@ export class AuditService {
         ? eq(auditLog.actorType, actorType as AuditLog['actorType'])
         : undefined,
       action !== undefined ? eq(auditLog.action, action) : undefined,
+      actionPrefix !== undefined ? like(auditLog.action, likePrefix(actionPrefix)) : undefined,
       resourceType !== undefined ? eq(auditLog.resourceType, resourceType) : undefined,
       resourceId !== undefined ? eq(auditLog.resourceId, resourceId) : undefined,
       q !== undefined ? or(eq(auditLog.actorId, q), eq(auditLog.resourceId, q)) : undefined,

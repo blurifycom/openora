@@ -34,6 +34,11 @@ export const user = pgTable(
     twoFactorEnabled: boolean().default(false),
     failedLoginAttempts: integer().notNull().default(0),
     lockoutUntil: timestamp({ withTimezone: true }),
+    // Responsible-Gambling login block (cooling-off / self-exclusion). Written only via
+    // the LOGIN_ENFORCEMENT port. `rgBlockedUntil` null while blocked = indefinite
+    // (self-exclusion); a Date is the cooling-off expiry the login gate auto-clears.
+    rgBlocked: boolean().notNull().default(false),
+    rgBlockedUntil: timestamp({ withTimezone: true }),
     createdAt: timestamp({ withTimezone: true }).notNull().defaultNow(),
     updatedAt: timestamp({ withTimezone: true })
       .notNull()

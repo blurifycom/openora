@@ -78,6 +78,14 @@ export class PlayerService {
     return toPlayer(record, await fetchEmailByUserId(this.drizzle, record.userId));
   }
 
+  async getByUserId(userId: string) {
+    const record = findOneOrThrow(
+      await this.drizzle.db.select().from(player).where(eq(player.userId, userId)),
+      new PlayerNotFoundError(userId),
+    );
+    return toPlayer(record, await fetchEmailByUserId(this.drizzle, record.userId));
+  }
+
   async getExtended(playerId: string) {
     const record = findOneOrThrow(
       await this.drizzle.db.select().from(player).where(eq(player.id, playerId)),

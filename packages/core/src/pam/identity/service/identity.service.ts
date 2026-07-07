@@ -138,6 +138,12 @@ function computeLockoutState(
   return { isLocking, lockoutUntil: isLocking ? new Date(nowMs + durationMs) : null };
 }
 
+// A finite rgBlockedUntil in the past = a lapsed cooling-off; a null one = indefinite
+// (self-exclusion / permanent). Blocked only while set and not elapsed.
+function isRgBlocked(u: { rgBlocked: boolean; rgBlockedUntil: Date | null }): boolean {
+  return u.rgBlocked && (u.rgBlockedUntil === null || u.rgBlockedUntil > new Date());
+}
+
 export type IdentityServiceDeps = {
   drizzle: DrizzleService;
   events: EventBus;
@@ -201,23 +207,27 @@ export class IdentityService {
     const email = input.email.toLowerCase();
 
     const configLockoutEnabled = this.options?.lockout?.enabled ?? true;
+    // Read once for the lockout budget, the admin-bypass check, and the RG login gate
+    // (indexed email lookup). Read unconditionally - the RG gate runs even when lockout
+    // is disabled.
+    const [existingUserRow] = await this.drizzle.db
+      .select({
+        id: user.id,
+        failedLoginAttempts: user.failedLoginAttempts,
+        lockoutUntil: user.lockoutUntil,
+        role: user.role,
+        rgBlocked: user.rgBlocked,
+        rgBlockedUntil: user.rgBlockedUntil,
+      })
+      .from(user)
+      .where(eq(user.email, email))
+      .limit(1);
     let existingUser:
-      | Pick<typeof user.$inferSelect, 'id' | 'failedLoginAttempts' | 'lockoutUntil' | 'role'>
-      | undefined;
-
-    if (configLockoutEnabled) {
-      const [dbUser] = await this.drizzle.db
-        .select({
-          id: user.id,
-          failedLoginAttempts: user.failedLoginAttempts,
-          lockoutUntil: user.lockoutUntil,
-          role: user.role,
-        })
-        .from(user)
-        .where(eq(user.email, email))
-        .limit(1);
-      existingUser = dbUser;
-    }
+      | Pick<
+          typeof user.$inferSelect,
+          'id' | 'failedLoginAttempts' | 'lockoutUntil' | 'role' | 'rgBlocked' | 'rgBlockedUntil'
+        >
+      | undefined = existingUserRow;
 
     const isAdmin = existingUser?.role === 'admin';
     const bypassForAdmins = this.options?.lockout?.bypassForAdmins ?? false;
@@ -240,6 +250,22 @@ export class IdentityService {
         asResponse: true,
       });
       await ensureOk(authResponse);
+
+      // RG login block, applied only AFTER credentials verify so a pre-auth probe can't
+      // distinguish a restricted account from a wrong password. Kill the session
+      // better-auth just issued and never forward its cookie. Cooling-off auto-expires
+      // here once rgBlockedUntil elapses (no unblock job).
+      if (existingUser && isRgBlocked(existingUser)) {
+        await this.drizzle.db
+          .update(session)
+          .set({ expiresAt: new Date() })
+          .where(eq(session.userId, existingUser.id));
+        this.events.emit('rg.exclusion.login_blocked', { userId: existingUser.id, ip, userAgent });
+        throw new ORPCError('FORBIDDEN', {
+          message: 'Account access is currently restricted (responsible gambling).',
+        });
+      }
+
       forwardCookies(authResponse, resHeaders);
       const body = (await authResponse.json()) as {
         user?: BetterAuthUser;
@@ -265,6 +291,9 @@ export class IdentityService {
         session: { token: body.token, expiresAt },
       };
     } catch (error) {
+      // An RG block is not a credential failure - surface it as-is, without touching the
+      // lockout budget or emitting login.failed (the RG event was already emitted).
+      if (error instanceof ORPCError && error.code === 'FORBIDDEN') throw error;
       // Only a genuine credential rejection counts toward lockout - a transient DB/network
       // error must never lock the account out.
       const isCredentialFailure = error instanceof ORPCError && error.code === 'UNAUTHORIZED';

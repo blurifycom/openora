@@ -5,26 +5,49 @@ import {
   ADMIN_GUARD,
   createLogger,
 } from '@blurifycom/core/server';
+import * as z from 'zod';
 import {
+  ADMIN_USER_DIRECTORY,
   GEO_IP_ADAPTER,
+  JOB_QUEUE,
   KYC_ADAPTER,
   KYC_STATUS_WRITER,
   KYC_WEBHOOK_VERIFIER,
+  LOGIN_ENFORCEMENT,
   PLATFORM_CONFIG,
+  SEND_EMAIL,
+  UuidSchema,
   domainEventSchemas,
+  queue,
+  type JobQueueAdapter,
 } from '@blurifycom/core/contracts';
 import { ComplianceService } from './service/compliance.service.js';
 import { KycVerificationService } from './service/kyc.service.js';
+import { RgService } from './service/rg.service.js';
+import { RgMonitoringService, type RgEvalTrigger } from './service/rg-monitoring.service.js';
 import { createComplianceRouter } from './router/index.js';
 import { HmacKycWebhookVerifier } from './adapters/hmac-kyc-webhook-verifier.js';
 
 const logger = createLogger('compliance');
 
-// dependsOn pins the KYC_STATUS_WRITER (player-management) + KYC_ADAPTER (identity)
-// providers ahead of compliance for a SERVICE_MANIFEST split. See ADR-0017.
+const RG_EVAL_QUEUE = queue('rg-eval');
+const RG_MONITOR_QUEUE = queue('rg-monitor');
+
+const RgEvalJobSchema = z.object({
+  userId: UuidSchema,
+  trigger: z.enum([
+    'wallet.deposit.completed',
+    'sportsbook.bet.placed',
+    'gaming.round.ended',
+    'rg.exclusion.login_blocked',
+  ]),
+});
+const RgMonitorJobSchema = z.object({});
+
 export default definePlugin({
   id: 'compliance',
-  dependsOn: ['player-management', 'identity'],
+  dependsOn: ['player-management', 'identity', 'wallet', 'sportsbook', 'gaming'],
+  requiresPorts: [LOGIN_ENFORCEMENT],
   register(ctx) {
     ctx.provide(KYC_WEBHOOK_VERIFIER, (c) => {
       const cfg = c.has(PLATFORM_CONFIG) ? c.get(PLATFORM_CONFIG) : undefined;
@@ -32,15 +55,64 @@ export default definePlugin({
       return new HmacKycWebhookVerifier(process.env[envName]);
     });
 
-    // Threshold re-KYC reacts to deposits. svcRef is null at registration (subscriptions
-    // wire before router factories run) but set before any real event arrives.
+    // svcRefs are null at registration (subscriptions wire before router factories run)
+    // but set before any real event/job arrives. See create-app.ts boot order.
     let kycRef: KycVerificationService | null = null;
+    let rgRef: RgService | null = null;
+    let monitorRef: RgMonitoringService | null = null;
+    let jobQueueRef: JobQueueAdapter | null = null;
+
     ctx.events.on('wallet.deposit.completed', (payload) => {
       const parsed = domainEventSchemas['wallet.deposit.completed'].safeParse(payload);
       if (!parsed.success || !kycRef) return;
       kycRef
         .handleDeposit(parsed.data.userId)
         .catch((err) => logger.error({ err }, 're-KYC deposit hook failed'));
+    });
+
+    const enqueueEval = (userId: string, trigger: RgEvalTrigger) => {
+      if (!jobQueueRef) return;
+      void jobQueueRef
+        .enqueue(
+          RG_EVAL_QUEUE,
+          { userId, trigger },
+          { idempotencyKey: `rg-eval:${userId}`, orderingKey: userId },
+        )
+        .catch((err) => logger.error({ err }, 'rg-eval enqueue failed'));
+    };
+
+    ctx.events.on('wallet.deposit.completed', (payload) => {
+      const parsed = domainEventSchemas['wallet.deposit.completed'].safeParse(payload);
+      if (parsed.success) enqueueEval(parsed.data.userId, 'wallet.deposit.completed');
+    });
+    ctx.events.on('sportsbook.bet.placed', (payload) => {
+      const parsed = domainEventSchemas['sportsbook.bet.placed'].safeParse(payload);
+      if (parsed.success) enqueueEval(parsed.data.userId, 'sportsbook.bet.placed');
+    });
+    ctx.events.on('gaming.round.ended', (payload) => {
+      const parsed = domainEventSchemas['gaming.round.ended'].safeParse(payload);
+      if (parsed.success) enqueueEval(parsed.data.userId, 'gaming.round.ended');
+    });
+    ctx.events.on('rg.exclusion.login_blocked', (payload) => {
+      const parsed = domainEventSchemas['rg.exclusion.login_blocked'].safeParse(payload);
+      if (parsed.success) enqueueEval(parsed.data.userId, 'rg.exclusion.login_blocked');
+    });
+
+    ctx.jobs.worker({
+      queue: RG_EVAL_QUEUE,
+      schema: RgEvalJobSchema,
+      options: { serializeByOrderingKey: true },
+      handler: async ({ payload }) => {
+        if (monitorRef) await monitorRef.evaluateUser(payload.userId, payload.trigger);
+      },
+    });
+    ctx.jobs.worker({
+      queue: RG_MONITOR_QUEUE,
+      schema: RgMonitorJobSchema,
+      handler: async () => {
+        if (rgRef) await rgRef.expireLapsedCoolingOffs();
+        if (monitorRef) await monitorRef.sweep();
+      },
     });
 
     ctx.routers.add('compliance', (c) => {
@@ -63,6 +135,24 @@ export default definePlugin({
         platformConfig,
       });
       kycRef = kyc;
+
+      const directory = c.has(ADMIN_USER_DIRECTORY) ? c.get(ADMIN_USER_DIRECTORY) : null;
+      const rg = new RgService({
+        drizzle: c.get(DRIZZLE),
+        events: c.get(EVENT_BUS),
+        loginEnforcement: c.get(LOGIN_ENFORCEMENT),
+        email: c.has(SEND_EMAIL) ? c.get(SEND_EMAIL) : null,
+        directory,
+      });
+      rgRef = rg;
+      const rgMonitoring = new RgMonitoringService({ drizzle: c.get(DRIZZLE), directory });
+      monitorRef = rgMonitoring;
+
+      jobQueueRef = c.get(JOB_QUEUE);
+      void jobQueueRef
+        .schedule(RG_MONITOR_QUEUE, 'rg-monitor', {}, { everyMs: 60_000, cron: '* * * * *' })
+        .catch((err) => logger.error({ err }, 'rg-monitor schedule failed'));
+
       return createComplianceRouter({
         compliance: new ComplianceService(
           c.get(DRIZZLE),
@@ -73,6 +163,8 @@ export default definePlugin({
         kyc,
         kycAdapter,
         webhookVerifier: c.get(KYC_WEBHOOK_VERIFIER),
+        rg,
+        rgMonitoring,
       });
     });
   },

@@ -8,6 +8,14 @@ import {
   LimitOwnershipError,
 } from '../service/compliance.service.js';
 import { KycVerificationService } from '../service/kyc.service.js';
+import {
+  RgService,
+  ExclusionNotFoundError,
+  ActiveExclusionError,
+  PermanentExclusionLiftError,
+  ExclusionPeriodNotElapsedError,
+} from '../service/rg.service.js';
+import { RgMonitoringService } from '../service/rg-monitoring.service.js';
 
 function headerValue(context: OssContext, name: string): string | null {
   const raw = context.request.headers[name];
@@ -21,7 +29,11 @@ export function createComplianceRouter({
   kyc,
   kycAdapter,
   webhookVerifier,
+  rg,
+  rgMonitoring,
 }: {
+  rg: RgService;
+  rgMonitoring: RgMonitoringService;
   compliance: ComplianceService;
   adminGuard: AdminGuard;
   kyc: KycVerificationService;
@@ -84,6 +96,46 @@ export function createComplianceRouter({
         await kyc.reconcile(decision.referenceId, decision.status);
       }
       return { ok: true as const };
+    }),
+
+    setPlayerLimit: os.setPlayerLimit.handler(async ({ input, context }) => {
+      const caller = await adminGuard.assert(context, 'compliance', 'manage-rg');
+      return rg.setPlayerLimit(input.userId, input, caller.userId);
+    }),
+
+    activateCoolingOff: os.activateCoolingOff.handler(async ({ input, context }) => {
+      const caller = await adminGuard.assert(context, 'compliance', 'manage-rg');
+      return mapErrors({ CONFLICT: ActiveExclusionError }, () =>
+        rg.activateCoolingOff(input.userId, input, caller.userId),
+      );
+    }),
+
+    activateSelfExclusion: os.activateSelfExclusion.handler(async ({ input, context }) => {
+      const caller = await adminGuard.assert(context, 'compliance', 'manage-rg');
+      return mapErrors({ CONFLICT: ActiveExclusionError }, () =>
+        rg.activateSelfExclusion(input.userId, input, caller.userId),
+      );
+    }),
+
+    liftSelfExclusion: os.liftSelfExclusion.handler(async ({ input, context }) => {
+      const caller = await adminGuard.assert(context, 'compliance', 'manage-rg');
+      return mapErrors(
+        {
+          NOT_FOUND: ExclusionNotFoundError,
+          CONFLICT: [PermanentExclusionLiftError, ExclusionPeriodNotElapsedError],
+        },
+        () => rg.liftSelfExclusion(input.userId, input, caller.userId),
+      );
+    }),
+
+    getRgSection: os.getRgSection.handler(async ({ input, context }) => {
+      await adminGuard.assert(context, 'compliance', 'view');
+      return rg.getRgSection(input.userId);
+    }),
+
+    listRgFlags: os.listRgFlags.handler(async ({ input, context }) => {
+      await adminGuard.assert(context, 'compliance', 'view');
+      return rgMonitoring.listFlags(input);
     }),
   });
 }

@@ -40,7 +40,6 @@ export const KycRequiredError = makeConflictError(
   'KYC verification required before withdrawal',
 );
 
-// Statuses that satisfy the withdrawal KYC gate.
 const KYC_PASS_STATUSES: ReadonlySet<KycStatus> = new Set(['verified', 'manually_overridden']);
 
 export const CurrencyMismatchError = createDomainError(
@@ -49,24 +48,17 @@ export const CurrencyMismatchError = createDomainError(
     `Currency mismatch: requested ${requested}, wallet holds ${walletCurrency}`,
 );
 
-// Crypto currencies settle on the crypto rail (Fireblocks); everything else on the
-// fiat rail (a PSP). The concrete provider is recorded per transaction, not here.
 const CRYPTO_CURRENCIES = new Set(['BTC', 'ETH', 'USDT']);
 
 function railFor(currency: string): WalletRail {
   return CRYPTO_CURRENCIES.has(currency.toUpperCase()) ? 'crypto' : 'fiat';
 }
 
-// ponytail: a flat, currency-agnostic threshold - a starter heuristic for the review
-// queue, not a compliance risk engine. Revisit with a real risk service if/when one exists.
 const LARGE_WITHDRAWAL_THRESHOLD = 5000;
 
-// ponytail: >=3 withdrawals in a 24h window flags velocity; a flat count, not a per-tier rule.
 const HIGH_FREQUENCY_WINDOW_MS = 24 * 60 * 60 * 1000;
 const HIGH_FREQUENCY_MIN_COUNT = 3;
 
-// The concrete settlement provider recorded per transaction: the crypto rail settles
-// through Fireblocks, the fiat rail through a PSP.
 function providerNameFor(rail: WalletRail | null): string {
   return rail === 'crypto' ? 'fireblocks' : 'psp';
 }
@@ -80,7 +72,6 @@ export class WalletService {
     private readonly platformConfig?: PlatformConfig,
   ) {}
 
-  /** Fail-closed KYC gate: when enabled, a withdrawal needs a passing status (verified|manually_overridden). */
   private async assertKycForWithdrawal(userId: string) {
     if (!this.platformConfig?.kyc?.gateWithdrawals) return;
     const [summary] = this.directory ? await this.directory.lookupPlayers([userId]) : [];
@@ -109,7 +100,6 @@ export class WalletService {
     currency: string,
     provider?: string,
   ): Promise<TransactionResult> {
-    // PSP call stays outside the DB transaction; saga compensation for a PSP-success/ledger-failure split is out of scope.
     const psp = await this.payment.processDeposit(amount, currency, { userId, provider });
 
     const transactionId = await this.drizzle.db.transaction(async (txn) => {
@@ -148,7 +138,6 @@ export class WalletService {
     return { transactionId, status: 'completed' };
   }
 
-  /** Creates a PENDING withdrawal and HOLDS the funds (balance debited at request time). Funds are returned on reject/PSP-failure. */
   async withdraw(
     userId: string,
     amount: number,
@@ -158,15 +147,10 @@ export class WalletService {
     await this.assertKycForWithdrawal(userId);
 
     const transactionId = await this.drizzle.db.transaction(async (txn) => {
-      // Lock the wallet row so two concurrent withdrawals serialize instead of both
-      // reading the same balance and double-debiting (TOCTOU under READ COMMITTED).
       const current = findOneOrThrow(
         await txn.select().from(wallet).where(eq(wallet.userId, userId)).for('update'),
         new WalletNotFoundError(userId),
       );
-      // The wallet is single-currency; a mismatched request would mislabel the row and
-      // pick the wrong rail, so reject it rather than coerce. Compared case-insensitively
-      // since railFor() normalizes case and 'usd'/'USD' are the same currency.
       if (currency.toUpperCase() !== current.currency.toUpperCase()) {
         throw new CurrencyMismatchError(currency, current.currency);
       }
@@ -183,9 +167,6 @@ export class WalletService {
         })
         .returning();
 
-      // Authoritative money-moving check: a guarded conditional debit. The WHERE clause
-      // makes the balance>=amount test atomic with the write; 0 rows back means the hold
-      // would overdraw, so the whole tx (incl. the inserted row) rolls back.
       const debited = await txn
         .update(wallet)
         .set({ balance: sql`${wallet.balance} - ${amount}` })
@@ -224,9 +205,6 @@ export class WalletService {
       conditions.push(lte(walletTransaction.createdAt, new Date(filters.dateTo)));
     }
 
-    // The pending-review queue is bounded (tens/hundreds), so we fetch every row matching
-    // the wallet-side SQL filters, enrich + apply the kycStatus filter in memory, then
-    // paginate - otherwise a DB-paginated fetch makes `total` wrong once kycStatus prunes.
     const rows = await db
       .select({ tx: walletTransaction, userId: wallet.userId })
       .from(walletTransaction)
@@ -245,8 +223,6 @@ export class WalletService {
     const start = (page - 1) * limit;
     const pageRows = matching.slice(start, start + limit);
 
-    // One batched velocity query for the wallets on this page: withdrawals (any status)
-    // in the trailing 24h, grouped + counted, so high_frequency is not an N+1 per row.
     const pageWalletIds = [...new Set(pageRows.map((r) => r.tx.walletId))];
     const frequentWalletIds = new Set<string>();
     if (pageWalletIds.length > 0) {
@@ -289,11 +265,6 @@ export class WalletService {
     return { items, total: matching.length, page, limit };
   }
 
-  /**
-   * Approve: Pending -> Processing (commit + emit), send to PSP, then Completed on success
-   * or Failed + refund on PSP error. Robust PSP idempotency-key/reconciliation for a
-   * lost-response is deferred - same scope boundary the deposit path declares.
-   */
   async approveWithdrawal(adminId: string, withdrawalId: string): Promise<TransactionResult> {
     const reviewedAt = new Date();
 
@@ -306,8 +277,6 @@ export class WalletService {
           .for('update'),
         new WithdrawalNotFoundError(withdrawalId),
       );
-      // Idempotency guard - only a pending withdrawal can be approved, so a concurrent
-      // or repeated approve cannot double-send to the PSP.
       if (current.status !== 'pending' || current.type !== 'withdrawal') {
         throw new WithdrawalNotPendingError();
       }
@@ -338,7 +307,6 @@ export class WalletService {
         adminId,
       });
     } catch (err) {
-      // Payout did not happen - mark failed and return the held funds in one transaction.
       await this.drizzle.db.transaction(async (txn) => {
         await txn
           .update(walletTransaction)

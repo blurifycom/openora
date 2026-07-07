@@ -17,6 +17,11 @@ export function createPlayerRouter(player: PlayerService, adminGuard: AdminGuard
       return mapErrors({ NOT_FOUND: PlayerNotFoundError }, () => player.get(input.playerId));
     }),
 
+    getByUserId: os.getByUserId.handler(async ({ input, context }) => {
+      await adminGuard.assert(context, 'player', 'view');
+      return mapErrors({ NOT_FOUND: PlayerNotFoundError }, () => player.getByUserId(input.userId));
+    }),
+
     update: os.update.handler(async ({ input, context }) => {
       const { userId: actorId } = await adminGuard.assert(context, 'player', 'update');
       // A KYC-status transition is a regulated compliance action (bypassing it via

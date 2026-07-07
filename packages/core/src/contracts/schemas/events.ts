@@ -1,6 +1,11 @@
 import * as z from 'zod';
 import { TimestampSchema, UuidSchema } from './common.js';
-import { GeoRuleActionSchema } from './compliance.js';
+import {
+  GeoRuleActionSchema,
+  LimitTypeSchema,
+  LimitPeriodSchema,
+  ExclusionKindSchema,
+} from './compliance.js';
 import { LeaderboardMetricSchema, LeaderboardPeriodSchema } from './engagement.js';
 import { CurrencyCodeSchema, CountryCodeSchema } from './igaming-config.js';
 import { PermissionLevelSchema } from './iam.js';
@@ -124,6 +129,47 @@ export const domainEventSchemas = {
 
   'compliance.limit.upserted': z.object({ userId: UuidSchema, limitId: UuidSchema }),
   'compliance.limit.removed': z.object({ userId: UuidSchema, limitId: UuidSchema }),
+
+  // Responsible-Gambling admin actions. `userId` = the subject player, `actorId` =
+  // the acting admin (the envelope carries no caller, so it is explicit for the audit
+  // trail). login_blocked is system-driven (no actor) and a failure outcome.
+  'rg.limit.set': z.object({
+    userId: UuidSchema,
+    actorId: UuidSchema,
+    limitId: UuidSchema,
+    type: LimitTypeSchema,
+    period: LimitPeriodSchema,
+    amount: z.number(),
+    // null when this is the first limit of that (type, period).
+    previousAmount: z.number().nullable(),
+  }),
+  'rg.cooling_off.activated': z.object({
+    userId: UuidSchema,
+    actorId: UuidSchema,
+    exclusionId: UuidSchema,
+    expiresAt: TimestampSchema,
+    reason: z.string(),
+  }),
+  'rg.self_exclusion.activated': z.object({
+    userId: UuidSchema,
+    actorId: UuidSchema,
+    exclusionId: UuidSchema,
+    permanent: z.boolean(),
+    expiresAt: TimestampSchema.nullable(),
+    reason: z.string(),
+  }),
+  'rg.self_exclusion.lifted': z.object({
+    userId: UuidSchema,
+    actorId: UuidSchema,
+    exclusionId: UuidSchema,
+    kind: ExclusionKindSchema,
+    reason: z.string(),
+  }),
+  'rg.exclusion.login_blocked': z.object({
+    userId: UuidSchema,
+    ip: z.string().nullable().optional(),
+    userAgent: z.string().nullable().optional(),
+  }),
 
   // A player's KYC status changed. userId = subject player; actorId = the admin who
   // acted, or null for system-driven changes (vendor decision, webhook, threshold
