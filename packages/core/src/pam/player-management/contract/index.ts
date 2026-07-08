@@ -6,10 +6,18 @@ import {
   PlayerStatusSchema,
   KycStatusSchema,
   UuidSchema,
+  TagKeySchema,
+  PaginatedPlayerSearchArgsSchema,
 } from '@blurifycom/core/contracts';
-import { PageQuerySchema, paginated } from '@blurifycom/core/contracts/kit';
+import { paginated } from '@blurifycom/core/contracts/kit';
 
 export { PlayerSchema, PlayerStatusSchema, KycStatusSchema };
+
+/** Player row enriched with their active tags - used only by the admin list endpoint. */
+export const PlayerWithTagsSchema = PlayerSchema.extend({
+  tags: z.array(TagKeySchema),
+});
+export type PlayerWithTags = z.infer<typeof PlayerWithTagsSchema>;
 
 export const PlayerRegistrationPointSchema = z.object({
   date: z.string(), // YYYY-MM-DD
@@ -26,14 +34,8 @@ export const PlayerSummarySchema = z.object({
 export const playerContract = populateContractRouterPaths({
   list: oc
     .route({ method: 'GET', path: '/players' })
-    .input(
-      PageQuerySchema.extend({
-        search: z.string().optional(),
-        status: PlayerStatusSchema.optional(),
-        kycStatus: KycStatusSchema.optional(),
-      }),
-    )
-    .output(paginated(PlayerSchema)),
+    .input(PaginatedPlayerSearchArgsSchema)
+    .output(paginated(PlayerWithTagsSchema)),
 
   get: oc
     .route({ method: 'GET', path: '/players/{playerId}' })
@@ -42,7 +44,7 @@ export const playerContract = populateContractRouterPaths({
         playerId: UuidSchema,
       }),
     )
-    .output(PlayerSchema),
+    .output(PlayerWithTagsSchema),
 
   // Resolve a player by their identity userId - the id every other module (compliance
   // RG flags, audit, wallet) carries, since none of them know the PAM playerId.
@@ -63,7 +65,7 @@ export const playerContract = populateContractRouterPaths({
         email: z.email().optional(),
       }),
     )
-    .output(PlayerSchema),
+    .output(PlayerWithTagsSchema),
 
   remove: oc
     .route({ method: 'DELETE', path: '/players/{playerId}' })

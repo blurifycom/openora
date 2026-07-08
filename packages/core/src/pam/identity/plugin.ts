@@ -1,5 +1,6 @@
 import {
   ADMIN_USER_DIRECTORY,
+  IDENTITY_READER,
   KYC_ADAPTER,
   LOGIN_ENFORCEMENT,
   NOTIFICATION_DELIVERY_ADAPTER,
@@ -11,6 +12,7 @@ import {
 import { definePlugin, ADMIN_GUARD, EVENT_BUS, DRIZZLE } from '@blurifycom/core/server';
 import { MockKycAdapter } from './adapters/mock/mock-kyc-adapter.js';
 import { DrizzleAdminUserDirectory } from './admin-user-directory.js';
+import { IdentityReaderService } from './adapters/identity-reader.service.js';
 import { createIdentityRouter } from './router/index.js';
 import { IdentityService } from './service/identity.service.js';
 import { SessionService } from './service/session.service.js';
@@ -25,6 +27,8 @@ export default definePlugin({
       ADMIN_USER_DIRECTORY,
       (c) => new DrizzleAdminUserDirectory(c.get(DRIZZLE), c.get(EVENT_BUS)),
     );
+    // Read-only session queries for cross-module consumers (eg tag inactive evaluation).
+    ctx.provide(IDENTITY_READER, (c) => new IdentityReaderService(c.get(DRIZZLE)));
     // Resolved lazily so identity does not depend on the notifications plugin's load order.
     ctx.provide(SEND_EMAIL, (c) => ({
       send: ({ to, subject, body }) =>

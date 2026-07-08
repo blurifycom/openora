@@ -4,10 +4,12 @@ import {
   ADMIN_WALLET_REPORTING,
   PAYMENT_ADAPTER,
   WALLET_COMMANDS,
+  WALLET_READER,
   PLATFORM_CONFIG,
 } from '@blurifycom/core/contracts';
 import { WalletService } from './service/wallet.service.js';
 import { WalletCommandsService } from './service/wallet-commands.service.js';
+import { WalletReaderService } from './adapters/wallet-reader.service.js';
 import { DrizzleAdminWalletReporting } from './admin-reporting.js';
 import { createWalletRouter } from './router/index.js';
 import { MockPaymentAdapter } from './adapters/mock/mock-payment-adapter.js';
@@ -22,6 +24,8 @@ export default definePlugin({
     ctx.provide(PAYMENT_ADAPTER, () => new MockPaymentAdapter());
     // Other modules debit through this port within their own transaction (never importing wallet tables). See ADR-0016.
     ctx.provide(WALLET_COMMANDS, () => new WalletCommandsService());
+    // Read-only queries for cross-module consumers (eg tag evaluation). Never exposes wallet internals.
+    ctx.provide(WALLET_READER, (c) => new WalletReaderService(c.get(DRIZZLE)));
     ctx.provide(ADMIN_WALLET_REPORTING, (c) => new DrizzleAdminWalletReporting(c.get(DRIZZLE)));
     ctx.routers.add('wallet', (c) =>
       createWalletRouter(

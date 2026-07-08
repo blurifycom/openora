@@ -290,14 +290,18 @@
       "group": "core",
       "tables": [
         "player_tag",
-        "tag"
+        "tag",
+        "tag_rule"
       ],
       "routes": [
         "tag.assignPlayerTag",
         "tag.createTag",
         "tag.deleteTag",
+        "tag.listAssignableTags",
         "tag.listPlayerTags",
-        "tag.removePlayerTag"
+        "tag.listTagRules",
+        "tag.removePlayerTag",
+        "tag.upsertTagRule"
       ]
     },
     {
@@ -420,12 +424,23 @@
       ]
     },
     {
+      "category": "identity-reader",
+      "interface": "IdentityReader",
+      "token": "IDENTITY_READER",
+      "status": "wired",
+      "boundIn": [
+        "packages/core/src/pam/identity/plugin.ts",
+        "packages/core/src/pam/tag/plugin.ts"
+      ]
+    },
+    {
       "category": "job-queue",
       "interface": "JobQueueAdapter",
       "token": "JOB_QUEUE",
       "status": "wired",
       "boundIn": [
         "packages/core/src/compliance/plugin.ts",
+        "packages/core/src/pam/tag/plugin.ts",
         "packages/core/src/server/runtime/create-app.ts"
       ]
     },
@@ -506,6 +521,16 @@
         "packages/core/src/sportsbook/plugin.ts",
         "packages/core/src/wallet/plugin.ts"
       ]
+    },
+    {
+      "category": "wallet-reader",
+      "interface": "WalletReader",
+      "token": "WALLET_READER",
+      "status": "wired",
+      "boundIn": [
+        "packages/core/src/pam/tag/plugin.ts",
+        "packages/core/src/wallet/plugin.ts"
+      ]
     }
   ],
   "events": [
@@ -556,6 +581,9 @@
     "rg.self_exclusion.lifted",
     "sportsbook.bet.placed",
     "sportsbook.odds.updated",
+    "tag.player.assigned",
+    "tag.player.removed",
+    "tag.rule.upserted",
     "wallet.deposit.completed",
     "wallet.withdrawal.approved",
     "wallet.withdrawal.completed",
@@ -914,6 +942,10 @@
       "file": "packages/core/src/cms/contract/index.ts"
     },
     {
+      "name": "PaginatedPlayerSearchArgsSchema",
+      "file": "packages/core/src/contracts/schemas/player.ts"
+    },
+    {
       "name": "PaginationSchema",
       "file": "packages/core/src/contracts/schemas/common.ts"
     },
@@ -958,6 +990,10 @@
       "file": "packages/core/src/contracts/schemas/player.ts"
     },
     {
+      "name": "PlayerSearchArgsSchema",
+      "file": "packages/core/src/contracts/schemas/player.ts"
+    },
+    {
       "name": "PlayerSearchSchema",
       "file": "packages/core/src/admin-console/contract/index.ts"
     },
@@ -980,6 +1016,10 @@
     {
       "name": "PlayerUsernameSchema",
       "file": "packages/core/src/admin-console/contract/index.ts"
+    },
+    {
+      "name": "PlayerWithTagsSchema",
+      "file": "packages/core/src/pam/player-management/contract/index.ts"
     },
     {
       "name": "ProviderSelectionSchema",
@@ -1094,6 +1134,10 @@
       "file": "packages/core/src/contracts/schemas/tag.ts"
     },
     {
+      "name": "tagRuleSchema",
+      "file": "packages/core/src/contracts/schemas/tag.ts"
+    },
+    {
       "name": "tagSchema",
       "file": "packages/core/src/contracts/schemas/tag.ts"
     },
@@ -1128,6 +1172,10 @@
     {
       "name": "UpsertLimitInputSchema",
       "file": "packages/core/src/compliance/contract/limits.ts"
+    },
+    {
+      "name": "upsertTagRuleSchema",
+      "file": "packages/core/src/contracts/schemas/tag.ts"
     },
     {
       "name": "UserBonusSchema",
@@ -1285,9 +1333,11 @@
     "GET /lobby/featured",
     "GET /lobby/search",
     "GET /notifications",
+    "GET /player/{playerId}/assignable-tags",
     "GET /player/{playerId}/note",
     "GET /player/{playerId}/player-tag",
     "GET /profile",
+    "GET /tag-rule",
     "GET /wallet/balance",
     "GET /wallet/transactions",
     "GET /wallet/transactions/{userId}",
@@ -1344,6 +1394,7 @@
     "PUT /cms/pages/{id}",
     "PUT /compliance/limits",
     "PUT /compliance/players/{userId}/limits",
-    "PUT /iam/roles/{roleId}/permissions"
+    "PUT /iam/roles/{roleId}/permissions",
+    "PUT /tag-rule/{tagKey}"
   ]
 }

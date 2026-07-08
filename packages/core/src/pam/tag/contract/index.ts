@@ -1,45 +1,25 @@
 import { oc } from '@orpc/contract';
 import {
   UuidSchema,
-  TagKeySchema,
   createTagSchema,
   deleteTagSchema,
   playerTagSchema,
   tagSchema,
-  tagAssignRemoveSource,
+  tagRuleSchema,
+  upsertTagRuleSchema,
+  assignPlayerTagSchema,
+  removePlayerTagSchema,
 } from '@blurifycom/core/contracts';
 import { PageQuerySchema, paginated } from '@blurifycom/core/contracts/kit';
 import z from 'zod';
-
-export {
-  createTagSchema,
-  deleteTagSchema,
-  tagSchema,
-  playerTagSchema,
-  type Tag,
-  type PlayerTag,
-} from '@blurifycom/core/contracts';
-
-const tagAssignRemoveSourceSchema = z.enum(tagAssignRemoveSource);
 
 export const PlayerTagWithTagSchema = playerTagSchema.extend({
   tag: tagSchema.pick({ key: true }),
 });
 export type PlayerTagWithTag = z.infer<typeof PlayerTagWithTagSchema>;
 
-const AssignPlayerTagInputSchema = z.object({
-  playerId: UuidSchema,
-  tagKey: TagKeySchema,
-  assignReason: z.string().min(5),
-  assignActor: tagAssignRemoveSourceSchema,
-});
-
-const RemovePlayerTagInputSchema = z.object({
-  playerId: UuidSchema,
-  tagKey: TagKeySchema,
-  removalReason: z.string().min(5),
-  removalActor: tagAssignRemoveSourceSchema,
-});
+const AssignPlayerTagInputSchema = assignPlayerTagSchema.omit({ assignActorUserId: true });
+const RemovePlayerTagInputSchema = removePlayerTagSchema.omit({ removalActorUserId: true });
 
 export const tagContract = {
   createTag: oc.route({ method: 'POST', path: '/tag' }).input(createTagSchema).output(tagSchema),
@@ -63,4 +43,19 @@ export const tagContract = {
     .route({ method: 'DELETE', path: '/player/{playerId}/player-tag/{tagKey}' })
     .input(RemovePlayerTagInputSchema)
     .output(PlayerTagWithTagSchema),
+
+  listAssignableTags: oc
+    .route({ method: 'GET', path: '/player/{playerId}/assignable-tags' })
+    .input(z.object({ playerId: UuidSchema }))
+    .output(z.array(tagSchema)),
+
+  listTagRules: oc
+    .route({ method: 'GET', path: '/tag-rule' })
+    .input(z.object({}))
+    .output(z.array(tagRuleSchema)),
+
+  upsertTagRule: oc
+    .route({ method: 'PUT', path: '/tag-rule/{tagKey}' })
+    .input(upsertTagRuleSchema)
+    .output(tagRuleSchema),
 };

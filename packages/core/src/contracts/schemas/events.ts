@@ -7,11 +7,14 @@ import {
   ExclusionKindSchema,
 } from './compliance.js';
 import { LeaderboardMetricSchema, LeaderboardPeriodSchema } from './engagement.js';
+import { TagKeySchema } from './tag.js';
 import { CurrencyCodeSchema, CountryCodeSchema } from './igaming-config.js';
 import { PermissionLevelSchema } from './iam.js';
 import { KycStatusSchema } from './player.js';
 
 const iamRoleEventBase = z.object({ roleId: UuidSchema, actorId: UuidSchema });
+const actorReasonBase = z.object({ actorId: UuidSchema, reason: z.string() });
+const tagPlayerEventBase = actorReasonBase.extend({ playerId: UuidSchema, tagKey: TagKeySchema });
 const permissionLevelEntries = z.array(
   z.object({ resource: z.string(), level: PermissionLevelSchema }),
 );
@@ -143,27 +146,21 @@ export const domainEventSchemas = {
     // null when this is the first limit of that (type, period).
     previousAmount: z.number().nullable(),
   }),
-  'rg.cooling_off.activated': z.object({
+  'rg.cooling_off.activated': actorReasonBase.extend({
     userId: UuidSchema,
-    actorId: UuidSchema,
     exclusionId: UuidSchema,
     expiresAt: TimestampSchema,
-    reason: z.string(),
   }),
-  'rg.self_exclusion.activated': z.object({
+  'rg.self_exclusion.activated': actorReasonBase.extend({
     userId: UuidSchema,
-    actorId: UuidSchema,
     exclusionId: UuidSchema,
     permanent: z.boolean(),
     expiresAt: TimestampSchema.nullable(),
-    reason: z.string(),
   }),
-  'rg.self_exclusion.lifted': z.object({
+  'rg.self_exclusion.lifted': actorReasonBase.extend({
     userId: UuidSchema,
-    actorId: UuidSchema,
     exclusionId: UuidSchema,
     kind: ExclusionKindSchema,
-    reason: z.string(),
   }),
   'rg.exclusion.login_blocked': z.object({
     userId: UuidSchema,
@@ -257,6 +254,17 @@ export const domainEventSchemas = {
   }),
   'iam.role.assigned': iamRoleEventBase.extend({ userId: UuidSchema }),
   'iam.role.revoked': iamRoleEventBase.extend({ userId: UuidSchema }),
+
+  // Emitted after any tag is assigned to or removed from a player (both automated and manual).
+  // actorId is the user performing the action (SYSTEM_ACTOR_ID for automated ops).
+  'tag.player.assigned': tagPlayerEventBase,
+  'tag.player.removed': tagPlayerEventBase,
+  // Emitted after an admin creates or updates a tag rule configuration.
+  'tag.rule.upserted': z.object({
+    tagKey: TagKeySchema,
+    actorId: UuidSchema,
+    after: z.record(z.string(), z.unknown()),
+  }),
 } as const;
 
 export type DomainEventName = keyof typeof domainEventSchemas;

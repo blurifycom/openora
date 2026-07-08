@@ -5,10 +5,17 @@ import {
   findOneOrThrow,
   pageToOffset,
 } from '@blurifycom/core/server';
-import type { KycStatusWriter, PlayerStatus, KycStatus, Player } from '@blurifycom/core/contracts';
-import { eq, ilike, count, or, and, gte, desc, sql, ne } from 'drizzle-orm';
+import type {
+  KycStatusWriter,
+  PlayerStatus,
+  KycStatus,
+  Player,
+  TagKey,
+} from '@blurifycom/core/contracts';
+import { eq, ilike, count, or, and, gte, desc, sql, ne, inArray, isNull } from 'drizzle-orm';
 import { player } from '@blurifycom/core/pam/schema/profile';
 import { user } from '@blurifycom/core/pam/schema/identity';
+import { playerTag, tag } from '@blurifycom/core/pam/schema/tag';
 import { toPlayer, fetchEmailByUserId } from '../../shared/player-mapper.js';
 
 export const PlayerNotFoundError = makeNotFoundError('Player');
@@ -30,12 +37,14 @@ export class PlayerService {
     search,
     status,
     kycStatus,
+    tags,
   }: {
     page: number;
     limit: number;
     search?: string;
     status?: PlayerStatus;
     kycStatus?: KycStatus;
+    tags?: TagKey[];
   }) {
     const db = this.drizzle.db;
     const conditions = [];
@@ -50,12 +59,34 @@ export class PlayerService {
         ),
       );
     }
+    if (tags && tags.length > 0) {
+      conditions.push(
+        inArray(
+          player.id,
+          db
+            .select({ id: playerTag.playerId })
+            .from(playerTag)
+            .innerJoin(tag, eq(playerTag.tagId, tag.id))
+            .where(and(inArray(tag.key, tags), isNull(playerTag.removedAt))),
+        ),
+      );
+    }
     const whereClause = conditions.length > 0 ? and(...conditions) : undefined;
     const [rows, [{ n }]] = await Promise.all([
       db
-        .select({ player, email: user.email })
+        .select({
+          player,
+          email: user.email,
+          // Cast to text[] so pg driver deserializes as string[] (no parser for enum arrays).
+          tags: sql<
+            string[]
+          >`coalesce(array_agg(${tag.key}::text) filter (where ${tag.key} is not null), '{}'::text[])`,
+        })
         .from(player)
         .leftJoin(user, eq(user.id, player.userId))
+        .leftJoin(playerTag, and(eq(playerTag.playerId, player.id), isNull(playerTag.removedAt)))
+        .leftJoin(tag, eq(tag.id, playerTag.tagId))
+        .groupBy(player.id, user.email)
         .where(whereClause)
         .orderBy(desc(player.createdAt))
         .limit(limit)
@@ -66,16 +97,36 @@ export class PlayerService {
         .leftJoin(user, eq(user.id, player.userId))
         .where(whereClause),
     ]);
-    const items = rows.map((r) => toPlayer(r.player, r.email ?? ''));
+    const items = rows.map((r) => ({
+      ...toPlayer(r.player, r.email ?? ''),
+      tags: r.tags as TagKey[],
+    }));
     return { items, total: Number(n), page, limit };
   }
 
+  private async fetchOneWithTags(playerId: string) {
+    const db = this.drizzle.db;
+    const [row] = await db
+      .select({
+        player,
+        email: user.email,
+        // Cast to text[] so pg driver deserializes as string[] (no parser for enum arrays).
+        tags: sql<
+          string[]
+        >`coalesce(array_agg(${tag.key}::text) filter (where ${tag.key} is not null), '{}'::text[])`,
+      })
+      .from(player)
+      .leftJoin(user, eq(user.id, player.userId))
+      .leftJoin(playerTag, and(eq(playerTag.playerId, player.id), isNull(playerTag.removedAt)))
+      .leftJoin(tag, eq(tag.id, playerTag.tagId))
+      .groupBy(player.id, user.email)
+      .where(eq(player.id, playerId));
+    if (!row) throw new PlayerNotFoundError(playerId);
+    return { ...toPlayer(row.player, row.email ?? ''), tags: row.tags as TagKey[] };
+  }
+
   async get(playerId: string) {
-    const record = findOneOrThrow(
-      await this.drizzle.db.select().from(player).where(eq(player.id, playerId)),
-      new PlayerNotFoundError(playerId),
-    );
-    return toPlayer(record, await fetchEmailByUserId(this.drizzle, record.userId));
+    return this.fetchOneWithTags(playerId);
   }
 
   async getByUserId(userId: string) {
@@ -87,11 +138,7 @@ export class PlayerService {
   }
 
   async getExtended(playerId: string) {
-    const record = findOneOrThrow(
-      await this.drizzle.db.select().from(player).where(eq(player.id, playerId)),
-      new PlayerNotFoundError(playerId),
-    );
-    return toPlayer(record, await fetchEmailByUserId(this.drizzle, record.userId));
+    return this.fetchOneWithTags(playerId);
   }
 
   async update(
@@ -121,7 +168,7 @@ export class PlayerService {
     const kycChanged = data.kycStatus !== undefined && data.kycStatus !== existing.kycStatus;
 
     // One transaction so the email/field patch + the KYC write commit or roll back together.
-    const record = await this.drizzle.db.transaction(async (trx) => {
+    await this.drizzle.db.transaction(async (trx) => {
       if (data.email !== undefined) {
         await trx.update(user).set({ email: data.email }).where(eq(user.id, existing.userId));
       }
@@ -140,11 +187,14 @@ export class PlayerService {
           trx,
         );
       }
-      const rows = await trx.select().from(player).where(eq(player.id, playerId));
-      return findOneOrThrow(rows, new PlayerNotFoundError(playerId));
+      // Verify the row still exists after all writes before the txn commits.
+      findOneOrThrow(
+        await trx.select().from(player).where(eq(player.id, playerId)),
+        new PlayerNotFoundError(playerId),
+      );
     });
 
-    return toPlayer(record, await fetchEmailByUserId(this.drizzle, record.userId));
+    return this.fetchOneWithTags(playerId);
   }
 
   async remove(playerId: Player['id']) {

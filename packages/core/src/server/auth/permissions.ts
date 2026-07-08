@@ -17,6 +17,7 @@ export const statement = {
   affiliate: ['view', 'manage'] as const,
   sessions: ['view', 'revoke'] as const,
   'player-note': ['view', 'create'] as const,
+  'tag-rule': ['view', 'update'] as const,
 } as const;
 
 export const ac = createAccessControl(statement);
@@ -38,6 +39,7 @@ export const adminRole = ac.newRole({
   affiliate: ['view', 'manage'],
   sessions: ['view', 'revoke'],
   'player-note': ['view', 'create'],
+  'tag-rule': ['view', 'update'],
 });
 
 export const supportRole = ac.newRole({

@@ -73,6 +73,7 @@ const SERVICE_FILE_ALLOWLIST = new Set([
   're-kyc-trigger.ts',
   'kyc-status-writer.ts',
   'rg-eval.ts',
+  'tag-mappers.ts',
 ]);
 
 function filename(context) {

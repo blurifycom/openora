@@ -107,6 +107,7 @@
       "@blurifycom/core/pam/react": ["./src/pam/react.ts"],
       "@blurifycom/core/pam/schema/identity": ["./src/pam/identity/schema/index.ts"],
       "@blurifycom/core/pam/schema/profile": ["./src/pam/profile/schema/index.ts"],
+      "@blurifycom/core/pam/schema/tag": ["./src/pam/tag/schema/index.ts"],
       "@blurifycom/core/pam/server": ["./src/pam/server.ts"],
       "@blurifycom/core/pam/tag/seed": ["./src/pam/tag/seed/index.ts"],
       "@blurifycom/core/react": ["./src/react/index.ts"],

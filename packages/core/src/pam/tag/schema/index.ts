@@ -1,5 +1,15 @@
 import { tagAssignRemoveSource, tagKeys } from '@blurifycom/core/contracts';
-import { pgTable, uuid, text, timestamp, index, boolean, pgEnum } from 'drizzle-orm/pg-core';
+import {
+  pgTable,
+  uuid,
+  text,
+  timestamp,
+  index,
+  boolean,
+  pgEnum,
+  integer,
+  decimal,
+} from 'drizzle-orm/pg-core';
 
 export const tagAssignRemoveSourceEnum = pgEnum('tag_assign_remove_source', tagAssignRemoveSource);
 export const tagKeyEnum = pgEnum('tag_key', tagKeys);
@@ -45,3 +55,24 @@ export const playerTag = pgTable(
 
 export type Tag = typeof tag.$inferSelect;
 export type PlayerTag = typeof playerTag.$inferSelect;
+
+export const tagRule = pgTable('tag_rule', {
+  id: uuid().primaryKey().defaultRandom(),
+  tagId: uuid()
+    .notNull()
+    .references(() => tag.id, { onDelete: 'restrict' })
+    .unique(),
+  isEnabled: boolean().notNull().default(false),
+  /** Amount threshold matching wallet decimal convention (high_roller: lifetime deposits; large_depositor: single deposit; high_risk: single withdrawal). */
+  thresholdAmount: decimal(),
+  /** Days threshold (inactive: days since last login; high_risk: rolling window for withdrawal count). */
+  thresholdDays: integer(),
+  /** Count threshold (high_risk: number of withdrawals within thresholdDays). */
+  thresholdCount: integer(),
+  updatedAt: timestamp({ withTimezone: true })
+    .notNull()
+    .$onUpdateFn(() => new Date()),
+  createdAt: timestamp({ withTimezone: true }).notNull().defaultNow(),
+});
+
+export type TagRule = typeof tagRule.$inferSelect;

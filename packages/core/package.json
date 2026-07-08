@@ -376,6 +376,11 @@
       "import": "./dist/pam/profile/schema/index.js",
       "default": "./dist/pam/profile/schema/index.js"
     },
+    "./pam/schema/tag": {
+      "types": "./dist/pam/tag/schema/index.d.ts",
+      "import": "./dist/pam/tag/schema/index.js",
+      "default": "./dist/pam/tag/schema/index.js"
+    },
     "./pam/plugins/identity": {
       "types": "./dist/pam/identity/plugin.d.ts",
       "import": "./dist/pam/identity/plugin.js",

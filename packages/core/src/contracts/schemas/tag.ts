@@ -1,5 +1,5 @@
 import z from 'zod';
-import { UuidSchema } from './common.js';
+import { TimestampSchema, UuidSchema } from './common.js';
 
 export const tagAssignRemoveSource = ['scheduled', 'manual'] as const;
 const tagAssignRemoveSourceSchema = z.enum(tagAssignRemoveSource);
@@ -24,8 +24,8 @@ export const tagSchema = z.object({
   id: UuidSchema,
   key: TagKeySchema,
   isSticky: z.boolean().default(false),
-  createdAt: z.coerce.date(),
-  updatedAt: z.coerce.date(),
+  createdAt: TimestampSchema,
+  updatedAt: TimestampSchema,
 });
 export type Tag = z.infer<typeof tagSchema>;
 
@@ -49,8 +49,8 @@ export const playerTagSchema = z.object({
   removalReason: z.string().nullable(),
   removalActor: tagAssignRemoveSourceSchema.nullable(),
   removalActorUserId: UuidSchema.nullable(),
-  createdAt: z.coerce.date(),
-  updatedAt: z.coerce.date(),
+  createdAt: TimestampSchema,
+  updatedAt: TimestampSchema,
 });
 export type PlayerTag = z.infer<typeof playerTagSchema>;
 
@@ -69,3 +69,27 @@ export const removePlayerTagSchema = playerTagSchema.pick({ playerId: true }).ex
   removalActorUserId: UuidSchema.nullable(),
 });
 export type RemovePlayerTagInput = z.infer<typeof removePlayerTagSchema>;
+
+export const tagRuleSchema = z.object({
+  id: UuidSchema,
+  tagId: UuidSchema,
+  tagKey: TagKeySchema,
+  isEnabled: z.boolean(),
+  /** Amount threshold in the wallet's decimal convention - same unit as wallet.amount and wallet_transaction.amount (high_roller: lifetime deposits; large_depositor: single deposit; high_risk: single withdrawal). */
+  thresholdAmount: z.coerce.number().nullable(),
+  /** Inactivity or rolling-window length in days (inactive, high_risk). */
+  thresholdDays: z.number().int().nullable(),
+  /** Minimum event count within the window (high_risk withdrawal frequency). */
+  thresholdCount: z.number().int().nullable(),
+  createdAt: TimestampSchema,
+  updatedAt: TimestampSchema,
+});
+export type TagRule = z.infer<typeof tagRuleSchema>;
+
+export const upsertTagRuleSchema = tagRuleSchema.omit({
+  id: true,
+  tagId: true,
+  createdAt: true,
+  updatedAt: true,
+});
+export type UpsertTagRuleInput = z.infer<typeof upsertTagRuleSchema>;

@@ -35,6 +35,7 @@ function fakeService(): PlayerService {
     lastSeenAt: null,
     createdAt: '2026-01-01T00:00:00.000Z',
     updatedAt: '2026-01-01T00:00:00.000Z',
+    tags: [],
   };
   return mock<PlayerService>({ update: vi.fn().mockResolvedValue(playerDto) });
 }

@@ -1,6 +1,8 @@
 import * as z from 'zod';
 import { TimestampSchema, UuidSchema } from './common.js';
 import { CurrencyCodeSchema } from './igaming-config.js';
+import { TagKeySchema } from './tag.js';
+import { PageQuerySchema } from '../kit.js';
 
 export const PLAYER_STATUSES = [
   'active',
@@ -35,12 +37,26 @@ export const PlayerSchema = z.object({
   totalDeposits: z.number(),
   lastSeenAt: z.string().nullable(),
   createdAt: TimestampSchema,
-  updatedAt: z.string(),
+  updatedAt: TimestampSchema,
+});
+
+export const PlayerSearchArgsSchema = z.object({
+  search: z.string().optional(),
+  status: PlayerStatusSchema.optional(),
+  kycStatus: KycStatusSchema.optional(),
+  tags: z.array(TagKeySchema).optional(),
+});
+
+export const PaginatedPlayerSearchArgsSchema = z.object({
+  ...PlayerSearchArgsSchema.shape,
+  ...PageQuerySchema.shape,
 });
 
 export type Player = z.infer<typeof PlayerSchema>;
 export type PlayerStatus = z.infer<typeof PlayerStatusSchema>;
 export type KycStatus = z.infer<typeof KycStatusSchema>;
+
+export type PaginatedPlayerListSearchArgs = z.infer<typeof PaginatedPlayerSearchArgsSchema>;
 
 export const UpdatePlayerProfileInputSchema = PlayerSchema.pick({
   displayName: true,

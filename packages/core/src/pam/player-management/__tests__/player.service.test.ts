@@ -14,6 +14,29 @@ function chain(result: unknown): any {
   return proxy;
 }
 
+// Chainable proxy that captures the first non-undefined argument passed to .where()
+function makeCapturingChain(results: unknown[]): { proxy: any; captured: { where: unknown[] } } {
+  const captured = { where: [] as unknown[] };
+  let callIdx = 0;
+  const proxy: any = new Proxy(function () {}, {
+    get(_t, prop) {
+      if (prop === 'then') {
+        const result = results[callIdx++ % results.length];
+        return (res: (v: unknown) => unknown) => res(result);
+      }
+      if (prop === 'where') {
+        return (clause: unknown) => {
+          captured.where.push(clause);
+          return proxy;
+        };
+      }
+      return () => proxy;
+    },
+    apply: () => proxy,
+  });
+  return { proxy, captured };
+}
+
 function makeService(dayCounts: DayCountRow[] = []): PlayerService {
   const db = { select: vi.fn(() => chain(dayCounts)) };
   const writer = { setStatus: vi.fn() } as never;
@@ -84,5 +107,57 @@ describe('PlayerService.registrationsOverTime', () => {
     const today = points.find((p) => p.date === todayKey);
     expect(today?.count).toBe(3);
     expect(points.filter((p) => p.date !== todayKey).every((p) => p.count === 0)).toBe(true);
+  });
+});
+
+describe('PlayerService.list tag filter', () => {
+  const emptyPlayerRow = {
+    player: {
+      id: 'p-1',
+      userId: 'u-1',
+      displayName: 'Player',
+      status: 'active',
+      kycStatus: 'pending',
+      level: 1,
+      totalWagered: '0',
+      totalDeposits: '0',
+      lastSeenAt: null,
+      createdAt: new Date(),
+      updatedAt: new Date(),
+    },
+    email: 'p@test.com',
+    tags: [],
+  };
+
+  it('applies a WHERE clause when tags are provided', async () => {
+    const { proxy, captured } = makeCapturingChain([[emptyPlayerRow], [{ n: 0 }]]);
+    const db = { select: vi.fn(() => proxy) };
+    const svc = new PlayerService({ db } as never, { setStatus: vi.fn() } as never);
+
+    await svc.list({ page: 1, limit: 20, tags: ['self_excluded', 'kyc_rejected'] }).catch(() => {});
+
+    // At least one .where() call must have received a non-undefined clause
+    expect(captured.where.some((c) => c !== undefined)).toBe(true);
+  });
+
+  it('applies no WHERE clause when tags are absent', async () => {
+    const { proxy, captured } = makeCapturingChain([[emptyPlayerRow], [{ n: 0 }]]);
+    const db = { select: vi.fn(() => proxy) };
+    const svc = new PlayerService({ db } as never, { setStatus: vi.fn() } as never);
+
+    await svc.list({ page: 1, limit: 20 }).catch(() => {});
+
+    // All .where() calls should receive undefined when no filter is active
+    expect(captured.where.every((c) => c === undefined)).toBe(true);
+  });
+
+  it('applies no WHERE clause when tags is an empty array', async () => {
+    const { proxy, captured } = makeCapturingChain([[emptyPlayerRow], [{ n: 0 }]]);
+    const db = { select: vi.fn(() => proxy) };
+    const svc = new PlayerService({ db } as never, { setStatus: vi.fn() } as never);
+
+    await svc.list({ page: 1, limit: 20, tags: [] }).catch(() => {});
+
+    expect(captured.where.every((c) => c === undefined)).toBe(true);
   });
 });

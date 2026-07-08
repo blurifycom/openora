@@ -1,6 +1,6 @@
 {
-  "id": "13854122-e9e6-4108-a16a-907b0e87bb93",
-  "prevId": "236bc693-a1bb-4b75-ae07-f681f84702ac",
+  "id": "a741bcbd-4c86-44e2-9154-4421b714d9fc",
+  "prevId": "72d00f6b-629a-476e-9edf-e02f7b559fc7",
   "version": "7",
   "dialect": "postgresql",
   "tables": {
@@ -189,10 +189,9 @@
           "notNull": true,
           "default": "gen_random_uuid()"
         },
-        "tag_key": {
-          "name": "tag_key",
-          "type": "tag_key",
-          "typeSchema": "public",
+        "tag_id": {
+          "name": "tag_id",
+          "type": "uuid",
           "primaryKey": false,
           "notNull": true
         },
@@ -236,13 +235,23 @@
         }
       },
       "indexes": {},
-      "foreignKeys": {},
+      "foreignKeys": {
+        "tag_rule_tag_id_tag_id_fk": {
+          "name": "tag_rule_tag_id_tag_id_fk",
+          "tableFrom": "tag_rule",
+          "tableTo": "tag",
+          "columnsFrom": ["tag_id"],
+          "columnsTo": ["id"],
+          "onDelete": "restrict",
+          "onUpdate": "no action"
+        }
+      },
       "compositePrimaryKeys": {},
       "uniqueConstraints": {
-        "tag_rule_tag_key_unique": {
-          "name": "tag_rule_tag_key_unique",
+        "tag_rule_tagId_unique": {
+          "name": "tag_rule_tagId_unique",
           "nullsNotDistinct": false,
-          "columns": ["tag_key"]
+          "columns": ["tag_id"]
         }
       },
       "policies": {},

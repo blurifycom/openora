@@ -225,6 +225,32 @@ function mapEventToRecord(topic: string, p: Record<string, unknown>): RecordInpu
     };
   }
 
+  // System-automated or admin-manual tag assignment/removal.
+  // actorId = SYSTEM_ACTOR_ID (zero UUID) for automated ops; admin user id for manual.
+  if (topic === 'tag.player.assigned' || topic === 'tag.player.removed') {
+    const SYSTEM_ACTOR = '00000000-0000-0000-0000-000000000000';
+    const actorId = str(p['actorId']);
+    return {
+      ...base,
+      actorType: actorId === SYSTEM_ACTOR ? 'system' : 'admin',
+      actorId,
+      resourceType: 'player',
+      resourceId: str(p['playerId']),
+      after: { tagKey: p['tagKey'], reason: p['reason'] },
+    };
+  }
+
+  // Admin updated a tag rule configuration.
+  if (topic === 'tag.rule.upserted') {
+    return {
+      ...base,
+      actorType: 'admin',
+      actorId: str(p['actorId']),
+      resourceType: 'tag-rule',
+      resourceId: str(p['tagKey']),
+      after: isRecord(p['after']) ? p['after'] : null,
+    };
+  }
   // RG admin actions. `userId` = subject player (resource), `actorId` = acting admin.
   // limit.set + lifted carry a before-snapshot so the regulatory export is diffable.
   if (
@@ -247,18 +273,6 @@ function mapEventToRecord(topic: string, p: Record<string, unknown>): RecordInpu
       resourceId: str(p['userId']),
       before,
       after: p,
-    };
-  }
-
-  // A blocked/self-excluded player attempted login: system-driven, failure outcome,
-  // subject = the player.
-  if (topic === 'rg.exclusion.login_blocked') {
-    return {
-      ...base,
-      actorType: 'system',
-      resourceType: 'player',
-      resourceId: str(p['userId']),
-      result: 'failure',
     };
   }
 
@@ -332,6 +346,9 @@ const SUBSCRIBED_TOPICS: DomainEventName[] = [
   'iam.role.permissions.changed',
   'iam.role.assigned',
   'iam.role.revoked',
+  'tag.player.assigned',
+  'tag.player.removed',
+  'tag.rule.upserted',
 ] as const;
 
 export default definePlugin({
