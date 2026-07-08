@@ -38,7 +38,9 @@ jobs:
 
       - uses: changesets/action@v1
         with:
-          version: pnpm version
+          # `pnpm version` resolves to pnpm's built-in semver command, not the package script -
+          # `pnpm run version` forces the script (`changeset version`).
+          version: pnpm run version
           title: 'chore: version packages'
           commit: 'chore: version packages'
         env:
