@@ -1,6 +1,6 @@
 # @openora/mcp
 
-Consumer-facing MCP server for the OSS igaming platform. It exposes the generated
+Consumer-facing MCP server for the OSS igaming framework. It exposes the generated
 platform catalog (`docs/catalog.json`) as read-only MCP tools so an AI agent
 working in a downstream consumer repo (one that installs the `@openora/*` packages,
 not the source tree) can discover what it can extend: modules, adapter swap-seams,

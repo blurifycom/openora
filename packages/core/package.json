@@ -1,7 +1,26 @@
 {
   "name": "@openora/core",
   "version": "0.3.0",
+  "description": "Open-source, headless, plugin-based, AI-native iGaming framework - domain modules, plugin engine, Zod-first contracts, typed React SDK",
+  "keywords": [
+    "ai-native",
+    "casino",
+    "drizzle",
+    "gambling",
+    "headless",
+    "igaming",
+    "orpc",
+    "plugin",
+    "sportsbook",
+    "zod"
+  ],
+  "homepage": "https://github.com/blurifycom/openora",
   "license": "AGPL-3.0-only",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/blurifycom/openora.git",
+    "directory": "packages/core"
+  },
   "files": [
     "dist",
     "tsconfig",

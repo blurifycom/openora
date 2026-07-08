@@ -1,13 +1,14 @@
-# OSS iGaming Platform
+# OSS iGaming Framework
 
-[![CI](https://github.com/blurifycom/oss/actions/workflows/ci.yml/badge.svg?branch=dev)](https://github.com/blurifycom/oss/actions/workflows/ci.yml)
+[![Pipeline](https://github.com/blurifycom/openora/actions/workflows/pipeline.yml/badge.svg?branch=dev)](https://github.com/blurifycom/openora/actions/workflows/pipeline.yml)
+[![npm](https://img.shields.io/npm/v/@openora/core?label=%40openora%2Fcore)](https://www.npmjs.com/package/@openora/core)
 [![License: AGPL v3](https://img.shields.io/badge/license-AGPL--3.0-blue.svg)](./LICENSE)
 [![Node](https://img.shields.io/badge/node-26%2B-339933?logo=node.js&logoColor=white)](#requirements)
 [![pnpm](https://img.shields.io/badge/pnpm-11%2B-F69220?logo=pnpm&logoColor=white)](#requirements)
 [![PRs welcome](https://img.shields.io/badge/PRs-welcome-brightgreen.svg)](./CONTRIBUTING.md)
 [![Code of Conduct](https://img.shields.io/badge/code%20of%20conduct-v2.1-ff69b4.svg)](./CODE_OF_CONDUCT.md)
 
-> Open-source, headless, plugin-based, AI-native iGaming platform. Clone it, extend it, deploy it - without forking core.
+> Open-source, headless, plugin-based, AI-native iGaming framework. Clone it, extend it, deploy it - without forking core.
 
 The platform ships the full backend surface (auth, wallet, lobby, chat, bonus, compliance, backoffice, CMS, aggregator) as composable modules and a typed SDK. Your frontend, branding, and vendor adapters live in your own consumer repo and talk to it over HTTP. Nothing operator-specific lives here.
 
@@ -142,7 +143,7 @@ The platform is headless and ships no UI - backend modules + contracts + the SDK
 
 ## Roadmap
 
-Planned work and progress live on the public board: **[blurifycom/oss roadmap](https://github.com/orgs/blurifycom/projects/1)**. Have a request or found a gap? [Open an issue](https://github.com/blurifycom/oss/issues/new/choose) and we triage it onto the board.
+Planned work and progress live on the public board: **[openora roadmap](https://github.com/orgs/blurifycom/projects/1)**. Have a request or found a gap? [Open an issue](https://github.com/blurifycom/openora/issues/new/choose) and we triage it onto the board.
 
 ## Documentation
 

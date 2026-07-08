@@ -1,9 +1,10 @@
+# Runs standalone on every PR, and as the `ci` gate job inside pipeline.yml
+# (workflow_call) on pushes to dev/stage/tags - one verify definition, two entries.
 name: CI
 
 on:
-  push:
-    branches: [dev]
   pull_request:
+  workflow_call:
 
 concurrency:
   group: ci-${{ github.ref }}

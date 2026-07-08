@@ -1,7 +1,21 @@
 {
   "name": "@openora/mcp",
   "version": "0.3.0",
+  "description": "MCP server exposing the Openora iGaming framework catalog (routes, schemas, adapter seams, events) to AI coding agents in consumer repos",
+  "keywords": [
+    "ai-native",
+    "igaming",
+    "mcp",
+    "model-context-protocol",
+    "openora"
+  ],
+  "homepage": "https://github.com/blurifycom/openora",
   "license": "AGPL-3.0-only",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/blurifycom/openora.git",
+    "directory": "packages/mcp"
+  },
   "bin": "./dist/main.js",
   "files": [
     "dist",
