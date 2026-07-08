@@ -54,7 +54,10 @@ export const extensions = [
 
   // Overlay extensions (<your-app>/src/extensions/<name>/plugin.ts)
   // Add via: pnpm gen plugin <name>
-  // Consumer apps add their own overlay entries here (eg BullMQ, RabbitMQ,
-  // custom adapters). The platform ships in-process defaults for JOB_QUEUE and
-  // MESSAGE_BROKER; bind a durable driver by adding your own infra plugin.
+  // Consumer apps add their own overlay entries here (eg RabbitMQ, custom adapters).
+  // The platform ships in-process defaults plus Redis-backed reference drivers that
+  // auto-bind when REDIS_URL is set: BullMQ for JOB_QUEUE (durable jobs, real cron) and
+  // the Redis cache/rate-limiter (ADR-0028). MESSAGE_BROKER stays in-process (AMQP_URL
+  // enables the outbox; a durable broker is still an overlay). Rebind any of these
+  // with your own infra plugin (Container last-wins).
 ];

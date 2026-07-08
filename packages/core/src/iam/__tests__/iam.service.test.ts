@@ -70,8 +70,23 @@ function routingDrizzle(byTable: {
       return chain;
     }),
     innerJoin: vi.fn().mockReturnThis(),
+    leftJoin: vi.fn().mockReturnThis(),
     where: vi.fn().mockImplementation(() => {
       const route = (): unknown[] => {
+        // getGrants' single join (select includes isSuperAdmin). Synthesize the joined
+        // rows from the decomposed byTable so existing test data keeps working: one row
+        // per (role x permission), super roles collapse to a bypass row, empty -> [].
+        if (lastSelect && 'isSuperAdmin' in lastSelect) {
+          const assignments = (byTable.assignment ?? []) as { roleId: string }[];
+          if (assignments.length === 0) return [];
+          const superIds = new Set((byTable.superRole ?? []).map((r) => (r as { id: string }).id));
+          if (assignments.some((a) => superIds.has(a.roleId))) {
+            return [{ isSuperAdmin: true, resource: null, level: null }];
+          }
+          const perms = (byTable.permission ?? []) as { resource: string; level: string }[];
+          if (perms.length === 0) return [{ isSuperAdmin: false, resource: null, level: null }];
+          return perms.map((p) => ({ isSuperAdmin: false, resource: p.resource, level: p.level }));
+        }
         if ('emailVerified' in table) return byTable.user ?? [];
         if ('level' in table) return byTable.permission ?? [];
         // adminRoleAssignment has `userId` column. A { roleId }-only select is the
@@ -195,6 +210,70 @@ describe('DbAdminPermissionResolver', () => {
     expect(grants).toContainEqual({ resource: 'withdrawal', action: 'approve' });
     // read player must NOT yield write actions.
     expect(grants).not.toContainEqual({ resource: 'player', action: 'ban' });
+  });
+});
+
+describe('DbAdminPermissionResolver caching', () => {
+  // Counts only the getGrants join (the query flagged by leftJoin); the un-joined
+  // where() is the invalidateRole holder lookup, which returns `holders`.
+  function grantsDrizzle(holders: { userId: string }[] = []) {
+    const state = { grantsQueries: 0 };
+    let joined = false;
+    const chain: Record<string, unknown> = {
+      select: () => chain,
+      from: () => chain,
+      innerJoin: () => chain,
+      leftJoin: () => {
+        joined = true;
+        return chain;
+      },
+      where: () => {
+        if (joined) {
+          joined = false;
+          state.grantsQueries += 1;
+          return Promise.resolve([{ isSuperAdmin: true, resource: null, level: null }]);
+        }
+        return Promise.resolve(holders);
+      },
+    };
+    return { drizzle: mockDb(chain), state };
+  }
+
+  it('serves a repeat lookup from cache without re-querying', async () => {
+    const { drizzle, state } = grantsDrizzle();
+    const resolver = new DbAdminPermissionResolver(drizzle, new core.InProcessCache());
+    await resolver.getGrants('u1');
+    await resolver.getGrants('u1');
+    expect(state.grantsQueries).toBe(1);
+  });
+
+  it('without a cache, every lookup queries', async () => {
+    const { drizzle, state } = grantsDrizzle();
+    const resolver = new DbAdminPermissionResolver(drizzle);
+    await resolver.getGrants('u1');
+    await resolver.getGrants('u1');
+    expect(state.grantsQueries).toBe(2);
+  });
+
+  it('invalidateUser purges so the next lookup re-queries', async () => {
+    const { drizzle, state } = grantsDrizzle();
+    const resolver = new DbAdminPermissionResolver(drizzle, new core.InProcessCache());
+    await resolver.getGrants('u1');
+    await resolver.invalidateUser('u1');
+    await resolver.getGrants('u1');
+    expect(state.grantsQueries).toBe(2);
+  });
+
+  it('invalidateRole purges every current holder of the role', async () => {
+    const { drizzle, state } = grantsDrizzle([{ userId: 'u1' }, { userId: 'u2' }]);
+    const resolver = new DbAdminPermissionResolver(drizzle, new core.InProcessCache());
+    await resolver.getGrants('u1');
+    await resolver.getGrants('u2');
+    expect(state.grantsQueries).toBe(2);
+    await resolver.invalidateRole('role-1');
+    await resolver.getGrants('u1');
+    await resolver.getGrants('u2');
+    expect(state.grantsQueries).toBe(4);
   });
 });
 

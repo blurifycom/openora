@@ -61,6 +61,12 @@ await db.select().from(wallet).where(inArray(wallet.playerId, ids));
 ```
 
 - Select only the columns you use; don't `select(*)` wide rows to read one field.
+- **Build rows by spread + override, never hand-copy field-by-field.** When a row mostly mirrors a
+  validated input, spread it and set only the server-computed fields - `db.insert(x).values({ ...input,
+id, createdAt })` - never re-list `field: input.field` per key (it silently drifts the moment a
+  column is added). Keep fields explicit only for: an order-sensitive hash/signature payload; a source
+  carrying columns the row must not receive (spread then omit them); or a null-vs-undefined boundary
+  that won't coerce (`actorId: input.actorId ?? null`).
 - **Money / critical paths are transactional and idempotent** - a DB guard inside the transaction,
   not just an `idempotencyKey` (delivery is at-least-once).
 

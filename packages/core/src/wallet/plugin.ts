@@ -6,6 +6,9 @@ import {
   WALLET_COMMANDS,
   WALLET_READER,
   PLATFORM_CONFIG,
+  RATE_LIMITER,
+  PLAYER_TAGS,
+  AUDIT_WRITER,
 } from '@blurifycom/core/contracts';
 import { WalletService } from './service/wallet.service.js';
 import { WalletCommandsService } from './service/wallet-commands.service.js';
@@ -16,10 +19,7 @@ import { MockPaymentAdapter } from './adapters/mock/mock-payment-adapter.js';
 
 export default definePlugin({
   id: 'wallet',
-  // The withdrawal queue resolves ADMIN_USER_DIRECTORY (owned by identity) to enrich
-  // items with player username/kycStatus; pin load order so a SERVICE_MANIFEST=wallet
-  // split still finds the port. See ADR-0017.
-  dependsOn: ['identity'],
+  dependsOn: ['identity', 'tag', 'audit'],
   register(ctx) {
     ctx.provide(PAYMENT_ADAPTER, () => new MockPaymentAdapter());
     // Other modules debit through this port within their own transaction (never importing wallet tables). See ADR-0016.
@@ -29,14 +29,18 @@ export default definePlugin({
     ctx.provide(ADMIN_WALLET_REPORTING, (c) => new DrizzleAdminWalletReporting(c.get(DRIZZLE)));
     ctx.routers.add('wallet', (c) =>
       createWalletRouter(
-        new WalletService(
-          c.get(DRIZZLE),
-          c.get(EVENT_BUS),
-          c.get(PAYMENT_ADAPTER),
-          c.get(ADMIN_USER_DIRECTORY),
-          c.has(PLATFORM_CONFIG) ? c.get(PLATFORM_CONFIG) : undefined,
-        ),
+        new WalletService({
+          drizzle: c.get(DRIZZLE),
+          events: c.get(EVENT_BUS),
+          payment: c.get(PAYMENT_ADAPTER),
+          directory: c.get(ADMIN_USER_DIRECTORY),
+          platformConfig: c.has(PLATFORM_CONFIG) ? c.get(PLATFORM_CONFIG) : undefined,
+          limiter: c.get(RATE_LIMITER),
+          riskTags: c.has(PLAYER_TAGS) ? c.get(PLAYER_TAGS) : undefined,
+          audit: c.get(AUDIT_WRITER),
+        }),
         c.get(ADMIN_GUARD),
+        c.get(AUDIT_WRITER),
       ),
     );
   },

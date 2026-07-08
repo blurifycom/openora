@@ -130,6 +130,7 @@ For platform development (this repo); consumer agents ship in `tools/templates/c
 | `operator`          | Outside-in readiness audit; find launch blockers             |
 | `contract-reviewer` | Diff for breaking changes, boundary violations, schema drift |
 | `security-reviewer` | Money/authz/secret-PII/auth-flow risks in changed files      |
+| `quality-reviewer`  | Performance/duplication/simplification/conventions in a diff |
 | `qa`                | API-level tests + hands-on walkthrough; bug triage           |
 | `docs`              | Sync prose docs to code, then `pnpm sync:agents`             |
 

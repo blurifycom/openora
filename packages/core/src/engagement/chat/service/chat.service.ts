@@ -4,6 +4,7 @@ import {
   assertOwnership,
   DrizzleService,
   findOneOrThrow,
+  serializeRow,
 } from '@blurifycom/core/server';
 import type { RealtimeTransport } from '@blurifycom/core/contracts';
 import { eq, and, isNull, lt, desc, asc, notInArray } from 'drizzle-orm';
@@ -49,25 +50,11 @@ function gateContent(content: string): string {
 }
 
 function toRoom(record: typeof chatRoom.$inferSelect) {
-  return {
-    id: record.id,
-    name: record.name,
-    slug: record.slug,
-    isPublic: record.isPublic,
-    createdAt: record.createdAt.toISOString(),
-  };
+  return serializeRow(record, { dateFields: ['createdAt'] });
 }
 
 function toMessage(record: typeof chatMessage.$inferSelect) {
-  return {
-    id: record.id,
-    roomId: record.roomId,
-    userId: record.userId,
-    username: record.username,
-    content: record.content,
-    isDeleted: record.isDeleted,
-    createdAt: record.createdAt.toISOString(),
-  };
+  return serializeRow(record, { dateFields: ['createdAt'] });
 }
 
 export class ChatService {
@@ -249,7 +236,7 @@ export class ChatService {
       .from(chatUserBlock)
       .where(eq(chatUserBlock.blockerId, blockerId))
       .orderBy(desc(chatUserBlock.createdAt));
-    return rows.map((r) => ({ blockedId: r.blockedId, createdAt: r.createdAt.toISOString() }));
+    return rows.map((r) => serializeRow(r, { dateFields: ['createdAt'] }));
   }
 
   async blockUser(blockerId: User['id'], blockedId: User['id']) {

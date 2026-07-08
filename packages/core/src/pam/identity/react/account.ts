@@ -12,6 +12,15 @@ type IdentityUtils = ReturnType<typeof useOrpcQueryUtils<typeof identityContract
 const invalidateMe = (utils: IdentityUtils, queryClient: QueryClient) => () =>
   queryClient.invalidateQueries({ queryKey: utils.me.key() });
 
+export function useEnable2fa() {
+  const utils = useOrpcQueryUtils(identityContract);
+  const queryClient = useQueryClient();
+  return useMutation({
+    ...utils.enable2fa.mutationOptions(),
+    onSuccess: invalidateMe(utils, queryClient),
+  });
+}
+
 export function useVerify2fa() {
   const utils = useOrpcQueryUtils(identityContract);
   const queryClient = useQueryClient();
@@ -44,15 +53,6 @@ export function useUpdateProfile() {
   const queryClient = useQueryClient();
   return useMutation({
     ...utils.updateProfile.mutationOptions(),
-    onSuccess: invalidateMe(utils, queryClient),
-  });
-}
-
-export function useEnable2fa() {
-  const utils = useOrpcQueryUtils(identityContract);
-  const queryClient = useQueryClient();
-  return useMutation({
-    ...utils.enable2fa.mutationOptions(),
     onSuccess: invalidateMe(utils, queryClient),
   });
 }

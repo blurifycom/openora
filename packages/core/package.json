@@ -611,11 +611,13 @@
     "@orpc/tanstack-query": "1.14.5",
     "@orpc/zod": "1.14.5",
     "better-auth": "1.6.15",
+    "bullmq": "5.79.2",
     "dotenv": "17.4.2",
     "drizzle-orm": "0.45.2",
     "hono": "4.12.25",
     "pg": "8.21.0",
     "pino": "10.3.1",
+    "redis": "5.12.1",
     "zod": "4.4.3"
   },
   "devDependencies": {

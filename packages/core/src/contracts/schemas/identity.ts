@@ -5,6 +5,9 @@ export const THEMES = ['light', 'dark', 'system'] as const;
 export const ThemeSchema = z.enum(THEMES);
 export type Theme = z.infer<typeof ThemeSchema>;
 
+// BCP 47 upper bound - the longest real-world tags stay well under this.
+export const LanguageSchema = z.string().max(35);
+
 export const UserSchema = z.object({
   id: UuidSchema,
   email: z.email(),
@@ -12,7 +15,7 @@ export const UserSchema = z.object({
   emailVerified: z.boolean(),
   image: z.url().nullable().optional(),
   theme: ThemeSchema,
-  language: z.string(),
+  language: LanguageSchema,
   createdAt: TimestampSchema,
   updatedAt: TimestampSchema,
 });
@@ -82,7 +85,7 @@ export const UpdateProfileInputSchema = z
     name: z.string().min(1).max(255).optional(),
     image: z.url().nullable().optional(),
     theme: ThemeSchema.optional(),
-    language: z.string().optional(),
+    language: LanguageSchema.optional(),
   })
   .refine((v) => Object.values(v).some((x) => x !== undefined), {
     message: 'Provide at least one field to update',

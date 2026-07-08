@@ -25,6 +25,8 @@ export const user = pgTable(
     language: text().notNull().default('en'),
     role: text().notNull().default('player'),
     isActive: boolean().notNull().default(true),
+    // Required by the drizzle adapter when better-auth admin() plugin is enabled;
+    // omitting these causes "field banned does not exist" on user creation.
     banned: boolean().default(false),
     banReason: text(),
     banExpires: timestamp({ withTimezone: true }),

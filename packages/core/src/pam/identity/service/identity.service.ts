@@ -4,10 +4,13 @@ import {
   type EventBus,
   type NodeHeaders,
   DrizzleService,
+  assertRateLimit,
 } from '@blurifycom/core/server';
+import { parseCookies } from 'better-auth/cookies';
 import { eq, sql } from 'drizzle-orm';
 import { user, session, account, verification, twoFactor } from '../schema/index.js';
 import type {
+  RateLimiterAdapter,
   SendEmailPort,
   LoginInput,
   RegisterInput,
@@ -80,6 +83,21 @@ function forwardCookies(authResponse: globalThis.Response, resHeaders: Headers):
   }
 }
 
+function clientIp(headers: Headers): string | null {
+  return headers.get('x-forwarded-for')?.split(',')[0]?.trim() || headers.get('x-real-ip') || null;
+}
+
+// Key on the `.two_factor` cookie VALUE, never the raw Cookie header: an attacker can
+// otherwise churn the rate-limit key each retry by appending unrelated cookie pairs.
+function twoFactorPendingCookieValue(headers: Headers): string | undefined {
+  const cookieHeader = headers.get('cookie');
+  if (!cookieHeader) return undefined;
+  for (const [name, value] of parseCookies(cookieHeader)) {
+    if (name.endsWith('.two_factor')) return value;
+  }
+  return undefined;
+}
+
 // createAuth() is cast to the base better-auth `Auth` type (to dodge the Zod v4
 // $strip portability error), so the twoFactor() plugin endpoints are absent from
 // the static type. We declare the narrow shapes we call and route through a typed
@@ -124,16 +142,43 @@ async function ensureOk(res: globalThis.Response) {
 
 const DEFAULT_MAX_LOGIN_ATTEMPTS = 5;
 const DEFAULT_LOCKOUT_DURATION_MS = 15 * 60 * 1000;
+
+const MINUTE_MS = 60 * 1000;
+// Coarse abuse throttles keyed by the caller identifier the context provides (email/
+// token/session), NOT IP. The lockout above is a per-account credential-failure
+// counter; these bound raw request volume on each brute-force surface. An overlay
+// rebinds RATE_LIMITER to change the backend, not the policy - the numbers are here.
+// Credential-guessing keys fail closed when the limiter backend is down: an
+// unthrottled login/2fa/reset window is worse than a transient 429. The volume
+// throttles (register/resend/etc.) keep the default fail-open.
+const LOGIN_RATE_LIMIT = { limit: 10, windowMs: 5 * MINUTE_MS, onUnavailable: 'deny' } as const;
+const REGISTER_RATE_LIMIT = { limit: 5, windowMs: 15 * MINUTE_MS };
+const PASSWORD_RESET_REQUEST_RATE_LIMIT = { limit: 3, windowMs: 15 * MINUTE_MS };
+const PASSWORD_RESET_RATE_LIMIT = {
+  limit: 5,
+  windowMs: 15 * MINUTE_MS,
+  onUnavailable: 'deny',
+} as const;
+const VERIFY_2FA_RATE_LIMIT = { limit: 5, windowMs: 5 * MINUTE_MS, onUnavailable: 'deny' } as const;
+const EMAIL_VERIFICATION_RATE_LIMIT = { limit: 3, windowMs: 15 * MINUTE_MS };
+const VERIFY_EMAIL_RATE_LIMIT = { limit: 5, windowMs: 15 * MINUTE_MS };
+const CHANGE_PASSWORD_RATE_LIMIT = { limit: 5, windowMs: 15 * MINUTE_MS };
+const TWO_FACTOR_PASSWORD_RATE_LIMIT = { limit: 5, windowMs: 5 * MINUTE_MS };
 // Mirrors better-auth session.expiresIn (server/auth/auth.ts); used only as a fallback
 // when the sign-in response omits an explicit session expiry.
 const SESSION_TTL_MS = 30 * 24 * 60 * 60 * 1000;
 
-function computeLockoutState(
-  attempts: number,
-  maxAttempts: number,
-  durationMs: number,
-  nowMs: number,
-) {
+function computeLockoutState({
+  attempts,
+  maxAttempts,
+  durationMs,
+  nowMs,
+}: {
+  attempts: number;
+  maxAttempts: number;
+  durationMs: number;
+  nowMs: number;
+}) {
   const isLocking = attempts >= maxAttempts;
   return { isLocking, lockoutUntil: isLocking ? new Date(nowMs + durationMs) : null };
 }
@@ -149,6 +194,7 @@ export type IdentityServiceDeps = {
   events: EventBus;
   email?: SendEmailPort;
   options?: IdentityServiceOptions;
+  limiter?: RateLimiterAdapter;
   platformConfig?: PlatformConfig;
 };
 
@@ -158,13 +204,15 @@ export class IdentityService {
   private readonly events: EventBus;
   private readonly email?: SendEmailPort;
   private readonly options?: IdentityServiceOptions;
+  private readonly limiter?: RateLimiterAdapter;
   private readonly platformConfig?: PlatformConfig;
 
-  constructor({ drizzle, events, email, options, platformConfig }: IdentityServiceDeps) {
+  constructor({ drizzle, events, email, options, limiter, platformConfig }: IdentityServiceDeps) {
     this.drizzle = drizzle;
     this.events = events;
     this.email = email;
     this.options = options;
+    this.limiter = limiter;
     this.platformConfig = platformConfig;
     this.auth = createAuth({
       db: drizzle.db,
@@ -185,6 +233,11 @@ export class IdentityService {
   }
 
   async register(input: RegisterInput, reqHeaders: NodeHeaders, resHeaders: Headers) {
+    await assertRateLimit(
+      this.limiter,
+      `register:${input.email.toLowerCase()}`,
+      REGISTER_RATE_LIMIT,
+    );
     const headers = nodeHeadersToHeaders(reqHeaders);
     const authResponse = await this.auth.api.signUpEmail({
       body: { email: input.email, password: input.password, name: input.name },
@@ -200,11 +253,12 @@ export class IdentityService {
 
   async login(input: LoginInput, reqHeaders: NodeHeaders, resHeaders: Headers) {
     const headers = nodeHeadersToHeaders(reqHeaders);
-    const ip =
-      headers.get('x-forwarded-for')?.split(',')[0]?.trim() || headers.get('x-real-ip') || null;
+    const ip = clientIp(headers);
     const userAgent = headers.get('user-agent') || null;
     // better-auth lowercases emails on write, so the lockout lookup must match on the same form.
     const email = input.email.toLowerCase();
+
+    await assertRateLimit(this.limiter, `login:${email}`, LOGIN_RATE_LIMIT);
 
     const configLockoutEnabled = this.options?.lockout?.enabled ?? true;
     // Read once for the lockout budget, the admin-bypass check, and the RG login gate
@@ -309,12 +363,12 @@ export class IdentityService {
           .where(eq(user.id, existingUser.id))
           .returning({ failedLoginAttempts: user.failedLoginAttempts });
         const newAttempts = row?.failedLoginAttempts ?? existingUser.failedLoginAttempts + 1;
-        const { isLocking, lockoutUntil } = computeLockoutState(
-          newAttempts,
+        const { isLocking, lockoutUntil } = computeLockoutState({
+          attempts: newAttempts,
           maxAttempts,
           durationMs,
-          Date.now(),
-        );
+          nowMs: Date.now(),
+        });
 
         if (isLocking && lockoutUntil) {
           await this.drizzle.db
@@ -398,6 +452,12 @@ export class IdentityService {
 
   async enableTwoFactor(input: Enable2faInput, reqHeaders: NodeHeaders, resHeaders: Headers) {
     const headers = nodeHeadersToHeaders(reqHeaders);
+    const userId = await this.currentUserId(headers);
+    await assertRateLimit(
+      this.limiter,
+      `enable2fa:${userId ?? 'anonymous'}`,
+      TWO_FACTOR_PASSWORD_RATE_LIMIT,
+    );
     const res = await this.api.enableTwoFactor({
       body: { password: input.password },
       headers,
@@ -411,6 +471,9 @@ export class IdentityService {
 
   async verifyTwoFactor(input: Verify2faInput, reqHeaders: NodeHeaders, resHeaders: Headers) {
     const headers = nodeHeadersToHeaders(reqHeaders);
+    const twoFactorKey =
+      (await this.currentUserId(headers)) ?? twoFactorPendingCookieValue(headers) ?? 'anonymous';
+    await assertRateLimit(this.limiter, `verify2fa:${twoFactorKey}`, VERIFY_2FA_RATE_LIMIT);
     const res = await this.api.verifyTOTP({
       body: { code: input.code },
       headers,
@@ -426,6 +489,11 @@ export class IdentityService {
   async disableTwoFactor(input: Disable2faInput, reqHeaders: NodeHeaders, resHeaders: Headers) {
     const headers = nodeHeadersToHeaders(reqHeaders);
     const userId = await this.currentUserId(headers);
+    await assertRateLimit(
+      this.limiter,
+      `disable2fa:${userId ?? 'anonymous'}`,
+      TWO_FACTOR_PASSWORD_RATE_LIMIT,
+    );
     const res = await this.api.disableTwoFactor({
       body: { password: input.password },
       headers,
@@ -438,6 +506,11 @@ export class IdentityService {
   }
 
   async requestPasswordReset(input: RequestPasswordResetInput) {
+    await assertRateLimit(
+      this.limiter,
+      `pwreset-req:${input.email.toLowerCase()}`,
+      PASSWORD_RESET_REQUEST_RATE_LIMIT,
+    );
     // Always returns success - never reveal whether the email exists. The reset
     // email (if any) is delivered through the sendEmail hook -> notifications.
     // Any underlying error is swallowed for the same anti-enumeration reason.
@@ -454,6 +527,9 @@ export class IdentityService {
   }
 
   async resetPassword(input: ResetPasswordInput) {
+    // Key on the token - the only identifier the input carries - to bound retries
+    // against a single reset token.
+    await assertRateLimit(this.limiter, `pwreset:${input.token}`, PASSWORD_RESET_RATE_LIMIT);
     const res = await this.api.resetPassword({
       body: { newPassword: input.newPassword, token: input.token },
       headers: new Headers(),
@@ -471,6 +547,12 @@ export class IdentityService {
 
   async changePassword(input: ChangePasswordInput, reqHeaders: NodeHeaders, resHeaders: Headers) {
     const headers = nodeHeadersToHeaders(reqHeaders);
+    const userId = await this.currentUserId(headers);
+    await assertRateLimit(
+      this.limiter,
+      `change-password:${userId ?? 'anonymous'}`,
+      CHANGE_PASSWORD_RATE_LIMIT,
+    );
     const res = await this.api.changePassword({
       body: { currentPassword: input.currentPassword, newPassword: input.newPassword },
       headers,
@@ -486,6 +568,11 @@ export class IdentityService {
     const session = await this.auth.api.getSession({ headers });
     const email = session?.user?.email;
     if (email) {
+      await assertRateLimit(
+        this.limiter,
+        `email-verify:${email.toLowerCase()}`,
+        EMAIL_VERIFICATION_RATE_LIMIT,
+      );
       await this.api.sendVerificationEmail({ body: { email }, headers, asResponse: true });
     }
     return SUCCESS;
@@ -493,13 +580,18 @@ export class IdentityService {
 
   async verifyEmail(input: VerifyEmailInput, reqHeaders: NodeHeaders) {
     const headers = nodeHeadersToHeaders(reqHeaders);
+    const userId = await this.currentUserId(headers);
+    await assertRateLimit(
+      this.limiter,
+      `verify-email:${userId ?? 'anonymous'}`,
+      VERIFY_EMAIL_RATE_LIMIT,
+    );
     const res = await this.api.verifyEmail({
       query: { token: input.token },
       headers,
       asResponse: true,
     });
     await ensureOk(res);
-    const userId = await this.currentUserId(headers);
     if (userId) this.events.emit('identity.email.verified', { userId });
     return SUCCESS;
   }

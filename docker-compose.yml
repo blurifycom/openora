@@ -32,5 +32,20 @@ services:
       timeout: 5s
       retries: 10
 
+  # Distributed CACHE + RATE_LIMITER reference backend. OPT-IN via the `redis`
+  # profile: `docker compose --profile redis up`. A consumer app binds it by setting
+  # REDIS_URL (redis://localhost:6379) - createApp auto-binds the Redis adapters, no
+  # code change. See ADR-0028.
+  redis:
+    profiles: ['redis']
+    image: redis:7-alpine
+    ports:
+      - '6379:6379'
+    healthcheck:
+      test: ['CMD', 'redis-cli', 'ping']
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
 volumes:
   postgres_data:

@@ -1,4 +1,14 @@
-import { pgTable, uuid, text, decimal, timestamp, pgEnum, index } from 'drizzle-orm/pg-core';
+import { sql } from 'drizzle-orm';
+import {
+  pgTable,
+  uuid,
+  text,
+  decimal,
+  timestamp,
+  pgEnum,
+  index,
+  uniqueIndex,
+} from 'drizzle-orm/pg-core';
 import {
   WALLET_RAILS,
   WALLET_TRANSACTION_STATUSES,
@@ -59,6 +69,9 @@ export const walletTransaction = pgTable(
     // Reserved escape hatch for genuinely free-form, non-queryable extras. Provider
     // identity now lives in the typed columns above, not here.
     metadata: text(),
+    // Client-supplied dedup key for deposit/withdraw. A wallet is 1:1 with its user, so
+    // scoping the unique index on walletId is equivalent to scoping on userId.
+    idempotencyKey: uuid(),
     createdAt: timestamp({ withTimezone: true }).notNull().defaultNow(),
   },
   (t) => [
@@ -69,8 +82,25 @@ export const walletTransaction = pgTable(
     index('wallet_transaction_rail_idx').on(t.rail),
     index('wallet_transaction_currency_idx').on(t.currency),
     index('wallet_transaction_provider_ref_id_idx').on(t.providerRefId),
+    uniqueIndex('wallet_transaction_wallet_id_idempotency_key_idx')
+      .on(t.walletId, t.idempotencyKey)
+      .where(sql`${t.idempotencyKey} IS NOT NULL`),
   ],
 );
 
+// Per-player threshold override (unique userId); overrides the global autoWithdrawal.fiatThreshold.
+export const autoWithdrawalRule = pgTable('auto_withdrawal_rule', {
+  id: uuid().primaryKey().defaultRandom(),
+  userId: uuid().notNull().unique('auto_withdrawal_rule_user_id_unique'),
+  threshold: decimal().notNull(),
+  reason: text().notNull(),
+  createdBy: uuid().notNull(),
+  createdAt: timestamp({ withTimezone: true }).notNull().defaultNow(),
+  updatedAt: timestamp({ withTimezone: true })
+    .notNull()
+    .$onUpdateFn(() => new Date()),
+});
+
 export type Wallet = typeof wallet.$inferSelect;
 export type WalletTransaction = typeof walletTransaction.$inferSelect;
+export type AutoWithdrawalRule = typeof autoWithdrawalRule.$inferSelect;

@@ -53,33 +53,21 @@
       "@blurifycom/core/engagement/contracts": ["./src/engagement/contracts.ts"],
       "@blurifycom/core/engagement/contracts/bonus": ["./src/engagement/bonus/contract/index.ts"],
       "@blurifycom/core/engagement/contracts/chat": ["./src/engagement/chat/contract/index.ts"],
-      "@blurifycom/core/engagement/contracts/leaderboard": [
-        "./src/engagement/leaderboard/contract/index.ts"
-      ],
-      "@blurifycom/core/engagement/contracts/notifications": [
-        "./src/engagement/notifications/contract/index.ts"
-      ],
+      "@blurifycom/core/engagement/contracts/leaderboard": ["./src/engagement/leaderboard/contract/index.ts"],
+      "@blurifycom/core/engagement/contracts/notifications": ["./src/engagement/notifications/contract/index.ts"],
       "@blurifycom/core/engagement/migrate": ["./src/engagement/leaderboard/migrate.ts"],
       "@blurifycom/core/engagement/migrate/bonus": ["./src/engagement/bonus/migrate.ts"],
       "@blurifycom/core/engagement/migrate/chat": ["./src/engagement/chat/migrate.ts"],
-      "@blurifycom/core/engagement/migrate/notifications": [
-        "./src/engagement/notifications/migrate.ts"
-      ],
+      "@blurifycom/core/engagement/migrate/notifications": ["./src/engagement/notifications/migrate.ts"],
       "@blurifycom/core/engagement/plugins/bonus": ["./src/engagement/bonus/plugin.ts"],
       "@blurifycom/core/engagement/plugins/chat": ["./src/engagement/chat/plugin.ts"],
       "@blurifycom/core/engagement/plugins/leaderboard": ["./src/engagement/leaderboard/plugin.ts"],
-      "@blurifycom/core/engagement/plugins/notifications": [
-        "./src/engagement/notifications/plugin.ts"
-      ],
+      "@blurifycom/core/engagement/plugins/notifications": ["./src/engagement/notifications/plugin.ts"],
       "@blurifycom/core/engagement/react": ["./src/engagement/react.ts"],
       "@blurifycom/core/engagement/schema/bonus": ["./src/engagement/bonus/schema/index.ts"],
       "@blurifycom/core/engagement/schema/chat": ["./src/engagement/chat/schema/index.ts"],
-      "@blurifycom/core/engagement/schema/leaderboard": [
-        "./src/engagement/leaderboard/schema/index.ts"
-      ],
-      "@blurifycom/core/engagement/schema/notifications": [
-        "./src/engagement/notifications/schema/index.ts"
-      ],
+      "@blurifycom/core/engagement/schema/leaderboard": ["./src/engagement/leaderboard/schema/index.ts"],
+      "@blurifycom/core/engagement/schema/notifications": ["./src/engagement/notifications/schema/index.ts"],
       "@blurifycom/core/engagement/server": ["./src/engagement/server.ts"],
       "@blurifycom/core/iam": ["./src/iam/index.ts"],
       "@blurifycom/core/iam/contract": ["./src/iam/contract/index.ts"],

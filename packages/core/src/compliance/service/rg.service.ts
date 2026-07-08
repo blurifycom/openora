@@ -3,6 +3,7 @@ import {
   createLogger,
   makeNotFoundError,
   makeConflictError,
+  serializeRow,
   type EventBus,
 } from '@blurifycom/core/server';
 import { and, eq, or, gt, lte, desc } from 'drizzle-orm';
@@ -60,23 +61,10 @@ function toLimitDto(row: typeof userLimit.$inferSelect): Limit {
   };
 }
 
-function toExclusionDto(row: typeof rgExclusion.$inferSelect): RgExclusion {
-  return {
-    id: row.id,
-    userId: row.userId,
-    kind: row.kind,
-    status: row.status,
-    reason: row.reason,
-    permanent: row.permanent,
-    startsAt: row.startsAt.toISOString(),
-    expiresAt: row.expiresAt ? row.expiresAt.toISOString() : null,
-    liftedAt: row.liftedAt ? row.liftedAt.toISOString() : null,
-    liftedReason: row.liftedReason,
-    liftedBy: row.liftedBy,
-    createdBy: row.createdBy,
-    createdAt: row.createdAt.toISOString(),
-    updatedAt: row.updatedAt.toISOString(),
-  };
+function toExclusionDto(row: typeof rgExclusion.$inferSelect) {
+  return serializeRow(row, {
+    dateFields: ['startsAt', 'expiresAt', 'liftedAt', 'createdAt', 'updatedAt'],
+  });
 }
 
 export type RgServiceDeps = {
@@ -120,7 +108,7 @@ export class RgService {
       .limit(1);
     const [row] = await this.drizzle.db
       .insert(userLimit)
-      .values({ userId, type: input.type, amount: input.amount, period: input.period })
+      .values({ ...input, userId })
       .onConflictDoUpdate({
         target: [userLimit.userId, userLimit.type, userLimit.period],
         set: { amount: input.amount },

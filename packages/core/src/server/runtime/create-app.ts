@@ -4,17 +4,24 @@ import { ResponseHeadersPlugin } from '@orpc/server/plugins';
 import type { ContractRouter } from '@orpc/contract';
 import { Hono } from 'hono';
 import { cors } from 'hono/cors';
+import { etag } from 'hono/etag';
 import { serve, type ServerType } from '@hono/node-server';
 import { resolve } from 'node:path';
 import { generateOpenApiSpec } from './openapi.js';
 import {
   Container,
+  BullMqJobQueue,
   InMemoryBroker,
+  InProcessCache,
   InProcessJobQueue,
+  InProcessRateLimiter,
   InProcessRealtimeTransport,
+  RedisCache,
+  RedisRateLimiter,
   SseClientAuthorizer,
   createEventBus,
   createLogger,
+  createRedisClient,
   withRequestContext,
   EVENT_BUS,
   type OssContext,
@@ -27,6 +34,8 @@ import {
   REALTIME_CLIENT_AUTHORIZER,
   OUTBOX,
   ADMIN_PERMISSION_RESOLVER,
+  RATE_LIMITER,
+  CACHE,
   composeContract,
   healthContract,
   IGAMING_CONFIG,
@@ -37,6 +46,25 @@ import { DrizzleService, DRIZZLE, DrizzleOutboxWriter, OutboxRelay } from '../db
 import { AdminGuard, ADMIN_GUARD, SessionResolver, AUTH_SESSION } from '../auth/index.js';
 import { loadPlugins, type PluginEntry } from '../plugin-host/index.js';
 import { loadPlatformConfig, resolvePlatformConfigPath } from '../kernel/platform-config-loader.js';
+
+// Path prefixes safe to cache at the HTTP layer: public, non-personalized reads
+// only (lobby feeds, public CMS content, the game catalogue). NOTHING
+// authenticated or per-player (wallet, profile, notifications, admin, chat) - a
+// consumer overrides this via `httpCache.paths` or disables it with `httpCache: false`.
+// This list living in the domain-agnostic engine (rather than each module
+// declaring its own cacheable routes) is accepted debt.
+// '/cms/banners' is excluded on purpose: its `listBanners` route is unguarded and returns
+// inactive banners, so HTTP-caching it would leak draft banners to a shared cache.
+const PUBLIC_HTTP_CACHE_PATHS: readonly string[] = [
+  '/lobby/categories',
+  '/lobby/featured',
+  '/lobby/search',
+  '/cms/pages',
+  '/gaming/games',
+];
+
+const DEFAULT_HTTP_CACHE_MAX_AGE_SECONDS = 30;
+const DEFAULT_HTTP_CACHE_STALE_WHILE_REVALIDATE_SECONDS = 60;
 
 export type CreateAppConfig = {
   plugins: PluginEntry[];
@@ -66,6 +94,10 @@ export type CreateAppConfig = {
   };
 
   igaming?: IgamingConfig;
+
+  // GET-only, path-prefix-matched Cache-Control on PUBLIC_HTTP_CACHE_PATHS (or a
+  // supplied override). `false` disables HTTP response caching entirely.
+  httpCache?: { paths?: string[]; maxAgeSeconds?: number } | false;
 
   configure?: (container: Container) => void | Promise<void>;
 
@@ -160,13 +192,41 @@ export async function createApp(config: CreateAppConfig): Promise<CreatedApp> {
   // Default is first-party SSE (no token; the session cookie authorizes the stream).
   // A managed-vendor overlay rebinds this to mint a per-player scoped token. See ADR-0007.
   container.register(REALTIME_CLIENT_AUTHORIZER, () => new SseClientAuthorizer());
-  // Default in-process queue (zero deps); an overlay rebinds to BullMQ/Redis.
-  // Disposer drains in-flight jobs before the DB closes (disposers run in reverse).
-  container.register(JOB_QUEUE, () => {
-    const q = new InProcessJobQueue(createLogger('job-queue'));
-    container.onDispose(() => q.close());
-    return q;
-  });
+  // When REDIS_URL is set, JOB_QUEUE, the rate limiter and cache bind to the shipped
+  // Redis reference adapters: BullMQ-backed durable jobs (survive restarts, real cron),
+  // distributed throttling and cross-replica cache invalidation - mirrors the AMQP_URL
+  // outbox precedent above. Otherwise the process-local in-process defaults stay (zero
+  // deps for dev/test). Either way a consumer overlay can rebind any of these tokens
+  // (plugins load after). The JOB_QUEUE disposer drains in-flight jobs before the DB
+  // closes (DRIZZLE is resolved before JOB_QUEUE below, and disposers run in reverse).
+  const redisUrl = process.env['REDIS_URL'];
+  if (redisUrl) {
+    container.register(JOB_QUEUE, () => {
+      const q = new BullMqJobQueue(redisUrl);
+      container.onDispose(() => q.close());
+      return q;
+    });
+    const redis = createRedisClient(redisUrl);
+    container.onDispose(() => redis.close());
+    container.register(RATE_LIMITER, () => new RedisRateLimiter(redis));
+    container.register(CACHE, () => new RedisCache(redis));
+  } else {
+    container.register(JOB_QUEUE, () => {
+      const q = new InProcessJobQueue(createLogger('job-queue'));
+      container.onDispose(() => q.close());
+      return q;
+    });
+    container.register(RATE_LIMITER, () => {
+      const limiter = new InProcessRateLimiter();
+      container.onDispose(() => limiter.close());
+      return limiter;
+    });
+    container.register(CACHE, () => {
+      const cache = new InProcessCache();
+      container.onDispose(() => cache.close());
+      return cache;
+    });
+  }
   // One shared better-auth instance for both the per-request middleware and AdminGuard -
   // no second createAuth() over the same DB. authSchema is injected (not imported) because
   // the engine is domain-agnostic (ADR-0019/0025).
@@ -249,6 +309,36 @@ export async function createApp(config: CreateAppConfig): Promise<CreatedApp> {
     const origins =
       config.cors === true || config.cors === undefined ? undefined : config.cors.origins;
     app.use('/*', cors({ origin: origins ?? ((origin) => origin), credentials: true }));
+  }
+
+  if (config.httpCache !== false) {
+    const cachePaths = config.httpCache?.paths ?? PUBLIC_HTTP_CACHE_PATHS;
+    const maxAgeSeconds = config.httpCache?.maxAgeSeconds ?? DEFAULT_HTTP_CACHE_MAX_AGE_SECONDS;
+    const staleWhileRevalidateSeconds = config.httpCache?.maxAgeSeconds
+      ? maxAgeSeconds * 2
+      : DEFAULT_HTTP_CACHE_STALE_WHILE_REVALIDATE_SECONDS;
+    // GET/HEAD only - the etag middleware short-circuits with a 304 on a matching
+    // If-None-Match, which would swallow a PUT/DELETE's response after it already
+    // ran the mutation (eg PUT /cms/pages/{id} under the /cms/pages cache prefix).
+    const etagMiddleware = etag();
+    app.use('/*', async (c, next) => {
+      const isCacheablePath = cachePaths.some(
+        (path) => c.req.path === path || c.req.path.startsWith(`${path}/`),
+      );
+      const isCacheableMethod = c.req.method === 'GET' || c.req.method === 'HEAD';
+      const isCacheable = isCacheableMethod && isCacheablePath;
+      if (isCacheable) {
+        await etagMiddleware(c, next);
+      } else {
+        await next();
+      }
+      c.res.headers.set(
+        'Cache-Control',
+        isCacheable
+          ? `public, max-age=${maxAgeSeconds}, stale-while-revalidate=${staleWhileRevalidateSeconds}`
+          : 'no-store',
+      );
+    });
   }
 
   const sessions = container.get(AUTH_SESSION);

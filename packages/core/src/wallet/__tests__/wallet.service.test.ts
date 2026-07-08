@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { mockDb, readPrivate } from '../../testing/mock.js';
+import { mock, readPrivate, makeDrizzle, makeEvents, makePayment } from '../../testing/mock.js';
 import {
   WalletService,
   WalletNotFoundError,
@@ -7,58 +7,10 @@ import {
   WithdrawalNotPendingError,
   InsufficientBalanceError,
   CurrencyMismatchError,
+  IdempotencyKeyReuseError,
 } from '../service/wallet.service.js';
 
 type Row = Record<string, unknown>;
-
-// A chainable, awaitable Drizzle query double. Chain methods (incl. `.for('update')`)
-// return the builder; awaiting the builder pops the next `select` queue entry; `.returning`
-// pops the `returning` queue. Each terminal read pops one queue entry in call order, so a
-// test supplies the per-statement results in the order the service issues them.
-function makeQueryBuilder(results: { select: Row[][]; returning: Row[][] }) {
-  const builder: Record<string, unknown> = {};
-  const chain = () => builder;
-  builder['select'] = vi.fn(chain);
-  builder['from'] = vi.fn(chain);
-  builder['innerJoin'] = vi.fn(chain);
-  builder['leftJoin'] = vi.fn(chain);
-  builder['orderBy'] = vi.fn(chain);
-  builder['groupBy'] = vi.fn(chain);
-  builder['limit'] = vi.fn(chain);
-  builder['offset'] = vi.fn(chain);
-  builder['for'] = vi.fn(chain);
-  builder['insert'] = vi.fn(chain);
-  builder['values'] = vi.fn(chain);
-  builder['update'] = vi.fn(chain);
-  builder['set'] = vi.fn(chain);
-  builder['delete'] = vi.fn(chain);
-  builder['where'] = vi.fn(chain);
-  builder['returning'] = vi.fn(() => Promise.resolve(results.returning.shift() ?? []));
-  // oxlint-disable-next-line unicorn/no-thenable -- the builder must be awaitable to mimic Drizzle.
-  builder['then'] = (resolve: (v: Row[]) => unknown) => resolve(results.select.shift() ?? []);
-  return builder;
-}
-
-function makeDrizzle(results: { select?: Row[][]; returning?: Row[][] } = {}) {
-  const state = { select: results.select ?? [], returning: results.returning ?? [] };
-  const builder = makeQueryBuilder(state);
-  const db = {
-    ...builder,
-    transaction: vi.fn(async (fn: (txn: unknown) => Promise<unknown>) => fn(builder)),
-  };
-  return mockDb(db);
-}
-
-function makeEvents() {
-  return { emit: vi.fn(), on: vi.fn(), emitInTransaction: vi.fn() };
-}
-
-function makePayment() {
-  return {
-    processDeposit: vi.fn().mockResolvedValue({ externalId: 'ext-1', status: 'completed' }),
-    processWithdrawal: vi.fn().mockResolvedValue({ externalId: 'ext-2', status: 'completed' }),
-  };
-}
 
 function makeDirectory(summaries: Row[] = []) {
   return {
@@ -70,9 +22,10 @@ function makeDirectory(summaries: Row[] = []) {
   };
 }
 
-// oxlint-disable typescript/no-explicit-any
 const svcOf = (drizzle: unknown, events: unknown, payment: unknown, directory?: unknown) =>
-  new WalletService(drizzle as any, events as any, payment as any, directory as any);
+  new WalletService(
+    mock<ConstructorParameters<typeof WalletService>[0]>({ drizzle, events, payment, directory }),
+  );
 
 describe('WalletService domain errors', () => {
   it('WalletNotFoundError carries the userId', () => {
@@ -105,7 +58,7 @@ describe('WalletService.deposit', () => {
     const valuesSpy = readPrivate<ReturnType<typeof vi.fn>>(drizzle.db, 'values');
     const svc = svcOf(drizzle, events, payment);
 
-    await svc.deposit('u-1', 40, 'USD', 'stripe');
+    await svc.deposit({ userId: 'u-1', amount: 40, currency: 'USD', provider: 'stripe' });
 
     expect(valuesSpy).toHaveBeenCalledWith(
       expect.objectContaining({ type: 'deposit', rail: 'fiat' }),
@@ -120,7 +73,7 @@ describe('WalletService.deposit', () => {
     const valuesSpy = readPrivate<ReturnType<typeof vi.fn>>(drizzle.db, 'values');
     const svc = svcOf(drizzle, events, payment);
 
-    await svc.deposit('u-1', 1, 'BTC', 'fireblocks');
+    await svc.deposit({ userId: 'u-1', amount: 1, currency: 'BTC', provider: 'fireblocks' });
 
     expect(valuesSpy).toHaveBeenCalledWith(
       expect.objectContaining({ type: 'deposit', rail: 'crypto' }),
@@ -148,7 +101,7 @@ describe('WalletService.withdraw', () => {
     const forSpy = readPrivate<ReturnType<typeof vi.fn>>(drizzle.db, 'for');
     const svc = svcOf(drizzle, events, payment);
 
-    const result = await svc.withdraw('u-1', 40, 'USD');
+    const result = await svc.withdraw({ userId: 'u-1', amount: 40, currency: 'USD' });
 
     expect(result).toEqual({ transactionId: 'tx-1', status: 'pending' });
     expect(forSpy).toHaveBeenCalledWith('update');
@@ -172,7 +125,7 @@ describe('WalletService.withdraw', () => {
     const valuesSpy = readPrivate<ReturnType<typeof vi.fn>>(drizzle.db, 'values');
     const svc = svcOf(drizzle, events, payment);
 
-    await svc.withdraw('u-1', 1, 'BTC');
+    await svc.withdraw({ userId: 'u-1', amount: 1, currency: 'BTC' });
 
     expect(valuesSpy).toHaveBeenCalledWith(expect.objectContaining({ rail: 'crypto' }));
   });
@@ -183,7 +136,9 @@ describe('WalletService.withdraw', () => {
     });
     const svc = svcOf(drizzle, events, payment);
 
-    await expect(svc.withdraw('u-1', 40, 'EUR')).rejects.toBeInstanceOf(CurrencyMismatchError);
+    await expect(
+      svc.withdraw({ userId: 'u-1', amount: 40, currency: 'EUR' }),
+    ).rejects.toBeInstanceOf(CurrencyMismatchError);
     expect(events.emit).not.toHaveBeenCalled();
   });
 
@@ -197,8 +152,348 @@ describe('WalletService.withdraw', () => {
     });
     const svc = svcOf(drizzle, events, payment);
 
-    await expect(svc.withdraw('u-1', 40, 'USD')).rejects.toBeInstanceOf(InsufficientBalanceError);
+    await expect(
+      svc.withdraw({ userId: 'u-1', amount: 40, currency: 'USD' }),
+    ).rejects.toBeInstanceOf(InsufficientBalanceError);
     expect(events.emit).not.toHaveBeenCalled();
+  });
+});
+
+describe('WalletService idempotency - deposit', () => {
+  let events: ReturnType<typeof makeEvents>;
+  let payment: ReturnType<typeof makePayment>;
+
+  beforeEach(() => {
+    events = makeEvents();
+    payment = makePayment();
+  });
+
+  it('replay short-circuits BEFORE the PSP call, does not insert again, and does not re-emit', async () => {
+    const drizzle = makeDrizzle({
+      select: [
+        [{ id: 'w-1', userId: 'u-1', balance: '100', currency: 'USD' }],
+        [{ id: 'tx-1', walletId: 'w-1', amount: '40', currency: 'USD', status: 'completed' }],
+      ],
+    });
+    const insertSpy = readPrivate<ReturnType<typeof vi.fn>>(drizzle.db, 'insert');
+    const svc = svcOf(drizzle, events, payment);
+
+    const result = await svc.deposit({
+      userId: 'u-1',
+      amount: 40,
+      currency: 'USD',
+      idempotencyKey: 'key-1',
+    });
+
+    expect(result).toEqual({ transactionId: 'tx-1', status: 'completed' });
+    expect(payment.processDeposit).not.toHaveBeenCalled();
+    expect(insertSpy).not.toHaveBeenCalled();
+    expect(events.emit).not.toHaveBeenCalled();
+  });
+
+  it('throws IdempotencyKeyReuseError when a replayed key was used with a different amount', async () => {
+    const drizzle = makeDrizzle({
+      select: [
+        [{ id: 'w-1', userId: 'u-1', balance: '100', currency: 'USD' }],
+        [{ id: 'tx-1', walletId: 'w-1', amount: '40', currency: 'USD', status: 'completed' }],
+      ],
+    });
+    const svc = svcOf(drizzle, events, payment);
+
+    await expect(
+      svc.deposit({ userId: 'u-1', amount: 99, currency: 'USD', idempotencyKey: 'key-1' }),
+    ).rejects.toBeInstanceOf(IdempotencyKeyReuseError);
+    expect(payment.processDeposit).not.toHaveBeenCalled();
+  });
+
+  it('distinct idempotency keys create distinct transactions', async () => {
+    const drizzle = makeDrizzle({
+      select: [
+        [{ id: 'w-1', userId: 'u-1', balance: '100', currency: 'USD' }], // pre-PSP replay check: wallet lookup
+        [], // pre-PSP replay check: no existing tx for key-a
+        [], // bare-awaited balance credit for call 1 (no .returning(); reuses pre-PSP wallet)
+        [{ id: 'w-1', userId: 'u-1', balance: '140', currency: 'USD' }], // pre-PSP replay check: wallet lookup
+        [], // pre-PSP replay check: no existing tx for key-b
+        [], // bare-awaited balance credit for call 2 (no .returning())
+      ],
+      returning: [
+        [{ id: 'tx-a', walletId: 'w-1', amount: '40', currency: 'USD', status: 'completed' }],
+        [{ id: 'tx-b', walletId: 'w-1', amount: '40', currency: 'USD', status: 'completed' }],
+      ],
+    });
+    const svc = svcOf(drizzle, events, payment);
+
+    const r1 = await svc.deposit({
+      userId: 'u-1',
+      amount: 40,
+      currency: 'USD',
+      idempotencyKey: 'key-a',
+    });
+    const r2 = await svc.deposit({
+      userId: 'u-1',
+      amount: 40,
+      currency: 'USD',
+      idempotencyKey: 'key-b',
+    });
+
+    expect(r1.transactionId).toBe('tx-a');
+    expect(r2.transactionId).toBe('tx-b');
+    expect(events.emit).toHaveBeenCalledTimes(2);
+  });
+
+  it('with no idempotencyKey, stores a null key and behaves unchanged', async () => {
+    const drizzle = makeDrizzle({
+      select: [
+        [{ id: 'w-1', userId: 'u-1', balance: '100', currency: 'USD' }],
+        [], // bare-awaited balance credit (no .returning())
+      ],
+      returning: [
+        [{ id: 'tx-1', walletId: 'w-1', amount: '40', currency: 'USD', status: 'completed' }],
+      ],
+    });
+    const valuesSpy = readPrivate<ReturnType<typeof vi.fn>>(drizzle.db, 'values');
+    const svc = svcOf(drizzle, events, payment);
+
+    const result = await svc.deposit({ userId: 'u-1', amount: 40, currency: 'USD' });
+
+    expect(result).toEqual({ transactionId: 'tx-1', status: 'completed' });
+    expect(valuesSpy).toHaveBeenCalledWith(expect.objectContaining({ idempotencyKey: null }));
+    expect(events.emit).toHaveBeenCalledWith(
+      'wallet.deposit.completed',
+      expect.objectContaining({ transactionId: 'tx-1' }),
+    );
+  });
+
+  it('a race on the partial unique index re-reads the winner instead of aborting the transaction', async () => {
+    const drizzle = makeDrizzle({
+      select: [
+        [{ id: 'w-1', userId: 'u-1', balance: '100', currency: 'USD' }], // pre-PSP replay check: wallet lookup
+        [], // pre-PSP replay check: not found yet, both requests race past it
+        [{ id: 'tx-winner', walletId: 'w-1', amount: '40', currency: 'USD', status: 'completed' }], // txn: re-read after the conflicting insert
+      ],
+      returning: [
+        [], // onConflictDoNothing().returning() - the loser's insert is a no-op, not a thrown error
+      ],
+    });
+    const svc = svcOf(drizzle, events, payment);
+
+    const result = await svc.deposit({
+      userId: 'u-1',
+      amount: 40,
+      currency: 'USD',
+      idempotencyKey: 'key-1',
+    });
+
+    expect(result).toEqual({ transactionId: 'tx-winner', status: 'completed' });
+    expect(events.emit).not.toHaveBeenCalled();
+  });
+
+  it('throws IdempotencyKeyReuseError when a replayed key was used with a different currency', async () => {
+    const drizzle = makeDrizzle({
+      select: [
+        [{ id: 'w-1', userId: 'u-1', balance: '100', currency: 'USD' }],
+        [{ id: 'tx-1', walletId: 'w-1', amount: '40', currency: 'USD', status: 'completed' }],
+      ],
+    });
+    const svc = svcOf(drizzle, events, payment);
+
+    await expect(
+      svc.deposit({ userId: 'u-1', amount: 40, currency: 'EUR', idempotencyKey: 'key-1' }),
+    ).rejects.toBeInstanceOf(IdempotencyKeyReuseError);
+    expect(payment.processDeposit).not.toHaveBeenCalled();
+  });
+});
+
+describe('WalletService idempotency - withdraw', () => {
+  let events: ReturnType<typeof makeEvents>;
+  let payment: ReturnType<typeof makePayment>;
+
+  beforeEach(() => {
+    events = makeEvents();
+    payment = makePayment();
+  });
+
+  it('replay returns the first stored transaction, does not insert again, and does not re-emit', async () => {
+    const drizzle = makeDrizzle({
+      select: [
+        [{ id: 'w-1', userId: 'u-1', balance: '60', currency: 'USD' }],
+        [{ id: 'tx-1', walletId: 'w-1', amount: '40', currency: 'USD', status: 'pending' }],
+      ],
+    });
+    const insertSpy = readPrivate<ReturnType<typeof vi.fn>>(drizzle.db, 'insert');
+    const svc = svcOf(drizzle, events, payment);
+
+    const result = await svc.withdraw({
+      userId: 'u-1',
+      amount: 40,
+      currency: 'USD',
+      idempotencyKey: 'key-1',
+    });
+
+    expect(result).toEqual({ transactionId: 'tx-1', status: 'pending' });
+    expect(insertSpy).not.toHaveBeenCalled();
+    expect(events.emit).not.toHaveBeenCalled();
+  });
+
+  it('throws IdempotencyKeyReuseError when a replayed key was used with a different amount', async () => {
+    const drizzle = makeDrizzle({
+      select: [
+        [{ id: 'w-1', userId: 'u-1', balance: '60', currency: 'USD' }],
+        [{ id: 'tx-1', walletId: 'w-1', amount: '40', currency: 'USD', status: 'pending' }],
+      ],
+    });
+    const svc = svcOf(drizzle, events, payment);
+
+    await expect(
+      svc.withdraw({ userId: 'u-1', amount: 99, currency: 'USD', idempotencyKey: 'key-1' }),
+    ).rejects.toBeInstanceOf(IdempotencyKeyReuseError);
+  });
+
+  it('distinct idempotency keys create distinct transactions', async () => {
+    const drizzle = makeDrizzle({
+      select: [
+        [{ id: 'w-1', userId: 'u-1', balance: '100', currency: 'USD' }],
+        [], // no existing tx for key-a
+        [{ id: 'w-1', userId: 'u-1', balance: '60', currency: 'USD' }],
+        [], // no existing tx for key-b
+      ],
+      returning: [
+        [{ id: 'tx-a', walletId: 'w-1', amount: '40', currency: 'USD', status: 'pending' }],
+        [{ id: 'w-1' }], // guarded debit for call 1
+        [{ id: 'tx-b', walletId: 'w-1', amount: '20', currency: 'USD', status: 'pending' }],
+        [{ id: 'w-1' }], // guarded debit for call 2
+      ],
+    });
+    const svc = svcOf(drizzle, events, payment);
+
+    const r1 = await svc.withdraw({
+      userId: 'u-1',
+      amount: 40,
+      currency: 'USD',
+      idempotencyKey: 'key-a',
+    });
+    const r2 = await svc.withdraw({
+      userId: 'u-1',
+      amount: 20,
+      currency: 'USD',
+      idempotencyKey: 'key-b',
+    });
+
+    expect(r1.transactionId).toBe('tx-a');
+    expect(r2.transactionId).toBe('tx-b');
+    expect(events.emit).toHaveBeenCalledTimes(2);
+  });
+
+  it('with no idempotencyKey, stores a null key and behaves unchanged', async () => {
+    const drizzle = makeDrizzle({
+      select: [[{ id: 'w-1', userId: 'u-1', balance: '100', currency: 'USD' }]],
+      returning: [
+        [{ id: 'tx-1', walletId: 'w-1', amount: '40', currency: 'USD', status: 'pending' }],
+        [{ id: 'w-1' }],
+      ],
+    });
+    const valuesSpy = readPrivate<ReturnType<typeof vi.fn>>(drizzle.db, 'values');
+    const svc = svcOf(drizzle, events, payment);
+
+    const result = await svc.withdraw({ userId: 'u-1', amount: 40, currency: 'USD' });
+
+    expect(result).toEqual({ transactionId: 'tx-1', status: 'pending' });
+    expect(valuesSpy).toHaveBeenCalledWith(expect.objectContaining({ idempotencyKey: null }));
+    expect(events.emit).toHaveBeenCalledWith(
+      'wallet.withdrawal.requested',
+      expect.objectContaining({ transactionId: 'tx-1' }),
+    );
+  });
+
+  it('a race on the partial unique index re-reads the winner instead of aborting the transaction', async () => {
+    const drizzle = makeDrizzle({
+      select: [
+        [{ id: 'w-1', userId: 'u-1', balance: '100', currency: 'USD' }],
+        [], // pre-insert check: not found yet, both requests race past it
+        [{ id: 'tx-winner', walletId: 'w-1', amount: '40', currency: 'USD', status: 'pending' }],
+      ],
+      returning: [
+        [], // onConflictDoNothing().returning() - the loser's insert is a no-op, not a thrown error
+      ],
+    });
+    const svc = svcOf(drizzle, events, payment);
+
+    const result = await svc.withdraw({
+      userId: 'u-1',
+      amount: 40,
+      currency: 'USD',
+      idempotencyKey: 'key-1',
+    });
+
+    expect(result).toEqual({ transactionId: 'tx-winner', status: 'pending' });
+    expect(events.emit).not.toHaveBeenCalled();
+  });
+
+  it('throws IdempotencyKeyReuseError when a replayed key was used with a different currency', async () => {
+    const drizzle = makeDrizzle({
+      select: [
+        [{ id: 'w-1', userId: 'u-1', balance: '60', currency: 'USD' }],
+        [{ id: 'tx-1', walletId: 'w-1', amount: '40', currency: 'EUR', status: 'pending' }],
+      ],
+    });
+    const svc = svcOf(drizzle, events, payment);
+
+    await expect(
+      svc.withdraw({ userId: 'u-1', amount: 40, currency: 'USD', idempotencyKey: 'key-1' }),
+    ).rejects.toBeInstanceOf(IdempotencyKeyReuseError);
+  });
+});
+
+describe('WalletService idempotency - namespaced across operations', () => {
+  let events: ReturnType<typeof makeEvents>;
+  let payment: ReturnType<typeof makePayment>;
+
+  beforeEach(() => {
+    events = makeEvents();
+    payment = makePayment();
+  });
+
+  it('the same raw key used for a deposit then a withdraw creates two distinct rows, not a false replay', async () => {
+    const drizzle = makeDrizzle({
+      select: [
+        [{ id: 'w-1', userId: 'u-1', balance: '100', currency: 'USD' }], // deposit pre-PSP: wallet lookup
+        [], // deposit pre-PSP: no existing tx under the deposit namespace
+        [], // bare-awaited balance credit (no .returning())
+        [{ id: 'w-1', userId: 'u-1', balance: '140', currency: 'USD' }], // withdraw: current (for update)
+        [], // withdraw pre-insert check: no existing tx under the withdraw namespace
+      ],
+      returning: [
+        [{ id: 'tx-deposit', walletId: 'w-1', amount: '40', currency: 'USD', status: 'completed' }],
+        [{ id: 'tx-withdraw', walletId: 'w-1', amount: '40', currency: 'USD', status: 'pending' }],
+        [{ id: 'w-1' }], // withdraw guarded debit
+      ],
+    });
+    const svc = svcOf(drizzle, events, payment);
+
+    const deposit = await svc.deposit({
+      userId: 'u-1',
+      amount: 40,
+      currency: 'USD',
+      idempotencyKey: 'shared-key',
+    });
+    const withdraw = await svc.withdraw({
+      userId: 'u-1',
+      amount: 40,
+      currency: 'USD',
+      idempotencyKey: 'shared-key',
+    });
+
+    expect(deposit.transactionId).toBe('tx-deposit');
+    expect(withdraw.transactionId).toBe('tx-withdraw');
+    expect(deposit.transactionId).not.toBe(withdraw.transactionId);
+    expect(events.emit).toHaveBeenCalledWith(
+      'wallet.deposit.completed',
+      expect.objectContaining({ transactionId: 'tx-deposit' }),
+    );
+    expect(events.emit).toHaveBeenCalledWith(
+      'wallet.withdrawal.requested',
+      expect.objectContaining({ transactionId: 'tx-withdraw' }),
+    );
   });
 });
 

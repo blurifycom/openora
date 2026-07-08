@@ -58,6 +58,10 @@ const ROUTES = [
     agent: 'expert',
     re: /\b(acceptance criteria|responsible gaming|regulatory requirement)\b/,
   },
+  {
+    agent: 'quality-reviewer',
+    re: /\b(quality review|code quality|over-engineer(ed|ing)?|simplification review|duplication review)\b/,
+  },
 ];
 
 const hit = ROUTES.find((r) => r.re.test(text));

@@ -10,6 +10,12 @@ export type { EventBus, EventHandler } from './event-bus.js';
 export { EVENT_BUS, InMemoryBroker, createEventBus } from './event-bus.js';
 
 export { InProcessJobQueue } from './job-queue.js';
+export { BullMqJobQueue } from './bullmq-job-queue.js';
+export { InProcessRateLimiter, makeRateLimitError, assertRateLimit } from './rate-limiter.js';
+export { InProcessCache, cached, invalidate } from './cache.js';
+export { createRedisClient, type RedisClient } from './redis-client.js';
+export { RedisCache } from './redis-cache.js';
+export { RedisRateLimiter } from './redis-rate-limiter.js';
 export { InProcessRealtimeTransport } from './realtime-transport.js';
 export { SseClientAuthorizer, type SseClientAuthorizerOptions } from './realtime-authorizer.js';
 

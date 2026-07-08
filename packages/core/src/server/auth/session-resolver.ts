@@ -20,7 +20,6 @@ export class SessionResolver {
     this.auth = createAuth({ db: drizzle.db, ...(schema ? { schema } : {}) });
   }
 
-  // Returns undefined (not throws) on a missing/invalid session - public routes legitimately have none.
   async resolveUserId(headers: Headers): Promise<string | undefined> {
     const session = await this.auth.api.getSession({ headers });
     return session?.user?.id;

@@ -33,12 +33,7 @@ export class NotificationsService {
   async create(input: CreateNotificationInput) {
     const [record] = await this.drizzle.db
       .insert(notification)
-      .values({
-        userId: input.userId,
-        type: input.type,
-        title: input.title,
-        body: input.body,
-      })
+      .values({ ...input })
       .returning();
     this.events.emit('notifications.created', {
       notificationId: record!.id,

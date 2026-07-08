@@ -6,15 +6,17 @@ import {
   pageToOffset,
   alreadyInUseError,
 } from '@blurifycom/core/server';
-import { and, asc, count, eq, isNull, notInArray } from 'drizzle-orm';
+import { and, asc, count, eq, inArray, isNull, notInArray } from 'drizzle-orm';
 import {
   AssignPlayerTagInput,
   CreateTagInput,
   DeleteTagInput,
   RemovePlayerTagInput,
   Tag,
+  type PlayerTags,
   type TagKey,
 } from '@blurifycom/core/contracts';
+import { player } from '@blurifycom/core/pam/schema/profile';
 import { playerTag, tag } from '../schema/index.js';
 import { PlayerTagWithTag } from '../contract/index.js';
 import { mapDbError } from '@blurifycom/core/common/errors';
@@ -24,11 +26,29 @@ export const TagNotFoundError = makeNotFoundError('Tag');
 export const TagAlreadyInUseError = alreadyInUseError('Tag');
 export const TagAssignmentNotFoundError = makeNotFoundError('Tag Assignment');
 
-export class TagService {
+export class TagService implements PlayerTags {
   constructor(
     private readonly drizzle: DrizzleService,
     private readonly event: EventBus,
   ) {}
+
+  // Keyed by auth `userId`, not the internal `player.id`. Users with no active tags are absent from the map.
+  public async getActiveTagKeys(userIds: readonly string[]): Promise<Map<string, TagKey[]>> {
+    const result = new Map<string, TagKey[]>();
+    if (userIds.length === 0) return result;
+    const rows = await this.drizzle.db
+      .select({ userId: player.userId, key: tag.key })
+      .from(player)
+      .innerJoin(playerTag, and(eq(playerTag.playerId, player.id), isNull(playerTag.removedAt)))
+      .innerJoin(tag, eq(tag.id, playerTag.tagId))
+      .where(inArray(player.userId, [...userIds]));
+    for (const row of rows) {
+      const keys = result.get(row.userId) ?? [];
+      keys.push(row.key);
+      result.set(row.userId, keys);
+    }
+    return result;
+  }
 
   private async _findTagByKeyOrThrow(tagKey: TagKey, trx: DrizzleTx): Promise<Tag> {
     const results = await trx.select().from(tag).where(eq(tag.key, tagKey)).limit(1);

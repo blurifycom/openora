@@ -8,11 +8,11 @@ export {
   useResetPassword,
 } from './identity/react/auth.js';
 export {
+  useEnable2fa,
   useVerify2fa,
   useDisable2fa,
   useVerifyEmail,
   useUpdateProfile,
-  useEnable2fa,
   useChangePassword,
   useSendEmailVerification,
   type Enable2faResult,

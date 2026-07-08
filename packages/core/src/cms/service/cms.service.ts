@@ -3,12 +3,22 @@ import {
   makeNotFoundError,
   DrizzleService,
   findOneOrThrow,
+  cached,
+  invalidate,
 } from '@blurifycom/core/server';
-import { eq, and, asc, desc } from 'drizzle-orm';
+import type { CacheAdapter } from '@blurifycom/core/contracts';
+import { eq, and, asc, desc, isNotNull } from 'drizzle-orm';
 import { page as pageTable, banner as bannerTable } from '../schema/index.js';
 
 export const PageNotFoundError = makeNotFoundError('Page');
 export const BannerNotFoundError = makeNotFoundError('Banner');
+
+// Public content is read far more than written; a short TTL bounds staleness
+// after a publish/edit to the invalidation below, not to this window alone.
+const CMS_CACHE_TTL_MS = 60_000;
+
+const pageCacheKey = (slug: string) => `cms:page:${slug}`;
+const bannersCacheKey = (placement: string) => `cms:banners:${placement}`;
 
 function toPage(record: {
   id: string;
@@ -54,8 +64,11 @@ export class CmsService {
   constructor(
     private readonly drizzle: DrizzleService,
     private readonly events: EventBus,
+    private readonly cache?: CacheAdapter,
   ) {}
 
+  // Public routes (no adminGuard, HTTP-cacheable) - published-only. There is no
+  // admin equivalent yet, so a draft page is visible only via direct DB access.
   async listPages() {
     const pages = await this.drizzle.db
       .select({
@@ -66,6 +79,7 @@ export class CmsService {
         createdAt: pageTable.createdAt,
       })
       .from(pageTable)
+      .where(isNotNull(pageTable.publishedAt))
       .orderBy(desc(pageTable.createdAt));
     return pages.map((p) => ({
       id: p.id,
@@ -76,12 +90,19 @@ export class CmsService {
     }));
   }
 
+  // Published-only, so an unpublished slug 404s the same as a nonexistent one
+  // (no draft-existence leak).
   async getPage(slug: string) {
-    const record = findOneOrThrow(
-      await this.drizzle.db.select().from(pageTable).where(eq(pageTable.slug, slug)),
-      new PageNotFoundError(slug),
-    );
-    return toPage(record);
+    return cached(this.cache, pageCacheKey(slug), CMS_CACHE_TTL_MS, async () => {
+      const record = findOneOrThrow(
+        await this.drizzle.db
+          .select()
+          .from(pageTable)
+          .where(and(eq(pageTable.slug, slug), isNotNull(pageTable.publishedAt))),
+        new PageNotFoundError(slug),
+      );
+      return toPage(record);
+    });
   }
 
   async createPage(input: {
@@ -99,6 +120,7 @@ export class CmsService {
         publishedAt: input.publishedAt ? new Date(input.publishedAt) : null,
       })
       .returning();
+    await invalidate(this.cache, pageCacheKey(input.slug));
     if (record!.publishedAt) {
       this.events.emit('cms.page.published', { pageId: record!.id, slug: record!.slug });
     }
@@ -132,6 +154,8 @@ export class CmsService {
       .where(eq(pageTable.id, input.id))
       .returning();
 
+    await invalidate(this.cache, [existing.slug, input.slug ?? existing.slug].map(pageCacheKey));
+
     const nowPublished = record!.publishedAt !== null;
     if (!wasPublished && nowPublished) {
       this.events.emit('cms.page.published', { pageId: record!.id, slug: record!.slug });
@@ -141,11 +165,12 @@ export class CmsService {
   }
 
   async deletePage(id: string): Promise<{ success: true }> {
-    findOneOrThrow(
+    const existing = findOneOrThrow(
       await this.drizzle.db.select().from(pageTable).where(eq(pageTable.id, id)),
       new PageNotFoundError(id),
     );
     await this.drizzle.db.delete(pageTable).where(eq(pageTable.id, id));
+    await invalidate(this.cache, pageCacheKey(existing.slug));
     return { success: true };
   }
 
@@ -158,12 +183,14 @@ export class CmsService {
   }
 
   async listBannersByPlacement(placement: string) {
-    const banners = await this.drizzle.db
-      .select()
-      .from(bannerTable)
-      .where(and(eq(bannerTable.placement, placement), eq(bannerTable.isActive, true)))
-      .orderBy(asc(bannerTable.sortOrder));
-    return banners.map(toBanner);
+    return cached(this.cache, bannersCacheKey(placement), CMS_CACHE_TTL_MS, async () => {
+      const banners = await this.drizzle.db
+        .select()
+        .from(bannerTable)
+        .where(and(eq(bannerTable.placement, placement), eq(bannerTable.isActive, true)))
+        .orderBy(asc(bannerTable.sortOrder));
+      return banners.map(toBanner);
+    });
   }
 
   async createBanner(input: {
@@ -173,16 +200,8 @@ export class CmsService {
     linkUrl?: string;
     sortOrder?: number;
   }) {
-    const [record] = await this.drizzle.db
-      .insert(bannerTable)
-      .values({
-        placement: input.placement,
-        title: input.title,
-        imageUrl: input.imageUrl,
-        linkUrl: input.linkUrl ?? null,
-        sortOrder: input.sortOrder ?? 0,
-      })
-      .returning();
+    const [record] = await this.drizzle.db.insert(bannerTable).values(input).returning();
+    await invalidate(this.cache, bannersCacheKey(input.placement));
     return toBanner(record!);
   }
 
@@ -195,7 +214,7 @@ export class CmsService {
     isActive?: boolean;
     sortOrder?: number;
   }) {
-    findOneOrThrow(
+    const existing = findOneOrThrow(
       await this.drizzle.db.select().from(bannerTable).where(eq(bannerTable.id, input.id)),
       new BannerNotFoundError(input.id),
     );
@@ -213,15 +232,20 @@ export class CmsService {
       .set(patch)
       .where(eq(bannerTable.id, input.id))
       .returning();
+    await invalidate(
+      this.cache,
+      [existing.placement, input.placement ?? existing.placement].map(bannersCacheKey),
+    );
     return toBanner(record!);
   }
 
   async deleteBanner(id: string): Promise<{ success: true }> {
-    findOneOrThrow(
+    const existing = findOneOrThrow(
       await this.drizzle.db.select().from(bannerTable).where(eq(bannerTable.id, id)),
       new BannerNotFoundError(id),
     );
     await this.drizzle.db.delete(bannerTable).where(eq(bannerTable.id, id));
+    await invalidate(this.cache, bannersCacheKey(existing.placement));
     return { success: true };
   }
 }

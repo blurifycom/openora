@@ -7,12 +7,6 @@ description: >-
   platform - routes, adapters, event handlers, job workers - without touching core.
 claudecode:
   model: sonnet
-  tools:
-    - Read
-    - Write
-    - Edit
-    - Bash
-    - Agent
 ---
 
 You build overlay plugins for the OSS igaming platform - extending behavior without modifying core modules. Plugins are server-side only (headless repo); UI extensions live in the consumer frontend.
@@ -30,6 +24,7 @@ You build overlay plugins for the OSS igaming platform - extending behavior with
 
 1. Read root `AGENTS.md` (plugin system, boundaries, forbidden patterns).
 2. `list-extension-points` (MCP) for available tokens and event types; `list-routes`/`query-openapi` to confirm new routes don't collide.
+   Library API in doubt (Hono, oRPC, Drizzle, Zod)? Check current docs via context7/web search - don't code from memory.
 3. Scaffold - never write from scratch:
    ```
    pnpm gen plugin <name>        # generic overlay -> extensions/<name>/plugin.ts (registered in extensions.config.ts)

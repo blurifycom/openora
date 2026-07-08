@@ -227,6 +227,13 @@ export const domainEventSchemas = {
     selectionId: UuidSchema,
     stake: z.number(),
   }),
+  'sportsbook.bet.settled': z.object({
+    userId: UuidSchema,
+    betId: UuidSchema,
+    selectionId: UuidSchema,
+    outcome: z.enum(['win', 'loss']),
+    payout: z.number(),
+  }),
 
   // Emitted when an admin invitation token is accepted. The consumer (identity
   // module or an overlay) provisions the user account and completes the role

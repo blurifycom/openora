@@ -55,7 +55,7 @@ The implementer ships co-located Vitest tests with the slice (vi-mocked Drizzle 
 
 ### 5. Review (findings only)
 
-In parallel: `contract-reviewer` (boundaries, contract/schema drift, breaking changes) + `security-reviewer` (money, authz, PII). Loop findings back to the implementer; re-review if the surface changed.
+In parallel: `contract-reviewer` (boundaries, contract/schema drift, breaking changes) + `security-reviewer` (money, authz, PII) + `quality-reviewer` (performance, duplication, simplification, conventions). Loop findings back to the implementer; re-review if the surface changed.
 
 ### 6. E2E
 

@@ -1,5 +1,6 @@
 import { implement } from '@orpc/server';
 import { getUserId, mapErrors, type AdminGuard, type OssContext } from '@blurifycom/core/server';
+import type { AuditWritePort } from '@blurifycom/core/contracts';
 import { walletContract } from '../contract/index.js';
 import {
   WalletService,
@@ -9,16 +10,29 @@ import {
   InsufficientBalanceError,
   CurrencyMismatchError,
   KycRequiredError,
+  IdempotencyKeyReuseError,
 } from '../service/wallet.service.js';
 
-export function createWalletRouter(wallet: WalletService, adminGuard: AdminGuard) {
+export function createWalletRouter(
+  wallet: WalletService,
+  adminGuard: AdminGuard,
+  audit: AuditWritePort,
+) {
   const os = implement(walletContract).$context<OssContext>();
 
   return os.router({
     getBalance: os.getBalance.handler(({ context }) => wallet.getBalance(getUserId(context))),
 
     deposit: os.deposit.handler(({ input, context }) =>
-      wallet.deposit(getUserId(context), input.amount, input.currency, input.provider),
+      mapErrors({ CONFLICT: IdempotencyKeyReuseError }, () =>
+        wallet.deposit({
+          userId: getUserId(context),
+          amount: input.amount,
+          currency: input.currency,
+          provider: input.provider,
+          idempotencyKey: input.idempotencyKey,
+        }),
+      ),
     ),
 
     withdraw: os.withdraw.handler(({ input, context }) =>
@@ -26,9 +40,15 @@ export function createWalletRouter(wallet: WalletService, adminGuard: AdminGuard
         {
           NOT_FOUND: WalletNotFoundError,
           BAD_REQUEST: [InsufficientBalanceError, CurrencyMismatchError],
-          CONFLICT: KycRequiredError,
+          CONFLICT: [KycRequiredError, IdempotencyKeyReuseError],
         },
-        () => wallet.withdraw(getUserId(context), input.amount, input.currency, input.provider),
+        () =>
+          wallet.withdraw({
+            userId: getUserId(context),
+            amount: input.amount,
+            currency: input.currency,
+            idempotencyKey: input.idempotencyKey,
+          }),
       ),
     ),
 
@@ -36,9 +56,10 @@ export function createWalletRouter(wallet: WalletService, adminGuard: AdminGuard
       wallet.getTransactions(getUserId(context), input.page, input.limit),
     ),
 
-    listPlayerTransactions: os.listPlayerTransactions.handler(({ input }) =>
-      wallet.getTransactions(input.userId, input.page, input.limit),
-    ),
+    listPlayerTransactions: os.listPlayerTransactions.handler(async ({ input, context }) => {
+      await adminGuard.assert(context, 'transaction', 'view');
+      return wallet.getTransactions(input.userId, input.page, input.limit);
+    }),
 
     withdrawals: {
       list: os.withdrawals.list.handler(async ({ input, context }) => {
@@ -60,6 +81,52 @@ export function createWalletRouter(wallet: WalletService, adminGuard: AdminGuard
           { NOT_FOUND: WithdrawalNotFoundError, CONFLICT: WithdrawalNotPendingError },
           () => wallet.rejectWithdrawal(adminId, input.withdrawalId, input.reason),
         );
+      }),
+    },
+
+    autoWithdrawalRules: {
+      set: os.autoWithdrawalRules.set.handler(async ({ input, context }) => {
+        const { userId: adminId } = await adminGuard.assert(context, 'withdrawal', 'auto-rule');
+        const before = await wallet.getAutoWithdrawalRule(input.userId);
+        const rule = await wallet.setAutoWithdrawalRule({
+          userId: input.userId,
+          threshold: input.threshold,
+          reason: input.reason,
+          createdBy: adminId,
+        });
+        await audit.record({
+          actorId: adminId,
+          actorType: 'admin',
+          action: 'wallet.auto_withdrawal_rule.set',
+          resourceType: 'auto_withdrawal_rule',
+          resourceId: input.userId,
+          before: before ? { threshold: before.threshold, reason: before.reason } : null,
+          after: { threshold: rule.threshold, reason: rule.reason },
+        });
+        return rule;
+      }),
+
+      get: os.autoWithdrawalRules.get.handler(async ({ input, context }) => {
+        await adminGuard.assert(context, 'withdrawal', 'auto-rule');
+        return wallet.getAutoWithdrawalRule(input.userId);
+      }),
+
+      delete: os.autoWithdrawalRules.delete.handler(async ({ input, context }) => {
+        const { userId: adminId } = await adminGuard.assert(context, 'withdrawal', 'auto-rule');
+        const before = await wallet.getAutoWithdrawalRule(input.userId);
+        const deleted = await wallet.deleteAutoWithdrawalRule(input.userId);
+        if (deleted) {
+          await audit.record({
+            actorId: adminId,
+            actorType: 'admin',
+            action: 'wallet.auto_withdrawal_rule.deleted',
+            resourceType: 'auto_withdrawal_rule',
+            resourceId: input.userId,
+            before: before ? { threshold: before.threshold, reason: before.reason } : null,
+            after: null,
+          });
+        }
+        return deleted;
       }),
     },
   });

@@ -1,5 +1,6 @@
 import { z } from 'zod';
 import { LimitsSchema } from './igaming-config.js';
+import { TagKeySchema } from './tag.js';
 import { createToken } from '../adapters/token.js';
 
 /**
@@ -66,6 +67,22 @@ export const KycConfigSchema = z
   })
   .strict();
 
+export const AutoWithdrawalConfigSchema = z
+  .object({
+    enabled: z.boolean().default(false),
+    /** Fiat-rail auto-approval ceiling; a per-player rule overrides it. Crypto is hard-stopped in the evaluator, never here. */
+    fiatThreshold: z.number().positive().optional(),
+    /** Active tag keys that veto auto-approval and force manual review. */
+    excludeRiskFlags: z.array(TagKeySchema).default([]),
+    /** Amount cap on auto-approved payouts per player per trailing 24h. Absent = no cap. */
+    dailyCapAmount: z.number().positive().optional(),
+    /** Count cap on auto-approved payouts per player per trailing 24h. Absent = no cap. */
+    dailyCapCount: z.number().int().positive().optional(),
+  })
+  .strict();
+
+export type AutoWithdrawalConfig = z.infer<typeof AutoWithdrawalConfigSchema>;
+
 export const PlatformConfigSchema = z
   .object({
     /**
@@ -100,6 +117,8 @@ export const PlatformConfigSchema = z
      * and per-currency re-KYC deposit thresholds. Absent = KYC ungated, no re-KYC.
      */
     kyc: KycConfigSchema.optional(),
+    /** Auto-approve withdrawals that clear every risk gate instead of queuing them for manual review. Absent = always manual. */
+    autoWithdrawal: AutoWithdrawalConfigSchema.optional(),
     /**
      * Player-facing language codes the operator supports (eg `['en', 'es']`).
      * Undefined or empty means no restriction - any value is accepted.

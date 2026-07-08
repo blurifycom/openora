@@ -308,17 +308,21 @@
       "id": "wallet",
       "group": "core",
       "tables": [
+        "auto_withdrawal_rule",
         "wallet",
         "wallet_transaction"
       ],
       "routes": [
         "wallet.approve",
+        "wallet.delete",
         "wallet.deposit",
+        "wallet.get",
         "wallet.getBalance",
         "wallet.list",
         "wallet.listPlayerTransactions",
         "wallet.listTransactions",
         "wallet.reject",
+        "wallet.set",
         "wallet.withdraw"
       ]
     }
@@ -373,7 +377,8 @@
       "status": "wired",
       "boundIn": [
         "packages/core/src/admin-console/plugin.ts",
-        "packages/core/src/audit/plugin.ts"
+        "packages/core/src/audit/plugin.ts",
+        "packages/core/src/wallet/plugin.ts"
       ]
     },
     {
@@ -383,6 +388,17 @@
       "status": "wired",
       "boundIn": [
         "packages/core/src/server/runtime/create-app.ts"
+      ]
+    },
+    {
+      "category": "cache",
+      "interface": "CacheAdapter",
+      "token": "CACHE",
+      "status": "wired",
+      "boundIn": [
+        "packages/core/src/casino/lobby/plugin.ts",
+        "packages/core/src/cms/plugin.ts",
+        "packages/core/src/iam/plugin.ts"
       ]
     },
     {
@@ -494,6 +510,26 @@
       ]
     },
     {
+      "category": "player-tags",
+      "interface": "PlayerTags",
+      "token": "PLAYER_TAGS",
+      "status": "wired",
+      "boundIn": [
+        "packages/core/src/pam/tag/plugin.ts",
+        "packages/core/src/wallet/plugin.ts"
+      ]
+    },
+    {
+      "category": "rate-limit",
+      "interface": "RateLimiterAdapter",
+      "token": "RATE_LIMITER",
+      "status": "wired",
+      "boundIn": [
+        "packages/core/src/pam/identity/plugin.ts",
+        "packages/core/src/wallet/plugin.ts"
+      ]
+    },
+    {
       "category": "realtime",
       "interface": "RealtimePresence",
       "token": "REALTIME_TRANSPORT",
@@ -580,6 +616,7 @@
     "rg.self_exclusion.activated",
     "rg.self_exclusion.lifted",
     "sportsbook.bet.placed",
+    "sportsbook.bet.settled",
     "sportsbook.odds.updated",
     "tag.player.assigned",
     "tag.player.removed",
@@ -664,6 +701,18 @@
     {
       "name": "AuditLogEntrySchema",
       "file": "packages/core/src/audit/contract/index.ts"
+    },
+    {
+      "name": "AutoWithdrawalConfigSchema",
+      "file": "packages/core/src/contracts/schemas/platform-config.ts"
+    },
+    {
+      "name": "AutoWithdrawalRuleKeySchema",
+      "file": "packages/core/src/wallet/contract/index.ts"
+    },
+    {
+      "name": "AutoWithdrawalRuleSchema",
+      "file": "packages/core/src/wallet/contract/index.ts"
     },
     {
       "name": "BannerSchema",
@@ -856,6 +905,10 @@
     {
       "name": "KycVerificationSchema",
       "file": "packages/core/src/compliance/contract/index.ts"
+    },
+    {
+      "name": "LanguageSchema",
+      "file": "packages/core/src/contracts/schemas/identity.ts"
     },
     {
       "name": "LeaderboardEntrySchema",
@@ -1086,6 +1139,10 @@
       "file": "packages/core/src/compliance/contract/rg.ts"
     },
     {
+      "name": "SetAutoWithdrawalRuleInputSchema",
+      "file": "packages/core/src/wallet/contract/index.ts"
+    },
+    {
       "name": "SetPlayerLimitInputSchema",
       "file": "packages/core/src/compliance/contract/rg.ts"
     },
@@ -1289,6 +1346,7 @@
     "DELETE /iam/roles/{roleId}",
     "DELETE /player/{playerId}/player-tag/{tagKey}",
     "DELETE /tag/{key}",
+    "DELETE /wallet/auto-withdrawal-rules/{userId}",
     "GET /audit/export",
     "GET /audit/logs",
     "GET /backoffice/stats",
@@ -1338,6 +1396,7 @@
     "GET /player/{playerId}/player-tag",
     "GET /profile",
     "GET /tag-rule",
+    "GET /wallet/auto-withdrawal-rules/{userId}",
     "GET /wallet/balance",
     "GET /wallet/transactions",
     "GET /wallet/transactions/{userId}",
@@ -1395,6 +1454,7 @@
     "PUT /compliance/limits",
     "PUT /compliance/players/{userId}/limits",
     "PUT /iam/roles/{roleId}/permissions",
-    "PUT /tag-rule/{tagKey}"
+    "PUT /tag-rule/{tagKey}",
+    "PUT /wallet/auto-withdrawal-rules/{userId}"
   ]
 }

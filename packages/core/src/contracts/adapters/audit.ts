@@ -20,7 +20,12 @@ import { createToken, type Token } from './token.js';
 
 // Admin actions that are recorded directly (not via a domain-event subscription)
 // and so have no entry in `domainEventSchemas`. Add new direct actions here.
-export type DirectAuditAction = 'admin.user.updated' | 'audit.export';
+export type DirectAuditAction =
+  | 'admin.user.updated'
+  | 'audit.export'
+  | 'wallet.withdrawal.auto_approved'
+  | 'wallet.auto_withdrawal_rule.set'
+  | 'wallet.auto_withdrawal_rule.deleted';
 
 // Every value the audit `action` column legitimately holds: a cross-module domain
 // event topic (recorded by the audit plugin's subscriptions) or a direct admin

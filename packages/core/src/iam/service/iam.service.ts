@@ -6,6 +6,7 @@ import {
   DrizzleService,
   findOneOrThrow,
   pageToOffset,
+  serializeRow,
   statement,
   roles,
   readActions,
@@ -13,6 +14,8 @@ import {
   levelToActions,
   levelRank,
   isLevelSufficient,
+  cached,
+  invalidate,
   actionsToLevel,
   type ResourceName,
   type RoleName,
@@ -23,6 +26,7 @@ import type {
   SendEmailPort,
   AdminPermissionResolver,
   AdminGrant,
+  CacheAdapter,
   SessionCommands,
 } from '@blurifycom/core/contracts';
 import {
@@ -33,7 +37,7 @@ import {
 } from '../schema/index.js';
 // Read-only cross-domain schema import (sanctioned): assignRole verifies the target is an admin user.
 import { user } from '@blurifycom/core/pam/schema/identity';
-import type { AdminInvitation, EffectivePermissions } from '../contract/index.js';
+import type { EffectivePermissions } from '../contract/index.js';
 
 export const RoleNotFoundError = makeNotFoundError('AdminRole');
 export const InvitationNotFoundError = makeNotFoundError('AdminInvitation');
@@ -135,80 +139,60 @@ function grantsToLevelMap(grants: readonly AdminGrant[]) {
 }
 
 function toRoleDto(row: typeof adminRole.$inferSelect) {
-  return {
-    id: row.id,
-    key: row.key ?? null,
-    name: row.name,
-    isSystem: row.isSystem,
-    isSuperAdmin: row.isSuperAdmin,
-    createdAt: row.createdAt.toISOString(),
-  };
+  return serializeRow(row, { dateFields: ['createdAt'] });
 }
 
 function toAssignmentDto(row: typeof adminRoleAssignment.$inferSelect) {
-  return {
-    id: row.id,
-    userId: row.userId,
-    roleId: row.roleId,
-    createdAt: row.createdAt.toISOString(),
-  };
+  return serializeRow(row, { dateFields: ['createdAt'] });
 }
 
 function toInvitationDto(row: typeof adminInvitation.$inferSelect) {
-  return {
-    id: row.id,
-    email: row.email,
-    roleId: row.roleId,
-    token: row.token,
-    status: row.status as AdminInvitation['status'],
-    expiresAt: row.expiresAt.toISOString(),
-    acceptedAt: row.acceptedAt ? row.acceptedAt.toISOString() : null,
-    createdAt: row.createdAt.toISOString(),
-  };
+  return serializeRow(row, { dateFields: ['expiresAt', 'acceptedAt', 'createdAt'] });
 }
+
+// Short TTL: grants are cached only to spare the DB on the per-request guard path,
+// so a stale entry means a revoked admin keeps access for at most this window. The
+// event-driven purge below normally beats the TTL; this is just the safety floor.
+const GRANTS_CACHE_TTL_MS = 10_000;
+const grantsCacheKey = (userId: string) => `admin-grants:${userId}`;
 
 /** Implements ADMIN_PERMISSION_RESOLVER; returns null when the user has no DB assignment (guard falls back to static roles for the bootstrap admin path). */
 export class DbAdminPermissionResolver implements AdminPermissionResolver {
-  constructor(private readonly drizzle: DrizzleService) {}
+  constructor(
+    private readonly drizzle: DrizzleService,
+    private readonly cache?: CacheAdapter,
+  ) {}
 
-  async getGrants(userId: string) {
-    const db = this.drizzle.db;
+  getGrants(userId: string) {
+    // A cached `null` (no assignment) is a valid, cacheable answer - cached() treats
+    // only `undefined` as a miss, so repeated forbidden hits don't re-query either.
+    return cached(this.cache, grantsCacheKey(userId), GRANTS_CACHE_TTL_MS, () =>
+      this.loadGrants(userId),
+    );
+  }
 
-    const assignments = await db
-      .select({ roleId: adminRoleAssignment.roleId })
+  private async loadGrants(userId: string): Promise<AdminGrant[] | null> {
+    // One indexed join (on admin_role_assignment_user_id_idx) replaces the old
+    // 2 + N-per-role fan-out. leftJoin keeps super-admin roles (no permission rows)
+    // and empty roles in the result so the null/[]/grants semantics are unchanged.
+    const rows = await this.drizzle.db
+      .select({
+        isSuperAdmin: adminRole.isSuperAdmin,
+        resource: adminRolePermission.resource,
+        level: adminRolePermission.level,
+      })
       .from(adminRoleAssignment)
+      .innerJoin(adminRole, eq(adminRole.id, adminRoleAssignment.roleId))
+      .leftJoin(adminRolePermission, eq(adminRolePermission.roleId, adminRole.id))
       .where(eq(adminRoleAssignment.userId, userId));
 
-    if (assignments.length === 0) {
-      return null;
-    }
-
-    const roleIds = assignments.map((a) => a.roleId);
-
-    // Super-admin bypass: skip level rows entirely.
-    const superRows = await db
-      .select({ id: adminRole.id })
-      .from(adminRole)
-      .where(and(inArray(adminRole.id, roleIds), eq(adminRole.isSuperAdmin, true)));
-    if (superRows.length > 0) {
-      return allGrants();
-    }
-
-    const rows = await Promise.all(
-      roleIds.map((roleId) =>
-        db
-          .select({
-            resource: adminRolePermission.resource,
-            level: adminRolePermission.level,
-          })
-          .from(adminRolePermission)
-          .where(eq(adminRolePermission.roleId, roleId)),
-      ),
-    );
+    if (rows.length === 0) return null;
+    if (rows.some((r) => r.isSuperAdmin)) return allGrants();
 
     const seen = new Set<string>();
     const grants: AdminGrant[] = [];
-    for (const r of rows.flat()) {
+    for (const r of rows) {
+      if (!r.resource || !r.level) continue; // leftJoin null: role with no permission rows
       for (const action of levelToActions(r.resource, r.level as PermissionLevel)) {
         const key = `${r.resource}:${action}`;
         if (seen.has(key)) continue;
@@ -217,6 +201,25 @@ export class DbAdminPermissionResolver implements AdminPermissionResolver {
       }
     }
     return grants;
+  }
+
+  /** Drop one user's cached grants - called on assign/revoke so revocation is instant. */
+  async invalidateUser(userId: string): Promise<void> {
+    await invalidate(this.cache, grantsCacheKey(userId));
+  }
+
+  /** Drop cached grants for every current holder of a role - for a role-wide permission change. */
+  async invalidateRole(roleId: string): Promise<void> {
+    const holders = await this.drizzle.db
+      .select({ userId: adminRoleAssignment.userId })
+      .from(adminRoleAssignment)
+      .where(eq(adminRoleAssignment.roleId, roleId));
+    if (holders.length > 0) {
+      await invalidate(
+        this.cache,
+        holders.map((h) => grantsCacheKey(h.userId)),
+      );
+    }
   }
 }
 
@@ -425,13 +428,9 @@ export class IamService {
       await txn.delete(adminRolePermission).where(eq(adminRolePermission.roleId, input.roleId));
 
       if (persist.length > 0) {
-        await txn.insert(adminRolePermission).values(
-          persist.map((g) => ({
-            roleId: input.roleId,
-            resource: g.resource,
-            level: g.level,
-          })),
-        );
+        await txn
+          .insert(adminRolePermission)
+          .values(persist.map((g) => ({ ...g, roleId: input.roleId })));
       }
 
       const afterRows = await txn

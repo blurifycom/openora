@@ -9,7 +9,7 @@
       },
       {
         "type": "command",
-        "matcher": "Task",
+        "matcher": "Task|Agent",
         "command": "node \"${CLAUDE_PROJECT_DIR:-.}/.rulesync/hooks/guard-subagent.mjs\""
       }
     ],

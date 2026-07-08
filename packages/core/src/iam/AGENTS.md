@@ -84,7 +84,7 @@ Contract slice: `@blurifycom/core/iam/contract`.
 - Unknown module/level (or the non-assignable `admin` module) -> `InvalidGrantError` -> BAD_REQUEST.
 - `assignRole` dedupes on the unique index (returns the existing row, no 500).
 - `acceptInvitation` is a single atomic conditional UPDATE; a replay updates zero rows and emits no event.
-- "Applies immediately to active sessions": `AdminGuard` resolves grants from the DB every request (no cache).
+- "Applies immediately to active sessions": `getGrants` resolves a user's grants in ONE indexed join (assignment -> role -> permission), then the resolver caches the result per user (`admin-grants:<userId>`) behind `CACHE` for a short 10s TTL. Revocation stays effectively immediate because the plugin purges the affected keys on `iam.role.assigned`/`iam.role.revoked` (user-keyed) and `iam.role.permissions.changed` (fanned out to every current holder via `invalidateRole`); the TTL is only the safety floor. When `CACHE` is unbound (eg some tests) the resolver just always hits the DB.
 
 ## Routes (`iam.*`)
 

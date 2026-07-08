@@ -72,6 +72,15 @@ Goal: code that is clean, separated, scalable, and extendible - easy to understa
 
 - **Pure functions with dependencies passed in; side effects at the edges.** `price(cart, rate)` - the caller owns the IO, not `price(cart)` reading a rate inside.
 - **Immutability - derive, don't mutate.** `{ ...user, roles: [...user.roles, 'admin'] }`, not `user.roles.push('admin')`.
+- **Construct objects by spread + override, never hand-copy field-by-field.** When a new object mostly mirrors an existing one (a DB insert from a validated input, a patch, a re-shaped payload, a row -> DTO), spread the source and set only what differs - `db.insert(x).values({ ...input, id, createdAt, hash })` - never re-list `field: input.field` per key. The hand-written copy is pure noise that silently drifts the moment a field is added on one side. For a row -> DTO that only turns `Date`/`Decimal` into strings, use `serializeRow(row, { dateFields, decimalFields })`, not a manual map. Three cases keep fields explicit, and only these: (1) **order-sensitive serialization** - a hash/signature canonical form ties its bytes to key order, so list keys by hand and treat the list as append-only; (2) the source carries **fields the target must not receive** - spread then `.omit`/destructure them off, or list explicitly; (3) **null vs undefined matters at a boundary that won't coerce** - normalize once (`actorId: input.actorId ?? null`) rather than relying on a spread passing `undefined` through.
+
+  ```ts
+  // bad - re-lists every field; adding `userAgent` to the schema silently drops it here
+  .values({ id, actorId: input.actorId ?? null, actorType: input.actorType, action: input.action })
+  // good - spread the validated input, override only the server-computed fields
+  .values({ ...input, createdAt: input.createdAt.toISOString() })
+  ```
+
 - **A `class` is only a thin dependency-holding shell at a composition root; methods delegate to pure functions.**
 - **No inheritance for reuse - compose.** No decorators anywhere.
 - **Short, single-purpose functions.** If you'd comment "// step 2" inside a function, extract it.

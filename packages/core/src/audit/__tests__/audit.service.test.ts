@@ -1,35 +1,24 @@
 import { describe, it, expect, vi } from 'vitest';
 import { mock, mockDb } from '../../testing/mock.js';
-import { createHash } from 'node:crypto';
-import { AuditService } from '../service/audit.service.js';
+import { AuditService, computeHash } from '../service/audit.service.js';
 
-function computeHash(fields: {
-  id: string;
-  actorId: string | null;
-  actorType: string;
-  action: string;
-  resourceType: string;
-  resourceId: string | null;
-  seq: number;
-  createdAt: string;
-  prevHash: string | null;
-}): string {
-  return createHash('sha256')
-    .update(
-      JSON.stringify({
-        id: fields.id,
-        actorId: fields.actorId,
-        actorType: fields.actorType,
-        action: fields.action,
-        resourceType: fields.resourceType,
-        resourceId: fields.resourceId,
-        seq: fields.seq,
-        createdAt: fields.createdAt,
-        prevHash: fields.prevHash ?? '',
+describe('computeHash canonical form', () => {
+  it('matches the frozen golden vector', () => {
+    expect(
+      computeHash({
+        id: '11111111-1111-1111-1111-111111111111',
+        actorId: null,
+        actorType: 'system',
+        action: 'test.action',
+        resourceType: 'test',
+        resourceId: null,
+        seq: 1,
+        createdAt: '2024-01-01T00:00:00.000Z',
+        prevHash: null,
       }),
-    )
-    .digest('hex');
-}
+    ).toBe('b27c8c5da2ea836a61b72d519dc463459395499314eee863a7938d54840216b6');
+  });
+});
 
 function makeEvents(): import('@blurifycom/core/server').EventBus {
   return mock<import('@blurifycom/core/server').EventBus>({ emit: vi.fn(), on: vi.fn() });
@@ -139,11 +128,11 @@ describe('AuditService.record()', () => {
 
     const expected = computeHash({
       id: result.id,
-      actorId: result.actorId,
+      actorId: result.actorId ?? null,
       actorType: result.actorType,
       action: result.action,
       resourceType: result.resourceType,
-      resourceId: result.resourceId,
+      resourceId: result.resourceId ?? null,
       seq: result.seq,
       createdAt: result.createdAt,
       prevHash: null,

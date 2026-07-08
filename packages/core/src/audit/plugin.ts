@@ -319,6 +319,7 @@ const SUBSCRIBED_TOPICS: DomainEventName[] = [
   'wallet.withdrawal.approved',
   'wallet.withdrawal.rejected',
   'wallet.withdrawal.failed',
+  'sportsbook.bet.settled',
   'gaming.round.started',
   'gaming.round.ended',
   'bonus.claimed',

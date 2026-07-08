@@ -1,23 +1,24 @@
 import { createHash, randomUUID } from 'node:crypto';
-import { DrizzleService, pageToOffset, type EventBus } from '@blurifycom/core/server';
+import {
+  DrizzleService,
+  pageToOffset,
+  serializeRow,
+  withAdvisoryXactLock,
+  type EventBus,
+} from '@blurifycom/core/server';
 import { eq, and, or, gte, lte, like, desc, sql } from 'drizzle-orm';
 import type { AuditWritePort } from '@blurifycom/core/contracts';
 import { auditLog, type AuditLog } from '../schema/index.js';
-import type { AuditLogEntry, AuditListFilters, AuditExportFilters } from '../contract/index.js';
+import type { AuditListFilters, AuditExportFilters } from '../contract/index.js';
 
 // Key order is deterministic - changes here BREAK the chain for existing rows.
 // Treat this as an append-only list.
-function canonicalHashInput(fields: {
-  id: string;
-  actorId: string | null;
-  actorType: string;
-  action: string;
-  resourceType: string;
-  resourceId: string | null;
-  seq: number;
-  createdAt: string;
-  prevHash: string | null;
-}): string {
+type CanonicalHashInput = Pick<
+  AuditLog,
+  'id' | 'actorId' | 'actorType' | 'action' | 'resourceType' | 'resourceId' | 'seq' | 'prevHash'
+> & { createdAt: string };
+
+function canonicalHashInput(fields: CanonicalHashInput): string {
   return JSON.stringify({
     id: fields.id,
     actorId: fields.actorId,
@@ -31,7 +32,7 @@ function canonicalHashInput(fields: {
   });
 }
 
-function computeHash(fields: Parameters<typeof canonicalHashInput>[0]): string {
+export function computeHash(fields: CanonicalHashInput): string {
   return createHash('sha256').update(canonicalHashInput(fields)).digest('hex');
 }
 
@@ -41,29 +42,33 @@ function likePrefix(prefix: string): string {
   return `${prefix.replace(/[\\%_]/g, '\\$&')}%`;
 }
 
-function toDto(row: AuditLog) {
-  return {
-    id: row.id,
-    actorId: row.actorId ?? null,
-    actorType: row.actorType as AuditLogEntry['actorType'],
-    action: row.action,
-    resourceType: row.resourceType,
-    resourceId: row.resourceId ?? null,
-    before: row.before ?? null,
-    after: row.after ?? null,
-    ip: row.ip ?? null,
-    userAgent: row.userAgent ?? null,
-    correlationId: row.correlationId ?? null,
-    result: row.result ?? null,
-    seq: row.seq,
-    prevHash: row.prevHash ?? null,
-    hash: row.hash,
-    createdAt: row.createdAt.toISOString(),
-  };
+function buildWhere(filters: AuditExportFilters) {
+  const {
+    actorId,
+    actorType,
+    action,
+    actionPrefix,
+    resourceType,
+    resourceId,
+    q,
+    fromDate,
+    toDate,
+  } = filters;
+  return and(
+    actorId ? eq(auditLog.actorId, actorId) : undefined,
+    actorType ? eq(auditLog.actorType, actorType as AuditLog['actorType']) : undefined,
+    action ? eq(auditLog.action, action) : undefined,
+    actionPrefix ? like(auditLog.action, likePrefix(actionPrefix)) : undefined,
+    resourceType ? eq(auditLog.resourceType, resourceType) : undefined,
+    resourceId ? eq(auditLog.resourceId, resourceId) : undefined,
+    q ? or(eq(auditLog.actorId, q), eq(auditLog.resourceId, q)) : undefined,
+    fromDate ? gte(auditLog.createdAt, new Date(fromDate)) : undefined,
+    toDate ? lte(auditLog.createdAt, new Date(toDate)) : undefined,
+  );
 }
 
-// The audit-write port's entry plus the internal-only `result` outcome flag the
-// event subscriptions set (never part of the public write contract).
+const toDto = (row: AuditLog) => serializeRow(row, { dateFields: ['createdAt'] });
+
 export type RecordInput = Parameters<AuditWritePort['record']>[0] & {
   result?: string | null;
 };
@@ -78,99 +83,53 @@ export class AuditService {
   // crash can never leave a 'pending' hash. Serialized via pg advisory lock so
   // concurrent record() calls cannot fork the chain. Append-only.
   async record(input: RecordInput) {
-    const row = await this.drizzle.db.transaction(async (tx) => {
-      // pg_advisory_xact_lock serializes appends without locking the whole table.
-      await tx.execute(sql`SELECT pg_advisory_xact_lock(hashtext('audit_log'))`);
+    const row = await this.drizzle.db.transaction((tx) =>
+      withAdvisoryXactLock(tx, 'audit_log', async () => {
+        const [latest] = await tx
+          .select({ hash: auditLog.hash })
+          .from(auditLog)
+          .orderBy(desc(auditLog.seq))
+          .limit(1);
+        const prevHash = latest?.hash ?? null;
 
-      const [latest] = await tx
-        .select({ hash: auditLog.hash })
-        .from(auditLog)
-        .orderBy(desc(auditLog.seq))
-        .limit(1);
-      const prevHash = latest?.hash ?? null;
+        const seqResult = await tx.execute<{ seq: string | number }>(
+          sql`SELECT nextval(pg_get_serial_sequence('audit_log', 'seq')) AS seq`,
+        );
+        const seq = +(seqResult.rows.at(0)?.seq ?? 0);
 
-      // Reserve the seq BEFORE insert so the hash covers the final seq value.
-      const seqResult = await tx.execute<{ seq: string | number }>(
-        sql`SELECT nextval(pg_get_serial_sequence('audit_log', 'seq')) AS seq`,
-      );
-      const seq = Number((seqResult.rows[0] as { seq: string | number }).seq);
+        const id = randomUUID();
+        const createdAt = new Date();
 
-      // Generated here (not DB-defaulted) so the hash input matches the persisted row.
-      const id = randomUUID();
-      const createdAt = new Date();
-
-      const hash = computeHash({
-        id,
-        actorId: input.actorId ?? null,
-        actorType: input.actorType,
-        action: input.action,
-        resourceType: input.resourceType,
-        resourceId: input.resourceId ?? null,
-        seq,
-        createdAt: createdAt.toISOString(),
-        prevHash,
-      });
-
-      const [inserted] = await tx
-        .insert(auditLog)
-        .values({
+        const hash = computeHash({
           id,
           actorId: input.actorId ?? null,
           actorType: input.actorType,
           action: input.action,
           resourceType: input.resourceType,
           resourceId: input.resourceId ?? null,
-          before: input.before ?? null,
-          after: input.after ?? null,
-          ip: input.ip ?? null,
-          userAgent: input.userAgent ?? null,
-          correlationId: input.correlationId ?? null,
-          result: input.result ?? null,
           seq,
+          createdAt: createdAt.toISOString(),
           prevHash,
-          createdAt,
-          hash,
-        })
-        .returning();
+        });
 
-      return inserted!;
-    });
+        const [inserted] = await tx
+          .insert(auditLog)
+          .values({ ...input, id, seq, prevHash, createdAt, hash })
+          .returning();
+
+        return inserted;
+      }),
+    );
 
     return toDto(row);
   }
 
   async list(filters: AuditListFilters) {
     const db = this.drizzle.db;
-    const {
-      actorId,
-      actorType,
-      action,
-      actionPrefix,
-      resourceType,
-      resourceId,
-      q,
-      fromDate,
-      toDate,
-      page,
-      limit,
-    } = filters;
+    const { page, limit } = filters;
     const offset = pageToOffset(page, limit);
 
-    const conditions = [
-      actorId !== undefined ? eq(auditLog.actorId, actorId) : undefined,
-      actorType !== undefined
-        ? eq(auditLog.actorType, actorType as AuditLog['actorType'])
-        : undefined,
-      action !== undefined ? eq(auditLog.action, action) : undefined,
-      actionPrefix !== undefined ? like(auditLog.action, likePrefix(actionPrefix)) : undefined,
-      resourceType !== undefined ? eq(auditLog.resourceType, resourceType) : undefined,
-      resourceId !== undefined ? eq(auditLog.resourceId, resourceId) : undefined,
-      q !== undefined ? or(eq(auditLog.actorId, q), eq(auditLog.resourceId, q)) : undefined,
-      fromDate !== undefined ? gte(auditLog.createdAt, new Date(fromDate)) : undefined,
-      toDate !== undefined ? lte(auditLog.createdAt, new Date(toDate)) : undefined,
-    ].filter((c): c is NonNullable<typeof c> => c !== undefined);
-
-    const where = conditions.length > 0 ? and(...conditions) : undefined;
+    const where = buildWhere(filters);
 
     const [rows, countResult] = await Promise.all([
       db
@@ -200,33 +159,7 @@ export class AuditService {
 
   async exportCsv(filters: AuditExportFilters) {
     const db = this.drizzle.db;
-    const {
-      actorId,
-      actorType,
-      action,
-      actionPrefix,
-      resourceType,
-      resourceId,
-      q,
-      fromDate,
-      toDate,
-    } = filters;
-
-    const conditions = [
-      actorId !== undefined ? eq(auditLog.actorId, actorId) : undefined,
-      actorType !== undefined
-        ? eq(auditLog.actorType, actorType as AuditLog['actorType'])
-        : undefined,
-      action !== undefined ? eq(auditLog.action, action) : undefined,
-      actionPrefix !== undefined ? like(auditLog.action, likePrefix(actionPrefix)) : undefined,
-      resourceType !== undefined ? eq(auditLog.resourceType, resourceType) : undefined,
-      resourceId !== undefined ? eq(auditLog.resourceId, resourceId) : undefined,
-      q !== undefined ? or(eq(auditLog.actorId, q), eq(auditLog.resourceId, q)) : undefined,
-      fromDate !== undefined ? gte(auditLog.createdAt, new Date(fromDate)) : undefined,
-      toDate !== undefined ? lte(auditLog.createdAt, new Date(toDate)) : undefined,
-    ].filter((c): c is NonNullable<typeof c> => c !== undefined);
-
-    const where = conditions.length > 0 ? and(...conditions) : undefined;
+    const where = buildWhere(filters);
 
     const rows = await db
       .select()

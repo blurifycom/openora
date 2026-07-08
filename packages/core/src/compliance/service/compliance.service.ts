@@ -38,7 +38,7 @@ export class ComplianceService {
   async upsertLimit(userId: string, input: UpsertLimitInput) {
     const [row] = await this.drizzle.db
       .insert(userLimit)
-      .values({ userId, type: input.type, amount: input.amount, period: input.period })
+      .values({ ...input, userId })
       .onConflictDoUpdate({
         target: [userLimit.userId, userLimit.type, userLimit.period],
         set: { amount: input.amount },
@@ -97,7 +97,7 @@ export class ComplianceService {
   async addGeoRule(input: AddGeoRuleInput, actorId?: string) {
     const [row] = await this.drizzle.db
       .insert(geoRule)
-      .values({ countryCode: input.countryCode, action: input.action })
+      .values({ ...input })
       .onConflictDoUpdate({
         target: geoRule.countryCode,
         set: { action: input.action },

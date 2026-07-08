@@ -17,7 +17,13 @@ export { MESSAGE_BROKER } from './broker.js';
 export type { OutboxWriter } from './outbox.js';
 export { OUTBOX } from './outbox.js';
 
-export type { WalletCommands, WalletDebitArgs, WalletDebitOutcome } from './wallet-commands.js';
+export type {
+  WalletCommands,
+  WalletDebitArgs,
+  WalletDebitOutcome,
+  WalletCreditArgs,
+  WalletCreditOutcome,
+} from './wallet-commands.js';
 export { WALLET_COMMANDS } from './wallet-commands.js';
 
 export type { WalletReader } from './wallet-reader.js';
@@ -39,6 +45,12 @@ export type {
   PayloadSchema,
 } from './job-queue.js';
 export { JOB_QUEUE, queue } from './job-queue.js';
+
+export type { RateLimiterAdapter, RateLimitOptions, RateLimitResult } from './rate-limit.js';
+export { RATE_LIMITER } from './rate-limit.js';
+
+export type { CacheAdapter } from './cache.js';
+export { CACHE } from './cache.js';
 
 export type {
   RealtimeTransport,
@@ -86,6 +98,9 @@ export { ADMIN_PERMISSION_RESOLVER } from './admin-permission.js';
 
 export type { AuditWritePort, AuditAction, DirectAuditAction } from './audit.js';
 export { AUDIT_WRITER } from './audit.js';
+
+export type { PlayerTags } from './player-tags.js';
+export { PLAYER_TAGS } from './player-tags.js';
 
 export type {
   AdminUserRow,

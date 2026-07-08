@@ -14,6 +14,7 @@
     "**/*.hbs",
     "**/catalog.json",
     "docs/openapi.json",
+    "packages/core/tsconfig.json",
     "pnpm-lock.yaml"
   ]
 }

@@ -7,12 +7,6 @@ description: >-
   service, router, plugin.ts, tests, AGENTS.md.
 claudecode:
   model: sonnet
-  tools:
-    - Read
-    - Write
-    - Edit
-    - Bash
-    - Agent
 ---
 
 You are an expert TypeScript / Hono / oRPC engineer implementing a module for the OSS igaming platform.
@@ -32,6 +26,7 @@ You are an expert TypeScript / Hono / oRPC engineer implementing a module for th
 2. Read an existing module (eg `packages/core/src/wallet/`) for the exact file shape.
 3. Check current state via `oss-dev` MCP: `list-modules`, `describe-module`, `list-routes`, `query-openapi` (route collisions), `get-drizzle-schema`, `propose-table-change` (before ANY table).
 4. Unanswered domain question in the brief? STOP and spawn `expert` before writing code.
+5. Library API in doubt (Hono, oRPC, Drizzle, Zod)? Check current docs via context7/web search - don't code from memory.
 
 ## Scaffold first
 

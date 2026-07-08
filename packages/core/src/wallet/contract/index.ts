@@ -31,12 +31,14 @@ export const DepositInputSchema = z.object({
   amount: z.number().positive(),
   currency: CurrencyCodeSchema,
   provider: z.string().optional(),
+  idempotencyKey: UuidSchema.optional(),
 });
 
 export const WithdrawInputSchema = z.object({
   amount: z.number().positive(),
   currency: CurrencyCodeSchema,
   provider: z.string().optional(),
+  idempotencyKey: UuidSchema.optional(),
 });
 
 export const TransactionResultSchema = z.object({
@@ -74,6 +76,25 @@ export const WithdrawalQueueFilterSchema = PageQuerySchema.extend({
   dateTo: TimestampSchema.optional(),
 });
 export type WithdrawalQueueFilter = z.infer<typeof WithdrawalQueueFilterSchema>;
+
+export const AutoWithdrawalRuleSchema = z.object({
+  id: UuidSchema,
+  userId: UuidSchema,
+  threshold: z.number(),
+  reason: z.string(),
+  createdBy: UuidSchema,
+  createdAt: TimestampSchema,
+  updatedAt: TimestampSchema,
+});
+export type AutoWithdrawalRule = z.infer<typeof AutoWithdrawalRuleSchema>;
+
+export const SetAutoWithdrawalRuleInputSchema = z.object({
+  userId: UuidSchema,
+  threshold: z.number().positive(),
+  reason: z.string().min(1),
+});
+
+export const AutoWithdrawalRuleKeySchema = z.object({ userId: UuidSchema });
 
 export const ApproveWithdrawalInputSchema = z.object({ withdrawalId: UuidSchema });
 
@@ -120,5 +141,22 @@ export const walletContract = {
       .route({ method: 'POST', path: '/wallet/withdrawals/{withdrawalId}/reject' })
       .input(RejectWithdrawalInputSchema)
       .output(TransactionResultSchema),
+  },
+
+  autoWithdrawalRules: {
+    set: oc
+      .route({ method: 'PUT', path: '/wallet/auto-withdrawal-rules/{userId}' })
+      .input(SetAutoWithdrawalRuleInputSchema)
+      .output(AutoWithdrawalRuleSchema),
+
+    get: oc
+      .route({ method: 'GET', path: '/wallet/auto-withdrawal-rules/{userId}' })
+      .input(AutoWithdrawalRuleKeySchema)
+      .output(AutoWithdrawalRuleSchema.nullable()),
+
+    delete: oc
+      .route({ method: 'DELETE', path: '/wallet/auto-withdrawal-rules/{userId}' })
+      .input(AutoWithdrawalRuleKeySchema)
+      .output(z.boolean()),
   },
 };

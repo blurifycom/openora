@@ -6,6 +6,7 @@ import {
   NOTIFICATION_DELIVERY_ADAPTER,
   SEND_EMAIL,
   IDENTITY_OPTIONS,
+  RATE_LIMITER,
   PLATFORM_CONFIG,
   SESSION_COMMANDS,
 } from '@blurifycom/core/contracts';
@@ -56,6 +57,7 @@ export default definePlugin({
           events: c.get(EVENT_BUS),
           email: c.get(SEND_EMAIL),
           options: c.has(IDENTITY_OPTIONS) ? c.get(IDENTITY_OPTIONS) : undefined,
+          limiter: c.get(RATE_LIMITER),
           platformConfig: c.has(PLATFORM_CONFIG) ? c.get(PLATFORM_CONFIG) : undefined,
         }),
         new SessionService({ drizzle: c.get(DRIZZLE), events: c.get(EVENT_BUS) }),
