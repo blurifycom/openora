@@ -5,7 +5,7 @@ import type { PluginEntry } from '../load-plugins.js';
 const entries: PluginEntry[] = [
   { id: 'identity', path: 'a' },
   { id: 'wallet', path: 'b' },
-  { id: 'sportsbook', path: 'c' },
+  { id: 'gaming', path: 'c' },
   { id: 'rabbitmq', path: 'd', kind: 'infra' },
   { id: 'bullmq', path: 'e', kind: 'infra' },
 ];

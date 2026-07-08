@@ -18,12 +18,9 @@ const sets: ReadonlyArray<readonly [string, string]> = [
   ['gaming', '@openora/core/casino/migrate/gaming'],
   ['lobby', '@openora/core/casino/migrate/lobby'],
   ['chat', '@openora/core/engagement/migrate/chat'],
-  ['bonus', '@openora/core/engagement/migrate/bonus'],
   ['notifications', '@openora/core/engagement/migrate/notifications'],
   ['compliance', '@openora/core/compliance/migrate'],
   ['cms', '@openora/core/cms/migrate'],
-  // Gated add-ons - uncomment the ones you enable:
-  // ['sportsbook', '@openora/core/sportsbook/migrate'],
 ];
 
 async function main() {

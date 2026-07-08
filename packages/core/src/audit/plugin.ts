@@ -36,18 +36,6 @@ function mapEventToRecord(topic: string, p: Record<string, unknown>): RecordInpu
     };
   }
 
-  // Admin-triggered game-catalogue sync. actorId = acting admin (may be absent on
-  // system-triggered syncs, in which case it stays a system entry).
-  if (topic === 'aggregator.sync.completed') {
-    return {
-      ...base,
-      actorType: typeof p['actorId'] === 'string' ? 'admin' : 'system',
-      actorId: str(p['actorId']),
-      resourceType: 'game',
-      after: { synced: p['synced'] ?? null, failed: p['failed'] ?? null },
-    };
-  }
-
   // Player submitted KYC documents. actorId = the player; resourceId = the player.
   if (topic === 'compliance.kyc.submitted') {
     return {
@@ -319,10 +307,8 @@ const SUBSCRIBED_TOPICS: DomainEventName[] = [
   'wallet.withdrawal.approved',
   'wallet.withdrawal.rejected',
   'wallet.withdrawal.failed',
-  'sportsbook.bet.settled',
   'gaming.round.started',
   'gaming.round.ended',
-  'bonus.claimed',
   // chat.message.sent is intentionally NOT audited: it is high-volume content
   // already persisted in chatMessage; the moderation/block actions are what we audit.
   'chat.user.blocked',
@@ -338,7 +324,6 @@ const SUBSCRIBED_TOPICS: DomainEventName[] = [
   'compliance.kyc.submitted',
   'compliance.kyc.reverify_required',
   'compliance.geo-rule.added',
-  'aggregator.sync.completed',
   'cms.page.published',
   'iam.invitation.accepted',
   'iam.role.created',

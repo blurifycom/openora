@@ -10,7 +10,7 @@
 
 > Open-source, headless, plugin-based, AI-native iGaming framework. Clone it, extend it, deploy it - without forking core.
 
-The platform ships the full backend surface (auth, wallet, lobby, chat, bonus, compliance, backoffice, CMS, aggregator) as composable modules and a typed SDK. Your frontend, branding, and vendor adapters live in your own consumer repo and talk to it over HTTP. Nothing operator-specific lives here.
+The platform ships the full backend surface (auth, wallet, lobby, chat, compliance, backoffice, CMS) as composable modules and a typed SDK. Your frontend, branding, and vendor adapters live in your own consumer repo and talk to it over HTTP. Nothing operator-specific lives here.
 
 > [!WARNING]
 > **Status: alpha (pre-1.0).** Contracts, package layout, and APIs may change between releases. Not yet recommended for production without your own review. See the [roadmap](#roadmap).

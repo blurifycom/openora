@@ -17,13 +17,9 @@ const sets = [
   ['gaming', '@openora/core/casino/migrate/gaming'],
   ['lobby', '@openora/core/casino/migrate/lobby'],
   ['chat', '@openora/core/engagement/migrate/chat'],
-  ['bonus', '@openora/core/engagement/migrate/bonus'],
   ['notifications', '@openora/core/engagement/migrate/notifications'],
   ['compliance', '@openora/core/compliance/migrate'],
   ['cms', '@openora/core/cms/migrate'],
-  ['sportsbook (gated)', '@openora/core/sportsbook/migrate'],
-  ['aggregator (gated)', '@openora/core/casino/migrate'],
-  ['leaderboard (gated)', '@openora/core/engagement/migrate'],
 ];
 
 for (const [label, specifier] of sets) {

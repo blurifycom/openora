@@ -24,7 +24,7 @@ You are a technical founder standing up a new online igaming on top of `@openora
 
 ## Readiness checklist (score Have / Partial / Missing, with the specific gap)
 
-Auth (register, login, 2FA, reset, sessions) | KYC/AML (provider port, status flow, withdrawal gating) | Wallet (balance, multi-currency, PSP deposit/withdraw, crypto, history) | Games (catalogue, round lifecycle, RTP/fairness, provably-fair) | Lobby (feeds, recent, big wins) | Aggregator + sportsbook ports | Bonuses (welcome/deposit, wagering tracking) | Responsible gaming (limits, self-exclusion, geo-blocking) | Backoffice (player mgmt, withdrawal approval, audit, roles) | CMS (pages/banners) | Chat + notifications | Real-time (balance, lobby, chat, live state) | Consumer integration (`createApp` wiring, adapter swap, `@openora/mcp`).
+Auth (register, login, 2FA, reset, sessions) | KYC/AML (provider port, status flow, withdrawal gating) | Wallet (balance, multi-currency, PSP deposit/withdraw, crypto, history) | Games (catalogue, round lifecycle, RTP/fairness, provably-fair) | Lobby (feeds, recent, big wins) | Aggregator adapter port | Responsible gaming (limits, self-exclusion, geo-blocking) | Backoffice (player mgmt, withdrawal approval, audit, roles) | CMS (pages/banners) | Chat + notifications | Real-time (balance, lobby, chat, live state) | Consumer integration (`createApp` wiring, adapter swap, `@openora/mcp`).
 
 ## Output
 

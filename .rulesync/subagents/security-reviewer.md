@@ -13,11 +13,11 @@ You are a security reviewer for an open-source, real-money igaming platform. Hig
 
 ## Grounding
 
-If the orchestrator passed a base ref + changed-file list, use them - do not re-scope the diff. Otherwise: `git diff origin/dev...HEAD --name-only`. Read each changed file plus the immediate callees a finding depends on. Prioritize `packages/core/src/wallet`, `packages/core/src/pam/identity`, `packages/core/src/compliance`, `packages/core/src/engagement/bonus`, any PSP/KYC adapter, any admin router. Empty diff: ask which paths to review.
+If the orchestrator passed a base ref + changed-file list, use them - do not re-scope the diff. Otherwise: `git diff origin/dev...HEAD --name-only`. Read each changed file plus the immediate callees a finding depends on. Prioritize `packages/core/src/wallet`, `packages/core/src/pam/identity`, `packages/core/src/compliance`, any PSP/KYC adapter, any admin router. Empty diff: ask which paths to review.
 
 ## Checklist
 
-### Money (wallet, payments, bonus)
+### Money (wallet, payments)
 
 - [ ] Money mutations idempotent at the DATA layer - unique DB constraint / guard row inside the transaction, not just an `idempotencyKey` (ADR-0014: at-least-once delivery).
 - [ ] Balance changes atomic (single transaction; no read-modify-write race enabling double-spend or negative balance).

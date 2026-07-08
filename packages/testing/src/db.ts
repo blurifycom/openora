@@ -16,12 +16,8 @@ import { migrate as migrateCompliance } from '@openora/core/compliance/migrate';
 import { migrate as migrateWallet } from '@openora/core/wallet/migrate';
 import { migrate as migrateGaming } from '@openora/core/casino/migrate/gaming';
 import { migrate as migrateLobby } from '@openora/core/casino/migrate/lobby';
-import { migrate as migrateBonus } from '@openora/core/engagement/migrate/bonus';
 import { migrate as migrateChat } from '@openora/core/engagement/migrate/chat';
 import { migrate as migrateNotifications } from '@openora/core/engagement/migrate/notifications';
-import { migrate as migrateSportsbook } from '@openora/core/sportsbook/migrate';
-import { migrate as migrateAggregator } from '@openora/core/casino/migrate';
-import { migrate as migrateLeaderboard } from '@openora/core/engagement/migrate';
 
 const DEFAULT_TEST_URL = 'postgres://postgres:postgres@localhost:5432/oss_igaming_test';
 
@@ -38,12 +34,8 @@ async function applyAllMigrations(url: string): Promise<void> {
   await migrateWallet(url);
   await migrateGaming(url);
   await migrateLobby(url);
-  await migrateBonus(url);
   await migrateChat(url);
   await migrateNotifications(url);
-  await migrateSportsbook(url);
-  await migrateAggregator(url);
-  await migrateLeaderboard(url);
 }
 
 export async function applyMigrations(url: string): Promise<void> {

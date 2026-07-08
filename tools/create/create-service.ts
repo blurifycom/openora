@@ -12,7 +12,7 @@
  *
  * After scaffolding: `pnpm install`, build deps, then
  *   pnpm -F @openora/<name>-service dev          # uses the baked-in manifest
- *   SERVICE_MANIFEST=identity,wallet,bonus pnpm -F @openora/<name>-service dev   # override
+ *   SERVICE_MANIFEST=identity,wallet,chat pnpm -F @openora/<name>-service dev   # override
  */
 import { existsSync, mkdirSync, writeFileSync, readFileSync } from 'node:fs';
 import { join, dirname } from 'node:path';

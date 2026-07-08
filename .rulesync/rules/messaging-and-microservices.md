@@ -36,7 +36,7 @@ Never move money or a needed-now answer over events.
 
 ## Synchronous cross-module commands - command ports (ADR-0017)
 
-When module A must mutate/query module B synchronously, it goes through a command port B owns - never B's tables. Reference: sportsbook debits the wallet via `WALLET_COMMANDS.debit(tx, { userId, amount })`, passing its own transaction handle so bet-insert + debit stay atomic in-process. A remote wallet service later rebinds the port with a saga impl - the caller is unchanged. Declare `dependsOn: ['<owner>']` in the consumer's plugin.
+When module A must mutate/query module B synchronously, it goes through a command port B owns - never B's tables. Reference: a game round settling debits the wallet via `WALLET_COMMANDS.debit(tx, { userId, amount })`, passing its own transaction handle so the round-write + debit stay atomic in-process. A remote wallet service later rebinds the port with a saga impl - the caller is unchanged. Declare `dependsOn: ['<owner>']` in the consumer's plugin.
 
 ## Domain events - always through `EventBus`, never the broker directly
 

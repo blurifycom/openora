@@ -35,7 +35,6 @@ export const extensions: PluginEntry[] = [
   { id: 'gaming', path: `${CORE}/casino/gaming/plugin.js` },
   { id: 'lobby', path: `${CORE}/casino/lobby/plugin.js` },
   { id: 'chat', path: `${CORE}/engagement/chat/plugin.js` },
-  { id: 'bonus', path: `${CORE}/engagement/bonus/plugin.js` },
   { id: 'profile', path: `${CORE}/pam/profile/plugin.js` },
 
   // Backoffice surface.

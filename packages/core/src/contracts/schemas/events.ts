@@ -6,7 +6,6 @@ import {
   LimitPeriodSchema,
   ExclusionKindSchema,
 } from './compliance.js';
-import { LeaderboardMetricSchema, LeaderboardPeriodSchema } from './engagement.js';
 import { TagKeySchema } from './tag.js';
 import { CurrencyCodeSchema, CountryCodeSchema } from './igaming-config.js';
 import { PermissionLevelSchema } from './iam.js';
@@ -105,12 +104,6 @@ export const domainEventSchemas = {
   }),
   'gaming.round.ended': z.object({ roundId: UuidSchema, userId: UuidSchema }),
 
-  'bonus.claimed': z.object({
-    userId: UuidSchema,
-    bonusId: UuidSchema,
-    userBonusId: UuidSchema,
-  }),
-
   'chat.message.sent': z.object({
     messageId: UuidSchema,
     // null for global-chat messages (no room); a room id otherwise.
@@ -196,44 +189,6 @@ export const domainEventSchemas = {
   'notifications.created': z.object({ notificationId: UuidSchema, userId: UuidSchema }),
 
   'cms.page.published': z.object({ pageId: UuidSchema, slug: z.string() }),
-
-  // An admin triggered a game-catalogue sync. `actorId` is the acting admin (the
-  // envelope carries no caller) so the audit log can attribute the mutation.
-  'aggregator.sync.completed': z.object({
-    synced: z.number(),
-    failed: z.number(),
-    actorId: UuidSchema.optional(),
-  }),
-  'aggregator.callback.received': z.object({ provider: z.string(), event: z.string() }),
-
-  'leaderboard.score.recorded': z.object({
-    userId: UuidSchema,
-    metric: LeaderboardMetricSchema,
-    amount: z.number(),
-  }),
-  'leaderboard.reset': z.object({
-    metric: LeaderboardMetricSchema,
-    period: LeaderboardPeriodSchema,
-  }),
-
-  'sportsbook.odds.updated': z.object({
-    eventId: UuidSchema,
-    selectionId: UuidSchema,
-    odds: z.number(),
-  }),
-  'sportsbook.bet.placed': z.object({
-    userId: UuidSchema,
-    betId: UuidSchema,
-    selectionId: UuidSchema,
-    stake: z.number(),
-  }),
-  'sportsbook.bet.settled': z.object({
-    userId: UuidSchema,
-    betId: UuidSchema,
-    selectionId: UuidSchema,
-    outcome: z.enum(['win', 'loss']),
-    payout: z.number(),
-  }),
 
   // Emitted when an admin invitation token is accepted. The consumer (identity
   // module or an overlay) provisions the user account and completes the role

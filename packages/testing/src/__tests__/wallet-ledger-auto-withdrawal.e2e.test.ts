@@ -2,10 +2,7 @@ import { describe, it, expect, beforeAll, afterAll, vi } from 'vitest';
 import { randomUUID } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import { eq } from 'drizzle-orm';
-import { loadExtensions, DRIZZLE, EVENT_BUS, type Container } from '@openora/core/server';
-import { REALTIME_TRANSPORT, WALLET_COMMANDS, PLATFORM_CONFIG } from '@openora/core/contracts';
-import { SportsbookService } from '@openora/core/sportsbook/server';
-import { sportsbookEvent, sportsbookSelection } from '@openora/core/sportsbook/schema';
+import { loadExtensions, DRIZZLE, type Container } from '@openora/core/server';
 import { user } from '@openora/core/pam/schema/identity';
 import {
   setupTestDb,
@@ -20,11 +17,9 @@ import {
 
 /**
  * E2E for ABC-214 (wallet ledger + auto-withdrawal) over real HTTP + Postgres. Three apps share one db:
- * - `appDefault`: stock stack, autoWithdrawal off (sportsbook ledger, manual approve/reject, rule-route authz).
+ * - `appDefault`: stock stack, autoWithdrawal off (manual approve/reject, rule-route authz).
  * - `appGated`: autoWithdrawal enabled, fiatThreshold 200, high caps - single-shot gate scenarios.
  * - `appCapGated`: dailyCapCount 1 - the daily-cap scenario isolated from the velocity heuristic.
- *
- * `settleBet` has no oRPC route yet, so it's exercised by instantiating SportsbookService against the app's container.
  */
 
 let db: TestDb;
@@ -115,96 +110,6 @@ afterAll(async () => {
   await appGated?.close();
   await appCapGated?.close();
   await db?.dispose();
-});
-
-describe('Sportsbook ledger: bet debit + settleBet credit/loss (no route - direct service call)', () => {
-  it('a bet debits type=bet, a win credits type=win, a loss writes a 0-amount type=loss row', async () => {
-    const email = `sb-ledger-${randomUUID()}@e2e.test`;
-    const { client, userId } = await registerAndMaterializePlayer(appDefault.app, email);
-
-    const depositRes = await client.post('/wallet/deposit', { amount: 500, currency: 'USD' });
-    expect(depositRes.status).toBe(200);
-    const balance0 = (await readJson(await client.get('/wallet/balance'))).balance;
-    expect(balance0).toBe(500);
-
-    const drizzle = appDefault.container.get(DRIZZLE).db;
-    const [event] = await drizzle
-      .insert(sportsbookEvent)
-      .values({
-        sport: 'football',
-        league: 'e2e-league',
-        homeTeam: 'QA Home',
-        awayTeam: 'QA Away',
-        startsAt: new Date(Date.now() + 3_600_000),
-      })
-      .returning();
-    const [selection] = await drizzle
-      .insert(sportsbookSelection)
-      .values({ eventId: event!.id, label: 'home', odds: 2 })
-      .returning();
-
-    const bet1Res = await client.post('/sportsbook/bets', {
-      selectionId: selection!.id,
-      stake: 20,
-    });
-    expect(bet1Res.status).toBe(200);
-    const bet1 = await readJson(bet1Res);
-    expect(bet1.newBalance).toBe(480);
-
-    const bet2Res = await client.post('/sportsbook/bets', {
-      selectionId: selection!.id,
-      stake: 20,
-    });
-    expect(bet2Res.status).toBe(200);
-    const bet2 = await readJson(bet2Res);
-    expect(bet2.newBalance).toBe(460);
-
-    const afterBets = await readJson(await client.get('/wallet/transactions?limit=100'));
-    const betRows = afterBets.items.filter((t: { type: string }) => t.type === 'bet');
-    expect(betRows).toHaveLength(2);
-    expect(betRows.every((t: { amount: number; status: string }) => t.amount === 20)).toBe(true);
-    expect(betRows.every((t: { status: string }) => t.status === 'completed')).toBe(true);
-
-    const sportsbookSvc = new SportsbookService({
-      drizzle: appDefault.container.get(DRIZZLE),
-      events: appDefault.container.get(EVENT_BUS),
-      transport: appDefault.container.get(REALTIME_TRANSPORT),
-      walletCommands: appDefault.container.get(WALLET_COMMANDS),
-      ...(appDefault.container.has(PLATFORM_CONFIG)
-        ? { platformConfig: appDefault.container.get(PLATFORM_CONFIG) }
-        : {}),
-    });
-
-    const settledWin = await sportsbookSvc.settleBet(bet1.bet.id, 'win');
-    expect(settledWin.bet.status).toBe('settled');
-    const balanceAfterWin = (await readJson(await client.get('/wallet/balance'))).balance;
-    // potentialReturn = 20 stake * 2 odds = 40, credited on top of the 460 post-bets balance.
-    expect(balanceAfterWin).toBe(500);
-
-    const settledLoss = await sportsbookSvc.settleBet(bet2.bet.id, 'loss');
-    expect(settledLoss.bet.status).toBe('settled');
-    const balanceAfterLoss = (await readJson(await client.get('/wallet/balance'))).balance;
-    // A loss never touches the balance - the stake already left at bet time.
-    expect(balanceAfterLoss).toBe(500);
-
-    const finalTx = await readJson(await client.get('/wallet/transactions?limit=100'));
-    const winRow = finalTx.items.find((t: { type: string }) => t.type === 'win');
-    const lossRow = finalTx.items.find((t: { type: string }) => t.type === 'loss');
-    expect(winRow).toMatchObject({ amount: 40, status: 'completed' });
-    expect(lossRow).toMatchObject({ amount: 0, status: 'completed' });
-
-    // Settle-once guard: a repeated settle is a no-op replay, never a second credit.
-    await sportsbookSvc.settleBet(bet1.bet.id, 'win');
-    const balanceAfterReplay = (await readJson(await client.get('/wallet/balance'))).balance;
-    expect(balanceAfterReplay).toBe(500);
-
-    // Backoffice-equivalent surface: the admin per-player ledger read shows the same rows.
-    const admin = await asAdmin(appDefault.app);
-    const adminTx = await readJson(await admin.get(`/wallet/transactions/${userId}?limit=100`));
-    expect(adminTx.items.some((t: { type: string }) => t.type === 'bet')).toBe(true);
-    expect(adminTx.items.some((t: { type: string }) => t.type === 'win')).toBe(true);
-    expect(adminTx.items.some((t: { type: string }) => t.type === 'loss')).toBe(true);
-  });
 });
 
 describe('Auto-withdrawal: single-shot gates (appGated - fiatThreshold 200)', () => {

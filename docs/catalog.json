@@ -14,18 +14,6 @@
       ]
     },
     {
-      "id": "aggregator",
-      "group": "addon",
-      "tables": [
-        "aggregator_provider"
-      ],
-      "routes": [
-        "aggregator.callback",
-        "aggregator.listProviders",
-        "aggregator.sync"
-      ]
-    },
-    {
       "id": "audit",
       "group": "core",
       "tables": [
@@ -34,20 +22,6 @@
       "routes": [
         "audit.exportCsv",
         "audit.list"
-      ]
-    },
-    {
-      "id": "bonus",
-      "group": "core",
-      "tables": [
-        "bonus",
-        "user_bonus"
-      ],
-      "routes": [
-        "bonus.claimBonus",
-        "bonus.getUserBonus",
-        "bonus.getUserBonuses",
-        "bonus.listBonuses"
       ]
     },
     {
@@ -196,18 +170,6 @@
       ]
     },
     {
-      "id": "leaderboard",
-      "group": "addon",
-      "tables": [
-        "leaderboard",
-        "leaderboard_entry"
-      ],
-      "routes": [
-        "leaderboard.adminReset",
-        "leaderboard.get"
-      ]
-    },
-    {
       "id": "lobby",
       "group": "core",
       "tables": [
@@ -268,21 +230,6 @@
       "routes": [
         "profile.get",
         "profile.update"
-      ]
-    },
-    {
-      "id": "sportsbook",
-      "group": "addon",
-      "tables": [
-        "sportsbook_bet",
-        "sportsbook_event",
-        "sportsbook_selection"
-      ],
-      "routes": [
-        "sportsbook.getEvent",
-        "sportsbook.listEvents",
-        "sportsbook.oddsStream",
-        "sportsbook.placeBet"
       ]
     },
     {
@@ -365,10 +312,8 @@
       "category": "aggregator",
       "interface": "AggregatorAdapter",
       "token": "AGGREGATOR_ADAPTER",
-      "status": "wired",
-      "boundIn": [
-        "packages/core/src/casino/aggregator/plugin.ts"
-      ]
+      "status": "stub",
+      "boundIn": []
     },
     {
       "category": "audit",
@@ -535,8 +480,7 @@
       "token": "REALTIME_TRANSPORT",
       "status": "wired",
       "boundIn": [
-        "packages/core/src/engagement/chat/plugin.ts",
-        "packages/core/src/sportsbook/plugin.ts"
+        "packages/core/src/engagement/chat/plugin.ts"
       ]
     },
     {
@@ -554,7 +498,6 @@
       "token": "WALLET_COMMANDS",
       "status": "wired",
       "boundIn": [
-        "packages/core/src/sportsbook/plugin.ts",
         "packages/core/src/wallet/plugin.ts"
       ]
     },
@@ -570,9 +513,6 @@
     }
   ],
   "events": [
-    "aggregator.callback.received",
-    "aggregator.sync.completed",
-    "bonus.claimed",
     "chat.message.sent",
     "chat.user.blocked",
     "chat.user.unblocked",
@@ -607,17 +547,12 @@
     "identity.user.reactivated",
     "identity.user.registered",
     "identity.user.unlocked",
-    "leaderboard.reset",
-    "leaderboard.score.recorded",
     "notifications.created",
     "rg.cooling_off.activated",
     "rg.exclusion.login_blocked",
     "rg.limit.set",
     "rg.self_exclusion.activated",
     "rg.self_exclusion.lifted",
-    "sportsbook.bet.placed",
-    "sportsbook.bet.settled",
-    "sportsbook.odds.updated",
     "tag.player.assigned",
     "tag.player.removed",
     "tag.rule.upserted",
@@ -675,10 +610,6 @@
       "file": "packages/core/src/admin-console/contract/index.ts"
     },
     {
-      "name": "AggregatorProviderSummarySchema",
-      "file": "packages/core/src/casino/aggregator/contract/index.ts"
-    },
-    {
       "name": "ApproveWithdrawalInputSchema",
       "file": "packages/core/src/wallet/contract/index.ts"
     },
@@ -723,28 +654,12 @@
       "file": "packages/core/src/engagement/chat/contract/index.ts"
     },
     {
-      "name": "BonusSchema",
-      "file": "packages/core/src/engagement/bonus/contract/index.ts"
-    },
-    {
-      "name": "BonusTypeSchema",
-      "file": "packages/core/src/engagement/bonus/contract/index.ts"
-    },
-    {
       "name": "BrandingSchema",
       "file": "packages/core/src/contracts/schemas/igaming-config.ts"
     },
     {
       "name": "BrandSchema",
       "file": "packages/core/src/contracts/schemas/platform-config.ts"
-    },
-    {
-      "name": "CallbackInputSchema",
-      "file": "packages/core/src/casino/aggregator/contract/index.ts"
-    },
-    {
-      "name": "CallbackResultSchema",
-      "file": "packages/core/src/casino/aggregator/contract/index.ts"
     },
     {
       "name": "CatalogEntrySchema",
@@ -911,22 +826,6 @@
       "file": "packages/core/src/contracts/schemas/identity.ts"
     },
     {
-      "name": "LeaderboardEntrySchema",
-      "file": "packages/core/src/engagement/leaderboard/contract/index.ts"
-    },
-    {
-      "name": "LeaderboardMetricSchema",
-      "file": "packages/core/src/contracts/schemas/engagement.ts"
-    },
-    {
-      "name": "LeaderboardPeriodSchema",
-      "file": "packages/core/src/contracts/schemas/engagement.ts"
-    },
-    {
-      "name": "LeaderboardResponseSchema",
-      "file": "packages/core/src/engagement/leaderboard/contract/index.ts"
-    },
-    {
       "name": "LiftSelfExclusionInputSchema",
       "file": "packages/core/src/compliance/contract/rg.ts"
     },
@@ -979,10 +878,6 @@
       "file": "packages/core/src/engagement/notifications/contract/index.ts"
     },
     {
-      "name": "OddsUpdateSchema",
-      "file": "packages/core/src/sportsbook/contract/index.ts"
-    },
-    {
       "name": "OrganizationSchema",
       "file": "packages/core/src/contracts/schemas/identity.ts"
     },
@@ -1005,14 +900,6 @@
     {
       "name": "PermissionLevelSchema",
       "file": "packages/core/src/contracts/schemas/iam.ts"
-    },
-    {
-      "name": "PlaceBetInputSchema",
-      "file": "packages/core/src/sportsbook/contract/index.ts"
-    },
-    {
-      "name": "PlaceBetResultSchema",
-      "file": "packages/core/src/sportsbook/contract/index.ts"
     },
     {
       "name": "PlatformConfigSchema",
@@ -1147,30 +1034,6 @@
       "file": "packages/core/src/compliance/contract/rg.ts"
     },
     {
-      "name": "SportsbookBetSchema",
-      "file": "packages/core/src/sportsbook/contract/index.ts"
-    },
-    {
-      "name": "SportsbookBetStatusSchema",
-      "file": "packages/core/src/sportsbook/contract/index.ts"
-    },
-    {
-      "name": "SportsbookConfigSchema",
-      "file": "packages/core/src/contracts/schemas/platform-config.ts"
-    },
-    {
-      "name": "SportsbookEventSchema",
-      "file": "packages/core/src/sportsbook/contract/index.ts"
-    },
-    {
-      "name": "SportsbookEventStatusSchema",
-      "file": "packages/core/src/sportsbook/contract/index.ts"
-    },
-    {
-      "name": "SportsbookSelectionSchema",
-      "file": "packages/core/src/sportsbook/contract/index.ts"
-    },
-    {
       "name": "StartRoundInputSchema",
       "file": "packages/core/src/casino/gaming/contract/index.ts"
     },
@@ -1181,10 +1044,6 @@
     {
       "name": "SubmitKycInputSchema",
       "file": "packages/core/src/compliance/contract/index.ts"
-    },
-    {
-      "name": "SyncResultSchema",
-      "file": "packages/core/src/casino/aggregator/contract/index.ts"
     },
     {
       "name": "TagKeySchema",
@@ -1233,14 +1092,6 @@
     {
       "name": "upsertTagRuleSchema",
       "file": "packages/core/src/contracts/schemas/tag.ts"
-    },
-    {
-      "name": "UserBonusSchema",
-      "file": "packages/core/src/engagement/bonus/contract/index.ts"
-    },
-    {
-      "name": "UserBonusStatusSchema",
-      "file": "packages/core/src/engagement/bonus/contract/index.ts"
     },
     {
       "name": "UserIdInputSchema",
@@ -1354,9 +1205,6 @@
     "GET /backoffice/transactions/{id}",
     "GET /backoffice/users",
     "GET /backoffice/users/{userId}",
-    "GET /bonus/bonuses",
-    "GET /bonus/user-bonuses",
-    "GET /bonus/user-bonuses/{id}",
     "GET /chat/blocks",
     "GET /chat/connection",
     "GET /chat/global",
@@ -1405,7 +1253,6 @@
     "PATCH /iam/roles/{roleId}",
     "PATCH /identity/profile",
     "PATCH /profile",
-    "POST /bonus/claim/{bonusId}",
     "POST /chat/blocks",
     "POST /chat/global",
     "POST /chat/rooms/{roomId}/messages",

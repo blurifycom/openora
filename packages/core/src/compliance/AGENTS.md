@@ -53,13 +53,13 @@ compare - no unblock job.
 
 ### Monitoring (queue-based)
 
-`wallet.deposit.completed` / `sportsbook.bet.placed` / `gaming.round.ended` /
+`wallet.deposit.completed` / `gaming.round.ended` /
 `rg.exclusion.login_blocked` enqueue per-player `rg-eval` jobs (idempotencyKey +
 orderingKey:userId) off the hot path. A worker upserts/clears `rg_flag` rows at the 80%
 band; a recurring `rg-monitor` job (everyMs 60_000 + cron for a durable overlay) raises
 session-time flags. `listRgFlags` is a cheap indexed read enriched via `ADMIN_USER_DIRECTORY`.
 
-Cross-domain reads (`/schema` subpaths only): wallet, sportsbook, casino/gaming (spend
+Cross-domain reads (`/schema` subpaths only): wallet, casino/gaming (spend
 aggregation), pam/identity (`session` for the sweep).
 
 ### Events (all v1, audited)

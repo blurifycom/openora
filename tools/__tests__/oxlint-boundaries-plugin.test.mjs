@@ -91,7 +91,7 @@ test('no-cross-addon allows the sibling /schema subpath, flags internals', () =>
 });
 
 test('no-cross-core-domain flags sibling internals, allows /schema + self', () => {
-  const file = `${CORE}/engagement/bonus/service/bonus.service.ts`;
+  const file = `${CORE}/engagement/chat/service/chat.service.ts`;
   const bad = lint('no-cross-core-domain', file, (v) =>
     v.ImportDeclaration(importNode('@openora/core/wallet/service')),
   );

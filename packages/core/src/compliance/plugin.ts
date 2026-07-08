@@ -29,18 +29,13 @@ const RG_MONITOR_QUEUE = queue('rg-monitor');
 
 const RgEvalJobSchema = z.object({
   userId: UuidSchema,
-  trigger: z.enum([
-    'wallet.deposit.completed',
-    'sportsbook.bet.placed',
-    'gaming.round.ended',
-    'rg.exclusion.login_blocked',
-  ]),
+  trigger: z.enum(['wallet.deposit.completed', 'gaming.round.ended', 'rg.exclusion.login_blocked']),
 });
 const RgMonitorJobSchema = z.object({});
 
 export default definePlugin({
   id: 'compliance',
-  dependsOn: ['player-management', 'identity', 'wallet', 'sportsbook', 'gaming'],
+  dependsOn: ['player-management', 'identity', 'wallet', 'gaming'],
   requiresPorts: [LOGIN_ENFORCEMENT],
   register(ctx) {
     ctx.provide(KYC_WEBHOOK_VERIFIER, (c) => {
@@ -78,10 +73,6 @@ export default definePlugin({
     ctx.events.on('wallet.deposit.completed', (payload) => {
       const parsed = domainEventSchemas['wallet.deposit.completed'].safeParse(payload);
       if (parsed.success) enqueueEval(parsed.data.userId, 'wallet.deposit.completed');
-    });
-    ctx.events.on('sportsbook.bet.placed', (payload) => {
-      const parsed = domainEventSchemas['sportsbook.bet.placed'].safeParse(payload);
-      if (parsed.success) enqueueEval(parsed.data.userId, 'sportsbook.bet.placed');
     });
     ctx.events.on('gaming.round.ended', (payload) => {
       const parsed = domainEventSchemas['gaming.round.ended'].safeParse(payload);

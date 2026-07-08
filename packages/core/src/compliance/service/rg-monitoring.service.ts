@@ -3,7 +3,6 @@ import { and, eq, or, gt, gte, lte, isNull, desc, sql, type SQL } from 'drizzle-
 import type { AdminUserDirectory, LimitType, LimitPeriod } from '@openora/core/contracts';
 import { userLimit, rgFlag, rgExclusion } from '../schema/index.js';
 import { wallet, walletTransaction } from '@openora/core/wallet/schema';
-import { sportsbookBet } from '@openora/core/sportsbook/schema';
 import { gameRound } from '@openora/core/casino/schema/gaming';
 import { session } from '@openora/core/pam/schema/identity';
 import type { RgFlagListItem, ListRgFlagsInput, RgFlagDetail } from '../contract/index.js';
@@ -12,7 +11,6 @@ import { periodWindow, isAtThreshold, thresholdPct } from './rg-eval.js';
 // The recompute trigger carried on the enqueued job - which upstream event fired.
 export type RgEvalTrigger =
   | 'wallet.deposit.completed'
-  | 'sportsbook.bet.placed'
   | 'gaming.round.ended'
   | 'rg.exclusion.login_blocked';
 
@@ -180,16 +178,6 @@ export class RgMonitoringService {
   }
 
   private async betsSum(userId: string, from: Date, to: Date): Promise<number> {
-    const [bets] = await this.drizzle.db
-      .select({ total: sql<string>`coalesce(sum(${sportsbookBet.stake}), 0)` })
-      .from(sportsbookBet)
-      .where(
-        and(
-          eq(sportsbookBet.userId, userId),
-          gte(sportsbookBet.createdAt, from),
-          lte(sportsbookBet.createdAt, to),
-        ),
-      );
     const [rounds] = await this.drizzle.db
       .select({ total: sql<string>`coalesce(sum(${gameRound.betAmount}), 0)` })
       .from(gameRound)
@@ -200,7 +188,7 @@ export class RgMonitoringService {
           lte(gameRound.startedAt, to),
         ),
       );
-    return Number(bets?.total ?? 0) + Number(rounds?.total ?? 0);
+    return Number(rounds?.total ?? 0);
   }
 
   private async raiseFlag(

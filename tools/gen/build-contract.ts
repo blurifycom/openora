@@ -12,7 +12,6 @@ import { complianceContract } from '@openora/core/compliance/contracts';
 import { profileContract } from '@openora/core/pam/contracts/profile';
 import { cmsContract } from '@openora/core/cms/contracts';
 import { notificationsContract } from '@openora/core/engagement/contracts/notifications';
-import { bonusContract } from '@openora/core/engagement/contracts/bonus';
 import { chatContract } from '@openora/core/engagement/contracts/chat';
 import { walletContract } from '@openora/core/wallet/contract';
 import { gamingContract } from '@openora/core/casino/contracts/gaming';
@@ -20,9 +19,6 @@ import { lobbyContract } from '@openora/core/casino/contracts/lobby';
 import { backofficeContract } from '@openora/core/admin-console/contract';
 import { iamContract } from '@openora/core/iam/contract';
 import { auditContract } from '@openora/core/audit/contract';
-import { leaderboardContract } from '@openora/core/engagement/contracts/leaderboard';
-import { sportsbookContract } from '@openora/core/sportsbook/contract';
-import { igamingAggregatorContract } from '@openora/core/casino/contracts/aggregator';
 import { playerContract } from '@openora/core/pam/contracts/player';
 import { tagContract } from '@openora/core/pam/contracts/tag';
 import { playerNoteContract } from '@openora/core/pam/contracts/player-note';
@@ -38,7 +34,6 @@ const CORE: Record<string, AnyContract> = {
   notifications: notificationsContract,
   wallet: walletContract,
   gaming: gamingContract,
-  bonus: bonusContract,
   chat: chatContract,
   lobby: lobbyContract,
   backoffice: backofficeContract,
@@ -51,11 +46,7 @@ const CORE: Record<string, AnyContract> = {
 
 type AddonEntry = { namespace: string; contract: AnyContract };
 
-// namespace is the root-contract key; aggregator historically diverged from its id.
 const ADDONS: Record<string, AddonEntry> = {
-  leaderboard: { namespace: 'leaderboard', contract: leaderboardContract },
-  sportsbook: { namespace: 'sportsbook', contract: sportsbookContract },
-  aggregator: { namespace: 'igamingAggregator', contract: igamingAggregatorContract },
   'player-management': { namespace: 'player', contract: playerContract },
 };
 

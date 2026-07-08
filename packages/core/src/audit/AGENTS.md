@@ -65,7 +65,7 @@ extraction / OOM - narrow the date range and paginate for larger windows, or use
 `identity.2fa.disabled`, `identity.password.reset`, `identity.email.verified`,
 `identity.profile.updated`, `wallet.deposit.completed`,
 `wallet.withdrawal.completed`, `gaming.round.started`, `gaming.round.ended`,
-`bonus.claimed`, `compliance.limit.upserted`, `compliance.limit.removed`,
+`compliance.limit.upserted`, `compliance.limit.removed`,
 `compliance.kyc.updated`, `compliance.kyc.submitted`,
 `compliance.kyc.reverify_required`, `compliance.geo-rule.added`,
 `rg.limit.set`, `rg.cooling_off.activated`, `rg.self_exclusion.activated`,

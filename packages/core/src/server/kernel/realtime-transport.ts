@@ -23,7 +23,7 @@ class InProcessPresence implements RealtimePresence {
   }
 }
 
-// Reference adoption: sportsbook odds. See ADR-0007.
+// Reference adoption: chat message fan-out + big-win feed. See ADR-0007.
 export class InProcessRealtimeTransport implements RealtimeTransport {
   private readonly channels = new Map<string, Set<Handler>>();
   readonly presence: RealtimePresence = new InProcessPresence();

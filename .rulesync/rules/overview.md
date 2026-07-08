@@ -14,7 +14,7 @@ Sibling rules (load on demand; don't reopen settled questions): `conventions` (c
 
 ## Mission
 
-Open-source, headless, plugin-based, AI-native igaming platform. Consumers clone/install and extend it with their own modules, plugins, and adapters; the frontend lives in their consumer repo. The default backend is fully featured (auth, wallet, lobby, chat, bonus, compliance, backoffice, CMS, aggregator). Nothing consumer-specific lives here.
+Open-source, headless, plugin-based, AI-native igaming platform. Consumers clone/install and extend it with their own modules, plugins, and adapters; the frontend lives in their consumer repo. The default backend is fully featured (auth, wallet, lobby, chat, compliance, backoffice, CMS). Nothing consumer-specific lives here.
 
 ## Architecture pillars
 
@@ -41,7 +41,7 @@ packages/
     src/react/       # domain-agnostic SDK: createClient, typed client, auth, realtime. No UI.
     src/server/      # node engine: kernel (logger, EventBus + EVENT_BUS, Container), plugin-host (definePlugin, ModuleRegistry, loader), db (DrizzleService), auth (better-auth + AdminGuard), runtime (createApp - domain-agnostic, single-tenant). Subpaths: /orm, /migrate
     src/compliance/  # sealed-token list + assertSealedServicesBound (engine); also the compliance domain (/contracts, /schema, /plugins)
-    src/<domain>/    # 10 folded domains (casino, cms, compliance, engagement, pam, sportsbook, wallet, iam, audit, admin-console), exposed as @openora/core/<domain>/{contracts,schema,plugins,server,react}. The BARE root (@openora/core/<domain>) is the public consumer surface: an isomorphic contract barrel (schemas, enum triples, z.infer types; multi-slice domains namespace per slice, eg `import { bonus } from '@openora/core/engagement'`) - never server code. Services/routers/plugin live under /server; tables under /schema. A domain imports engine zones + a sibling's read-only /schema only - never a sibling's internals.
+    src/<domain>/    # 9 folded domains (casino, cms, compliance, engagement, pam, wallet, iam, audit, admin-console), exposed as @openora/core/<domain>/{contracts,schema,plugins,server,react}. The BARE root (@openora/core/<domain>) is the public consumer surface: an isomorphic contract barrel (schemas, enum triples, z.infer types; multi-slice domains namespace per slice, eg `import { chat } from '@openora/core/engagement'`) - never server code. Services/routers/plugin live under /server; tables under /schema. A domain imports engine zones + a sibling's read-only /schema only - never a sibling's internals.
     src/<domain>/<module>/drizzle/  # each module owns its drizzle.config.ts + migrations/ history (ADR-0027); scripts/generate-all.mjs runs them all
   addons/          # gated @openora-addons/<name> packages - gating + extraction machinery (OSS_ADDONS, no-cross-addon, scaffolder) kept for future premium modules; none ship today. ADR-0025
   mcp/             # @openora/mcp - publishable MCP server consumers run against their own repo

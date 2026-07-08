@@ -21,7 +21,6 @@ export const extensions = [
   { id: 'gaming', path: './packages/core/dist/casino/gaming/plugin.js' },
   { id: 'lobby', path: './packages/core/dist/casino/lobby/plugin.js' },
   { id: 'chat', path: './packages/core/dist/engagement/chat/plugin.js' },
-  { id: 'bonus', path: './packages/core/dist/engagement/bonus/plugin.js' },
   // Player self-profile (owns the `player` table). The admin PAM surface is the
   // gated player-management add-on below.
   { id: 'profile', path: './packages/core/dist/pam/profile/plugin.js' },
@@ -36,14 +35,6 @@ export const extensions = [
   // kind: 'addon' -> loaded ONLY when the id is in the OSS_ADDONS allowlist.
   // Default build omits them entirely (no routes, no OpenAPI). Each ships its own
   // contract slice + migrations and can be lifted to its own npm package. See ADR-0020/ADR-0021.
-  {
-    id: 'leaderboard',
-    path: './packages/core/dist/engagement/leaderboard/plugin.js',
-    kind: 'addon',
-  },
-  { id: 'sportsbook', path: './packages/core/dist/sportsbook/plugin.js', kind: 'addon' },
-  // sportsbook debits the core wallet via WALLET_COMMANDS (dependsOn: ['wallet']).
-  { id: 'aggregator', path: './packages/core/dist/casino/aggregator/plugin.js', kind: 'addon' },
   // Admin PAM. Reads the core `player` table (owned by the profile module) via the
   // /schema subpath; the player-facing profile stays free.
   {

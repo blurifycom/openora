@@ -7,8 +7,8 @@
  *
  * A "domain" is any dir under packages/core/src/ other than the engine zones
  * (contracts, server, react, scripts). Single-slice ones keep index.ts + plugin.ts
- * at their root (wallet, iam, audit, ...); multi-slice ones (casino: gaming/lobby/
- * aggregator; engagement; pam) keep index.ts + per-slice plugin/contract/schema.
+ * at their root (wallet, iam, audit, ...); multi-slice ones (casino: gaming/lobby;
+ * engagement; pam) keep index.ts + per-slice plugin/contract/schema.
  *
  * Required per domain (checked against the @openora/core package.json exports):
  *   index.ts              - the domain slice root (its public API source)
