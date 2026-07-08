@@ -23,7 +23,7 @@ re-implement their work. The platform-core twin is the `/add-feature` skill in t
   `responseContentFormat: "markdown"`.
 - GitLab: `<your-gitlab-project>`, MR target `dev`, `glab` CLI.
 - Slack: `<your-team-channel>`, draft only.
-- Repo: `apps/api` (Hono entry + extensions) consumes `@blurifycom/*` upstream. This is a headless
+- Repo: `apps/api` (Hono entry + extensions) consumes `@openora/*` upstream. This is a headless
   API consumer; build your frontend in its own repo and consume the API over HTTP.
 - **Hard rule:** the linked OSS checkout is read-only (guard-core hook + permission deny). Extend from
   the outside; core changes hand off - see `handoff.md`.
@@ -65,7 +65,7 @@ Synthesize into a plan and present it. Do NOT edit yet.
 - **Open questions** - ask before proceeding if any blocks design.
 - **Implementation breakdown** - tasks mapped to files/packages + the owning subagent. Classify each:
   - **downstream** -> overlay plugin / adapter swap / UI provider / config (build via `create-plugin`).
-  - **OSS-core** -> only fixable in `@blurifycom/*`. Flag it; triggers `handoff.md`.
+  - **OSS-core** -> only fixable in `@openora/*`. Flag it; triggers `handoff.md`.
 - **Risks / dependencies** - external services, OSS handoff, data/migrations.
 
 Require explicit approval. Treat as plan mode even if the harness isn't.

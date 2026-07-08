@@ -1,11 +1,11 @@
-import { DrizzleService, pageToOffset } from '@blurifycom/core/server';
+import { DrizzleService, pageToOffset } from '@openora/core/server';
 import { and, eq, or, gt, gte, lte, isNull, desc, sql, type SQL } from 'drizzle-orm';
-import type { AdminUserDirectory, LimitType, LimitPeriod } from '@blurifycom/core/contracts';
+import type { AdminUserDirectory, LimitType, LimitPeriod } from '@openora/core/contracts';
 import { userLimit, rgFlag, rgExclusion } from '../schema/index.js';
-import { wallet, walletTransaction } from '@blurifycom/core/wallet/schema';
-import { sportsbookBet } from '@blurifycom/core/sportsbook/schema';
-import { gameRound } from '@blurifycom/core/casino/schema/gaming';
-import { session } from '@blurifycom/core/pam/schema/identity';
+import { wallet, walletTransaction } from '@openora/core/wallet/schema';
+import { sportsbookBet } from '@openora/core/sportsbook/schema';
+import { gameRound } from '@openora/core/casino/schema/gaming';
+import { session } from '@openora/core/pam/schema/identity';
 import type { RgFlagListItem, ListRgFlagsInput, RgFlagDetail } from '../contract/index.js';
 import { periodWindow, isAtThreshold, thresholdPct } from './rg-eval.js';
 

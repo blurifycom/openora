@@ -1,4 +1,4 @@
-import { type CreateTagInput } from '@blurifycom/core/contracts';
+import { type CreateTagInput } from '@openora/core/contracts';
 
 export const DEFAULT_TAGS: CreateTagInput[] = [
   { key: 'high_roller', isSticky: false },

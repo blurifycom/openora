@@ -1,5 +1,5 @@
 {
-  "name": "@blurifycom/mcp",
+  "name": "@openora/mcp",
   "version": "0.3.0",
   "license": "AGPL-3.0-only",
   "bin": "./dist/main.js",
@@ -10,7 +10,7 @@
   ],
   "type": "module",
   "publishConfig": {
-    "registry": "https://npm.pkg.github.com"
+    "access": "public"
   },
   "scripts": {
     "build": "tsc",
@@ -18,8 +18,8 @@
     "clean": "rm -rf dist"
   },
   "dependencies": {
-    "@blurifycom/core": "workspace:*",
     "@modelcontextprotocol/sdk": "1.29.0",
+    "@openora/core": "workspace:*",
     "zod": "4.4.3"
   },
   "devDependencies": {

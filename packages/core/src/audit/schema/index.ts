@@ -28,8 +28,6 @@ export const auditLog = pgTable(
     ip: text(),
     userAgent: text(),
     correlationId: text(),
-    // Nullable for older rows. NOT part of the hash chain, so adding it does not
-    // break existing rows' tamper-evidence hashes.
     result: text(),
     seq: bigserial({ mode: 'number' }).notNull(),
     prevHash: text(),

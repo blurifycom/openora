@@ -5,7 +5,7 @@ description: Commit, push, and open a GitHub Pull Request following this repo's 
 
 # create-pr (oss)
 
-This repo is on **GitHub** (`github.com/blurifycom/oss`). Use the `gh` CLI. Branches are promoted along a fixed chain - never open a PR straight to `stage` from a feature branch.
+This repo is on **GitHub** (`github.com/blurifycom/openora`). Use the `gh` CLI. Branches are promoted along a fixed chain - never open a PR straight to `stage` from a feature branch.
 
 ## Promotion chain
 

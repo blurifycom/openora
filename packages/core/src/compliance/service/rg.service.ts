@@ -5,13 +5,13 @@ import {
   makeConflictError,
   serializeRow,
   type EventBus,
-} from '@blurifycom/core/server';
+} from '@openora/core/server';
 import { and, eq, or, gt, lte, desc } from 'drizzle-orm';
 import type {
   LoginEnforcementPort,
   SendEmailPort,
   AdminUserDirectory,
-} from '@blurifycom/core/contracts';
+} from '@openora/core/contracts';
 import { userLimit, rgExclusion } from '../schema/index.js';
 import type {
   Limit,

@@ -5,7 +5,7 @@
 
 ## Context
 
-Core domains were folded into the single `@blurifycom/core` package (ADR-0025) and share one Postgres database. Until now they also shared one drizzle-kit migration journal: `packages/core/drizzle/migrations/`, produced by one central `drizzle.config.ts` that globbed every core domain's `schema/index.ts`.
+Core domains were folded into the single `@openora/core` package (ADR-0025) and share one Postgres database. Until now they also shared one drizzle-kit migration journal: `packages/core/drizzle/migrations/`, produced by one central `drizzle.config.ts` that globbed every core domain's `schema/index.ts`.
 
 That central journal was the only thing still coupling the core domains. Their code was already isolated - no domain imports a sibling's schema, no foreign key crosses a module boundary (ADR-0024, the `no-cross-domain` boundary, and the db-conventions FK rule), and every table is owned by exactly one module. Gated add-ons (sportsbook, aggregator, leaderboard) already owned their own journal + tracking table via `runMigrations` (ADR-0020), proving the per-module pattern works against the shared DB.
 
@@ -20,8 +20,8 @@ A shared journal across modules has real costs:
 Every module owns its own migration history, co-located with its schema, while continuing to share one database.
 
 - Each core module (and the engine `outbox`) has its own `drizzle.config.ts` next to its `schema/`, writing to a co-located `drizzle/migrations/` with its own tracking table `__drizzle_migrations_<id>` in the `drizzle` schema.
-- Each module exports a `migrate()` (`@blurifycom/core/<module>/migrate`) that calls the shared `runMigrations` primitive with its folder + tracking table. The engine `outbox` set is owned by `@blurifycom/core/server/migrate`.
-- `pnpm -F @blurifycom/core generate` (`scripts/generate-all.mjs`) discovers every `src/**/drizzle.config.ts` and runs `drizzle-kit generate` per module - a new module needs no central wiring, just a `drizzle.config.ts` next to its schema.
+- Each module exports a `migrate()` (`@openora/core/<module>/migrate`) that calls the shared `runMigrations` primitive with its folder + tracking table. The engine `outbox` set is owned by `@openora/core/server/migrate`.
+- `pnpm -F @openora/core generate` (`scripts/generate-all.mjs`) discovers every `src/**/drizzle.config.ts` and runs `drizzle-kit generate` per module - a new module needs no central wiring, just a `drizzle.config.ts` next to its schema.
 - `pnpm db:migrate:all` (`tools/migrate-all.mjs`) applies every set. Order is not load-bearing because no FK crosses a module boundary.
 - Postgres extensions a module's index needs (eg `pg_trgm` for a GIN trgm index) are declared via the new `runMigrations({ extensions })` option, not hand-edited into a regenerated migration.
 - The central `packages/core/drizzle/` history and central `drizzle.config.ts` are removed. Existing histories were regenerated fresh from current schema (acceptable pre-1.0; existing databases re-init).

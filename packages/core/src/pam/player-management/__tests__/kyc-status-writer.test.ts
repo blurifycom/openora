@@ -1,5 +1,5 @@
 import { describe, it, expect, vi } from 'vitest';
-import type { EventBus } from '@blurifycom/core/server';
+import type { EventBus } from '@openora/core/server';
 import { PlayerKycStatusWriter } from '../service/kyc-status-writer.js';
 import { mock, mockDb } from '../../../testing/mock.js';
 

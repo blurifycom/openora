@@ -1,8 +1,8 @@
-import { createDomainError, DrizzleService, findOneOrThrow, cached } from '@blurifycom/core/server';
-import type { CacheAdapter } from '@blurifycom/core/contracts';
+import { createDomainError, DrizzleService, findOneOrThrow, cached } from '@openora/core/server';
+import type { CacheAdapter } from '@openora/core/contracts';
 import { eq, and, ilike, count, asc, inArray } from 'drizzle-orm';
 import { lobbyCategory, lobbyCategoryGame, featuredSlot } from '../schema/index.js';
-import { game } from '@blurifycom/core/casino/schema/gaming';
+import { game } from '@openora/core/casino/schema/gaming';
 
 export const LobbyCategoryNotFoundError = createDomainError(
   'LobbyCategoryNotFoundError',

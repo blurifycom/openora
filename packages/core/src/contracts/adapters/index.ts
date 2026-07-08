@@ -1,9 +1,9 @@
-// @blurifycom/core/contracts - the single home for vendor adapter interfaces (the swap
+// @openora/core/contracts - the single home for vendor adapter interfaces (the swap
 // seams). A module's service depends on an adapter interface; an operator binds
 // a concrete implementation to its DI token in the module's plugin.ts. One file
 // per service category. See AGENTS.md "third-party integration" in the decision tree.
 
-export type { Token, SealedToken, ClientPageToken } from './token.js';
+export type { AnyToken, Token, SealedToken, ClientPageToken } from './token.js';
 export { createToken, createSealedToken, createClientPageToken } from './token.js';
 
 export type {

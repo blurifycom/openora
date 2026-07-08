@@ -1,6 +1,6 @@
 import { describe, it, expect, vi } from 'vitest';
 import { mock, mockDb } from '../../../testing/mock.js';
-import type { EventBus } from '@blurifycom/core/server';
+import type { EventBus } from '@openora/core/server';
 import { TagRuleService, TagRuleNotFoundError } from '../service/tag-rule.service.js';
 import type { TagRule } from '../schema/index.js';
 

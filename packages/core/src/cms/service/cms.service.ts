@@ -5,8 +5,8 @@ import {
   findOneOrThrow,
   cached,
   invalidate,
-} from '@blurifycom/core/server';
-import type { CacheAdapter } from '@blurifycom/core/contracts';
+} from '@openora/core/server';
+import type { CacheAdapter } from '@openora/core/contracts';
 import { eq, and, asc, desc, isNotNull } from 'drizzle-orm';
 import { page as pageTable, banner as bannerTable } from '../schema/index.js';
 

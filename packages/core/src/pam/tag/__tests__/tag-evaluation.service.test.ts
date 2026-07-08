@@ -1,6 +1,6 @@
 import { describe, it, expect, vi } from 'vitest';
 import { mock } from '../../../testing/mock.js';
-import type { WalletReader, IdentityReader, TagRule, KycStatus } from '@blurifycom/core/contracts';
+import type { WalletReader, IdentityReader, TagRule, KycStatus } from '@openora/core/contracts';
 import { TagEvaluationService, SYSTEM_ACTOR_ID } from '../service/tag-evaluation.service.js';
 import {
   TagService,

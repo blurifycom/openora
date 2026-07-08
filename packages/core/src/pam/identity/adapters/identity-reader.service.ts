@@ -1,8 +1,8 @@
-import { DrizzleService } from '@blurifycom/core/server';
-import { Player, type IdentityReader } from '@blurifycom/core/contracts';
+import { DrizzleService } from '@openora/core/server';
+import { Player, type IdentityReader } from '@openora/core/contracts';
 import { and, eq, isNull, lt, max, or } from 'drizzle-orm';
 import { session, user } from '../schema/index.js';
-import { player } from '@blurifycom/core/pam/schema/profile';
+import { player } from '@openora/core/pam/schema/profile';
 
 export class IdentityReaderService implements IdentityReader {
   constructor(private readonly drizzle: DrizzleService) {}

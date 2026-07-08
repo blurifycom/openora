@@ -1,4 +1,4 @@
-import type { CacheAdapter } from '@blurifycom/core/contracts';
+import type { CacheAdapter } from '@openora/core/contracts';
 import { createLogger } from './logger.js';
 
 const logger = createLogger('cache');

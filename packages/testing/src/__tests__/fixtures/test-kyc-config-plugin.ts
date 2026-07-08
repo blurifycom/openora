@@ -1,4 +1,4 @@
-import { definePlugin } from '@blurifycom/core/server';
+import { definePlugin } from '@openora/core/server';
 import {
   PLATFORM_CONFIG,
   KYC_ADAPTER,
@@ -6,7 +6,7 @@ import {
   type KycAdapter,
   type KycDocument,
   type KycResult,
-} from '@blurifycom/core/contracts';
+} from '@openora/core/contracts';
 
 /**
  * Test-only KYC adapter: never auto-approves (so the withdrawal-gate boot guard stays

@@ -18,17 +18,17 @@ Open-source, headless, plugin-based, AI-native igaming platform. Consumers clone
 
 ## Architecture pillars
 
-1. **Zod-first contracts.** Every shape is a Zod schema; types are `z.infer`'d, never hand-written. Cross-cutting schemas in `packages/core/src/contracts/schemas/`; each module OWNS its route contract + req/res schemas + `z.infer`'d types in its `contract/` dir - the single source of wire truth, nothing else re-declares a wire shape. `composeContract` (`@blurifycom/core/contracts`) owns only `health`; the composition root (`tools/gen/build-contract.ts` here, the consumer's entry when deployed) composes each enabled module's `/contract` slice into the one runtime contract the SDK links against. ADR-0021/0025.
-2. **oRPC + Hono.** oRPC owns route definition + Zod validation + OpenAPI emit; its `OpenAPIHandler` mounts on a Hono server. DI is a functional `Container` (`@blurifycom/core/server`) - typed-token factories, no decorators, no `reflect-metadata`. ADR-0009.
+1. **Zod-first contracts.** Every shape is a Zod schema; types are `z.infer`'d, never hand-written. Cross-cutting schemas in `packages/core/src/contracts/schemas/`; each module OWNS its route contract + req/res schemas + `z.infer`'d types in its `contract/` dir - the single source of wire truth, nothing else re-declares a wire shape. `composeContract` (`@openora/core/contracts`) owns only `health`; the composition root (`tools/gen/build-contract.ts` here, the consumer's entry when deployed) composes each enabled module's `/contract` slice into the one runtime contract the SDK links against. ADR-0021/0025.
+2. **oRPC + Hono.** oRPC owns route definition + Zod validation + OpenAPI emit; its `OpenAPIHandler` mounts on a Hono server. DI is a functional `Container` (`@openora/core/server`) - typed-token factories, no decorators, no `reflect-metadata`. ADR-0009.
 3. **Plugin host.** `definePlugin({ id, dependsOn, register })` is the only way new functionality enters. Everything (core modules included) loads through `extensions.config.ts`.
-4. **Headless.** Backend modules + contracts + SDK surface only. UI lives in the consumer, which imports `@blurifycom/core/react` (hooks, typed client, auth, realtime). No UI packages here.
+4. **Headless.** Backend modules + contracts + SDK surface only. UI lives in the consumer, which imports `@openora/core/react` (hooks, typed client, auth, realtime). No UI packages here.
 5. **Explicit > magic.** No auto-discovery, no decorators. Everything greppable; every wiring point a typed call.
 6. **AI-friendly.** Every module has an `AGENTS.md`; every scaffold a command; contracts queryable via the `oss-dev` MCP server + generated `docs/catalog.json`.
 7. **Functional & declarative.** Pure functions, immutable data, composition. A `class` only as a thin DI shell delegating to pure functions. Rationale + examples in `conventions`.
 
 ## Repo map
 
-Ships `@blurifycom/core` (domains + engine), the SDK, tooling. The API server lives in the consumer - this repo has no runnable server (`apps/api` removed 2026-06-22).
+Ships `@openora/core` (domains + engine), the SDK, tooling. The API server lives in the consumer - this repo has no runnable server (`apps/api` removed 2026-06-22).
 
 ```
 apps/
@@ -36,26 +36,26 @@ apps/
   mcp-server-dev/  # MCP dev server (stdio) - agents connect via .mcp.json
 packages/
   config/          # tsconfig, vitest, oxlint presets; boundary lint plugins
-  core/            # @blurifycom/core - THE single published package (ADR-0025). Subpaths:
+  core/            # @openora/core - THE single published package (ADR-0025). Subpaths:
     src/contracts/   # isomorphic: composeContract + healthContract, base zod schemas (schemas/), adapter interfaces + DI tokens (adapters/)
     src/react/       # domain-agnostic SDK: createClient, typed client, auth, realtime. No UI.
     src/server/      # node engine: kernel (logger, EventBus + EVENT_BUS, Container), plugin-host (definePlugin, ModuleRegistry, loader), db (DrizzleService), auth (better-auth + AdminGuard), runtime (createApp - domain-agnostic, single-tenant). Subpaths: /orm, /migrate
-    src/compliance/  # sealed-token list + assertNoSealedProviders (engine); also the compliance domain (/contracts, /schema, /plugins)
-    src/<domain>/    # 10 folded domains (casino, cms, compliance, engagement, pam, sportsbook, wallet, iam, audit, admin-console), exposed as @blurifycom/core/<domain>/{contracts,schema,plugins,server,react}. The BARE root (@blurifycom/core/<domain>) is the public consumer surface: an isomorphic contract barrel (schemas, enum triples, z.infer types; multi-slice domains namespace per slice, eg `import { bonus } from '@blurifycom/core/engagement'`) - never server code. Services/routers/plugin live under /server; tables under /schema. A domain imports engine zones + a sibling's read-only /schema only - never a sibling's internals.
+    src/compliance/  # sealed-token list + assertSealedServicesBound (engine); also the compliance domain (/contracts, /schema, /plugins)
+    src/<domain>/    # 10 folded domains (casino, cms, compliance, engagement, pam, sportsbook, wallet, iam, audit, admin-console), exposed as @openora/core/<domain>/{contracts,schema,plugins,server,react}. The BARE root (@openora/core/<domain>) is the public consumer surface: an isomorphic contract barrel (schemas, enum triples, z.infer types; multi-slice domains namespace per slice, eg `import { bonus } from '@openora/core/engagement'`) - never server code. Services/routers/plugin live under /server; tables under /schema. A domain imports engine zones + a sibling's read-only /schema only - never a sibling's internals.
     src/<domain>/<module>/drizzle/  # each module owns its drizzle.config.ts + migrations/ history (ADR-0027); scripts/generate-all.mjs runs them all
-  addons/          # gated @blurifycom-addons/<name> packages - gating + extraction machinery (OSS_ADDONS, no-cross-addon, scaffolder) kept for future premium modules; none ship today. ADR-0025
-  mcp/             # @blurifycom/mcp - publishable MCP server consumers run against their own repo
-  testing/         # @blurifycom/testing - dev/test harness (bootTestApp, seedDemoData)
+  addons/          # gated @openora-addons/<name> packages - gating + extraction machinery (OSS_ADDONS, no-cross-addon, scaffolder) kept for future premium modules; none ship today. ADR-0025
+  mcp/             # @openora/mcp - publishable MCP server consumers run against their own repo
+  testing/         # @openora/testing - dev/test harness (bootTestApp, seedDemoData)
 docs/
   adr/             # architecture decision records
-  catalog.json     # generated surface (routes/schemas/adapters/slots/events); read by @blurifycom/mcp
+  catalog.json     # generated surface (routes/schemas/adapters/slots/events); read by @openora/mcp
 tools/             # grouped: gen/ (gen.ts scaffolder, build-contract, gen-openapi, gen-catalog), lint/ (oxlint plugins, verify-module-shape), create/, db/ (seed, migrate-all), setup/
 extensions.config.ts # the single registry of enabled plugins
 ```
 
 ## Where does X go? (decision tree)
 
-- **New business domain** (eg "tournaments") -> `pnpm gen module <name>` creates `@blurifycom-addons/<name>` under `packages/addons/<name>/` and registers it in `extensions.config.ts` (no `kind` = core, `kind: 'addon'` = gated). Core: add its `/contract` slice to `tools/gen/build-contract.ts`. Every module owns its `drizzle.config.ts` + migration history. ADR-0021/0024/0027.
+- **New business domain** (eg "tournaments") -> `pnpm gen module <name>` creates `@openora-addons/<name>` under `packages/addons/<name>/` and registers it in `extensions.config.ts` (no `kind` = core, `kind: 'addon'` = gated). Core: add its `/contract` slice to `tools/gen/build-contract.ts`. Every module owns its `drizzle.config.ts` + migration history. ADR-0021/0024/0027.
 - **Extend/override an existing module** -> overlay plugin: `pnpm gen plugin <name>` -> `extensions/<name>/plugin.ts` (repo root here; the consumer's app when deployed).
 - **New HTTP route** -> the module's `router/index.ts` via `pnpm gen route <module> <method> <path>`. Player routes resolve the caller from `x-user-id`; admin routes MUST be guarded (next).
 - **Admin-only route** -> `plugin.ts` resolves `AdminGuard` (`c.get(ADMIN_GUARD)`, seeded by `createApp`) and passes it into the router; `await adminGuard.assert(context)` is the handler's FIRST line. The single admin-enforcement point - never re-implement the role check.
@@ -63,7 +63,7 @@ extensions.config.ts # the single registry of enabled plugins
 - **Reusable Zod schema** -> `packages/core/src/contracts/schemas/<namespace>.ts`. Module-local schemas in the module's `contract/`.
 - **Enum / status value set** -> a values + schema + type triple on the contract surface (cross-domain: core `contracts/schemas/`; domain-local: the module's `contract/`), pgEnum derived from the tuple. `conventions` section 3 + `db-conventions` > Enums.
 - **Cross-module event** -> declare the payload in `domainEventSchemas` (`packages/core/src/contracts/schemas/events.ts`), emit via `EventBus`, subscribe with `ctx.events.on(...)`. ADR-0010; detail in `messaging-and-microservices`.
-- **Frontend UI** -> NOT here (headless). Consumer builds it over HTTP via `@blurifycom/core/react`.
+- **Frontend UI** -> NOT here (headless). Consumer builds it over HTTP via `@openora/core/react`.
 - **New data hook** -> `packages/core/src/react/hooks/` (domain-specific: that domain's `react/` dir). Hand-write `useMemo`/`useCallback` for stability-contract returns (consumer's React Compiler skips `node_modules`) - `conventions` section 7.
 - **Operator config** (feature flags, brands, RG defaults) -> `platform-config.yaml`/`.json` via `loadPlatformConfig()` + `PlatformConfigSchema`, bound as `PLATFORM_CONFIG`. ADR-0013.
 - **Third-party integration** (PSP, KYC, aggregator, chat) -> adapter interface + `createToken<Adapter>` in `packages/core/src/contracts/adapters/<category>.ts`, impl in the owning module's `adapters/<vendor>/`, bound in `plugin.ts` via `ctx.provide(TOKEN, () => new Impl())`. Never inline `fetch`/SDK calls.
@@ -74,7 +74,7 @@ extensions.config.ts # the single registry of enabled plugins
 
 Cross-cutting basics (kebab files, PascalCase types, `<Name>Schema` + inferred `<Name>`, predicate booleans, units in names) in `conventions`. OSS-specific:
 
-- Packages: `@blurifycom/<kebab>` (platform), `@blurifycom-addons/<kebab>` (gated add-ons). Public API = package/subpath entry + read-only `/schema`; internals are a lint error.
+- Packages: `@openora/<kebab>` (platform), `@openora-addons/<kebab>` (gated add-ons). Public API = package/subpath entry + read-only `/schema`; internals are a lint error.
 - oRPC routers namespaced by module (`wallet.transactions.list`).
 - SQL / Drizzle identifiers: `db-conventions`.
 
@@ -84,7 +84,7 @@ Two complementary gates, kept in sync: (1) **oxlint `oss-boundaries/*`** (`tools
 
 - A folded domain imports engine zones (`contracts`/`server`/`react`) + a sibling's read-only `/schema` only - never a sibling's internals (`no-cross-domain`). Couple via a command port, a domain event, or a shared contract. Same rule for add-ons (`no-cross-addon`).
 - `contracts` is isomorphic: only other contracts + Zod (`no-contracts-to-runtime`). `react` never imports `server` or a module (`no-react-to-runtime`).
-- Engine zones never import a domain or add-on (`no-core-to-domain`/`no-core-to-addon`); wiring happens only in the consumer's composition root (+ `@blurifycom/testing`).
+- Engine zones never import a domain or add-on (`no-core-to-domain`/`no-core-to-addon`); wiring happens only in the consumer's composition root (+ `@openora/testing`).
 - Import the package/subpath entry, never a deep `dist/` path. No cycles - break by inverting the dependency or moving the type to contracts.
 
 ## Forbidden patterns

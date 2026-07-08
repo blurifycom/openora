@@ -4,18 +4,18 @@ import {
   DrizzleService,
   findOneOrThrow,
   pageToOffset,
-} from '@blurifycom/core/server';
+} from '@openora/core/server';
 import type {
   KycStatusWriter,
   PlayerStatus,
   KycStatus,
   Player,
   TagKey,
-} from '@blurifycom/core/contracts';
+} from '@openora/core/contracts';
 import { eq, ilike, count, or, and, gte, desc, sql, ne, inArray, isNull } from 'drizzle-orm';
-import { player } from '@blurifycom/core/pam/schema/profile';
-import { user } from '@blurifycom/core/pam/schema/identity';
-import { playerTag, tag } from '@blurifycom/core/pam/schema/tag';
+import { player } from '@openora/core/pam/schema/profile';
+import { user } from '@openora/core/pam/schema/identity';
+import { playerTag, tag } from '@openora/core/pam/schema/tag';
 import { toPlayer, fetchEmailByUserId } from '../../shared/player-mapper.js';
 
 export const PlayerNotFoundError = makeNotFoundError('Player');

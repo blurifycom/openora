@@ -6,11 +6,11 @@ import {
   makeOwnershipError,
   assertOwnership,
   serializeRow,
-} from '@blurifycom/core/server';
+} from '@openora/core/server';
 import { eq } from 'drizzle-orm';
 import { userLimit, geoRule } from '../schema/index.js';
 import type { UpsertLimitInput, Limit, GeoRule, AddGeoRuleInput } from '../contract/index.js';
-import { type GeoIpAdapter } from '@blurifycom/core/contracts';
+import { type GeoIpAdapter } from '@openora/core/contracts';
 
 export const LimitNotFoundError = makeNotFoundError('Limit');
 

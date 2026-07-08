@@ -173,7 +173,7 @@ function classifyIntent(ask: string): IntentKind {
   return 'unsure';
 }
 
-/** Symbol DI tokens exported from @blurifycom/core/contracts - the vendor swap seams. */
+/** Symbol DI tokens exported from @openora/core/contracts - the vendor swap seams. */
 function readAdapterTokens(): string[] {
   const dir = repoPath('packages', 'contracts', 'adapters', 'src');
   if (!existsSync(dir)) return [];
@@ -205,7 +205,7 @@ function buildPlaybook(
     case 'feature':
       return [
         '## Where it goes',
-        'A new business domain -> a new standalone @blurifycom-addons/<name> package under `packages/addons/<name>/` (registered as a core add-on in extensions.config.ts).',
+        'A new business domain -> a new standalone @openora-addons/<name> package under `packages/addons/<name>/` (registered as a core add-on in extensions.config.ts).',
         '',
         '## Existing modules (avoid name collisions)',
         moduleList,
@@ -222,7 +222,7 @@ function buildPlaybook(
     case 'adapter':
       return [
         '## Where it goes',
-        'A third-party integration -> implement the adapter interface under `packages/addons/<name>/src/adapters/<vendor>/` and bind it to a DI token in the add-on/overlay `plugin.ts`. Interfaces + tokens all live in `@blurifycom/core/contracts`.',
+        'A third-party integration -> implement the adapter interface under `packages/addons/<name>/src/adapters/<vendor>/` and bind it to a DI token in the add-on/overlay `plugin.ts`. Interfaces + tokens all live in `@openora/core/contracts`.',
         '',
         '## Adapter tokens available to override',
         ctx.tokens.length ? ctx.tokens.map((t) => `- ${t}`).join('\n') : '- (none found)',
@@ -237,10 +237,10 @@ function buildPlaybook(
     case 'ui-page':
       return [
         '## Where it goes',
-        'The platform is headless and ships no UI - pages live in your own frontend repo and consume the api via `@blurifycom/core/react`. The frontend owns all components and styling.',
+        'The platform is headless and ships no UI - pages live in your own frontend repo and consume the api via `@openora/core/react`. The frontend owns all components and styling.',
         '',
         '## Playbook',
-        '1. Implement the page in your frontend repo using `@blurifycom/core/react` data hooks.',
+        '1. Implement the page in your frontend repo using `@openora/core/react` data hooks.',
         '2. To extend an existing surface without forking it, fill a named slot via your frontend UI plugin (ADR-0006).',
         '3. Run `run-verify`. Delegate backend routes to `dev`.',
       ].join('\n');
@@ -261,13 +261,13 @@ function buildPlaybook(
     case 'downstream-app':
       return [
         '## Where it goes',
-        'A brand-new operator repo that consumes `@blurifycom/*` via local `link:` - it does NOT fork this repo.',
+        'A brand-new operator repo that consumes `@openora/*` via local `link:` - it does NOT fork this repo.',
         '',
         '## Playbook',
         '1. Run `scaffold-app <target-dir>` (MCP tool) or `pnpm create:app ../<name> --name <name>`.',
         '2. In the new dir: `pnpm install && pnpm build:oss && cp .env.example .env` (set DATABASE_URL + AUTH_SECRET) then `pnpm db:migrate`.',
         '3. Run `pnpm setup:mcp` in the new repo so its own agents get this same toolbelt, then `/start` there.',
-        '4. `pnpm dev` boots api :3001. The frontend lives in your own repo consuming `@blurifycom/core/react`.',
+        '4. `pnpm dev` boots api :3001. The frontend lives in your own repo consuming `@openora/core/react`.',
       ].join('\n');
     default:
       return [
@@ -324,7 +324,7 @@ server.registerTool(
   },
   async ({ section, package: pkg }) => {
     const filePath = pkg
-      ? repoPath(pkg.replace(/^@blurifycom\//, ''), 'AGENTS.md')
+      ? repoPath(pkg.replace(/^@openora\//, ''), 'AGENTS.md')
       : repoPath('AGENTS.md');
     const content = readFile(filePath);
     if (!content) return { content: [{ type: 'text', text: `No AGENTS.md found at ${filePath}` }] };
@@ -455,15 +455,13 @@ server.registerTool(
 
     const eventsFile = repoPath('packages', 'platform', 'core', 'src', 'event-bus.ts');
     if (existsSync(eventsFile)) {
-      parts.push(
-        `\n=== Events (EventBus from @blurifycom/core/server) ===\n${readFile(eventsFile)}`,
-      );
+      parts.push(`\n=== Events (EventBus from @openora/core/server) ===\n${readFile(eventsFile)}`);
     } else {
       parts.push('\n=== Events ===\n(event-bus.ts not found)');
     }
 
     const adaptersDir = repoPath('packages', 'contracts', 'adapters', 'src');
-    parts.push('\n=== Adapter interfaces (@blurifycom/core/contracts) ===');
+    parts.push('\n=== Adapter interfaces (@openora/core/contracts) ===');
     if (existsSync(adaptersDir)) {
       for (const f of readdirSync(adaptersDir)) {
         if (!f.endsWith('.ts') || f === 'index.ts') continue;
@@ -523,7 +521,7 @@ server.registerTool(
   'scaffold-module',
   {
     description:
-      'Scaffold a new business module as a standalone @blurifycom-addons/<name> package under packages/addons/<name>.',
+      'Scaffold a new business module as a standalone @openora-addons/<name> package under packages/addons/<name>.',
     inputSchema: {
       group: z.enum(['player', 'backoffice', 'platform']),
       name: z.string(),

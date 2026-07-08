@@ -1,6 +1,6 @@
 import { implement } from '@orpc/server';
-import { getUserId, mapErrors, type AdminGuard, type OssContext } from '@blurifycom/core/server';
-import type { AuditWritePort } from '@blurifycom/core/contracts';
+import { getUserId, mapErrors, type AdminGuard, type OssContext } from '@openora/core/server';
+import type { AuditWritePort } from '@openora/core/contracts';
 import { walletContract } from '../contract/index.js';
 import {
   WalletService,

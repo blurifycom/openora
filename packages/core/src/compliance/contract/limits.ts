@@ -4,7 +4,7 @@ import {
   TimestampSchema,
   LimitTypeSchema,
   LimitPeriodSchema,
-} from '@blurifycom/core/contracts';
+} from '@openora/core/contracts';
 
 // Shared leaf so both the limit routes (index.ts) and the RG routes (rg.ts) derive
 // from one wire shape without a contract cycle.

@@ -30,7 +30,7 @@ No vendor is prescribed. Pick whatever fits your stack (SMTP, SES, SendGrid, Pos
 
 ```ts
 // apps/api/src/extensions/email-delivery/src/my-email-adapter.ts
-import type { NotificationDeliveryAdapter } from '@blurifycom/core/contracts';
+import type { NotificationDeliveryAdapter } from '@openora/core/contracts';
 
 export class MyEmailAdapter implements NotificationDeliveryAdapter {
   async sendEmail(to: string, subject: string, body: string): Promise<void> {
@@ -43,8 +43,8 @@ export class MyEmailAdapter implements NotificationDeliveryAdapter {
 
 ```ts
 // apps/api/src/extensions/email-delivery/plugin.ts
-import { NOTIFICATION_DELIVERY_ADAPTER } from '@blurifycom/core/contracts';
-import { definePlugin } from '@blurifycom/core/server';
+import { NOTIFICATION_DELIVERY_ADAPTER } from '@openora/core/contracts';
+import { definePlugin } from '@openora/core/server';
 import { MyEmailAdapter } from './src/my-email-adapter.js';
 
 export default definePlugin({
@@ -61,5 +61,5 @@ export default definePlugin({
 ## Extending the interface
 
 If you need richer delivery (SMS, push, templates), extend the adapter interface in
-`@blurifycom/core/contracts` and add a new token. Keep `sendEmail` in the existing interface for
+`@openora/core/contracts` and add a new token. Keep `sendEmail` in the existing interface for
 backwards compatibility, or replace the token entirely in your overlay.

@@ -28,7 +28,7 @@ Service methods are data-in/data-out; side effects (DB writes, event emits, adap
 ## Dependency injection (no decorators, no reflect-metadata)
 
 - Tokens are typed symbols: `createToken<T>('NAME')`, declared with the port in `packages/core/src/contracts/adapters/`.
-- `Container` (`@blurifycom/core/server`) wires factories: `register(token, factory)` (last-wins = overlay rebind), `get(token)` (lazy singleton), `onDispose(fn)`.
+- `Container` (`@openora/core/server`) wires factories: `register(token, factory)` (last-wins = overlay rebind), `get(token)` (lazy singleton), `onDispose(fn)`.
 - Services take deps by type via constructor; never touch the container. `plugin.ts` builds them: `ctx.routers.add('wallet', (c) => createWalletRouter(new WalletService(c.get(DRIZZLE), c.get(EVENT_BUS), c.get(PAYMENT_ADAPTER))))`.
 - A dep captured in a closure is a smell - make it a port + token (canonical fix: `SEND_EMAIL` in identity).
 
@@ -42,13 +42,13 @@ Sanctioned paths only: domain **events** (`EventBus`), **command ports** (a toke
 
 Money + any needed-now mutation stay synchronous/transactional, never over events - use a command port: caller passes its own `tx` (`WALLET_COMMANDS.debit(tx, ...)`), atomic in-process yet splittable later; declare `dependsOn: ['<owner>']`. Cross-module schema reads are sanctioned but warned (`no-cross-addon-schema-read`) - each one is an extraction blocker. ADR-0017.
 
-**Never write a deep (`../../`+) relative import that leaves your own top-level dir under `packages/core/src/` - reach every other zone through the package's own `@blurifycom/core/*` subpath.** A relative import is only for staying inside your own module/zone (`./schema/index.js`, `../db/index.js`). The moment a `..` would cross into another domain, slice, or engine zone, it's a `@blurifycom/core/*` import instead:
+**Never write a deep (`../../`+) relative import that leaves your own top-level dir under `packages/core/src/` - reach every other zone through the package's own `@openora/core/*` subpath.** A relative import is only for staying inside your own module/zone (`./schema/index.js`, `../db/index.js`). The moment a `..` would cross into another domain, slice, or engine zone, it's a `@openora/core/*` import instead:
 
-- reaching the contracts zone -> `@blurifycom/core/contracts` (never `../../contracts/...`)
-- reaching engine helpers -> `@blurifycom/core/server` (never `../../../server/kernel/...`)
-- reaching shared errors -> `@blurifycom/core/common/errors`
-- a sibling domain's tables -> `@blurifycom/core/<domain>/schema` (never `../../<domain>/schema`)
-- a sibling slice -> that slice's `@blurifycom/core/<domain>/<schema|contracts|plugins>/<slice>` subpath
+- reaching the contracts zone -> `@openora/core/contracts` (never `../../contracts/...`)
+- reaching engine helpers -> `@openora/core/server` (never `../../../server/kernel/...`)
+- reaching shared errors -> `@openora/core/common/errors`
+- a sibling domain's tables -> `@openora/core/<domain>/schema` (never `../../<domain>/schema`)
+- a sibling slice -> that slice's `@openora/core/<domain>/<schema|contracts|plugins>/<slice>` subpath
 
 Lint-enforced by `oss-module-shape/no-relative-zone-escape` (folded domains AND the contracts/server/react engine zones; only `scripts`/`common`/`testing` are exempt as the importing file). If a target has no subpath yet, add the export - don't reach for `../../../`.
 
@@ -58,15 +58,15 @@ Lint-enforced by `oss-module-shape/no-relative-zone-escape` (folded domains AND 
 
 ## Reuse these shared helpers (do not re-roll)
 
-| Need                                         | Use                                                                                             | From                         |
-| -------------------------------------------- | ----------------------------------------------------------------------------------------------- | ---------------------------- |
-| first-row-or-throw                           | `findOneOrThrow(await db.select()..., new XNotFoundError(id))`                                  | `@blurifycom/core/server`    |
-| page offset                                  | `pageToOffset(page, limit)`                                                                     | `@blurifycom/core/server`    |
-| ownership guard                              | `assertOwnership(row.userId, callerId, error)`                                                  | `@blurifycom/core/server`    |
-| row -> DTO (Date/Decimal -> string)          | `serializeRow(row, { dateFields: [...], decimalFields: [...] })`                                | `@blurifycom/core/server`    |
-| not-found / ownership / conflict error class | `makeNotFoundError('Entity')` / `makeOwnershipError('Entity')` / `makeConflictError(name, msg)` | `@blurifycom/core/server`    |
-| push subscription -> SSE async generator     | `createEventStreamGenerator((push) => svc.subscribe(push), { signal, prime })`                  | `@blurifycom/core/server`    |
-| canonical id/userId/pagination input         | `IdInputSchema` / `UserIdInputSchema` / `PaginationInputSchema`                                 | `@blurifycom/core/contracts` |
+| Need                                         | Use                                                                                             | From                      |
+| -------------------------------------------- | ----------------------------------------------------------------------------------------------- | ------------------------- |
+| first-row-or-throw                           | `findOneOrThrow(await db.select()..., new XNotFoundError(id))`                                  | `@openora/core/server`    |
+| page offset                                  | `pageToOffset(page, limit)`                                                                     | `@openora/core/server`    |
+| ownership guard                              | `assertOwnership(row.userId, callerId, error)`                                                  | `@openora/core/server`    |
+| row -> DTO (Date/Decimal -> string)          | `serializeRow(row, { dateFields: [...], decimalFields: [...] })`                                | `@openora/core/server`    |
+| not-found / ownership / conflict error class | `makeNotFoundError('Entity')` / `makeOwnershipError('Entity')` / `makeConflictError(name, msg)` | `@openora/core/server`    |
+| push subscription -> SSE async generator     | `createEventStreamGenerator((push) => svc.subscribe(push), { signal, prime })`                  | `@openora/core/server`    |
+| canonical id/userId/pagination input         | `IdInputSchema` / `UserIdInputSchema` / `PaginationInputSchema`                                 | `@openora/core/contracts` |
 
 Error factories keep the SAME exported const identifier (`export const WalletNotFoundError = makeNotFoundError('Wallet')`) - routers import the class and `mapErrors` keys off it.
 

@@ -46,7 +46,7 @@ before judging - do not infer behavior from a diff hunk. If a finding depends on
 function does, open it; if you can't cite it, fetch it. These docs are the single source of truth -
 cite them in findings:
 
-- `.claude/rules/overview.md` - what this repo is (a downstream operator on `@blurifycom/*` consumed as linked packages), the HARD RULE that OSS core is read-only, how you work here, and the enforced import/module boundaries (extend only from the outside).
+- `.claude/rules/overview.md` - what this repo is (a downstream operator on `@openora/*` consumed as linked packages), the HARD RULE that OSS core is read-only, how you work here, and the enforced import/module boundaries (extend only from the outside).
 - `.claude/rules/db-conventions.md` - SQL / Drizzle rules for tables an overlay owns.
 - Any other `.claude/rules/*.md` the consumer has added (e.g. `conventions`, `oss-boundaries`, `frontend`) - cite whichever own the touched files.
 
@@ -55,13 +55,13 @@ cite them in findings:
 Each dimension maps to a rule doc and, where one fits, a pre-scoped subagent. Spawn only the
 dimensions whose files actually changed.
 
-| #   | Dimension                  | Covers                                                                                                                                 | Use subagent       |
-| --- | -------------------------- | -------------------------------------------------------------------------------------------------------------------------------------- | ------------------ |
-| 1   | OSS boundaries & extension | never edits `@blurifycom/*` core; extends only via `extensions.config.ts` / overlay plugins / vendor adapters; no deep `dist/` imports | general (overview) |
-| 2   | Conventions & quality      | naming, functional/immutable, no `any`/`interface`/default-export, types inferred not hand-written, comments WHY, tests                | general (overview) |
-| 3   | Frontend                   | React/styling rules - only if a frontend app or shared UI package was added and changed                                                | general (frontend) |
-| 4   | Security & secrets         | authz on overlay routes, vendor-adapter creds from env (KYC/PSP/notify), no secret/PII leaks, Zod-validated input                      | general (overview) |
-| 5   | Operator/domain fit        | does the change make igaming sense for this operator; launch-blockers (only if business logic changed)                                 | `expert`           |
+| #   | Dimension                  | Covers                                                                                                                              | Use subagent       |
+| --- | -------------------------- | ----------------------------------------------------------------------------------------------------------------------------------- | ------------------ |
+| 1   | OSS boundaries & extension | never edits `@openora/*` core; extends only via `extensions.config.ts` / overlay plugins / vendor adapters; no deep `dist/` imports | general (overview) |
+| 2   | Conventions & quality      | naming, functional/immutable, no `any`/`interface`/default-export, types inferred not hand-written, comments WHY, tests             | general (overview) |
+| 3   | Frontend                   | React/styling rules - only if a frontend app or shared UI package was added and changed                                             | general (frontend) |
+| 4   | Security & secrets         | authz on overlay routes, vendor-adapter creds from env (KYC/PSP/notify), no secret/PII leaks, Zod-validated input                   | general (overview) |
+| 5   | Operator/domain fit        | does the change make igaming sense for this operator; launch-blockers (only if business logic changed)                              | `expert`           |
 
 ## 5. Allocate reviewers to `--agents N`
 
@@ -105,7 +105,7 @@ and report green/red. Leave INFO items untouched. Never commit or push.
 ## Constraints
 
 - Read-only by default; `--fix` edits the working tree only - no commit, no push.
-- NEVER edit `@blurifycom/*` core or `node_modules` - this repo extends the platform from the outside only.
+- NEVER edit `@openora/*` core or `node_modules` - this repo extends the platform from the outside only.
 - Reviewers report findings; they do not edit. Only the orchestrator edits, and only under `--fix`.
 - Always cite the rule doc a finding rests on - no opinions ungrounded in the conventions.
 - Cap at 5 parallel reviewers.

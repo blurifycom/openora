@@ -1,5 +1,5 @@
 import { implement } from '@orpc/server';
-import { mapErrors, type OssContext } from '@blurifycom/core/server';
+import { mapErrors, type OssContext } from '@openora/core/server';
 import { lobbyContract } from '../contract/index.js';
 import { LobbyService, LobbyCategoryNotFoundError } from '../service/lobby.service.js';
 

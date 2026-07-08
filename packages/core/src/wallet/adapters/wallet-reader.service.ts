@@ -1,5 +1,5 @@
-import { DrizzleService } from '@blurifycom/core/server';
-import { type WalletReader } from '@blurifycom/core/contracts';
+import { DrizzleService } from '@openora/core/server';
+import { type WalletReader } from '@openora/core/contracts';
 import { and, count, eq, gt, sum } from 'drizzle-orm';
 import { wallet, walletTransaction } from '../schema/index.js';
 

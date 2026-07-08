@@ -3,9 +3,9 @@ import {
   makeNotFoundError,
   DrizzleService,
   findOneOrThrow,
-} from '@blurifycom/core/server';
+} from '@openora/core/server';
 import { eq, and, asc, desc } from 'drizzle-orm';
-import { type GameAdapter } from '@blurifycom/core/contracts';
+import { type GameAdapter } from '@openora/core/contracts';
 import { game, gameRound } from '../schema/index.js';
 import type { GameRound } from '../contract/index.js';
 

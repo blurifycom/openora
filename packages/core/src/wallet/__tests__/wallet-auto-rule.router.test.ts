@@ -1,8 +1,8 @@
 import { describe, it, expect, vi } from 'vitest';
 import { call, ORPCError } from '@orpc/server';
 import { mock } from '../../testing/mock.js';
-import type { AdminGuard } from '@blurifycom/core/server';
-import type { AuditWritePort } from '@blurifycom/core/contracts';
+import type { AdminGuard } from '@openora/core/server';
+import type { AuditWritePort } from '@openora/core/contracts';
 import { createWalletRouter } from '../router/index.js';
 import type { WalletService } from '../service/wallet.service.js';
 

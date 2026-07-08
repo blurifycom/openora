@@ -1,5 +1,5 @@
 import { ORPCError } from '@orpc/server';
-import { type EventBus, DrizzleService, pageToOffset } from '@blurifycom/core/server';
+import { type EventBus, DrizzleService, pageToOffset } from '@openora/core/server';
 import { eq, desc, and, gt, count, sql } from 'drizzle-orm';
 import { session } from '../schema/index.js';
 import { type SessionItem } from '../contract/index.js';
@@ -37,7 +37,6 @@ export class SessionService {
       items: rows.map(
         (s): SessionItem => ({
           id: s.id,
-          token: s.token,
           expiresAt: s.expiresAt.toISOString(),
           createdAt: s.createdAt.toISOString(),
           ipAddress: s.ipAddress,
@@ -50,11 +49,11 @@ export class SessionService {
     };
   }
 
-  async revokeSession(userId: string, token: string, actorId?: string) {
+  async revokeSession(userId: string, id: string, actorId?: string) {
     const updated = await this.drizzle.db
       .update(session)
       .set({ expiresAt: sql`now()` })
-      .where(and(eq(session.token, token), eq(session.userId, userId)))
+      .where(and(eq(session.id, id), eq(session.userId, userId)))
       .returning({ id: session.id });
 
     if (updated.length === 0) {
@@ -63,7 +62,7 @@ export class SessionService {
 
     this.events.emit('identity.session.revoked', {
       userId: userId,
-      sessionToken: token,
+      sessionId: id,
       actorId,
     });
     return { success: true as const };

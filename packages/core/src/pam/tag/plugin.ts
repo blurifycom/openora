@@ -4,14 +4,14 @@ import {
   DRIZZLE,
   ADMIN_GUARD,
   type Container,
-} from '@blurifycom/core/server';
+} from '@openora/core/server';
 import {
   PLAYER_TAGS,
   WALLET_READER,
   IDENTITY_READER,
   JOB_QUEUE,
   queue,
-} from '@blurifycom/core/contracts';
+} from '@openora/core/contracts';
 import z from 'zod';
 import { TagService } from './service/tag.service.js';
 import { TagRuleService } from './service/tag-rule.service.js';

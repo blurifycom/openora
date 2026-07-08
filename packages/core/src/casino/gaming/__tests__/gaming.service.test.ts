@@ -1,7 +1,7 @@
 import { describe, it, expect, vi } from 'vitest';
 import { mock, mockDb } from '../../../testing/mock.js';
-import type { EventBus } from '@blurifycom/core/server';
-import type { GameAdapter } from '@blurifycom/core/contracts';
+import type { EventBus } from '@openora/core/server';
+import type { GameAdapter } from '@openora/core/contracts';
 import {
   GamingService,
   GameNotFoundError,

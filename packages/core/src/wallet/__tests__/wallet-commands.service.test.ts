@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import type { WalletTransactionType } from '@blurifycom/core/contracts';
+import type { WalletTransactionType } from '@openora/core/contracts';
 import { WalletCommandsService } from '../service/wallet-commands.service.js';
 
 type Row = Record<string, unknown>;

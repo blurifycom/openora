@@ -1,5 +1,5 @@
 import { implement } from '@orpc/server';
-import { AdminGuard, mapErrors, type OssContext } from '@blurifycom/core/server';
+import { AdminGuard, mapErrors, type OssContext } from '@openora/core/server';
 import { playerContract } from '../contract/index.js';
 import { PlayerService, PlayerNotFoundError } from '../service/player.service.js';
 

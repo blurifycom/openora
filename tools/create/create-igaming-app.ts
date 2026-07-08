@@ -111,7 +111,7 @@ function main(): void {
 
   console.log(`\n  Creating ${name} at ${targetDir}`);
   console.log(`  headless api-only consumer (frontend lives in your own repo)`);
-  console.log(`  Installs @blurifycom/* from GitHub Packages (.npmrc) - no platform checkout\n`);
+  console.log(`  Installs @openora/* from npm - no platform checkout\n`);
 
   emitTree(templateRoot, vars, targetDir);
 
@@ -119,8 +119,7 @@ function main(): void {
   Done. Next steps:
 
     cd ${posix(relative(process.cwd(), targetDir)) || '.'}
-    export GITHUB_PACKAGES_TOKEN=<your token>   # read:packages scope - .npmrc reads it
-    pnpm install            # pulls @blurifycom/* from GitHub Packages + generates agent files
+    pnpm install            # pulls @openora/* from npm + generates agent files
     cp .env.example .env     # then set DATABASE_URL / AUTH_SECRET
     pnpm db:migrate          # apply the schema - runs from node_modules
     pnpm dev                 # api :3001
@@ -130,9 +129,9 @@ function main(): void {
     pnpm gen plugin          # new overlay plugin
     pnpm gen adapter         # swap a vendor adapter (KYC / payment / notification)
 
-  MCP is preconfigured (.mcp.json -> node_modules/@blurifycom/mcp). Launch Claude
+  MCP is preconfigured (.mcp.json -> node_modules/@openora/mcp). Launch Claude
   Code and run /start. This is a headless api - build your frontend in this repo
-  and consume the api over HTTP with @blurifycom/core/react.
+  and consume the api over HTTP with @openora/core/react.
 `);
 }
 

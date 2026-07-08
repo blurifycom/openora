@@ -16,7 +16,7 @@
 //   no-inline-pg-enum - pgEnum('name', [...]) with an inline array literal is an error;
 //     values must come from a named tuple (see packages/core/src/wallet/schema/index.ts).
 //   no-relative-zone-escape - a relative import that leaves its module root must instead use
-//     the package's own public subpath (@blurifycom/core/<domain>...). Module root = the
+//     the package's own public subpath (@openora/core/<domain>...). Module root = the
 //     top-most dir under the domain that owns the file, reusing the same derivation as
 //     module-file-placement: a single-slice domain (wallet, iam, ...) has rest[0] itself a
 //     LAYER_DIR, so the whole domain is one module; a multi-slice domain (casino, engagement,
@@ -220,7 +220,7 @@ function checkRelativeZoneEscape(context, segments, domain, mRoot, node, source)
       node,
       message:
         `'${source}' escapes packages/core/src/${domain} into ${targetDomain}. Import from the ` +
-        `package's own public subpath (eg @blurifycom/core/${targetDomain}) instead of a relative path.`,
+        `package's own public subpath (eg @openora/core/${targetDomain}) instead of a relative path.`,
     });
     return;
   }
@@ -242,7 +242,7 @@ function checkRelativeZoneEscape(context, segments, domain, mRoot, node, source)
     message:
       `'${source}' escapes the packages/core/src/${mRoot.join('/')} module into the sibling ` +
       `slice packages/core/src/${targetSlice}. Import from that slice's public subpath ` +
-      `(eg @blurifycom/core/${domain}/schema/${targetRest[0]}) instead of a relative path.`,
+      `(eg @openora/core/${domain}/schema/${targetRest[0]}) instead of a relative path.`,
   });
 }
 
@@ -254,7 +254,7 @@ const noRelativeZoneEscape = {
     // scripts + common + testing are exempt (build/cross-cutting; no zone discipline). Engine
     // zones (contracts/server/react) ARE checked now: their module root is the whole zone, so
     // an intra-zone import (server/kernel -> server/db) passes the mRoot.length===1 short-circuit
-    // while a cross-zone one (server -> contracts) is flagged -> use @blurifycom/core/contracts.
+    // while a cross-zone one (server -> contracts) is flagged -> use @openora/core/contracts.
     if (EXCLUDED_TOP_DIRS.has(domain) || domain === 'scripts') return {};
     const mRoot = ENGINE_ZONES.has(domain) ? [domain] : moduleRootOf(segments);
     if (!mRoot) return {};

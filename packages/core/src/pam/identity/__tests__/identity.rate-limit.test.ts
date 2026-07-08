@@ -1,13 +1,13 @@
 import { describe, it, expect, vi } from 'vitest';
-import { InProcessRateLimiter, type EventBus } from '@blurifycom/core/server';
-import type { RateLimiterAdapter } from '@blurifycom/core/contracts';
+import { InProcessRateLimiter, type EventBus } from '@openora/core/server';
+import type { RateLimiterAdapter } from '@openora/core/contracts';
 import { mock, mockDb } from '../../../testing/mock.js';
 import { IdentityService } from '../service/identity.service.js';
 
-// Keep the real @blurifycom/core/server (so assertRateLimit + InProcessRateLimiter
+// Keep the real @openora/core/server (so assertRateLimit + InProcessRateLimiter
 // are real); only stub createAuth so the constructor doesn't touch a real DB.
-vi.mock('@blurifycom/core/server', async (importOriginal) => {
-  const actual = await importOriginal<typeof import('@blurifycom/core/server')>();
+vi.mock('@openora/core/server', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@openora/core/server')>();
   return {
     ...actual,
     createAuth: vi.fn(() => ({

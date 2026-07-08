@@ -5,10 +5,10 @@ import {
   PermissionLevelSchema,
   TimestampSchema,
   UuidSchema,
-} from '@blurifycom/core/contracts';
-import { PageQuerySchema, paginated } from '@blurifycom/core/contracts/kit';
+} from '@openora/core/contracts';
+import { PageQuerySchema, paginated } from '@openora/core/contracts/kit';
 
-export { InvitationStatusSchema, PermissionLevelSchema } from '@blurifycom/core/contracts';
+export { InvitationStatusSchema, PermissionLevelSchema } from '@openora/core/contracts';
 
 export const AdminRoleSchema = z.object({
   id: UuidSchema,

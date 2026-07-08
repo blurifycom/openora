@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import { randomUUID } from 'node:crypto';
-import { loadExtensions } from '@blurifycom/core/server';
+import { loadExtensions } from '@openora/core/server';
 import {
   setupTestDb,
   bootTestApp,

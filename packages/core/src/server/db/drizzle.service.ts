@@ -1,4 +1,4 @@
-import { createToken, type Token } from '@blurifycom/core/contracts';
+import { createToken, type Token } from '@openora/core/contracts';
 import { Pool } from 'pg';
 import { drizzle, type NodePgDatabase } from 'drizzle-orm/node-postgres';
 

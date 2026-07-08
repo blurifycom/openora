@@ -2,8 +2,8 @@ import {
   ADMIN_USER_DIRECTORY,
   ADMIN_WALLET_REPORTING,
   AUDIT_WRITER,
-} from '@blurifycom/core/contracts';
-import { definePlugin, ADMIN_GUARD } from '@blurifycom/core/server';
+} from '@openora/core/contracts';
+import { definePlugin, ADMIN_GUARD } from '@openora/core/server';
 import { BackofficeService } from './service/backoffice.service.js';
 import { createBackofficeRouter } from './router/index.js';
 

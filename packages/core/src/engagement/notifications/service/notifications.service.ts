@@ -5,10 +5,10 @@ import {
   assertOwnership,
   DrizzleService,
   findOneOrThrow,
-} from '@blurifycom/core/server';
+} from '@openora/core/server';
 import { eq, and, isNull, desc } from 'drizzle-orm';
 import * as z from 'zod';
-import { UuidSchema } from '@blurifycom/core/contracts';
+import { UuidSchema } from '@openora/core/contracts';
 import { notification } from '../schema/index.js';
 
 // Internal-only - fed by domain-event handlers in plugin.ts, not a wire route.

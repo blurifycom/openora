@@ -1,4 +1,4 @@
-import type { LimitPeriod } from '@blurifycom/core/contracts';
+import type { LimitPeriod } from '@openora/core/contracts';
 
 // Pure, DB-free RG evaluation helpers. Rolling windows (last N) rather than calendar
 // buckets: a defensible, timezone-free reading of "daily/weekly/monthly" spend.

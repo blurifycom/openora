@@ -41,7 +41,7 @@ import {
   IGAMING_CONFIG,
   type IgamingConfig,
   PLATFORM_CONFIG,
-} from '@blurifycom/core/contracts';
+} from '@openora/core/contracts';
 import { DrizzleService, DRIZZLE, DrizzleOutboxWriter, OutboxRelay } from '../db/index.js';
 import { AdminGuard, ADMIN_GUARD, SessionResolver, AUTH_SESSION } from '../auth/index.js';
 import { loadPlugins, type PluginEntry } from '../plugin-host/index.js';

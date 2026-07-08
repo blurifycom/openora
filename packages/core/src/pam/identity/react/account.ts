@@ -1,8 +1,8 @@
 'use client';
 
 import { useMutation, useQueryClient, type QueryClient } from '@tanstack/react-query';
-import type { Enable2faResult } from '@blurifycom/core/contracts';
-import { useOrpcQueryUtils } from '@blurifycom/core/react';
+import type { Enable2faResult } from '@openora/core/contracts';
+import { useOrpcQueryUtils } from '@openora/core/react';
 import { identityContract } from '../contract/index.js';
 
 export type { Enable2faResult };

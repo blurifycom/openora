@@ -7,6 +7,6 @@ export { eventOutbox, type EventOutboxRow } from './outbox/schema.js';
 export { DrizzleOutboxWriter } from './outbox/writer.js';
 export { OutboxRelay, type OutboxRelayOptions } from './outbox/relay.js';
 
-// @blurifycom/core/server/orm is a framework-free leaf so drizzle-kit can bundle schemas without
+// @openora/core/server/orm is a framework-free leaf so drizzle-kit can bundle schemas without
 // pulling in DrizzleService; cross-workspace consumers use it to share the physical drizzle-orm copy.
 export * as orm from './orm.js';

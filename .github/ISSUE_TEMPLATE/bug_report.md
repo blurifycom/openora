@@ -21,7 +21,7 @@ labels: bug
 
 ## Environment
 
-- Module / package (eg `@blurifycom/modules/player/wallet`):
+- Module / package (eg `@openora/modules/player/wallet`):
 - Node / pnpm version:
 - `pnpm verify` output (if relevant):
 

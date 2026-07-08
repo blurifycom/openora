@@ -1,8 +1,8 @@
-import { DrizzleService } from '@blurifycom/core/server';
-import type { User } from '@blurifycom/core/contracts';
+import { DrizzleService } from '@openora/core/server';
+import type { User } from '@openora/core/contracts';
 import { eq } from 'drizzle-orm';
 import { player } from '../schema/index.js';
-import { user } from '@blurifycom/core/pam/schema/identity';
+import { user } from '@openora/core/pam/schema/identity';
 import type { UpdatePlayerProfileInput } from '../contract/index.js';
 import { toPlayer, fetchEmailByUserId } from '../../shared/player-mapper.js';
 

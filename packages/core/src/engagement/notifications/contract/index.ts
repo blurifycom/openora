@@ -1,6 +1,6 @@
 import { oc } from '@orpc/contract';
 import * as z from 'zod';
-import { IdInputSchema, TimestampSchema, UuidSchema } from '@blurifycom/core/contracts';
+import { IdInputSchema, TimestampSchema, UuidSchema } from '@openora/core/contracts';
 
 export const NotificationSchema = z.object({
   id: UuidSchema,

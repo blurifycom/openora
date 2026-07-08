@@ -1,7 +1,7 @@
 import { oc } from '@orpc/contract';
 import * as z from 'zod';
-import { TimestampSchema, UuidSchema } from '@blurifycom/core/contracts';
-import { PageQuerySchema, paginated } from '@blurifycom/core/contracts/kit';
+import { TimestampSchema, UuidSchema } from '@openora/core/contracts';
+import { PageQuerySchema, paginated } from '@openora/core/contracts/kit';
 
 // The value tuple is the single source of truth: `z.enum` derives the contract here
 // and the Drizzle `pgEnum` in audit/schema derives the DB enum from the same tuple,

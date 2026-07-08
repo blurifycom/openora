@@ -1,10 +1,5 @@
 // Replace via overlay: ctx.provide(KYC_ADAPTER, () => new SumsubKycAdapter()) - see docs/adapters/kyc.md.
-import type {
-  KycAdapter,
-  KycDocument,
-  KycResult,
-  KycVendorStatus,
-} from '@blurifycom/core/contracts';
+import type { KycAdapter, KycDocument, KycResult, KycVendorStatus } from '@openora/core/contracts';
 
 export class MockKycAdapter implements KycAdapter {
   readonly autoApproves = true;

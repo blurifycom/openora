@@ -26,7 +26,7 @@ import type { PlopTypes } from '@turbo/gen';
 // is CJS, so `require.resolve` is the real Node resolver) and read templates by
 // absolute path.
 declare const require: NodeJS.Require;
-const pkgDir = dirname(require.resolve('@blurifycom/core/package.json'));
+const pkgDir = dirname(require.resolve('@openora/core/package.json'));
 const tpl = (name: string): string => join(pkgDir, 'turbo-generators', 'src', 'templates', name);
 
 const kebabRe = /^[a-z][a-z0-9-]*$/;
@@ -145,7 +145,7 @@ function appendRoute(moduleName: string, method: string, routePath: string): str
 
 export default function generator(plop: PlopTypes.NodePlopAPI): void {
   plop.setGenerator('module', {
-    description: 'New business module - a standalone @blurifycom-addons/<name> core add-on package',
+    description: 'New business module - a standalone @openora-addons/<name> core add-on package',
     prompts: [
       {
         type: 'list',
@@ -219,7 +219,7 @@ export default function generator(plop: PlopTypes.NodePlopAPI): void {
           ),
         () => wireContractIndex(toKebab(s(a, 'name'))),
         () =>
-          `next: pnpm install (link the new package) && pnpm -F @blurifycom-addons/${toKebab(s(a, 'name'))} generate (its own migration history) && pnpm regen && pnpm verify`,
+          `next: pnpm install (link the new package) && pnpm -F @openora-addons/${toKebab(s(a, 'name'))} generate (its own migration history) && pnpm regen && pnpm verify`,
       ];
     },
   });

@@ -11,8 +11,8 @@
  *   pnpm create:service wallet identity,wallet
  *
  * After scaffolding: `pnpm install`, build deps, then
- *   pnpm -F @blurifycom/<name>-service dev          # uses the baked-in manifest
- *   SERVICE_MANIFEST=identity,wallet,bonus pnpm -F @blurifycom/<name>-service dev   # override
+ *   pnpm -F @openora/<name>-service dev          # uses the baked-in manifest
+ *   SERVICE_MANIFEST=identity,wallet,bonus pnpm -F @openora/<name>-service dev   # override
  */
 import { existsSync, mkdirSync, writeFileSync, readFileSync } from 'node:fs';
 import { join, dirname } from 'node:path';
@@ -51,10 +51,10 @@ if (existsSync(appDir)) {
   process.exit(1);
 }
 
-const pkgName = `@blurifycom/${name}-service`;
+const pkgName = `@openora/${name}-service`;
 
 const addonDeps = Object.fromEntries(
-  manifest.map((id) => [`@blurifycom-addons/${id}`, 'workspace:*'] as const).sort(),
+  manifest.map((id) => [`@openora-addons/${id}`, 'workspace:*'] as const).sort(),
 );
 
 const files: Record<string, string> = {
@@ -73,7 +73,7 @@ const files: Record<string, string> = {
         },
         dependencies: {
           '@orpc/server': '1.14.3',
-          '@blurifycom/core': 'workspace:*',
+          '@openora/core': 'workspace:*',
           ...addonDeps,
           amqplib: '^2.0.1',
           bullmq: '^5.77.6',
@@ -91,7 +91,7 @@ const files: Record<string, string> = {
   'tsconfig.json':
     JSON.stringify(
       {
-        extends: '@blurifycom/core/tsconfig/node-service.json',
+        extends: '@openora/core/tsconfig/node-service.json',
         compilerOptions: { rootDir: 'src', outDir: 'dist' },
         include: ['src'],
       },
@@ -99,7 +99,7 @@ const files: Record<string, string> = {
       2,
     ) + '\n',
 
-  'src/main.ts': `import { createApp, loadExtensions } from '@blurifycom/core/server';
+  'src/main.ts': `import { createApp, loadExtensions } from '@openora/core/server';
 
 // ${name} service: boots only the modules it owns. The module code is shared with
 // the monolith (root extensions.config.ts) - this host just narrows it via the
@@ -110,7 +110,7 @@ async function bootstrap() {
   const plugins = await loadExtensions();
   // Routes come from the loaded plugins. To emit an OpenAPI spec for this
   // service, compose its slices with composeContract({ ... }) from
-  // @blurifycom/core/contracts and pass it as \`contract\`. See tools/gen/build-contract.ts.
+  // @openora/core/contracts and pass it as \`contract\`. See tools/gen/build-contract.ts.
   const { listen } = await createApp({ plugins });
   await listen();
 }

@@ -8,7 +8,7 @@ Run `pnpm gen plugin $ARGUMENTS` in the repo root. Variants: `pnpm gen adapter <
 
 The generator creates `extensions/<name>/plugin.ts` and registers it in `extensions.config.ts`. Then implement `register(ctx)`:
 
-- `ctx.provide(TOKEN, factory)` - bind/override an adapter or service. Last registration wins, so an overlay loaded after the default-binding module replaces the default - keep the order in `extensions.config.ts` intentional. Sealed compliance tokens (`@blurifycom/core/compliance`) are rejected at compile time + runtime.
+- `ctx.provide(TOKEN, factory)` - bind/override an adapter or service. Last registration wins, so an overlay loaded after the default-binding module replaces the default - keep the order in `extensions.config.ts` intentional. Sealed compliance tokens (`@openora/core/compliance`) are rejected at compile time + runtime.
 - `ctx.routers.add(namespace, (c) => router)` - mount oRPC routes.
 - `ctx.events.on(topic, handler)` - subscribe to the typed `EventBus`.
 - `ctx.jobs.worker({ queue, schema, handler, onDeadLetter? })` - process jobs off the `JOB_QUEUE` seam (ADR-0014). Enqueue from a service via `enqueue(queue('name'), payload, { idempotencyKey, delayMs, attempts, backoff })`. Handlers must be idempotent (at-least-once).

@@ -1,9 +1,9 @@
 import { describe, it, expect } from 'vitest';
-import type { DrizzleService } from '@blurifycom/core/server';
+import type { DrizzleService } from '@openora/core/server';
 import { mockDb } from '../../testing/mock.js';
 import { RgMonitoringService } from '../service/rg-monitoring.service.js';
 import { userLimit, rgFlag } from '../schema/index.js';
-import { walletTransaction } from '@blurifycom/core/wallet/schema';
+import { walletTransaction } from '@openora/core/wallet/schema';
 
 type SelectPair = [unknown, unknown];
 

@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { z } from 'zod';
-import { queue } from '@blurifycom/core/contracts';
+import { queue } from '@openora/core/contracts';
 
 type FakeJob = {
   id?: string;

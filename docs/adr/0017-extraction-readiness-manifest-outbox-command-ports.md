@@ -16,7 +16,7 @@ mechanical rather than a rewrite:
    commit. If the broker was down between commit and publish, the event was lost -
    unacceptable once a separate service depends on it.
 3. **Synchronous cross-module money used shared tables.** Sportsbook debited the
-   wallet by importing `@blurifycom/modules/player/wallet/schema` and writing it inside its
+   wallet by importing `@openora/modules/player/wallet/schema` and writing it inside its
    own transaction. Atomic and sanctioned, but it couples the two modules to one
    database, so neither can move without a rewrite.
 
@@ -25,7 +25,7 @@ mechanical rather than a rewrite:
 **Service manifest (deployable topology = config).** `SERVICE_MANIFEST` (comma-
 separated module ids) selects which modules a process boots; unset = the full
 monolith. Infra overlays (`kind: 'infra'` in `extensions.config.ts`) always load.
-`applyServiceManifest` (`@blurifycom/plugin-host`) does the filtering; `apps/api/src/extensions.ts`
+`applyServiceManifest` (`@openora/plugin-host`) does the filtering; `apps/api/src/extensions.ts`
 applies it. `pnpm create:service <name> <modules>` scaffolds a thin host under
 `apps/<name>/` that bakes a manifest and reuses the root registry - module code is
 never copied. The same `wallet` package runs in the monolith or as its own service
@@ -35,8 +35,8 @@ with zero code change.
 writes the envelope to an `event_outbox` table within the caller's transaction
 (atomic with the state change). An `OutboxRelay` polls pending rows and publishes
 them to the `MESSAGE_BROKER` after commit, stamping `publishedAt`; delivery is
-at-least-once and consumers dedup on `eventId`. Port `OUTBOX` (`@blurifycom/adapters`),
-impl `DrizzleOutboxWriter` + `OutboxRelay` (`@blurifycom/db`), wired in `create-app`.
+at-least-once and consumers dedup on `eventId`. Port `OUTBOX` (`@openora/adapters`),
+impl `DrizzleOutboxWriter` + `OutboxRelay` (`@openora/db`), wired in `create-app`.
 **Opt-in:** bound only when `OUTBOX_ENABLED` or a durable broker (`AMQP_URL`) is
 set. In the default in-process monolith it stays off - `emit()`'s synchronous
 fan-out is sufficient and `emitInTransaction` throws a guiding error. Per-event

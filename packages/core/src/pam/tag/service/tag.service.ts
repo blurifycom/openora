@@ -5,7 +5,7 @@ import {
   makeNotFoundError,
   pageToOffset,
   alreadyInUseError,
-} from '@blurifycom/core/server';
+} from '@openora/core/server';
 import { and, asc, count, eq, inArray, isNull, notInArray } from 'drizzle-orm';
 import {
   AssignPlayerTagInput,
@@ -15,11 +15,11 @@ import {
   Tag,
   type PlayerTags,
   type TagKey,
-} from '@blurifycom/core/contracts';
-import { player } from '@blurifycom/core/pam/schema/profile';
+} from '@openora/core/contracts';
+import { player } from '@openora/core/pam/schema/profile';
 import { playerTag, tag } from '../schema/index.js';
 import { PlayerTagWithTag } from '../contract/index.js';
-import { mapDbError } from '@blurifycom/core/common/errors';
+import { mapDbError } from '@openora/core/common/errors';
 import { toTag, toPlayerTagWithTag } from './tag-mappers.js';
 
 export const TagNotFoundError = makeNotFoundError('Tag');

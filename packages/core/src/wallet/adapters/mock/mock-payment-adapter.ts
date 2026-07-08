@@ -1,4 +1,4 @@
-import type { PaymentAdapter } from '@blurifycom/core/contracts';
+import type { PaymentAdapter } from '@openora/core/contracts';
 
 export class MockPaymentAdapter implements PaymentAdapter {
   async processDeposit(amount: number, currency: string, _metadata: Record<string, unknown>) {

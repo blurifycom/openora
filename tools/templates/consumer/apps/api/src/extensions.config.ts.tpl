@@ -1,4 +1,4 @@
-import type { PluginEntry } from '@blurifycom/core/server';
+import type { PluginEntry } from '@openora/core/server';
 import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -7,7 +7,7 @@ import { fileURLToPath } from 'node:url';
 // the bottom. Adapter overrides MUST come after the module that owns the default
 // binding - last registration of a DI token wins.
 //
-// Paths point at BUILT plugin dist inside the linked @blurifycom/core, not source: tsx in
+// Paths point at BUILT plugin dist inside the linked @openora/core, not source: tsx in
 // this API entry can't reliably resolve the OSS tsconfig.
 // Run `pnpm build:oss` before booting. Local overlays under src/extensions/ are loaded
 // from .ts source directly.

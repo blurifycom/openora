@@ -1,5 +1,5 @@
 {
-  "name": "@blurifycom/testing",
+  "name": "@openora/testing",
   "version": "0.3.0",
   "private": true,
   "license": "AGPL-3.0-only",
@@ -20,7 +20,7 @@
     "test:integration": "vitest run --passWithNoTests"
   },
   "dependencies": {
-    "@blurifycom/core": "workspace:*",
+    "@openora/core": "workspace:*",
     "drizzle-orm": "0.45.2",
     "hono": "4.12.25",
     "pg": "8.21.0"

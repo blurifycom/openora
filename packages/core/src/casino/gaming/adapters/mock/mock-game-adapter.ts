@@ -1,4 +1,4 @@
-import type { GameAdapter } from '@blurifycom/core/contracts';
+import type { GameAdapter } from '@openora/core/contracts';
 
 export class MockGameAdapter implements GameAdapter {
   async launchGame(gameId: string, userId: string, currency: string) {

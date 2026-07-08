@@ -1,5 +1,5 @@
 import { describe, it, expect, vi } from 'vitest';
-import type { DrizzleService } from '@blurifycom/core/server';
+import type { DrizzleService } from '@openora/core/server';
 import { mock, mockDb } from '../../../testing/mock.js';
 import { LoginEnforcementService } from '../service/login-enforcement.service.js';
 import type { SessionService } from '../service/session.service.js';

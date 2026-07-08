@@ -4,7 +4,7 @@ import {
   type IdentityReader,
   type TagKey,
   type TagRule,
-} from '@blurifycom/core/contracts';
+} from '@openora/core/contracts';
 import { TagService, TagAlreadyInUseError, TagAssignmentNotFoundError } from './tag.service.js';
 import { TagRuleService, TagRuleNotFoundError } from './tag-rule.service.js';
 

@@ -1,7 +1,7 @@
 'use client';
 
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { useOrpcQueryUtils } from '@blurifycom/core/react';
+import { useOrpcQueryUtils } from '@openora/core/react';
 import { identityContract } from '../contract/index.js';
 
 export function useCurrentUser() {

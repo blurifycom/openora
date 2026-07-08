@@ -6,8 +6,8 @@
 // at-least-once domain events reliable - and the reason a module can be extracted
 // to its own process without dropping events. See ADR-0016.
 //
-// `tx` is the active transaction handle, typed `unknown` here to keep @blurifycom/core/contracts
-// ORM-free; the Drizzle implementation in @blurifycom/core/server narrows it. Services never touch
+// `tx` is the active transaction handle, typed `unknown` here to keep @openora/core/contracts
+// ORM-free; the Drizzle implementation in @openora/core/server narrows it. Services never touch
 // this port directly - they call EventBus.emitInTransaction(tx, ...), which builds
 // the envelope and delegates here.
 import { createToken, type Token } from './token.js';

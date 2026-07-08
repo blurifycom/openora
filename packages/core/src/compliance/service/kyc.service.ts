@@ -1,17 +1,17 @@
-import { DrizzleService, type EventBus } from '@blurifycom/core/server';
+import { DrizzleService, type EventBus } from '@openora/core/server';
 import type {
   KycAdapter,
   KycStatusWriter,
   KycVendorStatus,
   KycStatus,
   PlatformConfig,
-} from '@blurifycom/core/contracts';
+} from '@openora/core/contracts';
 import { and, desc, eq, sql } from 'drizzle-orm';
 import { kycVerification, type KycVerification } from '../schema/index.js';
 // Cross-domain reads via public /schema subpaths (ADR-0020); the wallet ledger is the
 // source of truth for lifetime deposits (player.totalDeposits is not maintained).
-import { player } from '@blurifycom/core/pam/schema/profile';
-import { wallet, walletTransaction } from '@blurifycom/core/wallet/schema';
+import { player } from '@openora/core/pam/schema/profile';
+import { wallet, walletTransaction } from '@openora/core/wallet/schema';
 import type {
   KycVerification as KycVerificationDto,
   SubmitKycInput,

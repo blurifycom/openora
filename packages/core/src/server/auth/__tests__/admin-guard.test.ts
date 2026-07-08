@@ -1,7 +1,7 @@
 import { describe, it, expect, vi } from 'vitest';
 import { mock, mockDb } from '../../../testing/mock.js';
-import type { EventBus } from '@blurifycom/core/server';
-import type { AdminPermissionResolver } from '@blurifycom/core/contracts';
+import type { EventBus } from '@openora/core/server';
+import type { AdminPermissionResolver } from '@openora/core/contracts';
 import { AdminGuard } from '../admin-guard.js';
 import type { SessionResolver } from '../session-resolver.js';
 

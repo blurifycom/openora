@@ -10,7 +10,7 @@ description: SQL / Drizzle conventions for tables an overlay or local add-on own
 # Database conventions (SQL / Drizzle)
 
 Applies to every table an overlay or local add-on owns (`apps/api/src/extensions/<name>/src/schema/`).
-Tables live in `@blurifycom/*` core for platform domains - never edit those; these rules govern the
+Tables live in `@openora/*` core for platform domains - never edit those; these rules govern the
 tables you add. Boundary/import rules live in `oss-boundaries`; this file is SQL only.
 
 ## Identifiers - snake_case everywhere

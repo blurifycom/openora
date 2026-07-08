@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, afterEach, beforeEach } from 'vitest';
 import { InProcessCache, cached, invalidate } from '../cache.js';
-import type { CacheAdapter } from '@blurifycom/core/contracts';
+import type { CacheAdapter } from '@openora/core/contracts';
 import { mock } from '../../../testing/mock.js';
 
 describe('InProcessCache', () => {

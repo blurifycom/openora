@@ -1,5 +1,5 @@
 {
-  "name": "@blurifycom/core",
+  "name": "@openora/core",
   "version": "0.3.0",
   "license": "AGPL-3.0-only",
   "files": [
@@ -588,7 +588,7 @@
     }
   },
   "publishConfig": {
-    "registry": "https://npm.pkg.github.com"
+    "access": "public"
   },
   "scripts": {
     "build": "tsc && node scripts/copy-drizzle.mjs",

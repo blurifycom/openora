@@ -1,5 +1,5 @@
 {
-  "extends": "@blurifycom/core/tsconfig/node.json",
+  "extends": "@openora/core/tsconfig/node.json",
   "compilerOptions": {
     "rootDir": "src",
     "outDir": "dist"

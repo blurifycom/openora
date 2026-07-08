@@ -15,12 +15,6 @@ importers:
 
   .:
     devDependencies:
-      '@blurifycom/core':
-        specifier: workspace:*
-        version: link:packages/core
-      '@blurifycom/testing':
-        specifier: workspace:*
-        version: link:packages/testing
       '@changesets/cli':
         specifier: 2.31.0
         version: 2.31.0(@types/node@25.9.2)
@@ -30,6 +24,12 @@ importers:
       '@commitlint/config-conventional':
         specifier: 21.1.0
         version: 21.1.0
+      '@openora/core':
+        specifier: workspace:*
+        version: link:packages/core
+      '@openora/testing':
+        specifier: workspace:*
+        version: link:packages/testing
       '@orpc/contract':
         specifier: 1.14.5
         version: 1.14.5
@@ -139,12 +139,12 @@ importers:
 
   apps/mcp-server-dev:
     dependencies:
-      '@blurifycom/core':
-        specifier: workspace:*
-        version: link:../../packages/core
       '@modelcontextprotocol/sdk':
         specifier: 1.29.0
         version: 1.29.0(zod@4.4.3)
+      '@openora/core':
+        specifier: workspace:*
+        version: link:../../packages/core
       pg:
         specifier: 8.21.0
         version: 8.21.0
@@ -264,12 +264,12 @@ importers:
 
   packages/mcp:
     dependencies:
-      '@blurifycom/core':
-        specifier: workspace:*
-        version: link:../core
       '@modelcontextprotocol/sdk':
         specifier: 1.29.0
         version: 1.29.0(zod@4.4.3)
+      '@openora/core':
+        specifier: workspace:*
+        version: link:../core
       zod:
         specifier: 4.4.3
         version: 4.4.3
@@ -283,7 +283,7 @@ importers:
 
   packages/testing:
     dependencies:
-      '@blurifycom/core':
+      '@openora/core':
         specifier: workspace:*
         version: link:../core
       drizzle-orm:

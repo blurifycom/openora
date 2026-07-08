@@ -1,12 +1,12 @@
 # {{name}}
 
-An igaming platform built on the open-source `@blurifycom/*` packages. This repo holds only
+An igaming platform built on the open-source `@openora/*` packages. This repo holds only
 what is unique to your operation - branding, vendor adapters, and overlay plugins. The
 core (auth, wallet, gaming, lobby, compliance, backoffice, CMS) is consumed as linked
 packages and never forked.
 
 This is a headless api consumer. Build your frontend (player web + admin backoffice)
-in its own repo and talk to this api over HTTP via `@blurifycom/react`.
+in its own repo and talk to this api over HTTP via `@openora/react`.
 
 ## Layout
 
@@ -19,23 +19,15 @@ turbo/generators/ # turbo gen: plugin, adapter
 
 ## Prerequisites
 
-The `@blurifycom/*` packages are consumed via `link:` from a sibling OSS checkout (see `pnpm.overrides`).
-Clone both repos side by side BEFORE running `pnpm install`:
-
-```
-parent/
-  oss/        # the OSS platform checkout
-  {{name}}/           # this repo
-```
-
-Publishing to npm/GitLab is on the roadmap; until then the sibling checkout is required.
+The `@openora/*` packages install straight from npm - no sibling checkout needed. The generated
+`devDependencies`/`dependencies` pin the `alpha` dist-tag by default; bump to `rc` or a pinned
+stable version when you promote.
 
 ## Dev setup
 
 ```bash
-pnpm install               # links @blurifycom/* from the sibling checkout
+pnpm install               # pulls @openora/* from npm
 pnpm setup:mcp             # trust the MCP server + install the /start onboarding flow
-pnpm build:oss             # build the linked @blurifycom/* packages once
 pnpm regen                 # regenerate OpenAPI + catalog + Drizzle client (after schema changes)
 cp .env.example .env       # set DATABASE_URL + AUTH_SECRET
 pnpm db:migrate            # apply the OSS schema to your database
@@ -45,8 +37,8 @@ pnpm dev                   # api :3001
 After `pnpm setup:mcp`, restart your editor and run **`/start`** in Claude Code - it asks what
 you want to build and scaffolds it for you.
 
-When you change OSS source, rebuild it (`pnpm build:oss`) so the linked `dist/` updates. For a
-hot loop, run a watch build in the OSS checkout in parallel.
+To pick up a newer platform version, bump the `@openora/*` version/dist-tag in `package.json` and
+re-run `pnpm install`.
 
 ## Extending
 

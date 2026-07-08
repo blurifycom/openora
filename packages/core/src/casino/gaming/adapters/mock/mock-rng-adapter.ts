@@ -1,4 +1,4 @@
-import type { RngAdapter } from '@blurifycom/core/contracts';
+import type { RngAdapter } from '@openora/core/contracts';
 
 /**
  * Deterministic, seedable mulberry32 RNG. Default seed is wall-clock so behavior

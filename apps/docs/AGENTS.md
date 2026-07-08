@@ -13,7 +13,7 @@ principle.
 ## Single source of truth is `/docs`
 
 All prose content is **generated** from the repo-root `docs/` Markdown by
-`tools/gen-docs-content.ts` (the same pattern as `docs/catalog.json`). Do NOT edit
+`tools/gen/gen-docs-content.ts` (the same pattern as `docs/catalog.json`). Do NOT edit
 `apps/docs/content/` - it is gitignored and rebuilt on every `dev`/`build`. Edit the
 Markdown under `/docs` instead, then re-run the generator.
 
@@ -26,16 +26,16 @@ The generator:
 - **scrubs vendor/brand names** and fails loudly if any survive - the published OSS site must
   stay vendor-neutral.
 
-`docs/openapi.json` is emitted by `pnpm --filter @blurifycom/api codegen`; run it before building so
+`docs/openapi.json` is emitted by `pnpm regen` (runs `tsx tools/gen/gen-openapi.ts`); run it before building so
 the API reference is current.
 
 ## Commands
 
 ```
-pnpm --filter @blurifycom/docs docs:gen   # regenerate content from /docs (+ openapi)
-pnpm --filter @blurifycom/docs dev        # local dev server (runs docs:gen first)
-pnpm --filter @blurifycom/docs build      # static export to apps/docs/out
-pnpm --filter @blurifycom/docs typecheck  # fumadocs-mdx + next typegen + tsc
+pnpm --filter @openora/docs docs:gen   # regenerate content from /docs (+ openapi)
+pnpm --filter @openora/docs dev        # local dev server (runs docs:gen first)
+pnpm --filter @openora/docs build      # static export to apps/docs/out
+pnpm --filter @openora/docs typecheck  # fumadocs-mdx + next typegen + tsc
 ```
 
 ## Mermaid
@@ -47,5 +47,5 @@ plugin (configured in `source.config.ts`) + the `Mermaid` component. No per-file
 
 `next.config.mjs` sets `output: 'export'`, so `build` emits a static site to `apps/docs/out`
 deployable to any static host. A GitHub Pages workflow is intentionally NOT wired yet; when it
-lands it should run `pnpm --filter @blurifycom/api codegen` then `pnpm --filter @blurifycom/docs build`, set
+lands it should run `pnpm regen` then `pnpm --filter @openora/docs build`, set
 `DOCS_BASE_PATH` to the project sub-path, and publish `apps/docs/out`.

@@ -5,17 +5,28 @@ import {
   serializeRow,
   withAdvisoryXactLock,
   type EventBus,
-} from '@blurifycom/core/server';
+} from '@openora/core/server';
 import { eq, and, or, gte, lte, like, desc, sql } from 'drizzle-orm';
-import type { AuditWritePort } from '@blurifycom/core/contracts';
+import type { AuditWritePort } from '@openora/core/contracts';
 import { auditLog, type AuditLog } from '../schema/index.js';
 import type { AuditListFilters, AuditExportFilters } from '../contract/index.js';
 
 // Key order is deterministic - changes here BREAK the chain for existing rows.
-// Treat this as an append-only list.
+// Treat this as an append-only list. before/after/result are IN the chain - a row's
+// mutation payload and outcome must be tamper-evident, not just its who/what/where.
 type CanonicalHashInput = Pick<
   AuditLog,
-  'id' | 'actorId' | 'actorType' | 'action' | 'resourceType' | 'resourceId' | 'seq' | 'prevHash'
+  | 'id'
+  | 'actorId'
+  | 'actorType'
+  | 'action'
+  | 'resourceType'
+  | 'resourceId'
+  | 'before'
+  | 'after'
+  | 'result'
+  | 'seq'
+  | 'prevHash'
 > & { createdAt: string };
 
 function canonicalHashInput(fields: CanonicalHashInput): string {
@@ -26,6 +37,9 @@ function canonicalHashInput(fields: CanonicalHashInput): string {
     action: fields.action,
     resourceType: fields.resourceType,
     resourceId: fields.resourceId,
+    before: fields.before ?? null,
+    after: fields.after ?? null,
+    result: fields.result ?? null,
     seq: fields.seq,
     createdAt: fields.createdAt,
     prevHash: fields.prevHash ?? '',
@@ -107,6 +121,9 @@ export class AuditService {
           action: input.action,
           resourceType: input.resourceType,
           resourceId: input.resourceId ?? null,
+          before: input.before ?? null,
+          after: input.after ?? null,
+          result: input.result ?? null,
           seq,
           createdAt: createdAt.toISOString(),
           prevHash,
@@ -212,6 +229,9 @@ export class AuditService {
         action: row.action,
         resourceType: row.resourceType,
         resourceId: row.resourceId ?? null,
+        before: row.before ?? null,
+        after: row.after ?? null,
+        result: row.result ?? null,
         seq: row.seq,
         createdAt: row.createdAt.toISOString(),
         prevHash: row.prevHash ?? null,

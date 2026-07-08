@@ -13,7 +13,7 @@ A correction that shaped the comparison: as of 2026-05, TanStack's _RSC_ support
 
 ## Method
 
-Built the comparison in the consumer (`apps/web` = Next 16, `apps/web-tanstack` = TanStack Start). Both mount the **same** `@blurifycom/react-sdk` pages (lobby, games, sportsbook, wallet, login) with the **same** `daisyuiProvider`, so the only variable is the framework shell. Both fetch SSR data through the identical `@blurifycom/react-sdk/server` fetchers (`fetchLobbyData`, `fetchSportsbookData`), forwarding the player's cookies; the sportsbook page exercises the real-time path (live odds over SSE via `useEventStream`). Bundle sizes are gzipped client JS measured on disk from a production build.
+Built the comparison in the consumer (`apps/web` = Next 16, `apps/web-tanstack` = TanStack Start). Both mount the **same** `@openora/react-sdk` pages (lobby, games, sportsbook, wallet, login) with the **same** `daisyuiProvider`, so the only variable is the framework shell. Both fetch SSR data through the identical `@openora/react-sdk/server` fetchers (`fetchLobbyData`, `fetchSportsbookData`), forwarding the player's cookies; the sportsbook page exercises the real-time path (live odds over SSE via `useEventStream`). Bundle sizes are gzipped client JS measured on disk from a production build.
 
 That both shells run the same page bodies unchanged is itself the key finding: the framework choice is low-risk and reversible because the data/page layer (`sdk-core` + react-query + the server fetchers) is framework-agnostic.
 

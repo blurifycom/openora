@@ -1,4 +1,4 @@
-import { statement, type ResourceName, type PermissionLevel } from '@blurifycom/core/server';
+import { statement, type ResourceName, type PermissionLevel } from '@openora/core/server';
 
 // Canonical spec of the predefined backoffice roles, consumed by seedRoles.
 // Omitted matrix cells default to no_access.

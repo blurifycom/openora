@@ -1,7 +1,12 @@
-import type { Token } from '@blurifycom/core/contracts';
+import type { AnyToken } from '@openora/core/contracts';
 
 // Functional DI container. Resolution is lazy and cached; last `register` for a
 // token wins - overlays rebind adapters by registering after the default binding.
+//
+// Container itself is token-shape-agnostic (AnyToken, the shape Token AND
+// SealedToken both share) - it's a type-erased-at-runtime symbol map. The
+// sealed/overlay-rejection rules live one layer up, in ModuleRegistry's
+// provide()/provideSealed() (see plugin-host/module-registry.ts).
 
 export type Factory<T> = (c: Container) => T;
 
@@ -11,16 +16,16 @@ export class Container {
   private readonly resolving = new Set<symbol>();
   private readonly disposers: Array<() => void | Promise<void>> = [];
 
-  register<T>(token: Token<T>, factory: Factory<T>): void {
+  register<T>(token: AnyToken<T>, factory: Factory<T>): void {
     this.factories.set(token, factory as Factory<unknown>);
     this.instances.delete(token);
   }
 
-  has(token: Token<unknown>): boolean {
+  has(token: AnyToken<unknown>): boolean {
     return this.factories.has(token);
   }
 
-  get<T>(token: Token<T>): T {
+  get<T>(token: AnyToken<T>): T {
     if (this.instances.has(token)) return this.instances.get(token) as T;
 
     const factory = this.factories.get(token);

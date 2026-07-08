@@ -1,6 +1,6 @@
 import { implement } from '@orpc/server';
-import { AdminGuard, mapErrors, type OssContext } from '@blurifycom/core/server';
-import type { AuditWritePort } from '@blurifycom/core/contracts';
+import { AdminGuard, mapErrors, type OssContext } from '@openora/core/server';
+import type { AuditWritePort } from '@openora/core/contracts';
 import { backofficeContract } from '../contract/index.js';
 import {
   BackofficeService,

@@ -12,16 +12,44 @@ describe('computeHash canonical form', () => {
         action: 'test.action',
         resourceType: 'test',
         resourceId: null,
+        before: null,
+        after: null,
+        result: null,
         seq: 1,
         createdAt: '2024-01-01T00:00:00.000Z',
         prevHash: null,
       }),
-    ).toBe('b27c8c5da2ea836a61b72d519dc463459395499314eee863a7938d54840216b6');
+    ).toBe('4974d60531e6d9bd960f61a1d86371ac92aa12e31ec24ab3f61130aa6ee1f3ca');
+  });
+
+  it('changes when before/after/result differ - the mutation payload is in the chain', () => {
+    const base = {
+      id: '11111111-1111-1111-1111-111111111111',
+      actorId: null,
+      actorType: 'system' as const,
+      action: 'test.action',
+      resourceType: 'test',
+      resourceId: null,
+      seq: 1,
+      createdAt: '2024-01-01T00:00:00.000Z',
+      prevHash: null,
+    };
+    const unmodified = computeHash({ ...base, before: null, after: null, result: null });
+    const tamperedAfter = computeHash({
+      ...base,
+      before: null,
+      after: { role: 'admin' },
+      result: null,
+    });
+    const tamperedResult = computeHash({ ...base, before: null, after: null, result: 'success' });
+
+    expect(tamperedAfter).not.toBe(unmodified);
+    expect(tamperedResult).not.toBe(unmodified);
   });
 });
 
-function makeEvents(): import('@blurifycom/core/server').EventBus {
-  return mock<import('@blurifycom/core/server').EventBus>({ emit: vi.fn(), on: vi.fn() });
+function makeEvents(): import('@openora/core/server').EventBus {
+  return mock<import('@openora/core/server').EventBus>({ emit: vi.fn(), on: vi.fn() });
 }
 
 const CREATED_AT = new Date('2024-01-01T00:00:00.000Z');
@@ -67,7 +95,7 @@ function makeRow(
 
 function makeManualDrizzle(
   db: Record<string, unknown>,
-): import('@blurifycom/core/server').DrizzleService {
+): import('@openora/core/server').DrizzleService {
   return mockDb(db);
 }
 
@@ -133,6 +161,9 @@ describe('AuditService.record()', () => {
       action: result.action,
       resourceType: result.resourceType,
       resourceId: result.resourceId ?? null,
+      before: result.before ?? null,
+      after: result.after ?? null,
+      result: result.result ?? null,
       seq: result.seq,
       createdAt: result.createdAt,
       prevHash: null,
@@ -202,6 +233,9 @@ describe('AuditService.verifyChain()', () => {
       action: 'identity.user.registered',
       resourceType: 'identity',
       resourceId: null,
+      before: null,
+      after: null,
+      result: null,
       seq: 1,
       createdAt: CREATED_AT.toISOString(),
       prevHash: null,
@@ -213,6 +247,9 @@ describe('AuditService.verifyChain()', () => {
       action: 'wallet.deposit.completed',
       resourceType: 'wallet',
       resourceId: null,
+      before: null,
+      after: null,
+      result: null,
       seq: 2,
       createdAt: CREATED_AT.toISOString(),
       prevHash: hash1,
@@ -247,6 +284,49 @@ describe('AuditService.verifyChain()', () => {
     }
   });
 
+  it('detects a rewritten before/after/result - not just the id/action/actor fields', async () => {
+    const hash1 = computeHash({
+      id: 'r1',
+      actorId: 'admin-1',
+      actorType: 'admin',
+      action: 'admin.user.updated',
+      resourceType: 'user',
+      resourceId: 'user-9',
+      before: { role: 'player' },
+      after: { role: 'player' },
+      result: 'success',
+      seq: 1,
+      createdAt: CREATED_AT.toISOString(),
+      prevHash: null,
+    });
+
+    // A rogue DBA rewrites `after` to hide a role escalation, but leaves the
+    // original hash in place - this must now fail verification.
+    const rows = [
+      makeRow({
+        id: 'r1',
+        actorId: 'admin-1',
+        actorType: 'admin',
+        action: 'admin.user.updated',
+        resourceType: 'user',
+        resourceId: 'user-9',
+        before: { role: 'player' },
+        after: { role: 'admin' },
+        seq: 1,
+        prevHash: null,
+        hash: hash1,
+      }),
+    ];
+
+    const svc = new AuditService(makeVerifyDb(rows), makeEvents());
+    const result = await svc.verifyChain();
+
+    expect(result.valid).toBe(false);
+    if (!result.valid) {
+      expect(result.rowId).toBe('r1');
+    }
+  });
+
   it('detects a broken prevHash link between rows', async () => {
     const hash1 = computeHash({
       id: 'r1',
@@ -255,6 +335,9 @@ describe('AuditService.verifyChain()', () => {
       action: 'identity.user.registered',
       resourceType: 'identity',
       resourceId: null,
+      before: null,
+      after: null,
+      result: null,
       seq: 1,
       createdAt: CREATED_AT.toISOString(),
       prevHash: null,

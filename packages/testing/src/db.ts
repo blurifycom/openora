@@ -5,23 +5,23 @@ import { sql } from 'drizzle-orm';
 // test DB must apply all of them or integration tests hit "relation does not exist".
 // `server/migrate` covers only the engine-owned `outbox` table; everything else is a
 // domain module. Keep this list in sync with `packages/core/src/**/migrate.ts`.
-import { migrate as migrateOutbox } from '@blurifycom/core/server/migrate';
-import { migrate as migrateIdentity } from '@blurifycom/core/pam/migrate/identity';
-import { migrate as migrateProfile } from '@blurifycom/core/pam/migrate/profile';
-import { migrate as migrateTag } from '@blurifycom/core/pam/migrate/tag';
-import { migrate as migrateAudit } from '@blurifycom/core/audit/migrate';
-import { migrate as migrateIam } from '@blurifycom/core/iam/migrate';
-import { migrate as migrateCms } from '@blurifycom/core/cms/migrate';
-import { migrate as migrateCompliance } from '@blurifycom/core/compliance/migrate';
-import { migrate as migrateWallet } from '@blurifycom/core/wallet/migrate';
-import { migrate as migrateGaming } from '@blurifycom/core/casino/migrate/gaming';
-import { migrate as migrateLobby } from '@blurifycom/core/casino/migrate/lobby';
-import { migrate as migrateBonus } from '@blurifycom/core/engagement/migrate/bonus';
-import { migrate as migrateChat } from '@blurifycom/core/engagement/migrate/chat';
-import { migrate as migrateNotifications } from '@blurifycom/core/engagement/migrate/notifications';
-import { migrate as migrateSportsbook } from '@blurifycom/core/sportsbook/migrate';
-import { migrate as migrateAggregator } from '@blurifycom/core/casino/migrate';
-import { migrate as migrateLeaderboard } from '@blurifycom/core/engagement/migrate';
+import { migrate as migrateOutbox } from '@openora/core/server/migrate';
+import { migrate as migrateIdentity } from '@openora/core/pam/migrate/identity';
+import { migrate as migrateProfile } from '@openora/core/pam/migrate/profile';
+import { migrate as migrateTag } from '@openora/core/pam/migrate/tag';
+import { migrate as migrateAudit } from '@openora/core/audit/migrate';
+import { migrate as migrateIam } from '@openora/core/iam/migrate';
+import { migrate as migrateCms } from '@openora/core/cms/migrate';
+import { migrate as migrateCompliance } from '@openora/core/compliance/migrate';
+import { migrate as migrateWallet } from '@openora/core/wallet/migrate';
+import { migrate as migrateGaming } from '@openora/core/casino/migrate/gaming';
+import { migrate as migrateLobby } from '@openora/core/casino/migrate/lobby';
+import { migrate as migrateBonus } from '@openora/core/engagement/migrate/bonus';
+import { migrate as migrateChat } from '@openora/core/engagement/migrate/chat';
+import { migrate as migrateNotifications } from '@openora/core/engagement/migrate/notifications';
+import { migrate as migrateSportsbook } from '@openora/core/sportsbook/migrate';
+import { migrate as migrateAggregator } from '@openora/core/casino/migrate';
+import { migrate as migrateLeaderboard } from '@openora/core/engagement/migrate';
 
 const DEFAULT_TEST_URL = 'postgres://postgres:postgres@localhost:5432/oss_igaming_test';
 

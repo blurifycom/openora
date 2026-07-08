@@ -6,26 +6,26 @@
  * stitches them together. See ADR-0021/0025.
  */
 import type { ContractRouter } from '@orpc/contract';
-import { composeContract } from '@blurifycom/core/contracts';
-import { identityContract } from '@blurifycom/core/pam/contracts/identity';
-import { complianceContract } from '@blurifycom/core/compliance/contracts';
-import { profileContract } from '@blurifycom/core/pam/contracts/profile';
-import { cmsContract } from '@blurifycom/core/cms/contracts';
-import { notificationsContract } from '@blurifycom/core/engagement/contracts/notifications';
-import { bonusContract } from '@blurifycom/core/engagement/contracts/bonus';
-import { chatContract } from '@blurifycom/core/engagement/contracts/chat';
-import { walletContract } from '@blurifycom/core/wallet/contract';
-import { gamingContract } from '@blurifycom/core/casino/contracts/gaming';
-import { lobbyContract } from '@blurifycom/core/casino/contracts/lobby';
-import { backofficeContract } from '@blurifycom/core/admin-console/contract';
-import { iamContract } from '@blurifycom/core/iam/contract';
-import { auditContract } from '@blurifycom/core/audit/contract';
-import { leaderboardContract } from '@blurifycom/core/engagement/contracts/leaderboard';
-import { sportsbookContract } from '@blurifycom/core/sportsbook/contract';
-import { igamingAggregatorContract } from '@blurifycom/core/casino/contracts/aggregator';
-import { playerContract } from '@blurifycom/core/pam/contracts/player';
-import { tagContract } from '@blurifycom/core/pam/contracts/tag';
-import { playerNoteContract } from '@blurifycom/core/pam/contracts/player-note';
+import { composeContract } from '@openora/core/contracts';
+import { identityContract } from '@openora/core/pam/contracts/identity';
+import { complianceContract } from '@openora/core/compliance/contracts';
+import { profileContract } from '@openora/core/pam/contracts/profile';
+import { cmsContract } from '@openora/core/cms/contracts';
+import { notificationsContract } from '@openora/core/engagement/contracts/notifications';
+import { bonusContract } from '@openora/core/engagement/contracts/bonus';
+import { chatContract } from '@openora/core/engagement/contracts/chat';
+import { walletContract } from '@openora/core/wallet/contract';
+import { gamingContract } from '@openora/core/casino/contracts/gaming';
+import { lobbyContract } from '@openora/core/casino/contracts/lobby';
+import { backofficeContract } from '@openora/core/admin-console/contract';
+import { iamContract } from '@openora/core/iam/contract';
+import { auditContract } from '@openora/core/audit/contract';
+import { leaderboardContract } from '@openora/core/engagement/contracts/leaderboard';
+import { sportsbookContract } from '@openora/core/sportsbook/contract';
+import { igamingAggregatorContract } from '@openora/core/casino/contracts/aggregator';
+import { playerContract } from '@openora/core/pam/contracts/player';
+import { tagContract } from '@openora/core/pam/contracts/tag';
+import { playerNoteContract } from '@openora/core/pam/contracts/player-note';
 
 // oxlint-disable-next-line typescript/no-explicit-any -- root contract is an external oRPC generic
 type AnyContract = ContractRouter<any>;

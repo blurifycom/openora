@@ -16,8 +16,8 @@ import {
   ChangeEmailInputSchema,
   IdentitySuccessSchema,
   TimestampSchema,
-} from '@blurifycom/core/contracts';
-import { PageQuerySchema, paginated } from '@blurifycom/core/contracts/kit';
+} from '@openora/core/contracts';
+import { PageQuerySchema, paginated } from '@openora/core/contracts/kit';
 import * as z from 'zod';
 
 const SessionSchema = z.object({
@@ -27,7 +27,6 @@ const SessionSchema = z.object({
 
 export const SessionItemSchema = z.object({
   id: UuidSchema,
-  token: z.string(),
   expiresAt: TimestampSchema,
   createdAt: TimestampSchema,
   ipAddress: z.string().nullable().optional(),
@@ -123,7 +122,7 @@ export const identityContract = {
 
     revoke: oc
       .route({ method: 'POST', path: '/identity/sessions/revoke' })
-      .input(z.object({ userId: UuidSchema, token: z.string() }))
+      .input(z.object({ userId: UuidSchema, id: UuidSchema }))
       .output(IdentitySuccessSchema),
 
     revokeAll: oc

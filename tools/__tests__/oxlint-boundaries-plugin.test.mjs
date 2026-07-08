@@ -22,10 +22,10 @@ function importNode(source) {
   return { source: { value: source } };
 }
 
-test('no-deep-dist-import catches the @blurifycom-addons scope too', () => {
+test('no-deep-dist-import catches the @openora-addons scope too', () => {
   for (const spec of [
-    '@blurifycom/core/dist/server/index.js',
-    '@blurifycom-addons/wallet/dist/schema/index.js',
+    '@openora/core/dist/server/index.js',
+    '@openora-addons/wallet/dist/schema/index.js',
   ]) {
     const reports = lint('no-deep-dist-import', `${CORE}/wallet/service/wallet.service.ts`, (v) =>
       v.ImportDeclaration(importNode(spec)),
@@ -36,23 +36,23 @@ test('no-deep-dist-import catches the @blurifycom-addons scope too', () => {
 
 test('no-deep-dist-import allows package entries', () => {
   const reports = lint('no-deep-dist-import', `${CORE}/wallet/service/wallet.service.ts`, (v) =>
-    v.ImportDeclaration(importNode('@blurifycom-addons/wallet/schema')),
+    v.ImportDeclaration(importNode('@openora-addons/wallet/schema')),
   );
   assert.deepEqual(reports, []);
 });
 
 test('boundaries rules cover re-export laundering', () => {
   const reports = lint('no-core-to-addon', `${CORE}/wallet/index.ts`, (v) =>
-    v.ExportAllDeclaration(importNode('@blurifycom-addons/tournaments')),
+    v.ExportAllDeclaration(importNode('@openora-addons/tournaments')),
   );
   assert.equal(reports.length, 1);
 });
 
 test('no-module-contract-to-runtime blocks non-isomorphic imports in a module contract', () => {
   for (const spec of [
-    '@blurifycom/core/server',
+    '@openora/core/server',
     'drizzle-orm',
-    '@blurifycom/core/wallet/schema',
+    '@openora/core/wallet/schema',
     '../schema/index.js',
     'node:crypto',
   ]) {
@@ -64,7 +64,7 @@ test('no-module-contract-to-runtime blocks non-isomorphic imports in a module co
 });
 
 test('no-module-contract-to-runtime allows zod + core contracts, and ignores the engine contracts zone', () => {
-  for (const spec of ['zod', '@blurifycom/core/contracts']) {
+  for (const spec of ['zod', '@openora/core/contracts']) {
     const ok = lint(
       'no-module-contract-to-runtime',
       `${CORE}/casino/gaming/contract/index.ts`,
@@ -81,11 +81,11 @@ test('no-module-contract-to-runtime allows zod + core contracts, and ignores the
 
 test('no-cross-addon allows the sibling /schema subpath, flags internals', () => {
   const ok = lint('no-cross-addon', `${ADDONS}/audit/src/service/audit.service.ts`, (v) =>
-    v.ImportDeclaration(importNode('@blurifycom-addons/wallet/schema')),
+    v.ImportDeclaration(importNode('@openora-addons/wallet/schema')),
   );
   assert.deepEqual(ok, []);
   const bad = lint('no-cross-addon', `${ADDONS}/audit/src/service/audit.service.ts`, (v) =>
-    v.ExportNamedDeclaration(importNode('@blurifycom-addons/wallet/service')),
+    v.ExportNamedDeclaration(importNode('@openora-addons/wallet/service')),
   );
   assert.equal(bad.length, 1);
 });
@@ -93,10 +93,10 @@ test('no-cross-addon allows the sibling /schema subpath, flags internals', () =>
 test('no-cross-core-domain flags sibling internals, allows /schema + self', () => {
   const file = `${CORE}/engagement/bonus/service/bonus.service.ts`;
   const bad = lint('no-cross-core-domain', file, (v) =>
-    v.ImportDeclaration(importNode('@blurifycom/core/wallet/service')),
+    v.ImportDeclaration(importNode('@openora/core/wallet/service')),
   );
   assert.equal(bad.length, 1);
-  for (const spec of ['@blurifycom/core/wallet/schema', '@blurifycom/core/engagement/contracts']) {
+  for (const spec of ['@openora/core/wallet/schema', '@openora/core/engagement/contracts']) {
     const ok = lint('no-cross-core-domain', file, (v) => v.ImportDeclaration(importNode(spec)));
     assert.deepEqual(ok, [], spec);
   }
@@ -104,7 +104,7 @@ test('no-cross-core-domain flags sibling internals, allows /schema + self', () =
 
 test('no-engine-to-domain flags a domain import from the engine', () => {
   const reports = lint('no-engine-to-domain', `${CORE}/server/runtime/create-app.ts`, (v) =>
-    v.ImportDeclaration(importNode('@blurifycom/core/wallet/plugins')),
+    v.ImportDeclaration(importNode('@openora/core/wallet/plugins')),
   );
   assert.equal(reports.length, 1);
 });

@@ -1,5 +1,5 @@
 import { fileURLToPath } from 'node:url';
-import { runMigrations } from '@blurifycom/core/server/migrate';
+import { runMigrations } from '@openora/core/server/migrate';
 
 export function migrate(databaseUrl?: string): Promise<void> {
   return runMigrations({

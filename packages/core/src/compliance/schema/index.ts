@@ -18,7 +18,7 @@ import {
   EXCLUSION_STATUSES,
   RG_FLAG_TYPES,
   RG_FLAG_STATUSES,
-} from '@blurifycom/core/contracts';
+} from '@openora/core/contracts';
 import { KYC_DOCUMENT_TYPES, KYC_TRIGGERED_BY } from '../contract/enums.js';
 import type { RgFlagDetail } from '../contract/rg.js';
 

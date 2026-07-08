@@ -36,7 +36,7 @@ You build overlay plugins for the OSS igaming platform - extending behavior with
 
 ```ts
 ctx.provide(TOKEN, factory); // bind/override a typed DI token (last registration wins).
-// SealedToken<T> (@blurifycom/core/compliance) is rejected at compile time + runtime.
+// SealedToken<T> (@openora/core/compliance) is rejected at compile time + runtime.
 ctx.routers.add(namespace, (c) => router); // mount oRPC routes
 ctx.events.on(topic, handler); // subscribe to the typed EventBus
 ctx.jobs.worker({ queue, schema, handler, onDeadLetter }); // process JOB_QUEUE jobs (idempotent - at-least-once)

@@ -5,8 +5,8 @@ import type {
   WalletCreditArgs,
   WalletCreditOutcome,
   WalletTransactionType,
-} from '@blurifycom/core/contracts';
-import type { DrizzleDb } from '@blurifycom/core/server';
+} from '@openora/core/contracts';
+import type { DrizzleDb } from '@openora/core/server';
 import { and, eq, gte, sql } from 'drizzle-orm';
 import { wallet, walletTransaction } from '../schema/index.js';
 import { railFor } from './wallet.service.js';

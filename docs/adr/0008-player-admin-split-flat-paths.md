@@ -18,9 +18,9 @@ A route-level audit showed the namespace re-prefix would touch ~60 procedures ac
 
 1. **Keep flat wire paths.** Do **not** re-prefix routes into `player.*`/`admin.*`. `client.wallet.getBalance()` and `client.backoffice.listUsers()` stay as they are.
 2. **Express the split where it is navigated, not on the wire:**
-   - `@blurifycom/react-sdk` pages are grouped `src/pages/admin/` and `src/pages/player/`.
+   - `@openora/react-sdk` pages are grouped `src/pages/admin/` and `src/pages/player/`.
    - Two reference apps consume the respective surfaces: `apps/backoffice` (admin) and `apps/web` (player).
-3. **Enforce admin access with one shared guard.** `AdminGuard` (in `@blurifycom/auth`, seeded into the composition container by `createApp`) resolves the better-auth session and asserts `role === 'admin'`, throwing `ORPCError` UNAUTHORIZED/FORBIDDEN. Every admin route calls `await adminGuard.assert(context)` as its first line. This is the single enforcement point; modules never re-implement the role check.
+3. **Enforce admin access with one shared guard.** `AdminGuard` (in `@openora/auth`, seeded into the composition container by `createApp`) resolves the better-auth session and asserts `role === 'admin'`, throwing `ORPCError` UNAUTHORIZED/FORBIDDEN. Every admin route calls `await adminGuard.assert(context)` as its first line. This is the single enforcement point; modules never re-implement the role check.
 
 ## Consequences
 

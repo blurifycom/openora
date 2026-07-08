@@ -20,7 +20,7 @@ events.
 Three levels, totally ordered: `no_access` < `read` < `read_write`. A role's matrix
 is `permissions: Array<{ resource, level }>` and stores only non-`no_access` cells
 (sparse - a missing module means `no_access`; deleting a row downgrades to
-`no_access`). Levels live in `@blurifycom/core/server` (`permission-levels.ts`):
+`no_access`). Levels live in `@openora/core/server` (`permission-levels.ts`):
 
 | Helper                           | Purpose                                                              |
 | -------------------------------- | -------------------------------------------------------------------- |
@@ -44,16 +44,16 @@ identically.
 | router   | `router/index.ts`        | thin oRPC wiring: resolve caller, call service, `mapErrors`                 |
 | plugin   | `plugin.ts`              | DI wiring only: `ctx.routers.add(...)`, `ctx.provide(...)`                  |
 
-Contract slice: `@blurifycom/core/iam/contract`.
+Contract slice: `@openora/core/iam/contract`.
 
 ## Extension points
 
-| Point                        | How                                                                                                                                                             |
-| ---------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Override email sender        | `ctx.provide(SEND_EMAIL, ...)` in an overlay loaded after this module                                                                                           |
-| React to accepted invitation | `ctx.events.on('iam.invitation.accepted', handler)` in an overlay                                                                                               |
-| Add permission modules       | Edit `packages/core/src/server/auth/permissions.ts` `statement` - catalog, levels, validation derive                                                            |
-| Change default roles         | Edit `DEFAULT_ADMIN_ROLES` (`iam/seed/default-admin-roles.ts`) and re-run the seeder (`seedRoles`, `@blurifycom/core/iam/seed`); migrations stay structure-only |
+| Point                        | How                                                                                                                                                          |
+| ---------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| Override email sender        | `ctx.provide(SEND_EMAIL, ...)` in an overlay loaded after this module                                                                                        |
+| React to accepted invitation | `ctx.events.on('iam.invitation.accepted', handler)` in an overlay                                                                                            |
+| Add permission modules       | Edit `packages/core/src/server/auth/permissions.ts` `statement` - catalog, levels, validation derive                                                         |
+| Change default roles         | Edit `DEFAULT_ADMIN_ROLES` (`iam/seed/default-admin-roles.ts`) and re-run the seeder (`seedRoles`, `@openora/core/iam/seed`); migrations stay structure-only |
 
 ## Ports consumed / provided
 
@@ -138,7 +138,7 @@ with `actorType:'admin'`, `resourceType:'role'`, `resourceId:roleId`, carrying
 
 ## Done-when checklist
 
-- [x] `pnpm regen` generated a migration (`0001_abc100_rbac_levels.sql`).
+- [x] `pnpm regen` generated a migration in the module's `drizzle/migrations/`.
 - [x] `pnpm verify` exits 0.
 - [x] `ADMIN_PERMISSION_RESOLVER` bound in `plugin.ts`; super-admin bypass + level expansion.
 - [x] Unit tests cover level helpers, resolver bypass/expansion, escalation + protected-role blocks, last-super-admin guard, assign-to-admin-only guard, preview union, `iam.role.*` emits.

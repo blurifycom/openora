@@ -1,4 +1,4 @@
-import type { Tag, TagRule, TagKey } from '@blurifycom/core/contracts';
+import type { Tag, TagRule, TagKey } from '@openora/core/contracts';
 import type { PlayerTagWithTag } from '../contract/index.js';
 import { tag, playerTag, tagRule } from '../schema/index.js';
 

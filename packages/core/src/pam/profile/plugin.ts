@@ -1,4 +1,4 @@
-import { definePlugin, DRIZZLE } from '@blurifycom/core/server';
+import { definePlugin, DRIZZLE } from '@openora/core/server';
 import { ProfileService } from './service/profile.service.js';
 import { createProfileRouter } from './router/index.js';
 

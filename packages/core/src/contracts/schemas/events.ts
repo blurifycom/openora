@@ -65,7 +65,7 @@ export const domainEventSchemas = {
   'identity.user.reactivated': z.object({ userId: UuidSchema, actorId: UuidSchema }),
   'identity.session.revoked': z.object({
     userId: UuidSchema,
-    sessionToken: z.string(),
+    sessionId: UuidSchema,
     actorId: UuidSchema.optional(),
   }),
   'identity.sessions.revoked_all': z.object({
@@ -283,6 +283,9 @@ export const domainEventVersions: Partial<Record<DomainEventName, number>> = {
   // v3: actorId is nullable - null marks a system-driven flip (vendor/webhook/reverify),
   // which the audit writer records as actorType 'system'.
   'compliance.kyc.updated': 3,
+  // v2: sessionToken (the raw bearer credential) replaced with sessionId - the token
+  // must never be persisted to the audit log or handed back to any caller.
+  'identity.session.revoked': 2,
 };
 
 export function getEventVersion(event: string): number {

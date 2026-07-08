@@ -1,5 +1,5 @@
 import type { Container, Factory } from '../kernel/index.js';
-import type { Token, WorkerRegistration } from '@blurifycom/core/contracts';
+import type { SealedToken, Token, WorkerRegistration } from '@openora/core/contracts';
 import type {
   ModuleRegistry,
   McpToolDefinition,
@@ -13,13 +13,14 @@ export class ModuleRegistryImpl implements ModuleRegistry {
   private _events = new Map<string, EventHandler[]>();
   private _jobs: WorkerRegistration<unknown>[] = [];
   private _mcpTools: McpToolDefinition[] = [];
+  private _sealedBound = new Set<symbol>();
 
   constructor(private readonly container: Container) {}
 
   // Last-wins, so an overlay loaded after a module can rebind its adapter token.
   // Sealed tokens (Symbol description prefixed `sealed:`) are rejected at runtime
   // even though the type system already blocks them - catches plain-JS callers and cast escapes.
-  // Canonical sealed list lives in `@blurifycom/core/compliance`.
+  // Canonical sealed list lives in `@openora/core/compliance`.
   provide = <T>(token: Token<T>, factory: Factory<T>): void => {
     const desc = token.description ?? '';
     if (desc.startsWith('sealed:')) {
@@ -27,9 +28,25 @@ export class ModuleRegistryImpl implements ModuleRegistry {
         `[plugin-host] Refusing to bind a sealed token (${desc}). ` +
           `Sealed services back regulatory invariants (RG enforcement, KYC writes, ` +
           `AML/SAR, ledger writes, RNG, etc.) and may not be replaced by a plugin. ` +
-          `See @blurifycom/core/compliance for the canonical list.`,
+          `Its owning module binds it via ctx.provideSealed() instead. ` +
+          `See @openora/core/compliance for the canonical list.`,
       );
     }
+    this.container.register(token, factory);
+  };
+
+  // Bind-once. The owning module calls this during its own register() to bind the
+  // canonical implementation; a second call for the same token - an overlay trying
+  // to slip past provide()'s rejection, or a duplicate registration - throws instead
+  // of silently rebinding (there is no "last-wins" for a sealed token).
+  provideSealed = <T>(token: SealedToken<T>, factory: Factory<T>): void => {
+    if (this._sealedBound.has(token)) {
+      throw new Error(
+        `[plugin-host] Sealed token (${token.description ?? '(unnamed)'}) is already bound. ` +
+          `A sealed service may be bound exactly once, by its owning module, and never rebound.`,
+      );
+    }
+    this._sealedBound.add(token);
     this.container.register(token, factory);
   };
 

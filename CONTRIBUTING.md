@@ -57,6 +57,22 @@ Flow: `feat/*` -> MR -> `dev` -> promote to `stage` -> release tags.
 CI (`.github/workflows/ci.yml`) runs `verify` on every pull request and on
 pushes to `dev`.
 
+## Publishing (`@openora/*` to npm)
+
+`.github/workflows/release.yml` publishes on every push to `dev`/`stage` and on `v*.*.*` tags:
+`dev` -> dist-tag `alpha`, `stage` -> dist-tag `rc`, a tag -> dist-tag `latest`. Prereleases are
+ephemeral snapshots (`0.x.y-<channel>-<sha>`), never committed.
+
+Production release runbook:
+
+1. Changes land on `dev` with a changeset each (`pnpm changeset`).
+2. `.github/workflows/version.yml` keeps a "Version Packages" PR open against `dev`, bumping the
+   fixed `@openora/*` version and writing changelogs from pending changesets.
+3. Merge that PR into `dev` when ready to release.
+4. Promote `dev` -> `stage` (publishes the `rc` snapshot for pre-release testing).
+5. Push a `v<version>` tag matching the merged version (`packages/core/package.json`) - `release.yml`
+   publishes it under `latest`.
+
 ## Commits
 
 Conventional Commits, **enforced** by `commitlint` (local `commit-msg` hook + CI) as

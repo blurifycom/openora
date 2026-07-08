@@ -44,12 +44,7 @@ The intended production provider is [SumSub](https://sumsub.com). To wire it:
 
 ```ts
 // apps/api/src/extensions/sumsub-kyc/src/sumsub-kyc-adapter.ts
-import type {
-  KycAdapter,
-  KycDocument,
-  KycResult,
-  KycVendorStatus,
-} from '@blurifycom/core/contracts';
+import type { KycAdapter, KycDocument, KycResult, KycVendorStatus } from '@openora/core/contracts';
 
 export class SumsubKycAdapter implements KycAdapter {
   async submit(userId: string, documents: KycDocument[]): Promise<KycResult> {
@@ -67,8 +62,8 @@ export class SumsubKycAdapter implements KycAdapter {
 
 ```ts
 // apps/api/src/extensions/sumsub-kyc/plugin.ts
-import { KYC_ADAPTER } from '@blurifycom/core/contracts';
-import { definePlugin } from '@blurifycom/core/server';
+import { KYC_ADAPTER } from '@openora/core/contracts';
+import { definePlugin } from '@openora/core/server';
 import { SumsubKycAdapter } from './src/sumsub-kyc-adapter.js';
 
 export default definePlugin({

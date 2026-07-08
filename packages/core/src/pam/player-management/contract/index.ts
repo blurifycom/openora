@@ -8,8 +8,8 @@ import {
   UuidSchema,
   TagKeySchema,
   PaginatedPlayerSearchArgsSchema,
-} from '@blurifycom/core/contracts';
-import { paginated } from '@blurifycom/core/contracts/kit';
+} from '@openora/core/contracts';
+import { paginated } from '@openora/core/contracts/kit';
 
 export { PlayerSchema, PlayerStatusSchema, KycStatusSchema };
 

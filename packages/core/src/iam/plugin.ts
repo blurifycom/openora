@@ -1,17 +1,11 @@
-import {
-  definePlugin,
-  EVENT_BUS,
-  DRIZZLE,
-  ADMIN_GUARD,
-  createLogger,
-} from '@blurifycom/core/server';
+import { definePlugin, EVENT_BUS, DRIZZLE, ADMIN_GUARD, createLogger } from '@openora/core/server';
 import {
   ADMIN_PERMISSION_RESOLVER,
   SEND_EMAIL,
   SESSION_COMMANDS,
   CACHE,
   domainEventSchemas,
-} from '@blurifycom/core/contracts';
+} from '@openora/core/contracts';
 import { IamService, DbAdminPermissionResolver } from './service/iam.service.js';
 import { createIamRouter } from './router/index.js';
 

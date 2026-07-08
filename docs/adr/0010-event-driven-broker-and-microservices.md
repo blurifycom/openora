@@ -5,7 +5,7 @@
 
 ## Context
 
-Modules must stay decoupled so the platform scales both in load and in team/organisational terms, and so an operator can extract a hot module into its own service later. Today modules already communicate via an in-process `EventBus` (`EVENT_BUS`) and read each other's tables through the `@blurifycom/modules/<group>/<name>/schema` subpath - never by importing another module. We want to make event-driven communication the primary, intentional pattern and define how it grows into a real broker and, eventually, microservices - without committing to a broker product prematurely.
+Modules must stay decoupled so the platform scales both in load and in team/organisational terms, and so an operator can extract a hot module into its own service later. Today modules already communicate via an in-process `EventBus` (`EVENT_BUS`) and read each other's tables through the `@openora/modules/<group>/<name>/schema` subpath - never by importing another module. We want to make event-driven communication the primary, intentional pattern and define how it grows into a real broker and, eventually, microservices - without committing to a broker product prematurely.
 
 ## Decision
 
@@ -20,7 +20,7 @@ Modules must stay decoupled so the platform scales both in load and in team/orga
 
 **3. Broker behind an adapter seam; driver chosen later.**
 
-- A `MessageBrokerAdapter` interface + `MESSAGE_BROKER` token will live in `@blurifycom/adapters`, mirroring the existing six vendor seams. The default binding stays the in-process `InMemoryEventBus`; production binds a durable driver.
+- A `MessageBrokerAdapter` interface + `MESSAGE_BROKER` token will live in `@openora/adapters`, mirroring the existing six vendor seams. The default binding stays the in-process `InMemoryEventBus`; production binds a durable driver.
 - **Recommendation when we get there:** for regulated real-money igaming the audit/ledger/replay requirement favours a durable, ordered, replayable log - a **Kafka-compatible** backbone. Prefer **Redpanda** (Kafka API, no JVM/ZooKeeper, lower ops) for the financial/audit stream; **NATS JetStream** is the lighter option for early stage or ephemeral fan-out. RabbitMQ/SQS are acceptable for at-least-once work queues. Delivery is **at-least-once**, so consumers must be idempotent.
 
 **4. Client push is separate from inter-module transport.**
@@ -41,8 +41,8 @@ Modules must stay decoupled so the platform scales both in load and in team/orga
 
 Done:
 
-1. **Typed event catalog.** `domainEventSchemas` (Zod) in `@blurifycom/shared-schemas` (`events.ts`) is the single source for every cross-module event payload; `DomainEventName`/`DomainEventPayload` are inferred from it.
-2. **Broker seam.** `MessageBrokerAdapter` + `MESSAGE_BROKER` token in `@blurifycom/adapters`. The `EventBus` (`@blurifycom/core`) is a typed facade over it that validates known payloads and isolates subscriber failures. Default binding is `InMemoryBroker` (synchronous in-process fan-out); bind a durable driver to `MESSAGE_BROKER` in an overlay to swap transport - no module change.
+1. **Typed event catalog.** `domainEventSchemas` (Zod) in `@openora/shared-schemas` (`events.ts`) is the single source for every cross-module event payload; `DomainEventName`/`DomainEventPayload` are inferred from it.
+2. **Broker seam.** `MessageBrokerAdapter` + `MESSAGE_BROKER` token in `@openora/adapters`. The `EventBus` (`@openora/core`) is a typed facade over it that validates known payloads and isolates subscriber failures. Default binding is `InMemoryBroker` (synchronous in-process fan-out); bind a durable driver to `MESSAGE_BROKER` in an overlay to swap transport - no module change.
 3. **Plugin handlers wired.** `createApp` subscribes every `registry.events.getAll()` handler to the resolved bus at boot, so cross-module `ctx.events.on(...)` handlers now actually fire.
 4. **Atomic money.** `wallet` deposit/withdraw wrap the ledger insert + balance update in `db.transaction(...)` (withdraw re-checks the balance inside the txn to block double-spend) and emit only after commit.
 

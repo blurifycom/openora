@@ -1,5 +1,5 @@
 {
-  "name": "@blurifycom/mcp-server-dev",
+  "name": "@openora/mcp-server-dev",
   "version": "0.3.0",
   "private": true,
   "license": "AGPL-3.0-only",
@@ -11,8 +11,8 @@
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
-    "@blurifycom/core": "workspace:*",
     "@modelcontextprotocol/sdk": "1.29.0",
+    "@openora/core": "workspace:*",
     "pg": "8.21.0",
     "zod": "4.4.3"
   },

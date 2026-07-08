@@ -34,7 +34,7 @@ Your prompt contains requirements + acceptance criteria. Build to those. If the 
 
 - Module isolation: no module imports another module's internals. Cross-module = command port, event, or read-only `/schema`. Third-party integrations go behind a port in `packages/core/src/contracts/adapters/` + an impl in the module's `adapters/<vendor>/`.
 - All Zod schemas in the module's `contract/`/`schemas/` or core contracts; types `z.infer`'d, never hand-written.
-- Services throw shared-factory domain errors (`makeNotFoundError` etc. from `@blurifycom/core/server`); routers map them via `mapErrors`.
+- Services throw shared-factory domain errors (`makeNotFoundError` etc. from `@openora/core/server`); routers map them via `mapErrors`.
 - Drizzle: tables in the module's `schema/index.ts`; no cross-module FKs; `pnpm regen` after schema edits; never hand-edit migrations (ADR-0027).
 
 ## Finish criteria

@@ -1,10 +1,10 @@
 // See ADR-0020.
-import type { DrizzleDb } from '@blurifycom/core/server';
+import type { DrizzleDb } from '@openora/core/server';
 import { eq } from 'drizzle-orm';
-import { user } from '@blurifycom/core/pam/schema/identity';
-import { player } from '@blurifycom/core/pam/schema/profile';
-import { wallet, walletTransaction } from '@blurifycom/core/wallet/schema';
-import { game } from '@blurifycom/core/casino/schema/gaming';
+import { user } from '@openora/core/pam/schema/identity';
+import { player } from '@openora/core/pam/schema/profile';
+import { wallet, walletTransaction } from '@openora/core/wallet/schema';
+import { game } from '@openora/core/casino/schema/gaming';
 
 export type SeedAuth = {
   api: {

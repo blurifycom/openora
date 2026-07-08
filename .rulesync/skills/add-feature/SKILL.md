@@ -11,7 +11,7 @@ description: >
 
 # add-feature (oss)
 
-Platform-core twin of the consumer `add-feature` skill. Use in this repo when a consumer feature needs `@blurifycom/*` core changes (via a work-order) or for a standalone core feature. Owns the whole development + delivery cycle.
+Platform-core twin of the consumer `add-feature` skill. Use in this repo when a consumer feature needs `@openora/*` core changes (via a work-order) or for a standalone core feature. Owns the whole development + delivery cycle.
 
 ```
 1 context (+ GRILL) -> 2 plan + approval -> 3 implement -> 4 unit/integration tests
@@ -21,9 +21,9 @@ Platform-core twin of the consumer `add-feature` skill. Use in this repo when a 
 
 ## Coordinates
 
-- Repo: `github.com/blurifycom/oss`. PR target: `dev` (chain `dev -> stage` + tags). Tool: `gh` CLI.
+- Repo: `github.com/blurifycom/openora`. PR target: `dev` (chain `dev -> stage` + tags). Tool: `gh` CLI.
 - Codebase inspection: `oss-dev` MCP (read-only). Headless backend - contracts + Hono + oRPC + Drizzle + react SDK + plugins. No UI here.
-- Jira/Confluence: the **Atlassian** MCP (cloudId `00000000-0000-0000-0000-000000000000`). Slack: the **Slack** MCP; notice channel `the agreed notice channel` (id `C0000000000`, **draft only**).
+- Issue tracker / chat: use whatever MCP integrations the session has (Jira/Confluence, Slack). Chat notices are **draft only**, to the team's agreed channel. No integration connected: skip those steps silently.
 
 ## The contract
 
@@ -35,7 +35,7 @@ Platform-core twin of the consumer `add-feature` skill. Use in this repo when a 
 
 ### 1. Resolve input + collect context (read-only)
 
-`$ARGUMENTS` is a work-order path (eg `~/.claude/plans/BF-XXX-oss.md`) or a ticket. Read it (goal, consumer feature it unblocks, core surface, contract/schema impact, acceptance), then gather in parallel: the ticket (Atlassian MCP), `docs/` ADRs + `catalog.json` + `openapi.json`, the rule docs (`conventions`, `clean-architecture`, `messaging-and-microservices`, `db-conventions`), the codebase (`oss-dev` MCP + Explore), Slack/Confluence for prior design discussion (search the BF key).
+`$ARGUMENTS` is a work-order path (eg `~/.claude/plans/<ticket>-oss.md`) or a ticket. Read it (goal, consumer feature it unblocks, core surface, contract/schema impact, acceptance), then gather in parallel: the ticket (tracker MCP if connected), `docs/` ADRs + `catalog.json` + `openapi.json`, the rule docs (`conventions`, `clean-architecture`, `messaging-and-microservices`, `db-conventions`), the codebase (`oss-dev` MCP + Explore), chat/wiki for prior design discussion (search the ticket key).
 
 #### 1a. Grill the user before planning (MANDATORY)
 
@@ -79,11 +79,11 @@ Match changed paths against `CODEOWNERS`, then `gh pr edit <num> --add-reviewer 
 
 ### 11. Jira - ONLY on explicit user request
 
-No transition, comment, worklog, or link by default. When the user asks in their own words (eg "move ABC-210 to Code Review"): fetch valid transitions via the Atlassian MCP, apply the matching one. Never post PR-link/status comments on the ticket.
+No transition, comment, worklog, or link by default. When the user asks in their own words (eg "move ABC-210 to Code Review"): fetch valid transitions via the tracker MCP, apply the matching one. Never post PR-link/status comments on the ticket.
 
 ### 12. Slack notice
 
-Draft (never direct-send) a **single line** to `the agreed notice channel`: emoji + PR/task name as a link, eg `👉 RBAC backend - PR #11`.
+Draft (never direct-send) a **single line** to the team's agreed notice channel: emoji + PR/task name as a link, eg `👉 RBAC backend - PR #11`.
 
 ## Rules
 

@@ -1,4 +1,4 @@
-import { tagAssignRemoveSource, tagKeys } from '@blurifycom/core/contracts';
+import { tagAssignRemoveSource, tagKeys } from '@openora/core/contracts';
 import {
   pgTable,
   uuid,

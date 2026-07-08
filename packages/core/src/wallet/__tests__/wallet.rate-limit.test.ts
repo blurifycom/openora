@@ -1,6 +1,6 @@
 import { describe, it, expect, vi } from 'vitest';
-import { InProcessRateLimiter, type EventBus } from '@blurifycom/core/server';
-import type { PaymentAdapter, AuditWritePort } from '@blurifycom/core/contracts';
+import { InProcessRateLimiter, type EventBus } from '@openora/core/server';
+import type { PaymentAdapter, AuditWritePort } from '@openora/core/contracts';
 import { mock, mockDb } from '../../testing/mock.js';
 import { WalletService } from '../service/wallet.service.js';
 

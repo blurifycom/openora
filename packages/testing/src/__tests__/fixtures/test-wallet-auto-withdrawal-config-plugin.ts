@@ -1,5 +1,5 @@
-import { definePlugin } from '@blurifycom/core/server';
-import { PLATFORM_CONFIG, definePlatformConfig } from '@blurifycom/core/contracts';
+import { definePlugin } from '@openora/core/server';
+import { PLATFORM_CONFIG, definePlatformConfig } from '@openora/core/contracts';
 
 // PLATFORM_CONFIG overlay for the auto-withdrawal e2e suite: autoWithdrawal enabled (threshold 200,
 // high_risk/bonus_abuser excluded, caps set high). kyc.gateWithdrawals stays false so the KYC-not-passing

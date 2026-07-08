@@ -11,7 +11,7 @@ import {
   withAdvisoryXactLock,
   assertRateLimit,
   createLogger,
-} from '@blurifycom/core/server';
+} from '@openora/core/server';
 import {
   type PaymentAdapter,
   type AdminUserDirectory,
@@ -22,7 +22,7 @@ import {
   type PlayerTags,
   type AuditWritePort,
   type TagKey,
-} from '@blurifycom/core/contracts';
+} from '@openora/core/contracts';
 import { eq, desc, sql, and, gte, lte, count, inArray } from 'drizzle-orm';
 import { createHash } from 'node:crypto';
 import {

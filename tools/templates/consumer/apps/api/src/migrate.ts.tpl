@@ -1,6 +1,6 @@
 /**
- * Migration runner. Applies every enabled @blurifycom/core migration set against
- * DATABASE_URL (or DATABASE_ADMIN_URL). Resolves @blurifycom/core from node_modules,
+ * Migration runner. Applies every enabled @openora/core migration set against
+ * DATABASE_URL (or DATABASE_ADMIN_URL). Resolves @openora/core from node_modules,
  * so it works whether the package is a local `link:` or a published npm install -
  * no platform checkout required. Each set tracks itself in its own table, so order is
  * not load-bearing and re-runs are idempotent. See ADR-0027.
@@ -9,21 +9,21 @@
  * Add or remove a line to match the modules you enable in extensions.config.ts.
  */
 const sets: ReadonlyArray<readonly [string, string]> = [
-  ['engine outbox', '@blurifycom/core/server/migrate'],
-  ['audit', '@blurifycom/core/audit/migrate'],
-  ['iam', '@blurifycom/core/iam/migrate'],
-  ['identity', '@blurifycom/core/pam/migrate/identity'],
-  ['profile', '@blurifycom/core/pam/migrate/profile'],
-  ['wallet', '@blurifycom/core/wallet/migrate'],
-  ['gaming', '@blurifycom/core/casino/migrate/gaming'],
-  ['lobby', '@blurifycom/core/casino/migrate/lobby'],
-  ['chat', '@blurifycom/core/engagement/migrate/chat'],
-  ['bonus', '@blurifycom/core/engagement/migrate/bonus'],
-  ['notifications', '@blurifycom/core/engagement/migrate/notifications'],
-  ['compliance', '@blurifycom/core/compliance/migrate'],
-  ['cms', '@blurifycom/core/cms/migrate'],
+  ['engine outbox', '@openora/core/server/migrate'],
+  ['audit', '@openora/core/audit/migrate'],
+  ['iam', '@openora/core/iam/migrate'],
+  ['identity', '@openora/core/pam/migrate/identity'],
+  ['profile', '@openora/core/pam/migrate/profile'],
+  ['wallet', '@openora/core/wallet/migrate'],
+  ['gaming', '@openora/core/casino/migrate/gaming'],
+  ['lobby', '@openora/core/casino/migrate/lobby'],
+  ['chat', '@openora/core/engagement/migrate/chat'],
+  ['bonus', '@openora/core/engagement/migrate/bonus'],
+  ['notifications', '@openora/core/engagement/migrate/notifications'],
+  ['compliance', '@openora/core/compliance/migrate'],
+  ['cms', '@openora/core/cms/migrate'],
   // Gated add-ons - uncomment the ones you enable:
-  // ['sportsbook', '@blurifycom/core/sportsbook/migrate'],
+  // ['sportsbook', '@openora/core/sportsbook/migrate'],
 ];
 
 async function main() {

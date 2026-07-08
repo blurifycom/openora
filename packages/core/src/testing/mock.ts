@@ -1,5 +1,5 @@
 import { vi, type Mock } from 'vitest';
-import type { DrizzleService } from '@blurifycom/core/server';
+import type { DrizzleService } from '@openora/core/server';
 
 // The one sanctioned home for test-double type assertions. A unit test standing in
 // for a collaborator is inherently partial, so the cast lives here - documented and

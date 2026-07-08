@@ -18,17 +18,11 @@
  * Requires DATABASE_URL (falls back to the local docker default). Single-tenant
  * since ADR-0026 - one DB role, no RLS.
  */
-import { createAuth, createDrizzleDb } from '@blurifycom/core/server';
-import { seedIam } from '@blurifycom/core/iam/seed';
-import { seedTag } from '@blurifycom/core/pam/tag/seed';
-import { seedDemoData } from '@blurifycom/testing';
-import {
-  user,
-  session,
-  account,
-  verification,
-  twoFactor,
-} from '@blurifycom/core/pam/schema/identity';
+import { createAuth, createDrizzleDb } from '@openora/core/server';
+import { seedIam } from '@openora/core/iam/seed';
+import { seedTag } from '@openora/core/pam/tag/seed';
+import { seedDemoData } from '@openora/testing';
+import { user, session, account, verification, twoFactor } from '@openora/core/pam/schema/identity';
 
 function arg(name: string): string | undefined {
   const hit = process.argv.find((a) => a.startsWith(`--${name}=`));
@@ -42,7 +36,7 @@ async function main() {
     'postgresql://postgres:postgres@localhost:5432/oss_igaming';
   const db = createDrizzleDb(databaseUrl);
   // better-auth's drizzle adapter needs the auth tables passed as schema, else
-  // user creation throws "model user not found". See @blurifycom/core/server createAuth().
+  // user creation throws "model user not found". See @openora/core/server createAuth().
   const auth = createAuth({ db, schema: { user, session, account, verification, twoFactor } });
 
   await seedIam(db);

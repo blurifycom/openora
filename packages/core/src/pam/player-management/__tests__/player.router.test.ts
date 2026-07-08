@@ -1,7 +1,7 @@
 import { describe, it, expect, vi } from 'vitest';
 import { mock } from '../../../testing/mock.js';
 import { call, ORPCError } from '@orpc/server';
-import type { AdminGuard } from '@blurifycom/core/server';
+import type { AdminGuard } from '@openora/core/server';
 import { createPlayerRouter } from '../router/index.js';
 import type { PlayerService } from '../service/player.service.js';
 

@@ -1,10 +1,10 @@
-import { definePlugin } from '@blurifycom/plugin-host';
-import { queue } from '@blurifycom/adapters';
+import { definePlugin } from '@openora/plugin-host';
+import { queue } from '@openora/adapters';
 import * as z from 'zod';
 
 // Background-job worker overlay for the '{{kebabCase name}}' queue. A service enqueues
 // work with `jobQueue.enqueue(queue('{{kebabCase name}}'), payload, { idempotencyKey })`
-// (resolve JOB_QUEUE from @blurifycom/adapters in its plugin.ts); this overlay consumes it.
+// (resolve JOB_QUEUE from @openora/adapters in its plugin.ts); this overlay consumes it.
 // Delivery is AT-LEAST-ONCE - the handler MUST be idempotent (a DB unique-row guard,
 // not just idempotencyKey, for money). The default driver is in-process; the bullmq
 // overlay rebinds JOB_QUEUE to Redis when REDIS_URL is set. See ADR-0014.

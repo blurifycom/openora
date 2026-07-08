@@ -3,7 +3,7 @@
     "oss": {
       "type": "stdio",
       "command": "node",
-      "args": ["node_modules/@blurifycom/mcp/dist/main.js"]
+      "args": ["node_modules/@openora/mcp/dist/main.js"]
     }
   }
 }

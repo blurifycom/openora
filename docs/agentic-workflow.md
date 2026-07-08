@@ -75,7 +75,7 @@ Fill in the `// AGENT: implement here` regions (or tell the agent to), then afte
 ```
 /regen                        # migrations + openapi + catalog
 /verify                       # typecheck + lint + unit tests, same as CI
-/verify --filter @blurifycom/core   # scoped to one package (faster)
+/verify --filter @openora/core   # scoped to one package (faster)
 ```
 
 `/verify` doesn't just run the checks - it fixes what fails (or explains why a test needs updating) and never reports done on red.

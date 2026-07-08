@@ -1,15 +1,13 @@
-# Package publishing (Changesets -> GitHub Packages).
+# Package publishing (Changesets -> public npm).
 #
 # Channels:
-#   push to dev   -> snapshot publish under dist-tag `alpha`  (0.x.y-alpha-<ts>)
-#   push to stage -> snapshot publish under dist-tag `beta`   (0.x.y-beta-<ts>)
-#   tag    v*.*.* -> stable publish under dist-tag `latest`   (cut tags from prod/main)
+#   push to dev   -> snapshot publish under dist-tag `alpha` (0.x.y-alpha-<sha>)
+#   push to stage -> snapshot publish under dist-tag `rc`    (0.x.y-rc-<sha>)
+#   tag    v*.*.* -> stable publish under dist-tag `latest`  (cut tags from prod/main)
 #
-# Packages are scoped `@blurifycom/*` to match the GitHub org (GitHub Packages
-# requires scope == owner). Each published package.json carries
-# "publishConfig": { "registry": "https://npm.pkg.github.com" }; consumers install
-# with a .npmrc mapping `@blurifycom:registry=https://npm.pkg.github.com`. Auth uses
-# the built-in GITHUB_TOKEN (packages:write, set below).
+# Packages are scoped `@openora/*`, published publicly ("publishConfig":
+# { "access": "public" }). Auth uses the NPM_TOKEN repo secret (an npm
+# automation token for the @openora org/user).
 name: Release
 
 on:
@@ -26,7 +24,6 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: read
-      packages: write
     env:
       # The downstream consumer is identified ONLY by these secret VALUES - this repo
       # is public, so nothing about it (host, project, branch) is committed here.
@@ -43,8 +40,8 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 26
-          registry-url: https://npm.pkg.github.com
-          scope: '@blurifycom'
+          registry-url: https://registry.npmjs.org
+          scope: '@openora'
 
       - name: Enable corepack (pnpm)
         run: |
@@ -64,22 +61,22 @@ jobs:
         if: startsWith(github.ref, 'refs/tags/v')
         run: pnpm changeset publish
         env:
-          NODE_AUTH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
 
-      # Prerelease: dev -> alpha, stage -> beta. Each push snapshot-publishes an
+      # Prerelease: dev -> alpha, stage -> rc. Each push snapshot-publishes an
       # immutable 0.x.y-<channel>-<shortsha> under the matching dist-tag. The
       # version bump is ephemeral (not committed); --no-git-tag avoids tagging.
-      - name: Publish snapshot (alpha/beta)
+      - name: Publish snapshot (alpha/rc)
         if: github.ref == 'refs/heads/dev' || github.ref == 'refs/heads/stage'
         run: |
-          if [ "${{ github.ref_name }}" = "dev" ]; then CHANNEL=alpha; else CHANNEL=beta; fi
+          if [ "${{ github.ref_name }}" = "dev" ]; then CHANNEL=alpha; else CHANNEL=rc; fi
           SHORT=$(git rev-parse --short HEAD)
           pnpm changeset version --snapshot "$CHANNEL" --snapshot-prerelease-template "{tag}-$SHORT"
           pnpm changeset publish --no-git-tag --tag "$CHANNEL"
         env:
-          NODE_AUTH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
 
-      # Now that the new @blurifycom/* version is on the registry, ask the downstream
+      # Now that the new @openora/* version is on the registry, ask the downstream
       # consumer to open a bump MR. We POST its GitLab pipeline-trigger API (CONSUMER_*
       # secrets) with the published version. Only the alpha channel (push to dev)
       # auto-bumps the consumer dev branch; stage/prod bumps are promoted manually.
@@ -100,7 +97,7 @@ jobs:
 
       # Redeploy the public example demo (separate GitLab repo -> Railway). That repo
       # builds its own app against the published core; we pass the new version so its
-      # pipeline bumps the @blurifycom/core pin and `railway up`s. Only on the alpha
+      # pipeline bumps the @openora/core pin and `railway up`s. Only on the alpha
       # channel (push to dev). No-op when the secrets are unset.
       - name: Trigger example demo deploy
         continue-on-error: true

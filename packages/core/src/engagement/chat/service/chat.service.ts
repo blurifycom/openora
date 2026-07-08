@@ -5,11 +5,11 @@ import {
   DrizzleService,
   findOneOrThrow,
   serializeRow,
-} from '@blurifycom/core/server';
-import type { RealtimeTransport } from '@blurifycom/core/contracts';
+} from '@openora/core/server';
+import type { RealtimeTransport } from '@openora/core/contracts';
 import { eq, and, isNull, lt, desc, asc, notInArray } from 'drizzle-orm';
-import { user } from '@blurifycom/core/pam/schema/identity';
-import type { User } from '@blurifycom/core/pam/schema/identity';
+import { user } from '@openora/core/pam/schema/identity';
+import type { User } from '@openora/core/pam/schema/identity';
 import { chatRoom, chatMessage, chatUserBlock } from '../schema/index.js';
 import type { ChatRoom, ChatMessage } from '../contract/index.js';
 import { moderateContent } from '../moderation/index.js';

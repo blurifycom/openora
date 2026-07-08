@@ -8,18 +8,18 @@ For the rationale behind each choice, see the [ADRs](./adr/). For the rules an
 agent must follow, see [AGENTS.md](../AGENTS.md).
 
 > **Packaging note (ADR-0025, 2026-06-16):** the foundation, engine, and free domains
-> now ship as ONE published package, `@blurifycom/core`, with subpaths - `@blurifycom/core/contracts`
-> (isomorphic), `@blurifycom/core/react` (browser), `@blurifycom/core/server` (node engine: kernel +
-> plugin-host + db + auth + createApp), `@blurifycom/core/compliance`, and per-module subpaths.
-> The logical structure described below is unchanged; specifier names like `@blurifycom/adapters`,
-> `@blurifycom/db`, `@blurifycom/orpc-contract`, `@blurifycom/react` are now `@blurifycom/core/*` subpaths. Premium
-> features stay separate `@blurifycom-addons/*` packages. See [ADR-0025](./adr/0025-single-core-package-with-module-subpaths.md).
+> now ship as ONE published package, `@openora/core`, with subpaths - `@openora/core/contracts`
+> (isomorphic), `@openora/core/react` (browser), `@openora/core/server` (node engine: kernel +
+> plugin-host + db + auth + createApp), `@openora/core/compliance`, and per-module subpaths.
+> The logical structure described below is unchanged; specifier names like `@openora/adapters`,
+> `@openora/db`, `@openora/orpc-contract`, `@openora/react` are now `@openora/core/*` subpaths. Premium
+> features stay separate `@openora-addons/*` packages. See [ADR-0025](./adr/0025-single-core-package-with-module-subpaths.md).
 
 ## System overview
 
 ```mermaid
 flowchart TB
-  subgraph contracts["@blurifycom/core/contracts - the source of truth (isomorphic)"]
+  subgraph contracts["@openora/core/contracts - the source of truth (isomorphic)"]
     zod["/contracts schemas<br/>single Zod root"]
     orpc["/contracts composeContract<br/>(health only; no aggregation)"]
     openapi["docs/openapi.json<br/>(emitted)"]
@@ -40,15 +40,15 @@ flowchart TB
     orpc --> hono
   end
 
-  subgraph platform["@blurifycom/core/server - node engine"]
+  subgraph platform["@openora/core/server - node engine"]
     db["/server db<br/>Drizzle client + migrations"]
     auth["/server auth<br/>better-auth + AdminGuard"]
     core["/server kernel<br/>logger, EventBus, Container"]
   end
 
-  subgraph modules["Domains (packages/domains/* - each deps @blurifycom/core)"]
+  subgraph modules["Domains (packages/domains/* - each deps @openora/core)"]
     mod["pam (identity·profile·player-mgmt), compliance,<br/>wallet, casino (gaming·lobby·aggregator),<br/>sportsbook, engagement (chat·notifications·bonus·leaderboard), cms"]
-    adapters["@blurifycom/core/contracts<br/>vendor adapter interfaces (ports)"]
+    adapters["@openora/core/contracts<br/>vendor adapter interfaces (ports)"]
     mod --> adapters
   end
 
@@ -62,7 +62,7 @@ flowchart TB
 
   subgraph consumer["Downstream consumer (reference)"]
     bapi["apps/api<br/>thin createApp()"]
-    bfront["frontend (consumer repo)<br/>own pages, components, styling<br/>consumes api over HTTP via @blurifycom/core/react"]
+    bfront["frontend (consumer repo)<br/>own pages, components, styling<br/>consumes api over HTTP via @openora/core/react"]
     bplug["consumer plugins<br/>one feature per folder"]
     bcfg["extensions.config.ts<br/>+ pnpm link: overrides"]
     bplug --> bcfg
@@ -95,11 +95,11 @@ Solid arrows are runtime/build dependencies; dashed arrows are **adapter seams**
 
 - **extensions.config.ts** - the one list of enabled plugins (modules + overlays). The only place wiring is turned on.
 - **plugin-host** - `definePlugin({ id, dependsOn, register })` + `ModuleRegistry`. In `register(ctx)` a plugin binds providers (`ctx.provide(token, factory)`), mounts routers (`ctx.routers.add(namespace, (c) => router)`), subscribes to events, and registers MCP tools. Overlays add their own `pgTable` in their module's `src/schema/index.ts`. ADR-0002.
-- **Hono + oRPC** - oRPC defines routes and validates I/O against the Zod contract; its `OpenAPIHandler` is mounted on a Hono server and emits `docs/openapi.json`. Dependency wiring is a small **functional composition `Container`** (`@blurifycom/core/server`): typed-token factories, lazy + last-wins, no decorators. `apps/api` is a thin caller of `createApp()` from `@blurifycom/core/server`; downstream consumers call the same factory. ADR-0009.
+- **Hono + oRPC** - oRPC defines routes and validates I/O against the Zod contract; its `OpenAPIHandler` is mounted on a Hono server and emits `docs/openapi.json`. Dependency wiring is a small **functional composition `Container`** (`@openora/core/server`): typed-token factories, lazy + last-wins, no decorators. `apps/api` is a thin caller of `createApp()` from `@openora/core/server`; downstream consumers call the same factory. ADR-0009.
 
-**Engine** (`@blurifycom/core/server`) - the node runtime, all under one subpath: `db` (Drizzle client, drizzle-kit migrations, `DrizzleService`, the framework-free `@blurifycom/core/server/orm` re-export), `auth` (better-auth + the shared `AdminGuard`), `kernel` (logger, typed `EventBus`, composition `Container`), `plugin-host` (the plugin loader), and `createApp()` - which is domain-agnostic (the consumer injects the PAM identity schema, ADR-0025/0026: single-tenant, no resolveTenant).
+**Engine** (`@openora/core/server`) - the node runtime, all under one subpath: `db` (Drizzle client, drizzle-kit migrations, `DrizzleService`, the framework-free `@openora/core/server/orm` re-export), `auth` (better-auth + the shared `AdminGuard`), `kernel` (logger, typed `EventBus`, composition `Container`), `plugin-host` (the plugin loader), and `createApp()` - which is domain-agnostic (the consumer injects the PAM identity schema, ADR-0025/0026: single-tenant, no resolveTenant).
 
-**Domains** (`packages/domains/*`) - one package per domain (`@blurifycom/<domain>`), each depending on `@blurifycom/core` only. A domain may import `@blurifycom/core/*` but **never another domain** - cross-domain communication goes through events, command ports, or shared contracts. Vendor adapter interfaces come from `@blurifycom/core/contracts`.
+**Domains** (`packages/domains/*`) - one package per domain (`@openora/<domain>`), each depending on `@openora/core` only. A domain may import `@openora/core/*` but **never another domain** - cross-domain communication goes through events, command ports, or shared contracts. Vendor adapter interfaces come from `@openora/core/contracts`.
 
 **Vendor adapters** - concrete implementations of a module's adapter interfaces (PSP, KYC vendor, igaming aggregator, chat), shipped as separate packages. The interface is the seam; the implementation is swappable.
 
@@ -107,32 +107,32 @@ Solid arrows are runtime/build dependencies; dashed arrows are **adapter seams**
 
 **SDK & consumption surface**
 
-- **`@blurifycom/core/react`** - the supported frontend consumption surface: data hooks, typed oRPC client, auth, and client-side realtime transport. The platform is headless backend only; the frontend lives in the downstream consumer repo.
-- **`@blurifycom/core/compliance`** - canonical list of `SealedToken<T>` services operators may never override (RG enforcement, KYC writes, AML/SAR, ledger writes, RNG, etc.) with regulatory citations.
+- **`@openora/core/react`** - the supported frontend consumption surface: data hooks, typed oRPC client, auth, and client-side realtime transport. The platform is headless backend only; the frontend lives in the downstream consumer repo.
+- **`@openora/core/compliance`** - canonical list of `SealedToken<T>` services operators may never override (RG enforcement, KYC writes, AML/SAR, ledger writes, RNG, etc.) with regulatory citations.
 
-**Downstream consumer (reference)** - does **not** fork. `apps/api` is a thin `createApp()` entry with its own `extensions.config.ts`; `@blurifycom/*` packages resolve via `pnpm` workspace overrides (`link:`). The platform is headless: the frontend lives in the downstream consumer repo and consumes the api over HTTP via `@blurifycom/core/react`. Per-operator backend customization lives in plugins under `apps/api/src/extensions/`. ADR-0005 + ADR-0012 + ADR-0013.
+**Downstream consumer (reference)** - does **not** fork. `apps/api` is a thin `createApp()` entry with its own `extensions.config.ts`; `@openora/*` packages resolve via `pnpm` workspace overrides (`link:`). The platform is headless: the frontend lives in the downstream consumer repo and consumes the api over HTTP via `@openora/core/react`. Per-operator backend customization lives in plugins under `apps/api/src/extensions/`. ADR-0005 + ADR-0012 + ADR-0013.
 
 **AI dev surface**
 
 - **mcp-server-dev** - a stdio MCP server (registered in `.mcp.json`, not a port) exposing read-only inspection (`list-modules`, `list-routes`, `query-openapi`, `get-drizzle-schema`, ...) and write tools that delegate to the scaffolder.
-- **tools/gen/gen.ts** (-> `@blurifycom/turbo-generators`) - deterministic code-mods behind the `/scaffold-*` slash commands (module, plugin, route).
+- **tools/gen/gen.ts** (-> `@openora/turbo-generators`) - deterministic code-mods behind the `/scaffold-*` slash commands (module, plugin, route).
 - **AGENTS.md** - per-package brief; the first thing an agent reads.
 
 ## Adapter / bridge seams
 
 These are the swap points - the reason the platform is "headless" and extensible:
 
-| Seam           | Interface side                           | Implementation side                                        | Swap to...                                       |
-| -------------- | ---------------------------------------- | ---------------------------------------------------------- | ------------------------------------------------ |
-| Plugin host    | `definePlugin` contract                  | a module or overlay folder                                 | add/remove features without touching core        |
-| Vendor adapter | `@blurifycom/core/contracts` (interface) | impl under `domains/<m>/adapters/<vendor>/` (or an add-on) | a different PSP, KYC, or aggregator              |
-| Consumer link  | `createApp()` + `@blurifycom/*` packages | downstream `apps/api` + `link:` overrides                  | publish to npm and bump the tag (no code change) |
+| Seam           | Interface side                        | Implementation side                                        | Swap to...                                       |
+| -------------- | ------------------------------------- | ---------------------------------------------------------- | ------------------------------------------------ |
+| Plugin host    | `definePlugin` contract               | a module or overlay folder                                 | add/remove features without touching core        |
+| Vendor adapter | `@openora/core/contracts` (interface) | impl under `domains/<m>/adapters/<vendor>/` (or an add-on) | a different PSP, KYC, or aggregator              |
+| Consumer link  | `createApp()` + `@openora/*` packages | downstream `apps/api` + `link:` overrides                  | publish to npm and bump the tag (no code change) |
 
 ## Request flow (a typical read)
 
 ```mermaid
 sequenceDiagram
-  participant UI as consumer frontend (@blurifycom/core/react)
+  participant UI as consumer frontend (@openora/core/react)
   participant API as Hono + oRPC
   participant Mod as Module service
   participant DB as Drizzle

@@ -1,5 +1,5 @@
-import { definePlugin, EVENT_BUS, DRIZZLE } from '@blurifycom/core/server';
-import { REALTIME_TRANSPORT, REALTIME_CLIENT_AUTHORIZER } from '@blurifycom/core/contracts';
+import { definePlugin, EVENT_BUS, DRIZZLE } from '@openora/core/server';
+import { REALTIME_TRANSPORT, REALTIME_CLIENT_AUTHORIZER } from '@openora/core/contracts';
 import { ChatService } from './service/chat.service.js';
 import { createChatRouter } from './router/index.js';
 

@@ -6,7 +6,7 @@ import {
   TimestampSchema,
   CountryCodeSchema,
   GeoRuleActionSchema,
-} from '@blurifycom/core/contracts';
+} from '@openora/core/contracts';
 import { KYC_DOCUMENT_TYPES, KYC_TRIGGERED_BY } from './enums.js';
 import { LimitSchema, UpsertLimitInputSchema } from './limits.js';
 import { rgContract } from './rg.js';

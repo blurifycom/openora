@@ -7,8 +7,8 @@
 > **Superseded note (2026-06-14).** The platform is now **headless** — the OSS repo ships
 > no player front and no consumer frontend scaffold (see the superseded note in
 > [ADR-0013](./0013-ui-extensibility-tiers.md); `apps/web` / `apps/backoffice` and the
-> `@blurifycom/react-sdk` pages were removed). The player-front framework is therefore the
-> **consumer's** decision (the consumer builds its own frontend and consumes `@blurifycom/react`),
+> `@openora/react-sdk` pages were removed). The player-front framework is therefore the
+> **consumer's** decision (the consumer builds its own frontend and consumes `@openora/react`),
 > not an OSS-level ADR. The Next.js-vs-TanStack analysis below is retained as historical
 > input that may inform a downstream choice.
 
@@ -43,11 +43,11 @@ Bundle size is the one real cost of this decision. We accept it for the RSC mand
 
 ## Data flow on the player surface
 
-The `@blurifycom/react-sdk` pages remain React client components (they use hooks, query client, slot system, theme). The Next consumer's route file is the RSC: it prefetches data server-side and hydrates the client page.
+The `@openora/react-sdk` pages remain React client components (they use hooks, query client, slot system, theme). The Next consumer's route file is the RSC: it prefetches data server-side and hydrates the client page.
 
 ```tsx
 // apps/web/app/lobby/page.tsx  (Next RSC - runs on server)
-import { PlayerLobbyPage, prefetchLobby } from '@blurifycom/react-sdk';
+import { PlayerLobbyPage, prefetchLobby } from '@openora/react-sdk';
 import { HydrationBoundary, dehydrate, QueryClient } from '@tanstack/react-query';
 
 export default async function Page() {
@@ -61,13 +61,13 @@ export default async function Page() {
 }
 ```
 
-`prefetchLobby`, `prefetchGames`, `prefetchWallet`, etc., live in `packages/sdks/react-sdk/src/server/`. They run server-only (no `'use client'`, no React tree), build an oRPC client via `@blurifycom/sdk-core`, forward request cookies, and seed the query cache. A static-feel page (about, terms, promo landing) is plain RSC in the consumer's Next app with no SDK involvement.
+`prefetchLobby`, `prefetchGames`, `prefetchWallet`, etc., live in `packages/sdks/react-sdk/src/server/`. They run server-only (no `'use client'`, no React tree), build an oRPC client via `@openora/sdk-core`, forward request cookies, and seed the query cache. A static-feel page (about, terms, promo landing) is plain RSC in the consumer's Next app with no SDK involvement.
 
 ## Consequences
 
 - The scaffolder no longer takes a `--web` flag. `apps/web` is always Next App Router. The `tools/templates/variants/web-tanstack/` tree is deleted.
 - ADR-0011 is Superseded - kept on disk for the bundle-size comparison data.
-- The `@blurifycom/react-sdk/server` entry stays Next-only (it does not need to be portable across frameworks any more); its module-level comment is updated accordingly.
+- The `@openora/react-sdk/server` entry stays Next-only (it does not need to be portable across frameworks any more); its module-level comment is updated accordingly.
 - Existing references to "Next.js or TanStack Start" across docs / agents / templates are normalized to "Next.js App Router (RSC + SSR)".
 - The `pnpm gen page` consumer generator stays Next-shaped (Next route shim `apps/web/app/<route>/page.tsx`); the follow-up about making it framework-aware is now scoped to a Next-vs-backoffice surface check instead of a 3-way framework matrix.
 

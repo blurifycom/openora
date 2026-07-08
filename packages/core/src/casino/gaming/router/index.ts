@@ -1,5 +1,5 @@
 import { implement } from '@orpc/server';
-import { getUserId, mapErrors, type OssContext } from '@blurifycom/core/server';
+import { getUserId, mapErrors, type OssContext } from '@openora/core/server';
 import { gamingContract } from '../contract/index.js';
 import {
   GamingService,

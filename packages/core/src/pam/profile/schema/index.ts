@@ -9,7 +9,7 @@ import {
   pgEnum,
   index,
 } from 'drizzle-orm/pg-core';
-import { PLAYER_STATUSES, KYC_STATUSES } from '@blurifycom/core/contracts';
+import { PLAYER_STATUSES, KYC_STATUSES } from '@openora/core/contracts';
 
 export const playerStatusEnum = pgEnum('player_status', PLAYER_STATUSES);
 export const kycStatusEnum = pgEnum('kyc_status', KYC_STATUSES);

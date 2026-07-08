@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 /**
- * Structural-shape guard. After ADR-0025 the domains fold into @blurifycom/core as
+ * Structural-shape guard. After ADR-0025 the domains fold into @openora/core as
  * subpaths, so this asserts every folded domain under packages/core/src/<name>
  * still matches the canonical shape - an agent can't quietly delete or relocate a
  * required piece mid-task ("constraint decay"). Runs in `pnpm verify`.
@@ -10,11 +10,11 @@
  * at their root (wallet, iam, audit, ...); multi-slice ones (casino: gaming/lobby/
  * aggregator; engagement; pam) keep index.ts + per-slice plugin/contract/schema.
  *
- * Required per domain (checked against the @blurifycom/core package.json exports):
+ * Required per domain (checked against the @openora/core package.json exports):
  *   index.ts              - the domain slice root (its public API source)
- *   a contract subpath    - @blurifycom/core exports "./<domain>/contract(s)..." (cross-domain
+ *   a contract subpath    - @openora/core exports "./<domain>/contract(s)..." (cross-domain
  *                           comms go through the published contract, never a sibling import)
- *   a runtime subpath     - @blurifycom/core exports "./<domain>/plugin" | "./<domain>/server" |
+ *   a runtime subpath     - @openora/core exports "./<domain>/plugin" | "./<domain>/server" |
  *                           "./<domain>/plugins/*" (the plugin host loads the domain through one)
  *
  * Premium add-on packages (packages/addons/*, currently none - ADR-0025) keep their own
@@ -25,7 +25,7 @@ import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const repoRoot = join(dirname(fileURLToPath(import.meta.url)), '../..');
-// Domains fold into @blurifycom/core as subpaths. See ADR-0025.
+// Domains fold into @openora/core as subpaths. See ADR-0025.
 const coreSrc = join(repoRoot, 'packages', 'core', 'src');
 const engineDirs = new Set(['contracts', 'server', 'react', 'scripts']);
 const addonsRoot = join(repoRoot, 'packages', 'addons');
@@ -57,22 +57,33 @@ function checkDomain(dir: string, id: string): Check[] {
   const hasRuntime = keys.some(
     (k) => k === `./${id}/plugin` || k === `./${id}/server` || k.startsWith(`./${id}/plugins/`),
   );
+  const moduleDirs = has('plugin.ts')
+    ? [{ rel: '', dir }]
+    : readdirSync(dir)
+        .sort()
+        .map((m) => ({ rel: `${m}/`, dir: join(dir, m) }))
+        .filter(({ dir: m }) => statSync(m).isDirectory() && existsSync(join(m, 'plugin.ts')));
 
   return [
+    ...moduleDirs.map(({ rel }) => ({
+      label: `${rel}AGENTS.md`,
+      ok: existsSync(join(dir, rel, 'AGENTS.md')),
+      hint: 'every module ships an AGENTS.md (what it does, extension points, do/dont)',
+    })),
     {
       label: 'index.ts (slice root)',
       ok: has('index.ts'),
       hint: 'the public API source under packages/core/src/<domain>/',
     },
     {
-      label: `@blurifycom/core exports "./${id}/contract(s)"`,
+      label: `@openora/core exports "./${id}/contract(s)"`,
       ok: hasContract,
-      hint: 'cross-domain communication goes through the published contract subpath of @blurifycom/core',
+      hint: 'cross-domain communication goes through the published contract subpath of @openora/core',
     },
     {
-      label: `@blurifycom/core exports a runtime subpath ("./${id}/plugin" | "./${id}/server" | "./${id}/plugins/*")`,
+      label: `@openora/core exports a runtime subpath ("./${id}/plugin" | "./${id}/server" | "./${id}/plugins/*")`,
       ok: hasRuntime,
-      hint: 'the plugin host loads the domain through its plugin entry - export it from @blurifycom/core',
+      hint: 'the plugin host loads the domain through its plugin entry - export it from @openora/core',
     },
   ];
 }
@@ -111,7 +122,7 @@ function checkAddon(dir: string): Check[] {
     {
       label: 'package.json',
       ok: file('package.json'),
-      hint: 'every add-on is a standalone @blurifycom-addons/<name> package',
+      hint: 'every add-on is a standalone @openora-addons/<name> package',
     },
     {
       label: 'AGENTS.md',

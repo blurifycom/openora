@@ -6,7 +6,7 @@ import type {
   RepeatOptions,
   JobContext,
   WorkerRegistration,
-} from '@blurifycom/core/contracts';
+} from '@openora/core/contracts';
 import { createLogger } from './logger.js';
 
 // Durable JOB_QUEUE reference driver, bound by createApp when REDIS_URL is set -

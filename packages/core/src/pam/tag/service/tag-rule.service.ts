@@ -1,5 +1,5 @@
-import { DrizzleService, EventBus, makeNotFoundError } from '@blurifycom/core/server';
-import { type UpsertTagRuleInput, type TagKey, type TagRule } from '@blurifycom/core/contracts';
+import { DrizzleService, EventBus, makeNotFoundError } from '@openora/core/server';
+import { type UpsertTagRuleInput, type TagKey, type TagRule } from '@openora/core/contracts';
 import { asc, eq } from 'drizzle-orm';
 import { tag, tagRule } from '../schema/index.js';
 import { toTagRule } from './tag-mappers.js';

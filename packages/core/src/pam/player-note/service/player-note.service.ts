@@ -1,4 +1,4 @@
-import { DrizzleService, pageToOffset, serializeRow } from '@blurifycom/core/server';
+import { DrizzleService, pageToOffset, serializeRow } from '@openora/core/server';
 import { count, desc, eq } from 'drizzle-orm';
 import { playerNote } from '../schema/index.js';
 import type { CreatePlayerNoteInput, PlayerNoteItem } from '../contract/index.js';

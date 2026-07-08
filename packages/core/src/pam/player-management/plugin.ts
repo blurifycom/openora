@@ -1,5 +1,5 @@
-import { definePlugin, EVENT_BUS, DRIZZLE, ADMIN_GUARD } from '@blurifycom/core/server';
-import { KYC_STATUS_WRITER } from '@blurifycom/core/contracts';
+import { definePlugin, EVENT_BUS, DRIZZLE, ADMIN_GUARD } from '@openora/core/server';
+import { KYC_STATUS_WRITER } from '@openora/core/contracts';
 import { PlayerService } from './service/player.service.js';
 import { PlayerKycStatusWriter } from './service/kyc-status-writer.js';
 import { createPlayerRouter } from './router/index.js';

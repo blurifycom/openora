@@ -1,5 +1,5 @@
-import { definePlugin, EVENT_BUS, DRIZZLE, ADMIN_GUARD } from '@blurifycom/core/server';
-import { CACHE } from '@blurifycom/core/contracts';
+import { definePlugin, EVENT_BUS, DRIZZLE, ADMIN_GUARD } from '@openora/core/server';
+import { CACHE } from '@openora/core/contracts';
 import { CmsService } from './service/cms.service.js';
 import { createCmsRouter } from './router/index.js';
 

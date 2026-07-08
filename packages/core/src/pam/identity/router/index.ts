@@ -6,7 +6,7 @@ import {
   getUserId,
   createEventStreamGenerator,
   type EventBus,
-} from '@blurifycom/core/server';
+} from '@openora/core/server';
 import { identityContract } from '../contract/index.js';
 import { IdentityService } from '../service/identity.service.js';
 import { SessionService } from '../service/session.service.js';
@@ -116,7 +116,7 @@ export function createIdentityRouter(
       }),
       revoke: os.sessions.revoke.handler(async ({ input, context }) => {
         const caller = await adminGuard.assert(context, 'sessions', 'revoke');
-        return sessionSvc.revokeSession(input.userId, input.token, caller.userId);
+        return sessionSvc.revokeSession(input.userId, input.id, caller.userId);
       }),
       revokeAll: os.sessions.revokeAll.handler(async ({ input, context }) => {
         const caller = await adminGuard.assert(context, 'sessions', 'revoke');

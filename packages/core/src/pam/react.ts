@@ -1,4 +1,4 @@
-// `@blurifycom/core/pam/react` - domain-owned hooks, keeping the base @blurifycom/core/react SDK domain-agnostic.
+// `@openora/core/pam/react` - domain-owned hooks, keeping the base @openora/core/react SDK domain-agnostic.
 export {
   useCurrentUser,
   useLogin,

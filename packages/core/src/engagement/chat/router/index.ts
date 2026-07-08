@@ -5,8 +5,8 @@ import {
   createEventStreamGenerator,
   getUserId,
   type OssContext,
-} from '@blurifycom/core/server';
-import type { RealtimeClientAuthorizer } from '@blurifycom/core/contracts';
+} from '@openora/core/server';
+import type { RealtimeClientAuthorizer } from '@openora/core/contracts';
 import { chatContract } from '../contract/index.js';
 import {
   ChatService,

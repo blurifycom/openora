@@ -1,21 +1,21 @@
 # System design
 
-The whole platform in one place: the single `@blurifycom/core` package, the seven domains, the contract spine, the
+The whole platform in one place: the single `@openora/core` package, the seven domains, the contract spine, the
 plugin host, the adapter ports, the three async seams, and how a downstream consumer
 overlays proprietary code. Generated from `docs/catalog.json` (17 modules,
 17 adapters, 26 events, 79 HTTP routes), `extensions.config.ts`, and the package graph.
 
 > **Packaging note (ADR-0025, 2026-06-16):** the foundation + engine + free domains
-> now ship as ONE published package, `@blurifycom/core`, with subpaths (`@blurifycom/core/contracts`,
-> `@blurifycom/core/react`, `@blurifycom/core/server`, `@blurifycom/core/compliance`, and per-module subpaths).
+> now ship as ONE published package, `@openora/core`, with subpaths (`@openora/core/contracts`,
+> `@openora/core/react`, `@openora/core/server`, `@openora/core/compliance`, and per-module subpaths).
 > The diagrams below show the LOGICAL module layout (contract spine, plugin host, adapters,
 > domains) which is unchanged - only the distribution unit collapsed. The diagram specifier
-> names (`@blurifycom/orpc-contract`, `@blurifycom/shared-schemas`, `@blurifycom/adapters`, `@blurifycom/db`, `@blurifycom/auth`,
-> `@blurifycom/api-runtime`, `@blurifycom/plugin-host`, `@blurifycom/react`) are now subpaths of `@blurifycom/core`.
-> Premium add-ons stay separate `@blurifycom-addons/*` packages.
+> names (`@openora/orpc-contract`, `@openora/shared-schemas`, `@openora/adapters`, `@openora/db`, `@openora/auth`,
+> `@openora/api-runtime`, `@openora/plugin-host`, `@openora/react`) are now subpaths of `@openora/core`.
+> Premium add-ons stay separate `@openora-addons/*` packages.
 
 For rationale see the [ADRs](./adr/) — especially [ADR-0025](./adr/0025-single-core-package-with-module-subpaths.md)
-(single `@blurifycom/core` package, supersedes ADR-0024 packaging), [ADR-0024](./adr/0024-domain-as-package-and-distribution-tiers.md)
+(single `@openora/core` package, supersedes ADR-0024 packaging), [ADR-0024](./adr/0024-domain-as-package-and-distribution-tiers.md)
 (domain-as-package + distribution, supersedes ADR-0022), [ADR-0021](./adr/0021-everything-is-an-add-on.md)
 (standalone add-ons), [ADR-0020](./adr/0020-editions-and-add-on-modules.md) (editions),
 [ADR-0014/0016/0017](./adr/) (seams, envelope, outbox). Consumer wiring: [downstream-consumer.md](./downstream-consumer.md).
@@ -40,7 +40,7 @@ flowchart TB
       DD["Dice Duel"]:::game
       GR["Gifts + Rain"]:::game
     end
-    subgraph T2VEND["Vendor adapters (implement @blurifycom/core/contracts ports)"]
+    subgraph T2VEND["Vendor adapters (implement @openora/core/contracts ports)"]
       FB["Fireblocks<br/>crypto wallet"]:::vend
       SS["Sumsub<br/>KYC"]:::vend
       EM["EveryMatrix<br/>casino aggregator"]:::vend
@@ -53,56 +53,56 @@ flowchart TB
   end
 
   %% ============ SDK ============
-  subgraph SDK["@blurifycom/core/react · headless SDK (browser)"]
+  subgraph SDK["@openora/core/react · headless SDK (browser)"]
     HOOKS["data hooks · auth · transport"]
     TC["typed oRPC client<br/>(zero codegen)"]
     OAPI["docs/openapi.json (emitted)"]
   end
 
-  %% ============ ENGINE (@blurifycom/core/server) ============
-  subgraph RT["@blurifycom/core/server · createApp() (node engine)"]
+  %% ============ ENGINE (@openora/core/server) ============
+  subgraph RT["@openora/core/server · createApp() (node engine)"]
     PH["plugin-host<br/>definePlugin · ModuleRegistry · applyServiceManifest"]
     DI["Container<br/>tokens to factories (last-wins overlay)"]
     HONO["Hono + oRPC OpenAPIHandler<br/>validation · OpenAPI emit"]
     GATE["editions: OSS_ADDONS allowlist<br/>SERVICE_MANIFEST module filter"]
   end
 
-  %% ============ CONTRACT SPINE (@blurifycom/core/contracts + /compliance) ============
-  subgraph SPINE["@blurifycom/core/contracts + /compliance (isomorphic)"]
+  %% ============ CONTRACT SPINE (@openora/core/contracts + /compliance) ============
+  subgraph SPINE["@openora/core/contracts + /compliance (isomorphic)"]
     ZOD["/contracts<br/>Zod schemas · events.ts · igaming-config"]
     OC["/contracts<br/>composeContract + health (no aggregation)"]
     ADP["/contracts<br/>adapter port tokens (createToken)"]
     CINV["/compliance<br/>sealed tokens + invariants"]
   end
 
-  %% ============ DOMAINS (separate packages, each deps @blurifycom/core) ============
-  subgraph D1["@blurifycom/core/server (engine) + admin/audit domains"]
-    AUDIT["audit ⟨audit_log⟩ · @blurifycom/audit"]:::core
-    IAM["iam ⟨roles·perms·invites⟩ · @blurifycom/iam"]:::core
-    ADMC["admin-console (read API via ports) · @blurifycom/admin-console"]:::core
-    DBPKG["@blurifycom/core/server: db (Drizzle · migrate)"]:::kern
-    AUTHPKG["@blurifycom/core/server: auth (better-auth)"]:::kern
+  %% ============ DOMAINS (separate packages, each deps @openora/core) ============
+  subgraph D1["@openora/core/server (engine) + admin/audit domains"]
+    AUDIT["audit ⟨audit_log⟩ · @openora/audit"]:::core
+    IAM["iam ⟨roles·perms·invites⟩ · @openora/iam"]:::core
+    ADMC["admin-console (read API via ports) · @openora/admin-console"]:::core
+    DBPKG["@openora/core/server: db (Drizzle · migrate)"]:::kern
+    AUTHPKG["@openora/core/server: auth (better-auth)"]:::kern
   end
-  subgraph D2["@blurifycom/pam · player account mgmt"]
+  subgraph D2["@openora/pam · player account mgmt"]
     IDENT["identity ⟨user·session·2fa⟩"]:::core
     PROF["profile ⟨player⟩"]:::core
     PM["player-management (PAM)"]:::gated
   end
-  subgraph DCOMP["@blurifycom/compliance · RG/KYC"]
+  subgraph DCOMP["@openora/compliance · RG/KYC"]
     COMP["compliance ⟨geo_rule·user_limit⟩"]:::core
   end
-  subgraph D3["@blurifycom/wallet · money"]
+  subgraph D3["@openora/wallet · money"]
     WAL["wallet ⟨wallet·wallet_transaction⟩"]:::core
   end
-  subgraph D4["@blurifycom/casino · games"]
+  subgraph D4["@openora/casino · games"]
     GAM["gaming ⟨Game·GameRound⟩"]:::core
     AGG["aggregator ⟨provider⟩"]:::gated
     LOB["lobby ⟨categories·featured⟩"]:::core
   end
-  subgraph D5["@blurifycom/sportsbook"]
+  subgraph D5["@openora/sportsbook"]
     SB["sportsbook ⟨event·selection·bet⟩"]:::gated
   end
-  subgraph D6["@blurifycom/engagement · CRM/social"]
+  subgraph D6["@openora/engagement · CRM/social"]
     CHAT["chat ⟨ChatRoom·ChatMessage⟩"]:::core
     NOT["notifications ⟨notification⟩"]:::core
     BON["bonus ⟨bonus·user_bonus⟩"]:::core
@@ -204,14 +204,14 @@ independently installable.
 flowchart LR
   subgraph SRC["Workspace packages (ONE published core + domains + premium addons)"]
     direction TB
-    CORE["@blurifycom/core — THE published package (ADR-0025)<br/>/contracts · /react · /server · /server/orm · /server/migrate · /compliance"]
-    DOM["domains (each deps @blurifycom/core): pam · compliance · wallet · casino · sportsbook · engagement · cms · iam · audit · admin-console"]
+    CORE["@openora/core — THE published package (ADR-0025)<br/>/contracts · /react · /server · /server/orm · /server/migrate · /compliance"]
+    DOM["domains (each deps @openora/core): pam · compliance · wallet · casino · sportsbook · engagement · cms · iam · audit · admin-console"]
     ADD["premium add-ons (separate repo + private registry; none in tree yet)"]
-    DEV["dev/tooling (not part of core): @blurifycom/mcp · @blurifycom/testing · @blurifycom/config"]
+    DEV["dev/tooling (not part of core): @openora/mcp · @openora/testing · @openora/config"]
   end
   REG[["Package Registry<br/>your-org/oss<br/>1 fixed version (Changesets)"]]
   subgraph CONS["Consumers"]
-    INST["install @blurifycom/core + chosen domains<br/>(eg core + @blurifycom/pam, or + premium addons)"]
+    INST["install @openora/core + chosen domains<br/>(eg core + @openora/pam, or + premium addons)"]
     BFLINK["local dev: link:oss + git skip-worktree"]
     T2X["Tier-2 overlays: games · vendor adapters · UI"]
   end
@@ -240,7 +240,7 @@ flowchart LR
     wal2["wallet"]; idn2["identity"]; gam2["gaming"]; cmp2["compliance"]
     agg2["aggregator"]; cht2["chat"]; sb2["sportsbook"]; iam2["iam"]; aud2["audit"]
   end
-  subgraph TOKENS["@blurifycom/core/contracts adapter tokens"]
+  subgraph TOKENS["@openora/core/contracts adapter tokens"]
     t1["PAYMENT_ADAPTER"]; t2["KYC_ADAPTER"]; t3["GAME_ADAPTER"]; t4["RNG_ADAPTER"]
     t5["GEO_IP_ADAPTER"]; t6["AGGREGATOR_ADAPTER"]; t7["REALTIME_TRANSPORT"]
     t8["SEND_EMAIL"]; t9["NOTIFICATION_DELIVERY_ADAPTER"]; t10["ADMIN_PERMISSION_RESOLVER"]; t11["AUDIT_WRITER"]
@@ -299,17 +299,17 @@ flowchart TB
 
 ## Reference — domain → modules → tables → routes
 
-| Domain                      | Modules (core / **gated**)                                           | Tables                                                                                                   | Routes |
-| --------------------------- | -------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------- | ------ |
-| `@blurifycom/iam`           | iam (admin roles · perms · invites)                                  | admin_role / admin_role_assignment / admin_role_permission / admin_invitation                            | 9      |
-| `@blurifycom/audit`         | audit (append-only log)                                              | audit_log                                                                                                | 2      |
-| `@blurifycom/admin-console` | backoffice read API (via pam + wallet ports)                         | (owns none - reads via ADMIN_USER_DIRECTORY + ADMIN_WALLET_REPORTING)                                    | 2      |
-| `@blurifycom/pam`           | identity · profile · **player-management**                           | user / session / account / twoFactor / verification, player                                              | 24     |
-| `@blurifycom/compliance`    | compliance (RG/KYC, sealed)                                          | geo_rule, user_limit                                                                                     | 4      |
-| `@blurifycom/wallet`        | wallet                                                               | wallet, wallet_transaction                                                                               | 4      |
-| `@blurifycom/casino`        | gaming · lobby · **aggregator**                                      | Game / GameRound, LobbyCategory / FeaturedSlot, aggregator_provider                                      | 12     |
-| `@blurifycom/sportsbook`    | **sportsbook**                                                       | SportsbookEvent / SportsbookSelection / SportsbookBet                                                    | 4      |
-| `@blurifycom/engagement`    | chat · notifications · bonus · cms · admin-console · **leaderboard** | ChatRoom / ChatMessage, notification, bonus / user_bonus, page / banner, leaderboard / leaderboard_entry | 18     |
+| Domain                   | Modules (core / **gated**)                                           | Tables                                                                                                   | Routes |
+| ------------------------ | -------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------- | ------ |
+| `@openora/iam`           | iam (admin roles · perms · invites)                                  | admin_role / admin_role_assignment / admin_role_permission / admin_invitation                            | 9      |
+| `@openora/audit`         | audit (append-only log)                                              | audit_log                                                                                                | 2      |
+| `@openora/admin-console` | backoffice read API (via pam + wallet ports)                         | (owns none - reads via ADMIN_USER_DIRECTORY + ADMIN_WALLET_REPORTING)                                    | 2      |
+| `@openora/pam`           | identity · profile · **player-management**                           | user / session / account / twoFactor / verification, player                                              | 24     |
+| `@openora/compliance`    | compliance (RG/KYC, sealed)                                          | geo_rule, user_limit                                                                                     | 4      |
+| `@openora/wallet`        | wallet                                                               | wallet, wallet_transaction                                                                               | 4      |
+| `@openora/casino`        | gaming · lobby · **aggregator**                                      | Game / GameRound, LobbyCategory / FeaturedSlot, aggregator_provider                                      | 12     |
+| `@openora/sportsbook`    | **sportsbook**                                                       | SportsbookEvent / SportsbookSelection / SportsbookBet                                                    | 4      |
+| `@openora/engagement`    | chat · notifications · bonus · cms · admin-console · **leaderboard** | ChatRoom / ChatMessage, notification, bonus / user_bonus, page / banner, leaderboard / leaderboard_entry | 18     |
 
 **bold** = gated add-on (`kind: 'addon'`, loads only when listed in `OSS_ADDONS`).
 
@@ -319,8 +319,8 @@ flowchart TB
 | --------------------------- | -------------------------------------------------------------- |
 | iam → identity              | `dependsOn` (load order)                                       |
 | sportsbook → wallet         | `WALLET_COMMANDS` synchronous command port (same `tx`, atomic) |
-| player-management → profile | read-only `@blurifycom/pam/schema/profile`                     |
-| lobby → gaming              | read-only `@blurifycom/casino/schema/gaming`                   |
+| player-management → profile | read-only `@openora/pam/schema/profile`                        |
+| lobby → gaming              | read-only `@openora/casino/schema/gaming`                      |
 | any → any                   | domain **events** via `EventBus` (24 topics) — never money     |
 
 15 adapter ports and 3 async seams (`MESSAGE_BROKER`, `JOB_QUEUE`, `REALTIME_TRANSPORT`) plus

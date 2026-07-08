@@ -1,12 +1,7 @@
 import { describe, it, expect, vi } from 'vitest';
 import { mock, mockDb, readPrivate } from '../../testing/mock.js';
-import * as core from '@blurifycom/core/server';
-import {
-  levelToActions,
-  actionsToLevel,
-  statement,
-  type ResourceName,
-} from '@blurifycom/core/server';
+import * as core from '@openora/core/server';
+import { levelToActions, actionsToLevel, statement, type ResourceName } from '@openora/core/server';
 import {
   IamService,
   DbAdminPermissionResolver,
@@ -33,11 +28,11 @@ vi.mock('drizzle-orm', async (importOriginal) => {
 });
 
 function makeEvents() {
-  return mock<import('@blurifycom/core/server').EventBus>({ emit: vi.fn(), on: vi.fn() });
+  return mock<import('@openora/core/server').EventBus>({ emit: vi.fn(), on: vi.fn() });
 }
 
 function makeEmail() {
-  return mock<import('@blurifycom/core/contracts').SendEmailPort>({
+  return mock<import('@openora/core/contracts').SendEmailPort>({
     send: vi.fn().mockResolvedValue(undefined),
   });
 }

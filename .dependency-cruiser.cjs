@@ -6,7 +6,7 @@
  * resolution (by design - see tools/lint/oxlint-boundaries-plugin.mjs). These rules
  * run against the RESOLVED dependency graph, so they also catch what the string
  * matcher cannot: transitive edges, re-export/barrel laundering, dynamic
- * `import()`, and relative paths that dodge the `@blurifycom/` specifier prefix.
+ * `import()`, and relative paths that dodge the `@openora/` specifier prefix.
  *
  * The layering mirrors AGENTS.md > Dependency rules. Keep the two enforcers in
  * sync: a rule added here should have a string-level twin in the oxlint plugin
@@ -15,7 +15,7 @@
  * @type {import('dependency-cruiser').IConfiguration}
  */
 
-// Package self-reference subpaths (@blurifycom/core/<domain>/...) resolve through the
+// Package self-reference subpaths (@openora/core/<domain>/...) resolve through the
 // exports map to dist/, which is excluded - without a paths mapping those edges are
 // INVISIBLE to the graph and every rule below silently skips them. Reuse the canonical
 // paths from packages/core/tsconfig.json (rebased onto the repo root, extends dropped -
@@ -56,7 +56,7 @@ module.exports = {
       name: 'no-contracts-to-runtime',
       severity: 'error',
       comment:
-        'The contracts zone (@blurifycom/core/contracts = packages/core/src/contracts) is isomorphic - it must not depend on the node engine (@blurifycom/core/server) or an add-on (a folded domain is covered by no-core-to-domain). It holds only composeContract/healthContract, base zod schemas, and ports/tokens. See AGENTS.md > Dependency rules and ADR-0021/0025.',
+        'The contracts zone (@openora/core/contracts = packages/core/src/contracts) is isomorphic - it must not depend on the node engine (@openora/core/server) or an add-on (a folded domain is covered by no-core-to-domain). It holds only composeContract/healthContract, base zod schemas, and ports/tokens. See AGENTS.md > Dependency rules and ADR-0021/0025.',
       from: { path: '^packages/core/src/contracts' },
       to: { path: '^(packages/core/src/server|packages/addons/)' },
     },
@@ -64,7 +64,7 @@ module.exports = {
       name: 'no-react-to-runtime',
       severity: 'error',
       comment:
-        'The react zone (@blurifycom/core/react = packages/core/src/react) is browser glue - it must not depend on the node engine (@blurifycom/core/server = packages/core/src/server). Importing it pulls Drizzle/Hono/node into the client bundle. Keep it domain-free + server-free. See ADR-0025.',
+        'The react zone (@openora/core/react = packages/core/src/react) is browser glue - it must not depend on the node engine (@openora/core/server = packages/core/src/server). Importing it pulls Drizzle/Hono/node into the client bundle. Keep it domain-free + server-free. See ADR-0025.',
       from: { path: '^packages/core/src/react' },
       to: { path: '^packages/core/src/server' },
     },
@@ -72,7 +72,7 @@ module.exports = {
       name: 'no-core-to-addon',
       severity: 'error',
       comment:
-        'The published core (@blurifycom/core = packages/core) must never depend on an add-on package (packages/addons/*). Add-on is wired in only by the composition roots under apps/* (extensions.config.ts + the editions contract merge) and the @blurifycom/testing harness. This keeps every add-on extractable. See ADR-0021/0025.',
+        'The published core (@openora/core = packages/core) must never depend on an add-on package (packages/addons/*). Add-on is wired in only by the composition roots under apps/* (extensions.config.ts + the editions contract merge) and the @openora/testing harness. This keeps every add-on extractable. See ADR-0021/0025.',
       from: { path: '^packages/core/' },
       to: { path: '^packages/addons/' },
     },
@@ -80,7 +80,7 @@ module.exports = {
       name: 'no-core-to-domain',
       severity: 'error',
       comment:
-        'The @blurifycom/core engine zones (contracts/server/react) must never depend on a folded domain (packages/core/src/<domain> = any core/src dir other than the engine zones). createApp is domain-agnostic (DI: the consumer injects PAM identity + the tenant resolver); demo seeding lives in @blurifycom/testing. Post-fold twin of the old packages/core -> packages/domains rule. See ADR-0024/0025.',
+        'The @openora/core engine zones (contracts/server/react) must never depend on a folded domain (packages/core/src/<domain> = any core/src dir other than the engine zones). createApp is domain-agnostic (DI: the consumer injects PAM identity + the tenant resolver); demo seeding lives in @openora/testing. Post-fold twin of the old packages/core -> packages/domains rule. See ADR-0024/0025.',
       from: { path: '^packages/core/src/(contracts|server|react)/' },
       to: { path: '^packages/core/src/(?!contracts/|server/|react/|scripts/)[^/]+/' },
     },

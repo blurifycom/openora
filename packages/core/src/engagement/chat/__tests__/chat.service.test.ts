@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { InProcessRealtimeTransport, type EventBus } from '@blurifycom/core/server';
+import { InProcessRealtimeTransport, type EventBus } from '@openora/core/server';
 import type { ChatMessage } from '../contract/index.js';
 import { mock, mockDb } from '../../../testing/mock.js';
 import {

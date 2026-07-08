@@ -3,7 +3,7 @@ name: create-plugin
 
 description: >
   Guided creation of an extension - the right way to add behavior or swap a vendor without
-  touching `@blurifycom/*` core. Interviews for intent, classifies the seam (plugin / adapter /
+  touching `@openora/*` core. Interviews for intent, classifies the seam (plugin / adapter /
   page / route), runs the matching scaffold command, wires extensions.config.ts, and enforces
   boundaries + audit + db rules. Use on "create plugin", "add an extension", "swap KYC/PSP",
   "mount a page", "/create-plugin <name>".
@@ -12,7 +12,7 @@ description: >
 # create-plugin
 
 The platform is extended from the **outside only** (overlay plugin / adapter rebind / UI page /
-config) - never by editing `@blurifycom/*`. This skill picks the correct seam and scaffolds it.
+config) - never by editing `@openora/*`. This skill picks the correct seam and scaffolds it.
 Domain questions go to `expert` first; review the result with `code-review`.
 
 ## 1. Classify the seam (ask if unclear)
@@ -52,7 +52,7 @@ plugins: [myCustomPspAdapter, walletModule];
 
 ## 4. Non-negotiables
 
-- **Boundaries**: import only package entrypoints (`@blurifycom/core`, not `.../src` or `.../dist`).
+- **Boundaries**: import only package entrypoints (`@openora/core`, not `.../src` or `.../dist`).
   No imports between extensions; cross-extension data goes through the oRPC client or a schema subpath.
 - **Tables**: live in the overlay's own `src/schema/index.ts`; follow `db-conventions` (snake_case,
   `timestamp({ withTimezone: true })`). Run `pnpm db:migrate` after.
@@ -68,5 +68,5 @@ plugins: [myCustomPspAdapter, walletModule];
 
 ## Rules
 
-- Extend from the outside; never edit `@blurifycom/*` or `node_modules`.
+- Extend from the outside; never edit `@openora/*` or `node_modules`.
 - One extension = one concern. Don't commit or push (that's `create-pr`).

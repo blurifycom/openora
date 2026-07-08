@@ -43,7 +43,7 @@ RG change history / activity log / CSV = the audit module: filter by `actionPref
 
 ### Cross-boundary login enforcement
 
-`LOGIN_ENFORCEMENT` (a non-sealed push port in `@blurifycom/core/contracts`) is owned +
+`LOGIN_ENFORCEMENT` (a non-sealed push port in `@openora/core/contracts`) is owned +
 bound by identity (`pam/identity/service/login-enforcement.service.ts`). `block` sets
 `user.rgBlocked` / `rgBlockedUntil` and revokes all sessions; `unblock` clears them.
 Compliance drives it through the port only - never the identity schema. The identity

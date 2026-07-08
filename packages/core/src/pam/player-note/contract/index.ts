@@ -1,6 +1,6 @@
 import { oc } from '@orpc/contract';
-import { UuidSchema, TimestampSchema } from '@blurifycom/core/contracts';
-import { PageQuerySchema, paginated } from '@blurifycom/core/contracts/kit';
+import { UuidSchema, TimestampSchema } from '@openora/core/contracts';
+import { PageQuerySchema, paginated } from '@openora/core/contracts/kit';
 import z from 'zod';
 
 export const PlayerNoteSchema = z.object({

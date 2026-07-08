@@ -12,7 +12,7 @@ the codebase anymore.
 Every multi-tenant table carries a `tenantId` column, but nothing enforced it. Tenant
 scoping relied on each service remembering to add `WHERE tenantId = ...` - a single
 missed filter is a cross-tenant data leak, the worst failure mode for an igaming
-operator hosting multiple brands. The `TenantContext` primitive (`@blurifycom/core`,
+operator hosting multiple brands. The `TenantContext` primitive (`@openora/core`,
 AsyncLocalStorage) existed but was unused per-request, and an unsafe `setTenantId`
 helper did a session-level `SET app.tenant_id` on a pooled connection - which leaks
 the tenant scope onto whatever request next borrows that connection.
@@ -102,7 +102,7 @@ scope. The unsafe session-level `setTenantId` was removed.
 the policy rejects any insert whose `tenantId` is not the active GUC. Services that
 create a row in a scoped table set its `tenantId` from the request tenant - either
 derived from a parent row already read under the same GUC (eg a wallet transaction
-takes its wallet's tenantId), or read directly via `getCurrentTenantId()` (`@blurifycom/core`,
+takes its wallet's tenantId), or read directly via `getCurrentTenantId()` (`@openora/core`,
 the ALS accessor that mirrors `getCurrentTenant()` and returns the same value
 `runWithTenant` pinned as the GUC). The earlier placeholders (`tenantId: ''`,
 `'default'`, or an omitted column) are rejected by `WITH CHECK` on the enforced role,
@@ -126,7 +126,7 @@ current_user`) and logs a loud warning if it is a superuser or BYPASSRLS - becau
   `x-user-id` request header to identify that user, so a forged header resolved another
   tenant - RLS inherited that hole. ADR-0019 closed it: the caller is now resolved from
   the VERIFIED better-auth session cookie once per request (a shared `SessionResolver`
-  in `@blurifycom/auth`), the verified userId is published onto the oRPC context, and
+  in `@openora/auth`), the verified userId is published onto the oRPC context, and
   `tenant-resolver.ts` maps that verified userId to its tenant before `runWithTenant`
   pins the GUC. `getUserId`/`getTenantId` read the verified context field, never a
   header; a request with no valid session sets no GUC and is fail-closed (zero rows).
@@ -137,7 +137,7 @@ current_user`) and logs a loud warning if it is a superuser or BYPASSRLS - becau
   workers, the outbox relay, scheduled tasks) has no tenant GUC and so the app role sees
   zero rows (fail-closed). A per-tenant worker MUST wrap its work in
   `runWithTenant(envelope.tenantId, () => ...)`; legitimately cross-tenant system code
-  uses `adminDb` (BYPASSRLS). See `@blurifycom/db` AGENTS.md.
+  uses `adminDb` (BYPASSRLS). See `@openora/db` AGENTS.md.
 - **Outbox / GUC agreement (W4).** The EventBus lifts the envelope `tenantId` from the
   same tenant ALS that `create-app` uses to set the GUC, so a transactional-outbox write
   (`emitInTransaction`) can never stamp a `tenantId` that differs from the active GUC -
@@ -165,7 +165,7 @@ current_user`) and logs a loud warning if it is a superuser or BYPASSRLS - becau
 Tenant is resolved from the verified user, so a PRE-authentication request has no tenant
 context and fail-closes to zero rows on every scoped table. Two pre-auth paths need
 data anyway: the anonymous public game lobby and self-registration. Both use a single
-server-side constant, `DEFAULT_TENANT_ID = 'default'` (`@blurifycom/shared-schemas`), matching
+server-side constant, `DEFAULT_TENANT_ID = 'default'` (`@openora/shared-schemas`), matching
 the existing convention (scoped tables default `tenantId` to `'default'`; the seed's
 `DEMO_TENANT_ID` now points at this constant - one source of truth).
 
@@ -197,11 +197,11 @@ resolving the pre-auth tenant from host/brand - a documented extension seam, not
 - App-layer reconciliation: tenant-scoped inserts stamp the request tenant
   (`getCurrentTenantId()` in wallet / compliance / notifications / gaming /
   player-management / chat / aggregator; parent-row tenant in bonus / sportsbook /
-  leaderboard / chat-room). Added `getCurrentTenantId()` to `@blurifycom/core`.
+  leaderboard / chat-room). Added `getCurrentTenantId()` to `@openora/core`.
 - Seed: `seedDemoData` stamps `DEMO_TENANT_ID` (`'default'`) on every scoped row AND on
   the seeded `user.tenantId`, so login resolves the demo tenant and the player sees the
   seeded data under RLS.
-- Guards: boot-time role probe in `DrizzleService` (W2); a `@blurifycom/db` unit test
+- Guards: boot-time role probe in `DrizzleService` (W2); a `@openora/db` unit test
   (`rls-policy-coverage.test.ts`, I3) enumerates every `pgTable` with a `tenantId` column
   and asserts a matching ENABLE+FORCE+policy in the migrations SQL (the `user` table is an
   explicit, documented exemption). `drizzle.config.ts` migrate URL prefers
@@ -210,7 +210,7 @@ resolving the pre-auth tenant from host/brand - a documented extension seam, not
   `DrizzleService` (`drizzle.service.ts`) two pools + `db` proxy + `runWithTenant`.
 - Removed unsafe `setTenantId` (`drizzle.ts`).
 - Wiring: `create-app.ts` middleware + `tenant-resolver.ts`; `user.tenantId` column.
-- System paths: outbox relay uses `adminDb`; seed (`tools/seed.ts`, `@blurifycom/testing`)
+- System paths: outbox relay uses `adminDb`; seed (`tools/seed.ts`, `@openora/testing`)
   uses the admin/BYPASSRLS path.
 - Tests: unit `tenant-connection.test.ts` (leak/reset/isolation), integration
   `apps/api/test/integration/rls-tenant-isolation.integration.test.ts` (cross-tenant

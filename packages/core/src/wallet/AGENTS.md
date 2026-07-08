@@ -4,7 +4,7 @@
 
 Manages user balances, deposits, and withdrawals. Ships with `MockPaymentAdapter` as the default `PAYMENT_ADAPTER` binding - a synthetic PSP that returns `{ externalId, status: 'completed' }`. Emits domain events on completed transactions. Every user gets one wallet per system; money columns are Drizzle `decimal(...)` (strings in TS) to avoid floating-point drift - read with `Number(record.balance)`, write as a string (e.g. `'0'`).
 
-Withdrawals run through a back-office approval queue (ABC-210): a player `withdraw` HOLDS funds (balance debited at request time) and creates a `pending` transaction. A Payments Manager approves (status -> `processing`, sent to the PSP/Fireblocks rail) or rejects with a mandatory reason (status -> `rejected`, held funds returned). Status lifecycle: `pending` -> `processing` -> `completed`; reject -> `rejected`. Rail is derived from the currency (`BTC`/`ETH`/`USDT` -> `fireblocks`, else `psp`).
+Withdrawals run through a back-office approval queue: a player `withdraw` HOLDS funds (balance debited at request time) and creates a `pending` transaction. A Payments Manager approves (status -> `processing`, sent to the PSP/Fireblocks rail) or rejects with a mandatory reason (status -> `rejected`, held funds returned). Status lifecycle: `pending` -> `processing` -> `completed`; reject -> `rejected`. Rail is derived from the currency (`BTC`/`ETH`/`USDT` -> `fireblocks`, else `psp`).
 
 ## Routes
 
@@ -26,7 +26,7 @@ Player routes require an authenticated caller (verified better-auth session via 
 
 KYC withdrawal gate: when `platformConfig.kyc.gateWithdrawals` is true, `withdraw()` fails closed unless the player's KYC status is in the pass-set (`verified` or `manually_overridden`), throwing `KycRequiredError` (maps to CONFLICT). The status is read through the existing `ADMIN_USER_DIRECTORY.lookupPlayers` port - no new cross-domain coupling. Off by default.
 
-Auto-withdrawal (ABC-214): after the hold commits, `withdraw()` runs a strictly fail-closed evaluator (`maybeAutoApprove`) that decides WHO approves the withdrawal - the system or the manual queue - never whether the request itself succeeds. It NEVER throws out of `withdraw()`; any error or ambiguous branch leaves the row `pending`. On eligibility it reuses `flipToProcessing`/`settleApproved` directly (the same two-phase sequence the manual approve uses: `processing` commit -> PSP call outside the tx -> `completed`, or refund on PSP failure), with `reviewedBy = null` and `reviewReason = 'auto-approved'` as the system-actor marker. Only the daily-cap check runs under the per-user advisory lock (atomic with the `processing` flip); threshold/KYC/risk/velocity gates run before the lock. All gates must hold: `platformConfig.autoWithdrawal.enabled`; rail is `fiat` (crypto is a hard stop - irreversible + Travel-Rule/AML, never auto-approved and never even KYC/risk-resolved); a resolved positive threshold (per-player `auto_withdrawal_rule` wins over the global `autoWithdrawal.fiatThreshold`) with `amount <= threshold`; KYC status in the pass-set INDEPENDENT of `kyc.gateWithdrawals` (missing directory/summary => pending); no active tag intersecting `autoWithdrawal.excludeRiskFlags` (resolved via the `PLAYER_TAGS` port - unbound while flags are configured => pending); no `large_amount`/`high_frequency` heuristic; and the trailing-24h auto-approved `dailyCapAmount`/`dailyCapCount` not exceeded. Every auto-approval writes an `AUDIT_WRITER` entry (`actorType: 'system'`, `action: 'wallet.withdrawal.auto_approved'`) capturing the full rationale (threshold + source, KYC status, risk tags evaluated, caps used) BEFORE the PSP call, so the AML/SAR trail survives a PSP failure. Rule set/delete write `wallet.auto_withdrawal_rule.set`/`.deleted` admin audit entries. Off by default.
+Auto-withdrawal: after the hold commits, `withdraw()` runs a strictly fail-closed evaluator (`maybeAutoApprove`) that decides WHO approves the withdrawal - the system or the manual queue - never whether the request itself succeeds. It NEVER throws out of `withdraw()`; any error or ambiguous branch leaves the row `pending`. On eligibility it reuses `flipToProcessing`/`settleApproved` directly (the same two-phase sequence the manual approve uses: `processing` commit -> PSP call outside the tx -> `completed`, or refund on PSP failure), with `reviewedBy = null` and `reviewReason = 'auto-approved'` as the system-actor marker. Only the daily-cap check runs under the per-user advisory lock (atomic with the `processing` flip); threshold/KYC/risk/velocity gates run before the lock. All gates must hold: `platformConfig.autoWithdrawal.enabled`; rail is `fiat` (crypto is a hard stop - irreversible + Travel-Rule/AML, never auto-approved and never even KYC/risk-resolved); a resolved positive threshold (per-player `auto_withdrawal_rule` wins over the global `autoWithdrawal.fiatThreshold`) with `amount <= threshold`; KYC status in the pass-set INDEPENDENT of `kyc.gateWithdrawals` (missing directory/summary => pending); no active tag intersecting `autoWithdrawal.excludeRiskFlags` (resolved via the `PLAYER_TAGS` port - unbound while flags are configured => pending); no `large_amount`/`high_frequency` heuristic; and the trailing-24h auto-approved `dailyCapAmount`/`dailyCapCount` not exceeded. Every auto-approval writes an `AUDIT_WRITER` entry (`actorType: 'system'`, `action: 'wallet.withdrawal.auto_approved'`) capturing the full rationale (threshold + source, KYC status, risk tags evaluated, caps used) BEFORE the PSP call, so the AML/SAR trail survives a PSP failure. Rule set/delete write `wallet.auto_withdrawal_rule.set`/`.deleted` admin audit entries. Off by default.
 
 Client-supplied idempotency: `deposit` and `withdraw` accept an optional `idempotencyKey` (uuid). `wallet_transaction.idempotency_key` carries a partial unique index scoped to `(wallet_id, idempotency_key)` - a wallet is 1:1 with its user, so this is equivalent to scoping on userId. A matching key returns the ORIGINAL stored transaction (same response shape, no second insert, no re-emitted domain event) - a REUSED key with a DIFFERENT amount is rejected as `IdempotencyKeyReuseError` (CONFLICT) instead of silently replaying the wrong result. The insert uses `onConflictDoNothing()` (unqualified - the table's only unique index is the partial idempotency one); a concurrent race on the index makes the loser's insert a no-op (never aborts the transaction) and it re-reads the winner's already-committed row instead of erroring. No key = unchanged behavior (plain insert, no dedup).
 
@@ -36,7 +36,7 @@ Rate limiting: `deposit` and `withdraw` consume a per-user budget (30/min, keyed
 
 ## Extension points
 
-- **Ports**: `PaymentAdapter` lives in `@blurifycom/adapters` and is passed into `WalletService` (the constructor takes a `PaymentAdapter`; `plugin.ts` resolves `PAYMENT_ADAPTER` from the container). The default binding is `MockPaymentAdapter` (bound in `src/plugin.ts`). Implement it for a real PSP and override the binding via an overlay plugin.
+- **Ports**: `PaymentAdapter` lives in `@openora/core/contracts` and is passed into `WalletService` (the constructor takes a `PaymentAdapter`; `plugin.ts` resolves `PAYMENT_ADAPTER` from the container). The default binding is `MockPaymentAdapter` (bound in `src/plugin.ts`). Implement it for a real PSP and override the binding via an overlay plugin.
 - **Events emitted**:
   - `wallet.deposit.completed` - `{ userId, amount, currency, transactionId }`
   - `wallet.withdrawal.requested` - `{ userId, amount, currency, transactionId }` (player held funds, status `pending`)
@@ -52,7 +52,7 @@ Rate limiting: `deposit` and `withdraw` consume a per-user budget (30/min, keyed
 
 ## Ports
 
-`PaymentAdapter` (symbol `PAYMENT_ADAPTER`) - the swap seam for a real PSP. `WalletService` injects it and calls it on every money movement: `deposit()` calls `processDeposit(amount, currency, metadata)` BEFORE crediting the balance, and `withdraw()` calls `processWithdrawal(...)` after the balance check and before debiting. The returned `externalId` is stored in the transaction's `metadata` column (JSON, alongside `provider`). The default binding is `MockPaymentAdapter` (returns `{ externalId, status: 'completed' }`).
+`PaymentAdapter` (symbol `PAYMENT_ADAPTER`, from `@openora/core/contracts`) - the swap seam for a real PSP. `WalletService` injects it and calls it on every money movement: `deposit()` calls `processDeposit(amount, currency, metadata)` BEFORE crediting the balance, and `withdraw()` calls `processWithdrawal(...)` after the balance check and before debiting. The returned `externalId` is stored in the transaction's `metadata` column (JSON, alongside `provider`). The default binding is `MockPaymentAdapter` (returns `{ externalId, status: 'completed' }`).
 
 To use a real PSP, implement `PaymentAdapter` under `adapters/<vendor>/` and bind it in an overlay plugin that loads AFTER the wallet module in `extensions.config.ts` - last registration to the `PAYMENT_ADAPTER` token wins, so the overlay's binding overrides `MockPaymentAdapter` with no fork:
 
@@ -62,7 +62,7 @@ ctx.provide(PAYMENT_ADAPTER, () => new StripePaymentAdapter());
 
 ## Do
 
-- Add business logic to `service/wallet.service.ts` (inject `DrizzleService` from `@blurifycom/db`; query via `this.drizzle.db.select().from(wallet).where(eq(...))`)
+- Add business logic to `service/wallet.service.ts` (inject `DrizzleService` from `@openora/core/server`; query via `this.drizzle.db.select().from(wallet).where(eq(...))`)
 - Add or edit `pgTable` defs in `src/schema/index.ts`, then run `pnpm regen`
 - Implement `PaymentAdapter` in `adapters/<vendor>/` for real payment processing
 - Emit cross-module events via `EventBus` - never import other modules directly
@@ -71,7 +71,7 @@ ctx.provide(PAYMENT_ADAPTER, () => new StripePaymentAdapter());
 
 - Import from other modules directly
 - Throw framework HTTP errors from services - throw domain errors instead
-- Edit the generated migrations under `packages/core/drizzle/` by hand - the source of truth is `src/schema/index.ts`
+- Edit the generated migrations under the module's `drizzle/migrations/` by hand - the source of truth is `src/schema/index.ts`
 - Use floating-point for money calculations - money columns are `decimal(...)` (strings); read with `Number(record.balance)`, write as a string
 - Add inline Zod schemas in the router - all schemas live in `schemas/` or the contract
 
@@ -79,6 +79,6 @@ ctx.provide(PAYMENT_ADAPTER, () => new StripePaymentAdapter());
 
 - `pnpm verify` passes (typecheck + lint + boundaries + module-shape + tests).
 - `list-routes module=wallet` shows the new/changed route(s) (e.g. `wallet.deposit`).
-- No `boundaries/dependencies` lint errors (no cross-add-on code imports; read other add-ons' tables only via the `@blurifycom-addons/<name>/schema` subpath).
+- No `boundaries/dependencies` lint errors (no cross-module code imports; read other domains' tables only via the `@openora/core/<domain>/schema` subpath).
 - If you changed the `PaymentAdapter` contract, `pnpm regen` then check `docs/catalog.json` shows the `PAYMENT_ADAPTER` seam still wired.
 - New tables: added to `src/schema/index.ts`, `pnpm regen` run, migration committed.

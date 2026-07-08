@@ -1,6 +1,6 @@
 import { oc } from '@orpc/contract';
 import * as z from 'zod';
-import { CurrencyCodeSchema, IdInputSchema, UuidSchema } from '@blurifycom/core/contracts';
+import { CurrencyCodeSchema, IdInputSchema, UuidSchema } from '@openora/core/contracts';
 
 export const GAME_ROUND_STATUSES = ['active', 'completed', 'cancelled'] as const;
 export const GameRoundStatusSchema = z.enum(GAME_ROUND_STATUSES);

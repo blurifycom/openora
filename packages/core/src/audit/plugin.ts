@@ -1,5 +1,5 @@
-import { definePlugin, EVENT_BUS, DRIZZLE, ADMIN_GUARD } from '@blurifycom/core/server';
-import { AUDIT_WRITER, type DomainEventName } from '@blurifycom/core/contracts';
+import { definePlugin, EVENT_BUS, DRIZZLE, ADMIN_GUARD } from '@openora/core/server';
+import { AUDIT_WRITER, type DomainEventName } from '@openora/core/contracts';
 import { AuditService, type RecordInput } from './service/audit.service.js';
 import { createAuditRouter } from './router/index.js';
 
@@ -195,7 +195,7 @@ function mapEventToRecord(topic: string, p: Record<string, unknown>): RecordInpu
       actorType: isForced ? 'admin' : 'player',
       actorId,
       resourceType: isSingle ? 'session' : 'user',
-      resourceId: isSingle ? str(p['sessionToken']) : str(p['userId']),
+      resourceId: isSingle ? str(p['sessionId']) : str(p['userId']),
     };
   }
 
@@ -359,7 +359,7 @@ export default definePlugin({
     // so svcRef is null at registration but set before any real event arrives.
     let svcRef: AuditService | null = null;
 
-    ctx.provide(AUDIT_WRITER, (c) => {
+    ctx.provideSealed(AUDIT_WRITER, (c) => {
       const svc = new AuditService(c.get(DRIZZLE), c.get(EVENT_BUS));
       return {
         record: (entry) => svc.record(entry).then(() => undefined),

@@ -6,8 +6,8 @@ import type {
   AdminUserRow,
   AdminWalletReporting,
   UserRole,
-} from '@blurifycom/core/contracts';
-import { makeNotFoundError } from '@blurifycom/core/server';
+} from '@openora/core/contracts';
+import { makeNotFoundError } from '@openora/core/server';
 import type { TransactionFilter } from '../contract/index.js';
 
 export const UserNotFoundError = makeNotFoundError('User');

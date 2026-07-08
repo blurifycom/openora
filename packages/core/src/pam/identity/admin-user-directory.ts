@@ -1,13 +1,13 @@
-import type { AdminUserDirectory, AdminUserListOptions } from '@blurifycom/core/contracts';
-import { KycStatusSchema, UserRoleSchema } from '@blurifycom/core/contracts';
-import { DrizzleService, pageToOffset } from '@blurifycom/core/server';
-import type { EventBus } from '@blurifycom/core/server';
+import type { AdminUserDirectory, AdminUserListOptions } from '@openora/core/contracts';
+import { KycStatusSchema, UserRoleSchema } from '@openora/core/contracts';
+import { DrizzleService, pageToOffset } from '@openora/core/server';
+import type { EventBus } from '@openora/core/server';
 import { count, desc, eq, ilike, inArray } from 'drizzle-orm';
 import { user } from './schema/index.js';
 // Read-only cross-domain read of the player/profile table via the public /schema
 // subpath (allowed per ADR-0020) so back-office lists can label players by
 // username + KYC without leaking the schema to the consumer module.
-import { player } from '@blurifycom/core/pam/schema/profile';
+import { player } from '@openora/core/pam/schema/profile';
 
 // Identity owns the `user` table, so it owns the admin directory port.
 // admin-console depends only on ADMIN_USER_DIRECTORY - never on this schema. See ADR-0017/0025.

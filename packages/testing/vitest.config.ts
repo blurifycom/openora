@@ -2,7 +2,7 @@ import { defineConfig } from 'vitest/config';
 
 // Every suite here boots the real app (bootTestApp) against a real Postgres test db,
 // so all suites share one database and cannot run in parallel (see AGENTS.md).
-// Requires `pnpm build` on @blurifycom/core first (loadExtensions() resolves compiled
+// Requires `pnpm build` on @openora/core first (loadExtensions() resolves compiled
 // dist/**/plugin.js).
 export default defineConfig({
   test: {

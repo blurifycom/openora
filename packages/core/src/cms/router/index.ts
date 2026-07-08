@@ -1,5 +1,5 @@
 import { implement } from '@orpc/server';
-import { AdminGuard, mapErrors, type OssContext } from '@blurifycom/core/server';
+import { AdminGuard, mapErrors, type OssContext } from '@openora/core/server';
 import { cmsContract } from '../contract/index.js';
 import { CmsService, PageNotFoundError, BannerNotFoundError } from '../service/cms.service.js';
 

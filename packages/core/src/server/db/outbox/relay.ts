@@ -1,4 +1,4 @@
-import type { MessageBrokerAdapter, EventEnvelope } from '@blurifycom/core/contracts';
+import type { MessageBrokerAdapter, EventEnvelope } from '@openora/core/contracts';
 import { asc, eq, isNull } from 'drizzle-orm';
 import { eventOutbox } from './schema.js';
 import type { DrizzleDb } from '../drizzle.js';

@@ -1,6 +1,6 @@
 import { eq } from 'drizzle-orm';
-import type { DrizzleService } from '@blurifycom/core/server';
-import type { Player, User } from '@blurifycom/core/contracts';
+import type { DrizzleService } from '@openora/core/server';
+import type { Player, User } from '@openora/core/contracts';
 import { player } from '../profile/schema/index.js';
 import { user } from '../identity/schema/index.js';
 

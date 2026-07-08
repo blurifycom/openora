@@ -2,28 +2,28 @@
 // Applies every migration set in the build. Each set tracks its applied migrations in its own
 // table (__drizzle_migrations_<id>) so they never collide while sharing one database. Uses the
 // runtime migrator (drizzle-orm), NOT drizzle-kit migrate (crashes on Node >=26). Requires
-// @blurifycom/core to be built and DATABASE_ADMIN_URL or DATABASE_URL set. See ADR-0020/0025/0027.
+// @openora/core to be built and DATABASE_ADMIN_URL or DATABASE_URL set. See ADR-0020/0025/0027.
 
 // No FK crosses a module boundary, so order is not load-bearing; engine first, then core, then gated.
 const sets = [
-  ['engine outbox', '@blurifycom/core/server/migrate'],
-  ['audit', '@blurifycom/core/audit/migrate'],
-  ['iam', '@blurifycom/core/iam/migrate'],
-  ['identity', '@blurifycom/core/pam/migrate/identity'],
-  ['tag', '@blurifycom/core/pam/migrate/tag'],
-  ['player-note', '@blurifycom/core/pam/migrate/player-note'],
-  ['profile', '@blurifycom/core/pam/migrate/profile'],
-  ['wallet', '@blurifycom/core/wallet/migrate'],
-  ['gaming', '@blurifycom/core/casino/migrate/gaming'],
-  ['lobby', '@blurifycom/core/casino/migrate/lobby'],
-  ['chat', '@blurifycom/core/engagement/migrate/chat'],
-  ['bonus', '@blurifycom/core/engagement/migrate/bonus'],
-  ['notifications', '@blurifycom/core/engagement/migrate/notifications'],
-  ['compliance', '@blurifycom/core/compliance/migrate'],
-  ['cms', '@blurifycom/core/cms/migrate'],
-  ['sportsbook (gated)', '@blurifycom/core/sportsbook/migrate'],
-  ['aggregator (gated)', '@blurifycom/core/casino/migrate'],
-  ['leaderboard (gated)', '@blurifycom/core/engagement/migrate'],
+  ['engine outbox', '@openora/core/server/migrate'],
+  ['audit', '@openora/core/audit/migrate'],
+  ['iam', '@openora/core/iam/migrate'],
+  ['identity', '@openora/core/pam/migrate/identity'],
+  ['tag', '@openora/core/pam/migrate/tag'],
+  ['player-note', '@openora/core/pam/migrate/player-note'],
+  ['profile', '@openora/core/pam/migrate/profile'],
+  ['wallet', '@openora/core/wallet/migrate'],
+  ['gaming', '@openora/core/casino/migrate/gaming'],
+  ['lobby', '@openora/core/casino/migrate/lobby'],
+  ['chat', '@openora/core/engagement/migrate/chat'],
+  ['bonus', '@openora/core/engagement/migrate/bonus'],
+  ['notifications', '@openora/core/engagement/migrate/notifications'],
+  ['compliance', '@openora/core/compliance/migrate'],
+  ['cms', '@openora/core/cms/migrate'],
+  ['sportsbook (gated)', '@openora/core/sportsbook/migrate'],
+  ['aggregator (gated)', '@openora/core/casino/migrate'],
+  ['leaderboard (gated)', '@openora/core/engagement/migrate'],
 ];
 
 for (const [label, specifier] of sets) {

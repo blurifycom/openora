@@ -1,13 +1,13 @@
-# @blurifycom/mcp
+# @openora/mcp
 
 Consumer-facing MCP server for the OSS igaming platform. It exposes the generated
 platform catalog (`docs/catalog.json`) as read-only MCP tools so an AI agent
-working in a downstream consumer repo (one that installs the `@blurifycom/*` packages,
+working in a downstream consumer repo (one that installs the `@openora/*` packages,
 not the source tree) can discover what it can extend: modules, adapter swap-seams,
 events, UI slots, contract schemas, and config fields.
 
 This is the consumer analog of the contributor dev server (`apps/mcp-server-dev`),
-which reads the live source tree. `@blurifycom/mcp` instead reads the catalog snapshot
+which reads the live source tree. `@openora/mcp` instead reads the catalog snapshot
 shipped in the published package, or a catalog you point it at.
 
 ## Tools
@@ -32,7 +32,7 @@ The server locates `catalog.json` at runtime (it never imports the JSON) in this
 order:
 
 1. `OSS_CATALOG` env var (absolute path), if set.
-2. `<cwd>/docs/catalog.json`, then `<cwd>/node_modules/@blurifycom/mcp/docs/catalog.json`,
+2. `<cwd>/docs/catalog.json`, then `<cwd>/node_modules/@openora/mcp/docs/catalog.json`,
    then walking up from `cwd` for a `docs/catalog.json`.
 3. The package's own bundled snapshot (shipped in `docs/catalog.json`).
 
@@ -44,9 +44,9 @@ order:
     "oss": {
       "type": "stdio",
       "command": "npx",
-      "args": ["@blurifycom/mcp"],
+      "args": ["@openora/mcp"],
       "env": {
-        "OSS_CATALOG": "./node_modules/@blurifycom/mcp/docs/catalog.json",
+        "OSS_CATALOG": "./node_modules/@openora/mcp/docs/catalog.json",
       },
     },
   },
@@ -56,5 +56,5 @@ order:
 ## Keeping the catalog current
 
 The catalog is regenerated upstream in the platform repo via `pnpm regen`
-(which runs `tools/gen/gen-catalog.ts`). A new `@blurifycom/mcp` release ships the updated
+(which runs `tools/gen/gen-catalog.ts`). A new `@openora/mcp` release ships the updated
 snapshot; pin `OSS_CATALOG` to a freshly generated file to override it locally.

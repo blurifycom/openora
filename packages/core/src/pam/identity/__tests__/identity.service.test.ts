@@ -1,7 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { IdentityService } from '../service/identity.service.js';
 import { UnsupportedLanguageError } from '../../shared/language.js';
-import type { SendEmailPort } from '@blurifycom/core/contracts';
+import type { SendEmailPort } from '@openora/core/contracts';
 import { ORPCError } from '@orpc/server';
 
 const { signInEmailMock, getSessionMock, updateUserMock } = vi.hoisted(() => ({
@@ -10,7 +10,7 @@ const { signInEmailMock, getSessionMock, updateUserMock } = vi.hoisted(() => ({
   updateUserMock: vi.fn(),
 }));
 
-vi.mock('@blurifycom/core/server', async (importOriginal) => ({
+vi.mock('@openora/core/server', async (importOriginal) => ({
   ...(await importOriginal<object>()),
   createAuth: vi.fn(() => ({
     api: {

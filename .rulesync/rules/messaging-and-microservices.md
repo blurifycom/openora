@@ -61,7 +61,7 @@ Because the envelope isolates transport from domain logic, binding a durable bro
 
 ## Deployable topology - the service manifest (ADR-0017)
 
-`SERVICE_MANIFEST` (comma-separated module ids) selects which modules a process loads; unset = all (monolith). Infra overlays (`kind: 'infra'` in `extensions.config.ts`) always load; filtering lives in `applyServiceManifest` (`@blurifycom/core/server`).
+`SERVICE_MANIFEST` (comma-separated module ids) selects which modules a process loads; unset = all (monolith). Infra overlays (`kind: 'infra'` in `extensions.config.ts`) always load; filtering lives in `applyServiceManifest` (`@openora/core/server`).
 
 - Run a subset: `SERVICE_MANIFEST=identity,wallet <your-app-dev-cmd>`.
 - Scaffold a thin host: `pnpm create:service <name> <modules>` -> `apps/<name>/` baking the manifest, reusing the root `extensions.config.ts`.

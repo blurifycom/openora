@@ -12,7 +12,7 @@
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
-    "@blurifycom/core": "alpha"
+    "@openora/core": "alpha"
   },
   "devDependencies": {
     "tsx": "4.22.2",

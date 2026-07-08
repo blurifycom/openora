@@ -1,5 +1,5 @@
 import type { Container, Factory } from '../kernel/index.js';
-import type { Token, WorkerRegistration } from '@blurifycom/core/contracts';
+import type { SealedToken, Token, WorkerRegistration } from '@openora/core/contracts';
 
 export type McpToolDefinition = {
   name: string;
@@ -16,6 +16,10 @@ export type EventHandler = (payload: unknown) => void | Promise<void>;
 export type ModuleRegistry = {
   // Last registration wins - an overlay loaded after a module can rebind its adapter token.
   provide<T>(token: Token<T>, factory: Factory<T>): void;
+  // Bind-once, owner-only. The ONLY legitimate way to bind a SealedToken - provide()
+  // rejects sealed tokens outright. A second call for the same token (an overlay
+  // trying to override a regulator-mandated service) throws instead of rebinding.
+  provideSealed<T>(token: SealedToken<T>, factory: Factory<T>): void;
   routers: {
     add(namespace: string, factory: RouterFactory): void;
     getAll(): Map<string, RouterFactory>;

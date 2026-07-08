@@ -1,6 +1,6 @@
 import { describe, it, expect, vi } from 'vitest';
-import type { DrizzleService } from '@blurifycom/core/server';
-import type { LoginEnforcementPort } from '@blurifycom/core/contracts';
+import type { DrizzleService } from '@openora/core/server';
+import type { LoginEnforcementPort } from '@openora/core/contracts';
 import { mock, mockDb } from '../../testing/mock.js';
 import { userLimit, rgExclusion } from '../schema/index.js';
 import {

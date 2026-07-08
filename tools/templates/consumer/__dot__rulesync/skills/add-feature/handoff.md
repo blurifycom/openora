@@ -1,12 +1,12 @@
 # OSS core handoff
 
-When an `add-feature` work item can only be fixed in `@blurifycom/*` core, this consumer repo cannot
+When an `add-feature` work item can only be fixed in `@openora/*` core, this consumer repo cannot
 edit it (the `guard-core.mjs` hook and `permissions.deny` block the linked OSS checkout). Hand off to
 the platform-core twin skill instead of fighting the guard.
 
 ## When to hand off
 
-- The fix requires changing a contract, schema, service, router, or platform seam in `@blurifycom/*`.
+- The fix requires changing a contract, schema, service, router, or platform seam in `@openora/*`.
 - An overlay plugin / adapter swap / UI provider override / config change genuinely cannot
   express the behavior.
 - Default bias: try to extend from the outside first. Only hand off when you've confirmed the
@@ -43,7 +43,7 @@ consumer feature <ticket-key> - <which downstream slice depends on this>
 
 ## Dependency
 
-consumer MR <url-or-TBD> stays in draft until this merges and a new @blurifycom/core/\* version is consumed.
+consumer MR <url-or-TBD> stays in draft until this merges and a new @openora/core/\* version is consumed.
 ```
 
 ## Protocol
@@ -53,6 +53,6 @@ consumer MR <url-or-TBD> stays in draft until this merges and a new @blurifycom/
 2. The user runs `/add-feature` inside the platform OSS repo (separate cwd/session). It reads
    the work-order, implements, and opens its own MR there.
 3. The consumer MR stays draft/blocked until the OSS MR merges and the consumer bumps the consumed
-   `@blurifycom/*` version. Link the two by the work-order path and the ticket key.
+   `@openora/*` version. Link the two by the work-order path and the ticket key.
 4. Note the handoff in the Jira ticket and the consumer MR description so the dependency is
    visible.

@@ -1,5 +1,5 @@
 import * as z from 'zod';
-import { PlayerSchema } from '@blurifycom/core/contracts';
+import { PlayerSchema } from '@openora/core/contracts';
 
 const ReKycSnapshotSchema = PlayerSchema.pick({
   currency: true,

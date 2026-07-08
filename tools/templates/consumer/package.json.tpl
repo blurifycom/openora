@@ -15,7 +15,7 @@
     "gen": "turbo gen"
   },
   "devDependencies": {
-    "@blurifycom/mcp": "alpha",
+    "@openora/mcp": "alpha",
     "@turbo/gen": "2.9.14",
     "@types/node": "25.9.0",
     "oxlint": "1.64.0",

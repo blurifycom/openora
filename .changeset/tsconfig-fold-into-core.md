@@ -1,5 +1,5 @@
 ---
-'@blurifycom/core': minor
+'@openora/core': minor
 ---
 
-Fold the shared tsconfig presets into `@blurifycom/core` as the `@blurifycom/core/tsconfig/*` subpath and stop publishing the separate `@blurifycom/tsconfig` package. Consumers now extend `@blurifycom/core/tsconfig/{base,node,node-service,nextjs,react-lib}.json` instead of `@blurifycom/tsconfig/...` and drop the `@blurifycom/tsconfig` devDependency.
+Fold the shared tsconfig presets into `@openora/core` as the `@openora/core/tsconfig/*` subpath and stop publishing the separate `@openora/tsconfig` package. Consumers now extend `@openora/core/tsconfig/{base,node,node-service,nextjs,react-lib}.json` instead of `@openora/tsconfig/...` and drop the `@openora/tsconfig` devDependency.

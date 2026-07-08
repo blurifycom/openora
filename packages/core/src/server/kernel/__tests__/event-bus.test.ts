@@ -1,11 +1,7 @@
 import { describe, it, expect, vi } from 'vitest';
 import { mock } from '../../../testing/mock.js';
 import type { Logger } from 'pino';
-import type {
-  MessageBrokerAdapter,
-  BrokerHandler,
-  EventEnvelope,
-} from '@blurifycom/core/contracts';
+import type { MessageBrokerAdapter, BrokerHandler, EventEnvelope } from '@openora/core/contracts';
 import { createEventBus, InMemoryBroker } from '../event-bus.js';
 
 function fakeLogger() {

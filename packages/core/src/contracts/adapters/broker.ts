@@ -1,4 +1,4 @@
-// Message-broker seam. The EventBus (@blurifycom/core/server) publishes/subscribes through this
+// Message-broker seam. The EventBus (@openora/core/server) publishes/subscribes through this
 // adapter, so the inter-module transport is swappable: the default binding is an
 // in-process broker; a downstream operator binds a durable driver (RabbitMQ,
 // Redpanda / Kafka API, NATS JetStream) to MESSAGE_BROKER in an overlay and every

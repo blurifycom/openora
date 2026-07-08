@@ -1,6 +1,6 @@
 import { oc } from '@orpc/contract';
 import * as z from 'zod';
-import { UuidSchema } from '@blurifycom/core/contracts';
+import { UuidSchema } from '@openora/core/contracts';
 
 export const GameSummarySchema = z.object({
   id: UuidSchema,

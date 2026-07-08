@@ -20,7 +20,7 @@ import {
   type ResourceName,
   type RoleName,
   type PermissionLevel,
-} from '@blurifycom/core/server';
+} from '@openora/core/server';
 import { eq, and, gt, inArray, sql } from 'drizzle-orm';
 import type {
   SendEmailPort,
@@ -28,7 +28,7 @@ import type {
   AdminGrant,
   CacheAdapter,
   SessionCommands,
-} from '@blurifycom/core/contracts';
+} from '@openora/core/contracts';
 import {
   adminRole,
   adminRolePermission,
@@ -36,7 +36,7 @@ import {
   adminInvitation,
 } from '../schema/index.js';
 // Read-only cross-domain schema import (sanctioned): assignRole verifies the target is an admin user.
-import { user } from '@blurifycom/core/pam/schema/identity';
+import { user } from '@openora/core/pam/schema/identity';
 import type { EffectivePermissions } from '../contract/index.js';
 
 export const RoleNotFoundError = makeNotFoundError('AdminRole');

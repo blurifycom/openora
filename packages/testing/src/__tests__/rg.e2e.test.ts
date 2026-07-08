@@ -1,10 +1,10 @@
 import { describe, it, expect, beforeAll, afterAll, vi } from 'vitest';
 import { randomUUID } from 'node:crypto';
 import { eq } from 'drizzle-orm';
-import { loadExtensions, DRIZZLE, type Container } from '@blurifycom/core/server';
-import { JOB_QUEUE, queue } from '@blurifycom/core/contracts';
-import { rgExclusion } from '@blurifycom/core/compliance/schema';
-import { user } from '@blurifycom/core/pam/schema/identity';
+import { loadExtensions, DRIZZLE, type Container } from '@openora/core/server';
+import { JOB_QUEUE, queue } from '@openora/core/contracts';
+import { rgExclusion } from '@openora/core/compliance/schema';
+import { user } from '@openora/core/pam/schema/identity';
 import {
   setupTestDb,
   bootTestApp,

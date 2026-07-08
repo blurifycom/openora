@@ -1,27 +1,27 @@
 import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { createApp, loadExtensions } from '@blurifycom/core/server';
-import { composeContract, defineIgamingConfig } from '@blurifycom/core/contracts';
+import { createApp, loadExtensions } from '@openora/core/server';
+import { composeContract, defineIgamingConfig } from '@openora/core/contracts';
 import {
   user,
   session,
   account,
   verification,
   twoFactor,
-} from '@blurifycom/core/pam/schema/identity';
-import { identityContract } from '@blurifycom/core/pam/contracts/identity';
-import { complianceContract } from '@blurifycom/core/compliance/contracts';
-import { profileContract } from '@blurifycom/core/pam/contracts/profile';
-import { cmsContract } from '@blurifycom/core/cms/contracts';
-import { notificationsContract } from '@blurifycom/core/engagement/contracts/notifications';
-import { bonusContract } from '@blurifycom/core/engagement/contracts/bonus';
-import { chatContract } from '@blurifycom/core/engagement/contracts/chat';
-import { walletContract } from '@blurifycom/core/wallet/contract';
-import { gamingContract } from '@blurifycom/core/casino/contracts/gaming';
-import { lobbyContract } from '@blurifycom/core/casino/contracts/lobby';
-import { backofficeContract } from '@blurifycom/core/admin-console/contract';
-import { iamContract } from '@blurifycom/core/iam/contract';
-import { auditContract } from '@blurifycom/core/audit/contract';
+} from '@openora/core/pam/schema/identity';
+import { identityContract } from '@openora/core/pam/contracts/identity';
+import { complianceContract } from '@openora/core/compliance/contracts';
+import { profileContract } from '@openora/core/pam/contracts/profile';
+import { cmsContract } from '@openora/core/cms/contracts';
+import { notificationsContract } from '@openora/core/engagement/contracts/notifications';
+import { bonusContract } from '@openora/core/engagement/contracts/bonus';
+import { chatContract } from '@openora/core/engagement/contracts/chat';
+import { walletContract } from '@openora/core/wallet/contract';
+import { gamingContract } from '@openora/core/casino/contracts/gaming';
+import { lobbyContract } from '@openora/core/casino/contracts/lobby';
+import { backofficeContract } from '@openora/core/admin-console/contract';
+import { iamContract } from '@openora/core/iam/contract';
+import { auditContract } from '@openora/core/audit/contract';
 
 const contract = composeContract({
   identity: identityContract,

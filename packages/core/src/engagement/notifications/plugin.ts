@@ -4,8 +4,8 @@ import {
   domainEventSchemas,
   type AdminUserDirectory,
   type NotificationDeliveryAdapter,
-} from '@blurifycom/core/contracts';
-import { createLogger, definePlugin, EVENT_BUS, DRIZZLE } from '@blurifycom/core/server';
+} from '@openora/core/contracts';
+import { createLogger, definePlugin, EVENT_BUS, DRIZZLE } from '@openora/core/server';
 import { MockNotificationDeliveryAdapter } from './adapters/mock/mock-notification-adapter.js';
 import { createNotificationsRouter } from './router/index.js';
 import { NotificationsService } from './service/notifications.service.js';

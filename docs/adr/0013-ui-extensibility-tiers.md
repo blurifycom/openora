@@ -5,17 +5,17 @@
 **Supersedes (partially)**: nothing - extends ADR-0006 (UI plugin registry)
 
 > **Superseded note (2026-06-09).** The page/block SDK layer described below
-> (`@blurifycom/react-pages` / `@blurifycom/react-blocks`) and the reference frontend apps
+> (`@openora/react-pages` / `@openora/react-blocks`) and the reference frontend apps
 > (`apps/web` / `apps/backoffice`) were removed from the OSS repo. The platform is
 > now headless: the frontend lives in the consumer repo and will be re-extracted from
-> it later. `@blurifycom/react` remains the supported frontend
+> it later. `@openora/react` remains the supported frontend
 > consumption surface; the `no-sdk-layer-inversion` boundary lint and the `pnpm gen
 page` generator were removed with the layer. The historical design below is kept
 > for context and will inform the re-extraction.
 
 ## Context
 
-`@blurifycom/react-sdk` was a monolithic package containing data hooks, presentational primitives, composed pages, the ui-plugin slot registry, theme, and the server prefetcher entry. The slot system supported only `add` / `prepend` / `replace` with isolated subjects - no shared page context, no RBAC, no brand scoping, no feature flagging. Operator scenarios that didn't fit a slot forced a fork of OSS pages.
+`@openora/react-sdk` was a monolithic package containing data hooks, presentational primitives, composed pages, the ui-plugin slot registry, theme, and the server prefetcher entry. The slot system supported only `add` / `prepend` / `replace` with isolated subjects - no shared page context, no RBAC, no brand scoping, no feature flagging. Operator scenarios that didn't fit a slot forced a fork of OSS pages.
 
 We re-evaluated what an operator-extensible UI actually needs (see [Slack canvas: OSS UI Extensibility](https://example.slack.com/docs/T8EUWEKE2/F0B7JNZ6J48) for the alternative options weighed). Five tiers cover the real shape of the work:
 
@@ -35,15 +35,15 @@ Three architectural changes:
 
 ### 1. Split the monolith
 
-`@blurifycom/react-sdk` is deleted. Three layered packages take its place:
+`@openora/react-sdk` is deleted. Three layered packages take its place:
 
-| Package                    | Contents                                                                                   | Subpaths                                                                  |
-| -------------------------- | ------------------------------------------------------------------------------------------ | ------------------------------------------------------------------------- |
-| `@blurifycom/react`        | data hooks, transport, auth, UIProvider context, cross-cutting helpers, server prefetchers | `.` (client), `./server` (RSC-only)                                       |
-| `@blurifycom/react-blocks` | presentational primitives consuming UIProvider                                             | `./admin`, `./player`                                                     |
-| `@blurifycom/react-pages`  | composed pages, ui-plugin registry, theme, OssProviders                                    | `.` (convenience barrel), `./admin`, `./player`, `./ui-plugin`, `./theme` |
+| Package                 | Contents                                                                                   | Subpaths                                                                  |
+| ----------------------- | ------------------------------------------------------------------------------------------ | ------------------------------------------------------------------------- |
+| `@openora/react`        | data hooks, transport, auth, UIProvider context, cross-cutting helpers, server prefetchers | `.` (client), `./server` (RSC-only)                                       |
+| `@openora/react-blocks` | presentational primitives consuming UIProvider                                             | `./admin`, `./player`                                                     |
+| `@openora/react-pages`  | composed pages, ui-plugin registry, theme, OssProviders                                    | `.` (convenience barrel), `./admin`, `./player`, `./ui-plugin`, `./theme` |
 
-The `@blurifycom/react-pages` root barrel re-exports the union of hooks + blocks + ui-plugin for ergonomic migration; subpath imports are required to keep RSC + client cleanly separated (`@blurifycom/react/server` is the only entry safe to import from a Next RSC). Layer DAG enforced by `oss-boundaries/no-sdk-layer-inversion` lint rule.
+The `@openora/react-pages` root barrel re-exports the union of hooks + blocks + ui-plugin for ergonomic migration; subpath imports are required to keep RSC + client cleanly separated (`@openora/react/server` is the only entry safe to import from a Next RSC). Layer DAG enforced by `oss-boundaries/no-sdk-layer-inversion` lint rule.
 
 ### 2. Grow the slot contract
 
@@ -60,32 +60,32 @@ All gating props are optional with backwards-safe defaults: existing fills keep 
 
 ### 3. Two new typed tokens + sealed services
 
-`@blurifycom/adapters` gains two phantom-typed token kinds alongside `Token<T>`:
+`@openora/adapters` gains two phantom-typed token kinds alongside `Token<T>`:
 
 - `SealedToken<T>` - regulator-mandated services operators must never override. Structurally incompatible with `Token<T>`, so `ctx.provide(sealed, ...)` fails typecheck. Belt-and-braces runtime guard in `plugin-host` rejects any token whose Symbol description starts with `sealed:`.
 - `ClientPageToken<P>` - Tier 3 escape hatch for full client-side page replacement.
 
-`@blurifycom/compliance-invariants` is the canonical home for the sealed list with regulatory citations per token (UKGC LCCP 3.5, MGA Player Protection, 5AMLD, FATF, etc.). 12 sealed tokens shipped in v1.
+`@openora/compliance-invariants` is the canonical home for the sealed list with regulatory citations per token (UKGC LCCP 3.5, MGA Player Protection, 5AMLD, FATF, etc.). 12 sealed tokens shipped in v1.
 
 ## Consequences
 
-- Operators ship feature plugins covering ~80%+ of common scenarios without forking. The reference plugin `@blurifycom/example-vip-tier` exercises every v1 surface as a starter.
-- Atomic migration: `@blurifycom/react-sdk` was dropped in one coordinated commit. Downstream operators must update imports in lockstep with the OSS release.
+- Operators ship feature plugins covering ~80%+ of common scenarios without forking. The reference plugin `@openora/example-vip-tier` exercises every v1 surface as a starter.
+- Atomic migration: `@openora/react-sdk` was dropped in one coordinated commit. Downstream operators must update imports in lockstep with the OSS release.
 - T0 config admin UI is **deferred to v2**. v1 ships Zod schema + file loader only. 60% of operator "customization" tickets are still actionable via the file.
 - T3 page override **seam is shipped but no reference override** is provided in v1 - the contract exists, the demo doesn't.
-- The `@blurifycom/compliance-invariants` package is first-class. Operators import it in their own test suites.
+- The `@openora/compliance-invariants` package is first-class. Operators import it in their own test suites.
 - `pnpm verify` boundary lint now enforces the SDK layer DAG.
 
 ## Alternatives considered (summary)
 
-| Option                                               | Verdict                                                                      |
-| ---------------------------------------------------- | ---------------------------------------------------------------------------- |
-| **Layered packages + three-tier model**              | **chosen**                                                                   |
-| Page-as-plugin (every page replaceable via token)    | rejected for now - fights Next RSC; revisit when RSC matures                 |
-| Per-feature packages (`@blurifycom/page-lobby`, ...) | rejected - 20+ packages, premature at current scale                          |
-| Headless-only (no JSX in OSS)                        | rejected - violates "fully playable default surface" mission                 |
-| Schema-driven UI (pages-as-data)                     | rejected - DSL expressivity wall; revisit if admin explodes to 50+ resources |
-| Status quo + targeted polish                         | rejected - doesn't solve "80% of this page" pain                             |
+| Option                                            | Verdict                                                                      |
+| ------------------------------------------------- | ---------------------------------------------------------------------------- |
+| **Layered packages + three-tier model**           | **chosen**                                                                   |
+| Page-as-plugin (every page replaceable via token) | rejected for now - fights Next RSC; revisit when RSC matures                 |
+| Per-feature packages (`@openora/page-lobby`, ...) | rejected - 20+ packages, premature at current scale                          |
+| Headless-only (no JSX in OSS)                     | rejected - violates "fully playable default surface" mission                 |
+| Schema-driven UI (pages-as-data)                  | rejected - DSL expressivity wall; revisit if admin explodes to 50+ resources |
+| Status quo + targeted polish                      | rejected - doesn't solve "80% of this page" pain                             |
 
 Full sizing in [Slack canvas](https://example.slack.com/docs/T8EUWEKE2/F0B7JNZ6J48).
 
@@ -96,5 +96,5 @@ Full sizing in [Slack canvas](https://example.slack.com/docs/T8EUWEKE2/F0B7JNZ6J
 - [ADR-0012: Player-front framework - Next.js App Router (RSC)](./0012-player-front-next-rsc.md) - RSC + SSR target for player surface
 - [Slack canvas: OSS UI Extensibility](https://example.slack.com/docs/T8EUWEKE2/F0B7JNZ6J48)
 - Notion memory: `oss-ui-arch-layering-exploration` (decision)
-- `@blurifycom/example-vip-tier` - reference plugin exercising every v1 tier
-- `@blurifycom/compliance-invariants` - canonical sealed-token list + regulatory citations
+- `@openora/example-vip-tier` - reference plugin exercising every v1 tier
+- `@openora/compliance-invariants` - canonical sealed-token list + regulatory citations

@@ -191,7 +191,7 @@ test('no-relative-zone-escape ignores non-relative (subpath) specifiers', () => 
   const reports = lint(
     'no-relative-zone-escape',
     `${REPO}/pam/player-management/service/player.service.ts`,
-    (v) => v.ImportDeclaration(importNode('@blurifycom/core/pam/schema/profile')),
+    (v) => v.ImportDeclaration(importNode('@openora/core/pam/schema/profile')),
   );
   assert.deepEqual(reports, []);
 });

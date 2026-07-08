@@ -2,9 +2,9 @@
 // Loaded via jsPlugins in .oxlintrc.json. API is ESLint v9-compatible.
 //
 // Why a hand-written plugin and not eslint-plugin-boundaries:
-//   eslint-plugin-boundaries enforces nothing unless every @blurifycom/* import resolves to
+//   eslint-plugin-boundaries enforces nothing unless every @openora/* import resolves to
 //   a file - which means a native import resolver (unrs-resolver) plus a maintained
-//   lint-only tsconfig mapping all ~24 @blurifycom/* packages to src (pnpm otherwise
+//   lint-only tsconfig mapping all ~24 @openora/* packages to src (pnpm otherwise
 //   resolves them to dist and misclassifies elements). This plugin matches specifier
 //   strings directly: zero deps, zero resolution, fast. See ADR-0015.
 //
@@ -25,7 +25,7 @@ function isCoreFile(file) {
 }
 
 function isAddonSpecifier(spec) {
-  return spec === '@blurifycom-addons' || spec.startsWith('@blurifycom-addons/');
+  return spec === '@openora-addons' || spec.startsWith('@openora-addons/');
 }
 
 // Visits every node that carries an import/re-export source specifier.
@@ -49,9 +49,9 @@ const noCoreToAddon = {
       context.report({
         node,
         message:
-          'The published core (@blurifycom/core) must not import an add-on package (@blurifycom-addons/*). ' +
+          'The published core (@openora/core) must not import an add-on package (@openora-addons/*). ' +
           "Add-on is wired in only by the consumer's composition root " +
-          '(extensions.config.ts + the build-contract slice merge) and the @blurifycom/testing harness. ' +
+          '(extensions.config.ts + the build-contract slice merge) and the @openora/testing harness. ' +
           'This keeps add-on packages extractable. See ADR-0021/0025.',
       });
     });
@@ -64,8 +64,8 @@ function importingAddon(file) {
 }
 
 function addonImportTarget(spec) {
-  if (!spec.startsWith('@blurifycom-addons/')) return null;
-  const tail = spec.slice('@blurifycom-addons/'.length).split('/').filter(Boolean);
+  if (!spec.startsWith('@openora-addons/')) return null;
+  const tail = spec.slice('@openora-addons/'.length).split('/').filter(Boolean);
   if (tail.length === 0) return null;
   const name = tail[0];
   const isSchemaSubpath = tail.length === 2 && tail[1] === 'schema';
@@ -85,20 +85,20 @@ const noCrossAddon = {
         message:
           `An add-on package must not import another add-on package (${spec}). ` +
           'Import a sibling only through its read-only /schema subpath ' +
-          '(@blurifycom-addons/<name>/schema); communicate otherwise via events or a command port. ' +
+          '(@openora-addons/<name>/schema); communicate otherwise via events or a command port. ' +
           'See ADR-0020.',
       });
     });
   },
 };
 
-const RUNTIME_SPECIFIERS = ['@blurifycom/core/server'];
+const RUNTIME_SPECIFIERS = ['@openora/core/server'];
 
 function isRuntimeSpecifier(spec) {
   return RUNTIME_SPECIFIERS.some((b) => spec === b || spec.startsWith(b + '/'));
 }
 
-const blocked_by_contracts = ['@blurifycom-addons', ...RUNTIME_SPECIFIERS];
+const blocked_by_contracts = ['@openora-addons', ...RUNTIME_SPECIFIERS];
 
 function isContractsZone(file) {
   return file.includes('packages/core/src/contracts');
@@ -116,8 +116,8 @@ const noContractsToRuntime = {
       context.report({
         node,
         message:
-          'The @blurifycom/core/contracts zone is isomorphic - it must not import the engine ' +
-          '(@blurifycom/core/server) or an add-on. Keep it to contracts, base schemas, ports + zod. ' +
+          'The @openora/core/contracts zone is isomorphic - it must not import the engine ' +
+          '(@openora/core/server) or an add-on. Keep it to contracts, base schemas, ports + zod. ' +
           'See AGENTS.md > Dependency rules / ADR-0025.',
       });
     });
@@ -131,15 +131,11 @@ function isModuleContractZone(file) {
   return /packages\/core\/src\/(?!contracts\/)[^/]+\/(?:[^/]+\/)?contract\//.test(file);
 }
 
-const CONTRACT_RUNTIME_SPECIFIERS = [
-  '@blurifycom/core/server',
-  '@blurifycom-addons',
-  'drizzle-orm',
-];
+const CONTRACT_RUNTIME_SPECIFIERS = ['@openora/core/server', '@openora-addons', 'drizzle-orm'];
 
-// The public root barrel (@blurifycom/core/<domain>) re-exports the module's contract/, so the
+// The public root barrel (@openora/core/<domain>) re-exports the module's contract/, so the
 // contract MUST stay isomorphic (browser-safe) - no engine, no add-on, no Drizzle, no /schema
-// (schema pulls Drizzle transitively). Zod + @blurifycom/core/contracts are fine.
+// (schema pulls Drizzle transitively). Zod + @openora/core/contracts are fine.
 const noModuleContractToRuntime = {
   create(context) {
     if (!isModuleContractZone(filename(context))) return {};
@@ -153,9 +149,9 @@ const noModuleContractToRuntime = {
         node,
         message:
           `A module contract/ dir is isomorphic - it is re-exported by the public root barrel ` +
-          `(@blurifycom/core/<domain>), so it must not import the engine (@blurifycom/core/server), ` +
+          `(@openora/core/<domain>), so it must not import the engine (@openora/core/server), ` +
           `an add-on, Drizzle, a /schema subpath, or node built-ins (${spec}). Keep it to Zod + ` +
-          `@blurifycom/core/contracts. See AGENTS.md > Dependency rules / ADR-0025.`,
+          `@openora/core/contracts. See AGENTS.md > Dependency rules / ADR-0025.`,
       });
     });
   },
@@ -164,12 +160,12 @@ const noModuleContractToRuntime = {
 const noDeepDistImport = {
   create(context) {
     return sourceVisitors((node, spec) => {
-      if (/^@blurifycom(-addons)?\/.+\/dist(\/|$)/.test(spec)) {
+      if (/^@openora(-addons)?\/.+\/dist(\/|$)/.test(spec)) {
         context.report({
           node,
           message:
             'Never import a deep dist/ path. Use the package entry instead ' +
-            '(e.g. @blurifycom-addons/wallet/schema).',
+            '(e.g. @openora-addons/wallet/schema).',
         });
       }
     });
@@ -213,7 +209,7 @@ const noAdhocZodInRouter = {
             node,
             message:
               `Ad-hoc Zod (z.${callee.property.name}(...)) in a router. Define the shape in ` +
-              "the module's contract slice (its /contract dir, exported as @blurifycom/<module>/contracts) - " +
+              "the module's contract slice (its /contract dir, exported as @openora/<module>/contracts) - " +
               'the source of truth for validation + OpenAPI + the typed client - and reference it. ' +
               'See clean-architecture.md.',
           });
@@ -231,7 +227,7 @@ const noReactToRuntime = {
       context.report({
         node,
         message:
-          'The @blurifycom/core/react zone must not import the engine (@blurifycom/core/server) or an ' +
+          'The @openora/core/react zone must not import the engine (@openora/core/server) or an ' +
           'add-on - it would pull Drizzle/Hono/node into the browser bundle. ' +
           'Keep client glue domain-free + server-free. See ADR-0025.',
       });
@@ -254,11 +250,11 @@ function coreDomainOf(file) {
   return m[1];
 }
 
-// The bare `@blurifycom/core/compliance` (sealed-token util) is an engine zone; the
+// The bare `@openora/core/compliance` (sealed-token util) is an engine zone; the
 // compliance DOMAIN is only reachable via subpaths like /contracts, /schema.
 function coreDomainTarget(spec) {
-  if (!spec.startsWith('@blurifycom/core/')) return null;
-  const tail = spec.slice('@blurifycom/core/'.length).split('/').filter(Boolean);
+  if (!spec.startsWith('@openora/core/')) return null;
+  const tail = spec.slice('@openora/core/'.length).split('/').filter(Boolean);
   if (tail.length === 0 || SHARED_ZONES.includes(tail[0])) return null;
   if (tail[0] === 'compliance' && tail.length === 1) return null;
   return { name: tail[0], isSchema: tail[1] === 'schema' };
@@ -294,10 +290,10 @@ const noEngineToDomain = {
       context.report({
         node,
         message:
-          `The @blurifycom/core engine (contracts/server/react) must not import a domain ` +
+          `The @openora/core engine (contracts/server/react) must not import a domain ` +
           `(${spec}). createApp is domain-agnostic (DI: the consumer injects ` +
           "PAM identity + the tenant resolver); a domain is wired in only through the consumer's " +
-          'app and the @blurifycom/testing harness. See ADR-0024/0025.',
+          'app and the @openora/testing harness. See ADR-0024/0025.',
       });
     });
   },

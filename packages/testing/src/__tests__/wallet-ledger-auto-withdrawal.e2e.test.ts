@@ -2,11 +2,11 @@ import { describe, it, expect, beforeAll, afterAll, vi } from 'vitest';
 import { randomUUID } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import { eq } from 'drizzle-orm';
-import { loadExtensions, DRIZZLE, EVENT_BUS, type Container } from '@blurifycom/core/server';
-import { REALTIME_TRANSPORT, WALLET_COMMANDS, PLATFORM_CONFIG } from '@blurifycom/core/contracts';
-import { SportsbookService } from '@blurifycom/core/sportsbook/server';
-import { sportsbookEvent, sportsbookSelection } from '@blurifycom/core/sportsbook/schema';
-import { user } from '@blurifycom/core/pam/schema/identity';
+import { loadExtensions, DRIZZLE, EVENT_BUS, type Container } from '@openora/core/server';
+import { REALTIME_TRANSPORT, WALLET_COMMANDS, PLATFORM_CONFIG } from '@openora/core/contracts';
+import { SportsbookService } from '@openora/core/sportsbook/server';
+import { sportsbookEvent, sportsbookSelection } from '@openora/core/sportsbook/schema';
+import { user } from '@openora/core/pam/schema/identity';
 import {
   setupTestDb,
   bootTestApp,

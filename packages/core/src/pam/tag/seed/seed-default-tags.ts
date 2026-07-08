@@ -1,5 +1,5 @@
 import { sql } from 'drizzle-orm';
-import type { DrizzleDb } from '@blurifycom/core/server';
+import type { DrizzleDb } from '@openora/core/server';
 import { tag } from '../schema/index.js';
 import { DEFAULT_TAGS } from './data/default-tags.js';
 /**

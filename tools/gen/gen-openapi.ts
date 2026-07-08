@@ -3,7 +3,7 @@
  * Emits docs/openapi.json from the assembled contract - no server boot, no DB.
  * Runs via `pnpm regen` and in CI via `pnpm verify:drift`.
  */
-import { generateOpenApiSpec } from '@blurifycom/core/server';
+import { generateOpenApiSpec } from '@openora/core/server';
 import { buildContract } from './build-contract.js';
 import { resolve, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';

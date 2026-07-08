@@ -9,8 +9,8 @@ import {
   RATE_LIMITER,
   PLATFORM_CONFIG,
   SESSION_COMMANDS,
-} from '@blurifycom/core/contracts';
-import { definePlugin, ADMIN_GUARD, EVENT_BUS, DRIZZLE } from '@blurifycom/core/server';
+} from '@openora/core/contracts';
+import { definePlugin, ADMIN_GUARD, EVENT_BUS, DRIZZLE } from '@openora/core/server';
 import { MockKycAdapter } from './adapters/mock/mock-kyc-adapter.js';
 import { DrizzleAdminUserDirectory } from './admin-user-directory.js';
 import { IdentityReaderService } from './adapters/identity-reader.service.js';

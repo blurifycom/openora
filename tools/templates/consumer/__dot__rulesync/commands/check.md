@@ -18,4 +18,4 @@ After running:
 - All green: report ready for PR; list changed files (`git diff --name-only`).
 - typecheck/lint fails: show the location, propose a fix.
 
-Do not touch `@blurifycom/*` core or `node_modules` - this repo extends the platform from the outside only (overlay plugins, adapter rebindings, UI plugins, config). Never report ready for PR if any step fails.
+Do not touch `@openora/*` core or `node_modules` - this repo extends the platform from the outside only (overlay plugins, adapter rebindings, UI plugins, config). Never report ready for PR if any step fails.

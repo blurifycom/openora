@@ -1,5 +1,5 @@
 import { implement } from '@orpc/server';
-import { getUserId, type OssContext } from '@blurifycom/core/server';
+import { getUserId, type OssContext } from '@openora/core/server';
 import { profileContract } from '../contract/index.js';
 import { ProfileService } from '../service/profile.service.js';
 

@@ -15,7 +15,7 @@ import {
   WALLET_TRANSACTION_TYPES,
   type WalletRail,
   type WalletTransactionStatus,
-} from '@blurifycom/core/contracts';
+} from '@openora/core/contracts';
 
 // Enum values derive from the canonical tuples so the DB enum can never drift from
 // the contract. Editing the value set is a one-place change in wallet-tx.ts.

@@ -1,5 +1,5 @@
 import { implement } from '@orpc/server';
-import { AdminGuard, getUserId, mapErrors, type OssContext } from '@blurifycom/core/server';
+import { AdminGuard, getUserId, mapErrors, type OssContext } from '@openora/core/server';
 import { auditContract } from '../contract/index.js';
 import { AuditService } from '../service/audit.service.js';
 

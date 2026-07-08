@@ -1,4 +1,4 @@
-import { type UpsertTagRuleInput } from '@blurifycom/core/contracts';
+import { type UpsertTagRuleInput } from '@openora/core/contracts';
 
 export const DEFAULT_TAG_RULES: UpsertTagRuleInput[] = [
   {

@@ -1,5 +1,5 @@
 ---
-description: 'Generate an overlay extension under apps/api/src/extensions/<name>/. Adds routes, providers, event handlers, or MCP tools without touching @blurifycom/* core. Args: <name>.'
+description: 'Generate an overlay extension under apps/api/src/extensions/<name>/. Adds routes, providers, event handlers, or MCP tools without touching @openora/* core. Args: <name>.'
 ---
 
 Run `pnpm gen plugin $ARGUMENTS` in the repo root. For a vendor swap use

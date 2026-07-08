@@ -1,5 +1,5 @@
-import type { AdminTxListOptions, AdminWalletReporting } from '@blurifycom/core/contracts';
-import { DrizzleService, pageToOffset } from '@blurifycom/core/server';
+import type { AdminTxListOptions, AdminWalletReporting } from '@openora/core/contracts';
+import { DrizzleService, pageToOffset } from '@openora/core/server';
 import { and, count, desc, eq, gte, inArray, lte, sum } from 'drizzle-orm';
 import { wallet, walletTransaction } from './schema/index.js';
 

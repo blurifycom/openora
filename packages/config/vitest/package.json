@@ -1,5 +1,5 @@
 {
-  "name": "@blurifycom/vitest-config",
+  "name": "@openora/vitest-config",
   "version": "0.3.0",
   "private": true,
   "license": "AGPL-3.0-only",

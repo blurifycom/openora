@@ -5,7 +5,7 @@ import {
   type NodeHeaders,
   DrizzleService,
   assertRateLimit,
-} from '@blurifycom/core/server';
+} from '@openora/core/server';
 import { parseCookies } from 'better-auth/cookies';
 import { eq, sql } from 'drizzle-orm';
 import { user, session, account, verification, twoFactor } from '../schema/index.js';
@@ -27,7 +27,7 @@ import type {
   ChangeEmailInput,
   IdentityServiceOptions,
   PlatformConfig,
-} from '@blurifycom/core/contracts';
+} from '@openora/core/contracts';
 import { assertSupportedLanguage } from '../../shared/language.js';
 
 function nodeHeadersToHeaders(nodeHeaders: NodeHeaders) {

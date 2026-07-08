@@ -9,7 +9,7 @@ import {
   index,
   integer,
 } from 'drizzle-orm/pg-core';
-import { THEMES } from '@blurifycom/core/contracts';
+import { THEMES } from '@openora/core/contracts';
 
 export const userThemeEnum = pgEnum('user_theme', THEMES);
 
@@ -109,7 +109,7 @@ export const verification = pgTable(
   (t) => [index('verification_identifier_idx').on(t.identifier)],
 );
 
-// Field shape mirrors better-auth twoFactor() plugin schema. See @blurifycom/core/server createAuth().
+// Field shape mirrors better-auth twoFactor() plugin schema. See @openora/core/server createAuth().
 export const twoFactor = pgTable(
   'two_factor',
   {

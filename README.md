@@ -69,8 +69,8 @@ Then use `list-modules`, `list-routes`, `query-openapi`, `get-drizzle-schema`, `
 ```bash
 pnpm install                                  # install workspace deps
 docker compose up -d                          # start Postgres (library-first: only the db)
-pnpm -F @blurifycom/core generate             # generate Drizzle migrations
-pnpm -F @blurifycom/core migrate              # apply them
+pnpm -F @openora/core generate             # generate Drizzle migrations
+pnpm -F @openora/core migrate              # apply them
 pnpm seed                                     # demo data
 pnpm dev                                      # api :3001
 ```
@@ -81,13 +81,13 @@ To run the whole reference stack in containers instead of on the host, use the o
 
 ## How it fits together
 
-The platform is a pnpm + Turbo monorepo. `@blurifycom/core` is the single published package, exposing subpaths (`/contracts`, `/server`, `/react`, and one per domain). Domains are wired into a domain-agnostic runtime through the composition root; add-ons and overlays extend it without touching core.
+The platform is a pnpm + Turbo monorepo. `@openora/core` is the single published package, exposing subpaths (`/contracts`, `/server`, `/react`, and one per domain). Domains are wired into a domain-agnostic runtime through the composition root; add-ons and overlays extend it without touching core.
 
 ```text
 apps/api            # Hono + oRPC HTTP API (the runtime)
 apps/mcp-server-dev # MCP dev server (stdio) for agents
-packages/core       # @blurifycom/core - contracts, server engine, react SDK, domains
-packages/addons     # @blurifycom-addons/* - optional/gated modules
+packages/core       # @openora/core - contracts, server engine, react SDK, domains
+packages/addons     # @openora-addons/* - optional/gated modules
 extensions.config.ts# the single registry of enabled plugins
 ```
 
@@ -101,7 +101,7 @@ See [docs/architecture.md](./docs/architecture.md) and the pillars + decision tr
 pnpm gen module <name>
 ```
 
-Generates a standalone `@blurifycom-addons/<name>` package under `packages/addons/<name>/` and registers it in `extensions.config.ts`. Run `pnpm regen && pnpm verify`. See [AGENTS.md](./AGENTS.md) for the full decision tree.
+Generates a standalone `@openora-addons/<name>` package under `packages/addons/<name>/` and registers it in `extensions.config.ts`. Run `pnpm regen && pnpm verify`. See [AGENTS.md](./AGENTS.md) for the full decision tree.
 
 ### Add an extension (overlay plugin)
 
@@ -109,7 +109,7 @@ Drop a folder under `apps/api/src/extensions/<name>/` or point to an npm package
 
 ```typescript
 // apps/api/src/extensions/my-feature/plugin.ts
-import { definePlugin } from '@blurifycom/plugin-host';
+import { definePlugin } from '@openora/plugin-host';
 
 export default definePlugin({
   id: 'my-feature',
@@ -127,7 +127,7 @@ Then register it in `extensions.config.ts`.
 
 ## Build your own iGaming on top
 
-Scaffold a consumer turborepo that links this checkout - it holds only what's unique to your operation (frontend, branding, vendor adapters, overlay plugins). Core is consumed as linked `@blurifycom/*` packages, never forked.
+Scaffold a consumer turborepo that links this checkout - it holds only what's unique to your operation (frontend, branding, vendor adapters, overlay plugins). Core is consumed as linked `@openora/*` packages, never forked.
 
 ```bash
 pnpm create:app ../my-igaming --name my-igaming
@@ -138,7 +138,7 @@ See [docs/downstream-consumer.md](./docs/downstream-consumer.md) for the full gu
 
 ## Frontend
 
-The platform is headless and ships no UI - backend modules + contracts + the SDK consumption surface only. The frontend (pages, components, styling, theme) lives in your consumer repo and talks to the api over HTTP via `@blurifycom/core/react` (data hooks, auth, navigation, typed client). Use whatever UI stack you like.
+The platform is headless and ships no UI - backend modules + contracts + the SDK consumption surface only. The frontend (pages, components, styling, theme) lives in your consumer repo and talks to the api over HTTP via `@openora/core/react` (data hooks, auth, navigation, typed client). Use whatever UI stack you like.
 
 ## Roadmap
 

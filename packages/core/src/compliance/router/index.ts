@@ -1,6 +1,6 @@
 import { implement, ORPCError } from '@orpc/server';
-import { AdminGuard, getUserId, mapErrors, type OssContext } from '@blurifycom/core/server';
-import type { KycAdapter, KycWebhookVerifier } from '@blurifycom/core/contracts';
+import { AdminGuard, getUserId, mapErrors, type OssContext } from '@openora/core/server';
+import type { KycAdapter, KycWebhookVerifier } from '@openora/core/contracts';
 import { complianceContract } from '../contract/index.js';
 import {
   ComplianceService,

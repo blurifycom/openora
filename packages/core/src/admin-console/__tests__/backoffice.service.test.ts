@@ -5,7 +5,7 @@ import type {
   AdminTxRow,
   AdminUserDirectory,
   AdminWalletReporting,
-} from '@blurifycom/core/contracts';
+} from '@openora/core/contracts';
 import {
   BackofficeService,
   TransactionNotFoundError,

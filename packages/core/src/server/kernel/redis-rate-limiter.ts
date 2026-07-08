@@ -2,7 +2,7 @@ import type {
   RateLimiterAdapter,
   RateLimitOptions,
   RateLimitResult,
-} from '@blurifycom/core/contracts';
+} from '@openora/core/contracts';
 import type { RedisClient } from './redis-client.js';
 import { createLogger } from './logger.js';
 

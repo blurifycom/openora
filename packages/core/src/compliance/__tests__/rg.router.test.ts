@@ -1,7 +1,7 @@
 import { describe, it, expect, vi } from 'vitest';
 import { call, ORPCError } from '@orpc/server';
-import type { AdminGuard } from '@blurifycom/core/server';
-import type { KycAdapter, KycWebhookVerifier } from '@blurifycom/core/contracts';
+import type { AdminGuard } from '@openora/core/server';
+import type { KycAdapter, KycWebhookVerifier } from '@openora/core/contracts';
 import { mock } from '../../testing/mock.js';
 import { createComplianceRouter } from '../router/index.js';
 import type { ComplianceService } from '../service/compliance.service.js';

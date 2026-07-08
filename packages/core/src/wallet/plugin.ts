@@ -1,4 +1,4 @@
-import { definePlugin, ADMIN_GUARD, EVENT_BUS, DRIZZLE } from '@blurifycom/core/server';
+import { definePlugin, ADMIN_GUARD, EVENT_BUS, DRIZZLE } from '@openora/core/server';
 import {
   ADMIN_USER_DIRECTORY,
   ADMIN_WALLET_REPORTING,
@@ -9,7 +9,7 @@ import {
   RATE_LIMITER,
   PLAYER_TAGS,
   AUDIT_WRITER,
-} from '@blurifycom/core/contracts';
+} from '@openora/core/contracts';
 import { WalletService } from './service/wallet.service.js';
 import { WalletCommandsService } from './service/wallet-commands.service.js';
 import { WalletReaderService } from './adapters/wallet-reader.service.js';

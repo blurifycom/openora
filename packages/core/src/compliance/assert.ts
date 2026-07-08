@@ -1,32 +1,41 @@
-import { SEALED_TOKENS } from './sealed.js';
+import { IMPLEMENTED_SEALED_TOKENS } from './sealed.js';
 
 /**
- * Runtime assertion that the assembled DI container has not bound any sealed
- * service token to a non-default provider. Operators run this in their CI
- * suite against their assembled app to catch regressions where a plugin tried
- * (in plain JS) to slip past the typed contract.
+ * Runtime assertion that every sealed service the platform actually implements
+ * (`IMPLEMENTED_SEALED_TOKENS`) is bound in the assembled DI container. Operators
+ * run this in their CI suite against their assembled app to catch a
+ * misconfigured deployment where a regulator-mandated service's owning module
+ * was never loaded (eg the audit module disabled, silently dropping every
+ * audit write).
+ *
+ * A sealed token can only ever be bound once, by its owning module, via
+ * `ctx.provideSealed()` - `ctx.provide()` rejects any sealed token outright and
+ * `provideSealed()` itself refuses a second bind (see module-registry.ts). So a
+ * bound sealed token is always the owner's canonical implementation, never a
+ * plugin override; this check exists to catch an ABSENT binding, not a hijacked
+ * one - the hijack path is already closed at bind time for every deployment.
  *
  * The argument shape is intentionally minimal - any container exposing a
- * boolean `has(token)` works. `@blurifycom/core/server` `Container.has(token)` satisfies it.
+ * boolean `has(token)` works. `@openora/core/server` `Container.has(token)` satisfies it.
  *
- * Throws on first sealed token with a bound provider, listing the offender.
+ * Throws listing every sealed service that isn't bound.
  */
 export type SealedContainerView = {
   has(token: symbol): boolean;
 };
 
-export function assertNoSealedProviders(container: SealedContainerView): void {
-  const violations: string[] = [];
-  for (const token of SEALED_TOKENS) {
-    if (container.has(token)) {
-      violations.push(token.description ?? '(unnamed)');
+export function assertSealedServicesBound(container: SealedContainerView): void {
+  const missing: string[] = [];
+  for (const token of IMPLEMENTED_SEALED_TOKENS) {
+    if (!container.has(token)) {
+      missing.push(token.description ?? '(unnamed)');
     }
   }
-  if (violations.length > 0) {
+  if (missing.length > 0) {
     throw new Error(
-      `[compliance-invariants] sealed services must not be bound by a plugin:\n` +
-        violations.map((v) => `  - ${v}`).join('\n') +
-        `\nSee @blurifycom/core/compliance/sealed.ts for the regulatory citations.`,
+      `[compliance-invariants] sealed services must be bound by their owning module:\n` +
+        missing.map((v) => `  - ${v}`).join('\n') +
+        `\nSee @openora/core/compliance/sealed.ts for the regulatory citations.`,
     );
   }
 }

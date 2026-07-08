@@ -1,5 +1,5 @@
 import { createHmac, timingSafeEqual } from 'node:crypto';
-import type { KycWebhookVerifier } from '@blurifycom/core/contracts';
+import type { KycWebhookVerifier } from '@openora/core/contracts';
 
 /**
  * Default KYC-webhook verifier: recomputes an HMAC-SHA256 of the raw request body

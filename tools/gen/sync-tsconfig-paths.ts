@@ -23,7 +23,7 @@ function derivePaths(exports: Record<string, ExportEntry>): Record<string, [stri
       const target = typesTarget(entry);
       if (!target) return [];
       const src = target.replace(/^\.\/dist\//, './src/').replace(/\.d\.ts$/, '.ts');
-      return [[`@blurifycom/core/${key.slice(2)}`, [src] as [string]] as const];
+      return [[`@openora/core/${key.slice(2)}`, [src] as [string]] as const];
     }),
   );
 }

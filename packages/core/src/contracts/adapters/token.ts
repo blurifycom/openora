@@ -1,13 +1,18 @@
 // Typed DI token. A token is a plain Symbol at runtime; the phantom `__token`
 // field only carries the resolved type so the composition container can infer
 // what `container.get(TOKEN)` returns. No decorators, no reflection - the type
-// travels with the symbol. See @blurifycom/core/server `Container`.
+// travels with the symbol. See @openora/core/server `Container`.
+
+// Common shape both Token and SealedToken share - what Container itself accepts.
+// Container is a type-erased-at-runtime symbol map; it doesn't care whether a
+// token is sealed, only ModuleRegistry.provide()/provideSealed() do.
+export type AnyToken<T> = symbol & { readonly __token?: T };
 
 // The `__sealed?: never` brand makes Token<T> structurally incompatible with
 // SealedToken<T> (which has `__sealed: true`). That mismatch is what lets the
 // `provide<T>(token: Token<T>, ...)` signature reject sealed tokens at the
 // call site - see SealedToken below.
-export type Token<T> = symbol & { readonly __token?: T; readonly __sealed?: never };
+export type Token<T> = AnyToken<T> & { readonly __sealed?: never };
 
 export function createToken<T>(description: string): Token<T> {
   return Symbol(description) as Token<T>;
@@ -27,11 +32,10 @@ export function createToken<T>(description: string): Token<T> {
  * Belt-and-braces: the plugin host also runtime-checks token identity against
  * the sealed list at registration time.
  *
- * See `@blurifycom/core/compliance` for the canonical list and the regulatory
+ * See `@openora/core/compliance` for the canonical list and the regulatory
  * citation per token.
  */
-export type SealedToken<T> = symbol & {
-  readonly __token?: T;
+export type SealedToken<T> = AnyToken<T> & {
   readonly __sealed: true;
 };
 

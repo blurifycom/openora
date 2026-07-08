@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { mock, readPrivate, makeDrizzle, makeEvents, makePayment } from '../../testing/mock.js';
-import type { AutoWithdrawalConfig } from '@blurifycom/core/contracts';
+import type { AutoWithdrawalConfig } from '@openora/core/contracts';
 import { WalletService } from '../service/wallet.service.js';
 
 type Row = Record<string, unknown>;

@@ -1,13 +1,8 @@
-import { DrizzleService } from '@blurifycom/core/server';
-import type { EventBus, DrizzleDb } from '@blurifycom/core/server';
-import type {
-  KycStatus,
-  KycStatusWriter,
-  KycStatusSource,
-  Player,
-} from '@blurifycom/core/contracts';
+import { DrizzleService } from '@openora/core/server';
+import type { EventBus, DrizzleDb } from '@openora/core/server';
+import type { KycStatus, KycStatusWriter, KycStatusSource, Player } from '@openora/core/contracts';
 import { eq } from 'drizzle-orm';
-import { player } from '@blurifycom/core/pam/schema/profile';
+import { player } from '@openora/core/pam/schema/profile';
 
 /**
  * The single writer of `player.kycStatus` (the KYC_STATUS_WRITER seam). Every status

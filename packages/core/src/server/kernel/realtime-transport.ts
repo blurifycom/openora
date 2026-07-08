@@ -1,4 +1,4 @@
-import type { RealtimeTransport, RealtimePresence } from '@blurifycom/core/contracts';
+import type { RealtimeTransport, RealtimePresence } from '@openora/core/contracts';
 
 type Handler = (event: unknown) => void;
 

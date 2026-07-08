@@ -1,4 +1,4 @@
-import { definePlugin, DRIZZLE, ADMIN_GUARD } from '@blurifycom/core/server';
+import { definePlugin, DRIZZLE, ADMIN_GUARD } from '@openora/core/server';
 import { PlayerNoteService } from './service/player-note.service.js';
 import { createPlayerNoteRouter } from './router/index.js';
 

@@ -1,5 +1,5 @@
 import { implement } from '@orpc/server';
-import { getUserId, type AdminGuard, type OssContext } from '@blurifycom/core/server';
+import { getUserId, type AdminGuard, type OssContext } from '@openora/core/server';
 import { tagContract } from '../contract/index.js';
 import { TagService } from '../service/tag.service.js';
 import { TagRuleService } from '../service/tag-rule.service.js';

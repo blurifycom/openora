@@ -1,6 +1,6 @@
-import { DrizzleService } from '@blurifycom/core/server';
+import { DrizzleService } from '@openora/core/server';
 import { eq } from 'drizzle-orm';
-import type { LoginEnforcementPort } from '@blurifycom/core/contracts';
+import type { LoginEnforcementPort } from '@openora/core/contracts';
 import { user } from '../schema/index.js';
 import { SessionService } from './session.service.js';
 

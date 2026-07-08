@@ -1,4 +1,4 @@
-import { NodeHeaders } from '@blurifycom/core/server';
+import { NodeHeaders } from '@openora/core/server';
 
 export function nodeHeadersToHeaders(nodeHeaders: NodeHeaders): Headers {
   const headers = new Headers();

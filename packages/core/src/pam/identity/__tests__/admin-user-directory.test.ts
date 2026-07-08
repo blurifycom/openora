@@ -1,6 +1,6 @@
 import { describe, it, expect, vi } from 'vitest';
 import { mock, mockDb } from '../../../testing/mock.js';
-import type { EventBus } from '@blurifycom/core/server';
+import type { EventBus } from '@openora/core/server';
 import { DrizzleAdminUserDirectory } from '../admin-user-directory.js';
 
 function makeDir(existing: { isActive: boolean }) {

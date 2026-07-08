@@ -8,8 +8,8 @@ import {
   WalletRailSchema,
   WalletTransactionStatusSchema,
   WalletTransactionTypeSchema,
-} from '@blurifycom/core/contracts';
-import { PageQuerySchema, paginated } from '@blurifycom/core/contracts/kit';
+} from '@openora/core/contracts';
+import { PageQuerySchema, paginated } from '@openora/core/contracts/kit';
 
 export { WalletRailSchema, WalletTransactionStatusSchema, WalletTransactionTypeSchema };
 

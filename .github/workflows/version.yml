@@ -1,0 +1,45 @@
+# Changesets version-PR bot. On every push to dev with pending changesets, opens/updates
+# a "Version Packages" PR that bumps the fixed @openora/* version and writes changelogs.
+# Merging that PR is how a production release gets its version - promote dev -> stage
+# (publishes `rc`), then push the resulting v<version> tag (release.yml publishes `latest`).
+# This workflow never publishes - only release.yml does, gated by branch/tag.
+name: Version
+
+on:
+  push:
+    branches: [dev]
+
+concurrency:
+  group: version-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  version:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      pull-requests: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 26
+
+      - name: Enable corepack (pnpm)
+        run: |
+          npm install -g corepack@latest
+          corepack enable
+          corepack prepare pnpm@11.8.0 --activate
+
+      - run: pnpm install --frozen-lockfile
+
+      - uses: changesets/action@v1
+        with:
+          version: pnpm version
+          title: 'chore: version packages'
+          commit: 'chore: version packages'
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

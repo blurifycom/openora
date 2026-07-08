@@ -1,5 +1,5 @@
 import { statement, type ResourceName } from './permissions.js';
-import { permissionLevels, type PermissionLevel } from '@blurifycom/core/contracts';
+import { permissionLevels, type PermissionLevel } from '@openora/core/contracts';
 
 export type { PermissionLevel };
 

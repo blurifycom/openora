@@ -1,4 +1,4 @@
-import { createSealedToken, type SealedToken } from '@blurifycom/core/contracts';
+import { AUDIT_WRITER, createSealedToken, type SealedToken } from '@openora/core/contracts';
 
 /**
  * Self-exclusion + cool-off enforcement.
@@ -37,13 +37,10 @@ export const AML_SAR_WRITER: SealedToken<unknown> = createSealedToken('aml-sar-w
  */
 export const LEDGER_WRITER: SealedToken<unknown> = createSealedToken('ledger-writer');
 
-/**
- * Audit log writer.
- *
- * Append-only, content-hashed. Plugins emit events; the platform writes the
- * log entries.
- */
-export const AUDIT_LOG_WRITER: SealedToken<unknown> = createSealedToken('audit-log-writer');
+// AUDIT_WRITER (append-only, content-hashed audit log; plugins emit events, the
+// platform writes the log entries) is defined and bound as a SealedToken directly
+// at `@openora/core/contracts` `adapters/audit.ts` - re-exported here as part of
+// the canonical sealed list rather than declared as a second, parallel identity.
 
 /**
  * Game round outcome / RNG / RTP.
@@ -104,7 +101,7 @@ export const SEALED_TOKENS: readonly SealedToken<unknown>[] = [
   NATIONAL_SE_REGISTRY,
   AML_SAR_WRITER,
   LEDGER_WRITER,
-  AUDIT_LOG_WRITER,
+  AUDIT_WRITER,
   GAME_OUTCOME_AUTHORITY,
   BONUS_WAGERING_ENGINE,
   RG_LIMIT_COOLING_TIMER,
@@ -112,3 +109,11 @@ export const SEALED_TOKENS: readonly SealedToken<unknown>[] = [
   GEO_PLATFORM_DENY_LIST,
   GDPR_DATA_RIGHTS_WORKFLOW,
 ];
+
+// Sealed identities that currently have a real owning-module implementation bound
+// via ctx.provideSealed() - a subset of SEALED_TOKENS. The rest (self-exclusion
+// enforcement, ledger manualAdjust, the production RNG authority, ...) are
+// documented regulatory placeholders with no DI-resolvable implementation yet;
+// asserting their presence would fail every deployment. Add a token here only
+// once its owning module actually binds it via provideSealed().
+export const IMPLEMENTED_SEALED_TOKENS: readonly SealedToken<unknown>[] = [AUDIT_WRITER];

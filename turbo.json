@@ -6,7 +6,7 @@
       "dependsOn": ["^build"],
       "outputs": ["dist/**", ".next/**", "!.next/cache/**"]
     },
-    "@blurifycom/docs#build": {
+    "@openora/docs#build": {
       "dependsOn": ["^build"],
       "outputs": ["out/**", ".next/**", "!.next/cache/**"]
     },

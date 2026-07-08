@@ -2,7 +2,7 @@ import type {
   RealtimeClientAuthorizer,
   RealtimeClientAuthorizerInput,
   RealtimeConnectionGrant,
-} from '@blurifycom/core/contracts';
+} from '@openora/core/contracts';
 
 // Default REALTIME_CLIENT_AUTHORIZER binding (first-party SSE). No token to mint:
 // the session cookie already authorizes the chat event-iterator path. An operator

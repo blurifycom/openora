@@ -9,8 +9,8 @@ import {
   ExclusionStatusSchema,
   RgFlagTypeSchema,
   RgFlagStatusSchema,
-} from '@blurifycom/core/contracts';
-import { PageQuerySchema, paginated } from '@blurifycom/core/contracts/kit';
+} from '@openora/core/contracts';
+import { PageQuerySchema, paginated } from '@openora/core/contracts/kit';
 import { LimitSchema, isConsistentLimit } from './limits.js';
 
 export const RgExclusionSchema = z.object({

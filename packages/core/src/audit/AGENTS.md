@@ -15,35 +15,24 @@ without importing this module's internals.
 
 ## Layout
 
-| Layer   | File                       | Holds                                                              |
-| ------- | -------------------------- | ------------------------------------------------------------------ |
-| schema  | `schema/index.ts`          | `audit_log` pgTable + `actorTypeEnum`. Append-only by design.      |
-| schemas | `schemas/index.ts`         | Re-exports from `@blurifycom/orpc-contract/audit`; inferred types. |
-| service | `service/audit.service.ts` | `record`, `list`, `exportCsv`, `verifyChain`.                      |
-| router  | `router/index.ts`          | `audit.list` (audit:view), `audit.exportCsv` (audit:export).       |
-| plugin  | `plugin.ts`                | DI wiring, AUDIT_WRITER port, event subscriptions.                 |
+| Layer    | File                       | Holds                                                                          |
+| -------- | -------------------------- | ------------------------------------------------------------------------------ |
+| schema   | `schema/index.ts`          | `audit_log` pgTable + `actorTypeEnum`. Append-only by design.                  |
+| contract | `contract/index.ts`        | oRPC contract slice + Zod schemas; exported as `@openora/core/audit/contract`. |
+| service  | `service/audit.service.ts` | `record`, `list`, `exportCsv`, `verifyChain`.                                  |
+| router   | `router/index.ts`          | `audit.list` (audit:view), `audit.exportCsv` (audit:export).                   |
+| plugin   | `plugin.ts`                | DI wiring, AUDIT_WRITER port, event subscriptions.                             |
 
-Contract slice: `packages/contracts/orpc-contract/src/audit.ts`.
+## Sealed token
 
-## Sealed token decision
-
-The brief requested a `createSealedToken` for the audit write port, reflecting
-that AML/SAR audit writes are a regulator-mandated invariant operators must not
-override (MGA/UKGC).
-
-**Finding:** the plugin host's `ctx.provide(token, factory)` signature is typed
-`<T>(token: Token<T>, ...)`. `SealedToken<T>` is structurally incompatible (the
-`__sealed: true` brand makes it a different type), so the TypeScript compiler
-rejects `ctx.provide(sealedToken, ...)` at the call site. The runtime guard in
-`ModuleRegistryImpl.provide` also throws for any token whose Symbol description
-starts with `sealed:`. Neither escape hatch exists - a module cannot bind its own
-sealed token through the public API.
-
-**Decision:** `AUDIT_WRITER` uses a regular `Token<T>` (via `createToken`). The
-invariant is enforced by design (no update/delete routes or service methods) and
-documented here. A future platform version could add a `bindSealedToken` hook on
-`ModuleRegistry` that bypasses the overlay-rejection guard for the owning module
-only. See `packages/contracts/adapters/src/audit.ts` for the full rationale comment.
+`AUDIT_WRITER` is a real `SealedToken<AuditWritePort>` (AML/SAR audit writes are
+a regulator-mandated invariant operators must not override - MGA/UKGC). This
+module binds it via `ctx.provideSealed()` in `plugin.ts` - the only legitimate
+bind path for a sealed token: `ctx.provide()` still rejects any sealed token
+outright, and `provideSealed()` itself refuses a second bind for the same
+token, so no overlay can rebind `AUDIT_WRITER` after this module registers it.
+See `@openora/core/contracts` `adapters/token.ts` for the `provideSealed`
+rationale and `@openora/core/compliance` `sealed.ts` for the canonical list.
 
 ## Hash chain approach
 
@@ -51,7 +40,7 @@ Each `record()` call:
 
 1. Reads the latest row's `hash` (or null for the first row).
 2. Inserts the row with `prevHash` = that value and a placeholder `hash = 'pending'`.
-3. Computes `sha256(JSON.stringify({ id, actorId, actorType, action, resourceType, resourceId, seq, createdAt, prevHash: prevHash ?? '' }))` - stable key order, no tenantId (single-tenant).
+3. Computes `sha256(JSON.stringify({ id, actorId, actorType, action, resourceType, resourceId, before, after, result, seq, createdAt, prevHash: prevHash ?? '' }))` - stable key order, no tenantId (single-tenant). `before`/`after`/`result` are IN the hash: the mutation payload and outcome must be tamper-evident, not just the who/what/where.
 4. Updates the row with the real hash.
 
 `verifyChain()` re-derives every hash from scratch and reports the first broken link.
@@ -66,9 +55,9 @@ extraction / OOM - narrow the date range and paginate for larger windows, or use
 
 ### Ports
 
-| Interface        | Token          | File                              | Purpose                                   |
-| ---------------- | -------------- | --------------------------------- | ----------------------------------------- |
-| `AuditWritePort` | `AUDIT_WRITER` | `@blurifycom/adapters` `audit.ts` | Write path other modules call explicitly. |
+| Interface        | Token          | File                                 | Purpose                                   |
+| ---------------- | -------------- | ------------------------------------ | ----------------------------------------- |
+| `AuditWritePort` | `AUDIT_WRITER` | `@openora/core/contracts` `audit.ts` | Write path other modules call explicitly. |
 
 ### Events subscribed (existing `domainEventSchemas` topics only)
 
@@ -112,7 +101,7 @@ OR within that AND. Exact-match only - keeps the `actorId`/`resourceId` indexes 
 
 ## Do
 
-- Use `AUDIT_WRITER` from `@blurifycom/adapters` to record entries from other modules/overlays.
+- Use `AUDIT_WRITER` from `@openora/core/contracts` to record entries from other modules/overlays.
 - Call `verifyChain()` in a scheduled job or admin tool to detect tampering.
 - Add new event subscriptions in `plugin.ts` only for topics declared in
   `domainEventSchemas` - never invent topics.
@@ -124,14 +113,14 @@ OR within that AND. Exact-match only - keeps the `actorId`/`resourceId` indexes 
 - Expose update or delete on `audit_log` - it is append-only by regulatory requirement.
 - Import another module's root or internals - use events / `AUDIT_WRITER` / the `/schema` subpath.
 - Invent event topics not in `domainEventSchemas`.
-- Hand-edit the generated migrations under `packages/core/drizzle/`.
+- Hand-edit the generated migrations under the module's `drizzle/migrations/` - the source of truth is `src/schema/index.ts`.
 
 ## Done when
 
 - [x] `pnpm verify` exits 0.
 - [x] `audit_log` table in Drizzle schema with all required columns.
-- [x] `audit_log` migration generated (single-tenant, no RLS).
-- [x] `AUDIT_WRITER` token declared in `@blurifycom/adapters`.
+- [x] `audit_log` migration generated in the module's `drizzle/migrations/` (single-tenant, no RLS).
+- [x] `AUDIT_WRITER` token declared in `@openora/core/contracts`.
 - [x] `audit.list` and `audit.exportCsv` routes guarded with `audit:view` / `audit:export`.
 - [x] `verifyChain` helper implemented and tested.
 - [x] 12 unit tests covering: record() hash chaining, verifyChain() tamper detection, list() pagination, exportCsv() format.

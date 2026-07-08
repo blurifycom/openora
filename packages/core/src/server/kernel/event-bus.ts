@@ -9,7 +9,7 @@ import {
   getEventVersion,
   type DomainEventName,
   type DomainEventPayload,
-} from '@blurifycom/core/contracts';
+} from '@openora/core/contracts';
 import type { ZodType } from 'zod';
 import type { Logger } from 'pino';
 import { createLogger } from './logger.js';

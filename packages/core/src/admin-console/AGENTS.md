@@ -1,45 +1,43 @@
-# Backoffice Module - AGENTS.md
+# Admin-console Module - AGENTS.md
 
 ## What this module does
 
-Admin API for managing users, viewing transactions, and querying platform stats.
-This module provides the HTTP endpoints consumed by the `apps/backoffice` Vite + TanStack Router admin SPA.
+HTTP API for backoffice admin operations: user management, transaction viewing, and platform stats.
 It does not own any DB tables - it reads from tables owned by `identity` (user) and `wallet` (wallet_transaction).
+The backoffice SPA lives in the downstream consumer repo, not here (headless platform).
 
-## Extension points
+## Ports consumed
 
-- Routes: `src/router/index.ts` - add new admin endpoints here
-- Service: `src/service/backoffice.service.ts` - add new query/mutation methods
-- Ports: add adapter interfaces for external analytics/reporting systems to `@blurifycom/adapters`
-- Events: emit `backoffice.*` events via the injected `EventBus` for audit logging
+- `ADMIN_USER_DIRECTORY` - look up players by email/username for enrichment + KYC status
+- `ADMIN_WALLET_REPORTING` - transaction ledger reads for admin queue views
+- `ADMIN_GUARD` - authorize each admin route
+- `AUDIT_WRITER` - record admin actions
 
-## Ports
+## oRPC routes
 
-None currently. If a reporting or analytics vendor is added, define an interface in `@blurifycom/adapters` and implement under `adapters/<vendor>/`.
+| Procedure                 | Method | Path                         | Guard        |
+| ------------------------- | ------ | ---------------------------- | ------------ |
+| `backoffice.listUsers`    | GET    | `/backoffice/users`          | `admin:view` |
+| `backoffice.getPlatform`  | GET    | `/backoffice/platform-stats` | `admin:view` |
+| `backoffice.getUserStats` | GET    | `/backoffice/users/{userId}` | `admin:view` |
 
 ## Do
 
-- Read another add-on's tables by importing them via the subpath (`import { user } from '@blurifycom-addons/identity/schema'`, `import { wallet, walletTransaction } from '@blurifycom-addons/wallet/schema'`) and querying with `DrizzleService` - no casts needed
-- Throw domain errors (`UserNotFoundError`) from the service, map to `ORPCError` in the router
+- Read sibling tables via their `/schema` subpath (`import { user } from '@openora/core/pam/schema/identity'`); query with `DrizzleService` from `@openora/core/server`
+- Throw domain errors from the service; map to oRPC errors in the router
 - Return all dates as ISO strings
-- Import contracts from `@blurifycom/orpc-contract/backoffice` (subpath export)
+- Guard every admin route first: `await adminGuard.assert(context, resource, action)` as the handler's first line
+- Record admin actions via the `AUDIT_WRITER` port (no `backoffice.*` topics exist in `domainEventSchemas` - never invent topics)
 
 ## Don't
 
-- Import from another add-on's service/runtime code directly (read its tables via the schema subpath, or use events)
-- Throw `ORPCError` (or a domain error mapped via `mapErrors`) - never framework HTTP errors
-- Edit the generated migrations under `packages/core/drizzle/` by hand - the source of truth is `src/schema/index.ts`
-
-## Sample: add a new admin route
-
-1. Add the contract entry to `packages/contracts/orpc-contract/src/backoffice.ts`
-2. Add the service method to `src/service/backoffice.service.ts`
-3. Add the handler to `src/router/index.ts` using `implement(contract.backoffice.<name>).handler(...)`
-4. Run `pnpm regen && pnpm verify`
+- Import another module's service/internals - read tables via schema subpath or use events
+- Throw framework HTTP errors from the service - throw domain errors only
+- Add new DB tables here (admin-console is read-only)
 
 ## Done when
 
 - `pnpm verify` passes (typecheck + lint + boundaries + module-shape + tests).
-- `list-routes module=admin-console` shows the new/changed route(s) (e.g. `backoffice.listUsers`).
-- Every admin route guards first: `await this.adminGuard.assert(context)` as the handler's first line.
-- No `boundaries/dependencies` lint errors (no cross-add-on code imports; read other add-ons' tables only via the `@blurifycom-addons/<name>/schema` subpath).
+- `list-routes module=admin-console` shows the new/changed route(s).
+- Every admin route is guarded (`AdminGuard.assert` first line).
+- No `boundaries/dependencies` lint errors (read other domains' tables only via `@openora/core/<domain>/schema` subpath).

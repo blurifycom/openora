@@ -1,8 +1,8 @@
 import { describe, it, expect, vi } from 'vitest';
 import { KycVerificationService, type KycVerificationDeps } from '../service/kyc.service.js';
 import { CumulativeDepositReKycTrigger } from '../service/re-kyc-trigger.js';
-import type { DrizzleService } from '@blurifycom/core/server';
-import type { KycVendorStatus } from '@blurifycom/core/contracts';
+import type { DrizzleService } from '@openora/core/server';
+import type { KycVendorStatus } from '@openora/core/contracts';
 import { mock, mockDb } from '../../testing/mock.js';
 
 // A chainable Drizzle stub: every builder method returns the builder; awaiting it yields

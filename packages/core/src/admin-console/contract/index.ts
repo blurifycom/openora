@@ -10,8 +10,8 @@ import {
   WalletRailSchema,
   WalletTransactionStatusSchema,
   WalletTransactionTypeSchema,
-} from '@blurifycom/core/contracts';
-import { PageQuerySchema, paginated } from '@blurifycom/core/contracts/kit';
+} from '@openora/core/contracts';
+import { PageQuerySchema, paginated } from '@openora/core/contracts/kit';
 
 export const PlayerEmailSchema = z.email();
 export const PlayerUsernameSchema = z.string();
@@ -30,7 +30,7 @@ export const PlatformStatsSchema = z.object({
   totalBonusClaimed: z.number(),
 });
 
-export { UserRoleSchema } from '@blurifycom/core/contracts';
+export { UserRoleSchema } from '@openora/core/contracts';
 
 export const AdminUserSchema = z.object({
   id: UuidSchema,

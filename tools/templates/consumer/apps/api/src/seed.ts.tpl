@@ -8,8 +8,8 @@
  * Usage: pnpm db:seed  (run after db:migrate). Requires DATABASE_URL.
  * Does NOT include demo data (fixtures, fake players) - that is dev-only.
  */
-import { createDrizzleDb } from '@blurifycom/core/server';
-import { seedRoles } from '@blurifycom/core/iam/seed';
+import { createDrizzleDb } from '@openora/core/server';
+import { seedRoles } from '@openora/core/iam/seed';
 // import additional module seeders here as you enable them
 
 async function main() {

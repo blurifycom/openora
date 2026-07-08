@@ -1,5 +1,5 @@
-import { createDomainError } from '@blurifycom/core/server';
-import type { PlatformConfig } from '@blurifycom/core/contracts';
+import { createDomainError } from '@openora/core/server';
+import type { PlatformConfig } from '@openora/core/contracts';
 
 export const UnsupportedLanguageError = createDomainError(
   'UnsupportedLanguageError',

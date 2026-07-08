@@ -14,10 +14,10 @@ ADR-0001 chose oRPC on top of NestJS, primarily for Nest's DI container and modu
 
 ## Decision
 
-Replace NestJS with **Hono** (served on Node via `@hono/node-server`; Bun-ready later) and replace Nest DI with a **small functional composition container** (`Container` in `@blurifycom/core`).
+Replace NestJS with **Hono** (served on Node via `@hono/node-server`; Bun-ready later) and replace Nest DI with a **small functional composition container** (`Container` in `@openora/core`).
 
 - **Routing:** oRPC stays. Routes are built contract-first with `implement(contract).$context<OssContext>()` and mounted via oRPC's `OpenAPIHandler` (`@orpc/openapi/fetch`) as Hono middleware. The SDK keeps using `OpenAPILink`, so REST paths and the emitted OpenAPI spec are unchanged. `OpenAPIGenerator` still emits `docs/openapi.json`.
-- **Composition over DI:** a `Token<T>` is a typed `Symbol` (in `@blurifycom/adapters`); a provider is an explicit factory `(c) => new Service(c.get(DEP), ...)`. Resolution is lazy, cached, and last-registration-wins (so an overlay rebinds an adapter by registering after the owning module). No decorators, no `reflect-metadata`.
+- **Composition over DI:** a `Token<T>` is a typed `Symbol` (in `@openora/adapters`); a provider is an explicit factory `(c) => new Service(c.get(DEP), ...)`. Resolution is lazy, cached, and last-registration-wins (so an overlay rebinds an adapter by registering after the owning module). No decorators, no `reflect-metadata`.
 - **Plugin host:** `definePlugin({ register(ctx) })` now exposes `ctx.provide(token, factory)` and `ctx.routers.add(namespace, (c) => router)` (plus `events`, `slots`, `mcp`). The Nest `DynamicModule`/controller path is gone.
 - **Services are plain classes.** Constructors take explicit dependencies; the module's `plugin.ts` builds them via the container. Cookies/response headers (auth) flow through oRPC's `ResponseHeadersPlugin` (`context.resHeaders`) instead of an Express `Response`.
 - **Lifecycle:** `DrizzleService.dispose()` (pool teardown) is registered with `container.onDispose()` and run on server close / SIGTERM.

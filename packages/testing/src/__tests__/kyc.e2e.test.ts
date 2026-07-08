@@ -1,7 +1,7 @@
 import { describe, it, expect, beforeAll, afterAll, vi } from 'vitest';
 import { createHmac, randomUUID } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
-import { loadExtensions } from '@blurifycom/core/server';
+import { loadExtensions } from '@openora/core/server';
 import {
   setupTestDb,
   bootTestApp,
@@ -18,7 +18,7 @@ import {
  * against the real Hono + oRPC app (bootTestApp) and a real Postgres test db. Pure
  * service-level logic (vendor-status mapping, the re-KYC watermark math, HMAC
  * verification) is already unit-tested next to the code (see compliance/__tests__ +
- * wallet/__tests__ in @blurifycom/core) - this suite only exercises the wiring a unit
+ * wallet/__tests__ in @openora/core) - this suite only exercises the wiring a unit
  * test with a mocked DB cannot: real routing, real authz, real DB state, and the
  * real (fire-and-forget) event -> audit pipeline.
  *

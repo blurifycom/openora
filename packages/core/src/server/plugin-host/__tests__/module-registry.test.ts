@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { Container } from '../../kernel/index.js';
-import { createToken, createSealedToken } from '@blurifycom/core/contracts';
+import { createToken, createSealedToken } from '@openora/core/contracts';
 import { ModuleRegistryImpl } from '../module-registry.js';
 
 function newRegistry() {
@@ -21,6 +21,20 @@ describe('ModuleRegistryImpl', () => {
     const { reg } = newRegistry();
     const SEALED = createSealedToken<string>('rg-enforcement');
     expect(() => reg.provide(SEALED as never, () => 'x')).toThrow(/sealed token/i);
+  });
+
+  it('provideSealed() binds a sealed token exactly once', () => {
+    const { container, reg } = newRegistry();
+    const SEALED = createSealedToken<string>('audit-log-writer');
+    reg.provideSealed(SEALED, () => 'canonical');
+    expect(container.get(SEALED)).toBe('canonical');
+  });
+
+  it('provideSealed() rejects a second bind of the same sealed token', () => {
+    const { reg } = newRegistry();
+    const SEALED = createSealedToken<string>('audit-log-writer');
+    reg.provideSealed(SEALED, () => 'canonical');
+    expect(() => reg.provideSealed(SEALED, () => 'overlay-attempt')).toThrow(/already bound/i);
   });
 
   it('routers.add() rejects a duplicate namespace', () => {

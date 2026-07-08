@@ -1,4 +1,4 @@
-import type { DrizzleDb } from '@blurifycom/core/server';
+import type { DrizzleDb } from '@openora/core/server';
 import { seedTags } from './seed-default-tags.js';
 import { seedTagRules } from './seed-default-tag-rules.js';
 

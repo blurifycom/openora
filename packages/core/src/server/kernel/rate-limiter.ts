@@ -3,7 +3,7 @@ import type {
   RateLimiterAdapter,
   RateLimitOptions,
   RateLimitResult,
-} from '@blurifycom/core/contracts';
+} from '@openora/core/contracts';
 
 // Zero-dependency in-process default (set REDIS_URL to bind the distributed Redis
 // reference adapter instead). State is a Map keyed by the caller-supplied key; each

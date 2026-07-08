@@ -2,7 +2,7 @@ import { describe, it, expect, vi } from 'vitest';
 import { PgDialect } from 'drizzle-orm/pg-core';
 import type { SQL } from 'drizzle-orm';
 import { mock, mockDb } from '../../testing/mock.js';
-import { InProcessCache, type EventBus } from '@blurifycom/core/server';
+import { InProcessCache, type EventBus } from '@openora/core/server';
 import { CmsService } from '../service/cms.service.js';
 
 const dialect = new PgDialect();

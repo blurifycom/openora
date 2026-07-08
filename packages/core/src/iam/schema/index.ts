@@ -1,4 +1,4 @@
-import { invitationStatuses } from '@blurifycom/core/contracts';
+import { invitationStatuses } from '@openora/core/contracts';
 import {
   boolean,
   foreignKey,

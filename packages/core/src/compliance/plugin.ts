@@ -1,10 +1,4 @@
-import {
-  definePlugin,
-  EVENT_BUS,
-  DRIZZLE,
-  ADMIN_GUARD,
-  createLogger,
-} from '@blurifycom/core/server';
+import { definePlugin, EVENT_BUS, DRIZZLE, ADMIN_GUARD, createLogger } from '@openora/core/server';
 import * as z from 'zod';
 import {
   ADMIN_USER_DIRECTORY,
@@ -20,7 +14,7 @@ import {
   domainEventSchemas,
   queue,
   type JobQueueAdapter,
-} from '@blurifycom/core/contracts';
+} from '@openora/core/contracts';
 import { ComplianceService } from './service/compliance.service.js';
 import { KycVerificationService } from './service/kyc.service.js';
 import { RgService } from './service/rg.service.js';
