@@ -1,6 +1,7 @@
 import { implement } from '@orpc/server';
 import {
   type OssContext,
+  type NodeHeaders,
   AdminGuard,
   mapErrors,
   getUserId,
@@ -10,11 +11,25 @@ import {
 import { identityContract } from '../contract/index.js';
 import { IdentityService } from '../service/identity.service.js';
 import { SessionService } from '../service/session.service.js';
+import { PhoneLoginService } from '../service/phone-login.service.js';
 import { UnsupportedLanguageError } from '../../shared/language.js';
+
+function nodeIp(headers: NodeHeaders): string | null {
+  const fwd = headers['x-forwarded-for'];
+  const first = Array.isArray(fwd) ? fwd[0] : fwd;
+  const real = headers['x-real-ip'];
+  return first?.split(',')[0]?.trim() || (Array.isArray(real) ? real[0] : real) || null;
+}
+
+function nodeUa(headers: NodeHeaders): string | null {
+  const ua = headers['user-agent'];
+  return (Array.isArray(ua) ? ua[0] : ua) ?? null;
+}
 
 export function createIdentityRouter(
   identity: IdentityService,
   sessionSvc: SessionService,
+  phoneLogin: PhoneLoginService,
   adminGuard: AdminGuard,
   eventBus: EventBus,
 ) {
@@ -28,6 +43,16 @@ export function createIdentityRouter(
     login: os.login.handler(({ input, context }) =>
       identity.login(input, context.request.headers, context.resHeaders ?? new Headers()),
     ),
+
+    phoneLoginRequest: os.phoneLoginRequest.handler(({ input, context }) => {
+      const h = context.request.headers;
+      return phoneLogin.requestOtp({ ...input, ip: nodeIp(h), userAgent: nodeUa(h) });
+    }),
+
+    phoneLoginVerify: os.phoneLoginVerify.handler(({ input, context }) => {
+      const h = context.request.headers;
+      return phoneLogin.verifyOtp({ ...input, ip: nodeIp(h), userAgent: nodeUa(h) });
+    }),
 
     logout: os.logout.handler(({ context }) =>
       identity.logout(context.request.headers, context.resHeaders ?? new Headers()),

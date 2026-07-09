@@ -16,8 +16,33 @@ export const UserSchema = z.object({
   image: z.url().nullable().optional(),
   theme: ThemeSchema,
   language: LanguageSchema,
+  // Phone-login fields. Optional so existing callers/serializers are unaffected; a
+  // player without a verified phone simply carries a null number and `false`.
+  phoneNumber: z.string().nullable().optional(),
+  phoneVerified: z.boolean().optional(),
   createdAt: TimestampSchema,
   updatedAt: TimestampSchema,
+});
+
+// E.164: '+' then a non-zero country digit and 7-14 more digits (8-15 total).
+export const E164PhoneSchema = z.string().regex(/^\+[1-9]\d{7,14}$/);
+
+export const PhoneLoginRequestInputSchema = z.object({ phone: E164PhoneSchema });
+
+export const PhoneLoginRequestOutputSchema = z.object({
+  // When the OTP the caller just requested expires (now + 5 min).
+  expiresAt: TimestampSchema,
+  // The earliest a fresh OTP may be requested for this phone (now + 60 s).
+  resendAfter: TimestampSchema,
+});
+
+export const PhoneLoginVerifyInputSchema = z.object({
+  phone: E164PhoneSchema,
+  code: z
+    .string()
+    .length(6)
+    .regex(/^\d{6}$/),
+  rememberMe: z.boolean().optional(),
 });
 
 export const OrganizationSchema = z.object({
@@ -117,3 +142,7 @@ export type VerifyEmailInput = z.infer<typeof VerifyEmailInputSchema>;
 export type UpdateProfileInput = z.infer<typeof UpdateProfileInputSchema>;
 export type ChangePasswordInput = z.infer<typeof ChangePasswordInputSchema>;
 export type ChangeEmailInput = z.infer<typeof ChangeEmailInputSchema>;
+export type E164Phone = z.infer<typeof E164PhoneSchema>;
+export type PhoneLoginRequestInput = z.infer<typeof PhoneLoginRequestInputSchema>;
+export type PhoneLoginRequestOutput = z.infer<typeof PhoneLoginRequestOutputSchema>;
+export type PhoneLoginVerifyInput = z.infer<typeof PhoneLoginVerifyInputSchema>;

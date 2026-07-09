@@ -143,6 +143,7 @@
       "tables": [
         "account",
         "session",
+        "sms_otp_session",
         "two_factor",
         "user",
         "verification"
@@ -156,6 +157,8 @@
         "identity.login",
         "identity.logout",
         "identity.me",
+        "identity.phoneLoginRequest",
+        "identity.phoneLoginVerify",
         "identity.register",
         "identity.requestPasswordReset",
         "identity.resetPassword",
@@ -493,6 +496,16 @@
       ]
     },
     {
+      "category": "sms",
+      "interface": "SmsAdapter",
+      "token": "SMS_ADAPTER",
+      "status": "wired",
+      "boundIn": [
+        "packages/core/src/pam/identity/adapters/mock/mock-sms-adapter.ts",
+        "packages/core/src/pam/identity/plugin.ts"
+      ]
+    },
+    {
       "category": "wallet-commands",
       "interface": "WalletDebitArgs",
       "token": "WALLET_COMMANDS",
@@ -536,6 +549,8 @@
     "identity.2fa.enabled",
     "identity.email.verified",
     "identity.password.reset",
+    "identity.phone_otp.cancelled",
+    "identity.phone_otp.requested",
     "identity.profile.updated",
     "identity.session.revoked",
     "identity.sessions.revoked_all",
@@ -544,6 +559,7 @@
     "identity.user.login",
     "identity.user.login.failed",
     "identity.user.logout",
+    "identity.user.phone_login",
     "identity.user.reactivated",
     "identity.user.registered",
     "identity.user.unlocked",
@@ -715,6 +731,10 @@
     },
     {
       "name": "Disable2faInputSchema",
+      "file": "packages/core/src/contracts/schemas/identity.ts"
+    },
+    {
+      "name": "E164PhoneSchema",
       "file": "packages/core/src/contracts/schemas/identity.ts"
     },
     {
@@ -900,6 +920,18 @@
     {
       "name": "PermissionLevelSchema",
       "file": "packages/core/src/contracts/schemas/iam.ts"
+    },
+    {
+      "name": "PhoneLoginRequestInputSchema",
+      "file": "packages/core/src/contracts/schemas/identity.ts"
+    },
+    {
+      "name": "PhoneLoginRequestOutputSchema",
+      "file": "packages/core/src/contracts/schemas/identity.ts"
+    },
+    {
+      "name": "PhoneLoginVerifyInputSchema",
+      "file": "packages/core/src/contracts/schemas/identity.ts"
     },
     {
       "name": "PlatformConfigSchema",

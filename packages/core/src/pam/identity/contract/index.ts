@@ -16,6 +16,9 @@ import {
   ChangeEmailInputSchema,
   IdentitySuccessSchema,
   TimestampSchema,
+  PhoneLoginRequestInputSchema,
+  PhoneLoginRequestOutputSchema,
+  PhoneLoginVerifyInputSchema,
 } from '@openora/core/contracts';
 import { PageQuerySchema, paginated } from '@openora/core/contracts/kit';
 import * as z from 'zod';
@@ -51,6 +54,16 @@ export const identityContract = {
         twoFactorRedirect: z.boolean().optional(),
       }),
     ),
+
+  phoneLoginRequest: oc
+    .route({ method: 'POST', path: '/identity/phone-login/request' })
+    .input(PhoneLoginRequestInputSchema)
+    .output(PhoneLoginRequestOutputSchema),
+
+  phoneLoginVerify: oc
+    .route({ method: 'POST', path: '/identity/phone-login/verify' })
+    .input(PhoneLoginVerifyInputSchema)
+    .output(z.object({ user: UserSchema, session: SessionSchema })),
 
   logout: oc.route({ method: 'POST', path: '/identity/logout' }).output(IdentitySuccessSchema),
 
