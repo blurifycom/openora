@@ -12,6 +12,10 @@ concurrency:
 
 jobs:
   commitlint:
+    # PR only: lints the PR's commits. On pushes to dev/stage the commits already passed
+    # commitlint on their PR, and the push before-SHA is unreliable (null on a branch's
+    # first push -> "Invalid revision range 0000...").
+    if: github.event_name == 'pull_request'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -19,7 +23,7 @@ jobs:
           fetch-depth: 0
       - uses: ./.github/actions/bootstrap
       - name: Commitlint
-        run: pnpm commitlint --from ${{ github.event.pull_request.base.sha || github.event.before }} --to ${{ github.event.pull_request.head.sha || github.sha }}
+        run: pnpm commitlint --from ${{ github.event.pull_request.base.sha }} --to ${{ github.event.pull_request.head.sha }}
 
   verify:
     runs-on: ubuntu-latest
