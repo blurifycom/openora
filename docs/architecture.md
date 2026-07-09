@@ -29,7 +29,7 @@ flowchart TB
     orpc --> client
   end
 
-  subgraph runtime["API runtime - apps/api calls createApp()"]
+  subgraph runtime["API runtime (consumer's createApp() entry)"]
     cfg["extensions.config.ts<br/>plugin registry"]
     host["plugin-host<br/>definePlugin / ModuleRegistry"]
     container["Container<br/>functional composition (tokens -> factories)"]
@@ -46,8 +46,8 @@ flowchart TB
     core["/server kernel<br/>logger, EventBus, Container"]
   end
 
-  subgraph modules["Domains (packages/domains/* - each deps @openora/core)"]
-    mod["pam (identity·profile·player-mgmt), compliance,<br/>wallet, casino (gaming·lobby·aggregator),<br/>sportsbook, engagement (chat·notifications·bonus·leaderboard), cms"]
+  subgraph modules["Domains (packages/core/src/* - each part of @openora/core)"]
+    mod["pam (identity·profile·player-mgmt·player-note·tag), compliance,<br/>wallet, casino (gaming·lobby), engagement (chat·notifications), cms,<br/>iam, audit, admin-console"]
     adapters["@openora/core/contracts<br/>vendor adapter interfaces (ports)"]
     mod --> adapters
   end
@@ -61,7 +61,7 @@ flowchart TB
   adapters -. implemented by .-> vendor
 
   subgraph consumer["Downstream consumer (reference)"]
-    bapi["apps/api<br/>thin createApp()"]
+    bapi["consumer entry<br/>calls createApp()"]
     bfront["frontend (consumer repo)<br/>own pages, components, styling<br/>consumes api over HTTP via @openora/core/react"]
     bplug["consumer plugins<br/>one feature per folder"]
     bcfg["extensions.config.ts<br/>+ pnpm link: overrides"]
@@ -70,7 +70,6 @@ flowchart TB
   end
   hono -. createApp + link .-> bapi
   client --> bfront
-  hooks --> bfront
 
   subgraph ai["AI dev surface"]
     mcp["mcp-server-dev<br/>stdio, via .mcp.json"]
@@ -88,18 +87,18 @@ Solid arrows are runtime/build dependencies; dashed arrows are **adapter seams**
 
 **Contracts**
 
-- **shared-schemas** - shared Zod schemas (cross-cutting primitives + identity). Per-module request/response schemas live with the router in `orpc-contract`. Every type is `z.infer`'d, never hand-written. ADR-0004.
-- **orpc-contract** - composes each module's router into one contract. From it the build emits `docs/openapi.json` and a fully typed client (no codegen step). ADR-0001.
+- **`@openora/core/contracts` schemas** - shared Zod schemas (cross-cutting primitives + identity) under `contracts/schemas/`. Per-module request/response schemas live in that module's `contract/` dir. Every type is `z.infer`'d, never hand-written. ADR-0004.
+- **`composeContract`** (`@openora/core/contracts`) - the composition root composes each enabled module's contract slice into one runtime contract. From it the build emits `docs/openapi.json` and a fully typed client (no codegen step). ADR-0001.
 
 **API runtime**
 
 - **extensions.config.ts** - the one list of enabled plugins (modules + overlays). The only place wiring is turned on.
-- **plugin-host** - `definePlugin({ id, dependsOn, register })` + `ModuleRegistry`. In `register(ctx)` a plugin binds providers (`ctx.provide(token, factory)`), mounts routers (`ctx.routers.add(namespace, (c) => router)`), subscribes to events, and registers MCP tools. Overlays add their own `pgTable` in their module's `src/schema/index.ts`. ADR-0002.
-- **Hono + oRPC** - oRPC defines routes and validates I/O against the Zod contract; its `OpenAPIHandler` is mounted on a Hono server and emits `docs/openapi.json`. Dependency wiring is a small **functional composition `Container`** (`@openora/core/server`): typed-token factories, lazy + last-wins, no decorators. `apps/api` is a thin caller of `createApp()` from `@openora/core/server`; downstream consumers call the same factory. ADR-0009.
+- **plugin-host** - `definePlugin({ id, dependsOn, register })` + `ModuleRegistry`. In `register(ctx)` a plugin binds providers (`ctx.provide(token, factory)`), mounts routers (`ctx.routers.add(namespace, (c) => router)`), subscribes to events, and registers MCP tools. Overlays add their own `pgTable` in their module's `schema/index.ts`. ADR-0002.
+- **Hono + oRPC** - oRPC defines routes and validates I/O against the Zod contract; its `OpenAPIHandler` is mounted on a Hono server and emits `docs/openapi.json`. Dependency wiring is a small **functional composition `Container`** (`@openora/core/server`): typed-token factories, lazy + last-wins, no decorators. Downstream consumers call `createApp()` from `@openora/core/server` to boot their API entry. ADR-0009.
 
 **Engine** (`@openora/core/server`) - the node runtime, all under one subpath: `db` (Drizzle client, drizzle-kit migrations, `DrizzleService`, the framework-free `@openora/core/server/orm` re-export), `auth` (better-auth + the shared `AdminGuard`), `kernel` (logger, typed `EventBus`, composition `Container`), `plugin-host` (the plugin loader), and `createApp()` - which is domain-agnostic (the consumer injects the PAM identity schema, ADR-0025/0026: single-tenant, no resolveTenant).
 
-**Domains** (`packages/domains/*`) - one package per domain (`@openora/<domain>`), each depending on `@openora/core` only. A domain may import `@openora/core/*` but **never another domain** - cross-domain communication goes through events, command ports, or shared contracts. Vendor adapter interfaces come from `@openora/core/contracts`.
+**Domains** (`packages/core/src/<domain>/*`) - folded into the single `@openora/core` package and exposed as subpaths (`@openora/core/<domain>`), not as one package per domain. A domain may import the engine zones (`contracts`, `server`, `react`) and a sibling's read-only `/schema` subpath, but **never another domain's internals** - cross-domain communication goes through events, command ports, or shared contracts. Vendor adapter interfaces come from `@openora/core/contracts`. ADR-0025.
 
 **Vendor adapters** - concrete implementations of a module's adapter interfaces (PSP, KYC vendor, igaming aggregator, chat), shipped as separate packages. The interface is the seam; the implementation is swappable.
 
@@ -110,7 +109,7 @@ Solid arrows are runtime/build dependencies; dashed arrows are **adapter seams**
 - **`@openora/core/react`** - the supported frontend consumption surface: data hooks, typed oRPC client, auth, and client-side realtime transport. The platform is headless backend only; the frontend lives in the downstream consumer repo.
 - **`@openora/core/compliance`** - canonical list of `SealedToken<T>` services operators may never override (RG enforcement, KYC writes, AML/SAR, ledger writes, RNG, etc.) with regulatory citations.
 
-**Downstream consumer (reference)** - does **not** fork. `apps/api` is a thin `createApp()` entry with its own `extensions.config.ts`; `@openora/*` packages resolve via `pnpm` workspace overrides (`link:`). The platform is headless: the frontend lives in the downstream consumer repo and consumes the api over HTTP via `@openora/core/react`. Per-operator backend customization lives in plugins under `apps/api/src/extensions/`. ADR-0005 + ADR-0012 + ADR-0013.
+**Downstream consumer (reference)** - does **not** fork. The consumer creates its own `createApp()` entry with its own `extensions.config.ts`; `@openora/*` packages resolve via `pnpm` workspace overrides (`link:`). The platform is headless: the frontend lives in the downstream consumer repo and consumes the api over HTTP via `@openora/core/react`. Per-operator backend customization lives in plugins under `extensions/`. ADR-0005 + ADR-0012 + ADR-0013.
 
 **AI dev surface**
 
@@ -122,11 +121,11 @@ Solid arrows are runtime/build dependencies; dashed arrows are **adapter seams**
 
 These are the swap points - the reason the platform is "headless" and extensible:
 
-| Seam           | Interface side                        | Implementation side                                        | Swap to...                                       |
-| -------------- | ------------------------------------- | ---------------------------------------------------------- | ------------------------------------------------ |
-| Plugin host    | `definePlugin` contract               | a module or overlay folder                                 | add/remove features without touching core        |
-| Vendor adapter | `@openora/core/contracts` (interface) | impl under `domains/<m>/adapters/<vendor>/` (or an add-on) | a different PSP, KYC, or aggregator              |
-| Consumer link  | `createApp()` + `@openora/*` packages | downstream `apps/api` + `link:` overrides                  | publish to npm and bump the tag (no code change) |
+| Seam           | Interface side                        | Implementation side                               | Swap to...                                       |
+| -------------- | ------------------------------------- | ------------------------------------------------- | ------------------------------------------------ |
+| Plugin host    | `definePlugin` contract               | a module or overlay folder                        | add/remove features without touching core        |
+| Vendor adapter | `@openora/core/contracts` (interface) | impl under `<domain>/<module>/adapters/<vendor>/` | a different PSP, KYC, or aggregator              |
+| Consumer link  | `createApp()` + `@openora/core`       | the consumer's own `apps/api` entry               | publish to npm and bump the tag (no code change) |
 
 ## Request flow (a typical read)
 
@@ -154,17 +153,17 @@ other's routes. See [ADR-0010](./adr/0010-event-driven-broker-and-microservices.
 for the full direction; the shape:
 
 - **Events for side effects.** A module emits via the typed `EventBus` (payloads
-  validated against the Zod catalog in `shared-schemas/events.ts`); any number of
+  validated against the Zod catalog in `contracts/schemas/events.ts`); any number of
   modules subscribe (fan-out) with `ctx.events.on(...)`, wired to the bus at boot
-  by `createApp`. Bonuses, AML checks, leaderboards, notifications, and
-  personalization react this way. Consumers must be idempotent (delivery is
-  at-least-once once a durable broker is bound). A throwing subscriber is logged
-  and isolated - it never breaks the emitter or its siblings.
-- **Synchronous + atomic for money - via command ports.** Placing a bet (wallet
+  by `createApp`. Notifications, personalization, and cross-domain side effects react
+  this way. Consumers must be idempotent (delivery is at-least-once once a durable
+  broker is bound). A throwing subscriber is logged and isolated - it never breaks the
+  emitter or its siblings.
+- **Synchronous + atomic for money - via command ports.** Playing a game (wallet
   debit, balance check, RGS result) and pre-action gates (KYC/jurisdiction) run
   inside a single `db.transaction(...)` - never "emit and hope". A module that must
   mutate another synchronously calls the owner's **command port** passing its own
-  `tx` (eg sportsbook -> `WALLET_COMMANDS.debit(tx, ...)`): atomic in-process, yet
+  `tx` (eg gaming -> `WALLET_COMMANDS.debit(tx, ...)`): atomic in-process, yet
   decoupled enough to split later (a remote impl runs a saga). Events record what
   already happened; they never move funds.
 - **Broker behind a seam.** The `EventBus` is a typed facade over a
@@ -181,10 +180,10 @@ for the full direction; the shape:
 - **Client push is separate.** WebSockets/SSE are client-facing only (chat,
   balance/bonus toasts), never the transport between modules.
 - **Modular monolith now, microservices later.** The no-cross-module-imports rule,
-  the broker seam, and the outbox make a hot module (eg `bonus`, `aggregator`)
-  extractable into its own deployable. The same codebase boots a subset via
-  `SERVICE_MANIFEST` (`pnpm create:service` scaffolds a thin host); point its broker
-  at the shared stream and its events keep flowing. The `no-cross-module-schema-read`
-  lint warning flags the remaining shared-table couplings to retire first. Scale the
-  stateless Hono API horizontally; scale async work by moving consumers to their own
-  services. See [ADR-0017](./adr/0017-extraction-readiness-manifest-outbox-command-ports.md).
+  the broker seam, and the outbox make any module extractable into its own deployable.
+  The same codebase boots a subset via `SERVICE_MANIFEST` (`pnpm create:service`
+  scaffolds a thin host); point its broker at the shared stream and its events keep
+  flowing. The `no-cross-module-schema-read` lint warning flags the remaining
+  shared-table couplings to retire first. Scale the stateless Hono API horizontally;
+  scale async work by moving consumers to their own services. See
+  [ADR-0017](./adr/0017-extraction-readiness-manifest-outbox-command-ports.md).

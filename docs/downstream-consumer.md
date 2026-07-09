@@ -48,9 +48,9 @@ its PAM identity tables (ADR-0025/0026: single-tenant):
 // my-igaming/apps/api/src/main.ts
 import { createApp } from '@openora/core/server';
 import { composeContract } from '@openora/core/contracts';
-import { user, session, account, verification, twoFactor } from '@openora/pam/schema/identity';
-import { identityContract } from '@openora/pam/contracts/identity';
-import { walletContract } from '@openora/wallet/contract';
+import { user, session, account, verification, twoFactor } from '@openora/core/pam/schema/identity';
+import { identityContract } from '@openora/core/pam/contracts/identity';
+import { walletContract } from '@openora/core/wallet/contract';
 import { extensions } from './extensions.config.js'; // their own plugin list
 
 // Compose only the modules you enable (composeContract adds `health` itself).
@@ -69,17 +69,13 @@ await listen();
 await emitOpenApiSpec();
 ```
 
-The OSS `apps/api` is itself a thin consumer of `createApp` and serves as the reference.
-Downstream consumers do NOT fork `apps/api` - they create their own thin entrypoint and bring
-their own `extensions.config.ts`.
+Downstream consumers create their own thin entrypoint that calls `createApp` and bring
+their own `extensions.config.ts`. See `tools/templates/consumer/apps/api/src/main.ts` for the reference.
 
-## Add-on packages
+## Premium add-ons (future)
 
-Some modules are not part of the default OSS build - they ship as separately distributed
-`@openora-addons/*` packages (e.g. `@openora-addons/player-management` for admin PAM,
-`@openora-addons/sportsbook`, `@openora-addons/leaderboard`, `@openora-addons/aggregator`). A
-add-on package is a normal `definePlugin` module that also ships its own contract
-slice and migrations. To enable one you want:
+The `@openora/core` package ships the 15 core modules. Premium add-ons will be available as
+separately distributed packages in the future. When available, you enable them the same way:
 
 1. `pnpm add @openora-addons/<name>`.
 2. Register its plugin in your `extensions.config.ts` (it exports a default plugin).
@@ -88,19 +84,19 @@ slice and migrations. To enable one you want:
 
    ```typescript
    import { composeContract } from '@openora/core/contracts';
-   import { walletContract } from '@openora/wallet/contract';
-   import { playerContract } from '@openora-addons/player-management/contract';
+   import { walletContract } from '@openora/core/wallet/contracts/wallet';
+   import { premiumModuleContract } from '@openora-addons/<name>/contracts/<name>';
 
-   const contract = composeContract({ wallet: walletContract, player: playerContract });
+   const contract = composeContract({
+     wallet: walletContract,
+     '<name>': premiumModuleContract,
+   });
    ```
 
-4. If the package owns tables, run its migrations after the core set
-   (`pnpm -F @openora-addons/<name> db:migrate`, or the platform's `pnpm db:migrate:all`,
-   which discovers every add-on package's migration set).
+4. If the package owns tables, run its migrations after the core set.
 
 The core OSS build never references add-on packages (a lint boundary,
-`no-core-to-addon`, enforces it), so you only ever pull in what you enable. See
-[ADR-0020](./adr/0020-editions-and-add-on-modules.md).
+`no-core-to-addon`, enforces it), so you only ever pull in what you enable.
 
 ## Seeding reference data (production)
 
@@ -203,12 +199,9 @@ Until OSS packages are published to npm, downstream consumers point at this work
 ```jsonc
 "pnpm": {
   "overrides": {
-    // Everything folded into one package (ADR-0025) - link @openora/core, plus the
-    // domain/add-on packages you install, plus the dev configs.
-    "@openora/core":           "link:../oss/packages/core",
-    "@openora/pam":            "link:../oss/packages/domains/pam",
-    "@openora/wallet":         "link:../oss/packages/domains/wallet",
-    "@openora/tsconfig":       "link:../oss/packages/config/tsconfig"
+    // Everything is folded into one package (ADR-0025): link @openora/core and you
+    // get every domain as a subpath. Add @openora-addons/* only if you install one.
+    "@openora/core": "link:../oss/packages/core"
   }
 }
 ```
@@ -218,30 +211,30 @@ To keep the link hot during dev, run a watch build here in parallel with the con
 process:
 
 ```bash
-pnpm -F @openora/core -F @openora/pam -F @openora/wallet --parallel build --watch
+pnpm -F @openora/core build --watch
 ```
 
-Modules under `packages/domains/*` are loaded by the consumer via `extensions.config.ts` paths
-pointing at built plugin files - see the load pattern below.
+Modules under `packages/core/src/<domain>/*` are loaded by the consumer via `extensions.config.ts`
+paths pointing at built plugin files - see the load pattern below.
 
 Rejected alternatives: `pnpm link --global` (legacy, leaks state), `yalc` (extra publish step
 on every change), `file:` (snapshot copy on install, no live source).
 
 ## Consumer load pattern
 
-Consumer `extensions.config.ts` points at the built plugin files inside `@openora/modules`
-(`.../packages/domains/dist/<group>/<name>/src/plugin.js`), not source, because tsx in the
-consumer's API entry can't reliably resolve the tsconfig (decorator metadata gets dropped).
-Always build `@openora/modules` before booting the consumer:
+Consumer `extensions.config.ts` points at the built plugin files inside `@openora/core`
+(`.../packages/core/dist/<domain>/<module>/src/plugin.js`), not source, because tsx in the
+consumer's API entry can't reliably resolve the tsconfig. Always build `@openora/core`
+before booting the consumer:
 
 ```bash
-pnpm -F @openora/modules build
+pnpm -F @openora/core build
 ```
 
 For a watch loop during development:
 
 ```bash
-pnpm -r --filter '@openora/*' --parallel build --watch
+pnpm -F @openora/core --parallel build --watch
 ```
 
 Paths in the consumer's `extensions.config.ts` resolve relative to that config file's own
@@ -252,8 +245,8 @@ directory.
 - Drizzle tables live in each module's `src/schema/index.ts`. `drizzle.config.ts` (in `@openora/core/server`)
   globs those files; `pnpm regen` runs drizzle-kit to generate migrations. There is no
   schema-merge step.
-- All feature modules compile together as the single `@openora/modules` package (`tsc`, rootDir
-  `packages/domains`, emitting `dist/<group>/<name>/src/...`).
+- All 15 core modules compile together as part of `@openora/core` (`tsc`, rootDir
+  `packages/core/src`, emitting `dist/<domain>/<module>/src/...`).
 - `pnpm-workspace.yaml#allowBuilds` (pnpm 11 syntax) replaces the legacy
   `pnpm.onlyBuiltDependencies` in package.json.
 - A consumer gets the same AI surface this repo has by running the published `@openora/mcp` server

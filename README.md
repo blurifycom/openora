@@ -85,10 +85,10 @@ To run the whole reference stack in containers instead of on the host, use the o
 The platform is a pnpm + Turbo monorepo. `@openora/core` is the single published package, exposing subpaths (`/contracts`, `/server`, `/react`, and one per domain). Domains are wired into a domain-agnostic runtime through the composition root; add-ons and overlays extend it without touching core.
 
 ```text
-apps/api            # Hono + oRPC HTTP API (the runtime)
+apps/examples       # consumer reference implementation
 apps/mcp-server-dev # MCP dev server (stdio) for agents
-packages/core       # @openora/core - contracts, server engine, react SDK, domains
-packages/addons     # @openora-addons/* - optional/gated modules
+packages/core       # @openora/core - contracts, server engine, react SDK, all 15 modules
+packages/addons     # @openora-addons/* - premium modules (future)
 extensions.config.ts# the single registry of enabled plugins
 ```
 
@@ -106,11 +106,11 @@ Generates a standalone `@openora-addons/<name>` package under `packages/addons/<
 
 ### Add an extension (overlay plugin)
 
-Drop a folder under `apps/api/src/extensions/<name>/` or point to an npm package. Both use the same `definePlugin` contract:
+Drop a folder under `extensions/<name>/` or point to an npm package. Both use the same `definePlugin` contract:
 
 ```typescript
-// apps/api/src/extensions/my-feature/plugin.ts
-import { definePlugin } from '@openora/plugin-host';
+// extensions/my-feature/plugin.ts
+import { definePlugin } from '@openora/core/server';
 
 export default definePlugin({
   id: 'my-feature',
@@ -146,8 +146,6 @@ The platform is headless and ships no UI - backend modules + contracts + the SDK
 Planned work and progress live on the public board: **[openora roadmap](https://github.com/orgs/blurifycom/projects/1)**. Have a request or found a gap? [Open an issue](https://github.com/blurifycom/openora/issues/new/choose) and we triage it onto the board.
 
 ## Documentation
-
-<!-- TODO: add a link to the hosted docs site (Fumadocs, apps/docs) once it is deployed; also set it as the repo homepage. -->
 
 - Architecture: [docs/architecture.md](./docs/architecture.md)
 - System design: [docs/system-design.md](./docs/system-design.md)

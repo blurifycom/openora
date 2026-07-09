@@ -47,7 +47,7 @@ prefer to remain anonymous.
 In scope:
 
 - The platform core in this repository (API, modules, SDKs, adapters, plugin host).
-- Authentication, session handling, tenant isolation (RLS), and admin guards.
+- Authentication, session handling, and admin guards.
 - Money-handling paths (wallet, compliance) and event/job integrity.
 
 Out of scope:

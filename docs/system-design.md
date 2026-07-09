@@ -1,9 +1,9 @@
 # System design
 
-The whole platform in one place: the single `@openora/core` package, the seven domains, the contract spine, the
-plugin host, the adapter ports, the three async seams, and how a downstream consumer
-overlays proprietary code. Generated from `docs/catalog.json` (17 modules,
-17 adapters, 26 events, 79 HTTP routes), `extensions.config.ts`, and the package graph.
+The whole platform in one place: the single `@openora/core` package, 15 modules across
+9 domains, the contract spine, the plugin host, the adapter ports, the three async seams,
+and how a downstream consumer overlays proprietary code. Generated from `docs/catalog.json`
+(15 modules, 24 adapters, 49 events, 115 routes), `extensions.config.ts`, and the package graph.
 
 > **Packaging note (ADR-0025, 2026-06-16):** the foundation + engine + free domains
 > now ship as ONE published package, `@openora/core`, with subpaths (`@openora/core/contracts`,
@@ -41,15 +41,14 @@ flowchart TB
       GR["Gifts + Rain"]:::game
     end
     subgraph T2VEND["Vendor adapters (implement @openora/core/contracts ports)"]
-      FB["Fireblocks<br/>crypto wallet"]:::vend
-      SS["Sumsub<br/>KYC"]:::vend
-      EM["EveryMatrix<br/>casino aggregator"]:::vend
-      OM["OddsMatrix / Betby<br/>sportsbook feed"]:::vend
-      ABLY["Ably<br/>realtime"]:::vend
-      MAIL["SendGrid / Twilio<br/>email + SMS"]:::vend
+      FB["Payment processor<br/>PSP integration"]:::vend
+      SS["KYC provider"]:::vend
+      EM["Game aggregator"]:::vend
+      ABLY["Realtime transport"]:::vend
+      MAIL["Email + SMS provider"]:::vend
     end
-    APIHOST["apps/api<br/>createApp() host<br/>extensions.config.ts + editions.ts"]:::host
-    INFRA2["apps/infra<br/>Pulumi + awsx (AWS)"]:::host
+    APIHOST["consumer apps/api<br/>createApp() host<br/>extensions.config.ts"]:::host
+    INFRA2["consumer infrastructure<br/>any Node runtime + Postgres"]:::host
   end
 
   %% ============ SDK ============
@@ -75,38 +74,34 @@ flowchart TB
     CINV["/compliance<br/>sealed tokens + invariants"]
   end
 
-  %% ============ DOMAINS (separate packages, each deps @openora/core) ============
+  %% ============ DOMAINS (subpaths of @openora/core, ADR-0025) ============
   subgraph D1["@openora/core/server (engine) + admin/audit domains"]
-    AUDIT["audit ⟨audit_log⟩ · @openora/audit"]:::core
-    IAM["iam ⟨roles·perms·invites⟩ · @openora/iam"]:::core
-    ADMC["admin-console (read API via ports) · @openora/admin-console"]:::core
+    AUDIT["audit ⟨audit_log⟩ · @openora/core/audit"]:::core
+    IAM["iam ⟨roles·perms·invites⟩ · @openora/core/iam"]:::core
+    ADMC["admin-console (read API via ports) · @openora/core/admin-console"]:::core
     DBPKG["@openora/core/server: db (Drizzle · migrate)"]:::kern
     AUTHPKG["@openora/core/server: auth (better-auth)"]:::kern
   end
-  subgraph D2["@openora/pam · player account mgmt"]
+  subgraph D2["@openora/core/pam · player account mgmt"]
     IDENT["identity ⟨user·session·2fa⟩"]:::core
     PROF["profile ⟨player⟩"]:::core
     PM["player-management (PAM)"]:::gated
   end
-  subgraph DCOMP["@openora/compliance · RG/KYC"]
+  subgraph DCOMP["@openora/core/compliance · RG/KYC"]
     COMP["compliance ⟨geo_rule·user_limit⟩"]:::core
   end
-  subgraph D3["@openora/wallet · money"]
+  subgraph D3["@openora/core/wallet · money"]
     WAL["wallet ⟨wallet·wallet_transaction⟩"]:::core
   end
-  subgraph D4["@openora/casino · games"]
+  subgraph D4["@openora/core/casino · games"]
     GAM["gaming ⟨Game·GameRound⟩"]:::core
-    AGG["aggregator ⟨provider⟩"]:::gated
     LOB["lobby ⟨categories·featured⟩"]:::core
   end
-  subgraph D5["@openora/sportsbook"]
-    SB["sportsbook ⟨event·selection·bet⟩"]:::gated
-  end
-  subgraph D6["@openora/engagement · CRM/social"]
+  subgraph D6["@openora/core/engagement · CRM/social"]
     CHAT["chat ⟨ChatRoom·ChatMessage⟩"]:::core
     NOT["notifications ⟨notification⟩"]:::core
-    BON["bonus ⟨bonus·user_bonus⟩"]:::core
-    LB["leaderboard"]:::gated
+  end
+  subgraph D7["@openora/core/cms · content"]
     CMS["cms ⟨page·banner⟩"]:::core
   end
 
@@ -134,7 +129,7 @@ flowchart TB
     PG[("PostgreSQL 16")]:::data
     REDIS[("Redis to BullMQ<br/>(REDIS_URL)")]:::data
     RMQ[("RabbitMQ to Kafka<br/>(AMQP_URL)")]:::data
-    BUS["EventBus envelope<br/>24 domain events"]:::seam
+    BUS["EventBus envelope<br/>49 domain events"]:::seam
   end
 
   %% ---- wiring ----
@@ -144,7 +139,6 @@ flowchart TB
   FB -.->|binds| P_PAY
   SS -.->|binds| P_KYC
   EM -.->|binds| P_AGG
-  OM -.->|feeds| SB
   ABLY -.->|binds| P_RT
   MAIL -.->|binds| P_MAIL
 
@@ -154,9 +148,9 @@ flowchart TB
   OC --> TC
   ZOD --> OC
 
-  D1 & D2 & DCOMP & D3 & D4 & D5 & D6 --> DI
+  D1 & D2 & DCOMP & D3 & D4 & D6 & D7 --> DI
   WAL ==>|owns| P_WCMD
-  SB ==>|debit tx| P_WCMD
+  GAM ==>|debit tx| P_WCMD
   IAM -->|dependsOn| IDENT
   PM -.->|reads /schema| PROF
   LOB -.->|reads /schema| GAM
@@ -167,18 +161,16 @@ flowchart TB
   COMP --> P_GEO
   AUDIT --> P_AUD
   GAM --> P_GAME & P_RNG
-  AGG --> P_AGG
   CHAT --> P_RT
-  SB --> P_RT
   NOT --> P_NOTI
 
-  D1 & D2 & D3 & D4 & D5 & D6 -->|after commit| BUS
+  D1 & D2 & D3 & D4 & D6 & D7 -->|after commit| BUS
   BUS --- P_BROK
   P_BROK -.->|AMQP_URL overlay| RMQ
   P_JOB -.->|REDIS_URL overlay| REDIS
   P_OUT --> PG
   DBPKG --> PG
-  D1 & D2 & D3 & D4 & D5 & D6 --> DBPKG
+  D1 & D2 & D3 & D4 & D6 & D7 --> DBPKG
 
   classDef game fill:#fde2e2,stroke:#c0392b,color:#000
   classDef vend fill:#f9c0c0,stroke:#a93226,color:#000
@@ -191,45 +183,43 @@ flowchart TB
   classDef data fill:#fcf3cf,stroke:#9a7d0a,color:#000
 ```
 
-## 2. Publishing & distribution model (ADR-0024)
+## 2. Publishing & distribution model (ADR-0025)
 
-~19 consumer-facing packages publish to the GitLab registry under ONE fixed version
-(Changesets, no cross-domain version skew) - but each is its own npm package, never a
-bundle. A consumer installs only the subset its edition licenses (PAM-only, or +premium
-domains). There is NO facade/aggregator package: the runtime contract is composed only
-in the consumer's `apps/api` (`composeContract`). That is what keeps any subset
-independently installable.
+The single `@openora/core` package ships under one fixed version (Changesets, no
+cross-domain version skew). A consumer installs the one core package; its subpaths expose
+all 15 modules (`@openora/core/<domain>/<module>` routes). The runtime contract is composed
+only in the consumer's `createApp()` call via `composeContract` - that is what keeps every
+subset independently usable.
 
 ```mermaid
 flowchart LR
-  subgraph SRC["Workspace packages (ONE published core + domains + premium addons)"]
+  subgraph SRC["Workspace packages (ONE published core + published tooling)"]
     direction TB
-    CORE["@openora/core — THE published package (ADR-0025)<br/>/contracts · /react · /server · /server/orm · /server/migrate · /compliance"]
-    DOM["domains (each deps @openora/core): pam · compliance · wallet · casino · sportsbook · engagement · cms · iam · audit · admin-console"]
-    ADD["premium add-ons (separate repo + private registry; none in tree yet)"]
-    DEV["dev/tooling (not part of core): @openora/mcp · @openora/testing · @openora/config"]
+    CORE["@openora/core - THE published package (ADR-0025)<br/>all 15 modules as subpaths · /contracts · /react · /server · /compliance"]
+    ADD["premium add-ons (future: separate packages)"]
+    DEV["dev/tooling (published separate): @openora/mcp · @openora/testing · @openora/config"]
   end
   REG[["Package Registry<br/>your-org/oss<br/>1 fixed version (Changesets)"]]
   subgraph CONS["Consumers"]
-    INST["install @openora/core + chosen domains<br/>(eg core + @openora/pam, or + premium addons)"]
+    INST["install @openora/core + chosen domains<br/>(eg core alone, or + premium addons)"]
     BFLINK["local dev: link:oss + git skip-worktree"]
     T2X["Tier-2 overlays: games · vendor adapters · UI"]
   end
 
-  CORE & DOM -->|"changeset publish (CI_JOB_TOKEN)"| REG
-  ADD -.->|"private registry (future)"| REG
+  CORE -->|"changeset publish (CI_JOB_TOKEN)"| REG
+  ADD -.->|"future premium packages"| REG
   REG --> INST
   REG -. dev override .-> BFLINK
   INST --> T2X
   T2X -.->|"plugin/adapter seams"| INST
 
-  subgraph EXPORTS["each domain package exposes subpaths"]
-    E1["/server (node plugins)"]
-    E2["/react (headless hooks)"]
-    E3["/contracts (isomorphic Zod slices)"]
-    E4["/schema (Drizzle)"]
+  subgraph EXPORTS["@openora/core exposes subpaths"]
+    E0["/contracts (isomorphic Zod)"]
+    E1["/server (node engine · plugins)"]
+    E2["/react (headless SDK · hooks)"]
+    E3["/<domain>/<module> (per-module routes · schema)"]
   end
-  DOM --- EXPORTS
+  CORE --- EXPORTS
 ```
 
 ## 3. Ports & adapters — default (mock) ↔ vendor overlay
@@ -238,49 +228,49 @@ flowchart LR
 flowchart LR
   subgraph CONSUMERS["Module consumes port (interface only)"]
     wal2["wallet"]; idn2["identity"]; gam2["gaming"]; cmp2["compliance"]
-    agg2["aggregator"]; cht2["chat"]; sb2["sportsbook"]; iam2["iam"]; aud2["audit"]
+    cht2["chat"]; iam2["iam"]; aud2["audit"]; not2["notifications"]
   end
   subgraph TOKENS["@openora/core/contracts adapter tokens"]
     t1["PAYMENT_ADAPTER"]; t2["KYC_ADAPTER"]; t3["GAME_ADAPTER"]; t4["RNG_ADAPTER"]
     t5["GEO_IP_ADAPTER"]; t6["AGGREGATOR_ADAPTER"]; t7["REALTIME_TRANSPORT"]
     t8["SEND_EMAIL"]; t9["NOTIFICATION_DELIVERY_ADAPTER"]; t10["ADMIN_PERMISSION_RESOLVER"]; t11["AUDIT_WRITER"]
   end
-  subgraph DEFAULT["Default impl (in add-on plugin.ts — dev/test/CI)"]
+  subgraph DEFAULT["Default impl (in plugin - dev/test/CI)"]
     d1["MockPaymentAdapter"]; d2["MockKycAdapter"]; d3["MockGameAdapter"]; d4["DefaultRng"]
     d5["StubGeoIp"]; d6["MockAggregator"]; d7["InProcessTransport"]; d8["ConsoleEmail"]
   end
   subgraph OVERLAY["Vendor overlay (consumer rebinds token — last-wins)"]
-    v1["Fireblocks crypto"]; v2["Sumsub"]; v6["EveryMatrix"]; v7["Ably"]; v8["SendGrid/Twilio"]
+    v1["Payment processor"]; v2["KYC vendor"]; v6["Game aggregator"]; v7["Realtime service"]; v8["Email/SMS service"]
   end
 
   wal2-->t1; idn2-->t2 & t8 & t9; gam2-->t3 & t4; cmp2-->t5
-  agg2-->t6; cht2-->t7; sb2-->t7; iam2-->t10 & t8; aud2-->t11
+  cht2-->t7; iam2-->t10 & t8; aud2-->t11; not2-->t9
 
   t1-->d1; t2-->d2; t3-->d3; t4-->d4; t5-->d5; t6-->d6; t7-->d7; t8-->d8
   t1-.->v1; t2-.->v2; t6-.->v6; t7-.->v7; t8-.->v8
 ```
 
-## 4. Money + event lifecycle (sportsbook bet → wallet debit → fan-out)
+## 4. Money + event lifecycle (game round → wallet debit → fan-out)
 
 ```mermaid
 sequenceDiagram
   participant C as Consumer UI
   participant H as Hono+oRPC
-  participant SB as sportsbook.service
+  participant G as gaming.service
   participant W as WALLET_COMMANDS
   participant DB as Postgres (tx)
   participant EB as EventBus/Outbox
-  participant N as notifications / leaderboard
-  C->>H: POST /sportsbook/placeBet (validated by Zod)
-  H->>SB: placeBet(userId, amount)
-  SB->>DB: BEGIN tx — insert SportsbookBet
-  SB->>W: debit(tx, {userId, amount})  %% sync command port, same tx
+  participant N as notifications / other subscribers
+  C->>H: POST /gaming/rounds/start (validated by Zod)
+  H->>G: startRound(userId, gameId, stake)
+  G->>DB: BEGIN tx - insert GameRound
+  G->>W: debit(tx, {userId, stake})
   W->>DB: update wallet balance (atomic)
-  DB-->>SB: COMMIT
-  SB->>EB: emit "sportsbook.bet.placed" (after commit / outbox if durable)
+  DB-->>G: COMMIT
+  G->>EB: emit "gaming.round.started" (after commit / outbox if durable)
   EB-->>N: fan-out (idempotent handlers)
   Note over EB: in-process default · RabbitMQ overlay on AMQP_URL · at-least-once
-  SB-->>C: PlaceBetResult
+  G-->>C: round result
 ```
 
 ## 5. Deployment topology — monolith ↔ split services (SERVICE_MANIFEST)
@@ -288,7 +278,7 @@ sequenceDiagram
 ```mermaid
 flowchart TB
   CODE["Single codebase · extensions.config.ts"]
-  CODE --> MONO["SERVICE_MANIFEST unset to MONOLITH<br/>all 17 modules, in-process seams"]
+  CODE --> MONO["SERVICE_MANIFEST unset to MONOLITH<br/>all 15 modules, in-process seams"]
   CODE --> SPLIT["SERVICE_MANIFEST=identity,wallet,...<br/>per-module thin host (pnpm create:service)"]
   SPLIT --> S1["identity svc"]
   SPLIT --> S2["wallet svc"]
@@ -299,30 +289,30 @@ flowchart TB
 
 ## Reference — domain → modules → tables → routes
 
-| Domain                   | Modules (core / **gated**)                                           | Tables                                                                                                   | Routes |
-| ------------------------ | -------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------- | ------ |
-| `@openora/iam`           | iam (admin roles · perms · invites)                                  | admin_role / admin_role_assignment / admin_role_permission / admin_invitation                            | 9      |
-| `@openora/audit`         | audit (append-only log)                                              | audit_log                                                                                                | 2      |
-| `@openora/admin-console` | backoffice read API (via pam + wallet ports)                         | (owns none - reads via ADMIN_USER_DIRECTORY + ADMIN_WALLET_REPORTING)                                    | 2      |
-| `@openora/pam`           | identity · profile · **player-management**                           | user / session / account / twoFactor / verification, player                                              | 24     |
-| `@openora/compliance`    | compliance (RG/KYC, sealed)                                          | geo_rule, user_limit                                                                                     | 4      |
-| `@openora/wallet`        | wallet                                                               | wallet, wallet_transaction                                                                               | 4      |
-| `@openora/casino`        | gaming · lobby · **aggregator**                                      | Game / GameRound, LobbyCategory / FeaturedSlot, aggregator_provider                                      | 12     |
-| `@openora/sportsbook`    | **sportsbook**                                                       | SportsbookEvent / SportsbookSelection / SportsbookBet                                                    | 4      |
-| `@openora/engagement`    | chat · notifications · bonus · cms · admin-console · **leaderboard** | ChatRoom / ChatMessage, notification, bonus / user_bonus, page / banner, leaderboard / leaderboard_entry | 18     |
+Route counts are from `docs/catalog.json` (115 routes total, `health` included).
 
-**bold** = gated add-on (`kind: 'addon'`, loads only when listed in `OSS_ADDONS`).
+| Domain                        | Modules                                                    | Tables                                                                        | Routes |
+| ----------------------------- | ---------------------------------------------------------- | ----------------------------------------------------------------------------- | ------ |
+| `@openora/core/iam`           | iam (admin roles · perms · invites)                        | admin_role / admin_role_assignment / admin_role_permission / admin_invitation | 16     |
+| `@openora/core/audit`         | audit (append-only log)                                    | audit_log                                                                     | 2      |
+| `@openora/core/admin-console` | backoffice read API (via pam + wallet ports)               | (owns none - reads via ADMIN_USER_DIRECTORY + ADMIN_WALLET_REPORTING)         | 6      |
+| `@openora/core/pam`           | identity · profile · player-management · player-note · tag | user / session / account / twoFactor / verification, player, player_note, tag | 31     |
+| `@openora/core/compliance`    | compliance (RG/KYC)                                        | geo_rule, user_limit                                                          | 15     |
+| `@openora/core/wallet`        | wallet                                                     | wallet, wallet_transaction                                                    | 11     |
+| `@openora/core/casino`        | gaming · lobby                                             | Game / GameRound, LobbyCategory / FeaturedSlot                                | 9      |
+| `@openora/core/engagement`    | chat · notifications                                       | ChatRoom / ChatMessage, notification                                          | 14     |
+| `@openora/core/cms`           | cms                                                        | page / banner                                                                 | 10     |
 
 ## Cross-domain edges (lint-enforced — ADR-0015)
 
 | From → To                   | Channel                                                        |
 | --------------------------- | -------------------------------------------------------------- |
 | iam → identity              | `dependsOn` (load order)                                       |
-| sportsbook → wallet         | `WALLET_COMMANDS` synchronous command port (same `tx`, atomic) |
-| player-management → profile | read-only `@openora/pam/schema/profile`                        |
-| lobby → gaming              | read-only `@openora/casino/schema/gaming`                      |
+| gaming → wallet             | `WALLET_COMMANDS` synchronous command port (same `tx`, atomic) |
+| player-management → profile | read-only `@openora/core/pam/schema/profile`                   |
+| lobby → gaming              | read-only `@openora/core/casino/schema/gaming`                 |
 | any → any                   | domain **events** via `EventBus` (24 topics) — never money     |
 
-15 adapter ports and 3 async seams (`MESSAGE_BROKER`, `JOB_QUEUE`, `REALTIME_TRANSPORT`) plus
+11 adapter ports and 3 async seams (`MESSAGE_BROKER`, `JOB_QUEUE`, `REALTIME_TRANSPORT`) plus
 the transactional `OUTBOX` carry everything else. Money and needed-now reads stay synchronous
-and transactional; nothing else imports another add-on's internals.
+and transactional; nothing else imports another module's internals.

@@ -3,8 +3,8 @@
 An open-source, headless, plugin-based, AI-native igaming platform. Clone it, extend it
 with your own modules and adapters, and deploy it - without forking core.
 
-The backend ships fully featured out of the box: auth, wallet, lobby, games, chat, bonuses,
-compliance, back office, CMS, and an aggregator hook. The frontend lives in your own consumer
+The backend ships fully featured out of the box: auth, wallet, lobby, games, chat,
+compliance, back office, and CMS. The frontend (all UI) lives in your own consumer
 repo and talks to the API over HTTP.
 
 ## What makes it different
