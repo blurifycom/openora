@@ -1,5 +1,5 @@
 {
-  "id": "7a11ae6a-422e-4cef-96e1-217d783a0b91",
+  "id": "28077ace-125b-4e04-9ba3-d03ea55ff67d",
   "prevId": "00000000-0000-0000-0000-000000000000",
   "version": "7",
   "dialect": "postgresql",
@@ -35,7 +35,8 @@
         },
         "status": {
           "name": "status",
-          "type": "text",
+          "type": "invitation_status",
+          "typeSchema": "public",
           "primaryKey": false,
           "notNull": true,
           "default": "'pending'"
@@ -356,7 +357,13 @@
       "isRLSEnabled": false
     }
   },
-  "enums": {},
+  "enums": {
+    "public.invitation_status": {
+      "name": "invitation_status",
+      "schema": "public",
+      "values": ["pending", "accepted", "revoked"]
+    }
+  },
   "schemas": {},
   "sequences": {},
   "roles": {},

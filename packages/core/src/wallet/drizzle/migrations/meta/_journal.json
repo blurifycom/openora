@@ -5,22 +5,8 @@
     {
       "idx": 0,
       "version": "7",
-      "when": 1782666314321,
-      "tag": "0000_slippery_mesmero",
-      "breakpoints": true
-    },
-    {
-      "idx": 1,
-      "version": "7",
-      "when": 1783038524163,
-      "tag": "0001_wallet-idempotency-key",
-      "breakpoints": true
-    },
-    {
-      "idx": 2,
-      "version": "7",
-      "when": 1783469264005,
-      "tag": "0002_nervous_mariko_yashida",
+      "when": 1783555227386,
+      "tag": "0000_shallow_baron_zemo",
       "breakpoints": true
     }
   ]

@@ -1,3 +1,4 @@
+CREATE TYPE "public"."user_theme" AS ENUM('light', 'dark', 'system');--> statement-breakpoint
 CREATE TABLE "account" (
 	"id" uuid PRIMARY KEY DEFAULT gen_random_uuid() NOT NULL,
 	"account_id" text NOT NULL,
@@ -40,6 +41,8 @@ CREATE TABLE "user" (
 	"email" text NOT NULL,
 	"email_verified" boolean DEFAULT false NOT NULL,
 	"image" text,
+	"theme" "user_theme" DEFAULT 'system' NOT NULL,
+	"language" text DEFAULT 'en' NOT NULL,
 	"role" text DEFAULT 'player' NOT NULL,
 	"is_active" boolean DEFAULT true NOT NULL,
 	"banned" boolean DEFAULT false,
@@ -48,6 +51,8 @@ CREATE TABLE "user" (
 	"two_factor_enabled" boolean DEFAULT false,
 	"failed_login_attempts" integer DEFAULT 0 NOT NULL,
 	"lockout_until" timestamp with time zone,
+	"rg_blocked" boolean DEFAULT false NOT NULL,
+	"rg_blocked_until" timestamp with time zone,
 	"created_at" timestamp with time zone DEFAULT now() NOT NULL,
 	"updated_at" timestamp with time zone NOT NULL,
 	CONSTRAINT "user_email_unique" UNIQUE("email")

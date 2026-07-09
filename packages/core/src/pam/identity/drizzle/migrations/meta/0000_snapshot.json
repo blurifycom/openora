@@ -1,5 +1,5 @@
 {
-  "id": "a6ea6a08-2cb4-406e-a646-b7d8c28089fc",
+  "id": "65994818-a8b0-4408-8af1-3fb81ed897a9",
   "prevId": "00000000-0000-0000-0000-000000000000",
   "version": "7",
   "dialect": "postgresql",
@@ -340,6 +340,21 @@
           "primaryKey": false,
           "notNull": false
         },
+        "theme": {
+          "name": "theme",
+          "type": "user_theme",
+          "typeSchema": "public",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "'system'"
+        },
+        "language": {
+          "name": "language",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "'en'"
+        },
         "role": {
           "name": "role",
           "type": "text",
@@ -389,6 +404,19 @@
         },
         "lockout_until": {
           "name": "lockout_until",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "rg_blocked": {
+          "name": "rg_blocked",
+          "type": "boolean",
+          "primaryKey": false,
+          "notNull": true,
+          "default": false
+        },
+        "rg_blocked_until": {
+          "name": "rg_blocked_until",
           "type": "timestamp with time zone",
           "primaryKey": false,
           "notNull": false
@@ -505,7 +533,13 @@
       "isRLSEnabled": false
     }
   },
-  "enums": {},
+  "enums": {
+    "public.user_theme": {
+      "name": "user_theme",
+      "schema": "public",
+      "values": ["light", "dark", "system"]
+    }
+  },
   "schemas": {},
   "sequences": {},
   "roles": {},

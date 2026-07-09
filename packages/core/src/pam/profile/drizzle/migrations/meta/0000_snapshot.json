@@ -1,5 +1,5 @@
 {
-  "id": "c7dde0be-9991-4b7b-9ac5-c8cd32bd6446",
+  "id": "2038a57f-7dee-4f79-bcfe-9e56e1cc1538",
   "prevId": "00000000-0000-0000-0000-000000000000",
   "version": "7",
   "dialect": "postgresql",
@@ -40,23 +40,18 @@
           "notNull": true,
           "default": "'USD'"
         },
-        "language": {
-          "name": "language",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true,
-          "default": "'en'"
-        },
         "status": {
           "name": "status",
-          "type": "text",
+          "type": "player_status",
+          "typeSchema": "public",
           "primaryKey": false,
           "notNull": true,
           "default": "'active'"
         },
         "kyc_status": {
           "name": "kyc_status",
-          "type": "text",
+          "type": "kyc_status",
+          "typeSchema": "public",
           "primaryKey": false,
           "notNull": true,
           "default": "'pending'"
@@ -163,7 +158,25 @@
       "isRLSEnabled": false
     }
   },
-  "enums": {},
+  "enums": {
+    "public.kyc_status": {
+      "name": "kyc_status",
+      "schema": "public",
+      "values": [
+        "not_started",
+        "pending",
+        "verified",
+        "rejected",
+        "resubmission_requested",
+        "manually_overridden"
+      ]
+    },
+    "public.player_status": {
+      "name": "player_status",
+      "schema": "public",
+      "values": ["active", "dormant", "self_excluded", "suspended", "closed"]
+    }
+  },
   "schemas": {},
   "sequences": {},
   "roles": {},

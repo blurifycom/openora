@@ -1,9 +1,10 @@
+CREATE TYPE "public"."invitation_status" AS ENUM('pending', 'accepted', 'revoked');--> statement-breakpoint
 CREATE TABLE "admin_invitation" (
 	"id" uuid PRIMARY KEY DEFAULT gen_random_uuid() NOT NULL,
 	"email" text NOT NULL,
 	"role_id" uuid NOT NULL,
 	"token" text NOT NULL,
-	"status" text DEFAULT 'pending' NOT NULL,
+	"status" "invitation_status" DEFAULT 'pending' NOT NULL,
 	"expires_at" timestamp with time zone NOT NULL,
 	"accepted_at" timestamp with time zone,
 	"created_at" timestamp with time zone DEFAULT now() NOT NULL,

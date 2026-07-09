@@ -1,5 +1,5 @@
 {
-  "id": "ac52fdb4-921a-49e2-bafc-e2abee39b1cb",
+  "id": "f30e0e4d-b9dd-43cb-bcd6-59266867bb05",
   "prevId": "00000000-0000-0000-0000-000000000000",
   "version": "7",
   "dialect": "postgresql",
@@ -44,7 +44,7 @@
           "name": "assign_actor_user_id",
           "type": "uuid",
           "primaryKey": false,
-          "notNull": true
+          "notNull": false
         },
         "removed_at": {
           "name": "removed_at",
@@ -138,27 +138,10 @@
         },
         "key": {
           "name": "key",
-          "type": "text",
+          "type": "tag_key",
+          "typeSchema": "public",
           "primaryKey": false,
           "notNull": true
-        },
-        "name": {
-          "name": "name",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "color": {
-          "name": "color",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "description": {
-          "name": "description",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": false
         },
         "is_sticky": {
           "name": "is_sticky",
@@ -181,23 +164,7 @@
           "default": "now()"
         }
       },
-      "indexes": {
-        "tag_key_idx": {
-          "name": "tag_key_idx",
-          "columns": [
-            {
-              "expression": "key",
-              "isExpression": false,
-              "asc": true,
-              "nulls": "last"
-            }
-          ],
-          "isUnique": false,
-          "concurrently": false,
-          "method": "btree",
-          "with": {}
-        }
-      },
+      "indexes": {},
       "foreignKeys": {},
       "compositePrimaryKeys": {},
       "uniqueConstraints": {
@@ -208,12 +175,87 @@
         }
       },
       "policies": {},
-      "checkConstraints": {
-        "tag_color_hex_check": {
-          "name": "tag_color_hex_check",
-          "value": "\"tag\".\"color\" ~ '^#[0-9A-Fa-f]{6}$'"
+      "checkConstraints": {},
+      "isRLSEnabled": false
+    },
+    "public.tag_rule": {
+      "name": "tag_rule",
+      "schema": "",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "uuid",
+          "primaryKey": true,
+          "notNull": true,
+          "default": "gen_random_uuid()"
+        },
+        "tag_id": {
+          "name": "tag_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "is_enabled": {
+          "name": "is_enabled",
+          "type": "boolean",
+          "primaryKey": false,
+          "notNull": true,
+          "default": false
+        },
+        "threshold_amount": {
+          "name": "threshold_amount",
+          "type": "numeric",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "threshold_days": {
+          "name": "threshold_days",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "threshold_count": {
+          "name": "threshold_count",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "updated_at": {
+          "name": "updated_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
         }
       },
+      "indexes": {},
+      "foreignKeys": {
+        "tag_rule_tag_id_tag_id_fk": {
+          "name": "tag_rule_tag_id_tag_id_fk",
+          "tableFrom": "tag_rule",
+          "tableTo": "tag",
+          "columnsFrom": ["tag_id"],
+          "columnsTo": ["id"],
+          "onDelete": "restrict",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {
+        "tag_rule_tagId_unique": {
+          "name": "tag_rule_tagId_unique",
+          "nullsNotDistinct": false,
+          "columns": ["tag_id"]
+        }
+      },
+      "policies": {},
+      "checkConstraints": {},
       "isRLSEnabled": false
     }
   },
@@ -222,6 +264,22 @@
       "name": "tag_assign_remove_source",
       "schema": "public",
       "values": ["scheduled", "manual"]
+    },
+    "public.tag_key": {
+      "name": "tag_key",
+      "schema": "public",
+      "values": [
+        "high_roller",
+        "vip",
+        "bonus_abuser",
+        "high_risk",
+        "inactive",
+        "large_depositor",
+        "self_excluded",
+        "kyc_pending",
+        "kyc_rejected",
+        "test_account"
+      ]
     }
   },
   "schemas": {},
