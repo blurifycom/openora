@@ -52,8 +52,8 @@ leave the wiring alone. After scaffolding a module/table: `pnpm regen && pnpm ve
 | `stage`                      | Pre-prod / release-candidate. Promoted from `dev`; stable releases are cut here. |
 | `feat/*`, `fix/*`, `chore/*` | Short-lived topic branches. Branch off `dev`, open an MR back into `dev`.        |
 
-Flow: `feat/*` -> MR -> `dev` (publishes `alpha`) -> promote to `stage` (publishes `rc`) ->
-run the Release workflow (publishes `latest`). See [Releasing](#releasing-openora-to-npm) below.
+Flow: `feat/*` -> MR -> `dev` (publishes `alpha`) -> promote to `stage` -> tag `vX.Y.Z-rc.N` for a
+release candidate (`rc`), `vX.Y.Z` for stable (`latest`). See [Releasing](#releasing-openora-to-npm) below.
 CI (`.github/workflows/ci.yml`) runs `verify` on every pull request and on
 pushes to `dev`.
 
@@ -67,22 +67,22 @@ from those. The two published packages (`@openora/core`, `@openora/mcp`) move to
 ```mermaid
 flowchart LR
     PR["feat/* PR<br/>+ pnpm changeset"] -->|merge| DEV[dev]
-    DEV -. push .-> ALPHA(["npm dist-tag alpha<br/>x.y.z-alpha-sha"])
+    DEV -. push .-> ALPHA(["npm alpha<br/>x.y.z-alpha-sha"])
     DEV ==>|promote| STAGE[stage]
-    STAGE -. push .-> RC(["npm dist-tag rc<br/>x.y.z-rc-sha"])
-    STAGE ==>|"Release workflow (one click)"| LATEST(["npm dist-tag latest<br/>vX.Y.Z + git tag<br/>+ GitHub Release"])
+    STAGE -->|"tag vX.Y.Z-rc.N"| RC(["npm rc<br/>+ GitHub pre-release"])
+    STAGE -->|"tag vX.Y.Z"| LATEST(["npm latest<br/>+ GitHub Release"])
 ```
 
-- **`dev` push -> `alpha`.** Every merge to `dev` publishes an immutable snapshot
-  (`x.y.z-alpha-<sha>`, computed from pending changesets) under the `alpha` dist-tag. Install it with
+- **`dev` push -> `alpha`** (automatic). Every merge to `dev` publishes an immutable snapshot
+  (`x.y.z-alpha-<sha>`, computed from pending changesets) under the `alpha` dist-tag. Install with
   `pnpm add @openora/core@alpha`. Changesets are not consumed and nothing is committed.
-- **`stage` push -> `rc`.** Promote `dev` -> `stage` to publish an `rc` snapshot for release-candidate
-  testing (`pnpm add @openora/core@rc`).
-- **Stable -> `latest`.** From `stage`, run **Actions -> Release -> Run workflow** (`release.yml`). It
-  consumes the changesets, computes the version, writes the CHANGELOGs, commits `chore: release vX.Y.Z`,
-  tags `vX.Y.Z`, publishes `latest`, and opens a GitHub Release. Flip `dry_run` on first to preview the
-  version + changelog without publishing. The release commit is fast-forwarded back onto `dev` so the
-  trunk's changesets stay consumed - if `dev` has moved on, merge `stage` -> `dev` afterwards.
+- **rc + stable are tag-driven from `stage`** (`.github/workflows/release.yml` - the tag name IS the
+  version):
+  - **rc**: `git tag vX.Y.Z-rc.N && git push origin vX.Y.Z-rc.N` -> publishes to the `rc` dist-tag +
+    a GitHub **pre-release**. A candidate for the upcoming `X.Y.Z`; changesets are left intact.
+  - **stable**: first `pnpm changeset version` (consumes changesets, bumps `@openora/*`, writes
+    CHANGELOGs) -> commit + push `stage` (and fast-forward `dev` so the trunk stays in sync), then
+    `git tag vX.Y.Z && git push origin vX.Y.Z` -> publishes `latest` + a GitHub Release.
 
 Auth is a single `NPM_TOKEN` repo secret (an npm automation / 2FA-bypass token). The downstream consumer
 and example-demo redeploys fire from the `alpha` channel via repo secrets - all encrypted, none public.

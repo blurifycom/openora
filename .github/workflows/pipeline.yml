@@ -1,16 +1,12 @@
-# Push pipeline: ci -> prerelease snapshot. One chained run per push.
+# Push pipeline: ci -> alpha snapshot. One chained run per push.
 #
-# Prerelease channels (Changesets snapshots - versions auto-computed from pending changesets):
-#   - push to dev   -> immutable ALPHA snapshot (`<next>-alpha-<sha>`, dist-tag `alpha`)
-#   - push to stage -> immutable RC snapshot    (`<next>-rc-<sha>`,    dist-tag `rc`)
+# Every push to dev publishes an immutable ALPHA snapshot (`<next>-alpha-<sha>`, dist-tag `alpha`),
+# the version auto-computed from pending changesets. It's ephemeral: `changeset version --snapshot`
+# runs in a throwaway working tree (changesets are NOT consumed, nothing is committed), then
+# publishes under the `alpha` dist-tag so `latest` is never touched. Push to stage runs CI only.
 #
-# Snapshots are ephemeral: `changeset version --snapshot` computes the version in a throwaway
-# working tree (changesets are NOT consumed, nothing is committed), then publishes under its own
-# dist-tag so `latest` is never touched.
-#
-# Stable releases are cut with the "Release" workflow (.github/workflows/release.yml), a manual
-# one-click run from stage that consumes the changesets, computes the version, tags, and publishes
-# `latest`. CodeQL stays a separate workflow.
+# rc and stable are TAG-driven (.github/workflows/release.yml): tag `vX.Y.Z-rc.N` -> `rc`,
+# tag `vX.Y.Z` -> `latest`. CodeQL stays a separate workflow.
 #
 # Auth: NPM_TOKEN (npm automation / 2FA-bypass token).
 name: Pipeline
@@ -29,7 +25,7 @@ jobs:
 
   snapshot:
     needs: ci
-    if: github.ref == 'refs/heads/dev' || github.ref == 'refs/heads/stage'
+    if: github.ref == 'refs/heads/dev'
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -59,15 +55,13 @@ jobs:
       # Build only the publishable packages - the apps are private and never published.
       - run: pnpm exec turbo run build --filter='!./apps/*'
 
-      # Immutable snapshot: dev -> alpha, stage -> rc. `--no-git-tag` avoids tagging the
-      # ephemeral version; `--tag` keeps it off the `latest` dist-tag. Changesets are not
-      # consumed (the working-tree bump is discarded).
-      - name: Publish snapshot (alpha/rc)
+      # Immutable alpha snapshot. `--no-git-tag` avoids tagging the ephemeral version; `--tag alpha`
+      # keeps it off `latest`. Changesets are not consumed (the working-tree bump is discarded).
+      - name: Publish alpha snapshot
         run: |
-          if [ "${{ github.ref_name }}" = "dev" ]; then CHANNEL=alpha; else CHANNEL=rc; fi
           SHORT=$(git rev-parse --short HEAD)
-          pnpm changeset version --snapshot "$CHANNEL" --snapshot-prerelease-template "{tag}-$SHORT"
-          pnpm changeset publish --no-git-tag --tag "$CHANNEL"
+          pnpm changeset version --snapshot alpha --snapshot-prerelease-template "{tag}-$SHORT"
+          pnpm changeset publish --no-git-tag --tag alpha
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
 
