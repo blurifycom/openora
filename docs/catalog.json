@@ -1315,6 +1315,8 @@
     "POST /identity/password/change",
     "POST /identity/password/forgot",
     "POST /identity/password/reset",
+    "POST /identity/phone-login/request",
+    "POST /identity/phone-login/verify",
     "POST /identity/register",
     "POST /identity/sessions/revoke",
     "POST /identity/sessions/revoke-all",
