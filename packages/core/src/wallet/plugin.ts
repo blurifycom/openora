@@ -18,6 +18,10 @@ import { createWalletRouter } from './router/index.js';
 import { MockPaymentAdapter } from './adapters/mock/mock-payment-adapter.js';
 
 export default definePlugin({
+  // NOT dependsOn 'tag': that would cycle (tag hard-depends on wallet's WALLET_READER).
+  // wallet's use of tag's PLAYER_TAGS is optional and resolved lazily in the router
+  // factory (`c.has(PLAYER_TAGS)`), which runs after every plugin has registered - so
+  // the port is bound by then regardless of load order.
   id: 'wallet',
   dependsOn: ['identity', 'audit'],
   register(ctx) {
