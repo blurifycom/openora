@@ -1,19 +1,16 @@
 # Single push pipeline: ci -> release, plus a pre-release snapshot. One chained run per push.
 #
-# Release model (Changesets - automatic bump-and-publish):
+# Release model (Changesets, direct-to-branch - no PR):
 #   - Every feature PR carries a changeset (`.changeset/*.md`) stating the change + semver bump.
-#   - push to dev: `changesets/action` runs and does ONE of two things:
-#       * pending changesets  -> opens/updates the "Version Packages" PR (bumps the fixed
-#         `@openora/*` group + writes CHANGELOGs). Merging that PR is the release trigger.
-#       * no pending changesets (the Version PR just merged) -> builds and `changeset publish`
-#         -> npm dist-tag `latest`, a `v<version>` git tag, and a GitHub Release. Fully automatic.
-#   - Between releases, every dev/stage push also publishes an immutable pre-release snapshot
-#     (`<next>-alpha-<sha>` on dev, `-rc-<sha>` on stage) under its own dist-tag so consumers can
-#     test unreleased work - skipped only on the dev commit that just cut a stable release.
+#   - push to dev with pending changesets -> the release job runs `changeset version` (bumps the
+#     fixed `@openora/*` group + writes CHANGELOGs), commits the bump straight to dev with
+#     `[skip ci]` (so it doesn't re-trigger), then `changeset publish` -> npm dist-tag `latest`
+#     + git tags. Fully automatic, no Version PR - avoids the org policy that blocks Actions from
+#     creating pull requests; only `contents: write` is needed.
+#   - push without pending changesets -> nothing is released; the snapshot job publishes an
+#     immutable pre-release (`<next>-alpha-<sha>` on dev, `-rc-<sha>` on stage) for testing.
 #
-# Auth: NPM_TOKEN (granular `@openora` token) for now. Once the first version is published,
-# switch to npm Trusted Publishing (OIDC): drop NPM_TOKEN, keep `id-token: write` + a `npm`
-# environment. CodeQL stays a separate workflow.
+# Auth: NPM_TOKEN (granular `@openora` token). CodeQL stays a separate workflow.
 name: Pipeline
 
 on:
@@ -33,15 +30,9 @@ jobs:
     if: github.ref == 'refs/heads/dev'
     runs-on: ubuntu-latest
     permissions:
-      contents: write # push the version-bump commit, create git tags + GitHub releases
-      pull-requests: write # open/update the "Version Packages" PR
-      id-token: write # ready for OIDC trusted publishing (no-op with NPM_TOKEN today)
+      contents: write # push the version-bump commit + git tags (no create-PR needed)
     outputs:
-      published: ${{ steps.changesets.outputs.published }}
-    env:
-      # The changesets version commit runs the husky pre-commit hook (regen + typecheck),
-      # which needs a built dist this job doesn't have - and CI already verified the commit.
-      HUSKY: 0
+      published: ${{ steps.release.outputs.published }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -61,25 +52,38 @@ jobs:
 
       - run: pnpm install --frozen-lockfile
 
-      # Pending changesets -> Version PR. None -> `pnpm run release` (build + changeset publish
-      # -> npm `latest` + git tag + GitHub Release). The action detects pnpm automatically.
-      - id: changesets
-        uses: changesets/action@v1
-        with:
-          version: pnpm run version
-          publish: pnpm run release
-          title: 'chore: version packages'
-          commit: 'chore: version packages'
+      # Pending changesets -> bump + commit (`[skip ci]`) + push to dev, then publish to npm +
+      # push git tags. No pending -> no-op (the snapshot job handles pre-release testing).
+      - id: release
         env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+          HUSKY: 0 # the version commit skips the pre-commit hook; CI already verified this ref
+        run: |
+          shopt -s nullglob
+          pending=$(ls .changeset/*.md 2>/dev/null | grep -v '/README.md$' || true)
+          if [ -z "$pending" ]; then
+            echo "published=false" >> "$GITHUB_OUTPUT"
+            echo "No pending changesets - nothing to release."
+            exit 0
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          pnpm changeset version
+          pnpm install --lockfile-only
+          git add -A
+          git commit -m "chore: version packages [skip ci]"
+          git push origin "HEAD:${GITHUB_REF_NAME}"
+          pnpm build
+          pnpm changeset publish
+          git push origin --tags
+          echo "published=true" >> "$GITHUB_OUTPUT"
 
   snapshot:
     needs: [ci, release]
-    # Pre-release testing channel. Runs on every stage push (rc) and every dev push (alpha)
-    # EXCEPT the dev commit that just published a stable release. `release` only runs on dev,
-    # so on stage its output is empty and the second clause passes.
-    if: ${{ always() && needs.ci.result == 'success' && (github.ref == 'refs/heads/stage' || needs.release.outputs.published != 'true') }}
+    # Pre-release testing channel. Runs on every stage push (rc) and on dev pushes that did NOT
+    # cut a stable release (alpha). `release` runs on dev only, so on stage its output is empty
+    # and the first clause carries it.
+    if: ${{ always() && needs.ci.result == 'success' && (github.ref == 'refs/heads/stage' || needs.release.outputs.published == 'false') }}
     runs-on: ubuntu-latest
     permissions:
       contents: read
