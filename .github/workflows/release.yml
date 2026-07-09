@@ -1,0 +1,93 @@
+# Cut a STABLE release. Manual one-click run (Actions -> Release -> Run workflow) from `stage`.
+#
+# What it does (no hand-edited versions - Changesets computes everything):
+#   1. `changeset version` - consumes the pending changesets, bumps the fixed `@openora/*` group,
+#      writes CHANGELOGs. The version is derived from the changeset bump types.
+#   2. commits "chore: release vX.Y.Z" to stage, and fast-forwards the same commit onto dev so the
+#      trunk's changesets stay consumed (no drift). If dev has moved on, it warns instead of failing
+#      - merge stage into dev afterwards to sync.
+#   3. tags `vX.Y.Z`, `changeset publish` -> npm dist-tag `latest` + per-package git tags, and a
+#      GitHub Release with generated notes.
+#
+# Run with dry_run=true first to preview the version + changelog without publishing.
+name: Release
+
+on:
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: 'Preview the version bump + changelog without publishing'
+        type: boolean
+        default: false
+
+concurrency:
+  group: release
+  cancel-in-progress: false
+
+jobs:
+  release:
+    if: github.ref == 'refs/heads/stage'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write # push the release commit + tag, create the GitHub Release
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 26
+          registry-url: https://registry.npmjs.org
+          scope: '@openora'
+
+      - name: Enable corepack (pnpm)
+        run: |
+          npm install -g corepack@latest
+          corepack enable
+          corepack prepare pnpm@11.8.0 --activate
+
+      - run: pnpm install --frozen-lockfile
+
+      # Consume changesets, bump the version, write CHANGELOGs. Fails early if nothing to release.
+      - name: Version
+        env:
+          HUSKY: 0
+        run: |
+          shopt -s nullglob
+          pending=$(ls .changeset/*.md 2>/dev/null | grep -v '/README.md$' || true)
+          if [ -z "$pending" ]; then
+            echo "::error::No pending changesets - nothing to release."
+            exit 1
+          fi
+          pnpm changeset version
+          pnpm exec oxfmt # the changeset changelog generator isn't oxfmt-clean
+          pnpm install --lockfile-only
+          echo "VERSION=$(node -p "require('./packages/core/package.json').version")" >> "$GITHUB_ENV"
+
+      - name: Dry-run summary
+        if: ${{ inputs.dry_run }}
+        run: |
+          echo "## Dry run - would release v$VERSION" >> "$GITHUB_STEP_SUMMARY"
+          git --no-pager diff --stat >> "$GITHUB_STEP_SUMMARY"
+          echo "No commit, tag, or publish performed."
+
+      - name: Commit, tag, publish
+        if: ${{ !inputs.dry_run }}
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A
+          git commit -m "chore: release v$VERSION [skip ci]"
+          git push origin HEAD:stage
+          # Keep the trunk in sync so changesets stay consumed there too (best-effort fast-forward).
+          git push origin HEAD:dev || echo "::warning::could not fast-forward dev - merge stage into dev to sync the release commit"
+          git tag "v$VERSION"
+          git push origin "v$VERSION"
+          pnpm build
+          pnpm changeset publish
+          git push origin --tags || true
+          gh release create "v$VERSION" --title "v$VERSION" --generate-notes --verify-tag || true

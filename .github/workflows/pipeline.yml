@@ -1,21 +1,23 @@
-# Single push pipeline: ci -> release. One chained run per push to dev.
+# Push pipeline: ci -> prerelease snapshot. One chained run per push.
 #
-# Release model (Changesets, direct-to-branch - no PR, avoids the org policy that blocks
-# Actions from creating pull requests):
-#   1. Version: if there are pending changesets, `changeset version` bumps the fixed
-#      `@openora/*` group + writes CHANGELOGs, committed straight to dev with `[skip ci]`.
-#   2. Publish: `changeset publish` ALWAYS runs and is idempotent - it publishes only versions
-#      not yet on npm, so it also recovers a prior bump-without-publish. On a real publish it
-#      pushes git tags and fires the downstream consumer + example-deploy triggers.
+# Prerelease channels (Changesets snapshots - versions auto-computed from pending changesets):
+#   - push to dev   -> immutable ALPHA snapshot (`<next>-alpha-<sha>`, dist-tag `alpha`)
+#   - push to stage -> immutable RC snapshot    (`<next>-rc-<sha>`,    dist-tag `rc`)
 #
-# Auth: NPM_TOKEN must be an npm automation token (or a granular token with "bypass 2FA")
-# so `changeset publish` runs non-interactively. Once 0.x is live, migrate to npm Trusted
-# Publishing (OIDC). CodeQL stays a separate workflow.
+# Snapshots are ephemeral: `changeset version --snapshot` computes the version in a throwaway
+# working tree (changesets are NOT consumed, nothing is committed), then publishes under its own
+# dist-tag so `latest` is never touched.
+#
+# Stable releases are cut with the "Release" workflow (.github/workflows/release.yml), a manual
+# one-click run from stage that consumes the changesets, computes the version, tags, and publishes
+# `latest`. CodeQL stays a separate workflow.
+#
+# Auth: NPM_TOKEN (npm automation / 2FA-bypass token).
 name: Pipeline
 
 on:
   push:
-    branches: [dev]
+    branches: [dev, stage]
 
 concurrency:
   group: pipeline-${{ github.ref }}
@@ -25,12 +27,12 @@ jobs:
   ci:
     uses: ./.github/workflows/ci.yml
 
-  release:
+  snapshot:
     needs: ci
-    if: github.ref == 'refs/heads/dev'
+    if: github.ref == 'refs/heads/dev' || github.ref == 'refs/heads/stage'
     runs-on: ubuntu-latest
     permissions:
-      contents: write # push the version-bump commit + git tags (no create-PR needed)
+      contents: read
     env:
       # The downstream consumer and example demo are identified ONLY by these secret VALUES -
       # this repo is public, so nothing about them is committed here. Unset -> the step no-ops.
@@ -40,8 +42,6 @@ jobs:
       EXAMPLE_DEPLOY_TRIGGER_TOKEN: ${{ secrets.EXAMPLE_DEPLOY_TRIGGER_TOKEN }}
     steps:
       - uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
 
       - uses: actions/setup-node@v4
         with:
@@ -56,63 +56,43 @@ jobs:
           corepack prepare pnpm@11.8.0 --activate
 
       - run: pnpm install --frozen-lockfile
+      # Build only the publishable packages - the apps are private and never published.
+      - run: pnpm exec turbo run build --filter='!./apps/*'
 
-      # Bump only when changesets are pending; commit straight to dev with [skip ci].
-      - name: Version pending changesets
-        env:
-          HUSKY: 0 # the version commit skips the pre-commit hook; CI already verified this ref
+      # Immutable snapshot: dev -> alpha, stage -> rc. `--no-git-tag` avoids tagging the
+      # ephemeral version; `--tag` keeps it off the `latest` dist-tag. Changesets are not
+      # consumed (the working-tree bump is discarded).
+      - name: Publish snapshot (alpha/rc)
         run: |
-          shopt -s nullglob
-          pending=$(ls .changeset/*.md 2>/dev/null | grep -v '/README.md$' || true)
-          if [ -z "$pending" ]; then
-            echo "No pending changesets - skipping version bump."
-            exit 0
-          fi
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          pnpm changeset version
-          pnpm exec oxfmt # the changeset changelog generator isn't oxfmt-clean; format it
-          pnpm install --lockfile-only
-          git add -A
-          git commit -m "chore: version packages [skip ci]"
-          git push origin "HEAD:${GITHUB_REF_NAME}"
-
-      # Idempotent: `changeset publish` skips any version already on npm, so this safely retries
-      # a bump that failed to publish before. `New tag:` lines mean something actually published.
-      - name: Publish to npm
-        id: publish
+          if [ "${{ github.ref_name }}" = "dev" ]; then CHANNEL=alpha; else CHANNEL=rc; fi
+          SHORT=$(git rev-parse --short HEAD)
+          pnpm changeset version --snapshot "$CHANNEL" --snapshot-prerelease-template "{tag}-$SHORT"
+          pnpm changeset publish --no-git-tag --tag "$CHANNEL"
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
-        run: |
-          pnpm build
-          set -o pipefail
-          pnpm changeset publish | tee /tmp/publish.log
-          git push origin --tags || true
-          if grep -q 'New tag:' /tmp/publish.log; then
-            echo "published=true" >> "$GITHUB_OUTPUT"
-            echo "version=$(node -p "require('./packages/core/package.json').version")" >> "$GITHUB_OUTPUT"
-          fi
 
-      # Ask the downstream consumer to open a bump MR against its dev (its CI owns the
-      # pin/lockfile/MR). Best-effort; fires only when a version actually published.
+      # Ask the downstream consumer to open a bump MR against its dev with the new snapshot
+      # version (its CI owns the pin/lockfile/MR). Best-effort; alpha (dev) channel only.
       - name: Trigger downstream consumer bump
         continue-on-error: true
-        if: steps.publish.outputs.published == 'true' && env.CONSUMER_TRIGGER_URL != ''
+        if: env.CONSUMER_TRIGGER_URL != '' && github.ref == 'refs/heads/dev'
         run: |
+          VERSION=$(node -p "require('./packages/core/package.json').version")
           curl -sf -X POST "$CONSUMER_TRIGGER_URL" \
             -F "token=$CONSUMER_TRIGGER_TOKEN" \
             -F "ref=dev" \
             -F "variables[OSS_BUMP]=true" \
-            -F "variables[OSS_VERSION]=${{ steps.publish.outputs.version }}" \
+            -F "variables[OSS_VERSION]=$VERSION" \
             -F "variables[OSS_BUMP_TARGET]=dev"
 
-      # Redeploy the public example demo against the new version. Best-effort.
+      # Redeploy the public example demo against the new snapshot. Best-effort; dev channel only.
       - name: Trigger example demo deploy
         continue-on-error: true
-        if: steps.publish.outputs.published == 'true' && env.EXAMPLE_DEPLOY_TRIGGER_URL != ''
+        if: env.EXAMPLE_DEPLOY_TRIGGER_URL != '' && github.ref == 'refs/heads/dev'
         run: |
+          VERSION=$(node -p "require('./packages/core/package.json').version")
           curl -sf -X POST "$EXAMPLE_DEPLOY_TRIGGER_URL" \
             -F "token=$EXAMPLE_DEPLOY_TRIGGER_TOKEN" \
             -F "ref=main" \
             -F "variables[DEPLOY]=true" \
-            -F "variables[OSS_VERSION]=${{ steps.publish.outputs.version }}"
+            -F "variables[OSS_VERSION]=$VERSION"
