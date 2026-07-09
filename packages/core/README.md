@@ -1,5 +1,10 @@
 # @openora/core
 
+[![npm](https://img.shields.io/npm/v/@openora/core)](https://www.npmjs.com/package/@openora/core)
+[![canary](https://img.shields.io/npm/v/@openora/core/canary?label=canary&color=orange)](https://www.npmjs.com/package/@openora/core?activeTab=versions)
+[![License: AGPL v3](https://img.shields.io/badge/license-AGPL--3.0-blue.svg)](https://github.com/blurifycom/openora/blob/dev/LICENSE)
+[![GitHub](https://img.shields.io/badge/GitHub-blurifycom%2Fopenora-181717?logo=github)](https://github.com/blurifycom/openora)
+
 > Open-source, headless, plugin-based, AI-native iGaming framework. Clone it, extend it, deploy it - without forking core.
 
 The single package behind [Openora](https://github.com/blurifycom/openora): backend domain modules (auth, wallet, casino, compliance, CMS, backoffice, audit), the plugin engine that composes them, Zod-first contracts, and a typed React SDK. Your frontend, branding, and vendor adapters live in your own consumer repo and talk to it over HTTP.

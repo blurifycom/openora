@@ -2,6 +2,7 @@
 
 [![Pipeline](https://github.com/blurifycom/openora/actions/workflows/pipeline.yml/badge.svg?branch=dev)](https://github.com/blurifycom/openora/actions/workflows/pipeline.yml)
 [![npm](https://img.shields.io/npm/v/@openora/core?label=%40openora%2Fcore)](https://www.npmjs.com/package/@openora/core)
+[![canary](https://img.shields.io/npm/v/@openora/core/canary?label=canary&color=orange)](https://www.npmjs.com/package/@openora/core?activeTab=versions)
 [![License: AGPL v3](https://img.shields.io/badge/license-AGPL--3.0-blue.svg)](./LICENSE)
 [![Node](https://img.shields.io/badge/node-26%2B-339933?logo=node.js&logoColor=white)](#requirements)
 [![pnpm](https://img.shields.io/badge/pnpm-11%2B-F69220?logo=pnpm&logoColor=white)](#requirements)
