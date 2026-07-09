@@ -15,7 +15,7 @@
     "gen": "turbo gen"
   },
   "devDependencies": {
-    "@openora/mcp": "alpha",
+    "@openora/mcp": "latest",
     "@turbo/gen": "2.9.14",
     "@types/node": "25.9.0",
     "oxlint": "1.64.0",

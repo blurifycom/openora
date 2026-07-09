@@ -9,8 +9,8 @@
 # Cutting an rc: from stage, `git tag vX.Y.Z-rc.N && git push origin vX.Y.Z-rc.N` (no changeset
 # consumption - a candidate of the upcoming X.Y.Z; the tag sets the published version).
 #
-# alpha snapshots are separate and automatic on every dev push (pipeline.yml).
-# Auth: NPM_TOKEN (npm automation / 2FA-bypass token).
+# canary builds are separate and automatic on every dev push (pipeline.yml).
+# Auth: NPM_TOKEN (npm automation / 2FA-bypass token); provenance signed via OIDC (id-token).
 name: Release
 
 on:
@@ -26,6 +26,7 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: write # create the GitHub Release
+      id-token: write # npm provenance (signed build attestation)
     steps:
       - uses: actions/checkout@v4
 
@@ -60,6 +61,7 @@ jobs:
       - name: Build and publish
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+          NPM_CONFIG_PROVENANCE: true
           V: ${{ steps.rel.outputs.version }}
           DISTTAG: ${{ steps.rel.outputs.disttag }}
         run: |

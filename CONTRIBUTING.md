@@ -52,30 +52,33 @@ leave the wiring alone. After scaffolding a module/table: `pnpm regen && pnpm ve
 | `stage`                      | Pre-prod / release-candidate. Promoted from `dev`; stable releases are cut here. |
 | `feat/*`, `fix/*`, `chore/*` | Short-lived topic branches. Branch off `dev`, open an MR back into `dev`.        |
 
-Flow: `feat/*` -> MR -> `dev` (publishes `alpha`) -> promote to `stage` -> tag `vX.Y.Z-rc.N` for a
+Flow: `feat/*` -> MR -> `dev` (publishes `canary`) -> promote to `stage` -> tag `vX.Y.Z-rc.N` for a
 release candidate (`rc`), `vX.Y.Z` for stable (`latest`). See [Releasing](#releasing-openora-to-npm) below.
 CI (`.github/workflows/ci.yml`) runs `verify` on every pull request and on
 pushes to `dev`.
 
 ## Releasing (`@openora/*` to npm)
 
-Versions are driven entirely by [Changesets](https://github.com/changesets/changesets) - you never
-hand-edit a version number. Any PR that changes published behavior includes a changeset
-(`pnpm changeset` -> pick patch/minor/major + a one-line summary); the tooling computes the version
-from those. The two published packages (`@openora/core`, `@openora/mcp`) move together as a fixed group.
+Stable and rc versions are driven by [Changesets](https://github.com/changesets/changesets) - you
+never hand-edit a release version. Any PR that changes published behavior includes a changeset
+(`pnpm changeset` -> pick patch/minor/major + a one-line summary); the tooling computes the stable
+version from those. Canary builds ignore changesets and publish continuously (below). The two
+published packages (`@openora/core`, `@openora/mcp`) move together as a fixed group.
 
 ```mermaid
 flowchart LR
     PR["feat/* PR<br/>+ pnpm changeset"] -->|merge| DEV[dev]
-    DEV -. push .-> ALPHA(["npm alpha<br/>x.y.z-alpha-sha"])
+    DEV -. push .-> CANARY(["npm canary<br/>x.y.z-canary.run"])
     DEV ==>|promote| STAGE[stage]
     STAGE -->|"tag vX.Y.Z-rc.N"| RC(["npm rc<br/>+ GitHub pre-release"])
     STAGE -->|"tag vX.Y.Z"| LATEST(["npm latest<br/>+ GitHub Release"])
 ```
 
-- **`dev` push -> `alpha`** (automatic). Every merge to `dev` publishes an immutable snapshot
-  (`x.y.z-alpha-<sha>`, computed from pending changesets) under the `alpha` dist-tag. Install with
-  `pnpm add @openora/core@alpha`. Changesets are not consumed and nothing is committed.
+- **`dev` push -> `canary`** (automatic, always). Every merge to `dev` publishes an immutable build
+  (`x.y.z-canary.<run>`) under the `canary` dist-tag, independent of changesets - the base is the
+  latest published stable patch-bumped so canary always leads it, and `<run>` is the CI run number
+  (a monotonic, sha-free counter). Install with `pnpm add @openora/core@canary`. Nothing is committed;
+  this is the rolling dev channel consumers track.
 - **rc + stable are tag-driven from `stage`** (`.github/workflows/release.yml` - the tag name IS the
   version):
   - **rc**: `git tag vX.Y.Z-rc.N && git push origin vX.Y.Z-rc.N` -> publishes to the `rc` dist-tag +
@@ -85,7 +88,7 @@ flowchart LR
     `git tag vX.Y.Z && git push origin vX.Y.Z` -> publishes `latest` + a GitHub Release.
 
 Auth is a single `NPM_TOKEN` repo secret (an npm automation / 2FA-bypass token). The downstream consumer
-and example-demo redeploys fire from the `alpha` channel via repo secrets - all encrypted, none public.
+and example-demo redeploys fire from the `canary` channel via repo secrets - all encrypted, none public.
 
 ## Commits
 

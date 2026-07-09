@@ -20,8 +20,8 @@ turbo/generators/ # turbo gen: plugin, adapter
 ## Prerequisites
 
 The `@openora/*` packages install straight from npm - no sibling checkout needed. The generated
-`devDependencies`/`dependencies` pin the `alpha` dist-tag by default; bump to `rc` or a pinned
-stable version when you promote.
+`devDependencies`/`dependencies` track the `latest` stable tag, so a fresh install always pulls the
+newest release; pin an exact version if you need reproducible installs.
 
 ## Dev setup
 
@@ -37,8 +37,7 @@ pnpm dev                   # api :3001
 After `pnpm setup:mcp`, restart your editor and run **`/start`** in Claude Code - it asks what
 you want to build and scaffolds it for you.
 
-To pick up a newer platform version, bump the `@openora/*` version/dist-tag in `package.json` and
-re-run `pnpm install`.
+To pull the newest platform release, re-run `pnpm install` (the pin tracks the `latest` stable tag).
 
 ## Extending
 

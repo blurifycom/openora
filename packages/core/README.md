@@ -2,7 +2,7 @@
 
 > Open-source, headless, plugin-based, AI-native iGaming framework. Clone it, extend it, deploy it - without forking core.
 
-The single package behind [Openora](https://github.com/blurifycom/openora): backend domain modules (auth, wallet, casino, sportsbook, bonus, compliance, CMS, backoffice, audit), the plugin engine that composes them, Zod-first contracts, and a typed React SDK. Your frontend, branding, and vendor adapters live in your own consumer repo and talk to it over HTTP.
+The single package behind [Openora](https://github.com/blurifycom/openora): backend domain modules (auth, wallet, casino, compliance, CMS, backoffice, audit), the plugin engine that composes them, Zod-first contracts, and a typed React SDK. Your frontend, branding, and vendor adapters live in your own consumer repo and talk to it over HTTP.
 
 > **Status: alpha (pre-1.0).** Contracts, package layout, and APIs may change between releases.
 
@@ -10,8 +10,9 @@ The single package behind [Openora](https://github.com/blurifycom/openora): back
 
 ```sh
 pnpm add @openora/core        # latest stable
-pnpm add @openora/core@alpha  # dev channel snapshot
 ```
+
+The rolling `canary` dev channel (`@openora/core@canary`) publishes on every `dev` push - use it for pre-release testing, not production.
 
 ## What's inside (subpath exports)
 

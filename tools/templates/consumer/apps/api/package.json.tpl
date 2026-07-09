@@ -12,7 +12,7 @@
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
-    "@openora/core": "alpha"
+    "@openora/core": "latest"
   },
   "devDependencies": {
     "tsx": "4.22.2",
