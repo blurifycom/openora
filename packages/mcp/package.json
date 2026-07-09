@@ -1,6 +1,6 @@
 {
   "name": "@openora/mcp",
-  "version": "0.3.0",
+  "version": "0.4.0",
   "description": "MCP server exposing the Openora iGaming framework catalog (routes, schemas, adapter seams, events) to AI coding agents in consumer repos",
   "keywords": [
     "ai-native",
