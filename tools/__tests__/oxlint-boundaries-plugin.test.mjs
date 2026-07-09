@@ -111,7 +111,9 @@ test('no-engine-to-domain flags a domain import from the engine', () => {
 
 test('out-of-scope files register no visitors', () => {
   for (const rule of ['no-cross-addon', 'no-cross-core-domain', 'no-react-to-runtime']) {
-    const visitor = plugin.rules[rule].create({ filename: '/repo/apps/docs/src/index.ts' });
+    const visitor = plugin.rules[rule].create({
+      filename: '/repo/apps/mcp-server-dev/src/main.ts',
+    });
     assert.deepEqual(Object.keys(visitor), [], rule);
   }
 });

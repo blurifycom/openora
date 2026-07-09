@@ -36,8 +36,6 @@
     "regen": "tsx tools/gen/sync-tsconfig-paths.ts && tsx tools/gen/gen-openapi.ts && pnpm -F @openora/core generate && pnpm run gen:catalog",
     "sync:tsconfig-paths": "tsx tools/gen/sync-tsconfig-paths.ts",
     "gen:catalog": "tsx tools/gen/gen-catalog.ts",
-    "docs": "pnpm --filter @openora/docs dev",
-    "docs:build": "tsx tools/gen/gen-openapi.ts && pnpm --filter @openora/docs build",
     "seed": "tsx tools/db/seed.ts",
     "test:tools": "node --test \"tools/__tests__/*.test.mjs\"",
     "verify": "turbo run typecheck test:unit && pnpm run test:tools && pnpm run lint && pnpm run verify:shape && pnpm run boundaries",

@@ -6,10 +6,6 @@
       "dependsOn": ["^build"],
       "outputs": ["dist/**", ".next/**", "!.next/cache/**"]
     },
-    "@openora/docs#build": {
-      "dependsOn": ["^build"],
-      "outputs": ["out/**", ".next/**", "!.next/cache/**"]
-    },
     "dev": {
       "cache": false,
       "persistent": true
