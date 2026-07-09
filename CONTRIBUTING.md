@@ -46,31 +46,46 @@ leave the wiring alone. After scaffolding a module/table: `pnpm regen && pnpm ve
 
 ## Branch model
 
-| Branch                       | Purpose                                                                        |
-| ---------------------------- | ------------------------------------------------------------------------------ |
-| `dev`                        | Shared integration branch - the source of truth. Keep it green; MRs land here. |
-| `stage`                      | Pre-prod / release-candidate. Promoted from `dev`; releases are cut as tags.   |
-| `feat/*`, `fix/*`, `chore/*` | Short-lived topic branches. Branch off `dev`, open an MR back into `dev`.      |
+| Branch                       | Purpose                                                                          |
+| ---------------------------- | -------------------------------------------------------------------------------- |
+| `dev`                        | Shared integration branch - the source of truth. Keep it green; MRs land here.   |
+| `stage`                      | Pre-prod / release-candidate. Promoted from `dev`; stable releases are cut here. |
+| `feat/*`, `fix/*`, `chore/*` | Short-lived topic branches. Branch off `dev`, open an MR back into `dev`.        |
 
-Flow: `feat/*` -> MR -> `dev` -> promote to `stage` -> release tags.
+Flow: `feat/*` -> MR -> `dev` (publishes `alpha`) -> promote to `stage` (publishes `rc`) ->
+run the Release workflow (publishes `latest`). See [Releasing](#releasing-openora-to-npm) below.
 CI (`.github/workflows/ci.yml`) runs `verify` on every pull request and on
 pushes to `dev`.
 
-## Publishing (`@openora/*` to npm)
+## Releasing (`@openora/*` to npm)
 
-`.github/workflows/release.yml` publishes on every push to `dev`/`stage` and on `v*.*.*` tags:
-`dev` -> dist-tag `alpha`, `stage` -> dist-tag `rc`, a tag -> dist-tag `latest`. Prereleases are
-ephemeral snapshots (`0.x.y-<channel>-<sha>`), never committed.
+Versions are driven entirely by [Changesets](https://github.com/changesets/changesets) - you never
+hand-edit a version number. Any PR that changes published behavior includes a changeset
+(`pnpm changeset` -> pick patch/minor/major + a one-line summary); the tooling computes the version
+from those. The two published packages (`@openora/core`, `@openora/mcp`) move together as a fixed group.
 
-Production release runbook:
+```mermaid
+flowchart LR
+    PR["feat/* PR<br/>+ pnpm changeset"] -->|merge| DEV[dev]
+    DEV -. push .-> ALPHA(["npm dist-tag alpha<br/>x.y.z-alpha-sha"])
+    DEV ==>|promote| STAGE[stage]
+    STAGE -. push .-> RC(["npm dist-tag rc<br/>x.y.z-rc-sha"])
+    STAGE ==>|"Release workflow (one click)"| LATEST(["npm dist-tag latest<br/>vX.Y.Z + git tag<br/>+ GitHub Release"])
+```
 
-1. Changes land on `dev` with a changeset each (`pnpm changeset`).
-2. `.github/workflows/version.yml` keeps a "Version Packages" PR open against `dev`, bumping the
-   fixed `@openora/*` version and writing changelogs from pending changesets.
-3. Merge that PR into `dev` when ready to release.
-4. Promote `dev` -> `stage` (publishes the `rc` snapshot for pre-release testing).
-5. Push a `v<version>` tag matching the merged version (`packages/core/package.json`) - `release.yml`
-   publishes it under `latest`.
+- **`dev` push -> `alpha`.** Every merge to `dev` publishes an immutable snapshot
+  (`x.y.z-alpha-<sha>`, computed from pending changesets) under the `alpha` dist-tag. Install it with
+  `pnpm add @openora/core@alpha`. Changesets are not consumed and nothing is committed.
+- **`stage` push -> `rc`.** Promote `dev` -> `stage` to publish an `rc` snapshot for release-candidate
+  testing (`pnpm add @openora/core@rc`).
+- **Stable -> `latest`.** From `stage`, run **Actions -> Release -> Run workflow** (`release.yml`). It
+  consumes the changesets, computes the version, writes the CHANGELOGs, commits `chore: release vX.Y.Z`,
+  tags `vX.Y.Z`, publishes `latest`, and opens a GitHub Release. Flip `dry_run` on first to preview the
+  version + changelog without publishing. The release commit is fast-forwarded back onto `dev` so the
+  trunk's changesets stay consumed - if `dev` has moved on, merge `stage` -> `dev` afterwards.
+
+Auth is a single `NPM_TOKEN` repo secret (an npm automation / 2FA-bypass token). The downstream consumer
+and example-demo redeploys fire from the `alpha` channel via repo secrets - all encrypted, none public.
 
 ## Commits
 
