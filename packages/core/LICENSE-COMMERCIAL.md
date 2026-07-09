@@ -47,7 +47,7 @@ not covered by this file.
 
 ## How to obtain a commercial license
 
-Contact: **licensing@blurify.com**
+Contact: **contact@openora.ai**
 
 Include your company name, intended use, and deployment model. Blurify will
 respond with the applicable commercial terms.
@@ -63,4 +63,4 @@ respond with the applicable commercial terms.
 | Embedding in a closed-source product or redistributing under other terms     | Commercial    |
 | Need a warranty, indemnity, or commercial SLA                                | Commercial    |
 
-When in doubt, contact licensing@blurify.com.
+When in doubt, contact contact@openora.ai.

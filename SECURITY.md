@@ -23,7 +23,7 @@ discussion for a suspected vulnerability.
 Preferred: use GitHub's [private vulnerability reporting](https://docs.github.com/en/code-security/security-advisories/guidance-on-reporting-and-writing-information-about-vulnerabilities/privately-reporting-a-security-vulnerability)
 ("Report a vulnerability" under the repository's Security tab).
 
-Alternatively, email **security@oss.dev** with:
+Alternatively, email **contact@openora.ai** with:
 
 - a description of the issue and its impact,
 - steps to reproduce or a proof of concept,
