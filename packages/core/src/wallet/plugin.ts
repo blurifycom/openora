@@ -19,7 +19,7 @@ import { MockPaymentAdapter } from './adapters/mock/mock-payment-adapter.js';
 
 export default definePlugin({
   id: 'wallet',
-  dependsOn: ['identity', 'tag', 'audit'],
+  dependsOn: ['identity', 'audit'],
   register(ctx) {
     ctx.provide(PAYMENT_ADAPTER, () => new MockPaymentAdapter());
     // Other modules debit through this port within their own transaction (never importing wallet tables). See ADR-0016.
