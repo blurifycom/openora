@@ -1,26 +1,24 @@
-# The single push pipeline: verify -> publish -> version PR, one chained run per push.
-# Publishing is gated on a green verify (previously CI/Release/Version raced as three
-# independent workflows and a red verify could still publish). CodeQL stays separate.
+# Single push pipeline: ci -> release, plus a pre-release snapshot. One chained run per push.
 #
-# Channels (publish job):
-#   push to dev   -> snapshot publish under dist-tag `alpha` (0.x.y-alpha-<sha>)
-#   push to stage -> snapshot publish under dist-tag `rc`    (0.x.y-rc-<sha>)
-#   tag    v*.*.* -> stable publish under dist-tag `latest`  (cut tags from stage)
+# Release model (Changesets - automatic bump-and-publish):
+#   - Every feature PR carries a changeset (`.changeset/*.md`) stating the change + semver bump.
+#   - push to dev: `changesets/action` runs and does ONE of two things:
+#       * pending changesets  -> opens/updates the "Version Packages" PR (bumps the fixed
+#         `@openora/*` group + writes CHANGELOGs). Merging that PR is the release trigger.
+#       * no pending changesets (the Version PR just merged) -> builds and `changeset publish`
+#         -> npm dist-tag `latest`, a `v<version>` git tag, and a GitHub Release. Fully automatic.
+#   - Between releases, every dev/stage push also publishes an immutable pre-release snapshot
+#     (`<next>-alpha-<sha>` on dev, `-rc-<sha>` on stage) under its own dist-tag so consumers can
+#     test unreleased work - skipped only on the dev commit that just cut a stable release.
 #
-# Packages are scoped `@openora/*`, published publicly ("publishConfig":
-# { "access": "public" }). Auth uses the NPM_TOKEN repo secret (an npm granular
-# token for the @openora scope).
-#
-# The version-pr job (dev only) is the Changesets bot: with pending changesets it
-# opens/updates a "chore: version packages" PR. Merging that PR is how a production
-# release gets its version - promote dev -> stage (publishes `rc`), then push the
-# resulting v<version> tag (the publish job publishes `latest`).
+# Auth: NPM_TOKEN (granular `@openora` token) for now. Once the first version is published,
+# switch to npm Trusted Publishing (OIDC): drop NPM_TOKEN, keep `id-token: write` + a `npm`
+# environment. CodeQL stays a separate workflow.
 name: Pipeline
 
 on:
   push:
     branches: [dev, stage]
-    tags: ['v*.*.*']
 
 concurrency:
   group: pipeline-${{ github.ref }}
@@ -30,19 +28,66 @@ jobs:
   ci:
     uses: ./.github/workflows/ci.yml
 
-  publish:
+  release:
     needs: ci
+    if: github.ref == 'refs/heads/dev'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write # push the version-bump commit, create git tags + GitHub releases
+      pull-requests: write # open/update the "Version Packages" PR
+      id-token: write # ready for OIDC trusted publishing (no-op with NPM_TOKEN today)
+    outputs:
+      published: ${{ steps.changesets.outputs.published }}
+    env:
+      # The changesets version commit runs the husky pre-commit hook (regen + typecheck),
+      # which needs a built dist this job doesn't have - and CI already verified the commit.
+      HUSKY: 0
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 26
+          registry-url: https://registry.npmjs.org
+          scope: '@openora'
+
+      - name: Enable corepack (pnpm)
+        run: |
+          npm install -g corepack@latest
+          corepack enable
+          corepack prepare pnpm@11.8.0 --activate
+
+      - run: pnpm install --frozen-lockfile
+
+      # Pending changesets -> Version PR. None -> `pnpm run release` (build + changeset publish
+      # -> npm `latest` + git tag + GitHub Release). The action detects pnpm automatically.
+      - id: changesets
+        uses: changesets/action@v1
+        with:
+          version: pnpm run version
+          publish: pnpm run release
+          title: 'chore: version packages'
+          commit: 'chore: version packages'
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+
+  snapshot:
+    needs: [ci, release]
+    # Pre-release testing channel. Runs on every stage push (rc) and every dev push (alpha)
+    # EXCEPT the dev commit that just published a stable release. `release` only runs on dev,
+    # so on stage its output is empty and the second clause passes.
+    if: ${{ always() && needs.ci.result == 'success' && (github.ref == 'refs/heads/stage' || needs.release.outputs.published != 'true') }}
     runs-on: ubuntu-latest
     permissions:
       contents: read
     env:
-      # The downstream consumer is identified ONLY by these secret VALUES - this repo
-      # is public, so nothing about it (host, project, branch) is committed here.
-      # Unset -> the trigger step is a no-op.
+      # The downstream consumer and example demo are identified ONLY by these secret VALUES -
+      # this repo is public, so nothing about them is committed here. Unset -> the step no-ops.
       CONSUMER_TRIGGER_URL: ${{ secrets.CONSUMER_TRIGGER_URL }}
       CONSUMER_TRIGGER_TOKEN: ${{ secrets.CONSUMER_TRIGGER_TOKEN }}
-      # The example demo deploy (separate repo). Identified ONLY by these secret
-      # VALUES; unset -> the trigger step is a no-op.
       EXAMPLE_DEPLOY_TRIGGER_URL: ${{ secrets.EXAMPLE_DEPLOY_TRIGGER_URL }}
       EXAMPLE_DEPLOY_TRIGGER_TOKEN: ${{ secrets.EXAMPLE_DEPLOY_TRIGGER_TOKEN }}
     steps:
@@ -61,24 +106,12 @@ jobs:
           corepack prepare pnpm@11.8.0 --activate
 
       - run: pnpm install --frozen-lockfile
-      # Build only the publishable packages - the apps (docs, mcp-server-dev) are
-      # private and never published.
+      # Build only the publishable packages - the apps are private and never published.
       - run: pnpm exec turbo run build --filter='!./apps/*'
 
-      # Stable: a v*.*.* tag publishes the current versions under `latest`.
-      # changeset publish skips any package+version already in the registry, so
-      # re-running a tag is safe.
-      - name: Publish stable (latest)
-        if: startsWith(github.ref, 'refs/tags/v')
-        run: pnpm changeset publish
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
-
-      # Prerelease: dev -> alpha, stage -> rc. Each push snapshot-publishes an
-      # immutable 0.x.y-<channel>-<shortsha> under the matching dist-tag. The
-      # version bump is ephemeral (not committed); --no-git-tag avoids tagging.
+      # Immutable snapshot: dev -> alpha, stage -> rc. `--no-git-tag` avoids tagging the
+      # ephemeral version; `--tag` keeps it off the `latest` dist-tag.
       - name: Publish snapshot (alpha/rc)
-        if: github.ref == 'refs/heads/dev' || github.ref == 'refs/heads/stage'
         run: |
           if [ "${{ github.ref_name }}" = "dev" ]; then CHANNEL=alpha; else CHANNEL=rc; fi
           SHORT=$(git rev-parse --short HEAD)
@@ -87,14 +120,10 @@ jobs:
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
 
-      # Now that the new @openora/* version is on the registry, ask the downstream
-      # consumer to open a bump MR. We POST its pipeline-trigger API (CONSUMER_*
-      # secrets) with the published version. Only the alpha channel (push to dev)
-      # auto-bumps the consumer dev branch; stage/prod bumps are promoted manually.
-      # The consumer CI (OSS_BUMP=true) owns the pin/lockfile/MR. No-op when unset.
+      # Ask the downstream consumer to open a bump MR against its dev with the new snapshot
+      # version (its CI owns the pin/lockfile/MR). Best-effort; a trigger error never fails
+      # the run. No-op when the secret is unset. Dev (alpha) channel only.
       - name: Trigger downstream consumer bump
-        # Best-effort fire-and-forget - a trigger error must not fail the release
-        # (publish already succeeded) or block later trigger steps.
         continue-on-error: true
         if: env.CONSUMER_TRIGGER_URL != '' && github.ref == 'refs/heads/dev'
         run: |
@@ -106,10 +135,7 @@ jobs:
             -F "variables[OSS_VERSION]=$VERSION" \
             -F "variables[OSS_BUMP_TARGET]=dev"
 
-      # Redeploy the public example demo (separate repo). That repo builds its own
-      # app against the published core; we pass the new version so its pipeline
-      # bumps the @openora/core pin and redeploys. Only on the alpha channel
-      # (push to dev). No-op when the secrets are unset.
+      # Redeploy the public example demo against the new snapshot. Best-effort; dev channel only.
       - name: Trigger example demo deploy
         continue-on-error: true
         if: env.EXAMPLE_DEPLOY_TRIGGER_URL != '' && github.ref == 'refs/heads/dev'
@@ -120,32 +146,3 @@ jobs:
             -F "ref=main" \
             -F "variables[DEPLOY]=true" \
             -F "variables[OSS_VERSION]=$VERSION"
-
-  version-pr:
-    needs: ci
-    if: github.ref == 'refs/heads/dev'
-    runs-on: ubuntu-latest
-    permissions:
-      contents: write
-      pull-requests: write
-    env:
-      # The changesets action commits the version bump; the husky pre-commit hook
-      # (regen + typecheck) needs a built dist that this job doesn't have - and CI
-      # already verified this commit. Skip hooks entirely.
-      HUSKY: 0
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
-
-      - uses: ./.github/actions/bootstrap
-
-      - uses: changesets/action@v1
-        with:
-          # `pnpm version` resolves to pnpm's built-in semver command, not the
-          # package script - `pnpm run version` forces the script (`changeset version`).
-          version: pnpm run version
-          title: 'chore: version packages'
-          commit: 'chore: version packages'
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
