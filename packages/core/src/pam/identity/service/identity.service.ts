@@ -76,10 +76,28 @@ function toUser(u: BetterAuthUser) {
   return u.image !== undefined ? { ...base, image: u.image } : base;
 }
 
-function forwardCookies(authResponse: globalThis.Response, resHeaders: Headers): void {
+function forwardCookies(
+  authResponse: globalThis.Response,
+  resHeaders: Headers,
+  rememberMe?: boolean,
+): void {
   const cookies = authResponse.headers.getSetCookie?.() ?? [];
+  const REMEMBER_ME_DURATION_SECONDS = 30 * 24 * 60 * 60; // 30 days
   for (const cookie of cookies) {
-    resHeaders.append('set-cookie', cookie);
+    const isSessionCookie = cookie.includes('HttpOnly') && cookie.includes('Path=');
+    if (isSessionCookie && rememberMe === true) {
+      const parts = cookie.split('; ');
+      const baseAndValue = parts[0];
+      const attrs = parts.slice(1);
+      const filteredAttrs = attrs.filter(
+        (attr) =>
+          !attr.toLowerCase().startsWith('max-age') && !attr.toLowerCase().startsWith('expires'),
+      );
+      filteredAttrs.push(`Max-Age=${REMEMBER_ME_DURATION_SECONDS}`);
+      resHeaders.append('set-cookie', [baseAndValue, ...filteredAttrs].join('; '));
+    } else {
+      resHeaders.append('set-cookie', cookie);
+    }
   }
 }
 
@@ -320,7 +338,7 @@ export class IdentityService {
         });
       }
 
-      forwardCookies(authResponse, resHeaders);
+      forwardCookies(authResponse, resHeaders, input.rememberMe);
       const body = (await authResponse.json()) as {
         user?: BetterAuthUser;
         token?: string;
