@@ -355,6 +355,35 @@ describe('IdentityService - unlockUser', () => {
     const svc = new IdentityService({ drizzle: drizzle as never, events: makeEvents() as never });
     await expect(svc.unlockUser('missing', 'admin1')).rejects.toThrow();
   });
+
+  it('resets the login rate-limit window for the unlocked user', async () => {
+    const drizzle = makeDrizzle({
+      selectRows: [
+        [
+          {
+            id: 'u1',
+            email: 'A@B.DEV',
+            failedLoginAttempts: 5,
+            lockoutUntil: new Date('2020-01-01'),
+          },
+        ],
+      ],
+    });
+    const resetMock = vi.fn().mockResolvedValue(undefined);
+    const limiter = {
+      consume: vi.fn(),
+      reset: resetMock,
+    } satisfies import('@openora/core/contracts').RateLimiterAdapter;
+    const svc = new IdentityService({
+      drizzle: drizzle as never,
+      events: makeEvents() as never,
+      limiter,
+    });
+
+    await svc.unlockUser('u1', 'admin1');
+
+    expect(resetMock).toHaveBeenCalledWith('login:a@b.dev');
+  });
 });
 
 describe('IdentityService.updateProfile language validation', () => {

@@ -418,6 +418,7 @@ export class IdentityService {
     }
 
     await this.clearLockout(userId);
+    await this.limiter?.reset(`login:${existingUser.email.toLowerCase()}`);
 
     this.events.emit('identity.user.unlocked', {
       userId,

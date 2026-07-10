@@ -44,6 +44,11 @@ export class InProcessRateLimiter implements RateLimiterAdapter {
     return Promise.resolve({ allowed: false, retryAfterMs: existing.resetAt - now });
   }
 
+  reset(key: string): Promise<void> {
+    this.windows.delete(key);
+    return Promise.resolve();
+  }
+
   private sweep(): void {
     const now = Date.now();
     for (const [key, window] of this.windows) {

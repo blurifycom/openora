@@ -25,6 +25,7 @@ export type RateLimitResult = {
 
 export type RateLimiterAdapter = {
   consume(key: string, opts: RateLimitOptions): Promise<RateLimitResult>;
+  reset(key: string): Promise<void>;
 };
 
 export const RATE_LIMITER: Token<RateLimiterAdapter> = createToken('RATE_LIMITER');
