@@ -83,7 +83,8 @@ export class BullMqJobQueue implements JobQueueAdapter {
         };
         await reg.handler(ctx);
       },
-      { connection: this.connection, concurrency: registration.options?.concurrency },
+      // BullMQ rejects an explicit `concurrency: undefined`; default to 1 when unset.
+      { connection: this.connection, concurrency: registration.options?.concurrency ?? 1 },
     );
 
     // 'failed' fires per attempt; act only once retries are exhausted (attemptsMade has

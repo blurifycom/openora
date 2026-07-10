@@ -1,17 +1,19 @@
 # Quickstart
 
-Get the API running at `http://localhost:3001` and call your first route. Requires Node 26+,
+Get the platform running locally and scaffold an app on top of it. Requires Node 26+,
 pnpm 11+, and Docker.
 
-## Run it
+This repo is a library, not a server. It ships `@openora/core` and the tooling around it -
+there is no `apps/api` here to boot. The runnable API lives in a consumer app you generate
+with `pnpm create:app`.
 
-The fastest path checks prerequisites, installs deps, boots Postgres, applies migrations, and
-seeds demo data:
+## Set up the framework repo
+
+The fastest path checks prerequisites, installs deps, boots Postgres, and applies migrations:
 
 ```bash
 pnpm setup:agent   # prereqs + deps + Postgres + migrations
 pnpm seed          # demo data: admin + players + wallets + games
-pnpm dev           # api on :3001
 ```
 
 Prefer the explicit steps?
@@ -19,16 +21,27 @@ Prefer the explicit steps?
 ```bash
 pnpm install
 docker compose up -d                  # Postgres only (library-first)
-pnpm -F @openora/core/server generate     # generate Drizzle migrations
-pnpm -F @openora/core/server migrate      # apply them
+pnpm -F @openora/core generate        # generate Drizzle migrations
+pnpm db:migrate:all                   # apply them
 pnpm seed
-pnpm dev
 ```
 
 Seeding logs you in with `admin@oss.dev` / `password123`. Flags: `--players=<n>`,
 `--admin-email=<e>`, `--admin-password=<p>`.
 
-## Call a route
+## Run an API
+
+Scaffold a consumer app. It installs `@openora/core` from npm, registers every core module
+against the plugin host, and never forks the framework:
+
+```bash
+pnpm create:app my-gaming-core
+cd my-gaming-core
+pnpm install
+cp .env.example .env                  # set DATABASE_URL + AUTH_SECRET
+pnpm db:migrate
+pnpm dev                              # api on :3001
+```
 
 ```bash
 curl http://localhost:3001/health
@@ -36,10 +49,12 @@ curl http://localhost:3001/health
 
 Every route is browsable in the [API reference](/docs/api), generated from the live contract.
 
+> `pnpm dev` in _this_ repo runs the MCP dev server, not an API.
+
 ## Add a module
 
-Scaffold a standalone module - schema, service, router, contract slice, and `plugin.ts` are
-generated and registered for you:
+Scaffold a standalone core add-on - schema, service, router, contract slice, and `plugin.ts`
+are generated and registered for you:
 
 ```bash
 pnpm gen module tournaments   # creates @openora-addons/tournaments + registers it
@@ -48,6 +63,10 @@ pnpm regen && pnpm verify
 
 Fill the `// AGENT: implement here` regions; leave the wiring alone. See
 [Core concepts](/docs/core-concepts) for what each generated file does.
+
+`gen module`, `route`, `config`, `event`, `service` and `app` are core-only generators - they
+run inside this monorepo. In a consumer repo you extend through overlays instead:
+`pnpm gen plugin <name>` and `pnpm gen adapter`.
 
 ## Next
 

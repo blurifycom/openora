@@ -1,14 +1,14 @@
-# Push pipeline: ci -> alpha snapshot. One chained run per push.
+# Push pipeline: ci -> canary publish. One chained run per push.
 #
-# Every push to dev publishes an immutable ALPHA snapshot (`<next>-alpha-<sha>`, dist-tag `alpha`),
-# the version auto-computed from pending changesets. It's ephemeral: `changeset version --snapshot`
-# runs in a throwaway working tree (changesets are NOT consumed, nothing is committed), then
-# publishes under the `alpha` dist-tag so `latest` is never touched. Push to stage runs CI only.
+# Every push to dev publishes an immutable CANARY build (`<next>-canary.<run>`, dist-tag `canary`) -
+# ALWAYS, independent of changesets: the base is the latest published stable patch-bumped so canary
+# always leads it, and the CI run number is a monotonic sha-free counter. Nothing is committed. This
+# is the rolling dev channel consumers track. Push to stage runs CI only.
 #
-# rc and stable are TAG-driven (.github/workflows/release.yml): tag `vX.Y.Z-rc.N` -> `rc`,
-# tag `vX.Y.Z` -> `latest`. CodeQL stays a separate workflow.
+# rc and stable are TAG-driven + changeset-driven (.github/workflows/release.yml): tag `vX.Y.Z-rc.N`
+# -> `rc`, tag `vX.Y.Z` -> `latest`. CodeQL stays a separate workflow.
 #
-# Auth: NPM_TOKEN (npm automation / 2FA-bypass token).
+# Auth: NPM_TOKEN (npm automation / 2FA-bypass token); provenance signed via OIDC (id-token).
 name: Pipeline
 
 on:
@@ -29,6 +29,7 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: read
+      id-token: write # npm provenance (signed build attestation)
     env:
       # The downstream consumer and example demo are identified ONLY by these secret VALUES -
       # this repo is public, so nothing about them is committed here. Unset -> the step no-ops.
@@ -55,18 +56,26 @@ jobs:
       # Build only the publishable packages - the apps are private and never published.
       - run: pnpm exec turbo run build --filter='!./apps/*'
 
-      # Immutable alpha snapshot. `--no-git-tag` avoids tagging the ephemeral version; `--tag alpha`
-      # keeps it off `latest`. Changesets are not consumed (the working-tree bump is discarded).
-      - name: Publish alpha snapshot
+      # Immutable canary build `<next>-canary.<run>`, published on EVERY dev push regardless of
+      # changesets: base = latest published stable, patch-bumped so canary always leads it; the run
+      # number is a monotonic sha-free counter. `changeset publish` needs no changesets - it ships any
+      # version not yet on npm, and `<run>` makes each unique. `--tag canary` keeps it off `latest`.
+      # Nothing is committed. (Stable/rc consume changesets - see release.yml.)
+      - name: Publish canary
         run: |
-          SHORT=$(git rev-parse --short HEAD)
-          pnpm changeset version --snapshot alpha --snapshot-prerelease-template "{tag}-$SHORT"
-          pnpm changeset publish --no-git-tag --tag alpha
+          LATEST=$(npm view @openora/core version 2>/dev/null || node -p "require('./packages/core/package.json').version")
+          NEXT=$(node -e 'const v=process.argv[1].split("-")[0].split(".").map(Number); console.log(v[0]+"."+v[1]+"."+(v[2]+1))' "$LATEST")
+          export VERSION="${NEXT}-canary.${RUN}"
+          echo "Publishing canary $VERSION"
+          node -e "for (const p of ['packages/core/package.json','packages/mcp/package.json']) { const fs=require('fs'); const j=JSON.parse(fs.readFileSync(p,'utf8')); j.version=process.env.VERSION; fs.writeFileSync(p, JSON.stringify(j,null,2)+'\n'); }"
+          pnpm changeset publish --no-git-tag --tag canary
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+          NPM_CONFIG_PROVENANCE: true
+          RUN: ${{ github.run_number }}
 
-      # Ask the downstream consumer to open a bump MR against its dev with the new snapshot
-      # version (its CI owns the pin/lockfile/MR). Best-effort; alpha (dev) channel only.
+      # Ask the downstream consumer to open a bump MR against its dev with the new canary
+      # version (its CI owns the pin/lockfile/MR). Best-effort; canary (dev) channel only.
       - name: Trigger downstream consumer bump
         continue-on-error: true
         if: env.CONSUMER_TRIGGER_URL != '' && github.ref == 'refs/heads/dev'
