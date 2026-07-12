@@ -1,5 +1,5 @@
 {
-  "id": "4e340313-4e14-47ba-a63d-7384411c0cac",
+  "id": "7f6bba4b-00cb-44b9-b86d-cfc0c5299bb5",
   "prevId": "f30e0e4d-b9dd-43cb-bcd6-59266867bb05",
   "version": "7",
   "dialect": "postgresql",
@@ -202,9 +202,9 @@
           "notNull": true,
           "default": false
         },
-        "threshold_cents": {
-          "name": "threshold_cents",
-          "type": "integer",
+        "threshold": {
+          "name": "threshold",
+          "type": "numeric(18, 2)",
           "primaryKey": false,
           "notNull": false
         },

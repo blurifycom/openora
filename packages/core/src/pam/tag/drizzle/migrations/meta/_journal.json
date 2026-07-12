@@ -12,15 +12,8 @@
     {
       "idx": 1,
       "version": "7",
-      "when": 1783764936818,
-      "tag": "0001_lowly_paladin",
-      "breakpoints": true
-    },
-    {
-      "idx": 2,
-      "version": "7",
-      "when": 1783809169365,
-      "tag": "0002_left_ronan",
+      "when": 1783854980666,
+      "tag": "0001_neat_iron_monger",
       "breakpoints": true
     }
   ]

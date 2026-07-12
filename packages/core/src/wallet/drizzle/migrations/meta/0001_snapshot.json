@@ -1,5 +1,5 @@
 {
-  "id": "6a251d75-a926-4492-847d-992aa5d0ed95",
+  "id": "734cd227-e947-44f2-aae2-c47146fe2051",
   "prevId": "c4edb97b-d1b3-4b6e-83fa-83c2fdddbc88",
   "version": "7",
   "dialect": "postgresql",
@@ -21,9 +21,9 @@
           "primaryKey": false,
           "notNull": true
         },
-        "threshold_cents": {
-          "name": "threshold_cents",
-          "type": "integer",
+        "threshold": {
+          "name": "threshold",
+          "type": "numeric(18, 2)",
           "primaryKey": false,
           "notNull": true
         },
@@ -84,12 +84,12 @@
           "primaryKey": false,
           "notNull": true
         },
-        "balance_cents": {
-          "name": "balance_cents",
-          "type": "integer",
+        "balance": {
+          "name": "balance",
+          "type": "numeric(18, 2)",
           "primaryKey": false,
           "notNull": true,
-          "default": 0
+          "default": "'0'"
         },
         "currency": {
           "name": "currency",
@@ -143,9 +143,9 @@
           "primaryKey": false,
           "notNull": true
         },
-        "amount_cents": {
-          "name": "amount_cents",
-          "type": "integer",
+        "amount": {
+          "name": "amount",
+          "type": "numeric(18, 2)",
           "primaryKey": false,
           "notNull": true
         },

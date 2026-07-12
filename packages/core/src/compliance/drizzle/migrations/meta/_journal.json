@@ -12,15 +12,8 @@
     {
       "idx": 1,
       "version": "7",
-      "when": 1783764166036,
-      "tag": "0001_big_randall",
-      "breakpoints": true
-    },
-    {
-      "idx": 2,
-      "version": "7",
-      "when": 1783809162941,
-      "tag": "0002_fair_mimic",
+      "when": 1783854980971,
+      "tag": "0001_funny_vance_astro",
       "breakpoints": true
     }
   ]
