@@ -1079,6 +1079,10 @@
       "file": "packages/core/src/compliance/contract/index.ts"
     },
     {
+      "name": "SubmitKycOutputSchema",
+      "file": "packages/core/src/compliance/contract/index.ts"
+    },
+    {
       "name": "TagKeySchema",
       "file": "packages/core/src/contracts/schemas/tag.ts"
     },

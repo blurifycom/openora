@@ -37,9 +37,14 @@ export const KycVerificationSchema = z.object({
 });
 
 export const SubmitKycInputSchema = z.object({
-  documents: z.array(KycDocumentSchema).min(1),
+  documents: z.array(KycDocumentSchema),
 });
 export type SubmitKycInput = z.infer<typeof SubmitKycInputSchema>;
+
+export const SubmitKycOutputSchema = KycVerificationSchema.extend({
+  verificationUrl: z.string().optional(),
+});
+export type SubmitKycOutput = z.infer<typeof SubmitKycOutputSchema>;
 
 export const PlayerKycViewSchema = z.object({
   current: KycVerificationSchema.nullable(),
@@ -99,7 +104,7 @@ export const complianceContract = {
   submitKyc: oc
     .route({ method: 'POST', path: '/compliance/kyc' })
     .input(SubmitKycInputSchema)
-    .output(KycVerificationSchema),
+    .output(SubmitKycOutputSchema),
 
   kycWebhook: oc
     .route({ method: 'POST', path: '/compliance/kyc/webhook' })
