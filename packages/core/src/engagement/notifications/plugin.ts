@@ -29,7 +29,9 @@ export default definePlugin({
     // Best-effort email alongside the in-app notification; a missing user or delivery
     // failure is logged, never thrown - the in-app notification already landed.
     const sendEmail = (userId: string, title: string, body: string) => {
-      if (!deliveryRef || !directoryRef) return;
+      if (!deliveryRef || !directoryRef) {
+        return;
+      }
       const delivery = deliveryRef;
       directoryRef
         .get(userId)
@@ -45,7 +47,9 @@ export default definePlugin({
 
     ctx.events.on('wallet.withdrawal.approved', (payload) => {
       const parsed = domainEventSchemas['wallet.withdrawal.approved'].safeParse(payload);
-      if (!parsed.success || !svcRef) return;
+      if (!parsed.success || !svcRef) {
+        return;
+      }
       const p = parsed.data;
       const title = 'Withdrawal approved';
       const body = `Your withdrawal of ${p.amount} ${p.currency} has been approved and is being processed.`;
@@ -57,7 +61,9 @@ export default definePlugin({
 
     ctx.events.on('wallet.withdrawal.rejected', (payload) => {
       const parsed = domainEventSchemas['wallet.withdrawal.rejected'].safeParse(payload);
-      if (!parsed.success || !svcRef) return;
+      if (!parsed.success || !svcRef) {
+        return;
+      }
       const p = parsed.data;
       const reason = p.reason ? ` Reason: ${p.reason}.` : '';
       const title = 'Withdrawal rejected';

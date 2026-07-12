@@ -50,15 +50,18 @@ function topoSort(plugins: Plugin[]): Plugin[] {
   const sorted: Plugin[] = [];
 
   function visit(plugin: Plugin, stack: Set<string>) {
-    if (visited.has(plugin.id)) return;
+    if (visited.has(plugin.id)) {
+      return;
+    }
     if (stack.has(plugin.id)) {
       throw new Error(`Circular plugin dependency: ${[...stack, plugin.id].join(' -> ')}`);
     }
     stack.add(plugin.id);
     for (const dep of plugin.dependsOn ?? []) {
       const depPlugin = byId.get(dep);
-      if (!depPlugin)
+      if (!depPlugin) {
         throw new Error(`Plugin "${plugin.id}" depends on "${dep}" which is not registered`);
+      }
       visit(depPlugin, stack);
     }
     stack.delete(plugin.id);

@@ -19,9 +19,13 @@ function typesTarget(entry: ExportEntry): string | undefined {
 function derivePaths(exports: Record<string, ExportEntry>): Record<string, [string]> {
   return Object.fromEntries(
     Object.entries(exports).flatMap(([key, entry]) => {
-      if (key === '.') return [];
+      if (key === '.') {
+        return [];
+      }
       const target = typesTarget(entry);
-      if (!target) return [];
+      if (!target) {
+        return [];
+      }
       const src = target.replace(/^\.\/dist\//, './src/').replace(/\.d\.ts$/, '.ts');
       return [[`@openora/core/${key.slice(2)}`, [src] as [string]] as const];
     }),
@@ -62,6 +66,8 @@ if (process.argv.includes('--check')) {
   }
   console.log('tsconfig paths in sync.');
 } else {
-  if (current !== next) writeFileSync(tsconfigPath, next);
+  if (current !== next) {
+    writeFileSync(tsconfigPath, next);
+  }
   console.log('synced tsconfig paths from exports.');
 }

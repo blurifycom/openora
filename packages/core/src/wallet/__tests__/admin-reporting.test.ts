@@ -44,12 +44,12 @@ function txRow(overrides: Row = {}): Row {
 }
 
 describe('DrizzleAdminWalletReporting.listTransactions', () => {
-  it('returns mapped rows incl. rail and a numeric amount', async () => {
+  it('returns mapped rows incl. rail and a decimal-string amount', async () => {
     const { drizzle } = makeDrizzle([[{ tx: txRow(), walletUserId: 'u-1' }], [{ n: 1 }]]);
     const reporting = new DrizzleAdminWalletReporting(drizzle);
     const { rows, total } = await reporting.listTransactions({ page: 1, limit: 20 });
     expect(total).toBe(1);
-    expect(rows[0]).toMatchObject({ id: 'tx-1', userId: 'u-1', amount: 100, rail: 'fiat' });
+    expect(rows[0]).toMatchObject({ id: 'tx-1', userId: 'u-1', amount: '100', rail: 'fiat' });
   });
 
   it('maps a null rail to null', async () => {

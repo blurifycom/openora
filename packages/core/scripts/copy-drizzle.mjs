@@ -13,12 +13,19 @@ const drizzleDirs = [];
 const walk = (dir) => {
   for (const name of readdirSync(dir)) {
     const p = join(dir, name);
-    if (!statSync(p).isDirectory()) continue;
-    if (name === 'drizzle') drizzleDirs.push(p);
-    else walk(p);
+    if (!statSync(p).isDirectory()) {
+      continue;
+    }
+    if (name === 'drizzle') {
+      drizzleDirs.push(p);
+    } else {
+      walk(p);
+    }
   }
 };
-if (existsSync(src)) walk(src);
+if (existsSync(src)) {
+  walk(src);
+}
 
 for (const from of drizzleDirs) {
   const to = from.replace(`${root}/src/`, `${root}/dist/`);

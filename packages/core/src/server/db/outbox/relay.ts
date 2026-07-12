@@ -9,17 +9,21 @@ export type OutboxRelayOptions = {
   onError?: (err: unknown) => void;
 };
 
-// Publishes pending outbox rows to the MESSAGE_BROKER. Runs as a background poll
-// loop (start/stop) and is also drainable on demand (drainOnce) for tests and for
-// a synchronous flush. A row is marked published only AFTER broker.publish
-// resolves, so a crash mid-publish leaves it pending and it is retried -
-// at-least-once; consumers dedup on eventId.
-//
-// ponytail: claim-then-publish (no `claimed_at` migration) - the SKIP LOCKED select
-// commits in its own short transaction, then each row publishes and is marked in its own
-// transaction outside that lock, so a publish failure only retries the failing row. The
-// tradeoff: two relays on the same tick can both grab a row - fine under at-least-once
-// (consumers dedup on eventId); add a `claimed_at` claim-update if that ever needs closing.
+/**
+ * Publishes pending `event_outbox` rows to the `MESSAGE_BROKER`. Runs as a
+ * background poll loop (`start`/`stop`) and is also drainable on demand
+ * (`drainOnce`) for tests or a synchronous flush. A row is marked published
+ * only AFTER `broker.publish` resolves, so a crash mid-publish leaves it
+ * pending and it is retried - at-least-once delivery; consumers dedup on
+ * `eventId`.
+ *
+ * ponytail: claim-then-publish (no `claimed_at` migration) - the SKIP LOCKED
+ * select commits in its own short transaction, then each row publishes and is
+ * marked in its own transaction outside that lock, so a publish failure only
+ * retries the failing row. The tradeoff: two relays on the same tick can both
+ * grab a row - fine under at-least-once (consumers dedup on `eventId`); add a
+ * `claimed_at` claim-update if that ever needs closing.
+ */
 export class OutboxRelay {
   private timer: ReturnType<typeof setInterval> | undefined;
   private draining = false;
@@ -31,7 +35,9 @@ export class OutboxRelay {
   ) {}
 
   start(): void {
-    if (this.timer) return;
+    if (this.timer) {
+      return;
+    }
     this.timer = setInterval(() => void this.drainSafe(), this.opts.intervalMs ?? 1000);
     this.timer.unref?.();
   }
@@ -41,7 +47,9 @@ export class OutboxRelay {
       clearInterval(this.timer);
       this.timer = undefined;
     }
-    while (this.draining) await new Promise((r) => setTimeout(r, 10));
+    while (this.draining) {
+      await new Promise((r) => setTimeout(r, 10));
+    }
   }
 
   private async drainSafe(): Promise<void> {
@@ -55,7 +63,9 @@ export class OutboxRelay {
   // Publish one batch of pending rows. Returns how many were published. Reentrant-
   // safe: a second call while a drain is in flight is a no-op.
   async drainOnce(): Promise<number> {
-    if (this.draining) return 0;
+    if (this.draining) {
+      return 0;
+    }
     this.draining = true;
     try {
       const batch = await this.db.transaction((txn) =>

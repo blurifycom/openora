@@ -6,7 +6,7 @@ import {
   withAdvisoryXactLock,
   type EventBus,
 } from '@openora/core/server';
-import { eq, and, or, gte, lte, like, desc, sql } from 'drizzle-orm';
+import { eq, and, or, gt, gte, lte, like, desc, sql } from 'drizzle-orm';
 import type { AuditWritePort } from '@openora/core/contracts';
 import { auditLog, type AuditLog } from '../schema/index.js';
 import type { AuditListFilters, AuditExportFilters } from '../contract/index.js';
@@ -29,6 +29,23 @@ type CanonicalHashInput = Pick<
   | 'prevHash'
 > & { createdAt: string };
 
+// Postgres jsonb reorders object keys (length-then-lex) on read-back, so before/after
+// must have their nested key order canonicalized before hashing - otherwise record()
+// and verifyChain() disagree on the exact same data. Arrays keep their original order.
+function sortKeysDeep(value: unknown): unknown {
+  if (Array.isArray(value)) {
+    return value.map(sortKeysDeep);
+  }
+  if (value === null || typeof value !== 'object') {
+    return value;
+  }
+  return Object.fromEntries(
+    Object.keys(value as Record<string, unknown>)
+      .sort()
+      .map((key) => [key, sortKeysDeep((value as Record<string, unknown>)[key])]),
+  );
+}
+
 function canonicalHashInput(fields: CanonicalHashInput): string {
   return JSON.stringify({
     id: fields.id,
@@ -37,8 +54,8 @@ function canonicalHashInput(fields: CanonicalHashInput): string {
     action: fields.action,
     resourceType: fields.resourceType,
     resourceId: fields.resourceId,
-    before: fields.before ?? null,
-    after: fields.after ?? null,
+    before: sortKeysDeep(fields.before ?? null),
+    after: sortKeysDeep(fields.after ?? null),
     result: fields.result ?? null,
     seq: fields.seq,
     createdAt: fields.createdAt,
@@ -174,6 +191,8 @@ export class AuditService {
   // truncated to the latest rows. Use verifyChain for full-chain integrity.
   static readonly EXPORT_MAX_ROWS = 50_000;
 
+  static readonly VERIFY_CHUNK_SIZE = 1_000;
+
   async exportCsv(filters: AuditExportFilters) {
     const db = this.drizzle.db;
     const where = buildWhere(filters);
@@ -213,35 +232,49 @@ export class AuditService {
   async verifyChain(): Promise<
     { valid: true } | { valid: false; firstBrokenSeq: number; rowId: string }
   > {
-    const rows = await this.drizzle.db.select().from(auditLog).orderBy(auditLog.seq);
-
     let expectedPrevHash: string | null = null;
+    let cursor: number | null = null;
+    let hasMore = true;
 
-    for (const row of rows) {
-      if (row.prevHash !== expectedPrevHash) {
-        return { valid: false, firstBrokenSeq: row.seq, rowId: row.id };
+    // Keyset-paged so a large chain verifies in constant memory; VERIFY_CHUNK_SIZE
+    // caps how many rows are held per round-trip.
+    while (hasMore) {
+      const rows = await this.drizzle.db
+        .select()
+        .from(auditLog)
+        .where(cursor === null ? undefined : gt(auditLog.seq, cursor))
+        .orderBy(auditLog.seq)
+        .limit(AuditService.VERIFY_CHUNK_SIZE);
+
+      for (const row of rows) {
+        if (row.prevHash !== expectedPrevHash) {
+          return { valid: false, firstBrokenSeq: row.seq, rowId: row.id };
+        }
+
+        const expected = computeHash({
+          id: row.id,
+          actorId: row.actorId ?? null,
+          actorType: row.actorType,
+          action: row.action,
+          resourceType: row.resourceType,
+          resourceId: row.resourceId ?? null,
+          before: row.before ?? null,
+          after: row.after ?? null,
+          result: row.result ?? null,
+          seq: row.seq,
+          createdAt: row.createdAt.toISOString(),
+          prevHash: row.prevHash ?? null,
+        });
+
+        if (row.hash !== expected) {
+          return { valid: false, firstBrokenSeq: row.seq, rowId: row.id };
+        }
+
+        expectedPrevHash = row.hash;
+        cursor = row.seq;
       }
 
-      const expected = computeHash({
-        id: row.id,
-        actorId: row.actorId ?? null,
-        actorType: row.actorType,
-        action: row.action,
-        resourceType: row.resourceType,
-        resourceId: row.resourceId ?? null,
-        before: row.before ?? null,
-        after: row.after ?? null,
-        result: row.result ?? null,
-        seq: row.seq,
-        createdAt: row.createdAt.toISOString(),
-        prevHash: row.prevHash ?? null,
-      });
-
-      if (row.hash !== expected) {
-        return { valid: false, firstBrokenSeq: row.seq, rowId: row.id };
-      }
-
-      expectedPrevHash = row.hash;
+      hasMore = rows.length === AuditService.VERIFY_CHUNK_SIZE;
     }
 
     return { valid: true };

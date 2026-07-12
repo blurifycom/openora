@@ -45,7 +45,7 @@ describe('compliance RG router authz', () => {
     await expect(
       call(
         router.setPlayerLimit,
-        { userId: USER, type: 'deposit', amount: 100, period: 'daily' },
+        { userId: USER, type: 'deposit', amount: '100', minutes: null, period: 'daily' },
         { context: CTX },
       ),
     ).rejects.toBeInstanceOf(ORPCError);
@@ -56,7 +56,7 @@ describe('compliance RG router authz', () => {
     await expect(
       call(
         router.activateSelfExclusion,
-        { userId: USER, permanent: true, reason: 'x', confirm: true },
+        { userId: USER, isPermanent: true, reason: 'x', confirm: true },
         { context: CTX },
       ),
     ).rejects.toBeInstanceOf(ORPCError);
@@ -81,14 +81,15 @@ describe('compliance RG router authz', () => {
       id: '22222222-2222-4222-8222-222222222222',
       userId: USER,
       type: 'deposit',
-      amount: 100,
+      amount: '100',
+      minutes: null,
       period: 'daily',
       createdAt: new Date().toISOString(),
     });
     const router = build(fakeGuard(['compliance:manage-rg']), { setPlayerLimit });
     await call(
       router.setPlayerLimit,
-      { userId: USER, type: 'deposit', amount: 100, period: 'daily' },
+      { userId: USER, type: 'deposit', amount: '100', minutes: null, period: 'daily' },
       { context: CTX },
     );
     expect(setPlayerLimit).toHaveBeenCalledWith(USER, expect.any(Object), 'admin-1');

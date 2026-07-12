@@ -11,7 +11,7 @@ const USER_ID = '63d3c264-3bf4-4d08-9b92-ea3eaf40a440';
 const RULE = {
   id: '1f6d1b2c-0000-4000-8000-000000000001',
   userId: USER_ID,
-  threshold: 500,
+  threshold: '500',
   reason: 'trusted',
   createdBy: '9a2f7c11-0000-4000-8000-0000000000aa',
   createdAt: '2026-01-01T00:00:00.000Z',
@@ -53,14 +53,14 @@ describe('wallet auto-withdrawal-rule routes', () => {
 
     const result = await call(
       router.autoWithdrawalRules.set,
-      { userId: USER_ID, threshold: 500, reason: 'trusted' },
+      { userId: USER_ID, threshold: '500', reason: 'trusted' },
       { context: CTX },
     );
 
     expect(result).toEqual(RULE);
     expect(wallet.setAutoWithdrawalRule).toHaveBeenCalledWith({
       userId: USER_ID,
-      threshold: 500,
+      threshold: '500',
       reason: 'trusted',
       createdBy: 'caller-1',
     });
@@ -70,7 +70,7 @@ describe('wallet auto-withdrawal-rule routes', () => {
         action: 'wallet.auto_withdrawal_rule.set',
         resourceType: 'auto_withdrawal_rule',
         resourceId: USER_ID,
-        after: { threshold: 500, reason: 'trusted' },
+        after: { threshold: '500', reason: 'trusted' },
       }),
     );
   });
@@ -83,7 +83,7 @@ describe('wallet auto-withdrawal-rule routes', () => {
     await expect(
       call(
         router.autoWithdrawalRules.set,
-        { userId: USER_ID, threshold: 500, reason: 'trusted' },
+        { userId: USER_ID, threshold: '500', reason: 'trusted' },
         { context: CTX },
       ),
     ).rejects.toBeInstanceOf(ORPCError);

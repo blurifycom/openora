@@ -11,6 +11,8 @@ export function moderateContent(
   content: string,
   languages?: readonly SupportedLanguage[],
 ): ModerationResult {
-  if (hasProfanity(content, languages)) return { ok: false, reason: 'profanity' };
+  if (hasProfanity(content, languages)) {
+    return { ok: false, reason: 'profanity' };
+  }
   return { ok: true, content: sanitizeUrls(content) };
 }

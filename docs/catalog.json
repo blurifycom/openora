@@ -516,7 +516,13 @@
     "chat.message.sent",
     "chat.user.blocked",
     "chat.user.unblocked",
+    "cms.banner.created",
+    "cms.banner.deleted",
+    "cms.banner.updated",
+    "cms.page.created",
+    "cms.page.deleted",
     "cms.page.published",
+    "cms.page.updated",
     "compliance.geo-rule.added",
     "compliance.kyc.reverify_required",
     "compliance.kyc.submitted",
@@ -692,6 +698,10 @@
     {
       "name": "CountryCodeSchema",
       "file": "packages/core/src/contracts/schemas/igaming-config.ts"
+    },
+    {
+      "name": "CreateNotificationInputSchema",
+      "file": "packages/core/src/engagement/notifications/contract/index.ts"
     },
     {
       "name": "CreatePlayerNoteInputSchema",
@@ -874,7 +884,15 @@
       "file": "packages/core/src/engagement/chat/contract/index.ts"
     },
     {
+      "name": "MoneyAmountSchema",
+      "file": "packages/core/src/contracts/schemas/common.ts"
+    },
+    {
       "name": "NotificationSchema",
+      "file": "packages/core/src/engagement/notifications/contract/index.ts"
+    },
+    {
+      "name": "NotificationTypeSchema",
       "file": "packages/core/src/engagement/notifications/contract/index.ts"
     },
     {
@@ -892,10 +910,6 @@
     {
       "name": "PaginatedPlayerSearchArgsSchema",
       "file": "packages/core/src/contracts/schemas/player.ts"
-    },
-    {
-      "name": "PaginationSchema",
-      "file": "packages/core/src/contracts/schemas/common.ts"
     },
     {
       "name": "PermissionLevelSchema",

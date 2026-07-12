@@ -50,10 +50,14 @@ export function useEventStream<T>(
     (async () => {
       try {
         const iterable = await subscribe(controller.signal);
-        if (cancelled) return;
+        if (cancelled) {
+          return;
+        }
         setStatus('open');
         for await (const event of iterable) {
-          if (cancelled) break;
+          if (cancelled) {
+            break;
+          }
           onEventRef.current?.(event);
           setLast(event);
         }
@@ -63,7 +67,9 @@ export function useEventStream<T>(
           // Stream closed; status is updated in finally.
         }
       } finally {
-        if (!cancelled) setStatus('closed');
+        if (!cancelled) {
+          setStatus('closed');
+        }
       }
     })();
 

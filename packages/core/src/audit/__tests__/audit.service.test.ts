@@ -46,6 +46,34 @@ describe('computeHash canonical form', () => {
     expect(tamperedAfter).not.toBe(unmodified);
     expect(tamperedResult).not.toBe(unmodified);
   });
+
+  it('is unaffected by nested before/after key order - jsonb round-tripping reorders keys', () => {
+    const base = {
+      id: '11111111-1111-1111-1111-111111111111',
+      actorId: null,
+      actorType: 'admin' as const,
+      action: 'test.action',
+      resourceType: 'test',
+      resourceId: null,
+      result: null,
+      seq: 1,
+      createdAt: '2024-01-01T00:00:00.000Z',
+      prevHash: null,
+    };
+
+    const originalOrder = computeHash({
+      ...base,
+      before: { role: 'player', nested: { b: 2, a: 1 } },
+      after: { nested: { b: 2, a: 1 }, role: 'admin' },
+    });
+    const reorderedKeys = computeHash({
+      ...base,
+      before: { nested: { a: 1, b: 2 }, role: 'player' },
+      after: { role: 'admin', nested: { a: 1, b: 2 } },
+    });
+
+    expect(reorderedKeys).toBe(originalOrder);
+  });
 });
 
 function makeEvents(): import('@openora/core/server').EventBus {
@@ -199,7 +227,8 @@ describe('AuditService.record()', () => {
         select: vi.fn().mockReturnValue({
           from: vi.fn().mockReturnThis(),
           where: vi.fn().mockReturnThis(),
-          orderBy: vi.fn().mockResolvedValueOnce(persisted),
+          orderBy: vi.fn().mockReturnThis(),
+          limit: vi.fn().mockResolvedValueOnce(persisted),
         }),
       }),
       makeEvents(),
@@ -214,7 +243,8 @@ describe('AuditService.verifyChain()', () => {
       select: vi.fn().mockReturnValue({
         from: vi.fn().mockReturnThis(),
         where: vi.fn().mockReturnThis(),
-        orderBy: vi.fn().mockResolvedValueOnce(rows),
+        orderBy: vi.fn().mockReturnThis(),
+        limit: vi.fn().mockResolvedValueOnce(rows),
       }),
     };
     return makeManualDrizzle(db);

@@ -1,6 +1,6 @@
-import { DrizzleService, pageToOffset } from '@openora/core/server';
-import { and, eq, or, gt, gte, lte, isNull, desc, sql, type SQL } from 'drizzle-orm';
-import type { AdminUserDirectory, LimitType, LimitPeriod } from '@openora/core/contracts';
+import { DrizzleService, pageToOffset, moneyToNumber, mapConcurrent } from '@openora/core/server';
+import { and, eq, or, gt, gte, lte, isNull, inArray, desc, sql, type SQL } from 'drizzle-orm';
+import type { AdminUserDirectory, LimitType, LimitPeriod, User } from '@openora/core/contracts';
 import { userLimit, rgFlag, rgExclusion } from '../schema/index.js';
 import { wallet, walletTransaction } from '@openora/core/wallet/schema';
 import { gameRound } from '@openora/core/casino/schema/gaming';
@@ -9,12 +9,18 @@ import type { RgFlagListItem, ListRgFlagsInput, RgFlagDetail } from '../contract
 import { periodWindow, isAtThreshold, thresholdPct } from './rg-eval.js';
 
 // The recompute trigger carried on the enqueued job - which upstream event fired.
-export type RgEvalTrigger =
-  | 'wallet.deposit.completed'
-  | 'gaming.round.ended'
-  | 'rg.exclusion.login_blocked';
+export const RG_EVAL_TRIGGERS = [
+  'wallet.deposit.completed',
+  'gaming.round.ended',
+  'rg.exclusion.login_blocked',
+] as const;
+export type RgEvalTrigger = (typeof RG_EVAL_TRIGGERS)[number];
 
 const SESSION_LIMIT = { type: 'session', period: 'session' } as const;
+
+// Cap in-flight flag writes per sweep so a large session-limit population can't exhaust the
+// shared pg pool. ponytail: fixed cap; raise only if a single sweep can't keep up.
+const SWEEP_CONCURRENCY = 10;
 
 export type RgMonitoringDeps = {
   drizzle: DrizzleService;
@@ -30,7 +36,7 @@ export class RgMonitoringService {
     this.directory = deps.directory ?? null;
   }
 
-  async evaluateUser(userId: string, trigger: RgEvalTrigger): Promise<void> {
+  async evaluateUser(userId: User['id'], trigger: RgEvalTrigger) {
     const now = new Date();
     if (trigger === 'rg.exclusion.login_blocked') {
       // Label the flag with the exclusion kind so dashboards distinguish a cooling-off
@@ -57,15 +63,21 @@ export class RgMonitoringService {
       .where(eq(userLimit.userId, userId));
 
     for (const limit of limits) {
-      if (limit.period === 'session' || limit.type === 'session') continue;
+      // Money-type limits only (deposit/wager/loss); the session-type limit is handled by sweep().
+      if (limit.period === 'session' || limit.type === 'session' || limit.amount === null) {
+        continue;
+      }
+      const limitAmount = limit.amount;
       const { from } = periodWindow(limit.period as LimitPeriod, now);
-      const actual = await this.spendFor(userId, limit.type as LimitType, from, now);
-      if (isAtThreshold(actual, limit.amount)) {
+      const actualAmount = await this.spendFor(userId, limit.type as LimitType, from, now);
+      // Threshold comparison is a review-flag decision, not a ledger write - moneyToNumber
+      // is the documented single conversion point (see the helper's own doc comment).
+      if (isAtThreshold(moneyToNumber(actualAmount), moneyToNumber(limitAmount))) {
         await this.raiseFlag(userId, 'limit_threshold', limit.type, {
-          actual,
-          limit: limit.amount,
+          actual: actualAmount,
+          limit: limitAmount,
           period: limit.period as LimitPeriod,
-          pct: thresholdPct(actual, limit.amount),
+          pct: thresholdPct(moneyToNumber(actualAmount), moneyToNumber(limitAmount)),
         });
       } else {
         await this.clearFlag(userId, 'limit_threshold', limit.type);
@@ -76,7 +88,7 @@ export class RgMonitoringService {
   // Recurring session-time sweep: raises session_time flags for players whose current
   // active session is at >= 80% of their configured session-minute limit, and clears
   // flags for players who have since ended or rolled over their session.
-  async sweep(): Promise<void> {
+  async sweep() {
     const now = new Date();
     const sessionLimits = await this.drizzle.db
       .select()
@@ -85,26 +97,37 @@ export class RgMonitoringService {
         and(eq(userLimit.type, SESSION_LIMIT.type), eq(userLimit.period, SESSION_LIMIT.period)),
       );
 
-    for (const limit of sessionLimits) {
-      const [longest] = await this.drizzle.db
-        .select({ createdAt: session.createdAt })
-        .from(session)
-        .where(and(eq(session.userId, limit.userId), gt(session.expiresAt, now)))
-        .orderBy(session.createdAt)
-        .limit(1);
+    const userIds = sessionLimits.map((l) => l.userId);
+    const activeSessions = userIds.length
+      ? await this.drizzle.db
+          .select({ userId: session.userId, createdAt: session.createdAt })
+          .from(session)
+          .where(and(inArray(session.userId, userIds), gt(session.expiresAt, now)))
+      : [];
 
-      const elapsedMinutes = longest ? (now.getTime() - longest.createdAt.getTime()) / 60000 : 0;
-
-      if (longest && isAtThreshold(elapsedMinutes, limit.amount)) {
-        await this.raiseFlag(limit.userId, 'session_time', null, {
-          sessionMinutes: elapsedMinutes,
-          limitMinutes: limit.amount,
-          pct: thresholdPct(elapsedMinutes, limit.amount),
-        });
-      } else {
-        await this.clearFlag(limit.userId, 'session_time', null);
+    const earliestByUser = new Map<User['id'], Date>();
+    for (const s of activeSessions) {
+      const current = earliestByUser.get(s.userId);
+      if (!current || s.createdAt < current) {
+        earliestByUser.set(s.userId, s.createdAt);
       }
     }
+
+    const pending = sessionLimits.filter((limit) => limit.minutes !== null);
+    await mapConcurrent(pending, SWEEP_CONCURRENCY, (limit) => {
+      const limitMinutes = limit.minutes as number;
+      const longest = earliestByUser.get(limit.userId) ?? null;
+      const elapsedMinutes = longest ? (now.getTime() - longest.getTime()) / 60000 : 0;
+
+      if (longest && isAtThreshold(elapsedMinutes, limitMinutes)) {
+        return this.raiseFlag(limit.userId, 'session_time', null, {
+          sessionMinutes: elapsedMinutes,
+          limitMinutes,
+          pct: thresholdPct(elapsedMinutes, limitMinutes),
+        });
+      }
+      return this.clearFlag(limit.userId, 'session_time', null);
+    });
   }
 
   async listFlags(filters: ListRgFlagsInput) {
@@ -113,11 +136,21 @@ export class RgMonitoringService {
     const offset = pageToOffset(page, limit);
 
     const conditions: SQL[] = [];
-    if (flagType) conditions.push(eq(rgFlag.flagType, flagType));
-    if (limitType) conditions.push(eq(rgFlag.limitType, limitType));
-    if (status) conditions.push(eq(rgFlag.status, status));
-    if (fromDate) conditions.push(gte(rgFlag.flaggedAt, new Date(fromDate)));
-    if (toDate) conditions.push(lte(rgFlag.flaggedAt, new Date(toDate)));
+    if (flagType) {
+      conditions.push(eq(rgFlag.flagType, flagType));
+    }
+    if (limitType) {
+      conditions.push(eq(rgFlag.limitType, limitType));
+    }
+    if (status) {
+      conditions.push(eq(rgFlag.status, status));
+    }
+    if (fromDate) {
+      conditions.push(gte(rgFlag.flaggedAt, new Date(fromDate)));
+    }
+    if (toDate) {
+      conditions.push(lte(rgFlag.flaggedAt, new Date(toDate)));
+    }
     const where = conditions.length > 0 ? and(...conditions) : undefined;
 
     const [rows, countResult] = await Promise.all([
@@ -155,12 +188,15 @@ export class RgMonitoringService {
     return { items, total: countResult[0]?.count ?? 0, page, limit };
   }
 
-  private async spendFor(userId: string, type: LimitType, from: Date, to: Date): Promise<number> {
-    if (type === 'deposit') return this.depositsSum(userId, from, to);
+  private async spendFor(userId: User['id'], type: LimitType, from: Date, to: Date) {
+    if (type === 'deposit') {
+      return this.depositsSum(userId, from, to);
+    }
     return this.betsSum(userId, from, to);
   }
 
-  private async depositsSum(userId: string, from: Date, to: Date): Promise<number> {
+  // Decimal string, matching userLimit.amount (same unit as walletTransaction.amount).
+  private async depositsSum(userId: User['id'], from: Date, to: Date) {
     const [row] = await this.drizzle.db
       .select({ total: sql<string>`coalesce(sum(${walletTransaction.amount}), 0)` })
       .from(walletTransaction)
@@ -174,10 +210,11 @@ export class RgMonitoringService {
           lte(walletTransaction.createdAt, to),
         ),
       );
-    return Number(row?.total ?? 0);
+    return row?.total ?? '0';
   }
 
-  private async betsSum(userId: string, from: Date, to: Date): Promise<number> {
+  // Decimal string, matching userLimit.amount (same unit as gameRound.betAmount).
+  private async betsSum(userId: User['id'], from: Date, to: Date) {
     const [rounds] = await this.drizzle.db
       .select({ total: sql<string>`coalesce(sum(${gameRound.betAmount}), 0)` })
       .from(gameRound)
@@ -188,11 +225,11 @@ export class RgMonitoringService {
           lte(gameRound.startedAt, to),
         ),
       );
-    return Number(rounds?.total ?? 0);
+    return rounds?.total ?? '0';
   }
 
   private async raiseFlag(
-    userId: string,
+    userId: User['id'],
     flagType: (typeof rgFlag.$inferSelect)['flagType'],
     limitType: string | null,
     detail: RgFlagDetail,
@@ -218,7 +255,7 @@ export class RgMonitoringService {
   }
 
   private async clearFlag(
-    userId: string,
+    userId: User['id'],
     flagType: (typeof rgFlag.$inferSelect)['flagType'],
     limitType: string | null,
   ): Promise<void> {

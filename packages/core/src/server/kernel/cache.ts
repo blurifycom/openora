@@ -25,7 +25,9 @@ export class InProcessCache implements CacheAdapter {
 
   get<T>(key: string): Promise<T | undefined> {
     const entry = this.entries.get(key);
-    if (!entry) return Promise.resolve(undefined);
+    if (!entry) {
+      return Promise.resolve(undefined);
+    }
     if (Date.now() >= entry.expiresAt) {
       this.entries.delete(key);
       return Promise.resolve(undefined);
@@ -36,21 +38,27 @@ export class InProcessCache implements CacheAdapter {
   set<T>(key: string, value: T, opts: { ttlMs: number }): Promise<void> {
     if (!this.entries.has(key) && this.entries.size >= MAX_ENTRIES) {
       const oldestKey = this.entries.keys().next().value;
-      if (oldestKey !== undefined) this.entries.delete(oldestKey);
+      if (oldestKey !== undefined) {
+        this.entries.delete(oldestKey);
+      }
     }
     this.entries.set(key, { value, expiresAt: Date.now() + opts.ttlMs });
     return Promise.resolve();
   }
 
   delete(key: string | string[]): Promise<void> {
-    for (const k of Array.isArray(key) ? key : [key]) this.entries.delete(k);
+    for (const k of Array.isArray(key) ? key : [key]) {
+      this.entries.delete(k);
+    }
     return Promise.resolve();
   }
 
   private sweep(): void {
     const now = Date.now();
     for (const [key, entry] of this.entries) {
-      if (now >= entry.expiresAt) this.entries.delete(key);
+      if (now >= entry.expiresAt) {
+        this.entries.delete(key);
+      }
     }
   }
 
@@ -69,7 +77,9 @@ export async function cached<T>(
   ttlMs: number,
   loader: () => Promise<T>,
 ): Promise<T> {
-  if (!cache) return loader();
+  if (!cache) {
+    return loader();
+  }
 
   let hit: T | undefined;
   try {
@@ -78,7 +88,9 @@ export async function cached<T>(
     logger.warn({ key, err }, 'cache get failed');
     hit = undefined;
   }
-  if (hit !== undefined) return hit;
+  if (hit !== undefined) {
+    return hit;
+  }
 
   const value = await loader();
   try {
@@ -93,7 +105,9 @@ export async function invalidate(
   cache: CacheAdapter | undefined,
   keys: string | string[],
 ): Promise<void> {
-  if (!cache) return;
+  if (!cache) {
+    return;
+  }
   try {
     await cache.delete(keys);
   } catch (err) {

@@ -40,7 +40,7 @@ describe('WalletService.withdraw KYC gate', () => {
   it('throws KycRequiredError when the gate is on and status is not in the pass-set', async () => {
     const { svc, db } = makeService('pending', true);
     await expect(
-      svc.withdraw({ userId: 'u-1', amount: 50, currency: 'USD' }),
+      svc.withdraw({ userId: 'u-1', amount: '50', currency: 'USD' }),
     ).rejects.toBeInstanceOf(KycRequiredError);
     expect(db.db.transaction).not.toHaveBeenCalled();
   });
@@ -48,25 +48,25 @@ describe('WalletService.withdraw KYC gate', () => {
   it('fails closed when the gate is on and the player has no KYC summary', async () => {
     const { svc } = makeService(null, true);
     await expect(
-      svc.withdraw({ userId: 'u-1', amount: 50, currency: 'USD' }),
+      svc.withdraw({ userId: 'u-1', amount: '50', currency: 'USD' }),
     ).rejects.toBeInstanceOf(KycRequiredError);
   });
 
   it('allows a verified player through the gate', async () => {
     const { svc } = makeService('verified', true);
-    const result = await svc.withdraw({ userId: 'u-1', amount: 50, currency: 'USD' });
+    const result = await svc.withdraw({ userId: 'u-1', amount: '50', currency: 'USD' });
     expect(result).toEqual({ transactionId: 'tx-1', status: 'pending' });
   });
 
   it('allows a manually_overridden player through the gate', async () => {
     const { svc } = makeService('manually_overridden', true);
-    const result = await svc.withdraw({ userId: 'u-1', amount: 50, currency: 'USD' });
+    const result = await svc.withdraw({ userId: 'u-1', amount: '50', currency: 'USD' });
     expect(result.status).toBe('pending');
   });
 
   it('does not consult KYC when the gate is off', async () => {
     const { svc, directory } = makeService('pending', false);
-    const result = await svc.withdraw({ userId: 'u-1', amount: 50, currency: 'USD' });
+    const result = await svc.withdraw({ userId: 'u-1', amount: '50', currency: 'USD' });
     expect(result.status).toBe('pending');
     expect(directory.lookupPlayers).not.toHaveBeenCalled();
   });

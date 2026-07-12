@@ -1,7 +1,9 @@
 import type { PluginEntry } from './load-plugins.js';
 
 export function parseServiceManifest(raw: string | undefined): string[] | null {
-  if (raw === undefined) return null;
+  if (raw === undefined) {
+    return null;
+  }
   const ids = raw
     .split(/[,\s]+/)
     .map((s) => s.trim())
@@ -13,7 +15,9 @@ export function applyServiceManifest(
   entries: PluginEntry[],
   manifest: readonly string[] | null,
 ): PluginEntry[] {
-  if (manifest === null) return entries;
+  if (manifest === null) {
+    return entries;
+  }
 
   const known = new Set(entries.map((e) => e.id));
   const unknown = manifest.filter((id) => !known.has(id));

@@ -5,51 +5,32 @@ import type {
   AdminUserDirectory,
   AdminUserRow,
   AdminWalletReporting,
+  User,
   UserRole,
 } from '@openora/core/contracts';
-import { makeNotFoundError } from '@openora/core/server';
+import { makeNotFoundError, serializeRow } from '@openora/core/server';
 import type { TransactionFilter } from '../contract/index.js';
 
 export const UserNotFoundError = makeNotFoundError('User');
 export const TransactionNotFoundError = makeNotFoundError('Transaction');
 
 function toAdminUser(r: AdminUserRow) {
-  return {
-    id: r.id,
-    email: r.email,
-    name: r.name,
-    createdAt: r.createdAt.toISOString(),
-    isActive: r.isActive,
-    role: r.role,
-    failedLoginAttempts: r.failedLoginAttempts,
-    lockoutUntil: r.lockoutUntil ? r.lockoutUntil.toISOString() : undefined,
-  };
+  return serializeRow(r, { dateFields: ['createdAt', 'lockoutUntil'] });
 }
 
 function toAdminTransaction(r: AdminTxRow, player?: AdminPlayerSummary) {
   return {
-    id: r.id,
-    userId: r.userId,
-    type: r.type,
-    amount: r.amount,
-    currency: r.currency,
-    status: r.status,
-    rail: r.rail,
+    ...serializeRow(r, { dateFields: ['createdAt'] }),
     playerEmail: player?.email ?? null,
-    createdAt: r.createdAt.toISOString(),
   };
 }
 
 function toAdminTransactionDetail(r: AdminTxDetail, player?: AdminPlayerSummary) {
   return {
-    ...toAdminTransaction(r, player),
+    ...serializeRow(r, { dateFields: ['createdAt', 'reviewedAt'] }),
+    playerEmail: player?.email ?? null,
     playerUsername: player?.username ?? null,
     playerKycStatus: player?.kycStatus ?? null,
-    providerRefId: r.providerRefId,
-    providerName: r.providerName,
-    reviewedBy: r.reviewedBy,
-    reviewedAt: r.reviewedAt ? r.reviewedAt.toISOString() : null,
-    reviewReason: r.reviewReason,
   };
 }
 
@@ -66,7 +47,7 @@ export class BackofficeService {
       activeUsers: totalUsers,
       totalDeposits: totals.deposits,
       totalWithdrawals: totals.withdrawals,
-      totalBonusClaimed: 0,
+      totalBonusClaimed: '0',
     };
   }
 
@@ -75,15 +56,23 @@ export class BackofficeService {
     return { items: rows.map(toAdminUser), total, page, limit };
   }
 
-  async getUser(userId: string) {
+  async getUser(userId: User['id']) {
     const row = await this.users.get(userId);
-    if (!row) throw new UserNotFoundError(userId);
+    if (!row) {
+      throw new UserNotFoundError(userId);
+    }
     return toAdminUser(row);
   }
 
-  async updateUser(userId: string, data: { isActive?: boolean; role?: UserRole }, actorId: string) {
+  async updateUser(
+    userId: User['id'],
+    data: { isActive?: boolean; role?: UserRole },
+    actorId: User['id'],
+  ) {
     const row = await this.users.update(userId, data, actorId);
-    if (!row) throw new UserNotFoundError(userId);
+    if (!row) {
+      throw new UserNotFoundError(userId);
+    }
     return toAdminUser(row);
   }
 
@@ -109,7 +98,9 @@ export class BackofficeService {
     if (player) {
       const resolved = await this.users.findPlayerIds(player);
       userIds = userId ? resolved.filter((id) => id === userId) : resolved;
-      if (userIds.length === 0) return { items: [], total: 0, page, limit };
+      if (userIds.length === 0) {
+        return { items: [], total: 0, page, limit };
+      }
     } else if (userId) {
       userIds = [userId];
     }
@@ -139,14 +130,18 @@ export class BackofficeService {
 
   async getTransaction(id: string) {
     const row = await this.reporting.getTransaction(id);
-    if (!row) throw new TransactionNotFoundError(id);
+    if (!row) {
+      throw new TransactionNotFoundError(id);
+    }
     const players = await this.lookupPlayerMap([row.userId]);
     return toAdminTransactionDetail(row, players.get(row.userId));
   }
 
   private async lookupPlayerMap(userIds: string[]): Promise<Map<string, AdminPlayerSummary>> {
     const unique = [...new Set(userIds)];
-    if (unique.length === 0) return new Map();
+    if (unique.length === 0) {
+      return new Map();
+    }
     const summaries = await this.users.lookupPlayers(unique);
     return new Map(summaries.map((s) => [s.userId, s]));
   }

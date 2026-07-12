@@ -9,7 +9,9 @@ import {
 function chain(result: unknown): any {
   const proxy: any = new Proxy(function () {}, {
     get(_t, prop) {
-      if (prop === 'then') return (res: (v: unknown) => unknown) => res(result);
+      if (prop === 'then') {
+        return (res: (v: unknown) => unknown) => res(result);
+      }
       return () => proxy;
     },
     apply: () => proxy,
@@ -44,7 +46,7 @@ describe('NotificationsService', () => {
         {
           id: 'n1',
           userId: 'u1',
-          type: 'info',
+          type: 'withdrawal.approved',
           title: 'Hello',
           body: 'World',
           readAt: null,
@@ -56,7 +58,7 @@ describe('NotificationsService', () => {
 
     const result = await service.create({
       userId: 'u1',
-      type: 'info',
+      type: 'withdrawal.approved',
       title: 'Hello',
       body: 'World',
     });

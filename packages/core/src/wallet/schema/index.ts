@@ -34,7 +34,7 @@ export const walletRailEnum = pgEnum('wallet_rail', WALLET_RAILS);
 export const wallet = pgTable('wallet', {
   id: uuid().primaryKey().defaultRandom(),
   userId: uuid().notNull().unique('wallet_user_id_unique'),
-  balance: decimal().notNull().default('0'),
+  balance: decimal({ precision: 18, scale: 2 }).notNull().default('0'),
   currency: text().notNull().default('USD'),
   updatedAt: timestamp({ withTimezone: true })
     .notNull()
@@ -49,7 +49,7 @@ export const walletTransaction = pgTable(
       .notNull()
       .references(() => wallet.id),
     type: walletTransactionTypeEnum().notNull(),
-    amount: decimal().notNull(),
+    amount: decimal({ precision: 18, scale: 2 }).notNull(),
     currency: text().notNull(),
     status: walletTransactionStatusEnum()
       .$type<WalletTransactionStatus>()
@@ -92,7 +92,7 @@ export const walletTransaction = pgTable(
 export const autoWithdrawalRule = pgTable('auto_withdrawal_rule', {
   id: uuid().primaryKey().defaultRandom(),
   userId: uuid().notNull().unique('auto_withdrawal_rule_user_id_unique'),
-  threshold: decimal().notNull(),
+  threshold: decimal({ precision: 18, scale: 2 }).notNull(),
   reason: text().notNull(),
   createdBy: uuid().notNull(),
   createdAt: timestamp({ withTimezone: true }).notNull().defaultNow(),

@@ -18,7 +18,11 @@ import {
 import { ComplianceService } from './service/compliance.service.js';
 import { KycVerificationService } from './service/kyc.service.js';
 import { RgService } from './service/rg.service.js';
-import { RgMonitoringService, type RgEvalTrigger } from './service/rg-monitoring.service.js';
+import {
+  RgMonitoringService,
+  RG_EVAL_TRIGGERS,
+  type RgEvalTrigger,
+} from './service/rg-monitoring.service.js';
 import { createComplianceRouter } from './router/index.js';
 import { HmacKycWebhookVerifier } from './adapters/hmac-kyc-webhook-verifier.js';
 
@@ -29,7 +33,7 @@ const RG_MONITOR_QUEUE = queue('rg-monitor');
 
 const RgEvalJobSchema = z.object({
   userId: UuidSchema,
-  trigger: z.enum(['wallet.deposit.completed', 'gaming.round.ended', 'rg.exclusion.login_blocked']),
+  trigger: z.enum(RG_EVAL_TRIGGERS),
 });
 const RgMonitorJobSchema = z.object({});
 
@@ -41,7 +45,12 @@ export default definePlugin({
     ctx.provide(KYC_WEBHOOK_VERIFIER, (c) => {
       const cfg = c.has(PLATFORM_CONFIG) ? c.get(PLATFORM_CONFIG) : undefined;
       const envName = cfg?.kyc?.webhookSecretEnv ?? 'KYC_WEBHOOK_SECRET';
-      return new HmacKycWebhookVerifier(process.env[envName]);
+      const webhookSecret = z
+        .string()
+        .min(1)
+        .optional()
+        .parse(process.env[envName] || undefined);
+      return new HmacKycWebhookVerifier(webhookSecret);
     });
 
     // svcRefs are null at registration (subscriptions wire before router factories run)
@@ -53,14 +62,18 @@ export default definePlugin({
 
     ctx.events.on('wallet.deposit.completed', (payload) => {
       const parsed = domainEventSchemas['wallet.deposit.completed'].safeParse(payload);
-      if (!parsed.success || !kycRef) return;
+      if (!parsed.success || !kycRef) {
+        return;
+      }
       kycRef
         .handleDeposit(parsed.data.userId)
         .catch((err) => logger.error({ err }, 're-KYC deposit hook failed'));
     });
 
     const enqueueEval = (userId: string, trigger: RgEvalTrigger) => {
-      if (!jobQueueRef) return;
+      if (!jobQueueRef) {
+        return;
+      }
       void jobQueueRef
         .enqueue(
           RG_EVAL_QUEUE,
@@ -72,15 +85,21 @@ export default definePlugin({
 
     ctx.events.on('wallet.deposit.completed', (payload) => {
       const parsed = domainEventSchemas['wallet.deposit.completed'].safeParse(payload);
-      if (parsed.success) enqueueEval(parsed.data.userId, 'wallet.deposit.completed');
+      if (parsed.success) {
+        enqueueEval(parsed.data.userId, 'wallet.deposit.completed');
+      }
     });
     ctx.events.on('gaming.round.ended', (payload) => {
       const parsed = domainEventSchemas['gaming.round.ended'].safeParse(payload);
-      if (parsed.success) enqueueEval(parsed.data.userId, 'gaming.round.ended');
+      if (parsed.success) {
+        enqueueEval(parsed.data.userId, 'gaming.round.ended');
+      }
     });
     ctx.events.on('rg.exclusion.login_blocked', (payload) => {
       const parsed = domainEventSchemas['rg.exclusion.login_blocked'].safeParse(payload);
-      if (parsed.success) enqueueEval(parsed.data.userId, 'rg.exclusion.login_blocked');
+      if (parsed.success) {
+        enqueueEval(parsed.data.userId, 'rg.exclusion.login_blocked');
+      }
     });
 
     ctx.jobs.worker({
@@ -88,15 +107,21 @@ export default definePlugin({
       schema: RgEvalJobSchema,
       options: { serializeByOrderingKey: true },
       handler: async ({ payload }) => {
-        if (monitorRef) await monitorRef.evaluateUser(payload.userId, payload.trigger);
+        if (monitorRef) {
+          await monitorRef.evaluateUser(payload.userId, payload.trigger);
+        }
       },
     });
     ctx.jobs.worker({
       queue: RG_MONITOR_QUEUE,
       schema: RgMonitorJobSchema,
       handler: async () => {
-        if (rgRef) await rgRef.expireLapsedCoolingOffs();
-        if (monitorRef) await monitorRef.sweep();
+        if (rgRef) {
+          await rgRef.expireLapsedCoolingOffs();
+        }
+        if (monitorRef) {
+          await monitorRef.sweep();
+        }
       },
     });
 
@@ -109,7 +134,9 @@ export default definePlugin({
       if (platformConfig?.kyc?.gateWithdrawals && kycAdapter.autoApproves) {
         const msg =
           'kyc.gateWithdrawals is enabled but the bound KYC_ADAPTER auto-approves (MockKycAdapter). Bind a real provider or the withdrawal gate is a no-op.';
-        if (process.env['NODE_ENV'] === 'production') throw new Error(msg);
+        if (process.env['NODE_ENV'] === 'production') {
+          throw new Error(msg);
+        }
         logger.warn(msg);
       }
       const kyc = new KycVerificationService({

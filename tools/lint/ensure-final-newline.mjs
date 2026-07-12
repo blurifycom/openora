@@ -19,19 +19,27 @@ const files = execSync('git ls-files -z', { cwd: root, maxBuffer: 64 * 1024 * 10
 
 let fixed = 0;
 for (const rel of files) {
-  if (SKIP.has(rel)) continue;
+  if (SKIP.has(rel)) {
+    continue;
+  }
   const path = join(root, rel);
 
   let buf;
   try {
-    if (!lstatSync(path).isFile()) continue; // lstat, not stat: skip symlinks/submodules (don't write through a link)
+    if (!lstatSync(path).isFile()) {
+      continue;
+    } // lstat, not stat: skip symlinks/submodules (don't write through a link)
     buf = readFileSync(path);
   } catch {
     continue; // staged-deleted or unreadable
   }
 
-  if (buf.length === 0 || buf.includes(0)) continue; // empty or binary (NUL byte)
-  if (buf[buf.length - 1] === 0x0a) continue;
+  if (buf.length === 0 || buf.includes(0)) {
+    continue;
+  } // empty or binary (NUL byte)
+  if (buf[buf.length - 1] === 0x0a) {
+    continue;
+  }
 
   writeFileSync(path, Buffer.concat([buf, Buffer.from('\n')]));
   console.log(`+ newline: ${rel}`);

@@ -13,9 +13,15 @@ const CAP_LINES = 40;
 const CAP_CHARS = 2000;
 
 const filePath = extractFilePath(readPayload());
-if (!filePath) process.exit(0);
-if (!/\.(ts|tsx)$/.test(filePath) || filePath.endsWith('d.ts')) process.exit(0);
-if (filePath.includes('/templates/') || filePath.includes('/generated/')) process.exit(0);
+if (!filePath) {
+  process.exit(0);
+}
+if (!/\.(ts|tsx)$/.test(filePath) || filePath.endsWith('d.ts')) {
+  process.exit(0);
+}
+if (filePath.includes('/templates/') || filePath.includes('/generated/')) {
+  process.exit(0);
+}
 
 // Format (best effort - never block on the formatter).
 try {
@@ -40,10 +46,14 @@ try {
 // Resolve the owning workspace package (apps/<x> or packages/<group>/<x>).
 function packageNameFor(fp) {
   const m = fp.match(/(.*?\/(?:apps\/[^/]+|packages\/[^/]+\/[^/]+))\//);
-  if (!m) return null;
+  if (!m) {
+    return null;
+  }
   try {
     const pkg = JSON.parse(readFileSync(join(m[1], 'package.json'), 'utf8'));
-    if (!pkg.name || !pkg.scripts?.typecheck) return null;
+    if (!pkg.name || !pkg.scripts?.typecheck) {
+      return null;
+    }
     return pkg.name;
   } catch {
     return null;
@@ -52,7 +62,9 @@ function packageNameFor(fp) {
 
 const abs = isAbsolute(filePath) ? filePath : join(process.cwd(), filePath);
 const owner = packageNameFor(abs);
-if (!owner) process.exit(0);
+if (!owner) {
+  process.exit(0);
+}
 
 function cap(text) {
   const out = text.split('\n').slice(0, CAP_LINES).join('\n').slice(0, CAP_CHARS);

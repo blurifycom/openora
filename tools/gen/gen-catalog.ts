@@ -39,7 +39,9 @@ function moduleSrcDirs(): ModuleSrc[] {
   if (existsSync(addonsRoot)) {
     for (const name of readdirSync(addonsRoot)) {
       const srcDir = join(addonsRoot, name, 'src');
-      if (isDir(join(addonsRoot, name)) && hasPlugin(srcDir)) out.push({ id: name, srcDir });
+      if (isDir(join(addonsRoot, name)) && hasPlugin(srcDir)) {
+        out.push({ id: name, srcDir });
+      }
     }
   }
   // Domains fold into @openora/core as subpaths. See ADR-0024/0025.
@@ -48,13 +50,17 @@ function moduleSrcDirs(): ModuleSrc[] {
   if (existsSync(coreSrc)) {
     for (const d of readdirSync(coreSrc)) {
       const dsrc = join(coreSrc, d);
-      if (!isDir(dsrc) || engineDirs.has(d)) continue;
+      if (!isDir(dsrc) || engineDirs.has(d)) {
+        continue;
+      }
       if (hasPlugin(dsrc)) {
         out.push({ id: d, srcDir: dsrc }); // single-member domain (incl. compliance)
       } else {
         for (const member of readdirSync(dsrc)) {
           const msrc = join(dsrc, member);
-          if (isDir(msrc) && hasPlugin(msrc)) out.push({ id: member, srcDir: msrc });
+          if (isDir(msrc) && hasPlugin(msrc)) {
+            out.push({ id: member, srcDir: msrc });
+          }
         }
       }
     }
@@ -63,10 +69,13 @@ function moduleSrcDirs(): ModuleSrc[] {
 }
 
 function walk(dir: string, ext: string, acc: string[] = []): string[] {
-  if (!existsSync(dir)) return acc;
+  if (!existsSync(dir)) {
+    return acc;
+  }
   for (const e of readdirSync(dir)) {
-    if (e.startsWith('node_modules') || ['dist', '.next', '.turbo', 'coverage'].includes(e))
+    if (e.startsWith('node_modules') || ['dist', '.next', '.turbo', 'coverage'].includes(e)) {
       continue;
+    }
     const full = join(dir, e);
     let st;
     try {
@@ -74,8 +83,11 @@ function walk(dir: string, ext: string, acc: string[] = []): string[] {
     } catch {
       continue; // skip broken symlinks / vanished entries
     }
-    if (st.isDirectory()) walk(full, ext, acc);
-    else if (full.endsWith(ext)) acc.push(full);
+    if (st.isDirectory()) {
+      walk(full, ext, acc);
+    } else if (full.endsWith(ext)) {
+      acc.push(full);
+    }
   }
   return acc;
 }
@@ -86,8 +98,8 @@ function readAddonKinds(): Map<string, string> {
   const src = read(join(repoRoot, 'extensions.config.ts'));
   const out = new Map<string, string>();
   for (const m of src.matchAll(/\{[^}]*id:\s*'([^']+)'[^}]*\}/g)) {
-    const entry = m[0]!;
-    const id = m[1]!;
+    const entry = m[0] ?? '';
+    const id = m[1] ?? '';
     out.set(id, /kind:\s*'addon'/.test(entry) ? 'addon' : 'core');
   }
   return out;
@@ -99,7 +111,7 @@ function collectModules(): ModuleInfo[] {
   for (const { id, srcDir } of moduleSrcDirs()) {
     const schema = read(join(srcDir, 'schema', 'index.ts'));
     const router = read(join(srcDir, 'router', 'index.ts'));
-    const tables = [...schema.matchAll(/pgTable\(\s*'([^']+)'/g)].map((m) => m[1]!).sort();
+    const tables = [...schema.matchAll(/pgTable\(\s*'([^']+)'/g)].map((m) => m[1] ?? '').sort();
     const routes = [...router.matchAll(/^\s{2,}(\w+):\s*os\b/gm)]
       .map((m) => `${id}.${m[1]}`)
       .sort();
@@ -126,9 +138,13 @@ function collectAdapters(): AdapterInfo[] {
   ];
   const moduleSrc = moduleFiles.map((f) => ({ f, src: readFileSync(f, 'utf8') }));
   const out: AdapterInfo[] = [];
-  if (!existsSync(dir)) return out;
+  if (!existsSync(dir)) {
+    return out;
+  }
   for (const file of readdirSync(dir).sort()) {
-    if (!file.endsWith('.ts') || file === 'index.ts') continue;
+    if (!file.endsWith('.ts') || file === 'index.ts') {
+      continue;
+    }
     const src = readFileSync(join(dir, file), 'utf8');
     const iface =
       src.match(/export (?:interface|type) (\w*Adapter)\b/)?.[1] ??
@@ -138,7 +154,9 @@ function collectAdapters(): AdapterInfo[] {
       src.match(
         /export const (\w+)(?::\s*(?:Sealed)?Token<[^>]*>)?\s*=\s*(?:createSealedToken|createToken|Symbol)/,
       )?.[1] ?? '';
-    if (!token) continue;
+    if (!token) {
+      continue;
+    }
     const boundIn = moduleSrc
       .filter(({ src }) =>
         new RegExp(
@@ -162,8 +180,9 @@ function collectEvents(): string[] {
   const set = new Set<string>();
   for (const { srcDir } of moduleSrcDirs()) {
     for (const f of walk(srcDir, '.ts')) {
-      for (const m of readFileSync(f, 'utf8').matchAll(/\.emit\(\s*'([a-z][\w.:-]+)'/g))
-        set.add(m[1]!);
+      for (const m of readFileSync(f, 'utf8').matchAll(/\.emit\(\s*'([a-z][\w.:-]+)'/g)) {
+        set.add(m[1] ?? '');
+      }
     }
   }
   return [...set].sort();
@@ -182,7 +201,7 @@ function collectSlots(): Array<{ name: string; description: string }> {
     }
     const slot = line.match(/:\s*'([a-z][a-z:]+)'/);
     if (slot) {
-      out.push({ name: slot[1]!, description: pending });
+      out.push({ name: slot[1] ?? '', description: pending });
       pending = '';
     }
   }
@@ -195,14 +214,18 @@ function collectSchemas(): Array<{ name: string; file: string }> {
   const roots = [join(repoRoot, 'packages', 'core', 'src', 'contracts')];
   for (const { srcDir } of moduleSrcDirs()) {
     const contractDir = join(srcDir, 'contract');
-    if (existsSync(contractDir)) roots.push(contractDir);
+    if (existsSync(contractDir)) {
+      roots.push(contractDir);
+    }
   }
   for (const root of roots) {
     for (const file of walk(root, '.ts')) {
-      if (file.endsWith('.d.ts')) continue;
+      if (file.endsWith('.d.ts')) {
+        continue;
+      }
       const rel = file.replace(`${repoRoot}/`, '');
       for (const m of readFileSync(file, 'utf8').matchAll(/export const (\w+Schema)\b/g)) {
-        out.push({ name: m[1]!, file: rel });
+        out.push({ name: m[1] ?? '', file: rel });
       }
     }
   }
@@ -221,12 +244,12 @@ function collectConfigFields(): Array<{ key: string; note: string }> {
   for (const line of lines) {
     const c = line.match(/^\s*\/\/\s?(.*)/);
     if (c) {
-      note = note ? `${note} ${c[1]!.trim()}` : c[1]!.trim();
+      note = note ? `${note} ${(c[1] ?? '').trim()}` : (c[1] ?? '').trim();
       continue;
     }
     const key = line.match(/^\s*(\w+):\s/);
     if (key) {
-      out.push({ key: key[1]!, note });
+      out.push({ key: key[1] ?? '', note });
       note = '';
     }
   }
@@ -239,18 +262,22 @@ function collectPluginSurface(): string[] {
   );
   const body =
     src.match(/export (?:interface|type) ModuleRegistry (?:= )?\{([\s\S]*?)\n\}/)?.[1] ?? '';
-  return [...body.matchAll(/^\s{2}(\w+):/gm)].map((m) => m[1]!).sort();
+  return [...body.matchAll(/^\s{2}(\w+):/gm)].map((m) => m[1] ?? '').sort();
 }
 
 function collectOpenApiRoutes(): string[] {
   const spec = read(join(repoRoot, 'docs', 'openapi.json'));
-  if (!spec) return [];
+  if (!spec) {
+    return [];
+  }
   try {
     const json = JSON.parse(spec);
     const paths = Object.keys(json.paths ?? {});
     const out: string[] = [];
     for (const p of paths) {
-      for (const method of Object.keys(json.paths[p])) out.push(`${method.toUpperCase()} ${p}`);
+      for (const method of Object.keys(json.paths[p])) {
+        out.push(`${method.toUpperCase()} ${p}`);
+      }
     }
     return out.sort();
   } catch {

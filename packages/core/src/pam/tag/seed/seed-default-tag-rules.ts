@@ -10,19 +10,23 @@ export async function seedTagRules(db: DrizzleDb): Promise<void> {
 
   const rows = DEFAULT_TAG_RULES.flatMap((r) => {
     const tagId = tagIdByKey.get(r.tagKey);
-    if (!tagId) return [];
+    if (!tagId) {
+      return [];
+    }
     return [
       {
         tagId,
         isEnabled: r.isEnabled,
-        thresholdAmount: r.thresholdAmount?.toString() ?? null,
+        threshold: r.threshold,
         thresholdDays: r.thresholdDays,
         thresholdCount: r.thresholdCount,
       },
     ];
   });
 
-  if (rows.length === 0) return;
+  if (rows.length === 0) {
+    return;
+  }
 
   await db
     .insert(tagRule)

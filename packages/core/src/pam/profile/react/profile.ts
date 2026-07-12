@@ -1,12 +1,11 @@
 'use client';
 
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import * as z from 'zod';
-import { PlayerSchema } from '@openora/core/contracts';
+import type { Player } from '@openora/core/contracts';
 import { useOrpcQueryUtils } from '@openora/core/react';
 import { profileContract } from '../contract/index.js';
 
-export type PlayerProfile = z.infer<typeof PlayerSchema>;
+export type PlayerProfile = Player;
 
 export function usePlayerProfile() {
   const utils = useOrpcQueryUtils(profileContract);

@@ -1,5 +1,5 @@
 import * as z from 'zod';
-import { TimestampSchema, UuidSchema } from './common.js';
+import { MoneyAmountSchema, TimestampSchema, UuidSchema } from './common.js';
 import {
   GeoRuleActionSchema,
   LimitTypeSchema,
@@ -12,6 +12,8 @@ import { PermissionLevelSchema } from './iam.js';
 import { KycStatusSchema } from './player.js';
 
 const iamRoleEventBase = z.object({ roleId: UuidSchema, actorId: UuidSchema });
+const cmsPageEventBase = z.object({ pageId: UuidSchema, actorId: UuidSchema });
+const cmsBannerEventBase = z.object({ bannerId: UuidSchema, actorId: UuidSchema });
 const actorReasonBase = z.object({ actorId: UuidSchema, reason: z.string() });
 const tagPlayerEventBase = actorReasonBase.extend({ playerId: UuidSchema, tagKey: TagKeySchema });
 const permissionLevelEntries = z.array(
@@ -24,10 +26,10 @@ const authContextBase = z.object({
   userAgent: z.string().nullable().optional(),
 });
 
-// Shared shape for every wallet money-movement event.
+// Shared shape for every wallet money-movement event. Exact decimal string + currency.
 const walletTxnBase = z.object({
   userId: UuidSchema,
-  amount: z.number(),
+  amount: MoneyAmountSchema,
   currency: CurrencyCodeSchema,
   transactionId: UuidSchema,
 });
@@ -129,15 +131,20 @@ export const domainEventSchemas = {
   // Responsible-Gambling admin actions. `userId` = the subject player, `actorId` =
   // the acting admin (the envelope carries no caller, so it is explicit for the audit
   // trail). login_blocked is system-driven (no actor) and a failure outcome.
+  // amount/minutes are polymorphic by `type` (see compliance/contract/limits.ts):
+  // money-type limits carry amount (minutes null), the session-type limit
+  // carries minutes (amount null). previous* mirrors the prior row's value, null
+  // when this is the first limit of that (type, period).
   'rg.limit.set': z.object({
     userId: UuidSchema,
     actorId: UuidSchema,
     limitId: UuidSchema,
     type: LimitTypeSchema,
     period: LimitPeriodSchema,
-    amount: z.number(),
-    // null when this is the first limit of that (type, period).
-    previousAmount: z.number().nullable(),
+    amount: MoneyAmountSchema.nullable(),
+    minutes: z.number().int().nullable(),
+    previousAmount: MoneyAmountSchema.nullable(),
+    previousMinutes: z.number().int().nullable(),
   }),
   'rg.cooling_off.activated': actorReasonBase.extend({
     userId: UuidSchema,
@@ -147,7 +154,7 @@ export const domainEventSchemas = {
   'rg.self_exclusion.activated': actorReasonBase.extend({
     userId: UuidSchema,
     exclusionId: UuidSchema,
-    permanent: z.boolean(),
+    isPermanent: z.boolean(),
     expiresAt: TimestampSchema.nullable(),
   }),
   'rg.self_exclusion.lifted': actorReasonBase.extend({
@@ -189,6 +196,12 @@ export const domainEventSchemas = {
   'notifications.created': z.object({ notificationId: UuidSchema, userId: UuidSchema }),
 
   'cms.page.published': z.object({ pageId: UuidSchema, slug: z.string() }),
+  'cms.page.created': cmsPageEventBase,
+  'cms.page.updated': cmsPageEventBase,
+  'cms.page.deleted': cmsPageEventBase,
+  'cms.banner.created': cmsBannerEventBase,
+  'cms.banner.updated': cmsBannerEventBase,
+  'cms.banner.deleted': cmsBannerEventBase,
 
   // Emitted when an admin invitation token is accepted. The consumer (identity
   // module or an overlay) provisions the user account and completes the role
@@ -241,6 +254,18 @@ export const domainEventVersions: Partial<Record<DomainEventName, number>> = {
   // v2: sessionToken (the raw bearer credential) replaced with sessionId - the token
   // must never be persisted to the audit log or handed back to any caller.
   'identity.session.revoked': 2,
+  // v2: exact decimal-string amount (+ currency), never a JS number.
+  'wallet.deposit.completed': 2,
+  'wallet.withdrawal.completed': 2,
+  'wallet.withdrawal.requested': 2,
+  'wallet.withdrawal.approved': 2,
+  'wallet.withdrawal.rejected': 2,
+  'wallet.withdrawal.failed': 2,
+  // v2: amount/previousAmount (decimal string) + minutes/previousMinutes polymorphic
+  // pair (money limit vs session-time limit), never a JS number.
+  'rg.limit.set': 2,
+  // v2: permanent renamed to isPermanent (non-predicate boolean naming rule).
+  'rg.self_exclusion.activated': 2,
 };
 
 export function getEventVersion(event: string): number {

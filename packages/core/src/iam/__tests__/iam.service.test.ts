@@ -1,7 +1,13 @@
 import { describe, it, expect, vi } from 'vitest';
 import { mock, mockDb, readPrivate } from '../../testing/mock.js';
 import * as core from '@openora/core/server';
-import { levelToActions, actionsToLevel, statement, type ResourceName } from '@openora/core/server';
+import {
+  levelToActions,
+  actionsToLevel,
+  statement,
+  findOneOrThrow,
+  type ResourceName,
+} from '@openora/core/server';
 import {
   IamService,
   DbAdminPermissionResolver,
@@ -73,17 +79,25 @@ function routingDrizzle(byTable: {
         // per (role x permission), super roles collapse to a bypass row, empty -> [].
         if (lastSelect && 'isSuperAdmin' in lastSelect) {
           const assignments = (byTable.assignment ?? []) as { roleId: string }[];
-          if (assignments.length === 0) return [];
+          if (assignments.length === 0) {
+            return [];
+          }
           const superIds = new Set((byTable.superRole ?? []).map((r) => (r as { id: string }).id));
           if (assignments.some((a) => superIds.has(a.roleId))) {
             return [{ isSuperAdmin: true, resource: null, level: null }];
           }
           const perms = (byTable.permission ?? []) as { resource: string; level: string }[];
-          if (perms.length === 0) return [{ isSuperAdmin: false, resource: null, level: null }];
+          if (perms.length === 0) {
+            return [{ isSuperAdmin: false, resource: null, level: null }];
+          }
           return perms.map((p) => ({ isSuperAdmin: false, resource: p.resource, level: p.level }));
         }
-        if ('emailVerified' in table) return byTable.user ?? [];
-        if ('level' in table) return byTable.permission ?? [];
+        if ('emailVerified' in table) {
+          return byTable.user ?? [];
+        }
+        if ('level' in table) {
+          return byTable.permission ?? [];
+        }
         // adminRoleAssignment has `userId` column. A { roleId }-only select is the
         // assignment read used by both getGrants and isSuperAdmin(caller); a
         // full-row select is the dedup existing-check. When a test needs the two
@@ -742,7 +756,9 @@ describe('IamService.inviteAdmin', () => {
       }),
       where: vi.fn().mockImplementation(() => {
         // adminRoleAssignment (has userId col): caller's assignment for isSuperAdmin.
-        if ('userId' in table) return Promise.resolve([{ roleId: 'role-super' }]);
+        if ('userId' in table) {
+          return Promise.resolve([{ roleId: 'role-super' }]);
+        }
         // adminRole id-only probe: the super-admin check.
         if (lastSelect && 'id' in lastSelect && Object.keys(lastSelect).length === 1) {
           return Promise.resolve([{ id: 'role-super' }]);
@@ -814,7 +830,7 @@ describe('IamService paginated lists', () => {
     expect(result.page).toBe(2);
     expect(result.limit).toBe(10);
     expect(result.items).toHaveLength(1);
-    expect(result.items[0]!.id).toBe(ROLE_ROW.id);
+    expect(findOneOrThrow(result.items, new Error('expected an item')).id).toBe(ROLE_ROW.id);
   });
 
   it('listInvitations returns the paginated wrapper', async () => {
@@ -833,7 +849,7 @@ describe('IamService paginated lists', () => {
     const result = await svc.listInvitations({ page: 1, limit: 20 });
     expect(result.total).toBe(5);
     expect(result.items).toHaveLength(1);
-    expect(result.items[0]!.email).toBe('a@b.com');
+    expect(findOneOrThrow(result.items, new Error('expected an item')).email).toBe('a@b.com');
   });
 
   it('listAssignments returns the paginated wrapper with joined role fields', async () => {
@@ -850,7 +866,7 @@ describe('IamService paginated lists', () => {
     const result = await svc.listAssignments({ page: 1, limit: 20 });
     expect(result.total).toBe(3);
     expect(result.items).toHaveLength(1);
-    expect(result.items[0]!.roleName).toBe('Ops');
+    expect(findOneOrThrow(result.items, new Error('expected an item')).roleName).toBe('Ops');
   });
 });
 

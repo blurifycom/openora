@@ -9,7 +9,7 @@ export default definePlugin({
   register(ctx) {
     ctx.provide(PLATFORM_CONFIG, () =>
       definePlatformConfig({
-        autoWithdrawal: { enabled: true, fiatThreshold: 200, dailyCapCount: 1 },
+        autoWithdrawal: { enabled: true, fiatThreshold: '2', dailyCapCount: 1 },
       }),
     );
   },
