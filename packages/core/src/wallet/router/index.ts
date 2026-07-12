@@ -1,6 +1,10 @@
-import { implement } from '@orpc/server';
+import { implement, ORPCError } from '@orpc/server';
 import { getUserId, mapErrors, type AdminGuard, type OssContext } from '@openora/core/server';
-import type { AuditWritePort } from '@openora/core/contracts';
+import type {
+  AuditWritePort,
+  PaymentAdapter,
+  PaymentWebhookVerifier,
+} from '@openora/core/contracts';
 import { walletContract } from '../contract/index.js';
 import {
   WalletService,
@@ -11,12 +15,16 @@ import {
   CurrencyMismatchError,
   KycRequiredError,
   IdempotencyKeyReuseError,
+  DepositAddressUnsupportedError,
+  DestinationAddressRequiredError,
 } from '../service/wallet.service.js';
 
 export function createWalletRouter(
   wallet: WalletService,
   adminGuard: AdminGuard,
   audit: AuditWritePort,
+  paymentAdapter: PaymentAdapter,
+  webhookVerifier: PaymentWebhookVerifier,
 ) {
   const os = implement(walletContract).$context<OssContext>();
 
@@ -40,7 +48,7 @@ export function createWalletRouter(
         {
           NOT_FOUND: WalletNotFoundError,
           BAD_REQUEST: [InsufficientBalanceError, CurrencyMismatchError],
-          CONFLICT: [KycRequiredError, IdempotencyKeyReuseError],
+          CONFLICT: [KycRequiredError, IdempotencyKeyReuseError, DestinationAddressRequiredError],
         },
         () =>
           wallet.withdraw({
@@ -48,6 +56,7 @@ export function createWalletRouter(
             amount: input.amount,
             currency: input.currency,
             idempotencyKey: input.idempotencyKey,
+            destinationAddress: input.destinationAddress,
           }),
       ),
     ),
@@ -129,5 +138,29 @@ export function createWalletRouter(
         return deleted;
       }),
     },
+
+    deposits: {
+      getAddress: os.deposits.getAddress.handler(({ input, context }) =>
+        mapErrors({ CONFLICT: DepositAddressUnsupportedError }, () =>
+          wallet.getOrCreateDepositAddress(getUserId(context), input.currency),
+        ),
+      ),
+    },
+
+    webhook: os.webhook.handler(async ({ context }) => {
+      const rawBody = context.rawBody;
+      if (rawBody === undefined || !webhookVerifier.verify(rawBody, context.request.headers)) {
+        throw new ORPCError('UNAUTHORIZED', { message: 'Invalid payment webhook signature' });
+      }
+      const event = paymentAdapter.parseWebhook?.(rawBody, context.request.headers);
+      if (event) {
+        if (event.kind === 'deposit') {
+          await wallet.creditDepositByAddress(event);
+        } else {
+          await wallet.reconcileWithdrawalStatus(event);
+        }
+      }
+      return { ok: true as const };
+    }),
   });
 }

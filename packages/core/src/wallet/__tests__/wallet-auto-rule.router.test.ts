@@ -2,7 +2,11 @@ import { describe, it, expect, vi } from 'vitest';
 import { call, ORPCError } from '@orpc/server';
 import { mock } from '../../testing/mock.js';
 import type { AdminGuard } from '@openora/core/server';
-import type { AuditWritePort } from '@openora/core/contracts';
+import type {
+  AuditWritePort,
+  PaymentAdapter,
+  PaymentWebhookVerifier,
+} from '@openora/core/contracts';
 import { createWalletRouter } from '../router/index.js';
 import type { WalletService } from '../service/wallet.service.js';
 
@@ -44,12 +48,21 @@ function autoRuleDenyingGuard(): AdminGuard {
 }
 
 const fakeAudit = () => mock<AuditWritePort>({ record: vi.fn() });
+const fakePayment = (): PaymentAdapter => mock<PaymentAdapter>({});
+const fakeWebhookVerifier = (): PaymentWebhookVerifier =>
+  mock<PaymentWebhookVerifier>({ verify: vi.fn().mockReturnValue(false) });
 
 describe('wallet auto-withdrawal-rule routes', () => {
   it('set: creates the rule and writes an admin audit entry', async () => {
     const wallet = fakeWallet();
     const audit = fakeAudit();
-    const router = createWalletRouter(wallet, allowingGuard(), audit);
+    const router = createWalletRouter(
+      wallet,
+      allowingGuard(),
+      audit,
+      fakePayment(),
+      fakeWebhookVerifier(),
+    );
 
     const result = await call(
       router.autoWithdrawalRules.set,
@@ -78,7 +91,13 @@ describe('wallet auto-withdrawal-rule routes', () => {
   it('set: rejects a caller lacking withdrawal:auto-rule', async () => {
     const wallet = fakeWallet();
     const audit = fakeAudit();
-    const router = createWalletRouter(wallet, autoRuleDenyingGuard(), audit);
+    const router = createWalletRouter(
+      wallet,
+      autoRuleDenyingGuard(),
+      audit,
+      fakePayment(),
+      fakeWebhookVerifier(),
+    );
 
     await expect(
       call(
@@ -94,7 +113,13 @@ describe('wallet auto-withdrawal-rule routes', () => {
   it('delete: removes the rule and writes an admin audit entry', async () => {
     const wallet = fakeWallet();
     const audit = fakeAudit();
-    const router = createWalletRouter(wallet, allowingGuard(), audit);
+    const router = createWalletRouter(
+      wallet,
+      allowingGuard(),
+      audit,
+      fakePayment(),
+      fakeWebhookVerifier(),
+    );
 
     const result = await call(
       router.autoWithdrawalRules.delete,
@@ -113,7 +138,13 @@ describe('wallet auto-withdrawal-rule routes', () => {
 
   it('delete: rejects a caller lacking withdrawal:auto-rule', async () => {
     const wallet = fakeWallet();
-    const router = createWalletRouter(wallet, autoRuleDenyingGuard(), fakeAudit());
+    const router = createWalletRouter(
+      wallet,
+      autoRuleDenyingGuard(),
+      fakeAudit(),
+      fakePayment(),
+      fakeWebhookVerifier(),
+    );
 
     await expect(
       call(router.autoWithdrawalRules.delete, { userId: USER_ID }, { context: CTX }),
@@ -123,7 +154,13 @@ describe('wallet auto-withdrawal-rule routes', () => {
 
   it('get: returns the rule for an authorized caller', async () => {
     const wallet = fakeWallet();
-    const router = createWalletRouter(wallet, allowingGuard(), fakeAudit());
+    const router = createWalletRouter(
+      wallet,
+      allowingGuard(),
+      fakeAudit(),
+      fakePayment(),
+      fakeWebhookVerifier(),
+    );
 
     const result = await call(
       router.autoWithdrawalRules.get,
@@ -136,7 +173,13 @@ describe('wallet auto-withdrawal-rule routes', () => {
 
   it('get: rejects a caller lacking withdrawal:auto-rule', async () => {
     const wallet = fakeWallet();
-    const router = createWalletRouter(wallet, autoRuleDenyingGuard(), fakeAudit());
+    const router = createWalletRouter(
+      wallet,
+      autoRuleDenyingGuard(),
+      fakeAudit(),
+      fakePayment(),
+      fakeWebhookVerifier(),
+    );
 
     await expect(
       call(router.autoWithdrawalRules.get, { userId: USER_ID }, { context: CTX }),
