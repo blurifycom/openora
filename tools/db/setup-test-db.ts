@@ -8,7 +8,9 @@ const TEST_URL =
 async function main() {
   const url = new URL(TEST_URL);
   const dbName = url.pathname.replace(/^\//, '');
-  if (!dbName) throw new Error('TEST_DATABASE_URL has no database name');
+  if (!dbName) {
+    throw new Error('TEST_DATABASE_URL has no database name');
+  }
 
   const adminUrl = new URL(TEST_URL);
   adminUrl.pathname = '/postgres';

@@ -32,7 +32,9 @@ function isAddonSpecifier(spec) {
 function sourceVisitors(check) {
   const visit = (node) => {
     const spec = node.source?.value;
-    if (typeof spec === 'string') check(node, spec);
+    if (typeof spec === 'string') {
+      check(node, spec);
+    }
   };
   return {
     ImportDeclaration: visit,
@@ -43,9 +45,13 @@ function sourceVisitors(check) {
 
 const noCoreToAddon = {
   create(context) {
-    if (!isCoreFile(filename(context))) return {};
+    if (!isCoreFile(filename(context))) {
+      return {};
+    }
     return sourceVisitors((node, spec) => {
-      if (!isAddonSpecifier(spec)) return;
+      if (!isAddonSpecifier(spec)) {
+        return;
+      }
       context.report({
         node,
         message:
@@ -64,9 +70,13 @@ function importingAddon(file) {
 }
 
 function addonImportTarget(spec) {
-  if (!spec.startsWith('@openora-addons/')) return null;
+  if (!spec.startsWith('@openora-addons/')) {
+    return null;
+  }
   const tail = spec.slice('@openora-addons/'.length).split('/').filter(Boolean);
-  if (tail.length === 0) return null;
+  if (tail.length === 0) {
+    return null;
+  }
   const name = tail[0];
   const isSchemaSubpath = tail.length === 2 && tail[1] === 'schema';
   return { name, isSchemaSubpath, segments: tail.length };
@@ -75,11 +85,17 @@ function addonImportTarget(spec) {
 const noCrossAddon = {
   create(context) {
     const self = importingAddon(filename(context));
-    if (!self) return {};
+    if (!self) {
+      return {};
+    }
     return sourceVisitors((node, spec) => {
       const target = addonImportTarget(spec);
-      if (!target || target.name === self) return;
-      if (target.isSchemaSubpath) return;
+      if (!target || target.name === self) {
+        return;
+      }
+      if (target.isSchemaSubpath) {
+        return;
+      }
       context.report({
         node,
         message:
@@ -109,10 +125,14 @@ function isReactZone(file) {
 
 const noContractsToRuntime = {
   create(context) {
-    if (!isContractsZone(filename(context))) return {};
+    if (!isContractsZone(filename(context))) {
+      return {};
+    }
     return sourceVisitors((node, spec) => {
       const blocked = blocked_by_contracts.some((b) => spec === b || spec.startsWith(b + '/'));
-      if (!blocked) return;
+      if (!blocked) {
+        return;
+      }
       context.report({
         node,
         message:
@@ -138,13 +158,17 @@ const CONTRACT_RUNTIME_SPECIFIERS = ['@openora/core/server', '@openora-addons', 
 // (schema pulls Drizzle transitively). Zod + @openora/core/contracts are fine.
 const noModuleContractToRuntime = {
   create(context) {
-    if (!isModuleContractZone(filename(context))) return {};
+    if (!isModuleContractZone(filename(context))) {
+      return {};
+    }
     return sourceVisitors((node, spec) => {
       const blocked =
         CONTRACT_RUNTIME_SPECIFIERS.some((b) => spec === b || spec.startsWith(b + '/')) ||
         /(^|\/)schema(\/|$)/.test(spec) ||
         spec.startsWith('node:');
-      if (!blocked) return;
+      if (!blocked) {
+        return;
+      }
       context.report({
         node,
         message:
@@ -194,7 +218,9 @@ function isRouterFile(file) {
 
 const noAdhocZodInRouter = {
   create(context) {
-    if (!isRouterFile(filename(context))) return {};
+    if (!isRouterFile(filename(context))) {
+      return {};
+    }
     return {
       CallExpression(node) {
         const callee = node.callee;
@@ -221,9 +247,13 @@ const noAdhocZodInRouter = {
 
 const noReactToRuntime = {
   create(context) {
-    if (!isReactZone(filename(context))) return {};
+    if (!isReactZone(filename(context))) {
+      return {};
+    }
     return sourceVisitors((node, spec) => {
-      if (!isRuntimeSpecifier(spec) && !isAddonSpecifier(spec)) return;
+      if (!isRuntimeSpecifier(spec) && !isAddonSpecifier(spec)) {
+        return;
+      }
       context.report({
         node,
         message:
@@ -246,28 +276,42 @@ const SHARED_ZONES = [...ENGINE_ZONES, 'common', 'testing'];
 
 function coreDomainOf(file) {
   const m = file.match(/packages\/core\/src\/([a-z0-9-]+)\//);
-  if (!m || SHARED_ZONES.includes(m[1])) return null;
+  if (!m || SHARED_ZONES.includes(m[1])) {
+    return null;
+  }
   return m[1];
 }
 
 // The bare `@openora/core/compliance` (sealed-token util) is an engine zone; the
 // compliance DOMAIN is only reachable via subpaths like /contracts, /schema.
 function coreDomainTarget(spec) {
-  if (!spec.startsWith('@openora/core/')) return null;
+  if (!spec.startsWith('@openora/core/')) {
+    return null;
+  }
   const tail = spec.slice('@openora/core/'.length).split('/').filter(Boolean);
-  if (tail.length === 0 || SHARED_ZONES.includes(tail[0])) return null;
-  if (tail[0] === 'compliance' && tail.length === 1) return null;
+  if (tail.length === 0 || SHARED_ZONES.includes(tail[0])) {
+    return null;
+  }
+  if (tail[0] === 'compliance' && tail.length === 1) {
+    return null;
+  }
   return { name: tail[0], isSchema: tail[1] === 'schema' };
 }
 
 const noCrossCoreDomain = {
   create(context) {
     const self = coreDomainOf(filename(context));
-    if (!self) return {};
+    if (!self) {
+      return {};
+    }
     return sourceVisitors((node, spec) => {
       const target = coreDomainTarget(spec);
-      if (!target || target.name === self) return;
-      if (target.isSchema) return;
+      if (!target || target.name === self) {
+        return;
+      }
+      if (target.isSchema) {
+        return;
+      }
       context.report({
         node,
         message:
@@ -283,10 +327,14 @@ const noCrossCoreDomain = {
 
 const noEngineToDomain = {
   create(context) {
-    if (!/packages\/core\/src\/(contracts|server|react)\//.test(filename(context))) return {};
+    if (!/packages\/core\/src\/(contracts|server|react)\//.test(filename(context))) {
+      return {};
+    }
     return sourceVisitors((node, spec) => {
       const target = coreDomainTarget(spec);
-      if (!target) return;
+      if (!target) {
+        return;
+      }
       context.report({
         node,
         message:

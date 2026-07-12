@@ -5,21 +5,21 @@ import { createToken, type Token } from './token.js';
 
 export type WalletDebitArgs = {
   userId: string;
-  amount: number;
+  amount: string;
   type: WalletTransactionType;
 };
 
 export type WalletDebitOutcome =
-  | { ok: true; newBalance: number }
-  | { ok: false; available: number };
+  | { ok: true; newBalance: string }
+  | { ok: false; available: string };
 
 export type WalletCreditArgs = {
   userId: string;
-  amount: number;
+  amount: string;
   type: WalletTransactionType;
 };
 
-export type WalletCreditOutcome = { ok: true; newBalance: number } | { ok: false; reason: string };
+export type WalletCreditOutcome = { ok: true; newBalance: string } | { ok: false; reason: string };
 
 export type WalletCommands = {
   debit(tx: unknown, args: WalletDebitArgs): Promise<WalletDebitOutcome>;

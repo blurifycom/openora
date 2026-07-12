@@ -4,13 +4,13 @@ import { createToken, type Token } from './token.js';
 
 export type PaymentAdapter = {
   processDeposit(
-    amount: number,
+    amount: string,
     currency: string,
     metadata: Record<string, unknown>,
   ): Promise<{ externalId: string; status: string }>;
 
   processWithdrawal(
-    amount: number,
+    amount: string,
     currency: string,
     metadata: Record<string, unknown>,
   ): Promise<{ externalId: string; status: string }>;

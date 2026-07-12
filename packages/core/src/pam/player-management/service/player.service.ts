@@ -10,6 +10,7 @@ import type {
   PlayerStatus,
   KycStatus,
   Player,
+  User,
   TagKey,
 } from '@openora/core/contracts';
 import { eq, ilike, count, or, and, gte, desc, sql, ne, inArray, isNull } from 'drizzle-orm';
@@ -48,8 +49,12 @@ export class PlayerService {
   }) {
     const db = this.drizzle.db;
     const conditions = [];
-    if (status) conditions.push(eq(player.status, status));
-    if (kycStatus) conditions.push(eq(player.kycStatus, kycStatus));
+    if (status) {
+      conditions.push(eq(player.status, status));
+    }
+    if (kycStatus) {
+      conditions.push(eq(player.kycStatus, kycStatus));
+    }
     if (search) {
       conditions.push(
         or(
@@ -104,32 +109,34 @@ export class PlayerService {
     return { items, total: Number(n), page, limit };
   }
 
-  private async fetchOneWithTags(playerId: string) {
+  private async fetchOneWithTags(playerId: Player['id']) {
     const db = this.drizzle.db;
-    const [row] = await db
-      .select({
-        player,
-        email: user.email,
-        // Cast to text[] so pg driver deserializes as string[] (no parser for enum arrays).
-        tags: sql<
-          string[]
-        >`coalesce(array_agg(${tag.key}::text) filter (where ${tag.key} is not null), '{}'::text[])`,
-      })
-      .from(player)
-      .leftJoin(user, eq(user.id, player.userId))
-      .leftJoin(playerTag, and(eq(playerTag.playerId, player.id), isNull(playerTag.removedAt)))
-      .leftJoin(tag, eq(tag.id, playerTag.tagId))
-      .groupBy(player.id, user.email)
-      .where(eq(player.id, playerId));
-    if (!row) throw new PlayerNotFoundError(playerId);
+    const row = findOneOrThrow(
+      await db
+        .select({
+          player,
+          email: user.email,
+          // Cast to text[] so pg driver deserializes as string[] (no parser for enum arrays).
+          tags: sql<
+            string[]
+          >`coalesce(array_agg(${tag.key}::text) filter (where ${tag.key} is not null), '{}'::text[])`,
+        })
+        .from(player)
+        .leftJoin(user, eq(user.id, player.userId))
+        .leftJoin(playerTag, and(eq(playerTag.playerId, player.id), isNull(playerTag.removedAt)))
+        .leftJoin(tag, eq(tag.id, playerTag.tagId))
+        .groupBy(player.id, user.email)
+        .where(eq(player.id, playerId)),
+      new PlayerNotFoundError(playerId),
+    );
     return { ...toPlayer(row.player, row.email ?? ''), tags: row.tags as TagKey[] };
   }
 
-  async get(playerId: string) {
+  async get(playerId: Player['id']) {
     return this.fetchOneWithTags(playerId);
   }
 
-  async getByUserId(userId: string) {
+  async getByUserId(userId: User['id']) {
     const record = findOneOrThrow(
       await this.drizzle.db.select().from(player).where(eq(player.userId, userId)),
       new PlayerNotFoundError(userId),
@@ -137,14 +144,14 @@ export class PlayerService {
     return toPlayer(record, await fetchEmailByUserId(this.drizzle, record.userId));
   }
 
-  async getExtended(playerId: string) {
+  async getExtended(playerId: Player['id']) {
     return this.fetchOneWithTags(playerId);
   }
 
   async update(
     playerId: Player['id'],
     data: Partial<Pick<Player, 'displayName' | 'status' | 'kycStatus' | 'level' | 'email'>>,
-    actorId: string,
+    actorId: User['id'],
   ) {
     const existing = findOneOrThrow(
       await this.drizzle.db.select().from(player).where(eq(player.id, playerId)),
@@ -157,15 +164,21 @@ export class PlayerService {
         .from(user)
         .where(and(eq(user.email, data.email), ne(user.id, existing.userId)))
         .limit(1);
-      if (clash.length > 0) throw new DuplicateEmailError();
+      if (clash.length > 0) {
+        throw new DuplicateEmailError();
+      }
     }
 
     const patch: Partial<typeof player.$inferInsert> = {};
-    if (data.displayName !== undefined) patch.displayName = data.displayName;
-    if (data.status !== undefined) patch.status = data.status;
-    if (data.level !== undefined) patch.level = data.level;
-
-    const kycChanged = data.kycStatus !== undefined && data.kycStatus !== existing.kycStatus;
+    if (data.displayName !== undefined) {
+      patch.displayName = data.displayName;
+    }
+    if (data.status !== undefined) {
+      patch.status = data.status;
+    }
+    if (data.level !== undefined) {
+      patch.level = data.level;
+    }
 
     // One transaction so the email/field patch + the KYC write commit or roll back together.
     await this.drizzle.db.transaction(async (trx) => {
@@ -179,10 +192,10 @@ export class PlayerService {
       // KYC_STATUS_WRITER seam (it owns the player.kycStatus write + compliance.kyc.updated
       // emit), so an admin override and a vendor decision share one code path. Runs on this
       // txn via its optional tx handle.
-      if (kycChanged) {
+      if (data.kycStatus !== undefined && data.kycStatus !== existing.kycStatus) {
         await this.kycStatusWriter.setStatus(
           existing.userId,
-          data.kycStatus!,
+          data.kycStatus,
           { actorId, source: 'manual' },
           trx,
         );

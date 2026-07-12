@@ -1,6 +1,6 @@
 'use client';
 
-import { useState } from 'react';
+import { useState, useCallback } from 'react';
 import { useQuery, keepPreviousData } from '@tanstack/react-query';
 
 const DEFAULT_PAGE_SIZE = 20;
@@ -33,10 +33,10 @@ export function usePaginatedList<T>(opts: {
 
   const total = data?.total ?? 0;
 
-  function handleSetSearch(s: string) {
+  const handleSetSearch = useCallback((s: string) => {
     setSearch(s);
     setPage(1);
-  }
+  }, []);
 
   return {
     items: data?.items ?? [],

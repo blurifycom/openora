@@ -15,7 +15,7 @@ function makeRow(overrides: Partial<TagRuleWithKey> = {}): TagRuleWithKey {
     tagId: TAG_ID,
     tagKey: 'high_roller',
     isEnabled: true,
-    thresholdAmount: '1000',
+    threshold: '1000',
     thresholdDays: null,
     thresholdCount: null,
     createdAt: new Date('2024-01-01'),
@@ -24,14 +24,14 @@ function makeRow(overrides: Partial<TagRuleWithKey> = {}): TagRuleWithKey {
   } as TagRuleWithKey;
 }
 
-/** Mirrors what toTagRule does: dates -> ISO strings, decimal string -> number. */
+/** Mirrors what toTagRule does: dates -> ISO strings; decimal-string thresholds pass through. */
 function mapped(row: TagRuleWithKey) {
   return {
     id: row.id,
     tagId: row.tagId,
     tagKey: row.tagKey,
     isEnabled: row.isEnabled,
-    thresholdAmount: row.thresholdAmount === null ? null : Number(row.thresholdAmount),
+    threshold: row.threshold,
     thresholdDays: row.thresholdDays,
     thresholdCount: row.thresholdCount,
     createdAt: (row.createdAt as unknown as Date).toISOString(),
@@ -81,7 +81,7 @@ function makeUpsertDb(tagId: string | null, returningResult: unknown[] = []) {
 describe('TagRuleService', () => {
   describe('listTagRules', () => {
     it('returns rows joined with tag key, ordered by tag key', async () => {
-      const rows = [makeRow(), makeRow({ tagKey: 'inactive', thresholdAmount: null })];
+      const rows = [makeRow(), makeRow({ tagKey: 'inactive', threshold: null })];
       const { drizzle } = makeQueryDb(rows);
       const svc = new TagRuleService(drizzle, makeEvents());
       expect(await svc.listTagRules()).toEqual(rows.map(mapped));
@@ -104,7 +104,7 @@ describe('TagRuleService', () => {
   });
 
   describe('upsertTagRule', () => {
-    it('upserts and returns the row with tagKey, stringifying thresholdAmount and excluding tagId from the update set', async () => {
+    it('upserts and returns the row with tagKey, writing the decimal threshold and excluding tagId from the update set', async () => {
       const row = makeRow();
       const { drizzle, db } = makeUpsertDb(TAG_ID, [row]);
       const svc = new TagRuleService(drizzle, makeEvents());
@@ -113,7 +113,7 @@ describe('TagRuleService', () => {
         {
           tagKey: 'high_roller',
           isEnabled: true,
-          thresholdAmount: 1000,
+          threshold: '1000',
           thresholdDays: null,
           thresholdCount: null,
         },
@@ -122,7 +122,7 @@ describe('TagRuleService', () => {
 
       expect(result).toEqual(mapped(row));
       expect(db.values).toHaveBeenCalledWith(
-        expect.objectContaining({ tagId: TAG_ID, thresholdAmount: '1000' }),
+        expect.objectContaining({ tagId: TAG_ID, threshold: '1000' }),
       );
       // tagId must not appear in the update set (it is the conflict target)
       expect(db.onConflictDoUpdate).toHaveBeenCalledWith(
@@ -131,12 +131,12 @@ describe('TagRuleService', () => {
         }),
       );
       expect(db.onConflictDoUpdate).toHaveBeenCalledWith(
-        expect.objectContaining({ set: expect.objectContaining({ thresholdAmount: '1000' }) }),
+        expect.objectContaining({ set: expect.objectContaining({ threshold: '1000' }) }),
       );
     });
 
-    it('writes null thresholdAmount when omitted', async () => {
-      const row = makeRow({ thresholdAmount: null });
+    it('writes a null threshold when omitted', async () => {
+      const row = makeRow({ threshold: null });
       const { drizzle, db } = makeUpsertDb(TAG_ID, [row]);
       const svc = new TagRuleService(drizzle, makeEvents());
 
@@ -144,14 +144,14 @@ describe('TagRuleService', () => {
         {
           tagKey: 'inactive',
           isEnabled: true,
-          thresholdAmount: null,
+          threshold: null,
           thresholdDays: 30,
           thresholdCount: null,
         },
         ACTOR_ID,
       );
 
-      expect(db.values).toHaveBeenCalledWith(expect.objectContaining({ thresholdAmount: null }));
+      expect(db.values).toHaveBeenCalledWith(expect.objectContaining({ threshold: null }));
     });
 
     it('throws TagRuleNotFoundError when no tag row exists for the given key', async () => {
@@ -162,7 +162,7 @@ describe('TagRuleService', () => {
           {
             tagKey: 'high_roller',
             isEnabled: true,
-            thresholdAmount: null,
+            threshold: null,
             thresholdDays: null,
             thresholdCount: null,
           },
@@ -181,7 +181,7 @@ describe('TagRuleService', () => {
         {
           tagKey: 'high_roller',
           isEnabled: true,
-          thresholdAmount: 1000,
+          threshold: '1000',
           thresholdDays: null,
           thresholdCount: null,
         },

@@ -1,4 +1,4 @@
-import { definePlugin, EVENT_BUS, DRIZZLE, ADMIN_GUARD } from '@openora/core/server';
+import { definePlugin, EVENT_BUS, DRIZZLE, ADMIN_GUARD, createLogger } from '@openora/core/server';
 import { AUDIT_WRITER, type DomainEventName } from '@openora/core/contracts';
 import { AuditService, type RecordInput } from './service/audit.service.js';
 import { createAuditRouter } from './router/index.js';
@@ -228,6 +228,37 @@ function mapEventToRecord(topic: string, p: Record<string, unknown>): RecordInpu
     };
   }
 
+  // Admin CMS page/banner CRUD. actorId = acting admin; resourceId = the page/banner.
+  if (
+    topic === 'cms.page.created' ||
+    topic === 'cms.page.updated' ||
+    topic === 'cms.page.deleted' ||
+    topic === 'cms.banner.created' ||
+    topic === 'cms.banner.updated' ||
+    topic === 'cms.banner.deleted'
+  ) {
+    const isBanner = topic.startsWith('cms.banner.');
+    return {
+      ...base,
+      actorType: 'admin',
+      actorId: str(p['actorId']),
+      resourceType: isBanner ? 'banner' : 'page',
+      resourceId: str(isBanner ? p['bannerId'] : p['pageId']),
+    };
+  }
+
+  // System-generated in-app notification (fed by a wallet withdrawal event); the
+  // recipient is the notification's subject, not an acting player.
+  if (topic === 'notifications.created') {
+    return {
+      ...base,
+      actorType: 'system',
+      resourceType: 'notification',
+      resourceId: str(p['notificationId']),
+      after: { userId: str(p['userId']) },
+    };
+  }
+
   // Admin updated a tag rule configuration.
   if (topic === 'tag.rule.upserted') {
     return {
@@ -249,7 +280,7 @@ function mapEventToRecord(topic: string, p: Record<string, unknown>): RecordInpu
   ) {
     const before =
       topic === 'rg.limit.set'
-        ? { amount: p['previousAmount'] ?? null }
+        ? { amount: p['previousAmount'] ?? null, minutes: p['previousMinutes'] ?? null }
         : topic === 'rg.self_exclusion.lifted'
           ? { status: 'active' }
           : null;
@@ -261,6 +292,19 @@ function mapEventToRecord(topic: string, p: Record<string, unknown>): RecordInpu
       resourceId: str(p['userId']),
       before,
       after: p,
+    };
+  }
+
+  // System-driven login block on an excluded/cooled-off player. actorType is
+  // 'system' (no admin acted here) and the outcome is a failure, not the base
+  // regex's default 'success' (the topic doesn't end in failed/rejected/declined).
+  if (topic === 'rg.exclusion.login_blocked') {
+    return {
+      ...base,
+      actorType: 'system',
+      resourceType: 'player',
+      resourceId: str(p['userId']),
+      result: 'failure',
     };
   }
 
@@ -325,6 +369,13 @@ const SUBSCRIBED_TOPICS: DomainEventName[] = [
   'compliance.kyc.reverify_required',
   'compliance.geo-rule.added',
   'cms.page.published',
+  'cms.page.created',
+  'cms.page.updated',
+  'cms.page.deleted',
+  'cms.banner.created',
+  'cms.banner.updated',
+  'cms.banner.deleted',
+  'notifications.created',
   'iam.invitation.accepted',
   'iam.role.created',
   'iam.role.updated',
@@ -340,6 +391,8 @@ const SUBSCRIBED_TOPICS: DomainEventName[] = [
 export default definePlugin({
   id: 'audit',
   register(ctx) {
+    const logger = createLogger('audit');
+
     // Subscriptions are wired before router factories run (create-app.ts boot order),
     // so svcRef is null at registration but set before any real event arrives.
     let svcRef: AuditService | null = null;
@@ -353,8 +406,12 @@ export default definePlugin({
 
     for (const topic of SUBSCRIBED_TOPICS) {
       ctx.events.on(topic, (payload) => {
-        if (!svcRef || !isRecord(payload)) return;
-        void svcRef.record(mapEventToRecord(topic, payload));
+        if (!svcRef || !isRecord(payload)) {
+          return;
+        }
+        void svcRef
+          .record(mapEventToRecord(topic, payload))
+          .catch((err) => logger.error({ err, topic }, 'audit record failed'));
       });
     }
 

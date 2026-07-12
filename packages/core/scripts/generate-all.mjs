@@ -16,14 +16,18 @@ const bin = [
   join(core, 'node_modules/.bin/drizzle-kit'),
   join(core, '../../node_modules/.bin/drizzle-kit'),
 ].find(existsSync);
-if (!bin) throw new Error('drizzle-kit binary not found in node_modules/.bin');
+if (!bin) {
+  throw new Error('drizzle-kit binary not found in node_modules/.bin');
+}
 
 const dirs = [];
 const walk = (dir) => {
   for (const name of readdirSync(dir)) {
     const p = join(dir, name);
     if (!statSync(p).isDirectory()) {
-      if (name === 'drizzle.config.ts') dirs.push(dir);
+      if (name === 'drizzle.config.ts') {
+        dirs.push(dir);
+      }
       continue;
     }
     walk(p);

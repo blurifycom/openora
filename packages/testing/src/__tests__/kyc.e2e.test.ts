@@ -213,17 +213,17 @@ describe('KYC withdrawal gate (gated stack)', () => {
     const { client, playerId, userId } = await registerAndMaterializePlayer(appGated.app, email);
     const admin = await asAdmin(appGated.app);
 
-    const depositRes = await client.post('/wallet/deposit', { amount: 200, currency: 'USD' });
+    const depositRes = await client.post('/wallet/deposit', { amount: '2', currency: 'USD' });
     expect(depositRes.status).toBe(200);
 
-    const blockedRes = await client.post('/wallet/withdraw', { amount: 50, currency: 'USD' });
+    const blockedRes = await client.post('/wallet/withdraw', { amount: '0.5', currency: 'USD' });
     expect(blockedRes.status).toBe(409);
 
     const overrideRes = await admin.patch(`/players/${playerId}`, { kycStatus: 'verified' });
     expect(overrideRes.status).toBe(200);
     expect((await readJson(overrideRes)).kycStatus).toBe('verified');
 
-    const allowedRes = await client.post('/wallet/withdraw', { amount: 50, currency: 'USD' });
+    const allowedRes = await client.post('/wallet/withdraw', { amount: '0.5', currency: 'USD' });
     expect(allowedRes.status).toBe(200);
     const allowed = await readJson(allowedRes);
     expect(allowed.status).toBe('pending');
@@ -256,8 +256,8 @@ describe('KYC threshold re-KYC on deposit (gated stack)', () => {
     expect(overrideRes.status).toBe(200);
     expect((await readJson(overrideRes)).kycStatus).toBe('verified');
 
-    // Fixture config sets kyc.reverifyThresholds.USD = 1000; this crosses it.
-    const depositRes = await client.post('/wallet/deposit', { amount: 1500, currency: 'USD' });
+    // Fixture config sets kyc.reverifyThresholds.USD = 10; this crosses it.
+    const depositRes = await client.post('/wallet/deposit', { amount: '15', currency: 'USD' });
     expect(depositRes.status).toBe(200);
 
     await vi.waitFor(

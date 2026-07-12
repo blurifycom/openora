@@ -1,6 +1,6 @@
 import { DrizzleService } from '@openora/core/server';
 import { eq } from 'drizzle-orm';
-import type { LoginEnforcementPort } from '@openora/core/contracts';
+import type { LoginEnforcementPort, User } from '@openora/core/contracts';
 import { user } from '../schema/index.js';
 import { SessionService } from './session.service.js';
 
@@ -13,7 +13,7 @@ export class LoginEnforcementService implements LoginEnforcementPort {
     private readonly sessions: SessionService,
   ) {}
 
-  async block(userId: string, opts: { until: Date | null }): Promise<void> {
+  async block(userId: User['id'], opts: { until: Date | null }): Promise<void> {
     await this.drizzle.db
       .update(user)
       .set({ rgBlocked: true, rgBlockedUntil: opts.until })
@@ -21,7 +21,7 @@ export class LoginEnforcementService implements LoginEnforcementPort {
     await this.sessions.revokeAllSessions(userId);
   }
 
-  async unblock(userId: string): Promise<void> {
+  async unblock(userId: User['id']): Promise<void> {
     await this.drizzle.db
       .update(user)
       .set({ rgBlocked: false, rgBlockedUntil: null })

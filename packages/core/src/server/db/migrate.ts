@@ -39,7 +39,9 @@ export async function runMigrations(opts: RunMigrationsOptions) {
   const pool = new Pool({ connectionString: migrateUrl(opts.databaseUrl) });
   try {
     for (const ext of opts.extensions ?? []) {
-      if (!/^[a-z0-9_]+$/.test(ext)) throw new Error(`Invalid extension name: ${ext}`);
+      if (!/^[a-z0-9_]+$/.test(ext)) {
+        throw new Error(`Invalid extension name: ${ext}`);
+      }
       await pool.query(`CREATE EXTENSION IF NOT EXISTS ${ext}`);
     }
     const db = drizzle(pool, { casing: 'snake_case' });

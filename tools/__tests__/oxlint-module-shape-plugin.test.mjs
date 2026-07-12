@@ -216,3 +216,317 @@ test('no-inline-pg-enum rejects an inline array literal', () => {
   );
   assert.equal(reports.length, 1);
 });
+
+function importSpecifierNode(source, localName) {
+  return {
+    source: { value: source },
+    specifiers: [{ type: 'ImportSpecifier', local: { type: 'Identifier', name: localName } }],
+  };
+}
+
+function zInferTypeReference(schemaName) {
+  return {
+    typeName: {
+      type: 'TSQualifiedName',
+      left: { type: 'Identifier', name: 'z' },
+      right: { type: 'Identifier', name: 'infer' },
+    },
+    typeArguments: {
+      params: [{ type: 'TSTypeQuery', exprName: { type: 'Identifier', name: schemaName } }],
+    },
+  };
+}
+
+test('no-reinfer-imported-schema flags z.infer of a schema imported from a contract path', () => {
+  const reports = lint(
+    'no-reinfer-imported-schema',
+    `${REPO}/pam/profile/react/profile.ts`,
+    (v) => {
+      v.ImportDeclaration(importSpecifierNode('@openora/core/contracts', 'PlayerSchema'));
+      v.TSTypeReference(zInferTypeReference('PlayerSchema'));
+    },
+  );
+  assert.equal(reports.length, 1);
+});
+
+test('no-reinfer-imported-schema allows z.infer of a locally-declared schema', () => {
+  const reports = lint(
+    'no-reinfer-imported-schema',
+    `${REPO}/pam/profile/react/profile.ts`,
+    (v) => {
+      v.ImportDeclaration(importSpecifierNode('@openora/core/contracts', 'PlayerSchema'));
+      v.TSTypeReference(zInferTypeReference('DerivedSchema'));
+    },
+  );
+  assert.deepEqual(reports, []);
+});
+
+test('no-reinfer-imported-schema ignores an import from a non-contract path', () => {
+  const reports = lint(
+    'no-reinfer-imported-schema',
+    `${REPO}/pam/profile/react/profile.ts`,
+    (v) => {
+      v.ImportDeclaration(importSpecifierNode('drizzle-orm', 'sql'));
+      v.TSTypeReference(zInferTypeReference('sql'));
+    },
+  );
+  assert.deepEqual(reports, []);
+});
+
+test('no-reinfer-imported-schema is out of scope inside a contract/schemas dir', () => {
+  for (const f of [`${REPO}/wallet/contract/index.ts`, `${REPO}/contracts/schemas/common.ts`]) {
+    const visitor = plugin.rules['no-reinfer-imported-schema'].create({ filename: f });
+    assert.deepEqual(Object.keys(visitor), [], f);
+  }
+});
+
+function stringIdParam(name) {
+  return {
+    type: 'Identifier',
+    name,
+    typeAnnotation: { typeAnnotation: { type: 'TSStringKeyword' } },
+  };
+}
+
+function ownedIdParam(name) {
+  return {
+    type: 'Identifier',
+    name,
+    typeAnnotation: { typeAnnotation: { type: 'TSIndexedAccessType' } },
+  };
+}
+
+function objectIdParam(propName, propType) {
+  return {
+    type: 'ObjectPattern',
+    typeAnnotation: {
+      typeAnnotation: {
+        type: 'TSTypeLiteral',
+        members: [
+          {
+            type: 'TSPropertySignature',
+            key: { type: 'Identifier', name: propName },
+            typeAnnotation: { typeAnnotation: { type: propType } },
+          },
+        ],
+      },
+    },
+  };
+}
+
+test('no-bare-string-id-param flags a bare string Id param in a service file', () => {
+  const reports = lint('no-bare-string-id-param', `${REPO}/iam/service/iam.service.ts`, (v) =>
+    v.FunctionDeclaration({ params: [stringIdParam('roleId')] }),
+  );
+  assert.equal(reports.length, 1);
+});
+
+test('no-bare-string-id-param allows an id typed through the owning type', () => {
+  const reports = lint('no-bare-string-id-param', `${REPO}/iam/service/iam.service.ts`, (v) =>
+    v.FunctionDeclaration({ params: [ownedIdParam('roleId')] }),
+  );
+  assert.deepEqual(reports, []);
+});
+
+test('no-bare-string-id-param flags a bare string Id inside an inline object param', () => {
+  const reports = lint('no-bare-string-id-param', `${REPO}/wallet/service/wallet.service.ts`, (v) =>
+    v.FunctionExpression({
+      params: [objectIdParam('withdrawalId', 'TSStringKeyword')],
+    }),
+  );
+  assert.equal(reports.length, 1);
+});
+
+test('no-bare-string-id-param allows an object param id typed through the owning type', () => {
+  const reports = lint('no-bare-string-id-param', `${REPO}/wallet/service/wallet.service.ts`, (v) =>
+    v.ArrowFunctionExpression({
+      params: [objectIdParam('withdrawalId', 'TSIndexedAccessType')],
+    }),
+  );
+  assert.deepEqual(reports, []);
+});
+
+test('no-bare-string-id-param exempts the surveyed genuinely-external id names', () => {
+  const reports = lint(
+    'no-bare-string-id-param',
+    `${REPO}/compliance/service/kyc.service.ts`,
+    (v) => v.FunctionDeclaration({ params: [stringIdParam('referenceId')] }),
+  );
+  assert.deepEqual(reports, []);
+});
+
+test('no-bare-string-id-param ignores a param not ending in Id', () => {
+  const reports = lint('no-bare-string-id-param', `${REPO}/iam/service/iam.service.ts`, (v) =>
+    v.FunctionDeclaration({ params: [stringIdParam('name')] }),
+  );
+  assert.deepEqual(reports, []);
+});
+
+test('no-bare-string-id-param is out of scope outside service/router files', () => {
+  const visitor = plugin.rules['no-bare-string-id-param'].create({
+    filename: `${REPO}/wallet/schema/index.ts`,
+  });
+  assert.deepEqual(Object.keys(visitor), []);
+});
+
+function promiseAllOverMap({ promiseMethod = 'all', mapMethod = 'map', receiverType }) {
+  return {
+    callee: {
+      type: 'MemberExpression',
+      object: { type: 'Identifier', name: 'Promise' },
+      property: { type: 'Identifier', name: promiseMethod },
+    },
+    arguments: [
+      {
+        type: 'CallExpression',
+        callee: {
+          type: 'MemberExpression',
+          object: { type: receiverType },
+          property: { type: 'Identifier', name: mapMethod },
+        },
+      },
+    ],
+  };
+}
+
+test('no-unbounded-db-fanout flags Promise.all over a mapped query result', () => {
+  const reports = lint('no-unbounded-db-fanout', `${REPO}/compliance/service/rg.service.ts`, (v) =>
+    v.CallExpression(promiseAllOverMap({ receiverType: 'Identifier' })),
+  );
+  assert.equal(reports.length, 1);
+});
+
+test('no-unbounded-db-fanout also flags allSettled and flatMap', () => {
+  const reports = lint('no-unbounded-db-fanout', `${REPO}/iam/service/iam.service.ts`, (v) =>
+    v.CallExpression(
+      promiseAllOverMap({
+        promiseMethod: 'allSettled',
+        mapMethod: 'flatMap',
+        receiverType: 'Identifier',
+      }),
+    ),
+  );
+  assert.equal(reports.length, 1);
+});
+
+test('no-unbounded-db-fanout allows a fixed array-literal fan-out', () => {
+  const reports = lint('no-unbounded-db-fanout', `${REPO}/iam/service/iam.service.ts`, (v) =>
+    v.CallExpression(promiseAllOverMap({ receiverType: 'ArrayExpression' })),
+  );
+  assert.deepEqual(reports, []);
+});
+
+test('no-unbounded-db-fanout is out of scope outside service/router files', () => {
+  const visitor = plugin.rules['no-unbounded-db-fanout'].create({
+    filename: `${REPO}/wallet/schema/index.ts`,
+  });
+  assert.deepEqual(Object.keys(visitor), []);
+});
+
+const SCHEMA = `${REPO}/wallet/schema/index.ts`;
+const SERVICE = `${REPO}/wallet/service/wallet.service.ts`;
+
+const identCall = (name, args = []) => ({ callee: { type: 'Identifier', name }, arguments: args });
+const str = (value) => ({ type: 'Literal', value });
+const zMemberCall = (prop, args = []) => ({
+  callee: {
+    type: 'MemberExpression',
+    object: { type: 'Identifier', name: 'z' },
+    property: { type: 'Identifier', name: prop },
+  },
+  arguments: args,
+});
+
+test('no-naive-timestamp flags a bare timestamp() in a schema file', () => {
+  const reports = lint('no-naive-timestamp', SCHEMA, (v) =>
+    v.CallExpression(identCall('timestamp')),
+  );
+  assert.equal(reports.length, 1);
+});
+
+test('no-naive-timestamp allows timestamp({ withTimezone: true })', () => {
+  const arg = {
+    type: 'ObjectExpression',
+    properties: [
+      {
+        type: 'Property',
+        key: { type: 'Identifier', name: 'withTimezone' },
+        value: { type: 'Literal', value: true },
+      },
+    ],
+  };
+  const reports = lint('no-naive-timestamp', SCHEMA, (v) =>
+    v.CallExpression(identCall('timestamp', [arg])),
+  );
+  assert.deepEqual(reports, []);
+});
+
+test('no-naive-timestamp is out of scope outside schema files', () => {
+  const visitor = plugin.rules['no-naive-timestamp'].create({ filename: SERVICE });
+  assert.deepEqual(Object.keys(visitor), []);
+});
+
+test('no-float-money flags real() in a schema file', () => {
+  const reports = lint('no-float-money', SCHEMA, (v) => v.CallExpression(identCall('real')));
+  assert.equal(reports.length, 1);
+});
+
+test('no-float-money allows decimal()', () => {
+  const reports = lint('no-float-money', SCHEMA, (v) => v.CallExpression(identCall('decimal')));
+  assert.deepEqual(reports, []);
+});
+
+test('drizzle-snake-case flags a PascalCase pgTable name', () => {
+  const reports = lint('drizzle-snake-case', SCHEMA, (v) =>
+    v.CallExpression(identCall('pgTable', [str('WalletTransaction')])),
+  );
+  assert.equal(reports.length, 1);
+});
+
+test('drizzle-snake-case flags a camelCase explicit column name', () => {
+  const reports = lint('drizzle-snake-case', SCHEMA, (v) =>
+    v.CallExpression(identCall('uuid', [str('walletId')])),
+  );
+  assert.equal(reports.length, 1);
+});
+
+test('drizzle-snake-case allows a snake_case name and a name-less column', () => {
+  const ok = lint('drizzle-snake-case', SCHEMA, (v) => {
+    v.CallExpression(identCall('pgTable', [str('wallet_transaction')]));
+    v.CallExpression(identCall('uuid', []));
+    v.CallExpression(identCall('index', [str('wallet_transaction_wallet_id_idx')]));
+  });
+  assert.deepEqual(ok, []);
+});
+
+test('no-raw-z-uuid flags z.uuid() outside the definition file', () => {
+  const reports = lint('no-raw-z-uuid', `${REPO}/wallet/contract/index.ts`, (v) =>
+    v.CallExpression(zMemberCall('uuid')),
+  );
+  assert.equal(reports.length, 1);
+});
+
+test('no-raw-z-uuid exempts the UuidSchema definition file', () => {
+  const visitor = plugin.rules['no-raw-z-uuid'].create({
+    filename: `${REPO}/contracts/schemas/common.ts`,
+  });
+  assert.deepEqual(Object.keys(visitor), []);
+});
+
+test('no-inline-z-enum-outside-contract flags z.enum([...]) in a service', () => {
+  const reports = lint('no-inline-z-enum-outside-contract', SERVICE, (v) =>
+    v.CallExpression(zMemberCall('enum', [{ type: 'ArrayExpression', elements: [] }])),
+  );
+  assert.equal(reports.length, 1);
+});
+
+test('no-inline-z-enum-outside-contract allows z.enum(TUPLE) and is out of scope in contract dirs', () => {
+  const allowed = lint('no-inline-z-enum-outside-contract', SERVICE, (v) =>
+    v.CallExpression(zMemberCall('enum', [{ type: 'Identifier', name: 'WALLET_STATUSES' }])),
+  );
+  assert.deepEqual(allowed, []);
+  const visitor = plugin.rules['no-inline-z-enum-outside-contract'].create({
+    filename: `${REPO}/wallet/contract/index.ts`,
+  });
+  assert.deepEqual(Object.keys(visitor), []);
+});

@@ -47,7 +47,9 @@ export class InProcessRateLimiter implements RateLimiterAdapter {
   private sweep(): void {
     const now = Date.now();
     for (const [key, window] of this.windows) {
-      if (now >= window.resetAt) this.windows.delete(key);
+      if (now >= window.resetAt) {
+        this.windows.delete(key);
+      }
     }
   }
 
@@ -76,7 +78,11 @@ export async function assertRateLimit(
   key: string,
   opts: RateLimitOptions,
 ): Promise<void> {
-  if (!limiter) return;
+  if (!limiter) {
+    return;
+  }
   const { allowed, retryAfterMs } = await limiter.consume(key, opts);
-  if (!allowed) throw makeRateLimitError(retryAfterMs);
+  if (!allowed) {
+    throw makeRateLimitError(retryAfterMs);
+  }
 }

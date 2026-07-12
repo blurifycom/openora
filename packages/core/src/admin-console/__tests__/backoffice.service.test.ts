@@ -38,7 +38,7 @@ function txRow(over: Partial<AdminTxRow> = {}): AdminTxRow {
     id: 'tx-1',
     userId: 'u-1',
     type: 'deposit',
-    amount: 100,
+    amount: '100',
     currency: 'USD',
     status: 'completed',
     rail: 'fiat',

@@ -1,5 +1,5 @@
 import z from 'zod';
-import { TimestampSchema, UuidSchema } from './common.js';
+import { MoneyAmountSchema, TimestampSchema, UuidSchema } from './common.js';
 
 export const tagAssignRemoveSource = ['scheduled', 'manual'] as const;
 const tagAssignRemoveSourceSchema = z.enum(tagAssignRemoveSource);
@@ -75,8 +75,8 @@ export const tagRuleSchema = z.object({
   tagId: UuidSchema,
   tagKey: TagKeySchema,
   isEnabled: z.boolean(),
-  /** Amount threshold in the wallet's decimal convention - same unit as wallet.amount and wallet_transaction.amount (high_roller: lifetime deposits; large_depositor: single deposit; high_risk: single withdrawal). */
-  thresholdAmount: z.coerce.number().nullable(),
+  /** Amount threshold as a decimal string - same unit as wallet.balance and wallet_transaction.amount (high_roller: lifetime deposits; large_depositor: single deposit; high_risk: single withdrawal). */
+  threshold: MoneyAmountSchema.nullable(),
   /** Inactivity or rolling-window length in days (inactive, high_risk). */
   thresholdDays: z.number().int().nullable(),
   /** Minimum event count within the window (high_risk withdrawal frequency). */

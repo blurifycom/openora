@@ -6,7 +6,7 @@ import { wallet, walletTransaction } from '../schema/index.js';
 export class WalletReaderService implements WalletReader {
   constructor(private readonly drizzle: DrizzleService) {}
 
-  async getLifetimeDeposit(userId: string): Promise<number> {
+  async getLifetimeDeposit(userId: string): Promise<string> {
     const [row] = await this.drizzle.db
       .select({ total: sum(walletTransaction.amount) })
       .from(walletTransaction)
@@ -18,7 +18,7 @@ export class WalletReaderService implements WalletReader {
           eq(walletTransaction.status, 'completed'),
         ),
       );
-    return Number(row?.total ?? 0);
+    return row?.total ?? '0';
   }
 
   async getWithdrawalCountInWindow(userId: string, windowDays: number): Promise<number> {

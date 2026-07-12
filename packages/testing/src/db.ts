@@ -74,7 +74,9 @@ export async function setupTestDb(): Promise<TestDb> {
         WHERE schemaname = 'public' AND tablename NOT LIKE '\\_\\_drizzle%'
       `);
       const tables = rows.rows.map((r) => `"public"."${r.tablename}"`);
-      if (tables.length === 0) return;
+      if (tables.length === 0) {
+        return;
+      }
       await db.execute(sql.raw(`TRUNCATE ${tables.join(', ')} RESTART IDENTITY CASCADE`));
     },
     async dispose() {

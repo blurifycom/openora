@@ -4,7 +4,7 @@ import {
   pgEnum,
   uuid,
   text,
-  real,
+  integer,
   boolean,
   decimal,
   jsonb,
@@ -18,6 +18,9 @@ import {
   EXCLUSION_STATUSES,
   RG_FLAG_TYPES,
   RG_FLAG_STATUSES,
+  limitTypes,
+  limitPeriods,
+  geoRuleActions,
 } from '@openora/core/contracts';
 import { KYC_DOCUMENT_TYPES, KYC_TRIGGERED_BY } from '../contract/enums.js';
 import type { RgFlagDetail } from '../contract/rg.js';
@@ -34,9 +37,12 @@ export const userLimit = pgTable(
   {
     id: uuid().primaryKey().defaultRandom(),
     userId: uuid().notNull(),
-    type: text().notNull(),
-    amount: real().notNull(),
-    period: text().notNull(),
+    type: text({ enum: limitTypes }).notNull(),
+    // Exactly one of the two is set, discriminated by `type`: money-type limits
+    // (deposit/wager/loss) carry amount; the session-type limit carries minutes.
+    amount: decimal({ precision: 18, scale: 2 }),
+    minutes: integer(),
+    period: text({ enum: limitPeriods }).notNull(),
     createdAt: timestamp({ withTimezone: true }).notNull().defaultNow(),
     updatedAt: timestamp({ withTimezone: true })
       .notNull()
@@ -51,7 +57,7 @@ export const userLimit = pgTable(
 export const geoRule = pgTable('geo_rule', {
   id: uuid().primaryKey().defaultRandom(),
   countryCode: text().notNull().unique('geo_rule_country_code_unique'),
-  action: text().notNull(),
+  action: text({ enum: geoRuleActions }).notNull(),
   createdAt: timestamp({ withTimezone: true }).notNull().defaultNow(),
 });
 
@@ -95,7 +101,7 @@ export const rgExclusion = pgTable(
     kind: rgExclusionKind().notNull(),
     status: rgExclusionStatus().notNull().default('active'),
     reason: text().notNull(),
-    permanent: boolean().notNull().default(false),
+    isPermanent: boolean().notNull().default(false),
     startsAt: timestamp({ withTimezone: true }).notNull().defaultNow(),
     expiresAt: timestamp({ withTimezone: true }),
     liftedAt: timestamp({ withTimezone: true }),

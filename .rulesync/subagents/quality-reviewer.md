@@ -26,7 +26,8 @@ The orchestrator passes you the base ref and changed-file list - do not re-scope
 
 ### Performance
 
-- [ ] No N+1 queries - batch with `inArray`/joins; no `await` inside a loop that could be `Promise.all` or a single query.
+- [ ] No N+1 queries - batch with `inArray`/joins; an `await`-in-loop over a query result should be one set-based query, not a per-row round-trip.
+- [ ] Bounded fan-out - concurrent DB work over a query result goes through `mapConcurrent(items, limit, fn)`, never an uncapped `Promise.all(rows.map(...))` (one pool connection per row starves the instance at scale). Watch for fan-out hidden behind a called method, and for oversized `IN (...)` lists.
 - [ ] No unbounded reads - lists paginate; no `SELECT *` of a hot table into memory to filter in JS.
 - [ ] Hot-path work not repeated per call when it can be computed once (schema parsing, regex compilation, config reads).
 - [ ] React hooks: stability-contract returns use `useMemo`/`useCallback` (conventions section 7).

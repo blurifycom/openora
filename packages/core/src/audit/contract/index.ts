@@ -19,10 +19,12 @@ const AuditSnapshotSchema = z
 
 export const AuditLogEntrySchema = z.object({
   id: UuidSchema,
+  // external / system actor id - not necessarily one of our UUIDs
   actorId: z.string().nullable(),
   actorType: AuditActorTypeSchema,
   action: z.string(),
   resourceType: z.string(),
+  // arbitrary resource key (config key, external ref, ...) - not necessarily a UUID
   resourceId: z.string().nullable(),
   before: AuditSnapshotSchema,
   after: AuditSnapshotSchema,

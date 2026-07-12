@@ -1,5 +1,5 @@
 import * as z from 'zod';
-import { TimestampSchema, UuidSchema } from './common.js';
+import { MoneyAmountSchema, TimestampSchema, UuidSchema } from './common.js';
 import { CurrencyCodeSchema } from './igaming-config.js';
 import { TagKeySchema } from './tag.js';
 import { PageQuerySchema } from '../kit.js';
@@ -33,8 +33,8 @@ export const PlayerSchema = z.object({
   status: PlayerStatusSchema,
   kycStatus: KycStatusSchema,
   level: z.number().int(),
-  totalWagered: z.number(),
-  totalDeposits: z.number(),
+  totalWagered: MoneyAmountSchema,
+  totalDeposits: MoneyAmountSchema,
   lastSeenAt: z.string().nullable(),
   createdAt: TimestampSchema,
   updatedAt: TimestampSchema,

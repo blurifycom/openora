@@ -1,6 +1,12 @@
 export { DrizzleService, DRIZZLE } from './drizzle.service.js';
 export { createDrizzleDb, type DrizzleDb, type DrizzleTx } from './drizzle.js';
-export { findOneOrThrow, pageToOffset, withAdvisoryXactLock } from './query-helpers.js';
+export {
+  findOneOrThrow,
+  pageToOffset,
+  withAdvisoryXactLock,
+  moneyToNumber,
+  mapConcurrent,
+} from './query-helpers.js';
 
 // Transactional outbox - writer binds atomically with the state change; relay publishes to MESSAGE_BROKER. See ADR-0016.
 export { eventOutbox, type EventOutboxRow } from './outbox/schema.js';

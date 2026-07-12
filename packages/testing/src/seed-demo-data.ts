@@ -1,5 +1,5 @@
 // See ADR-0020.
-import type { DrizzleDb } from '@openora/core/server';
+import { findOneOrThrow, type DrizzleDb } from '@openora/core/server';
 import { eq } from 'drizzle-orm';
 import { user } from '@openora/core/pam/schema/identity';
 import { player } from '@openora/core/pam/schema/profile';
@@ -51,9 +51,15 @@ function weighted<T>(rng: () => number, table: readonly (readonly [T, number])[]
   let roll = rng() * total;
   for (const [value, w] of table) {
     roll -= w;
-    if (roll <= 0) return value;
+    if (roll <= 0) {
+      return value;
+    }
   }
-  return table[table.length - 1]![0];
+  const last = table.at(-1);
+  if (!last) {
+    throw new Error('weighted: table must not be empty');
+  }
+  return last[0];
 }
 
 function round2(n: number): number {
@@ -181,7 +187,9 @@ export async function seedDemoData(options: SeedOptions): Promise<SeedResult> {
     role: 'admin',
     isActive: true,
   });
-  if (adminUser) log(`Admin ready: ${admin.email} / ${admin.password}`);
+  if (adminUser) {
+    log(`Admin ready: ${admin.email} / ${admin.password}`);
+  }
 
   await db.insert(game).values(
     GAMES.map(([name, provider, category]) => ({
@@ -219,7 +227,9 @@ export async function seedDemoData(options: SeedOptions): Promise<SeedResult> {
       isActive,
       createdAt,
     });
-    if (!playerUser) continue;
+    if (!playerUser) {
+      continue;
+    }
     userCount++;
 
     const totalDeposits = round2(rng() * 8000 + (level - 1) * 400);
@@ -245,14 +255,17 @@ export async function seedDemoData(options: SeedOptions): Promise<SeedResult> {
       createdAt,
     });
 
-    const [walletRow] = await db
-      .insert(wallet)
-      .values({
-        userId: playerUser.id,
-        balance: String(round2(rng() * 1500)),
-        currency,
-      })
-      .returning();
+    const walletRow = findOneOrThrow(
+      await db
+        .insert(wallet)
+        .values({
+          userId: playerUser.id,
+          balance: String(round2(rng() * 1500)),
+          currency,
+        })
+        .returning(),
+      new Error('seed: expected the wallet insert to return a row'),
+    );
 
     const deposits = 1 + Math.floor(rng() * 4);
     let depositSum = 0;
@@ -261,7 +274,7 @@ export async function seedDemoData(options: SeedOptions): Promise<SeedResult> {
       const amount = round2(20 + rng() * 600);
       depositSum += amount;
       txRows.push({
-        walletId: walletRow!.id,
+        walletId: walletRow.id,
         type: 'deposit',
         amount: String(amount),
         currency,
@@ -271,7 +284,7 @@ export async function seedDemoData(options: SeedOptions): Promise<SeedResult> {
     }
     if (kycStatus === 'verified' && rng() > 0.5) {
       txRows.push({
-        walletId: walletRow!.id,
+        walletId: walletRow.id,
         type: 'withdrawal',
         amount: String(round2(depositSum * (0.2 + rng() * 0.3))),
         currency,
@@ -319,13 +332,17 @@ async function ensureUser(
     });
     [existing] = await db.select({ id: user.id }).from(user).where(eq(user.email, input.email));
   }
-  if (!existing) return null;
+  if (!existing) {
+    return null;
+  }
   const patch: Partial<typeof user.$inferInsert> = {
     name: input.name,
     role: input.role,
     isActive: input.isActive,
   };
-  if (input.createdAt) patch.createdAt = input.createdAt;
+  if (input.createdAt) {
+    patch.createdAt = input.createdAt;
+  }
   await db.update(user).set(patch).where(eq(user.id, existing.id));
   return { id: existing.id };
 }

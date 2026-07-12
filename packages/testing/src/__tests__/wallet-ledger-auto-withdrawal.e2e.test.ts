@@ -18,7 +18,7 @@ import {
 /**
  * E2E for ABC-214 (wallet ledger + auto-withdrawal) over real HTTP + Postgres. Three apps share one db:
  * - `appDefault`: stock stack, autoWithdrawal off (manual approve/reject, rule-route authz).
- * - `appGated`: autoWithdrawal enabled, fiatThreshold 200, high caps - single-shot gate scenarios.
+ * - `appGated`: autoWithdrawal enabled, fiatThreshold 2, high caps - single-shot gate scenarios.
  * - `appCapGated`: dailyCapCount 1 - the daily-cap scenario isolated from the velocity heuristic.
  */
 
@@ -58,7 +58,9 @@ async function setRole(container: Container, userId: string, role: string) {
 
 async function verifyKyc(admin: TestClient, playerId: string) {
   const res = await admin.patch(`/players/${playerId}`, { kycStatus: 'verified' });
-  if (res.status !== 200) throw new Error(`verifyKyc failed (${res.status}): ${await res.text()}`);
+  if (res.status !== 200) {
+    throw new Error(`verifyKyc failed (${res.status}): ${await res.text()}`);
+  }
 }
 
 async function assignTag(admin: TestClient, playerId: string, tagKey: string) {
@@ -67,7 +69,9 @@ async function assignTag(admin: TestClient, playerId: string, tagKey: string) {
     assignReason: 'qa e2e fixture',
     assignActor: 'manual',
   });
-  if (res.status !== 200) throw new Error(`assignTag failed (${res.status}): ${await res.text()}`);
+  if (res.status !== 200) {
+    throw new Error(`assignTag failed (${res.status}): ${await res.text()}`);
+  }
 }
 
 async function pendingWithdrawalIds(admin: TestClient, currency = 'USD') {
@@ -112,21 +116,21 @@ afterAll(async () => {
   await db?.dispose();
 });
 
-describe('Auto-withdrawal: single-shot gates (appGated - fiatThreshold 200)', () => {
+describe('Auto-withdrawal: single-shot gates (appGated - fiatThreshold 2)', () => {
   it('auto-completes a fiat withdrawal under threshold, with a KYC-verified untagged player', async () => {
     const email = `auto-ok-${randomUUID()}@e2e.test`;
     const { client, playerId, userId } = await registerAndMaterializePlayer(appGated.app, email);
     const admin = await asAdmin(appGated.app);
     await verifyKyc(admin, playerId);
 
-    await client.post('/wallet/deposit', { amount: 500, currency: 'USD' });
-    const res = await client.post('/wallet/withdraw', { amount: 50, currency: 'USD' });
+    await client.post('/wallet/deposit', { amount: '5', currency: 'USD' });
+    const res = await client.post('/wallet/withdraw', { amount: '0.5', currency: 'USD' });
     expect(res.status).toBe(200);
     const body = await readJson(res);
     expect(body.status).toBe('completed');
 
     const balance = (await readJson(await client.get('/wallet/balance'))).balance;
-    expect(balance).toBe(450);
+    expect(balance).toBe('4.50');
 
     const pending = await pendingWithdrawalIds(admin);
     expect(pending.has(body.transactionId)).toBe(false);
@@ -140,7 +144,7 @@ describe('Auto-withdrawal: single-shot gates (appGated - fiatThreshold 200)', ()
       expect(auditBody.items[0].actorType).toBe('system');
       expect(auditBody.items[0].after).toMatchObject({
         userId,
-        threshold: 200,
+        threshold: '2',
         thresholdSource: 'global',
         kycStatus: 'verified',
         riskTagsEvaluated: [],
@@ -154,8 +158,8 @@ describe('Auto-withdrawal: single-shot gates (appGated - fiatThreshold 200)', ()
     const admin = await asAdmin(appGated.app);
     // No verifyKyc() call - player stays at the default kycStatus 'pending'.
 
-    await client.post('/wallet/deposit', { amount: 300, currency: 'USD' });
-    const res = await client.post('/wallet/withdraw', { amount: 50, currency: 'USD' });
+    await client.post('/wallet/deposit', { amount: '3', currency: 'USD' });
+    const res = await client.post('/wallet/withdraw', { amount: '0.5', currency: 'USD' });
     // gateWithdrawals is off, so the withdraw request itself succeeds...
     expect(res.status).toBe(200);
     const body = await readJson(res);
@@ -173,8 +177,8 @@ describe('Auto-withdrawal: single-shot gates (appGated - fiatThreshold 200)', ()
     await verifyKyc(admin, playerId);
     await assignTag(admin, playerId, 'high_risk');
 
-    await client.post('/wallet/deposit', { amount: 300, currency: 'USD' });
-    const res = await client.post('/wallet/withdraw', { amount: 50, currency: 'USD' });
+    await client.post('/wallet/deposit', { amount: '3', currency: 'USD' });
+    const res = await client.post('/wallet/withdraw', { amount: '0.5', currency: 'USD' });
     expect(res.status).toBe(200);
     const body = await readJson(res);
     expect(body.status).toBe('pending');
@@ -189,8 +193,8 @@ describe('Auto-withdrawal: single-shot gates (appGated - fiatThreshold 200)', ()
     const admin = await asAdmin(appGated.app);
     await verifyKyc(admin, playerId);
 
-    await client.post('/wallet/deposit', { amount: 500, currency: 'USD' });
-    const res = await client.post('/wallet/withdraw', { amount: 250, currency: 'USD' });
+    await client.post('/wallet/deposit', { amount: '5', currency: 'USD' });
+    const res = await client.post('/wallet/withdraw', { amount: '2.5', currency: 'USD' });
     expect(res.status).toBe(200);
     const body = await readJson(res);
     expect(body.status).toBe('pending');
@@ -205,8 +209,8 @@ describe('Auto-withdrawal: single-shot gates (appGated - fiatThreshold 200)', ()
     const admin = await asAdmin(appGated.app);
     await verifyKyc(admin, playerId);
 
-    await client.post('/wallet/deposit', { amount: 10, currency: 'BTC' });
-    const res = await client.post('/wallet/withdraw', { amount: 1, currency: 'BTC' });
+    await client.post('/wallet/deposit', { amount: '0.1', currency: 'BTC' });
+    const res = await client.post('/wallet/withdraw', { amount: '0.01', currency: 'BTC' });
     expect(res.status).toBe(200);
     const body = await readJson(res);
     expect(body.status).toBe('pending');
@@ -222,14 +226,14 @@ describe('Auto-withdrawal: single-shot gates (appGated - fiatThreshold 200)', ()
     await verifyKyc(admin, playerId);
 
     const setRes = await admin.put(`/wallet/auto-withdrawal-rules/${userId}`, {
-      threshold: 10,
+      threshold: '0.1',
       reason: 'watchlist - lower ceiling',
     });
     expect(setRes.status).toBe(200);
 
-    await client.post('/wallet/deposit', { amount: 500, currency: 'USD' });
-    // 40 is well under the global 200 threshold but over the per-player rule's 10.
-    const res = await client.post('/wallet/withdraw', { amount: 40, currency: 'USD' });
+    await client.post('/wallet/deposit', { amount: '5', currency: 'USD' });
+    // 0.4 is well under the global 2 threshold but over the per-player rule's 0.1.
+    const res = await client.post('/wallet/withdraw', { amount: '0.4', currency: 'USD' });
     const body = await readJson(res);
     expect(body.status).toBe('pending');
   });
@@ -241,14 +245,14 @@ describe('Auto-withdrawal: single-shot gates (appGated - fiatThreshold 200)', ()
     await verifyKyc(admin, playerId);
 
     const setRes = await admin.put(`/wallet/auto-withdrawal-rules/${userId}`, {
-      threshold: 300,
+      threshold: '3',
       reason: 'trusted long-standing player',
     });
     expect(setRes.status).toBe(200);
 
-    await client.post('/wallet/deposit', { amount: 500, currency: 'USD' });
-    // 250 exceeds the global 200 threshold but is under the per-player rule's 300.
-    const res = await client.post('/wallet/withdraw', { amount: 250, currency: 'USD' });
+    await client.post('/wallet/deposit', { amount: '5', currency: 'USD' });
+    // 2.5 exceeds the global 2 threshold but is under the per-player rule's 3.
+    const res = await client.post('/wallet/withdraw', { amount: '2.5', currency: 'USD' });
     const body = await readJson(res);
     expect(body.status).toBe('completed');
 
@@ -258,7 +262,7 @@ describe('Auto-withdrawal: single-shot gates (appGated - fiatThreshold 200)', ()
       );
       const auditBody = await readJson(auditRes);
       expect(auditBody.items[0].after).toMatchObject({
-        threshold: 300,
+        threshold: '3.00',
         thresholdSource: 'per-player',
       });
     });
@@ -272,15 +276,15 @@ describe('Auto-withdrawal: daily cap (appCapGated - dailyCapCount 1)', () => {
     const admin = await asAdmin(appCapGated.app);
     await verifyKyc(admin, playerId);
 
-    await client.post('/wallet/deposit', { amount: 500, currency: 'USD' });
+    await client.post('/wallet/deposit', { amount: '5', currency: 'USD' });
 
     const first = await readJson(
-      await client.post('/wallet/withdraw', { amount: 30, currency: 'USD' }),
+      await client.post('/wallet/withdraw', { amount: '0.3', currency: 'USD' }),
     );
     expect(first.status).toBe('completed');
 
     const second = await readJson(
-      await client.post('/wallet/withdraw', { amount: 30, currency: 'USD' }),
+      await client.post('/wallet/withdraw', { amount: '0.3', currency: 'USD' }),
     );
     expect(second.status).toBe('pending');
 
@@ -308,7 +312,7 @@ describe('Auto-withdrawal-rule routes: authz + audit', () => {
     const anonSet = await appDefault.app.request(`/wallet/auto-withdrawal-rules/${userId}`, {
       method: 'PUT',
       headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ threshold: 100, reason: 'no session' }),
+      body: JSON.stringify({ threshold: '1', reason: 'no session' }),
     });
     expect(anonSet.status).toBe(401);
     const anonGet = await appDefault.app.request(`/wallet/auto-withdrawal-rules/${userId}`);
@@ -320,7 +324,7 @@ describe('Auto-withdrawal-rule routes: authz + audit', () => {
 
     // 403: authenticated but missing the specific permission.
     const staffSet = await staffClient.put(`/wallet/auto-withdrawal-rules/${userId}`, {
-      threshold: 100,
+      threshold: '1',
       reason: 'should be denied',
     });
     expect(staffSet.status).toBe(403);
@@ -331,16 +335,16 @@ describe('Auto-withdrawal-rule routes: authz + audit', () => {
 
     // Admin: full round trip + audit trail on set and delete.
     const setRes = await admin.put(`/wallet/auto-withdrawal-rules/${userId}`, {
-      threshold: 150,
+      threshold: '1.5',
       reason: 'admin round trip',
     });
     expect(setRes.status).toBe(200);
     const rule = await readJson(setRes);
-    expect(rule).toMatchObject({ userId, threshold: 150, reason: 'admin round trip' });
+    expect(rule).toMatchObject({ userId, threshold: '1.50', reason: 'admin round trip' });
 
     const getRes = await admin.get(`/wallet/auto-withdrawal-rules/${userId}`);
     expect(getRes.status).toBe(200);
-    expect(await readJson(getRes)).toMatchObject({ threshold: 150 });
+    expect(await readJson(getRes)).toMatchObject({ threshold: '1.50' });
 
     await vi.waitFor(async () => {
       const auditRes = await admin.get(
@@ -349,7 +353,7 @@ describe('Auto-withdrawal-rule routes: authz + audit', () => {
       const auditBody = await readJson(auditRes);
       expect(auditBody.items.length).toBeGreaterThanOrEqual(1);
       expect(auditBody.items[0].after).toMatchObject({
-        threshold: 150,
+        threshold: '1.50',
         reason: 'admin round trip',
       });
     });
@@ -377,14 +381,14 @@ describe('Manual withdrawal approve/reject regression (appDefault - autoWithdraw
     const { client } = await registerAndMaterializePlayer(appDefault.app, email);
     const admin = await asAdmin(appDefault.app);
 
-    await client.post('/wallet/deposit', { amount: 300, currency: 'USD' });
+    await client.post('/wallet/deposit', { amount: '3', currency: 'USD' });
 
     const w1 = await readJson(
-      await client.post('/wallet/withdraw', { amount: 60, currency: 'USD' }),
+      await client.post('/wallet/withdraw', { amount: '0.6', currency: 'USD' }),
     );
     expect(w1.status).toBe('pending');
     const balanceAfterHold = (await readJson(await client.get('/wallet/balance'))).balance;
-    expect(balanceAfterHold).toBe(240);
+    expect(balanceAfterHold).toBe('2.40');
 
     const approveRes = await admin.post(`/wallet/withdrawals/${w1.transactionId}/approve`, {
       withdrawalId: w1.transactionId,
@@ -393,11 +397,11 @@ describe('Manual withdrawal approve/reject regression (appDefault - autoWithdraw
     expect((await readJson(approveRes)).status).toBe('completed');
 
     const w2 = await readJson(
-      await client.post('/wallet/withdraw', { amount: 40, currency: 'USD' }),
+      await client.post('/wallet/withdraw', { amount: '0.4', currency: 'USD' }),
     );
     expect(w2.status).toBe('pending');
     const balanceAfterSecondHold = (await readJson(await client.get('/wallet/balance'))).balance;
-    expect(balanceAfterSecondHold).toBe(200); // 240 - 40
+    expect(balanceAfterSecondHold).toBe('2.00'); // 2.40 - 0.40
 
     const rejectRes = await admin.post(`/wallet/withdrawals/${w2.transactionId}/reject`, {
       withdrawalId: w2.transactionId,
@@ -408,6 +412,6 @@ describe('Manual withdrawal approve/reject regression (appDefault - autoWithdraw
 
     const balanceAfterReject = (await readJson(await client.get('/wallet/balance'))).balance;
     // Held funds are returned on reject.
-    expect(balanceAfterReject).toBe(240);
+    expect(balanceAfterReject).toBe('2.40');
   });
 });

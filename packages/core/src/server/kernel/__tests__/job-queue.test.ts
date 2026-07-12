@@ -3,6 +3,7 @@ import { mock } from '../../../testing/mock.js';
 import { z } from 'zod';
 import type { Logger } from 'pino';
 import { queue } from '@openora/core/contracts';
+import { findOneOrThrow } from '@openora/core/server';
 import { InProcessJobQueue } from '../job-queue.js';
 
 function fakeLogger() {
@@ -15,7 +16,9 @@ const wait = (ms: number) => new Promise((r) => setTimeout(r, ms));
 // Returns as soon as predicate holds rather than sleeping a fixed amount, avoiding CI scheduling jitter.
 async function waitFor(predicate: () => boolean, timeoutMs = 2000): Promise<void> {
   const deadline = Date.now() + timeoutMs;
-  while (!predicate() && Date.now() < deadline) await wait(5);
+  while (!predicate() && Date.now() < deadline) {
+    await wait(5);
+  }
 }
 
 const Payload = z.object({ value: z.string() });
@@ -86,7 +89,8 @@ describe('InProcessJobQueue', () => {
 
     expect(attempts).toEqual([1, 2, 3]);
     expect(dead).toHaveBeenCalledOnce();
-    expect((dead.mock.calls[0]![1] as Error).message).toBe('boom');
+    const deadCall = findOneOrThrow(dead.mock.calls, new Error('expected a dead-letter call'));
+    expect((deadCall[1] as Error).message).toBe('boom');
     await q.close();
   });
 
