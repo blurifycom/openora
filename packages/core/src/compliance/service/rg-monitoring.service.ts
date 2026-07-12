@@ -1,4 +1,4 @@
-import { DrizzleService, pageToOffset, moneyToNumber } from '@openora/core/server';
+import { DrizzleService, pageToOffset, moneyToNumber, mapConcurrent } from '@openora/core/server';
 import { and, eq, or, gt, gte, lte, isNull, inArray, desc, sql, type SQL } from 'drizzle-orm';
 import type { AdminUserDirectory, LimitType, LimitPeriod, User } from '@openora/core/contracts';
 import { userLimit, rgFlag, rgExclusion } from '../schema/index.js';
@@ -17,6 +17,10 @@ export const RG_EVAL_TRIGGERS = [
 export type RgEvalTrigger = (typeof RG_EVAL_TRIGGERS)[number];
 
 const SESSION_LIMIT = { type: 'session', period: 'session' } as const;
+
+// Cap in-flight flag writes per sweep so a large session-limit population can't exhaust the
+// shared pg pool. ponytail: fixed cap; raise only if a single sweep can't keep up.
+const SWEEP_CONCURRENCY = 10;
 
 export type RgMonitoringDeps = {
   drizzle: DrizzleService;
@@ -109,24 +113,21 @@ export class RgMonitoringService {
       }
     }
 
-    await Promise.all(
-      sessionLimits
-        .filter((limit) => limit.minutes !== null)
-        .map((limit) => {
-          const limitMinutes = limit.minutes as number;
-          const longest = earliestByUser.get(limit.userId) ?? null;
-          const elapsedMinutes = longest ? (now.getTime() - longest.getTime()) / 60000 : 0;
+    const pending = sessionLimits.filter((limit) => limit.minutes !== null);
+    await mapConcurrent(pending, SWEEP_CONCURRENCY, (limit) => {
+      const limitMinutes = limit.minutes as number;
+      const longest = earliestByUser.get(limit.userId) ?? null;
+      const elapsedMinutes = longest ? (now.getTime() - longest.getTime()) / 60000 : 0;
 
-          if (longest && isAtThreshold(elapsedMinutes, limitMinutes)) {
-            return this.raiseFlag(limit.userId, 'session_time', null, {
-              sessionMinutes: elapsedMinutes,
-              limitMinutes,
-              pct: thresholdPct(elapsedMinutes, limitMinutes),
-            });
-          }
-          return this.clearFlag(limit.userId, 'session_time', null);
-        }),
-    );
+      if (longest && isAtThreshold(elapsedMinutes, limitMinutes)) {
+        return this.raiseFlag(limit.userId, 'session_time', null, {
+          sessionMinutes: elapsedMinutes,
+          limitMinutes,
+          pct: thresholdPct(elapsedMinutes, limitMinutes),
+        });
+      }
+      return this.clearFlag(limit.userId, 'session_time', null);
+    });
   }
 
   async listFlags(filters: ListRgFlagsInput) {

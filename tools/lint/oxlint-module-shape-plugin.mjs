@@ -44,6 +44,17 @@
 //     `Uuid` (`@openora/core/contracts`) - never a bare string. A short allowlist covers the
 //     genuinely-external ids the conventions doc already carves out (eg a KYC vendor's own
 //     reference id).
+//   no-unbounded-db-fanout - `Promise.all(rows.map(fn))` over a query result in a service/router
+//     file, where the fan-out opens one pool connection per row. Use mapConcurrent (bounded).
+//   no-naive-timestamp - `timestamp()` in a schema file without { withTimezone: true } - drops
+//     the zone; every datetime column is timestamptz (db-conventions).
+//   no-float-money - `real()`/`doublePrecision()`/`float()` in a schema file - money is exact
+//     decimal (ADR-0029); disable-with-note for a genuine non-money float.
+//   drizzle-snake-case - a pgTable/pgEnum/index name, or an explicit column name, that is not
+//     snake_case - drizzle derives snake_case columns from the camelCase key (db-conventions).
+//   no-raw-z-uuid - `z.uuid()`/`z.string().uuid()` in core source - use the shared UuidSchema.
+//   no-inline-z-enum-outside-contract - `z.enum([...])` inline outside a contract/schemas dir -
+//     define the enum triple on the contract surface (single source of truth).
 
 const ENGINE_ZONES = new Set(['contracts', 'server', 'react', 'scripts']);
 // common/ and testing/ are cross-cutting utility dirs, not folded domains (no index.ts at
@@ -487,6 +498,283 @@ const noBareStringIdParam = {
   },
 };
 
+function isPromiseAllCallee(callee) {
+  return (
+    callee?.type === 'MemberExpression' &&
+    callee.object?.type === 'Identifier' &&
+    callee.object.name === 'Promise' &&
+    callee.property?.type === 'Identifier' &&
+    (callee.property.name === 'all' || callee.property.name === 'allSettled')
+  );
+}
+
+// A `.map()`/`.flatMap()` call whose receiver is NOT an array literal - ie a collection of
+// unknown size (a query result). `Promise.all([a, b].map(...))` over a literal is a fixed,
+// bounded fan-out and is left alone.
+function isUnboundedMapCall(node) {
+  if (node?.type !== 'CallExpression' || node.callee?.type !== 'MemberExpression') {
+    return false;
+  }
+  const { property, object } = node.callee;
+  if (property?.type !== 'Identifier' || (property.name !== 'map' && property.name !== 'flatMap')) {
+    return false;
+  }
+  return object?.type !== 'ArrayExpression';
+}
+
+const noUnboundedDbFanout = {
+  create(context) {
+    if (!isServiceOrRouterFile(filename(context))) {
+      return {};
+    }
+    return {
+      CallExpression(node) {
+        if (!isPromiseAllCallee(node.callee) || !isUnboundedMapCall(node.arguments?.[0])) {
+          return;
+        }
+        context.report({
+          node,
+          message:
+            'Promise.all over a mapped query result fans out one DB connection per row and ' +
+            'exhausts the pool at scale. Use mapConcurrent(items, limit, fn) from ' +
+            '@openora/core/server, or oxlint-disable this line with a note if the collection ' +
+            'is provably bounded (eg a fixed worker set).',
+        });
+      },
+    };
+  },
+};
+
+// A drizzle schema file - tables live in a `schema/` dir (folded domains) or a `schema.ts`
+// leaf (eg server/db/outbox). The contracts `schemas/` dir (plural) holds ZOD schemas, not
+// drizzle tables, so it is explicitly out of scope.
+function isDrizzleSchemaFile(file) {
+  const segments = coreSrcSegments(file);
+  if (!segments || segments.includes('schemas')) {
+    return false;
+  }
+  return segments.includes('schema') || segments.at(-1) === 'schema.ts';
+}
+
+function stringLiteralValue(node) {
+  return node && typeof node.value === 'string' ? node.value : null;
+}
+
+function isIdentifierCallee(node, name) {
+  return node.callee?.type === 'Identifier' && node.callee.name === name;
+}
+
+const noNaiveTimestamp = {
+  create(context) {
+    if (!isDrizzleSchemaFile(filename(context))) {
+      return {};
+    }
+    return {
+      CallExpression(node) {
+        if (!isIdentifierCallee(node, 'timestamp')) {
+          return;
+        }
+        const hasTz = node.arguments?.some(
+          (arg) =>
+            arg?.type === 'ObjectExpression' &&
+            arg.properties?.some(
+              (p) =>
+                p.type === 'Property' &&
+                p.key?.type === 'Identifier' &&
+                p.key.name === 'withTimezone' &&
+                p.value?.type === 'Literal' &&
+                p.value.value === true,
+            ),
+        );
+        if (!hasTz) {
+          context.report({
+            node,
+            message:
+              'timestamp() without { withTimezone: true } stores a naive datetime and drops the ' +
+              'zone. Every *At column is timestamptz - use timestamp({ withTimezone: true }).',
+          });
+        }
+      },
+    };
+  },
+};
+
+const FLOAT_COLUMN_BUILDERS = new Set(['real', 'doublePrecision', 'float']);
+
+const noFloatMoney = {
+  create(context) {
+    if (!isDrizzleSchemaFile(filename(context))) {
+      return {};
+    }
+    return {
+      CallExpression(node) {
+        if (node.callee?.type !== 'Identifier' || !FLOAT_COLUMN_BUILDERS.has(node.callee.name)) {
+          return;
+        }
+        context.report({
+          node,
+          message:
+            `${node.callee.name}() is IEEE float - money must be exact decimal (ADR-0029). ` +
+            'Use decimal({ precision: 18, scale: 2 }) with a currency column. For a genuine ' +
+            'non-money float, oxlint-disable this line with a note.',
+        });
+      },
+    };
+  },
+};
+
+const DRIZZLE_NAME_DECLARERS = new Set([
+  'pgTable',
+  'pgEnum',
+  'index',
+  'uniqueIndex',
+  'foreignKey',
+  'primaryKey',
+  'unique',
+]);
+const DRIZZLE_COLUMN_BUILDERS = new Set([
+  'uuid',
+  'text',
+  'varchar',
+  'char',
+  'integer',
+  'bigint',
+  'smallint',
+  'serial',
+  'bigserial',
+  'boolean',
+  'timestamp',
+  'date',
+  'time',
+  'interval',
+  'decimal',
+  'numeric',
+  'real',
+  'doublePrecision',
+  'json',
+  'jsonb',
+  'inet',
+]);
+
+function isSnakeCase(value) {
+  return /^[a-z][a-z0-9_]*$/.test(value);
+}
+
+const drizzleSnakeCase = {
+  create(context) {
+    if (!isDrizzleSchemaFile(filename(context))) {
+      return {};
+    }
+    return {
+      CallExpression(node) {
+        if (node.callee?.type !== 'Identifier') {
+          return;
+        }
+        const name = node.callee.name;
+        const literal = stringLiteralValue(node.arguments?.[0]);
+        // Column builders take an OPTIONAL explicit name; when present it must be snake_case
+        // (drizzle derives it from the camelCase key via casing:'snake_case', so a camelCase
+        // literal produces a camelCase SQL column). Name-declarers always take a name string.
+        const isDeclarer = DRIZZLE_NAME_DECLARERS.has(name);
+        if (!isDeclarer && !DRIZZLE_COLUMN_BUILDERS.has(name)) {
+          return;
+        }
+        if (literal === null || isSnakeCase(literal)) {
+          return;
+        }
+        context.report({
+          node,
+          message: `'${literal}' is not snake_case. Drizzle SQL identifiers (${
+            isDeclarer ? 'table/enum/index names' : 'columns'
+          }) are snake_case - ${
+            isDeclarer
+              ? 'name it in snake_case'
+              : "drop the explicit name and let casing:'snake_case' derive it from the key"
+          }.`,
+        });
+      },
+    };
+  },
+};
+
+// Walk a member-call chain (z.string().uuid()) back to its root identifier.
+function rootIdentifierName(node) {
+  let current = node;
+  while (current) {
+    if (current.type === 'Identifier') {
+      return current.name;
+    }
+    if (current.type === 'CallExpression') {
+      current = current.callee;
+    } else if (current.type === 'MemberExpression') {
+      current = current.object;
+    } else {
+      return null;
+    }
+  }
+  return null;
+}
+
+const noRawZUuid = {
+  create(context) {
+    const file = filename(context);
+    // Scope to the platform's own source; the one sanctioned definition is the shared schema.
+    if (!coreSrcSegments(file) || file.endsWith('contracts/schemas/common.ts')) {
+      return {};
+    }
+    return {
+      CallExpression(node) {
+        const callee = node.callee;
+        if (
+          callee?.type !== 'MemberExpression' ||
+          callee.property?.type !== 'Identifier' ||
+          callee.property.name !== 'uuid' ||
+          rootIdentifierName(callee.object) !== 'z'
+        ) {
+          return;
+        }
+        context.report({
+          node,
+          message:
+            'Use UuidSchema (@openora/core/contracts) instead of z.uuid()/z.string().uuid() - ' +
+            'a single source of truth for the uuid shape across contracts.',
+        });
+      },
+    };
+  },
+};
+
+const noInlineZEnumOutsideContract = {
+  create(context) {
+    const file = filename(context);
+    if (!coreSrcSegments(file) || isContractOrSchemaZone(file)) {
+      return {};
+    }
+    return {
+      CallExpression(node) {
+        const callee = node.callee;
+        if (
+          callee?.type !== 'MemberExpression' ||
+          callee.object?.type !== 'Identifier' ||
+          callee.object.name !== 'z' ||
+          callee.property?.type !== 'Identifier' ||
+          callee.property.name !== 'enum' ||
+          node.arguments?.[0]?.type !== 'ArrayExpression'
+        ) {
+          return;
+        }
+        context.report({
+          node,
+          message:
+            'Inline z.enum([...]) duplicates a value set. Define the enum triple (values tuple + ' +
+            'z.enum(tuple) + inferred type) on the contract surface and import it - single source ' +
+            'of truth for enums (see conventions section 3).',
+        });
+      },
+    };
+  },
+};
+
 export default {
   meta: { name: 'oss-module-shape' },
   rules: {
@@ -496,5 +784,11 @@ export default {
     'no-relative-zone-escape': noRelativeZoneEscape,
     'no-reinfer-imported-schema': noReinferImportedSchema,
     'no-bare-string-id-param': noBareStringIdParam,
+    'no-unbounded-db-fanout': noUnboundedDbFanout,
+    'no-naive-timestamp': noNaiveTimestamp,
+    'no-float-money': noFloatMoney,
+    'drizzle-snake-case': drizzleSnakeCase,
+    'no-raw-z-uuid': noRawZUuid,
+    'no-inline-z-enum-outside-contract': noInlineZEnumOutsideContract,
   },
 };

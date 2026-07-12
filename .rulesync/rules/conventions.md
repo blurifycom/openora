@@ -65,7 +65,8 @@ Goal: code that is clean, separated, scalable, and extendible - easy to understa
 - **`type` over `interface`** (lint-enforced).
 - **Type entity ids through their owning type**: `User['id']`, never a bare `string` - the id's representation lives in one place and every signature follows when it changes (lint: `oss-module-shape/no-bare-string-id-param`). Bad: `roleId: string`. Good: `roleId: AdminRole['id']`.
 - **Derive related schemas, never re-type fields**: `UserSchema.partial().omit({ id: true })`.
-- **Enum-like value sets are a values + schema + type triple, declared once on the contract surface**: `X_STATUSES = [...] as const` -> `XStatusSchema = z.enum(X_STATUSES)` -> inferred `XStatus`. Anything in a route contract is public API - consumers need the runtime values (dropdowns, badge maps), so types alone are not enough. Never TS `enum`; never a second hand-typed copy of the set (in a consumer either - import it).
+- **Enum-like value sets are a values + schema + type triple, declared once on the contract surface**: `X_STATUSES = [...] as const` -> `XStatusSchema = z.enum(X_STATUSES)` -> inferred `XStatus`. Anything in a route contract is public API - consumers need the runtime values (dropdowns, badge maps), so types alone are not enough. Never TS `enum`; never a second hand-typed copy of the set (in a consumer either - import it). Inline `z.enum([...])` outside a contract dir is a lint error (`oss-module-shape/no-inline-z-enum-outside-contract`).
+- **Reuse `UuidSchema`** (`@openora/core/contracts`) for uuid fields, never a raw `z.uuid()`/`z.string().uuid()` - one source of truth for the shape (lint: `oss-module-shape/no-raw-z-uuid`).
 - **Make illegal states unrepresentable** - discriminated unions (`{ status: 'loading' } | { status: 'ok'; data } | { status: 'error'; error }`) over optional-flag soup (`{ loading: boolean; data?: T; error?: Error }`).
 
 ## 4. Functions, modules, and classes

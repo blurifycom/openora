@@ -6,7 +6,7 @@ import {
   type TagRule,
   type User,
 } from '@openora/core/contracts';
-import { moneyToNumber } from '@openora/core/server';
+import { moneyToNumber, mapConcurrent } from '@openora/core/server';
 import { TagService, TagAlreadyInUseError, TagAssignmentNotFoundError } from './tag.service.js';
 import { TagRuleService, TagRuleNotFoundError } from './tag-rule.service.js';
 
@@ -215,16 +215,10 @@ export class TagEvaluationService {
     const sinceDate = new Date(Date.now() - rule.thresholdDays * 24 * 60 * 60 * 1000);
     const userIds = await this.identityReader.getPlayerIdsInactiveSince(sinceDate);
 
-    // Chunked so the inactive-player set (unbounded) can't open one DB round-trip per
-    // user or one giant Promise.all; EVAL_CHUNK_SIZE caps in-flight assignments.
-    for (let i = 0; i < userIds.length; i += EVAL_CHUNK_SIZE) {
-      await Promise.all(
-        userIds
-          .slice(i, i + EVAL_CHUNK_SIZE)
-          .map((userId) =>
-            this.tryAssignTag(userId, 'inactive', 'no login for configured threshold'),
-          ),
-      );
-    }
+    // Capped fan-out: the inactive-player set is unbounded, so hold at most EVAL_CHUNK_SIZE
+    // assignments in flight rather than one giant Promise.all that would exhaust the pool.
+    await mapConcurrent(userIds, EVAL_CHUNK_SIZE, (userId) =>
+      this.tryAssignTag(userId, 'inactive', 'no login for configured threshold'),
+    );
   }
 }

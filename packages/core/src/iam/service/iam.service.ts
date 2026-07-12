@@ -303,18 +303,39 @@ export class IamService {
     return rows.map((r) => ({ resource: r.resource, level: r.level as PermissionLevel }));
   }
 
+  // One batched query for a page of roles - avoids an N+1 rolePermissions() per row.
+  private async rolePermissionsByRole(roleIds: AdminRole['id'][]) {
+    const byRole = new Map<AdminRole['id'], { resource: string; level: PermissionLevel }[]>();
+    if (roleIds.length === 0) {
+      return byRole;
+    }
+    const rows = await this.drizzle.db
+      .select({
+        roleId: adminRolePermission.roleId,
+        resource: adminRolePermission.resource,
+        level: adminRolePermission.level,
+      })
+      .from(adminRolePermission)
+      .where(inArray(adminRolePermission.roleId, roleIds));
+    for (const r of rows) {
+      const list = byRole.get(r.roleId) ?? [];
+      list.push({ resource: r.resource, level: r.level });
+      byRole.set(r.roleId, list);
+    }
+    return byRole;
+  }
+
   async listRoles({ page, limit }: Page) {
     const offset = pageToOffset(page, limit);
     const [rows, countResult] = await Promise.all([
       this.drizzle.db.select().from(adminRole).limit(limit).offset(offset),
       this.drizzle.db.select({ count: sql<number>`count(*)::int` }).from(adminRole),
     ]);
-    const items = await Promise.all(
-      rows.map(async (row) => ({
-        ...toRoleDto(row),
-        permissions: await this.rolePermissions(row.id),
-      })),
-    );
+    const permissionsByRole = await this.rolePermissionsByRole(rows.map((r) => r.id));
+    const items = rows.map((row) => ({
+      ...toRoleDto(row),
+      permissions: permissionsByRole.get(row.id) ?? [],
+    }));
     return { items, total: countResult[0]?.count ?? 0, page, limit };
   }
 

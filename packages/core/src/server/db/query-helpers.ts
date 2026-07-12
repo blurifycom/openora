@@ -21,6 +21,30 @@ export function moneyToNumber(amount: string): number {
   return Number(amount);
 }
 
+// Run `fn` over `items` with at most `concurrency` promises in flight, results in input
+// order. Use this instead of `Promise.all(items.map(fn))` whenever `items` comes from a
+// query (unbounded) and `fn` touches the DB: an uncapped fan-out opens one pool connection
+// per item, exhausts the pool, and starves every other query on the same Postgres instance.
+// Enforced in service files by oss-module-shape/no-unbounded-db-fanout.
+export async function mapConcurrent<T, R>(
+  items: readonly T[],
+  concurrency: number,
+  fn: (item: T, index: number) => Promise<R>,
+): Promise<R[]> {
+  const results = Array.from<R>({ length: items.length });
+  let cursor = 0;
+  const worker = async () => {
+    while (cursor < items.length) {
+      const index = cursor;
+      cursor += 1;
+      results[index] = await fn(items[index], index);
+    }
+  };
+  const workers = Math.max(1, Math.min(concurrency, items.length));
+  await Promise.all(Array.from({ length: workers }, worker));
+  return results;
+}
+
 // Serialize a critical section per `key` with a transaction-scoped Postgres advisory lock
 // (auto-released on commit/rollback). `hashtext` maps the string key to the required bigint. Must run in a transaction.
 export async function withAdvisoryXactLock<T>(
