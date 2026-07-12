@@ -41,7 +41,7 @@ export type KycAdapter = {
   /**
    * Provider-specific normalization of a raw webhook into a vendor decision, or
    * null when the body is not a reconcilable decision. Optional - MockKycAdapter
-   * omits it; the Didit/SumSub overlay (ABC-293) implements it.
+   * omits it; the Didit/SumSub overlay implements it.
    */
   parseWebhook?(
     rawBody: string,
@@ -80,7 +80,7 @@ export const KYC_STATUS_WRITER: Token<KycStatusWriter> = createToken('KYC_STATUS
  * `x-kyc-signature` header; a vendor overlay rebinds it. Fails closed when the secret is
  * unset, the signature is absent, or the raw body was not captured. Takes the full
  * headers map (not a pre-extracted value) because the signing header name is
- * vendor-specific - eg SumSub vs a hosted-session vendor each name it differently -
+ * vendor-specific - eg SumSub vs a hosted-session vendor each names it differently -
  * so each implementation extracts whatever header(s) it actually needs.
  */
 export type KycWebhookVerifier = {

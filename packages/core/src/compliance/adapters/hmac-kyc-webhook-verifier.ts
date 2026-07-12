@@ -1,15 +1,11 @@
 import { createHmac, timingSafeEqual } from 'node:crypto';
 import type { KycWebhookVerifier } from '@openora/core/contracts';
 
-/**
- * Case-insensitive lookup - the runtime normally lowercases header names (Fetch `Headers`),
- * but a caller passing raw framework headers may not.
- */
 function findHeader(
   headers: Record<string, string | string[] | undefined>,
   name: string,
 ): string | null {
-  const key = Object.keys(headers).find((k) => k.toLowerCase() === name);
+  const key = Object.keys(headers).find((k) => k.toLowerCase() === name.toLowerCase());
   if (!key) {
     return null;
   }
