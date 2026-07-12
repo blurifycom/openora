@@ -84,6 +84,34 @@ Goal: code that is clean, separated, scalable, and extendible - easy to understa
 - **A `class` is only a thin dependency-holding shell at a composition root; methods delegate to pure functions.**
 - **No inheritance for reuse - compose.** No decorators anywhere.
 - **Short, single-purpose functions.** If you'd comment "// step 2" inside a function, extract it.
+- **Guard clauses first, main path last.** Early-return the edge/simple cases up top; keep the biggest branch as the final unguarded return - flatter and easier to read than wrapping it in an `if`.
+  ```ts
+  // bad - main branch nested in an if
+  if (Array.isArray(v)) {
+    return v.map(f);
+  }
+  if (v !== null && typeof v === 'object') {
+    return heavy(v);
+  }
+  return v;
+  // good - edge cases guarded, heavy branch falls through to the end
+  if (Array.isArray(v)) {
+    return v.map(f);
+  }
+  if (v === null || typeof v !== 'object') {
+    return v;
+  }
+  return heavy(v);
+  ```
+- **Always brace control statements** - every `if`/`else`/`for`/`while` body in `{ }`, even one-liners (lint: `curly`).
+  ```ts
+  // bad
+  if (isActive) return true;
+  // good
+  if (isActive) {
+    return true;
+  }
+  ```
 - **Don't annotate a return type TypeScript can infer** - the body is the single source of truth. Annotate ONLY when:
   - inference can't (recursion), or
   - you deliberately widen/narrow, or

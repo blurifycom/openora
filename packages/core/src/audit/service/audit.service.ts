@@ -33,15 +33,17 @@ type CanonicalHashInput = Pick<
 // must have their nested key order canonicalized before hashing - otherwise record()
 // and verifyChain() disagree on the exact same data. Arrays keep their original order.
 function sortKeysDeep(value: unknown): unknown {
-  if (Array.isArray(value)) return value.map(sortKeysDeep);
-  if (value !== null && typeof value === 'object') {
-    const sorted: Record<string, unknown> = {};
-    for (const key of Object.keys(value as Record<string, unknown>).sort()) {
-      sorted[key] = sortKeysDeep((value as Record<string, unknown>)[key]);
-    }
-    return sorted;
+  if (Array.isArray(value)) {
+    return value.map(sortKeysDeep);
   }
-  return value;
+  if (value === null || typeof value !== 'object') {
+    return value;
+  }
+  return Object.fromEntries(
+    Object.keys(value as Record<string, unknown>)
+      .sort()
+      .map((key) => [key, sortKeysDeep((value as Record<string, unknown>)[key])]),
+  );
 }
 
 function canonicalHashInput(fields: CanonicalHashInput): string {
