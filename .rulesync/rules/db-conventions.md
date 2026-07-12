@@ -32,7 +32,7 @@ export const walletTransaction = pgTable(
     id: uuid().primaryKey().defaultRandom(),
     walletId: uuid().notNull(), // -> wallet_id
     type: walletTransactionType().notNull(), // pgEnum('wallet_transaction_type', ...)
-    amountCents: integer().notNull(),
+    amount: decimal({ precision: 18, scale: 2 }).notNull(),
     createdAt: timestamp({ withTimezone: true }).notNull().defaultNow(),
   },
   (t) => [index('wallet_transaction_wallet_id_idx').on(t.walletId)],
@@ -43,6 +43,14 @@ pgTable('WalletTransaction', { wallet_id: uuid('walletId') });
 ```
 
 Row type is `typeof walletTransaction.$inferSelect`; never hand-write it.
+
+## Money - exact decimal, never float, never scaled integer
+
+Every money column is `decimal()` (Postgres `NUMERIC`) - never `real`/`float`, never an
+`integer` "cents" column. Pair it with a `currency` column; on the wire, use the shared
+`MoneyAmountSchema` (decimal string) + `currency`, never `z.number()`. Balance math runs
+in SQL (`sql\`${wallet.balance} + ${amount}::numeric\``), never JS float arithmetic. Full
+rationale (multi-currency exponents, crypto, wire-format precedent): ADR-0029.
 
 ## Timestamps - always timestamptz
 
@@ -78,7 +86,7 @@ await db.select().from(wallet).where(inArray(wallet.id, ids));
 ```ts
 await db.transaction(async (t) => {
   if (await ledgerExists(t, idempotencyKey)) return; // guard, not just a key
-  await insertLedger(t, { idempotencyKey, amountCents });
+  await insertLedger(t, { idempotencyKey, amount });
 });
 ```
 
