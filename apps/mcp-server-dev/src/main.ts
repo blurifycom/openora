@@ -30,7 +30,7 @@ function readAddonKinds(): Map<string, string> {
   const src = readFile(repoPath('extensions.config.ts'));
   const out = new Map<string, string>();
   for (const m of src.matchAll(/\{[^}]*id:\s*'([^']+)'[^}]*\}/g)) {
-    out.set(m[1]!, /kind:\s*'addon'/.test(m[0]!) ? 'addon' : 'core');
+    out.set(m[1] ?? '', /kind:\s*'addon'/.test(m[0] ?? '') ? 'addon' : 'core');
   }
   return out;
 }
@@ -72,7 +72,7 @@ function listModulesFromConfig(): Array<{ id: string; path: string }> {
   if (!existsSync(configPath)) return [];
   const src = readFileSync(configPath, 'utf8');
   const matches = [...src.matchAll(/\{\s*id:\s*'([^']+)',\s*path:\s*'([^']+)'\s*\}/g)];
-  return matches.map((m) => ({ id: m[1]!, path: m[2]! }));
+  return matches.map((m) => ({ id: m[1] ?? '', path: m[2] ?? '' }));
 }
 
 function run(cmd: string): { ok: boolean; output: string } {
@@ -115,12 +115,12 @@ function extractDeclaration(src: string, name: string): { line: number; code: st
   const lines = src.split('\n');
   const startRe = new RegExp(`^\\s*export\\s+const\\s+${name}\\b`);
   for (let i = 0; i < lines.length; i++) {
-    if (!startRe.test(lines[i]!)) continue;
+    if (!startRe.test(lines[i] ?? '')) continue;
     let depth = 0;
     let started = false;
     const out: string[] = [];
     for (let j = i; j < lines.length; j++) {
-      const l = lines[j]!;
+      const l = lines[j] ?? '';
       out.push(l);
       for (const ch of l) {
         if (ch === '(' || ch === '{' || ch === '[') {
@@ -183,7 +183,7 @@ function readAdapterTokens(): string[] {
     for (const m of readFileSync(join(dir, f), 'utf8').matchAll(
       /^export const (\w+)(?::\s*Token<[^>]*>)?\s*=\s*(?:createToken|Symbol)/gm,
     )) {
-      out.push(m[1]!);
+      out.push(m[1] ?? '');
     }
   }
   return out;
@@ -754,7 +754,7 @@ server.registerTool(
     const names = new Set<string>();
     for (const file of files) {
       for (const m of readFileSync(file, 'utf8').matchAll(/export const (\w+Schema)\b/g)) {
-        names.add(m[1]!);
+        names.add(m[1] ?? '');
       }
     }
     const list = [...names].sort().join(', ');
@@ -789,8 +789,9 @@ server.registerTool(
       const lines = readFileSync(file, 'utf8').split('\n');
       const rel = file.replace(`${repoRoot}/`, '');
       for (let i = 0; i < lines.length; i++) {
-        if (lines[i]!.toLowerCase().includes(needle)) {
-          hits.push(`${rel}:${i + 1}: ${lines[i]!.trim()}`);
+        const line = lines[i] ?? '';
+        if (line.toLowerCase().includes(needle)) {
+          hits.push(`${rel}:${i + 1}: ${line.trim()}`);
           if (hits.length >= max) break;
         }
       }

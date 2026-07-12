@@ -1,6 +1,6 @@
 import { implement } from '@orpc/server';
 import { getUserId, mapErrors, type OssContext } from '@openora/core/server';
-import { notificationsContract } from '../contract/index.js';
+import { notificationsContract, NotificationTypeSchema } from '../contract/index.js';
 import {
   NotificationsService,
   NotificationNotFoundError,
@@ -15,6 +15,7 @@ export function createNotificationsRouter(notifications: NotificationsService) {
       notifications.listForUser(getUserId(context)).then((items) =>
         items.map((n) => ({
           ...n,
+          type: NotificationTypeSchema.parse(n.type),
           readAt: n.readAt ? n.readAt.toISOString() : null,
           createdAt: n.createdAt.toISOString(),
         })),

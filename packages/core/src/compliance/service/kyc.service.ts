@@ -1,10 +1,17 @@
-import { DrizzleService, type EventBus } from '@openora/core/server';
+import {
+  DrizzleService,
+  findOneOrThrow,
+  makeNotFoundError,
+  serializeRow,
+  type EventBus,
+} from '@openora/core/server';
 import type {
   KycAdapter,
   KycStatusWriter,
   KycVendorStatus,
   KycStatus,
   PlatformConfig,
+  User,
 } from '@openora/core/contracts';
 import { and, desc, eq, sql } from 'drizzle-orm';
 import { kycVerification, type KycVerification } from '../schema/index.js';
@@ -12,14 +19,12 @@ import { kycVerification, type KycVerification } from '../schema/index.js';
 // source of truth for lifetime deposits (player.totalDeposits is not maintained).
 import { player } from '@openora/core/pam/schema/profile';
 import { wallet, walletTransaction } from '@openora/core/wallet/schema';
-import type {
-  KycVerification as KycVerificationDto,
-  SubmitKycInput,
-  PlayerKycView,
-} from '../contract/index.js';
+import type { SubmitKycInput, PlayerKycView } from '../contract/index.js';
 import { CumulativeDepositReKycTrigger, type ReKycTrigger } from './re-kyc-trigger.js';
 
 const DEFAULT_PROVIDER = 'mock';
+
+export const KycVerificationNotFoundError = makeNotFoundError('KycVerification');
 
 function mapVendorStatus(vendor: KycVendorStatus) {
   switch (vendor) {
@@ -38,21 +43,10 @@ function isDecided(status: KycStatus) {
   return status === 'verified' || status === 'rejected';
 }
 
-function toDto(row: KycVerification): KycVerificationDto {
-  return {
-    id: row.id,
-    userId: row.userId,
-    provider: row.provider,
-    referenceId: row.referenceId,
-    status: row.status,
-    documentTypes: row.documentTypes,
-    decisionReason: row.decisionReason,
-    triggeredBy: row.triggeredBy,
-    submittedAt: row.submittedAt.toISOString(),
-    decidedAt: row.decidedAt ? row.decidedAt.toISOString() : null,
-    createdAt: row.createdAt.toISOString(),
-    updatedAt: row.updatedAt.toISOString(),
-  };
+function toDto(row: KycVerification) {
+  return serializeRow(row, {
+    dateFields: ['submittedAt', 'decidedAt', 'createdAt', 'updatedAt'],
+  });
 }
 
 /**
@@ -90,38 +84,42 @@ export class KycVerificationService {
     return this.platformConfig?.kyc?.provider ?? DEFAULT_PROVIDER;
   }
 
-  async submit(userId: string, input: SubmitKycInput) {
+  async submit(userId: User['id'], input: SubmitKycInput) {
     const result = await this.kycAdapter.submit(
       userId,
       input.documents.map((d) => ({ type: d.type, frontUrl: d.frontUrl, backUrl: d.backUrl })),
     );
     const status = mapVendorStatus(result.status);
     const decided = isDecided(status);
-    const [row] = await this.drizzle.db
-      .insert(kycVerification)
-      .values({
-        userId,
-        provider: this.provider,
-        referenceId: result.referenceId,
-        status,
-        documentTypes: input.documents.map((d) => d.type),
-        triggeredBy: 'submission',
-        decidedAt: decided ? new Date() : null,
-      })
-      .returning();
+    const row = findOneOrThrow(
+      await this.drizzle.db
+        .insert(kycVerification)
+        .values({
+          userId,
+          provider: this.provider,
+          referenceId: result.referenceId,
+          status,
+          documentTypes: input.documents.map((d) => d.type),
+          triggeredBy: 'submission',
+          decidedAt: decided ? new Date() : null,
+        })
+        .returning(),
+      new KycVerificationNotFoundError(userId),
+    );
     this.events.emit('compliance.kyc.submitted', {
       userId,
       referenceId: result.referenceId,
       provider: this.provider,
     });
     await this.statusWriter.setStatus(userId, status, { actorId: null, source: 'vendor' });
-    return toDto(row!);
+    return toDto(row);
   }
 
   /**
    * Idempotent vendor-decision apply (polling + webhook). No-op when the latest record
    * already holds the mapped status.
    */
+  // referenceId is the KYC vendor's own reference, not an internal Uuid - stays a plain string.
   async reconcile(referenceId: string, vendorStatus: KycVendorStatus, reason?: string) {
     const [existing] = await this.drizzle.db
       .select()
@@ -136,20 +134,23 @@ export class KycVerificationService {
       return toDto(existing);
     }
 
-    const [row] = await this.drizzle.db
-      .update(kycVerification)
-      .set({ status, decisionReason: reason ?? null, decidedAt: new Date() })
-      .where(eq(kycVerification.id, existing.id))
-      .returning();
+    const row = findOneOrThrow(
+      await this.drizzle.db
+        .update(kycVerification)
+        .set({ status, decisionReason: reason ?? null, decidedAt: new Date() })
+        .where(eq(kycVerification.id, existing.id))
+        .returning(),
+      new KycVerificationNotFoundError(existing.id),
+    );
     await this.statusWriter.setStatus(existing.userId, status, {
       actorId: null,
       source: 'webhook',
       reason,
     });
-    return toDto(row!);
+    return toDto(row);
   }
 
-  async getForPlayer(userId: string): Promise<PlayerKycView> {
+  async getForPlayer(userId: User['id']): Promise<PlayerKycView> {
     const rows = await this.drizzle.db
       .select()
       .from(kycVerification)
@@ -164,7 +165,7 @@ export class KycVerificationService {
    * over: skips unless presently `verified`, and the watermark stops a re-verified
    * high-roller re-firing on every later deposit.
    */
-  async handleDeposit(userId: string) {
+  async handleDeposit(userId: User['id']) {
     const [current] = await this.drizzle.db
       .select({ currency: player.currency, kycStatus: player.kycStatus })
       .from(player)
@@ -196,11 +197,11 @@ export class KycVerificationService {
       .orderBy(desc(kycVerification.createdAt))
       .limit(1);
 
-    const totalDeposits = Number(deposited?.total ?? 0);
+    const totalDeposits = deposited?.total ?? '0';
     const snapshot = {
       totalDeposits,
       currency: current.currency,
-      lastTriggeredDeposits: Number(lastFire?.triggerDeposits ?? 0),
+      lastTriggeredDeposits: lastFire?.triggerDeposits ?? '0',
     };
     const thresholds = this.platformConfig?.kyc?.reverifyThresholds;
     if (!this.reKycTrigger.requiresReverify(snapshot, thresholds)) return;
@@ -213,7 +214,7 @@ export class KycVerificationService {
       status: 'resubmission_requested',
       documentTypes: [],
       triggeredBy: 'reverify_threshold',
-      triggerDeposits: String(totalDeposits),
+      triggerDeposits: totalDeposits,
       decisionReason: reason,
     });
     await this.statusWriter.setStatus(userId, 'resubmission_requested', {

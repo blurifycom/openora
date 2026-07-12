@@ -1,8 +1,15 @@
-import { ORPCError } from '@orpc/server';
-import { type EventBus, DrizzleService, pageToOffset } from '@openora/core/server';
+import {
+  type EventBus,
+  DrizzleService,
+  pageToOffset,
+  makeNotFoundError,
+} from '@openora/core/server';
 import { eq, desc, and, gt, count, sql } from 'drizzle-orm';
+import type { User } from '@openora/core/contracts';
 import { session } from '../schema/index.js';
 import { type SessionItem } from '../contract/index.js';
+
+export const SessionNotFoundError = makeNotFoundError('Session');
 
 export type SessionServiceDeps = {
   drizzle: DrizzleService;
@@ -18,7 +25,7 @@ export class SessionService {
     this.events = events;
   }
 
-  async listSessions(userId: string, page: number, limit: number) {
+  async listSessions(userId: User['id'], page: number, limit: number) {
     const where = eq(session.userId, userId);
     const db = this.drizzle.db;
     // Active sessions first (expiresAt > now), newest-first within each group.
@@ -49,7 +56,7 @@ export class SessionService {
     };
   }
 
-  async revokeSession(userId: string, id: string, actorId?: string) {
+  async revokeSession(userId: User['id'], id: string, actorId?: User['id']) {
     const updated = await this.drizzle.db
       .update(session)
       .set({ expiresAt: sql`now()` })
@@ -57,7 +64,7 @@ export class SessionService {
       .returning({ id: session.id });
 
     if (updated.length === 0) {
-      throw new ORPCError('NOT_FOUND', { message: 'Session not found' });
+      throw new SessionNotFoundError(id);
     }
 
     this.events.emit('identity.session.revoked', {
@@ -68,7 +75,7 @@ export class SessionService {
     return { success: true as const };
   }
 
-  async revokeAllSessions(userId: string, actorId?: string) {
+  async revokeAllSessions(userId: User['id'], actorId?: User['id']) {
     await this.drizzle.db
       .update(session)
       .set({ expiresAt: sql`now()` })

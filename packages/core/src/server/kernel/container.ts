@@ -10,6 +10,16 @@ import type { AnyToken } from '@openora/core/contracts';
 
 export type Factory<T> = (c: Container) => T;
 
+/**
+ * Functional DI container - no decorators, no reflection. `get()` resolves
+ * lazily and caches the instance for the container's lifetime; `register()`
+ * for an already-resolved token clears the cached instance, so a later
+ * `register()` (an overlay rebinding an adapter after the default plugin
+ * loads) always wins on the next `get()`. Resolving a token whose factory
+ * transitively depends on itself throws rather than recursing forever.
+ * `dispose()` runs every `onDispose` callback in REVERSE registration order -
+ * register dependencies before their dependents so teardown happens safely.
+ */
 export class Container {
   private readonly factories = new Map<symbol, Factory<unknown>>();
   private readonly instances = new Map<symbol, unknown>();

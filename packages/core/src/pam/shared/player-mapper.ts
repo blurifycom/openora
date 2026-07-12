@@ -1,10 +1,10 @@
 import { eq } from 'drizzle-orm';
 import type { DrizzleService } from '@openora/core/server';
-import type { Player, User } from '@openora/core/contracts';
+import type { User } from '@openora/core/contracts';
 import { player } from '../profile/schema/index.js';
 import { user } from '../identity/schema/index.js';
 
-export function toPlayer(row: typeof player.$inferSelect, email: string): Player {
+export function toPlayer(row: typeof player.$inferSelect, email: string) {
   return {
     id: row.id,
     userId: row.userId,
@@ -15,8 +15,8 @@ export function toPlayer(row: typeof player.$inferSelect, email: string): Player
     status: row.status,
     kycStatus: row.kycStatus,
     level: row.level,
-    totalWagered: Number(row.totalWagered),
-    totalDeposits: Number(row.totalDeposits),
+    totalWagered: row.totalWagered,
+    totalDeposits: row.totalDeposits,
     lastSeenAt: row.lastSeenAt ? row.lastSeenAt.toISOString() : null,
     createdAt: row.createdAt.toISOString(),
     updatedAt: row.updatedAt.toISOString(),

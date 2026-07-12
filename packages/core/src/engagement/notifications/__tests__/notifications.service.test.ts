@@ -44,7 +44,7 @@ describe('NotificationsService', () => {
         {
           id: 'n1',
           userId: 'u1',
-          type: 'info',
+          type: 'withdrawal.approved',
           title: 'Hello',
           body: 'World',
           readAt: null,
@@ -56,7 +56,7 @@ describe('NotificationsService', () => {
 
     const result = await service.create({
       userId: 'u1',
-      type: 'info',
+      type: 'withdrawal.approved',
       title: 'Hello',
       body: 'World',
     });

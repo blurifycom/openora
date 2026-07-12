@@ -6,7 +6,7 @@ import {
   cached,
   invalidate,
 } from '@openora/core/server';
-import type { CacheAdapter } from '@openora/core/contracts';
+import type { CacheAdapter, User } from '@openora/core/contracts';
 import { eq, and, asc, desc, isNotNull } from 'drizzle-orm';
 import { page as pageTable, banner as bannerTable } from '../schema/index.js';
 
@@ -105,35 +105,45 @@ export class CmsService {
     });
   }
 
-  async createPage(input: {
-    slug: string;
-    title: string;
-    content?: unknown;
-    publishedAt?: string;
-  }) {
-    const [record] = await this.drizzle.db
-      .insert(pageTable)
-      .values({
-        slug: input.slug,
-        title: input.title,
-        content: (input.content ?? {}) as object,
-        publishedAt: input.publishedAt ? new Date(input.publishedAt) : null,
-      })
-      .returning();
+  async createPage(
+    input: {
+      slug: string;
+      title: string;
+      content?: unknown;
+      publishedAt?: string;
+    },
+    actorId: User['id'],
+  ) {
+    const record = findOneOrThrow(
+      await this.drizzle.db
+        .insert(pageTable)
+        .values({
+          slug: input.slug,
+          title: input.title,
+          content: (input.content ?? {}) as object,
+          publishedAt: input.publishedAt ? new Date(input.publishedAt) : null,
+        })
+        .returning(),
+      new PageNotFoundError(input.slug),
+    );
     await invalidate(this.cache, pageCacheKey(input.slug));
-    if (record!.publishedAt) {
-      this.events.emit('cms.page.published', { pageId: record!.id, slug: record!.slug });
+    this.events.emit('cms.page.created', { pageId: record.id, actorId });
+    if (record.publishedAt) {
+      this.events.emit('cms.page.published', { pageId: record.id, slug: record.slug });
     }
-    return toPage(record!);
+    return toPage(record);
   }
 
-  async updatePage(input: {
-    id: string;
-    slug?: string;
-    title?: string;
-    content?: unknown;
-    publishedAt?: string | null;
-  }) {
+  async updatePage(
+    input: {
+      id: string;
+      slug?: string;
+      title?: string;
+      content?: unknown;
+      publishedAt?: string | null;
+    },
+    actorId: User['id'],
+  ) {
     const existing = findOneOrThrow(
       await this.drizzle.db.select().from(pageTable).where(eq(pageTable.id, input.id)),
       new PageNotFoundError(input.id),
@@ -148,29 +158,34 @@ export class CmsService {
     if (input.publishedAt !== undefined)
       patch.publishedAt = input.publishedAt ? new Date(input.publishedAt) : null;
 
-    const [record] = await this.drizzle.db
-      .update(pageTable)
-      .set(patch)
-      .where(eq(pageTable.id, input.id))
-      .returning();
+    const record = findOneOrThrow(
+      await this.drizzle.db
+        .update(pageTable)
+        .set(patch)
+        .where(eq(pageTable.id, input.id))
+        .returning(),
+      new PageNotFoundError(input.id),
+    );
 
     await invalidate(this.cache, [existing.slug, input.slug ?? existing.slug].map(pageCacheKey));
 
-    const nowPublished = record!.publishedAt !== null;
+    this.events.emit('cms.page.updated', { pageId: record.id, actorId });
+    const nowPublished = record.publishedAt !== null;
     if (!wasPublished && nowPublished) {
-      this.events.emit('cms.page.published', { pageId: record!.id, slug: record!.slug });
+      this.events.emit('cms.page.published', { pageId: record.id, slug: record.slug });
     }
 
-    return toPage(record!);
+    return toPage(record);
   }
 
-  async deletePage(id: string): Promise<{ success: true }> {
+  async deletePage(id: string, actorId: User['id']): Promise<{ success: true }> {
     const existing = findOneOrThrow(
       await this.drizzle.db.select().from(pageTable).where(eq(pageTable.id, id)),
       new PageNotFoundError(id),
     );
     await this.drizzle.db.delete(pageTable).where(eq(pageTable.id, id));
     await invalidate(this.cache, pageCacheKey(existing.slug));
+    this.events.emit('cms.page.deleted', { pageId: id, actorId });
     return { success: true };
   }
 
@@ -193,27 +208,37 @@ export class CmsService {
     });
   }
 
-  async createBanner(input: {
-    placement: string;
-    title: string;
-    imageUrl: string;
-    linkUrl?: string;
-    sortOrder?: number;
-  }) {
-    const [record] = await this.drizzle.db.insert(bannerTable).values(input).returning();
+  async createBanner(
+    input: {
+      placement: string;
+      title: string;
+      imageUrl: string;
+      linkUrl?: string;
+      sortOrder?: number;
+    },
+    actorId: User['id'],
+  ) {
+    const record = findOneOrThrow(
+      await this.drizzle.db.insert(bannerTable).values(input).returning(),
+      new BannerNotFoundError(input.placement),
+    );
     await invalidate(this.cache, bannersCacheKey(input.placement));
-    return toBanner(record!);
+    this.events.emit('cms.banner.created', { bannerId: record.id, actorId });
+    return toBanner(record);
   }
 
-  async updateBanner(input: {
-    id: string;
-    placement?: string;
-    title?: string;
-    imageUrl?: string;
-    linkUrl?: string | null;
-    isActive?: boolean;
-    sortOrder?: number;
-  }) {
+  async updateBanner(
+    input: {
+      id: string;
+      placement?: string;
+      title?: string;
+      imageUrl?: string;
+      linkUrl?: string | null;
+      isActive?: boolean;
+      sortOrder?: number;
+    },
+    actorId: User['id'],
+  ) {
     const existing = findOneOrThrow(
       await this.drizzle.db.select().from(bannerTable).where(eq(bannerTable.id, input.id)),
       new BannerNotFoundError(input.id),
@@ -227,25 +252,30 @@ export class CmsService {
     if (input.isActive !== undefined) patch.isActive = input.isActive;
     if (input.sortOrder !== undefined) patch.sortOrder = input.sortOrder;
 
-    const [record] = await this.drizzle.db
-      .update(bannerTable)
-      .set(patch)
-      .where(eq(bannerTable.id, input.id))
-      .returning();
+    const record = findOneOrThrow(
+      await this.drizzle.db
+        .update(bannerTable)
+        .set(patch)
+        .where(eq(bannerTable.id, input.id))
+        .returning(),
+      new BannerNotFoundError(input.id),
+    );
     await invalidate(
       this.cache,
       [existing.placement, input.placement ?? existing.placement].map(bannersCacheKey),
     );
-    return toBanner(record!);
+    this.events.emit('cms.banner.updated', { bannerId: record.id, actorId });
+    return toBanner(record);
   }
 
-  async deleteBanner(id: string): Promise<{ success: true }> {
+  async deleteBanner(id: string, actorId: User['id']): Promise<{ success: true }> {
     const existing = findOneOrThrow(
       await this.drizzle.db.select().from(bannerTable).where(eq(bannerTable.id, id)),
       new BannerNotFoundError(id),
     );
     await this.drizzle.db.delete(bannerTable).where(eq(bannerTable.id, id));
     await invalidate(this.cache, bannersCacheKey(existing.placement));
+    this.events.emit('cms.banner.deleted', { bannerId: id, actorId });
     return { success: true };
   }
 }

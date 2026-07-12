@@ -1,5 +1,6 @@
 import { DrizzleService, pageToOffset, serializeRow } from '@openora/core/server';
 import { count, desc, eq } from 'drizzle-orm';
+import type { Player, User } from '@openora/core/contracts';
 import { playerNote } from '../schema/index.js';
 import type { CreatePlayerNoteInput, PlayerNoteItem } from '../contract/index.js';
 
@@ -12,7 +13,7 @@ function toItem(row: typeof playerNote.$inferSelect): PlayerNoteItem {
 export class PlayerNoteService {
   constructor(private readonly drizzle: DrizzleService) {}
 
-  async list(playerId: string, page: number, limit: number) {
+  async list(playerId: Player['id'], page: number, limit: number) {
     const where = eq(playerNote.playerId, playerId);
     const db = this.drizzle.db;
     const [rows, [{ n }]] = await Promise.all([
@@ -28,10 +29,10 @@ export class PlayerNoteService {
     return { items: rows.map(toItem), total: Number(n), page, limit };
   }
 
-  async create(input: CreatePlayerNoteInput, actorId: string): Promise<PlayerNoteItem> {
+  async create(input: CreatePlayerNoteInput, actorId: User['id']) {
     const [created] = await this.drizzle.db
       .insert(playerNote)
-      .values({ playerId: input.playerId, actorId, content: input.content })
+      .values({ ...input, actorId })
       .returning();
     return toItem(created);
   }

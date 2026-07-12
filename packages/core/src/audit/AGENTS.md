@@ -36,15 +36,20 @@ rationale and `@openora/core/compliance` `sealed.ts` for the canonical list.
 
 ## Hash chain approach
 
-Each `record()` call:
+Each `record()` call, inside a single transaction serialized via a pg advisory lock:
 
-1. Reads the latest row's `hash` (or null for the first row).
-2. Inserts the row with `prevHash` = that value and a placeholder `hash = 'pending'`.
-3. Computes `sha256(JSON.stringify({ id, actorId, actorType, action, resourceType, resourceId, before, after, result, seq, createdAt, prevHash: prevHash ?? '' }))` - stable key order, no tenantId (single-tenant). `before`/`after`/`result` are IN the hash: the mutation payload and outcome must be tamper-evident, not just the who/what/where.
-4. Updates the row with the real hash.
+1. Reads the latest row's `hash` (or null for the first row) to derive `prevHash`.
+2. Computes `sha256(JSON.stringify({ id, actorId, actorType, action, resourceType, resourceId, before, after, result, seq, createdAt, prevHash: prevHash ?? '' }))` - stable top-level key order, no tenantId (single-tenant). `before`/`after`/`result` are IN the hash: the mutation payload and outcome must be tamper-evident, not just the who/what/where.
+3. Inserts the row with `prevHash` and the real `hash` in one statement - no read-back UPDATE, so a crash can never leave a placeholder hash.
 
-`verifyChain()` re-derives every hash from scratch and reports the first broken link.
-Used for tamper detection and as a test target.
+`before`/`after` are `jsonb` columns; Postgres reorders their nested object keys
+(length-then-lex) on read-back, so `computeHash` deep-sorts the keys of `before`/`after`
+(arrays keep their original order) before stringifying - otherwise a freshly-inserted row
+and the same row read back from `verifyChain()` would hash differently despite identical
+content.
+
+`verifyChain()` re-derives every hash from scratch (from rows read back from Postgres)
+and reports the first broken link. Used for tamper detection and as a test target.
 
 `list` and `exportCsv` have no tenant filtering (single-tenant). `exportCsv` is capped
 at `AuditService.EXPORT_MAX_ROWS` (50_000) so it cannot be used for unbounded bulk

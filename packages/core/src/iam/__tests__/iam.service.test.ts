@@ -1,7 +1,13 @@
 import { describe, it, expect, vi } from 'vitest';
 import { mock, mockDb, readPrivate } from '../../testing/mock.js';
 import * as core from '@openora/core/server';
-import { levelToActions, actionsToLevel, statement, type ResourceName } from '@openora/core/server';
+import {
+  levelToActions,
+  actionsToLevel,
+  statement,
+  findOneOrThrow,
+  type ResourceName,
+} from '@openora/core/server';
 import {
   IamService,
   DbAdminPermissionResolver,
@@ -814,7 +820,7 @@ describe('IamService paginated lists', () => {
     expect(result.page).toBe(2);
     expect(result.limit).toBe(10);
     expect(result.items).toHaveLength(1);
-    expect(result.items[0]!.id).toBe(ROLE_ROW.id);
+    expect(findOneOrThrow(result.items, new Error('expected an item')).id).toBe(ROLE_ROW.id);
   });
 
   it('listInvitations returns the paginated wrapper', async () => {
@@ -833,7 +839,7 @@ describe('IamService paginated lists', () => {
     const result = await svc.listInvitations({ page: 1, limit: 20 });
     expect(result.total).toBe(5);
     expect(result.items).toHaveLength(1);
-    expect(result.items[0]!.email).toBe('a@b.com');
+    expect(findOneOrThrow(result.items, new Error('expected an item')).email).toBe('a@b.com');
   });
 
   it('listAssignments returns the paginated wrapper with joined role fields', async () => {
@@ -850,7 +856,7 @@ describe('IamService paginated lists', () => {
     const result = await svc.listAssignments({ page: 1, limit: 20 });
     expect(result.total).toBe(3);
     expect(result.items).toHaveLength(1);
-    expect(result.items[0]!.roleName).toBe('Ops');
+    expect(findOneOrThrow(result.items, new Error('expected an item')).roleName).toBe('Ops');
   });
 });
 

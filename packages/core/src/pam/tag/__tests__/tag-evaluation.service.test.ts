@@ -18,7 +18,7 @@ function makeRule(overrides: Partial<TagRule> = {}): TagRule {
     tagId: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa',
     tagKey: 'high_roller',
     isEnabled: true,
-    thresholdAmount: null,
+    threshold: null,
     thresholdDays: null,
     thresholdCount: null,
     createdAt: new Date().toISOString(),
@@ -44,7 +44,7 @@ function makeServices(rules: Partial<Record<string, TagRule>> = {}) {
     }),
   });
   const walletReader = mock<WalletReader>({
-    getLifetimeDeposit: vi.fn().mockResolvedValue(0),
+    getLifetimeDeposit: vi.fn().mockResolvedValue('0'),
     getWithdrawalCountInWindow: vi.fn().mockResolvedValue(0),
   });
   const identityReader = mock<IdentityReader>({
@@ -58,10 +58,10 @@ function makeServices(rules: Partial<Record<string, TagRule>> = {}) {
 }
 
 function depositPayload(amount: number) {
-  return { userId: UID, amount, currency: 'USD', transactionId: TXID };
+  return { userId: UID, amount: String(amount), currency: 'USD', transactionId: TXID };
 }
 function withdrawalPayload(amount: number) {
-  return { userId: UID, amount, currency: 'USD', transactionId: TXID };
+  return { userId: UID, amount: String(amount), currency: 'USD', transactionId: TXID };
 }
 function kycUpdatedPayload(status: KycStatus) {
   return { userId: UID, actorId: SYSTEM_ACTOR_ID, status, previousStatus: 'pending' };
@@ -71,7 +71,7 @@ describe('TagEvaluationService', () => {
   describe('onDepositCompleted', () => {
     it('assigns large_depositor when a single deposit meets the amount threshold', async () => {
       const { service, tag } = makeServices({
-        large_depositor: makeRule({ tagKey: 'large_depositor', thresholdAmount: 500 }),
+        large_depositor: makeRule({ tagKey: 'large_depositor', threshold: '500' }),
       });
       await service.onDepositCompleted(depositPayload(500));
       expect(tag.assignPlayerTag).toHaveBeenCalledWith(
@@ -81,7 +81,7 @@ describe('TagEvaluationService', () => {
 
     it('does not assign large_depositor when the deposit is below threshold', async () => {
       const { service, tag } = makeServices({
-        large_depositor: makeRule({ tagKey: 'large_depositor', thresholdAmount: 500 }),
+        large_depositor: makeRule({ tagKey: 'large_depositor', threshold: '500' }),
       });
       await service.onDepositCompleted(depositPayload(499));
       expect(tag.assignPlayerTag).not.toHaveBeenCalled();
@@ -89,9 +89,9 @@ describe('TagEvaluationService', () => {
 
     it('assigns high_roller when lifetime deposits meet the threshold', async () => {
       const { service, tag, walletReader } = makeServices({
-        high_roller: makeRule({ tagKey: 'high_roller', thresholdAmount: 10000 }),
+        high_roller: makeRule({ tagKey: 'high_roller', threshold: '10000' }),
       });
-      walletReader.getLifetimeDeposit = vi.fn().mockResolvedValue(12000);
+      walletReader.getLifetimeDeposit = vi.fn().mockResolvedValue('12000');
       await service.onDepositCompleted(depositPayload(100));
       expect(tag.assignPlayerTag).toHaveBeenCalledWith(
         expect.objectContaining({ tagKey: 'high_roller' }),
@@ -100,9 +100,9 @@ describe('TagEvaluationService', () => {
 
     it('removes high_roller when lifetime deposits fall below a raised threshold', async () => {
       const { service, tag, walletReader } = makeServices({
-        high_roller: makeRule({ tagKey: 'high_roller', thresholdAmount: 10000 }),
+        high_roller: makeRule({ tagKey: 'high_roller', threshold: '10000' }),
       });
-      walletReader.getLifetimeDeposit = vi.fn().mockResolvedValue(5000);
+      walletReader.getLifetimeDeposit = vi.fn().mockResolvedValue('5000');
       await service.onDepositCompleted(depositPayload(100));
       expect(tag.removePlayerTag).toHaveBeenCalledWith(
         expect.objectContaining({ tagKey: 'high_roller' }),
@@ -112,10 +112,10 @@ describe('TagEvaluationService', () => {
 
     it('does nothing when the rules are disabled', async () => {
       const { service, tag, walletReader } = makeServices({
-        high_roller: makeRule({ tagKey: 'high_roller', thresholdAmount: 10000, isEnabled: false }),
+        high_roller: makeRule({ tagKey: 'high_roller', threshold: '10000', isEnabled: false }),
         large_depositor: makeRule({
           tagKey: 'large_depositor',
-          thresholdAmount: 100,
+          threshold: '100',
           isEnabled: false,
         }),
       });
@@ -129,7 +129,7 @@ describe('TagEvaluationService', () => {
   describe('onWithdrawalCompleted', () => {
     it('assigns high_risk when a single withdrawal meets the amount threshold', async () => {
       const { service, tag } = makeServices({
-        high_risk: makeRule({ tagKey: 'high_risk', thresholdAmount: 1000 }),
+        high_risk: makeRule({ tagKey: 'high_risk', threshold: '1000' }),
       });
       await service.onWithdrawalCompleted(withdrawalPayload(1500));
       expect(tag.assignPlayerTag).toHaveBeenCalledWith(
@@ -141,7 +141,7 @@ describe('TagEvaluationService', () => {
       const { service, tag, walletReader } = makeServices({
         high_risk: makeRule({
           tagKey: 'high_risk',
-          thresholdAmount: 1000,
+          threshold: '1000',
           thresholdDays: 7,
           thresholdCount: 3,
         }),
@@ -158,7 +158,7 @@ describe('TagEvaluationService', () => {
       const { service, tag, walletReader } = makeServices({
         high_risk: makeRule({
           tagKey: 'high_risk',
-          thresholdAmount: 1000,
+          threshold: '1000',
           thresholdDays: 7,
           thresholdCount: 3,
         }),
@@ -171,7 +171,7 @@ describe('TagEvaluationService', () => {
 
     it('skips the count check when thresholdDays or thresholdCount is null', async () => {
       const { service, walletReader } = makeServices({
-        high_risk: makeRule({ tagKey: 'high_risk', thresholdAmount: 1000, thresholdDays: null }),
+        high_risk: makeRule({ tagKey: 'high_risk', threshold: '1000', thresholdDays: null }),
       });
       await service.onWithdrawalCompleted(withdrawalPayload(10));
       expect(walletReader.getWithdrawalCountInWindow).not.toHaveBeenCalled();
@@ -325,7 +325,7 @@ describe('TagEvaluationService', () => {
   describe('idempotency', () => {
     it('tryAssignTag swallows TagAlreadyInUseError', async () => {
       const { service, tag } = makeServices({
-        large_depositor: makeRule({ tagKey: 'large_depositor', thresholdAmount: 500 }),
+        large_depositor: makeRule({ tagKey: 'large_depositor', threshold: '500' }),
       });
       tag.assignPlayerTag = vi.fn().mockRejectedValue(new TagAlreadyInUseError());
       await expect(service.onDepositCompleted(depositPayload(500))).resolves.toBeUndefined();

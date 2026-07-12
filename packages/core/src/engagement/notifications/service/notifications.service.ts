@@ -7,18 +7,9 @@ import {
   findOneOrThrow,
 } from '@openora/core/server';
 import { eq, and, isNull, desc } from 'drizzle-orm';
-import * as z from 'zod';
-import { UuidSchema } from '@openora/core/contracts';
+import type { User } from '@openora/core/contracts';
 import { notification } from '../schema/index.js';
-
-// Internal-only - fed by domain-event handlers in plugin.ts, not a wire route.
-const CreateNotificationInputSchema = z.object({
-  userId: UuidSchema,
-  type: z.string(),
-  title: z.string(),
-  body: z.string(),
-});
-export type CreateNotificationInput = z.infer<typeof CreateNotificationInputSchema>;
+import type { CreateNotificationInput } from '../contract/index.js';
 
 export const NotificationNotFoundError = makeNotFoundError('Notification');
 
@@ -31,18 +22,21 @@ export class NotificationsService {
   ) {}
 
   async create(input: CreateNotificationInput) {
-    const [record] = await this.drizzle.db
-      .insert(notification)
-      .values({ ...input })
-      .returning();
+    const record = findOneOrThrow(
+      await this.drizzle.db
+        .insert(notification)
+        .values({ ...input })
+        .returning(),
+      new NotificationNotFoundError(input.userId),
+    );
     this.events.emit('notifications.created', {
-      notificationId: record!.id,
+      notificationId: record.id,
       userId: input.userId,
     });
-    return record!;
+    return record;
   }
 
-  async listForUser(userId: string) {
+  async listForUser(userId: User['id']) {
     return this.drizzle.db
       .select()
       .from(notification)
@@ -51,21 +45,24 @@ export class NotificationsService {
       .limit(50);
   }
 
-  async markRead(id: string, userId: string) {
+  async markRead(id: string, userId: User['id']) {
     const record = findOneOrThrow(
       await this.drizzle.db.select().from(notification).where(eq(notification.id, id)),
       new NotificationNotFoundError(id),
     );
     assertOwnership(record.userId, userId, new NotificationOwnershipError());
-    const [updated] = await this.drizzle.db
-      .update(notification)
-      .set({ readAt: new Date() })
-      .where(eq(notification.id, id))
-      .returning();
-    return updated!;
+    const updated = findOneOrThrow(
+      await this.drizzle.db
+        .update(notification)
+        .set({ readAt: new Date() })
+        .where(eq(notification.id, id))
+        .returning(),
+      new NotificationNotFoundError(id),
+    );
+    return updated;
   }
 
-  async markAllRead(userId: string) {
+  async markAllRead(userId: User['id']) {
     const rows = await this.drizzle.db
       .update(notification)
       .set({ readAt: new Date() })

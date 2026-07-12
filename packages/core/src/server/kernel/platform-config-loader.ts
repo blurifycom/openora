@@ -78,8 +78,9 @@ function parseTrivialYaml(input: string): unknown {
     const indent = line.length - line.trimStart().length;
     const body = line.trimStart();
 
-    while (stack[stack.length - 1]!.indent >= indent) stack.pop();
-    const parent = stack[stack.length - 1]!;
+    while ((stack.at(-1)?.indent ?? -Infinity) >= indent) stack.pop();
+    const parent = stack.at(-1);
+    if (!parent) throw new Error('platform config parser: stack underflow');
 
     if (body.startsWith('- ')) {
       const inner = body.slice(2).trim();

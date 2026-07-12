@@ -18,7 +18,11 @@ import {
 import { ComplianceService } from './service/compliance.service.js';
 import { KycVerificationService } from './service/kyc.service.js';
 import { RgService } from './service/rg.service.js';
-import { RgMonitoringService, type RgEvalTrigger } from './service/rg-monitoring.service.js';
+import {
+  RgMonitoringService,
+  RG_EVAL_TRIGGERS,
+  type RgEvalTrigger,
+} from './service/rg-monitoring.service.js';
 import { createComplianceRouter } from './router/index.js';
 import { HmacKycWebhookVerifier } from './adapters/hmac-kyc-webhook-verifier.js';
 
@@ -29,7 +33,7 @@ const RG_MONITOR_QUEUE = queue('rg-monitor');
 
 const RgEvalJobSchema = z.object({
   userId: UuidSchema,
-  trigger: z.enum(['wallet.deposit.completed', 'gaming.round.ended', 'rg.exclusion.login_blocked']),
+  trigger: z.enum(RG_EVAL_TRIGGERS),
 });
 const RgMonitorJobSchema = z.object({});
 
@@ -41,7 +45,12 @@ export default definePlugin({
     ctx.provide(KYC_WEBHOOK_VERIFIER, (c) => {
       const cfg = c.has(PLATFORM_CONFIG) ? c.get(PLATFORM_CONFIG) : undefined;
       const envName = cfg?.kyc?.webhookSecretEnv ?? 'KYC_WEBHOOK_SECRET';
-      return new HmacKycWebhookVerifier(process.env[envName]);
+      const webhookSecret = z
+        .string()
+        .min(1)
+        .optional()
+        .parse(process.env[envName] || undefined);
+      return new HmacKycWebhookVerifier(webhookSecret);
     });
 
     // svcRefs are null at registration (subscriptions wire before router factories run)

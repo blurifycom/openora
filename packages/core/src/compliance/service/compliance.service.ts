@@ -9,12 +9,14 @@ import {
 } from '@openora/core/server';
 import { eq } from 'drizzle-orm';
 import { userLimit, geoRule } from '../schema/index.js';
-import type { UpsertLimitInput, Limit, GeoRule, AddGeoRuleInput } from '../contract/index.js';
-import { type GeoIpAdapter } from '@openora/core/contracts';
+import type { UpsertLimitInput, AddGeoRuleInput } from '../contract/index.js';
+import { type GeoIpAdapter, type User } from '@openora/core/contracts';
 
 export const LimitNotFoundError = makeNotFoundError('Limit');
 
 export const LimitOwnershipError = makeOwnershipError('Limit');
+
+export const GeoRuleNotFoundError = makeNotFoundError('GeoRule');
 
 export class ComplianceService {
   constructor(
@@ -23,39 +25,28 @@ export class ComplianceService {
     private readonly geoIp: GeoIpAdapter | null = null,
   ) {}
 
-  async getLimitsForUser(userId: string) {
+  async getLimitsForUser(userId: User['id']) {
     const rows = await this.drizzle.db.select().from(userLimit).where(eq(userLimit.userId, userId));
-    return rows.map((r) => ({
-      id: r.id,
-      userId: r.userId,
-      type: r.type as Limit['type'],
-      amount: r.amount,
-      period: r.period as Limit['period'],
-      createdAt: r.createdAt.toISOString(),
-    }));
+    return rows.map((r) => serializeRow(r, { dateFields: ['createdAt'] }));
   }
 
-  async upsertLimit(userId: string, input: UpsertLimitInput) {
-    const [row] = await this.drizzle.db
-      .insert(userLimit)
-      .values({ ...input, userId })
-      .onConflictDoUpdate({
-        target: [userLimit.userId, userLimit.type, userLimit.period],
-        set: { amount: input.amount },
-      })
-      .returning();
-    this.events.emit('compliance.limit.upserted', { userId, limitId: row!.id });
-    return {
-      id: row!.id,
-      userId: row!.userId,
-      type: row!.type as Limit['type'],
-      amount: row!.amount,
-      period: row!.period as Limit['period'],
-      createdAt: row!.createdAt.toISOString(),
-    };
+  async upsertLimit(userId: User['id'], input: UpsertLimitInput) {
+    const row = findOneOrThrow(
+      await this.drizzle.db
+        .insert(userLimit)
+        .values({ ...input, userId })
+        .onConflictDoUpdate({
+          target: [userLimit.userId, userLimit.type, userLimit.period],
+          set: { amount: input.amount, minutes: input.minutes },
+        })
+        .returning(),
+      new LimitNotFoundError(userId),
+    );
+    this.events.emit('compliance.limit.upserted', { userId, limitId: row.id });
+    return serializeRow(row, { dateFields: ['createdAt'] });
   }
 
-  async removeLimit(id: string, userId: string): Promise<{ success: true }> {
+  async removeLimit(id: string, userId: User['id']): Promise<{ success: true }> {
     const existing = findOneOrThrow(
       await this.drizzle.db.select().from(userLimit).where(eq(userLimit.id, id)),
       new LimitNotFoundError(id),
@@ -79,7 +70,7 @@ export class ComplianceService {
     }
 
     const [rule] = await this.drizzle.db
-      .select()
+      .select({ action: geoRule.action })
       .from(geoRule)
       .where(eq(geoRule.countryCode, countryCode));
 
@@ -94,25 +85,28 @@ export class ComplianceService {
     return { allowed: true, countryCode, reason: null };
   }
 
-  async addGeoRule(input: AddGeoRuleInput, actorId?: string) {
-    const [row] = await this.drizzle.db
-      .insert(geoRule)
-      .values({ ...input })
-      .onConflictDoUpdate({
-        target: geoRule.countryCode,
-        set: { action: input.action },
-      })
-      .returning();
+  async addGeoRule(input: AddGeoRuleInput, actorId?: User['id']) {
+    const row = findOneOrThrow(
+      await this.drizzle.db
+        .insert(geoRule)
+        .values({ ...input })
+        .onConflictDoUpdate({
+          target: geoRule.countryCode,
+          set: { action: input.action },
+        })
+        .returning(),
+      new GeoRuleNotFoundError(input.countryCode),
+    );
     this.events.emit('compliance.geo-rule.added', {
       countryCode: input.countryCode,
       action: input.action,
       actorId,
     });
-    return serializeRow(row!, { dateFields: ['createdAt'] }) as GeoRule;
+    return serializeRow(row, { dateFields: ['createdAt'] });
   }
 
   async listGeoRules() {
     const rows = await this.drizzle.db.select().from(geoRule);
-    return rows.map((r) => serializeRow(r, { dateFields: ['createdAt'] }) as GeoRule);
+    return rows.map((r) => serializeRow(r, { dateFields: ['createdAt'] }));
   }
 }

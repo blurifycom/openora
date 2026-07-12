@@ -72,7 +72,7 @@ export class ChatService {
     let blocked: ReadonlySet<User['id']> | null = viewerId ? null : new Set();
     const pending: ChatMessage[] = [];
     const deliver = (message: ChatMessage) => {
-      if (!blocked!.has(message.userId)) listener(message);
+      if (blocked && !blocked.has(message.userId)) listener(message);
     };
     if (viewerId) {
       this.blockedIdsFor(viewerId)

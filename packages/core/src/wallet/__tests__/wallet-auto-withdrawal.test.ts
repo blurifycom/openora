@@ -105,10 +105,10 @@ describe('WalletService.withdraw auto-approval', () => {
     const { svc, payment, audit } = makeSvc({
       drizzle: dz,
       directory: verifiedDirectory(),
-      autoWithdrawal: { fiatThreshold: 1000 },
+      autoWithdrawal: { fiatThreshold: '1000' },
     });
 
-    const result = await svc.withdraw({ userId: 'u-1', amount: 40, currency: 'USD' });
+    const result = await svc.withdraw({ userId: 'u-1', amount: '40', currency: 'USD' });
 
     expect(result).toEqual({ transactionId: 'tx-1', status: 'completed' });
     expect(payment.processWithdrawal).toHaveBeenCalledTimes(1);
@@ -125,7 +125,7 @@ describe('WalletService.withdraw auto-approval', () => {
         resourceType: 'wallet_transaction',
         resourceId: 'tx-1',
         after: expect.objectContaining({
-          threshold: 1000,
+          threshold: '1000',
           thresholdSource: 'global',
           kycStatus: 'verified',
           riskTagsEvaluated: [],
@@ -152,19 +152,21 @@ describe('WalletService.withdraw auto-approval', () => {
     const { svc } = makeSvc({
       drizzle: dz,
       directory: verifiedDirectory(),
-      autoWithdrawal: { fiatThreshold: 1000, dailyCapCount: 1 },
+      autoWithdrawal: { fiatThreshold: '1000', dailyCapCount: 1 },
     });
 
-    await svc.withdraw({ userId: 'u-1', amount: 40, currency: 'USD' });
+    await svc.withdraw({ userId: 'u-1', amount: '40', currency: 'USD' });
 
     expect(executeSpy).toHaveBeenCalledTimes(1);
-    const lockOrder = executeSpy.mock.invocationCallOrder[0]!;
+    const lockOrder = executeSpy.mock.invocationCallOrder.at(0);
+    if (lockOrder === undefined) throw new Error('expected executeSpy to have been called');
     // The lock must precede the flip `.set()` that writes the auto-approved marker (and the cap read between them).
     const flipCallIndex = setSpy.mock.calls.findIndex(
       ([arg]) => (arg as { reviewReason?: string })?.reviewReason === 'auto-approved',
     );
     expect(flipCallIndex).toBeGreaterThanOrEqual(0);
-    const flipOrder = setSpy.mock.invocationCallOrder[flipCallIndex]!;
+    const flipOrder = setSpy.mock.invocationCallOrder.at(flipCallIndex);
+    if (flipOrder === undefined) throw new Error('expected the flip call to have been recorded');
     expect(lockOrder).toBeLessThan(flipOrder);
   });
 
@@ -204,11 +206,11 @@ describe('WalletService.withdraw auto-approval', () => {
     const { svc, audit, payment } = makeSvc({
       drizzle: dz,
       directory: verifiedDirectory(),
-      autoWithdrawal: { fiatThreshold: 1000 },
+      autoWithdrawal: { fiatThreshold: '1000' },
     });
     audit.record.mockRejectedValueOnce(new Error('audit down'));
 
-    const result = await svc.withdraw({ userId: 'u-1', amount: 40, currency: 'USD' });
+    const result = await svc.withdraw({ userId: 'u-1', amount: '40', currency: 'USD' });
 
     expect(result).toEqual({ transactionId: 'tx-1', status: 'pending' });
     expect(payment.processWithdrawal).not.toHaveBeenCalled();
@@ -236,10 +238,10 @@ describe('WalletService.withdraw auto-approval', () => {
         lookupPlayers: vi.fn().mockResolvedValue([{ userId: 'u-1', kycStatus: 'pending' }]),
       },
       kyc: { gateWithdrawals: false },
-      autoWithdrawal: { fiatThreshold: 1000 },
+      autoWithdrawal: { fiatThreshold: '1000' },
     });
 
-    const result = await svc.withdraw({ userId: 'u-1', amount: 40, currency: 'USD' });
+    const result = await svc.withdraw({ userId: 'u-1', amount: '40', currency: 'USD' });
 
     expect(result.status).toBe('pending');
     expect(payment.processWithdrawal).not.toHaveBeenCalled();
@@ -256,10 +258,10 @@ describe('WalletService.withdraw auto-approval', () => {
       riskTags: {
         getActiveTagKeys: vi.fn().mockResolvedValue(new Map([['u-1', ['high_risk']]])),
       },
-      autoWithdrawal: { fiatThreshold: 1000, excludeRiskFlags: ['high_risk'] },
+      autoWithdrawal: { fiatThreshold: '1000', excludeRiskFlags: ['high_risk'] },
     });
 
-    const result = await svc.withdraw({ userId: 'u-1', amount: 40, currency: 'USD' });
+    const result = await svc.withdraw({ userId: 'u-1', amount: '40', currency: 'USD' });
 
     expect(result.status).toBe('pending');
     expect(payment.processWithdrawal).not.toHaveBeenCalled();
@@ -274,10 +276,10 @@ describe('WalletService.withdraw auto-approval', () => {
     const { svc, payment } = makeSvc({
       drizzle: dz,
       directory: verifiedDirectory(),
-      autoWithdrawal: { fiatThreshold: 1000 },
+      autoWithdrawal: { fiatThreshold: '1000' },
     });
 
-    const result = await svc.withdraw({ userId: 'u-1', amount: 40, currency: 'USD' });
+    const result = await svc.withdraw({ userId: 'u-1', amount: '40', currency: 'USD' });
 
     expect(result.status).toBe('pending');
     expect(payment.processWithdrawal).not.toHaveBeenCalled();
@@ -291,10 +293,10 @@ describe('WalletService.withdraw auto-approval', () => {
     const { svc, payment } = makeSvc({
       drizzle: dz,
       directory: verifiedDirectory(),
-      autoWithdrawal: { fiatThreshold: 1000, dailyCapCount: 1 },
+      autoWithdrawal: { fiatThreshold: '1000', dailyCapCount: 1 },
     });
 
-    const result = await svc.withdraw({ userId: 'u-1', amount: 40, currency: 'USD' });
+    const result = await svc.withdraw({ userId: 'u-1', amount: '40', currency: 'USD' });
 
     expect(result.status).toBe('pending');
     expect(payment.processWithdrawal).not.toHaveBeenCalled();
@@ -308,10 +310,10 @@ describe('WalletService.withdraw auto-approval', () => {
     const { svc, payment } = makeSvc({
       drizzle: dz,
       directory: verifiedDirectory(),
-      autoWithdrawal: { fiatThreshold: 1000, dailyCapAmount: 100 },
+      autoWithdrawal: { fiatThreshold: '1000', dailyCapAmount: '100' },
     });
 
-    const result = await svc.withdraw({ userId: 'u-1', amount: 40, currency: 'USD' });
+    const result = await svc.withdraw({ userId: 'u-1', amount: '40', currency: 'USD' });
 
     expect(result.status).toBe('pending');
     expect(payment.processWithdrawal).not.toHaveBeenCalled();
@@ -325,10 +327,10 @@ describe('WalletService.withdraw auto-approval', () => {
     const { svc, payment } = makeSvc({
       drizzle: dz,
       directory: verifiedDirectory(),
-      autoWithdrawal: { fiatThreshold: 1000, excludeRiskFlags: ['high_risk'] },
+      autoWithdrawal: { fiatThreshold: '1000', excludeRiskFlags: ['high_risk'] },
     });
 
-    const result = await svc.withdraw({ userId: 'u-1', amount: 40, currency: 'USD' });
+    const result = await svc.withdraw({ userId: 'u-1', amount: '40', currency: 'USD' });
 
     expect(result.status).toBe('pending');
     expect(payment.processWithdrawal).not.toHaveBeenCalled();
@@ -342,10 +344,10 @@ describe('WalletService.withdraw auto-approval', () => {
     const { svc, payment } = makeSvc({
       drizzle: dz,
       directory: { lookupPlayers: vi.fn().mockRejectedValue(new Error('directory down')) },
-      autoWithdrawal: { fiatThreshold: 1000 },
+      autoWithdrawal: { fiatThreshold: '1000' },
     });
 
-    const result = await svc.withdraw({ userId: 'u-1', amount: 40, currency: 'USD' });
+    const result = await svc.withdraw({ userId: 'u-1', amount: '40', currency: 'USD' });
 
     expect(result.status).toBe('pending');
     expect(payment.processWithdrawal).not.toHaveBeenCalled();
@@ -363,10 +365,10 @@ describe('WalletService.withdraw auto-approval', () => {
     const { svc, payment } = makeSvc({
       drizzle: dz,
       directory,
-      autoWithdrawal: { fiatThreshold: 1_000_000 },
+      autoWithdrawal: { fiatThreshold: '1000000' },
     });
 
-    const result = await svc.withdraw({ userId: 'u-1', amount: 1, currency: 'BTC' });
+    const result = await svc.withdraw({ userId: 'u-1', amount: '1', currency: 'BTC' });
 
     expect(result.status).toBe('pending');
     expect(payment.processWithdrawal).not.toHaveBeenCalled();
@@ -385,7 +387,7 @@ describe('WalletService.withdraw auto-approval', () => {
       autoWithdrawal: {}, // enabled, but no fiatThreshold
     });
 
-    const result = await svc.withdraw({ userId: 'u-1', amount: 40, currency: 'USD' });
+    const result = await svc.withdraw({ userId: 'u-1', amount: '40', currency: 'USD' });
 
     expect(result.status).toBe('pending');
     expect(payment.processWithdrawal).not.toHaveBeenCalled();
@@ -402,10 +404,10 @@ describe('WalletService.withdraw auto-approval', () => {
     const { svc, payment } = makeSvc({
       drizzle: dz,
       directory: verifiedDirectory(),
-      autoWithdrawal: { fiatThreshold: 1000 },
+      autoWithdrawal: { fiatThreshold: '1000' },
     });
 
-    const result = await svc.withdraw({ userId: 'u-1', amount: 40, currency: 'USD' });
+    const result = await svc.withdraw({ userId: 'u-1', amount: '40', currency: 'USD' });
 
     expect(result.status).toBe('pending');
     expect(payment.processWithdrawal).not.toHaveBeenCalled();
@@ -425,16 +427,16 @@ describe('WalletService.withdraw auto-approval', () => {
     const { svc, payment, audit } = makeSvc({
       drizzle: dz,
       directory: verifiedDirectory(),
-      autoWithdrawal: { fiatThreshold: 10 },
+      autoWithdrawal: { fiatThreshold: '10' },
     });
 
-    const result = await svc.withdraw({ userId: 'u-1', amount: 40, currency: 'USD' });
+    const result = await svc.withdraw({ userId: 'u-1', amount: '40', currency: 'USD' });
 
     expect(result.status).toBe('completed');
     expect(payment.processWithdrawal).toHaveBeenCalledTimes(1);
     expect(audit.record).toHaveBeenCalledWith(
       expect.objectContaining({
-        after: expect.objectContaining({ threshold: 1000, thresholdSource: 'per-player' }),
+        after: expect.objectContaining({ threshold: '1000', thresholdSource: 'per-player' }),
       }),
     );
   });
@@ -443,7 +445,7 @@ describe('WalletService.withdraw auto-approval', () => {
 describe('WalletService auto-withdrawal rule methods', () => {
   beforeEach(() => vi.clearAllMocks());
 
-  it('setAutoWithdrawalRule upserts and returns the rule with a numeric threshold', async () => {
+  it('setAutoWithdrawalRule upserts and returns the rule with a decimal threshold', async () => {
     const dz = makeDrizzle({
       returning: [
         [
@@ -463,12 +465,17 @@ describe('WalletService auto-withdrawal rule methods', () => {
 
     const rule = await svc.setAutoWithdrawalRule({
       userId: 'u-1',
-      threshold: 500,
+      threshold: '500',
       reason: 'trusted',
       createdBy: 'a-1',
     });
 
-    expect(rule).toMatchObject({ id: 'r-1', userId: 'u-1', threshold: 500, reason: 'trusted' });
+    expect(rule).toMatchObject({
+      id: 'r-1',
+      userId: 'u-1',
+      threshold: '500',
+      reason: 'trusted',
+    });
     expect(typeof rule.createdAt).toBe('string');
   });
 

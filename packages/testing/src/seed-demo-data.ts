@@ -1,5 +1,5 @@
 // See ADR-0020.
-import type { DrizzleDb } from '@openora/core/server';
+import { findOneOrThrow, type DrizzleDb } from '@openora/core/server';
 import { eq } from 'drizzle-orm';
 import { user } from '@openora/core/pam/schema/identity';
 import { player } from '@openora/core/pam/schema/profile';
@@ -53,7 +53,9 @@ function weighted<T>(rng: () => number, table: readonly (readonly [T, number])[]
     roll -= w;
     if (roll <= 0) return value;
   }
-  return table[table.length - 1]![0];
+  const last = table.at(-1);
+  if (!last) throw new Error('weighted: table must not be empty');
+  return last[0];
 }
 
 function round2(n: number): number {
@@ -245,14 +247,17 @@ export async function seedDemoData(options: SeedOptions): Promise<SeedResult> {
       createdAt,
     });
 
-    const [walletRow] = await db
-      .insert(wallet)
-      .values({
-        userId: playerUser.id,
-        balance: String(round2(rng() * 1500)),
-        currency,
-      })
-      .returning();
+    const walletRow = findOneOrThrow(
+      await db
+        .insert(wallet)
+        .values({
+          userId: playerUser.id,
+          balance: String(round2(rng() * 1500)),
+          currency,
+        })
+        .returning(),
+      new Error('seed: expected the wallet insert to return a row'),
+    );
 
     const deposits = 1 + Math.floor(rng() * 4);
     let depositSum = 0;
@@ -261,7 +266,7 @@ export async function seedDemoData(options: SeedOptions): Promise<SeedResult> {
       const amount = round2(20 + rng() * 600);
       depositSum += amount;
       txRows.push({
-        walletId: walletRow!.id,
+        walletId: walletRow.id,
         type: 'deposit',
         amount: String(amount),
         currency,
@@ -271,7 +276,7 @@ export async function seedDemoData(options: SeedOptions): Promise<SeedResult> {
     }
     if (kycStatus === 'verified' && rng() > 0.5) {
       txRows.push({
-        walletId: walletRow!.id,
+        walletId: walletRow.id,
         type: 'withdrawal',
         amount: String(round2(depositSum * (0.2 + rng() * 0.3))),
         currency,

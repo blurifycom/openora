@@ -49,7 +49,7 @@ export default definePlugin({
       definePlatformConfig({
         kyc: {
           gateWithdrawals: true,
-          reverifyThresholds: { USD: 1000, EUR: 1000 },
+          reverifyThresholds: { USD: '10', EUR: '10' },
         },
       }),
     );

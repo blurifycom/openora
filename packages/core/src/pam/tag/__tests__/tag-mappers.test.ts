@@ -90,13 +90,13 @@ describe('toPlayerTagWithTag', () => {
 });
 
 describe('toTagRule', () => {
-  it('converts Date fields to ISO strings and decimal thresholdAmount to number', () => {
+  it('converts Date fields to ISO strings and passes the decimal threshold through', () => {
     const result = toTagRule({
       id: RULE_ID,
       tagId: TAG_ID,
       tagKey: 'high_roller',
       isEnabled: true,
-      thresholdAmount: '5000.50',
+      threshold: '500050',
       thresholdDays: null,
       thresholdCount: null,
       createdAt: DATE,
@@ -107,7 +107,7 @@ describe('toTagRule', () => {
       tagId: TAG_ID,
       tagKey: 'high_roller',
       isEnabled: true,
-      thresholdAmount: 5000.5,
+      threshold: '500050',
       thresholdDays: null,
       thresholdCount: null,
       createdAt: ISO,
@@ -115,19 +115,19 @@ describe('toTagRule', () => {
     });
   });
 
-  it('passes null thresholdAmount through as null', () => {
+  it('passes a null threshold through as null', () => {
     const result = toTagRule({
       id: RULE_ID,
       tagId: TAG_ID,
       tagKey: 'inactive',
       isEnabled: true,
-      thresholdAmount: null,
+      threshold: null,
       thresholdDays: 30,
       thresholdCount: null,
       createdAt: DATE,
       updatedAt: DATE,
     });
-    expect(result.thresholdAmount).toBeNull();
+    expect(result.threshold).toBeNull();
     expect(result.thresholdDays).toBe(30);
   });
 });

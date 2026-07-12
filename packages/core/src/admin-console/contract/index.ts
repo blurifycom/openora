@@ -2,7 +2,9 @@ import { oc } from '@orpc/contract';
 import * as z from 'zod';
 import {
   CurrencyCodeSchema,
+  IdInputSchema,
   KycStatusSchema,
+  MoneyAmountSchema,
   TimestampSchema,
   UserIdInputSchema,
   UserRoleSchema,
@@ -25,9 +27,9 @@ export const PlayerSearchSchema = z
 export const PlatformStatsSchema = z.object({
   totalUsers: z.number().int(),
   activeUsers: z.number().int(),
-  totalDeposits: z.number(),
-  totalWithdrawals: z.number(),
-  totalBonusClaimed: z.number(),
+  totalDeposits: MoneyAmountSchema,
+  totalWithdrawals: MoneyAmountSchema,
+  totalBonusClaimed: MoneyAmountSchema,
 });
 
 export { UserRoleSchema } from '@openora/core/contracts';
@@ -51,8 +53,8 @@ export const TransactionFilterSchema = PageQuerySchema.extend({
   status: WalletTransactionStatusSchema.optional(),
   dateFrom: TimestampSchema.optional(),
   dateTo: TimestampSchema.optional(),
-  amountMin: z.number().nonnegative().optional(),
-  amountMax: z.number().nonnegative().optional(),
+  amountMin: MoneyAmountSchema.optional(),
+  amountMax: MoneyAmountSchema.optional(),
   player: PlayerSearchSchema.optional(),
 });
 
@@ -62,7 +64,7 @@ export const AdminTransactionSchema = z.object({
   id: UuidSchema,
   userId: UuidSchema,
   type: WalletTransactionTypeSchema,
-  amount: z.number(),
+  amount: MoneyAmountSchema,
   currency: CurrencyCodeSchema,
   status: WalletTransactionStatusSchema,
   rail: WalletRailSchema.nullable(),
@@ -111,7 +113,7 @@ export const backofficeContract = {
 
   getTransaction: oc
     .route({ method: 'GET', path: '/backoffice/transactions/{id}' })
-    .input(z.object({ id: UuidSchema }))
+    .input(IdInputSchema)
     .output(AdminTransactionDetailSchema),
 };
 

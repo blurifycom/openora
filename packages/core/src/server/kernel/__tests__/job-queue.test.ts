@@ -3,6 +3,7 @@ import { mock } from '../../../testing/mock.js';
 import { z } from 'zod';
 import type { Logger } from 'pino';
 import { queue } from '@openora/core/contracts';
+import { findOneOrThrow } from '@openora/core/server';
 import { InProcessJobQueue } from '../job-queue.js';
 
 function fakeLogger() {
@@ -86,7 +87,8 @@ describe('InProcessJobQueue', () => {
 
     expect(attempts).toEqual([1, 2, 3]);
     expect(dead).toHaveBeenCalledOnce();
-    expect((dead.mock.calls[0]![1] as Error).message).toBe('boom');
+    const deadCall = findOneOrThrow(dead.mock.calls, new Error('expected a dead-letter call'));
+    expect((deadCall[1] as Error).message).toBe('boom');
     await q.close();
   });
 

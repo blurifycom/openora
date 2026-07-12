@@ -1,10 +1,11 @@
 import * as z from 'zod';
-import { PlayerSchema } from '@openora/core/contracts';
+import { PlayerSchema, MoneyAmountSchema } from '@openora/core/contracts';
+import { moneyToNumber } from '@openora/core/server';
 
 const ReKycSnapshotSchema = PlayerSchema.pick({
   currency: true,
   totalDeposits: true,
-}).extend({ lastTriggeredDeposits: z.number() });
+}).extend({ lastTriggeredDeposits: MoneyAmountSchema });
 
 export type ReKycPlayerSnapshot = z.infer<typeof ReKycSnapshotSchema>;
 
@@ -17,17 +18,20 @@ export type ReKycPlayerSnapshot = z.infer<typeof ReKycSnapshotSchema>;
 export type ReKycTrigger = {
   requiresReverify(
     player: ReKycPlayerSnapshot,
-    thresholds: Record<string, number> | undefined,
+    thresholds: Record<string, string> | undefined,
   ): boolean;
 };
 
 export class CumulativeDepositReKycTrigger implements ReKycTrigger {
-  requiresReverify(player: ReKycPlayerSnapshot, thresholds: Record<string, number> | undefined) {
+  requiresReverify(player: ReKycPlayerSnapshot, thresholds: Record<string, string> | undefined) {
     const threshold = thresholds?.[player.currency];
-    if (threshold === undefined || threshold <= 0) return false;
+    if (threshold === undefined || moneyToNumber(threshold) <= 0) return false;
+    // Band-crossing check is a decision, not a ledger write - moneyToNumber is the
+    // documented single conversion point.
+    const bandSize = moneyToNumber(threshold);
     return (
-      Math.floor(player.totalDeposits / threshold) >
-      Math.floor(player.lastTriggeredDeposits / threshold)
+      Math.floor(moneyToNumber(player.totalDeposits) / bandSize) >
+      Math.floor(moneyToNumber(player.lastTriggeredDeposits) / bandSize)
     );
   }
 }

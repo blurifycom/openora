@@ -2,16 +2,15 @@
 
 import { useCallback, useEffect, useState, type Dispatch, type SetStateAction } from 'react';
 import { populateContractRouterPaths } from '@orpc/contract';
-import type { z } from 'zod';
 import {
   useOrpcClient,
   useEventStream,
   useOptionalRealtimeClient,
   type EventStreamStatus,
 } from '@openora/core/react';
-import { chatContract, ChatMessageSchema } from '../contract/index.js';
+import { chatContract, type ChatMessage } from '../contract/index.js';
 
-export type ChatMessage = z.infer<typeof ChatMessageSchema>;
+export type { ChatMessage };
 
 const chatRootContract = populateContractRouterPaths({ chat: chatContract });
 

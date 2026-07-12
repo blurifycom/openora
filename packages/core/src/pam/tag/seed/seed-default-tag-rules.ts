@@ -15,7 +15,7 @@ export async function seedTagRules(db: DrizzleDb): Promise<void> {
       {
         tagId,
         isEnabled: r.isEnabled,
-        thresholdAmount: r.thresholdAmount?.toString() ?? null,
+        threshold: r.threshold,
         thresholdDays: r.thresholdDays,
         thresholdCount: r.thresholdCount,
       },

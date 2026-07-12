@@ -53,7 +53,7 @@ describe('CmsService page cache invalidation', () => {
     expect(cachedAgain.title).toBe('About v1');
     expect(db.select).toHaveBeenCalledTimes(1);
 
-    await svc.updatePage({ id: 'p1', title: 'About v2' });
+    await svc.updatePage({ id: 'p1', title: 'About v2' }, 'admin-1');
 
     const afterUpdate = await svc.getPage('about');
     expect(afterUpdate.title).toBe('About v2');

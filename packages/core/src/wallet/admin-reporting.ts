@@ -16,14 +16,14 @@ export class DrizzleAdminWalletReporting implements AdminWalletReporting {
         .where(
           and(eq(walletTransaction.type, 'deposit'), eq(walletTransaction.status, 'completed')),
         )
-        .then(([r]) => Number(r?.total ?? 0)),
+        .then(([r]) => r?.total ?? '0'),
       db
         .select({ total: sum(walletTransaction.amount) })
         .from(walletTransaction)
         .where(
           and(eq(walletTransaction.type, 'withdrawal'), eq(walletTransaction.status, 'completed')),
         )
-        .then(([r]) => Number(r?.total ?? 0)),
+        .then(([r]) => r?.total ?? '0'),
     ]);
     return { deposits, withdrawals };
   }
@@ -50,9 +50,8 @@ export class DrizzleAdminWalletReporting implements AdminWalletReporting {
       status ? eq(walletTransaction.status, status) : undefined,
       dateFrom ? gte(walletTransaction.createdAt, dateFrom) : undefined,
       dateTo ? lte(walletTransaction.createdAt, dateTo) : undefined,
-      // `amount` is a numeric column, so the string bound compares numerically.
-      amountMin !== undefined ? gte(walletTransaction.amount, amountMin.toString()) : undefined,
-      amountMax !== undefined ? lte(walletTransaction.amount, amountMax.toString()) : undefined,
+      amountMin !== undefined ? gte(walletTransaction.amount, amountMin) : undefined,
+      amountMax !== undefined ? lte(walletTransaction.amount, amountMax) : undefined,
     ].filter(Boolean);
     const where = conditions.length > 0 ? and(...conditions) : undefined;
     const [rows, [{ n }]] = await Promise.all([
@@ -75,7 +74,7 @@ export class DrizzleAdminWalletReporting implements AdminWalletReporting {
         id: tx.id,
         userId: walletUserId,
         type: tx.type,
-        amount: Number(tx.amount),
+        amount: tx.amount,
         currency: tx.currency,
         status: tx.status,
         rail: tx.rail ?? null,
@@ -97,7 +96,7 @@ export class DrizzleAdminWalletReporting implements AdminWalletReporting {
       id: tx.id,
       userId: walletUserId,
       type: tx.type,
-      amount: Number(tx.amount),
+      amount: tx.amount,
       currency: tx.currency,
       status: tx.status,
       rail: tx.rail ?? null,

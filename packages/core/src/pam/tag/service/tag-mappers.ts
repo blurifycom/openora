@@ -1,15 +1,10 @@
-import type { Tag, TagRule, TagKey } from '@openora/core/contracts';
+import type { TagRule, TagKey } from '@openora/core/contracts';
+import { serializeRow } from '@openora/core/server';
 import type { PlayerTagWithTag } from '../contract/index.js';
 import { tag, playerTag, tagRule } from '../schema/index.js';
 
-export function toTag(row: typeof tag.$inferSelect): Tag {
-  return {
-    id: row.id,
-    key: row.key,
-    isSticky: row.isSticky,
-    createdAt: row.createdAt.toISOString(),
-    updatedAt: row.updatedAt.toISOString(),
-  };
+export function toTag(row: typeof tag.$inferSelect) {
+  return serializeRow(row, { dateFields: ['createdAt', 'updatedAt'] });
 }
 
 export function toPlayerTagWithTag(
@@ -39,7 +34,7 @@ export function toTagRule(row: typeof tagRule.$inferSelect & { tagKey: TagKey })
     tagId: row.tagId,
     tagKey: row.tagKey,
     isEnabled: row.isEnabled,
-    thresholdAmount: row.thresholdAmount === null ? null : Number(row.thresholdAmount),
+    threshold: row.threshold,
     thresholdDays: row.thresholdDays ?? null,
     thresholdCount: row.thresholdCount ?? null,
     createdAt: row.createdAt.toISOString(),

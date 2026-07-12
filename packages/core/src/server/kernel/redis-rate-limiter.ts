@@ -24,6 +24,17 @@ end
 return { count, redis.call('PTTL', KEYS[1]) }
 `;
 
+/**
+ * Redis-backed `RATE_LIMITER`, auto-bound by `createApp` when `REDIS_URL` is
+ * set - a fixed-window counter, incremented and expiry-set in one atomic Lua
+ * round-trip so concurrent replicas can't both read a stale count and slip
+ * past the limit. On a backend error/unreachable client it fails OPEN
+ * (allows the request) by default; callers that pass `onUnavailable: 'deny'`
+ * (credential-guessing surfaces, where an unthrottled window is worse than a
+ * false-positive 429) fail CLOSED instead. Never logs the raw key - it can
+ * embed a token or email (`pwreset:<token>`, `login:<email>`) - only the
+ * prefix before the first `:` is recorded.
+ */
 export class RedisRateLimiter implements RateLimiterAdapter {
   private readonly logger = createLogger('redis-rate-limiter');
 

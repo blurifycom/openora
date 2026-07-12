@@ -4,11 +4,15 @@ import {
   type IdentityReader,
   type TagKey,
   type TagRule,
+  type User,
 } from '@openora/core/contracts';
+import { moneyToNumber } from '@openora/core/server';
 import { TagService, TagAlreadyInUseError, TagAssignmentNotFoundError } from './tag.service.js';
 import { TagRuleService, TagRuleNotFoundError } from './tag-rule.service.js';
 
 export const SYSTEM_ACTOR_ID = '00000000-0000-0000-0000-000000000000';
+
+const EVAL_CHUNK_SIZE = 100;
 
 export class TagEvaluationService {
   constructor(
@@ -31,7 +35,7 @@ export class TagEvaluationService {
   }
 
   /** Idempotently assigns a tag; swallows TagAlreadyInUseError. */
-  private async tryAssignTag(userId: string, tagKey: TagKey, reason: string): Promise<void> {
+  private async tryAssignTag(userId: User['id'], tagKey: TagKey, reason: string) {
     const playerId = await this.identityReader.getPlayerIdByUserId(userId);
     if (!playerId) return;
     try {
@@ -49,7 +53,7 @@ export class TagEvaluationService {
   }
 
   /** Idempotently removes a tag; swallows TagAssignmentNotFoundError. */
-  private async tryRemoveTag(userId: string, tagKey: TagKey, reason: string): Promise<void> {
+  private async tryRemoveTag(userId: User['id'], tagKey: TagKey, reason: string) {
     const playerId = await this.identityReader.getPlayerIdByUserId(userId);
     if (!playerId) return;
     try {
@@ -70,7 +74,7 @@ export class TagEvaluationService {
    * Evaluates high_roller and large_depositor rules.
    * Called on wallet.deposit.completed.
    */
-  async onDepositCompleted(payload: unknown): Promise<void> {
+  async onDepositCompleted(payload: unknown) {
     const { userId, amount } = domainEventSchemas['wallet.deposit.completed'].parse(payload);
 
     const [highRoller, largeDepositor] = await Promise.all([
@@ -78,17 +82,19 @@ export class TagEvaluationService {
       this.getEnabledRule('large_depositor'),
     ]);
 
+    // Tag-threshold comparisons are evaluation decisions, not ledger writes -
+    // moneyToNumber is the documented single conversion point.
     if (
       largeDepositor &&
-      largeDepositor.thresholdAmount !== null &&
-      amount >= largeDepositor.thresholdAmount
+      largeDepositor.threshold !== null &&
+      moneyToNumber(amount) >= moneyToNumber(largeDepositor.threshold)
     ) {
       await this.tryAssignTag(userId, 'large_depositor', 'single deposit crossed threshold');
     }
 
-    if (highRoller && highRoller.thresholdAmount !== null) {
+    if (highRoller && highRoller.threshold !== null) {
       const lifetimeDeposit = await this.walletReader.getLifetimeDeposit(userId);
-      if (lifetimeDeposit >= highRoller.thresholdAmount) {
+      if (moneyToNumber(lifetimeDeposit) >= moneyToNumber(highRoller.threshold)) {
         await this.tryAssignTag(userId, 'high_roller', 'lifetime deposits crossed threshold');
       } else {
         await this.tryRemoveTag(userId, 'high_roller', 'lifetime deposits below threshold');
@@ -102,13 +108,14 @@ export class TagEvaluationService {
    * Only assigns the tag when a threshold is crossed; never auto-removes
    * (risk designation requires an explicit admin clear).
    */
-  async onWithdrawalCompleted(payload: unknown): Promise<void> {
+  async onWithdrawalCompleted(payload: unknown) {
     const { userId, amount } = domainEventSchemas['wallet.withdrawal.completed'].parse(payload);
 
     const rule = await this.getEnabledRule('high_risk');
     if (!rule) return;
 
-    const amountBreached = rule.thresholdAmount !== null && amount >= rule.thresholdAmount;
+    const amountBreached =
+      rule.threshold !== null && moneyToNumber(amount) >= moneyToNumber(rule.threshold);
 
     let countBreached = false;
     if (rule.thresholdDays !== null && rule.thresholdCount !== null) {
@@ -129,7 +136,7 @@ export class TagEvaluationService {
    * Removes the inactive tag when a player logs in.
    * Called on identity.user.login.
    */
-  async onUserLogin(payload: unknown): Promise<void> {
+  async onUserLogin(payload: unknown) {
     const { userId } = domainEventSchemas['identity.user.login'].parse(payload);
     await this.tryRemoveTag(userId, 'inactive', 'player logged in');
   }
@@ -138,7 +145,7 @@ export class TagEvaluationService {
    * Applies the kyc_pending tag on KYC submission and clears any prior kyc_rejected.
    * Called on compliance.kyc.submitted. Respects the kyc_pending rule's isEnabled flag.
    */
-  async onKycSubmitted(payload: unknown): Promise<void> {
+  async onKycSubmitted(payload: unknown) {
     const { userId } = domainEventSchemas['compliance.kyc.submitted'].parse(payload);
     const rule = await this.getEnabledRule('kyc_pending');
     if (!rule) return;
@@ -155,7 +162,7 @@ export class TagEvaluationService {
    *   rejected                       -> remove kyc_pending, assign kyc_rejected
    *   resubmission_requested         -> assign kyc_pending
    */
-  async onKycStatusUpdated(payload: unknown): Promise<void> {
+  async onKycStatusUpdated(payload: unknown) {
     const { userId, status } = domainEventSchemas['compliance.kyc.updated'].parse(payload);
     const rule = await this.getEnabledRule('kyc_pending');
     if (!rule) return;
@@ -181,15 +188,23 @@ export class TagEvaluationService {
    * Daily scheduled evaluation: assigns inactive to players who have not logged in
    * for rule.thresholdDays days. Removal is handled by onUserLogin on next login.
    */
-  async runDailyEvaluation(): Promise<void> {
+  async runDailyEvaluation() {
     const rule = await this.getEnabledRule('inactive');
     if (!rule || rule.thresholdDays === null) return;
 
     const sinceDate = new Date(Date.now() - rule.thresholdDays * 24 * 60 * 60 * 1000);
     const userIds = await this.identityReader.getPlayerIdsInactiveSince(sinceDate);
 
-    for (const userId of userIds) {
-      await this.tryAssignTag(userId, 'inactive', 'no login for configured threshold');
+    // Chunked so the inactive-player set (unbounded) can't open one DB round-trip per
+    // user or one giant Promise.all; EVAL_CHUNK_SIZE caps in-flight assignments.
+    for (let i = 0; i < userIds.length; i += EVAL_CHUNK_SIZE) {
+      await Promise.all(
+        userIds
+          .slice(i, i + EVAL_CHUNK_SIZE)
+          .map((userId) =>
+            this.tryAssignTag(userId, 'inactive', 'no login for configured threshold'),
+          ),
+      );
     }
   }
 }

@@ -13,6 +13,7 @@ import {
   seedMinimal,
   type TestDb,
   type TestApp,
+  type TestClient,
 } from '../index.js';
 
 /**
@@ -31,6 +32,7 @@ import {
 
 let db: TestDb;
 let app: TestApp;
+let admin: TestClient;
 
 // oxlint-disable-next-line typescript/no-explicit-any -- ad-hoc JSON shape assertions in tests
 async function readJson(res: Response): Promise<any> {
@@ -91,6 +93,9 @@ beforeAll(async () => {
   const plugins = await loadExtensions();
   app = await bootTestApp({ plugins, databaseUrl: db.url });
   await seedMinimal(app.container, { playerCount: 0 });
+  // Logged in once and reused across every test in this file - 15 per-test asAdmin()
+  // logins would trip the identity module's login rate limit (10/5min/email).
+  admin = await asAdmin(app.app);
 }, 60_000);
 
 afterAll(async () => {
@@ -101,19 +106,20 @@ afterAll(async () => {
 describe('RG limits, cooling-off, self-exclusion happy path', () => {
   it('sets a deposit + session-time limit, reads them back via getRgSection', async () => {
     const { userId } = await registerPlayer(`rg-limits-${randomUUID()}@e2e.test`);
-    const admin = await asAdmin(app.app);
 
     const depositRes = await admin.put(`/compliance/players/${userId}/limits`, {
       type: 'deposit',
-      amount: 500,
+      amount: '500',
+      minutes: null,
       period: 'daily',
     });
     expect(depositRes.status).toBe(200);
-    expect((await readJson(depositRes)).amount).toBe(500);
+    expect((await readJson(depositRes)).amount).toBe('500.00');
 
     const sessionRes = await admin.put(`/compliance/players/${userId}/limits`, {
       type: 'session',
-      amount: 60,
+      amount: null,
+      minutes: 60,
       period: 'session',
     });
     expect(sessionRes.status).toBe(200);
@@ -132,7 +138,6 @@ describe('RG limits, cooling-off, self-exclusion happy path', () => {
 
   it('activates a 24h cooling-off and surfaces it via getRgSection', async () => {
     const { userId } = await registerPlayer(`rg-cooloff-${randomUUID()}@e2e.test`);
-    const admin = await asAdmin(app.app);
 
     const res = await admin.post(`/compliance/players/${userId}/cooling-off`, {
       durationHours: 24,
@@ -141,7 +146,7 @@ describe('RG limits, cooling-off, self-exclusion happy path', () => {
     expect(res.status).toBe(200);
     const body = await readJson(res);
     expect(body.status).toBe('active');
-    expect(body.permanent).toBe(false);
+    expect(body.isPermanent).toBe(false);
     expect(new Date(body.expiresAt).getTime()).toBeGreaterThan(Date.now());
 
     const section = await readJson(await admin.get(`/compliance/players/${userId}/rg`));
@@ -151,17 +156,16 @@ describe('RG limits, cooling-off, self-exclusion happy path', () => {
   it('activates a fixed-term (6mo) and a permanent self-exclusion on different players', async () => {
     const fixed = await registerPlayer(`rg-selfexcl-fixed-${randomUUID()}@e2e.test`);
     const permanent = await registerPlayer(`rg-selfexcl-perm-${randomUUID()}@e2e.test`);
-    const admin = await asAdmin(app.app);
 
     const fixedRes = await admin.post(`/compliance/players/${fixed.userId}/self-exclusion`, {
-      permanent: false,
+      isPermanent: false,
       durationMonths: 6,
       reason: 'player requested',
       confirm: true,
     });
     expect(fixedRes.status).toBe(200);
     const fixedBody = await readJson(fixedRes);
-    expect(fixedBody.permanent).toBe(false);
+    expect(fixedBody.isPermanent).toBe(false);
     expect(fixedBody.expiresAt).not.toBeNull();
     // ~6 months out, well past the 6-week cooling-off ceiling.
     expect(new Date(fixedBody.expiresAt).getTime()).toBeGreaterThan(
@@ -169,22 +173,21 @@ describe('RG limits, cooling-off, self-exclusion happy path', () => {
     );
 
     const permRes = await admin.post(`/compliance/players/${permanent.userId}/self-exclusion`, {
-      permanent: true,
+      isPermanent: true,
       reason: 'player requested, permanent',
       confirm: true,
     });
     expect(permRes.status).toBe(200);
     const permBody = await readJson(permRes);
-    expect(permBody.permanent).toBe(true);
+    expect(permBody.isPermanent).toBe(true);
     expect(permBody.expiresAt).toBeNull();
   });
 
   it('lifts a fixed-term self-exclusion once the minimum period has elapsed', async () => {
     const { userId } = await registerPlayer(`rg-lift-${randomUUID()}@e2e.test`);
-    const admin = await asAdmin(app.app);
 
     const activateRes = await admin.post(`/compliance/players/${userId}/self-exclusion`, {
-      permanent: false,
+      isPermanent: false,
       durationMonths: 6,
       reason: 'player requested',
       confirm: true,
@@ -209,7 +212,6 @@ describe('RG login enforcement', () => {
   it('blocks login + revokes sessions after cooling-off; wrong password stays indistinguishable pre-auth', async () => {
     const email = `rg-enforce-cooloff-${randomUUID()}@e2e.test`;
     const { client, userId } = await registerPlayer(email);
-    const admin = await asAdmin(app.app);
 
     const preBlockRes = await client.get('/profile');
     expect(preBlockRes.status).toBe(200);
@@ -242,12 +244,11 @@ describe('RG login enforcement', () => {
   it('blocks login + revokes sessions after self-exclusion', async () => {
     const email = `rg-enforce-selfexcl-${randomUUID()}@e2e.test`;
     const { client, userId } = await registerPlayer(email);
-    const admin = await asAdmin(app.app);
 
     expect((await client.get('/profile')).status).toBe(200);
 
     const res = await admin.post(`/compliance/players/${userId}/self-exclusion`, {
-      permanent: true,
+      isPermanent: true,
       reason: 'player requested, permanent',
       confirm: true,
     });
@@ -270,10 +271,9 @@ describe('RG login enforcement', () => {
 describe('RG self-exclusion lift negatives', () => {
   it('rejects lifting before the minimum period elapses', async () => {
     const { userId } = await registerPlayer(`rg-lift-early-${randomUUID()}@e2e.test`);
-    const admin = await asAdmin(app.app);
 
     const activateRes = await admin.post(`/compliance/players/${userId}/self-exclusion`, {
-      permanent: false,
+      isPermanent: false,
       durationMonths: 6,
       reason: 'player requested',
       confirm: true,
@@ -289,10 +289,9 @@ describe('RG self-exclusion lift negatives', () => {
 
   it('rejects lifting a permanent self-exclusion, even long after activation', async () => {
     const { userId } = await registerPlayer(`rg-lift-permanent-${randomUUID()}@e2e.test`);
-    const admin = await asAdmin(app.app);
 
     const activateRes = await admin.post(`/compliance/players/${userId}/self-exclusion`, {
-      permanent: true,
+      isPermanent: true,
       reason: 'player requested, permanent',
       confirm: true,
     });
@@ -307,10 +306,9 @@ describe('RG self-exclusion lift negatives', () => {
 
   it('requires reason + confirm:true on the lift', async () => {
     const { userId } = await registerPlayer(`rg-lift-shape-${randomUUID()}@e2e.test`);
-    const admin = await asAdmin(app.app);
 
     await admin.post(`/compliance/players/${userId}/self-exclusion`, {
-      permanent: false,
+      isPermanent: false,
       durationMonths: 6,
       reason: 'player requested',
       confirm: true,
@@ -336,10 +334,9 @@ describe('RG regression: a permanent self-exclusion outlives a lapsed cooling-of
   it('keeps the login block after a subsequent short cooling-off expires, and allows re-activating cooling-off', async () => {
     const email = `rg-regression-${randomUUID()}@e2e.test`;
     const { userId } = await registerPlayer(email);
-    const admin = await asAdmin(app.app);
 
     const permRes = await admin.post(`/compliance/players/${userId}/self-exclusion`, {
-      permanent: true,
+      isPermanent: true,
       reason: 'player requested, permanent',
       confirm: true,
     });
@@ -370,7 +367,7 @@ describe('RG regression: a permanent self-exclusion outlives a lapsed cooling-of
 
     const section = await readJson(await admin.get(`/compliance/players/${userId}/rg`));
     expect(section.coolingOff).toBeNull();
-    expect(section.selfExclusion).toMatchObject({ status: 'active', permanent: true });
+    expect(section.selfExclusion).toMatchObject({ status: 'active', isPermanent: true });
 
     // A lapsed/expired cooling-off must not block a fresh one from being activated.
     const secondCoolOffRes = await admin.post(`/compliance/players/${userId}/cooling-off`, {
@@ -384,9 +381,9 @@ describe('RG regression: a permanent self-exclusion outlives a lapsed cooling-of
 
 describe('RG authz negatives', () => {
   const validBodies: Record<string, unknown> = {
-    limits: { type: 'deposit', amount: 100, period: 'daily' },
+    limits: { type: 'deposit', amount: '100', minutes: null, period: 'daily' },
     coolingOff: { durationHours: 24, reason: 'x' },
-    selfExclusion: { permanent: true, reason: 'x', confirm: true },
+    selfExclusion: { isPermanent: true, reason: 'x', confirm: true },
     lift: { reason: 'x', confirm: true },
   };
 
@@ -441,11 +438,11 @@ describe('RG authz negatives', () => {
 describe('RG monitoring (queue-based)', () => {
   it('a deposit crossing 80% of a deposit limit raises a limit_threshold flag, filterable by type/period/date', async () => {
     const { client, userId } = await registerPlayer(`rg-monitor-deposit-${randomUUID()}@e2e.test`);
-    const admin = await asAdmin(app.app);
 
     const limitRes = await admin.put(`/compliance/players/${userId}/limits`, {
       type: 'deposit',
-      amount: 100,
+      amount: '100',
+      minutes: null,
       period: 'daily',
     });
     expect(limitRes.status).toBe(200);
@@ -453,7 +450,7 @@ describe('RG monitoring (queue-based)', () => {
     const yesterday = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString();
     const tomorrow = new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString();
 
-    const depositRes = await client.post('/wallet/deposit', { amount: 85, currency: 'USD' });
+    const depositRes = await client.post('/wallet/deposit', { amount: '85', currency: 'USD' });
     expect(depositRes.status).toBe(200);
 
     await vi.waitFor(async () => {
@@ -478,10 +475,9 @@ describe('RG monitoring (queue-based)', () => {
   it('a self-excluded login attempt raises a self_excluded_login flag', async () => {
     const email = `rg-monitor-login-${randomUUID()}@e2e.test`;
     const { userId } = await registerPlayer(email);
-    const admin = await asAdmin(app.app);
 
     const res = await admin.post(`/compliance/players/${userId}/self-exclusion`, {
-      permanent: true,
+      isPermanent: true,
       reason: 'player requested, permanent',
       confirm: true,
     });
@@ -502,11 +498,11 @@ describe('RG monitoring (queue-based)', () => {
 describe('RG audit trail', () => {
   it('every RG mutation leaves an audit row with the right actor + before/after', async () => {
     const { userId } = await registerPlayer(`rg-audit-${randomUUID()}@e2e.test`);
-    const admin = await asAdmin(app.app);
 
     const limitRes = await admin.put(`/compliance/players/${userId}/limits`, {
       type: 'deposit',
-      amount: 250,
+      amount: '250',
+      minutes: null,
       period: 'daily',
     });
     expect(limitRes.status).toBe(200);
@@ -520,7 +516,7 @@ describe('RG audit trail', () => {
     await expireExclusion(app.container, coolOffId);
 
     const selfExclRes = await admin.post(`/compliance/players/${userId}/self-exclusion`, {
-      permanent: false,
+      isPermanent: false,
       durationMonths: 6,
       reason: 'audit trail check',
       confirm: true,
@@ -540,7 +536,7 @@ describe('RG audit trail', () => {
       const body = await readJson(res);
       expect(body.items).toHaveLength(1);
       expect(body.items[0].actorType).toBe('admin');
-      expect(body.items[0].after).toMatchObject({ amount: 250, type: 'deposit' });
+      expect(body.items[0].after).toMatchObject({ amount: '250', type: 'deposit' });
     });
 
     await vi.waitFor(async () => {
@@ -559,7 +555,7 @@ describe('RG audit trail', () => {
       const body = await readJson(res);
       expect(body.items).toHaveLength(1);
       expect(body.items[0].actorType).toBe('admin');
-      expect(body.items[0].after).toMatchObject({ permanent: false });
+      expect(body.items[0].after).toMatchObject({ isPermanent: false });
     });
 
     await vi.waitFor(async () => {
@@ -576,10 +572,9 @@ describe('RG audit trail', () => {
   it('records a system-actor audit row for a blocked login attempt', async () => {
     const email = `rg-audit-login-${randomUUID()}@e2e.test`;
     const { userId } = await registerPlayer(email);
-    const admin = await asAdmin(app.app);
 
     await admin.post(`/compliance/players/${userId}/self-exclusion`, {
-      permanent: true,
+      isPermanent: true,
       reason: 'audit login check',
       confirm: true,
     });
@@ -598,11 +593,11 @@ describe('RG audit trail', () => {
 
   it('exportCsv({actionPrefix: "rg."}) returns only rg.* rows', async () => {
     const { userId } = await registerPlayer(`rg-audit-export-${randomUUID()}@e2e.test`);
-    const admin = await asAdmin(app.app);
 
     const limitRes = await admin.put(`/compliance/players/${userId}/limits`, {
       type: 'wager',
-      amount: 300,
+      amount: '300',
+      minutes: null,
       period: 'weekly',
     });
     expect(limitRes.status).toBe(200);

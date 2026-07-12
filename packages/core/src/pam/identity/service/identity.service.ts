@@ -5,6 +5,8 @@ import {
   type NodeHeaders,
   DrizzleService,
   assertRateLimit,
+  findOneOrThrow,
+  makeNotFoundError,
 } from '@openora/core/server';
 import { parseCookies } from 'better-auth/cookies';
 import { eq, sql } from 'drizzle-orm';
@@ -124,6 +126,8 @@ type ExtendedAuthApi = {
 
 const SUCCESS = { success: true as const };
 
+export const UserNotFoundError = makeNotFoundError('User');
+
 // better-auth calls use `asResponse: true`, which returns an error *Response*
 // (4xx/5xx) rather than throwing. Surface those as ORPCErrors so oRPC maps them
 // to the right HTTP status instead of the handler silently returning success.
@@ -198,6 +202,15 @@ export type IdentityServiceDeps = {
   platformConfig?: PlatformConfig;
 };
 
+/**
+ * Thin wrapper over the shared better-auth instance (register/login/2FA/
+ * password/email flows) that layers on platform-specific policy better-auth
+ * doesn't provide: per-account lockout after N failed logins, RG
+ * (responsible-gambling) login blocking, and rate limiting keyed by
+ * caller-identifier (email/token/session), never IP. better-auth calls use
+ * `asResponse: true` and return an error Response rather than throwing, so
+ * every call is routed through `ensureOk` to surface failures as `ORPCError`s.
+ */
 export class IdentityService {
   private readonly auth: ReturnType<typeof createAuth>;
   private readonly drizzle: DrizzleService;
@@ -251,6 +264,18 @@ export class IdentityService {
     return { user: toUser(body.user) };
   }
 
+  /**
+   * Credentials are verified FIRST; the RG login block is checked only AFTER
+   * a pass, so a pre-auth probe can't distinguish a restricted account from a
+   * wrong password. An RG-blocked account still authenticates then has its
+   * fresh session immediately expired and the cookie withheld - it never
+   * counts toward the lockout budget. A 2FA-enrolled account returns
+   * `{ twoFactorRedirect: true }` instead of a session; the client completes
+   * via `verifyTwoFactor`. Failed-attempt counting only advances on a genuine
+   * credential rejection (never on a transient/backend error), via an atomic
+   * `UPDATE ... SET attempts = attempts + 1` so concurrent failures can't each
+   * read a stale count and slip past the lockout threshold.
+   */
   async login(input: LoginInput, reqHeaders: NodeHeaders, resHeaders: Headers) {
     const headers = nodeHeadersToHeaders(reqHeaders);
     const ip = clientIp(headers);
@@ -394,28 +419,27 @@ export class IdentityService {
     }
   }
 
-  private clearLockout(userId: string) {
+  private clearLockout(userId: User['id']) {
     return this.drizzle.db
       .update(user)
       .set({ failedLoginAttempts: 0, lockoutUntil: null })
       .where(eq(user.id, userId));
   }
 
-  async unlockUser(userId: string, actorId: string) {
-    const [existingUser] = await this.drizzle.db
-      .select({
-        id: user.id,
-        email: user.email,
-        failedLoginAttempts: user.failedLoginAttempts,
-        lockoutUntil: user.lockoutUntil,
-      })
-      .from(user)
-      .where(eq(user.id, userId))
-      .limit(1);
-
-    if (!existingUser) {
-      throw new ORPCError('NOT_FOUND', { message: 'User not found' });
-    }
+  async unlockUser(userId: User['id'], actorId: User['id']) {
+    const existingUser = findOneOrThrow(
+      await this.drizzle.db
+        .select({
+          id: user.id,
+          email: user.email,
+          failedLoginAttempts: user.failedLoginAttempts,
+          lockoutUntil: user.lockoutUntil,
+        })
+        .from(user)
+        .where(eq(user.id, userId))
+        .limit(1),
+      new UserNotFoundError(userId),
+    );
 
     await this.clearLockout(userId);
 

@@ -35,7 +35,7 @@ describe('WalletService domain errors', () => {
   });
 
   it('InsufficientBalanceError carries available and requested amounts', () => {
-    const err = new InsufficientBalanceError(50, 100);
+    const err = new InsufficientBalanceError('50', '100');
     expect(err.message).toContain('50');
     expect(err.message).toContain('100');
   });
@@ -58,7 +58,7 @@ describe('WalletService.deposit', () => {
     const valuesSpy = readPrivate<ReturnType<typeof vi.fn>>(drizzle.db, 'values');
     const svc = svcOf(drizzle, events, payment);
 
-    await svc.deposit({ userId: 'u-1', amount: 40, currency: 'USD', provider: 'stripe' });
+    await svc.deposit({ userId: 'u-1', amount: '40', currency: 'USD', provider: 'stripe' });
 
     expect(valuesSpy).toHaveBeenCalledWith(
       expect.objectContaining({ type: 'deposit', rail: 'fiat' }),
@@ -73,7 +73,7 @@ describe('WalletService.deposit', () => {
     const valuesSpy = readPrivate<ReturnType<typeof vi.fn>>(drizzle.db, 'values');
     const svc = svcOf(drizzle, events, payment);
 
-    await svc.deposit({ userId: 'u-1', amount: 1, currency: 'BTC', provider: 'fireblocks' });
+    await svc.deposit({ userId: 'u-1', amount: '1', currency: 'BTC', provider: 'fireblocks' });
 
     expect(valuesSpy).toHaveBeenCalledWith(
       expect.objectContaining({ type: 'deposit', rail: 'crypto' }),
@@ -101,14 +101,14 @@ describe('WalletService.withdraw', () => {
     const forSpy = readPrivate<ReturnType<typeof vi.fn>>(drizzle.db, 'for');
     const svc = svcOf(drizzle, events, payment);
 
-    const result = await svc.withdraw({ userId: 'u-1', amount: 40, currency: 'USD' });
+    const result = await svc.withdraw({ userId: 'u-1', amount: '40', currency: 'USD' });
 
     expect(result).toEqual({ transactionId: 'tx-1', status: 'pending' });
     expect(forSpy).toHaveBeenCalledWith('update');
     expect(payment.processWithdrawal).not.toHaveBeenCalled();
     expect(events.emit).toHaveBeenCalledWith('wallet.withdrawal.requested', {
       userId: 'u-1',
-      amount: 40,
+      amount: '40',
       currency: 'USD',
       transactionId: 'tx-1',
     });
@@ -125,7 +125,7 @@ describe('WalletService.withdraw', () => {
     const valuesSpy = readPrivate<ReturnType<typeof vi.fn>>(drizzle.db, 'values');
     const svc = svcOf(drizzle, events, payment);
 
-    await svc.withdraw({ userId: 'u-1', amount: 1, currency: 'BTC' });
+    await svc.withdraw({ userId: 'u-1', amount: '1', currency: 'BTC' });
 
     expect(valuesSpy).toHaveBeenCalledWith(expect.objectContaining({ rail: 'crypto' }));
   });
@@ -137,7 +137,7 @@ describe('WalletService.withdraw', () => {
     const svc = svcOf(drizzle, events, payment);
 
     await expect(
-      svc.withdraw({ userId: 'u-1', amount: 40, currency: 'EUR' }),
+      svc.withdraw({ userId: 'u-1', amount: '40', currency: 'EUR' }),
     ).rejects.toBeInstanceOf(CurrencyMismatchError);
     expect(events.emit).not.toHaveBeenCalled();
   });
@@ -153,7 +153,7 @@ describe('WalletService.withdraw', () => {
     const svc = svcOf(drizzle, events, payment);
 
     await expect(
-      svc.withdraw({ userId: 'u-1', amount: 40, currency: 'USD' }),
+      svc.withdraw({ userId: 'u-1', amount: '40', currency: 'USD' }),
     ).rejects.toBeInstanceOf(InsufficientBalanceError);
     expect(events.emit).not.toHaveBeenCalled();
   });
@@ -180,7 +180,7 @@ describe('WalletService idempotency - deposit', () => {
 
     const result = await svc.deposit({
       userId: 'u-1',
-      amount: 40,
+      amount: '40',
       currency: 'USD',
       idempotencyKey: 'key-1',
     });
@@ -201,7 +201,7 @@ describe('WalletService idempotency - deposit', () => {
     const svc = svcOf(drizzle, events, payment);
 
     await expect(
-      svc.deposit({ userId: 'u-1', amount: 99, currency: 'USD', idempotencyKey: 'key-1' }),
+      svc.deposit({ userId: 'u-1', amount: '99', currency: 'USD', idempotencyKey: 'key-1' }),
     ).rejects.toBeInstanceOf(IdempotencyKeyReuseError);
     expect(payment.processDeposit).not.toHaveBeenCalled();
   });
@@ -225,13 +225,13 @@ describe('WalletService idempotency - deposit', () => {
 
     const r1 = await svc.deposit({
       userId: 'u-1',
-      amount: 40,
+      amount: '40',
       currency: 'USD',
       idempotencyKey: 'key-a',
     });
     const r2 = await svc.deposit({
       userId: 'u-1',
-      amount: 40,
+      amount: '40',
       currency: 'USD',
       idempotencyKey: 'key-b',
     });
@@ -254,7 +254,7 @@ describe('WalletService idempotency - deposit', () => {
     const valuesSpy = readPrivate<ReturnType<typeof vi.fn>>(drizzle.db, 'values');
     const svc = svcOf(drizzle, events, payment);
 
-    const result = await svc.deposit({ userId: 'u-1', amount: 40, currency: 'USD' });
+    const result = await svc.deposit({ userId: 'u-1', amount: '40', currency: 'USD' });
 
     expect(result).toEqual({ transactionId: 'tx-1', status: 'completed' });
     expect(valuesSpy).toHaveBeenCalledWith(expect.objectContaining({ idempotencyKey: null }));
@@ -269,7 +269,15 @@ describe('WalletService idempotency - deposit', () => {
       select: [
         [{ id: 'w-1', userId: 'u-1', balance: '100', currency: 'USD' }], // pre-PSP replay check: wallet lookup
         [], // pre-PSP replay check: not found yet, both requests race past it
-        [{ id: 'tx-winner', walletId: 'w-1', amount: '40', currency: 'USD', status: 'completed' }], // txn: re-read after the conflicting insert
+        [
+          {
+            id: 'tx-winner',
+            walletId: 'w-1',
+            amount: '40',
+            currency: 'USD',
+            status: 'completed',
+          },
+        ], // txn: re-read after the conflicting insert
       ],
       returning: [
         [], // onConflictDoNothing().returning() - the loser's insert is a no-op, not a thrown error
@@ -279,7 +287,7 @@ describe('WalletService idempotency - deposit', () => {
 
     const result = await svc.deposit({
       userId: 'u-1',
-      amount: 40,
+      amount: '40',
       currency: 'USD',
       idempotencyKey: 'key-1',
     });
@@ -298,7 +306,7 @@ describe('WalletService idempotency - deposit', () => {
     const svc = svcOf(drizzle, events, payment);
 
     await expect(
-      svc.deposit({ userId: 'u-1', amount: 40, currency: 'EUR', idempotencyKey: 'key-1' }),
+      svc.deposit({ userId: 'u-1', amount: '40', currency: 'EUR', idempotencyKey: 'key-1' }),
     ).rejects.toBeInstanceOf(IdempotencyKeyReuseError);
     expect(payment.processDeposit).not.toHaveBeenCalled();
   });
@@ -325,7 +333,7 @@ describe('WalletService idempotency - withdraw', () => {
 
     const result = await svc.withdraw({
       userId: 'u-1',
-      amount: 40,
+      amount: '40',
       currency: 'USD',
       idempotencyKey: 'key-1',
     });
@@ -345,7 +353,7 @@ describe('WalletService idempotency - withdraw', () => {
     const svc = svcOf(drizzle, events, payment);
 
     await expect(
-      svc.withdraw({ userId: 'u-1', amount: 99, currency: 'USD', idempotencyKey: 'key-1' }),
+      svc.withdraw({ userId: 'u-1', amount: '99', currency: 'USD', idempotencyKey: 'key-1' }),
     ).rejects.toBeInstanceOf(IdempotencyKeyReuseError);
   });
 
@@ -368,13 +376,13 @@ describe('WalletService idempotency - withdraw', () => {
 
     const r1 = await svc.withdraw({
       userId: 'u-1',
-      amount: 40,
+      amount: '40',
       currency: 'USD',
       idempotencyKey: 'key-a',
     });
     const r2 = await svc.withdraw({
       userId: 'u-1',
-      amount: 20,
+      amount: '20',
       currency: 'USD',
       idempotencyKey: 'key-b',
     });
@@ -395,7 +403,7 @@ describe('WalletService idempotency - withdraw', () => {
     const valuesSpy = readPrivate<ReturnType<typeof vi.fn>>(drizzle.db, 'values');
     const svc = svcOf(drizzle, events, payment);
 
-    const result = await svc.withdraw({ userId: 'u-1', amount: 40, currency: 'USD' });
+    const result = await svc.withdraw({ userId: 'u-1', amount: '40', currency: 'USD' });
 
     expect(result).toEqual({ transactionId: 'tx-1', status: 'pending' });
     expect(valuesSpy).toHaveBeenCalledWith(expect.objectContaining({ idempotencyKey: null }));
@@ -420,7 +428,7 @@ describe('WalletService idempotency - withdraw', () => {
 
     const result = await svc.withdraw({
       userId: 'u-1',
-      amount: 40,
+      amount: '40',
       currency: 'USD',
       idempotencyKey: 'key-1',
     });
@@ -439,7 +447,7 @@ describe('WalletService idempotency - withdraw', () => {
     const svc = svcOf(drizzle, events, payment);
 
     await expect(
-      svc.withdraw({ userId: 'u-1', amount: 40, currency: 'USD', idempotencyKey: 'key-1' }),
+      svc.withdraw({ userId: 'u-1', amount: '40', currency: 'USD', idempotencyKey: 'key-1' }),
     ).rejects.toBeInstanceOf(IdempotencyKeyReuseError);
   });
 });
@@ -463,8 +471,24 @@ describe('WalletService idempotency - namespaced across operations', () => {
         [], // withdraw pre-insert check: no existing tx under the withdraw namespace
       ],
       returning: [
-        [{ id: 'tx-deposit', walletId: 'w-1', amount: '40', currency: 'USD', status: 'completed' }],
-        [{ id: 'tx-withdraw', walletId: 'w-1', amount: '40', currency: 'USD', status: 'pending' }],
+        [
+          {
+            id: 'tx-deposit',
+            walletId: 'w-1',
+            amount: '40',
+            currency: 'USD',
+            status: 'completed',
+          },
+        ],
+        [
+          {
+            id: 'tx-withdraw',
+            walletId: 'w-1',
+            amount: '40',
+            currency: 'USD',
+            status: 'pending',
+          },
+        ],
         [{ id: 'w-1' }], // withdraw guarded debit
       ],
     });
@@ -472,13 +496,13 @@ describe('WalletService idempotency - namespaced across operations', () => {
 
     const deposit = await svc.deposit({
       userId: 'u-1',
-      amount: 40,
+      amount: '40',
       currency: 'USD',
       idempotencyKey: 'shared-key',
     });
     const withdraw = await svc.withdraw({
       userId: 'u-1',
-      amount: 40,
+      amount: '40',
       currency: 'USD',
       idempotencyKey: 'shared-key',
     });
@@ -542,7 +566,7 @@ describe('WalletService.approveWithdrawal', () => {
     const result = await svc.approveWithdrawal('admin-1', 'tx-1');
 
     expect(result).toEqual({ transactionId: 'tx-1', status: 'completed' });
-    expect(payment.processWithdrawal).toHaveBeenCalledWith(40, 'USD', {
+    expect(payment.processWithdrawal).toHaveBeenCalledWith('40', 'USD', {
       transactionId: 'tx-1',
       userId: 'u-1',
       rail: 'fiat',
@@ -556,14 +580,14 @@ describe('WalletService.approveWithdrawal', () => {
     });
     expect(events.emit).toHaveBeenNthCalledWith(1, 'wallet.withdrawal.approved', {
       userId: 'u-1',
-      amount: 40,
+      amount: '40',
       currency: 'USD',
       transactionId: 'tx-1',
       adminId: 'admin-1',
     });
     expect(events.emit).toHaveBeenNthCalledWith(2, 'wallet.withdrawal.completed', {
       userId: 'u-1',
-      amount: 40,
+      amount: '40',
       currency: 'USD',
       transactionId: 'tx-1',
     });
@@ -609,7 +633,7 @@ describe('WalletService.approveWithdrawal', () => {
     expect(setSpy).toHaveBeenCalledWith(expect.objectContaining({ balance: expect.anything() }));
     expect(events.emit).toHaveBeenCalledWith('wallet.withdrawal.failed', {
       userId: 'u-1',
-      amount: 40,
+      amount: '40',
       currency: 'USD',
       transactionId: 'tx-1',
       adminId: 'admin-1',
@@ -697,7 +721,7 @@ describe('WalletService.rejectWithdrawal', () => {
     expect(setSpy).toHaveBeenCalledWith(expect.objectContaining({ balance: expect.anything() }));
     expect(events.emit).toHaveBeenCalledWith('wallet.withdrawal.rejected', {
       userId: 'u-1',
-      amount: 40,
+      amount: '40',
       currency: 'USD',
       transactionId: 'tx-1',
       adminId: 'admin-1',
@@ -818,8 +842,12 @@ describe('WalletService.listWithdrawals', () => {
   });
 
   it('tags large_amount when the amount is at/above the threshold, not below', async () => {
-    const big = makeDrizzle({ select: [[queueRow('tx-1', 'u-1', { amount: '5000' })], []] });
-    const small = makeDrizzle({ select: [[queueRow('tx-2', 'u-2', { amount: '4999' })], []] });
+    const big = makeDrizzle({
+      select: [[queueRow('tx-1', 'u-1', { amount: '5000' })], []],
+    });
+    const small = makeDrizzle({
+      select: [[queueRow('tx-2', 'u-2', { amount: '4999.99' })], []],
+    });
 
     const bigResult = await svcOf(
       big,

@@ -98,7 +98,7 @@ function exclusionRow(overrides: Record<string, unknown> = {}) {
     kind: 'self_exclusion',
     status: 'active',
     reason: 'gambling concern',
-    permanent: false,
+    isPermanent: false,
     startsAt: now,
     expiresAt: null,
     liftedAt: null,
@@ -121,20 +121,28 @@ describe('RgService.setPlayerLimit', () => {
       id: 'lim-1',
       userId: USER,
       type: 'deposit',
-      amount: 100,
+      amount: '100',
+      minutes: null,
       period: 'daily',
       createdAt: new Date(),
     };
-    const { svc, events } = newSvc(routingDb({ userLimit: [[{ amount: 50 }]], returning: [row] }));
+    const { svc, events } = newSvc(
+      routingDb({ userLimit: [[{ amount: '50', minutes: null }]], returning: [row] }),
+    );
     const dto = await svc.setPlayerLimit(
       USER,
-      { userId: USER, type: 'deposit', amount: 100, period: 'daily' },
+      { userId: USER, type: 'deposit', amount: '100', minutes: null, period: 'daily' },
       ADMIN,
     );
     expect(dto.id).toBe('lim-1');
     expect(events.emit).toHaveBeenCalledWith(
       'rg.limit.set',
-      expect.objectContaining({ userId: USER, actorId: ADMIN, amount: 100, previousAmount: 50 }),
+      expect.objectContaining({
+        userId: USER,
+        actorId: ADMIN,
+        amount: '100',
+        previousAmount: '50',
+      }),
     );
   });
 });
@@ -185,7 +193,7 @@ describe('RgService.activateCoolingOff', () => {
 
 describe('RgService.activateSelfExclusion', () => {
   it('blocks indefinitely (until null) for a permanent exclusion', async () => {
-    const row = exclusionRow({ permanent: true, expiresAt: null });
+    const row = exclusionRow({ isPermanent: true, expiresAt: null });
     const db = routingDb({
       rgExclusion: [[], [{ kind: 'self_exclusion', expiresAt: null }]],
       returning: [row],
@@ -193,20 +201,20 @@ describe('RgService.activateSelfExclusion', () => {
     const { svc, events, enforcement } = newSvc(db);
     await svc.activateSelfExclusion(
       USER,
-      { userId: USER, permanent: true, reason: 'stop', confirm: true },
+      { userId: USER, isPermanent: true, reason: 'stop', confirm: true },
       ADMIN,
     );
     expect(enforcement.block).toHaveBeenCalledWith(USER, { until: null });
     expect(events.emit).toHaveBeenCalledWith(
       'rg.self_exclusion.activated',
-      expect.objectContaining({ permanent: true, expiresAt: null }),
+      expect.objectContaining({ isPermanent: true, expiresAt: null }),
     );
   });
 });
 
 describe('RgService.liftSelfExclusion', () => {
   it('rejects lifting a permanent self-exclusion', async () => {
-    const db = routingDb({ rgExclusion: [[exclusionRow({ permanent: true, expiresAt: null })]] });
+    const db = routingDb({ rgExclusion: [[exclusionRow({ isPermanent: true, expiresAt: null })]] });
     const { svc, enforcement } = newSvc(db);
     await expect(
       svc.liftSelfExclusion(USER, { userId: USER, reason: 'ok', confirm: true }, ADMIN),
@@ -216,7 +224,7 @@ describe('RgService.liftSelfExclusion', () => {
 
   it('rejects lifting before the minimum period elapses', async () => {
     const db = routingDb({
-      rgExclusion: [[exclusionRow({ permanent: false, expiresAt: future() })]],
+      rgExclusion: [[exclusionRow({ isPermanent: false, expiresAt: future() })]],
     });
     const { svc } = newSvc(db);
     await expect(
@@ -233,7 +241,7 @@ describe('RgService.liftSelfExclusion', () => {
 
   it('lifts after the minimum period and unblocks when nothing else is active', async () => {
     const past = new Date(Date.now() - 1000);
-    const existing = exclusionRow({ permanent: false, expiresAt: past });
+    const existing = exclusionRow({ isPermanent: false, expiresAt: past });
     const lifted = { ...existing, status: 'lifted' };
     const db = routingDb({ rgExclusion: [[existing], []], returning: [lifted] });
     const { svc, events, enforcement } = newSvc(db);
@@ -248,7 +256,7 @@ describe('RgService.liftSelfExclusion', () => {
   // GROUP 1: lifting the self-exclusion must not clear an unrelated active cooling-off.
   it('recomputes to the remaining cooling-off block instead of unblocking', async () => {
     const past = new Date(Date.now() - 1000);
-    const existing = exclusionRow({ permanent: false, expiresAt: past });
+    const existing = exclusionRow({ isPermanent: false, expiresAt: past });
     const db = routingDb({
       rgExclusion: [[existing], [{ kind: 'cooling_off', expiresAt: future() }]],
       returning: [{ ...existing, status: 'lifted' }],
