@@ -7,6 +7,7 @@
     "eqeqeq": "error",
     "no-var": "error",
     "prefer-const": "error",
+    "curly": ["error", "all"],
     "typescript/no-explicit-any": "error",
     "typescript/no-non-null-assertion": "error",
     "typescript/consistent-type-definitions": ["error", "type"],
