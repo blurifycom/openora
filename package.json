@@ -39,7 +39,7 @@
     "seed": "tsx tools/db/seed.ts",
     "test:tools": "node --test \"tools/__tests__/*.test.mjs\"",
     "verify": "turbo run typecheck test:unit && pnpm run test:tools && pnpm run lint && pnpm run verify:shape && pnpm run boundaries",
-    "verify:drift": "tsx tools/gen/sync-tsconfig-paths.ts --check && tsx tools/gen/gen-openapi.ts && tsx tools/gen/gen-catalog.ts && git diff --exit-code -- docs/openapi.json docs/catalog.json",
+    "verify:drift": "tsx tools/gen/sync-tsconfig-paths.ts --check && tsx tools/gen/gen-openapi.ts && tsx tools/gen/gen-catalog.ts && pnpm run sync:agents && git diff --exit-code -- docs/openapi.json docs/catalog.json .github/copilot-instructions.md .github/instructions/",
     "eval:scaffold": "tsx tools/gen/eval-scaffold.ts",
     "setup:agent": "tsx tools/setup/setup-agent.ts",
     "setup:mcp": "tsx tools/setup/setup-mcp.ts",

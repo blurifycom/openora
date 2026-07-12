@@ -1,11 +1,8 @@
 ---
-root: false
-targets:
-  - '*'
-globs:
-  - 'packages/addons/**'
-  - 'packages/core/**'
-description: SQL / Drizzle conventions - snake_case identifiers, timestamptz, keys, indexing, efficient ops, migrations.
+description: >-
+  SQL / Drizzle conventions - snake_case identifiers, timestamptz, keys,
+  indexing, efficient ops, migrations.
+applyTo: 'packages/addons/**,packages/core/**'
 ---
 
 # Database conventions (SQL / Drizzle)
