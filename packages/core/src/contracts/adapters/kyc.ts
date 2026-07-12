@@ -1,8 +1,10 @@
-// KYC/identity-verification seam. Intended real provider: SumSub (https://sumsub.com).
-// The identity module ships MockKycAdapter (auto-approves) as the default binding.
-// Override via overlay: ctx.provide(KYC_ADAPTER, () => new SumsubKycAdapter())
-// Load your overlay AFTER the identity plugin in extensions.config.ts (last registration wins).
-// See docs/adapters/kyc.md for the full binding guide.
+/**
+ * KYC/identity-verification seam. Intended real provider: SumSub (https://sumsub.com).
+ * The identity module ships MockKycAdapter (auto-approves) as the default binding.
+ * Override via overlay: `ctx.provide(KYC_ADAPTER, () => new SumsubKycAdapter())`.
+ * Load your overlay AFTER the identity plugin in extensions.config.ts (last registration wins).
+ * See docs/adapters/kyc.md for the full binding guide.
+ */
 import { createToken, type Token } from './token.js';
 import type { KycStatus, Player } from '../schemas/player.js';
 
@@ -19,22 +21,28 @@ export type KycVendorStatus = 'pending' | 'approved' | 'rejected' | 'not_started
 export type KycResult = {
   referenceId: string;
   status: KycVendorStatus;
-  // Hosted verification URL to redirect the end user to, for vendors whose flow collects
-  // documents on their own hosted page (eg Didit) rather than accepting them from our
-  // backend. Omitted by document-forwarding vendors (eg SumSub, MockKycAdapter).
+  /**
+   * Hosted verification URL to redirect the end user to, for vendors whose flow collects
+   * documents on their own hosted page (eg Didit) rather than accepting them from our
+   * backend. Omitted by document-forwarding vendors (eg SumSub, MockKycAdapter).
+   */
   verificationUrl?: string;
 };
 
 export type KycAdapter = {
-  // True when the adapter rubber-stamps every submission (the default MockKycAdapter).
-  // A boot guard refuses/warns if withdrawals are KYC-gated while this is bound, so an
-  // operator can't enable the gate yet leave verification a no-op. Real providers omit it.
+  /**
+   * True when the adapter rubber-stamps every submission (the default MockKycAdapter).
+   * A boot guard refuses/warns if withdrawals are KYC-gated while this is bound, so an
+   * operator can't enable the gate yet leave verification a no-op. Real providers omit it.
+   */
   readonly autoApproves?: boolean;
   submit(userId: string, documents: KycDocument[]): Promise<KycResult>;
   getStatus(userId: string): Promise<KycVendorStatus>;
-  // Provider-specific normalization of a raw webhook into a vendor decision, or
-  // null when the body is not a reconcilable decision. Optional - MockKycAdapter
-  // omits it; the Didit/SumSub overlay (ABC-293) implements it.
+  /**
+   * Provider-specific normalization of a raw webhook into a vendor decision, or
+   * null when the body is not a reconcilable decision. Optional - MockKycAdapter
+   * omits it; the Didit/SumSub overlay (ABC-293) implements it.
+   */
   parseWebhook?(
     rawBody: string,
     headers: Record<string, string | string[] | undefined>,
@@ -66,13 +74,15 @@ export type KycStatusWriter = {
 
 export const KYC_STATUS_WRITER: Token<KycStatusWriter> = createToken('KYC_STATUS_WRITER');
 
-// Verifies the public KYC provider webhook is genuine. The default impl recomputes
-// an HMAC-SHA256 over the raw request body and constant-time compares it against the
-// `x-kyc-signature` header; a vendor overlay rebinds it. Fails closed when the secret is
-// unset, the signature is absent, or the raw body was not captured. Takes the full
-// headers map (not a pre-extracted value) because the signing header name is
-// vendor-specific - eg SumSub vs a hosted-session vendor each name it differently -
-// so each implementation extracts whatever header(s) it actually needs.
+/**
+ * Verifies the public KYC provider webhook is genuine. The default impl recomputes
+ * an HMAC-SHA256 over the raw request body and constant-time compares it against the
+ * `x-kyc-signature` header; a vendor overlay rebinds it. Fails closed when the secret is
+ * unset, the signature is absent, or the raw body was not captured. Takes the full
+ * headers map (not a pre-extracted value) because the signing header name is
+ * vendor-specific - eg SumSub vs a hosted-session vendor each name it differently -
+ * so each implementation extracts whatever header(s) it actually needs.
+ */
 export type KycWebhookVerifier = {
   verify(rawBody: string, headers: Record<string, string | string[] | undefined>): boolean;
 };

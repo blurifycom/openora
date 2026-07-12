@@ -36,13 +36,21 @@ export const KycVerificationSchema = z.object({
   updatedAt: TimestampSchema,
 });
 
+/**
+ * `documents` is empty for a hosted-session vendor (eg Didit) - there is nothing to
+ * forward, the vendor collects documents on its own hosted page after `submitKyc`
+ * redirects the user there. A document-forwarding vendor (eg SumSub) expects at
+ * least one document; that requirement is the adapter's concern, not this contract's.
+ */
 export const SubmitKycInputSchema = z.object({
-  documents: z.array(KycDocumentSchema).min(1),
+  documents: z.array(KycDocumentSchema),
 });
 export type SubmitKycInput = z.infer<typeof SubmitKycInputSchema>;
 
-// Extends the persisted verification record with a hosted verification URL, present only
-// for vendors whose flow requires redirecting the end user (eg a hosted-session provider).
+/**
+ * Extends the persisted verification record with a hosted verification URL, present only
+ * for vendors whose flow requires redirecting the end user (eg a hosted-session provider).
+ */
 export const SubmitKycOutputSchema = KycVerificationSchema.extend({
   verificationUrl: z.string().optional(),
 });
