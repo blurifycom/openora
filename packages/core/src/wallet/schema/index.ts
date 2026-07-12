@@ -34,8 +34,6 @@ export const walletRailEnum = pgEnum('wallet_rail', WALLET_RAILS);
 export const wallet = pgTable('wallet', {
   id: uuid().primaryKey().defaultRandom(),
   userId: uuid().notNull().unique('wallet_user_id_unique'),
-  // scale 8 covers both fiat (2dp) and crypto (BTC-level 8dp / wei-level ETH precision
-  // without further rescale); widening scale is a non-representation-changing migration (ADR-0029).
   balance: decimal({ precision: 18, scale: 8 }).notNull().default('0'),
   currency: text().notNull().default('USD'),
   updatedAt: timestamp({ withTimezone: true })
@@ -68,8 +66,6 @@ export const walletTransaction = pgTable(
     // reconciliation rather than buried in free-form JSON.
     providerName: text(),
     providerRefId: text(),
-    // Inbound address-based deposit (custody-vendor rail) and the on-chain tx hash it
-    // settled in. Both null for a non-address-based deposit/withdrawal.
     destinationAddress: text(),
     txHash: text(),
     // Reserved escape hatch for genuinely free-form, non-queryable extras. Provider
@@ -88,10 +84,6 @@ export const walletTransaction = pgTable(
     index('wallet_transaction_rail_idx').on(t.rail),
     index('wallet_transaction_currency_idx').on(t.currency),
     index('wallet_transaction_tx_hash_idx').on(t.txHash),
-    // Also the dedup key for an inbound/async-vendor webhook reconciliation (see
-    // WalletService.creditDepositByAddress / reconcileWithdrawalStatus): a real vendor
-    // reference id is unique per settlement, so this doubles as the money-critical-path
-    // DB guard (onConflictDoNothing) rather than just an app-level check.
     uniqueIndex('wallet_transaction_provider_ref_id_idx')
       .on(t.providerRefId)
       .where(sql`${t.providerRefId} IS NOT NULL`),
@@ -101,8 +93,7 @@ export const walletTransaction = pgTable(
   ],
 );
 
-// Per-player threshold override (unique userId); overrides the global autoWithdrawal
-// fiatThreshold/cryptoThreshold for whichever rail the withdrawal is on.
+// Per-player threshold override (unique userId); overrides the global autoWithdrawal.fiatThreshold.
 export const autoWithdrawalRule = pgTable('auto_withdrawal_rule', {
   id: uuid().primaryKey().defaultRandom(),
   userId: uuid().notNull().unique('auto_withdrawal_rule_user_id_unique'),
@@ -115,10 +106,6 @@ export const autoWithdrawalRule = pgTable('auto_withdrawal_rule', {
     .$onUpdateFn(() => new Date()),
 });
 
-// A custody/address-issuing vendor hands out one deposit address per (user, asset); we
-// persist it so re-requesting the same currency is idempotent and so an inbound webhook
-// can resolve `address` back to a userId. `userId` is a bare uuid (cross-module id, no
-// .references) - the user table is owned by another domain.
 export const walletDepositAddress = pgTable(
   'wallet_deposit_address',
   {

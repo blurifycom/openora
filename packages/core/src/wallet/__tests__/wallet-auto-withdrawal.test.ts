@@ -366,9 +366,6 @@ describe('WalletService.withdraw auto-approval', () => {
       ],
     });
     const directory = verifiedDirectory();
-    // fiatThreshold is generous, but cryptoThreshold is unset - the crypto rail must
-    // never inherit the fiat ceiling; the threshold gate resolves to null and short-
-    // circuits before any KYC/risk resolution.
     const { svc, payment } = makeSvc({
       drizzle: dz,
       directory,
@@ -392,9 +389,9 @@ describe('WalletService.withdraw auto-approval', () => {
     const dz = makeDrizzle({
       select: [
         ...holdSelect(btcWallet).map((r) => [r]),
-        [], // resolveAutoThreshold: no per-player rule -> falls back to global cryptoThreshold
-        [{ walletId: 'w-1', n: 1 }], // velocity grouped count (< 3), pre-lock
-        [{ total: '0', n: 0 }], // caps, inside the advisory lock
+        [],
+        [{ walletId: 'w-1', n: 1 }],
+        [{ total: '0', n: 0 }],
         [
           {
             id: 'tx-1',
@@ -404,9 +401,9 @@ describe('WalletService.withdraw auto-approval', () => {
             amount: '0.5',
             currency: 'BTC',
           },
-        ], // flipToProcessing's FOR UPDATE select
-        [{ userId: 'u-1' }], // settleApproved's userIdForWallet
-        [], // final "completed" update (awaited, unused)
+        ],
+        [{ userId: 'u-1' }],
+        [],
       ],
       returning: [
         ...holdReturning(insertRow({ currency: 'BTC', rail: 'crypto', amount: '0.5' })),

@@ -53,11 +53,6 @@ export const AutoWithdrawalConfigSchema = z
     enabled: z.boolean().default(false),
     /** Fiat-rail auto-approval ceiling; a per-player rule overrides it. */
     fiatThreshold: MoneyAmountSchema.optional(),
-    /**
-     * Crypto-rail auto-approval ceiling; a per-player rule overrides it (same override
-     * column as fiat - see wallet/AGENTS.md). Absent = never auto-approved (explicit
-     * operator opt-in required; crypto is irreversible, so this must never default on).
-     */
     cryptoThreshold: MoneyAmountSchema.optional(),
     /** Active tag keys that veto auto-approval and force manual review. */
     excludeRiskFlags: z.array(TagKeySchema).default([]),

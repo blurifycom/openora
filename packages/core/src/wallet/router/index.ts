@@ -147,8 +147,6 @@ export function createWalletRouter(
       ),
     },
 
-    // M2M payment-vendor webhook - no admin session. Verify the verbatim bytes against
-    // the signature header or reject (fail closed); never fall back to an empty body.
     webhook: os.webhook.handler(async ({ context }) => {
       const rawBody = context.rawBody;
       if (rawBody === undefined || !webhookVerifier.verify(rawBody, context.request.headers)) {

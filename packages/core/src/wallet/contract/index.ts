@@ -18,8 +18,6 @@ const PositiveMoneyAmountSchema = MoneyAmountSchema.refine((v) => Number(v) > 0,
   message: 'must be greater than zero',
 });
 
-// A wallet currency is either an ISO 4217 fiat code or a crypto asset ticker (eg USDT, 4
-// letters) - never CurrencyCodeSchema (fixed 3-letter), which would reject the crypto rail.
 const WalletCurrencyCodeSchema = z.string().min(1);
 
 export const WalletBalanceSchema = z.object({
@@ -48,8 +46,6 @@ export const WithdrawInputSchema = z.object({
   currency: WalletCurrencyCodeSchema,
   provider: z.string().optional(),
   idempotencyKey: UuidSchema.optional(),
-  // Required for the crypto rail (where should the funds go?); ignored for fiat, where the
-  // PSP resolves the payout destination from the player's on-file payment method.
   destinationAddress: z.string().optional(),
 });
 
@@ -74,8 +70,6 @@ export const WithdrawalQueueItemSchema = z.object({
   kycStatus: KycStatusSchema.nullable(),
   riskTags: z.array(z.string()),
   requestedAt: TimestampSchema,
-  // Crypto rail only - the address funds are sent to, and the on-chain reference once
-  // settled. Both null for a fiat withdrawal (the PSP resolves its own payout destination).
   destinationAddress: z.string().nullable(),
   txHash: z.string().nullable(),
 });
@@ -192,7 +186,6 @@ export const walletContract = {
       .output(DepositAddressSchema),
   },
 
-  // M2M payment-vendor webhook - no admin session.
   webhook: oc
     .route({ method: 'POST', path: '/wallet/webhook' })
     .input(PaymentWebhookInputSchema)

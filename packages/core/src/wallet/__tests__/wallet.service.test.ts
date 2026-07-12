@@ -626,7 +626,6 @@ describe('WalletService.approveWithdrawal', () => {
           },
         ],
         [{ userId: 'u-1' }], // userIdForWallet
-        [], // failed-status update (awaited, unused)
         [], // refund balance update (awaited, unused)
       ],
       returning: [
@@ -640,6 +639,7 @@ describe('WalletService.approveWithdrawal', () => {
             currency: 'USD',
           },
         ],
+        [{ id: 'tx-1' }],
       ],
     });
     payment.processWithdrawal.mockRejectedValueOnce(new Error('psp down'));
@@ -929,8 +929,8 @@ describe('WalletService.approveWithdrawal - async vendor', () => {
             currency: 'USD',
           },
         ],
-        [{ userId: 'u-1' }], // userIdForWallet
-        [], // non-terminal providerName/providerRefId update (awaited, unused)
+        [{ userId: 'u-1' }],
+        [],
       ],
       returning: [
         [
@@ -974,7 +974,8 @@ describe('WalletService.reconcileWithdrawalStatus', () => {
   it('completed: transitions processing -> completed and emits wallet.withdrawal.completed', async () => {
     const events = makeEvents();
     const drizzle = makeDrizzle({
-      select: [[PROCESSING_TX], [{ userId: 'u-1' }], []],
+      select: [[PROCESSING_TX], [{ userId: 'u-1' }]],
+      returning: [[{ id: 'tx-1' }]],
     });
     const setSpy = readPrivate<ReturnType<typeof vi.fn>>(drizzle.db, 'set');
     const svc = svcOf(drizzle, events, makePayment());
@@ -997,7 +998,8 @@ describe('WalletService.reconcileWithdrawalStatus', () => {
   it('failed: refunds and marks failed, without an admin-attributed event (system/webhook-driven)', async () => {
     const events = makeEvents();
     const drizzle = makeDrizzle({
-      select: [[PROCESSING_TX], [{ userId: 'u-1' }], [], []],
+      select: [[PROCESSING_TX], [{ userId: 'u-1' }], []],
+      returning: [[{ id: 'tx-1' }]],
     });
     const setSpy = readPrivate<ReturnType<typeof vi.fn>>(drizzle.db, 'set');
     const svc = svcOf(drizzle, events, makePayment());
@@ -1171,9 +1173,9 @@ describe('WalletService.creditDepositByAddress', () => {
       select: [
         [DEPOSIT_ADDRESS_ROW],
         [WALLET_ROW],
-        [{ id: 'tx-1', walletId: 'w-1', providerRefId: 'vendor-ext-1' }], // re-read on conflict
+        [{ id: 'tx-1', walletId: 'w-1', providerRefId: 'vendor-ext-1' }],
       ],
-      returning: [[]], // onConflictDoNothing: the row already exists
+      returning: [[]],
     });
     const svc = svcOf(drizzle, events, makePayment());
 

@@ -4,6 +4,8 @@
 
 ```ts
 // packages/core/src/contracts/adapters/payment.ts
+import { createToken, type Token } from './token.js';
+
 export type PaymentAdapter = {
   processDeposit(
     amount: string,
@@ -37,15 +39,22 @@ export type PaymentWebhookEvent =
       txHash: string;
       externalId: string;
     }
-  | { kind: 'withdrawal'; externalId: string; status: 'processing' | 'completed' | 'failed' };
+  | {
+      kind: 'withdrawal';
+      externalId: string;
+      status: 'processing' | 'completed' | 'failed';
+      txHash?: string;
+    };
 
-export const PAYMENT_ADAPTER = Symbol('PAYMENT_ADAPTER');
+export const PAYMENT_ADAPTER: Token<PaymentAdapter> = createToken('PAYMENT_ADAPTER');
 
 export type PaymentWebhookVerifier = {
   verify(rawBody: string, headers: Record<string, string | string[] | undefined>): boolean;
 };
 
-export const PAYMENT_WEBHOOK_VERIFIER = Symbol('PAYMENT_WEBHOOK_VERIFIER');
+export const PAYMENT_WEBHOOK_VERIFIER: Token<PaymentWebhookVerifier> = createToken(
+  'PAYMENT_WEBHOOK_VERIFIER',
+);
 ```
 
 ## Default binding

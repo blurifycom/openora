@@ -11,13 +11,6 @@ function headerValue(
   return Array.isArray(raw) ? (raw[0] ?? null) : (raw ?? null);
 }
 
-/**
- * Default payment-webhook verifier: recomputes an HMAC-SHA256 of the raw request body
- * keyed by the configured secret and constant-time compares the hex digest against the
- * (case-insensitively looked-up) `x-payment-signature` header - a leading `sha256=` is
- * tolerated. Fails closed when the secret is unset, the signature is absent, or the
- * body was not captured.
- */
 export class HmacPaymentWebhookVerifier implements PaymentWebhookVerifier {
   constructor(private readonly secret: string | undefined) {}
 
