@@ -34,6 +34,16 @@
 //     always an escape (each has a public subpath). Reaching common/ or testing/ is never an
 //     escape - those are cross-cutting utility dirs, not folded domains, out of scope exactly
 //     like they are for module-file-placement (no public subpath exists or is warranted).
+//   no-reinfer-imported-schema - `z.infer<typeof X>` where X is imported from a
+//     contract/contracts/schemas path, in a file that is not itself under a contract/ or
+//     schemas/ dir. The type is already exported once from the owning contract; re-running
+//     z.infer locally is a hand-rolled duplicate that silently drifts. Import the type instead.
+//   no-bare-string-id-param - a service/router function or method param (or a member of an
+//     inline object-literal param type) whose name ends `Id` and whose type is a bare
+//     `string`. Type it through the owning contract/schema type (`X['id']`) or the shared
+//     `Uuid` (`@openora/core/contracts`) - never a bare string. A short allowlist covers the
+//     genuinely-external ids the conventions doc already carves out (eg a KYC vendor's own
+//     reference id).
 
 const ENGINE_ZONES = new Set(['contracts', 'server', 'react', 'scripts']);
 // common/ and testing/ are cross-cutting utility dirs, not folded domains (no index.ts at
@@ -291,6 +301,120 @@ const noInlinePgEnum = {
   },
 };
 
+// A per-module contract/ dir (contract/, contracts/) or a base-schemas dir (schemas/) - the
+// zones that OWN a wire shape and are allowed to z.infer it directly.
+function isContractOrSchemaZone(file) {
+  return /\/(contract|contracts|schemas)\//.test(file);
+}
+
+// An import specifier reaching a contract/contracts/schemas path, subpath or relative.
+function isContractSchemaSpecifier(spec) {
+  return /(^|\/)(contract|contracts|schemas)(\/|$)/.test(spec);
+}
+
+function isZInferTypeName(typeName) {
+  return (
+    typeName?.type === 'TSQualifiedName' &&
+    typeName.left?.type === 'Identifier' &&
+    typeName.left.name === 'z' &&
+    typeName.right?.type === 'Identifier' &&
+    typeName.right.name === 'infer'
+  );
+}
+
+const noReinferImportedSchema = {
+  create(context) {
+    if (isContractOrSchemaZone(filename(context))) return {};
+    // Populated by ImportDeclaration below, read by TSTypeReference - imports sit above their
+    // use in source order, so this fills in before a same-file z.infer<typeof X> is visited.
+    const importedFrom = new Map();
+    return {
+      ImportDeclaration(node) {
+        const source = node.source?.value;
+        if (typeof source !== 'string' || !isContractSchemaSpecifier(source)) return;
+        for (const spec of node.specifiers ?? []) {
+          if (spec.type === 'ImportSpecifier' || spec.type === 'ImportDefaultSpecifier') {
+            importedFrom.set(spec.local.name, source);
+          }
+        }
+      },
+      TSTypeReference(node) {
+        if (!isZInferTypeName(node.typeName)) return;
+        const arg = node.typeArguments?.params?.[0];
+        if (arg?.type !== 'TSTypeQuery' || arg.exprName?.type !== 'Identifier') return;
+        const schemaName = arg.exprName.name;
+        const source = importedFrom.get(schemaName);
+        if (!source) return;
+        context.report({
+          node,
+          message:
+            `z.infer<typeof ${schemaName}> re-infers a type already exported from '${source}'. ` +
+            'Import the type from the owning contract instead of re-inferring it here ' +
+            `(eg import type { ${schemaName.replace(/Schema$/, '')} } from '${source}').`,
+        });
+      },
+    };
+  },
+};
+
+function isServiceOrRouterFile(file) {
+  const segments = coreSrcSegments(file);
+  if (!segments) return false;
+  const [domain, ...rest] = segments;
+  if (ENGINE_ZONES.has(domain) || EXCLUDED_TOP_DIRS.has(domain)) return false;
+  return rest.includes('service') || rest.includes('router');
+}
+
+// Ids whose value is owned by a third party, not this platform - carved out by name in
+// conventions.md section 3 (the audit contract's correlationId note). Extend this list only
+// for another surveyed external id, not speculatively.
+const EXTERNAL_ID_PARAM_NAMES = new Set(['referenceId']);
+
+function isBareStringType(typeAnnotation) {
+  return typeAnnotation?.type === 'TSStringKeyword';
+}
+
+function reportBareStringId(context, name, node) {
+  context.report({
+    node,
+    message:
+      `'${name}' is a bare string id param. Type it through the owning contract/schema type ` +
+      `(eg X['id']) or the shared Uuid type (@openora/core/contracts) - never a bare string.`,
+  });
+}
+
+function checkIdParam(context, name, typeAnnotation, node) {
+  if (!name.endsWith('Id') || EXTERNAL_ID_PARAM_NAMES.has(name)) return;
+  if (isBareStringType(typeAnnotation)) reportBareStringId(context, name, node);
+}
+
+// Only descends one level into an inline object-literal param type (the named-object-param
+// convention's shape) - a param referencing a named type alias is out of scope, same as the
+// rule never reaches into a function's return type.
+function checkParams(context, params) {
+  for (const param of params) {
+    const paramType = param.typeAnnotation?.typeAnnotation;
+    if (param.type === 'Identifier') checkIdParam(context, param.name, paramType, param);
+    if (paramType?.type !== 'TSTypeLiteral') continue;
+    for (const member of paramType.members) {
+      if (member.type !== 'TSPropertySignature' || member.key?.type !== 'Identifier') continue;
+      checkIdParam(context, member.key.name, member.typeAnnotation?.typeAnnotation, member);
+    }
+  }
+}
+
+const noBareStringIdParam = {
+  create(context) {
+    if (!isServiceOrRouterFile(filename(context))) return {};
+    const visit = (node) => checkParams(context, node.params);
+    return {
+      FunctionDeclaration: visit,
+      FunctionExpression: visit,
+      ArrowFunctionExpression: visit,
+    };
+  },
+};
+
 export default {
   meta: { name: 'oss-module-shape' },
   rules: {
@@ -298,5 +422,7 @@ export default {
     'layer-file-naming': layerFileNaming,
     'no-inline-pg-enum': noInlinePgEnum,
     'no-relative-zone-escape': noRelativeZoneEscape,
+    'no-reinfer-imported-schema': noReinferImportedSchema,
+    'no-bare-string-id-param': noBareStringIdParam,
   },
 };

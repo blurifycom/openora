@@ -216,3 +216,155 @@ test('no-inline-pg-enum rejects an inline array literal', () => {
   );
   assert.equal(reports.length, 1);
 });
+
+function importSpecifierNode(source, localName) {
+  return {
+    source: { value: source },
+    specifiers: [{ type: 'ImportSpecifier', local: { type: 'Identifier', name: localName } }],
+  };
+}
+
+function zInferTypeReference(schemaName) {
+  return {
+    typeName: {
+      type: 'TSQualifiedName',
+      left: { type: 'Identifier', name: 'z' },
+      right: { type: 'Identifier', name: 'infer' },
+    },
+    typeArguments: {
+      params: [{ type: 'TSTypeQuery', exprName: { type: 'Identifier', name: schemaName } }],
+    },
+  };
+}
+
+test('no-reinfer-imported-schema flags z.infer of a schema imported from a contract path', () => {
+  const reports = lint(
+    'no-reinfer-imported-schema',
+    `${REPO}/pam/profile/react/profile.ts`,
+    (v) => {
+      v.ImportDeclaration(importSpecifierNode('@openora/core/contracts', 'PlayerSchema'));
+      v.TSTypeReference(zInferTypeReference('PlayerSchema'));
+    },
+  );
+  assert.equal(reports.length, 1);
+});
+
+test('no-reinfer-imported-schema allows z.infer of a locally-declared schema', () => {
+  const reports = lint(
+    'no-reinfer-imported-schema',
+    `${REPO}/pam/profile/react/profile.ts`,
+    (v) => {
+      v.ImportDeclaration(importSpecifierNode('@openora/core/contracts', 'PlayerSchema'));
+      v.TSTypeReference(zInferTypeReference('DerivedSchema'));
+    },
+  );
+  assert.deepEqual(reports, []);
+});
+
+test('no-reinfer-imported-schema ignores an import from a non-contract path', () => {
+  const reports = lint(
+    'no-reinfer-imported-schema',
+    `${REPO}/pam/profile/react/profile.ts`,
+    (v) => {
+      v.ImportDeclaration(importSpecifierNode('drizzle-orm', 'sql'));
+      v.TSTypeReference(zInferTypeReference('sql'));
+    },
+  );
+  assert.deepEqual(reports, []);
+});
+
+test('no-reinfer-imported-schema is out of scope inside a contract/schemas dir', () => {
+  for (const f of [`${REPO}/wallet/contract/index.ts`, `${REPO}/contracts/schemas/common.ts`]) {
+    const visitor = plugin.rules['no-reinfer-imported-schema'].create({ filename: f });
+    assert.deepEqual(Object.keys(visitor), [], f);
+  }
+});
+
+function stringIdParam(name) {
+  return {
+    type: 'Identifier',
+    name,
+    typeAnnotation: { typeAnnotation: { type: 'TSStringKeyword' } },
+  };
+}
+
+function ownedIdParam(name) {
+  return {
+    type: 'Identifier',
+    name,
+    typeAnnotation: { typeAnnotation: { type: 'TSIndexedAccessType' } },
+  };
+}
+
+function objectIdParam(propName, propType) {
+  return {
+    type: 'ObjectPattern',
+    typeAnnotation: {
+      typeAnnotation: {
+        type: 'TSTypeLiteral',
+        members: [
+          {
+            type: 'TSPropertySignature',
+            key: { type: 'Identifier', name: propName },
+            typeAnnotation: { typeAnnotation: { type: propType } },
+          },
+        ],
+      },
+    },
+  };
+}
+
+test('no-bare-string-id-param flags a bare string Id param in a service file', () => {
+  const reports = lint('no-bare-string-id-param', `${REPO}/iam/service/iam.service.ts`, (v) =>
+    v.FunctionDeclaration({ params: [stringIdParam('roleId')] }),
+  );
+  assert.equal(reports.length, 1);
+});
+
+test('no-bare-string-id-param allows an id typed through the owning type', () => {
+  const reports = lint('no-bare-string-id-param', `${REPO}/iam/service/iam.service.ts`, (v) =>
+    v.FunctionDeclaration({ params: [ownedIdParam('roleId')] }),
+  );
+  assert.deepEqual(reports, []);
+});
+
+test('no-bare-string-id-param flags a bare string Id inside an inline object param', () => {
+  const reports = lint('no-bare-string-id-param', `${REPO}/wallet/service/wallet.service.ts`, (v) =>
+    v.FunctionExpression({
+      params: [objectIdParam('withdrawalId', 'TSStringKeyword')],
+    }),
+  );
+  assert.equal(reports.length, 1);
+});
+
+test('no-bare-string-id-param allows an object param id typed through the owning type', () => {
+  const reports = lint('no-bare-string-id-param', `${REPO}/wallet/service/wallet.service.ts`, (v) =>
+    v.ArrowFunctionExpression({
+      params: [objectIdParam('withdrawalId', 'TSIndexedAccessType')],
+    }),
+  );
+  assert.deepEqual(reports, []);
+});
+
+test('no-bare-string-id-param exempts the surveyed genuinely-external id names', () => {
+  const reports = lint(
+    'no-bare-string-id-param',
+    `${REPO}/compliance/service/kyc.service.ts`,
+    (v) => v.FunctionDeclaration({ params: [stringIdParam('referenceId')] }),
+  );
+  assert.deepEqual(reports, []);
+});
+
+test('no-bare-string-id-param ignores a param not ending in Id', () => {
+  const reports = lint('no-bare-string-id-param', `${REPO}/iam/service/iam.service.ts`, (v) =>
+    v.FunctionDeclaration({ params: [stringIdParam('name')] }),
+  );
+  assert.deepEqual(reports, []);
+});
+
+test('no-bare-string-id-param is out of scope outside service/router files', () => {
+  const visitor = plugin.rules['no-bare-string-id-param'].create({
+    filename: `${REPO}/wallet/schema/index.ts`,
+  });
+  assert.deepEqual(Object.keys(visitor), []);
+});
