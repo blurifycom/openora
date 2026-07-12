@@ -19,6 +19,10 @@ export type KycVendorStatus = 'pending' | 'approved' | 'rejected' | 'not_started
 export type KycResult = {
   referenceId: string;
   status: KycVendorStatus;
+  // Hosted verification URL to redirect the end user to, for vendors whose flow collects
+  // documents on their own hosted page (eg Didit) rather than accepting them from our
+  // backend. Omitted by document-forwarding vendors (eg SumSub, MockKycAdapter).
+  verificationUrl?: string;
 };
 
 export type KycAdapter = {
@@ -64,10 +68,13 @@ export const KYC_STATUS_WRITER: Token<KycStatusWriter> = createToken('KYC_STATUS
 
 // Verifies the public KYC provider webhook is genuine. The default impl recomputes
 // an HMAC-SHA256 over the raw request body and constant-time compares it against the
-// signature header; a vendor overlay rebinds it. Fails closed when the secret is
-// unset, the signature is absent, or the raw body was not captured.
+// `x-kyc-signature` header; a vendor overlay rebinds it. Fails closed when the secret is
+// unset, the signature is absent, or the raw body was not captured. Takes the full
+// headers map (not a pre-extracted value) because the signing header name is
+// vendor-specific - eg SumSub vs a hosted-session vendor each name it differently -
+// so each implementation extracts whatever header(s) it actually needs.
 export type KycWebhookVerifier = {
-  verify(rawBody: string, signature: string | null): boolean;
+  verify(rawBody: string, headers: Record<string, string | string[] | undefined>): boolean;
 };
 
 export const KYC_WEBHOOK_VERIFIER: Token<KycWebhookVerifier> = createToken('KYC_WEBHOOK_VERIFIER');

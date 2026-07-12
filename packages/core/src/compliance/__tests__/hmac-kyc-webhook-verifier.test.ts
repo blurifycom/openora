@@ -12,13 +12,22 @@ function sign(body: string, secret = SECRET) {
 describe('HmacKycWebhookVerifier (fail closed)', () => {
   it('accepts a correct signature (with and without sha256= prefix)', () => {
     const v = new HmacKycWebhookVerifier(SECRET);
-    expect(v.verify(BODY, sign(BODY))).toBe(true);
-    expect(v.verify(BODY, `sha256=${sign(BODY)}`)).toBe(true);
+    expect(v.verify(BODY, { 'x-kyc-signature': sign(BODY) })).toBe(true);
+    expect(v.verify(BODY, { 'x-kyc-signature': `sha256=${sign(BODY)}` })).toBe(true);
+  });
+
+  it('extracts the signature header case-insensitively', () => {
+    const v = new HmacKycWebhookVerifier(SECRET);
+    expect(v.verify(BODY, { 'X-Kyc-Signature': sign(BODY) })).toBe(true);
   });
 
   it('rejects a wrong signature, a missing signature, and an unset secret', () => {
-    expect(new HmacKycWebhookVerifier(SECRET).verify(BODY, sign('tampered'))).toBe(false);
-    expect(new HmacKycWebhookVerifier(SECRET).verify(BODY, null)).toBe(false);
-    expect(new HmacKycWebhookVerifier(undefined).verify(BODY, sign(BODY))).toBe(false);
+    expect(
+      new HmacKycWebhookVerifier(SECRET).verify(BODY, { 'x-kyc-signature': sign('tampered') }),
+    ).toBe(false);
+    expect(new HmacKycWebhookVerifier(SECRET).verify(BODY, {})).toBe(false);
+    expect(
+      new HmacKycWebhookVerifier(undefined).verify(BODY, { 'x-kyc-signature': sign(BODY) }),
+    ).toBe(false);
   });
 });

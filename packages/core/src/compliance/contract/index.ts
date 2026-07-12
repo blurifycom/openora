@@ -41,6 +41,13 @@ export const SubmitKycInputSchema = z.object({
 });
 export type SubmitKycInput = z.infer<typeof SubmitKycInputSchema>;
 
+// Extends the persisted verification record with a hosted verification URL, present only
+// for vendors whose flow requires redirecting the end user (eg a hosted-session provider).
+export const SubmitKycOutputSchema = KycVerificationSchema.extend({
+  verificationUrl: z.string().optional(),
+});
+export type SubmitKycOutput = z.infer<typeof SubmitKycOutputSchema>;
+
 export const PlayerKycViewSchema = z.object({
   current: KycVerificationSchema.nullable(),
   history: z.array(KycVerificationSchema),
@@ -99,7 +106,7 @@ export const complianceContract = {
   submitKyc: oc
     .route({ method: 'POST', path: '/compliance/kyc' })
     .input(SubmitKycInputSchema)
-    .output(KycVerificationSchema),
+    .output(SubmitKycOutputSchema),
 
   kycWebhook: oc
     .route({ method: 'POST', path: '/compliance/kyc/webhook' })
