@@ -152,11 +152,18 @@ export class CmsService {
     const wasPublished = existing.publishedAt !== null;
 
     const patch: Partial<typeof pageTable.$inferInsert> = {};
-    if (input.slug !== undefined) patch.slug = input.slug;
-    if (input.title !== undefined) patch.title = input.title;
-    if (input.content !== undefined) patch.content = input.content as object;
-    if (input.publishedAt !== undefined)
+    if (input.slug !== undefined) {
+      patch.slug = input.slug;
+    }
+    if (input.title !== undefined) {
+      patch.title = input.title;
+    }
+    if (input.content !== undefined) {
+      patch.content = input.content as object;
+    }
+    if (input.publishedAt !== undefined) {
       patch.publishedAt = input.publishedAt ? new Date(input.publishedAt) : null;
+    }
 
     const record = findOneOrThrow(
       await this.drizzle.db
@@ -245,12 +252,24 @@ export class CmsService {
     );
 
     const patch: Partial<typeof bannerTable.$inferInsert> = {};
-    if (input.placement !== undefined) patch.placement = input.placement;
-    if (input.title !== undefined) patch.title = input.title;
-    if (input.imageUrl !== undefined) patch.imageUrl = input.imageUrl;
-    if (input.linkUrl !== undefined) patch.linkUrl = input.linkUrl;
-    if (input.isActive !== undefined) patch.isActive = input.isActive;
-    if (input.sortOrder !== undefined) patch.sortOrder = input.sortOrder;
+    if (input.placement !== undefined) {
+      patch.placement = input.placement;
+    }
+    if (input.title !== undefined) {
+      patch.title = input.title;
+    }
+    if (input.imageUrl !== undefined) {
+      patch.imageUrl = input.imageUrl;
+    }
+    if (input.linkUrl !== undefined) {
+      patch.linkUrl = input.linkUrl;
+    }
+    if (input.isActive !== undefined) {
+      patch.isActive = input.isActive;
+    }
+    if (input.sortOrder !== undefined) {
+      patch.sortOrder = input.sortOrder;
+    }
 
     const record = findOneOrThrow(
       await this.drizzle.db

@@ -50,7 +50,9 @@ export class WalletCommandsService implements WalletCommands {
     }
 
     const [row] = await txn.select().from(wallet).where(eq(wallet.userId, userId));
-    if (!row) return { ok: false, available: '0' };
+    if (!row) {
+      return { ok: false, available: '0' };
+    }
     const available = row.balance;
 
     if (type === 'loss') {
@@ -66,7 +68,9 @@ export class WalletCommandsService implements WalletCommands {
       .where(and(eq(wallet.id, row.id), gte(wallet.balance, amount)))
       .returning({ balance: wallet.balance });
     const newBalance = debited[0]?.balance;
-    if (newBalance === undefined) return { ok: false, available };
+    if (newBalance === undefined) {
+      return { ok: false, available };
+    }
 
     await this.writeLedgerRow(txn, row, type, amount);
 
@@ -85,14 +89,18 @@ export class WalletCommandsService implements WalletCommands {
 
     const [row] = await txn.select().from(wallet).where(eq(wallet.userId, userId));
     // Fail closed: a credit never creates a wallet - a missing one is a caller bug.
-    if (!row) return { ok: false, reason: 'wallet not found' };
+    if (!row) {
+      return { ok: false, reason: 'wallet not found' };
+    }
 
     const [credited] = await txn
       .update(wallet)
       .set({ balance: sql`${wallet.balance} + ${amount}::numeric` })
       .where(eq(wallet.id, row.id))
       .returning({ balance: wallet.balance });
-    if (!credited) throw new Error('wallet credit: no row');
+    if (!credited) {
+      throw new Error('wallet credit: no row');
+    }
 
     await this.writeLedgerRow(txn, row, type, amount);
 

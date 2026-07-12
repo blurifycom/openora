@@ -39,7 +39,9 @@ function makeServices(rules: Partial<Record<string, TagRule>> = {}) {
   const rule = mock<TagRuleService>({
     getTagRule: vi.fn(async (tagKey: string) => {
       const found = rules[tagKey];
-      if (!found) throw new TagRuleNotFoundError(tagKey);
+      if (!found) {
+        throw new TagRuleNotFoundError(tagKey);
+      }
       return found;
     }),
   });

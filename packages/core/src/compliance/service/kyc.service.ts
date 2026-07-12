@@ -127,7 +127,9 @@ export class KycVerificationService {
       .where(eq(kycVerification.referenceId, referenceId))
       .orderBy(desc(kycVerification.createdAt))
       .limit(1);
-    if (!existing) return null;
+    if (!existing) {
+      return null;
+    }
 
     const status = mapVendorStatus(vendorStatus);
     if (existing.status === status && existing.decidedAt) {
@@ -170,7 +172,9 @@ export class KycVerificationService {
       .select({ currency: player.currency, kycStatus: player.kycStatus })
       .from(player)
       .where(eq(player.userId, userId));
-    if (!current || current.kycStatus !== 'verified') return;
+    if (!current || current.kycStatus !== 'verified') {
+      return;
+    }
 
     const [deposited] = await this.drizzle.db
       .select({ total: sql<string>`coalesce(sum(${walletTransaction.amount}), 0)` })
@@ -204,7 +208,9 @@ export class KycVerificationService {
       lastTriggeredDeposits: lastFire?.triggerDeposits ?? '0',
     };
     const thresholds = this.platformConfig?.kyc?.reverifyThresholds;
-    if (!this.reKycTrigger.requiresReverify(snapshot, thresholds)) return;
+    if (!this.reKycTrigger.requiresReverify(snapshot, thresholds)) {
+      return;
+    }
 
     const reason = `Cumulative deposits ${totalDeposits} ${snapshot.currency} crossed the re-KYC threshold`;
     await this.drizzle.db.insert(kycVerification).values({

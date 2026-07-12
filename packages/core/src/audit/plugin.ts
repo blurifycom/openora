@@ -406,7 +406,9 @@ export default definePlugin({
 
     for (const topic of SUBSCRIBED_TOPICS) {
       ctx.events.on(topic, (payload) => {
-        if (!svcRef || !isRecord(payload)) return;
+        if (!svcRef || !isRecord(payload)) {
+          return;
+        }
         void svcRef
           .record(mapEventToRecord(topic, payload))
           .catch((err) => logger.error({ err, topic }, 'audit record failed'));

@@ -35,7 +35,9 @@ import { assertSupportedLanguage } from '../../shared/language.js';
 function nodeHeadersToHeaders(nodeHeaders: NodeHeaders) {
   const headers = new Headers();
   for (const [key, value] of Object.entries(nodeHeaders)) {
-    if (value === undefined) continue;
+    if (value === undefined) {
+      continue;
+    }
     headers.set(key, Array.isArray(value) ? value.join(', ') : value);
   }
   return headers;
@@ -93,9 +95,13 @@ function clientIp(headers: Headers): string | null {
 // otherwise churn the rate-limit key each retry by appending unrelated cookie pairs.
 function twoFactorPendingCookieValue(headers: Headers): string | undefined {
   const cookieHeader = headers.get('cookie');
-  if (!cookieHeader) return undefined;
+  if (!cookieHeader) {
+    return undefined;
+  }
   for (const [name, value] of parseCookies(cookieHeader)) {
-    if (name.endsWith('.two_factor')) return value;
+    if (name.endsWith('.two_factor')) {
+      return value;
+    }
   }
   return undefined;
 }
@@ -133,11 +139,15 @@ export const UserNotFoundError = makeNotFoundError('User');
 // to the right HTTP status instead of the handler silently returning success.
 // Only reads the body on failure, so a subsequent res.json() on success is safe.
 async function ensureOk(res: globalThis.Response) {
-  if (res.ok) return;
+  if (res.ok) {
+    return;
+  }
   let message = `Request failed (${res.status})`;
   try {
     const parsed = JSON.parse(await res.text()) as { message?: string };
-    if (parsed.message) message = parsed.message;
+    if (parsed.message) {
+      message = parsed.message;
+    }
   } catch {
     // non-JSON body - keep the default message
   }
@@ -372,7 +382,9 @@ export class IdentityService {
     } catch (error) {
       // An RG block is not a credential failure - surface it as-is, without touching the
       // lockout budget or emitting login.failed (the RG event was already emitted).
-      if (error instanceof ORPCError && error.code === 'FORBIDDEN') throw error;
+      if (error instanceof ORPCError && error.code === 'FORBIDDEN') {
+        throw error;
+      }
       // Only a genuine credential rejection counts toward lockout - a transient DB/network
       // error must never lock the account out.
       const isCredentialFailure = error instanceof ORPCError && error.code === 'UNAUTHORIZED';
@@ -463,14 +475,18 @@ export class IdentityService {
     const userId = (session?.user as BetterAuthUser | undefined)?.id;
     const authResponse = await this.auth.api.signOut({ headers, asResponse: true });
     forwardCookies(authResponse, resHeaders);
-    if (userId) this.events.emit('identity.user.logout', { userId });
+    if (userId) {
+      this.events.emit('identity.user.logout', { userId });
+    }
     return SUCCESS;
   }
 
   async me(reqHeaders: NodeHeaders) {
     const headers = nodeHeadersToHeaders(reqHeaders);
     const session = await this.auth.api.getSession({ headers });
-    if (!session?.user) return null;
+    if (!session?.user) {
+      return null;
+    }
     return toUser(session.user as BetterAuthUser);
   }
 
@@ -506,7 +522,9 @@ export class IdentityService {
     await ensureOk(res);
     forwardCookies(res, resHeaders);
     const userId = await this.currentUserId(headers);
-    if (userId) this.events.emit('identity.2fa.enabled', { userId });
+    if (userId) {
+      this.events.emit('identity.2fa.enabled', { userId });
+    }
     return SUCCESS;
   }
 
@@ -525,7 +543,9 @@ export class IdentityService {
     });
     await ensureOk(res);
     forwardCookies(res, resHeaders);
-    if (userId) this.events.emit('identity.2fa.disabled', { userId });
+    if (userId) {
+      this.events.emit('identity.2fa.disabled', { userId });
+    }
     return SUCCESS;
   }
 
@@ -616,7 +636,9 @@ export class IdentityService {
       asResponse: true,
     });
     await ensureOk(res);
-    if (userId) this.events.emit('identity.email.verified', { userId });
+    if (userId) {
+      this.events.emit('identity.email.verified', { userId });
+    }
     return SUCCESS;
   }
 
@@ -633,7 +655,9 @@ export class IdentityService {
   }
 
   async updateProfile(input: UpdateProfileInput, reqHeaders: NodeHeaders, resHeaders: Headers) {
-    if (input.language !== undefined) assertSupportedLanguage(input.language, this.platformConfig);
+    if (input.language !== undefined) {
+      assertSupportedLanguage(input.language, this.platformConfig);
+    }
     const headers = nodeHeadersToHeaders(reqHeaders);
     // better-auth's field parser and drizzle's mapUpdateSet both drop `undefined`
     // values before the SQL SET clause, so omitted fields are safely no-ops here.
@@ -648,7 +672,9 @@ export class IdentityService {
     // updateUser returns { status } only - re-read from session to get the full user.
     const session = await this.auth.api.getSession({ headers });
     const current = session?.user as BetterAuthUser | undefined;
-    if (current) this.events.emit('identity.profile.updated', { userId: current.id });
+    if (current) {
+      this.events.emit('identity.profile.updated', { userId: current.id });
+    }
     if (!current) {
       throw new Error('Profile update succeeded but session could not be re-read');
     }

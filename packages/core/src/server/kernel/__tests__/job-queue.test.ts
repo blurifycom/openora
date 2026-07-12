@@ -16,7 +16,9 @@ const wait = (ms: number) => new Promise((r) => setTimeout(r, ms));
 // Returns as soon as predicate holds rather than sleeping a fixed amount, avoiding CI scheduling jitter.
 async function waitFor(predicate: () => boolean, timeoutMs = 2000): Promise<void> {
   const deadline = Date.now() + timeoutMs;
-  while (!predicate() && Date.now() < deadline) await wait(5);
+  while (!predicate() && Date.now() < deadline) {
+    await wait(5);
+  }
 }
 
 const Payload = z.object({ value: z.string() });

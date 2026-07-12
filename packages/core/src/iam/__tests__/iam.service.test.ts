@@ -79,17 +79,25 @@ function routingDrizzle(byTable: {
         // per (role x permission), super roles collapse to a bypass row, empty -> [].
         if (lastSelect && 'isSuperAdmin' in lastSelect) {
           const assignments = (byTable.assignment ?? []) as { roleId: string }[];
-          if (assignments.length === 0) return [];
+          if (assignments.length === 0) {
+            return [];
+          }
           const superIds = new Set((byTable.superRole ?? []).map((r) => (r as { id: string }).id));
           if (assignments.some((a) => superIds.has(a.roleId))) {
             return [{ isSuperAdmin: true, resource: null, level: null }];
           }
           const perms = (byTable.permission ?? []) as { resource: string; level: string }[];
-          if (perms.length === 0) return [{ isSuperAdmin: false, resource: null, level: null }];
+          if (perms.length === 0) {
+            return [{ isSuperAdmin: false, resource: null, level: null }];
+          }
           return perms.map((p) => ({ isSuperAdmin: false, resource: p.resource, level: p.level }));
         }
-        if ('emailVerified' in table) return byTable.user ?? [];
-        if ('level' in table) return byTable.permission ?? [];
+        if ('emailVerified' in table) {
+          return byTable.user ?? [];
+        }
+        if ('level' in table) {
+          return byTable.permission ?? [];
+        }
         // adminRoleAssignment has `userId` column. A { roleId }-only select is the
         // assignment read used by both getGrants and isSuperAdmin(caller); a
         // full-row select is the dedup existing-check. When a test needs the two
@@ -748,7 +756,9 @@ describe('IamService.inviteAdmin', () => {
       }),
       where: vi.fn().mockImplementation(() => {
         // adminRoleAssignment (has userId col): caller's assignment for isSuperAdmin.
-        if ('userId' in table) return Promise.resolve([{ roleId: 'role-super' }]);
+        if ('userId' in table) {
+          return Promise.resolve([{ roleId: 'role-super' }]);
+        }
         // adminRole id-only probe: the super-admin check.
         if (lastSelect && 'id' in lastSelect && Object.keys(lastSelect).length === 1) {
           return Promise.resolve([{ id: 'role-super' }]);

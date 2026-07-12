@@ -35,7 +35,9 @@ export class OutboxRelay {
   ) {}
 
   start(): void {
-    if (this.timer) return;
+    if (this.timer) {
+      return;
+    }
     this.timer = setInterval(() => void this.drainSafe(), this.opts.intervalMs ?? 1000);
     this.timer.unref?.();
   }
@@ -45,7 +47,9 @@ export class OutboxRelay {
       clearInterval(this.timer);
       this.timer = undefined;
     }
-    while (this.draining) await new Promise((r) => setTimeout(r, 10));
+    while (this.draining) {
+      await new Promise((r) => setTimeout(r, 10));
+    }
   }
 
   private async drainSafe(): Promise<void> {
@@ -59,7 +63,9 @@ export class OutboxRelay {
   // Publish one batch of pending rows. Returns how many were published. Reentrant-
   // safe: a second call while a drain is in flight is a no-op.
   async drainOnce(): Promise<number> {
-    if (this.draining) return 0;
+    if (this.draining) {
+      return 0;
+    }
     this.draining = true;
     try {
       const batch = await this.db.transaction((txn) =>

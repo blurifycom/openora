@@ -90,7 +90,9 @@ export class DrizzleAdminWalletReporting implements AdminWalletReporting {
       .from(walletTransaction)
       .innerJoin(wallet, eq(walletTransaction.walletId, wallet.id))
       .where(eq(walletTransaction.id, id));
-    if (!row) return null;
+    if (!row) {
+      return null;
+    }
     const { tx, walletUserId } = row;
     return {
       id: tx.id,

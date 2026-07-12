@@ -26,10 +26,14 @@ export class TagEvaluationService {
   private async getEnabledRule(tagKey: TagKey): Promise<TagRule | null> {
     try {
       const rule = await this.rule.getTagRule(tagKey);
-      if (!rule.isEnabled) return null;
+      if (!rule.isEnabled) {
+        return null;
+      }
       return rule;
     } catch (e) {
-      if (e instanceof TagRuleNotFoundError) return null;
+      if (e instanceof TagRuleNotFoundError) {
+        return null;
+      }
       throw e;
     }
   }
@@ -37,7 +41,9 @@ export class TagEvaluationService {
   /** Idempotently assigns a tag; swallows TagAlreadyInUseError. */
   private async tryAssignTag(userId: User['id'], tagKey: TagKey, reason: string) {
     const playerId = await this.identityReader.getPlayerIdByUserId(userId);
-    if (!playerId) return;
+    if (!playerId) {
+      return;
+    }
     try {
       await this.tag.assignPlayerTag({
         playerId,
@@ -47,7 +53,9 @@ export class TagEvaluationService {
         assignActorUserId: SYSTEM_ACTOR_ID,
       });
     } catch (e) {
-      if (e instanceof TagAlreadyInUseError) return;
+      if (e instanceof TagAlreadyInUseError) {
+        return;
+      }
       throw e;
     }
   }
@@ -55,7 +63,9 @@ export class TagEvaluationService {
   /** Idempotently removes a tag; swallows TagAssignmentNotFoundError. */
   private async tryRemoveTag(userId: User['id'], tagKey: TagKey, reason: string) {
     const playerId = await this.identityReader.getPlayerIdByUserId(userId);
-    if (!playerId) return;
+    if (!playerId) {
+      return;
+    }
     try {
       await this.tag.removePlayerTag({
         playerId,
@@ -65,7 +75,9 @@ export class TagEvaluationService {
         removalActorUserId: SYSTEM_ACTOR_ID,
       });
     } catch (e) {
-      if (e instanceof TagAssignmentNotFoundError) return;
+      if (e instanceof TagAssignmentNotFoundError) {
+        return;
+      }
       throw e;
     }
   }
@@ -112,7 +124,9 @@ export class TagEvaluationService {
     const { userId, amount } = domainEventSchemas['wallet.withdrawal.completed'].parse(payload);
 
     const rule = await this.getEnabledRule('high_risk');
-    if (!rule) return;
+    if (!rule) {
+      return;
+    }
 
     const amountBreached =
       rule.threshold !== null && moneyToNumber(amount) >= moneyToNumber(rule.threshold);
@@ -148,7 +162,9 @@ export class TagEvaluationService {
   async onKycSubmitted(payload: unknown) {
     const { userId } = domainEventSchemas['compliance.kyc.submitted'].parse(payload);
     const rule = await this.getEnabledRule('kyc_pending');
-    if (!rule) return;
+    if (!rule) {
+      return;
+    }
     await this.tryRemoveTag(userId, 'kyc_rejected', 'kyc resubmitted');
     await this.tryAssignTag(userId, 'kyc_pending', 'kyc verification initiated');
   }
@@ -165,7 +181,9 @@ export class TagEvaluationService {
   async onKycStatusUpdated(payload: unknown) {
     const { userId, status } = domainEventSchemas['compliance.kyc.updated'].parse(payload);
     const rule = await this.getEnabledRule('kyc_pending');
-    if (!rule) return;
+    if (!rule) {
+      return;
+    }
 
     if (status === 'verified' || status === 'manually_overridden') {
       await this.tryRemoveTag(userId, 'kyc_pending', 'kyc approved');
@@ -190,7 +208,9 @@ export class TagEvaluationService {
    */
   async runDailyEvaluation() {
     const rule = await this.getEnabledRule('inactive');
-    if (!rule || rule.thresholdDays === null) return;
+    if (!rule || rule.thresholdDays === null) {
+      return;
+    }
 
     const sinceDate = new Date(Date.now() - rule.thresholdDays * 24 * 60 * 60 * 1000);
     const userIds = await this.identityReader.getPlayerIdsInactiveSince(sinceDate);

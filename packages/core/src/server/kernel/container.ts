@@ -36,7 +36,9 @@ export class Container {
   }
 
   get<T>(token: AnyToken<T>): T {
-    if (this.instances.has(token)) return this.instances.get(token) as T;
+    if (this.instances.has(token)) {
+      return this.instances.get(token) as T;
+    }
 
     const factory = this.factories.get(token);
     if (!factory) {

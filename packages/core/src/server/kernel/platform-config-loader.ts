@@ -23,9 +23,13 @@ import {
  * On parse / schema failure, throws an Error with the offending paths.
  */
 export function loadPlatformConfig(path?: string): PlatformConfig {
-  if (!path) return defaultPlatformConfig;
+  if (!path) {
+    return defaultPlatformConfig;
+  }
   const abs = resolve(path);
-  if (!existsSync(abs)) return defaultPlatformConfig;
+  if (!existsSync(abs)) {
+    return defaultPlatformConfig;
+  }
 
   const raw = readFileSync(abs, 'utf8');
   const ext = abs.split('.').pop()?.toLowerCase();
@@ -52,10 +56,14 @@ export function loadPlatformConfig(path?: string): PlatformConfig {
 export function resolvePlatformConfigPath(
   env: NodeJS.ProcessEnv = process.env,
 ): string | undefined {
-  if (env.PLATFORM_CONFIG_PATH) return env.PLATFORM_CONFIG_PATH;
+  if (env.PLATFORM_CONFIG_PATH) {
+    return env.PLATFORM_CONFIG_PATH;
+  }
   for (const candidate of ['platform-config.yaml', 'platform-config.yml', 'platform-config.json']) {
     const abs = resolve(candidate);
-    if (existsSync(abs)) return abs;
+    if (existsSync(abs)) {
+      return abs;
+    }
   }
   return undefined;
 }
@@ -74,13 +82,19 @@ function parseTrivialYaml(input: string): unknown {
 
   for (const rawLine of lines) {
     const line = rawLine.replace(/#.*$/, '').trimEnd();
-    if (!line.trim()) continue;
+    if (!line.trim()) {
+      continue;
+    }
     const indent = line.length - line.trimStart().length;
     const body = line.trimStart();
 
-    while ((stack.at(-1)?.indent ?? -Infinity) >= indent) stack.pop();
+    while ((stack.at(-1)?.indent ?? -Infinity) >= indent) {
+      stack.pop();
+    }
     const parent = stack.at(-1);
-    if (!parent) throw new Error('platform config parser: stack underflow');
+    if (!parent) {
+      throw new Error('platform config parser: stack underflow');
+    }
 
     if (body.startsWith('- ')) {
       const inner = body.slice(2).trim();
@@ -100,7 +114,9 @@ function parseTrivialYaml(input: string): unknown {
       stack.push(item);
     } else {
       const colon = body.indexOf(':');
-      if (colon === -1) continue;
+      if (colon === -1) {
+        continue;
+      }
       const key = body.slice(0, colon).trim();
       const value = body.slice(colon + 1).trim();
       const node: Node = { indent, key, value: value || undefined, children: [] };
@@ -118,7 +134,9 @@ function parseTrivialYaml(input: string): unknown {
         if (c.children.length > 0) {
           const obj: Record<string, unknown> = {};
           for (const kv of c.children) {
-            if (kv.key !== undefined) obj[kv.key] = build(kv);
+            if (kv.key !== undefined) {
+              obj[kv.key] = build(kv);
+            }
           }
           return obj;
         }
@@ -127,18 +145,32 @@ function parseTrivialYaml(input: string): unknown {
     }
     const obj: Record<string, unknown> = {};
     for (const c of node.children) {
-      if (c.key !== undefined) obj[c.key] = build(c);
+      if (c.key !== undefined) {
+        obj[c.key] = build(c);
+      }
     }
     return obj;
   }
 
   function parseScalar(v: string | undefined): unknown {
-    if (v === undefined || v === '') return undefined;
-    if (v === 'true') return true;
-    if (v === 'false') return false;
-    if (v === 'null' || v === '~') return null;
-    if (/^-?\d+$/.test(v)) return Number.parseInt(v, 10);
-    if (/^-?\d+\.\d+$/.test(v)) return Number.parseFloat(v);
+    if (v === undefined || v === '') {
+      return undefined;
+    }
+    if (v === 'true') {
+      return true;
+    }
+    if (v === 'false') {
+      return false;
+    }
+    if (v === 'null' || v === '~') {
+      return null;
+    }
+    if (/^-?\d+$/.test(v)) {
+      return Number.parseInt(v, 10);
+    }
+    if (/^-?\d+\.\d+$/.test(v)) {
+      return Number.parseFloat(v);
+    }
     if ((v.startsWith('"') && v.endsWith('"')) || (v.startsWith("'") && v.endsWith("'"))) {
       return v.slice(1, -1);
     }

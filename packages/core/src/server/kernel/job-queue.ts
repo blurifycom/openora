@@ -22,8 +22,12 @@ type InternalJob = {
 
 function computeBackoffMs(opts: EnqueueOptions, attempt: number): number {
   const backoff = opts.backoff;
-  if (!backoff) return 0;
-  if (backoff.type === 'fixed') return backoff.delayMs;
+  if (!backoff) {
+    return 0;
+  }
+  if (backoff.type === 'fixed') {
+    return backoff.delayMs;
+  }
   return backoff.delayMs * 2 ** (attempt - 1);
 }
 
@@ -59,15 +63,21 @@ export class InProcessJobQueue implements JobQueueAdapter {
   constructor(private readonly logger: Logger) {}
 
   enqueue<T>(queue: QueueName, payload: T, opts: EnqueueOptions = {}): Promise<{ id: string }> {
-    if (this.closed) throw new Error('[job-queue] enqueue after close()');
+    if (this.closed) {
+      throw new Error('[job-queue] enqueue after close()');
+    }
 
     if (opts.idempotencyKey) {
       const existing = this.activeKeys.get(opts.idempotencyKey);
-      if (existing) return Promise.resolve({ id: existing });
+      if (existing) {
+        return Promise.resolve({ id: existing });
+      }
     }
 
     const id = `job-${++this.counter}`;
-    if (opts.idempotencyKey) this.activeKeys.set(opts.idempotencyKey, id);
+    if (opts.idempotencyKey) {
+      this.activeKeys.set(opts.idempotencyKey, id);
+    }
 
     const job: InternalJob = { id, queue, payload, opts, enqueuedAt: new Date() };
 
@@ -90,7 +100,9 @@ export class InProcessJobQueue implements JobQueueAdapter {
     const buffered = this.pending.get(registration.queue);
     if (buffered) {
       this.pending.delete(registration.queue);
-      for (const job of buffered) this.dispatch(job);
+      for (const job of buffered) {
+        this.dispatch(job);
+      }
     }
   }
 
@@ -100,10 +112,14 @@ export class InProcessJobQueue implements JobQueueAdapter {
     payload: T,
     repeat: RepeatOptions,
   ): Promise<void> {
-    if (this.closed) throw new Error('[job-queue] schedule after close()');
+    if (this.closed) {
+      throw new Error('[job-queue] schedule after close()');
+    }
     const key = `${queue}:${scheduleId}`;
     const existing = this.schedules.get(key);
-    if (existing) clearInterval(existing);
+    if (existing) {
+      clearInterval(existing);
+    }
 
     if (repeat.everyMs && repeat.everyMs > 0) {
       const interval = setInterval(() => {
@@ -134,9 +150,13 @@ export class InProcessJobQueue implements JobQueueAdapter {
 
   async close(): Promise<void> {
     this.closed = true;
-    for (const t of this.timers) clearTimeout(t);
+    for (const t of this.timers) {
+      clearTimeout(t);
+    }
     this.timers.clear();
-    for (const interval of this.schedules.values()) clearInterval(interval);
+    for (const interval of this.schedules.values()) {
+      clearInterval(interval);
+    }
     this.schedules.clear();
     await Promise.allSettled([...this.inFlight, ...this.lanes.values()]);
   }
@@ -165,7 +185,9 @@ export class InProcessJobQueue implements JobQueueAdapter {
       );
       // Tidy the lane map once this is the tail.
       void next.finally(() => {
-        if (this.lanes.get(laneKey) === undefined) return;
+        if (this.lanes.get(laneKey) === undefined) {
+          return;
+        }
       });
     } else {
       this.track(this.runJob(worker, job));

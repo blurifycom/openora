@@ -28,7 +28,9 @@ class ControllablePendingKycAdapter implements KycAdapter {
   parseWebhook(rawBody: string): KycResult | null {
     try {
       const parsed = JSON.parse(rawBody) as Partial<KycResult>;
-      if (typeof parsed.referenceId !== 'string' || typeof parsed.status !== 'string') return null;
+      if (typeof parsed.referenceId !== 'string' || typeof parsed.status !== 'string') {
+        return null;
+      }
       return { referenceId: parsed.referenceId, status: parsed.status as KycResult['status'] };
     } catch {
       return null;

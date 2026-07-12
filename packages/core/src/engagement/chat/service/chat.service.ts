@@ -45,7 +45,9 @@ export const ChatSelfBlockError = createDomainError(
 
 function gateContent(content: string): string {
   const result = moderateContent(content);
-  if (!result.ok) throw new ChatMessageBlockedError();
+  if (!result.ok) {
+    throw new ChatMessageBlockedError();
+  }
   return result.content;
 }
 
@@ -72,20 +74,27 @@ export class ChatService {
     let blocked: ReadonlySet<User['id']> | null = viewerId ? null : new Set();
     const pending: ChatMessage[] = [];
     const deliver = (message: ChatMessage) => {
-      if (blocked && !blocked.has(message.userId)) listener(message);
+      if (blocked && !blocked.has(message.userId)) {
+        listener(message);
+      }
     };
     if (viewerId) {
       this.blockedIdsFor(viewerId)
         .catch(() => new Set<User['id']>())
         .then((ids) => {
           blocked = ids;
-          for (const message of pending) deliver(message);
+          for (const message of pending) {
+            deliver(message);
+          }
           pending.length = 0;
         });
     }
     return this.transport.subscribe<ChatMessage>(chatChannel(roomId), (message) => {
-      if (blocked === null) pending.push(message);
-      else deliver(message);
+      if (blocked === null) {
+        pending.push(message);
+      } else {
+        deliver(message);
+      }
     });
   }
 
@@ -123,7 +132,9 @@ export class ChatService {
     viewerId?: User['id'];
   }) {
     const conditions = [eq(chatMessage.roomId, roomId), eq(chatMessage.isDeleted, false)];
-    if (before) conditions.push(lt(chatMessage.createdAt, new Date(before)));
+    if (before) {
+      conditions.push(lt(chatMessage.createdAt, new Date(before)));
+    }
     await this.appendBlockFilter(conditions, viewerId);
     const messages = await this.drizzle.db
       .select()
@@ -135,9 +146,13 @@ export class ChatService {
   }
 
   private async appendBlockFilter(conditions: ReturnType<typeof eq>[], viewerId?: User['id']) {
-    if (!viewerId) return;
+    if (!viewerId) {
+      return;
+    }
     const blocked = await this.blockedIdsFor(viewerId);
-    if (blocked.size > 0) conditions.push(notInArray(chatMessage.userId, [...blocked]));
+    if (blocked.size > 0) {
+      conditions.push(notInArray(chatMessage.userId, [...blocked]));
+    }
   }
 
   async sendRoomMessage({
@@ -240,7 +255,9 @@ export class ChatService {
   }
 
   async blockUser(blockerId: User['id'], blockedId: User['id']) {
-    if (blockerId === blockedId) throw new ChatSelfBlockError();
+    if (blockerId === blockedId) {
+      throw new ChatSelfBlockError();
+    }
 
     // Idempotent: re-blocking is a no-op, so only the first block emits an event.
     const inserted = await this.drizzle.db
@@ -249,7 +266,9 @@ export class ChatService {
       .onConflictDoNothing({ target: [chatUserBlock.blockerId, chatUserBlock.blockedId] })
       .returning();
 
-    if (inserted.length > 0) this.events.emit('chat.user.blocked', { blockerId, blockedId });
+    if (inserted.length > 0) {
+      this.events.emit('chat.user.blocked', { blockerId, blockedId });
+    }
     return { success: true } as const;
   }
 
@@ -259,7 +278,9 @@ export class ChatService {
       .where(and(eq(chatUserBlock.blockerId, blockerId), eq(chatUserBlock.blockedId, blockedId)))
       .returning();
 
-    if (removed.length > 0) this.events.emit('chat.user.unblocked', { blockerId, blockedId });
+    if (removed.length > 0) {
+      this.events.emit('chat.user.unblocked', { blockerId, blockedId });
+    }
     return { success: true } as const;
   }
 }

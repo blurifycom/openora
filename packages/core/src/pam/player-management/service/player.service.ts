@@ -49,8 +49,12 @@ export class PlayerService {
   }) {
     const db = this.drizzle.db;
     const conditions = [];
-    if (status) conditions.push(eq(player.status, status));
-    if (kycStatus) conditions.push(eq(player.kycStatus, kycStatus));
+    if (status) {
+      conditions.push(eq(player.status, status));
+    }
+    if (kycStatus) {
+      conditions.push(eq(player.kycStatus, kycStatus));
+    }
     if (search) {
       conditions.push(
         or(
@@ -160,13 +164,21 @@ export class PlayerService {
         .from(user)
         .where(and(eq(user.email, data.email), ne(user.id, existing.userId)))
         .limit(1);
-      if (clash.length > 0) throw new DuplicateEmailError();
+      if (clash.length > 0) {
+        throw new DuplicateEmailError();
+      }
     }
 
     const patch: Partial<typeof player.$inferInsert> = {};
-    if (data.displayName !== undefined) patch.displayName = data.displayName;
-    if (data.status !== undefined) patch.status = data.status;
-    if (data.level !== undefined) patch.level = data.level;
+    if (data.displayName !== undefined) {
+      patch.displayName = data.displayName;
+    }
+    if (data.status !== undefined) {
+      patch.status = data.status;
+    }
+    if (data.level !== undefined) {
+      patch.level = data.level;
+    }
 
     // One transaction so the email/field patch + the KYC write commit or roll back together.
     await this.drizzle.db.transaction(async (trx) => {

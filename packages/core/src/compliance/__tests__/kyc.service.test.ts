@@ -10,8 +10,12 @@ import { mock, mockDb } from '../../testing/mock.js';
 function makeDb(selectResult: unknown, insertResult: unknown): DrizzleService {
   const builder: unknown = new Proxy(function () {}, {
     get(_t, prop) {
-      if (prop === 'then') return (res: (v: unknown) => unknown) => res(selectResult);
-      if (prop === 'returning') return () => Promise.resolve(insertResult);
+      if (prop === 'then') {
+        return (res: (v: unknown) => unknown) => res(selectResult);
+      }
+      if (prop === 'returning') {
+        return () => Promise.resolve(insertResult);
+      }
       return () => builder;
     },
     apply: () => builder,

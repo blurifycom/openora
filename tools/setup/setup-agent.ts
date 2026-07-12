@@ -87,7 +87,9 @@ async function main() {
   const ports: Record<string, string> = {};
   for (const line of envExample.split('\n')) {
     const m = line.match(/^(PORT_\w+)=(\d+)/);
-    if (m) ports[m[1]] = m[2];
+    if (m) {
+      ports[m[1]] = m[2];
+    }
   }
 
   console.log('\n=== Setup complete ===\n');

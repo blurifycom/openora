@@ -13,7 +13,9 @@ export class ProfileService {
   // lazily so a freshly-registered user always has a profile.
   private async ensureProfile(userId: User['id']) {
     const [existing] = await this.drizzle.db.select().from(player).where(eq(player.userId, userId));
-    if (existing) return toPlayer(existing, await fetchEmailByUserId(this.drizzle, userId));
+    if (existing) {
+      return toPlayer(existing, await fetchEmailByUserId(this.drizzle, userId));
+    }
 
     const [u] = await this.drizzle.db
       .select({ name: user.name, email: user.email })

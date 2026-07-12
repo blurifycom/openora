@@ -51,10 +51,14 @@ function weighted<T>(rng: () => number, table: readonly (readonly [T, number])[]
   let roll = rng() * total;
   for (const [value, w] of table) {
     roll -= w;
-    if (roll <= 0) return value;
+    if (roll <= 0) {
+      return value;
+    }
   }
   const last = table.at(-1);
-  if (!last) throw new Error('weighted: table must not be empty');
+  if (!last) {
+    throw new Error('weighted: table must not be empty');
+  }
   return last[0];
 }
 
@@ -183,7 +187,9 @@ export async function seedDemoData(options: SeedOptions): Promise<SeedResult> {
     role: 'admin',
     isActive: true,
   });
-  if (adminUser) log(`Admin ready: ${admin.email} / ${admin.password}`);
+  if (adminUser) {
+    log(`Admin ready: ${admin.email} / ${admin.password}`);
+  }
 
   await db.insert(game).values(
     GAMES.map(([name, provider, category]) => ({
@@ -221,7 +227,9 @@ export async function seedDemoData(options: SeedOptions): Promise<SeedResult> {
       isActive,
       createdAt,
     });
-    if (!playerUser) continue;
+    if (!playerUser) {
+      continue;
+    }
     userCount++;
 
     const totalDeposits = round2(rng() * 8000 + (level - 1) * 400);
@@ -324,13 +332,17 @@ async function ensureUser(
     });
     [existing] = await db.select({ id: user.id }).from(user).where(eq(user.email, input.email));
   }
-  if (!existing) return null;
+  if (!existing) {
+    return null;
+  }
   const patch: Partial<typeof user.$inferInsert> = {
     name: input.name,
     role: input.role,
     isActive: input.isActive,
   };
-  if (input.createdAt) patch.createdAt = input.createdAt;
+  if (input.createdAt) {
+    patch.createdAt = input.createdAt;
+  }
   await db.update(user).set(patch).where(eq(user.id, existing.id));
   return { id: existing.id };
 }

@@ -58,7 +58,9 @@ async function setRole(container: Container, userId: string, role: string) {
 
 async function verifyKyc(admin: TestClient, playerId: string) {
   const res = await admin.patch(`/players/${playerId}`, { kycStatus: 'verified' });
-  if (res.status !== 200) throw new Error(`verifyKyc failed (${res.status}): ${await res.text()}`);
+  if (res.status !== 200) {
+    throw new Error(`verifyKyc failed (${res.status}): ${await res.text()}`);
+  }
 }
 
 async function assignTag(admin: TestClient, playerId: string, tagKey: string) {
@@ -67,7 +69,9 @@ async function assignTag(admin: TestClient, playerId: string, tagKey: string) {
     assignReason: 'qa e2e fixture',
     assignActor: 'manual',
   });
-  if (res.status !== 200) throw new Error(`assignTag failed (${res.status}): ${await res.text()}`);
+  if (res.status !== 200) {
+    throw new Error(`assignTag failed (${res.status}): ${await res.text()}`);
+  }
 }
 
 async function pendingWithdrawalIds(admin: TestClient, currency = 'USD') {

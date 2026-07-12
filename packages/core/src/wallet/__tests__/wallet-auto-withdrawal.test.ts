@@ -159,14 +159,18 @@ describe('WalletService.withdraw auto-approval', () => {
 
     expect(executeSpy).toHaveBeenCalledTimes(1);
     const lockOrder = executeSpy.mock.invocationCallOrder.at(0);
-    if (lockOrder === undefined) throw new Error('expected executeSpy to have been called');
+    if (lockOrder === undefined) {
+      throw new Error('expected executeSpy to have been called');
+    }
     // The lock must precede the flip `.set()` that writes the auto-approved marker (and the cap read between them).
     const flipCallIndex = setSpy.mock.calls.findIndex(
       ([arg]) => (arg as { reviewReason?: string })?.reviewReason === 'auto-approved',
     );
     expect(flipCallIndex).toBeGreaterThanOrEqual(0);
     const flipOrder = setSpy.mock.invocationCallOrder.at(flipCallIndex);
-    if (flipOrder === undefined) throw new Error('expected the flip call to have been recorded');
+    if (flipOrder === undefined) {
+      throw new Error('expected the flip call to have been recorded');
+    }
     expect(lockOrder).toBeLessThan(flipOrder);
   });
 

@@ -195,9 +195,13 @@ describe('wallet ledger reconciliation', () => {
       const type = r['type'] as WalletTransactionType | 'withdrawal';
       const amount = num(r['amount']);
       if (type === 'withdrawal') {
-        if (r['status'] === 'pending' || r['status'] === 'processing') held += amount;
+        if (r['status'] === 'pending' || r['status'] === 'processing') {
+          held += amount;
+        }
       } else if (isCredit(type)) {
-        if (r['status'] === 'completed') credits += amount;
+        if (r['status'] === 'completed') {
+          credits += amount;
+        }
       } else {
         debits += amount;
       }

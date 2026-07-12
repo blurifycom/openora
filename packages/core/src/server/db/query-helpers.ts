@@ -3,7 +3,9 @@ import type { DrizzleTx } from './drizzle.js';
 
 export function findOneOrThrow<T>(rows: T[], error: Error): T {
   const row = rows[0];
-  if (row === undefined) throw error;
+  if (row === undefined) {
+    throw error;
+  }
   return row;
 }
 

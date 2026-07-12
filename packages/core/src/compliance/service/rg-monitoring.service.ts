@@ -104,7 +104,9 @@ export class RgMonitoringService {
     const earliestByUser = new Map<User['id'], Date>();
     for (const s of activeSessions) {
       const current = earliestByUser.get(s.userId);
-      if (!current || s.createdAt < current) earliestByUser.set(s.userId, s.createdAt);
+      if (!current || s.createdAt < current) {
+        earliestByUser.set(s.userId, s.createdAt);
+      }
     }
 
     await Promise.all(
@@ -133,11 +135,21 @@ export class RgMonitoringService {
     const offset = pageToOffset(page, limit);
 
     const conditions: SQL[] = [];
-    if (flagType) conditions.push(eq(rgFlag.flagType, flagType));
-    if (limitType) conditions.push(eq(rgFlag.limitType, limitType));
-    if (status) conditions.push(eq(rgFlag.status, status));
-    if (fromDate) conditions.push(gte(rgFlag.flaggedAt, new Date(fromDate)));
-    if (toDate) conditions.push(lte(rgFlag.flaggedAt, new Date(toDate)));
+    if (flagType) {
+      conditions.push(eq(rgFlag.flagType, flagType));
+    }
+    if (limitType) {
+      conditions.push(eq(rgFlag.limitType, limitType));
+    }
+    if (status) {
+      conditions.push(eq(rgFlag.status, status));
+    }
+    if (fromDate) {
+      conditions.push(gte(rgFlag.flaggedAt, new Date(fromDate)));
+    }
+    if (toDate) {
+      conditions.push(lte(rgFlag.flaggedAt, new Date(toDate)));
+    }
     const where = conditions.length > 0 ? and(...conditions) : undefined;
 
     const [rows, countResult] = await Promise.all([
@@ -176,7 +188,9 @@ export class RgMonitoringService {
   }
 
   private async spendFor(userId: User['id'], type: LimitType, from: Date, to: Date) {
-    if (type === 'deposit') return this.depositsSum(userId, from, to);
+    if (type === 'deposit') {
+      return this.depositsSum(userId, from, to);
+    }
     return this.betsSum(userId, from, to);
   }
 

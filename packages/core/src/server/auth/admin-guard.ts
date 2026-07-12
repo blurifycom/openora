@@ -48,7 +48,9 @@ export class AdminGuard {
 
     const headers = new Headers();
     for (const [k, v] of Object.entries(request.headers)) {
-      if (v === undefined) continue;
+      if (v === undefined) {
+        continue;
+      }
       headers.set(k, Array.isArray(v) ? v.join(', ') : v);
     }
     const userId = await this.sessions.resolveUserId(headers);

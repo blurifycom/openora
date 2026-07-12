@@ -45,7 +45,9 @@ async function registerPlayer(email: string) {
     headers: { 'content-type': 'application/json' },
     body: JSON.stringify({ email, password: 'password123', name: 'RG E2E Player' }),
   });
-  if (!res.ok) throw new Error(`register failed (${res.status}): ${await res.text()}`);
+  if (!res.ok) {
+    throw new Error(`register failed (${res.status}): ${await res.text()}`);
+  }
   const body = (await readJson(res)) as { user: { id: string } };
   const client = await asPlayer(app.app, { email });
   return { client, userId: body.user.id };

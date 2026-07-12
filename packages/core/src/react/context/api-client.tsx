@@ -20,18 +20,26 @@ export type OssApiClientConfig = {
 const ApiClientContext = createContext<OssApiClient | null>(null);
 
 function buildQueryString(query?: QueryParams): string {
-  if (!query) return '';
+  if (!query) {
+    return '';
+  }
   const entries = Object.entries(query).filter(
     ([, v]) => v !== undefined && v !== null && v !== '',
   );
-  if (entries.length === 0) return '';
+  if (entries.length === 0) {
+    return '';
+  }
   const params = new URLSearchParams();
-  for (const [k, v] of entries) params.set(k, String(v));
+  for (const [k, v] of entries) {
+    params.set(k, String(v));
+  }
   return `?${params.toString()}`;
 }
 
 function buildClient(config: OssApiClientConfig | OssApiClient): OssApiClient {
-  if ('get' in config && 'post' in config && 'patch' in config) return config;
+  if ('get' in config && 'post' in config && 'patch' in config) {
+    return config;
+  }
   const baseUrl = config.baseUrl;
   const send = async <T,>(
     method: 'GET' | 'POST' | 'PATCH' | 'DELETE',
@@ -50,13 +58,17 @@ function buildClient(config: OssApiClientConfig | OssApiClient): OssApiClient {
       let message = `${method} ${path} -> ${res.status}`;
       try {
         const errorBody = (await res.json()) as { message?: string };
-        if (errorBody?.message) message = errorBody.message;
+        if (errorBody?.message) {
+          message = errorBody.message;
+        }
       } catch {
         /* non-JSON */
       }
       throw new Error(message);
     }
-    if (res.status === 204) return undefined as T;
+    if (res.status === 204) {
+      return undefined as T;
+    }
     return (await res.json()) as T;
   };
   return {
@@ -81,6 +93,8 @@ export function ApiClientProvider({
 
 export function useApiClient(): OssApiClient {
   const ctx = useContext(ApiClientContext);
-  if (!ctx) throw new Error('useApiClient must be used within ApiClientProvider');
+  if (!ctx) {
+    throw new Error('useApiClient must be used within ApiClientProvider');
+  }
   return ctx;
 }

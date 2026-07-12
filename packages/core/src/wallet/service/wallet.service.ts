@@ -214,7 +214,9 @@ export class WalletService {
 
   /** Fail-closed KYC gate: when enabled, a withdrawal needs a passing status (verified|manually_overridden). */
   private async assertKycForWithdrawal(userId: User['id']) {
-    if (!this.platformConfig?.kyc?.gateWithdrawals) return;
+    if (!this.platformConfig?.kyc?.gateWithdrawals) {
+      return;
+    }
     const status = await this.autoApprovalKycStatus(userId);
     if (!status || !KYC_PASS_STATUSES.has(status)) {
       throw new KycRequiredError();
@@ -266,7 +268,9 @@ export class WalletService {
     let preResolvedWallet: Wallet | undefined;
     if (idempotencyKey) {
       const found = await this.findDepositReplay({ userId, idempotencyKey, amount, currency });
-      if (found.replay) return found.replay;
+      if (found.replay) {
+        return found.replay;
+      }
       preResolvedWallet = found.walletRecord;
     }
 
@@ -341,13 +345,17 @@ export class WalletService {
       .select()
       .from(wallet)
       .where(eq(wallet.userId, userId));
-    if (!walletRecord) return { walletRecord: undefined, replay: undefined };
+    if (!walletRecord) {
+      return { walletRecord: undefined, replay: undefined };
+    }
     const existing = await this.findByIdempotencyKey(
       this.drizzle.db,
       walletRecord.id,
       namespacedIdempotencyKey(DEPOSIT_IDEMPOTENCY_NAMESPACE, idempotencyKey),
     );
-    if (!existing) return { walletRecord, replay: undefined };
+    if (!existing) {
+      return { walletRecord, replay: undefined };
+    }
     this.assertReplayMatches(existing, amount, currency);
     return { walletRecord, replay: { transactionId: existing.id, status: existing.status } };
   }
@@ -395,7 +403,9 @@ export class WalletService {
       ? await insertQuery.onConflictDoNothing().returning()
       : await insertQuery.returning();
 
-    if (row) return { row, replayed: false };
+    if (row) {
+      return { row, replayed: false };
+    }
 
     // Only the keyed (onConflictDoNothing) branch above can return an empty `returning()`
     // - the plain-insert branch always yields exactly one row.
@@ -513,7 +523,9 @@ export class WalletService {
       },
     );
 
-    if (replayed) return { transactionId, status };
+    if (replayed) {
+      return { transactionId, status };
+    }
 
     this.events.emit('wallet.withdrawal.requested', {
       userId,
@@ -539,9 +551,15 @@ export class WalletService {
     const { page, limit } = filters;
 
     const conditions = [eq(walletTransaction.type, 'withdrawal')];
-    if (filters.status) conditions.push(eq(walletTransaction.status, filters.status));
-    if (filters.currency) conditions.push(eq(walletTransaction.currency, filters.currency));
-    if (filters.rail) conditions.push(eq(walletTransaction.rail, filters.rail));
+    if (filters.status) {
+      conditions.push(eq(walletTransaction.status, filters.status));
+    }
+    if (filters.currency) {
+      conditions.push(eq(walletTransaction.currency, filters.currency));
+    }
+    if (filters.rail) {
+      conditions.push(eq(walletTransaction.rail, filters.rail));
+    }
     if (filters.minAmount !== undefined) {
       conditions.push(gte(walletTransaction.amount, filters.minAmount));
     }
@@ -585,7 +603,9 @@ export class WalletService {
       if (moneyToNumber(r.tx.amount) >= moneyToNumber(LARGE_WITHDRAWAL_THRESHOLD)) {
         riskTags.push('large_amount');
       }
-      if (frequentWalletIds.has(r.tx.walletId)) riskTags.push('high_frequency');
+      if (frequentWalletIds.has(r.tx.walletId)) {
+        riskTags.push('high_frequency');
+      }
       return {
         transactionId: r.tx.id,
         userId: r.userId,
@@ -741,14 +761,18 @@ export class WalletService {
     rail: WalletRail;
   }): Promise<TransactionResult | undefined> {
     // Cheap gates first (auto-approval off, or crypto - never auto-approved): skip opening a tx/lock.
-    if (!this.platformConfig?.autoWithdrawal?.enabled || args.rail !== 'fiat') return undefined;
+    if (!this.platformConfig?.autoWithdrawal?.enabled || args.rail !== 'fiat') {
+      return undefined;
+    }
 
     try {
       const cfg = this.platformConfig.autoWithdrawal;
 
       // Threshold/KYC/risk/velocity gates run outside any lock; only the cap check below needs serializing.
       const gates = await this.evaluateAutoApproval(args);
-      if (!gates) return undefined;
+      if (!gates) {
+        return undefined;
+      }
 
       // Serialize the cap-check-and-flip per user with an advisory lock: without it two concurrent
       // withdrawals read the same daily-cap usage and both auto-approve, bypassing the cap. The cap read
@@ -760,7 +784,9 @@ export class WalletService {
             { walletId: args.walletId, amount: args.amount, cfg },
             txn,
           );
-          if (caps.exceeded) return null;
+          if (caps.exceeded) {
+            return null;
+          }
           const tx = await this.flipToProcessing({
             txn,
             withdrawalId: args.transactionId,
@@ -770,7 +796,9 @@ export class WalletService {
           return { tx, caps };
         }),
       );
-      if (!decided) return undefined;
+      if (!decided) {
+        return undefined;
+      }
 
       const decision: AutoApprovalDecision = {
         ...gates,
@@ -826,25 +854,41 @@ export class WalletService {
     rail: WalletRail;
   }): Promise<AutoApprovalGates | null> {
     const cfg = this.platformConfig?.autoWithdrawal;
-    if (!cfg?.enabled) return null;
+    if (!cfg?.enabled) {
+      return null;
+    }
     // Hard stop: crypto is irreversible and AML-sensitive - never auto-approved.
-    if (rail !== 'fiat') return null;
+    if (rail !== 'fiat') {
+      return null;
+    }
 
     const threshold = await this.resolveAutoThreshold(userId);
-    if (!threshold || moneyToNumber(threshold.value) <= 0) return null;
-    if (moneyToNumber(amount) > moneyToNumber(threshold.value)) return null;
+    if (!threshold || moneyToNumber(threshold.value) <= 0) {
+      return null;
+    }
+    if (moneyToNumber(amount) > moneyToNumber(threshold.value)) {
+      return null;
+    }
 
     // Independent of kyc.gateWithdrawals: auto-approval always demands a passing status; anything else fails closed.
     const kycStatus = await this.autoApprovalKycStatus(userId);
-    if (!kycStatus || !KYC_PASS_STATUSES.has(kycStatus)) return null;
+    if (!kycStatus || !KYC_PASS_STATUSES.has(kycStatus)) {
+      return null;
+    }
 
     const riskTags = await this.autoApprovalRiskTags(userId, cfg.excludeRiskFlags);
     // null = exclusions configured but the lookup port is unavailable => fail closed.
-    if (riskTags === null) return null;
-    if (riskTags.some((t) => cfg.excludeRiskFlags.includes(t))) return null;
+    if (riskTags === null) {
+      return null;
+    }
+    if (riskTags.some((t) => cfg.excludeRiskFlags.includes(t))) {
+      return null;
+    }
 
     const heuristics = await this.autoApprovalHeuristics({ walletId, amount });
-    if (heuristics.largeAmount || heuristics.highFrequency) return null;
+    if (heuristics.largeAmount || heuristics.highFrequency) {
+      return null;
+    }
 
     return {
       threshold: threshold.value,
@@ -862,15 +906,21 @@ export class WalletService {
       .select()
       .from(autoWithdrawalRule)
       .where(eq(autoWithdrawalRule.userId, userId));
-    if (rule) return { value: rule.threshold, source: 'per-player' };
+    if (rule) {
+      return { value: rule.threshold, source: 'per-player' };
+    }
     const global = this.platformConfig?.autoWithdrawal?.fiatThreshold;
-    if (global !== undefined) return { value: global, source: 'global' };
+    if (global !== undefined) {
+      return { value: global, source: 'global' };
+    }
     return null;
   }
 
   private async autoApprovalKycStatus(userId: User['id']): Promise<KycStatus | null> {
     // No directory bound => cannot verify KYC => fail closed.
-    if (!this.directory) return null;
+    if (!this.directory) {
+      return null;
+    }
     const [summary] = await this.directory.lookupPlayers([userId]);
     return summary?.kycStatus ?? null;
   }
@@ -880,8 +930,12 @@ export class WalletService {
     userId: User['id'],
     excludeRiskFlags: readonly TagKey[],
   ): Promise<TagKey[] | null> {
-    if (excludeRiskFlags.length === 0) return [];
-    if (!this.riskTags) return null;
+    if (excludeRiskFlags.length === 0) {
+      return [];
+    }
+    if (!this.riskTags) {
+      return null;
+    }
     const byUser = await this.riskTags.getActiveTagKeys([userId]);
     return byUser.get(userId) ?? [];
   }
@@ -907,7 +961,9 @@ export class WalletService {
     walletIds: string[],
   ): Promise<Set<string>> {
     const frequent = new Set<string>();
-    if (walletIds.length === 0) return frequent;
+    if (walletIds.length === 0) {
+      return frequent;
+    }
     const since = new Date(Date.now() - HIGH_FREQUENCY_WINDOW_MS);
     const counts = await db
       .select({ walletId: walletTransaction.walletId, n: count() })
@@ -921,7 +977,9 @@ export class WalletService {
       )
       .groupBy(walletTransaction.walletId);
     for (const row of counts) {
-      if (Number(row.n) >= HIGH_FREQUENCY_MIN_COUNT) frequent.add(row.walletId);
+      if (Number(row.n) >= HIGH_FREQUENCY_MIN_COUNT) {
+        frequent.add(row.walletId);
+      }
     }
     return frequent;
   }
@@ -1060,7 +1118,9 @@ export class WalletService {
     const db = this.drizzle.db;
 
     const [walletRecord] = await db.select().from(wallet).where(eq(wallet.userId, userId));
-    if (!walletRecord) return { items: [], total: 0, page, limit };
+    if (!walletRecord) {
+      return { items: [], total: 0, page, limit };
+    }
     const where = eq(walletTransaction.walletId, walletRecord.id);
     const [txs, [{ n }]] = await Promise.all([
       db

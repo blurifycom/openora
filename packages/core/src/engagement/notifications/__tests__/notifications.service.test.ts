@@ -9,7 +9,9 @@ import {
 function chain(result: unknown): any {
   const proxy: any = new Proxy(function () {}, {
     get(_t, prop) {
-      if (prop === 'then') return (res: (v: unknown) => unknown) => res(result);
+      if (prop === 'then') {
+        return (res: (v: unknown) => unknown) => res(result);
+      }
       return () => proxy;
     },
     apply: () => proxy,

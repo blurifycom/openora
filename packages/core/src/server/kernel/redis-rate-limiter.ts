@@ -41,7 +41,9 @@ export class RedisRateLimiter implements RateLimiterAdapter {
   constructor(private readonly client: RedisClient) {}
 
   async consume(key: string, opts: RateLimitOptions): Promise<RateLimitResult> {
-    if (!this.client.isReady) return this.unavailable(opts, { keyPrefix: key.split(':')[0] });
+    if (!this.client.isReady) {
+      return this.unavailable(opts, { keyPrefix: key.split(':')[0] });
+    }
     try {
       const reply = await this.client.eval(CONSUME_SCRIPT, {
         keys: [PREFIX + key],

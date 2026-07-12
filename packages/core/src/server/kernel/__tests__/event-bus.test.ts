@@ -59,7 +59,9 @@ describe('createEventBus', () => {
     const bus = createEventBus(new InMemoryBroker(), fakeLogger());
     const ids: string[] = [];
     bus.on('wallet.deposit.completed', (_p, env) => {
-      if (env?.eventId) ids.push(env.eventId);
+      if (env?.eventId) {
+        ids.push(env.eventId);
+      }
     });
 
     bus.emit('wallet.deposit.completed', {

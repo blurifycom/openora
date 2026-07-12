@@ -102,9 +102,13 @@ export class BullMqJobQueue implements JobQueueAdapter {
     // 'failed' fires per attempt; act only once retries are exhausted (attemptsMade has
     // reached the job's own attempts, default 1) - mirrors the in-process dead-letter.
     worker.on('failed', (job, error) => {
-      if (!job) return;
+      if (!job) {
+        return;
+      }
       const maxAttempts = job.opts.attempts ?? 1;
-      if (job.attemptsMade < maxAttempts) return;
+      if (job.attemptsMade < maxAttempts) {
+        return;
+      }
       void this.deadLetter(reg, job, error);
     });
 
@@ -142,7 +146,9 @@ export class BullMqJobQueue implements JobQueueAdapter {
 
   private getQueue(queue: QueueName): Queue<JobEnvelope> {
     const existing = this.queues.get(queue);
-    if (existing) return existing;
+    if (existing) {
+      return existing;
+    }
     const created = new Queue<JobEnvelope>(queue, { connection: this.connection });
     this.queues.set(queue, created);
     return created;

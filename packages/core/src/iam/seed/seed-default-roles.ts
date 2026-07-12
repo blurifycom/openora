@@ -31,7 +31,9 @@ export async function seedRoles(db: DrizzleDb): Promise<void> {
   // Super-admin bypasses authz, so it stores no permission rows.
   const permissionRows = DEFAULT_ADMIN_ROLES.filter((r) => !r.isSuperAdmin).flatMap((r) => {
     const roleId = roleByKey.get(r.key);
-    if (!roleId) return [];
+    if (!roleId) {
+      return [];
+    }
     return Object.entries(r.matrix)
       .filter(([, level]) => level !== 'no_access')
       .map(([resource, level]) => ({ roleId, resource, level }));

@@ -54,7 +54,9 @@ function harness(rows: Row[]) {
       set: (values: { publishedAt: Date }) => ({
         where: async () => {
           const r = rows.find((x) => x.eventId === lastPublishedId);
-          if (r) r.publishedAt = values.publishedAt;
+          if (r) {
+            r.publishedAt = values.publishedAt;
+          }
         },
       }),
     }),
@@ -133,7 +135,9 @@ describe('OutboxRelay.drainOnce', () => {
     ];
     const { db, trackPublish } = harness(rows);
     const broker = brokerThat(trackPublish, (eventId) => {
-      if (eventId === 'b') throw new Error('broker unreachable');
+      if (eventId === 'b') {
+        throw new Error('broker unreachable');
+      }
     });
     const relay = new OutboxRelay(db, broker);
 

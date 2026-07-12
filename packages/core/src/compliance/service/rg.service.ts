@@ -264,10 +264,15 @@ export class RgService {
         ),
       )
       .limit(1);
-    if (!existing) throw new ExclusionNotFoundError(userId);
-    if (existing.isPermanent || existing.expiresAt === null)
+    if (!existing) {
+      throw new ExclusionNotFoundError(userId);
+    }
+    if (existing.isPermanent || existing.expiresAt === null) {
       throw new PermanentExclusionLiftError();
-    if (new Date() < existing.expiresAt) throw new ExclusionPeriodNotElapsedError();
+    }
+    if (new Date() < existing.expiresAt) {
+      throw new ExclusionPeriodNotElapsedError();
+    }
 
     const now = new Date();
     const row = await this.drizzle.db.transaction(async (tx) => {
@@ -391,23 +396,31 @@ export class RgService {
     ];
     // A lapsed-but-not-yet-swept cooling-off must not block a fresh one; a self-exclusion
     // has no time-based lapse (only an explicit lift clears it).
-    if (kind === 'cooling_off') conditions.push(gt(rgExclusion.expiresAt, now));
+    if (kind === 'cooling_off') {
+      conditions.push(gt(rgExclusion.expiresAt, now));
+    }
     const [existing] = await this.drizzle.db
       .select({ id: rgExclusion.id })
       .from(rgExclusion)
       .where(and(...conditions))
       .limit(1);
-    if (existing) throw new ActiveExclusionError();
+    if (existing) {
+      throw new ActiveExclusionError();
+    }
   }
 
   // Best-effort player notification. Both the email port and the directory are optional
   // (guarded by c.has at wiring). A lookup/send failure must not fail an RG action that
   // already committed - log without PII (no email, no reason text) and move on.
   private async notify(userId: User['id'], subject: string, body: string) {
-    if (!this.email || !this.directory) return;
+    if (!this.email || !this.directory) {
+      return;
+    }
     try {
       const [summary] = await this.directory.lookupPlayers([userId]);
-      if (!summary?.email) return;
+      if (!summary?.email) {
+        return;
+      }
       await this.email.send({ to: summary.email, subject, body });
     } catch (err) {
       logger.warn({ err, userId }, 'RG player notification failed');

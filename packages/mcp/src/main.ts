@@ -62,7 +62,9 @@ function catalogCandidates(): string[] {
   const candidates: string[] = [];
 
   const override = process.env['OSS_CATALOG'];
-  if (override) candidates.push(override);
+  if (override) {
+    candidates.push(override);
+  }
 
   const cwd = process.cwd();
 
@@ -73,7 +75,9 @@ function catalogCandidates(): string[] {
   for (;;) {
     candidates.push(join(dir, 'docs', 'catalog.json'));
     const parent = parse(dir).dir;
-    if (!parent || parent === dir) break;
+    if (!parent || parent === dir) {
+      break;
+    }
     dir = parent;
   }
 
@@ -84,7 +88,9 @@ function catalogCandidates(): string[] {
 
 function loadCatalog(): { catalog: Catalog; path: string } | null {
   for (const candidate of catalogCandidates()) {
-    if (!candidate || !existsSync(candidate)) continue;
+    if (!candidate || !existsSync(candidate)) {
+      continue;
+    }
     try {
       const catalog = JSON.parse(readFileSync(candidate, 'utf8')) as Catalog;
       return { catalog, path: candidate };
@@ -150,14 +156,19 @@ server.registerTool(
     inputSchema: {},
   },
   withCatalog((c) => {
-    if (c.adapters.length === 0) return 'No adapters in the catalog.';
+    if (c.adapters.length === 0) {
+      return 'No adapters in the catalog.';
+    }
     const lines: string[] = ['=== Adapter seams ==='];
     for (const a of c.adapters) {
       lines.push(`\n${a.category}  [${a.status}]`);
       lines.push(`  interface: ${a.interface}`);
       lines.push(`  token:     ${a.token}`);
-      if (a.boundIn.length > 0) lines.push(`  boundIn:   ${a.boundIn.join(', ')}`);
-      else lines.push('  boundIn:   (none - stub; bind your implementation to the token)');
+      if (a.boundIn.length > 0) {
+        lines.push(`  boundIn:   ${a.boundIn.join(', ')}`);
+      } else {
+        lines.push('  boundIn:   (none - stub; bind your implementation to the token)');
+      }
     }
     return lines.join('\n');
   }),
@@ -174,7 +185,9 @@ server.registerTool(
   },
   async ({ module: mod }) => {
     const loaded = loadCatalog();
-    if (!loaded) return { content: [{ type: 'text' as const, text: NOT_FOUND_MESSAGE }] };
+    if (!loaded) {
+      return { content: [{ type: 'text' as const, text: NOT_FOUND_MESSAGE }] };
+    }
     const c = loaded.catalog;
     const modules = mod ? c.modules.filter((m) => m.id === mod) : c.modules;
     if (mod && modules.length === 0) {
@@ -209,7 +222,9 @@ server.registerTool(
     inputSchema: {},
   },
   withCatalog((c) => {
-    if (c.events.length === 0) return 'No events in the catalog.';
+    if (c.events.length === 0) {
+      return 'No events in the catalog.';
+    }
     return `=== Domain events (${c.events.length}) ===\n${c.events.map((e) => `- ${e}`).join('\n')}`;
   }),
 );
@@ -222,7 +237,9 @@ server.registerTool(
     inputSchema: {},
   },
   withCatalog((c) => {
-    if (c.uiSlots.length === 0) return 'No UI slots in the catalog.';
+    if (c.uiSlots.length === 0) {
+      return 'No UI slots in the catalog.';
+    }
     const lines: string[] = ['=== UI slots ==='];
     for (const s of c.uiSlots) {
       lines.push(`- ${s.name}${s.description ? `  # ${s.description}` : ''}`);
@@ -240,7 +257,9 @@ server.registerTool(
   },
   async ({ name }) => {
     const loaded = loadCatalog();
-    if (!loaded) return { content: [{ type: 'text' as const, text: NOT_FOUND_MESSAGE }] };
+    if (!loaded) {
+      return { content: [{ type: 'text' as const, text: NOT_FOUND_MESSAGE }] };
+    }
     const c = loaded.catalog;
     const m = c.modules.find((x) => x.id === name);
     if (!m) {
@@ -276,7 +295,9 @@ server.registerTool(
   },
   async ({ name }) => {
     const loaded = loadCatalog();
-    if (!loaded) return { content: [{ type: 'text' as const, text: NOT_FOUND_MESSAGE }] };
+    if (!loaded) {
+      return { content: [{ type: 'text' as const, text: NOT_FOUND_MESSAGE }] };
+    }
     const c = loaded.catalog;
     const candidates = name.endsWith('Schema') ? [name] : [`${name}Schema`, name];
     const hit = c.schemas.find((s) => candidates.includes(s.name));
@@ -324,15 +345,20 @@ function classifyIntent(ask: string): IntentKind {
   const has = (re: RegExp) => re.test(a);
   if (
     has(/\b(payment|psp|stripe|adyen|kyc|onfido|sms|email|notification|vendor|adapter|gateway)\b/)
-  )
+  ) {
     return 'adapter';
-  if (has(/\b(page|screen|dashboard|view|frontend|admin panel|backoffice page|player page)\b/))
+  }
+  if (has(/\b(page|screen|dashboard|view|frontend|admin panel|backoffice page|player page)\b/)) {
     return 'ui-page';
-  if (has(/\b(endpoint|route|procedure|api method|rpc)\b/)) return 'route';
+  }
+  if (has(/\b(endpoint|route|procedure|api method|rpc)\b/)) {
+    return 'route';
+  }
   if (
     has(/\b(feature|module|tournament|leaderboard|jackpot|loyalty|bonus|cashback|mission|reward)\b/)
-  )
+  ) {
     return 'feature';
+  }
   return 'unsure';
 }
 
@@ -634,10 +660,11 @@ server.registerTool(
       return { content: [{ type: 'text' as const, text: r.ok ? 'Stopped.' : r.output }] };
     }
     const up = runShell('docker compose up -d');
-    if (!up.ok)
+    if (!up.ok) {
       return {
         content: [{ type: 'text' as const, text: `docker compose up failed:\n${up.output}` }],
       };
+    }
 
     const deadline = Date.now() + 30_000;
     let ready = false;

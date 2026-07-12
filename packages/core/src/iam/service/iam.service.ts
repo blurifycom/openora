@@ -112,7 +112,9 @@ function validateGrants(grants: ReadonlyArray<{ resource: string; level: string 
 
 function staticGrantsForRole(roleName: string) {
   const role = roles[roleName as RoleName];
-  if (!role) return [];
+  if (!role) {
+    return [];
+  }
   return (Object.keys(statement) as ResourceName[]).flatMap((resource) =>
     (statement[resource] as readonly string[])
       .filter((action) => role.authorize({ [resource]: [action] }).success)
@@ -133,7 +135,9 @@ function grantsToLevelMap(grants: readonly AdminGrant[]) {
   const map: Record<string, PermissionLevel> = {};
   for (const [resource, actions] of byResource) {
     const all = statement[resource as ResourceName] as readonly string[] | undefined;
-    if (!all) continue;
+    if (!all) {
+      continue;
+    }
     if (all.every((a) => actions.has(a))) {
       map[resource] = 'read_write';
     } else {
@@ -192,16 +196,24 @@ export class DbAdminPermissionResolver implements AdminPermissionResolver {
       .leftJoin(adminRolePermission, eq(adminRolePermission.roleId, adminRole.id))
       .where(eq(adminRoleAssignment.userId, userId));
 
-    if (rows.length === 0) return null;
-    if (rows.some((r) => r.isSuperAdmin)) return allGrants();
+    if (rows.length === 0) {
+      return null;
+    }
+    if (rows.some((r) => r.isSuperAdmin)) {
+      return allGrants();
+    }
 
     const seen = new Set<string>();
     const grants: AdminGrant[] = [];
     for (const r of rows) {
-      if (!r.resource || !r.level) continue; // leftJoin null: role with no permission rows
+      if (!r.resource || !r.level) {
+        continue;
+      } // leftJoin null: role with no permission rows
       for (const action of levelToActions(r.resource, r.level as PermissionLevel)) {
         const key = `${r.resource}:${action}`;
-        if (seen.has(key)) continue;
+        if (seen.has(key)) {
+          continue;
+        }
         seen.add(key);
         grants.push({ resource: r.resource, action });
       }
@@ -342,7 +354,9 @@ export class IamService {
     }
 
     const patch: Partial<typeof adminRole.$inferInsert> = {};
-    if (input.name !== undefined) patch.name = input.name;
+    if (input.name !== undefined) {
+      patch.name = input.name;
+    }
 
     const row = findOneOrThrow(
       await this.drizzle.db
@@ -422,7 +436,9 @@ export class IamService {
     // assertSuperAdmin already proved the caller holds all levels.
     const callerMap = grantsToLevelMap(await this.callerGrants(input.caller));
     for (const g of input.grants) {
-      if (g.level === 'no_access') continue;
+      if (g.level === 'no_access') {
+        continue;
+      }
       const have = callerMap[g.resource] ?? 'no_access';
       if (!isLevelSufficient(have, g.level)) {
         throw new GrantEscalationError();
@@ -672,7 +688,9 @@ export class IamService {
     for (const r of rows) {
       const level = r.level as PermissionLevel;
       const cur = max.get(r.resource);
-      if (!cur || levelRank(level) > levelRank(cur)) max.set(r.resource, level);
+      if (!cur || levelRank(level) > levelRank(cur)) {
+        max.set(r.resource, level);
+      }
     }
     return {
       permissions: [...max.entries()].map(([resource, level]) => ({ resource, level })),

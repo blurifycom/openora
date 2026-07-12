@@ -35,7 +35,9 @@ export class TagService implements PlayerTags {
   // Keyed by auth `userId`, not the internal `player.id`. Users with no active tags are absent from the map.
   public async getActiveTagKeys(userIds: readonly string[]) {
     const result = new Map<string, TagKey[]>();
-    if (userIds.length === 0) return result;
+    if (userIds.length === 0) {
+      return result;
+    }
     const rows = await this.drizzle.db
       .select({ userId: player.userId, key: tag.key })
       .from(player)

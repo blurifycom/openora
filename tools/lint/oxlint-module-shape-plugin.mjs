@@ -101,9 +101,13 @@ const moduleFilePlacement = {
     return {
       Program(node) {
         const segments = coreSrcSegments(filename(context));
-        if (!segments || segments.length < 2) return;
+        if (!segments || segments.length < 2) {
+          return;
+        }
         const [domain, ...rest] = segments;
-        if (ENGINE_ZONES.has(domain) || EXCLUDED_TOP_DIRS.has(domain)) return;
+        if (ENGINE_ZONES.has(domain) || EXCLUDED_TOP_DIRS.has(domain)) {
+          return;
+        }
 
         if (rest.length === 1) {
           if (!ROOT_ALLOWED_FILES.has(rest[0])) {
@@ -120,7 +124,9 @@ const moduleFilePlacement = {
           return;
         }
 
-        if (LAYER_DIRS.has(rest[0])) return;
+        if (LAYER_DIRS.has(rest[0])) {
+          return;
+        }
 
         if (rest.length === 2) {
           if (!ROOT_ALLOWED_FILES.has(rest[1])) {
@@ -135,7 +141,9 @@ const moduleFilePlacement = {
           return;
         }
 
-        if (LAYER_DIRS.has(rest[1])) return;
+        if (LAYER_DIRS.has(rest[1])) {
+          return;
+        }
 
         context.report({
           node,
@@ -154,21 +162,29 @@ const layerFileNaming = {
     return {
       Program(node) {
         const segments = coreSrcSegments(filename(context));
-        if (!segments || segments.length < 2) return;
+        if (!segments || segments.length < 2) {
+          return;
+        }
         const [domain, ...rest] = segments;
-        if (ENGINE_ZONES.has(domain) || EXCLUDED_TOP_DIRS.has(domain)) return;
+        if (ENGINE_ZONES.has(domain) || EXCLUDED_TOP_DIRS.has(domain)) {
+          return;
+        }
 
         const layerIdx = LAYER_DIRS.has(rest[0])
           ? 0
           : rest.length >= 2 && LAYER_DIRS.has(rest[1])
             ? 1
             : -1;
-        if (layerIdx === -1) return;
+        if (layerIdx === -1) {
+          return;
+        }
         const layer = rest[layerIdx];
         // Only enforce naming on files directly inside the layer dir, not nested subfolders
         // (adapters/mock/*, seed/data/* stay free-form - the layer dirs with a naming rule
         // are service/ and __tests__/, neither of which has nested subfolders today).
-        if (rest.length !== layerIdx + 2) return;
+        if (rest.length !== layerIdx + 2) {
+          return;
+        }
         const base = rest[layerIdx + 1];
 
         if (
@@ -198,9 +214,13 @@ const layerFileNaming = {
 function resolveRelativeSegments(fileSegments, spec) {
   const stack = fileSegments.slice(0, -1);
   for (const part of spec.split('/')) {
-    if (part === '' || part === '.') continue;
+    if (part === '' || part === '.') {
+      continue;
+    }
     if (part === '..') {
-      if (stack.length === 0) return null;
+      if (stack.length === 0) {
+        return null;
+      }
       stack.pop();
     } else {
       stack.push(part);
@@ -213,19 +233,29 @@ function resolveRelativeSegments(fileSegments, spec) {
 // (see the no-relative-zone-escape header note above).
 function moduleRootOf(segments) {
   const [domain, ...rest] = segments;
-  if (!domain || ENGINE_ZONES.has(domain) || EXCLUDED_TOP_DIRS.has(domain)) return null;
-  if (rest.length <= 1 || LAYER_DIRS.has(rest[0])) return [domain];
+  if (!domain || ENGINE_ZONES.has(domain) || EXCLUDED_TOP_DIRS.has(domain)) {
+    return null;
+  }
+  if (rest.length <= 1 || LAYER_DIRS.has(rest[0])) {
+    return [domain];
+  }
   return [domain, rest[0]];
 }
 
 function checkRelativeZoneEscape(context, segments, domain, mRoot, node, source) {
-  if (!source || !source.startsWith('.')) return;
+  if (!source || !source.startsWith('.')) {
+    return;
+  }
   const targetSegments = resolveRelativeSegments(segments, source);
-  if (!targetSegments) return;
+  if (!targetSegments) {
+    return;
+  }
   const targetDomain = targetSegments[0];
 
   if (targetDomain !== domain) {
-    if (EXCLUDED_TOP_DIRS.has(targetDomain)) return;
+    if (EXCLUDED_TOP_DIRS.has(targetDomain)) {
+      return;
+    }
     context.report({
       node,
       message:
@@ -235,16 +265,24 @@ function checkRelativeZoneEscape(context, segments, domain, mRoot, node, source)
     return;
   }
 
-  if (mRoot.length === 1) return;
+  if (mRoot.length === 1) {
+    return;
+  }
   const tRoot = moduleRootOf(targetSegments) ?? [domain];
-  if (tRoot.join('/') === mRoot.join('/')) return;
+  if (tRoot.join('/') === mRoot.join('/')) {
+    return;
+  }
 
   const targetRest = targetSegments.slice(1);
-  if (LAYER_DIRS.has(targetRest[0])) return;
+  if (LAYER_DIRS.has(targetRest[0])) {
+    return;
+  }
   // A single extension-bearing segment is a domain-root file (index.js, server.js,
   // contracts.js) - legit composition reach. A single extensionless segment is a bare
   // sibling-slice directory barrel (../../lobby) - an escape, so don't exempt it.
-  if (targetRest.length === 1 && targetRest[0].includes('.')) return;
+  if (targetRest.length === 1 && targetRest[0].includes('.')) {
+    return;
+  }
 
   const targetSlice = `${domain}/${targetRest[0]}`;
   context.report({
@@ -259,15 +297,21 @@ function checkRelativeZoneEscape(context, segments, domain, mRoot, node, source)
 const noRelativeZoneEscape = {
   create(context) {
     const segments = coreSrcSegments(filename(context));
-    if (!segments || segments.length < 2) return {};
+    if (!segments || segments.length < 2) {
+      return {};
+    }
     const [domain] = segments;
     // scripts + common + testing are exempt (build/cross-cutting; no zone discipline). Engine
     // zones (contracts/server/react) ARE checked now: their module root is the whole zone, so
     // an intra-zone import (server/kernel -> server/db) passes the mRoot.length===1 short-circuit
     // while a cross-zone one (server -> contracts) is flagged -> use @openora/core/contracts.
-    if (EXCLUDED_TOP_DIRS.has(domain) || domain === 'scripts') return {};
+    if (EXCLUDED_TOP_DIRS.has(domain) || domain === 'scripts') {
+      return {};
+    }
     const mRoot = ENGINE_ZONES.has(domain) ? [domain] : moduleRootOf(segments);
-    if (!mRoot) return {};
+    if (!mRoot) {
+      return {};
+    }
     const visit = (node) =>
       checkRelativeZoneEscape(context, segments, domain, mRoot, node, node.source?.value);
     return {
@@ -286,7 +330,9 @@ const noInlinePgEnum = {
   create(context) {
     return {
       CallExpression(node) {
-        if (!isPgEnumCall(node)) return;
+        if (!isPgEnumCall(node)) {
+          return;
+        }
         const valuesArg = node.arguments[1];
         if (valuesArg?.type === 'ArrayExpression') {
           context.report({
@@ -324,14 +370,18 @@ function isZInferTypeName(typeName) {
 
 const noReinferImportedSchema = {
   create(context) {
-    if (isContractOrSchemaZone(filename(context))) return {};
+    if (isContractOrSchemaZone(filename(context))) {
+      return {};
+    }
     // Populated by ImportDeclaration below, read by TSTypeReference - imports sit above their
     // use in source order, so this fills in before a same-file z.infer<typeof X> is visited.
     const importedFrom = new Map();
     return {
       ImportDeclaration(node) {
         const source = node.source?.value;
-        if (typeof source !== 'string' || !isContractSchemaSpecifier(source)) return;
+        if (typeof source !== 'string' || !isContractSchemaSpecifier(source)) {
+          return;
+        }
         for (const spec of node.specifiers ?? []) {
           if (spec.type === 'ImportSpecifier' || spec.type === 'ImportDefaultSpecifier') {
             importedFrom.set(spec.local.name, source);
@@ -339,12 +389,18 @@ const noReinferImportedSchema = {
         }
       },
       TSTypeReference(node) {
-        if (!isZInferTypeName(node.typeName)) return;
+        if (!isZInferTypeName(node.typeName)) {
+          return;
+        }
         const arg = node.typeArguments?.params?.[0];
-        if (arg?.type !== 'TSTypeQuery' || arg.exprName?.type !== 'Identifier') return;
+        if (arg?.type !== 'TSTypeQuery' || arg.exprName?.type !== 'Identifier') {
+          return;
+        }
         const schemaName = arg.exprName.name;
         const source = importedFrom.get(schemaName);
-        if (!source) return;
+        if (!source) {
+          return;
+        }
         context.report({
           node,
           message:
@@ -359,9 +415,13 @@ const noReinferImportedSchema = {
 
 function isServiceOrRouterFile(file) {
   const segments = coreSrcSegments(file);
-  if (!segments) return false;
+  if (!segments) {
+    return false;
+  }
   const [domain, ...rest] = segments;
-  if (ENGINE_ZONES.has(domain) || EXCLUDED_TOP_DIRS.has(domain)) return false;
+  if (ENGINE_ZONES.has(domain) || EXCLUDED_TOP_DIRS.has(domain)) {
+    return false;
+  }
   return rest.includes('service') || rest.includes('router');
 }
 
@@ -384,8 +444,12 @@ function reportBareStringId(context, name, node) {
 }
 
 function checkIdParam(context, name, typeAnnotation, node) {
-  if (!name.endsWith('Id') || EXTERNAL_ID_PARAM_NAMES.has(name)) return;
-  if (isBareStringType(typeAnnotation)) reportBareStringId(context, name, node);
+  if (!name.endsWith('Id') || EXTERNAL_ID_PARAM_NAMES.has(name)) {
+    return;
+  }
+  if (isBareStringType(typeAnnotation)) {
+    reportBareStringId(context, name, node);
+  }
 }
 
 // Only descends one level into an inline object-literal param type (the named-object-param
@@ -394,10 +458,16 @@ function checkIdParam(context, name, typeAnnotation, node) {
 function checkParams(context, params) {
   for (const param of params) {
     const paramType = param.typeAnnotation?.typeAnnotation;
-    if (param.type === 'Identifier') checkIdParam(context, param.name, paramType, param);
-    if (paramType?.type !== 'TSTypeLiteral') continue;
+    if (param.type === 'Identifier') {
+      checkIdParam(context, param.name, paramType, param);
+    }
+    if (paramType?.type !== 'TSTypeLiteral') {
+      continue;
+    }
     for (const member of paramType.members) {
-      if (member.type !== 'TSPropertySignature' || member.key?.type !== 'Identifier') continue;
+      if (member.type !== 'TSPropertySignature' || member.key?.type !== 'Identifier') {
+        continue;
+      }
       checkIdParam(context, member.key.name, member.typeAnnotation?.typeAnnotation, member);
     }
   }
@@ -405,7 +475,9 @@ function checkParams(context, params) {
 
 const noBareStringIdParam = {
   create(context) {
-    if (!isServiceOrRouterFile(filename(context))) return {};
+    if (!isServiceOrRouterFile(filename(context))) {
+      return {};
+    }
     const visit = (node) => checkParams(context, node.params);
     return {
       FunctionDeclaration: visit,
