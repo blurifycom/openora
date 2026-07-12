@@ -32,8 +32,10 @@ routeTree.gen.ts
 .claude/agents/
 .claude/commands/
 .claude/skills/
+.github/copilot-instructions.md
 .github/agents/
 .github/prompts/
 .github/hooks/
+.github/instructions/
 .claude/rules/
 .agents/
