@@ -1,23 +1,12 @@
 {
   "$schema": "./node_modules/oxlint/configuration_schema.json",
+  "extends": ["./packages/core/oxlint/oxlintrc.json"],
   "jsPlugins": [
     "./tools/lint/oxlint-boundaries-plugin.mjs",
     "./tools/lint/oxlint-module-shape-plugin.mjs"
   ],
   "plugins": ["unicorn", "typescript", "oxc", "import"],
   "rules": {
-    "import/no-cycle": [
-      "error",
-      {
-        "ignoreTypes": false
-      }
-    ],
-    "no-unused-vars": "error",
-    "no-console": "warn",
-    "eqeqeq": "error",
-    "no-var": "error",
-    "prefer-const": "error",
-    "typescript/no-explicit-any": "error",
     "unicorn/filename-case": ["error", { "case": "kebabCase" }],
     "oss-boundaries/no-adhoc-zod-in-router": "error",
     "oss-boundaries/no-core-to-addon": "error",
@@ -32,8 +21,14 @@
     "oss-module-shape/layer-file-naming": "error",
     "oss-module-shape/no-inline-pg-enum": "error",
     "oss-module-shape/no-relative-zone-escape": "error",
-    "typescript/consistent-type-definitions": ["error", "type"],
-    "import/no-duplicates": "error"
+    "oss-module-shape/no-reinfer-imported-schema": "error",
+    "oss-module-shape/no-bare-string-id-param": "error",
+    "oss-module-shape/no-unbounded-db-fanout": "error",
+    "oss-module-shape/no-naive-timestamp": "error",
+    "oss-module-shape/no-float-money": "error",
+    "oss-module-shape/drizzle-snake-case": "error",
+    "oss-module-shape/no-raw-z-uuid": "error",
+    "oss-module-shape/no-inline-z-enum-outside-contract": "error"
   },
   "ignorePatterns": [
     "**/node_modules*/**",

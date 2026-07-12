@@ -66,7 +66,7 @@ Lint-enforced by `oss-module-shape/no-relative-zone-escape` (folded domains AND 
 | row -> DTO (Date/Decimal -> string)          | `serializeRow(row, { dateFields: [...], decimalFields: [...] })`                                | `@openora/core/server`    |
 | not-found / ownership / conflict error class | `makeNotFoundError('Entity')` / `makeOwnershipError('Entity')` / `makeConflictError(name, msg)` | `@openora/core/server`    |
 | push subscription -> SSE async generator     | `createEventStreamGenerator((push) => svc.subscribe(push), { signal, prime })`                  | `@openora/core/server`    |
-| canonical id/userId/pagination input         | `IdInputSchema` / `UserIdInputSchema` / `PaginationInputSchema`                                 | `@openora/core/contracts` |
+| canonical id/userId/pagination input         | `IdInputSchema` / `UserIdInputSchema` / `PageQuerySchema`                                       | `@openora/core/contracts` |
 
 Error factories keep the SAME exported const identifier (`export const WalletNotFoundError = makeNotFoundError('Wallet')`) - routers import the class and `mapErrors` keys off it.
 

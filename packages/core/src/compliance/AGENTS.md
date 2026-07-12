@@ -17,15 +17,15 @@ Pending withdrawals are untouched (funds are not locked).
 
 ### Layout (RG pieces)
 
-| Layer    | File                                   | Holds                                                                                         |
-| -------- | -------------------------------------- | --------------------------------------------------------------------------------------------- |
-| schema   | `schema/index.ts`                      | `rg_exclusion`, `rg_flag` tables + pgEnums. Session limit reuses `user_limit`.                |
-| contract | `contract/rg.ts`, `contract/limits.ts` | RG route contract + req/res schemas; shared `LimitSchema` leaf.                               |
-| service  | `service/rg.service.ts`                | limit set, cooling-off, self-exclusion, lift, `getRgSection`.                                 |
-| service  | `service/rg-monitoring.service.ts`     | `evaluateUser` (limit-threshold + login flags), `sweep` (session-time), `listFlags`.          |
-| service  | `service/rg-eval.ts`                   | pure `periodWindow` / `thresholdPct` / `isAtThreshold` (DB-free).                             |
-| router   | `router/index.ts`                      | RG routes, admin-guarded.                                                                     |
-| plugin   | `plugin.ts`                            | event subscriptions -> `rg-eval` jobs, `rg-eval`/`rg-monitor` workers, `rg-monitor` schedule. |
+| Layer    | File                                   | Holds                                                                                                                                                                                                                              |
+| -------- | -------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| schema   | `schema/index.ts`                      | `rg_exclusion` (`isPermanent`), `rg_flag` tables + pgEnums. Session limit reuses `user_limit` (`amount`/`minutes` polymorphic by `type` - money limits carry `amount` as a `decimal()`, the session-time limit carries `minutes`). |
+| contract | `contract/rg.ts`, `contract/limits.ts` | RG route contract + req/res schemas; shared `LimitSchema` leaf.                                                                                                                                                                    |
+| service  | `service/rg.service.ts`                | limit set, cooling-off, self-exclusion, lift, `getRgSection`.                                                                                                                                                                      |
+| service  | `service/rg-monitoring.service.ts`     | `evaluateUser` (limit-threshold + login flags), `sweep` (session-time), `listFlags`.                                                                                                                                               |
+| service  | `service/rg-eval.ts`                   | pure `periodWindow` / `thresholdPct` / `isAtThreshold` (DB-free).                                                                                                                                                                  |
+| router   | `router/index.ts`                      | RG routes, admin-guarded.                                                                                                                                                                                                          |
+| plugin   | `plugin.ts`                            | event subscriptions -> `rg-eval` jobs, `rg-eval`/`rg-monitor` workers, `rg-monitor` schedule.                                                                                                                                      |
 
 ### oRPC routes
 
@@ -62,12 +62,14 @@ session-time flags. `listRgFlags` is a cheap indexed read enriched via `ADMIN_US
 Cross-domain reads (`/schema` subpaths only): wallet, casino/gaming (spend
 aggregation), pam/identity (`session` for the sweep).
 
-### Events (all v1, audited)
+### Events (audited)
 
-`rg.limit.set`, `rg.cooling_off.activated`, `rg.self_exclusion.activated`,
-`rg.self_exclusion.lifted` (admin actor, subject player), `rg.exclusion.login_blocked`
-(system actor, `result:'failure'`). Declared in `domainEventSchemas`; audited via the
-subscription + `mapEventToRecord` branch in `audit/plugin.ts`.
+`rg.limit.set` (v2 - `amount` (decimal string)/`minutes` polymorphic by limit `type`, plus
+`previousAmount`/`previousMinutes`), `rg.cooling_off.activated` (v1),
+`rg.self_exclusion.activated` (v2 - `isPermanent`), `rg.self_exclusion.lifted`
+(admin actor, subject player), `rg.exclusion.login_blocked` (system actor,
+`result:'failure'`). Declared in `domainEventSchemas`; audited via the subscription +
+`mapEventToRecord` branch in `audit/plugin.ts`.
 
 ## Don't
 

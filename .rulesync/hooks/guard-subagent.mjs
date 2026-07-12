@@ -22,7 +22,9 @@ const sub = String(ti.subagent_type ?? '').toLowerCase();
 
 // A specific subagent choice is always allowed - only police the generic ones.
 const GENERIC = new Set(['general-purpose', 'claude', '']);
-if (!GENERIC.has(sub)) process.exit(0);
+if (!GENERIC.has(sub)) {
+  process.exit(0);
+}
 
 const text = `${ti.description ?? ''}\n${ti.prompt ?? ''}`.toLowerCase();
 
@@ -65,7 +67,9 @@ const ROUTES = [
 ];
 
 const hit = ROUTES.find((r) => r.re.test(text));
-if (!hit) process.exit(0);
+if (!hit) {
+  process.exit(0);
+}
 
 process.stderr.write(
   `Use the \`${hit.agent}\` subagent for this task, not \`${sub || 'general-purpose'}\`. ` +

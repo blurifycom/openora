@@ -19,7 +19,9 @@ import { RgMonitoringService } from '../service/rg-monitoring.service.js';
 
 function headerValue(context: OssContext, name: string): string | null {
   const raw = context.request.headers[name];
-  if (Array.isArray(raw)) return raw[0] ?? null;
+  if (Array.isArray(raw)) {
+    return raw[0] ?? null;
+  }
   return raw ?? null;
 }
 

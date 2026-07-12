@@ -28,12 +28,14 @@ import type {
   AdminGrant,
   CacheAdapter,
   SessionCommands,
+  User,
 } from '@openora/core/contracts';
 import {
   adminRole,
   adminRolePermission,
   adminRoleAssignment,
   adminInvitation,
+  type AdminRole,
 } from '../schema/index.js';
 // Read-only cross-domain schema import (sanctioned): assignRole verifies the target is an admin user.
 import { user } from '@openora/core/pam/schema/identity';
@@ -74,7 +76,7 @@ export const LastSuperAdminError = makeConflictError(
   'Cannot remove the last super-admin',
 );
 
-type Caller = { userId: string; role: string };
+type Caller = { userId: User['id']; role: string };
 
 type Page = { page: number; limit: number };
 
@@ -110,7 +112,9 @@ function validateGrants(grants: ReadonlyArray<{ resource: string; level: string 
 
 function staticGrantsForRole(roleName: string) {
   const role = roles[roleName as RoleName];
-  if (!role) return [];
+  if (!role) {
+    return [];
+  }
   return (Object.keys(statement) as ResourceName[]).flatMap((resource) =>
     (statement[resource] as readonly string[])
       .filter((action) => role.authorize({ [resource]: [action] }).success)
@@ -121,13 +125,19 @@ function staticGrantsForRole(roleName: string) {
 function grantsToLevelMap(grants: readonly AdminGrant[]) {
   const byResource = new Map<string, Set<string>>();
   for (const g of grants) {
-    if (!byResource.has(g.resource)) byResource.set(g.resource, new Set());
-    byResource.get(g.resource)!.add(g.action);
+    let actions = byResource.get(g.resource);
+    if (!actions) {
+      actions = new Set();
+      byResource.set(g.resource, actions);
+    }
+    actions.add(g.action);
   }
   const map: Record<string, PermissionLevel> = {};
   for (const [resource, actions] of byResource) {
     const all = statement[resource as ResourceName] as readonly string[] | undefined;
-    if (!all) continue;
+    if (!all) {
+      continue;
+    }
     if (all.every((a) => actions.has(a))) {
       map[resource] = 'read_write';
     } else {
@@ -154,7 +164,7 @@ function toInvitationDto(row: typeof adminInvitation.$inferSelect) {
 // so a stale entry means a revoked admin keeps access for at most this window. The
 // event-driven purge below normally beats the TTL; this is just the safety floor.
 const GRANTS_CACHE_TTL_MS = 10_000;
-const grantsCacheKey = (userId: string) => `admin-grants:${userId}`;
+const grantsCacheKey = (userId: User['id']) => `admin-grants:${userId}`;
 
 /** Implements ADMIN_PERMISSION_RESOLVER; returns null when the user has no DB assignment (guard falls back to static roles for the bootstrap admin path). */
 export class DbAdminPermissionResolver implements AdminPermissionResolver {
@@ -163,7 +173,7 @@ export class DbAdminPermissionResolver implements AdminPermissionResolver {
     private readonly cache?: CacheAdapter,
   ) {}
 
-  getGrants(userId: string) {
+  getGrants(userId: User['id']) {
     // A cached `null` (no assignment) is a valid, cacheable answer - cached() treats
     // only `undefined` as a miss, so repeated forbidden hits don't re-query either.
     return cached(this.cache, grantsCacheKey(userId), GRANTS_CACHE_TTL_MS, () =>
@@ -171,7 +181,7 @@ export class DbAdminPermissionResolver implements AdminPermissionResolver {
     );
   }
 
-  private async loadGrants(userId: string): Promise<AdminGrant[] | null> {
+  private async loadGrants(userId: User['id']): Promise<AdminGrant[] | null> {
     // One indexed join (on admin_role_assignment_user_id_idx) replaces the old
     // 2 + N-per-role fan-out. leftJoin keeps super-admin roles (no permission rows)
     // and empty roles in the result so the null/[]/grants semantics are unchanged.
@@ -186,16 +196,24 @@ export class DbAdminPermissionResolver implements AdminPermissionResolver {
       .leftJoin(adminRolePermission, eq(adminRolePermission.roleId, adminRole.id))
       .where(eq(adminRoleAssignment.userId, userId));
 
-    if (rows.length === 0) return null;
-    if (rows.some((r) => r.isSuperAdmin)) return allGrants();
+    if (rows.length === 0) {
+      return null;
+    }
+    if (rows.some((r) => r.isSuperAdmin)) {
+      return allGrants();
+    }
 
     const seen = new Set<string>();
     const grants: AdminGrant[] = [];
     for (const r of rows) {
-      if (!r.resource || !r.level) continue; // leftJoin null: role with no permission rows
+      if (!r.resource || !r.level) {
+        continue;
+      } // leftJoin null: role with no permission rows
       for (const action of levelToActions(r.resource, r.level as PermissionLevel)) {
         const key = `${r.resource}:${action}`;
-        if (seen.has(key)) continue;
+        if (seen.has(key)) {
+          continue;
+        }
         seen.add(key);
         grants.push({ resource: r.resource, action });
       }
@@ -204,12 +222,12 @@ export class DbAdminPermissionResolver implements AdminPermissionResolver {
   }
 
   /** Drop one user's cached grants - called on assign/revoke so revocation is instant. */
-  async invalidateUser(userId: string): Promise<void> {
+  async invalidateUser(userId: User['id']) {
     await invalidate(this.cache, grantsCacheKey(userId));
   }
 
   /** Drop cached grants for every current holder of a role - for a role-wide permission change. */
-  async invalidateRole(roleId: string): Promise<void> {
+  async invalidateRole(roleId: AdminRole['id']) {
     const holders = await this.drizzle.db
       .select({ userId: adminRoleAssignment.userId })
       .from(adminRoleAssignment)
@@ -277,12 +295,34 @@ export class IamService {
     return buildCatalog();
   }
 
-  private async rolePermissions(roleId: string) {
+  private async rolePermissions(roleId: AdminRole['id']) {
     const rows = await this.drizzle.db
       .select({ resource: adminRolePermission.resource, level: adminRolePermission.level })
       .from(adminRolePermission)
       .where(eq(adminRolePermission.roleId, roleId));
     return rows.map((r) => ({ resource: r.resource, level: r.level as PermissionLevel }));
+  }
+
+  // One batched query for a page of roles - avoids an N+1 rolePermissions() per row.
+  private async rolePermissionsByRole(roleIds: AdminRole['id'][]) {
+    const byRole = new Map<AdminRole['id'], { resource: string; level: PermissionLevel }[]>();
+    if (roleIds.length === 0) {
+      return byRole;
+    }
+    const rows = await this.drizzle.db
+      .select({
+        roleId: adminRolePermission.roleId,
+        resource: adminRolePermission.resource,
+        level: adminRolePermission.level,
+      })
+      .from(adminRolePermission)
+      .where(inArray(adminRolePermission.roleId, roleIds));
+    for (const r of rows) {
+      const list = byRole.get(r.roleId) ?? [];
+      list.push({ resource: r.resource, level: r.level });
+      byRole.set(r.roleId, list);
+    }
+    return byRole;
   }
 
   async listRoles({ page, limit }: Page) {
@@ -291,16 +331,15 @@ export class IamService {
       this.drizzle.db.select().from(adminRole).limit(limit).offset(offset),
       this.drizzle.db.select({ count: sql<number>`count(*)::int` }).from(adminRole),
     ]);
-    const items = await Promise.all(
-      rows.map(async (row) => ({
-        ...toRoleDto(row),
-        permissions: await this.rolePermissions(row.id),
-      })),
-    );
+    const permissionsByRole = await this.rolePermissionsByRole(rows.map((r) => r.id));
+    const items = rows.map((row) => ({
+      ...toRoleDto(row),
+      permissions: permissionsByRole.get(row.id) ?? [],
+    }));
     return { items, total: countResult[0]?.count ?? 0, page, limit };
   }
 
-  async getRole(roleId: string) {
+  async getRole(roleId: AdminRole['id']) {
     const row = findOneOrThrow(
       await this.drizzle.db.select().from(adminRole).where(eq(adminRole.id, roleId)),
       new RoleNotFoundError(roleId),
@@ -310,8 +349,11 @@ export class IamService {
 
   async createRole(input: { name: string; caller: Caller }) {
     await this.assertSuperAdmin(input.caller);
-    const [row] = await this.drizzle.db.insert(adminRole).values({ name: input.name }).returning();
-    const dto = toRoleDto(row!);
+    const row = findOneOrThrow(
+      await this.drizzle.db.insert(adminRole).values({ name: input.name }).returning(),
+      new RoleNotFoundError(input.name),
+    );
+    const dto = toRoleDto(row);
     this.events.emit('iam.role.created', {
       roleId: dto.id,
       name: dto.name,
@@ -320,7 +362,7 @@ export class IamService {
     return dto;
   }
 
-  async updateRole(input: { roleId: string; name?: string; caller: Caller }) {
+  async updateRole(input: { roleId: AdminRole['id']; name?: string; caller: Caller }) {
     await this.assertSuperAdmin(input.caller);
     const existing = findOneOrThrow(
       await this.drizzle.db.select().from(adminRole).where(eq(adminRole.id, input.roleId)),
@@ -333,14 +375,19 @@ export class IamService {
     }
 
     const patch: Partial<typeof adminRole.$inferInsert> = {};
-    if (input.name !== undefined) patch.name = input.name;
+    if (input.name !== undefined) {
+      patch.name = input.name;
+    }
 
-    const [row] = await this.drizzle.db
-      .update(adminRole)
-      .set(patch)
-      .where(eq(adminRole.id, input.roleId))
-      .returning();
-    const dto = toRoleDto(row!);
+    const row = findOneOrThrow(
+      await this.drizzle.db
+        .update(adminRole)
+        .set(patch)
+        .where(eq(adminRole.id, input.roleId))
+        .returning(),
+      new RoleNotFoundError(input.roleId),
+    );
+    const dto = toRoleDto(row);
     this.events.emit('iam.role.updated', {
       roleId: dto.id,
       name: input.name,
@@ -349,7 +396,7 @@ export class IamService {
     return dto;
   }
 
-  async deleteRole(input: { roleId: string; caller: Caller }): Promise<{ success: true }> {
+  async deleteRole(input: { roleId: AdminRole['id']; caller: Caller }): Promise<{ success: true }> {
     await this.assertSuperAdmin(input.caller);
     const row = findOneOrThrow(
       await this.drizzle.db.select().from(adminRole).where(eq(adminRole.id, input.roleId)),
@@ -390,7 +437,7 @@ export class IamService {
   }
 
   async setRolePermissions(input: {
-    roleId: string;
+    roleId: AdminRole['id'];
     grants: ReadonlyArray<{ resource: string; level: PermissionLevel }>;
     caller: Caller;
   }) {
@@ -410,7 +457,9 @@ export class IamService {
     // assertSuperAdmin already proved the caller holds all levels.
     const callerMap = grantsToLevelMap(await this.callerGrants(input.caller));
     for (const g of input.grants) {
-      if (g.level === 'no_access') continue;
+      if (g.level === 'no_access') {
+        continue;
+      }
       const have = callerMap[g.resource] ?? 'no_access';
       if (!isLevelSufficient(have, g.level)) {
         throw new GrantEscalationError();
@@ -453,7 +502,7 @@ export class IamService {
     return this.getRole(input.roleId);
   }
 
-  async assignRole(input: { userId: string; roleId: string; caller: Caller }) {
+  async assignRole(input: { userId: User['id']; roleId: AdminRole['id']; caller: Caller }) {
     await this.assertSuperAdmin(input.caller);
     findOneOrThrow(
       await this.drizzle.db.select().from(adminRole).where(eq(adminRole.id, input.roleId)),
@@ -471,7 +520,7 @@ export class IamService {
     }
 
     // Return the existing row rather than 500-ing on the unique (userId, roleId) index.
-    const existing = await this.drizzle.db
+    const [existing] = await this.drizzle.db
       .select()
       .from(adminRoleAssignment)
       .where(
@@ -480,15 +529,18 @@ export class IamService {
           eq(adminRoleAssignment.roleId, input.roleId),
         ),
       );
-    if (existing.length > 0) {
-      return toAssignmentDto(existing[0]!);
+    if (existing) {
+      return toAssignmentDto(existing);
     }
 
-    const [row] = await this.drizzle.db
-      .insert(adminRoleAssignment)
-      .values({ userId: input.userId, roleId: input.roleId })
-      .returning();
-    const dto = toAssignmentDto(row!);
+    const row = findOneOrThrow(
+      await this.drizzle.db
+        .insert(adminRoleAssignment)
+        .values({ userId: input.userId, roleId: input.roleId })
+        .returning(),
+      new RoleNotFoundError(input.roleId),
+    );
+    const dto = toAssignmentDto(row);
     this.events.emit('iam.role.assigned', {
       roleId: input.roleId,
       userId: input.userId,
@@ -498,8 +550,8 @@ export class IamService {
   }
 
   async unassignRole(input: {
-    userId: string;
-    roleId: string;
+    userId: User['id'];
+    roleId: AdminRole['id'];
     caller: Caller;
   }): Promise<{ success: true }> {
     await this.assertSuperAdmin(input.caller);
@@ -553,7 +605,7 @@ export class IamService {
     return { success: true };
   }
 
-  async listAssignments(input: Page & { userId?: string }) {
+  async listAssignments(input: Page & { userId?: User['id'] }) {
     const { page, limit, userId } = input;
     const offset = pageToOffset(page, limit);
     const where = userId ? eq(adminRoleAssignment.userId, userId) : undefined;
@@ -591,7 +643,7 @@ export class IamService {
   }
 
   async previewEffectivePermissions(
-    input: { userId: string } | { roleIds: string[] },
+    input: { userId: User['id'] } | { roleIds: string[] },
   ): Promise<EffectivePermissions> {
     let roleIds: string[];
     if ('userId' in input) {
@@ -614,8 +666,12 @@ export class IamService {
         const staticGrants = staticGrantsForRole(u.role);
         const byResource = new Map<string, string[]>();
         for (const g of staticGrants) {
-          if (!byResource.has(g.resource)) byResource.set(g.resource, []);
-          byResource.get(g.resource)!.push(g.action);
+          let actions = byResource.get(g.resource);
+          if (!actions) {
+            actions = [];
+            byResource.set(g.resource, actions);
+          }
+          actions.push(g.action);
         }
         const permissions = [...byResource.entries()]
           .map(([resource, actions]) => ({
@@ -653,7 +709,9 @@ export class IamService {
     for (const r of rows) {
       const level = r.level as PermissionLevel;
       const cur = max.get(r.resource);
-      if (!cur || levelRank(level) > levelRank(cur)) max.set(r.resource, level);
+      if (!cur || levelRank(level) > levelRank(cur)) {
+        max.set(r.resource, level);
+      }
     }
     return {
       permissions: [...max.entries()].map(([resource, level]) => ({ resource, level })),
@@ -669,7 +727,7 @@ export class IamService {
     return { items: rows.map(toInvitationDto), total: countResult[0]?.count ?? 0, page, limit };
   }
 
-  async inviteAdmin(input: { email: string; roleId: string; caller: Caller }) {
+  async inviteAdmin(input: { email: string; roleId: AdminRole['id']; caller: Caller }) {
     // Inviting to a role is a role grant by another name, so it is super-admin-only -
     // consistent with assignRole. A non-super admin must not invite to a role
     // exceeding their own (esp. super-admin).
@@ -682,16 +740,19 @@ export class IamService {
     const token = crypto.randomUUID();
     const expiresAt = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000);
 
-    const [row] = await this.drizzle.db
-      .insert(adminInvitation)
-      .values({
-        email: input.email,
-        roleId: input.roleId,
-        token,
-        status: 'pending',
-        expiresAt,
-      })
-      .returning();
+    const row = findOneOrThrow(
+      await this.drizzle.db
+        .insert(adminInvitation)
+        .values({
+          email: input.email,
+          roleId: input.roleId,
+          token,
+          status: 'pending',
+          expiresAt,
+        })
+        .returning(),
+      new InvitationNotFoundError(input.email),
+    );
 
     await this.email.send({
       to: input.email,
@@ -699,7 +760,7 @@ export class IamService {
       body: `Your admin invitation token: ${token}. It expires at ${expiresAt.toISOString()}.`,
     });
 
-    return toInvitationDto(row!);
+    return toInvitationDto(row);
   }
 
   async acceptInvitation(token: string): Promise<{ success: true; email: string }> {
@@ -707,21 +768,20 @@ export class IamService {
     // so two concurrent accepts cannot both succeed. Public path - tenant is derived
     // from the row, not the request, so no tenant predicate is needed.
     const now = new Date();
-    const [row] = await this.drizzle.db
-      .update(adminInvitation)
-      .set({ status: 'accepted', acceptedAt: now })
-      .where(
-        and(
-          eq(adminInvitation.token, token),
-          eq(adminInvitation.status, 'pending'),
-          gt(adminInvitation.expiresAt, now),
-        ),
-      )
-      .returning();
-
-    if (!row) {
-      throw new InvitationConflictError();
-    }
+    const row = findOneOrThrow(
+      await this.drizzle.db
+        .update(adminInvitation)
+        .set({ status: 'accepted', acceptedAt: now })
+        .where(
+          and(
+            eq(adminInvitation.token, token),
+            eq(adminInvitation.status, 'pending'),
+            gt(adminInvitation.expiresAt, now),
+          ),
+        )
+        .returning(),
+      new InvitationConflictError(),
+    );
 
     // Emit only on actual transition - a replayed accept must never double-provision.
     this.events.emit('iam.invitation.accepted', {
@@ -733,7 +793,7 @@ export class IamService {
     return { success: true, email: row.email };
   }
 
-  async forceLogout(input: { userId: string; caller: Caller }) {
+  async forceLogout(input: { userId: User['id']; caller: Caller }) {
     await this.assertSuperAdmin(input.caller);
     if (!this.sessionCommands) {
       throw new Error('SessionCommands adapter not provided');

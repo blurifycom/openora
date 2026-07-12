@@ -22,7 +22,9 @@ const chat = populateContractRouterPaths({ chat: chatContract }).chat;
 
 function resolveUsername(context: OssContext, fallback = 'anonymous') {
   const val = context.request.headers['x-username'];
-  if (Array.isArray(val)) return val[0] ?? fallback;
+  if (Array.isArray(val)) {
+    return val[0] ?? fallback;
+  }
   return typeof val === 'string' ? val : fallback;
 }
 

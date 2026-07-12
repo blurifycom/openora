@@ -42,7 +42,9 @@ export async function* createEventStreamGenerator<T>(
         continue;
       }
       const next = queue.shift();
-      if (next !== undefined) yield next;
+      if (next !== undefined) {
+        yield next;
+      }
     }
   } finally {
     unsubscribe();

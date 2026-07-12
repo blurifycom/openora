@@ -9,12 +9,16 @@ const PERIOD_MS: Record<Exclude<LimitPeriod, 'session'>, number> = {
 };
 
 export function periodWindow(period: LimitPeriod, now: Date): { from: Date; to: Date } {
-  if (period === 'session') return { from: now, to: now };
+  if (period === 'session') {
+    return { from: now, to: now };
+  }
   return { from: new Date(now.getTime() - PERIOD_MS[period]), to: now };
 }
 
 export function thresholdPct(actual: number, limit: number): number {
-  if (limit <= 0) return 0;
+  if (limit <= 0) {
+    return 0;
+  }
   return (actual / limit) * 100;
 }
 

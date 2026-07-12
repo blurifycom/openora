@@ -13,7 +13,9 @@ const here = dirname(fileURLToPath(import.meta.url));
 const ossRoot = resolve(here, '../..');
 
 function readJson<T>(p: string, fallback: T): T {
-  if (!existsSync(p)) return fallback;
+  if (!existsSync(p)) {
+    return fallback;
+  }
   try {
     return JSON.parse(readFileSync(p, 'utf8')) as T;
   } catch {
@@ -59,11 +61,12 @@ function main(): void {
   let changed = false;
 
   const enabled = new Set(settings.enabledMcpjsonServers ?? []);
-  for (const name of serverNames)
+  for (const name of serverNames) {
     if (!enabled.has(name)) {
       enabled.add(name);
       changed = true;
     }
+  }
   if (settings.enableAllProjectMcpServers === undefined) {
     settings.enableAllProjectMcpServers = false;
     changed = true;
@@ -78,7 +81,9 @@ function main(): void {
   }
 
   console.log('\n  MCP setup');
-  for (const l of log) console.log(`  - ${l}`);
+  for (const l of log) {
+    console.log(`  - ${l}`);
+  }
   console.log(`
   Next:
     1. Restart your editor (or run /mcp) so it picks up .mcp.json.

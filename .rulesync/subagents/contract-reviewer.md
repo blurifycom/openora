@@ -39,6 +39,7 @@ If the orchestrator passed a base ref + changed-file list, use them - do not re-
 
 - [ ] Services throw shared-factory domain errors (`makeNotFoundError` etc.), not HTTP exceptions; routers `mapErrors`.
 - [ ] No `any` outside tests, no `interface`, no `!` non-null assertions, no bare casts, no default exports, no inline `fetch`/`axios`.
+- [ ] No re-inferred/duplicated types outside the owning contract; id params typed via owning type.
 - [ ] TODOs/FIXMEs carry context; module `AGENTS.md` updated if extension points/ports/routes changed.
 - [ ] No frontend/UI code - headless repo.
 

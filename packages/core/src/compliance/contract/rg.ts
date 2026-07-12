@@ -9,9 +9,10 @@ import {
   ExclusionStatusSchema,
   RgFlagTypeSchema,
   RgFlagStatusSchema,
+  MoneyAmountSchema,
 } from '@openora/core/contracts';
 import { PageQuerySchema, paginated } from '@openora/core/contracts/kit';
-import { LimitSchema, isConsistentLimit } from './limits.js';
+import { LimitSchema, isConsistentLimit, isConsistentLimitAmount } from './limits.js';
 
 export const RgExclusionSchema = z.object({
   id: UuidSchema,
@@ -19,7 +20,7 @@ export const RgExclusionSchema = z.object({
   kind: ExclusionKindSchema,
   status: ExclusionStatusSchema,
   reason: z.string(),
-  permanent: z.boolean(),
+  isPermanent: z.boolean(),
   startsAt: TimestampSchema,
   expiresAt: TimestampSchema.nullable(),
   liftedAt: TimestampSchema.nullable(),
@@ -35,12 +36,17 @@ export const SetPlayerLimitInputSchema = z
   .object({
     userId: UuidSchema,
     type: LimitTypeSchema,
-    amount: z.number().positive(),
+    amount: MoneyAmountSchema.nullable(),
+    minutes: z.number().int().positive().nullable(),
     period: LimitPeriodSchema,
   })
   .refine(isConsistentLimit, {
     message: "type 'session' requires period 'session' and vice versa",
     path: ['period'],
+  })
+  .refine(isConsistentLimitAmount, {
+    message: "type 'session' requires minutes (not amount); other types require amount",
+    path: ['amount'],
   });
 export type SetPlayerLimitInput = z.infer<typeof SetPlayerLimitInputSchema>;
 
@@ -57,13 +63,13 @@ export type ActivateCoolingOffInput = z.infer<typeof ActivateCoolingOffInputSche
 export const ActivateSelfExclusionInputSchema = z
   .object({
     userId: UuidSchema,
-    permanent: z.boolean(),
+    isPermanent: z.boolean(),
     durationMonths: z.number().int().min(6).optional(),
     reason: z.string().trim().min(1),
     confirm: z.literal(true),
   })
-  .refine((v) => v.permanent || v.durationMonths !== undefined, {
-    message: 'durationMonths (>= 6) is required unless permanent is true',
+  .refine((v) => v.isPermanent || v.durationMonths !== undefined, {
+    message: 'durationMonths (>= 6) is required unless isPermanent is true',
     path: ['durationMonths'],
   });
 export type ActivateSelfExclusionInput = z.infer<typeof ActivateSelfExclusionInputSchema>;
@@ -84,8 +90,8 @@ export type RgSection = z.infer<typeof RgSectionSchema>;
 
 // Each flagType writes one known detail shape (see rg-monitoring.service.ts).
 export const LimitThresholdDetailSchema = z.object({
-  actual: z.number(),
-  limit: z.number(),
+  actual: MoneyAmountSchema,
+  limit: MoneyAmountSchema,
   period: LimitPeriodSchema,
   pct: z.number(),
 });

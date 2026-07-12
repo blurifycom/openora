@@ -8,6 +8,18 @@ import type { OssContext, EventBus } from '../kernel/index.js';
 
 export const ADMIN_GUARD: Token<AdminGuard> = createToken('ADMIN_GUARD');
 
+/**
+ * The single admin-enforcement point - every admin route calls `assert()` as its
+ * first line, never re-implementing the role check. Overload without
+ * `resource`/`action` only requires a valid admin session; the 3-arg overload
+ * additionally checks a specific permission. When the iam module's permission
+ * resolver is bound, DB-assigned grants are authoritative; when a role has no DB
+ * assignment row (the bootstrap path - seed admin), it falls back to the static
+ * role table instead of denying outright. A revoked-in-DB but still
+ * statically-granted role is NOT denied by this fallback - revoke the static role
+ * to fully lock a bootstrap admin out. Every denial emits
+ * `identity.user.unauthorized_access` for audit, before throwing.
+ */
 export class AdminGuard {
   // Uses the shared SessionResolver (one better-auth init for the whole app) rather than a second createAuth over the same DB.
   constructor(
@@ -36,7 +48,9 @@ export class AdminGuard {
 
     const headers = new Headers();
     for (const [k, v] of Object.entries(request.headers)) {
-      if (v === undefined) continue;
+      if (v === undefined) {
+        continue;
+      }
       headers.set(k, Array.isArray(v) ? v.join(', ') : v);
     }
     const userId = await this.sessions.resolveUserId(headers);

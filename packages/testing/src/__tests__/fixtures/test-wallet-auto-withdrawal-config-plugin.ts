@@ -1,7 +1,7 @@
 import { definePlugin } from '@openora/core/server';
 import { PLATFORM_CONFIG, definePlatformConfig } from '@openora/core/contracts';
 
-// PLATFORM_CONFIG overlay for the auto-withdrawal e2e suite: autoWithdrawal enabled (threshold 200,
+// PLATFORM_CONFIG overlay for the auto-withdrawal e2e suite: autoWithdrawal enabled (threshold 2,
 // high_risk/bonus_abuser excluded, caps set high). kyc.gateWithdrawals stays false so the KYC-not-passing
 // scenario hits the auto-approval KYC gate, not the withdraw-time one. Append last so this binding wins.
 export default definePlugin({
@@ -13,9 +13,9 @@ export default definePlugin({
         kyc: { gateWithdrawals: false },
         autoWithdrawal: {
           enabled: true,
-          fiatThreshold: 200,
+          fiatThreshold: '2',
           excludeRiskFlags: ['high_risk', 'bonus_abuser'],
-          dailyCapAmount: 100_000,
+          dailyCapAmount: '1000',
           dailyCapCount: 100,
         },
       }),

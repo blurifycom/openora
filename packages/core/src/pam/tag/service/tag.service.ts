@@ -2,6 +2,7 @@ import {
   DrizzleService,
   DrizzleTx,
   EventBus,
+  findOneOrThrow,
   makeNotFoundError,
   pageToOffset,
   alreadyInUseError,
@@ -12,13 +13,12 @@ import {
   CreateTagInput,
   DeleteTagInput,
   RemovePlayerTagInput,
-  Tag,
   type PlayerTags,
+  type Player,
   type TagKey,
 } from '@openora/core/contracts';
 import { player } from '@openora/core/pam/schema/profile';
 import { playerTag, tag } from '../schema/index.js';
-import { PlayerTagWithTag } from '../contract/index.js';
 import { mapDbError } from '@openora/core/common/errors';
 import { toTag, toPlayerTagWithTag } from './tag-mappers.js';
 
@@ -33,9 +33,11 @@ export class TagService implements PlayerTags {
   ) {}
 
   // Keyed by auth `userId`, not the internal `player.id`. Users with no active tags are absent from the map.
-  public async getActiveTagKeys(userIds: readonly string[]): Promise<Map<string, TagKey[]>> {
+  public async getActiveTagKeys(userIds: readonly string[]) {
     const result = new Map<string, TagKey[]>();
-    if (userIds.length === 0) return result;
+    if (userIds.length === 0) {
+      return result;
+    }
     const rows = await this.drizzle.db
       .select({ userId: player.userId, key: tag.key })
       .from(player)
@@ -50,15 +52,12 @@ export class TagService implements PlayerTags {
     return result;
   }
 
-  private async _findTagByKeyOrThrow(tagKey: TagKey, trx: DrizzleTx): Promise<Tag> {
+  private async _findTagByKeyOrThrow(tagKey: TagKey, trx: DrizzleTx) {
     const results = await trx.select().from(tag).where(eq(tag.key, tagKey)).limit(1);
-    if (!results.length) {
-      throw new TagNotFoundError(tagKey);
-    }
-    return toTag(results[0]);
+    return toTag(findOneOrThrow(results, new TagNotFoundError(tagKey)));
   }
 
-  public async createTag(args: CreateTagInput): Promise<Tag> {
+  public async createTag(args: CreateTagInput) {
     try {
       const db = this.drizzle.db;
       const [created] = await db.insert(tag).values(args).returning();
@@ -68,7 +67,7 @@ export class TagService implements PlayerTags {
     }
   }
 
-  public async deleteTag(args: DeleteTagInput): Promise<boolean> {
+  public async deleteTag(args: DeleteTagInput) {
     try {
       const db = this.drizzle.db;
       await db.delete(tag).where(eq(tag.key, args.key));
@@ -78,7 +77,7 @@ export class TagService implements PlayerTags {
     }
   }
 
-  public async listPlayerTags(playerId: string, page: number, limit: number) {
+  public async listPlayerTags(playerId: Player['id'], page: number, limit: number) {
     const where = and(eq(playerTag.playerId, playerId), isNull(playerTag.removedAt));
     const db = this.drizzle.db;
     const [rows, [{ n }]] = await Promise.all([
@@ -102,7 +101,7 @@ export class TagService implements PlayerTags {
     };
   }
 
-  public async listAssignableTags(playerId: string): Promise<Tag[]> {
+  public async listAssignableTags(playerId: Player['id']) {
     const db = this.drizzle.db;
     const rows = await db
       .select()
@@ -120,7 +119,7 @@ export class TagService implements PlayerTags {
     return rows.map(toTag);
   }
 
-  public async assignPlayerTag(args: AssignPlayerTagInput): Promise<PlayerTagWithTag> {
+  public async assignPlayerTag(args: AssignPlayerTagInput) {
     try {
       const { tagKey, ...restArgs } = args;
       const db = this.drizzle.db;
@@ -158,25 +157,25 @@ export class TagService implements PlayerTags {
     }
   }
 
-  public async removePlayerTag(args: RemovePlayerTagInput): Promise<PlayerTagWithTag> {
+  public async removePlayerTag(args: RemovePlayerTagInput) {
     try {
       const db = this.drizzle.db;
       const result = await db.transaction(async (trx) => {
         const foundTag = await this._findTagByKeyOrThrow(args.tagKey, trx);
-        const [active] = await trx
-          .select()
-          .from(playerTag)
-          .where(
-            and(
-              eq(playerTag.tagId, foundTag.id),
-              eq(playerTag.playerId, args.playerId),
-              isNull(playerTag.removedAt),
-            ),
-          )
-          .limit(1);
-        if (!active) {
-          throw new TagAssignmentNotFoundError(args.playerId);
-        }
+        const active = findOneOrThrow(
+          await trx
+            .select()
+            .from(playerTag)
+            .where(
+              and(
+                eq(playerTag.tagId, foundTag.id),
+                eq(playerTag.playerId, args.playerId),
+                isNull(playerTag.removedAt),
+              ),
+            )
+            .limit(1),
+          new TagAssignmentNotFoundError(args.playerId),
+        );
         const [updated] = await trx
           .update(playerTag)
           .set({

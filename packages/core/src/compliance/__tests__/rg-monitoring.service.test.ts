@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import type { DrizzleService } from '@openora/core/server';
+import { findOneOrThrow, type DrizzleService } from '@openora/core/server';
 import { mockDb } from '../../testing/mock.js';
 import { RgMonitoringService } from '../service/rg-monitoring.service.js';
 import { userLimit, rgFlag } from '../schema/index.js';
@@ -62,7 +62,14 @@ function routingDb(cfg: {
 }
 
 const USER = 'user-1';
-const depositLimit = { id: 'l1', userId: USER, type: 'deposit', amount: 100, period: 'daily' };
+const depositLimit = {
+  id: 'l1',
+  userId: USER,
+  type: 'deposit',
+  amount: '100',
+  minutes: null,
+  period: 'daily',
+};
 
 describe('RgMonitoringService.evaluateUser (80% boundary)', () => {
   it('raises a limit_threshold flag at exactly 80% of the limit', async () => {
@@ -77,8 +84,9 @@ describe('RgMonitoringService.evaluateUser (80% boundary)', () => {
     });
     await new RgMonitoringService({ drizzle: db }).evaluateUser(USER, 'wallet.deposit.completed');
     expect(inserts).toHaveLength(1);
-    expect(inserts[0]!.table).toBe(rgFlag);
-    expect(inserts[0]!.values).toMatchObject({ flagType: 'limit_threshold', limitType: 'deposit' });
+    const insert = findOneOrThrow(inserts, new Error('expected an insert'));
+    expect(insert.table).toBe(rgFlag);
+    expect(insert.values).toMatchObject({ flagType: 'limit_threshold', limitType: 'deposit' });
   });
 
   it('clears the flag when spend drops below 80%', async () => {
@@ -93,8 +101,9 @@ describe('RgMonitoringService.evaluateUser (80% boundary)', () => {
     });
     await new RgMonitoringService({ drizzle: db }).evaluateUser(USER, 'wallet.deposit.completed');
     expect(updates).toHaveLength(1);
-    expect(updates[0]!.table).toBe(rgFlag);
-    expect(updates[0]!.set).toMatchObject({ status: 'cleared' });
+    const update = findOneOrThrow(updates, new Error('expected an update'));
+    expect(update.table).toBe(rgFlag);
+    expect(update.set).toMatchObject({ status: 'cleared' });
   });
 
   it('raises a self_excluded_login flag on a blocked-login trigger', async () => {
@@ -105,6 +114,7 @@ describe('RgMonitoringService.evaluateUser (80% boundary)', () => {
     });
     await new RgMonitoringService({ drizzle: db }).evaluateUser(USER, 'rg.exclusion.login_blocked');
     expect(inserts).toHaveLength(1);
-    expect(inserts[0]!.values).toMatchObject({ flagType: 'self_excluded_login', limitType: null });
+    const insert = findOneOrThrow(inserts, new Error('expected an insert'));
+    expect(insert.values).toMatchObject({ flagType: 'self_excluded_login', limitType: null });
   });
 });

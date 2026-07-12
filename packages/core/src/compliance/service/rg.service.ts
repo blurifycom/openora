@@ -1,6 +1,7 @@
 import {
   DrizzleService,
   createLogger,
+  findOneOrThrow,
   makeNotFoundError,
   makeConflictError,
   serializeRow,
@@ -11,8 +12,10 @@ import type {
   LoginEnforcementPort,
   SendEmailPort,
   AdminUserDirectory,
+  User,
 } from '@openora/core/contracts';
 import { userLimit, rgExclusion } from '../schema/index.js';
+import { LimitNotFoundError } from './compliance.service.js';
 import type {
   Limit,
   RgExclusion,
@@ -50,15 +53,8 @@ function addMonths(from: Date, months: number): Date {
   return d;
 }
 
-function toLimitDto(row: typeof userLimit.$inferSelect): Limit {
-  return {
-    id: row.id,
-    userId: row.userId,
-    type: row.type as Limit['type'],
-    amount: row.amount,
-    period: row.period as Limit['period'],
-    createdAt: row.createdAt.toISOString(),
-  };
+function toLimitDto(row: typeof userLimit.$inferSelect) {
+  return serializeRow(row, { dateFields: ['createdAt'] });
 }
 
 function toExclusionDto(row: typeof rgExclusion.$inferSelect) {
@@ -75,6 +71,15 @@ export type RgServiceDeps = {
   directory?: AdminUserDirectory | null;
 };
 
+/**
+ * Owns player-facing and admin responsible-gambling controls: deposit/session
+ * limits, cooling-off, and self-exclusion. Every mutation that changes the set
+ * of active exclusions ends by recomputing login enforcement from scratch
+ * (`syncEnforcement`) rather than patching it incrementally, so a lift/expiry
+ * of one exclusion can never leave a stale block from another. Precedence:
+ * an active self-exclusion always wins with an indefinite block; otherwise
+ * the longest-expiring active cooling-off; otherwise unblocked.
+ */
 export class RgService {
   private readonly drizzle: DrizzleService;
   private readonly events: EventBus;
@@ -91,12 +96,12 @@ export class RgService {
   }
 
   async setPlayerLimit(
-    userId: string,
+    userId: User['id'],
     input: SetPlayerLimitInput,
-    actorId: string,
+    actorId: User['id'],
   ): Promise<Limit> {
     const [prior] = await this.drizzle.db
-      .select({ amount: userLimit.amount })
+      .select({ amount: userLimit.amount, minutes: userLimit.minutes })
       .from(userLimit)
       .where(
         and(
@@ -106,56 +111,65 @@ export class RgService {
         ),
       )
       .limit(1);
-    const [row] = await this.drizzle.db
-      .insert(userLimit)
-      .values({ ...input, userId })
-      .onConflictDoUpdate({
-        target: [userLimit.userId, userLimit.type, userLimit.period],
-        set: { amount: input.amount },
-      })
-      .returning();
+    const row = findOneOrThrow(
+      await this.drizzle.db
+        .insert(userLimit)
+        .values({ ...input, userId })
+        .onConflictDoUpdate({
+          target: [userLimit.userId, userLimit.type, userLimit.period],
+          set: { amount: input.amount, minutes: input.minutes },
+        })
+        .returning(),
+      new LimitNotFoundError(userId),
+    );
     this.events.emit('rg.limit.set', {
       userId,
       actorId,
-      limitId: row!.id,
+      limitId: row.id,
       type: input.type,
       period: input.period,
       amount: input.amount,
+      minutes: input.minutes,
       previousAmount: prior?.amount ?? null,
+      previousMinutes: prior?.minutes ?? null,
     });
+    const limitDescription = input.type === 'session' ? `${input.minutes} minutes` : input.amount;
     await this.notify(
       userId,
       'Your gambling limit was updated',
-      `A ${input.period} ${input.type} limit of ${input.amount} is now active on your account.`,
+      `A ${input.period} ${input.type} limit of ${limitDescription} is now active on your account.`,
     );
-    return toLimitDto(row!);
+    return toLimitDto(row);
   }
 
   async activateCoolingOff(
-    userId: string,
+    userId: User['id'],
     input: ActivateCoolingOffInput,
-    actorId: string,
+    actorId: User['id'],
   ): Promise<RgExclusion> {
     await this.assertNoActiveExclusion(userId, 'cooling_off');
     const now = new Date();
     const expiresAt = new Date(now.getTime() + input.durationHours * HOUR_MS);
     const row = await this.drizzle.db.transaction(async (tx) => {
       await this.expireLapsedCoolingOff(userId, tx, now);
-      const [r] = await tx
-        .insert(rgExclusion)
-        .values({
-          userId,
-          kind: 'cooling_off',
-          status: 'active',
-          reason: input.reason,
-          permanent: false,
-          startsAt: now,
-          expiresAt,
-          createdBy: actorId,
-        })
-        .returning();
+      const r = findOneOrThrow(
+        await tx
+          .insert(rgExclusion)
+          .values({
+            userId,
+            kind: 'cooling_off',
+            status: 'active',
+            reason: input.reason,
+            isPermanent: false,
+            startsAt: now,
+            expiresAt,
+            createdBy: actorId,
+          })
+          .returning(),
+        new ExclusionNotFoundError(userId),
+      );
       await this.syncEnforcement(userId, tx);
-      return r!;
+      return r;
     });
     this.events.emit('rg.cooling_off.activated', {
       userId,
@@ -172,56 +186,72 @@ export class RgService {
     return toExclusionDto(row);
   }
 
+  /**
+   * `isPermanent: true` stores `expiresAt: null` - a permanent exclusion has
+   * no time-based lapse and can only ever be cleared by an explicit
+   * `liftSelfExclusion` (which itself rejects lifting a permanent one). Only
+   * one active self-exclusion may exist per player at a time.
+   */
   async activateSelfExclusion(
-    userId: string,
+    userId: User['id'],
     input: ActivateSelfExclusionInput,
-    actorId: string,
+    actorId: User['id'],
   ): Promise<RgExclusion> {
     await this.assertNoActiveExclusion(userId, 'self_exclusion');
     const now = new Date();
     const expiresAt =
-      input.permanent || input.durationMonths === undefined
+      input.isPermanent || input.durationMonths === undefined
         ? null
         : addMonths(now, input.durationMonths);
     const row = await this.drizzle.db.transaction(async (tx) => {
-      const [r] = await tx
-        .insert(rgExclusion)
-        .values({
-          userId,
-          kind: 'self_exclusion',
-          status: 'active',
-          reason: input.reason,
-          permanent: input.permanent,
-          startsAt: now,
-          expiresAt,
-          createdBy: actorId,
-        })
-        .returning();
+      const r = findOneOrThrow(
+        await tx
+          .insert(rgExclusion)
+          .values({
+            userId,
+            kind: 'self_exclusion',
+            status: 'active',
+            reason: input.reason,
+            isPermanent: input.isPermanent,
+            startsAt: now,
+            expiresAt,
+            createdBy: actorId,
+          })
+          .returning(),
+        new ExclusionNotFoundError(userId),
+      );
       await this.syncEnforcement(userId, tx);
-      return r!;
+      return r;
     });
     this.events.emit('rg.self_exclusion.activated', {
       userId,
       actorId,
       exclusionId: row.id,
-      permanent: input.permanent,
+      isPermanent: input.isPermanent,
       expiresAt: expiresAt ? expiresAt.toISOString() : null,
       reason: input.reason,
     });
     await this.notify(
       userId,
       'Self-exclusion activated',
-      input.permanent
-        ? 'A permanent self-exclusion is now active on your account.'
-        : `A self-exclusion is active on your account until at least ${expiresAt!.toISOString()}.`,
+      expiresAt
+        ? `A self-exclusion is active on your account until at least ${expiresAt.toISOString()}.`
+        : 'A permanent self-exclusion is now active on your account.',
     );
     return toExclusionDto(row);
   }
 
+  /**
+   * A permanent self-exclusion (`isPermanent`/`expiresAt: null`) can never be
+   * lifted through this path (`PermanentExclusionLiftError`) - by design,
+   * there is no self-service or admin override. A fixed-term exclusion can
+   * only be lifted once its minimum period has actually elapsed
+   * (`ExclusionPeriodNotElapsedError` otherwise), even for an admin actor.
+   */
   async liftSelfExclusion(
-    userId: string,
+    userId: User['id'],
     input: LiftSelfExclusionInput,
-    actorId: string,
+    actorId: User['id'],
   ): Promise<RgExclusion> {
     const [existing] = await this.drizzle.db
       .select()
@@ -234,21 +264,30 @@ export class RgService {
         ),
       )
       .limit(1);
-    if (!existing) throw new ExclusionNotFoundError(userId);
-    if (existing.permanent || existing.expiresAt === null) throw new PermanentExclusionLiftError();
-    if (new Date() < existing.expiresAt) throw new ExclusionPeriodNotElapsedError();
+    if (!existing) {
+      throw new ExclusionNotFoundError(userId);
+    }
+    if (existing.isPermanent || existing.expiresAt === null) {
+      throw new PermanentExclusionLiftError();
+    }
+    if (new Date() < existing.expiresAt) {
+      throw new ExclusionPeriodNotElapsedError();
+    }
 
     const now = new Date();
     const row = await this.drizzle.db.transaction(async (tx) => {
-      const [r] = await tx
-        .update(rgExclusion)
-        .set({ status: 'lifted', liftedAt: now, liftedReason: input.reason, liftedBy: actorId })
-        .where(eq(rgExclusion.id, existing.id))
-        .returning();
+      const r = findOneOrThrow(
+        await tx
+          .update(rgExclusion)
+          .set({ status: 'lifted', liftedAt: now, liftedReason: input.reason, liftedBy: actorId })
+          .where(eq(rgExclusion.id, existing.id))
+          .returning(),
+        new ExclusionNotFoundError(existing.id),
+      );
       // Recompute from what remains - a still-active cooling-off keeps its own block
       // rather than being cleared by this lift.
       await this.syncEnforcement(userId, tx);
-      return r!;
+      return r;
     });
     this.events.emit('rg.self_exclusion.lifted', {
       userId,
@@ -265,7 +304,7 @@ export class RgService {
     return toExclusionDto(row);
   }
 
-  async getRgSection(userId: string): Promise<RgSection> {
+  async getRgSection(userId: User['id']): Promise<RgSection> {
     const now = new Date();
     const [limits, exclusions] = await Promise.all([
       this.drizzle.db.select().from(userLimit).where(eq(userLimit.userId, userId)),
@@ -307,7 +346,7 @@ export class RgService {
     }
   }
 
-  private expireLapsedCoolingOff(userId: string, tx: Tx, now: Date) {
+  private expireLapsedCoolingOff(userId: User['id'], tx: Tx, now: Date) {
     return tx
       .update(rgExclusion)
       .set({ status: 'expired' })
@@ -324,7 +363,7 @@ export class RgService {
   // The single source of truth for the login block: derive it from the STRONGEST
   // remaining active exclusion. An active self-exclusion (permanent or fixed-term)
   // wins with an indefinite block; otherwise the longest active cooling-off; else clear.
-  private async syncEnforcement(userId: string, db: Db | Tx = this.drizzle.db): Promise<void> {
+  private async syncEnforcement(userId: User['id'], db: Db | Tx = this.drizzle.db): Promise<void> {
     const now = new Date();
     const active = await db
       .select({ kind: rgExclusion.kind, expiresAt: rgExclusion.expiresAt })
@@ -348,7 +387,7 @@ export class RgService {
     await this.loginEnforcement.unblock(userId);
   }
 
-  private async assertNoActiveExclusion(userId: string, kind: RgExclusion['kind']) {
+  private async assertNoActiveExclusion(userId: User['id'], kind: RgExclusion['kind']) {
     const now = new Date();
     const conditions = [
       eq(rgExclusion.userId, userId),
@@ -357,23 +396,31 @@ export class RgService {
     ];
     // A lapsed-but-not-yet-swept cooling-off must not block a fresh one; a self-exclusion
     // has no time-based lapse (only an explicit lift clears it).
-    if (kind === 'cooling_off') conditions.push(gt(rgExclusion.expiresAt, now));
+    if (kind === 'cooling_off') {
+      conditions.push(gt(rgExclusion.expiresAt, now));
+    }
     const [existing] = await this.drizzle.db
       .select({ id: rgExclusion.id })
       .from(rgExclusion)
       .where(and(...conditions))
       .limit(1);
-    if (existing) throw new ActiveExclusionError();
+    if (existing) {
+      throw new ActiveExclusionError();
+    }
   }
 
   // Best-effort player notification. Both the email port and the directory are optional
   // (guarded by c.has at wiring). A lookup/send failure must not fail an RG action that
   // already committed - log without PII (no email, no reason text) and move on.
-  private async notify(userId: string, subject: string, body: string) {
-    if (!this.email || !this.directory) return;
+  private async notify(userId: User['id'], subject: string, body: string) {
+    if (!this.email || !this.directory) {
+      return;
+    }
     try {
       const [summary] = await this.directory.lookupPlayers([userId]);
-      if (!summary?.email) return;
+      if (!summary?.email) {
+        return;
+      }
       await this.email.send({ to: summary.email, subject, body });
     } catch (err) {
       logger.warn({ err, userId }, 'RG player notification failed');

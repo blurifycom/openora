@@ -54,10 +54,16 @@ const ADDONS: Record<string, AddonEntry> = {
 export function enabledAddons(): Set<string> {
   const all = new Set(Object.keys(ADDONS));
   const raw = process.env['OSS_ADDONS'];
-  if (raw === undefined) return all;
+  if (raw === undefined) {
+    return all;
+  }
   const v = raw.trim().toLowerCase();
-  if (v === '' || v === 'none') return new Set();
-  if (v === '*' || v === 'all') return all;
+  if (v === '' || v === 'none') {
+    return new Set();
+  }
+  if (v === '*' || v === 'all') {
+    return all;
+  }
   return new Set(
     raw
       .split(',')
@@ -74,7 +80,9 @@ export function buildContract({
   if (includeAddons) {
     const enabled = enabledAddons();
     for (const [id, entry] of Object.entries(ADDONS)) {
-      if (enabled.has(id)) slices[entry.namespace] = entry.contract;
+      if (enabled.has(id)) {
+        slices[entry.namespace] = entry.contract;
+      }
     }
   }
   return composeContract(slices);

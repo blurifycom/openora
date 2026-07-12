@@ -1,6 +1,7 @@
 import { z } from 'zod';
 import { LimitsSchema } from './igaming-config.js';
 import { TagKeySchema } from './tag.js';
+import { MoneyAmountSchema } from './common.js';
 import { createToken } from '../adapters/token.js';
 
 /**
@@ -40,10 +41,10 @@ export const KycConfigSchema = z
     /** When true, withdrawals require a passing KYC status (verified|manually_overridden). */
     gateWithdrawals: z.boolean().default(false),
     /**
-     * Per-currency cumulative-deposit thresholds (currency code -> amount) that trigger
-     * a re-KYC of a verified player. Absent currency = no threshold for that currency.
+     * Per-currency cumulative-deposit thresholds (currency code -> decimal string)
+     * that trigger a re-KYC of a verified player. Absent currency = no threshold for that currency.
      */
-    reverifyThresholds: z.record(z.string(), z.number()).optional(),
+    reverifyThresholds: z.record(z.string(), MoneyAmountSchema).optional(),
   })
   .strict();
 
@@ -51,11 +52,11 @@ export const AutoWithdrawalConfigSchema = z
   .object({
     enabled: z.boolean().default(false),
     /** Fiat-rail auto-approval ceiling; a per-player rule overrides it. Crypto is hard-stopped in the evaluator, never here. */
-    fiatThreshold: z.number().positive().optional(),
+    fiatThreshold: MoneyAmountSchema.optional(),
     /** Active tag keys that veto auto-approval and force manual review. */
     excludeRiskFlags: z.array(TagKeySchema).default([]),
     /** Amount cap on auto-approved payouts per player per trailing 24h. Absent = no cap. */
-    dailyCapAmount: z.number().positive().optional(),
+    dailyCapAmount: MoneyAmountSchema.optional(),
     /** Count cap on auto-approved payouts per player per trailing 24h. Absent = no cap. */
     dailyCapCount: z.number().int().positive().optional(),
   })

@@ -58,24 +58,37 @@ export class DrizzleAdminUserDirectory implements AdminUserDirectory {
 
   async update(id: string, patch: { isActive?: boolean; role?: string }, actorId: string) {
     const [existing] = await this.drizzle.db.select().from(user).where(eq(user.id, id));
-    if (!existing) return null;
+    if (!existing) {
+      return null;
+    }
     const set: Partial<typeof user.$inferInsert> = {};
-    if (patch.isActive !== undefined) set.isActive = patch.isActive;
-    if (patch.role !== undefined) set.role = patch.role;
+    if (patch.isActive !== undefined) {
+      set.isActive = patch.isActive;
+    }
+    if (patch.role !== undefined) {
+      set.role = patch.role;
+    }
     const [r] = await this.drizzle.db.update(user).set(set).where(eq(user.id, id)).returning();
-    if (!r) return null;
+    if (!r) {
+      return null;
+    }
 
     // Emit only on an actual active-status flip, after the commit. Literal topics
     // (not a ternary) so the catalog generator's emit-scanner picks them up.
     if (patch.isActive !== undefined && patch.isActive !== existing.isActive) {
-      if (patch.isActive) this.events.emit('identity.user.reactivated', { userId: id, actorId });
-      else this.events.emit('identity.user.deactivated', { userId: id, actorId });
+      if (patch.isActive) {
+        this.events.emit('identity.user.reactivated', { userId: id, actorId });
+      } else {
+        this.events.emit('identity.user.deactivated', { userId: id, actorId });
+      }
     }
     return toRow(r);
   }
 
   async lookupPlayers(userIds: readonly string[]) {
-    if (userIds.length === 0) return [];
+    if (userIds.length === 0) {
+      return [];
+    }
     const rows = await this.drizzle.db
       .select({
         userId: player.userId,
@@ -114,8 +127,12 @@ export class DrizzleAdminUserDirectory implements AdminUserDirectory {
         .limit(cap),
     ]);
     const ids = new Set<string>();
-    for (const r of byEmail) ids.add(r.id);
-    for (const r of byName) ids.add(r.userId);
+    for (const r of byEmail) {
+      ids.add(r.id);
+    }
+    for (const r of byName) {
+      ids.add(r.userId);
+    }
     return [...ids].slice(0, cap);
   }
 }

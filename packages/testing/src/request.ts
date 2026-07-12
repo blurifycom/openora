@@ -13,7 +13,9 @@ export type TestClient = {
 function makeClient(app: Hono, baseHeaders: Record<string, string>): TestClient {
   const call = async (path: string, init: RequestInit = {}): Promise<Response> => {
     const headers = new Headers(init.headers);
-    for (const [k, v] of Object.entries(baseHeaders)) headers.set(k, v);
+    for (const [k, v] of Object.entries(baseHeaders)) {
+      headers.set(k, v);
+    }
     return app.request(path, { ...init, headers });
   };
   const withBody = (method: string) => (path: string, body?: unknown) =>
@@ -58,7 +60,9 @@ async function loginAs(
   }
   const raw = res.headers.get('set-cookie') ?? '';
   const cookie = raw.split(';')[0] ?? '';
-  if (!cookie) throw new Error(`${label}: login succeeded but no session cookie was set`);
+  if (!cookie) {
+    throw new Error(`${label}: login succeeded but no session cookie was set`);
+  }
   return makeClient(app, { cookie });
 }
 

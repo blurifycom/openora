@@ -22,6 +22,18 @@ type AnyWorker = WorkerRegistration<unknown>;
 // runs, exactly as the in-process driver does.
 type JobEnvelope = { payload: unknown; meta: Record<string, string | undefined> };
 
+/**
+ * Durable `JOB_QUEUE` reference driver, auto-bound by `createApp` when
+ * `REDIS_URL` is set - jobs survive a process restart and `cron`/`everyMs`
+ * schedules run for real. `idempotencyKey` maps to the BullMQ `jobId`, so
+ * BullMQ itself dedupes concurrent enqueues. `orderingKey` is NOT honoured
+ * (OSS BullMQ has no per-key ordering groups) - jobs run unordered regardless
+ * of the key, so every handler must be idempotent under any interleaving, not
+ * just under retries. The `'failed'` listener only triggers the dead-letter
+ * hook once `attemptsMade` reaches the job's own `attempts` (default 1) -
+ * intermediate retry failures are silent by design. `close()` closes workers
+ * before queues so in-flight jobs drain first.
+ */
 export class BullMqJobQueue implements JobQueueAdapter {
   private readonly logger = createLogger('bullmq-job-queue');
   private readonly connection: ConnectionOptions;
@@ -90,9 +102,13 @@ export class BullMqJobQueue implements JobQueueAdapter {
     // 'failed' fires per attempt; act only once retries are exhausted (attemptsMade has
     // reached the job's own attempts, default 1) - mirrors the in-process dead-letter.
     worker.on('failed', (job, error) => {
-      if (!job) return;
+      if (!job) {
+        return;
+      }
       const maxAttempts = job.opts.attempts ?? 1;
-      if (job.attemptsMade < maxAttempts) return;
+      if (job.attemptsMade < maxAttempts) {
+        return;
+      }
       void this.deadLetter(reg, job, error);
     });
 
@@ -130,7 +146,9 @@ export class BullMqJobQueue implements JobQueueAdapter {
 
   private getQueue(queue: QueueName): Queue<JobEnvelope> {
     const existing = this.queues.get(queue);
-    if (existing) return existing;
+    if (existing) {
+      return existing;
+    }
     const created = new Queue<JobEnvelope>(queue, { connection: this.connection });
     this.queues.set(queue, created);
     return created;

@@ -11,7 +11,9 @@ function fakeClient(isReady = true) {
   });
   const get = vi.fn(async (key: string) => store.get(key) ?? null);
   const del = vi.fn(async (keys: string[]) => {
-    for (const k of keys) store.delete(k);
+    for (const k of keys) {
+      store.delete(k);
+    }
     return keys.length;
   });
   return { isReady, get, set, del };

@@ -1,6 +1,11 @@
 import { oc } from '@orpc/contract';
 import * as z from 'zod';
-import { CurrencyCodeSchema, IdInputSchema, UuidSchema } from '@openora/core/contracts';
+import {
+  CurrencyCodeSchema,
+  IdInputSchema,
+  MoneyAmountSchema,
+  UuidSchema,
+} from '@openora/core/contracts';
 
 export const GAME_ROUND_STATUSES = ['active', 'completed', 'cancelled'] as const;
 export const GameRoundStatusSchema = z.enum(GAME_ROUND_STATUSES);
@@ -21,8 +26,8 @@ export const GameRoundSchema = z.object({
   gameId: UuidSchema,
   userId: UuidSchema,
   status: GameRoundStatusSchema,
-  betAmount: z.string(),
-  winAmount: z.string(),
+  betAmount: MoneyAmountSchema,
+  winAmount: MoneyAmountSchema,
   currency: CurrencyCodeSchema,
   startedAt: z.string(),
   endedAt: z.string().nullable(),

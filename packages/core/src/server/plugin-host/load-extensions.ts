@@ -52,7 +52,9 @@ function findConfigUpwards(start: string): string {
       }
     }
     const parent = dirname(dir);
-    if (parent === dir) break;
+    if (parent === dir) {
+      break;
+    }
     dir = parent;
   }
   throw new Error(

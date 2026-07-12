@@ -3,6 +3,7 @@ import * as z from 'zod';
 import {
   CurrencyCodeSchema,
   KycStatusSchema,
+  MoneyAmountSchema,
   TimestampSchema,
   UuidSchema,
   WalletRailSchema,
@@ -13,29 +14,34 @@ import { PageQuerySchema, paginated } from '@openora/core/contracts/kit';
 
 export { WalletRailSchema, WalletTransactionStatusSchema, WalletTransactionTypeSchema };
 
+// Deposit/withdraw amounts must be strictly positive; balances/thresholds may be zero.
+const PositiveMoneyAmountSchema = MoneyAmountSchema.refine((v) => Number(v) > 0, {
+  message: 'must be greater than zero',
+});
+
 export const WalletBalanceSchema = z.object({
-  balance: z.number(),
+  balance: MoneyAmountSchema,
   currency: CurrencyCodeSchema,
 });
 
 export const WalletTransactionSchema = z.object({
   id: UuidSchema,
   type: WalletTransactionTypeSchema,
-  amount: z.number(),
+  amount: MoneyAmountSchema,
   currency: CurrencyCodeSchema,
   status: WalletTransactionStatusSchema,
   createdAt: TimestampSchema,
 });
 
 export const DepositInputSchema = z.object({
-  amount: z.number().positive(),
+  amount: PositiveMoneyAmountSchema,
   currency: CurrencyCodeSchema,
   provider: z.string().optional(),
   idempotencyKey: UuidSchema.optional(),
 });
 
 export const WithdrawInputSchema = z.object({
-  amount: z.number().positive(),
+  amount: PositiveMoneyAmountSchema,
   currency: CurrencyCodeSchema,
   provider: z.string().optional(),
   idempotencyKey: UuidSchema.optional(),
@@ -55,7 +61,7 @@ export const WithdrawalQueueItemSchema = z.object({
   transactionId: UuidSchema,
   userId: UuidSchema,
   username: z.string(),
-  amount: z.number(),
+  amount: MoneyAmountSchema,
   currency: CurrencyCodeSchema,
   rail: WalletRailSchema.nullable(),
   status: WalletTransactionStatusSchema,
@@ -69,8 +75,8 @@ export const WithdrawalQueueFilterSchema = PageQuerySchema.extend({
   status: WalletTransactionStatusSchema.optional(),
   currency: CurrencyCodeSchema.optional(),
   rail: WalletRailSchema.optional(),
-  minAmount: z.coerce.number().nonnegative().optional(),
-  maxAmount: z.coerce.number().nonnegative().optional(),
+  minAmount: MoneyAmountSchema.optional(),
+  maxAmount: MoneyAmountSchema.optional(),
   kycStatus: KycStatusSchema.optional(),
   dateFrom: TimestampSchema.optional(),
   dateTo: TimestampSchema.optional(),
@@ -80,7 +86,7 @@ export type WithdrawalQueueFilter = z.infer<typeof WithdrawalQueueFilterSchema>;
 export const AutoWithdrawalRuleSchema = z.object({
   id: UuidSchema,
   userId: UuidSchema,
-  threshold: z.number(),
+  threshold: MoneyAmountSchema,
   reason: z.string(),
   createdBy: UuidSchema,
   createdAt: TimestampSchema,
@@ -90,7 +96,7 @@ export type AutoWithdrawalRule = z.infer<typeof AutoWithdrawalRuleSchema>;
 
 export const SetAutoWithdrawalRuleInputSchema = z.object({
   userId: UuidSchema,
-  threshold: z.number().positive(),
+  threshold: PositiveMoneyAmountSchema,
   reason: z.string().min(1),
 });
 

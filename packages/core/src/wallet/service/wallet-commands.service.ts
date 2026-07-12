@@ -6,15 +6,15 @@ import type {
   WalletCreditOutcome,
   WalletTransactionType,
 } from '@openora/core/contracts';
-import type { DrizzleDb } from '@openora/core/server';
+import { createDomainError, type DrizzleDb } from '@openora/core/server';
 import { and, eq, gte, sql } from 'drizzle-orm';
 import { wallet, walletTransaction } from '../schema/index.js';
 import { railFor } from './wallet.service.js';
 
-// Round a money amount to 2 decimal places, avoiding binary float drift on the running balance.
-function round2(n: number): number {
-  return Math.round(n * 100) / 100;
-}
+export const WalletCommandAmountError = createDomainError<[operation: string, amount: string]>(
+  'WalletCommandAmountError',
+  (operation, amount) => `wallet ${operation} amount must be positive (got ${amount})`,
+);
 
 // Default in-process WALLET_COMMANDS implementation. Operates on the caller's
 // transaction handle, so a move commits or rolls back together with the caller's
@@ -29,12 +29,12 @@ export class WalletCommandsService implements WalletCommands {
     txn: DrizzleDb,
     row: { id: string; currency: string },
     type: WalletTransactionType,
-    amount: number,
+    amount: string,
   ) {
     return txn.insert(walletTransaction).values({
       walletId: row.id,
       type,
-      amount: amount.toString(),
+      amount,
       currency: row.currency,
       status: 'completed',
       rail: railFor(row.currency),
@@ -45,29 +45,36 @@ export class WalletCommandsService implements WalletCommands {
     const txn = tx as DrizzleDb;
 
     // `loss` is informational (stake already left at bet time): 0-amount row, balance untouched. Every other debit is real money.
-    if (type !== 'loss' && amount <= 0) {
-      throw new Error(`wallet debit amount must be positive (got ${amount})`);
+    if (type !== 'loss' && Number(amount) <= 0) {
+      throw new WalletCommandAmountError('debit', amount);
     }
 
     const [row] = await txn.select().from(wallet).where(eq(wallet.userId, userId));
-    if (!row) return { ok: false, available: 0 };
-    const available = Number(row.balance);
+    if (!row) {
+      return { ok: false, available: '0' };
+    }
+    const available = row.balance;
 
     if (type === 'loss') {
-      await this.writeLedgerRow(txn, row, 'loss', 0);
+      await this.writeLedgerRow(txn, row, 'loss', '0');
       return { ok: true, newBalance: available };
     }
 
+    // The UPDATE ... RETURNING gives the new balance straight from Postgres numeric
+    // arithmetic - no JS float math on either side of the debit.
     const debited = await txn
       .update(wallet)
-      .set({ balance: sql`${wallet.balance} - ${amount}` })
-      .where(and(eq(wallet.id, row.id), gte(wallet.balance, amount.toString())))
-      .returning({ id: wallet.id });
-    if (debited.length !== 1) return { ok: false, available };
+      .set({ balance: sql`${wallet.balance} - ${amount}::numeric` })
+      .where(and(eq(wallet.id, row.id), gte(wallet.balance, amount)))
+      .returning({ balance: wallet.balance });
+    const newBalance = debited[0]?.balance;
+    if (newBalance === undefined) {
+      return { ok: false, available };
+    }
 
     await this.writeLedgerRow(txn, row, type, amount);
 
-    return { ok: true, newBalance: round2(available - Number(amount)) };
+    return { ok: true, newBalance };
   }
 
   async credit(
@@ -76,21 +83,27 @@ export class WalletCommandsService implements WalletCommands {
   ): Promise<WalletCreditOutcome> {
     const txn = tx as DrizzleDb;
 
-    if (amount <= 0) {
-      throw new Error(`wallet credit amount must be positive (got ${amount})`);
+    if (Number(amount) <= 0) {
+      throw new WalletCommandAmountError('credit', amount);
     }
 
     const [row] = await txn.select().from(wallet).where(eq(wallet.userId, userId));
     // Fail closed: a credit never creates a wallet - a missing one is a caller bug.
-    if (!row) return { ok: false, reason: 'wallet not found' };
+    if (!row) {
+      return { ok: false, reason: 'wallet not found' };
+    }
 
-    await txn
+    const [credited] = await txn
       .update(wallet)
-      .set({ balance: sql`${wallet.balance} + ${amount}` })
-      .where(eq(wallet.id, row.id));
+      .set({ balance: sql`${wallet.balance} + ${amount}::numeric` })
+      .where(eq(wallet.id, row.id))
+      .returning({ balance: wallet.balance });
+    if (!credited) {
+      throw new Error('wallet credit: no row');
+    }
 
-    await this.writeLedgerRow(txn, row, type, Number(amount));
+    await this.writeLedgerRow(txn, row, type, amount);
 
-    return { ok: true, newBalance: round2(Number(row.balance) + Number(amount)) };
+    return { ok: true, newBalance: credited.balance };
   }
 }

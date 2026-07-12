@@ -3,11 +3,11 @@ import {
   makeNotFoundError,
   DrizzleService,
   findOneOrThrow,
+  serializeRow,
 } from '@openora/core/server';
 import { eq, and, asc, desc } from 'drizzle-orm';
-import { type GameAdapter } from '@openora/core/contracts';
-import { game, gameRound } from '../schema/index.js';
-import type { GameRound } from '../contract/index.js';
+import { type GameAdapter, type User } from '@openora/core/contracts';
+import { game, gameRound, type Game, type GameRound } from '../schema/index.js';
 
 export const GameNotFoundError = makeNotFoundError('Game');
 
@@ -26,17 +26,7 @@ function toGame(record: typeof game.$inferSelect) {
 }
 
 function toGameRound(record: typeof gameRound.$inferSelect) {
-  return {
-    id: record.id,
-    gameId: record.gameId,
-    userId: record.userId,
-    status: record.status as GameRound['status'],
-    betAmount: record.betAmount.toString(),
-    winAmount: record.winAmount.toString(),
-    currency: record.currency,
-    startedAt: record.startedAt.toISOString(),
-    endedAt: record.endedAt ? record.endedAt.toISOString() : null,
-  };
+  return serializeRow(record, { dateFields: ['startedAt', 'endedAt'] });
 }
 
 export class GamingService {
@@ -63,32 +53,38 @@ export class GamingService {
     return toGame(record);
   }
 
-  async startRound(userId: string, gameId: string, currency: string) {
+  async startRound(userId: User['id'], gameId: Game['id'], currency: string) {
     await this.getGame(gameId);
 
     const { launchUrl, token } = await this.provider.launchGame(gameId, userId, currency);
 
-    const [round] = await this.drizzle.db
-      .insert(gameRound)
-      .values({
-        gameId,
-        userId,
-        currency,
-        status: 'active',
-      })
-      .returning();
+    const round = findOneOrThrow(
+      await this.drizzle.db
+        .insert(gameRound)
+        .values({
+          gameId,
+          userId,
+          currency,
+          status: 'active',
+        })
+        .returning(),
+      new GameRoundNotFoundError(gameId),
+    );
 
     this.events.emit('gaming.round.started', {
-      roundId: round!.id,
+      roundId: round.id,
       gameId,
       userId,
       currency,
     });
 
-    return { roundId: round!.id, launchUrl, token };
+    return { roundId: round.id, launchUrl, token };
   }
 
-  async endRound(userId: string, roundId: string): Promise<{ success: true; outcome?: unknown }> {
+  async endRound(
+    userId: User['id'],
+    roundId: GameRound['id'],
+  ): Promise<{ success: true; outcome?: unknown }> {
     // Without RLS (ADR-0026, single-tenant) this userId filter is the sole access guard.
     findOneOrThrow(
       await this.drizzle.db
@@ -110,7 +106,7 @@ export class GamingService {
     return { success: true };
   }
 
-  async getUserRounds(userId: string) {
+  async getUserRounds(userId: User['id']) {
     const rounds = await this.drizzle.db
       .select()
       .from(gameRound)

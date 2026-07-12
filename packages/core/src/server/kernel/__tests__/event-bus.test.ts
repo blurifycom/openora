@@ -20,13 +20,15 @@ describe('createEventBus', () => {
 
     bus.emit('wallet.deposit.completed', {
       userId: 'u1',
-      amount: 50,
+      amount: '50',
       currency: 'USD',
       transactionId: 'tx1',
     });
     await flush();
 
-    expect(received).toEqual([{ userId: 'u1', amount: 50, currency: 'USD', transactionId: 'tx1' }]);
+    expect(received).toEqual([
+      { userId: 'u1', amount: '50', currency: 'USD', transactionId: 'tx1' },
+    ]);
   });
 
   it('delivers the envelope as the optional second arg to handlers', async () => {
@@ -38,7 +40,7 @@ describe('createEventBus', () => {
     });
     bus.emit('wallet.deposit.completed', {
       userId: 'u1',
-      amount: 10,
+      amount: '10',
       currency: 'USD',
       transactionId: 'tx2',
     });
@@ -49,7 +51,7 @@ describe('createEventBus', () => {
     expect(typeof env?.eventId).toBe('string');
     expect(env?.eventId).toHaveLength(36);
     expect(env?.topic).toBe('wallet.deposit.completed');
-    expect(env?.schemaVersion).toBe(1);
+    expect(env?.schemaVersion).toBe(2);
     expect(typeof env?.occurredAt).toBe('string');
   });
 
@@ -57,18 +59,20 @@ describe('createEventBus', () => {
     const bus = createEventBus(new InMemoryBroker(), fakeLogger());
     const ids: string[] = [];
     bus.on('wallet.deposit.completed', (_p, env) => {
-      if (env?.eventId) ids.push(env.eventId);
+      if (env?.eventId) {
+        ids.push(env.eventId);
+      }
     });
 
     bus.emit('wallet.deposit.completed', {
       userId: 'u1',
-      amount: 1,
+      amount: '1',
       currency: 'USD',
       transactionId: 'a',
     });
     bus.emit('wallet.deposit.completed', {
       userId: 'u1',
-      amount: 2,
+      amount: '2',
       currency: 'USD',
       transactionId: 'b',
     });
