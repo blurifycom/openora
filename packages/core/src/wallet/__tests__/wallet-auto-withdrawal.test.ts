@@ -357,27 +357,139 @@ describe('WalletService.withdraw auto-approval', () => {
     expect(payment.processWithdrawal).not.toHaveBeenCalled();
   });
 
-  it('never auto-approves the crypto rail regardless of config', async () => {
+  it('stays pending for crypto when no cryptoThreshold is configured (opt-in required, never silently active)', async () => {
     const dz = makeDrizzle({
-      select: [[{ id: 'w-1', userId: 'u-1', balance: '100', currency: 'BTC' }]],
+      select: [[{ id: 'w-1', userId: 'u-1', balance: '100', currency: 'BTC' }], []],
       returning: [
         [{ id: 'tx-1', walletId: 'w-1', amount: '1', currency: 'BTC', status: 'pending' }],
         [{ id: 'w-1' }],
       ],
     });
     const directory = verifiedDirectory();
+    // fiatThreshold is generous, but cryptoThreshold is unset - the crypto rail must
+    // never inherit the fiat ceiling; the threshold gate resolves to null and short-
+    // circuits before any KYC/risk resolution.
     const { svc, payment } = makeSvc({
       drizzle: dz,
       directory,
       autoWithdrawal: { fiatThreshold: '1000000' },
     });
 
-    const result = await svc.withdraw({ userId: 'u-1', amount: '1', currency: 'BTC' });
+    const result = await svc.withdraw({
+      userId: 'u-1',
+      amount: '1',
+      currency: 'BTC',
+      destinationAddress: 'bc1qtest',
+    });
 
     expect(result.status).toBe('pending');
     expect(payment.processWithdrawal).not.toHaveBeenCalled();
-    // Crypto is hard-stopped before any KYC/risk resolution.
     expect(directory.lookupPlayers).not.toHaveBeenCalled();
+  });
+
+  it('auto-approves a crypto withdrawal once an operator configures a positive cryptoThreshold', async () => {
+    const btcWallet = { id: 'w-1', userId: 'u-1', balance: '10', currency: 'BTC' };
+    const dz = makeDrizzle({
+      select: [
+        ...holdSelect(btcWallet).map((r) => [r]),
+        [], // resolveAutoThreshold: no per-player rule -> falls back to global cryptoThreshold
+        [{ walletId: 'w-1', n: 1 }], // velocity grouped count (< 3), pre-lock
+        [{ total: '0', n: 0 }], // caps, inside the advisory lock
+        [
+          {
+            id: 'tx-1',
+            walletId: 'w-1',
+            type: 'withdrawal',
+            status: 'pending',
+            amount: '0.5',
+            currency: 'BTC',
+          },
+        ], // flipToProcessing's FOR UPDATE select
+        [{ userId: 'u-1' }], // settleApproved's userIdForWallet
+        [], // final "completed" update (awaited, unused)
+      ],
+      returning: [
+        ...holdReturning(insertRow({ currency: 'BTC', rail: 'crypto', amount: '0.5' })),
+        [
+          {
+            id: 'tx-1',
+            walletId: 'w-1',
+            status: 'processing',
+            amount: '0.5',
+            currency: 'BTC',
+            rail: 'crypto',
+          },
+        ],
+      ],
+    });
+    const { svc, payment, audit } = makeSvc({
+      drizzle: dz,
+      directory: verifiedDirectory(),
+      autoWithdrawal: { cryptoThreshold: '1' },
+    });
+
+    const result = await svc.withdraw({
+      userId: 'u-1',
+      amount: '0.5',
+      currency: 'BTC',
+      destinationAddress: 'bc1qtest',
+    });
+
+    expect(result).toEqual({ transactionId: 'tx-1', status: 'completed' });
+    expect(payment.processWithdrawal).toHaveBeenCalledTimes(1);
+    expect(audit.record).toHaveBeenCalledWith(
+      expect.objectContaining({
+        after: expect.objectContaining({ threshold: '1', thresholdSource: 'global' }),
+      }),
+    );
+  });
+
+  it('stays pending when the crypto amount exceeds the configured cryptoThreshold', async () => {
+    const btcWallet = { id: 'w-1', userId: 'u-1', balance: '10', currency: 'BTC' };
+    const dz = makeDrizzle({
+      select: [...holdSelect(btcWallet).map((r) => [r]), []],
+      returning: [...holdReturning(insertRow({ currency: 'BTC', rail: 'crypto', amount: '5' }))],
+    });
+    const { svc, payment } = makeSvc({
+      drizzle: dz,
+      directory: verifiedDirectory(),
+      autoWithdrawal: { cryptoThreshold: '1' },
+    });
+
+    const result = await svc.withdraw({
+      userId: 'u-1',
+      amount: '5',
+      currency: 'BTC',
+      destinationAddress: 'bc1qtest',
+    });
+
+    expect(result.status).toBe('pending');
+    expect(payment.processWithdrawal).not.toHaveBeenCalled();
+  });
+
+  it('stays pending for a crypto withdrawal below cryptoThreshold when KYC is not passing (same guard as fiat)', async () => {
+    const btcWallet = { id: 'w-1', userId: 'u-1', balance: '10', currency: 'BTC' };
+    const dz = makeDrizzle({
+      select: [...holdSelect(btcWallet).map((r) => [r]), []],
+      returning: [...holdReturning(insertRow({ currency: 'BTC', rail: 'crypto', amount: '0.5' }))],
+    });
+    const { svc, payment } = makeSvc({
+      drizzle: dz,
+      directory: {
+        lookupPlayers: vi.fn().mockResolvedValue([{ userId: 'u-1', kycStatus: 'pending' }]),
+      },
+      autoWithdrawal: { cryptoThreshold: '1' },
+    });
+
+    const result = await svc.withdraw({
+      userId: 'u-1',
+      amount: '0.5',
+      currency: 'BTC',
+      destinationAddress: 'bc1qtest',
+    });
+
+    expect(result.status).toBe('pending');
+    expect(payment.processWithdrawal).not.toHaveBeenCalled();
   });
 
   it('stays pending when no threshold is configured (no per-player rule, no global)', async () => {

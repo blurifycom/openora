@@ -15,6 +15,7 @@ import {
 } from '@openora/core/server';
 import {
   type PaymentAdapter,
+  type PaymentWebhookEvent,
   type AdminUserDirectory,
   type PlatformConfig,
   type KycStatus,
@@ -31,6 +32,7 @@ import {
   wallet,
   walletTransaction,
   autoWithdrawalRule,
+  walletDepositAddress,
   type Wallet,
   type WalletTransaction,
   type AutoWithdrawalRule as AutoWithdrawalRuleRow,
@@ -65,6 +67,16 @@ export const KycRequiredError = makeConflictError(
 export const IdempotencyKeyReuseError = makeConflictError(
   'IdempotencyKeyReuseError',
   'Idempotency key was already used with a different amount',
+);
+
+export const DepositAddressUnsupportedError = makeConflictError(
+  'DepositAddressUnsupportedError',
+  'The bound payment adapter does not support address-based deposits',
+);
+
+export const DestinationAddressRequiredError = makeConflictError(
+  'DestinationAddressRequiredError',
+  'A destination address is required for a crypto-rail withdrawal',
 );
 
 // Statuses that satisfy the withdrawal KYC gate.
@@ -437,14 +449,19 @@ export class WalletService {
     amount,
     currency,
     idempotencyKey,
+    destinationAddress,
   }: {
     userId: User['id'];
     amount: string;
     currency: string;
     idempotencyKey?: string;
+    destinationAddress?: string;
   }): Promise<TransactionResult> {
     await this.rateLimit(userId);
     await this.assertKycForWithdrawal(userId);
+    if (railFor(currency) === 'crypto' && !destinationAddress) {
+      throw new DestinationAddressRequiredError();
+    }
 
     const { transactionId, status, replayed, walletId, rail } = await this.drizzle.db.transaction(
       async (txn) => {
@@ -490,6 +507,7 @@ export class WalletService {
             currency,
             status: 'pending',
             rail: railFor(currency),
+            destinationAddress: destinationAddress ?? null,
           },
         });
 
@@ -617,6 +635,8 @@ export class WalletService {
         kycStatus: summary?.kycStatus ?? null,
         riskTags,
         requestedAt: r.tx.createdAt.toISOString(),
+        destinationAddress: r.tx.destinationAddress,
+        txHash: r.tx.txHash,
       };
     });
 
@@ -680,8 +700,14 @@ export class WalletService {
     );
   }
 
-  // Phase two: settle a `processing` withdrawal via the PSP (Completed on success, Failed + refund on error).
-  // Runs OUTSIDE the hold/flip transaction so the external PSP call never holds a DB lock.
+  // Phase two: settle a `processing` withdrawal via the vendor. A SYNCHRONOUS vendor
+  // (MockPaymentAdapter, a card/bank PSP) returns an already-terminal status and this
+  // finalizes immediately (Completed on success, Failed + refund on error/explicit
+  // failure) - unchanged from before. An ASYNC vendor (eg a custody rail) returns a
+  // non-terminal status (eg 'processing'/'submitted'): the transaction stays
+  // `processing` and `reconcileWithdrawalStatus` (driven by the webhook path) performs
+  // the eventual terminal transition. Runs OUTSIDE the hold/flip transaction so the
+  // external vendor call never holds a DB lock.
   private async settleApproved(
     tx: WalletTransaction,
     adminId: User['id'] | null,
@@ -707,29 +733,30 @@ export class WalletService {
         userId,
         rail: tx.rail,
         adminId,
+        destinationAddress: tx.destinationAddress,
       });
     } catch (err) {
-      // Payout did not happen - mark failed and return the held funds in one transaction.
-      await this.drizzle.db.transaction(async (txn) => {
-        await txn
-          .update(walletTransaction)
-          .set({ status: 'failed' })
-          .where(eq(walletTransaction.id, tx.id));
-        await txn
-          .update(wallet)
-          .set({ balance: sql`${wallet.balance} + ${amount}::numeric` })
-          .where(eq(wallet.id, tx.walletId));
-      });
-      if (adminId) {
-        this.events.emit('wallet.withdrawal.failed', {
-          userId,
-          amount,
-          currency: tx.currency,
-          transactionId: tx.id,
-          adminId,
-        });
-      }
+      // Payout did not happen - mark failed and return the held funds.
+      await this.finalizeFailedWithdrawal({ tx, adminId, userId, amount });
       throw err;
+    }
+
+    if (result.status === 'failed') {
+      // The vendor call didn't throw but reported an explicit terminal failure - same
+      // refund/failed handling as the throw path above.
+      await this.finalizeFailedWithdrawal({ tx, adminId, userId, amount });
+      return { transactionId: tx.id, status: 'failed' };
+    }
+
+    if (result.status !== 'completed') {
+      // Async vendor: non-terminal status. Stay `processing`; persist the provider ref
+      // now so reconcileWithdrawalStatus can find this row by providerRefId once the
+      // vendor's webhook lands.
+      await this.drizzle.db
+        .update(walletTransaction)
+        .set({ providerName: providerNameFor(tx.rail), providerRefId: result.externalId })
+        .where(eq(walletTransaction.id, tx.id));
+      return { transactionId: tx.id, status: 'processing' };
     }
 
     await this.drizzle.db
@@ -750,6 +777,88 @@ export class WalletService {
     return { transactionId: tx.id, status: 'completed' };
   }
 
+  // Shared by a thrown vendor error and an explicit `status: 'failed'` response: marks
+  // the withdrawal failed and returns the held funds in one transaction. `adminId` null
+  // (the auto path, or a system-driven webhook reconciliation) skips the admin-attributed
+  // `failed` event - same precedent as the approved/completed events above.
+  private async finalizeFailedWithdrawal({
+    tx,
+    adminId,
+    userId,
+    amount,
+  }: {
+    tx: WalletTransaction;
+    adminId: User['id'] | null;
+    userId: User['id'];
+    amount: string;
+  }): Promise<void> {
+    await this.drizzle.db.transaction(async (txn) => {
+      await txn
+        .update(walletTransaction)
+        .set({ status: 'failed' })
+        .where(eq(walletTransaction.id, tx.id));
+      await txn
+        .update(wallet)
+        .set({ balance: sql`${wallet.balance} + ${amount}::numeric` })
+        .where(eq(wallet.id, tx.walletId));
+    });
+    if (adminId) {
+      this.events.emit('wallet.withdrawal.failed', {
+        userId,
+        amount,
+        currency: tx.currency,
+        transactionId: tx.id,
+        adminId,
+      });
+    }
+  }
+
+  /**
+   * Reconciles a withdrawal status update from an async vendor's webhook. Finds the
+   * transaction by `providerRefId === externalId` (set by `settleApproved`'s
+   * non-terminal branch) and idempotently transitions `processing` -> `completed`
+   * (mirrors settleApproved's success path) or -> `failed` + refund (mirrors its
+   * failure path). No-ops when no matching row exists or the row is not currently
+   * `processing` (already terminal, or a stray webhook for a not-yet-approved row).
+   */
+  async reconcileWithdrawalStatus(
+    event: Extract<PaymentWebhookEvent, { kind: 'withdrawal' }>,
+  ): Promise<void> {
+    const { externalId, status, txHash } = event;
+    const [tx] = await this.drizzle.db
+      .select()
+      .from(walletTransaction)
+      .where(eq(walletTransaction.providerRefId, externalId));
+    if (!tx || tx.type !== 'withdrawal') {
+      logger.warn({ externalId }, 'payment webhook: no matching withdrawal for providerRefId');
+      return;
+    }
+    if (tx.status !== 'processing') {
+      return;
+    }
+
+    const userId = await this.userIdForWallet(tx.walletId);
+
+    if (status === 'completed') {
+      await this.drizzle.db
+        .update(walletTransaction)
+        .set({ status: 'completed', txHash: txHash ?? tx.txHash })
+        .where(eq(walletTransaction.id, tx.id));
+      this.events.emit('wallet.withdrawal.completed', {
+        userId,
+        amount: tx.amount,
+        currency: tx.currency,
+        transactionId: tx.id,
+      });
+      return;
+    }
+
+    if (status === 'failed') {
+      await this.finalizeFailedWithdrawal({ tx, adminId: null, userId, amount: tx.amount });
+    }
+    // status === 'processing': already processing, nothing to transition.
+  }
+
   // Evaluates the auto-approval gates and settles the payout if all pass; returns undefined to
   // leave the row pending for the manual queue. NEVER throws: any error fails closed to manual.
   private async maybeAutoApprove(args: {
@@ -760,8 +869,9 @@ export class WalletService {
     walletId: Wallet['id'];
     rail: WalletRail;
   }): Promise<TransactionResult | undefined> {
-    // Cheap gates first (auto-approval off, or crypto - never auto-approved): skip opening a tx/lock.
-    if (!this.platformConfig?.autoWithdrawal?.enabled || args.rail !== 'fiat') {
+    // Cheap gate first (auto-approval off entirely): skip opening a tx/lock. Crypto is no
+    // longer hard-stopped here - see the rail-aware threshold gate in evaluateAutoApproval.
+    if (!this.platformConfig?.autoWithdrawal?.enabled) {
       return undefined;
     }
 
@@ -857,12 +967,12 @@ export class WalletService {
     if (!cfg?.enabled) {
       return null;
     }
-    // Hard stop: crypto is irreversible and AML-sensitive - never auto-approved.
-    if (rail !== 'fiat') {
-      return null;
-    }
-
-    const threshold = await this.resolveAutoThreshold(userId);
+    // BF-211: crypto auto-approval is no longer a hard stop - it is threshold-driven,
+    // same mechanism as fiat, gated by the SAME checks below (KYC-approved-status,
+    // risk-tag exclusion, velocity/large-amount heuristics, daily caps). What keeps it
+    // safe is `resolveAutoThreshold` resolving `cryptoThreshold` to null/0 unless an
+    // operator explicitly configures a positive value - never silently active.
+    const threshold = await this.resolveAutoThreshold(userId, rail);
     if (!threshold || moneyToNumber(threshold.value) <= 0) {
       return null;
     }
@@ -898,9 +1008,12 @@ export class WalletService {
     };
   }
 
-  // Per-player rule wins over the global fiat threshold; null when neither is set.
+  // Per-player rule wins over the global per-rail threshold; null when neither is set.
+  // The override row is a single global threshold (not rail-aware) - it applies to
+  // whichever rail the withdrawal is on. See wallet/AGENTS.md for the scope note.
   private async resolveAutoThreshold(
     userId: User['id'],
+    rail: WalletRail,
   ): Promise<{ value: string; source: 'per-player' | 'global' } | null> {
     const [rule] = await this.drizzle.db
       .select()
@@ -909,7 +1022,10 @@ export class WalletService {
     if (rule) {
       return { value: rule.threshold, source: 'per-player' };
     }
-    const global = this.platformConfig?.autoWithdrawal?.fiatThreshold;
+    const global =
+      rail === 'crypto'
+        ? this.platformConfig?.autoWithdrawal?.cryptoThreshold
+        : this.platformConfig?.autoWithdrawal?.fiatThreshold;
     if (global !== undefined) {
       return { value: global, source: 'global' };
     }
@@ -1147,6 +1263,134 @@ export class WalletService {
     };
   }
 
+  /**
+   * Get-or-create a deposit address for this user/asset. A previously-issued address is
+   * always reused (idempotent - never a second vendor call). Throws
+   * `DepositAddressUnsupportedError` when the bound `PaymentAdapter` doesn't implement
+   * `issueDepositAddress` (eg a fiat-only PSP).
+   */
+  async getOrCreateDepositAddress(
+    userId: User['id'],
+    currency: string,
+  ): Promise<{ address: string; currency: string }> {
+    const existing = await this.findDepositAddress(userId, currency);
+    if (existing) {
+      return { address: existing.address, currency: existing.currency };
+    }
+    if (!this.payment.issueDepositAddress) {
+      throw new DepositAddressUnsupportedError();
+    }
+    const issued = await this.payment.issueDepositAddress(userId, currency);
+
+    const [row] = await this.drizzle.db
+      .insert(walletDepositAddress)
+      .values({
+        userId,
+        currency,
+        address: issued.address,
+        providerName: providerNameFor(railFor(currency)),
+      })
+      .onConflictDoNothing()
+      .returning();
+    if (row) {
+      return { address: row.address, currency: row.currency };
+    }
+    // Lost a concurrent race for the same (userId, currency): re-read the winner's row
+    // rather than issuing a second vendor address.
+    const winner = await this.findDepositAddress(userId, currency);
+    if (!winner) {
+      throw new Error(
+        `wallet deposit address: idempotency conflict but no row found (userId=${userId}, currency=${currency})`,
+      );
+    }
+    return { address: winner.address, currency: winner.currency };
+  }
+
+  /**
+   * Credits a wallet from an inbound address-based deposit reported by a payment
+   * webhook (`PaymentWebhookEvent` `kind: 'deposit'`). Resolves the destination address
+   * to a userId via `wallet_deposit_address`; logs and no-ops on an unknown address
+   * rather than throwing past the webhook boundary. Idempotent on the vendor's
+   * `externalId` via the `providerRefId` unique index (`onConflictDoNothing`) - a
+   * replayed webhook re-reads the already-committed row instead of double-crediting.
+   * Emits `wallet.deposit.completed` only on the actual credit, never on a replay.
+   */
+  async creditDepositByAddress(
+    event: Extract<PaymentWebhookEvent, { kind: 'deposit' }>,
+  ): Promise<void> {
+    const depositAddress = await this.findDepositAddressByAddress(event.address);
+    if (!depositAddress) {
+      logger.warn(
+        { address: event.address },
+        'payment webhook: no wallet_deposit_address for inbound deposit',
+      );
+      return;
+    }
+
+    const { transactionId, replayed } = await this.drizzle.db.transaction(async (txn) => {
+      let [walletRecord] = await txn
+        .select()
+        .from(wallet)
+        .where(eq(wallet.userId, depositAddress.userId));
+      if (!walletRecord) {
+        walletRecord = findOneOrThrow(
+          await txn
+            .insert(wallet)
+            .values({ userId: depositAddress.userId, balance: '0', currency: event.currency })
+            .returning(),
+          new WalletNotFoundError(depositAddress.userId),
+        );
+      }
+
+      const [inserted] = await txn
+        .insert(walletTransaction)
+        .values({
+          walletId: walletRecord.id,
+          type: 'deposit',
+          amount: event.amount,
+          currency: event.currency,
+          status: 'completed',
+          rail: railFor(event.currency),
+          providerName: depositAddress.providerName,
+          providerRefId: event.externalId,
+          destinationAddress: event.address,
+          txHash: event.txHash,
+        })
+        .onConflictDoNothing({ target: walletTransaction.providerRefId })
+        .returning();
+
+      if (inserted) {
+        await txn
+          .update(wallet)
+          .set({ balance: sql`${wallet.balance} + ${event.amount}::numeric` })
+          .where(eq(wallet.id, walletRecord.id));
+        return { transactionId: inserted.id, replayed: false };
+      }
+
+      // Lost the providerRefId conflict: a concurrent/replayed webhook for the same
+      // vendor event already landed - re-read its row instead of crediting twice.
+      const [winner] = await txn
+        .select()
+        .from(walletTransaction)
+        .where(eq(walletTransaction.providerRefId, event.externalId));
+      if (!winner) {
+        throw new Error(
+          `payment webhook: idempotency conflict but no row found (externalId=${event.externalId})`,
+        );
+      }
+      return { transactionId: winner.id, replayed: true };
+    });
+
+    if (!replayed) {
+      this.events.emit('wallet.deposit.completed', {
+        userId: depositAddress.userId,
+        amount: event.amount,
+        currency: event.currency,
+        transactionId,
+      });
+    }
+  }
+
   private async userIdForWallet(walletId: Wallet['id']) {
     const record = findOneOrThrow(
       await this.drizzle.db
@@ -1173,5 +1417,23 @@ export class WalletService {
         ),
       );
     return existing;
+  }
+
+  private async findDepositAddress(userId: User['id'], currency: string) {
+    const [row] = await this.drizzle.db
+      .select()
+      .from(walletDepositAddress)
+      .where(
+        and(eq(walletDepositAddress.userId, userId), eq(walletDepositAddress.currency, currency)),
+      );
+    return row;
+  }
+
+  private async findDepositAddressByAddress(address: string) {
+    const [row] = await this.drizzle.db
+      .select()
+      .from(walletDepositAddress)
+      .where(eq(walletDepositAddress.address, address));
+    return row;
   }
 }

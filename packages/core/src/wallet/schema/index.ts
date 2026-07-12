@@ -34,7 +34,9 @@ export const walletRailEnum = pgEnum('wallet_rail', WALLET_RAILS);
 export const wallet = pgTable('wallet', {
   id: uuid().primaryKey().defaultRandom(),
   userId: uuid().notNull().unique('wallet_user_id_unique'),
-  balance: decimal({ precision: 18, scale: 2 }).notNull().default('0'),
+  // scale 8 covers both fiat (2dp) and crypto (BTC-level 8dp / wei-level ETH precision
+  // without further rescale); widening scale is a non-representation-changing migration (ADR-0029).
+  balance: decimal({ precision: 18, scale: 8 }).notNull().default('0'),
   currency: text().notNull().default('USD'),
   updatedAt: timestamp({ withTimezone: true })
     .notNull()
@@ -49,7 +51,7 @@ export const walletTransaction = pgTable(
       .notNull()
       .references(() => wallet.id),
     type: walletTransactionTypeEnum().notNull(),
-    amount: decimal({ precision: 18, scale: 2 }).notNull(),
+    amount: decimal({ precision: 18, scale: 8 }).notNull(),
     currency: text().notNull(),
     status: walletTransactionStatusEnum()
       .$type<WalletTransactionStatus>()
@@ -66,6 +68,10 @@ export const walletTransaction = pgTable(
     // reconciliation rather than buried in free-form JSON.
     providerName: text(),
     providerRefId: text(),
+    // Inbound address-based deposit (custody-vendor rail) and the on-chain tx hash it
+    // settled in. Both null for a non-address-based deposit/withdrawal.
+    destinationAddress: text(),
+    txHash: text(),
     // Reserved escape hatch for genuinely free-form, non-queryable extras. Provider
     // identity now lives in the typed columns above, not here.
     metadata: text(),
@@ -81,18 +87,26 @@ export const walletTransaction = pgTable(
     index('wallet_transaction_status_idx').on(t.status),
     index('wallet_transaction_rail_idx').on(t.rail),
     index('wallet_transaction_currency_idx').on(t.currency),
-    index('wallet_transaction_provider_ref_id_idx').on(t.providerRefId),
+    index('wallet_transaction_tx_hash_idx').on(t.txHash),
+    // Also the dedup key for an inbound/async-vendor webhook reconciliation (see
+    // WalletService.creditDepositByAddress / reconcileWithdrawalStatus): a real vendor
+    // reference id is unique per settlement, so this doubles as the money-critical-path
+    // DB guard (onConflictDoNothing) rather than just an app-level check.
+    uniqueIndex('wallet_transaction_provider_ref_id_idx')
+      .on(t.providerRefId)
+      .where(sql`${t.providerRefId} IS NOT NULL`),
     uniqueIndex('wallet_transaction_wallet_id_idempotency_key_idx')
       .on(t.walletId, t.idempotencyKey)
       .where(sql`${t.idempotencyKey} IS NOT NULL`),
   ],
 );
 
-// Per-player threshold override (unique userId); overrides the global autoWithdrawal.fiatThreshold.
+// Per-player threshold override (unique userId); overrides the global autoWithdrawal
+// fiatThreshold/cryptoThreshold for whichever rail the withdrawal is on.
 export const autoWithdrawalRule = pgTable('auto_withdrawal_rule', {
   id: uuid().primaryKey().defaultRandom(),
   userId: uuid().notNull().unique('auto_withdrawal_rule_user_id_unique'),
-  threshold: decimal({ precision: 18, scale: 2 }).notNull(),
+  threshold: decimal({ precision: 18, scale: 8 }).notNull(),
   reason: text().notNull(),
   createdBy: uuid().notNull(),
   createdAt: timestamp({ withTimezone: true }).notNull().defaultNow(),
@@ -101,6 +115,27 @@ export const autoWithdrawalRule = pgTable('auto_withdrawal_rule', {
     .$onUpdateFn(() => new Date()),
 });
 
+// A custody/address-issuing vendor hands out one deposit address per (user, asset); we
+// persist it so re-requesting the same currency is idempotent and so an inbound webhook
+// can resolve `address` back to a userId. `userId` is a bare uuid (cross-module id, no
+// .references) - the user table is owned by another domain.
+export const walletDepositAddress = pgTable(
+  'wallet_deposit_address',
+  {
+    id: uuid().primaryKey().defaultRandom(),
+    userId: uuid().notNull(),
+    currency: text().notNull(),
+    address: text().notNull(),
+    providerName: text().notNull(),
+    createdAt: timestamp({ withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    uniqueIndex('wallet_deposit_address_user_id_currency_idx').on(t.userId, t.currency),
+    index('wallet_deposit_address_address_idx').on(t.address),
+  ],
+);
+
 export type Wallet = typeof wallet.$inferSelect;
 export type WalletTransaction = typeof walletTransaction.$inferSelect;
 export type AutoWithdrawalRule = typeof autoWithdrawalRule.$inferSelect;
+export type WalletDepositAddress = typeof walletDepositAddress.$inferSelect;
