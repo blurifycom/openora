@@ -11,10 +11,10 @@ export type IdInput = z.infer<typeof IdInputSchema>;
 export const UserIdInputSchema = z.object({ userId: UuidSchema });
 export type UserIdInput = z.infer<typeof UserIdInputSchema>;
 
-// Exact decimal string on the wire, matching the numeric() column on the DB side -
-// money is never a JS number (float precision loss, cross-currency/crypto scale).
-// Non-negative; every balance/amount/threshold in the platform is >= 0.
 export const MoneyAmountSchema = z
   .string()
-  .regex(/^\d+(\.\d+)?$/, 'must be a non-negative decimal string');
+  .regex(
+    /^\d+(\.\d{1,2})?$/,
+    'must be a non-negative decimal string with at most 2 decimal places',
+  );
 export type MoneyAmount = z.infer<typeof MoneyAmountSchema>;

@@ -176,17 +176,14 @@ export class InProcessJobQueue implements JobQueueAdapter {
       const prev = this.lanes.get(laneKey) ?? Promise.resolve();
       const next = prev.then(() => this.runJob(worker, job));
       // Swallow so one lane failure doesn't poison subsequent jobs on the same key.
-      this.lanes.set(
-        laneKey,
-        next.then(
-          () => undefined,
-          () => undefined,
-        ),
+      const settled = next.then(
+        () => undefined,
+        () => undefined,
       );
-      // Tidy the lane map once this is the tail.
-      void next.finally(() => {
-        if (this.lanes.get(laneKey) === undefined) {
-          return;
+      this.lanes.set(laneKey, settled);
+      void settled.finally(() => {
+        if (this.lanes.get(laneKey) === settled) {
+          this.lanes.delete(laneKey);
         }
       });
     } else {

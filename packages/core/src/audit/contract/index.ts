@@ -30,7 +30,7 @@ export const AuditLogEntrySchema = z.object({
   after: AuditSnapshotSchema,
   ip: z.string().nullable(),
   userAgent: z.string().nullable(),
-  correlationId: UuidSchema.nullable(),
+  correlationId: z.string().nullable(),
   result: z.string().nullable(),
   seq: z.number(),
   prevHash: z.string().nullable(),

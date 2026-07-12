@@ -13,12 +13,20 @@ export function createNotificationsRouter(notifications: NotificationsService) {
   return os.router({
     list: os.list.handler(({ context }) =>
       notifications.listForUser(getUserId(context)).then((items) =>
-        items.map((n) => ({
-          ...n,
-          type: NotificationTypeSchema.parse(n.type),
-          readAt: n.readAt ? n.readAt.toISOString() : null,
-          createdAt: n.createdAt.toISOString(),
-        })),
+        items.flatMap((n) => {
+          const type = NotificationTypeSchema.safeParse(n.type);
+          if (!type.success) {
+            return [];
+          }
+          return [
+            {
+              ...n,
+              type: type.data,
+              readAt: n.readAt ? n.readAt.toISOString() : null,
+              createdAt: n.createdAt.toISOString(),
+            },
+          ];
+        }),
       ),
     ),
 

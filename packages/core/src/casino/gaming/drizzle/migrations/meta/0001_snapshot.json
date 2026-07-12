@@ -1,5 +1,5 @@
 {
-  "id": "bb379afa-a911-4ca7-9720-6287756d0c09",
+  "id": "5d66134c-3caa-4bec-b984-d1ea89812e9e",
   "prevId": "2f2a2740-ea55-4d89-95a4-c1cee60c0745",
   "version": "7",
   "dialect": "postgresql",
@@ -99,19 +99,19 @@
           "notNull": true,
           "default": "'active'"
         },
-        "bet_amount_cents": {
-          "name": "bet_amount_cents",
-          "type": "integer",
+        "bet_amount": {
+          "name": "bet_amount",
+          "type": "numeric(18, 2)",
           "primaryKey": false,
           "notNull": true,
-          "default": 0
+          "default": "'0'"
         },
-        "win_amount_cents": {
-          "name": "win_amount_cents",
-          "type": "integer",
+        "win_amount": {
+          "name": "win_amount",
+          "type": "numeric(18, 2)",
           "primaryKey": false,
           "notNull": true,
-          "default": 0
+          "default": "'0'"
         },
         "currency": {
           "name": "currency",

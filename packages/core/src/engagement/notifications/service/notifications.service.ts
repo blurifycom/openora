@@ -2,6 +2,7 @@ import {
   type EventBus,
   makeNotFoundError,
   makeOwnershipError,
+  createDomainError,
   assertOwnership,
   DrizzleService,
   findOneOrThrow,
@@ -15,6 +16,11 @@ export const NotificationNotFoundError = makeNotFoundError('Notification');
 
 export const NotificationOwnershipError = makeOwnershipError('Notification');
 
+const NotificationInsertFailedError = createDomainError(
+  'NotificationInsertFailedError',
+  () => 'Notification insert did not return a row',
+);
+
 export class NotificationsService {
   constructor(
     private readonly drizzle: DrizzleService,
@@ -27,7 +33,7 @@ export class NotificationsService {
         .insert(notification)
         .values({ ...input })
         .returning(),
-      new NotificationNotFoundError(input.userId),
+      new NotificationInsertFailedError(),
     );
     this.events.emit('notifications.created', {
       notificationId: record.id,

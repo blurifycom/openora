@@ -12,15 +12,8 @@
     {
       "idx": 1,
       "version": "7",
-      "when": 1783764945403,
-      "tag": "0001_windy_bushwacker",
-      "breakpoints": true
-    },
-    {
-      "idx": 2,
-      "version": "7",
-      "when": 1783809151992,
-      "tag": "0002_mixed_luckman",
+      "when": 1783860249138,
+      "tag": "0001_easy_ben_grimm",
       "breakpoints": true
     }
   ]
