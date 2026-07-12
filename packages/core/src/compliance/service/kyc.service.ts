@@ -112,7 +112,7 @@ export class KycVerificationService {
       provider: this.provider,
     });
     await this.statusWriter.setStatus(userId, status, { actorId: null, source: 'vendor' });
-    return toDto(row);
+    return { ...toDto(row), verificationUrl: result.verificationUrl };
   }
 
   /**
