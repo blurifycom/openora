@@ -124,13 +124,15 @@ export class PhoneLoginService {
 
     // Anti-enumeration: an unknown phone gets the same success-shaped response, minus
     // the SMS. A caller cannot distinguish a real number from a fake one.
-    if (!account)
+    if (!account) {
       return { expiresAt: expiresAt.toISOString(), resendAfter: resendAfter.toISOString() };
+    }
 
-    if (!account.phoneVerified)
+    if (!account.phoneVerified) {
       throw new ORPCError('FORBIDDEN', {
         message: 'Phone number is not verified on this account.',
       });
+    }
 
     const [existing] = await this.drizzle.db
       .select({ createdAt: smsOtpSession.createdAt })
@@ -219,7 +221,9 @@ export class PhoneLoginService {
       .from(user)
       .where(eq(user.id, otp.userId))
       .limit(1);
-    if (!account) throw new ORPCError('INTERNAL_SERVER_ERROR', { message: 'Account not found.' });
+    if (!account) {
+      throw new ORPCError('INTERNAL_SERVER_ERROR', { message: 'Account not found.' });
+    }
 
     // RG login block, applied only AFTER the OTP verifies so a probe can't distinguish a
     // restricted account from a wrong code.
