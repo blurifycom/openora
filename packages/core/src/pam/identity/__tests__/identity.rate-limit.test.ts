@@ -172,10 +172,10 @@ describe('IdentityService - fail-closed limiter policy for credential-guessing k
     const svc = new IdentityService({ drizzle, events, limiter });
 
     await expect(
-      svc.resetPassword({ token: 'reset-tok', newPassword: 'newpassword1' }),
+      svc.resetPassword({ email: 'user@x.dev', otp: '123456', newPassword: 'newpassword1' }),
     ).rejects.toMatchObject({ code: 'TOO_MANY_REQUESTS' });
     expect(consume).toHaveBeenCalledWith(
-      'pwreset:reset-tok',
+      'pwreset:user@x.dev',
       expect.objectContaining({ onUnavailable: 'deny' }),
     );
   });

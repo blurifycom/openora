@@ -121,8 +121,8 @@ type ExtendedAuthApi = {
   enableTwoFactor: AuthCall<{ password: string }>;
   verifyTOTP: AuthCall<{ code: string }>;
   disableTwoFactor: AuthCall<{ password: string }>;
-  requestPasswordReset: AuthCall<{ email: string; redirectTo?: string }>;
-  resetPassword: AuthCall<{ newPassword: string; token: string }>;
+  requestPasswordResetEmailOTP: AuthCall<{ email: string }>;
+  resetPasswordEmailOTP: AuthCall<{ email: string; otp: string; password: string }>;
   sendVerificationEmail: AuthCall<{ email: string }>;
   verifyEmail: AuthCall<{ token: string }>;
   changePassword: AuthCall<{ currentPassword: string; newPassword: string }>;
@@ -559,8 +559,8 @@ export class IdentityService {
     // email (if any) is delivered through the sendEmail hook -> notifications.
     // Any underlying error is swallowed for the same anti-enumeration reason.
     try {
-      await this.api.requestPasswordReset({
-        body: { email: input.email, redirectTo: '/reset-password' },
+      await this.api.requestPasswordResetEmailOTP({
+        body: { email: input.email },
         headers: new Headers(),
         asResponse: true,
       });
@@ -571,11 +571,14 @@ export class IdentityService {
   }
 
   async resetPassword(input: ResetPasswordInput) {
-    // Key on the token - the only identifier the input carries - to bound retries
-    // against a single reset token.
-    await assertRateLimit(this.limiter, `pwreset:${input.token}`, PASSWORD_RESET_RATE_LIMIT);
-    const res = await this.api.resetPassword({
-      body: { newPassword: input.newPassword, token: input.token },
+    // Key on the email to bound retries against a single OTP.
+    await assertRateLimit(
+      this.limiter,
+      `pwreset:${input.email.toLowerCase()}`,
+      PASSWORD_RESET_RATE_LIMIT,
+    );
+    const res = await this.api.resetPasswordEmailOTP({
+      body: { email: input.email, otp: input.otp, password: input.newPassword },
       headers: new Headers(),
       asResponse: true,
     });

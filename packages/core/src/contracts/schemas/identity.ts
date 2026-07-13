@@ -2,6 +2,8 @@ import { z } from 'zod';
 import { UuidSchema, TimestampSchema } from './common.js';
 
 export const THEMES = ['light', 'dark', 'system'] as const;
+export const OTP_CODE_LENGTH = 6;
+export const OTP_EXPIRES_IN_SEC = 3600; // 1 hour
 export const ThemeSchema = z.enum(THEMES);
 export type Theme = z.infer<typeof ThemeSchema>;
 
@@ -72,7 +74,8 @@ export const RequestPasswordResetInputSchema = z.object({
 });
 
 export const ResetPasswordInputSchema = z.object({
-  token: z.string().min(1),
+  email: z.email(),
+  otp: z.string().length(OTP_CODE_LENGTH),
   newPassword: z.string().min(8),
 });
 

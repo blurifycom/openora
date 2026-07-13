@@ -2,9 +2,10 @@ import { randomUUID } from 'node:crypto';
 import { betterAuth } from 'better-auth';
 import type { Auth as BetterAuthType } from 'better-auth';
 import { drizzleAdapter } from 'better-auth/adapters/drizzle';
-import { organization, admin as adminPlugin, twoFactor } from 'better-auth/plugins';
+import { organization, admin as adminPlugin, twoFactor, emailOTP } from 'better-auth/plugins';
 import type { DrizzleDb } from '../db/index.js';
 import { ac, roles } from './permissions.js';
+import { OTP_CODE_LENGTH, OTP_EXPIRES_IN_SEC } from '@openora/core/contracts';
 
 // Transport-agnostic mail hook; identity plugin binds the implementation via
 // NOTIFICATION_DELIVERY_ADAPTER. When omitted, emails are silently skipped (eg in tests).
@@ -58,13 +59,7 @@ export function createAuth(options: AuthOptions): BetterAuthType {
     emailAndPassword: {
       enabled: true,
       rememberMeDuration: 30 * 24 * 60 * 60,
-      sendResetPassword: async ({ user, url, token }) => {
-        await sendEmail({
-          to: user.email,
-          subject: 'Reset your password',
-          body: `Reset your password using this link: ${url}\n\nReset token: ${token}`,
-        });
-      },
+      revokeSessionsOnPasswordReset: true,
     },
     emailVerification: {
       sendVerificationEmail: async ({ user, url, token }) => {
@@ -77,7 +72,24 @@ export function createAuth(options: AuthOptions): BetterAuthType {
     },
     // Without this, better-auth's admin plugin defaults new signups to its own
     // 'user' role, which UserRoleSchema (player|admin) rejects everywhere downstream.
-    plugins: [organization(), adminPlugin({ ac, roles, defaultRole: 'player' }), twoFactor()],
+    plugins: [
+      organization(),
+      adminPlugin({ ac, roles, defaultRole: 'player' }),
+      twoFactor(),
+      emailOTP({
+        otpLength: OTP_CODE_LENGTH,
+        expiresIn: OTP_EXPIRES_IN_SEC,
+        async sendVerificationOTP({ email, otp, type }) {
+          if (type === 'forget-password') {
+            await sendEmail({
+              to: email,
+              subject: 'Reset your password',
+              body: `Your password reset code is: ${otp}`,
+            });
+          }
+        },
+      }),
+    ],
     // Library boundary: better-auth infers an options-specific instantiation that isn't
     // assignable to its own exported `Auth` alias. No way to narrow without matching the
     // full generic - the one sanctioned cast, see conventions.
