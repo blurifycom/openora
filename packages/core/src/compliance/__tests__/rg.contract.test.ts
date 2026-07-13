@@ -3,10 +3,36 @@ import {
   ActivateCoolingOffInputSchema,
   ActivateSelfExclusionInputSchema,
   LiftSelfExclusionInputSchema,
+  RgFlagListItemSchema,
   SetPlayerLimitInputSchema,
 } from '../contract/rg.js';
 
 const USER = '11111111-1111-4111-8111-111111111111';
+
+describe('RgFlagListItemSchema.detail resilience', () => {
+  const base = {
+    id: USER,
+    userId: USER,
+    username: null,
+    email: null,
+    flagType: 'session_time' as const,
+    limitType: null,
+    status: 'active' as const,
+    flaggedAt: new Date().toISOString(),
+    clearedAt: null,
+  };
+  it('accepts a legacy/empty detail so one bad row cannot 500 the whole list', () => {
+    expect(RgFlagListItemSchema.safeParse({ ...base, detail: {} }).success).toBe(true);
+  });
+  it('still accepts the known detail shapes', () => {
+    expect(
+      RgFlagListItemSchema.safeParse({
+        ...base,
+        detail: { sessionMinutes: 65, limitMinutes: 60, pct: 108 },
+      }).success,
+    ).toBe(true);
+  });
+});
 
 describe('SetPlayerLimitInputSchema session invariant', () => {
   const money = { userId: USER, amount: '100', minutes: null };
