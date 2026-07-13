@@ -84,7 +84,7 @@ export const chatContract = {
 
   streamMessages: oc
     .route({ method: 'GET', path: '/chat/stream' })
-    .input(z.object({ roomId: UuidSchema.nullable() }))
+    .input(z.object({ roomId: UuidSchema.nullable().optional() }))
     .output(eventIterator(ChatMessageSchema)),
 
   listBlockedUsers: oc
