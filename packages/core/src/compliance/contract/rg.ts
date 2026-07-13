@@ -118,7 +118,9 @@ export const RgFlagListItemSchema = z.object({
   email: z.string().nullable(),
   flagType: RgFlagTypeSchema,
   limitType: z.string().nullable(),
-  detail: RgFlagDetailSchema,
+  // ponytail: tolerate a legacy/empty ('{}') detail on read so one malformed row can't
+  // 500 the whole RG dashboard. Writes stay strict via RgFlagDetailSchema (raiseFlag).
+  detail: RgFlagDetailSchema.or(z.record(z.string(), z.unknown())),
   status: RgFlagStatusSchema,
   flaggedAt: TimestampSchema,
   clearedAt: TimestampSchema.nullable(),
