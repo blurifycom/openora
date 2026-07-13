@@ -78,9 +78,9 @@ export function makeRateLimitError(
  * Consume one unit for `key`; throw a 429 with retryAfterMs when the limit is exceeded.
  * No-ops when `limiter` is undefined so call sites don't need an optional-guard wrapper.
  */
-export async function assertRateLimit(
-  limiter: RateLimiterAdapter | undefined,
-  key: string,
+export async function assertRateLimit<K extends string = string>(
+  limiter: RateLimiterAdapter<K> | undefined,
+  key: K,
   opts: RateLimitOptions,
 ): Promise<void> {
   if (!limiter) {

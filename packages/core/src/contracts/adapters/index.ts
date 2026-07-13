@@ -46,8 +46,14 @@ export type {
 } from './job-queue.js';
 export { JOB_QUEUE, queue } from './job-queue.js';
 
-export type { RateLimiterAdapter, RateLimitOptions, RateLimitResult } from './rate-limit.js';
-export { RATE_LIMITER } from './rate-limit.js';
+export type {
+  RateLimiterAdapter,
+  RateLimitOptions,
+  RateLimitResult,
+  RateLimitKey,
+  RateLimitKeyPrefix,
+} from './rate-limit.js';
+export { RATE_LIMITER, RATE_LIMIT_KEYS } from './rate-limit.js';
 
 export type { CacheAdapter } from './cache.js';
 export { CACHE } from './cache.js';

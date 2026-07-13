@@ -13,6 +13,7 @@ import { eq, sql } from 'drizzle-orm';
 import { user, session, account, verification, twoFactor } from '../schema/index.js';
 import type {
   RateLimiterAdapter,
+  RateLimitKey,
   SendEmailPort,
   LoginInput,
   RegisterInput,
@@ -208,7 +209,7 @@ export type IdentityServiceDeps = {
   events: EventBus;
   email?: SendEmailPort;
   options?: IdentityServiceOptions;
-  limiter?: RateLimiterAdapter;
+  limiter?: RateLimiterAdapter<RateLimitKey>;
   platformConfig?: PlatformConfig;
 };
 
@@ -227,7 +228,7 @@ export class IdentityService {
   private readonly events: EventBus;
   private readonly email?: SendEmailPort;
   private readonly options?: IdentityServiceOptions;
-  private readonly limiter?: RateLimiterAdapter;
+  private readonly limiter?: RateLimiterAdapter<RateLimitKey>;
   private readonly platformConfig?: PlatformConfig;
 
   constructor({ drizzle, events, email, options, limiter, platformConfig }: IdentityServiceDeps) {

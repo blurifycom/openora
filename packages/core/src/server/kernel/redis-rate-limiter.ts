@@ -60,7 +60,9 @@ export class RedisRateLimiter implements RateLimiterAdapter {
   }
 
   async reset(key: string): Promise<void> {
-    if (!this.client.isReady) return;
+    if (!this.client.isReady) {
+      return;
+    }
     try {
       await this.client.del(PREFIX + key);
     } catch (err) {
