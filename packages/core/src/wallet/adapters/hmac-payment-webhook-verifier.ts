@@ -1,29 +1,21 @@
 import { createHmac, timingSafeEqual } from 'node:crypto';
-import type { KycWebhookVerifier } from '@openora/core/contracts';
+import type { PaymentWebhookVerifier } from '@openora/core/contracts';
 
-function findHeader(
+function headerValue(
   headers: Record<string, string | string[] | undefined>,
   name: string,
 ): string | null {
-  const key = Object.keys(headers).find((k) => k.toLowerCase() === name.toLowerCase());
-  if (!key) {
-    return null;
-  }
-  const raw = headers[key];
+  const lowerName = name.toLowerCase();
+  const match = Object.entries(headers).find(([key]) => key.toLowerCase() === lowerName);
+  const raw = match?.[1];
   return Array.isArray(raw) ? (raw[0] ?? null) : (raw ?? null);
 }
 
-/**
- * Default KYC-webhook verifier: recomputes an HMAC-SHA256 of the raw request body
- * keyed by the configured secret and constant-time compares the hex digest against
- * the `x-kyc-signature` header (a leading `sha256=` is tolerated). Fails closed when
- * the secret is unset, the signature is absent, or the body was not captured.
- */
-export class HmacKycWebhookVerifier implements KycWebhookVerifier {
+export class HmacPaymentWebhookVerifier implements PaymentWebhookVerifier {
   constructor(private readonly secret: string | undefined) {}
 
   verify(rawBody: string, headers: Record<string, string | string[] | undefined>): boolean {
-    const signature = findHeader(headers, 'x-kyc-signature');
+    const signature = headerValue(headers, 'x-payment-signature');
     if (!this.secret || !signature) {
       return false;
     }

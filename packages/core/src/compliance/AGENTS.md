@@ -3,6 +3,40 @@
 Regulatory surface: player limits, KYC verification, geo rules, and Responsible
 Gambling (RG). Headless - the back-office UI lives in the consumer.
 
+## KYC
+
+Player identity verification: submission, vendor/webhook reconciliation, and
+deposit-threshold re-KYC. Vendor-agnostic - real providers (SumSub-style
+document-forwarding, hosted-session vendors) bind against the adapter ports in
+`docs/adapters/kyc.md`; this repo ships only `MockKycAdapter` (auto-approves).
+
+### Layout (KYC pieces)
+
+| Layer    | File                        | Holds                                                                                                                                                                                |
+| -------- | --------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| schema   | `schema/index.ts`           | `kyc_verification` table (append-only history: `referenceId`, `status`, `documentTypes`, `triggeredBy`, `decidedAt`).                                                                |
+| contract | `contract/index.ts`         | `getPlayerKyc`, `submitKyc`, `kycWebhook` routes + `KycVerificationSchema`/`SubmitKycOutputSchema` (extends the record with an optional `verificationUrl`).                          |
+| service  | `service/kyc.service.ts`    | `KycVerificationService`: `submit` (calls `KYC_ADAPTER`, inserts a record), `reconcile` (idempotent vendor-decision apply), `getForPlayer`, `handleDeposit` (threshold re-KYC hook). |
+| service  | `service/re-kyc-trigger.ts` | `ReKycTrigger` interface + `CumulativeDepositReKycTrigger` (pure, DB-free threshold-band logic).                                                                                     |
+| router   | `router/index.ts`           | `submitKyc` (player-scoped), `getPlayerKyc` (admin-guarded), `kycWebhook` (unauthenticated M2M, verified via `KYC_WEBHOOK_VERIFIER`).                                                |
+
+### oRPC routes
+
+| Procedure                 | Method | Path                               | Guard                        |
+| ------------------------- | ------ | ---------------------------------- | ---------------------------- |
+| `compliance.submitKyc`    | POST   | `/compliance/kyc`                  | authenticated player         |
+| `compliance.getPlayerKyc` | GET    | `/compliance/players/{userId}/kyc` | `compliance:view`            |
+| `compliance.kycWebhook`   | POST   | `/compliance/kyc/webhook`          | `KYC_WEBHOOK_VERIFIER` (M2M) |
+
+### Adapter ports
+
+`KYC_ADAPTER`, `KYC_STATUS_WRITER`, `KYC_WEBHOOK_VERIFIER` (all in
+`packages/core/src/contracts/adapters/kyc.ts`). `KYC_STATUS_WRITER` is the single writer
+for `player.kycStatus` - pam owns it and binds the only implementation; every status
+change (submit, webhook reconcile, threshold re-KYC, admin override) routes through it so
+the `compliance.kyc.updated` audit emit never gets skipped. Compliance calls the port,
+never writes `player` directly.
+
 ## Responsible Gambling (RG)
 
 A write surface (limits, cooling-off, self-exclusion, lift) plus a read/monitoring surface

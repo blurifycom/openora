@@ -51,8 +51,9 @@ export const KycConfigSchema = z
 export const AutoWithdrawalConfigSchema = z
   .object({
     enabled: z.boolean().default(false),
-    /** Fiat-rail auto-approval ceiling; a per-player rule overrides it. Crypto is hard-stopped in the evaluator, never here. */
+    /** Fiat-rail auto-approval ceiling; a per-player rule overrides it. */
     fiatThreshold: MoneyAmountSchema.optional(),
+    cryptoThreshold: MoneyAmountSchema.optional(),
     /** Active tag keys that veto auto-approval and force manual review. */
     excludeRiskFlags: z.array(TagKeySchema).default([]),
     /** Amount cap on auto-approved payouts per player per trailing 24h. Absent = no cap. */
