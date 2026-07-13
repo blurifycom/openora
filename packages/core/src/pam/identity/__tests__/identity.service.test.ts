@@ -13,6 +13,11 @@ const { signInEmailMock, getSessionMock, updateUserMock } = vi.hoisted(() => ({
 vi.mock('@openora/core/server', async (importOriginal) => ({
   ...(await importOriginal<object>()),
   createAuth: vi.fn(() => ({
+    options: {
+      session: {
+        expiresIn: 30 * 24 * 60 * 60,
+      },
+    },
     api: {
       getSession: getSessionMock,
       signUpEmail: vi.fn(),
