@@ -154,6 +154,7 @@ Planned work and progress live on the public board: **[openora roadmap](https://
 - Glossary (operator vs player, KYC, RTP, provably fair, rollover...): [docs/glossary.md](./docs/glossary.md)
 - Pillars & decision tree: [AGENTS.md](./AGENTS.md)
 - ADRs: [docs/adr/](./docs/adr/)
+- Adapter binding guides (KYC, payment, ...): [docs/adapters/](./docs/adapters/)
 
 ## Contributing
 

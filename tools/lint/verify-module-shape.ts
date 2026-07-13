@@ -35,7 +35,9 @@ type Pkg = { exports?: Record<string, unknown> };
 
 const readPkg = (dir: string): Pkg | null => {
   const p = join(dir, 'package.json');
-  if (!existsSync(p)) return null;
+  if (!existsSync(p)) {
+    return null;
+  }
   try {
     return JSON.parse(readFileSync(p, 'utf8')) as Pkg;
   } catch {

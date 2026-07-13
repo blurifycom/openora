@@ -2,12 +2,19 @@ import { describe, it, expect, vi } from 'vitest';
 import { call, ORPCError } from '@orpc/server';
 import { mock } from '../../testing/mock.js';
 import type { AdminGuard } from '@openora/core/server';
-import type { AuditWritePort } from '@openora/core/contracts';
+import type {
+  AuditWritePort,
+  PaymentAdapter,
+  PaymentWebhookVerifier,
+} from '@openora/core/contracts';
 import { createWalletRouter } from '../router/index.js';
 import type { WalletService } from '../service/wallet.service.js';
 
 const CTX = { request: { headers: {} } };
 const fakeAudit = (): AuditWritePort => mock<AuditWritePort>({ record: vi.fn() });
+const fakePayment = (): PaymentAdapter => mock<PaymentAdapter>({});
+const fakeWebhookVerifier = (): PaymentWebhookVerifier =>
+  mock<PaymentWebhookVerifier>({ verify: vi.fn().mockReturnValue(false) });
 const USER_ID = '63d3c264-3bf4-4d08-9b92-ea3eaf40a440';
 
 function fakeWallet(): WalletService {
@@ -37,7 +44,13 @@ function fakeAllowingGuard(): AdminGuard {
 describe('wallet router listPlayerTransactions authz', () => {
   it('rejects a caller lacking transaction:view (IDOR guard)', async () => {
     const wallet = fakeWallet();
-    const router = createWalletRouter(wallet, fakeTransactionDenyingGuard(), fakeAudit());
+    const router = createWalletRouter(
+      wallet,
+      fakeTransactionDenyingGuard(),
+      fakeAudit(),
+      fakePayment(),
+      fakeWebhookVerifier(),
+    );
 
     await expect(
       call(
@@ -51,7 +64,13 @@ describe('wallet router listPlayerTransactions authz', () => {
 
   it('allows a caller with transaction:view to read any player ledger', async () => {
     const wallet = fakeWallet();
-    const router = createWalletRouter(wallet, fakeAllowingGuard(), fakeAudit());
+    const router = createWalletRouter(
+      wallet,
+      fakeAllowingGuard(),
+      fakeAudit(),
+      fakePayment(),
+      fakeWebhookVerifier(),
+    );
 
     await call(
       router.listPlayerTransactions,

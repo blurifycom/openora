@@ -128,19 +128,29 @@ function headersToRecord(headers: Headers): Record<string, string> {
 const MAX_CAPTURED_BODY_BYTES = 1_048_576;
 
 async function captureRawBody(req: Request): Promise<string | undefined> {
-  if (!req.body) return undefined;
+  if (!req.body) {
+    return undefined;
+  }
   const declaredLength = req.headers.get('content-length');
-  if (declaredLength && Number(declaredLength) > MAX_CAPTURED_BODY_BYTES) return undefined;
+  if (declaredLength && Number(declaredLength) > MAX_CAPTURED_BODY_BYTES) {
+    return undefined;
+  }
   // content-length can be absent (chunked) or lie, so bound the actual stream rather
   // than trusting the header: stop and bail past the cap so memory stays bounded and
   // the signature check fails closed.
-  const reader = req.clone().body!.getReader();
+  const clonedBody = req.clone().body;
+  if (!clonedBody) {
+    return undefined;
+  }
+  const reader = clonedBody.getReader();
   const chunks: Uint8Array[] = [];
   let total = 0;
   try {
     for (;;) {
       const { done, value } = await reader.read();
-      if (done) break;
+      if (done) {
+        break;
+      }
       total += value.byteLength;
       if (total > MAX_CAPTURED_BODY_BYTES) {
         await reader.cancel();
@@ -154,6 +164,18 @@ async function captureRawBody(req: Request): Promise<string | undefined> {
   return Buffer.concat(chunks).toString('utf8');
 }
 
+/**
+ * The single composition root: wires the DI container, boots every plugin in
+ * `config.plugins`, and mounts the resulting oRPC router on a Hono app. Seam
+ * defaults auto-upgrade when env vars are set - `REDIS_URL` binds `JOB_QUEUE`/
+ * `RATE_LIMITER`/`CACHE` to their Redis-backed drivers, `OUTBOX_ENABLED` (or
+ * `AMQP_URL`/`RABBITMQ_URL`) enables the transactional outbox relay - otherwise
+ * every seam stays in-process (zero deps for dev/test). `container.dispose()`
+ * (via `close()`) runs disposers in REVERSE registration order, so DRIZZLE is
+ * registered before JOB_QUEUE to guarantee workers drain before the DB closes.
+ * A router namespace registered by more than one plugin throws at boot, not at
+ * request time.
+ */
 export async function createApp(config: CreateAppConfig): Promise<CreatedApp> {
   if (config.databaseUrl) {
     process.env['DATABASE_URL'] = config.databaseUrl;
@@ -362,7 +384,9 @@ export async function createApp(config: CreateAppConfig): Promise<CreatedApp> {
 
     const runHandler = async (): Promise<Response> => {
       const { matched, response } = await handler.handle(c.req.raw, { context });
-      if (matched) return c.newResponse(response.body, response);
+      if (matched) {
+        return c.newResponse(response.body, response);
+      }
       await next();
       return c.res;
     };
@@ -392,7 +416,9 @@ export async function createApp(config: CreateAppConfig): Promise<CreatedApp> {
       process.stdout.write(`API listening on :${port}\n`);
     },
     async emitOpenApiSpec() {
-      if (config.openapi?.enabled === false) return null;
+      if (config.openapi?.enabled === false) {
+        return null;
+      }
       const outPath = await generateOpenApiSpec(config.contract ?? composeContract({}), {
         info: config.openapi?.info,
         outputPath: config.openapi?.outputPath ?? resolve(process.cwd(), 'docs/openapi.json'),

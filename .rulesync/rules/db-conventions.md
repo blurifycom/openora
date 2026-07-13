@@ -32,7 +32,7 @@ export const walletTransaction = pgTable(
     id: uuid().primaryKey().defaultRandom(),
     walletId: uuid().notNull(), // -> wallet_id
     type: walletTransactionType().notNull(), // pgEnum('wallet_transaction_type', ...)
-    amountCents: integer().notNull(),
+    amount: decimal({ precision: 18, scale: 2 }).notNull(),
     createdAt: timestamp({ withTimezone: true }).notNull().defaultNow(),
   },
   (t) => [index('wallet_transaction_wallet_id_idx').on(t.walletId)],
@@ -42,7 +42,18 @@ export const walletTransaction = pgTable(
 pgTable('WalletTransaction', { wallet_id: uuid('walletId') });
 ```
 
-Row type is `typeof walletTransaction.$inferSelect`; never hand-write it.
+Lint error `oss-module-shape/drizzle-snake-case` - a non-snake table/enum/index name or an explicit
+camelCase column name. Row type is `typeof walletTransaction.$inferSelect`; never hand-write it.
+
+## Money - exact decimal, never float, never scaled integer
+
+Every money column is `decimal()` (Postgres `NUMERIC`) - never `real`/`float`, never an
+`integer` "cents" column. Pair it with a `currency` column; on the wire, use the shared
+`MoneyAmountSchema` (decimal string) + `currency`, never `z.number()`. Balance math runs
+in SQL (`sql\`${wallet.balance} + ${amount}::numeric\``), never JS float arithmetic. Full
+rationale (multi-currency exponents, crypto, wire-format precedent): ADR-0029.
+
+Lint error `oss-module-shape/no-float-money` bans a float-typed column in a schema file.
 
 ## Timestamps - always timestamptz
 
@@ -51,7 +62,8 @@ createdAt: timestamp({ withTimezone: true }); // good - Postgres timestamptz, st
 createdAt: timestamp(); // bad - naive, drops the zone
 ```
 
-Applies to every datetime column (`createdAt`, `updatedAt`, `expiresAt`, any `*At`).
+Applies to every datetime column (`createdAt`, `updatedAt`, `expiresAt`, any `*At`). Lint error
+`oss-module-shape/no-naive-timestamp` flags a `timestamp()` missing `{ withTimezone: true }`.
 
 ## Keys, references, indexes
 
@@ -72,13 +84,16 @@ await db.select().from(wallet).where(inArray(wallet.id, ids));
 ```
 
 - Select only the columns you use; don't read wide rows for one field.
+- **Bound the fan-out** - never `Promise.all(rows.map(fn))` when `rows` is a query result and `fn`
+  touches the DB: it opens one pool connection per row and starves every other query at scale. Use
+  `mapConcurrent(items, limit, fn)` (`@openora/core/server`). Lint: `oss-module-shape/no-unbounded-db-fanout`.
 - **Money / critical paths are transactional and idempotent** - a DB guard inside the transaction,
   not just an `idempotencyKey` (delivery is at-least-once).
 
 ```ts
 await db.transaction(async (t) => {
   if (await ledgerExists(t, idempotencyKey)) return; // guard, not just a key
-  await insertLedger(t, { idempotencyKey, amountCents });
+  await insertLedger(t, { idempotencyKey, amount });
 });
 ```
 

@@ -11,14 +11,18 @@ describe('InProcessRateLimiter', () => {
   it('allows up to the limit then denies within the same window', async () => {
     const limiter = new InProcessRateLimiter();
     const results = [];
-    for (let i = 0; i < 4; i++) results.push(await limiter.consume('k', OPTS));
+    for (let i = 0; i < 4; i++) {
+      results.push(await limiter.consume('k', OPTS));
+    }
     expect(results.map((r) => r.allowed)).toEqual([true, true, true, false]);
     limiter.close();
   });
 
   it('reports retryAfterMs equal to the time left in the window on denial', async () => {
     const limiter = new InProcessRateLimiter();
-    for (let i = 0; i < 3; i++) await limiter.consume('k', OPTS);
+    for (let i = 0; i < 3; i++) {
+      await limiter.consume('k', OPTS);
+    }
     vi.advanceTimersByTime(400);
     const denied = await limiter.consume('k', OPTS);
     expect(denied.allowed).toBe(false);
@@ -28,7 +32,9 @@ describe('InProcessRateLimiter', () => {
 
   it('rolls over: a fresh budget is available once the window elapses', async () => {
     const limiter = new InProcessRateLimiter();
-    for (let i = 0; i < 3; i++) await limiter.consume('k', OPTS);
+    for (let i = 0; i < 3; i++) {
+      await limiter.consume('k', OPTS);
+    }
     expect((await limiter.consume('k', OPTS)).allowed).toBe(false);
     vi.advanceTimersByTime(1000);
     expect((await limiter.consume('k', OPTS)).allowed).toBe(true);
@@ -37,7 +43,9 @@ describe('InProcessRateLimiter', () => {
 
   it('isolates budgets between keys', async () => {
     const limiter = new InProcessRateLimiter();
-    for (let i = 0; i < 3; i++) await limiter.consume('a', OPTS);
+    for (let i = 0; i < 3; i++) {
+      await limiter.consume('a', OPTS);
+    }
     expect((await limiter.consume('a', OPTS)).allowed).toBe(false);
     expect((await limiter.consume('b', OPTS)).allowed).toBe(true);
     limiter.close();
@@ -48,7 +56,9 @@ describe('assertRateLimit / makeRateLimitError', () => {
   it('throws a TOO_MANY_REQUESTS ORPCError carrying retryAfterMs once the limit is hit', async () => {
     vi.useFakeTimers();
     const limiter = new InProcessRateLimiter();
-    for (let i = 0; i < 3; i++) await assertRateLimit(limiter, 'k', OPTS);
+    for (let i = 0; i < 3; i++) {
+      await assertRateLimit(limiter, 'k', OPTS);
+    }
     await expect(assertRateLimit(limiter, 'k', OPTS)).rejects.toMatchObject({
       code: 'TOO_MANY_REQUESTS',
       data: { retryAfterMs: OPTS.windowMs },

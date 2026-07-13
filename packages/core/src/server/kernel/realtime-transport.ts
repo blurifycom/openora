@@ -13,9 +13,13 @@ class InProcessPresence implements RealtimePresence {
 
   leave(channel: string, memberId: string): void {
     const set = this.members.get(channel);
-    if (!set) return;
+    if (!set) {
+      return;
+    }
     set.delete(memberId);
-    if (set.size === 0) this.members.delete(channel);
+    if (set.size === 0) {
+      this.members.delete(channel);
+    }
   }
 
   count(channel: string): number {
@@ -30,7 +34,9 @@ export class InProcessRealtimeTransport implements RealtimeTransport {
 
   publish<T>(channel: string, event: T): void {
     const subscribers = this.channels.get(channel);
-    if (!subscribers) return;
+    if (!subscribers) {
+      return;
+    }
     // Snapshot so a handler that unsubscribes mid-iteration can't corrupt the loop.
     for (const handler of Array.from(subscribers)) {
       try {
@@ -47,9 +53,13 @@ export class InProcessRealtimeTransport implements RealtimeTransport {
     this.channels.set(channel, set);
     return () => {
       const current = this.channels.get(channel);
-      if (!current) return;
+      if (!current) {
+        return;
+      }
       current.delete(handler as Handler);
-      if (current.size === 0) this.channels.delete(channel);
+      if (current.size === 0) {
+        this.channels.delete(channel);
+      }
     };
   }
 }

@@ -21,7 +21,7 @@ If the orchestrator passed a base ref + changed-file list, use them - do not re-
 
 - [ ] Money mutations idempotent at the DATA layer - unique DB constraint / guard row inside the transaction, not just an `idempotencyKey` (ADR-0014: at-least-once delivery).
 - [ ] Balance changes atomic (single transaction; no read-modify-write race enabling double-spend or negative balance).
-- [ ] Amounts are integer minor units - no float arithmetic on money.
+- [ ] Amounts are exact decimal types - `numeric`/`decimal` in the DB, a decimal string (`MoneyAmountSchema`) + `currency` on the wire, never a JS `number`; arithmetic runs in SQL or the sanctioned `moneyToNumber()` conversion point, never plain JS float math (ADR-0029).
 - [ ] No client-supplied balance/amount trusted without server-side recomputation.
 
 ### Authorization

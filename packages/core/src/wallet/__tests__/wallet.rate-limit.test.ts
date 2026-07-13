@@ -18,7 +18,7 @@ describe('WalletService - rate limiting', () => {
     }
     const svc = new WalletService({ drizzle, events, payment, limiter, audit });
 
-    await expect(svc.deposit({ userId, amount: 100, currency: 'USD' })).rejects.toMatchObject({
+    await expect(svc.deposit({ userId, amount: '100', currency: 'USD' })).rejects.toMatchObject({
       code: 'TOO_MANY_REQUESTS',
       data: { retryAfterMs: expect.any(Number) },
     });
@@ -31,7 +31,7 @@ describe('WalletService - rate limiting', () => {
     // No limiter denial: the call proceeds past the guard and fails later on the unused
     // drizzle double - so a non-429 rejection proves the guard let it through.
     await expect(
-      svc.withdraw({ userId: 'u2', amount: 100, currency: 'USD' }),
+      svc.withdraw({ userId: 'u2', amount: '100', currency: 'USD' }),
     ).rejects.not.toMatchObject({
       code: 'TOO_MANY_REQUESTS',
     });

@@ -6,7 +6,9 @@ import { mock, mockDb } from '../../../testing/mock.js';
 function makeDb(selectResult: unknown) {
   const builder: unknown = new Proxy(function () {}, {
     get(_t, prop) {
-      if (prop === 'then') return (res: (v: unknown) => unknown) => res(selectResult);
+      if (prop === 'then') {
+        return (res: (v: unknown) => unknown) => res(selectResult);
+      }
       return () => builder;
     },
     apply: () => builder,

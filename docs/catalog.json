@@ -260,6 +260,7 @@
       "tables": [
         "auto_withdrawal_rule",
         "wallet",
+        "wallet_deposit_address",
         "wallet_transaction"
       ],
       "routes": [
@@ -267,12 +268,14 @@
         "wallet.delete",
         "wallet.deposit",
         "wallet.get",
+        "wallet.getAddress",
         "wallet.getBalance",
         "wallet.list",
         "wallet.listPlayerTransactions",
         "wallet.listTransactions",
         "wallet.reject",
         "wallet.set",
+        "wallet.webhook",
         "wallet.withdraw"
       ]
     }
@@ -529,7 +532,13 @@
     "chat.message.sent",
     "chat.user.blocked",
     "chat.user.unblocked",
+    "cms.banner.created",
+    "cms.banner.deleted",
+    "cms.banner.updated",
+    "cms.page.created",
+    "cms.page.deleted",
     "cms.page.published",
+    "cms.page.updated",
     "compliance.geo-rule.added",
     "compliance.kyc.reverify_required",
     "compliance.kyc.submitted",
@@ -710,6 +719,10 @@
       "file": "packages/core/src/contracts/schemas/igaming-config.ts"
     },
     {
+      "name": "CreateNotificationInputSchema",
+      "file": "packages/core/src/engagement/notifications/contract/index.ts"
+    },
+    {
       "name": "CreatePlayerNoteInputSchema",
       "file": "packages/core/src/pam/player-note/contract/index.ts"
     },
@@ -724,6 +737,14 @@
     {
       "name": "deleteTagSchema",
       "file": "packages/core/src/contracts/schemas/tag.ts"
+    },
+    {
+      "name": "DepositAddressInputSchema",
+      "file": "packages/core/src/wallet/contract/index.ts"
+    },
+    {
+      "name": "DepositAddressSchema",
+      "file": "packages/core/src/wallet/contract/index.ts"
     },
     {
       "name": "DepositInputSchema",
@@ -894,7 +915,15 @@
       "file": "packages/core/src/engagement/chat/contract/index.ts"
     },
     {
+      "name": "MoneyAmountSchema",
+      "file": "packages/core/src/contracts/schemas/common.ts"
+    },
+    {
       "name": "NotificationSchema",
+      "file": "packages/core/src/engagement/notifications/contract/index.ts"
+    },
+    {
+      "name": "NotificationTypeSchema",
       "file": "packages/core/src/engagement/notifications/contract/index.ts"
     },
     {
@@ -914,8 +943,12 @@
       "file": "packages/core/src/contracts/schemas/player.ts"
     },
     {
-      "name": "PaginationSchema",
-      "file": "packages/core/src/contracts/schemas/common.ts"
+      "name": "PaymentWebhookInputSchema",
+      "file": "packages/core/src/wallet/contract/index.ts"
+    },
+    {
+      "name": "PaymentWebhookOutputSchema",
+      "file": "packages/core/src/wallet/contract/index.ts"
     },
     {
       "name": "PermissionLevelSchema",
@@ -1075,6 +1108,10 @@
     },
     {
       "name": "SubmitKycInputSchema",
+      "file": "packages/core/src/compliance/contract/index.ts"
+    },
+    {
+      "name": "SubmitKycOutputSchema",
       "file": "packages/core/src/compliance/contract/index.ts"
     },
     {
@@ -1327,6 +1364,8 @@
     "POST /player/{playerId}/player-tag",
     "POST /tag",
     "POST /wallet/deposit",
+    "POST /wallet/deposits/address",
+    "POST /wallet/webhook",
     "POST /wallet/withdraw",
     "POST /wallet/withdrawals/{withdrawalId}/approve",
     "POST /wallet/withdrawals/{withdrawalId}/reject",

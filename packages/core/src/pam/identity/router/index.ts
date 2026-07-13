@@ -9,9 +9,9 @@ import {
   type EventBus,
 } from '@openora/core/server';
 import { identityContract } from '../contract/index.js';
-import { IdentityService } from '../service/identity.service.js';
-import { SessionService } from '../service/session.service.js';
 import { PhoneLoginService } from '../service/phone-login.service.js';
+import { IdentityService, UserNotFoundError } from '../service/identity.service.js';
+import { SessionService, SessionNotFoundError } from '../service/session.service.js';
 import { UnsupportedLanguageError } from '../../shared/language.js';
 
 function nodeForwardedFor(headers: NodeHeaders): string | null {
@@ -139,7 +139,9 @@ export function createIdentityRouter(
 
     unlockUser: os.unlockUser.handler(async ({ input, context }) => {
       const caller = await adminGuard.assert(context, 'player', 'update');
-      return identity.unlockUser(input.userId, caller.userId);
+      return mapErrors({ NOT_FOUND: UserNotFoundError }, () =>
+        identity.unlockUser(input.userId, caller.userId),
+      );
     }),
 
     sessions: {
@@ -149,7 +151,9 @@ export function createIdentityRouter(
       }),
       revoke: os.sessions.revoke.handler(async ({ input, context }) => {
         const caller = await adminGuard.assert(context, 'sessions', 'revoke');
-        return sessionSvc.revokeSession(input.userId, input.id, caller.userId);
+        return mapErrors({ NOT_FOUND: SessionNotFoundError }, () =>
+          sessionSvc.revokeSession(input.userId, input.id, caller.userId),
+        );
       }),
       revokeAll: os.sessions.revokeAll.handler(async ({ input, context }) => {
         const caller = await adminGuard.assert(context, 'sessions', 'revoke');

@@ -76,16 +76,22 @@ function registerExtension(id: string, importPath: string): string {
     return `created ${file}`;
   }
   const src = readFileSync(file, 'utf8');
-  if (src.includes(`id: '${id}'`)) return `extensions.config.ts already has '${id}'`;
+  if (src.includes(`id: '${id}'`)) {
+    return `extensions.config.ts already has '${id}'`;
+  }
   writeFileSync(file, src.replace(/(export const extensions = \[)/, `$1\n${line}`));
   return `registered '${id}' in extensions.config.ts`;
 }
 
 function wireContractIndex(name: string): string {
   const indexFile = join(root(), 'packages', 'contracts', 'orpc-contract', 'src', 'index.ts');
-  if (!existsSync(indexFile)) return 'no orpc-contract index (skipped)';
+  if (!existsSync(indexFile)) {
+    return 'no orpc-contract index (skipped)';
+  }
   let src = readFileSync(indexFile, 'utf8');
-  if (src.includes(`from './${name}.js'`)) return `contract index already wires '${name}'`;
+  if (src.includes(`from './${name}.js'`)) {
+    return `contract index already wires '${name}'`;
+  }
   const camel = toCamel(name);
   const contractName = `${camel}Contract`;
   src = src.replace(/(^export\s)/m, `import { ${contractName} } from './${name}.js';\n\n$1`);
@@ -100,9 +106,13 @@ function wireContractIndex(name: string): string {
 
 function appendEventSchema(topic: string): string {
   const file = join(root(), 'packages', 'contracts', 'shared-schemas', 'src', 'events.ts');
-  if (!existsSync(file)) return 'no events.ts (skipped)';
+  if (!existsSync(file)) {
+    return 'no events.ts (skipped)';
+  }
   let src = readFileSync(file, 'utf8');
-  if (src.includes(`'${topic}':`)) return `event '${topic}' already in the catalog`;
+  if (src.includes(`'${topic}':`)) {
+    return `event '${topic}' already in the catalog`;
+  }
   const entry = `  '${topic}': z.object({\n    // AGENT: define the payload (ids + primitives)\n  }),`;
   src = src.replace(/(export const domainEventSchemas = \{)/, `$1\n${entry}`);
   writeFileSync(file, src);
@@ -456,7 +466,9 @@ export default function generator(plop: PlopTypes.NodePlopAPI): void {
       return [
         () => {
           const args = ['exec', 'tsx', 'tools/create/create-igaming-app.ts', s(a, 'dir')];
-          if (s(a, 'appName')) args.push('--name', s(a, 'appName'));
+          if (s(a, 'appName')) {
+            args.push('--name', s(a, 'appName'));
+          }
           execFileSync('pnpm', args, { cwd: root(), stdio: 'inherit' });
           return `scaffolded consumer repo at ${s(a, 'dir')}`;
         },

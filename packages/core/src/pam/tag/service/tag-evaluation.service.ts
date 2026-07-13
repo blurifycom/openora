@@ -4,11 +4,15 @@ import {
   type IdentityReader,
   type TagKey,
   type TagRule,
+  type User,
 } from '@openora/core/contracts';
+import { moneyToNumber, mapConcurrent } from '@openora/core/server';
 import { TagService, TagAlreadyInUseError, TagAssignmentNotFoundError } from './tag.service.js';
 import { TagRuleService, TagRuleNotFoundError } from './tag-rule.service.js';
 
 export const SYSTEM_ACTOR_ID = '00000000-0000-0000-0000-000000000000';
+
+const EVAL_CHUNK_SIZE = 100;
 
 export class TagEvaluationService {
   constructor(
@@ -22,18 +26,24 @@ export class TagEvaluationService {
   private async getEnabledRule(tagKey: TagKey): Promise<TagRule | null> {
     try {
       const rule = await this.rule.getTagRule(tagKey);
-      if (!rule.isEnabled) return null;
+      if (!rule.isEnabled) {
+        return null;
+      }
       return rule;
     } catch (e) {
-      if (e instanceof TagRuleNotFoundError) return null;
+      if (e instanceof TagRuleNotFoundError) {
+        return null;
+      }
       throw e;
     }
   }
 
   /** Idempotently assigns a tag; swallows TagAlreadyInUseError. */
-  private async tryAssignTag(userId: string, tagKey: TagKey, reason: string): Promise<void> {
+  private async tryAssignTag(userId: User['id'], tagKey: TagKey, reason: string) {
     const playerId = await this.identityReader.getPlayerIdByUserId(userId);
-    if (!playerId) return;
+    if (!playerId) {
+      return;
+    }
     try {
       await this.tag.assignPlayerTag({
         playerId,
@@ -43,15 +53,19 @@ export class TagEvaluationService {
         assignActorUserId: SYSTEM_ACTOR_ID,
       });
     } catch (e) {
-      if (e instanceof TagAlreadyInUseError) return;
+      if (e instanceof TagAlreadyInUseError) {
+        return;
+      }
       throw e;
     }
   }
 
   /** Idempotently removes a tag; swallows TagAssignmentNotFoundError. */
-  private async tryRemoveTag(userId: string, tagKey: TagKey, reason: string): Promise<void> {
+  private async tryRemoveTag(userId: User['id'], tagKey: TagKey, reason: string) {
     const playerId = await this.identityReader.getPlayerIdByUserId(userId);
-    if (!playerId) return;
+    if (!playerId) {
+      return;
+    }
     try {
       await this.tag.removePlayerTag({
         playerId,
@@ -61,7 +75,9 @@ export class TagEvaluationService {
         removalActorUserId: SYSTEM_ACTOR_ID,
       });
     } catch (e) {
-      if (e instanceof TagAssignmentNotFoundError) return;
+      if (e instanceof TagAssignmentNotFoundError) {
+        return;
+      }
       throw e;
     }
   }
@@ -70,7 +86,7 @@ export class TagEvaluationService {
    * Evaluates high_roller and large_depositor rules.
    * Called on wallet.deposit.completed.
    */
-  async onDepositCompleted(payload: unknown): Promise<void> {
+  async onDepositCompleted(payload: unknown) {
     const { userId, amount } = domainEventSchemas['wallet.deposit.completed'].parse(payload);
 
     const [highRoller, largeDepositor] = await Promise.all([
@@ -78,17 +94,19 @@ export class TagEvaluationService {
       this.getEnabledRule('large_depositor'),
     ]);
 
+    // Tag-threshold comparisons are evaluation decisions, not ledger writes -
+    // moneyToNumber is the documented single conversion point.
     if (
       largeDepositor &&
-      largeDepositor.thresholdAmount !== null &&
-      amount >= largeDepositor.thresholdAmount
+      largeDepositor.threshold !== null &&
+      moneyToNumber(amount) >= moneyToNumber(largeDepositor.threshold)
     ) {
       await this.tryAssignTag(userId, 'large_depositor', 'single deposit crossed threshold');
     }
 
-    if (highRoller && highRoller.thresholdAmount !== null) {
+    if (highRoller && highRoller.threshold !== null) {
       const lifetimeDeposit = await this.walletReader.getLifetimeDeposit(userId);
-      if (lifetimeDeposit >= highRoller.thresholdAmount) {
+      if (moneyToNumber(lifetimeDeposit) >= moneyToNumber(highRoller.threshold)) {
         await this.tryAssignTag(userId, 'high_roller', 'lifetime deposits crossed threshold');
       } else {
         await this.tryRemoveTag(userId, 'high_roller', 'lifetime deposits below threshold');
@@ -102,13 +120,16 @@ export class TagEvaluationService {
    * Only assigns the tag when a threshold is crossed; never auto-removes
    * (risk designation requires an explicit admin clear).
    */
-  async onWithdrawalCompleted(payload: unknown): Promise<void> {
+  async onWithdrawalCompleted(payload: unknown) {
     const { userId, amount } = domainEventSchemas['wallet.withdrawal.completed'].parse(payload);
 
     const rule = await this.getEnabledRule('high_risk');
-    if (!rule) return;
+    if (!rule) {
+      return;
+    }
 
-    const amountBreached = rule.thresholdAmount !== null && amount >= rule.thresholdAmount;
+    const amountBreached =
+      rule.threshold !== null && moneyToNumber(amount) >= moneyToNumber(rule.threshold);
 
     let countBreached = false;
     if (rule.thresholdDays !== null && rule.thresholdCount !== null) {
@@ -129,7 +150,7 @@ export class TagEvaluationService {
    * Removes the inactive tag when a player logs in.
    * Called on identity.user.login.
    */
-  async onUserLogin(payload: unknown): Promise<void> {
+  async onUserLogin(payload: unknown) {
     const { userId } = domainEventSchemas['identity.user.login'].parse(payload);
     await this.tryRemoveTag(userId, 'inactive', 'player logged in');
   }
@@ -138,10 +159,12 @@ export class TagEvaluationService {
    * Applies the kyc_pending tag on KYC submission and clears any prior kyc_rejected.
    * Called on compliance.kyc.submitted. Respects the kyc_pending rule's isEnabled flag.
    */
-  async onKycSubmitted(payload: unknown): Promise<void> {
+  async onKycSubmitted(payload: unknown) {
     const { userId } = domainEventSchemas['compliance.kyc.submitted'].parse(payload);
     const rule = await this.getEnabledRule('kyc_pending');
-    if (!rule) return;
+    if (!rule) {
+      return;
+    }
     await this.tryRemoveTag(userId, 'kyc_rejected', 'kyc resubmitted');
     await this.tryAssignTag(userId, 'kyc_pending', 'kyc verification initiated');
   }
@@ -155,10 +178,12 @@ export class TagEvaluationService {
    *   rejected                       -> remove kyc_pending, assign kyc_rejected
    *   resubmission_requested         -> assign kyc_pending
    */
-  async onKycStatusUpdated(payload: unknown): Promise<void> {
+  async onKycStatusUpdated(payload: unknown) {
     const { userId, status } = domainEventSchemas['compliance.kyc.updated'].parse(payload);
     const rule = await this.getEnabledRule('kyc_pending');
-    if (!rule) return;
+    if (!rule) {
+      return;
+    }
 
     if (status === 'verified' || status === 'manually_overridden') {
       await this.tryRemoveTag(userId, 'kyc_pending', 'kyc approved');
@@ -181,15 +206,19 @@ export class TagEvaluationService {
    * Daily scheduled evaluation: assigns inactive to players who have not logged in
    * for rule.thresholdDays days. Removal is handled by onUserLogin on next login.
    */
-  async runDailyEvaluation(): Promise<void> {
+  async runDailyEvaluation() {
     const rule = await this.getEnabledRule('inactive');
-    if (!rule || rule.thresholdDays === null) return;
+    if (!rule || rule.thresholdDays === null) {
+      return;
+    }
 
     const sinceDate = new Date(Date.now() - rule.thresholdDays * 24 * 60 * 60 * 1000);
     const userIds = await this.identityReader.getPlayerIdsInactiveSince(sinceDate);
 
-    for (const userId of userIds) {
-      await this.tryAssignTag(userId, 'inactive', 'no login for configured threshold');
-    }
+    // Capped fan-out: the inactive-player set is unbounded, so hold at most EVAL_CHUNK_SIZE
+    // assignments in flight rather than one giant Promise.all that would exhaust the pool.
+    await mapConcurrent(userIds, EVAL_CHUNK_SIZE, (userId) =>
+      this.tryAssignTag(userId, 'inactive', 'no login for configured threshold'),
+    );
   }
 }

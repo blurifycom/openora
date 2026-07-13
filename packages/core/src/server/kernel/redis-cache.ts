@@ -12,23 +12,33 @@ export class RedisCache implements CacheAdapter {
   constructor(private readonly client: RedisClient) {}
 
   async get<T>(key: string): Promise<T | undefined> {
-    if (!this.client.isReady) return undefined;
+    if (!this.client.isReady) {
+      return undefined;
+    }
     const raw = await this.client.get(PREFIX + key);
-    if (raw === null) return undefined;
+    if (raw === null) {
+      return undefined;
+    }
     return JSON.parse(raw);
   }
 
   async set<T>(key: string, value: T, opts: { ttlMs: number }): Promise<void> {
-    if (!this.client.isReady) return;
+    if (!this.client.isReady) {
+      return;
+    }
     await this.client.set(PREFIX + key, JSON.stringify(value), {
       expiration: { type: 'PX', value: opts.ttlMs },
     });
   }
 
   async delete(key: string | string[]): Promise<void> {
-    if (!this.client.isReady) return;
+    if (!this.client.isReady) {
+      return;
+    }
     const keys = (Array.isArray(key) ? key : [key]).map((k) => PREFIX + k);
-    if (keys.length === 0) return;
+    if (keys.length === 0) {
+      return;
+    }
     await this.client.del(keys);
   }
 }

@@ -10,8 +10,12 @@ import { mock, mockDb } from '../../testing/mock.js';
 function makeDb(selectResult: unknown, insertResult: unknown): DrizzleService {
   const builder: unknown = new Proxy(function () {}, {
     get(_t, prop) {
-      if (prop === 'then') return (res: (v: unknown) => unknown) => res(selectResult);
-      if (prop === 'returning') return () => Promise.resolve(insertResult);
+      if (prop === 'then') {
+        return (res: (v: unknown) => unknown) => res(selectResult);
+      }
+      if (prop === 'returning') {
+        return () => Promise.resolve(insertResult);
+      }
       return () => builder;
     },
     apply: () => builder,
@@ -97,6 +101,31 @@ describe('KycVerificationService.submit', () => {
     );
     expect(dto.status).toBe('verified');
   });
+
+  it('passes verificationUrl through from a hosted-session adapter result', async () => {
+    const adapter = {
+      submit: vi.fn().mockResolvedValue({
+        referenceId: 'ref-1',
+        status: 'pending',
+        verificationUrl: 'https://vendor.example/session/abc',
+      }),
+      getStatus: vi.fn().mockResolvedValue('pending'),
+    };
+    const svc = newSvc({
+      db: makeDb([], [fullRow({ status: 'pending' })]),
+      adapter,
+    });
+    const dto = await svc.submit('user-1', { documents: [{ type: 'passport', frontUrl: 'u' }] });
+    expect(dto.verificationUrl).toBe('https://vendor.example/session/abc');
+  });
+
+  it('omits verificationUrl when the adapter does not return one', async () => {
+    const svc = newSvc({
+      db: makeDb([], [fullRow({ status: 'verified', decidedAt: new Date() })]),
+    });
+    const dto = await svc.submit('user-1', { documents: [{ type: 'passport', frontUrl: 'u' }] });
+    expect(dto.verificationUrl).toBeUndefined();
+  });
 });
 
 describe('KycVerificationService.reconcile', () => {
@@ -130,7 +159,7 @@ describe('KycVerificationService.reconcile', () => {
 });
 
 describe('KycVerificationService.handleDeposit (threshold re-KYC)', () => {
-  const cfg = { kyc: { reverifyThresholds: { USD: 500 } } };
+  const cfg = { kyc: { reverifyThresholds: { USD: '500' } } };
 
   it('flips a verified player to resubmission_requested once the threshold is crossed', async () => {
     const events = makeEvents();
@@ -182,14 +211,14 @@ describe('CumulativeDepositReKycTrigger', () => {
   it('fires on the first crossing at or above the per-currency threshold', () => {
     expect(
       trigger.requiresReverify(
-        { totalDeposits: 500, currency: 'USD', lastTriggeredDeposits: 0 },
-        { USD: 500 },
+        { totalDeposits: '500', currency: 'USD', lastTriggeredDeposits: '0' },
+        { USD: '500' },
       ),
     ).toBe(true);
     expect(
       trigger.requiresReverify(
-        { totalDeposits: 900, currency: 'USD', lastTriggeredDeposits: 0 },
-        { USD: 500 },
+        { totalDeposits: '900', currency: 'USD', lastTriggeredDeposits: '0' },
+        { USD: '500' },
       ),
     ).toBe(true);
   });
@@ -197,14 +226,14 @@ describe('CumulativeDepositReKycTrigger', () => {
   it('does not re-fire within the same band, but fires again on a fresh band (watermark)', () => {
     expect(
       trigger.requiresReverify(
-        { totalDeposits: 950, currency: 'USD', lastTriggeredDeposits: 900 },
-        { USD: 500 },
+        { totalDeposits: '950', currency: 'USD', lastTriggeredDeposits: '900' },
+        { USD: '500' },
       ),
     ).toBe(false);
     expect(
       trigger.requiresReverify(
-        { totalDeposits: 1000, currency: 'USD', lastTriggeredDeposits: 900 },
-        { USD: 500 },
+        { totalDeposits: '1000', currency: 'USD', lastTriggeredDeposits: '900' },
+        { USD: '500' },
       ),
     ).toBe(true);
   });
@@ -212,19 +241,19 @@ describe('CumulativeDepositReKycTrigger', () => {
   it('does not fire below the threshold or when the currency has none', () => {
     expect(
       trigger.requiresReverify(
-        { totalDeposits: 100, currency: 'USD', lastTriggeredDeposits: 0 },
-        { USD: 500 },
+        { totalDeposits: '100', currency: 'USD', lastTriggeredDeposits: '0' },
+        { USD: '500' },
       ),
     ).toBe(false);
     expect(
       trigger.requiresReverify(
-        { totalDeposits: 9999, currency: 'EUR', lastTriggeredDeposits: 0 },
-        { USD: 500 },
+        { totalDeposits: '9999', currency: 'EUR', lastTriggeredDeposits: '0' },
+        { USD: '500' },
       ),
     ).toBe(false);
     expect(
       trigger.requiresReverify(
-        { totalDeposits: 9999, currency: 'USD', lastTriggeredDeposits: 0 },
+        { totalDeposits: '9999', currency: 'USD', lastTriggeredDeposits: '0' },
         undefined,
       ),
     ).toBe(false);

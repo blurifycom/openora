@@ -1,8 +1,10 @@
 import { definePlugin, ADMIN_GUARD, EVENT_BUS, DRIZZLE } from '@openora/core/server';
+import * as z from 'zod';
 import {
   ADMIN_USER_DIRECTORY,
   ADMIN_WALLET_REPORTING,
   PAYMENT_ADAPTER,
+  PAYMENT_WEBHOOK_VERIFIER,
   WALLET_COMMANDS,
   WALLET_READER,
   PLATFORM_CONFIG,
@@ -16,6 +18,7 @@ import { WalletReaderService } from './adapters/wallet-reader.service.js';
 import { DrizzleAdminWalletReporting } from './admin-reporting.js';
 import { createWalletRouter } from './router/index.js';
 import { MockPaymentAdapter } from './adapters/mock/mock-payment-adapter.js';
+import { HmacPaymentWebhookVerifier } from './adapters/hmac-payment-webhook-verifier.js';
 
 export default definePlugin({
   // NOT dependsOn 'tag': that would cycle (tag hard-depends on wallet's WALLET_READER).
@@ -26,6 +29,14 @@ export default definePlugin({
   dependsOn: ['identity', 'audit'],
   register(ctx) {
     ctx.provide(PAYMENT_ADAPTER, () => new MockPaymentAdapter());
+    ctx.provide(PAYMENT_WEBHOOK_VERIFIER, () => {
+      const webhookSecret = z
+        .string()
+        .min(1)
+        .optional()
+        .parse(process.env.PAYMENT_WEBHOOK_SECRET || undefined);
+      return new HmacPaymentWebhookVerifier(webhookSecret);
+    });
     // Other modules debit through this port within their own transaction (never importing wallet tables). See ADR-0016.
     ctx.provide(WALLET_COMMANDS, () => new WalletCommandsService());
     // Read-only queries for cross-module consumers (eg tag evaluation). Never exposes wallet internals.
@@ -45,6 +56,8 @@ export default definePlugin({
         }),
         c.get(ADMIN_GUARD),
         c.get(AUDIT_WRITER),
+        c.get(PAYMENT_ADAPTER),
+        c.get(PAYMENT_WEBHOOK_VERIFIER),
       ),
     );
   },

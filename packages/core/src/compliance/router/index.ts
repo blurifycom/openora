@@ -17,12 +17,6 @@ import {
 } from '../service/rg.service.js';
 import { RgMonitoringService } from '../service/rg-monitoring.service.js';
 
-function headerValue(context: OssContext, name: string): string | null {
-  const raw = context.request.headers[name];
-  if (Array.isArray(raw)) return raw[0] ?? null;
-  return raw ?? null;
-}
-
 export function createComplianceRouter({
   compliance,
   adminGuard,
@@ -85,10 +79,7 @@ export function createComplianceRouter({
     // signature header or reject (fail closed); never fall back to an empty body.
     kycWebhook: os.kycWebhook.handler(async ({ context }) => {
       const rawBody = context.rawBody;
-      if (
-        rawBody === undefined ||
-        !webhookVerifier.verify(rawBody, headerValue(context, 'x-kyc-signature'))
-      ) {
+      if (rawBody === undefined || !webhookVerifier.verify(rawBody, context.request.headers)) {
         throw new ORPCError('UNAUTHORIZED', { message: 'Invalid KYC webhook signature' });
       }
       const decision = kycAdapter.parseWebhook?.(rawBody, context.request.headers);

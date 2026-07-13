@@ -20,7 +20,15 @@ export type AuthOptions = {
   sendEmail?: SendEmail;
 };
 
-// Explicit return type avoids TS2883 (Zod v4 $strip portability issue with admin plugin).
+/**
+ * Builds the one shared better-auth instance for the whole app - both the
+ * per-request session middleware and `AdminGuard` resolve sessions through it,
+ * never a second `createAuth()` over the same DB. Bundles the org, admin
+ * (role/permission), and two-factor plugins; `sendEmail` is a silent no-op
+ * when omitted (eg tests) rather than throwing. The explicit `BetterAuthType`
+ * return annotation is load-bearing, not stylistic - it dodges a TS2883 Zod v4
+ * `$strip` portability error the inferred type would otherwise surface.
+ */
 export function createAuth(options: AuthOptions): BetterAuthType {
   const sendEmail: SendEmail = options.sendEmail ?? (() => {});
   return betterAuth({

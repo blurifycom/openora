@@ -11,9 +11,11 @@ import {
   withAdvisoryXactLock,
   assertRateLimit,
   createLogger,
+  moneyToNumber,
 } from '@openora/core/server';
 import {
   type PaymentAdapter,
+  type PaymentWebhookEvent,
   type AdminUserDirectory,
   type PlatformConfig,
   type KycStatus,
@@ -22,6 +24,7 @@ import {
   type PlayerTags,
   type AuditWritePort,
   type TagKey,
+  type User,
 } from '@openora/core/contracts';
 import { eq, desc, sql, and, gte, lte, count, inArray } from 'drizzle-orm';
 import { createHash } from 'node:crypto';
@@ -29,6 +32,7 @@ import {
   wallet,
   walletTransaction,
   autoWithdrawalRule,
+  walletDepositAddress,
   type Wallet,
   type WalletTransaction,
   type AutoWithdrawalRule as AutoWithdrawalRuleRow,
@@ -45,7 +49,7 @@ const logger = createLogger('wallet');
 export const WalletNotFoundError = makeNotFoundError('Wallet');
 export const WithdrawalNotFoundError = makeNotFoundError('Withdrawal');
 
-export const InsufficientBalanceError = createDomainError(
+export const InsufficientBalanceError = createDomainError<[available: string, requested: string]>(
   'InsufficientBalanceError',
   (available, requested) => `Insufficient balance: available ${available}, requested ${requested}`,
 );
@@ -63,6 +67,16 @@ export const KycRequiredError = makeConflictError(
 export const IdempotencyKeyReuseError = makeConflictError(
   'IdempotencyKeyReuseError',
   'Idempotency key was already used with a different amount',
+);
+
+export const DepositAddressUnsupportedError = makeConflictError(
+  'DepositAddressUnsupportedError',
+  'The bound payment adapter does not support address-based deposits',
+);
+
+export const DestinationAddressRequiredError = makeConflictError(
+  'DestinationAddressRequiredError',
+  'A destination address is required for a crypto-rail withdrawal',
 );
 
 // Statuses that satisfy the withdrawal KYC gate.
@@ -106,7 +120,8 @@ function namespacedIdempotencyKey(namespace: string, rawKey: string): string {
 
 // ponytail: a flat, currency-agnostic threshold - a starter heuristic for the review
 // queue, not a compliance risk engine. Revisit with a real risk service if/when one exists.
-const LARGE_WITHDRAWAL_THRESHOLD = 5000;
+// moneyToNumber is the sanctioned JS conversion point for this heuristic comparison only.
+const LARGE_WITHDRAWAL_THRESHOLD = '5000';
 
 // ponytail: >=3 withdrawals in a 24h window flags velocity; a flat count, not a per-tier rule.
 const HIGH_FREQUENCY_WINDOW_MS = 24 * 60 * 60 * 1000;
@@ -118,13 +133,13 @@ const DAILY_CAP_WINDOW_MS = 24 * 60 * 60 * 1000;
 const AUTO_APPROVED_REASON = 'auto-approved';
 
 type AutoApprovalDecision = {
-  threshold: number;
+  threshold: string;
   thresholdSource: 'per-player' | 'global';
   kycStatus: KycStatus;
   riskTagsEvaluated: TagKey[];
-  dailyCapAmount: number | null;
+  dailyCapAmount: string | null;
   dailyCapCount: number | null;
-  cumulativeAmountUsed: number;
+  cumulativeAmountUsed: string;
   cumulativeCountUsed: number;
 };
 
@@ -138,7 +153,7 @@ function toAutoWithdrawalRuleDto(row: AutoWithdrawalRuleRow): AutoWithdrawalRule
   return {
     id: row.id,
     userId: row.userId,
-    threshold: Number(row.threshold),
+    threshold: row.threshold,
     reason: row.reason,
     createdBy: row.createdBy,
     createdAt: row.createdAt.toISOString(),
@@ -165,6 +180,14 @@ export type WalletServiceDeps = {
   audit: AuditWritePort;
 };
 
+/**
+ * Owns all wallet balance mutations and the withdrawal review/auto-approval
+ * pipeline. Every balance change is a transactional, idempotent-keyed ledger
+ * write (never a bare balance update) - `amount` is always a decimal string,
+ * mutated via SQL numeric arithmetic, never a JS float. Domain events emit only
+ * AFTER the owning transaction commits, and only for the non-replay branch of
+ * an idempotent call.
+ */
 export class WalletService {
   private readonly drizzle: DrizzleService;
   private readonly events: EventBus;
@@ -195,34 +218,46 @@ export class WalletService {
     this.audit = audit;
   }
 
-  private rateLimit(userId: string) {
+  private rateLimit(userId: User['id']) {
     return this.limiter
       ? assertRateLimit(this.limiter, `wallet-mutation:${userId}`, WALLET_MUTATION_RATE_LIMIT)
       : Promise.resolve();
   }
 
   /** Fail-closed KYC gate: when enabled, a withdrawal needs a passing status (verified|manually_overridden). */
-  private async assertKycForWithdrawal(userId: string) {
-    if (!this.platformConfig?.kyc?.gateWithdrawals) return;
+  private async assertKycForWithdrawal(userId: User['id']) {
+    if (!this.platformConfig?.kyc?.gateWithdrawals) {
+      return;
+    }
     const status = await this.autoApprovalKycStatus(userId);
     if (!status || !KYC_PASS_STATUSES.has(status)) {
       throw new KycRequiredError();
     }
   }
 
-  async getBalance(userId: string) {
+  async getBalance(userId: User['id']) {
     const [record] = await this.drizzle.db.select().from(wallet).where(eq(wallet.userId, userId));
 
     if (!record) {
-      return { balance: 0, currency: 'USD' };
+      return { balance: '0', currency: 'USD' };
     }
 
     return {
-      balance: Number(record.balance),
+      balance: record.balance,
       currency: record.currency,
     };
   }
 
+  /**
+   * `idempotencyKey` (when supplied) makes a retried deposit a no-op: a replay
+   * returns the original committed result WITHOUT calling the PSP again or
+   * crediting the balance twice, and rejects if the same key is reused with a
+   * different amount/currency (`IdempotencyKeyReuseError`). A GENUINE
+   * concurrent race (two first-attempts, same key, landing at once) can both
+   * reach the PSP, but the ledger insert's unique-index conflict still
+   * guarantees only one balance credit - the loser's write becomes a replay
+   * read of the winner's row.
+   */
   async deposit({
     userId,
     amount,
@@ -230,8 +265,8 @@ export class WalletService {
     provider,
     idempotencyKey,
   }: {
-    userId: string;
-    amount: number;
+    userId: User['id'];
+    amount: string;
     currency: string;
     provider?: string;
     idempotencyKey?: string;
@@ -245,7 +280,9 @@ export class WalletService {
     let preResolvedWallet: Wallet | undefined;
     if (idempotencyKey) {
       const found = await this.findDepositReplay({ userId, idempotencyKey, amount, currency });
-      if (found.replay) return found.replay;
+      if (found.replay) {
+        return found.replay;
+      }
       preResolvedWallet = found.walletRecord;
     }
 
@@ -257,22 +294,22 @@ export class WalletService {
         [walletRecord] = await txn.select().from(wallet).where(eq(wallet.userId, userId));
       }
       if (!walletRecord) {
-        [walletRecord] = await txn
-          .insert(wallet)
-          .values({ userId, balance: '0', currency })
-          .returning();
+        walletRecord = findOneOrThrow(
+          await txn.insert(wallet).values({ userId, balance: '0', currency }).returning(),
+          new WalletNotFoundError(userId),
+        );
       }
 
       const { row, replayed } = await this.insertIdempotentTransaction(txn, {
         namespace: DEPOSIT_IDEMPOTENCY_NAMESPACE,
-        walletId: walletRecord!.id,
+        walletId: walletRecord.id,
         rawIdempotencyKey: idempotencyKey,
         amount,
         currency,
         values: {
-          walletId: walletRecord!.id,
+          walletId: walletRecord.id,
           type: 'deposit',
-          amount: amount.toString(),
+          amount,
           currency,
           status: 'completed',
           rail: railFor(currency),
@@ -284,15 +321,20 @@ export class WalletService {
       if (!replayed) {
         await txn
           .update(wallet)
-          .set({ balance: sql`${wallet.balance} + ${amount}` })
-          .where(eq(wallet.id, walletRecord!.id));
+          .set({ balance: sql`${wallet.balance} + ${amount}::numeric` })
+          .where(eq(wallet.id, walletRecord.id));
       }
 
       return { transactionId: row.id, replayed };
     });
 
     if (!replayed) {
-      this.events.emit('wallet.deposit.completed', { userId, amount, currency, transactionId });
+      this.events.emit('wallet.deposit.completed', {
+        userId,
+        amount,
+        currency,
+        transactionId,
+      });
     }
 
     return { transactionId, status: 'completed' };
@@ -306,29 +348,35 @@ export class WalletService {
     amount,
     currency,
   }: {
-    userId: string;
+    userId: User['id'];
     idempotencyKey: string;
-    amount: number;
+    amount: string;
     currency: string;
   }): Promise<{ walletRecord: Wallet | undefined; replay: TransactionResult | undefined }> {
     const [walletRecord] = await this.drizzle.db
       .select()
       .from(wallet)
       .where(eq(wallet.userId, userId));
-    if (!walletRecord) return { walletRecord: undefined, replay: undefined };
+    if (!walletRecord) {
+      return { walletRecord: undefined, replay: undefined };
+    }
     const existing = await this.findByIdempotencyKey(
       this.drizzle.db,
       walletRecord.id,
       namespacedIdempotencyKey(DEPOSIT_IDEMPOTENCY_NAMESPACE, idempotencyKey),
     );
-    if (!existing) return { walletRecord, replay: undefined };
+    if (!existing) {
+      return { walletRecord, replay: undefined };
+    }
     this.assertReplayMatches(existing, amount, currency);
     return { walletRecord, replay: { transactionId: existing.id, status: existing.status } };
   }
 
-  private assertReplayMatches(existing: WalletTransaction, amount: number, currency: string): void {
+  // Replay comparison only (not a ledger write) - moneyToNumber avoids a false mismatch
+  // between an unnormalized caller string (eg "10") and the DB's fixed-scale value ("10.00").
+  private assertReplayMatches(existing: WalletTransaction, amount: string, currency: string): void {
     if (
-      Number(existing.amount) !== amount ||
+      moneyToNumber(existing.amount) !== moneyToNumber(amount) ||
       existing.currency.toUpperCase() !== currency.toUpperCase()
     ) {
       throw new IdempotencyKeyReuseError();
@@ -349,9 +397,9 @@ export class WalletService {
       values,
     }: {
       namespace: string;
-      walletId: string;
+      walletId: Wallet['id'];
       rawIdempotencyKey: string | undefined;
-      amount: number;
+      amount: string;
       currency: string;
       values: Omit<typeof walletTransaction.$inferInsert, 'idempotencyKey'>;
     },
@@ -367,7 +415,9 @@ export class WalletService {
       ? await insertQuery.onConflictDoNothing().returning()
       : await insertQuery.returning();
 
-    if (row) return { row, replayed: false };
+    if (row) {
+      return { row, replayed: false };
+    }
 
     // Only the keyed (onConflictDoNothing) branch above can return an empty `returning()`
     // - the plain-insert branch always yields exactly one row.
@@ -384,20 +434,34 @@ export class WalletService {
     return { row: winner, replayed: true };
   }
 
-  /** Creates a PENDING withdrawal and HOLDS the funds (balance debited at request time). Funds are returned on reject/PSP-failure. */
+  /**
+   * Creates a PENDING withdrawal and HOLDS the funds immediately (balance
+   * debited at request time, not on approval) - funds are returned on
+   * reject/PSP-failure. The debit is a conditional `UPDATE ... WHERE balance
+   * >= amount`, atomic with the row lock (`FOR UPDATE`) taken on the wallet,
+   * so two concurrent withdrawals can't both pass a balance check and
+   * double-spend. `idempotencyKey` replay semantics mirror `deposit()`. May
+   * return an already-`completed`/`processing` result if the request
+   * qualifies for (and passes) auto-approval - see `maybeAutoApprove`.
+   */
   async withdraw({
     userId,
     amount,
     currency,
     idempotencyKey,
+    destinationAddress,
   }: {
-    userId: string;
-    amount: number;
+    userId: User['id'];
+    amount: string;
     currency: string;
     idempotencyKey?: string;
+    destinationAddress?: string;
   }): Promise<TransactionResult> {
     await this.rateLimit(userId);
     await this.assertKycForWithdrawal(userId);
+    if (railFor(currency) === 'crypto' && !destinationAddress) {
+      throw new DestinationAddressRequiredError();
+    }
 
     const { transactionId, status, replayed, walletId, rail } = await this.drizzle.db.transaction(
       async (txn) => {
@@ -439,10 +503,11 @@ export class WalletService {
           values: {
             walletId: current.id,
             type: 'withdrawal',
-            amount: amount.toString(),
+            amount,
             currency,
             status: 'pending',
             rail: railFor(currency),
+            destinationAddress: destinationAddress ?? null,
           },
         });
 
@@ -459,11 +524,11 @@ export class WalletService {
         // Guarded conditional debit: the WHERE makes balance>=amount atomic with the write; 0 rows back rolls back the whole tx.
         const debited = await txn
           .update(wallet)
-          .set({ balance: sql`${wallet.balance} - ${amount}` })
-          .where(and(eq(wallet.id, current.id), gte(wallet.balance, amount.toString())))
+          .set({ balance: sql`${wallet.balance} - ${amount}::numeric` })
+          .where(and(eq(wallet.id, current.id), gte(wallet.balance, amount)))
           .returning({ id: wallet.id });
         if (debited.length !== 1) {
-          throw new InsufficientBalanceError(Number(current.balance), amount);
+          throw new InsufficientBalanceError(current.balance, amount);
         }
 
         return {
@@ -476,9 +541,16 @@ export class WalletService {
       },
     );
 
-    if (replayed) return { transactionId, status };
+    if (replayed) {
+      return { transactionId, status };
+    }
 
-    this.events.emit('wallet.withdrawal.requested', { userId, amount, currency, transactionId });
+    this.events.emit('wallet.withdrawal.requested', {
+      userId,
+      amount,
+      currency,
+      transactionId,
+    });
 
     // Fail-closed post-step: decides who approves (system vs manual queue), never throws out of withdraw() - failure leaves the row pending.
     const auto = await this.maybeAutoApprove({
@@ -497,14 +569,20 @@ export class WalletService {
     const { page, limit } = filters;
 
     const conditions = [eq(walletTransaction.type, 'withdrawal')];
-    if (filters.status) conditions.push(eq(walletTransaction.status, filters.status));
-    if (filters.currency) conditions.push(eq(walletTransaction.currency, filters.currency));
-    if (filters.rail) conditions.push(eq(walletTransaction.rail, filters.rail));
+    if (filters.status) {
+      conditions.push(eq(walletTransaction.status, filters.status));
+    }
+    if (filters.currency) {
+      conditions.push(eq(walletTransaction.currency, filters.currency));
+    }
+    if (filters.rail) {
+      conditions.push(eq(walletTransaction.rail, filters.rail));
+    }
     if (filters.minAmount !== undefined) {
-      conditions.push(gte(walletTransaction.amount, filters.minAmount.toString()));
+      conditions.push(gte(walletTransaction.amount, filters.minAmount));
     }
     if (filters.maxAmount !== undefined) {
-      conditions.push(lte(walletTransaction.amount, filters.maxAmount.toString()));
+      conditions.push(lte(walletTransaction.amount, filters.maxAmount));
     }
     if (filters.dateFrom) {
       conditions.push(gte(walletTransaction.createdAt, new Date(filters.dateFrom)));
@@ -530,7 +608,7 @@ export class WalletService {
       ? rows.filter((r) => byUserId.get(r.userId)?.kycStatus === filters.kycStatus)
       : rows;
 
-    const start = (page - 1) * limit;
+    const start = pageToOffset(page, limit);
     const pageRows = matching.slice(start, start + limit);
 
     // One batched velocity query for the page (no N+1); shares the window + threshold + query the auto-approval evaluator uses.
@@ -540,19 +618,25 @@ export class WalletService {
     const items: WithdrawalQueueItem[] = pageRows.map((r) => {
       const summary = byUserId.get(r.userId);
       const riskTags: string[] = [];
-      if (Number(r.tx.amount) >= LARGE_WITHDRAWAL_THRESHOLD) riskTags.push('large_amount');
-      if (frequentWalletIds.has(r.tx.walletId)) riskTags.push('high_frequency');
+      if (moneyToNumber(r.tx.amount) >= moneyToNumber(LARGE_WITHDRAWAL_THRESHOLD)) {
+        riskTags.push('large_amount');
+      }
+      if (frequentWalletIds.has(r.tx.walletId)) {
+        riskTags.push('high_frequency');
+      }
       return {
         transactionId: r.tx.id,
         userId: r.userId,
         username: summary?.username ?? '',
-        amount: Number(r.tx.amount),
+        amount: r.tx.amount,
         currency: r.tx.currency,
         rail: r.tx.rail ?? null,
         status: r.tx.status,
         kycStatus: summary?.kycStatus ?? null,
         riskTags,
         requestedAt: r.tx.createdAt.toISOString(),
+        destinationAddress: r.tx.destinationAddress,
+        txHash: r.tx.txHash,
       };
     });
 
@@ -564,7 +648,10 @@ export class WalletService {
    * or Failed + refund on PSP error. Robust PSP idempotency-key/reconciliation for a
    * lost-response is deferred - same scope boundary the deposit path declares.
    */
-  async approveWithdrawal(adminId: string, withdrawalId: string): Promise<TransactionResult> {
+  async approveWithdrawal(
+    adminId: User['id'],
+    withdrawalId: WalletTransaction['id'],
+  ): Promise<TransactionResult> {
     // Two-phase: commit the `processing` flip first (FOR UPDATE lock), then call the PSP OUTSIDE
     // the tx (a failure refunds in a second tx). Never inline the PSP call inside the hold transaction.
     const tx = await this.drizzle.db.transaction((txn) =>
@@ -582,8 +669,8 @@ export class WalletService {
     reviewReason,
   }: {
     txn: DrizzleTx;
-    withdrawalId: string;
-    adminId: string | null;
+    withdrawalId: WalletTransaction['id'];
+    adminId: User['id'] | null;
     reviewReason?: string;
   }): Promise<WalletTransaction> {
     const current = findOneOrThrow(
@@ -598,27 +685,29 @@ export class WalletService {
     if (current.status !== 'pending' || current.type !== 'withdrawal') {
       throw new WithdrawalNotPendingError();
     }
-    const [updated] = await txn
-      .update(walletTransaction)
-      .set({
-        status: 'processing',
-        reviewedBy: adminId,
-        reviewedAt: new Date(),
-        ...(reviewReason !== undefined ? { reviewReason } : {}),
-      })
-      .where(eq(walletTransaction.id, withdrawalId))
-      .returning();
-    return updated!;
+    return findOneOrThrow(
+      await txn
+        .update(walletTransaction)
+        .set({
+          status: 'processing',
+          reviewedBy: adminId,
+          reviewedAt: new Date(),
+          ...(reviewReason !== undefined ? { reviewReason } : {}),
+        })
+        .where(eq(walletTransaction.id, withdrawalId))
+        .returning(),
+      new WithdrawalNotFoundError(withdrawalId),
+    );
   }
 
   // Phase two: settle a `processing` withdrawal via the PSP (Completed on success, Failed + refund on error).
   // Runs OUTSIDE the hold/flip transaction so the external PSP call never holds a DB lock.
   private async settleApproved(
     tx: WalletTransaction,
-    adminId: string | null,
+    adminId: User['id'] | null,
   ): Promise<TransactionResult> {
     const userId = await this.userIdForWallet(tx.walletId);
-    const amount = Number(tx.amount);
+    const amount = tx.amount;
     // approved/failed are admin-attributed events (schema requires a uuid adminId); the system auto path
     // skips them - its trail is the AUDIT_WRITER entry plus the shared `completed` event below.
     if (adminId) {
@@ -638,29 +727,25 @@ export class WalletService {
         userId,
         rail: tx.rail,
         adminId,
+        destinationAddress: tx.destinationAddress,
       });
     } catch (err) {
       // Payout did not happen - mark failed and return the held funds in one transaction.
-      await this.drizzle.db.transaction(async (txn) => {
-        await txn
-          .update(walletTransaction)
-          .set({ status: 'failed' })
-          .where(eq(walletTransaction.id, tx.id));
-        await txn
-          .update(wallet)
-          .set({ balance: sql`${wallet.balance} + ${amount}` })
-          .where(eq(wallet.id, tx.walletId));
-      });
-      if (adminId) {
-        this.events.emit('wallet.withdrawal.failed', {
-          userId,
-          amount,
-          currency: tx.currency,
-          transactionId: tx.id,
-          adminId,
-        });
-      }
+      await this.finalizeFailedWithdrawal({ tx, adminId, userId, amount });
       throw err;
+    }
+
+    if (result.status === 'failed') {
+      await this.finalizeFailedWithdrawal({ tx, adminId, userId, amount });
+      return { transactionId: tx.id, status: 'failed' };
+    }
+
+    if (result.status !== 'completed') {
+      await this.drizzle.db
+        .update(walletTransaction)
+        .set({ providerName: providerNameFor(tx.rail), providerRefId: result.externalId })
+        .where(eq(walletTransaction.id, tx.id));
+      return { transactionId: tx.id, status: 'processing' };
     }
 
     await this.drizzle.db
@@ -681,25 +766,106 @@ export class WalletService {
     return { transactionId: tx.id, status: 'completed' };
   }
 
+  private async finalizeFailedWithdrawal({
+    tx,
+    adminId,
+    userId,
+    amount,
+  }: {
+    tx: WalletTransaction;
+    adminId: User['id'] | null;
+    userId: User['id'];
+    amount: string;
+  }): Promise<void> {
+    const transitioned = await this.drizzle.db.transaction(async (txn) => {
+      const updated = await txn
+        .update(walletTransaction)
+        .set({ status: 'failed' })
+        .where(and(eq(walletTransaction.id, tx.id), eq(walletTransaction.status, 'processing')))
+        .returning({ id: walletTransaction.id });
+      if (updated.length === 0) {
+        return false;
+      }
+      await txn
+        .update(wallet)
+        .set({ balance: sql`${wallet.balance} + ${amount}::numeric` })
+        .where(eq(wallet.id, tx.walletId));
+      return true;
+    });
+    if (transitioned && adminId) {
+      this.events.emit('wallet.withdrawal.failed', {
+        userId,
+        amount,
+        currency: tx.currency,
+        transactionId: tx.id,
+        adminId,
+      });
+    }
+  }
+
+  async reconcileWithdrawalStatus(
+    event: Extract<PaymentWebhookEvent, { kind: 'withdrawal' }>,
+  ): Promise<void> {
+    const { externalId, status, txHash } = event;
+    const [tx] = await this.drizzle.db
+      .select()
+      .from(walletTransaction)
+      .where(eq(walletTransaction.providerRefId, externalId));
+    if (!tx || tx.type !== 'withdrawal') {
+      logger.warn({ externalId }, 'payment webhook: no matching withdrawal for providerRefId');
+      return;
+    }
+    if (tx.status !== 'processing') {
+      return;
+    }
+
+    const userId = await this.userIdForWallet(tx.walletId);
+
+    if (status === 'completed') {
+      const updated = await this.drizzle.db
+        .update(walletTransaction)
+        .set({ status: 'completed', txHash: txHash ?? tx.txHash })
+        .where(and(eq(walletTransaction.id, tx.id), eq(walletTransaction.status, 'processing')))
+        .returning({ id: walletTransaction.id });
+      if (updated.length === 0) {
+        return;
+      }
+      this.events.emit('wallet.withdrawal.completed', {
+        userId,
+        amount: tx.amount,
+        currency: tx.currency,
+        transactionId: tx.id,
+      });
+      return;
+    }
+
+    if (status === 'failed') {
+      await this.finalizeFailedWithdrawal({ tx, adminId: null, userId, amount: tx.amount });
+    }
+  }
+
   // Evaluates the auto-approval gates and settles the payout if all pass; returns undefined to
   // leave the row pending for the manual queue. NEVER throws: any error fails closed to manual.
   private async maybeAutoApprove(args: {
-    userId: string;
-    amount: number;
+    userId: User['id'];
+    amount: string;
     currency: string;
-    transactionId: string;
-    walletId: string;
+    transactionId: WalletTransaction['id'];
+    walletId: Wallet['id'];
     rail: WalletRail;
   }): Promise<TransactionResult | undefined> {
-    // Cheap gates first (auto-approval off, or crypto - never auto-approved): skip opening a tx/lock.
-    if (!this.platformConfig?.autoWithdrawal?.enabled || args.rail !== 'fiat') return undefined;
+    if (!this.platformConfig?.autoWithdrawal?.enabled) {
+      return undefined;
+    }
 
     try {
       const cfg = this.platformConfig.autoWithdrawal;
 
       // Threshold/KYC/risk/velocity gates run outside any lock; only the cap check below needs serializing.
       const gates = await this.evaluateAutoApproval(args);
-      if (!gates) return undefined;
+      if (!gates) {
+        return undefined;
+      }
 
       // Serialize the cap-check-and-flip per user with an advisory lock: without it two concurrent
       // withdrawals read the same daily-cap usage and both auto-approve, bypassing the cap. The cap read
@@ -711,7 +877,9 @@ export class WalletService {
             { walletId: args.walletId, amount: args.amount, cfg },
             txn,
           );
-          if (caps.exceeded) return null;
+          if (caps.exceeded) {
+            return null;
+          }
           const tx = await this.flipToProcessing({
             txn,
             withdrawalId: args.transactionId,
@@ -721,7 +889,9 @@ export class WalletService {
           return { tx, caps };
         }),
       );
-      if (!decided) return undefined;
+      if (!decided) {
+        return undefined;
+      }
 
       const decision: AutoApprovalDecision = {
         ...gates,
@@ -738,7 +908,12 @@ export class WalletService {
           action: 'wallet.withdrawal.auto_approved',
           resourceType: 'wallet_transaction',
           resourceId: args.transactionId,
-          after: { userId: args.userId, amount: args.amount, currency: args.currency, ...decision },
+          after: {
+            userId: args.userId,
+            amount: args.amount,
+            currency: args.currency,
+            ...decision,
+          },
         });
       } catch (err) {
         // The flip already committed; an audit-write failure must not strand the row `processing`
@@ -766,31 +941,42 @@ export class WalletService {
     walletId,
     rail,
   }: {
-    userId: string;
-    amount: number;
-    walletId: string;
+    userId: User['id'];
+    amount: string;
+    walletId: Wallet['id'];
     rail: WalletRail;
   }): Promise<AutoApprovalGates | null> {
     const cfg = this.platformConfig?.autoWithdrawal;
-    if (!cfg?.enabled) return null;
-    // Hard stop: crypto is irreversible and AML-sensitive - never auto-approved.
-    if (rail !== 'fiat') return null;
-
-    const threshold = await this.resolveAutoThreshold(userId);
-    if (!threshold || threshold.value <= 0) return null;
-    if (amount > threshold.value) return null;
+    if (!cfg?.enabled) {
+      return null;
+    }
+    const threshold = await this.resolveAutoThreshold(userId, rail);
+    if (!threshold || moneyToNumber(threshold.value) <= 0) {
+      return null;
+    }
+    if (moneyToNumber(amount) > moneyToNumber(threshold.value)) {
+      return null;
+    }
 
     // Independent of kyc.gateWithdrawals: auto-approval always demands a passing status; anything else fails closed.
     const kycStatus = await this.autoApprovalKycStatus(userId);
-    if (!kycStatus || !KYC_PASS_STATUSES.has(kycStatus)) return null;
+    if (!kycStatus || !KYC_PASS_STATUSES.has(kycStatus)) {
+      return null;
+    }
 
     const riskTags = await this.autoApprovalRiskTags(userId, cfg.excludeRiskFlags);
     // null = exclusions configured but the lookup port is unavailable => fail closed.
-    if (riskTags === null) return null;
-    if (riskTags.some((t) => cfg.excludeRiskFlags.includes(t))) return null;
+    if (riskTags === null) {
+      return null;
+    }
+    if (riskTags.some((t) => cfg.excludeRiskFlags.includes(t))) {
+      return null;
+    }
 
     const heuristics = await this.autoApprovalHeuristics({ walletId, amount });
-    if (heuristics.largeAmount || heuristics.highFrequency) return null;
+    if (heuristics.largeAmount || heuristics.highFrequency) {
+      return null;
+    }
 
     return {
       threshold: threshold.value,
@@ -800,34 +986,47 @@ export class WalletService {
     };
   }
 
-  // Per-player rule wins over the global fiat threshold; null when neither is set.
   private async resolveAutoThreshold(
-    userId: string,
-  ): Promise<{ value: number; source: 'per-player' | 'global' } | null> {
+    userId: User['id'],
+    rail: WalletRail,
+  ): Promise<{ value: string; source: 'per-player' | 'global' } | null> {
     const [rule] = await this.drizzle.db
       .select()
       .from(autoWithdrawalRule)
       .where(eq(autoWithdrawalRule.userId, userId));
-    if (rule) return { value: Number(rule.threshold), source: 'per-player' };
-    const global = this.platformConfig?.autoWithdrawal?.fiatThreshold;
-    if (global !== undefined) return { value: global, source: 'global' };
+    if (rule) {
+      return { value: rule.threshold, source: 'per-player' };
+    }
+    const global =
+      rail === 'crypto'
+        ? this.platformConfig?.autoWithdrawal?.cryptoThreshold
+        : this.platformConfig?.autoWithdrawal?.fiatThreshold;
+    if (global !== undefined) {
+      return { value: global, source: 'global' };
+    }
     return null;
   }
 
-  private async autoApprovalKycStatus(userId: string): Promise<KycStatus | null> {
+  private async autoApprovalKycStatus(userId: User['id']): Promise<KycStatus | null> {
     // No directory bound => cannot verify KYC => fail closed.
-    if (!this.directory) return null;
+    if (!this.directory) {
+      return null;
+    }
     const [summary] = await this.directory.lookupPlayers([userId]);
     return summary?.kycStatus ?? null;
   }
 
   // Active tag keys; [] when no exclusions configured or none carried; null when configured but the port is unbound (fail closed).
   private async autoApprovalRiskTags(
-    userId: string,
+    userId: User['id'],
     excludeRiskFlags: readonly TagKey[],
   ): Promise<TagKey[] | null> {
-    if (excludeRiskFlags.length === 0) return [];
-    if (!this.riskTags) return null;
+    if (excludeRiskFlags.length === 0) {
+      return [];
+    }
+    if (!this.riskTags) {
+      return null;
+    }
     const byUser = await this.riskTags.getActiveTagKeys([userId]);
     return byUser.get(userId) ?? [];
   }
@@ -836,12 +1035,12 @@ export class WalletService {
     walletId,
     amount,
   }: {
-    walletId: string;
-    amount: number;
+    walletId: Wallet['id'];
+    amount: string;
   }): Promise<{ largeAmount: boolean; highFrequency: boolean }> {
     const frequent = await this.frequentWithdrawalWalletIds(this.drizzle.db, [walletId]);
     return {
-      largeAmount: amount >= LARGE_WITHDRAWAL_THRESHOLD,
+      largeAmount: moneyToNumber(amount) >= moneyToNumber(LARGE_WITHDRAWAL_THRESHOLD),
       highFrequency: frequent.has(walletId),
     };
   }
@@ -853,7 +1052,9 @@ export class WalletService {
     walletIds: string[],
   ): Promise<Set<string>> {
     const frequent = new Set<string>();
-    if (walletIds.length === 0) return frequent;
+    if (walletIds.length === 0) {
+      return frequent;
+    }
     const since = new Date(Date.now() - HIGH_FREQUENCY_WINDOW_MS);
     const counts = await db
       .select({ walletId: walletTransaction.walletId, n: count() })
@@ -867,7 +1068,9 @@ export class WalletService {
       )
       .groupBy(walletTransaction.walletId);
     for (const row of counts) {
-      if (Number(row.n) >= HIGH_FREQUENCY_MIN_COUNT) frequent.add(row.walletId);
+      if (Number(row.n) >= HIGH_FREQUENCY_MIN_COUNT) {
+        frequent.add(row.walletId);
+      }
     }
     return frequent;
   }
@@ -880,15 +1083,18 @@ export class WalletService {
       amount,
       cfg,
     }: {
-      walletId: string;
-      amount: number;
+      walletId: Wallet['id'];
+      amount: string;
       cfg: NonNullable<PlatformConfig['autoWithdrawal']>;
     },
     db: DrizzleTx,
-  ): Promise<{ exceeded: boolean; amountUsed: number; countUsed: number }> {
+  ): Promise<{ exceeded: boolean; amountUsed: string; countUsed: number }> {
     const since = new Date(Date.now() - DAILY_CAP_WINDOW_MS);
     const [row] = await db
-      .select({ total: sql<string>`coalesce(sum(${walletTransaction.amount}), 0)`, n: count() })
+      .select({
+        total: sql<string>`coalesce(sum(${walletTransaction.amount}), 0)`,
+        n: count(),
+      })
       .from(walletTransaction)
       .where(
         and(
@@ -898,10 +1104,13 @@ export class WalletService {
           gte(walletTransaction.createdAt, since),
         ),
       );
-    const amountUsed = Number(row?.total ?? 0);
+    const amountUsed = row?.total ?? '0';
     const countUsed = Number(row?.n ?? 0);
+    // Cap comparison is a review-queue decision, not a ledger write - moneyToNumber is the
+    // documented single conversion point (see the helper's own doc comment).
     const amountExceeded =
-      cfg.dailyCapAmount !== undefined && amountUsed + amount > cfg.dailyCapAmount;
+      cfg.dailyCapAmount !== undefined &&
+      moneyToNumber(amountUsed) + moneyToNumber(amount) > moneyToNumber(cfg.dailyCapAmount);
     const countExceeded = cfg.dailyCapCount !== undefined && countUsed + 1 > cfg.dailyCapCount;
     return { exceeded: amountExceeded || countExceeded, amountUsed, countUsed };
   }
@@ -912,23 +1121,26 @@ export class WalletService {
     reason,
     createdBy,
   }: {
-    userId: string;
-    threshold: number;
+    userId: User['id'];
+    threshold: string;
     reason: string;
     createdBy: string;
   }): Promise<AutoWithdrawalRule> {
-    const [row] = await this.drizzle.db
-      .insert(autoWithdrawalRule)
-      .values({ userId, threshold: threshold.toString(), reason, createdBy })
-      .onConflictDoUpdate({
-        target: autoWithdrawalRule.userId,
-        set: { threshold: threshold.toString(), reason, createdBy },
-      })
-      .returning();
-    return toAutoWithdrawalRuleDto(row!);
+    const row = findOneOrThrow(
+      await this.drizzle.db
+        .insert(autoWithdrawalRule)
+        .values({ userId, threshold, reason, createdBy })
+        .onConflictDoUpdate({
+          target: autoWithdrawalRule.userId,
+          set: { threshold, reason, createdBy },
+        })
+        .returning(),
+      new WalletNotFoundError(userId),
+    );
+    return toAutoWithdrawalRuleDto(row);
   }
 
-  async getAutoWithdrawalRule(userId: string): Promise<AutoWithdrawalRule | null> {
+  async getAutoWithdrawalRule(userId: User['id']): Promise<AutoWithdrawalRule | null> {
     const [row] = await this.drizzle.db
       .select()
       .from(autoWithdrawalRule)
@@ -936,7 +1148,7 @@ export class WalletService {
     return row ? toAutoWithdrawalRuleDto(row) : null;
   }
 
-  async deleteAutoWithdrawalRule(userId: string): Promise<boolean> {
+  async deleteAutoWithdrawalRule(userId: User['id']): Promise<boolean> {
     const deleted = await this.drizzle.db
       .delete(autoWithdrawalRule)
       .where(eq(autoWithdrawalRule.userId, userId))
@@ -945,8 +1157,8 @@ export class WalletService {
   }
 
   async rejectWithdrawal(
-    adminId: string,
-    withdrawalId: string,
+    adminId: User['id'],
+    withdrawalId: WalletTransaction['id'],
     reason: string,
   ): Promise<TransactionResult> {
     const reviewedAt = new Date();
@@ -963,24 +1175,27 @@ export class WalletService {
       if (current.status !== 'pending' || current.type !== 'withdrawal') {
         throw new WithdrawalNotPendingError();
       }
-      const [updated] = await txn
-        .update(walletTransaction)
-        .set({ status: 'rejected', reviewedBy: adminId, reviewedAt, reviewReason: reason })
-        .where(eq(walletTransaction.id, withdrawalId))
-        .returning();
+      const updated = findOneOrThrow(
+        await txn
+          .update(walletTransaction)
+          .set({ status: 'rejected', reviewedBy: adminId, reviewedAt, reviewReason: reason })
+          .where(eq(walletTransaction.id, withdrawalId))
+          .returning(),
+        new WithdrawalNotFoundError(withdrawalId),
+      );
 
       await txn
         .update(wallet)
-        .set({ balance: sql`${wallet.balance} + ${updated!.amount}` })
-        .where(eq(wallet.id, updated!.walletId));
+        .set({ balance: sql`${wallet.balance} + ${updated.amount}::numeric` })
+        .where(eq(wallet.id, updated.walletId));
 
-      return updated!;
+      return updated;
     });
 
     const userId = await this.userIdForWallet(tx.walletId);
     this.events.emit('wallet.withdrawal.rejected', {
       userId,
-      amount: Number(tx.amount),
+      amount: tx.amount,
       currency: tx.currency,
       transactionId: tx.id,
       adminId,
@@ -990,11 +1205,13 @@ export class WalletService {
     return { transactionId: tx.id, status: 'rejected' };
   }
 
-  async getTransactions(userId: string, page: number, limit: number) {
+  async getTransactions(userId: User['id'], page: number, limit: number) {
     const db = this.drizzle.db;
 
     const [walletRecord] = await db.select().from(wallet).where(eq(wallet.userId, userId));
-    if (!walletRecord) return { items: [], total: 0, page, limit };
+    if (!walletRecord) {
+      return { items: [], total: 0, page, limit };
+    }
     const where = eq(walletTransaction.walletId, walletRecord.id);
     const [txs, [{ n }]] = await Promise.all([
       db
@@ -1010,7 +1227,7 @@ export class WalletService {
       items: txs.map((tx) => ({
         id: tx.id,
         type: tx.type,
-        amount: Number(tx.amount),
+        amount: tx.amount,
         currency: tx.currency,
         status: tx.status,
         createdAt: tx.createdAt.toISOString(),
@@ -1021,7 +1238,121 @@ export class WalletService {
     };
   }
 
-  private async userIdForWallet(walletId: string) {
+  async getOrCreateDepositAddress(
+    userId: User['id'],
+    currency: string,
+  ): Promise<{ address: string; currency: string }> {
+    const existing = await this.findDepositAddress(userId, currency);
+    if (existing) {
+      return { address: existing.address, currency: existing.currency };
+    }
+    if (!this.payment.issueDepositAddress) {
+      throw new DepositAddressUnsupportedError();
+    }
+    const issued = await this.payment.issueDepositAddress(userId, currency);
+
+    const [row] = await this.drizzle.db
+      .insert(walletDepositAddress)
+      .values({
+        userId,
+        currency,
+        address: issued.address,
+        providerName: providerNameFor(railFor(currency)),
+      })
+      .onConflictDoNothing()
+      .returning();
+    if (row) {
+      return { address: row.address, currency: row.currency };
+    }
+    const winner = await this.findDepositAddress(userId, currency);
+    if (!winner) {
+      throw new Error(
+        `wallet deposit address: idempotency conflict but no row found (userId=${userId}, currency=${currency})`,
+      );
+    }
+    return { address: winner.address, currency: winner.currency };
+  }
+
+  async creditDepositByAddress(
+    event: Extract<PaymentWebhookEvent, { kind: 'deposit' }>,
+  ): Promise<void> {
+    const depositAddress = await this.findDepositAddressByAddress(event.address);
+    if (!depositAddress) {
+      logger.warn(
+        { address: event.address },
+        'payment webhook: no wallet_deposit_address for inbound deposit',
+      );
+      return;
+    }
+    if (event.currency.toUpperCase() !== depositAddress.currency.toUpperCase()) {
+      throw new CurrencyMismatchError(event.currency, depositAddress.currency);
+    }
+
+    const { transactionId, replayed } = await this.drizzle.db.transaction(async (txn) => {
+      let [walletRecord] = await txn
+        .select()
+        .from(wallet)
+        .where(eq(wallet.userId, depositAddress.userId));
+      if (!walletRecord) {
+        walletRecord = findOneOrThrow(
+          await txn
+            .insert(wallet)
+            .values({ userId: depositAddress.userId, balance: '0', currency: event.currency })
+            .returning(),
+          new WalletNotFoundError(depositAddress.userId),
+        );
+      } else if (walletRecord.currency.toUpperCase() !== event.currency.toUpperCase()) {
+        throw new CurrencyMismatchError(event.currency, walletRecord.currency);
+      }
+
+      const [inserted] = await txn
+        .insert(walletTransaction)
+        .values({
+          walletId: walletRecord.id,
+          type: 'deposit',
+          amount: event.amount,
+          currency: event.currency,
+          status: 'completed',
+          rail: railFor(event.currency),
+          providerName: depositAddress.providerName,
+          providerRefId: event.externalId,
+          destinationAddress: event.address,
+          txHash: event.txHash,
+        })
+        .onConflictDoNothing()
+        .returning();
+
+      if (inserted) {
+        await txn
+          .update(wallet)
+          .set({ balance: sql`${wallet.balance} + ${event.amount}::numeric` })
+          .where(eq(wallet.id, walletRecord.id));
+        return { transactionId: inserted.id, replayed: false };
+      }
+
+      const [winner] = await txn
+        .select()
+        .from(walletTransaction)
+        .where(eq(walletTransaction.providerRefId, event.externalId));
+      if (!winner) {
+        throw new Error(
+          `payment webhook: idempotency conflict but no row found (externalId=${event.externalId})`,
+        );
+      }
+      return { transactionId: winner.id, replayed: true };
+    });
+
+    if (!replayed) {
+      this.events.emit('wallet.deposit.completed', {
+        userId: depositAddress.userId,
+        amount: event.amount,
+        currency: event.currency,
+        transactionId,
+      });
+    }
+  }
+
+  private async userIdForWallet(walletId: Wallet['id']) {
     const record = findOneOrThrow(
       await this.drizzle.db
         .select({ userId: wallet.userId })
@@ -1034,7 +1365,7 @@ export class WalletService {
 
   private async findByIdempotencyKey(
     txn: DrizzleDb | DrizzleTx,
-    walletId: string,
+    walletId: Wallet['id'],
     idempotencyKey: string,
   ) {
     const [existing] = await txn
@@ -1047,5 +1378,23 @@ export class WalletService {
         ),
       );
     return existing;
+  }
+
+  private async findDepositAddress(userId: User['id'], currency: string) {
+    const [row] = await this.drizzle.db
+      .select()
+      .from(walletDepositAddress)
+      .where(
+        and(eq(walletDepositAddress.userId, userId), eq(walletDepositAddress.currency, currency)),
+      );
+    return row;
+  }
+
+  private async findDepositAddressByAddress(address: string) {
+    const [row] = await this.drizzle.db
+      .select()
+      .from(walletDepositAddress)
+      .where(eq(walletDepositAddress.address, address));
+    return row;
   }
 }

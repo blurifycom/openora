@@ -46,7 +46,15 @@ export type EventBus = {
 
 export const EVENT_BUS: Token<EventBus> = createToken('EVENT_BUS');
 
-// Default in-process transport. Swap by binding a durable MessageBrokerAdapter to MESSAGE_BROKER in an overlay.
+/**
+ * Default in-process `MESSAGE_BROKER` - `publish` fans out synchronously to
+ * whatever's subscribed in THIS process only; it does not survive a restart
+ * and does not reach other replicas. An overlay rebinds `MESSAGE_BROKER` to a
+ * durable `MessageBrokerAdapter` (eg RabbitMQ via `AMQP_URL`) once events must
+ * cross a process boundary. `subscribe`'s returned unsubscribe function is
+ * safe to call mid-dispatch: the handler list is copied on write, never
+ * mutated in place.
+ */
 export class InMemoryBroker implements MessageBrokerAdapter {
   private readonly handlers = new Map<
     string,

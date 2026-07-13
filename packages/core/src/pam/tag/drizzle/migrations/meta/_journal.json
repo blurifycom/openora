@@ -8,6 +8,13 @@
       "when": 1783555226630,
       "tag": "0000_natural_cerise",
       "breakpoints": true
+    },
+    {
+      "idx": 1,
+      "version": "7",
+      "when": 1783854980666,
+      "tag": "0001_neat_iron_monger",
+      "breakpoints": true
     }
   ]
 }

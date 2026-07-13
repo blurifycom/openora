@@ -15,12 +15,16 @@ function repoPath(...parts: string[]): string {
 }
 
 function readFile(p: string): string {
-  if (!existsSync(p)) return '';
+  if (!existsSync(p)) {
+    return '';
+  }
   return readFileSync(p, 'utf8');
 }
 
 function listDirs(p: string): string[] {
-  if (!existsSync(p)) return [];
+  if (!existsSync(p)) {
+    return [];
+  }
   return readdirSync(p).filter((f) => statSync(join(p, f)).isDirectory());
 }
 
@@ -30,7 +34,7 @@ function readAddonKinds(): Map<string, string> {
   const src = readFile(repoPath('extensions.config.ts'));
   const out = new Map<string, string>();
   for (const m of src.matchAll(/\{[^}]*id:\s*'([^']+)'[^}]*\}/g)) {
-    out.set(m[1]!, /kind:\s*'addon'/.test(m[0]!) ? 'addon' : 'core');
+    out.set(m[1] ?? '', /kind:\s*'addon'/.test(m[0] ?? '') ? 'addon' : 'core');
   }
   return out;
 }
@@ -61,18 +65,24 @@ function parseAgentsMdSection(content: string, heading: string): string {
       capture = true;
       continue;
     }
-    if (capture && line.startsWith('## ')) break;
-    if (capture) out.push(line);
+    if (capture && line.startsWith('## ')) {
+      break;
+    }
+    if (capture) {
+      out.push(line);
+    }
   }
   return out.join('\n').trim();
 }
 
 function listModulesFromConfig(): Array<{ id: string; path: string }> {
   const configPath = repoPath('extensions.config.ts');
-  if (!existsSync(configPath)) return [];
+  if (!existsSync(configPath)) {
+    return [];
+  }
   const src = readFileSync(configPath, 'utf8');
   const matches = [...src.matchAll(/\{\s*id:\s*'([^']+)',\s*path:\s*'([^']+)'\s*\}/g)];
-  return matches.map((m) => ({ id: m[1]!, path: m[2]! }));
+  return matches.map((m) => ({ id: m[1] ?? '', path: m[2] ?? '' }));
 }
 
 function run(cmd: string): { ok: boolean; output: string } {
@@ -94,14 +104,19 @@ function run(cmd: string): { ok: boolean; output: string } {
 }
 
 function walkFiles(dir: string, ext: string, acc: string[] = []): string[] {
-  if (!existsSync(dir)) return acc;
+  if (!existsSync(dir)) {
+    return acc;
+  }
   for (const entry of readdirSync(dir)) {
     if (entry === 'node_modules' || entry === 'dist' || entry === '.next' || entry === '.turbo') {
       continue;
     }
     const full = join(dir, entry);
-    if (statSync(full).isDirectory()) walkFiles(full, ext, acc);
-    else if (full.endsWith(ext)) acc.push(full);
+    if (statSync(full).isDirectory()) {
+      walkFiles(full, ext, acc);
+    } else if (full.endsWith(ext)) {
+      acc.push(full);
+    }
   }
   return acc;
 }
@@ -115,21 +130,29 @@ function extractDeclaration(src: string, name: string): { line: number; code: st
   const lines = src.split('\n');
   const startRe = new RegExp(`^\\s*export\\s+const\\s+${name}\\b`);
   for (let i = 0; i < lines.length; i++) {
-    if (!startRe.test(lines[i]!)) continue;
+    if (!startRe.test(lines[i] ?? '')) {
+      continue;
+    }
     let depth = 0;
     let started = false;
     const out: string[] = [];
     for (let j = i; j < lines.length; j++) {
-      const l = lines[j]!;
+      const l = lines[j] ?? '';
       out.push(l);
       for (const ch of l) {
         if (ch === '(' || ch === '{' || ch === '[') {
           depth++;
           started = true;
-        } else if (ch === ')' || ch === '}' || ch === ']') depth--;
+        } else if (ch === ')' || ch === '}' || ch === ']') {
+          depth--;
+        }
       }
-      if (started && depth <= 0) break;
-      if (!started && l.includes(';')) break;
+      if (started && depth <= 0) {
+        break;
+      }
+      if (!started && l.includes(';')) {
+        break;
+      }
     }
     return { line: i + 1, code: out.join('\n') };
   }
@@ -153,37 +176,47 @@ function classifyIntent(ask: string): IntentKind {
     has(
       /\b(downstream|consumer repo|new project|new app|new repo|my own|standalone|bootstrap|spin up)\b/,
     )
-  )
+  ) {
     return 'downstream-app';
+  }
   if (
     has(
       /\b(payment|psp|stripe|adyen|kyc|onfido|identity check|sms|email|notification|vendor|adapter|gateway|provider integration)\b/,
     )
-  )
+  ) {
     return 'adapter';
-  if (has(/\b(page|screen|dashboard|view|frontend|admin panel|backoffice page|player page)\b/))
+  }
+  if (has(/\b(page|screen|dashboard|view|frontend|admin panel|backoffice page|player page)\b/)) {
     return 'ui-page';
-  if (has(/\b(endpoint|route|procedure|api method|rpc)\b/)) return 'route';
+  }
+  if (has(/\b(endpoint|route|procedure|api method|rpc)\b/)) {
+    return 'route';
+  }
   if (
     has(
       /\b(module|feature|domain|tournament|leaderboard|jackpot|loyalty|bonus|cashback|mission|quest|reward|system)\b/,
     )
-  )
+  ) {
     return 'feature';
+  }
   return 'unsure';
 }
 
 /** Symbol DI tokens exported from @openora/core/contracts - the vendor swap seams. */
 function readAdapterTokens(): string[] {
   const dir = repoPath('packages', 'contracts', 'adapters', 'src');
-  if (!existsSync(dir)) return [];
+  if (!existsSync(dir)) {
+    return [];
+  }
   const out: string[] = [];
   for (const f of readdirSync(dir)) {
-    if (!f.endsWith('.ts') || f === 'index.ts') continue;
+    if (!f.endsWith('.ts') || f === 'index.ts') {
+      continue;
+    }
     for (const m of readFileSync(join(dir, f), 'utf8').matchAll(
       /^export const (\w+)(?::\s*Token<[^>]*>)?\s*=\s*(?:createToken|Symbol)/gm,
     )) {
-      out.push(m[1]!);
+      out.push(m[1] ?? '');
     }
   }
   return out;
@@ -327,7 +360,9 @@ server.registerTool(
       ? repoPath(pkg.replace(/^@openora\//, ''), 'AGENTS.md')
       : repoPath('AGENTS.md');
     const content = readFile(filePath);
-    if (!content) return { content: [{ type: 'text', text: `No AGENTS.md found at ${filePath}` }] };
+    if (!content) {
+      return { content: [{ type: 'text', text: `No AGENTS.md found at ${filePath}` }] };
+    }
     const text = section
       ? parseAgentsMdSection(content, section) || `Section "${section}" not found.`
       : content;
@@ -432,12 +467,16 @@ server.registerTool(
     const lines: string[] = [];
     for (const { name, dir } of modules) {
       const routerFile = join(dir, 'src', 'router', 'index.ts');
-      if (!existsSync(routerFile)) continue;
+      if (!existsSync(routerFile)) {
+        continue;
+      }
       const src = readFileSync(routerFile, 'utf8');
       const procedures = [...src.matchAll(/^\s{2,}(\w+):\s*os\b/gm)].map(
         (m) => `  ${name}.${m[1]}`,
       );
-      if (procedures.length > 0) lines.push(`${name}:\n${procedures.join('\n')}`);
+      if (procedures.length > 0) {
+        lines.push(`${name}:\n${procedures.join('\n')}`);
+      }
     }
     return { content: [{ type: 'text', text: lines.join('\n\n') || 'No routes defined yet.' }] };
   },
@@ -464,12 +503,16 @@ server.registerTool(
     parts.push('\n=== Adapter interfaces (@openora/core/contracts) ===');
     if (existsSync(adaptersDir)) {
       for (const f of readdirSync(adaptersDir)) {
-        if (!f.endsWith('.ts') || f === 'index.ts') continue;
+        if (!f.endsWith('.ts') || f === 'index.ts') {
+          continue;
+        }
         const src = readFileSync(join(adaptersDir, f), 'utf8');
         const interfaces = [...src.matchAll(/^export interface (\w+)/gm)].map((m) => m[1]);
         const tokens = [...src.matchAll(/^export const (\w+) = Symbol/gm)].map((m) => m[1]);
         const label = [...interfaces, ...tokens.map((t) => `${t} (token)`)].join(', ');
-        if (label) parts.push(`${f.replace(/\.ts$/, '')}: ${label}`);
+        if (label) {
+          parts.push(`${f.replace(/\.ts$/, '')}: ${label}`);
+        }
       }
     }
 
@@ -661,10 +704,14 @@ server.registerTool(
     const parts: string[] = [];
     for (const { group, name, dir } of modules) {
       const schemaFile = join(dir, 'src', 'schema', 'index.ts');
-      if (!existsSync(schemaFile)) continue;
+      if (!existsSync(schemaFile)) {
+        continue;
+      }
       const src = readFileSync(schemaFile, 'utf8');
       const tables = [...src.matchAll(/export const (\w+)\s*=\s*pgTable\(\s*'([^']+)'/g)];
-      if (tables.length === 0) continue;
+      if (tables.length === 0) {
+        continue;
+      }
       if (detailed) {
         parts.push(`=== ${group}/${name} (src/schema/index.ts) ===\n${src.trim()}`);
       } else {
@@ -699,7 +746,9 @@ server.registerTool(
     const want = table.trim();
     for (const { group, name, dir } of listAllModules()) {
       const schemaFile = join(dir, 'src', 'schema', 'index.ts');
-      if (!existsSync(schemaFile)) continue;
+      if (!existsSync(schemaFile)) {
+        continue;
+      }
       const src = readFileSync(schemaFile, 'utf8');
       for (const [, , tableName] of src.matchAll(/pgTable\(\s*'([^']+)'/g)) {
         if (tableName === want) {
@@ -754,7 +803,7 @@ server.registerTool(
     const names = new Set<string>();
     for (const file of files) {
       for (const m of readFileSync(file, 'utf8').matchAll(/export const (\w+Schema)\b/g)) {
-        names.add(m[1]!);
+        names.add(m[1] ?? '');
       }
     }
     const list = [...names].sort().join(', ');
@@ -780,21 +829,32 @@ server.registerTool(
     const max = limit ?? 60;
     const roots = [repoPath('docs'), repoPath('packages'), repoPath('apps')];
     const files = new Set<string>([repoPath('README.md'), repoPath('AGENTS.md')]);
-    for (const root of roots) for (const f of walkFiles(root, '.md')) files.add(f);
+    for (const root of roots) {
+      for (const f of walkFiles(root, '.md')) {
+        files.add(f);
+      }
+    }
 
     const needle = query.toLowerCase();
     const hits: string[] = [];
     for (const file of [...files].sort()) {
-      if (!existsSync(file)) continue;
+      if (!existsSync(file)) {
+        continue;
+      }
       const lines = readFileSync(file, 'utf8').split('\n');
       const rel = file.replace(`${repoRoot}/`, '');
       for (let i = 0; i < lines.length; i++) {
-        if (lines[i]!.toLowerCase().includes(needle)) {
-          hits.push(`${rel}:${i + 1}: ${lines[i]!.trim()}`);
-          if (hits.length >= max) break;
+        const line = lines[i] ?? '';
+        if (line.toLowerCase().includes(needle)) {
+          hits.push(`${rel}:${i + 1}: ${line.trim()}`);
+          if (hits.length >= max) {
+            break;
+          }
         }
       }
-      if (hits.length >= max) break;
+      if (hits.length >= max) {
+        break;
+      }
     }
     return {
       content: [
@@ -863,11 +923,14 @@ server.registerTool(
   },
   async () => {
     const commandsDir = join(repoRoot, '.claude', 'commands');
-    if (!existsSync(commandsDir))
+    if (!existsSync(commandsDir)) {
       return { content: [{ type: 'text', text: 'No .claude/commands/ directory found.' }] };
+    }
     const lines: string[] = ['Available slash commands:\n'];
     for (const file of readdirSync(commandsDir).sort()) {
-      if (!file.endsWith('.md')) continue;
+      if (!file.endsWith('.md')) {
+        continue;
+      }
       const name = '/' + file.replace(/\.md$/, '');
       const content = readFileSync(join(commandsDir, file), 'utf8');
       const descLine = content.split('\n').find((l) => l.startsWith('description:'));

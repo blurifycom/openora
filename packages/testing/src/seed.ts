@@ -28,7 +28,9 @@ export async function seedMinimal(
 ): Promise<SeedResult> {
   const drizzleSvc = container.get(DRIZZLE);
   const url = process.env['DATABASE_URL'];
-  if (!url) throw new Error('seedMinimal: DATABASE_URL is not set (boot the app first)');
+  if (!url) {
+    throw new Error('seedMinimal: DATABASE_URL is not set (boot the app first)');
+  }
 
   const authPool = new Pool({ connectionString: url });
   const authDb = drizzle(authPool, {

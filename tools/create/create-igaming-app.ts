@@ -23,7 +23,9 @@ const USAGE = 'Usage: pnpm create:app <target-dir> [--name <name>]';
 function readFlag(args: string[], i: number): { value: string | undefined; next: number } {
   const a = args[i];
   const eq = a.indexOf('=');
-  if (eq !== -1) return { value: a.slice(eq + 1), next: i };
+  if (eq !== -1) {
+    return { value: a.slice(eq + 1), next: i };
+  }
   return { value: args[i + 1], next: i + 1 };
 }
 
@@ -41,7 +43,9 @@ function parseArgs(argv: string[]): ParsedArgs {
       target = a;
     }
   }
-  if (!target) die(`missing target directory.\n  ${USAGE}`);
+  if (!target) {
+    die(`missing target directory.\n  ${USAGE}`);
+  }
   return { target, name };
 }
 
@@ -66,8 +70,11 @@ function walk(dir: string): string[] {
   const out: string[] = [];
   for (const entry of readdirSync(dir)) {
     const full = join(dir, entry);
-    if (statSync(full).isDirectory()) out.push(...walk(full));
-    else out.push(full);
+    if (statSync(full).isDirectory()) {
+      out.push(...walk(full));
+    } else {
+      out.push(full);
+    }
   }
   return out;
 }
@@ -80,7 +87,9 @@ function emitTree(srcRoot: string, vars: Record<string, string>, targetDir: stri
   for (const file of walk(srcRoot)) {
     const rel = relative(srcRoot, file);
     let outRel = rel.split(sep).map(undotSegment).join(sep);
-    if (outRel.endsWith('.tpl')) outRel = outRel.slice(0, -'.tpl'.length);
+    if (outRel.endsWith('.tpl')) {
+      outRel = outRel.slice(0, -'.tpl'.length);
+    }
 
     const raw = readFileSync(file, 'utf8');
     const content = file.endsWith('.tpl') ? substitute(raw, vars) : raw;
@@ -100,7 +109,9 @@ function main(): void {
   if (existsSync(targetDir) && readdirSync(targetDir).length > 0) {
     die(`${targetDir} already exists and is not empty.`);
   }
-  if (!existsSync(templateRoot)) die(`template missing at ${templateRoot}`);
+  if (!existsSync(templateRoot)) {
+    die(`template missing at ${templateRoot}`);
+  }
 
   const vars: Record<string, string> = {
     name,

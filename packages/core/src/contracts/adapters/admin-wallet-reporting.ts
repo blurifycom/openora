@@ -13,7 +13,7 @@ export type AdminTxRow = {
   id: string;
   userId: string;
   type: WalletTransactionType;
-  amount: number;
+  amount: string;
   currency: string;
   status: WalletTransactionStatus;
   rail: WalletRail | null;
@@ -39,12 +39,12 @@ export type AdminTxListOptions = {
   status?: WalletTransactionStatus;
   dateFrom?: Date;
   dateTo?: Date;
-  amountMin?: number;
-  amountMax?: number;
+  amountMin?: string;
+  amountMax?: string;
 };
 
 export type AdminWalletReporting = {
-  totals(): Promise<{ deposits: number; withdrawals: number }>;
+  totals(): Promise<{ deposits: string; withdrawals: string }>;
   listTransactions(opts: AdminTxListOptions): Promise<{ rows: AdminTxRow[]; total: number }>;
   getTransaction(id: string): Promise<AdminTxDetail | null>;
 };

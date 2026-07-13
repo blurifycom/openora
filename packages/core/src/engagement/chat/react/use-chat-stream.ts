@@ -2,16 +2,15 @@
 
 import { useCallback, useEffect, useState, type Dispatch, type SetStateAction } from 'react';
 import { populateContractRouterPaths } from '@orpc/contract';
-import type { z } from 'zod';
 import {
   useOrpcClient,
   useEventStream,
   useOptionalRealtimeClient,
   type EventStreamStatus,
 } from '@openora/core/react';
-import { chatContract, ChatMessageSchema } from '../contract/index.js';
+import { chatContract, type ChatMessage } from '../contract/index.js';
 
-export type ChatMessage = z.infer<typeof ChatMessageSchema>;
+export type { ChatMessage };
 
 const chatRootContract = populateContractRouterPaths({ chat: chatContract });
 
@@ -57,7 +56,9 @@ export function useChatStream(
   const onMessage = useCallback(
     (message: ChatMessage) => {
       setMessages((prev) => {
-        if (prev.some((m) => m.id === message.id)) return prev;
+        if (prev.some((m) => m.id === message.id)) {
+          return prev;
+        }
         const next = [...prev, message];
         return next.length > maxMessages ? next.slice(next.length - maxMessages) : next;
       });
@@ -75,7 +76,9 @@ export function useChatStream(
   });
 
   useEffect(() => {
-    if (!adapter || !enabled) return;
+    if (!adapter || !enabled) {
+      return;
+    }
     return adapter.subscribe<ChatMessage>(chatChannel(roomId), {
       onMessage,
       onStatus: setAdapterStatus,

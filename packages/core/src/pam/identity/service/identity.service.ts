@@ -5,6 +5,8 @@ import {
   type NodeHeaders,
   DrizzleService,
   assertRateLimit,
+  findOneOrThrow,
+  makeNotFoundError,
 } from '@openora/core/server';
 import { parseCookies } from 'better-auth/cookies';
 import { eq, sql } from 'drizzle-orm';
@@ -33,7 +35,9 @@ import { assertSupportedLanguage } from '../../shared/language.js';
 function nodeHeadersToHeaders(nodeHeaders: NodeHeaders) {
   const headers = new Headers();
   for (const [key, value] of Object.entries(nodeHeaders)) {
-    if (value === undefined) continue;
+    if (value === undefined) {
+      continue;
+    }
     headers.set(key, Array.isArray(value) ? value.join(', ') : value);
   }
   return headers;
@@ -91,9 +95,13 @@ function clientIp(headers: Headers): string | null {
 // otherwise churn the rate-limit key each retry by appending unrelated cookie pairs.
 function twoFactorPendingCookieValue(headers: Headers): string | undefined {
   const cookieHeader = headers.get('cookie');
-  if (!cookieHeader) return undefined;
+  if (!cookieHeader) {
+    return undefined;
+  }
   for (const [name, value] of parseCookies(cookieHeader)) {
-    if (name.endsWith('.two_factor')) return value;
+    if (name.endsWith('.two_factor')) {
+      return value;
+    }
   }
   return undefined;
 }
@@ -124,16 +132,22 @@ type ExtendedAuthApi = {
 
 const SUCCESS = { success: true as const };
 
+export const UserNotFoundError = makeNotFoundError('User');
+
 // better-auth calls use `asResponse: true`, which returns an error *Response*
 // (4xx/5xx) rather than throwing. Surface those as ORPCErrors so oRPC maps them
 // to the right HTTP status instead of the handler silently returning success.
 // Only reads the body on failure, so a subsequent res.json() on success is safe.
 async function ensureOk(res: globalThis.Response) {
-  if (res.ok) return;
+  if (res.ok) {
+    return;
+  }
   let message = `Request failed (${res.status})`;
   try {
     const parsed = JSON.parse(await res.text()) as { message?: string };
-    if (parsed.message) message = parsed.message;
+    if (parsed.message) {
+      message = parsed.message;
+    }
   } catch {
     // non-JSON body - keep the default message
   }
@@ -222,6 +236,15 @@ export type IdentityServiceDeps = {
   platformConfig?: PlatformConfig;
 };
 
+/**
+ * Thin wrapper over the shared better-auth instance (register/login/2FA/
+ * password/email flows) that layers on platform-specific policy better-auth
+ * doesn't provide: per-account lockout after N failed logins, RG
+ * (responsible-gambling) login blocking, and rate limiting keyed by
+ * caller-identifier (email/token/session), never IP. better-auth calls use
+ * `asResponse: true` and return an error Response rather than throwing, so
+ * every call is routed through `ensureOk` to surface failures as `ORPCError`s.
+ */
 export class IdentityService {
   private readonly auth: ReturnType<typeof createAuth>;
   private readonly drizzle: DrizzleService;
@@ -275,6 +298,18 @@ export class IdentityService {
     return { user: toUser(body.user) };
   }
 
+  /**
+   * Credentials are verified FIRST; the RG login block is checked only AFTER
+   * a pass, so a pre-auth probe can't distinguish a restricted account from a
+   * wrong password. An RG-blocked account still authenticates then has its
+   * fresh session immediately expired and the cookie withheld - it never
+   * counts toward the lockout budget. A 2FA-enrolled account returns
+   * `{ twoFactorRedirect: true }` instead of a session; the client completes
+   * via `verifyTwoFactor`. Failed-attempt counting only advances on a genuine
+   * credential rejection (never on a transient/backend error), via an atomic
+   * `UPDATE ... SET attempts = attempts + 1` so concurrent failures can't each
+   * read a stale count and slip past the lockout threshold.
+   */
   async login(input: LoginInput, reqHeaders: NodeHeaders, resHeaders: Headers) {
     const headers = nodeHeadersToHeaders(reqHeaders);
     const ip = clientIp(headers);
@@ -380,7 +415,9 @@ export class IdentityService {
     } catch (error) {
       // An RG block is not a credential failure - surface it as-is, without touching the
       // lockout budget or emitting login.failed (the RG event was already emitted).
-      if (error instanceof ORPCError && error.code === 'FORBIDDEN') throw error;
+      if (error instanceof ORPCError && error.code === 'FORBIDDEN') {
+        throw error;
+      }
       // Only a genuine credential rejection counts toward lockout - a transient DB/network
       // error must never lock the account out.
       const isCredentialFailure = error instanceof ORPCError && error.code === 'UNAUTHORIZED';
@@ -444,28 +481,27 @@ export class IdentityService {
     }
   }
 
-  private clearLockout(userId: string) {
+  private clearLockout(userId: User['id']) {
     return this.drizzle.db
       .update(user)
       .set({ failedLoginAttempts: 0, lockoutUntil: null })
       .where(eq(user.id, userId));
   }
 
-  async unlockUser(userId: string, actorId: string) {
-    const [existingUser] = await this.drizzle.db
-      .select({
-        id: user.id,
-        email: user.email,
-        failedLoginAttempts: user.failedLoginAttempts,
-        lockoutUntil: user.lockoutUntil,
-      })
-      .from(user)
-      .where(eq(user.id, userId))
-      .limit(1);
-
-    if (!existingUser) {
-      throw new ORPCError('NOT_FOUND', { message: 'User not found' });
-    }
+  async unlockUser(userId: User['id'], actorId: User['id']) {
+    const existingUser = findOneOrThrow(
+      await this.drizzle.db
+        .select({
+          id: user.id,
+          email: user.email,
+          failedLoginAttempts: user.failedLoginAttempts,
+          lockoutUntil: user.lockoutUntil,
+        })
+        .from(user)
+        .where(eq(user.id, userId))
+        .limit(1),
+      new UserNotFoundError(userId),
+    );
 
     await this.clearLockout(userId);
 
@@ -489,14 +525,18 @@ export class IdentityService {
     const userId = (session?.user as BetterAuthUser | undefined)?.id;
     const authResponse = await this.auth.api.signOut({ headers, asResponse: true });
     forwardCookies(authResponse, resHeaders);
-    if (userId) this.events.emit('identity.user.logout', { userId });
+    if (userId) {
+      this.events.emit('identity.user.logout', { userId });
+    }
     return SUCCESS;
   }
 
   async me(reqHeaders: NodeHeaders) {
     const headers = nodeHeadersToHeaders(reqHeaders);
     const session = await this.auth.api.getSession({ headers });
-    if (!session?.user) return null;
+    if (!session?.user) {
+      return null;
+    }
     return toUser(session.user as BetterAuthUser);
   }
 
@@ -532,7 +572,9 @@ export class IdentityService {
     await ensureOk(res);
     forwardCookies(res, resHeaders);
     const userId = await this.currentUserId(headers);
-    if (userId) this.events.emit('identity.2fa.enabled', { userId });
+    if (userId) {
+      this.events.emit('identity.2fa.enabled', { userId });
+    }
     return SUCCESS;
   }
 
@@ -551,7 +593,9 @@ export class IdentityService {
     });
     await ensureOk(res);
     forwardCookies(res, resHeaders);
-    if (userId) this.events.emit('identity.2fa.disabled', { userId });
+    if (userId) {
+      this.events.emit('identity.2fa.disabled', { userId });
+    }
     return SUCCESS;
   }
 
@@ -642,7 +686,9 @@ export class IdentityService {
       asResponse: true,
     });
     await ensureOk(res);
-    if (userId) this.events.emit('identity.email.verified', { userId });
+    if (userId) {
+      this.events.emit('identity.email.verified', { userId });
+    }
     return SUCCESS;
   }
 
@@ -659,7 +705,9 @@ export class IdentityService {
   }
 
   async updateProfile(input: UpdateProfileInput, reqHeaders: NodeHeaders, resHeaders: Headers) {
-    if (input.language !== undefined) assertSupportedLanguage(input.language, this.platformConfig);
+    if (input.language !== undefined) {
+      assertSupportedLanguage(input.language, this.platformConfig);
+    }
     const headers = nodeHeadersToHeaders(reqHeaders);
     // better-auth's field parser and drizzle's mapUpdateSet both drop `undefined`
     // values before the SQL SET clause, so omitted fields are safely no-ops here.
@@ -674,7 +722,9 @@ export class IdentityService {
     // updateUser returns { status } only - re-read from session to get the full user.
     const session = await this.auth.api.getSession({ headers });
     const current = session?.user as BetterAuthUser | undefined;
-    if (current) this.events.emit('identity.profile.updated', { userId: current.id });
+    if (current) {
+      this.events.emit('identity.profile.updated', { userId: current.id });
+    }
     if (!current) {
       throw new Error('Profile update succeeded but session could not be re-read');
     }

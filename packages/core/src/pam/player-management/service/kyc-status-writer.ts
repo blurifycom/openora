@@ -29,7 +29,9 @@ export class PlayerKycStatusWriter implements KycStatusWriter {
       .select({ kycStatus: player.kycStatus })
       .from(player)
       .where(eq(player.userId, userId));
-    if (!existing || existing.kycStatus === status) return;
+    if (!existing || existing.kycStatus === status) {
+      return;
+    }
 
     await db.update(player).set({ kycStatus: status }).where(eq(player.userId, userId));
 
