@@ -1,7 +1,7 @@
 import { createHash, randomInt, randomUUID } from 'node:crypto';
 import { ORPCError } from '@orpc/server';
 import { type EventBus, DrizzleService, assertRateLimit } from '@openora/core/server';
-import { eq, and, sql } from 'drizzle-orm';
+import { eq, sql } from 'drizzle-orm';
 import type {
   RateLimiterAdapter,
   SmsAdapter,
@@ -117,15 +117,20 @@ export class PhoneLoginService {
     const resendAfter = new Date(now + RESEND_COOLDOWN_MS);
 
     const [account] = await this.drizzle.db
-      .select({ id: user.id })
+      .select({ id: user.id, phoneVerified: user.phoneVerified })
       .from(user)
-      .where(and(eq(user.phoneNumber, phone), eq(user.phoneVerified, true)))
+      .where(eq(user.phoneNumber, phone))
       .limit(1);
 
-    // Anti-enumeration: an unregistered/unverified phone gets the same success-shaped
-    // response, minus the SMS. A caller cannot tell a real number from a fake one.
+    // Anti-enumeration: an unknown phone gets the same success-shaped response, minus
+    // the SMS. A caller cannot distinguish a real number from a fake one.
     if (!account)
       return { expiresAt: expiresAt.toISOString(), resendAfter: resendAfter.toISOString() };
+
+    if (!account.phoneVerified)
+      throw new ORPCError('FORBIDDEN', {
+        message: 'Phone number is not verified on this account.',
+      });
 
     const [existing] = await this.drizzle.db
       .select({ createdAt: smsOtpSession.createdAt })
@@ -172,13 +177,17 @@ export class PhoneLoginService {
         userId: smsOtpSession.userId,
         codeHash: smsOtpSession.codeHash,
         expiresAt: smsOtpSession.expiresAt,
+        failedAttempts: smsOtpSession.failedAttempts,
       })
       .from(smsOtpSession)
       .where(eq(smsOtpSession.phone, phone))
       .limit(1);
 
-    if (!otp || otp.expiresAt.getTime() < Date.now()) {
-      throw OtpInvalidError(MAX_VERIFY_ATTEMPTS);
+    if (!otp) {
+      throw OtpInvalidError(0);
+    }
+    if (otp.expiresAt.getTime() < Date.now()) {
+      throw OtpInvalidError(MAX_VERIFY_ATTEMPTS - otp.failedAttempts);
     }
 
     if (hashCode(code) !== otp.codeHash) {
@@ -210,7 +219,7 @@ export class PhoneLoginService {
       .from(user)
       .where(eq(user.id, otp.userId))
       .limit(1);
-    if (!account) throw OtpInvalidError(MAX_VERIFY_ATTEMPTS);
+    if (!account) throw new ORPCError('INTERNAL_SERVER_ERROR', { message: 'Account not found.' });
 
     // RG login block, applied only AFTER the OTP verifies so a probe can't distinguish a
     // restricted account from a wrong code.

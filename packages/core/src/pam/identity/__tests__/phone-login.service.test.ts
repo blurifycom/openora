@@ -57,6 +57,7 @@ const otpRow = (over: Record<string, unknown> = {}) => ({
   userId: 'u1',
   codeHash: '', // set per-test
   expiresAt: new Date(Date.now() + 5 * 60 * 1000),
+  failedAttempts: 0,
   ...over,
 });
 
@@ -68,7 +69,7 @@ describe('PhoneLoginService.requestOtp', () => {
     // select order: (1) user lookup, (2) existing-otp lookup (none),
     // (3) delete (awaited), (4) insert (awaited).
     const { svc, events, sms } = build({
-      select: [[{ id: 'u1' }], [], [], []],
+      select: [[{ id: 'u1', phoneVerified: true }], [], [], []],
     });
 
     const out = await svc.requestOtp({ phone: PHONE });
@@ -91,10 +92,17 @@ describe('PhoneLoginService.requestOtp', () => {
     expect(events.emit).not.toHaveBeenCalled();
   });
 
+  it('throws FORBIDDEN when the phone is registered but not verified', async () => {
+    const { svc, sms } = build({ select: [[{ id: 'u1', phoneVerified: false }]] });
+
+    await expect(svc.requestOtp({ phone: PHONE })).rejects.toMatchObject({ code: 'FORBIDDEN' });
+    expect(sms.sendOtp).not.toHaveBeenCalled();
+  });
+
   it('throws OtpCooldownError when a code was sent under 60s ago', async () => {
     const { svc, sms } = build({
       // (1) user found, (2) existing OTP created 10s ago.
-      select: [[{ id: 'u1' }], [{ createdAt: new Date(Date.now() - 10_000) }]],
+      select: [[{ id: 'u1', phoneVerified: true }], [{ createdAt: new Date(Date.now() - 10_000) }]],
     });
 
     await expect(svc.requestOtp({ phone: PHONE })).rejects.toMatchObject({
@@ -106,7 +114,12 @@ describe('PhoneLoginService.requestOtp', () => {
   it('supersedes an expired-cooldown prior OTP and emits cancelled(new_otp_requested)', async () => {
     const { svc, events, sms } = build({
       // (1) user, (2) prior OTP older than cooldown, (3) delete, (4) insert.
-      select: [[{ id: 'u1' }], [{ createdAt: new Date(Date.now() - 120_000) }], [], []],
+      select: [
+        [{ id: 'u1', phoneVerified: true }],
+        [{ createdAt: new Date(Date.now() - 120_000) }],
+        [],
+        [],
+      ],
     });
 
     await svc.requestOtp({ phone: PHONE });
@@ -182,21 +195,32 @@ describe('PhoneLoginService.verifyOtp', () => {
     });
   });
 
-  it('expired OTP throws OtpInvalidError', async () => {
+  it('expired OTP returns attemptsRemaining derived from failedAttempts on the dead session', async () => {
     const code = '123456';
     const { svc } = build({
-      select: [[otpRow({ codeHash: hash(code), expiresAt: new Date(Date.now() - 1000) })]],
+      // 2 failed attempts before the code expired -> 3 remaining
+      select: [
+        [
+          otpRow({
+            codeHash: hash(code),
+            expiresAt: new Date(Date.now() - 1000),
+            failedAttempts: 2,
+          }),
+        ],
+      ],
     });
 
     await expect(svc.verifyOtp({ phone: PHONE, code })).rejects.toMatchObject({
       code: 'UNPROCESSABLE_CONTENT',
+      data: { attemptsRemaining: 3 },
     });
   });
 
-  it('missing OTP session throws OtpInvalidError', async () => {
+  it('missing OTP session throws OtpInvalidError with 0 attemptsRemaining', async () => {
     const { svc } = build({ select: [[]] });
     await expect(svc.verifyOtp({ phone: PHONE, code: '123456' })).rejects.toMatchObject({
       code: 'UNPROCESSABLE_CONTENT',
+      data: { attemptsRemaining: 0 },
     });
   });
 

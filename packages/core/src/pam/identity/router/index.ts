@@ -14,14 +14,14 @@ import { SessionService } from '../service/session.service.js';
 import { PhoneLoginService } from '../service/phone-login.service.js';
 import { UnsupportedLanguageError } from '../../shared/language.js';
 
-function nodeIp(headers: NodeHeaders): string | null {
+function nodeForwardedFor(headers: NodeHeaders): string | null {
   const fwd = headers['x-forwarded-for'];
   const first = Array.isArray(fwd) ? fwd[0] : fwd;
   const real = headers['x-real-ip'];
   return first?.split(',')[0]?.trim() || (Array.isArray(real) ? real[0] : real) || null;
 }
 
-function nodeUa(headers: NodeHeaders): string | null {
+function nodeUserAgent(headers: NodeHeaders): string | null {
   const ua = headers['user-agent'];
   return (Array.isArray(ua) ? ua[0] : ua) ?? null;
 }
@@ -46,12 +46,20 @@ export function createIdentityRouter(
 
     phoneLoginRequest: os.phoneLoginRequest.handler(({ input, context }) => {
       const h = context.request.headers;
-      return phoneLogin.requestOtp({ ...input, ip: nodeIp(h), userAgent: nodeUa(h) });
+      return phoneLogin.requestOtp({
+        ...input,
+        ip: nodeForwardedFor(h),
+        userAgent: nodeUserAgent(h),
+      });
     }),
 
     phoneLoginVerify: os.phoneLoginVerify.handler(({ input, context }) => {
       const h = context.request.headers;
-      return phoneLogin.verifyOtp({ ...input, ip: nodeIp(h), userAgent: nodeUa(h) });
+      return phoneLogin.verifyOtp({
+        ...input,
+        ip: nodeForwardedFor(h),
+        userAgent: nodeUserAgent(h),
+      });
     }),
 
     logout: os.logout.handler(({ context }) =>
