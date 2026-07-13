@@ -101,6 +101,31 @@ describe('KycVerificationService.submit', () => {
     );
     expect(dto.status).toBe('verified');
   });
+
+  it('passes verificationUrl through from a hosted-session adapter result', async () => {
+    const adapter = {
+      submit: vi.fn().mockResolvedValue({
+        referenceId: 'ref-1',
+        status: 'pending',
+        verificationUrl: 'https://vendor.example/session/abc',
+      }),
+      getStatus: vi.fn().mockResolvedValue('pending'),
+    };
+    const svc = newSvc({
+      db: makeDb([], [fullRow({ status: 'pending' })]),
+      adapter,
+    });
+    const dto = await svc.submit('user-1', { documents: [{ type: 'passport', frontUrl: 'u' }] });
+    expect(dto.verificationUrl).toBe('https://vendor.example/session/abc');
+  });
+
+  it('omits verificationUrl when the adapter does not return one', async () => {
+    const svc = newSvc({
+      db: makeDb([], [fullRow({ status: 'verified', decidedAt: new Date() })]),
+    });
+    const dto = await svc.submit('user-1', { documents: [{ type: 'passport', frontUrl: 'u' }] });
+    expect(dto.verificationUrl).toBeUndefined();
+  });
 });
 
 describe('KycVerificationService.reconcile', () => {

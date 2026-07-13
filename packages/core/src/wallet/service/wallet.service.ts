@@ -15,6 +15,7 @@ import {
 } from '@openora/core/server';
 import {
   type PaymentAdapter,
+  type PaymentWebhookEvent,
   type AdminUserDirectory,
   type PlatformConfig,
   type KycStatus,
@@ -31,6 +32,7 @@ import {
   wallet,
   walletTransaction,
   autoWithdrawalRule,
+  walletDepositAddress,
   type Wallet,
   type WalletTransaction,
   type AutoWithdrawalRule as AutoWithdrawalRuleRow,
@@ -65,6 +67,16 @@ export const KycRequiredError = makeConflictError(
 export const IdempotencyKeyReuseError = makeConflictError(
   'IdempotencyKeyReuseError',
   'Idempotency key was already used with a different amount',
+);
+
+export const DepositAddressUnsupportedError = makeConflictError(
+  'DepositAddressUnsupportedError',
+  'The bound payment adapter does not support address-based deposits',
+);
+
+export const DestinationAddressRequiredError = makeConflictError(
+  'DestinationAddressRequiredError',
+  'A destination address is required for a crypto-rail withdrawal',
 );
 
 // Statuses that satisfy the withdrawal KYC gate.
@@ -437,14 +449,19 @@ export class WalletService {
     amount,
     currency,
     idempotencyKey,
+    destinationAddress,
   }: {
     userId: User['id'];
     amount: string;
     currency: string;
     idempotencyKey?: string;
+    destinationAddress?: string;
   }): Promise<TransactionResult> {
     await this.rateLimit(userId);
     await this.assertKycForWithdrawal(userId);
+    if (railFor(currency) === 'crypto' && !destinationAddress) {
+      throw new DestinationAddressRequiredError();
+    }
 
     const { transactionId, status, replayed, walletId, rail } = await this.drizzle.db.transaction(
       async (txn) => {
@@ -490,6 +507,7 @@ export class WalletService {
             currency,
             status: 'pending',
             rail: railFor(currency),
+            destinationAddress: destinationAddress ?? null,
           },
         });
 
@@ -617,6 +635,8 @@ export class WalletService {
         kycStatus: summary?.kycStatus ?? null,
         riskTags,
         requestedAt: r.tx.createdAt.toISOString(),
+        destinationAddress: r.tx.destinationAddress,
+        txHash: r.tx.txHash,
       };
     });
 
@@ -707,29 +727,25 @@ export class WalletService {
         userId,
         rail: tx.rail,
         adminId,
+        destinationAddress: tx.destinationAddress,
       });
     } catch (err) {
       // Payout did not happen - mark failed and return the held funds in one transaction.
-      await this.drizzle.db.transaction(async (txn) => {
-        await txn
-          .update(walletTransaction)
-          .set({ status: 'failed' })
-          .where(eq(walletTransaction.id, tx.id));
-        await txn
-          .update(wallet)
-          .set({ balance: sql`${wallet.balance} + ${amount}::numeric` })
-          .where(eq(wallet.id, tx.walletId));
-      });
-      if (adminId) {
-        this.events.emit('wallet.withdrawal.failed', {
-          userId,
-          amount,
-          currency: tx.currency,
-          transactionId: tx.id,
-          adminId,
-        });
-      }
+      await this.finalizeFailedWithdrawal({ tx, adminId, userId, amount });
       throw err;
+    }
+
+    if (result.status === 'failed') {
+      await this.finalizeFailedWithdrawal({ tx, adminId, userId, amount });
+      return { transactionId: tx.id, status: 'failed' };
+    }
+
+    if (result.status !== 'completed') {
+      await this.drizzle.db
+        .update(walletTransaction)
+        .set({ providerName: providerNameFor(tx.rail), providerRefId: result.externalId })
+        .where(eq(walletTransaction.id, tx.id));
+      return { transactionId: tx.id, status: 'processing' };
     }
 
     await this.drizzle.db
@@ -750,6 +766,84 @@ export class WalletService {
     return { transactionId: tx.id, status: 'completed' };
   }
 
+  private async finalizeFailedWithdrawal({
+    tx,
+    adminId,
+    userId,
+    amount,
+  }: {
+    tx: WalletTransaction;
+    adminId: User['id'] | null;
+    userId: User['id'];
+    amount: string;
+  }): Promise<void> {
+    const transitioned = await this.drizzle.db.transaction(async (txn) => {
+      const updated = await txn
+        .update(walletTransaction)
+        .set({ status: 'failed' })
+        .where(and(eq(walletTransaction.id, tx.id), eq(walletTransaction.status, 'processing')))
+        .returning({ id: walletTransaction.id });
+      if (updated.length === 0) {
+        return false;
+      }
+      await txn
+        .update(wallet)
+        .set({ balance: sql`${wallet.balance} + ${amount}::numeric` })
+        .where(eq(wallet.id, tx.walletId));
+      return true;
+    });
+    if (transitioned && adminId) {
+      this.events.emit('wallet.withdrawal.failed', {
+        userId,
+        amount,
+        currency: tx.currency,
+        transactionId: tx.id,
+        adminId,
+      });
+    }
+  }
+
+  async reconcileWithdrawalStatus(
+    event: Extract<PaymentWebhookEvent, { kind: 'withdrawal' }>,
+  ): Promise<void> {
+    const { externalId, status, txHash } = event;
+    const [tx] = await this.drizzle.db
+      .select()
+      .from(walletTransaction)
+      .where(eq(walletTransaction.providerRefId, externalId));
+    if (!tx || tx.type !== 'withdrawal') {
+      logger.warn({ externalId }, 'payment webhook: no matching withdrawal for providerRefId');
+      return;
+    }
+    if (tx.status !== 'processing') {
+      return;
+    }
+
+    const userId = await this.userIdForWallet(tx.walletId);
+
+    if (status === 'completed') {
+      const updated = await this.drizzle.db
+        .update(walletTransaction)
+        .set({ status: 'completed', txHash: txHash ?? tx.txHash })
+        .where(and(eq(walletTransaction.id, tx.id), eq(walletTransaction.status, 'processing')))
+        .returning({ id: walletTransaction.id });
+      if (updated.length === 0) {
+        return;
+      }
+      this.events.emit('wallet.withdrawal.completed', {
+        userId,
+        amount: tx.amount,
+        currency: tx.currency,
+        transactionId: tx.id,
+      });
+      return;
+    }
+
+    if (status === 'failed') {
+      await this.finalizeFailedWithdrawal({ tx, adminId: null, userId, amount: tx.amount });
+    }
+  }
+
   // Evaluates the auto-approval gates and settles the payout if all pass; returns undefined to
   // leave the row pending for the manual queue. NEVER throws: any error fails closed to manual.
   private async maybeAutoApprove(args: {
@@ -760,8 +854,7 @@ export class WalletService {
     walletId: Wallet['id'];
     rail: WalletRail;
   }): Promise<TransactionResult | undefined> {
-    // Cheap gates first (auto-approval off, or crypto - never auto-approved): skip opening a tx/lock.
-    if (!this.platformConfig?.autoWithdrawal?.enabled || args.rail !== 'fiat') {
+    if (!this.platformConfig?.autoWithdrawal?.enabled) {
       return undefined;
     }
 
@@ -857,12 +950,7 @@ export class WalletService {
     if (!cfg?.enabled) {
       return null;
     }
-    // Hard stop: crypto is irreversible and AML-sensitive - never auto-approved.
-    if (rail !== 'fiat') {
-      return null;
-    }
-
-    const threshold = await this.resolveAutoThreshold(userId);
+    const threshold = await this.resolveAutoThreshold(userId, rail);
     if (!threshold || moneyToNumber(threshold.value) <= 0) {
       return null;
     }
@@ -898,9 +986,9 @@ export class WalletService {
     };
   }
 
-  // Per-player rule wins over the global fiat threshold; null when neither is set.
   private async resolveAutoThreshold(
     userId: User['id'],
+    rail: WalletRail,
   ): Promise<{ value: string; source: 'per-player' | 'global' } | null> {
     const [rule] = await this.drizzle.db
       .select()
@@ -909,7 +997,10 @@ export class WalletService {
     if (rule) {
       return { value: rule.threshold, source: 'per-player' };
     }
-    const global = this.platformConfig?.autoWithdrawal?.fiatThreshold;
+    const global =
+      rail === 'crypto'
+        ? this.platformConfig?.autoWithdrawal?.cryptoThreshold
+        : this.platformConfig?.autoWithdrawal?.fiatThreshold;
     if (global !== undefined) {
       return { value: global, source: 'global' };
     }
@@ -1147,6 +1238,120 @@ export class WalletService {
     };
   }
 
+  async getOrCreateDepositAddress(
+    userId: User['id'],
+    currency: string,
+  ): Promise<{ address: string; currency: string }> {
+    const existing = await this.findDepositAddress(userId, currency);
+    if (existing) {
+      return { address: existing.address, currency: existing.currency };
+    }
+    if (!this.payment.issueDepositAddress) {
+      throw new DepositAddressUnsupportedError();
+    }
+    const issued = await this.payment.issueDepositAddress(userId, currency);
+
+    const [row] = await this.drizzle.db
+      .insert(walletDepositAddress)
+      .values({
+        userId,
+        currency,
+        address: issued.address,
+        providerName: providerNameFor(railFor(currency)),
+      })
+      .onConflictDoNothing()
+      .returning();
+    if (row) {
+      return { address: row.address, currency: row.currency };
+    }
+    const winner = await this.findDepositAddress(userId, currency);
+    if (!winner) {
+      throw new Error(
+        `wallet deposit address: idempotency conflict but no row found (userId=${userId}, currency=${currency})`,
+      );
+    }
+    return { address: winner.address, currency: winner.currency };
+  }
+
+  async creditDepositByAddress(
+    event: Extract<PaymentWebhookEvent, { kind: 'deposit' }>,
+  ): Promise<void> {
+    const depositAddress = await this.findDepositAddressByAddress(event.address);
+    if (!depositAddress) {
+      logger.warn(
+        { address: event.address },
+        'payment webhook: no wallet_deposit_address for inbound deposit',
+      );
+      return;
+    }
+    if (event.currency.toUpperCase() !== depositAddress.currency.toUpperCase()) {
+      throw new CurrencyMismatchError(event.currency, depositAddress.currency);
+    }
+
+    const { transactionId, replayed } = await this.drizzle.db.transaction(async (txn) => {
+      let [walletRecord] = await txn
+        .select()
+        .from(wallet)
+        .where(eq(wallet.userId, depositAddress.userId));
+      if (!walletRecord) {
+        walletRecord = findOneOrThrow(
+          await txn
+            .insert(wallet)
+            .values({ userId: depositAddress.userId, balance: '0', currency: event.currency })
+            .returning(),
+          new WalletNotFoundError(depositAddress.userId),
+        );
+      } else if (walletRecord.currency.toUpperCase() !== event.currency.toUpperCase()) {
+        throw new CurrencyMismatchError(event.currency, walletRecord.currency);
+      }
+
+      const [inserted] = await txn
+        .insert(walletTransaction)
+        .values({
+          walletId: walletRecord.id,
+          type: 'deposit',
+          amount: event.amount,
+          currency: event.currency,
+          status: 'completed',
+          rail: railFor(event.currency),
+          providerName: depositAddress.providerName,
+          providerRefId: event.externalId,
+          destinationAddress: event.address,
+          txHash: event.txHash,
+        })
+        .onConflictDoNothing()
+        .returning();
+
+      if (inserted) {
+        await txn
+          .update(wallet)
+          .set({ balance: sql`${wallet.balance} + ${event.amount}::numeric` })
+          .where(eq(wallet.id, walletRecord.id));
+        return { transactionId: inserted.id, replayed: false };
+      }
+
+      const [winner] = await txn
+        .select()
+        .from(walletTransaction)
+        .where(eq(walletTransaction.providerRefId, event.externalId));
+      if (!winner) {
+        throw new Error(
+          `payment webhook: idempotency conflict but no row found (externalId=${event.externalId})`,
+        );
+      }
+      return { transactionId: winner.id, replayed: true };
+    });
+
+    if (!replayed) {
+      this.events.emit('wallet.deposit.completed', {
+        userId: depositAddress.userId,
+        amount: event.amount,
+        currency: event.currency,
+        transactionId,
+      });
+    }
+  }
+
   private async userIdForWallet(walletId: Wallet['id']) {
     const record = findOneOrThrow(
       await this.drizzle.db
@@ -1173,5 +1378,23 @@ export class WalletService {
         ),
       );
     return existing;
+  }
+
+  private async findDepositAddress(userId: User['id'], currency: string) {
+    const [row] = await this.drizzle.db
+      .select()
+      .from(walletDepositAddress)
+      .where(
+        and(eq(walletDepositAddress.userId, userId), eq(walletDepositAddress.currency, currency)),
+      );
+    return row;
+  }
+
+  private async findDepositAddressByAddress(address: string) {
+    const [row] = await this.drizzle.db
+      .select()
+      .from(walletDepositAddress)
+      .where(eq(walletDepositAddress.address, address));
+    return row;
   }
 }

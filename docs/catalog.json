@@ -257,6 +257,7 @@
       "tables": [
         "auto_withdrawal_rule",
         "wallet",
+        "wallet_deposit_address",
         "wallet_transaction"
       ],
       "routes": [
@@ -264,12 +265,14 @@
         "wallet.delete",
         "wallet.deposit",
         "wallet.get",
+        "wallet.getAddress",
         "wallet.getBalance",
         "wallet.list",
         "wallet.listPlayerTransactions",
         "wallet.listTransactions",
         "wallet.reject",
         "wallet.set",
+        "wallet.webhook",
         "wallet.withdraw"
       ]
     }
@@ -720,6 +723,14 @@
       "file": "packages/core/src/contracts/schemas/tag.ts"
     },
     {
+      "name": "DepositAddressInputSchema",
+      "file": "packages/core/src/wallet/contract/index.ts"
+    },
+    {
+      "name": "DepositAddressSchema",
+      "file": "packages/core/src/wallet/contract/index.ts"
+    },
+    {
       "name": "DepositInputSchema",
       "file": "packages/core/src/wallet/contract/index.ts"
     },
@@ -912,6 +923,14 @@
       "file": "packages/core/src/contracts/schemas/player.ts"
     },
     {
+      "name": "PaymentWebhookInputSchema",
+      "file": "packages/core/src/wallet/contract/index.ts"
+    },
+    {
+      "name": "PaymentWebhookOutputSchema",
+      "file": "packages/core/src/wallet/contract/index.ts"
+    },
+    {
       "name": "PermissionLevelSchema",
       "file": "packages/core/src/contracts/schemas/iam.ts"
     },
@@ -1057,6 +1076,10 @@
     },
     {
       "name": "SubmitKycInputSchema",
+      "file": "packages/core/src/compliance/contract/index.ts"
+    },
+    {
+      "name": "SubmitKycOutputSchema",
       "file": "packages/core/src/compliance/contract/index.ts"
     },
     {
@@ -1307,6 +1330,8 @@
     "POST /player/{playerId}/player-tag",
     "POST /tag",
     "POST /wallet/deposit",
+    "POST /wallet/deposits/address",
+    "POST /wallet/webhook",
     "POST /wallet/withdraw",
     "POST /wallet/withdrawals/{withdrawalId}/approve",
     "POST /wallet/withdrawals/{withdrawalId}/reject",

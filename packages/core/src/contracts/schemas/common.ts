@@ -14,7 +14,7 @@ export type UserIdInput = z.infer<typeof UserIdInputSchema>;
 export const MoneyAmountSchema = z
   .string()
   .regex(
-    /^\d+(\.\d{1,2})?$/,
-    'must be a non-negative decimal string with at most 2 decimal places',
+    /^\d+(\.\d{1,8})?$/,
+    'must be a non-negative decimal string with at most 8 decimal places',
   );
 export type MoneyAmount = z.infer<typeof MoneyAmountSchema>;
