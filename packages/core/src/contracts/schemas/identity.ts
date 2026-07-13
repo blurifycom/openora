@@ -16,8 +16,6 @@ export const UserSchema = z.object({
   image: z.url().nullable().optional(),
   theme: ThemeSchema,
   language: LanguageSchema,
-  // Phone-login fields. Optional so existing callers/serializers are unaffected; a
-  // player without a verified phone simply carries a null number and `false`.
   phoneNumber: z.string().nullable().optional(),
   phoneVerified: z.boolean().optional(),
   createdAt: TimestampSchema,
@@ -30,9 +28,7 @@ export const E164PhoneSchema = z.string().regex(/^\+[1-9]\d{7,14}$/);
 export const PhoneLoginRequestInputSchema = z.object({ phone: E164PhoneSchema });
 
 export const PhoneLoginRequestOutputSchema = z.object({
-  // When the OTP the caller just requested expires (now + 5 min).
   expiresAt: TimestampSchema,
-  // The earliest a fresh OTP may be requested for this phone (now + 60 s).
   resendAfter: TimestampSchema,
 });
 

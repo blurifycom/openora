@@ -20,9 +20,6 @@ const MAX_VERIFY_ATTEMPTS = 5;
 const SESSION_TTL_MS = 24 * 60 * 60 * 1000;
 const REMEMBER_ME_TTL_MS = 30 * 24 * 60 * 60 * 1000;
 
-// Fixed-window abuse throttles keyed by phone. Both fail closed (`deny`): an
-// unthrottled OTP-request or OTP-guess window is a credential-guessing surface, so a
-// transient limiter outage must not open it.
 const OTP_REQUEST_RATE_LIMIT = {
   limit: 3,
   windowMs: 15 * MINUTE_MS,

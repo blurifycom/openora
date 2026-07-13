@@ -40,20 +40,13 @@ export const domainEventSchemas = {
   'identity.user.login.failed': authContextBase.extend({
     email: z.email(),
     reason: z.string().nullable().optional(),
-    // Remaining credential attempts before lockout - surfaced so the client can show a
-    // "Forgot password?" CTA as the count runs down. Absent on non-credential errors.
     attemptsRemaining: z.number().int().optional(),
   }),
   'identity.user.logout': z.object({ userId: UuidSchema }),
-  // A player authenticated via SMS OTP (phone login). TOTP 2FA does not apply here;
-  // the session is minted directly. `method` is a literal so the audit log can
-  // distinguish it from a password login.
   'identity.user.phone_login': authContextBase.extend({
     userId: UuidSchema,
     method: z.literal('phone'),
   }),
-  // A pending OTP was invalidated - either superseded by a fresh request or killed
-  // after too many wrong guesses (a security event when `max_attempts`).
   'identity.phone_otp.requested': z.object({ userId: UuidSchema }),
   'identity.phone_otp.cancelled': z.object({
     userId: UuidSchema,
