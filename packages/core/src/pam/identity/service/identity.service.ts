@@ -31,6 +31,7 @@ import type {
   PlatformConfig,
 } from '@openora/core/contracts';
 import { assertSupportedLanguage } from '../../shared/language.js';
+import { isRgBlocked } from './rg-guard.service.js';
 
 function nodeHeadersToHeaders(nodeHeaders: NodeHeaders) {
   const headers = new Headers();
@@ -219,12 +220,6 @@ function computeLockoutState({
 }) {
   const isLocking = attempts >= maxAttempts;
   return { isLocking, lockoutUntil: isLocking ? new Date(nowMs + durationMs) : null };
-}
-
-// A finite rgBlockedUntil in the past = a lapsed cooling-off; a null one = indefinite
-// (self-exclusion / permanent). Blocked only while set and not elapsed.
-function isRgBlocked(u: { rgBlocked: boolean; rgBlockedUntil: Date | null }): boolean {
-  return u.rgBlocked && (u.rgBlockedUntil === null || u.rgBlockedUntil > new Date());
 }
 
 export type IdentityServiceDeps = {
@@ -484,7 +479,7 @@ export class IdentityService {
   private clearLockout(userId: User['id']) {
     return this.drizzle.db
       .update(user)
-      .set({ failedLoginAttempts: 0, lockoutUntil: null })
+      .set({ failedLoginAttempts: 0, lockoutUntil: null, lockoutCount: 0, lastLockoutAt: null })
       .where(eq(user.id, userId));
   }
 

@@ -15,6 +15,13 @@
       "when": 1783611861777,
       "tag": "0001_rainy_peter_quill",
       "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "7",
+      "when": 1783944672839,
+      "tag": "0002_outstanding_patriot",
+      "breakpoints": true
     }
   ]
 }

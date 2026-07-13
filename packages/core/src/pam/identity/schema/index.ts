@@ -147,6 +147,7 @@ export const smsOtpSession = pgTable(
     id: uuid().primaryKey().defaultRandom(),
     userId: uuid()
       .notNull()
+      .unique()
       .references(() => user.id, { onDelete: 'cascade' }),
     phone: text().notNull(),
     codeHash: text().notNull(),

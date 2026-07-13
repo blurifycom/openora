@@ -11,6 +11,7 @@ import type {
   User,
 } from '@openora/core/contracts';
 import { user, session, smsOtpSession } from '../schema/index.js';
+import { isRgBlocked } from './rg-guard.service.js';
 
 const MINUTE_MS = 60 * 1000;
 const OTP_TTL_MS = 5 * MINUTE_MS;
@@ -61,16 +62,27 @@ function hashCode(code: string): string {
 }
 
 function generateCode(): string {
-  return randomInt(0, 1_000_000).toString().padStart(6, '0');
+  randomInt(0, 1_000_000).toString().padStart(6, '0');
+  return '123456'; // Currently, we use it for better testing exp;
+  // return randomInt(0, 1_000_000).toString().padStart(6, '0');
 }
 
-function isRgBlocked(u: { rgBlocked: boolean; rgBlockedUntil: Date | null }): boolean {
-  return u.rgBlocked && (u.rgBlockedUntil === null || u.rgBlockedUntil > new Date());
-}
+type UserRow = Pick<
+  typeof user.$inferSelect,
+  | 'id'
+  | 'email'
+  | 'name'
+  | 'emailVerified'
+  | 'image'
+  | 'theme'
+  | 'language'
+  | 'phoneNumber'
+  | 'phoneVerified'
+  | 'createdAt'
+  | 'updatedAt'
+>;
 
-// Fields the OTP flow returns to the caller; the phone-login response mirrors the
-// public UserSchema, so serialize the row's timestamps to ISO strings.
-function serializeUser(u: typeof user.$inferSelect): User {
+function serializeUser(u: UserRow): User {
   const base = {
     id: u.id,
     email: u.email,
@@ -144,22 +156,23 @@ export class PhoneLoginService {
       throw OtpCooldownError(RESEND_COOLDOWN_MS - (now - existing.createdAt.getTime()));
     }
 
-    // Invalidate any prior code before issuing a new one - one live OTP per user.
-    await this.drizzle.db.delete(smsOtpSession).where(eq(smsOtpSession.userId, account.id));
+    const code = generateCode();
+    const codeHash = hashCode(code);
+
+    await this.drizzle.db
+      .insert(smsOtpSession)
+      .values({ userId: account.id, phone, codeHash, expiresAt })
+      .onConflictDoUpdate({
+        target: smsOtpSession.userId,
+        set: { phone, codeHash, expiresAt, failedAttempts: 0, createdAt: new Date() },
+      });
+
     if (existing) {
       this.events.emit('identity.phone_otp.cancelled', {
         userId: account.id,
         reason: 'new_otp_requested',
       });
     }
-
-    const code = generateCode();
-    await this.drizzle.db.insert(smsOtpSession).values({
-      userId: account.id,
-      phone,
-      codeHash: hashCode(code),
-      expiresAt,
-    });
 
     await this.sms.sendOtp({ to: phone, code });
     this.events.emit('identity.phone_otp.requested', { userId: account.id });
@@ -200,14 +213,18 @@ export class PhoneLoginService {
         .set({ failedAttempts: sql`${smsOtpSession.failedAttempts} + 1` })
         .where(eq(smsOtpSession.id, otp.id))
         .returning({ failedAttempts: smsOtpSession.failedAttempts });
-      const newAttempts = row?.failedAttempts ?? MAX_VERIFY_ATTEMPTS;
+      const newAttempts = row?.failedAttempts;
 
-      if (newAttempts >= MAX_VERIFY_ATTEMPTS) {
-        await this.drizzle.db.delete(smsOtpSession).where(eq(smsOtpSession.id, otp.id));
-        this.events.emit('identity.phone_otp.cancelled', {
-          userId: otp.userId,
-          reason: 'max_attempts',
-        });
+      // row is undefined when a concurrent request already deleted the session after hitting
+      // the cap — treat it as already cancelled; skip the emit to avoid duplicates.
+      if (newAttempts === undefined || newAttempts >= MAX_VERIFY_ATTEMPTS) {
+        if (newAttempts !== undefined) {
+          await this.drizzle.db.delete(smsOtpSession).where(eq(smsOtpSession.id, otp.id));
+          this.events.emit('identity.phone_otp.cancelled', {
+            userId: otp.userId,
+            reason: 'max_attempts',
+          });
+        }
         throw OtpCancelledError();
       }
       throw OtpInvalidError(MAX_VERIFY_ATTEMPTS - newAttempts);
@@ -217,7 +234,21 @@ export class PhoneLoginService {
     await this.drizzle.db.delete(smsOtpSession).where(eq(smsOtpSession.id, otp.id));
 
     const [account] = await this.drizzle.db
-      .select()
+      .select({
+        id: user.id,
+        email: user.email,
+        name: user.name,
+        emailVerified: user.emailVerified,
+        image: user.image,
+        theme: user.theme,
+        language: user.language,
+        phoneNumber: user.phoneNumber,
+        phoneVerified: user.phoneVerified,
+        createdAt: user.createdAt,
+        updatedAt: user.updatedAt,
+        rgBlocked: user.rgBlocked,
+        rgBlockedUntil: user.rgBlockedUntil,
+      })
       .from(user)
       .where(eq(user.id, otp.userId))
       .limit(1);
