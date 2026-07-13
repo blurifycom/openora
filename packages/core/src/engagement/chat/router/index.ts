@@ -100,7 +100,7 @@ export function createChatRouter(chatService: ChatService, authorizer: RealtimeC
     streamMessages: os.streamMessages.handler(({ input, signal, context }) => {
       const viewerId = resolveViewerId(context);
       return createEventStreamGenerator(
-        (push) => chatService.subscribeMessages(input.roomId, push, viewerId),
+        (push) => chatService.subscribeMessages(input.roomId ?? null, push, viewerId),
         { signal },
       );
     }),
