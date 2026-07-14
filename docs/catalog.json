@@ -1087,6 +1087,10 @@
       "file": "packages/core/src/pam/identity/contract/index.ts"
     },
     {
+      "name": "SessionSchema",
+      "file": "packages/core/src/pam/identity/contract/index.ts"
+    },
+    {
       "name": "SessionTimeDetailSchema",
       "file": "packages/core/src/compliance/contract/rg.ts"
     },
