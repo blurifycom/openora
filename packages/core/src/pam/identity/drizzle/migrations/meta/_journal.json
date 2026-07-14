@@ -29,6 +29,13 @@
       "when": 1784029716450,
       "tag": "0003_open_shotgun",
       "breakpoints": true
+    },
+    {
+      "idx": 4,
+      "version": "7",
+      "when": 1784032154664,
+      "tag": "0004_round_giant_girl",
+      "breakpoints": true
     }
   ]
 }

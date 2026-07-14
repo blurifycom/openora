@@ -23,7 +23,7 @@ import {
 import { PageQuerySchema, paginated } from '@openora/core/contracts/kit';
 import * as z from 'zod';
 
-const SessionSchema = z.object({
+export const SessionSchema = z.object({
   token: z.string(),
   expiresAt: TimestampSchema,
 });

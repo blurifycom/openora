@@ -152,10 +152,7 @@ export const smsOtpSession = pgTable(
     failedAttempts: integer().notNull().default(0),
     createdAt: timestamp({ withTimezone: true }).notNull().defaultNow(),
   },
-  (t) => [
-    index('sms_otp_session_user_id_idx').on(t.userId),
-    index('sms_otp_session_phone_idx').on(t.phone),
-  ],
+  (t) => [index('sms_otp_session_phone_idx').on(t.phone)],
 );
 
 export type User = typeof user.$inferSelect;

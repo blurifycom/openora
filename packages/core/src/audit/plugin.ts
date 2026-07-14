@@ -172,6 +172,18 @@ function mapEventToRecord(topic: string, p: Record<string, unknown>): RecordInpu
     };
   }
 
+  // An OTP was issued (smsOtpSession row created/upserted). System-driven credential
+  // dispatch; resourceId = the user the code was sent for.
+  if (topic === 'identity.phone_otp.requested') {
+    return {
+      ...base,
+      actorType: 'system',
+      resourceType: 'user',
+      resourceId: str(p['userId']),
+      result: 'success',
+    };
+  }
+
   // A pending OTP was cancelled. `max_attempts` is a system-driven security event
   // (guessing exhausted); recorded as a failure with the reason for the trail.
   if (topic === 'identity.phone_otp.cancelled') {
@@ -361,6 +373,7 @@ const SUBSCRIBED_TOPICS: DomainEventName[] = [
   'identity.user.unlocked',
   'identity.user.logout',
   'identity.user.phone_login',
+  'identity.phone_otp.requested',
   'identity.phone_otp.cancelled',
   'identity.2fa.enabled',
   'identity.2fa.disabled',

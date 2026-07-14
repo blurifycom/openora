@@ -92,10 +92,11 @@ describe('PhoneLoginService.requestOtp', () => {
     expect(events.emit).not.toHaveBeenCalled();
   });
 
-  it('throws FORBIDDEN when the phone is registered but not verified', async () => {
+  it('anti-enumeration: unverified phone returns success shape without sending SMS', async () => {
     const { svc, sms } = build({ select: [[{ id: 'u1', phoneVerified: false }]] });
 
-    await expect(svc.requestOtp({ phone: PHONE })).rejects.toMatchObject({ code: 'FORBIDDEN' });
+    const out = await svc.requestOtp({ phone: PHONE });
+    expect(out).toEqual({ expiresAt: expect.any(String), resendAfter: expect.any(String) });
     expect(sms.sendOtp).not.toHaveBeenCalled();
   });
 
@@ -136,8 +137,8 @@ describe('PhoneLoginService.verifyOtp', () => {
   it('happy path: correct code mints a session and emits phone_login', async () => {
     const code = '123456';
     const { svc, events } = build({
-      // (1) otp lookup, (2) delete otp, (3) user lookup, (4) session insert.
-      select: [[otpRow({ codeHash: hash(code) })], [], [userRow], []],
+      // (1) otp lookup, (2) user lookup, (3) delete otp in tx, (4) session insert in tx.
+      select: [[otpRow({ codeHash: hash(code) })], [userRow], [], []],
     });
 
     const out = await svc.verifyOtp({ phone: PHONE, code });
@@ -154,7 +155,7 @@ describe('PhoneLoginService.verifyOtp', () => {
   it('rememberMe extends the session TTL to ~30 days', async () => {
     const code = '123456';
     const { svc } = build({
-      select: [[otpRow({ codeHash: hash(code) })], [], [userRow], []],
+      select: [[otpRow({ codeHash: hash(code) })], [userRow], [], []],
     });
 
     const out = await svc.verifyOtp({ phone: PHONE, code, rememberMe: true });
@@ -227,10 +228,9 @@ describe('PhoneLoginService.verifyOtp', () => {
   it('RG-blocked user is forbidden after the OTP passes and no session is minted', async () => {
     const code = '123456';
     const { svc, events } = build({
-      // (1) otp lookup, (2) delete otp, (3) blocked user lookup.
+      // (1) otp lookup, (2) blocked user lookup - RG check before tx so OTP is not consumed.
       select: [
         [otpRow({ codeHash: hash(code) })],
-        [],
         [{ ...userRow, rgBlocked: true, rgBlockedUntil: null }],
       ],
     });

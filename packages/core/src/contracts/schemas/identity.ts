@@ -33,7 +33,7 @@ export const PhoneLoginRequestOutputSchema = z.object({
 
 export const PhoneLoginVerifyInputSchema = z.object({
   phone: E164PhoneSchema,
-  code: z.string().regex(/^\d{6}$/),
+  code: z.string().regex(/^[0-9]{6}$/),
   rememberMe: z.boolean().optional(),
 });
 

@@ -1,7 +1,7 @@
 import { createHash, randomInt, randomUUID } from 'node:crypto';
 import { ORPCError } from '@orpc/server';
 import { type EventBus, DrizzleService, assertRateLimit } from '@openora/core/server';
-import { eq, sql } from 'drizzle-orm';
+import { and, eq, gt, sql } from 'drizzle-orm';
 import type {
   RateLimiterAdapter,
   SmsAdapter,
@@ -15,7 +15,7 @@ import { isRgBlocked } from './rg-guard.service.js';
 
 const MINUTE_MS = 60 * 1000;
 const OTP_TTL_MS = 5 * MINUTE_MS;
-const RESEND_COOLDOWN_MS = 60 * 1000;
+const RESEND_COOLDOWN_MS = MINUTE_MS;
 const MAX_VERIFY_ATTEMPTS = 5;
 const SESSION_TTL_MS = 24 * 60 * 60 * 1000;
 const REMEMBER_ME_TTL_MS = 30 * 24 * 60 * 60 * 1000;
@@ -60,7 +60,7 @@ function hashCode(code: string): string {
 
 function generateCode(): string {
   const code = randomInt(0, 1_000_000).toString().padStart(6, '0');
-  if (process.env['NODE_ENV'] === 'production') {
+  if (process.env['NODE_ENV'] !== 'production') {
     console.log(`SMS Verification code sent: ${code}`); // oxlint-disable-line no-console
   }
   return code;
@@ -108,7 +108,7 @@ export class PhoneLoginService {
   private readonly drizzle: DrizzleService;
   private readonly events: EventBus;
   private readonly sms: SmsAdapter;
-  private readonly limiter?: RateLimiterAdapter;
+  private readonly limiter: RateLimiterAdapter;
 
   constructor({ drizzle, events, sms, limiter }: PhoneLoginServiceDeps) {
     this.drizzle = drizzle;
@@ -133,22 +133,17 @@ export class PhoneLoginService {
       .where(eq(user.phoneNumber, phone))
       .limit(1);
 
-    // Anti-enumeration: an unknown phone gets the same success-shaped response, minus
-    // the SMS. A caller cannot distinguish a real number from a fake one.
-    if (!account) {
+    // Anti-enumeration: an unknown or unverified phone gets the same success-shaped
+    // response, minus the SMS. A caller cannot distinguish a real verified number from
+    // a fake or unverified one.
+    if (!account || !account.phoneVerified) {
       return { expiresAt: expiresAt.toISOString(), resendAfter: resendAfter.toISOString() };
-    }
-
-    if (!account.phoneVerified) {
-      throw new ORPCError('FORBIDDEN', {
-        message: 'Phone number is not verified on this account.',
-      });
     }
 
     const [existing] = await this.drizzle.db
       .select({ createdAt: smsOtpSession.createdAt })
       .from(smsOtpSession)
-      .where(eq(smsOtpSession.userId, account.id))
+      .where(and(eq(smsOtpSession.userId, account.id), gt(smsOtpSession.expiresAt, new Date())))
       .limit(1);
 
     if (existing && now - existing.createdAt.getTime() < RESEND_COOLDOWN_MS) {
@@ -166,14 +161,16 @@ export class PhoneLoginService {
         set: { phone, codeHash, expiresAt, failedAttempts: 0, createdAt: new Date() },
       });
 
+    await this.sms.sendOtp({ to: phone, code });
+
+    // Emit events only after SMS delivery so a send failure leaves no misleading
+    // audit trail (no cancelled-without-requested orphan in the audit log).
     if (existing) {
       this.events.emit('identity.phone_otp.cancelled', {
         userId: account.id,
         reason: 'new_otp_requested',
       });
     }
-
-    await this.sms.sendOtp({ to: phone, code });
     this.events.emit('identity.phone_otp.requested', { userId: account.id });
 
     return { expiresAt: expiresAt.toISOString(), resendAfter: resendAfter.toISOString() };
@@ -207,6 +204,9 @@ export class PhoneLoginService {
     if (hashCode(code) !== otp.codeHash) {
       // Atomic increment so concurrent guesses can't each read a stale count and slip
       // past the cap.
+      // Individual wrong-code attempts are not emitted as audit events; the final
+      // `identity.phone_otp.cancelled` event captures the outcome. High-volume
+      // per-attempt events would bloat the audit log (same rationale as chat messages).
       const [row] = await this.drizzle.db
         .update(smsOtpSession)
         .set({ failedAttempts: sql`${smsOtpSession.failedAttempts} + 1` })
@@ -214,8 +214,9 @@ export class PhoneLoginService {
         .returning({ failedAttempts: smsOtpSession.failedAttempts });
       const newAttempts = row?.failedAttempts;
 
-      // row is undefined when a concurrent request already deleted the session after hitting
-      // the cap — treat it as already cancelled; skip the emit to avoid duplicates.
+      // row is undefined when a concurrent request already deleted the session after
+      // hitting the cap — treat it as already cancelled; skip the emit to avoid
+      // duplicates.
       if (newAttempts === undefined || newAttempts >= MAX_VERIFY_ATTEMPTS) {
         if (newAttempts !== undefined) {
           await this.drizzle.db.delete(smsOtpSession).where(eq(smsOtpSession.id, otp.id));
@@ -229,9 +230,8 @@ export class PhoneLoginService {
       throw OtpInvalidError(MAX_VERIFY_ATTEMPTS - newAttempts);
     }
 
-    // Correct code: single-use, so remove the session before minting a login session.
-    await this.drizzle.db.delete(smsOtpSession).where(eq(smsOtpSession.id, otp.id));
-
+    // Resolve the account before entering the transaction so the RG check can short-
+    // circuit without consuming the OTP: a blocked user can try again once unblocked.
     const [account] = await this.drizzle.db
       .select({
         id: user.id,
@@ -255,8 +255,8 @@ export class PhoneLoginService {
       throw new ORPCError('INTERNAL_SERVER_ERROR', { message: 'Account not found.' });
     }
 
-    // RG login block, applied only AFTER the OTP verifies so a probe can't distinguish a
-    // restricted account from a wrong code.
+    // RG login block applied only AFTER the OTP verifies so a probe can't distinguish
+    // a restricted account from a wrong code.
     if (isRgBlocked(account)) {
       this.events.emit('rg.exclusion.login_blocked', { userId: account.id, ip, userAgent });
       throw new ORPCError('FORBIDDEN', {
@@ -266,17 +266,24 @@ export class PhoneLoginService {
 
     // Mint the session directly - bypasses better-auth's TOTP plugin chain by design,
     // so phone login never triggers a second factor.
+    // Delete the OTP and insert the new session atomically: if the insert fails the
+    // OTP is not consumed and the user can retry with the same code.
     const token = randomUUID();
-    const expiresAt = new Date(Date.now() + (rememberMe ? REMEMBER_ME_TTL_MS : SESSION_TTL_MS));
-    await this.drizzle.db.insert(session).values({
-      id: randomUUID(),
-      token,
-      userId: account.id,
-      expiresAt,
-      ipAddress: ip,
-      userAgent,
-      createdAt: new Date(),
-      updatedAt: new Date(),
+    const sessionExpiresAt = new Date(
+      Date.now() + (rememberMe ? REMEMBER_ME_TTL_MS : SESSION_TTL_MS),
+    );
+    await this.drizzle.db.transaction(async (t) => {
+      await t.delete(smsOtpSession).where(eq(smsOtpSession.id, otp.id));
+      await t.insert(session).values({
+        id: randomUUID(),
+        token,
+        userId: account.id,
+        expiresAt: sessionExpiresAt,
+        ipAddress: ip,
+        userAgent,
+        createdAt: new Date(),
+        updatedAt: new Date(),
+      });
     });
 
     this.events.emit('identity.user.phone_login', {
@@ -288,7 +295,7 @@ export class PhoneLoginService {
 
     return {
       user: serializeUser(account),
-      session: { token, expiresAt: expiresAt.toISOString() },
+      session: { token, expiresAt: sessionExpiresAt.toISOString() },
     };
   }
 }
