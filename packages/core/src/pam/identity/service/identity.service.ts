@@ -151,7 +151,7 @@ const DEFAULT_MAX_LOGIN_ATTEMPTS = 5;
 const DEFAULT_LOCKOUT_DURATION_MS = 15 * 60 * 1000;
 
 const MINUTE_MS = 60 * 1000;
-const SESSION_DURATION_SECONDS = 30 * 24 * 60 * 60; // 30 days
+export const SESSION_DURATION_IN_SECONDS = 30 * 24 * 60 * 60; // 30 days
 // Coarse abuse throttles keyed by the caller identifier the context provides (email/
 // token/session), NOT IP. The lockout above is a per-account credential-failure
 // counter; these bound raw request volume on each brute-force surface. An overlay
@@ -247,7 +247,8 @@ export class IdentityService {
     rememberMe?: boolean,
   ): void {
     const cookies = authResponse.headers.getSetCookie?.() ?? [];
-    const sessionDurationSeconds = this.auth.options.session?.expiresIn ?? SESSION_DURATION_SECONDS;
+    const sessionDurationSeconds =
+      this.auth.options.session?.expiresIn ?? SESSION_DURATION_IN_SECONDS;
     for (const cookie of cookies) {
       const isSessionCookie = cookie.split('=')[0]?.trim().endsWith('better-auth.session_token');
       if (isSessionCookie && rememberMe === true) {
@@ -389,7 +390,7 @@ export class IdentityService {
 
       this.events.emit('identity.user.login', { userId: body.user.id, ip, userAgent });
       const sessionDurationSeconds =
-        this.auth.options.session?.expiresIn ?? SESSION_DURATION_SECONDS;
+        this.auth.options.session?.expiresIn ?? SESSION_DURATION_IN_SECONDS;
       const expiresAt = body.session?.expiresAt
         ? toIso(body.session.expiresAt)
         : new Date(Date.now() + sessionDurationSeconds * 1000).toISOString();

@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { IdentityService } from '../service/identity.service.js';
+import { IdentityService, SESSION_DURATION_IN_SECONDS } from '../service/identity.service.js';
 import { UnsupportedLanguageError } from '../../shared/language.js';
 import type { SendEmailPort } from '@openora/core/contracts';
 import { ORPCError } from '@orpc/server';
@@ -15,7 +15,7 @@ vi.mock('@openora/core/server', async (importOriginal) => ({
   createAuth: vi.fn(() => ({
     options: {
       session: {
-        expiresIn: 30 * 24 * 60 * 60,
+        expiresIn: SESSION_DURATION_IN_SECONDS,
       },
     },
     api: {
