@@ -138,9 +138,9 @@ export const twoFactor = pgTable(
   ],
 );
 
-// One active OTP per user: `requestOtp` deletes any prior row before inserting, so a
-// new code invalidates the previous one. `codeHash` is SHA-256 of the 6-digit code -
-// the plaintext OTP is never stored. `failedAttempts` caps guessing at 5 per session.
+// One active OTP per user: `requestOtp` upserts by `userId`, so a new code overwrites the previous one.
+// `codeHash` is SHA-256 of the 6-digit code - the plaintext OTP is never stored.
+// `failedAttempts` caps guessing at 5 per session.
 export const smsOtpSession = pgTable(
   'sms_otp_session',
   {
