@@ -5,7 +5,11 @@ import { drizzleAdapter } from 'better-auth/adapters/drizzle';
 import { organization, admin as adminPlugin, twoFactor, emailOTP } from 'better-auth/plugins';
 import type { DrizzleDb } from '../db/index.js';
 import { ac, roles } from './permissions.js';
-import { OTP_CODE_LENGTH, OTP_EXPIRES_IN_SEC } from '@openora/core/contracts';
+import {
+  OTP_CODE_LENGTH,
+  OTP_EXPIRES_IN_SEC,
+  type EmailTemplateRenderer,
+} from '@openora/core/contracts';
 
 // Transport-agnostic mail hook; identity plugin binds the implementation via
 // NOTIFICATION_DELIVERY_ADAPTER. When omitted, emails are silently skipped (eg in tests).
@@ -19,6 +23,22 @@ export type AuthOptions = {
   db: DrizzleDb;
   schema?: Record<string, unknown>;
   sendEmail?: SendEmail;
+  onPasswordReset?: (user: { id: string; email: string }) => Promise<void> | void;
+  templateRenderer?: EmailTemplateRenderer;
+  getUserLanguage?: (email: string) => Promise<string | null>;
+};
+
+// Used only by SessionResolver's createAuth() call, which never sends email (getSession
+// only) - keeps templateRenderer optional on AuthOptions without a server/auth -> pam
+// layering violation (the real DefaultEmailTemplateRenderer lives in pam/identity).
+const fallbackTemplateRenderer: EmailTemplateRenderer = {
+  render: (key, data) =>
+    key === 'verifyEmail'
+      ? {
+          subject: 'Verify your email',
+          body: `Verify your email using this link: ${data['url']}\n\nVerification token: ${data['token']}`,
+        }
+      : { subject: 'Reset your password', body: `Your password reset code is: ${data['otp']}` },
 };
 
 /**
@@ -32,6 +52,7 @@ export type AuthOptions = {
  */
 export function createAuth(options: AuthOptions): BetterAuthType {
   const sendEmail: SendEmail = options.sendEmail ?? (() => {});
+  const templateRenderer = options.templateRenderer ?? fallbackTemplateRenderer;
   return betterAuth({
     database: drizzleAdapter(options.db, {
       provider: 'pg',
@@ -60,14 +81,21 @@ export function createAuth(options: AuthOptions): BetterAuthType {
       enabled: true,
       rememberMeDuration: 30 * 24 * 60 * 60,
       revokeSessionsOnPasswordReset: true,
+      onPasswordReset: options.onPasswordReset
+        ? async ({ user }) => {
+            await options.onPasswordReset?.({ id: user.id, email: user.email });
+          }
+        : undefined,
     },
     emailVerification: {
       sendVerificationEmail: async ({ user, url, token }) => {
-        await sendEmail({
-          to: user.email,
-          subject: 'Verify your email',
-          body: `Verify your email using this link: ${url}\n\nVerification token: ${token}`,
-        });
+        const locale = (user as { language?: string }).language ?? 'en';
+        const { subject, body } = await templateRenderer.render(
+          'verifyEmail',
+          { url, token },
+          locale,
+        );
+        await sendEmail({ to: user.email, subject, body });
       },
     },
     // Without this, better-auth's admin plugin defaults new signups to its own
@@ -80,13 +108,16 @@ export function createAuth(options: AuthOptions): BetterAuthType {
         otpLength: OTP_CODE_LENGTH,
         expiresIn: OTP_EXPIRES_IN_SEC,
         async sendVerificationOTP({ email, otp, type }) {
-          if (type === 'forget-password') {
-            await sendEmail({
-              to: email,
-              subject: 'Reset your password',
-              body: `Your password reset code is: ${otp}`,
-            });
+          if (type !== 'forget-password') {
+            return;
           }
+          const locale = (await options.getUserLanguage?.(email)) ?? 'en';
+          const { subject, body } = await templateRenderer.render(
+            'resetPasswordOtp',
+            { otp },
+            locale,
+          );
+          await sendEmail({ to: email, subject, body });
         },
       }),
     ],

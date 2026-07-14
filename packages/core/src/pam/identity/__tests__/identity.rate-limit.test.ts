@@ -179,4 +179,30 @@ describe('IdentityService - fail-closed limiter policy for credential-guessing k
       expect.objectContaining({ onUnavailable: 'deny' }),
     );
   });
+
+  it('passes onUnavailable: deny on the pwreset-verify: key', async () => {
+    const { limiter, consume } = denyingLimiter();
+    const svc = new IdentityService({ drizzle, events, limiter });
+
+    await expect(
+      svc.verifyPasswordResetOtp({ email: 'user@x.dev', otp: '123456' }),
+    ).rejects.toMatchObject({ code: 'TOO_MANY_REQUESTS' });
+    expect(consume).toHaveBeenCalledWith(
+      'pwreset-verify:user@x.dev',
+      expect.objectContaining({ onUnavailable: 'deny' }),
+    );
+  });
+
+  it('passes onUnavailable: deny on the pwreset-verify: key', async () => {
+    const { limiter, consume } = denyingLimiter();
+    const svc = new IdentityService({ drizzle, events, limiter });
+
+    await expect(
+      svc.verifyPasswordResetOtp({ email: 'user@x.dev', otp: '123456' }),
+    ).rejects.toMatchObject({ code: 'TOO_MANY_REQUESTS' });
+    expect(consume).toHaveBeenCalledWith(
+      'pwreset-verify:user@x.dev',
+      expect.objectContaining({ onUnavailable: 'deny' }),
+    );
+  });
 });

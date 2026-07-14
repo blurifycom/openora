@@ -3,7 +3,7 @@ import { UuidSchema, TimestampSchema } from './common.js';
 
 export const THEMES = ['light', 'dark', 'system'] as const;
 export const OTP_CODE_LENGTH = 6;
-export const OTP_EXPIRES_IN_SEC = 3600; // 1 hour
+export const OTP_EXPIRES_IN_SEC = 3600;
 export const ThemeSchema = z.enum(THEMES);
 export type Theme = z.infer<typeof ThemeSchema>;
 
@@ -79,6 +79,11 @@ export const ResetPasswordInputSchema = z.object({
   newPassword: z.string().min(8),
 });
 
+export const VerifyPasswordResetOtpInputSchema = ResetPasswordInputSchema.pick({
+  email: true,
+  otp: true,
+});
+
 export const VerifyEmailInputSchema = z.object({
   token: z.string().min(1),
 });
@@ -116,6 +121,7 @@ export type Verify2faInput = z.infer<typeof Verify2faInputSchema>;
 export type Disable2faInput = z.infer<typeof Disable2faInputSchema>;
 export type RequestPasswordResetInput = z.infer<typeof RequestPasswordResetInputSchema>;
 export type ResetPasswordInput = z.infer<typeof ResetPasswordInputSchema>;
+export type VerifyPasswordResetOtpInput = z.infer<typeof VerifyPasswordResetOtpInputSchema>;
 export type VerifyEmailInput = z.infer<typeof VerifyEmailInputSchema>;
 export type UpdateProfileInput = z.infer<typeof UpdateProfileInputSchema>;
 export type ChangePasswordInput = z.infer<typeof ChangePasswordInputSchema>;

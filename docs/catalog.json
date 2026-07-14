@@ -166,7 +166,8 @@
         "identity.unlockUser",
         "identity.updateProfile",
         "identity.verify2fa",
-        "identity.verifyEmail"
+        "identity.verifyEmail",
+        "identity.verifyPasswordResetOtp"
       ]
     },
     {
@@ -357,6 +358,16 @@
       "boundIn": [
         "packages/core/src/compliance/plugin.ts",
         "packages/core/src/iam/plugin.ts",
+        "packages/core/src/pam/identity/plugin.ts"
+      ]
+    },
+    {
+      "category": "email-template",
+      "interface": "EmailTemplateKey",
+      "token": "EMAIL_TEMPLATE_RENDERER",
+      "status": "wired",
+      "boundIn": [
+        "packages/core/src/pam/identity/adapters/default-email-template-renderer.ts",
         "packages/core/src/pam/identity/plugin.ts"
       ]
     },
@@ -1155,6 +1166,10 @@
       "file": "packages/core/src/contracts/schemas/identity.ts"
     },
     {
+      "name": "VerifyPasswordResetOtpInputSchema",
+      "file": "packages/core/src/contracts/schemas/identity.ts"
+    },
+    {
       "name": "WalletBalanceSchema",
       "file": "packages/core/src/wallet/contract/index.ts"
     },
@@ -1320,6 +1335,7 @@
     "POST /identity/password/change",
     "POST /identity/password/forgot",
     "POST /identity/password/reset",
+    "POST /identity/password/verify-otp",
     "POST /identity/register",
     "POST /identity/sessions/revoke",
     "POST /identity/sessions/revoke-all",
