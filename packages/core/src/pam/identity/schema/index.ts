@@ -34,10 +34,7 @@ export const user = pgTable(
     // Use logical JS property names only; drizzle.config.ts maps camelCase -> snake_case
     // for SQL identifiers so migrations and runtime are consistent.
     twoFactorEnabled: boolean().default(false),
-    // Phone-login (SMS OTP) fields. `phoneNumber` is E.164; `phoneVerified` gates the
-    // phone-login lookup so an unverified/blank phone can never authenticate. Phone
-    // management routes are a separate story - these are written elsewhere today.
-    phoneNumber: text(),
+    phoneNumber: text().unique(),
     phoneVerified: boolean().notNull().default(false),
     phoneVerifiedAt: timestamp({ withTimezone: true }),
     failedLoginAttempts: integer().notNull().default(0),

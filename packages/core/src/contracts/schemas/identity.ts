@@ -22,8 +22,7 @@ export const UserSchema = z.object({
   updatedAt: TimestampSchema,
 });
 
-// E.164: '+' then a non-zero country digit and 7-14 more digits (8-15 total).
-export const E164PhoneSchema = z.string().regex(/^\+[1-9]\d{7,14}$/);
+export const E164PhoneSchema = z.string().regex(/^\+[1-9][0-9]{7,14}$/);
 
 export const PhoneLoginRequestInputSchema = z.object({ phone: E164PhoneSchema });
 

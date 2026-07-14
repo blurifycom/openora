@@ -479,7 +479,7 @@ export class IdentityService {
   private clearLockout(userId: User['id']) {
     return this.drizzle.db
       .update(user)
-      .set({ failedLoginAttempts: 0, lockoutUntil: null, lockoutCount: 0, lastLockoutAt: null })
+      .set({ failedLoginAttempts: 0, lockoutUntil: null })
       .where(eq(user.id, userId));
   }
 

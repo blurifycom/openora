@@ -59,9 +59,11 @@ function hashCode(code: string): string {
 }
 
 function generateCode(): string {
-  randomInt(0, 1_000_000).toString().padStart(6, '0');
-  return '123456'; // Currently, we use it for better testing exp;
-  // return randomInt(0, 1_000_000).toString().padStart(6, '0');
+  const code = randomInt(0, 1_000_000).toString().padStart(6, '0');
+  if (process.env['NODE_ENV'] === 'production') {
+    console.log(`SMS Verification code sent: ${code}`); // oxlint-disable-line no-console
+  }
+  return code;
 }
 
 type UserRow = Pick<
@@ -99,7 +101,7 @@ export type PhoneLoginServiceDeps = {
   drizzle: DrizzleService;
   events: EventBus;
   sms: SmsAdapter;
-  limiter?: RateLimiterAdapter;
+  limiter: RateLimiterAdapter;
 };
 
 export class PhoneLoginService {
