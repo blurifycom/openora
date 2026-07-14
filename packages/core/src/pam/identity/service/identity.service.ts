@@ -241,29 +241,10 @@ export class IdentityService {
     return this.auth.api as unknown as ExtendedAuthApi;
   }
 
-  private forwardCookies(
-    authResponse: globalThis.Response,
-    resHeaders: Headers,
-    rememberMe?: boolean,
-  ): void {
+  private forwardCookies(authResponse: globalThis.Response, resHeaders: Headers): void {
     const cookies = authResponse.headers.getSetCookie?.() ?? [];
-    const sessionDurationSeconds =
-      this.auth.options.session?.expiresIn ?? SESSION_DURATION_IN_SECONDS;
     for (const cookie of cookies) {
-      const isSessionCookie = cookie.split('=')[0]?.trim().endsWith('better-auth.session_token');
-      if (isSessionCookie && rememberMe === true) {
-        const parts = cookie.split('; ');
-        const baseAndValue = parts[0];
-        const attrs = parts.slice(1);
-        const filteredAttrs = attrs.filter(
-          (attr) =>
-            !attr.toLowerCase().startsWith('max-age') && !attr.toLowerCase().startsWith('expires'),
-        );
-        filteredAttrs.push(`Max-Age=${sessionDurationSeconds}`);
-        resHeaders.append('set-cookie', [baseAndValue, ...filteredAttrs].join('; '));
-      } else {
-        resHeaders.append('set-cookie', cookie);
-      }
+      resHeaders.append('set-cookie', cookie);
     }
   }
 
@@ -372,7 +353,8 @@ export class IdentityService {
         });
       }
 
-      this.forwardCookies(authResponse, resHeaders, input.rememberMe);
+      this.forwardCookies(authResponse, resHeaders);
+
       const body = (await authResponse.json()) as {
         user?: BetterAuthUser;
         token?: string;
