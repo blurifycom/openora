@@ -3,7 +3,7 @@
 # unstaged changes.
 staged=$(git diff --cached --name-only --diff-filter=ACMR)
 
-pnpm lint
+pnpm lint:fix
 pnpm format
 
 if [ -n "$staged" ]; then

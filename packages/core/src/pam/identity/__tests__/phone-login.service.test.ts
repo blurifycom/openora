@@ -27,6 +27,7 @@ const userRow = {
 
 const allowLimiter = (): RateLimiterAdapter => ({
   consume: vi.fn().mockResolvedValue({ allowed: true, retryAfterMs: 0 }),
+  reset: vi.fn(),
 });
 
 function build({
