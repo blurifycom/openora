@@ -117,6 +117,19 @@ export const domainEventSchemas = {
   'chat.user.blocked': z.object({ blockerId: UuidSchema, blockedId: UuidSchema }),
   'chat.user.unblocked': z.object({ blockerId: UuidSchema, blockedId: UuidSchema }),
 
+  // Private room lifecycle: creation and member moderation.
+  'chat.private_room.created': z.object({ roomId: UuidSchema, creatorId: UuidSchema }),
+  'chat.room.member.kicked': z.object({
+    roomId: UuidSchema,
+    userId: UuidSchema,
+    kickedBy: UuidSchema,
+  }),
+  'chat.room.member.banned': z.object({
+    roomId: UuidSchema,
+    userId: UuidSchema,
+    bannedBy: UuidSchema,
+  }),
+
   // An admin added or changed a geo (country) rule (regulatory). `actorId` is the
   // acting admin so the audit log can attribute the mutation.
   'compliance.geo-rule.added': z.object({

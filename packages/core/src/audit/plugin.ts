@@ -198,6 +198,30 @@ function mapEventToRecord(topic: string, p: Record<string, unknown>): RecordInpu
     };
   }
 
+  // actorId = the moderator who acted; resource = the affected player in that room.
+  if (topic === 'chat.room.member.kicked' || topic === 'chat.room.member.banned') {
+    const actorKey = topic === 'chat.room.member.kicked' ? 'kickedBy' : 'bannedBy';
+    return {
+      ...base,
+      actorType: 'player',
+      actorId: str(p[actorKey]),
+      resourceType: 'chat_room_member',
+      resourceId: str(p['userId']),
+      after: { roomId: str(p['roomId']) },
+    };
+  }
+
+  // actorId = the player who created the room; resource = the new room.
+  if (topic === 'chat.private_room.created') {
+    return {
+      ...base,
+      actorType: 'player',
+      actorId: str(p['creatorId']),
+      resourceType: 'chat_room',
+      resourceId: str(p['roomId']),
+    };
+  }
+
   // actorType = admin (the only path flipping isActive is the back-office route);
   // resource = the subject user. after carries the new active state.
   if (topic === 'identity.user.deactivated' || topic === 'identity.user.reactivated') {
@@ -357,6 +381,9 @@ const SUBSCRIBED_TOPICS: DomainEventName[] = [
   // already persisted in chatMessage; the moderation/block actions are what we audit.
   'chat.user.blocked',
   'chat.user.unblocked',
+  'chat.private_room.created',
+  'chat.room.member.kicked',
+  'chat.room.member.banned',
   'compliance.limit.upserted',
   'compliance.limit.removed',
   'rg.limit.set',

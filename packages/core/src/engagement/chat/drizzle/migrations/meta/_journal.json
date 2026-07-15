@@ -8,6 +8,13 @@
       "when": 1783555224311,
       "tag": "0000_numerous_albert_cleary",
       "breakpoints": true
+    },
+    {
+      "idx": 1,
+      "version": "7",
+      "when": 1784117825980,
+      "tag": "0001_nifty_infant_terrible",
+      "breakpoints": true
     }
   ]
 }
