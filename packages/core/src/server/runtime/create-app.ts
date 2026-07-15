@@ -23,6 +23,9 @@ import {
   createLogger,
   createRedisClient,
   withRequestContext,
+  getCurrentRequestContext,
+  NoopErrorTracker,
+  createSentryErrorTracker,
   EVENT_BUS,
   type OssContext,
 } from '../kernel/index.js';
@@ -36,6 +39,7 @@ import {
   ADMIN_PERMISSION_RESOLVER,
   RATE_LIMITER,
   CACHE,
+  ERROR_TRACKING,
   composeContract,
   healthContract,
   IGAMING_CONFIG,
@@ -182,6 +186,19 @@ export async function createApp(config: CreateAppConfig): Promise<CreatedApp> {
   }
 
   const container = new Container();
+  // Registered before the event-bus/outbox so every downstream c.get(ERROR_TRACKING)
+  // resolves synchronously. Sentry inits here (async dynamic import) when SENTRY_DSN
+  // is set; otherwise a no-op. A consumer overlay re-providing ERROR_TRACKING later
+  // still wins (last registration wins).
+  const sentryDsn = process.env['SENTRY_DSN'];
+  const tracesSampleRate = process.env['SENTRY_TRACES_SAMPLE_RATE'];
+  const errorTracker = sentryDsn
+    ? await createSentryErrorTracker({
+        dsn: sentryDsn,
+        ...(tracesSampleRate ? { tracesSampleRate: Number(tracesSampleRate) } : {}),
+      })
+    : new NoopErrorTracker();
+  container.register(ERROR_TRACKING, () => errorTracker);
   container.register(DRIZZLE, () => {
     const svc = new DrizzleService();
     container.onDispose(() => svc.dispose());
@@ -206,6 +223,7 @@ export async function createApp(config: CreateAppConfig): Promise<CreatedApp> {
       c.get(MESSAGE_BROKER),
       createLogger('event-bus'),
       outboxEnabled ? c.get(OUTBOX) : undefined,
+      c.get(ERROR_TRACKING),
     ),
   );
   // Default in-process fan-out served as SSE; an overlay rebinds to a managed
@@ -293,7 +311,10 @@ export async function createApp(config: CreateAppConfig): Promise<CreatedApp> {
 
   if (outboxEnabled) {
     const relay = new OutboxRelay(drizzle.db, container.get(MESSAGE_BROKER), {
-      onError: (err) => createLogger('outbox-relay').error({ err }, 'outbox drain failed'),
+      onError: (err) => {
+        createLogger('outbox-relay').error({ err }, 'outbox drain failed');
+        errorTracker.captureException(err, { tags: { path: 'outbox-relay' } });
+      },
     });
     relay.start();
     container.onDispose(() => relay.stop());
@@ -320,6 +341,7 @@ export async function createApp(config: CreateAppConfig): Promise<CreatedApp> {
       onError((error) => {
         if (!(error instanceof ORPCError)) {
           createLogger('orpc').error({ err: error }, 'unhandled error');
+          container.get(ERROR_TRACKING).captureException(error, getCurrentRequestContext());
         }
       }),
     ],

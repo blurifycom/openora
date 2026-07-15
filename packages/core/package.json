@@ -565,5 +565,8 @@
     "react-dom": {
       "optional": true
     }
+  },
+  "optionalDependencies": {
+    "@sentry/node": "10.65.0"
   }
 }

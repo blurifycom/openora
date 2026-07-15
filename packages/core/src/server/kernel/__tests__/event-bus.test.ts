@@ -105,6 +105,24 @@ describe('createEventBus', () => {
     );
   });
 
+  it('reports a throwing subscriber to the error tracker when one is bound', async () => {
+    const reporter = { captureException: vi.fn() };
+    const bus = createEventBus(new InMemoryBroker(), fakeLogger(), undefined, reporter);
+
+    bus.on('identity.user.registered', () => {
+      throw new Error('boom');
+    });
+    bus.emit('identity.user.registered', { userId: 'u1' });
+    await flush();
+
+    expect(reporter.captureException).toHaveBeenCalledWith(
+      expect.any(Error),
+      expect.objectContaining({
+        tags: { event: 'identity.user.registered', path: 'event-subscriber' },
+      }),
+    );
+  });
+
   it('logs a validation error for a bad payload but still delivers', async () => {
     const logger = fakeLogger();
     const bus = createEventBus(new InMemoryBroker(), logger);
