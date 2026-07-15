@@ -454,7 +454,7 @@ describe('IdentityService - unlockUser', () => {
       consume: vi.fn(),
       reset: resetMock,
     } satisfies import('@openora/core/contracts').RateLimiterAdapter;
-    const svc = new IdentityService({
+    const svc = withTemplateRenderer({
       drizzle: drizzle as never,
       events: makeEvents() as never,
       limiter,

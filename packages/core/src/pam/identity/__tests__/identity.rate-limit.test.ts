@@ -200,4 +200,16 @@ describe('IdentityService - fail-closed limiter policy for credential-guessing k
       expect.objectContaining({ onUnavailable: 'deny' }),
     );
   });
+
+  it('throttles requestPasswordReset on the pwreset-req: key', async () => {
+    const { limiter, consume } = denyingLimiter();
+    const svc = withTemplateRenderer({ drizzle, events, limiter });
+
+    // The throttle is asserted before the anti-enumeration try/catch, so a denied
+    // request key surfaces as a 429 (only the better-auth call is swallowed).
+    await expect(svc.requestPasswordReset({ email: 'User@X.dev' })).rejects.toMatchObject({
+      code: 'TOO_MANY_REQUESTS',
+    });
+    expect(consume).toHaveBeenCalledWith('pwreset-req:user@x.dev', expect.any(Object));
+  });
 });

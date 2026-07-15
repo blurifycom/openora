@@ -33,6 +33,7 @@ import type {
   IdentityServiceOptions,
   PlatformConfig,
 } from '@openora/core/contracts';
+import { RATE_LIMIT_KEYS, makeRateLimitKey } from '@openora/core/contracts';
 import { assertSupportedLanguage } from '../../shared/language.js';
 
 function nodeHeadersToHeaders(nodeHeaders: NodeHeaders) {
@@ -199,16 +200,6 @@ const EMAIL_VERIFICATION_RATE_LIMIT = { limit: 3, windowMs: 15 * MINUTE_MS };
 const VERIFY_EMAIL_RATE_LIMIT = { limit: 5, windowMs: 15 * MINUTE_MS };
 const CHANGE_PASSWORD_RATE_LIMIT = { limit: 5, windowMs: 15 * MINUTE_MS };
 const TWO_FACTOR_PASSWORD_RATE_LIMIT = { limit: 5, windowMs: 5 * MINUTE_MS };
-
-function makePasswordResetRequestKey(email: string): `pwreset-req:${string}` {
-  return `pwreset-req:${email}`;
-}
-function makePasswordResetVerifyKey(email: string): `pwreset-verify:${string}` {
-  return `pwreset-verify:${email}`;
-}
-function makePasswordResetKey(email: string): `pwreset:${string}` {
-  return `pwreset:${email}`;
-}
 
 function computeLockoutState({
   attempts,
@@ -635,7 +626,7 @@ export class IdentityService {
     const email = input.email.toLowerCase();
     await assertRateLimit(
       this.limiter,
-      makePasswordResetRequestKey(email),
+      makeRateLimitKey(RATE_LIMIT_KEYS.PASSWORD_RESET_REQUEST, email),
       PASSWORD_RESET_REQUEST_RATE_LIMIT,
     );
     // Always returns success - never reveal whether the email exists. The reset
@@ -657,7 +648,7 @@ export class IdentityService {
     const email = input.email.toLowerCase();
     await assertRateLimit(
       this.limiter,
-      makePasswordResetVerifyKey(email),
+      makeRateLimitKey(RATE_LIMIT_KEYS.PASSWORD_RESET_VERIFY, email),
       PASSWORD_RESET_VERIFY_RATE_LIMIT,
     );
     const res = await this.api.checkVerificationOTP({
@@ -671,7 +662,11 @@ export class IdentityService {
 
   async resetPassword(input: ResetPasswordInput) {
     const email = input.email.toLowerCase();
-    await assertRateLimit(this.limiter, makePasswordResetKey(email), PASSWORD_RESET_RATE_LIMIT);
+    await assertRateLimit(
+      this.limiter,
+      makeRateLimitKey(RATE_LIMIT_KEYS.PASSWORD_RESET, email),
+      PASSWORD_RESET_RATE_LIMIT,
+    );
     const res = await this.api.resetPasswordEmailOTP({
       body: { email, otp: input.otp, password: input.newPassword },
       headers: new Headers(),

@@ -53,7 +53,7 @@ export type {
   RateLimitKey,
   RateLimitKeyPrefix,
 } from './rate-limit.js';
-export { RATE_LIMITER, RATE_LIMIT_KEYS } from './rate-limit.js';
+export { RATE_LIMITER, RATE_LIMIT_KEYS, makeRateLimitKey } from './rate-limit.js';
 
 export type { CacheAdapter } from './cache.js';
 export { CACHE } from './cache.js';
