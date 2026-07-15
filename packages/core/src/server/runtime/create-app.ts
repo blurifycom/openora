@@ -279,10 +279,8 @@ export async function createApp(config: CreateAppConfig): Promise<CreatedApp> {
   const registry = await loadPlugins(config.plugins, container);
   await config.configure?.(container);
 
-  // Bridge the logger's error-report hook to whatever ERROR_TRACKING an overlay
-  // bound (Sentry/PostHog/...). No overlay -> no binding -> error logs stay
-  // logs-only. Run after plugins/configure so the final binding wins. Core names
-  // no vendor; the port is the only seam.
+  // Bridge the logger's error sink to whatever ERROR_TRACKING an overlay bound,
+  // after plugins/configure so the final binding wins. Unbound -> logs stay logs-only.
   if (container.has(ERROR_TRACKING)) {
     const tracker = container.get(ERROR_TRACKING);
     setErrorSink((error, context) => tracker.captureException(error, context));
@@ -340,12 +338,11 @@ export async function createApp(config: CreateAppConfig): Promise<CreatedApp> {
 
   const app = new Hono();
 
-  // Outermost catch for anything thrown in the Hono middleware chain (session
-  // resolution, raw-body capture, etag/cache) - oRPC's onError interceptor only
-  // sees route/service errors, which handler.handle turns into responses and never
-  // rethrows. The logger.error({ err }) here flows to the bound ERROR_TRACKING sink,
-  // so no capture call. HTTPExceptions are deliberate HTTP outcomes - returned as-is,
-  // not reported (mirrors skipping ORPCError in the interceptor).
+  // Outermost catch for errors thrown in the Hono middleware chain (session
+  // resolution, raw-body capture, etag/cache) - the one seam oRPC's onError
+  // interceptor never sees, since handler.handle turns route/service errors into
+  // responses. logger.error reports via the sink; HTTPExceptions are deliberate
+  // outcomes, returned without reporting.
   app.onError((err, c) => {
     if (err instanceof HTTPException) {
       return err.getResponse();

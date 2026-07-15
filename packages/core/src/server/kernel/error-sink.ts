@@ -1,9 +1,7 @@
 import type { ErrorContext } from '@openora/core/contracts';
 
-// The process-wide bridge from the logger to a bound ERROR_TRACKING adapter.
-// createApp sets it once after plugins load (when an overlay bound the port);
-// createLogger forwards every error-level log carrying an `err` here, so a single
-// logger.error(...) both logs and reports - no separate capture call at each site.
+// The process-wide bridge from the logger to a bound ERROR_TRACKING adapter;
+// createApp sets it once after plugins load, when an overlay bound the port.
 export type ErrorSink = (error: unknown, context?: ErrorContext) => void;
 
 // ponytail: module-global, single sink. Fine for the single-process, single-tenant

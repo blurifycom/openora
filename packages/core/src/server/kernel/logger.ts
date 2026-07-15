@@ -4,13 +4,11 @@ import { getCurrentRequestContext } from './request-context.js';
 
 const ERROR_LEVEL = 50;
 
-// Mirror every error-level log carrying an `err` to the bound error sink
-// (Sentry/PostHog/... via an ERROR_TRACKING overlay). Wiring it into the logger
-// means one logger.error({ err }, msg) both logs and reports - callers never make a
-// separate capture call, and all error logs are covered, not just a hand-picked few.
-// The hook fires for child loggers too. Logs without an `err` (validation notices,
-// etc.) are not reported, and `logger.error({ err, report: false }, msg)` opts an
-// expected/noisy error out of forwarding - still logged, just not sent to the tracker.
+// One logger.error({ err }, msg) both logs and reports: this hook forwards every
+// error-level log carrying an `err` to the bound error sink (an ERROR_TRACKING
+// overlay - Sentry/PostHog/...), so no call site makes a separate capture call and
+// child loggers are covered too. `report: false` opts a noisy/expected error out of
+// forwarding (still logged); a log without `err` is never reported.
 export function createLogger(name: string): Logger {
   return pino({
     name,

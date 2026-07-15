@@ -1,10 +1,6 @@
-// Error-tracking seam. Core names no vendor: every error-level log carrying an
-// `err` is forwarded here (wired through the logger), so binding this port reports
-// all error logs - the oRPC interceptor, event-subscriber failures, outbox-relay
-// drops, and any other logger.error({ err }). Unbound -> error logs stay logs-only.
-// A consumer binds a vendor (Sentry, PostHog, Rollbar, ...) via an overlay plugin:
-//   ctx.provide(ERROR_TRACKING, () => new MyErrorTracker())
-// Load your overlay AFTER core so its binding wins (last registration wins).
+// Error-tracking seam. Core names no vendor; a consumer binds one (Sentry, PostHog,
+// Rollbar, ...) via an overlay plugin. Bound -> every error-level log carrying an
+// `err` is reported (forwarded through the logger); unbound -> logs stay logs-only.
 import { createToken, type Token } from './token.js';
 
 export type ErrorContext = {
@@ -14,8 +10,7 @@ export type ErrorContext = {
   extra?: Record<string, unknown>;
 };
 
-// captureException is fire-and-forget (returns void) - a reporter failure must
-// never break the request or background path that called it.
+// Fire-and-forget - a reporter failure must never break the path that called it.
 export type ErrorTrackingAdapter = {
   captureException(error: unknown, context?: ErrorContext): void;
 };
