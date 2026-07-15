@@ -2,23 +2,7 @@
 
 ## Interface
 
-```ts
-// packages/core/src/contracts/adapters/error-tracking.ts
-import { createToken, type Token } from './token.js';
-
-export type ErrorContext = {
-  userId?: string;
-  traceId?: string;
-  tags?: Record<string, string>;
-  extra?: Record<string, unknown>;
-};
-
-export type ErrorTrackingAdapter = {
-  captureException(error: unknown, context?: ErrorContext): void;
-};
-
-export const ERROR_TRACKING: Token<ErrorTrackingAdapter> = createToken('ERROR_TRACKING');
-```
+Source of truth: [`packages/core/src/contracts/adapters/error-tracking.ts`](../../packages/core/src/contracts/adapters/error-tracking.ts) - `ErrorTrackingAdapter`, `ErrorContext`, and the `ERROR_TRACKING` token.
 
 `captureException` is fire-and-forget (returns `void`) - a reporter failure never breaks the
 path that reported the error. Core names **no vendor**: the port is the only seam. Sentry,
