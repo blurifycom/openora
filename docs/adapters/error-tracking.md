@@ -80,5 +80,5 @@ export default definePlugin({
 });
 ```
 
-Register it last in `extensions.config.ts` (an `kind: 'infra'` overlay). A PostHog/Rollbar shop
+Register it last in `extensions.config.ts` (a `kind: 'infra'` overlay). A PostHog/Rollbar shop
 writes the equivalent overlay against the same port - core is unchanged.

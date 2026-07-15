@@ -23,7 +23,10 @@ export function createLogger(name: string): Logger {
         if (!first || typeof first !== 'object' || !('err' in first)) {
           return;
         }
-        const { err, ...rest } = first as { err: unknown } & Record<string, unknown>;
+        const { err, ...rest } = first as { err?: unknown } & Record<string, unknown>;
+        if (err === null || err === undefined) {
+          return;
+        }
         const ctx = getCurrentRequestContext();
         const message = typeof second === 'string' ? second : undefined;
         reportError(err, {

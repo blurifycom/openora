@@ -39,6 +39,14 @@ describe('createLogger error-sink hook', () => {
     expect(sink).not.toHaveBeenCalled();
   });
 
+  it('swallows sink failures', () => {
+    setErrorSink(() => {
+      throw new Error('sink failed');
+    });
+
+    expect(() => createLogger('test').error({ err: new Error('x') }, 'sink failure')).not.toThrow();
+  });
+
   it('is inert when no sink is bound', () => {
     expect(() => createLogger('test').error({ err: new Error('x') }, 'no sink')).not.toThrow();
   });
