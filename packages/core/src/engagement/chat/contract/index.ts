@@ -6,6 +6,7 @@ import {
   ROOM_NAME_MAX_LENGTH,
   ROOM_SLUG_MAX_LENGTH,
   JOIN_CODE_INPUT_MAX_LENGTH,
+  CHAT_ROOM_ROLES,
 } from './constants.js';
 
 export * from './constants.js';
@@ -20,8 +21,6 @@ export const ChatRoomSlugSchema = z
 
 export const MessageContentSchema = z.string().trim().min(1).max(MAX_MESSAGE_LENGTH);
 
-// Values must stay in sync with MEMBER_ROLES in schema/index.ts (boundary rule prevents a shared import).
-export const CHAT_ROOM_ROLES = ['member', 'moderator'] as const;
 export const ChatRoomRoleSchema = z.enum(CHAT_ROOM_ROLES);
 export type ChatRoomRole = z.infer<typeof ChatRoomRoleSchema>;
 

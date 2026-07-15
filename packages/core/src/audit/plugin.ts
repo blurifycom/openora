@@ -222,6 +222,28 @@ function mapEventToRecord(topic: string, p: Record<string, unknown>): RecordInpu
     };
   }
 
+  if (topic === 'chat.room.created' || topic === 'chat.room.deleted') {
+    return {
+      ...base,
+      actorType: 'admin',
+      actorId: str(p['actorId']),
+      resourceType: 'chat_room',
+      resourceId: str(p['roomId']),
+      ...(topic === 'chat.room.created' ? { after: { name: str(p['name']) } } : {}),
+    };
+  }
+
+  if (topic === 'chat.room.member.joined' || topic === 'chat.room.member.left') {
+    return {
+      ...base,
+      actorType: 'player',
+      actorId: str(p['userId']),
+      resourceType: 'chat_room_member',
+      resourceId: str(p['userId']),
+      after: { roomId: str(p['roomId']) },
+    };
+  }
+
   // actorType = admin (the only path flipping isActive is the back-office route);
   // resource = the subject user. after carries the new active state.
   if (topic === 'identity.user.deactivated' || topic === 'identity.user.reactivated') {
@@ -382,6 +404,10 @@ const SUBSCRIBED_TOPICS: DomainEventName[] = [
   'chat.user.blocked',
   'chat.user.unblocked',
   'chat.private_room.created',
+  'chat.room.created',
+  'chat.room.deleted',
+  'chat.room.member.joined',
+  'chat.room.member.left',
   'chat.room.member.kicked',
   'chat.room.member.banned',
   'compliance.limit.upserted',

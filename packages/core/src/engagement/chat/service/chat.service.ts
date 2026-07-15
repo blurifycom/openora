@@ -1,6 +1,9 @@
 import { randomInt } from 'node:crypto';
 import {
   type EventBus,
+  makeNotFoundError,
+  makeOwnershipError,
+  makeConflictError,
   createDomainError,
   assertOwnership,
   DrizzleService,
@@ -8,7 +11,7 @@ import {
   serializeRow,
 } from '@openora/core/server';
 import type { RealtimeTransport } from '@openora/core/contracts';
-import { eq, and, isNull, lt, desc, asc, notInArray, inArray } from 'drizzle-orm';
+import { eq, and, isNull, lt, desc, asc, notInArray, inArray, count } from 'drizzle-orm';
 import { user } from '@openora/core/pam/schema/identity';
 import type { User } from '@openora/core/pam/schema/identity';
 import {
@@ -23,6 +26,7 @@ import {
   DEFAULT_MESSAGE_LIMIT,
   JOIN_CODE_ALPHABET,
   JOIN_CODE_LENGTH,
+  MAX_PRIVATE_ROOMS_PER_PLAYER,
   PRIVATE_ROOM_SLUG_PREFIX,
 } from '../contract/constants.js';
 import { moderateContent } from '../moderation/index.js';
@@ -31,20 +35,9 @@ export function chatChannel(roomId: ChatRoom['id'] | null) {
   return roomId ? `chat:room:${roomId}` : 'chat:global';
 }
 
-export const ChatRoomNotFoundError = createDomainError(
-  'ChatRoomNotFoundError',
-  (id: string) => `Chat room not found: ${id}`,
-);
-
-export const ChatMessageNotFoundError = createDomainError(
-  'ChatMessageNotFoundError',
-  (id: string) => `Chat message not found: ${id}`,
-);
-
-export const ChatMessageOwnershipError = createDomainError(
-  'ChatMessageOwnershipError',
-  (id: string) => `Not authorized to delete message: ${id}`,
-);
+export const ChatRoomNotFoundError = makeNotFoundError('ChatRoom');
+export const ChatMessageNotFoundError = makeNotFoundError('ChatMessage');
+export const ChatMessageOwnershipError = makeOwnershipError('ChatMessage');
 
 export const ChatMessageBlockedError = createDomainError(
   'ChatMessageBlockedError',
@@ -56,9 +49,19 @@ export const ChatSelfBlockError = createDomainError(
   () => 'You cannot block yourself',
 );
 
-export const ChatRoomSlugConflictError = createDomainError(
+export const ChatRoomSlugConflictError = makeConflictError(
   'ChatRoomSlugConflictError',
-  (slug: string) => `A room with slug '${slug}' already exists`,
+  'A room with this slug already exists',
+);
+
+export const ChatRoomLimitReachedError = makeConflictError(
+  'ChatRoomLimitReachedError',
+  'Private room limit reached',
+);
+
+export const ChatRoomLastModeratorError = makeConflictError(
+  'ChatRoomLastModeratorError',
+  'Cannot leave: you are the sole moderator of this room',
 );
 
 export const ChatRoomJoinCodeNotFoundError = createDomainError(
@@ -107,6 +110,10 @@ function generateJoinCode(): string {
     const ch = JOIN_CODE_ALPHABET[randomInt(0, JOIN_CODE_ALPHABET.length)];
     return ch ?? 'A'; // unreachable: randomInt(0, N) is always < N
   }).join('');
+}
+
+function isUniqueConstraintViolation(e: unknown): boolean {
+  return (e as { code?: unknown }).code === '23505';
 }
 
 export class ChatService {
@@ -281,6 +288,7 @@ export class ChatService {
     roomId: ChatRoom['id'];
     content: string;
   }) {
+    // TODO: check RG_SELF_EXCLUSION_SERVICE before send (sealed token not yet implemented)
     await this.verifyRoomAccess(roomId, userId);
 
     const safeContent = gateContent(content);
@@ -311,7 +319,7 @@ export class ChatService {
       await this.drizzle.db.select().from(chatMessage).where(eq(chatMessage.id, id)),
       new ChatMessageNotFoundError(id),
     );
-    assertOwnership(message.userId, userId, new ChatMessageOwnershipError(id));
+    assertOwnership(message.userId, userId, new ChatMessageOwnershipError());
 
     await this.drizzle.db
       .update(chatMessage)
@@ -334,6 +342,7 @@ export class ChatService {
   }
 
   async sendGlobalMessage(userId: User['id'], username: string, content: string) {
+    // TODO: check RG_SELF_EXCLUSION_SERVICE before send (sealed token not yet implemented)
     const safeContent = gateContent(content);
     const displayName = await this.resolveDisplayName(userId, username);
     const [record] = await this.drizzle.db
@@ -396,20 +405,21 @@ export class ChatService {
     return { success: true } as const;
   }
 
-  async createRoom({ name, slug }: { name: string; slug: string }) {
+  async createRoom({ name, slug, actorId }: { name: string; slug: string; actorId?: User['id'] }) {
     const [existing] = await this.drizzle.db
       .select({ id: chatRoom.id })
       .from(chatRoom)
       .where(eq(chatRoom.slug, slug))
       .limit(1);
     if (existing) {
-      throw new ChatRoomSlugConflictError(slug);
+      throw new ChatRoomSlugConflictError();
     }
     const [record] = await this.drizzle.db.insert(chatRoom).values({ name, slug }).returning();
+    this.events.emit('chat.room.created', { roomId: record.id, name, actorId });
     return toRoom(record);
   }
 
-  async deleteRoom(id: ChatRoom['id']) {
+  async deleteRoom(id: ChatRoom['id'], actorId?: User['id']) {
     await this.drizzle.db.transaction(async (t) => {
       await t.delete(chatMessage).where(eq(chatMessage.roomId, id));
       findOneOrThrow(
@@ -417,25 +427,49 @@ export class ChatService {
         new ChatRoomNotFoundError(id),
       );
     });
+    this.events.emit('chat.room.deleted', { roomId: id, actorId });
     return { success: true } as const;
   }
 
   async createPrivateRoom({ userId, name }: { userId: User['id']; name: string }) {
-    const joinCode = generateJoinCode();
-    const slug = `${PRIVATE_ROOM_SLUG_PREFIX}${joinCode.toLowerCase()}`;
-    const [record] = await this.drizzle.db
-      .insert(chatRoom)
-      .values({ name, slug, isPublic: false, joinCode, creatorId: userId })
-      .returning();
-    await this.drizzle.db
-      .insert(chatRoomMember)
-      .values({ roomId: record.id, userId, role: 'moderator' })
-      .onConflictDoNothing();
-    this.events.emit('chat.private_room.created', { roomId: record.id, creatorId: userId });
-    return toRoom(record);
+    const [{ total }] = await this.drizzle.db
+      .select({ total: count() })
+      .from(chatRoom)
+      .where(and(eq(chatRoom.creatorId, userId), eq(chatRoom.isPublic, false)));
+    if (Number(total) >= MAX_PRIVATE_ROOMS_PER_PLAYER) {
+      throw new ChatRoomLimitReachedError();
+    }
+
+    for (let attempt = 1; attempt <= 3; attempt++) {
+      const joinCode = generateJoinCode();
+      const slug = `${PRIVATE_ROOM_SLUG_PREFIX}${joinCode.toLowerCase()}`;
+      try {
+        const record = await this.drizzle.db.transaction(async (t) => {
+          const [room] = await t
+            .insert(chatRoom)
+            .values({ name, slug, isPublic: false, joinCode, creatorId: userId })
+            .returning();
+          await t
+            .insert(chatRoomMember)
+            .values({ roomId: room.id, userId, role: 'moderator' })
+            .onConflictDoNothing();
+          return room;
+        });
+        this.events.emit('chat.private_room.created', { roomId: record.id, creatorId: userId });
+        return toRoom(record);
+      } catch (e) {
+        if (attempt < 3 && isUniqueConstraintViolation(e)) {
+          continue;
+        }
+        throw e;
+      }
+    }
+    // unreachable: loop returns or rethrows on every iteration
+    throw new ChatRoomSlugConflictError();
   }
 
   async joinRoom({ userId, joinCode }: { userId: User['id']; joinCode: string }) {
+    // TODO: apply RATE_LIMITER (5 req/15 min per IP+userId) to prevent join-code brute-force
     const [room] = await this.drizzle.db
       .select()
       .from(chatRoom)
@@ -453,17 +487,39 @@ export class ChatService {
       throw new ChatRoomBannedError(room.id);
     }
     // Idempotent: re-joining is a no-op (preserves existing role).
-    await this.drizzle.db
+    const inserted = await this.drizzle.db
       .insert(chatRoomMember)
       .values({ roomId: room.id, userId })
-      .onConflictDoNothing();
+      .onConflictDoNothing()
+      .returning();
+    if (inserted.length > 0) {
+      this.events.emit('chat.room.member.joined', { roomId: room.id, userId });
+    }
     return toRoom(room);
   }
 
   async leaveRoom({ userId, roomId }: { userId: User['id']; roomId: ChatRoom['id'] }) {
-    await this.drizzle.db
+    const [memberRow] = await this.drizzle.db
+      .select({ role: chatRoomMember.role })
+      .from(chatRoomMember)
+      .where(and(eq(chatRoomMember.roomId, roomId), eq(chatRoomMember.userId, userId)))
+      .limit(1);
+    if (memberRow?.role === 'moderator') {
+      const [{ modCount }] = await this.drizzle.db
+        .select({ modCount: count() })
+        .from(chatRoomMember)
+        .where(and(eq(chatRoomMember.roomId, roomId), eq(chatRoomMember.role, 'moderator')));
+      if (Number(modCount) <= 1) {
+        throw new ChatRoomLastModeratorError();
+      }
+    }
+    const removed = await this.drizzle.db
       .delete(chatRoomMember)
-      .where(and(eq(chatRoomMember.roomId, roomId), eq(chatRoomMember.userId, userId)));
+      .where(and(eq(chatRoomMember.roomId, roomId), eq(chatRoomMember.userId, userId)))
+      .returning();
+    if (removed.length > 0) {
+      this.events.emit('chat.room.member.left', { roomId, userId });
+    }
     return { success: true } as const;
   }
 
@@ -479,17 +535,19 @@ export class ChatService {
     if (moderatorId === userId) {
       throw new ChatRoomSelfModerationError();
     }
-    const [mod] = await this.drizzle.db
-      .select({ role: chatRoomMember.role })
-      .from(chatRoomMember)
-      .where(and(eq(chatRoomMember.roomId, roomId), eq(chatRoomMember.userId, moderatorId)))
-      .limit(1);
-    if (!mod || mod.role !== 'moderator') {
-      throw new ChatRoomNotModeratorError(roomId);
-    }
-    await this.drizzle.db
-      .delete(chatRoomMember)
-      .where(and(eq(chatRoomMember.roomId, roomId), eq(chatRoomMember.userId, userId)));
+    await this.drizzle.db.transaction(async (t) => {
+      const [mod] = await t
+        .select({ role: chatRoomMember.role })
+        .from(chatRoomMember)
+        .where(and(eq(chatRoomMember.roomId, roomId), eq(chatRoomMember.userId, moderatorId)))
+        .limit(1);
+      if (!mod || mod.role !== 'moderator') {
+        throw new ChatRoomNotModeratorError(roomId);
+      }
+      await t
+        .delete(chatRoomMember)
+        .where(and(eq(chatRoomMember.roomId, roomId), eq(chatRoomMember.userId, userId)));
+    });
     this.events.emit('chat.room.member.kicked', { roomId, userId, kickedBy: moderatorId });
     return { success: true } as const;
   }
@@ -506,22 +564,24 @@ export class ChatService {
     if (moderatorId === userId) {
       throw new ChatRoomSelfModerationError();
     }
-    const [mod] = await this.drizzle.db
-      .select({ role: chatRoomMember.role })
-      .from(chatRoomMember)
-      .where(and(eq(chatRoomMember.roomId, roomId), eq(chatRoomMember.userId, moderatorId)))
-      .limit(1);
-    if (!mod || mod.role !== 'moderator') {
-      throw new ChatRoomNotModeratorError(roomId);
-    }
     // Idempotent: banning an already-banned user is a no-op.
-    await this.drizzle.db
-      .insert(chatRoomBan)
-      .values({ roomId, userId, bannedBy: moderatorId })
-      .onConflictDoNothing();
-    await this.drizzle.db
-      .delete(chatRoomMember)
-      .where(and(eq(chatRoomMember.roomId, roomId), eq(chatRoomMember.userId, userId)));
+    await this.drizzle.db.transaction(async (t) => {
+      const [mod] = await t
+        .select({ role: chatRoomMember.role })
+        .from(chatRoomMember)
+        .where(and(eq(chatRoomMember.roomId, roomId), eq(chatRoomMember.userId, moderatorId)))
+        .limit(1);
+      if (!mod || mod.role !== 'moderator') {
+        throw new ChatRoomNotModeratorError(roomId);
+      }
+      await t
+        .insert(chatRoomBan)
+        .values({ roomId, userId, bannedBy: moderatorId })
+        .onConflictDoNothing();
+      await t
+        .delete(chatRoomMember)
+        .where(and(eq(chatRoomMember.roomId, roomId), eq(chatRoomMember.userId, userId)));
+    });
     this.events.emit('chat.room.member.banned', { roomId, userId, bannedBy: moderatorId });
     return { success: true } as const;
   }

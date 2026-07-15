@@ -8,10 +8,9 @@ import {
   uniqueIndex,
   index,
 } from 'drizzle-orm/pg-core';
+import { CHAT_ROOM_ROLES } from '../contract/constants.js';
 
-// Must stay in sync with CHAT_ROOM_ROLES in contract/index.ts (boundary rule prevents a shared import).
-const MEMBER_ROLES = ['member', 'moderator'] as const;
-const chatRoomRole = pgEnum('chat_room_role', MEMBER_ROLES);
+const chatRoomRole = pgEnum('chat_room_role', CHAT_ROOM_ROLES);
 
 export const chatRoom = pgTable(
   'chat_room',

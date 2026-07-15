@@ -117,8 +117,18 @@ export const domainEventSchemas = {
   'chat.user.blocked': z.object({ blockerId: UuidSchema, blockedId: UuidSchema }),
   'chat.user.unblocked': z.object({ blockerId: UuidSchema, blockedId: UuidSchema }),
 
-  // Private room lifecycle: creation and member moderation.
+  // Admin room CRUD (actorId = acting admin UUID).
+  'chat.room.created': z.object({
+    roomId: UuidSchema,
+    name: z.string(),
+    actorId: UuidSchema.optional(),
+  }),
+  'chat.room.deleted': z.object({ roomId: UuidSchema, actorId: UuidSchema.optional() }),
+
+  // Private room lifecycle: creation and member membership changes.
   'chat.private_room.created': z.object({ roomId: UuidSchema, creatorId: UuidSchema }),
+  'chat.room.member.joined': z.object({ roomId: UuidSchema, userId: UuidSchema }),
+  'chat.room.member.left': z.object({ roomId: UuidSchema, userId: UuidSchema }),
   'chat.room.member.kicked': z.object({
     roomId: UuidSchema,
     userId: UuidSchema,

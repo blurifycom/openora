@@ -30,15 +30,26 @@
       "tables": [
         "chat_message",
         "chat_room",
+        "chat_room_ban",
+        "chat_room_member",
         "chat_user_block"
       ],
       "routes": [
+        "chat.banMember",
         "chat.blockUser",
+        "chat.createPrivateRoom",
+        "chat.createRoom",
         "chat.deleteMessage",
+        "chat.deleteRoom",
         "chat.getConnection",
         "chat.getGlobalMessages",
+        "chat.getRoom",
         "chat.getRoomMessages",
+        "chat.joinRoom",
+        "chat.kickMember",
+        "chat.leaveRoom",
         "chat.listBlockedUsers",
+        "chat.listRoomMembers",
         "chat.listRooms",
         "chat.sendGlobalMessage",
         "chat.sendRoomMessage",
@@ -517,6 +528,13 @@
   ],
   "events": [
     "chat.message.sent",
+    "chat.private_room.created",
+    "chat.room.created",
+    "chat.room.deleted",
+    "chat.room.member.banned",
+    "chat.room.member.joined",
+    "chat.room.member.kicked",
+    "chat.room.member.left",
     "chat.user.blocked",
     "chat.user.unblocked",
     "cms.banner.created",
@@ -695,7 +713,19 @@
       "file": "packages/core/src/engagement/chat/contract/index.ts"
     },
     {
+      "name": "ChatRoomMemberSchema",
+      "file": "packages/core/src/engagement/chat/contract/index.ts"
+    },
+    {
+      "name": "ChatRoomRoleSchema",
+      "file": "packages/core/src/engagement/chat/contract/index.ts"
+    },
+    {
       "name": "ChatRoomSchema",
+      "file": "packages/core/src/engagement/chat/contract/index.ts"
+    },
+    {
+      "name": "ChatRoomSlugSchema",
       "file": "packages/core/src/engagement/chat/contract/index.ts"
     },
     {
@@ -1229,6 +1259,7 @@
     "slots"
   ],
   "httpRoutes": [
+    "DELETE /backoffice/chat/rooms/{id}",
     "DELETE /chat/blocks/{blockedId}",
     "DELETE /chat/messages/{id}",
     "DELETE /cms/banners/{id}",
@@ -1250,6 +1281,8 @@
     "GET /chat/connection",
     "GET /chat/global",
     "GET /chat/rooms",
+    "GET /chat/rooms/{roomId}",
+    "GET /chat/rooms/{roomId}/members",
     "GET /chat/rooms/{roomId}/messages",
     "GET /chat/stream",
     "GET /cms/banners",
@@ -1294,8 +1327,14 @@
     "PATCH /iam/roles/{roleId}",
     "PATCH /identity/profile",
     "PATCH /profile",
+    "POST /backoffice/chat/rooms",
     "POST /chat/blocks",
     "POST /chat/global",
+    "POST /chat/rooms/join",
+    "POST /chat/rooms/private",
+    "POST /chat/rooms/{roomId}/ban",
+    "POST /chat/rooms/{roomId}/kick",
+    "POST /chat/rooms/{roomId}/leave",
     "POST /chat/rooms/{roomId}/messages",
     "POST /cms/banners",
     "POST /cms/pages",

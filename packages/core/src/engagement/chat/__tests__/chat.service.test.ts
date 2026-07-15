@@ -37,11 +37,10 @@ describe('ChatService domain errors', () => {
     expect(err.message).toContain('msg-456');
   });
 
-  it('ChatMessageOwnershipError carries the id', () => {
-    const err = new ChatMessageOwnershipError('msg-789');
+  it('ChatMessageOwnershipError is a typed error', () => {
+    const err = new ChatMessageOwnershipError();
     expect(err).toBeInstanceOf(Error);
     expect(err.name).toBe('ChatMessageOwnershipError');
-    expect(err.message).toContain('msg-789');
   });
 });
 
@@ -327,8 +326,8 @@ const privateRoomRow = {
 
 describe('ChatService.createPrivateRoom', () => {
   it('creates a private room, joins creator as moderator, and returns serialized row', async () => {
-    // (1) insert chatRoom -> returning[0], (2) insert chatRoomMember -> select[0] no-op
-    const drizzle = makeDrizzle({ select: [[]], returning: [[privateRoomRow]] });
+    // (1) count private rooms -> 0, in tx: (2) insert chatRoom -> returning[0], (3) insert member -> no-op
+    const drizzle = makeDrizzle({ select: [[{ total: 0 }], []], returning: [[privateRoomRow]] });
     const result = await makeAdminService(drizzle).createPrivateRoom({
       userId: 'u1',
       name: 'Squad Chat',
