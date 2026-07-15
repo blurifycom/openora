@@ -9,6 +9,7 @@ import {
   Verify2faInputSchema,
   Disable2faInputSchema,
   RequestPasswordResetInputSchema,
+  VerifyPasswordResetOtpInputSchema,
   ResetPasswordInputSchema,
   VerifyEmailInputSchema,
   UpdateProfileInputSchema,
@@ -85,6 +86,11 @@ export const identityContract = {
   requestPasswordReset: oc
     .route({ method: 'POST', path: '/identity/password/forgot' })
     .input(RequestPasswordResetInputSchema)
+    .output(IdentitySuccessSchema),
+
+  verifyPasswordResetOtp: oc
+    .route({ method: 'POST', path: '/identity/password/verify-otp' })
+    .input(VerifyPasswordResetOtpInputSchema)
     .output(IdentitySuccessSchema),
 
   resetPassword: oc

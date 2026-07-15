@@ -26,6 +26,7 @@ routeTree.gen.ts
 # Root-anchored so per-package AGENTS.md (hand-written) stay tracked.
 /AGENTS.md
 /CLAUDE.md
+/GEMINI.md
 /.mcp.json
 .vscode/mcp.json
 .codex/
@@ -37,5 +38,6 @@ routeTree.gen.ts
 .github/prompts/
 .github/hooks/
 .github/instructions/
+.github/skills/
 .claude/rules/
 .agents/
