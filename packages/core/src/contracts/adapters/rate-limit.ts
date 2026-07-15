@@ -6,6 +6,24 @@
 // with zero consumer code; rebind RATE_LIMITER via an overlay for any other backend.
 import { createToken, type Token } from './token.js';
 
+export const RATE_LIMIT_KEYS = {
+  REGISTER: 'register',
+  LOGIN: 'login',
+  ENABLE_2FA: 'enable2fa',
+  VERIFY_2FA: 'verify2fa',
+  DISABLE_2FA: 'disable2fa',
+  PASSWORD_RESET_REQUEST: 'pwreset-req',
+  PASSWORD_RESET: 'pwreset',
+  CHANGE_PASSWORD: 'change-password',
+  EMAIL_VERIFICATION: 'email-verify',
+  VERIFY_EMAIL: 'verify-email',
+  WALLET_MUTATION: 'wallet-mutation',
+} as const;
+
+export type RateLimitKeyPrefix = (typeof RATE_LIMIT_KEYS)[keyof typeof RATE_LIMIT_KEYS];
+
+export type RateLimitKey = `${RateLimitKeyPrefix}:${string}`;
+
 export type RateLimitOptions = {
   // Max allowed consumptions per window per key.
   limit: number;
@@ -23,8 +41,9 @@ export type RateLimitResult = {
   retryAfterMs: number;
 };
 
-export type RateLimiterAdapter = {
-  consume(key: string, opts: RateLimitOptions): Promise<RateLimitResult>;
+export type RateLimiterAdapter<Key extends string = string> = {
+  consume(key: Key, opts: RateLimitOptions): Promise<RateLimitResult>;
+  reset(key: Key): Promise<void>;
 };
 
-export const RATE_LIMITER: Token<RateLimiterAdapter> = createToken('RATE_LIMITER');
+export const RATE_LIMITER: Token<RateLimiterAdapter<RateLimitKey>> = createToken('RATE_LIMITER');

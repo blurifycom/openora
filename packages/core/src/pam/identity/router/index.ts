@@ -49,12 +49,20 @@ export function createIdentityRouter(
       const userId = getUserId(context);
       return createEventStreamGenerator(
         (push) => {
-          const unsubscribe = eventBus.on('identity.sessions.revoked_all', (event) => {
+          const unsubscribeRevoked = eventBus.on('identity.sessions.revoked_all', (event) => {
             if (event.userId === userId) {
               push({ type: 'revoked' });
             }
           });
-          return unsubscribe;
+          const unsubscribeUnlocked = eventBus.on('identity.user.unlocked', (event) => {
+            if (event.userId === userId) {
+              push({ type: 'unlocked' });
+            }
+          });
+          return () => {
+            unsubscribeRevoked();
+            unsubscribeUnlocked();
+          };
         },
         { signal },
       );
