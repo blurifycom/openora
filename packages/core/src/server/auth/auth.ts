@@ -76,7 +76,6 @@ export function createAuth(options: AuthOptions): BetterAuthType {
     },
     emailAndPassword: {
       enabled: true,
-      rememberMeDuration: 30 * 24 * 60 * 60,
       revokeSessionsOnPasswordReset: true,
       onPasswordReset: options.onPasswordReset
         ? async ({ user }) => {

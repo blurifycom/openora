@@ -1,5 +1,9 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { IdentityService, type IdentityServiceDeps } from '../service/identity.service.js';
+import {
+  IdentityService,
+  SESSION_DURATION_IN_SECONDS,
+  type IdentityServiceDeps,
+} from '../service/identity.service.js';
 import { UnsupportedLanguageError } from '../../shared/language.js';
 import type { EmailTemplateRenderer, SendEmailPort, PlatformConfig } from '@openora/core/contracts';
 import { ORPCError } from '@orpc/server';
@@ -33,6 +37,11 @@ vi.mock('@openora/core/server', async (importOriginal) => ({
   createAuth: vi.fn((options) => {
     capturedAuthOptions.current = options;
     return {
+      options: {
+        session: {
+          expiresIn: SESSION_DURATION_IN_SECONDS,
+        },
+      },
       api: {
         getSession: getSessionMock,
         signUpEmail: vi.fn(),

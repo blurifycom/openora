@@ -60,6 +60,7 @@ export class PlayerService {
         or(
           ilike(player.displayName, `%${search}%`),
           ilike(sql`${player.userId}::text`, search),
+          ilike(sql`${player.id}::text`, search),
           ilike(user.email, `%${search}%`),
         ),
       );
