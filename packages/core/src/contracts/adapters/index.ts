@@ -99,6 +99,8 @@ export { RNG_ADAPTER } from './rng.js';
 export type { SendEmailPort } from './email.js';
 export { SEND_EMAIL } from './email.js';
 
+export type { SmsAdapter } from './sms.js';
+export { SMS_ADAPTER } from './sms.js';
 export type {
   EmailTemplateKey,
   EmailTemplateData,
