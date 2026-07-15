@@ -367,7 +367,6 @@
       "token": "EMAIL_TEMPLATE_RENDERER",
       "status": "wired",
       "boundIn": [
-        "packages/core/src/pam/identity/adapters/default-email-template-renderer.ts",
         "packages/core/src/pam/identity/plugin.ts"
       ]
     },
