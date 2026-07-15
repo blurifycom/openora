@@ -13,6 +13,7 @@ import { eq, sql } from 'drizzle-orm';
 import { user, session, account, verification, twoFactor } from '../schema/index.js';
 import type {
   RateLimiterAdapter,
+  RateLimitKey,
   SendEmailPort,
   LoginInput,
   RegisterInput,
@@ -81,15 +82,12 @@ function toUser(u: BetterAuthUser) {
   return u.image !== undefined ? { ...base, image: u.image } : base;
 }
 
-function forwardCookies(authResponse: globalThis.Response, resHeaders: Headers): void {
-  const cookies = authResponse.headers.getSetCookie?.() ?? [];
-  for (const cookie of cookies) {
-    resHeaders.append('set-cookie', cookie);
-  }
-}
-
 function clientIp(headers: Headers): string | null {
   return headers.get('x-forwarded-for')?.split(',')[0]?.trim() || headers.get('x-real-ip') || null;
+}
+
+function makeLoginRateLimitKey(email: string): `login:${string}` {
+  return `login:${email.toLowerCase()}`;
 }
 
 // Key on the `.two_factor` cookie VALUE, never the raw Cookie header: an attacker can
@@ -183,6 +181,7 @@ function computeLockoutTier({
 }
 
 const MINUTE_MS = 60 * 1000;
+export const SESSION_DURATION_IN_SECONDS = 30 * 24 * 60 * 60; // 30 days
 // Coarse abuse throttles keyed by the caller identifier the context provides (email/
 // token/session), NOT IP. The lockout above is a per-account credential-failure
 // counter; these bound raw request volume on each brute-force surface. An overlay
@@ -203,9 +202,6 @@ const EMAIL_VERIFICATION_RATE_LIMIT = { limit: 3, windowMs: 15 * MINUTE_MS };
 const VERIFY_EMAIL_RATE_LIMIT = { limit: 5, windowMs: 15 * MINUTE_MS };
 const CHANGE_PASSWORD_RATE_LIMIT = { limit: 5, windowMs: 15 * MINUTE_MS };
 const TWO_FACTOR_PASSWORD_RATE_LIMIT = { limit: 5, windowMs: 5 * MINUTE_MS };
-// Mirrors better-auth session.expiresIn (server/auth/auth.ts); used only as a fallback
-// when the sign-in response omits an explicit session expiry.
-const SESSION_TTL_MS = 30 * 24 * 60 * 60 * 1000;
 
 function computeLockoutState({
   attempts,
@@ -227,7 +223,7 @@ export type IdentityServiceDeps = {
   events: EventBus;
   email?: SendEmailPort;
   options?: IdentityServiceOptions;
-  limiter?: RateLimiterAdapter;
+  limiter?: RateLimiterAdapter<RateLimitKey>;
   platformConfig?: PlatformConfig;
 };
 
@@ -246,7 +242,7 @@ export class IdentityService {
   private readonly events: EventBus;
   private readonly email?: SendEmailPort;
   private readonly options?: IdentityServiceOptions;
-  private readonly limiter?: RateLimiterAdapter;
+  private readonly limiter?: RateLimiterAdapter<RateLimitKey>;
   private readonly platformConfig?: PlatformConfig;
 
   constructor({ drizzle, events, email, options, limiter, platformConfig }: IdentityServiceDeps) {
@@ -269,6 +265,13 @@ export class IdentityService {
     return this.auth.api as unknown as ExtendedAuthApi;
   }
 
+  private forwardCookies(authResponse: globalThis.Response, resHeaders: Headers): void {
+    const cookies = authResponse.headers.getSetCookie?.() ?? [];
+    for (const cookie of cookies) {
+      resHeaders.append('set-cookie', cookie);
+    }
+  }
+
   private async currentUserId(headers: Headers) {
     const session = await this.auth.api.getSession({ headers });
     return session?.user?.id ?? null;
@@ -286,7 +289,7 @@ export class IdentityService {
       headers,
       asResponse: true,
     });
-    forwardCookies(authResponse, resHeaders);
+    this.forwardCookies(authResponse, resHeaders);
     const body = (await authResponse.json()) as { user: BetterAuthUser };
 
     this.events.emit('identity.user.registered', { userId: body.user.id });
@@ -312,7 +315,7 @@ export class IdentityService {
     // better-auth lowercases emails on write, so the lockout lookup must match on the same form.
     const email = input.email.toLowerCase();
 
-    await assertRateLimit(this.limiter, `login:${email}`, LOGIN_RATE_LIMIT);
+    await assertRateLimit(this.limiter, makeLoginRateLimitKey(email), LOGIN_RATE_LIMIT);
 
     const configLockoutEnabled = this.options?.lockout?.enabled ?? true;
     // Read once for the lockout budget, the admin-bypass check, and the RG login gate
@@ -383,7 +386,8 @@ export class IdentityService {
         });
       }
 
-      forwardCookies(authResponse, resHeaders);
+      this.forwardCookies(authResponse, resHeaders);
+
       const body = (await authResponse.json()) as {
         user?: BetterAuthUser;
         token?: string;
@@ -400,9 +404,11 @@ export class IdentityService {
       }
 
       this.events.emit('identity.user.login', { userId: body.user.id, ip, userAgent });
+      const sessionDurationSeconds =
+        this.auth.options.session?.expiresIn ?? SESSION_DURATION_IN_SECONDS;
       const expiresAt = body.session?.expiresAt
         ? toIso(body.session.expiresAt)
-        : new Date(Date.now() + SESSION_TTL_MS).toISOString();
+        : new Date(Date.now() + sessionDurationSeconds * 1000).toISOString();
       return {
         user: toUser(body.user),
         session: { token: body.token, expiresAt },
@@ -499,6 +505,7 @@ export class IdentityService {
     );
 
     await this.clearLockout(userId);
+    await this.limiter?.reset(makeLoginRateLimitKey(existingUser.email));
 
     this.events.emit('identity.user.unlocked', {
       userId,
@@ -519,7 +526,7 @@ export class IdentityService {
     const session = await this.auth.api.getSession({ headers });
     const userId = (session?.user as BetterAuthUser | undefined)?.id;
     const authResponse = await this.auth.api.signOut({ headers, asResponse: true });
-    forwardCookies(authResponse, resHeaders);
+    this.forwardCookies(authResponse, resHeaders);
     if (userId) {
       this.events.emit('identity.user.logout', { userId });
     }
@@ -549,7 +556,7 @@ export class IdentityService {
       asResponse: true,
     });
     await ensureOk(res);
-    forwardCookies(res, resHeaders);
+    this.forwardCookies(res, resHeaders);
     const body = (await res.json()) as { totpURI: string; backupCodes: string[] };
     return { totpUri: body.totpURI, backupCodes: body.backupCodes };
   }
@@ -565,7 +572,7 @@ export class IdentityService {
       asResponse: true,
     });
     await ensureOk(res);
-    forwardCookies(res, resHeaders);
+    this.forwardCookies(res, resHeaders);
     const userId = await this.currentUserId(headers);
     if (userId) {
       this.events.emit('identity.2fa.enabled', { userId });
@@ -587,7 +594,7 @@ export class IdentityService {
       asResponse: true,
     });
     await ensureOk(res);
-    forwardCookies(res, resHeaders);
+    this.forwardCookies(res, resHeaders);
     if (userId) {
       this.events.emit('identity.2fa.disabled', { userId });
     }
@@ -648,7 +655,7 @@ export class IdentityService {
       asResponse: true,
     });
     await ensureOk(res);
-    forwardCookies(res, resHeaders);
+    this.forwardCookies(res, resHeaders);
     return SUCCESS;
   }
 
@@ -695,7 +702,7 @@ export class IdentityService {
       asResponse: true,
     });
     await ensureOk(res);
-    forwardCookies(res, resHeaders);
+    this.forwardCookies(res, resHeaders);
     return SUCCESS;
   }
 
@@ -713,7 +720,7 @@ export class IdentityService {
       asResponse: true,
     });
     await ensureOk(res);
-    forwardCookies(res, resHeaders);
+    this.forwardCookies(res, resHeaders);
     // updateUser returns { status } only - re-read from session to get the full user.
     const session = await this.auth.api.getSession({ headers });
     const current = session?.user as BetterAuthUser | undefined;

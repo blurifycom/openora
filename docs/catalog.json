@@ -471,16 +471,6 @@
       ]
     },
     {
-      "category": "rate-limit",
-      "interface": "RateLimiterAdapter",
-      "token": "RATE_LIMITER",
-      "status": "wired",
-      "boundIn": [
-        "packages/core/src/pam/identity/plugin.ts",
-        "packages/core/src/wallet/plugin.ts"
-      ]
-    },
-    {
       "category": "realtime",
       "interface": "RealtimePresence",
       "token": "REALTIME_TRANSPORT",

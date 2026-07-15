@@ -71,7 +71,14 @@ export const identityContract = {
 
   streamSession: oc
     .route({ method: 'GET', path: '/identity/session/stream' })
-    .output(eventIterator(z.object({ type: z.literal('revoked') }))),
+    .output(
+      eventIterator(
+        z.discriminatedUnion('type', [
+          z.object({ type: z.literal('revoked') }),
+          z.object({ type: z.literal('unlocked') }),
+        ]),
+      ),
+    ),
 
   enable2fa: oc
     .route({ method: 'POST', path: '/identity/2fa/enable' })

@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { IdentityService } from '../service/identity.service.js';
+import { IdentityService, SESSION_DURATION_IN_SECONDS } from '../service/identity.service.js';
 import { UnsupportedLanguageError } from '../../shared/language.js';
 import type { SendEmailPort } from '@openora/core/contracts';
 import { ORPCError } from '@orpc/server';
@@ -13,6 +13,11 @@ const { signInEmailMock, getSessionMock, updateUserMock } = vi.hoisted(() => ({
 vi.mock('@openora/core/server', async (importOriginal) => ({
   ...(await importOriginal<object>()),
   createAuth: vi.fn(() => ({
+    options: {
+      session: {
+        expiresIn: SESSION_DURATION_IN_SECONDS,
+      },
+    },
     api: {
       getSession: getSessionMock,
       signUpEmail: vi.fn(),
@@ -354,6 +359,35 @@ describe('IdentityService - unlockUser', () => {
     const drizzle = makeDrizzle({ selectRows: [[]] });
     const svc = new IdentityService({ drizzle: drizzle as never, events: makeEvents() as never });
     await expect(svc.unlockUser('missing', 'admin1')).rejects.toThrow();
+  });
+
+  it('resets the login rate-limit window for the unlocked user', async () => {
+    const drizzle = makeDrizzle({
+      selectRows: [
+        [
+          {
+            id: 'u1',
+            email: 'A@B.DEV',
+            failedLoginAttempts: 5,
+            lockoutUntil: new Date('2020-01-01'),
+          },
+        ],
+      ],
+    });
+    const resetMock = vi.fn().mockResolvedValue(undefined);
+    const limiter = {
+      consume: vi.fn(),
+      reset: resetMock,
+    } satisfies import('@openora/core/contracts').RateLimiterAdapter;
+    const svc = new IdentityService({
+      drizzle: drizzle as never,
+      events: makeEvents() as never,
+      limiter,
+    });
+
+    await svc.unlockUser('u1', 'admin1');
+
+    expect(resetMock).toHaveBeenCalledWith('login:a@b.dev');
   });
 });
 
