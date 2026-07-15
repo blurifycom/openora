@@ -6,7 +6,7 @@
 #   - Frontend SDK (react consumption layer) -> frontend owner, reviewed with the maintainer
 # Consumers read this repo as upstream; they don't edit it.
 
-* @zaxovaiko @agniev-a-hub
+* @zaxovaiko @agniev-a-hub @klaudia-blazyczek-blurify
 
 # Frontend SDK (react consumption layer)
 /packages/core/src/react/   @klaudia-blazyczek-blurify @zaxovaiko

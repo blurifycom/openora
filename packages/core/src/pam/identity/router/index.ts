@@ -121,6 +121,10 @@ export function createIdentityRouter(
       identity.requestPasswordReset(input),
     ),
 
+    verifyPasswordResetOtp: os.verifyPasswordResetOtp.handler(({ input }) =>
+      identity.verifyPasswordResetOtp(input),
+    ),
+
     resetPassword: os.resetPassword.handler(({ input }) => identity.resetPassword(input)),
 
     changePassword: os.changePassword.handler(({ input, context }) =>

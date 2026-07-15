@@ -15,12 +15,14 @@ import type {
   RateLimiterAdapter,
   RateLimitKey,
   SendEmailPort,
+  EmailTemplateRenderer,
   LoginInput,
   RegisterInput,
   Enable2faInput,
   Verify2faInput,
   Disable2faInput,
   RequestPasswordResetInput,
+  VerifyPasswordResetOtpInput,
   ResetPasswordInput,
   VerifyEmailInput,
   UpdateProfileInput,
@@ -31,6 +33,7 @@ import type {
   IdentityServiceOptions,
   PlatformConfig,
 } from '@openora/core/contracts';
+import { RATE_LIMIT_KEYS, makeRateLimitKey } from '@openora/core/contracts';
 import { assertSupportedLanguage } from '../../shared/language.js';
 import { isRgBlocked } from './rg-guard.service.js';
 
@@ -120,8 +123,9 @@ type ExtendedAuthApi = {
   enableTwoFactor: AuthCall<{ password: string }>;
   verifyTOTP: AuthCall<{ code: string }>;
   disableTwoFactor: AuthCall<{ password: string }>;
-  requestPasswordReset: AuthCall<{ email: string; redirectTo?: string }>;
-  resetPassword: AuthCall<{ newPassword: string; token: string }>;
+  requestPasswordResetEmailOTP: AuthCall<{ email: string }>;
+  checkVerificationOTP: AuthCall<{ email: string; type: 'forget-password'; otp: string }>;
+  resetPasswordEmailOTP: AuthCall<{ email: string; otp: string; password: string }>;
   sendVerificationEmail: AuthCall<{ email: string }>;
   verifyEmail: AuthCall<{ token: string }>;
   changePassword: AuthCall<{ currentPassword: string; newPassword: string }>;
@@ -137,9 +141,23 @@ export const UserNotFoundError = makeNotFoundError('User');
 // (4xx/5xx) rather than throwing. Surface those as ORPCErrors so oRPC maps them
 // to the right HTTP status instead of the handler silently returning success.
 // Only reads the body on failure, so a subsequent res.json() on success is safe.
-async function ensureOk(res: globalThis.Response) {
+// 401 -> UNAUTHORIZED (bad credentials), 403 -> FORBIDDEN (better-auth's
+// TOO_MANY_ATTEMPTS on checkVerificationOTP/resetPasswordEmailOTP), else BAD_REQUEST.
+// `opts.genericMessage` lets a BAD_REQUEST *or* FORBIDDEN caller opt into a fixed
+// message instead of better-auth's raw one - some better-auth 400s (eg
+// checkVerificationOTP's USER_NOT_FOUND-before-INVALID_OTP ordering) leak account
+// existence otherwise. When genericMessage is set, a 403 is masked down to
+// BAD_REQUEST too, so a caller can't tell "too many attempts" apart from "wrong code".
+async function ensureOk(res: globalThis.Response, opts?: { genericMessage?: string }) {
   if (res.ok) {
     return;
+  }
+  const code =
+    res.status === 401 ? 'UNAUTHORIZED' : res.status === 403 ? 'FORBIDDEN' : 'BAD_REQUEST';
+  if ((code === 'BAD_REQUEST' || code === 'FORBIDDEN') && opts?.genericMessage) {
+    throw new ORPCError(code === 'FORBIDDEN' ? 'BAD_REQUEST' : code, {
+      message: opts.genericMessage,
+    });
   }
   let message = `Request failed (${res.status})`;
   try {
@@ -150,7 +168,7 @@ async function ensureOk(res: globalThis.Response) {
   } catch {
     // non-JSON body - keep the default message
   }
-  throw new ORPCError(res.status === 401 ? 'UNAUTHORIZED' : 'BAD_REQUEST', { message });
+  throw new ORPCError(code, { message });
 }
 
 const DEFAULT_MAX_LOGIN_ATTEMPTS = 5;
@@ -197,6 +215,11 @@ const PASSWORD_RESET_RATE_LIMIT = {
   windowMs: 15 * MINUTE_MS,
   onUnavailable: 'deny',
 } as const;
+const PASSWORD_RESET_VERIFY_RATE_LIMIT = {
+  limit: 5,
+  windowMs: 5 * MINUTE_MS,
+  onUnavailable: 'deny',
+} as const;
 const VERIFY_2FA_RATE_LIMIT = { limit: 5, windowMs: 5 * MINUTE_MS, onUnavailable: 'deny' } as const;
 const EMAIL_VERIFICATION_RATE_LIMIT = { limit: 3, windowMs: 15 * MINUTE_MS };
 const VERIFY_EMAIL_RATE_LIMIT = { limit: 5, windowMs: 15 * MINUTE_MS };
@@ -222,6 +245,7 @@ export type IdentityServiceDeps = {
   drizzle: DrizzleService;
   events: EventBus;
   email?: SendEmailPort;
+  templateRenderer: EmailTemplateRenderer;
   options?: IdentityServiceOptions;
   limiter?: RateLimiterAdapter<RateLimitKey>;
   platformConfig?: PlatformConfig;
@@ -241,14 +265,24 @@ export class IdentityService {
   private readonly drizzle: DrizzleService;
   private readonly events: EventBus;
   private readonly email?: SendEmailPort;
+  private readonly templateRenderer: EmailTemplateRenderer;
   private readonly options?: IdentityServiceOptions;
   private readonly limiter?: RateLimiterAdapter<RateLimitKey>;
   private readonly platformConfig?: PlatformConfig;
 
-  constructor({ drizzle, events, email, options, limiter, platformConfig }: IdentityServiceDeps) {
+  constructor({
+    drizzle,
+    events,
+    email,
+    templateRenderer,
+    options,
+    limiter,
+    platformConfig,
+  }: IdentityServiceDeps) {
     this.drizzle = drizzle;
     this.events = events;
     this.email = email;
+    this.templateRenderer = templateRenderer;
     this.options = options;
     this.limiter = limiter;
     this.platformConfig = platformConfig;
@@ -256,7 +290,31 @@ export class IdentityService {
       db: drizzle.db,
       schema: { user, session, account, verification, twoFactor },
       ...(email ? { sendEmail: (args) => email.send(args) } : {}),
+      templateRenderer: this.templateRenderer,
+      getUserLanguage: (lookupEmail) => this.resolveUserLanguage(lookupEmail),
+      onPasswordReset: async (resetUser) => {
+        this.events.emit('identity.password.reset', { userId: resetUser.id });
+        await this.clearLockout(resetUser.id);
+      },
     });
+  }
+
+  private async findUserByEmail(
+    email: string,
+  ): Promise<{ id: User['id']; language: string | null } | undefined> {
+    const [row] = await this.drizzle.db
+      .select({ id: user.id, language: user.language })
+      .from(user)
+      .where(eq(user.email, email.toLowerCase()))
+      .limit(1);
+    return row;
+  }
+
+  // Used by the emailOTP plugin's sendVerificationOTP hook to pick a locale for the
+  // reset-password email - better-auth only gives us the target email, not a session.
+  private async resolveUserLanguage(email: string): Promise<string | null> {
+    const row = await this.findUserByEmail(email);
+    return row?.language ?? null;
   }
 
   private get api() {
@@ -383,6 +441,7 @@ export class IdentityService {
         this.events.emit('rg.exclusion.login_blocked', { userId: existingUser.id, ip, userAgent });
         throw new ORPCError('FORBIDDEN', {
           message: 'Account access is currently restricted (responsible gambling).',
+          data: { code: 'RG_BLOCKED' },
         });
       }
 
@@ -415,8 +474,15 @@ export class IdentityService {
       };
     } catch (error) {
       // An RG block is not a credential failure - surface it as-is, without touching the
-      // lockout budget or emitting login.failed (the RG event was already emitted).
-      if (error instanceof ORPCError && error.code === 'FORBIDDEN') {
+      // lockout budget or emitting login.failed (the RG event was already emitted). Match on
+      // the RG_BLOCKED marker, not the bare FORBIDDEN code - ensureOk also maps a banned-user
+      // 403 (better-auth's admin plugin) to FORBIDDEN, and that path must still fall through
+      // to the generic branch below to emit login.failed.
+      if (
+        error instanceof ORPCError &&
+        error.code === 'FORBIDDEN' &&
+        (error.data as { code?: string } | undefined)?.code === 'RG_BLOCKED'
+      ) {
         throw error;
       }
       // Only a genuine credential rejection counts toward lockout - a transient DB/network
@@ -602,17 +668,18 @@ export class IdentityService {
   }
 
   async requestPasswordReset(input: RequestPasswordResetInput) {
+    const email = input.email.toLowerCase();
     await assertRateLimit(
       this.limiter,
-      `pwreset-req:${input.email.toLowerCase()}`,
+      makeRateLimitKey(RATE_LIMIT_KEYS.PASSWORD_RESET_REQUEST, email),
       PASSWORD_RESET_REQUEST_RATE_LIMIT,
     );
     // Always returns success - never reveal whether the email exists. The reset
     // email (if any) is delivered through the sendEmail hook -> notifications.
     // Any underlying error is swallowed for the same anti-enumeration reason.
     try {
-      await this.api.requestPasswordReset({
-        body: { email: input.email, redirectTo: '/reset-password' },
+      await this.api.requestPasswordResetEmailOTP({
+        body: { email },
         headers: new Headers(),
         asResponse: true,
       });
@@ -622,22 +689,42 @@ export class IdentityService {
     return SUCCESS;
   }
 
-  async resetPassword(input: ResetPasswordInput) {
-    // Key on the token - the only identifier the input carries - to bound retries
-    // against a single reset token.
-    await assertRateLimit(this.limiter, `pwreset:${input.token}`, PASSWORD_RESET_RATE_LIMIT);
-    const res = await this.api.resetPassword({
-      body: { newPassword: input.newPassword, token: input.token },
+  async verifyPasswordResetOtp(input: VerifyPasswordResetOtpInput) {
+    const email = input.email.toLowerCase();
+    await assertRateLimit(
+      this.limiter,
+      makeRateLimitKey(RATE_LIMIT_KEYS.PASSWORD_RESET_VERIFY, email),
+      PASSWORD_RESET_VERIFY_RATE_LIMIT,
+    );
+    const res = await this.api.checkVerificationOTP({
+      body: { email, type: 'forget-password', otp: input.otp },
       headers: new Headers(),
       asResponse: true,
     });
-    await ensureOk(res);
-    const body = (await res.json().catch(() => ({}))) as { user?: { id: string } };
-    if (body.user?.id) {
-      this.events.emit('identity.password.reset', { userId: body.user.id });
-      // Password reset clears any lockout - the user has proven identity via email/phone.
-      await this.clearLockout(body.user.id);
+    await ensureOk(res, { genericMessage: 'Invalid or expired verification code' });
+    return SUCCESS;
+  }
+
+  async resetPassword(input: ResetPasswordInput) {
+    const email = input.email.toLowerCase();
+    await assertRateLimit(
+      this.limiter,
+      makeRateLimitKey(RATE_LIMIT_KEYS.PASSWORD_RESET, email),
+      PASSWORD_RESET_RATE_LIMIT,
+    );
+    const res = await this.api.resetPasswordEmailOTP({
+      body: { email, otp: input.otp, password: input.newPassword },
+      headers: new Headers(),
+      asResponse: true,
+    });
+    await ensureOk(res, { genericMessage: 'Invalid or expired verification code' });
+
+    const row = await this.findUserByEmail(email);
+    if (row) {
+      this.events.emit('identity.password.reset', { userId: row.id });
+      await this.clearLockout(row.id);
     }
+
     return SUCCESS;
   }
 

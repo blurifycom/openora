@@ -1,8 +1,16 @@
 import { describe, it, expect, vi } from 'vitest';
 import { InProcessRateLimiter, type EventBus } from '@openora/core/server';
-import type { RateLimiterAdapter } from '@openora/core/contracts';
+import type { EmailTemplateRenderer, RateLimiterAdapter } from '@openora/core/contracts';
 import { mock, mockDb } from '../../../testing/mock.js';
-import { IdentityService } from '../service/identity.service.js';
+import { IdentityService, type IdentityServiceDeps } from '../service/identity.service.js';
+
+const testTemplateRenderer: EmailTemplateRenderer = {
+  render: () => ({ subject: 'subject', body: 'body' }),
+};
+
+function withTemplateRenderer(deps: Omit<IdentityServiceDeps, 'templateRenderer'>) {
+  return new IdentityService({ templateRenderer: testTemplateRenderer, ...deps });
+}
 
 // Keep the real @openora/core/server (so assertRateLimit + InProcessRateLimiter
 // are real); only stub createAuth so the constructor doesn't touch a real DB.
@@ -27,7 +35,7 @@ describe('IdentityService - rate limiting', () => {
     for (let i = 0; i < 5; i++) {
       await limiter.consume(`register:${email}`, { limit: 5, windowMs: 15 * 60 * 1000 });
     }
-    const svc = new IdentityService({ drizzle, events, limiter });
+    const svc = withTemplateRenderer({ drizzle, events, limiter });
 
     await expect(
       svc.register({ email, password: 'password123', name: 'A' }, {}, new Headers()),
@@ -39,7 +47,7 @@ describe('IdentityService - rate limiting', () => {
   });
 
   it('allows register when no limiter is bound (test/no-auth edition)', async () => {
-    const svc = new IdentityService({ drizzle, events });
+    const svc = withTemplateRenderer({ drizzle, events });
     // signUpEmail is a bare vi.fn returning undefined; a throw here would be a 429, not the
     // downstream .json() failure we expect, so assert we got past the guard.
     await expect(
@@ -58,7 +66,7 @@ describe('IdentityService - verify2fa rate-limit key stability (ABC-208 finding 
         windowMs: 5 * 60 * 1000,
       });
     }
-    const svc = new IdentityService({ drizzle, events, limiter });
+    const svc = withTemplateRenderer({ drizzle, events, limiter });
 
     // Same two_factor cookie + different junk pairs must still hit the one exhausted bucket.
     for (let i = 0; i < 3; i++) {
@@ -80,7 +88,7 @@ describe('IdentityService - rate limiting on secret-guessing routes (ABC-208 fin
     for (let i = 0; i < 5; i++) {
       await limiter.consume('change-password:anonymous', { limit: 5, windowMs: 15 * 60 * 1000 });
     }
-    const svc = new IdentityService({ drizzle, events, limiter });
+    const svc = withTemplateRenderer({ drizzle, events, limiter });
 
     await expect(
       svc.changePassword(
@@ -97,7 +105,7 @@ describe('IdentityService - rate limiting on secret-guessing routes (ABC-208 fin
     for (let i = 0; i < 5; i++) {
       await limiter.consume('verify-email:anonymous', { limit: 5, windowMs: 15 * 60 * 1000 });
     }
-    const svc = new IdentityService({ drizzle, events, limiter });
+    const svc = withTemplateRenderer({ drizzle, events, limiter });
 
     await expect(svc.verifyEmail({ token: 'sometoken' }, {})).rejects.toMatchObject({
       code: 'TOO_MANY_REQUESTS',
@@ -110,7 +118,7 @@ describe('IdentityService - rate limiting on secret-guessing routes (ABC-208 fin
     for (let i = 0; i < 5; i++) {
       await limiter.consume('enable2fa:anonymous', { limit: 5, windowMs: 5 * 60 * 1000 });
     }
-    const svc = new IdentityService({ drizzle, events, limiter });
+    const svc = withTemplateRenderer({ drizzle, events, limiter });
 
     await expect(
       svc.enableTwoFactor({ password: 'currentpw1' }, {}, new Headers()),
@@ -123,7 +131,7 @@ describe('IdentityService - rate limiting on secret-guessing routes (ABC-208 fin
     for (let i = 0; i < 5; i++) {
       await limiter.consume('disable2fa:anonymous', { limit: 5, windowMs: 5 * 60 * 1000 });
     }
-    const svc = new IdentityService({ drizzle, events, limiter });
+    const svc = withTemplateRenderer({ drizzle, events, limiter });
 
     await expect(
       svc.disableTwoFactor({ password: 'currentpw1' }, {}, new Headers()),
@@ -143,7 +151,7 @@ describe('IdentityService - fail-closed limiter policy for credential-guessing k
 
   it('passes onUnavailable: deny on the login: key', async () => {
     const { limiter, consume } = denyingLimiter();
-    const svc = new IdentityService({ drizzle, events, limiter });
+    const svc = withTemplateRenderer({ drizzle, events, limiter });
 
     await expect(
       svc.login({ email: 'User@X.dev', password: 'password123' }, {}, new Headers()),
@@ -156,7 +164,7 @@ describe('IdentityService - fail-closed limiter policy for credential-guessing k
 
   it('passes onUnavailable: deny on the verify2fa: key', async () => {
     const { limiter, consume } = denyingLimiter();
-    const svc = new IdentityService({ drizzle, events, limiter });
+    const svc = withTemplateRenderer({ drizzle, events, limiter });
 
     await expect(svc.verifyTwoFactor({ code: '123456' }, {}, new Headers())).rejects.toMatchObject({
       code: 'TOO_MANY_REQUESTS',
@@ -169,14 +177,39 @@ describe('IdentityService - fail-closed limiter policy for credential-guessing k
 
   it('passes onUnavailable: deny on the pwreset: key', async () => {
     const { limiter, consume } = denyingLimiter();
-    const svc = new IdentityService({ drizzle, events, limiter });
+    const svc = withTemplateRenderer({ drizzle, events, limiter });
 
     await expect(
-      svc.resetPassword({ token: 'reset-tok', newPassword: 'newpassword1' }),
+      svc.resetPassword({ email: 'user@x.dev', otp: '123456', newPassword: 'newpassword1' }),
     ).rejects.toMatchObject({ code: 'TOO_MANY_REQUESTS' });
     expect(consume).toHaveBeenCalledWith(
-      'pwreset:reset-tok',
+      'pwreset:user@x.dev',
       expect.objectContaining({ onUnavailable: 'deny' }),
     );
+  });
+
+  it('passes onUnavailable: deny on the pwreset-verify: key', async () => {
+    const { limiter, consume } = denyingLimiter();
+    const svc = withTemplateRenderer({ drizzle, events, limiter });
+
+    await expect(
+      svc.verifyPasswordResetOtp({ email: 'user@x.dev', otp: '123456' }),
+    ).rejects.toMatchObject({ code: 'TOO_MANY_REQUESTS' });
+    expect(consume).toHaveBeenCalledWith(
+      'pwreset-verify:user@x.dev',
+      expect.objectContaining({ onUnavailable: 'deny' }),
+    );
+  });
+
+  it('throttles requestPasswordReset on the pwreset-req: key', async () => {
+    const { limiter, consume } = denyingLimiter();
+    const svc = withTemplateRenderer({ drizzle, events, limiter });
+
+    // The throttle is asserted before the anti-enumeration try/catch, so a denied
+    // request key surfaces as a 429 (only the better-auth call is swallowed).
+    await expect(svc.requestPasswordReset({ email: 'User@X.dev' })).rejects.toMatchObject({
+      code: 'TOO_MANY_REQUESTS',
+    });
+    expect(consume).toHaveBeenCalledWith('pwreset-req:user@x.dev', expect.any(Object));
   });
 });
