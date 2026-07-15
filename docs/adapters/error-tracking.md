@@ -16,6 +16,19 @@ both logs and reports, and **all** error logs are covered - the oRPC unhandled-e
 interceptor, EventBus subscriber failures, OutboxRelay drops, and anything else that logs an
 error with an `err` field. Error logs without an `err` (validation notices) are not reported.
 
+Every unhandled error is caught at one of three global seams - never per-call-site in a module:
+
+- **oRPC `onError` interceptor** - every route/service error; `handler.handle` maps it to a
+  response, and non-`ORPCError`s are logged (expected `ORPCError`s are not reported).
+- **Hono `app.onError`** - anything thrown in the middleware chain before oRPC runs (session
+  resolution, raw-body capture, etag/cache); returns a 500 and reports non-`HTTPException` errors.
+- **EventBus / OutboxRelay** - async subscriber and outbox-drain failures.
+
+A module never writes tracker-specific code: it throws a typed error (caught by the interceptor)
+or logs with `logger.error({ err })`. To opt an expected/noisy error out of forwarding - a caught
+third-party timeout you log-and-retry - pass `report: false`: `logger.error({ err, report: false },
+'psp timeout, retrying')` is still logged, just not sent to the tracker (so it doesn't burn quota).
+
 Wiring, in `createApp`, after plugins load:
 
 ```ts

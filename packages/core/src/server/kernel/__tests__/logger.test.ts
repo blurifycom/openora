@@ -30,6 +30,15 @@ describe('createLogger error-sink hook', () => {
     expect(sink).not.toHaveBeenCalled();
   });
 
+  it('does not report an error log opted out with `report: false`', () => {
+    const sink = vi.fn();
+    setErrorSink(sink);
+
+    createLogger('test').error({ err: new Error('boom'), report: false }, 'expected, retrying');
+
+    expect(sink).not.toHaveBeenCalled();
+  });
+
   it('does not report non-error levels', () => {
     const sink = vi.fn();
     setErrorSink(sink);

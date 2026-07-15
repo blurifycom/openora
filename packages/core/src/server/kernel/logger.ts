@@ -9,7 +9,8 @@ const ERROR_LEVEL = 50;
 // means one logger.error({ err }, msg) both logs and reports - callers never make a
 // separate capture call, and all error logs are covered, not just a hand-picked few.
 // The hook fires for child loggers too. Logs without an `err` (validation notices,
-// etc.) are not reported.
+// etc.) are not reported, and `logger.error({ err, report: false }, msg)` opts an
+// expected/noisy error out of forwarding - still logged, just not sent to the tracker.
 export function createLogger(name: string): Logger {
   return pino({
     name,
@@ -23,8 +24,11 @@ export function createLogger(name: string): Logger {
         if (!first || typeof first !== 'object' || !('err' in first)) {
           return;
         }
-        const { err, ...rest } = first as { err?: unknown } & Record<string, unknown>;
-        if (err === null || err === undefined) {
+        const { err, report, ...rest } = first as {
+          err?: unknown;
+          report?: boolean;
+        } & Record<string, unknown>;
+        if (err === null || err === undefined || report === false) {
           return;
         }
         const ctx = getCurrentRequestContext();

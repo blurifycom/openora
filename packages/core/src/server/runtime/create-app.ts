@@ -5,6 +5,7 @@ import type { ContractRouter } from '@orpc/contract';
 import { Hono } from 'hono';
 import { cors } from 'hono/cors';
 import { etag } from 'hono/etag';
+import { HTTPException } from 'hono/http-exception';
 import { serve, type ServerType } from '@hono/node-server';
 import { resolve } from 'node:path';
 import { generateOpenApiSpec } from './openapi.js';
@@ -338,6 +339,23 @@ export async function createApp(config: CreateAppConfig): Promise<CreatedApp> {
   });
 
   const app = new Hono();
+
+  // Outermost catch for anything thrown in the Hono middleware chain (session
+  // resolution, raw-body capture, etag/cache) - oRPC's onError interceptor only
+  // sees route/service errors, which handler.handle turns into responses and never
+  // rethrows. The logger.error({ err }) here flows to the bound ERROR_TRACKING sink,
+  // so no capture call. HTTPExceptions are deliberate HTTP outcomes - returned as-is,
+  // not reported (mirrors skipping ORPCError in the interceptor).
+  app.onError((err, c) => {
+    if (err instanceof HTTPException) {
+      return err.getResponse();
+    }
+    createLogger('http').error(
+      { err, method: c.req.method, path: c.req.path },
+      'unhandled request error',
+    );
+    return c.json({ error: 'Internal Server Error' }, 500);
+  });
 
   if (config.cors !== false) {
     const origins =
