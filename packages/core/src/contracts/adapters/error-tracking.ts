@@ -1,8 +1,8 @@
-// Error-tracking seam. The runtime reports unhandled errors here - the oRPC
-// interceptor, event-subscriber failures, and outbox-relay drops. The default is
-// a no-op; core ships a Sentry reference impl that auto-binds when SENTRY_DSN is
-// set (mirroring the Redis/BullMQ reference drivers). Operators swap it for any
-// vendor (PostHog, Rollbar, ...) via an overlay:
+// Error-tracking seam. Core names no vendor: every error-level log carrying an
+// `err` is forwarded here (wired through the logger), so binding this port reports
+// all error logs - the oRPC interceptor, event-subscriber failures, outbox-relay
+// drops, and any other logger.error({ err }). Unbound -> error logs stay logs-only.
+// A consumer binds a vendor (Sentry, PostHog, Rollbar, ...) via an overlay plugin:
 //   ctx.provide(ERROR_TRACKING, () => new MyErrorTracker())
 // Load your overlay AFTER core so its binding wins (last registration wins).
 import { createToken, type Token } from './token.js';

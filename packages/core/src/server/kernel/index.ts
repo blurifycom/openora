@@ -24,8 +24,8 @@ export type { Factory } from './container.js';
 
 export { createLogger } from './logger.js';
 
-export { NoopErrorTracker, createSentryErrorTracker } from './error-tracker.js';
-export type { SentryErrorTrackerConfig } from './error-tracker.js';
+export { setErrorSink, reportError } from './error-sink.js';
+export type { ErrorSink } from './error-sink.js';
 
 export { getUserId } from './router-utils.js';
 export type { OssContext, AuthContext, NodeHeaders } from './router-utils.js';

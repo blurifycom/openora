@@ -143,6 +143,7 @@
       "tables": [
         "account",
         "session",
+        "sms_otp_session",
         "two_factor",
         "user",
         "verification"
@@ -156,6 +157,8 @@
         "identity.login",
         "identity.logout",
         "identity.me",
+        "identity.phoneLoginRequest",
+        "identity.phoneLoginVerify",
         "identity.register",
         "identity.requestPasswordReset",
         "identity.resetPassword",
@@ -166,7 +169,8 @@
         "identity.unlockUser",
         "identity.updateProfile",
         "identity.verify2fa",
-        "identity.verifyEmail"
+        "identity.verifyEmail",
+        "identity.verifyPasswordResetOtp"
       ]
     },
     {
@@ -361,6 +365,15 @@
       ]
     },
     {
+      "category": "email-template",
+      "interface": "EmailTemplateKey",
+      "token": "EMAIL_TEMPLATE_RENDERER",
+      "status": "wired",
+      "boundIn": [
+        "packages/core/src/pam/identity/plugin.ts"
+      ]
+    },
+    {
       "category": "error-tracking",
       "interface": "ErrorTrackingAdapter",
       "token": "ERROR_TRACKING",
@@ -477,16 +490,6 @@
       ]
     },
     {
-      "category": "rate-limit",
-      "interface": "RateLimiterAdapter",
-      "token": "RATE_LIMITER",
-      "status": "wired",
-      "boundIn": [
-        "packages/core/src/pam/identity/plugin.ts",
-        "packages/core/src/wallet/plugin.ts"
-      ]
-    },
-    {
       "category": "realtime",
       "interface": "RealtimePresence",
       "token": "REALTIME_TRANSPORT",
@@ -502,6 +505,16 @@
       "status": "wired",
       "boundIn": [
         "packages/core/src/casino/gaming/plugin.ts"
+      ]
+    },
+    {
+      "category": "sms",
+      "interface": "SmsAdapter",
+      "token": "SMS_ADAPTER",
+      "status": "wired",
+      "boundIn": [
+        "packages/core/src/pam/identity/adapters/mock/mock-sms-adapter.ts",
+        "packages/core/src/pam/identity/plugin.ts"
       ]
     },
     {
@@ -554,6 +567,8 @@
     "identity.2fa.enabled",
     "identity.email.verified",
     "identity.password.reset",
+    "identity.phone_otp.cancelled",
+    "identity.phone_otp.requested",
     "identity.profile.updated",
     "identity.session.revoked",
     "identity.sessions.revoked_all",
@@ -562,6 +577,7 @@
     "identity.user.login",
     "identity.user.login.failed",
     "identity.user.logout",
+    "identity.user.phone_login",
     "identity.user.reactivated",
     "identity.user.registered",
     "identity.user.unlocked",
@@ -745,6 +761,10 @@
     },
     {
       "name": "Disable2faInputSchema",
+      "file": "packages/core/src/contracts/schemas/identity.ts"
+    },
+    {
+      "name": "E164PhoneSchema",
       "file": "packages/core/src/contracts/schemas/identity.ts"
     },
     {
@@ -944,6 +964,18 @@
       "file": "packages/core/src/contracts/schemas/iam.ts"
     },
     {
+      "name": "PhoneLoginRequestInputSchema",
+      "file": "packages/core/src/contracts/schemas/identity.ts"
+    },
+    {
+      "name": "PhoneLoginRequestOutputSchema",
+      "file": "packages/core/src/contracts/schemas/identity.ts"
+    },
+    {
+      "name": "PhoneLoginVerifyInputSchema",
+      "file": "packages/core/src/contracts/schemas/identity.ts"
+    },
+    {
       "name": "PlatformConfigSchema",
       "file": "packages/core/src/contracts/schemas/platform-config.ts"
     },
@@ -1064,6 +1096,10 @@
       "file": "packages/core/src/pam/identity/contract/index.ts"
     },
     {
+      "name": "SessionSchema",
+      "file": "packages/core/src/pam/identity/contract/index.ts"
+    },
+    {
       "name": "SessionTimeDetailSchema",
       "file": "packages/core/src/compliance/contract/rg.ts"
     },
@@ -1161,6 +1197,10 @@
     },
     {
       "name": "VerifyEmailInputSchema",
+      "file": "packages/core/src/contracts/schemas/identity.ts"
+    },
+    {
+      "name": "VerifyPasswordResetOtpInputSchema",
       "file": "packages/core/src/contracts/schemas/identity.ts"
     },
     {
@@ -1329,6 +1369,9 @@
     "POST /identity/password/change",
     "POST /identity/password/forgot",
     "POST /identity/password/reset",
+    "POST /identity/password/verify-otp",
+    "POST /identity/phone-login/request",
+    "POST /identity/phone-login/verify",
     "POST /identity/register",
     "POST /identity/sessions/revoke",
     "POST /identity/sessions/revoke-all",

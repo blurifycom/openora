@@ -5,7 +5,6 @@ import {
   type OutboxWriter,
   type EventEnvelope,
   type SubscribeOptions,
-  type ErrorTrackingAdapter,
   domainEventSchemas,
   getEventVersion,
   type DomainEventName,
@@ -111,7 +110,6 @@ export function createEventBus(
   broker: MessageBrokerAdapter,
   logger: Logger = createLogger('event-bus'),
   outbox?: OutboxWriter,
-  reporter?: ErrorTrackingAdapter,
 ): EventBus {
   function validate(event: string, payload: unknown): void {
     if (isKnownEvent(event)) {
@@ -149,10 +147,6 @@ export function createEventBus(
           await handler(envelope.payload, envelope);
         } catch (err) {
           logger.error({ event, err }, 'event subscriber threw');
-          reporter?.captureException(err, {
-            traceId: getCurrentTraceId(),
-            tags: { event, path: 'event-subscriber' },
-          });
         }
       });
     },
