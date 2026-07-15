@@ -38,5 +38,6 @@ routeTree.gen.ts
 .github/prompts/
 .github/hooks/
 .github/instructions/
+.github/skills/
 .claude/rules/
 .agents/

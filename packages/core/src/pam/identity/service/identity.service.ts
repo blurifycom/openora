@@ -143,9 +143,11 @@ export const UserNotFoundError = makeNotFoundError('User');
 // Only reads the body on failure, so a subsequent res.json() on success is safe.
 // 401 -> UNAUTHORIZED (bad credentials), 403 -> FORBIDDEN (better-auth's
 // TOO_MANY_ATTEMPTS on checkVerificationOTP/resetPasswordEmailOTP), else BAD_REQUEST.
-// `opts.genericMessage` lets a BAD_REQUEST caller opt into a fixed message instead of
-// better-auth's raw one - some better-auth 400s (eg checkVerificationOTP's
-// USER_NOT_FOUND-before-INVALID_OTP ordering) leak account existence otherwise.
+// `opts.genericMessage` lets a BAD_REQUEST *or* FORBIDDEN caller opt into a fixed
+// message instead of better-auth's raw one - some better-auth 400s (eg
+// checkVerificationOTP's USER_NOT_FOUND-before-INVALID_OTP ordering) leak account
+// existence otherwise. When genericMessage is set, a 403 is masked down to
+// BAD_REQUEST too, so a caller can't tell "too many attempts" apart from "wrong code".
 async function ensureOk(res: globalThis.Response, opts?: { genericMessage?: string }) {
   if (res.ok) {
     return;
@@ -201,6 +203,16 @@ const TWO_FACTOR_PASSWORD_RATE_LIMIT = { limit: 5, windowMs: 5 * MINUTE_MS };
 // Mirrors better-auth session.expiresIn (server/auth/auth.ts); used only as a fallback
 // when the sign-in response omits an explicit session expiry.
 const SESSION_TTL_MS = 30 * 24 * 60 * 60 * 1000;
+
+function makePasswordResetRequestKey(email: string): `pwreset-req:${string}` {
+  return `pwreset-req:${email}`;
+}
+function makePasswordResetVerifyKey(email: string): `pwreset-verify:${string}` {
+  return `pwreset-verify:${email}`;
+}
+function makePasswordResetKey(email: string): `pwreset:${string}` {
+  return `pwreset:${email}`;
+}
 
 function computeLockoutState({
   attempts,
@@ -273,19 +285,30 @@ export class IdentityService {
       schema: { user, session, account, verification, twoFactor },
       ...(email ? { sendEmail: (args) => email.send(args) } : {}),
       templateRenderer: this.templateRenderer,
-      getUserLanguage: async (lookupEmail) => {
-        const [row] = await this.drizzle.db
-          .select({ language: user.language })
-          .from(user)
-          .where(eq(user.email, lookupEmail.toLowerCase()))
-          .limit(1);
-        return row?.language ?? null;
-      },
+      getUserLanguage: (lookupEmail) => this.resolveUserLanguage(lookupEmail),
       onPasswordReset: async (resetUser) => {
         this.events.emit('identity.password.reset', { userId: resetUser.id });
         await this.clearLockout(resetUser.id);
       },
     });
+  }
+
+  private async findUserByEmail(
+    email: string,
+  ): Promise<{ id: User['id']; language: string | null } | undefined> {
+    const [row] = await this.drizzle.db
+      .select({ id: user.id, language: user.language })
+      .from(user)
+      .where(eq(user.email, email.toLowerCase()))
+      .limit(1);
+    return row;
+  }
+
+  // Used by the emailOTP plugin's sendVerificationOTP hook to pick a locale for the
+  // reset-password email - better-auth only gives us the target email, not a session.
+  private async resolveUserLanguage(email: string): Promise<string | null> {
+    const row = await this.findUserByEmail(email);
+    return row?.language ?? null;
   }
 
   private get api() {
@@ -602,9 +625,10 @@ export class IdentityService {
   }
 
   async requestPasswordReset(input: RequestPasswordResetInput) {
+    const email = input.email.toLowerCase();
     await assertRateLimit(
       this.limiter,
-      `pwreset-req:${input.email.toLowerCase()}`,
+      makePasswordResetRequestKey(email),
       PASSWORD_RESET_REQUEST_RATE_LIMIT,
     );
     // Always returns success - never reveal whether the email exists. The reset
@@ -612,7 +636,7 @@ export class IdentityService {
     // Any underlying error is swallowed for the same anti-enumeration reason.
     try {
       await this.api.requestPasswordResetEmailOTP({
-        body: { email: input.email },
+        body: { email },
         headers: new Headers(),
         asResponse: true,
       });
@@ -623,13 +647,14 @@ export class IdentityService {
   }
 
   async verifyPasswordResetOtp(input: VerifyPasswordResetOtpInput) {
+    const email = input.email.toLowerCase();
     await assertRateLimit(
       this.limiter,
-      `pwreset-verify:${input.email.toLowerCase()}`,
+      makePasswordResetVerifyKey(email),
       PASSWORD_RESET_VERIFY_RATE_LIMIT,
     );
     const res = await this.api.checkVerificationOTP({
-      body: { email: input.email, type: 'forget-password', otp: input.otp },
+      body: { email, type: 'forget-password', otp: input.otp },
       headers: new Headers(),
       asResponse: true,
     });
@@ -638,23 +663,16 @@ export class IdentityService {
   }
 
   async resetPassword(input: ResetPasswordInput) {
-    await assertRateLimit(
-      this.limiter,
-      `pwreset:${input.email.toLowerCase()}`,
-      PASSWORD_RESET_RATE_LIMIT,
-    );
+    const email = input.email.toLowerCase();
+    await assertRateLimit(this.limiter, makePasswordResetKey(email), PASSWORD_RESET_RATE_LIMIT);
     const res = await this.api.resetPasswordEmailOTP({
-      body: { email: input.email, otp: input.otp, password: input.newPassword },
+      body: { email, otp: input.otp, password: input.newPassword },
       headers: new Headers(),
       asResponse: true,
     });
     await ensureOk(res, { genericMessage: 'Invalid or expired verification code' });
 
-    const [row] = await this.drizzle.db
-      .select({ id: user.id })
-      .from(user)
-      .where(eq(user.email, input.email.toLowerCase()))
-      .limit(1);
+    const row = await this.findUserByEmail(email);
     if (row) {
       this.events.emit('identity.password.reset', { userId: row.id });
       await this.clearLockout(row.id);

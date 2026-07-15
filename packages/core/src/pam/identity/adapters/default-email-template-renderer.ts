@@ -1,5 +1,3 @@
-// Production-safe default (English-only, unlike the dev-only Mock* adapters).
-// Replace via overlay: ctx.provide(EMAIL_TEMPLATE_RENDERER, () => new MyRenderer())
 import {
   DEFAULT_EMAIL_TEMPLATES,
   type EmailTemplateData,
