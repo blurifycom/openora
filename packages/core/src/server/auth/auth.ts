@@ -8,6 +8,7 @@ import { ac, roles } from './permissions.js';
 import {
   OTP_CODE_LENGTH,
   OTP_EXPIRES_IN_SEC,
+  DEFAULT_EMAIL_TEMPLATES,
   type EmailTemplateRenderer,
 } from '@openora/core/contracts';
 
@@ -31,14 +32,10 @@ export type AuthOptions = {
 // Used only by SessionResolver's createAuth() call, which never sends email (getSession
 // only) - keeps templateRenderer optional on AuthOptions without a server/auth -> pam
 // layering violation (the real DefaultEmailTemplateRenderer lives in pam/identity).
+// Delegates to the shared DEFAULT_EMAIL_TEMPLATES map (contracts/adapters/email-template.ts)
+// so this fallback copy can never drift from DefaultEmailTemplateRenderer's.
 const fallbackTemplateRenderer: EmailTemplateRenderer = {
-  render: (key, data) =>
-    key === 'verifyEmail'
-      ? {
-          subject: 'Verify your email',
-          body: `Verify your email using this link: ${data['url']}\n\nVerification token: ${data['token']}`,
-        }
-      : { subject: 'Reset your password', body: `Your password reset code is: ${data['otp']}` },
+  render: (key, data) => DEFAULT_EMAIL_TEMPLATES[key](data),
 };
 
 /**

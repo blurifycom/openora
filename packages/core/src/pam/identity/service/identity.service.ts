@@ -33,7 +33,6 @@ import type {
   PlatformConfig,
 } from '@openora/core/contracts';
 import { assertSupportedLanguage } from '../../shared/language.js';
-import { DefaultEmailTemplateRenderer } from '../adapters/default-email-template-renderer.js';
 
 function nodeHeadersToHeaders(nodeHeaders: NodeHeaders) {
   const headers = new Headers();
@@ -124,7 +123,7 @@ type ExtendedAuthApi = {
   enableTwoFactor: AuthCall<{ password: string }>;
   verifyTOTP: AuthCall<{ code: string }>;
   disableTwoFactor: AuthCall<{ password: string }>;
-  forgetPasswordEmailOTP: AuthCall<{ email: string }>;
+  requestPasswordResetEmailOTP: AuthCall<{ email: string }>;
   checkVerificationOTP: AuthCall<{ email: string; type: 'forget-password'; otp: string }>;
   resetPasswordEmailOTP: AuthCall<{ email: string; otp: string; password: string }>;
   sendVerificationEmail: AuthCall<{ email: string }>;
@@ -153,8 +152,8 @@ async function ensureOk(res: globalThis.Response, opts?: { genericMessage?: stri
   }
   const code =
     res.status === 401 ? 'UNAUTHORIZED' : res.status === 403 ? 'FORBIDDEN' : 'BAD_REQUEST';
-  if (code === 'BAD_REQUEST' && opts?.genericMessage) {
-    throw new ORPCError(code, { message: opts.genericMessage });
+  if ((code === 'BAD_REQUEST' || code === 'FORBIDDEN') && opts?.genericMessage) {
+    throw new ORPCError(code === 'FORBIDDEN' ? 'BAD_REQUEST' : code, { message: opts.genericMessage });
   }
   let message = `Request failed (${res.status})`;
   try {
@@ -226,7 +225,7 @@ export type IdentityServiceDeps = {
   drizzle: DrizzleService;
   events: EventBus;
   email?: SendEmailPort;
-  templateRenderer?: EmailTemplateRenderer;
+  templateRenderer: EmailTemplateRenderer;
   options?: IdentityServiceOptions;
   limiter?: RateLimiterAdapter;
   platformConfig?: PlatformConfig;
@@ -263,7 +262,7 @@ export class IdentityService {
     this.drizzle = drizzle;
     this.events = events;
     this.email = email;
-    this.templateRenderer = templateRenderer ?? new DefaultEmailTemplateRenderer();
+    this.templateRenderer = templateRenderer;
     this.options = options;
     this.limiter = limiter;
     this.platformConfig = platformConfig;
@@ -610,7 +609,7 @@ export class IdentityService {
     // email (if any) is delivered through the sendEmail hook -> notifications.
     // Any underlying error is swallowed for the same anti-enumeration reason.
     try {
-      await this.api.forgetPasswordEmailOTP({
+      await this.api.requestPasswordResetEmailOTP({
         body: { email: input.email },
         headers: new Headers(),
         asResponse: true,
@@ -648,6 +647,17 @@ export class IdentityService {
       asResponse: true,
     });
     await ensureOk(res, { genericMessage: 'Invalid or expired verification code' });
+
+    const [row] = await this.drizzle.db
+      .select({ id: user.id })
+      .from(user)
+      .where(eq(user.email, input.email.toLowerCase()))
+      .limit(1);
+    if (row) {
+      this.events.emit('identity.password.reset', { userId: row.id });
+      await this.clearLockout(row.id);
+    }
+
     return SUCCESS;
   }
 

@@ -76,7 +76,11 @@ export const RequestPasswordResetInputSchema = z.object({
 export const ResetPasswordInputSchema = z.object({
   email: z.email(),
   otp: z.string().length(OTP_CODE_LENGTH),
-  newPassword: z.string().min(8),
+  token: z.string().min(1).optional(),
+  // Upper-bounded to better-auth's own maxPasswordLength default (128): better-auth checks
+  // this AFTER consuming the OTP, so an over-length password would burn a valid one-time
+  // code and still get rejected - reject it here instead, before the OTP is ever spent.
+  newPassword: z.string().min(8).max(128),
 });
 
 export const VerifyPasswordResetOtpInputSchema = ResetPasswordInputSchema.pick({

@@ -1,13 +1,16 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { IdentityService } from '../service/identity.service.js';
+import { IdentityService, type IdentityServiceDeps } from '../service/identity.service.js';
 import { UnsupportedLanguageError } from '../../shared/language.js';
-import type { SendEmailPort } from '@openora/core/contracts';
+import type { EmailTemplateRenderer, SendEmailPort, PlatformConfig } from '@openora/core/contracts';
 import { ORPCError } from '@orpc/server';
+import { mock } from '../../../testing/mock.js';
+import type { DrizzleService, EventBus } from '@openora/core/server';
 
 const {
   signInEmailMock,
   getSessionMock,
   updateUserMock,
+  requestPasswordResetEmailOTPMock,
   checkVerificationOTPMock,
   resetPasswordEmailOTPMock,
   capturedAuthOptions,
@@ -15,6 +18,7 @@ const {
   signInEmailMock: vi.fn(),
   getSessionMock: vi.fn().mockResolvedValue(null),
   updateUserMock: vi.fn(),
+  requestPasswordResetEmailOTPMock: vi.fn(),
   checkVerificationOTPMock: vi.fn(),
   resetPasswordEmailOTPMock: vi.fn(),
   capturedAuthOptions: {
@@ -35,6 +39,7 @@ vi.mock('@openora/core/server', async (importOriginal) => ({
         signInEmail: signInEmailMock,
         signOut: vi.fn(),
         updateUser: updateUserMock,
+        requestPasswordResetEmailOTP: requestPasswordResetEmailOTPMock,
         checkVerificationOTP: checkVerificationOTPMock,
         resetPasswordEmailOTP: resetPasswordEmailOTPMock,
       },
@@ -58,11 +63,25 @@ function makeDrizzle({ selectRows = [], updateReturning = [] }: DrizzleRows = {}
   const select = vi.fn(() => ({
     from: () => ({ where: () => ({ limit: () => Promise.resolve(selectQueue.shift() ?? []) }) }),
   }));
-  return { db: { select, update }, update, select };
+  return mock<DrizzleService & { update: ReturnType<typeof vi.fn>; select: ReturnType<typeof vi.fn> }>({
+    db: { select, update } as any,
+    update,
+    select,
+  });
 }
 
 function makeEvents() {
-  return { emit: vi.fn(), on: vi.fn() };
+  return mock<EventBus>({ emit: vi.fn(), on: vi.fn() });
+}
+
+// createAuth() is mocked below, so the renderer is never actually invoked - this fake only
+// satisfies IdentityService's required `templateRenderer` dependency at construction time.
+const testTemplateRenderer: EmailTemplateRenderer = {
+  render: () => ({ subject: 'subject', body: 'body' }),
+};
+
+function withTemplateRenderer(deps: Omit<IdentityServiceDeps, 'templateRenderer'>) {
+  return new IdentityService({ templateRenderer: testTemplateRenderer, ...deps });
 }
 
 function jsonResponse(body: unknown, status: number) {
@@ -88,27 +107,27 @@ beforeEach(() => {
 
 describe('IdentityService - SendEmailPort seam', () => {
   it('constructs without a SendEmailPort (email delivery silently skipped)', () => {
-    const svc = new IdentityService({
-      drizzle: makeDrizzle() as never,
-      events: makeEvents() as never,
+    const svc = withTemplateRenderer({
+      drizzle: makeDrizzle(),
+      events: makeEvents(),
     });
     expect(svc).toBeInstanceOf(IdentityService);
   });
 
   it('constructs with a stub SendEmailPort and exposes it for use', () => {
     const stub: SendEmailPort = { send: vi.fn().mockResolvedValue(undefined) };
-    const svc = new IdentityService({
-      drizzle: makeDrizzle() as never,
-      events: makeEvents() as never,
+    const svc = withTemplateRenderer({
+      drizzle: makeDrizzle(),
+      events: makeEvents(),
       email: stub,
     });
     expect(svc).toBeInstanceOf(IdentityService);
   });
 
   it('me returns null when no session exists', async () => {
-    const svc = new IdentityService({
-      drizzle: makeDrizzle() as never,
-      events: makeEvents() as never,
+    const svc = withTemplateRenderer({
+      drizzle: makeDrizzle(),
+      events: makeEvents(),
     });
     const result = await svc.me({});
     expect(result).toBeNull();
@@ -123,7 +142,7 @@ describe('IdentityService - login lockout', () => {
     });
     const events = makeEvents();
     signInEmailMock.mockResolvedValue(jsonResponse({ message: 'Invalid' }, 401));
-    const svc = new IdentityService({ drizzle: drizzle as never, events: events as never });
+    const svc = withTemplateRenderer({ drizzle: drizzle, events: events });
 
     await expect(
       svc.login({ email: 'A@B.dev', password: 'wrongpass1' }, {}, new Headers()),
@@ -142,7 +161,7 @@ describe('IdentityService - login lockout', () => {
     });
     const events = makeEvents();
     signInEmailMock.mockResolvedValue(jsonResponse({ message: 'Invalid' }, 401));
-    const svc = new IdentityService({ drizzle: drizzle as never, events: events as never });
+    const svc = withTemplateRenderer({ drizzle: drizzle, events: events });
 
     await expect(
       svc.login({ email: 'a@b.dev', password: 'wrongpass1' }, {}, new Headers()),
@@ -163,7 +182,7 @@ describe('IdentityService - login lockout', () => {
     const drizzle = makeDrizzle({
       selectRows: [[{ id: 'u1', failedLoginAttempts: 5, lockoutUntil: future }]],
     });
-    const svc = new IdentityService({ drizzle: drizzle as never, events: makeEvents() as never });
+    const svc = withTemplateRenderer({ drizzle: drizzle, events: makeEvents() });
 
     const promise = svc.login({ email: 'a@b.dev', password: 'whatever1' }, {}, new Headers());
     await expect(promise).rejects.toThrow(ORPCError);
@@ -189,7 +208,7 @@ describe('IdentityService - login lockout', () => {
         200,
       ),
     );
-    const svc = new IdentityService({ drizzle: drizzle as never, events: events as never });
+    const svc = withTemplateRenderer({ drizzle: drizzle, events: events });
 
     const result = await svc.login({ email: 'a@b.dev', password: 'rightpass1' }, {}, new Headers());
 
@@ -207,9 +226,9 @@ describe('IdentityService - login lockout', () => {
     });
     const events = makeEvents();
     signInEmailMock.mockResolvedValue(jsonResponse({ message: 'Invalid' }, 401));
-    const svc = new IdentityService({
-      drizzle: drizzle as never,
-      events: events as never,
+    const svc = withTemplateRenderer({
+      drizzle: drizzle,
+      events: events,
       options: {
         lockout: {
           enabled: true,
@@ -243,9 +262,9 @@ describe('IdentityService - login lockout', () => {
     });
     const events = makeEvents();
     signInEmailMock.mockResolvedValue(jsonResponse({ message: 'Invalid' }, 401));
-    const svc = new IdentityService({
-      drizzle: drizzle as never,
-      events: events as never,
+    const svc = withTemplateRenderer({
+      drizzle: drizzle,
+      events: events,
       options: {
         lockout: {
           enabled: true,
@@ -285,7 +304,7 @@ describe('IdentityService - login banned-user 403 (not the RG block)', () => {
     });
     const events = makeEvents();
     signInEmailMock.mockResolvedValue(jsonResponse({ message: 'BANNED_USER' }, 403));
-    const svc = new IdentityService({ drizzle: drizzle as never, events: events as never });
+    const svc = withTemplateRenderer({ drizzle: drizzle, events: events });
 
     await expect(
       svc.login({ email: 'a@b.dev', password: 'whatever1' }, {}, new Headers()),
@@ -319,7 +338,7 @@ describe('IdentityService - RG login gate', () => {
     signInEmailMock.mockResolvedValue(
       jsonResponse({ user: betterAuthUser, token: 'tok', session: {} }, 200),
     );
-    const svc = new IdentityService({ drizzle: drizzle as never, events: events as never });
+    const svc = withTemplateRenderer({ drizzle: drizzle, events: events });
 
     await expect(
       svc.login({ email: 'a@b.dev', password: 'rightpass1' }, {}, new Headers()),
@@ -355,7 +374,7 @@ describe('IdentityService - RG login gate', () => {
     signInEmailMock.mockResolvedValue(
       jsonResponse({ user: betterAuthUser, token: 'tok', session: {} }, 200),
     );
-    const svc = new IdentityService({ drizzle: drizzle as never, events: events as never });
+    const svc = withTemplateRenderer({ drizzle: drizzle, events: events });
 
     const result = await svc.login({ email: 'a@b.dev', password: 'rightpass1' }, {}, new Headers());
 
@@ -383,7 +402,7 @@ describe('IdentityService - unlockUser', () => {
       ],
     });
     const events = makeEvents();
-    const svc = new IdentityService({ drizzle: drizzle as never, events: events as never });
+    const svc = withTemplateRenderer({ drizzle: drizzle, events: events });
 
     const res = await svc.unlockUser('u1', 'admin1');
 
@@ -402,17 +421,46 @@ describe('IdentityService - unlockUser', () => {
 
   it('throws when the user does not exist', async () => {
     const drizzle = makeDrizzle({ selectRows: [[]] });
-    const svc = new IdentityService({ drizzle: drizzle as never, events: makeEvents() as never });
+    const svc = withTemplateRenderer({ drizzle: drizzle, events: makeEvents() });
     await expect(svc.unlockUser('missing', 'admin1')).rejects.toThrow();
+  });
+});
+
+describe('IdentityService.requestPasswordReset', () => {
+  it('calls the non-deprecated requestPasswordResetEmailOTP endpoint and returns SUCCESS', async () => {
+    requestPasswordResetEmailOTPMock.mockResolvedValue(jsonResponse({ success: true }, 200));
+    const svc = withTemplateRenderer({
+      drizzle: makeDrizzle(),
+      events: makeEvents(),
+    });
+
+    const result = await svc.requestPasswordReset({ email: 'a@b.dev' });
+
+    expect(result).toEqual({ success: true });
+    expect(requestPasswordResetEmailOTPMock).toHaveBeenCalledWith(
+      expect.objectContaining({ body: { email: 'a@b.dev' } }),
+    );
+  });
+
+  it('swallows a failure and still returns SUCCESS (anti-enumeration)', async () => {
+    requestPasswordResetEmailOTPMock.mockRejectedValue(new Error('boom'));
+    const svc = withTemplateRenderer({
+      drizzle: makeDrizzle(),
+      events: makeEvents(),
+    });
+
+    await expect(svc.requestPasswordReset({ email: 'unregistered@x.dev' })).resolves.toEqual({
+      success: true,
+    });
   });
 });
 
 describe('IdentityService.verifyPasswordResetOtp', () => {
   it('calls checkVerificationOTP with type forget-password and returns SUCCESS', async () => {
     checkVerificationOTPMock.mockResolvedValue(jsonResponse({ success: true }, 200));
-    const svc = new IdentityService({
-      drizzle: makeDrizzle() as never,
-      events: makeEvents() as never,
+    const svc = withTemplateRenderer({
+      drizzle: makeDrizzle(),
+      events: makeEvents(),
     });
 
     const result = await svc.verifyPasswordResetOtp({ email: 'a@b.dev', otp: '123456' });
@@ -427,9 +475,9 @@ describe('IdentityService.verifyPasswordResetOtp', () => {
 
   it('surfaces an invalid OTP (400) response as ORPCError BAD_REQUEST with a generic message', async () => {
     checkVerificationOTPMock.mockResolvedValue(jsonResponse({ message: 'INVALID_OTP' }, 400));
-    const svc = new IdentityService({
-      drizzle: makeDrizzle() as never,
-      events: makeEvents() as never,
+    const svc = withTemplateRenderer({
+      drizzle: makeDrizzle(),
+      events: makeEvents(),
     });
 
     await expect(
@@ -445,9 +493,9 @@ describe('IdentityService.verifyPasswordResetOtp', () => {
     // unregistered email produces a distinct raw message ("User not found") that must never
     // reach the caller - it would let an unauthenticated caller learn whether an email exists.
     checkVerificationOTPMock.mockResolvedValue(jsonResponse({ message: 'User not found' }, 400));
-    const svc = new IdentityService({
-      drizzle: makeDrizzle() as never,
-      events: makeEvents() as never,
+    const svc = withTemplateRenderer({
+      drizzle: makeDrizzle(),
+      events: makeEvents(),
     });
 
     await expect(
@@ -458,25 +506,25 @@ describe('IdentityService.verifyPasswordResetOtp', () => {
     });
   });
 
-  it('surfaces a TOO_MANY_ATTEMPTS (403) response as ORPCError FORBIDDEN', async () => {
+  it('surfaces a TOO_MANY_ATTEMPTS (403) response as ORPCError BAD_REQUEST (masked)', async () => {
     checkVerificationOTPMock.mockResolvedValue(jsonResponse({ message: 'TOO_MANY_ATTEMPTS' }, 403));
-    const svc = new IdentityService({
-      drizzle: makeDrizzle() as never,
-      events: makeEvents() as never,
+    const svc = withTemplateRenderer({
+      drizzle: makeDrizzle(),
+      events: makeEvents(),
     });
 
     await expect(
       svc.verifyPasswordResetOtp({ email: 'a@b.dev', otp: '000000' }),
-    ).rejects.toMatchObject({ code: 'FORBIDDEN' });
+    ).rejects.toMatchObject({ code: 'BAD_REQUEST' });
   });
 });
 
 describe('IdentityService.resetPassword', () => {
   it('calls resetPasswordEmailOTP with the right body and returns SUCCESS', async () => {
     resetPasswordEmailOTPMock.mockResolvedValue(jsonResponse({ success: true }, 200));
-    const svc = new IdentityService({
-      drizzle: makeDrizzle() as never,
-      events: makeEvents() as never,
+    const svc = withTemplateRenderer({
+      drizzle: makeDrizzle(),
+      events: makeEvents(),
     });
 
     const result = await svc.resetPassword({
@@ -493,18 +541,18 @@ describe('IdentityService.resetPassword', () => {
     );
   });
 
-  it('surfaces a TOO_MANY_ATTEMPTS (403) response as ORPCError FORBIDDEN', async () => {
+  it('surfaces a TOO_MANY_ATTEMPTS (403) response as ORPCError BAD_REQUEST (masked)', async () => {
     resetPasswordEmailOTPMock.mockResolvedValue(
       jsonResponse({ message: 'TOO_MANY_ATTEMPTS' }, 403),
     );
-    const svc = new IdentityService({
-      drizzle: makeDrizzle() as never,
-      events: makeEvents() as never,
+    const svc = withTemplateRenderer({
+      drizzle: makeDrizzle(),
+      events: makeEvents(),
     });
 
     await expect(
       svc.resetPassword({ email: 'a@b.dev', otp: '000000', newPassword: 'newpassword1' }),
-    ).rejects.toMatchObject({ code: 'FORBIDDEN' });
+    ).rejects.toMatchObject({ code: 'BAD_REQUEST' });
   });
 });
 
@@ -512,7 +560,7 @@ describe('IdentityService onPasswordReset hook (wired via createAuth)', () => {
   it('clears the lockout and emits identity.password.reset when better-auth invokes the hook', async () => {
     const drizzle = makeDrizzle();
     const events = makeEvents();
-    new IdentityService({ drizzle: drizzle as never, events: events as never });
+    withTemplateRenderer({ drizzle: drizzle, events: events });
 
     await capturedAuthOptions.current?.onPasswordReset?.({ id: 'u1', email: 'a@b.dev' });
 
@@ -524,76 +572,12 @@ describe('IdentityService onPasswordReset hook (wired via createAuth)', () => {
   });
 });
 
-describe('IdentityService.verifyPasswordResetOtp', () => {
-  it('calls checkVerificationOTP with type forget-password and returns SUCCESS', async () => {
-    checkVerificationOTPMock.mockResolvedValue(jsonResponse({ success: true }, 200));
-    const svc = new IdentityService({
-      drizzle: makeDrizzle() as never,
-      events: makeEvents() as never,
-    });
-
-    const result = await svc.verifyPasswordResetOtp({ email: 'a@b.dev', otp: '123456' });
-
-    expect(result).toEqual({ success: true });
-    expect(checkVerificationOTPMock).toHaveBeenCalledWith(
-      expect.objectContaining({
-        body: { email: 'a@b.dev', type: 'forget-password', otp: '123456' },
-      }),
-    );
-  });
-
-  it('surfaces an invalid OTP (400) response as ORPCError BAD_REQUEST with a generic message', async () => {
-    checkVerificationOTPMock.mockResolvedValue(jsonResponse({ message: 'INVALID_OTP' }, 400));
-    const svc = new IdentityService({
-      drizzle: makeDrizzle() as never,
-      events: makeEvents() as never,
-    });
-
-    await expect(
-      svc.verifyPasswordResetOtp({ email: 'a@b.dev', otp: '000000' }),
-    ).rejects.toMatchObject({
-      code: 'BAD_REQUEST',
-      message: 'Invalid or expired verification code',
-    });
-  });
-
-  it('does not leak better-auth USER_NOT_FOUND message - forces the same generic message as a wrong OTP (anti-enumeration)', async () => {
-    // better-auth's checkVerificationOTP checks findUserByEmail BEFORE the OTP row, so an
-    // unregistered email produces a distinct raw message ("User not found") that must never
-    // reach the caller - it would let an unauthenticated caller learn whether an email exists.
-    checkVerificationOTPMock.mockResolvedValue(jsonResponse({ message: 'User not found' }, 400));
-    const svc = new IdentityService({
-      drizzle: makeDrizzle() as never,
-      events: makeEvents() as never,
-    });
-
-    await expect(
-      svc.verifyPasswordResetOtp({ email: 'unregistered@x.dev', otp: '000000' }),
-    ).rejects.toMatchObject({
-      code: 'BAD_REQUEST',
-      message: 'Invalid or expired verification code',
-    });
-  });
-
-  it('surfaces a TOO_MANY_ATTEMPTS (403) response as ORPCError FORBIDDEN', async () => {
-    checkVerificationOTPMock.mockResolvedValue(jsonResponse({ message: 'TOO_MANY_ATTEMPTS' }, 403));
-    const svc = new IdentityService({
-      drizzle: makeDrizzle() as never,
-      events: makeEvents() as never,
-    });
-
-    await expect(
-      svc.verifyPasswordResetOtp({ email: 'a@b.dev', otp: '000000' }),
-    ).rejects.toMatchObject({ code: 'FORBIDDEN' });
-  });
-});
-
 describe('IdentityService.updateProfile language validation', () => {
   it('rejects an unsupported language before calling updateUser', async () => {
-    const svc = new IdentityService({
-      drizzle: makeDrizzle() as never,
-      events: makeEvents() as never,
-      platformConfig: { supportedLanguages: ['en', 'fr'] } as never,
+    const svc = withTemplateRenderer({
+      drizzle: makeDrizzle(),
+      events: makeEvents(),
+      platformConfig: mock<PlatformConfig>({ supportedLanguages: ['en', 'fr'] }),
     });
 
     await expect(svc.updateProfile({ language: 'de' }, {}, new Headers())).rejects.toThrow(
@@ -605,10 +589,10 @@ describe('IdentityService.updateProfile language validation', () => {
   it('accepts a supported language and forwards it to updateUser', async () => {
     updateUserMock.mockResolvedValue(jsonResponse({ status: true }, 200));
     getSessionMock.mockResolvedValueOnce({ user: { ...betterAuthUser, language: 'fr' } });
-    const svc = new IdentityService({
-      drizzle: makeDrizzle() as never,
-      events: makeEvents() as never,
-      platformConfig: { supportedLanguages: ['en', 'fr'] } as never,
+    const svc = withTemplateRenderer({
+      drizzle: makeDrizzle(),
+      events: makeEvents(),
+      platformConfig: mock<PlatformConfig>({ supportedLanguages: ['en', 'fr'] }),
     });
 
     const result = await svc.updateProfile({ language: 'fr' }, {}, new Headers());
