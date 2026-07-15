@@ -63,7 +63,9 @@ function makeDrizzle({ selectRows = [], updateReturning = [] }: DrizzleRows = {}
   const select = vi.fn(() => ({
     from: () => ({ where: () => ({ limit: () => Promise.resolve(selectQueue.shift() ?? []) }) }),
   }));
-  return mock<DrizzleService & { update: ReturnType<typeof vi.fn>; select: ReturnType<typeof vi.fn> }>({
+  return mock<
+    DrizzleService & { update: ReturnType<typeof vi.fn>; select: ReturnType<typeof vi.fn> }
+  >({
     db: { select, update } as any,
     update,
     select,

@@ -153,7 +153,9 @@ async function ensureOk(res: globalThis.Response, opts?: { genericMessage?: stri
   const code =
     res.status === 401 ? 'UNAUTHORIZED' : res.status === 403 ? 'FORBIDDEN' : 'BAD_REQUEST';
   if ((code === 'BAD_REQUEST' || code === 'FORBIDDEN') && opts?.genericMessage) {
-    throw new ORPCError(code === 'FORBIDDEN' ? 'BAD_REQUEST' : code, { message: opts.genericMessage });
+    throw new ORPCError(code === 'FORBIDDEN' ? 'BAD_REQUEST' : code, {
+      message: opts.genericMessage,
+    });
   }
   let message = `Request failed (${res.status})`;
   try {

@@ -93,7 +93,11 @@ export { RNG_ADAPTER } from './rng.js';
 export type { SendEmailPort } from './email.js';
 export { SEND_EMAIL } from './email.js';
 
-export type { EmailTemplateKey, EmailTemplateData, EmailTemplateRenderer } from './email-template.js';
+export type {
+  EmailTemplateKey,
+  EmailTemplateData,
+  EmailTemplateRenderer,
+} from './email-template.js';
 export { EMAIL_TEMPLATE_RENDERER, DEFAULT_EMAIL_TEMPLATES } from './email-template.js';
 
 export type { AdminGrant, AdminPermissionResolver } from './admin-permission.js';

@@ -34,7 +34,7 @@ describe('identity schemas', () => {
     ).toBe(false);
   });
 
-  it('ResetPasswordInputSchema rejects a password over better-auth\'s 128-char max', () => {
+  it("ResetPasswordInputSchema rejects a password over better-auth's 128-char max", () => {
     const base = { email: 'a@b.dev', otp: '123456' };
     expect(
       ResetPasswordInputSchema.safeParse({ ...base, newPassword: 'a'.repeat(128) }).success,
