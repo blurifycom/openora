@@ -13,6 +13,7 @@ import { eq, sql } from 'drizzle-orm';
 import { user, session, account, verification, twoFactor } from '../schema/index.js';
 import type {
   RateLimiterAdapter,
+  RateLimitKey,
   SendEmailPort,
   LoginInput,
   RegisterInput,
@@ -82,6 +83,10 @@ function toUser(u: BetterAuthUser) {
 
 function clientIp(headers: Headers): string | null {
   return headers.get('x-forwarded-for')?.split(',')[0]?.trim() || headers.get('x-real-ip') || null;
+}
+
+function makeLoginRateLimitKey(email: string): `login:${string}` {
+  return `login:${email.toLowerCase()}`;
 }
 
 // Key on the `.two_factor` cookie VALUE, never the raw Cookie header: an attacker can
@@ -199,7 +204,7 @@ export type IdentityServiceDeps = {
   events: EventBus;
   email?: SendEmailPort;
   options?: IdentityServiceOptions;
-  limiter?: RateLimiterAdapter;
+  limiter?: RateLimiterAdapter<RateLimitKey>;
   platformConfig?: PlatformConfig;
 };
 
@@ -218,7 +223,7 @@ export class IdentityService {
   private readonly events: EventBus;
   private readonly email?: SendEmailPort;
   private readonly options?: IdentityServiceOptions;
-  private readonly limiter?: RateLimiterAdapter;
+  private readonly limiter?: RateLimiterAdapter<RateLimitKey>;
   private readonly platformConfig?: PlatformConfig;
 
   constructor({ drizzle, events, email, options, limiter, platformConfig }: IdentityServiceDeps) {
@@ -291,7 +296,7 @@ export class IdentityService {
     // better-auth lowercases emails on write, so the lockout lookup must match on the same form.
     const email = input.email.toLowerCase();
 
-    await assertRateLimit(this.limiter, `login:${email}`, LOGIN_RATE_LIMIT);
+    await assertRateLimit(this.limiter, makeLoginRateLimitKey(email), LOGIN_RATE_LIMIT);
 
     const configLockoutEnabled = this.options?.lockout?.enabled ?? true;
     // Read once for the lockout budget, the admin-bypass check, and the RG login gate
@@ -455,6 +460,7 @@ export class IdentityService {
     );
 
     await this.clearLockout(userId);
+    await this.limiter?.reset(makeLoginRateLimitKey(existingUser.email));
 
     this.events.emit('identity.user.unlocked', {
       userId,
