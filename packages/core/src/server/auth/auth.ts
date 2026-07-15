@@ -57,7 +57,6 @@ export function createAuth(options: AuthOptions): BetterAuthType {
     },
     emailAndPassword: {
       enabled: true,
-      rememberMeDuration: 30 * 24 * 60 * 60,
       sendResetPassword: async ({ user, url, token }) => {
         await sendEmail({
           to: user.email,
