@@ -374,6 +374,15 @@
       ]
     },
     {
+      "category": "error-tracking",
+      "interface": "ErrorTrackingAdapter",
+      "token": "ERROR_TRACKING",
+      "status": "wired",
+      "boundIn": [
+        "packages/core/src/server/runtime/create-app.ts"
+      ]
+    },
+    {
       "category": "game",
       "interface": "GameAdapter",
       "token": "GAME_ADAPTER",

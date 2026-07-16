@@ -2,60 +2,9 @@
 
 ## Interface
 
-```ts
-// packages/core/src/contracts/adapters/payment.ts
-import { createToken, type Token } from './token.js';
+Source of truth: [`packages/core/src/contracts/adapters/payment.ts`](../../packages/core/src/contracts/adapters/payment.ts) - `PaymentAdapter`, `PaymentWebhookEvent`, `PaymentWebhookVerifier`, and the `PAYMENT_ADAPTER` / `PAYMENT_WEBHOOK_VERIFIER` tokens.
 
-export type PaymentAdapter = {
-  processDeposit(
-    amount: string,
-    currency: string,
-    metadata: Record<string, unknown>,
-  ): Promise<{ externalId: string; status: string }>;
-
-  processWithdrawal(
-    amount: string,
-    currency: string,
-    metadata: Record<string, unknown>,
-  ): Promise<{ externalId: string; status: string }>;
-
-  // Address-based deposit vendors only (eg a custody rail). Omit entirely for a
-  // synchronous PSP.
-  issueDepositAddress?(userId: string, currency: string): Promise<{ address: string }>;
-
-  // Async vendors only. Normalizes a raw webhook body into a reconcilable event.
-  parseWebhook?(
-    rawBody: string,
-    headers: Record<string, string | string[] | undefined>,
-  ): PaymentWebhookEvent | null;
-};
-
-export type PaymentWebhookEvent =
-  | {
-      kind: 'deposit';
-      address: string;
-      amount: string;
-      currency: string;
-      txHash: string;
-      externalId: string;
-    }
-  | {
-      kind: 'withdrawal';
-      externalId: string;
-      status: 'processing' | 'completed' | 'failed';
-      txHash?: string;
-    };
-
-export const PAYMENT_ADAPTER: Token<PaymentAdapter> = createToken('PAYMENT_ADAPTER');
-
-export type PaymentWebhookVerifier = {
-  verify(rawBody: string, headers: Record<string, string | string[] | undefined>): boolean;
-};
-
-export const PAYMENT_WEBHOOK_VERIFIER: Token<PaymentWebhookVerifier> = createToken(
-  'PAYMENT_WEBHOOK_VERIFIER',
-);
-```
+`issueDepositAddress` and `parseWebhook` are optional - present only on address-based/async vendors, omitted by a synchronous PSP (see the two vendor shapes below).
 
 ## Default binding
 
