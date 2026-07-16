@@ -140,6 +140,6 @@ For platform development (this repo); consumer agents ship in `tools/templates/c
 
 - Use the `oss-dev` MCP server (`.mcp.json`, pre-approved) for read-only inspection: `read-agents-md`, `list-modules`, `describe-module`, `list-routes`, `list-extension-points`, `query-openapi`, `get-drizzle-schema`, `propose-table-change`, `schema-get`, `docs-search`, `db-query-readonly`. Faster than grep, reflects current state.
 - Before a route: `query-openapi`. Before a table: `propose-table-change`. After any change: `pnpm verify --filter <package>`; fix failures before continuing.
-- Read the touched module's `AGENTS.md` before editing it; keep it updated when extension points/ports/routes change.
+- Read the touched module's `AGENTS.md` before editing it; keep it updated when invariants or extension seams change. An `AGENTS.md` holds ONLY what code can't say: invariants, rationale, gotchas, extension seams, and where-to-look pointers - never route/table/layout/event listings (they duplicate `contract/`, `schema/`, `docs/catalog.json` and drift). Claude Code loads them via generated per-module `CLAUDE.md` stubs (`tools/gen/gen-claude-stubs.mjs`, gitignored).
 - Small PRs scoped to one module; cross-module changes need human approval. Never commit unless asked; never push without explicit per-action confirmation.
 - ASCII only in code; short dashes (-) only, never long dashes.
