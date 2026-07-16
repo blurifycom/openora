@@ -327,9 +327,17 @@ export async function createApp(config: CreateAppConfig): Promise<CreatedApp> {
     plugins: [new ResponseHeadersPlugin()],
     interceptors: [
       onError((error) => {
-        if (!(error instanceof ORPCError)) {
-          createLogger('orpc').error({ err: error }, 'unhandled error');
+        // oRPC wraps a thrown native error (a DB failure, a bug) into an
+        // ORPCError('INTERNAL_SERVER_ERROR', { cause }). Report anything that is a
+        // server fault - a non-ORPCError, or an ORPCError with a 5xx status - and skip
+        // expected client errors (4xx: not-found, conflict, validation, rate-limit).
+        // Report the underlying `cause` so the tracker gets the real error + stack,
+        // not the generic wrapper.
+        if (error instanceof ORPCError && error.status < 500) {
+          return;
         }
+        const err = error instanceof ORPCError ? (error.cause ?? error) : error;
+        createLogger('orpc').error({ err }, 'unhandled error');
       }),
     ],
   });
