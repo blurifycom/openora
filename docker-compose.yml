@@ -32,12 +32,12 @@ services:
       timeout: 5s
       retries: 10
 
-  # Distributed CACHE + RATE_LIMITER reference backend. OPT-IN via the `redis`
-  # profile: `docker compose --profile redis up`. A consumer app binds it by setting
-  # REDIS_URL (redis://localhost:6379) - createApp auto-binds the Redis adapters, no
-  # code change. See ADR-0028.
+  # Distributed CACHE + RATE_LIMITER + MESSAGE_BROKER + JOB_QUEUE reference backend.
+  # Starts by default (`docker compose up -d`) because the real-infra kernel tests run
+  # the actual Redis adapters against it. A consumer app binds it by setting REDIS_URL
+  # (redis://localhost:6379) - createApp auto-binds the Redis adapters, no code change.
+  # See ADR-0028.
   redis:
-    profiles: ['redis']
     image: redis:7-alpine
     ports:
       - '6379:6379'
