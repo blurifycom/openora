@@ -24,8 +24,8 @@ export type { Factory } from './container.js';
 
 export { createLogger } from './logger.js';
 
-export { setErrorSink, reportError } from './error-sink.js';
-export type { ErrorSink } from './error-sink.js';
+export { setErrorReporter, reportError } from './error-reporter.js';
+export type { ErrorReporter } from './error-reporter.js';
 
 export { getUserId } from './router-utils.js';
 export type { OssContext, AuthContext, NodeHeaders } from './router-utils.js';

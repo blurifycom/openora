@@ -24,7 +24,7 @@ import {
   createLogger,
   createRedisClient,
   withRequestContext,
-  setErrorSink,
+  setErrorReporter,
   EVENT_BUS,
   type OssContext,
 } from '../kernel/index.js';
@@ -279,12 +279,10 @@ export async function createApp(config: CreateAppConfig): Promise<CreatedApp> {
   const registry = await loadPlugins(config.plugins, container);
   await config.configure?.(container);
 
-  // Bridge the logger's error sink to whatever ERROR_TRACKING an overlay bound,
-  // after plugins/configure so the final binding wins. Unbound -> logs stay logs-only.
   if (container.has(ERROR_TRACKING)) {
     const tracker = container.get(ERROR_TRACKING);
-    setErrorSink((error, context) => tracker.captureException(error, context));
-    container.onDispose(() => setErrorSink(undefined));
+    setErrorReporter((error, context) => tracker.captureException(error, context));
+    container.onDispose(() => setErrorReporter(undefined));
   }
 
   const bus = container.get(EVENT_BUS);
@@ -341,7 +339,7 @@ export async function createApp(config: CreateAppConfig): Promise<CreatedApp> {
   // Outermost catch for errors thrown in the Hono middleware chain (session
   // resolution, raw-body capture, etag/cache) - the one seam oRPC's onError
   // interceptor never sees, since handler.handle turns route/service errors into
-  // responses. logger.error reports via the sink; HTTPExceptions are deliberate
+  // responses. logger.error reports via the reporter; HTTPExceptions are deliberate
   // outcomes, returned without reporting.
   app.onError((err, c) => {
     if (err instanceof HTTPException) {

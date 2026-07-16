@@ -34,11 +34,11 @@ Wiring, in `createApp`, after plugins load:
 ```ts
 if (container.has(ERROR_TRACKING)) {
   const tracker = container.get(ERROR_TRACKING);
-  setErrorSink((error, context) => tracker.captureException(error, context));
+  setErrorReporter((error, context) => tracker.captureException(error, context));
 }
 ```
 
-No overlay binds `ERROR_TRACKING` -> no sink -> error logs stay logs-only. The engine imports
+No overlay binds `ERROR_TRACKING` -> no reporter -> error logs stay logs-only. The engine imports
 no vendor SDK and has no `SENTRY_DSN`/vendor env of its own.
 
 The forwarded `ErrorContext` carries `userId`/`traceId` from the active request context plus the
