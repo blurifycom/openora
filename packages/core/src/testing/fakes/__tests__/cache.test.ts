@@ -1,7 +1,8 @@
 import { describe, it, expect, vi, afterEach, beforeEach } from 'vitest';
-import { InProcessCache, cached, invalidate } from '../cache.js';
+import { cached, invalidate } from '@openora/core/server';
 import type { CacheAdapter } from '@openora/core/contracts';
-import { mock } from '../../../testing/mock.js';
+import { InProcessCache } from '../cache.js';
+import { mock } from '../../mock.js';
 
 describe('InProcessCache', () => {
   beforeEach(() => vi.useFakeTimers());

@@ -4,7 +4,6 @@ import {
   type MessageBrokerAdapter,
   type OutboxWriter,
   type EventEnvelope,
-  type SubscribeOptions,
   domainEventSchemas,
   getEventVersion,
   type DomainEventName,
@@ -46,49 +45,6 @@ export type EventBus = {
 
 export const EVENT_BUS: Token<EventBus> = createToken('EVENT_BUS');
 
-/**
- * Default in-process `MESSAGE_BROKER` - `publish` fans out synchronously to
- * whatever's subscribed in THIS process only; it does not survive a restart
- * and does not reach other replicas. An overlay rebinds `MESSAGE_BROKER` to a
- * durable `MessageBrokerAdapter` (eg RabbitMQ via `AMQP_URL`) once events must
- * cross a process boundary. `subscribe`'s returned unsubscribe function is
- * safe to call mid-dispatch: the handler list is copied on write, never
- * mutated in place.
- */
-export class InMemoryBroker implements MessageBrokerAdapter {
-  private readonly handlers = new Map<
-    string,
-    Array<(env: EventEnvelope) => void | Promise<void>>
-  >();
-
-  publish(envelope: EventEnvelope): void {
-    for (const fn of this.handlers.get(envelope.topic) ?? []) {
-      void fn(envelope);
-    }
-  }
-
-  subscribe(
-    topic: string,
-    handler: (env: EventEnvelope) => void | Promise<void>,
-    _options?: SubscribeOptions,
-  ): () => void {
-    const fns = this.handlers.get(topic) ?? [];
-    const updated = [...fns, handler];
-    this.handlers.set(topic, updated);
-    return () => {
-      const current = this.handlers.get(topic) ?? [];
-      this.handlers.set(
-        topic,
-        current.filter((f) => f !== handler),
-      );
-    };
-  }
-
-  async close(): Promise<void> {
-    this.handlers.clear();
-  }
-}
-
 function isKnownEvent(event: string): event is DomainEventName {
   return event in domainEventSchemas;
 }
@@ -126,7 +82,9 @@ export function createEventBus(
     emit(event: string, payload: unknown): void {
       validate(event, payload);
       const envelope = buildEnvelope(event, payload);
-      void broker.publish(envelope);
+      void Promise.resolve(broker.publish(envelope)).catch((err) =>
+        logger.error({ event, err }, 'event publish failed'),
+      );
     },
 
     async emitInTransaction(tx: unknown, event: string, payload: unknown): Promise<void> {

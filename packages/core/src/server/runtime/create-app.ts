@@ -12,14 +12,8 @@ import { generateOpenApiSpec } from './openapi.js';
 import {
   Container,
   BullMqJobQueue,
-  InMemoryBroker,
-  InProcessCache,
-  InProcessJobQueue,
-  InProcessRateLimiter,
-  InProcessRealtimeTransport,
   RedisCache,
   RedisRateLimiter,
-  SseClientAuthorizer,
   createEventBus,
   createLogger,
   createRedisClient,
@@ -32,8 +26,6 @@ import { randomUUID } from 'node:crypto';
 import {
   MESSAGE_BROKER,
   JOB_QUEUE,
-  REALTIME_TRANSPORT,
-  REALTIME_CLIENT_AUTHORIZER,
   OUTBOX,
   ADMIN_PERMISSION_RESOLVER,
   RATE_LIMITER,
@@ -48,6 +40,7 @@ import {
 import { DrizzleService, DRIZZLE, DrizzleOutboxWriter, OutboxRelay } from '../db/index.js';
 import { AdminGuard, ADMIN_GUARD, SessionResolver, AUTH_SESSION } from '../auth/index.js';
 import { loadPlugins, type PluginEntry } from '../plugin-host/index.js';
+import { assertDurableSeamsBound } from './assert-durable-seams.js';
 import { loadPlatformConfig, resolvePlatformConfigPath } from '../kernel/platform-config-loader.js';
 
 // Path prefixes safe to cache at the HTTP layer: public, non-personalized reads
@@ -169,15 +162,20 @@ async function captureRawBody(req: Request): Promise<string | undefined> {
 
 /**
  * The single composition root: wires the DI container, boots every plugin in
- * `config.plugins`, and mounts the resulting oRPC router on a Hono app. Seam
- * defaults auto-upgrade when env vars are set - `REDIS_URL` binds `JOB_QUEUE`/
- * `RATE_LIMITER`/`CACHE` to their Redis-backed drivers, `OUTBOX_ENABLED` (or
- * `AMQP_URL`/`RABBITMQ_URL`) enables the transactional outbox relay - otherwise
- * every seam stays in-process (zero deps for dev/test). `container.dispose()`
- * (via `close()`) runs disposers in REVERSE registration order, so DRIZZLE is
- * registered before JOB_QUEUE to guarantee workers drain before the DB closes.
- * A router namespace registered by more than one plugin throws at boot, not at
- * request time.
+ * `config.plugins`, and mounts the resulting oRPC router on a Hono app.
+ * Production is distributed-only (ADR-0030, superseding ADR-0010/0014/0016/0028):
+ * `REDIS_URL` auto-binds `JOB_QUEUE`/`RATE_LIMITER`/`CACHE` to their Redis-backed
+ * drivers; `MESSAGE_BROKER` has no in-core default and must come from an overlay
+ * (or a test's `configure` callback). `assertDurableSeamsBound` runs right after
+ * plugins + `configure` and throws a clear, actionable error listing every
+ * always-needed seam that still has no binding - it never falls back to an
+ * in-process impl. `REALTIME_TRANSPORT` stays lazy (throws on first use) since not
+ * every deployment serves realtime traffic. `OUTBOX_ENABLED` (or
+ * `AMQP_URL`/`RABBITMQ_URL`) enables the transactional outbox relay.
+ * `container.dispose()` (via `close()`) runs disposers in REVERSE registration
+ * order, so DRIZZLE is registered before JOB_QUEUE to guarantee workers drain
+ * before the DB closes. A router namespace registered by more than one plugin
+ * throws at boot, not at request time.
  */
 export async function createApp(config: CreateAppConfig): Promise<CreatedApp> {
   if (config.databaseUrl) {
@@ -190,15 +188,10 @@ export async function createApp(config: CreateAppConfig): Promise<CreatedApp> {
     container.onDispose(() => svc.dispose());
     return svc;
   });
-  container.register(MESSAGE_BROKER, () => {
-    const broker = new InMemoryBroker();
-    container.onDispose(() => broker.close());
-    return broker;
-  });
   // Enabled when OUTBOX_ENABLED is set or a durable broker is configured (AMQP_URL) -
   // a distributed deployment wants events that survive a crash between commit and
-  // publish. In the default in-process monolith it stays off, so emit() keeps its
-  // synchronous fan-out and emitInTransaction() guides callers to enable it.
+  // publish. Off by default: emit() keeps its best-effort fan-out and
+  // emitInTransaction() throws a guiding error until this is enabled.
   const outboxEnabled =
     !!process.env['OUTBOX_ENABLED'] || !!process.env['AMQP_URL'] || !!process.env['RABBITMQ_URL'];
   if (outboxEnabled) {
@@ -211,19 +204,13 @@ export async function createApp(config: CreateAppConfig): Promise<CreatedApp> {
       outboxEnabled ? c.get(OUTBOX) : undefined,
     ),
   );
-  // Default in-process fan-out served as SSE; an overlay rebinds to a managed
-  // vendor (Ably/GetStream) without touching modules. See ADR-0007.
-  container.register(REALTIME_TRANSPORT, () => new InProcessRealtimeTransport());
-  // Default is first-party SSE (no token; the session cookie authorizes the stream).
-  // A managed-vendor overlay rebinds this to mint a per-player scoped token. See ADR-0007.
-  container.register(REALTIME_CLIENT_AUTHORIZER, () => new SseClientAuthorizer());
   // When REDIS_URL is set, JOB_QUEUE, the rate limiter and cache bind to the shipped
   // Redis reference adapters: BullMQ-backed durable jobs (survive restarts, real cron),
-  // distributed throttling and cross-replica cache invalidation - mirrors the AMQP_URL
-  // outbox precedent above. Otherwise the process-local in-process defaults stay (zero
-  // deps for dev/test). Either way a consumer overlay can rebind any of these tokens
-  // (plugins load after). The JOB_QUEUE disposer drains in-flight jobs before the DB
-  // closes (DRIZZLE is resolved before JOB_QUEUE below, and disposers run in reverse).
+  // distributed throttling and cross-replica cache invalidation. There is no in-process
+  // fallback (ADR-0030) - a deployment without REDIS_URL must bind these itself (an
+  // overlay, or a test's `configure` callback), or `assertDurableSeamsBound` below
+  // throws. The JOB_QUEUE disposer drains in-flight jobs before the DB closes (DRIZZLE
+  // is resolved before JOB_QUEUE below, and disposers run in reverse).
   const redisUrl = process.env['REDIS_URL'];
   if (redisUrl) {
     container.register(JOB_QUEUE, () => {
@@ -235,22 +222,6 @@ export async function createApp(config: CreateAppConfig): Promise<CreatedApp> {
     container.onDispose(() => redis.close());
     container.register(RATE_LIMITER, () => new RedisRateLimiter(redis));
     container.register(CACHE, () => new RedisCache(redis));
-  } else {
-    container.register(JOB_QUEUE, () => {
-      const q = new InProcessJobQueue(createLogger('job-queue'));
-      container.onDispose(() => q.close());
-      return q;
-    });
-    container.register(RATE_LIMITER, () => {
-      const limiter = new InProcessRateLimiter();
-      container.onDispose(() => limiter.close());
-      return limiter;
-    });
-    container.register(CACHE, () => {
-      const cache = new InProcessCache();
-      container.onDispose(() => cache.close());
-      return cache;
-    });
   }
   // One shared better-auth instance for both the per-request middleware and AdminGuard -
   // no second createAuth() over the same DB. authSchema is injected (not imported) because
@@ -278,6 +249,8 @@ export async function createApp(config: CreateAppConfig): Promise<CreatedApp> {
 
   const registry = await loadPlugins(config.plugins, container);
   await config.configure?.(container);
+
+  assertDurableSeamsBound(container);
 
   if (container.has(ERROR_TRACKING)) {
     const tracker = container.get(ERROR_TRACKING);

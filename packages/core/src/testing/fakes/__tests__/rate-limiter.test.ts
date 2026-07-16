@@ -1,6 +1,7 @@
 import { describe, it, expect, vi, afterEach, beforeEach } from 'vitest';
 import { ORPCError } from '@orpc/server';
-import { InProcessRateLimiter, assertRateLimit, makeRateLimitError } from '../rate-limiter.js';
+import { assertRateLimit, makeRateLimitError } from '@openora/core/server';
+import { InProcessRateLimiter } from '../rate-limiter.js';
 
 const OPTS = { limit: 3, windowMs: 1000 };
 

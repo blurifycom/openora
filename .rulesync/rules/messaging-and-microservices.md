@@ -10,19 +10,19 @@ globs:
 
 # Messaging and microservices-readiness
 
-A modular monolith today, designed so high-impact modules extract into their own services later with zero module-code changes. Three swappable seams carry all async/cross-process traffic; a transactional outbox makes events durable; a service manifest boots the same codebase as monolith or single-module service. ADR-0010/0014/0016/0017.
+A modular monolith today, designed so high-impact modules extract into their own services later with zero module-code changes. Three swappable seams carry all async/cross-process traffic; a transactional outbox makes events durable; a service manifest boots the same codebase as monolith or single-module service. ADR-0010/0014/0016/0017. **Production is distributed-only (ADR-0030):** `createApp` no longer ships an in-process default for `MESSAGE_BROKER`/`JOB_QUEUE`/`CACHE`/`RATE_LIMITER` - it calls `assertDurableSeamsBound` right after plugins load and throws a clear, actionable error listing every seam still unbound. The in-process impls (`InMemoryBroker`, `InProcessJobQueue`, `InProcessCache`, `InProcessRateLimiter`, `InProcessRealtimeTransport`, `SseClientAuthorizer`) survive only as test-only doubles in `@openora/core/testing`; `bootTestApp` binds them via a `configure` callback so the suite still runs with zero infra.
 
-## The three seams (ports in `packages/core/src/contracts/adapters/`, default impls in core)
+## The three seams (ports in `packages/core/src/contracts/adapters/`, durable drivers in core; dev/test doubles in `@openora/core/testing`)
 
-| Seam                       | Token                | For                              | Default                        | Durable driver                  |
-| -------------------------- | -------------------- | -------------------------------- | ------------------------------ | ------------------------------- |
-| Inter-module domain events | `MESSAGE_BROKER`     | one module reacts to another     | in-process `InMemoryBroker`    | RabbitMQ (`AMQP_URL`)           |
-| Background jobs            | `JOB_QUEUE`          | durable/retryable/scheduled work | in-process `InProcessJobQueue` | BullMQ + Redis (`REDIS_URL`)    |
-| Client push                | `REALTIME_TRANSPORT` | SSE/WS to the browser            | in-process transport           | managed vendor (Ably/GetStream) |
+| Seam                       | Token                | For                              | Dev/test double (`@openora/core/testing`) | Durable driver (production)                                                 |
+| -------------------------- | -------------------- | -------------------------------- | ----------------------------------------- | --------------------------------------------------------------------------- |
+| Inter-module domain events | `MESSAGE_BROKER`     | one module reacts to another     | `InMemoryBroker`                          | RabbitMQ/Kafka overlay (required - core ships none)                         |
+| Background jobs            | `JOB_QUEUE`          | durable/retryable/scheduled work | `InProcessJobQueue`                       | BullMQ + Redis (`REDIS_URL`)                                                |
+| Client push                | `REALTIME_TRANSPORT` | SSE/WS to the browser            | `InProcessRealtimeTransport`              | managed vendor (Ably/GetStream); stays lazy, throws on first use if unbound |
 
 `MESSAGE_BROKER` is module-to-module. `REALTIME_TRANSPORT` is server-to-client. Do not conflate them.
 
-The `JOB_QUEUE` BullMQ reference driver (`BullMqJobQueue`) ships in core and auto-binds when `REDIS_URL` is set - jobs survive restarts and cron runs for real, zero consumer code (same auto-bind treatment as the Redis cache/rate-limiter, ADR-0028). The in-process default stays for dev/test; a consumer overlay can still rebind `JOB_QUEUE` (Container last-wins). `orderingKey` is not honoured by this driver (no ordering groups in OSS BullMQ) - restore strict ordering with BullMQ Pro groups or a custom overlay.
+The `JOB_QUEUE` BullMQ reference driver (`BullMqJobQueue`) ships in core and auto-binds when `REDIS_URL` is set - jobs survive restarts and cron runs for real, zero consumer code (same auto-bind treatment as the Redis cache/rate-limiter, ADR-0028). Production requires either `REDIS_URL` or a consumer overlay to bind `JOB_QUEUE` (Container last-wins) - there is no in-process fallback once `createApp` finishes booting (ADR-0030). `orderingKey` is not honoured by this driver (no ordering groups in OSS BullMQ) - restore strict ordering with BullMQ Pro groups or a custom overlay.
 
 ## Choose the channel: command vs event vs job
 
