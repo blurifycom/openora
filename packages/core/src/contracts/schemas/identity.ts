@@ -18,8 +18,25 @@ export const UserSchema = z.object({
   image: z.url().nullable().optional(),
   theme: ThemeSchema,
   language: LanguageSchema,
+  phoneNumber: z.string().nullable().optional(),
+  phoneVerified: z.boolean().optional(),
   createdAt: TimestampSchema,
   updatedAt: TimestampSchema,
+});
+
+export const E164PhoneSchema = z.string().regex(/^\+[1-9][0-9]{7,14}$/);
+
+export const PhoneLoginRequestInputSchema = z.object({ phone: E164PhoneSchema });
+
+export const PhoneLoginRequestOutputSchema = z.object({
+  expiresAt: TimestampSchema,
+  resendAfter: TimestampSchema,
+});
+
+export const PhoneLoginVerifyInputSchema = z.object({
+  phone: E164PhoneSchema,
+  code: z.string().regex(/^[0-9]{6}$/),
+  rememberMe: z.boolean().optional(),
 });
 
 export const OrganizationSchema = z.object({
@@ -130,3 +147,7 @@ export type VerifyEmailInput = z.infer<typeof VerifyEmailInputSchema>;
 export type UpdateProfileInput = z.infer<typeof UpdateProfileInputSchema>;
 export type ChangePasswordInput = z.infer<typeof ChangePasswordInputSchema>;
 export type ChangeEmailInput = z.infer<typeof ChangeEmailInputSchema>;
+export type E164Phone = z.infer<typeof E164PhoneSchema>;
+export type PhoneLoginRequestInput = z.infer<typeof PhoneLoginRequestInputSchema>;
+export type PhoneLoginRequestOutput = z.infer<typeof PhoneLoginRequestOutputSchema>;
+export type PhoneLoginVerifyInput = z.infer<typeof PhoneLoginVerifyInputSchema>;

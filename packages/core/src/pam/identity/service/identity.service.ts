@@ -35,6 +35,7 @@ import type {
 } from '@openora/core/contracts';
 import { RATE_LIMIT_KEYS, makeRateLimitKey } from '@openora/core/contracts';
 import { assertSupportedLanguage } from '../../shared/language.js';
+import { isRgBlocked } from './rg-guard.service.js';
 
 function nodeHeadersToHeaders(nodeHeaders: NodeHeaders) {
   const headers = new Headers();
@@ -173,6 +174,30 @@ async function ensureOk(res: globalThis.Response, opts?: { genericMessage?: stri
 const DEFAULT_MAX_LOGIN_ATTEMPTS = 5;
 const DEFAULT_LOCKOUT_DURATION_MS = 15 * 60 * 1000;
 
+// Progressive lockout: a repeat lockout inside a rolling 24h window escalates the
+// duration (1 min -> 5 min -> 15 min, capped at tier 3). The window resets once the
+// last lockout falls outside it, so an occasional fat-finger never compounds.
+const LOCKOUT_WINDOW_MS = 24 * 60 * 60 * 1000;
+const LOCKOUT_TIER_DURATIONS_MS = [60_000, 5 * 60_000, 15 * 60_000] as const;
+
+function computeLockoutTier({
+  lockoutCount,
+  lastLockoutAt,
+  nowMs,
+  fallbackDurationMs,
+}: {
+  lockoutCount: number;
+  lastLockoutAt: Date | null;
+  nowMs: number;
+  fallbackDurationMs: number;
+}) {
+  const withinWindow =
+    lastLockoutAt !== null && nowMs - lastLockoutAt.getTime() < LOCKOUT_WINDOW_MS;
+  const tier = withinWindow ? lockoutCount + 1 : 1;
+  const durationMs = LOCKOUT_TIER_DURATIONS_MS[Math.min(tier - 1, 2)] ?? fallbackDurationMs;
+  return { tier, durationMs };
+}
+
 const MINUTE_MS = 60 * 1000;
 export const SESSION_DURATION_IN_SECONDS = 30 * 24 * 60 * 60; // 30 days
 // Coarse abuse throttles keyed by the caller identifier the context provides (email/
@@ -214,12 +239,6 @@ function computeLockoutState({
 }) {
   const isLocking = attempts >= maxAttempts;
   return { isLocking, lockoutUntil: isLocking ? new Date(nowMs + durationMs) : null };
-}
-
-// A finite rgBlockedUntil in the past = a lapsed cooling-off; a null one = indefinite
-// (self-exclusion / permanent). Blocked only while set and not elapsed.
-function isRgBlocked(u: { rgBlocked: boolean; rgBlockedUntil: Date | null }): boolean {
-  return u.rgBlocked && (u.rgBlockedUntil === null || u.rgBlockedUntil > new Date());
 }
 
 export type IdentityServiceDeps = {
@@ -365,6 +384,8 @@ export class IdentityService {
         id: user.id,
         failedLoginAttempts: user.failedLoginAttempts,
         lockoutUntil: user.lockoutUntil,
+        lockoutCount: user.lockoutCount,
+        lastLockoutAt: user.lastLockoutAt,
         role: user.role,
         rgBlocked: user.rgBlocked,
         rgBlockedUntil: user.rgBlockedUntil,
@@ -375,7 +396,14 @@ export class IdentityService {
     let existingUser:
       | Pick<
           typeof user.$inferSelect,
-          'id' | 'failedLoginAttempts' | 'lockoutUntil' | 'role' | 'rgBlocked' | 'rgBlockedUntil'
+          | 'id'
+          | 'failedLoginAttempts'
+          | 'lockoutUntil'
+          | 'lockoutCount'
+          | 'lastLockoutAt'
+          | 'role'
+          | 'rgBlocked'
+          | 'rgBlockedUntil'
         >
       | undefined = existingUserRow;
 
@@ -461,9 +489,10 @@ export class IdentityService {
       // error must never lock the account out.
       const isCredentialFailure = error instanceof ORPCError && error.code === 'UNAUTHORIZED';
 
+      let attemptsRemaining: number | undefined;
       if (lockoutEnabled && existingUser && isCredentialFailure) {
         const maxAttempts = this.options?.lockout?.maxAttempts ?? DEFAULT_MAX_LOGIN_ATTEMPTS;
-        const durationMs = this.options?.lockout?.durationMs ?? DEFAULT_LOCKOUT_DURATION_MS;
+        const fallbackDurationMs = this.options?.lockout?.durationMs ?? DEFAULT_LOCKOUT_DURATION_MS;
         // Atomic increment: concurrent failures can't each read a stale count and slip past
         // the threshold (the read-modify-write this replaces was bypassable under load).
         const [row] = await this.drizzle.db
@@ -472,17 +501,27 @@ export class IdentityService {
           .where(eq(user.id, existingUser.id))
           .returning({ failedLoginAttempts: user.failedLoginAttempts });
         const newAttempts = row?.failedLoginAttempts ?? existingUser.failedLoginAttempts + 1;
-        const { isLocking, lockoutUntil } = computeLockoutState({
+        attemptsRemaining = Math.max(maxAttempts - newAttempts, 0);
+        const { isLocking } = computeLockoutState({
           attempts: newAttempts,
           maxAttempts,
-          durationMs,
+          durationMs: fallbackDurationMs,
           nowMs: Date.now(),
         });
 
-        if (isLocking && lockoutUntil) {
+        if (isLocking) {
+          const nowMs = Date.now();
+          // Escalate the lockout duration for repeat offenders inside the 24h window.
+          const { tier, durationMs } = computeLockoutTier({
+            lockoutCount: existingUser.lockoutCount ?? 0,
+            lastLockoutAt: existingUser.lastLockoutAt ?? null,
+            nowMs,
+            fallbackDurationMs,
+          });
+          const lockoutUntil = new Date(nowMs + durationMs);
           await this.drizzle.db
             .update(user)
-            .set({ lockoutUntil })
+            .set({ lockoutUntil, lockoutCount: tier, lastLockoutAt: new Date(nowMs) })
             .where(eq(user.id, existingUser.id));
 
           this.events.emit('identity.user.lockout.triggered', {
@@ -498,7 +537,13 @@ export class IdentityService {
       }
 
       const reason = isCredentialFailure ? 'invalid_credentials' : 'error';
-      this.events.emit('identity.user.login.failed', { email, reason, ip, userAgent });
+      this.events.emit('identity.user.login.failed', {
+        email,
+        reason,
+        ip,
+        userAgent,
+        ...(attemptsRemaining !== undefined ? { attemptsRemaining } : {}),
+      });
       throw error;
     }
   }
