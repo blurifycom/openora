@@ -99,13 +99,14 @@ The platform is headless backend only - pages, components, and styling live in t
 
 ## Step 10: Update AGENTS.md
 
-Edit `packages/addons/<name>/AGENTS.md` (core modules: `packages/core/src/<domain>/<module>/AGENTS.md`). Fill in:
+Edit `packages/addons/<name>/AGENTS.md` (core modules: `packages/core/src/<domain>/<module>/AGENTS.md`). It holds ONLY what code can't say:
 
-- What the module does (one paragraph).
-- Extension points (ports, events emitted/consumed, UI slots, routes).
-- Do / don't list.
-- Sample diff showing how to add a route.
-- A "Done when:" checklist the next agent can self-verify against.
+- What the module does (one paragraph) + where-to-look pointers (`contract/`, `schema/index.ts`, `domainEventSchemas`).
+- Invariants and rationale: fail-closed branches, DB guards, race windows accepted by design, "X is the single writer of Y".
+- Extension seams: ports provided/consumed, what an overlay can rebind.
+- Module-specific don'ts (global rules are lint-enforced - don't repeat them).
+
+Never route/table/layout/event listings - they duplicate `contract/`/`schema/`/`docs/catalog.json` and drift.
 
 ## Step 11: Verify
 

@@ -4,14 +4,17 @@ targets:
   - '*'
 description: Messaging seams (broker / job-queue / realtime), command vs event vs job, the event envelope, outbox, and the service-manifest path to microservices.
 # Scoped to where async seams are used: services (emit/enqueue), plugins (subscribe/
-# provide/workers), adapters, the contracts zone (event schemas, seam ports), the
-# engine, and overlays - not react/router/schema-only edits.
+# provide/workers), adapters, module contracts (eventIterator SSE routes) + the core
+# contracts zone (event schemas, seam ports), module-root port impls (admin-*.ts),
+# the engine, and overlays - not react/schema-only edits.
 globs:
   - 'packages/**/service/**'
   - 'packages/**/plugin.ts'
   - 'packages/**/plugins/**'
   - 'packages/**/adapters/**'
+  - 'packages/**/contract/**'
   - 'packages/core/src/contracts/**'
+  - 'packages/core/src/**/admin-*.ts'
   - 'packages/core/src/server/**'
   - 'packages/testing/**'
   - 'extensions/**'
