@@ -15,6 +15,7 @@ export { cached, invalidate } from './cache.js';
 export { createRedisClient, type RedisClient } from './redis-client.js';
 export { RedisCache } from './redis-cache.js';
 export { RedisRateLimiter } from './redis-rate-limiter.js';
+export { RedisStreamsBroker } from './redis-streams-broker.js';
 
 export { Container } from './container.js';
 export type { Factory } from './container.js';

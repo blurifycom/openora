@@ -14,6 +14,7 @@ import {
   BullMqJobQueue,
   RedisCache,
   RedisRateLimiter,
+  RedisStreamsBroker,
   createEventBus,
   createLogger,
   createRedisClient,
@@ -61,6 +62,14 @@ const PUBLIC_HTTP_CACHE_PATHS: readonly string[] = [
 
 const DEFAULT_HTTP_CACHE_MAX_AGE_SECONDS = 30;
 const DEFAULT_HTTP_CACHE_STALE_WHILE_REVALIDATE_SECONDS = 60;
+
+// Redis Streams consumer group name for MESSAGE_BROKER. Distinct deployments/services
+// sharing one Redis MUST use distinct names so their subscribers don't compete for
+// each other's events - a split service (SERVICE_MANIFEST) gets one automatically;
+// a monolith or an unsplit service can override via SERVICE_NAME.
+function resolveServiceName(): string {
+  return process.env['SERVICE_NAME'] ?? process.env['SERVICE_MANIFEST'] ?? 'monolith';
+}
 
 export type CreateAppConfig = {
   plugins: PluginEntry[];
@@ -222,6 +231,11 @@ export async function createApp(config: CreateAppConfig): Promise<CreatedApp> {
     container.onDispose(() => redis.close());
     container.register(RATE_LIMITER, () => new RedisRateLimiter(redis));
     container.register(CACHE, () => new RedisCache(redis));
+    container.register(MESSAGE_BROKER, () => {
+      const broker = new RedisStreamsBroker(redis, { serviceName: resolveServiceName() });
+      container.onDispose(() => broker.close());
+      return broker;
+    });
   }
   // One shared better-auth instance for both the per-request middleware and AdminGuard -
   // no second createAuth() over the same DB. authSchema is injected (not imported) because
