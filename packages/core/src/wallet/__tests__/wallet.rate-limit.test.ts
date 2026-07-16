@@ -1,6 +1,7 @@
-import { describe, it, expect, vi } from 'vitest';
+import { describe, it, expect, vi, beforeAll, afterAll, beforeEach } from 'vitest';
 import type { EventBus } from '@openora/core/server';
-import { InProcessRateLimiter } from '@openora/core/testing';
+import { RedisRateLimiter } from '@openora/core/server';
+import { createTestRedis, type TestRedis } from '@openora/core/testing';
 import type { PaymentAdapter, AuditWritePort } from '@openora/core/contracts';
 import { mock, mockDb } from '../../testing/mock.js';
 import { WalletService } from '../service/wallet.service.js';
@@ -10,10 +11,25 @@ const events = mock<EventBus>({ emit: vi.fn(), on: vi.fn() });
 const payment = mock<PaymentAdapter>({});
 const audit = mock<AuditWritePort>({ record: vi.fn() });
 
-describe('WalletService - rate limiting', () => {
+let redis: TestRedis;
+const makeLimiter = () => new RedisRateLimiter(redis.client);
+
+beforeAll(async () => {
+  redis = await createTestRedis();
+});
+
+afterAll(async () => {
+  await redis.quit();
+});
+
+beforeEach(async () => {
+  await redis.flush();
+});
+
+describe('WalletService - rate limiting (real Redis)', () => {
   it('rejects deposit with a 429 once the per-user mutation limit is exhausted', async () => {
     const userId = 'u1';
-    const limiter = new InProcessRateLimiter();
+    const limiter = makeLimiter();
     for (let i = 0; i < 30; i++) {
       await limiter.consume(`wallet-mutation:${userId}`, { limit: 30, windowMs: 60_000 });
     }
@@ -23,11 +39,10 @@ describe('WalletService - rate limiting', () => {
       code: 'TOO_MANY_REQUESTS',
       data: { retryAfterMs: expect.any(Number) },
     });
-    limiter.close();
   });
 
   it('lets a withdraw through when the per-user budget is unused', async () => {
-    const limiter = new InProcessRateLimiter();
+    const limiter = makeLimiter();
     const svc = new WalletService({ drizzle, events, payment, limiter, audit });
     // No limiter denial: the call proceeds past the guard and fails later on the unused
     // drizzle double - so a non-429 rejection proves the guard let it through.
@@ -36,6 +51,5 @@ describe('WalletService - rate limiting', () => {
     ).rejects.not.toMatchObject({
       code: 'TOO_MANY_REQUESTS',
     });
-    limiter.close();
   });
 });

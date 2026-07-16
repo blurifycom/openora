@@ -1,103 +1,88 @@
-import { describe, it, expect, vi } from 'vitest';
-import { PgDialect } from 'drizzle-orm/pg-core';
-import type { SQL } from 'drizzle-orm';
-import { mock, mockDb } from '../../testing/mock.js';
+import { describe, it, expect, beforeAll, afterAll, beforeEach, vi } from 'vitest';
+import { eq, sql } from 'drizzle-orm';
+import { RedisCache } from '@openora/core/server';
 import type { EventBus } from '@openora/core/server';
-import { InProcessCache } from '@openora/core/testing';
-import { CmsService } from '../service/cms.service.js';
+import { createTestDb, createTestRedis, type TestDb, type TestRedis } from '@openora/core/testing';
+import { mock } from '../../testing/mock.js';
+import { migrate } from '../migrate.js';
+import { page as pageTable } from '../schema/index.js';
+import { CmsService, PageNotFoundError } from '../service/cms.service.js';
 
-const dialect = new PgDialect();
-const whereSql = (cond: SQL) => dialect.sqlToQuery(cond).sql;
+let db: TestDb;
+let redis: TestRedis;
 
-function makeDb(rows: { pageV1: unknown; pageV2: unknown }) {
-  const selectResults = [[rows.pageV1], [rows.pageV1], [rows.pageV2]];
-  let selectCall = 0;
-
-  const selectChain = {
-    from: vi.fn().mockReturnThis(),
-    where: vi.fn(() => Promise.resolve(selectResults[selectCall++] ?? [])),
-  };
-  const updateChain = {
-    set: vi.fn().mockReturnThis(),
-    where: vi.fn().mockReturnThis(),
-    returning: vi.fn().mockResolvedValue([rows.pageV2]),
-  };
-
-  return {
-    select: vi.fn(() => selectChain),
-    update: vi.fn(() => updateChain),
-  };
+function makeService() {
+  const events = mock<EventBus>({ emit: vi.fn(), on: vi.fn() });
+  const cache = new RedisCache(redis.client);
+  return { svc: new CmsService(db.drizzle, events, cache), events };
 }
 
-describe('CmsService page cache invalidation', () => {
-  it('updatePage invalidates the cached page so the next getPage reloads', async () => {
-    const pageV1 = {
-      id: 'p1',
-      slug: 'about',
-      title: 'About v1',
-      content: {},
-      publishedAt: null,
-      createdAt: new Date('2024-01-01T00:00:00Z'),
-    };
-    const pageV2 = { ...pageV1, title: 'About v2' };
+beforeAll(async () => {
+  db = await createTestDb([migrate]);
+  redis = await createTestRedis();
+});
 
-    const db = makeDb({ pageV1, pageV2 });
-    const events = mock<EventBus>({ emit: vi.fn(), on: vi.fn() });
-    const cache = new InProcessCache();
-    const svc = new CmsService(mockDb(db), events, cache);
+afterAll(async () => {
+  await db.drop();
+  await redis.quit();
+});
 
-    const first = await svc.getPage('about');
-    expect(first.title).toBe('About v1');
+beforeEach(async () => {
+  await db.drizzle.db.execute(sql`TRUNCATE ${pageTable} RESTART IDENTITY CASCADE`);
+  await redis.flush();
+});
 
-    // Second getPage within the ttl should hit the cache, not the db.
-    const cachedAgain = await svc.getPage('about');
-    expect(cachedAgain.title).toBe('About v1');
-    expect(db.select).toHaveBeenCalledTimes(1);
+describe('CmsService page cache invalidation (real PG + real Redis)', () => {
+  it('serves the next getPage from cache, then updatePage invalidates so the reload sees the new row', async () => {
+    const { svc } = makeService();
+    const created = await svc.createPage(
+      { slug: 'about', title: 'About v1', publishedAt: '2024-01-01T00:00:00.000Z' },
+      'admin-1',
+    );
 
-    await svc.updatePage({ id: 'p1', title: 'About v2' }, 'admin-1');
+    // First read populates the read-through cache under the module's key + TTL.
+    expect((await svc.getPage('about')).title).toBe('About v1');
+    expect(await redis.client.get('cache:cms:page:about')).toContain('About v1');
+    const pttl = await redis.client.pTTL('cache:cms:page:about');
+    expect(pttl).toBeGreaterThan(0);
+    expect(pttl).toBeLessThanOrEqual(60_000);
 
-    const afterUpdate = await svc.getPage('about');
-    expect(afterUpdate.title).toBe('About v2');
-    // 1 (first getPage) + 1 (updatePage's existing-row lookup) + 1 (reload post-invalidation)
-    expect(db.select).toHaveBeenCalledTimes(3);
+    // A write straight to the DB (bypassing the service) is invisible while the cache holds.
+    await db.drizzle.db
+      .update(pageTable)
+      .set({ title: 'sneaky direct write' })
+      .where(eq(pageTable.id, created.id));
+    expect((await svc.getPage('about')).title).toBe('About v1');
 
-    cache.close();
+    // updatePage invalidates the slug key, so the next read reloads from the DB.
+    await svc.updatePage({ id: created.id, title: 'About v2' }, 'admin-1');
+    expect(await redis.client.get('cache:cms:page:about')).toBeNull();
+    expect((await svc.getPage('about')).title).toBe('About v2');
   });
 });
 
-describe('CmsService public reads exclude drafts', () => {
-  it('getPage filters on publishedAt IS NOT NULL and 404s a draft slug', async () => {
-    let capturedWhere: SQL | undefined;
-    const selectChain = {
-      from: vi.fn().mockReturnThis(),
-      where: vi.fn((cond: SQL) => {
-        capturedWhere = cond;
-        return Promise.resolve([]);
-      }),
-    };
-    const db = { select: vi.fn(() => selectChain) };
-    const events = mock<EventBus>({ emit: vi.fn(), on: vi.fn() });
-    const svc = new CmsService(mockDb(db), events);
+describe('CmsService public reads exclude drafts (real SQL)', () => {
+  it('getPage 404s a draft slug but returns a published one', async () => {
+    const { svc } = makeService();
+    await svc.createPage({ slug: 'draft-slug', title: 'Draft' }, 'admin-1');
+    await svc.createPage(
+      { slug: 'live', title: 'Live', publishedAt: '2024-01-01T00:00:00.000Z' },
+      'admin-1',
+    );
 
-    await expect(svc.getPage('draft-slug')).rejects.toThrow('Page not found: draft-slug');
-    expect(capturedWhere && whereSql(capturedWhere)).toContain('"publishedAt" is not null');
+    await expect(svc.getPage('draft-slug')).rejects.toBeInstanceOf(PageNotFoundError);
+    expect((await svc.getPage('live')).title).toBe('Live');
   });
 
-  it('listPages filters on publishedAt IS NOT NULL', async () => {
-    let capturedWhere: SQL | undefined;
-    const selectChain = {
-      from: vi.fn().mockReturnThis(),
-      where: vi.fn((cond: SQL) => {
-        capturedWhere = cond;
-        return selectChain;
-      }),
-      orderBy: vi.fn(() => Promise.resolve([])),
-    };
-    const db = { select: vi.fn(() => selectChain) };
-    const events = mock<EventBus>({ emit: vi.fn(), on: vi.fn() });
-    const svc = new CmsService(mockDb(db), events);
+  it('listPages returns only published pages', async () => {
+    const { svc } = makeService();
+    await svc.createPage({ slug: 'draft-slug', title: 'Draft' }, 'admin-1');
+    await svc.createPage(
+      { slug: 'live', title: 'Live', publishedAt: '2024-01-01T00:00:00.000Z' },
+      'admin-1',
+    );
 
-    await svc.listPages();
-    expect(capturedWhere && whereSql(capturedWhere)).toContain('"publishedAt" is not null');
+    const pages = await svc.listPages();
+    expect(pages.map((p) => p.slug)).toEqual(['live']);
   });
 });
