@@ -2,58 +2,13 @@
 
 ## Interface
 
-```ts
-// packages/core/src/contracts/adapters/kyc.ts
-export type KycAdapter = {
-  // True when the adapter rubber-stamps every submission (the default MockKycAdapter).
-  // A boot guard refuses/warns if withdrawals are KYC-gated while this is bound, so an
-  // operator can't enable the gate yet leave verification a no-op. Real providers omit it.
-  readonly autoApproves?: boolean;
-  submit(userId: string, documents: KycDocument[]): Promise<KycResult>;
-  getStatus(userId: string): Promise<KycVendorStatus>;
-  // Provider-specific normalization of a raw webhook into a vendor decision, or null when
-  // the body is not a reconcilable decision. Optional - MockKycAdapter omits it.
-  parseWebhook?(
-    rawBody: string,
-    headers: Record<string, string | string[] | undefined>,
-  ): KycResult | null;
-};
+Source of truth: [`packages/core/src/contracts/adapters/kyc.ts`](../../packages/core/src/contracts/adapters/kyc.ts) - `KycAdapter`, `KycDocument`, `KycVendorStatus`, `KycResult`, and the `KYC_ADAPTER` token.
 
-export type KycDocument = {
-  type: 'passport' | 'drivers_license' | 'national_id';
-  frontUrl: string;
-  backUrl?: string;
-};
-
-export type KycVendorStatus = 'pending' | 'approved' | 'rejected' | 'not_started';
-
-export type KycResult = {
-  referenceId: string;
-  status: KycVendorStatus;
-  // Hosted verification URL to redirect the end user to, for vendors whose flow collects
-  // documents on their own hosted page rather than accepting them from our backend.
-  // Omitted by document-forwarding vendors (eg SumSub, MockKycAdapter).
-  verificationUrl?: string;
-};
-
-export const KYC_ADAPTER: Token<KycAdapter> = createToken('KYC_ADAPTER');
-```
-
-`KYC_ADAPTER` is a `Token<T>` created via `createToken` (`packages/core/src/contracts/adapters/token.ts`),
-not a bare `Symbol` - the `Container` uses it to type both `provide` and `get` calls.
+Two fields drive behavior beyond their types: `KycAdapter.autoApproves` marks a rubber-stamp adapter (the default `MockKycAdapter`) - a boot guard refuses/warns if withdrawals are KYC-gated while it's bound, so the gate can't be on with verification a no-op; real providers omit it. `KycResult.verificationUrl` is set only by hosted-session vendors whose own page collects documents (see recipe 2), and omitted by document-forwarding vendors.
 
 ## Webhook verifier
 
-A second port authenticates the vendor's async webhook before `KycAdapter.parseWebhook`
-ever sees the body:
-
-```ts
-export type KycWebhookVerifier = {
-  verify(rawBody: string, headers: Record<string, string | string[] | undefined>): boolean;
-};
-
-export const KYC_WEBHOOK_VERIFIER: Token<KycWebhookVerifier> = createToken('KYC_WEBHOOK_VERIFIER');
-```
+A second port, `KycWebhookVerifier` + the `KYC_WEBHOOK_VERIFIER` token (same source file), authenticates the vendor's async webhook before `KycAdapter.parseWebhook` ever sees the body.
 
 `verify` takes the full headers map, not a single pre-extracted value - the signing header
 name is vendor-specific (SumSub, a hosted-session vendor, and any future provider each name

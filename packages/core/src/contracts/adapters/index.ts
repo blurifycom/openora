@@ -108,6 +108,9 @@ export type {
 } from './email-template.js';
 export { EMAIL_TEMPLATE_RENDERER, DEFAULT_EMAIL_TEMPLATES } from './email-template.js';
 
+export type { ErrorTrackingAdapter, ErrorContext } from './error-tracking.js';
+export { ERROR_TRACKING } from './error-tracking.js';
+
 export type { AdminGrant, AdminPermissionResolver } from './admin-permission.js';
 export { ADMIN_PERMISSION_RESOLVER } from './admin-permission.js';
 

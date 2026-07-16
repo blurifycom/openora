@@ -233,7 +233,7 @@ export class InProcessJobQueue implements JobQueueAdapter {
     error: Error,
   ): Promise<void> {
     this.logger.error(
-      { queue: ctx.name, jobId: ctx.id, attempt: ctx.attempt, err: error.message },
+      { queue: ctx.name, jobId: ctx.id, attempt: ctx.attempt, err: error },
       '[job-queue] job exhausted retries -> dead-letter',
     );
     if (worker.onDeadLetter) {
@@ -241,7 +241,7 @@ export class InProcessJobQueue implements JobQueueAdapter {
         await worker.onDeadLetter(ctx, error);
       } catch (hookErr) {
         this.logger.error(
-          { queue: ctx.name, jobId: ctx.id, err: String(hookErr) },
+          { queue: ctx.name, jobId: ctx.id, err: hookErr },
           '[job-queue] onDeadLetter hook threw',
         );
       }
