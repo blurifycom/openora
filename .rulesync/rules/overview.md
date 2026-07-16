@@ -103,6 +103,7 @@ pnpm dev           # turbo dev (docs, mcp)
 pnpm regen         # openapi emit + drizzle-kit generate + catalog
 pnpm seed          # demo data (idempotent; admin@oss.dev / password123)
 pnpm boundaries    # whole-graph boundary + cycle gate
+pnpm -F @openora/core vitest run <path>   # one test file/dir, eg src/iam/__tests__
 pnpm verify        # typecheck + test:unit + lint + module-shape + boundaries
 ```
 
