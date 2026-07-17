@@ -1,12 +1,15 @@
 import { describe, it, expect, vi } from 'vitest';
+import { DatabaseError } from 'pg';
 import { mock, mockDb } from '../../../testing/mock.js';
 import type { EventBus } from '@openora/core/server';
-import type { Tag, PlayerTag } from '../schema/index.js';
+import { tag as tagTable, type Tag, type PlayerTag } from '../schema/index.js';
 import {
   TagService,
   TagNotFoundError,
   TagAlreadyInUseError,
   TagAssignmentNotFoundError,
+  TagKeyConflictError,
+  TagInUseError,
 } from '../service/tag.service.js';
 
 const PLAYER_ID = '11111111-1111-4111-8111-111111111111';
@@ -32,6 +35,7 @@ function makeQueryBuilder(results: { select: Row[][]; returning: Row[][] }) {
   builder['offset'] = vi.fn(chain);
   builder['insert'] = vi.fn(chain);
   builder['values'] = vi.fn(chain);
+  builder['onConflictDoNothing'] = vi.fn(chain);
   builder['update'] = vi.fn(chain);
   builder['set'] = vi.fn(chain);
   builder['delete'] = vi.fn(chain);
@@ -50,6 +54,71 @@ function makeDrizzle(results: { select?: Row[][]; returning?: Row[][] } = {}) {
     transaction: vi.fn(async (fn: (txn: unknown) => Promise<unknown>) => fn(builder)),
   };
   return { drizzle: mockDb(db), db };
+}
+
+function makePgDatabaseError(code: string): DatabaseError {
+  const err = new DatabaseError('simulated pg constraint violation', 0, 'error');
+  err.code = code;
+  return err;
+}
+
+/**
+ * Models a query builder whose insert/delete statement itself rejects (a real
+ * Postgres constraint violation), not a pre-check SELECT - createTag/deleteTag have
+ * no pre-check, so this is the only way their DatabaseError-detection branch fires.
+ */
+function makeThrowingDrizzle(err: unknown) {
+  const builder: Record<string, unknown> = {};
+  const chain = () => builder;
+  builder['insert'] = vi.fn(chain);
+  builder['values'] = vi.fn(chain);
+  builder['delete'] = vi.fn(chain);
+  builder['where'] = vi.fn(chain);
+  builder['returning'] = vi.fn(() => Promise.reject(err));
+  // oxlint-disable-next-line unicorn/no-thenable -- builder must be awaitable to mimic Drizzle;
+  // deleteTag awaits the builder directly (no .returning()), so `then`'s reject path is what fires.
+  builder['then'] = (_resolve: (v: unknown) => unknown, reject?: (e: unknown) => unknown) =>
+    reject?.(err);
+  return mockDb(builder);
+}
+
+/**
+ * Models the partial unique index (player_tag_active_key) that backs
+ * onConflictDoNothing under real concurrency: every caller's pre-check SELECT sees
+ * "no existing row" (the race window every caller opened before any commit), but
+ * only the first caller to reach the insert's `.returning()` claims the row - every
+ * later one gets an empty result, exactly like the DB would reject the duplicate.
+ */
+function makeConcurrentAssignDrizzle(tagRow: Tag, ptRowFactory: () => PlayerTag) {
+  let claimed = false;
+  let currentFrom: unknown = null;
+  const builder: Record<string, unknown> = {};
+  const chain = () => builder;
+  builder['select'] = vi.fn(chain);
+  builder['from'] = vi.fn((table: unknown) => {
+    currentFrom = table;
+    return builder;
+  });
+  builder['where'] = vi.fn(chain);
+  builder['limit'] = vi.fn(chain);
+  builder['insert'] = vi.fn(chain);
+  builder['values'] = vi.fn(chain);
+  builder['onConflictDoNothing'] = vi.fn(chain);
+  builder['returning'] = vi.fn(() => {
+    if (claimed) {
+      return Promise.resolve([]);
+    }
+    claimed = true;
+    return Promise.resolve([ptRowFactory()]);
+  });
+  // oxlint-disable-next-line unicorn/no-thenable -- builder must be awaitable to mimic Drizzle
+  builder['then'] = (resolve: (v: Row[]) => unknown) =>
+    resolve(currentFrom === tagTable ? [tagRow] : []);
+  const db = {
+    ...builder,
+    transaction: vi.fn(async (fn: (txn: unknown) => Promise<unknown>) => fn(builder)),
+  };
+  return mockDb(db);
 }
 
 function makeEvents() {
@@ -87,25 +156,56 @@ function makePlayerTag(overrides: Partial<PlayerTag> = {}): PlayerTag {
 
 describe('TagService', () => {
   describe('createTag', () => {
-    it('inserts and returns the created tag with serialized dates', async () => {
+    it('inserts, returns the created tag with serialized dates, and emits tag.created', async () => {
       const tagRow = makeTag();
+      const events = makeEvents();
       const { drizzle } = makeDrizzle({ returning: [[tagRow]] });
-      const svc = new TagService(drizzle, makeEvents());
-      const result = await svc.createTag({ key: 'high_roller', isSticky: false });
+      const svc = new TagService(drizzle, events);
+      const result = await svc.createTag({ key: 'high_roller', isSticky: false }, ACTOR_ID);
       expect(result).toEqual({
         ...tagRow,
         createdAt: tagRow.createdAt.toISOString(),
         updatedAt: tagRow.updatedAt.toISOString(),
       });
+      expect(events.emit).toHaveBeenCalledWith('tag.created', {
+        key: 'high_roller',
+        isSticky: false,
+        actorId: ACTOR_ID,
+      });
+    });
+
+    it('throws TagKeyConflictError on a duplicate tag key (23505) and does not emit', async () => {
+      const events = makeEvents();
+      const drizzle = makeThrowingDrizzle(makePgDatabaseError('23505'));
+      const svc = new TagService(drizzle, events);
+      await expect(
+        svc.createTag({ key: 'high_roller', isSticky: false }, ACTOR_ID),
+      ).rejects.toBeInstanceOf(TagKeyConflictError);
+      expect(events.emit).not.toHaveBeenCalled();
     });
   });
 
   describe('deleteTag', () => {
-    it('deletes and returns true', async () => {
+    it('deletes, returns true, and emits tag.deleted', async () => {
+      const events = makeEvents();
       const { drizzle } = makeDrizzle({ select: [[]] });
-      const svc = new TagService(drizzle, makeEvents());
-      const result = await svc.deleteTag({ key: 'high_roller' });
+      const svc = new TagService(drizzle, events);
+      const result = await svc.deleteTag({ key: 'high_roller' }, ACTOR_ID);
       expect(result).toBe(true);
+      expect(events.emit).toHaveBeenCalledWith('tag.deleted', {
+        key: 'high_roller',
+        actorId: ACTOR_ID,
+      });
+    });
+
+    it('throws TagInUseError when a playerTag/tagRule row still references the key (23503) and does not emit', async () => {
+      const events = makeEvents();
+      const drizzle = makeThrowingDrizzle(makePgDatabaseError('23503'));
+      const svc = new TagService(drizzle, events);
+      await expect(svc.deleteTag({ key: 'high_roller' }, ACTOR_ID)).rejects.toBeInstanceOf(
+        TagInUseError,
+      );
+      expect(events.emit).not.toHaveBeenCalled();
     });
   });
 
@@ -225,6 +325,53 @@ describe('TagService', () => {
         })
         .catch(() => undefined);
       expect(events.emit).not.toHaveBeenCalled();
+    });
+
+    it('throws TagAlreadyInUseError when the insert loses the race despite a clean pre-check', async () => {
+      // Pre-check SELECT sees no existing row (the race window), but the DB-level
+      // partial unique index rejects the insert via onConflictDoNothing - the empty
+      // returning() is the only signal a real race leaves behind.
+      const tagRow = makeTag();
+      const events = makeEvents();
+      const { drizzle } = makeDrizzle({ select: [[tagRow], []], returning: [[]] });
+      const svc = new TagService(drizzle, events);
+      await expect(
+        svc.assignPlayerTag({
+          playerId: PLAYER_ID,
+          tagKey: 'high_roller',
+          assignReason: 'test reason',
+          assignActor: 'manual',
+          assignActorUserId: ACTOR_ID,
+        }),
+      ).rejects.toBeInstanceOf(TagAlreadyInUseError);
+      expect(events.emit).not.toHaveBeenCalled();
+    });
+
+    it('creates exactly one active row when 5 concurrent calls race for the same player+tag', async () => {
+      const tagRow = makeTag();
+      const events = makeEvents();
+      const drizzle = makeConcurrentAssignDrizzle(tagRow, () => makePlayerTag());
+      const svc = new TagService(drizzle, events);
+      const input = {
+        playerId: PLAYER_ID,
+        tagKey: 'high_roller' as const,
+        assignReason: 'test reason',
+        assignActor: 'manual' as const,
+        assignActorUserId: ACTOR_ID,
+      };
+
+      const results = await Promise.allSettled(
+        Array.from({ length: 5 }, () => svc.assignPlayerTag(input)),
+      );
+
+      const fulfilled = results.filter((r) => r.status === 'fulfilled');
+      const rejected = results.filter((r) => r.status === 'rejected');
+      expect(fulfilled).toHaveLength(1);
+      expect(rejected).toHaveLength(4);
+      for (const r of rejected) {
+        expect((r as PromiseRejectedResult).reason).toBeInstanceOf(TagAlreadyInUseError);
+      }
+      expect(events.emit).toHaveBeenCalledTimes(1);
     });
   });
 

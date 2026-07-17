@@ -270,6 +270,17 @@ function mapEventToRecord(topic: string, p: Record<string, unknown>): RecordInpu
       after: isRecord(p['after']) ? p['after'] : null,
     };
   }
+  // Admin created or deleted a tag catalog definition (the tag itself, not a
+  // player assignment - see the tag.player.assigned/removed branch for that).
+  if (topic === 'tag.created' || topic === 'tag.deleted') {
+    return {
+      ...base,
+      actorType: 'admin',
+      actorId: str(p['actorId']),
+      resourceType: 'tag',
+      resourceId: str(p['key']),
+    };
+  }
   // RG admin actions. `userId` = subject player (resource), `actorId` = acting admin.
   // limit.set + lifted carry a before-snapshot so the regulatory export is diffable.
   if (
@@ -383,6 +394,8 @@ const SUBSCRIBED_TOPICS: DomainEventName[] = [
   'iam.role.permissions.changed',
   'iam.role.assigned',
   'iam.role.revoked',
+  'tag.created',
+  'tag.deleted',
   'tag.player.assigned',
   'tag.player.removed',
   'tag.rule.upserted',

@@ -115,10 +115,33 @@ export class TagEvaluationService {
   }
 
   /**
+   * Assigns withdrawal_review when a single withdrawal attempt exceeds its threshold.
+   * Called on wallet.withdrawal.requested (the attempt, before funds move) so the
+   * review tag lands before payout. Sticky - never auto-removed here or anywhere else.
+   */
+  async onWithdrawalRequested(payload: unknown) {
+    const { userId, amount } = domainEventSchemas['wallet.withdrawal.requested'].parse(payload);
+
+    const rule = await this.getEnabledRule('withdrawal_review');
+    if (!rule || rule.threshold === null) {
+      return;
+    }
+
+    if (moneyToNumber(amount) >= moneyToNumber(rule.threshold)) {
+      await this.tryAssignTag(
+        userId,
+        'withdrawal_review',
+        'single withdrawal attempt exceeded review threshold',
+      );
+    }
+  }
+
+  /**
    * Evaluates the high_risk rule based on withdrawal amount and frequency.
-   * Called on wallet.withdrawal.completed.
-   * Only assigns the tag when a threshold is crossed; never auto-removes
-   * (risk designation requires an explicit admin clear).
+   * Called on wallet.withdrawal.completed. Only assigns the tag when a threshold is
+   * crossed; removal is handled separately by the daily resweep in runDailyEvaluation
+   * (a rolling-window count/amount can drop back under threshold with no new
+   * withdrawal, so it can't be detected event-driven-only).
    */
   async onWithdrawalCompleted(payload: unknown) {
     const { userId, amount } = domainEventSchemas['wallet.withdrawal.completed'].parse(payload);
@@ -147,12 +170,14 @@ export class TagEvaluationService {
   }
 
   /**
-   * Removes the inactive tag when a player logs in.
-   * Called on identity.user.login.
+   * Removes the inactive and dormant_high_roller tags when a player logs in.
+   * Called on identity.user.login. Leaves high_roller itself untouched - the player
+   * is still a high roller, just no longer dormant.
    */
   async onUserLogin(payload: unknown) {
     const { userId } = domainEventSchemas['identity.user.login'].parse(payload);
     await this.tryRemoveTag(userId, 'inactive', 'player logged in');
+    await this.tryRemoveTag(userId, 'dormant_high_roller', 'player logged in');
   }
 
   /**
@@ -203,10 +228,32 @@ export class TagEvaluationService {
   }
 
   /**
-   * Daily scheduled evaluation: assigns inactive to players who have not logged in
-   * for rule.thresholdDays days. Removal is handled by onUserLogin on next login.
+   * Daily scheduled evaluation, three independent sweeps:
+   *  - inactive: assigns to players who have not logged in for rule.thresholdDays
+   *    days. Removal is handled by onUserLogin on next login.
+   *  - dormant_high_roller: a co-occurrence check, not a history lookup - high_roller
+   *    is only re-evaluated on deposit, so a player who goes quiet never loses it via
+   *    that path. Assigns to players who are both currently inactive (per this tag's
+   *    OWN thresholdDays, decoupled from the inactive rule's) and currently hold an
+   *    active high_roller tag. Removal is handled by onUserLogin on next login.
+   *  - high_risk resweep: removal-only, frequency dimension only. A rolling
+   *    withdrawal-count window can drop back under threshold with no new withdrawal
+   *    to trigger onWithdrawalCompleted, so current holders are rechecked here and
+   *    removed once the count falls below threshold. Deliberately does NOT recheck
+   *    the amount dimension - assignment's amount check has no time bound, so a
+   *    windowed recheck would silently de-designate a still-risky player once their
+   *    triggering withdrawal ages out of the window (an AML false negative).
+   *    Skipped entirely when thresholdDays or thresholdCount is null - an amount-only
+   *    high_risk rule isn't resweepable by the cron; it stays until an admin clears it
+   *    or a future withdrawal re-triggers assignment.
    */
   async runDailyEvaluation() {
+    await this._runInactiveSweep();
+    await this._runDormantHighRollerSweep();
+    await this._runHighRiskResweep();
+  }
+
+  private async _runInactiveSweep() {
     const rule = await this.getEnabledRule('inactive');
     if (!rule || rule.thresholdDays === null) {
       return;
@@ -220,5 +267,69 @@ export class TagEvaluationService {
     await mapConcurrent(userIds, EVAL_CHUNK_SIZE, (userId) =>
       this.tryAssignTag(userId, 'inactive', 'no login for configured threshold'),
     );
+  }
+
+  private async _runDormantHighRollerSweep() {
+    const rule = await this.getEnabledRule('dormant_high_roller');
+    if (!rule || rule.thresholdDays === null) {
+      return;
+    }
+
+    const sinceDate = new Date(Date.now() - rule.thresholdDays * 24 * 60 * 60 * 1000);
+    const inactiveUserIds = await this.identityReader.getPlayerIdsInactiveSince(sinceDate);
+    const activeTagsByUser = await this.tag.getActiveTagKeys(inactiveUserIds);
+
+    const highRollerUserIds = inactiveUserIds.filter((userId) =>
+      (activeTagsByUser.get(userId) ?? []).includes('high_roller'),
+    );
+
+    await mapConcurrent(highRollerUserIds, EVAL_CHUNK_SIZE, (userId) =>
+      this.tryAssignTag(
+        userId,
+        'dormant_high_roller',
+        'holds high_roller and inactive for configured threshold',
+      ),
+    );
+  }
+
+  /**
+   * Frequency-only removal. Assignment (onWithdrawalCompleted) checks a single
+   * withdrawal's amount with no time bound, so an amount-only breach from outside
+   * this rolling window is invisible to a windowed recheck - resweeping it would
+   * silently de-designate a still-risky player (an AML false negative). Only the
+   * count dimension, which IS windowed at assignment time, is safe to resweep.
+   * Skipped entirely when thresholdDays or thresholdCount is null - an amount-only
+   * rule has no frequency dimension to resweep against and is never auto-cleared by
+   * the cron, only by an admin or a future onWithdrawalCompleted re-evaluation.
+   */
+  private async _runHighRiskResweep() {
+    const rule = await this.getEnabledRule('high_risk');
+    if (!rule || rule.thresholdDays === null || rule.thresholdCount === null) {
+      return;
+    }
+    const { thresholdDays, thresholdCount } = rule;
+
+    const holderUserIds = await this.tag.listActivePlayerUserIdsByTagKey('high_risk');
+    if (holderUserIds.length === 0) {
+      return;
+    }
+
+    // One set-based query for all holders' counts, then bound only the per-user
+    // removal writes - the reads are already batched, not per-row.
+    const countsByUser = await this.walletReader.getWithdrawalCountsInWindow(
+      holderUserIds,
+      thresholdDays,
+    );
+
+    await mapConcurrent(holderUserIds, EVAL_CHUNK_SIZE, async (userId) => {
+      const countInWindow = countsByUser.get(userId) ?? 0;
+      if (countInWindow < thresholdCount) {
+        await this.tryRemoveTag(
+          userId,
+          'high_risk',
+          'withdrawal frequency dropped below threshold within window',
+        );
+      }
+    });
   }
 }

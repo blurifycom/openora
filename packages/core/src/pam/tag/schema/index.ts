@@ -1,10 +1,12 @@
 import { tagAssignRemoveSource, tagKeys } from '@openora/core/contracts';
+import { isNull } from 'drizzle-orm';
 import {
   pgTable,
   uuid,
   text,
   timestamp,
   index,
+  uniqueIndex,
   boolean,
   pgEnum,
   integer,
@@ -49,7 +51,16 @@ export const playerTag = pgTable(
       .$onUpdateFn(() => new Date()),
     createdAt: timestamp({ withTimezone: true }).notNull().defaultNow(),
   },
-  (table) => [index('player_tag_player_tag_idx').on(table.playerId, table.tagId)],
+  (table) => [
+    index('player_tag_player_tag_idx').on(table.playerId, table.tagId),
+    index('player_tag_tag_id_idx').on(table.tagId).where(isNull(table.removedAt)),
+    // DB-level source of truth for "at most one active assignment per (tag, player)" -
+    // the service pre-check is a friendly fast path only; this index is what actually
+    // closes the concurrent-insert / at-least-once-redelivery race.
+    uniqueIndex('player_tag_active_key')
+      .on(table.tagId, table.playerId)
+      .where(isNull(table.removedAt)),
+  ],
 );
 
 export type Tag = typeof tag.$inferSelect;

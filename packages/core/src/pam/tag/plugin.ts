@@ -28,6 +28,9 @@ export default definePlugin({
     ctx.events.on('wallet.withdrawal.completed', (p) =>
       tagEvaluationService?.onWithdrawalCompleted(p),
     );
+    ctx.events.on('wallet.withdrawal.requested', (p) =>
+      tagEvaluationService?.onWithdrawalRequested(p),
+    );
     ctx.events.on('identity.user.login', (p) => tagEvaluationService?.onUserLogin(p));
     ctx.events.on('compliance.kyc.submitted', (p) => tagEvaluationService?.onKycSubmitted(p));
     ctx.events.on('compliance.kyc.updated', (p) => tagEvaluationService?.onKycStatusUpdated(p));

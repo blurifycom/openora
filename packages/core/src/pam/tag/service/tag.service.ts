@@ -4,10 +4,12 @@ import {
   EventBus,
   findOneOrThrow,
   makeNotFoundError,
+  makeConflictError,
   pageToOffset,
   alreadyInUseError,
 } from '@openora/core/server';
 import { and, asc, count, eq, inArray, isNull, notInArray } from 'drizzle-orm';
+import { DatabaseError } from 'pg';
 import {
   AssignPlayerTagInput,
   CreateTagInput,
@@ -16,6 +18,7 @@ import {
   type PlayerTags,
   type Player,
   type TagKey,
+  type User,
 } from '@openora/core/contracts';
 import { player } from '@openora/core/pam/schema/profile';
 import { playerTag, tag } from '../schema/index.js';
@@ -25,6 +28,18 @@ import { toTag, toPlayerTagWithTag } from './tag-mappers.js';
 export const TagNotFoundError = makeNotFoundError('Tag');
 export const TagAlreadyInUseError = alreadyInUseError('Tag');
 export const TagAssignmentNotFoundError = makeNotFoundError('Tag Assignment');
+// Distinct from TagAlreadyInUseError above (a player already holding this tag active) -
+// this is the tag CATALOG key colliding on create.
+export const TagKeyConflictError = makeConflictError(
+  'TagKeyConflictError',
+  'Tag key already exists',
+);
+// A tag can't be deleted while a playerTag/tagRule row still references it
+// (onDelete: 'restrict' in the schema).
+export const TagInUseError = makeConflictError(
+  'TagInUseError',
+  'Tag is still referenced by a player tag or tag rule and cannot be deleted',
+);
 
 export class TagService implements PlayerTags {
   constructor(
@@ -52,27 +67,52 @@ export class TagService implements PlayerTags {
     return result;
   }
 
+  /**
+   * userIds (auth `userId`, not `player.id`) currently holding an active assignment
+   * of tagKey. Internal to this module - used only by TagEvaluationService for the
+   * daily high_risk resweep; deliberately not exposed on the PLAYER_TAGS port since
+   * no other module needs "list holders of tag X" today.
+   */
+  public async listActivePlayerUserIdsByTagKey(tagKey: TagKey): Promise<string[]> {
+    const rows = await this.drizzle.db
+      .select({ userId: player.userId })
+      .from(playerTag)
+      .innerJoin(tag, eq(playerTag.tagId, tag.id))
+      .innerJoin(player, eq(player.id, playerTag.playerId))
+      .where(and(eq(tag.key, tagKey), isNull(playerTag.removedAt)));
+    return rows.map((r) => r.userId);
+  }
+
   private async _findTagByKeyOrThrow(tagKey: TagKey, trx: DrizzleTx) {
     const results = await trx.select().from(tag).where(eq(tag.key, tagKey)).limit(1);
     return toTag(findOneOrThrow(results, new TagNotFoundError(tagKey)));
   }
 
-  public async createTag(args: CreateTagInput) {
+  public async createTag(args: CreateTagInput, actorId: User['id']) {
     try {
       const db = this.drizzle.db;
       const [created] = await db.insert(tag).values(args).returning();
-      return toTag(created);
+      const result = toTag(created);
+      void this.event.emit('tag.created', { key: result.key, isSticky: result.isSticky, actorId });
+      return result;
     } catch (e) {
+      if (e instanceof DatabaseError && e.code === '23505') {
+        throw new TagKeyConflictError();
+      }
       mapDbError(e);
     }
   }
 
-  public async deleteTag(args: DeleteTagInput) {
+  public async deleteTag(args: DeleteTagInput, actorId: User['id']) {
     try {
       const db = this.drizzle.db;
       await db.delete(tag).where(eq(tag.key, args.key));
+      void this.event.emit('tag.deleted', { key: args.key, actorId });
       return true;
     } catch (e) {
+      if (e instanceof DatabaseError && e.code === '23503') {
+        throw new TagInUseError();
+      }
       mapDbError(e);
     }
   }
@@ -125,6 +165,10 @@ export class TagService implements PlayerTags {
       const db = this.drizzle.db;
       const result = await db.transaction(async (trx) => {
         const foundTag = await this._findTagByKeyOrThrow(tagKey, trx);
+        // Fast/friendly pre-check only - the real guard is the partial unique index
+        // (player_tag_active_key) backing the onConflictDoNothing below. Without it, two
+        // concurrent calls (or the same at-least-once event redelivered) can both pass
+        // this SELECT before either commits, creating duplicate active rows.
         const [existing] = await trx
           .select()
           .from(playerTag)
@@ -139,10 +183,20 @@ export class TagService implements PlayerTags {
         if (existing) {
           throw new TagAlreadyInUseError();
         }
+        // The loser of a genuine race hits the unique index here instead: its insert is a
+        // no-op (empty returning()), so it throws the same TagAlreadyInUseError as the
+        // pre-check - tryAssignTag already treats that as an idempotent no-op.
         const [created] = await trx
           .insert(playerTag)
           .values({ ...restArgs, tagId: foundTag.id })
+          .onConflictDoNothing({
+            target: [playerTag.tagId, playerTag.playerId],
+            where: isNull(playerTag.removedAt),
+          })
           .returning();
+        if (!created) {
+          throw new TagAlreadyInUseError();
+        }
         return toPlayerTagWithTag(created, foundTag.key);
       });
       void this.event.emit('tag.player.assigned', {

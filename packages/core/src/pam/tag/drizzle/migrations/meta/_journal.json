@@ -15,6 +15,27 @@
       "when": 1783854980666,
       "tag": "0001_neat_iron_monger",
       "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "7",
+      "when": 1784268208305,
+      "tag": "0002_silent_skaar",
+      "breakpoints": true
+    },
+    {
+      "idx": 3,
+      "version": "7",
+      "when": 1784270254307,
+      "tag": "0003_open_longshot",
+      "breakpoints": true
+    },
+    {
+      "idx": 4,
+      "version": "7",
+      "when": 1784273254707,
+      "tag": "0004_omniscient_ezekiel_stane",
+      "breakpoints": true
     }
   ]
 }

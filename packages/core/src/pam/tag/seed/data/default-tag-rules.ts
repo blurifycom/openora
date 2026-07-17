@@ -43,4 +43,18 @@ export const DEFAULT_TAG_RULES: UpsertTagRuleInput[] = [
     thresholdDays: null,
     thresholdCount: null,
   },
+  {
+    tagKey: 'dormant_high_roller',
+    isEnabled: false,
+    threshold: null,
+    thresholdDays: null,
+    thresholdCount: null,
+  },
+  {
+    tagKey: 'withdrawal_review',
+    isEnabled: false,
+    threshold: null,
+    thresholdDays: null,
+    thresholdCount: null,
+  },
 ];

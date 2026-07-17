@@ -16,6 +16,8 @@ export const tagKeys = [
   'kyc_pending',
   'kyc_rejected',
   'test_account',
+  'dormant_high_roller',
+  'withdrawal_review',
 ] as const;
 export const TagKeySchema = z.enum(tagKeys);
 export type TagKey = z.infer<typeof TagKeySchema>;

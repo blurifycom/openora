@@ -11,4 +11,6 @@ export const DEFAULT_TAGS: CreateTagInput[] = [
   { key: 'kyc_pending', isSticky: false },
   { key: 'kyc_rejected', isSticky: true },
   { key: 'test_account', isSticky: true },
+  { key: 'dormant_high_roller', isSticky: false },
+  { key: 'withdrawal_review', isSticky: true },
 ];

@@ -35,6 +35,8 @@ function makeServices(rules: Partial<Record<string, TagRule>> = {}) {
   const tag = mock<TagService>({
     assignPlayerTag: vi.fn().mockResolvedValue(undefined),
     removePlayerTag: vi.fn().mockResolvedValue(undefined),
+    getActiveTagKeys: vi.fn().mockResolvedValue(new Map()),
+    listActivePlayerUserIdsByTagKey: vi.fn().mockResolvedValue([]),
   });
   const rule = mock<TagRuleService>({
     getTagRule: vi.fn(async (tagKey: string) => {
@@ -48,6 +50,7 @@ function makeServices(rules: Partial<Record<string, TagRule>> = {}) {
   const walletReader = mock<WalletReader>({
     getLifetimeDeposit: vi.fn().mockResolvedValue('0'),
     getWithdrawalCountInWindow: vi.fn().mockResolvedValue(0),
+    getWithdrawalCountsInWindow: vi.fn().mockResolvedValue(new Map()),
   });
   const identityReader = mock<IdentityReader>({
     getLastLoginAt: vi.fn().mockResolvedValue(null),
@@ -180,6 +183,44 @@ describe('TagEvaluationService', () => {
     });
   });
 
+  describe('onWithdrawalRequested', () => {
+    it('assigns withdrawal_review when the withdrawal amount meets the threshold', async () => {
+      const { service, tag } = makeServices({
+        withdrawal_review: makeRule({ tagKey: 'withdrawal_review', threshold: '5000' }),
+      });
+      await service.onWithdrawalRequested(withdrawalPayload(5000));
+      expect(tag.assignPlayerTag).toHaveBeenCalledWith(
+        expect.objectContaining({ playerId: UID, tagKey: 'withdrawal_review' }),
+      );
+    });
+
+    it('does not assign withdrawal_review when the amount is below threshold', async () => {
+      const { service, tag } = makeServices({
+        withdrawal_review: makeRule({ tagKey: 'withdrawal_review', threshold: '5000' }),
+      });
+      await service.onWithdrawalRequested(withdrawalPayload(4999));
+      expect(tag.assignPlayerTag).not.toHaveBeenCalled();
+    });
+
+    it('does nothing when the rule is disabled', async () => {
+      const { service, tag } = makeServices({
+        withdrawal_review: makeRule({
+          tagKey: 'withdrawal_review',
+          threshold: '5000',
+          isEnabled: false,
+        }),
+      });
+      await service.onWithdrawalRequested(withdrawalPayload(99999));
+      expect(tag.assignPlayerTag).not.toHaveBeenCalled();
+    });
+
+    it('does nothing when the rule is absent', async () => {
+      const { service, tag } = makeServices();
+      await service.onWithdrawalRequested(withdrawalPayload(99999));
+      expect(tag.assignPlayerTag).not.toHaveBeenCalled();
+    });
+  });
+
   describe('onUserLogin', () => {
     it('tries to remove the inactive tag', async () => {
       const { service, tag } = makeServices();
@@ -187,6 +228,24 @@ describe('TagEvaluationService', () => {
       expect(tag.removePlayerTag).toHaveBeenCalledWith(
         expect.objectContaining({ playerId: UID, tagKey: 'inactive', removalActor: 'scheduled' }),
       );
+    });
+
+    it('also tries to remove the dormant_high_roller tag', async () => {
+      const { service, tag } = makeServices();
+      await service.onUserLogin({ userId: UID });
+      expect(tag.removePlayerTag).toHaveBeenCalledWith(
+        expect.objectContaining({
+          playerId: UID,
+          tagKey: 'dormant_high_roller',
+          removalActor: 'scheduled',
+        }),
+      );
+    });
+
+    it('is idempotent when dormant_high_roller was never assigned', async () => {
+      const { service, tag } = makeServices();
+      tag.removePlayerTag = vi.fn().mockRejectedValue(new TagAssignmentNotFoundError(UID));
+      await expect(service.onUserLogin({ userId: UID })).resolves.toBeUndefined();
     });
   });
 
@@ -321,6 +380,169 @@ describe('TagEvaluationService', () => {
       });
       await service.runDailyEvaluation();
       expect(identityReader.getPlayerIdsInactiveSince).not.toHaveBeenCalled();
+    });
+
+    describe('dormant_high_roller sweep', () => {
+      it('assigns to inactive users who also hold high_roller', async () => {
+        const { service, tag, identityReader } = makeServices({
+          dormant_high_roller: makeRule({ tagKey: 'dormant_high_roller', thresholdDays: 60 }),
+        });
+        identityReader.getPlayerIdsInactiveSince = vi.fn().mockResolvedValue(['p1', 'p2']);
+        tag.getActiveTagKeys = vi.fn().mockResolvedValue(
+          new Map([
+            ['p1', ['high_roller']],
+            ['p2', ['kyc_pending']],
+          ]),
+        );
+        await service.runDailyEvaluation();
+        expect(tag.assignPlayerTag).toHaveBeenCalledWith(
+          expect.objectContaining({ playerId: 'p1', tagKey: 'dormant_high_roller' }),
+        );
+        expect(tag.assignPlayerTag).not.toHaveBeenCalledWith(
+          expect.objectContaining({ playerId: 'p2', tagKey: 'dormant_high_roller' }),
+        );
+      });
+
+      it('does not assign to inactive users without high_roller', async () => {
+        const { service, tag, identityReader } = makeServices({
+          dormant_high_roller: makeRule({ tagKey: 'dormant_high_roller', thresholdDays: 60 }),
+        });
+        identityReader.getPlayerIdsInactiveSince = vi.fn().mockResolvedValue(['p1']);
+        tag.getActiveTagKeys = vi.fn().mockResolvedValue(new Map([['p1', ['vip']]]));
+        await service.runDailyEvaluation();
+        expect(tag.assignPlayerTag).not.toHaveBeenCalledWith(
+          expect.objectContaining({ tagKey: 'dormant_high_roller' }),
+        );
+      });
+
+      it('does nothing when the rule is disabled', async () => {
+        const { service, identityReader } = makeServices({
+          dormant_high_roller: makeRule({
+            tagKey: 'dormant_high_roller',
+            thresholdDays: 60,
+            isEnabled: false,
+          }),
+        });
+        await service.runDailyEvaluation();
+        expect(identityReader.getPlayerIdsInactiveSince).not.toHaveBeenCalled();
+      });
+
+      it('does nothing when thresholdDays is null', async () => {
+        const { service, tag } = makeServices({
+          dormant_high_roller: makeRule({ tagKey: 'dormant_high_roller', thresholdDays: null }),
+        });
+        await service.runDailyEvaluation();
+        expect(tag.getActiveTagKeys).not.toHaveBeenCalled();
+      });
+    });
+
+    describe('high_risk resweep', () => {
+      it('removes the tag from a holder when the recheck shows count below threshold', async () => {
+        const { service, tag, walletReader } = makeServices({
+          high_risk: makeRule({
+            tagKey: 'high_risk',
+            threshold: '1000',
+            thresholdDays: 7,
+            thresholdCount: 3,
+          }),
+        });
+        tag.listActivePlayerUserIdsByTagKey = vi.fn().mockResolvedValue(['p1']);
+        walletReader.getWithdrawalCountsInWindow = vi.fn().mockResolvedValue(new Map([['p1', 1]]));
+        await service.runDailyEvaluation();
+        expect(walletReader.getWithdrawalCountsInWindow).toHaveBeenCalledWith(['p1'], 7);
+        expect(tag.removePlayerTag).toHaveBeenCalledWith(
+          expect.objectContaining({ playerId: 'p1', tagKey: 'high_risk' }),
+        );
+      });
+
+      it('keeps the tag when the count is still at or above threshold', async () => {
+        const { service, tag, walletReader } = makeServices({
+          high_risk: makeRule({
+            tagKey: 'high_risk',
+            threshold: '1000',
+            thresholdDays: 7,
+            thresholdCount: 3,
+          }),
+        });
+        tag.listActivePlayerUserIdsByTagKey = vi.fn().mockResolvedValue(['p1']);
+        walletReader.getWithdrawalCountsInWindow = vi.fn().mockResolvedValue(new Map([['p1', 3]]));
+        await service.runDailyEvaluation();
+        expect(tag.removePlayerTag).not.toHaveBeenCalledWith(
+          expect.objectContaining({ tagKey: 'high_risk' }),
+        );
+      });
+
+      it('treats a holder absent from the batched result as zero and removes the tag', async () => {
+        const { service, tag, walletReader } = makeServices({
+          high_risk: makeRule({
+            tagKey: 'high_risk',
+            threshold: '1000',
+            thresholdDays: 7,
+            thresholdCount: 3,
+          }),
+        });
+        tag.listActivePlayerUserIdsByTagKey = vi.fn().mockResolvedValue(['p1']);
+        walletReader.getWithdrawalCountsInWindow = vi.fn().mockResolvedValue(new Map());
+        await service.runDailyEvaluation();
+        expect(tag.removePlayerTag).toHaveBeenCalledWith(
+          expect.objectContaining({ playerId: 'p1', tagKey: 'high_risk' }),
+        );
+      });
+
+      it('skips entirely when thresholdDays is null (amount-only rule, not resweepable)', async () => {
+        const { service, tag } = makeServices({
+          high_risk: makeRule({
+            tagKey: 'high_risk',
+            threshold: '1000',
+            thresholdDays: null,
+            thresholdCount: 3,
+          }),
+        });
+        await service.runDailyEvaluation();
+        expect(tag.listActivePlayerUserIdsByTagKey).not.toHaveBeenCalled();
+      });
+
+      it('skips entirely when thresholdCount is null (no frequency dimension to resweep)', async () => {
+        const { service, tag } = makeServices({
+          high_risk: makeRule({
+            tagKey: 'high_risk',
+            threshold: '1000',
+            thresholdDays: 7,
+            thresholdCount: null,
+          }),
+        });
+        await service.runDailyEvaluation();
+        expect(tag.listActivePlayerUserIdsByTagKey).not.toHaveBeenCalled();
+      });
+
+      it('skips when the rule is disabled', async () => {
+        const { service, tag } = makeServices({
+          high_risk: makeRule({
+            tagKey: 'high_risk',
+            threshold: '1000',
+            thresholdDays: 7,
+            thresholdCount: 3,
+            isEnabled: false,
+          }),
+        });
+        await service.runDailyEvaluation();
+        expect(tag.listActivePlayerUserIdsByTagKey).not.toHaveBeenCalled();
+      });
+
+      it('does nothing when there are no holders', async () => {
+        const { service, tag, walletReader } = makeServices({
+          high_risk: makeRule({
+            tagKey: 'high_risk',
+            threshold: '1000',
+            thresholdDays: 7,
+            thresholdCount: 3,
+          }),
+        });
+        tag.listActivePlayerUserIdsByTagKey = vi.fn().mockResolvedValue([]);
+        await service.runDailyEvaluation();
+        expect(walletReader.getWithdrawalCountsInWindow).not.toHaveBeenCalled();
+        expect(tag.removePlayerTag).not.toHaveBeenCalled();
+      });
     });
   });
 

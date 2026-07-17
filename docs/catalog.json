@@ -562,6 +562,8 @@
     "rg.limit.set",
     "rg.self_exclusion.activated",
     "rg.self_exclusion.lifted",
+    "tag.created",
+    "tag.deleted",
     "tag.player.assigned",
     "tag.player.removed",
     "tag.rule.upserted",

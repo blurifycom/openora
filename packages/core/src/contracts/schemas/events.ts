@@ -230,6 +230,10 @@ export const domainEventSchemas = {
   'iam.role.assigned': iamRoleEventBase.extend({ userId: UuidSchema }),
   'iam.role.revoked': iamRoleEventBase.extend({ userId: UuidSchema }),
 
+  // Emitted after an admin creates or deletes a tag catalog definition (the tag
+  // itself, not a player assignment - see tag.player.assigned/removed for that).
+  'tag.created': z.object({ key: TagKeySchema, isSticky: z.boolean(), actorId: UuidSchema }),
+  'tag.deleted': z.object({ key: TagKeySchema, actorId: UuidSchema }),
   // Emitted after any tag is assigned to or removed from a player (both automated and manual).
   // actorId is the user performing the action (SYSTEM_ACTOR_ID for automated ops).
   'tag.player.assigned': tagPlayerEventBase,
