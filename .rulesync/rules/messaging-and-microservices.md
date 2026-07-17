@@ -3,9 +3,22 @@ root: false
 targets:
   - '*'
 description: Messaging seams (broker / job-queue / realtime), command vs event vs job, the event envelope, outbox, and the service-manifest path to microservices.
+# Scoped to where async seams are used: services (emit/enqueue), plugins (subscribe/
+# provide/workers), adapters, module contracts (eventIterator SSE routes) + the core
+# contracts zone (event schemas, seam ports), module-root port impls (admin-*.ts),
+# the engine, and overlays - not react/schema-only edits.
 globs:
-  - 'packages/**'
+  - 'packages/**/service/**'
+  - 'packages/**/plugin.ts'
+  - 'packages/**/plugins/**'
+  - 'packages/**/adapters/**'
+  - 'packages/**/contract/**'
+  - 'packages/core/src/contracts/**'
+  - 'packages/core/src/**/admin-*.ts'
+  - 'packages/core/src/server/**'
+  - 'packages/testing/**'
   - 'extensions/**'
+  - 'tools/create/**'
 ---
 
 # Messaging and microservices-readiness
@@ -16,11 +29,13 @@ A modular monolith today, designed so high-impact modules extract into their own
 
 | Seam                       | Token                | For                              | Dev/test double (`@openora/core/testing`) | Durable driver (production)                                                 |
 | -------------------------- | -------------------- | -------------------------------- | ----------------------------------------- | --------------------------------------------------------------------------- |
-| Inter-module domain events | `MESSAGE_BROKER`     | one module reacts to another     | `InMemoryBroker`                          | RabbitMQ/Kafka overlay (required - core ships none)                         |
+| Inter-module domain events | `MESSAGE_BROKER`     | one module reacts to another     | `InMemoryBroker`                          | Redis Streams (`REDIS_URL`); RabbitMQ/Kafka via overlay                     |
 | Background jobs            | `JOB_QUEUE`          | durable/retryable/scheduled work | `InProcessJobQueue`                       | BullMQ + Redis (`REDIS_URL`)                                                |
 | Client push                | `REALTIME_TRANSPORT` | SSE/WS to the browser            | `InProcessRealtimeTransport`              | managed vendor (Ably/GetStream); stays lazy, throws on first use if unbound |
 
 `MESSAGE_BROKER` is module-to-module. `REALTIME_TRANSPORT` is server-to-client. Do not conflate them.
+
+The `MESSAGE_BROKER` reference driver (`RedisStreamsBroker`) ships in core and auto-binds when `REDIS_URL` is set - so a monolith needs only Redis, no separate broker. It uses one Redis Streams consumer group per **service name** (`SERVICE_NAME`, else `SERVICE_MANIFEST`, else `monolith`): every replica of a service competes in that group, so an event is handled by exactly one replica, which then fans out to all local handlers for the topic - once per cluster, not once per replica (correct for audit/notifications). A split service (`SERVICE_MANIFEST`) gets a distinct group automatically; distinct deployments sharing one Redis MUST set distinct `SERVICE_NAME`. Delivery is at-least-once (crashed-consumer entries are reclaimed via `XAUTOCLAIM`), so handlers stay idempotent; `orderingKey` is not honoured (Streams have no partitioning). A consumer overlay can still re-provide `MESSAGE_BROKER` with RabbitMQ/Kafka.
 
 The `JOB_QUEUE` BullMQ reference driver (`BullMqJobQueue`) ships in core and auto-binds when `REDIS_URL` is set - jobs survive restarts and cron runs for real, zero consumer code (same auto-bind treatment as the Redis cache/rate-limiter, ADR-0028). Production requires either `REDIS_URL` or a consumer overlay to bind `JOB_QUEUE` (Container last-wins) - there is no in-process fallback once `createApp` finishes booting (ADR-0030). `orderingKey` is not honoured by this driver (no ordering groups in OSS BullMQ) - restore strict ordering with BullMQ Pro groups or a custom overlay.
 
@@ -57,7 +72,7 @@ The `EventBus` wraps every emission at the broker boundary; module code never bu
 - `orderingKey` - Kafka partition key / RabbitMQ routing for per-user ordering.
 - `schemaVersion` - forward-compatible payload evolution. `traceId` - correlation.
 
-Because the envelope isolates transport from domain logic, binding a durable broker is an overlay swap (a `definePlugin` re-providing `MESSAGE_BROKER`) and extracting a module needs no module edits. Migration path: in-process -> RabbitMQ (set `AMQP_URL`; `docker compose --profile broker up`) -> Kafka (a new overlay implementing `MessageBrokerAdapter`); `topic` maps to routing key/topic, `orderingKey` to partition key, `consumerGroup` to durable queue/consumer group, `eventId` to dedup.
+Because the envelope isolates transport from domain logic, binding a durable broker is an overlay swap (a `definePlugin` re-providing `MESSAGE_BROKER`) and extracting a module needs no module edits. Migration path: Redis Streams (default, `REDIS_URL`) -> RabbitMQ/Kafka (a consumer overlay implementing `MessageBrokerAdapter`); `topic` maps to routing key/topic, `orderingKey` to partition key, `consumerGroup` to durable queue/consumer group, `eventId` to dedup.
 
 ## Deployable topology - the service manifest (ADR-0017)
 
