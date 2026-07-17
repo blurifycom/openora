@@ -28,7 +28,7 @@ const REQUIRED_DURABLE_SEAMS: readonly SeamRequirement[] = [
   {
     token: MESSAGE_BROKER,
     name: 'MESSAGE_BROKER',
-    fix: 'core ships no default broker - bind a durable MessageBrokerAdapter overlay (eg RabbitMQ/Kafka) via ctx.provide(MESSAGE_BROKER, ...)',
+    fix: 'set REDIS_URL to auto-bind RedisStreamsBroker, or bind a MessageBrokerAdapter overlay (eg RabbitMQ/Kafka) via ctx.provide(MESSAGE_BROKER, ...)',
   },
   {
     token: JOB_QUEUE,

@@ -35,6 +35,13 @@ type StreamClaimReply = {
 
 type RedisStreamsBrokerOptions = {
   serviceName: string;
+
+  // Where a consumer group starts reading, on the ONE pass that creates it (a group
+  // that already exists comes back BUSYGROUP and keeps its own cursor, so this never
+  // rewinds a running deployment). '$' - the default - takes only events published
+  // after creation; '0' replays everything still retained in the stream (up to
+  // STREAM_MAXLEN). See the class docstring for which to pick.
+  startId?: '$' | '0';
 };
 
 type ConsumerLoop = {
@@ -62,8 +69,10 @@ function isBusyGroupError(err: unknown): boolean {
  * is delivered to exactly one replica of the service (competing consumers across
  * replicas via the shared group), and that replica runs every local handler for
  * the topic (matches in-process fan-out semantics, but once per cluster, not once
- * per replica). A distinct `SERVICE_NAME` per split service (`SERVICE_MANIFEST`)
- * gives each service its own copy of every event.
+ * per replica). A distinct `SERVICE_NAME` per split service gives each service its
+ * own copy of every event; `createApp` requires one as soon as `SERVICE_MANIFEST`
+ * is set, since the group name is a durable identity and can't be derived from a
+ * module list that reorders and grows.
  *
  * Blocking `XREADGROUP` runs on a `client.duplicate()`d connection per loop, never
  * on the shared client - `publish` (`XADD`, non-blocking) uses the shared client,
@@ -75,6 +84,18 @@ function isBusyGroupError(err: unknown): boolean {
  * outbox). A crash before XACK leaves the entry pending; `XAUTOCLAIM` periodically
  * reclaims idle-pending entries so at-least-once delivery survives a replica crash.
  *
+ * At-least-once holds from group creation onward, NOT before it. A group is created
+ * at `startId` (default `$`) on first subscribe and persists in Redis from then on,
+ * so restarts and outages are covered: the group keeps its cursor, undelivered
+ * entries wait in the stream, and pending ones are reclaimed. The one uncovered
+ * window is a group's FIRST-EVER creation - a service extracted after events were
+ * already flowing starts from `$` and never sees the backlog. `startId: '0'` closes
+ * that window by replaying everything still retained (up to STREAM_MAXLEN), at the
+ * cost of re-running every handler for those events: safe on a fresh deploy (empty
+ * streams), a duplicate-side-effect hazard for a late-added service, since core has
+ * no dedup layer - `EventBus.on` invokes handlers directly, and `eventId` is a key
+ * consumers must dedup on themselves.
+ *
  * `orderingKey` is NOT honoured - Redis Streams have no partitioning, so per-key
  * ordering across concurrent consumers isn't guaranteed (same footnote as
  * `BullMqJobQueue`'s `orderingKey`).
@@ -82,6 +103,7 @@ function isBusyGroupError(err: unknown): boolean {
 export class RedisStreamsBroker implements MessageBrokerAdapter {
   private readonly logger = createLogger('message-broker');
   private readonly serviceName: string;
+  private readonly startId: '$' | '0';
   private readonly consumerId = randomUUID();
   private readonly loops = new Map<string, ConsumerLoop>();
 
@@ -90,6 +112,7 @@ export class RedisStreamsBroker implements MessageBrokerAdapter {
     opts: RedisStreamsBrokerOptions,
   ) {
     this.serviceName = opts.serviceName;
+    this.startId = opts.startId ?? '$';
   }
 
   async publish(envelope: EventEnvelope): Promise<void> {
@@ -151,18 +174,25 @@ export class RedisStreamsBroker implements MessageBrokerAdapter {
       reader.destroy();
     };
 
-    // `ready` gates (re-)connecting + group creation: false on the very first pass
-    // and again after any error, so a Redis outage at loop start (or a drop the
-    // client's own reconnectStrategy doesn't paper over) is retried with backoff
-    // rather than permanently abandoning this (topic, group)'s consumption.
+    // `ready` gates connecting + group creation, and stays false until BOTH have
+    // succeeded - so a Redis outage at loop start retries the whole handshake with
+    // backoff rather than permanently abandoning this (topic, group)'s consumption.
+    // It is NOT reset on a later error: node-redis owns reconnection from there on
+    // (socket.reconnectStrategy re-establishes the connection and re-queues the
+    // blocked XREADGROUP), and the group already exists, so there is nothing to redo.
+    // Both steps are idempotent regardless - `connect()` throws 'Socket already
+    // opened' once the socket is open, hence the isOpen guard, and a re-created group
+    // comes back BUSYGROUP, which is tolerated below.
     const done = (async (): Promise<void> => {
       let ready = false;
       while (!stopped) {
         try {
           if (!ready) {
-            await reader.connect();
+            if (!reader.isOpen) {
+              await reader.connect();
+            }
             try {
-              await reader.xGroupCreate(key, group, '$', { MKSTREAM: true });
+              await reader.xGroupCreate(key, group, this.startId, { MKSTREAM: true });
             } catch (err) {
               if (!isBusyGroupError(err)) {
                 throw err;

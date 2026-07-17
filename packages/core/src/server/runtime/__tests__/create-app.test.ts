@@ -1,4 +1,4 @@
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, afterEach } from 'vitest';
 import { MESSAGE_BROKER, JOB_QUEUE, CACHE, RATE_LIMITER } from '@openora/core/contracts';
 import {
   InMemoryBroker,
@@ -40,5 +40,37 @@ describe('createApp - distributed-only durable seams (ADR-0030)', () => {
     expect(await res.json()).toMatchObject({ status: 'ok' });
 
     await created.close();
+  });
+});
+
+describe('createApp - service name for the Redis Streams consumer group', () => {
+  const saved = { redis: process.env['REDIS_URL'], manifest: process.env['SERVICE_MANIFEST'] };
+
+  afterEach(() => {
+    // Restore rather than delete: a bare delete would strip a REDIS_URL the rest of
+    // the suite (or a CI service container) legitimately set.
+    for (const [key, value] of [
+      ['REDIS_URL', saved.redis],
+      ['SERVICE_MANIFEST', saved.manifest],
+    ] as const) {
+      if (value === undefined) {
+        delete process.env[key];
+      } else {
+        process.env[key] = value;
+      }
+    }
+  });
+
+  it('refuses to boot a split service that has no SERVICE_NAME of its own', async () => {
+    // The consumer group is a durable identity, so it can never be derived from
+    // SERVICE_MANIFEST - that is a list of module ids ('wallet,iam') which reorders
+    // and grows. Throws before any Redis client is opened.
+    process.env['REDIS_URL'] = 'redis://127.0.0.1:1';
+    process.env['SERVICE_MANIFEST'] = 'wallet,iam';
+    delete process.env['SERVICE_NAME'];
+
+    await expect(
+      createApp({ plugins: [], databaseUrl: DUMMY_DATABASE_URL, openapi: { enabled: false } }),
+    ).rejects.toThrow(/SERVICE_MANIFEST is set but SERVICE_NAME is not/);
   });
 });
