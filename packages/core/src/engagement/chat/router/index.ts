@@ -51,20 +51,24 @@ export function createChatRouter(
   const os = implement(chat).$context<OssContext>();
 
   return os.router({
-    listRooms: os.listRooms.handler(({ context }) =>
-      chatService.listRooms(resolveViewerId(context)),
-    ),
+    listRooms: os.listRooms.handler(({ context }) => {
+      const userId = getUserId(context);
+      return chatService.listRooms(userId);
+    }),
 
-    getRoomMessages: os.getRoomMessages.handler(({ input, context }) =>
-      mapErrors({ NOT_FOUND: ChatRoomNotFoundError, FORBIDDEN: ChatRoomNotMemberError }, () =>
-        chatService.getRoomMessages({
-          roomId: input.roomId,
-          limit: input.limit,
-          before: input.before,
-          viewerId: resolveViewerId(context),
-        }),
-      ),
-    ),
+    getRoomMessages: os.getRoomMessages.handler(({ input, context }) => {
+      const viewerId = getUserId(context);
+      return mapErrors(
+        { NOT_FOUND: ChatRoomNotFoundError, FORBIDDEN: ChatRoomNotMemberError },
+        () =>
+          chatService.getRoomMessages({
+            roomId: input.roomId,
+            limit: input.limit,
+            before: input.before,
+            viewerId,
+          }),
+      );
+    }),
 
     sendRoomMessage: os.sendRoomMessage.handler(({ input, context }) => {
       const userId = getUserId(context);
@@ -116,8 +120,9 @@ export function createChatRouter(
     }),
 
     streamMessages: os.streamMessages.handler(async ({ input, signal, context }) => {
-      const viewerId = resolveViewerId(context);
       const roomId = input.roomId ?? null;
+      // Room streams require auth; global stream allows anonymous viewers.
+      const viewerId = roomId ? getUserId(context) : resolveViewerId(context);
       if (roomId) {
         await mapErrors(
           { NOT_FOUND: ChatRoomNotFoundError, FORBIDDEN: ChatRoomNotMemberError },
@@ -128,6 +133,17 @@ export function createChatRouter(
         (push) => chatService.subscribeMessages(roomId, push, viewerId),
         { signal },
       );
+    }),
+
+    getOnlineCount: os.getOnlineCount.handler(async ({ input, context }) => {
+      const roomId = input.roomId ?? null;
+      if (roomId) {
+        await mapErrors(
+          { NOT_FOUND: ChatRoomNotFoundError, FORBIDDEN: ChatRoomNotMemberError },
+          () => chatService.verifyRoomAccess(roomId, getUserId(context)),
+        );
+      }
+      return chatService.getOnlineCount(roomId);
     }),
 
     listBlockedUsers: os.listBlockedUsers.handler(({ context }) =>
@@ -170,7 +186,7 @@ export function createChatRouter(
 
     getRoom: os.getRoom.handler(({ input, context }) =>
       mapErrors({ NOT_FOUND: ChatRoomNotFoundError, FORBIDDEN: ChatRoomNotMemberError }, () =>
-        chatService.getRoom({ roomId: input.roomId, viewerId: resolveViewerId(context) }),
+        chatService.getRoom({ roomId: input.roomId, viewerId: getUserId(context) }),
       ),
     ),
 
@@ -202,7 +218,7 @@ export function createChatRouter(
       mapErrors({ NOT_FOUND: ChatRoomNotFoundError, FORBIDDEN: ChatRoomNotMemberError }, () =>
         chatService.listRoomMembers({
           roomId: input.roomId,
-          viewerId: resolveViewerId(context),
+          viewerId: getUserId(context),
         }),
       ),
     ),
@@ -212,6 +228,19 @@ export function createChatRouter(
       return mapErrors({ CONFLICT: ChatRoomSlugConflictError }, () =>
         chatService.createRoom({ ...input, actorId: userId }),
       );
+    }),
+
+    updateRoom: os.updateRoom.handler(async ({ input, context }) => {
+      const { userId } = await adminGuard.assert(context, 'chat-room', 'update');
+      return mapErrors(
+        { NOT_FOUND: ChatRoomNotFoundError, CONFLICT: ChatRoomSlugConflictError },
+        () => chatService.updateRoom({ ...input, actorId: userId }),
+      );
+    }),
+
+    listAdminRooms: os.listAdminRooms.handler(async ({ input, context }) => {
+      await adminGuard.assert(context, 'chat-room', 'view');
+      return chatService.listAdminRooms(input);
     }),
 
     deleteRoom: os.deleteRoom.handler(async ({ input, context }) => {

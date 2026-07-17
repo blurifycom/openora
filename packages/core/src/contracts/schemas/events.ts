@@ -131,9 +131,21 @@ export const domainEventSchemas = {
   'chat.room.created': z.object({
     roomId: UuidSchema,
     name: z.string(),
+    slug: z.string(),
+    category: z.string(),
     actorId: UuidSchema.optional(),
   }),
-  'chat.room.deleted': z.object({ roomId: UuidSchema, actorId: UuidSchema.optional() }),
+  'chat.room.deleted': z.object({
+    roomId: UuidSchema,
+    actorId: UuidSchema.optional(),
+    before: z.object({ name: z.string(), slug: z.string(), category: z.string() }),
+  }),
+  'chat.room.updated': z.object({
+    roomId: UuidSchema,
+    actorId: UuidSchema.optional(),
+    before: z.object({ name: z.string(), slug: z.string(), category: z.string() }),
+    after: z.object({ name: z.string(), slug: z.string(), category: z.string() }),
+  }),
 
   // Private room lifecycle: creation and member membership changes.
   'chat.private_room.created': z.object({ roomId: UuidSchema, creatorId: UuidSchema }),

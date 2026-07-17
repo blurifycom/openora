@@ -43,18 +43,21 @@
         "chat.deleteRoom",
         "chat.getConnection",
         "chat.getGlobalMessages",
+        "chat.getOnlineCount",
         "chat.getRoom",
         "chat.getRoomMessages",
         "chat.joinRoom",
         "chat.kickMember",
         "chat.leaveRoom",
+        "chat.listAdminRooms",
         "chat.listBlockedUsers",
         "chat.listRoomMembers",
         "chat.listRooms",
         "chat.sendGlobalMessage",
         "chat.sendRoomMessage",
         "chat.streamMessages",
-        "chat.unblockUser"
+        "chat.unblockUser",
+        "chat.updateRoom"
       ]
     },
     {
@@ -557,6 +560,7 @@
     "chat.room.member.joined",
     "chat.room.member.kicked",
     "chat.room.member.left",
+    "chat.room.updated",
     "chat.user.blocked",
     "chat.user.unblocked",
     "cms.banner.created",
@@ -650,6 +654,10 @@
       "file": "packages/core/src/iam/contract/index.ts"
     },
     {
+      "name": "AdminRoomSortBySchema",
+      "file": "packages/core/src/engagement/chat/contract/index.ts"
+    },
+    {
       "name": "AdminTransactionDetailSchema",
       "file": "packages/core/src/admin-console/contract/index.ts"
     },
@@ -735,6 +743,14 @@
     },
     {
       "name": "ChatMessageSchema",
+      "file": "packages/core/src/engagement/chat/contract/index.ts"
+    },
+    {
+      "name": "ChatOnlineCountSchema",
+      "file": "packages/core/src/engagement/chat/contract/index.ts"
+    },
+    {
+      "name": "ChatRoomCategorySchema",
       "file": "packages/core/src/engagement/chat/contract/index.ts"
     },
     {
@@ -1142,6 +1158,10 @@
       "file": "packages/core/src/compliance/contract/rg.ts"
     },
     {
+      "name": "SortOrderSchema",
+      "file": "packages/core/src/engagement/chat/contract/index.ts"
+    },
+    {
       "name": "StartRoundInputSchema",
       "file": "packages/core/src/casino/gaming/contract/index.ts"
     },
@@ -1317,6 +1337,7 @@
     "DELETE /wallet/auto-withdrawal-rules/{userId}",
     "GET /audit/export",
     "GET /audit/logs",
+    "GET /backoffice/chat/rooms",
     "GET /backoffice/stats",
     "GET /backoffice/transactions",
     "GET /backoffice/transactions/{id}",
@@ -1325,6 +1346,7 @@
     "GET /chat/blocks",
     "GET /chat/connection",
     "GET /chat/global",
+    "GET /chat/online-count",
     "GET /chat/rooms",
     "GET /chat/rooms/{roomId}",
     "GET /chat/rooms/{roomId}/members",
@@ -1368,6 +1390,7 @@
     "GET /wallet/transactions",
     "GET /wallet/transactions/{userId}",
     "GET /wallet/withdrawals",
+    "PATCH /backoffice/chat/rooms/{id}",
     "PATCH /backoffice/users/{userId}",
     "PATCH /iam/roles/{roleId}",
     "PATCH /identity/profile",

@@ -44,11 +44,13 @@ describe('InProcessRealtimeTransport', () => {
 
   it('tracks presence counts per channel', () => {
     const t = new InProcessRealtimeTransport();
-    t.presence.join('room', 'u1');
-    t.presence.join('room', 'u2');
-    t.presence.join('room', 'u2');
+    t.presence.join('room', 'u1', 'tab-1');
+    t.presence.join('room', 'u2', 'tab-1');
+    t.presence.join('room', 'u2', 'tab-2');
     expect(t.presence.count('room')).toBe(2);
-    t.presence.leave('room', 'u1');
+    t.presence.leave('room', 'u2', 'tab-1');
+    expect(t.presence.count('room')).toBe(2);
+    t.presence.leave('room', 'u1', 'tab-1');
     expect(t.presence.count('room')).toBe(1);
   });
 });

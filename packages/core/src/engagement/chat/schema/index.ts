@@ -8,9 +8,10 @@ import {
   uniqueIndex,
   index,
 } from 'drizzle-orm/pg-core';
-import { CHAT_ROOM_ROLES } from '../contract/constants.js';
+import { CHAT_ROOM_CATEGORIES, CHAT_ROOM_ROLES } from '../contract/index.js';
 
 const chatRoomRole = pgEnum('chat_room_role', CHAT_ROOM_ROLES);
+export const chatRoomCategory = pgEnum('chat_room_category', CHAT_ROOM_CATEGORIES);
 
 export const chatRoom = pgTable(
   'chat_room',
@@ -18,15 +19,19 @@ export const chatRoom = pgTable(
     id: uuid().primaryKey().defaultRandom(),
     name: text().notNull(),
     slug: text().notNull(),
+    category: chatRoomCategory().notNull().default('games-sports'),
     isPublic: boolean().notNull().default(true),
     // Set only for private rooms; null for public/admin-created rooms.
     joinCode: text(),
     creatorId: uuid(), // bare id - cross-module (user from pam/identity), no FK
     createdAt: timestamp({ withTimezone: true }).notNull().defaultNow(),
+    deletedAt: timestamp({ withTimezone: true }),
   },
   (t) => [
     uniqueIndex('chat_room_slug_key').on(t.slug),
     uniqueIndex('chat_room_join_code_key').on(t.joinCode),
+    index('chat_room_deleted_at_idx').on(t.deletedAt),
+    index('chat_room_creator_public_deleted_at_idx').on(t.creatorId, t.isPublic, t.deletedAt),
   ],
 );
 

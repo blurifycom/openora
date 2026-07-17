@@ -5,3 +5,4 @@ export {
   type UseChatStreamOptions,
   type UseChatStreamResult,
 } from './chat/react/use-chat-stream.js';
+export { useJoinRoom } from './chat/react/use-join-room.js';

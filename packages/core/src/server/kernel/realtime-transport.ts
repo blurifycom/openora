@@ -3,21 +3,27 @@ import type { RealtimeTransport, RealtimePresence } from '@openora/core/contract
 type Handler = (event: unknown) => void;
 
 class InProcessPresence implements RealtimePresence {
-  private readonly members = new Map<string, Set<string>>();
+  private readonly members = new Map<string, Map<string, Set<string>>>();
 
-  join(channel: string, memberId: string): void {
-    const set = this.members.get(channel) ?? new Set<string>();
-    set.add(memberId);
-    this.members.set(channel, set);
+  join(channel: string, memberId: string, connectionId: string): void {
+    const channelMembers = this.members.get(channel) ?? new Map<string, Set<string>>();
+    const connections = channelMembers.get(memberId) ?? new Set<string>();
+    connections.add(connectionId);
+    channelMembers.set(memberId, connections);
+    this.members.set(channel, channelMembers);
   }
 
-  leave(channel: string, memberId: string): void {
-    const set = this.members.get(channel);
-    if (!set) {
+  leave(channel: string, memberId: string, connectionId: string): void {
+    const channelMembers = this.members.get(channel);
+    const connections = channelMembers?.get(memberId);
+    if (!channelMembers || !connections) {
       return;
     }
-    set.delete(memberId);
-    if (set.size === 0) {
+    connections.delete(connectionId);
+    if (connections.size === 0) {
+      channelMembers.delete(memberId);
+    }
+    if (channelMembers.size === 0) {
       this.members.delete(channel);
     }
   }

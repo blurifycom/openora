@@ -15,6 +15,20 @@
       "when": 1784117825980,
       "tag": "0001_nifty_infant_terrible",
       "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "7",
+      "when": 1784294749394,
+      "tag": "0002_curly_phalanx",
+      "breakpoints": true
+    },
+    {
+      "idx": 3,
+      "version": "7",
+      "when": 1784308310854,
+      "tag": "0003_youthful_peter_parker",
+      "breakpoints": true
     }
   ]
 }

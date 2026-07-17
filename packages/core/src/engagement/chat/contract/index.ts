@@ -1,6 +1,7 @@
 import { oc, eventIterator } from '@orpc/contract';
 import * as z from 'zod';
 import { IdInputSchema, TimestampSchema, UuidSchema } from '@openora/core/contracts';
+import { PageQuerySchema, paginated } from '@openora/core/contracts/kit';
 import {
   MAX_MESSAGE_LENGTH,
   ROOM_NAME_MAX_LENGTH,
@@ -10,6 +11,14 @@ import {
 } from './constants.js';
 
 export * from './constants.js';
+
+export const AdminRoomSortByValues = ['name', 'createdAt'] as const;
+export const AdminRoomSortBySchema = z.enum(AdminRoomSortByValues).default('createdAt');
+export type AdminRoomSortBy = z.infer<typeof AdminRoomSortBySchema>;
+
+export const SortOrderValues = ['asc', 'desc'] as const;
+export const SortOrderSchema = z.enum(SortOrderValues).default('desc');
+export type SortOrder = z.infer<typeof SortOrderSchema>;
 
 // kebab-case slug: lowercase alphanum + hyphens, no leading/trailing hyphen.
 export const ChatRoomSlugSchema = z
@@ -24,10 +33,20 @@ export const MessageContentSchema = z.string().trim().min(1).max(MAX_MESSAGE_LEN
 export const ChatRoomRoleSchema = z.enum(CHAT_ROOM_ROLES);
 export type ChatRoomRole = z.infer<typeof ChatRoomRoleSchema>;
 
+export const CHAT_ROOM_CATEGORIES = [
+  'games-sports',
+  'regions',
+  'languages',
+  'private-channels',
+] as const;
+export const ChatRoomCategorySchema = z.enum(CHAT_ROOM_CATEGORIES);
+export type ChatRoomCategory = z.infer<typeof ChatRoomCategorySchema>;
+
 export const ChatRoomSchema = z.object({
   id: UuidSchema,
   name: z.string(),
   slug: z.string(),
+  category: ChatRoomCategorySchema,
   isPublic: z.boolean(),
   // Null for public rooms; populated for private rooms when the viewer is a member.
   joinCode: z.string().nullable(),
@@ -60,6 +79,8 @@ export const BlockedUserSchema = z.object({
   blockedId: UuidSchema,
   createdAt: TimestampSchema,
 });
+
+export const ChatOnlineCountSchema = z.object({ count: z.number().int().min(0) });
 
 // `.loose()` keeps this an open union so a managed-vendor overlay (eg Ably) can return extra fields without a contract change.
 export const ChatConnectionGrantSchema = z
@@ -117,6 +138,11 @@ export const chatContract = {
     .input(z.object({ roomId: UuidSchema.nullable().optional() }))
     .output(eventIterator(ChatMessageSchema)),
 
+  getOnlineCount: oc
+    .route({ method: 'GET', path: '/chat/online-count' })
+    .input(z.object({ roomId: UuidSchema.nullable().optional() }))
+    .output(ChatOnlineCountSchema),
+
   listBlockedUsers: oc
     .route({ method: 'GET', path: '/chat/blocks' })
     .output(z.array(BlockedUserSchema)),
@@ -172,9 +198,41 @@ export const chatContract = {
       z.object({
         name: z.string().trim().min(1).max(ROOM_NAME_MAX_LENGTH),
         slug: ChatRoomSlugSchema,
+        category: ChatRoomCategorySchema,
       }),
     )
     .output(ChatRoomSchema),
+
+  updateRoom: oc
+    .route({ method: 'PATCH', path: '/backoffice/chat/rooms/{id}' })
+    .input(
+      z
+        .object({
+          id: UuidSchema,
+          name: z.string().trim().min(1).max(ROOM_NAME_MAX_LENGTH).optional(),
+          slug: ChatRoomSlugSchema.optional(),
+          category: ChatRoomCategorySchema.optional(),
+        })
+        .refine(
+          ({ name, slug, category }) =>
+            name !== undefined || slug !== undefined || category !== undefined,
+          {
+            message: 'At least one room field is required',
+          },
+        ),
+    )
+    .output(ChatRoomSchema),
+
+  listAdminRooms: oc
+    .route({ method: 'GET', path: '/backoffice/chat/rooms' })
+    .input(
+      z.object({
+        ...PageQuerySchema.shape,
+        sortBy: AdminRoomSortBySchema,
+        sortOrder: SortOrderSchema,
+      }),
+    )
+    .output(paginated(ChatRoomSchema)),
 
   deleteRoom: oc
     .route({ method: 'DELETE', path: '/backoffice/chat/rooms/{id}' })

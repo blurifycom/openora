@@ -10,6 +10,6 @@ export const JOIN_CODE_INPUT_MAX_LENGTH = 20;
 
 export const PRIVATE_ROOM_SLUG_PREFIX = 'private-';
 
-export const MAX_PRIVATE_ROOMS_PER_PLAYER = 10;
+export const MAX_PRIVATE_ROOMS_PER_PLAYER = 15;
 
 export const CHAT_ROOM_ROLES = ['member', 'moderator'] as const;

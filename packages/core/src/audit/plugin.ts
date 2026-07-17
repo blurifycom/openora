@@ -259,14 +259,24 @@ function mapEventToRecord(topic: string, p: Record<string, unknown>): RecordInpu
     };
   }
 
-  if (topic === 'chat.room.created' || topic === 'chat.room.deleted') {
+  if (
+    topic === 'chat.room.created' ||
+    topic === 'chat.room.updated' ||
+    topic === 'chat.room.deleted'
+  ) {
     return {
       ...base,
       actorType: 'admin',
       actorId: str(p['actorId']),
       resourceType: 'chat_room',
       resourceId: str(p['roomId']),
-      ...(topic === 'chat.room.created' ? { after: { name: str(p['name']) } } : {}),
+      ...(topic === 'chat.room.created'
+        ? { after: { name: str(p['name']), slug: str(p['slug']), category: str(p['category']) } }
+        : {}),
+      ...(topic === 'chat.room.updated' || topic === 'chat.room.deleted'
+        ? { before: isRecord(p['before']) ? p['before'] : null }
+        : {}),
+      ...(topic === 'chat.room.updated' ? { after: isRecord(p['after']) ? p['after'] : null } : {}),
     };
   }
 
@@ -445,6 +455,7 @@ const SUBSCRIBED_TOPICS: DomainEventName[] = [
   'chat.user.unblocked',
   'chat.private_room.created',
   'chat.room.created',
+  'chat.room.updated',
   'chat.room.deleted',
   'chat.room.member.joined',
   'chat.room.member.left',

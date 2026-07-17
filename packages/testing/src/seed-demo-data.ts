@@ -5,6 +5,7 @@ import { user } from '@openora/core/pam/schema/identity';
 import { player } from '@openora/core/pam/schema/profile';
 import { wallet, walletTransaction } from '@openora/core/wallet/schema';
 import { game } from '@openora/core/casino/schema/gaming';
+import { chatRoom, chatMessage } from '@openora/core/engagement/schema/chat';
 
 export type SeedAuth = {
   api: {
@@ -32,6 +33,7 @@ export type SeedResult = {
   players: number;
   games: number;
   transactions: number;
+  rooms: number;
 };
 
 function makeRng(seed: number): () => number {
@@ -205,6 +207,42 @@ const GAMES = [
   ['Plinko', 'Spribe', 'crash'],
 ] as const;
 
+const CHAT_ROOMS = [
+  {
+    slug: 'general',
+    name: 'General',
+    category: 'languages',
+    messages: [
+      'Welcome to the platform! Feel free to chat here.',
+      'Have fun and good luck everyone!',
+    ],
+  },
+  {
+    slug: 'sports-betting',
+    name: 'Sports Betting',
+    category: 'games-sports',
+    messages: [
+      'Big match tonight - who are you backing?',
+      'Odds are looking great on the underdog.',
+    ],
+  },
+  {
+    slug: 'big-wins',
+    name: 'Big Wins',
+    category: 'games-sports',
+    messages: ['Share your wins here!', 'Jackpot season has begun!'],
+  },
+  {
+    slug: 'support',
+    name: 'Support',
+    category: 'regions',
+    messages: [
+      'Need help? Our team is here.',
+      'For account issues please include your registered email.',
+    ],
+  },
+] as const;
+
 export async function seedDemoData(options: SeedOptions): Promise<SeedResult> {
   const { db, auth, playerCount = 36, windowDays = 90, log = () => {} } = options;
   const admin = options.admin ?? {
@@ -215,7 +253,9 @@ export async function seedDemoData(options: SeedOptions): Promise<SeedResult> {
   const playerPassword = options.password ?? 'password123';
   const rng = makeRng(0x5eed);
 
-  log('Clearing existing demo content (player, wallet, transaction, game)...');
+  log('Clearing existing demo content (player, wallet, transaction, game, chat)...');
+  await db.delete(chatMessage);
+  await db.delete(chatRoom);
   await db.delete(walletTransaction);
   await db.delete(wallet);
   await db.delete(player);
@@ -241,6 +281,38 @@ export async function seedDemoData(options: SeedOptions): Promise<SeedResult> {
     })),
   );
   log(`Created ${GAMES.length} games.`);
+
+  let roomCount = 0;
+  if (adminUser) {
+    const insertedRooms = await db
+      .insert(chatRoom)
+      .values(
+        CHAT_ROOMS.map((r) => ({
+          name: r.name,
+          slug: r.slug,
+          category: r.category,
+          isPublic: true,
+          creatorId: adminUser.id,
+        })),
+      )
+      .returning();
+
+    const messageRows: (typeof chatMessage.$inferInsert)[] = insertedRooms.flatMap((room) => {
+      const def = CHAT_ROOMS.find((r) => r.slug === room.slug);
+      return (def?.messages ?? []).map((content) => ({
+        roomId: room.id,
+        userId: adminUser.id,
+        username: admin.name,
+        content,
+      }));
+    });
+    if (messageRows.length > 0) {
+      await db.insert(chatMessage).values(messageRows);
+    }
+
+    roomCount = insertedRooms.length;
+    log(`Created ${roomCount} public chat rooms with demo messages.`);
+  }
 
   let userCount = adminUser ? 1 : 0;
   let txCount = 0;
@@ -357,6 +429,7 @@ export async function seedDemoData(options: SeedOptions): Promise<SeedResult> {
     players: playerCount,
     games: GAMES.length,
     transactions: txCount,
+    rooms: roomCount,
   };
 }
 
