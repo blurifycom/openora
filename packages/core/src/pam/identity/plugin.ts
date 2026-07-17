@@ -5,13 +5,18 @@ import {
   LOGIN_ENFORCEMENT,
   NOTIFICATION_DELIVERY_ADAPTER,
   SEND_EMAIL,
+  EMAIL_TEMPLATE_RENDERER,
   IDENTITY_OPTIONS,
   RATE_LIMITER,
   PLATFORM_CONFIG,
   SESSION_COMMANDS,
+  SMS_ADAPTER,
 } from '@openora/core/contracts';
 import { definePlugin, ADMIN_GUARD, EVENT_BUS, DRIZZLE } from '@openora/core/server';
 import { MockKycAdapter } from './adapters/mock/mock-kyc-adapter.js';
+import { MockSmsAdapter } from './adapters/mock/mock-sms-adapter.js';
+import { PhoneLoginService } from './service/phone-login.service.js';
+import { DefaultEmailTemplateRenderer } from './adapters/default-email-template-renderer.js';
 import { DrizzleAdminUserDirectory } from './admin-user-directory.js';
 import { IdentityReaderService } from './adapters/identity-reader.service.js';
 import { createIdentityRouter } from './router/index.js';
@@ -23,6 +28,9 @@ export default definePlugin({
   id: 'identity',
   register(ctx) {
     ctx.provide(KYC_ADAPTER, () => new MockKycAdapter());
+    // Platform default SMS transport: logs the OTP to stdout. A consumer overlay
+    // rebinds SMS_ADAPTER to a real vendor (Twilio, AWS SNS) after this plugin.
+    ctx.provide(SMS_ADAPTER, () => new MockSmsAdapter());
     // The back-office depends on this port, not on the identity schema directly.
     ctx.provide(
       ADMIN_USER_DIRECTORY,
@@ -35,6 +43,7 @@ export default definePlugin({
       send: ({ to, subject, body }) =>
         c.get(NOTIFICATION_DELIVERY_ADAPTER).sendEmail(to, subject, body),
     }));
+    ctx.provide(EMAIL_TEMPLATE_RENDERER, () => new DefaultEmailTemplateRenderer());
     // RG login-block writer. compliance drives it through the port, never the schema.
     ctx.provide(
       LOGIN_ENFORCEMENT,
@@ -56,11 +65,18 @@ export default definePlugin({
           drizzle: c.get(DRIZZLE),
           events: c.get(EVENT_BUS),
           email: c.get(SEND_EMAIL),
+          templateRenderer: c.get(EMAIL_TEMPLATE_RENDERER),
           options: c.has(IDENTITY_OPTIONS) ? c.get(IDENTITY_OPTIONS) : undefined,
           limiter: c.get(RATE_LIMITER),
           platformConfig: c.has(PLATFORM_CONFIG) ? c.get(PLATFORM_CONFIG) : undefined,
         }),
         new SessionService({ drizzle: c.get(DRIZZLE), events: c.get(EVENT_BUS) }),
+        new PhoneLoginService({
+          drizzle: c.get(DRIZZLE),
+          events: c.get(EVENT_BUS),
+          sms: c.get(SMS_ADAPTER),
+          limiter: c.get(RATE_LIMITER),
+        }),
         c.get(ADMIN_GUARD),
         c.get(EVENT_BUS),
       ),

@@ -164,7 +164,7 @@ export class BullMqJobQueue implements JobQueueAdapter {
       meta: job.data.meta,
     };
     this.logger.error(
-      { queue: ctx.name, jobId: ctx.id, attempt: ctx.attempt, err: error.message },
+      { queue: ctx.name, jobId: ctx.id, attempt: ctx.attempt, err: error },
       '[bullmq-job-queue] job exhausted retries -> dead-letter',
     );
     if (worker.onDeadLetter) {
@@ -172,7 +172,7 @@ export class BullMqJobQueue implements JobQueueAdapter {
         await worker.onDeadLetter(ctx, error);
       } catch (hookErr) {
         this.logger.error(
-          { queue: ctx.name, jobId: ctx.id, err: String(hookErr) },
+          { queue: ctx.name, jobId: ctx.id, err: hookErr },
           '[bullmq-job-queue] onDeadLetter hook threw',
         );
       }

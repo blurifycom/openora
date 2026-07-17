@@ -147,6 +147,47 @@ const KYC_WEIGHTS = [
   ['rejected', 12],
 ] as const;
 
+// E.164 phone numbers, one per seeded player slot (index-stable so the same player
+// always gets the same number across re-seeds). Country codes align roughly with LOCALES.
+const PHONE_NUMBERS = [
+  '+4915201234567',
+  '+4407911123456',
+  '+14165550101',
+  '+46701234567',
+  '+34612345678',
+  '+33612345678',
+  '+4791234567',
+  '+393331234567',
+  '+4915207654321',
+  '+4407911654321',
+  '+14165550202',
+  '+46709876543',
+  '+34698765432',
+  '+33698765432',
+  '+4798765432',
+  '+393339876543',
+  '+4915209988776',
+  '+4407922334455',
+  '+14165550303',
+  '+46731122334',
+  '+34611223344',
+  '+33611223344',
+  '+4792233445',
+  '+393312233445',
+  '+4915203344556',
+  '+4407933445566',
+  '+14165550404',
+  '+46744556677',
+  '+34633445566',
+  '+33644556677',
+  '+4793344556',
+  '+393323344556',
+  '+4915204455667',
+  '+4407944556677',
+  '+14165550505',
+  '+46755667788',
+] as const;
+
 const GAMES = [
   ['Gates of Olympus', 'Pragmatic Play', 'slots'],
   ['Sweet Bonanza', 'Pragmatic Play', 'slots'],
@@ -218,6 +259,11 @@ export async function seedDemoData(options: SeedOptions): Promise<SeedResult> {
     const daysAgo = Math.floor(rng() * rng() * windowDays);
     const createdAt = new Date(now - daysAgo * dayMs);
     const isActive = status !== 'suspended' && status !== 'closed';
+    const phoneNumber = PHONE_NUMBERS[i % PHONE_NUMBERS.length] ?? null;
+    const phoneVerified = phoneNumber !== null && rng() > 0.25;
+    const phoneVerifiedAt = phoneVerified
+      ? new Date(createdAt.getTime() + Math.floor(rng() * 7) * dayMs)
+      : null;
 
     const playerUser = await ensureUser(db, auth, {
       email,
@@ -226,6 +272,9 @@ export async function seedDemoData(options: SeedOptions): Promise<SeedResult> {
       role: 'player',
       isActive,
       createdAt,
+      phoneNumber,
+      phoneVerified,
+      phoneVerifiedAt,
     });
     if (!playerUser) {
       continue;
@@ -318,6 +367,9 @@ type EnsureUserInput = {
   role: string;
   isActive: boolean;
   createdAt?: Date;
+  phoneNumber?: string | null;
+  phoneVerified?: boolean;
+  phoneVerifiedAt?: Date | null;
 };
 
 async function ensureUser(
@@ -342,6 +394,15 @@ async function ensureUser(
   };
   if (input.createdAt) {
     patch.createdAt = input.createdAt;
+  }
+  if (input.phoneNumber !== undefined) {
+    patch.phoneNumber = input.phoneNumber;
+  }
+  if (input.phoneVerified !== undefined) {
+    patch.phoneVerified = input.phoneVerified;
+  }
+  if (input.phoneVerifiedAt !== undefined) {
+    patch.phoneVerifiedAt = input.phoneVerifiedAt;
   }
   await db.update(user).set(patch).where(eq(user.id, existing.id));
   return { id: existing.id };

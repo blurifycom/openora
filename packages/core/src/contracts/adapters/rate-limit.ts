@@ -13,6 +13,7 @@ export const RATE_LIMIT_KEYS = {
   VERIFY_2FA: 'verify2fa',
   DISABLE_2FA: 'disable2fa',
   PASSWORD_RESET_REQUEST: 'pwreset-req',
+  PASSWORD_RESET_VERIFY: 'pwreset-verify',
   PASSWORD_RESET: 'pwreset',
   CHANGE_PASSWORD: 'change-password',
   EMAIL_VERIFICATION: 'email-verify',
@@ -23,6 +24,10 @@ export const RATE_LIMIT_KEYS = {
 export type RateLimitKeyPrefix = (typeof RATE_LIMIT_KEYS)[keyof typeof RATE_LIMIT_KEYS];
 
 export type RateLimitKey = `${RateLimitKeyPrefix}:${string}`;
+
+export function makeRateLimitKey(prefix: RateLimitKeyPrefix, id: string): RateLimitKey {
+  return `${prefix}:${id}`;
+}
 
 export type RateLimitOptions = {
   // Max allowed consumptions per window per key.

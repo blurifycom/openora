@@ -2,6 +2,8 @@ import { z } from 'zod';
 import { UuidSchema, TimestampSchema } from './common.js';
 
 export const THEMES = ['light', 'dark', 'system'] as const;
+export const OTP_CODE_LENGTH = 6;
+export const OTP_EXPIRES_IN_SEC = 3600;
 export const ThemeSchema = z.enum(THEMES);
 export type Theme = z.infer<typeof ThemeSchema>;
 
@@ -16,8 +18,25 @@ export const UserSchema = z.object({
   image: z.url().nullable().optional(),
   theme: ThemeSchema,
   language: LanguageSchema,
+  phoneNumber: z.string().nullable().optional(),
+  phoneVerified: z.boolean().optional(),
   createdAt: TimestampSchema,
   updatedAt: TimestampSchema,
+});
+
+export const E164PhoneSchema = z.string().regex(/^\+[1-9][0-9]{7,14}$/);
+
+export const PhoneLoginRequestInputSchema = z.object({ phone: E164PhoneSchema });
+
+export const PhoneLoginRequestOutputSchema = z.object({
+  expiresAt: TimestampSchema,
+  resendAfter: TimestampSchema,
+});
+
+export const PhoneLoginVerifyInputSchema = z.object({
+  phone: E164PhoneSchema,
+  code: z.string().regex(/^[0-9]{6}$/),
+  rememberMe: z.boolean().optional(),
 });
 
 export const OrganizationSchema = z.object({
@@ -72,8 +91,18 @@ export const RequestPasswordResetInputSchema = z.object({
 });
 
 export const ResetPasswordInputSchema = z.object({
-  token: z.string().min(1),
-  newPassword: z.string().min(8),
+  email: z.email(),
+  otp: z.string().length(OTP_CODE_LENGTH),
+  token: z.string().min(1).optional(),
+  // Upper-bounded to better-auth's own maxPasswordLength default (128): better-auth checks
+  // this AFTER consuming the OTP, so an over-length password would burn a valid one-time
+  // code and still get rejected - reject it here instead, before the OTP is ever spent.
+  newPassword: z.string().min(8).max(128),
+});
+
+export const VerifyPasswordResetOtpInputSchema = ResetPasswordInputSchema.pick({
+  email: true,
+  otp: true,
 });
 
 export const VerifyEmailInputSchema = z.object({
@@ -113,7 +142,12 @@ export type Verify2faInput = z.infer<typeof Verify2faInputSchema>;
 export type Disable2faInput = z.infer<typeof Disable2faInputSchema>;
 export type RequestPasswordResetInput = z.infer<typeof RequestPasswordResetInputSchema>;
 export type ResetPasswordInput = z.infer<typeof ResetPasswordInputSchema>;
+export type VerifyPasswordResetOtpInput = z.infer<typeof VerifyPasswordResetOtpInputSchema>;
 export type VerifyEmailInput = z.infer<typeof VerifyEmailInputSchema>;
 export type UpdateProfileInput = z.infer<typeof UpdateProfileInputSchema>;
 export type ChangePasswordInput = z.infer<typeof ChangePasswordInputSchema>;
 export type ChangeEmailInput = z.infer<typeof ChangeEmailInputSchema>;
+export type E164Phone = z.infer<typeof E164PhoneSchema>;
+export type PhoneLoginRequestInput = z.infer<typeof PhoneLoginRequestInputSchema>;
+export type PhoneLoginRequestOutput = z.infer<typeof PhoneLoginRequestOutputSchema>;
+export type PhoneLoginVerifyInput = z.infer<typeof PhoneLoginVerifyInputSchema>;

@@ -1,5 +1,10 @@
 import { describe, it, expect } from 'vitest';
-import { LoginInputSchema, RegisterInputSchema, UserSchema } from '../identity.js';
+import {
+  LoginInputSchema,
+  RegisterInputSchema,
+  ResetPasswordInputSchema,
+  UserSchema,
+} from '../identity.js';
 
 describe('identity schemas', () => {
   it('LoginInputSchema accepts a valid credential pair', () => {
@@ -26,6 +31,16 @@ describe('identity schemas', () => {
     expect(
       RegisterInputSchema.safeParse({ email: 'a@b.dev', password: 'password123', name: '' })
         .success,
+    ).toBe(false);
+  });
+
+  it("ResetPasswordInputSchema rejects a password over better-auth's 128-char max", () => {
+    const base = { email: 'a@b.dev', otp: '123456' };
+    expect(
+      ResetPasswordInputSchema.safeParse({ ...base, newPassword: 'a'.repeat(128) }).success,
+    ).toBe(true);
+    expect(
+      ResetPasswordInputSchema.safeParse({ ...base, newPassword: 'a'.repeat(129) }).success,
     ).toBe(false);
   });
 
