@@ -51,6 +51,9 @@ export function OtpInvalidError(attemptsRemaining: number) {
 export function OtpCancelledError() {
   return new ORPCError('FORBIDDEN', {
     message: 'Too many incorrect attempts. Please request a new code.',
+    // Both terminal failures are FORBIDDEN; `reason` is what lets a client route them
+    // apart without matching on English message text.
+    data: { reason: 'otp_cancelled' },
   });
 }
 
@@ -261,6 +264,7 @@ export class PhoneLoginService {
       this.events.emit('rg.exclusion.login_blocked', { userId: account.id, ip, userAgent });
       throw new ORPCError('FORBIDDEN', {
         message: 'Account access is currently restricted (responsible gambling).',
+        data: { reason: 'rg_blocked' },
       });
     }
 
