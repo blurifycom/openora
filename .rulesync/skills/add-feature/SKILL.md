@@ -35,7 +35,7 @@ Platform-core twin of the consumer `add-feature` skill. Use in this repo when a 
 
 ### 1. Resolve input + collect context (read-only)
 
-`$ARGUMENTS` is a work-order path (eg `~/.claude/plans/<ticket>-oss.md`) or a ticket. Read it (goal, consumer feature it unblocks, core surface, contract/schema impact, acceptance), then gather in parallel: the ticket (tracker MCP if connected), `docs/` ADRs + `catalog.json` + `openapi.json`, the rule docs (`conventions`, `clean-architecture`, `messaging-and-microservices`, `db-conventions`), the codebase (`oss-dev` MCP + Explore), chat/wiki for prior design discussion (search the ticket key).
+`$ARGUMENTS` is a work-order path (eg `~/.claude/plans/<ticket>-oss.md`) or a ticket. Read it (goal, consumer feature it unblocks, core surface, contract/schema impact, acceptance), then gather in parallel: the ticket (tracker MCP if connected), `docs/` ADRs + `catalog.json` + `openapi.json`, the rule docs (`conventions`, `clean-architecture`, `messaging-and-microservices`, `db-conventions`), the codebase (`oss-dev` MCP + Explore), chat/wiki for prior design discussion (search the ticket key). Run the `enhance-prompt` pre-step on the ask first, so this gather stays scoped and 1a grills against a clear brief.
 
 #### 1a. Grill the user before planning (MANDATORY)
 

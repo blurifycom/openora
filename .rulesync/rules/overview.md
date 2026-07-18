@@ -16,6 +16,10 @@ Sibling rules (load on demand; don't reopen settled questions): `conventions` (c
 
 Open-source, headless, plugin-based, AI-native igaming platform. Consumers clone/install and extend it with their own modules, plugins, and adapters; the frontend lives in their consumer repo. The default backend is fully featured (auth, wallet, lobby, chat, compliance, backoffice, CMS). Nothing consumer-specific lives here.
 
+## Enhance the ask first (pre-step)
+
+Before acting on any non-trivial request - and before delegating to an agent - run the `enhance-prompt` skill on the raw ask: restate the intent, gather scoped context (issue tracker / roadmap, `docs/` + ADRs, the catalog MCP tools), surface the blocking ambiguities, and produce the brief you actually execute. Skip it only when the ask is already precise. Subagents act on the brief they are handed - they do not re-enhance it.
+
 ## Architecture pillars
 
 1. **Zod-first contracts.** Every shape is a Zod schema; types are `z.infer`'d, never hand-written. Cross-cutting schemas in `packages/core/src/contracts/schemas/`; each module OWNS its route contract + req/res schemas + `z.infer`'d types in its `contract/` dir - the single source of wire truth, nothing else re-declares a wire shape. `composeContract` (`@openora/core/contracts`) owns only `health`; the composition root (`tools/gen/build-contract.ts` here, the consumer's entry when deployed) composes each enabled module's `/contract` slice into the one runtime contract the SDK links against. ADR-0021/0025.
