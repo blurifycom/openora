@@ -53,13 +53,13 @@ Pick the implementer per slice: `expert` (fuzzy -> requirements, advisory), `mod
 
 The implementer ships co-located Vitest tests with the slice (vi-mocked Drizzle for services; `bootTestApp` for integration) - part of the deliverable, not an afterthought.
 
-### 5. Review (findings only)
+### 5. E2E
 
-In parallel: `contract-reviewer` (boundaries, contract/schema drift, breaking changes) + `security-reviewer` (money, authz, PII) + `quality-reviewer` (performance, duplication, simplification, conventions). Loop findings back to the implementer; re-review if the surface changed.
+Derive the checklist from the AC first: happy path, edge cases, authz negatives (401/403), money/idempotency, audit entry per mutation. Then `qa` executes it API-level. E2e failures go back to the step-3 implementer BEFORE any review - don't review code that doesn't work.
 
-### 6. E2E
+### 6. Review (findings only)
 
-Derive the checklist from the AC first: happy path, edge cases, authz negatives (401/403), money/idempotency, audit entry per mutation. Then `qa` executes it API-level.
+In parallel: `contract-reviewer` (boundaries, contract/schema drift, breaking changes) + `security-reviewer` (money, authz, PII) + `quality-reviewer` (performance, duplication, simplification, conventions). Pass each what the e2e run proved so reviewers dig where tests can't reach. Loop findings back to the implementer; re-review if the surface changed, and re-run the affected e2e checks if a fix changed behavior.
 
 ### 7. Fix loop
 
