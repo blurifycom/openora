@@ -38,6 +38,27 @@ function quoteIdentifier(identifier: string): string {
   return `"${identifier.replaceAll('"', '""')}"`;
 }
 
+type SqlClient = {
+  query(sql: string, values?: unknown[]): Promise<unknown>;
+};
+
+/**
+ * Serializes migration runners for one journal. The lock is session-scoped, so
+ * it remains held while each migration uses its own transaction connection.
+ */
+export async function withMigrationAdvisoryLock<T>(
+  client: SqlClient,
+  lockName: string,
+  action: () => Promise<T>,
+) {
+  await client.query('SELECT pg_advisory_lock(hashtext($1))', [lockName]);
+  try {
+    return await action();
+  } finally {
+    await client.query('SELECT pg_advisory_unlock(hashtext($1))', [lockName]);
+  }
+}
+
 export async function applyMigrationsIndividually({
   migrations,
   apply,
@@ -73,35 +94,46 @@ export async function runMigrations(opts: RunMigrationsOptions) {
     await pool.query(
       `CREATE TABLE IF NOT EXISTS ${schema}.${table} (id SERIAL PRIMARY KEY, hash text NOT NULL, created_at bigint)`,
     );
-    const latest = await pool.query<{ created_at: string | number }>(
-      `SELECT created_at FROM ${schema}.${table} ORDER BY created_at DESC LIMIT 1`,
-    );
-    const lastAppliedAt = Number(latest.rows[0]?.created_at ?? 0);
-    const pending = readMigrationFiles(migrationConfig).filter(
-      (migration) => migration.folderMillis > lastAppliedAt,
-    );
-    await applyMigrationsIndividually({
-      migrations: pending,
-      apply: async (migration) => {
-        const client = await pool.connect();
-        try {
-          await client.query('BEGIN');
-          for (const statement of migration.sql) {
-            await client.query(statement);
-          }
-          await client.query(`INSERT INTO ${schema}.${table} (hash, created_at) VALUES ($1, $2)`, [
-            migration.hash,
-            migration.folderMillis,
-          ]);
-          await client.query('COMMIT');
-        } catch (error) {
-          await client.query('ROLLBACK');
-          throw error;
-        } finally {
-          client.release();
-        }
-      },
-    });
+    const lockClient = await pool.connect();
+    try {
+      await withMigrationAdvisoryLock(
+        lockClient,
+        `${migrationsSchema}.${migrationsTable}`,
+        async () => {
+          const applied = await lockClient.query<{ hash: string }>(
+            `SELECT hash FROM ${schema}.${table}`,
+          );
+          const appliedHashes = new Set(applied.rows.map(({ hash }) => hash));
+          const pending = readMigrationFiles(migrationConfig).filter(
+            (migration) => !appliedHashes.has(migration.hash),
+          );
+          await applyMigrationsIndividually({
+            migrations: pending,
+            apply: async (migration) => {
+              const client = await pool.connect();
+              try {
+                await client.query('BEGIN');
+                for (const statement of migration.sql) {
+                  await client.query(statement);
+                }
+                await client.query(
+                  `INSERT INTO ${schema}.${table} (hash, created_at) VALUES ($1, $2)`,
+                  [migration.hash, migration.folderMillis],
+                );
+                await client.query('COMMIT');
+              } catch (error) {
+                await client.query('ROLLBACK');
+                throw error;
+              } finally {
+                client.release();
+              }
+            },
+          });
+        },
+      );
+    } finally {
+      lockClient.release();
+    }
   } finally {
     await pool.end();
   }

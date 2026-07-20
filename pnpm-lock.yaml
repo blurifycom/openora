@@ -39,9 +39,6 @@ importers:
       '@types/node':
         specifier: 25.9.2
         version: 25.9.2
-      ably:
-        specifier: 2.22.1
-        version: 2.22.1(react-dom@19.2.7(react@19.2.7))(react@19.2.7)
       dependency-cruiser:
         specifier: 17.4.3
         version: 17.4.3
@@ -72,6 +69,10 @@ importers:
       typescript:
         specifier: 6.0.3
         version: 6.0.3
+    optionalDependencies:
+      ably:
+        specifier: 2.22.1
+        version: 2.22.1(react-dom@19.2.7(react@19.2.7))(react@19.2.7)
 
   apps/mcp-server-dev:
     dependencies:
@@ -4087,6 +4088,7 @@ snapshots:
   '@ably/msgpack-js@0.4.1':
     dependencies:
       bops: 1.0.1
+    optional: true
 
   '@babel/code-frame@7.29.7':
     dependencies:
@@ -5319,7 +5321,8 @@ snapshots:
 
   '@simple-libs/stream-utils@1.2.0': {}
 
-  '@sindresorhus/is@4.6.0': {}
+  '@sindresorhus/is@4.6.0':
+    optional: true
 
   '@sindresorhus/merge-streams@4.0.0': {}
 
@@ -5333,6 +5336,7 @@ snapshots:
   '@szmarczak/http-timer@4.0.6':
     dependencies:
       defer-to-connect: 2.0.1
+    optional: true
 
   '@tanstack/query-core@5.101.0': {}
 
@@ -5394,6 +5398,7 @@ snapshots:
       '@types/keyv': 3.1.4
       '@types/node': 25.9.2
       '@types/responselike': 1.0.3
+    optional: true
 
   '@types/chai@5.2.3':
     dependencies:
@@ -5404,11 +5409,13 @@ snapshots:
 
   '@types/estree@1.0.9': {}
 
-  '@types/http-cache-semantics@4.2.0': {}
+  '@types/http-cache-semantics@4.2.0':
+    optional: true
 
   '@types/keyv@3.1.4':
     dependencies:
       '@types/node': 25.9.2
+    optional: true
 
   '@types/node@12.20.55': {}
 
@@ -5433,6 +5440,7 @@ snapshots:
   '@types/responselike@1.0.3':
     dependencies:
       '@types/node': 25.9.2
+    optional: true
 
   '@valibot/to-json-schema@1.6.0(valibot@1.4.1(typescript@6.0.3))':
     dependencies:
@@ -5507,6 +5515,7 @@ snapshots:
     transitivePeerDependencies:
       - bufferutil
       - utf-8-validate
+    optional: true
 
   accepts@1.3.8:
     dependencies:
@@ -5597,7 +5606,8 @@ snapshots:
 
   balanced-match@4.0.4: {}
 
-  base64-js@1.0.2: {}
+  base64-js@1.0.2:
+    optional: true
 
   baseline-browser-mapping@2.10.38:
     optional: true
@@ -5666,6 +5676,7 @@ snapshots:
     dependencies:
       base64-js: 1.0.2
       to-utf8: 0.0.1
+    optional: true
 
   brace-expansion@5.0.6:
     dependencies:
@@ -5694,7 +5705,8 @@ snapshots:
 
   cac@7.0.0: {}
 
-  cacheable-lookup@5.0.4: {}
+  cacheable-lookup@5.0.4:
+    optional: true
 
   cacheable-request@7.0.4:
     dependencies:
@@ -5705,6 +5717,7 @@ snapshots:
       lowercase-keys: 2.0.0
       normalize-url: 6.1.0
       responselike: 2.0.1
+    optional: true
 
   call-bind-apply-helpers@1.0.2:
     dependencies:
@@ -5750,6 +5763,7 @@ snapshots:
   clone-response@1.0.3:
     dependencies:
       mimic-response: 1.0.1
+    optional: true
 
   cluster-key-slot@1.1.2: {}
 
@@ -5846,10 +5860,12 @@ snapshots:
   decompress-response@6.0.0:
     dependencies:
       mimic-response: 3.1.0
+    optional: true
 
   deep-equal@1.0.1: {}
 
-  defer-to-connect@2.0.1: {}
+  defer-to-connect@2.0.1:
+    optional: true
 
   defu@6.1.7: {}
 
@@ -5891,7 +5907,8 @@ snapshots:
       picocolors: 1.1.1
       ts-morph: 28.0.0
 
-  dequal@2.0.3: {}
+  dequal@2.0.3:
+    optional: true
 
   destroy@1.2.0: {}
 
@@ -6108,7 +6125,8 @@ snapshots:
 
   fast-uri@3.1.2: {}
 
-  fastestsmallesttextencoderdecoder@1.0.22: {}
+  fastestsmallesttextencoderdecoder@1.0.22:
+    optional: true
 
   fastmcp@3.34.0(@valibot/to-json-schema@1.6.0(valibot@1.4.1(typescript@6.0.3)))(effect@3.20.0)(sury@10.0.4):
     dependencies:
@@ -6237,6 +6255,7 @@ snapshots:
   get-stream@5.2.0:
     dependencies:
       pump: 3.0.4
+    optional: true
 
   get-stream@9.0.1:
     dependencies:
@@ -6300,6 +6319,7 @@ snapshots:
       lowercase-keys: 2.0.0
       p-cancelable: 2.1.1
       responselike: 2.0.1
+    optional: true
 
   graceful-fs@4.2.11: {}
 
@@ -6331,7 +6351,8 @@ snapshots:
       deep-equal: 1.0.1
       http-errors: 1.8.1
 
-  http-cache-semantics@4.2.0: {}
+  http-cache-semantics@4.2.0:
+    optional: true
 
   http-errors@1.8.1:
     dependencies:
@@ -6353,6 +6374,7 @@ snapshots:
     dependencies:
       quick-lru: 5.1.1
       resolve-alpn: 1.2.1
+    optional: true
 
   https-proxy-agent@5.0.1:
     dependencies:
@@ -6492,7 +6514,8 @@ snapshots:
     dependencies:
       argparse: 2.0.1
 
-  json-buffer@3.0.1: {}
+  json-buffer@3.0.1:
+    optional: true
 
   json-parse-even-better-errors@2.3.1: {}
 
@@ -6517,6 +6540,7 @@ snapshots:
   keyv@4.5.4:
     dependencies:
       json-buffer: 3.0.1
+    optional: true
 
   kind-of@6.0.3: {}
 
@@ -6619,7 +6643,8 @@ snapshots:
 
   lodash.startcase@4.4.0: {}
 
-  lowercase-keys@2.0.0: {}
+  lowercase-keys@2.0.0:
+    optional: true
 
   luxon@3.7.2: {}
 
@@ -6670,9 +6695,11 @@ snapshots:
     dependencies:
       mime-db: 1.54.0
 
-  mimic-response@1.0.1: {}
+  mimic-response@1.0.1:
+    optional: true
 
-  mimic-response@3.1.0: {}
+  mimic-response@3.1.0:
+    optional: true
 
   minimatch@10.2.5:
     dependencies:
@@ -6742,7 +6769,8 @@ snapshots:
       detect-libc: 2.1.2
     optional: true
 
-  normalize-url@6.1.0: {}
+  normalize-url@6.1.0:
+    optional: true
 
   npm-run-path@6.0.0:
     dependencies:
@@ -6815,7 +6843,8 @@ snapshots:
       '@oxlint/binding-win32-ia32-msvc': 1.69.0
       '@oxlint/binding-win32-x64-msvc': 1.69.0
 
-  p-cancelable@2.1.1: {}
+  p-cancelable@2.1.1:
+    optional: true
 
   p-filter@2.1.0:
     dependencies:
@@ -7008,7 +7037,8 @@ snapshots:
 
   quick-format-unescaped@4.0.4: {}
 
-  quick-lru@5.1.1: {}
+  quick-lru@5.1.1:
+    optional: true
 
   radash@12.1.1: {}
 
@@ -7064,7 +7094,8 @@ snapshots:
 
   require-from-string@2.0.2: {}
 
-  resolve-alpn@1.2.1: {}
+  resolve-alpn@1.2.1:
+    optional: true
 
   resolve-from@4.0.0: {}
 
@@ -7082,6 +7113,7 @@ snapshots:
   responselike@2.0.1:
     dependencies:
       lowercase-keys: 2.0.0
+    optional: true
 
   reusify@1.1.0: {}
 
@@ -7385,7 +7417,8 @@ snapshots:
     dependencies:
       is-number: 7.0.0
 
-  to-utf8@0.0.1: {}
+  to-utf8@0.0.1:
+    optional: true
 
   toidentifier@1.0.1: {}
 
@@ -7446,7 +7479,8 @@ snapshots:
 
   uint8array-extras@1.5.0: {}
 
-  ulid@2.4.0: {}
+  ulid@2.4.0:
+    optional: true
 
   undici-types@7.24.6: {}
 
@@ -7539,7 +7573,8 @@ snapshots:
 
   wrappy@1.0.2: {}
 
-  ws@8.21.1: {}
+  ws@8.21.1:
+    optional: true
 
   xsschema@0.4.4(@valibot/to-json-schema@1.6.0(valibot@1.4.1(typescript@6.0.3)))(effect@3.20.0)(sury@10.0.4)(zod-to-json-schema@3.25.2(zod@4.4.3))(zod@4.4.3):
     optionalDependencies:

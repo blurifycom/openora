@@ -625,7 +625,6 @@ export class ChatService {
   }
 
   async joinRoom({ userId, joinCode }: { userId: User['id']; joinCode: string }) {
-    // TODO: apply RATE_LIMITER (5 req/15 min per IP+userId) to prevent join-code brute-force
     const [room] = await this.drizzle.db
       .select()
       .from(chatRoom)

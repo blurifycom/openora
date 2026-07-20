@@ -5,9 +5,15 @@ import {
   createEventStreamGenerator,
   getUserId,
   AdminGuard,
+  assertRateLimit,
   type OssContext,
 } from '@openora/core/server';
-import type { RealtimeClientAuthorizer } from '@openora/core/contracts';
+import {
+  makeRateLimitKey,
+  RATE_LIMIT_KEYS,
+  type RateLimiterAdapter,
+  type RealtimeClientAuthorizer,
+} from '@openora/core/contracts';
 import { chatContract } from '../contract/index.js';
 import {
   ChatService,
@@ -28,6 +34,11 @@ import {
 } from '../service/chat.service.js';
 
 const chat = populateContractRouterPaths({ chat: chatContract }).chat;
+const JOIN_ROOM_RATE_LIMIT = {
+  limit: 5,
+  windowMs: 15 * 60 * 1_000,
+  onUnavailable: 'deny',
+} as const;
 
 function resolveUsername(context: OssContext, fallback = 'anonymous') {
   const val = context.request.headers['x-username'];
@@ -47,6 +58,7 @@ export function createChatRouter(
   chatService: ChatService,
   authorizer: RealtimeClientAuthorizer,
   adminGuard: AdminGuard,
+  limiter: RateLimiterAdapter,
 ) {
   const os = implement(chat).$context<OssContext>();
 
@@ -168,9 +180,13 @@ export function createChatRouter(
       );
     }),
 
-    joinRoom: os.joinRoom.handler(({ input, context }) => {
+    joinRoom: os.joinRoom.handler(async ({ input, context }) => {
       const userId = getUserId(context);
-      // TODO: apply RATE_LIMITER (5 req/15 min per IP+userId) to prevent join-code brute-force
+      await assertRateLimit(
+        limiter,
+        makeRateLimitKey(RATE_LIMIT_KEYS.CHAT_ROOM_JOIN, userId),
+        JOIN_ROOM_RATE_LIMIT,
+      );
       return mapErrors(
         { NOT_FOUND: ChatRoomJoinCodeNotFoundError, FORBIDDEN: ChatRoomBannedError },
         () => chatService.joinRoom({ userId, joinCode: input.joinCode }),

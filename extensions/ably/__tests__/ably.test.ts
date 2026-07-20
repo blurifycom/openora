@@ -11,6 +11,7 @@ import {
   type AblyPresencePage,
   type AblyRealtimeClient,
 } from '../ably-realtime-transport.js';
+import { shouldEnableAbly } from '../plugin.js';
 
 function tokenClient() {
   const requests: AblyTokenRequestParams[] = [];
@@ -83,4 +84,14 @@ test('AblyRealtimeTransport publishes messages and counts unique presence identi
   await transport.publish('chat:global', { id: 'message-1' });
   assert.equal(await transport.presence.count('chat:global'), 2);
   assert.deepEqual(publications, [{ name: 'message', data: { id: 'message-1' } }]);
+});
+
+test('Ably stays disabled unless the browser adapter is explicitly enabled', () => {
+  assert.equal(shouldEnableAbly({}), false);
+  assert.equal(shouldEnableAbly({ ABLY_API_KEY: 'key' }), false);
+  assert.equal(shouldEnableAbly({ ABLY_BROWSER_REALTIME_ENABLED: 'true' }), false);
+  assert.equal(
+    shouldEnableAbly({ ABLY_API_KEY: 'key', ABLY_BROWSER_REALTIME_ENABLED: 'true' }),
+    true,
+  );
 });

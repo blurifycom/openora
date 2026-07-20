@@ -19,6 +19,7 @@ export const RATE_LIMIT_KEYS = {
   EMAIL_VERIFICATION: 'email-verify',
   VERIFY_EMAIL: 'verify-email',
   WALLET_MUTATION: 'wallet-mutation',
+  CHAT_ROOM_JOIN: 'chat-room-join',
 } as const;
 
 export type RateLimitKeyPrefix = (typeof RATE_LIMIT_KEYS)[keyof typeof RATE_LIMIT_KEYS];
