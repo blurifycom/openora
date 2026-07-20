@@ -13,12 +13,12 @@ describe('signSessionCookie', () => {
     // through better-auth) - not just recomputed with this same module's own algorithm.
     // A change to the HMAC key, digest, or encoding would show up here as a diff against
     // a value this test doesn't derive.
-    const cookie = signSessionCookie(
-      'fixed-token-for-golden-vector',
-      SESSION_COOKIE,
-      'unit-test-secret-do-not-use-in-prod',
-      3600,
-    );
+    const cookie = signSessionCookie({
+      token: 'fixed-token-for-golden-vector',
+      sessionCookie: SESSION_COOKIE,
+      secret: 'unit-test-secret-do-not-use-in-prod',
+      maxAgeSeconds: 3600,
+    });
 
     expect(cookie).toContain(
       'better-auth.session_token=fixed-token-for-golden-vector.HUa0peblWWtfebbtuTmir7Km5kqZbRR2ZVIMnEP8BDQ%3D',
@@ -26,7 +26,12 @@ describe('signSessionCookie', () => {
   });
 
   it('carries the cookie attributes and the given max-age', () => {
-    const cookie = signSessionCookie('t', SESSION_COOKIE, 's', 86_400);
+    const cookie = signSessionCookie({
+      token: 't',
+      sessionCookie: SESSION_COOKIE,
+      secret: 's',
+      maxAgeSeconds: 86_400,
+    });
 
     expect(cookie).toContain('Max-Age=86400');
     expect(cookie).toContain('Path=/');
@@ -36,8 +41,18 @@ describe('signSessionCookie', () => {
   });
 
   it('differs for different secrets, so a signature cannot be replayed across environments', () => {
-    const a = signSessionCookie('same-token', SESSION_COOKIE, 'secret-a', 60);
-    const b = signSessionCookie('same-token', SESSION_COOKIE, 'secret-b', 60);
+    const a = signSessionCookie({
+      token: 'same-token',
+      sessionCookie: SESSION_COOKIE,
+      secret: 'secret-a',
+      maxAgeSeconds: 60,
+    });
+    const b = signSessionCookie({
+      token: 'same-token',
+      sessionCookie: SESSION_COOKIE,
+      secret: 'secret-b',
+      maxAgeSeconds: 60,
+    });
     expect(a).not.toBe(b);
   });
 
@@ -53,7 +68,12 @@ describe('signSessionCookie', () => {
       attributes: { ...SESSION_COOKIE.attributes, maxAge: 7 * 24 * 60 * 60 },
     };
 
-    const cookie = signSessionCookie('t', cookieWithInheritedDefault, 's', undefined);
+    const cookie = signSessionCookie({
+      token: 't',
+      sessionCookie: cookieWithInheritedDefault,
+      secret: 's',
+      maxAgeSeconds: undefined,
+    });
 
     expect(cookie).not.toContain('Max-Age');
   });

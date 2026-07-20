@@ -39,6 +39,11 @@ export const PhoneLoginVerifyInputSchema = z.object({
   rememberMe: z.boolean().optional(),
 });
 
+// Machine-readable discriminators on a FORBIDDEN phone-login error's `data.reason`, so a
+// client can route the two terminal failures apart without matching on message text.
+export const PHONE_LOGIN_ERROR_REASONS = ['otp_cancelled', 'rg_blocked'] as const;
+export const PhoneLoginErrorReasonSchema = z.enum(PHONE_LOGIN_ERROR_REASONS);
+
 export const OrganizationSchema = z.object({
   id: UuidSchema,
   name: z.string().min(1).max(255),
@@ -151,3 +156,4 @@ export type E164Phone = z.infer<typeof E164PhoneSchema>;
 export type PhoneLoginRequestInput = z.infer<typeof PhoneLoginRequestInputSchema>;
 export type PhoneLoginRequestOutput = z.infer<typeof PhoneLoginRequestOutputSchema>;
 export type PhoneLoginVerifyInput = z.infer<typeof PhoneLoginVerifyInputSchema>;
+export type PhoneLoginErrorReason = z.infer<typeof PhoneLoginErrorReasonSchema>;

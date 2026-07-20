@@ -8,6 +8,7 @@ import {
   signSessionCookie,
 } from '@openora/core/server';
 import { and, eq, gt, sql } from 'drizzle-orm';
+import { PhoneLoginErrorReasonSchema } from '@openora/core/contracts';
 import type {
   RateLimiterAdapter,
   SmsAdapter,
@@ -59,7 +60,7 @@ export function OtpCancelledError() {
     message: 'Too many incorrect attempts. Please request a new code.',
     // Both terminal failures are FORBIDDEN; `reason` is what lets a client route them
     // apart without matching on English message text.
-    data: { reason: 'otp_cancelled' },
+    data: { reason: PhoneLoginErrorReasonSchema.enum.otp_cancelled },
   });
 }
 
@@ -281,7 +282,7 @@ export class PhoneLoginService {
       this.events.emit('rg.exclusion.login_blocked', { userId: account.id, ip, userAgent });
       throw new ORPCError('FORBIDDEN', {
         message: 'Account access is currently restricted (responsible gambling).',
-        data: { reason: 'rg_blocked' },
+        data: { reason: PhoneLoginErrorReasonSchema.enum.rg_blocked },
       });
     }
 
@@ -328,12 +329,12 @@ export class PhoneLoginService {
       : undefined;
     resHeaders.append(
       'set-cookie',
-      signSessionCookie(
+      signSessionCookie({
         token,
-        authContext.authCookies.sessionToken,
-        authContext.secret,
+        sessionCookie: authContext.authCookies.sessionToken,
+        secret: authContext.secret,
         maxAgeSeconds,
-      ),
+      }),
     );
 
     return {

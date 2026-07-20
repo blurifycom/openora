@@ -964,6 +964,10 @@
       "file": "packages/core/src/contracts/schemas/iam.ts"
     },
     {
+      "name": "PhoneLoginErrorReasonSchema",
+      "file": "packages/core/src/contracts/schemas/identity.ts"
+    },
+    {
       "name": "PhoneLoginRequestInputSchema",
       "file": "packages/core/src/contracts/schemas/identity.ts"
     },

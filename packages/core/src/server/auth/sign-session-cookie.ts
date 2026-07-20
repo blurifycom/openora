@@ -35,12 +35,17 @@ export type SessionCookieConfig = {
  * underlying `session` row still expires server-side on its own schedule regardless;
  * this only controls whether the *cookie* survives a browser restart.
  */
-export function signSessionCookie(
-  token: string,
-  sessionCookie: SessionCookieConfig,
-  secret: string,
-  maxAgeSeconds?: number,
-): string {
+export function signSessionCookie({
+  token,
+  sessionCookie,
+  secret,
+  maxAgeSeconds,
+}: {
+  token: string;
+  sessionCookie: SessionCookieConfig;
+  secret: string;
+  maxAgeSeconds?: number;
+}): string {
   const signature = createHmac('sha256', secret).update(token).digest('base64');
   const signedValue = `${token}.${signature}`;
   const attributes = { ...sessionCookie.attributes };
