@@ -11,11 +11,6 @@ const PHONE = '+14155550100';
 const AUTH_SECRET = 'unit-test-secret-do-not-use-in-prod';
 const SESSION_COOKIE_NAME = 'better-auth.session_token';
 
-// A minimal double of the shared better-auth instance: only `$context` is read (for
-// `secret` and `authCookies.sessionToken`), so the rest of `Auth`'s surface is unused
-// by this service and left out of the double. `maxAge` mirrors better-auth's own static
-// session config default (eg 7 days) - present here so the !rememberMe tests below prove
-// the service actively strips an INHERITED default, not just that it never set one.
 const fakeAuth: Auth = mock<Auth>({
   $context: Promise.resolve({
     secret: AUTH_SECRET,
@@ -80,7 +75,6 @@ function build({
   return { svc, events, sms };
 }
 
-/** Recomputes the same HMAC-SHA256 the service signs with, to check a minted cookie. */
 function expectedSignature(token: string): string {
   return createHmac('sha256', AUTH_SECRET).update(token).digest('base64');
 }
@@ -187,9 +181,6 @@ describe('PhoneLoginService.verifyOtp', () => {
   });
 
   it('signs a session cookie the same auth instance can verify', async () => {
-    // The whole point of A1: `getSession` reads the SIGNED cookie, not the response
-    // body's `session.token` - so this proves the cookie carries the minted token,
-    // signed with the exact secret `auth.$context` (and so `SessionResolver`) uses.
     const code = '123456';
     const { svc } = build({
       select: [[otpRow({ codeHash: hash(code) })], [userRow], [], []],
@@ -202,10 +193,6 @@ describe('PhoneLoginService.verifyOtp', () => {
     expect(setCookie).not.toBeNull();
     expect(setCookie).toContain(`${SESSION_COOKIE_NAME}=`);
     expect(setCookie).toContain('HttpOnly');
-    // Without rememberMe the cookie must be a real browser session cookie (no Max-Age),
-    // even though `fakeAuth`'s own cookie config carries a 7-day default - a leaked
-    // inherited default here would make every phone login persistent regardless of
-    // the player's choice.
     expect(setCookie).not.toContain('Max-Age');
 
     const cookieValue = decodeURIComponent(

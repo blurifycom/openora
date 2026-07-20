@@ -76,9 +76,6 @@ export default definePlugin({
           events: c.get(EVENT_BUS),
           sms: c.get(SMS_ADAPTER),
           limiter: c.get(RATE_LIMITER),
-          // Same better-auth instance SessionResolver uses to verify every request's
-          // cookie - see the PhoneLoginServiceDeps.auth doc comment for why this must be
-          // the shared instance rather than a locally-built one.
           auth: c.get(AUTH_SESSION).auth,
         }),
         c.get(ADMIN_GUARD),

@@ -58,8 +58,6 @@ export function OtpInvalidError(attemptsRemaining: number) {
 export function OtpCancelledError() {
   return new ORPCError('FORBIDDEN', {
     message: 'Too many incorrect attempts. Please request a new code.',
-    // Both terminal failures are FORBIDDEN; `reason` is what lets a client route them
-    // apart without matching on English message text.
     data: { reason: PhoneLoginErrorReasonSchema.enum.otp_cancelled },
   });
 }
@@ -112,13 +110,6 @@ export type PhoneLoginServiceDeps = {
   events: EventBus;
   sms: SmsAdapter;
   limiter: RateLimiterAdapter;
-  /**
-   * The shared better-auth instance also used by `SessionResolver` (the `AUTH_SESSION`
-   * token) to resolve every authenticated request. Injected here - rather than this
-   * service building its own `createAuth()` - so the cookie minted below is signed with
-   * exactly the secret and cookie config that later verifies it; a second, independently
-   * configured instance would risk drifting (eg a future `advanced.cookies` override).
-   */
   auth: Auth;
 };
 
@@ -315,15 +306,8 @@ export class PhoneLoginService {
       userAgent,
     });
 
-    // The session row above is inserted directly rather than through better-auth's own
-    // sign-in endpoints, so - unlike `login`/`register`, which forward the Set-Cookie
-    // better-auth already produced - nothing has told the browser about this session yet.
-    // Sign one by hand, byte-compatible with what `auth.api.getSession` expects to read.
     const authContext = await this.auth.$context;
-    // Without rememberMe the cookie must NOT carry a Max-Age: a persistent cookie would
-    // survive closing the browser regardless of what the player chose, which is exactly
-    // the "remember me" behaviour they didn't opt into. The session row's own expiry
-    // (24h) still governs validity server-side either way.
+
     const maxAgeSeconds = rememberMe
       ? Math.max(0, Math.round((sessionExpiresAt.getTime() - Date.now()) / 1000))
       : undefined;

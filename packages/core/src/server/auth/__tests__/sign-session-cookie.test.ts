@@ -8,11 +8,6 @@ const SESSION_COOKIE = {
 
 describe('signSessionCookie', () => {
   it('produces a signature matching a known-good vector', () => {
-    // Golden vector, independently verified against the real better-call
-    // `verifySignature`/`getCryptoKey` (the exact functions `auth.api.getSession` calls
-    // through better-auth) - not just recomputed with this same module's own algorithm.
-    // A change to the HMAC key, digest, or encoding would show up here as a diff against
-    // a value this test doesn't derive.
     const cookie = signSessionCookie({
       token: 'fixed-token-for-golden-vector',
       sessionCookie: SESSION_COOKIE,
@@ -57,12 +52,6 @@ describe('signSessionCookie', () => {
   });
 
   it('omits Max-Age when no ttl is given, producing a real browser session cookie', () => {
-    // better-auth's own `authCookies.sessionToken.attributes` bakes in a default
-    // `maxAge` (its static session config, eg 7 days) - this fixture reproduces that so
-    // the test actually exercises stripping an INHERITED value, not just never setting
-    // one. Regression guard for a bug where the inherited default leaked through on a
-    // "don't remember me" login, making every phone login persistent regardless of the
-    // player's choice.
     const cookieWithInheritedDefault = {
       name: 'better-auth.session_token',
       attributes: { ...SESSION_COOKIE.attributes, maxAge: 7 * 24 * 60 * 60 },
