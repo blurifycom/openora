@@ -12,7 +12,7 @@ import {
   SESSION_COMMANDS,
   SMS_ADAPTER,
 } from '@openora/core/contracts';
-import { definePlugin, ADMIN_GUARD, EVENT_BUS, DRIZZLE } from '@openora/core/server';
+import { definePlugin, ADMIN_GUARD, EVENT_BUS, DRIZZLE, AUTH_SESSION } from '@openora/core/server';
 import { MockKycAdapter } from './adapters/mock/mock-kyc-adapter.js';
 import { MockSmsAdapter } from './adapters/mock/mock-sms-adapter.js';
 import { PhoneLoginService } from './service/phone-login.service.js';
@@ -76,6 +76,10 @@ export default definePlugin({
           events: c.get(EVENT_BUS),
           sms: c.get(SMS_ADAPTER),
           limiter: c.get(RATE_LIMITER),
+          // Same better-auth instance SessionResolver uses to verify every request's
+          // cookie - see the PhoneLoginServiceDeps.auth doc comment for why this must be
+          // the shared instance rather than a locally-built one.
+          auth: c.get(AUTH_SESSION).auth,
         }),
         c.get(ADMIN_GUARD),
         c.get(EVENT_BUS),

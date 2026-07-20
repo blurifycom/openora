@@ -1,12 +1,38 @@
-import { createHash } from 'node:crypto';
+import { createHash, createHmac } from 'node:crypto';
 import { describe, it, expect, vi } from 'vitest';
 import { ORPCError } from '@orpc/server';
 import { PhoneLoginService } from '../service/phone-login.service.js';
 import { makeDrizzle, makeEvents, mock } from '../../../testing/mock.js';
-import type { DrizzleService, EventBus } from '@openora/core/server';
+import type { DrizzleService, EventBus, Auth } from '@openora/core/server';
 import type { RateLimiterAdapter, SmsAdapter } from '@openora/core/contracts';
 
 const PHONE = '+14155550100';
+
+const AUTH_SECRET = 'unit-test-secret-do-not-use-in-prod';
+const SESSION_COOKIE_NAME = 'better-auth.session_token';
+
+// A minimal double of the shared better-auth instance: only `$context` is read (for
+// `secret` and `authCookies.sessionToken`), so the rest of `Auth`'s surface is unused
+// by this service and left out of the double. `maxAge` mirrors better-auth's own static
+// session config default (eg 7 days) - present here so the !rememberMe tests below prove
+// the service actively strips an INHERITED default, not just that it never set one.
+const fakeAuth: Auth = mock<Auth>({
+  $context: Promise.resolve({
+    secret: AUTH_SECRET,
+    authCookies: {
+      sessionToken: {
+        name: SESSION_COOKIE_NAME,
+        attributes: {
+          httpOnly: true,
+          secure: false,
+          sameSite: 'lax',
+          path: '/',
+          maxAge: 7 * 24 * 60 * 60,
+        },
+      },
+    },
+  }),
+});
 
 // A verified-phone user row as `verifyOtp`'s `select().from(user)` returns it.
 const userRow = {
@@ -49,8 +75,14 @@ function build({
     events: mock<EventBus>(events),
     sms,
     limiter: allowLimiter(),
+    auth: fakeAuth,
   });
   return { svc, events, sms };
+}
+
+/** Recomputes the same HMAC-SHA256 the service signs with, to check a minted cookie. */
+function expectedSignature(token: string): string {
+  return createHmac('sha256', AUTH_SECRET).update(token).digest('base64');
 }
 
 const otpRow = (over: Record<string, unknown> = {}) => ({
@@ -141,8 +173,9 @@ describe('PhoneLoginService.verifyOtp', () => {
       // (1) otp lookup, (2) user lookup, (3) delete otp in tx, (4) session insert in tx.
       select: [[otpRow({ codeHash: hash(code) })], [userRow], [], []],
     });
+    const resHeaders = new Headers();
 
-    const out = await svc.verifyOtp({ phone: PHONE, code });
+    const out = await svc.verifyOtp({ phone: PHONE, code }, resHeaders);
 
     expect(out.user.id).toBe('u1');
     expect(out.session.token).toEqual(expect.any(String));
@@ -153,15 +186,49 @@ describe('PhoneLoginService.verifyOtp', () => {
     );
   });
 
-  it('rememberMe extends the session TTL to ~30 days', async () => {
+  it('signs a session cookie the same auth instance can verify', async () => {
+    // The whole point of A1: `getSession` reads the SIGNED cookie, not the response
+    // body's `session.token` - so this proves the cookie carries the minted token,
+    // signed with the exact secret `auth.$context` (and so `SessionResolver`) uses.
     const code = '123456';
     const { svc } = build({
       select: [[otpRow({ codeHash: hash(code) })], [userRow], [], []],
     });
+    const resHeaders = new Headers();
 
-    const out = await svc.verifyOtp({ phone: PHONE, code, rememberMe: true });
+    const out = await svc.verifyOtp({ phone: PHONE, code }, resHeaders);
+
+    const setCookie = resHeaders.get('set-cookie');
+    expect(setCookie).not.toBeNull();
+    expect(setCookie).toContain(`${SESSION_COOKIE_NAME}=`);
+    expect(setCookie).toContain('HttpOnly');
+    // Without rememberMe the cookie must be a real browser session cookie (no Max-Age),
+    // even though `fakeAuth`'s own cookie config carries a 7-day default - a leaked
+    // inherited default here would make every phone login persistent regardless of
+    // the player's choice.
+    expect(setCookie).not.toContain('Max-Age');
+
+    const cookieValue = decodeURIComponent(
+      setCookie?.split(';')[0]?.split('=').slice(1).join('=') ?? '',
+    );
+    const sigPos = cookieValue.lastIndexOf('.');
+    expect(cookieValue.slice(0, sigPos)).toBe(out.session.token);
+    expect(cookieValue.slice(sigPos + 1)).toBe(expectedSignature(out.session.token));
+  });
+
+  it('rememberMe extends the session TTL to ~30 days and the cookie Max-Age to match', async () => {
+    const code = '123456';
+    const { svc } = build({
+      select: [[otpRow({ codeHash: hash(code) })], [userRow], [], []],
+    });
+    const resHeaders = new Headers();
+
+    const out = await svc.verifyOtp({ phone: PHONE, code, rememberMe: true }, resHeaders);
     const ttlMs = new Date(out.session.expiresAt).getTime() - Date.now();
     expect(ttlMs).toBeGreaterThan(29 * 24 * 60 * 60 * 1000);
+
+    const maxAgeMatch = resHeaders.get('set-cookie')?.match(/Max-Age=(\d+)/);
+    expect(Number(maxAgeMatch?.[1])).toBeGreaterThan(29 * 24 * 60 * 60);
   });
 
   it('wrong code increments failedAttempts and throws OtpInvalidError with attemptsRemaining', async () => {
@@ -172,7 +239,7 @@ describe('PhoneLoginService.verifyOtp', () => {
       returning: [[{ failedAttempts: 2 }]],
     });
 
-    const promise = svc.verifyOtp({ phone: PHONE, code: '111111' });
+    const promise = svc.verifyOtp({ phone: PHONE, code: '111111' }, new Headers());
     await expect(promise).rejects.toBeInstanceOf(ORPCError);
     await expect(promise).rejects.toMatchObject({
       code: 'UNPROCESSABLE_CONTENT',
@@ -188,7 +255,9 @@ describe('PhoneLoginService.verifyOtp', () => {
       returning: [[{ failedAttempts: 5 }]],
     });
 
-    await expect(svc.verifyOtp({ phone: PHONE, code: '111111' })).rejects.toMatchObject({
+    await expect(
+      svc.verifyOtp({ phone: PHONE, code: '111111' }, new Headers()),
+    ).rejects.toMatchObject({
       code: 'FORBIDDEN',
     });
     expect(events.emit).toHaveBeenCalledWith('identity.phone_otp.cancelled', {
@@ -212,7 +281,7 @@ describe('PhoneLoginService.verifyOtp', () => {
       ],
     });
 
-    await expect(svc.verifyOtp({ phone: PHONE, code })).rejects.toMatchObject({
+    await expect(svc.verifyOtp({ phone: PHONE, code }, new Headers())).rejects.toMatchObject({
       code: 'UNPROCESSABLE_CONTENT',
       data: { attemptsRemaining: 3 },
     });
@@ -220,7 +289,9 @@ describe('PhoneLoginService.verifyOtp', () => {
 
   it('missing OTP session throws OtpInvalidError with 0 attemptsRemaining', async () => {
     const { svc } = build({ select: [[]] });
-    await expect(svc.verifyOtp({ phone: PHONE, code: '123456' })).rejects.toMatchObject({
+    await expect(
+      svc.verifyOtp({ phone: PHONE, code: '123456' }, new Headers()),
+    ).rejects.toMatchObject({
       code: 'UNPROCESSABLE_CONTENT',
       data: { attemptsRemaining: 0 },
     });
@@ -235,10 +306,13 @@ describe('PhoneLoginService.verifyOtp', () => {
         [{ ...userRow, rgBlocked: true, rgBlockedUntil: null }],
       ],
     });
+    const resHeaders = new Headers();
 
-    await expect(svc.verifyOtp({ phone: PHONE, code })).rejects.toMatchObject({
+    await expect(svc.verifyOtp({ phone: PHONE, code }, resHeaders)).rejects.toMatchObject({
       code: 'FORBIDDEN',
+      data: { reason: 'rg_blocked' },
     });
+    expect(resHeaders.get('set-cookie')).toBeNull();
     expect(events.emit).toHaveBeenCalledWith(
       'rg.exclusion.login_blocked',
       expect.objectContaining({ userId: 'u1' }),
