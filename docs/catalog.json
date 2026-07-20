@@ -353,6 +353,7 @@
       "token": "MESSAGE_BROKER",
       "status": "wired",
       "boundIn": [
+        "packages/core/src/server/runtime/assert-durable-seams.ts",
         "packages/core/src/server/runtime/create-app.ts"
       ]
     },

@@ -65,6 +65,11 @@
       "require": "./dist/server/db/migrate.js",
       "types": "./dist/server/db/migrate.d.ts"
     },
+    "./testing": {
+      "import": "./dist/testing/index.js",
+      "require": "./dist/testing/index.js",
+      "types": "./dist/testing/index.d.ts"
+    },
     "./compliance": {
       "import": "./dist/compliance.js",
       "require": "./dist/compliance.js",

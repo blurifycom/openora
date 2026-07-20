@@ -33,7 +33,9 @@ class InProcessPresence implements RealtimePresence {
   }
 }
 
-// Reference adoption: chat message fan-out + big-win feed. See ADR-0007.
+// Test-only `REALTIME_TRANSPORT` double. Production leaves this seam lazy - it
+// throws on first use until an overlay binds a managed vendor (Ably/GetStream).
+// See ADR-0007.
 export class InProcessRealtimeTransport implements RealtimeTransport {
   private readonly channels = new Map<string, Set<Handler>>();
   readonly presence: RealtimePresence = new InProcessPresence();

@@ -1,5 +1,6 @@
 import { describe, it, expect, vi } from 'vitest';
-import { InProcessRateLimiter, type EventBus } from '@openora/core/server';
+import type { EventBus } from '@openora/core/server';
+import { InProcessRateLimiter } from '@openora/core/testing';
 import type { PaymentAdapter, AuditWritePort } from '@openora/core/contracts';
 import { mock, mockDb } from '../../testing/mock.js';
 import { WalletService } from '../service/wallet.service.js';

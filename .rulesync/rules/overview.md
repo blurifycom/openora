@@ -16,6 +16,10 @@ Sibling rules (load on demand; don't reopen settled questions): `conventions` (c
 
 Open-source, headless, plugin-based, AI-native igaming platform. Consumers clone/install and extend it with their own modules, plugins, and adapters; the frontend lives in their consumer repo. The default backend is fully featured (auth, wallet, lobby, chat, compliance, backoffice, CMS). Nothing consumer-specific lives here.
 
+## Enhance the ask first (pre-step)
+
+Before acting on any non-trivial request - and before delegating to an agent - run the `enhance-prompt` skill on the raw ask: restate the intent, gather scoped context (issue tracker / roadmap, `docs/` + ADRs, the catalog MCP tools), surface the blocking ambiguities, and produce the brief you actually execute. Skip it only when the ask is already precise. Subagents act on the brief they are handed - they do not re-enhance it.
+
 ## Architecture pillars
 
 1. **Zod-first contracts.** Every shape is a Zod schema; types are `z.infer`'d, never hand-written. Cross-cutting schemas in `packages/core/src/contracts/schemas/`; each module OWNS its route contract + req/res schemas + `z.infer`'d types in its `contract/` dir - the single source of wire truth, nothing else re-declares a wire shape. `composeContract` (`@openora/core/contracts`) owns only `health`; the composition root (`tools/gen/build-contract.ts` here, the consumer's entry when deployed) composes each enabled module's `/contract` slice into the one runtime contract the SDK links against. ADR-0021/0025.
@@ -103,6 +107,7 @@ pnpm dev           # turbo dev (docs, mcp)
 pnpm regen         # openapi emit + drizzle-kit generate + catalog
 pnpm seed          # demo data (idempotent; admin@oss.dev / password123)
 pnpm boundaries    # whole-graph boundary + cycle gate
+pnpm -F @openora/core vitest run <path>   # one test file/dir, eg src/iam/__tests__
 pnpm verify        # typecheck + test:unit + lint + module-shape + boundaries
 ```
 
@@ -140,6 +145,6 @@ For platform development (this repo); consumer agents ship in `tools/templates/c
 
 - Use the `oss-dev` MCP server (`.mcp.json`, pre-approved) for read-only inspection: `read-agents-md`, `list-modules`, `describe-module`, `list-routes`, `list-extension-points`, `query-openapi`, `get-drizzle-schema`, `propose-table-change`, `schema-get`, `docs-search`, `db-query-readonly`. Faster than grep, reflects current state.
 - Before a route: `query-openapi`. Before a table: `propose-table-change`. After any change: `pnpm verify --filter <package>`; fix failures before continuing.
-- Read the touched module's `AGENTS.md` before editing it; keep it updated when extension points/ports/routes change.
+- Read the touched module's `AGENTS.md` before editing it; keep it updated when invariants or extension seams change. An `AGENTS.md` holds ONLY what code can't say: invariants, rationale, gotchas, extension seams, and where-to-look pointers - never route/table/layout/event listings (they duplicate `contract/`, `schema/`, `docs/catalog.json` and drift). Claude Code loads them via generated per-module `CLAUDE.md` stubs (`tools/gen/gen-claude-stubs.mjs`, gitignored).
 - Small PRs scoped to one module; cross-module changes need human approval. Never commit unless asked; never push without explicit per-action confirmation.
 - ASCII only in code; short dashes (-) only, never long dashes.

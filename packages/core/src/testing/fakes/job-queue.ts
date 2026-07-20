@@ -8,7 +8,8 @@ import type {
   WorkerRegistration,
 } from '@openora/core/contracts';
 
-// Zero-dependency in-process default. Swap to BullMQ overlay for persistence/cron. See ADR-0014.
+// Zero-dependency test-only double for `JOB_QUEUE` (production requires the BullMQ
+// driver via REDIS_URL - see `assertDurableSeamsBound`). See ADR-0014.
 
 type AnyWorker = WorkerRegistration<unknown>;
 
@@ -35,16 +36,16 @@ const sleep = (ms: number): Promise<void> =>
   ms <= 0 ? Promise.resolve() : new Promise((r) => setTimeout(r, ms));
 
 /**
- * Zero-dependency default `JOB_QUEUE` driver - process-local, non-durable (jobs
- * are lost on restart). `idempotencyKey` dedupes concurrent enqueues to a single
- * job id; `orderingKey` serializes execution into a per-key lane so jobs with
- * the same key never run concurrently or out of order (a lane failure is
- * swallowed so it can't poison later jobs on the same key). Retries run
- * in-process with the configured backoff; once `attempts` is exhausted the job
- * goes to `onDeadLetter` instead of throwing. `cron` repeat schedules are not
+ * Test-only `JOB_QUEUE` double - process-local, non-durable (jobs are lost on
+ * restart). `idempotencyKey` dedupes concurrent enqueues to a single job id;
+ * `orderingKey` serializes execution into a per-key lane so jobs with the same
+ * key never run concurrently or out of order (a lane failure is swallowed so
+ * it can't poison later jobs on the same key). Retries run in-process with the
+ * configured backoff; once `attempts` is exhausted the job goes to
+ * `onDeadLetter` instead of throwing. `cron` repeat schedules are not
  * supported here (warns and is ignored) - only `everyMs` interval schedules
- * work; use the BullMQ driver for real cron. `close()` awaits every in-flight
- * job and lane before resolving.
+ * work; the BullMQ driver is the production analogue for real cron. `close()`
+ * awaits every in-flight job and lane before resolving.
  */
 export class InProcessJobQueue implements JobQueueAdapter {
   private readonly workers = new Map<string, AnyWorker>();

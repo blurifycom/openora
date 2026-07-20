@@ -2,9 +2,21 @@
 root: false
 targets:
   - '*'
+# Scoped to where SQL is actually written/read: schema defs, services + adapters
+# (queries), module-root directory/reporting impls (admin-*.ts), seeds, migrations,
+# the engine db zone, the test harness, and db tooling - not react/contract/router edits.
 globs:
-  - 'packages/addons/**'
-  - 'packages/core/**'
+  - 'packages/**/schema/**'
+  - 'packages/**/service/**'
+  - 'packages/**/adapters/**'
+  - 'packages/core/src/**/admin-*.ts'
+  - 'packages/**/seed/**'
+  - 'packages/**/drizzle/**'
+  - 'packages/**/drizzle.config.ts'
+  - 'packages/**/migrate.ts'
+  - 'packages/core/src/server/db/**'
+  - 'packages/testing/src/**'
+  - 'tools/db/**'
 description: SQL / Drizzle conventions - snake_case identifiers, timestamptz, keys, indexing, efficient ops, migrations.
 ---
 

@@ -1,11 +1,7 @@
-import { describe, it, expect, vi } from 'vitest';
-import {
-  InProcessRealtimeTransport,
-  type EventBus,
-  type DrizzleService,
-} from '@openora/core/server';
+import { type EventBus, type DrizzleService } from '@openora/core/server';
 import { CHAT_ROOM_CATEGORIES, type ChatMessage } from '../contract/index.js';
 import { mock, mockDb, makeDrizzle, makeEvents, readPrivate } from '../../../testing/mock.js';
+import { describe, it, expect, vi } from 'vitest';
 import {
   ChatService,
   chatChannel,
@@ -22,6 +18,7 @@ import {
   ChatRoomNotModeratorError,
   ChatRoomSelfModerationError,
 } from '../service/chat.service.js';
+import { InProcessRealtimeTransport } from '@openora/core/testing';
 
 describe('ChatService domain errors', () => {
   it('ChatRoomNotFoundError carries the id', () => {

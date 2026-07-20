@@ -1,64 +1,7 @@
-import { describe, it, expect, vi, afterEach, beforeEach } from 'vitest';
-import { InProcessCache, cached, invalidate } from '../cache.js';
+import { describe, it, expect, vi } from 'vitest';
 import type { CacheAdapter } from '@openora/core/contracts';
-import { mock } from '../../../testing/mock.js';
-
-describe('InProcessCache', () => {
-  beforeEach(() => vi.useFakeTimers());
-  afterEach(() => vi.useRealTimers());
-
-  it('returns undefined for a missing key', async () => {
-    const cache = new InProcessCache();
-    expect(await cache.get('missing')).toBeUndefined();
-    cache.close();
-  });
-
-  it('returns the stored value before the ttl elapses', async () => {
-    const cache = new InProcessCache();
-    await cache.set('k', 'v', { ttlMs: 1000 });
-    vi.advanceTimersByTime(500);
-    expect(await cache.get('k')).toBe('v');
-    cache.close();
-  });
-
-  it('expires lazily once the ttl elapses', async () => {
-    const cache = new InProcessCache();
-    await cache.set('k', 'v', { ttlMs: 1000 });
-    vi.advanceTimersByTime(1000);
-    expect(await cache.get('k')).toBeUndefined();
-    cache.close();
-  });
-
-  it('deletes a single key', async () => {
-    const cache = new InProcessCache();
-    await cache.set('a', 1, { ttlMs: 1000 });
-    await cache.delete('a');
-    expect(await cache.get('a')).toBeUndefined();
-    cache.close();
-  });
-
-  it('deletes an array of keys', async () => {
-    const cache = new InProcessCache();
-    await cache.set('a', 1, { ttlMs: 1000 });
-    await cache.set('b', 2, { ttlMs: 1000 });
-    await cache.delete(['a', 'b']);
-    expect(await cache.get('a')).toBeUndefined();
-    expect(await cache.get('b')).toBeUndefined();
-    cache.close();
-  });
-
-  it('evicts the oldest entry once the max-entries cap is hit', async () => {
-    const cache = new InProcessCache();
-    for (let i = 0; i < 5_000; i++) {
-      await cache.set(`k${i}`, i, { ttlMs: 60_000 });
-    }
-    expect(await cache.get('k0')).toBe(0);
-    await cache.set('k5000', 5000, { ttlMs: 60_000 });
-    expect(await cache.get('k0')).toBeUndefined();
-    expect(await cache.get('k5000')).toBe(5000);
-    cache.close();
-  });
-});
+import { cached, invalidate } from '../cache.js';
+import { InProcessCache } from '@openora/core/testing';
 
 describe('cached', () => {
   it('loads and stores on a miss', async () => {
@@ -86,10 +29,13 @@ describe('cached', () => {
 
 describe('invalidate', () => {
   it('swallows a delete failure instead of throwing', async () => {
-    const cache = mock<CacheAdapter>({
-      delete: vi.fn().mockRejectedValue(new Error('backend down')),
-    });
-
-    await expect(invalidate(cache, 'k')).resolves.toBeUndefined();
+    const failing: CacheAdapter = {
+      get: async () => undefined,
+      set: async () => {},
+      delete: async () => {
+        throw new Error('backend down');
+      },
+    };
+    await expect(invalidate(failing, 'k')).resolves.toBeUndefined();
   });
 });
