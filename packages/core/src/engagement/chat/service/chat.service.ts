@@ -117,8 +117,17 @@ function toMessage(record: typeof chatMessage.$inferSelect) {
 function generateJoinCode(): string {
   return Array.from({ length: JOIN_CODE_LENGTH }, () => {
     const ch = JOIN_CODE_ALPHABET[randomInt(0, JOIN_CODE_ALPHABET.length)];
-    return ch ?? 'A'; // unreachable: randomInt(0, N) is always < N
+    return ch ?? 'A';
   }).join('');
+}
+
+function generatePrivateRoomSlug(joinCode: string): string {
+  const normalizedJoinCode = joinCode.toLowerCase();
+  let slug = `${PRIVATE_ROOM_SLUG_PREFIX}${randomUUID()}`;
+  while (slug.includes(normalizedJoinCode)) {
+    slug = `${PRIVATE_ROOM_SLUG_PREFIX}${randomUUID()}`;
+  }
+  return slug;
 }
 
 function isUniqueConstraintViolation(e: unknown): boolean {
@@ -566,7 +575,7 @@ export class ChatService {
   async createPrivateRoom({ userId, name }: { userId: User['id']; name: string }) {
     for (let attempt = 1; attempt <= 3; attempt++) {
       const joinCode = generateJoinCode();
-      const slug = `${PRIVATE_ROOM_SLUG_PREFIX}${joinCode.toLowerCase()}`;
+      const slug = generatePrivateRoomSlug(joinCode);
       try {
         const record = await this.drizzle.db.transaction((t) =>
           withAdvisoryXactLock(t, userId, async () => {

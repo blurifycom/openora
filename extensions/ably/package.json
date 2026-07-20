@@ -1,0 +1,5 @@
+{
+  "name": "@openora/extension-ably",
+  "private": true,
+  "type": "module"
+}

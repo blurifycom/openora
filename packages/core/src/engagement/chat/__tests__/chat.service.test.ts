@@ -4,7 +4,7 @@ import {
   type EventBus,
   type DrizzleService,
 } from '@openora/core/server';
-import type { ChatMessage } from '../contract/index.js';
+import { CHAT_ROOM_CATEGORIES, type ChatMessage } from '../contract/index.js';
 import { mock, mockDb, makeDrizzle, makeEvents, readPrivate } from '../../../testing/mock.js';
 import {
   ChatService,
@@ -42,6 +42,17 @@ describe('ChatService domain errors', () => {
     const err = new ChatMessageOwnershipError();
     expect(err).toBeInstanceOf(Error);
     expect(err.name).toBe('ChatMessageOwnershipError');
+  });
+});
+
+describe('Chat room categories', () => {
+  it('exposes the complete persisted category set', () => {
+    expect(CHAT_ROOM_CATEGORIES).toEqual([
+      'games-sports',
+      'regions',
+      'languages',
+      'private-channels',
+    ]);
   });
 });
 
@@ -397,7 +408,7 @@ describe('ChatService.deleteRoom', () => {
 const privateRoomRow = {
   id: 'r2',
   name: 'Squad Chat',
-  slug: 'private-abc123',
+  slug: 'private-ef1f8d41-e0ac-4ad3-bd93-3a55e047eb38',
   category: 'private-channels',
   isPublic: false,
   joinCode: 'ABC123',
@@ -418,6 +429,20 @@ describe('ChatService.createPrivateRoom', () => {
     expect(result.joinCode).toBe('ABC123');
     expect(result.creatorId).toBe('u1');
     expect(result.category).toBe('private-channels');
+  });
+
+  it('generates a separate URL-safe slug instead of exposing the join code', async () => {
+    const drizzle = makeDrizzle({ select: [[{ total: 0 }], []], returning: [[privateRoomRow]] });
+    const valuesSpy = readPrivate<ReturnType<typeof vi.fn>>(drizzle.db, 'values');
+
+    await makeAdminService(drizzle).createPrivateRoom({ userId: 'u1', name: 'Squad Chat' });
+
+    const [room] = valuesSpy.mock.calls[0] ?? [];
+    expect(room).toMatchObject({ joinCode: expect.any(String) });
+    expect(room).toMatchObject({
+      slug: expect.stringMatching(/^private-[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}$/),
+    });
+    expect(room.slug).not.toContain(room.joinCode.toLowerCase());
   });
 
   it('rejects creating a sixteenth active private room', async () => {

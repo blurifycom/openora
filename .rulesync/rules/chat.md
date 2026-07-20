@@ -1,3 +1,14 @@
+---
+root: false
+targets:
+  - agentsmd
+globs:
+  - packages/core/src/engagement/chat/**
+description: Chat module routes, access model, room lifecycle, and realtime delivery rules.
+agentsmd:
+  subprojectPath: packages/core/src/engagement/chat
+---
+
 # Chat
 
 Room-based and global messaging. Global chat has `roomId: null` and no `chatRoom` row or category. `chatRoom` stores name, unique slug, required category (`games-sports`, `regions`, `languages`, or `private-channels`), `isPublic`, nullable unique joinCode for private rooms, nullable creatorId, and soft-delete via `deletedAt`. Other tables: `chatMessage` (soft-delete via `isDeleted`, indexed by room + createdAt), `chatUserBlock` (directional mute, blocker-keyed), `chatRoomMember` (role: member/moderator, unique per room+user), and `chatRoomBan` (unique per room+user).

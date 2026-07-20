@@ -56,6 +56,7 @@
     "@orpc/contract": "1.14.5",
     "@turbo/gen": "2.9.16",
     "@types/node": "25.9.2",
+    "ably": "2.22.1",
     "dependency-cruiser": "17.4.3",
     "depretec": "0.2.3",
     "husky": "9.1.7",

@@ -6,6 +6,7 @@ import { player } from '@openora/core/pam/schema/profile';
 import { wallet, walletTransaction } from '@openora/core/wallet/schema';
 import { game } from '@openora/core/casino/schema/gaming';
 import { chatRoom, chatMessage } from '@openora/core/engagement/schema/chat';
+import type { ChatRoomCategory } from '@openora/core/engagement/contracts/chat';
 
 export type SeedAuth = {
   api: {
@@ -207,19 +208,19 @@ const GAMES = [
   ['Plinko', 'Spribe', 'crash'],
 ] as const;
 
-const CHAT_ROOMS = [
+type ChatRoomSeed = {
+  slug: string;
+  name: string;
+  category: ChatRoomCategory;
+  isPublic?: boolean;
+  joinCode?: string;
+  messages: readonly string[];
+};
+
+const CHAT_ROOMS: readonly ChatRoomSeed[] = [
   {
-    slug: 'general',
-    name: 'General',
-    category: 'languages',
-    messages: [
-      'Welcome to the platform! Feel free to chat here.',
-      'Have fun and good luck everyone!',
-    ],
-  },
-  {
-    slug: 'sports-betting',
-    name: 'Sports Betting',
+    slug: 'sports',
+    name: 'Sports',
     category: 'games-sports',
     messages: [
       'Big match tonight - who are you backing?',
@@ -227,21 +228,114 @@ const CHAT_ROOMS = [
     ],
   },
   {
-    slug: 'big-wins',
-    name: 'Big Wins',
+    slug: 'jackpot-wheel',
+    name: 'Jackpot Wheel',
     category: 'games-sports',
     messages: ['Share your wins here!', 'Jackpot season has begun!'],
   },
   {
-    slug: 'support',
-    name: 'Support',
+    slug: 'latam',
+    name: 'LATAM',
     category: 'regions',
-    messages: [
-      'Need help? Our team is here.',
-      'For account issues please include your registered email.',
-    ],
+    messages: [],
   },
-] as const;
+  {
+    slug: 'europe',
+    name: 'Europe',
+    category: 'regions',
+    messages: [],
+  },
+  {
+    slug: 'asia',
+    name: 'Asia',
+    category: 'regions',
+    messages: [],
+  },
+  {
+    slug: 'africa',
+    name: 'Africa',
+    category: 'regions',
+    messages: [],
+  },
+  {
+    slug: 'english',
+    name: 'English',
+    category: 'languages',
+    messages: [],
+  },
+  {
+    slug: 'india',
+    name: 'India',
+    category: 'languages',
+    messages: [],
+  },
+  {
+    slug: 'chinese',
+    name: 'Chinese',
+    category: 'languages',
+    messages: [],
+  },
+  {
+    slug: 'spanish',
+    name: 'Spanish',
+    category: 'languages',
+    messages: [],
+  },
+  {
+    slug: 'russian',
+    name: 'Russian',
+    category: 'languages',
+    messages: [],
+  },
+  {
+    slug: 'french',
+    name: 'French',
+    category: 'languages',
+    messages: [],
+  },
+  {
+    slug: 'arabic',
+    name: 'Arabic',
+    category: 'languages',
+    messages: [],
+  },
+  {
+    slug: 'bengali',
+    name: 'Bengali',
+    category: 'languages',
+    messages: [],
+  },
+  {
+    slug: 'portuguese',
+    name: 'Portuguese',
+    category: 'languages',
+    messages: [],
+  },
+  {
+    slug: 'high-rollers-club',
+    name: 'High Rollers Club',
+    category: 'private-channels',
+    isPublic: false,
+    joinCode: 'HR7C2P',
+    messages: [],
+  },
+  {
+    slug: 'squad-lobby',
+    name: 'Squad Lobby',
+    category: 'private-channels',
+    isPublic: false,
+    joinCode: 'SQ8D4M',
+    messages: [],
+  },
+  {
+    slug: 'vip-whales',
+    name: 'VIP Whales',
+    category: 'private-channels',
+    isPublic: false,
+    joinCode: 'VW9H3K',
+    messages: [],
+  },
+];
 
 export async function seedDemoData(options: SeedOptions): Promise<SeedResult> {
   const { db, auth, playerCount = 36, windowDays = 90, log = () => {} } = options;
@@ -291,8 +385,9 @@ export async function seedDemoData(options: SeedOptions): Promise<SeedResult> {
           name: r.name,
           slug: r.slug,
           category: r.category,
-          isPublic: true,
-          creatorId: adminUser.id,
+          isPublic: r.isPublic ?? true,
+          joinCode: r.joinCode ?? null,
+          creatorId: r.category === 'private-channels' ? null : adminUser.id,
         })),
       )
       .returning();
@@ -311,7 +406,7 @@ export async function seedDemoData(options: SeedOptions): Promise<SeedResult> {
     }
 
     roomCount = insertedRooms.length;
-    log(`Created ${roomCount} public chat rooms with demo messages.`);
+    log(`Created ${roomCount} chat rooms with demo messages.`);
   }
 
   let userCount = adminUser ? 1 : 0;

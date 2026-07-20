@@ -29,6 +29,27 @@
       "when": 1784308310854,
       "tag": "0003_youthful_peter_parker",
       "breakpoints": true
+    },
+    {
+      "idx": 4,
+      "version": "7",
+      "when": 1784532275201,
+      "tag": "0004_rotate-private-room-slugs",
+      "breakpoints": true
+    },
+    {
+      "idx": 5,
+      "version": "7",
+      "when": 1784532728337,
+      "tag": "0005_map-private-chat-room-data",
+      "breakpoints": true
+    },
+    {
+      "idx": 6,
+      "version": "7",
+      "when": 1784532737287,
+      "tag": "0006_remove-private-chats-category",
+      "breakpoints": true
     }
   ]
 }

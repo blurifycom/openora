@@ -1,0 +1,8 @@
+{
+  "extends": "../../packages/core/tsconfig/node-service.json",
+  "compilerOptions": {
+    "noEmit": true,
+    "rootDir": "."
+  },
+  "include": ["*.ts", "__tests__/*.ts"]
+}
