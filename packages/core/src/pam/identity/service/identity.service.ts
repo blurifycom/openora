@@ -13,13 +13,16 @@ import { eq, sql } from 'drizzle-orm';
 import { user, session, account, verification, twoFactor } from '../schema/index.js';
 import type {
   RateLimiterAdapter,
+  RateLimitKey,
   SendEmailPort,
+  EmailTemplateRenderer,
   LoginInput,
   RegisterInput,
   Enable2faInput,
   Verify2faInput,
   Disable2faInput,
   RequestPasswordResetInput,
+  VerifyPasswordResetOtpInput,
   ResetPasswordInput,
   VerifyEmailInput,
   UpdateProfileInput,
@@ -30,7 +33,9 @@ import type {
   IdentityServiceOptions,
   PlatformConfig,
 } from '@openora/core/contracts';
+import { RATE_LIMIT_KEYS, makeRateLimitKey } from '@openora/core/contracts';
 import { assertSupportedLanguage } from '../../shared/language.js';
+import { isRgBlocked } from './rg-guard.service.js';
 
 function nodeHeadersToHeaders(nodeHeaders: NodeHeaders) {
   const headers = new Headers();
@@ -80,15 +85,12 @@ function toUser(u: BetterAuthUser) {
   return u.image !== undefined ? { ...base, image: u.image } : base;
 }
 
-function forwardCookies(authResponse: globalThis.Response, resHeaders: Headers): void {
-  const cookies = authResponse.headers.getSetCookie?.() ?? [];
-  for (const cookie of cookies) {
-    resHeaders.append('set-cookie', cookie);
-  }
-}
-
 function clientIp(headers: Headers): string | null {
   return headers.get('x-forwarded-for')?.split(',')[0]?.trim() || headers.get('x-real-ip') || null;
+}
+
+function makeLoginRateLimitKey(email: string): `login:${string}` {
+  return `login:${email.toLowerCase()}`;
 }
 
 // Key on the `.two_factor` cookie VALUE, never the raw Cookie header: an attacker can
@@ -121,8 +123,9 @@ type ExtendedAuthApi = {
   enableTwoFactor: AuthCall<{ password: string }>;
   verifyTOTP: AuthCall<{ code: string }>;
   disableTwoFactor: AuthCall<{ password: string }>;
-  requestPasswordReset: AuthCall<{ email: string; redirectTo?: string }>;
-  resetPassword: AuthCall<{ newPassword: string; token: string }>;
+  requestPasswordResetEmailOTP: AuthCall<{ email: string }>;
+  checkVerificationOTP: AuthCall<{ email: string; type: 'forget-password'; otp: string }>;
+  resetPasswordEmailOTP: AuthCall<{ email: string; otp: string; password: string }>;
   sendVerificationEmail: AuthCall<{ email: string }>;
   verifyEmail: AuthCall<{ token: string }>;
   changePassword: AuthCall<{ currentPassword: string; newPassword: string }>;
@@ -138,9 +141,23 @@ export const UserNotFoundError = makeNotFoundError('User');
 // (4xx/5xx) rather than throwing. Surface those as ORPCErrors so oRPC maps them
 // to the right HTTP status instead of the handler silently returning success.
 // Only reads the body on failure, so a subsequent res.json() on success is safe.
-async function ensureOk(res: globalThis.Response) {
+// 401 -> UNAUTHORIZED (bad credentials), 403 -> FORBIDDEN (better-auth's
+// TOO_MANY_ATTEMPTS on checkVerificationOTP/resetPasswordEmailOTP), else BAD_REQUEST.
+// `opts.genericMessage` lets a BAD_REQUEST *or* FORBIDDEN caller opt into a fixed
+// message instead of better-auth's raw one - some better-auth 400s (eg
+// checkVerificationOTP's USER_NOT_FOUND-before-INVALID_OTP ordering) leak account
+// existence otherwise. When genericMessage is set, a 403 is masked down to
+// BAD_REQUEST too, so a caller can't tell "too many attempts" apart from "wrong code".
+async function ensureOk(res: globalThis.Response, opts?: { genericMessage?: string }) {
   if (res.ok) {
     return;
+  }
+  const code =
+    res.status === 401 ? 'UNAUTHORIZED' : res.status === 403 ? 'FORBIDDEN' : 'BAD_REQUEST';
+  if ((code === 'BAD_REQUEST' || code === 'FORBIDDEN') && opts?.genericMessage) {
+    throw new ORPCError(code === 'FORBIDDEN' ? 'BAD_REQUEST' : code, {
+      message: opts.genericMessage,
+    });
   }
   let message = `Request failed (${res.status})`;
   try {
@@ -151,13 +168,38 @@ async function ensureOk(res: globalThis.Response) {
   } catch {
     // non-JSON body - keep the default message
   }
-  throw new ORPCError(res.status === 401 ? 'UNAUTHORIZED' : 'BAD_REQUEST', { message });
+  throw new ORPCError(code, { message });
 }
 
 const DEFAULT_MAX_LOGIN_ATTEMPTS = 5;
 const DEFAULT_LOCKOUT_DURATION_MS = 15 * 60 * 1000;
 
+// Progressive lockout: a repeat lockout inside a rolling 24h window escalates the
+// duration (1 min -> 5 min -> 15 min, capped at tier 3). The window resets once the
+// last lockout falls outside it, so an occasional fat-finger never compounds.
+const LOCKOUT_WINDOW_MS = 24 * 60 * 60 * 1000;
+const LOCKOUT_TIER_DURATIONS_MS = [60_000, 5 * 60_000, 15 * 60_000] as const;
+
+function computeLockoutTier({
+  lockoutCount,
+  lastLockoutAt,
+  nowMs,
+  fallbackDurationMs,
+}: {
+  lockoutCount: number;
+  lastLockoutAt: Date | null;
+  nowMs: number;
+  fallbackDurationMs: number;
+}) {
+  const withinWindow =
+    lastLockoutAt !== null && nowMs - lastLockoutAt.getTime() < LOCKOUT_WINDOW_MS;
+  const tier = withinWindow ? lockoutCount + 1 : 1;
+  const durationMs = LOCKOUT_TIER_DURATIONS_MS[Math.min(tier - 1, 2)] ?? fallbackDurationMs;
+  return { tier, durationMs };
+}
+
 const MINUTE_MS = 60 * 1000;
+export const SESSION_DURATION_IN_SECONDS = 30 * 24 * 60 * 60; // 30 days
 // Coarse abuse throttles keyed by the caller identifier the context provides (email/
 // token/session), NOT IP. The lockout above is a per-account credential-failure
 // counter; these bound raw request volume on each brute-force surface. An overlay
@@ -173,14 +215,16 @@ const PASSWORD_RESET_RATE_LIMIT = {
   windowMs: 15 * MINUTE_MS,
   onUnavailable: 'deny',
 } as const;
+const PASSWORD_RESET_VERIFY_RATE_LIMIT = {
+  limit: 5,
+  windowMs: 5 * MINUTE_MS,
+  onUnavailable: 'deny',
+} as const;
 const VERIFY_2FA_RATE_LIMIT = { limit: 5, windowMs: 5 * MINUTE_MS, onUnavailable: 'deny' } as const;
 const EMAIL_VERIFICATION_RATE_LIMIT = { limit: 3, windowMs: 15 * MINUTE_MS };
 const VERIFY_EMAIL_RATE_LIMIT = { limit: 5, windowMs: 15 * MINUTE_MS };
 const CHANGE_PASSWORD_RATE_LIMIT = { limit: 5, windowMs: 15 * MINUTE_MS };
 const TWO_FACTOR_PASSWORD_RATE_LIMIT = { limit: 5, windowMs: 5 * MINUTE_MS };
-// Mirrors better-auth session.expiresIn (server/auth/auth.ts); used only as a fallback
-// when the sign-in response omits an explicit session expiry.
-const SESSION_TTL_MS = 30 * 24 * 60 * 60 * 1000;
 
 function computeLockoutState({
   attempts,
@@ -197,18 +241,13 @@ function computeLockoutState({
   return { isLocking, lockoutUntil: isLocking ? new Date(nowMs + durationMs) : null };
 }
 
-// A finite rgBlockedUntil in the past = a lapsed cooling-off; a null one = indefinite
-// (self-exclusion / permanent). Blocked only while set and not elapsed.
-function isRgBlocked(u: { rgBlocked: boolean; rgBlockedUntil: Date | null }): boolean {
-  return u.rgBlocked && (u.rgBlockedUntil === null || u.rgBlockedUntil > new Date());
-}
-
 export type IdentityServiceDeps = {
   drizzle: DrizzleService;
   events: EventBus;
   email?: SendEmailPort;
+  templateRenderer: EmailTemplateRenderer;
   options?: IdentityServiceOptions;
-  limiter?: RateLimiterAdapter;
+  limiter?: RateLimiterAdapter<RateLimitKey>;
   platformConfig?: PlatformConfig;
 };
 
@@ -226,14 +265,24 @@ export class IdentityService {
   private readonly drizzle: DrizzleService;
   private readonly events: EventBus;
   private readonly email?: SendEmailPort;
+  private readonly templateRenderer: EmailTemplateRenderer;
   private readonly options?: IdentityServiceOptions;
-  private readonly limiter?: RateLimiterAdapter;
+  private readonly limiter?: RateLimiterAdapter<RateLimitKey>;
   private readonly platformConfig?: PlatformConfig;
 
-  constructor({ drizzle, events, email, options, limiter, platformConfig }: IdentityServiceDeps) {
+  constructor({
+    drizzle,
+    events,
+    email,
+    templateRenderer,
+    options,
+    limiter,
+    platformConfig,
+  }: IdentityServiceDeps) {
     this.drizzle = drizzle;
     this.events = events;
     this.email = email;
+    this.templateRenderer = templateRenderer;
     this.options = options;
     this.limiter = limiter;
     this.platformConfig = platformConfig;
@@ -241,13 +290,44 @@ export class IdentityService {
       db: drizzle.db,
       schema: { user, session, account, verification, twoFactor },
       ...(email ? { sendEmail: (args) => email.send(args) } : {}),
+      templateRenderer: this.templateRenderer,
+      getUserLanguage: (lookupEmail) => this.resolveUserLanguage(lookupEmail),
+      onPasswordReset: async (resetUser) => {
+        this.events.emit('identity.password.reset', { userId: resetUser.id });
+        await this.clearLockout(resetUser.id);
+      },
     });
+  }
+
+  private async findUserByEmail(
+    email: string,
+  ): Promise<{ id: User['id']; language: string | null } | undefined> {
+    const [row] = await this.drizzle.db
+      .select({ id: user.id, language: user.language })
+      .from(user)
+      .where(eq(user.email, email.toLowerCase()))
+      .limit(1);
+    return row;
+  }
+
+  // Used by the emailOTP plugin's sendVerificationOTP hook to pick a locale for the
+  // reset-password email - better-auth only gives us the target email, not a session.
+  private async resolveUserLanguage(email: string): Promise<string | null> {
+    const row = await this.findUserByEmail(email);
+    return row?.language ?? null;
   }
 
   private get api() {
     // Library boundary: the admin/organization plugin endpoints aren't on better-auth's
     // base `api` type. Sanctioned cast, see conventions.
     return this.auth.api as unknown as ExtendedAuthApi;
+  }
+
+  private forwardCookies(authResponse: globalThis.Response, resHeaders: Headers): void {
+    const cookies = authResponse.headers.getSetCookie?.() ?? [];
+    for (const cookie of cookies) {
+      resHeaders.append('set-cookie', cookie);
+    }
   }
 
   private async currentUserId(headers: Headers) {
@@ -267,7 +347,7 @@ export class IdentityService {
       headers,
       asResponse: true,
     });
-    forwardCookies(authResponse, resHeaders);
+    this.forwardCookies(authResponse, resHeaders);
     const body = (await authResponse.json()) as { user: BetterAuthUser };
 
     this.events.emit('identity.user.registered', { userId: body.user.id });
@@ -293,7 +373,7 @@ export class IdentityService {
     // better-auth lowercases emails on write, so the lockout lookup must match on the same form.
     const email = input.email.toLowerCase();
 
-    await assertRateLimit(this.limiter, `login:${email}`, LOGIN_RATE_LIMIT);
+    await assertRateLimit(this.limiter, makeLoginRateLimitKey(email), LOGIN_RATE_LIMIT);
 
     const configLockoutEnabled = this.options?.lockout?.enabled ?? true;
     // Read once for the lockout budget, the admin-bypass check, and the RG login gate
@@ -304,6 +384,8 @@ export class IdentityService {
         id: user.id,
         failedLoginAttempts: user.failedLoginAttempts,
         lockoutUntil: user.lockoutUntil,
+        lockoutCount: user.lockoutCount,
+        lastLockoutAt: user.lastLockoutAt,
         role: user.role,
         rgBlocked: user.rgBlocked,
         rgBlockedUntil: user.rgBlockedUntil,
@@ -314,7 +396,14 @@ export class IdentityService {
     let existingUser:
       | Pick<
           typeof user.$inferSelect,
-          'id' | 'failedLoginAttempts' | 'lockoutUntil' | 'role' | 'rgBlocked' | 'rgBlockedUntil'
+          | 'id'
+          | 'failedLoginAttempts'
+          | 'lockoutUntil'
+          | 'lockoutCount'
+          | 'lastLockoutAt'
+          | 'role'
+          | 'rgBlocked'
+          | 'rgBlockedUntil'
         >
       | undefined = existingUserRow;
 
@@ -352,10 +441,12 @@ export class IdentityService {
         this.events.emit('rg.exclusion.login_blocked', { userId: existingUser.id, ip, userAgent });
         throw new ORPCError('FORBIDDEN', {
           message: 'Account access is currently restricted (responsible gambling).',
+          data: { code: 'RG_BLOCKED' },
         });
       }
 
-      forwardCookies(authResponse, resHeaders);
+      this.forwardCookies(authResponse, resHeaders);
+
       const body = (await authResponse.json()) as {
         user?: BetterAuthUser;
         token?: string;
@@ -372,26 +463,36 @@ export class IdentityService {
       }
 
       this.events.emit('identity.user.login', { userId: body.user.id, ip, userAgent });
+      const sessionDurationSeconds =
+        this.auth.options.session?.expiresIn ?? SESSION_DURATION_IN_SECONDS;
       const expiresAt = body.session?.expiresAt
         ? toIso(body.session.expiresAt)
-        : new Date(Date.now() + SESSION_TTL_MS).toISOString();
+        : new Date(Date.now() + sessionDurationSeconds * 1000).toISOString();
       return {
         user: toUser(body.user),
         session: { token: body.token, expiresAt },
       };
     } catch (error) {
       // An RG block is not a credential failure - surface it as-is, without touching the
-      // lockout budget or emitting login.failed (the RG event was already emitted).
-      if (error instanceof ORPCError && error.code === 'FORBIDDEN') {
+      // lockout budget or emitting login.failed (the RG event was already emitted). Match on
+      // the RG_BLOCKED marker, not the bare FORBIDDEN code - ensureOk also maps a banned-user
+      // 403 (better-auth's admin plugin) to FORBIDDEN, and that path must still fall through
+      // to the generic branch below to emit login.failed.
+      if (
+        error instanceof ORPCError &&
+        error.code === 'FORBIDDEN' &&
+        (error.data as { code?: string } | undefined)?.code === 'RG_BLOCKED'
+      ) {
         throw error;
       }
       // Only a genuine credential rejection counts toward lockout - a transient DB/network
       // error must never lock the account out.
       const isCredentialFailure = error instanceof ORPCError && error.code === 'UNAUTHORIZED';
 
+      let attemptsRemaining: number | undefined;
       if (lockoutEnabled && existingUser && isCredentialFailure) {
         const maxAttempts = this.options?.lockout?.maxAttempts ?? DEFAULT_MAX_LOGIN_ATTEMPTS;
-        const durationMs = this.options?.lockout?.durationMs ?? DEFAULT_LOCKOUT_DURATION_MS;
+        const fallbackDurationMs = this.options?.lockout?.durationMs ?? DEFAULT_LOCKOUT_DURATION_MS;
         // Atomic increment: concurrent failures can't each read a stale count and slip past
         // the threshold (the read-modify-write this replaces was bypassable under load).
         const [row] = await this.drizzle.db
@@ -400,17 +501,27 @@ export class IdentityService {
           .where(eq(user.id, existingUser.id))
           .returning({ failedLoginAttempts: user.failedLoginAttempts });
         const newAttempts = row?.failedLoginAttempts ?? existingUser.failedLoginAttempts + 1;
-        const { isLocking, lockoutUntil } = computeLockoutState({
+        attemptsRemaining = Math.max(maxAttempts - newAttempts, 0);
+        const { isLocking } = computeLockoutState({
           attempts: newAttempts,
           maxAttempts,
-          durationMs,
+          durationMs: fallbackDurationMs,
           nowMs: Date.now(),
         });
 
-        if (isLocking && lockoutUntil) {
+        if (isLocking) {
+          const nowMs = Date.now();
+          // Escalate the lockout duration for repeat offenders inside the 24h window.
+          const { tier, durationMs } = computeLockoutTier({
+            lockoutCount: existingUser.lockoutCount ?? 0,
+            lastLockoutAt: existingUser.lastLockoutAt ?? null,
+            nowMs,
+            fallbackDurationMs,
+          });
+          const lockoutUntil = new Date(nowMs + durationMs);
           await this.drizzle.db
             .update(user)
-            .set({ lockoutUntil })
+            .set({ lockoutUntil, lockoutCount: tier, lastLockoutAt: new Date(nowMs) })
             .where(eq(user.id, existingUser.id));
 
           this.events.emit('identity.user.lockout.triggered', {
@@ -426,7 +537,13 @@ export class IdentityService {
       }
 
       const reason = isCredentialFailure ? 'invalid_credentials' : 'error';
-      this.events.emit('identity.user.login.failed', { email, reason, ip, userAgent });
+      this.events.emit('identity.user.login.failed', {
+        email,
+        reason,
+        ip,
+        userAgent,
+        ...(attemptsRemaining !== undefined ? { attemptsRemaining } : {}),
+      });
       throw error;
     }
   }
@@ -454,6 +571,7 @@ export class IdentityService {
     );
 
     await this.clearLockout(userId);
+    await this.limiter?.reset(makeLoginRateLimitKey(existingUser.email));
 
     this.events.emit('identity.user.unlocked', {
       userId,
@@ -474,7 +592,7 @@ export class IdentityService {
     const session = await this.auth.api.getSession({ headers });
     const userId = (session?.user as BetterAuthUser | undefined)?.id;
     const authResponse = await this.auth.api.signOut({ headers, asResponse: true });
-    forwardCookies(authResponse, resHeaders);
+    this.forwardCookies(authResponse, resHeaders);
     if (userId) {
       this.events.emit('identity.user.logout', { userId });
     }
@@ -504,7 +622,7 @@ export class IdentityService {
       asResponse: true,
     });
     await ensureOk(res);
-    forwardCookies(res, resHeaders);
+    this.forwardCookies(res, resHeaders);
     const body = (await res.json()) as { totpURI: string; backupCodes: string[] };
     return { totpUri: body.totpURI, backupCodes: body.backupCodes };
   }
@@ -520,7 +638,7 @@ export class IdentityService {
       asResponse: true,
     });
     await ensureOk(res);
-    forwardCookies(res, resHeaders);
+    this.forwardCookies(res, resHeaders);
     const userId = await this.currentUserId(headers);
     if (userId) {
       this.events.emit('identity.2fa.enabled', { userId });
@@ -542,7 +660,7 @@ export class IdentityService {
       asResponse: true,
     });
     await ensureOk(res);
-    forwardCookies(res, resHeaders);
+    this.forwardCookies(res, resHeaders);
     if (userId) {
       this.events.emit('identity.2fa.disabled', { userId });
     }
@@ -550,17 +668,18 @@ export class IdentityService {
   }
 
   async requestPasswordReset(input: RequestPasswordResetInput) {
+    const email = input.email.toLowerCase();
     await assertRateLimit(
       this.limiter,
-      `pwreset-req:${input.email.toLowerCase()}`,
+      makeRateLimitKey(RATE_LIMIT_KEYS.PASSWORD_RESET_REQUEST, email),
       PASSWORD_RESET_REQUEST_RATE_LIMIT,
     );
     // Always returns success - never reveal whether the email exists. The reset
     // email (if any) is delivered through the sendEmail hook -> notifications.
     // Any underlying error is swallowed for the same anti-enumeration reason.
     try {
-      await this.api.requestPasswordReset({
-        body: { email: input.email, redirectTo: '/reset-password' },
+      await this.api.requestPasswordResetEmailOTP({
+        body: { email },
         headers: new Headers(),
         asResponse: true,
       });
@@ -570,22 +689,42 @@ export class IdentityService {
     return SUCCESS;
   }
 
-  async resetPassword(input: ResetPasswordInput) {
-    // Key on the token - the only identifier the input carries - to bound retries
-    // against a single reset token.
-    await assertRateLimit(this.limiter, `pwreset:${input.token}`, PASSWORD_RESET_RATE_LIMIT);
-    const res = await this.api.resetPassword({
-      body: { newPassword: input.newPassword, token: input.token },
+  async verifyPasswordResetOtp(input: VerifyPasswordResetOtpInput) {
+    const email = input.email.toLowerCase();
+    await assertRateLimit(
+      this.limiter,
+      makeRateLimitKey(RATE_LIMIT_KEYS.PASSWORD_RESET_VERIFY, email),
+      PASSWORD_RESET_VERIFY_RATE_LIMIT,
+    );
+    const res = await this.api.checkVerificationOTP({
+      body: { email, type: 'forget-password', otp: input.otp },
       headers: new Headers(),
       asResponse: true,
     });
-    await ensureOk(res);
-    const body = (await res.json().catch(() => ({}))) as { user?: { id: string } };
-    if (body.user?.id) {
-      this.events.emit('identity.password.reset', { userId: body.user.id });
-      // Password reset clears any lockout - the user has proven identity via email/phone.
-      await this.clearLockout(body.user.id);
+    await ensureOk(res, { genericMessage: 'Invalid or expired verification code' });
+    return SUCCESS;
+  }
+
+  async resetPassword(input: ResetPasswordInput) {
+    const email = input.email.toLowerCase();
+    await assertRateLimit(
+      this.limiter,
+      makeRateLimitKey(RATE_LIMIT_KEYS.PASSWORD_RESET, email),
+      PASSWORD_RESET_RATE_LIMIT,
+    );
+    const res = await this.api.resetPasswordEmailOTP({
+      body: { email, otp: input.otp, password: input.newPassword },
+      headers: new Headers(),
+      asResponse: true,
+    });
+    await ensureOk(res, { genericMessage: 'Invalid or expired verification code' });
+
+    const row = await this.findUserByEmail(email);
+    if (row) {
+      this.events.emit('identity.password.reset', { userId: row.id });
+      await this.clearLockout(row.id);
     }
+
     return SUCCESS;
   }
 
@@ -603,7 +742,7 @@ export class IdentityService {
       asResponse: true,
     });
     await ensureOk(res);
-    forwardCookies(res, resHeaders);
+    this.forwardCookies(res, resHeaders);
     return SUCCESS;
   }
 
@@ -650,7 +789,7 @@ export class IdentityService {
       asResponse: true,
     });
     await ensureOk(res);
-    forwardCookies(res, resHeaders);
+    this.forwardCookies(res, resHeaders);
     return SUCCESS;
   }
 
@@ -668,7 +807,7 @@ export class IdentityService {
       asResponse: true,
     });
     await ensureOk(res);
-    forwardCookies(res, resHeaders);
+    this.forwardCookies(res, resHeaders);
     // updateUser returns { status } only - re-read from session to get the full user.
     const session = await this.auth.api.getSession({ headers });
     const current = session?.user as BetterAuthUser | undefined;

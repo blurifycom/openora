@@ -44,6 +44,11 @@ export class InProcessRateLimiter implements RateLimiterAdapter {
     return Promise.resolve({ allowed: false, retryAfterMs: existing.resetAt - now });
   }
 
+  reset(key: string): Promise<void> {
+    this.windows.delete(key);
+    return Promise.resolve();
+  }
+
   private sweep(): void {
     const now = Date.now();
     for (const [key, window] of this.windows) {
@@ -73,9 +78,9 @@ export function makeRateLimitError(
  * Consume one unit for `key`; throw a 429 with retryAfterMs when the limit is exceeded.
  * No-ops when `limiter` is undefined so call sites don't need an optional-guard wrapper.
  */
-export async function assertRateLimit(
-  limiter: RateLimiterAdapter | undefined,
-  key: string,
+export async function assertRateLimit<K extends string = string>(
+  limiter: RateLimiterAdapter<K> | undefined,
+  key: K,
   opts: RateLimitOptions,
 ): Promise<void> {
   if (!limiter) {

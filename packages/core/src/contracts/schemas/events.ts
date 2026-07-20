@@ -40,8 +40,18 @@ export const domainEventSchemas = {
   'identity.user.login.failed': authContextBase.extend({
     email: z.email(),
     reason: z.string().nullable().optional(),
+    attemptsRemaining: z.number().int().optional(),
   }),
   'identity.user.logout': z.object({ userId: UuidSchema }),
+  'identity.user.phone_login': authContextBase.extend({
+    userId: UuidSchema,
+    method: z.literal('phone'),
+  }),
+  'identity.phone_otp.requested': z.object({ userId: UuidSchema }),
+  'identity.phone_otp.cancelled': z.object({
+    userId: UuidSchema,
+    reason: z.enum(['max_attempts', 'new_otp_requested']),
+  }),
   'identity.user.lockout.triggered': authContextBase.extend({
     userId: UuidSchema,
     email: z.email(),

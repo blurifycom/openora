@@ -20,6 +20,7 @@ import {
   type PlatformConfig,
   type KycStatus,
   type RateLimiterAdapter,
+  type RateLimitKey,
   type WalletRail,
   type PlayerTags,
   type AuditWritePort,
@@ -173,7 +174,7 @@ export type WalletServiceDeps = {
   payment: PaymentAdapter;
   directory?: AdminUserDirectory;
   platformConfig?: PlatformConfig;
-  limiter?: RateLimiterAdapter;
+  limiter?: RateLimiterAdapter<RateLimitKey>;
   // Optional: bound by the tag module. If risk-flag exclusions are configured but this is absent, auto-approval fails closed.
   riskTags?: PlayerTags;
   // Required: the auto-approval audit trail is a regulatory invariant, so wallet hard-depends on audit.
@@ -194,7 +195,7 @@ export class WalletService {
   private readonly payment: PaymentAdapter;
   private readonly directory?: AdminUserDirectory;
   private readonly platformConfig?: PlatformConfig;
-  private readonly limiter?: RateLimiterAdapter;
+  private readonly limiter?: RateLimiterAdapter<RateLimitKey>;
   private readonly riskTags?: PlayerTags;
   private readonly audit: AuditWritePort;
 

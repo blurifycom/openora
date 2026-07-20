@@ -59,6 +59,17 @@ export class RedisRateLimiter implements RateLimiterAdapter {
     }
   }
 
+  async reset(key: string): Promise<void> {
+    if (!this.client.isReady) {
+      return;
+    }
+    try {
+      await this.client.del(PREFIX + key);
+    } catch (err) {
+      this.logger.warn({ keyPrefix: key.split(':')[0], err }, 'rate limiter reset failed');
+    }
+  }
+
   // Backend unreachable: fail-open by default to keep availability (throttling pauses
   // during an outage); fail-closed for keys that opt into 'deny' where an unthrottled
   // window is worse than a 429 (credential guessing).

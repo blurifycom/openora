@@ -8,6 +8,34 @@
       "when": 1783555225473,
       "tag": "0000_curved_tana_nile",
       "breakpoints": true
+    },
+    {
+      "idx": 1,
+      "version": "7",
+      "when": 1783611861777,
+      "tag": "0001_rainy_peter_quill",
+      "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "7",
+      "when": 1783944672839,
+      "tag": "0002_outstanding_patriot",
+      "breakpoints": true
+    },
+    {
+      "idx": 3,
+      "version": "7",
+      "when": 1784029716450,
+      "tag": "0003_open_shotgun",
+      "breakpoints": true
+    },
+    {
+      "idx": 4,
+      "version": "7",
+      "when": 1784032154664,
+      "tag": "0004_round_giant_girl",
+      "breakpoints": true
     }
   ]
 }

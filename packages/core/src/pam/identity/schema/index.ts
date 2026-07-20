@@ -34,8 +34,16 @@ export const user = pgTable(
     // Use logical JS property names only; drizzle.config.ts maps camelCase -> snake_case
     // for SQL identifiers so migrations and runtime are consistent.
     twoFactorEnabled: boolean().default(false),
+    phoneNumber: text().unique(),
+    phoneVerified: boolean().notNull().default(false),
+    phoneVerifiedAt: timestamp({ withTimezone: true }),
     failedLoginAttempts: integer().notNull().default(0),
     lockoutUntil: timestamp({ withTimezone: true }),
+    // Progressive lockout tiers: `lockoutCount` counts lockouts inside a rolling 24h
+    // window (reset once `lastLockoutAt` falls outside it), escalating the duration
+    // 1min -> 5min -> 15min. Shared by every login method.
+    lockoutCount: integer().notNull().default(0),
+    lastLockoutAt: timestamp({ withTimezone: true }),
     // Responsible-Gambling login block (cooling-off / self-exclusion). Written only via
     // the LOGIN_ENFORCEMENT port. `rgBlockedUntil` null while blocked = indefinite
     // (self-exclusion); a Date is the cooling-off expiry the login gate auto-clears.
@@ -127,8 +135,29 @@ export const twoFactor = pgTable(
   ],
 );
 
+// One active OTP per user: `requestOtp` upserts by `userId`, so a new code overwrites the previous one.
+// `codeHash` is SHA-256 of the 6-digit code - the plaintext OTP is never stored.
+// `failedAttempts` caps guessing at 5 per session.
+export const smsOtpSession = pgTable(
+  'sms_otp_session',
+  {
+    id: uuid().primaryKey().defaultRandom(),
+    userId: uuid()
+      .notNull()
+      .unique()
+      .references(() => user.id, { onDelete: 'cascade' }),
+    phone: text().notNull(),
+    codeHash: text().notNull(),
+    expiresAt: timestamp({ withTimezone: true }).notNull(),
+    failedAttempts: integer().notNull().default(0),
+    createdAt: timestamp({ withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [index('sms_otp_session_phone_idx').on(t.phone)],
+);
+
 export type User = typeof user.$inferSelect;
 export type Session = typeof session.$inferSelect;
+export type SmsOtpSession = typeof smsOtpSession.$inferSelect;
 export type Account = typeof account.$inferSelect;
 export type Verification = typeof verification.$inferSelect;
 export type TwoFactor = typeof twoFactor.$inferSelect;

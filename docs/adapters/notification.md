@@ -2,14 +2,7 @@
 
 ## Interface
 
-```ts
-// packages/core/src/contracts/adapters/src/notification.ts
-export interface NotificationDeliveryAdapter {
-  sendEmail(to: string, subject: string, body: string): Promise<void>;
-}
-
-export const NOTIFICATION_DELIVERY_ADAPTER = Symbol('NOTIFICATION_DELIVERY_ADAPTER');
-```
+Source of truth: [`packages/core/src/contracts/adapters/notification.ts`](../../packages/core/src/contracts/adapters/notification.ts) - `NotificationDeliveryAdapter` and the `NOTIFICATION_DELIVERY_ADAPTER` token.
 
 ## Default binding
 

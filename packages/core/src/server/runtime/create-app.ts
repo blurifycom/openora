@@ -5,6 +5,7 @@ import type { ContractRouter } from '@orpc/contract';
 import { Hono } from 'hono';
 import { cors } from 'hono/cors';
 import { etag } from 'hono/etag';
+import { HTTPException } from 'hono/http-exception';
 import { serve, type ServerType } from '@hono/node-server';
 import { resolve } from 'node:path';
 import { generateOpenApiSpec } from './openapi.js';
@@ -23,6 +24,7 @@ import {
   createLogger,
   createRedisClient,
   withRequestContext,
+  setErrorReporter,
   EVENT_BUS,
   type OssContext,
 } from '../kernel/index.js';
@@ -36,6 +38,7 @@ import {
   ADMIN_PERMISSION_RESOLVER,
   RATE_LIMITER,
   CACHE,
+  ERROR_TRACKING,
   composeContract,
   healthContract,
   IGAMING_CONFIG,
@@ -276,6 +279,12 @@ export async function createApp(config: CreateAppConfig): Promise<CreatedApp> {
   const registry = await loadPlugins(config.plugins, container);
   await config.configure?.(container);
 
+  if (container.has(ERROR_TRACKING)) {
+    const tracker = container.get(ERROR_TRACKING);
+    setErrorReporter((error, context) => tracker.captureException(error, context));
+    container.onDispose(() => setErrorReporter(undefined));
+  }
+
   const bus = container.get(EVENT_BUS);
   for (const [event, handlers] of registry.events.getAll()) {
     for (const handler of handlers) {
@@ -318,14 +327,38 @@ export async function createApp(config: CreateAppConfig): Promise<CreatedApp> {
     plugins: [new ResponseHeadersPlugin()],
     interceptors: [
       onError((error) => {
-        if (!(error instanceof ORPCError)) {
-          createLogger('orpc').error({ err: error }, 'unhandled error');
+        // oRPC wraps a thrown native error (a DB failure, a bug) into an
+        // ORPCError('INTERNAL_SERVER_ERROR', { cause }). Report anything that is a
+        // server fault - a non-ORPCError, or an ORPCError with a 5xx status - and skip
+        // expected client errors (4xx: not-found, conflict, validation, rate-limit).
+        // Report the underlying `cause` so the tracker gets the real error + stack,
+        // not the generic wrapper.
+        if (error instanceof ORPCError && error.status < 500) {
+          return;
         }
+        const err = error instanceof ORPCError ? (error.cause ?? error) : error;
+        createLogger('orpc').error({ err }, 'unhandled error');
       }),
     ],
   });
 
   const app = new Hono();
+
+  // Outermost catch for errors thrown in the Hono middleware chain (session
+  // resolution, raw-body capture, etag/cache) - the one seam oRPC's onError
+  // interceptor never sees, since handler.handle turns route/service errors into
+  // responses. logger.error reports via the reporter; HTTPExceptions are deliberate
+  // outcomes, returned without reporting.
+  app.onError((err, c) => {
+    if (err instanceof HTTPException) {
+      return err.getResponse();
+    }
+    createLogger('http').error(
+      { err, method: c.req.method, path: c.req.path },
+      'unhandled request error',
+    );
+    return c.json({ error: 'Internal Server Error' }, 500);
+  });
 
   if (config.cors !== false) {
     const origins =

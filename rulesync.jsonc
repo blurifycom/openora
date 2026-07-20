@@ -9,9 +9,14 @@
   // hooks: generated for copilot from .rulesync/hooks.json (-> .rulesync/hooks/*.mjs).
   // Claude's hooks stay hand-written in .claude/settings.json (which also holds
   // enabledMcpjsonServers - not in rulesync's model), pointing at the same .mjs scripts.
-  // permissions are NOT managed here (hand-kept in settings.json).
-  // codexcli: rules (AGENTS.md) + mcp (config.toml) only - its commands/subagents
-  // are simulation-only (we keep simulation off) and it has no hooks system.
+  // permissions are NOT managed here for claudecode (hand-kept in settings.json).
+  // Per-target feature support (project mode, not just global) per rulesync's
+  // supported-tools reference for the installed version - re-check there before
+  // adding a feature back:
+  //   copilot: no "ignore", no "permissions".
+  //   codexcli: no "ignore"; "commands" is global-mode only (we don't run --global).
+  //   antigravity-cli: only "rules"/"mcp"/"hooks"/"skills" - "subagents"/"commands"
+  //     aren't supported at all, and "permissions" is global-mode only.
   "targets": {
     "agentsmd": ["rules"],
     "claudecode": [
@@ -24,8 +29,9 @@
       "permissions",
       "ignore",
     ],
-    "copilot": ["rules", "mcp", "subagents", "commands", "hooks"],
-    "codexcli": ["rules", "mcp", "subagents", "commands", "hooks", "permissions", "ignore"],
+    "copilot": ["rules", "mcp", "subagents", "commands", "skills", "hooks"],
+    "codexcli": ["rules", "mcp", "subagents", "skills", "hooks", "permissions"],
+    "antigravity-cli": ["rules", "mcp", "hooks", "skills"],
   },
 
   // rulesync emits Copilot agents/prompts natively - no simulation needed, and

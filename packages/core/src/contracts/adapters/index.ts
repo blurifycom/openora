@@ -46,8 +46,14 @@ export type {
 } from './job-queue.js';
 export { JOB_QUEUE, queue } from './job-queue.js';
 
-export type { RateLimiterAdapter, RateLimitOptions, RateLimitResult } from './rate-limit.js';
-export { RATE_LIMITER } from './rate-limit.js';
+export type {
+  RateLimiterAdapter,
+  RateLimitOptions,
+  RateLimitResult,
+  RateLimitKey,
+  RateLimitKeyPrefix,
+} from './rate-limit.js';
+export { RATE_LIMITER, RATE_LIMIT_KEYS, makeRateLimitKey } from './rate-limit.js';
 
 export type { CacheAdapter } from './cache.js';
 export { CACHE } from './cache.js';
@@ -92,6 +98,18 @@ export { RNG_ADAPTER } from './rng.js';
 
 export type { SendEmailPort } from './email.js';
 export { SEND_EMAIL } from './email.js';
+
+export type { SmsAdapter } from './sms.js';
+export { SMS_ADAPTER } from './sms.js';
+export type {
+  EmailTemplateKey,
+  EmailTemplateData,
+  EmailTemplateRenderer,
+} from './email-template.js';
+export { EMAIL_TEMPLATE_RENDERER, DEFAULT_EMAIL_TEMPLATES } from './email-template.js';
+
+export type { ErrorTrackingAdapter, ErrorContext } from './error-tracking.js';
+export { ERROR_TRACKING } from './error-tracking.js';
 
 export type { AdminGrant, AdminPermissionResolver } from './admin-permission.js';
 export { ADMIN_PERMISSION_RESOLVER } from './admin-permission.js';

@@ -1,6 +1,7 @@
 import { implement } from '@orpc/server';
 import {
   type OssContext,
+  type NodeHeaders,
   AdminGuard,
   mapErrors,
   getUserId,
@@ -8,13 +9,27 @@ import {
   type EventBus,
 } from '@openora/core/server';
 import { identityContract } from '../contract/index.js';
+import { PhoneLoginService } from '../service/phone-login.service.js';
 import { IdentityService, UserNotFoundError } from '../service/identity.service.js';
 import { SessionService, SessionNotFoundError } from '../service/session.service.js';
 import { UnsupportedLanguageError } from '../../shared/language.js';
 
+function nodeForwardedFor(headers: NodeHeaders): string | null {
+  const fwd = headers['x-forwarded-for'];
+  const first = Array.isArray(fwd) ? fwd[0] : fwd;
+  const real = headers['x-real-ip'];
+  return first?.split(',')[0]?.trim() || (Array.isArray(real) ? real[0] : real) || null;
+}
+
+function nodeUserAgent(headers: NodeHeaders): string | null {
+  const ua = headers['user-agent'];
+  return (Array.isArray(ua) ? ua[0] : ua) ?? null;
+}
+
 export function createIdentityRouter(
   identity: IdentityService,
   sessionSvc: SessionService,
+  phoneLogin: PhoneLoginService,
   adminGuard: AdminGuard,
   eventBus: EventBus,
 ) {
@@ -28,6 +43,24 @@ export function createIdentityRouter(
     login: os.login.handler(({ input, context }) =>
       identity.login(input, context.request.headers, context.resHeaders ?? new Headers()),
     ),
+
+    phoneLoginRequest: os.phoneLoginRequest.handler(({ input, context }) => {
+      const h = context.request.headers;
+      return phoneLogin.requestOtp({
+        ...input,
+        ip: nodeForwardedFor(h),
+        userAgent: nodeUserAgent(h),
+      });
+    }),
+
+    phoneLoginVerify: os.phoneLoginVerify.handler(({ input, context }) => {
+      const h = context.request.headers;
+      return phoneLogin.verifyOtp({
+        ...input,
+        ip: nodeForwardedFor(h),
+        userAgent: nodeUserAgent(h),
+      });
+    }),
 
     logout: os.logout.handler(({ context }) =>
       identity.logout(context.request.headers, context.resHeaders ?? new Headers()),
@@ -49,12 +82,20 @@ export function createIdentityRouter(
       const userId = getUserId(context);
       return createEventStreamGenerator(
         (push) => {
-          const unsubscribe = eventBus.on('identity.sessions.revoked_all', (event) => {
+          const unsubscribeRevoked = eventBus.on('identity.sessions.revoked_all', (event) => {
             if (event.userId === userId) {
               push({ type: 'revoked' });
             }
           });
-          return unsubscribe;
+          const unsubscribeUnlocked = eventBus.on('identity.user.unlocked', (event) => {
+            if (event.userId === userId) {
+              push({ type: 'unlocked' });
+            }
+          });
+          return () => {
+            unsubscribeRevoked();
+            unsubscribeUnlocked();
+          };
         },
         { signal },
       );
@@ -78,6 +119,10 @@ export function createIdentityRouter(
 
     requestPasswordReset: os.requestPasswordReset.handler(({ input }) =>
       identity.requestPasswordReset(input),
+    ),
+
+    verifyPasswordResetOtp: os.verifyPasswordResetOtp.handler(({ input }) =>
+      identity.verifyPasswordResetOtp(input),
     ),
 
     resetPassword: os.resetPassword.handler(({ input }) => identity.resetPassword(input)),
