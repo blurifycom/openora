@@ -4,9 +4,10 @@ import type {
   RealtimeConnectionGrant,
 } from '@openora/core/contracts';
 
-// Default REALTIME_CLIENT_AUTHORIZER binding (first-party SSE). No token to mint:
-// the session cookie already authorizes the chat event-iterator path. An operator
-// targeting a managed vendor (Ably/GetStream) rebinds this in an overlay. See ADR-0007.
+// Test-only `REALTIME_CLIENT_AUTHORIZER` double (first-party SSE, no token to
+// mint - the session cookie already authorizes the chat event-iterator path). An
+// operator targeting a managed vendor (Ably/GetStream) binds a real authorizer in
+// an overlay. See ADR-0007.
 
 export type SseClientAuthorizerOptions = {
   streamPath?: string;

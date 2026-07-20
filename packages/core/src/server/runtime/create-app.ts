@@ -12,14 +12,9 @@ import { generateOpenApiSpec } from './openapi.js';
 import {
   Container,
   BullMqJobQueue,
-  InMemoryBroker,
-  InProcessCache,
-  InProcessJobQueue,
-  InProcessRateLimiter,
-  InProcessRealtimeTransport,
   RedisCache,
   RedisRateLimiter,
-  SseClientAuthorizer,
+  RedisStreamsBroker,
   createEventBus,
   createLogger,
   createRedisClient,
@@ -32,8 +27,6 @@ import { randomUUID } from 'node:crypto';
 import {
   MESSAGE_BROKER,
   JOB_QUEUE,
-  REALTIME_TRANSPORT,
-  REALTIME_CLIENT_AUTHORIZER,
   OUTBOX,
   ADMIN_PERMISSION_RESOLVER,
   RATE_LIMITER,
@@ -48,6 +41,7 @@ import {
 import { DrizzleService, DRIZZLE, DrizzleOutboxWriter, OutboxRelay } from '../db/index.js';
 import { AdminGuard, ADMIN_GUARD, SessionResolver, AUTH_SESSION } from '../auth/index.js';
 import { loadPlugins, type PluginEntry } from '../plugin-host/index.js';
+import { assertDurableSeamsBound } from './assert-durable-seams.js';
 import { loadPlatformConfig, resolvePlatformConfigPath } from '../kernel/platform-config-loader.js';
 
 // Path prefixes safe to cache at the HTTP layer: public, non-personalized reads
@@ -68,6 +62,29 @@ const PUBLIC_HTTP_CACHE_PATHS: readonly string[] = [
 
 const DEFAULT_HTTP_CACHE_MAX_AGE_SECONDS = 30;
 const DEFAULT_HTTP_CACHE_STALE_WHILE_REVALIDATE_SECONDS = 60;
+
+// Redis Streams consumer group name for MESSAGE_BROKER. Distinct deployments/services
+// sharing one Redis MUST use distinct names so their subscribers don't compete for
+// each other's events. The name is a durable identity: renaming it strands the old
+// group's pending (delivered-but-unacked) entries and starts the new one at `$`, so
+// it can never be derived from SERVICE_MANIFEST - that is a LIST of module ids
+// (see service-manifest.ts) whose value reorders and grows as modules move.
+// A split deployment must therefore name itself explicitly.
+function resolveServiceName(): string {
+  const serviceName = process.env['SERVICE_NAME'];
+  if (serviceName) {
+    return serviceName;
+  }
+  if (process.env['SERVICE_MANIFEST']) {
+    throw new Error(
+      '[create-app] SERVICE_MANIFEST is set but SERVICE_NAME is not. A split service needs a stable ' +
+        'name of its own: it becomes the MESSAGE_BROKER consumer group, and every service sharing a ' +
+        'group competes for the same events instead of each receiving a copy. Set SERVICE_NAME to a ' +
+        'stable identifier for this deployment (eg SERVICE_NAME=wallet).',
+    );
+  }
+  return 'monolith';
+}
 
 export type CreateAppConfig = {
   plugins: PluginEntry[];
@@ -169,15 +186,21 @@ async function captureRawBody(req: Request): Promise<string | undefined> {
 
 /**
  * The single composition root: wires the DI container, boots every plugin in
- * `config.plugins`, and mounts the resulting oRPC router on a Hono app. Seam
- * defaults auto-upgrade when env vars are set - `REDIS_URL` binds `JOB_QUEUE`/
- * `RATE_LIMITER`/`CACHE` to their Redis-backed drivers, `OUTBOX_ENABLED` (or
- * `AMQP_URL`/`RABBITMQ_URL`) enables the transactional outbox relay - otherwise
- * every seam stays in-process (zero deps for dev/test). `container.dispose()`
- * (via `close()`) runs disposers in REVERSE registration order, so DRIZZLE is
- * registered before JOB_QUEUE to guarantee workers drain before the DB closes.
- * A router namespace registered by more than one plugin throws at boot, not at
- * request time.
+ * `config.plugins`, and mounts the resulting oRPC router on a Hono app.
+ * Production is distributed-only (ADR-0030, superseding ADR-0010/0014/0016/0028):
+ * `REDIS_URL` auto-binds `JOB_QUEUE`/`RATE_LIMITER`/`CACHE`/`MESSAGE_BROKER` to their
+ * Redis-backed drivers - the broker being the `RedisStreamsBroker` reference driver,
+ * which an overlay (RabbitMQ/Kafka) or a test's `configure` callback can replace.
+ * `assertDurableSeamsBound` runs right after
+ * plugins + `configure` and throws a clear, actionable error listing every
+ * always-needed seam that still has no binding - it never falls back to an
+ * in-process impl. `REALTIME_TRANSPORT` stays lazy (throws on first use) since not
+ * every deployment serves realtime traffic. `OUTBOX_ENABLED` (or
+ * `AMQP_URL`/`RABBITMQ_URL`) enables the transactional outbox relay.
+ * `container.dispose()` (via `close()`) runs disposers in REVERSE registration
+ * order, so DRIZZLE is registered before JOB_QUEUE to guarantee workers drain
+ * before the DB closes. A router namespace registered by more than one plugin
+ * throws at boot, not at request time.
  */
 export async function createApp(config: CreateAppConfig): Promise<CreatedApp> {
   if (config.databaseUrl) {
@@ -190,15 +213,13 @@ export async function createApp(config: CreateAppConfig): Promise<CreatedApp> {
     container.onDispose(() => svc.dispose());
     return svc;
   });
-  container.register(MESSAGE_BROKER, () => {
-    const broker = new InMemoryBroker();
-    container.onDispose(() => broker.close());
-    return broker;
-  });
-  // Enabled when OUTBOX_ENABLED is set or a durable broker is configured (AMQP_URL) -
-  // a distributed deployment wants events that survive a crash between commit and
-  // publish. In the default in-process monolith it stays off, so emit() keeps its
-  // synchronous fan-out and emitInTransaction() guides callers to enable it.
+  // A distributed deployment wants events that survive a crash between commit and
+  // publish. Off by default: emit() keeps its best-effort fan-out and
+  // emitInTransaction() throws a guiding error until this is enabled.
+  // AMQP_URL/RABBITMQ_URL only signal the INTENT to run a RabbitMQ broker overlay -
+  // core binds no AMQP driver, so they enable the outbox and nothing else. The relay
+  // publishes to whatever MESSAGE_BROKER resolves to (the Redis Streams driver below,
+  // unless an overlay replaced it); set OUTBOX_ENABLED directly when that is the aim.
   const outboxEnabled =
     !!process.env['OUTBOX_ENABLED'] || !!process.env['AMQP_URL'] || !!process.env['RABBITMQ_URL'];
   if (outboxEnabled) {
@@ -211,21 +232,19 @@ export async function createApp(config: CreateAppConfig): Promise<CreatedApp> {
       outboxEnabled ? c.get(OUTBOX) : undefined,
     ),
   );
-  // Default in-process fan-out served as SSE; an overlay rebinds to a managed
-  // vendor (Ably/GetStream) without touching modules. See ADR-0007.
-  container.register(REALTIME_TRANSPORT, () => new InProcessRealtimeTransport());
-  // Default is first-party SSE (no token; the session cookie authorizes the stream).
-  // A managed-vendor overlay rebinds this to mint a per-player scoped token. See ADR-0007.
-  container.register(REALTIME_CLIENT_AUTHORIZER, () => new SseClientAuthorizer());
-  // When REDIS_URL is set, JOB_QUEUE, the rate limiter and cache bind to the shipped
-  // Redis reference adapters: BullMQ-backed durable jobs (survive restarts, real cron),
-  // distributed throttling and cross-replica cache invalidation - mirrors the AMQP_URL
-  // outbox precedent above. Otherwise the process-local in-process defaults stay (zero
-  // deps for dev/test). Either way a consumer overlay can rebind any of these tokens
-  // (plugins load after). The JOB_QUEUE disposer drains in-flight jobs before the DB
-  // closes (DRIZZLE is resolved before JOB_QUEUE below, and disposers run in reverse).
+  // When REDIS_URL is set, JOB_QUEUE, the rate limiter, the cache and the message
+  // broker bind to the shipped Redis reference adapters: BullMQ-backed durable jobs
+  // (survive restarts, real cron), distributed throttling, cross-replica cache
+  // invalidation and cross-replica events over Redis Streams. There is no in-process
+  // fallback (ADR-0030) - a deployment without REDIS_URL must bind these itself (an
+  // overlay, or a test's `configure` callback), or `assertDurableSeamsBound` below
+  // throws. The JOB_QUEUE disposer drains in-flight jobs before the DB closes (DRIZZLE
+  // is resolved before JOB_QUEUE below, and disposers run in reverse).
   const redisUrl = process.env['REDIS_URL'];
   if (redisUrl) {
+    // Resolved eagerly, before any client is opened: a misconfigured service name is
+    // a boot error, not a surprise on whichever code path resolves the broker first.
+    const serviceName = resolveServiceName();
     container.register(JOB_QUEUE, () => {
       const q = new BullMqJobQueue(redisUrl);
       container.onDispose(() => q.close());
@@ -235,21 +254,10 @@ export async function createApp(config: CreateAppConfig): Promise<CreatedApp> {
     container.onDispose(() => redis.close());
     container.register(RATE_LIMITER, () => new RedisRateLimiter(redis));
     container.register(CACHE, () => new RedisCache(redis));
-  } else {
-    container.register(JOB_QUEUE, () => {
-      const q = new InProcessJobQueue(createLogger('job-queue'));
-      container.onDispose(() => q.close());
-      return q;
-    });
-    container.register(RATE_LIMITER, () => {
-      const limiter = new InProcessRateLimiter();
-      container.onDispose(() => limiter.close());
-      return limiter;
-    });
-    container.register(CACHE, () => {
-      const cache = new InProcessCache();
-      container.onDispose(() => cache.close());
-      return cache;
+    container.register(MESSAGE_BROKER, () => {
+      const broker = new RedisStreamsBroker(redis, { serviceName });
+      container.onDispose(() => broker.close());
+      return broker;
     });
   }
   // One shared better-auth instance for both the per-request middleware and AdminGuard -
@@ -278,6 +286,8 @@ export async function createApp(config: CreateAppConfig): Promise<CreatedApp> {
 
   const registry = await loadPlugins(config.plugins, container);
   await config.configure?.(container);
+
+  assertDurableSeamsBound(container);
 
   if (container.has(ERROR_TRACKING)) {
     const tracker = container.get(ERROR_TRACKING);
