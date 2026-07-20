@@ -43,6 +43,15 @@ or people's names in review output or draft comments.
 stated intent, plus any unresolved reviewer asks (so the review doesn't repeat or contradict them).
 No PR yet: use the branch's commit subjects as intent.
 
+## 2b. Stance - assume the change is broken
+
+Review to falsify, not to confirm. Every reviewer (and you, on the fast path) starts from "this code does not work" and lets the diff earn correctness:
+
+- For each changed behavior, trace the concrete execution path with real inputs - happy path plus at least one hostile one (empty/`''`/`0`, error, unauthorized, concurrent/repeat) - until you hit a defect or prove it sound. Reading the diff hunk is never enough.
+- Verify the called API actually behaves as the code assumes - open the callee or check current docs. Watch for falsy-vs-nullish, off-by-default options, swallowed rejections, partial failure mid-flow.
+- Author claims prove nothing: commit message, comments, green gates, and "obviously correct" wrappers are not evidence.
+- Skepticism picks what to dig into; the step-4 evidence gate still decides what becomes a finding - only a traced trigger path qualifies.
+
 ## 3. Review angles
 
 Fixed angles and when they apply:
@@ -55,8 +64,8 @@ Fixed angles and when they apply:
 | iGaming domain fit                                    | business rules changed AND AC exists to judge against      | `expert`            |
 
 **Small-diff fast path (<= 150 changed lines): no subagents.** Read the changed files in the main
-thread and apply all applicable angle checklists yourself (each subagent's checklist is in
-`.claude/agents/<name>.md` - skim, don't spawn). This is the common case and costs a fraction of a
+thread and apply all applicable angle checklists yourself under the §2b stance (each subagent's
+checklist is in `.claude/agents/<name>.md` - skim, don't spawn). This is the common case and costs a fraction of a
 fan-out.
 
 **Larger diffs: spawn only the applicable subagents, all in ONE message (parallel).** Models are
@@ -64,7 +73,7 @@ fixed in each agent's definition (sonnet for quality/contract, opus for security
 override upward. Pass each reviewer:
 
 - base ref + the changed-file list relevant to its angle (pre-grouped - reviewers never re-scope)
-- the step-2 context block
+- the step-2 context block + the §2b stance verbatim
 - hard caps: read only changed files + immediate callees; max 10 findings; compact
   `[SEV] file:line - finding - evidence - fix` lines, no prose; do NOT run `pnpm verify`/tests
 
