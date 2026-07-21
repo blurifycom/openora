@@ -73,12 +73,12 @@ function likePrefix(prefix: string): string {
   return `${prefix.replace(/[\\%_]/g, '\\$&')}%`;
 }
 
-function startOfDayUtc(dateStr: string): Date {
+export function startOfDayUtc(dateStr: string): Date {
   const d = new Date(dateStr);
   return new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate(), 0, 0, 0, 0));
 }
 
-function endOfDayUtc(dateStr: string): Date {
+export function endOfDayUtc(dateStr: string): Date {
   const d = new Date(dateStr);
   return new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate(), 23, 59, 59, 999));
 }
