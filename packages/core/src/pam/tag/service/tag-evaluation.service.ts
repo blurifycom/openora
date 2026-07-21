@@ -6,7 +6,7 @@ import {
   type TagRule,
   type User,
 } from '@openora/core/contracts';
-import { moneyToNumber, mapConcurrent } from '@openora/core/server';
+import { moneyToNumber, mapConcurrent, type DrizzleTx } from '@openora/core/server';
 import { TagService, TagAlreadyInUseError, TagAssignmentNotFoundError } from './tag.service.js';
 import { TagRuleService, TagRuleNotFoundError } from './tag-rule.service.js';
 
@@ -114,25 +114,72 @@ export class TagEvaluationService {
     }
   }
 
+  /** True when the withdrawal_review rule is enabled and amount crosses its threshold. Shared by the event path and the synchronous command-port path below so both stay in lockstep. */
+  private async _withdrawalReviewThresholdCrossed(amount: string): Promise<boolean> {
+    const rule = await this.getEnabledRule('withdrawal_review');
+    if (!rule || rule.threshold === null) {
+      return false;
+    }
+    return moneyToNumber(amount) >= moneyToNumber(rule.threshold);
+  }
+
   /**
    * Assigns withdrawal_review when a single withdrawal attempt exceeds its threshold.
    * Called on wallet.withdrawal.requested (the attempt, before funds move) so the
    * review tag lands before payout. Sticky - never auto-removed here or anywhere else.
+   * This is the async, best-effort fan-out path (other consumers may want the event) -
+   * wallet's own auto-approval decision does NOT wait on this; it calls
+   * evaluateWithdrawalRequested below instead. Idempotent with that path via
+   * TagAlreadyInUseError (see tryAssignTag).
    */
   async onWithdrawalRequested(payload: unknown) {
     const { userId, amount } = domainEventSchemas['wallet.withdrawal.requested'].parse(payload);
-
-    const rule = await this.getEnabledRule('withdrawal_review');
-    if (!rule || rule.threshold === null) {
-      return;
-    }
-
-    if (moneyToNumber(amount) >= moneyToNumber(rule.threshold)) {
+    if (await this._withdrawalReviewThresholdCrossed(amount)) {
       await this.tryAssignTag(
         userId,
         'withdrawal_review',
         'single withdrawal attempt exceeded review threshold',
       );
+    }
+  }
+
+  /**
+   * Synchronous, transactional counterpart to onWithdrawalRequested, bound behind
+   * TAG_EVALUATION_COMMANDS. wallet.withdraw() awaits this on its own transaction handle
+   * BEFORE its maybeAutoApprove reads risk tags, so a withdrawal_review assignment is
+   * guaranteed committed before the auto-approval decision runs - closing the race the
+   * fire-and-forget EventBus emit above cannot (an EventBus emit is never awaited by the
+   * emitter). Money-adjacent: never events-only for this decision (see
+   * messaging-and-microservices "money never flows over events"). Any error here
+   * propagates and aborts the caller's withdrawal transaction - a review-gate evaluation
+   * failure must block the withdrawal rather than silently skip review.
+   */
+  async evaluateWithdrawalRequested(
+    tx: unknown,
+    args: { userId: User['id']; amount: string },
+  ): Promise<void> {
+    const { userId, amount } = args;
+    if (!(await this._withdrawalReviewThresholdCrossed(amount))) {
+      return;
+    }
+    const playerId = await this.identityReader.getPlayerIdByUserId(userId);
+    if (!playerId) {
+      return;
+    }
+    const trx = tx as DrizzleTx;
+    try {
+      await this.tag.assignPlayerTagInTx(trx, {
+        playerId,
+        tagKey: 'withdrawal_review',
+        assignReason: 'single withdrawal attempt exceeded review threshold',
+        assignActor: 'scheduled',
+        assignActorUserId: SYSTEM_ACTOR_ID,
+      });
+    } catch (e) {
+      if (e instanceof TagAlreadyInUseError) {
+        return;
+      }
+      throw e;
     }
   }
 
@@ -315,11 +362,17 @@ export class TagEvaluationService {
     }
 
     // One set-based query for all holders' counts, then bound only the per-user
-    // removal writes - the reads are already batched, not per-row.
-    const countsByUser = await this.walletReader.getWithdrawalCountsInWindow(
-      holderUserIds,
-      thresholdDays,
-    );
+    // removal writes - the reads are already batched, not per-row. The batched method
+    // is optional on the port (an external WalletReader may predate it), so fall back to
+    // bounded fan-out over the singular getWithdrawalCountInWindow when it's absent.
+    const countsByUser = this.walletReader.getWithdrawalCountsInWindow
+      ? await this.walletReader.getWithdrawalCountsInWindow(holderUserIds, thresholdDays)
+      : new Map(
+          await mapConcurrent(holderUserIds, EVAL_CHUNK_SIZE, async (userId) => {
+            const count = await this.walletReader.getWithdrawalCountInWindow(userId, thresholdDays);
+            return [userId, count] as const;
+          }),
+        );
 
     await mapConcurrent(holderUserIds, EVAL_CHUNK_SIZE, async (userId) => {
       const countInWindow = countsByUser.get(userId) ?? 0;

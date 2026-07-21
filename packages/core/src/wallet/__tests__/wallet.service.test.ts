@@ -178,6 +178,87 @@ describe('WalletService.withdraw', () => {
   });
 });
 
+describe('WalletService.withdraw - synchronous tag evaluation (TAG_EVALUATION_COMMANDS)', () => {
+  let events: ReturnType<typeof makeEvents>;
+  let payment: ReturnType<typeof makePayment>;
+
+  beforeEach(() => {
+    events = makeEvents();
+    payment = makePayment();
+  });
+
+  it('calls evaluateWithdrawalRequested on the withdrawal transaction handle, with userId/amount, before returning', async () => {
+    const drizzle = makeDrizzle({
+      select: [[{ id: 'w-1', userId: 'u-1', balance: '100', currency: 'USD' }]],
+      returning: [
+        [{ id: 'tx-1', walletId: 'w-1', amount: '40', currency: 'USD', status: 'pending' }],
+        [{ id: 'w-1' }],
+      ],
+    });
+    const tagEvaluationCommands = {
+      evaluateWithdrawalRequested: vi.fn().mockResolvedValue(undefined),
+    };
+    const svc = new WalletService(
+      mock<ConstructorParameters<typeof WalletService>[0]>({
+        drizzle,
+        events,
+        payment,
+        tagEvaluationCommands,
+      }),
+    );
+
+    const result = await svc.withdraw({ userId: 'u-1', amount: '40', currency: 'USD' });
+
+    expect(result).toEqual({ transactionId: 'tx-1', status: 'pending' });
+    expect(tagEvaluationCommands.evaluateWithdrawalRequested).toHaveBeenCalledWith(
+      expect.anything(),
+      { userId: 'u-1', amount: '40' },
+    );
+  });
+
+  it('is never called when unbound (matches the pre-existing async-event-only behavior)', async () => {
+    const drizzle = makeDrizzle({
+      select: [[{ id: 'w-1', userId: 'u-1', balance: '100', currency: 'USD' }]],
+      returning: [
+        [{ id: 'tx-1', walletId: 'w-1', amount: '40', currency: 'USD', status: 'pending' }],
+        [{ id: 'w-1' }],
+      ],
+    });
+    const svc = svcOf(drizzle, events, payment);
+    const result = await svc.withdraw({ userId: 'u-1', amount: '40', currency: 'USD' });
+    expect(result).toEqual({ transactionId: 'tx-1', status: 'pending' });
+  });
+
+  it('propagates an unexpected error and aborts the withdrawal (fail-closed: a review-gate failure must block the withdrawal, not silently skip review)', async () => {
+    const drizzle = makeDrizzle({
+      select: [[{ id: 'w-1', userId: 'u-1', balance: '100', currency: 'USD' }]],
+      returning: [
+        [{ id: 'tx-1', walletId: 'w-1', amount: '40', currency: 'USD', status: 'pending' }],
+        [{ id: 'w-1' }],
+      ],
+    });
+    const dbError = new Error('tag module db unavailable');
+    const tagEvaluationCommands = {
+      evaluateWithdrawalRequested: vi.fn().mockRejectedValue(dbError),
+    };
+    const svc = new WalletService(
+      mock<ConstructorParameters<typeof WalletService>[0]>({
+        drizzle,
+        events,
+        payment,
+        tagEvaluationCommands,
+      }),
+    );
+
+    await expect(svc.withdraw({ userId: 'u-1', amount: '40', currency: 'USD' })).rejects.toBe(
+      dbError,
+    );
+    // The transaction rolled back before the requested event/auto-approval step ran.
+    expect(events.emit).not.toHaveBeenCalled();
+    expect(payment.processWithdrawal).not.toHaveBeenCalled();
+  });
+});
+
 describe('WalletService idempotency - deposit', () => {
   let events: ReturnType<typeof makeEvents>;
   let payment: ReturnType<typeof makePayment>;

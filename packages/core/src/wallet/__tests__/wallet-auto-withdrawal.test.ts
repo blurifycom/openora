@@ -55,6 +55,7 @@ type Opts = {
   drizzle: ReturnType<typeof makeDrizzle>;
   directory?: { lookupPlayers: ReturnType<typeof vi.fn> };
   riskTags?: { getActiveTagKeys: ReturnType<typeof vi.fn> };
+  tagEvaluationCommands?: { evaluateWithdrawalRequested: ReturnType<typeof vi.fn> };
   autoWithdrawal?: Partial<AutoWithdrawalConfig>;
   kyc?: Record<string, unknown>;
 };
@@ -76,6 +77,7 @@ function makeSvc(opts: Opts) {
       payment,
       directory: opts.directory,
       riskTags: opts.riskTags,
+      tagEvaluationCommands: opts.tagEvaluationCommands,
       audit,
       platformConfig,
     }),
@@ -267,6 +269,51 @@ describe('WalletService.withdraw auto-approval', () => {
 
     const result = await svc.withdraw({ userId: 'u-1', amount: '40', currency: 'USD' });
 
+    expect(result.status).toBe('pending');
+    expect(payment.processWithdrawal).not.toHaveBeenCalled();
+  });
+
+  it('awaits the synchronous tag evaluation (TAG_EVALUATION_COMMANDS) before reading risk tags, so a withdrawal_review assignment it makes is honored by auto-approval instead of raced by the async event handler', async () => {
+    const dz = makeDrizzle({
+      select: [...holdSelect().map((r) => [r]), []],
+      returning: [...holdReturning()],
+    });
+    const callOrder: string[] = [];
+    // Stands in for TagEvaluationService.evaluateWithdrawalRequested committing a
+    // withdrawal_review assignment on the caller's own tx (see wallet.service.ts's
+    // withdraw()) - by the time this resolves, the tag must be visible to any later read.
+    const assignedTags = new Set<string>();
+    const tagEvaluationCommands = {
+      evaluateWithdrawalRequested: vi.fn(async () => {
+        callOrder.push('evaluateWithdrawalRequested');
+        assignedTags.add('withdrawal_review');
+      }),
+    };
+    const riskTags = {
+      getActiveTagKeys: vi.fn(async (userIds: string[]) => {
+        callOrder.push('getActiveTagKeys');
+        return new Map(userIds.map((id) => [id, [...assignedTags]]));
+      }),
+    };
+    const { svc, payment } = makeSvc({
+      drizzle: dz,
+      directory: verifiedDirectory(),
+      riskTags,
+      tagEvaluationCommands,
+      autoWithdrawal: { fiatThreshold: '1000', excludeRiskFlags: ['withdrawal_review'] },
+    });
+
+    const result = await svc.withdraw({ userId: 'u-1', amount: '40', currency: 'USD' });
+
+    // Ordering proof: the synchronous command-port call happened, and completed, before
+    // auto-approval's risk-tag read - never the reverse, and never concurrent/unawaited.
+    expect(callOrder).toEqual(['evaluateWithdrawalRequested', 'getActiveTagKeys']);
+    expect(tagEvaluationCommands.evaluateWithdrawalRequested).toHaveBeenCalledWith(
+      expect.anything(),
+      { userId: 'u-1', amount: '40' },
+    );
+    // Causality proof: auto-approval saw the tag the synchronous call just assigned and
+    // declined to pay out - the exact race the fire-and-forget event emit alone could lose.
     expect(result.status).toBe('pending');
     expect(payment.processWithdrawal).not.toHaveBeenCalled();
   });

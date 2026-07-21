@@ -1,7 +1,7 @@
 import { describe, it, expect, vi } from 'vitest';
 import { DatabaseError } from 'pg';
 import { mock, mockDb } from '../../../testing/mock.js';
-import type { EventBus } from '@openora/core/server';
+import type { EventBus, DrizzleTx } from '@openora/core/server';
 import { tag as tagTable, type Tag, type PlayerTag } from '../schema/index.js';
 import {
   TagService,
@@ -75,8 +75,9 @@ function makeThrowingDrizzle(err: unknown) {
   builder['delete'] = vi.fn(chain);
   builder['where'] = vi.fn(chain);
   builder['returning'] = vi.fn(() => Promise.reject(err));
-  // oxlint-disable-next-line unicorn/no-thenable -- builder must be awaitable to mimic Drizzle;
-  // deleteTag awaits the builder directly (no .returning()), so `then`'s reject path is what fires.
+  // oxlint-disable-next-line unicorn/no-thenable -- builder must be awaitable to mimic Drizzle.
+  // Both createTag and deleteTag call .returning(), which rejects above; `then` is kept as a
+  // defensive fallback in case a caller ever awaits the builder directly instead.
   builder['then'] = (_resolve: (v: unknown) => unknown, reject?: (e: unknown) => unknown) =>
     reject?.(err);
   return mockDb(builder);
@@ -188,7 +189,8 @@ describe('TagService', () => {
   describe('deleteTag', () => {
     it('deletes, returns true, and emits tag.deleted', async () => {
       const events = makeEvents();
-      const { drizzle } = makeDrizzle({ select: [[]] });
+      const tagRow = makeTag();
+      const { drizzle } = makeDrizzle({ returning: [[tagRow]] });
       const svc = new TagService(drizzle, events);
       const result = await svc.deleteTag({ key: 'high_roller' }, ACTOR_ID);
       expect(result).toBe(true);
@@ -196,6 +198,16 @@ describe('TagService', () => {
         key: 'high_roller',
         actorId: ACTOR_ID,
       });
+    });
+
+    it('throws TagNotFoundError when the key does not exist (no row deleted) and does not emit', async () => {
+      const events = makeEvents();
+      const { drizzle } = makeDrizzle({ returning: [[]] });
+      const svc = new TagService(drizzle, events);
+      await expect(svc.deleteTag({ key: 'high_roller' }, ACTOR_ID)).rejects.toBeInstanceOf(
+        TagNotFoundError,
+      );
+      expect(events.emit).not.toHaveBeenCalled();
     });
 
     it('throws TagInUseError when a playerTag/tagRule row still references the key (23503) and does not emit', async () => {
@@ -372,6 +384,57 @@ describe('TagService', () => {
         expect((r as PromiseRejectedResult).reason).toBeInstanceOf(TagAlreadyInUseError);
       }
       expect(events.emit).toHaveBeenCalledTimes(1);
+    });
+  });
+
+  describe('assignPlayerTagInTx', () => {
+    it('assigns on the caller-supplied transaction handle (no own db.transaction), returns PlayerTagWithTag, and emits tag.player.assigned', async () => {
+      const tagRow = makeTag();
+      const ptRow = makePlayerTag();
+      const events = makeEvents();
+      // A bare builder standing in for a caller's transaction handle - assignPlayerTagInTx
+      // must operate directly on it, never opening its own db.transaction.
+      const trx = mock<DrizzleTx>(
+        makeQueryBuilder({ select: [[tagRow], []], returning: [[ptRow]] }),
+      );
+      const db = { transaction: vi.fn() };
+      const svc = new TagService(mockDb(db), events);
+
+      const result = await svc.assignPlayerTagInTx(trx, {
+        playerId: PLAYER_ID,
+        tagKey: 'high_roller',
+        assignReason: 'test reason',
+        assignActor: 'scheduled',
+        assignActorUserId: ACTOR_ID,
+      });
+
+      expect(db.transaction).not.toHaveBeenCalled();
+      expect(result).toMatchObject({ playerId: PLAYER_ID, tag: { key: 'high_roller' } });
+      expect(events.emit).toHaveBeenCalledWith(
+        'tag.player.assigned',
+        expect.objectContaining({ playerId: PLAYER_ID, tagKey: 'high_roller', actorId: ACTOR_ID }),
+      );
+    });
+
+    it('throws TagAlreadyInUseError and does not emit when already active', async () => {
+      const tagRow = makeTag();
+      const existingPt = makePlayerTag();
+      const events = makeEvents();
+      const trx = mock<DrizzleTx>(
+        makeQueryBuilder({ select: [[tagRow], [existingPt]], returning: [] }),
+      );
+      const svc = new TagService(mockDb({ transaction: vi.fn() }), events);
+
+      await expect(
+        svc.assignPlayerTagInTx(trx, {
+          playerId: PLAYER_ID,
+          tagKey: 'high_roller',
+          assignReason: 'test reason',
+          assignActor: 'scheduled',
+          assignActorUserId: ACTOR_ID,
+        }),
+      ).rejects.toBeInstanceOf(TagAlreadyInUseError);
+      expect(events.emit).not.toHaveBeenCalled();
     });
   });
 

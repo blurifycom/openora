@@ -34,6 +34,7 @@ function makeRule(overrides: Partial<TagRule> = {}): TagRule {
 function makeServices(rules: Partial<Record<string, TagRule>> = {}) {
   const tag = mock<TagService>({
     assignPlayerTag: vi.fn().mockResolvedValue(undefined),
+    assignPlayerTagInTx: vi.fn().mockResolvedValue(undefined),
     removePlayerTag: vi.fn().mockResolvedValue(undefined),
     getActiveTagKeys: vi.fn().mockResolvedValue(new Map()),
     listActivePlayerUserIdsByTagKey: vi.fn().mockResolvedValue([]),
@@ -218,6 +219,57 @@ describe('TagEvaluationService', () => {
       const { service, tag } = makeServices();
       await service.onWithdrawalRequested(withdrawalPayload(99999));
       expect(tag.assignPlayerTag).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('evaluateWithdrawalRequested (synchronous TAG_EVALUATION_COMMANDS path)', () => {
+    const FAKE_TX = { fake: 'tx-handle' };
+
+    it('assigns withdrawal_review on the caller-supplied tx (not assignPlayerTag) when the amount meets threshold', async () => {
+      const { service, tag } = makeServices({
+        withdrawal_review: makeRule({ tagKey: 'withdrawal_review', threshold: '5000' }),
+      });
+      await service.evaluateWithdrawalRequested(FAKE_TX, { userId: UID, amount: '5000' });
+      expect(tag.assignPlayerTagInTx).toHaveBeenCalledWith(
+        FAKE_TX,
+        expect.objectContaining({ playerId: UID, tagKey: 'withdrawal_review' }),
+      );
+      expect(tag.assignPlayerTag).not.toHaveBeenCalled();
+    });
+
+    it('does not assign when the amount is below threshold', async () => {
+      const { service, tag } = makeServices({
+        withdrawal_review: makeRule({ tagKey: 'withdrawal_review', threshold: '5000' }),
+      });
+      await service.evaluateWithdrawalRequested(FAKE_TX, { userId: UID, amount: '4999' });
+      expect(tag.assignPlayerTagInTx).not.toHaveBeenCalled();
+    });
+
+    it('does nothing when the rule is disabled or absent', async () => {
+      const { service, tag } = makeServices();
+      await service.evaluateWithdrawalRequested(FAKE_TX, { userId: UID, amount: '99999' });
+      expect(tag.assignPlayerTagInTx).not.toHaveBeenCalled();
+    });
+
+    it('is idempotent - swallows TagAlreadyInUseError when already assigned', async () => {
+      const { service, tag } = makeServices({
+        withdrawal_review: makeRule({ tagKey: 'withdrawal_review', threshold: '5000' }),
+      });
+      tag.assignPlayerTagInTx = vi.fn().mockRejectedValue(new TagAlreadyInUseError());
+      await expect(
+        service.evaluateWithdrawalRequested(FAKE_TX, { userId: UID, amount: '5000' }),
+      ).resolves.toBeUndefined();
+    });
+
+    it('propagates an unexpected error (fail-closed: a review-gate failure must block the caller, not silently skip review)', async () => {
+      const { service, tag } = makeServices({
+        withdrawal_review: makeRule({ tagKey: 'withdrawal_review', threshold: '5000' }),
+      });
+      const dbError = new Error('db unavailable');
+      tag.assignPlayerTagInTx = vi.fn().mockRejectedValue(dbError);
+      await expect(
+        service.evaluateWithdrawalRequested(FAKE_TX, { userId: UID, amount: '5000' }),
+      ).rejects.toBe(dbError);
     });
   });
 
@@ -542,6 +594,32 @@ describe('TagEvaluationService', () => {
         await service.runDailyEvaluation();
         expect(walletReader.getWithdrawalCountsInWindow).not.toHaveBeenCalled();
         expect(tag.removePlayerTag).not.toHaveBeenCalled();
+      });
+
+      it('falls back to per-holder getWithdrawalCountInWindow when the batched method is absent from the adapter', async () => {
+        const { service, tag, walletReader } = makeServices({
+          high_risk: makeRule({
+            tagKey: 'high_risk',
+            threshold: '1000',
+            thresholdDays: 7,
+            thresholdCount: 3,
+          }),
+        });
+        tag.listActivePlayerUserIdsByTagKey = vi.fn().mockResolvedValue(['p1', 'p2']);
+        // Simulate an external WalletReader implementation that predates the batched method.
+        walletReader.getWithdrawalCountsInWindow = undefined;
+        walletReader.getWithdrawalCountInWindow = vi.fn(async (userId: string) =>
+          userId === 'p1' ? 1 : 5,
+        );
+        await service.runDailyEvaluation();
+        expect(walletReader.getWithdrawalCountInWindow).toHaveBeenCalledWith('p1', 7);
+        expect(walletReader.getWithdrawalCountInWindow).toHaveBeenCalledWith('p2', 7);
+        expect(tag.removePlayerTag).toHaveBeenCalledWith(
+          expect.objectContaining({ playerId: 'p1', tagKey: 'high_risk' }),
+        );
+        expect(tag.removePlayerTag).not.toHaveBeenCalledWith(
+          expect.objectContaining({ playerId: 'p2', tagKey: 'high_risk' }),
+        );
       });
     });
   });

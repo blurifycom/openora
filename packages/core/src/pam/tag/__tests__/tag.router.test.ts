@@ -7,6 +7,7 @@ import {
   TagAlreadyInUseError,
   TagKeyConflictError,
   TagInUseError,
+  TagNotFoundError,
   type TagService,
 } from '../service/tag.service.js';
 import type { TagRuleService } from '../service/tag-rule.service.js';
@@ -165,5 +166,15 @@ describe('tag router error mapping', () => {
     await expect(
       call(router.deleteTag, { key: 'high_roller' }, { context: AUTHED_CTX }),
     ).rejects.toMatchObject({ code: 'CONFLICT' });
+  });
+
+  it('maps TagNotFoundError (deleting a nonexistent key) to a NOT_FOUND response', async () => {
+    const tagSvc = mock<TagService>({
+      deleteTag: vi.fn().mockRejectedValue(new TagNotFoundError('high_roller')),
+    });
+    const router = createTagRouter(tagSvc, fakeRuleService(), fakeAllowingGuard());
+    await expect(
+      call(router.deleteTag, { key: 'high_roller' }, { context: AUTHED_CTX }),
+    ).rejects.toMatchObject({ code: 'NOT_FOUND' });
   });
 });

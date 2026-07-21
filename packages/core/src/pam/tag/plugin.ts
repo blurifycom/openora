@@ -7,6 +7,7 @@ import {
 } from '@openora/core/server';
 import {
   PLAYER_TAGS,
+  TAG_EVALUATION_COMMANDS,
   WALLET_READER,
   IDENTITY_READER,
   JOB_QUEUE,
@@ -22,44 +23,58 @@ export default definePlugin({
   id: 'tag',
   dependsOn: ['wallet', 'identity'],
   register(ctx) {
-    let tagEvaluationService: TagEvaluationService | null = null;
+    // One memoized instance backs the PLAYER_TAGS port and the router closure.
+    let svc: TagService | null = null;
+    const tagService = (c: Container) => (svc ??= new TagService(c.get(DRIZZLE), c.get(EVENT_BUS)));
 
-    ctx.events.on('wallet.deposit.completed', (p) => tagEvaluationService?.onDepositCompleted(p));
-    ctx.events.on('wallet.withdrawal.completed', (p) =>
-      tagEvaluationService?.onWithdrawalCompleted(p),
-    );
-    ctx.events.on('wallet.withdrawal.requested', (p) =>
-      tagEvaluationService?.onWithdrawalRequested(p),
-    );
-    ctx.events.on('identity.user.login', (p) => tagEvaluationService?.onUserLogin(p));
-    ctx.events.on('compliance.kyc.submitted', (p) => tagEvaluationService?.onKycSubmitted(p));
-    ctx.events.on('compliance.kyc.updated', (p) => tagEvaluationService?.onKycStatusUpdated(p));
+    // One memoized instance backs the router closure and the TAG_EVALUATION_COMMANDS port.
+    let ruleSvc: TagRuleService | null = null;
+    const ruleService = (c: Container) =>
+      (ruleSvc ??= new TagRuleService(c.get(DRIZZLE), c.get(EVENT_BUS)));
+
+    // One memoized instance backs the daily job, the event subscriptions below, and the
+    // TAG_EVALUATION_COMMANDS port - constructed lazily on first access (via either the
+    // provide() factory or the router factory, whichever runs first) rather than only
+    // inside the router factory, so wallet's synchronous TAG_EVALUATION_COMMANDS call is
+    // never blocked on this module's own router having mounted first.
+    let evalSvc: TagEvaluationService | null = null;
+    const tagEvaluationService = (c: Container) =>
+      (evalSvc ??= new TagEvaluationService(
+        tagService(c),
+        ruleService(c),
+        c.get(WALLET_READER),
+        c.get(IDENTITY_READER),
+      ));
+
+    ctx.provide(PLAYER_TAGS, tagService);
+    // Synchronous counterpart to the wallet.withdrawal.requested subscription below - see
+    // TagEvaluationService.evaluateWithdrawalRequested for why auto-approval can't rely on
+    // the async event handler alone. ADR-0017.
+    ctx.provide(TAG_EVALUATION_COMMANDS, (c) => ({
+      evaluateWithdrawalRequested: (tx, args) =>
+        tagEvaluationService(c).evaluateWithdrawalRequested(tx, args),
+    }));
+
+    ctx.events.on('wallet.deposit.completed', (p) => evalSvc?.onDepositCompleted(p));
+    ctx.events.on('wallet.withdrawal.completed', (p) => evalSvc?.onWithdrawalCompleted(p));
+    ctx.events.on('wallet.withdrawal.requested', (p) => evalSvc?.onWithdrawalRequested(p));
+    ctx.events.on('identity.user.login', (p) => evalSvc?.onUserLogin(p));
+    ctx.events.on('compliance.kyc.submitted', (p) => evalSvc?.onKycSubmitted(p));
+    ctx.events.on('compliance.kyc.updated', (p) => evalSvc?.onKycStatusUpdated(p));
 
     // Daily inactive-player sweep. schedule() is called in the router factory (container access).
     ctx.jobs.worker({
       queue: queue('tag.daily-evaluation'),
       schema: z.object({}),
       handler: async () => {
-        await tagEvaluationService?.runDailyEvaluation();
+        await evalSvc?.runDailyEvaluation();
       },
     });
 
-    // One memoized instance backs both the PLAYER_TAGS port and the router closure.
-    let svc: TagService | null = null;
-    const tagService = (c: Container) => (svc ??= new TagService(c.get(DRIZZLE), c.get(EVENT_BUS)));
-
-    ctx.provide(PLAYER_TAGS, tagService);
-
     ctx.routers.add('tag', (c) => {
       const tagSvc = tagService(c);
-      const ruleSvc = new TagRuleService(c.get(DRIZZLE), c.get(EVENT_BUS));
-      const evalSvc = new TagEvaluationService(
-        tagSvc,
-        ruleSvc,
-        c.get(WALLET_READER),
-        c.get(IDENTITY_READER),
-      );
-      tagEvaluationService = evalSvc;
+      const ruleSvcForRouter = ruleService(c);
+      tagEvaluationService(c); // ensure evalSvc is constructed for the event handlers/job worker above
 
       // Idempotent daily schedule (keyed by scheduleId). In-process driver runs it
       // manually; a durable overlay (BullMQ) fires at cron time.
@@ -72,7 +87,7 @@ export default definePlugin({
           { cron: '0 2 * * *' },
         );
 
-      return createTagRouter(tagSvc, ruleSvc, c.get(ADMIN_GUARD));
+      return createTagRouter(tagSvc, ruleSvcForRouter, c.get(ADMIN_GUARD));
     });
   },
 });

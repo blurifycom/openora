@@ -29,6 +29,12 @@ export { WALLET_COMMANDS } from './wallet-commands.js';
 export type { WalletReader } from './wallet-reader.js';
 export { WALLET_READER } from './wallet-reader.js';
 
+export type {
+  TagEvaluationCommands,
+  TagEvaluationWithdrawalRequestedArgs,
+} from './tag-evaluation-commands.js';
+export { TAG_EVALUATION_COMMANDS } from './tag-evaluation-commands.js';
+
 export type { IdentityReader } from './identity-reader.js';
 export { IDENTITY_READER } from './identity-reader.js';
 

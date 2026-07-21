@@ -24,7 +24,9 @@ export function createTagRouter(tag: TagService, rule: TagRuleService, adminGuar
 
     deleteTag: os.deleteTag.handler(async ({ context, input }) => {
       await adminGuard.assert(context, 'tag', 'delete');
-      return mapErrors({ CONFLICT: TagInUseError }, () => tag.deleteTag(input, getUserId(context)));
+      return mapErrors({ NOT_FOUND: TagNotFoundError, CONFLICT: TagInUseError }, () =>
+        tag.deleteTag(input, getUserId(context)),
+      );
     }),
 
     listPlayerTags: os.listPlayerTags.handler(async ({ context, input }) => {

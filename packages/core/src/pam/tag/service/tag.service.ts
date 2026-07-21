@@ -106,7 +106,13 @@ export class TagService implements PlayerTags {
   public async deleteTag(args: DeleteTagInput, actorId: User['id']) {
     try {
       const db = this.drizzle.db;
-      await db.delete(tag).where(eq(tag.key, args.key));
+      // .returning() is the only signal a genuine delete happened - without it a
+      // no-op delete of a missing key would still fall through and emit tag.deleted,
+      // which the audit module records as a real deletion that never occurred.
+      const deleted = await db.delete(tag).where(eq(tag.key, args.key)).returning();
+      if (deleted.length === 0) {
+        throw new TagNotFoundError(args.key);
+      }
       void this.event.emit('tag.deleted', { key: args.key, actorId });
       return true;
     } catch (e) {
@@ -159,46 +165,76 @@ export class TagService implements PlayerTags {
     return rows.map(toTag);
   }
 
+  // Core idempotent assign, shared by assignPlayerTag (own transaction) and
+  // assignPlayerTagInTx (caller-supplied transaction). Does NOT emit - callers decide
+  // when, since assignPlayerTagInTx's caller owns a transaction this method has no
+  // visibility into committing.
+  private async _assignPlayerTagOnTx(trx: DrizzleTx, args: AssignPlayerTagInput) {
+    const { tagKey, ...restArgs } = args;
+    const foundTag = await this._findTagByKeyOrThrow(tagKey, trx);
+    // Fast/friendly pre-check only - the real guard is the partial unique index
+    // (player_tag_active_key) backing the onConflictDoNothing below. Without it, two
+    // concurrent calls (or the same at-least-once event redelivered) can both pass
+    // this SELECT before either commits, creating duplicate active rows.
+    const [existing] = await trx
+      .select()
+      .from(playerTag)
+      .where(
+        and(
+          eq(playerTag.tagId, foundTag.id),
+          eq(playerTag.playerId, args.playerId),
+          isNull(playerTag.removedAt),
+        ),
+      )
+      .limit(1);
+    if (existing) {
+      throw new TagAlreadyInUseError();
+    }
+    // The loser of a genuine race hits the unique index here instead: its insert is a
+    // no-op (empty returning()), so it throws the same TagAlreadyInUseError as the
+    // pre-check - tryAssignTag already treats that as an idempotent no-op.
+    const [created] = await trx
+      .insert(playerTag)
+      .values({ ...restArgs, tagId: foundTag.id })
+      .onConflictDoNothing({
+        target: [playerTag.tagId, playerTag.playerId],
+        where: isNull(playerTag.removedAt),
+      })
+      .returning();
+    if (!created) {
+      throw new TagAlreadyInUseError();
+    }
+    return toPlayerTagWithTag(created, foundTag.key);
+  }
+
   public async assignPlayerTag(args: AssignPlayerTagInput) {
     try {
-      const { tagKey, ...restArgs } = args;
       const db = this.drizzle.db;
-      const result = await db.transaction(async (trx) => {
-        const foundTag = await this._findTagByKeyOrThrow(tagKey, trx);
-        // Fast/friendly pre-check only - the real guard is the partial unique index
-        // (player_tag_active_key) backing the onConflictDoNothing below. Without it, two
-        // concurrent calls (or the same at-least-once event redelivered) can both pass
-        // this SELECT before either commits, creating duplicate active rows.
-        const [existing] = await trx
-          .select()
-          .from(playerTag)
-          .where(
-            and(
-              eq(playerTag.tagId, foundTag.id),
-              eq(playerTag.playerId, args.playerId),
-              isNull(playerTag.removedAt),
-            ),
-          )
-          .limit(1);
-        if (existing) {
-          throw new TagAlreadyInUseError();
-        }
-        // The loser of a genuine race hits the unique index here instead: its insert is a
-        // no-op (empty returning()), so it throws the same TagAlreadyInUseError as the
-        // pre-check - tryAssignTag already treats that as an idempotent no-op.
-        const [created] = await trx
-          .insert(playerTag)
-          .values({ ...restArgs, tagId: foundTag.id })
-          .onConflictDoNothing({
-            target: [playerTag.tagId, playerTag.playerId],
-            where: isNull(playerTag.removedAt),
-          })
-          .returning();
-        if (!created) {
-          throw new TagAlreadyInUseError();
-        }
-        return toPlayerTagWithTag(created, foundTag.key);
+      const result = await db.transaction((trx) => this._assignPlayerTagOnTx(trx, args));
+      void this.event.emit('tag.player.assigned', {
+        playerId: args.playerId,
+        tagKey: args.tagKey,
+        reason: args.assignReason,
+        actorId: args.assignActorUserId,
       });
+      return result;
+    } catch (e) {
+      mapDbError(e);
+    }
+  }
+
+  /**
+   * Same idempotent assign as assignPlayerTag, but on a caller-supplied transaction handle
+   * (the TAG_EVALUATION_COMMANDS command-port idiom, ADR-0017) so the write commits
+   * atomically with the caller's own writes - eg wallet's withdraw() inserting the
+   * withdrawal request row. Emits tag.player.assigned right after the write (mirrors
+   * PlayerKycStatusWriter.setStatus): this method has no visibility into when the
+   * caller's own transaction actually commits, so - like every other caller-supplied-tx
+   * command port in this repo - it cannot defer the emit past that point.
+   */
+  public async assignPlayerTagInTx(trx: DrizzleTx, args: AssignPlayerTagInput) {
+    try {
+      const result = await this._assignPlayerTagOnTx(trx, args);
       void this.event.emit('tag.player.assigned', {
         playerId: args.playerId,
         tagKey: args.tagKey,
