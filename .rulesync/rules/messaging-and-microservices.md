@@ -3,26 +3,41 @@ root: false
 targets:
   - '*'
 description: Messaging seams (broker / job-queue / realtime), command vs event vs job, the event envelope, outbox, and the service-manifest path to microservices.
+# Scoped to where async seams are used: services (emit/enqueue), plugins (subscribe/
+# provide/workers), adapters, module contracts (eventIterator SSE routes) + the core
+# contracts zone (event schemas, seam ports), module-root port impls (admin-*.ts),
+# the engine, and overlays - not react/schema-only edits.
 globs:
-  - 'packages/**'
+  - 'packages/**/service/**'
+  - 'packages/**/plugin.ts'
+  - 'packages/**/plugins/**'
+  - 'packages/**/adapters/**'
+  - 'packages/**/contract/**'
+  - 'packages/core/src/contracts/**'
+  - 'packages/core/src/**/admin-*.ts'
+  - 'packages/core/src/server/**'
+  - 'packages/testing/**'
   - 'extensions/**'
+  - 'tools/create/**'
 ---
 
 # Messaging and microservices-readiness
 
-A modular monolith today, designed so high-impact modules extract into their own services later with zero module-code changes. Three swappable seams carry all async/cross-process traffic; a transactional outbox makes events durable; a service manifest boots the same codebase as monolith or single-module service. ADR-0010/0014/0016/0017.
+A modular monolith today, designed so high-impact modules extract into their own services later with zero module-code changes. Three swappable seams carry all async/cross-process traffic; a transactional outbox makes events durable; a service manifest boots the same codebase as monolith or single-module service. ADR-0010/0014/0016/0017. **Production is distributed-only (ADR-0030):** `createApp` no longer ships an in-process default for `MESSAGE_BROKER`/`JOB_QUEUE`/`CACHE`/`RATE_LIMITER` - it calls `assertDurableSeamsBound` right after plugins load and throws a clear, actionable error listing every seam still unbound. `REDIS_URL` auto-binds all four to their Redis reference drivers, so setting it is the whole production wiring. The in-process impls (`InMemoryBroker`, `InProcessJobQueue`, `InProcessCache`, `InProcessRateLimiter`, `InProcessRealtimeTransport`, `SseClientAuthorizer`) survive only as test-only doubles in `@openora/core/testing`; `bootTestApp` binds them via a `configure` callback so the suite still runs with zero infra.
 
-## The three seams (ports in `packages/core/src/contracts/adapters/`, default impls in core)
+## The three seams (ports in `packages/core/src/contracts/adapters/`, durable drivers in core; dev/test doubles in `@openora/core/testing`)
 
-| Seam                       | Token                | For                              | Default                        | Durable driver                  |
-| -------------------------- | -------------------- | -------------------------------- | ------------------------------ | ------------------------------- |
-| Inter-module domain events | `MESSAGE_BROKER`     | one module reacts to another     | in-process `InMemoryBroker`    | RabbitMQ (`AMQP_URL`)           |
-| Background jobs            | `JOB_QUEUE`          | durable/retryable/scheduled work | in-process `InProcessJobQueue` | BullMQ + Redis (`REDIS_URL`)    |
-| Client push                | `REALTIME_TRANSPORT` | SSE/WS to the browser            | in-process transport           | managed vendor (Ably/GetStream) |
+| Seam                       | Token                | For                              | Dev/test double (`@openora/core/testing`) | Durable driver (production)                                                 |
+| -------------------------- | -------------------- | -------------------------------- | ----------------------------------------- | --------------------------------------------------------------------------- |
+| Inter-module domain events | `MESSAGE_BROKER`     | one module reacts to another     | `InMemoryBroker`                          | Redis Streams (`REDIS_URL`); RabbitMQ/Kafka via overlay                     |
+| Background jobs            | `JOB_QUEUE`          | durable/retryable/scheduled work | `InProcessJobQueue`                       | BullMQ + Redis (`REDIS_URL`)                                                |
+| Client push                | `REALTIME_TRANSPORT` | SSE/WS to the browser            | `InProcessRealtimeTransport`              | managed vendor (Ably/GetStream); stays lazy, throws on first use if unbound |
 
 `MESSAGE_BROKER` is module-to-module. `REALTIME_TRANSPORT` is server-to-client. Do not conflate them.
 
-The `JOB_QUEUE` BullMQ reference driver (`BullMqJobQueue`) ships in core and auto-binds when `REDIS_URL` is set - jobs survive restarts and cron runs for real, zero consumer code (same auto-bind treatment as the Redis cache/rate-limiter, ADR-0028). The in-process default stays for dev/test; a consumer overlay can still rebind `JOB_QUEUE` (Container last-wins). `orderingKey` is not honoured by this driver (no ordering groups in OSS BullMQ) - restore strict ordering with BullMQ Pro groups or a custom overlay.
+The `MESSAGE_BROKER` reference driver (`RedisStreamsBroker`) ships in core and auto-binds when `REDIS_URL` is set - so a monolith needs only Redis, no separate broker. It uses one Redis Streams consumer group per **service name** (`SERVICE_NAME`, else `monolith`): every replica of a service competes in that group, so an event is handled by exactly one replica, which then fans out to all local handlers for the topic - once per cluster, not once per replica (correct for audit/notifications). Distinct deployments sharing one Redis MUST set distinct `SERVICE_NAME`, so a split service names itself explicitly - `createApp` throws when `SERVICE_MANIFEST` is set without one. The group name can't be derived from `SERVICE_MANIFEST`: that is a list of module ids whose value reorders and grows, while a group name is a durable identity (renaming it strands the old group's pending entries and restarts consumption at `$`). Delivery is at-least-once from group creation onward (crashed-consumer entries are reclaimed via `XAUTOCLAIM`), so handlers stay idempotent; a group's first-ever creation starts at `$`, so a service extracted after events were already flowing does not replay the backlog (`startId: '0'` opts into that, accepting duplicate handler runs). `orderingKey` is not honoured (Streams have no partitioning). A consumer overlay can still re-provide `MESSAGE_BROKER` with RabbitMQ/Kafka.
+
+The `JOB_QUEUE` BullMQ reference driver (`BullMqJobQueue`) ships in core and auto-binds when `REDIS_URL` is set - jobs survive restarts and cron runs for real, zero consumer code (same auto-bind treatment as the Redis cache/rate-limiter, ADR-0028). Production requires either `REDIS_URL` or a consumer overlay to bind `JOB_QUEUE` (Container last-wins) - there is no in-process fallback once `createApp` finishes booting (ADR-0030). `orderingKey` is not honoured by this driver (no ordering groups in OSS BullMQ) - restore strict ordering with BullMQ Pro groups or a custom overlay.
 
 ## Choose the channel: command vs event vs job
 
@@ -57,7 +72,7 @@ The `EventBus` wraps every emission at the broker boundary; module code never bu
 - `orderingKey` - Kafka partition key / RabbitMQ routing for per-user ordering.
 - `schemaVersion` - forward-compatible payload evolution. `traceId` - correlation.
 
-Because the envelope isolates transport from domain logic, binding a durable broker is an overlay swap (a `definePlugin` re-providing `MESSAGE_BROKER`) and extracting a module needs no module edits. Migration path: in-process -> RabbitMQ (set `AMQP_URL`; `docker compose --profile broker up`) -> Kafka (a new overlay implementing `MessageBrokerAdapter`); `topic` maps to routing key/topic, `orderingKey` to partition key, `consumerGroup` to durable queue/consumer group, `eventId` to dedup.
+Because the envelope isolates transport from domain logic, binding a durable broker is an overlay swap (a `definePlugin` re-providing `MESSAGE_BROKER`) and extracting a module needs no module edits. Migration path: Redis Streams (default, `REDIS_URL`) -> RabbitMQ/Kafka (a consumer overlay implementing `MessageBrokerAdapter`); `topic` maps to routing key/topic, `orderingKey` to partition key, `consumerGroup` to durable queue/consumer group, `eventId` to dedup. Swap when you need what Streams lacks: partitioned ordering (`orderingKey` is not honoured), unbounded retention (Streams trim at `STREAM_MAXLEN`), or a dead-letter queue. `AMQP_URL`/`RABBITMQ_URL` do NOT bind a broker - core ships no AMQP driver; they only enable the transactional outbox, same as `OUTBOX_ENABLED`.
 
 ## Deployable topology - the service manifest (ADR-0017)
 
@@ -65,7 +80,7 @@ Because the envelope isolates transport from domain logic, binding a durable bro
 
 - Run a subset: `SERVICE_MANIFEST=identity,wallet <your-app-dev-cmd>`.
 - Scaffold a thin host: `pnpm create:service <name> <modules>` -> `apps/<name>/` baking the manifest, reusing the root `extensions.config.ts`.
-- A manifest must include each module's `dependsOn` deps (topo-sort fails fast). Split services exchanging events need a durable broker (`AMQP_URL`).
+- A manifest must include each module's `dependsOn` deps (topo-sort fails fast). Split services exchanging events need a durable broker (`REDIS_URL`, or a broker overlay) and a distinct `SERVICE_NAME` each - it is the consumer group, so services sharing one compete for the same events instead of each getting a copy. `createApp` throws when `SERVICE_MANIFEST` is set without it.
 
 ## Rules for async work
 

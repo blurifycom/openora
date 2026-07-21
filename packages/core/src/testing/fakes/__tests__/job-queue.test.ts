@@ -1,10 +1,10 @@
 import { describe, it, expect, vi } from 'vitest';
-import { mock } from '../../../testing/mock.js';
 import { z } from 'zod';
 import type { Logger } from 'pino';
 import { queue } from '@openora/core/contracts';
 import { findOneOrThrow } from '@openora/core/server';
 import { InProcessJobQueue } from '../job-queue.js';
+import { mock } from '../../mock.js';
 
 function fakeLogger() {
   return mock<Logger>({ error: vi.fn(), warn: vi.fn(), info: vi.fn(), debug: vi.fn() });

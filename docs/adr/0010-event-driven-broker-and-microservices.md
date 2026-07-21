@@ -2,6 +2,7 @@
 
 **Date**: 2026-05-27
 **Status**: Accepted; foundation implemented (typed bus + broker seam + wiring + atomic money). Only a concrete durable driver remains - see "Implementation backlog".
+**Superseded in part by [ADR-0030](./0030-distributed-only-production-seams.md) (2026-07-16)**: the in-process `InMemoryBroker` default was removed from the production path - production is distributed-only, `createApp` now requires a durable `MESSAGE_BROKER` binding and throws otherwise. `REDIS_URL` auto-binds the in-core `RedisStreamsBroker` reference driver; RabbitMQ/Kafka remain overlay swaps. `InMemoryBroker` survives as a test-only double (`@openora/core/testing`). Everything else here (event-driven decoupling, the broker seam shape, synchronous/atomic money, modular-monolith-now-extract-later) still stands.
 
 ## Context
 

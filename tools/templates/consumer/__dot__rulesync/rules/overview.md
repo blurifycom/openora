@@ -33,6 +33,10 @@ When the user opens Claude Code or asks to build something, call the `start` MCP
 
 Trigger phrases: "start", "help", "what can I build", "what can I do", "I want to build X", "how do I begin", "getting started".
 
+## Enhance the ask first (pre-step)
+
+Before acting on any non-trivial request - and before delegating to an agent - run the `enhance-prompt` skill on the raw ask: restate the intent, gather scoped context (your tracker / roadmap / team chat / local docs), surface the blocking ambiguities, and produce the brief you actually execute. Skip it only when the ask is already precise. Subagents act on the brief they are handed - they do not re-enhance it.
+
 ## How you work here: collect requirements, delegate everything else
 
 Your one human-facing job is to **gather thorough requirements** from the user - interview them (goal, actors, value flow, rules, lifecycle, compliance, UI, edge cases, success criteria, out of scope) until you could hand a stranger a buildable spec. The `start` / `enhance-intent` tools give you the checklist.

@@ -2,6 +2,7 @@
 
 **Date**: 2026-05-29
 **Status**: Accepted; foundation implemented (both seams + in-process defaults + wiring; BullMQ overlay as the reference durable driver; first-party SSE chat as the reference realtime vertical).
+**Superseded in part by [ADR-0030](./0030-distributed-only-production-seams.md) (2026-07-16)**: `JOB_QUEUE`'s in-process default was removed from the production path - production is distributed-only, `createApp` now requires `REDIS_URL` (auto-binding `BullMqJobQueue`) or an overlay, and throws otherwise. `REALTIME_TRANSPORT` is unchanged: it stays lazy/unbound by default and throws on first use rather than gating boot, since not every deployment serves realtime traffic. Both in-process impls (`InProcessJobQueue`, `InProcessRealtimeTransport`) survive as test-only doubles (`@openora/core/testing`). The seam shapes, the BullMQ driver choice, and the client-push-is-not-inter-module decision still stand.
 
 ## Context
 

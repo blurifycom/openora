@@ -6,7 +6,9 @@
  * required piece mid-task ("constraint decay"). Runs in `pnpm verify`.
  *
  * A "domain" is any dir under packages/core/src/ other than the engine zones
- * (contracts, server, react, scripts). Single-slice ones keep index.ts + plugin.ts
+ * (contracts, server, react, scripts) and the cross-cutting shared zones (common,
+ * testing - same exclusion as the oxlint boundaries/module-shape plugins). Single-slice
+ * ones keep index.ts + plugin.ts
  * at their root (wallet, iam, audit, ...); multi-slice ones (casino: gaming/lobby;
  * engagement; pam) keep index.ts + per-slice plugin/contract/schema.
  *
@@ -27,7 +29,7 @@ import { fileURLToPath } from 'node:url';
 const repoRoot = join(dirname(fileURLToPath(import.meta.url)), '../..');
 // Domains fold into @openora/core as subpaths. See ADR-0025.
 const coreSrc = join(repoRoot, 'packages', 'core', 'src');
-const engineDirs = new Set(['contracts', 'server', 'react', 'scripts']);
+const engineDirs = new Set(['contracts', 'server', 'react', 'scripts', 'common', 'testing']);
 const addonsRoot = join(repoRoot, 'packages', 'addons');
 
 type Check = { label: string; ok: boolean; hint: string };
@@ -129,7 +131,7 @@ function checkAddon(dir: string): Check[] {
     {
       label: 'AGENTS.md',
       ok: file('AGENTS.md'),
-      hint: 'every add-on ships an AGENTS.md (extension points, do/dont, Done-when)',
+      hint: 'every add-on ships an AGENTS.md (invariants, rationale, extension seams - no route/table listings)',
     },
   ];
 }
