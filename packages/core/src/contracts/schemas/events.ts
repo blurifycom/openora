@@ -282,9 +282,11 @@ export function getEventVersion(event: string): number {
   return domainEventVersions[event as DomainEventName] ?? 1;
 }
 
+export const DOMAIN_EVENT_CATALOG = Object.keys(domainEventSchemas) as DomainEventName[];
+
 /** Returns every cross-module topic and its current schema version for broker provisioning and producer/consumer agreement checks. */
 export function eventCatalog(): ReadonlyArray<{ topic: DomainEventName; version: number }> {
-  return (Object.keys(domainEventSchemas) as DomainEventName[]).map((topic) => ({
+  return DOMAIN_EVENT_CATALOG.map((topic) => ({
     topic,
     version: getEventVersion(topic),
   }));
