@@ -1,11 +1,6 @@
 import { describe, it, expect, vi } from 'vitest';
 import { mock, mockDb } from '../../testing/mock.js';
-import {
-  AuditService,
-  computeHash,
-  startOfDayUtc,
-  endOfDayUtc,
-} from '../service/audit.service.js';
+import { AuditService, computeHash, startOfDayUtc, endOfDayUtc } from '../service/audit.service.js';
 import { AuditListFiltersSchema } from '../contract/index.js';
 
 describe('computeHash canonical form', () => {
@@ -500,7 +495,10 @@ describe('audit date-range boundaries', () => {
   });
 
   it('list filters accept bare YYYY-MM-DD dates', () => {
-    const parsed = AuditListFiltersSchema.safeParse({ fromDate: '2026-07-01', toDate: '2026-07-21' });
+    const parsed = AuditListFiltersSchema.safeParse({
+      fromDate: '2026-07-01',
+      toDate: '2026-07-21',
+    });
     expect(parsed.success).toBe(true);
   });
 
