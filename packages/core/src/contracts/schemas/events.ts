@@ -254,6 +254,15 @@ export const domainEventSchemas = {
     actorId: UuidSchema,
     after: z.record(z.string(), z.unknown()),
   }),
+
+  // A player's level changed via the admin PlayerService.update() path. actorId is the
+  // acting admin. Consumed by the tag module to keep the single mutable `level` tag in sync.
+  'player.level.changed': z.object({
+    userId: UuidSchema,
+    previousLevel: z.number().int(),
+    newLevel: z.number().int(),
+    actorId: UuidSchema,
+  }),
 } as const;
 
 export type DomainEventName = keyof typeof domainEventSchemas;

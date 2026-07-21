@@ -61,6 +61,9 @@ export default definePlugin({
     ctx.events.on('identity.user.login', (p) => evalSvc?.onUserLogin(p));
     ctx.events.on('compliance.kyc.submitted', (p) => evalSvc?.onKycSubmitted(p));
     ctx.events.on('compliance.kyc.updated', (p) => evalSvc?.onKycStatusUpdated(p));
+    ctx.events.on('rg.self_exclusion.activated', (p) => evalSvc?.onSelfExclusionActivated(p));
+    ctx.events.on('rg.self_exclusion.lifted', (p) => evalSvc?.onSelfExclusionLifted(p));
+    ctx.events.on('player.level.changed', (p) => evalSvc?.onPlayerLevelChanged(p));
 
     // Daily inactive-player sweep. schedule() is called in the router factory (container access).
     ctx.jobs.worker({

@@ -36,6 +36,7 @@ function makeServices(rules: Partial<Record<string, TagRule>> = {}) {
     assignPlayerTag: vi.fn().mockResolvedValue(undefined),
     assignPlayerTagInTx: vi.fn().mockResolvedValue(undefined),
     removePlayerTag: vi.fn().mockResolvedValue(undefined),
+    replacePlayerTag: vi.fn().mockResolvedValue(undefined),
     getActiveTagKeys: vi.fn().mockResolvedValue(new Map()),
     listActivePlayerUserIdsByTagKey: vi.fn().mockResolvedValue([]),
   });
@@ -621,6 +622,133 @@ describe('TagEvaluationService', () => {
           expect.objectContaining({ playerId: 'p2', tagKey: 'high_risk' }),
         );
       });
+    });
+  });
+
+  describe('onSelfExclusionActivated', () => {
+    it('assigns self_excluded', async () => {
+      const { service, tag } = makeServices();
+      await service.onSelfExclusionActivated({
+        userId: UID,
+        actorId: SYSTEM_ACTOR_ID,
+        reason: 'player requested self-exclusion',
+        exclusionId: '33333333-3333-4333-8333-333333333333',
+        isPermanent: false,
+        expiresAt: new Date().toISOString(),
+      });
+      expect(tag.assignPlayerTag).toHaveBeenCalledWith(
+        expect.objectContaining({ playerId: UID, tagKey: 'self_excluded' }),
+      );
+    });
+
+    it('is idempotent when self_excluded is already assigned', async () => {
+      const { service, tag } = makeServices();
+      tag.assignPlayerTag = vi.fn().mockRejectedValue(new TagAlreadyInUseError());
+      await expect(
+        service.onSelfExclusionActivated({
+          userId: UID,
+          actorId: SYSTEM_ACTOR_ID,
+          reason: 'player requested self-exclusion',
+          exclusionId: '33333333-3333-4333-8333-333333333333',
+          isPermanent: false,
+          expiresAt: null,
+        }),
+      ).resolves.toBeUndefined();
+    });
+  });
+
+  describe('onSelfExclusionLifted', () => {
+    it('removes self_excluded', async () => {
+      const { service, tag } = makeServices();
+      await service.onSelfExclusionLifted({
+        userId: UID,
+        actorId: SYSTEM_ACTOR_ID,
+        reason: 'exclusion period expired',
+        exclusionId: '33333333-3333-4333-8333-333333333333',
+        kind: 'self_exclusion',
+      });
+      expect(tag.removePlayerTag).toHaveBeenCalledWith(
+        expect.objectContaining({ playerId: UID, tagKey: 'self_excluded' }),
+      );
+    });
+
+    it('is idempotent when self_excluded was never assigned', async () => {
+      const { service, tag } = makeServices();
+      tag.removePlayerTag = vi.fn().mockRejectedValue(new TagAssignmentNotFoundError(UID));
+      await expect(
+        service.onSelfExclusionLifted({
+          userId: UID,
+          actorId: SYSTEM_ACTOR_ID,
+          reason: 'exclusion period expired',
+          exclusionId: '33333333-3333-4333-8333-333333333333',
+          kind: 'self_exclusion',
+        }),
+      ).resolves.toBeUndefined();
+    });
+  });
+
+  describe('onPlayerLevelChanged', () => {
+    it('atomically replaces the level tag with the new level in the assign reason', async () => {
+      const { service, tag } = makeServices();
+      await service.onPlayerLevelChanged({
+        userId: UID,
+        previousLevel: 3,
+        newLevel: 4,
+        actorId: SYSTEM_ACTOR_ID,
+      });
+      expect(tag.replacePlayerTag).toHaveBeenCalledTimes(1);
+      expect(tag.replacePlayerTag).toHaveBeenCalledWith({
+        playerId: UID,
+        tagKey: 'level',
+        removalReason: 'player level changed',
+        assignReason: 'player level set to 4',
+        assignActor: 'scheduled',
+        assignActorUserId: SYSTEM_ACTOR_ID,
+      });
+      // The swap must never go through the two-transaction remove/assign pair - that
+      // path can strand the player with no active level row on a mid-swap failure.
+      expect(tag.removePlayerTag).not.toHaveBeenCalled();
+      expect(tag.assignPlayerTag).not.toHaveBeenCalled();
+    });
+
+    it('swallows TagAlreadyInUseError when a concurrent replace won the race', async () => {
+      const { service, tag } = makeServices();
+      tag.replacePlayerTag = vi.fn().mockRejectedValue(new TagAlreadyInUseError());
+      await expect(
+        service.onPlayerLevelChanged({
+          userId: UID,
+          previousLevel: 0,
+          newLevel: 1,
+          actorId: SYSTEM_ACTOR_ID,
+        }),
+      ).resolves.toBeUndefined();
+    });
+
+    it('rethrows unexpected errors from the replace', async () => {
+      const { service, tag } = makeServices();
+      tag.replacePlayerTag = vi.fn().mockRejectedValue(new Error('connection lost'));
+      await expect(
+        service.onPlayerLevelChanged({
+          userId: UID,
+          previousLevel: 0,
+          newLevel: 1,
+          actorId: SYSTEM_ACTOR_ID,
+        }),
+      ).rejects.toThrow('connection lost');
+    });
+
+    it('is a no-op when the playerId is unknown to the identity reader', async () => {
+      const { service, tag, identityReader } = makeServices();
+      identityReader.getPlayerIdByUserId = vi.fn().mockResolvedValue(null);
+      await expect(
+        service.onPlayerLevelChanged({
+          userId: UID,
+          previousLevel: 3,
+          newLevel: 4,
+          actorId: SYSTEM_ACTOR_ID,
+        }),
+      ).resolves.toBeUndefined();
+      expect(tag.replacePlayerTag).not.toHaveBeenCalled();
     });
   });
 

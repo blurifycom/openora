@@ -275,6 +275,58 @@ export class TagEvaluationService {
   }
 
   /**
+   * Assigns self_excluded when a player activates self-exclusion.
+   * Called on rg.self_exclusion.activated.
+   */
+  async onSelfExclusionActivated(payload: unknown) {
+    const { userId } = domainEventSchemas['rg.self_exclusion.activated'].parse(payload);
+    await this.tryAssignTag(userId, 'self_excluded', 'self-exclusion activated');
+  }
+
+  /**
+   * Removes self_excluded when a player's self-exclusion is lifted.
+   * Called on rg.self_exclusion.lifted.
+   */
+  async onSelfExclusionLifted(payload: unknown) {
+    const { userId } = domainEventSchemas['rg.self_exclusion.lifted'].parse(payload);
+    await this.tryRemoveTag(userId, 'self_excluded', 'self-exclusion lifted');
+  }
+
+  /**
+   * Replaces the single mutable `level` tag with the player's new level.
+   * Called on player.level.changed (emitted by PlayerService.update() after commit).
+   * Not sticky - the level value lives only in assignReason text, never as a separate
+   * tag key per level. The swap goes through TagService.replacePlayerTag: removal of
+   * the prior active row (silent no-op when absent) + insert of the new one on ONE
+   * transaction, so a mid-swap failure can never strand the player with the old row
+   * removed and no new one committed. The loser of a concurrent replace throws
+   * TagAlreadyInUseError with nothing committed - swallowed here as the usual
+   * idempotent no-op (player.level itself stays the source of truth).
+   */
+  async onPlayerLevelChanged(payload: unknown) {
+    const { userId, newLevel } = domainEventSchemas['player.level.changed'].parse(payload);
+    const playerId = await this.identityReader.getPlayerIdByUserId(userId);
+    if (!playerId) {
+      return;
+    }
+    try {
+      await this.tag.replacePlayerTag({
+        playerId,
+        tagKey: 'level',
+        removalReason: 'player level changed',
+        assignReason: `player level set to ${newLevel}`,
+        assignActor: 'scheduled',
+        assignActorUserId: SYSTEM_ACTOR_ID,
+      });
+    } catch (e) {
+      if (e instanceof TagAlreadyInUseError) {
+        return;
+      }
+      throw e;
+    }
+  }
+
+  /**
    * Daily scheduled evaluation, three independent sweeps:
    *  - inactive: assigns to players who have not logged in for rule.thresholdDays
    *    days. Removal is handled by onUserLogin on next login.

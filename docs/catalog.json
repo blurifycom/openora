@@ -592,6 +592,7 @@
     "identity.user.registered",
     "identity.user.unlocked",
     "notifications.created",
+    "player.level.changed",
     "rg.cooling_off.activated",
     "rg.exclusion.login_blocked",
     "rg.limit.set",
@@ -1061,6 +1062,10 @@
     },
     {
       "name": "removePlayerTagSchema",
+      "file": "packages/core/src/contracts/schemas/tag.ts"
+    },
+    {
+      "name": "replacePlayerTagSchema",
       "file": "packages/core/src/contracts/schemas/tag.ts"
     },
     {

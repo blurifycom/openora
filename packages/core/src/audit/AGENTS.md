@@ -75,7 +75,12 @@ extraction / OOM - narrow the date range and paginate for larger windows, or use
 `compliance.kyc.reverify_required`, `compliance.geo-rule.added`,
 `rg.limit.set`, `rg.cooling_off.activated`, `rg.self_exclusion.activated`,
 `rg.self_exclusion.lifted`, `rg.exclusion.login_blocked`,
-`cms.page.published`, `iam.invitation.accepted`.
+`cms.page.published`, `iam.invitation.accepted`, `player.level.changed`.
+
+`player.level.changed` (emitted by `player-management`'s `PlayerService.update()` after
+commit, when an admin edits `player.level`) maps to `actorType='admin'`,
+`actorId=actorId`, `resourceType='player'`, `resourceId=userId`,
+`before={ level: previousLevel }`, `after={ level: newLevel }`.
 
 The RG activity log / change history reuses this module: `list`/`exportCsv` take an
 optional `actionPrefix` filter (`like(action, 'rg.%')`); the four admin RG events map

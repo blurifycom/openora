@@ -15,7 +15,7 @@ export default definePlugin({
     );
     ctx.routers.add('player', (c) =>
       createPlayerRouter(
-        new PlayerService(c.get(DRIZZLE), c.get(KYC_STATUS_WRITER)),
+        new PlayerService(c.get(DRIZZLE), c.get(KYC_STATUS_WRITER), c.get(EVENT_BUS)),
         c.get(ADMIN_GUARD),
       ),
     );

@@ -250,6 +250,20 @@ function mapEventToRecord(topic: string, p: Record<string, unknown>): RecordInpu
     };
   }
 
+  // Admin changed a player's level via PlayerService.update(). resource = the
+  // subject player; before/after carry the level transition.
+  if (topic === 'player.level.changed') {
+    return {
+      ...base,
+      actorType: 'admin',
+      actorId: str(p['actorId']),
+      resourceType: 'player',
+      resourceId: str(p['userId']),
+      before: { level: p['previousLevel'] ?? null },
+      after: { level: p['newLevel'] ?? null },
+    };
+  }
+
   // System-automated or admin-manual tag assignment/removal.
   // actorId = SYSTEM_ACTOR_ID (zero UUID) for automated ops; admin user id for manual.
   if (topic === 'tag.player.assigned' || topic === 'tag.player.removed') {
@@ -439,6 +453,7 @@ const SUBSCRIBED_TOPICS: DomainEventName[] = [
   'tag.player.assigned',
   'tag.player.removed',
   'tag.rule.upserted',
+  'player.level.changed',
 ] as const;
 
 export default definePlugin({
