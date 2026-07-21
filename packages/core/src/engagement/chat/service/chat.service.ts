@@ -131,7 +131,10 @@ function generatePrivateRoomSlug(joinCode: string): string {
 }
 
 function isUniqueConstraintViolation(e: unknown): boolean {
-  return (e as { code?: unknown }).code === '23505';
+  if (typeof e !== 'object' || e === null || !('code' in e)) {
+    return false;
+  }
+  return e.code === '23505';
 }
 
 export class ChatService {
@@ -484,10 +487,18 @@ export class ChatService {
     if (existing) {
       throw new ChatRoomSlugConflictError();
     }
-    const [record] = await this.drizzle.db
-      .insert(chatRoom)
-      .values({ name, slug, category })
-      .returning();
+    let record: typeof chatRoom.$inferSelect;
+    try {
+      [record] = await this.drizzle.db
+        .insert(chatRoom)
+        .values({ name, slug, category })
+        .returning();
+    } catch (error) {
+      if (isUniqueConstraintViolation(error)) {
+        throw new ChatRoomSlugConflictError();
+      }
+      throw error;
+    }
     this.events.emit('chat.room.created', { roomId: record.id, name, slug, category, actorId });
     return toRoom(record);
   }
@@ -533,14 +544,22 @@ export class ChatService {
     if (category !== undefined) {
       patch.category = category;
     }
-    const updated = findOneOrThrow(
-      await this.drizzle.db
-        .update(chatRoom)
-        .set(patch)
-        .where(and(eq(chatRoom.id, id), isNull(chatRoom.deletedAt)))
-        .returning(),
-      new ChatRoomNotFoundError(id),
-    );
+    let updated: typeof chatRoom.$inferSelect;
+    try {
+      updated = findOneOrThrow(
+        await this.drizzle.db
+          .update(chatRoom)
+          .set(patch)
+          .where(and(eq(chatRoom.id, id), isNull(chatRoom.deletedAt)))
+          .returning(),
+        new ChatRoomNotFoundError(id),
+      );
+    } catch (error) {
+      if (isUniqueConstraintViolation(error)) {
+        throw new ChatRoomSlugConflictError();
+      }
+      throw error;
+    }
     this.events.emit('chat.room.updated', {
       roomId: id,
       actorId,
@@ -625,28 +644,47 @@ export class ChatService {
   }
 
   async joinRoom({ userId, joinCode }: { userId: User['id']; joinCode: string }) {
-    const [room] = await this.drizzle.db
-      .select()
+    const [candidate] = await this.drizzle.db
+      .select({ id: chatRoom.id })
       .from(chatRoom)
       .where(and(eq(chatRoom.joinCode, joinCode), isNull(chatRoom.deletedAt)))
       .limit(1);
-    if (!room) {
+    if (!candidate) {
       throw new ChatRoomJoinCodeNotFoundError(joinCode);
     }
-    const [ban] = await this.drizzle.db
-      .select({ id: chatRoomBan.id })
-      .from(chatRoomBan)
-      .where(and(eq(chatRoomBan.roomId, room.id), eq(chatRoomBan.userId, userId)))
-      .limit(1);
-    if (ban) {
-      throw new ChatRoomBannedError(room.id);
-    }
-    // Idempotent: re-joining is a no-op (preserves existing role).
-    const inserted = await this.drizzle.db
-      .insert(chatRoomMember)
-      .values({ roomId: room.id, userId })
-      .onConflictDoNothing()
-      .returning();
+    const { room, inserted } = await this.drizzle.db.transaction((t) =>
+      withAdvisoryXactLock(t, `chat-room:${candidate.id}`, async () => {
+        const [room] = await t
+          .select()
+          .from(chatRoom)
+          .where(
+            and(
+              eq(chatRoom.id, candidate.id),
+              eq(chatRoom.joinCode, joinCode),
+              isNull(chatRoom.deletedAt),
+            ),
+          )
+          .limit(1);
+        if (!room) {
+          throw new ChatRoomJoinCodeNotFoundError(joinCode);
+        }
+        const [ban] = await t
+          .select({ id: chatRoomBan.id })
+          .from(chatRoomBan)
+          .where(and(eq(chatRoomBan.roomId, room.id), eq(chatRoomBan.userId, userId)))
+          .limit(1);
+        if (ban) {
+          throw new ChatRoomBannedError(room.id);
+        }
+        // Idempotent: re-joining is a no-op (preserves existing role).
+        const inserted = await t
+          .insert(chatRoomMember)
+          .values({ roomId: room.id, userId })
+          .onConflictDoNothing()
+          .returning();
+        return { room, inserted };
+      }),
+    );
     if (inserted.length > 0) {
       this.events.emit('chat.room.member.joined', { roomId: room.id, userId });
     }
@@ -706,6 +744,7 @@ export class ChatService {
         .where(and(eq(chatRoomMember.roomId, roomId), eq(chatRoomMember.userId, userId)));
     });
     this.events.emit('chat.room.member.kicked', { roomId, userId, kickedBy: moderatorId });
+    await this.transport.revokeClient?.(userId);
     return { success: true } as const;
   }
 
@@ -723,24 +762,27 @@ export class ChatService {
     }
     await this.verifyRoomAccess(roomId, moderatorId);
     // Idempotent: banning an already-banned user is a no-op.
-    await this.drizzle.db.transaction(async (t) => {
-      const [mod] = await t
-        .select({ role: chatRoomMember.role })
-        .from(chatRoomMember)
-        .where(and(eq(chatRoomMember.roomId, roomId), eq(chatRoomMember.userId, moderatorId)))
-        .limit(1);
-      if (!mod || mod.role !== 'moderator') {
-        throw new ChatRoomNotModeratorError(roomId);
-      }
-      await t
-        .insert(chatRoomBan)
-        .values({ roomId, userId, bannedBy: moderatorId })
-        .onConflictDoNothing();
-      await t
-        .delete(chatRoomMember)
-        .where(and(eq(chatRoomMember.roomId, roomId), eq(chatRoomMember.userId, userId)));
-    });
+    await this.drizzle.db.transaction((t) =>
+      withAdvisoryXactLock(t, `chat-room:${roomId}`, async () => {
+        const [mod] = await t
+          .select({ role: chatRoomMember.role })
+          .from(chatRoomMember)
+          .where(and(eq(chatRoomMember.roomId, roomId), eq(chatRoomMember.userId, moderatorId)))
+          .limit(1);
+        if (!mod || mod.role !== 'moderator') {
+          throw new ChatRoomNotModeratorError(roomId);
+        }
+        await t
+          .insert(chatRoomBan)
+          .values({ roomId, userId, bannedBy: moderatorId })
+          .onConflictDoNothing();
+        await t
+          .delete(chatRoomMember)
+          .where(and(eq(chatRoomMember.roomId, roomId), eq(chatRoomMember.userId, userId)));
+      }),
+    );
     this.events.emit('chat.room.member.banned', { roomId, userId, bannedBy: moderatorId });
+    await this.transport.revokeClient?.(userId);
     return { success: true } as const;
   }
 

@@ -462,8 +462,8 @@ describe('ChatService.createPrivateRoom', () => {
 
 describe('ChatService.joinRoom', () => {
   it('joins a private room via join code and returns the room', async () => {
-    // (1) find room by joinCode -> privateRoomRow, (2) check ban -> empty, (3) insert member -> no-op
-    const drizzle = makeDrizzle({ select: [[privateRoomRow], [], []] });
+    // (1) find room id by joinCode, (2) re-read room under the membership lock, (3) check ban.
+    const drizzle = makeDrizzle({ select: [[{ id: 'r2' }], [privateRoomRow], []] });
     const result = await makeAdminService(drizzle).joinRoom({ userId: 'u2', joinCode: 'ABC123' });
     expect(result.id).toBe('r2');
     expect(result.joinCode).toBe('ABC123');
@@ -478,8 +478,10 @@ describe('ChatService.joinRoom', () => {
   });
 
   it('throws ChatRoomBannedError when user is banned from the room', async () => {
-    // (1) find room -> privateRoomRow, (2) check ban -> ban record found
-    const drizzle = makeDrizzle({ select: [[privateRoomRow], [{ id: 'ban1' }]] });
+    // (1) find room id by joinCode, (2) re-read room, (3) check ban -> ban record found
+    const drizzle = makeDrizzle({
+      select: [[{ id: 'r2' }], [privateRoomRow], [{ id: 'ban1' }]],
+    });
     await expect(
       makeAdminService(drizzle).joinRoom({ userId: 'u2', joinCode: 'ABC123' }),
     ).rejects.toThrow(ChatRoomBannedError);

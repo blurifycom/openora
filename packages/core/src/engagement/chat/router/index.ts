@@ -64,12 +64,11 @@ export function createChatRouter(
 
   return os.router({
     listRooms: os.listRooms.handler(({ context }) => {
-      const userId = getUserId(context);
-      return chatService.listRooms(userId);
+      return chatService.listRooms(resolveViewerId(context));
     }),
 
     getRoomMessages: os.getRoomMessages.handler(({ input, context }) => {
-      const viewerId = getUserId(context);
+      const viewerId = resolveViewerId(context);
       return mapErrors(
         { NOT_FOUND: ChatRoomNotFoundError, FORBIDDEN: ChatRoomNotMemberError },
         () =>
@@ -133,8 +132,8 @@ export function createChatRouter(
 
     streamMessages: os.streamMessages.handler(async ({ input, signal, context }) => {
       const roomId = input.roomId ?? null;
-      // Room streams require auth; global stream allows anonymous viewers.
-      const viewerId = roomId ? getUserId(context) : resolveViewerId(context);
+      // Private-room streams require membership; public-room and global streams are readable anonymously.
+      const viewerId = resolveViewerId(context);
       if (roomId) {
         await mapErrors(
           { NOT_FOUND: ChatRoomNotFoundError, FORBIDDEN: ChatRoomNotMemberError },
@@ -152,7 +151,7 @@ export function createChatRouter(
       if (roomId) {
         await mapErrors(
           { NOT_FOUND: ChatRoomNotFoundError, FORBIDDEN: ChatRoomNotMemberError },
-          () => chatService.verifyRoomAccess(roomId, getUserId(context)),
+          () => chatService.verifyRoomAccess(roomId, resolveViewerId(context)),
         );
       }
       return chatService.getOnlineCount(roomId);
@@ -202,7 +201,7 @@ export function createChatRouter(
 
     getRoom: os.getRoom.handler(({ input, context }) =>
       mapErrors({ NOT_FOUND: ChatRoomNotFoundError, FORBIDDEN: ChatRoomNotMemberError }, () =>
-        chatService.getRoom({ roomId: input.roomId, viewerId: getUserId(context) }),
+        chatService.getRoom({ roomId: input.roomId, viewerId: resolveViewerId(context) }),
       ),
     ),
 

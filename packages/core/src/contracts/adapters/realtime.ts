@@ -28,6 +28,8 @@ export type RealtimeTransport = {
   // Subscribe a handler to a channel. Returns an unsubscribe fn the caller MUST
   // invoke on teardown (eg an SSE handler on request abort).
   subscribe<T>(channel: string, handler: (event: T) => void): () => void;
+  // Revoke managed-provider credentials for a client after access is removed.
+  revokeClient?: (clientId: string) => void | Promise<void>;
   presence?: RealtimePresence;
 };
 

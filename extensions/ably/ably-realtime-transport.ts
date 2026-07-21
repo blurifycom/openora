@@ -14,6 +14,12 @@ export type AblyChannelClient = {
 
 export type AblyRealtimeClient = {
   channels: { get(channel: string): AblyChannelClient };
+  auth: {
+    revokeTokens(
+      specifiers: { type: string; value: string }[],
+      options?: { allowReauthMargin?: boolean },
+    ): Promise<unknown>;
+  };
 };
 
 export type AblyLogger = Pick<ReturnType<typeof createLogger>, 'warn'>;
@@ -66,5 +72,15 @@ export class AblyRealtimeTransport implements RealtimeTransport {
 
   subscribe<T>(_channel: string, _handler: (event: T) => void) {
     return () => {};
+  }
+
+  async revokeClient(clientId: string) {
+    try {
+      await this.rest.auth.revokeTokens([{ type: 'clientId', value: clientId }], {
+        allowReauthMargin: false,
+      });
+    } catch (err) {
+      this.log.warn({ err, clientId }, 'Ably client token revocation failed.');
+    }
   }
 }
