@@ -1,6 +1,6 @@
 import { describe, it, expect, vi } from 'vitest';
 import { mockDb } from '../../../testing/mock.js';
-import { InProcessCache } from '@openora/core/server';
+import { InProcessCache } from '@openora/core/testing';
 import { LobbyService } from '../service/lobby.service.js';
 
 function makeDb(slotRows: unknown[], gameRows: unknown[]) {

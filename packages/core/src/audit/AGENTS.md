@@ -1,133 +1,30 @@
-# Audit Module
+# audit
 
-Append-only, tamper-evident audit log. A regulatory requirement under MGA/UKGC:
-operators must retain an immutable 5-year record of player financial transactions,
-admin actions, game results, login/logout events, and config/permission changes.
-
-## What this module does
-
-Owns the `audit_log` table. Each row is hash-chained to the previous row via SHA-256,
-making the log tamper-evident: any modified or deleted row breaks the chain at that point,
-detectable by `verifyChain()`. The module exposes two admin routes (`audit.list`,
-`audit.exportCsv`), subscribes to platform domain events to record them automatically,
-and binds the `AUDIT_WRITER` port so other modules can record entries explicitly
-without importing this module's internals.
-
-## Layout
-
-| Layer    | File                       | Holds                                                                          |
-| -------- | -------------------------- | ------------------------------------------------------------------------------ |
-| schema   | `schema/index.ts`          | `audit_log` pgTable + `actorTypeEnum`. Append-only by design.                  |
-| contract | `contract/index.ts`        | oRPC contract slice + Zod schemas; exported as `@openora/core/audit/contract`. |
-| service  | `service/audit.service.ts` | `record`, `list`, `exportCsv`, `verifyChain`.                                  |
-| router   | `router/index.ts`          | `audit.list` (audit:view), `audit.exportCsv` (audit:export).                   |
-| plugin   | `plugin.ts`                | DI wiring, AUDIT_WRITER port, event subscriptions.                             |
+Append-only, tamper-evident audit log - a regulatory requirement (MGA/UKGC: immutable 5-year record of financial transactions, admin actions, game results, logins, config/permission changes). Owns `audit_log`, exposes admin-guarded `audit.list`/`audit.exportCsv`, auto-records subscribed domain events, and binds the `AUDIT_WRITER` port for explicit writes. Subscribed topics: `SUBSCRIBED_TOPICS` in `plugin.ts` - only topics declared in `domainEventSchemas`, never invented ones. Routes and table: `contract/index.ts`, `schema/index.ts`.
 
 ## Sealed token
 
-`AUDIT_WRITER` is a real `SealedToken<AuditWritePort>` (AML/SAR audit writes are
-a regulator-mandated invariant operators must not override - MGA/UKGC). This
-module binds it via `ctx.provideSealed()` in `plugin.ts` - the only legitimate
-bind path for a sealed token: `ctx.provide()` still rejects any sealed token
-outright, and `provideSealed()` itself refuses a second bind for the same
-token, so no overlay can rebind `AUDIT_WRITER` after this module registers it.
-See `@openora/core/contracts` `adapters/token.ts` for the `provideSealed`
-rationale and `@openora/core/compliance` `sealed.ts` for the canonical list.
+`AUDIT_WRITER` is a `SealedToken<AuditWritePort>` - AML/SAR audit writes are a regulator-mandated invariant operators must not override. This module binds it via `ctx.provideSealed()` in `plugin.ts`, the only legitimate bind path: `ctx.provide()` rejects sealed tokens outright and `provideSealed()` refuses a second bind, so no overlay can rebind it. Rationale: `@openora/core/contracts` `adapters/token.ts`; canonical sealed list: `@openora/core/compliance` `sealed.ts`.
 
-## Hash chain approach
+## Hash chain
 
-Each `record()` call, inside a single transaction serialized via a pg advisory lock:
+Each `record()` runs in a single transaction serialized by a pg advisory lock:
 
-1. Reads the latest row's `hash` (or null for the first row) to derive `prevHash`.
-2. Computes `sha256(JSON.stringify({ id, actorId, actorType, action, resourceType, resourceId, before, after, result, seq, createdAt, prevHash: prevHash ?? '' }))` - stable top-level key order, no tenantId (single-tenant). `before`/`after`/`result` are IN the hash: the mutation payload and outcome must be tamper-evident, not just the who/what/where.
-3. Inserts the row with `prevHash` and the real `hash` in one statement - no read-back UPDATE, so a crash can never leave a placeholder hash.
+1. Read the latest row's `hash` (null for the first row) as `prevHash`.
+2. Compute `sha256(JSON.stringify(...))` over the full row INCLUDING `before`/`after`/`result` - the mutation payload and outcome must be tamper-evident, not just who/what/where - with stable top-level key order.
+3. Insert `prevHash` + the real `hash` in ONE statement - no read-back UPDATE, so a crash can never leave a placeholder hash.
 
-`before`/`after` are `jsonb` columns; Postgres reorders their nested object keys
-(length-then-lex) on read-back, so `computeHash` deep-sorts the keys of `before`/`after`
-(arrays keep their original order) before stringifying - otherwise a freshly-inserted row
-and the same row read back from `verifyChain()` would hash differently despite identical
-content.
+Gotcha: `before`/`after` are `jsonb` and Postgres reorders nested object keys on read-back (length-then-lex), so `computeHash` deep-sorts those keys (arrays keep order) before stringifying - otherwise a freshly-inserted row and the same row read back would hash differently despite identical content. `verifyChain()` re-derives every hash from rows read back from Postgres and reports the first broken link; run it from a scheduled job or admin tool for tamper detection.
 
-`verifyChain()` re-derives every hash from scratch (from rows read back from Postgres)
-and reports the first broken link. Used for tamper detection and as a test target.
+## Query semantics
 
-`list` and `exportCsv` have no tenant filtering (single-tenant). `exportCsv` is capped
-at `AuditService.EXPORT_MAX_ROWS` (50_000) so it cannot be used for unbounded bulk
-extraction / OOM - narrow the date range and paginate for larger windows, or use
-`verifyChain` for full-chain integrity.
+`list`/`exportCsv` filters combine with AND; the single search param `q` is a grouped OR that EXACT-matches `actorId` OR `resourceId` - exact only, to keep those indexes usable. `exportCsv` is capped at `EXPORT_MAX_ROWS` (50k) so it cannot be used for unbounded bulk extraction / OOM - narrow the date range for larger windows. The RG activity log / change history reuses this module via the `actionPrefix` filter (`like(action, 'rg.%')`) - no separate history table.
 
-## Extension points
+## Event -> row mapping
 
-### Ports
-
-| Interface        | Token          | File                                 | Purpose                                   |
-| ---------------- | -------------- | ------------------------------------ | ----------------------------------------- |
-| `AuditWritePort` | `AUDIT_WRITER` | `@openora/core/contracts` `audit.ts` | Write path other modules call explicitly. |
-
-### Events subscribed (existing `domainEventSchemas` topics only)
-
-`identity.user.registered`, `identity.user.login`, `identity.2fa.enabled`,
-`identity.2fa.disabled`, `identity.password.reset`, `identity.email.verified`,
-`identity.profile.updated`, `wallet.deposit.completed`,
-`wallet.withdrawal.completed`, `gaming.round.started`, `gaming.round.ended`,
-`compliance.limit.upserted`, `compliance.limit.removed`,
-`compliance.kyc.updated`, `compliance.kyc.submitted`,
-`compliance.kyc.reverify_required`, `compliance.geo-rule.added`,
-`rg.limit.set`, `rg.cooling_off.activated`, `rg.self_exclusion.activated`,
-`rg.self_exclusion.lifted`, `rg.exclusion.login_blocked`,
-`cms.page.published`, `iam.invitation.accepted`.
-
-The RG activity log / change history reuses this module: `list`/`exportCsv` take an
-optional `actionPrefix` filter (`like(action, 'rg.%')`); the four admin RG events map
-to `actorType='admin'`, `resourceType='player'`, `resourceId=userId`, and
-`rg.exclusion.login_blocked` maps to a system `result='failure'` entry.
-
-Mapping: `wallet.*` events record `actorType='player'`, `actorId=userId`,
-`resourceType='transaction'`, `resourceId=transactionId` (so a transaction
-reference is searchable, not buried in `after`). Otherwise, if the payload has a
-`userId` field the row uses `actorType='player'`; failing that, `actorType='system'`.
-The event topic becomes the `action` column value.
-
-### oRPC routes
-
-| Procedure         | Method | Path            | Guard          |
-| ----------------- | ------ | --------------- | -------------- |
-| `audit.list`      | GET    | `/audit/logs`   | `audit:view`   |
-| `audit.exportCsv` | GET    | `/audit/export` | `audit:export` |
-
-No create/update/delete routes. Writes happen only via `record()` (called by the
-event subscribers in `plugin.ts` or by callers of the `AUDIT_WRITER` port).
-
-`audit.list` / `audit.exportCsv` accept optional filters `actorId`, `actorType`,
-`action`, `resourceType`, `resourceId`, `fromDate`, `toDate`, plus a single search
-param `q` that exact-matches `actorId` OR `resourceId` (covers player ID, admin
-identity, and transaction reference). Filters combine with AND; `q` is the grouped
-OR within that AND. Exact-match only - keeps the `actorId`/`resourceId` indexes usable.
-
-## Do
-
-- Use `AUDIT_WRITER` from `@openora/core/contracts` to record entries from other modules/overlays.
-- Call `verifyChain()` in a scheduled job or admin tool to detect tampering.
-- Add new event subscriptions in `plugin.ts` only for topics declared in
-  `domainEventSchemas` - never invent topics.
-- For regulator export, stream `exportCsv` to a file; `csv` field in the response
-  is plain text suitable for direct download.
+`wallet.*` events record `actorType='player'`, `resourceType='transaction'`, `resourceId=transactionId` (a transaction reference is searchable, not buried in `after`). Otherwise a payload with `userId` maps to `actorType='player'`; failing that, `system`. The topic becomes the `action` column. The four admin RG events map to `actorType='admin'`, `resourceType='player'`, `resourceId=userId`; `rg.exclusion.login_blocked` maps to a system `result='failure'` entry.
 
 ## Don't
 
-- Expose update or delete on `audit_log` - it is append-only by regulatory requirement.
-- Import another module's root or internals - use events / `AUDIT_WRITER` / the `/schema` subpath.
+- Expose update or delete on `audit_log` - append-only by regulatory requirement. Writes happen only via `record()` (event subscribers or `AUDIT_WRITER` callers).
 - Invent event topics not in `domainEventSchemas`.
-- Hand-edit the generated migrations under the module's `drizzle/migrations/` - the source of truth is `src/schema/index.ts`.
-
-## Done when
-
-- [x] `pnpm verify` exits 0.
-- [x] `audit_log` table in Drizzle schema with all required columns.
-- [x] `audit_log` migration generated in the module's `drizzle/migrations/` (single-tenant, no RLS).
-- [x] `AUDIT_WRITER` token declared in `@openora/core/contracts`.
-- [x] `audit.list` and `audit.exportCsv` routes guarded with `audit:view` / `audit:export`.
-- [x] `verifyChain` helper implemented and tested.
-- [x] 12 unit tests covering: record() hash chaining, verifyChain() tamper detection, list() pagination, exportCsv() format.
-- [x] Sealed token decision documented (regular Token used; reason above).
-- [x] No boundary violations (`pnpm boundaries` clean).

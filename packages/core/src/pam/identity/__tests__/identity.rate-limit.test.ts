@@ -1,5 +1,6 @@
 import { describe, it, expect, vi } from 'vitest';
-import { InProcessRateLimiter, type EventBus } from '@openora/core/server';
+import type { EventBus } from '@openora/core/server';
+import { InProcessRateLimiter } from '@openora/core/testing';
 import type { EmailTemplateRenderer, RateLimiterAdapter } from '@openora/core/contracts';
 import { mock, mockDb } from '../../../testing/mock.js';
 import { IdentityService, type IdentityServiceDeps } from '../service/identity.service.js';
@@ -12,8 +13,9 @@ function withTemplateRenderer(deps: Omit<IdentityServiceDeps, 'templateRenderer'
   return new IdentityService({ templateRenderer: testTemplateRenderer, ...deps });
 }
 
-// Keep the real @openora/core/server (so assertRateLimit + InProcessRateLimiter
-// are real); only stub createAuth so the constructor doesn't touch a real DB.
+// Keep the real @openora/core/server (so assertRateLimit is real; InProcessRateLimiter
+// comes from @openora/core/testing, unaffected by this mock); only stub createAuth so
+// the constructor doesn't touch a real DB.
 vi.mock('@openora/core/server', async (importOriginal) => {
   const actual = await importOriginal<typeof import('@openora/core/server')>();
   return {

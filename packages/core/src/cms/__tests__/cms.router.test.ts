@@ -28,50 +28,40 @@ function fakeService(): CmsService {
   });
 }
 
-describe('cms router authz', () => {
-  it('rejects createPage for a non-privileged caller', async () => {
-    const router = createCmsRouter(fakeService(), fakeDenyingGuard());
-    await expect(
-      call(router.createPage, { slug: 'about', title: 'About' }, { context: CTX }),
-    ).rejects.toBeInstanceOf(ORPCError);
-  });
+type Router = ReturnType<typeof createCmsRouter>;
 
-  it('rejects updatePage for a non-privileged caller', async () => {
-    const router = createCmsRouter(fakeService(), fakeDenyingGuard());
-    await expect(
-      call(router.updatePage, { id: PAGE_ID, title: 'About v2' }, { context: CTX }),
-    ).rejects.toBeInstanceOf(ORPCError);
-  });
-
-  it('rejects deletePage for a non-privileged caller', async () => {
-    const router = createCmsRouter(fakeService(), fakeDenyingGuard());
-    await expect(call(router.deletePage, { id: PAGE_ID }, { context: CTX })).rejects.toBeInstanceOf(
-      ORPCError,
-    );
-  });
-
-  it('rejects createBanner for a non-privileged caller', async () => {
-    const router = createCmsRouter(fakeService(), fakeDenyingGuard());
-    await expect(
+const GUARDED_ROUTES: ReadonlyArray<{ name: string; invoke: (r: Router) => Promise<unknown> }> = [
+  {
+    name: 'createPage',
+    invoke: (r) => call(r.createPage, { slug: 'about', title: 'About' }, { context: CTX }),
+  },
+  {
+    name: 'updatePage',
+    invoke: (r) => call(r.updatePage, { id: PAGE_ID, title: 'About v2' }, { context: CTX }),
+  },
+  { name: 'deletePage', invoke: (r) => call(r.deletePage, { id: PAGE_ID }, { context: CTX }) },
+  {
+    name: 'createBanner',
+    invoke: (r) =>
       call(
-        router.createBanner,
+        r.createBanner,
         { placement: 'home', title: 'Promo', imageUrl: 'https://example.test/a.png' },
         { context: CTX },
       ),
-    ).rejects.toBeInstanceOf(ORPCError);
-  });
+  },
+  {
+    name: 'updateBanner',
+    invoke: (r) => call(r.updateBanner, { id: BANNER_ID, title: 'Promo v2' }, { context: CTX }),
+  },
+  {
+    name: 'deleteBanner',
+    invoke: (r) => call(r.deleteBanner, { id: BANNER_ID }, { context: CTX }),
+  },
+];
 
-  it('rejects updateBanner for a non-privileged caller', async () => {
+describe('cms router authz', () => {
+  it.each(GUARDED_ROUTES)('rejects $name for a non-privileged caller', async ({ invoke }) => {
     const router = createCmsRouter(fakeService(), fakeDenyingGuard());
-    await expect(
-      call(router.updateBanner, { id: BANNER_ID, title: 'Promo v2' }, { context: CTX }),
-    ).rejects.toBeInstanceOf(ORPCError);
-  });
-
-  it('rejects deleteBanner for a non-privileged caller', async () => {
-    const router = createCmsRouter(fakeService(), fakeDenyingGuard());
-    await expect(
-      call(router.deleteBanner, { id: BANNER_ID }, { context: CTX }),
-    ).rejects.toBeInstanceOf(ORPCError);
+    await expect(invoke(router)).rejects.toBeInstanceOf(ORPCError);
   });
 });

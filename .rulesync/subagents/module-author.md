@@ -38,16 +38,16 @@ Creates the module as a standalone package with all required files and registers
 
 ## What to fill in
 
-| File                        | What goes here                                                                                 |
-| --------------------------- | ---------------------------------------------------------------------------------------------- |
-| `schema/index.ts`           | Drizzle `pgTable`s (see `db-conventions`). `propose-table-change` first.                       |
-| `contract/index.ts`         | oRPC route contract + req/res Zod schemas - the source of truth.                               |
-| `schemas/index.ts`          | Local Zod helpers; types via `z.infer`, never hand-written.                                    |
-| `service/<name>.service.ts` | Business logic as plain async methods. No HTTP concepts. Inject `DrizzleService` + `EventBus`. |
-| `adapters/<vendor>/`        | Impls of any adapter ports (port + token in `packages/core/src/contracts/adapters/`).          |
-| `router/index.ts`           | Thin oRPC wiring; admin routes call `await adminGuard.assert(context)` first.                  |
-| `plugin.ts`                 | `definePlugin` - DI wiring only.                                                               |
-| `AGENTS.md`                 | What it does, extension points, ports, do/don't, done-when checklist.                          |
+| File                        | What goes here                                                                                                                                              |
+| --------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `schema/index.ts`           | Drizzle `pgTable`s (see `db-conventions`). `propose-table-change` first.                                                                                    |
+| `contract/index.ts`         | oRPC route contract + req/res Zod schemas - the source of truth.                                                                                            |
+| `schemas/index.ts`          | Local Zod helpers; types via `z.infer`, never hand-written.                                                                                                 |
+| `service/<name>.service.ts` | Business logic as plain async methods. No HTTP concepts. Inject `DrizzleService` + `EventBus`.                                                              |
+| `adapters/<vendor>/`        | Impls of any adapter ports (port + token in `packages/core/src/contracts/adapters/`).                                                                       |
+| `router/index.ts`           | Thin oRPC wiring; admin routes call `await adminGuard.assert(context)` first.                                                                               |
+| `plugin.ts`                 | `definePlugin` - DI wiring only.                                                                                                                            |
+| `AGENTS.md`                 | ONLY what code can't say: invariants, rationale, gotchas, extension seams. No route/table/layout listings - they duplicate `contract/`/`schema/` and drift. |
 
 Headless repo: build no UI. After filling in: `pnpm regen` (migration + OpenAPI + catalog), then `pnpm verify` and fix everything.
 
