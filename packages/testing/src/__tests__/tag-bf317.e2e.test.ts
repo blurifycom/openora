@@ -16,10 +16,10 @@ import {
 
 /**
  * E2E for BF-317: self_excluded auto-assign/remove on the RG self-exclusion lifecycle,
- * the seeded sticky multi_account tag (manual-assign only, no evaluator), the seeded
- * non-sticky level tag (single mutable row, atomic replace-on-change via
- * TagService.replacePlayerTag driven by player.level.changed), and the already-generic
- * bonus_abuser round-trip. Also covers authz negatives and the audit trail.
+ * automatic multi_account + bonus_abuser tagging from identity login signals, the
+ * seeded non-sticky level tag (single mutable row, atomic replace-on-change via
+ * TagService.replacePlayerTag driven by player.level.changed), manual sticky-tag
+ * cleanup, authz negatives, and the audit trail.
  */
 
 const SYSTEM_ACTOR = '00000000-0000-0000-0000-000000000000';
@@ -50,6 +50,21 @@ async function registerAndMaterializePlayer(honoApp: TestApp['app'], email: stri
   }
   const profile = (await profileRes.json()) as { id: string; userId: string };
   return { client, playerId: profile.id, userId: profile.userId };
+}
+
+async function loginWithIp(honoApp: TestApp['app'], email: string, ip: string) {
+  const loginRes = await honoApp.request('/identity/login', {
+    method: 'POST',
+    headers: {
+      'content-type': 'application/json',
+      'x-real-ip': ip,
+      'user-agent': 'bf-317-e2e',
+    },
+    body: JSON.stringify({ email, password: 'password123' }),
+  });
+  if (!loginRes.ok) {
+    throw new Error(`login failed (${loginRes.status}): ${await loginRes.text()}`);
+  }
 }
 
 async function activeTags(
@@ -210,8 +225,38 @@ describe('level: atomic replace-on-change driven by player.level.changed', () =>
   });
 });
 
-describe('multi_account: manual-assign-only sticky tag', () => {
-  it('assigns via the generic admin route, verifies, removes, verifies removal', async () => {
+describe('multi_account and bonus_abuser: automatic shared-IP risk tags', () => {
+  it('auto-assigns both tags to both player accounts after a shared login IP', async () => {
+    const admin = await asAdmin(app.app);
+    const sharedIp = '203.0.113.77';
+    const firstEmail = `multiacct-a-${randomUUID()}@e2e.test`;
+    const secondEmail = `multiacct-b-${randomUUID()}@e2e.test`;
+    const first = await registerAndMaterializePlayer(app.app, firstEmail);
+    const second = await registerAndMaterializePlayer(app.app, secondEmail);
+
+    await loginWithIp(app.app, firstEmail, sharedIp);
+    await loginWithIp(app.app, secondEmail, sharedIp);
+
+    await vi.waitFor(async () => {
+      const firstTags = await activeTags(admin, first.playerId);
+      const secondTags = await activeTags(admin, second.playerId);
+      const firstKeys = firstTags.map((t) => t.key);
+      const secondKeys = secondTags.map((t) => t.key);
+
+      expect(firstKeys).toEqual(expect.arrayContaining(['multi_account', 'bonus_abuser']));
+      expect(secondKeys).toEqual(expect.arrayContaining(['multi_account', 'bonus_abuser']));
+      for (const tag of [...firstTags, ...secondTags].filter((t) =>
+        ['multi_account', 'bonus_abuser'].includes(t.key),
+      )) {
+        expect(tag.reason ?? '').not.toContain(sharedIp);
+      }
+    });
+
+    await auditHasEntry(admin, first.playerId, 'tag.player.assigned');
+    await auditHasEntry(admin, second.playerId, 'tag.player.assigned');
+  });
+
+  it('manual removal still clears the sticky multi_account tag after review', async () => {
     const admin = await asAdmin(app.app);
     const email = `multiacct-${randomUUID()}@e2e.test`;
     const { playerId } = await registerAndMaterializePlayer(app.app, email);

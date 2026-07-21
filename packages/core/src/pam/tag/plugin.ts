@@ -59,6 +59,7 @@ export default definePlugin({
     ctx.events.on('wallet.withdrawal.completed', (p) => evalSvc?.onWithdrawalCompleted(p));
     ctx.events.on('wallet.withdrawal.requested', (p) => evalSvc?.onWithdrawalRequested(p));
     ctx.events.on('identity.user.login', (p) => evalSvc?.onUserLogin(p));
+    ctx.events.on('identity.user.phone_login', (p) => evalSvc?.onUserPhoneLogin(p));
     ctx.events.on('compliance.kyc.submitted', (p) => evalSvc?.onKycSubmitted(p));
     ctx.events.on('compliance.kyc.updated', (p) => evalSvc?.onKycStatusUpdated(p));
     ctx.events.on('rg.self_exclusion.activated', (p) => evalSvc?.onSelfExclusionActivated(p));

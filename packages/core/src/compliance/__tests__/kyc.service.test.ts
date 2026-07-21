@@ -76,7 +76,7 @@ function newSvc(opts: {
 }
 
 describe('KycVerificationService.submit', () => {
-  it('inserts a record and emits compliance.kyc.submitted', async () => {
+  it('inserts a record, writes status, then emits compliance.kyc.submitted', async () => {
     const events = makeEvents();
     const writer = makeWriter();
     const adapter = makeAdapter('approved');
@@ -99,6 +99,11 @@ describe('KycVerificationService.submit', () => {
       'verified',
       expect.objectContaining({ source: 'vendor' }),
     );
+    const statusCallOrder = writer.setStatus.mock.invocationCallOrder[0];
+    const emitCallOrder = events.emit.mock.invocationCallOrder[0];
+    expect(statusCallOrder).toEqual(expect.any(Number));
+    expect(emitCallOrder).toEqual(expect.any(Number));
+    expect(statusCallOrder ?? Number.POSITIVE_INFINITY).toBeLessThan(emitCallOrder ?? 0);
     expect(dto.status).toBe('verified');
   });
 

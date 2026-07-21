@@ -2,6 +2,7 @@ import {
   domainEventSchemas,
   type WalletReader,
   type IdentityReader,
+  type KycStatus,
   type TagKey,
   type TagRule,
   type User,
@@ -13,6 +14,12 @@ import { TagRuleService, TagRuleNotFoundError } from './tag-rule.service.js';
 export const SYSTEM_ACTOR_ID = '00000000-0000-0000-0000-000000000000';
 
 const EVAL_CHUNK_SIZE = 100;
+const MULTI_ACCOUNT_REASON = 'identity signal matched another player account';
+const BONUS_ABUSER_REASON = 'multi-account risk rule matched';
+
+function isPendingKycStatus(status: KycStatus): boolean {
+  return status === 'pending' || status === 'resubmission_requested';
+}
 
 export class TagEvaluationService {
   constructor(
@@ -217,19 +224,68 @@ export class TagEvaluationService {
   }
 
   /**
-   * Removes the inactive and dormant_high_roller tags when a player logs in.
-   * Called on identity.user.login. Leaves high_roller itself untouched - the player
-   * is still a high roller, just no longer dormant.
+   * Handles password login side effects:
+   *  - removes inactive/dormant_high_roller on activity
+   *  - assigns multi_account + bonus_abuser when another player has used this login IP
    */
   async onUserLogin(payload: unknown) {
-    const { userId } = domainEventSchemas['identity.user.login'].parse(payload);
-    await this.tryRemoveTag(userId, 'inactive', 'player logged in');
-    await this.tryRemoveTag(userId, 'dormant_high_roller', 'player logged in');
+    const { userId, ip } = domainEventSchemas['identity.user.login'].parse(payload);
+    await this.onAuthenticatedLogin({ userId, ip });
   }
 
   /**
-   * Applies the kyc_pending tag on KYC submission and clears any prior kyc_rejected.
-   * Called on compliance.kyc.submitted. Respects the kyc_pending rule's isEnabled flag.
+   * Phone-login path mirrors password-login risk evaluation. The signal is the same
+   * authenticated session IP; the login method is intentionally not encoded in the tag.
+   */
+  async onUserPhoneLogin(payload: unknown) {
+    const { userId, ip } = domainEventSchemas['identity.user.phone_login'].parse(payload);
+    await this.onAuthenticatedLogin({ userId, ip });
+  }
+
+  private async onAuthenticatedLogin(args: { userId: User['id']; ip?: string | null }) {
+    const { userId, ip } = args;
+    await this.tryRemoveTag(userId, 'inactive', 'player logged in');
+    await this.tryRemoveTag(userId, 'dormant_high_roller', 'player logged in');
+    await this.evaluateSharedLoginIp(userId, ip);
+  }
+
+  private async evaluateSharedLoginIp(userId: User['id'], ip?: string | null) {
+    const normalizedIp = ip?.trim();
+    if (!normalizedIp) {
+      return;
+    }
+
+    const [multiAccountRule, bonusAbuserRule] = await Promise.all([
+      this.getEnabledRule('multi_account'),
+      this.getEnabledRule('bonus_abuser'),
+    ]);
+    if (!multiAccountRule && !bonusAbuserRule) {
+      return;
+    }
+
+    const linkedUserIds = await this.identityReader.getPlayerUserIdsSharingLoginIp(
+      userId,
+      normalizedIp,
+    );
+    if (linkedUserIds.length === 0) {
+      return;
+    }
+
+    const userIds = [...new Set([userId, ...linkedUserIds])];
+    await mapConcurrent(userIds, EVAL_CHUNK_SIZE, async (linkedUserId) => {
+      if (multiAccountRule) {
+        await this.tryAssignTag(linkedUserId, 'multi_account', MULTI_ACCOUNT_REASON);
+      }
+      if (bonusAbuserRule) {
+        await this.tryAssignTag(linkedUserId, 'bonus_abuser', BONUS_ABUSER_REASON);
+      }
+    });
+  }
+
+  /**
+   * Applies kyc_pending on KYC submission only while the profile still has a pending-like
+   * status. Does not clear kyc_rejected: that sticky tag remains until a later approved
+   * state explicitly clears it.
    */
   async onKycSubmitted(payload: unknown) {
     const { userId } = domainEventSchemas['compliance.kyc.submitted'].parse(payload);
@@ -237,25 +293,25 @@ export class TagEvaluationService {
     if (!rule) {
       return;
     }
-    await this.tryRemoveTag(userId, 'kyc_rejected', 'kyc resubmitted');
+    const status = await this.identityReader.getPlayerKycStatusByUserId(userId);
+    if (!status || !isPendingKycStatus(status)) {
+      return;
+    }
     await this.tryAssignTag(userId, 'kyc_pending', 'kyc verification initiated');
   }
 
   /**
    * Manages kyc_pending / kyc_rejected lifecycle on KYC status changes.
-   * Called on compliance.kyc.updated. Respects the kyc_pending rule's isEnabled flag.
+   * Called on compliance.kyc.updated. Assignment respects each tag rule's isEnabled flag;
+   * terminal cleanup still runs so disabled rules cannot strand old active rows.
    *
    * Transitions:
    *   verified / manually_overridden -> remove kyc_pending + kyc_rejected
    *   rejected                       -> remove kyc_pending, assign kyc_rejected
-   *   resubmission_requested         -> assign kyc_pending
+   *   resubmission_requested         -> assign kyc_pending, keep kyc_rejected sticky
    */
   async onKycStatusUpdated(payload: unknown) {
     const { userId, status } = domainEventSchemas['compliance.kyc.updated'].parse(payload);
-    const rule = await this.getEnabledRule('kyc_pending');
-    if (!rule) {
-      return;
-    }
 
     if (status === 'verified' || status === 'manually_overridden') {
       await this.tryRemoveTag(userId, 'kyc_pending', 'kyc approved');
@@ -265,12 +321,18 @@ export class TagEvaluationService {
 
     if (status === 'rejected') {
       await this.tryRemoveTag(userId, 'kyc_pending', 'kyc rejected');
-      await this.tryAssignTag(userId, 'kyc_rejected', 'kyc verification rejected');
+      const rule = await this.getEnabledRule('kyc_rejected');
+      if (rule) {
+        await this.tryAssignTag(userId, 'kyc_rejected', 'kyc verification rejected');
+      }
       return;
     }
 
     if (status === 'resubmission_requested') {
-      await this.tryAssignTag(userId, 'kyc_pending', 'kyc re-verification required');
+      const rule = await this.getEnabledRule('kyc_pending');
+      if (rule) {
+        await this.tryAssignTag(userId, 'kyc_pending', 'kyc re-verification required');
+      }
     }
   }
 

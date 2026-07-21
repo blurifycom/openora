@@ -11,6 +11,7 @@ import { TagRuleService, TagRuleNotFoundError } from '../service/tag-rule.servic
 
 const UID = '11111111-1111-4111-8111-111111111111';
 const TXID = '22222222-2222-4222-8222-222222222222';
+const OTHER_UID = '33333333-3333-4333-8333-333333333333';
 
 function makeRule(overrides: Partial<TagRule> = {}): TagRule {
   return {
@@ -58,6 +59,8 @@ function makeServices(rules: Partial<Record<string, TagRule>> = {}) {
     getLastLoginAt: vi.fn().mockResolvedValue(null),
     getPlayerIdsInactiveSince: vi.fn().mockResolvedValue([]),
     getPlayerIdByUserId: vi.fn(async (uid: string) => uid),
+    getPlayerKycStatusByUserId: vi.fn().mockResolvedValue('pending'),
+    getPlayerUserIdsSharingLoginIp: vi.fn().mockResolvedValue([]),
   });
 
   const service = new TagEvaluationService(tag, rule, walletReader, identityReader);
@@ -300,6 +303,86 @@ describe('TagEvaluationService', () => {
       tag.removePlayerTag = vi.fn().mockRejectedValue(new TagAssignmentNotFoundError(UID));
       await expect(service.onUserLogin({ userId: UID })).resolves.toBeUndefined();
     });
+
+    it('assigns multi_account and bonus_abuser to both player accounts when login IP is shared', async () => {
+      const { service, tag, identityReader } = makeServices({
+        multi_account: makeRule({ tagKey: 'multi_account' }),
+        bonus_abuser: makeRule({ tagKey: 'bonus_abuser' }),
+      });
+      identityReader.getPlayerUserIdsSharingLoginIp = vi.fn().mockResolvedValue([OTHER_UID]);
+
+      await service.onUserLogin({ userId: UID, ip: '203.0.113.10', userAgent: null });
+
+      expect(identityReader.getPlayerUserIdsSharingLoginIp).toHaveBeenCalledWith(
+        UID,
+        '203.0.113.10',
+      );
+      expect(tag.assignPlayerTag).toHaveBeenCalledWith(
+        expect.objectContaining({
+          playerId: UID,
+          tagKey: 'multi_account',
+          assignReason: 'identity signal matched another player account',
+        }),
+      );
+      expect(tag.assignPlayerTag).toHaveBeenCalledWith(
+        expect.objectContaining({
+          playerId: OTHER_UID,
+          tagKey: 'multi_account',
+          assignReason: 'identity signal matched another player account',
+        }),
+      );
+      expect(tag.assignPlayerTag).toHaveBeenCalledWith(
+        expect.objectContaining({
+          playerId: UID,
+          tagKey: 'bonus_abuser',
+          assignReason: 'multi-account risk rule matched',
+        }),
+      );
+      expect(tag.assignPlayerTag).toHaveBeenCalledWith(
+        expect.objectContaining({
+          playerId: OTHER_UID,
+          tagKey: 'bonus_abuser',
+          assignReason: 'multi-account risk rule matched',
+        }),
+      );
+    });
+
+    it('does not evaluate shared-IP risk when login has no IP metadata', async () => {
+      const { service, identityReader } = makeServices({
+        multi_account: makeRule({ tagKey: 'multi_account' }),
+        bonus_abuser: makeRule({ tagKey: 'bonus_abuser' }),
+      });
+
+      await service.onUserLogin({ userId: UID });
+
+      expect(identityReader.getPlayerUserIdsSharingLoginIp).not.toHaveBeenCalled();
+    });
+
+    it('uses the same shared-IP risk path for phone login', async () => {
+      const { service, tag, identityReader } = makeServices({
+        multi_account: makeRule({ tagKey: 'multi_account' }),
+        bonus_abuser: makeRule({ tagKey: 'bonus_abuser' }),
+      });
+      identityReader.getPlayerUserIdsSharingLoginIp = vi.fn().mockResolvedValue([OTHER_UID]);
+
+      await service.onUserPhoneLogin({
+        userId: UID,
+        method: 'phone',
+        ip: '203.0.113.11',
+        userAgent: null,
+      });
+
+      expect(identityReader.getPlayerUserIdsSharingLoginIp).toHaveBeenCalledWith(
+        UID,
+        '203.0.113.11',
+      );
+      expect(tag.assignPlayerTag).toHaveBeenCalledWith(
+        expect.objectContaining({ playerId: UID, tagKey: 'multi_account' }),
+      );
+      expect(tag.assignPlayerTag).toHaveBeenCalledWith(
+        expect.objectContaining({ playerId: OTHER_UID, tagKey: 'bonus_abuser' }),
+      );
+    });
   });
 
   describe('onKycSubmitted', () => {
@@ -313,12 +396,19 @@ describe('TagEvaluationService', () => {
       );
     });
 
-    it('also tries to remove kyc_rejected on the resubmission path', async () => {
+    it('keeps kyc_rejected sticky on the resubmission path', async () => {
       const { service, tag } = makeServices(kycRule);
       await service.onKycSubmitted({ userId: UID, referenceId: 'ref-1', provider: 'sumsub' });
-      expect(tag.removePlayerTag).toHaveBeenCalledWith(
+      expect(tag.removePlayerTag).not.toHaveBeenCalledWith(
         expect.objectContaining({ tagKey: 'kyc_rejected' }),
       );
+    });
+
+    it('does not assign kyc_pending when the profile status is already terminal', async () => {
+      const { service, tag, identityReader } = makeServices(kycRule);
+      identityReader.getPlayerKycStatusByUserId = vi.fn().mockResolvedValue('verified');
+      await service.onKycSubmitted({ userId: UID, referenceId: 'ref-1', provider: 'sumsub' });
+      expect(tag.assignPlayerTag).not.toHaveBeenCalled();
     });
 
     it('does nothing when kyc_pending rule is disabled', async () => {
@@ -339,10 +429,13 @@ describe('TagEvaluationService', () => {
   });
 
   describe('onKycStatusUpdated', () => {
-    const kycRule = { kyc_pending: makeRule({ tagKey: 'kyc_pending' }) };
+    const kycRules = {
+      kyc_pending: makeRule({ tagKey: 'kyc_pending' }),
+      kyc_rejected: makeRule({ tagKey: 'kyc_rejected' }),
+    };
 
     it('removes kyc_pending on verified', async () => {
-      const { service, tag } = makeServices(kycRule);
+      const { service, tag } = makeServices(kycRules);
       await service.onKycStatusUpdated(kycUpdatedPayload('verified'));
       expect(tag.removePlayerTag).toHaveBeenCalledWith(
         expect.objectContaining({ tagKey: 'kyc_pending' }),
@@ -351,7 +444,7 @@ describe('TagEvaluationService', () => {
     });
 
     it('removes kyc_pending and assigns kyc_rejected on rejected', async () => {
-      const { service, tag } = makeServices(kycRule);
+      const { service, tag } = makeServices(kycRules);
       await service.onKycStatusUpdated(kycUpdatedPayload('rejected'));
       expect(tag.removePlayerTag).toHaveBeenCalledWith(
         expect.objectContaining({ tagKey: 'kyc_pending' }),
@@ -361,24 +454,38 @@ describe('TagEvaluationService', () => {
       );
     });
 
-    it('assigns kyc_pending on resubmission_requested', async () => {
-      const { service, tag } = makeServices(kycRule);
+    it('assigns kyc_pending and keeps kyc_rejected on resubmission_requested', async () => {
+      const { service, tag } = makeServices(kycRules);
       await service.onKycStatusUpdated(kycUpdatedPayload('resubmission_requested'));
       expect(tag.assignPlayerTag).toHaveBeenCalledWith(
         expect.objectContaining({ tagKey: 'kyc_pending' }),
       );
+      expect(tag.removePlayerTag).not.toHaveBeenCalledWith(
+        expect.objectContaining({ tagKey: 'kyc_rejected' }),
+      );
     });
 
-    it('does nothing when kyc_pending rule is disabled', async () => {
+    it('does not assign kyc_pending on resubmission_requested when the rule is disabled', async () => {
       const { service, tag } = makeServices({
         kyc_pending: makeRule({ tagKey: 'kyc_pending', isEnabled: false }),
       });
-      await service.onKycStatusUpdated(kycUpdatedPayload('verified'));
-      expect(tag.removePlayerTag).not.toHaveBeenCalled();
+      await service.onKycStatusUpdated(kycUpdatedPayload('resubmission_requested'));
+      expect(tag.assignPlayerTag).not.toHaveBeenCalled();
+    });
+
+    it('does not assign kyc_rejected when the rejected rule is disabled', async () => {
+      const { service, tag } = makeServices({
+        kyc_rejected: makeRule({ tagKey: 'kyc_rejected', isEnabled: false }),
+      });
+      await service.onKycStatusUpdated(kycUpdatedPayload('rejected'));
+      expect(tag.removePlayerTag).toHaveBeenCalledWith(
+        expect.objectContaining({ tagKey: 'kyc_pending' }),
+      );
+      expect(tag.assignPlayerTag).not.toHaveBeenCalled();
     });
 
     it('is idempotent when verified fires twice (tags already removed)', async () => {
-      const { service, tag } = makeServices(kycRule);
+      const { service, tag } = makeServices(kycRules);
       tag.removePlayerTag = vi.fn().mockRejectedValue(new TagAssignmentNotFoundError(UID));
       await expect(
         service.onKycStatusUpdated(kycUpdatedPayload('verified')),
@@ -386,7 +493,7 @@ describe('TagEvaluationService', () => {
     });
 
     it('is idempotent when rejected fires twice (kyc_pending gone, kyc_rejected already present)', async () => {
-      const { service, tag } = makeServices(kycRule);
+      const { service, tag } = makeServices(kycRules);
       tag.removePlayerTag = vi.fn().mockRejectedValue(new TagAssignmentNotFoundError(UID));
       tag.assignPlayerTag = vi.fn().mockRejectedValue(new TagAlreadyInUseError());
       await expect(
@@ -395,7 +502,7 @@ describe('TagEvaluationService', () => {
     });
 
     it('is idempotent when resubmission_requested fires twice (kyc_pending already assigned)', async () => {
-      const { service, tag } = makeServices(kycRule);
+      const { service, tag } = makeServices(kycRules);
       tag.assignPlayerTag = vi.fn().mockRejectedValue(new TagAlreadyInUseError());
       await expect(
         service.onKycStatusUpdated(kycUpdatedPayload('resubmission_requested')),
