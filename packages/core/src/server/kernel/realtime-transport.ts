@@ -39,7 +39,12 @@ export class InProcessRealtimeTransport implements RealtimeTransport {
   readonly presence: RealtimePresence = new InProcessPresence();
 
   publish<T>(channel: string, event: T): void {
-    for (const handler of Array.from(this.channels.get(channel) ?? [])) {
+    const subscribers = this.channels.get(channel);
+    if (!subscribers) {
+      return;
+    }
+    // Snapshot so a handler that unsubscribes mid-iteration can't corrupt the loop.
+    for (const handler of Array.from(subscribers)) {
       try {
         handler(event);
       } catch {

@@ -130,7 +130,7 @@ export const chatContract = {
 
   getConnection: oc
     .route({ method: 'GET', path: '/chat/connection' })
-    .input(z.object({ clientId: z.string().optional(), channels: z.array(z.string()).optional() }))
+    .input(z.object({ clientId: z.string().optional() }))
     .output(ChatConnectionGrantSchema),
 
   streamMessages: oc

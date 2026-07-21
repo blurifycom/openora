@@ -40,6 +40,12 @@ const JOIN_ROOM_RATE_LIMIT = {
   onUnavailable: 'deny',
 } as const;
 
+const SEND_MESSAGE_RATE_LIMIT = {
+  limit: 10,
+  windowMs: 10_000,
+  onUnavailable: 'allow',
+} as const;
+
 function resolveUsername(context: OssContext, fallback = 'anonymous') {
   const val = context.request.headers['x-username'];
   if (Array.isArray(val)) {
@@ -54,12 +60,17 @@ function resolveViewerId(context: OssContext) {
   return context.auth?.userId;
 }
 
-export function createChatRouter(
-  chatService: ChatService,
-  authorizer: RealtimeClientAuthorizer,
-  adminGuard: AdminGuard,
-  limiter: RateLimiterAdapter,
-) {
+export function createChatRouter({
+  chatService,
+  authorizer,
+  adminGuard,
+  limiter,
+}: {
+  chatService: ChatService;
+  authorizer: RealtimeClientAuthorizer;
+  adminGuard: AdminGuard;
+  limiter: RateLimiterAdapter;
+}) {
   const os = implement(chat).$context<OssContext>();
 
   return os.router({
@@ -81,9 +92,14 @@ export function createChatRouter(
       );
     }),
 
-    sendRoomMessage: os.sendRoomMessage.handler(({ input, context }) => {
+    sendRoomMessage: os.sendRoomMessage.handler(async ({ input, context }) => {
       const userId = getUserId(context);
       const username = resolveUsername(context);
+      await assertRateLimit(
+        limiter,
+        makeRateLimitKey(RATE_LIMIT_KEYS.CHAT_SEND, userId),
+        SEND_MESSAGE_RATE_LIMIT,
+      );
       return mapErrors(
         {
           NOT_FOUND: ChatRoomNotFoundError,
@@ -112,9 +128,14 @@ export function createChatRouter(
       chatService.getGlobalMessages(undefined, resolveViewerId(context)),
     ),
 
-    sendGlobalMessage: os.sendGlobalMessage.handler(({ input, context }) => {
+    sendGlobalMessage: os.sendGlobalMessage.handler(async ({ input, context }) => {
       const userId = getUserId(context);
       const username = resolveUsername(context);
+      await assertRateLimit(
+        limiter,
+        makeRateLimitKey(RATE_LIMIT_KEYS.CHAT_SEND, userId),
+        SEND_MESSAGE_RATE_LIMIT,
+      );
       return mapErrors({ BAD_REQUEST: ChatMessageBlockedError }, () =>
         chatService.sendGlobalMessage(userId, username, input.content),
       );

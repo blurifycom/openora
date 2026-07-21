@@ -52,5 +52,5 @@ export const extensions = [
   // enables the outbox; a durable broker is still an overlay). Rebind any of these
   // with your own infra plugin (Container last-wins).
   // Ably is opt-in: without ABLY_API_KEY its plugin leaves the SSE defaults bound.
-  { id: 'ably', path: './extensions/ably/plugin.ts' },
+  { id: 'ably', path: './extensions/ably/plugin.ts', kind: 'infra' },
 ];

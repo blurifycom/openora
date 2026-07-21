@@ -693,24 +693,28 @@ export class ChatService {
 
   async leaveRoom({ userId, roomId }: { userId: User['id']; roomId: ChatRoom['id'] }) {
     await this.verifyRoomAccess(roomId, userId);
-    const [memberRow] = await this.drizzle.db
-      .select({ role: chatRoomMember.role })
-      .from(chatRoomMember)
-      .where(and(eq(chatRoomMember.roomId, roomId), eq(chatRoomMember.userId, userId)))
-      .limit(1);
-    if (memberRow?.role === 'moderator') {
-      const [{ modCount }] = await this.drizzle.db
-        .select({ modCount: count() })
-        .from(chatRoomMember)
-        .where(and(eq(chatRoomMember.roomId, roomId), eq(chatRoomMember.role, 'moderator')));
-      if (Number(modCount) <= 1) {
-        throw new ChatRoomLastModeratorError();
-      }
-    }
-    const removed = await this.drizzle.db
-      .delete(chatRoomMember)
-      .where(and(eq(chatRoomMember.roomId, roomId), eq(chatRoomMember.userId, userId)))
-      .returning();
+    const removed = await this.drizzle.db.transaction((t) =>
+      withAdvisoryXactLock(t, `chat-room:${roomId}`, async () => {
+        const [memberRow] = await t
+          .select({ role: chatRoomMember.role })
+          .from(chatRoomMember)
+          .where(and(eq(chatRoomMember.roomId, roomId), eq(chatRoomMember.userId, userId)))
+          .limit(1);
+        if (memberRow?.role === 'moderator') {
+          const [{ modCount }] = await t
+            .select({ modCount: count() })
+            .from(chatRoomMember)
+            .where(and(eq(chatRoomMember.roomId, roomId), eq(chatRoomMember.role, 'moderator')));
+          if (Number(modCount) <= 1) {
+            throw new ChatRoomLastModeratorError();
+          }
+        }
+        return t
+          .delete(chatRoomMember)
+          .where(and(eq(chatRoomMember.roomId, roomId), eq(chatRoomMember.userId, userId)))
+          .returning();
+      }),
+    );
     if (removed.length > 0) {
       this.events.emit('chat.room.member.left', { roomId, userId });
     }
@@ -730,7 +734,7 @@ export class ChatService {
       throw new ChatRoomSelfModerationError();
     }
     await this.verifyRoomAccess(roomId, moderatorId);
-    await this.drizzle.db.transaction(async (t) => {
+    const removed = await this.drizzle.db.transaction(async (t) => {
       const [mod] = await t
         .select({ role: chatRoomMember.role })
         .from(chatRoomMember)
@@ -739,11 +743,14 @@ export class ChatService {
       if (!mod || mod.role !== 'moderator') {
         throw new ChatRoomNotModeratorError(roomId);
       }
-      await t
+      return t
         .delete(chatRoomMember)
-        .where(and(eq(chatRoomMember.roomId, roomId), eq(chatRoomMember.userId, userId)));
+        .where(and(eq(chatRoomMember.roomId, roomId), eq(chatRoomMember.userId, userId)))
+        .returning();
     });
-    this.events.emit('chat.room.member.kicked', { roomId, userId, kickedBy: moderatorId });
+    if (removed.length > 0) {
+      this.events.emit('chat.room.member.kicked', { roomId, userId, kickedBy: moderatorId });
+    }
     await this.transport.revokeClient?.(userId);
     return { success: true } as const;
   }

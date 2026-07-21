@@ -385,16 +385,18 @@ describe('ChatService.updateRoom', () => {
 });
 
 describe('ChatService.deleteRoom', () => {
-  it('deletes room messages then the room and returns success', async () => {
-    // In tx: (1) delete chatMessage (awaited, pops select), (2) delete chatRoom (pops returning).
-    const drizzle = makeDrizzle({ select: [[]], returning: [[{ id: 'r1' }]] });
+  it('soft-deletes the room and returns success', async () => {
+    // Single UPDATE...RETURNING sets deletedAt; findOneOrThrow consumes the result.
+    const drizzle = makeDrizzle({
+      returning: [[{ id: 'r1', name: 'n', slug: 's', category: 'games-sports' }]],
+    });
     const result = await makeAdminService(drizzle).deleteRoom('r1');
     expect(result).toEqual({ success: true });
   });
 
   it('throws ChatRoomNotFoundError when room does not exist', async () => {
-    // (1) delete chatMessage ok, (2) delete chatRoom returns nothing -> not found.
-    const drizzle = makeDrizzle({ select: [[]], returning: [[]] });
+    // UPDATE matches no rows -> returning empty -> findOneOrThrow throws.
+    const drizzle = makeDrizzle({ returning: [[]] });
     await expect(makeAdminService(drizzle).deleteRoom('nonexistent')).rejects.toThrow(
       ChatRoomNotFoundError,
     );
