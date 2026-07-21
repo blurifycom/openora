@@ -10,6 +10,7 @@ const PHONE = '+14155550100';
 
 const AUTH_SECRET = 'unit-test-secret-do-not-use-in-prod';
 const SESSION_COOKIE_NAME = 'better-auth.session_token';
+const DONT_REMEMBER_COOKIE_NAME = 'better-auth.dont_remember';
 
 const fakeAuth: Auth = mock<Auth>({
   $context: Promise.resolve({
@@ -23,6 +24,15 @@ const fakeAuth: Auth = mock<Auth>({
           sameSite: 'lax',
           path: '/',
           maxAge: 7 * 24 * 60 * 60,
+        },
+      },
+      dontRememberToken: {
+        name: DONT_REMEMBER_COOKIE_NAME,
+        attributes: {
+          httpOnly: true,
+          secure: false,
+          sameSite: 'lax',
+          path: '/',
         },
       },
     },
@@ -203,6 +213,29 @@ describe('PhoneLoginService.verifyOtp', () => {
     expect(cookieValue.slice(sigPos + 1)).toBe(expectedSignature(out.session.token));
   });
 
+  it('without rememberMe emits a signed dont_remember cookie so getSession will not roll the session to 30 days', async () => {
+    const code = '123456';
+    const { svc } = build({
+      select: [[otpRow({ codeHash: hash(code) })], [userRow], [], []],
+    });
+    const resHeaders = new Headers();
+
+    await svc.verifyOtp({ phone: PHONE, code }, resHeaders);
+
+    const dontRemember = resHeaders
+      .getSetCookie()
+      .find((c) => c.startsWith(`${DONT_REMEMBER_COOKIE_NAME}=`));
+    expect(dontRemember).toBeDefined();
+    expect(dontRemember).not.toContain('Max-Age');
+
+    const value = decodeURIComponent(
+      dontRemember?.split(';')[0]?.split('=').slice(1).join('=') ?? '',
+    );
+    const sigPos = value.lastIndexOf('.');
+    expect(value.slice(0, sigPos)).toBe('true');
+    expect(value.slice(sigPos + 1)).toBe(expectedSignature('true'));
+  });
+
   it('rememberMe extends the session TTL to ~30 days and the cookie Max-Age to match', async () => {
     const code = '123456';
     const { svc } = build({
@@ -216,6 +249,11 @@ describe('PhoneLoginService.verifyOtp', () => {
 
     const maxAgeMatch = resHeaders.get('set-cookie')?.match(/Max-Age=(\d+)/);
     expect(Number(maxAgeMatch?.[1])).toBeGreaterThan(29 * 24 * 60 * 60);
+
+    const hasDontRemember = resHeaders
+      .getSetCookie()
+      .some((c) => c.startsWith(`${DONT_REMEMBER_COOKIE_NAME}=`));
+    expect(hasDontRemember).toBe(false);
   });
 
   it('wrong code increments failedAttempts and throws OtpInvalidError with attemptsRemaining', async () => {

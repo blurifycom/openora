@@ -321,6 +321,17 @@ export class PhoneLoginService {
       }),
     );
 
+    if (!rememberMe) {
+      resHeaders.append(
+        'set-cookie',
+        signSessionCookie({
+          token: 'true',
+          sessionCookie: authContext.authCookies.dontRememberToken,
+          secret: authContext.secret,
+        }),
+      );
+    }
+
     return {
       user: serializeUser(account),
       session: { token, expiresAt: sessionExpiresAt.toISOString() },
