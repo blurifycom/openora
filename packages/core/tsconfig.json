@@ -90,6 +90,7 @@
       "@openora/core/server": ["./src/server/index.ts"],
       "@openora/core/server/migrate": ["./src/server/db/migrate.ts"],
       "@openora/core/server/orm": ["./src/server/db/orm.ts"],
+      "@openora/core/testing": ["./src/testing/index.ts"],
       "@openora/core/wallet": ["./src/wallet/index.ts"],
       "@openora/core/wallet/contract": ["./src/wallet/contract/index.ts"],
       "@openora/core/wallet/contracts": ["./src/wallet/contract/index.ts"],

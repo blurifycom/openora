@@ -8,6 +8,7 @@ import {
   findOneOrThrow,
   type ResourceName,
 } from '@openora/core/server';
+import { InProcessCache } from '@openora/core/testing';
 import {
   IamService,
   DbAdminPermissionResolver,
@@ -250,7 +251,7 @@ describe('DbAdminPermissionResolver caching', () => {
 
   it('serves a repeat lookup from cache without re-querying', async () => {
     const { drizzle, state } = grantsDrizzle();
-    const resolver = new DbAdminPermissionResolver(drizzle, new core.InProcessCache());
+    const resolver = new DbAdminPermissionResolver(drizzle, new InProcessCache());
     await resolver.getGrants('u1');
     await resolver.getGrants('u1');
     expect(state.grantsQueries).toBe(1);
@@ -266,7 +267,7 @@ describe('DbAdminPermissionResolver caching', () => {
 
   it('invalidateUser purges so the next lookup re-queries', async () => {
     const { drizzle, state } = grantsDrizzle();
-    const resolver = new DbAdminPermissionResolver(drizzle, new core.InProcessCache());
+    const resolver = new DbAdminPermissionResolver(drizzle, new InProcessCache());
     await resolver.getGrants('u1');
     await resolver.invalidateUser('u1');
     await resolver.getGrants('u1');
@@ -275,7 +276,7 @@ describe('DbAdminPermissionResolver caching', () => {
 
   it('invalidateRole purges every current holder of the role', async () => {
     const { drizzle, state } = grantsDrizzle([{ userId: 'u1' }, { userId: 'u2' }]);
-    const resolver = new DbAdminPermissionResolver(drizzle, new core.InProcessCache());
+    const resolver = new DbAdminPermissionResolver(drizzle, new InProcessCache());
     await resolver.getGrants('u1');
     await resolver.getGrants('u2');
     expect(state.grantsQueries).toBe(2);

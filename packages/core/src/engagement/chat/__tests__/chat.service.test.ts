@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest';
-import { InProcessRealtimeTransport, type EventBus } from '@openora/core/server';
+import type { EventBus } from '@openora/core/server';
+import { InProcessRealtimeTransport } from '@openora/core/testing';
 import type { ChatMessage } from '../contract/index.js';
 import { mock, mockDb } from '../../../testing/mock.js';
 import {

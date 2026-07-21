@@ -2,7 +2,8 @@ import { describe, it, expect, vi } from 'vitest';
 import { mock } from '../../../testing/mock.js';
 import type { Logger } from 'pino';
 import type { MessageBrokerAdapter, BrokerHandler, EventEnvelope } from '@openora/core/contracts';
-import { createEventBus, InMemoryBroker } from '../event-bus.js';
+import { InMemoryBroker } from '@openora/core/testing';
+import { createEventBus } from '../event-bus.js';
 
 function fakeLogger() {
   return mock<Logger>({ error: vi.fn(), warn: vi.fn(), info: vi.fn() });
@@ -121,6 +122,24 @@ describe('createEventBus', () => {
       'event payload failed validation',
     );
     expect(received).toHaveLength(1);
+  });
+
+  it('logs a rejected async publish instead of an unhandled rejection', async () => {
+    const logger = fakeLogger();
+    const rejectingBroker: MessageBrokerAdapter = {
+      publish: () => Promise.reject(new Error('broker down')),
+      subscribe: (_topic: string, _handler: BrokerHandler) => () => undefined,
+      close: async () => undefined,
+    };
+    const bus = createEventBus(rejectingBroker, logger);
+
+    bus.emit('gaming.round.ended', { roundId: 'r1', userId: 'u1' });
+    await flush();
+
+    expect(logger.error).toHaveBeenCalledWith(
+      expect.objectContaining({ event: 'gaming.round.ended', err: expect.any(Error) }),
+      'event publish failed',
+    );
   });
 
   it('delegates transport to the bound broker (the swap seam)', () => {
