@@ -30,20 +30,34 @@
       "tables": [
         "chat_message",
         "chat_room",
+        "chat_room_ban",
+        "chat_room_member",
         "chat_user_block"
       ],
       "routes": [
+        "chat.banMember",
         "chat.blockUser",
+        "chat.createPrivateRoom",
+        "chat.createRoom",
         "chat.deleteMessage",
+        "chat.deleteRoom",
         "chat.getConnection",
         "chat.getGlobalMessages",
+        "chat.getOnlineCount",
+        "chat.getRoom",
         "chat.getRoomMessages",
+        "chat.joinRoom",
+        "chat.kickMember",
+        "chat.leaveRoom",
+        "chat.listAdminRooms",
         "chat.listBlockedUsers",
+        "chat.listRoomMembers",
         "chat.listRooms",
         "chat.sendGlobalMessage",
         "chat.sendRoomMessage",
         "chat.streamMessages",
-        "chat.unblockUser"
+        "chat.unblockUser",
+        "chat.updateRoom"
       ]
     },
     {
@@ -540,6 +554,14 @@
   ],
   "events": [
     "chat.message.sent",
+    "chat.private_room.created",
+    "chat.room.created",
+    "chat.room.deleted",
+    "chat.room.member.banned",
+    "chat.room.member.joined",
+    "chat.room.member.kicked",
+    "chat.room.member.left",
+    "chat.room.updated",
     "chat.user.blocked",
     "chat.user.unblocked",
     "cms.banner.created",
@@ -633,6 +655,10 @@
       "file": "packages/core/src/iam/contract/index.ts"
     },
     {
+      "name": "AdminRoomSortBySchema",
+      "file": "packages/core/src/engagement/chat/contract/index.ts"
+    },
+    {
       "name": "AdminTransactionDetailSchema",
       "file": "packages/core/src/admin-console/contract/index.ts"
     },
@@ -721,7 +747,27 @@
       "file": "packages/core/src/engagement/chat/contract/index.ts"
     },
     {
+      "name": "ChatOnlineCountSchema",
+      "file": "packages/core/src/engagement/chat/contract/index.ts"
+    },
+    {
+      "name": "ChatRoomCategorySchema",
+      "file": "packages/core/src/engagement/chat/contract/index.ts"
+    },
+    {
+      "name": "ChatRoomMemberSchema",
+      "file": "packages/core/src/engagement/chat/contract/index.ts"
+    },
+    {
+      "name": "ChatRoomRoleSchema",
+      "file": "packages/core/src/engagement/chat/contract/index.ts"
+    },
+    {
       "name": "ChatRoomSchema",
+      "file": "packages/core/src/engagement/chat/contract/index.ts"
+    },
+    {
+      "name": "ChatRoomSlugSchema",
       "file": "packages/core/src/engagement/chat/contract/index.ts"
     },
     {
@@ -1117,6 +1163,10 @@
       "file": "packages/core/src/compliance/contract/rg.ts"
     },
     {
+      "name": "SortOrderSchema",
+      "file": "packages/core/src/engagement/chat/contract/index.ts"
+    },
+    {
       "name": "StartRoundInputSchema",
       "file": "packages/core/src/casino/gaming/contract/index.ts"
     },
@@ -1279,6 +1329,7 @@
     "slots"
   ],
   "httpRoutes": [
+    "DELETE /backoffice/chat/rooms/{id}",
     "DELETE /chat/blocks/{blockedId}",
     "DELETE /chat/messages/{id}",
     "DELETE /cms/banners/{id}",
@@ -1291,6 +1342,7 @@
     "DELETE /wallet/auto-withdrawal-rules/{userId}",
     "GET /audit/export",
     "GET /audit/logs",
+    "GET /backoffice/chat/rooms",
     "GET /backoffice/stats",
     "GET /backoffice/transactions",
     "GET /backoffice/transactions/{id}",
@@ -1299,7 +1351,10 @@
     "GET /chat/blocks",
     "GET /chat/connection",
     "GET /chat/global",
+    "GET /chat/online-count",
     "GET /chat/rooms",
+    "GET /chat/rooms/{roomId}",
+    "GET /chat/rooms/{roomId}/members",
     "GET /chat/rooms/{roomId}/messages",
     "GET /chat/stream",
     "GET /cms/banners",
@@ -1340,12 +1395,19 @@
     "GET /wallet/transactions",
     "GET /wallet/transactions/{userId}",
     "GET /wallet/withdrawals",
+    "PATCH /backoffice/chat/rooms/{id}",
     "PATCH /backoffice/users/{userId}",
     "PATCH /iam/roles/{roleId}",
     "PATCH /identity/profile",
     "PATCH /profile",
+    "POST /backoffice/chat/rooms",
     "POST /chat/blocks",
     "POST /chat/global",
+    "POST /chat/rooms/join",
+    "POST /chat/rooms/private",
+    "POST /chat/rooms/{roomId}/ban",
+    "POST /chat/rooms/{roomId}/kick",
+    "POST /chat/rooms/{roomId}/leave",
     "POST /chat/rooms/{roomId}/messages",
     "POST /cms/banners",
     "POST /cms/pages",

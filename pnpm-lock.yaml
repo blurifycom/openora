@@ -120,19 +120,19 @@ importers:
         version: 1.14.5
       '@orpc/openapi':
         specifier: 1.14.5
-        version: 1.14.5
+        version: 1.14.5(ws@8.21.1)
       '@orpc/openapi-client':
         specifier: 1.14.5
         version: 1.14.5
       '@orpc/server':
         specifier: 1.14.5
-        version: 1.14.5
+        version: 1.14.5(ws@8.21.1)
       '@orpc/tanstack-query':
         specifier: 1.14.5
         version: 1.14.5(@orpc/client@1.14.5)(@tanstack/query-core@5.101.0)
       '@orpc/zod':
         specifier: 1.14.5
-        version: 1.14.5(@orpc/contract@1.14.5)(@orpc/server@1.14.5)(zod@4.4.3)
+        version: 1.14.5(@orpc/contract@1.14.5)(@orpc/server@1.14.5(ws@8.21.1))(ws@8.21.1)(zod@4.4.3)
       better-auth:
         specifier: 1.6.15
         version: 1.6.15(drizzle-kit@0.31.10)(drizzle-orm@0.45.2(@types/pg@8.20.0)(kysely@0.29.2)(pg@8.21.0))(next@16.2.9(react-dom@19.2.7(react@19.2.7))(react@19.2.7))(pg@8.21.0)(react-dom@19.2.7(react@19.2.7))(react@19.2.7)(vitest@4.1.8)
@@ -513,11 +513,11 @@ packages:
 
   '@esbuild-kit/core-utils@3.3.2':
     resolution: {integrity: sha512-sPRAnw9CdSsRmEtnsl2WXWdyquogVpB3yZ3dgwJfe8zrOzTsV7cJvmwrKVa+0ma5BoiGJ+BoqkMvawbayKUsqQ==}
-    deprecated: 'Merged into tsx: https://tsx.is'
+    deprecated: 'Merged into tsx: https://tsx.hirok.io'
 
   '@esbuild-kit/esm-loader@2.6.5':
     resolution: {integrity: sha512-FxEMIkJKnodyA1OaCUoEvbYRkoZlLZ4d/eXFu9Fh8CbBBgP5EmZxrfTRyN0qpXZ4vOvqnE5YdRdcrmUUXuU+dA==}
-    deprecated: 'Merged into tsx: https://tsx.is'
+    deprecated: 'Merged into tsx: https://tsx.hirok.io'
 
   '@esbuild/aix-ppc64@0.28.1':
     resolution: {integrity: sha512-Svl7tq8k/08+p6CXPpRjQ1fKX+1odH/BQbb48fV6fj3CWHhsoIOoY87w1oHXm0qEpkIK3ZfVgp0hed3XBXzXMQ==}
@@ -3881,6 +3881,18 @@ packages:
   wrappy@1.0.2:
     resolution: {integrity: sha512-l4Sp/DRseor9wL6EvV2+TuQn63dMkPjZ/sp9XkghTEbV9KlPS1xUsZ3u7/IQO4wxtcFB4bgpQPRcR3QCvezPcQ==}
 
+  ws@8.21.1:
+    resolution: {integrity: sha512-+0NTnW77fFN/DjQi6k/Sq/Yvk4Sgajw7urW8V+asjXnRgDs9gyGkdb7EzgfhA4goXsRIZKE28fzIXBHEzhuiWw==}
+    engines: {node: '>=10.0.0'}
+    peerDependencies:
+      bufferutil: ^4.0.1
+      utf-8-validate: '>=5.0.2'
+    peerDependenciesMeta:
+      bufferutil:
+        optional: true
+      utf-8-validate:
+        optional: true
+
   xsschema@0.4.4:
     resolution: {integrity: sha512-TMhbk8AhxO+YuDOn3rXBjGXQ+Vja3T13UPQkHx/FemhusaOzRfCSj2seykt0mdnFPsOtO9l3ANf4adcp+4NRGw==}
     peerDependencies:
@@ -4844,12 +4856,12 @@ snapshots:
 
   '@orpc/interop@1.14.5': {}
 
-  '@orpc/json-schema@1.14.5':
+  '@orpc/json-schema@1.14.5(ws@8.21.1)':
     dependencies:
       '@orpc/contract': 1.14.5
       '@orpc/interop': 1.14.5
-      '@orpc/openapi': 1.14.5
-      '@orpc/server': 1.14.5
+      '@orpc/openapi': 1.14.5(ws@8.21.1)
+      '@orpc/server': 1.14.5(ws@8.21.1)
       '@orpc/shared': 1.14.5
       json-schema-typed: 8.0.2
     transitivePeerDependencies:
@@ -4867,13 +4879,13 @@ snapshots:
     transitivePeerDependencies:
       - '@opentelemetry/api'
 
-  '@orpc/openapi@1.14.5':
+  '@orpc/openapi@1.14.5(ws@8.21.1)':
     dependencies:
       '@orpc/client': 1.14.5
       '@orpc/contract': 1.14.5
       '@orpc/interop': 1.14.5
       '@orpc/openapi-client': 1.14.5
-      '@orpc/server': 1.14.5
+      '@orpc/server': 1.14.5(ws@8.21.1)
       '@orpc/shared': 1.14.5
       '@orpc/standard-server': 1.14.5
       json-schema-typed: 8.0.2
@@ -4884,7 +4896,7 @@ snapshots:
       - fastify
       - ws
 
-  '@orpc/server@1.14.5':
+  '@orpc/server@1.14.5(ws@8.21.1)':
     dependencies:
       '@orpc/client': 1.14.5
       '@orpc/contract': 1.14.5
@@ -4897,6 +4909,8 @@ snapshots:
       '@orpc/standard-server-node': 1.14.5
       '@orpc/standard-server-peer': 1.14.5
       cookie: 1.1.1
+    optionalDependencies:
+      ws: 8.21.1
     transitivePeerDependencies:
       - '@opentelemetry/api'
       - fastify
@@ -4959,12 +4973,12 @@ snapshots:
     transitivePeerDependencies:
       - '@opentelemetry/api'
 
-  '@orpc/zod@1.14.5(@orpc/contract@1.14.5)(@orpc/server@1.14.5)(zod@4.4.3)':
+  '@orpc/zod@1.14.5(@orpc/contract@1.14.5)(@orpc/server@1.14.5(ws@8.21.1))(ws@8.21.1)(zod@4.4.3)':
     dependencies:
       '@orpc/contract': 1.14.5
-      '@orpc/json-schema': 1.14.5
-      '@orpc/openapi': 1.14.5
-      '@orpc/server': 1.14.5
+      '@orpc/json-schema': 1.14.5(ws@8.21.1)
+      '@orpc/openapi': 1.14.5(ws@8.21.1)
+      '@orpc/server': 1.14.5(ws@8.21.1)
       '@orpc/shared': 1.14.5
       escape-string-regexp: 5.0.0
       wildcard-match: 5.1.4
@@ -7267,6 +7281,9 @@ snapshots:
       strip-ansi: 7.2.0
 
   wrappy@1.0.2: {}
+
+  ws@8.21.1:
+    optional: true
 
   xsschema@0.4.4(@valibot/to-json-schema@1.6.0(valibot@1.4.1(typescript@6.0.3)))(effect@3.20.0)(sury@10.0.4)(zod-to-json-schema@3.25.2(zod@4.4.3))(zod@4.4.3):
     optionalDependencies:

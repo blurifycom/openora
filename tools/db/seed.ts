@@ -48,6 +48,7 @@ async function main() {
     db,
     auth,
     playerCount: Number(arg('players') ?? 36),
+    password: arg('password') ?? 'password123',
     admin: {
       email: arg('admin-email') ?? 'admin@oss.dev',
       password: arg('admin-password') ?? 'password123',
@@ -61,6 +62,7 @@ async function main() {
   console.log(`  Players:      ${result.players}`);
   console.log(`  Games:        ${result.games}`);
   console.log(`  Transactions: ${result.transactions}`);
+  console.log(`  Chat rooms:   ${result.rooms}`);
   console.log('\nLog in to the backoffice:');
   console.log(`  ${result.adminEmail} / ${result.adminPassword}`);
 }
