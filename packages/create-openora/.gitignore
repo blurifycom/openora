@@ -1,0 +1,4 @@
+dist
+template
+src/generated
+*.tsbuildinfo
