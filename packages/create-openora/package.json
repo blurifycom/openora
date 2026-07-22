@@ -1,6 +1,6 @@
 {
   "name": "@openora/create",
-  "version": "0.1.0",
+  "version": "0.4.0",
   "description": "npm initializer that scaffolds a headless Openora consumer app from the published @openora/* packages - no OSS checkout required",
   "keywords": [
     "ai-native",

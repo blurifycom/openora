@@ -67,7 +67,7 @@ jobs:
           NEXT=$(node -e 'const v=process.argv[1].split("-")[0].split(".").map(Number); console.log(v[0]+"."+v[1]+"."+(v[2]+1))' "$LATEST")
           export VERSION="${NEXT}-canary.${RUN}"
           echo "Publishing canary $VERSION"
-          node -e "for (const p of ['packages/core/package.json','packages/mcp/package.json']) { const fs=require('fs'); const j=JSON.parse(fs.readFileSync(p,'utf8')); j.version=process.env.VERSION; fs.writeFileSync(p, JSON.stringify(j,null,2)+'\n'); }"
+          node -e "for (const p of ['packages/core/package.json','packages/mcp/package.json','packages/create-openora/package.json']) { const fs=require('fs'); const j=JSON.parse(fs.readFileSync(p,'utf8')); j.version=process.env.VERSION; fs.writeFileSync(p, JSON.stringify(j,null,2)+'\n'); }"
           pnpm changeset publish --no-git-tag --tag canary
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
