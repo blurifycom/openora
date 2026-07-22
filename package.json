@@ -67,9 +67,6 @@
     "turbo": "2.9.16",
     "typescript": "6.0.3"
   },
-  "optionalDependencies": {
-    "ably": "2.22.1"
-  },
   "engines": {
     "node": ">=26.0.0",
     "pnpm": ">=11.0.0"
