@@ -13,7 +13,7 @@ import type {
   User,
   TagKey,
 } from '@openora/core/contracts';
-import { eq, ilike, count, or, and, gte, desc, sql, ne, inArray, isNull } from 'drizzle-orm';
+import { eq, ilike, count, or, and, gte, asc, desc, sql, ne, inArray, isNull } from 'drizzle-orm';
 import { player } from '@openora/core/pam/schema/profile';
 import { user } from '@openora/core/pam/schema/identity';
 import { playerTag, tag } from '@openora/core/pam/schema/tag';
@@ -39,6 +39,8 @@ export class PlayerService {
     status,
     kycStatus,
     tags,
+    sortBy,
+    sortOrder,
   }: {
     page: number;
     limit: number;
@@ -46,6 +48,8 @@ export class PlayerService {
     status?: PlayerStatus;
     kycStatus?: KycStatus;
     tags?: TagKey[];
+    sortBy?: string;
+    sortOrder?: string;
   }) {
     const db = this.drizzle.db;
     const conditions = [];
@@ -94,7 +98,26 @@ export class PlayerService {
         .leftJoin(tag, eq(tag.id, playerTag.tagId))
         .groupBy(player.id, user.email)
         .where(whereClause)
-        .orderBy(desc(player.createdAt))
+        .orderBy(
+          ((sortOrder ?? 'desc') === 'asc' ? asc : desc)(
+            sortBy === 'displayName'
+              ? player.displayName
+              : sortBy === 'status'
+                ? player.status
+                : sortBy === 'kycStatus'
+                  ? player.kycStatus
+                  : sortBy === 'totalWagered'
+                    ? player.totalWagered
+                    : sortBy === 'totalDeposits'
+                      ? player.totalDeposits
+                      : sortBy === 'lastSeenAt'
+                        ? player.lastSeenAt
+                        : sortBy === 'level'
+                          ? player.level
+                          : player.createdAt,
+          ),
+          desc(player.id),
+        )
         .limit(limit)
         .offset(pageToOffset(page, limit)),
       db

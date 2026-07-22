@@ -6,6 +6,9 @@ export const PageQuerySchema = z.object({
 });
 export type PageQuery = z.infer<typeof PageQuerySchema>;
 
+export const SortOrderSchema = z.enum(['asc', 'desc']);
+export type SortOrder = z.infer<typeof SortOrderSchema>;
+
 export const paginated = <T extends z.ZodType>(item: T) =>
   z.object({
     items: z.array(item),

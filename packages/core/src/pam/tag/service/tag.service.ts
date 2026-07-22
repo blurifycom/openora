@@ -7,7 +7,7 @@ import {
   pageToOffset,
   alreadyInUseError,
 } from '@openora/core/server';
-import { and, asc, count, eq, inArray, isNull, notInArray } from 'drizzle-orm';
+import { and, asc, count, desc, eq, inArray, isNull, notInArray } from 'drizzle-orm';
 import {
   AssignPlayerTagInput,
   CreateTagInput,
@@ -77,9 +77,28 @@ export class TagService implements PlayerTags {
     }
   }
 
-  public async listPlayerTags(playerId: Player['id'], page: number, limit: number) {
+  public async listPlayerTags({
+    playerId,
+    page,
+    limit,
+    sortBy,
+    sortOrder,
+  }: {
+    playerId: Player['id'];
+    page: number;
+    limit: number;
+    sortBy?: string;
+    sortOrder?: string;
+  }) {
     const where = and(eq(playerTag.playerId, playerId), isNull(playerTag.removedAt));
     const db = this.drizzle.db;
+    const dir = (sortOrder ?? 'desc') === 'asc' ? asc : desc;
+    const tagSortCol =
+      sortBy === 'removedAt'
+        ? playerTag.removedAt
+        : sortBy === 'assignActor'
+          ? playerTag.assignActor
+          : playerTag.createdAt;
     const [rows, [{ n }]] = await Promise.all([
       db
         .select({
@@ -89,6 +108,7 @@ export class TagService implements PlayerTags {
         .from(playerTag)
         .innerJoin(tag, eq(playerTag.tagId, tag.id))
         .where(where)
+        .orderBy(dir(tagSortCol), desc(playerTag.id))
         .limit(limit)
         .offset(pageToOffset(page, limit)),
       db.select({ n: count() }).from(playerTag).where(where),

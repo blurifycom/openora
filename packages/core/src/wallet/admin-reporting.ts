@@ -1,6 +1,6 @@
 import type { AdminTxListOptions, AdminWalletReporting } from '@openora/core/contracts';
 import { DrizzleService, pageToOffset } from '@openora/core/server';
-import { and, count, desc, eq, gte, inArray, lte, sum } from 'drizzle-orm';
+import { and, asc, count, desc, eq, gte, inArray, lte, sum } from 'drizzle-orm';
 import { wallet, walletTransaction } from './schema/index.js';
 
 // See ADR-0017/0025.
@@ -40,6 +40,8 @@ export class DrizzleAdminWalletReporting implements AdminWalletReporting {
     dateTo,
     amountMin,
     amountMax,
+    sortBy,
+    sortOrder,
   }: AdminTxListOptions) {
     const db = this.drizzle.db;
     const conditions = [
@@ -60,7 +62,24 @@ export class DrizzleAdminWalletReporting implements AdminWalletReporting {
         .from(walletTransaction)
         .innerJoin(wallet, eq(walletTransaction.walletId, wallet.id))
         .where(where)
-        .orderBy(desc(walletTransaction.createdAt))
+        .orderBy(
+          ((sortOrder ?? 'desc') === 'asc' ? asc : desc)(
+            sortBy === 'amount'
+              ? walletTransaction.amount
+              : sortBy === 'type'
+                ? walletTransaction.type
+                : sortBy === 'status'
+                  ? walletTransaction.status
+                  : sortBy === 'currency'
+                    ? walletTransaction.currency
+                    : sortBy === 'rail'
+                      ? walletTransaction.rail
+                      : sortBy === 'reviewedAt'
+                        ? walletTransaction.reviewedAt
+                        : walletTransaction.createdAt,
+          ),
+          desc(walletTransaction.id),
+        )
         .limit(limit)
         .offset(pageToOffset(page, limit)),
       db

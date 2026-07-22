@@ -18,7 +18,13 @@ export type AdminUserRow = {
   lockoutUntil?: Date | null;
 };
 
-export type AdminUserListOptions = { page: number; limit: number; search?: string };
+export type AdminUserListOptions = {
+  page: number;
+  limit: number;
+  search?: string;
+  sortBy?: 'createdAt' | 'email' | 'name' | 'role' | 'isActive' | 'lastLockoutAt';
+  sortOrder?: 'asc' | 'desc';
+};
 
 // Player-facing back-office enrichment (username + KYC). Lets a back-office
 // consumer label a player row without reaching into the player/profile tables.

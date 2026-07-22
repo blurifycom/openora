@@ -813,6 +813,7 @@ function paginatedDrizzle(rows: unknown[], total: number) {
         from: vi.fn(() => chain),
         innerJoin: vi.fn(() => chain),
         where: vi.fn(() => chain),
+        orderBy: vi.fn(() => chain),
         limit: vi.fn(() => chain),
         offset: vi.fn(() => chain),
       };

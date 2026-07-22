@@ -3,6 +3,7 @@ import type {
   AdminTxDetail,
   AdminTxRow,
   AdminUserDirectory,
+  AdminUserListOptions,
   AdminUserRow,
   AdminWalletReporting,
   User,
@@ -51,8 +52,20 @@ export class BackofficeService {
     };
   }
 
-  async listUsers(page: number, limit: number, search?: string) {
-    const { rows, total } = await this.users.list({ page, limit, search });
+  async listUsers({
+    page,
+    limit,
+    search,
+    sortBy,
+    sortOrder,
+  }: {
+    page: number;
+    limit: number;
+    search?: string;
+    sortBy?: AdminUserListOptions['sortBy'];
+    sortOrder?: AdminUserListOptions['sortOrder'];
+  }) {
+    const { rows, total } = await this.users.list({ page, limit, search, sortBy, sortOrder });
     return { items: rows.map(toAdminUser), total, page, limit };
   }
 
@@ -90,6 +103,8 @@ export class BackofficeService {
       amountMin,
       amountMax,
       player,
+      sortBy,
+      sortOrder,
     } = filters;
 
     // `userId` = exact wallet.userId match; `player` = free-text resolved to ids.
@@ -117,6 +132,8 @@ export class BackofficeService {
       dateTo: dateTo ? new Date(dateTo) : undefined,
       amountMin,
       amountMax,
+      sortBy,
+      sortOrder,
     });
 
     const players = await this.lookupPlayerMap(rows.map((r) => r.userId));

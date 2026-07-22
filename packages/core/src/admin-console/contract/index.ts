@@ -13,7 +13,7 @@ import {
   WalletTransactionStatusSchema,
   WalletTransactionTypeSchema,
 } from '@openora/core/contracts';
-import { PageQuerySchema, paginated } from '@openora/core/contracts/kit';
+import { PageQuerySchema, SortOrderSchema, paginated } from '@openora/core/contracts/kit';
 
 export const PlayerEmailSchema = z.email();
 export const PlayerUsernameSchema = z.string();
@@ -45,6 +45,29 @@ export const AdminUserSchema = z.object({
   lockoutUntil: TimestampSchema.nullable().optional(),
 });
 
+export const ADMIN_USER_SORT_BY_VALUES = [
+  'createdAt',
+  'email',
+  'name',
+  'role',
+  'isActive',
+  'lastLockoutAt',
+] as const;
+export const AdminUserSortBySchema = z.enum(ADMIN_USER_SORT_BY_VALUES).default('createdAt');
+export type AdminUserSortBy = z.infer<typeof AdminUserSortBySchema>;
+
+export const ADMIN_TX_SORT_BY_VALUES = [
+  'createdAt',
+  'amount',
+  'type',
+  'status',
+  'currency',
+  'rail',
+  'reviewedAt',
+] as const;
+export const AdminTransactionSortBySchema = z.enum(ADMIN_TX_SORT_BY_VALUES).default('createdAt');
+export type AdminTransactionSortBy = z.infer<typeof AdminTransactionSortBySchema>;
+
 export const TransactionFilterSchema = PageQuerySchema.extend({
   userId: UuidSchema.optional(),
   type: WalletTransactionTypeSchema.optional(),
@@ -56,6 +79,8 @@ export const TransactionFilterSchema = PageQuerySchema.extend({
   amountMin: MoneyAmountSchema.optional(),
   amountMax: MoneyAmountSchema.optional(),
   player: PlayerSearchSchema.optional(),
+  sortBy: AdminTransactionSortBySchema.optional(),
+  sortOrder: SortOrderSchema.default('desc').optional(),
 });
 
 // The list row carries only the player email as the identifying label; the fuller
@@ -87,7 +112,13 @@ export const backofficeContract = {
 
   listUsers: oc
     .route({ method: 'GET', path: '/backoffice/users' })
-    .input(PageQuerySchema.extend({ search: z.string().optional() }))
+    .input(
+      PageQuerySchema.extend({
+        search: z.string().optional(),
+        sortBy: AdminUserSortBySchema.optional(),
+        sortOrder: SortOrderSchema.default('asc').optional(),
+      }),
+    )
     .output(paginated(AdminUserSchema)),
 
   getUser: oc

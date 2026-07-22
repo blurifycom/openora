@@ -41,6 +41,8 @@ export type AdminTxListOptions = {
   dateTo?: Date;
   amountMin?: string;
   amountMax?: string;
+  sortBy?: 'createdAt' | 'amount' | 'type' | 'status' | 'currency' | 'rail' | 'reviewedAt';
+  sortOrder?: 'asc' | 'desc';
 };
 
 export type AdminWalletReporting = {
