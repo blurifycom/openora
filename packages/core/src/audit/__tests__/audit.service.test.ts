@@ -1,5 +1,10 @@
-import { describe, it, expect, vi } from 'vitest';
-import { mock, mockDb } from '../../testing/mock.js';
+import { describe, it, expect, vi, beforeAll, afterAll, beforeEach } from 'vitest';
+import { eq, sql } from 'drizzle-orm';
+import type { EventBus } from '@openora/core/server';
+import { createTestDb, type TestDb } from '@openora/core/testing';
+import { mock } from '../../testing/mock.js';
+import { migrate } from '../migrate.js';
+import { auditLog } from '../schema/index.js';
 import { AuditService, computeHash, startOfDayUtc, endOfDayUtc } from '../service/audit.service.js';
 import { AuditListFiltersSchema } from '../contract/index.js';
 
@@ -77,135 +82,56 @@ describe('computeHash canonical form', () => {
   });
 });
 
-function makeEvents(): import('@openora/core/server').EventBus {
-  return mock<import('@openora/core/server').EventBus>({ emit: vi.fn(), on: vi.fn() });
+let db: TestDb;
+
+const noEvents = () => mock<EventBus>({ emit: vi.fn(), on: vi.fn() });
+
+function makeService() {
+  return new AuditService(db.drizzle, noEvents());
 }
 
-const CREATED_AT = new Date('2024-01-01T00:00:00.000Z');
+beforeAll(async () => {
+  db = await createTestDb([migrate]);
+});
 
-function makeRow(
-  overrides: {
-    id?: string;
-    actorId?: string | null;
-    actorType?: 'player' | 'admin' | 'system';
-    action?: string;
-    resourceType?: string;
-    resourceId?: string | null;
-    before?: unknown;
-    after?: unknown;
-    ip?: string | null;
-    userAgent?: string | null;
-    correlationId?: string | null;
-    seq?: number;
-    prevHash?: string | null;
-    hash?: string;
-    createdAt?: Date;
-  } = {},
-) {
-  return {
-    id: 'row-1',
-    actorId: null,
-    actorType: 'system' as const,
-    action: 'identity.user.registered',
-    resourceType: 'identity',
-    resourceId: null,
-    before: null,
-    after: null,
-    ip: null,
-    userAgent: null,
-    correlationId: null,
-    seq: 1,
-    prevHash: null,
-    hash: 'deadbeef',
-    createdAt: CREATED_AT,
-    ...overrides,
-  };
-}
+afterAll(async () => {
+  await db.drop();
+});
 
-function makeManualDrizzle(
-  db: Record<string, unknown>,
-): import('@openora/core/server').DrizzleService {
-  return mockDb(db);
-}
+beforeEach(async () => {
+  await db.drizzle.db.execute(sql`TRUNCATE ${auditLog} RESTART IDENTITY CASCADE`);
+});
 
-function makeChainStore() {
-  const rows: ReturnType<typeof makeRow>[] = [];
-  let seqCounter = 0;
-  let executeCall = 0;
-
-  const tx = {
-    execute: vi.fn().mockImplementation(() => {
-      const call = executeCall++;
-      if (call % 2 === 1) {
-        seqCounter += 1;
-        return Promise.resolve({ rows: [{ seq: seqCounter }] });
-      }
-      return Promise.resolve({ rows: [{}] });
-    }),
-    select: vi.fn().mockImplementation(() => {
-      const chain = {
-        from: vi.fn().mockReturnThis(),
-        orderBy: vi.fn().mockReturnThis(),
-        limit: vi.fn().mockImplementation(() => {
-          const latest = rows[rows.length - 1];
-          return Promise.resolve(latest ? [{ hash: latest.hash }] : []);
-        }),
-      };
-      return chain;
-    }),
-    insert: vi.fn().mockImplementation(() => ({
-      values: vi.fn().mockImplementation((vals: ReturnType<typeof makeRow>) => ({
-        returning: vi.fn().mockImplementation(() => {
-          rows.push(vals);
-          return Promise.resolve([vals]);
-        }),
-      })),
-    })),
-  };
-
-  const db = {
-    transaction: vi.fn().mockImplementation((cb: (t: typeof tx) => Promise<unknown>) => cb(tx)),
-  };
-
-  return { drizzle: makeManualDrizzle(db), tx, getRows: () => rows };
-}
-
-describe('AuditService.record()', () => {
-  it('inserts with prevHash=null for the first row and stores a real sha256 hash (no UPDATE)', async () => {
-    const store = makeChainStore();
-    const svc = new AuditService(store.drizzle, makeEvents());
-
-    const result = await svc.record({
+describe('AuditService.record() (real PG)', () => {
+  it('inserts with prevHash=null for the first row and stores a real sha256 hash', async () => {
+    const result = await makeService().record({
       actorType: 'system',
       action: 'identity.user.registered',
       resourceType: 'identity',
     });
 
     expect(result.prevHash).toBeNull();
-
-    const expected = computeHash({
-      id: result.id,
-      actorId: result.actorId ?? null,
-      actorType: result.actorType,
-      action: result.action,
-      resourceType: result.resourceType,
-      resourceId: result.resourceId ?? null,
-      before: result.before ?? null,
-      after: result.after ?? null,
-      result: result.result ?? null,
-      seq: result.seq,
-      createdAt: result.createdAt,
-      prevHash: null,
-    });
-    expect(result.hash).toBe(expected);
+    expect(result.hash).toBe(
+      computeHash({
+        id: result.id,
+        actorId: result.actorId ?? null,
+        actorType: result.actorType,
+        action: result.action,
+        resourceType: result.resourceType,
+        resourceId: result.resourceId ?? null,
+        before: result.before ?? null,
+        after: result.after ?? null,
+        result: result.result ?? null,
+        seq: result.seq,
+        createdAt: result.createdAt,
+        prevHash: null,
+      }),
+    );
     expect(result.hash).not.toBe('pending');
-    expect('update' in store.tx).toBe(false);
   });
 
   it('chains prevHash from the latest existing row across sequential appends', async () => {
-    const store = makeChainStore();
-    const svc = new AuditService(store.drizzle, makeEvents());
-
+    const svc = makeService();
     const first = await svc.record({
       actorType: 'system',
       action: 'identity.user.registered',
@@ -218,106 +144,58 @@ describe('AuditService.record()', () => {
     });
 
     expect(first.prevHash).toBeNull();
-    expect(first.seq).toBe(1);
     expect(second.prevHash).toBe(first.hash);
-    expect(second.seq).toBe(2);
-
-    const persisted = store.getRows();
-    const verifySvc = new AuditService(
-      makeManualDrizzle({
-        select: vi.fn().mockReturnValue({
-          from: vi.fn().mockReturnThis(),
-          where: vi.fn().mockReturnThis(),
-          orderBy: vi.fn().mockReturnThis(),
-          limit: vi.fn().mockResolvedValueOnce(persisted),
-        }),
-      }),
-      makeEvents(),
-    );
-    expect(await verifySvc.verifyChain()).toEqual({ valid: true });
+    expect(second.seq).toBeGreaterThan(first.seq);
+    expect((await svc.verifyChain()).valid).toBe(true);
   });
 });
 
-describe('AuditService.verifyChain()', () => {
-  function makeVerifyDb(rows: ReturnType<typeof makeRow>[]) {
-    const db = {
-      select: vi.fn().mockReturnValue({
-        from: vi.fn().mockReturnThis(),
-        where: vi.fn().mockReturnThis(),
-        orderBy: vi.fn().mockReturnThis(),
-        limit: vi.fn().mockResolvedValueOnce(rows),
-      }),
-    };
-    return makeManualDrizzle(db);
+describe('AuditService.verifyChain() (real PG)', () => {
+  async function seedRow(input: Parameters<AuditService['record']>[0]) {
+    return makeService().record(input);
   }
 
   it('returns valid:true for an empty chain', async () => {
-    const svc = new AuditService(makeVerifyDb([]), makeEvents());
-    expect(await svc.verifyChain()).toEqual({ valid: true });
+    expect(await makeService().verifyChain()).toEqual({ valid: true });
   });
 
   it('returns valid:true when hash chain is intact across two rows', async () => {
-    const hash1 = computeHash({
-      id: 'r1',
-      actorId: null,
+    await seedRow({
       actorType: 'system',
       action: 'identity.user.registered',
       resourceType: 'identity',
-      resourceId: null,
-      before: null,
-      after: null,
-      result: null,
-      seq: 1,
-      createdAt: CREATED_AT.toISOString(),
-      prevHash: null,
     });
-    const hash2 = computeHash({
-      id: 'r2',
-      actorId: null,
+    await seedRow({
       actorType: 'system',
       action: 'wallet.deposit.completed',
       resourceType: 'wallet',
-      resourceId: null,
-      before: null,
-      after: null,
-      result: null,
-      seq: 2,
-      createdAt: CREATED_AT.toISOString(),
-      prevHash: hash1,
     });
 
-    const rows = [
-      makeRow({ id: 'r1', seq: 1, prevHash: null, hash: hash1 }),
-      makeRow({
-        id: 'r2',
-        seq: 2,
-        action: 'wallet.deposit.completed',
-        resourceType: 'wallet',
-        prevHash: hash1,
-        hash: hash2,
-      }),
-    ];
-
-    const svc = new AuditService(makeVerifyDb(rows), makeEvents());
-    expect(await svc.verifyChain()).toEqual({ valid: true });
+    expect(await makeService().verifyChain()).toEqual({ valid: true });
   });
 
   it('detects a tampered row - wrong hash value', async () => {
-    const rows = [makeRow({ id: 'r1', seq: 1, prevHash: null, hash: 'tampered-wrong-hash' })];
+    const row = await seedRow({
+      actorType: 'system',
+      action: 'identity.user.registered',
+      resourceType: 'identity',
+    });
+    await db.drizzle.db
+      .update(auditLog)
+      .set({ hash: 'tampered-wrong-hash' })
+      .where(eq(auditLog.id, row.id));
 
-    const svc = new AuditService(makeVerifyDb(rows), makeEvents());
-    const result = await svc.verifyChain();
+    const result = await makeService().verifyChain();
 
     expect(result.valid).toBe(false);
     if (!result.valid) {
-      expect(result.rowId).toBe('r1');
-      expect(result.firstBrokenSeq).toBe(1);
+      expect(result.rowId).toBe(row.id);
+      expect(result.firstBrokenSeq).toBe(row.seq);
     }
   });
 
   it('detects a rewritten before/after/result - not just the id/action/actor fields', async () => {
-    const hash1 = computeHash({
-      id: 'r1',
+    const row = await seedRow({
       actorId: 'admin-1',
       actorType: 'admin',
       action: 'admin.user.updated',
@@ -326,98 +204,61 @@ describe('AuditService.verifyChain()', () => {
       before: { role: 'player' },
       after: { role: 'player' },
       result: 'success',
-      seq: 1,
-      createdAt: CREATED_AT.toISOString(),
-      prevHash: null,
     });
+    await db.drizzle.db
+      .update(auditLog)
+      .set({ after: { role: 'admin' } })
+      .where(eq(auditLog.id, row.id));
 
-    // A rogue DBA rewrites `after` to hide a role escalation, but leaves the
-    // original hash in place - this must now fail verification.
-    const rows = [
-      makeRow({
-        id: 'r1',
-        actorId: 'admin-1',
-        actorType: 'admin',
-        action: 'admin.user.updated',
-        resourceType: 'user',
-        resourceId: 'user-9',
-        before: { role: 'player' },
-        after: { role: 'admin' },
-        seq: 1,
-        prevHash: null,
-        hash: hash1,
-      }),
-    ];
-
-    const svc = new AuditService(makeVerifyDb(rows), makeEvents());
-    const result = await svc.verifyChain();
+    const result = await makeService().verifyChain();
 
     expect(result.valid).toBe(false);
     if (!result.valid) {
-      expect(result.rowId).toBe('r1');
+      expect(result.rowId).toBe(row.id);
     }
   });
 
   it('detects a broken prevHash link between rows', async () => {
-    const hash1 = computeHash({
-      id: 'r1',
-      actorId: null,
+    await seedRow({
       actorType: 'system',
       action: 'identity.user.registered',
       resourceType: 'identity',
-      resourceId: null,
-      before: null,
-      after: null,
-      result: null,
-      seq: 1,
-      createdAt: CREATED_AT.toISOString(),
-      prevHash: null,
     });
+    const second = await seedRow({
+      actorType: 'system',
+      action: 'wallet.deposit.completed',
+      resourceType: 'wallet',
+    });
+    await db.drizzle.db
+      .update(auditLog)
+      .set({ prevHash: 'wrong-prev-hash' })
+      .where(eq(auditLog.id, second.id));
 
-    const rows = [
-      makeRow({ id: 'r1', seq: 1, prevHash: null, hash: hash1 }),
-      makeRow({ id: 'r2', seq: 2, prevHash: 'wrong-prev-hash', hash: 'anything' }),
-    ];
-
-    const svc = new AuditService(makeVerifyDb(rows), makeEvents());
-    const result = await svc.verifyChain();
+    const result = await makeService().verifyChain();
 
     expect(result.valid).toBe(false);
     if (!result.valid) {
-      expect(result.rowId).toBe('r2');
-      expect(result.firstBrokenSeq).toBe(2);
+      expect(result.rowId).toBe(second.id);
+      expect(result.firstBrokenSeq).toBe(second.seq);
     }
   });
 });
 
-describe('AuditService.list()', () => {
-  function makeListDb(rows: ReturnType<typeof makeRow>[], count: number) {
-    let selectCall = 0;
-    const db = {
-      select: vi.fn().mockImplementation(() => {
-        const call = selectCall++;
-        if (call === 0) {
-          return {
-            from: vi.fn().mockReturnThis(),
-            where: vi.fn().mockReturnThis(),
-            orderBy: vi.fn().mockReturnThis(),
-            limit: vi.fn().mockReturnThis(),
-            offset: vi.fn().mockResolvedValueOnce(rows),
-          };
-        }
-        return {
-          from: vi.fn().mockReturnThis(),
-          where: vi.fn().mockResolvedValueOnce([{ count }]),
-        };
-      }),
-    };
-    return makeManualDrizzle(db);
+describe('AuditService.list() (real PG)', () => {
+  async function seed(inputs: Parameters<AuditService['record']>[0][]) {
+    const svc = makeService();
+    for (const input of inputs) {
+      await svc.record(input);
+    }
   }
 
   it('returns paginated items with total', async () => {
-    const rows = [makeRow(), makeRow({ id: 'row-2', seq: 2 })];
-    const svc = new AuditService(makeListDb(rows, 2), makeEvents());
-    const result = await svc.list({ page: 1, limit: 10 });
+    await seed([
+      { actorType: 'system', action: 'a.one', resourceType: 'identity' },
+      { actorType: 'system', action: 'a.two', resourceType: 'wallet' },
+    ]);
+
+    const result = await makeService().list({ page: 1, limit: 10 });
 
     expect(result.items).toHaveLength(2);
     expect(result.total).toBe(2);
@@ -426,17 +267,21 @@ describe('AuditService.list()', () => {
   });
 
   it('applies actorId filter and returns empty result when no match', async () => {
-    const svc = new AuditService(makeListDb([], 0), makeEvents());
-    const result = await svc.list({ actorId: 'user-xyz', page: 1, limit: 10 });
+    await seed([{ actorId: 'someone', actorType: 'admin', action: 'a', resourceType: 'x' }]);
+
+    const result = await makeService().list({ actorId: 'user-xyz', page: 1, limit: 10 });
 
     expect(result.items).toHaveLength(0);
     expect(result.total).toBe(0);
   });
 
   it('q matches a row by actorId', async () => {
-    const rows = [makeRow({ actorId: 'subject-1', actorType: 'player' })];
-    const svc = new AuditService(makeListDb(rows, 1), makeEvents());
-    const result = await svc.list({ q: 'subject-1', page: 1, limit: 10 });
+    await seed([
+      { actorId: 'subject-1', actorType: 'player', action: 'a', resourceType: 'x' },
+      { actorId: 'other', actorType: 'player', action: 'a', resourceType: 'x' },
+    ]);
+
+    const result = await makeService().list({ q: 'subject-1', page: 1, limit: 10 });
 
     expect(result.items).toHaveLength(1);
     expect(result.items[0]?.actorId).toBe('subject-1');
@@ -444,9 +289,11 @@ describe('AuditService.list()', () => {
   });
 
   it('q matches a row by resourceId', async () => {
-    const rows = [makeRow({ resourceType: 'transaction', resourceId: 'txn-9' })];
-    const svc = new AuditService(makeListDb(rows, 1), makeEvents());
-    const result = await svc.list({ q: 'txn-9', page: 1, limit: 10 });
+    await seed([
+      { actorType: 'system', action: 'a', resourceType: 'transaction', resourceId: 'txn-9' },
+    ]);
+
+    const result = await makeService().list({ q: 'txn-9', page: 1, limit: 10 });
 
     expect(result.items).toHaveLength(1);
     expect(result.items[0]?.resourceId).toBe('txn-9');
@@ -454,30 +301,49 @@ describe('AuditService.list()', () => {
   });
 
   it('applies explicit resourceId filter', async () => {
-    const rows = [makeRow({ resourceType: 'transaction', resourceId: 'txn-42' })];
-    const svc = new AuditService(makeListDb(rows, 1), makeEvents());
-    const result = await svc.list({ resourceId: 'txn-42', page: 1, limit: 10 });
+    await seed([
+      { actorType: 'system', action: 'a', resourceType: 'transaction', resourceId: 'txn-42' },
+      { actorType: 'system', action: 'a', resourceType: 'transaction', resourceId: 'txn-99' },
+    ]);
+
+    const result = await makeService().list({ resourceId: 'txn-42', page: 1, limit: 10 });
 
     expect(result.items).toHaveLength(1);
     expect(result.items[0]?.resourceId).toBe('txn-42');
   });
 
   it('q combined with actorType still ANDs correctly', async () => {
-    const rows = [makeRow({ actorId: 'subject-1', actorType: 'player' })];
-    const svc = new AuditService(makeListDb(rows, 1), makeEvents());
-    const result = await svc.list({ q: 'subject-1', actorType: 'player', page: 1, limit: 10 });
+    await seed([
+      { actorId: 'subject-1', actorType: 'player', action: 'a', resourceType: 'x' },
+      { actorId: 'subject-1', actorType: 'admin', action: 'a', resourceType: 'x' },
+    ]);
+
+    const result = await makeService().list({
+      q: 'subject-1',
+      actorType: 'player',
+      page: 1,
+      limit: 10,
+    });
 
     expect(result.items).toHaveLength(1);
     expect(result.items[0]?.actorType).toBe('player');
   });
 
   it('respects page and limit for offset calculation', async () => {
-    const svc = new AuditService(makeListDb([], 50), makeEvents());
-    const result = await svc.list({ page: 3, limit: 10 });
+    await seed(
+      Array.from({ length: 12 }, (_, i) => ({
+        actorType: 'system' as const,
+        action: `a.${i}`,
+        resourceType: 'x',
+      })),
+    );
 
-    expect(result.page).toBe(3);
+    const result = await makeService().list({ page: 2, limit: 10 });
+
+    expect(result.page).toBe(2);
     expect(result.limit).toBe(10);
-    expect(result.total).toBe(50);
+    expect(result.total).toBe(12);
+    expect(result.items).toHaveLength(2);
   });
 });
 
@@ -508,46 +374,41 @@ describe('audit date-range boundaries', () => {
   });
 });
 
-describe('AuditService.exportCsv()', () => {
-  function makeExportDb(rows: ReturnType<typeof makeRow>[]) {
-    const db = {
-      select: vi.fn().mockReturnValue({
-        from: vi.fn().mockReturnThis(),
-        where: vi.fn().mockReturnThis(),
-        orderBy: vi.fn().mockReturnThis(),
-        limit: vi.fn().mockResolvedValueOnce(rows),
-      }),
-    };
-    return makeManualDrizzle(db);
+describe('AuditService.exportCsv() (real PG)', () => {
+  async function seed(inputs: Parameters<AuditService['record']>[0][]) {
+    const svc = makeService();
+    for (const input of inputs) {
+      await svc.record(input);
+    }
   }
 
   it('emits a header row followed by one data row per result', async () => {
-    const rows = [
-      makeRow({ actorId: 'u1', actorType: 'player' }),
-      makeRow({ id: 'row-2', seq: 2 }),
-    ];
-    const svc = new AuditService(makeExportDb(rows), makeEvents());
-    const csv = await svc.exportCsv({});
+    await seed([
+      { actorId: 'u1', actorType: 'player', action: 'a.one', resourceType: 'identity' },
+      { actorType: 'system', action: 'a.two', resourceType: 'wallet' },
+    ]);
 
+    const csv = await makeService().exportCsv({});
     const lines = csv.split('\n').filter(Boolean);
-    expect(lines).toHaveLength(3); // 1 header + 2 data
+
+    expect(lines).toHaveLength(3);
     expect(lines[0]).toContain('id');
     expect(lines[0]).toContain('hash');
   });
 
   it('includes correct field values in data rows', async () => {
-    const rows = [makeRow({ actorId: 'u1', actorType: 'player' })];
-    const svc = new AuditService(makeExportDb(rows), makeEvents());
-    const csv = await svc.exportCsv({});
+    await seed([{ actorId: 'u1', actorType: 'player', action: 'a.one', resourceType: 'identity' }]);
 
-    expect(csv).toContain('row-1');
+    const csv = await makeService().exportCsv({});
+
+    expect(csv).toContain('u1');
     expect(csv).toContain('player');
   });
 
   it('escapes double-quotes in field values', async () => {
-    const rows = [makeRow({ action: 'has "quotes"' })];
-    const svc = new AuditService(makeExportDb(rows), makeEvents());
-    const csv = await svc.exportCsv({});
+    await seed([{ actorType: 'system', action: 'has "quotes"', resourceType: 'x' }]);
+
+    const csv = await makeService().exportCsv({});
 
     expect(csv).toContain('has ""quotes""');
   });
