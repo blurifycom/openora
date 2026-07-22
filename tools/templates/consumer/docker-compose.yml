@@ -15,9 +15,6 @@ services:
       timeout: 5s
       retries: 10
 
-  # Required. createApp is distributed-only (ADR-0030): it binds the durable seams
-  # (MESSAGE_BROKER, JOB_QUEUE, CACHE, RATE_LIMITER) from REDIS_URL and refuses to
-  # boot with any of them unbound. Setting REDIS_URL in .env auto-binds all four.
   redis:
     image: redis:7-alpine
     ports:
