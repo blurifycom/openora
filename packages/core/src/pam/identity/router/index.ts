@@ -55,11 +55,14 @@ export function createIdentityRouter(
 
     phoneLoginVerify: os.phoneLoginVerify.handler(({ input, context }) => {
       const h = context.request.headers;
-      return phoneLogin.verifyOtp({
-        ...input,
-        ip: nodeForwardedFor(h),
-        userAgent: nodeUserAgent(h),
-      });
+      return phoneLogin.verifyOtp(
+        {
+          ...input,
+          ip: nodeForwardedFor(h),
+          userAgent: nodeUserAgent(h),
+        },
+        context.resHeaders ?? new Headers(),
+      );
     }),
 
     logout: os.logout.handler(({ context }) =>

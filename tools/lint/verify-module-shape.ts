@@ -131,7 +131,7 @@ function checkAddon(dir: string): Check[] {
     {
       label: 'AGENTS.md',
       ok: file('AGENTS.md'),
-      hint: 'every add-on ships an AGENTS.md (extension points, do/dont, Done-when)',
+      hint: 'every add-on ships an AGENTS.md (invariants, rationale, extension seams - no route/table listings)',
     },
   ];
 }

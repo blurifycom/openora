@@ -9,6 +9,7 @@ coverage
 .env.*
 !.env.example
 *.tsbuildinfo
+.pnpm-store
 # OpenAPI spec is generated, not committed. Emitted by `pnpm codegen` (apps/api
 # emit-openapi) and on API boot. Read by gen-catalog + the @openora/mcp query-openapi
 # tool, which regenerate/expect it locally (pnpm setup:agent runs codegen).

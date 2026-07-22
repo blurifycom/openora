@@ -524,6 +524,8 @@ export class IdentityService {
             .set({ lockoutUntil, lockoutCount: tier, lastLockoutAt: new Date(nowMs) })
             .where(eq(user.id, existingUser.id));
 
+          await this.limiter?.reset(makeLoginRateLimitKey(email));
+
           this.events.emit('identity.user.lockout.triggered', {
             userId: existingUser.id,
             email,

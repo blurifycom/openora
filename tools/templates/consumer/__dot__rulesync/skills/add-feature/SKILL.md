@@ -37,9 +37,9 @@ re-implement their work. The platform-core twin is the `/add-feature` skill in t
 
 ## Steps
 
-### 1. Resolve input
+### 1. Resolve input + enhance the ask
 
-`<KEY>-XXX` from `$ARGUMENTS`; if absent, ask. Echo it back.
+`<KEY>-XXX` from `$ARGUMENTS`; if absent, ask. Echo it back. Run the `enhance-prompt` pre-step on the ask before gathering context, so Step 2 pulls only what's relevant and Step 3 plans against a clear brief.
 
 ### 2. Gather context in parallel (read-only)
 

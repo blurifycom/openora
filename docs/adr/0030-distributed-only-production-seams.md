@@ -27,8 +27,23 @@ path entirely:
 - `createApp` no longer registers an in-process default for `MESSAGE_BROKER`,
   `JOB_QUEUE`, `CACHE`, or `RATE_LIMITER`. `REDIS_URL` still auto-binds the Redis
   reference drivers (`RedisCache`/`RedisRateLimiter`/`BullMqJobQueue`) exactly as
-  before (ADR-0028) - that part is unchanged. `MESSAGE_BROKER` has no in-core
-  durable default at all; a deployment must bind an overlay (RabbitMQ/Kafka).
+  before (ADR-0028) - that part is unchanged.
+- `MESSAGE_BROKER` gains an in-core durable reference driver, `RedisStreamsBroker`,
+  auto-bound on the same `REDIS_URL` as the other three. It gives every seam one
+  dependency to provision rather than making a broker overlay a precondition for
+  booting at all; RabbitMQ/Kafka remain overlay swaps for deployments that want them
+  (Container is last-registration-wins, so an overlay simply re-provides the token).
+  Each subscribed (topic, group) runs one Redis consumer-group loop on a duplicated
+  connection, fans out to every local handler and XACKs once, so an event lands on
+  exactly one replica per service. The consumer group defaults to `SERVICE_NAME`;
+  because a group name is a durable identity (renaming it strands pending entries),
+  `createApp` throws when `SERVICE_MANIFEST` is set without an explicit `SERVICE_NAME`
+  rather than deriving one from the module list.
+  At-least-once holds from group creation onward; the group is created at `$` by
+  default, so a service extracted after events were already flowing does not replay
+  the backlog. `RedisStreamsBrokerOptions.startId: '0'` opts into replaying whatever
+  the stream still retains, accepting duplicate handler runs - core has no dedup layer,
+  and `eventId` is a key consumers dedup on themselves.
 - After `loadPlugins` + `configure` (so a `REDIS_URL` auto-bind or an overlay's own
   registration already won - Container is last-registration-wins), `createApp` calls
   `assertDurableSeamsBound(container)`. It throws a single actionable error listing
@@ -72,12 +87,15 @@ the success path).
 **Negative / trade-offs:**
 
 - **Single-node zero-dependency production deploy is gone.** Every deployment now
-  needs Redis (`REDIS_URL`) plus a durable broker overlay bound before `createApp`
-  will finish booting.
-- **Core ships no durable `MESSAGE_BROKER`.** A RabbitMQ/Kafka broker overlay is
-  now mandatory to run at all - authoring one is necessary follow-up work, tracked
-  separately, not part of this change. Until it exists, no deployment boots without
-  first binding a broker in an overlay's `plugin.ts`.
+  needs Redis (`REDIS_URL`) before `createApp` will finish booting.
+- **Redis is a single point of failure for four seams at once.** Cache, rate limiter,
+  job queue and broker all ride one dependency, so a Redis outage degrades everything
+  rather than one capability. Accepted: it is the dependency an operator is most
+  likely to already run well, and each seam stays independently swappable.
+- **Redis Streams is a weaker broker than RabbitMQ/Kafka.** No partitioning (so
+  `orderingKey` is not honoured), retention is bounded by `STREAM_MAXLEN`, and there
+  is no dead-letter queue - a handler that throws is logged and the entry XACKed
+  anyway. A deployment needing any of those swaps in a broker overlay.
 - A realtime-vendor overlay (Ably/GetStream) is similarly required for any
   deployment that actually serves realtime traffic (chat, live odds), though
   `createApp` itself doesn't gate boot on it.

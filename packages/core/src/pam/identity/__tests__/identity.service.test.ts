@@ -5,7 +5,12 @@ import {
   type IdentityServiceDeps,
 } from '../service/identity.service.js';
 import { UnsupportedLanguageError } from '../../shared/language.js';
-import type { EmailTemplateRenderer, SendEmailPort, PlatformConfig } from '@openora/core/contracts';
+import type {
+  EmailTemplateRenderer,
+  SendEmailPort,
+  PlatformConfig,
+  RateLimiterAdapter,
+} from '@openora/core/contracts';
 import { ORPCError } from '@orpc/server';
 import { mock } from '../../../testing/mock.js';
 import type { DrizzleService, EventBus } from '@openora/core/server';
@@ -153,7 +158,11 @@ describe('IdentityService - login lockout', () => {
     });
     const events = makeEvents();
     signInEmailMock.mockResolvedValue(jsonResponse({ message: 'Invalid' }, 401));
-    const svc = withTemplateRenderer({ drizzle: drizzle, events: events });
+    const limiter = mock<RateLimiterAdapter>({
+      consume: vi.fn().mockResolvedValue({ allowed: true, retryAfterMs: 0 }),
+      reset: vi.fn().mockResolvedValue(undefined),
+    });
+    const svc = withTemplateRenderer({ drizzle: drizzle, events: events, limiter });
 
     await expect(
       svc.login({ email: 'A@B.dev', password: 'wrongpass1' }, {}, new Headers()),
@@ -163,6 +172,8 @@ describe('IdentityService - login lockout', () => {
       'identity.user.lockout.triggered',
       expect.objectContaining({ userId: 'u1', email: 'a@b.dev' }),
     );
+
+    expect(limiter.reset).toHaveBeenCalledWith('login:a@b.dev');
   });
 
   it('emits login.failed (not lockout) while still below the threshold', async () => {

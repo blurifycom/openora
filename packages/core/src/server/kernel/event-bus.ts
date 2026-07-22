@@ -91,8 +91,8 @@ export function createEventBus(
       if (!outbox) {
         throw new Error(
           `emitInTransaction('${event}') requires the transactional outbox, which is not bound. ` +
-            `Enable it (set OUTBOX_ENABLED=1 or a durable broker via AMQP_URL) so the event is ` +
-            `published reliably, or use emit() for best-effort post-commit delivery.`,
+            `Enable it (set OUTBOX_ENABLED=1) so the event is published reliably, or use emit() ` +
+            `for best-effort post-commit delivery.`,
         );
       }
       validate(event, payload);

@@ -1,6 +1,7 @@
 import { describe, it, expect, vi } from 'vitest';
 import { mock, mockDb } from '../../testing/mock.js';
-import { AuditService, computeHash } from '../service/audit.service.js';
+import { AuditService, computeHash, startOfDayUtc, endOfDayUtc } from '../service/audit.service.js';
+import { AuditListFiltersSchema } from '../contract/index.js';
 
 describe('computeHash canonical form', () => {
   it('matches the frozen golden vector', () => {
@@ -477,6 +478,33 @@ describe('AuditService.list()', () => {
     expect(result.page).toBe(3);
     expect(result.limit).toBe(10);
     expect(result.total).toBe(50);
+  });
+});
+
+describe('audit date-range boundaries', () => {
+  it('endOfDayUtc spans the whole day so toDate includes same-day entries', () => {
+    const end = endOfDayUtc('2026-07-21');
+    expect(end.toISOString()).toBe('2026-07-21T23:59:59.999Z');
+
+    const lateEntry = new Date('2026-07-21T22:00:00.000Z');
+    expect(lateEntry <= end).toBe(true);
+  });
+
+  it('startOfDayUtc anchors to midnight UTC', () => {
+    expect(startOfDayUtc('2026-07-21').toISOString()).toBe('2026-07-21T00:00:00.000Z');
+  });
+
+  it('list filters accept bare YYYY-MM-DD dates', () => {
+    const parsed = AuditListFiltersSchema.safeParse({
+      fromDate: '2026-07-01',
+      toDate: '2026-07-21',
+    });
+    expect(parsed.success).toBe(true);
+  });
+
+  it('list filters reject a full timestamp so the day-boundary math cannot shift', () => {
+    const parsed = AuditListFiltersSchema.safeParse({ toDate: '2026-07-21T22:00:00+05:00' });
+    expect(parsed.success).toBe(false);
   });
 });
 

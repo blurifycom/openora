@@ -15,8 +15,9 @@ import {
  * Modeled on `assertSealedServicesBound` (`compliance/assert.ts`) - same `has(token)`
  * shape, same "list every gap, don't stop at the first" style.
  *
- * `REALTIME_TRANSPORT` is deliberately excluded: it stays lazy and throws on first
- * use, since not every deployment serves realtime traffic.
+ * `REALTIME_TRANSPORT` is excluded: `createApp` binds `InProcessRealtimeTransport` as
+ * the default for single-process SSE deployments. Infra overlays (e.g. Ably) rebind it
+ * via last-wins `container.register`. Not listed here because it always has a binding.
  */
 export type DurableSeamContainerView = {
   has(token: AnyToken<unknown>): boolean;
@@ -28,7 +29,7 @@ const REQUIRED_DURABLE_SEAMS: readonly SeamRequirement[] = [
   {
     token: MESSAGE_BROKER,
     name: 'MESSAGE_BROKER',
-    fix: 'core ships no default broker - bind a durable MessageBrokerAdapter overlay (eg RabbitMQ/Kafka) via ctx.provide(MESSAGE_BROKER, ...)',
+    fix: 'set REDIS_URL to auto-bind RedisStreamsBroker, or bind a MessageBrokerAdapter overlay (eg RabbitMQ/Kafka) via ctx.provide(MESSAGE_BROKER, ...)',
   },
   {
     token: JOB_QUEUE,

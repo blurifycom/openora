@@ -127,6 +127,41 @@ export const domainEventSchemas = {
   'chat.user.blocked': z.object({ blockerId: UuidSchema, blockedId: UuidSchema }),
   'chat.user.unblocked': z.object({ blockerId: UuidSchema, blockedId: UuidSchema }),
 
+  // Admin room CRUD (actorId = acting admin UUID).
+  'chat.room.created': z.object({
+    roomId: UuidSchema,
+    name: z.string(),
+    slug: z.string(),
+    category: z.string(),
+    actorId: UuidSchema.optional(),
+  }),
+  'chat.room.deleted': z.object({
+    roomId: UuidSchema,
+    actorId: UuidSchema.optional(),
+    before: z.object({ name: z.string(), slug: z.string(), category: z.string() }),
+  }),
+  'chat.room.updated': z.object({
+    roomId: UuidSchema,
+    actorId: UuidSchema.optional(),
+    before: z.object({ name: z.string(), slug: z.string(), category: z.string() }),
+    after: z.object({ name: z.string(), slug: z.string(), category: z.string() }),
+  }),
+
+  // Private room lifecycle: creation and member membership changes.
+  'chat.private_room.created': z.object({ roomId: UuidSchema, creatorId: UuidSchema }),
+  'chat.room.member.joined': z.object({ roomId: UuidSchema, userId: UuidSchema }),
+  'chat.room.member.left': z.object({ roomId: UuidSchema, userId: UuidSchema }),
+  'chat.room.member.kicked': z.object({
+    roomId: UuidSchema,
+    userId: UuidSchema,
+    kickedBy: UuidSchema,
+  }),
+  'chat.room.member.banned': z.object({
+    roomId: UuidSchema,
+    userId: UuidSchema,
+    bannedBy: UuidSchema,
+  }),
+
   // An admin added or changed a geo (country) rule (regulatory). `actorId` is the
   // acting admin so the audit log can attribute the mutation.
   'compliance.geo-rule.added': z.object({
@@ -282,9 +317,11 @@ export function getEventVersion(event: string): number {
   return domainEventVersions[event as DomainEventName] ?? 1;
 }
 
+export const DOMAIN_EVENT_CATALOG = Object.keys(domainEventSchemas) as DomainEventName[];
+
 /** Returns every cross-module topic and its current schema version for broker provisioning and producer/consumer agreement checks. */
 export function eventCatalog(): ReadonlyArray<{ topic: DomainEventName; version: number }> {
-  return (Object.keys(domainEventSchemas) as DomainEventName[]).map((topic) => ({
+  return DOMAIN_EVENT_CATALOG.map((topic) => ({
     topic,
     version: getEventVersion(topic),
   }));
