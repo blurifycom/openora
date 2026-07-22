@@ -21,7 +21,7 @@ npm create @openora@latest my-casino
 cd my-casino
 pnpm install
 cp .env.example .env      # set DATABASE_URL / AUTH_SECRET
-docker compose up -d      # postgres
+docker compose up -d      # postgres + redis
 pnpm db:migrate
 pnpm dev                  # api on http://localhost:3001
 ```

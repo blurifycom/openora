@@ -14,8 +14,11 @@ const CORE_PLUGIN_MODULES: ReadonlyArray<{ id: string; specifier: string }> = [
   { id: 'lobby', specifier: '@openora/core/casino/plugins/lobby' },
   { id: 'chat', specifier: '@openora/core/engagement/plugins/chat' },
   { id: 'profile', specifier: '@openora/core/pam/plugins/profile' },
+  { id: 'tag', specifier: '@openora/core/pam/plugins/tag' },
   { id: 'admin-console', specifier: '@openora/core/admin-console/plugin' },
+  { id: 'player-note', specifier: '@openora/core/pam/plugins/player-note' },
   { id: 'cms', specifier: '@openora/core/cms/plugins/cms' },
+  { id: 'player-management', specifier: '@openora/core/pam/plugins/player-management' },
 ];
 
 /**
