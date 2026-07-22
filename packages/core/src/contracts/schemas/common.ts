@@ -33,3 +33,14 @@ export const AUTH_GUARD_REASONS = [
 ] as const;
 export const AuthGuardReasonSchema = z.enum(AUTH_GUARD_REASONS);
 export type AuthGuardReason = z.infer<typeof AuthGuardReasonSchema>;
+
+// A money-shaped value that MAY be negative - eg GGR (bets - wins) over a period, which
+// legitimately goes negative when players are paid out more than they wagered. Never use
+// for a balance/threshold/ledger amount, which stay non-negative (MoneyAmountSchema).
+export const SignedMoneyAmountSchema = z
+  .string()
+  .regex(
+    /^-?\d+(\.\d{1,8})?$/,
+    'must be a decimal string (optionally negative) with at most 8 decimal places',
+  );
+export type SignedMoneyAmount = z.infer<typeof SignedMoneyAmountSchema>;

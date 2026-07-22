@@ -65,6 +65,7 @@ const GAME_ROW = {
   name: 'Aces',
   provider: 'mock',
   category: 'slots',
+  gameType: 'casino',
   thumbnailUrl: null,
   isActive: true,
   metadata: null,

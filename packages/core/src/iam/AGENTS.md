@@ -27,6 +27,7 @@ Three totally ordered levels: `no_access` < `read` < `read_write`. Storage is sp
 - React to onboarding: `ctx.events.on('iam.invitation.accepted', ...)`.
 - Add permission modules: edit `statement` in `packages/core/src/server/auth/permissions.ts` - catalog, levels, and validation all derive from it.
 - Each `iam.role.*` payload carries an explicit `actorId` (the envelope does not); the audit module subscribes to all of them.
+- Binds `ADMIN_PLAYER_ACTIVITY` (`adapters/admin-player-activity.ts`) - the back-office player-activity report (registrations over time, DAU/WAU/MAU trend, 7d/30d retention cohorts). It reads the `user`/`session` tables via identity's read-only `/schema` subpath rather than identity binding the port itself - iam already `dependsOn: ['identity']` and centralizes the other admin-reporting-style ports, so this keeps that a single seam for admin-console. "Active" is defined as a session row whose `updatedAt` falls in the window (better-auth refreshes it on continued use) - see the one-line comment on `getActiveUsersTrend` before changing it, this is a deliberate simplification, not a hard requirement.
 
 ## Don't
 

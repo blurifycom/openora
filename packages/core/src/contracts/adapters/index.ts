@@ -139,6 +139,23 @@ export type {
 export { ADMIN_WALLET_REPORTING, ADMIN_TX_SORT_BY_VALUES } from './admin-wallet-reporting.js';
 
 export type {
+  GamePerformanceSortBy,
+  GamePerformanceFilter,
+  GamePerformanceRow,
+  AdminGameReporting,
+} from './admin-game-reporting.js';
+export { GAME_PERFORMANCE_SORT_FIELDS, ADMIN_GAME_REPORTING } from './admin-game-reporting.js';
+
+export type {
+  PlayerActivityFilter,
+  RegistrationsOverTimePoint,
+  ActiveUsersTrendPoint,
+  RetentionCohortRow,
+  AdminPlayerActivity,
+} from './admin-player-activity.js';
+export { ADMIN_PLAYER_ACTIVITY } from './admin-player-activity.js';
+
+export type {
   IdentityServiceOptions,
   IdentityLockoutOptions,
   SessionCommands,

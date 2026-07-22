@@ -2,9 +2,11 @@
   "modules": [
     {
       "id": "admin-console",
-      "group": "admin-console",
+      "group": "core",
       "tables": [],
       "routes": [
+        "admin-console.getGamePerformance",
+        "admin-console.getPlayerActivity",
         "admin-console.getStats",
         "admin-console.getTransaction",
         "admin-console.getUser",
@@ -14,18 +16,8 @@
       ]
     },
     {
-      "id": "analytics",
-      "group": "analytics",
-      "tables": [],
-      "routes": [
-        "analytics.conversion",
-        "analytics.ggr",
-        "analytics.summary"
-      ]
-    },
-    {
       "id": "audit",
-      "group": "audit",
+      "group": "core",
       "tables": [
         "audit_log"
       ],
@@ -36,43 +28,29 @@
     },
     {
       "id": "chat",
-      "group": "engagement",
+      "group": "core",
       "tables": [
         "chat_message",
         "chat_room",
-        "chat_room_ban",
-        "chat_room_member",
         "chat_user_block"
       ],
       "routes": [
-        "chat.banMember",
         "chat.blockUser",
-        "chat.createPrivateRoom",
-        "chat.createRoom",
         "chat.deleteMessage",
-        "chat.deleteRoom",
         "chat.getConnection",
         "chat.getGlobalMessages",
-        "chat.getOnlineCount",
-        "chat.getRoom",
         "chat.getRoomMessages",
-        "chat.joinRoom",
-        "chat.kickMember",
-        "chat.leaveRoom",
-        "chat.listAdminRooms",
         "chat.listBlockedUsers",
-        "chat.listRoomMembers",
         "chat.listRooms",
         "chat.sendGlobalMessage",
         "chat.sendRoomMessage",
         "chat.streamMessages",
-        "chat.unblockUser",
-        "chat.updateRoom"
+        "chat.unblockUser"
       ]
     },
     {
       "id": "cms",
-      "group": "cms",
+      "group": "core",
       "tables": [
         "banner",
         "page"
@@ -92,7 +70,7 @@
     },
     {
       "id": "compliance",
-      "group": "compliance",
+      "group": "core",
       "tables": [
         "geo_rule",
         "kyc_verification",
@@ -110,7 +88,6 @@
         "compliance.getPlayerKyc",
         "compliance.getRgSection",
         "compliance.kycWebhook",
-        "compliance.liftCoolingOff",
         "compliance.liftSelfExclusion",
         "compliance.listGeoRules",
         "compliance.listRgFlags",
@@ -121,7 +98,7 @@
     },
     {
       "id": "gaming",
-      "group": "casino",
+      "group": "core",
       "tables": [
         "game",
         "game_round"
@@ -136,7 +113,7 @@
     },
     {
       "id": "iam",
-      "group": "iam",
+      "group": "core",
       "tables": [
         "admin_invitation",
         "admin_role",
@@ -164,7 +141,7 @@
     },
     {
       "id": "identity",
-      "group": "pam",
+      "group": "core",
       "tables": [
         "account",
         "session",
@@ -200,7 +177,7 @@
     },
     {
       "id": "lobby",
-      "group": "casino",
+      "group": "core",
       "tables": [
         "featured_slot",
         "lobby_category",
@@ -215,7 +192,7 @@
     },
     {
       "id": "notifications",
-      "group": "engagement",
+      "group": "core",
       "tables": [
         "notification"
       ],
@@ -227,7 +204,7 @@
     },
     {
       "id": "player-management",
-      "group": "pam",
+      "group": "addon",
       "tables": [],
       "routes": [
         "player-management.get",
@@ -241,7 +218,7 @@
     },
     {
       "id": "player-note",
-      "group": "pam",
+      "group": "core",
       "tables": [
         "player_note"
       ],
@@ -252,7 +229,7 @@
     },
     {
       "id": "profile",
-      "group": "pam",
+      "group": "core",
       "tables": [
         "player"
       ],
@@ -263,7 +240,7 @@
     },
     {
       "id": "tag",
-      "group": "pam",
+      "group": "core",
       "tables": [
         "player_tag",
         "tag",
@@ -282,7 +259,7 @@
     },
     {
       "id": "wallet",
-      "group": "wallet",
+      "group": "core",
       "tables": [
         "auto_withdrawal_rule",
         "wallet",
@@ -308,6 +285,16 @@
   ],
   "adapters": [
     {
+      "category": "admin-game-reporting",
+      "interface": "GamePerformanceSortBy",
+      "token": "ADMIN_GAME_REPORTING",
+      "status": "wired",
+      "boundIn": [
+        "packages/core/src/admin-console/plugin.ts",
+        "packages/core/src/casino/gaming/plugin.ts"
+      ]
+    },
+    {
       "category": "admin-permission",
       "interface": "AdminGrant",
       "token": "ADMIN_PERMISSION_RESOLVER",
@@ -315,6 +302,16 @@
       "boundIn": [
         "packages/core/src/iam/plugin.ts",
         "packages/core/src/server/runtime/create-app.ts"
+      ]
+    },
+    {
+      "category": "admin-player-activity",
+      "interface": "PlayerActivityFilter",
+      "token": "ADMIN_PLAYER_ACTIVITY",
+      "status": "wired",
+      "boundIn": [
+        "packages/core/src/admin-console/plugin.ts",
+        "packages/core/src/iam/plugin.ts"
       ]
     },
     {
@@ -374,11 +371,9 @@
       "token": "CACHE",
       "status": "wired",
       "boundIn": [
-        "packages/core/src/analytics/plugin.ts",
         "packages/core/src/casino/lobby/plugin.ts",
         "packages/core/src/cms/plugin.ts",
-        "packages/core/src/iam/plugin.ts",
-        "packages/core/src/pam/identity/plugin.ts"
+        "packages/core/src/iam/plugin.ts"
       ]
     },
     {
@@ -398,7 +393,6 @@
       "token": "EMAIL_TEMPLATE_RENDERER",
       "status": "wired",
       "boundIn": [
-        "packages/core/src/compliance/plugin.ts",
         "packages/core/src/pam/identity/plugin.ts"
       ]
     },
@@ -509,17 +503,6 @@
       ]
     },
     {
-      "category": "play-eligibility",
-      "interface": "PlayEligibilityPort",
-      "token": "PLAY_ELIGIBILITY",
-      "status": "wired",
-      "boundIn": [
-        "packages/core/src/casino/gaming/plugin.ts",
-        "packages/core/src/pam/identity/plugin.ts",
-        "packages/core/src/wallet/plugin.ts"
-      ]
-    },
-    {
       "category": "player-tags",
       "interface": "PlayerTags",
       "token": "PLAYER_TAGS",
@@ -563,7 +546,6 @@
       "token": "WALLET_COMMANDS",
       "status": "wired",
       "boundIn": [
-        "packages/core/src/casino/gaming/plugin.ts",
         "packages/core/src/wallet/plugin.ts"
       ]
     },
@@ -580,14 +562,6 @@
   ],
   "events": [
     "chat.message.sent",
-    "chat.private_room.created",
-    "chat.room.created",
-    "chat.room.deleted",
-    "chat.room.member.banned",
-    "chat.room.member.joined",
-    "chat.room.member.kicked",
-    "chat.room.member.left",
-    "chat.room.updated",
     "chat.user.blocked",
     "chat.user.unblocked",
     "cms.banner.created",
@@ -632,7 +606,6 @@
     "identity.user.unlocked",
     "notifications.created",
     "rg.cooling_off.activated",
-    "rg.cooling_off.lifted",
     "rg.exclusion.login_blocked",
     "rg.limit.set",
     "rg.self_exclusion.activated",
@@ -656,6 +629,10 @@
     {
       "name": "ActivateSelfExclusionInputSchema",
       "file": "packages/core/src/compliance/contract/rg.ts"
+    },
+    {
+      "name": "ActiveUsersTrendPointSchema",
+      "file": "packages/core/src/admin-console/contract/index.ts"
     },
     {
       "name": "AddGeoRuleInputSchema",
@@ -682,10 +659,6 @@
       "file": "packages/core/src/iam/contract/index.ts"
     },
     {
-      "name": "AdminRoomSortBySchema",
-      "file": "packages/core/src/engagement/chat/contract/index.ts"
-    },
-    {
       "name": "AdminTransactionDetailSchema",
       "file": "packages/core/src/admin-console/contract/index.ts"
     },
@@ -694,15 +667,7 @@
       "file": "packages/core/src/admin-console/contract/index.ts"
     },
     {
-      "name": "AdminTransactionSortBySchema",
-      "file": "packages/core/src/admin-console/contract/index.ts"
-    },
-    {
       "name": "AdminUserSchema",
-      "file": "packages/core/src/admin-console/contract/index.ts"
-    },
-    {
-      "name": "AdminUserSortBySchema",
       "file": "packages/core/src/admin-console/contract/index.ts"
     },
     {
@@ -728,14 +693,6 @@
     {
       "name": "AuditLogEntrySchema",
       "file": "packages/core/src/audit/contract/index.ts"
-    },
-    {
-      "name": "AuditSortBySchema",
-      "file": "packages/core/src/audit/contract/index.ts"
-    },
-    {
-      "name": "AuthGuardReasonSchema",
-      "file": "packages/core/src/contracts/schemas/common.ts"
     },
     {
       "name": "AutoWithdrawalConfigSchema",
@@ -790,36 +747,8 @@
       "file": "packages/core/src/engagement/chat/contract/index.ts"
     },
     {
-      "name": "ChatOnlineCountSchema",
-      "file": "packages/core/src/engagement/chat/contract/index.ts"
-    },
-    {
-      "name": "ChatRoomCategorySchema",
-      "file": "packages/core/src/engagement/chat/contract/index.ts"
-    },
-    {
-      "name": "ChatRoomMemberSchema",
-      "file": "packages/core/src/engagement/chat/contract/index.ts"
-    },
-    {
-      "name": "ChatRoomRoleSchema",
-      "file": "packages/core/src/engagement/chat/contract/index.ts"
-    },
-    {
       "name": "ChatRoomSchema",
       "file": "packages/core/src/engagement/chat/contract/index.ts"
-    },
-    {
-      "name": "ChatRoomSlugSchema",
-      "file": "packages/core/src/engagement/chat/contract/index.ts"
-    },
-    {
-      "name": "ClientMetaSchema",
-      "file": "packages/core/src/contracts/schemas/common.ts"
-    },
-    {
-      "name": "ConversionFunnelSchema",
-      "file": "packages/core/src/analytics/contract/funnel.ts"
     },
     {
       "name": "CountryCodeSchema",
@@ -840,10 +769,6 @@
     {
       "name": "CurrencyCodeSchema",
       "file": "packages/core/src/contracts/schemas/igaming-config.ts"
-    },
-    {
-      "name": "DateRangeSchema",
-      "file": "packages/core/src/contracts/schemas/reporting.ts"
     },
     {
       "name": "deleteTagSchema",
@@ -906,28 +831,16 @@
       "file": "packages/core/src/contracts/schemas/platform-config.ts"
     },
     {
-      "name": "FinancialGgrQuerySchema",
-      "file": "packages/core/src/analytics/contract/financial.ts"
+      "name": "GamePerformanceFilterSchema",
+      "file": "packages/core/src/admin-console/contract/index.ts"
     },
     {
-      "name": "FinancialSummaryQuerySchema",
-      "file": "packages/core/src/analytics/contract/financial.ts"
+      "name": "GamePerformanceSchema",
+      "file": "packages/core/src/admin-console/contract/index.ts"
     },
     {
-      "name": "FinancialSummarySchema",
-      "file": "packages/core/src/analytics/contract/financial.ts"
-    },
-    {
-      "name": "FunnelQuerySchema",
-      "file": "packages/core/src/analytics/contract/funnel.ts"
-    },
-    {
-      "name": "FunnelStageNameSchema",
-      "file": "packages/core/src/analytics/contract/funnel.ts"
-    },
-    {
-      "name": "FunnelStageSchema",
-      "file": "packages/core/src/analytics/contract/funnel.ts"
+      "name": "GamePerformanceSortBySchema",
+      "file": "packages/core/src/admin-console/contract/index.ts"
     },
     {
       "name": "GameRoundSchema",
@@ -946,6 +859,10 @@
       "file": "packages/core/src/casino/lobby/contract/index.ts"
     },
     {
+      "name": "GameTypeSchema",
+      "file": "packages/core/src/contracts/schemas/game.ts"
+    },
+    {
       "name": "GeoRuleActionSchema",
       "file": "packages/core/src/contracts/schemas/compliance.ts"
     },
@@ -954,31 +871,7 @@
       "file": "packages/core/src/compliance/contract/index.ts"
     },
     {
-      "name": "GgrPointSchema",
-      "file": "packages/core/src/analytics/contract/financial.ts"
-    },
-    {
-      "name": "GgrSeriesSchema",
-      "file": "packages/core/src/analytics/contract/financial.ts"
-    },
-    {
       "name": "GrantInputSchema",
-      "file": "packages/core/src/iam/contract/index.ts"
-    },
-    {
-      "name": "GranularitySchema",
-      "file": "packages/core/src/contracts/schemas/reporting.ts"
-    },
-    {
-      "name": "IamAssignmentSortBySchema",
-      "file": "packages/core/src/iam/contract/index.ts"
-    },
-    {
-      "name": "IamInvitationSortBySchema",
-      "file": "packages/core/src/iam/contract/index.ts"
-    },
-    {
-      "name": "IamRoleSortBySchema",
       "file": "packages/core/src/iam/contract/index.ts"
     },
     {
@@ -1024,10 +917,6 @@
     {
       "name": "LanguageSchema",
       "file": "packages/core/src/contracts/schemas/identity.ts"
-    },
-    {
-      "name": "LiftCoolingOffInputSchema",
-      "file": "packages/core/src/compliance/contract/rg.ts"
     },
     {
       "name": "LiftSelfExclusionInputSchema",
@@ -1082,14 +971,6 @@
       "file": "packages/core/src/contracts/schemas/common.ts"
     },
     {
-      "name": "MoneyByCurrencyRailSchema",
-      "file": "packages/core/src/analytics/contract/financial.ts"
-    },
-    {
-      "name": "MoneyByCurrencySchema",
-      "file": "packages/core/src/analytics/contract/financial.ts"
-    },
-    {
       "name": "NotificationSchema",
       "file": "packages/core/src/engagement/notifications/contract/index.ts"
     },
@@ -1130,10 +1011,6 @@
       "file": "packages/core/src/contracts/schemas/identity.ts"
     },
     {
-      "name": "PhoneLoginOtpInvalidReasonSchema",
-      "file": "packages/core/src/contracts/schemas/identity.ts"
-    },
-    {
       "name": "PhoneLoginRequestInputSchema",
       "file": "packages/core/src/contracts/schemas/identity.ts"
     },
@@ -1154,6 +1031,14 @@
       "file": "packages/core/src/admin-console/contract/index.ts"
     },
     {
+      "name": "PlayerActivityFilterSchema",
+      "file": "packages/core/src/admin-console/contract/index.ts"
+    },
+    {
+      "name": "PlayerActivitySchema",
+      "file": "packages/core/src/admin-console/contract/index.ts"
+    },
+    {
       "name": "PlayerEmailSchema",
       "file": "packages/core/src/admin-console/contract/index.ts"
     },
@@ -1163,10 +1048,6 @@
     },
     {
       "name": "PlayerNoteSchema",
-      "file": "packages/core/src/pam/player-note/contract/index.ts"
-    },
-    {
-      "name": "PlayerNoteSortBySchema",
       "file": "packages/core/src/pam/player-note/contract/index.ts"
     },
     {
@@ -1186,10 +1067,6 @@
       "file": "packages/core/src/admin-console/contract/index.ts"
     },
     {
-      "name": "PlayerSortBySchema",
-      "file": "packages/core/src/contracts/schemas/player.ts"
-    },
-    {
       "name": "PlayerStatusSchema",
       "file": "packages/core/src/contracts/schemas/player.ts"
     },
@@ -1200,10 +1077,6 @@
     {
       "name": "playerTagSchema",
       "file": "packages/core/src/contracts/schemas/tag.ts"
-    },
-    {
-      "name": "PlayerTagSortBySchema",
-      "file": "packages/core/src/pam/tag/contract/index.ts"
     },
     {
       "name": "PlayerTagWithTagSchema",
@@ -1218,16 +1091,16 @@
       "file": "packages/core/src/pam/player-management/contract/index.ts"
     },
     {
-      "name": "PositiveMoneyAmountSchema",
-      "file": "packages/core/src/casino/gaming/contract/index.ts"
-    },
-    {
       "name": "ProviderSelectionSchema",
       "file": "packages/core/src/contracts/schemas/igaming-config.ts"
     },
     {
       "name": "RegisterInputSchema",
       "file": "packages/core/src/contracts/schemas/identity.ts"
+    },
+    {
+      "name": "RegistrationsOverTimePointSchema",
+      "file": "packages/core/src/admin-console/contract/index.ts"
     },
     {
       "name": "RejectWithdrawalInputSchema",
@@ -1246,6 +1119,10 @@
       "file": "packages/core/src/contracts/schemas/identity.ts"
     },
     {
+      "name": "RetentionCohortRowSchema",
+      "file": "packages/core/src/admin-console/contract/index.ts"
+    },
+    {
       "name": "RgExclusionSchema",
       "file": "packages/core/src/compliance/contract/rg.ts"
     },
@@ -1255,10 +1132,6 @@
     },
     {
       "name": "RgFlagListItemSchema",
-      "file": "packages/core/src/compliance/contract/rg.ts"
-    },
-    {
-      "name": "RgFlagSortBySchema",
       "file": "packages/core/src/compliance/contract/rg.ts"
     },
     {
@@ -1290,10 +1163,6 @@
       "file": "packages/core/src/pam/identity/contract/index.ts"
     },
     {
-      "name": "SessionSortBySchema",
-      "file": "packages/core/src/pam/identity/contract/index.ts"
-    },
-    {
       "name": "SessionTimeDetailSchema",
       "file": "packages/core/src/compliance/contract/rg.ts"
     },
@@ -1307,11 +1176,11 @@
     },
     {
       "name": "SignedMoneyAmountSchema",
-      "file": "packages/core/src/analytics/contract/financial.ts"
+      "file": "packages/core/src/contracts/schemas/common.ts"
     },
     {
-      "name": "SortOrderSchema",
-      "file": "packages/core/src/contracts/kit.ts"
+      "name": "SortDirectionSchema",
+      "file": "packages/core/src/admin-console/contract/index.ts"
     },
     {
       "name": "StartRoundInputSchema",
@@ -1418,10 +1287,6 @@
       "file": "packages/core/src/wallet/contract/index.ts"
     },
     {
-      "name": "WalletTransactionSortBySchema",
-      "file": "packages/core/src/wallet/contract/index.ts"
-    },
-    {
       "name": "WalletTransactionStatusSchema",
       "file": "packages/core/src/contracts/schemas/wallet-tx.ts"
     },
@@ -1435,10 +1300,6 @@
     },
     {
       "name": "WithdrawalQueueItemSchema",
-      "file": "packages/core/src/wallet/contract/index.ts"
-    },
-    {
-      "name": "WithdrawalSortBySchema",
       "file": "packages/core/src/wallet/contract/index.ts"
     },
     {
@@ -1484,7 +1345,6 @@
     "slots"
   ],
   "httpRoutes": [
-    "DELETE /backoffice/chat/rooms/{id}",
     "DELETE /chat/blocks/{blockedId}",
     "DELETE /chat/messages/{id}",
     "DELETE /cms/banners/{id}",
@@ -1493,15 +1353,12 @@
     "DELETE /iam/assignments",
     "DELETE /iam/roles/{roleId}",
     "DELETE /player/{playerId}/player-tag/{tagKey}",
-    "DELETE /players/{playerId}",
     "DELETE /tag/{key}",
     "DELETE /wallet/auto-withdrawal-rules/{userId}",
-    "GET /analytics/financial/ggr",
-    "GET /analytics/financial/summary",
-    "GET /analytics/funnel/conversion",
     "GET /audit/export",
     "GET /audit/logs",
-    "GET /backoffice/chat/rooms",
+    "GET /backoffice/analytics/games",
+    "GET /backoffice/analytics/players",
     "GET /backoffice/stats",
     "GET /backoffice/transactions",
     "GET /backoffice/transactions/{id}",
@@ -1510,10 +1367,7 @@
     "GET /chat/blocks",
     "GET /chat/connection",
     "GET /chat/global",
-    "GET /chat/online-count",
     "GET /chat/rooms",
-    "GET /chat/rooms/{roomId}",
-    "GET /chat/rooms/{roomId}/members",
     "GET /chat/rooms/{roomId}/messages",
     "GET /chat/stream",
     "GET /cms/banners",
@@ -1547,11 +1401,6 @@
     "GET /player/{playerId}/assignable-tags",
     "GET /player/{playerId}/note",
     "GET /player/{playerId}/player-tag",
-    "GET /players",
-    "GET /players/by-user/{userId}",
-    "GET /players/stats/registrations",
-    "GET /players/stats/summary",
-    "GET /players/{playerId}",
     "GET /profile",
     "GET /tag-rule",
     "GET /wallet/auto-withdrawal-rules/{userId}",
@@ -1559,20 +1408,12 @@
     "GET /wallet/transactions",
     "GET /wallet/transactions/{userId}",
     "GET /wallet/withdrawals",
-    "PATCH /backoffice/chat/rooms/{id}",
     "PATCH /backoffice/users/{userId}",
     "PATCH /iam/roles/{roleId}",
     "PATCH /identity/profile",
-    "PATCH /players/{playerId}",
     "PATCH /profile",
-    "POST /backoffice/chat/rooms",
     "POST /chat/blocks",
     "POST /chat/global",
-    "POST /chat/rooms/join",
-    "POST /chat/rooms/private",
-    "POST /chat/rooms/{roomId}/ban",
-    "POST /chat/rooms/{roomId}/kick",
-    "POST /chat/rooms/{roomId}/leave",
     "POST /chat/rooms/{roomId}/messages",
     "POST /cms/banners",
     "POST /cms/pages",
@@ -1580,7 +1421,6 @@
     "POST /compliance/kyc",
     "POST /compliance/kyc/webhook",
     "POST /compliance/players/{userId}/cooling-off",
-    "POST /compliance/players/{userId}/cooling-off/lift",
     "POST /compliance/players/{userId}/self-exclusion",
     "POST /compliance/players/{userId}/self-exclusion/lift",
     "POST /gaming/rounds/start",
