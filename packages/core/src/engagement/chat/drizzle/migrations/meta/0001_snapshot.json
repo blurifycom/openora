@@ -97,12 +97,8 @@
           "name": "chat_message_room_id_chat_room_id_fk",
           "tableFrom": "chat_message",
           "tableTo": "chat_room",
-          "columnsFrom": [
-            "room_id"
-          ],
-          "columnsTo": [
-            "id"
-          ],
+          "columnsFrom": ["room_id"],
+          "columnsTo": ["id"],
           "onDelete": "no action",
           "onUpdate": "no action"
         }
@@ -338,12 +334,8 @@
           "name": "chat_room_ban_room_id_chat_room_id_fk",
           "tableFrom": "chat_room_ban",
           "tableTo": "chat_room",
-          "columnsFrom": [
-            "room_id"
-          ],
-          "columnsTo": [
-            "id"
-          ],
+          "columnsFrom": ["room_id"],
+          "columnsTo": ["id"],
           "onDelete": "cascade",
           "onUpdate": "no action"
         }
@@ -451,12 +443,8 @@
           "name": "chat_room_member_room_id_chat_room_id_fk",
           "tableFrom": "chat_room_member",
           "tableTo": "chat_room",
-          "columnsFrom": [
-            "room_id"
-          ],
-          "columnsTo": [
-            "id"
-          ],
+          "columnsFrom": ["room_id"],
+          "columnsTo": ["id"],
           "onDelete": "cascade",
           "onUpdate": "no action"
         }
@@ -548,20 +536,12 @@
     "public.chat_room_category": {
       "name": "chat_room_category",
       "schema": "public",
-      "values": [
-        "games-sports",
-        "regions",
-        "languages",
-        "private-channels"
-      ]
+      "values": ["games-sports", "regions", "languages", "private-channels"]
     },
     "public.chat_room_role": {
       "name": "chat_room_role",
       "schema": "public",
-      "values": [
-        "member",
-        "moderator"
-      ]
+      "values": ["member", "moderator"]
     }
   },
   "schemas": {},
