@@ -350,7 +350,9 @@ export class IdentityService {
     this.forwardCookies(authResponse, resHeaders);
     const body = (await authResponse.json()) as { user: BetterAuthUser };
 
-    this.events.emit('identity.user.registered', { userId: body.user.id });
+    const ip = clientIp(headers);
+    const userAgent = headers.get('user-agent') || null;
+    this.events.emit('identity.user.registered', { userId: body.user.id, ip, userAgent });
     return { user: toUser(body.user) };
   }
 
@@ -557,7 +559,11 @@ export class IdentityService {
       .where(eq(user.id, userId));
   }
 
-  async unlockUser(userId: User['id'], actorId: User['id']) {
+  async unlockUser(
+    userId: User['id'],
+    actorId: User['id'],
+    meta?: { ip?: string | null; userAgent?: string | null },
+  ) {
     const existingUser = findOneOrThrow(
       await this.drizzle.db
         .select({
@@ -583,6 +589,8 @@ export class IdentityService {
       previousLockoutUntil: existingUser.lockoutUntil
         ? existingUser.lockoutUntil.toISOString()
         : null,
+      ip: meta?.ip ?? null,
+      userAgent: meta?.userAgent ?? null,
     });
 
     return SUCCESS;
@@ -596,7 +604,9 @@ export class IdentityService {
     const authResponse = await this.auth.api.signOut({ headers, asResponse: true });
     this.forwardCookies(authResponse, resHeaders);
     if (userId) {
-      this.events.emit('identity.user.logout', { userId });
+      const ip = clientIp(headers);
+      const userAgent = headers.get('user-agent') || null;
+      this.events.emit('identity.user.logout', { userId, ip, userAgent });
     }
     return SUCCESS;
   }
@@ -643,7 +653,9 @@ export class IdentityService {
     this.forwardCookies(res, resHeaders);
     const userId = await this.currentUserId(headers);
     if (userId) {
-      this.events.emit('identity.2fa.enabled', { userId });
+      const ip = clientIp(headers);
+      const userAgent = headers.get('user-agent') || null;
+      this.events.emit('identity.2fa.enabled', { userId, ip, userAgent });
     }
     return SUCCESS;
   }
@@ -664,7 +676,9 @@ export class IdentityService {
     await ensureOk(res);
     this.forwardCookies(res, resHeaders);
     if (userId) {
-      this.events.emit('identity.2fa.disabled', { userId });
+      const ip = clientIp(headers);
+      const userAgent = headers.get('user-agent') || null;
+      this.events.emit('identity.2fa.disabled', { userId, ip, userAgent });
     }
     return SUCCESS;
   }
@@ -707,7 +721,7 @@ export class IdentityService {
     return SUCCESS;
   }
 
-  async resetPassword(input: ResetPasswordInput) {
+  async resetPassword(input: ResetPasswordInput, reqHeaders?: NodeHeaders) {
     const email = input.email.toLowerCase();
     await assertRateLimit(
       this.limiter,
@@ -723,7 +737,10 @@ export class IdentityService {
 
     const row = await this.findUserByEmail(email);
     if (row) {
-      this.events.emit('identity.password.reset', { userId: row.id });
+      const headers = reqHeaders ? nodeHeadersToHeaders(reqHeaders) : null;
+      const ip = headers ? clientIp(headers) : null;
+      const userAgent = headers ? headers.get('user-agent') || null : null;
+      this.events.emit('identity.password.reset', { userId: row.id, ip, userAgent });
       await this.clearLockout(row.id);
     }
 
@@ -778,7 +795,9 @@ export class IdentityService {
     });
     await ensureOk(res);
     if (userId) {
-      this.events.emit('identity.email.verified', { userId });
+      const ip = clientIp(headers);
+      const userAgent = headers.get('user-agent') || null;
+      this.events.emit('identity.email.verified', { userId, ip, userAgent });
     }
     return SUCCESS;
   }
@@ -814,7 +833,9 @@ export class IdentityService {
     const session = await this.auth.api.getSession({ headers });
     const current = session?.user as BetterAuthUser | undefined;
     if (current) {
-      this.events.emit('identity.profile.updated', { userId: current.id });
+      const ip = clientIp(headers);
+      const userAgent = headers.get('user-agent') || null;
+      this.events.emit('identity.profile.updated', { userId: current.id, ip, userAgent });
     }
     if (!current) {
       throw new Error('Profile update succeeded but session could not be re-read');

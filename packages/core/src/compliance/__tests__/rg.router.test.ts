@@ -18,7 +18,7 @@ function fakeGuard(allowed: ReadonlyArray<`${string}:${string}`>): AdminGuard {
       if (resource && action && !allowed.includes(`${resource}:${action}`)) {
         throw new ORPCError('FORBIDDEN', { message: `Missing permission: ${resource}:${action}` });
       }
-      return { userId: 'admin-1', role: 'admin' };
+      return { userId: 'admin-1', role: 'admin', ip: null, userAgent: null };
     }),
   });
 }
@@ -92,7 +92,10 @@ describe('compliance RG router authz', () => {
       { userId: USER, type: 'deposit', amount: '100', minutes: null, period: 'daily' },
       { context: CTX },
     );
-    expect(setPlayerLimit).toHaveBeenCalledWith(USER, expect.any(Object), 'admin-1');
+    expect(setPlayerLimit).toHaveBeenCalledWith(USER, expect.any(Object), 'admin-1', {
+      ip: null,
+      userAgent: null,
+    });
   });
 
   it('maps a min-period lift rejection to a CONFLICT error', async () => {

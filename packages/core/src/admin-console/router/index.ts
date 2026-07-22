@@ -49,6 +49,7 @@ export function createBackofficeRouter(
           input.userId,
           { isActive: input.isActive, role: input.role },
           caller.userId,
+          { ip: caller.ip, userAgent: caller.userAgent },
         ),
       );
       await audit.record({
@@ -59,6 +60,8 @@ export function createBackofficeRouter(
         resourceId: input.userId,
         before: { isActive: before.isActive, role: before.role },
         after: { isActive: updated.isActive, role: updated.role },
+        ip: caller.ip,
+        userAgent: caller.userAgent,
       });
       return updated;
     }),

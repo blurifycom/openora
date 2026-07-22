@@ -51,7 +51,11 @@ export class TagRuleService {
     return toTagRule(findOneOrThrow(results, new TagRuleNotFoundError(tagKey)));
   }
 
-  async upsertTagRule(input: UpsertTagRuleInput, actorId: User['id']) {
+  async upsertTagRule(
+    input: UpsertTagRuleInput,
+    actorId: User['id'],
+    meta?: { ip?: string | null; userAgent?: string | null },
+  ) {
     const tagRow = findOneOrThrow(
       await this.drizzle.db
         .select({ id: tag.id })
@@ -79,7 +83,13 @@ export class TagRuleService {
       new TagRuleNotFoundError(input.tagKey),
     );
     const result = toTagRule({ ...row, tagKey: input.tagKey });
-    void this.events.emit('tag.rule.upserted', { tagKey: input.tagKey, actorId, after: result });
+    void this.events.emit('tag.rule.upserted', {
+      tagKey: input.tagKey,
+      actorId,
+      after: result,
+      ip: meta?.ip ?? null,
+      userAgent: meta?.userAgent ?? null,
+    });
     return result;
   }
 }

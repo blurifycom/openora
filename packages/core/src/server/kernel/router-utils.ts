@@ -40,3 +40,15 @@ function resolveAuth(context: unknown): AuthContext {
 export function getUserId(context: unknown): string {
   return resolveAuth(context).userId;
 }
+
+export function extractClientMeta(headers: NodeHeaders): {
+  ip: string | null;
+  userAgent: string | null;
+} {
+  const fwd = headers['x-forwarded-for'];
+  const first = Array.isArray(fwd) ? fwd[0] : fwd;
+  const real = headers['x-real-ip'];
+  const ip = first?.split(',')[0]?.trim() || (Array.isArray(real) ? real[0] : real) || null;
+  const ua = headers['user-agent'];
+  return { ip: ip ?? null, userAgent: (Array.isArray(ua) ? ua[0] : ua) ?? null };
+}

@@ -99,6 +99,7 @@ export class RgService {
     userId: User['id'],
     input: SetPlayerLimitInput,
     actorId: User['id'],
+    meta?: { ip?: string | null; userAgent?: string | null },
   ): Promise<Limit> {
     const [prior] = await this.drizzle.db
       .select({ amount: userLimit.amount, minutes: userLimit.minutes })
@@ -132,6 +133,8 @@ export class RgService {
       minutes: input.minutes,
       previousAmount: prior?.amount ?? null,
       previousMinutes: prior?.minutes ?? null,
+      ip: meta?.ip ?? null,
+      userAgent: meta?.userAgent ?? null,
     });
     const limitDescription = input.type === 'session' ? `${input.minutes} minutes` : input.amount;
     await this.notify(
@@ -146,6 +149,7 @@ export class RgService {
     userId: User['id'],
     input: ActivateCoolingOffInput,
     actorId: User['id'],
+    meta?: { ip?: string | null; userAgent?: string | null },
   ): Promise<RgExclusion> {
     await this.assertNoActiveExclusion(userId, 'cooling_off');
     const now = new Date();
@@ -177,6 +181,8 @@ export class RgService {
       exclusionId: row.id,
       expiresAt: expiresAt.toISOString(),
       reason: input.reason,
+      ip: meta?.ip ?? null,
+      userAgent: meta?.userAgent ?? null,
     });
     await this.notify(
       userId,
@@ -196,6 +202,7 @@ export class RgService {
     userId: User['id'],
     input: ActivateSelfExclusionInput,
     actorId: User['id'],
+    meta?: { ip?: string | null; userAgent?: string | null },
   ): Promise<RgExclusion> {
     await this.assertNoActiveExclusion(userId, 'self_exclusion');
     const now = new Date();
@@ -230,6 +237,8 @@ export class RgService {
       isPermanent: input.isPermanent,
       expiresAt: expiresAt ? expiresAt.toISOString() : null,
       reason: input.reason,
+      ip: meta?.ip ?? null,
+      userAgent: meta?.userAgent ?? null,
     });
     await this.notify(
       userId,
@@ -252,6 +261,7 @@ export class RgService {
     userId: User['id'],
     input: LiftSelfExclusionInput,
     actorId: User['id'],
+    meta?: { ip?: string | null; userAgent?: string | null },
   ): Promise<RgExclusion> {
     const [existing] = await this.drizzle.db
       .select()
@@ -295,6 +305,8 @@ export class RgService {
       exclusionId: row.id,
       kind: 'self_exclusion',
       reason: input.reason,
+      ip: meta?.ip ?? null,
+      userAgent: meta?.userAgent ?? null,
     });
     await this.notify(
       userId,

@@ -27,7 +27,7 @@ export { createLogger } from './logger.js';
 export { setErrorReporter, reportError } from './error-reporter.js';
 export type { ErrorReporter } from './error-reporter.js';
 
-export { getUserId } from './router-utils.js';
+export { getUserId, extractClientMeta } from './router-utils.js';
 export type { OssContext, AuthContext, NodeHeaders } from './router-utils.js';
 export {
   createDomainError,

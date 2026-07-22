@@ -38,6 +38,7 @@ export type AdminUserDirectory = {
     id: string,
     patch: { isActive?: boolean; role?: UserRole },
     actorId: string,
+    meta?: { ip?: string | null; userAgent?: string | null },
   ): Promise<AdminUserRow | null>;
   // Batch enrichment for back-office lists (eg the withdrawal queue). Returns one
   // entry per resolvable id; unknown ids are omitted.

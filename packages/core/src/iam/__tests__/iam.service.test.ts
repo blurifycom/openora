@@ -500,11 +500,15 @@ describe('IamService.deleteRole', () => {
       roleId: 'role-1',
       userId: 'user-a',
       actorId: 'admin-1',
+      ip: null,
+      userAgent: null,
     });
     expect(events.emit).toHaveBeenCalledWith('iam.role.revoked', {
       roleId: 'role-1',
       userId: 'user-b',
       actorId: 'admin-1',
+      ip: null,
+      userAgent: null,
     });
     const revokeCalls = (events.emit as ReturnType<typeof vi.fn>).mock.calls.filter(
       (c) => c[0] === 'iam.role.revoked',

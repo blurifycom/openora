@@ -68,8 +68,9 @@ export class BackofficeService {
     userId: User['id'],
     data: { isActive?: boolean; role?: UserRole },
     actorId: User['id'],
+    meta?: { ip?: string | null; userAgent?: string | null },
   ) {
-    const row = await this.users.update(userId, data, actorId);
+    const row = await this.users.update(userId, data, actorId, meta);
     if (!row) {
       throw new UserNotFoundError(userId);
     }

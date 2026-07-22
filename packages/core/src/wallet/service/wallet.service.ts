@@ -451,12 +451,16 @@ export class WalletService {
     currency,
     idempotencyKey,
     destinationAddress,
+    ip,
+    userAgent,
   }: {
     userId: User['id'];
     amount: string;
     currency: string;
     idempotencyKey?: string;
     destinationAddress?: string;
+    ip?: string | null;
+    userAgent?: string | null;
   }): Promise<TransactionResult> {
     await this.rateLimit(userId);
     await this.assertKycForWithdrawal(userId);
@@ -551,6 +555,8 @@ export class WalletService {
       amount,
       currency,
       transactionId,
+      ip: ip ?? null,
+      userAgent: userAgent ?? null,
     });
 
     // Fail-closed post-step: decides who approves (system vs manual queue), never throws out of withdraw() - failure leaves the row pending.
@@ -652,13 +658,14 @@ export class WalletService {
   async approveWithdrawal(
     adminId: User['id'],
     withdrawalId: WalletTransaction['id'],
+    meta?: { ip?: string | null; userAgent?: string | null },
   ): Promise<TransactionResult> {
     // Two-phase: commit the `processing` flip first (FOR UPDATE lock), then call the PSP OUTSIDE
     // the tx (a failure refunds in a second tx). Never inline the PSP call inside the hold transaction.
     const tx = await this.drizzle.db.transaction((txn) =>
       this.flipToProcessing({ txn, withdrawalId, adminId }),
     );
-    return this.settleApproved(tx, adminId);
+    return this.settleApproved(tx, adminId, meta);
   }
 
   // Phase one: the pending -> processing flip under a FOR UPDATE lock. Extracted so the auto path can run it
@@ -706,6 +713,7 @@ export class WalletService {
   private async settleApproved(
     tx: WalletTransaction,
     adminId: User['id'] | null,
+    meta?: { ip?: string | null; userAgent?: string | null },
   ): Promise<TransactionResult> {
     const userId = await this.userIdForWallet(tx.walletId);
     const amount = tx.amount;
@@ -718,6 +726,8 @@ export class WalletService {
         currency: tx.currency,
         transactionId: tx.id,
         adminId,
+        ip: meta?.ip ?? null,
+        userAgent: meta?.userAgent ?? null,
       });
     }
 
@@ -1161,6 +1171,7 @@ export class WalletService {
     adminId: User['id'],
     withdrawalId: WalletTransaction['id'],
     reason: string,
+    meta?: { ip?: string | null; userAgent?: string | null },
   ): Promise<TransactionResult> {
     const reviewedAt = new Date();
 
@@ -1201,6 +1212,8 @@ export class WalletService {
       transactionId: tx.id,
       adminId,
       reason,
+      ip: meta?.ip ?? null,
+      userAgent: meta?.userAgent ?? null,
     });
 
     return { transactionId: tx.id, status: 'rejected' };

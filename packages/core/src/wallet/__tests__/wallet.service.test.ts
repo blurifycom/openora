@@ -113,6 +113,8 @@ describe('WalletService.withdraw', () => {
       amount: '40',
       currency: 'USD',
       transactionId: 'tx-1',
+      ip: null,
+      userAgent: null,
     });
   });
 
@@ -603,6 +605,8 @@ describe('WalletService.approveWithdrawal', () => {
       currency: 'USD',
       transactionId: 'tx-1',
       adminId: 'admin-1',
+      ip: null,
+      userAgent: null,
     });
     expect(events.emit).toHaveBeenNthCalledWith(2, 'wallet.withdrawal.completed', {
       userId: 'u-1',
@@ -745,6 +749,8 @@ describe('WalletService.rejectWithdrawal', () => {
       transactionId: 'tx-1',
       adminId: 'admin-1',
       reason: 'AML hold',
+      ip: null,
+      userAgent: null,
     });
   });
 

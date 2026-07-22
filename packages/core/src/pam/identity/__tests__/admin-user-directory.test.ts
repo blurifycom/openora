@@ -32,6 +32,8 @@ describe('DrizzleAdminUserDirectory.update active-status events', () => {
     expect(emit).toHaveBeenCalledWith('identity.user.deactivated', {
       userId: 'u1',
       actorId: 'admin-1',
+      ip: null,
+      userAgent: null,
     });
   });
 
@@ -41,6 +43,8 @@ describe('DrizzleAdminUserDirectory.update active-status events', () => {
     expect(emit).toHaveBeenCalledWith('identity.user.reactivated', {
       userId: 'u1',
       actorId: 'admin-1',
+      ip: null,
+      userAgent: null,
     });
   });
 

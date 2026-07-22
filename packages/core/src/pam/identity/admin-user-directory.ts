@@ -56,7 +56,12 @@ export class DrizzleAdminUserDirectory implements AdminUserDirectory {
     return r ? toRow(r) : null;
   }
 
-  async update(id: string, patch: { isActive?: boolean; role?: string }, actorId: string) {
+  async update(
+    id: string,
+    patch: { isActive?: boolean; role?: string },
+    actorId: string,
+    meta?: { ip?: string | null; userAgent?: string | null },
+  ) {
     const [existing] = await this.drizzle.db.select().from(user).where(eq(user.id, id));
     if (!existing) {
       return null;
@@ -76,10 +81,12 @@ export class DrizzleAdminUserDirectory implements AdminUserDirectory {
     // Emit only on an actual active-status flip, after the commit. Literal topics
     // (not a ternary) so the catalog generator's emit-scanner picks them up.
     if (patch.isActive !== undefined && patch.isActive !== existing.isActive) {
+      const ip = meta?.ip ?? null;
+      const userAgent = meta?.userAgent ?? null;
       if (patch.isActive) {
-        this.events.emit('identity.user.reactivated', { userId: id, actorId });
+        this.events.emit('identity.user.reactivated', { userId: id, actorId, ip, userAgent });
       } else {
-        this.events.emit('identity.user.deactivated', { userId: id, actorId });
+        this.events.emit('identity.user.deactivated', { userId: id, actorId, ip, userAgent });
       }
     }
     return toRow(r);

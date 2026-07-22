@@ -1,5 +1,5 @@
 import { implement } from '@orpc/server';
-import { AdminGuard, mapErrors, type OssContext } from '@openora/core/server';
+import { AdminGuard, mapErrors, extractClientMeta, type OssContext } from '@openora/core/server';
 import { iamContract } from '../contract/index.js';
 import {
   IamService,
@@ -98,11 +98,13 @@ export function createIamRouter(svc: IamService, adminGuard: AdminGuard) {
     }),
 
     // Public - invitee is not yet an admin.
-    acceptInvitation: os.acceptInvitation.handler(({ input }) =>
-      mapErrors({ NOT_FOUND: InvitationNotFoundError, CONFLICT: InvitationConflictError }, () =>
-        svc.acceptInvitation(input.token),
-      ),
-    ),
+    acceptInvitation: os.acceptInvitation.handler(({ input, context }) => {
+      const meta = extractClientMeta(context.request.headers);
+      return mapErrors(
+        { NOT_FOUND: InvitationNotFoundError, CONFLICT: InvitationConflictError },
+        () => svc.acceptInvitation(input.token, meta),
+      );
+    }),
 
     forceLogout: os.forceLogout.handler(async ({ input, context }) => {
       const caller = await adminGuard.assert(context, 'admin', 'delete');

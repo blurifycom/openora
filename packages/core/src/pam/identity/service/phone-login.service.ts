@@ -176,13 +176,17 @@ export class PhoneLoginService {
 
     // Emit events only after SMS delivery so a send failure leaves no misleading
     // audit trail (no cancelled-without-requested orphan in the audit log).
+    const ip = input.ip ?? null;
+    const userAgent = input.userAgent ?? null;
     if (existing) {
       this.events.emit('identity.phone_otp.cancelled', {
         userId: account.id,
         reason: 'new_otp_requested',
+        ip,
+        userAgent,
       });
     }
-    this.events.emit('identity.phone_otp.requested', { userId: account.id });
+    this.events.emit('identity.phone_otp.requested', { userId: account.id, ip, userAgent });
 
     return { expiresAt: expiresAt.toISOString(), resendAfter: resendAfter.toISOString() };
   }
@@ -235,6 +239,8 @@ export class PhoneLoginService {
           this.events.emit('identity.phone_otp.cancelled', {
             userId: otp.userId,
             reason: 'max_attempts',
+            ip,
+            userAgent,
           });
         }
         throw OtpCancelledError();

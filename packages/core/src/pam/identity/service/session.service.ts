@@ -56,7 +56,12 @@ export class SessionService {
     };
   }
 
-  async revokeSession(userId: User['id'], id: string, actorId?: User['id']) {
+  async revokeSession(
+    userId: User['id'],
+    id: string,
+    actorId?: User['id'],
+    meta?: { ip?: string | null; userAgent?: string | null },
+  ) {
     const updated = await this.drizzle.db
       .update(session)
       .set({ expiresAt: sql`now()` })
@@ -68,20 +73,31 @@ export class SessionService {
     }
 
     this.events.emit('identity.session.revoked', {
-      userId: userId,
+      userId,
       sessionId: id,
       actorId,
+      ip: meta?.ip ?? null,
+      userAgent: meta?.userAgent ?? null,
     });
     return { success: true as const };
   }
 
-  async revokeAllSessions(userId: User['id'], actorId?: User['id']) {
+  async revokeAllSessions(
+    userId: User['id'],
+    actorId?: User['id'],
+    meta?: { ip?: string | null; userAgent?: string | null },
+  ) {
     await this.drizzle.db
       .update(session)
       .set({ expiresAt: sql`now()` })
       .where(and(eq(session.userId, userId), gt(session.expiresAt, sql`now()`)));
 
-    this.events.emit('identity.sessions.revoked_all', { userId: userId, actorId });
+    this.events.emit('identity.sessions.revoked_all', {
+      userId,
+      actorId,
+      ip: meta?.ip ?? null,
+      userAgent: meta?.userAgent ?? null,
+    });
     return { success: true as const };
   }
 }

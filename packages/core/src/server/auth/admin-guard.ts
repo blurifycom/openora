@@ -5,6 +5,7 @@ import { sql } from 'drizzle-orm';
 import { SessionResolver } from './session-resolver.js';
 import { roles, type ResourceName, type ActionOf } from './permissions.js';
 import type { OssContext, EventBus } from '../kernel/index.js';
+import { extractClientMeta } from '../kernel/router-utils.js';
 
 export const ADMIN_GUARD: Token<AdminGuard> = createToken('ADMIN_GUARD');
 
@@ -30,21 +31,25 @@ export class AdminGuard {
     private readonly events?: EventBus,
   ) {}
 
-  async assert(context: unknown): Promise<{ userId: string; role: string }>;
+  async assert(
+    context: unknown,
+  ): Promise<{ userId: string; role: string; ip: string | null; userAgent: string | null }>;
   async assert<R extends ResourceName>(
     context: unknown,
     resource: R,
     action: ActionOf<R>,
-  ): Promise<{ userId: string; role: string }>;
+  ): Promise<{ userId: string; role: string; ip: string | null; userAgent: string | null }>;
   async assert<R extends ResourceName>(
     context: unknown,
     resource?: R,
     action?: ActionOf<R>,
-  ): Promise<{ userId: string; role: string }> {
+  ): Promise<{ userId: string; role: string; ip: string | null; userAgent: string | null }> {
     const request = (context as { request?: OssContext['request'] }).request;
     if (!request || typeof request.headers !== 'object') {
       throw new ORPCError('UNAUTHORIZED', { message: 'Missing request context' });
     }
+
+    const { ip, userAgent } = extractClientMeta(request.headers);
 
     const headers = new Headers();
     for (const [k, v] of Object.entries(request.headers)) {
@@ -64,9 +69,9 @@ export class AdminGuard {
     const userRecord = result.rows[0] as { id: string; role: string } | undefined;
     if (!userRecord) {
       if (resource !== undefined && action !== undefined) {
-        this.emitUnauthorized(userId, undefined, resource, action, headers);
+        this.emitUnauthorized(userId, undefined, resource, action, ip, userAgent);
       } else {
-        this.emitUnauthorized(userId, undefined, 'admin', 'access', headers);
+        this.emitUnauthorized(userId, undefined, 'admin', 'access', ip, userAgent);
       }
       throw new ORPCError('FORBIDDEN', { message: 'Admin access required' });
     }
@@ -74,9 +79,9 @@ export class AdminGuard {
     const userRole = roles[userRecord.role as keyof typeof roles];
     if (!userRole) {
       if (resource !== undefined && action !== undefined) {
-        this.emitUnauthorized(userId, userRecord.role, resource, action, headers);
+        this.emitUnauthorized(userId, userRecord.role, resource, action, ip, userAgent);
       } else {
-        this.emitUnauthorized(userId, userRecord.role, 'admin', 'access', headers);
+        this.emitUnauthorized(userId, userRecord.role, 'admin', 'access', ip, userAgent);
       }
       throw new ORPCError('FORBIDDEN', { message: 'Admin access required' });
     }
@@ -89,7 +94,7 @@ export class AdminGuard {
       if (grants !== null) {
         const allowed = grants.some((g) => g.resource === resource && g.action === action);
         if (!allowed) {
-          this.emitUnauthorized(userId, userRecord.role, resource, action, headers);
+          this.emitUnauthorized(userId, userRecord.role, resource, action, ip, userAgent);
           throw new ORPCError('FORBIDDEN', {
             message: `Missing permission: ${String(resource)}:${String(action)}`,
           });
@@ -98,7 +103,7 @@ export class AdminGuard {
         // Bootstrap path: seed admin has user.role='admin' but no DB assignment row. DB revocation is NOT authoritative while a static role still grants - revoke the static role to fully deny.
         const check = userRole.authorize({ [resource]: [action] });
         if (!check.success) {
-          this.emitUnauthorized(userId, userRecord.role, resource, action, headers);
+          this.emitUnauthorized(userId, userRecord.role, resource, action, ip, userAgent);
           throw new ORPCError('FORBIDDEN', {
             message: `Missing permission: ${String(resource)}:${String(action)}`,
           });
@@ -106,7 +111,7 @@ export class AdminGuard {
       }
     }
 
-    return { userId, role: userRecord.role };
+    return { userId, role: userRecord.role, ip, userAgent };
   }
 
   private emitUnauthorized(
@@ -114,11 +119,9 @@ export class AdminGuard {
     role: string | undefined,
     resource: string,
     action: string,
-    headers: Headers,
+    ip: string | null,
+    userAgent: string | null,
   ) {
-    const ip =
-      headers.get('x-forwarded-for')?.split(',')[0]?.trim() || headers.get('x-real-ip') || null;
-    const userAgent = headers.get('user-agent') || null;
     this.events?.emit('identity.user.unauthorized_access', {
       userId,
       resource,

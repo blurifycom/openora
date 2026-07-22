@@ -380,6 +380,8 @@ describe('ChatService.updateRoom', () => {
       actorId: 'admin-1',
       before: { name: 'Jackpot Wheel', slug: 'jackpot-wheel', category: 'games-sports' },
       after: { name: 'Mega Wheel', slug: 'mega-wheel', category: 'regions' },
+      ip: null,
+      userAgent: null,
     });
   });
 });

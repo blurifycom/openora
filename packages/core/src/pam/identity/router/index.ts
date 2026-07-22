@@ -1,10 +1,10 @@
 import { implement } from '@orpc/server';
 import {
   type OssContext,
-  type NodeHeaders,
   AdminGuard,
   mapErrors,
   getUserId,
+  extractClientMeta,
   createEventStreamGenerator,
   type EventBus,
 } from '@openora/core/server';
@@ -13,18 +13,6 @@ import { PhoneLoginService } from '../service/phone-login.service.js';
 import { IdentityService, UserNotFoundError } from '../service/identity.service.js';
 import { SessionService, SessionNotFoundError } from '../service/session.service.js';
 import { UnsupportedLanguageError } from '../../shared/language.js';
-
-function nodeForwardedFor(headers: NodeHeaders): string | null {
-  const fwd = headers['x-forwarded-for'];
-  const first = Array.isArray(fwd) ? fwd[0] : fwd;
-  const real = headers['x-real-ip'];
-  return first?.split(',')[0]?.trim() || (Array.isArray(real) ? real[0] : real) || null;
-}
-
-function nodeUserAgent(headers: NodeHeaders): string | null {
-  const ua = headers['user-agent'];
-  return (Array.isArray(ua) ? ua[0] : ua) ?? null;
-}
 
 export function createIdentityRouter(
   identity: IdentityService,
@@ -45,24 +33,13 @@ export function createIdentityRouter(
     ),
 
     phoneLoginRequest: os.phoneLoginRequest.handler(({ input, context }) => {
-      const h = context.request.headers;
-      return phoneLogin.requestOtp({
-        ...input,
-        ip: nodeForwardedFor(h),
-        userAgent: nodeUserAgent(h),
-      });
+      const { ip, userAgent } = extractClientMeta(context.request.headers);
+      return phoneLogin.requestOtp({ ...input, ip, userAgent });
     }),
 
     phoneLoginVerify: os.phoneLoginVerify.handler(({ input, context }) => {
-      const h = context.request.headers;
-      return phoneLogin.verifyOtp(
-        {
-          ...input,
-          ip: nodeForwardedFor(h),
-          userAgent: nodeUserAgent(h),
-        },
-        context.resHeaders ?? new Headers(),
-      );
+      const { ip, userAgent } = extractClientMeta(context.request.headers);
+      return phoneLogin.verifyOtp({ ...input, ip, userAgent }, context.resHeaders ?? new Headers());
     }),
 
     logout: os.logout.handler(({ context }) =>
@@ -128,7 +105,9 @@ export function createIdentityRouter(
       identity.verifyPasswordResetOtp(input),
     ),
 
-    resetPassword: os.resetPassword.handler(({ input }) => identity.resetPassword(input)),
+    resetPassword: os.resetPassword.handler(({ input, context }) =>
+      identity.resetPassword(input, context.request.headers),
+    ),
 
     changePassword: os.changePassword.handler(({ input, context }) =>
       identity.changePassword(input, context.request.headers, context.resHeaders ?? new Headers()),
@@ -155,7 +134,10 @@ export function createIdentityRouter(
     unlockUser: os.unlockUser.handler(async ({ input, context }) => {
       const caller = await adminGuard.assert(context, 'player', 'update');
       return mapErrors({ NOT_FOUND: UserNotFoundError }, () =>
-        identity.unlockUser(input.userId, caller.userId),
+        identity.unlockUser(input.userId, caller.userId, {
+          ip: caller.ip,
+          userAgent: caller.userAgent,
+        }),
       );
     }),
 
@@ -167,12 +149,18 @@ export function createIdentityRouter(
       revoke: os.sessions.revoke.handler(async ({ input, context }) => {
         const caller = await adminGuard.assert(context, 'sessions', 'revoke');
         return mapErrors({ NOT_FOUND: SessionNotFoundError }, () =>
-          sessionSvc.revokeSession(input.userId, input.id, caller.userId),
+          sessionSvc.revokeSession(input.userId, input.id, caller.userId, {
+            ip: caller.ip,
+            userAgent: caller.userAgent,
+          }),
         );
       }),
       revokeAll: os.sessions.revokeAll.handler(async ({ input, context }) => {
         const caller = await adminGuard.assert(context, 'sessions', 'revoke');
-        return sessionSvc.revokeAllSessions(input.userId, caller.userId);
+        return sessionSvc.revokeAllSessions(input.userId, caller.userId, {
+          ip: caller.ip,
+          userAgent: caller.userAgent,
+        });
       }),
     },
   });

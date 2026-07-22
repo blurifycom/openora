@@ -1,5 +1,10 @@
 import { implement } from '@orpc/server';
-import { getUserId, type AdminGuard, type OssContext } from '@openora/core/server';
+import {
+  getUserId,
+  extractClientMeta,
+  type AdminGuard,
+  type OssContext,
+} from '@openora/core/server';
 import { tagContract } from '../contract/index.js';
 import { TagService } from '../service/tag.service.js';
 import { TagRuleService } from '../service/tag-rule.service.js';
@@ -16,13 +21,15 @@ export function createTagRouter(tag: TagService, rule: TagRuleService, adminGuar
       tag.listPlayerTags(input.playerId, input.page, input.limit),
     ),
 
-    assignPlayerTag: os.assignPlayerTag.handler(({ context, input }) =>
-      tag.assignPlayerTag({ ...input, assignActorUserId: getUserId(context) }),
-    ),
+    assignPlayerTag: os.assignPlayerTag.handler(({ context, input }) => {
+      const meta = extractClientMeta(context.request.headers);
+      return tag.assignPlayerTag({ ...input, assignActorUserId: getUserId(context) }, meta);
+    }),
 
-    removePlayerTag: os.removePlayerTag.handler(({ context, input }) =>
-      tag.removePlayerTag({ ...input, removalActorUserId: getUserId(context) }),
-    ),
+    removePlayerTag: os.removePlayerTag.handler(({ context, input }) => {
+      const meta = extractClientMeta(context.request.headers);
+      return tag.removePlayerTag({ ...input, removalActorUserId: getUserId(context) }, meta);
+    }),
 
     listAssignableTags: os.listAssignableTags.handler(({ input }) =>
       tag.listAssignableTags(input.playerId),
@@ -34,8 +41,8 @@ export function createTagRouter(tag: TagService, rule: TagRuleService, adminGuar
     }),
 
     upsertTagRule: os.upsertTagRule.handler(async ({ context, input }) => {
-      await adminGuard.assert(context, 'tag-rule', 'update');
-      return rule.upsertTagRule(input, getUserId(context));
+      const { userId, ip, userAgent } = await adminGuard.assert(context, 'tag-rule', 'update');
+      return rule.upsertTagRule(input, userId, { ip, userAgent });
     }),
   });
 }

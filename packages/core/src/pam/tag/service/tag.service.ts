@@ -119,7 +119,10 @@ export class TagService implements PlayerTags {
     return rows.map(toTag);
   }
 
-  public async assignPlayerTag(args: AssignPlayerTagInput) {
+  public async assignPlayerTag(
+    args: AssignPlayerTagInput,
+    meta?: { ip?: string | null; userAgent?: string | null },
+  ) {
     try {
       const { tagKey, ...restArgs } = args;
       const db = this.drizzle.db;
@@ -150,6 +153,8 @@ export class TagService implements PlayerTags {
         tagKey: args.tagKey,
         reason: args.assignReason,
         actorId: args.assignActorUserId,
+        ip: meta?.ip ?? null,
+        userAgent: meta?.userAgent ?? null,
       });
       return result;
     } catch (e) {
@@ -157,7 +162,10 @@ export class TagService implements PlayerTags {
     }
   }
 
-  public async removePlayerTag(args: RemovePlayerTagInput) {
+  public async removePlayerTag(
+    args: RemovePlayerTagInput,
+    meta?: { ip?: string | null; userAgent?: string | null },
+  ) {
     try {
       const db = this.drizzle.db;
       const result = await db.transaction(async (trx) => {
@@ -193,6 +201,8 @@ export class TagService implements PlayerTags {
         tagKey: args.tagKey,
         reason: args.removalReason,
         actorId: args.removalActorUserId,
+        ip: meta?.ip ?? null,
+        userAgent: meta?.userAgent ?? null,
       });
       return result;
     } catch (e) {

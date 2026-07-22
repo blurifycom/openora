@@ -76,7 +76,7 @@ export const LastSuperAdminError = makeConflictError(
   'Cannot remove the last super-admin',
 );
 
-type Caller = { userId: User['id']; role: string };
+type Caller = { userId: User['id']; role: string; ip?: string | null; userAgent?: string | null };
 
 type Page = { page: number; limit: number };
 
@@ -358,6 +358,8 @@ export class IamService {
       roleId: dto.id,
       name: dto.name,
       actorId: input.caller.userId,
+      ip: input.caller.ip ?? null,
+      userAgent: input.caller.userAgent ?? null,
     });
     return dto;
   }
@@ -392,6 +394,8 @@ export class IamService {
       roleId: dto.id,
       name: input.name,
       actorId: input.caller.userId,
+      ip: input.caller.ip ?? null,
+      userAgent: input.caller.userAgent ?? null,
     });
     return dto;
   }
@@ -427,11 +431,15 @@ export class IamService {
         roleId: input.roleId,
         userId,
         actorId: input.caller.userId,
+        ip: input.caller.ip ?? null,
+        userAgent: input.caller.userAgent ?? null,
       });
     }
     this.events.emit('iam.role.deleted', {
       roleId: input.roleId,
       actorId: input.caller.userId,
+      ip: input.caller.ip ?? null,
+      userAgent: input.caller.userAgent ?? null,
     });
     return { success: true };
   }
@@ -497,6 +505,8 @@ export class IamService {
       before,
       after,
       actorId: input.caller.userId,
+      ip: input.caller.ip ?? null,
+      userAgent: input.caller.userAgent ?? null,
     });
 
     return this.getRole(input.roleId);
@@ -545,6 +555,8 @@ export class IamService {
       roleId: input.roleId,
       userId: input.userId,
       actorId: input.caller.userId,
+      ip: input.caller.ip ?? null,
+      userAgent: input.caller.userAgent ?? null,
     });
     return dto;
   }
@@ -600,6 +612,8 @@ export class IamService {
         roleId: input.roleId,
         userId: input.userId,
         actorId: input.caller.userId,
+        ip: input.caller.ip ?? null,
+        userAgent: input.caller.userAgent ?? null,
       });
     }
     return { success: true };
@@ -763,7 +777,10 @@ export class IamService {
     return toInvitationDto(row);
   }
 
-  async acceptInvitation(token: string): Promise<{ success: true; email: string }> {
+  async acceptInvitation(
+    token: string,
+    meta?: { ip?: string | null; userAgent?: string | null },
+  ): Promise<{ success: true; email: string }> {
     // Atomic conditional UPDATE: the DB evaluates pending + not-expired under row lock,
     // so two concurrent accepts cannot both succeed. Public path - tenant is derived
     // from the row, not the request, so no tenant predicate is needed.
@@ -788,6 +805,8 @@ export class IamService {
       email: row.email,
       roleId: row.roleId,
       invitationId: row.id,
+      ip: meta?.ip ?? null,
+      userAgent: meta?.userAgent ?? null,
     });
 
     return { success: true, email: row.email };

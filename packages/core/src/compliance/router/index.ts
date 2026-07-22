@@ -1,5 +1,11 @@
 import { implement, ORPCError } from '@orpc/server';
-import { AdminGuard, getUserId, mapErrors, type OssContext } from '@openora/core/server';
+import {
+  AdminGuard,
+  extractClientMeta,
+  getUserId,
+  mapErrors,
+  type OssContext,
+} from '@openora/core/server';
 import type { KycAdapter, KycWebhookVerifier } from '@openora/core/contracts';
 import { complianceContract } from '../contract/index.js';
 import {
@@ -41,26 +47,30 @@ export function createComplianceRouter({
       compliance.getLimitsForUser(getUserId(context)),
     ),
 
-    upsertLimit: os.upsertLimit.handler(({ input, context }) =>
-      compliance.upsertLimit(getUserId(context), input),
-    ),
+    upsertLimit: os.upsertLimit.handler(({ input, context }) => {
+      const meta = extractClientMeta(context.request.headers);
+      return compliance.upsertLimit(getUserId(context), input, meta);
+    }),
 
-    deleteLimit: os.deleteLimit.handler(({ input, context }) =>
-      mapErrors({ NOT_FOUND: LimitNotFoundError, FORBIDDEN: LimitOwnershipError }, () =>
-        compliance.removeLimit(input.id, getUserId(context)),
-      ),
-    ),
+    deleteLimit: os.deleteLimit.handler(({ input, context }) => {
+      const meta = extractClientMeta(context.request.headers);
+      return mapErrors({ NOT_FOUND: LimitNotFoundError, FORBIDDEN: LimitOwnershipError }, () =>
+        compliance.removeLimit(input.id, getUserId(context), meta),
+      );
+    }),
 
     geoCheck: os.geoCheck.handler(({ context }) => {
-      const ip =
-        (context.request.headers['x-forwarded-for'] as string | undefined)?.split(',')[0]?.trim() ??
-        '127.0.0.1';
-      return compliance.geoCheck(ip);
+      const { ip } = extractClientMeta(context.request.headers);
+      return compliance.geoCheck(ip ?? '127.0.0.1');
     }),
 
     addGeoRule: os.addGeoRule.handler(async ({ input, context }) => {
-      const caller = await adminGuard.assert(context, 'compliance', 'override-limit');
-      return compliance.addGeoRule(input, caller.userId);
+      const { userId, ip, userAgent } = await adminGuard.assert(
+        context,
+        'compliance',
+        'override-limit',
+      );
+      return compliance.addGeoRule(input, userId, { ip, userAgent });
     }),
 
     listGeoRules: os.listGeoRules.handler(async ({ context }) => {
@@ -73,7 +83,10 @@ export function createComplianceRouter({
       return kyc.getForPlayer(input.userId);
     }),
 
-    submitKyc: os.submitKyc.handler(({ input, context }) => kyc.submit(getUserId(context), input)),
+    submitKyc: os.submitKyc.handler(({ input, context }) => {
+      const meta = extractClientMeta(context.request.headers);
+      return kyc.submit(getUserId(context), input, meta);
+    }),
 
     // M2M provider webhook - no admin session. Verify the verbatim bytes against the
     // signature header or reject (fail closed); never fall back to an empty body.
@@ -90,32 +103,32 @@ export function createComplianceRouter({
     }),
 
     setPlayerLimit: os.setPlayerLimit.handler(async ({ input, context }) => {
-      const caller = await adminGuard.assert(context, 'compliance', 'manage-rg');
-      return rg.setPlayerLimit(input.userId, input, caller.userId);
+      const { userId, ip, userAgent } = await adminGuard.assert(context, 'compliance', 'manage-rg');
+      return rg.setPlayerLimit(input.userId, input, userId, { ip, userAgent });
     }),
 
     activateCoolingOff: os.activateCoolingOff.handler(async ({ input, context }) => {
-      const caller = await adminGuard.assert(context, 'compliance', 'manage-rg');
+      const { userId, ip, userAgent } = await adminGuard.assert(context, 'compliance', 'manage-rg');
       return mapErrors({ CONFLICT: ActiveExclusionError }, () =>
-        rg.activateCoolingOff(input.userId, input, caller.userId),
+        rg.activateCoolingOff(input.userId, input, userId, { ip, userAgent }),
       );
     }),
 
     activateSelfExclusion: os.activateSelfExclusion.handler(async ({ input, context }) => {
-      const caller = await adminGuard.assert(context, 'compliance', 'manage-rg');
+      const { userId, ip, userAgent } = await adminGuard.assert(context, 'compliance', 'manage-rg');
       return mapErrors({ CONFLICT: ActiveExclusionError }, () =>
-        rg.activateSelfExclusion(input.userId, input, caller.userId),
+        rg.activateSelfExclusion(input.userId, input, userId, { ip, userAgent }),
       );
     }),
 
     liftSelfExclusion: os.liftSelfExclusion.handler(async ({ input, context }) => {
-      const caller = await adminGuard.assert(context, 'compliance', 'manage-rg');
+      const { userId, ip, userAgent } = await adminGuard.assert(context, 'compliance', 'manage-rg');
       return mapErrors(
         {
           NOT_FOUND: ExclusionNotFoundError,
           CONFLICT: [PermanentExclusionLiftError, ExclusionPeriodNotElapsedError],
         },
-        () => rg.liftSelfExclusion(input.userId, input, caller.userId),
+        () => rg.liftSelfExclusion(input.userId, input, userId, { ip, userAgent }),
       );
     }),
 

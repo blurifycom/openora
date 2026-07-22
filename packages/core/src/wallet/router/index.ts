@@ -1,5 +1,11 @@
 import { implement, ORPCError } from '@orpc/server';
-import { getUserId, mapErrors, type AdminGuard, type OssContext } from '@openora/core/server';
+import {
+  getUserId,
+  mapErrors,
+  extractClientMeta,
+  type AdminGuard,
+  type OssContext,
+} from '@openora/core/server';
 import type {
   AuditWritePort,
   PaymentAdapter,
@@ -43,8 +49,9 @@ export function createWalletRouter(
       ),
     ),
 
-    withdraw: os.withdraw.handler(({ input, context }) =>
-      mapErrors(
+    withdraw: os.withdraw.handler(({ input, context }) => {
+      const { ip, userAgent } = extractClientMeta(context.request.headers);
+      return mapErrors(
         {
           NOT_FOUND: WalletNotFoundError,
           BAD_REQUEST: [InsufficientBalanceError, CurrencyMismatchError],
@@ -57,9 +64,11 @@ export function createWalletRouter(
             currency: input.currency,
             idempotencyKey: input.idempotencyKey,
             destinationAddress: input.destinationAddress,
+            ip,
+            userAgent,
           }),
-      ),
-    ),
+      );
+    }),
 
     listTransactions: os.listTransactions.handler(({ context, input }) =>
       wallet.getTransactions(getUserId(context), input.page, input.limit),
@@ -77,25 +86,38 @@ export function createWalletRouter(
       }),
 
       approve: os.withdrawals.approve.handler(async ({ input, context }) => {
-        const { userId: adminId } = await adminGuard.assert(context, 'withdrawal', 'approve');
+        const {
+          userId: adminId,
+          ip,
+          userAgent,
+        } = await adminGuard.assert(context, 'withdrawal', 'approve');
         return mapErrors(
           { NOT_FOUND: WithdrawalNotFoundError, CONFLICT: WithdrawalNotPendingError },
-          () => wallet.approveWithdrawal(adminId, input.withdrawalId),
+          () => wallet.approveWithdrawal(adminId, input.withdrawalId, { ip, userAgent }),
         );
       }),
 
       reject: os.withdrawals.reject.handler(async ({ input, context }) => {
-        const { userId: adminId } = await adminGuard.assert(context, 'withdrawal', 'reject');
+        const {
+          userId: adminId,
+          ip,
+          userAgent,
+        } = await adminGuard.assert(context, 'withdrawal', 'reject');
         return mapErrors(
           { NOT_FOUND: WithdrawalNotFoundError, CONFLICT: WithdrawalNotPendingError },
-          () => wallet.rejectWithdrawal(adminId, input.withdrawalId, input.reason),
+          () =>
+            wallet.rejectWithdrawal(adminId, input.withdrawalId, input.reason, { ip, userAgent }),
         );
       }),
     },
 
     autoWithdrawalRules: {
       set: os.autoWithdrawalRules.set.handler(async ({ input, context }) => {
-        const { userId: adminId } = await adminGuard.assert(context, 'withdrawal', 'auto-rule');
+        const {
+          userId: adminId,
+          ip,
+          userAgent,
+        } = await adminGuard.assert(context, 'withdrawal', 'auto-rule');
         const before = await wallet.getAutoWithdrawalRule(input.userId);
         const rule = await wallet.setAutoWithdrawalRule({
           userId: input.userId,
@@ -111,6 +133,8 @@ export function createWalletRouter(
           resourceId: input.userId,
           before: before ? { threshold: before.threshold, reason: before.reason } : null,
           after: { threshold: rule.threshold, reason: rule.reason },
+          ip,
+          userAgent,
         });
         return rule;
       }),
@@ -121,7 +145,11 @@ export function createWalletRouter(
       }),
 
       delete: os.autoWithdrawalRules.delete.handler(async ({ input, context }) => {
-        const { userId: adminId } = await adminGuard.assert(context, 'withdrawal', 'auto-rule');
+        const {
+          userId: adminId,
+          ip,
+          userAgent,
+        } = await adminGuard.assert(context, 'withdrawal', 'auto-rule');
         const before = await wallet.getAutoWithdrawalRule(input.userId);
         const deleted = await wallet.deleteAutoWithdrawalRule(input.userId);
         if (deleted) {
@@ -133,6 +161,8 @@ export function createWalletRouter(
             resourceId: input.userId,
             before: before ? { threshold: before.threshold, reason: before.reason } : null,
             after: null,
+            ip,
+            userAgent,
           });
         }
         return deleted;

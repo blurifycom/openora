@@ -84,7 +84,11 @@ export class KycVerificationService {
     return this.platformConfig?.kyc?.provider ?? DEFAULT_PROVIDER;
   }
 
-  async submit(userId: User['id'], input: SubmitKycInput) {
+  async submit(
+    userId: User['id'],
+    input: SubmitKycInput,
+    meta?: { ip?: string | null; userAgent?: string | null },
+  ) {
     const result = await this.kycAdapter.submit(
       userId,
       input.documents.map((d) => ({ type: d.type, frontUrl: d.frontUrl, backUrl: d.backUrl })),
@@ -110,6 +114,8 @@ export class KycVerificationService {
       userId,
       referenceId: result.referenceId,
       provider: this.provider,
+      ip: meta?.ip ?? null,
+      userAgent: meta?.userAgent ?? null,
     });
     await this.statusWriter.setStatus(userId, status, { actorId: null, source: 'vendor' });
     return { ...toDto(row), verificationUrl: result.verificationUrl };

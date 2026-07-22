@@ -116,7 +116,11 @@ describe('PhoneLoginService.requestOtp', () => {
     expect(sms.sendOtp).toHaveBeenCalledWith(
       expect.objectContaining({ to: PHONE, code: expect.stringMatching(/^\d{6}$/) }),
     );
-    expect(events.emit).toHaveBeenCalledWith('identity.phone_otp.requested', { userId: 'u1' });
+    expect(events.emit).toHaveBeenCalledWith('identity.phone_otp.requested', {
+      userId: 'u1',
+      ip: null,
+      userAgent: null,
+    });
   });
 
   it('anti-enumeration: unknown phone returns success shape without sending SMS', async () => {
@@ -165,6 +169,8 @@ describe('PhoneLoginService.requestOtp', () => {
     expect(events.emit).toHaveBeenCalledWith('identity.phone_otp.cancelled', {
       userId: 'u1',
       reason: 'new_otp_requested',
+      ip: null,
+      userAgent: null,
     });
     expect(sms.sendOtp).toHaveBeenCalled();
   });
@@ -288,6 +294,8 @@ describe('PhoneLoginService.verifyOtp', () => {
     expect(events.emit).toHaveBeenCalledWith('identity.phone_otp.cancelled', {
       userId: 'u1',
       reason: 'max_attempts',
+      ip: null,
+      userAgent: null,
     });
   });
 

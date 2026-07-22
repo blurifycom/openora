@@ -30,7 +30,11 @@ export class ComplianceService {
     return rows.map((r) => serializeRow(r, { dateFields: ['createdAt'] }));
   }
 
-  async upsertLimit(userId: User['id'], input: UpsertLimitInput) {
+  async upsertLimit(
+    userId: User['id'],
+    input: UpsertLimitInput,
+    meta?: { ip?: string | null; userAgent?: string | null },
+  ) {
     const row = findOneOrThrow(
       await this.drizzle.db
         .insert(userLimit)
@@ -42,18 +46,32 @@ export class ComplianceService {
         .returning(),
       new LimitNotFoundError(userId),
     );
-    this.events.emit('compliance.limit.upserted', { userId, limitId: row.id });
+    this.events.emit('compliance.limit.upserted', {
+      userId,
+      limitId: row.id,
+      ip: meta?.ip ?? null,
+      userAgent: meta?.userAgent ?? null,
+    });
     return serializeRow(row, { dateFields: ['createdAt'] });
   }
 
-  async removeLimit(id: string, userId: User['id']): Promise<{ success: true }> {
+  async removeLimit(
+    id: string,
+    userId: User['id'],
+    meta?: { ip?: string | null; userAgent?: string | null },
+  ): Promise<{ success: true }> {
     const existing = findOneOrThrow(
       await this.drizzle.db.select().from(userLimit).where(eq(userLimit.id, id)),
       new LimitNotFoundError(id),
     );
     assertOwnership(existing.userId, userId, new LimitOwnershipError());
     await this.drizzle.db.delete(userLimit).where(eq(userLimit.id, id));
-    this.events.emit('compliance.limit.removed', { userId, limitId: id });
+    this.events.emit('compliance.limit.removed', {
+      userId,
+      limitId: id,
+      ip: meta?.ip ?? null,
+      userAgent: meta?.userAgent ?? null,
+    });
     return { success: true };
   }
 
@@ -85,7 +103,11 @@ export class ComplianceService {
     return { allowed: true, countryCode, reason: null };
   }
 
-  async addGeoRule(input: AddGeoRuleInput, actorId?: User['id']) {
+  async addGeoRule(
+    input: AddGeoRuleInput,
+    actorId?: User['id'],
+    meta?: { ip?: string | null; userAgent?: string | null },
+  ) {
     const row = findOneOrThrow(
       await this.drizzle.db
         .insert(geoRule)
@@ -101,6 +123,8 @@ export class ComplianceService {
       countryCode: input.countryCode,
       action: input.action,
       actorId,
+      ip: meta?.ip ?? null,
+      userAgent: meta?.userAgent ?? null,
     });
     return serializeRow(row, { dateFields: ['createdAt'] });
   }
