@@ -73,6 +73,16 @@ function likePrefix(prefix: string): string {
   return `${prefix.replace(/[\\%_]/g, '\\$&')}%`;
 }
 
+export function startOfDayUtc(dateStr: string): Date {
+  const d = new Date(dateStr);
+  return new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate(), 0, 0, 0, 0));
+}
+
+export function endOfDayUtc(dateStr: string): Date {
+  const d = new Date(dateStr);
+  return new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate(), 23, 59, 59, 999));
+}
+
 function buildWhere(filters: AuditExportFilters) {
   const {
     actorId,
@@ -85,6 +95,7 @@ function buildWhere(filters: AuditExportFilters) {
     fromDate,
     toDate,
   } = filters;
+
   return and(
     actorId ? eq(auditLog.actorId, actorId) : undefined,
     actorType ? eq(auditLog.actorType, actorType as AuditLog['actorType']) : undefined,
@@ -93,8 +104,8 @@ function buildWhere(filters: AuditExportFilters) {
     resourceType ? eq(auditLog.resourceType, resourceType) : undefined,
     resourceId ? eq(auditLog.resourceId, resourceId) : undefined,
     q ? or(eq(auditLog.actorId, q), eq(auditLog.resourceId, q)) : undefined,
-    fromDate ? gte(auditLog.createdAt, new Date(fromDate)) : undefined,
-    toDate ? lte(auditLog.createdAt, new Date(toDate)) : undefined,
+    fromDate ? gte(auditLog.createdAt, startOfDayUtc(fromDate)) : undefined,
+    toDate ? lte(auditLog.createdAt, endOfDayUtc(toDate)) : undefined,
   );
 }
 

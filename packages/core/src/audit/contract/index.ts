@@ -49,8 +49,8 @@ export const AuditListFiltersSchema = PageQuerySchema.extend({
   resourceId: z.string().optional(),
   // Single search box: exact-match the subject against actorId OR resourceId.
   q: z.string().trim().min(1).optional(),
-  fromDate: z.string().optional(),
-  toDate: z.string().optional(),
+  fromDate: z.iso.date().optional(),
+  toDate: z.iso.date().optional(),
 });
 export type AuditListFilters = z.infer<typeof AuditListFiltersSchema>;
 

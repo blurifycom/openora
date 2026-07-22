@@ -1,7 +1,14 @@
 import { createHash, randomInt, randomUUID } from 'node:crypto';
 import { ORPCError } from '@orpc/server';
-import { type EventBus, DrizzleService, assertRateLimit } from '@openora/core/server';
+import {
+  type EventBus,
+  type Auth,
+  DrizzleService,
+  assertRateLimit,
+  signSessionCookie,
+} from '@openora/core/server';
 import { and, eq, gt, sql } from 'drizzle-orm';
+import { PhoneLoginErrorReasonSchema } from '@openora/core/contracts';
 import type {
   RateLimiterAdapter,
   SmsAdapter,
@@ -51,6 +58,7 @@ export function OtpInvalidError(attemptsRemaining: number) {
 export function OtpCancelledError() {
   return new ORPCError('FORBIDDEN', {
     message: 'Too many incorrect attempts. Please request a new code.',
+    data: { reason: PhoneLoginErrorReasonSchema.enum.otp_cancelled },
   });
 }
 
@@ -102,6 +110,7 @@ export type PhoneLoginServiceDeps = {
   events: EventBus;
   sms: SmsAdapter;
   limiter: RateLimiterAdapter;
+  auth: Auth;
 };
 
 export class PhoneLoginService {
@@ -109,12 +118,14 @@ export class PhoneLoginService {
   private readonly events: EventBus;
   private readonly sms: SmsAdapter;
   private readonly limiter: RateLimiterAdapter;
+  private readonly auth: Auth;
 
-  constructor({ drizzle, events, sms, limiter }: PhoneLoginServiceDeps) {
+  constructor({ drizzle, events, sms, limiter, auth }: PhoneLoginServiceDeps) {
     this.drizzle = drizzle;
     this.events = events;
     this.sms = sms;
     this.limiter = limiter;
+    this.auth = auth;
   }
 
   async requestOtp(
@@ -178,6 +189,7 @@ export class PhoneLoginService {
 
   async verifyOtp(
     input: PhoneLoginVerifyInput & { ip?: string | null; userAgent?: string | null },
+    resHeaders: Headers,
   ) {
     const { phone, code, rememberMe, ip = null, userAgent = null } = input;
     await assertRateLimit(this.limiter, `phone-otp-verify:${phone}`, OTP_VERIFY_RATE_LIMIT);
@@ -261,6 +273,7 @@ export class PhoneLoginService {
       this.events.emit('rg.exclusion.login_blocked', { userId: account.id, ip, userAgent });
       throw new ORPCError('FORBIDDEN', {
         message: 'Account access is currently restricted (responsible gambling).',
+        data: { reason: PhoneLoginErrorReasonSchema.enum.rg_blocked },
       });
     }
 
@@ -292,6 +305,32 @@ export class PhoneLoginService {
       ip,
       userAgent,
     });
+
+    const authContext = await this.auth.$context;
+
+    const maxAgeSeconds = rememberMe
+      ? Math.max(0, Math.round((sessionExpiresAt.getTime() - Date.now()) / 1000))
+      : undefined;
+    resHeaders.append(
+      'set-cookie',
+      signSessionCookie({
+        token,
+        sessionCookie: authContext.authCookies.sessionToken,
+        secret: authContext.secret,
+        maxAgeSeconds,
+      }),
+    );
+
+    if (!rememberMe) {
+      resHeaders.append(
+        'set-cookie',
+        signSessionCookie({
+          token: 'true',
+          sessionCookie: authContext.authCookies.dontRememberToken,
+          secret: authContext.secret,
+        }),
+      );
+    }
 
     return {
       user: serializeUser(account),
