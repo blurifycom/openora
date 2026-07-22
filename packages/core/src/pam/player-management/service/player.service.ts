@@ -12,6 +12,8 @@ import type {
   Player,
   User,
   TagKey,
+  PlayerSortBy,
+  SortOrder,
 } from '@openora/core/contracts';
 import { eq, ilike, count, or, and, gte, asc, desc, sql, ne, inArray, isNull } from 'drizzle-orm';
 import { player } from '@openora/core/pam/schema/profile';
@@ -48,8 +50,8 @@ export class PlayerService {
     status?: PlayerStatus;
     kycStatus?: KycStatus;
     tags?: TagKey[];
-    sortBy?: string;
-    sortOrder?: string;
+    sortBy?: PlayerSortBy;
+    sortOrder?: SortOrder;
   }) {
     const db = this.drizzle.db;
     const conditions = [];
@@ -100,21 +102,16 @@ export class PlayerService {
         .where(whereClause)
         .orderBy(
           ((sortOrder ?? 'desc') === 'asc' ? asc : desc)(
-            sortBy === 'displayName'
-              ? player.displayName
-              : sortBy === 'status'
-                ? player.status
-                : sortBy === 'kycStatus'
-                  ? player.kycStatus
-                  : sortBy === 'totalWagered'
-                    ? player.totalWagered
-                    : sortBy === 'totalDeposits'
-                      ? player.totalDeposits
-                      : sortBy === 'lastSeenAt'
-                        ? player.lastSeenAt
-                        : sortBy === 'level'
-                          ? player.level
-                          : player.createdAt,
+            {
+              createdAt: player.createdAt,
+              displayName: player.displayName,
+              status: player.status,
+              kycStatus: player.kycStatus,
+              totalWagered: player.totalWagered,
+              totalDeposits: player.totalDeposits,
+              lastSeenAt: player.lastSeenAt,
+              level: player.level,
+            }[sortBy ?? 'createdAt'],
           ),
           desc(player.id),
         )

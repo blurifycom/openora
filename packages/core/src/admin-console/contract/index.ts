@@ -1,6 +1,8 @@
 import { oc } from '@orpc/contract';
 import * as z from 'zod';
 import {
+  ADMIN_TX_SORT_BY_VALUES,
+  ADMIN_USER_SORT_BY_VALUES,
   CurrencyCodeSchema,
   IdInputSchema,
   KycStatusSchema,
@@ -45,26 +47,9 @@ export const AdminUserSchema = z.object({
   lockoutUntil: TimestampSchema.nullable().optional(),
 });
 
-export const ADMIN_USER_SORT_BY_VALUES = [
-  'createdAt',
-  'email',
-  'name',
-  'role',
-  'isActive',
-  'lastLockoutAt',
-] as const;
 export const AdminUserSortBySchema = z.enum(ADMIN_USER_SORT_BY_VALUES).default('createdAt');
 export type AdminUserSortBy = z.infer<typeof AdminUserSortBySchema>;
 
-export const ADMIN_TX_SORT_BY_VALUES = [
-  'createdAt',
-  'amount',
-  'type',
-  'status',
-  'currency',
-  'rail',
-  'reviewedAt',
-] as const;
 export const AdminTransactionSortBySchema = z.enum(ADMIN_TX_SORT_BY_VALUES).default('createdAt');
 export type AdminTransactionSortBy = z.infer<typeof AdminTransactionSortBySchema>;
 

@@ -5,9 +5,9 @@ import {
   makeNotFoundError,
 } from '@openora/core/server';
 import { eq, asc, desc, and, gt, count, sql } from 'drizzle-orm';
-import type { User } from '@openora/core/contracts';
+import type { User, SortOrder } from '@openora/core/contracts';
 import { session } from '../schema/index.js';
-import { type SessionItem } from '../contract/index.js';
+import { type SessionItem, type SessionSortBy } from '../contract/index.js';
 
 export const SessionNotFoundError = makeNotFoundError('Session');
 
@@ -35,8 +35,8 @@ export class SessionService {
     userId: User['id'];
     page: number;
     limit: number;
-    sortBy?: string;
-    sortOrder?: string;
+    sortBy?: SessionSortBy;
+    sortOrder?: SortOrder;
   }) {
     const where = eq(session.userId, userId);
     const db = this.drizzle.db;

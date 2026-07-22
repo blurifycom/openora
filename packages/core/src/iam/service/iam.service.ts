@@ -29,6 +29,7 @@ import type {
   CacheAdapter,
   SessionCommands,
   User,
+  SortOrder,
 } from '@openora/core/contracts';
 import {
   adminRole,
@@ -39,7 +40,11 @@ import {
 } from '../schema/index.js';
 // Read-only cross-domain schema import (sanctioned): assignRole verifies the target is an admin user.
 import { user } from '@openora/core/pam/schema/identity';
-import type { EffectivePermissions } from '../contract/index.js';
+import type {
+  EffectivePermissions,
+  IamRoleSortBy,
+  IamInvitationSortBy,
+} from '../contract/index.js';
 
 export const RoleNotFoundError = makeNotFoundError('AdminRole');
 export const InvitationNotFoundError = makeNotFoundError('AdminInvitation');
@@ -330,7 +335,7 @@ export class IamService {
     limit,
     sortBy,
     sortOrder,
-  }: Page & { sortBy?: string; sortOrder?: string }) {
+  }: Page & { sortBy?: IamRoleSortBy; sortOrder?: SortOrder }) {
     const offset = pageToOffset(page, limit);
     const dir = (sortOrder ?? 'asc') === 'asc' ? asc : desc;
     const ROLE_SORT_COLS = {
@@ -338,7 +343,7 @@ export class IamService {
       createdAt: adminRole.createdAt,
       key: adminRole.key,
     } as const;
-    const col = ROLE_SORT_COLS[sortBy === 'createdAt' || sortBy === 'key' ? sortBy : 'name'];
+    const col = ROLE_SORT_COLS[sortBy ?? 'name'];
     const [rows, countResult] = await Promise.all([
       this.drizzle.db
         .select()
@@ -622,9 +627,7 @@ export class IamService {
     return { success: true };
   }
 
-  async listAssignments(
-    input: Page & { userId?: User['id']; sortBy?: string; sortOrder?: string },
-  ) {
+  async listAssignments(input: Page & { userId?: User['id']; sortOrder?: SortOrder }) {
     const { page, limit, userId, sortOrder } = input;
     const offset = pageToOffset(page, limit);
     const where = userId ? eq(adminRoleAssignment.userId, userId) : undefined;
@@ -744,7 +747,7 @@ export class IamService {
     limit,
     sortBy,
     sortOrder,
-  }: Page & { sortBy?: string; sortOrder?: string }) {
+  }: Page & { sortBy?: IamInvitationSortBy; sortOrder?: SortOrder }) {
     const offset = pageToOffset(page, limit);
     const dir = (sortOrder ?? 'desc') === 'asc' ? asc : desc;
     const INV_SORT_COLS = {
@@ -754,15 +757,7 @@ export class IamService {
       status: adminInvitation.status,
       acceptedAt: adminInvitation.acceptedAt,
     } as const;
-    const col =
-      INV_SORT_COLS[
-        sortBy === 'expiresAt' ||
-        sortBy === 'email' ||
-        sortBy === 'status' ||
-        sortBy === 'acceptedAt'
-          ? sortBy
-          : 'createdAt'
-      ];
+    const col = INV_SORT_COLS[sortBy ?? 'createdAt'];
     const [rows, countResult] = await Promise.all([
       this.drizzle.db
         .select()

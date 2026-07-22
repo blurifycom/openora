@@ -16,7 +16,9 @@ import {
   type PlayerTags,
   type Player,
   type TagKey,
+  type SortOrder,
 } from '@openora/core/contracts';
+import type { PlayerTagSortBy } from '../contract/index.js';
 import { player } from '@openora/core/pam/schema/profile';
 import { playerTag, tag } from '../schema/index.js';
 import { mapDbError } from '@openora/core/common/errors';
@@ -87,18 +89,17 @@ export class TagService implements PlayerTags {
     playerId: Player['id'];
     page: number;
     limit: number;
-    sortBy?: string;
-    sortOrder?: string;
+    sortBy?: PlayerTagSortBy;
+    sortOrder?: SortOrder;
   }) {
     const where = and(eq(playerTag.playerId, playerId), isNull(playerTag.removedAt));
     const db = this.drizzle.db;
     const dir = (sortOrder ?? 'desc') === 'asc' ? asc : desc;
-    const tagSortCol =
-      sortBy === 'removedAt'
-        ? playerTag.removedAt
-        : sortBy === 'assignActor'
-          ? playerTag.assignActor
-          : playerTag.createdAt;
+    const TAG_SORT_COLS = {
+      createdAt: playerTag.createdAt,
+      assignActor: playerTag.assignActor,
+    } as const;
+    const tagSortCol = TAG_SORT_COLS[sortBy ?? 'createdAt'];
     const [rows, [{ n }]] = await Promise.all([
       db
         .select({

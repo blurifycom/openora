@@ -64,19 +64,15 @@ export class DrizzleAdminWalletReporting implements AdminWalletReporting {
         .where(where)
         .orderBy(
           ((sortOrder ?? 'desc') === 'asc' ? asc : desc)(
-            sortBy === 'amount'
-              ? walletTransaction.amount
-              : sortBy === 'type'
-                ? walletTransaction.type
-                : sortBy === 'status'
-                  ? walletTransaction.status
-                  : sortBy === 'currency'
-                    ? walletTransaction.currency
-                    : sortBy === 'rail'
-                      ? walletTransaction.rail
-                      : sortBy === 'reviewedAt'
-                        ? walletTransaction.reviewedAt
-                        : walletTransaction.createdAt,
+            {
+              createdAt: walletTransaction.createdAt,
+              amount: walletTransaction.amount,
+              type: walletTransaction.type,
+              status: walletTransaction.status,
+              currency: walletTransaction.currency,
+              rail: walletTransaction.rail,
+              reviewedAt: walletTransaction.reviewedAt,
+            }[sortBy ?? 'createdAt'],
           ),
           desc(walletTransaction.id),
         )

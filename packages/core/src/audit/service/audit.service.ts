@@ -11,6 +11,15 @@ import type { AuditWritePort } from '@openora/core/contracts';
 import { auditLog, type AuditLog } from '../schema/index.js';
 import type { AuditListFilters, AuditExportFilters } from '../contract/index.js';
 
+const AUDIT_SORT_COLS = {
+  createdAt: auditLog.createdAt,
+  action: auditLog.action,
+  actorId: auditLog.actorId,
+  actorType: auditLog.actorType,
+  resourceType: auditLog.resourceType,
+  resourceId: auditLog.resourceId,
+} as const;
+
 // Key order is deterministic - changes here BREAK the chain for existing rows.
 // Treat this as an append-only list. before/after/result are IN the chain - a row's
 // mutation payload and outcome must be tamper-evident, not just its who/what/where.
@@ -177,21 +186,13 @@ export class AuditService {
     const where = buildWhere(filters);
     const sortBy = filters.sortBy ?? 'createdAt';
     const dir = (filters.sortOrder ?? 'desc') === 'asc' ? asc : desc;
-    const SORT_COLS = {
-      createdAt: auditLog.createdAt,
-      action: auditLog.action,
-      actorId: auditLog.actorId,
-      actorType: auditLog.actorType,
-      resourceType: auditLog.resourceType,
-      resourceId: auditLog.resourceId,
-    } as const;
 
     const [rows, countResult] = await Promise.all([
       db
         .select()
         .from(auditLog)
         .where(where)
-        .orderBy(dir(SORT_COLS[sortBy]), desc(auditLog.seq))
+        .orderBy(dir(AUDIT_SORT_COLS[sortBy]), dir(auditLog.seq))
         .limit(limit)
         .offset(offset),
       db
@@ -220,20 +221,12 @@ export class AuditService {
 
     const sortBy = filters.sortBy ?? 'createdAt';
     const dir = (filters.sortOrder ?? 'asc') === 'asc' ? asc : desc;
-    const SORT_COLS = {
-      createdAt: auditLog.createdAt,
-      action: auditLog.action,
-      actorId: auditLog.actorId,
-      actorType: auditLog.actorType,
-      resourceType: auditLog.resourceType,
-      resourceId: auditLog.resourceId,
-    } as const;
 
     const rows = await db
       .select()
       .from(auditLog)
       .where(where)
-      .orderBy(dir(SORT_COLS[sortBy]), asc(auditLog.seq))
+      .orderBy(dir(AUDIT_SORT_COLS[sortBy]), dir(auditLog.seq))
       .limit(AuditService.EXPORT_MAX_ROWS);
 
     const header =

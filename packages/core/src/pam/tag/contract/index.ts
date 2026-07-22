@@ -13,7 +13,7 @@ import {
 import { PageQuerySchema, SortOrderSchema, paginated } from '@openora/core/contracts/kit';
 import z from 'zod';
 
-export const PLAYER_TAG_SORT_BY_VALUES = ['createdAt', 'removedAt', 'assignActor'] as const;
+export const PLAYER_TAG_SORT_BY_VALUES = ['createdAt', 'assignActor'] as const;
 export const PlayerTagSortBySchema = z.enum(PLAYER_TAG_SORT_BY_VALUES).default('createdAt');
 export type PlayerTagSortBy = z.infer<typeof PlayerTagSortBySchema>;
 

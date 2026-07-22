@@ -26,6 +26,7 @@ import {
   type AuditWritePort,
   type TagKey,
   type User,
+  type SortOrder,
 } from '@openora/core/contracts';
 import { eq, asc, desc, sql, and, gte, lte, count, inArray } from 'drizzle-orm';
 import { createHash } from 'node:crypto';
@@ -43,6 +44,7 @@ import type {
   WithdrawalQueueItem,
   WithdrawalQueueFilter,
   AutoWithdrawalRule,
+  WalletTransactionSortBy,
 } from '../contract/index.js';
 
 const logger = createLogger('wallet');
@@ -604,21 +606,12 @@ export class WalletService {
       rail: walletTransaction.rail,
       reviewedAt: walletTransaction.reviewedAt,
     } as const;
-    const wdSortKey =
-      wdSortBy === 'amount' ||
-      wdSortBy === 'status' ||
-      wdSortBy === 'currency' ||
-      wdSortBy === 'rail' ||
-      wdSortBy === 'reviewedAt'
-        ? wdSortBy
-        : 'createdAt';
-
     const rows = await db
       .select({ tx: walletTransaction, userId: wallet.userId })
       .from(walletTransaction)
       .innerJoin(wallet, eq(wallet.id, walletTransaction.walletId))
       .where(and(...conditions))
-      .orderBy(wdDir(WD_SORT_COLS[wdSortKey]), desc(walletTransaction.id));
+      .orderBy(wdDir(WD_SORT_COLS[wdSortBy]), desc(walletTransaction.id));
 
     const userIds = [...new Set(rows.map((r) => r.userId))];
     const summaries = this.directory ? await this.directory.lookupPlayers(userIds) : [];
@@ -1235,8 +1228,8 @@ export class WalletService {
     userId: User['id'];
     page: number;
     limit: number;
-    sortBy?: string;
-    sortOrder?: string;
+    sortBy?: WalletTransactionSortBy;
+    sortOrder?: SortOrder;
   }) {
     const db = this.drizzle.db;
 
@@ -1254,16 +1247,7 @@ export class WalletService {
       rail: walletTransaction.rail,
       reviewedAt: walletTransaction.reviewedAt,
     } as const;
-    const txSortKey =
-      sortBy === 'amount' ||
-      sortBy === 'type' ||
-      sortBy === 'status' ||
-      sortBy === 'currency' ||
-      sortBy === 'rail' ||
-      sortBy === 'reviewedAt'
-        ? sortBy
-        : 'createdAt';
-    const col = TX_SORT_COLS[txSortKey];
+    const col = TX_SORT_COLS[sortBy ?? 'createdAt'];
     const where = eq(walletTransaction.walletId, walletRecord.id);
     const [txs, [{ n }]] = await Promise.all([
       db
