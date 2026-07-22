@@ -10,7 +10,7 @@ import {
 } from 'drizzle-orm/pg-core';
 import { CHAT_ROOM_CATEGORIES, CHAT_ROOM_ROLES } from '../contract/index.js';
 
-const chatRoomRole = pgEnum('chat_room_role', CHAT_ROOM_ROLES);
+export const chatRoomRole = pgEnum('chat_room_role', CHAT_ROOM_ROLES);
 export const chatRoomCategory = pgEnum('chat_room_category', CHAT_ROOM_CATEGORIES);
 
 export const chatRoom = pgTable(
