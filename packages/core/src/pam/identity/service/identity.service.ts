@@ -7,11 +7,13 @@ import {
   assertRateLimit,
   findOneOrThrow,
   makeNotFoundError,
+  createLogger,
 } from '@openora/core/server';
 import { parseCookies } from 'better-auth/cookies';
 import { eq, sql } from 'drizzle-orm';
 import { user, session, account, verification, twoFactor } from '../schema/index.js';
 import type {
+  CacheAdapter,
   RateLimiterAdapter,
   RateLimitKey,
   SendEmailPort,
@@ -226,6 +228,38 @@ const VERIFY_EMAIL_RATE_LIMIT = { limit: 5, windowMs: 15 * MINUTE_MS };
 const CHANGE_PASSWORD_RATE_LIMIT = { limit: 5, windowMs: 15 * MINUTE_MS };
 const TWO_FACTOR_PASSWORD_RATE_LIMIT = { limit: 5, windowMs: 5 * MINUTE_MS };
 
+// Anti-enumeration shadow state for a nonexistent email (`existingUser` undefined -
+// the whole lockout-counting block below is normally skipped for these, which would
+// let a caller distinguish a registered email from a fake one just by noticing whether
+// repeated wrong passwords ever escalate to ACCOUNT_LOCKED). Mirrors the `user` table's
+// own lockout columns and runs through the SAME pure `computeLockoutState`/
+// `computeLockoutTier` functions used for real accounts. Deliberate exception to
+// "server state is owned by the data layer, no ad-hoc shadow caches": there is no real
+// account or business state behind a nonexistent email, so nothing here can ever
+// diverge from a source of truth - it exists purely so a static reply doesn't
+// fingerprint which emails are registered.
+//
+// Unlike the real column (which never expires on its own - only a success or an
+// elapsed lockout clears it), this shadow needs a finite cache TTL; a generous one
+// (not `LOCKOUT_WINDOW_MS`, which is the tier-escalation window, not a "forget this
+// email" duration) keeps the residual gap (a patient attacker waiting out the TTL
+// between probes) as small as practical - accepted, not fully closable with a finite
+// TTL, and documented rather than silently assumed away.
+const FAKE_LOGIN_SHADOW_TTL_MS = 7 * 24 * 60 * 60 * 1000;
+
+type FakeLoginShadow = {
+  failedAttempts: number;
+  lockoutUntil: string | null;
+  lockoutCount: number;
+  lastLockoutAt: string | null;
+};
+
+function loginShadowKey(email: string): string {
+  return `login-shadow:${email}`;
+}
+
+const loginShadowLogger = createLogger('login-shadow');
+
 function computeLockoutState({
   attempts,
   maxAttempts,
@@ -249,6 +283,7 @@ export type IdentityServiceDeps = {
   options?: IdentityServiceOptions;
   limiter?: RateLimiterAdapter<RateLimitKey>;
   platformConfig?: PlatformConfig;
+  cache?: CacheAdapter;
 };
 
 /**
@@ -269,6 +304,7 @@ export class IdentityService {
   private readonly options?: IdentityServiceOptions;
   private readonly limiter?: RateLimiterAdapter<RateLimitKey>;
   private readonly platformConfig?: PlatformConfig;
+  private readonly cache?: CacheAdapter;
 
   constructor({
     drizzle,
@@ -278,6 +314,7 @@ export class IdentityService {
     options,
     limiter,
     platformConfig,
+    cache,
   }: IdentityServiceDeps) {
     this.drizzle = drizzle;
     this.events = events;
@@ -286,6 +323,7 @@ export class IdentityService {
     this.options = options;
     this.limiter = limiter;
     this.platformConfig = platformConfig;
+    this.cache = cache;
     this.auth = createAuth({
       db: drizzle.db,
       schema: { user, session, account, verification, twoFactor },
@@ -421,6 +459,23 @@ export class IdentityService {
       existingUser = { ...existingUser, failedLoginAttempts: 0, lockoutUntil: null };
     }
 
+    // Anti-enumeration: a nonexistent email must be indistinguishable from a real one
+    // across a full wrong-password sequence, not just the first attempt - otherwise a
+    // caller can tell a registered email apart from a fake one just by noticing
+    // whether repeated failures ever escalate to ACCOUNT_LOCKED. Mirror the real
+    // lockout state (above/below) against a shadow record instead of the `user` row.
+    let fakeLoginShadow: FakeLoginShadow | undefined;
+    if (lockoutEnabled && !existingUser) {
+      fakeLoginShadow = await this.loginShadowGet(loginShadowKey(email));
+      if (fakeLoginShadow?.lockoutUntil) {
+        if (new Date(fakeLoginShadow.lockoutUntil) > new Date()) {
+          throw createAccountLockedError(new Date(fakeLoginShadow.lockoutUntil));
+        }
+        // Lock window elapsed - fresh budget, keep the tier history (mirrors clearLockout).
+        fakeLoginShadow = { ...fakeLoginShadow, failedAttempts: 0, lockoutUntil: null };
+      }
+    }
+
     try {
       const authResponse = await this.auth.api.signInEmail({
         body: { email, password: input.password, rememberMe: input.rememberMe },
@@ -536,6 +591,50 @@ export class IdentityService {
 
           throw createAccountLockedError(lockoutUntil);
         }
+      } else if (lockoutEnabled && !existingUser && isCredentialFailure) {
+        const maxAttempts = this.options?.lockout?.maxAttempts ?? DEFAULT_MAX_LOGIN_ATTEMPTS;
+        const fallbackDurationMs = this.options?.lockout?.durationMs ?? DEFAULT_LOCKOUT_DURATION_MS;
+        const newAttempts = (fakeLoginShadow?.failedAttempts ?? 0) + 1;
+        attemptsRemaining = Math.max(maxAttempts - newAttempts, 0);
+        const { isLocking } = computeLockoutState({
+          attempts: newAttempts,
+          maxAttempts,
+          durationMs: fallbackDurationMs,
+          nowMs: Date.now(),
+        });
+
+        if (isLocking) {
+          const nowMs = Date.now();
+          const { tier, durationMs } = computeLockoutTier({
+            lockoutCount: fakeLoginShadow?.lockoutCount ?? 0,
+            lastLockoutAt: fakeLoginShadow?.lastLockoutAt
+              ? new Date(fakeLoginShadow.lastLockoutAt)
+              : null,
+            nowMs,
+            fallbackDurationMs,
+          });
+          const lockoutUntil = new Date(nowMs + durationMs);
+          await this.loginShadowSet(loginShadowKey(email), {
+            failedAttempts: newAttempts,
+            lockoutUntil: lockoutUntil.toISOString(),
+            lockoutCount: tier,
+            lastLockoutAt: new Date(nowMs).toISOString(),
+          });
+
+          await this.limiter?.reset(makeLoginRateLimitKey(email));
+
+          // No `identity.user.lockout.triggered` emit here - there is no real userId
+          // to attach it to, and emitting one would corrupt the audit trail (same
+          // rationale as phone-login's identical anti-enumeration shadow state).
+          throw createAccountLockedError(lockoutUntil);
+        }
+
+        await this.loginShadowSet(loginShadowKey(email), {
+          failedAttempts: newAttempts,
+          lockoutUntil: null,
+          lockoutCount: fakeLoginShadow?.lockoutCount ?? 0,
+          lastLockoutAt: fakeLoginShadow?.lastLockoutAt ?? null,
+        });
       }
 
       const reason = isCredentialFailure ? 'invalid_credentials' : 'error';
@@ -555,6 +654,37 @@ export class IdentityService {
       .update(user)
       .set({ failedLoginAttempts: 0, lockoutUntil: null })
       .where(eq(user.id, userId));
+  }
+
+  // Best-effort: anti-enumeration mimicry must never fail a real login over a cache
+  // hiccup, so every call degrades to `undefined`/no-op on error instead of rethrowing
+  // (RedisCache does not swallow genuine command errors itself). This degradation is
+  // asymmetric by nature - a real account's lockout state lives in Postgres and is
+  // unaffected by a cache outage, so a down cache transiently reopens the same oracle
+  // for fake emails until it recovers. Accepted: failing closed here (blocking real
+  // logins whenever the cache is unreachable) would trade a rare, bounded security
+  // regression for a guaranteed availability one, which is worse.
+  private async loginShadowGet(key: string): Promise<FakeLoginShadow | undefined> {
+    if (!this.cache) {
+      return undefined;
+    }
+    try {
+      return await this.cache.get<FakeLoginShadow>(key);
+    } catch (err) {
+      loginShadowLogger.warn({ key, err }, 'login shadow cache read failed');
+      return undefined;
+    }
+  }
+
+  private async loginShadowSet(key: string, value: FakeLoginShadow): Promise<void> {
+    if (!this.cache) {
+      return;
+    }
+    try {
+      await this.cache.set(key, value, { ttlMs: FAKE_LOGIN_SHADOW_TTL_MS });
+    } catch (err) {
+      loginShadowLogger.warn({ key, err }, 'login shadow cache write failed');
+    }
   }
 
   async unlockUser(userId: User['id'], actorId: User['id']) {

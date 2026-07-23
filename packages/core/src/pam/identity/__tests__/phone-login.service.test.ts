@@ -3,8 +3,9 @@ import { describe, it, expect, vi } from 'vitest';
 import { ORPCError } from '@orpc/server';
 import { PhoneLoginService } from '../service/phone-login.service.js';
 import { makeDrizzle, makeEvents, mock } from '../../../testing/mock.js';
+import { InProcessCache } from '../../../testing/fakes/cache.js';
 import type { DrizzleService, EventBus, Auth } from '@openora/core/server';
-import type { RateLimiterAdapter, SmsAdapter } from '@openora/core/contracts';
+import type { CacheAdapter, RateLimiterAdapter, SmsAdapter } from '@openora/core/contracts';
 
 const PHONE = '+14155550100';
 
@@ -65,10 +66,12 @@ function build({
   select = [],
   returning = [],
   sms = { sendOtp: vi.fn().mockResolvedValue(undefined) },
+  cache,
 }: {
   select?: unknown[][];
   returning?: unknown[][];
   sms?: SmsAdapter;
+  cache?: CacheAdapter;
 } = {}) {
   const drizzle = makeDrizzle({
     select: select as never,
@@ -81,6 +84,7 @@ function build({
     sms,
     limiter: allowLimiter(),
     auth: fakeAuth,
+    cache,
   });
   return { svc, events, sms };
 }
@@ -134,6 +138,17 @@ describe('PhoneLoginService.requestOtp', () => {
 
     const out = await svc.requestOtp({ phone: PHONE });
     expect(out).toEqual({ expiresAt: expect.any(String), resendAfter: expect.any(String) });
+    expect(sms.sendOtp).not.toHaveBeenCalled();
+  });
+
+  it('anti-enumeration: unknown phone requested twice within 60s throws OtpCooldownError, mirroring a real resend', async () => {
+    const cache = new InProcessCache();
+    const { svc, sms } = build({ select: [[], []], cache });
+
+    await svc.requestOtp({ phone: PHONE });
+    await expect(svc.requestOtp({ phone: PHONE })).rejects.toMatchObject({
+      code: 'TOO_MANY_REQUESTS',
+    });
     expect(sms.sendOtp).not.toHaveBeenCalled();
   });
 
@@ -312,14 +327,58 @@ describe('PhoneLoginService.verifyOtp', () => {
     });
   });
 
-  it('missing OTP session throws OtpInvalidError with reason "expired" and 0 attemptsRemaining', async () => {
+  it('missing OTP session (anti-enumeration) mimics a real first wrong guess, not "expired"', async () => {
     const { svc } = build({ select: [[]] });
     await expect(
       svc.verifyOtp({ phone: PHONE, code: '123456' }, new Headers()),
     ).rejects.toMatchObject({
       code: 'UNPROCESSABLE_CONTENT',
-      data: { attemptsRemaining: 0, reason: 'expired' },
+      data: { attemptsRemaining: 4, reason: 'wrong_code' },
     });
+  });
+
+  it('anti-enumeration: repeated wrong guesses against an unknown phone decrement then cancel, mirroring a real session', async () => {
+    const cache = new InProcessCache();
+    // (1) requestOtp's account lookup, (2)-(6) verifyOtp's otp lookup x5 - all empty
+    // (no real session ever exists for this phone).
+    const { svc, events } = build({ select: [[], [], [], [], [], []], cache });
+
+    await svc.requestOtp({ phone: PHONE });
+
+    for (const expected of [4, 3, 2, 1]) {
+      await expect(
+        svc.verifyOtp({ phone: PHONE, code: 'wrong' }, new Headers()),
+      ).rejects.toMatchObject({
+        code: 'UNPROCESSABLE_CONTENT',
+        data: { attemptsRemaining: expected, reason: 'wrong_code' },
+      });
+    }
+
+    await expect(
+      svc.verifyOtp({ phone: PHONE, code: 'wrong' }, new Headers()),
+    ).rejects.toMatchObject({ code: 'FORBIDDEN' });
+
+    expect(events.emit).not.toHaveBeenCalled();
+  });
+
+  it('anti-enumeration: an untouched shadow past the OTP TTL returns "expired", not "wrong_code"', async () => {
+    vi.useFakeTimers();
+    try {
+      const cache = new InProcessCache();
+      const { svc } = build({ select: [[], []], cache });
+
+      await svc.requestOtp({ phone: PHONE });
+      vi.advanceTimersByTime(5 * 60 * 1000 + 1);
+
+      await expect(
+        svc.verifyOtp({ phone: PHONE, code: 'wrong' }, new Headers()),
+      ).rejects.toMatchObject({
+        code: 'UNPROCESSABLE_CONTENT',
+        data: { attemptsRemaining: 5, reason: 'expired' },
+      });
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it('RG-blocked user is forbidden after the OTP passes and no session is minted', async () => {
