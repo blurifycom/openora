@@ -26,7 +26,7 @@ import {
   type AuditWritePort,
   type TagKey,
   type User,
-  type SortOrder,
+  type PaginationOptions,
 } from '@openora/core/contracts';
 import { eq, asc, desc, sql, and, gte, lte, count, inArray } from 'drizzle-orm';
 import { createHash } from 'node:crypto';
@@ -1224,13 +1224,7 @@ export class WalletService {
     limit,
     sortBy,
     sortOrder,
-  }: {
-    userId: User['id'];
-    page: number;
-    limit: number;
-    sortBy?: WalletTransactionSortBy;
-    sortOrder?: SortOrder;
-  }) {
+  }: PaginationOptions<{ userId: User['id'] }, WalletTransactionSortBy>) {
     const db = this.drizzle.db;
 
     const [walletRecord] = await db.select().from(wallet).where(eq(wallet.userId, userId));

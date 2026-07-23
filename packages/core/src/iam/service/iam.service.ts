@@ -30,6 +30,8 @@ import type {
   SessionCommands,
   User,
   SortOrder,
+  PageQuery,
+  PaginationOptions,
 } from '@openora/core/contracts';
 import {
   adminRole,
@@ -82,8 +84,6 @@ export const LastSuperAdminError = makeConflictError(
 );
 
 type Caller = { userId: User['id']; role: string };
-
-type Page = { page: number; limit: number };
 
 // The `admin` module is NOT operator-assignable: granting `admin: read_write` to a
 // custom role would pass the router's adminGuard - it must come ONLY from `isSuperAdmin`.
@@ -330,12 +330,7 @@ export class IamService {
     return byRole;
   }
 
-  async listRoles({
-    page,
-    limit,
-    sortBy,
-    sortOrder,
-  }: Page & { sortBy?: IamRoleSortBy; sortOrder?: SortOrder }) {
+  async listRoles({ page, limit, sortBy, sortOrder }: PaginationOptions<object, IamRoleSortBy>) {
     const offset = pageToOffset(page, limit);
     const dir = (sortOrder ?? 'asc') === 'asc' ? asc : desc;
     const ROLE_SORT_COLS = {
@@ -627,7 +622,7 @@ export class IamService {
     return { success: true };
   }
 
-  async listAssignments(input: Page & { userId?: User['id']; sortOrder?: SortOrder }) {
+  async listAssignments(input: PageQuery & { userId?: User['id']; sortOrder?: SortOrder }) {
     const { page, limit, userId, sortOrder } = input;
     const offset = pageToOffset(page, limit);
     const where = userId ? eq(adminRoleAssignment.userId, userId) : undefined;
@@ -747,7 +742,7 @@ export class IamService {
     limit,
     sortBy,
     sortOrder,
-  }: Page & { sortBy?: IamInvitationSortBy; sortOrder?: SortOrder }) {
+  }: PaginationOptions<object, IamInvitationSortBy>) {
     const offset = pageToOffset(page, limit);
     const dir = (sortOrder ?? 'desc') === 'asc' ? asc : desc;
     const INV_SORT_COLS = {

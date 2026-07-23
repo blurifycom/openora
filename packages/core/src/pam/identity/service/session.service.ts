@@ -5,7 +5,7 @@ import {
   makeNotFoundError,
 } from '@openora/core/server';
 import { eq, asc, desc, and, gt, count, sql } from 'drizzle-orm';
-import type { User, SortOrder } from '@openora/core/contracts';
+import type { User, PaginationOptions } from '@openora/core/contracts';
 import { session } from '../schema/index.js';
 import { type SessionItem, type SessionSortBy } from '../contract/index.js';
 
@@ -31,13 +31,7 @@ export class SessionService {
     limit,
     sortBy,
     sortOrder,
-  }: {
-    userId: User['id'];
-    page: number;
-    limit: number;
-    sortBy?: SessionSortBy;
-    sortOrder?: SortOrder;
-  }) {
+  }: PaginationOptions<{ userId: User['id'] }, SessionSortBy>) {
     const where = eq(session.userId, userId);
     const db = this.drizzle.db;
     // Active sessions first (expiresAt > now), then user-chosen sort within each group.

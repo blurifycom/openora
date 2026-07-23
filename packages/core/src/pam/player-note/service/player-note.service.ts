@@ -1,6 +1,6 @@
 import { DrizzleService, pageToOffset, serializeRow } from '@openora/core/server';
 import { asc, count, desc, eq } from 'drizzle-orm';
-import type { Player, User, SortOrder } from '@openora/core/contracts';
+import type { Player, User, PaginationOptions } from '@openora/core/contracts';
 import { playerNote } from '../schema/index.js';
 import type { CreatePlayerNoteInput, PlayerNoteItem, PlayerNoteSortBy } from '../contract/index.js';
 
@@ -19,13 +19,7 @@ export class PlayerNoteService {
     limit,
     sortBy,
     sortOrder,
-  }: {
-    playerId: Player['id'];
-    page: number;
-    limit: number;
-    sortBy?: PlayerNoteSortBy;
-    sortOrder?: SortOrder;
-  }) {
+  }: PaginationOptions<{ playerId: Player['id'] }, PlayerNoteSortBy>) {
     const where = eq(playerNote.playerId, playerId);
     const db = this.drizzle.db;
     const dir = (sortOrder ?? 'desc') === 'asc' ? asc : desc;

@@ -52,19 +52,7 @@ export class BackofficeService {
     };
   }
 
-  async listUsers({
-    page,
-    limit,
-    search,
-    sortBy,
-    sortOrder,
-  }: {
-    page: number;
-    limit: number;
-    search?: string;
-    sortBy?: AdminUserListOptions['sortBy'];
-    sortOrder?: AdminUserListOptions['sortOrder'];
-  }) {
+  async listUsers({ page, limit, search, sortBy, sortOrder }: AdminUserListOptions) {
     const { rows, total } = await this.users.list({ page, limit, search, sortBy, sortOrder });
     return { items: rows.map(toAdminUser), total, page, limit };
   }

@@ -16,7 +16,7 @@ import {
   type PlayerTags,
   type Player,
   type TagKey,
-  type SortOrder,
+  type PaginationOptions,
 } from '@openora/core/contracts';
 import type { PlayerTagSortBy } from '../contract/index.js';
 import { player } from '@openora/core/pam/schema/profile';
@@ -85,13 +85,7 @@ export class TagService implements PlayerTags {
     limit,
     sortBy,
     sortOrder,
-  }: {
-    playerId: Player['id'];
-    page: number;
-    limit: number;
-    sortBy?: PlayerTagSortBy;
-    sortOrder?: SortOrder;
-  }) {
+  }: PaginationOptions<{ playerId: Player['id'] }, PlayerTagSortBy>) {
     const where = and(eq(playerTag.playerId, playerId), isNull(playerTag.removedAt));
     const db = this.drizzle.db;
     const dir = (sortOrder ?? 'desc') === 'asc' ? asc : desc;

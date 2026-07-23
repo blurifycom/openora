@@ -13,7 +13,7 @@ import type {
   User,
   TagKey,
   PlayerSortBy,
-  SortOrder,
+  PaginationOptions,
 } from '@openora/core/contracts';
 import { eq, ilike, count, or, and, gte, asc, desc, sql, ne, inArray, isNull } from 'drizzle-orm';
 import { player } from '@openora/core/pam/schema/profile';
@@ -43,16 +43,15 @@ export class PlayerService {
     tags,
     sortBy,
     sortOrder,
-  }: {
-    page: number;
-    limit: number;
-    search?: string;
-    status?: PlayerStatus;
-    kycStatus?: KycStatus;
-    tags?: TagKey[];
-    sortBy?: PlayerSortBy;
-    sortOrder?: SortOrder;
-  }) {
+  }: PaginationOptions<
+    {
+      search?: string;
+      status?: PlayerStatus;
+      kycStatus?: KycStatus;
+      tags?: TagKey[];
+    },
+    PlayerSortBy
+  >) {
     const db = this.drizzle.db;
     const conditions = [];
     if (status) {
