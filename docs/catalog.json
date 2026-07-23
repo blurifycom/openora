@@ -1015,6 +1015,10 @@
       "file": "packages/core/src/contracts/schemas/identity.ts"
     },
     {
+      "name": "PhoneLoginOtpInvalidReasonSchema",
+      "file": "packages/core/src/contracts/schemas/identity.ts"
+    },
+    {
       "name": "PhoneLoginRequestInputSchema",
       "file": "packages/core/src/contracts/schemas/identity.ts"
     },
