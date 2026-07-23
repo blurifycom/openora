@@ -54,7 +54,7 @@ export class SessionService {
         .select()
         .from(session)
         .where(where)
-        .orderBy(activeFirst, dir(col))
+        .orderBy(...(sortBy ? [dir(col)] : [activeFirst, dir(col)]))
         .limit(limit)
         .offset(pageToOffset(page, limit)),
       db.select({ n: count() }).from(session).where(where),

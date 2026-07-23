@@ -101,7 +101,7 @@ export const backofficeContract = {
       PageQuerySchema.extend({
         search: z.string().optional(),
         sortBy: AdminUserSortBySchema.optional(),
-        sortOrder: SortOrderSchema.default('asc').optional(),
+        sortOrder: SortOrderSchema.default('desc').optional(),
       }),
     )
     .output(paginated(AdminUserSchema)),
