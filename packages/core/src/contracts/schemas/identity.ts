@@ -42,6 +42,9 @@ export const PhoneLoginVerifyInputSchema = z.object({
 export const PHONE_LOGIN_ERROR_REASONS = ['otp_cancelled', 'rg_blocked'] as const;
 export const PhoneLoginErrorReasonSchema = z.enum(PHONE_LOGIN_ERROR_REASONS);
 
+export const PHONE_LOGIN_OTP_INVALID_REASONS = ['expired', 'wrong_code'] as const;
+export const PhoneLoginOtpInvalidReasonSchema = z.enum(PHONE_LOGIN_OTP_INVALID_REASONS);
+
 export const OrganizationSchema = z.object({
   id: UuidSchema,
   name: z.string().min(1).max(255),
@@ -155,3 +158,4 @@ export type PhoneLoginRequestInput = z.infer<typeof PhoneLoginRequestInputSchema
 export type PhoneLoginRequestOutput = z.infer<typeof PhoneLoginRequestOutputSchema>;
 export type PhoneLoginVerifyInput = z.infer<typeof PhoneLoginVerifyInputSchema>;
 export type PhoneLoginErrorReason = z.infer<typeof PhoneLoginErrorReasonSchema>;
+export type PhoneLoginOtpInvalidReason = z.infer<typeof PhoneLoginOtpInvalidReasonSchema>;

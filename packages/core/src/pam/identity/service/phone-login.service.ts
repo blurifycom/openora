@@ -8,14 +8,16 @@ import {
   signSessionCookie,
 } from '@openora/core/server';
 import { and, eq, gt, sql } from 'drizzle-orm';
-import { PhoneLoginErrorReasonSchema } from '@openora/core/contracts';
-import type {
-  RateLimiterAdapter,
-  SmsAdapter,
-  PhoneLoginRequestInput,
-  PhoneLoginRequestOutput,
-  PhoneLoginVerifyInput,
-  User,
+import {
+  PhoneLoginErrorReasonSchema,
+  PhoneLoginOtpInvalidReasonSchema,
+  type PhoneLoginOtpInvalidReason,
+  type RateLimiterAdapter,
+  type SmsAdapter,
+  type PhoneLoginRequestInput,
+  type PhoneLoginRequestOutput,
+  type PhoneLoginVerifyInput,
+  type User,
 } from '@openora/core/contracts';
 import { user, session, smsOtpSession } from '../schema/index.js';
 import { isRgBlocked } from './rg-guard.service.js';
@@ -46,11 +48,11 @@ export function OtpCooldownError(retryAfterMs: number) {
   });
 }
 
-/** Wrong or expired code, session still alive. */
-export function OtpInvalidError(attemptsRemaining: number) {
+/** Wrong or expired code, session still alive. `reason` lets the caller tell the two apart. */
+export function OtpInvalidError(attemptsRemaining: number, reason: PhoneLoginOtpInvalidReason) {
   return new ORPCError('UNPROCESSABLE_CONTENT', {
-    message: 'The code is invalid or has expired.',
-    data: { attemptsRemaining },
+    message: reason === 'expired' ? 'The code has expired.' : 'The code is invalid.',
+    data: { attemptsRemaining, reason: PhoneLoginOtpInvalidReasonSchema.enum[reason] },
   });
 }
 
@@ -207,10 +209,10 @@ export class PhoneLoginService {
       .limit(1);
 
     if (!otp) {
-      throw OtpInvalidError(0);
+      throw OtpInvalidError(0, 'expired');
     }
     if (otp.expiresAt.getTime() < Date.now()) {
-      throw OtpInvalidError(MAX_VERIFY_ATTEMPTS - otp.failedAttempts);
+      throw OtpInvalidError(MAX_VERIFY_ATTEMPTS - otp.failedAttempts, 'expired');
     }
 
     if (hashCode(code) !== otp.codeHash) {
@@ -239,7 +241,7 @@ export class PhoneLoginService {
         }
         throw OtpCancelledError();
       }
-      throw OtpInvalidError(MAX_VERIFY_ATTEMPTS - newAttempts);
+      throw OtpInvalidError(MAX_VERIFY_ATTEMPTS - newAttempts, 'wrong_code');
     }
 
     // Resolve the account before entering the transaction so the RG check can short-

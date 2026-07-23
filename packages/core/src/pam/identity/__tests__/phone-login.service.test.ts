@@ -256,7 +256,7 @@ describe('PhoneLoginService.verifyOtp', () => {
     expect(hasDontRemember).toBe(false);
   });
 
-  it('wrong code increments failedAttempts and throws OtpInvalidError with attemptsRemaining', async () => {
+  it('wrong code increments failedAttempts and throws OtpInvalidError with reason "wrong_code"', async () => {
     const { svc, events } = build({
       // (1) otp lookup only (update uses returning, not the select queue).
       select: [[otpRow({ codeHash: hash('000000') })]],
@@ -268,7 +268,7 @@ describe('PhoneLoginService.verifyOtp', () => {
     await expect(promise).rejects.toBeInstanceOf(ORPCError);
     await expect(promise).rejects.toMatchObject({
       code: 'UNPROCESSABLE_CONTENT',
-      data: { attemptsRemaining: 3 },
+      data: { attemptsRemaining: 3, reason: 'wrong_code' },
     });
     expect(events.emit).not.toHaveBeenCalledWith('identity.phone_otp.cancelled', expect.anything());
   });
@@ -291,7 +291,7 @@ describe('PhoneLoginService.verifyOtp', () => {
     });
   });
 
-  it('expired OTP returns attemptsRemaining derived from failedAttempts on the dead session', async () => {
+  it('expired OTP throws OtpInvalidError with reason "expired", not "wrong_code"', async () => {
     const code = '123456';
     const { svc } = build({
       // 2 failed attempts before the code expired -> 3 remaining
@@ -308,17 +308,17 @@ describe('PhoneLoginService.verifyOtp', () => {
 
     await expect(svc.verifyOtp({ phone: PHONE, code }, new Headers())).rejects.toMatchObject({
       code: 'UNPROCESSABLE_CONTENT',
-      data: { attemptsRemaining: 3 },
+      data: { attemptsRemaining: 3, reason: 'expired' },
     });
   });
 
-  it('missing OTP session throws OtpInvalidError with 0 attemptsRemaining', async () => {
+  it('missing OTP session throws OtpInvalidError with reason "expired" and 0 attemptsRemaining', async () => {
     const { svc } = build({ select: [[]] });
     await expect(
       svc.verifyOtp({ phone: PHONE, code: '123456' }, new Headers()),
     ).rejects.toMatchObject({
       code: 'UNPROCESSABLE_CONTENT',
-      data: { attemptsRemaining: 0 },
+      data: { attemptsRemaining: 0, reason: 'expired' },
     });
   });
 
