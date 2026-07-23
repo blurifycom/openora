@@ -365,7 +365,8 @@
       "boundIn": [
         "packages/core/src/casino/lobby/plugin.ts",
         "packages/core/src/cms/plugin.ts",
-        "packages/core/src/iam/plugin.ts"
+        "packages/core/src/iam/plugin.ts",
+        "packages/core/src/pam/identity/plugin.ts"
       ]
     },
     {
