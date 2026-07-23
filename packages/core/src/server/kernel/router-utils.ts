@@ -41,10 +41,9 @@ export function getUserId(context: unknown): string {
   return resolveAuth(context).userId;
 }
 
-export function extractClientMeta(headers: NodeHeaders): {
-  ip: string | null;
-  userAgent: string | null;
-} {
+export type ClientMeta = { ip: string | null; userAgent: string | null };
+
+export function extractClientMeta(headers: NodeHeaders): ClientMeta {
   const fwd = headers['x-forwarded-for'];
   const first = Array.isArray(fwd) ? fwd[0] : fwd;
   const real = headers['x-real-ip'];

@@ -20,7 +20,7 @@ import {
 import { player } from '@openora/core/pam/schema/profile';
 import { playerTag, tag } from '../schema/index.js';
 import { mapDbError } from '@openora/core/common/errors';
-import { toTag, toPlayerTagWithTag } from './tag-mappers.js';
+import { toTag, toPlayerTagWithTag, SYSTEM_ACTOR_ID } from './tag-mappers.js';
 
 export const TagNotFoundError = makeNotFoundError('Tag');
 export const TagAlreadyInUseError = alreadyInUseError('Tag');
@@ -152,7 +152,7 @@ export class TagService implements PlayerTags {
         playerId: args.playerId,
         tagKey: args.tagKey,
         reason: args.assignReason,
-        actorId: args.assignActorUserId,
+        actorId: args.assignActorUserId ?? SYSTEM_ACTOR_ID,
         ip: meta?.ip ?? null,
         userAgent: meta?.userAgent ?? null,
       });
@@ -200,7 +200,7 @@ export class TagService implements PlayerTags {
         playerId: args.playerId,
         tagKey: args.tagKey,
         reason: args.removalReason,
-        actorId: args.removalActorUserId,
+        actorId: args.removalActorUserId ?? SYSTEM_ACTOR_ID,
         ip: meta?.ip ?? null,
         userAgent: meta?.userAgent ?? null,
       });

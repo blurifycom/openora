@@ -217,11 +217,7 @@ export const domainEventSchemas = {
   'rg.self_exclusion.lifted': actorReasonBase
     .extend({ userId: UuidSchema, exclusionId: UuidSchema, kind: ExclusionKindSchema })
     .merge(authContextBase),
-  'rg.exclusion.login_blocked': z.object({
-    userId: UuidSchema,
-    ip: z.string().nullable().optional(),
-    userAgent: z.string().nullable().optional(),
-  }),
+  'rg.exclusion.login_blocked': authContextBase.extend({ userId: UuidSchema }),
 
   // A player's KYC status changed. userId = subject player; actorId = the admin who
   // acted, or null for system-driven changes (vendor decision, webhook, threshold
@@ -290,7 +286,7 @@ export const domainEventSchemas = {
   'tag.player.assigned': tagPlayerEventBase,
   'tag.player.removed': tagPlayerEventBase,
   // Emitted after an admin creates or updates a tag rule configuration.
-  'tag.rule.upserted': z.object({
+  'tag.rule.upserted': authContextBase.extend({
     tagKey: TagKeySchema,
     actorId: UuidSchema,
     after: z.record(z.string(), z.unknown()),

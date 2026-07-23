@@ -1,4 +1,6 @@
 import type { TagRule, TagKey } from '@openora/core/contracts';
+
+export const SYSTEM_ACTOR_ID = '00000000-0000-0000-0000-000000000000';
 import { serializeRow } from '@openora/core/server';
 import type { PlayerTagWithTag } from '../contract/index.js';
 import { tag, playerTag, tagRule } from '../schema/index.js';

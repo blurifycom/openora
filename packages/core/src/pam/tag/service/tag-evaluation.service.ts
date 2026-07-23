@@ -9,8 +9,7 @@ import {
 import { moneyToNumber, mapConcurrent } from '@openora/core/server';
 import { TagService, TagAlreadyInUseError, TagAssignmentNotFoundError } from './tag.service.js';
 import { TagRuleService, TagRuleNotFoundError } from './tag-rule.service.js';
-
-export const SYSTEM_ACTOR_ID = '00000000-0000-0000-0000-000000000000';
+import { SYSTEM_ACTOR_ID } from './tag-mappers.js';
 
 const EVAL_CHUNK_SIZE = 100;
 
