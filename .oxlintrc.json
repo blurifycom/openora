@@ -51,7 +51,7 @@
       }
     },
     {
-      "files": ["tools/**", "**/scripts/**"],
+      "files": ["tools/**", "**/scripts/**", "packages/create-openora/src/**"],
       "rules": {
         "no-console": "off"
       }

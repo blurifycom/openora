@@ -1,32 +1,36 @@
 #!/usr/bin/env node
 
-import { readdirSync, readFileSync, writeFileSync, mkdirSync, existsSync, statSync } from 'node:fs';
-import { join, dirname, relative, resolve, sep, basename } from 'node:path';
+import { existsSync, mkdirSync, readFileSync, readdirSync, statSync, writeFileSync } from 'node:fs';
+import { basename, dirname, join, relative, resolve, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { CORE_VERSION } from './generated/core-version.js';
 
 const here = dirname(fileURLToPath(import.meta.url));
-const ossRoot = resolve(here, '../..');
-const templateRoot = join(here, '..', 'templates', 'consumer');
+const templateRoot = join(here, '..', 'template');
+
+const MCP_COMMAND = 'node';
+const MCP_ARGS = ['node_modules/@openora/mcp/dist/main.js'];
+const SKIPPED_BASENAMES = new Set(['guard-core.mjs.tpl', 'guard-core.mjs']);
 
 type ParsedArgs = {
   target: string;
   name?: string;
 };
 
-function die(msg: string): never {
-  console.error(`\n  error: ${msg}\n`);
+function die(message: string): never {
+  console.error(`\n  error: ${message}\n`);
   process.exit(1);
 }
 
-const USAGE = 'Usage: pnpm create:app <target-dir> [--name <name>]';
+const USAGE = 'Usage: npm create @openora <target-dir> [--name <name>]';
 
-function readFlag(args: string[], i: number): { value: string | undefined; next: number } {
-  const a = args[i];
-  const eq = a.indexOf('=');
+function readFlag(args: string[], index: number): { value: string | undefined; next: number } {
+  const arg = args[index] ?? '';
+  const eq = arg.indexOf('=');
   if (eq !== -1) {
-    return { value: a.slice(eq + 1), next: i };
+    return { value: arg.slice(eq + 1), next: index };
   }
-  return { value: args[i + 1], next: i + 1 };
+  return { value: args[index + 1], next: index + 1 };
 }
 
 function parseArgs(argv: string[]): ParsedArgs {
@@ -34,19 +38,22 @@ function parseArgs(argv: string[]): ParsedArgs {
   let target: string | undefined;
   let name: string | undefined;
   for (let i = 0; i < args.length; i++) {
-    const a = args[i];
-    if (a === '--name' || a.startsWith('--name=')) {
-      const r = readFlag(args, i);
-      name = r.value;
-      i = r.next;
-    } else if (!a.startsWith('-') && !target) {
-      target = a;
+    const arg = args[i];
+    if (arg === undefined) {
+      continue;
+    }
+    if (arg === '--name' || arg.startsWith('--name=')) {
+      const flag = readFlag(args, i);
+      name = flag.value;
+      i = flag.next;
+    } else if (!arg.startsWith('-') && !target) {
+      target = arg;
     }
   }
   if (!target) {
     die(`missing target directory.\n  ${USAGE}`);
   }
-  return { target, name };
+  return name === undefined ? { target } : { target, name };
 }
 
 function sanitizeName(raw: string): string {
@@ -58,12 +65,15 @@ function sanitizeName(raw: string): string {
   );
 }
 
-function posix(p: string): string {
-  return p.split(sep).join('/');
+function posix(path: string): string {
+  return path.split(sep).join('/');
 }
 
 function substitute(content: string, vars: Record<string, string>): string {
-  return content.replace(/\{\{(\w+)\}\}/g, (m, key) => (key in vars ? vars[key] : m));
+  return content.replace(/\{\{(\w+)\}\}/g, (match, key: string) => {
+    const value = vars[key];
+    return value === undefined ? match : value;
+  });
 }
 
 function walk(dir: string): string[] {
@@ -79,12 +89,16 @@ function walk(dir: string): string[] {
   return out;
 }
 
-function undotSegment(seg: string): string {
-  return seg.startsWith('__dot__') ? `.${seg.slice('__dot__'.length)}` : seg;
+function undotSegment(segment: string): string {
+  return segment.startsWith('__dot__') ? `.${segment.slice('__dot__'.length)}` : segment;
 }
 
 function emitTree(srcRoot: string, vars: Record<string, string>, targetDir: string): void {
   for (const file of walk(srcRoot)) {
+    if (SKIPPED_BASENAMES.has(basename(file))) {
+      continue;
+    }
+
     const rel = relative(srcRoot, file);
     let outRel = rel.split(sep).map(undotSegment).join(sep);
     if (outRel.endsWith('.tpl')) {
@@ -113,15 +127,11 @@ function main(): void {
     die(`template missing at ${templateRoot}`);
   }
 
-  const ossFromRoot = posix(relative(targetDir, ossRoot));
   const vars: Record<string, string> = {
     name,
-    ossFromRoot,
-    ossFromApp: posix(relative(join(targetDir, 'apps', 'api'), ossRoot)),
-    ossFromApiSrc: posix(relative(join(targetDir, 'apps', 'api', 'src'), ossRoot)),
-    coreVersion: 'latest',
-    mcpCommand: 'pnpm',
-    mcpArgsJson: JSON.stringify(['exec', 'tsx', `${ossFromRoot}/apps/mcp-server-dev/src/main.ts`]),
+    coreVersion: CORE_VERSION,
+    mcpCommand: MCP_COMMAND,
+    mcpArgsJson: JSON.stringify(MCP_ARGS),
   };
 
   console.log(`\n  Creating ${name} at ${targetDir}`);
