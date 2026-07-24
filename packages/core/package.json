@@ -521,7 +521,6 @@
     "clean": "rm -rf dist",
     "test": "vitest run",
     "test:unit": "vitest run --passWithNoTests",
-    "test:integration": "vitest run --passWithNoTests",
     "generate": "node scripts/generate-all.mjs"
   },
   "dependencies": {

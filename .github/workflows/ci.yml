@@ -30,6 +30,8 @@ jobs:
     # Real infra for the kernel adapter tests (RedisCache/RateLimiter/StreamsBroker/BullMQ
     # + ephemeral Postgres). The harness (@openora/core/testing real-infra) reads
     # TEST_ADMIN_DATABASE_URL / TEST_REDIS_URL, defaulting to these same local endpoints.
+    # The @openora/testing integration suites boot the real app against one shared
+    # TEST_DATABASE_URL database instead, created by the db:test:setup step below.
     services:
       postgres:
         image: postgres:16-alpine
@@ -56,6 +58,7 @@ jobs:
     env:
       TEST_ADMIN_DATABASE_URL: postgresql://postgres:postgres@localhost:5432/postgres
       TEST_REDIS_URL: redis://localhost:6379
+      TEST_DATABASE_URL: postgres://postgres:postgres@localhost:5432/oss_igaming_test
     steps:
       - uses: actions/checkout@v4
       - uses: ./.github/actions/bootstrap
@@ -65,6 +68,10 @@ jobs:
         run: pnpm typecheck
       - name: Unit tests
         run: pnpm test:unit
+      - name: Create integration test database
+        run: pnpm db:test:setup
+      - name: Integration tests
+        run: pnpm test:integration
       - name: Lint
         run: pnpm lint
       - name: Format check
