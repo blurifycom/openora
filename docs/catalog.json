@@ -696,6 +696,10 @@
       "file": "packages/core/src/audit/contract/index.ts"
     },
     {
+      "name": "AuthGuardReasonSchema",
+      "file": "packages/core/src/contracts/schemas/common.ts"
+    },
+    {
       "name": "AutoWithdrawalConfigSchema",
       "file": "packages/core/src/contracts/schemas/platform-config.ts"
     },

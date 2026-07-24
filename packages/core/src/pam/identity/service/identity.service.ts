@@ -170,6 +170,10 @@ async function ensureOk(res: globalThis.Response, opts?: { genericMessage?: stri
   } catch {
     // non-JSON body - keep the default message
   }
+  // TODO: this forwards better-auth's raw upstream message with no fixed data.reason -
+  // there's no enumerable set of causes to name (whatever better-auth's internal API
+  // returns), unlike the other ORPCError call sites in this module. Revisit if
+  // better-auth's error responses turn out to fall into a small stable set of cases.
   throw new ORPCError(code, { message });
 }
 
