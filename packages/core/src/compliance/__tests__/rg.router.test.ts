@@ -14,6 +14,7 @@ import { createTestDb, type TestDb } from '@openora/core/testing';
 import { mock, makeEventBus, makeAdminGuard, testContext } from '../../testing/mock.js';
 import { migrate } from '../migrate.js';
 import { userLimit, rgExclusion, rgFlag } from '../schema/index.js';
+import { queue } from '@openora/core/contracts';
 import { createComplianceRouter } from '../router/index.js';
 import type { ComplianceService } from '../service/compliance.service.js';
 import type { KycVerificationService } from '../service/kyc.service.js';
@@ -64,6 +65,9 @@ function build(adminGuard: AdminGuard) {
     kycAdapter: mock<KycAdapter>({}),
     webhookVerifier: mock<KycWebhookVerifier>({}),
     rg,
+    audit: mock<AuditWritePort>({ record: vi.fn().mockResolvedValue(undefined) }),
+    jobQueue: mock<JobQueueAdapter>({}),
+    kycDecisionSyncQueue: queue('kyc-decision-sync'),
     rgMonitoring: mock<RgMonitoringService>({}),
   });
   return { router, events, enforcement };

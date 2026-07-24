@@ -32,7 +32,11 @@ function mapEventToRecord(topic: string, p: Record<string, unknown>): RecordInpu
       resourceType: 'player',
       resourceId: str(p['userId']),
       before: { kycStatus: p['previousStatus'] ?? null },
-      after: { kycStatus: p['status'] ?? null },
+      after: {
+        kycStatus: p['status'] ?? null,
+        reason: p['reason'] ?? null,
+        source: p['source'] ?? null,
+      },
     };
   }
 
@@ -56,6 +60,22 @@ function mapEventToRecord(topic: string, p: Record<string, unknown>): RecordInpu
       resourceType: 'player',
       resourceId: str(p['userId']),
       after: { reason: p['reason'] ?? null },
+    };
+  }
+
+  if (topic === 'compliance.kyc.high_risk_signal_detected') {
+    return {
+      ...base,
+      actorType: 'system',
+      resourceType: 'player',
+      resourceId: str(p['userId']),
+      after: {
+        referenceId: p['referenceId'] ?? null,
+        vpnOrTorDetected: p['vpnOrTorDetected'] ?? null,
+        dataCenterIpDetected: p['dataCenterIpDetected'] ?? null,
+        duplicateDeviceDetected: p['duplicateDeviceDetected'] ?? null,
+        highRiskCountryDetected: p['highRiskCountryDetected'] ?? null,
+      },
     };
   }
 
@@ -498,6 +518,7 @@ const SUBSCRIBED_TOPICS: DomainEventName[] = [
   'compliance.kyc.updated',
   'compliance.kyc.submitted',
   'compliance.kyc.reverify_required',
+  'compliance.kyc.high_risk_signal_detected',
   'compliance.geo-rule.added',
   'cms.page.published',
   'cms.page.created',

@@ -743,6 +743,27 @@ describe('WalletService.listWithdrawals (real PG)', () => {
     expect(items[0]?.userId).toBe(verified.userId);
   });
 
+  it('matches a legacy directory-reported "verified" when filtering by the canonical "approved"', async () => {
+    const legacyVerified = await seedWallet();
+    const pendingKyc = await seedWallet();
+    await seedTx(legacyVerified.id);
+    await seedTx(pendingKyc.id);
+    const directory = makeDirectory([
+      { userId: legacyVerified.userId, username: 'a', kycStatus: 'verified' } as AdminPlayerSummary,
+      { userId: pendingKyc.userId, username: 'b', kycStatus: 'pending' } as AdminPlayerSummary,
+    ]);
+    const { svc } = makeService({ directory });
+
+    const { items, total } = await svc.listWithdrawals({
+      page: 1,
+      limit: 20,
+      kycStatus: 'approved',
+    });
+
+    expect(total).toBe(1);
+    expect(items[0]?.userId).toBe(legacyVerified.userId);
+  });
+
   it('slices the requested page out of the filtered set', async () => {
     const w = await seedWallet();
     await seedTx(w.id, { createdAt: new Date('2026-01-01T00:00:00.000Z') });

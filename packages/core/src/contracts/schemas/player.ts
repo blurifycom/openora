@@ -16,12 +16,29 @@ export const PlayerStatusSchema = z.enum(PLAYER_STATUSES);
 export const KYC_STATUSES = [
   'not_started',
   'pending',
+  'approved',
   'verified',
   'rejected',
   'resubmission_requested',
   'manually_overridden',
 ] as const;
 export const KycStatusSchema = z.enum(KYC_STATUSES);
+
+export const KYC_STATUS_SOURCES = ['vendor', 'manual', 'webhook', 'reverify'] as const;
+export const KycStatusSourceSchema = z.enum(KYC_STATUS_SOURCES);
+export type KycStatusSource = z.infer<typeof KycStatusSourceSchema>;
+
+/**
+ * Normalizes the deprecated `verified` value to the canonical `approved`. All new
+ * writes produce `approved`; any read of a KYC status must go through this before
+ * comparing, so a legacy row (or an in-flight old ECS task still writing `verified`
+ * during a rolling deploy) is treated identically to a fresh `approved` one. Use this
+ * everywhere a KYC status is checked for the approved state - never a scattered
+ * `=== 'verified' || === 'approved'`.
+ */
+export function normalizeKycStatus(status: KycStatus): KycStatus {
+  return status === 'verified' ? 'approved' : status;
+}
 
 export const PlayerSchema = z.object({
   id: UuidSchema,

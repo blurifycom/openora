@@ -166,6 +166,63 @@ describe('KycVerificationService.submit (real PG)', () => {
 
     expect(result.verificationUrl).toBeUndefined();
   });
+
+  it('downgrades an instant-decision approved result when the adapter returns an incomplete check (trigger: an adapter that decides synchronously, not just reconcile)', async () => {
+    const writer = makeWriter();
+    const adapter = {
+      submit: vi.fn().mockResolvedValue({
+        referenceId: 'ref-1',
+        status: 'approved',
+        checks: [
+          { step: 'ID_VERIFICATION', status: 'approved' },
+          { step: 'AML', status: 'in_review' },
+        ],
+      }),
+      getStatus: vi.fn(),
+    };
+    const svc = newSvc({
+      db: makeDb([], [fullRow({ status: 'resubmission_requested' })]),
+      adapter,
+      writer,
+    });
+
+    const dto = await svc.submit('user-1', { documents: [{ type: 'passport', frontUrl: 'u' }] });
+
+    expect(writer.setStatus).toHaveBeenCalledWith(
+      'user-1',
+      'resubmission_requested',
+      expect.objectContaining({ source: 'vendor' }),
+      expect.anything(),
+    );
+    expect(dto.status).toBe('resubmission_requested');
+  });
+
+  it('approves an instant-decision result when every returned check is approved', async () => {
+    const writer = makeWriter();
+    const adapter = {
+      submit: vi.fn().mockResolvedValue({
+        referenceId: 'ref-1',
+        status: 'approved',
+        checks: [{ step: 'ID_VERIFICATION', status: 'approved' }],
+      }),
+      getStatus: vi.fn(),
+    };
+    const svc = newSvc({
+      db: makeDb([], [fullRow({ status: 'approved', decidedAt: new Date() })]),
+      adapter,
+      writer,
+    });
+
+    const dto = await svc.submit('user-1', { documents: [{ type: 'passport', frontUrl: 'u' }] });
+
+    expect(writer.setStatus).toHaveBeenCalledWith(
+      'user-1',
+      'approved',
+      expect.objectContaining({ source: 'vendor' }),
+      expect.anything(),
+    );
+    expect(dto.status).toBe('approved');
+  });
 });
 
 describe('KycVerificationService.reconcile (real PG)', () => {

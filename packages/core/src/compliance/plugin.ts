@@ -2,10 +2,13 @@ import { definePlugin, EVENT_BUS, DRIZZLE, ADMIN_GUARD, createLogger } from '@op
 import * as z from 'zod';
 import {
   ADMIN_USER_DIRECTORY,
+  AUDIT_WRITER,
+  CACHE,
   GEO_IP_ADAPTER,
   JOB_QUEUE,
   KYC_ADAPTER,
   KYC_STATUS_WRITER,
+  KYC_VENDOR_STATUSES,
   KYC_WEBHOOK_VERIFIER,
   LOGIN_ENFORCEMENT,
   PLATFORM_CONFIG,
@@ -31,16 +34,24 @@ const logger = createLogger('compliance');
 
 const RG_EVAL_QUEUE = queue('rg-eval');
 const RG_MONITOR_QUEUE = queue('rg-monitor');
+const KYC_DECISION_SYNC_QUEUE = queue('kyc-decision-sync');
 
 const RgEvalJobSchema = z.object({
   userId: UuidSchema,
   trigger: z.enum(RG_EVAL_TRIGGERS),
 });
 const RgMonitorJobSchema = z.object({});
+const KycDecisionSyncJobSchema = z.object({
+  referenceId: z.string().min(1),
+  status: z.enum(KYC_VENDOR_STATUSES),
+  // Webhook-arrival time, stamped by the router before enqueue - the monotonicity
+  // watermark `reconcile` compares against, immune to job-processing reordering.
+  receivedAt: z.iso.datetime(),
+});
 
 export default definePlugin({
   id: 'compliance',
-  dependsOn: ['player-management', 'identity', 'wallet', 'gaming'],
+  dependsOn: ['player-management', 'identity', 'wallet', 'gaming', 'audit'],
   requiresPorts: [LOGIN_ENFORCEMENT],
   register(ctx) {
     ctx.provide(KYC_WEBHOOK_VERIFIER, (c) => {
@@ -51,7 +62,7 @@ export default definePlugin({
         .min(1)
         .optional()
         .parse(process.env[envName] || undefined);
-      return new HmacKycWebhookVerifier(webhookSecret);
+      return new HmacKycWebhookVerifier(webhookSecret, c.get(CACHE));
     });
 
     // svcRefs are null at registration (subscriptions wire before router factories run)
@@ -125,6 +136,19 @@ export default definePlugin({
         }
       },
     });
+    ctx.jobs.worker({
+      queue: KYC_DECISION_SYNC_QUEUE,
+      schema: KycDecisionSyncJobSchema,
+      handler: async ({ payload }) => {
+        if (kycRef) {
+          await kycRef.syncDecision(
+            payload.referenceId,
+            payload.status,
+            new Date(payload.receivedAt),
+          );
+        }
+      },
+    });
 
     ctx.routers.add('compliance', (c) => {
       const platformConfig = c.has(PLATFORM_CONFIG) ? c.get(PLATFORM_CONFIG) : undefined;
@@ -174,9 +198,12 @@ export default definePlugin({
           c.has(GEO_IP_ADAPTER) ? c.get(GEO_IP_ADAPTER) : null,
         ),
         adminGuard: c.get(ADMIN_GUARD),
+        audit: c.get(AUDIT_WRITER),
         kyc,
         kycAdapter,
         webhookVerifier: c.get(KYC_WEBHOOK_VERIFIER),
+        jobQueue: jobQueueRef,
+        kycDecisionSyncQueue: KYC_DECISION_SYNC_QUEUE,
         rg,
         rgMonitoring,
       });

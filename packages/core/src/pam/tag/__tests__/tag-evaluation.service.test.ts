@@ -200,6 +200,9 @@ describe('TagEvaluationService.onDepositCompleted (real PG)', () => {
 
     expect(await activeTagKeys(userId)).toContain('large_depositor');
   });
+  const adminUserDirectory = mock<AdminUserDirectory>({
+    lookupPlayers: vi.fn().mockResolvedValue([]),
+  });
 
   it('does not assign large_depositor when the deposit is below threshold', async () => {
     const userId = randomUUID();

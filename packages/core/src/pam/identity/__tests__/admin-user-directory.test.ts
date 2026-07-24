@@ -194,6 +194,14 @@ describe('DrizzleAdminUserDirectory.lookupPlayers (real PG)', () => {
 
     expect(await dir.lookupPlayers([account.id])).toEqual([]);
   });
+
+  it('normalizes the deprecated verified value to approved (the single read boundary every admin consumer goes through)', async () => {
+    const dir = makeDirWithSelect([
+      [{ userId: 'u1', username: 'alice', kycStatus: 'verified', email: 'alice@example.com' }],
+    ]);
+    const [summary] = await dir.lookupPlayers(['u1']);
+    expect(summary?.kycStatus).toBe('approved');
+  });
 });
 
 describe('DrizzleAdminUserDirectory.findPlayerIds (real PG)', () => {

@@ -60,7 +60,6 @@ export const playerContract = populateContractRouterPaths({
         playerId: UuidSchema,
         displayName: z.string().min(1).max(120).optional(),
         status: PlayerStatusSchema.optional(),
-        kycStatus: KycStatusSchema.optional(),
         level: z.number().int().min(0).max(100).optional(),
         email: z.email().optional(),
       }),

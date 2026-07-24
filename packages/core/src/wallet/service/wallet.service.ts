@@ -14,6 +14,7 @@ import {
   moneyToNumber,
 } from '@openora/core/server';
 import {
+  normalizeKycStatus,
   type PaymentAdapter,
   type PaymentWebhookEvent,
   type AdminUserDirectory,
@@ -84,8 +85,7 @@ export const DestinationAddressRequiredError = makeConflictError(
   'A destination address is required for a crypto-rail withdrawal',
 );
 
-// Statuses that satisfy the withdrawal KYC gate.
-const KYC_PASS_STATUSES: ReadonlySet<KycStatus> = new Set(['verified', 'manually_overridden']);
+const KYC_PASS_STATUSES: ReadonlySet<KycStatus> = new Set(['approved', 'manually_overridden']);
 
 export const CurrencyMismatchError = createDomainError(
   'CurrencyMismatchError',
@@ -237,13 +237,12 @@ export class WalletService {
       : Promise.resolve();
   }
 
-  /** Fail-closed KYC gate: when enabled, a withdrawal needs a passing status (verified|manually_overridden). */
   private async assertKycForWithdrawal(userId: User['id']) {
     if (!this.platformConfig?.kyc?.gateWithdrawals) {
       return;
     }
     const status = await this.autoApprovalKycStatus(userId);
-    if (!status || !KYC_PASS_STATUSES.has(status)) {
+    if (!status || !KYC_PASS_STATUSES.has(normalizeKycStatus(status))) {
       throw new KycRequiredError();
     }
   }
@@ -640,8 +639,19 @@ export class WalletService {
     const summaries = this.directory ? await this.directory.lookupPlayers(userIds) : [];
     const byUserId = new Map(summaries.map((s) => [s.userId, s]));
 
-    const matching = filters.kycStatus
-      ? rows.filter((r) => byUserId.get(r.userId)?.kycStatus === filters.kycStatus)
+    // Normalize both sides before comparing: the ADMIN_USER_DIRECTORY port's return type
+    // still permits the deprecated `verified` value (it aliases `approved`), and this
+    // module cannot assume every bound implementation already normalized it at its own
+    // read boundary - a raw `===` here would silently hide every legacy-verified player
+    // from the queue the moment an admin filters by the canonical `approved`.
+    const kycStatusFilter = filters.kycStatus ? normalizeKycStatus(filters.kycStatus) : undefined;
+    const matching = kycStatusFilter
+      ? rows.filter((r) => {
+          const kycStatus = byUserId.get(r.userId)?.kycStatus;
+          return kycStatus !== undefined && kycStatus !== null
+            ? normalizeKycStatus(kycStatus) === kycStatusFilter
+            : false;
+        })
       : rows;
 
     const start = pageToOffset(page, limit);
@@ -1000,7 +1010,7 @@ export class WalletService {
 
     // Independent of kyc.gateWithdrawals: auto-approval always demands a passing status; anything else fails closed.
     const kycStatus = await this.autoApprovalKycStatus(userId);
-    if (!kycStatus || !KYC_PASS_STATUSES.has(kycStatus)) {
+    if (!kycStatus || !KYC_PASS_STATUSES.has(normalizeKycStatus(kycStatus))) {
       return null;
     }
 

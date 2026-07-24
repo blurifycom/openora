@@ -6,15 +6,15 @@ import {
   pageToOffset,
 } from '@openora/core/server';
 import type { EventBus } from '@openora/core/server';
-import type {
-  KycStatusWriter,
-  PlayerStatus,
-  KycStatus,
-  Player,
-  User,
-  TagKey,
-  PlayerSortBy,
-  PaginationOptions,
+import {
+  normalizeKycStatus,
+  type PlayerStatus,
+  type KycStatus,
+  type Player,
+  type User,
+  type TagKey,
+  type PlayerSortBy,
+  type PaginationOptions,
 } from '@openora/core/contracts';
 import { eq, ilike, count, or, and, gte, asc, desc, sql, ne, inArray, isNull } from 'drizzle-orm';
 import { player } from '@openora/core/pam/schema/profile';
@@ -32,7 +32,6 @@ function toDateKey(d: Date): string {
 export class PlayerService {
   constructor(
     private readonly drizzle: DrizzleService,
-    private readonly kycStatusWriter: KycStatusWriter,
     private readonly events: EventBus,
   ) {}
 
@@ -60,7 +59,17 @@ export class PlayerService {
       conditions.push(eq(player.status, status));
     }
     if (kycStatus) {
-      conditions.push(eq(player.kycStatus, kycStatus));
+      // `player.kyc_status` is queried directly (this module owns the table, so there
+      // is no shared read boundary to normalize through - see
+      // pam/identity/admin-user-directory.ts for that boundary). A filter for the
+      // canonical `approved` must also match a legacy row still holding the deprecated
+      // `verified` value, or every player verified before the expand/contract migration
+      // becomes invisible to this filter.
+      conditions.push(
+        normalizeKycStatus(kycStatus) === 'approved'
+          ? inArray(player.kycStatus, ['approved', 'verified'])
+          : eq(player.kycStatus, kycStatus),
+      );
     }
     if (search) {
       conditions.push(
@@ -172,8 +181,7 @@ export class PlayerService {
 
   async update(
     playerId: Player['id'],
-    data: Partial<Pick<Player, 'displayName' | 'status' | 'kycStatus' | 'level' | 'email'>>,
-    actorId: User['id'],
+    data: Partial<Pick<Player, 'displayName' | 'status' | 'level' | 'email'>>,
   ) {
     const existing = findOneOrThrow(
       await this.drizzle.db.select().from(player).where(eq(player.id, playerId)),
@@ -202,25 +210,12 @@ export class PlayerService {
       patch.level = data.level;
     }
 
-    // One transaction so the email/field patch + the KYC write commit or roll back together.
     await this.drizzle.db.transaction(async (trx) => {
       if (data.email !== undefined) {
         await trx.update(user).set({ email: data.email }).where(eq(user.id, existing.userId));
       }
       if (Object.keys(patch).length > 0) {
         await trx.update(player).set(patch).where(eq(player.id, playerId));
-      }
-      // A KYC transition is a regulated single-writer action - route it through the
-      // KYC_STATUS_WRITER seam (it owns the player.kycStatus write + compliance.kyc.updated
-      // emit), so an admin override and a vendor decision share one code path. Runs on this
-      // txn via its optional tx handle.
-      if (data.kycStatus !== undefined && data.kycStatus !== existing.kycStatus) {
-        await this.kycStatusWriter.setStatus(
-          existing.userId,
-          data.kycStatus,
-          { actorId, source: 'manual' },
-          trx,
-        );
       }
       // Verify the row still exists after all writes before the txn commits.
       findOneOrThrow(

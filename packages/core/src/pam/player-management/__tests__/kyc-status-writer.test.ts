@@ -53,6 +53,8 @@ describe('PlayerKycStatusWriter.setStatus (real PG)', () => {
       actorId,
       status: 'verified',
       previousStatus: 'pending',
+      reason: 'document review passed',
+      source: 'manual',
     });
   });
 

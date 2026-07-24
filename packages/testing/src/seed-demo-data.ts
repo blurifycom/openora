@@ -145,7 +145,7 @@ const STATUS_WEIGHTS = [
 ] as const;
 
 const KYC_WEIGHTS = [
-  ['verified', 62],
+  ['approved', 62],
   ['pending', 26],
   ['rejected', 12],
 ] as const;
@@ -498,7 +498,7 @@ export async function seedDemoData(options: SeedOptions): Promise<SeedResult> {
         createdAt: new Date(createdAt.getTime() + (d + 1) * dayMs),
       });
     }
-    if (kycStatus === 'verified' && rng() > 0.5) {
+    if (kycStatus === 'approved' && rng() > 0.5) {
       txRows.push({
         walletId: walletRow.id,
         type: 'withdrawal',

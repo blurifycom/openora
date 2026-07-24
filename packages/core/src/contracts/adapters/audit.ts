@@ -11,7 +11,10 @@ import { createSealedToken, type SealedToken } from './token.js';
 // and so have no entry in `domainEventSchemas`. Add new direct actions here.
 export type DirectAuditAction =
   | 'admin.user.updated'
+  | 'admin.player.updated'
+  | 'admin.player.removed'
   | 'audit.export'
+  | 'compliance.kyc.bulk_approve'
   | 'wallet.withdrawal.auto_approved'
   | 'wallet.auto_withdrawal_rule.set'
   | 'wallet.auto_withdrawal_rule.deleted';

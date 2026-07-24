@@ -71,4 +71,18 @@ export const DEFAULT_TAG_RULES: UpsertTagRuleInput[] = [
     thresholdDays: null,
     thresholdCount: null,
   },
+  {
+    tagKey: 'basic_kyc_needed',
+    isEnabled: true,
+    threshold: null,
+    thresholdDays: null,
+    thresholdCount: null,
+  },
+  {
+    tagKey: 'advanced_kyc_needed',
+    isEnabled: true,
+    threshold: null,
+    thresholdDays: null,
+    thresholdCount: null,
+  },
 ];

@@ -1,8 +1,10 @@
 import {
   domainEventSchemas,
+  normalizeKycStatus,
   type WalletReader,
   type IdentityReader,
   type KycStatus,
+  type AdminUserDirectory,
   type TagKey,
   type TagRule,
   type User,
@@ -25,13 +27,28 @@ function isPendingKycStatus(status: KycStatus): boolean {
   return status === 'pending' || status === 'resubmission_requested';
 }
 
+export type TagEvaluationServiceDeps = {
+  tag: TagService;
+  rule: TagRuleService;
+  walletReader: WalletReader;
+  identityReader: IdentityReader;
+  adminUserDirectory: AdminUserDirectory;
+};
+
 export class TagEvaluationService {
-  constructor(
-    private readonly tag: TagService,
-    private readonly rule: TagRuleService,
-    private readonly walletReader: WalletReader,
-    private readonly identityReader: IdentityReader,
-  ) {}
+  private readonly tag: TagService;
+  private readonly rule: TagRuleService;
+  private readonly walletReader: WalletReader;
+  private readonly identityReader: IdentityReader;
+  private readonly adminUserDirectory: AdminUserDirectory;
+
+  constructor(deps: TagEvaluationServiceDeps) {
+    this.tag = deps.tag;
+    this.rule = deps.rule;
+    this.walletReader = deps.walletReader;
+    this.identityReader = deps.identityReader;
+    this.adminUserDirectory = deps.adminUserDirectory;
+  }
 
   /** Loads a rule; returns null when it does not exist or is disabled. Never throws for a missing row. */
   private async getEnabledRule(tagKey: TagKey): Promise<TagRule | null> {
@@ -106,7 +123,11 @@ export class TagEvaluationService {
    * Called on wallet.deposit.completed.
    */
   async onDepositCompleted(payload: unknown) {
-    const { userId, amount } = domainEventSchemas['wallet.deposit.completed'].parse(payload);
+    const parsed = domainEventSchemas['wallet.deposit.completed'].safeParse(payload);
+    if (!parsed.success) {
+      return;
+    }
+    const { userId, amount } = parsed.data;
 
     const [highRoller, largeDepositor] = await Promise.all([
       this.getEnabledRule('high_roller'),
@@ -212,6 +233,24 @@ export class TagEvaluationService {
       }
       throw e;
     }
+
+    await this.evaluateBasicKycNeededOnDeposit(userId);
+  }
+
+  private async evaluateBasicKycNeededOnDeposit(userId: User['id']) {
+    const rule = await this.getEnabledRule('basic_kyc_needed');
+    if (!rule) {
+      return;
+    }
+    const [summary] = await this.adminUserDirectory.lookupPlayers([userId]);
+    const status = summary?.kycStatus ? normalizeKycStatus(summary.kycStatus) : null;
+    if (status === 'not_started' || status === 'rejected') {
+      await this.tryAssignTag({
+        userId,
+        tagKey: 'basic_kyc_needed',
+        reason: 'no approved KYC on file despite a completed deposit',
+      });
+    }
   }
 
   /**
@@ -224,7 +263,11 @@ export class TagEvaluationService {
    * amount dimension (never resweepable, see _runHighRiskResweep) was involved.
    */
   async onWithdrawalCompleted(payload: unknown) {
-    const { userId, amount } = domainEventSchemas['wallet.withdrawal.completed'].parse(payload);
+    const parsed = domainEventSchemas['wallet.withdrawal.completed'].safeParse(payload);
+    if (!parsed.success) {
+      return;
+    }
+    const { userId, amount } = parsed.data;
 
     const rule = await this.getEnabledRule('high_risk');
     if (!rule) {
@@ -264,7 +307,11 @@ export class TagEvaluationService {
    *  - assigns multi_account + bonus_abuser when another player has used this login IP
    */
   async onUserLogin(payload: unknown) {
-    const { userId, ip } = domainEventSchemas['identity.user.login'].parse(payload);
+    const parsed = domainEventSchemas['identity.user.login'].safeParse(payload);
+    if (!parsed.success) {
+      return;
+    }
+    const { userId, ip } = parsed.data;
     await this.onAuthenticatedLogin({ userId, ip });
   }
 
@@ -327,15 +374,21 @@ export class TagEvaluationService {
 
   /**
    * Applies kyc_pending on KYC submission only while the profile still has a pending-like
-   * status. Does not clear kyc_rejected: that sticky tag remains until a later approved
-   * state explicitly clears it.
+   * status, and clears basic_kyc_needed / advanced_kyc_needed. Does not clear kyc_rejected:
+   * that sticky tag remains until a later approved state explicitly clears it.
    */
   async onKycSubmitted(payload: unknown) {
-    const { userId } = domainEventSchemas['compliance.kyc.submitted'].parse(payload);
+    const parsed = domainEventSchemas['compliance.kyc.submitted'].safeParse(payload);
+    if (!parsed.success) {
+      return;
+    }
+    const { userId } = parsed.data;
     const rule = await this.getEnabledRule('kyc_pending');
     if (!rule) {
       return;
     }
+    await this.tryRemoveTag({ userId, tagKey: 'basic_kyc_needed', reason: 'kyc resubmitted' });
+    await this.tryRemoveTag({ userId, tagKey: 'advanced_kyc_needed', reason: 'kyc resubmitted' });
     const status = await this.identityReader.getPlayerKycStatusByUserId(userId);
     if (!status || !isPendingKycStatus(status)) {
       return;
@@ -347,22 +400,44 @@ export class TagEvaluationService {
     });
   }
 
+  private async evaluateBasicKycNeededOnRejection(userId: User['id']) {
+    const rule = await this.getEnabledRule('basic_kyc_needed');
+    if (!rule) {
+      return;
+    }
+    const lifetimeDeposit = await this.walletReader.getLifetimeDeposit(userId);
+    if (moneyToNumber(lifetimeDeposit) > 0) {
+      await this.tryAssignTag({
+        userId,
+        tagKey: 'basic_kyc_needed',
+        reason: 'kyc rejected with a completed deposit on file',
+      });
+    }
+  }
+
   /**
-   * Manages kyc_pending / kyc_rejected lifecycle on KYC status changes.
-   * Called on compliance.kyc.updated. Assignment respects each tag rule's isEnabled flag;
-   * terminal cleanup still runs so disabled rules cannot strand old active rows.
+   * Manages kyc_pending / kyc_rejected / basic_kyc_needed / advanced_kyc_needed lifecycle
+   * on KYC status changes. Called on compliance.kyc.updated. Assignment respects each tag
+   * rule's isEnabled flag; terminal cleanup still runs so disabled rules cannot strand old
+   * active rows.
    *
    * Transitions:
-   *   verified / manually_overridden -> remove kyc_pending + kyc_rejected
-   *   rejected                       -> remove kyc_pending, assign kyc_rejected
+   *   approved / manually_overridden -> remove kyc_pending + kyc_rejected + basic_kyc_needed + advanced_kyc_needed
+   *   rejected                       -> remove kyc_pending, assign kyc_rejected, evaluate basic_kyc_needed
    *   resubmission_requested         -> assign kyc_pending, keep kyc_rejected sticky
    */
   async onKycStatusUpdated(payload: unknown) {
-    const { userId, status } = domainEventSchemas['compliance.kyc.updated'].parse(payload);
+    const parsed = domainEventSchemas['compliance.kyc.updated'].safeParse(payload);
+    if (!parsed.success) {
+      return;
+    }
+    const { userId, status } = parsed.data;
 
-    if (status === 'verified' || status === 'manually_overridden') {
+    if (normalizeKycStatus(status) === 'approved' || status === 'manually_overridden') {
       await this.tryRemoveTag({ userId, tagKey: 'kyc_pending', reason: 'kyc approved' });
       await this.tryRemoveTag({ userId, tagKey: 'kyc_rejected', reason: 'kyc approved' });
+      await this.tryRemoveTag({ userId, tagKey: 'basic_kyc_needed', reason: 'kyc approved' });
+      await this.tryRemoveTag({ userId, tagKey: 'advanced_kyc_needed', reason: 'kyc approved' });
       return;
     }
 
@@ -376,6 +451,7 @@ export class TagEvaluationService {
           reason: 'kyc verification rejected',
         });
       }
+      await this.evaluateBasicKycNeededOnRejection(userId);
       return;
     }
 
@@ -389,6 +465,51 @@ export class TagEvaluationService {
         });
       }
     }
+  }
+
+  /**
+   * Assigns advanced_kyc_needed as a pure label over compliance's own re-KYC decision.
+   * Called on compliance.kyc.reverify_required. Respects the advanced_kyc_needed rule's
+   * isEnabled flag.
+   */
+  async onKycReverifyRequired(payload: unknown) {
+    const parsed = domainEventSchemas['compliance.kyc.reverify_required'].safeParse(payload);
+    if (!parsed.success) {
+      return;
+    }
+    const { userId } = parsed.data;
+    const rule = await this.getEnabledRule('advanced_kyc_needed');
+    if (!rule) {
+      return;
+    }
+    await this.tryAssignTag({
+      userId,
+      tagKey: 'advanced_kyc_needed',
+      reason: 'cumulative deposits crossed the re-KYC threshold',
+    });
+  }
+
+  /**
+   * Assigns high_risk as a pure label over compliance's own device/IP screening decision.
+   * Called on compliance.kyc.high_risk_signal_detected. Respects the high_risk rule's
+   * isEnabled flag; never auto-removes (risk designation requires an explicit admin clear).
+   */
+  async onKycHighRiskSignalDetected(payload: unknown) {
+    const parsed =
+      domainEventSchemas['compliance.kyc.high_risk_signal_detected'].safeParse(payload);
+    if (!parsed.success) {
+      return;
+    }
+    const { userId } = parsed.data;
+    const rule = await this.getEnabledRule('high_risk');
+    if (!rule) {
+      return;
+    }
+    await this.tryAssignTag({
+      userId,
+      tagKey: 'high_risk',
+      reason: 'kyc device/IP screening flagged high risk',
+    });
   }
 
   /**
