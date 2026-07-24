@@ -63,12 +63,24 @@ export function createWalletRouter(
     }),
 
     listTransactions: os.listTransactions.handler(({ context, input }) =>
-      wallet.getTransactions(getUserId(context), input.page, input.limit),
+      wallet.getTransactions({
+        userId: getUserId(context),
+        page: input.page,
+        limit: input.limit,
+        sortBy: input.sortBy,
+        sortOrder: input.sortOrder,
+      }),
     ),
 
     listPlayerTransactions: os.listPlayerTransactions.handler(async ({ input, context }) => {
       await adminGuard.assert(context, 'transaction', 'view');
-      return wallet.getTransactions(input.userId, input.page, input.limit);
+      return wallet.getTransactions({
+        userId: input.userId,
+        page: input.page,
+        limit: input.limit,
+        sortBy: input.sortBy,
+        sortOrder: input.sortOrder,
+      });
     }),
 
     withdrawals: {

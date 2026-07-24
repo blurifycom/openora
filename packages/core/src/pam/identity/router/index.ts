@@ -105,9 +105,7 @@ export function createIdentityRouter(
       identity.verifyPasswordResetOtp(input),
     ),
 
-    resetPassword: os.resetPassword.handler(({ input, context }) =>
-      identity.resetPassword(input, context.request.headers),
-    ),
+    resetPassword: os.resetPassword.handler(({ input }) => identity.resetPassword(input)),
 
     changePassword: os.changePassword.handler(({ input, context }) =>
       identity.changePassword(input, context.request.headers, context.resHeaders ?? new Headers()),
@@ -144,7 +142,13 @@ export function createIdentityRouter(
     sessions: {
       list: os.sessions.list.handler(async ({ input, context }) => {
         await adminGuard.assert(context, 'sessions', 'view');
-        return sessionSvc.listSessions(input.userId, input.page, input.limit);
+        return sessionSvc.listSessions({
+          userId: input.userId,
+          page: input.page,
+          limit: input.limit,
+          sortBy: input.sortBy,
+          sortOrder: input.sortOrder,
+        });
       }),
       revoke: os.sessions.revoke.handler(async ({ input, context }) => {
         const caller = await adminGuard.assert(context, 'sessions', 'revoke');

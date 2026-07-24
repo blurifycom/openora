@@ -446,12 +446,12 @@ export async function createApp(config: CreateAppConfig): Promise<CreatedApp> {
     if (!userId) {
       // No valid session - context.auth stays undefined so getUserId 401s. Auth and
       // public routes still work. Run inside the request context for trace correlation.
-      return withRequestContext({ traceId }, runHandler);
+      return withRequestContext({ traceId, clientMeta: context.clientMeta }, runHandler);
     }
 
     context.auth = { userId };
 
-    return withRequestContext({ userId, traceId }, runHandler);
+    return withRequestContext({ userId, traceId, clientMeta: context.clientMeta }, runHandler);
   });
 
   const port = config.port ?? Number(process.env['PORT_API'] ?? 3001);

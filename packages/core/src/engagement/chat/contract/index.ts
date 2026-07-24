@@ -1,7 +1,7 @@
 import { oc, eventIterator } from '@orpc/contract';
 import * as z from 'zod';
 import { IdInputSchema, TimestampSchema, UuidSchema } from '@openora/core/contracts';
-import { PageQuerySchema, paginated } from '@openora/core/contracts/kit';
+import { PageQuerySchema, SortOrderSchema, paginated } from '@openora/core/contracts/kit';
 import {
   MAX_MESSAGE_LENGTH,
   ROOM_NAME_MAX_LENGTH,
@@ -16,8 +16,6 @@ export const AdminRoomSortByValues = ['name', 'createdAt'] as const;
 export const AdminRoomSortBySchema = z.enum(AdminRoomSortByValues).default('createdAt');
 export type AdminRoomSortBy = z.infer<typeof AdminRoomSortBySchema>;
 
-export const SortOrderValues = ['asc', 'desc'] as const;
-export const SortOrderSchema = z.enum(SortOrderValues).default('desc');
 export type SortOrder = z.infer<typeof SortOrderSchema>;
 
 // kebab-case slug: lowercase alphanum + hyphens, no leading/trailing hyphen.
@@ -229,7 +227,7 @@ export const chatContract = {
       z.object({
         ...PageQuerySchema.shape,
         sortBy: AdminRoomSortBySchema,
-        sortOrder: SortOrderSchema,
+        sortOrder: SortOrderSchema.default('desc'),
       }),
     )
     .output(paginated(ChatRoomSchema)),

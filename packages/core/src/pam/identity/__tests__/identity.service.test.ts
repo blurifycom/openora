@@ -13,6 +13,7 @@ import type {
 } from '@openora/core/contracts';
 import { ORPCError } from '@orpc/server';
 import { mock } from '../../../testing/mock.js';
+import { InProcessCache } from '../../../testing/fakes/cache.js';
 import type { DrizzleService, EventBus } from '@openora/core/server';
 
 const {
@@ -305,6 +306,55 @@ describe('IdentityService - login lockout', () => {
     expect(events.emit).toHaveBeenCalledWith(
       'identity.user.lockout.triggered',
       expect.objectContaining({ userId: 'u1', email: 'support@b.dev' }),
+    );
+  });
+
+  it('anti-enumeration: locks a nonexistent email once failed attempts reach the threshold, mirroring a real account, without emitting lockout.triggered', async () => {
+    const drizzle = makeDrizzle({ selectRows: [[], [], [], [], []] });
+    const events = makeEvents();
+    signInEmailMock.mockImplementation(async () => jsonResponse({ message: 'Invalid' }, 401));
+    const limiter = mock<RateLimiterAdapter>({
+      consume: vi.fn().mockResolvedValue({ allowed: true, retryAfterMs: 0 }),
+      reset: vi.fn().mockResolvedValue(undefined),
+    });
+    const cache = new InProcessCache();
+    const svc = withTemplateRenderer({ drizzle, events, limiter, cache });
+
+    for (let i = 0; i < 4; i++) {
+      await expect(
+        svc.login({ email: 'nobody@b.dev', password: 'wrongpass1' }, {}, new Headers()),
+      ).rejects.toMatchObject({ code: 'UNAUTHORIZED', message: 'Invalid' });
+    }
+
+    await expect(
+      svc.login({ email: 'nobody@b.dev', password: 'wrongpass1' }, {}, new Headers()),
+    ).rejects.toMatchObject({
+      code: 'UNAUTHORIZED',
+      data: { code: 'ACCOUNT_LOCKED' },
+    });
+
+    expect(limiter.reset).toHaveBeenCalledWith('login:nobody@b.dev');
+    expect(events.emit).not.toHaveBeenCalledWith(
+      'identity.user.lockout.triggered',
+      expect.anything(),
+    );
+  });
+
+  it('never locks a nonexistent email when cache is not provided (degrades to the pre-mirroring behavior)', async () => {
+    const drizzle = makeDrizzle({ selectRows: [[], [], [], [], [], []] });
+    const events = makeEvents();
+    signInEmailMock.mockImplementation(async () => jsonResponse({ message: 'Invalid' }, 401));
+    const svc = withTemplateRenderer({ drizzle, events });
+
+    for (let i = 0; i < 6; i++) {
+      await expect(
+        svc.login({ email: 'nobody@b.dev', password: 'wrongpass1' }, {}, new Headers()),
+      ).rejects.toMatchObject({ code: 'UNAUTHORIZED', message: 'Invalid' });
+    }
+
+    expect(events.emit).not.toHaveBeenCalledWith(
+      'identity.user.lockout.triggered',
+      expect.anything(),
     );
   });
 });

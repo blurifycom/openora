@@ -125,16 +125,18 @@ export type {
   AdminUserListOptions,
   AdminUserDirectory,
   AdminPlayerSummary,
+  AdminUserSortBy,
 } from './admin-user-directory.js';
-export { ADMIN_USER_DIRECTORY } from './admin-user-directory.js';
+export { ADMIN_USER_DIRECTORY, ADMIN_USER_SORT_BY_VALUES } from './admin-user-directory.js';
 
 export type {
   AdminTxRow,
   AdminTxDetail,
   AdminTxListOptions,
   AdminWalletReporting,
+  AdminTxSortBy,
 } from './admin-wallet-reporting.js';
-export { ADMIN_WALLET_REPORTING } from './admin-wallet-reporting.js';
+export { ADMIN_WALLET_REPORTING, ADMIN_TX_SORT_BY_VALUES } from './admin-wallet-reporting.js';
 
 export type {
   IdentityServiceOptions,

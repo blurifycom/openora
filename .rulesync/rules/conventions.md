@@ -187,6 +187,7 @@ Headless repo - only the SDK consumption layer (hooks, typed client, auth, realt
 - **Fail fast at boundaries with typed errors** - `Schema.parse(raw)` throws early.
 - **No silent catches** - log with context and rethrow, or handle explicitly.
 - **Typed, named error classes mapped to transport at the edge.** Use the shared factories (`makeNotFoundError`/`makeOwnershipError`/`makeConflictError`); the router's `mapErrors` keys off the exported class. `export const WalletNotFoundError = makeNotFoundError('Wallet');`
+- **`ORPCError.message` is an English fallback for logs/tooling, not player-facing copy** - never render it directly in a UI. Consumers key UI copy off `.code` (the error category) plus typed `.data` fields (e.g. a `reason` discriminator); add a new field to `data`, not to `message`, when a UI needs to tell cases apart.
 - **Money / critical paths are transactional and idempotent** - a DB guard inside the transaction, not just an `idempotencyKey` (delivery is at-least-once):
   ```ts
   await db.transaction(async (t) => {

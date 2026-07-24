@@ -6,13 +6,16 @@ import {
   DrizzleService,
   assertRateLimit,
   extractClientMeta,
+  getCurrentClientMeta,
   findOneOrThrow,
   makeNotFoundError,
+  createLogger,
 } from '@openora/core/server';
 import { parseCookies } from 'better-auth/cookies';
 import { eq, sql } from 'drizzle-orm';
 import { user, session, account, verification, twoFactor } from '../schema/index.js';
 import type {
+  CacheAdapter,
   RateLimiterAdapter,
   RateLimitKey,
   SendEmailPort,
@@ -223,6 +226,20 @@ const EMAIL_VERIFICATION_RATE_LIMIT = { limit: 3, windowMs: 15 * MINUTE_MS };
 const VERIFY_EMAIL_RATE_LIMIT = { limit: 5, windowMs: 15 * MINUTE_MS };
 const CHANGE_PASSWORD_RATE_LIMIT = { limit: 5, windowMs: 15 * MINUTE_MS };
 const TWO_FACTOR_PASSWORD_RATE_LIMIT = { limit: 5, windowMs: 5 * MINUTE_MS };
+const FAKE_LOGIN_SHADOW_TTL_MS = 7 * 24 * 60 * 60 * 1000;
+
+type FakeLoginShadow = {
+  failedAttempts: number;
+  lockoutUntil: string | null;
+  lockoutCount: number;
+  lastLockoutAt: string | null;
+};
+
+function loginShadowKey(email: string): string {
+  return `login-shadow:${email}`;
+}
+
+const loginShadowLogger = createLogger('login-shadow');
 
 function computeLockoutState({
   attempts,
@@ -247,6 +264,7 @@ export type IdentityServiceDeps = {
   options?: IdentityServiceOptions;
   limiter?: RateLimiterAdapter<RateLimitKey>;
   platformConfig?: PlatformConfig;
+  cache?: CacheAdapter;
 };
 
 /**
@@ -267,6 +285,7 @@ export class IdentityService {
   private readonly options?: IdentityServiceOptions;
   private readonly limiter?: RateLimiterAdapter<RateLimitKey>;
   private readonly platformConfig?: PlatformConfig;
+  private readonly cache?: CacheAdapter;
 
   constructor({
     drizzle,
@@ -276,6 +295,7 @@ export class IdentityService {
     options,
     limiter,
     platformConfig,
+    cache,
   }: IdentityServiceDeps) {
     this.drizzle = drizzle;
     this.events = events;
@@ -284,6 +304,7 @@ export class IdentityService {
     this.options = options;
     this.limiter = limiter;
     this.platformConfig = platformConfig;
+    this.cache = cache;
     this.auth = createAuth({
       db: drizzle.db,
       schema: { user, session, account, verification, twoFactor },
@@ -291,7 +312,10 @@ export class IdentityService {
       templateRenderer: this.templateRenderer,
       getUserLanguage: (lookupEmail) => this.resolveUserLanguage(lookupEmail),
       onPasswordReset: async (resetUser) => {
-        this.events.emit('identity.password.reset', { userId: resetUser.id });
+        this.events.emit('identity.password.reset', {
+          userId: resetUser.id,
+          ...getCurrentClientMeta(),
+        });
         await this.clearLockout(resetUser.id);
       },
     });
@@ -419,6 +443,17 @@ export class IdentityService {
       existingUser = { ...existingUser, failedLoginAttempts: 0, lockoutUntil: null };
     }
 
+    let fakeLoginShadow: FakeLoginShadow | undefined;
+    if (lockoutEnabled && !existingUser) {
+      fakeLoginShadow = await this.loginShadowGet(loginShadowKey(email));
+      if (fakeLoginShadow?.lockoutUntil) {
+        if (new Date(fakeLoginShadow.lockoutUntil) > new Date()) {
+          throw createAccountLockedError(new Date(fakeLoginShadow.lockoutUntil));
+        }
+        fakeLoginShadow = { ...fakeLoginShadow, failedAttempts: 0, lockoutUntil: null };
+      }
+    }
+
     try {
       const authResponse = await this.auth.api.signInEmail({
         body: { email, password: input.password, rememberMe: input.rememberMe },
@@ -534,6 +569,47 @@ export class IdentityService {
 
           throw createAccountLockedError(lockoutUntil);
         }
+      } else if (lockoutEnabled && !existingUser && isCredentialFailure) {
+        const maxAttempts = this.options?.lockout?.maxAttempts ?? DEFAULT_MAX_LOGIN_ATTEMPTS;
+        const fallbackDurationMs = this.options?.lockout?.durationMs ?? DEFAULT_LOCKOUT_DURATION_MS;
+        const newAttempts = (fakeLoginShadow?.failedAttempts ?? 0) + 1;
+        attemptsRemaining = Math.max(maxAttempts - newAttempts, 0);
+        const { isLocking } = computeLockoutState({
+          attempts: newAttempts,
+          maxAttempts,
+          durationMs: fallbackDurationMs,
+          nowMs: Date.now(),
+        });
+
+        if (isLocking) {
+          const nowMs = Date.now();
+          const { tier, durationMs } = computeLockoutTier({
+            lockoutCount: fakeLoginShadow?.lockoutCount ?? 0,
+            lastLockoutAt: fakeLoginShadow?.lastLockoutAt
+              ? new Date(fakeLoginShadow.lastLockoutAt)
+              : null,
+            nowMs,
+            fallbackDurationMs,
+          });
+          const lockoutUntil = new Date(nowMs + durationMs);
+          await this.loginShadowSet(loginShadowKey(email), {
+            failedAttempts: newAttempts,
+            lockoutUntil: lockoutUntil.toISOString(),
+            lockoutCount: tier,
+            lastLockoutAt: new Date(nowMs).toISOString(),
+          });
+
+          await this.limiter?.reset(makeLoginRateLimitKey(email));
+
+          throw createAccountLockedError(lockoutUntil);
+        }
+
+        await this.loginShadowSet(loginShadowKey(email), {
+          failedAttempts: newAttempts,
+          lockoutUntil: null,
+          lockoutCount: fakeLoginShadow?.lockoutCount ?? 0,
+          lastLockoutAt: fakeLoginShadow?.lastLockoutAt ?? null,
+        });
       }
 
       const reason = isCredentialFailure ? 'invalid_credentials' : 'error';
@@ -553,6 +629,29 @@ export class IdentityService {
       .update(user)
       .set({ failedLoginAttempts: 0, lockoutUntil: null })
       .where(eq(user.id, userId));
+  }
+
+  private async loginShadowGet(key: string): Promise<FakeLoginShadow | undefined> {
+    if (!this.cache) {
+      return undefined;
+    }
+    try {
+      return await this.cache.get<FakeLoginShadow>(key);
+    } catch (err) {
+      loginShadowLogger.warn({ key, err }, 'login shadow cache read failed');
+      return undefined;
+    }
+  }
+
+  private async loginShadowSet(key: string, value: FakeLoginShadow): Promise<void> {
+    if (!this.cache) {
+      return;
+    }
+    try {
+      await this.cache.set(key, value, { ttlMs: FAKE_LOGIN_SHADOW_TTL_MS });
+    } catch (err) {
+      loginShadowLogger.warn({ key, err }, 'login shadow cache write failed');
+    }
   }
 
   async unlockUser(userId: User['id'], actorId: User['id'], meta?: ClientMeta) {
@@ -710,7 +809,7 @@ export class IdentityService {
     return SUCCESS;
   }
 
-  async resetPassword(input: ResetPasswordInput, reqHeaders?: NodeHeaders) {
+  async resetPassword(input: ResetPasswordInput) {
     const email = input.email.toLowerCase();
     await assertRateLimit(
       this.limiter,
@@ -724,15 +823,10 @@ export class IdentityService {
     });
     await ensureOk(res, { genericMessage: 'Invalid or expired verification code' });
 
-    const row = await this.findUserByEmail(email);
-    if (row) {
-      const { ip, userAgent } = reqHeaders
-        ? extractClientMeta(reqHeaders)
-        : { ip: null, userAgent: null };
-      this.events.emit('identity.password.reset', { userId: row.id, ip, userAgent });
-      await this.clearLockout(row.id);
-    }
-
+    // better-auth's resetPasswordEmailOTP internally invokes the onPasswordReset hook
+    // (wired in the constructor above), which emits `identity.password.reset` and
+    // clears the lockout - do not duplicate that here (was double-emitting/double-
+    // clearing on every real reset).
     return SUCCESS;
   }
 

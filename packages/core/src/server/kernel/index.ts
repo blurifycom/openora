@@ -3,6 +3,7 @@ export {
   requestStorage,
   getCurrentRequestContext,
   getCurrentTraceId,
+  getCurrentClientMeta,
   withRequestContext,
 } from './request-context.js';
 

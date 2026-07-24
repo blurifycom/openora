@@ -78,6 +78,12 @@ describe('wallet router listPlayerTransactions authz', () => {
       { context: CTX },
     );
 
-    expect(wallet.getTransactions).toHaveBeenCalledWith(USER_ID, 1, 20);
+    expect(wallet.getTransactions).toHaveBeenCalledWith({
+      userId: USER_ID,
+      page: 1,
+      limit: 20,
+      sortBy: 'createdAt',
+      sortOrder: 'desc',
+    });
   });
 });

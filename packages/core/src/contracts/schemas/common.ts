@@ -24,3 +24,12 @@ export const MoneyAmountSchema = z
     'must be a non-negative decimal string with at most 8 decimal places',
   );
 export type MoneyAmount = z.infer<typeof MoneyAmountSchema>;
+
+export const AUTH_GUARD_REASONS = [
+  'missing_request_context',
+  'authentication_required',
+  'admin_required',
+  'permission_denied',
+] as const;
+export const AuthGuardReasonSchema = z.enum(AUTH_GUARD_REASONS);
+export type AuthGuardReason = z.infer<typeof AuthGuardReasonSchema>;
