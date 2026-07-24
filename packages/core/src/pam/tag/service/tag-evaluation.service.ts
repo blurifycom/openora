@@ -9,6 +9,11 @@ import {
 import { moneyToNumber, mapConcurrent, type DrizzleTx } from '@openora/core/server';
 import { TagService, TagAlreadyInUseError, TagAssignmentNotFoundError } from './tag.service.js';
 import { TagRuleService, TagRuleNotFoundError } from './tag-rule.service.js';
+import type {
+  PlayerTagAssignMetadata,
+  HighRiskAmountBreachDetail,
+  HighRiskCountBreachDetail,
+} from '@openora/core/pam/contracts/tag';
 
 export const SYSTEM_ACTOR_ID = '00000000-0000-0000-0000-000000000000';
 
@@ -39,7 +44,13 @@ export class TagEvaluationService {
   }
 
   /** Idempotently assigns a tag; swallows TagAlreadyInUseError. */
-  private async tryAssignTag(userId: User['id'], tagKey: TagKey, reason: string) {
+  private async tryAssignTag(args: {
+    userId: User['id'];
+    tagKey: TagKey;
+    reason: string;
+    assignMetadata?: PlayerTagAssignMetadata | null;
+  }) {
+    const { userId, tagKey, reason, assignMetadata } = args;
     const playerId = await this.identityReader.getPlayerIdByUserId(userId);
     if (!playerId) {
       return;
@@ -51,6 +62,7 @@ export class TagEvaluationService {
         assignReason: reason,
         assignActor: 'scheduled',
         assignActorUserId: SYSTEM_ACTOR_ID,
+        assignMetadata,
       });
     } catch (e) {
       if (e instanceof TagAlreadyInUseError) {
@@ -61,7 +73,8 @@ export class TagEvaluationService {
   }
 
   /** Idempotently removes a tag; swallows TagAssignmentNotFoundError. */
-  private async tryRemoveTag(userId: User['id'], tagKey: TagKey, reason: string) {
+  private async tryRemoveTag(args: { userId: User['id']; tagKey: TagKey; reason: string }) {
+    const { userId, tagKey, reason } = args;
     const playerId = await this.identityReader.getPlayerIdByUserId(userId);
     if (!playerId) {
       return;
@@ -101,15 +114,27 @@ export class TagEvaluationService {
       largeDepositor.threshold !== null &&
       moneyToNumber(amount) >= moneyToNumber(largeDepositor.threshold)
     ) {
-      await this.tryAssignTag(userId, 'large_depositor', 'single deposit crossed threshold');
+      await this.tryAssignTag({
+        userId,
+        tagKey: 'large_depositor',
+        reason: 'single deposit crossed threshold',
+      });
     }
 
     if (highRoller && highRoller.threshold !== null) {
       const lifetimeDeposit = await this.walletReader.getLifetimeDeposit(userId);
       if (moneyToNumber(lifetimeDeposit) >= moneyToNumber(highRoller.threshold)) {
-        await this.tryAssignTag(userId, 'high_roller', 'lifetime deposits crossed threshold');
+        await this.tryAssignTag({
+          userId,
+          tagKey: 'high_roller',
+          reason: 'lifetime deposits crossed threshold',
+        });
       } else {
-        await this.tryRemoveTag(userId, 'high_roller', 'lifetime deposits below threshold');
+        await this.tryRemoveTag({
+          userId,
+          tagKey: 'high_roller',
+          reason: 'lifetime deposits below threshold',
+        });
       }
     }
   }
@@ -135,11 +160,11 @@ export class TagEvaluationService {
   async onWithdrawalRequested(payload: unknown) {
     const { userId, amount } = domainEventSchemas['wallet.withdrawal.requested'].parse(payload);
     if (await this._withdrawalReviewThresholdCrossed(amount)) {
-      await this.tryAssignTag(
+      await this.tryAssignTag({
         userId,
-        'withdrawal_review',
-        'single withdrawal attempt exceeded review threshold',
-      );
+        tagKey: 'withdrawal_review',
+        reason: 'single withdrawal attempt exceeded review threshold',
+      });
     }
   }
 
@@ -188,7 +213,9 @@ export class TagEvaluationService {
    * Called on wallet.withdrawal.completed. Only assigns the tag when a threshold is
    * crossed; removal is handled separately by the daily resweep in runDailyEvaluation
    * (a rolling-window count/amount can drop back under threshold with no new
-   * withdrawal, so it can't be detected event-driven-only).
+   * withdrawal, so it can't be detected event-driven-only). Records which breach
+   * condition(s) fired in assignMetadata - the resweep uses this to know whether the
+   * amount dimension (never resweepable, see _runHighRiskResweep) was involved.
    */
   async onWithdrawalCompleted(payload: unknown) {
     const { userId, amount } = domainEventSchemas['wallet.withdrawal.completed'].parse(payload);
@@ -198,21 +225,30 @@ export class TagEvaluationService {
       return;
     }
 
-    const amountBreached =
-      rule.threshold !== null && moneyToNumber(amount) >= moneyToNumber(rule.threshold);
+    const amountBreach: HighRiskAmountBreachDetail | null =
+      rule.threshold !== null && moneyToNumber(amount) >= moneyToNumber(rule.threshold)
+        ? { amount, threshold: rule.threshold }
+        : null;
 
-    let countBreached = false;
+    let countBreach: HighRiskCountBreachDetail | null = null;
     if (rule.thresholdDays !== null && rule.thresholdCount !== null) {
       const count = await this.walletReader.getWithdrawalCountInWindow(userId, rule.thresholdDays);
-      countBreached = count >= rule.thresholdCount;
+      if (count >= rule.thresholdCount) {
+        countBreach = {
+          count,
+          thresholdCount: rule.thresholdCount,
+          thresholdDays: rule.thresholdDays,
+        };
+      }
     }
 
-    if (amountBreached || countBreached) {
-      await this.tryAssignTag(
+    if (amountBreach || countBreach) {
+      await this.tryAssignTag({
         userId,
-        'high_risk',
-        'withdrawal amount or frequency crossed threshold',
-      );
+        tagKey: 'high_risk',
+        reason: 'withdrawal amount or frequency crossed threshold',
+        assignMetadata: { amountBreach, countBreach },
+      });
     }
   }
 
@@ -223,8 +259,8 @@ export class TagEvaluationService {
    */
   async onUserLogin(payload: unknown) {
     const { userId } = domainEventSchemas['identity.user.login'].parse(payload);
-    await this.tryRemoveTag(userId, 'inactive', 'player logged in');
-    await this.tryRemoveTag(userId, 'dormant_high_roller', 'player logged in');
+    await this.tryRemoveTag({ userId, tagKey: 'inactive', reason: 'player logged in' });
+    await this.tryRemoveTag({ userId, tagKey: 'dormant_high_roller', reason: 'player logged in' });
   }
 
   /**
@@ -237,8 +273,12 @@ export class TagEvaluationService {
     if (!rule) {
       return;
     }
-    await this.tryRemoveTag(userId, 'kyc_rejected', 'kyc resubmitted');
-    await this.tryAssignTag(userId, 'kyc_pending', 'kyc verification initiated');
+    await this.tryRemoveTag({ userId, tagKey: 'kyc_rejected', reason: 'kyc resubmitted' });
+    await this.tryAssignTag({
+      userId,
+      tagKey: 'kyc_pending',
+      reason: 'kyc verification initiated',
+    });
   }
 
   /**
@@ -258,19 +298,27 @@ export class TagEvaluationService {
     }
 
     if (status === 'verified' || status === 'manually_overridden') {
-      await this.tryRemoveTag(userId, 'kyc_pending', 'kyc approved');
-      await this.tryRemoveTag(userId, 'kyc_rejected', 'kyc approved');
+      await this.tryRemoveTag({ userId, tagKey: 'kyc_pending', reason: 'kyc approved' });
+      await this.tryRemoveTag({ userId, tagKey: 'kyc_rejected', reason: 'kyc approved' });
       return;
     }
 
     if (status === 'rejected') {
-      await this.tryRemoveTag(userId, 'kyc_pending', 'kyc rejected');
-      await this.tryAssignTag(userId, 'kyc_rejected', 'kyc verification rejected');
+      await this.tryRemoveTag({ userId, tagKey: 'kyc_pending', reason: 'kyc rejected' });
+      await this.tryAssignTag({
+        userId,
+        tagKey: 'kyc_rejected',
+        reason: 'kyc verification rejected',
+      });
       return;
     }
 
     if (status === 'resubmission_requested') {
-      await this.tryAssignTag(userId, 'kyc_pending', 'kyc re-verification required');
+      await this.tryAssignTag({
+        userId,
+        tagKey: 'kyc_pending',
+        reason: 'kyc re-verification required',
+      });
     }
   }
 
@@ -289,10 +337,14 @@ export class TagEvaluationService {
    *    removed once the count falls below threshold. Deliberately does NOT recheck
    *    the amount dimension - assignment's amount check has no time bound, so a
    *    windowed recheck would silently de-designate a still-risky player once their
-   *    triggering withdrawal ages out of the window (an AML false negative).
-   *    Skipped entirely when thresholdDays or thresholdCount is null - an amount-only
-   *    high_risk rule isn't resweepable by the cron; it stays until an admin clears it
-   *    or a future withdrawal re-triggers assignment.
+   *    triggering withdrawal ages out of the window (an AML false negative). Now gated
+   *    on each holder's assignMetadata (recorded at assignment): a holder whose
+   *    metadata shows an amount breach is skipped regardless of their current count,
+   *    and a holder with null metadata (pre-migration/legacy row, or manually
+   *    assigned) is also skipped - "unknown why this was assigned" is treated as
+   *    "do not auto-remove". Skipped entirely when thresholdDays or thresholdCount is
+   *    null - an amount-only high_risk rule isn't resweepable by the cron; it stays
+   *    until an admin clears it or a future withdrawal re-triggers assignment.
    */
   async runDailyEvaluation() {
     await this._runInactiveSweep();
@@ -312,7 +364,11 @@ export class TagEvaluationService {
     // Capped fan-out: the inactive-player set is unbounded, so hold at most EVAL_CHUNK_SIZE
     // assignments in flight rather than one giant Promise.all that would exhaust the pool.
     await mapConcurrent(userIds, EVAL_CHUNK_SIZE, (userId) =>
-      this.tryAssignTag(userId, 'inactive', 'no login for configured threshold'),
+      this.tryAssignTag({
+        userId,
+        tagKey: 'inactive',
+        reason: 'no login for configured threshold',
+      }),
     );
   }
 
@@ -331,11 +387,11 @@ export class TagEvaluationService {
     );
 
     await mapConcurrent(highRollerUserIds, EVAL_CHUNK_SIZE, (userId) =>
-      this.tryAssignTag(
+      this.tryAssignTag({
         userId,
-        'dormant_high_roller',
-        'holds high_roller and inactive for configured threshold',
-      ),
+        tagKey: 'dormant_high_roller',
+        reason: 'holds high_roller and inactive for configured threshold',
+      }),
     );
   }
 
@@ -344,10 +400,16 @@ export class TagEvaluationService {
    * withdrawal's amount with no time bound, so an amount-only breach from outside
    * this rolling window is invisible to a windowed recheck - resweeping it would
    * silently de-designate a still-risky player (an AML false negative). Only the
-   * count dimension, which IS windowed at assignment time, is safe to resweep.
-   * Skipped entirely when thresholdDays or thresholdCount is null - an amount-only
-   * rule has no frequency dimension to resweep against and is never auto-cleared by
-   * the cron, only by an admin or a future onWithdrawalCompleted re-evaluation.
+   * count dimension, which IS windowed at assignment time, is safe to resweep. Each
+   * holder's assignMetadata (recorded at assignment) records which breach dimension(s)
+   * fired; a holder whose metadata shows an amount breach, or whose metadata is null
+   * (pre-migration/legacy row or manual assignment - unknown why it was assigned), is
+   * skipped regardless of their current windowed count - pinned until an admin
+   * manually clears the tag or a future onWithdrawalCompleted re-evaluation populates
+   * metadata. Skipped entirely when thresholdDays or thresholdCount is null - an
+   * amount-only rule has no frequency dimension to resweep against and is never
+   * auto-cleared by the cron, only by an admin or a future onWithdrawalCompleted
+   * re-evaluation.
    */
   private async _runHighRiskResweep() {
     const rule = await this.getEnabledRule('high_risk');
@@ -356,10 +418,12 @@ export class TagEvaluationService {
     }
     const { thresholdDays, thresholdCount } = rule;
 
-    const holderUserIds = await this.tag.listActivePlayerUserIdsByTagKey('high_risk');
-    if (holderUserIds.length === 0) {
+    const holders = await this.tag.listActiveHoldersByTagKey('high_risk');
+    if (holders.length === 0) {
       return;
     }
+    const holderUserIds = holders.map((h) => h.userId);
+    const metadataByUser = new Map(holders.map((h) => [h.userId, h.assignMetadata]));
 
     // One set-based query for all holders' counts, then bound only the per-user
     // removal writes - the reads are already batched, not per-row. The batched method
@@ -375,13 +439,17 @@ export class TagEvaluationService {
         );
 
     await mapConcurrent(holderUserIds, EVAL_CHUNK_SIZE, async (userId) => {
+      const metadata = metadataByUser.get(userId) ?? null;
+      if (!metadata || metadata.amountBreach) {
+        return;
+      }
       const countInWindow = countsByUser.get(userId) ?? 0;
       if (countInWindow < thresholdCount) {
-        await this.tryRemoveTag(
+        await this.tryRemoveTag({
           userId,
-          'high_risk',
-          'withdrawal frequency dropped below threshold within window',
-        );
+          tagKey: 'high_risk',
+          reason: 'withdrawal frequency dropped below threshold within window',
+        });
       }
     });
   }

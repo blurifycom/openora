@@ -47,6 +47,7 @@ export const playerTagSchema = z.object({
   assignReason: z.string(),
   assignActor: tagAssignRemoveSourceSchema,
   assignActorUserId: UuidSchema.nullable(),
+  assignMetadata: z.record(z.string(), z.unknown()).nullable(),
   removedAt: z.coerce.date().nullable(),
   removalReason: z.string().nullable(),
   removalActor: tagAssignRemoveSourceSchema.nullable(),

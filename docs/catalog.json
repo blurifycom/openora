@@ -845,6 +845,18 @@
       "file": "packages/core/src/iam/contract/index.ts"
     },
     {
+      "name": "HighRiskAmountBreachDetailSchema",
+      "file": "packages/core/src/pam/tag/contract/player-tag-assign-metadata.ts"
+    },
+    {
+      "name": "HighRiskAssignMetadataSchema",
+      "file": "packages/core/src/pam/tag/contract/player-tag-assign-metadata.ts"
+    },
+    {
+      "name": "HighRiskCountBreachDetailSchema",
+      "file": "packages/core/src/pam/tag/contract/player-tag-assign-metadata.ts"
+    },
+    {
       "name": "IdentitySuccessSchema",
       "file": "packages/core/src/contracts/schemas/identity.ts"
     },
@@ -1031,6 +1043,10 @@
     {
       "name": "PlayerSummarySchema",
       "file": "packages/core/src/pam/player-management/contract/index.ts"
+    },
+    {
+      "name": "PlayerTagAssignMetadataSchema",
+      "file": "packages/core/src/pam/tag/contract/player-tag-assign-metadata.ts"
     },
     {
       "name": "playerTagSchema",

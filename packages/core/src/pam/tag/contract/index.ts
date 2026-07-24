@@ -12,9 +12,13 @@ import {
 } from '@openora/core/contracts';
 import { PageQuerySchema, paginated } from '@openora/core/contracts/kit';
 import z from 'zod';
+import { HighRiskAssignMetadataSchema } from './player-tag-assign-metadata.js';
+
+export * from './player-tag-assign-metadata.js';
 
 export const PlayerTagWithTagSchema = playerTagSchema.extend({
   tag: tagSchema.pick({ key: true }),
+  assignMetadata: HighRiskAssignMetadataSchema.nullable(),
 });
 export type PlayerTagWithTag = z.infer<typeof PlayerTagWithTagSchema>;
 
