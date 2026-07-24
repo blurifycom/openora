@@ -1,5 +1,5 @@
 {
-  "id": "4ffc2dec-d125-47bd-8621-c7eadc61888a",
+  "id": "b6f2fa7d-7a99-4d8b-be04-afe757c33db6",
   "prevId": "b949de8a-cdab-4056-bf0e-90d1199f1bf1",
   "version": "7",
   "dialect": "postgresql",
@@ -43,6 +43,12 @@
         "assign_actor_user_id": {
           "name": "assign_actor_user_id",
           "type": "uuid",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "assign_metadata": {
+          "name": "assign_metadata",
+          "type": "jsonb",
           "primaryKey": false,
           "notNull": false
         },

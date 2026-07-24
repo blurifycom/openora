@@ -25,6 +25,16 @@ import { player } from '@openora/core/pam/schema/profile';
 import { playerTag, tag } from '../schema/index.js';
 import { mapDbError } from '@openora/core/common/errors';
 import { toTag, toPlayerTagWithTag } from './tag-mappers.js';
+import type { PlayerTagAssignMetadata } from '../contract/player-tag-assign-metadata.js';
+import type { PlayerTagWithTag } from '../contract/index.js';
+
+// AssignPlayerTagInput is the admin wire-contract type (free-text assignReason only -
+// admins never supply structured metadata). This is the internal superset used by
+// TagService's assign methods so event-driven callers (TagEvaluationService) can attach
+// typed breach detail without widening the public admin contract.
+type AssignPlayerTagArgs = AssignPlayerTagInput & {
+  assignMetadata?: PlayerTagAssignMetadata | null;
+};
 
 export const TagNotFoundError = makeNotFoundError('Tag');
 export const TagAlreadyInUseError = alreadyInUseError('Tag');
@@ -41,6 +51,30 @@ export const TagInUseError = makeConflictError(
   'TagInUseError',
   'Tag is still referenced by a player tag or tag rule and cannot be deleted',
 );
+
+// "First evidence wins per breach dimension, but a dimension that was never recorded gets
+// filled in the moment it's observed." Never overwrites an already-populated dimension with
+// fresher numbers - once a dimension has ever been recorded, the resweep treats it as sticky.
+// Returns the SAME `existing` reference when nothing new was merged in, so the caller can
+// detect a no-op write via reference equality.
+function mergeAssignMetadata(
+  existing: PlayerTagAssignMetadata | null,
+  incoming: PlayerTagAssignMetadata | null | undefined,
+): PlayerTagAssignMetadata | null {
+  if (!incoming) {
+    return existing;
+  }
+  if (!existing) {
+    return incoming;
+  }
+  if (existing.amountBreach && existing.countBreach) {
+    return existing;
+  }
+  return {
+    amountBreach: existing.amountBreach ?? incoming.amountBreach,
+    countBreach: existing.countBreach ?? incoming.countBreach,
+  };
+}
 
 export class TagService implements PlayerTags {
   constructor(
@@ -69,19 +103,23 @@ export class TagService implements PlayerTags {
   }
 
   /**
-   * userIds (auth `userId`, not `player.id`) currently holding an active assignment
-   * of tagKey. Internal to this module - used only by TagEvaluationService for the
-   * daily high_risk resweep; deliberately not exposed on the PLAYER_TAGS port since
-   * no other module needs "list holders of tag X" today.
+   * Active holders (auth `userId`, not `player.id`) of tagKey, each with the
+   * assignMetadata recorded at assignment time. Internal to this module - used only by
+   * TagEvaluationService for the daily high_risk resweep to gate removal on WHICH breach
+   * condition originally fired (an amount breach, or a null/legacy row, must never be
+   * auto-cleared); deliberately not exposed on the PLAYER_TAGS port since no other module
+   * needs "list holders of tag X" today.
    */
-  public async listActivePlayerUserIdsByTagKey(tagKey: TagKey): Promise<string[]> {
+  public async listActiveHoldersByTagKey(
+    tagKey: TagKey,
+  ): Promise<{ userId: string; assignMetadata: PlayerTagAssignMetadata | null }[]> {
     const rows = await this.drizzle.db
-      .select({ userId: player.userId })
+      .select({ userId: player.userId, assignMetadata: playerTag.assignMetadata })
       .from(playerTag)
       .innerJoin(tag, eq(playerTag.tagId, tag.id))
       .innerJoin(player, eq(player.id, playerTag.playerId))
       .where(and(eq(tag.key, tagKey), isNull(playerTag.removedAt)));
-    return rows.map((r) => r.userId);
+    return rows.map((r) => ({ userId: r.userId, assignMetadata: r.assignMetadata ?? null }));
   }
 
   private async _findTagByKeyOrThrow(tagKey: TagKey, trx: DrizzleTx) {
@@ -170,7 +208,16 @@ export class TagService implements PlayerTags {
   // assignPlayerTagInTx (caller-supplied transaction). Does NOT emit - callers decide
   // when, since assignPlayerTagInTx's caller owns a transaction this method has no
   // visibility into committing.
-  private async _assignPlayerTagOnTx(trx: DrizzleTx, args: AssignPlayerTagInput) {
+  //
+  // Returns a status instead of throwing for the "already active" case: throwing here
+  // would roll back the merge UPDATE below along with the whole transaction when this
+  // runs inside assignPlayerTag's own db.transaction(...). Returning lets that
+  // transaction commit the metadata enrichment first; the public methods translate
+  // 'already_active' into TagAlreadyInUseError only after the transaction has resolved.
+  private async _assignPlayerTagOnTx(
+    trx: DrizzleTx,
+    args: AssignPlayerTagArgs,
+  ): Promise<{ status: 'created'; row: PlayerTagWithTag } | { status: 'already_active' }> {
     const { tagKey, ...restArgs } = args;
     const foundTag = await this._findTagByKeyOrThrow(tagKey, trx);
     // Fast/friendly pre-check only - the real guard is the partial unique index
@@ -189,11 +236,21 @@ export class TagService implements PlayerTags {
       )
       .limit(1);
     if (existing) {
-      throw new TagAlreadyInUseError();
+      // A later event can reveal a breach dimension absent from the original assignment;
+      // without merging it in, the resweep would act on stale metadata and could wrongly
+      // clear a still-risky player.
+      const merged = mergeAssignMetadata(existing.assignMetadata, args.assignMetadata);
+      if (merged !== existing.assignMetadata) {
+        await trx
+          .update(playerTag)
+          .set({ assignMetadata: merged })
+          .where(eq(playerTag.id, existing.id));
+      }
+      return { status: 'already_active' };
     }
     // The loser of a genuine race hits the unique index here instead: its insert is a
-    // no-op (empty returning()), so it throws the same TagAlreadyInUseError as the
-    // pre-check - tryAssignTag already treats that as an idempotent no-op.
+    // no-op (empty returning()), so it also reports 'already_active' - tryAssignTag
+    // already treats the resulting TagAlreadyInUseError as an idempotent no-op.
     const [created] = await trx
       .insert(playerTag)
       .values({ ...restArgs, tagId: foundTag.id })
@@ -203,22 +260,25 @@ export class TagService implements PlayerTags {
       })
       .returning();
     if (!created) {
-      throw new TagAlreadyInUseError();
+      return { status: 'already_active' };
     }
-    return toPlayerTagWithTag(created, foundTag.key);
+    return { status: 'created', row: toPlayerTagWithTag(created, foundTag.key) };
   }
 
-  public async assignPlayerTag(args: AssignPlayerTagInput) {
+  public async assignPlayerTag(args: AssignPlayerTagArgs) {
     try {
       const db = this.drizzle.db;
-      const result = await db.transaction((trx) => this._assignPlayerTagOnTx(trx, args));
+      const outcome = await db.transaction((trx) => this._assignPlayerTagOnTx(trx, args));
+      if (outcome.status === 'already_active') {
+        throw new TagAlreadyInUseError();
+      }
       void this.event.emit('tag.player.assigned', {
         playerId: args.playerId,
         tagKey: args.tagKey,
         reason: args.assignReason,
         actorId: args.assignActorUserId,
       });
-      return result;
+      return outcome.row;
     } catch (e) {
       mapDbError(e);
     }
@@ -233,16 +293,19 @@ export class TagService implements PlayerTags {
    * caller's own transaction actually commits, so - like every other caller-supplied-tx
    * command port in this repo - it cannot defer the emit past that point.
    */
-  public async assignPlayerTagInTx(trx: DrizzleTx, args: AssignPlayerTagInput) {
+  public async assignPlayerTagInTx(trx: DrizzleTx, args: AssignPlayerTagArgs) {
     try {
-      const result = await this._assignPlayerTagOnTx(trx, args);
+      const outcome = await this._assignPlayerTagOnTx(trx, args);
+      if (outcome.status === 'already_active') {
+        throw new TagAlreadyInUseError();
+      }
       void this.event.emit('tag.player.assigned', {
         playerId: args.playerId,
         tagKey: args.tagKey,
         reason: args.assignReason,
         actorId: args.assignActorUserId,
       });
-      return result;
+      return outcome.row;
     } catch (e) {
       mapDbError(e);
     }
@@ -330,7 +393,15 @@ export class TagService implements PlayerTags {
           }
         }
         const assigned = await this._assignPlayerTagOnTx(trx, assignArgs);
-        return { assigned, removed };
+        if (assigned.status === 'already_active') {
+          // Unlike assignPlayerTag/assignPlayerTagInTx (where a lost race is an
+          // idempotent no-op that must still let a metadata merge commit), a lost
+          // race HERE must roll back the whole swap, including the removal above -
+          // see the class doc: nothing may commit half-way. Throwing inside this
+          // db.transaction callback is exactly how that rollback happens.
+          throw new TagAlreadyInUseError();
+        }
+        return { row: assigned.row, removed };
       });
       if (result.removed) {
         void this.event.emit('tag.player.removed', {
@@ -346,7 +417,7 @@ export class TagService implements PlayerTags {
         reason: args.assignReason,
         actorId: args.assignActorUserId,
       });
-      return result.assigned;
+      return result.row;
     } catch (e) {
       mapDbError(e);
     }

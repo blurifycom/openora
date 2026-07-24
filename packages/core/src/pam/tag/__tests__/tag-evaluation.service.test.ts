@@ -39,7 +39,7 @@ function makeServices(rules: Partial<Record<string, TagRule>> = {}) {
     removePlayerTag: vi.fn().mockResolvedValue(undefined),
     replacePlayerTag: vi.fn().mockResolvedValue(undefined),
     getActiveTagKeys: vi.fn().mockResolvedValue(new Map()),
-    listActivePlayerUserIdsByTagKey: vi.fn().mockResolvedValue([]),
+    listActiveHoldersByTagKey: vi.fn().mockResolvedValue([]),
   });
   const rule = mock<TagRuleService>({
     getTagRule: vi.fn(async (tagKey: string) => {
@@ -137,17 +137,23 @@ describe('TagEvaluationService', () => {
   });
 
   describe('onWithdrawalCompleted', () => {
-    it('assigns high_risk when a single withdrawal meets the amount threshold', async () => {
+    it('assigns high_risk when a single withdrawal meets the amount threshold, recording the amount breach detail', async () => {
       const { service, tag } = makeServices({
         high_risk: makeRule({ tagKey: 'high_risk', threshold: '1000' }),
       });
       await service.onWithdrawalCompleted(withdrawalPayload(1500));
       expect(tag.assignPlayerTag).toHaveBeenCalledWith(
-        expect.objectContaining({ tagKey: 'high_risk' }),
+        expect.objectContaining({
+          tagKey: 'high_risk',
+          assignMetadata: {
+            amountBreach: { amount: '1500', threshold: '1000' },
+            countBreach: null,
+          },
+        }),
       );
     });
 
-    it('assigns high_risk when the withdrawal count in the window meets the threshold', async () => {
+    it('assigns high_risk when the withdrawal count in the window meets the threshold, recording the count breach detail', async () => {
       const { service, tag, walletReader } = makeServices({
         high_risk: makeRule({
           tagKey: 'high_risk',
@@ -160,7 +166,35 @@ describe('TagEvaluationService', () => {
       await service.onWithdrawalCompleted(withdrawalPayload(10));
       expect(walletReader.getWithdrawalCountInWindow).toHaveBeenCalledWith(UID, 7);
       expect(tag.assignPlayerTag).toHaveBeenCalledWith(
-        expect.objectContaining({ tagKey: 'high_risk' }),
+        expect.objectContaining({
+          tagKey: 'high_risk',
+          assignMetadata: {
+            amountBreach: null,
+            countBreach: { count: 3, thresholdCount: 3, thresholdDays: 7 },
+          },
+        }),
+      );
+    });
+
+    it('records both breach details when both amount and frequency thresholds are met', async () => {
+      const { service, tag, walletReader } = makeServices({
+        high_risk: makeRule({
+          tagKey: 'high_risk',
+          threshold: '1000',
+          thresholdDays: 7,
+          thresholdCount: 3,
+        }),
+      });
+      walletReader.getWithdrawalCountInWindow = vi.fn().mockResolvedValue(5);
+      await service.onWithdrawalCompleted(withdrawalPayload(1500));
+      expect(tag.assignPlayerTag).toHaveBeenCalledWith(
+        expect.objectContaining({
+          tagKey: 'high_risk',
+          assignMetadata: {
+            amountBreach: { amount: '1500', threshold: '1000' },
+            countBreach: { count: 5, thresholdCount: 3, thresholdDays: 7 },
+          },
+        }),
       );
     });
 
@@ -597,6 +631,15 @@ describe('TagEvaluationService', () => {
     });
 
     describe('high_risk resweep', () => {
+      const countOnlyMetadata = {
+        amountBreach: null,
+        countBreach: { count: 3, thresholdCount: 3, thresholdDays: 7 },
+      };
+      const amountBreachMetadata = {
+        amountBreach: { amount: '2000', threshold: '1000' },
+        countBreach: null,
+      };
+
       it('removes the tag from a holder when the recheck shows count below threshold', async () => {
         const { service, tag, walletReader } = makeServices({
           high_risk: makeRule({
@@ -606,7 +649,9 @@ describe('TagEvaluationService', () => {
             thresholdCount: 3,
           }),
         });
-        tag.listActivePlayerUserIdsByTagKey = vi.fn().mockResolvedValue(['p1']);
+        tag.listActiveHoldersByTagKey = vi
+          .fn()
+          .mockResolvedValue([{ userId: 'p1', assignMetadata: countOnlyMetadata }]);
         walletReader.getWithdrawalCountsInWindow = vi.fn().mockResolvedValue(new Map([['p1', 1]]));
         await service.runDailyEvaluation();
         expect(walletReader.getWithdrawalCountsInWindow).toHaveBeenCalledWith(['p1'], 7);
@@ -624,7 +669,9 @@ describe('TagEvaluationService', () => {
             thresholdCount: 3,
           }),
         });
-        tag.listActivePlayerUserIdsByTagKey = vi.fn().mockResolvedValue(['p1']);
+        tag.listActiveHoldersByTagKey = vi
+          .fn()
+          .mockResolvedValue([{ userId: 'p1', assignMetadata: countOnlyMetadata }]);
         walletReader.getWithdrawalCountsInWindow = vi.fn().mockResolvedValue(new Map([['p1', 3]]));
         await service.runDailyEvaluation();
         expect(tag.removePlayerTag).not.toHaveBeenCalledWith(
@@ -641,7 +688,9 @@ describe('TagEvaluationService', () => {
             thresholdCount: 3,
           }),
         });
-        tag.listActivePlayerUserIdsByTagKey = vi.fn().mockResolvedValue(['p1']);
+        tag.listActiveHoldersByTagKey = vi
+          .fn()
+          .mockResolvedValue([{ userId: 'p1', assignMetadata: countOnlyMetadata }]);
         walletReader.getWithdrawalCountsInWindow = vi.fn().mockResolvedValue(new Map());
         await service.runDailyEvaluation();
         expect(tag.removePlayerTag).toHaveBeenCalledWith(
@@ -659,7 +708,7 @@ describe('TagEvaluationService', () => {
           }),
         });
         await service.runDailyEvaluation();
-        expect(tag.listActivePlayerUserIdsByTagKey).not.toHaveBeenCalled();
+        expect(tag.listActiveHoldersByTagKey).not.toHaveBeenCalled();
       });
 
       it('skips entirely when thresholdCount is null (no frequency dimension to resweep)', async () => {
@@ -672,7 +721,7 @@ describe('TagEvaluationService', () => {
           }),
         });
         await service.runDailyEvaluation();
-        expect(tag.listActivePlayerUserIdsByTagKey).not.toHaveBeenCalled();
+        expect(tag.listActiveHoldersByTagKey).not.toHaveBeenCalled();
       });
 
       it('skips when the rule is disabled', async () => {
@@ -686,7 +735,7 @@ describe('TagEvaluationService', () => {
           }),
         });
         await service.runDailyEvaluation();
-        expect(tag.listActivePlayerUserIdsByTagKey).not.toHaveBeenCalled();
+        expect(tag.listActiveHoldersByTagKey).not.toHaveBeenCalled();
       });
 
       it('does nothing when there are no holders', async () => {
@@ -698,7 +747,7 @@ describe('TagEvaluationService', () => {
             thresholdCount: 3,
           }),
         });
-        tag.listActivePlayerUserIdsByTagKey = vi.fn().mockResolvedValue([]);
+        tag.listActiveHoldersByTagKey = vi.fn().mockResolvedValue([]);
         await service.runDailyEvaluation();
         expect(walletReader.getWithdrawalCountsInWindow).not.toHaveBeenCalled();
         expect(tag.removePlayerTag).not.toHaveBeenCalled();
@@ -713,7 +762,10 @@ describe('TagEvaluationService', () => {
             thresholdCount: 3,
           }),
         });
-        tag.listActivePlayerUserIdsByTagKey = vi.fn().mockResolvedValue(['p1', 'p2']);
+        tag.listActiveHoldersByTagKey = vi.fn().mockResolvedValue([
+          { userId: 'p1', assignMetadata: countOnlyMetadata },
+          { userId: 'p2', assignMetadata: countOnlyMetadata },
+        ]);
         // Simulate an external WalletReader implementation that predates the batched method.
         walletReader.getWithdrawalCountsInWindow = undefined;
         walletReader.getWithdrawalCountInWindow = vi.fn(async (userId: string) =>
@@ -728,6 +780,59 @@ describe('TagEvaluationService', () => {
         expect(tag.removePlayerTag).not.toHaveBeenCalledWith(
           expect.objectContaining({ playerId: 'p2', tagKey: 'high_risk' }),
         );
+      });
+
+      it('does not remove a holder whose assignMetadata shows an amount breach, even when the windowed count is below threshold (bug-fix case)', async () => {
+        const { service, tag, walletReader } = makeServices({
+          high_risk: makeRule({
+            tagKey: 'high_risk',
+            threshold: '1000',
+            thresholdDays: 7,
+            thresholdCount: 3,
+          }),
+        });
+        tag.listActiveHoldersByTagKey = vi
+          .fn()
+          .mockResolvedValue([{ userId: 'p1', assignMetadata: amountBreachMetadata }]);
+        walletReader.getWithdrawalCountsInWindow = vi.fn().mockResolvedValue(new Map([['p1', 0]]));
+        await service.runDailyEvaluation();
+        expect(tag.removePlayerTag).not.toHaveBeenCalled();
+      });
+
+      it('still removes a count-only-breach holder whose windowed count drops below threshold (existing behavior preserved)', async () => {
+        const { service, tag, walletReader } = makeServices({
+          high_risk: makeRule({
+            tagKey: 'high_risk',
+            threshold: '1000',
+            thresholdDays: 7,
+            thresholdCount: 3,
+          }),
+        });
+        tag.listActiveHoldersByTagKey = vi
+          .fn()
+          .mockResolvedValue([{ userId: 'p1', assignMetadata: countOnlyMetadata }]);
+        walletReader.getWithdrawalCountsInWindow = vi.fn().mockResolvedValue(new Map([['p1', 1]]));
+        await service.runDailyEvaluation();
+        expect(tag.removePlayerTag).toHaveBeenCalledWith(
+          expect.objectContaining({ playerId: 'p1', tagKey: 'high_risk' }),
+        );
+      });
+
+      it('does not remove a holder with null assignMetadata (legacy row), even when below threshold', async () => {
+        const { service, tag, walletReader } = makeServices({
+          high_risk: makeRule({
+            tagKey: 'high_risk',
+            threshold: '1000',
+            thresholdDays: 7,
+            thresholdCount: 3,
+          }),
+        });
+        tag.listActiveHoldersByTagKey = vi
+          .fn()
+          .mockResolvedValue([{ userId: 'p1', assignMetadata: null }]);
+        walletReader.getWithdrawalCountsInWindow = vi.fn().mockResolvedValue(new Map([['p1', 0]]));
+        await service.runDailyEvaluation();
+        expect(tag.removePlayerTag).not.toHaveBeenCalled();
       });
     });
   });

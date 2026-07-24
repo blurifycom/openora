@@ -145,6 +145,7 @@ function makePlayerTag(overrides: Partial<PlayerTag> = {}): PlayerTag {
     assignReason: 'test assign reason',
     assignActor: 'manual',
     assignActorUserId: ACTOR_ID,
+    assignMetadata: null,
     removedAt: null,
     removalReason: null,
     removalActor: null,
@@ -359,6 +360,56 @@ describe('TagService', () => {
       expect(events.emit).not.toHaveBeenCalled();
     });
 
+    it('commits the metadata merge UPDATE inside the same db.transaction call that resolves normally before TagAlreadyInUseError is thrown (regression: the merge must not be rolled back by the transaction it runs in)', async () => {
+      // This is the ONE real production path (TagEvaluationService.tryAssignTag ->
+      // assignPlayerTag, its own db.transaction) that ever supplies breach metadata for an
+      // already-active tag. The bug: _assignPlayerTagOnTx used to throw TagAlreadyInUseError
+      // from INSIDE the db.transaction callback for this case, so the merge UPDATE it had
+      // just issued was rolled back along with the whole transaction before the error
+      // reached this test. The fix returns a status instead, so db.transaction's own
+      // promise resolves normally (proving nothing crossed the transaction boundary to
+      // trigger a rollback) and the throw happens only afterwards, in assignPlayerTag itself.
+      const tagRow = makeTag({ key: 'high_risk' });
+      const existingCountBreach = { count: 5, thresholdCount: 3, thresholdDays: 30 };
+      const incomingAmountBreach = { amount: '500.00', threshold: '400.00' };
+      const existingPt = makePlayerTag({
+        assignMetadata: { amountBreach: null, countBreach: existingCountBreach },
+      });
+      const events = makeEvents();
+      // Own-db.transaction path (same shape as makeDrizzle), but with update/set/transaction
+      // kept as directly-typed spies so we can assert on them without going through the
+      // builder's untyped index signature.
+      const builder = makeQueryBuilder({ select: [[tagRow], [existingPt]], returning: [] });
+      const updateSpy = vi.fn(() => builder);
+      const setSpy = vi.fn(() => builder);
+      builder['update'] = updateSpy;
+      builder['set'] = setSpy;
+      const transactionSpy = vi.fn(async (fn: (txn: unknown) => Promise<unknown>) => fn(builder));
+      const svc = new TagService(mockDb({ ...builder, transaction: transactionSpy }), events);
+
+      await expect(
+        svc.assignPlayerTag({
+          playerId: PLAYER_ID,
+          tagKey: 'high_risk',
+          assignReason: 'test reason',
+          assignActor: 'scheduled',
+          assignActorUserId: ACTOR_ID,
+          assignMetadata: { amountBreach: incomingAmountBreach, countBreach: null },
+        }),
+      ).rejects.toBeInstanceOf(TagAlreadyInUseError);
+
+      // The key regression check: db.transaction's own promise resolved (not rejected).
+      // Under the old code, _assignPlayerTagOnTx threw inside the callback, so this same
+      // db.transaction call would have REJECTED - and Postgres would roll back the UPDATE
+      // along with it. TagAlreadyInUseError now surfaces only after this call settled.
+      expect(transactionSpy).toHaveResolved();
+      expect(updateSpy).toHaveBeenCalledTimes(1);
+      expect(setSpy).toHaveBeenCalledWith({
+        assignMetadata: { amountBreach: incomingAmountBreach, countBreach: existingCountBreach },
+      });
+      expect(events.emit).not.toHaveBeenCalled();
+    });
+
     it('creates exactly one active row when 5 concurrent calls race for the same player+tag', async () => {
       const tagRow = makeTag();
       const events = makeEvents();
@@ -434,6 +485,123 @@ describe('TagService', () => {
           assignActorUserId: ACTOR_ID,
         }),
       ).rejects.toBeInstanceOf(TagAlreadyInUseError);
+      expect(events.emit).not.toHaveBeenCalled();
+    });
+
+    it('merges a newly-observed breach dimension into an already-active tag before throwing', async () => {
+      const tagRow = makeTag({ key: 'high_risk' });
+      const existingCountBreach = { count: 5, thresholdCount: 3, thresholdDays: 30 };
+      const incomingAmountBreach = { amount: '500.00', threshold: '400.00' };
+      const existingPt = makePlayerTag({
+        assignMetadata: { amountBreach: null, countBreach: existingCountBreach },
+      });
+      const events = makeEvents();
+      const builder = makeQueryBuilder({ select: [[tagRow], [existingPt]], returning: [] });
+      const updateSpy = vi.fn(() => builder);
+      const setSpy = vi.fn(() => builder);
+      builder['update'] = updateSpy;
+      builder['set'] = setSpy;
+      const svc = new TagService(mockDb({ transaction: vi.fn() }), events);
+
+      await expect(
+        svc.assignPlayerTagInTx(mock<DrizzleTx>(builder), {
+          playerId: PLAYER_ID,
+          tagKey: 'high_risk',
+          assignReason: 'test reason',
+          assignActor: 'scheduled',
+          assignActorUserId: ACTOR_ID,
+          assignMetadata: { amountBreach: incomingAmountBreach, countBreach: null },
+        }),
+      ).rejects.toBeInstanceOf(TagAlreadyInUseError);
+
+      expect(updateSpy).toHaveBeenCalledTimes(1);
+      expect(setSpy).toHaveBeenCalledWith({
+        assignMetadata: { amountBreach: incomingAmountBreach, countBreach: existingCountBreach },
+      });
+      expect(events.emit).not.toHaveBeenCalled();
+    });
+
+    it('does not update when the incoming metadata is already fully covered by existing', async () => {
+      const tagRow = makeTag({ key: 'high_risk' });
+      const existingAssignMetadata = {
+        amountBreach: { amount: '500.00', threshold: '400.00' },
+        countBreach: { count: 5, thresholdCount: 3, thresholdDays: 30 },
+      };
+      const existingPt = makePlayerTag({ assignMetadata: existingAssignMetadata });
+      const events = makeEvents();
+      const builder = makeQueryBuilder({ select: [[tagRow], [existingPt]], returning: [] });
+      const updateSpy = vi.fn(() => builder);
+      builder['update'] = updateSpy;
+      const svc = new TagService(mockDb({ transaction: vi.fn() }), events);
+
+      await expect(
+        svc.assignPlayerTagInTx(mock<DrizzleTx>(builder), {
+          playerId: PLAYER_ID,
+          tagKey: 'high_risk',
+          assignReason: 'test reason',
+          assignActor: 'scheduled',
+          assignActorUserId: ACTOR_ID,
+          assignMetadata: { amountBreach: null, countBreach: existingAssignMetadata.countBreach },
+        }),
+      ).rejects.toBeInstanceOf(TagAlreadyInUseError);
+
+      expect(updateSpy).not.toHaveBeenCalled();
+      expect(events.emit).not.toHaveBeenCalled();
+    });
+
+    it('sets metadata directly to incoming when the existing row has none', async () => {
+      const tagRow = makeTag({ key: 'high_risk' });
+      const incomingAssignMetadata = {
+        amountBreach: null,
+        countBreach: { count: 5, thresholdCount: 3, thresholdDays: 30 },
+      };
+      const existingPt = makePlayerTag({ assignMetadata: null });
+      const events = makeEvents();
+      const builder = makeQueryBuilder({ select: [[tagRow], [existingPt]], returning: [] });
+      const updateSpy = vi.fn(() => builder);
+      const setSpy = vi.fn(() => builder);
+      builder['update'] = updateSpy;
+      builder['set'] = setSpy;
+      const svc = new TagService(mockDb({ transaction: vi.fn() }), events);
+
+      await expect(
+        svc.assignPlayerTagInTx(mock<DrizzleTx>(builder), {
+          playerId: PLAYER_ID,
+          tagKey: 'high_risk',
+          assignReason: 'test reason',
+          assignActor: 'scheduled',
+          assignActorUserId: ACTOR_ID,
+          assignMetadata: incomingAssignMetadata,
+        }),
+      ).rejects.toBeInstanceOf(TagAlreadyInUseError);
+
+      expect(updateSpy).toHaveBeenCalledTimes(1);
+      expect(setSpy).toHaveBeenCalledWith({
+        assignMetadata: incomingAssignMetadata,
+      });
+      expect(events.emit).not.toHaveBeenCalled();
+    });
+
+    it('does not update at all when the assign call carries no metadata (every non-high_risk tag)', async () => {
+      const tagRow = makeTag();
+      const existingPt = makePlayerTag({ assignMetadata: null });
+      const events = makeEvents();
+      const builder = makeQueryBuilder({ select: [[tagRow], [existingPt]], returning: [] });
+      const updateSpy = vi.fn(() => builder);
+      builder['update'] = updateSpy;
+      const svc = new TagService(mockDb({ transaction: vi.fn() }), events);
+
+      await expect(
+        svc.assignPlayerTagInTx(mock<DrizzleTx>(builder), {
+          playerId: PLAYER_ID,
+          tagKey: 'high_roller',
+          assignReason: 'test reason',
+          assignActor: 'scheduled',
+          assignActorUserId: ACTOR_ID,
+        }),
+      ).rejects.toBeInstanceOf(TagAlreadyInUseError);
+
+      expect(updateSpy).not.toHaveBeenCalled();
       expect(events.emit).not.toHaveBeenCalled();
     });
   });
