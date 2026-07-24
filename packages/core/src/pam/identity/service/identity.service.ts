@@ -855,12 +855,10 @@ export class IdentityService {
     });
     await ensureOk(res, { genericMessage: 'Invalid or expired verification code' });
 
-    const row = await this.findUserByEmail(email);
-    if (row) {
-      this.events.emit('identity.password.reset', { userId: row.id });
-      await this.clearLockout(row.id);
-    }
-
+    // better-auth's resetPasswordEmailOTP internally invokes the onPasswordReset hook
+    // (wired in the constructor above), which emits `identity.password.reset` and
+    // clears the lockout - do not duplicate that here (was double-emitting/double-
+    // clearing on every real reset).
     return SUCCESS;
   }
 
