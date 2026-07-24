@@ -1,11 +1,5 @@
 import { implement, ORPCError } from '@orpc/server';
-import {
-  getUserId,
-  mapErrors,
-  extractClientMeta,
-  type AdminGuard,
-  type OssContext,
-} from '@openora/core/server';
+import { getUserId, mapErrors, type AdminGuard, type OssContext } from '@openora/core/server';
 import type {
   AuditWritePort,
   PaymentAdapter,
@@ -50,7 +44,6 @@ export function createWalletRouter(
     ),
 
     withdraw: os.withdraw.handler(({ input, context }) => {
-      const { ip, userAgent } = extractClientMeta(context.request.headers);
       return mapErrors(
         {
           NOT_FOUND: WalletNotFoundError,
@@ -64,8 +57,7 @@ export function createWalletRouter(
             currency: input.currency,
             idempotencyKey: input.idempotencyKey,
             destinationAddress: input.destinationAddress,
-            ip,
-            userAgent,
+            ...context.clientMeta,
           }),
       );
     }),

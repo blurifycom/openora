@@ -1,10 +1,5 @@
 import { implement } from '@orpc/server';
-import {
-  getUserId,
-  extractClientMeta,
-  type AdminGuard,
-  type OssContext,
-} from '@openora/core/server';
+import { getUserId, type AdminGuard, type OssContext } from '@openora/core/server';
 import { tagContract } from '../contract/index.js';
 import { TagService } from '../service/tag.service.js';
 import { TagRuleService } from '../service/tag-rule.service.js';
@@ -22,13 +17,17 @@ export function createTagRouter(tag: TagService, rule: TagRuleService, adminGuar
     ),
 
     assignPlayerTag: os.assignPlayerTag.handler(({ context, input }) => {
-      const meta = extractClientMeta(context.request.headers);
-      return tag.assignPlayerTag({ ...input, assignActorUserId: getUserId(context) }, meta);
+      return tag.assignPlayerTag(
+        { ...input, assignActorUserId: getUserId(context) },
+        context.clientMeta,
+      );
     }),
 
     removePlayerTag: os.removePlayerTag.handler(({ context, input }) => {
-      const meta = extractClientMeta(context.request.headers);
-      return tag.removePlayerTag({ ...input, removalActorUserId: getUserId(context) }, meta);
+      return tag.removePlayerTag(
+        { ...input, removalActorUserId: getUserId(context) },
+        context.clientMeta,
+      );
     }),
 
     listAssignableTags: os.listAssignableTags.handler(({ input }) =>

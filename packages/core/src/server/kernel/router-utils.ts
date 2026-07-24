@@ -13,6 +13,7 @@ export type AuthContext = {
 
 export type OssContext = {
   request: RequestLike;
+  clientMeta: ClientMeta;
   auth?: AuthContext;
   resHeaders?: Headers;
   // The verbatim request body, captured by the runtime for signature verification

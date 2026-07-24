@@ -1,12 +1,12 @@
 import { describe, it, expect, vi } from 'vitest';
-import { mock } from '../../../testing/mock.js';
+import { mock, testContext } from '../../../testing/mock.js';
 import { call, ORPCError } from '@orpc/server';
 import type { AdminGuard } from '@openora/core/server';
 import { createTagRouter } from '../router/index.js';
 import type { TagService } from '../service/tag.service.js';
 import type { TagRuleService } from '../service/tag-rule.service.js';
 
-const CTX = { request: { headers: {} } };
+const CTX = testContext();
 
 function fakeDenyingGuard(): AdminGuard {
   return mock<AdminGuard>({

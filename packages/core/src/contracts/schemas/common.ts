@@ -11,12 +11,6 @@ export type IdInput = z.infer<typeof IdInputSchema>;
 export const UserIdInputSchema = z.object({ userId: UuidSchema });
 export type UserIdInput = z.infer<typeof UserIdInputSchema>;
 
-/**
- * Caller transport metadata attributed to an audited action. `null` means the
- * request carried no usable value - the sole source is `extractClientMeta`
- * (`@openora/core/server`), never a hand-built literal, so a future
- * proxy-trust/IP-spoofing fix lands in one place for every call site.
- */
 export const ClientMetaSchema = z.object({
   ip: z.string().nullable(),
   userAgent: z.string().nullable(),

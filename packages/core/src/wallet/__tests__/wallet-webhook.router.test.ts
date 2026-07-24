@@ -1,6 +1,6 @@
 import { describe, it, expect, vi } from 'vitest';
 import { call, ORPCError } from '@orpc/server';
-import { mock } from '../../testing/mock.js';
+import { mock, testContext } from '../../testing/mock.js';
 import type { AdminGuard } from '@openora/core/server';
 import type {
   AuditWritePort,
@@ -22,7 +22,7 @@ function fakeWallet(): WalletService {
 }
 
 function ctx(rawBody: string, headers: Record<string, string> = {}) {
-  return { context: { request: { headers }, rawBody } };
+  return { context: testContext({ request: { headers }, rawBody }) };
 }
 
 describe('wallet webhook route (M2M, no admin session)', () => {
@@ -45,9 +45,9 @@ describe('wallet webhook route (M2M, no admin session)', () => {
     const verifier = mock<PaymentWebhookVerifier>({ verify: vi.fn().mockReturnValue(true) });
     const router = createWalletRouter(wallet, fakeGuard(), fakeAudit(), payment, verifier);
 
-    await expect(
-      call(router.webhook, {}, { context: { request: { headers: {} } } }),
-    ).rejects.toBeInstanceOf(ORPCError);
+    await expect(call(router.webhook, {}, { context: testContext() })).rejects.toBeInstanceOf(
+      ORPCError,
+    );
     expect(verifier.verify).not.toHaveBeenCalled();
   });
 

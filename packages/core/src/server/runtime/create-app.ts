@@ -23,6 +23,7 @@ import {
   withRequestContext,
   setErrorReporter,
   EVENT_BUS,
+  extractClientMeta,
   type OssContext,
 } from '../kernel/index.js';
 import { randomUUID } from 'node:crypto';
@@ -424,6 +425,7 @@ export async function createApp(config: CreateAppConfig): Promise<CreatedApp> {
     }
     const context: OssContext = {
       request: { headers },
+      clientMeta: extractClientMeta(headers),
       rawBody: await captureRawBody(c.req.raw),
     };
 

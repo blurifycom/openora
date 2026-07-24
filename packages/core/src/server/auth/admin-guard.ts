@@ -14,11 +14,6 @@ import { extractClientMeta } from '../kernel/router-utils.js';
 
 export const ADMIN_GUARD: Token<AdminGuard> = createToken('ADMIN_GUARD');
 
-/**
- * The verified admin behind a request, plus the transport metadata every audited
- * admin action attributes the change to. Returned by `AdminGuard.assert`, so a
- * router never re-derives either half from the raw headers.
- */
 export type AdminCaller = { userId: string; role: string } & ClientMeta;
 
 /**

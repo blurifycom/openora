@@ -4,7 +4,6 @@ import {
   AdminGuard,
   mapErrors,
   getUserId,
-  extractClientMeta,
   createEventStreamGenerator,
   type EventBus,
 } from '@openora/core/server';
@@ -33,13 +32,14 @@ export function createIdentityRouter(
     ),
 
     phoneLoginRequest: os.phoneLoginRequest.handler(({ input, context }) => {
-      const { ip, userAgent } = extractClientMeta(context.request.headers);
-      return phoneLogin.requestOtp({ ...input, ip, userAgent });
+      return phoneLogin.requestOtp({ ...input, ...context.clientMeta });
     }),
 
     phoneLoginVerify: os.phoneLoginVerify.handler(({ input, context }) => {
-      const { ip, userAgent } = extractClientMeta(context.request.headers);
-      return phoneLogin.verifyOtp({ ...input, ip, userAgent }, context.resHeaders ?? new Headers());
+      return phoneLogin.verifyOtp(
+        { ...input, ...context.clientMeta },
+        context.resHeaders ?? new Headers(),
+      );
     }),
 
     logout: os.logout.handler(({ context }) =>

@@ -3,7 +3,6 @@ import { populateContractRouterPaths } from '@orpc/contract';
 import {
   mapErrors,
   createEventStreamGenerator,
-  extractClientMeta,
   getUserId,
   AdminGuard,
   assertRateLimit,
@@ -185,28 +184,24 @@ export function createChatRouter({
 
     blockUser: os.blockUser.handler(({ input, context }) => {
       const userId = getUserId(context);
-      const meta = extractClientMeta(context.request.headers);
       return mapErrors({ BAD_REQUEST: ChatSelfBlockError }, () =>
-        chatService.blockUser(userId, input.blockedId, meta),
+        chatService.blockUser(userId, input.blockedId, context.clientMeta),
       );
     }),
 
     unblockUser: os.unblockUser.handler(({ input, context }) => {
-      const meta = extractClientMeta(context.request.headers);
-      return chatService.unblockUser(getUserId(context), input.blockedId, meta);
+      return chatService.unblockUser(getUserId(context), input.blockedId, context.clientMeta);
     }),
 
     createPrivateRoom: os.createPrivateRoom.handler(({ input, context }) => {
       const userId = getUserId(context);
-      const { ip, userAgent } = extractClientMeta(context.request.headers);
       return mapErrors({ CONFLICT: ChatRoomLimitReachedError }, () =>
-        chatService.createPrivateRoom({ userId, name: input.name, ip, userAgent }),
+        chatService.createPrivateRoom({ userId, name: input.name, ...context.clientMeta }),
       );
     }),
 
     joinRoom: os.joinRoom.handler(async ({ input, context }) => {
       const userId = getUserId(context);
-      const { ip, userAgent } = extractClientMeta(context.request.headers);
       await assertRateLimit(
         limiter,
         makeRateLimitKey(RATE_LIMIT_KEYS.CHAT_ROOM_JOIN, userId),
@@ -214,15 +209,14 @@ export function createChatRouter({
       );
       return mapErrors(
         { NOT_FOUND: ChatRoomJoinCodeNotFoundError, FORBIDDEN: ChatRoomBannedError },
-        () => chatService.joinRoom({ userId, joinCode: input.joinCode, ip, userAgent }),
+        () => chatService.joinRoom({ userId, joinCode: input.joinCode, ...context.clientMeta }),
       );
     }),
 
     leaveRoom: os.leaveRoom.handler(({ input, context }) => {
       const userId = getUserId(context);
-      const { ip, userAgent } = extractClientMeta(context.request.headers);
       return mapErrors({ BAD_REQUEST: ChatRoomLastModeratorError }, () =>
-        chatService.leaveRoom({ userId, roomId: input.roomId, ip, userAgent }),
+        chatService.leaveRoom({ userId, roomId: input.roomId, ...context.clientMeta }),
       );
     }),
 
@@ -234,7 +228,6 @@ export function createChatRouter({
 
     kickMember: os.kickMember.handler(({ input, context }) => {
       const moderatorId = getUserId(context);
-      const { ip, userAgent } = extractClientMeta(context.request.headers);
       return mapErrors(
         {
           NOT_FOUND: ChatRoomNotFoundError,
@@ -246,15 +239,13 @@ export function createChatRouter({
             moderatorId,
             roomId: input.roomId,
             userId: input.userId,
-            ip,
-            userAgent,
+            ...context.clientMeta,
           }),
       );
     }),
 
     banMember: os.banMember.handler(({ input, context }) => {
       const moderatorId = getUserId(context);
-      const { ip, userAgent } = extractClientMeta(context.request.headers);
       return mapErrors(
         {
           NOT_FOUND: ChatRoomNotFoundError,
@@ -266,8 +257,7 @@ export function createChatRouter({
             moderatorId,
             roomId: input.roomId,
             userId: input.userId,
-            ip,
-            userAgent,
+            ...context.clientMeta,
           }),
       );
     }),

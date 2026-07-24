@@ -1,11 +1,5 @@
 import { implement, ORPCError } from '@orpc/server';
-import {
-  AdminGuard,
-  extractClientMeta,
-  getUserId,
-  mapErrors,
-  type OssContext,
-} from '@openora/core/server';
+import { AdminGuard, getUserId, mapErrors, type OssContext } from '@openora/core/server';
 import type { KycAdapter, KycWebhookVerifier } from '@openora/core/contracts';
 import { complianceContract } from '../contract/index.js';
 import {
@@ -48,19 +42,17 @@ export function createComplianceRouter({
     ),
 
     upsertLimit: os.upsertLimit.handler(({ input, context }) => {
-      const meta = extractClientMeta(context.request.headers);
-      return compliance.upsertLimit(getUserId(context), input, meta);
+      return compliance.upsertLimit(getUserId(context), input, context.clientMeta);
     }),
 
     deleteLimit: os.deleteLimit.handler(({ input, context }) => {
-      const meta = extractClientMeta(context.request.headers);
       return mapErrors({ NOT_FOUND: LimitNotFoundError, FORBIDDEN: LimitOwnershipError }, () =>
-        compliance.removeLimit(input.id, getUserId(context), meta),
+        compliance.removeLimit(input.id, getUserId(context), context.clientMeta),
       );
     }),
 
     geoCheck: os.geoCheck.handler(({ context }) => {
-      const { ip } = extractClientMeta(context.request.headers);
+      const { ip } = context.clientMeta;
       return compliance.geoCheck(ip ?? '127.0.0.1');
     }),
 
@@ -84,8 +76,7 @@ export function createComplianceRouter({
     }),
 
     submitKyc: os.submitKyc.handler(({ input, context }) => {
-      const meta = extractClientMeta(context.request.headers);
-      return kyc.submit(getUserId(context), input, meta);
+      return kyc.submit(getUserId(context), input, context.clientMeta);
     }),
 
     // M2M provider webhook - no admin session. Verify the verbatim bytes against the

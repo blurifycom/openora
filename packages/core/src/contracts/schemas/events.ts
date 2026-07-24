@@ -11,8 +11,7 @@ import { CurrencyCodeSchema, CountryCodeSchema } from './igaming-config.js';
 import { PermissionLevelSchema } from './iam.js';
 import { KycStatusSchema } from './player.js';
 
-// Optional request-origin metadata shared by HTTP-triggered events; both fields may be absent
-// because an event can also be raised by a job, a webhook, or another non-HTTP trigger.
+// Optional request-origin metadata shared by HTTP-triggered events; both fields may be absent.
 const authContextBase = ClientMetaSchema.partial();
 
 const iamRoleEventBase = z
