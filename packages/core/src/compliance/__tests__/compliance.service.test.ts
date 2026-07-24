@@ -1,111 +1,224 @@
-import { describe, it, expect, vi } from 'vitest';
-import { mockDb } from '../../testing/mock.js';
+import { describe, it, expect, vi, beforeAll, afterAll, beforeEach } from 'vitest';
+import { randomUUID } from 'node:crypto';
+import { eq, sql } from 'drizzle-orm';
+import type { EventBus } from '@openora/core/server';
+import type { GeoIpAdapter } from '@openora/core/contracts';
+import { createTestDb, type TestDb } from '@openora/core/testing';
+import { mock } from '../../testing/mock.js';
+import { migrate } from '../migrate.js';
+import { userLimit, geoRule } from '../schema/index.js';
 import {
   ComplianceService,
   LimitNotFoundError,
   LimitOwnershipError,
 } from '../service/compliance.service.js';
 
-function makeDrizzle(selectResult: unknown[] = [], insertResult: unknown[] = []) {
-  const db = {
-    select: vi.fn().mockReturnThis(),
-    from: vi.fn().mockReturnThis(),
-    where: vi.fn().mockResolvedValue(selectResult),
-    insert: vi.fn().mockReturnThis(),
-    values: vi.fn().mockReturnThis(),
-    onConflictDoUpdate: vi.fn().mockReturnThis(),
-    returning: vi.fn().mockResolvedValue(insertResult),
-    update: vi.fn().mockReturnThis(),
-    set: vi.fn().mockReturnThis(),
-    delete: vi.fn().mockReturnThis(),
-  };
-  return mockDb(db);
+let db: TestDb;
+
+function makeService(countryCode?: string | null) {
+  const events = { emit: vi.fn(), on: vi.fn() };
+  const geoIp =
+    countryCode === undefined
+      ? null
+      : mock<GeoIpAdapter>({ lookup: vi.fn(async () => ({ countryCode })) });
+  const svc = new ComplianceService(db.drizzle, mock<EventBus>(events), geoIp);
+  return { svc, events };
 }
 
-function makeEvents() {
-  return { emit: vi.fn(), on: vi.fn() };
+async function seedLimit(userId: string, overrides: Partial<typeof userLimit.$inferInsert> = {}) {
+  const [row] = await db.drizzle.db
+    .insert(userLimit)
+    .values({
+      userId,
+      type: 'deposit',
+      amount: '100',
+      minutes: null,
+      period: 'daily',
+      ...overrides,
+    })
+    .returning();
+  return row!;
 }
 
-describe('ComplianceService', () => {
-  describe('getLimitsForUser', () => {
-    it('returns empty array when no limits exist', async () => {
-      // oxlint-disable-next-line typescript/no-explicit-any
-      const svc = new ComplianceService(makeDrizzle() as any, makeEvents() as any);
-      const result = await svc.getLimitsForUser('user-1');
-      expect(result).toEqual([]);
+beforeAll(async () => {
+  db = await createTestDb([migrate]);
+});
+
+afterAll(async () => {
+  await db.drop();
+});
+
+beforeEach(async () => {
+  await db.drizzle.db.execute(sql`TRUNCATE ${userLimit}, ${geoRule} RESTART IDENTITY CASCADE`);
+});
+
+describe('ComplianceService limits (real PG)', () => {
+  it('returns an empty list for a player with no limits', async () => {
+    const { svc } = makeService();
+
+    expect(await svc.getLimitsForUser(randomUUID())).toEqual([]);
+  });
+
+  it('returns only the requesting player rows, with serialized timestamps', async () => {
+    const { svc } = makeService();
+    const userId = randomUUID();
+    await seedLimit(userId);
+    await seedLimit(randomUUID());
+
+    const limits = await svc.getLimitsForUser(userId);
+
+    expect(limits).toHaveLength(1);
+    expect(typeof limits[0]?.createdAt).toBe('string');
+  });
+
+  it('inserts a limit and emits upserted', async () => {
+    const { svc, events } = makeService();
+    const userId = randomUUID();
+
+    const limit = await svc.upsertLimit(userId, {
+      type: 'deposit',
+      amount: '100',
+      minutes: null,
+      period: 'daily',
+    });
+
+    expect(Number(limit.amount)).toBe(100);
+    expect(events.emit).toHaveBeenCalledWith(
+      'compliance.limit.upserted',
+      expect.objectContaining({ userId, limitId: limit.id }),
+    );
+  });
+
+  it('upserts in place on the same type and period', async () => {
+    const { svc } = makeService();
+    const userId = randomUUID();
+    const first = await svc.upsertLimit(userId, {
+      type: 'deposit',
+      amount: '100',
+      minutes: null,
+      period: 'daily',
+    });
+
+    const second = await svc.upsertLimit(userId, {
+      type: 'deposit',
+      amount: '250',
+      minutes: null,
+      period: 'daily',
+    });
+
+    expect(second.id).toBe(first.id);
+    const rows = await db.drizzle.db.select().from(userLimit).where(eq(userLimit.userId, userId));
+    expect(rows).toHaveLength(1);
+    expect(Number(rows[0]?.amount)).toBe(250);
+  });
+
+  it('removes an owned limit and emits removed', async () => {
+    const { svc, events } = makeService();
+    const userId = randomUUID();
+    const limit = await seedLimit(userId);
+
+    await expect(svc.removeLimit(limit.id, userId)).resolves.toEqual({ success: true });
+
+    expect(await db.drizzle.db.select().from(userLimit)).toHaveLength(0);
+    expect(events.emit).toHaveBeenCalledWith(
+      'compliance.limit.removed',
+      expect.objectContaining({ userId, limitId: limit.id }),
+    );
+  });
+
+  it('throws LimitNotFoundError for an unknown id', async () => {
+    const { svc } = makeService();
+
+    await expect(svc.removeLimit(randomUUID(), randomUUID())).rejects.toBeInstanceOf(
+      LimitNotFoundError,
+    );
+  });
+
+  it('refuses to remove another players limit and leaves the row in place', async () => {
+    const { svc, events } = makeService();
+    const owner = randomUUID();
+    const limit = await seedLimit(owner);
+
+    await expect(svc.removeLimit(limit.id, randomUUID())).rejects.toBeInstanceOf(
+      LimitOwnershipError,
+    );
+    expect(await db.drizzle.db.select().from(userLimit)).toHaveLength(1);
+    expect(events.emit).not.toHaveBeenCalled();
+  });
+});
+
+describe('ComplianceService.geoCheck (real PG)', () => {
+  it('allows the request when no geo-ip port is bound', async () => {
+    const { svc } = makeService();
+
+    expect(await svc.geoCheck('1.2.3.4')).toEqual({
+      allowed: true,
+      countryCode: null,
+      reason: null,
     });
   });
 
-  describe('removeLimit', () => {
-    it('throws LimitNotFoundError when limit does not exist', async () => {
-      // oxlint-disable-next-line typescript/no-explicit-any
-      const svc = new ComplianceService(makeDrizzle([]) as any, makeEvents() as any);
-      await expect(svc.removeLimit('nonexistent', 'user-1')).rejects.toBeInstanceOf(
-        LimitNotFoundError,
-      );
-    });
+  it('allows the request when the lookup resolves no country', async () => {
+    const { svc } = makeService(null);
 
-    it('throws LimitOwnershipError when limit belongs to another user', async () => {
-      const drizzle = makeDrizzle([
-        {
-          id: 'limit-1',
-          userId: 'user-other',
-          type: 'deposit',
-          amount: '100',
-          minutes: null,
-          period: 'daily',
-          createdAt: new Date(),
-          updatedAt: new Date(),
-        },
-      ]);
-      // oxlint-disable-next-line typescript/no-explicit-any
-      const svc = new ComplianceService(drizzle as any, makeEvents() as any);
-      await expect(svc.removeLimit('limit-1', 'user-1')).rejects.toBeInstanceOf(
-        LimitOwnershipError,
-      );
-    });
+    expect(await svc.geoCheck('1.2.3.4')).toMatchObject({ allowed: true, countryCode: null });
   });
 
-  describe('geoCheck', () => {
-    it('returns allowed: true when no geoIp port and no rule', async () => {
-      // oxlint-disable-next-line typescript/no-explicit-any
-      const svc = new ComplianceService(makeDrizzle([]) as any, makeEvents() as any);
-      const result = await svc.geoCheck('1.2.3.4');
-      expect(result.allowed).toBe(true);
-      expect(result.countryCode).toBeNull();
-    });
+  it('allows a resolved country that carries no rule', async () => {
+    const { svc } = makeService('DE');
 
-    it('returns allowed: false for blocked country', async () => {
-      const drizzle = makeDrizzle([
-        {
-          id: 'rule-1',
-          countryCode: 'US',
-          action: 'block',
-          createdAt: new Date(),
-        },
-      ]);
-      const geoIp = { lookup: vi.fn().mockResolvedValue({ countryCode: 'US' }) };
-      // oxlint-disable-next-line typescript/no-explicit-any
-      const svc = new ComplianceService(drizzle as any, makeEvents() as any, geoIp);
-      const result = await svc.geoCheck('1.2.3.4');
-      expect(result.allowed).toBe(false);
-      expect(result.countryCode).toBe('US');
-    });
+    expect(await svc.geoCheck('1.2.3.4')).toMatchObject({ allowed: true, countryCode: 'DE' });
+  });
 
-    it('returns allowed: true for allowed country rule', async () => {
-      const drizzle = makeDrizzle([
-        {
-          id: 'rule-2',
-          countryCode: 'DE',
-          action: 'allow',
-          createdAt: new Date(),
-        },
-      ]);
-      const geoIp = { lookup: vi.fn().mockResolvedValue({ countryCode: 'DE' }) };
-      // oxlint-disable-next-line typescript/no-explicit-any
-      const svc = new ComplianceService(drizzle as any, makeEvents() as any, geoIp);
-      const result = await svc.geoCheck('1.2.3.4');
-      expect(result.allowed).toBe(true);
-    });
+  it('blocks a country whose rule says block, with a reason', async () => {
+    const { svc } = makeService('US');
+    await db.drizzle.db.insert(geoRule).values({ countryCode: 'US', action: 'block' });
+
+    const result = await svc.geoCheck('1.2.3.4');
+
+    expect(result).toMatchObject({ allowed: false, countryCode: 'US' });
+    expect(result.reason).toContain('US');
+  });
+
+  it('allows a country whose rule says allow', async () => {
+    const { svc } = makeService('DE');
+    await db.drizzle.db.insert(geoRule).values({ countryCode: 'DE', action: 'allow' });
+
+    expect(await svc.geoCheck('1.2.3.4')).toMatchObject({ allowed: true, countryCode: 'DE' });
+  });
+});
+
+describe('ComplianceService geo rules (real PG)', () => {
+  it('adds a rule and emits the event', async () => {
+    const { svc, events } = makeService();
+    const actorId = randomUUID();
+
+    const rule = await svc.addGeoRule({ countryCode: 'FR', action: 'block' }, actorId);
+
+    expect(rule).toMatchObject({ countryCode: 'FR', action: 'block' });
+    expect(events.emit).toHaveBeenCalledWith(
+      'compliance.geo-rule.added',
+      expect.objectContaining({ countryCode: 'FR', action: 'block', actorId }),
+    );
+  });
+
+  it('upserts the action for a country already on file', async () => {
+    const { svc } = makeService();
+    await svc.addGeoRule({ countryCode: 'FR', action: 'block' });
+
+    const updated = await svc.addGeoRule({ countryCode: 'FR', action: 'allow' });
+
+    expect(updated.action).toBe('allow');
+    expect(await db.drizzle.db.select().from(geoRule)).toHaveLength(1);
+  });
+
+  it('lists every rule on file', async () => {
+    const { svc } = makeService();
+    await svc.addGeoRule({ countryCode: 'FR', action: 'block' });
+    await svc.addGeoRule({ countryCode: 'DE', action: 'allow' });
+
+    const rules = await svc.listGeoRules();
+
+    expect(rules.map((r) => r.countryCode).sort()).toEqual(['DE', 'FR']);
   });
 });

@@ -1,197 +1,204 @@
-import { describe, it, expect, vi } from 'vitest';
-import { mock, mockDb } from '../../../testing/mock.js';
+import { describe, it, expect, vi, beforeAll, afterAll, beforeEach } from 'vitest';
+import { randomUUID } from 'node:crypto';
+import { eq, sql } from 'drizzle-orm';
 import type { EventBus } from '@openora/core/server';
+import type { TagKey } from '@openora/core/contracts';
+import { createTestDb, type TestDb } from '@openora/core/testing';
+import { mock } from '../../../testing/mock.js';
+import { migrate } from '../migrate.js';
+import { tag, tagRule } from '../schema/index.js';
 import { TagRuleService, TagRuleNotFoundError } from '../service/tag-rule.service.js';
-import type { TagRule } from '../schema/index.js';
 
-const ACTOR_ID = '33333333-3333-4333-8333-333333333333';
-const TAG_ID = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa';
+let db: TestDb;
 
-type TagRuleWithKey = TagRule & { tagKey: string };
-
-function makeRow(overrides: Partial<TagRuleWithKey> = {}): TagRuleWithKey {
-  return {
-    id: '00000000-0000-0000-0000-000000000001',
-    tagId: TAG_ID,
-    tagKey: 'high_roller',
-    isEnabled: true,
-    threshold: '1000',
-    thresholdDays: null,
-    thresholdCount: null,
-    createdAt: new Date('2024-01-01'),
-    updatedAt: new Date('2024-01-01'),
-    ...overrides,
-  } as TagRuleWithKey;
+function makeService() {
+  const events = mock<EventBus>({ emit: vi.fn(), on: vi.fn() });
+  return { svc: new TagRuleService(db.drizzle, events), events };
 }
 
-/** Mirrors what toTagRule does: dates -> ISO strings; decimal-string thresholds pass through. */
-function mapped(row: TagRuleWithKey) {
-  return {
-    id: row.id,
-    tagId: row.tagId,
-    tagKey: row.tagKey,
-    isEnabled: row.isEnabled,
-    threshold: row.threshold,
-    thresholdDays: row.thresholdDays,
-    thresholdCount: row.thresholdCount,
-    createdAt: (row.createdAt as unknown as Date).toISOString(),
-    updatedAt: (row.updatedAt as unknown as Date).toISOString(),
-  };
+async function seedTag(key: TagKey) {
+  const [row] = await db.drizzle.db.insert(tag).values({ key }).returning();
+  return row!;
 }
 
-function makeEvents() {
-  return mock<EventBus>({ emit: vi.fn(), on: vi.fn() });
-}
+beforeAll(async () => {
+  db = await createTestDb([migrate]);
+});
 
-/**
- * For listTagRules / getTagRule: select with innerJoin.
- * Chain: select() -> from() -> innerJoin() -> orderBy() / where() -> limit()
- */
-function makeQueryDb(ruleRows: unknown[] = []) {
-  const limit = vi.fn().mockResolvedValue(ruleRows);
-  const where = vi.fn(() => ({ limit }));
-  const orderBy = vi.fn().mockResolvedValue(ruleRows);
-  const innerJoin = vi.fn(() => ({ where, orderBy }));
-  const from = vi.fn(() => Object.assign(Promise.resolve(ruleRows), { innerJoin }));
-  const select = vi.fn(() => ({ from }));
+afterAll(async () => {
+  await db.drop();
+});
 
-  const db = { select, from, innerJoin, where, limit, orderBy };
-  return { drizzle: mockDb(db), db };
-}
+beforeEach(async () => {
+  await db.drizzle.db.execute(sql`TRUNCATE ${tagRule}, ${tag} RESTART IDENTITY CASCADE`);
+});
 
-/**
- * For upsertTagRule: tag lookup (select -> from -> where -> limit) then insert chain.
- * Pass tagId=null to simulate a missing tag row.
- */
-function makeUpsertDb(tagId: string | null, returningResult: unknown[] = []) {
-  const tagLimit = vi.fn().mockResolvedValue(tagId ? [{ id: tagId }] : []);
-  const tagWhere = vi.fn(() => ({ limit: tagLimit }));
-  const tagFrom = vi.fn(() => ({ where: tagWhere }));
-  const select = vi.fn(() => ({ from: tagFrom }));
+describe('TagRuleService.upsertTagRule (real PG)', () => {
+  it('inserts the rule, writes the decimal threshold, and emits upserted', async () => {
+    const { svc, events } = makeService();
+    const t = await seedTag('high_roller');
+    const actorId = randomUUID();
 
-  const returning = vi.fn().mockResolvedValue(returningResult);
-  const onConflictDoUpdate = vi.fn(() => ({ returning }));
-  const values = vi.fn(() => ({ onConflictDoUpdate }));
-  const insert = vi.fn(() => ({ values }));
+    const rule = await svc.upsertTagRule(
+      {
+        tagKey: 'high_roller',
+        isEnabled: true,
+        threshold: '1000',
+        thresholdDays: null,
+        thresholdCount: null,
+      },
+      actorId,
+    );
 
-  const db = { select, insert, values, onConflictDoUpdate, returning, tagWhere, tagLimit };
-  return { drizzle: mockDb(db), db };
-}
-
-describe('TagRuleService', () => {
-  describe('listTagRules', () => {
-    it('returns rows joined with tag key, ordered by tag key', async () => {
-      const rows = [makeRow(), makeRow({ tagKey: 'inactive', threshold: null })];
-      const { drizzle } = makeQueryDb(rows);
-      const svc = new TagRuleService(drizzle, makeEvents());
-      expect(await svc.listTagRules()).toEqual(rows.map(mapped));
-    });
+    expect(rule).toMatchObject({ tagKey: 'high_roller', isEnabled: true, tagId: t.id });
+    expect(Number(rule.threshold)).toBe(1000);
+    expect(events.emit).toHaveBeenCalledWith(
+      'tag.rule.upserted',
+      expect.objectContaining({ tagKey: 'high_roller', actorId }),
+    );
   });
 
-  describe('getTagRule', () => {
-    it('returns the matching joined row', async () => {
-      const row = makeRow();
-      const { drizzle } = makeQueryDb([row]);
-      const svc = new TagRuleService(drizzle, makeEvents());
-      expect(await svc.getTagRule('high_roller')).toEqual(mapped(row));
-    });
+  it('updates the existing rule in place rather than adding a second one', async () => {
+    const { svc } = makeService();
+    await seedTag('high_roller');
+    const actorId = randomUUID();
+    const first = await svc.upsertTagRule(
+      {
+        tagKey: 'high_roller',
+        isEnabled: false,
+        threshold: '1000',
+        thresholdDays: null,
+        thresholdCount: null,
+      },
+      actorId,
+    );
 
-    it('throws TagRuleNotFoundError when no row is found', async () => {
-      const { drizzle } = makeQueryDb([]);
-      const svc = new TagRuleService(drizzle, makeEvents());
-      await expect(svc.getTagRule('high_roller')).rejects.toBeInstanceOf(TagRuleNotFoundError);
-    });
+    const updated = await svc.upsertTagRule(
+      {
+        tagKey: 'high_roller',
+        isEnabled: true,
+        threshold: '2500',
+        thresholdDays: null,
+        thresholdCount: null,
+      },
+      actorId,
+    );
+
+    expect(updated.id).toBe(first.id);
+    expect(updated.isEnabled).toBe(true);
+    expect(Number(updated.threshold)).toBe(2500);
+    expect(await db.drizzle.db.select().from(tagRule)).toHaveLength(1);
   });
 
-  describe('upsertTagRule', () => {
-    it('upserts and returns the row with tagKey, writing the decimal threshold and excluding tagId from the update set', async () => {
-      const row = makeRow();
-      const { drizzle, db } = makeUpsertDb(TAG_ID, [row]);
-      const svc = new TagRuleService(drizzle, makeEvents());
+  it('writes a null threshold when the rule does not use one', async () => {
+    const { svc } = makeService();
+    await seedTag('inactive');
 
-      const result = await svc.upsertTagRule(
+    const rule = await svc.upsertTagRule(
+      {
+        tagKey: 'inactive',
+        isEnabled: true,
+        threshold: null,
+        thresholdDays: 30,
+        thresholdCount: null,
+      },
+      randomUUID(),
+    );
+
+    expect(rule).toMatchObject({ threshold: null, thresholdDays: 30 });
+  });
+
+  it('throws TagRuleNotFoundError when the tag key has no tag row', async () => {
+    const { svc, events } = makeService();
+
+    await expect(
+      svc.upsertTagRule(
         {
-          tagKey: 'high_roller',
-          isEnabled: true,
-          threshold: '1000',
-          thresholdDays: null,
-          thresholdCount: null,
-        },
-        ACTOR_ID,
-      );
-
-      expect(result).toEqual(mapped(row));
-      expect(db.values).toHaveBeenCalledWith(
-        expect.objectContaining({ tagId: TAG_ID, threshold: '1000' }),
-      );
-      // tagId must not appear in the update set (it is the conflict target)
-      expect(db.onConflictDoUpdate).toHaveBeenCalledWith(
-        expect.objectContaining({
-          set: expect.not.objectContaining({ tagId: expect.anything() }),
-        }),
-      );
-      expect(db.onConflictDoUpdate).toHaveBeenCalledWith(
-        expect.objectContaining({ set: expect.objectContaining({ threshold: '1000' }) }),
-      );
-    });
-
-    it('writes a null threshold when omitted', async () => {
-      const row = makeRow({ threshold: null });
-      const { drizzle, db } = makeUpsertDb(TAG_ID, [row]);
-      const svc = new TagRuleService(drizzle, makeEvents());
-
-      await svc.upsertTagRule(
-        {
-          tagKey: 'inactive',
+          tagKey: 'vip',
           isEnabled: true,
           threshold: null,
-          thresholdDays: 30,
-          thresholdCount: null,
-        },
-        ACTOR_ID,
-      );
-
-      expect(db.values).toHaveBeenCalledWith(expect.objectContaining({ threshold: null }));
-    });
-
-    it('throws TagRuleNotFoundError when no tag row exists for the given key', async () => {
-      const { drizzle } = makeUpsertDb(null);
-      const svc = new TagRuleService(drizzle, makeEvents());
-      await expect(
-        svc.upsertTagRule(
-          {
-            tagKey: 'high_roller',
-            isEnabled: true,
-            threshold: null,
-            thresholdDays: null,
-            thresholdCount: null,
-          },
-          ACTOR_ID,
-        ),
-      ).rejects.toBeInstanceOf(TagRuleNotFoundError);
-    });
-
-    it('emits tag.rule.upserted after a successful write', async () => {
-      const row = makeRow();
-      const { drizzle } = makeUpsertDb(TAG_ID, [row]);
-      const events = makeEvents();
-      const svc = new TagRuleService(drizzle, events);
-
-      await svc.upsertTagRule(
-        {
-          tagKey: 'high_roller',
-          isEnabled: true,
-          threshold: '1000',
           thresholdDays: null,
           thresholdCount: null,
         },
-        ACTOR_ID,
-      );
+        randomUUID(),
+      ),
+    ).rejects.toBeInstanceOf(TagRuleNotFoundError);
+    expect(events.emit).not.toHaveBeenCalled();
+  });
+});
 
-      expect(events.emit).toHaveBeenCalledWith(
-        'tag.rule.upserted',
-        expect.objectContaining({ tagKey: 'high_roller', actorId: ACTOR_ID }),
-      );
+describe('TagRuleService.getTagRule (real PG)', () => {
+  it('returns the rule joined with its tag key', async () => {
+    const { svc } = makeService();
+    await seedTag('high_risk');
+    await svc.upsertTagRule(
+      {
+        tagKey: 'high_risk',
+        isEnabled: true,
+        threshold: '500',
+        thresholdDays: 7,
+        thresholdCount: 3,
+      },
+      randomUUID(),
+    );
+
+    const rule = await svc.getTagRule('high_risk');
+
+    expect(rule).toMatchObject({
+      tagKey: 'high_risk',
+      isEnabled: true,
+      thresholdDays: 7,
+      thresholdCount: 3,
     });
+  });
+
+  it('throws TagRuleNotFoundError when the tag carries no rule', async () => {
+    const { svc } = makeService();
+    await seedTag('vip');
+
+    await expect(svc.getTagRule('vip')).rejects.toBeInstanceOf(TagRuleNotFoundError);
+  });
+});
+
+describe('TagRuleService.listTagRules (real PG)', () => {
+  it('returns every rule ordered by the tag_key enum position, not alphabetically', async () => {
+    const { svc } = makeService();
+    const actorId = randomUUID();
+    for (const tagKey of ['vip', 'high_roller', 'inactive'] as const) {
+      await seedTag(tagKey);
+      await svc.upsertTagRule(
+        { tagKey, isEnabled: true, threshold: null, thresholdDays: null, thresholdCount: null },
+        actorId,
+      );
+    }
+
+    const rules = await svc.listTagRules();
+
+    expect(rules.map((r) => r.tagKey)).toEqual(['high_roller', 'vip', 'inactive']);
+  });
+
+  it('returns an empty list when no rules are configured', async () => {
+    const { svc } = makeService();
+    await seedTag('vip');
+
+    expect(await svc.listTagRules()).toEqual([]);
+  });
+
+  it('drops the rule from the listing once it is deleted', async () => {
+    const { svc } = makeService();
+    const t = await seedTag('vip');
+    await svc.upsertTagRule(
+      {
+        tagKey: 'vip',
+        isEnabled: true,
+        threshold: null,
+        thresholdDays: null,
+        thresholdCount: null,
+      },
+      randomUUID(),
+    );
+    await db.drizzle.db.delete(tagRule).where(eq(tagRule.tagId, t.id));
+
+    expect(await svc.listTagRules()).toEqual([]);
   });
 });

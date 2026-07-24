@@ -1,42 +1,112 @@
-import { describe, it, expect, vi } from 'vitest';
+import { describe, it, expect, vi, beforeAll, afterAll, beforeEach } from 'vitest';
+import { randomUUID } from 'node:crypto';
+import { eq, sql } from 'drizzle-orm';
 import type { EventBus } from '@openora/core/server';
+import { createTestDb, type TestDb } from '@openora/core/testing';
+import { player } from '@openora/core/pam/schema/profile';
+import { migrate as migrateProfile } from '@openora/core/pam/migrate/profile';
+import { mock } from '../../../testing/mock.js';
 import { PlayerKycStatusWriter } from '../service/kyc-status-writer.js';
-import { mock, mockDb } from '../../../testing/mock.js';
 
-function makeDb(selectResult: unknown) {
-  const builder: unknown = new Proxy(function () {}, {
-    get(_t, prop) {
-      if (prop === 'then') {
-        return (res: (v: unknown) => unknown) => res(selectResult);
-      }
-      return () => builder;
-    },
-    apply: () => builder,
-  });
-  return mockDb(builder);
-}
+let db: TestDb;
 
-function makeWriter(selectResult: unknown) {
+function makeWriter() {
   const events = { emit: vi.fn(), on: vi.fn() };
-  const writer = new PlayerKycStatusWriter(makeDb(selectResult), mock<EventBus>(events));
-  return { writer, events };
+  return { writer: new PlayerKycStatusWriter(db.drizzle, mock<EventBus>(events)), events };
 }
 
-describe('PlayerKycStatusWriter.setStatus', () => {
-  it('writes player.kycStatus and emits compliance.kyc.updated on a real change', async () => {
-    const { writer, events } = makeWriter([{ kycStatus: 'pending' }]);
-    await writer.setStatus('u-1', 'verified', { actorId: 'admin-1', source: 'manual' });
+async function seedPlayer(overrides: Partial<typeof player.$inferInsert> = {}) {
+  const [row] = await db.drizzle.db
+    .insert(player)
+    .values({ userId: randomUUID(), displayName: 'Player', ...overrides })
+    .returning();
+  return row!;
+}
+
+async function statusOf(userId: string) {
+  const [row] = await db.drizzle.db.select().from(player).where(eq(player.userId, userId));
+  return row?.kycStatus;
+}
+
+beforeAll(async () => {
+  db = await createTestDb([migrateProfile]);
+});
+
+afterAll(async () => {
+  await db.drop();
+});
+
+beforeEach(async () => {
+  await db.drizzle.db.execute(sql`TRUNCATE ${player} RESTART IDENTITY CASCADE`);
+});
+
+describe('PlayerKycStatusWriter.setStatus (real PG)', () => {
+  it('writes the new status and emits the change with its previous value', async () => {
+    const { writer, events } = makeWriter();
+    const { userId } = await seedPlayer({ kycStatus: 'pending' });
+    const actorId = randomUUID();
+
+    await writer.setStatus(userId, 'verified', { actorId, source: 'manual' });
+
+    expect(await statusOf(userId)).toBe('verified');
     expect(events.emit).toHaveBeenCalledWith('compliance.kyc.updated', {
-      userId: 'u-1',
-      actorId: 'admin-1',
+      userId,
+      actorId,
       status: 'verified',
       previousStatus: 'pending',
     });
   });
 
-  it('is a no-op when the status is unchanged', async () => {
-    const { writer, events } = makeWriter([{ kycStatus: 'verified' }]);
-    await writer.setStatus('u-1', 'verified', { actorId: null, source: 'vendor' });
+  it('is a silent no-op when the status is unchanged', async () => {
+    const { writer, events } = makeWriter();
+    const { userId } = await seedPlayer({ kycStatus: 'verified' });
+
+    await writer.setStatus(userId, 'verified', { actorId: null, source: 'vendor' });
+
     expect(events.emit).not.toHaveBeenCalled();
+  });
+
+  it('is a no-op for a user with no player profile', async () => {
+    const { writer, events } = makeWriter();
+
+    await writer.setStatus(randomUUID(), 'verified', { actorId: null, source: 'vendor' });
+
+    expect(events.emit).not.toHaveBeenCalled();
+  });
+
+  it('leaves other players untouched', async () => {
+    const { writer } = makeWriter();
+    const target = await seedPlayer({ kycStatus: 'pending' });
+    const other = await seedPlayer({ kycStatus: 'pending' });
+
+    await writer.setStatus(target.userId, 'rejected', { actorId: null, source: 'vendor' });
+
+    expect(await statusOf(other.userId)).toBe('pending');
+  });
+
+  it('writes on the callers transaction when one is supplied', async () => {
+    const { writer, events } = makeWriter();
+    const { userId } = await seedPlayer({ kycStatus: 'pending' });
+
+    await db.drizzle.db.transaction(async (tx) => {
+      await writer.setStatus(userId, 'verified', { actorId: null, source: 'webhook' }, tx);
+    });
+
+    expect(await statusOf(userId)).toBe('verified');
+    expect(events.emit).toHaveBeenCalledTimes(1);
+  });
+
+  it('rolls the status back with the callers transaction', async () => {
+    const { writer } = makeWriter();
+    const { userId } = await seedPlayer({ kycStatus: 'pending' });
+
+    await expect(
+      db.drizzle.db.transaction(async (tx) => {
+        await writer.setStatus(userId, 'verified', { actorId: null, source: 'webhook' }, tx);
+        throw new Error('caller failed after the status write');
+      }),
+    ).rejects.toThrow('caller failed');
+
+    expect(await statusOf(userId)).toBe('pending');
   });
 });

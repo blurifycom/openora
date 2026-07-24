@@ -1,14 +1,20 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest';
-import {
-  mock,
-  readPrivate,
-  makeDrizzle,
-  makeEvents,
-  makePayment,
-  NO_CLIENT_META,
-} from '../../testing/mock.js';
+import { describe, it, expect, vi, beforeAll, afterAll, beforeEach } from 'vitest';
+import { randomUUID } from 'node:crypto';
+import { eq, sql } from 'drizzle-orm';
+import type { EventBus } from '@openora/core/server';
+import type {
+  AdminUserDirectory,
+  AuditWritePort,
+  PaymentAdapter,
+  AdminPlayerSummary,
+} from '@openora/core/contracts';
+import { createTestDb, type TestDb } from '@openora/core/testing';
+import { mock, makeEvents, NO_CLIENT_META } from '../../testing/mock.js';
+import { migrate } from '../migrate.js';
+import { wallet, walletTransaction, walletDepositAddress } from '../schema/index.js';
 import {
   WalletService,
+  type WalletServiceDeps,
   WalletNotFoundError,
   WithdrawalNotFoundError,
   WithdrawalNotPendingError,
@@ -18,23 +24,6 @@ import {
   DepositAddressUnsupportedError,
   DestinationAddressRequiredError,
 } from '../service/wallet.service.js';
-
-type Row = Record<string, unknown>;
-
-function makeDirectory(summaries: Row[] = []) {
-  return {
-    count: vi.fn(),
-    list: vi.fn(),
-    get: vi.fn(),
-    update: vi.fn(),
-    lookupPlayers: vi.fn().mockResolvedValue(summaries),
-  };
-}
-
-const svcOf = (drizzle: unknown, events: unknown, payment: unknown, directory?: unknown) =>
-  new WalletService(
-    mock<ConstructorParameters<typeof WalletService>[0]>({ drizzle, events, payment, directory }),
-  );
 
 describe('WalletService domain errors', () => {
   it('WalletNotFoundError carries the userId', () => {
@@ -50,1036 +39,778 @@ describe('WalletService domain errors', () => {
   });
 });
 
-describe('WalletService.deposit', () => {
-  let events: ReturnType<typeof makeEvents>;
-  let payment: ReturnType<typeof makePayment>;
+let db: TestDb;
 
-  beforeEach(() => {
-    events = makeEvents();
-    payment = makePayment();
+type PspResult = Awaited<ReturnType<PaymentAdapter['processWithdrawal']>>;
+
+function makePsp() {
+  const settled = async (): Promise<PspResult> => ({
+    externalId: randomUUID(),
+    status: 'completed',
   });
+  return { processDeposit: vi.fn(settled), processWithdrawal: vi.fn(settled) };
+}
 
-  it('records the fiat rail for a fiat currency', async () => {
-    const drizzle = makeDrizzle({
-      select: [[{ id: 'w-1', userId: 'u-1', balance: '0', currency: 'USD' }], []],
-      returning: [[{ id: 'tx-1' }]],
+function makeService(overrides: Partial<WalletServiceDeps> = {}) {
+  const events = makeEvents();
+  const psp = makePsp();
+  const audit = mock<AuditWritePort>({ record: vi.fn() });
+  const svc = new WalletService({
+    drizzle: db.drizzle,
+    events: mock<EventBus>(events),
+    payment: mock<PaymentAdapter>(psp),
+    audit,
+    ...overrides,
+  });
+  return { svc, events, psp, audit };
+}
+
+const queueService = () => makeService().svc;
+
+function makeDirectory(summaries: AdminPlayerSummary[]) {
+  return mock<AdminUserDirectory>({
+    lookupPlayers: vi.fn(async (ids: string[]) => summaries.filter((s) => ids.includes(s.userId))),
+  });
+}
+
+async function seedWallet(overrides: Partial<typeof wallet.$inferInsert> = {}) {
+  const [row] = await db.drizzle.db
+    .insert(wallet)
+    .values({ userId: randomUUID(), balance: '0', currency: 'USD', ...overrides })
+    .returning();
+  return row!;
+}
+
+async function seedTx(
+  walletId: string,
+  overrides: Partial<typeof walletTransaction.$inferInsert> = {},
+) {
+  const [row] = await db.drizzle.db
+    .insert(walletTransaction)
+    .values({
+      walletId,
+      type: 'withdrawal',
+      amount: '10',
+      currency: 'USD',
+      status: 'pending',
+      rail: 'fiat',
+      ...overrides,
+    })
+    .returning();
+  return row!;
+}
+
+async function balanceOf(userId: string) {
+  const [row] = await db.drizzle.db.select().from(wallet).where(eq(wallet.userId, userId));
+  return Number(row?.balance);
+}
+
+async function txRows(walletId: string) {
+  return db.drizzle.db
+    .select()
+    .from(walletTransaction)
+    .where(eq(walletTransaction.walletId, walletId));
+}
+
+async function txById(id: string) {
+  const [row] = await db.drizzle.db
+    .select()
+    .from(walletTransaction)
+    .where(eq(walletTransaction.id, id));
+  return row!;
+}
+
+const emittedTopics = (events: ReturnType<typeof makeEvents>) =>
+  events.emit.mock.calls.map(([topic]) => topic);
+
+beforeAll(async () => {
+  db = await createTestDb([migrate]);
+});
+
+afterAll(async () => {
+  await db.drop();
+});
+
+beforeEach(async () => {
+  await db.drizzle.db.execute(
+    sql`TRUNCATE ${walletTransaction}, ${walletDepositAddress}, ${wallet} RESTART IDENTITY CASCADE`,
+  );
+});
+
+describe('WalletService.deposit (real PG)', () => {
+  it('creates the wallet on a first deposit, credits it, and writes one completed fiat ledger row', async () => {
+    const { svc, events, psp } = makeService();
+    const userId = randomUUID();
+    const externalId = randomUUID();
+    psp.processDeposit.mockResolvedValueOnce({ externalId, status: 'completed' });
+
+    const result = await svc.deposit({
+      userId,
+      amount: '40',
+      currency: 'USD',
+      provider: 'stripe',
     });
-    const valuesSpy = readPrivate<ReturnType<typeof vi.fn>>(drizzle.db, 'values');
-    const svc = svcOf(drizzle, events, payment);
 
-    await svc.deposit({ userId: 'u-1', amount: '40', currency: 'USD', provider: 'stripe' });
-
-    expect(valuesSpy).toHaveBeenCalledWith(
-      expect.objectContaining({ type: 'deposit', rail: 'fiat' }),
+    expect(result.status).toBe('completed');
+    expect(await balanceOf(userId)).toBe(40);
+    const [created] = await db.drizzle.db.select().from(wallet).where(eq(wallet.userId, userId));
+    const rows = await txRows(created!.id);
+    expect(rows).toHaveLength(1);
+    expect(rows[0]).toMatchObject({
+      type: 'deposit',
+      status: 'completed',
+      rail: 'fiat',
+      providerName: 'stripe',
+      providerRefId: externalId,
+    });
+    expect(events.emit).toHaveBeenCalledWith(
+      'wallet.deposit.completed',
+      expect.objectContaining({ userId, amount: '40', transactionId: result.transactionId }),
     );
   });
 
   it('records the crypto rail for a crypto currency', async () => {
-    const drizzle = makeDrizzle({
-      select: [[{ id: 'w-1', userId: 'u-1', balance: '0', currency: 'BTC' }], []],
-      returning: [[{ id: 'tx-2' }]],
-    });
-    const valuesSpy = readPrivate<ReturnType<typeof vi.fn>>(drizzle.db, 'values');
-    const svc = svcOf(drizzle, events, payment);
+    const { svc } = makeService();
+    const w = await seedWallet({ currency: 'BTC' });
 
-    await svc.deposit({ userId: 'u-1', amount: '1', currency: 'BTC', provider: 'fireblocks' });
+    await svc.deposit({ userId: w.userId, amount: '1', currency: 'BTC', provider: 'fireblocks' });
 
-    expect(valuesSpy).toHaveBeenCalledWith(
-      expect.objectContaining({ type: 'deposit', rail: 'crypto' }),
-    );
+    const rows = await txRows(w.id);
+    expect(rows[0]).toMatchObject({ type: 'deposit', rail: 'crypto' });
+  });
+
+  it('accumulates repeated deposits with SQL numeric arithmetic', async () => {
+    const { svc } = makeService();
+    const w = await seedWallet({ balance: '10.5' });
+
+    await svc.deposit({ userId: w.userId, amount: '0.25', currency: 'USD' });
+    await svc.deposit({ userId: w.userId, amount: '0.25', currency: 'USD' });
+
+    expect(await balanceOf(w.userId)).toBe(11);
   });
 });
 
-describe('WalletService.withdraw', () => {
-  let events: ReturnType<typeof makeEvents>;
-  let payment: ReturnType<typeof makePayment>;
-
-  beforeEach(() => {
-    events = makeEvents();
-    payment = makePayment();
-  });
-
-  it('locks the wallet row, holds funds, creates a pending withdrawal, and emits requested', async () => {
-    const drizzle = makeDrizzle({
-      select: [[{ id: 'w-1', userId: 'u-1', balance: '100', currency: 'USD' }]],
-      returning: [
-        [{ id: 'tx-1', walletId: 'w-1', amount: '40', currency: 'USD', status: 'pending' }],
-        [{ id: 'w-1' }], // guarded debit affected exactly one row
-      ],
-    });
-    const forSpy = readPrivate<ReturnType<typeof vi.fn>>(drizzle.db, 'for');
-    const svc = svcOf(drizzle, events, payment);
+describe('WalletService.withdraw (real PG)', () => {
+  it('holds the funds immediately, leaves the row pending, and emits requested', async () => {
+    const { svc, events } = makeService();
+    const w = await seedWallet({ balance: '100' });
 
     const result = await svc.withdraw({
-      userId: 'u-1',
+      userId: w.userId,
       amount: '40',
       currency: 'USD',
       ...NO_CLIENT_META,
     });
 
-    expect(result).toEqual({ transactionId: 'tx-1', status: 'pending' });
-    expect(forSpy).toHaveBeenCalledWith('update');
-    expect(payment.processWithdrawal).not.toHaveBeenCalled();
-    expect(events.emit).toHaveBeenCalledWith('wallet.withdrawal.requested', {
-      userId: 'u-1',
-      amount: '40',
-      currency: 'USD',
-      transactionId: 'tx-1',
-      ip: null,
-      userAgent: null,
+    expect(result.status).toBe('pending');
+    expect(await balanceOf(w.userId)).toBe(60);
+    expect(await txById(result.transactionId)).toMatchObject({
+      type: 'withdrawal',
+      status: 'pending',
+      rail: 'fiat',
     });
+    expect(events.emit).toHaveBeenCalledWith(
+      'wallet.withdrawal.requested',
+      expect.objectContaining({ userId: w.userId, amount: '40', ip: null, userAgent: null }),
+    );
   });
 
-  it('derives the crypto rail for crypto currencies', async () => {
-    const drizzle = makeDrizzle({
-      select: [[{ id: 'w-1', userId: 'u-1', balance: '5', currency: 'BTC' }]],
-      returning: [
-        [{ id: 'tx-2', walletId: 'w-1', amount: '1', currency: 'BTC', status: 'pending' }],
-        [{ id: 'w-1' }],
-      ],
-    });
-    const valuesSpy = readPrivate<ReturnType<typeof vi.fn>>(drizzle.db, 'values');
-    const svc = svcOf(drizzle, events, payment);
+  it('stores the destination address and the crypto rail for a crypto withdrawal', async () => {
+    const { svc } = makeService();
+    const w = await seedWallet({ balance: '2', currency: 'BTC' });
 
-    await svc.withdraw({
-      userId: 'u-1',
+    const result = await svc.withdraw({
+      userId: w.userId,
       amount: '1',
       currency: 'BTC',
-      destinationAddress: 'bc1qtest',
+      destinationAddress: 'bc1qexample',
       ...NO_CLIENT_META,
     });
 
-    expect(valuesSpy).toHaveBeenCalledWith(expect.objectContaining({ rail: 'crypto' }));
+    expect(await txById(result.transactionId)).toMatchObject({
+      rail: 'crypto',
+      destinationAddress: 'bc1qexample',
+    });
   });
 
   it('throws DestinationAddressRequiredError for a crypto withdrawal with no address', async () => {
-    const drizzle = makeDrizzle({
-      select: [[{ id: 'w-1', userId: 'u-1', balance: '5', currency: 'BTC' }]],
-    });
-    const svc = svcOf(drizzle, events, payment);
+    const { svc } = makeService();
+    const w = await seedWallet({ balance: '2', currency: 'BTC' });
 
     await expect(
-      svc.withdraw({ userId: 'u-1', amount: '1', currency: 'BTC', ...NO_CLIENT_META }),
-    ).rejects.toThrow(DestinationAddressRequiredError);
-    expect(payment.processWithdrawal).not.toHaveBeenCalled();
+      svc.withdraw({ userId: w.userId, amount: '1', currency: 'BTC', ...NO_CLIENT_META }),
+    ).rejects.toBeInstanceOf(DestinationAddressRequiredError);
+    expect(await balanceOf(w.userId)).toBe(2);
   });
 
   it('throws CurrencyMismatchError when the request currency differs from the wallet', async () => {
-    const drizzle = makeDrizzle({
-      select: [[{ id: 'w-1', userId: 'u-1', balance: '100', currency: 'USD' }]],
-    });
-    const svc = svcOf(drizzle, events, payment);
+    const { svc } = makeService();
+    const w = await seedWallet({ balance: '100', currency: 'USD' });
 
     await expect(
-      svc.withdraw({ userId: 'u-1', amount: '40', currency: 'EUR', ...NO_CLIENT_META }),
+      svc.withdraw({ userId: w.userId, amount: '10', currency: 'EUR', ...NO_CLIENT_META }),
     ).rejects.toBeInstanceOf(CurrencyMismatchError);
-    expect(events.emit).not.toHaveBeenCalled();
   });
 
-  it('rejects when the guarded debit affects zero rows (insufficient balance)', async () => {
-    const drizzle = makeDrizzle({
-      select: [[{ id: 'w-1', userId: 'u-1', balance: '10', currency: 'USD' }]],
-      returning: [
-        [{ id: 'tx-x', walletId: 'w-1', amount: '40', currency: 'USD', status: 'pending' }],
-        [], // guarded UPDATE ... WHERE balance >= amount matched no row
-      ],
-    });
-    const svc = svcOf(drizzle, events, payment);
+  it('throws WalletNotFoundError when the user has no wallet', async () => {
+    const { svc } = makeService();
 
     await expect(
-      svc.withdraw({ userId: 'u-1', amount: '40', currency: 'USD', ...NO_CLIENT_META }),
+      svc.withdraw({ userId: randomUUID(), amount: '10', currency: 'USD', ...NO_CLIENT_META }),
+    ).rejects.toBeInstanceOf(WalletNotFoundError);
+  });
+
+  it('rolls the whole transaction back when the guarded debit finds too little balance', async () => {
+    const { svc, events } = makeService();
+    const w = await seedWallet({ balance: '30' });
+
+    await expect(
+      svc.withdraw({ userId: w.userId, amount: '40', currency: 'USD', ...NO_CLIENT_META }),
     ).rejects.toBeInstanceOf(InsufficientBalanceError);
+
+    expect(await balanceOf(w.userId)).toBe(30);
+    expect(await txRows(w.id)).toHaveLength(0);
     expect(events.emit).not.toHaveBeenCalled();
+  });
+
+  it('lets two concurrent withdrawals share a balance without overdrawing it', async () => {
+    const { svc } = makeService();
+    const w = await seedWallet({ balance: '100' });
+
+    const settled = await Promise.allSettled([
+      svc.withdraw({ userId: w.userId, amount: '60', currency: 'USD', ...NO_CLIENT_META }),
+      svc.withdraw({ userId: w.userId, amount: '60', currency: 'USD', ...NO_CLIENT_META }),
+    ]);
+
+    expect(settled.filter((s) => s.status === 'fulfilled')).toHaveLength(1);
+    expect(await balanceOf(w.userId)).toBe(40);
+    expect(await txRows(w.id)).toHaveLength(1);
   });
 });
 
-describe('WalletService idempotency - deposit', () => {
-  let events: ReturnType<typeof makeEvents>;
-  let payment: ReturnType<typeof makePayment>;
+describe('WalletService idempotency - deposit (real PG)', () => {
+  it('replays before the PSP call: one row, one credit, one event', async () => {
+    const { svc, events, psp } = makeService();
+    const w = await seedWallet();
+    const idempotencyKey = randomUUID();
 
-  beforeEach(() => {
-    events = makeEvents();
-    payment = makePayment();
-  });
-
-  it('replay short-circuits BEFORE the PSP call, does not insert again, and does not re-emit', async () => {
-    const drizzle = makeDrizzle({
-      select: [
-        [{ id: 'w-1', userId: 'u-1', balance: '100', currency: 'USD' }],
-        [{ id: 'tx-1', walletId: 'w-1', amount: '40', currency: 'USD', status: 'completed' }],
-      ],
-    });
-    const insertSpy = readPrivate<ReturnType<typeof vi.fn>>(drizzle.db, 'insert');
-    const svc = svcOf(drizzle, events, payment);
-
-    const result = await svc.deposit({
-      userId: 'u-1',
-      amount: '40',
+    const first = await svc.deposit({
+      userId: w.userId,
+      amount: '25',
       currency: 'USD',
-      idempotencyKey: 'key-1',
+      idempotencyKey,
+    });
+    const replay = await svc.deposit({
+      userId: w.userId,
+      amount: '25',
+      currency: 'USD',
+      idempotencyKey,
     });
 
-    expect(result).toEqual({ transactionId: 'tx-1', status: 'completed' });
-    expect(payment.processDeposit).not.toHaveBeenCalled();
-    expect(insertSpy).not.toHaveBeenCalled();
-    expect(events.emit).not.toHaveBeenCalled();
+    expect(replay.transactionId).toBe(first.transactionId);
+    expect(psp.processDeposit).toHaveBeenCalledTimes(1);
+    expect(await txRows(w.id)).toHaveLength(1);
+    expect(await balanceOf(w.userId)).toBe(25);
+    expect(emittedTopics(events)).toEqual(['wallet.deposit.completed']);
   });
 
-  it('throws IdempotencyKeyReuseError when a replayed key was used with a different amount', async () => {
-    const drizzle = makeDrizzle({
-      select: [
-        [{ id: 'w-1', userId: 'u-1', balance: '100', currency: 'USD' }],
-        [{ id: 'tx-1', walletId: 'w-1', amount: '40', currency: 'USD', status: 'completed' }],
-      ],
-    });
-    const svc = svcOf(drizzle, events, payment);
+  it('throws IdempotencyKeyReuseError when the key is replayed with a different amount', async () => {
+    const { svc } = makeService();
+    const w = await seedWallet();
+    const idempotencyKey = randomUUID();
+    await svc.deposit({ userId: w.userId, amount: '25', currency: 'USD', idempotencyKey });
 
     await expect(
-      svc.deposit({ userId: 'u-1', amount: '99', currency: 'USD', idempotencyKey: 'key-1' }),
+      svc.deposit({ userId: w.userId, amount: '26', currency: 'USD', idempotencyKey }),
     ).rejects.toBeInstanceOf(IdempotencyKeyReuseError);
-    expect(payment.processDeposit).not.toHaveBeenCalled();
+    expect(await balanceOf(w.userId)).toBe(25);
+  });
+
+  it('treats an unnormalized replay amount as a match, not a reuse', async () => {
+    const { svc } = makeService();
+    const w = await seedWallet();
+    const idempotencyKey = randomUUID();
+    const first = await svc.deposit({
+      userId: w.userId,
+      amount: '25.00',
+      currency: 'USD',
+      idempotencyKey,
+    });
+
+    const replay = await svc.deposit({
+      userId: w.userId,
+      amount: '25',
+      currency: 'USD',
+      idempotencyKey,
+    });
+
+    expect(replay.transactionId).toBe(first.transactionId);
   });
 
   it('distinct idempotency keys create distinct transactions', async () => {
-    const drizzle = makeDrizzle({
-      select: [
-        [{ id: 'w-1', userId: 'u-1', balance: '100', currency: 'USD' }], // pre-PSP replay check: wallet lookup
-        [], // pre-PSP replay check: no existing tx for key-a
-        [], // bare-awaited balance credit for call 1 (no .returning(); reuses pre-PSP wallet)
-        [{ id: 'w-1', userId: 'u-1', balance: '140', currency: 'USD' }], // pre-PSP replay check: wallet lookup
-        [], // pre-PSP replay check: no existing tx for key-b
-        [], // bare-awaited balance credit for call 2 (no .returning())
-      ],
-      returning: [
-        [{ id: 'tx-a', walletId: 'w-1', amount: '40', currency: 'USD', status: 'completed' }],
-        [{ id: 'tx-b', walletId: 'w-1', amount: '40', currency: 'USD', status: 'completed' }],
-      ],
-    });
-    const svc = svcOf(drizzle, events, payment);
+    const { svc } = makeService();
+    const w = await seedWallet();
 
-    const r1 = await svc.deposit({
-      userId: 'u-1',
-      amount: '40',
+    const a = await svc.deposit({
+      userId: w.userId,
+      amount: '10',
       currency: 'USD',
-      idempotencyKey: 'key-a',
+      idempotencyKey: randomUUID(),
     });
-    const r2 = await svc.deposit({
-      userId: 'u-1',
-      amount: '40',
+    const b = await svc.deposit({
+      userId: w.userId,
+      amount: '10',
       currency: 'USD',
-      idempotencyKey: 'key-b',
+      idempotencyKey: randomUUID(),
     });
 
-    expect(r1.transactionId).toBe('tx-a');
-    expect(r2.transactionId).toBe('tx-b');
-    expect(events.emit).toHaveBeenCalledTimes(2);
+    expect(a.transactionId).not.toBe(b.transactionId);
+    expect(await balanceOf(w.userId)).toBe(20);
   });
 
-  it('with no idempotencyKey, stores a null key and behaves unchanged', async () => {
-    const drizzle = makeDrizzle({
-      select: [
-        [{ id: 'w-1', userId: 'u-1', balance: '100', currency: 'USD' }],
-        [], // bare-awaited balance credit (no .returning())
-      ],
-      returning: [
-        [{ id: 'tx-1', walletId: 'w-1', amount: '40', currency: 'USD', status: 'completed' }],
-      ],
-    });
-    const valuesSpy = readPrivate<ReturnType<typeof vi.fn>>(drizzle.db, 'values');
-    const svc = svcOf(drizzle, events, payment);
+  it('stores a null key and credits every call when no idempotencyKey is given', async () => {
+    const { svc } = makeService();
+    const w = await seedWallet();
 
-    const result = await svc.deposit({ userId: 'u-1', amount: '40', currency: 'USD' });
+    await svc.deposit({ userId: w.userId, amount: '10', currency: 'USD' });
+    await svc.deposit({ userId: w.userId, amount: '10', currency: 'USD' });
 
-    expect(result).toEqual({ transactionId: 'tx-1', status: 'completed' });
-    expect(valuesSpy).toHaveBeenCalledWith(expect.objectContaining({ idempotencyKey: null }));
-    expect(events.emit).toHaveBeenCalledWith(
-      'wallet.deposit.completed',
-      expect.objectContaining({ transactionId: 'tx-1' }),
-    );
+    const rows = await txRows(w.id);
+    expect(rows).toHaveLength(2);
+    expect(rows.every((r) => r.idempotencyKey === null)).toBe(true);
+    expect(await balanceOf(w.userId)).toBe(20);
   });
 
-  it('a race on the partial unique index re-reads the winner instead of aborting the transaction', async () => {
-    const drizzle = makeDrizzle({
-      select: [
-        [{ id: 'w-1', userId: 'u-1', balance: '100', currency: 'USD' }], // pre-PSP replay check: wallet lookup
-        [], // pre-PSP replay check: not found yet, both requests race past it
-        [
-          {
-            id: 'tx-winner',
-            walletId: 'w-1',
-            amount: '40',
-            currency: 'USD',
-            status: 'completed',
-          },
-        ], // txn: re-read after the conflicting insert
-      ],
-      returning: [
-        [], // onConflictDoNothing().returning() - the loser's insert is a no-op, not a thrown error
-      ],
-    });
-    const svc = svcOf(drizzle, events, payment);
+  it('never double-credits when two first attempts race on the same key', async () => {
+    const { svc } = makeService();
+    const w = await seedWallet();
+    const idempotencyKey = randomUUID();
 
-    const result = await svc.deposit({
-      userId: 'u-1',
-      amount: '40',
-      currency: 'USD',
-      idempotencyKey: 'key-1',
-    });
+    await Promise.all([
+      svc.deposit({ userId: w.userId, amount: '10', currency: 'USD', idempotencyKey }),
+      svc.deposit({ userId: w.userId, amount: '10', currency: 'USD', idempotencyKey }),
+    ]);
 
-    expect(result).toEqual({ transactionId: 'tx-winner', status: 'completed' });
-    expect(events.emit).not.toHaveBeenCalled();
+    expect(await txRows(w.id)).toHaveLength(1);
+    expect(await balanceOf(w.userId)).toBe(10);
   });
 
-  it('throws IdempotencyKeyReuseError when a replayed key was used with a different currency', async () => {
-    const drizzle = makeDrizzle({
-      select: [
-        [{ id: 'w-1', userId: 'u-1', balance: '100', currency: 'USD' }],
-        [{ id: 'tx-1', walletId: 'w-1', amount: '40', currency: 'USD', status: 'completed' }],
-      ],
-    });
-    const svc = svcOf(drizzle, events, payment);
+  it('throws IdempotencyKeyReuseError when the key is replayed with a different currency', async () => {
+    const { svc } = makeService();
+    const w = await seedWallet({ currency: 'USD' });
+    const idempotencyKey = randomUUID();
+    await svc.deposit({ userId: w.userId, amount: '10', currency: 'USD', idempotencyKey });
 
     await expect(
-      svc.deposit({ userId: 'u-1', amount: '40', currency: 'EUR', idempotencyKey: 'key-1' }),
+      svc.deposit({ userId: w.userId, amount: '10', currency: 'EUR', idempotencyKey }),
     ).rejects.toBeInstanceOf(IdempotencyKeyReuseError);
-    expect(payment.processDeposit).not.toHaveBeenCalled();
   });
 });
 
-describe('WalletService idempotency - withdraw', () => {
-  let events: ReturnType<typeof makeEvents>;
-  let payment: ReturnType<typeof makePayment>;
+describe('WalletService idempotency - withdraw (real PG)', () => {
+  it('replays the stored transaction without a second hold or event', async () => {
+    const { svc, events } = makeService();
+    const w = await seedWallet({ balance: '100' });
+    const idempotencyKey = randomUUID();
 
-  beforeEach(() => {
-    events = makeEvents();
-    payment = makePayment();
-  });
-
-  it('replay returns the first stored transaction, does not insert again, and does not re-emit', async () => {
-    const drizzle = makeDrizzle({
-      select: [
-        [{ id: 'w-1', userId: 'u-1', balance: '60', currency: 'USD' }],
-        [{ id: 'tx-1', walletId: 'w-1', amount: '40', currency: 'USD', status: 'pending' }],
-      ],
-    });
-    const insertSpy = readPrivate<ReturnType<typeof vi.fn>>(drizzle.db, 'insert');
-    const svc = svcOf(drizzle, events, payment);
-
-    const result = await svc.withdraw({
-      userId: 'u-1',
+    const first = await svc.withdraw({
+      userId: w.userId,
       amount: '40',
       currency: 'USD',
-      idempotencyKey: 'key-1',
+      idempotencyKey,
+      ...NO_CLIENT_META,
+    });
+    const replay = await svc.withdraw({
+      userId: w.userId,
+      amount: '40',
+      currency: 'USD',
+      idempotencyKey,
       ...NO_CLIENT_META,
     });
 
-    expect(result).toEqual({ transactionId: 'tx-1', status: 'pending' });
-    expect(insertSpy).not.toHaveBeenCalled();
-    expect(events.emit).not.toHaveBeenCalled();
+    expect(replay).toEqual(first);
+    expect(await txRows(w.id)).toHaveLength(1);
+    expect(await balanceOf(w.userId)).toBe(60);
+    expect(emittedTopics(events)).toEqual(['wallet.withdrawal.requested']);
   });
 
-  it('throws IdempotencyKeyReuseError when a replayed key was used with a different amount', async () => {
-    const drizzle = makeDrizzle({
-      select: [
-        [{ id: 'w-1', userId: 'u-1', balance: '60', currency: 'USD' }],
-        [{ id: 'tx-1', walletId: 'w-1', amount: '40', currency: 'USD', status: 'pending' }],
-      ],
+  it('throws IdempotencyKeyReuseError when the key is replayed with a different amount', async () => {
+    const { svc } = makeService();
+    const w = await seedWallet({ balance: '100' });
+    const idempotencyKey = randomUUID();
+    await svc.withdraw({
+      userId: w.userId,
+      amount: '40',
+      currency: 'USD',
+      idempotencyKey,
+      ...NO_CLIENT_META,
     });
-    const svc = svcOf(drizzle, events, payment);
 
     await expect(
       svc.withdraw({
-        userId: 'u-1',
-        amount: '99',
+        userId: w.userId,
+        amount: '41',
         currency: 'USD',
-        idempotencyKey: 'key-1',
+        idempotencyKey,
         ...NO_CLIENT_META,
       }),
     ).rejects.toBeInstanceOf(IdempotencyKeyReuseError);
+    expect(await balanceOf(w.userId)).toBe(60);
   });
 
-  it('distinct idempotency keys create distinct transactions', async () => {
-    const drizzle = makeDrizzle({
-      select: [
-        [{ id: 'w-1', userId: 'u-1', balance: '100', currency: 'USD' }],
-        [], // no existing tx for key-a
-        [{ id: 'w-1', userId: 'u-1', balance: '60', currency: 'USD' }],
-        [], // no existing tx for key-b
-      ],
-      returning: [
-        [{ id: 'tx-a', walletId: 'w-1', amount: '40', currency: 'USD', status: 'pending' }],
-        [{ id: 'w-1' }], // guarded debit for call 1
-        [{ id: 'tx-b', walletId: 'w-1', amount: '20', currency: 'USD', status: 'pending' }],
-        [{ id: 'w-1' }], // guarded debit for call 2
-      ],
-    });
-    const svc = svcOf(drizzle, events, payment);
+  it('distinct idempotency keys hold funds twice', async () => {
+    const { svc } = makeService();
+    const w = await seedWallet({ balance: '100' });
 
-    const r1 = await svc.withdraw({
-      userId: 'u-1',
+    await svc.withdraw({
+      userId: w.userId,
       amount: '40',
       currency: 'USD',
-      idempotencyKey: 'key-a',
+      idempotencyKey: randomUUID(),
       ...NO_CLIENT_META,
     });
-    const r2 = await svc.withdraw({
-      userId: 'u-1',
-      amount: '20',
-      currency: 'USD',
-      idempotencyKey: 'key-b',
-      ...NO_CLIENT_META,
-    });
-
-    expect(r1.transactionId).toBe('tx-a');
-    expect(r2.transactionId).toBe('tx-b');
-    expect(events.emit).toHaveBeenCalledTimes(2);
-  });
-
-  it('with no idempotencyKey, stores a null key and behaves unchanged', async () => {
-    const drizzle = makeDrizzle({
-      select: [[{ id: 'w-1', userId: 'u-1', balance: '100', currency: 'USD' }]],
-      returning: [
-        [{ id: 'tx-1', walletId: 'w-1', amount: '40', currency: 'USD', status: 'pending' }],
-        [{ id: 'w-1' }],
-      ],
-    });
-    const valuesSpy = readPrivate<ReturnType<typeof vi.fn>>(drizzle.db, 'values');
-    const svc = svcOf(drizzle, events, payment);
-
-    const result = await svc.withdraw({
-      userId: 'u-1',
+    await svc.withdraw({
+      userId: w.userId,
       amount: '40',
       currency: 'USD',
+      idempotencyKey: randomUUID(),
       ...NO_CLIENT_META,
     });
 
-    expect(result).toEqual({ transactionId: 'tx-1', status: 'pending' });
-    expect(valuesSpy).toHaveBeenCalledWith(expect.objectContaining({ idempotencyKey: null }));
-    expect(events.emit).toHaveBeenCalledWith(
-      'wallet.withdrawal.requested',
-      expect.objectContaining({ transactionId: 'tx-1' }),
-    );
+    expect(await txRows(w.id)).toHaveLength(2);
+    expect(await balanceOf(w.userId)).toBe(20);
   });
 
-  it('a race on the partial unique index re-reads the winner instead of aborting the transaction', async () => {
-    const drizzle = makeDrizzle({
-      select: [
-        [{ id: 'w-1', userId: 'u-1', balance: '100', currency: 'USD' }],
-        [], // pre-insert check: not found yet, both requests race past it
-        [{ id: 'tx-winner', walletId: 'w-1', amount: '40', currency: 'USD', status: 'pending' }],
-      ],
-      returning: [
-        [], // onConflictDoNothing().returning() - the loser's insert is a no-op, not a thrown error
-      ],
-    });
-    const svc = svcOf(drizzle, events, payment);
+  it('namespaces the key per operation so a deposit and a withdraw never collide', async () => {
+    const { svc } = makeService();
+    const w = await seedWallet({ balance: '100' });
+    const idempotencyKey = randomUUID();
 
-    const result = await svc.withdraw({
-      userId: 'u-1',
+    const deposited = await svc.deposit({
+      userId: w.userId,
       amount: '40',
       currency: 'USD',
-      idempotencyKey: 'key-1',
+      idempotencyKey,
+    });
+    const withdrawn = await svc.withdraw({
+      userId: w.userId,
+      amount: '40',
+      currency: 'USD',
+      idempotencyKey,
       ...NO_CLIENT_META,
     });
 
-    expect(result).toEqual({ transactionId: 'tx-winner', status: 'pending' });
-    expect(events.emit).not.toHaveBeenCalled();
-  });
-
-  it('throws IdempotencyKeyReuseError when a replayed key was used with a different currency', async () => {
-    const drizzle = makeDrizzle({
-      select: [
-        [{ id: 'w-1', userId: 'u-1', balance: '60', currency: 'USD' }],
-        [{ id: 'tx-1', walletId: 'w-1', amount: '40', currency: 'EUR', status: 'pending' }],
-      ],
-    });
-    const svc = svcOf(drizzle, events, payment);
-
-    await expect(
-      svc.withdraw({
-        userId: 'u-1',
-        amount: '40',
-        currency: 'USD',
-        idempotencyKey: 'key-1',
-        ...NO_CLIENT_META,
-      }),
-    ).rejects.toBeInstanceOf(IdempotencyKeyReuseError);
+    expect(deposited.transactionId).not.toBe(withdrawn.transactionId);
+    const rows = await txRows(w.id);
+    expect(rows.map((r) => r.type).sort()).toEqual(['deposit', 'withdrawal']);
+    expect(new Set(rows.map((r) => r.idempotencyKey)).size).toBe(2);
+    expect(await balanceOf(w.userId)).toBe(100);
   });
 });
 
-describe('WalletService idempotency - namespaced across operations', () => {
-  let events: ReturnType<typeof makeEvents>;
-  let payment: ReturnType<typeof makePayment>;
+describe('WalletService.approveWithdrawal (real PG)', () => {
+  it('moves pending -> completed, records the provider, and emits approved then completed', async () => {
+    const { svc, events, psp } = makeService();
+    const w = await seedWallet({ balance: '60' });
+    const adminId = randomUUID();
+    const pending = await seedTx(w.id, { amount: '40' });
 
-  beforeEach(() => {
-    events = makeEvents();
-    payment = makePayment();
-  });
+    const result = await svc.approveWithdrawal(adminId, pending.id, NO_CLIENT_META);
 
-  it('the same raw key used for a deposit then a withdraw creates two distinct rows, not a false replay', async () => {
-    const drizzle = makeDrizzle({
-      select: [
-        [{ id: 'w-1', userId: 'u-1', balance: '100', currency: 'USD' }], // deposit pre-PSP: wallet lookup
-        [], // deposit pre-PSP: no existing tx under the deposit namespace
-        [], // bare-awaited balance credit (no .returning())
-        [{ id: 'w-1', userId: 'u-1', balance: '140', currency: 'USD' }], // withdraw: current (for update)
-        [], // withdraw pre-insert check: no existing tx under the withdraw namespace
-      ],
-      returning: [
-        [
-          {
-            id: 'tx-deposit',
-            walletId: 'w-1',
-            amount: '40',
-            currency: 'USD',
-            status: 'completed',
-          },
-        ],
-        [
-          {
-            id: 'tx-withdraw',
-            walletId: 'w-1',
-            amount: '40',
-            currency: 'USD',
-            status: 'pending',
-          },
-        ],
-        [{ id: 'w-1' }], // withdraw guarded debit
-      ],
-    });
-    const svc = svcOf(drizzle, events, payment);
-
-    const deposit = await svc.deposit({
-      userId: 'u-1',
-      amount: '40',
-      currency: 'USD',
-      idempotencyKey: 'shared-key',
-    });
-    const withdraw = await svc.withdraw({
-      userId: 'u-1',
-      amount: '40',
-      currency: 'USD',
-      idempotencyKey: 'shared-key',
-      ...NO_CLIENT_META,
-    });
-
-    expect(deposit.transactionId).toBe('tx-deposit');
-    expect(withdraw.transactionId).toBe('tx-withdraw');
-    expect(deposit.transactionId).not.toBe(withdraw.transactionId);
-    expect(events.emit).toHaveBeenCalledWith(
-      'wallet.deposit.completed',
-      expect.objectContaining({ transactionId: 'tx-deposit' }),
-    );
-    expect(events.emit).toHaveBeenCalledWith(
-      'wallet.withdrawal.requested',
-      expect.objectContaining({ transactionId: 'tx-withdraw' }),
-    );
-  });
-});
-
-describe('WalletService.approveWithdrawal', () => {
-  let events: ReturnType<typeof makeEvents>;
-  let payment: ReturnType<typeof makePayment>;
-
-  beforeEach(() => {
-    events = makeEvents();
-    payment = makePayment();
-  });
-
-  it('moves pending -> processing -> completed, calls the PSP, and emits approved then completed', async () => {
-    const drizzle = makeDrizzle({
-      select: [
-        [
-          {
-            id: 'tx-1',
-            walletId: 'w-1',
-            type: 'withdrawal',
-            status: 'pending',
-            amount: '40',
-            currency: 'USD',
-          },
-        ],
-        [{ userId: 'u-1' }], // userIdForWallet
-        [], // final "completed" update (awaited, unused)
-      ],
-      returning: [
-        [
-          {
-            id: 'tx-1',
-            walletId: 'w-1',
-            type: 'withdrawal',
-            status: 'processing',
-            amount: '40',
-            currency: 'USD',
-            rail: 'fiat',
-          },
-        ],
-      ],
-    });
-    const setSpy = readPrivate<ReturnType<typeof vi.fn>>(drizzle.db, 'set');
-    const svc = svcOf(drizzle, events, payment);
-
-    const result = await svc.approveWithdrawal('admin-1', 'tx-1');
-
-    expect(result).toEqual({ transactionId: 'tx-1', status: 'completed' });
-    expect(payment.processWithdrawal).toHaveBeenCalledWith('40', 'USD', {
-      transactionId: 'tx-1',
-      userId: 'u-1',
-      rail: 'fiat',
-      adminId: 'admin-1',
-    });
-    // The PSP reference and derived provider name persist on the completing update.
-    expect(setSpy).toHaveBeenCalledWith({
+    expect(result).toEqual({ transactionId: pending.id, status: 'completed' });
+    expect(psp.processWithdrawal).toHaveBeenCalledTimes(1);
+    expect(await txById(pending.id)).toMatchObject({
       status: 'completed',
+      reviewedBy: adminId,
       providerName: 'psp',
-      providerRefId: 'ext-2',
     });
-    expect(events.emit).toHaveBeenNthCalledWith(1, 'wallet.withdrawal.approved', {
-      userId: 'u-1',
-      amount: '40',
-      currency: 'USD',
-      transactionId: 'tx-1',
-      adminId: 'admin-1',
-      ip: null,
-      userAgent: null,
-    });
-    expect(events.emit).toHaveBeenNthCalledWith(2, 'wallet.withdrawal.completed', {
-      userId: 'u-1',
-      amount: '40',
-      currency: 'USD',
-      transactionId: 'tx-1',
-    });
+    expect(await balanceOf(w.userId)).toBe(60);
+    expect(emittedTopics(events)).toEqual([
+      'wallet.withdrawal.approved',
+      'wallet.withdrawal.completed',
+    ]);
   });
 
-  it('on PSP failure marks failed, refunds, emits failed, and rethrows', async () => {
-    const drizzle = makeDrizzle({
-      select: [
-        [
-          {
-            id: 'tx-1',
-            walletId: 'w-1',
-            type: 'withdrawal',
-            status: 'pending',
-            amount: '40',
-            currency: 'USD',
-          },
-        ],
-        [{ userId: 'u-1' }], // userIdForWallet
-        [], // refund balance update (awaited, unused)
-      ],
-      returning: [
-        [
-          {
-            id: 'tx-1',
-            walletId: 'w-1',
-            type: 'withdrawal',
-            status: 'processing',
-            amount: '40',
-            currency: 'USD',
-          },
-        ],
-        [{ id: 'tx-1' }],
-      ],
-    });
-    payment.processWithdrawal.mockRejectedValueOnce(new Error('psp down'));
-    const setSpy = readPrivate<ReturnType<typeof vi.fn>>(drizzle.db, 'set');
-    const svc = svcOf(drizzle, events, payment);
+  it('records the fireblocks provider for a crypto-rail withdrawal', async () => {
+    const { svc } = makeService();
+    const w = await seedWallet({ currency: 'BTC' });
+    const pending = await seedTx(w.id, { currency: 'BTC', rail: 'crypto', amount: '1' });
 
-    await expect(svc.approveWithdrawal('admin-1', 'tx-1')).rejects.toThrow('psp down');
+    await svc.approveWithdrawal(randomUUID(), pending.id);
 
-    expect(setSpy).toHaveBeenCalledWith(expect.objectContaining({ status: 'failed' }));
-    expect(setSpy).toHaveBeenCalledWith(expect.objectContaining({ balance: expect.anything() }));
-    expect(events.emit).toHaveBeenCalledWith('wallet.withdrawal.failed', {
-      userId: 'u-1',
-      amount: '40',
-      currency: 'USD',
-      transactionId: 'tx-1',
-      adminId: 'admin-1',
-    });
-    expect(events.emit).not.toHaveBeenCalledWith('wallet.withdrawal.completed', expect.anything());
+    expect(await txById(pending.id)).toMatchObject({ providerName: 'fireblocks' });
   });
 
-  it('rejects a double-approve (status not pending) as a conflict', async () => {
-    const drizzle = makeDrizzle({
-      select: [
-        [
-          {
-            id: 'tx-1',
-            walletId: 'w-1',
-            type: 'withdrawal',
-            status: 'processing',
-            amount: '40',
-            currency: 'USD',
-          },
-        ],
-      ],
-    });
-    const svc = svcOf(drizzle, events, payment);
+  it('marks failed, refunds the hold, emits failed, and rethrows when the PSP throws', async () => {
+    const { svc, events, psp } = makeService();
+    const w = await seedWallet({ balance: '20' });
+    const pending = await seedTx(w.id, { amount: '40' });
+    psp.processWithdrawal.mockRejectedValueOnce(new Error('psp down'));
 
-    await expect(svc.approveWithdrawal('admin-1', 'tx-1')).rejects.toBeInstanceOf(
+    await expect(svc.approveWithdrawal(randomUUID(), pending.id)).rejects.toThrow('psp down');
+
+    expect(await txById(pending.id)).toMatchObject({ status: 'failed' });
+    expect(await balanceOf(w.userId)).toBe(60);
+    expect(emittedTopics(events)).toEqual([
+      'wallet.withdrawal.approved',
+      'wallet.withdrawal.failed',
+    ]);
+  });
+
+  it('marks failed and refunds when the PSP answers with a failed status', async () => {
+    const { svc, psp } = makeService();
+    const w = await seedWallet({ balance: '20' });
+    const pending = await seedTx(w.id, { amount: '40' });
+    psp.processWithdrawal.mockResolvedValueOnce({ externalId: randomUUID(), status: 'failed' });
+
+    const result = await svc.approveWithdrawal(randomUUID(), pending.id);
+
+    expect(result.status).toBe('failed');
+    expect(await balanceOf(w.userId)).toBe(60);
+  });
+
+  it('leaves the row processing when an async vendor returns a non-terminal status', async () => {
+    const { svc, events, psp } = makeService();
+    const w = await seedWallet({ balance: '20' });
+    const pending = await seedTx(w.id, { amount: '40' });
+    const externalId = randomUUID();
+    psp.processWithdrawal.mockResolvedValueOnce({ externalId, status: 'processing' });
+
+    const result = await svc.approveWithdrawal(randomUUID(), pending.id);
+
+    expect(result.status).toBe('processing');
+    expect(await txById(pending.id)).toMatchObject({
+      status: 'processing',
+      providerRefId: externalId,
+    });
+    expect(await balanceOf(w.userId)).toBe(20);
+    expect(emittedTopics(events)).toEqual(['wallet.withdrawal.approved']);
+  });
+
+  it('rejects a double approve as a conflict', async () => {
+    const { svc } = makeService();
+    const w = await seedWallet({ balance: '60' });
+    const pending = await seedTx(w.id, { amount: '40' });
+    await svc.approveWithdrawal(randomUUID(), pending.id);
+
+    await expect(svc.approveWithdrawal(randomUUID(), pending.id)).rejects.toBeInstanceOf(
       WithdrawalNotPendingError,
     );
-    expect(payment.processWithdrawal).not.toHaveBeenCalled();
-    expect(events.emit).not.toHaveBeenCalled();
   });
 
-  it('throws WithdrawalNotFoundError when missing', async () => {
-    const drizzle = makeDrizzle({ select: [[]] });
-    const svc = svcOf(drizzle, events, payment);
-    await expect(svc.approveWithdrawal('admin-1', 'missing')).rejects.toBeInstanceOf(
+  it('throws WithdrawalNotFoundError when the id is unknown', async () => {
+    const { svc } = makeService();
+
+    await expect(svc.approveWithdrawal(randomUUID(), randomUUID())).rejects.toBeInstanceOf(
       WithdrawalNotFoundError,
     );
   });
 });
 
-describe('WalletService.rejectWithdrawal', () => {
-  let events: ReturnType<typeof makeEvents>;
-  let payment: ReturnType<typeof makePayment>;
+describe('WalletService.rejectWithdrawal (real PG)', () => {
+  it('returns the held funds, records the reason, and emits rejected', async () => {
+    const { svc, events } = makeService();
+    const w = await seedWallet({ balance: '20' });
+    const adminId = randomUUID();
+    const pending = await seedTx(w.id, { amount: '40' });
 
-  beforeEach(() => {
-    events = makeEvents();
-    payment = makePayment();
+    const result = await svc.rejectWithdrawal(adminId, pending.id, 'suspicious', NO_CLIENT_META);
+
+    expect(result).toEqual({ transactionId: pending.id, status: 'rejected' });
+    expect(await balanceOf(w.userId)).toBe(60);
+    expect(await txById(pending.id)).toMatchObject({
+      status: 'rejected',
+      reviewedBy: adminId,
+      reviewReason: 'suspicious',
+    });
+    expect(events.emit).toHaveBeenCalledWith(
+      'wallet.withdrawal.rejected',
+      expect.objectContaining({ userId: w.userId, reason: 'suspicious', adminId }),
+    );
   });
 
-  it('returns funds, sets rejected, and emits rejected with reason', async () => {
-    const drizzle = makeDrizzle({
-      select: [
-        [
-          {
-            id: 'tx-1',
-            walletId: 'w-1',
-            type: 'withdrawal',
-            status: 'pending',
-            amount: '40',
-            currency: 'USD',
-          },
-        ],
-        [], // awaited balance credit-back update (result unused)
-        [{ userId: 'u-1' }], // userIdForWallet
-      ],
-      returning: [
-        [
-          {
-            id: 'tx-1',
-            walletId: 'w-1',
-            type: 'withdrawal',
-            status: 'rejected',
-            amount: '40',
-            currency: 'USD',
-          },
-        ],
-      ],
-    });
-    const setSpy = readPrivate<ReturnType<typeof vi.fn>>(drizzle.db, 'set');
-    const svc = svcOf(drizzle, events, payment);
+  it('rejects a double reject as a conflict', async () => {
+    const { svc } = makeService();
+    const w = await seedWallet({ balance: '20' });
+    const pending = await seedTx(w.id, { amount: '40' });
+    await svc.rejectWithdrawal(randomUUID(), pending.id, 'first');
 
-    const result = await svc.rejectWithdrawal('admin-1', 'tx-1', 'AML hold');
-
-    expect(result).toEqual({ transactionId: 'tx-1', status: 'rejected' });
-    expect(setSpy).toHaveBeenCalledWith(expect.objectContaining({ balance: expect.anything() }));
-    expect(events.emit).toHaveBeenCalledWith('wallet.withdrawal.rejected', {
-      userId: 'u-1',
-      amount: '40',
-      currency: 'USD',
-      transactionId: 'tx-1',
-      adminId: 'admin-1',
-      reason: 'AML hold',
-      ip: null,
-      userAgent: null,
-    });
-  });
-
-  it('rejects a double-reject (status not pending) as a conflict', async () => {
-    const drizzle = makeDrizzle({
-      select: [
-        [
-          {
-            id: 'tx-1',
-            walletId: 'w-1',
-            type: 'withdrawal',
-            status: 'rejected',
-            amount: '40',
-            currency: 'USD',
-          },
-        ],
-      ],
-    });
-    const svc = svcOf(drizzle, events, payment);
-
-    await expect(svc.rejectWithdrawal('admin-1', 'tx-1', 'again')).rejects.toBeInstanceOf(
+    await expect(svc.rejectWithdrawal(randomUUID(), pending.id, 'second')).rejects.toBeInstanceOf(
       WithdrawalNotPendingError,
     );
-    expect(events.emit).not.toHaveBeenCalled();
+    expect(await balanceOf(w.userId)).toBe(60);
   });
 });
 
-describe('WalletService.listWithdrawals', () => {
-  const queueRow = (id: string, userId: string, overrides: Row = {}) => ({
-    tx: {
-      id,
-      walletId: 'w-1',
-      amount: '40',
-      currency: 'USD',
-      rail: 'fiat',
-      status: 'pending',
-      createdAt: new Date('2026-06-01T00:00:00Z'),
-      ...overrides,
-    },
-    userId,
-  });
+describe('WalletService.listWithdrawals (real PG)', () => {
+  it('enriches rows with username and kycStatus from the directory port', async () => {
+    const w = await seedWallet();
+    const directory = makeDirectory([
+      { userId: w.userId, username: 'player1', kycStatus: 'verified' } as AdminPlayerSummary,
+    ]);
+    const { svc } = makeService({ directory });
+    await seedTx(w.id, { amount: '10' });
 
-  it('enriches rows with username + kycStatus via the directory port', async () => {
-    const drizzle = makeDrizzle({ select: [[queueRow('tx-1', 'u-1')]] });
-    const directory = makeDirectory([{ userId: 'u-1', username: 'alice', kycStatus: 'verified' }]);
-    const svc = svcOf(drizzle, makeEvents(), makePayment(), directory);
+    const { items, total } = await svc.listWithdrawals({ page: 1, limit: 20 });
 
-    const result = await svc.listWithdrawals({ page: 1, limit: 50 });
-
-    expect(directory.lookupPlayers).toHaveBeenCalledWith(['u-1']);
-    expect(result.total).toBe(1);
-    expect(result.items[0]).toMatchObject({
-      transactionId: 'tx-1',
-      username: 'alice',
+    expect(total).toBe(1);
+    expect(items[0]).toMatchObject({
+      userId: w.userId,
+      username: 'player1',
       kycStatus: 'verified',
-      rail: 'fiat',
       riskTags: [],
-      requestedAt: '2026-06-01T00:00:00.000Z',
     });
   });
 
-  it('applies the kycStatus filter in memory with a correct total and a full page', async () => {
-    const rows = [
-      queueRow('tx-1', 'u-1'),
-      queueRow('tx-2', 'u-2'),
-      queueRow('tx-3', 'u-3'),
-      queueRow('tx-4', 'u-4'),
-    ];
-    const drizzle = makeDrizzle({ select: [rows] });
+  it('returns rows of every status when no status filter is given', async () => {
+    const w = await seedWallet();
+    await seedTx(w.id, { status: 'pending' });
+    await seedTx(w.id, { status: 'completed' });
+    await seedTx(w.id, { status: 'rejected' });
+
+    const { items } = await queueService().listWithdrawals({ page: 1, limit: 20 });
+
+    expect(items.map((i) => i.status).sort()).toEqual(['completed', 'pending', 'rejected']);
+  });
+
+  it('excludes deposits from the withdrawal queue', async () => {
+    const w = await seedWallet();
+    await seedTx(w.id, { type: 'deposit', status: 'completed' });
+    await seedTx(w.id, { type: 'withdrawal' });
+
+    const { total } = await queueService().listWithdrawals({ page: 1, limit: 20 });
+
+    expect(total).toBe(1);
+  });
+
+  it('applies the kycStatus filter to the total, not just the page', async () => {
+    const verified = await seedWallet();
+    const pendingKyc = await seedWallet();
+    await seedTx(verified.id);
+    await seedTx(pendingKyc.id);
     const directory = makeDirectory([
-      { userId: 'u-1', username: 'a', kycStatus: 'verified' },
-      { userId: 'u-2', username: 'b', kycStatus: 'pending' },
-      { userId: 'u-3', username: 'c', kycStatus: 'verified' },
-      { userId: 'u-4', username: 'd', kycStatus: 'verified' },
+      { userId: verified.userId, username: 'a', kycStatus: 'verified' } as AdminPlayerSummary,
+      { userId: pendingKyc.userId, username: 'b', kycStatus: 'pending' } as AdminPlayerSummary,
     ]);
-    const svc = svcOf(drizzle, makeEvents(), makePayment(), directory);
+    const { svc } = makeService({ directory });
 
-    const result = await svc.listWithdrawals({ page: 1, limit: 2, kycStatus: 'verified' });
-
-    // 3 verified rows survive the in-memory filter; total reflects the filtered set, not the page.
-    expect(result.total).toBe(3);
-    expect(result.items).toHaveLength(2);
-    expect(result.items.map((i) => i.transactionId)).toEqual(['tx-1', 'tx-3']);
-  });
-
-  it('returns the second page sliced from the filtered set', async () => {
-    const rows = [queueRow('tx-1', 'u-1'), queueRow('tx-3', 'u-3')];
-    const drizzle = makeDrizzle({ select: [rows] });
-    const directory = makeDirectory([
-      { userId: 'u-1', username: 'a', kycStatus: 'verified' },
-      { userId: 'u-3', username: 'c', kycStatus: 'verified' },
-    ]);
-    const svc = svcOf(drizzle, makeEvents(), makePayment(), directory);
-
-    const result = await svc.listWithdrawals({ page: 2, limit: 1, kycStatus: 'verified' });
-
-    expect(result.total).toBe(2);
-    expect(result.items.map((i) => i.transactionId)).toEqual(['tx-3']);
-  });
-
-  it('returns rows of any status when no status filter is given (not pending-only)', async () => {
-    const rows = [
-      queueRow('tx-1', 'u-1', { status: 'pending' }),
-      queueRow('tx-2', 'u-2', { status: 'completed' }),
-      queueRow('tx-3', 'u-3', { status: 'rejected' }),
-    ];
-    const drizzle = makeDrizzle({ select: [rows] });
-    const svc = svcOf(drizzle, makeEvents(), makePayment(), makeDirectory());
-
-    const result = await svc.listWithdrawals({ page: 1, limit: 50 });
-
-    expect(result.total).toBe(3);
-    expect(result.items.map((i) => i.status)).toEqual(['pending', 'completed', 'rejected']);
-  });
-
-  it('tags large_amount when the amount is at/above the threshold, not below', async () => {
-    const big = makeDrizzle({
-      select: [[queueRow('tx-1', 'u-1', { amount: '5000' })], []],
-    });
-    const small = makeDrizzle({
-      select: [[queueRow('tx-2', 'u-2', { amount: '4999.99' })], []],
+    const { items, total } = await svc.listWithdrawals({
+      page: 1,
+      limit: 20,
+      kycStatus: 'verified',
     });
 
-    const bigResult = await svcOf(
-      big,
-      makeEvents(),
-      makePayment(),
-      makeDirectory(),
-    ).listWithdrawals({ page: 1, limit: 50 });
-    const smallResult = await svcOf(
-      small,
-      makeEvents(),
-      makePayment(),
-      makeDirectory(),
-    ).listWithdrawals({ page: 1, limit: 50 });
-
-    expect(bigResult.items[0]?.riskTags).toContain('large_amount');
-    expect(smallResult.items[0]?.riskTags).not.toContain('large_amount');
+    expect(total).toBe(1);
+    expect(items[0]?.userId).toBe(verified.userId);
   });
 
-  it('tags high_frequency when the grouped 24h count is >= 3 for the wallet, not below', async () => {
-    // Second select entry = the batched velocity count query result.
-    const frequent = makeDrizzle({
-      select: [[queueRow('tx-1', 'u-1')], [{ walletId: 'w-1', n: 3 }]],
-    });
-    const rare = makeDrizzle({
-      select: [[queueRow('tx-2', 'u-2')], [{ walletId: 'w-1', n: 2 }]],
-    });
+  it('slices the requested page out of the filtered set', async () => {
+    const w = await seedWallet();
+    await seedTx(w.id, { createdAt: new Date('2026-01-01T00:00:00.000Z') });
+    await seedTx(w.id, { createdAt: new Date('2026-01-02T00:00:00.000Z') });
+    await seedTx(w.id, { createdAt: new Date('2026-01-03T00:00:00.000Z') });
 
-    const frequentResult = await svcOf(
-      frequent,
-      makeEvents(),
-      makePayment(),
-      makeDirectory(),
-    ).listWithdrawals({ page: 1, limit: 50 });
-    const rareResult = await svcOf(
-      rare,
-      makeEvents(),
-      makePayment(),
-      makeDirectory(),
-    ).listWithdrawals({ page: 1, limit: 50 });
+    const { items, total } = await queueService().listWithdrawals({ page: 2, limit: 2 });
 
-    expect(frequentResult.items[0]?.riskTags).toContain('high_frequency');
-    expect(rareResult.items[0]?.riskTags).not.toContain('high_frequency');
+    expect(total).toBe(3);
+    expect(items).toHaveLength(1);
+  });
+
+  it('tags large_amount at or above the threshold, not below it', async () => {
+    const w = await seedWallet();
+    const big = await seedTx(w.id, { amount: '5000' });
+    const small = await seedTx(w.id, { amount: '4999.99' });
+
+    const { items } = await queueService().listWithdrawals({ page: 1, limit: 20 });
+
+    const byId = new Map(items.map((i) => [i.transactionId, i.riskTags]));
+    expect(byId.get(big.id)).toContain('large_amount');
+    expect(byId.get(small.id)).not.toContain('large_amount');
+  });
+
+  it('tags high_frequency once the wallet has three withdrawals in the trailing 24h', async () => {
+    const quiet = await seedWallet();
+    const busy = await seedWallet();
+    await seedTx(quiet.id);
+    await seedTx(busy.id);
+    await seedTx(busy.id);
+    await seedTx(busy.id);
+
+    const { items } = await queueService().listWithdrawals({ page: 1, limit: 20 });
+
+    const busyItem = items.find((i) => i.userId === busy.userId);
+    const quietItem = items.find((i) => i.userId === quiet.userId);
+    expect(busyItem?.riskTags).toContain('high_frequency');
+    expect(quietItem?.riskTags).not.toContain('high_frequency');
+  });
+
+  it('ignores withdrawals older than the velocity window', async () => {
+    const w = await seedWallet();
+    const old = new Date(Date.now() - 48 * 60 * 60 * 1000);
+    await seedTx(w.id, { createdAt: old });
+    await seedTx(w.id, { createdAt: old });
+    await seedTx(w.id);
+
+    const { items } = await queueService().listWithdrawals({ page: 1, limit: 20 });
+
+    expect(items.every((i) => !i.riskTags.includes('high_frequency'))).toBe(true);
   });
 });
 
-describe('WalletService.approveWithdrawal - async vendor', () => {
-  it('leaves the withdrawal processing (not completed) when the vendor returns a non-terminal status', async () => {
-    const events = makeEvents();
-    const payment = makePayment();
-    payment.processWithdrawal.mockResolvedValueOnce({ externalId: 'ext-3', status: 'processing' });
-    const drizzle = makeDrizzle({
-      select: [
-        [
-          {
-            id: 'tx-1',
-            walletId: 'w-1',
-            type: 'withdrawal',
-            status: 'pending',
-            amount: '40',
-            currency: 'USD',
-          },
-        ],
-        [{ userId: 'u-1' }],
-        [],
-      ],
-      returning: [
-        [
-          {
-            id: 'tx-1',
-            walletId: 'w-1',
-            type: 'withdrawal',
-            status: 'processing',
-            amount: '40',
-            currency: 'USD',
-            rail: 'fiat',
-          },
-        ],
-      ],
-    });
-    const setSpy = readPrivate<ReturnType<typeof vi.fn>>(drizzle.db, 'set');
-    const svc = svcOf(drizzle, events, payment);
-
-    const result = await svc.approveWithdrawal('admin-1', 'tx-1');
-
-    expect(result).toEqual({ transactionId: 'tx-1', status: 'processing' });
-    expect(setSpy).toHaveBeenCalledWith({ providerName: 'psp', providerRefId: 'ext-3' });
-    expect(events.emit).toHaveBeenCalledWith(
-      'wallet.withdrawal.approved',
-      expect.objectContaining({ transactionId: 'tx-1' }),
-    );
-    expect(events.emit).not.toHaveBeenCalledWith('wallet.withdrawal.completed', expect.anything());
-  });
-});
-
-describe('WalletService.reconcileWithdrawalStatus', () => {
-  const PROCESSING_TX = {
-    id: 'tx-1',
-    walletId: 'w-1',
-    type: 'withdrawal',
-    status: 'processing',
-    amount: '40',
-    currency: 'USD',
-  };
-
-  it('completed: transitions processing -> completed and emits wallet.withdrawal.completed', async () => {
-    const events = makeEvents();
-    const drizzle = makeDrizzle({
-      select: [[PROCESSING_TX], [{ userId: 'u-1' }]],
-      returning: [[{ id: 'tx-1' }]],
-    });
-    const setSpy = readPrivate<ReturnType<typeof vi.fn>>(drizzle.db, 'set');
-    const svc = svcOf(drizzle, events, makePayment());
+describe('WalletService.reconcileWithdrawalStatus (real PG)', () => {
+  it('transitions processing -> completed and emits completed', async () => {
+    const { svc, events } = makeService();
+    const w = await seedWallet();
+    const externalId = randomUUID();
+    const tx = await seedTx(w.id, { status: 'processing', providerRefId: externalId });
 
     await svc.reconcileWithdrawalStatus({
       kind: 'withdrawal',
-      externalId: 'ext-9',
+      externalId,
       status: 'completed',
+      txHash: '0xabc',
     });
 
-    expect(setSpy).toHaveBeenCalledWith({ status: 'completed' });
-    expect(events.emit).toHaveBeenCalledWith('wallet.withdrawal.completed', {
-      userId: 'u-1',
+    expect(await txById(tx.id)).toMatchObject({ status: 'completed', txHash: '0xabc' });
+    expect(emittedTopics(events)).toEqual(['wallet.withdrawal.completed']);
+  });
+
+  it('refunds and marks failed without an admin-attributed event', async () => {
+    const { svc, events } = makeService();
+    const w = await seedWallet({ balance: '0' });
+    const externalId = randomUUID();
+    const tx = await seedTx(w.id, {
+      status: 'processing',
       amount: '40',
-      currency: 'USD',
-      transactionId: 'tx-1',
-    });
-  });
-
-  it('failed: refunds and marks failed, without an admin-attributed event (system/webhook-driven)', async () => {
-    const events = makeEvents();
-    const drizzle = makeDrizzle({
-      select: [[PROCESSING_TX], [{ userId: 'u-1' }], []],
-      returning: [[{ id: 'tx-1' }]],
-    });
-    const setSpy = readPrivate<ReturnType<typeof vi.fn>>(drizzle.db, 'set');
-    const svc = svcOf(drizzle, events, makePayment());
-
-    await svc.reconcileWithdrawalStatus({
-      kind: 'withdrawal',
-      externalId: 'ext-9',
-      status: 'failed',
+      providerRefId: externalId,
     });
 
-    expect(setSpy).toHaveBeenCalledWith(expect.objectContaining({ status: 'failed' }));
-    expect(setSpy).toHaveBeenCalledWith(expect.objectContaining({ balance: expect.anything() }));
-    expect(events.emit).not.toHaveBeenCalledWith('wallet.withdrawal.failed', expect.anything());
-  });
+    await svc.reconcileWithdrawalStatus({ kind: 'withdrawal', externalId, status: 'failed' });
 
-  it('no-ops when the transaction is already terminal (idempotent replay)', async () => {
-    const events = makeEvents();
-    const drizzle = makeDrizzle({ select: [[{ ...PROCESSING_TX, status: 'completed' }]] });
-    const setSpy = readPrivate<ReturnType<typeof vi.fn>>(drizzle.db, 'set');
-    const svc = svcOf(drizzle, events, makePayment());
-
-    await svc.reconcileWithdrawalStatus({
-      kind: 'withdrawal',
-      externalId: 'ext-9',
-      status: 'completed',
-    });
-
-    expect(setSpy).not.toHaveBeenCalled();
+    expect(await txById(tx.id)).toMatchObject({ status: 'failed' });
+    expect(await balanceOf(w.userId)).toBe(40);
     expect(events.emit).not.toHaveBeenCalled();
   });
 
-  it('no-ops when no transaction matches the providerRefId', async () => {
-    const events = makeEvents();
-    const drizzle = makeDrizzle({ select: [[]] });
-    const svc = svcOf(drizzle, events, makePayment());
+  it('no-ops on a replay of an already terminal transaction', async () => {
+    const { svc, events } = makeService();
+    const w = await seedWallet({ balance: '0' });
+    const externalId = randomUUID();
+    const tx = await seedTx(w.id, { status: 'completed', amount: '40', providerRefId: externalId });
+
+    await svc.reconcileWithdrawalStatus({ kind: 'withdrawal', externalId, status: 'failed' });
+
+    expect(await txById(tx.id)).toMatchObject({ status: 'completed' });
+    expect(await balanceOf(w.userId)).toBe(0);
+    expect(events.emit).not.toHaveBeenCalled();
+  });
+
+  it('no-ops when no transaction carries the providerRefId', async () => {
+    const { svc, events } = makeService();
 
     await svc.reconcileWithdrawalStatus({
       kind: 'withdrawal',
-      externalId: 'unknown',
+      externalId: randomUUID(),
       status: 'completed',
     });
 
@@ -1087,141 +818,149 @@ describe('WalletService.reconcileWithdrawalStatus', () => {
   });
 });
 
-describe('WalletService.getOrCreateDepositAddress', () => {
-  it('returns an already-issued address without calling the adapter again', async () => {
-    const events = makeEvents();
-    const payment = makePayment();
-    const drizzle = makeDrizzle({
-      select: [
-        [
-          {
-            id: 'da-1',
-            userId: 'u-1',
-            currency: 'BTC',
-            address: 'bc1qexisting',
-            providerName: 'fireblocks',
-            createdAt: new Date('2026-01-01T00:00:00Z'),
-          },
-        ],
-      ],
+describe('WalletService.getOrCreateDepositAddress (real PG)', () => {
+  it('returns the already-issued address without calling the adapter again', async () => {
+    const userId = randomUUID();
+    const issueDepositAddress = vi.fn();
+    const { svc } = makeService({
+      payment: mock<PaymentAdapter>({ ...makePsp(), issueDepositAddress }),
     });
-    const svc = svcOf(drizzle, events, payment);
+    await db.drizzle.db.insert(walletDepositAddress).values({
+      userId,
+      currency: 'BTC',
+      address: 'bc1qexisting',
+      providerName: 'fireblocks',
+    });
 
-    const result = await svc.getOrCreateDepositAddress('u-1', 'BTC');
-
-    expect(result).toEqual({ address: 'bc1qexisting', currency: 'BTC' });
+    expect(await svc.getOrCreateDepositAddress(userId, 'BTC')).toEqual({
+      address: 'bc1qexisting',
+      currency: 'BTC',
+    });
+    expect(issueDepositAddress).not.toHaveBeenCalled();
   });
 
   it('issues and persists a new address on the first call', async () => {
-    const events = makeEvents();
-    const payment = {
-      ...makePayment(),
-      issueDepositAddress: vi.fn().mockResolvedValue({ address: 'bc1qnew' }),
-    };
-    const drizzle = makeDrizzle({
-      select: [[]],
-      returning: [
-        [
-          {
-            id: 'da-2',
-            userId: 'u-1',
-            currency: 'BTC',
-            address: 'bc1qnew',
-            providerName: 'fireblocks',
-            createdAt: new Date('2026-01-01T00:00:00Z'),
-          },
-        ],
-      ],
+    const userId = randomUUID();
+    const issueDepositAddress = vi.fn(async () => ({ address: 'bc1qnew' }));
+    const { svc } = makeService({
+      payment: mock<PaymentAdapter>({ ...makePsp(), issueDepositAddress }),
     });
-    const svc = svcOf(drizzle, events, payment);
 
-    const result = await svc.getOrCreateDepositAddress('u-1', 'BTC');
+    const result = await svc.getOrCreateDepositAddress(userId, 'BTC');
 
     expect(result).toEqual({ address: 'bc1qnew', currency: 'BTC' });
-    expect(payment.issueDepositAddress).toHaveBeenCalledWith('u-1', 'BTC');
+    const [stored] = await db.drizzle.db
+      .select()
+      .from(walletDepositAddress)
+      .where(eq(walletDepositAddress.userId, userId));
+    expect(stored).toMatchObject({ address: 'bc1qnew', providerName: 'fireblocks' });
   });
 
-  it('throws DepositAddressUnsupportedError when the bound adapter has no issueDepositAddress', async () => {
-    const events = makeEvents();
-    const drizzle = makeDrizzle({ select: [[]] });
-    const svc = svcOf(drizzle, events, makePayment());
+  it('issues one address when two calls race on the same user and currency', async () => {
+    const userId = randomUUID();
+    const issueDepositAddress = vi.fn(async () => ({ address: 'bc1qrace' }));
+    const { svc } = makeService({
+      payment: mock<PaymentAdapter>({ ...makePsp(), issueDepositAddress }),
+    });
 
-    await expect(svc.getOrCreateDepositAddress('u-1', 'BTC')).rejects.toBeInstanceOf(
+    const [a, b] = await Promise.all([
+      svc.getOrCreateDepositAddress(userId, 'BTC'),
+      svc.getOrCreateDepositAddress(userId, 'BTC'),
+    ]);
+
+    expect(a).toEqual(b);
+    const stored = await db.drizzle.db
+      .select()
+      .from(walletDepositAddress)
+      .where(eq(walletDepositAddress.userId, userId));
+    expect(stored).toHaveLength(1);
+  });
+
+  it('throws DepositAddressUnsupportedError when the adapter cannot issue addresses', async () => {
+    const { svc } = makeService();
+
+    await expect(svc.getOrCreateDepositAddress(randomUUID(), 'BTC')).rejects.toBeInstanceOf(
       DepositAddressUnsupportedError,
     );
   });
 });
 
-describe('WalletService.creditDepositByAddress', () => {
-  const DEPOSIT_ADDRESS_ROW = {
-    id: 'da-1',
-    userId: 'u-1',
-    currency: 'BTC',
-    address: 'bc1qxyz',
-    providerName: 'fireblocks',
-    createdAt: new Date('2026-01-01T00:00:00Z'),
-  };
-  const WALLET_ROW = { id: 'w-1', userId: 'u-1', balance: '0', currency: 'BTC' };
-  const EVENT = {
-    kind: 'deposit' as const,
-    address: 'bc1qxyz',
-    amount: '0.5',
-    currency: 'BTC',
-    txHash: '0xabc',
-    externalId: 'vendor-ext-1',
-  };
+describe('WalletService.creditDepositByAddress (real PG)', () => {
+  async function seedAddress(userId: string, address: string, currency = 'BTC') {
+    await db.drizzle.db
+      .insert(walletDepositAddress)
+      .values({ userId, currency, address, providerName: 'fireblocks' });
+  }
 
-  it('resolves the address, credits the wallet, and emits wallet.deposit.completed', async () => {
-    const events = makeEvents();
-    const drizzle = makeDrizzle({
-      select: [[DEPOSIT_ADDRESS_ROW], [WALLET_ROW], []],
-      returning: [[{ id: 'tx-1', walletId: 'w-1' }]],
-    });
-    const valuesSpy = readPrivate<ReturnType<typeof vi.fn>>(drizzle.db, 'values');
-    const svc = svcOf(drizzle, events, makePayment());
+  it('resolves the address, credits the wallet, and emits deposit.completed', async () => {
+    const { svc, events } = makeService();
+    const w = await seedWallet({ currency: 'BTC', balance: '1' });
+    await seedAddress(w.userId, 'bc1qcredit');
 
-    await svc.creditDepositByAddress(EVENT);
-
-    expect(valuesSpy).toHaveBeenCalledWith(
-      expect.objectContaining({
-        type: 'deposit',
-        providerRefId: 'vendor-ext-1',
-        destinationAddress: 'bc1qxyz',
-        txHash: '0xabc',
-      }),
-    );
-    expect(events.emit).toHaveBeenCalledWith('wallet.deposit.completed', {
-      userId: 'u-1',
+    await svc.creditDepositByAddress({
+      kind: 'deposit',
+      address: 'bc1qcredit',
       amount: '0.5',
       currency: 'BTC',
-      transactionId: 'tx-1',
+      externalId: randomUUID(),
+      txHash: '0xdead',
     });
+
+    expect(await balanceOf(w.userId)).toBe(1.5);
+    expect(emittedTopics(events)).toEqual(['wallet.deposit.completed']);
   });
 
   it('logs and no-ops when the address is unknown', async () => {
-    const events = makeEvents();
-    const drizzle = makeDrizzle({ select: [[]] });
-    const svc = svcOf(drizzle, events, makePayment());
+    const { svc, events } = makeService();
 
-    await svc.creditDepositByAddress(EVENT);
+    await svc.creditDepositByAddress({
+      kind: 'deposit',
+      address: 'bc1qunknown',
+      amount: '1',
+      currency: 'BTC',
+      externalId: randomUUID(),
+      txHash: '0xunknown',
+    });
 
     expect(events.emit).not.toHaveBeenCalled();
   });
 
-  it('is idempotent on a replayed externalId: re-reads the winner instead of double-crediting', async () => {
-    const events = makeEvents();
-    const drizzle = makeDrizzle({
-      select: [
-        [DEPOSIT_ADDRESS_ROW],
-        [WALLET_ROW],
-        [{ id: 'tx-1', walletId: 'w-1', providerRefId: 'vendor-ext-1' }],
-      ],
-      returning: [[]],
-    });
-    const svc = svcOf(drizzle, events, makePayment());
+  it('is idempotent on a replayed externalId', async () => {
+    const { svc, events } = makeService();
+    const w = await seedWallet({ currency: 'BTC', balance: '0' });
+    await seedAddress(w.userId, 'bc1qreplay');
+    const externalId = randomUUID();
+    const event = {
+      kind: 'deposit' as const,
+      address: 'bc1qreplay',
+      amount: '2',
+      currency: 'BTC',
+      externalId,
+      txHash: '0xreplay',
+    };
 
-    await svc.creditDepositByAddress(EVENT);
+    await svc.creditDepositByAddress(event);
+    await svc.creditDepositByAddress(event);
 
-    expect(events.emit).not.toHaveBeenCalled();
+    expect(await balanceOf(w.userId)).toBe(2);
+    expect(await txRows(w.id)).toHaveLength(1);
+    expect(emittedTopics(events)).toEqual(['wallet.deposit.completed']);
+  });
+
+  it('throws CurrencyMismatchError when the event currency differs from the address', async () => {
+    const { svc } = makeService();
+    const w = await seedWallet({ currency: 'BTC' });
+    await seedAddress(w.userId, 'bc1qmismatch');
+
+    await expect(
+      svc.creditDepositByAddress({
+        kind: 'deposit',
+        address: 'bc1qmismatch',
+        amount: '1',
+        currency: 'ETH',
+        externalId: randomUUID(),
+        txHash: '0xmismatch',
+      }),
+    ).rejects.toBeInstanceOf(CurrencyMismatchError);
   });
 });

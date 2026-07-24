@@ -1,7 +1,16 @@
-import { describe, it, expect, vi } from 'vitest';
-import type { DrizzleService } from '@openora/core/server';
-import type { LoginEnforcementPort } from '@openora/core/contracts';
-import { mock, mockDb } from '../../testing/mock.js';
+import { describe, it, expect, vi, beforeAll, afterAll, beforeEach } from 'vitest';
+import { randomUUID } from 'node:crypto';
+import { eq, sql } from 'drizzle-orm';
+import type { EventBus } from '@openora/core/server';
+import type {
+  AdminPlayerSummary,
+  AdminUserDirectory,
+  LoginEnforcementPort,
+  SendEmailPort,
+} from '@openora/core/contracts';
+import { createTestDb, type TestDb } from '@openora/core/testing';
+import { mock } from '../../testing/mock.js';
+import { migrate } from '../migrate.js';
 import { userLimit, rgExclusion } from '../schema/index.js';
 import {
   RgService,
@@ -11,259 +20,449 @@ import {
   ExclusionNotFoundError,
 } from '../service/rg.service.js';
 
-// Routing Drizzle stub. `select().from(t)` resolves the next value from that table's
-// queue (so the pre-write check and the enforcement recompute get distinct rows);
-// `transaction(cb)` runs inline; `insert`/`update` `.returning()` yield `returning`.
-function routingDb(cfg: {
-  rgExclusion?: unknown[];
-  userLimit?: unknown[];
-  returning?: unknown;
-}): DrizzleService {
-  const queues = new Map<unknown, unknown[]>([
-    [rgExclusion, [...(cfg.rgExclusion ?? [])]],
-    [userLimit, [...(cfg.userLimit ?? [])]],
-  ]);
-  function selectChain() {
-    let table: unknown;
-    const c: Record<string, unknown> = {
-      from: (t: unknown) => {
-        table = t;
-        return c;
-      },
-      innerJoin: () => c,
-      where: () => c,
-      orderBy: () => c,
-      limit: () => c,
-      offset: () => c,
-      then: (resolve: (v: unknown) => unknown) => {
-        const q = queues.get(table);
-        resolve(q && q.length > 0 ? q.shift() : []);
-      },
-    };
-    return c;
-  }
-  const returning = () => Promise.resolve(cfg.returning ?? []);
-  const db: Record<string, unknown> = {
-    transaction: (cb: (tx: unknown) => unknown) => cb(db),
-    select: () => selectChain(),
-    insert: () => {
-      const c: Record<string, unknown> = {
-        values: () => c,
-        onConflictDoUpdate: () => c,
-        returning,
-        then: (r: (v: unknown) => unknown) => r(undefined),
-      };
-      return c;
-    },
-    update: () => {
-      const c: Record<string, unknown> = {
-        set: () => c,
-        where: () => c,
-        returning,
-        then: (r: (v: unknown) => unknown) => r(undefined),
-      };
-      return c;
-    },
-  };
-  return mockDb(db);
-}
+let db: TestDb;
 
-function makeEvents() {
-  return { emit: vi.fn(), on: vi.fn() };
-}
+type Notifier = { email: SendEmailPort; directory: AdminUserDirectory };
 
-function makeEnforcement(): LoginEnforcementPort {
+function makeNotifier(email = 'player@example.com'): Notifier {
   return {
-    block: vi.fn().mockResolvedValue(undefined),
-    unblock: vi.fn().mockResolvedValue(undefined),
+    email: mock<SendEmailPort>({ send: vi.fn(async () => undefined) }),
+    directory: mock<AdminUserDirectory>({
+      lookupPlayers: vi.fn(async (ids: string[]) =>
+        ids.map((userId) => mock<AdminPlayerSummary>({ userId, email })),
+      ),
+    }),
   };
 }
 
-function newSvc(db: DrizzleService, enforcement = makeEnforcement(), events = makeEvents()) {
+function makeService(notifier?: Notifier) {
+  const events = { emit: vi.fn(), on: vi.fn() };
+  const enforcement = mock<LoginEnforcementPort>({
+    block: vi.fn(async () => undefined),
+    unblock: vi.fn(async () => undefined),
+  });
   const svc = new RgService({
-    drizzle: db,
-    events: mock(events),
+    drizzle: db.drizzle,
+    events: mock<EventBus>(events),
     loginEnforcement: enforcement,
-    email: null,
-    directory: null,
+    email: notifier?.email ?? null,
+    directory: notifier?.directory ?? null,
   });
   return { svc, events, enforcement };
 }
 
-function exclusionRow(overrides: Record<string, unknown> = {}) {
-  const now = new Date();
-  return {
-    id: 'excl-1',
-    userId: 'user-1',
-    kind: 'self_exclusion',
-    status: 'active',
-    reason: 'gambling concern',
-    isPermanent: false,
-    startsAt: now,
-    expiresAt: null,
-    liftedAt: null,
-    liftedReason: null,
-    liftedBy: null,
-    createdBy: 'admin-1',
-    createdAt: now,
-    updatedAt: now,
-    ...overrides,
-  };
+async function seedExclusion(overrides: Partial<typeof rgExclusion.$inferInsert>) {
+  const [row] = await db.drizzle.db
+    .insert(rgExclusion)
+    .values({
+      userId: randomUUID(),
+      kind: 'self_exclusion',
+      status: 'active',
+      reason: 'gambling concern',
+      isPermanent: false,
+      createdBy: randomUUID(),
+      ...overrides,
+    })
+    .returning();
+  return row!;
 }
 
-const USER = 'user-1';
-const ADMIN = 'admin-1';
-const future = () => new Date(Date.now() + 200 * 24 * 3600_000);
+async function exclusionsOf(userId: string) {
+  return db.drizzle.db.select().from(rgExclusion).where(eq(rgExclusion.userId, userId));
+}
 
-describe('RgService.setPlayerLimit', () => {
-  it('emits rg.limit.set with the prior amount and returns the DTO', async () => {
-    const row = {
-      id: 'lim-1',
-      userId: USER,
-      type: 'deposit',
-      amount: '100',
-      minutes: null,
-      period: 'daily',
-      createdAt: new Date(),
-    };
-    const { svc, events } = newSvc(
-      routingDb({ userLimit: [[{ amount: '50', minutes: null }]], returning: [row] }),
-    );
+const HOURS = 3600_000;
+const future = () => new Date(Date.now() + 200 * 24 * HOURS);
+const past = () => new Date(Date.now() - 1000);
+
+beforeAll(async () => {
+  db = await createTestDb([migrate]);
+});
+
+afterAll(async () => {
+  await db.drop();
+});
+
+beforeEach(async () => {
+  await db.drizzle.db.execute(sql`TRUNCATE ${rgExclusion}, ${userLimit} RESTART IDENTITY CASCADE`);
+});
+
+describe('RgService.setPlayerLimit (real PG)', () => {
+  it('persists a first limit and reports no prior amount', async () => {
+    const { svc, events } = makeService();
+    const userId = randomUUID();
+    const actorId = randomUUID();
+
     const dto = await svc.setPlayerLimit(
-      USER,
-      { userId: USER, type: 'deposit', amount: '100', minutes: null, period: 'daily' },
-      ADMIN,
+      userId,
+      { userId, type: 'deposit', amount: '100', minutes: null, period: 'daily' },
+      actorId,
     );
-    expect(dto.id).toBe('lim-1');
+
+    expect(Number(dto.amount)).toBe(100);
     expect(events.emit).toHaveBeenCalledWith(
       'rg.limit.set',
-      expect.objectContaining({
-        userId: USER,
-        actorId: ADMIN,
-        amount: '100',
-        previousAmount: '50',
-      }),
+      expect.objectContaining({ userId, actorId, amount: '100', previousAmount: null }),
     );
+  });
+
+  it('upserts on the same type and period, carrying the prior amount into the event', async () => {
+    const { svc, events } = makeService();
+    const userId = randomUUID();
+    const actorId = randomUUID();
+    await svc.setPlayerLimit(
+      userId,
+      { userId, type: 'deposit', amount: '50', minutes: null, period: 'daily' },
+      actorId,
+    );
+
+    await svc.setPlayerLimit(
+      userId,
+      { userId, type: 'deposit', amount: '100', minutes: null, period: 'daily' },
+      actorId,
+    );
+
+    const rows = await db.drizzle.db.select().from(userLimit).where(eq(userLimit.userId, userId));
+    expect(rows).toHaveLength(1);
+    expect(Number(rows[0]?.amount)).toBe(100);
+    expect(events.emit).toHaveBeenLastCalledWith(
+      'rg.limit.set',
+      expect.objectContaining({ previousAmount: '50.00' }),
+    );
+  });
+
+  it('keeps a different period as its own row', async () => {
+    const { svc } = makeService();
+    const userId = randomUUID();
+    const actorId = randomUUID();
+
+    await svc.setPlayerLimit(
+      userId,
+      { userId, type: 'deposit', amount: '50', minutes: null, period: 'daily' },
+      actorId,
+    );
+    await svc.setPlayerLimit(
+      userId,
+      { userId, type: 'deposit', amount: '500', minutes: null, period: 'monthly' },
+      actorId,
+    );
+
+    const rows = await db.drizzle.db.select().from(userLimit).where(eq(userLimit.userId, userId));
+    expect(rows).toHaveLength(2);
+  });
+
+  it('stores minutes and no amount for a session limit', async () => {
+    const { svc } = makeService();
+    const userId = randomUUID();
+
+    const dto = await svc.setPlayerLimit(
+      userId,
+      { userId, type: 'session', amount: null, minutes: 60, period: 'session' },
+      randomUUID(),
+    );
+
+    expect(dto).toMatchObject({ minutes: 60, amount: null });
+  });
+
+  it('emails the player when a mail port and directory are bound', async () => {
+    const notifier = makeNotifier();
+    const { svc } = makeService(notifier);
+    const userId = randomUUID();
+
+    await svc.setPlayerLimit(
+      userId,
+      { userId, type: 'deposit', amount: '100', minutes: null, period: 'daily' },
+      randomUUID(),
+    );
+
+    expect(notifier.email.send).toHaveBeenCalledWith(
+      expect.objectContaining({ to: 'player@example.com' }),
+    );
+  });
+
+  it('swallows a notification failure once the limit has committed', async () => {
+    const notifier = makeNotifier();
+    vi.mocked(notifier.email.send).mockRejectedValueOnce(new Error('smtp down'));
+    const { svc } = makeService(notifier);
+    const userId = randomUUID();
+
+    await expect(
+      svc.setPlayerLimit(
+        userId,
+        { userId, type: 'deposit', amount: '100', minutes: null, period: 'daily' },
+        randomUUID(),
+      ),
+    ).resolves.toMatchObject({ period: 'daily' });
+    const rows = await db.drizzle.db.select().from(userLimit).where(eq(userLimit.userId, userId));
+    expect(rows).toHaveLength(1);
   });
 });
 
-describe('RgService.activateCoolingOff', () => {
-  it('blocks login until the expiry and emits the activation event', async () => {
-    const row = exclusionRow({ kind: 'cooling_off', expiresAt: future() });
-    const db = routingDb({
-      rgExclusion: [[], [{ kind: 'cooling_off', expiresAt: future() }]],
-      returning: [row],
-    });
-    const { svc, events, enforcement } = newSvc(db);
-    await svc.activateCoolingOff(USER, { userId: USER, durationHours: 24, reason: 'break' }, ADMIN);
-    expect(enforcement.block).toHaveBeenCalledWith(USER, { until: expect.any(Date) });
+describe('RgService.activateCoolingOff (real PG)', () => {
+  it('stores an active row and blocks login until its expiry', async () => {
+    const { svc, events, enforcement } = makeService();
+    const userId = randomUUID();
+
+    await svc.activateCoolingOff(
+      userId,
+      { userId, durationHours: 24, reason: 'break' },
+      randomUUID(),
+    );
+
+    const [row] = await exclusionsOf(userId);
+    expect(row).toMatchObject({ kind: 'cooling_off', status: 'active', isPermanent: false });
+    expect(enforcement.block).toHaveBeenCalledWith(userId, { until: expect.any(Date) });
     expect(enforcement.unblock).not.toHaveBeenCalled();
     expect(events.emit).toHaveBeenCalledWith(
       'rg.cooling_off.activated',
-      expect.objectContaining({ userId: USER }),
+      expect.objectContaining({ userId }),
     );
   });
 
-  it('rejects when an active cooling-off already exists', async () => {
-    const { svc, enforcement } = newSvc(routingDb({ rgExclusion: [[{ id: 'x' }]] }));
+  it('rejects a second cooling-off while one is still running', async () => {
+    const { svc, enforcement } = makeService();
+    const userId = randomUUID();
+    await seedExclusion({ userId, kind: 'cooling_off', expiresAt: future() });
+
     await expect(
-      svc.activateCoolingOff(USER, { userId: USER, durationHours: 24, reason: 'break' }, ADMIN),
+      svc.activateCoolingOff(userId, { userId, durationHours: 24, reason: 'break' }, randomUUID()),
     ).rejects.toBeInstanceOf(ActiveExclusionError);
     expect(enforcement.block).not.toHaveBeenCalled();
   });
 
-  // GROUP 1: a cooling-off on a self-excluded player must NOT downgrade the hard block.
+  it('expires a lapsed cooling-off and lets a fresh one through', async () => {
+    const { svc } = makeService();
+    const userId = randomUUID();
+    const lapsed = await seedExclusion({ userId, kind: 'cooling_off', expiresAt: past() });
+
+    await svc.activateCoolingOff(
+      userId,
+      { userId, durationHours: 24, reason: 'again' },
+      randomUUID(),
+    );
+
+    const rows = await exclusionsOf(userId);
+    expect(rows).toHaveLength(2);
+    expect(rows.find((r) => r.id === lapsed.id)?.status).toBe('expired');
+    expect(rows.filter((r) => r.status === 'active')).toHaveLength(1);
+  });
+
   it('keeps an indefinite block when a self-exclusion is still active', async () => {
-    const row = exclusionRow({ kind: 'cooling_off', expiresAt: future() });
-    const db = routingDb({
-      rgExclusion: [
-        [],
-        [
-          { kind: 'self_exclusion', expiresAt: null },
-          { kind: 'cooling_off', expiresAt: future() },
-        ],
-      ],
-      returning: [row],
-    });
-    const { svc, enforcement } = newSvc(db);
-    await svc.activateCoolingOff(USER, { userId: USER, durationHours: 24, reason: 'break' }, ADMIN);
-    expect(enforcement.block).toHaveBeenCalledWith(USER, { until: null });
+    const { svc, enforcement } = makeService();
+    const userId = randomUUID();
+    await seedExclusion({ userId, kind: 'self_exclusion', isPermanent: true, expiresAt: null });
+
+    await svc.activateCoolingOff(
+      userId,
+      { userId, durationHours: 24, reason: 'break' },
+      randomUUID(),
+    );
+
+    expect(enforcement.block).toHaveBeenCalledWith(userId, { until: null });
   });
 });
 
-describe('RgService.activateSelfExclusion', () => {
-  it('blocks indefinitely (until null) for a permanent exclusion', async () => {
-    const row = exclusionRow({ isPermanent: true, expiresAt: null });
-    const db = routingDb({
-      rgExclusion: [[], [{ kind: 'self_exclusion', expiresAt: null }]],
-      returning: [row],
-    });
-    const { svc, events, enforcement } = newSvc(db);
+describe('RgService.activateSelfExclusion (real PG)', () => {
+  it('stores a permanent exclusion with no expiry and blocks indefinitely', async () => {
+    const { svc, events, enforcement } = makeService();
+    const userId = randomUUID();
+
     await svc.activateSelfExclusion(
-      USER,
-      { userId: USER, isPermanent: true, reason: 'stop', confirm: true },
-      ADMIN,
+      userId,
+      { userId, isPermanent: true, reason: 'stop', confirm: true },
+      randomUUID(),
     );
-    expect(enforcement.block).toHaveBeenCalledWith(USER, { until: null });
+
+    const [row] = await exclusionsOf(userId);
+    expect(row).toMatchObject({ kind: 'self_exclusion', isPermanent: true, expiresAt: null });
+    expect(enforcement.block).toHaveBeenCalledWith(userId, { until: null });
     expect(events.emit).toHaveBeenCalledWith(
       'rg.self_exclusion.activated',
       expect.objectContaining({ isPermanent: true, expiresAt: null }),
     );
   });
+
+  it('stores a fixed-term expiry but still blocks indefinitely', async () => {
+    const { svc, enforcement } = makeService();
+    const userId = randomUUID();
+
+    await svc.activateSelfExclusion(
+      userId,
+      { userId, isPermanent: false, durationMonths: 6, reason: 'break', confirm: true },
+      randomUUID(),
+    );
+
+    const [row] = await exclusionsOf(userId);
+    expect(row?.expiresAt).toBeInstanceOf(Date);
+    expect(enforcement.block).toHaveBeenCalledWith(userId, { until: null });
+  });
+
+  it('rejects a second active self-exclusion', async () => {
+    const { svc } = makeService();
+    const userId = randomUUID();
+    await seedExclusion({ userId, kind: 'self_exclusion', isPermanent: true });
+
+    await expect(
+      svc.activateSelfExclusion(
+        userId,
+        { userId, isPermanent: true, reason: 'again', confirm: true },
+        randomUUID(),
+      ),
+    ).rejects.toBeInstanceOf(ActiveExclusionError);
+  });
 });
 
-describe('RgService.liftSelfExclusion', () => {
-  it('rejects lifting a permanent self-exclusion', async () => {
-    const db = routingDb({ rgExclusion: [[exclusionRow({ isPermanent: true, expiresAt: null })]] });
-    const { svc, enforcement } = newSvc(db);
+describe('RgService.liftSelfExclusion (real PG)', () => {
+  it('refuses to lift a permanent self-exclusion', async () => {
+    const { svc, enforcement } = makeService();
+    const userId = randomUUID();
+    await seedExclusion({ userId, isPermanent: true, expiresAt: null });
+
     await expect(
-      svc.liftSelfExclusion(USER, { userId: USER, reason: 'ok', confirm: true }, ADMIN),
+      svc.liftSelfExclusion(userId, { userId, reason: 'ok', confirm: true }, randomUUID()),
     ).rejects.toBeInstanceOf(PermanentExclusionLiftError);
     expect(enforcement.unblock).not.toHaveBeenCalled();
   });
 
-  it('rejects lifting before the minimum period elapses', async () => {
-    const db = routingDb({
-      rgExclusion: [[exclusionRow({ isPermanent: false, expiresAt: future() })]],
-    });
-    const { svc } = newSvc(db);
+  it('refuses to lift before the minimum period has elapsed', async () => {
+    const { svc } = makeService();
+    const userId = randomUUID();
+    await seedExclusion({ userId, isPermanent: false, expiresAt: future() });
+
     await expect(
-      svc.liftSelfExclusion(USER, { userId: USER, reason: 'ok', confirm: true }, ADMIN),
+      svc.liftSelfExclusion(userId, { userId, reason: 'ok', confirm: true }, randomUUID()),
     ).rejects.toBeInstanceOf(ExclusionPeriodNotElapsedError);
   });
 
-  it('rejects when there is no active self-exclusion', async () => {
-    const { svc } = newSvc(routingDb({ rgExclusion: [[]] }));
+  it('throws when the player has no active self-exclusion', async () => {
+    const { svc } = makeService();
+
     await expect(
-      svc.liftSelfExclusion(USER, { userId: USER, reason: 'ok', confirm: true }, ADMIN),
+      svc.liftSelfExclusion(
+        randomUUID(),
+        { userId: randomUUID(), reason: 'ok', confirm: true },
+        randomUUID(),
+      ),
     ).rejects.toBeInstanceOf(ExclusionNotFoundError);
   });
 
-  it('lifts after the minimum period and unblocks when nothing else is active', async () => {
-    const past = new Date(Date.now() - 1000);
-    const existing = exclusionRow({ isPermanent: false, expiresAt: past });
-    const lifted = { ...existing, status: 'lifted' };
-    const db = routingDb({ rgExclusion: [[existing], []], returning: [lifted] });
-    const { svc, events, enforcement } = newSvc(db);
-    await svc.liftSelfExclusion(USER, { userId: USER, reason: 'ok', confirm: true }, ADMIN);
-    expect(enforcement.unblock).toHaveBeenCalledWith(USER);
+  it('lifts an elapsed exclusion, records the lift metadata, and unblocks', async () => {
+    const { svc, events, enforcement } = makeService();
+    const userId = randomUUID();
+    const actorId = randomUUID();
+    const existing = await seedExclusion({ userId, isPermanent: false, expiresAt: past() });
+
+    await svc.liftSelfExclusion(userId, { userId, reason: 'recovered', confirm: true }, actorId);
+
+    const [row] = await exclusionsOf(userId);
+    expect(row).toMatchObject({
+      id: existing.id,
+      status: 'lifted',
+      liftedReason: 'recovered',
+      liftedBy: actorId,
+    });
+    expect(row?.liftedAt).toBeInstanceOf(Date);
+    expect(enforcement.unblock).toHaveBeenCalledWith(userId);
     expect(events.emit).toHaveBeenCalledWith(
       'rg.self_exclusion.lifted',
-      expect.objectContaining({ userId: USER }),
+      expect.objectContaining({ userId, actorId }),
     );
   });
 
-  // GROUP 1: lifting the self-exclusion must not clear an unrelated active cooling-off.
   it('recomputes to the remaining cooling-off block instead of unblocking', async () => {
-    const past = new Date(Date.now() - 1000);
-    const existing = exclusionRow({ isPermanent: false, expiresAt: past });
-    const db = routingDb({
-      rgExclusion: [[existing], [{ kind: 'cooling_off', expiresAt: future() }]],
-      returning: [{ ...existing, status: 'lifted' }],
-    });
-    const { svc, enforcement } = newSvc(db);
-    await svc.liftSelfExclusion(USER, { userId: USER, reason: 'ok', confirm: true }, ADMIN);
-    expect(enforcement.block).toHaveBeenCalledWith(USER, { until: expect.any(Date) });
+    const { svc, enforcement } = makeService();
+    const userId = randomUUID();
+    await seedExclusion({ userId, isPermanent: false, expiresAt: past() });
+    await seedExclusion({ userId, kind: 'cooling_off', expiresAt: future() });
+
+    await svc.liftSelfExclusion(userId, { userId, reason: 'ok', confirm: true }, randomUUID());
+
+    expect(enforcement.block).toHaveBeenCalledWith(userId, { until: expect.any(Date) });
+    expect(enforcement.unblock).not.toHaveBeenCalled();
+  });
+
+  it('lets a fresh self-exclusion start once the previous one was lifted', async () => {
+    const { svc } = makeService();
+    const userId = randomUUID();
+    await seedExclusion({ userId, isPermanent: false, expiresAt: past() });
+    await svc.liftSelfExclusion(userId, { userId, reason: 'ok', confirm: true }, randomUUID());
+
+    await svc.activateSelfExclusion(
+      userId,
+      { userId, isPermanent: true, reason: 'relapse', confirm: true },
+      randomUUID(),
+    );
+
+    const rows = await exclusionsOf(userId);
+    expect(rows.filter((r) => r.status === 'active')).toHaveLength(1);
+  });
+});
+
+describe('RgService.getRgSection (real PG)', () => {
+  it('returns the player limits alongside the active exclusions', async () => {
+    const { svc } = makeService();
+    const userId = randomUUID();
+    await svc.setPlayerLimit(
+      userId,
+      { userId, type: 'deposit', amount: '100', minutes: null, period: 'daily' },
+      randomUUID(),
+    );
+    await seedExclusion({ userId, kind: 'cooling_off', expiresAt: future() });
+    await seedExclusion({ userId, kind: 'self_exclusion', isPermanent: true });
+
+    const section = await svc.getRgSection(userId);
+
+    expect(section.limits).toHaveLength(1);
+    expect(section.coolingOff).toMatchObject({ kind: 'cooling_off' });
+    expect(section.selfExclusion).toMatchObject({ kind: 'self_exclusion' });
+  });
+
+  it('treats a lapsed cooling-off as inactive even before the sweep runs', async () => {
+    const { svc } = makeService();
+    const userId = randomUUID();
+    await seedExclusion({ userId, kind: 'cooling_off', expiresAt: past() });
+
+    const section = await svc.getRgSection(userId);
+
+    expect(section.coolingOff).toBeNull();
+  });
+
+  it('returns empty state for a player with nothing on file', async () => {
+    const { svc } = makeService();
+
+    const section = await svc.getRgSection(randomUUID());
+
+    expect(section).toEqual({ limits: [], coolingOff: null, selfExclusion: null });
+  });
+});
+
+describe('RgService.expireLapsedCoolingOffs (real PG)', () => {
+  it('expires lapsed rows and unblocks the affected players', async () => {
+    const { svc, enforcement } = makeService();
+    const lapsedUser = randomUUID();
+    const runningUser = randomUUID();
+    await seedExclusion({ userId: lapsedUser, kind: 'cooling_off', expiresAt: past() });
+    await seedExclusion({ userId: runningUser, kind: 'cooling_off', expiresAt: future() });
+
+    await svc.expireLapsedCoolingOffs();
+
+    const [lapsed] = await exclusionsOf(lapsedUser);
+    const [running] = await exclusionsOf(runningUser);
+    expect(lapsed?.status).toBe('expired');
+    expect(running?.status).toBe('active');
+    expect(enforcement.unblock).toHaveBeenCalledWith(lapsedUser);
+    expect(enforcement.unblock).not.toHaveBeenCalledWith(runningUser);
+  });
+
+  it('keeps the indefinite block when the player is also self-excluded', async () => {
+    const { svc, enforcement } = makeService();
+    const userId = randomUUID();
+    await seedExclusion({ userId, kind: 'cooling_off', expiresAt: past() });
+    await seedExclusion({ userId, kind: 'self_exclusion', isPermanent: true });
+
+    await svc.expireLapsedCoolingOffs();
+
+    expect(enforcement.block).toHaveBeenCalledWith(userId, { until: null });
     expect(enforcement.unblock).not.toHaveBeenCalled();
   });
 });
