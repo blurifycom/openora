@@ -6,6 +6,18 @@ export const PageQuerySchema = z.object({
 });
 export type PageQuery = z.infer<typeof PageQuerySchema>;
 
+export const SortOrderSchema = z.enum(['asc', 'desc']);
+export type SortOrder = z.infer<typeof SortOrderSchema>;
+
+export type PaginationOptions<
+  TFilter extends object = object,
+  TSortBy extends string = string,
+> = PageQuery &
+  TFilter & {
+    sortBy?: TSortBy;
+    sortOrder?: SortOrder;
+  };
+
 export const paginated = <T extends z.ZodType>(item: T) =>
   z.object({
     items: z.array(item),

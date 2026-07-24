@@ -2,7 +2,7 @@ import type { AdminUserDirectory, AdminUserListOptions } from '@openora/core/con
 import { KycStatusSchema, UserRoleSchema } from '@openora/core/contracts';
 import { DrizzleService, pageToOffset } from '@openora/core/server';
 import type { EventBus } from '@openora/core/server';
-import { count, desc, eq, ilike, inArray } from 'drizzle-orm';
+import { asc, count, desc, eq, ilike, inArray } from 'drizzle-orm';
 import { user } from './schema/index.js';
 // Read-only cross-domain read of the player/profile table via the public /schema
 // subpath (allowed per ADR-0020) so back-office lists can label players by
@@ -35,15 +35,34 @@ export class DrizzleAdminUserDirectory implements AdminUserDirectory {
     return Number(r?.n ?? 0);
   }
 
-  async list({ page, limit, search }: AdminUserListOptions) {
+  async list({ page, limit, search, sortBy, sortOrder }: AdminUserListOptions) {
     const db = this.drizzle.db;
     const where = search ? ilike(user.email, `%${search}%`) : undefined;
+    const dir = (sortOrder ?? 'desc') === 'asc' ? asc : desc;
+    const USER_SORT_COLS = {
+      createdAt: user.createdAt,
+      email: user.email,
+      name: user.name,
+      role: user.role,
+      isActive: user.isActive,
+      lastLockoutAt: user.lastLockoutAt,
+    } as const;
+    const col =
+      USER_SORT_COLS[
+        sortBy === 'email' ||
+        sortBy === 'name' ||
+        sortBy === 'role' ||
+        sortBy === 'isActive' ||
+        sortBy === 'lastLockoutAt'
+          ? sortBy
+          : 'createdAt'
+      ];
     const [rows, [{ n }]] = await Promise.all([
       db
         .select()
         .from(user)
         .where(where)
-        .orderBy(desc(user.createdAt))
+        .orderBy(dir(col), desc(user.id))
         .limit(limit)
         .offset(pageToOffset(page, limit)),
       db.select({ n: count() }).from(user).where(where),

@@ -13,7 +13,13 @@ export function createTagRouter(tag: TagService, rule: TagRuleService, adminGuar
     deleteTag: os.deleteTag.handler(({ input }) => tag.deleteTag(input)),
 
     listPlayerTags: os.listPlayerTags.handler(({ input }) =>
-      tag.listPlayerTags(input.playerId, input.page, input.limit),
+      tag.listPlayerTags({
+        playerId: input.playerId,
+        page: input.page,
+        limit: input.limit,
+        sortBy: input.sortBy,
+        sortOrder: input.sortOrder,
+      }),
     ),
 
     assignPlayerTag: os.assignPlayerTag.handler(({ context, input }) =>

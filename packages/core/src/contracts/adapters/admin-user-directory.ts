@@ -1,6 +1,7 @@
 import { createToken, type Token } from './token.js';
 import type { KycStatus } from '../schemas/player.js';
 import type { UserRole } from '../schemas/iam.js';
+import type { SortOrder } from '../kit.js';
 
 // Admin/back-office view of the user directory. Owned + bound by the identity
 // module (it owns the `user` table); the back-office (admin-console) depends only
@@ -18,7 +19,23 @@ export type AdminUserRow = {
   lockoutUntil?: Date | null;
 };
 
-export type AdminUserListOptions = { page: number; limit: number; search?: string };
+export const ADMIN_USER_SORT_BY_VALUES = [
+  'createdAt',
+  'email',
+  'name',
+  'role',
+  'isActive',
+  'lastLockoutAt',
+] as const;
+export type AdminUserSortBy = (typeof ADMIN_USER_SORT_BY_VALUES)[number];
+
+export type AdminUserListOptions = {
+  page: number;
+  limit: number;
+  search?: string;
+  sortBy?: AdminUserSortBy;
+  sortOrder?: SortOrder;
+};
 
 // Player-facing back-office enrichment (username + KYC). Lets a back-office
 // consumer label a player row without reaching into the player/profile tables.

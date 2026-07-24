@@ -1,7 +1,11 @@
 import { oc } from '@orpc/contract';
 import { UuidSchema, TimestampSchema } from '@openora/core/contracts';
-import { PageQuerySchema, paginated } from '@openora/core/contracts/kit';
+import { PageQuerySchema, SortOrderSchema, paginated } from '@openora/core/contracts/kit';
 import z from 'zod';
+
+export const PLAYER_NOTE_SORT_BY_VALUES = ['createdAt', 'updatedAt'] as const;
+export const PlayerNoteSortBySchema = z.enum(PLAYER_NOTE_SORT_BY_VALUES).default('createdAt');
+export type PlayerNoteSortBy = z.infer<typeof PlayerNoteSortBySchema>;
 
 export const PlayerNoteSchema = z.object({
   id: UuidSchema,
@@ -23,7 +27,13 @@ export type CreatePlayerNoteInput = z.infer<typeof CreatePlayerNoteInputSchema>;
 export const playerNoteContract = {
   list: oc
     .route({ method: 'GET', path: '/player/{playerId}/note' })
-    .input(PageQuerySchema.extend({ playerId: UuidSchema }))
+    .input(
+      PageQuerySchema.extend({
+        playerId: UuidSchema,
+        sortBy: PlayerNoteSortBySchema.optional(),
+        sortOrder: SortOrderSchema.default('desc').optional(),
+      }),
+    )
     .output(paginated(PlayerNoteSchema)),
 
   create: oc

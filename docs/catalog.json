@@ -668,7 +668,15 @@
       "file": "packages/core/src/admin-console/contract/index.ts"
     },
     {
+      "name": "AdminTransactionSortBySchema",
+      "file": "packages/core/src/admin-console/contract/index.ts"
+    },
+    {
       "name": "AdminUserSchema",
+      "file": "packages/core/src/admin-console/contract/index.ts"
+    },
+    {
+      "name": "AdminUserSortBySchema",
       "file": "packages/core/src/admin-console/contract/index.ts"
     },
     {
@@ -693,6 +701,10 @@
     },
     {
       "name": "AuditLogEntrySchema",
+      "file": "packages/core/src/audit/contract/index.ts"
+    },
+    {
+      "name": "AuditSortBySchema",
       "file": "packages/core/src/audit/contract/index.ts"
     },
     {
@@ -884,6 +896,18 @@
       "file": "packages/core/src/iam/contract/index.ts"
     },
     {
+      "name": "IamAssignmentSortBySchema",
+      "file": "packages/core/src/iam/contract/index.ts"
+    },
+    {
+      "name": "IamInvitationSortBySchema",
+      "file": "packages/core/src/iam/contract/index.ts"
+    },
+    {
+      "name": "IamRoleSortBySchema",
+      "file": "packages/core/src/iam/contract/index.ts"
+    },
+    {
       "name": "IdentitySuccessSchema",
       "file": "packages/core/src/contracts/schemas/identity.ts"
     },
@@ -1056,6 +1080,10 @@
       "file": "packages/core/src/pam/player-note/contract/index.ts"
     },
     {
+      "name": "PlayerNoteSortBySchema",
+      "file": "packages/core/src/pam/player-note/contract/index.ts"
+    },
+    {
       "name": "PlayerRegistrationPointSchema",
       "file": "packages/core/src/pam/player-management/contract/index.ts"
     },
@@ -1072,6 +1100,10 @@
       "file": "packages/core/src/admin-console/contract/index.ts"
     },
     {
+      "name": "PlayerSortBySchema",
+      "file": "packages/core/src/contracts/schemas/player.ts"
+    },
+    {
       "name": "PlayerStatusSchema",
       "file": "packages/core/src/contracts/schemas/player.ts"
     },
@@ -1082,6 +1114,10 @@
     {
       "name": "playerTagSchema",
       "file": "packages/core/src/contracts/schemas/tag.ts"
+    },
+    {
+      "name": "PlayerTagSortBySchema",
+      "file": "packages/core/src/pam/tag/contract/index.ts"
     },
     {
       "name": "PlayerTagWithTagSchema",
@@ -1132,6 +1168,10 @@
       "file": "packages/core/src/compliance/contract/rg.ts"
     },
     {
+      "name": "RgFlagSortBySchema",
+      "file": "packages/core/src/compliance/contract/rg.ts"
+    },
+    {
       "name": "RgFlagStatusSchema",
       "file": "packages/core/src/contracts/schemas/compliance.ts"
     },
@@ -1160,6 +1200,10 @@
       "file": "packages/core/src/pam/identity/contract/index.ts"
     },
     {
+      "name": "SessionSortBySchema",
+      "file": "packages/core/src/pam/identity/contract/index.ts"
+    },
+    {
       "name": "SessionTimeDetailSchema",
       "file": "packages/core/src/compliance/contract/rg.ts"
     },
@@ -1173,7 +1217,7 @@
     },
     {
       "name": "SortOrderSchema",
-      "file": "packages/core/src/engagement/chat/contract/index.ts"
+      "file": "packages/core/src/contracts/kit.ts"
     },
     {
       "name": "StartRoundInputSchema",
@@ -1280,6 +1324,10 @@
       "file": "packages/core/src/wallet/contract/index.ts"
     },
     {
+      "name": "WalletTransactionSortBySchema",
+      "file": "packages/core/src/wallet/contract/index.ts"
+    },
+    {
       "name": "WalletTransactionStatusSchema",
       "file": "packages/core/src/contracts/schemas/wallet-tx.ts"
     },
@@ -1293,6 +1341,10 @@
     },
     {
       "name": "WithdrawalQueueItemSchema",
+      "file": "packages/core/src/wallet/contract/index.ts"
+    },
+    {
+      "name": "WithdrawalSortBySchema",
       "file": "packages/core/src/wallet/contract/index.ts"
     },
     {

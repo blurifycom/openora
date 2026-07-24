@@ -162,7 +162,13 @@ export function createIdentityRouter(
     sessions: {
       list: os.sessions.list.handler(async ({ input, context }) => {
         await adminGuard.assert(context, 'sessions', 'view');
-        return sessionSvc.listSessions(input.userId, input.page, input.limit);
+        return sessionSvc.listSessions({
+          userId: input.userId,
+          page: input.page,
+          limit: input.limit,
+          sortBy: input.sortBy,
+          sortOrder: input.sortOrder,
+        });
       }),
       revoke: os.sessions.revoke.handler(async ({ input, context }) => {
         const caller = await adminGuard.assert(context, 'sessions', 'revoke');
