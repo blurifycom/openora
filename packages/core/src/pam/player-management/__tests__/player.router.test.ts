@@ -1,11 +1,11 @@
 import { describe, it, expect, vi } from 'vitest';
-import { mock } from '../../../testing/mock.js';
+import { mock, adminCaller, testContext } from '../../../testing/mock.js';
 import { call, ORPCError } from '@orpc/server';
 import type { AdminGuard } from '@openora/core/server';
 import { createPlayerRouter } from '../router/index.js';
 import type { PlayerService } from '../service/player.service.js';
 
-const CTX = { request: { headers: {} } };
+const CTX = testContext();
 const PLAYER_ID = '63d3c264-3bf4-4d08-9b92-ea3eaf40a440';
 
 function fakeGuard(allowed: ReadonlyArray<`${string}:${string}`>): AdminGuard {
@@ -14,7 +14,7 @@ function fakeGuard(allowed: ReadonlyArray<`${string}:${string}`>): AdminGuard {
       if (resource && action && !allowed.includes(`${resource}:${action}`)) {
         throw new ORPCError('FORBIDDEN', { message: `Missing permission: ${resource}:${action}` });
       }
-      return { userId: 'admin-1', role: 'admin' };
+      return adminCaller();
     }),
   });
 }

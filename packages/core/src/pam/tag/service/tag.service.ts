@@ -16,13 +16,14 @@ import {
   type PlayerTags,
   type Player,
   type TagKey,
+  type ClientMeta,
   type PaginationOptions,
 } from '@openora/core/contracts';
 import type { PlayerTagSortBy } from '../contract/index.js';
 import { player } from '@openora/core/pam/schema/profile';
 import { playerTag, tag } from '../schema/index.js';
 import { mapDbError } from '@openora/core/common/errors';
-import { toTag, toPlayerTagWithTag } from './tag-mappers.js';
+import { toTag, toPlayerTagWithTag, SYSTEM_ACTOR_ID } from './tag-mappers.js';
 
 export const TagNotFoundError = makeNotFoundError('Tag');
 export const TagAlreadyInUseError = alreadyInUseError('Tag');
@@ -134,7 +135,7 @@ export class TagService implements PlayerTags {
     return rows.map(toTag);
   }
 
-  public async assignPlayerTag(args: AssignPlayerTagInput) {
+  public async assignPlayerTag(args: AssignPlayerTagInput, meta?: ClientMeta) {
     try {
       const { tagKey, ...restArgs } = args;
       const db = this.drizzle.db;
@@ -164,7 +165,9 @@ export class TagService implements PlayerTags {
         playerId: args.playerId,
         tagKey: args.tagKey,
         reason: args.assignReason,
-        actorId: args.assignActorUserId,
+        actorId: args.assignActorUserId ?? SYSTEM_ACTOR_ID,
+        ip: meta?.ip ?? null,
+        userAgent: meta?.userAgent ?? null,
       });
       return result;
     } catch (e) {
@@ -172,7 +175,7 @@ export class TagService implements PlayerTags {
     }
   }
 
-  public async removePlayerTag(args: RemovePlayerTagInput) {
+  public async removePlayerTag(args: RemovePlayerTagInput, meta?: ClientMeta) {
     try {
       const db = this.drizzle.db;
       const result = await db.transaction(async (trx) => {
@@ -207,7 +210,9 @@ export class TagService implements PlayerTags {
         playerId: args.playerId,
         tagKey: args.tagKey,
         reason: args.removalReason,
-        actorId: args.removalActorUserId,
+        actorId: args.removalActorUserId ?? SYSTEM_ACTOR_ID,
+        ip: meta?.ip ?? null,
+        userAgent: meta?.userAgent ?? null,
       });
       return result;
     } catch (e) {

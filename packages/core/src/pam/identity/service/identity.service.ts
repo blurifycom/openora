@@ -5,6 +5,8 @@ import {
   type NodeHeaders,
   DrizzleService,
   assertRateLimit,
+  extractClientMeta,
+  getCurrentClientMeta,
   findOneOrThrow,
   makeNotFoundError,
   createLogger,
@@ -34,6 +36,7 @@ import type {
   ChangeEmailInput,
   IdentityServiceOptions,
   PlatformConfig,
+  ClientMeta,
 } from '@openora/core/contracts';
 import { RATE_LIMIT_KEYS, makeRateLimitKey } from '@openora/core/contracts';
 import { assertSupportedLanguage } from '../../shared/language.js';
@@ -85,10 +88,6 @@ function toUser(u: BetterAuthUser) {
     updatedAt: toIso(u.updatedAt),
   };
   return u.image !== undefined ? { ...base, image: u.image } : base;
-}
-
-function clientIp(headers: Headers): string | null {
-  return headers.get('x-forwarded-for')?.split(',')[0]?.trim() || headers.get('x-real-ip') || null;
 }
 
 function makeLoginRateLimitKey(email: string): `login:${string}` {
@@ -313,7 +312,10 @@ export class IdentityService {
       templateRenderer: this.templateRenderer,
       getUserLanguage: (lookupEmail) => this.resolveUserLanguage(lookupEmail),
       onPasswordReset: async (resetUser) => {
-        this.events.emit('identity.password.reset', { userId: resetUser.id });
+        this.events.emit('identity.password.reset', {
+          userId: resetUser.id,
+          ...getCurrentClientMeta(),
+        });
         await this.clearLockout(resetUser.id);
       },
     });
@@ -361,6 +363,7 @@ export class IdentityService {
       `register:${input.email.toLowerCase()}`,
       REGISTER_RATE_LIMIT,
     );
+    const { ip, userAgent } = extractClientMeta(reqHeaders);
     const headers = nodeHeadersToHeaders(reqHeaders);
     const authResponse = await this.auth.api.signUpEmail({
       body: { email: input.email, password: input.password, name: input.name },
@@ -370,7 +373,7 @@ export class IdentityService {
     this.forwardCookies(authResponse, resHeaders);
     const body = (await authResponse.json()) as { user: BetterAuthUser };
 
-    this.events.emit('identity.user.registered', { userId: body.user.id });
+    this.events.emit('identity.user.registered', { userId: body.user.id, ip, userAgent });
     return { user: toUser(body.user) };
   }
 
@@ -387,9 +390,8 @@ export class IdentityService {
    * read a stale count and slip past the lockout threshold.
    */
   async login(input: LoginInput, reqHeaders: NodeHeaders, resHeaders: Headers) {
+    const { ip, userAgent } = extractClientMeta(reqHeaders);
     const headers = nodeHeadersToHeaders(reqHeaders);
-    const ip = clientIp(headers);
-    const userAgent = headers.get('user-agent') || null;
     // better-auth lowercases emails on write, so the lockout lookup must match on the same form.
     const email = input.email.toLowerCase();
 
@@ -652,7 +654,7 @@ export class IdentityService {
     }
   }
 
-  async unlockUser(userId: User['id'], actorId: User['id']) {
+  async unlockUser(userId: User['id'], actorId: User['id'], meta?: ClientMeta) {
     const existingUser = findOneOrThrow(
       await this.drizzle.db
         .select({
@@ -678,12 +680,15 @@ export class IdentityService {
       previousLockoutUntil: existingUser.lockoutUntil
         ? existingUser.lockoutUntil.toISOString()
         : null,
+      ip: meta?.ip ?? null,
+      userAgent: meta?.userAgent ?? null,
     });
 
     return SUCCESS;
   }
 
   async logout(reqHeaders: NodeHeaders, resHeaders: Headers) {
+    const { ip, userAgent } = extractClientMeta(reqHeaders);
     const headers = nodeHeadersToHeaders(reqHeaders);
     // Resolve the user BEFORE signOut so the audit log can attribute the logout.
     const session = await this.auth.api.getSession({ headers });
@@ -691,7 +696,7 @@ export class IdentityService {
     const authResponse = await this.auth.api.signOut({ headers, asResponse: true });
     this.forwardCookies(authResponse, resHeaders);
     if (userId) {
-      this.events.emit('identity.user.logout', { userId });
+      this.events.emit('identity.user.logout', { userId, ip, userAgent });
     }
     return SUCCESS;
   }
@@ -725,6 +730,7 @@ export class IdentityService {
   }
 
   async verifyTwoFactor(input: Verify2faInput, reqHeaders: NodeHeaders, resHeaders: Headers) {
+    const { ip, userAgent } = extractClientMeta(reqHeaders);
     const headers = nodeHeadersToHeaders(reqHeaders);
     const twoFactorKey =
       (await this.currentUserId(headers)) ?? twoFactorPendingCookieValue(headers) ?? 'anonymous';
@@ -738,12 +744,13 @@ export class IdentityService {
     this.forwardCookies(res, resHeaders);
     const userId = await this.currentUserId(headers);
     if (userId) {
-      this.events.emit('identity.2fa.enabled', { userId });
+      this.events.emit('identity.2fa.enabled', { userId, ip, userAgent });
     }
     return SUCCESS;
   }
 
   async disableTwoFactor(input: Disable2faInput, reqHeaders: NodeHeaders, resHeaders: Headers) {
+    const { ip, userAgent } = extractClientMeta(reqHeaders);
     const headers = nodeHeadersToHeaders(reqHeaders);
     const userId = await this.currentUserId(headers);
     await assertRateLimit(
@@ -759,7 +766,7 @@ export class IdentityService {
     await ensureOk(res);
     this.forwardCookies(res, resHeaders);
     if (userId) {
-      this.events.emit('identity.2fa.disabled', { userId });
+      this.events.emit('identity.2fa.disabled', { userId, ip, userAgent });
     }
     return SUCCESS;
   }
@@ -857,6 +864,7 @@ export class IdentityService {
   }
 
   async verifyEmail(input: VerifyEmailInput, reqHeaders: NodeHeaders) {
+    const { ip, userAgent } = extractClientMeta(reqHeaders);
     const headers = nodeHeadersToHeaders(reqHeaders);
     const userId = await this.currentUserId(headers);
     await assertRateLimit(
@@ -871,7 +879,7 @@ export class IdentityService {
     });
     await ensureOk(res);
     if (userId) {
-      this.events.emit('identity.email.verified', { userId });
+      this.events.emit('identity.email.verified', { userId, ip, userAgent });
     }
     return SUCCESS;
   }
@@ -892,6 +900,7 @@ export class IdentityService {
     if (input.language !== undefined) {
       assertSupportedLanguage(input.language, this.platformConfig);
     }
+    const { ip, userAgent } = extractClientMeta(reqHeaders);
     const headers = nodeHeadersToHeaders(reqHeaders);
     // better-auth's field parser and drizzle's mapUpdateSet both drop `undefined`
     // values before the SQL SET clause, so omitted fields are safely no-ops here.
@@ -907,7 +916,7 @@ export class IdentityService {
     const session = await this.auth.api.getSession({ headers });
     const current = session?.user as BetterAuthUser | undefined;
     if (current) {
-      this.events.emit('identity.profile.updated', { userId: current.id });
+      this.events.emit('identity.profile.updated', { userId: current.id, ip, userAgent });
     }
     if (!current) {
       throw new Error('Profile update succeeded but session could not be re-read');

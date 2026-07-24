@@ -11,6 +11,12 @@ export type IdInput = z.infer<typeof IdInputSchema>;
 export const UserIdInputSchema = z.object({ userId: UuidSchema });
 export type UserIdInput = z.infer<typeof UserIdInputSchema>;
 
+export const ClientMetaSchema = z.object({
+  ip: z.string().nullable(),
+  userAgent: z.string().nullable(),
+});
+export type ClientMeta = z.infer<typeof ClientMetaSchema>;
+
 export const MoneyAmountSchema = z
   .string()
   .regex(

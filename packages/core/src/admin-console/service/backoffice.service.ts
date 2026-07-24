@@ -8,6 +8,7 @@ import type {
   AdminWalletReporting,
   User,
   UserRole,
+  ClientMeta,
 } from '@openora/core/contracts';
 import { makeNotFoundError, serializeRow } from '@openora/core/server';
 import type { TransactionFilter } from '../contract/index.js';
@@ -69,8 +70,9 @@ export class BackofficeService {
     userId: User['id'],
     data: { isActive?: boolean; role?: UserRole },
     actorId: User['id'],
+    meta?: ClientMeta,
   ) {
-    const row = await this.users.update(userId, data, actorId);
+    const row = await this.users.update(userId, data, actorId, meta);
     if (!row) {
       throw new UserNotFoundError(userId);
     }

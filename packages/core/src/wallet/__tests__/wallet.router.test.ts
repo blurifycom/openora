@@ -1,6 +1,6 @@
 import { describe, it, expect, vi } from 'vitest';
 import { call, ORPCError } from '@orpc/server';
-import { mock } from '../../testing/mock.js';
+import { mock, adminCaller, testContext } from '../../testing/mock.js';
 import type { AdminGuard } from '@openora/core/server';
 import type {
   AuditWritePort,
@@ -10,7 +10,7 @@ import type {
 import { createWalletRouter } from '../router/index.js';
 import type { WalletService } from '../service/wallet.service.js';
 
-const CTX = { request: { headers: {} } };
+const CTX = testContext();
 const fakeAudit = (): AuditWritePort => mock<AuditWritePort>({ record: vi.fn() });
 const fakePayment = (): PaymentAdapter => mock<PaymentAdapter>({});
 const fakeWebhookVerifier = (): PaymentWebhookVerifier =>
@@ -30,14 +30,14 @@ function fakeTransactionDenyingGuard(): AdminGuard {
       if (resource === 'transaction') {
         throw new ORPCError('FORBIDDEN', { message: 'Missing permission: transaction:view' });
       }
-      return { userId: 'caller-1', role: 'support' };
+      return adminCaller({ userId: 'caller-1', role: 'support' });
     }),
   });
 }
 
 function fakeAllowingGuard(): AdminGuard {
   return mock<AdminGuard>({
-    assert: vi.fn(async () => ({ userId: 'caller-1', role: 'admin' })),
+    assert: vi.fn(async () => adminCaller({ userId: 'caller-1' })),
   });
 }
 

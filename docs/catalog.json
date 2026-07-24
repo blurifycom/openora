@@ -788,6 +788,10 @@
       "file": "packages/core/src/engagement/chat/contract/index.ts"
     },
     {
+      "name": "ClientMetaSchema",
+      "file": "packages/core/src/contracts/schemas/common.ts"
+    },
+    {
       "name": "CountryCodeSchema",
       "file": "packages/core/src/contracts/schemas/igaming-config.ts"
     },

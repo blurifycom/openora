@@ -1,6 +1,6 @@
 import { describe, it, expect, vi } from 'vitest';
 import { call, ORPCError } from '@orpc/server';
-import { mock } from '../../testing/mock.js';
+import { mock, adminCaller, testContext } from '../../testing/mock.js';
 import type { AdminGuard } from '@openora/core/server';
 import type {
   AuditWritePort,
@@ -10,7 +10,7 @@ import type {
 import { createWalletRouter } from '../router/index.js';
 import type { WalletService } from '../service/wallet.service.js';
 
-const CTX = { request: { headers: {} } };
+const CTX = testContext();
 const USER_ID = '63d3c264-3bf4-4d08-9b92-ea3eaf40a440';
 const RULE = {
   id: '1f6d1b2c-0000-4000-8000-000000000001',
@@ -32,7 +32,7 @@ function fakeWallet(over: Partial<WalletService> = {}): WalletService {
 }
 
 function allowingGuard(): AdminGuard {
-  return mock<AdminGuard>({ assert: vi.fn(async () => ({ userId: 'caller-1', role: 'admin' })) });
+  return mock<AdminGuard>({ assert: vi.fn(async () => adminCaller({ userId: 'caller-1' })) });
 }
 
 // Grants everything except `withdrawal:auto-rule`.
@@ -42,7 +42,7 @@ function autoRuleDenyingGuard(): AdminGuard {
       if (resource === 'withdrawal' && action === 'auto-rule') {
         throw new ORPCError('FORBIDDEN', { message: 'Missing permission: withdrawal:auto-rule' });
       }
-      return { userId: 'caller-1', role: 'support' };
+      return adminCaller({ userId: 'caller-1', role: 'support' });
     }),
   });
 }

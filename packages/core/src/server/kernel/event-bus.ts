@@ -24,7 +24,8 @@ export type EventHandler<T = unknown> = (
 // handlers continue to work unchanged.
 export type EventBus = {
   emit<K extends DomainEventName>(event: K, payload: DomainEventPayload<K>): void;
-  emit(event: string, payload: unknown): void;
+  // Escape hatch for plugin-defined dynamic topics not in domainEventSchemas.
+  emitRaw(event: string, payload: unknown): void;
   // Durable, transaction-atomic emit. Call INSIDE a db.transaction, passing the
   // transaction handle, when the event must never be lost relative to its state
   // change (money, anything a separate service depends on). The envelope is
@@ -38,7 +39,6 @@ export type EventBus = {
     event: K,
     payload: DomainEventPayload<K>,
   ): Promise<void>;
-  emitInTransaction(tx: unknown, event: string, payload: unknown): Promise<void>;
   on<K extends DomainEventName>(event: K, handler: EventHandler<DomainEventPayload<K>>): () => void;
   on(event: string, handler: EventHandler): () => void;
 };
@@ -78,13 +78,21 @@ export function createEventBus(
     }
   }
 
+  function publishEvent(event: string, payload: unknown): void {
+    validate(event, payload);
+    const envelope = buildEnvelope(event, payload);
+    void Promise.resolve(broker.publish(envelope)).catch((err) =>
+      logger.error({ event, err }, 'event publish failed'),
+    );
+  }
+
   return {
-    emit(event: string, payload: unknown): void {
-      validate(event, payload);
-      const envelope = buildEnvelope(event, payload);
-      void Promise.resolve(broker.publish(envelope)).catch((err) =>
-        logger.error({ event, err }, 'event publish failed'),
-      );
+    emit(event, payload) {
+      publishEvent(event, payload);
+    },
+
+    emitRaw(event, payload) {
+      publishEvent(event, payload);
     },
 
     async emitInTransaction(tx: unknown, event: string, payload: unknown): Promise<void> {

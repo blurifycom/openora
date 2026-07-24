@@ -21,6 +21,7 @@ import {
   type PhoneLoginRequestOutput,
   type PhoneLoginVerifyInput,
   type User,
+  ClientMeta,
 } from '@openora/core/contracts';
 import { user, session, smsOtpSession } from '../schema/index.js';
 import { isRgBlocked } from './rg-guard.service.js';
@@ -168,9 +169,7 @@ export class PhoneLoginService {
     }
   }
 
-  async requestOtp(
-    input: PhoneLoginRequestInput & { ip?: string | null; userAgent?: string | null },
-  ): Promise<PhoneLoginRequestOutput> {
+  async requestOtp(input: PhoneLoginRequestInput & ClientMeta): Promise<PhoneLoginRequestOutput> {
     const { phone } = input;
     await assertRateLimit(this.limiter, `phone-otp-req:${phone}`, OTP_REQUEST_RATE_LIMIT);
 
@@ -222,21 +221,22 @@ export class PhoneLoginService {
 
     // Emit events only after SMS delivery so a send failure leaves no misleading
     // audit trail (no cancelled-without-requested orphan in the audit log).
+    const ip = input.ip ?? null;
+    const userAgent = input.userAgent ?? null;
     if (existing) {
       this.events.emit('identity.phone_otp.cancelled', {
         userId: account.id,
         reason: 'new_otp_requested',
+        ip,
+        userAgent,
       });
     }
-    this.events.emit('identity.phone_otp.requested', { userId: account.id });
+    this.events.emit('identity.phone_otp.requested', { userId: account.id, ip, userAgent });
 
     return { expiresAt: expiresAt.toISOString(), resendAfter: resendAfter.toISOString() };
   }
 
-  async verifyOtp(
-    input: PhoneLoginVerifyInput & { ip?: string | null; userAgent?: string | null },
-    resHeaders: Headers,
-  ) {
+  async verifyOtp(input: PhoneLoginVerifyInput & ClientMeta, resHeaders: Headers) {
     const { phone, code, rememberMe, ip = null, userAgent = null } = input;
     await assertRateLimit(this.limiter, `phone-otp-verify:${phone}`, OTP_VERIFY_RATE_LIMIT);
 
@@ -295,6 +295,8 @@ export class PhoneLoginService {
           this.events.emit('identity.phone_otp.cancelled', {
             userId: otp.userId,
             reason: 'max_attempts',
+            ip,
+            userAgent,
           });
         }
         throw OtpCancelledError();
