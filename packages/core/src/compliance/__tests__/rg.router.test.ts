@@ -2,14 +2,14 @@ import { describe, it, expect, vi } from 'vitest';
 import { call, ORPCError } from '@orpc/server';
 import type { AdminGuard } from '@openora/core/server';
 import type { KycAdapter, KycWebhookVerifier } from '@openora/core/contracts';
-import { mock } from '../../testing/mock.js';
+import { mock, adminCaller, testContext } from '../../testing/mock.js';
 import { createComplianceRouter } from '../router/index.js';
 import type { ComplianceService } from '../service/compliance.service.js';
 import type { KycVerificationService } from '../service/kyc.service.js';
 import { RgService, ExclusionPeriodNotElapsedError } from '../service/rg.service.js';
 import type { RgMonitoringService } from '../service/rg-monitoring.service.js';
 
-const CTX = { request: { headers: {} as Record<string, string | string[] | undefined> } };
+const CTX = testContext();
 const USER = '11111111-1111-4111-8111-111111111111';
 
 function fakeGuard(allowed: ReadonlyArray<`${string}:${string}`>): AdminGuard {
@@ -18,7 +18,7 @@ function fakeGuard(allowed: ReadonlyArray<`${string}:${string}`>): AdminGuard {
       if (resource && action && !allowed.includes(`${resource}:${action}`)) {
         throw new ORPCError('FORBIDDEN', { message: `Missing permission: ${resource}:${action}` });
       }
-      return { userId: 'admin-1', role: 'admin' };
+      return adminCaller();
     }),
   });
 }
@@ -92,7 +92,10 @@ describe('compliance RG router authz', () => {
       { userId: USER, type: 'deposit', amount: '100', minutes: null, period: 'daily' },
       { context: CTX },
     );
-    expect(setPlayerLimit).toHaveBeenCalledWith(USER, expect.any(Object), 'admin-1');
+    expect(setPlayerLimit).toHaveBeenCalledWith(USER, expect.any(Object), 'admin-1', {
+      ip: null,
+      userAgent: null,
+    });
   });
 
   it('maps a min-period lift rejection to a CONFLICT error', async () => {

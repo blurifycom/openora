@@ -12,7 +12,7 @@ import {
   pageToOffset,
   withAdvisoryXactLock,
 } from '@openora/core/server';
-import type { RealtimeTransport } from '@openora/core/contracts';
+import type { ClientMeta, RealtimeTransport } from '@openora/core/contracts';
 import { eq, and, isNull, lt, desc, asc, notInArray, inArray, count, ne } from 'drizzle-orm';
 import { user } from '@openora/core/pam/schema/identity';
 import type { User } from '@openora/core/pam/schema/identity';
@@ -438,7 +438,7 @@ export class ChatService {
     return rows.map((r) => serializeRow(r, { dateFields: ['createdAt'] }));
   }
 
-  async blockUser(blockerId: User['id'], blockedId: User['id']) {
+  async blockUser(blockerId: User['id'], blockedId: User['id'], meta?: ClientMeta) {
     if (blockerId === blockedId) {
       throw new ChatSelfBlockError();
     }
@@ -451,19 +451,29 @@ export class ChatService {
       .returning();
 
     if (inserted.length > 0) {
-      this.events.emit('chat.user.blocked', { blockerId, blockedId });
+      this.events.emit('chat.user.blocked', {
+        blockerId,
+        blockedId,
+        ip: meta?.ip ?? null,
+        userAgent: meta?.userAgent ?? null,
+      });
     }
     return { success: true } as const;
   }
 
-  async unblockUser(blockerId: User['id'], blockedId: User['id']) {
+  async unblockUser(blockerId: User['id'], blockedId: User['id'], meta?: ClientMeta) {
     const removed = await this.drizzle.db
       .delete(chatUserBlock)
       .where(and(eq(chatUserBlock.blockerId, blockerId), eq(chatUserBlock.blockedId, blockedId)))
       .returning();
 
     if (removed.length > 0) {
-      this.events.emit('chat.user.unblocked', { blockerId, blockedId });
+      this.events.emit('chat.user.unblocked', {
+        blockerId,
+        blockedId,
+        ip: meta?.ip ?? null,
+        userAgent: meta?.userAgent ?? null,
+      });
     }
     return { success: true } as const;
   }
@@ -473,12 +483,14 @@ export class ChatService {
     slug,
     category,
     actorId,
+    ip,
+    userAgent,
   }: {
     name: string;
     slug: string;
     category: ChatRoomCategory;
     actorId?: User['id'];
-  }) {
+  } & ClientMeta) {
     const [existing] = await this.drizzle.db
       .select({ id: chatRoom.id })
       .from(chatRoom)
@@ -499,7 +511,15 @@ export class ChatService {
       }
       throw error;
     }
-    this.events.emit('chat.room.created', { roomId: record.id, name, slug, category, actorId });
+    this.events.emit('chat.room.created', {
+      roomId: record.id,
+      name,
+      slug,
+      category,
+      actorId,
+      ip: ip ?? null,
+      userAgent: userAgent ?? null,
+    });
     return toRoom(record);
   }
 
@@ -509,13 +529,15 @@ export class ChatService {
     slug,
     category,
     actorId,
+    ip,
+    userAgent,
   }: {
     id: ChatRoom['id'];
     name?: string;
     slug?: string;
     category?: ChatRoomCategory;
     actorId?: User['id'];
-  }) {
+  } & ClientMeta) {
     const existing = findOneOrThrow(
       await this.drizzle.db
         .select()
@@ -565,11 +587,13 @@ export class ChatService {
       actorId,
       before: { name: existing.name, slug: existing.slug, category: existing.category },
       after: { name: updated.name, slug: updated.slug, category: updated.category },
+      ip: ip ?? null,
+      userAgent: userAgent ?? null,
     });
     return toRoom(updated);
   }
 
-  async deleteRoom(id: ChatRoom['id'], actorId?: User['id']) {
+  async deleteRoom(id: ChatRoom['id'], actorId?: User['id'], meta?: ClientMeta) {
     const deleted = findOneOrThrow(
       await this.drizzle.db
         .update(chatRoom)
@@ -587,11 +611,21 @@ export class ChatService {
       roomId: id,
       actorId,
       before: { name: deleted.name, slug: deleted.slug, category: deleted.category },
+      ip: meta?.ip ?? null,
+      userAgent: meta?.userAgent ?? null,
     });
     return { success: true } as const;
   }
 
-  async createPrivateRoom({ userId, name }: { userId: User['id']; name: string }) {
+  async createPrivateRoom({
+    userId,
+    name,
+    ip,
+    userAgent,
+  }: {
+    userId: User['id'];
+    name: string;
+  } & ClientMeta) {
     for (let attempt = 1; attempt <= 3; attempt++) {
       const joinCode = generateJoinCode();
       const slug = generatePrivateRoomSlug(joinCode);
@@ -630,7 +664,12 @@ export class ChatService {
             return room;
           }),
         );
-        this.events.emit('chat.private_room.created', { roomId: record.id, creatorId: userId });
+        this.events.emit('chat.private_room.created', {
+          roomId: record.id,
+          creatorId: userId,
+          ip: ip ?? null,
+          userAgent: userAgent ?? null,
+        });
         return toRoom(record);
       } catch (e) {
         if (attempt < 3 && isUniqueConstraintViolation(e)) {
@@ -643,7 +682,15 @@ export class ChatService {
     throw new ChatRoomSlugConflictError();
   }
 
-  async joinRoom({ userId, joinCode }: { userId: User['id']; joinCode: string }) {
+  async joinRoom({
+    userId,
+    joinCode,
+    ip,
+    userAgent,
+  }: {
+    userId: User['id'];
+    joinCode: string;
+  } & ClientMeta) {
     const [candidate] = await this.drizzle.db
       .select({ id: chatRoom.id })
       .from(chatRoom)
@@ -686,12 +733,25 @@ export class ChatService {
       }),
     );
     if (inserted.length > 0) {
-      this.events.emit('chat.room.member.joined', { roomId: room.id, userId });
+      this.events.emit('chat.room.member.joined', {
+        roomId: room.id,
+        userId,
+        ip: ip ?? null,
+        userAgent: userAgent ?? null,
+      });
     }
     return toRoom(room);
   }
 
-  async leaveRoom({ userId, roomId }: { userId: User['id']; roomId: ChatRoom['id'] }) {
+  async leaveRoom({
+    userId,
+    roomId,
+    ip,
+    userAgent,
+  }: {
+    userId: User['id'];
+    roomId: ChatRoom['id'];
+  } & ClientMeta) {
     await this.verifyRoomAccess(roomId, userId);
     const removed = await this.drizzle.db.transaction((t) =>
       withAdvisoryXactLock(t, `chat-room:${roomId}`, async () => {
@@ -716,7 +776,12 @@ export class ChatService {
       }),
     );
     if (removed.length > 0) {
-      this.events.emit('chat.room.member.left', { roomId, userId });
+      this.events.emit('chat.room.member.left', {
+        roomId,
+        userId,
+        ip: ip ?? null,
+        userAgent: userAgent ?? null,
+      });
     }
     return { success: true } as const;
   }
@@ -725,11 +790,13 @@ export class ChatService {
     moderatorId,
     roomId,
     userId,
+    ip,
+    userAgent,
   }: {
     moderatorId: User['id'];
     roomId: ChatRoom['id'];
     userId: User['id'];
-  }) {
+  } & ClientMeta) {
     if (moderatorId === userId) {
       throw new ChatRoomSelfModerationError();
     }
@@ -749,7 +816,13 @@ export class ChatService {
         .returning();
     });
     if (removed.length > 0) {
-      this.events.emit('chat.room.member.kicked', { roomId, userId, kickedBy: moderatorId });
+      this.events.emit('chat.room.member.kicked', {
+        roomId,
+        userId,
+        kickedBy: moderatorId,
+        ip: ip ?? null,
+        userAgent: userAgent ?? null,
+      });
     }
     await this.transport.revokeClient?.(userId);
     return { success: true } as const;
@@ -759,11 +832,13 @@ export class ChatService {
     moderatorId,
     roomId,
     userId,
+    ip,
+    userAgent,
   }: {
     moderatorId: User['id'];
     roomId: ChatRoom['id'];
     userId: User['id'];
-  }) {
+  } & ClientMeta) {
     if (moderatorId === userId) {
       throw new ChatRoomSelfModerationError();
     }
@@ -788,7 +863,13 @@ export class ChatService {
           .where(and(eq(chatRoomMember.roomId, roomId), eq(chatRoomMember.userId, userId)));
       }),
     );
-    this.events.emit('chat.room.member.banned', { roomId, userId, bannedBy: moderatorId });
+    this.events.emit('chat.room.member.banned', {
+      roomId,
+      userId,
+      bannedBy: moderatorId,
+      ip: ip ?? null,
+      userAgent: userAgent ?? null,
+    });
     await this.transport.revokeClient?.(userId);
     return { success: true } as const;
   }

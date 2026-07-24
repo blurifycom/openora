@@ -1,6 +1,13 @@
 import { type EventBus, type DrizzleService } from '@openora/core/server';
 import { CHAT_ROOM_CATEGORIES, type ChatMessage } from '../contract/index.js';
-import { mock, mockDb, makeDrizzle, makeEvents, readPrivate } from '../../../testing/mock.js';
+import {
+  mock,
+  mockDb,
+  makeDrizzle,
+  makeEvents,
+  readPrivate,
+  NO_CLIENT_META,
+} from '../../../testing/mock.js';
 import { describe, it, expect, vi } from 'vitest';
 import {
   ChatService,
@@ -310,6 +317,7 @@ describe('ChatService.createRoom', () => {
       name: 'Jackpot Wheel',
       slug: 'jackpot-wheel',
       category: 'games-sports',
+      ...NO_CLIENT_META,
     });
     expect(result.id).toBe('r1');
     expect(result.slug).toBe('jackpot-wheel');
@@ -324,6 +332,7 @@ describe('ChatService.createRoom', () => {
         name: 'Jackpot Wheel',
         slug: 'jackpot-wheel',
         category: 'games-sports',
+        ...NO_CLIENT_META,
       }),
     ).rejects.toThrow(ChatRoomSlugConflictError);
   });
@@ -372,6 +381,7 @@ describe('ChatService.updateRoom', () => {
         slug: 'mega-wheel',
         category: 'regions',
         actorId: 'admin-1',
+        ...NO_CLIENT_META,
       }),
     ).resolves.toMatchObject({ name: 'Mega Wheel', slug: 'mega-wheel', category: 'regions' });
 
@@ -380,6 +390,8 @@ describe('ChatService.updateRoom', () => {
       actorId: 'admin-1',
       before: { name: 'Jackpot Wheel', slug: 'jackpot-wheel', category: 'games-sports' },
       after: { name: 'Mega Wheel', slug: 'mega-wheel', category: 'regions' },
+      ip: null,
+      userAgent: null,
     });
   });
 });
@@ -422,6 +434,7 @@ describe('ChatService.createPrivateRoom', () => {
     const result = await makeAdminService(drizzle).createPrivateRoom({
       userId: 'u1',
       name: 'Squad Chat',
+      ...NO_CLIENT_META,
     });
     expect(result.id).toBe('r2');
     expect(result.isPublic).toBe(false);
@@ -434,7 +447,11 @@ describe('ChatService.createPrivateRoom', () => {
     const drizzle = makeDrizzle({ select: [[{ total: 0 }], []], returning: [[privateRoomRow]] });
     const valuesSpy = readPrivate<ReturnType<typeof vi.fn>>(drizzle.db, 'values');
 
-    await makeAdminService(drizzle).createPrivateRoom({ userId: 'u1', name: 'Squad Chat' });
+    await makeAdminService(drizzle).createPrivateRoom({
+      userId: 'u1',
+      name: 'Squad Chat',
+      ...NO_CLIENT_META,
+    });
 
     const [room] = valuesSpy.mock.calls[0] ?? [];
     expect(room).toMatchObject({ joinCode: expect.any(String) });
@@ -448,7 +465,11 @@ describe('ChatService.createPrivateRoom', () => {
     const drizzle = makeDrizzle({ select: [[{ total: 15 }]] });
 
     await expect(
-      makeAdminService(drizzle).createPrivateRoom({ userId: 'u1', name: 'One Too Many' }),
+      makeAdminService(drizzle).createPrivateRoom({
+        userId: 'u1',
+        name: 'One Too Many',
+        ...NO_CLIENT_META,
+      }),
     ).rejects.toThrow(ChatRoomLimitReachedError);
   });
 
@@ -456,7 +477,11 @@ describe('ChatService.createPrivateRoom', () => {
     const drizzle = makeDrizzle({ select: [[{ total: 0 }]], returning: [[privateRoomRow]] });
     const executeSpy = readPrivate<ReturnType<typeof vi.fn>>(drizzle.db, 'execute');
 
-    await makeAdminService(drizzle).createPrivateRoom({ userId: 'u1', name: 'Squad Chat' });
+    await makeAdminService(drizzle).createPrivateRoom({
+      userId: 'u1',
+      name: 'Squad Chat',
+      ...NO_CLIENT_META,
+    });
 
     expect(executeSpy).toHaveBeenCalledTimes(1);
   });
@@ -466,7 +491,11 @@ describe('ChatService.joinRoom', () => {
   it('joins a private room via join code and returns the room', async () => {
     // (1) find room id by joinCode, (2) re-read room under the membership lock, (3) check ban.
     const drizzle = makeDrizzle({ select: [[{ id: 'r2' }], [privateRoomRow], []] });
-    const result = await makeAdminService(drizzle).joinRoom({ userId: 'u2', joinCode: 'ABC123' });
+    const result = await makeAdminService(drizzle).joinRoom({
+      userId: 'u2',
+      joinCode: 'ABC123',
+      ...NO_CLIENT_META,
+    });
     expect(result.id).toBe('r2');
     expect(result.joinCode).toBe('ABC123');
   });
@@ -475,7 +504,7 @@ describe('ChatService.joinRoom', () => {
     // (1) find room by joinCode -> empty
     const drizzle = makeDrizzle({ select: [[]] });
     await expect(
-      makeAdminService(drizzle).joinRoom({ userId: 'u2', joinCode: 'BADCODE' }),
+      makeAdminService(drizzle).joinRoom({ userId: 'u2', joinCode: 'BADCODE', ...NO_CLIENT_META }),
     ).rejects.toThrow(ChatRoomJoinCodeNotFoundError);
   });
 
@@ -485,7 +514,7 @@ describe('ChatService.joinRoom', () => {
       select: [[{ id: 'r2' }], [privateRoomRow], [{ id: 'ban1' }]],
     });
     await expect(
-      makeAdminService(drizzle).joinRoom({ userId: 'u2', joinCode: 'ABC123' }),
+      makeAdminService(drizzle).joinRoom({ userId: 'u2', joinCode: 'ABC123', ...NO_CLIENT_META }),
     ).rejects.toThrow(ChatRoomBannedError);
   });
 });
@@ -500,6 +529,7 @@ describe('ChatService.kickMember', () => {
       moderatorId: 'u1',
       roomId: 'r2',
       userId: 'u2',
+      ...NO_CLIENT_META,
     });
     expect(result).toEqual({ success: true });
   });
@@ -509,21 +539,36 @@ describe('ChatService.kickMember', () => {
       select: [[privateRoomRow], [{ id: 'mem1' }], [{ role: 'member' }]],
     });
     await expect(
-      makeAdminService(drizzle).kickMember({ moderatorId: 'u1', roomId: 'r2', userId: 'u2' }),
+      makeAdminService(drizzle).kickMember({
+        moderatorId: 'u1',
+        roomId: 'r2',
+        userId: 'u2',
+        ...NO_CLIENT_META,
+      }),
     ).rejects.toThrow(ChatRoomNotModeratorError);
   });
 
   it('throws ChatRoomNotModeratorError when caller is not in the room', async () => {
     const drizzle = makeDrizzle({ select: [[privateRoomRow], [{ id: 'mem1' }], []] });
     await expect(
-      makeAdminService(drizzle).kickMember({ moderatorId: 'u1', roomId: 'r2', userId: 'u2' }),
+      makeAdminService(drizzle).kickMember({
+        moderatorId: 'u1',
+        roomId: 'r2',
+        userId: 'u2',
+        ...NO_CLIENT_META,
+      }),
     ).rejects.toThrow(ChatRoomNotModeratorError);
   });
 
   it('throws ChatRoomSelfModerationError when trying to kick yourself', async () => {
     const drizzle = makeDrizzle({ select: [] });
     await expect(
-      makeAdminService(drizzle).kickMember({ moderatorId: 'u1', roomId: 'r2', userId: 'u1' }),
+      makeAdminService(drizzle).kickMember({
+        moderatorId: 'u1',
+        roomId: 'r2',
+        userId: 'u1',
+        ...NO_CLIENT_META,
+      }),
     ).rejects.toThrow(ChatRoomSelfModerationError);
   });
 });
@@ -538,6 +583,7 @@ describe('ChatService.banMember', () => {
       moderatorId: 'u1',
       roomId: 'r2',
       userId: 'u2',
+      ...NO_CLIENT_META,
     });
     expect(result).toEqual({ success: true });
   });
@@ -545,14 +591,24 @@ describe('ChatService.banMember', () => {
   it('throws ChatRoomNotModeratorError when caller is not a moderator', async () => {
     const drizzle = makeDrizzle({ select: [[privateRoomRow], [{ id: 'mem1' }], []] });
     await expect(
-      makeAdminService(drizzle).banMember({ moderatorId: 'u1', roomId: 'r2', userId: 'u2' }),
+      makeAdminService(drizzle).banMember({
+        moderatorId: 'u1',
+        roomId: 'r2',
+        userId: 'u2',
+        ...NO_CLIENT_META,
+      }),
     ).rejects.toThrow(ChatRoomNotModeratorError);
   });
 
   it('throws ChatRoomSelfModerationError when trying to ban yourself', async () => {
     const drizzle = makeDrizzle({ select: [] });
     await expect(
-      makeAdminService(drizzle).banMember({ moderatorId: 'u1', roomId: 'r2', userId: 'u1' }),
+      makeAdminService(drizzle).banMember({
+        moderatorId: 'u1',
+        roomId: 'r2',
+        userId: 'u1',
+        ...NO_CLIENT_META,
+      }),
     ).rejects.toThrow(ChatRoomSelfModerationError);
   });
 });

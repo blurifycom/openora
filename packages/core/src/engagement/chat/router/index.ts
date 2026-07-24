@@ -185,18 +185,18 @@ export function createChatRouter({
     blockUser: os.blockUser.handler(({ input, context }) => {
       const userId = getUserId(context);
       return mapErrors({ BAD_REQUEST: ChatSelfBlockError }, () =>
-        chatService.blockUser(userId, input.blockedId),
+        chatService.blockUser(userId, input.blockedId, context.clientMeta),
       );
     }),
 
-    unblockUser: os.unblockUser.handler(({ input, context }) =>
-      chatService.unblockUser(getUserId(context), input.blockedId),
-    ),
+    unblockUser: os.unblockUser.handler(({ input, context }) => {
+      return chatService.unblockUser(getUserId(context), input.blockedId, context.clientMeta);
+    }),
 
     createPrivateRoom: os.createPrivateRoom.handler(({ input, context }) => {
       const userId = getUserId(context);
       return mapErrors({ CONFLICT: ChatRoomLimitReachedError }, () =>
-        chatService.createPrivateRoom({ userId, name: input.name }),
+        chatService.createPrivateRoom({ userId, name: input.name, ...context.clientMeta }),
       );
     }),
 
@@ -209,14 +209,14 @@ export function createChatRouter({
       );
       return mapErrors(
         { NOT_FOUND: ChatRoomJoinCodeNotFoundError, FORBIDDEN: ChatRoomBannedError },
-        () => chatService.joinRoom({ userId, joinCode: input.joinCode }),
+        () => chatService.joinRoom({ userId, joinCode: input.joinCode, ...context.clientMeta }),
       );
     }),
 
     leaveRoom: os.leaveRoom.handler(({ input, context }) => {
       const userId = getUserId(context);
       return mapErrors({ BAD_REQUEST: ChatRoomLastModeratorError }, () =>
-        chatService.leaveRoom({ userId, roomId: input.roomId }),
+        chatService.leaveRoom({ userId, roomId: input.roomId, ...context.clientMeta }),
       );
     }),
 
@@ -234,7 +234,13 @@ export function createChatRouter({
           FORBIDDEN: ChatRoomNotModeratorError,
           BAD_REQUEST: ChatRoomSelfModerationError,
         },
-        () => chatService.kickMember({ moderatorId, roomId: input.roomId, userId: input.userId }),
+        () =>
+          chatService.kickMember({
+            moderatorId,
+            roomId: input.roomId,
+            userId: input.userId,
+            ...context.clientMeta,
+          }),
       );
     }),
 
@@ -246,7 +252,13 @@ export function createChatRouter({
           FORBIDDEN: ChatRoomNotModeratorError,
           BAD_REQUEST: ChatRoomSelfModerationError,
         },
-        () => chatService.banMember({ moderatorId, roomId: input.roomId, userId: input.userId }),
+        () =>
+          chatService.banMember({
+            moderatorId,
+            roomId: input.roomId,
+            userId: input.userId,
+            ...context.clientMeta,
+          }),
       );
     }),
 
@@ -260,17 +272,17 @@ export function createChatRouter({
     ),
 
     createRoom: os.createRoom.handler(async ({ input, context }) => {
-      const { userId } = await adminGuard.assert(context, 'chat-room', 'create');
+      const { userId, ip, userAgent } = await adminGuard.assert(context, 'chat-room', 'create');
       return mapErrors({ CONFLICT: ChatRoomSlugConflictError }, () =>
-        chatService.createRoom({ ...input, actorId: userId }),
+        chatService.createRoom({ ...input, actorId: userId, ip, userAgent }),
       );
     }),
 
     updateRoom: os.updateRoom.handler(async ({ input, context }) => {
-      const { userId } = await adminGuard.assert(context, 'chat-room', 'update');
+      const { userId, ip, userAgent } = await adminGuard.assert(context, 'chat-room', 'update');
       return mapErrors(
         { NOT_FOUND: ChatRoomNotFoundError, CONFLICT: ChatRoomSlugConflictError },
-        () => chatService.updateRoom({ ...input, actorId: userId }),
+        () => chatService.updateRoom({ ...input, actorId: userId, ip, userAgent }),
       );
     }),
 
@@ -280,9 +292,9 @@ export function createChatRouter({
     }),
 
     deleteRoom: os.deleteRoom.handler(async ({ input, context }) => {
-      const { userId } = await adminGuard.assert(context, 'chat-room', 'delete');
+      const { userId, ip, userAgent } = await adminGuard.assert(context, 'chat-room', 'delete');
       return mapErrors({ NOT_FOUND: ChatRoomNotFoundError }, () =>
-        chatService.deleteRoom(input.id, userId),
+        chatService.deleteRoom(input.id, userId, { ip, userAgent }),
       );
     }),
   });

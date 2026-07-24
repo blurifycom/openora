@@ -2,6 +2,7 @@ packages:
   - 'apps/*'
   - 'packages/core' # @openora/core - the single published umbrella (ADR-0025); modules fold in as subpaths
   - 'packages/mcp' # @openora/mcp - publishable MCP dev server (not part of core)
+  - 'packages/create-openora' # @openora/create - npm initializer (`npm create @openora`), no OSS checkout required
   - 'packages/testing' # @openora/testing - dev/test harness (not published)
   - 'packages/*/*' # includes packages/addons/* (every feature is a standalone add-on package)
 # Pin a single React version across the workspace - the SDK peer-deps `>=19`, so

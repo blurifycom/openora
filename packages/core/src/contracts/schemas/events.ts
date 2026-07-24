@@ -1,5 +1,5 @@
 import * as z from 'zod';
-import { MoneyAmountSchema, TimestampSchema, UuidSchema } from './common.js';
+import { ClientMetaSchema, MoneyAmountSchema, TimestampSchema, UuidSchema } from './common.js';
 import {
   GeoRuleActionSchema,
   LimitTypeSchema,
@@ -11,20 +11,25 @@ import { CurrencyCodeSchema, CountryCodeSchema } from './igaming-config.js';
 import { PermissionLevelSchema } from './iam.js';
 import { KycStatusSchema } from './player.js';
 
-const iamRoleEventBase = z.object({ roleId: UuidSchema, actorId: UuidSchema });
-const cmsPageEventBase = z.object({ pageId: UuidSchema, actorId: UuidSchema });
-const cmsBannerEventBase = z.object({ bannerId: UuidSchema, actorId: UuidSchema });
+// Optional request-origin metadata shared by HTTP-triggered events; both fields may be absent.
+const authContextBase = ClientMetaSchema.partial();
+
+const iamRoleEventBase = z
+  .object({ roleId: UuidSchema, actorId: UuidSchema })
+  .merge(authContextBase);
+const cmsPageEventBase = z
+  .object({ pageId: UuidSchema, actorId: UuidSchema })
+  .merge(authContextBase);
+const cmsBannerEventBase = z
+  .object({ bannerId: UuidSchema, actorId: UuidSchema })
+  .merge(authContextBase);
 const actorReasonBase = z.object({ actorId: UuidSchema, reason: z.string() });
-const tagPlayerEventBase = actorReasonBase.extend({ playerId: UuidSchema, tagKey: TagKeySchema });
+const tagPlayerEventBase = actorReasonBase
+  .extend({ playerId: UuidSchema, tagKey: TagKeySchema })
+  .merge(authContextBase);
 const permissionLevelEntries = z.array(
   z.object({ resource: z.string(), level: PermissionLevelSchema }),
 );
-
-// Optional request-origin metadata shared by auth events; both fields may be absent.
-const authContextBase = z.object({
-  ip: z.string().nullable().optional(),
-  userAgent: z.string().nullable().optional(),
-});
 
 // Shared shape for every wallet money-movement event. Exact decimal string + currency.
 const walletTxnBase = z.object({
@@ -35,20 +40,20 @@ const walletTxnBase = z.object({
 });
 
 export const domainEventSchemas = {
-  'identity.user.registered': z.object({ userId: UuidSchema }),
+  'identity.user.registered': authContextBase.extend({ userId: UuidSchema }),
   'identity.user.login': authContextBase.extend({ userId: UuidSchema }),
   'identity.user.login.failed': authContextBase.extend({
     email: z.email(),
     reason: z.string().nullable().optional(),
     attemptsRemaining: z.number().int().optional(),
   }),
-  'identity.user.logout': z.object({ userId: UuidSchema }),
+  'identity.user.logout': authContextBase.extend({ userId: UuidSchema }),
   'identity.user.phone_login': authContextBase.extend({
     userId: UuidSchema,
     method: z.literal('phone'),
   }),
-  'identity.phone_otp.requested': z.object({ userId: UuidSchema }),
-  'identity.phone_otp.cancelled': z.object({
+  'identity.phone_otp.requested': authContextBase.extend({ userId: UuidSchema }),
+  'identity.phone_otp.cancelled': authContextBase.extend({
     userId: UuidSchema,
     reason: z.enum(['max_attempts', 'new_otp_requested']),
   }),
@@ -57,29 +62,29 @@ export const domainEventSchemas = {
     email: z.email(),
     lockoutUntil: TimestampSchema,
   }),
-  'identity.user.unlocked': z.object({
+  'identity.user.unlocked': authContextBase.extend({
     userId: UuidSchema,
     email: z.email(),
     actorId: UuidSchema,
     previousFailedAttempts: z.number().int().optional(),
     previousLockoutUntil: TimestampSchema.nullable().optional(),
   }),
-  'identity.2fa.enabled': z.object({ userId: UuidSchema }),
-  'identity.2fa.disabled': z.object({ userId: UuidSchema }),
-  'identity.password.reset': z.object({ userId: UuidSchema }),
-  'identity.email.verified': z.object({ userId: UuidSchema }),
-  'identity.profile.updated': z.object({ userId: UuidSchema }),
+  'identity.2fa.enabled': authContextBase.extend({ userId: UuidSchema }),
+  'identity.2fa.disabled': authContextBase.extend({ userId: UuidSchema }),
+  'identity.password.reset': authContextBase.extend({ userId: UuidSchema }),
+  'identity.email.verified': authContextBase.extend({ userId: UuidSchema }),
+  'identity.profile.updated': authContextBase.extend({ userId: UuidSchema }),
   // An admin toggled a user's active status (the only user-lifecycle flow today;
   // users are deactivated, never hard-deleted). userId = subject, actorId = the
   // admin who acted (for a complete audit trail).
-  'identity.user.deactivated': z.object({ userId: UuidSchema, actorId: UuidSchema }),
-  'identity.user.reactivated': z.object({ userId: UuidSchema, actorId: UuidSchema }),
-  'identity.session.revoked': z.object({
+  'identity.user.deactivated': authContextBase.extend({ userId: UuidSchema, actorId: UuidSchema }),
+  'identity.user.reactivated': authContextBase.extend({ userId: UuidSchema, actorId: UuidSchema }),
+  'identity.session.revoked': authContextBase.extend({
     userId: UuidSchema,
     sessionId: UuidSchema,
     actorId: UuidSchema.optional(),
   }),
-  'identity.sessions.revoked_all': z.object({
+  'identity.sessions.revoked_all': authContextBase.extend({
     userId: UuidSchema,
     actorId: UuidSchema.optional(),
   }),
@@ -94,16 +99,17 @@ export const domainEventSchemas = {
   'wallet.withdrawal.completed': walletTxnBase,
   // A player requested a withdrawal; funds are held (balance debited) and the
   // request enters the back-office approval queue as `pending`.
-  'wallet.withdrawal.requested': walletTxnBase,
+  'wallet.withdrawal.requested': walletTxnBase.merge(authContextBase),
   // A payments admin approved a pending withdrawal; it moves to `processing` and
   // is sent to the PSP/Fireblocks rail. `adminId` is the acting reviewer.
-  'wallet.withdrawal.approved': walletTxnBase.extend({ adminId: UuidSchema }),
+  'wallet.withdrawal.approved': walletTxnBase
+    .extend({ adminId: UuidSchema })
+    .merge(authContextBase),
   // A payments admin rejected a pending withdrawal; held funds are returned to the
   // player balance. `adminId` is the acting reviewer; `reason` is mandatory.
-  'wallet.withdrawal.rejected': walletTxnBase.extend({
-    adminId: UuidSchema,
-    reason: z.string(),
-  }),
+  'wallet.withdrawal.rejected': walletTxnBase
+    .extend({ adminId: UuidSchema, reason: z.string() })
+    .merge(authContextBase),
   // An approved withdrawal failed at the PSP/Fireblocks rail; the held funds were
   // returned to the player balance and the transaction moved to `failed`.
   'wallet.withdrawal.failed': walletTxnBase.extend({ adminId: UuidSchema }),
@@ -124,23 +130,23 @@ export const domainEventSchemas = {
   }),
 
   // A player muted/unmuted another player's messages for themselves (ABC-45 AC11).
-  'chat.user.blocked': z.object({ blockerId: UuidSchema, blockedId: UuidSchema }),
-  'chat.user.unblocked': z.object({ blockerId: UuidSchema, blockedId: UuidSchema }),
+  'chat.user.blocked': authContextBase.extend({ blockerId: UuidSchema, blockedId: UuidSchema }),
+  'chat.user.unblocked': authContextBase.extend({ blockerId: UuidSchema, blockedId: UuidSchema }),
 
   // Admin room CRUD (actorId = acting admin UUID).
-  'chat.room.created': z.object({
+  'chat.room.created': authContextBase.extend({
     roomId: UuidSchema,
     name: z.string(),
     slug: z.string(),
     category: z.string(),
     actorId: UuidSchema.optional(),
   }),
-  'chat.room.deleted': z.object({
+  'chat.room.deleted': authContextBase.extend({
     roomId: UuidSchema,
     actorId: UuidSchema.optional(),
     before: z.object({ name: z.string(), slug: z.string(), category: z.string() }),
   }),
-  'chat.room.updated': z.object({
+  'chat.room.updated': authContextBase.extend({
     roomId: UuidSchema,
     actorId: UuidSchema.optional(),
     before: z.object({ name: z.string(), slug: z.string(), category: z.string() }),
@@ -148,15 +154,18 @@ export const domainEventSchemas = {
   }),
 
   // Private room lifecycle: creation and member membership changes.
-  'chat.private_room.created': z.object({ roomId: UuidSchema, creatorId: UuidSchema }),
-  'chat.room.member.joined': z.object({ roomId: UuidSchema, userId: UuidSchema }),
-  'chat.room.member.left': z.object({ roomId: UuidSchema, userId: UuidSchema }),
-  'chat.room.member.kicked': z.object({
+  'chat.private_room.created': authContextBase.extend({
+    roomId: UuidSchema,
+    creatorId: UuidSchema,
+  }),
+  'chat.room.member.joined': authContextBase.extend({ roomId: UuidSchema, userId: UuidSchema }),
+  'chat.room.member.left': authContextBase.extend({ roomId: UuidSchema, userId: UuidSchema }),
+  'chat.room.member.kicked': authContextBase.extend({
     roomId: UuidSchema,
     userId: UuidSchema,
     kickedBy: UuidSchema,
   }),
-  'chat.room.member.banned': z.object({
+  'chat.room.member.banned': authContextBase.extend({
     roomId: UuidSchema,
     userId: UuidSchema,
     bannedBy: UuidSchema,
@@ -164,14 +173,14 @@ export const domainEventSchemas = {
 
   // An admin added or changed a geo (country) rule (regulatory). `actorId` is the
   // acting admin so the audit log can attribute the mutation.
-  'compliance.geo-rule.added': z.object({
+  'compliance.geo-rule.added': authContextBase.extend({
     countryCode: CountryCodeSchema,
     action: GeoRuleActionSchema,
     actorId: UuidSchema.optional(),
   }),
 
-  'compliance.limit.upserted': z.object({ userId: UuidSchema, limitId: UuidSchema }),
-  'compliance.limit.removed': z.object({ userId: UuidSchema, limitId: UuidSchema }),
+  'compliance.limit.upserted': authContextBase.extend({ userId: UuidSchema, limitId: UuidSchema }),
+  'compliance.limit.removed': authContextBase.extend({ userId: UuidSchema, limitId: UuidSchema }),
 
   // Responsible-Gambling admin actions. `userId` = the subject player, `actorId` =
   // the acting admin (the envelope carries no caller, so it is explicit for the audit
@@ -180,7 +189,7 @@ export const domainEventSchemas = {
   // money-type limits carry amount (minutes null), the session-type limit
   // carries minutes (amount null). previous* mirrors the prior row's value, null
   // when this is the first limit of that (type, period).
-  'rg.limit.set': z.object({
+  'rg.limit.set': authContextBase.extend({
     userId: UuidSchema,
     actorId: UuidSchema,
     limitId: UuidSchema,
@@ -191,27 +200,21 @@ export const domainEventSchemas = {
     previousAmount: MoneyAmountSchema.nullable(),
     previousMinutes: z.number().int().nullable(),
   }),
-  'rg.cooling_off.activated': actorReasonBase.extend({
-    userId: UuidSchema,
-    exclusionId: UuidSchema,
-    expiresAt: TimestampSchema,
-  }),
-  'rg.self_exclusion.activated': actorReasonBase.extend({
-    userId: UuidSchema,
-    exclusionId: UuidSchema,
-    isPermanent: z.boolean(),
-    expiresAt: TimestampSchema.nullable(),
-  }),
-  'rg.self_exclusion.lifted': actorReasonBase.extend({
-    userId: UuidSchema,
-    exclusionId: UuidSchema,
-    kind: ExclusionKindSchema,
-  }),
-  'rg.exclusion.login_blocked': z.object({
-    userId: UuidSchema,
-    ip: z.string().nullable().optional(),
-    userAgent: z.string().nullable().optional(),
-  }),
+  'rg.cooling_off.activated': actorReasonBase
+    .extend({ userId: UuidSchema, exclusionId: UuidSchema, expiresAt: TimestampSchema })
+    .merge(authContextBase),
+  'rg.self_exclusion.activated': actorReasonBase
+    .extend({
+      userId: UuidSchema,
+      exclusionId: UuidSchema,
+      isPermanent: z.boolean(),
+      expiresAt: TimestampSchema.nullable(),
+    })
+    .merge(authContextBase),
+  'rg.self_exclusion.lifted': actorReasonBase
+    .extend({ userId: UuidSchema, exclusionId: UuidSchema, kind: ExclusionKindSchema })
+    .merge(authContextBase),
+  'rg.exclusion.login_blocked': authContextBase.extend({ userId: UuidSchema }),
 
   // A player's KYC status changed. userId = subject player; actorId = the admin who
   // acted, or null for system-driven changes (vendor decision, webhook, threshold
@@ -225,7 +228,7 @@ export const domainEventSchemas = {
 
   // A player submitted KYC documents; a verification record was created and sent to
   // the provider. userId = the submitting player; referenceId = the provider reference.
-  'compliance.kyc.submitted': z.object({
+  'compliance.kyc.submitted': authContextBase.extend({
     userId: UuidSchema,
     referenceId: z.string(),
     provider: z.string(),
@@ -240,7 +243,7 @@ export const domainEventSchemas = {
 
   'notifications.created': z.object({ notificationId: UuidSchema, userId: UuidSchema }),
 
-  'cms.page.published': z.object({ pageId: UuidSchema, slug: z.string() }),
+  'cms.page.published': authContextBase.extend({ pageId: UuidSchema, slug: z.string() }),
   'cms.page.created': cmsPageEventBase,
   'cms.page.updated': cmsPageEventBase,
   'cms.page.deleted': cmsPageEventBase,
@@ -251,7 +254,7 @@ export const domainEventSchemas = {
   // Emitted when an admin invitation token is accepted. The consumer (identity
   // module or an overlay) provisions the user account and completes the role
   // assignment by resolving the userId from the email.
-  'iam.invitation.accepted': z.object({
+  'iam.invitation.accepted': authContextBase.extend({
     email: z.email(),
     roleId: UuidSchema,
     invitationId: UuidSchema,
@@ -280,7 +283,7 @@ export const domainEventSchemas = {
   'tag.player.assigned': tagPlayerEventBase,
   'tag.player.removed': tagPlayerEventBase,
   // Emitted after an admin creates or updates a tag rule configuration.
-  'tag.rule.upserted': z.object({
+  'tag.rule.upserted': authContextBase.extend({
     tagKey: TagKeySchema,
     actorId: UuidSchema,
     after: z.record(z.string(), z.unknown()),

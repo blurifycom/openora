@@ -1,5 +1,6 @@
 import { vi, type Mock } from 'vitest';
-import type { DrizzleService } from '@openora/core/server';
+import type { AdminCaller, DrizzleService, OssContext } from '@openora/core/server';
+import type { ClientMeta } from '@openora/core/contracts';
 
 // The one sanctioned home for test-double type assertions. A unit test standing in
 // for a collaborator is inherently partial, so the cast lives here - documented and
@@ -12,6 +13,21 @@ export const mock = <T>(partial: object = {}): T => partial as unknown as T;
 
 /** Wrap a fake `db` handle (usually a chainable Proxy) as a DrizzleService. */
 export const mockDb = (db: unknown): DrizzleService => ({ db }) as unknown as DrizzleService;
+
+export const NO_CLIENT_META: ClientMeta = { ip: null, userAgent: null };
+
+export const adminCaller = (over: Partial<AdminCaller> = {}): AdminCaller => ({
+  userId: 'admin-1',
+  role: 'admin',
+  ...NO_CLIENT_META,
+  ...over,
+});
+
+export const testContext = (over: Partial<OssContext> = {}): OssContext => ({
+  request: { headers: {} },
+  clientMeta: NO_CLIENT_META,
+  ...over,
+});
 
 /** Read a private field off an instance without widening the class's public API. */
 export const readPrivate = <V = unknown>(obj: object, key: string): V =>

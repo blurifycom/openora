@@ -9,7 +9,7 @@ import {
   WalletTransactionStatusSchema,
   WalletTransactionTypeSchema,
 } from '@openora/core/contracts';
-import { PageQuerySchema, paginated } from '@openora/core/contracts/kit';
+import { PageQuerySchema, SortOrderSchema, paginated } from '@openora/core/contracts/kit';
 
 export { WalletRailSchema, WalletTransactionStatusSchema, WalletTransactionTypeSchema };
 
@@ -55,8 +55,33 @@ export const TransactionResultSchema = z.object({
 });
 export type TransactionResult = z.infer<typeof TransactionResultSchema>;
 
+export const WALLET_TX_SORT_BY_VALUES = [
+  'createdAt',
+  'amount',
+  'type',
+  'status',
+  'currency',
+  'rail',
+  'reviewedAt',
+] as const;
+export const WalletTransactionSortBySchema = z.enum(WALLET_TX_SORT_BY_VALUES).default('createdAt');
+export type WalletTransactionSortBy = z.infer<typeof WalletTransactionSortBySchema>;
+
+export const WITHDRAWAL_SORT_BY_VALUES = [
+  'createdAt',
+  'amount',
+  'status',
+  'currency',
+  'rail',
+  'reviewedAt',
+] as const;
+export const WithdrawalSortBySchema = z.enum(WITHDRAWAL_SORT_BY_VALUES).default('createdAt');
+export type WithdrawalSortBy = z.infer<typeof WithdrawalSortBySchema>;
+
 export const ListPlayerTransactionsArgs = PageQuerySchema.extend({
   userId: UuidSchema,
+  sortBy: WalletTransactionSortBySchema.optional(),
+  sortOrder: SortOrderSchema.default('desc').optional(),
 });
 
 export const WithdrawalQueueItemSchema = z.object({
@@ -84,6 +109,8 @@ export const WithdrawalQueueFilterSchema = PageQuerySchema.extend({
   kycStatus: KycStatusSchema.optional(),
   dateFrom: TimestampSchema.optional(),
   dateTo: TimestampSchema.optional(),
+  sortBy: WithdrawalSortBySchema.optional(),
+  sortOrder: SortOrderSchema.default('desc').optional(),
 });
 export type WithdrawalQueueFilter = z.infer<typeof WithdrawalQueueFilterSchema>;
 
@@ -137,7 +164,12 @@ export const walletContract = {
 
   listTransactions: oc
     .route({ method: 'GET', path: '/wallet/transactions' })
-    .input(PageQuerySchema)
+    .input(
+      PageQuerySchema.extend({
+        sortBy: WalletTransactionSortBySchema.optional(),
+        sortOrder: SortOrderSchema.default('desc').optional(),
+      }),
+    )
     .output(paginated(WalletTransactionSchema)),
 
   listPlayerTransactions: oc

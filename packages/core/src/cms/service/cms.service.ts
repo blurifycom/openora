@@ -6,7 +6,7 @@ import {
   cached,
   invalidate,
 } from '@openora/core/server';
-import type { CacheAdapter, User } from '@openora/core/contracts';
+import type { CacheAdapter, ClientMeta, User } from '@openora/core/contracts';
 import { eq, and, asc, desc, isNotNull } from 'drizzle-orm';
 import { page as pageTable, banner as bannerTable } from '../schema/index.js';
 
@@ -113,6 +113,7 @@ export class CmsService {
       publishedAt?: string;
     },
     actorId: User['id'],
+    meta?: ClientMeta,
   ) {
     const record = findOneOrThrow(
       await this.drizzle.db
@@ -127,9 +128,19 @@ export class CmsService {
       new PageNotFoundError(input.slug),
     );
     await invalidate(this.cache, pageCacheKey(input.slug));
-    this.events.emit('cms.page.created', { pageId: record.id, actorId });
+    this.events.emit('cms.page.created', {
+      pageId: record.id,
+      actorId,
+      ip: meta?.ip ?? null,
+      userAgent: meta?.userAgent ?? null,
+    });
     if (record.publishedAt) {
-      this.events.emit('cms.page.published', { pageId: record.id, slug: record.slug });
+      this.events.emit('cms.page.published', {
+        pageId: record.id,
+        slug: record.slug,
+        ip: meta?.ip ?? null,
+        userAgent: meta?.userAgent ?? null,
+      });
     }
     return toPage(record);
   }
@@ -143,6 +154,7 @@ export class CmsService {
       publishedAt?: string | null;
     },
     actorId: User['id'],
+    meta?: ClientMeta,
   ) {
     const existing = findOneOrThrow(
       await this.drizzle.db.select().from(pageTable).where(eq(pageTable.id, input.id)),
@@ -176,23 +188,38 @@ export class CmsService {
 
     await invalidate(this.cache, [existing.slug, input.slug ?? existing.slug].map(pageCacheKey));
 
-    this.events.emit('cms.page.updated', { pageId: record.id, actorId });
+    this.events.emit('cms.page.updated', {
+      pageId: record.id,
+      actorId,
+      ip: meta?.ip ?? null,
+      userAgent: meta?.userAgent ?? null,
+    });
     const nowPublished = record.publishedAt !== null;
     if (!wasPublished && nowPublished) {
-      this.events.emit('cms.page.published', { pageId: record.id, slug: record.slug });
+      this.events.emit('cms.page.published', {
+        pageId: record.id,
+        slug: record.slug,
+        ip: meta?.ip ?? null,
+        userAgent: meta?.userAgent ?? null,
+      });
     }
 
     return toPage(record);
   }
 
-  async deletePage(id: string, actorId: User['id']): Promise<{ success: true }> {
+  async deletePage(id: string, actorId: User['id'], meta?: ClientMeta): Promise<{ success: true }> {
     const existing = findOneOrThrow(
       await this.drizzle.db.select().from(pageTable).where(eq(pageTable.id, id)),
       new PageNotFoundError(id),
     );
     await this.drizzle.db.delete(pageTable).where(eq(pageTable.id, id));
     await invalidate(this.cache, pageCacheKey(existing.slug));
-    this.events.emit('cms.page.deleted', { pageId: id, actorId });
+    this.events.emit('cms.page.deleted', {
+      pageId: id,
+      actorId,
+      ip: meta?.ip ?? null,
+      userAgent: meta?.userAgent ?? null,
+    });
     return { success: true };
   }
 
@@ -224,13 +251,19 @@ export class CmsService {
       sortOrder?: number;
     },
     actorId: User['id'],
+    meta?: ClientMeta,
   ) {
     const record = findOneOrThrow(
       await this.drizzle.db.insert(bannerTable).values(input).returning(),
       new BannerNotFoundError(input.placement),
     );
     await invalidate(this.cache, bannersCacheKey(input.placement));
-    this.events.emit('cms.banner.created', { bannerId: record.id, actorId });
+    this.events.emit('cms.banner.created', {
+      bannerId: record.id,
+      actorId,
+      ip: meta?.ip ?? null,
+      userAgent: meta?.userAgent ?? null,
+    });
     return toBanner(record);
   }
 
@@ -245,6 +278,7 @@ export class CmsService {
       sortOrder?: number;
     },
     actorId: User['id'],
+    meta?: ClientMeta,
   ) {
     const existing = findOneOrThrow(
       await this.drizzle.db.select().from(bannerTable).where(eq(bannerTable.id, input.id)),
@@ -283,18 +317,32 @@ export class CmsService {
       this.cache,
       [existing.placement, input.placement ?? existing.placement].map(bannersCacheKey),
     );
-    this.events.emit('cms.banner.updated', { bannerId: record.id, actorId });
+    this.events.emit('cms.banner.updated', {
+      bannerId: record.id,
+      actorId,
+      ip: meta?.ip ?? null,
+      userAgent: meta?.userAgent ?? null,
+    });
     return toBanner(record);
   }
 
-  async deleteBanner(id: string, actorId: User['id']): Promise<{ success: true }> {
+  async deleteBanner(
+    id: string,
+    actorId: User['id'],
+    meta?: ClientMeta,
+  ): Promise<{ success: true }> {
     const existing = findOneOrThrow(
       await this.drizzle.db.select().from(bannerTable).where(eq(bannerTable.id, id)),
       new BannerNotFoundError(id),
     );
     await this.drizzle.db.delete(bannerTable).where(eq(bannerTable.id, id));
     await invalidate(this.cache, bannersCacheKey(existing.placement));
-    this.events.emit('cms.banner.deleted', { bannerId: id, actorId });
+    this.events.emit('cms.banner.deleted', {
+      bannerId: id,
+      actorId,
+      ip: meta?.ip ?? null,
+      userAgent: meta?.userAgent ?? null,
+    });
     return { success: true };
   }
 }

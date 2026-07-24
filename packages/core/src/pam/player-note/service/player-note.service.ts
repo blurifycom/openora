@@ -1,8 +1,8 @@
 import { DrizzleService, pageToOffset, serializeRow } from '@openora/core/server';
-import { count, desc, eq } from 'drizzle-orm';
-import type { Player, User } from '@openora/core/contracts';
+import { asc, count, desc, eq } from 'drizzle-orm';
+import type { Player, User, PaginationOptions } from '@openora/core/contracts';
 import { playerNote } from '../schema/index.js';
-import type { CreatePlayerNoteInput, PlayerNoteItem } from '../contract/index.js';
+import type { CreatePlayerNoteInput, PlayerNoteItem, PlayerNoteSortBy } from '../contract/index.js';
 
 const DATE_FIELDS = ['createdAt', 'updatedAt'] as const;
 
@@ -13,15 +13,23 @@ function toItem(row: typeof playerNote.$inferSelect): PlayerNoteItem {
 export class PlayerNoteService {
   constructor(private readonly drizzle: DrizzleService) {}
 
-  async list(playerId: Player['id'], page: number, limit: number) {
+  async list({
+    playerId,
+    page,
+    limit,
+    sortBy,
+    sortOrder,
+  }: PaginationOptions<{ playerId: Player['id'] }, PlayerNoteSortBy>) {
     const where = eq(playerNote.playerId, playerId);
     const db = this.drizzle.db;
+    const dir = (sortOrder ?? 'desc') === 'asc' ? asc : desc;
+    const col = sortBy === 'updatedAt' ? playerNote.updatedAt : playerNote.createdAt;
     const [rows, [{ n }]] = await Promise.all([
       db
         .select()
         .from(playerNote)
         .where(where)
-        .orderBy(desc(playerNote.createdAt))
+        .orderBy(dir(col))
         .limit(limit)
         .offset(pageToOffset(page, limit)),
       db.select({ n: count() }).from(playerNote).where(where),

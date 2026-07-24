@@ -1,5 +1,5 @@
 import { DrizzleService, pageToOffset, moneyToNumber, mapConcurrent } from '@openora/core/server';
-import { and, eq, or, gt, gte, lte, isNull, inArray, desc, sql, type SQL } from 'drizzle-orm';
+import { and, eq, or, gt, gte, lte, isNull, inArray, asc, desc, sql, type SQL } from 'drizzle-orm';
 import type { AdminUserDirectory, LimitType, LimitPeriod, User } from '@openora/core/contracts';
 import { userLimit, rgFlag, rgExclusion } from '../schema/index.js';
 import { wallet, walletTransaction } from '@openora/core/wallet/schema';
@@ -132,8 +132,18 @@ export class RgMonitoringService {
 
   async listFlags(filters: ListRgFlagsInput) {
     const db = this.drizzle.db;
-    const { page, limit, flagType, limitType, status, fromDate, toDate } = filters;
+    const { page, limit, flagType, limitType, status, fromDate, toDate, sortBy, sortOrder } =
+      filters;
     const offset = pageToOffset(page, limit);
+    const dir = (sortOrder ?? 'desc') === 'asc' ? asc : desc;
+    const RG_SORT_COLS = {
+      flaggedAt: rgFlag.flaggedAt,
+      limitType: rgFlag.limitType,
+      flagType: rgFlag.flagType,
+      status: rgFlag.status,
+      clearedAt: rgFlag.clearedAt,
+      userId: rgFlag.userId,
+    } as const;
 
     const conditions: SQL[] = [];
     if (flagType) {
@@ -158,7 +168,7 @@ export class RgMonitoringService {
         .select()
         .from(rgFlag)
         .where(where)
-        .orderBy(desc(rgFlag.flaggedAt))
+        .orderBy(dir(RG_SORT_COLS[sortBy ?? 'flaggedAt']), desc(rgFlag.id))
         .limit(limit)
         .offset(offset),
       db

@@ -12,6 +12,7 @@ import type {
   KycStatus,
   PlatformConfig,
   User,
+  ClientMeta,
 } from '@openora/core/contracts';
 import { and, desc, eq, sql } from 'drizzle-orm';
 import { kycVerification, type KycVerification } from '../schema/index.js';
@@ -84,7 +85,7 @@ export class KycVerificationService {
     return this.platformConfig?.kyc?.provider ?? DEFAULT_PROVIDER;
   }
 
-  async submit(userId: User['id'], input: SubmitKycInput) {
+  async submit(userId: User['id'], input: SubmitKycInput, meta?: ClientMeta) {
     const result = await this.kycAdapter.submit(
       userId,
       input.documents.map((d) => ({ type: d.type, frontUrl: d.frontUrl, backUrl: d.backUrl })),
@@ -110,6 +111,8 @@ export class KycVerificationService {
       userId,
       referenceId: result.referenceId,
       provider: this.provider,
+      ip: meta?.ip ?? null,
+      userAgent: meta?.userAgent ?? null,
     });
     await this.statusWriter.setStatus(userId, status, { actorId: null, source: 'vendor' });
     return { ...toDto(row), verificationUrl: result.verificationUrl };

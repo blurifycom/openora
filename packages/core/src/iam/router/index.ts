@@ -98,11 +98,12 @@ export function createIamRouter(svc: IamService, adminGuard: AdminGuard) {
     }),
 
     // Public - invitee is not yet an admin.
-    acceptInvitation: os.acceptInvitation.handler(({ input }) =>
-      mapErrors({ NOT_FOUND: InvitationNotFoundError, CONFLICT: InvitationConflictError }, () =>
-        svc.acceptInvitation(input.token),
-      ),
-    ),
+    acceptInvitation: os.acceptInvitation.handler(({ input, context }) => {
+      return mapErrors(
+        { NOT_FOUND: InvitationNotFoundError, CONFLICT: InvitationConflictError },
+        () => svc.acceptInvitation(input.token, context.clientMeta),
+      );
+    }),
 
     forceLogout: os.forceLogout.handler(async ({ input, context }) => {
       const caller = await adminGuard.assert(context, 'admin', 'delete');

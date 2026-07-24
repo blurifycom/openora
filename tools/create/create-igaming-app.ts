@@ -113,11 +113,15 @@ function main(): void {
     die(`template missing at ${templateRoot}`);
   }
 
+  const ossFromRoot = posix(relative(targetDir, ossRoot));
   const vars: Record<string, string> = {
     name,
-    ossFromRoot: posix(relative(targetDir, ossRoot)),
+    ossFromRoot,
     ossFromApp: posix(relative(join(targetDir, 'apps', 'api'), ossRoot)),
     ossFromApiSrc: posix(relative(join(targetDir, 'apps', 'api', 'src'), ossRoot)),
+    coreVersion: 'latest',
+    mcpCommand: 'pnpm',
+    mcpArgsJson: JSON.stringify(['exec', 'tsx', `${ossFromRoot}/apps/mcp-server-dev/src/main.ts`]),
   };
 
   console.log(`\n  Creating ${name} at ${targetDir}`);

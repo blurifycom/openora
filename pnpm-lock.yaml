@@ -195,6 +195,18 @@ importers:
         specifier: 4.1.8
         version: 4.1.8(@types/node@25.9.2)(@vitest/coverage-v8@4.1.8)(vite@8.0.16(@types/node@25.9.2)(esbuild@0.28.1)(jiti@2.7.0)(tsx@4.22.4))
 
+  packages/create-openora:
+    devDependencies:
+      '@openora/core':
+        specifier: workspace:*
+        version: link:../core
+      '@types/node':
+        specifier: 25.9.2
+        version: 25.9.2
+      typescript:
+        specifier: 6.0.3
+        version: 6.0.3
+
   packages/mcp:
     dependencies:
       '@modelcontextprotocol/sdk':

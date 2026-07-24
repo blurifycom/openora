@@ -6,7 +6,7 @@ import {
   TimestampSchema,
   UuidSchema,
 } from '@openora/core/contracts';
-import { PageQuerySchema, paginated } from '@openora/core/contracts/kit';
+import { PageQuerySchema, SortOrderSchema, paginated } from '@openora/core/contracts/kit';
 
 export { InvitationStatusSchema, PermissionLevelSchema } from '@openora/core/contracts';
 
@@ -74,12 +74,35 @@ export const EffectivePermissionsSchema = z.object({
   permissions: z.array(RolePermissionLevelSchema),
 });
 
+export const IAM_ROLE_SORT_BY_VALUES = ['name', 'createdAt', 'key'] as const;
+export const IamRoleSortBySchema = z.enum(IAM_ROLE_SORT_BY_VALUES).default('name');
+export type IamRoleSortBy = z.infer<typeof IamRoleSortBySchema>;
+
+export const IAM_ASSIGNMENT_SORT_BY_VALUES = ['createdAt'] as const;
+export const IamAssignmentSortBySchema = z.enum(IAM_ASSIGNMENT_SORT_BY_VALUES).default('createdAt');
+export type IamAssignmentSortBy = z.infer<typeof IamAssignmentSortBySchema>;
+
+export const IAM_INVITATION_SORT_BY_VALUES = [
+  'createdAt',
+  'expiresAt',
+  'email',
+  'status',
+  'acceptedAt',
+] as const;
+export const IamInvitationSortBySchema = z.enum(IAM_INVITATION_SORT_BY_VALUES).default('createdAt');
+export type IamInvitationSortBy = z.infer<typeof IamInvitationSortBySchema>;
+
 export const iamContract = {
   listCatalog: oc.route({ method: 'GET', path: '/iam/catalog' }).output(CatalogSchema),
 
   listRoles: oc
     .route({ method: 'GET', path: '/iam/roles' })
-    .input(PageQuerySchema)
+    .input(
+      PageQuerySchema.extend({
+        sortBy: IamRoleSortBySchema.optional(),
+        sortOrder: SortOrderSchema.default('asc').optional(),
+      }),
+    )
     .output(paginated(AdminRoleWithGrantsSchema)),
 
   getRole: oc
@@ -124,7 +147,13 @@ export const iamContract = {
 
   listAssignments: oc
     .route({ method: 'GET', path: '/iam/assignments' })
-    .input(PageQuerySchema.extend({ userId: UuidSchema.optional() }))
+    .input(
+      PageQuerySchema.extend({
+        userId: UuidSchema.optional(),
+        sortBy: IamAssignmentSortBySchema.optional(),
+        sortOrder: SortOrderSchema.default('desc').optional(),
+      }),
+    )
     .output(paginated(AdminRoleAssignmentDetailSchema)),
 
   previewEffectivePermissions: oc
@@ -134,7 +163,12 @@ export const iamContract = {
 
   listInvitations: oc
     .route({ method: 'GET', path: '/iam/invitations' })
-    .input(PageQuerySchema)
+    .input(
+      PageQuerySchema.extend({
+        sortBy: IamInvitationSortBySchema.optional(),
+        sortOrder: SortOrderSchema.default('desc').optional(),
+      }),
+    )
     .output(paginated(AdminInvitationSchema)),
 
   inviteAdmin: oc

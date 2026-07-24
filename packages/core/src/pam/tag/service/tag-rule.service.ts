@@ -1,5 +1,10 @@
 import { DrizzleService, EventBus, findOneOrThrow, makeNotFoundError } from '@openora/core/server';
-import { type UpsertTagRuleInput, type TagKey, type User } from '@openora/core/contracts';
+import {
+  type ClientMeta,
+  type UpsertTagRuleInput,
+  type TagKey,
+  type User,
+} from '@openora/core/contracts';
 import { asc, eq } from 'drizzle-orm';
 import { tag, tagRule } from '../schema/index.js';
 import { toTagRule } from './tag-mappers.js';
@@ -51,7 +56,7 @@ export class TagRuleService {
     return toTagRule(findOneOrThrow(results, new TagRuleNotFoundError(tagKey)));
   }
 
-  async upsertTagRule(input: UpsertTagRuleInput, actorId: User['id']) {
+  async upsertTagRule(input: UpsertTagRuleInput, actorId: User['id'], meta?: ClientMeta) {
     const tagRow = findOneOrThrow(
       await this.drizzle.db
         .select({ id: tag.id })
@@ -79,7 +84,13 @@ export class TagRuleService {
       new TagRuleNotFoundError(input.tagKey),
     );
     const result = toTagRule({ ...row, tagKey: input.tagKey });
-    void this.events.emit('tag.rule.upserted', { tagKey: input.tagKey, actorId, after: result });
+    void this.events.emit('tag.rule.upserted', {
+      tagKey: input.tagKey,
+      actorId,
+      after: result,
+      ip: meta?.ip ?? null,
+      userAgent: meta?.userAgent ?? null,
+    });
     return result;
   }
 }

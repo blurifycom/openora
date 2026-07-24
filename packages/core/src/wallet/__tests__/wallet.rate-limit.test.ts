@@ -3,7 +3,7 @@ import type { EventBus } from '@openora/core/server';
 import { RedisRateLimiter } from '@openora/core/server';
 import { createTestRedis, type TestRedis } from '@openora/core/testing';
 import type { PaymentAdapter, AuditWritePort } from '@openora/core/contracts';
-import { mock, mockDb } from '../../testing/mock.js';
+import { mock, mockDb, NO_CLIENT_META } from '../../testing/mock.js';
 import { WalletService } from '../service/wallet.service.js';
 
 const drizzle = mockDb({});
@@ -47,7 +47,7 @@ describe('WalletService - rate limiting (real Redis)', () => {
     // No limiter denial: the call proceeds past the guard and fails later on the unused
     // drizzle double - so a non-429 rejection proves the guard let it through.
     await expect(
-      svc.withdraw({ userId: 'u2', amount: '100', currency: 'USD' }),
+      svc.withdraw({ userId: 'u2', amount: '100', currency: 'USD', ...NO_CLIENT_META }),
     ).rejects.not.toMatchObject({
       code: 'TOO_MANY_REQUESTS',
     });

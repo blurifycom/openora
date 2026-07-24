@@ -116,7 +116,7 @@ describe('TagService', () => {
         select: [[{ pt, tagKey: 'high_roller' }], [{ n: 1 }]],
       });
       const svc = new TagService(drizzle, makeEvents());
-      const result = await svc.listPlayerTags(PLAYER_ID, 1, 10);
+      const result = await svc.listPlayerTags({ playerId: PLAYER_ID, page: 1, limit: 10 });
       expect(result.items).toHaveLength(1);
       expect(result.items[0]).toMatchObject({ playerId: PLAYER_ID, tag: { key: 'high_roller' } });
       expect(result.total).toBe(1);
@@ -127,7 +127,7 @@ describe('TagService', () => {
     it('returns an empty page when the player has no active tags', async () => {
       const { drizzle } = makeDrizzle({ select: [[], [{ n: 0 }]] });
       const svc = new TagService(drizzle, makeEvents());
-      const result = await svc.listPlayerTags(PLAYER_ID, 1, 10);
+      const result = await svc.listPlayerTags({ playerId: PLAYER_ID, page: 1, limit: 10 });
       expect(result.items).toHaveLength(0);
       expect(result.total).toBe(0);
     });

@@ -1,7 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import { describe, it, expect, vi, beforeAll, afterAll, beforeEach } from 'vitest';
 import { sql, eq } from 'drizzle-orm';
-import { mock } from '../../testing/mock.js';
+import { mock, NO_CLIENT_META } from '../../testing/mock.js';
 import {
   levelToActions,
   actionsToLevel,
@@ -42,8 +42,8 @@ const makeEvents = () => mock<EventBus>({ emit: vi.fn(), on: vi.fn() });
 const makeEmail = () => mock<SendEmailPort>({ send: vi.fn().mockResolvedValue(undefined) });
 
 // Bootstrap super-admin: no DB assignment row + user.role === 'admin' passes the static fallback.
-const ADMIN_CALLER = { userId: randomUUID(), role: 'admin' };
-const SUPPORT_CALLER = { userId: randomUUID(), role: 'support' };
+const ADMIN_CALLER = { userId: randomUUID(), role: 'admin', ...NO_CLIENT_META };
+const SUPPORT_CALLER = { userId: randomUUID(), role: 'support', ...NO_CLIENT_META };
 
 const TOTAL_GRANTS = (Object.keys(statement) as ResourceName[]).reduce(
   (n, r) => n + (statement[r] as readonly string[]).length,
@@ -398,11 +398,13 @@ describe('IamService.deleteRole', () => {
       roleId: role.id,
       userId: userA,
       actorId: ADMIN_CALLER.userId,
+      ...NO_CLIENT_META,
     });
     expect(events.emit).toHaveBeenCalledWith('iam.role.revoked', {
       roleId: role.id,
       userId: userB,
       actorId: ADMIN_CALLER.userId,
+      ...NO_CLIENT_META,
     });
     const revokeCalls = (events.emit as ReturnType<typeof vi.fn>).mock.calls.filter(
       (c) => c[0] === 'iam.role.revoked',

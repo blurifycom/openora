@@ -21,7 +21,7 @@ import {
   PhoneLoginRequestOutputSchema,
   PhoneLoginVerifyInputSchema,
 } from '@openora/core/contracts';
-import { PageQuerySchema, paginated } from '@openora/core/contracts/kit';
+import { PageQuerySchema, SortOrderSchema, paginated } from '@openora/core/contracts/kit';
 import * as z from 'zod';
 
 export const SessionSchema = z.object({
@@ -37,6 +37,10 @@ export const SessionItemSchema = z.object({
   userAgent: z.string().nullable().optional(),
 });
 export type SessionItem = z.infer<typeof SessionItemSchema>;
+
+export const SESSION_SORT_BY_VALUES = ['createdAt', 'expiresAt', 'updatedAt'] as const;
+export const SessionSortBySchema = z.enum(SESSION_SORT_BY_VALUES).default('createdAt');
+export type SessionSortBy = z.infer<typeof SessionSortBySchema>;
 
 export const identityContract = {
   register: oc
@@ -143,7 +147,13 @@ export const identityContract = {
   sessions: {
     list: oc
       .route({ method: 'GET', path: '/identity/sessions' })
-      .input(PageQuerySchema.extend({ userId: UuidSchema }))
+      .input(
+        PageQuerySchema.extend({
+          userId: UuidSchema,
+          sortBy: SessionSortBySchema.optional(),
+          sortOrder: SortOrderSchema.default('desc').optional(),
+        }),
+      )
       .output(paginated(SessionItemSchema)),
 
     revoke: oc
