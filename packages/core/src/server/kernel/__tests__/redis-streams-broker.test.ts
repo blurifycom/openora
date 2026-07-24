@@ -158,12 +158,14 @@ describe('RedisStreamsBroker', () => {
     await broker.close();
     await broker.publish(makeEnvelope(topic));
 
-    // Negative assertion needs a bounded wait: a live loop would have consumed the
-    // entry within a local-Redis roundtrip; the entry stays pending (unread) instead.
+    // Negative assertion needs a bounded wait: a live loop would have dispatched the
+    // entry within a local-Redis roundtrip. Delivery state is deliberately not asserted -
+    // Redis can serve an entry to a blocked XREADGROUP before it processes the reader's
+    // disconnect, leaving it read-but-unacked; that entry is still never dispatched, and
+    // XAUTOCLAIM reclaims it, which is the at-least-once contract.
     await new Promise((resolve) => setTimeout(resolve, 150));
     expect(seen).toEqual([]);
-    const pending = await redis.client.xPending(streamOf(topic), 'svc');
-    expect(pending.pending).toBe(0);
+    expect(await redis.client.xLen(streamOf(topic))).toBe(1);
   });
 
   it('two instances sharing a service name split events: exactly one handles each', async () => {
