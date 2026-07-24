@@ -38,7 +38,7 @@
     "gen:catalog": "tsx tools/gen/gen-catalog.ts",
     "seed": "tsx tools/db/seed.ts",
     "test:tools": "node --test \"tools/__tests__/*.test.mjs\"",
-    "verify": "turbo run typecheck test:unit && pnpm run test:tools && pnpm run lint && pnpm run verify:shape && pnpm run boundaries",
+    "verify": "turbo run //#format:check //#lint typecheck //#boundaries //#verify:shape test:unit //#test:tools",
     "verify:drift": "tsx tools/gen/sync-tsconfig-paths.ts --check && tsx tools/gen/gen-openapi.ts && tsx tools/gen/gen-catalog.ts && git diff --exit-code -- docs/openapi.json docs/catalog.json",
     "eval:scaffold": "tsx tools/gen/eval-scaffold.ts",
     "setup:agent": "tsx tools/setup/setup-agent.ts",
