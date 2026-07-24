@@ -186,6 +186,7 @@ export class PhoneLoginService {
 
     // Anti-enumeration: an unknown or unverified phone gets the same success-shaped
     // response, minus the SMS. A caller cannot distinguish a real verified number from
+    // a fake or unverified one.
     if (!account || !account.phoneVerified) {
       const key = phoneOtpShadowKey(phone);
       const shadow = await this.shadowGet(key);
