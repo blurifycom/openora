@@ -312,9 +312,6 @@ describe('IdentityService - login lockout', () => {
   it('anti-enumeration: locks a nonexistent email once failed attempts reach the threshold, mirroring a real account, without emitting lockout.triggered', async () => {
     const drizzle = makeDrizzle({ selectRows: [[], [], [], [], []] });
     const events = makeEvents();
-    // A fresh Response per call - `mockResolvedValue` would reuse the same Response
-    // instance across the repeated login() calls below, and a Response body stream
-    // can only be read once (ensureOk reads it via `.text()`).
     signInEmailMock.mockImplementation(async () => jsonResponse({ message: 'Invalid' }, 401));
     const limiter = mock<RateLimiterAdapter>({
       consume: vi.fn().mockResolvedValue({ allowed: true, retryAfterMs: 0 }),

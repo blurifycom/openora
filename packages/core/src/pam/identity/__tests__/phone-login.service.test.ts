@@ -339,8 +339,6 @@ describe('PhoneLoginService.verifyOtp', () => {
 
   it('anti-enumeration: repeated wrong guesses against an unknown phone decrement then cancel, mirroring a real session', async () => {
     const cache = new InProcessCache();
-    // (1) requestOtp's account lookup, (2)-(6) verifyOtp's otp lookup x5 - all empty
-    // (no real session ever exists for this phone).
     const { svc, events } = build({ select: [[], [], [], [], [], []], cache });
 
     await svc.requestOtp({ phone: PHONE });

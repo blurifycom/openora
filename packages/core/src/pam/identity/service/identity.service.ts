@@ -170,10 +170,6 @@ async function ensureOk(res: globalThis.Response, opts?: { genericMessage?: stri
   } catch {
     // non-JSON body - keep the default message
   }
-  // TODO: this forwards better-auth's raw upstream message with no fixed data.reason -
-  // there's no enumerable set of causes to name (whatever better-auth's internal API
-  // returns), unlike the other ORPCError call sites in this module. Revisit if
-  // better-auth's error responses turn out to fall into a small stable set of cases.
   throw new ORPCError(code, { message });
 }
 
@@ -231,24 +227,6 @@ const EMAIL_VERIFICATION_RATE_LIMIT = { limit: 3, windowMs: 15 * MINUTE_MS };
 const VERIFY_EMAIL_RATE_LIMIT = { limit: 5, windowMs: 15 * MINUTE_MS };
 const CHANGE_PASSWORD_RATE_LIMIT = { limit: 5, windowMs: 15 * MINUTE_MS };
 const TWO_FACTOR_PASSWORD_RATE_LIMIT = { limit: 5, windowMs: 5 * MINUTE_MS };
-
-// Anti-enumeration shadow state for a nonexistent email (`existingUser` undefined -
-// the whole lockout-counting block below is normally skipped for these, which would
-// let a caller distinguish a registered email from a fake one just by noticing whether
-// repeated wrong passwords ever escalate to ACCOUNT_LOCKED). Mirrors the `user` table's
-// own lockout columns and runs through the SAME pure `computeLockoutState`/
-// `computeLockoutTier` functions used for real accounts. Deliberate exception to
-// "server state is owned by the data layer, no ad-hoc shadow caches": there is no real
-// account or business state behind a nonexistent email, so nothing here can ever
-// diverge from a source of truth - it exists purely so a static reply doesn't
-// fingerprint which emails are registered.
-//
-// Unlike the real column (which never expires on its own - only a success or an
-// elapsed lockout clears it), this shadow needs a finite cache TTL; a generous one
-// (not `LOCKOUT_WINDOW_MS`, which is the tier-escalation window, not a "forget this
-// email" duration) keeps the residual gap (a patient attacker waiting out the TTL
-// between probes) as small as practical - accepted, not fully closable with a finite
-// TTL, and documented rather than silently assumed away.
 const FAKE_LOGIN_SHADOW_TTL_MS = 7 * 24 * 60 * 60 * 1000;
 
 type FakeLoginShadow = {
@@ -463,11 +441,6 @@ export class IdentityService {
       existingUser = { ...existingUser, failedLoginAttempts: 0, lockoutUntil: null };
     }
 
-    // Anti-enumeration: a nonexistent email must be indistinguishable from a real one
-    // across a full wrong-password sequence, not just the first attempt - otherwise a
-    // caller can tell a registered email apart from a fake one just by noticing
-    // whether repeated failures ever escalate to ACCOUNT_LOCKED. Mirror the real
-    // lockout state (above/below) against a shadow record instead of the `user` row.
     let fakeLoginShadow: FakeLoginShadow | undefined;
     if (lockoutEnabled && !existingUser) {
       fakeLoginShadow = await this.loginShadowGet(loginShadowKey(email));
@@ -475,7 +448,6 @@ export class IdentityService {
         if (new Date(fakeLoginShadow.lockoutUntil) > new Date()) {
           throw createAccountLockedError(new Date(fakeLoginShadow.lockoutUntil));
         }
-        // Lock window elapsed - fresh budget, keep the tier history (mirrors clearLockout).
         fakeLoginShadow = { ...fakeLoginShadow, failedAttempts: 0, lockoutUntil: null };
       }
     }
@@ -627,9 +599,6 @@ export class IdentityService {
 
           await this.limiter?.reset(makeLoginRateLimitKey(email));
 
-          // No `identity.user.lockout.triggered` emit here - there is no real userId
-          // to attach it to, and emitting one would corrupt the audit trail (same
-          // rationale as phone-login's identical anti-enumeration shadow state).
           throw createAccountLockedError(lockoutUntil);
         }
 
@@ -660,14 +629,6 @@ export class IdentityService {
       .where(eq(user.id, userId));
   }
 
-  // Best-effort: anti-enumeration mimicry must never fail a real login over a cache
-  // hiccup, so every call degrades to `undefined`/no-op on error instead of rethrowing
-  // (RedisCache does not swallow genuine command errors itself). This degradation is
-  // asymmetric by nature - a real account's lockout state lives in Postgres and is
-  // unaffected by a cache outage, so a down cache transiently reopens the same oracle
-  // for fake emails until it recovers. Accepted: failing closed here (blocking real
-  // logins whenever the cache is unreachable) would trade a rare, bounded security
-  // regression for a guaranteed availability one, which is worse.
   private async loginShadowGet(key: string): Promise<FakeLoginShadow | undefined> {
     if (!this.cache) {
       return undefined;

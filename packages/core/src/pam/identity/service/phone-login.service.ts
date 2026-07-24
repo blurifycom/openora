@@ -43,26 +43,6 @@ const OTP_VERIFY_RATE_LIMIT = {
   onUnavailable: 'deny',
 } as const;
 
-// Anti-enumeration shadow state for phone numbers with no real `smsOtpSession` row
-// (unknown, unverified, or a real session that just got cancelled/expired-and-never-
-// renewed - these are already indistinguishable from each other today, and must stay
-// that way). Mirrors the row's `createdAt`/`failedAttempts` shape so a fake number's
-// cooldown/attempt-count/expiry behaves exactly like a real one across a full sequence.
-// Deliberate exception to "server state is owned by the data layer, no ad-hoc shadow
-// caches": this is never real business state - a fake number has no account, no
-// balance, nothing to lose on inconsistency - it exists purely so a static reply
-// doesn't fingerprint which numbers are registered.
-//
-// The physical cache TTL is deliberately NOT `OTP_TTL_MS`: if the record vanished the
-// instant it should logically read as "expired", a cache miss would look identical to
-// "never requested" (back to the old, distinguishable static reply). Expiry is decided
-// purely from the stored `createdAt`, never from cache presence. It's also NOT a short
-// "just long enough" value: a real `smsOtpSession` row never expires from the DB on
-// its own (only overwritten by a new request or deleted on cancel/success), so a short
-// physical TTL here would reopen the same oracle at a delay equal to the TTL - a 60min
-// window is trivially waitable by an attacker. Use the same order of magnitude as the
-// login shadow's TTL below so the residual (a cache TTL can never truly match a real
-// row's unbounded lifetime) requires an impractical wait, not a coffee break.
 const FAKE_OTP_SHADOW_TTL_MS = 7 * 24 * 60 * 60 * 1000;
 
 type FakeOtpShadow = { createdAt: number; failedAttempts: number };
@@ -81,7 +61,6 @@ export function OtpCooldownError(retryAfterMs: number) {
   });
 }
 
-/** Wrong or expired code, session still alive. `reason` lets the caller tell the two apart. */
 export function OtpInvalidError(attemptsRemaining: number, reason: PhoneLoginOtpInvalidReason) {
   return new ORPCError('UNPROCESSABLE_CONTENT', {
     message: reason === 'expired' ? 'The code has expired.' : 'The code is invalid.',
@@ -166,14 +145,6 @@ export class PhoneLoginService {
     this.cache = cache;
   }
 
-  // Best-effort: anti-enumeration mimicry must never fail a real OTP request over a
-  // cache hiccup, so every call degrades to `undefined`/no-op on error instead of
-  // rethrowing (RedisCache does not swallow genuine command errors itself). This
-  // degradation is asymmetric by nature - a real phone's state lives in Postgres and
-  // is unaffected by a cache outage, so a down cache transiently reopens the same
-  // oracle for fake numbers until it recovers. Accepted: failing closed here (blocking
-  // real OTP requests whenever the cache is unreachable) would trade a rare, bounded
-  // security regression for a guaranteed availability one, which is worse.
   private async shadowGet(key: string): Promise<FakeOtpShadow | undefined> {
     if (!this.cache) {
       return undefined;
@@ -215,9 +186,6 @@ export class PhoneLoginService {
 
     // Anti-enumeration: an unknown or unverified phone gets the same success-shaped
     // response, minus the SMS. A caller cannot distinguish a real verified number from
-    // a fake or unverified one - including across repeated resends: the shadow record
-    // below mirrors the real cooldown/attempt-count/expiry state machine so a fake
-    // number's behavior is indistinguishable from a real one's over a full sequence.
     if (!account || !account.phoneVerified) {
       const key = phoneOtpShadowKey(phone);
       const shadow = await this.shadowGet(key);
@@ -283,12 +251,6 @@ export class PhoneLoginService {
       .where(eq(smsOtpSession.phone, phone))
       .limit(1);
 
-    // No session exists for an unknown or unverified phone (requestOtp never creates
-    // one for those - see the anti-enumeration branch above and its shadow record).
-    // Mirror the real branch below almost line-for-line against the shadow instead of
-    // the DB row, so this path decrements attempts, expires, and cancels exactly like
-    // a real session would - a static reply here would let a caller distinguish a
-    // registered number just by repeating wrong guesses.
     if (!otp) {
       const key = phoneOtpShadowKey(phone);
       const shadow = await this.shadowGet(key);
@@ -303,8 +265,6 @@ export class PhoneLoginService {
         await invalidate(this.cache, key);
         throw OtpCancelledError();
       }
-      // Preserve the original createdAt - a wrong guess must not extend the shadow's
-      // own life, mirroring how a real row's expiresAt never moves on a failed guess.
       await this.shadowSet(key, { createdAt: shadow.createdAt, failedAttempts: newAttempts });
       throw OtpInvalidError(MAX_VERIFY_ATTEMPTS - newAttempts, 'wrong_code');
     }
