@@ -62,10 +62,6 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: ./.github/actions/bootstrap
-      # Cheapest and most-often-wrong first, so a misformatted or boundary-breaking
-      # branch fails in seconds instead of behind a full build + test run. `lint` and
-      # `typecheck` carry `dependsOn: ["^build"]`, so turbo builds what they need; the
-      # explicit Build below covers `test:unit`, which has no build dependency.
       - name: Format check
         run: pnpm exec turbo run //#format:check
       - name: Lint
