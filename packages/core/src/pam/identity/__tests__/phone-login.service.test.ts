@@ -1,17 +1,23 @@
-import { createHash, createHmac } from 'node:crypto';
-import { describe, it, expect, vi } from 'vitest';
+import { createHash, createHmac, randomUUID } from 'node:crypto';
+import { describe, it, expect, vi, beforeAll, afterAll, beforeEach } from 'vitest';
 import { ORPCError } from '@orpc/server';
-import { PhoneLoginService } from '../service/phone-login.service.js';
-import { makeDrizzle, makeEvents, mock, NO_CLIENT_META } from '../../../testing/mock.js';
-import { InProcessCache } from '../../../testing/fakes/cache.js';
-import type { DrizzleService, EventBus, Auth } from '@openora/core/server';
+import { sql } from 'drizzle-orm';
+import { RedisCache } from '@openora/core/server';
+import { createTestDb, createTestRedis, type TestDb, type TestRedis } from '@openora/core/testing';
+import { migrate as migrateIdentity } from '@openora/core/pam/migrate/identity';
+import type { EventBus, Auth } from '@openora/core/server';
 import type { CacheAdapter, RateLimiterAdapter, SmsAdapter } from '@openora/core/contracts';
+import { PhoneLoginService } from '../service/phone-login.service.js';
+import { user, session, smsOtpSession } from '../schema/index.js';
+import { makeEvents, mock, NO_CLIENT_META } from '../../../testing/mock.js';
 
 const PHONE = '+14155550100';
 
 const AUTH_SECRET = 'unit-test-secret-do-not-use-in-prod';
 const SESSION_COOKIE_NAME = 'better-auth.session_token';
 const DONT_REMEMBER_COOKIE_NAME = 'better-auth.dont_remember';
+
+const OTP_TTL_MS = 5 * 60 * 1000;
 
 const fakeAuth: Auth = mock<Auth>({
   $context: Promise.resolve({
@@ -40,22 +46,8 @@ const fakeAuth: Auth = mock<Auth>({
   }),
 });
 
-// A verified-phone user row as `verifyOtp`'s `select().from(user)` returns it.
-const userRow = {
-  id: 'u1',
-  email: 'a@b.dev',
-  name: 'A',
-  emailVerified: true,
-  image: null,
-  theme: 'system',
-  language: 'en',
-  phoneNumber: PHONE,
-  phoneVerified: true,
-  rgBlocked: false,
-  rgBlockedUntil: null,
-  createdAt: new Date('2020-01-01T00:00:00.000Z'),
-  updatedAt: new Date('2020-01-01T00:00:00.000Z'),
-};
+let db: TestDb;
+let redis: TestRedis;
 
 const allowLimiter = (): RateLimiterAdapter => ({
   consume: vi.fn().mockResolvedValue({ allowed: true, retryAfterMs: 0 }),
@@ -63,23 +55,12 @@ const allowLimiter = (): RateLimiterAdapter => ({
 });
 
 function build({
-  select = [],
-  returning = [],
   sms = { sendOtp: vi.fn().mockResolvedValue(undefined) },
   cache,
-}: {
-  select?: unknown[][];
-  returning?: unknown[][];
-  sms?: SmsAdapter;
-  cache?: CacheAdapter;
-} = {}) {
-  const drizzle = makeDrizzle({
-    select: select as never,
-    returning: returning as never,
-  });
+}: { sms?: SmsAdapter; cache?: CacheAdapter } = {}) {
   const events = makeEvents();
   const svc = new PhoneLoginService({
-    drizzle: drizzle as unknown as DrizzleService,
+    drizzle: db.drizzle,
     events: mock<EventBus>(events),
     sms,
     limiter: allowLimiter(),
@@ -89,65 +70,114 @@ function build({
   return { svc, events, sms };
 }
 
+const realCache = () => new RedisCache(redis.client);
+
 function expectedSignature(token: string): string {
   return createHmac('sha256', AUTH_SECRET).update(token).digest('base64');
 }
 
-const otpRow = (over: Record<string, unknown> = {}) => ({
-  id: 'otp1',
-  userId: 'u1',
-  codeHash: '', // set per-test
-  expiresAt: new Date(Date.now() + 5 * 60 * 1000),
-  failedAttempts: 0,
-  ...over,
-});
-
 // SHA-256 of a code, mirroring the service's hashCode.
 const hash = (code: string) => createHash('sha256').update(code).digest('hex');
 
-describe('PhoneLoginService.requestOtp', () => {
-  it('sends an OTP for a verified phone and emits requested', async () => {
-    // select order: (1) user lookup, (2) existing-otp lookup (none),
-    // (3) delete (awaited), (4) insert (awaited).
-    const { svc, events, sms } = build({
-      select: [[{ id: 'u1', phoneVerified: true }], [], [], []],
-    });
+async function seedUser(over: Partial<typeof user.$inferInsert> = {}) {
+  const [row] = await db.drizzle.db
+    .insert(user)
+    .values({
+      name: 'A',
+      email: `${randomUUID()}@b.dev`,
+      emailVerified: true,
+      phoneNumber: PHONE,
+      phoneVerified: true,
+      ...over,
+    })
+    .returning();
+  return row;
+}
+
+async function seedOtp(userId: string, over: Partial<typeof smsOtpSession.$inferInsert> = {}) {
+  const [row] = await db.drizzle.db
+    .insert(smsOtpSession)
+    .values({
+      userId,
+      phone: PHONE,
+      codeHash: hash('123456'),
+      expiresAt: new Date(Date.now() + OTP_TTL_MS),
+      ...over,
+    })
+    .returning();
+  return row;
+}
+
+const otpRows = () => db.drizzle.db.select().from(smsOtpSession);
+const sessionRows = () => db.drizzle.db.select().from(session);
+
+beforeAll(async () => {
+  db = await createTestDb([migrateIdentity]);
+  redis = await createTestRedis();
+});
+
+afterAll(async () => {
+  await db.drop();
+  await redis.quit();
+});
+
+beforeEach(async () => {
+  await db.drizzle.db.execute(
+    sql`TRUNCATE ${user}, ${session}, ${smsOtpSession} RESTART IDENTITY CASCADE`,
+  );
+  await redis.flush();
+});
+
+describe('PhoneLoginService.requestOtp (real PG + real Redis)', () => {
+  it('sends an OTP for a verified phone, persists a hashed session row, and emits requested', async () => {
+    const account = await seedUser();
+    const { svc, events, sms } = build();
 
     const out = await svc.requestOtp({ phone: PHONE, ...NO_CLIENT_META });
 
     expect(typeof out.expiresAt).toBe('string');
     expect(typeof out.resendAfter).toBe('string');
-    expect(sms.sendOtp).toHaveBeenCalledWith(
-      expect.objectContaining({ to: PHONE, code: expect.stringMatching(/^\d{6}$/) }),
-    );
+    const sentCode = (sms.sendOtp as ReturnType<typeof vi.fn>).mock.calls[0]?.[0]?.code;
+    expect(sentCode).toMatch(/^\d{6}$/);
+
+    const [row] = await otpRows();
+    expect(row).toMatchObject({
+      userId: account.id,
+      phone: PHONE,
+      codeHash: hash(sentCode),
+      failedAttempts: 0,
+    });
     expect(events.emit).toHaveBeenCalledWith('identity.phone_otp.requested', {
-      userId: 'u1',
+      userId: account.id,
       ip: null,
       userAgent: null,
     });
   });
 
-  it('anti-enumeration: unknown phone returns success shape without sending SMS', async () => {
-    const { svc, events, sms } = build({ select: [[]] });
+  it('anti-enumeration: unknown phone returns the success shape, writes no row, and sends no SMS', async () => {
+    const { svc, events, sms } = build();
 
     const out = await svc.requestOtp({ phone: PHONE, ...NO_CLIENT_META });
 
     expect(out).toEqual({ expiresAt: expect.any(String), resendAfter: expect.any(String) });
     expect(sms.sendOtp).not.toHaveBeenCalled();
     expect(events.emit).not.toHaveBeenCalled();
+    expect(await otpRows()).toHaveLength(0);
   });
 
-  it('anti-enumeration: unverified phone returns success shape without sending SMS', async () => {
-    const { svc, sms } = build({ select: [[{ id: 'u1', phoneVerified: false }]] });
+  it('anti-enumeration: unverified phone returns the success shape and writes no row', async () => {
+    await seedUser({ phoneVerified: false });
+    const { svc, sms } = build();
 
     const out = await svc.requestOtp({ phone: PHONE, ...NO_CLIENT_META });
+
     expect(out).toEqual({ expiresAt: expect.any(String), resendAfter: expect.any(String) });
     expect(sms.sendOtp).not.toHaveBeenCalled();
+    expect(await otpRows()).toHaveLength(0);
   });
 
   it('anti-enumeration: unknown phone requested twice within 60s throws OtpCooldownError, mirroring a real resend', async () => {
-    const cache = new InProcessCache();
-    const { svc, sms } = build({ select: [[], []], cache });
+    const { svc, sms } = build({ cache: realCache() });
 
     await svc.requestOtp({ phone: PHONE, ...NO_CLIENT_META });
     await expect(svc.requestOtp({ phone: PHONE, ...NO_CLIENT_META })).rejects.toMatchObject({
@@ -156,66 +186,72 @@ describe('PhoneLoginService.requestOtp', () => {
     expect(sms.sendOtp).not.toHaveBeenCalled();
   });
 
-  it('throws OtpCooldownError when a code was sent under 60s ago', async () => {
-    const { svc, sms } = build({
-      // (1) user found, (2) existing OTP created 10s ago.
-      select: [[{ id: 'u1', phoneVerified: true }], [{ createdAt: new Date(Date.now() - 10_000) }]],
-    });
+  it('throws OtpCooldownError when a code was sent under 60s ago, leaving the stored code untouched', async () => {
+    const account = await seedUser();
+    const existing = await seedOtp(account.id, { createdAt: new Date(Date.now() - 10_000) });
+    const { svc, sms } = build();
 
     await expect(svc.requestOtp({ phone: PHONE, ...NO_CLIENT_META })).rejects.toMatchObject({
       code: 'TOO_MANY_REQUESTS',
     });
     expect(sms.sendOtp).not.toHaveBeenCalled();
+    const [row] = await otpRows();
+    expect(row.codeHash).toBe(existing.codeHash);
   });
 
-  it('supersedes an expired-cooldown prior OTP and emits cancelled(new_otp_requested)', async () => {
-    const { svc, events, sms } = build({
-      // (1) user, (2) prior OTP older than cooldown, (3) delete, (4) insert.
-      select: [
-        [{ id: 'u1', phoneVerified: true }],
-        [{ createdAt: new Date(Date.now() - 120_000) }],
-        [],
-        [],
-      ],
+  it('supersedes an expired-cooldown prior OTP in place and emits cancelled(new_otp_requested)', async () => {
+    const account = await seedUser();
+    const prior = await seedOtp(account.id, {
+      createdAt: new Date(Date.now() - 120_000),
+      failedAttempts: 3,
     });
+    const { svc, events, sms } = build();
 
     await svc.requestOtp({ phone: PHONE, ...NO_CLIENT_META });
 
     expect(events.emit).toHaveBeenCalledWith('identity.phone_otp.cancelled', {
-      userId: 'u1',
+      userId: account.id,
       reason: 'new_otp_requested',
       ip: null,
       userAgent: null,
     });
     expect(sms.sendOtp).toHaveBeenCalled();
+    // The unique index on userId means the row is replaced, not duplicated.
+    const rows = await otpRows();
+    expect(rows).toHaveLength(1);
+    expect(rows[0].codeHash).not.toBe(prior.codeHash);
+    expect(rows[0].failedAttempts).toBe(0);
   });
 });
 
-describe('PhoneLoginService.verifyOtp', () => {
-  it('happy path: correct code mints a session and emits phone_login', async () => {
+describe('PhoneLoginService.verifyOtp (real PG + real Redis)', () => {
+  it('happy path: correct code mints a session row, consumes the OTP, and emits phone_login', async () => {
     const code = '123456';
-    const { svc, events } = build({
-      // (1) otp lookup, (2) user lookup, (3) delete otp in tx, (4) session insert in tx.
-      select: [[otpRow({ codeHash: hash(code) })], [userRow], [], []],
-    });
-    const resHeaders = new Headers();
+    const account = await seedUser();
+    await seedOtp(account.id, { codeHash: hash(code) });
+    const { svc, events } = build();
 
-    const out = await svc.verifyOtp({ phone: PHONE, code, ...NO_CLIENT_META }, resHeaders);
+    const out = await svc.verifyOtp({ phone: PHONE, code, ...NO_CLIENT_META }, new Headers());
 
-    expect(out.user.id).toBe('u1');
+    expect(out.user.id).toBe(account.id);
     expect(out.session.token).toEqual(expect.any(String));
-    expect(out.session.expiresAt).toEqual(expect.any(String));
+
+    const sessions = await sessionRows();
+    expect(sessions).toHaveLength(1);
+    expect(sessions[0]).toMatchObject({ userId: account.id, token: out.session.token });
+    expect(new Date(out.session.expiresAt).toISOString()).toBe(sessions[0].expiresAt.toISOString());
+    expect(await otpRows()).toHaveLength(0);
     expect(events.emit).toHaveBeenCalledWith(
       'identity.user.phone_login',
-      expect.objectContaining({ userId: 'u1', method: 'phone' }),
+      expect.objectContaining({ userId: account.id, method: 'phone' }),
     );
   });
 
   it('signs a session cookie the same auth instance can verify', async () => {
     const code = '123456';
-    const { svc } = build({
-      select: [[otpRow({ codeHash: hash(code) })], [userRow], [], []],
-    });
+    const account = await seedUser();
+    await seedOtp(account.id, { codeHash: hash(code) });
+    const { svc } = build();
     const resHeaders = new Headers();
 
     const out = await svc.verifyOtp({ phone: PHONE, code, ...NO_CLIENT_META }, resHeaders);
@@ -236,9 +272,9 @@ describe('PhoneLoginService.verifyOtp', () => {
 
   it('without rememberMe emits a signed dont_remember cookie so getSession will not roll the session to 30 days', async () => {
     const code = '123456';
-    const { svc } = build({
-      select: [[otpRow({ codeHash: hash(code) })], [userRow], [], []],
-    });
+    const account = await seedUser();
+    await seedOtp(account.id, { codeHash: hash(code) });
+    const { svc } = build();
     const resHeaders = new Headers();
 
     await svc.verifyOtp({ phone: PHONE, code, ...NO_CLIENT_META }, resHeaders);
@@ -257,19 +293,17 @@ describe('PhoneLoginService.verifyOtp', () => {
     expect(value.slice(sigPos + 1)).toBe(expectedSignature('true'));
   });
 
-  it('rememberMe extends the session TTL to ~30 days and the cookie Max-Age to match', async () => {
+  it('rememberMe extends the persisted session TTL to ~30 days and the cookie Max-Age to match', async () => {
     const code = '123456';
-    const { svc } = build({
-      select: [[otpRow({ codeHash: hash(code) })], [userRow], [], []],
-    });
+    const account = await seedUser();
+    await seedOtp(account.id, { codeHash: hash(code) });
+    const { svc } = build();
     const resHeaders = new Headers();
 
-    const out = await svc.verifyOtp(
-      { phone: PHONE, code, rememberMe: true, ...NO_CLIENT_META },
-      resHeaders,
-    );
-    const ttlMs = new Date(out.session.expiresAt).getTime() - Date.now();
-    expect(ttlMs).toBeGreaterThan(29 * 24 * 60 * 60 * 1000);
+    await svc.verifyOtp({ phone: PHONE, code, rememberMe: true, ...NO_CLIENT_META }, resHeaders);
+
+    const [stored] = await sessionRows();
+    expect(stored.expiresAt.getTime() - Date.now()).toBeGreaterThan(29 * 24 * 60 * 60 * 1000);
 
     const maxAgeMatch = resHeaders.get('set-cookie')?.match(/Max-Age=(\d+)/);
     expect(Number(maxAgeMatch?.[1])).toBeGreaterThan(29 * 24 * 60 * 60);
@@ -280,13 +314,10 @@ describe('PhoneLoginService.verifyOtp', () => {
     expect(hasDontRemember).toBe(false);
   });
 
-  it('wrong code increments failedAttempts and throws OtpInvalidError with reason "wrong_code"', async () => {
-    const { svc, events } = build({
-      // (1) otp lookup only (update uses returning, not the select queue).
-      select: [[otpRow({ codeHash: hash('000000') })]],
-      // update...returning -> 2 attempts used.
-      returning: [[{ failedAttempts: 2 }]],
-    });
+  it('wrong code increments failedAttempts in the row and throws OtpInvalidError with reason "wrong_code"', async () => {
+    const account = await seedUser();
+    await seedOtp(account.id, { codeHash: hash('000000'), failedAttempts: 1 });
+    const { svc, events } = build();
 
     const promise = svc.verifyOtp(
       { phone: PHONE, code: '111111', ...NO_CLIENT_META },
@@ -297,23 +328,39 @@ describe('PhoneLoginService.verifyOtp', () => {
       code: 'UNPROCESSABLE_CONTENT',
       data: { attemptsRemaining: 3, reason: 'wrong_code' },
     });
+    const [row] = await otpRows();
+    expect(row.failedAttempts).toBe(2);
     expect(events.emit).not.toHaveBeenCalledWith('identity.phone_otp.cancelled', expect.anything());
   });
 
-  it('5th wrong code cancels the session, deletes it, and emits cancelled(max_attempts)', async () => {
-    const { svc, events } = build({
-      // (1) otp lookup, (2) delete (awaited).
-      select: [[otpRow({ codeHash: hash('000000') })], []],
-      returning: [[{ failedAttempts: 5 }]],
-    });
+  it('concurrent wrong guesses each consume exactly one attempt (atomic SQL increment)', async () => {
+    const account = await seedUser();
+    await seedOtp(account.id, { codeHash: hash('000000') });
+    const { svc } = build();
+
+    const attempts = await Promise.allSettled(
+      Array.from({ length: 3 }, () =>
+        svc.verifyOtp({ phone: PHONE, code: '111111', ...NO_CLIENT_META }, new Headers()),
+      ),
+    );
+
+    expect(attempts.every((a) => a.status === 'rejected')).toBe(true);
+    const [row] = await otpRows();
+    expect(row.failedAttempts).toBe(3);
+  });
+
+  it('5th wrong code deletes the session row and emits cancelled(max_attempts)', async () => {
+    const account = await seedUser();
+    await seedOtp(account.id, { codeHash: hash('000000'), failedAttempts: 4 });
+    const { svc, events } = build();
 
     await expect(
       svc.verifyOtp({ phone: PHONE, code: '111111', ...NO_CLIENT_META }, new Headers()),
-    ).rejects.toMatchObject({
-      code: 'FORBIDDEN',
-    });
+    ).rejects.toMatchObject({ code: 'FORBIDDEN' });
+
+    expect(await otpRows()).toHaveLength(0);
     expect(events.emit).toHaveBeenCalledWith('identity.phone_otp.cancelled', {
-      userId: 'u1',
+      userId: account.id,
       reason: 'max_attempts',
       ip: null,
       userAgent: null,
@@ -322,18 +369,14 @@ describe('PhoneLoginService.verifyOtp', () => {
 
   it('expired OTP throws OtpInvalidError with reason "expired", not "wrong_code"', async () => {
     const code = '123456';
-    const { svc } = build({
-      // 2 failed attempts before the code expired -> 3 remaining
-      select: [
-        [
-          otpRow({
-            codeHash: hash(code),
-            expiresAt: new Date(Date.now() - 1000),
-            failedAttempts: 2,
-          }),
-        ],
-      ],
+    const account = await seedUser();
+    // 2 failed attempts before the code expired -> 3 remaining
+    await seedOtp(account.id, {
+      codeHash: hash(code),
+      expiresAt: new Date(Date.now() - 1000),
+      failedAttempts: 2,
     });
+    const { svc } = build();
 
     await expect(
       svc.verifyOtp({ phone: PHONE, code, ...NO_CLIENT_META }, new Headers()),
@@ -344,7 +387,8 @@ describe('PhoneLoginService.verifyOtp', () => {
   });
 
   it('missing OTP session (anti-enumeration) mimics a real first wrong guess, not "expired"', async () => {
-    const { svc } = build({ select: [[]] });
+    const { svc } = build();
+
     await expect(
       svc.verifyOtp({ phone: PHONE, code: '123456', ...NO_CLIENT_META }, new Headers()),
     ).rejects.toMatchObject({
@@ -354,8 +398,7 @@ describe('PhoneLoginService.verifyOtp', () => {
   });
 
   it('anti-enumeration: repeated wrong guesses against an unknown phone decrement then cancel, mirroring a real session', async () => {
-    const cache = new InProcessCache();
-    const { svc, events } = build({ select: [[], [], [], [], [], []], cache });
+    const { svc, events } = build({ cache: realCache() });
 
     await svc.requestOtp({ phone: PHONE, ...NO_CLIENT_META });
 
@@ -373,16 +416,17 @@ describe('PhoneLoginService.verifyOtp', () => {
     ).rejects.toMatchObject({ code: 'FORBIDDEN' });
 
     expect(events.emit).not.toHaveBeenCalled();
+    expect(await otpRows()).toHaveLength(0);
   });
 
   it('anti-enumeration: an untouched shadow past the OTP TTL returns "expired", not "wrong_code"', async () => {
-    vi.useFakeTimers();
+    // Only Date is faked: the Redis and Postgres round-trips below still need real timers.
+    vi.useFakeTimers({ toFake: ['Date'] });
     try {
-      const cache = new InProcessCache();
-      const { svc } = build({ select: [[], []], cache });
+      const { svc } = build({ cache: realCache() });
 
       await svc.requestOtp({ phone: PHONE, ...NO_CLIENT_META });
-      vi.advanceTimersByTime(5 * 60 * 1000 + 1);
+      vi.setSystemTime(Date.now() + OTP_TTL_MS + 1);
 
       await expect(
         svc.verifyOtp({ phone: PHONE, code: 'wrong', ...NO_CLIENT_META }, new Headers()),
@@ -395,15 +439,11 @@ describe('PhoneLoginService.verifyOtp', () => {
     }
   });
 
-  it('RG-blocked user is forbidden after the OTP passes and no session is minted', async () => {
+  it('RG-blocked user is forbidden after the OTP passes, and neither the session nor the OTP is consumed', async () => {
     const code = '123456';
-    const { svc, events } = build({
-      // (1) otp lookup, (2) blocked user lookup - RG check before tx so OTP is not consumed.
-      select: [
-        [otpRow({ codeHash: hash(code) })],
-        [{ ...userRow, rgBlocked: true, rgBlockedUntil: null }],
-      ],
-    });
+    const account = await seedUser({ rgBlocked: true, rgBlockedUntil: null });
+    await seedOtp(account.id, { codeHash: hash(code) });
+    const { svc, events } = build();
     const resHeaders = new Headers();
 
     await expect(
@@ -412,10 +452,14 @@ describe('PhoneLoginService.verifyOtp', () => {
       code: 'FORBIDDEN',
       data: { reason: 'rg_blocked' },
     });
+
     expect(resHeaders.get('set-cookie')).toBeNull();
+    expect(await sessionRows()).toHaveLength(0);
+    // The OTP survives so the player can retry once the block lifts.
+    expect(await otpRows()).toHaveLength(1);
     expect(events.emit).toHaveBeenCalledWith(
       'rg.exclusion.login_blocked',
-      expect.objectContaining({ userId: 'u1' }),
+      expect.objectContaining({ userId: account.id }),
     );
     expect(events.emit).not.toHaveBeenCalledWith('identity.user.phone_login', expect.anything());
   });
