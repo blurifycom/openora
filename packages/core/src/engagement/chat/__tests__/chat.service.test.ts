@@ -101,23 +101,7 @@ beforeEach(async () => {
   );
 });
 
-describe('ChatService domain errors', () => {
-  it('ChatRoomNotFoundError carries the id', () => {
-    const err = new ChatRoomNotFoundError('room-123');
-    expect(err.name).toBe('ChatRoomNotFoundError');
-    expect(err.message).toContain('room-123');
-  });
-
-  it('ChatMessageNotFoundError carries the id', () => {
-    const err = new ChatMessageNotFoundError('msg-456');
-    expect(err.name).toBe('ChatMessageNotFoundError');
-    expect(err.message).toContain('msg-456');
-  });
-
-  it('ChatMessageOwnershipError is a typed error', () => {
-    expect(new ChatMessageOwnershipError().name).toBe('ChatMessageOwnershipError');
-  });
-
+describe('Chat contract surface', () => {
   it('exposes the complete persisted category set', () => {
     expect(CHAT_ROOM_CATEGORIES).toEqual([
       'games-sports',

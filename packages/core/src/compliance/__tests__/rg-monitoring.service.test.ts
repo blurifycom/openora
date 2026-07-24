@@ -47,9 +47,13 @@ async function seedBet(userId: string, betAmount: string) {
     .insert(game)
     .values({ name: 'Slot', provider: 'mock', category: 'slots' })
     .returning();
-  await db.drizzle.db
-    .insert(gameRound)
-    .values({ gameId: g!.id, userId, betAmount, currency: 'USD' });
+  await db.drizzle.db.insert(gameRound).values({
+    gameId: g!.id,
+    userId,
+    betAmount,
+    currency: 'USD',
+    startedAt: new Date(Date.now() - 60_000),
+  });
 }
 
 async function seedSession(userId: string, startedMinutesAgo: number) {

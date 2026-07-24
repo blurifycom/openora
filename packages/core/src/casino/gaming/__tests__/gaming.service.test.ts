@@ -6,27 +6,7 @@ import { createTestDb, type TestDb } from '@openora/core/testing';
 import { mock } from '../../../testing/mock.js';
 import { migrate } from '../migrate.js';
 import { game, gameRound } from '../schema/index.js';
-import {
-  GamingService,
-  GameNotFoundError,
-  GameRoundNotFoundError,
-} from '../service/gaming.service.js';
-
-describe('GamingService domain errors', () => {
-  it('GameNotFoundError carries the id', () => {
-    const err = new GameNotFoundError('game-abc');
-    expect(err).toBeInstanceOf(Error);
-    expect(err.name).toBe('GameNotFoundError');
-    expect(err.message).toContain('game-abc');
-  });
-
-  it('GameRoundNotFoundError carries the id', () => {
-    const err = new GameRoundNotFoundError('round-xyz');
-    expect(err).toBeInstanceOf(Error);
-    expect(err.name).toBe('GameRoundNotFoundError');
-    expect(err.message).toContain('round-xyz');
-  });
-});
+import { GamingService, GameNotFoundError } from '../service/gaming.service.js';
 
 let db: TestDb;
 

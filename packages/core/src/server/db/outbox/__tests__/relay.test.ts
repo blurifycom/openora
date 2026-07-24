@@ -1,107 +1,84 @@
-import { describe, it, expect, vi } from 'vitest';
-import { mock } from '../../../../testing/mock.js';
+import { describe, it, expect, vi, beforeAll, afterAll, beforeEach } from 'vitest';
+import { randomUUID } from 'node:crypto';
+import { eq, sql } from 'drizzle-orm';
+import type { MessageBrokerAdapter, EventEnvelope } from '@openora/core/contracts';
+import { createTestDb, type TestDb } from '@openora/core/testing';
+import { migrate } from '@openora/core/server/migrate';
 import { OutboxRelay } from '../relay.js';
-import type { DrizzleDb } from '../../drizzle.js';
-import type { MessageBrokerAdapter } from '@openora/core/contracts';
+import { eventOutbox } from '../schema.js';
 
-type Row = {
-  eventId: string;
-  topic: string;
-  payload: unknown;
-  schemaVersion: number;
-  traceId: string | null;
-  orderingKey: string | null;
-  occurredAt: Date;
-  publishedAt: Date | null;
-};
+let db: TestDb;
 
-function row(id: string, topic: string): Row {
-  return {
-    eventId: id,
-    topic,
-    payload: { id },
-    schemaVersion: 1,
-    traceId: null,
-    orderingKey: null,
-    occurredAt: new Date('2026-01-01T00:00:00.000Z'),
-    publishedAt: null,
-  };
+async function seedRow(overrides: Partial<typeof eventOutbox.$inferInsert> = {}) {
+  const [row] = await db.drizzle.db
+    .insert(eventOutbox)
+    .values({
+      eventId: randomUUID(),
+      topic: 'wallet.deposit.completed',
+      payload: { id: randomUUID() },
+      occurredAt: new Date(),
+      ...overrides,
+    })
+    .returning();
+  return row!;
 }
 
-// Fake drizzle: transaction() answers the SKIP LOCKED claim select; each row is then
-// marked via a top-level update(). trackPublish links that update() to the row the
-// broker just published, so a mid-batch throw leaves already-marked rows published.
-function harness(rows: Row[]) {
-  let lastPublishedId: string | null = null;
-
-  const db = mock<DrizzleDb>({
-    transaction: async (callback: (t: unknown) => Promise<Row[]>) =>
-      callback({
-        select: () => ({
-          from: () => ({
-            where: () => ({
-              orderBy: () => ({
-                limit: () => ({
-                  for: async () =>
-                    rows.filter((r) => r.publishedAt === null).map((r) => ({ ...r })),
-                }),
-              }),
-            }),
-          }),
-        }),
-      }),
-    update: () => ({
-      set: (values: { publishedAt: Date }) => ({
-        where: async () => {
-          const r = rows.find((x) => x.eventId === lastPublishedId);
-          if (r) {
-            r.publishedAt = values.publishedAt;
-          }
-        },
-      }),
-    }),
-  });
-
-  return { db, trackPublish: (eventId: string) => (lastPublishedId = eventId) };
-}
-
-function brokerThat(
-  trackPublish: (eventId: string) => void,
-  onPublish?: (eventId: string) => void,
-): MessageBrokerAdapter {
+function brokerThat(onPublish?: (envelope: EventEnvelope) => void): MessageBrokerAdapter {
   return {
-    publish: vi.fn(async (env) => {
-      trackPublish(env.eventId);
-      onPublish?.(env.eventId);
+    publish: vi.fn(async (envelope: EventEnvelope) => {
+      onPublish?.(envelope);
     }),
     subscribe: () => () => {},
     close: async () => {},
   };
 }
 
-describe('OutboxRelay.drainOnce', () => {
+async function rowsById() {
+  const rows = await db.drizzle.db.select().from(eventOutbox);
+  return new Map(rows.map((r) => [r.eventId, r]));
+}
+
+beforeAll(async () => {
+  db = await createTestDb([migrate]);
+});
+
+afterAll(async () => {
+  await db.drop();
+});
+
+beforeEach(async () => {
+  await db.drizzle.db.execute(sql`TRUNCATE ${eventOutbox} RESTART IDENTITY CASCADE`);
+});
+
+describe('OutboxRelay.drainOnce (real PG)', () => {
   it('publishes pending rows in order and marks them published', async () => {
-    const rows = [row('a', 'wallet.deposit.completed'), row('b', 'wallet.withdrawal.completed')];
-    const { db, trackPublish } = harness(rows);
-    const broker = brokerThat(trackPublish);
-    const relay = new OutboxRelay(db, broker);
+    const a = await seedRow({
+      topic: 'wallet.deposit.completed',
+      occurredAt: new Date('2026-01-01T00:00:00.000Z'),
+    });
+    await seedRow({
+      topic: 'wallet.withdrawal.completed',
+      occurredAt: new Date('2026-01-01T00:00:01.000Z'),
+    });
+    const broker = brokerThat();
+    const relay = new OutboxRelay(db.drizzle.db, broker);
 
     const n = await relay.drainOnce();
 
     expect(n).toBe(2);
     expect(broker.publish).toHaveBeenCalledTimes(2);
     expect((broker.publish as ReturnType<typeof vi.fn>).mock.calls[0][0]).toMatchObject({
-      eventId: 'a',
-      topic: 'wallet.deposit.completed',
+      eventId: a.eventId,
+      topic: a.topic,
     });
+    const rows = await db.drizzle.db.select().from(eventOutbox);
     expect(rows.every((r) => r.publishedAt !== null)).toBe(true);
   });
 
   it('is a no-op when nothing is pending', async () => {
-    const rows = [{ ...row('a', 'x'), publishedAt: new Date() }];
-    const { db, trackPublish } = harness(rows);
-    const broker = brokerThat(trackPublish);
-    const relay = new OutboxRelay(db, broker);
+    await seedRow({ publishedAt: new Date() });
+    const broker = brokerThat();
+    const relay = new OutboxRelay(db.drizzle.db, broker);
 
     const n = await relay.drainOnce();
 
@@ -110,51 +87,52 @@ describe('OutboxRelay.drainOnce', () => {
   });
 
   it('leaves the row pending when broker.publish throws', async () => {
-    const rows = [row('a', 'wallet.deposit.completed')];
-    const { db, trackPublish } = harness(rows);
+    const row = await seedRow();
     const broker: MessageBrokerAdapter = {
-      publish: vi.fn(async (env) => {
-        trackPublish(env.eventId);
+      publish: vi.fn(async () => {
         throw new Error('broker unreachable');
       }),
       subscribe: () => () => {},
       close: async () => {},
     };
-    const relay = new OutboxRelay(db, broker);
+    const relay = new OutboxRelay(db.drizzle.db, broker);
 
     await expect(relay.drainOnce()).rejects.toThrow('broker unreachable');
 
-    expect(rows[0]?.publishedAt).toBeNull();
+    const [after] = await db.drizzle.db
+      .select()
+      .from(eventOutbox)
+      .where(eq(eventOutbox.eventId, row.eventId));
+    expect(after?.publishedAt).toBeNull();
   });
 
   it('keeps rows published before a mid-batch publish failure, retrying only the failing row', async () => {
-    const rows = [
-      row('a', 'wallet.deposit.completed'),
-      row('b', 'wallet.withdrawal.completed'),
-      row('c', 'wallet.deposit.completed'),
-    ];
-    const { db, trackPublish } = harness(rows);
-    const broker = brokerThat(trackPublish, (eventId) => {
-      if (eventId === 'b') {
+    const a = await seedRow({ occurredAt: new Date('2026-01-01T00:00:00.000Z') });
+    const b = await seedRow({ occurredAt: new Date('2026-01-01T00:00:01.000Z') });
+    const c = await seedRow({ occurredAt: new Date('2026-01-01T00:00:02.000Z') });
+    const broker = brokerThat((envelope) => {
+      if (envelope.eventId === b.eventId) {
         throw new Error('broker unreachable');
       }
     });
-    const relay = new OutboxRelay(db, broker);
+    const relay = new OutboxRelay(db.drizzle.db, broker);
 
     await expect(relay.drainOnce()).rejects.toThrow('broker unreachable');
 
-    expect(rows[0]?.publishedAt).not.toBeNull(); // a - published before the failure
-    expect(rows[1]?.publishedAt).toBeNull(); // b - failed
-    expect(rows[2]?.publishedAt).toBeNull(); // c - never reached
+    const afterFailure = await rowsById();
+    expect(afterFailure.get(a.eventId)?.publishedAt).not.toBeNull();
+    expect(afterFailure.get(b.eventId)?.publishedAt).toBeNull();
+    expect(afterFailure.get(c.eventId)?.publishedAt).toBeNull();
 
     const publishSpy = broker.publish as ReturnType<typeof vi.fn>;
     publishSpy.mockClear();
-    publishSpy.mockImplementation(async (env) => trackPublish(env.eventId));
+    publishSpy.mockImplementation(async () => undefined);
     const n = await relay.drainOnce();
 
     expect(n).toBe(2);
     expect(publishSpy).toHaveBeenCalledTimes(2);
-    expect(publishSpy.mock.calls.map((c) => c[0].eventId)).toEqual(['b', 'c']);
-    expect(rows.every((r) => r.publishedAt !== null)).toBe(true);
+    expect(publishSpy.mock.calls.map((call) => call[0].eventId)).toEqual([b.eventId, c.eventId]);
+    const afterRetry = await rowsById();
+    expect([...afterRetry.values()].every((r) => r.publishedAt !== null)).toBe(true);
   });
 });
