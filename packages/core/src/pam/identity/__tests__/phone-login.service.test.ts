@@ -216,7 +216,6 @@ describe('PhoneLoginService.requestOtp (real PG + real Redis)', () => {
       userAgent: null,
     });
     expect(sms.sendOtp).toHaveBeenCalled();
-    // The unique index on userId means the row is replaced, not duplicated.
     const rows = await otpRows();
     expect(rows).toHaveLength(1);
     expect(rows[0].codeHash).not.toBe(prior.codeHash);
@@ -370,7 +369,6 @@ describe('PhoneLoginService.verifyOtp (real PG + real Redis)', () => {
   it('expired OTP throws OtpInvalidError with reason "expired", not "wrong_code"', async () => {
     const code = '123456';
     const account = await seedUser();
-    // 2 failed attempts before the code expired -> 3 remaining
     await seedOtp(account.id, {
       codeHash: hash(code),
       expiresAt: new Date(Date.now() - 1000),
@@ -420,7 +418,6 @@ describe('PhoneLoginService.verifyOtp (real PG + real Redis)', () => {
   });
 
   it('anti-enumeration: an untouched shadow past the OTP TTL returns "expired", not "wrong_code"', async () => {
-    // Only Date is faked: the Redis and Postgres round-trips below still need real timers.
     vi.useFakeTimers({ toFake: ['Date'] });
     try {
       const { svc } = build({ cache: realCache() });
@@ -455,7 +452,6 @@ describe('PhoneLoginService.verifyOtp (real PG + real Redis)', () => {
 
     expect(resHeaders.get('set-cookie')).toBeNull();
     expect(await sessionRows()).toHaveLength(0);
-    // The OTP survives so the player can retry once the block lifts.
     expect(await otpRows()).toHaveLength(1);
     expect(events.emit).toHaveBeenCalledWith(
       'rg.exclusion.login_blocked',

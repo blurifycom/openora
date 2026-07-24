@@ -158,11 +158,6 @@ describe('RedisStreamsBroker', () => {
     await broker.close();
     await broker.publish(makeEnvelope(topic));
 
-    // Negative assertion needs a bounded wait: a live loop would have dispatched the
-    // entry within a local-Redis roundtrip. Delivery state is deliberately not asserted -
-    // Redis can serve an entry to a blocked XREADGROUP before it processes the reader's
-    // disconnect, leaving it read-but-unacked; that entry is still never dispatched, and
-    // XAUTOCLAIM reclaims it, which is the at-least-once contract.
     await new Promise((resolve) => setTimeout(resolve, 150));
     expect(seen).toEqual([]);
     expect(await redis.client.xLen(streamOf(topic))).toBe(1);

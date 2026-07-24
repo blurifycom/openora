@@ -42,8 +42,6 @@ const {
   },
 }));
 
-// Keep the real @openora/core/server (DrizzleService, RedisCache, assertRateLimit stay real);
-// only stub createAuth, which would otherwise drive better-auth's own tables and network.
 vi.mock('@openora/core/server', async (importOriginal) => ({
   ...(await importOriginal<object>()),
   createAuth: vi.fn((options) => {
@@ -83,8 +81,6 @@ const allowLimiter = () =>
     reset: vi.fn().mockResolvedValue(undefined),
   });
 
-// createAuth() is mocked above, so the renderer is never actually invoked - this fake only
-// satisfies IdentityService's required `templateRenderer` dependency at construction time.
 const testTemplateRenderer: EmailTemplateRenderer = {
   render: () => ({ subject: 'subject', body: 'body' }),
 };
@@ -131,7 +127,6 @@ async function readUser(userId: string) {
 
 const realCache = () => new RedisCache(redis.client);
 
-// signInEmail returns the seeded row's id so the success path emits the real userId.
 const signInSuccess = (userId: string) =>
   jsonResponse(
     {
@@ -212,7 +207,6 @@ describe('IdentityService - login lockout (real PG + real Redis)', () => {
 
     const row = await readUser(account.id);
     expect(row.lockoutCount).toBe(2);
-    // Tier 2 is 5 minutes, comfortably past the 1-minute tier-1 duration.
     expect(row.lockoutUntil?.getTime()).toBeGreaterThan(Date.now() + 60_000);
   });
 
