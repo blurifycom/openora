@@ -26,6 +26,7 @@ import {
   type AuditWritePort,
   type TagKey,
   type User,
+  type ClientMeta,
 } from '@openora/core/contracts';
 import { eq, desc, sql, and, gte, lte, count, inArray } from 'drizzle-orm';
 import { createHash } from 'node:crypto';
@@ -459,9 +460,7 @@ export class WalletService {
     currency: string;
     idempotencyKey?: string;
     destinationAddress?: string;
-    ip?: string | null;
-    userAgent?: string | null;
-  }): Promise<TransactionResult> {
+  } & ClientMeta): Promise<TransactionResult> {
     await this.rateLimit(userId);
     await this.assertKycForWithdrawal(userId);
     if (railFor(currency) === 'crypto' && !destinationAddress) {
@@ -658,7 +657,7 @@ export class WalletService {
   async approveWithdrawal(
     adminId: User['id'],
     withdrawalId: WalletTransaction['id'],
-    meta?: { ip?: string | null; userAgent?: string | null },
+    meta?: ClientMeta,
   ): Promise<TransactionResult> {
     // Two-phase: commit the `processing` flip first (FOR UPDATE lock), then call the PSP OUTSIDE
     // the tx (a failure refunds in a second tx). Never inline the PSP call inside the hold transaction.
@@ -713,7 +712,7 @@ export class WalletService {
   private async settleApproved(
     tx: WalletTransaction,
     adminId: User['id'] | null,
-    meta?: { ip?: string | null; userAgent?: string | null },
+    meta?: ClientMeta,
   ): Promise<TransactionResult> {
     const userId = await this.userIdForWallet(tx.walletId);
     const amount = tx.amount;
@@ -1171,7 +1170,7 @@ export class WalletService {
     adminId: User['id'],
     withdrawalId: WalletTransaction['id'],
     reason: string,
-    meta?: { ip?: string | null; userAgent?: string | null },
+    meta?: ClientMeta,
   ): Promise<TransactionResult> {
     const reviewedAt = new Date();
 

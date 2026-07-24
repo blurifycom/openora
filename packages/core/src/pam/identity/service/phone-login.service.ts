@@ -16,6 +16,7 @@ import type {
   PhoneLoginRequestOutput,
   PhoneLoginVerifyInput,
   User,
+  ClientMeta,
 } from '@openora/core/contracts';
 import { user, session, smsOtpSession } from '../schema/index.js';
 import { isRgBlocked } from './rg-guard.service.js';
@@ -128,9 +129,7 @@ export class PhoneLoginService {
     this.auth = auth;
   }
 
-  async requestOtp(
-    input: PhoneLoginRequestInput & { ip?: string | null; userAgent?: string | null },
-  ): Promise<PhoneLoginRequestOutput> {
+  async requestOtp(input: PhoneLoginRequestInput & ClientMeta): Promise<PhoneLoginRequestOutput> {
     const { phone } = input;
     await assertRateLimit(this.limiter, `phone-otp-req:${phone}`, OTP_REQUEST_RATE_LIMIT);
 
@@ -191,10 +190,7 @@ export class PhoneLoginService {
     return { expiresAt: expiresAt.toISOString(), resendAfter: resendAfter.toISOString() };
   }
 
-  async verifyOtp(
-    input: PhoneLoginVerifyInput & { ip?: string | null; userAgent?: string | null },
-    resHeaders: Headers,
-  ) {
+  async verifyOtp(input: PhoneLoginVerifyInput & ClientMeta, resHeaders: Headers) {
     const { phone, code, rememberMe, ip = null, userAgent = null } = input;
     await assertRateLimit(this.limiter, `phone-otp-verify:${phone}`, OTP_VERIFY_RATE_LIMIT);
 

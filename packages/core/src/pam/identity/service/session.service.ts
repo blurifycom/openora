@@ -5,7 +5,7 @@ import {
   makeNotFoundError,
 } from '@openora/core/server';
 import { eq, desc, and, gt, count, sql } from 'drizzle-orm';
-import type { User } from '@openora/core/contracts';
+import type { ClientMeta, User } from '@openora/core/contracts';
 import { session } from '../schema/index.js';
 import { type SessionItem } from '../contract/index.js';
 
@@ -56,12 +56,7 @@ export class SessionService {
     };
   }
 
-  async revokeSession(
-    userId: User['id'],
-    id: string,
-    actorId?: User['id'],
-    meta?: { ip?: string | null; userAgent?: string | null },
-  ) {
+  async revokeSession(userId: User['id'], id: string, actorId?: User['id'], meta?: ClientMeta) {
     const updated = await this.drizzle.db
       .update(session)
       .set({ expiresAt: sql`now()` })
@@ -82,11 +77,7 @@ export class SessionService {
     return { success: true as const };
   }
 
-  async revokeAllSessions(
-    userId: User['id'],
-    actorId?: User['id'],
-    meta?: { ip?: string | null; userAgent?: string | null },
-  ) {
+  async revokeAllSessions(userId: User['id'], actorId?: User['id'], meta?: ClientMeta) {
     await this.drizzle.db
       .update(session)
       .set({ expiresAt: sql`now()` })

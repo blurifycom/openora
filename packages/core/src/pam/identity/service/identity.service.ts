@@ -33,6 +33,7 @@ import type {
   ChangeEmailInput,
   IdentityServiceOptions,
   PlatformConfig,
+  ClientMeta,
 } from '@openora/core/contracts';
 import { RATE_LIMIT_KEYS, makeRateLimitKey } from '@openora/core/contracts';
 import { assertSupportedLanguage } from '../../shared/language.js';
@@ -554,11 +555,7 @@ export class IdentityService {
       .where(eq(user.id, userId));
   }
 
-  async unlockUser(
-    userId: User['id'],
-    actorId: User['id'],
-    meta?: { ip?: string | null; userAgent?: string | null },
-  ) {
+  async unlockUser(userId: User['id'], actorId: User['id'], meta?: ClientMeta) {
     const existingUser = findOneOrThrow(
       await this.drizzle.db
         .select({

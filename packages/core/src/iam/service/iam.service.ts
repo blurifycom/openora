@@ -29,6 +29,7 @@ import type {
   CacheAdapter,
   SessionCommands,
   User,
+  ClientMeta,
 } from '@openora/core/contracts';
 import {
   adminRole,
@@ -76,7 +77,7 @@ export const LastSuperAdminError = makeConflictError(
   'Cannot remove the last super-admin',
 );
 
-type Caller = { userId: User['id']; role: string; ip?: string | null; userAgent?: string | null };
+type Caller = { userId: User['id']; role: string } & ClientMeta;
 
 type Page = { page: number; limit: number };
 
@@ -779,7 +780,7 @@ export class IamService {
 
   async acceptInvitation(
     token: string,
-    meta?: { ip?: string | null; userAgent?: string | null },
+    meta?: ClientMeta,
   ): Promise<{ success: true; email: string }> {
     // Atomic conditional UPDATE: the DB evaluates pending + not-expired under row lock,
     // so two concurrent accepts cannot both succeed. Public path - tenant is derived

@@ -1,5 +1,5 @@
 import * as z from 'zod';
-import { MoneyAmountSchema, TimestampSchema, UuidSchema } from './common.js';
+import { ClientMetaSchema, MoneyAmountSchema, TimestampSchema, UuidSchema } from './common.js';
 import {
   GeoRuleActionSchema,
   LimitTypeSchema,
@@ -11,11 +11,9 @@ import { CurrencyCodeSchema, CountryCodeSchema } from './igaming-config.js';
 import { PermissionLevelSchema } from './iam.js';
 import { KycStatusSchema } from './player.js';
 
-// Optional request-origin metadata shared by HTTP-triggered events; both fields may be absent.
-const authContextBase = z.object({
-  ip: z.string().nullable().optional(),
-  userAgent: z.string().nullable().optional(),
-});
+// Optional request-origin metadata shared by HTTP-triggered events; both fields may be absent
+// because an event can also be raised by a job, a webhook, or another non-HTTP trigger.
+const authContextBase = ClientMetaSchema.partial();
 
 const iamRoleEventBase = z
   .object({ roleId: UuidSchema, actorId: UuidSchema })

@@ -10,7 +10,7 @@ import {
 import { eq } from 'drizzle-orm';
 import { userLimit, geoRule } from '../schema/index.js';
 import type { UpsertLimitInput, AddGeoRuleInput } from '../contract/index.js';
-import { type GeoIpAdapter, type User } from '@openora/core/contracts';
+import { type ClientMeta, type GeoIpAdapter, type User } from '@openora/core/contracts';
 
 export const LimitNotFoundError = makeNotFoundError('Limit');
 
@@ -30,11 +30,7 @@ export class ComplianceService {
     return rows.map((r) => serializeRow(r, { dateFields: ['createdAt'] }));
   }
 
-  async upsertLimit(
-    userId: User['id'],
-    input: UpsertLimitInput,
-    meta?: { ip?: string | null; userAgent?: string | null },
-  ) {
+  async upsertLimit(userId: User['id'], input: UpsertLimitInput, meta?: ClientMeta) {
     const row = findOneOrThrow(
       await this.drizzle.db
         .insert(userLimit)
@@ -55,11 +51,7 @@ export class ComplianceService {
     return serializeRow(row, { dateFields: ['createdAt'] });
   }
 
-  async removeLimit(
-    id: string,
-    userId: User['id'],
-    meta?: { ip?: string | null; userAgent?: string | null },
-  ): Promise<{ success: true }> {
+  async removeLimit(id: string, userId: User['id'], meta?: ClientMeta): Promise<{ success: true }> {
     const existing = findOneOrThrow(
       await this.drizzle.db.select().from(userLimit).where(eq(userLimit.id, id)),
       new LimitNotFoundError(id),
@@ -103,11 +95,7 @@ export class ComplianceService {
     return { allowed: true, countryCode, reason: null };
   }
 
-  async addGeoRule(
-    input: AddGeoRuleInput,
-    actorId?: User['id'],
-    meta?: { ip?: string | null; userAgent?: string | null },
-  ) {
+  async addGeoRule(input: AddGeoRuleInput, actorId?: User['id'], meta?: ClientMeta) {
     const row = findOneOrThrow(
       await this.drizzle.db
         .insert(geoRule)

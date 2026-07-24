@@ -2,7 +2,7 @@ import { createHash, createHmac } from 'node:crypto';
 import { describe, it, expect, vi } from 'vitest';
 import { ORPCError } from '@orpc/server';
 import { PhoneLoginService } from '../service/phone-login.service.js';
-import { makeDrizzle, makeEvents, mock } from '../../../testing/mock.js';
+import { makeDrizzle, makeEvents, mock, NO_CLIENT_META } from '../../../testing/mock.js';
 import type { DrizzleService, EventBus, Auth } from '@openora/core/server';
 import type { RateLimiterAdapter, SmsAdapter } from '@openora/core/contracts';
 
@@ -109,7 +109,7 @@ describe('PhoneLoginService.requestOtp', () => {
       select: [[{ id: 'u1', phoneVerified: true }], [], [], []],
     });
 
-    const out = await svc.requestOtp({ phone: PHONE });
+    const out = await svc.requestOtp({ phone: PHONE, ...NO_CLIENT_META });
 
     expect(typeof out.expiresAt).toBe('string');
     expect(typeof out.resendAfter).toBe('string');
@@ -126,7 +126,7 @@ describe('PhoneLoginService.requestOtp', () => {
   it('anti-enumeration: unknown phone returns success shape without sending SMS', async () => {
     const { svc, events, sms } = build({ select: [[]] });
 
-    const out = await svc.requestOtp({ phone: PHONE });
+    const out = await svc.requestOtp({ phone: PHONE, ...NO_CLIENT_META });
 
     expect(out).toEqual({ expiresAt: expect.any(String), resendAfter: expect.any(String) });
     expect(sms.sendOtp).not.toHaveBeenCalled();
@@ -136,7 +136,7 @@ describe('PhoneLoginService.requestOtp', () => {
   it('anti-enumeration: unverified phone returns success shape without sending SMS', async () => {
     const { svc, sms } = build({ select: [[{ id: 'u1', phoneVerified: false }]] });
 
-    const out = await svc.requestOtp({ phone: PHONE });
+    const out = await svc.requestOtp({ phone: PHONE, ...NO_CLIENT_META });
     expect(out).toEqual({ expiresAt: expect.any(String), resendAfter: expect.any(String) });
     expect(sms.sendOtp).not.toHaveBeenCalled();
   });
@@ -147,7 +147,7 @@ describe('PhoneLoginService.requestOtp', () => {
       select: [[{ id: 'u1', phoneVerified: true }], [{ createdAt: new Date(Date.now() - 10_000) }]],
     });
 
-    await expect(svc.requestOtp({ phone: PHONE })).rejects.toMatchObject({
+    await expect(svc.requestOtp({ phone: PHONE, ...NO_CLIENT_META })).rejects.toMatchObject({
       code: 'TOO_MANY_REQUESTS',
     });
     expect(sms.sendOtp).not.toHaveBeenCalled();
@@ -164,7 +164,7 @@ describe('PhoneLoginService.requestOtp', () => {
       ],
     });
 
-    await svc.requestOtp({ phone: PHONE });
+    await svc.requestOtp({ phone: PHONE, ...NO_CLIENT_META });
 
     expect(events.emit).toHaveBeenCalledWith('identity.phone_otp.cancelled', {
       userId: 'u1',
@@ -185,7 +185,7 @@ describe('PhoneLoginService.verifyOtp', () => {
     });
     const resHeaders = new Headers();
 
-    const out = await svc.verifyOtp({ phone: PHONE, code }, resHeaders);
+    const out = await svc.verifyOtp({ phone: PHONE, code, ...NO_CLIENT_META }, resHeaders);
 
     expect(out.user.id).toBe('u1');
     expect(out.session.token).toEqual(expect.any(String));
@@ -203,7 +203,7 @@ describe('PhoneLoginService.verifyOtp', () => {
     });
     const resHeaders = new Headers();
 
-    const out = await svc.verifyOtp({ phone: PHONE, code }, resHeaders);
+    const out = await svc.verifyOtp({ phone: PHONE, code, ...NO_CLIENT_META }, resHeaders);
 
     const setCookie = resHeaders.get('set-cookie');
     expect(setCookie).not.toBeNull();
@@ -226,7 +226,7 @@ describe('PhoneLoginService.verifyOtp', () => {
     });
     const resHeaders = new Headers();
 
-    await svc.verifyOtp({ phone: PHONE, code }, resHeaders);
+    await svc.verifyOtp({ phone: PHONE, code, ...NO_CLIENT_META }, resHeaders);
 
     const dontRemember = resHeaders
       .getSetCookie()
@@ -249,7 +249,10 @@ describe('PhoneLoginService.verifyOtp', () => {
     });
     const resHeaders = new Headers();
 
-    const out = await svc.verifyOtp({ phone: PHONE, code, rememberMe: true }, resHeaders);
+    const out = await svc.verifyOtp(
+      { phone: PHONE, code, rememberMe: true, ...NO_CLIENT_META },
+      resHeaders,
+    );
     const ttlMs = new Date(out.session.expiresAt).getTime() - Date.now();
     expect(ttlMs).toBeGreaterThan(29 * 24 * 60 * 60 * 1000);
 
@@ -270,7 +273,10 @@ describe('PhoneLoginService.verifyOtp', () => {
       returning: [[{ failedAttempts: 2 }]],
     });
 
-    const promise = svc.verifyOtp({ phone: PHONE, code: '111111' }, new Headers());
+    const promise = svc.verifyOtp(
+      { phone: PHONE, code: '111111', ...NO_CLIENT_META },
+      new Headers(),
+    );
     await expect(promise).rejects.toBeInstanceOf(ORPCError);
     await expect(promise).rejects.toMatchObject({
       code: 'UNPROCESSABLE_CONTENT',
@@ -287,7 +293,7 @@ describe('PhoneLoginService.verifyOtp', () => {
     });
 
     await expect(
-      svc.verifyOtp({ phone: PHONE, code: '111111' }, new Headers()),
+      svc.verifyOtp({ phone: PHONE, code: '111111', ...NO_CLIENT_META }, new Headers()),
     ).rejects.toMatchObject({
       code: 'FORBIDDEN',
     });
@@ -314,7 +320,9 @@ describe('PhoneLoginService.verifyOtp', () => {
       ],
     });
 
-    await expect(svc.verifyOtp({ phone: PHONE, code }, new Headers())).rejects.toMatchObject({
+    await expect(
+      svc.verifyOtp({ phone: PHONE, code, ...NO_CLIENT_META }, new Headers()),
+    ).rejects.toMatchObject({
       code: 'UNPROCESSABLE_CONTENT',
       data: { attemptsRemaining: 3 },
     });
@@ -323,7 +331,7 @@ describe('PhoneLoginService.verifyOtp', () => {
   it('missing OTP session throws OtpInvalidError with 0 attemptsRemaining', async () => {
     const { svc } = build({ select: [[]] });
     await expect(
-      svc.verifyOtp({ phone: PHONE, code: '123456' }, new Headers()),
+      svc.verifyOtp({ phone: PHONE, code: '123456', ...NO_CLIENT_META }, new Headers()),
     ).rejects.toMatchObject({
       code: 'UNPROCESSABLE_CONTENT',
       data: { attemptsRemaining: 0 },
@@ -341,7 +349,9 @@ describe('PhoneLoginService.verifyOtp', () => {
     });
     const resHeaders = new Headers();
 
-    await expect(svc.verifyOtp({ phone: PHONE, code }, resHeaders)).rejects.toMatchObject({
+    await expect(
+      svc.verifyOtp({ phone: PHONE, code, ...NO_CLIENT_META }, resHeaders),
+    ).rejects.toMatchObject({
       code: 'FORBIDDEN',
       data: { reason: 'rg_blocked' },
     });

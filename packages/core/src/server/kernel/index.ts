@@ -28,7 +28,7 @@ export { setErrorReporter, reportError } from './error-reporter.js';
 export type { ErrorReporter } from './error-reporter.js';
 
 export { getUserId, extractClientMeta } from './router-utils.js';
-export type { OssContext, AuthContext, NodeHeaders, ClientMeta } from './router-utils.js';
+export type { OssContext, AuthContext, NodeHeaders } from './router-utils.js';
 export {
   createDomainError,
   makeNotFoundError,

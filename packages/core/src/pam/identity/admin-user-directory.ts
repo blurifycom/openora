@@ -1,4 +1,4 @@
-import type { AdminUserDirectory, AdminUserListOptions } from '@openora/core/contracts';
+import type { AdminUserDirectory, AdminUserListOptions, ClientMeta } from '@openora/core/contracts';
 import { KycStatusSchema, UserRoleSchema } from '@openora/core/contracts';
 import { DrizzleService, pageToOffset } from '@openora/core/server';
 import type { EventBus } from '@openora/core/server';
@@ -60,7 +60,7 @@ export class DrizzleAdminUserDirectory implements AdminUserDirectory {
     id: string,
     patch: { isActive?: boolean; role?: string },
     actorId: string,
-    meta?: { ip?: string | null; userAgent?: string | null },
+    meta?: ClientMeta,
   ) {
     const [existing] = await this.drizzle.db.select().from(user).where(eq(user.id, id));
     if (!existing) {

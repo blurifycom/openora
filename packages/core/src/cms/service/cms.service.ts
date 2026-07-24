@@ -6,7 +6,7 @@ import {
   cached,
   invalidate,
 } from '@openora/core/server';
-import type { CacheAdapter, User } from '@openora/core/contracts';
+import type { CacheAdapter, ClientMeta, User } from '@openora/core/contracts';
 import { eq, and, asc, desc, isNotNull } from 'drizzle-orm';
 import { page as pageTable, banner as bannerTable } from '../schema/index.js';
 
@@ -113,7 +113,7 @@ export class CmsService {
       publishedAt?: string;
     },
     actorId: User['id'],
-    meta?: { ip?: string | null; userAgent?: string | null },
+    meta?: ClientMeta,
   ) {
     const record = findOneOrThrow(
       await this.drizzle.db
@@ -154,7 +154,7 @@ export class CmsService {
       publishedAt?: string | null;
     },
     actorId: User['id'],
-    meta?: { ip?: string | null; userAgent?: string | null },
+    meta?: ClientMeta,
   ) {
     const existing = findOneOrThrow(
       await this.drizzle.db.select().from(pageTable).where(eq(pageTable.id, input.id)),
@@ -207,11 +207,7 @@ export class CmsService {
     return toPage(record);
   }
 
-  async deletePage(
-    id: string,
-    actorId: User['id'],
-    meta?: { ip?: string | null; userAgent?: string | null },
-  ): Promise<{ success: true }> {
+  async deletePage(id: string, actorId: User['id'], meta?: ClientMeta): Promise<{ success: true }> {
     const existing = findOneOrThrow(
       await this.drizzle.db.select().from(pageTable).where(eq(pageTable.id, id)),
       new PageNotFoundError(id),
@@ -255,7 +251,7 @@ export class CmsService {
       sortOrder?: number;
     },
     actorId: User['id'],
-    meta?: { ip?: string | null; userAgent?: string | null },
+    meta?: ClientMeta,
   ) {
     const record = findOneOrThrow(
       await this.drizzle.db.insert(bannerTable).values(input).returning(),
@@ -282,7 +278,7 @@ export class CmsService {
       sortOrder?: number;
     },
     actorId: User['id'],
-    meta?: { ip?: string | null; userAgent?: string | null },
+    meta?: ClientMeta,
   ) {
     const existing = findOneOrThrow(
       await this.drizzle.db.select().from(bannerTable).where(eq(bannerTable.id, input.id)),
@@ -333,7 +329,7 @@ export class CmsService {
   async deleteBanner(
     id: string,
     actorId: User['id'],
-    meta?: { ip?: string | null; userAgent?: string | null },
+    meta?: ClientMeta,
   ): Promise<{ success: true }> {
     const existing = findOneOrThrow(
       await this.drizzle.db.select().from(bannerTable).where(eq(bannerTable.id, id)),

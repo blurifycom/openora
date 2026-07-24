@@ -12,7 +12,7 @@ import {
   pageToOffset,
   withAdvisoryXactLock,
 } from '@openora/core/server';
-import type { RealtimeTransport } from '@openora/core/contracts';
+import type { ClientMeta, RealtimeTransport } from '@openora/core/contracts';
 import { eq, and, isNull, lt, desc, asc, notInArray, inArray, count, ne } from 'drizzle-orm';
 import { user } from '@openora/core/pam/schema/identity';
 import type { User } from '@openora/core/pam/schema/identity';
@@ -438,11 +438,7 @@ export class ChatService {
     return rows.map((r) => serializeRow(r, { dateFields: ['createdAt'] }));
   }
 
-  async blockUser(
-    blockerId: User['id'],
-    blockedId: User['id'],
-    meta?: { ip?: string | null; userAgent?: string | null },
-  ) {
+  async blockUser(blockerId: User['id'], blockedId: User['id'], meta?: ClientMeta) {
     if (blockerId === blockedId) {
       throw new ChatSelfBlockError();
     }
@@ -465,11 +461,7 @@ export class ChatService {
     return { success: true } as const;
   }
 
-  async unblockUser(
-    blockerId: User['id'],
-    blockedId: User['id'],
-    meta?: { ip?: string | null; userAgent?: string | null },
-  ) {
+  async unblockUser(blockerId: User['id'], blockedId: User['id'], meta?: ClientMeta) {
     const removed = await this.drizzle.db
       .delete(chatUserBlock)
       .where(and(eq(chatUserBlock.blockerId, blockerId), eq(chatUserBlock.blockedId, blockedId)))
@@ -498,9 +490,7 @@ export class ChatService {
     slug: string;
     category: ChatRoomCategory;
     actorId?: User['id'];
-    ip?: string | null;
-    userAgent?: string | null;
-  }) {
+  } & ClientMeta) {
     const [existing] = await this.drizzle.db
       .select({ id: chatRoom.id })
       .from(chatRoom)
@@ -547,9 +537,7 @@ export class ChatService {
     slug?: string;
     category?: ChatRoomCategory;
     actorId?: User['id'];
-    ip?: string | null;
-    userAgent?: string | null;
-  }) {
+  } & ClientMeta) {
     const existing = findOneOrThrow(
       await this.drizzle.db
         .select()
@@ -605,11 +593,7 @@ export class ChatService {
     return toRoom(updated);
   }
 
-  async deleteRoom(
-    id: ChatRoom['id'],
-    actorId?: User['id'],
-    meta?: { ip?: string | null; userAgent?: string | null },
-  ) {
+  async deleteRoom(id: ChatRoom['id'], actorId?: User['id'], meta?: ClientMeta) {
     const deleted = findOneOrThrow(
       await this.drizzle.db
         .update(chatRoom)
@@ -641,9 +625,7 @@ export class ChatService {
   }: {
     userId: User['id'];
     name: string;
-    ip?: string | null;
-    userAgent?: string | null;
-  }) {
+  } & ClientMeta) {
     for (let attempt = 1; attempt <= 3; attempt++) {
       const joinCode = generateJoinCode();
       const slug = generatePrivateRoomSlug(joinCode);
@@ -708,9 +690,7 @@ export class ChatService {
   }: {
     userId: User['id'];
     joinCode: string;
-    ip?: string | null;
-    userAgent?: string | null;
-  }) {
+  } & ClientMeta) {
     const [candidate] = await this.drizzle.db
       .select({ id: chatRoom.id })
       .from(chatRoom)
@@ -771,9 +751,7 @@ export class ChatService {
   }: {
     userId: User['id'];
     roomId: ChatRoom['id'];
-    ip?: string | null;
-    userAgent?: string | null;
-  }) {
+  } & ClientMeta) {
     await this.verifyRoomAccess(roomId, userId);
     const removed = await this.drizzle.db.transaction((t) =>
       withAdvisoryXactLock(t, `chat-room:${roomId}`, async () => {
@@ -818,9 +796,7 @@ export class ChatService {
     moderatorId: User['id'];
     roomId: ChatRoom['id'];
     userId: User['id'];
-    ip?: string | null;
-    userAgent?: string | null;
-  }) {
+  } & ClientMeta) {
     if (moderatorId === userId) {
       throw new ChatRoomSelfModerationError();
     }
@@ -862,9 +838,7 @@ export class ChatService {
     moderatorId: User['id'];
     roomId: ChatRoom['id'];
     userId: User['id'];
-    ip?: string | null;
-    userAgent?: string | null;
-  }) {
+  } & ClientMeta) {
     if (moderatorId === userId) {
       throw new ChatRoomSelfModerationError();
     }

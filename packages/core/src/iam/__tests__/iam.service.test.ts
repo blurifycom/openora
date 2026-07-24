@@ -1,5 +1,5 @@
 import { describe, it, expect, vi } from 'vitest';
-import { mock, mockDb, readPrivate } from '../../testing/mock.js';
+import { mock, mockDb, readPrivate, NO_CLIENT_META } from '../../testing/mock.js';
 import * as core from '@openora/core/server';
 import {
   levelToActions,
@@ -48,7 +48,7 @@ function inContext<T>(fn: () => T): T {
   return core.withRequestContext({ userId: 'caller', traceId: 't' }, fn);
 }
 
-const ADMIN_CALLER = { userId: 'admin-1', role: 'admin' };
+const ADMIN_CALLER = { userId: 'admin-1', role: 'admin', ...NO_CLIENT_META };
 
 function routingDrizzle(byTable: {
   role?: unknown[];
@@ -300,7 +300,7 @@ describe('IamService.setRolePermissions', () => {
         svc.setRolePermissions({
           roleId: 'role-1',
           grants: [{ resource: 'player', level: 'read' }],
-          caller: { userId: 'sup-1', role: 'support' },
+          caller: { userId: 'sup-1', role: 'support', ...NO_CLIENT_META },
         }),
       ),
     ).rejects.toBeInstanceOf(NotSuperAdminError);
@@ -800,7 +800,7 @@ describe('IamService.inviteAdmin', () => {
         svc.inviteAdmin({
           email: 'new@admin.com',
           roleId: 'role-1',
-          caller: { userId: 'sup-1', role: 'support' },
+          caller: { userId: 'sup-1', role: 'support', ...NO_CLIENT_META },
         }),
       ),
     ).rejects.toBeInstanceOf(NotSuperAdminError);
@@ -887,7 +887,7 @@ describe('IamService.forceLogout', () => {
       inContext(() =>
         svc.forceLogout({
           userId: 'target-user',
-          caller: { userId: 'sup-1', role: 'support' },
+          caller: { userId: 'sup-1', role: 'support', ...NO_CLIENT_META },
         }),
       ),
     ).rejects.toBeInstanceOf(NotSuperAdminError);

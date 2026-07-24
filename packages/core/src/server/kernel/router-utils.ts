@@ -1,4 +1,5 @@
 import { ORPCError } from '@orpc/server';
+import type { ClientMeta } from '@openora/core/contracts';
 
 // Raw Node `IncomingHttpHeaders`-shaped map, as the runtime hands it to services.
 export type NodeHeaders = Record<string, string | string[] | undefined>;
@@ -40,8 +41,6 @@ function resolveAuth(context: unknown): AuthContext {
 export function getUserId(context: unknown): string {
   return resolveAuth(context).userId;
 }
-
-export type ClientMeta = { ip: string | null; userAgent: string | null };
 
 export function extractClientMeta(headers: NodeHeaders): ClientMeta {
   const fwd = headers['x-forwarded-for'];

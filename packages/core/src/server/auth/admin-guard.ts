@@ -1,5 +1,10 @@
 import { ORPCError } from '@orpc/server';
-import { createToken, type Token, type AdminPermissionResolver } from '@openora/core/contracts';
+import {
+  createToken,
+  type Token,
+  type AdminPermissionResolver,
+  type ClientMeta,
+} from '@openora/core/contracts';
 import { DrizzleService } from '../db/index.js';
 import { sql } from 'drizzle-orm';
 import { SessionResolver } from './session-resolver.js';
@@ -8,6 +13,13 @@ import type { OssContext, EventBus } from '../kernel/index.js';
 import { extractClientMeta } from '../kernel/router-utils.js';
 
 export const ADMIN_GUARD: Token<AdminGuard> = createToken('ADMIN_GUARD');
+
+/**
+ * The verified admin behind a request, plus the transport metadata every audited
+ * admin action attributes the change to. Returned by `AdminGuard.assert`, so a
+ * router never re-derives either half from the raw headers.
+ */
+export type AdminCaller = { userId: string; role: string } & ClientMeta;
 
 /**
  * The single admin-enforcement point - every admin route calls `assert()` as its
@@ -31,19 +43,17 @@ export class AdminGuard {
     private readonly events?: EventBus,
   ) {}
 
-  async assert(
-    context: unknown,
-  ): Promise<{ userId: string; role: string; ip: string | null; userAgent: string | null }>;
+  async assert(context: unknown): Promise<AdminCaller>;
   async assert<R extends ResourceName>(
     context: unknown,
     resource: R,
     action: ActionOf<R>,
-  ): Promise<{ userId: string; role: string; ip: string | null; userAgent: string | null }>;
+  ): Promise<AdminCaller>;
   async assert<R extends ResourceName>(
     context: unknown,
     resource?: R,
     action?: ActionOf<R>,
-  ): Promise<{ userId: string; role: string; ip: string | null; userAgent: string | null }> {
+  ): Promise<AdminCaller> {
     const request = (context as { request?: OssContext['request'] }).request;
     if (!request || typeof request.headers !== 'object') {
       throw new ORPCError('UNAUTHORIZED', { message: 'Missing request context' });

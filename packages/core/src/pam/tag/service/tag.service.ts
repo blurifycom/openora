@@ -16,6 +16,7 @@ import {
   type PlayerTags,
   type Player,
   type TagKey,
+  type ClientMeta,
 } from '@openora/core/contracts';
 import { player } from '@openora/core/pam/schema/profile';
 import { playerTag, tag } from '../schema/index.js';
@@ -119,10 +120,7 @@ export class TagService implements PlayerTags {
     return rows.map(toTag);
   }
 
-  public async assignPlayerTag(
-    args: AssignPlayerTagInput,
-    meta?: { ip?: string | null; userAgent?: string | null },
-  ) {
+  public async assignPlayerTag(args: AssignPlayerTagInput, meta?: ClientMeta) {
     try {
       const { tagKey, ...restArgs } = args;
       const db = this.drizzle.db;
@@ -162,10 +160,7 @@ export class TagService implements PlayerTags {
     }
   }
 
-  public async removePlayerTag(
-    args: RemovePlayerTagInput,
-    meta?: { ip?: string | null; userAgent?: string | null },
-  ) {
+  public async removePlayerTag(args: RemovePlayerTagInput, meta?: ClientMeta) {
     try {
       const db = this.drizzle.db;
       const result = await db.transaction(async (trx) => {

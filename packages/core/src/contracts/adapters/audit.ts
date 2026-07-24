@@ -4,6 +4,7 @@
 // sealed token outright, and provideSealed() itself refuses a second bind). Other
 // modules resolve this port read-only (container.get(AUDIT_WRITER)) to call it.
 import type { DomainEventName } from '../schemas/events.js';
+import type { ClientMeta } from '../schemas/common.js';
 import { createSealedToken, type SealedToken } from './token.js';
 
 // Admin actions that are recorded directly (not via a domain-event subscription)
@@ -22,18 +23,18 @@ export type DirectAuditAction =
 export type AuditAction = DomainEventName | DirectAuditAction | (string & {});
 
 export type AuditWritePort = {
-  record(entry: {
-    actorId?: string | null;
-    actorType: 'player' | 'admin' | 'system';
-    action: AuditAction;
-    resourceType: string;
-    resourceId?: string | null;
-    before?: Record<string, unknown> | null;
-    after?: Record<string, unknown> | null;
-    ip?: string | null;
-    userAgent?: string | null;
-    correlationId?: string | null;
-  }): Promise<void>;
+  record(
+    entry: {
+      actorId?: string | null;
+      actorType: 'player' | 'admin' | 'system';
+      action: AuditAction;
+      resourceType: string;
+      resourceId?: string | null;
+      before?: Record<string, unknown> | null;
+      after?: Record<string, unknown> | null;
+      correlationId?: string | null;
+    } & Partial<ClientMeta>,
+  ): Promise<void>;
 };
 
 export const AUDIT_WRITER: SealedToken<AuditWritePort> =

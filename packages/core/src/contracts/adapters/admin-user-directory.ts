@@ -1,6 +1,7 @@
 import { createToken, type Token } from './token.js';
 import type { KycStatus } from '../schemas/player.js';
 import type { UserRole } from '../schemas/iam.js';
+import type { ClientMeta } from '../schemas/common.js';
 
 // Admin/back-office view of the user directory. Owned + bound by the identity
 // module (it owns the `user` table); the back-office (admin-console) depends only
@@ -38,7 +39,7 @@ export type AdminUserDirectory = {
     id: string,
     patch: { isActive?: boolean; role?: UserRole },
     actorId: string,
-    meta?: { ip?: string | null; userAgent?: string | null },
+    meta?: ClientMeta,
   ): Promise<AdminUserRow | null>;
   // Batch enrichment for back-office lists (eg the withdrawal queue). Returns one
   // entry per resolvable id; unknown ids are omitted.
