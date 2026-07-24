@@ -3,8 +3,9 @@ import { describe, it, expect, vi } from 'vitest';
 import { ORPCError } from '@orpc/server';
 import { PhoneLoginService } from '../service/phone-login.service.js';
 import { makeDrizzle, makeEvents, mock } from '../../../testing/mock.js';
+import { InProcessCache } from '../../../testing/fakes/cache.js';
 import type { DrizzleService, EventBus, Auth } from '@openora/core/server';
-import type { RateLimiterAdapter, SmsAdapter } from '@openora/core/contracts';
+import type { CacheAdapter, RateLimiterAdapter, SmsAdapter } from '@openora/core/contracts';
 
 const PHONE = '+14155550100';
 
@@ -65,10 +66,12 @@ function build({
   select = [],
   returning = [],
   sms = { sendOtp: vi.fn().mockResolvedValue(undefined) },
+  cache,
 }: {
   select?: unknown[][];
   returning?: unknown[][];
   sms?: SmsAdapter;
+  cache?: CacheAdapter;
 } = {}) {
   const drizzle = makeDrizzle({
     select: select as never,
@@ -81,6 +84,7 @@ function build({
     sms,
     limiter: allowLimiter(),
     auth: fakeAuth,
+    cache,
   });
   return { svc, events, sms };
 }
@@ -134,6 +138,17 @@ describe('PhoneLoginService.requestOtp', () => {
 
     const out = await svc.requestOtp({ phone: PHONE });
     expect(out).toEqual({ expiresAt: expect.any(String), resendAfter: expect.any(String) });
+    expect(sms.sendOtp).not.toHaveBeenCalled();
+  });
+
+  it('anti-enumeration: unknown phone requested twice within 60s throws OtpCooldownError, mirroring a real resend', async () => {
+    const cache = new InProcessCache();
+    const { svc, sms } = build({ select: [[], []], cache });
+
+    await svc.requestOtp({ phone: PHONE });
+    await expect(svc.requestOtp({ phone: PHONE })).rejects.toMatchObject({
+      code: 'TOO_MANY_REQUESTS',
+    });
     expect(sms.sendOtp).not.toHaveBeenCalled();
   });
 
@@ -256,7 +271,7 @@ describe('PhoneLoginService.verifyOtp', () => {
     expect(hasDontRemember).toBe(false);
   });
 
-  it('wrong code increments failedAttempts and throws OtpInvalidError with attemptsRemaining', async () => {
+  it('wrong code increments failedAttempts and throws OtpInvalidError with reason "wrong_code"', async () => {
     const { svc, events } = build({
       // (1) otp lookup only (update uses returning, not the select queue).
       select: [[otpRow({ codeHash: hash('000000') })]],
@@ -268,7 +283,7 @@ describe('PhoneLoginService.verifyOtp', () => {
     await expect(promise).rejects.toBeInstanceOf(ORPCError);
     await expect(promise).rejects.toMatchObject({
       code: 'UNPROCESSABLE_CONTENT',
-      data: { attemptsRemaining: 3 },
+      data: { attemptsRemaining: 3, reason: 'wrong_code' },
     });
     expect(events.emit).not.toHaveBeenCalledWith('identity.phone_otp.cancelled', expect.anything());
   });
@@ -291,7 +306,7 @@ describe('PhoneLoginService.verifyOtp', () => {
     });
   });
 
-  it('expired OTP returns attemptsRemaining derived from failedAttempts on the dead session', async () => {
+  it('expired OTP throws OtpInvalidError with reason "expired", not "wrong_code"', async () => {
     const code = '123456';
     const { svc } = build({
       // 2 failed attempts before the code expired -> 3 remaining
@@ -308,18 +323,60 @@ describe('PhoneLoginService.verifyOtp', () => {
 
     await expect(svc.verifyOtp({ phone: PHONE, code }, new Headers())).rejects.toMatchObject({
       code: 'UNPROCESSABLE_CONTENT',
-      data: { attemptsRemaining: 3 },
+      data: { attemptsRemaining: 3, reason: 'expired' },
     });
   });
 
-  it('missing OTP session throws OtpInvalidError with 0 attemptsRemaining', async () => {
+  it('missing OTP session (anti-enumeration) mimics a real first wrong guess, not "expired"', async () => {
     const { svc } = build({ select: [[]] });
     await expect(
       svc.verifyOtp({ phone: PHONE, code: '123456' }, new Headers()),
     ).rejects.toMatchObject({
       code: 'UNPROCESSABLE_CONTENT',
-      data: { attemptsRemaining: 0 },
+      data: { attemptsRemaining: 4, reason: 'wrong_code' },
     });
+  });
+
+  it('anti-enumeration: repeated wrong guesses against an unknown phone decrement then cancel, mirroring a real session', async () => {
+    const cache = new InProcessCache();
+    const { svc, events } = build({ select: [[], [], [], [], [], []], cache });
+
+    await svc.requestOtp({ phone: PHONE });
+
+    for (const expected of [4, 3, 2, 1]) {
+      await expect(
+        svc.verifyOtp({ phone: PHONE, code: 'wrong' }, new Headers()),
+      ).rejects.toMatchObject({
+        code: 'UNPROCESSABLE_CONTENT',
+        data: { attemptsRemaining: expected, reason: 'wrong_code' },
+      });
+    }
+
+    await expect(
+      svc.verifyOtp({ phone: PHONE, code: 'wrong' }, new Headers()),
+    ).rejects.toMatchObject({ code: 'FORBIDDEN' });
+
+    expect(events.emit).not.toHaveBeenCalled();
+  });
+
+  it('anti-enumeration: an untouched shadow past the OTP TTL returns "expired", not "wrong_code"', async () => {
+    vi.useFakeTimers();
+    try {
+      const cache = new InProcessCache();
+      const { svc } = build({ select: [[], []], cache });
+
+      await svc.requestOtp({ phone: PHONE });
+      vi.advanceTimersByTime(5 * 60 * 1000 + 1);
+
+      await expect(
+        svc.verifyOtp({ phone: PHONE, code: 'wrong' }, new Headers()),
+      ).rejects.toMatchObject({
+        code: 'UNPROCESSABLE_CONTENT',
+        data: { attemptsRemaining: 5, reason: 'expired' },
+      });
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it('RG-blocked user is forbidden after the OTP passes and no session is minted', async () => {

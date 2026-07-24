@@ -1,5 +1,10 @@
 import { ORPCError } from '@orpc/server';
-import { createToken, type Token, type AdminPermissionResolver } from '@openora/core/contracts';
+import {
+  createToken,
+  AuthGuardReasonSchema,
+  type Token,
+  type AdminPermissionResolver,
+} from '@openora/core/contracts';
 import { DrizzleService } from '../db/index.js';
 import { sql } from 'drizzle-orm';
 import { SessionResolver } from './session-resolver.js';
@@ -43,7 +48,10 @@ export class AdminGuard {
   ): Promise<{ userId: string; role: string }> {
     const request = (context as { request?: OssContext['request'] }).request;
     if (!request || typeof request.headers !== 'object') {
-      throw new ORPCError('UNAUTHORIZED', { message: 'Missing request context' });
+      throw new ORPCError('UNAUTHORIZED', {
+        message: 'Missing request context',
+        data: { reason: AuthGuardReasonSchema.enum.missing_request_context },
+      });
     }
 
     const headers = new Headers();
@@ -55,7 +63,10 @@ export class AdminGuard {
     }
     const userId = await this.sessions.resolveUserId(headers);
     if (!userId) {
-      throw new ORPCError('UNAUTHORIZED', { message: 'Authentication required' });
+      throw new ORPCError('UNAUTHORIZED', {
+        message: 'Authentication required',
+        data: { reason: AuthGuardReasonSchema.enum.authentication_required },
+      });
     }
 
     const result = await this.drizzle.db.execute(
@@ -68,7 +79,10 @@ export class AdminGuard {
       } else {
         this.emitUnauthorized(userId, undefined, 'admin', 'access', headers);
       }
-      throw new ORPCError('FORBIDDEN', { message: 'Admin access required' });
+      throw new ORPCError('FORBIDDEN', {
+        message: 'Admin access required',
+        data: { reason: AuthGuardReasonSchema.enum.admin_required },
+      });
     }
 
     const userRole = roles[userRecord.role as keyof typeof roles];
@@ -78,7 +92,10 @@ export class AdminGuard {
       } else {
         this.emitUnauthorized(userId, userRecord.role, 'admin', 'access', headers);
       }
-      throw new ORPCError('FORBIDDEN', { message: 'Admin access required' });
+      throw new ORPCError('FORBIDDEN', {
+        message: 'Admin access required',
+        data: { reason: AuthGuardReasonSchema.enum.admin_required },
+      });
     }
 
     if (resource !== undefined && action !== undefined) {
@@ -92,6 +109,11 @@ export class AdminGuard {
           this.emitUnauthorized(userId, userRecord.role, resource, action, headers);
           throw new ORPCError('FORBIDDEN', {
             message: `Missing permission: ${String(resource)}:${String(action)}`,
+            data: {
+              reason: AuthGuardReasonSchema.enum.permission_denied,
+              resource: String(resource),
+              action: String(action),
+            },
           });
         }
       } else {
@@ -101,6 +123,11 @@ export class AdminGuard {
           this.emitUnauthorized(userId, userRecord.role, resource, action, headers);
           throw new ORPCError('FORBIDDEN', {
             message: `Missing permission: ${String(resource)}:${String(action)}`,
+            data: {
+              reason: AuthGuardReasonSchema.enum.permission_denied,
+              resource: String(resource),
+              action: String(action),
+            },
           });
         }
       }

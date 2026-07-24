@@ -1,5 +1,6 @@
 import {
   ADMIN_USER_DIRECTORY,
+  CACHE,
   IDENTITY_READER,
   KYC_ADAPTER,
   LOGIN_ENFORCEMENT,
@@ -69,6 +70,7 @@ export default definePlugin({
           options: c.has(IDENTITY_OPTIONS) ? c.get(IDENTITY_OPTIONS) : undefined,
           limiter: c.get(RATE_LIMITER),
           platformConfig: c.has(PLATFORM_CONFIG) ? c.get(PLATFORM_CONFIG) : undefined,
+          cache: c.get(CACHE),
         }),
         new SessionService({ drizzle: c.get(DRIZZLE), events: c.get(EVENT_BUS) }),
         new PhoneLoginService({
@@ -77,6 +79,7 @@ export default definePlugin({
           sms: c.get(SMS_ADAPTER),
           limiter: c.get(RATE_LIMITER),
           auth: c.get(AUTH_SESSION).auth,
+          cache: c.get(CACHE),
         }),
         c.get(ADMIN_GUARD),
         c.get(EVENT_BUS),
