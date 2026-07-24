@@ -1,4 +1,5 @@
 import { ORPCError } from '@orpc/server';
+import { AuthGuardReasonSchema } from '@openora/core/contracts';
 
 // Raw Node `IncomingHttpHeaders`-shaped map, as the runtime hands it to services.
 export type NodeHeaders = Record<string, string | string[] | undefined>;
@@ -26,12 +27,18 @@ function resolveAuth(context: unknown): AuthContext {
     !('request' in context) ||
     typeof (context as Record<string, unknown>).request !== 'object'
   ) {
-    throw new ORPCError('UNAUTHORIZED', { message: 'Missing request context' });
+    throw new ORPCError('UNAUTHORIZED', {
+      message: 'Missing request context',
+      data: { reason: AuthGuardReasonSchema.enum.missing_request_context },
+    });
   }
 
   const auth = (context as { auth?: AuthContext }).auth;
   if (!auth?.userId) {
-    throw new ORPCError('UNAUTHORIZED', { message: 'Authentication required' });
+    throw new ORPCError('UNAUTHORIZED', {
+      message: 'Authentication required',
+      data: { reason: AuthGuardReasonSchema.enum.authentication_required },
+    });
   }
 
   return auth;

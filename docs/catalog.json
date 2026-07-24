@@ -365,7 +365,8 @@
       "boundIn": [
         "packages/core/src/casino/lobby/plugin.ts",
         "packages/core/src/cms/plugin.ts",
-        "packages/core/src/iam/plugin.ts"
+        "packages/core/src/iam/plugin.ts",
+        "packages/core/src/pam/identity/plugin.ts"
       ]
     },
     {
@@ -707,6 +708,10 @@
       "file": "packages/core/src/audit/contract/index.ts"
     },
     {
+      "name": "AuthGuardReasonSchema",
+      "file": "packages/core/src/contracts/schemas/common.ts"
+    },
+    {
       "name": "AutoWithdrawalConfigSchema",
       "file": "packages/core/src/contracts/schemas/platform-config.ts"
     },
@@ -1036,6 +1041,10 @@
     },
     {
       "name": "PhoneLoginErrorReasonSchema",
+      "file": "packages/core/src/contracts/schemas/identity.ts"
+    },
+    {
+      "name": "PhoneLoginOtpInvalidReasonSchema",
       "file": "packages/core/src/contracts/schemas/identity.ts"
     },
     {

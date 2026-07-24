@@ -6,16 +6,21 @@ import {
   DrizzleService,
   assertRateLimit,
   signSessionCookie,
+  createLogger,
+  invalidate,
 } from '@openora/core/server';
 import { and, eq, gt, sql } from 'drizzle-orm';
-import { PhoneLoginErrorReasonSchema } from '@openora/core/contracts';
-import type {
-  RateLimiterAdapter,
-  SmsAdapter,
-  PhoneLoginRequestInput,
-  PhoneLoginRequestOutput,
-  PhoneLoginVerifyInput,
-  User,
+import {
+  PhoneLoginErrorReasonSchema,
+  PhoneLoginOtpInvalidReasonSchema,
+  type PhoneLoginOtpInvalidReason,
+  type CacheAdapter,
+  type RateLimiterAdapter,
+  type SmsAdapter,
+  type PhoneLoginRequestInput,
+  type PhoneLoginRequestOutput,
+  type PhoneLoginVerifyInput,
+  type User,
 } from '@openora/core/contracts';
 import { user, session, smsOtpSession } from '../schema/index.js';
 import { isRgBlocked } from './rg-guard.service.js';
@@ -38,6 +43,16 @@ const OTP_VERIFY_RATE_LIMIT = {
   onUnavailable: 'deny',
 } as const;
 
+const FAKE_OTP_SHADOW_TTL_MS = 7 * 24 * 60 * 60 * 1000;
+
+type FakeOtpShadow = { createdAt: number; failedAttempts: number };
+
+function phoneOtpShadowKey(phone: string): string {
+  return `phone-otp-shadow:${phone}`;
+}
+
+const logger = createLogger('phone-otp-shadow');
+
 /** Resend requested before the 60s cooldown elapsed. */
 export function OtpCooldownError(retryAfterMs: number) {
   return new ORPCError('TOO_MANY_REQUESTS', {
@@ -46,11 +61,10 @@ export function OtpCooldownError(retryAfterMs: number) {
   });
 }
 
-/** Wrong or expired code, session still alive. */
-export function OtpInvalidError(attemptsRemaining: number) {
+export function OtpInvalidError(attemptsRemaining: number, reason: PhoneLoginOtpInvalidReason) {
   return new ORPCError('UNPROCESSABLE_CONTENT', {
-    message: 'The code is invalid or has expired.',
-    data: { attemptsRemaining },
+    message: reason === 'expired' ? 'The code has expired.' : 'The code is invalid.',
+    data: { attemptsRemaining, reason: PhoneLoginOtpInvalidReasonSchema.enum[reason] },
   });
 }
 
@@ -111,6 +125,7 @@ export type PhoneLoginServiceDeps = {
   sms: SmsAdapter;
   limiter: RateLimiterAdapter;
   auth: Auth;
+  cache?: CacheAdapter;
 };
 
 export class PhoneLoginService {
@@ -119,13 +134,38 @@ export class PhoneLoginService {
   private readonly sms: SmsAdapter;
   private readonly limiter: RateLimiterAdapter;
   private readonly auth: Auth;
+  private readonly cache?: CacheAdapter;
 
-  constructor({ drizzle, events, sms, limiter, auth }: PhoneLoginServiceDeps) {
+  constructor({ drizzle, events, sms, limiter, auth, cache }: PhoneLoginServiceDeps) {
     this.drizzle = drizzle;
     this.events = events;
     this.sms = sms;
     this.limiter = limiter;
     this.auth = auth;
+    this.cache = cache;
+  }
+
+  private async shadowGet(key: string): Promise<FakeOtpShadow | undefined> {
+    if (!this.cache) {
+      return undefined;
+    }
+    try {
+      return await this.cache.get<FakeOtpShadow>(key);
+    } catch (err) {
+      logger.warn({ key, err }, 'phone-otp shadow cache read failed');
+      return undefined;
+    }
+  }
+
+  private async shadowSet(key: string, value: FakeOtpShadow): Promise<void> {
+    if (!this.cache) {
+      return;
+    }
+    try {
+      await this.cache.set(key, value, { ttlMs: FAKE_OTP_SHADOW_TTL_MS });
+    } catch (err) {
+      logger.warn({ key, err }, 'phone-otp shadow cache write failed');
+    }
   }
 
   async requestOtp(
@@ -148,6 +188,12 @@ export class PhoneLoginService {
     // response, minus the SMS. A caller cannot distinguish a real verified number from
     // a fake or unverified one.
     if (!account || !account.phoneVerified) {
+      const key = phoneOtpShadowKey(phone);
+      const shadow = await this.shadowGet(key);
+      if (shadow && now - shadow.createdAt < RESEND_COOLDOWN_MS) {
+        throw OtpCooldownError(RESEND_COOLDOWN_MS - (now - shadow.createdAt));
+      }
+      await this.shadowSet(key, { createdAt: now, failedAttempts: 0 });
       return { expiresAt: expiresAt.toISOString(), resendAfter: resendAfter.toISOString() };
     }
 
@@ -207,10 +253,24 @@ export class PhoneLoginService {
       .limit(1);
 
     if (!otp) {
-      throw OtpInvalidError(0);
+      const key = phoneOtpShadowKey(phone);
+      const shadow = await this.shadowGet(key);
+      if (!shadow) {
+        throw OtpInvalidError(MAX_VERIFY_ATTEMPTS - 1, 'wrong_code');
+      }
+      if (Date.now() - shadow.createdAt >= OTP_TTL_MS) {
+        throw OtpInvalidError(MAX_VERIFY_ATTEMPTS - shadow.failedAttempts, 'expired');
+      }
+      const newAttempts = shadow.failedAttempts + 1;
+      if (newAttempts >= MAX_VERIFY_ATTEMPTS) {
+        await invalidate(this.cache, key);
+        throw OtpCancelledError();
+      }
+      await this.shadowSet(key, { createdAt: shadow.createdAt, failedAttempts: newAttempts });
+      throw OtpInvalidError(MAX_VERIFY_ATTEMPTS - newAttempts, 'wrong_code');
     }
     if (otp.expiresAt.getTime() < Date.now()) {
-      throw OtpInvalidError(MAX_VERIFY_ATTEMPTS - otp.failedAttempts);
+      throw OtpInvalidError(MAX_VERIFY_ATTEMPTS - otp.failedAttempts, 'expired');
     }
 
     if (hashCode(code) !== otp.codeHash) {
@@ -239,7 +299,7 @@ export class PhoneLoginService {
         }
         throw OtpCancelledError();
       }
-      throw OtpInvalidError(MAX_VERIFY_ATTEMPTS - newAttempts);
+      throw OtpInvalidError(MAX_VERIFY_ATTEMPTS - newAttempts, 'wrong_code');
     }
 
     // Resolve the account before entering the transaction so the RG check can short-
