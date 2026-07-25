@@ -203,11 +203,14 @@ export const domainEventSchemas = {
   'rg.cooling_off.activated': actorReasonBase
     .extend({ userId: UuidSchema, exclusionId: UuidSchema, expiresAt: TimestampSchema })
     .extend(authContextBase.shape),
+  // durationMonths is the admin's chosen term, null when permanent - the regulatory
+  // export reads the decision as made rather than re-deriving it from expiresAt.
   'rg.self_exclusion.activated': actorReasonBase
     .extend({
       userId: UuidSchema,
       exclusionId: UuidSchema,
       isPermanent: z.boolean(),
+      durationMonths: z.number().int().nullable(),
       expiresAt: TimestampSchema.nullable(),
     })
     .extend(authContextBase.shape),
@@ -316,7 +319,8 @@ export const domainEventVersions: Partial<Record<DomainEventName, number>> = {
   // pair (money limit vs session-time limit), never a JS number.
   'rg.limit.set': 2,
   // v2: permanent renamed to isPermanent (non-predicate boolean naming rule).
-  'rg.self_exclusion.activated': 2,
+  // v3: durationMonths added - the chosen term, explicit for the regulatory export.
+  'rg.self_exclusion.activated': 3,
 };
 
 export function getEventVersion(event: string): number {
