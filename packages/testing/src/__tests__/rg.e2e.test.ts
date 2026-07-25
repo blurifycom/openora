@@ -210,6 +210,35 @@ describe('RG limits, cooling-off, self-exclusion happy path', () => {
   });
 });
 
+describe('RG self-exclusion leaves player funds unlocked', () => {
+  it('keeps a pending withdrawal in the admin queue and approvable after the exclusion lands', async () => {
+    const email = `rg-withdraw-${randomUUID()}@e2e.test`;
+    const { client, userId } = await registerPlayer(email);
+
+    const depositRes = await client.post('/wallet/deposit', { amount: '50', currency: 'USD' });
+    expect(depositRes.status).toBe(200);
+    const withdrawRes = await client.post('/wallet/withdraw', { amount: '20', currency: 'USD' });
+    expect(withdrawRes.status).toBe(200);
+    const withdrawalId = (await readJson(withdrawRes)).transactionId as string;
+
+    const exclusionRes = await admin.post(`/compliance/players/${userId}/self-exclusion`, {
+      isPermanent: true,
+      reason: 'player requested, permanent',
+      confirm: true,
+    });
+    expect(exclusionRes.status).toBe(200);
+
+    const queueRes = await admin.get('/wallet/withdrawals?status=pending&currency=USD&limit=100');
+    expect(queueRes.status).toBe(200);
+    const queued = (await readJson(queueRes)).items as Array<{ transactionId: string }>;
+    expect(queued.map((i) => i.transactionId)).toContain(withdrawalId);
+
+    const approveRes = await admin.post(`/wallet/withdrawals/${withdrawalId}/approve`, {});
+    expect(approveRes.status).toBe(200);
+    expect((await readJson(approveRes)).status).not.toBe('pending');
+  });
+});
+
 describe('RG login enforcement', () => {
   it('blocks login + revokes sessions after cooling-off; wrong password stays indistinguishable pre-auth', async () => {
     const email = `rg-enforce-cooloff-${randomUUID()}@e2e.test`;
@@ -645,7 +674,14 @@ describe('RG audit trail', () => {
       const body = await readJson(res);
       expect(body.items).toHaveLength(1);
       expect(body.items[0].actorType).toBe('admin');
-      expect(body.items[0].after).toMatchObject({ isPermanent: false });
+      expect(body.items[0].after).toMatchObject({
+        isPermanent: false,
+        durationMonths: 6,
+        reason: 'audit trail check',
+        actorId: expect.any(String),
+      });
+      expect(body.items[0].after.expiresAt).toEqual(expect.any(String));
+      expect(body.items[0].createdAt).toEqual(expect.any(String));
     });
 
     await vi.waitFor(async () => {

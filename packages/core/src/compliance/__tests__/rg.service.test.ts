@@ -1,6 +1,6 @@
 import { describe, it, expect, vi } from 'vitest';
 import type { DrizzleService } from '@openora/core/server';
-import type { LoginEnforcementPort } from '@openora/core/contracts';
+import { domainEventSchemas, type LoginEnforcementPort } from '@openora/core/contracts';
 import { mock, mockDb } from '../../testing/mock.js';
 import { userLimit, rgExclusion } from '../schema/index.js';
 import {
@@ -113,6 +113,9 @@ function exclusionRow(overrides: Record<string, unknown> = {}) {
 
 const USER = 'user-1';
 const ADMIN = 'admin-1';
+const USER_UUID = '11111111-1111-4111-8111-111111111111';
+const ADMIN_UUID = '22222222-2222-4222-8222-222222222222';
+const EXCLUSION_UUID = '33333333-3333-4333-8333-333333333333';
 const future = () => new Date(Date.now() + 200 * 24 * 3600_000);
 
 describe('RgService.setPlayerLimit', () => {
@@ -207,8 +210,38 @@ describe('RgService.activateSelfExclusion', () => {
     expect(enforcement.block).toHaveBeenCalledWith(USER, { until: null });
     expect(events.emit).toHaveBeenCalledWith(
       'rg.self_exclusion.activated',
-      expect.objectContaining({ isPermanent: true, expiresAt: null }),
+      expect.objectContaining({ isPermanent: true, durationMonths: null, expiresAt: null }),
     );
+  });
+
+  it('carries the chosen term and a matching expiry for a fixed-term exclusion', async () => {
+    const expiresAt = future();
+    const row = exclusionRow({
+      id: EXCLUSION_UUID,
+      userId: USER_UUID,
+      isPermanent: false,
+      expiresAt,
+    });
+    const db = routingDb({
+      rgExclusion: [[], [{ kind: 'self_exclusion', expiresAt }]],
+      returning: [row],
+    });
+    const { svc, events, enforcement } = newSvc(db);
+    await svc.activateSelfExclusion(
+      USER_UUID,
+      { userId: USER_UUID, isPermanent: false, durationMonths: 6, reason: 'stop', confirm: true },
+      ADMIN_UUID,
+    );
+    expect(enforcement.block).toHaveBeenCalledWith(USER_UUID, { until: null });
+    const [topic, payload] = events.emit.mock.calls[0] ?? [];
+    expect(topic).toBe('rg.self_exclusion.activated');
+    expect(domainEventSchemas['rg.self_exclusion.activated'].parse(payload)).toMatchObject({
+      isPermanent: false,
+      durationMonths: 6,
+      reason: 'stop',
+      actorId: ADMIN_UUID,
+      userId: USER_UUID,
+    });
   });
 });
 

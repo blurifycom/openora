@@ -239,6 +239,7 @@ export class RgService {
       actorId,
       exclusionId: row.id,
       isPermanent: input.isPermanent,
+      durationMonths: input.isPermanent ? null : (input.durationMonths ?? null),
       expiresAt: expiresAt ? expiresAt.toISOString() : null,
       reason: input.reason,
       ip: meta?.ip ?? null,
