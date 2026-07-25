@@ -2,7 +2,7 @@ import { describe, it, expect, beforeAll, afterAll, vi } from 'vitest';
 import { randomUUID } from 'node:crypto';
 import { eq } from 'drizzle-orm';
 import { loadExtensions, DRIZZLE, type Container } from '@openora/core/server';
-import { JOB_QUEUE, queue } from '@openora/core/contracts';
+import { JOB_QUEUE, PLAY_ELIGIBILITY, queue } from '@openora/core/contracts';
 import { rgExclusion } from '@openora/core/compliance/schema';
 import { user } from '@openora/core/pam/schema/identity';
 import {
@@ -267,6 +267,94 @@ describe('RG login enforcement', () => {
     expect(wrongPwRes.status).toBe(401);
     const wrongPwBody = await readJson(wrongPwRes);
     expect(String(wrongPwBody.message).toLowerCase()).not.toContain('gambling');
+  });
+});
+
+describe('RG cooling-off lift', () => {
+  const isRestricted = (userId: string) => app.container.get(PLAY_ELIGIBILITY).isRestricted(userId);
+
+  it('restores login and play when an admin lifts an active cooling-off early', async () => {
+    const email = `rg-cooloff-lift-${randomUUID()}@e2e.test`;
+    const { userId } = await registerPlayer(email);
+
+    const activateRes = await admin.post(`/compliance/players/${userId}/cooling-off`, {
+      durationHours: 1008,
+      reason: 'activated on the wrong player',
+    });
+    expect(activateRes.status).toBe(200);
+    const exclusionId = (await readJson(activateRes)).id as string;
+
+    expect((await attemptLogin(email, 'password123')).status).toBe(403);
+    await expect(isRestricted(userId)).resolves.toBe(true);
+
+    const liftRes = await admin.post(`/compliance/players/${userId}/cooling-off/lift`, {
+      reason: 'raised in error, support ticket 42',
+    });
+    expect(liftRes.status).toBe(200);
+    const lifted = await readJson(liftRes);
+    expect(lifted.status).toBe('lifted');
+    expect(lifted.liftedReason).toBe('raised in error, support ticket 42');
+    expect(await exclusionStatus(app.container, exclusionId)).toBe('lifted');
+
+    expect((await attemptLogin(email, 'password123')).status).toBe(200);
+    await expect(isRestricted(userId)).resolves.toBe(false);
+
+    const section = await readJson(await admin.get(`/compliance/players/${userId}/rg`));
+    expect(section.coolingOff).toBeNull();
+  });
+
+  it('keeps the player blocked when a self-exclusion is still active', async () => {
+    const email = `rg-cooloff-lift-se-${randomUUID()}@e2e.test`;
+    const { userId } = await registerPlayer(email);
+
+    await admin.post(`/compliance/players/${userId}/cooling-off`, {
+      durationHours: 24,
+      reason: 'short break',
+    });
+    await admin.post(`/compliance/players/${userId}/self-exclusion`, {
+      isPermanent: true,
+      reason: 'player requested, permanent',
+      confirm: true,
+    });
+
+    const liftRes = await admin.post(`/compliance/players/${userId}/cooling-off/lift`, {
+      reason: 'superseded by the self-exclusion',
+    });
+    expect(liftRes.status).toBe(200);
+
+    expect((await attemptLogin(email, 'password123')).status).toBe(403);
+    await expect(isRestricted(userId)).resolves.toBe(true);
+  });
+
+  it('rejects lifting when the player has no active cooling-off', async () => {
+    const { userId } = await registerPlayer(`rg-cooloff-lift-none-${randomUUID()}@e2e.test`);
+
+    const res = await admin.post(`/compliance/players/${userId}/cooling-off/lift`, {
+      reason: 'nothing to lift',
+    });
+    expect(res.status).toBe(404);
+  });
+
+  it('records the lift in the audit trail with actor, reason and subject', async () => {
+    const { userId } = await registerPlayer(`rg-cooloff-lift-audit-${randomUUID()}@e2e.test`);
+
+    await admin.post(`/compliance/players/${userId}/cooling-off`, {
+      durationHours: 24,
+      reason: 'player requested a break',
+    });
+    await admin.post(`/compliance/players/${userId}/cooling-off/lift`, {
+      reason: 'player changed their mind',
+    });
+
+    await vi.waitFor(async () => {
+      const res = await admin.get(`/audit/logs?resourceId=${userId}&action=rg.cooling_off.lifted`);
+      const body = await readJson(res);
+      expect(body.items).toHaveLength(1);
+      expect(body.items[0].actorType).toBe('admin');
+      expect(body.items[0].resourceType).toBe('player');
+      expect(body.items[0].before).toMatchObject({ status: 'active' });
+      expect(body.items[0].after).toMatchObject({ reason: 'player changed their mind' });
+    });
   });
 });
 

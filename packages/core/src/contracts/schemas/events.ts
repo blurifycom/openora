@@ -214,6 +214,9 @@ export const domainEventSchemas = {
   'rg.self_exclusion.lifted': actorReasonBase
     .extend({ userId: UuidSchema, exclusionId: UuidSchema, kind: ExclusionKindSchema })
     .merge(authContextBase),
+  'rg.cooling_off.lifted': actorReasonBase
+    .extend({ userId: UuidSchema, exclusionId: UuidSchema })
+    .merge(authContextBase),
   'rg.exclusion.login_blocked': authContextBase.extend({ userId: UuidSchema }),
 
   // A player's KYC status changed. userId = subject player; actorId = the admin who

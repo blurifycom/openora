@@ -4,6 +4,7 @@ import {
   IDENTITY_READER,
   KYC_ADAPTER,
   LOGIN_ENFORCEMENT,
+  PLAY_ELIGIBILITY,
   NOTIFICATION_DELIVERY_ADAPTER,
   SEND_EMAIL,
   EMAIL_TEMPLATE_RENDERER,
@@ -24,6 +25,7 @@ import { createIdentityRouter } from './router/index.js';
 import { IdentityService } from './service/identity.service.js';
 import { SessionService } from './service/session.service.js';
 import { LoginEnforcementService } from './service/login-enforcement.service.js';
+import { PlayEligibilityService } from './service/play-eligibility.service.js';
 
 export default definePlugin({
   id: 'identity',
@@ -54,6 +56,9 @@ export default definePlugin({
           new SessionService({ drizzle: c.get(DRIZZLE), events: c.get(EVENT_BUS) }),
         ),
     );
+    // RG wager gate. Gaming and wallet refuse a bet through this port so a restricted
+    // player cannot keep playing on a session that outlived the block.
+    ctx.provide(PLAY_ELIGIBILITY, (c) => new PlayEligibilityService(c.get(DRIZZLE)));
     ctx.provide(SESSION_COMMANDS, (c) => {
       const sessionSvc = new SessionService({ drizzle: c.get(DRIZZLE), events: c.get(EVENT_BUS) });
       return {

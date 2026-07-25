@@ -100,6 +100,7 @@
         "compliance.getPlayerKyc",
         "compliance.getRgSection",
         "compliance.kycWebhook",
+        "compliance.liftCoolingOff",
         "compliance.liftSelfExclusion",
         "compliance.listGeoRules",
         "compliance.listRgFlags",
@@ -386,6 +387,7 @@
       "token": "EMAIL_TEMPLATE_RENDERER",
       "status": "wired",
       "boundIn": [
+        "packages/core/src/compliance/plugin.ts",
         "packages/core/src/pam/identity/plugin.ts"
       ]
     },
@@ -492,6 +494,17 @@
       "token": "PAYMENT_ADAPTER",
       "status": "wired",
       "boundIn": [
+        "packages/core/src/wallet/plugin.ts"
+      ]
+    },
+    {
+      "category": "play-eligibility",
+      "interface": "PlayEligibilityPort",
+      "token": "PLAY_ELIGIBILITY",
+      "status": "wired",
+      "boundIn": [
+        "packages/core/src/casino/gaming/plugin.ts",
+        "packages/core/src/pam/identity/plugin.ts",
         "packages/core/src/wallet/plugin.ts"
       ]
     },
@@ -607,6 +620,7 @@
     "identity.user.unlocked",
     "notifications.created",
     "rg.cooling_off.activated",
+    "rg.cooling_off.lifted",
     "rg.exclusion.login_blocked",
     "rg.limit.set",
     "rg.self_exclusion.activated",
@@ -954,6 +968,10 @@
     {
       "name": "LanguageSchema",
       "file": "packages/core/src/contracts/schemas/identity.ts"
+    },
+    {
+      "name": "LiftCoolingOffInputSchema",
+      "file": "packages/core/src/compliance/contract/rg.ts"
     },
     {
       "name": "LiftSelfExclusionInputSchema",
@@ -1480,6 +1498,7 @@
     "POST /compliance/kyc",
     "POST /compliance/kyc/webhook",
     "POST /compliance/players/{userId}/cooling-off",
+    "POST /compliance/players/{userId}/cooling-off/lift",
     "POST /compliance/players/{userId}/self-exclusion",
     "POST /compliance/players/{userId}/self-exclusion/lift",
     "POST /gaming/rounds/start",

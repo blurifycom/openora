@@ -267,3 +267,71 @@ describe('RgService.liftSelfExclusion', () => {
     expect(enforcement.unblock).not.toHaveBeenCalled();
   });
 });
+
+describe('RgService.liftCoolingOff', () => {
+  const coolingOffRow = (overrides: Record<string, unknown> = {}) =>
+    exclusionRow({ kind: 'cooling_off', expiresAt: future(), ...overrides });
+
+  it('rejects when the player has no active cooling-off', async () => {
+    const { svc } = newSvc(routingDb({ rgExclusion: [[]] }));
+    await expect(svc.liftCoolingOff(USER, { userId: USER, reason: 'ok' }, ADMIN)).rejects.toThrow(
+      ExclusionNotFoundError,
+    );
+  });
+
+  it('lifts before expiry and unblocks when nothing else is active', async () => {
+    const existing = coolingOffRow();
+    const db = routingDb({
+      rgExclusion: [[existing], []],
+      returning: [{ ...existing, status: 'lifted' }],
+    });
+    const { svc, events, enforcement } = newSvc(db);
+
+    const lifted = await svc.liftCoolingOff(
+      USER,
+      { userId: USER, reason: 'raised in error' },
+      ADMIN,
+    );
+
+    expect(lifted.status).toBe('lifted');
+    expect(enforcement.unblock).toHaveBeenCalledWith(USER);
+    expect(events.emit).toHaveBeenCalledWith(
+      'rg.cooling_off.lifted',
+      expect.objectContaining({ userId: USER, actorId: ADMIN, reason: 'raised in error' }),
+    );
+  });
+
+  it('keeps an indefinite block when the player is also self-excluded', async () => {
+    const existing = coolingOffRow();
+    const db = routingDb({
+      rgExclusion: [[existing], [{ kind: 'self_exclusion', expiresAt: null }]],
+      returning: [{ ...existing, status: 'lifted' }],
+    });
+    const { svc, enforcement } = newSvc(db);
+
+    await svc.liftCoolingOff(USER, { userId: USER, reason: 'ok' }, ADMIN);
+
+    expect(enforcement.block).toHaveBeenCalledWith(USER, { until: null });
+    expect(enforcement.unblock).not.toHaveBeenCalled();
+  });
+
+  it('records the actor and reason on the lifted row', async () => {
+    const existing = coolingOffRow();
+    const db = routingDb({
+      rgExclusion: [[existing], []],
+      returning: [
+        { ...existing, status: 'lifted', liftedBy: ADMIN, liftedReason: 'support ticket 42' },
+      ],
+    });
+    const { svc } = newSvc(db);
+
+    const lifted = await svc.liftCoolingOff(
+      USER,
+      { userId: USER, reason: 'support ticket 42' },
+      ADMIN,
+    );
+
+    expect(lifted.liftedBy).toBe(ADMIN);
+    expect(lifted.liftedReason).toBe('support ticket 42');
+  });
+});

@@ -5,6 +5,7 @@ import {
   GamingService,
   GameNotFoundError,
   GameRoundNotFoundError,
+  RgRestrictedError,
 } from '../service/gaming.service.js';
 
 export function createGamingRouter(gaming: GamingService) {
@@ -18,7 +19,7 @@ export function createGamingRouter(gaming: GamingService) {
     ),
 
     startRound: os.startRound.handler(({ input, context }) =>
-      mapErrors({ NOT_FOUND: GameNotFoundError }, () =>
+      mapErrors({ NOT_FOUND: GameNotFoundError, CONFLICT: RgRestrictedError }, () =>
         gaming.startRound(getUserId(context), input.gameId, input.currency),
       ),
     ),
