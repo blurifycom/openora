@@ -470,10 +470,6 @@ export class RgService {
     }
   }
 
-  // Best-effort player notification. The email port, the directory and the renderer are
-  // all optional (guarded by c.has at wiring). A lookup/render/send failure must not fail
-  // an RG action that already committed - log without PII (no email, no reason text) and
-  // move on.
   private async notify<K extends EmailTemplateKey>(
     userId: User['id'],
     key: K,

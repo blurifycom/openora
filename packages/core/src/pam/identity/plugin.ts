@@ -56,8 +56,6 @@ export default definePlugin({
           new SessionService({ drizzle: c.get(DRIZZLE), events: c.get(EVENT_BUS) }),
         ),
     );
-    // RG wager gate. Gaming and wallet refuse a bet through this port so a restricted
-    // player cannot keep playing on a session that outlived the block.
     ctx.provide(PLAY_ELIGIBILITY, (c) => new PlayEligibilityService(c.get(DRIZZLE)));
     ctx.provide(SESSION_COMMANDS, (c) => {
       const sessionSvc = new SessionService({ drizzle: c.get(DRIZZLE), events: c.get(EVENT_BUS) });

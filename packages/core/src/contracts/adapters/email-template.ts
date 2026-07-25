@@ -19,8 +19,6 @@ export type EmailTemplateData = {
   rgSelfExclusionLifted: Record<string, never>;
 };
 
-// Player-facing copy states an absolute instant, so it is pinned to UTC rather than the
-// server's zone - an ISO string in an email is unreadable, a local-zone one is ambiguous.
 const formatEmailDate = (value: Date | null): string =>
   value === null
     ? 'further notice'
