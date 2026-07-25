@@ -43,17 +43,17 @@ Goal: code that is clean, separated, scalable, and extendible - easy to understa
   import type { Player } from '@openora/core/contracts'; // good
   ```
 - **No type casts (`as`) to silence the compiler - fix the root cause.** (`as const` is fine.) `as unknown as X` turns type-checking off entirely. If a symbol needs a type, give it one at the source (`createToken<T>()`), don't cast at use sites. Exactly two sanctioned exceptions:
-  1. **Test doubles** - route through the `mock` / `mockDb` / `readPrivate` helpers (`packages/core/src/testing/mock.ts`) so the cast lives in one audited place, never inline in a test.
+  1. **Test doubles** - route through the `mock` helper (`packages/core/src/testing/mock.ts`) so the cast lives in one audited place, never inline in a test.
   2. **Third-party type-inference boundaries** a library gives you no honest way to satisfy - one cast with a one-line `// Library boundary:` note.
 
   ```ts
   // bad
   const user = data as User;
-  const svc = { db } as unknown as DrizzleService;
+  const directory = { lookupPlayers } as unknown as AdminUserDirectory;
   // good
   const user = UserSchema.parse(data);
   const TOKEN = createToken<Config>('CONFIG');
-  const svc = mockDb(db); // test double, cast confined to the helper
+  const directory = mock<AdminUserDirectory>({ lookupPlayers }); // cast confined to the helper
   ```
 
 - **Never `!` non-null assertions** - narrow or restructure instead (lint: `typescript/no-non-null-assertion`).
@@ -202,10 +202,12 @@ Headless repo - only the SDK consumption layer (hooks, typed client, auth, realt
 
 ## 10. Testing
 
-- **Co-locate as `__tests__/<name>.test.ts` (Vitest).** Service tests use a vi-mocked Drizzle.
-- **Test behaviour, not implementation** - assertions survive a safe refactor: `expect(await service.get(id)).toEqual(user)`, not `expect(service._cache.size).toBe(1)`.
+- **Co-locate as `__tests__/<name>.test.ts` (Vitest).**
+- **Anything that touches the database is tested against real Postgres** - `createTestDb([migrate])` (`@openora/core/testing`) gives the file its own ephemeral database; `createTestRedis()` gives it a per-worker Redis logical DB. Never fake a query builder: a mocked chain proves a call order, not a result, so it survives the regressions that matter (unique-index dedupe, `FOR UPDATE` under concurrency, conditional atomic updates, cache invalidation).
+- **What stays mocked:** external vendors (PSP, KYC, email, SMS, better-auth) and cross-module ports (`WALLET_COMMANDS`, `IdentityReader`, `EventBus`, `Logger`) - via the `mock` helper. Engine (`server/**`) tests cannot import a domain schema (ADR-0024/0025), so they use the in-process doubles in `@openora/core/testing/fakes`.
+- **Test behaviour, not implementation** - assert the resulting rows, cache state, and return value, not that a builder method was called: `expect(await service.get(id)).toEqual(user)`, not `expect(db.select).toHaveBeenCalled()`.
 - **Cover new logic as part of the change** - unit for pure fns; always include authz negatives.
-- **Deterministic and isolated:** no shared mutable state, no real network, seedable data.
+- **Deterministic and isolated:** no shared mutable state, no real network, seedable data. Real-infra suites stay parallel-safe - own your database and Redis keys, never assume an empty shared one.
 
 ## 11. Dependencies
 

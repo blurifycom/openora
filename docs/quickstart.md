@@ -20,7 +20,7 @@ Prefer the explicit steps?
 
 ```bash
 pnpm install
-docker compose up -d                  # Postgres only (library-first)
+docker compose up -d                  # Postgres + Redis (library-first: no app containers)
 pnpm -F @openora/core generate        # generate Drizzle migrations
 pnpm db:migrate:all                   # apply them
 pnpm seed

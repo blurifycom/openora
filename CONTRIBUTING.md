@@ -6,11 +6,11 @@ source for architecture, naming, boundaries, and the "where does X go?" decision
 
 ## Prerequisites
 
-| Tool   | Version                     |
-| ------ | --------------------------- |
-| Node   | 26+                         |
-| pnpm   | 11+ (via `corepack enable`) |
-| Docker | for Postgres (+ Redis)      |
+| Tool   | Version                                                       |
+| ------ | ------------------------------------------------------------- |
+| Node   | 26+                                                           |
+| pnpm   | 11+ (via `corepack enable`)                                   |
+| Docker | Postgres + Redis - required, the test suite runs against both |
 
 ## First run
 
@@ -29,8 +29,8 @@ Backoffice login: `admin@oss.dev` / `password123` (see `pnpm seed --help` for fl
 | ----------------------- | ------------------------------------------------------------------------------------------------------------------------- |
 | `pnpm dev`              | turbo dev across api, mcp                                                                                                 |
 | `pnpm regen`            | drizzle-kit generate + openapi emit + sdk regen + catalog                                                                 |
-| `pnpm verify`           | typecheck + lint (incl. boundaries + module shape) + unit tests                                                           |
-| `pnpm test:integration` | service/router tests against real Postgres                                                                                |
+| `pnpm verify`           | typecheck + lint (incl. boundaries + module shape) + unit tests - needs `docker compose up -d`                            |
+| `pnpm test:integration` | whole-app suites booted through `bootTestApp` against a shared `TEST_DATABASE_URL` database                               |
 | `pnpm sync:agents`      | regenerate the per-tool agent files (AGENTS.md / CLAUDE.md / .codex/config.toml / Copilot) from `.rulesync/` via rulesync |
 
 ## Scaffolding (don't hand-roll)
@@ -127,6 +127,9 @@ generator and fails on an uncommitted diff. So if you touched schemas or routes,
 - Zod-first. Every shape is a schema; types are `z.infer`'d, never hand-written.
 - No `any` outside `*.test.ts`. No inline `fetch`/`axios`. No decorators.
 - Cross-module talk goes through events or contracts - never import another module's internals.
+- Anything that touches the database is tested against real Postgres (`createTestDb` from
+  `@openora/core/testing`), never a faked query builder. Only external vendors and cross-module
+  ports are doubled.
 - New functionality enters only via `definePlugin`. No auto-discovery, no magic.
 - ASCII only in code. Short dashes (-) only.
 - Don't hand-edit generated files: drizzle migrations, `docs/openapi.json`, `docs/catalog.json`,

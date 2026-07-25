@@ -106,11 +106,11 @@ pnpm dev           # turbo dev (mcp)
 pnpm regen         # openapi emit + drizzle-kit generate + catalog
 pnpm seed          # demo data (idempotent; admin@oss.dev / password123)
 pnpm boundaries    # whole-graph boundary + cycle gate
-pnpm -F @openora/core vitest run <path>   # one test file/dir, eg src/iam/__tests__
+pnpm -F @openora/core exec vitest run <path>   # one test file/dir, eg src/iam/__tests__
 pnpm verify        # format + lint + typecheck + boundaries + module-shape + test:unit + tool tests
 ```
 
-`docker compose up` starts only postgres; apps run on the host. PR only on green `pnpm verify`; CI adds a no-drift check (`pnpm verify:drift`). Pre-commit runs `pnpm boundaries`.
+`docker compose up -d` starts postgres + redis; apps run on the host. Both are required by `pnpm verify` - the suite runs against real infra (ephemeral database per test file, per-worker Redis logical DB), so a stopped container fails the run with a `docker compose up -d` hint. PR only on green `pnpm verify`; CI adds a no-drift check (`pnpm verify:drift`). Pre-commit runs `pnpm boundaries`.
 
 ## Definition of done - audit every new action
 
