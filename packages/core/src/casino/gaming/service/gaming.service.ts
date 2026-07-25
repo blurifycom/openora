@@ -1,17 +1,23 @@
 import {
   type EventBus,
   makeNotFoundError,
+  makeConflictError,
   DrizzleService,
   findOneOrThrow,
   serializeRow,
 } from '@openora/core/server';
 import { eq, and, asc, desc } from 'drizzle-orm';
-import { type GameAdapter, type User } from '@openora/core/contracts';
+import { type GameAdapter, type PlayEligibilityPort, type User } from '@openora/core/contracts';
 import { game, gameRound, type Game, type GameRound } from '../schema/index.js';
 
 export const GameNotFoundError = makeNotFoundError('Game');
 
 export const GameRoundNotFoundError = makeNotFoundError('GameRound');
+
+export const RgRestrictedError = makeConflictError(
+  'RgRestrictedError',
+  'play is restricted by an active responsible-gambling exclusion',
+);
 
 function toGame(record: typeof game.$inferSelect) {
   return {
@@ -34,6 +40,7 @@ export class GamingService {
     private readonly drizzle: DrizzleService,
     private readonly events: EventBus,
     private readonly provider: GameAdapter,
+    private readonly playEligibility: PlayEligibilityPort,
   ) {}
 
   async listGames() {
@@ -54,6 +61,10 @@ export class GamingService {
   }
 
   async startRound(userId: User['id'], gameId: Game['id'], currency: string) {
+    if (await this.playEligibility.isRestricted(userId)) {
+      throw new RgRestrictedError();
+    }
+
     await this.getGame(gameId);
 
     const { launchUrl, token } = await this.provider.launchGame(gameId, userId, currency);

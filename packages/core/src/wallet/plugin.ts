@@ -10,6 +10,7 @@ import {
   PLATFORM_CONFIG,
   RATE_LIMITER,
   PLAYER_TAGS,
+  PLAY_ELIGIBILITY,
   AUDIT_WRITER,
 } from '@openora/core/contracts';
 import { WalletService } from './service/wallet.service.js';
@@ -38,7 +39,7 @@ export default definePlugin({
       return new HmacPaymentWebhookVerifier(webhookSecret);
     });
     // Other modules debit through this port within their own transaction (never importing wallet tables). See ADR-0016.
-    ctx.provide(WALLET_COMMANDS, () => new WalletCommandsService());
+    ctx.provide(WALLET_COMMANDS, (c) => new WalletCommandsService(c.get(PLAY_ELIGIBILITY)));
     // Read-only queries for cross-module consumers (eg tag evaluation). Never exposes wallet internals.
     ctx.provide(WALLET_READER, (c) => new WalletReaderService(c.get(DRIZZLE)));
     ctx.provide(ADMIN_WALLET_REPORTING, (c) => new DrizzleAdminWalletReporting(c.get(DRIZZLE)));

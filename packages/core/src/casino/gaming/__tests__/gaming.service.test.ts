@@ -1,11 +1,12 @@
 import { describe, it, expect, vi } from 'vitest';
 import { mock, mockDb } from '../../../testing/mock.js';
 import type { EventBus } from '@openora/core/server';
-import type { GameAdapter } from '@openora/core/contracts';
+import type { GameAdapter, PlayEligibilityPort } from '@openora/core/contracts';
 import {
   GamingService,
   GameNotFoundError,
   GameRoundNotFoundError,
+  RgRestrictedError,
 } from '../service/gaming.service.js';
 
 describe('GamingService domain errors', () => {
@@ -41,6 +42,11 @@ function makeQueryChain(rows: unknown[]) {
 const noopEvents = mock<EventBus>({ emit: vi.fn(), on: vi.fn() });
 const noopAdapter = mock<GameAdapter>({});
 
+const eligibility = (isRestricted: boolean) =>
+  mock<PlayEligibilityPort>({ isRestricted: vi.fn().mockResolvedValue(isRestricted) });
+
+const unrestricted = eligibility(false);
+
 describe('GamingService lobby', () => {
   it('listGames returns the active games', async () => {
     const query = makeQueryChain([
@@ -55,7 +61,7 @@ describe('GamingService lobby', () => {
       },
     ]);
     const drizzle = mockDb(query.chain);
-    const svc = new GamingService(drizzle, noopEvents, noopAdapter);
+    const svc = new GamingService(drizzle, noopEvents, noopAdapter, unrestricted);
 
     const games = await svc.listGames();
 
@@ -63,5 +69,37 @@ describe('GamingService lobby', () => {
     expect(query.chain.select).toHaveBeenCalledOnce();
     expect(query.chain.where).toHaveBeenCalledOnce();
     expect(query.calls.where).toBeDefined();
+  });
+});
+
+describe('GamingService responsible-gambling gate', () => {
+  it('startRound refuses a restricted player before touching the provider', async () => {
+    const launchGame = vi.fn();
+    const svc = new GamingService(
+      mockDb(makeQueryChain([]).chain),
+      noopEvents,
+      mock<GameAdapter>({ launchGame }),
+      eligibility(true),
+    );
+
+    await expect(svc.startRound('user-1', 'game-1', 'EUR')).rejects.toBeInstanceOf(
+      RgRestrictedError,
+    );
+    expect(launchGame).not.toHaveBeenCalled();
+  });
+
+  it('startRound passes the gate for an unrestricted player and fails later on the game lookup', async () => {
+    const launchGame = vi.fn();
+    const svc = new GamingService(
+      mockDb(makeQueryChain([]).chain),
+      noopEvents,
+      mock<GameAdapter>({ launchGame }),
+      unrestricted,
+    );
+
+    await expect(svc.startRound('user-1', 'missing-game', 'EUR')).rejects.toBeInstanceOf(
+      GameNotFoundError,
+    );
+    expect(launchGame).not.toHaveBeenCalled();
   });
 });

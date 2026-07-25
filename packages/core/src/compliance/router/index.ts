@@ -123,6 +123,13 @@ export function createComplianceRouter({
       );
     }),
 
+    liftCoolingOff: os.liftCoolingOff.handler(async ({ input, context }) => {
+      const { userId, ip, userAgent } = await adminGuard.assert(context, 'compliance', 'manage-rg');
+      return mapErrors({ NOT_FOUND: ExclusionNotFoundError }, () =>
+        rg.liftCoolingOff(input.userId, input, userId, { ip, userAgent }),
+      );
+    }),
+
     getRgSection: os.getRgSection.handler(async ({ input, context }) => {
       await adminGuard.assert(context, 'compliance', 'view');
       return rg.getRgSection(input.userId);
