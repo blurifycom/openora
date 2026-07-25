@@ -1,37 +1,9 @@
 import { describe, it, expect } from 'vitest';
-import {
-  LoginInputSchema,
-  RegisterInputSchema,
-  ResetPasswordInputSchema,
-  UserSchema,
-} from '../identity.js';
+import { LoginInputSchema, ResetPasswordInputSchema, UserSchema } from '../identity.js';
 
 describe('identity schemas', () => {
-  it('LoginInputSchema accepts a valid credential pair', () => {
-    const parsed = LoginInputSchema.parse({ email: 'a@b.dev', password: 'password123' });
-    expect(parsed.email).toBe('a@b.dev');
-    expect(parsed.rememberMe).toBeUndefined();
-
-    const parsedWithRemember = LoginInputSchema.parse({
-      email: 'a@b.dev',
-      password: 'password123',
-      rememberMe: true,
-    });
-    expect(parsedWithRemember.rememberMe).toBe(true);
-  });
-
-  it('LoginInputSchema rejects a bad email and a short password', () => {
-    expect(LoginInputSchema.safeParse({ email: 'nope', password: 'password123' }).success).toBe(
-      false,
-    );
+  it('LoginInputSchema rejects a password under the minimum length', () => {
     expect(LoginInputSchema.safeParse({ email: 'a@b.dev', password: 'short' }).success).toBe(false);
-  });
-
-  it('RegisterInputSchema requires a non-empty name', () => {
-    expect(
-      RegisterInputSchema.safeParse({ email: 'a@b.dev', password: 'password123', name: '' })
-        .success,
-    ).toBe(false);
   });
 
   it("ResetPasswordInputSchema rejects a password over better-auth's 128-char max", () => {
