@@ -52,8 +52,6 @@ export class WalletCommandsService implements WalletCommands {
   async debit(tx: unknown, { userId, amount, type }: WalletDebitArgs): Promise<WalletDebitOutcome> {
     const txn = tx as DrizzleDb;
 
-    // Only the stake is gated. `loss`/`win` settle a round that was already staked, and
-    // refusing them would strand an in-flight round rather than protect the player.
     if (type === 'bet' && (await this.playEligibility.isRestricted(userId))) {
       throw new WalletRgRestrictedError();
     }

@@ -81,8 +81,6 @@ export const LiftSelfExclusionInputSchema = z.object({
 });
 export type LiftSelfExclusionInput = z.infer<typeof LiftSelfExclusionInputSchema>;
 
-// No `confirm` gate, unlike self-exclusion: a cooling-off is a support convenience an
-// admin must be able to undo (wrong player, wrong duration), not a regulatory lock.
 export const LiftCoolingOffInputSchema = z.object({
   userId: UuidSchema,
   reason: z.string().trim().min(1),

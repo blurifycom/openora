@@ -4,10 +4,6 @@ import type { PlayEligibilityPort, User } from '@openora/core/contracts';
 import { user } from '../schema/index.js';
 import { isRgBlocked } from './rg-guard.service.js';
 
-// Identity-owned reader for the PLAY_ELIGIBILITY port, sharing the `isRgBlocked`
-// predicate with the login gate so a wager and a login can never disagree about
-// whether a player is restricted. An unknown user is treated as restricted: the
-// gate fails closed rather than letting an unresolvable caller wager.
 export class PlayEligibilityService implements PlayEligibilityPort {
   constructor(private readonly drizzle: DrizzleService) {}
 
