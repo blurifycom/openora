@@ -89,10 +89,13 @@ module id) - the domain earns "CQRS read side" as more than a label.
 - Cross-domain schema reads (three of them) are each a noted future extraction blocker
   per `no-cross-addon-schema-read` - acceptable now, revisited if any of wallet/identity/
   profile is ever split into its own service ahead of analytics.
-- `game_round.betAmount`/`winAmount` stay unwritten (a pre-existing gap, not introduced
-  here - `casino/gaming` never calls `WALLET_COMMANDS`), so GGR is computed from
-  `wallet_transaction` (`bet` minus `win`) rather than from `game_round`, and per-game
-  GGR (BF-218) still needs that separate fix before it can exist.
+- `game_round.betAmount` is now persisted (`casino/gaming` debits the stake via
+  `WALLET_COMMANDS` at round start), but `winAmount` stays unwritten - crediting a win
+  is regulated game-outcome/RTP territory gated by the sealed, unimplemented
+  `GAME_OUTCOME_AUTHORITY` token, not something to fake through a mock adapter. GGR is
+  computed from `wallet_transaction` (`bet` minus `win`) rather than from `game_round`,
+  and per-game GGR (BF-218) still needs a certified outcome authority before it can
+  exist.
 
 **Neutral:**
 

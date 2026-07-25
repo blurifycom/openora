@@ -563,6 +563,7 @@
       "token": "WALLET_COMMANDS",
       "status": "wired",
       "boundIn": [
+        "packages/core/src/casino/gaming/plugin.ts",
         "packages/core/src/wallet/plugin.ts"
       ]
     },
@@ -1215,6 +1216,10 @@
     {
       "name": "PlayerWithTagsSchema",
       "file": "packages/core/src/pam/player-management/contract/index.ts"
+    },
+    {
+      "name": "PositiveMoneyAmountSchema",
+      "file": "packages/core/src/casino/gaming/contract/index.ts"
     },
     {
       "name": "ProviderSelectionSchema",
