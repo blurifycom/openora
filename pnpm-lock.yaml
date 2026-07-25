@@ -240,6 +240,9 @@ importers:
       pg:
         specifier: 8.21.0
         version: 8.21.0
+      redis:
+        specifier: 5.12.1
+        version: 5.12.1
     devDependencies:
       '@types/node':
         specifier: 25.9.2

@@ -1,30 +1,57 @@
-import { describe, it, expect, vi } from 'vitest';
+import { describe, it, expect, vi, beforeAll, afterAll, beforeEach } from 'vitest';
+import { randomUUID } from 'node:crypto';
 import { call, ORPCError } from '@orpc/server';
-import { mock, adminCaller, testContext } from '../../testing/mock.js';
-import type { AdminGuard } from '@openora/core/server';
+import type { AdminGuard, EventBus } from '@openora/core/server';
 import type {
   AuditWritePort,
   PaymentAdapter,
   PaymentWebhookVerifier,
 } from '@openora/core/contracts';
+import { createTestDb, type TestDb } from '@openora/core/testing';
+import { mock, makeEvents, adminCaller, testContext } from '../../testing/mock.js';
+import { migrate } from '../migrate.js';
+import { wallet, walletTransaction } from '../schema/index.js';
 import { createWalletRouter } from '../router/index.js';
-import type { WalletService } from '../service/wallet.service.js';
+import { WalletService } from '../service/wallet.service.js';
 
 const CTX = testContext();
-const fakeAudit = (): AuditWritePort => mock<AuditWritePort>({ record: vi.fn() });
-const fakePayment = (): PaymentAdapter => mock<PaymentAdapter>({});
-const fakeWebhookVerifier = (): PaymentWebhookVerifier =>
-  mock<PaymentWebhookVerifier>({ verify: vi.fn().mockReturnValue(false) });
 const USER_ID = '63d3c264-3bf4-4d08-9b92-ea3eaf40a440';
 
-function fakeWallet(): WalletService {
-  return mock<WalletService>({
-    getTransactions: vi.fn().mockResolvedValue({ items: [], total: 0, page: 1, limit: 20 }),
+let db: TestDb;
+
+beforeAll(async () => {
+  db = await createTestDb([migrate]);
+});
+
+afterAll(async () => {
+  await db.drop();
+});
+
+beforeEach(async () => {
+  await db.drizzle.db.delete(walletTransaction);
+  await db.drizzle.db.delete(wallet);
+});
+
+function realWalletService() {
+  return new WalletService({
+    drizzle: db.drizzle,
+    events: mock<EventBus>(makeEvents()),
+    payment: mock<PaymentAdapter>({}),
+    audit: mock<AuditWritePort>({ record: vi.fn() }),
   });
 }
 
-/** AdminGuard that denies the `transaction` resource, grants everything else. */
-function fakeTransactionDenyingGuard(): AdminGuard {
+function routerWith(adminGuard: AdminGuard) {
+  return createWalletRouter(
+    realWalletService(),
+    adminGuard,
+    mock<AuditWritePort>({ record: vi.fn() }),
+    mock<PaymentAdapter>({}),
+    mock<PaymentWebhookVerifier>({ verify: vi.fn().mockReturnValue(false) }),
+  );
+}
+
+function transactionDenyingGuard(): AdminGuard {
   return mock<AdminGuard>({
     assert: vi.fn(async (_ctx: unknown, resource?: string) => {
       if (resource === 'transaction') {
@@ -35,55 +62,66 @@ function fakeTransactionDenyingGuard(): AdminGuard {
   });
 }
 
-function fakeAllowingGuard(): AdminGuard {
+function allowingGuard(): AdminGuard {
   return mock<AdminGuard>({
     assert: vi.fn(async () => adminCaller({ userId: 'caller-1' })),
   });
 }
 
+async function seedLedger(userId: string, amounts: string[]) {
+  const [row] = await db.drizzle.db
+    .insert(wallet)
+    .values({ userId, balance: '0', currency: 'USD' })
+    .returning();
+  for (const amount of amounts) {
+    await db.drizzle.db.insert(walletTransaction).values({
+      walletId: row!.id,
+      type: 'deposit',
+      amount,
+      currency: 'USD',
+      status: 'completed',
+      rail: 'fiat',
+    });
+  }
+}
+
 describe('wallet router listPlayerTransactions authz', () => {
   it('rejects a caller lacking transaction:view (IDOR guard)', async () => {
-    const wallet = fakeWallet();
-    const router = createWalletRouter(
-      wallet,
-      fakeTransactionDenyingGuard(),
-      fakeAudit(),
-      fakePayment(),
-      fakeWebhookVerifier(),
-    );
+    await seedLedger(USER_ID, ['10.00']);
 
     await expect(
       call(
-        router.listPlayerTransactions,
+        routerWith(transactionDenyingGuard()).listPlayerTransactions,
         { userId: USER_ID, page: 1, limit: 20 },
         { context: CTX },
       ),
     ).rejects.toBeInstanceOf(ORPCError);
-    expect(wallet.getTransactions).not.toHaveBeenCalled();
   });
 
   it('allows a caller with transaction:view to read any player ledger', async () => {
-    const wallet = fakeWallet();
-    const router = createWalletRouter(
-      wallet,
-      fakeAllowingGuard(),
-      fakeAudit(),
-      fakePayment(),
-      fakeWebhookVerifier(),
-    );
+    await seedLedger(USER_ID, ['10.00', '25.50']);
 
-    await call(
-      router.listPlayerTransactions,
+    const result = await call(
+      routerWith(allowingGuard()).listPlayerTransactions,
       { userId: USER_ID, page: 1, limit: 20 },
       { context: CTX },
     );
 
-    expect(wallet.getTransactions).toHaveBeenCalledWith({
-      userId: USER_ID,
-      page: 1,
-      limit: 20,
-      sortBy: 'createdAt',
-      sortOrder: 'desc',
-    });
+    expect(result.total).toBe(2);
+    expect(result.items.map((t) => t.amount).sort()).toEqual(['10.00000000', '25.50000000']);
+  });
+
+  it('reads only the requested player, never a neighbour ledger', async () => {
+    await seedLedger(USER_ID, ['10.00']);
+    await seedLedger(randomUUID(), ['999.00']);
+
+    const result = await call(
+      routerWith(allowingGuard()).listPlayerTransactions,
+      { userId: USER_ID, page: 1, limit: 20 },
+      { context: CTX },
+    );
+
+    expect(result.total).toBe(1);
+    expect(result.items[0]?.amount).toBe('10.00000000');
   });
 });

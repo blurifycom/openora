@@ -1,20 +1,22 @@
-import { describe, it, expect, vi, beforeAll, afterAll, beforeEach } from 'vitest';
+import { describe, it, expect, beforeAll, afterAll, beforeEach } from 'vitest';
 import { randomUUID } from 'node:crypto';
 import { eq, sql } from 'drizzle-orm';
+import type { EventBus } from '@openora/core/server';
 import { createTestDb, type TestDb } from '@openora/core/testing';
-import { mock } from '../../../testing/mock.js';
+import { mock, makeEvents } from '../../../testing/mock.js';
 import { migrate } from '../migrate.js';
-import { user } from '../schema/index.js';
+import { user, session } from '../schema/index.js';
 import { LoginEnforcementService } from '../service/login-enforcement.service.js';
-import type { SessionService } from '../service/session.service.js';
+import { SessionService } from '../service/session.service.js';
+
+const HOUR = 3600_000;
 
 let db: TestDb;
 
 function makeService() {
-  const sessions = mock<SessionService>({
-    revokeAllSessions: vi.fn(async () => ({ success: true as const })),
-  });
-  return { svc: new LoginEnforcementService(db.drizzle, sessions), sessions };
+  const events = makeEvents();
+  const sessions = new SessionService({ drizzle: db.drizzle, events: mock<EventBus>(events) });
+  return { svc: new LoginEnforcementService(db.drizzle, sessions), events };
 }
 
 async function seedUser(overrides: Partial<typeof user.$inferInsert> = {}) {
@@ -30,9 +32,29 @@ async function seedUser(overrides: Partial<typeof user.$inferInsert> = {}) {
   return row!;
 }
 
+async function seedActiveSession(userId: string) {
+  const [row] = await db.drizzle.db
+    .insert(session)
+    .values({
+      userId,
+      token: randomUUID(),
+      expiresAt: new Date(Date.now() + 24 * HOUR),
+    })
+    .returning();
+  return row!;
+}
+
 async function readUser(id: string) {
   const [row] = await db.drizzle.db.select().from(user).where(eq(user.id, id));
   return row!;
+}
+
+async function activeSessionCount(userId: string) {
+  const rows = await db.drizzle.db
+    .select()
+    .from(session)
+    .where(sql`${session.userId} = ${userId} AND ${session.expiresAt} > NOW()`);
+  return rows.length;
 }
 
 beforeAll(async () => {
@@ -44,19 +66,25 @@ afterAll(async () => {
 });
 
 beforeEach(async () => {
-  await db.drizzle.db.execute(sql`TRUNCATE ${user} RESTART IDENTITY CASCADE`);
+  await db.drizzle.db.execute(sql`TRUNCATE ${session}, ${user} RESTART IDENTITY CASCADE`);
 });
 
 describe('LoginEnforcementService (real PG)', () => {
-  it('writes the RG columns and revokes every session on a timed block', async () => {
-    const { svc, sessions } = makeService();
+  it('writes the RG columns and expires every live session on a timed block', async () => {
+    const { svc, events } = makeService();
     const account = await seedUser();
+    await seedActiveSession(account.id);
+    await seedActiveSession(account.id);
     const until = new Date('2026-08-01T00:00:00.000Z');
 
     await svc.block(account.id, { until });
 
     expect(await readUser(account.id)).toMatchObject({ rgBlocked: true, rgBlockedUntil: until });
-    expect(sessions.revokeAllSessions).toHaveBeenCalledWith(account.id);
+    expect(await activeSessionCount(account.id)).toBe(0);
+    expect(events.emit).toHaveBeenCalledWith(
+      'identity.sessions.revoked_all',
+      expect.objectContaining({ userId: account.id }),
+    );
   });
 
   it('stores a null expiry for an indefinite block', async () => {
@@ -68,24 +96,32 @@ describe('LoginEnforcementService (real PG)', () => {
     expect(await readUser(account.id)).toMatchObject({ rgBlocked: true, rgBlockedUntil: null });
   });
 
-  it('clears both columns on unblock without touching sessions', async () => {
-    const { svc, sessions } = makeService();
+  it('leaves another account session alive when blocking one player', async () => {
+    const { svc } = makeService();
+    const blocked = await seedUser();
+    const other = await seedUser();
+    await seedActiveSession(blocked.id);
+    await seedActiveSession(other.id);
+
+    await svc.block(blocked.id, { until: null });
+
+    expect(await activeSessionCount(other.id)).toBe(1);
+    expect(await readUser(other.id)).toMatchObject({ rgBlocked: false });
+  });
+
+  it('clears both columns on unblock without reviving or revoking sessions', async () => {
+    const { svc, events } = makeService();
     const account = await seedUser({ rgBlocked: true, rgBlockedUntil: new Date() });
+    await seedActiveSession(account.id);
 
     await svc.unblock(account.id);
 
     expect(await readUser(account.id)).toMatchObject({ rgBlocked: false, rgBlockedUntil: null });
-    expect(sessions.revokeAllSessions).not.toHaveBeenCalled();
-  });
-
-  it('leaves other accounts untouched', async () => {
-    const { svc } = makeService();
-    const blocked = await seedUser();
-    const other = await seedUser();
-
-    await svc.block(blocked.id, { until: null });
-
-    expect(await readUser(other.id)).toMatchObject({ rgBlocked: false });
+    expect(await activeSessionCount(account.id)).toBe(1);
+    expect(events.emit).not.toHaveBeenCalledWith(
+      'identity.sessions.revoked_all',
+      expect.anything(),
+    );
   });
 
   it('overwrites an earlier block with the newer expiry', async () => {

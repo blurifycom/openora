@@ -90,6 +90,72 @@ describe('BullMqJobQueue', () => {
     expect(count).toBe(1);
   });
 
+  it('runs a job whose idempotencyKey contains the reserved colon separator', async () => {
+    const q = makeQueue();
+    const seen: string[] = [];
+    q.registerWorker({
+      queue: queue('colon-key'),
+      schema: Payload,
+      handler: ({ payload }) => {
+        seen.push(payload.value);
+      },
+    });
+
+    await q.enqueue(queue('colon-key'), { value: 'a' }, { idempotencyKey: 'rg-eval:user-1' });
+
+    await vi.waitFor(() => expect(seen).toEqual(['a']), POLL);
+  });
+
+  it('keeps the original idempotencyKey in meta after encoding it into a job id', async () => {
+    const q = makeQueue();
+    const seen: Array<Record<string, string | undefined>> = [];
+    q.registerWorker({
+      queue: queue('colon-meta'),
+      schema: Payload,
+      handler: ({ meta }) => {
+        seen.push(meta);
+      },
+    });
+
+    await q.enqueue(queue('colon-meta'), { value: 'a' }, { idempotencyKey: 'rg-eval:user-1' });
+
+    await vi.waitFor(() => expect(seen).toHaveLength(1), POLL);
+    expect(seen[0]?.['idempotencyKey']).toBe('rg-eval:user-1');
+  });
+
+  it('does not collapse two colon keys that differ only where the separator sits', async () => {
+    const q = makeQueue();
+    let count = 0;
+    q.registerWorker({
+      queue: queue('colon-distinct'),
+      schema: Payload,
+      handler: () => {
+        count += 1;
+      },
+    });
+
+    await q.enqueue(queue('colon-distinct'), { value: 'a' }, { idempotencyKey: 'a:b' });
+    await q.enqueue(queue('colon-distinct'), { value: 'b' }, { idempotencyKey: 'a%3Ab' });
+
+    await vi.waitFor(() => expect(count).toBe(2), POLL);
+  });
+
+  it('runs a job whose idempotencyKey is all digits, which BullMQ rejects as a raw id', async () => {
+    const q = makeQueue();
+    const seen: string[] = [];
+    q.registerWorker({
+      queue: queue('digit-key'),
+      schema: Payload,
+      handler: ({ payload }) => {
+        seen.push(payload.value);
+      },
+    });
+
+    await q.enqueue(queue('digit-key'), { value: 'a' }, { idempotencyKey: '12345' });
+
+    await vi.waitFor(() => expect(seen).toEqual(['a']), POLL);
+  });
+
   it('delays processing by delayMs', async () => {
     const q = makeQueue();
     const enqueuedAt = Date.now();

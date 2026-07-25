@@ -1,5 +1,3 @@
-# Runs standalone on every PR, and as the `ci` gate job inside pipeline.yml
-# (workflow_call) on pushes to dev/stage/tags - one verify definition, two entries.
 name: CI
 
 on:
@@ -27,11 +25,6 @@ jobs:
 
   verify:
     runs-on: ubuntu-latest
-    # Real infra for the kernel adapter tests (RedisCache/RateLimiter/StreamsBroker/BullMQ
-    # + ephemeral Postgres). The harness (@openora/core/testing real-infra) reads
-    # TEST_ADMIN_DATABASE_URL / TEST_REDIS_URL, defaulting to these same local endpoints.
-    # The @openora/testing integration suites boot the real app against one shared
-    # TEST_DATABASE_URL database instead, created by the db:test:setup step below.
     services:
       postgres:
         image: postgres:16-alpine

@@ -1,68 +1,87 @@
-import { describe, it, expect, vi } from 'vitest';
+import { describe, it, expect, vi, beforeAll, afterAll, beforeEach } from 'vitest';
+import { eq } from 'drizzle-orm';
 import { call, ORPCError } from '@orpc/server';
-import { mock, adminCaller, testContext } from '../../testing/mock.js';
-import type { AdminGuard } from '@openora/core/server';
+import type { AdminGuard, EventBus } from '@openora/core/server';
 import type {
   AuditWritePort,
   PaymentAdapter,
   PaymentWebhookVerifier,
 } from '@openora/core/contracts';
+import { createTestDb, type TestDb } from '@openora/core/testing';
+import { mock, makeEvents, adminCaller, testContext } from '../../testing/mock.js';
+import { migrate } from '../migrate.js';
+import { autoWithdrawalRule } from '../schema/index.js';
 import { createWalletRouter } from '../router/index.js';
-import type { WalletService } from '../service/wallet.service.js';
+import { WalletService } from '../service/wallet.service.js';
 
 const CTX = testContext();
 const USER_ID = '63d3c264-3bf4-4d08-9b92-ea3eaf40a440';
-const RULE = {
-  id: '1f6d1b2c-0000-4000-8000-000000000001',
-  userId: USER_ID,
-  threshold: '500',
-  reason: 'trusted',
-  createdBy: '9a2f7c11-0000-4000-8000-0000000000aa',
-  createdAt: '2026-01-01T00:00:00.000Z',
-  updatedAt: '2026-01-01T00:00:00.000Z',
-};
+const CALLER_ID = '9a2f7c11-0000-4000-8000-0000000000aa';
 
-function fakeWallet(over: Partial<WalletService> = {}): WalletService {
-  return mock<WalletService>({
-    setAutoWithdrawalRule: vi.fn().mockResolvedValue(RULE),
-    getAutoWithdrawalRule: vi.fn().mockResolvedValue(RULE),
-    deleteAutoWithdrawalRule: vi.fn().mockResolvedValue(true),
-    ...over,
-  });
-}
+let db: TestDb;
+
+beforeAll(async () => {
+  db = await createTestDb([migrate]);
+});
+
+afterAll(async () => {
+  await db.drop();
+});
+
+beforeEach(async () => {
+  await db.drizzle.db.delete(autoWithdrawalRule);
+});
 
 function allowingGuard(): AdminGuard {
-  return mock<AdminGuard>({ assert: vi.fn(async () => adminCaller({ userId: 'caller-1' })) });
+  return mock<AdminGuard>({ assert: vi.fn(async () => adminCaller({ userId: CALLER_ID })) });
 }
 
-// Grants everything except `withdrawal:auto-rule`.
 function autoRuleDenyingGuard(): AdminGuard {
   return mock<AdminGuard>({
     assert: vi.fn(async (_ctx: unknown, resource?: string, action?: string) => {
       if (resource === 'withdrawal' && action === 'auto-rule') {
         throw new ORPCError('FORBIDDEN', { message: 'Missing permission: withdrawal:auto-rule' });
       }
-      return adminCaller({ userId: 'caller-1', role: 'support' });
+      return adminCaller({ userId: CALLER_ID, role: 'support' });
     }),
   });
 }
 
-const fakeAudit = () => mock<AuditWritePort>({ record: vi.fn() });
-const fakePayment = (): PaymentAdapter => mock<PaymentAdapter>({});
-const fakeWebhookVerifier = (): PaymentWebhookVerifier =>
-  mock<PaymentWebhookVerifier>({ verify: vi.fn().mockReturnValue(false) });
+function routerWith(adminGuard: AdminGuard) {
+  const audit = mock<AuditWritePort>({ record: vi.fn() });
+  const service = new WalletService({
+    drizzle: db.drizzle,
+    events: mock<EventBus>(makeEvents()),
+    payment: mock<PaymentAdapter>({}),
+    audit,
+  });
+  const router = createWalletRouter(
+    service,
+    adminGuard,
+    audit,
+    mock<PaymentAdapter>({}),
+    mock<PaymentWebhookVerifier>({ verify: vi.fn().mockReturnValue(false) }),
+  );
+  return { router, audit };
+}
+
+async function storedRule(userId: string) {
+  const [row] = await db.drizzle.db
+    .select()
+    .from(autoWithdrawalRule)
+    .where(eq(autoWithdrawalRule.userId, userId));
+  return row;
+}
+
+async function seedRule() {
+  await db.drizzle.db
+    .insert(autoWithdrawalRule)
+    .values({ userId: USER_ID, threshold: '500', reason: 'trusted', createdBy: CALLER_ID });
+}
 
 describe('wallet auto-withdrawal-rule routes', () => {
-  it('set: creates the rule and writes an admin audit entry', async () => {
-    const wallet = fakeWallet();
-    const audit = fakeAudit();
-    const router = createWalletRouter(
-      wallet,
-      allowingGuard(),
-      audit,
-      fakePayment(),
-      fakeWebhookVerifier(),
-    );
+  it('set: persists the rule and writes an admin audit entry', async () => {
+    const { router, audit } = routerWith(allowingGuard());
 
     const result = await call(
       router.autoWithdrawalRules.set,
@@ -70,34 +89,40 @@ describe('wallet auto-withdrawal-rule routes', () => {
       { context: CTX },
     );
 
-    expect(result).toEqual(RULE);
-    expect(wallet.setAutoWithdrawalRule).toHaveBeenCalledWith({
-      userId: USER_ID,
-      threshold: '500',
-      reason: 'trusted',
-      createdBy: 'caller-1',
-    });
+    expect(result.threshold).toBe('500.00000000');
+    expect(result.createdBy).toBe(CALLER_ID);
+    expect((await storedRule(USER_ID))?.reason).toBe('trusted');
     expect(audit.record).toHaveBeenCalledWith(
       expect.objectContaining({
         actorType: 'admin',
         action: 'wallet.auto_withdrawal_rule.set',
         resourceType: 'auto_withdrawal_rule',
         resourceId: USER_ID,
-        after: { threshold: '500', reason: 'trusted' },
+        after: { threshold: '500.00000000', reason: 'trusted' },
       }),
     );
   });
 
-  it('set: rejects a caller lacking withdrawal:auto-rule', async () => {
-    const wallet = fakeWallet();
-    const audit = fakeAudit();
-    const router = createWalletRouter(
-      wallet,
-      autoRuleDenyingGuard(),
-      audit,
-      fakePayment(),
-      fakeWebhookVerifier(),
+  it('set: overwrites the existing rule rather than adding a second one', async () => {
+    await seedRule();
+    const { router } = routerWith(allowingGuard());
+
+    await call(
+      router.autoWithdrawalRules.set,
+      { userId: USER_ID, threshold: '900', reason: 'raised' },
+      { context: CTX },
     );
+
+    const rows = await db.drizzle.db
+      .select()
+      .from(autoWithdrawalRule)
+      .where(eq(autoWithdrawalRule.userId, USER_ID));
+    expect(rows).toHaveLength(1);
+    expect(rows[0]?.reason).toBe('raised');
+  });
+
+  it('set: rejects a caller lacking withdrawal:auto-rule and writes nothing', async () => {
+    const { router, audit } = routerWith(autoRuleDenyingGuard());
 
     await expect(
       call(
@@ -106,20 +131,13 @@ describe('wallet auto-withdrawal-rule routes', () => {
         { context: CTX },
       ),
     ).rejects.toBeInstanceOf(ORPCError);
-    expect(wallet.setAutoWithdrawalRule).not.toHaveBeenCalled();
+    expect(await storedRule(USER_ID)).toBeUndefined();
     expect(audit.record).not.toHaveBeenCalled();
   });
 
   it('delete: removes the rule and writes an admin audit entry', async () => {
-    const wallet = fakeWallet();
-    const audit = fakeAudit();
-    const router = createWalletRouter(
-      wallet,
-      allowingGuard(),
-      audit,
-      fakePayment(),
-      fakeWebhookVerifier(),
-    );
+    await seedRule();
+    const { router, audit } = routerWith(allowingGuard());
 
     const result = await call(
       router.autoWithdrawalRules.delete,
@@ -128,6 +146,7 @@ describe('wallet auto-withdrawal-rule routes', () => {
     );
 
     expect(result).toBe(true);
+    expect(await storedRule(USER_ID)).toBeUndefined();
     expect(audit.record).toHaveBeenCalledWith(
       expect.objectContaining({
         action: 'wallet.auto_withdrawal_rule.deleted',
@@ -136,31 +155,27 @@ describe('wallet auto-withdrawal-rule routes', () => {
     );
   });
 
-  it('delete: rejects a caller lacking withdrawal:auto-rule', async () => {
-    const wallet = fakeWallet();
-    const router = createWalletRouter(
-      wallet,
-      autoRuleDenyingGuard(),
-      fakeAudit(),
-      fakePayment(),
-      fakeWebhookVerifier(),
-    );
+  it('delete: reports false when there was no rule to remove', async () => {
+    const { router } = routerWith(allowingGuard());
+
+    expect(
+      await call(router.autoWithdrawalRules.delete, { userId: USER_ID }, { context: CTX }),
+    ).toBe(false);
+  });
+
+  it('delete: rejects a caller lacking withdrawal:auto-rule and leaves the rule in place', async () => {
+    await seedRule();
+    const { router } = routerWith(autoRuleDenyingGuard());
 
     await expect(
       call(router.autoWithdrawalRules.delete, { userId: USER_ID }, { context: CTX }),
     ).rejects.toBeInstanceOf(ORPCError);
-    expect(wallet.deleteAutoWithdrawalRule).not.toHaveBeenCalled();
+    expect(await storedRule(USER_ID)).toBeDefined();
   });
 
-  it('get: returns the rule for an authorized caller', async () => {
-    const wallet = fakeWallet();
-    const router = createWalletRouter(
-      wallet,
-      allowingGuard(),
-      fakeAudit(),
-      fakePayment(),
-      fakeWebhookVerifier(),
-    );
+  it('get: returns the stored rule for an authorized caller', async () => {
+    await seedRule();
+    const { router } = routerWith(allowingGuard());
 
     const result = await call(
       router.autoWithdrawalRules.get,
@@ -168,22 +183,22 @@ describe('wallet auto-withdrawal-rule routes', () => {
       { context: CTX },
     );
 
-    expect(result).toEqual(RULE);
+    expect(result).toMatchObject({ userId: USER_ID, threshold: '500.00000000', reason: 'trusted' });
+  });
+
+  it('get: returns null when the player has no rule', async () => {
+    const { router } = routerWith(allowingGuard());
+
+    expect(await call(router.autoWithdrawalRules.get, { userId: USER_ID }, { context: CTX })).toBe(
+      null,
+    );
   });
 
   it('get: rejects a caller lacking withdrawal:auto-rule', async () => {
-    const wallet = fakeWallet();
-    const router = createWalletRouter(
-      wallet,
-      autoRuleDenyingGuard(),
-      fakeAudit(),
-      fakePayment(),
-      fakeWebhookVerifier(),
-    );
+    const { router } = routerWith(autoRuleDenyingGuard());
 
     await expect(
       call(router.autoWithdrawalRules.get, { userId: USER_ID }, { context: CTX }),
     ).rejects.toBeInstanceOf(ORPCError);
-    expect(wallet.getAutoWithdrawalRule).not.toHaveBeenCalled();
   });
 });

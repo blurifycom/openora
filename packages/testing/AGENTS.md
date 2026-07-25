@@ -3,7 +3,18 @@
 ## What this package does
 
 Shared test harness for integration suites used by downstream consumers. It boots the real Hono + oRPC app
-in-process against a real Postgres test database - no mocks, no network listener.
+in-process against a real Postgres test database and a real Redis - no mocks, no network listener.
+
+All four durable seams run the production drivers: `RedisStreamsBroker`, `BullMqJobQueue`, `RedisCache`,
+`RedisRateLimiter`. Every `bootTestApp` claims its own Redis logical database (allocated downward from 15,
+flushed on boot and on `close()`), so several apps booted in one file cannot compete for each other's
+events, jobs, cache entries or rate-limit counters. Two deliberate divergences from production: the broker
+reads from `startId: '0'` (a group created lazily at `$` would drop anything published in the milliseconds
+between boot and the first request), and realtime stays on the in-process fakes because core ships no
+realtime driver.
+
+Consequence for test authors: event and job effects are now genuinely asynchronous. Assert them inside
+`vi.waitFor(...)`, never immediately after the HTTP call that triggered them.
 
 ## Exports
 
@@ -42,8 +53,9 @@ afterEach(() => db.truncateAll()); // or rely on unique ids per test
 
 ## Requirements / conventions
 
-- A test Postgres must exist. CI provisions a `postgres:16` service; locally run
-  `pnpm db:test:setup` (creates `oss_igaming_test`) with docker-compose postgres up.
+- A test Postgres and a Redis must exist. CI provisions `postgres:16` + `redis:7` services;
+  locally run `docker compose up -d` then `pnpm db:test:setup` (creates `oss_igaming_test`).
+  `TEST_REDIS_URL` overrides the default `redis://localhost:6379`.
 - Integration vitest configs must `poolOptions.threads.singleThread = true` - all
   suites share one database, so they cannot run in parallel against it.
 - `bootTestApp` requires the platform to be **built** (`loadExtensions()` resolves

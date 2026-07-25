@@ -14,7 +14,7 @@ Sibling rules (load on demand; don't reopen settled questions): `conventions` (c
 
 ## Mission
 
-Open-source, headless, plugin-based, AI-native igaming platform. Consumers clone/install and extend it with their own modules, plugins, and adapters; the frontend lives in their consumer repo. The default backend is fully featured (auth, wallet, lobby, chat, compliance, backoffice, CMS). Nothing consumer-specific lives here.
+Open-source, headless, plugin-based, AI-native igaming framework. Consumers clone/install and extend it with their own modules, plugins, and adapters; the frontend lives in their consumer repo. The default backend is fully featured (auth, wallet, lobby, chat, compliance, backoffice). Nothing consumer-specific lives here.
 
 ## Enhance the ask first (pre-step)
 
@@ -27,7 +27,7 @@ Before acting on any non-trivial request - and before delegating to an agent - r
 3. **Plugin host.** `definePlugin({ id, dependsOn, register })` is the only way new functionality enters. Everything (core modules included) loads through `extensions.config.ts`.
 4. **Headless.** Backend modules + contracts + SDK surface only. UI lives in the consumer, which imports `@openora/core/react` (hooks, typed client, auth, realtime). No UI packages here.
 5. **Explicit > magic.** No auto-discovery, no decorators. Everything greppable; every wiring point a typed call.
-6. **AI-friendly.** Every module has an `AGENTS.md`; every scaffold a command; contracts queryable via the `oss-dev` MCP server + generated `docs/catalog.json`.
+6. **AI-first.** Every module has an `AGENTS.md`; every scaffold a command; contracts queryable via the `oss-dev` MCP server + generated `docs/catalog.json`.
 7. **Functional & declarative.** Pure functions, immutable data, composition. A `class` only as a thin DI shell delegating to pure functions. Rationale + examples in `conventions`.
 
 ## Repo map
@@ -101,13 +101,13 @@ Lint-enforced cross-cutting bans in `conventions`: `any` outside tests, `interfa
 ## Run locally
 
 ```
-pnpm setup:agent   # first time: docker + db + mcp + summary
-pnpm dev           # turbo dev (mcp)
-pnpm regen         # openapi emit + drizzle-kit generate + catalog
-pnpm seed          # demo data (idempotent; admin@oss.dev / password123)
-pnpm boundaries    # whole-graph boundary + cycle gate
-pnpm -F @openora/core exec vitest run <path>   # one test file/dir, eg src/iam/__tests__
-pnpm verify        # format + lint + typecheck + boundaries + module-shape + test:unit + tool tests
+pnpm setup:agent
+pnpm dev
+pnpm regen
+pnpm seed
+pnpm boundaries
+pnpm -F @openora/core exec vitest run <path>
+pnpm verify
 ```
 
 `docker compose up -d` starts postgres + redis; apps run on the host. Both are required by `pnpm verify` - the suite runs against real infra (ephemeral database per test file, per-worker Redis logical DB), so a stopped container fails the run with a `docker compose up -d` hint. PR only on green `pnpm verify`; CI adds a no-drift check (`pnpm verify:drift`). Pre-commit runs `pnpm boundaries`.
