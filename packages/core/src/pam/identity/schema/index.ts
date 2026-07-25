@@ -56,7 +56,10 @@ export const user = pgTable(
   },
   // Trigram GIN index so the back-office player search (`ILIKE '%term%'` on email)
   // is index-backed instead of a seq scan. Requires the pg_trgm extension.
-  (t) => [index('user_email_trgm_idx').using('gin', sql`${t.email} gin_trgm_ops`)],
+  (t) => [
+    index('user_email_trgm_idx').using('gin', sql`${t.email} gin_trgm_ops`),
+    index('user_created_at_idx').on(t.createdAt),
+  ],
 );
 
 export const session = pgTable(

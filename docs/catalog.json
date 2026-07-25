@@ -14,6 +14,16 @@
       ]
     },
     {
+      "id": "analytics",
+      "group": "core",
+      "tables": [],
+      "routes": [
+        "analytics.conversion",
+        "analytics.ggr",
+        "analytics.summary"
+      ]
+    },
+    {
       "id": "audit",
       "group": "audit",
       "tables": [
@@ -364,6 +374,7 @@
       "token": "CACHE",
       "status": "wired",
       "boundIn": [
+        "packages/core/src/analytics/plugin.ts",
         "packages/core/src/casino/lobby/plugin.ts",
         "packages/core/src/cms/plugin.ts",
         "packages/core/src/iam/plugin.ts",
@@ -806,6 +817,10 @@
       "file": "packages/core/src/contracts/schemas/common.ts"
     },
     {
+      "name": "ConversionFunnelSchema",
+      "file": "packages/core/src/analytics/contract/funnel.ts"
+    },
+    {
       "name": "CountryCodeSchema",
       "file": "packages/core/src/contracts/schemas/igaming-config.ts"
     },
@@ -824,6 +839,10 @@
     {
       "name": "CurrencyCodeSchema",
       "file": "packages/core/src/contracts/schemas/igaming-config.ts"
+    },
+    {
+      "name": "DateRangeSchema",
+      "file": "packages/core/src/contracts/schemas/reporting.ts"
     },
     {
       "name": "deleteTagSchema",
@@ -886,6 +905,30 @@
       "file": "packages/core/src/contracts/schemas/platform-config.ts"
     },
     {
+      "name": "FinancialGgrQuerySchema",
+      "file": "packages/core/src/analytics/contract/financial.ts"
+    },
+    {
+      "name": "FinancialSummaryQuerySchema",
+      "file": "packages/core/src/analytics/contract/financial.ts"
+    },
+    {
+      "name": "FinancialSummarySchema",
+      "file": "packages/core/src/analytics/contract/financial.ts"
+    },
+    {
+      "name": "FunnelQuerySchema",
+      "file": "packages/core/src/analytics/contract/funnel.ts"
+    },
+    {
+      "name": "FunnelStageNameSchema",
+      "file": "packages/core/src/analytics/contract/funnel.ts"
+    },
+    {
+      "name": "FunnelStageSchema",
+      "file": "packages/core/src/analytics/contract/funnel.ts"
+    },
+    {
       "name": "GameRoundSchema",
       "file": "packages/core/src/casino/gaming/contract/index.ts"
     },
@@ -910,8 +953,20 @@
       "file": "packages/core/src/compliance/contract/index.ts"
     },
     {
+      "name": "GgrPointSchema",
+      "file": "packages/core/src/analytics/contract/financial.ts"
+    },
+    {
+      "name": "GgrSeriesSchema",
+      "file": "packages/core/src/analytics/contract/financial.ts"
+    },
+    {
       "name": "GrantInputSchema",
       "file": "packages/core/src/iam/contract/index.ts"
+    },
+    {
+      "name": "GranularitySchema",
+      "file": "packages/core/src/contracts/schemas/reporting.ts"
     },
     {
       "name": "IamAssignmentSortBySchema",
@@ -1024,6 +1079,14 @@
     {
       "name": "MoneyAmountSchema",
       "file": "packages/core/src/contracts/schemas/common.ts"
+    },
+    {
+      "name": "MoneyByCurrencyRailSchema",
+      "file": "packages/core/src/analytics/contract/financial.ts"
+    },
+    {
+      "name": "MoneyByCurrencySchema",
+      "file": "packages/core/src/analytics/contract/financial.ts"
     },
     {
       "name": "NotificationSchema",
@@ -1238,6 +1301,10 @@
       "file": "packages/core/src/compliance/contract/rg.ts"
     },
     {
+      "name": "SignedMoneyAmountSchema",
+      "file": "packages/core/src/analytics/contract/financial.ts"
+    },
+    {
       "name": "SortOrderSchema",
       "file": "packages/core/src/contracts/kit.ts"
     },
@@ -1424,6 +1491,9 @@
     "DELETE /players/{playerId}",
     "DELETE /tag/{key}",
     "DELETE /wallet/auto-withdrawal-rules/{userId}",
+    "GET /analytics/financial/ggr",
+    "GET /analytics/financial/summary",
+    "GET /analytics/funnel/conversion",
     "GET /audit/export",
     "GET /audit/logs",
     "GET /backoffice/chat/rooms",

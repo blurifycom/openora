@@ -1,0 +1,9 @@
+# analytics
+
+Read-only reporting domain for the backoffice: financial breakdowns and the registration-to-first-bet conversion funnel. Owns NO tables - it is the CQRS read side over wallet, identity, and profile data, reached only via their published `/schema` subpaths (`@openora/core/wallet/schema`, `@openora/core/pam/schema/identity`, `@openora/core/pam/schema/profile`). Never import a sibling module's service.
+
+- Money is always grouped by currency, never summed across currencies - the platform has no FX rates anywhere. A currency filter narrows the same grouped shape; it never collapses it to a scalar.
+- `wallet_transaction` has no `userId` column - every query that needs the player joins through `wallet.userId`.
+- The conversion funnel is a registration-cohort funnel, not an event-in-range funnel: the cohort is users whose `createdAt` falls in the requested range, and each later stage is a strict subset of the one before it (email-verified users who registered in range, of those who also ever deposited, of those who also ever bet). A stage's underlying deposit/bet activity is NOT date-ranged - only the registration cohort is. This keeps drop-off rates meaningful (never negative, never over 100%).
+- `game_round.betAmount`/`winAmount` stay `'0'` for every row today - `casino/gaming` never calls `WALLET_COMMANDS`, so gameplay does not move money yet. GGR is therefore computed from `wallet_transaction` (`bet` minus `win`, completed only) rather than from `game_round`. Wiring real stake debit/credit into gameplay is a separate, larger change to the gaming domain - out of scope here.
+- Every route is guarded on the `analytics` resource (`await adminGuard.assert(context, 'analytics', 'view')`) and reads are cached briefly (`CACHE` port) - these are dashboards refreshed on an interval, not a real-time feed.

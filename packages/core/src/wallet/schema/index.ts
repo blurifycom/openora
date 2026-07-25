@@ -84,6 +84,8 @@ export const walletTransaction = pgTable(
     index('wallet_transaction_rail_idx').on(t.rail),
     index('wallet_transaction_currency_idx').on(t.currency),
     index('wallet_transaction_tx_hash_idx').on(t.txHash),
+    index('wallet_transaction_status_type_created_at_idx').on(t.status, t.type, t.createdAt),
+    index('wallet_transaction_wallet_id_type_status_idx').on(t.walletId, t.type, t.status),
     uniqueIndex('wallet_transaction_provider_ref_id_idx')
       .on(t.providerRefId)
       .where(sql`${t.providerRefId} IS NOT NULL`),
