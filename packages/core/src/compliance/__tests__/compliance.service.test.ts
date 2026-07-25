@@ -1,10 +1,9 @@
 import { describe, it, expect, vi, beforeAll, afterAll, beforeEach } from 'vitest';
 import { randomUUID } from 'node:crypto';
 import { eq, sql } from 'drizzle-orm';
-import type { EventBus } from '@openora/core/server';
 import type { GeoIpAdapter } from '@openora/core/contracts';
 import { createTestDb, type TestDb } from '@openora/core/testing';
-import { mock } from '../../testing/mock.js';
+import { mock, makeEventBus } from '../../testing/mock.js';
 import { migrate } from '../migrate.js';
 import { userLimit, geoRule } from '../schema/index.js';
 import {
@@ -16,12 +15,12 @@ import {
 let db: TestDb;
 
 function makeService(countryCode?: string | null) {
-  const events = { emit: vi.fn(), on: vi.fn() };
+  const events = makeEventBus();
   const geoIp =
     countryCode === undefined
       ? null
       : mock<GeoIpAdapter>({ lookup: vi.fn(async () => ({ countryCode })) });
-  const svc = new ComplianceService(db.drizzle, mock<EventBus>(events), geoIp);
+  const svc = new ComplianceService(db.drizzle, events, geoIp);
   return { svc, events };
 }
 

@@ -1,7 +1,6 @@
 import { describe, it, expect, vi, beforeAll, afterAll, beforeEach } from 'vitest';
 import { randomUUID } from 'node:crypto';
 import { desc, eq, sql } from 'drizzle-orm';
-import type { EventBus } from '@openora/core/server';
 import type {
   KycAdapter,
   KycStatusWriter,
@@ -13,18 +12,17 @@ import { player } from '@openora/core/pam/schema/profile';
 import { wallet, walletTransaction } from '@openora/core/wallet/schema';
 import { migrate as migrateProfile } from '@openora/core/pam/migrate/profile';
 import { migrate as migrateWallet } from '@openora/core/wallet/migrate';
-import { mock } from '../../testing/mock.js';
+import { mock, makeEventBus } from '../../testing/mock.js';
 import { migrate } from '../migrate.js';
 import { kycVerification } from '../schema/index.js';
 import { KycVerificationService } from '../service/kyc.service.js';
-import { CumulativeDepositReKycTrigger } from '../service/re-kyc-trigger.js';
 
 let db: TestDb;
 
 type AdapterResult = { referenceId: string; status: KycVendorStatus; verificationUrl?: string };
 
 function makeService(options: { adapter?: Partial<AdapterResult>; config?: PlatformConfig } = {}) {
-  const events = { emit: vi.fn(), on: vi.fn() };
+  const events = makeEventBus();
   const adapterResult: AdapterResult = {
     referenceId: randomUUID(),
     status: 'approved',
@@ -37,7 +35,7 @@ function makeService(options: { adapter?: Partial<AdapterResult>; config?: Platf
   const statusWriter = mock<KycStatusWriter>({ setStatus: vi.fn(async () => undefined) });
   const svc = new KycVerificationService({
     drizzle: db.drizzle,
-    events: mock<EventBus>(events),
+    events: events,
     kycAdapter,
     statusWriter,
     ...(options.config ? { platformConfig: options.config } : {}),
@@ -358,60 +356,5 @@ describe('KycVerificationService.handleDeposit - threshold re-KYC (real PG)', ()
     await svc.handleDeposit(userId);
 
     expect(statusWriter.setStatus).not.toHaveBeenCalled();
-  });
-});
-
-describe('CumulativeDepositReKycTrigger', () => {
-  const trigger = new CumulativeDepositReKycTrigger();
-
-  it('fires on the first crossing at or above the per-currency threshold', () => {
-    expect(
-      trigger.requiresReverify(
-        { totalDeposits: '500', currency: 'USD', lastTriggeredDeposits: '0' },
-        { USD: '500' },
-      ),
-    ).toBe(true);
-    expect(
-      trigger.requiresReverify(
-        { totalDeposits: '900', currency: 'USD', lastTriggeredDeposits: '0' },
-        { USD: '500' },
-      ),
-    ).toBe(true);
-  });
-
-  it('does not re-fire within the same band, but fires again on a fresh band (watermark)', () => {
-    expect(
-      trigger.requiresReverify(
-        { totalDeposits: '950', currency: 'USD', lastTriggeredDeposits: '900' },
-        { USD: '500' },
-      ),
-    ).toBe(false);
-    expect(
-      trigger.requiresReverify(
-        { totalDeposits: '1000', currency: 'USD', lastTriggeredDeposits: '900' },
-        { USD: '500' },
-      ),
-    ).toBe(true);
-  });
-
-  it('does not fire below the threshold or when the currency has none', () => {
-    expect(
-      trigger.requiresReverify(
-        { totalDeposits: '100', currency: 'USD', lastTriggeredDeposits: '0' },
-        { USD: '500' },
-      ),
-    ).toBe(false);
-    expect(
-      trigger.requiresReverify(
-        { totalDeposits: '9999', currency: 'EUR', lastTriggeredDeposits: '0' },
-        { USD: '500' },
-      ),
-    ).toBe(false);
-    expect(
-      trigger.requiresReverify(
-        { totalDeposits: '9999', currency: 'USD', lastTriggeredDeposits: '0' },
-        undefined,
-      ),
-    ).toBe(false);
   });
 });

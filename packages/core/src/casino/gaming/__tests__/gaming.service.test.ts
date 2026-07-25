@@ -1,16 +1,15 @@
-import { describe, it, expect, vi, beforeAll, afterAll, beforeEach } from 'vitest';
+import { describe, it, expect, beforeAll, afterAll, beforeEach } from 'vitest';
 import { sql } from 'drizzle-orm';
-import type { EventBus } from '@openora/core/server';
 import type { GameAdapter } from '@openora/core/contracts';
 import { createTestDb, type TestDb } from '@openora/core/testing';
-import { mock } from '../../../testing/mock.js';
+import { mock, makeEventBus } from '../../../testing/mock.js';
 import { migrate } from '../migrate.js';
 import { game, gameRound } from '../schema/index.js';
 import { GamingService, GameNotFoundError } from '../service/gaming.service.js';
 
 let db: TestDb;
 
-const noopEvents = mock<EventBus>({ emit: vi.fn(), on: vi.fn() });
+const noopEvents = makeEventBus();
 const noopAdapter = mock<GameAdapter>({});
 
 function makeService() {

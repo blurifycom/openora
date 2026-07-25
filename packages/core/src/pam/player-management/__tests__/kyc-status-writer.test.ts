@@ -1,18 +1,17 @@
-import { describe, it, expect, vi, beforeAll, afterAll, beforeEach } from 'vitest';
+import { describe, it, expect, beforeAll, afterAll, beforeEach } from 'vitest';
 import { randomUUID } from 'node:crypto';
 import { eq, sql } from 'drizzle-orm';
-import type { EventBus } from '@openora/core/server';
 import { createTestDb, type TestDb } from '@openora/core/testing';
 import { player } from '@openora/core/pam/schema/profile';
 import { migrate as migrateProfile } from '@openora/core/pam/migrate/profile';
-import { mock } from '../../../testing/mock.js';
+import { makeEventBus } from '../../../testing/mock.js';
 import { PlayerKycStatusWriter } from '../service/kyc-status-writer.js';
 
 let db: TestDb;
 
 function makeWriter() {
-  const events = { emit: vi.fn(), on: vi.fn() };
-  return { writer: new PlayerKycStatusWriter(db.drizzle, mock<EventBus>(events)), events };
+  const events = makeEventBus();
+  return { writer: new PlayerKycStatusWriter(db.drizzle, events), events };
 }
 
 async function seedPlayer(overrides: Partial<typeof player.$inferInsert> = {}) {

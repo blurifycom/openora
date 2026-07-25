@@ -1,7 +1,6 @@
 import { describe, it, expect, vi, beforeAll, afterAll, beforeEach } from 'vitest';
 import { randomUUID } from 'node:crypto';
 import { eq, sql } from 'drizzle-orm';
-import type { EventBus } from '@openora/core/server';
 import type {
   AdminUserDirectory,
   AuditWritePort,
@@ -14,7 +13,7 @@ import type {
   TagKey,
 } from '@openora/core/contracts';
 import { createTestDb, type TestDb } from '@openora/core/testing';
-import { mock, makeEvents, NO_CLIENT_META } from '../../testing/mock.js';
+import { mock, makeEventBus, NO_CLIENT_META, makeAuditWriter } from '../../testing/mock.js';
 import { migrate } from '../migrate.js';
 import { wallet, walletTransaction, autoWithdrawalRule } from '../schema/index.js';
 import { WalletService } from '../service/wallet.service.js';
@@ -34,14 +33,14 @@ function makeService({
   directoryThrows = false,
   riskTags = [],
 }: ServiceOptions = {}) {
-  const events = makeEvents();
+  const events = makeEventBus();
   const psp = {
     processWithdrawal: vi.fn(async () => ({
       externalId: randomUUID(),
       status: 'completed' as const,
     })),
   };
-  const audit = { record: vi.fn(async () => undefined) };
+  const audit = makeAuditWriter();
   const directory = mock<AdminUserDirectory>({
     lookupPlayers: vi.fn(async (ids: string[]) => {
       if (directoryThrows) {
@@ -59,7 +58,7 @@ function makeService({
   );
   const svc = new WalletService({
     drizzle: db.drizzle,
-    events: mock<EventBus>(events),
+    events: events,
     payment: mock<PaymentAdapter>(psp),
     audit: mock<AuditWritePort>(audit),
     directory,

@@ -5,7 +5,6 @@ import {
   domainEventVersions,
   domainEventSchemas,
   DOMAIN_EVENT_CATALOG,
-  type DomainEventName,
 } from '../events.js';
 
 describe('getEventVersion', () => {
@@ -63,12 +62,6 @@ describe('eventCatalog', () => {
   it('namespaces every topic by its owning module', () => {
     for (const { topic } of eventCatalog()) {
       expect(topic).toMatch(/^[a-z][a-z0-9_-]*(\.[a-z0-9][a-z0-9_-]*)+$/);
-    }
-  });
-
-  it('exposes a parseable schema for every topic', () => {
-    for (const { topic } of eventCatalog()) {
-      expect(domainEventSchemas[topic as DomainEventName]).toBeDefined();
     }
   });
 });

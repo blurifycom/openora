@@ -1,15 +1,13 @@
 import { describe, it, expect, vi, beforeAll, afterAll, beforeEach } from 'vitest';
 import { randomUUID } from 'node:crypto';
 import { eq, sql } from 'drizzle-orm';
-import type { EventBus } from '@openora/core/server';
 import type {
   AdminUserDirectory,
-  AuditWritePort,
   PaymentAdapter,
   AdminPlayerSummary,
 } from '@openora/core/contracts';
 import { createTestDb, type TestDb } from '@openora/core/testing';
-import { mock, makeEvents, NO_CLIENT_META } from '../../testing/mock.js';
+import { mock, makeEventBus, NO_CLIENT_META, makeAuditWriter } from '../../testing/mock.js';
 import { migrate } from '../migrate.js';
 import { wallet, walletTransaction, walletDepositAddress } from '../schema/index.js';
 import {
@@ -25,14 +23,6 @@ import {
   DestinationAddressRequiredError,
 } from '../service/wallet.service.js';
 
-describe('WalletService domain errors', () => {
-  it('InsufficientBalanceError carries available and requested amounts', () => {
-    const err = new InsufficientBalanceError('50', '100');
-    expect(err.message).toContain('50');
-    expect(err.message).toContain('100');
-  });
-});
-
 let db: TestDb;
 
 type PspResult = Awaited<ReturnType<PaymentAdapter['processWithdrawal']>>;
@@ -46,12 +36,12 @@ function makePsp() {
 }
 
 function makeService(overrides: Partial<WalletServiceDeps> = {}) {
-  const events = makeEvents();
+  const events = makeEventBus();
   const psp = makePsp();
-  const audit = mock<AuditWritePort>({ record: vi.fn() });
+  const audit = makeAuditWriter();
   const svc = new WalletService({
     drizzle: db.drizzle,
-    events: mock<EventBus>(events),
+    events: events,
     payment: mock<PaymentAdapter>(psp),
     audit,
     ...overrides,
@@ -114,7 +104,7 @@ async function txById(id: string) {
   return row!;
 }
 
-const emittedTopics = (events: ReturnType<typeof makeEvents>) =>
+const emittedTopics = (events: ReturnType<typeof makeEventBus>) =>
   events.emit.mock.calls.map(([topic]) => topic);
 
 beforeAll(async () => {

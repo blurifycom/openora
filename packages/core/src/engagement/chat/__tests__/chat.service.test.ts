@@ -1,11 +1,10 @@
-import { describe, it, expect, vi, beforeAll, afterAll, beforeEach } from 'vitest';
+import { describe, it, expect, beforeAll, afterAll, beforeEach } from 'vitest';
 import { randomUUID } from 'node:crypto';
 import { eq, sql } from 'drizzle-orm';
-import type { EventBus } from '@openora/core/server';
 import { createTestDb, InProcessRealtimeTransport, type TestDb } from '@openora/core/testing';
 import { user } from '@openora/core/pam/schema/identity';
 import { migrate as migrateIdentity } from '@openora/core/pam/migrate/identity';
-import { mock, NO_CLIENT_META } from '../../../testing/mock.js';
+import { NO_CLIENT_META, makeEventBus } from '../../../testing/mock.js';
 import { CHAT_ROOM_CATEGORIES, type ChatMessage } from '../contract/index.js';
 import { MAX_PRIVATE_ROOMS_PER_PLAYER } from '../contract/constants.js';
 import { migrate } from '../migrate.js';
@@ -38,8 +37,8 @@ let db: TestDb;
 
 function makeService() {
   const transport = new InProcessRealtimeTransport();
-  const events = { emit: vi.fn(), on: vi.fn() };
-  return { svc: new ChatService(db.drizzle, mock<EventBus>(events), transport), events, transport };
+  const events = makeEventBus();
+  return { svc: new ChatService(db.drizzle, events, transport), events, transport };
 }
 
 async function seedUser(name = 'Player') {

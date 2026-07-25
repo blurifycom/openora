@@ -1,14 +1,16 @@
 import { describe, it, expect, vi, beforeAll, afterAll, beforeEach } from 'vitest';
 import { randomUUID } from 'node:crypto';
 import { call, ORPCError } from '@orpc/server';
-import type { AdminGuard, EventBus } from '@openora/core/server';
-import type {
-  AuditWritePort,
-  PaymentAdapter,
-  PaymentWebhookVerifier,
-} from '@openora/core/contracts';
+import type { AdminGuard } from '@openora/core/server';
+import type { PaymentAdapter, PaymentWebhookVerifier } from '@openora/core/contracts';
 import { createTestDb, type TestDb } from '@openora/core/testing';
-import { mock, makeEvents, adminCaller, testContext } from '../../testing/mock.js';
+import {
+  mock,
+  makeEventBus,
+  testContext,
+  makeAuditWriter,
+  makeAdminGuard,
+} from '../../testing/mock.js';
 import { migrate } from '../migrate.js';
 import { wallet, walletTransaction } from '../schema/index.js';
 import { createWalletRouter } from '../router/index.js';
@@ -35,9 +37,9 @@ beforeEach(async () => {
 function realWalletService() {
   return new WalletService({
     drizzle: db.drizzle,
-    events: mock<EventBus>(makeEvents()),
+    events: makeEventBus(),
     payment: mock<PaymentAdapter>({}),
-    audit: mock<AuditWritePort>({ record: vi.fn() }),
+    audit: makeAuditWriter(),
   });
 }
 
@@ -45,28 +47,16 @@ function routerWith(adminGuard: AdminGuard) {
   return createWalletRouter(
     realWalletService(),
     adminGuard,
-    mock<AuditWritePort>({ record: vi.fn() }),
+    makeAuditWriter(),
     mock<PaymentAdapter>({}),
     mock<PaymentWebhookVerifier>({ verify: vi.fn().mockReturnValue(false) }),
   );
 }
 
-function transactionDenyingGuard(): AdminGuard {
-  return mock<AdminGuard>({
-    assert: vi.fn(async (_ctx: unknown, resource?: string) => {
-      if (resource === 'transaction') {
-        throw new ORPCError('FORBIDDEN', { message: 'Missing permission: transaction:view' });
-      }
-      return adminCaller({ userId: 'caller-1', role: 'support' });
-    }),
-  });
-}
+const transactionDenyingGuard = () =>
+  makeAdminGuard({ deny: ['transaction'], caller: { userId: 'caller-1', role: 'support' } });
 
-function allowingGuard(): AdminGuard {
-  return mock<AdminGuard>({
-    assert: vi.fn(async () => adminCaller({ userId: 'caller-1' })),
-  });
-}
+const allowingGuard = () => makeAdminGuard({ caller: { userId: 'caller-1' } });
 
 async function seedLedger(userId: string, amounts: string[]) {
   const [row] = await db.drizzle.db

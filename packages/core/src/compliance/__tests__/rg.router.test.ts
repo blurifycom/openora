@@ -2,7 +2,7 @@ import { describe, it, expect, vi, beforeAll, afterAll, beforeEach } from 'vites
 import { randomUUID } from 'node:crypto';
 import { eq, sql } from 'drizzle-orm';
 import { call, ORPCError } from '@orpc/server';
-import type { AdminGuard, EventBus } from '@openora/core/server';
+import type { AdminGuard } from '@openora/core/server';
 import type {
   AdminUserDirectory,
   KycAdapter,
@@ -12,7 +12,7 @@ import type {
   SendEmailPort,
 } from '@openora/core/contracts';
 import { createTestDb, type TestDb } from '@openora/core/testing';
-import { mock, makeEvents, adminCaller, testContext } from '../../testing/mock.js';
+import { mock, makeEventBus, makeAdminGuard, testContext } from '../../testing/mock.js';
 import { migrate } from '../migrate.js';
 import { userLimit, rgExclusion, rgFlag } from '../schema/index.js';
 import { createComplianceRouter } from '../router/index.js';
@@ -42,26 +42,18 @@ beforeEach(async () => {
   );
 });
 
-function guardAllowing(allowed: ReadonlyArray<`${string}:${string}`>): AdminGuard {
-  return mock<AdminGuard>({
-    assert: vi.fn(async (_ctx: unknown, resource?: string, action?: string) => {
-      if (resource && action && !allowed.includes(`${resource}:${action}`)) {
-        throw new ORPCError('FORBIDDEN', { message: `Missing permission: ${resource}:${action}` });
-      }
-      return adminCaller({ userId: CALLER });
-    }),
-  });
-}
+const guardAllowing = (allow: readonly string[]) =>
+  makeAdminGuard({ allow, caller: { userId: CALLER } });
 
 function build(adminGuard: AdminGuard) {
-  const events = makeEvents();
+  const events = makeEventBus();
   const enforcement = mock<LoginEnforcementPort>({
     block: vi.fn(async () => undefined),
     unblock: vi.fn(async () => undefined),
   });
   const rg = new RgService({
     drizzle: db.drizzle,
-    events: mock<EventBus>(events),
+    events: events,
     loginEnforcement: enforcement,
     email: mock<SendEmailPort>({ send: vi.fn(async () => undefined) }),
     directory: mock<AdminUserDirectory>({ lookupPlayers: vi.fn(async () => []) }),
@@ -72,11 +64,11 @@ function build(adminGuard: AdminGuard) {
     getStatus: vi.fn(async () => 'approved' as const),
   });
   const router = createComplianceRouter({
-    compliance: new ComplianceService(db.drizzle, mock<EventBus>(events)),
+    compliance: new ComplianceService(db.drizzle, events),
     adminGuard,
     kyc: new KycVerificationService({
       drizzle: db.drizzle,
-      events: mock<EventBus>(events),
+      events: events,
       kycAdapter,
       statusWriter: mock<KycStatusWriter>({ setStatus: vi.fn(async () => undefined) }),
     }),

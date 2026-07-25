@@ -1,9 +1,8 @@
-import { describe, it, expect, beforeAll, afterAll, beforeEach, vi } from 'vitest';
+import { describe, it, expect, beforeAll, afterAll, beforeEach } from 'vitest';
 import { eq, sql } from 'drizzle-orm';
 import { RedisCache } from '@openora/core/server';
-import type { EventBus } from '@openora/core/server';
 import { createTestDb, createTestRedis, type TestDb, type TestRedis } from '@openora/core/testing';
-import { mock } from '../../testing/mock.js';
+import { makeEventBus } from '../../testing/mock.js';
 import { migrate } from '../migrate.js';
 import { page as pageTable } from '../schema/index.js';
 import { CmsService, PageNotFoundError } from '../service/cms.service.js';
@@ -12,7 +11,7 @@ let db: TestDb;
 let redis: TestRedis;
 
 function makeService() {
-  const events = mock<EventBus>({ emit: vi.fn(), on: vi.fn() });
+  const events = makeEventBus();
   const cache = new RedisCache(redis.client);
   return { svc: new CmsService(db.drizzle, events, cache), events };
 }

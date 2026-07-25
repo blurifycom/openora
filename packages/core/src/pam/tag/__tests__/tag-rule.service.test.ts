@@ -1,10 +1,9 @@
-import { describe, it, expect, vi, beforeAll, afterAll, beforeEach } from 'vitest';
+import { describe, it, expect, beforeAll, afterAll, beforeEach } from 'vitest';
 import { randomUUID } from 'node:crypto';
 import { eq, sql } from 'drizzle-orm';
-import type { EventBus } from '@openora/core/server';
 import type { TagKey } from '@openora/core/contracts';
 import { createTestDb, type TestDb } from '@openora/core/testing';
-import { mock } from '../../../testing/mock.js';
+import { makeEventBus } from '../../../testing/mock.js';
 import { migrate } from '../migrate.js';
 import { tag, tagRule } from '../schema/index.js';
 import { TagRuleService, TagRuleNotFoundError } from '../service/tag-rule.service.js';
@@ -12,7 +11,7 @@ import { TagRuleService, TagRuleNotFoundError } from '../service/tag-rule.servic
 let db: TestDb;
 
 function makeService() {
-  const events = mock<EventBus>({ emit: vi.fn(), on: vi.fn() });
+  const events = makeEventBus();
   return { svc: new TagRuleService(db.drizzle, events), events };
 }
 

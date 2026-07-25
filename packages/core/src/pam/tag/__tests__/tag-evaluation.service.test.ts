@@ -2,9 +2,8 @@ import { describe, it, expect, vi, beforeAll, afterAll, beforeEach } from 'vites
 import { randomUUID } from 'node:crypto';
 import { and, eq, isNull, sql } from 'drizzle-orm';
 import type { WalletReader, IdentityReader, TagKey, KycStatus } from '@openora/core/contracts';
-import type { EventBus } from '@openora/core/server';
 import { createTestDb, type TestDb } from '@openora/core/testing';
-import { mock, makeEvents } from '../../../testing/mock.js';
+import { mock, makeEventBus } from '../../../testing/mock.js';
 import { TagEvaluationService } from '../service/tag-evaluation.service.js';
 import { SYSTEM_ACTOR_ID } from '../service/tag-mappers.js';
 import { TagService } from '../service/tag.service.js';
@@ -82,7 +81,7 @@ function makeServices(
     identityReader?: Partial<IdentityReader>;
   } = {},
 ) {
-  const events = mock<EventBus>(makeEvents());
+  const events = makeEventBus();
   const tagService = new TagService(db.drizzle, events);
   const ruleService = new TagRuleService(db.drizzle, events);
   const walletReader = mock<WalletReader>({

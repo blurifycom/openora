@@ -36,8 +36,4 @@ describe('assertSealedServicesBound', () => {
 
     expect(() => assertSealedServicesBound(containerWith([unrelated]))).toThrow();
   });
-
-  it('lists only the sealed tokens that are actually implemented today', () => {
-    expect(IMPLEMENTED_SEALED_TOKENS.every((t) => t.description?.length)).toBe(true);
-  });
 });

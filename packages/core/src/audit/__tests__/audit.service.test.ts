@@ -1,8 +1,7 @@
-import { describe, it, expect, vi, beforeAll, afterAll, beforeEach } from 'vitest';
+import { describe, it, expect, beforeAll, afterAll, beforeEach } from 'vitest';
 import { eq, sql } from 'drizzle-orm';
-import type { EventBus } from '@openora/core/server';
 import { createTestDb, type TestDb } from '@openora/core/testing';
-import { mock } from '../../testing/mock.js';
+import { makeEventBus } from '../../testing/mock.js';
 import { migrate } from '../migrate.js';
 import { auditLog } from '../schema/index.js';
 import { AuditService, computeHash, startOfDayUtc, endOfDayUtc } from '../service/audit.service.js';
@@ -84,10 +83,8 @@ describe('computeHash canonical form', () => {
 
 let db: TestDb;
 
-const noEvents = () => mock<EventBus>({ emit: vi.fn(), on: vi.fn() });
-
 function makeService() {
-  return new AuditService(db.drizzle, noEvents());
+  return new AuditService(db.drizzle, makeEventBus());
 }
 
 beforeAll(async () => {

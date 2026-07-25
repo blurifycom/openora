@@ -1,12 +1,11 @@
-import { describe, it, expect, vi, beforeAll, afterAll, beforeEach } from 'vitest';
+import { describe, it, expect, beforeAll, afterAll, beforeEach } from 'vitest';
 import { randomUUID } from 'node:crypto';
 import { eq, sql } from 'drizzle-orm';
-import type { EventBus } from '@openora/core/server';
 import type { TagKey } from '@openora/core/contracts';
 import { createTestDb, type TestDb } from '@openora/core/testing';
 import { player } from '@openora/core/pam/schema/profile';
 import { migrate as migrateProfile } from '@openora/core/pam/migrate/profile';
-import { mock } from '../../../testing/mock.js';
+import { makeEventBus } from '../../../testing/mock.js';
 import { migrate } from '../migrate.js';
 import { playerTag, tag } from '../schema/index.js';
 import { TagService } from '../service/tag.service.js';
@@ -44,7 +43,7 @@ async function seedPlayerWithTags(activeKeys: TagKey[], removedKeys: TagKey[] = 
 
 beforeAll(async () => {
   db = await createTestDb([migrate, migrateProfile]);
-  svc = new TagService(db.drizzle, mock<EventBus>({ emit: vi.fn(), on: vi.fn() }));
+  svc = new TagService(db.drizzle, makeEventBus());
 });
 
 afterAll(async () => {

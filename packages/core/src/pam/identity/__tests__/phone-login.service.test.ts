@@ -5,11 +5,11 @@ import { sql } from 'drizzle-orm';
 import { RedisCache } from '@openora/core/server';
 import { createTestDb, createTestRedis, type TestDb, type TestRedis } from '@openora/core/testing';
 import { migrate as migrateIdentity } from '@openora/core/pam/migrate/identity';
-import type { EventBus, Auth } from '@openora/core/server';
+import type { Auth } from '@openora/core/server';
 import type { CacheAdapter, RateLimiterAdapter, SmsAdapter } from '@openora/core/contracts';
 import { PhoneLoginService } from '../service/phone-login.service.js';
 import { user, session, smsOtpSession } from '../schema/index.js';
-import { makeEvents, mock, NO_CLIENT_META } from '../../../testing/mock.js';
+import { makeEventBus, mock, NO_CLIENT_META } from '../../../testing/mock.js';
 
 const PHONE = '+14155550100';
 
@@ -58,10 +58,10 @@ function build({
   sms = { sendOtp: vi.fn().mockResolvedValue(undefined) },
   cache,
 }: { sms?: SmsAdapter; cache?: CacheAdapter } = {}) {
-  const events = makeEvents();
+  const events = makeEventBus();
   const svc = new PhoneLoginService({
     drizzle: db.drizzle,
-    events: mock<EventBus>(events),
+    events: events,
     sms,
     limiter: allowLimiter(),
     auth: fakeAuth,

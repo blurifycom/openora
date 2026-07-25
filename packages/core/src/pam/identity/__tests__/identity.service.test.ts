@@ -6,11 +6,9 @@ import { createTestDb, createTestRedis, type TestDb, type TestRedis } from '@ope
 import { migrate as migrateIdentity } from '@openora/core/pam/migrate/identity';
 import type {
   EmailTemplateRenderer,
-  SendEmailPort,
   PlatformConfig,
   RateLimiterAdapter,
 } from '@openora/core/contracts';
-import type { EventBus } from '@openora/core/server';
 import {
   IdentityService,
   SESSION_DURATION_IN_SECONDS,
@@ -18,7 +16,7 @@ import {
 } from '../service/identity.service.js';
 import { UnsupportedLanguageError } from '../../shared/language.js';
 import { user, session } from '../schema/index.js';
-import { mock } from '../../../testing/mock.js';
+import { mock, makeEventBus } from '../../../testing/mock.js';
 
 const {
   signInEmailMock,
@@ -71,10 +69,6 @@ const { RedisCache } = await import('@openora/core/server');
 let db: TestDb;
 let redis: TestRedis;
 
-function makeEvents() {
-  return mock<EventBus>({ emit: vi.fn(), on: vi.fn() });
-}
-
 const allowLimiter = () =>
   mock<RateLimiterAdapter>({
     consume: vi.fn().mockResolvedValue({ allowed: true, retryAfterMs: 0 }),
@@ -89,7 +83,7 @@ function buildService(deps: Partial<Omit<IdentityServiceDeps, 'templateRenderer'
   return new IdentityService({
     templateRenderer: testTemplateRenderer,
     drizzle: db.drizzle,
-    events: makeEvents(),
+    events: makeEventBus(),
     ...deps,
   });
 }
@@ -154,17 +148,8 @@ beforeEach(async () => {
   await redis.flush();
 });
 
-describe('IdentityService - SendEmailPort seam', () => {
-  it('constructs without a SendEmailPort (email delivery silently skipped)', () => {
-    expect(buildService()).toBeInstanceOf(IdentityService);
-  });
-
-  it('constructs with a stub SendEmailPort and exposes it for use', () => {
-    const email: SendEmailPort = { send: vi.fn().mockResolvedValue(undefined) };
-    expect(buildService({ email })).toBeInstanceOf(IdentityService);
-  });
-
-  it('me returns null when no session exists', async () => {
+describe('IdentityService.me', () => {
+  it('returns null when no session exists', async () => {
     expect(await buildService().me({})).toBeNull();
   });
 });
@@ -172,7 +157,7 @@ describe('IdentityService - SendEmailPort seam', () => {
 describe('IdentityService - login lockout (real PG + real Redis)', () => {
   it('locks the account once failed attempts reach the threshold and emits lockout.triggered', async () => {
     const account = await seedUser({ failedLoginAttempts: 4 });
-    const events = makeEvents();
+    const events = makeEventBus();
     const limiter = allowLimiter();
     signInEmailMock.mockResolvedValue(jsonResponse({ message: 'Invalid' }, 401));
     const svc = buildService({ events, limiter });
@@ -212,7 +197,7 @@ describe('IdentityService - login lockout (real PG + real Redis)', () => {
 
   it('emits login.failed (not lockout) while still below the threshold', async () => {
     const account = await seedUser();
-    const events = makeEvents();
+    const events = makeEventBus();
     signInEmailMock.mockResolvedValue(jsonResponse({ message: 'Invalid' }, 401));
     const svc = buildService({ events });
 
@@ -267,7 +252,7 @@ describe('IdentityService - login lockout (real PG + real Redis)', () => {
 
   it('clears the counter and emits login on success', async () => {
     const account = await seedUser({ failedLoginAttempts: 2 });
-    const events = makeEvents();
+    const events = makeEventBus();
     signInEmailMock.mockResolvedValue(signInSuccess(account.id));
     const svc = buildService({ events });
 
@@ -287,7 +272,7 @@ describe('IdentityService - login lockout (real PG + real Redis)', () => {
       role: 'admin',
       failedLoginAttempts: 4,
     });
-    const events = makeEvents();
+    const events = makeEventBus();
     signInEmailMock.mockResolvedValue(jsonResponse({ message: 'Invalid' }, 401));
     const svc = buildService({
       events,
@@ -317,7 +302,7 @@ describe('IdentityService - login lockout (real PG + real Redis)', () => {
       role: 'support',
       failedLoginAttempts: 4,
     });
-    const events = makeEvents();
+    const events = makeEventBus();
     signInEmailMock.mockResolvedValue(jsonResponse({ message: 'Invalid' }, 401));
     const svc = buildService({
       events,
@@ -338,7 +323,7 @@ describe('IdentityService - login lockout (real PG + real Redis)', () => {
   });
 
   it('anti-enumeration: locks a nonexistent email once failed attempts reach the threshold, mirroring a real account, without emitting lockout.triggered', async () => {
-    const events = makeEvents();
+    const events = makeEventBus();
     const limiter = allowLimiter();
     signInEmailMock.mockImplementation(async () => jsonResponse({ message: 'Invalid' }, 401));
     const svc = buildService({ events, limiter, cache: realCache() });
@@ -383,7 +368,7 @@ describe('IdentityService - login lockout (real PG + real Redis)', () => {
   });
 
   it('never locks a nonexistent email when cache is not provided (degrades to the pre-mirroring behavior)', async () => {
-    const events = makeEvents();
+    const events = makeEventBus();
     signInEmailMock.mockImplementation(async () => jsonResponse({ message: 'Invalid' }, 401));
     const svc = buildService({ events });
 
@@ -403,7 +388,7 @@ describe('IdentityService - login lockout (real PG + real Redis)', () => {
 describe('IdentityService - login banned-user 403 (not the RG block)', () => {
   it('surfaces a banned-user 403 from signInEmail as FORBIDDEN and still emits login.failed', async () => {
     await seedUser();
-    const events = makeEvents();
+    const events = makeEventBus();
     signInEmailMock.mockResolvedValue(jsonResponse({ message: 'BANNED_USER' }, 403));
     const svc = buildService({ events });
 
@@ -426,7 +411,7 @@ describe('IdentityService - RG login gate (real PG)', () => {
     await db.drizzle.db
       .insert(session)
       .values({ userId: account.id, token: randomUUID(), expiresAt: live });
-    const events = makeEvents();
+    const events = makeEventBus();
     // Valid credentials (200) - the gate must still block.
     signInEmailMock.mockResolvedValue(signInSuccess(account.id));
     const svc = buildService({ events });
@@ -455,7 +440,7 @@ describe('IdentityService - RG login gate (real PG)', () => {
       rgBlocked: true,
       rgBlockedUntil: new Date(Date.now() - 60_000),
     });
-    const events = makeEvents();
+    const events = makeEventBus();
     signInEmailMock.mockResolvedValue(signInSuccess(account.id));
     const svc = buildService({ events });
 
@@ -474,7 +459,7 @@ describe('IdentityService.unlockUser (real PG)', () => {
   it('clears the lockout row and emits unlocked with the prior state', async () => {
     const lockedUntil = new Date('2020-01-01T00:00:00.000Z');
     const account = await seedUser({ failedLoginAttempts: 5, lockoutUntil: lockedUntil });
-    const events = makeEvents();
+    const events = makeEventBus();
     const svc = buildService({ events });
 
     const res = await svc.unlockUser(account.id, 'admin1');
@@ -616,7 +601,7 @@ describe('IdentityService onPasswordReset hook (wired via createAuth)', () => {
       failedLoginAttempts: 5,
       lockoutUntil: new Date(Date.now() + 60_000),
     });
-    const events = makeEvents();
+    const events = makeEventBus();
     buildService({ events });
 
     await capturedAuthOptions.current?.onPasswordReset?.({ id: account.id, email: EMAIL });

@@ -1,17 +1,15 @@
 import { describe, it, expect, vi, beforeAll, afterAll, beforeEach } from 'vitest';
 import { randomUUID } from 'node:crypto';
 import { eq, sql } from 'drizzle-orm';
-import type { EventBus } from '@openora/core/server';
 import type {
   AdminUserDirectory,
-  AuditWritePort,
   KycStatus,
   PaymentAdapter,
   PlatformConfig,
   AdminPlayerSummary,
 } from '@openora/core/contracts';
 import { createTestDb, type TestDb } from '@openora/core/testing';
-import { mock, makeEvents, NO_CLIENT_META } from '../../testing/mock.js';
+import { mock, makeEventBus, NO_CLIENT_META, makeAuditWriter } from '../../testing/mock.js';
 import { migrate } from '../migrate.js';
 import { wallet, walletTransaction } from '../schema/index.js';
 import { WalletService, KycRequiredError } from '../service/wallet.service.js';
@@ -28,9 +26,9 @@ function makeService(kycStatus: KycStatus | null, gateWithdrawals: boolean) {
   });
   const svc = new WalletService({
     drizzle: db.drizzle,
-    events: mock<EventBus>(makeEvents()),
+    events: makeEventBus(),
     payment: mock<PaymentAdapter>({ processWithdrawal: vi.fn() }),
-    audit: mock<AuditWritePort>({ record: vi.fn() }),
+    audit: makeAuditWriter(),
     directory,
     platformConfig: mock<PlatformConfig>({ kyc: { gateWithdrawals } }),
   });

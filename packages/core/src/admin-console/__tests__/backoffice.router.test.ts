@@ -1,13 +1,11 @@
 import { describe, it, expect, vi } from 'vitest';
 import { call, ORPCError } from '@orpc/server';
-import type { AdminGuard } from '@openora/core/server';
 import type {
   AdminUserDirectory,
   AdminUserRow,
   AdminWalletReporting,
-  AuditWritePort,
 } from '@openora/core/contracts';
-import { mock, adminCaller, testContext } from '../../testing/mock.js';
+import { mock, testContext, makeAuditWriter, makeAdminGuard } from '../../testing/mock.js';
 import { createBackofficeRouter } from '../router/index.js';
 import { BackofficeService } from '../service/backoffice.service.js';
 
@@ -49,29 +47,16 @@ function realService(over: { directory?: Partial<AdminUserDirectory> } = {}) {
   return { service: new BackofficeService(users, reporting), users, stored };
 }
 
-function guardWhereOnlySuperAdminClearsAdmin(isSuper: boolean): AdminGuard {
-  return mock<AdminGuard>({
-    assert: vi.fn(async (_ctx: unknown, resource?: string) => {
-      if (resource === 'admin' && !isSuper) {
-        throw new ORPCError('FORBIDDEN', { message: 'Missing permission: admin:update' });
-      }
-      return adminCaller({ userId: 'caller-1', role: isSuper ? 'admin' : 'support' });
-    }),
+const guardWhereOnlySuperAdminClearsAdmin = (isSuper: boolean) =>
+  makeAdminGuard({
+    deny: isSuper ? [] : ['admin'],
+    caller: { userId: 'caller-1', role: isSuper ? 'admin' : 'support' },
   });
-}
 
-function transactionDenyingGuard(): AdminGuard {
-  return mock<AdminGuard>({
-    assert: vi.fn(async (_ctx: unknown, resource?: string) => {
-      if (resource === 'transaction') {
-        throw new ORPCError('FORBIDDEN', { message: 'Missing permission: transaction:view' });
-      }
-      return adminCaller({ userId: 'caller-1', role: 'support' });
-    }),
-  });
-}
+const transactionDenyingGuard = () =>
+  makeAdminGuard({ deny: ['transaction'], caller: { userId: 'caller-1', role: 'support' } });
 
-const audit = (): AuditWritePort => ({ record: vi.fn().mockResolvedValue(undefined) });
+const audit = makeAuditWriter;
 
 describe('backoffice router updateUser authz', () => {
   it('rejects a role change from a non-super-admin and leaves the user untouched', async () => {

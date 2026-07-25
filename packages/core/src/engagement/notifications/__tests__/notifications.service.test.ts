@@ -1,9 +1,8 @@
-import { describe, it, expect, vi, beforeAll, afterAll, beforeEach } from 'vitest';
+import { describe, it, expect, beforeAll, afterAll, beforeEach } from 'vitest';
 import { randomUUID } from 'node:crypto';
 import { eq, sql } from 'drizzle-orm';
-import type { EventBus } from '@openora/core/server';
 import { createTestDb, type TestDb } from '@openora/core/testing';
-import { mock } from '../../../testing/mock.js';
+import { makeEventBus } from '../../../testing/mock.js';
 import { migrate } from '../migrate.js';
 import { notification } from '../schema/index.js';
 import {
@@ -15,8 +14,8 @@ import {
 let db: TestDb;
 
 function makeService() {
-  const events = { emit: vi.fn(), on: vi.fn() };
-  return { svc: new NotificationsService(db.drizzle, mock<EventBus>(events)), events };
+  const events = makeEventBus();
+  return { svc: new NotificationsService(db.drizzle, events), events };
 }
 
 async function seedNotification(overrides: Partial<typeof notification.$inferInsert> = {}) {

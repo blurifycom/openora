@@ -11,7 +11,7 @@ import { player } from '@openora/core/pam/schema/profile';
 import { migrate as migrateProfile } from '@openora/core/pam/migrate/profile';
 import { tag, playerTag } from '@openora/core/pam/schema/tag';
 import { migrate as migrateTag } from '@openora/core/pam/migrate/tag';
-import { mock, adminCaller, testContext } from '../../../testing/mock.js';
+import { mock, makeAdminGuard, testContext } from '../../../testing/mock.js';
 import { createPlayerRouter } from '../router/index.js';
 import { PlayerService } from '../service/player.service.js';
 
@@ -34,16 +34,8 @@ beforeEach(async () => {
   );
 });
 
-function guardAllowing(allowed: ReadonlyArray<`${string}:${string}`>): AdminGuard {
-  return mock<AdminGuard>({
-    assert: vi.fn(async (_ctx: unknown, resource?: string, action?: string) => {
-      if (resource && action && !allowed.includes(`${resource}:${action}`)) {
-        throw new ORPCError('FORBIDDEN', { message: `Missing permission: ${resource}:${action}` });
-      }
-      return adminCaller({ userId: CALLER });
-    }),
-  });
-}
+const guardAllowing = (allow: readonly string[]) =>
+  makeAdminGuard({ allow, caller: { userId: CALLER } });
 
 function build(adminGuard: AdminGuard) {
   const kycStatusWriter = mock<KycStatusWriter>({ setStatus: vi.fn() });

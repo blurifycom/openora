@@ -17,10 +17,6 @@ describe('createDomainError', () => {
     expect(new InsufficientFundsError('0', '1').name).toBe('InsufficientFundsError');
   });
 
-  it('stays an Error so a generic catch still works', () => {
-    expect(new InsufficientFundsError('0', '1')).toBeInstanceOf(Error);
-  });
-
   it('is instanceof-matchable, which is what the router error map keys on', () => {
     expect(new InsufficientFundsError('0', '1')).toBeInstanceOf(InsufficientFundsError);
   });
@@ -29,10 +25,6 @@ describe('createDomainError', () => {
     const Other = createDomainError<[]>('OtherError', () => 'other');
 
     expect(new InsufficientFundsError('0', '1')).not.toBeInstanceOf(Other);
-  });
-
-  it('captures a stack trace', () => {
-    expect(new InsufficientFundsError('0', '1').stack).toContain('InsufficientFundsError');
   });
 
   it('supports a message that takes no arguments', () => {

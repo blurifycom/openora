@@ -1,9 +1,8 @@
 import { describe, it, expect, beforeAll, afterAll, beforeEach } from 'vitest';
 import { randomUUID } from 'node:crypto';
 import { eq, sql } from 'drizzle-orm';
-import type { EventBus } from '@openora/core/server';
 import { createTestDb, type TestDb } from '@openora/core/testing';
-import { mock, makeEvents } from '../../../testing/mock.js';
+import { makeEventBus } from '../../../testing/mock.js';
 import { migrate } from '../migrate.js';
 import { user, session } from '../schema/index.js';
 import { LoginEnforcementService } from '../service/login-enforcement.service.js';
@@ -14,8 +13,8 @@ const HOUR = 3600_000;
 let db: TestDb;
 
 function makeService() {
-  const events = makeEvents();
-  const sessions = new SessionService({ drizzle: db.drizzle, events: mock<EventBus>(events) });
+  const events = makeEventBus();
+  const sessions = new SessionService({ drizzle: db.drizzle, events: events });
   return { svc: new LoginEnforcementService(db.drizzle, sessions), events };
 }
 

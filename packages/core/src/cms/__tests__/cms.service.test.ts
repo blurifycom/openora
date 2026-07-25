@@ -1,9 +1,8 @@
-import { describe, it, expect, vi, beforeAll, afterAll, beforeEach } from 'vitest';
+import { describe, it, expect, beforeAll, afterAll, beforeEach } from 'vitest';
 import { eq, sql } from 'drizzle-orm';
 import { RedisCache } from '@openora/core/server';
-import type { EventBus } from '@openora/core/server';
 import { createTestDb, createTestRedis, type TestDb, type TestRedis } from '@openora/core/testing';
-import { mock } from '../../testing/mock.js';
+import { makeEventBus } from '../../testing/mock.js';
 import { migrate } from '../migrate.js';
 import { page as pageTable, banner as bannerTable } from '../schema/index.js';
 import { CmsService, PageNotFoundError } from '../service/cms.service.js';
@@ -11,15 +10,13 @@ import { CmsService, PageNotFoundError } from '../service/cms.service.js';
 let db: TestDb;
 let redis: TestRedis;
 
-const makeEvents = () => ({ emit: vi.fn(), on: vi.fn() });
-
 function makeService() {
-  const events = makeEvents();
+  const events = makeEventBus();
   const cache = new RedisCache(redis.client);
-  return { svc: new CmsService(db.drizzle, mock<EventBus>(events), cache), events };
+  return { svc: new CmsService(db.drizzle, events, cache), events };
 }
 
-const emittedTopics = (events: ReturnType<typeof makeEvents>) =>
+const emittedTopics = (events: ReturnType<typeof makeEventBus>) =>
   events.emit.mock.calls.map(([topic]) => topic);
 
 async function bannerById(id: string) {

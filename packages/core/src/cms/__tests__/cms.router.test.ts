@@ -1,10 +1,10 @@
-import { describe, it, expect, vi, beforeAll, afterAll, beforeEach } from 'vitest';
+import { describe, it, expect, beforeAll, afterAll, beforeEach } from 'vitest';
 import { sql } from 'drizzle-orm';
 import { call, ORPCError } from '@orpc/server';
 import { RedisCache } from '@openora/core/server';
-import type { AdminGuard, EventBus } from '@openora/core/server';
+import type { AdminGuard } from '@openora/core/server';
 import { createTestDb, createTestRedis, type TestDb, type TestRedis } from '@openora/core/testing';
-import { mock, makeEvents, adminCaller, testContext } from '../../testing/mock.js';
+import { makeEventBus, makeAdminGuard, testContext } from '../../testing/mock.js';
 import { migrate } from '../migrate.js';
 import { page as pageTable, banner as bannerTable } from '../schema/index.js';
 import { createCmsRouter } from '../router/index.js';
@@ -33,25 +33,13 @@ beforeEach(async () => {
 });
 
 function routerWith(adminGuard: AdminGuard) {
-  const service = new CmsService(
-    db.drizzle,
-    mock<EventBus>(makeEvents()),
-    new RedisCache(redis.client),
-  );
+  const service = new CmsService(db.drizzle, makeEventBus(), new RedisCache(redis.client));
   return createCmsRouter(service, adminGuard);
 }
 
-function denyingGuard(): AdminGuard {
-  return mock<AdminGuard>({
-    assert: vi.fn(async () => {
-      throw new ORPCError('FORBIDDEN', { message: 'Missing permission: content' });
-    }),
-  });
-}
+const denyingGuard = () => makeAdminGuard({ allow: [] });
 
-function allowingGuard(): AdminGuard {
-  return mock<AdminGuard>({ assert: vi.fn(async () => adminCaller({ userId: 'caller-1' })) });
-}
+const allowingGuard = () => makeAdminGuard({ caller: { userId: 'caller-1' } });
 
 type Router = ReturnType<typeof createCmsRouter>;
 

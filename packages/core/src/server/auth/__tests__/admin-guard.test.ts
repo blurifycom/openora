@@ -1,10 +1,9 @@
 import { describe, it, expect, vi, beforeAll, afterAll, beforeEach } from 'vitest';
 import { randomUUID } from 'node:crypto';
 import { sql } from 'drizzle-orm';
-import type { EventBus } from '@openora/core/server';
 import type { AdminPermissionResolver } from '@openora/core/contracts';
 import { createTestDb, type TestDb } from '@openora/core/testing';
-import { mock } from '../../../testing/mock.js';
+import { mock, makeEventBus } from '../../../testing/mock.js';
 import { AdminGuard } from '../admin-guard.js';
 import type { SessionResolver } from '../session-resolver.js';
 
@@ -18,12 +17,12 @@ function makeGuard({
   userId,
   grants,
 }: { userId?: string; grants?: { resource: string; action: string }[] } = {}) {
-  const events = { emit: vi.fn(), on: vi.fn() };
+  const events = makeEventBus();
   const sessions = mock<SessionResolver>({ resolveUserId: vi.fn(async () => userId) });
   const permissionResolver = grants
     ? mock<AdminPermissionResolver>({ getGrants: vi.fn(async () => grants) })
     : undefined;
-  const guard = new AdminGuard(db.drizzle, sessions, permissionResolver, mock<EventBus>(events));
+  const guard = new AdminGuard(db.drizzle, sessions, permissionResolver, events);
   return { guard, events };
 }
 

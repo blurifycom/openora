@@ -1,8 +1,4 @@
-export { InProcessRealtimeTransport } from './fakes/realtime-transport.js';
-export {
-  SseClientAuthorizer,
-  type SseClientAuthorizerOptions,
-} from './fakes/realtime-authorizer.js';
+export { InProcessRealtimeTransport, SseClientAuthorizer } from '@openora/core/server';
 export {
   createTestDb,
   createTestRedis,

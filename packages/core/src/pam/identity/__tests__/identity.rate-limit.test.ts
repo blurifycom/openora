@@ -1,9 +1,8 @@
 import { describe, it, expect, vi, beforeAll, afterAll, beforeEach } from 'vitest';
-import type { EventBus } from '@openora/core/server';
 import { RedisRateLimiter } from '@openora/core/server';
 import { createTestDb, createTestRedis, type TestDb, type TestRedis } from '@openora/core/testing';
 import type { EmailTemplateRenderer, RateLimiterAdapter } from '@openora/core/contracts';
-import { mock } from '../../../testing/mock.js';
+import { mock, makeEventBus } from '../../../testing/mock.js';
 import { migrate } from '../migrate.js';
 import { IdentityService, type IdentityServiceDeps } from '../service/identity.service.js';
 
@@ -27,7 +26,7 @@ vi.mock('@openora/core/server', async (importOriginal) => {
   };
 });
 
-const events = mock<EventBus>({ emit: vi.fn(), on: vi.fn() });
+const events = makeEventBus();
 
 let db: TestDb;
 let drizzle: IdentityServiceDeps['drizzle'];

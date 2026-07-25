@@ -2,15 +2,14 @@ import { describe, it, expect, vi, beforeAll, afterAll, beforeEach } from 'vites
 import { randomUUID } from 'node:crypto';
 import { eq } from 'drizzle-orm';
 import { call, ORPCError } from '@orpc/server';
-import type { AdminGuard, EventBus } from '@openora/core/server';
+import type { AdminGuard } from '@openora/core/server';
 import type {
-  AuditWritePort,
   PaymentAdapter,
   PaymentWebhookEvent,
   PaymentWebhookVerifier,
 } from '@openora/core/contracts';
 import { createTestDb, type TestDb } from '@openora/core/testing';
-import { mock, makeEvents, testContext } from '../../testing/mock.js';
+import { mock, makeEventBus, testContext, makeAuditWriter } from '../../testing/mock.js';
 import { migrate } from '../migrate.js';
 import { wallet, walletTransaction, walletDepositAddress } from '../schema/index.js';
 import { createWalletRouter } from '../router/index.js';
@@ -38,14 +37,14 @@ beforeEach(async () => {
 function routerWith(payment: PaymentAdapter, verifier: PaymentWebhookVerifier) {
   const service = new WalletService({
     drizzle: db.drizzle,
-    events: mock<EventBus>(makeEvents()),
+    events: makeEventBus(),
     payment,
-    audit: mock<AuditWritePort>({ record: vi.fn() }),
+    audit: makeAuditWriter(),
   });
   return createWalletRouter(
     service,
     mock<AdminGuard>({ assert: vi.fn() }),
-    mock<AuditWritePort>({ record: vi.fn() }),
+    makeAuditWriter(),
     payment,
     verifier,
   );

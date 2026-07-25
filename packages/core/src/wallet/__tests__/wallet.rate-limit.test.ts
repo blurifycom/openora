@@ -1,16 +1,15 @@
 import { describe, it, expect, vi, beforeAll, afterAll, beforeEach } from 'vitest';
 import { randomUUID } from 'node:crypto';
 import { sql } from 'drizzle-orm';
-import type { EventBus } from '@openora/core/server';
 import { RedisRateLimiter } from '@openora/core/server';
 import { createTestDb, createTestRedis, type TestDb, type TestRedis } from '@openora/core/testing';
 import type { PaymentAdapter, AuditWritePort } from '@openora/core/contracts';
-import { mock, NO_CLIENT_META } from '../../testing/mock.js';
+import { mock, NO_CLIENT_META, makeEventBus } from '../../testing/mock.js';
 import { migrate } from '../migrate.js';
 import { wallet, walletTransaction } from '../schema/index.js';
 import { WalletService } from '../service/wallet.service.js';
 
-const events = mock<EventBus>({ emit: vi.fn(), on: vi.fn() });
+const events = makeEventBus();
 const payment = mock<PaymentAdapter>({
   processDeposit: vi.fn(async () => ({ externalId: randomUUID(), status: 'completed' as const })),
 });

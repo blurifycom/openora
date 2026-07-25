@@ -1,14 +1,16 @@
 import { describe, it, expect, vi, beforeAll, afterAll, beforeEach } from 'vitest';
 import { eq } from 'drizzle-orm';
 import { call, ORPCError } from '@orpc/server';
-import type { AdminGuard, EventBus } from '@openora/core/server';
-import type {
-  AuditWritePort,
-  PaymentAdapter,
-  PaymentWebhookVerifier,
-} from '@openora/core/contracts';
+import type { AdminGuard } from '@openora/core/server';
+import type { PaymentAdapter, PaymentWebhookVerifier } from '@openora/core/contracts';
 import { createTestDb, type TestDb } from '@openora/core/testing';
-import { mock, makeEvents, adminCaller, testContext } from '../../testing/mock.js';
+import {
+  mock,
+  makeEventBus,
+  testContext,
+  makeAuditWriter,
+  makeAdminGuard,
+} from '../../testing/mock.js';
 import { migrate } from '../migrate.js';
 import { autoWithdrawalRule } from '../schema/index.js';
 import { createWalletRouter } from '../router/index.js';
@@ -32,26 +34,19 @@ beforeEach(async () => {
   await db.drizzle.db.delete(autoWithdrawalRule);
 });
 
-function allowingGuard(): AdminGuard {
-  return mock<AdminGuard>({ assert: vi.fn(async () => adminCaller({ userId: CALLER_ID })) });
-}
+const allowingGuard = () => makeAdminGuard({ caller: { userId: CALLER_ID } });
 
-function autoRuleDenyingGuard(): AdminGuard {
-  return mock<AdminGuard>({
-    assert: vi.fn(async (_ctx: unknown, resource?: string, action?: string) => {
-      if (resource === 'withdrawal' && action === 'auto-rule') {
-        throw new ORPCError('FORBIDDEN', { message: 'Missing permission: withdrawal:auto-rule' });
-      }
-      return adminCaller({ userId: CALLER_ID, role: 'support' });
-    }),
+const autoRuleDenyingGuard = () =>
+  makeAdminGuard({
+    deny: ['withdrawal:auto-rule'],
+    caller: { userId: CALLER_ID, role: 'support' },
   });
-}
 
 function routerWith(adminGuard: AdminGuard) {
-  const audit = mock<AuditWritePort>({ record: vi.fn() });
+  const audit = makeAuditWriter();
   const service = new WalletService({
     drizzle: db.drizzle,
-    events: mock<EventBus>(makeEvents()),
+    events: makeEventBus(),
     payment: mock<PaymentAdapter>({}),
     audit,
   });

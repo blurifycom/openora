@@ -1,7 +1,6 @@
 import { describe, it, expect, vi, beforeAll, afterAll, beforeEach } from 'vitest';
 import { randomUUID } from 'node:crypto';
 import { eq, sql } from 'drizzle-orm';
-import type { EventBus } from '@openora/core/server';
 import type {
   AdminPlayerSummary,
   AdminUserDirectory,
@@ -9,7 +8,7 @@ import type {
   SendEmailPort,
 } from '@openora/core/contracts';
 import { createTestDb, type TestDb } from '@openora/core/testing';
-import { mock } from '../../testing/mock.js';
+import { mock, makeEventBus } from '../../testing/mock.js';
 import { migrate } from '../migrate.js';
 import { userLimit, rgExclusion } from '../schema/index.js';
 import {
@@ -36,14 +35,14 @@ function makeNotifier(email = 'player@example.com'): Notifier {
 }
 
 function makeService(notifier?: Notifier) {
-  const events = { emit: vi.fn(), on: vi.fn() };
+  const events = makeEventBus();
   const enforcement = mock<LoginEnforcementPort>({
     block: vi.fn(async () => undefined),
     unblock: vi.fn(async () => undefined),
   });
   const svc = new RgService({
     drizzle: db.drizzle,
-    events: mock<EventBus>(events),
+    events: events,
     loginEnforcement: enforcement,
     email: notifier?.email ?? null,
     directory: notifier?.directory ?? null,
