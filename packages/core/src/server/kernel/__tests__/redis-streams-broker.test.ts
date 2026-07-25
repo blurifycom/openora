@@ -70,7 +70,7 @@ describe('RedisStreamsBroker', () => {
     broker.subscribe(topic, (e) => {
       seen2.push(e);
     });
-    await waitForConsumerGroup(redis.client, streamOf(topic), 'wallet-svc');
+    await waitForConsumerGroup(redis.client, { stream: streamOf(topic), group: 'wallet-svc' });
 
     const envelope = makeEnvelope(topic);
     await broker.publish(envelope);
@@ -89,7 +89,7 @@ describe('RedisStreamsBroker', () => {
     const broker = makeBroker('wallet-svc');
     const topic = uniqueTopic();
     broker.subscribe(topic, () => undefined);
-    await waitForConsumerGroup(redis.client, streamOf(topic), 'wallet-svc');
+    await waitForConsumerGroup(redis.client, { stream: streamOf(topic), group: 'wallet-svc' });
 
     const groups = await redis.client.xInfoGroups(streamOf(topic));
     expect(groups.map((g) => g.name)).toEqual(['wallet-svc']);
@@ -110,8 +110,8 @@ describe('RedisStreamsBroker', () => {
       },
       { consumerGroup: 'analytics' },
     );
-    await waitForConsumerGroup(redis.client, streamOf(topic), 'wallet-svc');
-    await waitForConsumerGroup(redis.client, streamOf(topic), 'analytics');
+    await waitForConsumerGroup(redis.client, { stream: streamOf(topic), group: 'wallet-svc' });
+    await waitForConsumerGroup(redis.client, { stream: streamOf(topic), group: 'analytics' });
 
     const envelope = makeEnvelope(topic);
     await broker.publish(envelope);
@@ -135,7 +135,7 @@ describe('RedisStreamsBroker', () => {
     broker.subscribe(topic, (e) => {
       seen2.push(e);
     });
-    await waitForConsumerGroup(redis.client, streamOf(topic), 'svc');
+    await waitForConsumerGroup(redis.client, { stream: streamOf(topic), group: 'svc' });
 
     unsubscribe1();
 
@@ -153,7 +153,7 @@ describe('RedisStreamsBroker', () => {
     broker.subscribe(topic, (e) => {
       seen.push(e);
     });
-    await waitForConsumerGroup(redis.client, streamOf(topic), 'svc');
+    await waitForConsumerGroup(redis.client, { stream: streamOf(topic), group: 'svc' });
 
     await broker.close();
     await broker.publish(makeEnvelope(topic));
@@ -173,7 +173,7 @@ describe('RedisStreamsBroker', () => {
     makeBroker('svc').subscribe(topic, (e) => {
       seenB.push(e);
     });
-    await waitForConsumerGroup(redis.client, streamOf(topic), 'svc');
+    await waitForConsumerGroup(redis.client, { stream: streamOf(topic), group: 'svc' });
 
     const envelope = makeEnvelope(topic);
     await brokers[0]!.publish(envelope);
@@ -194,8 +194,8 @@ describe('RedisStreamsBroker', () => {
     makeBroker('svc-b').subscribe(topic, (e) => {
       seenB.push(e);
     });
-    await waitForConsumerGroup(redis.client, streamOf(topic), 'svc-a');
-    await waitForConsumerGroup(redis.client, streamOf(topic), 'svc-b');
+    await waitForConsumerGroup(redis.client, { stream: streamOf(topic), group: 'svc-a' });
+    await waitForConsumerGroup(redis.client, { stream: streamOf(topic), group: 'svc-b' });
 
     const envelope = makeEnvelope(topic);
     await brokers[0]!.publish(envelope);

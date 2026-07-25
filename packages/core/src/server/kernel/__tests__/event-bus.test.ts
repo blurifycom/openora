@@ -49,7 +49,10 @@ describe('createEventBus over Redis Streams', () => {
     bus.on('wallet.deposit.completed', (p) => {
       received.push(p);
     });
-    await waitForConsumerGroup(redis.client, streamOf('wallet.deposit.completed'), serviceName);
+    await waitForConsumerGroup(redis.client, {
+      stream: streamOf('wallet.deposit.completed'),
+      group: serviceName,
+    });
 
     bus.emit('wallet.deposit.completed', {
       userId: 'u1',
@@ -73,7 +76,10 @@ describe('createEventBus over Redis Streams', () => {
     bus.on('wallet.deposit.completed', (_payload, envelope) => {
       envelopes.push(envelope);
     });
-    await waitForConsumerGroup(redis.client, streamOf('wallet.deposit.completed'), serviceName);
+    await waitForConsumerGroup(redis.client, {
+      stream: streamOf('wallet.deposit.completed'),
+      group: serviceName,
+    });
 
     bus.emit('wallet.deposit.completed', {
       userId: 'u1',
@@ -99,7 +105,10 @@ describe('createEventBus over Redis Streams', () => {
         ids.push(env.eventId);
       }
     });
-    await waitForConsumerGroup(redis.client, streamOf('wallet.deposit.completed'), serviceName);
+    await waitForConsumerGroup(redis.client, {
+      stream: streamOf('wallet.deposit.completed'),
+      group: serviceName,
+    });
 
     bus.emit('wallet.deposit.completed', {
       userId: 'u1',
@@ -129,7 +138,10 @@ describe('createEventBus over Redis Streams', () => {
     bus.on('identity.user.registered', () => {
       order.push('second');
     });
-    await waitForConsumerGroup(redis.client, streamOf('identity.user.registered'), serviceName);
+    await waitForConsumerGroup(redis.client, {
+      stream: streamOf('identity.user.registered'),
+      group: serviceName,
+    });
 
     bus.emit('identity.user.registered', { userId: 'u1' });
 
@@ -147,7 +159,10 @@ describe('createEventBus over Redis Streams', () => {
     bus.on('identity.user.registered', (p) => {
       received.push(p);
     });
-    await waitForConsumerGroup(redis.client, streamOf('identity.user.registered'), serviceName);
+    await waitForConsumerGroup(redis.client, {
+      stream: streamOf('identity.user.registered'),
+      group: serviceName,
+    });
 
     bus.emit('identity.user.registered', { userId: 123 } as never);
 

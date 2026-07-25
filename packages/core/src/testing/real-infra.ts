@@ -3,12 +3,6 @@ import { Pool } from 'pg';
 import { createClient } from 'redis';
 import { DrizzleService } from '@openora/core/server';
 
-// Real-infra test harness: ephemeral Postgres databases + per-worker-isolated Redis,
-// for the kernel adapter tests that must exercise the actual backend (Redis Streams
-// consumer groups, BullMQ timing, SQL constraints) rather than an in-process double.
-// A measured benchmark put the cost at ~36ms/test + ~200ms/file for createdb+migrate,
-// so these run in the normal unit suite. See src/server/kernel/__tests__.
-
 const INFRA_HINT = 'real-infra tests need postgres+redis - run `docker compose up -d`';
 
 const ADMIN_DATABASE_URL =
@@ -16,8 +10,8 @@ const ADMIN_DATABASE_URL =
   'postgresql://postgres:postgres@localhost:5432/postgres';
 const REDIS_URL = process.env['TEST_REDIS_URL'] ?? 'redis://localhost:6379';
 
-// Per-vitest-worker logical Redis DB (0-15) so parallel workers never share keys.
-const REDIS_DATABASE = Number(process.env['VITEST_POOL_ID'] ?? 1) % 16;
+const REDIS_LOGICAL_DATABASE_COUNT = 16;
+const REDIS_DATABASE = Number(process.env['VITEST_POOL_ID'] ?? 1) % REDIS_LOGICAL_DATABASE_COUNT;
 
 function withRedisDatabase(baseUrl: string, database: number): string {
   const url = new URL(baseUrl);
@@ -41,9 +35,7 @@ export function redisUrlForWorker(): string {
  */
 export async function waitForConsumerGroup(
   client: ReturnType<typeof createClient>,
-  stream: string,
-  group: string,
-  timeoutMs = 3000,
+  { stream, group, timeoutMs = 3000 }: { stream: string; group: string; timeoutMs?: number },
 ): Promise<void> {
   const deadline = Date.now() + timeoutMs;
   for (;;) {
@@ -88,6 +80,9 @@ export type TestDb = {
  * Create a throwaway `test_<random>` database, apply the given per-module migrations
  * against it, and return a `DrizzleService` bound to it. `drop()` disposes the pool
  * and drops the database with FORCE (terminating any lingering backends).
+ *
+ * `DrizzleService` reads `DATABASE_URL` in its constructor, so this points the env at
+ * the ephemeral url just before constructing it - safe because a test file owns one db.
  */
 export async function createTestDb(migrations: Migration[]): Promise<TestDb> {
   const database = `test_${randomUUID().replaceAll('-', '')}`;
@@ -107,9 +102,6 @@ export async function createTestDb(migrations: Migration[]): Promise<TestDb> {
     await migrate(url);
   }
 
-  // DrizzleService reads DATABASE_URL in its constructor; a test file owns one db, so
-  // pointing the env at the ephemeral url just before construction is safe and matches
-  // the composition root's contract (no second construction path to maintain).
   process.env['DATABASE_URL'] = url;
   const drizzle = new DrizzleService();
 
@@ -133,11 +125,10 @@ export type TestRedis = {
 /**
  * Connect a node-redis client selected to a per-worker logical DB (VITEST_POOL_ID % 16),
  * so parallel vitest workers never collide on keys. `flush()` is a `flushDb` (safe - it
- * only clears this worker's logical DB), for tearing down between tests.
+ * only clears this worker's logical DB), for tearing down between tests. `reconnectStrategy`
+ * is off: node-redis otherwise retries a down server forever and hangs the run.
  */
 export async function createTestRedis(): Promise<TestRedis> {
-  // reconnectStrategy: false so a down Redis rejects connect() immediately with an
-  // actionable error, instead of retrying forever and hanging the test run.
   const client = createClient({
     url: REDIS_URL,
     database: REDIS_DATABASE,
