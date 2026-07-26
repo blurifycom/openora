@@ -9,7 +9,7 @@ import type { PlopTypes } from '@turbo/gen';
 // <type> ...`; AI agents call the same via the MCP `scaffold-*` tools. See the
 // "How to add ..." sections in AGENTS.md.
 //
-//   pnpm gen module <group> <name>   - business module (schema/service/router/plugin)
+//   pnpm gen module <domain> <name>  - business module (schema/service/router/plugin)
 //   pnpm gen route <module> <M> <p>  - oRPC procedure + contract entry
 //   pnpm gen plugin <name>           - overlay plugin
 //   pnpm gen adapter <name> <token>  - overlay that rebinds a vendor adapter token
@@ -30,7 +30,6 @@ const pkgDir = dirname(require.resolve('@openora/core/package.json'));
 const tpl = (name: string): string => join(pkgDir, 'turbo-generators', 'src', 'templates', name);
 
 const kebabRe = /^[a-z][a-z0-9-]*$/;
-const MODULE_GROUPS = ['player', 'backoffice', 'platform'] as const;
 
 // Plop hands actions an open `Answers` bag; read fields through these coercers.
 type Answers = Record<string, unknown>;
@@ -46,8 +45,9 @@ const toCamel = (v: string): string =>
   toKebab(v).replace(/-([a-z0-9])/g, (_, c: string) => c.toUpperCase());
 
 const root = (): string => process.cwd();
-// OSS monorepo has packages/addons; a consumer repo only has overlays.
-const isOssRepo = (): boolean => existsSync(join(root(), 'packages', 'addons'));
+// The OSS monorepo owns the core source tree; a consumer repo only has overlays.
+const coreSrc = (): string => join(root(), 'packages', 'core', 'src');
+const isOssRepo = (): boolean => existsSync(join(coreSrc(), 'contracts'));
 // extensions.config.ts lives at the repo root (both OSS and consumer repos).
 const extensionsConfigPath = (): string => join(root(), 'extensions.config.ts');
 const ossOnly = (gen: string): void => {
@@ -83,29 +83,8 @@ function registerExtension(id: string, importPath: string): string {
   return `registered '${id}' in extensions.config.ts`;
 }
 
-function wireContractIndex(name: string): string {
-  const indexFile = join(root(), 'packages', 'contracts', 'orpc-contract', 'src', 'index.ts');
-  if (!existsSync(indexFile)) {
-    return 'no orpc-contract index (skipped)';
-  }
-  let src = readFileSync(indexFile, 'utf8');
-  if (src.includes(`from './${name}.js'`)) {
-    return `contract index already wires '${name}'`;
-  }
-  const camel = toCamel(name);
-  const contractName = `${camel}Contract`;
-  src = src.replace(/(^export\s)/m, `import { ${contractName} } from './${name}.js';\n\n$1`);
-  src = src.replace(
-    /(^export const contract)/m,
-    `export { ${contractName} } from './${name}.js';\n\n$1`,
-  );
-  src = src.replace(/^(\}\);)/m, `  ${camel}: ${contractName},\n$1`);
-  writeFileSync(indexFile, src);
-  return `wired '${camel}' into orpc-contract index`;
-}
-
 function appendEventSchema(topic: string): string {
-  const file = join(root(), 'packages', 'contracts', 'shared-schemas', 'src', 'events.ts');
+  const file = join(coreSrc(), 'contracts', 'schemas', 'events.ts');
   if (!existsSync(file)) {
     return 'no events.ts (skipped)';
   }
@@ -119,11 +98,155 @@ function appendEventSchema(topic: string): string {
   return `added '${topic}' to domainEventSchemas`;
 }
 
-function appendRoute(moduleName: string, method: string, routePath: string): string {
+const ENGINE_ZONES = new Set(['contracts', 'server', 'react', 'common', 'testing', 'scripts']);
+
+function listDomains(): string[] {
+  const src = coreSrc();
+  if (!existsSync(src)) {
+    return [];
+  }
+  return readdirSync(src)
+    .filter((name) => !ENGINE_ZONES.has(name))
+    .filter((name) => existsSync(join(src, name, 'index.ts')))
+    .sort();
+}
+
+function moduleDir(domain: string, name: string): string {
+  return join(coreSrc(), domain, name);
+}
+
+/**
+ * Appends a `export * as <slice> from ...` (or plugin re-export) line to a domain
+ * barrel, creating the barrel when the domain is brand new.
+ */
+function appendToBarrel(file: string, line: string, header: string): void {
+  if (!existsSync(file)) {
+    writeFileSync(file, `${header}\n${line}\n`);
+    return;
+  }
+  const src = readFileSync(file, 'utf8');
+  if (src.includes(line)) {
+    return;
+  }
+  writeFileSync(file, `${src.replace(/\n*$/, '\n')}${line}\n`);
+}
+
+function wireDomainBarrels(domain: string, name: string): string {
+  const dir = join(coreSrc(), domain);
+  const camel = toCamel(name);
+  const contractLine = `export * as ${camel} from './${name}/contract/index.js';`;
+  appendToBarrel(
+    join(dir, 'index.ts'),
+    contractLine,
+    `// Public consumer surface of the ${domain} domain - isomorphic contract barrel only.`,
+  );
+  appendToBarrel(
+    join(dir, 'contracts.ts'),
+    contractLine,
+    `// Contract slices of the ${domain} domain.`,
+  );
+  appendToBarrel(
+    join(dir, 'server.ts'),
+    `export { default as ${camel}Plugin } from './${name}/plugin.js';`,
+    `// Server surface of the ${domain} domain - plugin entries for the composition root.`,
+  );
+  return `wired '${name}' into the ${domain} domain barrels`;
+}
+
+const SUBPATH_TARGETS = [
+  {
+    subpath: (d: string, n: string) => `./${d}/contracts/${n}`,
+    dist: (d: string, n: string) => `./dist/${d}/${n}/contract/index`,
+  },
+  {
+    subpath: (d: string, n: string) => `./${d}/schema/${n}`,
+    dist: (d: string, n: string) => `./dist/${d}/${n}/schema/index`,
+  },
+  {
+    subpath: (d: string, n: string) => `./${d}/plugins/${n}`,
+    dist: (d: string, n: string) => `./dist/${d}/${n}/plugin`,
+  },
+  {
+    subpath: (d: string, n: string) => `./${d}/migrate/${n}`,
+    dist: (d: string, n: string) => `./dist/${d}/${n}/migrate`,
+  },
+] as const;
+
+const DOMAIN_TARGETS = [
+  { suffix: '', file: 'index' },
+  { suffix: '/contracts', file: 'contracts' },
+  { suffix: '/server', file: 'server' },
+] as const;
+
+/**
+ * Adds the module's subpaths to the @openora/core exports map - the package's
+ * public surface. `pnpm regen` mirrors them into the tsconfig paths.
+ */
+function wireCoreExports(domain: string, name: string): string {
+  const pkgFile = join(root(), 'packages', 'core', 'package.json');
+  const pkg = JSON.parse(readFileSync(pkgFile, 'utf8')) as {
+    exports: Record<string, Record<string, string>>;
+  };
+  const entry = (dist: string) => ({
+    types: `${dist}.d.ts`,
+    import: `${dist}.js`,
+    default: `${dist}.js`,
+  });
+  const added: string[] = [];
+  const put = (subpath: string, dist: string) => {
+    if (pkg.exports[subpath]) {
+      return;
+    }
+    pkg.exports[subpath] = entry(dist);
+    added.push(subpath);
+  };
+  for (const { suffix, file } of DOMAIN_TARGETS) {
+    put(`./${domain}${suffix}`, `./dist/${domain}/${file}`);
+  }
+  for (const { subpath, dist } of SUBPATH_TARGETS) {
+    put(subpath(domain, name), dist(domain, name));
+  }
+  writeFileSync(pkgFile, `${JSON.stringify(pkg, null, 2)}\n`);
+  return added.length > 0
+    ? `added ${added.length} subpath(s) to @openora/core exports (${added.join(', ')})`
+    : 'no new @openora/core exports needed';
+}
+
+/**
+ * Registers the module's contract slice in the composition root so its routes
+ * reach the emitted OpenAPI spec and the typed client.
+ */
+function wireBuildContract(domain: string, name: string): string {
+  const file = join(root(), 'tools', 'gen', 'build-contract.ts');
+  if (!existsSync(file)) {
+    return 'no tools/gen/build-contract.ts (skipped)';
+  }
+  const camel = toCamel(name);
+  const contractName = `${camel}Contract`;
+  let src = readFileSync(file, 'utf8');
+  if (src.includes(contractName)) {
+    return `build-contract.ts already composes '${camel}'`;
+  }
+  const importLine = `import { ${contractName} } from '@openora/core/${domain}/contracts/${name}';`;
+  src = src.replace(/(\n\n\/\/ oxlint-disable-next-line)/, `\n${importLine}$1`);
+  src = src.replace(
+    /(const SLICES: Record<string, AnyContract> = \{)/,
+    `$1\n  ${camel}: ${contractName},`,
+  );
+  writeFileSync(file, src);
+  return `composed '${camel}' in tools/gen/build-contract.ts`;
+}
+
+function appendRoute(
+  domain: string,
+  moduleName: string,
+  method: string,
+  routePath: string,
+): string {
   const name = toKebab(moduleName);
-  const moduleDir = join(root(), 'packages', 'addons', name);
-  if (!existsSync(moduleDir)) {
-    throw new Error(`add-on '${name}' not found under packages/addons/`);
+  const dir = moduleDir(toKebab(domain), name);
+  if (!existsSync(dir)) {
+    throw new Error(`module '${name}' not found under packages/core/src/${toKebab(domain)}/`);
   }
   const proc = routePath
     .replace(/^\//, '')
@@ -132,7 +255,7 @@ function appendRoute(moduleName: string, method: string, routePath: string): str
     .replace(/\//g, '.')
     .replace(/[^a-zA-Z0-9.]/g, '');
 
-  const contractFile = join(root(), 'packages', 'contracts', 'orpc-contract', 'src', `${name}.ts`);
+  const contractFile = join(dir, 'contract', 'index.ts');
   if (existsSync(contractFile)) {
     let c = readFileSync(contractFile, 'utf8');
     const camel = toCamel(name);
@@ -143,7 +266,7 @@ function appendRoute(moduleName: string, method: string, routePath: string): str
     }
   }
 
-  const routerFile = join(moduleDir, 'src', 'router', 'index.ts');
+  const routerFile = join(dir, 'router', 'index.ts');
   let r = readFileSync(routerFile, 'utf8');
   if (!r.includes(`${proc}: os.${proc}`)) {
     const stub = `\n    ${proc}: os.${proc}.handler(() => ({})),`;
@@ -155,81 +278,49 @@ function appendRoute(moduleName: string, method: string, routePath: string): str
 
 export default function generator(plop: PlopTypes.NodePlopAPI): void {
   plop.setGenerator('module', {
-    description: 'New business module - a standalone @openora-addons/<name> core add-on package',
+    description: 'New business module under packages/core/src/<domain>/<name>',
     prompts: [
       {
-        type: 'list',
-        name: 'group',
-        // The group no longer maps to a directory (every add-on lives flat under
-        // packages/addons/<name>). It is kept purely as descriptive metadata in the
-        // generated AGENTS.md / scaffold message.
-        message: 'Surface this add-on serves (metadata only):',
-        choices: [...MODULE_GROUPS],
+        type: 'input',
+        name: 'domain',
+        message: `Owning domain (existing: ${listDomains().join(', ')} - or a new kebab-case name):`,
+        validate: (v: string) => (kebabRe.test(v) ? true : 'use kebab-case'),
       },
       {
         type: 'input',
         name: 'name',
-        message: 'Add-on name (kebab-case):',
+        message: 'Module name (kebab-case):',
         validate: (v: string) => (kebabRe.test(v) ? true : 'use kebab-case'),
       },
     ],
     actions: (data?: Answers): PlopTypes.ActionType[] => {
       ossOnly('module');
       const a = data ?? {};
-      const base = 'packages/addons/{{kebabCase name}}';
+      const domain = toKebab(s(a, 'domain'));
+      const name = toKebab(s(a, 'name'));
+      a['domain'] = domain;
+      const base = `packages/core/src/${domain}/{{kebabCase name}}`;
+      const file = (rel: string, template: string): PlopTypes.ActionType => ({
+        type: 'add',
+        path: `${base}/${rel}`,
+        templateFile: tpl(template),
+      });
       return [
-        {
-          type: 'add',
-          path: `${base}/package.json`,
-          templateFile: tpl('module/package.json.hbs'),
-        },
-        {
-          type: 'add',
-          path: `${base}/tsconfig.json`,
-          templateFile: tpl('module/tsconfig.json.hbs'),
-        },
-        {
-          type: 'add',
-          path: `${base}/src/schema/index.ts`,
-          templateFile: tpl('module/schema.hbs'),
-        },
-        {
-          type: 'add',
-          path: `${base}/src/service/{{kebabCase name}}.service.ts`,
-          templateFile: tpl('module/service.hbs'),
-        },
-        {
-          type: 'add',
-          path: `${base}/src/router/index.ts`,
-          templateFile: tpl('module/router.hbs'),
-        },
-        { type: 'add', path: `${base}/src/plugin.ts`, templateFile: tpl('module/plugin.hbs') },
-        { type: 'add', path: `${base}/src/index.ts`, templateFile: tpl('module/index.hbs') },
-        {
-          type: 'add',
-          path: `${base}/src/migrate.ts`,
-          templateFile: tpl('module/migrate.hbs'),
-        },
-        {
-          type: 'add',
-          path: `${base}/drizzle.config.ts`,
-          templateFile: tpl('module/drizzle.config.hbs'),
-        },
-        { type: 'add', path: `${base}/AGENTS.md`, templateFile: tpl('module/agents.hbs') },
-        {
-          type: 'add',
-          path: 'packages/contracts/orpc-contract/src/{{kebabCase name}}.ts',
-          templateFile: tpl('contract.hbs'),
-        },
-        // Core add-on: no `kind`, always loaded. Path points at the compiled plugin.
+        file('contract/index.ts', 'contract.hbs'),
+        file('schema/index.ts', 'module/schema.hbs'),
+        file('service/{{kebabCase name}}.service.ts', 'module/service.hbs'),
+        file('router/index.ts', 'module/router.hbs'),
+        file('plugin.ts', 'module/plugin.hbs'),
+        file('index.ts', 'module/index.hbs'),
+        file('migrate.ts', 'module/migrate.hbs'),
+        file('drizzle.config.ts', 'module/drizzle.config.hbs'),
+        file('AGENTS.md', 'module/agents.hbs'),
+        () => wireDomainBarrels(domain, name),
+        () => wireCoreExports(domain, name),
+        () => wireBuildContract(domain, name),
+        () => registerExtension(name, `./packages/core/dist/${domain}/${name}/plugin.js`),
         () =>
-          registerExtension(
-            toKebab(s(a, 'name')),
-            `./packages/addons/${toKebab(s(a, 'name'))}/dist/plugin.js`,
-          ),
-        () => wireContractIndex(toKebab(s(a, 'name'))),
-        () =>
-          `next: pnpm install (link the new package) && pnpm -F @openora-addons/${toKebab(s(a, 'name'))} generate (its own migration history) && pnpm regen && pnpm verify`,
+          `next: pnpm -F @openora/core generate (this module's migration history) && pnpm regen && pnpm verify`,
       ];
     },
   });
@@ -237,6 +328,12 @@ export default function generator(plop: PlopTypes.NodePlopAPI): void {
   plop.setGenerator('route', {
     description: 'Add an oRPC procedure (contract entry + router handler) to a module',
     prompts: [
+      {
+        type: 'input',
+        name: 'domain',
+        message: `Owning domain (${listDomains().join(', ')}):`,
+        validate: (v: string) => (v ? true : 'required'),
+      },
       {
         type: 'input',
         name: 'module',
@@ -259,7 +356,7 @@ export default function generator(plop: PlopTypes.NodePlopAPI): void {
     actions: (data?: Answers): PlopTypes.ActionType[] => {
       ossOnly('route');
       const a = data ?? {};
-      return [() => appendRoute(s(a, 'module'), s(a, 'method'), s(a, 'path'))];
+      return [() => appendRoute(s(a, 'domain'), s(a, 'module'), s(a, 'method'), s(a, 'path'))];
     },
   });
 
@@ -341,7 +438,7 @@ export default function generator(plop: PlopTypes.NodePlopAPI): void {
       return [
         {
           type: 'add',
-          path: 'packages/contracts/shared-schemas/src/config/{{kebabCase name}}.ts',
+          path: 'packages/core/src/contracts/schemas/config/{{kebabCase name}}.ts',
           templateFile: tpl('config.hbs'),
         },
       ];
@@ -349,7 +446,7 @@ export default function generator(plop: PlopTypes.NodePlopAPI): void {
   });
 
   plop.setGenerator('event', {
-    description: 'Add a domain event payload to the shared-schemas catalog',
+    description: 'Add a domain event payload to the core contracts catalog',
     prompts: [
       {
         type: 'input',

@@ -21,11 +21,10 @@ import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const repoRoot = join(dirname(fileURLToPath(import.meta.url)), '../..');
-const addonsRoot = join(repoRoot, 'packages', 'addons');
 
 const read = (p: string): string => (existsSync(p) ? readFileSync(p, 'utf8') : '');
 
-type ModuleSrc = { id: string; srcDir: string };
+type ModuleSrc = { id: string; domain: string; srcDir: string };
 function moduleSrcDirs(): ModuleSrc[] {
   const out: ModuleSrc[] = [];
   const hasPlugin = (srcDir: string): boolean => existsSync(join(srcDir, 'plugin.ts'));
@@ -36,14 +35,6 @@ function moduleSrcDirs(): ModuleSrc[] {
       return false;
     }
   };
-  if (existsSync(addonsRoot)) {
-    for (const name of readdirSync(addonsRoot)) {
-      const srcDir = join(addonsRoot, name, 'src');
-      if (isDir(join(addonsRoot, name)) && hasPlugin(srcDir)) {
-        out.push({ id: name, srcDir });
-      }
-    }
-  }
   // Domains fold into @openora/core as subpaths. See ADR-0024/0025.
   const coreSrc = join(repoRoot, 'packages', 'core', 'src');
   const engineDirs = new Set(['contracts', 'server', 'react']);
@@ -54,12 +45,12 @@ function moduleSrcDirs(): ModuleSrc[] {
         continue;
       }
       if (hasPlugin(dsrc)) {
-        out.push({ id: d, srcDir: dsrc }); // single-member domain (incl. compliance)
+        out.push({ id: d, domain: d, srcDir: dsrc }); // single-member domain (incl. compliance)
       } else {
         for (const member of readdirSync(dsrc)) {
           const msrc = join(dsrc, member);
           if (isDir(msrc) && hasPlugin(msrc)) {
-            out.push({ id: member, srcDir: msrc });
+            out.push({ id: member, domain: d, srcDir: msrc });
           }
         }
       }
@@ -94,28 +85,16 @@ function walk(dir: string, ext: string, acc: string[] = []): string[] {
 
 type ModuleInfo = { id: string; group: string; tables: string[]; routes: string[] };
 
-function readAddonKinds(): Map<string, string> {
-  const src = read(join(repoRoot, 'extensions.config.ts'));
-  const out = new Map<string, string>();
-  for (const m of src.matchAll(/\{[^}]*id:\s*'([^']+)'[^}]*\}/g)) {
-    const entry = m[0] ?? '';
-    const id = m[1] ?? '';
-    out.set(id, /kind:\s*'addon'/.test(entry) ? 'addon' : 'core');
-  }
-  return out;
-}
-
 function collectModules(): ModuleInfo[] {
   const out: ModuleInfo[] = [];
-  const kinds = readAddonKinds();
-  for (const { id, srcDir } of moduleSrcDirs()) {
+  for (const { id, domain, srcDir } of moduleSrcDirs()) {
     const schema = read(join(srcDir, 'schema', 'index.ts'));
     const router = read(join(srcDir, 'router', 'index.ts'));
     const tables = [...schema.matchAll(/pgTable\(\s*'([^']+)'/g)].map((m) => m[1] ?? '').sort();
     const routes = [...router.matchAll(/^\s{2,}(\w+):\s*os\b/gm)]
       .map((m) => `${id}.${m[1]}`)
       .sort();
-    out.push({ id, group: kinds.get(id) ?? 'core', tables, routes });
+    out.push({ id, group: domain, tables, routes });
   }
   return out;
 }
@@ -130,7 +109,7 @@ type AdapterInfo = {
 
 function collectAdapters(): AdapterInfo[] {
   const dir = join(repoRoot, 'packages', 'core', 'src', 'contracts', 'adapters');
-  // Scan add-on packages plus the engine app factory, so platform-level default
+  // Scan every module plus the engine app factory, so platform-level default
   // bindings (eg the in-process MESSAGE_BROKER seeded in create-app) count as wired.
   const moduleFiles = [
     ...moduleSrcDirs().flatMap(({ srcDir }) => walk(srcDir, '.ts')),
@@ -208,7 +187,7 @@ function collectSlots(): Array<{ name: string; description: string }> {
   return out.sort((a, b) => a.name.localeCompare(b.name));
 }
 
-// Each add-on owns its route contract under src/contract, so the schema index spans both the cross-cutting contracts packages and every add-on contract dir. See ADR-0021.
+// Each module owns its route contract under contract/, so the schema index spans both the cross-cutting core contracts zone and every module contract dir. See ADR-0021.
 function collectSchemas(): Array<{ name: string; file: string }> {
   const out: Array<{ name: string; file: string }> = [];
   const roots = [join(repoRoot, 'packages', 'core', 'src', 'contracts')];

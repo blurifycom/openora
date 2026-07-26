@@ -28,14 +28,14 @@ If the module is listed, use `describe-module <name>` to understand its current 
 ## Step 3: Scaffold the module
 
 ```
-/scaffold-module <name>
+/scaffold-module <domain> <name>
 ```
 
-This creates `packages/addons/<name>/` (a new add-on package) with all required files and registers it in `extensions.config.ts`.
+This creates `packages/core/src/<domain>/<name>/` with all required files, wires the domain barrels + `@openora/core` exports + the contract slice, and registers it in `extensions.config.ts`.
 
 ## Step 4: Define the Drizzle tables
 
-Edit `packages/addons/<name>/src/schema/index.ts` (core modules: `packages/core/src/<domain>/<module>/schema/index.ts` - no `src/` segment). Add `pgTable` definitions following these rules:
+Edit `packages/core/src/<domain>/<module>/schema/index.ts`. Add `pgTable` definitions following these rules:
 
 - No FK references to tables owned by other modules (use plain ID columns). Within your own module, `.references(() => table.id)` is fine.
 - Table names are snake_case (`pgTable('tournament_entry', ...)`); the exported const is camelCase; the row type is `typeof <const>.$inferSelect`.
@@ -54,7 +54,7 @@ Inspect the existing DB shape any time with `get-drizzle-schema` (pass `module=<
 
 ## Step 5: Define schemas
 
-Edit the module's `contract/` dir (`packages/addons/<name>/src/contract/index.ts`; core modules: `packages/core/src/<domain>/<module>/contract/index.ts`). It owns the route contract plus the request/response schemas and their `z.infer`'d types. Check if a shared schema already exists:
+Edit the module's `contract/` dir (`packages/core/src/<domain>/<module>/contract/index.ts`). It owns the route contract plus the request/response schemas and their `z.infer`'d types. Check if a shared schema already exists:
 
 ```
 schema-get name=<EntityName>
@@ -65,7 +65,7 @@ If a shared schema exists in `@openora/core/contracts`, re-export it instead of 
 
 ## Step 6: Implement the service
 
-Edit `packages/addons/<name>/src/service/<name>.service.ts` (core modules: `packages/core/src/<domain>/<module>/service/<name>.service.ts`). Business logic only. Rules:
+Edit `packages/core/src/<domain>/<module>/service/<module>.service.ts`. Business logic only. Rules:
 
 - Take `DrizzleService` (from `@openora/core/server`) + `EventBus` as constructor arguments (the module plugin builds the service from the container). Query with `this.drizzle.db.select().from(<table>).where(eq(...))`; import operators (`eq`, `desc`, `sql`) from `drizzle-orm` and tables from `../schema/index.js`.
 - Throw domain errors via `createDomainError(...)` from `@openora/core`.
@@ -89,7 +89,7 @@ list-routes module=<name>
 
 ## Step 8: Wire the plugin
 
-Edit `packages/addons/<name>/src/plugin.ts` (core modules: `packages/core/src/<domain>/<module>/plugin.ts`). Confirm the service is added to `ctx.providers` and the router is added to `ctx.routers`. The registry surface is: `providers`, `controllers`, `routers`, `slots`, `events`, `mcp`, `imports`.
+Edit `packages/core/src/<domain>/<module>/plugin.ts`. Confirm the service is added to `ctx.providers` and the router is added to `ctx.routers`. The registry surface is: `providers`, `controllers`, `routers`, `slots`, `events`, `mcp`, `imports`.
 
 ## Step 9: Add frontend consumption layer
 
@@ -99,7 +99,7 @@ The platform is headless backend only - pages, components, and styling live in t
 
 ## Step 10: Update AGENTS.md
 
-Edit `packages/addons/<name>/AGENTS.md` (core modules: `packages/core/src/<domain>/<module>/AGENTS.md`). It holds ONLY what code can't say:
+Edit `packages/core/src/<domain>/<module>/AGENTS.md`. It holds ONLY what code can't say:
 
 - What the module does (one paragraph) + where-to-look pointers (`contract/`, `schema/index.ts`, `domainEventSchemas`).
 - Invariants and rationale: fail-closed branches, DB guards, race windows accepted by design, "X is the single writer of Y".

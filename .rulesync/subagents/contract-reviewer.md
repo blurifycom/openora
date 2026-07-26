@@ -22,7 +22,7 @@ If the orchestrator passed a base ref + changed-file list, use them - do not re-
 ### Boundaries
 
 - [ ] No module/domain/extension imports another's internals - only engine zones, read-only `/schema`, events, command ports, shared contracts.
-- [ ] Engine zones (`packages/core/src/{contracts,server,react}`) import no domain and no add-on; `contracts` imports only contracts + Zod; `react` never imports `server` or a module.
+- [ ] Engine zones (`packages/core/src/{contracts,server,react}`) import no domain; `contracts` imports only contracts + Zod; `react` never imports `server` or a module.
 - [ ] New modules/extensions registered only via `extensions.config.ts`; no deep `dist/` imports; no cycles. Run `pnpm boundaries` if unsure - it's the whole-graph gate.
 
 ### Contracts

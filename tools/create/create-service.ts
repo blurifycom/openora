@@ -53,10 +53,6 @@ if (existsSync(appDir)) {
 
 const pkgName = `@openora/${name}-service`;
 
-const addonDeps = Object.fromEntries(
-  manifest.map((id) => [`@openora-addons/${id}`, 'workspace:*'] as const).sort(),
-);
-
 const files: Record<string, string> = {
   'package.json':
     JSON.stringify(
@@ -74,7 +70,6 @@ const files: Record<string, string> = {
         dependencies: {
           '@orpc/server': '1.14.3',
           '@openora/core': 'workspace:*',
-          ...addonDeps,
           amqplib: '^2.0.1',
           bullmq: '^5.77.6',
           zod: '4.4.3',

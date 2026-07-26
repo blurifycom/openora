@@ -1,14 +1,14 @@
 ---
 targets:
   - '*'
-description: 'Add an oRPC route stub to an existing module. Args: <module> <GET|POST|PUT|PATCH|DELETE> <path>. Example: /scaffold-route wallet GET /transactions'
+description: 'Add an oRPC route stub to an existing module. Args: <domain> <module> <GET|POST|PUT|PATCH|DELETE> <path>. Example: /scaffold-route engagement chat GET /rooms'
 ---
 
-Parse $ARGUMENTS as: <module> <method> <path>.
+Parse $ARGUMENTS as: <domain> <module> <method> <path>. The domain is the module's dir under `packages/core/src/`.
 
 Before adding, call the MCP tool `query-openapi` with the path to confirm the route doesn't already exist.
 
-Run `pnpm gen route <module> <method> <path>` in the repo root. The generator adds BOTH a contract procedure (in the module's `contract/index.ts`) and a matching router handler - no inline Zod in the router.
+Run `pnpm gen route <domain> <module> <method> <path>` in the repo root. The generator adds BOTH a contract procedure (in the module's `contract/index.ts`) and a matching router handler - no inline Zod in the router.
 
 Then:
 

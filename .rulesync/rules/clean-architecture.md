@@ -12,7 +12,7 @@ globs:
 
 Settled conventions - don't reopen. Style: `conventions`. Here: structure + the syntax that prevents recurring mistakes.
 
-## Module layering (`packages/core/src/<domain>/<module>/` or `packages/addons/<name>/src/`)
+## Module layering (`packages/core/src/<domain>/<module>/`)
 
 | Layer    | File                        | Holds                                                                                                                                                         | Must NOT hold                    |
 | -------- | --------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------- |
@@ -38,9 +38,9 @@ Ports = interfaces + tokens in `packages/core/src/contracts/adapters/` (`PAYMENT
 
 ## Cross-module communication (lint-enforced)
 
-Sanctioned paths only: domain **events** (`EventBus`), **command ports** (a token the owner binds, eg `WALLET_COMMANDS`), shared **contracts**, read-only table reads via the owner's `/schema` subpath. Never import another module's internals (`no-cross-domain`/`no-cross-addon` = errors; `pnpm boundaries` is the whole-graph gate). ADR-0015.
+Sanctioned paths only: domain **events** (`EventBus`), **command ports** (a token the owner binds, eg `WALLET_COMMANDS`), shared **contracts**, read-only table reads via the owner's `/schema` subpath. Never import another module's internals (`no-cross-domain` = error; `pnpm boundaries` is the whole-graph gate). ADR-0015.
 
-Money + any needed-now mutation stay synchronous/transactional, never over events - use a command port: caller passes its own `tx` (`WALLET_COMMANDS.debit(tx, ...)`), atomic in-process yet splittable later; declare `dependsOn: ['<owner>']`. Cross-module schema reads are sanctioned but warned (`no-cross-addon-schema-read`) - each one is an extraction blocker. ADR-0017.
+Money + any needed-now mutation stay synchronous/transactional, never over events - use a command port: caller passes its own `tx` (`WALLET_COMMANDS.debit(tx, ...)`), atomic in-process yet splittable later; declare `dependsOn: ['<owner>']`. Cross-module schema reads are sanctioned but each one is an extraction blocker. ADR-0017.
 
 **Never write a deep (`../../`+) relative import that leaves your own top-level dir under `packages/core/src/` - reach every other zone through the package's own `@openora/core/*` subpath.** A relative import is only for staying inside your own module/zone (`./schema/index.js`, `../db/index.js`). The moment a `..` would cross into another domain, slice, or engine zone, it's a `@openora/core/*` import instead:
 

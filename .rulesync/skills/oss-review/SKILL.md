@@ -46,7 +46,7 @@ function does, open it; if you can't cite it, fetch it. These docs are the singl
 cite them in findings:
 
 - `.claude/rules/conventions.md` - the portable code standard (philosophy, naming, types, functions, comments, testing, errors, deps, git).
-- `.claude/rules/clean-architecture.md` - add-on layering, DI, ports & adapters, shared helpers, FK rule.
+- `.claude/rules/clean-architecture.md` - module layering, DI, ports & adapters, shared helpers, FK rule.
 - `.claude/rules/messaging-and-microservices.md` - command vs event vs job, outbox, service manifest.
 - `CLAUDE.md` (AGENTS.md) - architecture pillars, dependency rules, forbidden patterns, the "Definition of done" audit requirement.
 - The touched module's own `AGENTS.md` and any relevant `docs/adr/*.md`.

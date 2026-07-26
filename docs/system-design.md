@@ -12,13 +12,13 @@ and how a downstream consumer overlays proprietary code. Generated from `docs/ca
 > domains) which is unchanged - only the distribution unit collapsed. The diagram specifier
 > names (`@openora/orpc-contract`, `@openora/shared-schemas`, `@openora/adapters`, `@openora/db`, `@openora/auth`,
 > `@openora/api-runtime`, `@openora/plugin-host`, `@openora/react`) are now subpaths of `@openora/core`.
-> Premium add-ons stay separate `@openora-addons/*` packages.
 
 For rationale see the [ADRs](./adr/) — especially [ADR-0025](./adr/0025-single-core-package-with-module-subpaths.md)
 (single `@openora/core` package, supersedes ADR-0024 packaging), [ADR-0024](./adr/0024-domain-as-package-and-distribution-tiers.md)
 (domain-as-package + distribution, supersedes ADR-0022), [ADR-0021](./adr/0021-everything-is-an-add-on.md)
-(standalone add-ons), [ADR-0020](./adr/0020-editions-and-add-on-modules.md) (editions),
-[ADR-0014/0016/0017](./adr/) (seams, envelope, outbox). Consumer wiring: [downstream-consumer.md](./downstream-consumer.md).
+
+- [ADR-0020](./adr/0020-editions-and-add-on-modules.md) (the add-on / editions tier, removed 2026-07-26 - every module now ships in core),
+  [ADR-0014/0016/0017](./adr/) (seams, envelope, outbox). Consumer wiring: [downstream-consumer.md](./downstream-consumer.md).
 
 ## 1. Mega architecture — the whole system
 
@@ -63,7 +63,7 @@ flowchart TB
     PH["plugin-host<br/>definePlugin · ModuleRegistry · applyServiceManifest"]
     DI["Container<br/>tokens to factories (last-wins overlay)"]
     HONO["Hono + oRPC OpenAPIHandler<br/>validation · OpenAPI emit"]
-    GATE["editions: OSS_ADDONS allowlist<br/>SERVICE_MANIFEST module filter"]
+    GATE["SERVICE_MANIFEST module filter"]
   end
 
   %% ============ CONTRACT SPINE (@openora/core/contracts + /compliance) ============
@@ -196,18 +196,16 @@ flowchart LR
   subgraph SRC["Workspace packages (ONE published core + published tooling)"]
     direction TB
     CORE["@openora/core - THE published package (ADR-0025)<br/>all 15 modules as subpaths · /contracts · /react · /server · /compliance"]
-    ADD["premium add-ons (future: separate packages)"]
     DEV["dev/tooling (published separate): @openora/mcp · @openora/testing · @openora/config"]
   end
   REG[["Package Registry<br/>your-org/oss<br/>1 fixed version (Changesets)"]]
   subgraph CONS["Consumers"]
-    INST["install @openora/core + chosen domains<br/>(eg core alone, or + premium addons)"]
+    INST["install @openora/core<br/>(enable the domains you need via extensions.config.ts)"]
     BFLINK["local dev: link:oss + git skip-worktree"]
     T2X["Tier-2 overlays: games · vendor adapters · UI"]
   end
 
   CORE -->|"changeset publish (CI_JOB_TOKEN)"| REG
-  ADD -.->|"future premium packages"| REG
   REG --> INST
   REG -. dev override .-> BFLINK
   INST --> T2X

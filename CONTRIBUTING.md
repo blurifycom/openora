@@ -36,7 +36,7 @@ Backoffice login: `admin@oss.dev` / `password123` (see `pnpm seed --help` for fl
 ## Scaffolding (don't hand-roll)
 
 ```bash
-pnpm gen module <name>           # new module under packages/addons/<name>
+pnpm gen module <domain> <name>  # new module under packages/core/src/<domain>/<name>
 pnpm gen plugin <name>           # overlay extension under extensions/<name>/
 pnpm gen route <module> <method> <path>
 ```
@@ -97,7 +97,7 @@ Conventional Commits, **enforced** by `commitlint` (local `commit-msg` hook + CI
 
 - **Types:** `feat`, `fix`, `refactor`, `chore`, `docs`, `test`, `ci`, `perf`, `build`, `style`, `revert`.
 - **Scope is a fixed list, not free-form.** `commitlint.config.cjs` derives a `scope-enum` from the
-  workspace - every `packages/*` and `packages/core/src/*` module dir, add-ons, apps, plus meta scopes
+  workspace - every `packages/*` and `packages/core/src/*` module dir, apps, plus meta scopes
   (`ci`, `deps`, `rules`, `repo`, `tooling`, ...). An unlisted scope fails the lint; omit the scope if
   none fits. Check a message with `pnpm commitlint --from HEAD~1`.
 - One MR = one concern; stage explicitly (`git add <paths>`), don't sweep foreign changes with `git add -A`.

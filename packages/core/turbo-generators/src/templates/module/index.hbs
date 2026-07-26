@@ -1,5 +1,5 @@
-// Public surface of the {{pascalCase name}} add-on. Export only what other packages
-// may consume; internal implementation details stay private. Cross-module table
-// reads go through the `@openora-addons/{{kebabCase name}}/schema` subpath.
+// Internal barrel of the {{pascalCase name}} module. The public consumer surface is the
+// domain barrel (@openora/core/{{dashCase domain}}), which re-exports this module's
+// contract/ slice; cross-domain table reads go through @openora/core/{{dashCase domain}}/schema/{{kebabCase name}}.
 export { {{pascalCase name}}Service } from './service/{{kebabCase name}}.service.js';
 export { create{{pascalCase name}}Router } from './router/index.js';

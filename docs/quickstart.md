@@ -53,11 +53,11 @@ Every route is browsable in the [API reference](/docs/api), generated from the l
 
 ## Add a module
 
-Scaffold a standalone core add-on - schema, service, router, contract slice, and `plugin.ts`
-are generated and registered for you:
+Scaffold a module - schema, service, router, contract slice, and `plugin.ts` are generated
+and registered for you:
 
 ```bash
-pnpm gen module tournaments   # creates @openora-addons/tournaments + registers it
+pnpm gen module casino tournaments   # creates packages/core/src/casino/tournaments + registers it
 pnpm regen && pnpm verify
 ```
 

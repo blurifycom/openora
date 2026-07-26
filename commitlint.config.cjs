@@ -54,7 +54,6 @@ const scopes = [
     ...dirsIn('packages'),
     ...dirsIn('packages/core/src'),
     ...nestedDirsIn('packages/core/src'),
-    ...dirsIn('packages/addons'),
     ...dirsIn('apps'),
     ...metaScopes,
   ]),

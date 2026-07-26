@@ -12,8 +12,8 @@ agent must follow, see [AGENTS.md](../AGENTS.md).
 > (isomorphic), `@openora/core/react` (browser), `@openora/core/server` (node engine: kernel +
 > plugin-host + db + auth + createApp), `@openora/core/compliance`, and per-module subpaths.
 > The logical structure described below is unchanged; specifier names like `@openora/adapters`,
-> `@openora/db`, `@openora/orpc-contract`, `@openora/react` are now `@openora/core/*` subpaths. Premium
-> features stay separate `@openora-addons/*` packages. See [ADR-0025](./adr/0025-single-core-package-with-module-subpaths.md).
+> `@openora/db`, `@openora/orpc-contract`, `@openora/react` are now `@openora/core/*` subpaths.
+> See [ADR-0025](./adr/0025-single-core-package-with-module-subpaths.md).
 
 ## System overview
 

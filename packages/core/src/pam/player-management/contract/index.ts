@@ -1,4 +1,4 @@
-// Shared so the profile add-on can derive from them too. See ADR-0021.
+// Shared so the profile module can derive from them too. See ADR-0021.
 import { oc, populateContractRouterPaths } from '@orpc/contract';
 import * as z from 'zod';
 import {

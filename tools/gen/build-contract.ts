@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 /**
- * Assembles the full runtime contract from all domain + add-on slices.
+ * Assembles the full runtime contract from all domain slices.
  * Used by gen-openapi.ts and as a reference for consumer composition roots.
  * Each domain owns its own /contracts slice; this file is the only place that
  * stitches them together. See ADR-0021/0025.
@@ -27,7 +27,7 @@ import { playerNoteContract } from '@openora/core/pam/contracts/player-note';
 type AnyContract = ContractRouter<any>;
 
 // Order mirrors the historical aggregate so the emitted OpenAPI paths stay stable.
-const CORE: Record<string, AnyContract> = {
+const SLICES: Record<string, AnyContract> = {
   identity: identityContract,
   cms: cmsContract,
   compliance: complianceContract,
@@ -42,48 +42,12 @@ const CORE: Record<string, AnyContract> = {
   audit: auditContract,
   tag: tagContract,
   'player-note': playerNoteContract,
+  player: playerContract,
 };
 
-type AddonEntry = { namespace: string; contract: AnyContract };
-
-const ADDONS: Record<string, AddonEntry> = {
-  'player-management': { namespace: 'player', contract: playerContract },
-};
-
-/** Returns the set of add-on ids enabled by OSS_ADDONS (default: all). */
-export function enabledAddons(): Set<string> {
-  const all = new Set(Object.keys(ADDONS));
-  const raw = process.env['OSS_ADDONS'];
-  if (raw === undefined) {
-    return all;
-  }
-  const v = raw.trim().toLowerCase();
-  if (v === '' || v === 'none') {
-    return new Set();
-  }
-  if (v === '*' || v === 'all') {
-    return all;
-  }
-  return new Set(
-    raw
-      .split(',')
-      .map((s) => s.trim())
-      .filter(Boolean),
-  );
-}
-
-/** Compose the full runtime contract from core + enabled add-on slices. */
-export function buildContract({
-  includeAddons = true,
-}: { includeAddons?: boolean } = {}): AnyContract {
-  const slices: Record<string, AnyContract> = { ...CORE };
-  if (includeAddons) {
-    const enabled = enabledAddons();
-    for (const [id, entry] of Object.entries(ADDONS)) {
-      if (enabled.has(id)) {
-        slices[entry.namespace] = entry.contract;
-      }
-    }
-  }
-  return composeContract(slices);
+/**
+ * Compose the full runtime contract from every module slice.
+ */
+export function buildContract(): AnyContract {
+  return composeContract(SLICES);
 }

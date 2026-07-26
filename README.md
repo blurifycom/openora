@@ -83,13 +83,12 @@ To run the whole reference stack in containers instead of on the host, use the o
 
 ## How it fits together
 
-The platform is a pnpm + Turbo monorepo. `@openora/core` is the single published package, exposing subpaths (`/contracts`, `/server`, `/react`, and one per domain). Domains are wired into a domain-agnostic runtime through the composition root; add-ons and overlays extend it without touching core.
+The platform is a pnpm + Turbo monorepo. `@openora/core` is the single published package, exposing subpaths (`/contracts`, `/server`, `/react`, and one per domain). Domains are wired into a domain-agnostic runtime through the composition root; overlay plugins extend it without touching core.
 
 ```text
 apps/examples       # consumer reference implementation
 apps/mcp-server-dev # MCP dev server (stdio) for agents
 packages/core       # @openora/core - contracts, server engine, react SDK, all 15 modules
-packages/addons     # @openora-addons/* - premium modules (future)
 extensions.config.ts# the single registry of enabled plugins
 ```
 
@@ -100,10 +99,10 @@ See [docs/architecture.md](./docs/architecture.md) and the pillars + decision tr
 ### Add a module
 
 ```bash
-pnpm gen module <name>
+pnpm gen module <domain> <name>
 ```
 
-Generates a standalone `@openora-addons/<name>` package under `packages/addons/<name>/` and registers it in `extensions.config.ts`. Run `pnpm regen && pnpm verify`. See [AGENTS.md](./AGENTS.md) for the full decision tree.
+Generates the module under `packages/core/src/<domain>/<name>/`, wires its domain barrels, `@openora/core` exports, contract slice, and `extensions.config.ts` entry. Run `pnpm regen && pnpm verify`. See [AGENTS.md](./AGENTS.md) for the full decision tree.
 
 ### Add an extension (overlay plugin)
 

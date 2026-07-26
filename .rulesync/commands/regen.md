@@ -35,6 +35,6 @@ Watch for:
 - `verify:drift` failures in CI - means `regen` was not run after a schema or contract change.
 - Type errors in the API after regen - usually a route's output schema no longer matches the model.
 - Boundary lint errors - a module imported a sibling directly instead of via the read-only
-  `/schema` subpath (`@openora/core/<domain>/schema`, `@openora-addons/<name>/schema`) or an event.
+  `/schema` subpath (`@openora/core/<domain>/schema`) or an event.
 
 Report what changed and whether any follow-up is needed.

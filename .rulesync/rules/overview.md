@@ -47,7 +47,6 @@ packages/
     src/compliance/  # sealed-token list + assertSealedServicesBound (engine); also the compliance domain (/contracts, /schema, /plugins)
     src/<domain>/    # 9 folded domains (casino, cms, compliance, engagement, pam, wallet, iam, audit, admin-console), exposed as @openora/core/<domain>/{contracts,schema,plugins,server,react}. The BARE root (@openora/core/<domain>) is the public consumer surface: an isomorphic contract barrel (schemas, enum triples, z.infer types; multi-slice domains namespace per slice, eg `import { chat } from '@openora/core/engagement'`) - never server code. Services/routers/plugin live under /server; tables under /schema. A domain imports engine zones + a sibling's read-only /schema only - never a sibling's internals.
     src/<domain>/<module>/drizzle/  # each module owns its drizzle.config.ts + migrations/ history (ADR-0027); scripts/generate-all.mjs runs them all
-  addons/          # gated @openora-addons/<name> packages - gating + extraction machinery (OSS_ADDONS, no-cross-addon, scaffolder) kept for future premium modules; none ship today. ADR-0025
   mcp/             # @openora/mcp - publishable MCP server consumers run against their own repo
   testing/         # @openora/testing - dev/test harness (bootTestApp, seedDemoData)
 docs/
@@ -59,7 +58,7 @@ extensions.config.ts # the single registry of enabled plugins
 
 ## Where does X go? (decision tree)
 
-- **New business domain** (eg "tournaments") -> `pnpm gen module <name>` creates `@openora-addons/<name>` under `packages/addons/<name>/` and registers it in `extensions.config.ts` (no `kind` = core, `kind: 'addon'` = gated). Core: add its `/contract` slice to `tools/gen/build-contract.ts`. Every module owns its `drizzle.config.ts` + migration history. ADR-0021/0024/0027.
+- **New business domain** (eg "tournaments") -> `pnpm gen module <domain> <name>` creates `packages/core/src/<domain>/<name>/`, wires the domain barrels + the `@openora/core` exports map + the `/contract` slice in `tools/gen/build-contract.ts`, and registers it in `extensions.config.ts`. Every module owns its `drizzle.config.ts` + migration history. ADR-0024/0025/0027.
 - **Extend/override an existing module** -> overlay plugin: `pnpm gen plugin <name>` -> `extensions/<name>/plugin.ts` (repo root here; the consumer's app when deployed).
 - **New HTTP route** -> the module's `router/index.ts` via `pnpm gen route <module> <method> <path>`. Player routes resolve the caller from `x-user-id`; admin routes MUST be guarded (next).
 - **Admin-only route** -> `plugin.ts` resolves `AdminGuard` (`c.get(ADMIN_GUARD)`, seeded by `createApp`) and passes it into the router; `await adminGuard.assert(context)` is the handler's FIRST line. The single admin-enforcement point - never re-implement the role check.
@@ -78,7 +77,7 @@ extensions.config.ts # the single registry of enabled plugins
 
 Cross-cutting basics (kebab files, PascalCase types, `<Name>Schema` + inferred `<Name>`, predicate booleans, units in names) in `conventions`. OSS-specific:
 
-- Packages: `@openora/<kebab>` (platform), `@openora-addons/<kebab>` (gated add-ons). Public API = package/subpath entry + read-only `/schema`; internals are a lint error.
+- Packages: `@openora/<kebab>`. Public API = package/subpath entry + read-only `/schema`; internals are a lint error.
 - oRPC routers namespaced by module (`wallet.transactions.list`).
 - SQL / Drizzle identifiers: `db-conventions`.
 
@@ -86,9 +85,9 @@ Cross-cutting basics (kebab files, PascalCase types, `<Name>Schema` + inferred `
 
 Two complementary gates, kept in sync: (1) **oxlint `oss-boundaries/*`** (`tools/lint/oxlint-boundaries-plugin.mjs`) - fast per-edit string matching on import specifiers (runs via `pnpm lint` + the post-edit hook); (2) **dependency-cruiser** (`.dependency-cruiser.cjs`, `pnpm boundaries`) - the resolved whole graph, so it also catches transitive edges, re-export/barrel laundering, dynamic `import()`, and relative paths that dodge the prefix. ADR-0015.
 
-- A folded domain imports engine zones (`contracts`/`server`/`react`) + a sibling's read-only `/schema` only - never a sibling's internals (`no-cross-domain`). Couple via a command port, a domain event, or a shared contract. Same rule for add-ons (`no-cross-addon`).
+- A folded domain imports engine zones (`contracts`/`server`/`react`) + a sibling's read-only `/schema` only - never a sibling's internals (`no-cross-domain`). Couple via a command port, a domain event, or a shared contract.
 - `contracts` is isomorphic: only other contracts + Zod (`no-contracts-to-runtime`). `react` never imports `server` or a module (`no-react-to-runtime`).
-- Engine zones never import a domain or add-on (`no-core-to-domain`/`no-core-to-addon`); wiring happens only in the consumer's composition root (+ `@openora/testing`).
+- Engine zones never import a domain (`no-core-to-domain`); wiring happens only in the consumer's composition root (+ `@openora/testing`).
 - Import the package/subpath entry, never a deep `dist/` path, and never a sibling package's `src/` internals (`no-deep-package-import`; `@openora/core` is exempt - its subpath exports all resolve into `src/`). No cycles - break by inverting the dependency or moving the type to contracts.
 
 ## Forbidden patterns
