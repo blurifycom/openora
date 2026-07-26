@@ -14,7 +14,7 @@
     "build": "turbo run build",
     "dev": "turbo run dev",
     "clean": "turbo run clean && rm -rf node_modules",
-    "verify": "turbo run check:types check:lint check:format check:boundaries check:shape check:deprecations test:unit test:tools",
+    "verify": "turbo run check:types check:lint check:format check:boundaries check:shape check:deprecations test:unit test:tools && pnpm check:drift",
     "check:types": "turbo run check:types",
     "check:lint": "oxlint .",
     "check:format": "oxfmt --check",
