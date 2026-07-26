@@ -5,7 +5,7 @@ Copy-paste recipes: what to type, in what order, for each common job. Each step 
 One-time setup (once per clone):
 
 ```
-pnpm setup:agent      # docker + db + mcp + deps
+pnpm setup      # docker + db + mcp + deps
 ```
 
 First time on the platform? Let it onboard you - it interviews you for requirements, then delegates the build to the right agents:
@@ -107,7 +107,7 @@ would table "tournament_entry" collide?   # propose-table-change
 ## Change the agents themselves
 
 1. Edit the source under `.rulesync/` (`rules/`, `subagents/`, `skills/`) - never the generated mirrors (`AGENTS.md`, `CLAUDE.md`, `.claude/`, `.github/`).
-2. `pnpm sync:agents`
+2. `pnpm gen:agents`
 3. New/changed subagents load in a fresh session, not the current one.
 
 ## Ground rules (hold everywhere)

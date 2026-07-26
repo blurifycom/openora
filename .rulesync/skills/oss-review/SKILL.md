@@ -46,7 +46,7 @@ function does, open it; if you can't cite it, fetch it. These docs are the singl
 cite them in findings:
 
 - `.claude/rules/conventions.md` - the portable code standard (philosophy, naming, types, functions, comments, testing, errors, deps, git).
-- `.claude/rules/clean-architecture.md` - add-on layering, DI, ports & adapters, shared helpers, FK rule.
+- `.claude/rules/clean-architecture.md` - module layering, DI, ports & adapters, shared helpers, FK rule.
 - `.claude/rules/messaging-and-microservices.md` - command vs event vs job, outbox, service manifest.
 - `CLAUDE.md` (AGENTS.md) - architecture pillars, dependency rules, forbidden patterns, the "Definition of done" audit requirement.
 - The touched module's own `AGENTS.md` and any relevant `docs/adr/*.md`.
@@ -83,7 +83,7 @@ Tell every reviewer to apply this before returning, and re-apply it yourself whe
 - Every `[BLOCK]` and `[WARN]` MUST cite a concrete `file:line` AND the rule doc/ADR it violates. No location or no rule = downgrade to `[INFO]` or drop it.
 - Report only high-confidence findings. If unsure whether something is a real defect vs a theoretical nit, downgrade or omit - prefer few actionable findings over flooding.
 - Don't invent runtime failures you haven't traced through the code. State the trigger path or don't raise it.
-- Don't bikeshed and don't duplicate what tooling already enforces: oxlint (`oss-boundaries/*`, `no-any`, `consistent-type-definitions`), `pnpm boundaries`, and `pnpm verify` run in CI. For a suspected boundary/lint issue, say "confirm with `pnpm boundaries`" rather than guessing - flag only what those gates miss.
+- Don't bikeshed and don't duplicate what tooling already enforces: oxlint (`oss-boundaries/*`, `no-any`, `consistent-type-definitions`), `pnpm check:boundaries`, and `pnpm verify` run in CI. For a suspected boundary/lint issue, say "confirm with `pnpm check:boundaries`" rather than guessing - flag only what those gates miss.
 - Each reviewer self-checks before returning: every finding has evidence + a cited rule, uncertain claims downgraded, no style nitpicks lint already catches, no unverified runtime claims.
 
 ## 7. Synthesize
@@ -101,7 +101,7 @@ counts per severity + verdict. End with **APPROVED** / **CHANGES REQUESTED** and
 critical finding.
 
 If `--fix`: after the report, apply BLOCK + WARN fixes in the working tree (smallest diff that
-satisfies the cited rule), then run `pnpm verify` (or `pnpm boundaries` for boundary fixes) and report
+satisfies the cited rule), then run `pnpm verify` (or `pnpm check:boundaries` for boundary fixes) and report
 green/red. Leave INFO items untouched. Never commit or push.
 
 ## Constraints

@@ -23,7 +23,7 @@ The OSS platform is headless (API + modules only) - the player app and backoffic
 | Player app | http://localhost:3000 | operator                              |
 | Backoffice | http://localhost:3002 | operator                              |
 
-Seed credentials (after `pnpm seed`): `admin@oss.dev` / `password123`
+Seed credentials (after `pnpm db:seed`): `admin@oss.dev` / `password123`
 
 Confirm actual ports and which UIs exist with the operator - they may have only an API, or a single combined app.
 

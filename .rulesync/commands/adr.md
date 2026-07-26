@@ -15,4 +15,4 @@ Rules:
 
 - One decision per ADR. A second decision is a second ADR.
 - Never rewrite an existing ADR's Context/Decision - drift gets a dated `> **Update (YYYY-MM-DD)**: ...` block at the top; a reversal gets a new ADR and the old one becomes `Status: Superseded by ADR-XXXX`.
-- Cross-reference related ADRs and the rule docs the decision affects; if a rule doc (`.rulesync/rules/*`) must change as a result, edit it in the same change and run `pnpm sync:agents`.
+- Cross-reference related ADRs and the rule docs the decision affects; if a rule doc (`.rulesync/rules/*`) must change as a result, edit it in the same change and run `pnpm gen:agents`.

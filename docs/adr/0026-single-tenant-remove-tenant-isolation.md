@@ -94,7 +94,7 @@ Make the platform **single-tenant** and delete the tenant-isolation subsystem en
 | 3     | Runtime/kernel: delete tenant-resolver / tenant-connection / tenant-context; collapse `DrizzleService` to one pool; `createApp` drops `resolveTenant`. |
 | 4     | RLS: delete `gen-rls.ts`, policies, roles, coverage test, role probe.                                                                                  |
 | 5     | Services/contracts: strip `tenantId` from queries/inserts/payloads + envelope.                                                                         |
-| 6     | `pnpm regen` -> the drop migration; `pnpm seed` no longer stamps tenant.                                                                               |
+| 6     | `pnpm regen` -> the drop migration; `pnpm db:seed` no longer stamps tenant.                                                                            |
 | 7     | Tests updated; rules/docs (`overview`, `clean-architecture`, `architecture.md`, glossary) drop the tenant convention.                                  |
 | 8     | Cross-repo: `@openora/core` major publish; a consumer's `apps/api` + consumer template drop `resolveTenant`.                                           |
 

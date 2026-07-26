@@ -1,6 +1,6 @@
 # compliance
 
-Regulatory surface: player limits, KYC verification, geo rules, Responsible Gambling (RG). Headless - the back-office UI lives in the consumer. Routes, tables, events: `contract/`, `schema/index.ts`, `domainEventSchemas` (or `list-routes module=compliance`).
+Regulatory surface: player limits, KYC verification, geo rules, Responsible Gambling (RG). Headless - the back-office UI lives in the consumer.
 
 ## KYC
 

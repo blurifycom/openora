@@ -28,32 +28,50 @@ function listDirs(p: string): string[] {
   return readdirSync(p).filter((f) => statSync(join(p, f)).isDirectory());
 }
 
-const ADDONS_DIR = ['packages', 'addons'] as const;
+const CORE_SRC = ['packages', 'core', 'src'] as const;
+const CONTRACTS_ZONE = [...CORE_SRC, 'contracts'] as const;
+const ADAPTERS_ZONE = [...CONTRACTS_ZONE, 'adapters'] as const;
+const ENGINE_ZONES = new Set(['contracts', 'server', 'react', 'common', 'testing', 'scripts']);
 
-function readAddonKinds(): Map<string, string> {
-  const src = readFile(repoPath('extensions.config.ts'));
-  const out = new Map<string, string>();
-  for (const m of src.matchAll(/\{[^}]*id:\s*'([^']+)'[^}]*\}/g)) {
-    out.set(m[1] ?? '', /kind:\s*'addon'/.test(m[0] ?? '') ? 'addon' : 'core');
+type ModuleDir = { group: string; name: string; dir: string };
+
+// Modules fold into @openora/core as subpaths: a single-member domain owns plugin.ts
+// directly (packages/core/src/audit), a multi-slice one nests it a level deeper
+// (packages/core/src/pam/profile). `group` is the owning domain. See ADR-0025.
+function listAllModules(): ModuleDir[] {
+  const out: ModuleDir[] = [];
+  const hasPlugin = (dir: string): boolean => existsSync(join(dir, 'plugin.ts'));
+  for (const domain of listDirs(repoPath(...CORE_SRC))) {
+    if (ENGINE_ZONES.has(domain)) {
+      continue;
+    }
+    const domainDir = repoPath(...CORE_SRC, domain);
+    if (hasPlugin(domainDir)) {
+      out.push({ group: domain, name: domain, dir: domainDir });
+      continue;
+    }
+    for (const member of listDirs(domainDir)) {
+      const memberDir = join(domainDir, member);
+      if (hasPlugin(memberDir)) {
+        out.push({ group: domain, name: member, dir: memberDir });
+      }
+    }
   }
-  return out;
+  return out.sort((a, b) => a.name.localeCompare(b.name));
 }
 
 function findModuleDir(name: string): string | null {
-  const dir = repoPath(...ADDONS_DIR, name);
-  return existsSync(dir) ? dir : null;
+  return listAllModules().find((m) => m.name === name)?.dir ?? null;
 }
 
-function listAllModules(): Array<{ group: string; name: string; dir: string }> {
-  const kinds = readAddonKinds();
-  const out: Array<{ group: string; name: string; dir: string }> = [];
-  for (const name of listDirs(repoPath(...ADDONS_DIR))) {
-    const dir = repoPath(...ADDONS_DIR, name);
-    if (existsSync(join(dir, 'src', 'plugin.ts'))) {
-      out.push({ group: kinds.get(name) ?? 'core', name, dir });
-    }
+// Wire shapes live in the cross-cutting contracts zone plus each module's own
+// contract/ dir - the two places a Zod schema may be declared. See ADR-0021/0025.
+function contractFiles(): string[] {
+  const files = walkFiles(repoPath(...CONTRACTS_ZONE), '.ts');
+  for (const { dir } of listAllModules()) {
+    files.push(...walkFiles(join(dir, 'contract'), '.ts'));
   }
-  return out;
+  return files.filter((f) => !f.endsWith('.d.ts'));
 }
 
 function parseAgentsMdSection(content: string, heading: string): string {
@@ -202,9 +220,14 @@ function classifyIntent(ask: string): IntentKind {
   return 'unsure';
 }
 
-/** Symbol DI tokens exported from @openora/core/contracts - the vendor swap seams. */
+// Tokens are declared as `export const X: Token<Y> = createToken(...)` or via
+// createSealedToken for the compliance-sealed seams. See packages/core/src/contracts/adapters.
+const ADAPTER_TOKEN_RE =
+  /^export const (\w+)(?::\s*(?:Sealed)?Token<[^>]*>)?\s*=\s*(?:createSealedToken|createToken)/gm;
+
+/** DI tokens exported from @openora/core/contracts - the vendor swap seams. */
 function readAdapterTokens(): string[] {
-  const dir = repoPath('packages', 'contracts', 'adapters', 'src');
+  const dir = repoPath(...ADAPTERS_ZONE);
   if (!existsSync(dir)) {
     return [];
   }
@@ -213,13 +236,28 @@ function readAdapterTokens(): string[] {
     if (!f.endsWith('.ts') || f === 'index.ts') {
       continue;
     }
-    for (const m of readFileSync(join(dir, f), 'utf8').matchAll(
-      /^export const (\w+)(?::\s*Token<[^>]*>)?\s*=\s*(?:createToken|Symbol)/gm,
-    )) {
+    for (const m of readFileSync(join(dir, f), 'utf8').matchAll(ADAPTER_TOKEN_RE)) {
       out.push(m[1] ?? '');
     }
   }
-  return out;
+  return out.sort();
+}
+
+/**
+ * Resolves an AGENTS.md from a module name, a package name, or a repo-relative path -
+ * module docs live at packages/core/src/<domain>[/<module>]/AGENTS.md, package docs at
+ * packages/<name>/AGENTS.md.
+ */
+function resolveAgentsMd(target: string): string | null {
+  const bare = target.replace(/^@openora(-[a-z]+)?\//, '');
+  const moduleDir = findModuleDir(bare);
+  const candidates = [
+    ...(moduleDir ? [join(moduleDir, 'AGENTS.md')] : []),
+    repoPath(target, 'AGENTS.md'),
+    repoPath('packages', bare, 'AGENTS.md'),
+    repoPath('apps', bare, 'AGENTS.md'),
+  ];
+  return candidates.find(existsSync) ?? null;
 }
 
 /** Named UI slot identifiers - the platform is headless; slots live in the consumer frontend. */
@@ -238,24 +276,24 @@ function buildPlaybook(
     case 'feature':
       return [
         '## Where it goes',
-        'A new business domain -> a new standalone @openora-addons/<name> package under `packages/addons/<name>/` (registered as a core add-on in extensions.config.ts).',
+        'A new business domain -> a new module under `packages/core/src/<domain>/<name>/` (registered in extensions.config.ts, contract slice composed in tools/gen/build-contract.ts).',
         '',
         '## Existing modules (avoid name collisions)',
         moduleList,
         '',
         '## Playbook',
         '1. Delegate to the `expert` agent: turn this ask into requirements + acceptance criteria (player lifecycle, edge cases, regulatory).',
-        '2. Pick a group + kebab-case name. Call `propose-table-change` for every table name you intend to add.',
-        '3. Run `scaffold-module <group> <name>` (MCP tool). In a consumer repo, an overlay is `pnpm gen plugin` instead.',
-        '4. Fill the `// AGENT: implement here` regions: src/schema (pgTable), src/schemas (Zod), src/service, src/router. Leave the wiring alone.',
-        '5. Add routes with `scaffold-route <module> <METHOD> <path>`. Admin routes MUST `await this.adminGuard.assert(context)` first.',
+        '2. Pick the owning domain + a kebab-case name. Call `propose-table-change` for every table name you intend to add.',
+        '3. Run `scaffold-module <domain> <name>` (MCP tool). In a consumer repo, an overlay is `pnpm gen plugin` instead.',
+        '4. Fill the `// AGENT: implement here` regions: schema/ (pgTable), contract/ (Zod), service/, router/. Leave the wiring alone.',
+        '5. Add routes with `scaffold-route <domain> <module> <METHOD> <path>`. Admin routes MUST `await adminGuard.assert(context)` first.',
         '6. Run `regen` (drizzle migration + OpenAPI + SDK + catalog), then `run-verify`.',
         '7. Hand the build to `module-author` (or `dev`) with the spec from step 1.',
       ].join('\n');
     case 'adapter':
       return [
         '## Where it goes',
-        'A third-party integration -> implement the adapter interface under `packages/addons/<name>/src/adapters/<vendor>/` and bind it to a DI token in the add-on/overlay `plugin.ts`. Interfaces + tokens all live in `@openora/core/contracts`.',
+        "A third-party integration -> implement the adapter interface under the owning module's `adapters/<vendor>/` dir and bind it to a DI token in that module's (or an overlay's) `plugin.ts`. Interfaces + tokens all live in `@openora/core/contracts`.",
         '',
         '## Adapter tokens available to override',
         ctx.tokens.length ? ctx.tokens.map((t) => `- ${t}`).join('\n') : '- (none found)',
@@ -287,7 +325,7 @@ function buildPlaybook(
         '',
         '## Playbook',
         '1. Call `query-openapi <keyword>` first to confirm the route does not already exist.',
-        '2. Run `scaffold-route <module> <METHOD> <path>`.',
+        '2. Run `scaffold-route <domain> <module> <METHOD> <path>`.',
         '3. Player routes resolve the caller from the verified better-auth session (getUserId); admin routes MUST assert AdminGuard as the first line.',
         '4. Run `regen` then `run-verify`.',
       ].join('\n');
@@ -298,7 +336,7 @@ function buildPlaybook(
         '',
         '## Playbook',
         '1. Run `scaffold-app <target-dir>` (MCP tool) or `pnpm create:app ../<name> --name <name>`.',
-        '2. In the new dir: `pnpm install && pnpm build:oss && cp .env.example .env` (set DATABASE_URL + AUTH_SECRET) then `pnpm db:migrate`.',
+        '2. In the new dir: `pnpm install && cp .env.example .env` (set DATABASE_URL + AUTH_SECRET) then `pnpm db:migrate`.',
         '3. Run `pnpm setup:mcp` in the new repo so its own agents get this same toolbelt, then `/start` there.',
         '4. `pnpm dev` boots api :3001. The frontend lives in your own repo consuming `@openora/core/react`.',
       ].join('\n');
@@ -357,7 +395,7 @@ server.registerTool(
   },
   async ({ section, package: pkg }) => {
     const filePath = pkg
-      ? repoPath(pkg.replace(/^@openora\//, ''), 'AGENTS.md')
+      ? (resolveAgentsMd(pkg) ?? repoPath(pkg, 'AGENTS.md'))
       : repoPath('AGENTS.md');
     const content = readFile(filePath);
     if (!content) {
@@ -410,7 +448,7 @@ server.registerTool(
   },
   async ({ name, response_format }) => {
     const detailed = response_format === 'detailed';
-    const overlayBase = repoPath('apps', 'extensions', name);
+    const overlayBase = repoPath('extensions', name);
     const dir = findModuleDir(name) ?? (existsSync(overlayBase) ? overlayBase : null);
 
     if (!dir) {
@@ -424,9 +462,9 @@ server.registerTool(
       };
     }
 
-    const schemaSrc = readFile(join(dir, 'src', 'schema', 'index.ts'));
-    const zodSrc = readFile(join(dir, 'src', 'contract', 'index.ts'));
-    const routerSrc = readFile(join(dir, 'src', 'router', 'index.ts'));
+    const schemaSrc = readFile(join(dir, 'schema', 'index.ts'));
+    const zodSrc = readFile(join(dir, 'contract', 'index.ts'));
+    const routerSrc = readFile(join(dir, 'router', 'index.ts'));
     const parts: string[] = [
       `=== Module: ${name} ===\n`,
       readFile(join(dir, 'AGENTS.md')) || '(no AGENTS.md)',
@@ -466,7 +504,7 @@ server.registerTool(
     const modules = mod ? all.filter((m) => m.name === mod) : all;
     const lines: string[] = [];
     for (const { name, dir } of modules) {
-      const routerFile = join(dir, 'src', 'router', 'index.ts');
+      const routerFile = join(dir, 'router', 'index.ts');
       if (!existsSync(routerFile)) {
         continue;
       }
@@ -492,14 +530,16 @@ server.registerTool(
   async () => {
     const parts: string[] = [];
 
-    const eventsFile = repoPath('packages', 'platform', 'core', 'src', 'event-bus.ts');
+    const eventsFile = repoPath(...CONTRACTS_ZONE, 'schemas', 'events.ts');
     if (existsSync(eventsFile)) {
-      parts.push(`\n=== Events (EventBus from @openora/core/server) ===\n${readFile(eventsFile)}`);
+      parts.push(
+        `\n=== Domain events (domainEventSchemas from @openora/core/contracts) ===\n${readFile(eventsFile)}`,
+      );
     } else {
-      parts.push('\n=== Events ===\n(event-bus.ts not found)');
+      parts.push('\n=== Domain events ===\n(contracts/schemas/events.ts not found)');
     }
 
-    const adaptersDir = repoPath('packages', 'contracts', 'adapters', 'src');
+    const adaptersDir = repoPath(...ADAPTERS_ZONE);
     parts.push('\n=== Adapter interfaces (@openora/core/contracts) ===');
     if (existsSync(adaptersDir)) {
       for (const f of readdirSync(adaptersDir)) {
@@ -507,8 +547,8 @@ server.registerTool(
           continue;
         }
         const src = readFileSync(join(adaptersDir, f), 'utf8');
-        const interfaces = [...src.matchAll(/^export interface (\w+)/gm)].map((m) => m[1]);
-        const tokens = [...src.matchAll(/^export const (\w+) = Symbol/gm)].map((m) => m[1]);
+        const interfaces = [...src.matchAll(/^export type (\w+) = \{/gm)].map((m) => m[1]);
+        const tokens = [...src.matchAll(ADAPTER_TOKEN_RE)].map((m) => m[1]);
         const label = [...interfaces, ...tokens.map((t) => `${t} (token)`)].join(', ');
         if (label) {
           parts.push(`${f.replace(/\.ts$/, '')}: ${label}`);
@@ -563,15 +603,14 @@ server.registerTool(
 server.registerTool(
   'scaffold-module',
   {
-    description:
-      'Scaffold a new business module as a standalone @openora-addons/<name> package under packages/addons/<name>.',
+    description: 'Scaffold a new business module under packages/core/src/<domain>/<name>.',
     inputSchema: {
-      group: z.enum(['player', 'backoffice', 'platform']),
-      name: z.string(),
+      domain: z.string().describe('Owning domain dir under packages/core/src (kebab-case)'),
+      name: z.string().describe('Module name (kebab-case)'),
     },
   },
-  async ({ group, name }) => {
-    const result = run(`pnpm gen module ${group} ${name}`);
+  async ({ domain, name }) => {
+    const result = run(`pnpm gen module ${domain} ${name}`);
     return {
       content: [{ type: 'text', text: result.output || (result.ok ? 'Done.' : 'Failed.') }],
     };
@@ -597,13 +636,14 @@ server.registerTool(
   {
     description: 'Add an oRPC route stub to a module',
     inputSchema: {
+      domain: z.string().describe('Owning domain dir under packages/core/src (kebab-case)'),
       module: z.string(),
       method: z.enum(['GET', 'POST', 'PUT', 'PATCH', 'DELETE']),
       path: z.string(),
     },
   },
-  async ({ module: mod, method, path }) => {
-    const result = run(`pnpm gen route ${mod} ${method} ${path}`);
+  async ({ domain, module: mod, method, path }) => {
+    const result = run(`pnpm gen route ${domain} ${mod} ${method} ${path}`);
     return {
       content: [{ type: 'text', text: result.output || (result.ok ? 'Done.' : 'Failed.') }],
     };
@@ -614,7 +654,7 @@ server.registerTool(
   'scaffold-app',
   {
     description:
-      'Bootstrap a new downstream igaming consumer repo (api + web + backoffice) wired to this OSS checkout via link:. Delegates to tools/create/create-igaming-app.ts. Does NOT run pnpm install - tell the user to run `pnpm install && pnpm build:oss && pnpm db:migrate` in the new dir next.',
+      'Bootstrap a new downstream igaming consumer repo (api + web + backoffice) wired to this OSS checkout via link:. Delegates to tools/create/create-igaming-app.ts. Does NOT run pnpm install - tell the user to run `pnpm install && pnpm db:migrate` in the new dir next.',
     inputSchema: {
       target: z
         .string()
@@ -703,7 +743,7 @@ server.registerTool(
     }
     const parts: string[] = [];
     for (const { group, name, dir } of modules) {
-      const schemaFile = join(dir, 'src', 'schema', 'index.ts');
+      const schemaFile = join(dir, 'schema', 'index.ts');
       if (!existsSync(schemaFile)) {
         continue;
       }
@@ -745,18 +785,18 @@ server.registerTool(
   async ({ table }) => {
     const want = table.trim();
     for (const { group, name, dir } of listAllModules()) {
-      const schemaFile = join(dir, 'src', 'schema', 'index.ts');
+      const schemaFile = join(dir, 'schema', 'index.ts');
       if (!existsSync(schemaFile)) {
         continue;
       }
       const src = readFileSync(schemaFile, 'utf8');
-      for (const [, , tableName] of src.matchAll(/pgTable\(\s*'([^']+)'/g)) {
+      for (const [, tableName] of src.matchAll(/pgTable\(\s*'([^']+)'/g)) {
         if (tableName === want) {
           return {
             content: [
               {
                 type: 'text',
-                text: `[COLLISION] Table '${want}' already defined in packages/addons/${name}/src/schema/index.ts (${group} add-on). Pick a different name or add a column to the existing table.`,
+                text: `[COLLISION] Table '${want}' already defined in packages/core/src/${group === name ? name : `${group}/${name}`}/schema/index.ts. Pick a different name or add a column to the existing table.`,
               },
             ],
           };
@@ -767,7 +807,7 @@ server.registerTool(
       content: [
         {
           type: 'text',
-          text: `[OK] Table name '${want}' is available. Add the pgTable to your module's src/schema/index.ts, then run pnpm regen to generate the migration.`,
+          text: `[OK] Table name '${want}' is available. Add the pgTable to your module's schema/index.ts, then run pnpm regen to generate the migration.`,
         },
       ],
     };
@@ -785,9 +825,7 @@ server.registerTool(
   },
   async ({ name }) => {
     const candidates = name.endsWith('Schema') ? [name] : [`${name}Schema`, name];
-    const files = walkFiles(repoPath('packages', 'contracts'), '.ts').filter(
-      (f) => !f.endsWith('.d.ts'),
-    );
+    const files = contractFiles();
     for (const file of files) {
       const src = readFileSync(file, 'utf8');
       for (const cand of candidates) {

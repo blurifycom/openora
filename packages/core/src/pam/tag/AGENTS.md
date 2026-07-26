@@ -1,9 +1,14 @@
 # Tag
 
-Rule-based player tagging with event-driven and manual assignment. Tables: `tag` (key, isSticky), `playerTag` (assign/removal history with actor/reason audit trail), `tagRule` (per-tag evaluation thresholds: amount, days, count).
+Rule-based player tagging. A tag lands on a player either manually (admin, actor stamped) or by rule evaluation on subscribed wallet/identity/compliance events; `playerTag` keeps the full assign/removal history rather than a current-state row, so removals stay auditable.
 
-Routes: `createTag`/`deleteTag` (admin), `assignPlayerTag`/`removePlayerTag` (admin or event-driven, stamps actor), `listPlayerTags`, `listAssignableTags`, admin rule CRUD (`listTagRules`, `upsertTagRule`).
+## Invariants
 
-Subscribes to wallet.deposit.completed, wallet.withdrawal.completed, identity.user.login, compliance.kyc.submitted, compliance.kyc.updated; evaluates rules on each event. Daily scheduled job (cron 0 2 \* \* \*, idempotent) runs inactive-player sweep. Provides `PLAYER_TAGS` port for other modules to query active tags. Depends on wallet and identity modules for reader ports.
+- Sticky tags (`isSticky=true`) are never auto-removed - only a manual removal clears them.
+- Rule-driven assignment is threshold-based and deterministic per rule type; re-evaluating the same event is a no-op.
+- The daily inactive-player sweep (cron `0 2 * * *`) is idempotent - it may re-run without duplicating assignments.
 
-Sticky tags (isSticky=true) are not auto-removed; manual assignment/removal always works. Event-driven assignment is rule-threshold-based and deterministic per rule type.
+## Extension points
+
+- Provides `PLAYER_TAGS` for other modules to query a player's active tags.
+- Consumes wallet + identity reader ports; `dependsOn` those modules.

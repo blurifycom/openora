@@ -12,8 +12,8 @@ with `pnpm create:app`.
 The fastest path checks prerequisites, installs deps, boots Postgres, and applies migrations:
 
 ```bash
-pnpm setup:agent   # prereqs + deps + Postgres + migrations
-pnpm seed          # demo data: admin + players + wallets + games
+pnpm setup   # prereqs + deps + Postgres + migrations
+pnpm db:seed          # demo data: admin + players + wallets + games
 ```
 
 Prefer the explicit steps?
@@ -21,9 +21,9 @@ Prefer the explicit steps?
 ```bash
 pnpm install
 docker compose up -d                  # Postgres only (library-first)
-pnpm -F @openora/core generate        # generate Drizzle migrations
-pnpm db:migrate:all                   # apply them
-pnpm seed
+pnpm gen:drizzle        # generate Drizzle migrations
+pnpm db:migrate                   # apply them
+pnpm db:seed
 ```
 
 Seeding logs you in with `admin@oss.dev` / `password123`. Flags: `--players=<n>`,
@@ -53,11 +53,11 @@ Every route is browsable in the [API reference](/docs/api), generated from the l
 
 ## Add a module
 
-Scaffold a standalone core add-on - schema, service, router, contract slice, and `plugin.ts`
-are generated and registered for you:
+Scaffold a module - schema, service, router, contract slice, and `plugin.ts` are generated
+and registered for you:
 
 ```bash
-pnpm gen module tournaments   # creates @openora-addons/tournaments + registers it
+pnpm gen module casino tournaments   # creates packages/core/src/casino/tournaments + registers it
 pnpm regen && pnpm verify
 ```
 

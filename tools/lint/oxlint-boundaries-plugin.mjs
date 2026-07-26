@@ -20,14 +20,6 @@ function inPath(file, segment) {
   return file.includes('/' + segment + '/');
 }
 
-function isCoreFile(file) {
-  return inPath(file, 'packages/core');
-}
-
-function isAddonSpecifier(spec) {
-  return spec === '@openora-addons' || spec.startsWith('@openora-addons/');
-}
-
 // Visits every node that carries an import/re-export source specifier.
 function sourceVisitors(check) {
   const visit = (node) => {
@@ -43,78 +35,11 @@ function sourceVisitors(check) {
   };
 }
 
-const noCoreToAddon = {
-  create(context) {
-    if (!isCoreFile(filename(context))) {
-      return {};
-    }
-    return sourceVisitors((node, spec) => {
-      if (!isAddonSpecifier(spec)) {
-        return;
-      }
-      context.report({
-        node,
-        message:
-          'The published core (@openora/core) must not import an add-on package (@openora-addons/*). ' +
-          "Add-on is wired in only by the consumer's composition root " +
-          '(extensions.config.ts + the build-contract slice merge) and the @openora/testing harness. ' +
-          'This keeps add-on packages extractable. See ADR-0021/0025.',
-      });
-    });
-  },
-};
-
-function importingAddon(file) {
-  const m = file.match(/packages\/addons\/([a-z0-9-]+)\//);
-  return m ? m[1] : null;
-}
-
-function addonImportTarget(spec) {
-  if (!spec.startsWith('@openora-addons/')) {
-    return null;
-  }
-  const tail = spec.slice('@openora-addons/'.length).split('/').filter(Boolean);
-  if (tail.length === 0) {
-    return null;
-  }
-  const name = tail[0];
-  const isSchemaSubpath = tail.length === 2 && tail[1] === 'schema';
-  return { name, isSchemaSubpath, segments: tail.length };
-}
-
-const noCrossAddon = {
-  create(context) {
-    const self = importingAddon(filename(context));
-    if (!self) {
-      return {};
-    }
-    return sourceVisitors((node, spec) => {
-      const target = addonImportTarget(spec);
-      if (!target || target.name === self) {
-        return;
-      }
-      if (target.isSchemaSubpath) {
-        return;
-      }
-      context.report({
-        node,
-        message:
-          `An add-on package must not import another add-on package (${spec}). ` +
-          'Import a sibling only through its read-only /schema subpath ' +
-          '(@openora-addons/<name>/schema); communicate otherwise via events or a command port. ' +
-          'See ADR-0020.',
-      });
-    });
-  },
-};
-
 const RUNTIME_SPECIFIERS = ['@openora/core/server'];
 
 function isRuntimeSpecifier(spec) {
   return RUNTIME_SPECIFIERS.some((b) => spec === b || spec.startsWith(b + '/'));
 }
-
-const blocked_by_contracts = ['@openora-addons', ...RUNTIME_SPECIFIERS];
 
 function isContractsZone(file) {
   return file.includes('packages/core/src/contracts');
@@ -129,7 +54,7 @@ const noContractsToRuntime = {
       return {};
     }
     return sourceVisitors((node, spec) => {
-      const blocked = blocked_by_contracts.some((b) => spec === b || spec.startsWith(b + '/'));
+      const blocked = isRuntimeSpecifier(spec);
       if (!blocked) {
         return;
       }
@@ -137,7 +62,7 @@ const noContractsToRuntime = {
         node,
         message:
           'The @openora/core/contracts zone is isomorphic - it must not import the engine ' +
-          '(@openora/core/server) or an add-on. Keep it to contracts, base schemas, ports + zod. ' +
+          '(@openora/core/server). Keep it to contracts, base schemas, ports + zod. ' +
           'See AGENTS.md > Dependency rules / ADR-0025.',
       });
     });
@@ -151,10 +76,10 @@ function isModuleContractZone(file) {
   return /packages\/core\/src\/(?!contracts\/)[^/]+\/(?:[^/]+\/)?contract\//.test(file);
 }
 
-const CONTRACT_RUNTIME_SPECIFIERS = ['@openora/core/server', '@openora-addons', 'drizzle-orm'];
+const CONTRACT_RUNTIME_SPECIFIERS = ['@openora/core/server', 'drizzle-orm'];
 
 // The public root barrel (@openora/core/<domain>) re-exports the module's contract/, so the
-// contract MUST stay isomorphic (browser-safe) - no engine, no add-on, no Drizzle, no /schema
+// contract MUST stay isomorphic (browser-safe) - no engine, no Drizzle, no /schema
 // (schema pulls Drizzle transitively). Zod + @openora/core/contracts are fine.
 const noModuleContractToRuntime = {
   create(context) {
@@ -174,7 +99,7 @@ const noModuleContractToRuntime = {
         message:
           `A module contract/ dir is isomorphic - it is re-exported by the public root barrel ` +
           `(@openora/core/<domain>), so it must not import the engine (@openora/core/server), ` +
-          `an add-on, Drizzle, a /schema subpath, or node built-ins (${spec}). Keep it to Zod + ` +
+          `Drizzle, a /schema subpath, or node built-ins (${spec}). Keep it to Zod + ` +
           `@openora/core/contracts. See AGENTS.md > Dependency rules / ADR-0025.`,
       });
     });
@@ -184,12 +109,12 @@ const noModuleContractToRuntime = {
 const noDeepDistImport = {
   create(context) {
     return sourceVisitors((node, spec) => {
-      if (/^@openora(-addons)?\/.+\/dist(\/|$)/.test(spec)) {
+      if (/^@openora\/.+\/dist(\/|$)/.test(spec)) {
         context.report({
           node,
           message:
             'Never import a deep dist/ path. Use the package entry instead ' +
-            '(e.g. @openora-addons/wallet/schema).',
+            '(e.g. @openora/core/wallet/schema).',
         });
       }
     });
@@ -251,14 +176,14 @@ const noReactToRuntime = {
       return {};
     }
     return sourceVisitors((node, spec) => {
-      if (!isRuntimeSpecifier(spec) && !isAddonSpecifier(spec)) {
+      if (!isRuntimeSpecifier(spec)) {
         return;
       }
       context.report({
         node,
         message:
-          'The @openora/core/react zone must not import the engine (@openora/core/server) or an ' +
-          'add-on - it would pull Drizzle/Hono/node into the browser bundle. ' +
+          'The @openora/core/react zone must not import the engine (@openora/core/server) - ' +
+          'it would pull Drizzle/Hono/node into the browser bundle. ' +
           'Keep client glue domain-free + server-free. See ADR-0025.',
       });
     });
@@ -351,8 +276,6 @@ const noEngineToDomain = {
 export default {
   meta: { name: 'oss-boundaries' },
   rules: {
-    'no-cross-addon': noCrossAddon,
-    'no-core-to-addon': noCoreToAddon,
     'no-contracts-to-runtime': noContractsToRuntime,
     'no-module-contract-to-runtime': noModuleContractToRuntime,
     'no-react-to-runtime': noReactToRuntime,

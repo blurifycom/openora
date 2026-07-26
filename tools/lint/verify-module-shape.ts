@@ -18,9 +18,6 @@
  *                           comms go through the published contract, never a sibling import)
  *   a runtime subpath     - @openora/core exports "./<domain>/plugin" | "./<domain>/server" |
  *                           "./<domain>/plugins/*" (the plugin host loads the domain through one)
- *
- * Premium add-on packages (packages/addons/*, currently none - ADR-0025) keep their own
- * canon and are checked only when the folder ships any.
  */
 import { existsSync, readFileSync, readdirSync, statSync } from 'node:fs';
 import { join, dirname } from 'node:path';
@@ -30,7 +27,6 @@ const repoRoot = join(dirname(fileURLToPath(import.meta.url)), '../..');
 // Domains fold into @openora/core as subpaths. See ADR-0025.
 const coreSrc = join(repoRoot, 'packages', 'core', 'src');
 const engineDirs = new Set(['contracts', 'server', 'react', 'scripts', 'common', 'testing']);
-const addonsRoot = join(repoRoot, 'packages', 'addons');
 
 type Check = { label: string; ok: boolean; hint: string };
 type Pkg = { exports?: Record<string, unknown> };
@@ -92,50 +88,6 @@ function checkDomain(dir: string, id: string): Check[] {
   ];
 }
 
-function checkAddon(dir: string): Check[] {
-  const file = (rel: string) => existsSync(join(dir, rel));
-  const dirExists = (rel: string) =>
-    existsSync(join(dir, rel)) && statSync(join(dir, rel)).isDirectory();
-  const pluginSrc = file('src/plugin.ts') ? readFileSync(join(dir, 'src/plugin.ts'), 'utf8') : '';
-  return [
-    {
-      label: 'src/plugin.ts',
-      ok: file('src/plugin.ts'),
-      hint: 'run /scaffold-module to regenerate the skeleton',
-    },
-    {
-      label: 'src/plugin.ts exports definePlugin',
-      ok: /definePlugin\s*\(/.test(pluginSrc),
-      hint: 'plugin.ts must `export default definePlugin({ id, register })`',
-    },
-    {
-      label: 'src/contract/index.ts',
-      ok: file('src/contract/index.ts'),
-      hint: 'the oRPC route contract + Zod schemas + inferred types live here (single source of wire truth)',
-    },
-    {
-      label: 'src/service/',
-      ok: dirExists('src/service'),
-      hint: 'business logic lives in a service class wired by plugin.ts',
-    },
-    {
-      label: 'src/router/index.ts',
-      ok: file('src/router/index.ts'),
-      hint: 'the oRPC router contract + handlers live here',
-    },
-    {
-      label: 'package.json',
-      ok: file('package.json'),
-      hint: 'every add-on is a standalone @openora-addons/<name> package',
-    },
-    {
-      label: 'AGENTS.md',
-      ok: file('AGENTS.md'),
-      hint: 'every add-on ships an AGENTS.md (invariants, rationale, extension seams - no route/table listings)',
-    },
-  ];
-}
-
 const collect = (
   kind: string,
   root: string,
@@ -157,7 +109,6 @@ const results = [
     checkDomain,
     (dir, name) => !engineDirs.has(name) && existsSync(join(dir, 'index.ts')),
   ),
-  ...collect('addons', addonsRoot, checkAddon, (dir) => existsSync(join(dir, 'src', 'plugin.ts'))),
 ];
 
 const failures = results.flatMap(({ kind, name, checks }) =>
@@ -173,11 +124,8 @@ if (failures.length > 0) {
   process.exit(1);
 }
 
-const byKind = (kind: string) => results.filter((r) => r.kind === kind).map((r) => r.name);
-const domains = byKind('core/src');
-const addons = byKind('addons');
+const domains = results.filter((r) => r.kind === 'core/src').map((r) => r.name);
 console.log(
   `[PASS] module-shape: ${domains.length} domains match the canonical shape ` +
-    `(${domains.join(', ')})` +
-    (addons.length ? `; ${addons.length} add-ons (${addons.join(', ')}).` : '.'),
+    `(${domains.join(', ')}).`,
 );

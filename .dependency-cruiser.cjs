@@ -56,9 +56,9 @@ module.exports = {
       name: 'no-contracts-to-runtime',
       severity: 'error',
       comment:
-        'The contracts zone (@openora/core/contracts = packages/core/src/contracts) is isomorphic - it must not depend on the node engine (@openora/core/server) or an add-on (a folded domain is covered by no-core-to-domain). It holds only composeContract/healthContract, base zod schemas, and ports/tokens. See AGENTS.md > Dependency rules and ADR-0021/0025.',
+        'The contracts zone (@openora/core/contracts = packages/core/src/contracts) is isomorphic - it must not depend on the node engine (@openora/core/server) (a folded domain is covered by no-core-to-domain). It holds only composeContract/healthContract, base zod schemas, and ports/tokens. See AGENTS.md > Dependency rules and ADR-0021/0025.',
       from: { path: '^packages/core/src/contracts' },
-      to: { path: '^(packages/core/src/server|packages/addons/)' },
+      to: { path: '^packages/core/src/server' },
     },
     {
       name: 'no-react-to-runtime',
@@ -67,14 +67,6 @@ module.exports = {
         'The react zone (@openora/core/react = packages/core/src/react) is browser glue - it must not depend on the node engine (@openora/core/server = packages/core/src/server). Importing it pulls Drizzle/Hono/node into the client bundle. Keep it domain-free + server-free. See ADR-0025.',
       from: { path: '^packages/core/src/react' },
       to: { path: '^packages/core/src/server' },
-    },
-    {
-      name: 'no-core-to-addon',
-      severity: 'error',
-      comment:
-        'The published core (@openora/core = packages/core) must never depend on an add-on package (packages/addons/*). Add-on is wired in only by the composition roots under apps/* (extensions.config.ts + the editions contract merge) and the @openora/testing harness. This keeps every add-on extractable. See ADR-0021/0025.',
-      from: { path: '^packages/core/' },
-      to: { path: '^packages/addons/' },
     },
     {
       name: 'no-core-to-domain',
@@ -96,22 +88,22 @@ module.exports = {
       },
     },
     {
-      name: 'no-cross-addon',
+      name: 'no-deep-package-import',
       severity: 'error',
       comment:
-        'An add-on package must not depend on another add-on package (same rule as no-cross-module). Communicate via events, a command port, or the read-only /schema subpath. Keeping add-on packages mutually independent is what lets each one be shipped separately/extracted on its own.',
-      from: { path: '^packages/addons/([^/]+)/' },
+        'Import a sibling workspace package through its package entry, never its src/dist internals. @openora/core is exempt: its exports map is a wide set of documented subpaths that all resolve into src/ through the generated paths mapping, so a "deep" path there is the public surface (its internals are policed by the zone rules above instead).',
+      from: { path: '^(?:apps|packages)/([^/]+)/' },
       to: {
-        path: '^packages/addons/[^/]+/',
-        pathNot: ['^packages/addons/$1/', '/src/schema/'],
+        path: '^packages/(?!core/)[^/]+/(?:src|dist)/',
+        pathNot: ['^packages/$1/', '^packages/[^/]+/(?:src/)?index\\.(?:ts|tsx|js|mjs)$'],
       },
     },
   ],
   options: {
     doNotFollow: { path: 'node_modules' },
     // Scan first-party source only; skip compiled output and (test|spec) files -
-    // tests legitimately wire several add-ons together (the oxlint twin disables
-    // the cross-addon rules for *.test.ts / *.spec.ts for the same reason).
+    // tests legitimately wire several domains together (the oxlint twin disables
+    // the cross-domain rule for *.test.ts / *.spec.ts for the same reason).
     exclude: { path: '(/dist/|/node_modules/|[.](test|spec)[.]ts$)' },
     includeOnly: '^(apps|packages)/',
     tsPreCompilationDeps: true,

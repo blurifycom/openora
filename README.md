@@ -53,8 +53,8 @@ Two ways to get the API up at `http://localhost:3001`. Demo credentials after se
 For agents (Claude Code, Copilot, Codex, Cursor) and anyone who wants a single onboarding step.
 
 ```bash
-pnpm setup:agent   # checks prereqs, installs deps, boots Postgres, runs migrations, prints a summary
-pnpm seed          # demo data: admin + players + wallets + transactions + games
+pnpm setup   # checks prereqs, installs deps, boots Postgres, runs migrations, prints a summary
+pnpm db:seed          # demo data: admin + players + wallets + transactions + games
 pnpm dev           # api :3001
 ```
 
@@ -71,25 +71,24 @@ Then use `list-modules`, `list-routes`, `query-openapi`, `get-drizzle-schema`, `
 ```bash
 pnpm install                                  # install workspace deps
 docker compose up -d                          # start Postgres (library-first: only the db)
-pnpm -F @openora/core generate             # generate Drizzle migrations
-pnpm -F @openora/core migrate              # apply them
-pnpm seed                                     # demo data
+pnpm gen:drizzle             # generate Drizzle migrations
+pnpm db:migrate                            # apply them
+pnpm db:seed                                     # demo data
 pnpm dev                                      # api :3001
 ```
 
-`pnpm seed` is idempotent and deterministic. Flags: `--players=<n>`, `--admin-email=<e>`, `--admin-password=<p>`.
+`pnpm db:seed` is idempotent and deterministic. Flags: `--players=<n>`, `--admin-email=<e>`, `--admin-password=<p>`.
 
 To run the whole reference stack in containers instead of on the host, use the opt-in profile: `docker compose --profile full up --build` (api :3001, web :3000, backoffice :3002).
 
 ## How it fits together
 
-The platform is a pnpm + Turbo monorepo. `@openora/core` is the single published package, exposing subpaths (`/contracts`, `/server`, `/react`, and one per domain). Domains are wired into a domain-agnostic runtime through the composition root; add-ons and overlays extend it without touching core.
+The platform is a pnpm + Turbo monorepo. `@openora/core` is the single published package, exposing subpaths (`/contracts`, `/server`, `/react`, and one per domain). Domains are wired into a domain-agnostic runtime through the composition root; overlay plugins extend it without touching core.
 
 ```text
 apps/examples       # consumer reference implementation
 apps/mcp-server-dev # MCP dev server (stdio) for agents
 packages/core       # @openora/core - contracts, server engine, react SDK, all 15 modules
-packages/addons     # @openora-addons/* - premium modules (future)
 extensions.config.ts# the single registry of enabled plugins
 ```
 
@@ -100,10 +99,10 @@ See [docs/architecture.md](./docs/architecture.md) and the pillars + decision tr
 ### Add a module
 
 ```bash
-pnpm gen module <name>
+pnpm gen module <domain> <name>
 ```
 
-Generates a standalone `@openora-addons/<name>` package under `packages/addons/<name>/` and registers it in `extensions.config.ts`. Run `pnpm regen && pnpm verify`. See [AGENTS.md](./AGENTS.md) for the full decision tree.
+Generates the module under `packages/core/src/<domain>/<name>/`, wires its domain barrels, `@openora/core` exports, contract slice, and `extensions.config.ts` entry. Run `pnpm regen && pnpm verify`. See [AGENTS.md](./AGENTS.md) for the full decision tree.
 
 ### Add an extension (overlay plugin)
 
@@ -133,7 +132,7 @@ Scaffold a consumer turborepo that links this checkout - it holds only what's un
 
 ```bash
 pnpm create:app ../my-igaming --name my-igaming
-cd ../my-igaming && pnpm install && pnpm build:oss && pnpm dev
+cd ../my-igaming && pnpm install && pnpm dev
 ```
 
 See [docs/downstream-consumer.md](./docs/downstream-consumer.md) for the full guide.

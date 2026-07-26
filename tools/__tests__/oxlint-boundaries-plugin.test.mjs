@@ -16,34 +16,28 @@ function lint(ruleName, filename, run) {
 
 // Real oxlint filenames are absolute
 const CORE = '/repo/packages/core/src';
-const ADDONS = '/repo/packages/addons';
 
 function importNode(source) {
   return { source: { value: source } };
 }
 
-test('no-deep-dist-import catches the @openora-addons scope too', () => {
-  for (const spec of [
-    '@openora/core/dist/server/index.js',
-    '@openora-addons/wallet/dist/schema/index.js',
-  ]) {
-    const reports = lint('no-deep-dist-import', `${CORE}/wallet/service/wallet.service.ts`, (v) =>
-      v.ImportDeclaration(importNode(spec)),
-    );
-    assert.equal(reports.length, 1, spec);
-  }
+test('no-deep-dist-import flags a deep dist path', () => {
+  const reports = lint('no-deep-dist-import', `${CORE}/wallet/service/wallet.service.ts`, (v) =>
+    v.ImportDeclaration(importNode('@openora/core/dist/server/index.js')),
+  );
+  assert.equal(reports.length, 1);
 });
 
-test('no-deep-dist-import allows package entries', () => {
+test('no-deep-dist-import allows package subpath entries', () => {
   const reports = lint('no-deep-dist-import', `${CORE}/wallet/service/wallet.service.ts`, (v) =>
-    v.ImportDeclaration(importNode('@openora-addons/wallet/schema')),
+    v.ImportDeclaration(importNode('@openora/core/wallet/schema')),
   );
   assert.deepEqual(reports, []);
 });
 
 test('boundaries rules cover re-export laundering', () => {
-  const reports = lint('no-core-to-addon', `${CORE}/wallet/index.ts`, (v) =>
-    v.ExportAllDeclaration(importNode('@openora-addons/tournaments')),
+  const reports = lint('no-cross-core-domain', `${CORE}/wallet/index.ts`, (v) =>
+    v.ExportAllDeclaration(importNode('@openora/core/casino/service')),
   );
   assert.equal(reports.length, 1);
 });
@@ -79,17 +73,6 @@ test('no-module-contract-to-runtime allows zod + core contracts, and ignores the
   assert.deepEqual(Object.keys(engine), []);
 });
 
-test('no-cross-addon allows the sibling /schema subpath, flags internals', () => {
-  const ok = lint('no-cross-addon', `${ADDONS}/audit/src/service/audit.service.ts`, (v) =>
-    v.ImportDeclaration(importNode('@openora-addons/wallet/schema')),
-  );
-  assert.deepEqual(ok, []);
-  const bad = lint('no-cross-addon', `${ADDONS}/audit/src/service/audit.service.ts`, (v) =>
-    v.ExportNamedDeclaration(importNode('@openora-addons/wallet/service')),
-  );
-  assert.equal(bad.length, 1);
-});
-
 test('no-cross-core-domain flags sibling internals, allows /schema + self', () => {
   const file = `${CORE}/engagement/chat/service/chat.service.ts`;
   const bad = lint('no-cross-core-domain', file, (v) =>
@@ -110,7 +93,7 @@ test('no-engine-to-domain flags a domain import from the engine', () => {
 });
 
 test('out-of-scope files register no visitors', () => {
-  for (const rule of ['no-cross-addon', 'no-cross-core-domain', 'no-react-to-runtime']) {
+  for (const rule of ['no-cross-core-domain', 'no-react-to-runtime']) {
     const visitor = plugin.rules[rule].create({
       filename: '/repo/apps/mcp-server-dev/src/main.ts',
     });
@@ -130,8 +113,8 @@ test('no-adhoc-zod-in-router covers core module routers', () => {
     v.CallExpression(zCall),
   );
   assert.equal(core.length, 1);
-  const addon = lint('no-adhoc-zod-in-router', `${ADDONS}/audit/src/router/index.ts`, (v) =>
+  const nested = lint('no-adhoc-zod-in-router', `${CORE}/engagement/chat/router/index.ts`, (v) =>
     v.CallExpression(zCall),
   );
-  assert.equal(addon.length, 1);
+  assert.equal(nested.length, 1);
 });

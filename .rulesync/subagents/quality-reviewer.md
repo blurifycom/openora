@@ -60,7 +60,7 @@ The orchestrator passes you the base ref and changed-file list - do not re-scope
 
 ## Do NOT flag (false-positive guard)
 
-- Anything lint/CI already enforces: `any`, `interface`, boundary imports, formatting - `pnpm verify` and `pnpm boundaries` catch these.
+- Anything lint/CI already enforces: `any`, `interface`, boundary imports, formatting - `pnpm verify` and `pnpm check:boundaries` catch these.
 - Style taste with no rule behind it (import order, personal naming preference, blank lines).
 - Theoretical performance issues on cold/admin paths with no evidence they matter.
 - Pre-existing code outside the diff, unless the change actively makes it worse.

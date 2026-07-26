@@ -1,6 +1,4 @@
-import { definePlugin } from '@openora/plugin-host';
-import { EVENT_BUS } from '@openora/core';
-import { DRIZZLE } from '@openora/db';
+import { definePlugin, EVENT_BUS, DRIZZLE } from '@openora/core/server';
 import { {{pascalCase name}}Service } from './service/{{kebabCase name}}.service.js';
 import { create{{pascalCase name}}Router } from './router/index.js';
 

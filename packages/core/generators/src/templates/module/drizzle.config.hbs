@@ -1,16 +1,16 @@
 import 'dotenv/config';
 import { defineConfig } from 'drizzle-kit';
 
-// This add-on owns its migration history + tracking table. One database shared with
-// sibling modules, but one journal per module so it can be installed or extracted
-// independently without history surgery. See ADR-0020/0027.
+// Own migration history + tracking table, co-located with the module's schema.
+// One DB shared with sibling modules, but one journal per module so a module can
+// be extracted to its own package without history surgery. See ADR-0020/0027.
 export default defineConfig({
   dialect: 'postgresql',
   casing: 'snake_case',
-  schema: ['./src/schema/index.ts'],
+  schema: ['./schema/index.ts'],
   out: './drizzle/migrations',
   migrations: {
-    table: '__drizzle_migrations_addon_{{snakeCase name}}',
+    table: '__drizzle_migrations_{{snakeCase name}}',
     schema: 'drizzle',
   },
   dbCredentials: {

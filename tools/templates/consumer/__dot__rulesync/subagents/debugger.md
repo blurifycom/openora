@@ -26,7 +26,7 @@ Reproduce deterministically with a build, not the dev server (dev caches aggress
 
 ```bash
 pnpm -C apps/web exec next build   # or apps/backoffice
-pnpm typecheck
+pnpm check:types
 ```
 
 Common consumer-side causes (this stack links `@openora/*` from a sibling checkout):
@@ -35,7 +35,6 @@ Common consumer-side causes (this stack links `@openora/*` from a sibling checko
 | ------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `Module not found: Can't resolve '@openora/...'` but `node -e "require.resolve(...)"` works | A bundler won't compile across the link: boundary (packages live outside the project root) | point the bundler's project root at the common ancestor of your frontend repo and the OSS checkout, and allow imports from outside the root (eg Next.js `turbopack.root` + `experimental.externalDir: true`). |
 | `extends "@openora/tsconfig/..." doesn't resolve`                                           | An `extends` chain through a symlinked tsconfig                                            | the `@openora/tsconfig` configs must be self-contained (no `extends`)                                                                                                                                         |
-| Resolves but won't import                                                                   | `@openora/*` not built                                                                     | run `pnpm build:oss`                                                                                                                                                                                          |
 | Stale error after a fix                                                                     | Turbopack cache                                                                            | `rm -rf apps/*/.next` and rebuild                                                                                                                                                                             |
 
 To confirm a resolution issue is the bundler (not a missing dep):

@@ -16,7 +16,6 @@ pnpm create:app ../my-igaming --name my-igaming
 cd ../my-igaming
 pnpm install
 pnpm setup:mcp          # trust the MCP server + install the /start onboarding flow
-pnpm build:oss          # build the linked @openora/* packages once
 cp .env.example .env     # set DATABASE_URL + AUTH_SECRET
 pnpm db:migrate          # apply the OSS schema
 pnpm dev                 # api :3001
@@ -72,32 +71,6 @@ await emitOpenApiSpec();
 Downstream consumers create their own thin entrypoint that calls `createApp` and bring
 their own `extensions.config.ts`. See `tools/templates/consumer/apps/api/src/main.ts` for the reference.
 
-## Premium add-ons (future)
-
-The `@openora/core` package ships the 15 core modules. Premium add-ons will be available as
-separately distributed packages in the future. When available, you enable them the same way:
-
-1. `pnpm add @openora-addons/<name>`.
-2. Register its plugin in your `extensions.config.ts` (it exports a default plugin).
-3. Merge its contract slice into the contract you pass to `createApp`, so OpenAPI +
-   the typed client expose its routes:
-
-   ```typescript
-   import { composeContract } from '@openora/core/contracts';
-   import { walletContract } from '@openora/core/wallet/contracts/wallet';
-   import { premiumModuleContract } from '@openora-addons/<name>/contracts/<name>';
-
-   const contract = composeContract({
-     wallet: walletContract,
-     '<name>': premiumModuleContract,
-   });
-   ```
-
-4. If the package owns tables, run its migrations after the core set.
-
-The core OSS build never references add-on packages (a lint boundary,
-`no-core-to-addon`, enforces it), so you only ever pull in what you enable.
-
 ## Seeding reference data (production)
 
 Migrations carry **structure only** (DDL: tables, indexes, constraints) - never data.
@@ -107,8 +80,8 @@ separately by **module seeders** - a function each module exports from its `/see
 (`ON CONFLICT ... DO UPDATE`), so editing the declared data and re-running reconciles existing
 rows - safe to run on every deploy.
 
-Seeding is a **standalone one-shot script**, exactly like migrations (`tools/db/migrate-all.mjs`
-imports `migrate()` callables and runs them). It needs only a DB connection - it never boots the
+Seeding is a **standalone one-shot script**, exactly like migrations (the `openora-migrate` bin shipped
+by `@openora/core` imports every `migrate()` callable and runs them). It needs only a DB connection - it never boots the
 app (no HTTP, no auth, no plugin host), so it is cheap and carries zero footprint in the running
 server. You compose the seeders you want explicitly, then run it after migrations:
 
@@ -200,7 +173,7 @@ Until OSS packages are published to npm, downstream consumers point at this work
 "pnpm": {
   "overrides": {
     // Everything is folded into one package (ADR-0025): link @openora/core and you
-    // get every domain as a subpath. Add @openora-addons/* only if you install one.
+    // get every domain as a subpath.
     "@openora/core": "link:../oss/packages/core"
   }
 }
