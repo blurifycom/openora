@@ -64,6 +64,16 @@ function findModuleDir(name: string): string | null {
   return listAllModules().find((m) => m.name === name)?.dir ?? null;
 }
 
+// Wire shapes live in the cross-cutting contracts zone plus each module's own
+// contract/ dir - the two places a Zod schema may be declared. See ADR-0021/0025.
+function contractFiles(): string[] {
+  const files = walkFiles(repoPath(...CONTRACTS_ZONE), '.ts');
+  for (const { dir } of listAllModules()) {
+    files.push(...walkFiles(join(dir, 'contract'), '.ts'));
+  }
+  return files.filter((f) => !f.endsWith('.d.ts'));
+}
+
 function parseAgentsMdSection(content: string, heading: string): string {
   const lines = content.split('\n');
   let capture = false;
@@ -233,6 +243,23 @@ function readAdapterTokens(): string[] {
   return out.sort();
 }
 
+/**
+ * Resolves an AGENTS.md from a module name, a package name, or a repo-relative path -
+ * module docs live at packages/core/src/<domain>[/<module>]/AGENTS.md, package docs at
+ * packages/<name>/AGENTS.md.
+ */
+function resolveAgentsMd(target: string): string | null {
+  const bare = target.replace(/^@openora(-[a-z]+)?\//, '');
+  const moduleDir = findModuleDir(bare);
+  const candidates = [
+    ...(moduleDir ? [join(moduleDir, 'AGENTS.md')] : []),
+    repoPath(target, 'AGENTS.md'),
+    repoPath('packages', bare, 'AGENTS.md'),
+    repoPath('apps', bare, 'AGENTS.md'),
+  ];
+  return candidates.find(existsSync) ?? null;
+}
+
 /** Named UI slot identifiers - the platform is headless; slots live in the consumer frontend. */
 function readSlots(): string[] {
   return [];
@@ -368,7 +395,7 @@ server.registerTool(
   },
   async ({ section, package: pkg }) => {
     const filePath = pkg
-      ? repoPath(pkg.replace(/^@openora\//, ''), 'AGENTS.md')
+      ? (resolveAgentsMd(pkg) ?? repoPath(pkg, 'AGENTS.md'))
       : repoPath('AGENTS.md');
     const content = readFile(filePath);
     if (!content) {
@@ -763,7 +790,7 @@ server.registerTool(
         continue;
       }
       const src = readFileSync(schemaFile, 'utf8');
-      for (const [, , tableName] of src.matchAll(/pgTable\(\s*'([^']+)'/g)) {
+      for (const [, tableName] of src.matchAll(/pgTable\(\s*'([^']+)'/g)) {
         if (tableName === want) {
           return {
             content: [
@@ -780,7 +807,7 @@ server.registerTool(
       content: [
         {
           type: 'text',
-          text: `[OK] Table name '${want}' is available. Add the pgTable to your module's src/schema/index.ts, then run pnpm regen to generate the migration.`,
+          text: `[OK] Table name '${want}' is available. Add the pgTable to your module's schema/index.ts, then run pnpm regen to generate the migration.`,
         },
       ],
     };
@@ -798,9 +825,7 @@ server.registerTool(
   },
   async ({ name }) => {
     const candidates = name.endsWith('Schema') ? [name] : [`${name}Schema`, name];
-    const files = walkFiles(repoPath('packages', 'contracts'), '.ts').filter(
-      (f) => !f.endsWith('.d.ts'),
-    );
+    const files = contractFiles();
     for (const file of files) {
       const src = readFileSync(file, 'utf8');
       for (const cand of candidates) {

@@ -27,9 +27,7 @@ beforeAll(async () => {
   db = await setupTestDb();
   const plugins = await loadExtensions();
   // Import the pre-built contract from your composition root, or compose it here
-  const contract = composeContract({
-    /* contract slices from each module */
-  });
+  const contract = composeContract({/* contract slices from each module */});
   testApp = await bootTestApp({ plugins, contract, databaseUrl: db.url });
   await seedMinimal(testApp.container);
 });
