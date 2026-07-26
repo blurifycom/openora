@@ -16,27 +16,46 @@ source for architecture, naming, boundaries, and the "where does X go?" decision
 
 ```bash
 pnpm install
-pnpm setup:agent   # boots Docker (Postgres + Redis), runs migrations, prints a summary
-pnpm seed          # demo data: admin + players + wallets + transactions + games
+pnpm setup   # boots Docker (Postgres + Redis), runs migrations, prints a summary
+pnpm db:seed          # demo data: admin + players + wallets + transactions + games
 pnpm dev           # api :3001, mcp dev server
 ```
 
-Backoffice login: `admin@oss.dev` / `password123` (see `pnpm seed --help` for flags).
+Backoffice login: `admin@oss.dev` / `password123` (see `pnpm db:seed --help` for flags).
 
 ## Day-to-day commands
 
-| Command                 | What it does                                                                                                              |
-| ----------------------- | ------------------------------------------------------------------------------------------------------------------------- |
-| `pnpm dev`              | turbo dev across api, mcp                                                                                                 |
-| `pnpm regen`            | drizzle-kit generate + openapi emit + sdk regen + catalog                                                                 |
-| `pnpm verify`           | typecheck + lint (incl. boundaries + module shape) + unit tests - needs `docker compose up -d`                            |
-| `pnpm test:integration` | whole-app suites booted through `bootTestApp` against a shared `TEST_DATABASE_URL` database                               |
-| `pnpm sync:agents`      | regenerate the per-tool agent files (AGENTS.md / CLAUDE.md / .codex/config.toml / Copilot) from `.rulesync/` via rulesync |
+Scripts are grouped by prefix: `check:*` reports, `fix:*` rewrites, `gen:*` emits, `db:*` touches Postgres, `test:*` runs suites. Every `check:*` and `test:*` task goes through turbo, so repeat runs hit the cache.
+
+| Command                   | What it does                                                                 |
+| ------------------------- | ---------------------------------------------------------------------------- |
+| `pnpm dev`                | turbo dev across docs, mcp                                                   |
+| `pnpm verify`             | the full gate - every `check:*` plus `test:unit` + `test:tools`, in parallel |
+| `pnpm regen`              | tsconfig paths + openapi emit + drizzle generate + catalog                   |
+| `pnpm check:types`        | `tsc --noEmit` across the workspace                                          |
+| `pnpm check:lint`         | oxlint (incl. the `oss-boundaries/*` plugin)                                 |
+| `pnpm check:format`       | oxfmt in check mode                                                          |
+| `pnpm check:boundaries`   | dependency-cruiser whole-graph boundary + cycle gate                         |
+| `pnpm check:shape`        | module layout conformance                                                    |
+| `pnpm check:deprecations` | fails on any use of a `@deprecated` symbol                                   |
+| `pnpm check:drift`        | regenerates catalog/openapi and fails if the committed output is stale       |
+| `pnpm fix:lint`           | oxlint `--fix`                                                               |
+| `pnpm fix:format`         | oxfmt write + final-newline pass                                             |
+| `pnpm test:unit`          | vitest, no external services                                                 |
+| `pnpm test:integration`   | service/router tests against real Postgres                                   |
+| `pnpm test:tools`         | `node --test` over `tools/__tests__`                                         |
+| `pnpm test:scaffold`      | scaffolds a throwaway module and verifies it, then cleans up                 |
+| `pnpm gen:agents`         | regenerate the per-tool agent files from `.rulesync/` via rulesync           |
+| `pnpm db:migrate`         | apply every module's migrations                                              |
+| `pnpm db:seed`            | demo data (idempotent)                                                       |
+| `pnpm db:setup:test`      | provision the integration-test database                                      |
+
+`check:deprecations` excludes `packages/core/src/pam/identity/adapters/identity-reader.service.ts`: depretec mis-resolves Drizzle's `SQL.as` overloads and flags the non-deprecated `as(alias: string)` one. Drop the exclusion once depretec resolves overloads correctly.
 
 ## Scaffolding (don't hand-roll)
 
 ```bash
-pnpm gen module <name>           # new module under packages/addons/<name>
+pnpm gen module <domain> <name>  # new module under packages/core/src/<domain>/<name>
 pnpm gen plugin <name>           # overlay extension under extensions/<name>/
 pnpm gen route <module> <method> <path>
 ```
@@ -97,7 +116,7 @@ Conventional Commits, **enforced** by `commitlint` (local `commit-msg` hook + CI
 
 - **Types:** `feat`, `fix`, `refactor`, `chore`, `docs`, `test`, `ci`, `perf`, `build`, `style`, `revert`.
 - **Scope is a fixed list, not free-form.** `commitlint.config.cjs` derives a `scope-enum` from the
-  workspace - every `packages/*` and `packages/core/src/*` module dir, add-ons, apps, plus meta scopes
+  workspace - every `packages/*` and `packages/core/src/*` module dir, apps, plus meta scopes
   (`ci`, `deps`, `rules`, `repo`, `tooling`, ...). An unlisted scope fails the lint; omit the scope if
   none fits. Check a message with `pnpm commitlint --from HEAD~1`.
 - One MR = one concern; stage explicitly (`git add <paths>`), don't sweep foreign changes with `git add -A`.
@@ -135,7 +154,7 @@ generator and fails on an uncommitted diff. So if you touched schemas or routes,
 - Don't hand-edit generated files: drizzle migrations, `docs/openapi.json`, `docs/catalog.json`,
   and the rulesync-generated agent files (`AGENTS.md`, `CLAUDE.md`, `.codex/config.toml`,
   `.github/copilot-instructions.md`, and the `.claude/`, `.github/` mirrors) - edit
-  `.rulesync/` and run `pnpm sync:agents`.
+  `.rulesync/` and run `pnpm gen:agents`.
 
 ## License and contributions
 

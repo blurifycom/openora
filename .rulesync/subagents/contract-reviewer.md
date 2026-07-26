@@ -22,8 +22,8 @@ If the orchestrator passed a base ref + changed-file list, use them - do not re-
 ### Boundaries
 
 - [ ] No module/domain/extension imports another's internals - only engine zones, read-only `/schema`, events, command ports, shared contracts.
-- [ ] Engine zones (`packages/core/src/{contracts,server,react}`) import no domain and no add-on; `contracts` imports only contracts + Zod; `react` never imports `server` or a module.
-- [ ] New modules/extensions registered only via `extensions.config.ts`; no deep `dist/` imports; no cycles. Run `pnpm boundaries` if unsure - it's the whole-graph gate.
+- [ ] Engine zones (`packages/core/src/{contracts,server,react}`) import no domain; `contracts` imports only contracts + Zod; `react` never imports `server` or a module.
+- [ ] New modules/extensions registered only via `extensions.config.ts`; no deep `dist/` imports; no cycles. Run `pnpm check:boundaries` if unsure - it's the whole-graph gate.
 
 ### Contracts
 
@@ -52,4 +52,4 @@ If the orchestrator passed a base ref + changed-file list, use them - do not re-
 
 ## Output
 
-Max 10 findings, most severe first. Each: `[BLOCK]` (must fix) / `[WARN]` (should fix) / `[INFO]` (FYI), with `file:line`, the violated rule, and a concrete fix. Don't duplicate what oxlint/`pnpm boundaries`/`pnpm verify` already enforce - flag what the gates miss. End with **APPROVED** / **CHANGES REQUESTED** + a one-line summary of the most critical finding.
+Max 10 findings, most severe first. Each: `[BLOCK]` (must fix) / `[WARN]` (should fix) / `[INFO]` (FYI), with `file:line`, the violated rule, and a concrete fix. Don't duplicate what oxlint/`pnpm check:boundaries`/`pnpm verify` already enforce - flag what the gates miss. End with **APPROVED** / **CHANGES REQUESTED** + a one-line summary of the most critical finding.

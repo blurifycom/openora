@@ -1,7 +1,9 @@
 # Player Management
 
-Admin player CRUD, search, and analytics. Table: `player` (userId-keyed, status/KYC-status enums, level, lifetime wagered/deposits totals). Routes: `list` (searchable: name, email, user ID), `get`, `getByUserId`, `update` (with gated KYC-status change requiring `compliance:override-limit` permission), `remove` (bans player), `registrationsOverTime` (admin analytics), `summary`.
+Operator-facing player CRUD, search, and analytics over the `player` table (lifetime wagered/deposit totals live here). Search leans on a trigram GIN index on `display_name` for ILIKE - the DB needs `pg_trgm`.
 
-Owns `KYC_STATUS_WRITER` port (consumed by compliance for status transitions). Player status filtering via `status` input (active, suspended, banned). Trigram GIN index on display_name for fast ILIKE searches (requires pg_trgm).
+## Invariants
 
-KYC-status transition is compliance-regulated; bypassing `KYC_STATUS_WRITER` via direct player:update is blocked by an explicit check in the router (requires both `player:update` and `compliance:override-limit`).
+- Owns and binds `KYC_STATUS_WRITER`; compliance drives KYC transitions through that port, never by writing `player`.
+- A KYC-status change through the plain player update is rejected in the router unless the caller holds BOTH `player:update` and `compliance:override-limit` - the regulated transition can't be laundered through generic CRUD.
+- `remove` bans the player; players are never hard-deleted.

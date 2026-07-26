@@ -1,7 +1,7 @@
 # Player Note
 
-Admin-only player annotation. Table: `playerNote` (playerId, actorId, content, timestamps). Routes: CRUD (all admin-guarded).
+Admin-only player annotations - an operator scratchpad, not a compliance record. Every write stamps `actorId` so notes carry authorship; no domain events, no cross-module coupling. Notes are permanent once written (no soft-delete).
 
-Simple audit trail - no domain events, no cross-module coupling. ActorId stamps every write so notes carry authorship. Soft-delete not implemented (records are permanent once written).
+## Don't
 
-Don't: use this for compliance audit (use the compliance audit module); this is operator scratchpad only.
+- Use this as the compliance/audit trail - that's the `audit` module.

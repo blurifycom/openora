@@ -6,8 +6,8 @@ import type { PluginEntry } from './load-plugins.js';
 /**
  * Load the extensions.config.ts registry from disk and resolve plugin paths.
  * Resolves via EXTENSIONS_CONFIG env var or walks up from process.cwd().
- * Optional `filter` lets callers apply edition gating (eg OSS_ADDONS) before
- * the service manifest is applied.
+ * Optional `filter` lets a composition root drop entries before the service
+ * manifest is applied.
  */
 export async function loadExtensions(
   filter?: (entries: PluginEntry[]) => PluginEntry[],

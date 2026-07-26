@@ -1,7 +1,9 @@
 # Gaming
 
-Game catalog and play sessions. Owns `GAME_ADAPTER` (game list) and `RNG_ADAPTER` (random number generation) ports; default mocks. Tables: `game` (provider, category, metadata), `gameRound` (per-user session with bet/win amounts, currency, status).
+Game catalog and play sessions. Owns the `GAME_ADAPTER` (catalog) and `RNG_ADAPTER` (randomness) ports - this repo ships mocks only; a real aggregator rebinds them in an overlay.
 
-Routes serve both public reads (`listGames`, `getGame`) and player writes (`startRound`, `endRound`, `listRounds`). Each round tracks bet/win as decimals (to match wallet precision). Rounds stay tied to the initiating user via `userId` - no FK cross-module reference to wallet, just plain ID.
+## Invariants
 
-Round lifecycle: status moves `'active'` -> `'completed'` on end. A round without an `endedAt` is still in play; a finished round carries final bet/win for accounting.
+- A round moves `active` -> `completed` once. No `endedAt` means still in play; a completed round's bet/win are final for accounting.
+- Bet/win are decimals matching wallet precision - never floats.
+- `gameRound.userId` is a plain uuid, no FK into another module's tables (cross-module FKs are unenforceable once tables split).

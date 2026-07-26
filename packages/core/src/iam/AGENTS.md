@@ -1,6 +1,6 @@
 # iam
 
-Identity & Access Management for the backoffice: dynamic DB-backed RBAC (a `(role x module) -> level` matrix), super-admin semantics, predefined roles seeded by script, admin onboarding via invitation tokens. Binds `ADMIN_PERMISSION_RESOLVER` so `AdminGuard` authorizes against DB grants: the resolver EXPANDS each stored `(module, level)` cell into the action grants the `AdminGuard.assert(ctx, resource, action)` call sites check - the guard and its call sites never change with the level model. Routes, tables, events: read `contract/index.ts`, `schema/index.ts`, `domainEventSchemas` (or `list-routes module=iam`).
+Identity & Access Management for the backoffice: dynamic DB-backed RBAC (a `(role x module) -> level` matrix), super-admin semantics, predefined roles seeded by script, admin onboarding via invitation tokens. Binds `ADMIN_PERMISSION_RESOLVER` so `AdminGuard` authorizes against DB grants: the resolver EXPANDS each stored `(module, level)` cell into the action grants the `AdminGuard.assert(ctx, resource, action)` call sites check - the guard and its call sites never change with the level model.
 
 ## Level model
 

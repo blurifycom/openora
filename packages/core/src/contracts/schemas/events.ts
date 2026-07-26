@@ -16,17 +16,17 @@ const authContextBase = ClientMetaSchema.partial();
 
 const iamRoleEventBase = z
   .object({ roleId: UuidSchema, actorId: UuidSchema })
-  .merge(authContextBase);
+  .extend(authContextBase.shape);
 const cmsPageEventBase = z
   .object({ pageId: UuidSchema, actorId: UuidSchema })
-  .merge(authContextBase);
+  .extend(authContextBase.shape);
 const cmsBannerEventBase = z
   .object({ bannerId: UuidSchema, actorId: UuidSchema })
-  .merge(authContextBase);
+  .extend(authContextBase.shape);
 const actorReasonBase = z.object({ actorId: UuidSchema, reason: z.string() });
 const tagPlayerEventBase = actorReasonBase
   .extend({ playerId: UuidSchema, tagKey: TagKeySchema })
-  .merge(authContextBase);
+  .extend(authContextBase.shape);
 const permissionLevelEntries = z.array(
   z.object({ resource: z.string(), level: PermissionLevelSchema }),
 );
@@ -99,17 +99,17 @@ export const domainEventSchemas = {
   'wallet.withdrawal.completed': walletTxnBase,
   // A player requested a withdrawal; funds are held (balance debited) and the
   // request enters the back-office approval queue as `pending`.
-  'wallet.withdrawal.requested': walletTxnBase.merge(authContextBase),
+  'wallet.withdrawal.requested': walletTxnBase.extend(authContextBase.shape),
   // A payments admin approved a pending withdrawal; it moves to `processing` and
   // is sent to the PSP/Fireblocks rail. `adminId` is the acting reviewer.
   'wallet.withdrawal.approved': walletTxnBase
     .extend({ adminId: UuidSchema })
-    .merge(authContextBase),
+    .extend(authContextBase.shape),
   // A payments admin rejected a pending withdrawal; held funds are returned to the
   // player balance. `adminId` is the acting reviewer; `reason` is mandatory.
   'wallet.withdrawal.rejected': walletTxnBase
     .extend({ adminId: UuidSchema, reason: z.string() })
-    .merge(authContextBase),
+    .extend(authContextBase.shape),
   // An approved withdrawal failed at the PSP/Fireblocks rail; the held funds were
   // returned to the player balance and the transaction moved to `failed`.
   'wallet.withdrawal.failed': walletTxnBase.extend({ adminId: UuidSchema }),
@@ -202,7 +202,7 @@ export const domainEventSchemas = {
   }),
   'rg.cooling_off.activated': actorReasonBase
     .extend({ userId: UuidSchema, exclusionId: UuidSchema, expiresAt: TimestampSchema })
-    .merge(authContextBase),
+    .extend(authContextBase.shape),
   'rg.self_exclusion.activated': actorReasonBase
     .extend({
       userId: UuidSchema,
@@ -210,10 +210,10 @@ export const domainEventSchemas = {
       isPermanent: z.boolean(),
       expiresAt: TimestampSchema.nullable(),
     })
-    .merge(authContextBase),
+    .extend(authContextBase.shape),
   'rg.self_exclusion.lifted': actorReasonBase
     .extend({ userId: UuidSchema, exclusionId: UuidSchema, kind: ExclusionKindSchema })
-    .merge(authContextBase),
+    .extend(authContextBase.shape),
   'rg.exclusion.login_blocked': authContextBase.extend({ userId: UuidSchema }),
 
   // A player's KYC status changed. userId = subject player; actorId = the admin who

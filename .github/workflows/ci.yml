@@ -55,25 +55,10 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: ./.github/actions/bootstrap
-      - name: Format check
-        run: pnpm exec turbo run //#format:check
-      - name: Lint
-        run: pnpm exec turbo run //#lint
-      - name: Typecheck
-        run: pnpm typecheck
-      - name: Boundaries
-        run: pnpm exec turbo run //#boundaries
-      - name: Module shape
-        run: pnpm exec turbo run //#verify:shape
-      - name: Build
-        run: pnpm build
-      - name: Unit tests
-        run: pnpm test:unit
-      - name: Tool tests
-        run: pnpm exec turbo run //#test:tools
-      - name: Create integration test database
-        run: pnpm db:test:setup
-      - name: Integration tests
-        run: pnpm test:integration
+      # Fans out types, lint, format, boundaries, module shape, deprecations, unit
+      # + tool tests through turbo (parallel + cached). `build` runs implicitly as
+      # the `check:types` dependency.
+      - name: Verify
+        run: pnpm verify
       - name: Drift check
-        run: pnpm verify:drift
+        run: pnpm check:drift

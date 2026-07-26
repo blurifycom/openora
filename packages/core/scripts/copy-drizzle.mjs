@@ -1,4 +1,4 @@
-// tsc only emits .ts -> .js; it does not copy the gated add-ons' SQL migration
+// tsc only emits .ts -> .js; it does not copy the modules' SQL migration
 // folders (src/<domain>/drizzle/**). Their runtime migrate.ts loads the SQL via an
 // import.meta.url-relative path (./drizzle/migrations or ../drizzle/migrations), so
 // dist must mirror src. Copy every src/**/drizzle dir to the matching dist path.

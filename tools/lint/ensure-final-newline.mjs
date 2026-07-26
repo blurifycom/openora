@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 // Ensures every tracked text file ends with a final newline. oxfmt (run first in
-// `pnpm format`) already does this for the file types it supports, but it cannot
+// `pnpm fix:format`) already does this for the file types it supports, but it cannot
 // format SQL (oxc#20724) and skips a few others; this is the catch-all. Operates on
 // `git ls-files` so gitignored paths are excluded by construction; binaries (NUL
 // byte) and the lockfile are skipped. Idempotent.

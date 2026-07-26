@@ -1,28 +1,30 @@
 {
   "$schema": "https://turbo.build/schema.json",
   "ui": "tui",
-  "globalDependencies": ["packages/config/**", ".npmrc"],
+  "globalDependencies": ["packages/config/**", ".oxlintrc.json", ".oxfmtrc.json"],
   "tasks": {
     "build": {
       "dependsOn": ["^build"],
-      "outputs": ["dist/**"]
+      "outputs": ["dist/**", ".next/**", "!.next/cache/**"]
     },
     "dev": {
       "cache": false,
       "persistent": true
     },
-    "typecheck": {
-      "dependsOn": ["^build"]
+    "clean": {
+      "cache": false
     },
-    "test": {
-      "dependsOn": ["build"],
-      "outputs": ["coverage/**"]
+    "check:types": {
+      "dependsOn": ["^build", "build"],
+      "outputs": []
     },
     "test:unit": {
-      "dependsOn": ["build"]
+      "dependsOn": ["^build", "build"],
+      "outputs": []
     },
     "test:integration": {
-      "dependsOn": ["build"],
+      "dependsOn": ["^build", "build"],
+      "cache": false,
       "passThroughEnv": [
         "TEST_DATABASE_URL",
         "DATABASE_URL",
@@ -31,64 +33,48 @@
         "BETTER_AUTH_URL"
       ]
     },
-    "codegen": {
-      "dependsOn": ["^build"],
-      "cache": false
-    },
-    "clean": {
-      "cache": false
-    },
-    "//#format:check": {
+    "//#check:lint": {
       "inputs": [
-        "apps/**",
-        "packages/**",
-        "tools/**",
-        "docs/**",
-        ".rulesync/**",
-        "*.{ts,mjs,cjs,json,md,yml,yaml}",
-        ".oxfmtrc.json",
+        "**/*.{ts,tsx,mts,cts,js,mjs,cjs,jsx}",
+        "!.turbo/**",
         "!**/node_modules/**",
         "!**/dist/**",
-        "!**/.turbo/**",
-        "!**/coverage/**"
-      ]
+        "!**/.next/**"
+      ],
+      "outputs": []
     },
-    "//#lint": {
+    "//#check:format": {
       "inputs": [
-        "apps/**",
-        "packages/**",
-        "tools/**",
-        "*.{ts,mjs,cjs}",
-        ".oxlintrc.json",
+        "**/*.{ts,tsx,mts,cts,js,mjs,cjs,jsx,json,jsonc,md,mdx,css,yml,yaml}",
+        "!.turbo/**",
         "!**/node_modules/**",
         "!**/dist/**",
-        "!**/.turbo/**",
-        "!**/coverage/**"
-      ]
+        "!**/.next/**"
+      ],
+      "outputs": []
     },
-    "//#boundaries": {
+    "//#check:boundaries": {
       "inputs": [
         "apps/**",
         "packages/**",
         ".dependency-cruiser.cjs",
         "!**/node_modules/**",
         "!**/dist/**",
-        "!**/.turbo/**",
-        "!**/coverage/**"
-      ]
+        "!**/.next/**"
+      ],
+      "outputs": []
     },
-    "//#verify:shape": {
-      "inputs": [
-        "packages/**",
-        "tools/lint/verify-module-shape.ts",
-        "!**/node_modules/**",
-        "!**/dist/**",
-        "!**/.turbo/**",
-        "!**/coverage/**"
-      ]
+    "//#check:shape": {
+      "inputs": ["packages/core/src/**", "tools/lint/verify-module-shape.ts"],
+      "outputs": []
+    },
+    "//#check:deprecations": {
+      "inputs": ["apps/*/src/**", "packages/*/src/**", "tools/**", "extensions.config.ts"],
+      "outputs": []
     },
     "//#test:tools": {
-      "inputs": ["tools/**", "!**/node_modules/**", "!**/.turbo/**"]
+      "inputs": ["tools/**"],
+      "outputs": []
     }
   }
 }

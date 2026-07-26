@@ -4,7 +4,7 @@ name: add-feature
 description: >
   Deliver a feature end-to-end in this consumer repo. Aggregates context (Jira + Confluence + Slack +
   Google Drive + Notion + local docs + past sessions + codebase), produces an approved plan, then drives
-  delivery by calling sibling skills - create-plugin (build), code-review (review), create-pr (MR) -
+  delivery by calling sibling skills - create-plugin (build), review, create-pr (MR) -
   and create-task for ticket hygiene. Transitions Jira (no comments) and drafts a one-line Slack
   notice. Use on "add feature", "plan <KEY>-XXX", "deliver <KEY>-XXX", or /add-feature [<KEY>-XXX].
   Read-only until the plan is approved; never pushes, transitions Jira, or sends Slack without OK.
@@ -33,7 +33,7 @@ re-implement their work. The platform-core twin is the `/add-feature` skill in t
 - **Read-only until the Step 3 plan is approved.** No edits, commits, pushes, Jira writes, or Slack
   sends before sign-off.
 - Reuse sibling skills, don't reinvent: **create-task** (ticket format), **create-plugin** (build an
-  overlay), **code-review** (review), **create-pr** (MR). Delegate code to subagents.
+  overlay), **review** (review), **create-pr** (MR). Delegate code to subagents.
 
 ## Steps
 
@@ -82,7 +82,7 @@ When implementation starts, transition Jira to In Progress (Step 7 - confirm fir
 
 ### 5. Review + tests
 
-- Run **code-review** on the change set; loop `[BLOCK]`/`[WARN]` fixes back through `builder`.
+- Run **review** on the change set; loop `[BLOCK]`/`[WARN]` fixes back through `builder`.
 - Run `/check` (typecheck + lint). Don't proceed on red.
 - Derive an e2e checklist from the AC (happy path, edge cases, authz negatives, error states), then
   `qa`: write/run the E2E specs, drive `chrome-devtools` on failure.

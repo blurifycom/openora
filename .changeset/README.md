@@ -1,6 +1,6 @@
 # Changesets
 
-This folder drives versioning + publishing of the `@openora/*` and `@openora-addons/*` packages
+This folder drives versioning + publishing of the `@openora/*` packages
 to the GitLab package registry. The whole set shares **one fixed version** (see
 `config.json` `fixed`), so a downstream consumer pins a single range. See
 [ADR-0022](../docs/adr/0022-domain-distribution-packages.md).
