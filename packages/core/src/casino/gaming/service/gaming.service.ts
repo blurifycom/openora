@@ -8,7 +8,12 @@ import {
   serializeRow,
 } from '@openora/core/server';
 import { eq, and, asc, desc } from 'drizzle-orm';
-import { type GameAdapter, type PlayEligibilityPort, type WalletCommands, type User } from '@openora/core/contracts';
+import {
+  type GameAdapter,
+  type PlayEligibilityPort,
+  type WalletCommands,
+  type User,
+} from '@openora/core/contracts';
 import { game, gameRound, type Game, type GameRound } from '../schema/index.js';
 
 export const GameNotFoundError = makeNotFoundError('Game');

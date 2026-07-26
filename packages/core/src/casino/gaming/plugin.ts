@@ -1,5 +1,10 @@
 import { definePlugin, EVENT_BUS, DRIZZLE } from '@openora/core/server';
-import { GAME_ADAPTER, PLAY_ELIGIBILITY, RNG_ADAPTER, WALLET_COMMANDS } from '@openora/core/contracts';
+import {
+  GAME_ADAPTER,
+  PLAY_ELIGIBILITY,
+  RNG_ADAPTER,
+  WALLET_COMMANDS,
+} from '@openora/core/contracts';
 import { GamingService } from './service/gaming.service.js';
 import { createGamingRouter } from './router/index.js';
 import { MockGameAdapter } from './adapters/mock/mock-game-adapter.js';

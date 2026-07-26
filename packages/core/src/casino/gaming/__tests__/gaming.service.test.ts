@@ -149,13 +149,7 @@ describe('GamingService.startRound', () => {
     const adapter = mock<GameAdapter>({
       launchGame: vi.fn().mockResolvedValue({ launchUrl: 'https://mock/play', token: 'tok' }),
     });
-    const svc = new GamingService(
-      drizzle,
-      noopEvents,
-      adapter,
-      unrestricted,
-      walletCommands,
-    );
+    const svc = new GamingService(drizzle, noopEvents, adapter, unrestricted, walletCommands);
 
     const result = await svc.startRound('u1', 'g1', 'USD', '10');
 
@@ -171,13 +165,7 @@ describe('GamingService.startRound', () => {
     const drizzle = makeDrizzle({ select: [[GAME_ROW]] });
     const walletCommands = makeWalletCommands({ ok: false, available: '2' });
     const adapter = mock<GameAdapter>({ launchGame: vi.fn() });
-    const svc = new GamingService(
-      drizzle,
-      noopEvents,
-      adapter,
-      unrestricted,
-      walletCommands,
-    );
+    const svc = new GamingService(drizzle, noopEvents, adapter, unrestricted, walletCommands);
 
     await expect(svc.startRound('u1', 'g1', 'USD', '10')).rejects.toBeInstanceOf(
       InsufficientBalanceError,
