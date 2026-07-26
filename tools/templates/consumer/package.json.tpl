@@ -10,7 +10,7 @@
     "lint": "oxlint .",
     "sync:agents": "rulesync generate",
     "prepare": "rulesync generate",
-    "db:migrate": "pnpm -F @{{name}}/api db:migrate",
+    "db:migrate": "pnpm -F @{{name}}/api exec openora-migrate",
     "db:seed": "pnpm -F @{{name}}/api db:seed",
     "gen": "turbo gen"
   },

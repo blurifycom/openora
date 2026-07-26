@@ -7,7 +7,6 @@
     "build": "tsc",
     "dev": "node --import tsx --watch --env-file-if-exists=../../.env src/main.ts",
     "start": "node --import tsx --env-file-if-exists=../../.env src/main.ts",
-    "db:migrate": "node --import tsx --env-file-if-exists=../../.env src/migrate.ts",
     "db:seed": "node --import tsx --env-file-if-exists=../../.env src/seed.ts",
     "typecheck": "tsc --noEmit"
   },

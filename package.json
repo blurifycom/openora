@@ -1,14 +1,14 @@
 {
-  "name": "oss-igaming-platform",
+  "name": "openora",
   "version": "0.0.1",
   "private": true,
-  "description": "Open-source, headless, plugin-based, AI-native igaming platform",
-  "homepage": "https://github.com/blurifycom/oss",
+  "description": "Open-source, headless, plugin-based, AI-native igaming framework",
+  "homepage": "https://github.com/blurifycom/openora",
   "license": "AGPL-3.0-only",
-  "author": "OSS iGaming contributors",
+  "author": "Blurify",
   "repository": {
     "type": "git",
-    "url": "https://github.com/blurifycom/oss.git"
+    "url": "https://github.com/blurifycom/openora.git"
   },
   "scripts": {
     "build": "turbo run build",
@@ -23,7 +23,7 @@
     "test:unit": "turbo run test:unit",
     "test:integration": "turbo run test:integration",
     "db:test:setup": "tsx tools/db/setup-test-db.ts",
-    "db:migrate:all": "node tools/db/migrate-all.mjs",
+    "db:migrate:all": "openora-migrate",
     "codegen": "turbo run codegen",
     "clean": "turbo run clean && rm -rf node_modules",
     "format": "oxfmt && node tools/lint/ensure-final-newline.mjs",

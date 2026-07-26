@@ -107,8 +107,8 @@ separately by **module seeders** - a function each module exports from its `/see
 (`ON CONFLICT ... DO UPDATE`), so editing the declared data and re-running reconciles existing
 rows - safe to run on every deploy.
 
-Seeding is a **standalone one-shot script**, exactly like migrations (`tools/db/migrate-all.mjs`
-imports `migrate()` callables and runs them). It needs only a DB connection - it never boots the
+Seeding is a **standalone one-shot script**, exactly like migrations (the `openora-migrate` bin shipped
+by `@openora/core` imports every `migrate()` callable and runs them). It needs only a DB connection - it never boots the
 app (no HTTP, no auth, no plugin host), so it is cheap and carries zero footprint in the running
 server. You compose the seeders you want explicitly, then run it after migrations:
 

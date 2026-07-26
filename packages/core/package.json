@@ -21,7 +21,11 @@
     "url": "git+https://github.com/blurifycom/openora.git",
     "directory": "packages/core"
   },
+  "bin": {
+    "openora-migrate": "./bin/migrate.mjs"
+  },
   "files": [
+    "bin",
     "dist",
     "tsconfig",
     "oxlint",

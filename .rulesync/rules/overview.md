@@ -53,7 +53,7 @@ packages/
 docs/
   adr/             # architecture decision records
   catalog.json     # generated surface (routes/schemas/adapters/slots/events); read by @openora/mcp
-tools/             # grouped: gen/ (gen.ts scaffolder, build-contract, gen-openapi, gen-catalog), lint/ (oxlint plugins, verify-module-shape), create/, db/ (seed, migrate-all), setup/
+tools/             # grouped: gen/ (gen.ts scaffolder, build-contract, gen-openapi, gen-catalog), lint/ (oxlint plugins, verify-module-shape), create/, db/ (seed), setup/
 extensions.config.ts # the single registry of enabled plugins
 ```
 
@@ -89,7 +89,7 @@ Two complementary gates, kept in sync: (1) **oxlint `oss-boundaries/*`** (`tools
 - A folded domain imports engine zones (`contracts`/`server`/`react`) + a sibling's read-only `/schema` only - never a sibling's internals (`no-cross-domain`). Couple via a command port, a domain event, or a shared contract. Same rule for add-ons (`no-cross-addon`).
 - `contracts` is isomorphic: only other contracts + Zod (`no-contracts-to-runtime`). `react` never imports `server` or a module (`no-react-to-runtime`).
 - Engine zones never import a domain or add-on (`no-core-to-domain`/`no-core-to-addon`); wiring happens only in the consumer's composition root (+ `@openora/testing`).
-- Import the package/subpath entry, never a deep `dist/` path. No cycles - break by inverting the dependency or moving the type to contracts.
+- Import the package/subpath entry, never a deep `dist/` path, and never a sibling package's `src/` internals (`no-deep-package-import`; `@openora/core` is exempt - its subpath exports all resolve into `src/`). No cycles - break by inverting the dependency or moving the type to contracts.
 
 ## Forbidden patterns
 

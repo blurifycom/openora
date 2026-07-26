@@ -106,6 +106,17 @@ module.exports = {
         pathNot: ['^packages/addons/$1/', '/src/schema/'],
       },
     },
+    {
+      name: 'no-deep-package-import',
+      severity: 'error',
+      comment:
+        'Import a sibling workspace package through its package entry, never its src/dist internals. @openora/core is exempt: its exports map is a wide set of documented subpaths that all resolve into src/ through the generated paths mapping, so a "deep" path there is the public surface (its internals are policed by the zone rules above instead).',
+      from: { path: '^(?:apps|packages)/([^/]+)/' },
+      to: {
+        path: '^packages/(?!core/|addons/)[^/]+/(?:src|dist)/',
+        pathNot: ['^packages/$1/', '^packages/[^/]+/(?:src/)?index\\.(?:ts|tsx|js|mjs)$'],
+      },
+    },
   ],
   options: {
     doNotFollow: { path: 'node_modules' },
