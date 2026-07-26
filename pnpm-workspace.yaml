@@ -1,10 +1,10 @@
 packages:
   - 'apps/*'
-  - 'packages/core' # @openora/core - the single published umbrella (ADR-0025); modules fold in as subpaths
-  - 'packages/mcp' # @openora/mcp - publishable MCP dev server (not part of core)
-  - 'packages/create-openora' # @openora/create - npm initializer (`npm create @openora`), no OSS checkout required
-  - 'packages/testing' # @openora/testing - dev/test harness (not published)
-  - 'packages/*/*' # includes packages/addons/* (every feature is a standalone add-on package)
+  - 'packages/core'
+  - 'packages/mcp'
+  - 'packages/create-openora'
+  - 'packages/testing'
+  - 'packages/*/*'
 # Pin a single React version across the workspace - the SDK peer-deps `>=19`, so
 # without this transitive deps drift across patch releases (19.2.0/19.2.6/...).
 overrides:
@@ -20,58 +20,4 @@ allowBuilds:
   sharp: true
   tldjs: false
 minimumReleaseAgeExclude:
-  - rulesync@8.26.0
-  - '@oxfmt/binding-android-arm-eabi@0.54.0'
-  - '@oxfmt/binding-android-arm64@0.54.0'
-  - '@oxfmt/binding-darwin-arm64@0.54.0'
-  - '@oxfmt/binding-darwin-x64@0.54.0'
-  - '@oxfmt/binding-freebsd-x64@0.54.0'
-  - '@oxfmt/binding-linux-arm-gnueabihf@0.54.0'
-  - '@oxfmt/binding-linux-arm-musleabihf@0.54.0'
-  - '@oxfmt/binding-linux-arm64-gnu@0.54.0'
-  - '@oxfmt/binding-linux-arm64-musl@0.54.0'
-  - '@oxfmt/binding-linux-ppc64-gnu@0.54.0'
-  - '@oxfmt/binding-linux-riscv64-gnu@0.54.0'
-  - '@oxfmt/binding-linux-riscv64-musl@0.54.0'
-  - '@oxfmt/binding-linux-s390x-gnu@0.54.0'
-  - '@oxfmt/binding-linux-x64-gnu@0.54.0'
-  - '@oxfmt/binding-linux-x64-musl@0.54.0'
-  - '@oxfmt/binding-openharmony-arm64@0.54.0'
-  - '@oxfmt/binding-win32-arm64-msvc@0.54.0'
-  - '@oxfmt/binding-win32-ia32-msvc@0.54.0'
-  - '@oxfmt/binding-win32-x64-msvc@0.54.0'
-  - '@oxlint/binding-android-arm-eabi@1.69.0'
-  - '@oxlint/binding-android-arm64@1.69.0'
-  - '@oxlint/binding-darwin-arm64@1.69.0'
-  - '@oxlint/binding-darwin-x64@1.69.0'
-  - '@oxlint/binding-freebsd-x64@1.69.0'
-  - '@oxlint/binding-linux-arm-gnueabihf@1.69.0'
-  - '@oxlint/binding-linux-arm-musleabihf@1.69.0'
-  - '@oxlint/binding-linux-arm64-gnu@1.69.0'
-  - '@oxlint/binding-linux-arm64-musl@1.69.0'
-  - '@oxlint/binding-linux-ppc64-gnu@1.69.0'
-  - '@oxlint/binding-linux-riscv64-gnu@1.69.0'
-  - '@oxlint/binding-linux-riscv64-musl@1.69.0'
-  - '@oxlint/binding-linux-s390x-gnu@1.69.0'
-  - '@oxlint/binding-linux-x64-gnu@1.69.0'
-  - '@oxlint/binding-linux-x64-musl@1.69.0'
-  - '@oxlint/binding-openharmony-arm64@1.69.0'
-  - '@oxlint/binding-win32-arm64-msvc@1.69.0'
-  - '@oxlint/binding-win32-ia32-msvc@1.69.0'
-  - '@oxlint/binding-win32-x64-msvc@1.69.0'
-  - hono@4.12.25
-  - oxfmt@0.54.0
-  - oxlint@1.69.0
-  - '@commitlint/cli@21.1.0'
-  - '@commitlint/config-conventional@21.1.0'
-  - '@commitlint/config-validator@21.1.0'
-  - '@commitlint/ensure@21.1.0'
-  - '@commitlint/format@21.1.0'
-  - '@commitlint/is-ignored@21.1.0'
-  - '@commitlint/lint@21.1.0'
-  - '@commitlint/load@21.1.0'
-  - '@commitlint/parse@21.1.0'
-  - '@commitlint/read@21.1.0'
-  - '@commitlint/resolve-extends@21.1.0'
-  - '@commitlint/rules@21.1.0'
-  - '@commitlint/types@21.1.0'
+  - 'rulesync@15.1.0'
