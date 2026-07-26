@@ -1,56 +1,15 @@
-# @openora/testing - AGENTS.md
+# @openora/testing
 
-## What this package does
+Shared harness for integration suites (ours and downstream consumers'): boots the real Hono + oRPC app in-process against a real Postgres test database - no mocks, no network listener. `setupTestDb` migrates and hands back `truncateAll`/`dispose`; `bootTestApp` returns `{ app, container, close }` you drive with `app.request()`; `asPlayer`/`asAdmin` log in through `/identity/login` for a real session cookie (no `x-user-id` trust, ADR-0019); `seedMinimal` wraps `seedDemoData`.
 
-Shared test harness for integration suites used by downstream consumers. It boots the real Hono + oRPC app
-in-process against a real Postgres test database - no mocks, no network listener.
+## Requirements
 
-## Exports
-
-| Symbol                                             | Purpose                                                                                                                                                                                                   |
-| -------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `setupTestDb()`                                    | Apply platform migrations to `TEST_DATABASE_URL` (default `oss_igaming_test`); returns `{ url, truncateAll(), dispose() }`.                                                                               |
-| `bootTestApp({ plugins, contract?, databaseUrl })` | Boot the full `@openora/core/server` `createApp` for tests (OpenAPI off); returns `{ app, container, close }`. Drive `app` with `app.request()`.                                                          |
-| `asPlayer(app, { email, password? })`              | Logs in a seeded player via `/identity/login` (verified session cookie - no `x-user-id` trust, ADR-0019). Seeded players: `player.<n>@demo.igaming.dev` / `password123`. Returns a `Promise<TestClient>`. |
-| `asAdmin(app, creds?)`                             | Logs in via `/identity/login`, returns a `Promise<TestClient>` carrying the session cookie. Defaults to `admin@oss.dev` / `password123`.                                                                  |
-| `seedMinimal(container, opts?)`                    | Thin wrapper over `seedDemoData` (admin + a few players + wallets).                                                                                                                                       |
-
-## Usage (integration test)
-
-```ts
-import { setupTestDb, bootTestApp, asPlayer, asAdmin, seedMinimal } from '@openora/testing';
-import { loadExtensions } from '../../src/extensions.js';
-import { composeContract } from '@openora/core/contracts';
-
-let db, testApp;
-beforeAll(async () => {
-  db = await setupTestDb();
-  const plugins = await loadExtensions();
-  // Import the pre-built contract from your composition root, or compose it here
-  const contract = composeContract({/* contract slices from each module */});
-  testApp = await bootTestApp({ plugins, contract, databaseUrl: db.url });
-  await seedMinimal(testApp.container);
-});
-afterAll(async () => {
-  await testApp.close();
-  await db.dispose();
-});
-afterEach(() => db.truncateAll()); // or rely on unique ids per test
-```
-
-## Requirements / conventions
-
-- A test Postgres must exist. CI provisions a `postgres:16` service; locally run
-  `pnpm db:setup:test` (creates `oss_igaming_test`) with docker-compose postgres up.
-- Integration vitest configs must `poolOptions.threads.singleThread = true` - all
-  suites share one database, so they cannot run in parallel against it.
-- `bootTestApp` requires the platform to be **built** (`loadExtensions()` resolves
-  compiled `dist/**/plugin.js`). Run `pnpm build` before `pnpm test:integration`.
-- Isolation: prefer unique tenant/user ids per test; use `truncateAll()` between
-  files for a clean slate. Alternative (not wired here): wrap each test in a DB
-  transaction and roll back - faster but requires the handler to use the txn.
+- A test Postgres must exist: CI provisions `postgres:16`, locally `pnpm db:setup:test` against docker-compose postgres.
+- Integration vitest configs MUST set `poolOptions.threads.singleThread = true` - every suite shares one database, so they cannot run in parallel.
+- `bootTestApp` needs the platform BUILT (`loadExtensions()` resolves compiled `dist/**/plugin.js`) - run `pnpm build` before `pnpm test:integration`.
+- Isolate with unique ids per test, or `truncateAll()` between files. (A per-test transaction rollback would be faster but requires handlers to take the txn - not wired here.)
 
 ## Don't
 
-- Don't import this package from production code - it's test-only (`devDependencies`).
-- Don't point `TEST_DATABASE_URL` at a real/dev database - `truncateAll()` wipes it.
+- Import this package from production code - it is test-only.
+- Point `TEST_DATABASE_URL` at a real or dev database: `truncateAll()` wipes it.

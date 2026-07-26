@@ -27,7 +27,7 @@ import type { PlopTypes } from '@turbo/gen';
 // absolute path.
 declare const require: NodeJS.Require;
 const pkgDir = dirname(require.resolve('@openora/core/package.json'));
-const tpl = (name: string): string => join(pkgDir, 'turbo-generators', 'src', 'templates', name);
+const tpl = (name: string): string => join(pkgDir, 'generators', 'src', 'templates', name);
 
 const kebabRe = /^[a-z][a-z0-9-]*$/;
 

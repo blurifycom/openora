@@ -18,7 +18,7 @@ Open-source, headless, plugin-based, AI-native igaming platform. Consumers clone
 
 ## Enhance the ask first (pre-step)
 
-Before acting on any non-trivial request - and before delegating to an agent - run the `enhance-prompt` skill on the raw ask: restate the intent, gather scoped context (issue tracker / roadmap, `docs/` + ADRs, the catalog MCP tools), surface the blocking ambiguities, and produce the brief you actually execute. Skip it only when the ask is already precise. Subagents act on the brief they are handed - they do not re-enhance it.
+Before acting on any non-trivial request - and before delegating - run the `enhance-prompt` skill on the raw ask to produce the brief you actually execute. Skip it only when the ask is already precise. Subagents act on the brief they are handed; they do not re-enhance it.
 
 ## Architecture pillars
 
@@ -83,7 +83,7 @@ Cross-cutting basics (kebab files, PascalCase types, `<Name>Schema` + inferred `
 
 ## Dependency rules (two-layer enforcement, both in `pnpm verify`)
 
-Two complementary gates, kept in sync: (1) **oxlint `oss-boundaries/*`** (`tools/lint/oxlint-boundaries-plugin.mjs`) - fast per-edit string matching on import specifiers (runs via `pnpm check:lint` + the post-edit hook); (2) **dependency-cruiser** (`.dependency-cruiser.cjs`, `pnpm check:boundaries`) - the resolved whole graph, so it also catches transitive edges, re-export/barrel laundering, dynamic `import()`, and relative paths that dodge the prefix. ADR-0015.
+Two gates, kept in sync: **oxlint `oss-boundaries/*`** (`tools/lint/oxlint-boundaries-plugin.mjs`) matches import specifiers per edit, and **dependency-cruiser** (`.dependency-cruiser.cjs`, `pnpm check:boundaries`) resolves the whole graph - so it also catches transitive edges, barrel laundering, dynamic `import()`, and relative paths that dodge the prefix. ADR-0015.
 
 - A folded domain imports engine zones (`contracts`/`server`/`react`) + a sibling's read-only `/schema` only - never a sibling's internals (`no-cross-domain`). Couple via a command port, a domain event, or a shared contract.
 - `contracts` is isomorphic: only other contracts + Zod (`no-contracts-to-runtime`). `react` never imports `server` or a module (`no-react-to-runtime`).
@@ -148,6 +148,6 @@ For platform development (this repo); consumer agents ship in `tools/templates/c
 
 - Use the `oss-dev` MCP server (`.mcp.json`, pre-approved) for read-only inspection: `read-agents-md`, `list-modules`, `describe-module`, `list-routes`, `list-extension-points`, `query-openapi`, `get-drizzle-schema`, `propose-table-change`, `schema-get`, `docs-search`, `db-query-readonly`. Faster than grep, reflects current state.
 - Before a route: `query-openapi`. Before a table: `propose-table-change`. After any change: `pnpm verify --filter <package>`; fix failures before continuing.
-- Read the touched module's `AGENTS.md` before editing it; keep it updated when invariants or extension seams change. An `AGENTS.md` holds ONLY what code can't say: invariants, rationale, gotchas, extension seams, and where-to-look pointers - never route/table/layout/event listings (they duplicate `contract/`, `schema/`, `docs/catalog.json` and drift). Claude Code loads them via generated per-module `CLAUDE.md` stubs (`tools/gen/gen-claude-stubs.mjs`, gitignored).
+- Read the touched module's `AGENTS.md` before editing it; keep it updated when invariants or extension seams change. Every `AGENTS.md` (this one included) stays lean: only what code can't say - invariants, rationale, gotchas, extension seams. Never route/table/event listings or "see `contract/`" pointers; agents already know to read `contract/`, `schema/`, `docs/catalog.json`. Claude Code loads them via generated per-module `CLAUDE.md` stubs (`tools/gen/gen-claude-stubs.mjs`, gitignored).
 - Small PRs scoped to one module; cross-module changes need human approval. Never commit unless asked; never push without explicit per-action confirmation.
 - ASCII only in code; short dashes (-) only, never long dashes.

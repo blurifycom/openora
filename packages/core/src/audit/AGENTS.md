@@ -1,6 +1,6 @@
 # audit
 
-Append-only, tamper-evident audit log - a regulatory requirement (MGA/UKGC: immutable 5-year record of financial transactions, admin actions, game results, logins, config/permission changes). Owns `audit_log`, exposes admin-guarded `audit.list`/`audit.exportCsv`, auto-records subscribed domain events, and binds the `AUDIT_WRITER` port for explicit writes. Subscribed topics: `SUBSCRIBED_TOPICS` in `plugin.ts` - only topics declared in `domainEventSchemas`, never invented ones. Routes and table: `contract/index.ts`, `schema/index.ts`.
+Append-only, tamper-evident audit log - a regulatory requirement (MGA/UKGC: immutable 5-year record of financial transactions, admin actions, game results, logins, config/permission changes). Owns `audit_log`, exposes admin-guarded `audit.list`/`audit.exportCsv`, auto-records subscribed domain events, and binds the `AUDIT_WRITER` port for explicit writes. Subscribed topics: `SUBSCRIBED_TOPICS` in `plugin.ts` - only topics declared in `domainEventSchemas`, never invented ones.
 
 ## Sealed token
 

@@ -1,6 +1,6 @@
 # wallet
 
-User balances, deposits, withdrawals. One wallet per user. Default `PAYMENT_ADAPTER` binding is `MockPaymentAdapter` (always returns terminal `completed`). Routes, tables (`wallet`, `wallet_transaction`, `auto_withdrawal_rule`, `wallet_deposit_address`), events (`wallet.*`, v2): `contract/`, `schema/index.ts`, `domainEventSchemas`.
+User balances, deposits, withdrawals. One wallet per user. Default `PAYMENT_ADAPTER` binding is `MockPaymentAdapter` (always returns terminal `completed`).
 
 ## Money model (ADR-0029)
 

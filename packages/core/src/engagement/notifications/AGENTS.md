@@ -1,13 +1,10 @@
 # Notifications
 
-In-app notification log + optional email delivery. Table: `notification` (userId, type, title, body, readAt timestamp). `type` is the contract-surface `NOTIFICATION_TYPES` triple (`contract/index.ts`) - currently `withdrawal.approved`/`withdrawal.rejected`, the only values a creation site emits. Routes: `list` (player), `markRead` (player), `markAllRead` (player).
+In-app notification log with optional email delivery, driven by the wallet withdrawal approved/rejected events. `type` is the `NOTIFICATION_TYPES` contract triple - only values a creation site actually emits belong in it. Player emails resolve through `ADMIN_USER_DIRECTORY` (owned by identity), never by reading identity tables.
 
-Subscribes to `wallet.withdrawal.approved` and `wallet.withdrawal.rejected` events; creates in-app notification + triggers email via `NOTIFICATION_DELIVERY_ADAPTER`. Email is best-effort (missing user or delivery failure logged, never throws) - the in-app notification lands first and always succeeds. Resolves player email via `ADMIN_USER_DIRECTORY` (owned by identity module); depends on identity for that port.
+## Invariants
 
-Event handler defers email send to a background promise (catches and logs) so a delivery hang doesn't block the event handler. On delivery failure, a warning log includes the userId for ops to investigate.
-
-## Audit
-
-`create` emits `notifications.created`, subscribed by the `audit` module (`audit/plugin.ts`) - the notification's creation is audited as a system-generated record (recipient carried in `after.userId`, not as an actor).
-
-`markRead`/`markAllRead` are a deliberate non-audited exception: they only flip a player's own `readAt` on their own notification (ownership-checked, no cross-user effect, no money/config/compliance impact) - not the kind of state change the DoD's "money/KYC/config change" bar targets.
+- The in-app record is authoritative and always lands; email through `NOTIFICATION_DELIVERY_ADAPTER` is best-effort - a missing user or failed delivery is logged with the userId for ops, never thrown.
+- The event handler fires the email on a detached, caught promise so a hung delivery can't stall event processing.
+- `create` emits `notifications.created` for the audit module: a system-generated record, recipient in `after.userId`, no actor.
+- `markRead`/`markAllRead` are a deliberate audit exception - a player flipping `readAt` on their own row has no money/KYC/config effect.

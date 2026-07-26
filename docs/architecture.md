@@ -114,7 +114,7 @@ Solid arrows are runtime/build dependencies; dashed arrows are **adapter seams**
 **AI dev surface**
 
 - **mcp-server-dev** - a stdio MCP server (registered in `.mcp.json`, not a port) exposing read-only inspection (`list-modules`, `list-routes`, `query-openapi`, `get-drizzle-schema`, ...) and write tools that delegate to the scaffolder.
-- **tools/gen/gen.ts** (-> `@openora/turbo-generators`) - deterministic code-mods behind the `/scaffold-*` slash commands (module, plugin, route).
+- **tools/gen/gen.ts** (-> `@openora/core/generators`) - deterministic code-mods behind the `/scaffold-*` slash commands (module, plugin, route).
 - **AGENTS.md** - per-package brief; the first thing an agent reads.
 
 ## Adapter / bridge seams
