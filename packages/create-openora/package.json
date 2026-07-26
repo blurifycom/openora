@@ -29,7 +29,7 @@
   },
   "scripts": {
     "build": "node scripts/copy-template.mjs && node scripts/generate-core-version.mjs && tsc",
-    "typecheck": "node scripts/generate-core-version.mjs && tsc --noEmit",
+    "check:types": "node scripts/generate-core-version.mjs && tsc --noEmit",
     "clean": "rm -rf dist template src/generated",
     "prepack": "pnpm run build"
   },

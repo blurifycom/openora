@@ -8,7 +8,7 @@
     "dev": "node --import tsx --watch --env-file-if-exists=../../.env src/main.ts",
     "start": "node --import tsx --env-file-if-exists=../../.env src/main.ts",
     "db:seed": "node --import tsx --env-file-if-exists=../../.env src/seed.ts",
-    "typecheck": "tsc --noEmit"
+    "check:types": "tsc --noEmit"
   },
   "dependencies": {
     "@openora/core": "{{coreVersion}}"

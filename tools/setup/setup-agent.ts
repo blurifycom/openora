@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 /**
- * One-command agent onboarding. Run via `pnpm setup:agent`.
+ * One-command agent onboarding. Run via `pnpm setup`.
  * Checks prerequisites, boots infra, migrates DB, starts MCP dev server, prints summary.
  */
 
@@ -50,8 +50,8 @@ async function main() {
     console.log('\n--- Dependencies: already installed ---');
   }
 
-  console.log('\n--- Generating OpenAPI spec (pnpm codegen) ---');
-  run('pnpm codegen');
+  console.log('\n--- Generating OpenAPI spec (pnpm regen) ---');
+  run('pnpm regen');
 
   console.log('\n--- Starting dev infra (docker compose up -d) ---');
   run('docker compose up -d');
@@ -75,8 +75,8 @@ async function main() {
 
   console.log('\n--- Running Drizzle migrations ---');
   try {
-    run('pnpm -F @openora/core generate');
-    run('pnpm db:migrate:all');
+    run('pnpm gen:drizzle');
+    run('pnpm db:migrate');
   } catch {
     console.warn('  [warn] Migration step skipped (schema may be empty - normal on first run)');
   }

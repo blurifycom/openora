@@ -28,5 +28,5 @@ Rules:
 
 - Fill it from the current conversation/diff - state the decision actually made, not options considered. If the decision isn't settled, say so and ask instead of writing a speculative ADR.
 - One ADR = one decision. Reference related ADRs by number.
-- If the decision changes agent-facing conventions, also update the matching `.rulesync/rules/*` file and run `pnpm sync:agents`.
+- If the decision changes agent-facing conventions, also update the matching `.rulesync/rules/*` file and run `pnpm gen:agents`.
 - Report the file path when done. Don't commit unless asked.

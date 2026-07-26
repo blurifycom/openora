@@ -336,7 +336,7 @@ function buildPlaybook(
         '',
         '## Playbook',
         '1. Run `scaffold-app <target-dir>` (MCP tool) or `pnpm create:app ../<name> --name <name>`.',
-        '2. In the new dir: `pnpm install && pnpm build:oss && cp .env.example .env` (set DATABASE_URL + AUTH_SECRET) then `pnpm db:migrate`.',
+        '2. In the new dir: `pnpm install && cp .env.example .env` (set DATABASE_URL + AUTH_SECRET) then `pnpm db:migrate`.',
         '3. Run `pnpm setup:mcp` in the new repo so its own agents get this same toolbelt, then `/start` there.',
         '4. `pnpm dev` boots api :3001. The frontend lives in your own repo consuming `@openora/core/react`.',
       ].join('\n');
@@ -654,7 +654,7 @@ server.registerTool(
   'scaffold-app',
   {
     description:
-      'Bootstrap a new downstream igaming consumer repo (api + web + backoffice) wired to this OSS checkout via link:. Delegates to tools/create/create-igaming-app.ts. Does NOT run pnpm install - tell the user to run `pnpm install && pnpm build:oss && pnpm db:migrate` in the new dir next.',
+      'Bootstrap a new downstream igaming consumer repo (api + web + backoffice) wired to this OSS checkout via link:. Delegates to tools/create/create-igaming-app.ts. Does NOT run pnpm install - tell the user to run `pnpm install && pnpm db:migrate` in the new dir next.',
     inputSchema: {
       target: z
         .string()

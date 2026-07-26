@@ -4,7 +4,7 @@ This guide walks an AI agent through implementing a module end-to-end using only
 
 ## Assumptions
 
-- `pnpm setup:agent` has been run (Docker up, DB migrated, dependencies installed).
+- `pnpm setup` has been run (Docker up, DB migrated, dependencies installed).
 - The `oss-dev` MCP server is registered in `.mcp.json` and your agent launches it automatically (stdio). No separate process to start. Verify: `claude mcp list` (Claude Code), or check MCP settings in Cursor/Windsurf. See `docs/mcp-setup.md` for per-editor setup.
 
 ## Step 1: Understand the platform
@@ -133,7 +133,7 @@ curl -X POST http://localhost:3001/<name>s -H "Content-Type: application/json" -
 ## Common pitfalls
 
 - Forgetting `pnpm regen` after editing `src/schema/index.ts` - the migration and generated types will be stale.
-- Importing from another module directly - use events or read its tables via the `@openora/core/<domain>/schema` subpath. Both boundary gates reject it: the oxlint `oss-boundaries/*` plugin (per-edit, specifier strings) and the whole-graph `pnpm boundaries` gate (catches transitive / re-export / dynamic-import / relative-path dodges too).
+- Importing from another module directly - use events or read its tables via the `@openora/core/<domain>/schema` subpath. Both boundary gates reject it: the oxlint `oss-boundaries/*` plugin (per-edit, specifier strings) and the whole-graph `pnpm check:boundaries` gate (catches transitive / re-export / dynamic-import / relative-path dodges too).
 - Introducing an import cycle - rejected by `import/no-cycle` and the whole-graph `no-circular` gate. Break it by extracting a shared module, inverting a dependency, or moving the type to a contracts package.
 - Declaring `interface` - use `type` (lint-enforced).
 - Defining schemas inline in handlers - they must live in the module's `contract/` dir.

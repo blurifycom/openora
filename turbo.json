@@ -1,6 +1,7 @@
 {
   "$schema": "https://turbo.build/schema.json",
   "ui": "tui",
+  "globalDependencies": ["packages/config/**", ".oxlintrc.json", ".oxfmtrc.json"],
   "tasks": {
     "build": {
       "dependsOn": ["^build"],
@@ -10,18 +11,16 @@
       "cache": false,
       "persistent": true
     },
-    "lint": {
-      "dependsOn": ["^build"]
+    "clean": {
+      "cache": false
     },
-    "typecheck": {
-      "dependsOn": ["^build"]
-    },
-    "test": {
+    "check:types": {
       "dependsOn": ["^build"],
-      "outputs": ["coverage/**"]
+      "outputs": []
     },
     "test:unit": {
-      "cache": false
+      "dependsOn": ["^build"],
+      "outputs": []
     },
     "test:integration": {
       "dependsOn": ["^build"],
@@ -34,12 +33,48 @@
         "BETTER_AUTH_URL"
       ]
     },
-    "codegen": {
-      "dependsOn": ["^build"],
-      "cache": false
+    "//#check:lint": {
+      "inputs": [
+        "**/*.{ts,tsx,mts,cts,js,mjs,cjs,jsx}",
+        "!.turbo/**",
+        "!**/node_modules/**",
+        "!**/dist/**",
+        "!**/.next/**"
+      ],
+      "outputs": []
     },
-    "clean": {
-      "cache": false
+    "//#check:format": {
+      "inputs": [
+        "**/*.{ts,tsx,mts,cts,js,mjs,cjs,jsx,json,jsonc,md,mdx,css,yml,yaml}",
+        "!.turbo/**",
+        "!**/node_modules/**",
+        "!**/dist/**",
+        "!**/.next/**"
+      ],
+      "outputs": []
+    },
+    "//#check:boundaries": {
+      "inputs": [
+        "apps/**",
+        "packages/**",
+        ".dependency-cruiser.cjs",
+        "!**/node_modules/**",
+        "!**/dist/**",
+        "!**/.next/**"
+      ],
+      "outputs": []
+    },
+    "//#check:shape": {
+      "inputs": ["packages/core/src/**", "tools/lint/verify-module-shape.ts"],
+      "outputs": []
+    },
+    "//#check:deprecations": {
+      "inputs": ["apps/*/src/**", "packages/*/src/**", "tools/**", "extensions.config.ts"],
+      "outputs": []
+    },
+    "//#test:tools": {
+      "inputs": ["tools/**"],
+      "outputs": []
     }
   }
 }

@@ -19,7 +19,7 @@ description: OSS core is read-only; enforced import/module boundaries.
 
 ## Import boundaries (enforced)
 
-Enforced by `pnpm lint` (oxlint, per-edit), `pnpm boundaries` (dependency-cruiser, whole graph), the pre-commit hook, CI, and the agent PostToolUse hook. Fix the import, never work around a violation.
+Enforced by `pnpm check:lint` (oxlint, per-edit), `pnpm check:boundaries` (dependency-cruiser, whole graph), the pre-commit hook, CI, and the agent PostToolUse hook. Fix the import, never work around a violation.
 
 - No deep OSS imports: `@openora/*/src/*` or `/dist/*` - import only the published entrypoint or subpath export.
 - No deep imports into your own shared packages - only the barrel/index entrypoint.
@@ -28,4 +28,4 @@ Enforced by `pnpm lint` (oxlint, per-edit), `pnpm boundaries` (dependency-cruise
 - No overlay-to-overlay imports - couple via a command port, a domain event, or a shared contract.
 - No import cycles.
 
-`pnpm boundaries:graph` renders the graph (needs Graphviz).
+`pnpm check:boundaries:graph` renders the graph (needs Graphviz).

@@ -3,13 +3,13 @@
 # unstaged changes.
 staged=$(git diff --cached --name-only --diff-filter=ACMR)
 
-pnpm lint:fix
-pnpm format
+pnpm fix:lint
+pnpm fix:format
 
 if [ -n "$staged" ]; then
   printf '%s\n' "$staged" | tr '\n' '\0' | xargs -0 git add --
 fi
 
 pnpm regen
-pnpm boundaries
-pnpm typecheck
+pnpm check:boundaries
+pnpm check:types

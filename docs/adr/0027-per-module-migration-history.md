@@ -21,8 +21,8 @@ Every module owns its own migration history, co-located with its schema, while c
 
 - Each core module (and the engine `outbox`) has its own `drizzle.config.ts` next to its `schema/`, writing to a co-located `drizzle/migrations/` with its own tracking table `__drizzle_migrations_<id>` in the `drizzle` schema.
 - Each module exports a `migrate()` (`@openora/core/<module>/migrate`) that calls the shared `runMigrations` primitive with its folder + tracking table. The engine `outbox` set is owned by `@openora/core/server/migrate`.
-- `pnpm -F @openora/core generate` (`scripts/generate-all.mjs`) discovers every `src/**/drizzle.config.ts` and runs `drizzle-kit generate` per module - a new module needs no central wiring, just a `drizzle.config.ts` next to its schema.
-- `pnpm db:migrate:all` (`tools/migrate-all.mjs`) applies every set. Order is not load-bearing because no FK crosses a module boundary.
+- `pnpm gen:drizzle` (`scripts/generate-all.mjs`) discovers every `src/**/drizzle.config.ts` and runs `drizzle-kit generate` per module - a new module needs no central wiring, just a `drizzle.config.ts` next to its schema.
+- `pnpm db:migrate` (`tools/migrate-all.mjs`) applies every set. Order is not load-bearing because no FK crosses a module boundary.
 - Postgres extensions a module's index needs (eg `pg_trgm` for a GIN trgm index) are declared via the new `runMigrations({ extensions })` option, not hand-edited into a regenerated migration.
 - The central `packages/core/drizzle/` history and central `drizzle.config.ts` are removed. Existing histories were regenerated fresh from current schema (acceptable pre-1.0; existing databases re-init).
 

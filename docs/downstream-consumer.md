@@ -16,7 +16,6 @@ pnpm create:app ../my-igaming --name my-igaming
 cd ../my-igaming
 pnpm install
 pnpm setup:mcp          # trust the MCP server + install the /start onboarding flow
-pnpm build:oss          # build the linked @openora/* packages once
 cp .env.example .env     # set DATABASE_URL + AUTH_SECRET
 pnpm db:migrate          # apply the OSS schema
 pnpm dev                 # api :3001

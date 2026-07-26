@@ -38,7 +38,7 @@ Ports = interfaces + tokens in `packages/core/src/contracts/adapters/` (`PAYMENT
 
 ## Cross-module communication (lint-enforced)
 
-Sanctioned paths only: domain **events** (`EventBus`), **command ports** (a token the owner binds, eg `WALLET_COMMANDS`), shared **contracts**, read-only table reads via the owner's `/schema` subpath. Never import another module's internals (`no-cross-domain` = error; `pnpm boundaries` is the whole-graph gate). ADR-0015.
+Sanctioned paths only: domain **events** (`EventBus`), **command ports** (a token the owner binds, eg `WALLET_COMMANDS`), shared **contracts**, read-only table reads via the owner's `/schema` subpath. Never import another module's internals (`no-cross-domain` = error; `pnpm check:boundaries` is the whole-graph gate). ADR-0015.
 
 Money + any needed-now mutation stay synchronous/transactional, never over events - use a command port: caller passes its own `tx` (`WALLET_COMMANDS.debit(tx, ...)`), atomic in-process yet splittable later; declare `dependsOn: ['<owner>']`. Cross-module schema reads are sanctioned but each one is an extraction blocker. ADR-0017.
 

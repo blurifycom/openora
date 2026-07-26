@@ -9,7 +9,7 @@ Parse $ARGUMENTS for an optional `--filter <package>` flag.
 If filter provided, run: `pnpm verify --filter <package>`
 Otherwise run: `pnpm verify`
 
-This executes `turbo run typecheck lint test:unit` (or scoped to the filter).
+This executes `turbo run check:types lint test:unit` (or scoped to the filter).
 
 After completion:
 

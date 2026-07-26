@@ -201,13 +201,13 @@ flowchart LR
   REG[["Package Registry<br/>your-org/oss<br/>1 fixed version (Changesets)"]]
   subgraph CONS["Consumers"]
     INST["install @openora/core<br/>(enable the domains you need via extensions.config.ts)"]
-    BFLINK["local dev: link:oss + git skip-worktree"]
+    LINK["local dev: link override to a side-by-side checkout"]
     T2X["Tier-2 overlays: games · vendor adapters · UI"]
   end
 
   CORE -->|"changeset publish (CI_JOB_TOKEN)"| REG
   REG --> INST
-  REG -. dev override .-> BFLINK
+  REG -. dev override .-> LINK
   INST --> T2X
   T2X -.->|"plugin/adapter seams"| INST
 

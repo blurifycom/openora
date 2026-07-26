@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 /**
  * Emits docs/openapi.json from the assembled contract - no server boot, no DB.
- * Runs via `pnpm regen` and in CI via `pnpm verify:drift`.
+ * Runs via `pnpm regen` and in CI via `pnpm check:drift`.
  */
 import { generateOpenApiSpec } from '@openora/core/server';
 import { buildContract } from './build-contract.js';

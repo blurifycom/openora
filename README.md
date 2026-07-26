@@ -53,8 +53,8 @@ Two ways to get the API up at `http://localhost:3001`. Demo credentials after se
 For agents (Claude Code, Copilot, Codex, Cursor) and anyone who wants a single onboarding step.
 
 ```bash
-pnpm setup:agent   # checks prereqs, installs deps, boots Postgres, runs migrations, prints a summary
-pnpm seed          # demo data: admin + players + wallets + transactions + games
+pnpm setup   # checks prereqs, installs deps, boots Postgres, runs migrations, prints a summary
+pnpm db:seed          # demo data: admin + players + wallets + transactions + games
 pnpm dev           # api :3001
 ```
 
@@ -71,13 +71,13 @@ Then use `list-modules`, `list-routes`, `query-openapi`, `get-drizzle-schema`, `
 ```bash
 pnpm install                                  # install workspace deps
 docker compose up -d                          # start Postgres (library-first: only the db)
-pnpm -F @openora/core generate             # generate Drizzle migrations
-pnpm -F @openora/core migrate              # apply them
-pnpm seed                                     # demo data
+pnpm gen:drizzle             # generate Drizzle migrations
+pnpm db:migrate                            # apply them
+pnpm db:seed                                     # demo data
 pnpm dev                                      # api :3001
 ```
 
-`pnpm seed` is idempotent and deterministic. Flags: `--players=<n>`, `--admin-email=<e>`, `--admin-password=<p>`.
+`pnpm db:seed` is idempotent and deterministic. Flags: `--players=<n>`, `--admin-email=<e>`, `--admin-password=<p>`.
 
 To run the whole reference stack in containers instead of on the host, use the opt-in profile: `docker compose --profile full up --build` (api :3001, web :3000, backoffice :3002).
 
@@ -132,7 +132,7 @@ Scaffold a consumer turborepo that links this checkout - it holds only what's un
 
 ```bash
 pnpm create:app ../my-igaming --name my-igaming
-cd ../my-igaming && pnpm install && pnpm build:oss && pnpm dev
+cd ../my-igaming && pnpm install && pnpm dev
 ```
 
 See [docs/downstream-consumer.md](./docs/downstream-consumer.md) for the full guide.

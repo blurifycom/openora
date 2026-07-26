@@ -12,8 +12,8 @@ with `pnpm create:app`.
 The fastest path checks prerequisites, installs deps, boots Postgres, and applies migrations:
 
 ```bash
-pnpm setup:agent   # prereqs + deps + Postgres + migrations
-pnpm seed          # demo data: admin + players + wallets + games
+pnpm setup   # prereqs + deps + Postgres + migrations
+pnpm db:seed          # demo data: admin + players + wallets + games
 ```
 
 Prefer the explicit steps?
@@ -21,9 +21,9 @@ Prefer the explicit steps?
 ```bash
 pnpm install
 docker compose up -d                  # Postgres only (library-first)
-pnpm -F @openora/core generate        # generate Drizzle migrations
-pnpm db:migrate:all                   # apply them
-pnpm seed
+pnpm gen:drizzle        # generate Drizzle migrations
+pnpm db:migrate                   # apply them
+pnpm db:seed
 ```
 
 Seeding logs you in with `admin@oss.dev` / `password123`. Flags: `--players=<n>`,

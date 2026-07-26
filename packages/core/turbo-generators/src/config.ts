@@ -320,7 +320,7 @@ export default function generator(plop: PlopTypes.NodePlopAPI): void {
         () => wireBuildContract(domain, name),
         () => registerExtension(name, `./packages/core/dist/${domain}/${name}/plugin.js`),
         () =>
-          `next: pnpm -F @openora/core generate (this module's migration history) && pnpm regen && pnpm verify`,
+          `next: pnpm gen:drizzle (this module's migration history) && pnpm regen && pnpm verify`,
       ];
     },
   });

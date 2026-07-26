@@ -55,4 +55,4 @@ Components use `useTranslation(ns)`; no hardcoded copy. Non-`en` files mirror `e
 
 ## 5. Verify
 
-`/check` green (the structure lint runs inside `pnpm lint`); route renders (`pnpm dev`). Hand to `review` before an MR.
+`/check` green (the structure lint runs inside `pnpm check:lint`); route renders (`pnpm dev`). Hand to `review` before an MR.

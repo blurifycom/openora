@@ -8,9 +8,9 @@ Run `pnpm regen` in the repo root.
 
 This runs in order (see root `package.json`):
 
-1. `turbo run codegen` - emits `docs/openapi.json` from the composed oRPC contract and
+1. `turbo run check:types` - emits `docs/openapi.json` from the composed oRPC contract and
    regenerates any per-package codegen registered with turbo.
-2. `pnpm -F @openora/core generate` (`scripts/generate-all.mjs`) - discovers every module's
+2. `pnpm gen:drizzle` (`scripts/generate-all.mjs`) - discovers every module's
    `src/**/drizzle.config.ts` and runs `drizzle-kit generate` per module, against that module's own
    co-located `drizzle/migrations/` history (ADR-0027).
 3. `pnpm run gen:catalog` (`tsx tools/gen/gen-catalog.ts`) - emits `docs/catalog.json`: the
@@ -22,7 +22,7 @@ generate a real migration:
 
 ```bash
 # all modules at once
-pnpm -F @openora/core generate
+pnpm gen:drizzle
 # or one module (cwd = the module dir holding its drizzle.config.ts)
 cd packages/core/src/<domain>/<module> && pnpm exec drizzle-kit generate --name <change-summary>
 ```

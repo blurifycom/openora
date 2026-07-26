@@ -76,7 +76,7 @@ Every reviewer applies this before returning; re-apply it yourself when synthesi
 - Every `[BLOCK]`/`[WARN]` cites a concrete `file:line` AND the rule doc violated - otherwise downgrade to `[INFO]` or drop.
 - High-confidence findings only; unsure = downgrade or omit. Few actionable findings beat flooding.
 - No invented runtime failures - state the trigger path or don't raise it.
-- Don't duplicate what tooling enforces (oxlint, the `/check` gate); for a suspected lint/boundary issue say "confirm with `pnpm lint`" - flag only what the gates miss.
+- Don't duplicate what tooling enforces (oxlint, the `/check` gate); for a suspected lint/boundary issue say "confirm with `pnpm check:lint`" - flag only what the gates miss.
 
 ## 7. Synthesize
 

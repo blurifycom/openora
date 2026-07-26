@@ -41,7 +41,7 @@ afterEach(() => db.truncateAll()); // or rely on unique ids per test
 ## Requirements / conventions
 
 - A test Postgres must exist. CI provisions a `postgres:16` service; locally run
-  `pnpm db:test:setup` (creates `oss_igaming_test`) with docker-compose postgres up.
+  `pnpm db:setup:test` (creates `oss_igaming_test`) with docker-compose postgres up.
 - Integration vitest configs must `poolOptions.threads.singleThread = true` - all
   suites share one database, so they cannot run in parallel against it.
 - `bootTestApp` requires the platform to be **built** (`loadExtensions()` resolves
