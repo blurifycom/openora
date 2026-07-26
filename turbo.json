@@ -15,15 +15,15 @@
       "cache": false
     },
     "check:types": {
-      "dependsOn": ["^build"],
+      "dependsOn": ["^build", "build"],
       "outputs": []
     },
     "test:unit": {
-      "dependsOn": ["^build"],
+      "dependsOn": ["^build", "build"],
       "outputs": []
     },
     "test:integration": {
-      "dependsOn": ["^build"],
+      "dependsOn": ["^build", "build"],
       "cache": false,
       "passThroughEnv": [
         "TEST_DATABASE_URL",
