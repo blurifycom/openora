@@ -27,6 +27,7 @@ export const extensions = [
 
   // Backoffice - the admin/operator surface
   { id: 'admin-console', path: './packages/core/dist/admin-console/plugin.js' },
+  { id: 'analytics', path: './packages/core/dist/analytics/plugin.js' },
   { id: 'player-note', path: './packages/core/dist/pam/player-note/plugin.js' },
   { id: 'cms', path: './packages/core/dist/cms/plugin.js' },
 

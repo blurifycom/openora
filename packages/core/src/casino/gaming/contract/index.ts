@@ -34,9 +34,14 @@ export const GameRoundSchema = z.object({
 });
 export type GameRound = z.infer<typeof GameRoundSchema>;
 
+export const PositiveMoneyAmountSchema = MoneyAmountSchema.refine((v) => Number(v) > 0, {
+  message: 'must be greater than zero',
+});
+
 export const StartRoundInputSchema = z.object({
   gameId: UuidSchema,
   currency: CurrencyCodeSchema,
+  betAmount: PositiveMoneyAmountSchema,
 });
 
 export const StartRoundOutputSchema = z.object({

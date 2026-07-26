@@ -1,5 +1,6 @@
 import {
   type EventBus,
+  createDomainError,
   makeNotFoundError,
   makeConflictError,
   DrizzleService,
@@ -7,7 +8,12 @@ import {
   serializeRow,
 } from '@openora/core/server';
 import { eq, and, asc, desc } from 'drizzle-orm';
-import { type GameAdapter, type PlayEligibilityPort, type User } from '@openora/core/contracts';
+import {
+  type GameAdapter,
+  type PlayEligibilityPort,
+  type WalletCommands,
+  type User,
+} from '@openora/core/contracts';
 import { game, gameRound, type Game, type GameRound } from '../schema/index.js';
 
 export const GameNotFoundError = makeNotFoundError('Game');
@@ -17,6 +23,10 @@ export const GameRoundNotFoundError = makeNotFoundError('GameRound');
 export const RgRestrictedError = makeConflictError(
   'RgRestrictedError',
   'play is restricted by an active responsible-gambling exclusion',
+);
+export const InsufficientBalanceError = createDomainError<[available: string, requested: string]>(
+  'InsufficientBalanceError',
+  (available, requested) => `Insufficient balance: available ${available}, requested ${requested}`,
 );
 
 function toGame(record: typeof game.$inferSelect) {
@@ -41,6 +51,7 @@ export class GamingService {
     private readonly events: EventBus,
     private readonly provider: GameAdapter,
     private readonly playEligibility: PlayEligibilityPort,
+    private readonly walletCommands: WalletCommands,
   ) {}
 
   async listGames() {
@@ -60,27 +71,38 @@ export class GamingService {
     return toGame(record);
   }
 
-  async startRound(userId: User['id'], gameId: Game['id'], currency: string) {
+  async startRound(userId: User['id'], gameId: Game['id'], currency: string, betAmount: string) {
     if (await this.playEligibility.isRestricted(userId)) {
       throw new RgRestrictedError();
     }
 
     await this.getGame(gameId);
 
-    const { launchUrl, token } = await this.provider.launchGame(gameId, userId, currency);
+    const round = await this.drizzle.db.transaction(async (tx) => {
+      const outcome = await this.walletCommands.debit(tx, {
+        userId,
+        amount: betAmount,
+        type: 'bet',
+      });
+      if (!outcome.ok) {
+        throw new InsufficientBalanceError(outcome.available, betAmount);
+      }
+      return findOneOrThrow(
+        await tx
+          .insert(gameRound)
+          .values({
+            gameId,
+            userId,
+            currency,
+            betAmount,
+            status: 'active',
+          })
+          .returning(),
+        new GameRoundNotFoundError(gameId),
+      );
+    });
 
-    const round = findOneOrThrow(
-      await this.drizzle.db
-        .insert(gameRound)
-        .values({
-          gameId,
-          userId,
-          currency,
-          status: 'active',
-        })
-        .returning(),
-      new GameRoundNotFoundError(gameId),
-    );
+    const { launchUrl, token } = await this.provider.launchGame(gameId, userId, currency);
 
     this.events.emit('gaming.round.started', {
       roundId: round.id,

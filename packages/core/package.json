@@ -99,6 +99,21 @@
       "import": "./dist/admin-console/contract/index.js",
       "default": "./dist/admin-console/contract/index.js"
     },
+    "./analytics": {
+      "types": "./dist/analytics/index.d.ts",
+      "import": "./dist/analytics/index.js",
+      "default": "./dist/analytics/index.js"
+    },
+    "./analytics/plugin": {
+      "types": "./dist/analytics/plugin.d.ts",
+      "import": "./dist/analytics/plugin.js",
+      "default": "./dist/analytics/plugin.js"
+    },
+    "./analytics/contract": {
+      "types": "./dist/analytics/contract/index.d.ts",
+      "import": "./dist/analytics/contract/index.js",
+      "default": "./dist/analytics/contract/index.js"
+    },
     "./audit": {
       "types": "./dist/audit/index.d.ts",
       "import": "./dist/audit/index.js",
@@ -503,6 +518,11 @@
       "types": "./dist/admin-console/server.d.ts",
       "import": "./dist/admin-console/server.js",
       "default": "./dist/admin-console/server.js"
+    },
+    "./analytics/server": {
+      "types": "./dist/analytics/server.d.ts",
+      "import": "./dist/analytics/server.js",
+      "default": "./dist/analytics/server.js"
     },
     "./pam/tag/seed": {
       "types": "./dist/pam/tag/seed/index.d.ts",
