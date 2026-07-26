@@ -2,6 +2,7 @@ import { describe, it, expect } from 'vitest';
 import {
   ActivateCoolingOffInputSchema,
   ActivateSelfExclusionInputSchema,
+  LiftCoolingOffInputSchema,
   LiftSelfExclusionInputSchema,
   RgFlagListItemSchema,
   SetPlayerLimitInputSchema,
@@ -147,6 +148,16 @@ describe('ActivateSelfExclusionInputSchema', () => {
         confirm: false,
       }).success,
     ).toBe(false);
+  });
+});
+
+describe('LiftCoolingOffInputSchema', () => {
+  it('requires a non-empty reason and takes no confirm flag', () => {
+    expect(LiftCoolingOffInputSchema.safeParse({ userId: USER, reason: 'x' }).success).toBe(true);
+    expect(LiftCoolingOffInputSchema.safeParse({ userId: USER, reason: '' }).success).toBe(false);
+    expect(LiftCoolingOffInputSchema.safeParse({ userId: USER, reason: '   ' }).success).toBe(
+      false,
+    );
   });
 });
 

@@ -369,12 +369,13 @@ function mapEventToRecord(topic: string, p: Record<string, unknown>): RecordInpu
     topic === 'rg.limit.set' ||
     topic === 'rg.cooling_off.activated' ||
     topic === 'rg.self_exclusion.activated' ||
-    topic === 'rg.self_exclusion.lifted'
+    topic === 'rg.self_exclusion.lifted' ||
+    topic === 'rg.cooling_off.lifted'
   ) {
     const before =
       topic === 'rg.limit.set'
         ? { amount: p['previousAmount'] ?? null, minutes: p['previousMinutes'] ?? null }
-        : topic === 'rg.self_exclusion.lifted'
+        : topic === 'rg.self_exclusion.lifted' || topic === 'rg.cooling_off.lifted'
           ? { status: 'active' }
           : null;
     return {
@@ -467,6 +468,7 @@ const SUBSCRIBED_TOPICS: DomainEventName[] = [
   'rg.cooling_off.activated',
   'rg.self_exclusion.activated',
   'rg.self_exclusion.lifted',
+  'rg.cooling_off.lifted',
   'rg.exclusion.login_blocked',
   'compliance.kyc.updated',
   'compliance.kyc.submitted',

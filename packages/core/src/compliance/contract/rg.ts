@@ -81,6 +81,12 @@ export const LiftSelfExclusionInputSchema = z.object({
 });
 export type LiftSelfExclusionInput = z.infer<typeof LiftSelfExclusionInputSchema>;
 
+export const LiftCoolingOffInputSchema = z.object({
+  userId: UuidSchema,
+  reason: z.string().trim().min(1),
+});
+export type LiftCoolingOffInput = z.infer<typeof LiftCoolingOffInputSchema>;
+
 export const RgSectionSchema = z.object({
   limits: z.array(LimitSchema),
   coolingOff: RgExclusionSchema.nullable(),
@@ -168,6 +174,11 @@ export const rgContract = {
   liftSelfExclusion: oc
     .route({ method: 'POST', path: '/compliance/players/{userId}/self-exclusion/lift' })
     .input(LiftSelfExclusionInputSchema)
+    .output(RgExclusionSchema),
+
+  liftCoolingOff: oc
+    .route({ method: 'POST', path: '/compliance/players/{userId}/cooling-off/lift' })
+    .input(LiftCoolingOffInputSchema)
     .output(RgExclusionSchema),
 
   getRgSection: oc

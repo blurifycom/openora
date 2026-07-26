@@ -121,6 +121,7 @@ export class DrizzleAdminUserDirectory implements AdminUserDirectory {
         username: player.displayName,
         kycStatus: player.kycStatus,
         email: user.email,
+        language: user.language,
       })
       .from(player)
       .innerJoin(user, eq(player.userId, user.id))
@@ -130,9 +131,7 @@ export class DrizzleAdminUserDirectory implements AdminUserDirectory {
       // so the port's KycStatus contract holds without a cast.
       const kyc = KycStatusSchema.safeParse(r.kycStatus);
       return {
-        userId: r.userId,
-        username: r.username,
-        email: r.email,
+        ...r,
         kycStatus: kyc.success ? kyc.data : null,
       };
     });
