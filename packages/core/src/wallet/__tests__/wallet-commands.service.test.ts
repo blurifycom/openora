@@ -1,6 +1,10 @@
-import { describe, it, expect } from 'vitest';
-import type { WalletTransactionType } from '@openora/core/contracts';
-import { WalletCommandsService } from '../service/wallet-commands.service.js';
+import { describe, it, expect, vi } from 'vitest';
+import type { PlayEligibilityPort, WalletTransactionType } from '@openora/core/contracts';
+import { mock } from '../../testing/mock.js';
+import {
+  WalletCommandsService,
+  WalletRgRestrictedError,
+} from '../service/wallet-commands.service.js';
 
 type Row = Record<string, unknown>;
 
@@ -34,8 +38,34 @@ function makeTxn({ walletRow, updateReturns }: { walletRow?: Row; updateReturns?
   return { txn, inserts, calls };
 }
 
-const svc = new WalletCommandsService();
+const eligibility = (isRestricted: boolean) =>
+  mock<PlayEligibilityPort>({ isRestricted: vi.fn().mockResolvedValue(isRestricted) });
+
+const svc = new WalletCommandsService(eligibility(false));
 const usdWallet = { id: 'w1', userId: 'u1', balance: '100', currency: 'USD' };
+
+describe('WalletCommandsService responsible-gambling gate', () => {
+  it('refuses a bet debit for a restricted player without touching the ledger', async () => {
+    const restricted = new WalletCommandsService(eligibility(true));
+    const { txn, inserts, calls } = makeTxn({ walletRow: usdWallet });
+
+    await expect(
+      restricted.debit(txn, { userId: 'u1', amount: '10', type: 'bet' }),
+    ).rejects.toBeInstanceOf(WalletRgRestrictedError);
+    expect(calls.update).toBe(0);
+    expect(inserts).toHaveLength(0);
+  });
+
+  it('leaves a non-bet debit unaffected for a restricted player', async () => {
+    const restricted = new WalletCommandsService(eligibility(true));
+    const { txn, inserts } = makeTxn({ walletRow: usdWallet });
+
+    const res = await restricted.debit(txn, { userId: 'u1', amount: '0', type: 'loss' });
+
+    expect(res).toEqual({ ok: true, newBalance: '100' });
+    expect(inserts[0]).toMatchObject({ type: 'loss' });
+  });
+});
 
 describe('WalletCommandsService.debit', () => {
   it('debits the balance and writes a completed bet ledger row', async () => {

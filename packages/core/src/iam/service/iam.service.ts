@@ -21,7 +21,7 @@ import {
   type RoleName,
   type PermissionLevel,
 } from '@openora/core/server';
-import { eq, and, gt, inArray, sql } from 'drizzle-orm';
+import { eq, and, gt, inArray, sql, asc, desc } from 'drizzle-orm';
 import type {
   SendEmailPort,
   AdminPermissionResolver,
@@ -29,6 +29,10 @@ import type {
   CacheAdapter,
   SessionCommands,
   User,
+  ClientMeta,
+  SortOrder,
+  PageQuery,
+  PaginationOptions,
 } from '@openora/core/contracts';
 import {
   adminRole,
@@ -39,7 +43,11 @@ import {
 } from '../schema/index.js';
 // Read-only cross-domain schema import (sanctioned): assignRole verifies the target is an admin user.
 import { user } from '@openora/core/pam/schema/identity';
-import type { EffectivePermissions } from '../contract/index.js';
+import type {
+  EffectivePermissions,
+  IamRoleSortBy,
+  IamInvitationSortBy,
+} from '../contract/index.js';
 
 export const RoleNotFoundError = makeNotFoundError('AdminRole');
 export const InvitationNotFoundError = makeNotFoundError('AdminInvitation');
@@ -76,9 +84,7 @@ export const LastSuperAdminError = makeConflictError(
   'Cannot remove the last super-admin',
 );
 
-type Caller = { userId: User['id']; role: string };
-
-type Page = { page: number; limit: number };
+type Caller = { userId: User['id']; role: string } & ClientMeta;
 
 // The `admin` module is NOT operator-assignable: granting `admin: read_write` to a
 // custom role would pass the router's adminGuard - it must come ONLY from `isSuperAdmin`.
@@ -325,10 +331,22 @@ export class IamService {
     return byRole;
   }
 
-  async listRoles({ page, limit }: Page) {
+  async listRoles({ page, limit, sortBy, sortOrder }: PaginationOptions<object, IamRoleSortBy>) {
     const offset = pageToOffset(page, limit);
+    const dir = (sortOrder ?? 'asc') === 'asc' ? asc : desc;
+    const ROLE_SORT_COLS = {
+      name: adminRole.name,
+      createdAt: adminRole.createdAt,
+      key: adminRole.key,
+    } as const;
+    const col = ROLE_SORT_COLS[sortBy ?? 'name'];
     const [rows, countResult] = await Promise.all([
-      this.drizzle.db.select().from(adminRole).limit(limit).offset(offset),
+      this.drizzle.db
+        .select()
+        .from(adminRole)
+        .orderBy(dir(col), desc(adminRole.id))
+        .limit(limit)
+        .offset(offset),
       this.drizzle.db.select({ count: sql<number>`count(*)::int` }).from(adminRole),
     ]);
     const permissionsByRole = await this.rolePermissionsByRole(rows.map((r) => r.id));
@@ -358,6 +376,8 @@ export class IamService {
       roleId: dto.id,
       name: dto.name,
       actorId: input.caller.userId,
+      ip: input.caller.ip ?? null,
+      userAgent: input.caller.userAgent ?? null,
     });
     return dto;
   }
@@ -392,6 +412,8 @@ export class IamService {
       roleId: dto.id,
       name: input.name,
       actorId: input.caller.userId,
+      ip: input.caller.ip ?? null,
+      userAgent: input.caller.userAgent ?? null,
     });
     return dto;
   }
@@ -427,11 +449,15 @@ export class IamService {
         roleId: input.roleId,
         userId,
         actorId: input.caller.userId,
+        ip: input.caller.ip ?? null,
+        userAgent: input.caller.userAgent ?? null,
       });
     }
     this.events.emit('iam.role.deleted', {
       roleId: input.roleId,
       actorId: input.caller.userId,
+      ip: input.caller.ip ?? null,
+      userAgent: input.caller.userAgent ?? null,
     });
     return { success: true };
   }
@@ -497,6 +523,8 @@ export class IamService {
       before,
       after,
       actorId: input.caller.userId,
+      ip: input.caller.ip ?? null,
+      userAgent: input.caller.userAgent ?? null,
     });
 
     return this.getRole(input.roleId);
@@ -545,6 +573,8 @@ export class IamService {
       roleId: input.roleId,
       userId: input.userId,
       actorId: input.caller.userId,
+      ip: input.caller.ip ?? null,
+      userAgent: input.caller.userAgent ?? null,
     });
     return dto;
   }
@@ -600,15 +630,18 @@ export class IamService {
         roleId: input.roleId,
         userId: input.userId,
         actorId: input.caller.userId,
+        ip: input.caller.ip ?? null,
+        userAgent: input.caller.userAgent ?? null,
       });
     }
     return { success: true };
   }
 
-  async listAssignments(input: Page & { userId?: User['id'] }) {
-    const { page, limit, userId } = input;
+  async listAssignments(input: PageQuery & { userId?: User['id']; sortOrder?: SortOrder }) {
+    const { page, limit, userId, sortOrder } = input;
     const offset = pageToOffset(page, limit);
     const where = userId ? eq(adminRoleAssignment.userId, userId) : undefined;
+    const dir = (sortOrder ?? 'desc') === 'asc' ? asc : desc;
 
     const [rows, countResult] = await Promise.all([
       this.drizzle.db
@@ -623,6 +656,7 @@ export class IamService {
         .from(adminRoleAssignment)
         .innerJoin(adminRole, eq(adminRole.id, adminRoleAssignment.roleId))
         .where(where)
+        .orderBy(dir(adminRoleAssignment.createdAt), desc(adminRoleAssignment.id))
         .limit(limit)
         .offset(offset),
       this.drizzle.db
@@ -718,10 +752,29 @@ export class IamService {
     };
   }
 
-  async listInvitations({ page, limit }: Page) {
+  async listInvitations({
+    page,
+    limit,
+    sortBy,
+    sortOrder,
+  }: PaginationOptions<object, IamInvitationSortBy>) {
     const offset = pageToOffset(page, limit);
+    const dir = (sortOrder ?? 'desc') === 'asc' ? asc : desc;
+    const INV_SORT_COLS = {
+      createdAt: adminInvitation.createdAt,
+      expiresAt: adminInvitation.expiresAt,
+      email: adminInvitation.email,
+      status: adminInvitation.status,
+      acceptedAt: adminInvitation.acceptedAt,
+    } as const;
+    const col = INV_SORT_COLS[sortBy ?? 'createdAt'];
     const [rows, countResult] = await Promise.all([
-      this.drizzle.db.select().from(adminInvitation).limit(limit).offset(offset),
+      this.drizzle.db
+        .select()
+        .from(adminInvitation)
+        .orderBy(dir(col), desc(adminInvitation.id))
+        .limit(limit)
+        .offset(offset),
       this.drizzle.db.select({ count: sql<number>`count(*)::int` }).from(adminInvitation),
     ]);
     return { items: rows.map(toInvitationDto), total: countResult[0]?.count ?? 0, page, limit };
@@ -763,7 +816,10 @@ export class IamService {
     return toInvitationDto(row);
   }
 
-  async acceptInvitation(token: string): Promise<{ success: true; email: string }> {
+  async acceptInvitation(
+    token: string,
+    meta?: ClientMeta,
+  ): Promise<{ success: true; email: string }> {
     // Atomic conditional UPDATE: the DB evaluates pending + not-expired under row lock,
     // so two concurrent accepts cannot both succeed. Public path - tenant is derived
     // from the row, not the request, so no tenant predicate is needed.
@@ -788,6 +844,8 @@ export class IamService {
       email: row.email,
       roleId: row.roleId,
       invitationId: row.id,
+      ip: meta?.ip ?? null,
+      userAgent: meta?.userAgent ?? null,
     });
 
     return { success: true, email: row.email };

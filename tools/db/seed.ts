@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 /**
  * Populate the local database so the backoffice has something realistic to show.
- * Run via `pnpm seed`. Idempotent - safe to re-run.
+ * Run via `pnpm db:seed`. Idempotent - safe to re-run.
  *
  * Two phases, both idempotent:
  *   1. Reference data - IAM's predefined roles (seedRoles, convergent upsert). Safe on any env.
@@ -11,9 +11,9 @@
  * DB connection, never boots the app. Reference seeders are composed explicitly here; the
  * consumer's own seed script does the same with the modules it enables.
  *
- *   pnpm seed                       # 36 players, admin@oss.dev / password123
- *   pnpm seed --players=60          # more players
- *   pnpm seed --admin-email=me@x.io --admin-password=secret123
+ *   pnpm db:seed                       # 36 players, admin@oss.dev / password123
+ *   pnpm db:seed --players=60          # more players
+ *   pnpm db:seed --admin-email=me@x.io --admin-password=secret123
  *
  * Requires DATABASE_URL (falls back to the local docker default). Single-tenant
  * since ADR-0026 - one DB role, no RLS.
@@ -48,6 +48,7 @@ async function main() {
     db,
     auth,
     playerCount: Number(arg('players') ?? 36),
+    password: arg('password') ?? 'password123',
     admin: {
       email: arg('admin-email') ?? 'admin@oss.dev',
       password: arg('admin-password') ?? 'password123',
@@ -61,6 +62,7 @@ async function main() {
   console.log(`  Players:      ${result.players}`);
   console.log(`  Games:        ${result.games}`);
   console.log(`  Transactions: ${result.transactions}`);
+  console.log(`  Chat rooms:   ${result.rooms}`);
   console.log('\nLog in to the backoffice:');
   console.log(`  ${result.adminEmail} / ${result.adminPassword}`);
 }

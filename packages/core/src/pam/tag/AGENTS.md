@@ -1,6 +1,6 @@
 # Tag
 
-Rule-based player tagging with event-driven and manual assignment. Tables: `tag` (key, isSticky), `playerTag` (assign/removal history with actor/reason audit trail), `tagRule` (per-tag evaluation thresholds: amount, days, count).
+Rule-based player tagging. A tag lands on a player either manually (admin, actor stamped) or by rule evaluation on subscribed wallet/identity/compliance events; `playerTag` keeps the full assign/removal history rather than a current-state row, so removals stay auditable.
 
 Tag keys: `high_roller`, `vip`, `bonus_abuser`, `high_risk`, `inactive`, `large_depositor`, `self_excluded`, `kyc_pending`, `kyc_rejected`, `test_account`, `dormant_high_roller`, `withdrawal_review`, `multi_account`, `level`.
 

@@ -1,8 +1,8 @@
-import type { AdminUserDirectory, AdminUserListOptions } from '@openora/core/contracts';
+import type { AdminUserDirectory, AdminUserListOptions, ClientMeta } from '@openora/core/contracts';
 import { KycStatusSchema, UserRoleSchema } from '@openora/core/contracts';
 import { DrizzleService, pageToOffset } from '@openora/core/server';
 import type { EventBus } from '@openora/core/server';
-import { count, desc, eq, ilike, inArray } from 'drizzle-orm';
+import { asc, count, desc, eq, ilike, inArray } from 'drizzle-orm';
 import { user } from './schema/index.js';
 // Read-only cross-domain read of the player/profile table via the public /schema
 // subpath (allowed per ADR-0020) so back-office lists can label players by
@@ -35,15 +35,34 @@ export class DrizzleAdminUserDirectory implements AdminUserDirectory {
     return Number(r?.n ?? 0);
   }
 
-  async list({ page, limit, search }: AdminUserListOptions) {
+  async list({ page, limit, search, sortBy, sortOrder }: AdminUserListOptions) {
     const db = this.drizzle.db;
     const where = search ? ilike(user.email, `%${search}%`) : undefined;
+    const dir = (sortOrder ?? 'desc') === 'asc' ? asc : desc;
+    const USER_SORT_COLS = {
+      createdAt: user.createdAt,
+      email: user.email,
+      name: user.name,
+      role: user.role,
+      isActive: user.isActive,
+      lastLockoutAt: user.lastLockoutAt,
+    } as const;
+    const col =
+      USER_SORT_COLS[
+        sortBy === 'email' ||
+        sortBy === 'name' ||
+        sortBy === 'role' ||
+        sortBy === 'isActive' ||
+        sortBy === 'lastLockoutAt'
+          ? sortBy
+          : 'createdAt'
+      ];
     const [rows, [{ n }]] = await Promise.all([
       db
         .select()
         .from(user)
         .where(where)
-        .orderBy(desc(user.createdAt))
+        .orderBy(dir(col), desc(user.id))
         .limit(limit)
         .offset(pageToOffset(page, limit)),
       db.select({ n: count() }).from(user).where(where),
@@ -56,7 +75,12 @@ export class DrizzleAdminUserDirectory implements AdminUserDirectory {
     return r ? toRow(r) : null;
   }
 
-  async update(id: string, patch: { isActive?: boolean; role?: string }, actorId: string) {
+  async update(
+    id: string,
+    patch: { isActive?: boolean; role?: string },
+    actorId: string,
+    meta?: ClientMeta,
+  ) {
     const [existing] = await this.drizzle.db.select().from(user).where(eq(user.id, id));
     if (!existing) {
       return null;
@@ -76,10 +100,12 @@ export class DrizzleAdminUserDirectory implements AdminUserDirectory {
     // Emit only on an actual active-status flip, after the commit. Literal topics
     // (not a ternary) so the catalog generator's emit-scanner picks them up.
     if (patch.isActive !== undefined && patch.isActive !== existing.isActive) {
+      const ip = meta?.ip ?? null;
+      const userAgent = meta?.userAgent ?? null;
       if (patch.isActive) {
-        this.events.emit('identity.user.reactivated', { userId: id, actorId });
+        this.events.emit('identity.user.reactivated', { userId: id, actorId, ip, userAgent });
       } else {
-        this.events.emit('identity.user.deactivated', { userId: id, actorId });
+        this.events.emit('identity.user.deactivated', { userId: id, actorId, ip, userAgent });
       }
     }
     return toRow(r);
@@ -95,6 +121,7 @@ export class DrizzleAdminUserDirectory implements AdminUserDirectory {
         username: player.displayName,
         kycStatus: player.kycStatus,
         email: user.email,
+        language: user.language,
       })
       .from(player)
       .innerJoin(user, eq(player.userId, user.id))
@@ -104,9 +131,7 @@ export class DrizzleAdminUserDirectory implements AdminUserDirectory {
       // so the port's KycStatus contract holds without a cast.
       const kyc = KycStatusSchema.safeParse(r.kycStatus);
       return {
-        userId: r.userId,
-        username: r.username,
-        email: r.email,
+        ...r,
         kycStatus: kyc.success ? kyc.data : null,
       };
     });

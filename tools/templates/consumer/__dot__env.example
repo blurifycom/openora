@@ -5,7 +5,9 @@ DATABASE_URL=postgresql://postgres:postgres@localhost:5432/oss_igaming
 # Auth secret (min 32 chars). Generate one: openssl rand -base64 32
 AUTH_SECRET=change-me-in-production-min-32-chars
 
-# Optional infra
+# Redis (required). Auto-binds the durable seams (job queue, cache, rate limiter,
+# message broker); the API refuses to boot without them (ADR-0030). `docker compose
+# up -d` starts this alongside Postgres.
 REDIS_URL=redis://localhost:6379
 
 # Ports

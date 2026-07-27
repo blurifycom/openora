@@ -5,13 +5,17 @@ import {
   type NodeHeaders,
   DrizzleService,
   assertRateLimit,
+  extractClientMeta,
+  getCurrentClientMeta,
   findOneOrThrow,
   makeNotFoundError,
+  createLogger,
 } from '@openora/core/server';
 import { parseCookies } from 'better-auth/cookies';
 import { eq, sql } from 'drizzle-orm';
 import { user, session, account, verification, twoFactor } from '../schema/index.js';
 import type {
+  CacheAdapter,
   RateLimiterAdapter,
   RateLimitKey,
   SendEmailPort,
@@ -32,6 +36,7 @@ import type {
   ChangeEmailInput,
   IdentityServiceOptions,
   PlatformConfig,
+  ClientMeta,
 } from '@openora/core/contracts';
 import { RATE_LIMIT_KEYS, makeRateLimitKey } from '@openora/core/contracts';
 import { assertSupportedLanguage } from '../../shared/language.js';
@@ -83,10 +88,6 @@ function toUser(u: BetterAuthUser) {
     updatedAt: toIso(u.updatedAt),
   };
   return u.image !== undefined ? { ...base, image: u.image } : base;
-}
-
-function clientIp(headers: Headers): string | null {
-  return headers.get('x-forwarded-for')?.split(',')[0]?.trim() || headers.get('x-real-ip') || null;
 }
 
 function makeLoginRateLimitKey(email: string): `login:${string}` {
@@ -225,6 +226,20 @@ const EMAIL_VERIFICATION_RATE_LIMIT = { limit: 3, windowMs: 15 * MINUTE_MS };
 const VERIFY_EMAIL_RATE_LIMIT = { limit: 5, windowMs: 15 * MINUTE_MS };
 const CHANGE_PASSWORD_RATE_LIMIT = { limit: 5, windowMs: 15 * MINUTE_MS };
 const TWO_FACTOR_PASSWORD_RATE_LIMIT = { limit: 5, windowMs: 5 * MINUTE_MS };
+const FAKE_LOGIN_SHADOW_TTL_MS = 7 * 24 * 60 * 60 * 1000;
+
+type FakeLoginShadow = {
+  failedAttempts: number;
+  lockoutUntil: string | null;
+  lockoutCount: number;
+  lastLockoutAt: string | null;
+};
+
+function loginShadowKey(email: string): string {
+  return `login-shadow:${email}`;
+}
+
+const loginShadowLogger = createLogger('login-shadow');
 
 function computeLockoutState({
   attempts,
@@ -249,6 +264,7 @@ export type IdentityServiceDeps = {
   options?: IdentityServiceOptions;
   limiter?: RateLimiterAdapter<RateLimitKey>;
   platformConfig?: PlatformConfig;
+  cache?: CacheAdapter;
 };
 
 /**
@@ -269,6 +285,7 @@ export class IdentityService {
   private readonly options?: IdentityServiceOptions;
   private readonly limiter?: RateLimiterAdapter<RateLimitKey>;
   private readonly platformConfig?: PlatformConfig;
+  private readonly cache?: CacheAdapter;
 
   constructor({
     drizzle,
@@ -278,6 +295,7 @@ export class IdentityService {
     options,
     limiter,
     platformConfig,
+    cache,
   }: IdentityServiceDeps) {
     this.drizzle = drizzle;
     this.events = events;
@@ -286,6 +304,7 @@ export class IdentityService {
     this.options = options;
     this.limiter = limiter;
     this.platformConfig = platformConfig;
+    this.cache = cache;
     this.auth = createAuth({
       db: drizzle.db,
       schema: { user, session, account, verification, twoFactor },
@@ -293,7 +312,10 @@ export class IdentityService {
       templateRenderer: this.templateRenderer,
       getUserLanguage: (lookupEmail) => this.resolveUserLanguage(lookupEmail),
       onPasswordReset: async (resetUser) => {
-        this.events.emit('identity.password.reset', { userId: resetUser.id });
+        this.events.emit('identity.password.reset', {
+          userId: resetUser.id,
+          ...getCurrentClientMeta(),
+        });
         await this.clearLockout(resetUser.id);
       },
     });
@@ -341,6 +363,7 @@ export class IdentityService {
       `register:${input.email.toLowerCase()}`,
       REGISTER_RATE_LIMIT,
     );
+    const { ip, userAgent } = extractClientMeta(reqHeaders);
     const headers = nodeHeadersToHeaders(reqHeaders);
     const authResponse = await this.auth.api.signUpEmail({
       body: { email: input.email, password: input.password, name: input.name },
@@ -350,7 +373,7 @@ export class IdentityService {
     this.forwardCookies(authResponse, resHeaders);
     const body = (await authResponse.json()) as { user: BetterAuthUser };
 
-    this.events.emit('identity.user.registered', { userId: body.user.id });
+    this.events.emit('identity.user.registered', { userId: body.user.id, ip, userAgent });
     return { user: toUser(body.user) };
   }
 
@@ -367,9 +390,8 @@ export class IdentityService {
    * read a stale count and slip past the lockout threshold.
    */
   async login(input: LoginInput, reqHeaders: NodeHeaders, resHeaders: Headers) {
+    const { ip, userAgent } = extractClientMeta(reqHeaders);
     const headers = nodeHeadersToHeaders(reqHeaders);
-    const ip = clientIp(headers);
-    const userAgent = headers.get('user-agent') || null;
     // better-auth lowercases emails on write, so the lockout lookup must match on the same form.
     const email = input.email.toLowerCase();
 
@@ -419,6 +441,17 @@ export class IdentityService {
       // instead of one more wrong password immediately re-locking the account.
       await this.clearLockout(existingUser.id);
       existingUser = { ...existingUser, failedLoginAttempts: 0, lockoutUntil: null };
+    }
+
+    let fakeLoginShadow: FakeLoginShadow | undefined;
+    if (lockoutEnabled && !existingUser) {
+      fakeLoginShadow = await this.loginShadowGet(loginShadowKey(email));
+      if (fakeLoginShadow?.lockoutUntil) {
+        if (new Date(fakeLoginShadow.lockoutUntil) > new Date()) {
+          throw createAccountLockedError(new Date(fakeLoginShadow.lockoutUntil));
+        }
+        fakeLoginShadow = { ...fakeLoginShadow, failedAttempts: 0, lockoutUntil: null };
+      }
     }
 
     try {
@@ -540,6 +573,47 @@ export class IdentityService {
 
           throw createAccountLockedError(lockoutUntil);
         }
+      } else if (lockoutEnabled && !existingUser && isCredentialFailure) {
+        const maxAttempts = this.options?.lockout?.maxAttempts ?? DEFAULT_MAX_LOGIN_ATTEMPTS;
+        const fallbackDurationMs = this.options?.lockout?.durationMs ?? DEFAULT_LOCKOUT_DURATION_MS;
+        const newAttempts = (fakeLoginShadow?.failedAttempts ?? 0) + 1;
+        attemptsRemaining = Math.max(maxAttempts - newAttempts, 0);
+        const { isLocking } = computeLockoutState({
+          attempts: newAttempts,
+          maxAttempts,
+          durationMs: fallbackDurationMs,
+          nowMs: Date.now(),
+        });
+
+        if (isLocking) {
+          const nowMs = Date.now();
+          const { tier, durationMs } = computeLockoutTier({
+            lockoutCount: fakeLoginShadow?.lockoutCount ?? 0,
+            lastLockoutAt: fakeLoginShadow?.lastLockoutAt
+              ? new Date(fakeLoginShadow.lastLockoutAt)
+              : null,
+            nowMs,
+            fallbackDurationMs,
+          });
+          const lockoutUntil = new Date(nowMs + durationMs);
+          await this.loginShadowSet(loginShadowKey(email), {
+            failedAttempts: newAttempts,
+            lockoutUntil: lockoutUntil.toISOString(),
+            lockoutCount: tier,
+            lastLockoutAt: new Date(nowMs).toISOString(),
+          });
+
+          await this.limiter?.reset(makeLoginRateLimitKey(email));
+
+          throw createAccountLockedError(lockoutUntil);
+        }
+
+        await this.loginShadowSet(loginShadowKey(email), {
+          failedAttempts: newAttempts,
+          lockoutUntil: null,
+          lockoutCount: fakeLoginShadow?.lockoutCount ?? 0,
+          lastLockoutAt: fakeLoginShadow?.lastLockoutAt ?? null,
+        });
       }
 
       const reason = isCredentialFailure ? 'invalid_credentials' : 'error';
@@ -561,7 +635,30 @@ export class IdentityService {
       .where(eq(user.id, userId));
   }
 
-  async unlockUser(userId: User['id'], actorId: User['id']) {
+  private async loginShadowGet(key: string): Promise<FakeLoginShadow | undefined> {
+    if (!this.cache) {
+      return undefined;
+    }
+    try {
+      return await this.cache.get<FakeLoginShadow>(key);
+    } catch (err) {
+      loginShadowLogger.warn({ key, err }, 'login shadow cache read failed');
+      return undefined;
+    }
+  }
+
+  private async loginShadowSet(key: string, value: FakeLoginShadow): Promise<void> {
+    if (!this.cache) {
+      return;
+    }
+    try {
+      await this.cache.set(key, value, { ttlMs: FAKE_LOGIN_SHADOW_TTL_MS });
+    } catch (err) {
+      loginShadowLogger.warn({ key, err }, 'login shadow cache write failed');
+    }
+  }
+
+  async unlockUser(userId: User['id'], actorId: User['id'], meta?: ClientMeta) {
     const existingUser = findOneOrThrow(
       await this.drizzle.db
         .select({
@@ -587,12 +684,15 @@ export class IdentityService {
       previousLockoutUntil: existingUser.lockoutUntil
         ? existingUser.lockoutUntil.toISOString()
         : null,
+      ip: meta?.ip ?? null,
+      userAgent: meta?.userAgent ?? null,
     });
 
     return SUCCESS;
   }
 
   async logout(reqHeaders: NodeHeaders, resHeaders: Headers) {
+    const { ip, userAgent } = extractClientMeta(reqHeaders);
     const headers = nodeHeadersToHeaders(reqHeaders);
     // Resolve the user BEFORE signOut so the audit log can attribute the logout.
     const session = await this.auth.api.getSession({ headers });
@@ -600,7 +700,7 @@ export class IdentityService {
     const authResponse = await this.auth.api.signOut({ headers, asResponse: true });
     this.forwardCookies(authResponse, resHeaders);
     if (userId) {
-      this.events.emit('identity.user.logout', { userId });
+      this.events.emit('identity.user.logout', { userId, ip, userAgent });
     }
     return SUCCESS;
   }
@@ -634,6 +734,7 @@ export class IdentityService {
   }
 
   async verifyTwoFactor(input: Verify2faInput, reqHeaders: NodeHeaders, resHeaders: Headers) {
+    const { ip, userAgent } = extractClientMeta(reqHeaders);
     const headers = nodeHeadersToHeaders(reqHeaders);
     const twoFactorKey =
       (await this.currentUserId(headers)) ?? twoFactorPendingCookieValue(headers) ?? 'anonymous';
@@ -647,12 +748,13 @@ export class IdentityService {
     this.forwardCookies(res, resHeaders);
     const userId = await this.currentUserId(headers);
     if (userId) {
-      this.events.emit('identity.2fa.enabled', { userId });
+      this.events.emit('identity.2fa.enabled', { userId, ip, userAgent });
     }
     return SUCCESS;
   }
 
   async disableTwoFactor(input: Disable2faInput, reqHeaders: NodeHeaders, resHeaders: Headers) {
+    const { ip, userAgent } = extractClientMeta(reqHeaders);
     const headers = nodeHeadersToHeaders(reqHeaders);
     const userId = await this.currentUserId(headers);
     await assertRateLimit(
@@ -668,7 +770,7 @@ export class IdentityService {
     await ensureOk(res);
     this.forwardCookies(res, resHeaders);
     if (userId) {
-      this.events.emit('identity.2fa.disabled', { userId });
+      this.events.emit('identity.2fa.disabled', { userId, ip, userAgent });
     }
     return SUCCESS;
   }
@@ -725,12 +827,10 @@ export class IdentityService {
     });
     await ensureOk(res, { genericMessage: 'Invalid or expired verification code' });
 
-    const row = await this.findUserByEmail(email);
-    if (row) {
-      this.events.emit('identity.password.reset', { userId: row.id });
-      await this.clearLockout(row.id);
-    }
-
+    // better-auth's resetPasswordEmailOTP internally invokes the onPasswordReset hook
+    // (wired in the constructor above), which emits `identity.password.reset` and
+    // clears the lockout - do not duplicate that here (was double-emitting/double-
+    // clearing on every real reset).
     return SUCCESS;
   }
 
@@ -768,6 +868,7 @@ export class IdentityService {
   }
 
   async verifyEmail(input: VerifyEmailInput, reqHeaders: NodeHeaders) {
+    const { ip, userAgent } = extractClientMeta(reqHeaders);
     const headers = nodeHeadersToHeaders(reqHeaders);
     const userId = await this.currentUserId(headers);
     await assertRateLimit(
@@ -782,7 +883,7 @@ export class IdentityService {
     });
     await ensureOk(res);
     if (userId) {
-      this.events.emit('identity.email.verified', { userId });
+      this.events.emit('identity.email.verified', { userId, ip, userAgent });
     }
     return SUCCESS;
   }
@@ -803,6 +904,7 @@ export class IdentityService {
     if (input.language !== undefined) {
       assertSupportedLanguage(input.language, this.platformConfig);
     }
+    const { ip, userAgent } = extractClientMeta(reqHeaders);
     const headers = nodeHeadersToHeaders(reqHeaders);
     // better-auth's field parser and drizzle's mapUpdateSet both drop `undefined`
     // values before the SQL SET clause, so omitted fields are safely no-ops here.
@@ -818,7 +920,7 @@ export class IdentityService {
     const session = await this.auth.api.getSession({ headers });
     const current = session?.user as BetterAuthUser | undefined;
     if (current) {
-      this.events.emit('identity.profile.updated', { userId: current.id });
+      this.events.emit('identity.profile.updated', { userId: current.id, ip, userAgent });
     }
     if (!current) {
       throw new Error('Profile update succeeded but session could not be re-read');

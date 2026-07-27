@@ -103,8 +103,8 @@ Activating the per-package add-on migrations requires a one-time **re-baseline**
 run `pnpm regen` to let drizzle-kit emit a central migration that DROPs the add-on
 tables from the core schema (they leave the core globs), review it, and let the
 add-on baselines own them going forward. Because the platform is pre-1.0 with a
-deterministic, idempotent `pnpm seed`, the local path is a DB reset
-(`docker compose down -v` && `pnpm regen && pnpm db:migrate:all && pnpm seed`). No
+deterministic, idempotent `pnpm db:seed`, the local path is a DB reset
+(`docker compose down -v` && `pnpm regen && pnpm db:migrate && pnpm db:seed`). No
 history is rewritten. This re-baseline is deferred and must be reviewed before
 applying - the add-on baseline migration files are staged but not yet applied.
 

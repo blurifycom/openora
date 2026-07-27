@@ -3,6 +3,7 @@ export {
   requestStorage,
   getCurrentRequestContext,
   getCurrentTraceId,
+  getCurrentClientMeta,
   withRequestContext,
 } from './request-context.js';
 
@@ -16,6 +17,8 @@ export { createRedisClient, type RedisClient } from './redis-client.js';
 export { RedisCache } from './redis-cache.js';
 export { RedisRateLimiter } from './redis-rate-limiter.js';
 export { RedisStreamsBroker } from './redis-streams-broker.js';
+export { InProcessRealtimeTransport } from './realtime-transport.js';
+export { SseClientAuthorizer } from './realtime-authorizer.js';
 
 export { Container } from './container.js';
 export type { Factory } from './container.js';
@@ -25,7 +28,7 @@ export { createLogger } from './logger.js';
 export { setErrorReporter, reportError } from './error-reporter.js';
 export type { ErrorReporter } from './error-reporter.js';
 
-export { getUserId } from './router-utils.js';
+export { getUserId, extractClientMeta } from './router-utils.js';
 export type { OssContext, AuthContext, NodeHeaders } from './router-utils.js';
 export {
   createDomainError,

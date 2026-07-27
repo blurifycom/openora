@@ -20,6 +20,9 @@ export type RealtimeClientAdapter = {
   // Optional: vendor adapters (eg Ably) must implement this to avoid leaking a
   // WebSocket across Fast-Refresh / StrictMode remounts.
   close?(): void;
+  // Optional: called after channel membership changes (eg joining a private room) so
+  // vendor adapters can issue a new auth token covering the new channel before subscribe.
+  refresh?(): void;
 };
 
 const RealtimeClientContext = createContext<RealtimeClientAdapter | null>(null);

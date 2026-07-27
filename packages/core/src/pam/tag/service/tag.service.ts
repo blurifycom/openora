@@ -8,7 +8,7 @@ import {
   pageToOffset,
   alreadyInUseError,
 } from '@openora/core/server';
-import { and, asc, count, eq, inArray, isNull, notInArray } from 'drizzle-orm';
+import { and, asc, count, desc, eq, inArray, isNull, notInArray } from 'drizzle-orm';
 import { DatabaseError } from 'pg';
 import {
   AssignPlayerTagInput,
@@ -20,13 +20,15 @@ import {
   type Player,
   type TagKey,
   type User,
+  type ClientMeta,
+  type PaginationOptions,
 } from '@openora/core/contracts';
+import type { PlayerTagSortBy, PlayerTagWithTag } from '../contract/index.js';
 import { player } from '@openora/core/pam/schema/profile';
 import { playerTag, tag } from '../schema/index.js';
 import { mapDbError } from '@openora/core/common/errors';
-import { toTag, toPlayerTagWithTag } from './tag-mappers.js';
+import { toTag, toPlayerTagWithTag, SYSTEM_ACTOR_ID } from './tag-mappers.js';
 import type { PlayerTagAssignMetadata } from '../contract/player-tag-assign-metadata.js';
-import type { PlayerTagWithTag } from '../contract/index.js';
 
 // AssignPlayerTagInput is the admin wire-contract type (free-text assignReason only -
 // admins never supply structured metadata). This is the internal superset used by
@@ -162,9 +164,21 @@ export class TagService implements PlayerTags {
     }
   }
 
-  public async listPlayerTags(playerId: Player['id'], page: number, limit: number) {
+  public async listPlayerTags({
+    playerId,
+    page,
+    limit,
+    sortBy,
+    sortOrder,
+  }: PaginationOptions<{ playerId: Player['id'] }, PlayerTagSortBy>) {
     const where = and(eq(playerTag.playerId, playerId), isNull(playerTag.removedAt));
     const db = this.drizzle.db;
+    const dir = (sortOrder ?? 'desc') === 'asc' ? asc : desc;
+    const TAG_SORT_COLS = {
+      createdAt: playerTag.createdAt,
+      assignActor: playerTag.assignActor,
+    } as const;
+    const tagSortCol = TAG_SORT_COLS[sortBy ?? 'createdAt'];
     const [rows, [{ n }]] = await Promise.all([
       db
         .select({
@@ -174,6 +188,7 @@ export class TagService implements PlayerTags {
         .from(playerTag)
         .innerJoin(tag, eq(playerTag.tagId, tag.id))
         .where(where)
+        .orderBy(dir(tagSortCol), desc(playerTag.id))
         .limit(limit)
         .offset(pageToOffset(page, limit)),
       db.select({ n: count() }).from(playerTag).where(where),
@@ -265,7 +280,7 @@ export class TagService implements PlayerTags {
     return { status: 'created', row: toPlayerTagWithTag(created, foundTag.key) };
   }
 
-  public async assignPlayerTag(args: AssignPlayerTagArgs) {
+  public async assignPlayerTag(args: AssignPlayerTagArgs, meta?: ClientMeta) {
     try {
       const db = this.drizzle.db;
       const outcome = await db.transaction((trx) => this._assignPlayerTagOnTx(trx, args));
@@ -276,7 +291,9 @@ export class TagService implements PlayerTags {
         playerId: args.playerId,
         tagKey: args.tagKey,
         reason: args.assignReason,
-        actorId: args.assignActorUserId,
+        actorId: args.assignActorUserId ?? SYSTEM_ACTOR_ID,
+        ip: meta?.ip ?? null,
+        userAgent: meta?.userAgent ?? null,
       });
       return outcome.row;
     } catch (e) {
@@ -303,7 +320,7 @@ export class TagService implements PlayerTags {
         playerId: args.playerId,
         tagKey: args.tagKey,
         reason: args.assignReason,
-        actorId: args.assignActorUserId,
+        actorId: args.assignActorUserId ?? SYSTEM_ACTOR_ID,
       });
       return outcome.row;
     } catch (e) {
@@ -311,9 +328,6 @@ export class TagService implements PlayerTags {
     }
   }
 
-  // Core removal, shared by removePlayerTag (own transaction) and replacePlayerTag
-  // (one shared transaction for the same-key swap). Throws TagAssignmentNotFoundError
-  // when no active row exists. Does NOT emit - same contract as _assignPlayerTagOnTx.
   private async _removePlayerTagOnTx(trx: DrizzleTx, args: RemovePlayerTagInput) {
     const foundTag = await this._findTagByKeyOrThrow(args.tagKey, trx);
     const active = findOneOrThrow(
@@ -343,15 +357,44 @@ export class TagService implements PlayerTags {
     return toPlayerTagWithTag(updated, foundTag.key);
   }
 
-  public async removePlayerTag(args: RemovePlayerTagInput) {
+  public async removePlayerTag(args: RemovePlayerTagInput, meta?: ClientMeta) {
     try {
       const db = this.drizzle.db;
-      const result = await db.transaction((trx) => this._removePlayerTagOnTx(trx, args));
+      const result = await db.transaction(async (trx) => {
+        const foundTag = await this._findTagByKeyOrThrow(args.tagKey, trx);
+        const active = findOneOrThrow(
+          await trx
+            .select()
+            .from(playerTag)
+            .where(
+              and(
+                eq(playerTag.tagId, foundTag.id),
+                eq(playerTag.playerId, args.playerId),
+                isNull(playerTag.removedAt),
+              ),
+            )
+            .limit(1),
+          new TagAssignmentNotFoundError(args.playerId),
+        );
+        const [updated] = await trx
+          .update(playerTag)
+          .set({
+            removedAt: new Date(),
+            removalReason: args.removalReason,
+            removalActor: args.removalActor,
+            removalActorUserId: args.removalActorUserId,
+          })
+          .where(eq(playerTag.id, active.id))
+          .returning();
+        return toPlayerTagWithTag(updated, foundTag.key);
+      });
       void this.event.emit('tag.player.removed', {
         playerId: args.playerId,
         tagKey: args.tagKey,
         reason: args.removalReason,
-        actorId: args.removalActorUserId,
+        actorId: args.removalActorUserId ?? SYSTEM_ACTOR_ID,
+        ip: meta?.ip ?? null,
+        userAgent: meta?.userAgent ?? null,
       });
       return result;
     } catch (e) {
@@ -408,14 +451,14 @@ export class TagService implements PlayerTags {
           playerId: args.playerId,
           tagKey: args.tagKey,
           reason: removalReason,
-          actorId: args.assignActorUserId,
+          actorId: args.assignActorUserId ?? SYSTEM_ACTOR_ID,
         });
       }
       void this.event.emit('tag.player.assigned', {
         playerId: args.playerId,
         tagKey: args.tagKey,
         reason: args.assignReason,
-        actorId: args.assignActorUserId,
+        actorId: args.assignActorUserId ?? SYSTEM_ACTOR_ID,
       });
       return result.row;
     } catch (e) {

@@ -81,7 +81,7 @@ override upward. Pass each reviewer:
 
 Dedup findings by `file:line`. Evidence gate: a finding without a concrete `file:line` and a stated
 trigger/evidence is dropped; don't repeat what lint/CI already enforces (`pnpm verify`,
-`pnpm boundaries`); don't contradict an unresolved reviewer thread without saying so.
+`pnpm check:boundaries`); don't contradict an unresolved reviewer thread without saying so.
 
 Output, in order:
 

@@ -13,7 +13,7 @@ description: >
 
 The platform is extended from the **outside only** (overlay plugin / adapter rebind / UI page /
 config) - never by editing `@openora/*`. This skill picks the correct seam and scaffolds it.
-Domain questions go to `expert` first; review the result with `code-review`.
+Domain questions go to `expert` first; review the result with `review`.
 
 ## 1. Classify the seam (ask if unclear)
 
@@ -64,7 +64,7 @@ plugins: [myCustomPspAdapter, walletModule];
 
 - `/check` (typecheck + lint) green.
 - Plugin boots (API health check / `pnpm dev`).
-- Hand to `code-review` before opening an MR.
+- Hand to `review` before opening an MR.
 
 ## Rules
 

@@ -1,8 +1,10 @@
 import {
   ADMIN_USER_DIRECTORY,
+  CACHE,
   IDENTITY_READER,
   KYC_ADAPTER,
   LOGIN_ENFORCEMENT,
+  PLAY_ELIGIBILITY,
   NOTIFICATION_DELIVERY_ADAPTER,
   SEND_EMAIL,
   EMAIL_TEMPLATE_RENDERER,
@@ -12,7 +14,7 @@ import {
   SESSION_COMMANDS,
   SMS_ADAPTER,
 } from '@openora/core/contracts';
-import { definePlugin, ADMIN_GUARD, EVENT_BUS, DRIZZLE } from '@openora/core/server';
+import { definePlugin, ADMIN_GUARD, EVENT_BUS, DRIZZLE, AUTH_SESSION } from '@openora/core/server';
 import { MockKycAdapter } from './adapters/mock/mock-kyc-adapter.js';
 import { MockSmsAdapter } from './adapters/mock/mock-sms-adapter.js';
 import { PhoneLoginService } from './service/phone-login.service.js';
@@ -23,6 +25,7 @@ import { createIdentityRouter } from './router/index.js';
 import { IdentityService } from './service/identity.service.js';
 import { SessionService } from './service/session.service.js';
 import { LoginEnforcementService } from './service/login-enforcement.service.js';
+import { PlayEligibilityService } from './service/play-eligibility.service.js';
 
 export default definePlugin({
   id: 'identity',
@@ -53,6 +56,7 @@ export default definePlugin({
           new SessionService({ drizzle: c.get(DRIZZLE), events: c.get(EVENT_BUS) }),
         ),
     );
+    ctx.provide(PLAY_ELIGIBILITY, (c) => new PlayEligibilityService(c.get(DRIZZLE)));
     ctx.provide(SESSION_COMMANDS, (c) => {
       const sessionSvc = new SessionService({ drizzle: c.get(DRIZZLE), events: c.get(EVENT_BUS) });
       return {
@@ -69,6 +73,7 @@ export default definePlugin({
           options: c.has(IDENTITY_OPTIONS) ? c.get(IDENTITY_OPTIONS) : undefined,
           limiter: c.get(RATE_LIMITER),
           platformConfig: c.has(PLATFORM_CONFIG) ? c.get(PLATFORM_CONFIG) : undefined,
+          cache: c.get(CACHE),
         }),
         new SessionService({ drizzle: c.get(DRIZZLE), events: c.get(EVENT_BUS) }),
         new PhoneLoginService({
@@ -76,6 +81,8 @@ export default definePlugin({
           events: c.get(EVENT_BUS),
           sms: c.get(SMS_ADAPTER),
           limiter: c.get(RATE_LIMITER),
+          auth: c.get(AUTH_SESSION).auth,
+          cache: c.get(CACHE),
         }),
         c.get(ADMIN_GUARD),
         c.get(EVENT_BUS),

@@ -1,0 +1,9 @@
+# analytics
+
+Read-only reporting domain for the backoffice: financial breakdowns and the registration-to-first-bet conversion funnel. Owns NO tables - it is the CQRS read side over wallet, identity, and profile data, reached only via their published `/schema` subpaths (`@openora/core/wallet/schema`, `@openora/core/pam/schema/identity`, `@openora/core/pam/schema/profile`). Never import a sibling module's service.
+
+- Money is always grouped by currency, never summed across currencies - the platform has no FX rates anywhere. A currency filter narrows the same grouped shape; it never collapses it to a scalar.
+- `wallet_transaction` has no `userId` column - every query that needs the player joins through `wallet.userId`.
+- The conversion funnel is a registration-cohort funnel, not an event-in-range funnel: the cohort is users whose `createdAt` falls in the requested range, and each later stage is a strict subset of the one before it (email-verified users who registered in range, of those who also ever deposited, of those who also ever bet). A stage's underlying deposit/bet activity is NOT date-ranged - only the registration cohort is. This keeps drop-off rates meaningful (never negative, never over 100%).
+- `game_round.betAmount` is now persisted (`casino/gaming` debits the stake via `WALLET_COMMANDS` at round start), but `winAmount` still stays `'0'` for every row - crediting a win is game-outcome/RTP territory gated by the sealed, unimplemented `GAME_OUTCOME_AUTHORITY` token (see `casino/gaming/AGENTS.md`). GGR is therefore computed from `wallet_transaction` (`bet` minus `win`, completed only) rather than from `game_round`, and will stay that way until a certified outcome authority exists to credit wins.
+- Every route is guarded on the `analytics` resource (`await adminGuard.assert(context, 'analytics', 'view')`) and reads are cached briefly (`CACHE` port) - these are dashboards refreshed on an interval, not a real-time feed.

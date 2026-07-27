@@ -235,6 +235,62 @@ function mapEventToRecord(topic: string, p: Record<string, unknown>): RecordInpu
     };
   }
 
+  // actorId = the moderator who acted; resource = the affected player in that room.
+  if (topic === 'chat.room.member.kicked' || topic === 'chat.room.member.banned') {
+    const actorKey = topic === 'chat.room.member.kicked' ? 'kickedBy' : 'bannedBy';
+    return {
+      ...base,
+      actorType: 'player',
+      actorId: str(p[actorKey]),
+      resourceType: 'chat_room_member',
+      resourceId: str(p['userId']),
+      after: { roomId: str(p['roomId']) },
+    };
+  }
+
+  // actorId = the player who created the room; resource = the new room.
+  if (topic === 'chat.private_room.created') {
+    return {
+      ...base,
+      actorType: 'player',
+      actorId: str(p['creatorId']),
+      resourceType: 'chat_room',
+      resourceId: str(p['roomId']),
+    };
+  }
+
+  if (
+    topic === 'chat.room.created' ||
+    topic === 'chat.room.updated' ||
+    topic === 'chat.room.deleted'
+  ) {
+    return {
+      ...base,
+      actorType: 'admin',
+      actorId: str(p['actorId']),
+      resourceType: 'chat_room',
+      resourceId: str(p['roomId']),
+      ...(topic === 'chat.room.created'
+        ? { after: { name: str(p['name']), slug: str(p['slug']), category: str(p['category']) } }
+        : {}),
+      ...(topic === 'chat.room.updated' || topic === 'chat.room.deleted'
+        ? { before: isRecord(p['before']) ? p['before'] : null }
+        : {}),
+      ...(topic === 'chat.room.updated' ? { after: isRecord(p['after']) ? p['after'] : null } : {}),
+    };
+  }
+
+  if (topic === 'chat.room.member.joined' || topic === 'chat.room.member.left') {
+    return {
+      ...base,
+      actorType: 'player',
+      actorId: str(p['userId']),
+      resourceType: 'chat_room_member',
+      resourceId: str(p['userId']),
+      after: { roomId: str(p['roomId']) },
+    };
+  }
+
   // actorType = admin (the only path flipping isActive is the back-office route);
   // resource = the subject user. after carries the new active state.
   if (topic === 'identity.user.deactivated' || topic === 'identity.user.reactivated') {
@@ -338,12 +394,13 @@ function mapEventToRecord(topic: string, p: Record<string, unknown>): RecordInpu
     topic === 'rg.limit.set' ||
     topic === 'rg.cooling_off.activated' ||
     topic === 'rg.self_exclusion.activated' ||
-    topic === 'rg.self_exclusion.lifted'
+    topic === 'rg.self_exclusion.lifted' ||
+    topic === 'rg.cooling_off.lifted'
   ) {
     const before =
       topic === 'rg.limit.set'
         ? { amount: p['previousAmount'] ?? null, minutes: p['previousMinutes'] ?? null }
-        : topic === 'rg.self_exclusion.lifted'
+        : topic === 'rg.self_exclusion.lifted' || topic === 'rg.cooling_off.lifted'
           ? { status: 'active' }
           : null;
     return {
@@ -422,12 +479,21 @@ const SUBSCRIBED_TOPICS: DomainEventName[] = [
   // already persisted in chatMessage; the moderation/block actions are what we audit.
   'chat.user.blocked',
   'chat.user.unblocked',
+  'chat.private_room.created',
+  'chat.room.created',
+  'chat.room.updated',
+  'chat.room.deleted',
+  'chat.room.member.joined',
+  'chat.room.member.left',
+  'chat.room.member.kicked',
+  'chat.room.member.banned',
   'compliance.limit.upserted',
   'compliance.limit.removed',
   'rg.limit.set',
   'rg.cooling_off.activated',
   'rg.self_exclusion.activated',
   'rg.self_exclusion.lifted',
+  'rg.cooling_off.lifted',
   'rg.exclusion.login_blocked',
   'compliance.kyc.updated',
   'compliance.kyc.submitted',

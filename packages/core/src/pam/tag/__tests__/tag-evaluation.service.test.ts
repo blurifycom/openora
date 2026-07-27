@@ -1,7 +1,8 @@
 import { describe, it, expect, vi } from 'vitest';
 import { mock } from '../../../testing/mock.js';
 import type { WalletReader, IdentityReader, TagRule, KycStatus } from '@openora/core/contracts';
-import { TagEvaluationService, SYSTEM_ACTOR_ID } from '../service/tag-evaluation.service.js';
+import { TagEvaluationService } from '../service/tag-evaluation.service.js';
+import { SYSTEM_ACTOR_ID } from '../service/tag-mappers.js';
 import {
   TagService,
   TagAlreadyInUseError,
@@ -846,6 +847,7 @@ describe('TagEvaluationService', () => {
         reason: 'player requested self-exclusion',
         exclusionId: '33333333-3333-4333-8333-333333333333',
         isPermanent: false,
+        durationMonths: 6,
         expiresAt: new Date().toISOString(),
       });
       expect(tag.assignPlayerTag).toHaveBeenCalledWith(
@@ -863,6 +865,7 @@ describe('TagEvaluationService', () => {
           reason: 'player requested self-exclusion',
           exclusionId: '33333333-3333-4333-8333-333333333333',
           isPermanent: false,
+          durationMonths: 6,
           expiresAt: null,
         }),
       ).resolves.toBeUndefined();

@@ -15,12 +15,15 @@ import {
   RedisCache,
   RedisRateLimiter,
   RedisStreamsBroker,
+  InProcessRealtimeTransport,
+  SseClientAuthorizer,
   createEventBus,
   createLogger,
   createRedisClient,
   withRequestContext,
   setErrorReporter,
   EVENT_BUS,
+  extractClientMeta,
   type OssContext,
 } from '../kernel/index.js';
 import { randomUUID } from 'node:crypto';
@@ -37,6 +40,8 @@ import {
   IGAMING_CONFIG,
   type IgamingConfig,
   PLATFORM_CONFIG,
+  REALTIME_TRANSPORT,
+  REALTIME_CLIENT_AUTHORIZER,
 } from '@openora/core/contracts';
 import { DrizzleService, DRIZZLE, DrizzleOutboxWriter, OutboxRelay } from '../db/index.js';
 import { AdminGuard, ADMIN_GUARD, SessionResolver, AUTH_SESSION } from '../auth/index.js';
@@ -194,8 +199,7 @@ async function captureRawBody(req: Request): Promise<string | undefined> {
  * `assertDurableSeamsBound` runs right after
  * plugins + `configure` and throws a clear, actionable error listing every
  * always-needed seam that still has no binding - it never falls back to an
- * in-process impl. `REALTIME_TRANSPORT` stays lazy (throws on first use) since not
- * every deployment serves realtime traffic. `OUTBOX_ENABLED` (or
+ * in-process realtime implementation. `OUTBOX_ENABLED` (or
  * `AMQP_URL`/`RABBITMQ_URL`) enables the transactional outbox relay.
  * `container.dispose()` (via `close()`) runs disposers in REVERSE registration
  * order, so DRIZZLE is registered before JOB_QUEUE to guarantee workers drain
@@ -232,6 +236,8 @@ export async function createApp(config: CreateAppConfig): Promise<CreatedApp> {
       outboxEnabled ? c.get(OUTBOX) : undefined,
     ),
   );
+  container.register(REALTIME_TRANSPORT, () => new InProcessRealtimeTransport());
+  container.register(REALTIME_CLIENT_AUTHORIZER, () => new SseClientAuthorizer());
   // When REDIS_URL is set, JOB_QUEUE, the rate limiter, the cache and the message
   // broker bind to the shipped Redis reference adapters: BullMQ-backed durable jobs
   // (survive restarts, real cron), distributed throttling, cross-replica cache
@@ -419,6 +425,7 @@ export async function createApp(config: CreateAppConfig): Promise<CreatedApp> {
     }
     const context: OssContext = {
       request: { headers },
+      clientMeta: extractClientMeta(headers),
       rawBody: await captureRawBody(c.req.raw),
     };
 
@@ -439,12 +446,12 @@ export async function createApp(config: CreateAppConfig): Promise<CreatedApp> {
     if (!userId) {
       // No valid session - context.auth stays undefined so getUserId 401s. Auth and
       // public routes still work. Run inside the request context for trace correlation.
-      return withRequestContext({ traceId }, runHandler);
+      return withRequestContext({ traceId, clientMeta: context.clientMeta }, runHandler);
     }
 
     context.auth = { userId };
 
-    return withRequestContext({ userId, traceId }, runHandler);
+    return withRequestContext({ userId, traceId, clientMeta: context.clientMeta }, runHandler);
   });
 
   const port = config.port ?? Number(process.env['PORT_API'] ?? 3001);

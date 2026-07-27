@@ -9,7 +9,13 @@ export function createPlayerNoteRouter(svc: PlayerNoteService, adminGuard: Admin
   return os.router({
     list: os.list.handler(async ({ input, context }) => {
       await adminGuard.assert(context, 'player-note', 'view');
-      return svc.list(input.playerId, input.page, input.limit);
+      return svc.list({
+        playerId: input.playerId,
+        page: input.page,
+        limit: input.limit,
+        sortBy: input.sortBy,
+        sortOrder: input.sortOrder,
+      });
     }),
 
     create: os.create.handler(async ({ input, context }) => {

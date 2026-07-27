@@ -1,6 +1,6 @@
 // rulesync config - single source of truth for all AI-agent instruction files.
 // Source lives in .rulesync/ (rules, subagents, commands, mcp.json).
-// Regenerate with `pnpm sync:agents`; CI checks with `pnpm sync:agents:check`.
+// Regenerate with `pnpm gen:agents`.
 {
   "$schema": "https://github.com/dyoshikawa/rulesync/releases/latest/download/config-schema.json",
 

@@ -13,8 +13,10 @@ import type {
   Player,
   User,
   TagKey,
+  PlayerSortBy,
+  PaginationOptions,
 } from '@openora/core/contracts';
-import { eq, ilike, count, or, and, gte, desc, sql, ne, inArray, isNull } from 'drizzle-orm';
+import { eq, ilike, count, or, and, gte, asc, desc, sql, ne, inArray, isNull } from 'drizzle-orm';
 import { player } from '@openora/core/pam/schema/profile';
 import { user } from '@openora/core/pam/schema/identity';
 import { playerTag, tag } from '@openora/core/pam/schema/tag';
@@ -41,14 +43,17 @@ export class PlayerService {
     status,
     kycStatus,
     tags,
-  }: {
-    page: number;
-    limit: number;
-    search?: string;
-    status?: PlayerStatus;
-    kycStatus?: KycStatus;
-    tags?: TagKey[];
-  }) {
+    sortBy,
+    sortOrder,
+  }: PaginationOptions<
+    {
+      search?: string;
+      status?: PlayerStatus;
+      kycStatus?: KycStatus;
+      tags?: TagKey[];
+    },
+    PlayerSortBy
+  >) {
     const db = this.drizzle.db;
     const conditions = [];
     if (status) {
@@ -96,7 +101,21 @@ export class PlayerService {
         .leftJoin(tag, eq(tag.id, playerTag.tagId))
         .groupBy(player.id, user.email)
         .where(whereClause)
-        .orderBy(desc(player.createdAt))
+        .orderBy(
+          ((sortOrder ?? 'desc') === 'asc' ? asc : desc)(
+            {
+              createdAt: player.createdAt,
+              displayName: player.displayName,
+              status: player.status,
+              kycStatus: player.kycStatus,
+              totalWagered: player.totalWagered,
+              totalDeposits: player.totalDeposits,
+              lastSeenAt: player.lastSeenAt,
+              level: player.level,
+            }[sortBy ?? 'createdAt'],
+          ),
+          desc(player.id),
+        )
         .limit(limit)
         .offset(pageToOffset(page, limit)),
       db

@@ -5,6 +5,8 @@ import { user } from '@openora/core/pam/schema/identity';
 import { player } from '@openora/core/pam/schema/profile';
 import { wallet, walletTransaction } from '@openora/core/wallet/schema';
 import { game } from '@openora/core/casino/schema/gaming';
+import { chatRoom, chatMessage } from '@openora/core/engagement/schema/chat';
+import type { ChatRoomCategory } from '@openora/core/engagement/contracts/chat';
 
 export type SeedAuth = {
   api: {
@@ -32,6 +34,7 @@ export type SeedResult = {
   players: number;
   games: number;
   transactions: number;
+  rooms: number;
 };
 
 function makeRng(seed: number): () => number {
@@ -205,6 +208,135 @@ const GAMES = [
   ['Plinko', 'Spribe', 'crash'],
 ] as const;
 
+type ChatRoomSeed = {
+  slug: string;
+  name: string;
+  category: ChatRoomCategory;
+  isPublic?: boolean;
+  joinCode?: string;
+  messages: readonly string[];
+};
+
+const CHAT_ROOMS: readonly ChatRoomSeed[] = [
+  {
+    slug: 'sports',
+    name: 'Sports',
+    category: 'games-sports',
+    messages: [
+      'Big match tonight - who are you backing?',
+      'Odds are looking great on the underdog.',
+    ],
+  },
+  {
+    slug: 'jackpot-wheel',
+    name: 'Jackpot Wheel',
+    category: 'games-sports',
+    messages: ['Share your wins here!', 'Jackpot season has begun!'],
+  },
+  {
+    slug: 'latam',
+    name: 'LATAM',
+    category: 'regions',
+    messages: [],
+  },
+  {
+    slug: 'europe',
+    name: 'Europe',
+    category: 'regions',
+    messages: [],
+  },
+  {
+    slug: 'asia',
+    name: 'Asia',
+    category: 'regions',
+    messages: [],
+  },
+  {
+    slug: 'africa',
+    name: 'Africa',
+    category: 'regions',
+    messages: [],
+  },
+  {
+    slug: 'english',
+    name: 'English',
+    category: 'languages',
+    messages: [],
+  },
+  {
+    slug: 'india',
+    name: 'India',
+    category: 'languages',
+    messages: [],
+  },
+  {
+    slug: 'chinese',
+    name: 'Chinese',
+    category: 'languages',
+    messages: [],
+  },
+  {
+    slug: 'spanish',
+    name: 'Spanish',
+    category: 'languages',
+    messages: [],
+  },
+  {
+    slug: 'russian',
+    name: 'Russian',
+    category: 'languages',
+    messages: [],
+  },
+  {
+    slug: 'french',
+    name: 'French',
+    category: 'languages',
+    messages: [],
+  },
+  {
+    slug: 'arabic',
+    name: 'Arabic',
+    category: 'languages',
+    messages: [],
+  },
+  {
+    slug: 'bengali',
+    name: 'Bengali',
+    category: 'languages',
+    messages: [],
+  },
+  {
+    slug: 'portuguese',
+    name: 'Portuguese',
+    category: 'languages',
+    messages: [],
+  },
+  {
+    slug: 'high-rollers-club',
+    name: 'High Rollers Club',
+    category: 'private-channels',
+    isPublic: false,
+    joinCode: 'HR7C2P',
+    messages: [],
+  },
+  {
+    slug: 'squad-lobby',
+    name: 'Squad Lobby',
+    category: 'private-channels',
+    isPublic: false,
+    joinCode: 'SQ8D4M',
+    messages: [],
+  },
+  {
+    slug: 'vip-whales',
+    name: 'VIP Whales',
+    category: 'private-channels',
+    isPublic: false,
+    joinCode: 'VW9H3K',
+    messages: [],
+  },
+];
+
 export async function seedDemoData(options: SeedOptions): Promise<SeedResult> {
   const { db, auth, playerCount = 36, windowDays = 90, log = () => {} } = options;
   const admin = options.admin ?? {
@@ -215,7 +347,9 @@ export async function seedDemoData(options: SeedOptions): Promise<SeedResult> {
   const playerPassword = options.password ?? 'password123';
   const rng = makeRng(0x5eed);
 
-  log('Clearing existing demo content (player, wallet, transaction, game)...');
+  log('Clearing existing demo content (player, wallet, transaction, game, chat)...');
+  await db.delete(chatMessage);
+  await db.delete(chatRoom);
   await db.delete(walletTransaction);
   await db.delete(wallet);
   await db.delete(player);
@@ -241,6 +375,39 @@ export async function seedDemoData(options: SeedOptions): Promise<SeedResult> {
     })),
   );
   log(`Created ${GAMES.length} games.`);
+
+  let roomCount = 0;
+  if (adminUser) {
+    const insertedRooms = await db
+      .insert(chatRoom)
+      .values(
+        CHAT_ROOMS.map((r) => ({
+          name: r.name,
+          slug: r.slug,
+          category: r.category,
+          isPublic: r.isPublic ?? true,
+          joinCode: r.joinCode ?? null,
+          creatorId: r.category === 'private-channels' ? null : adminUser.id,
+        })),
+      )
+      .returning();
+
+    const messageRows: (typeof chatMessage.$inferInsert)[] = insertedRooms.flatMap((room) => {
+      const def = CHAT_ROOMS.find((r) => r.slug === room.slug);
+      return (def?.messages ?? []).map((content) => ({
+        roomId: room.id,
+        userId: adminUser.id,
+        username: admin.name,
+        content,
+      }));
+    });
+    if (messageRows.length > 0) {
+      await db.insert(chatMessage).values(messageRows);
+    }
+
+    roomCount = insertedRooms.length;
+    log(`Created ${roomCount} chat rooms with demo messages.`);
+  }
 
   let userCount = adminUser ? 1 : 0;
   let txCount = 0;
@@ -357,6 +524,7 @@ export async function seedDemoData(options: SeedOptions): Promise<SeedResult> {
     players: playerCount,
     games: GAMES.length,
     transactions: txCount,
+    rooms: roomCount,
   };
 }
 

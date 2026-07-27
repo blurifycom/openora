@@ -14,9 +14,11 @@ import { createToken, type Token } from './token.js';
 // connected-member count; managed vendors provide richer presence. Kept optional
 // (a capability flag, per ADR-0007) so the base port is the common denominator.
 export type RealtimePresence = {
-  join(channel: string, memberId: string): void;
-  leave(channel: string, memberId: string): void;
-  count(channel: string): number;
+  // `connectionId` distinguishes concurrent tabs for the same member. Counts remain
+  // per member, so one tab leaving never marks a user offline while another is active.
+  join(channel: string, memberId: string, connectionId: string): void;
+  leave(channel: string, memberId: string, connectionId: string): void;
+  count(channel: string): number | Promise<number>;
 };
 
 export type RealtimeTransport = {
@@ -26,6 +28,8 @@ export type RealtimeTransport = {
   // Subscribe a handler to a channel. Returns an unsubscribe fn the caller MUST
   // invoke on teardown (eg an SSE handler on request abort).
   subscribe<T>(channel: string, handler: (event: T) => void): () => void;
+  // Revoke managed-provider credentials for a client after access is removed.
+  revokeClient?: (clientId: string) => void | Promise<void>;
   presence?: RealtimePresence;
 };
 

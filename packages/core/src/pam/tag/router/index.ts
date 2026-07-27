@@ -31,20 +31,32 @@ export function createTagRouter(tag: TagService, rule: TagRuleService, adminGuar
 
     listPlayerTags: os.listPlayerTags.handler(async ({ context, input }) => {
       await adminGuard.assert(context, 'tag', 'view');
-      return tag.listPlayerTags(input.playerId, input.page, input.limit);
+      return tag.listPlayerTags({
+        playerId: input.playerId,
+        page: input.page,
+        limit: input.limit,
+        sortBy: input.sortBy,
+        sortOrder: input.sortOrder,
+      });
     }),
 
     assignPlayerTag: os.assignPlayerTag.handler(async ({ context, input }) => {
       await adminGuard.assert(context, 'tag', 'create');
       return mapErrors({ NOT_FOUND: TagNotFoundError, CONFLICT: TagAlreadyInUseError }, () =>
-        tag.assignPlayerTag({ ...input, assignActorUserId: getUserId(context) }),
+        tag.assignPlayerTag(
+          { ...input, assignActorUserId: getUserId(context) },
+          context.clientMeta,
+        ),
       );
     }),
 
     removePlayerTag: os.removePlayerTag.handler(async ({ context, input }) => {
       await adminGuard.assert(context, 'tag', 'delete');
       return mapErrors({ NOT_FOUND: [TagNotFoundError, TagAssignmentNotFoundError] }, () =>
-        tag.removePlayerTag({ ...input, removalActorUserId: getUserId(context) }),
+        tag.removePlayerTag(
+          { ...input, removalActorUserId: getUserId(context) },
+          context.clientMeta,
+        ),
       );
     }),
 
@@ -59,9 +71,9 @@ export function createTagRouter(tag: TagService, rule: TagRuleService, adminGuar
     }),
 
     upsertTagRule: os.upsertTagRule.handler(async ({ context, input }) => {
-      await adminGuard.assert(context, 'tag-rule', 'update');
+      const { userId, ip, userAgent } = await adminGuard.assert(context, 'tag-rule', 'update');
       return mapErrors({ NOT_FOUND: TagRuleNotFoundError }, () =>
-        rule.upsertTagRule(input, getUserId(context)),
+        rule.upsertTagRule(input, userId, { ip, userAgent }),
       );
     }),
   });

@@ -80,8 +80,8 @@ Applies to every datetime column (`createdAt`, `updatedAt`, `expiresAt`, any `*A
 ## Keys, references, indexes
 
 - UUID primary keys (`uuid().primaryKey().defaultRandom()`).
-- **No foreign keys across an add-on/module boundary** - store a plain ID string and resolve via a
-  command port, event, or read-only `/schema` subpath. FKs only within the same add-on.
+- **No foreign keys across a module boundary** - store a plain ID string and resolve via a
+  command port, event, or read-only `/schema` subpath. FKs only within the same module.
 - `NOT NULL` by default; push defaults to the DB (`.notNull().default(...)`).
 - Index every column you filter or join on; name it `<table>_<cols>_idx`. Run `propose-table-change`
   (MCP) before adding a table to catch collisions.

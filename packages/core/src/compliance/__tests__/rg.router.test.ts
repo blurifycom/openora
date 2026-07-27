@@ -2,14 +2,18 @@ import { describe, it, expect, vi } from 'vitest';
 import { call, ORPCError } from '@orpc/server';
 import type { AdminGuard } from '@openora/core/server';
 import type { KycAdapter, KycWebhookVerifier } from '@openora/core/contracts';
-import { mock } from '../../testing/mock.js';
+import { mock, adminCaller, testContext } from '../../testing/mock.js';
 import { createComplianceRouter } from '../router/index.js';
 import type { ComplianceService } from '../service/compliance.service.js';
 import type { KycVerificationService } from '../service/kyc.service.js';
-import { RgService, ExclusionPeriodNotElapsedError } from '../service/rg.service.js';
+import {
+  RgService,
+  ExclusionPeriodNotElapsedError,
+  ExclusionNotFoundError,
+} from '../service/rg.service.js';
 import type { RgMonitoringService } from '../service/rg-monitoring.service.js';
 
-const CTX = { request: { headers: {} as Record<string, string | string[] | undefined> } };
+const CTX = testContext();
 const USER = '11111111-1111-4111-8111-111111111111';
 
 function fakeGuard(allowed: ReadonlyArray<`${string}:${string}`>): AdminGuard {
@@ -18,7 +22,7 @@ function fakeGuard(allowed: ReadonlyArray<`${string}:${string}`>): AdminGuard {
       if (resource && action && !allowed.includes(`${resource}:${action}`)) {
         throw new ORPCError('FORBIDDEN', { message: `Missing permission: ${resource}:${action}` });
       }
-      return { userId: 'admin-1', role: 'admin' };
+      return adminCaller();
     }),
   });
 }
@@ -92,7 +96,55 @@ describe('compliance RG router authz', () => {
       { userId: USER, type: 'deposit', amount: '100', minutes: null, period: 'daily' },
       { context: CTX },
     );
-    expect(setPlayerLimit).toHaveBeenCalledWith(USER, expect.any(Object), 'admin-1');
+    expect(setPlayerLimit).toHaveBeenCalledWith(USER, expect.any(Object), 'admin-1', {
+      ip: null,
+      userAgent: null,
+    });
+  });
+
+  it('liftCoolingOff requires compliance:manage-rg', async () => {
+    const router = build(fakeGuard([]));
+    await expect(
+      call(router.liftCoolingOff, { userId: USER, reason: 'x' }, { context: CTX }),
+    ).rejects.toBeInstanceOf(ORPCError);
+  });
+
+  it('maps a missing cooling-off to a NOT_FOUND error', async () => {
+    const liftCoolingOff = vi.fn().mockRejectedValue(new ExclusionNotFoundError(USER));
+    const router = build(fakeGuard(['compliance:manage-rg']), { liftCoolingOff });
+    await expect(
+      call(router.liftCoolingOff, { userId: USER, reason: 'x' }, { context: CTX }),
+    ).rejects.toMatchObject({ code: 'NOT_FOUND' });
+  });
+
+  it('passes the caller id to liftCoolingOff when authorized', async () => {
+    const now = new Date().toISOString();
+    const liftCoolingOff = vi.fn().mockResolvedValue({
+      id: '33333333-3333-4333-8333-333333333333',
+      userId: USER,
+      kind: 'cooling_off',
+      status: 'lifted',
+      reason: 'support request',
+      isPermanent: false,
+      startsAt: now,
+      expiresAt: now,
+      liftedAt: now,
+      liftedReason: 'raised in error',
+      liftedBy: '44444444-4444-4444-8444-444444444444',
+      createdBy: '44444444-4444-4444-8444-444444444444',
+      createdAt: now,
+      updatedAt: now,
+    });
+    const router = build(fakeGuard(['compliance:manage-rg']), { liftCoolingOff });
+    await call(
+      router.liftCoolingOff,
+      { userId: USER, reason: 'raised in error' },
+      { context: CTX },
+    );
+    expect(liftCoolingOff).toHaveBeenCalledWith(USER, expect.any(Object), 'admin-1', {
+      ip: null,
+      userAgent: null,
+    });
   });
 
   it('maps a min-period lift rejection to a CONFLICT error', async () => {

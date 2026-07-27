@@ -6,12 +6,12 @@ description: Run the local gate before a PR - typecheck + lint. There is no sing
 
 This repo has no `verify` script - typecheck and lint are separate. Run them in order and stop at the first failure.
 
-1. `pnpm typecheck` - `turbo run typecheck` across all apps.
-2. `pnpm lint` - `oxlint .`.
+1. `pnpm check:types` - `turbo run check:types` across all apps.
+2. `pnpm check:lint` - `oxlint .`.
 
 If you have added a test runner (eg `vitest`), also run your test script.
 
-The generated agent files (AGENTS.md, CLAUDE.md, .codex/config.toml, Copilot mirrors) are gitignored and regenerated from `.rulesync/` on `pnpm install` - there is nothing to drift-check. If you changed agent instructions, edit `.rulesync/` and run `pnpm sync:agents`.
+The generated agent files (AGENTS.md, CLAUDE.md, .codex/config.toml, Copilot mirrors) are gitignored and regenerated from `.rulesync/` on `pnpm install` - there is nothing to drift-check. If you changed agent instructions, edit `.rulesync/` and run `pnpm gen:agents`.
 
 After running:
 

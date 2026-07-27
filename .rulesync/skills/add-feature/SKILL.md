@@ -67,7 +67,7 @@ Every review/e2e finding goes back through the step-3 implementer until green; r
 
 ### 8. Regen + verify
 
-`/regen` if contracts/Drizzle changed; `docs` agent only if prose docs / agent surface changed; `/pre-pr` (`pnpm verify` + `pnpm verify:drift`). Don't proceed on red or a catalog diff.
+`/regen` if contracts/Drizzle changed; `docs` agent only if prose docs / agent surface changed; `/pre-pr` (`pnpm verify` + `pnpm check:drift`). Don't proceed on red or a catalog diff.
 
 ### 9. Open the PR
 

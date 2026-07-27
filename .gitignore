@@ -9,9 +9,10 @@ coverage
 .env.*
 !.env.example
 *.tsbuildinfo
-# OpenAPI spec is generated, not committed. Emitted by `pnpm codegen` (apps/api
-# emit-openapi) and on API boot. Read by gen-catalog + the @openora/mcp query-openapi
-# tool, which regenerate/expect it locally (pnpm setup:agent runs codegen).
+.pnpm-store
+# OpenAPI spec is generated, not committed. Emitted by `pnpm gen:openapi`
+# and on API boot. Read by gen-catalog + the @openora/mcp query-openapi
+# tool, which regenerate/expect it locally (pnpm setup runs regen).
 docs/openapi.json
 apps/*/docs/openapi.json
 .cache
@@ -21,13 +22,12 @@ routeTree.gen.ts
 .tanstack
 
 # AI-agent instruction files - ALL generated, never commit. Regenerated on
-# `pnpm install` (prepare) or `pnpm sync:agents`; nested CLAUDE.md stubs by
+# `pnpm install` (prepare) or `pnpm gen:agents`; nested CLAUDE.md stubs by
 # tools/gen/gen-claude-stubs.mjs. Never hand-write a CLAUDE.md anywhere (git
 # silently skips it) - module docs belong in the module's committed AGENTS.md.
 # Ignore-everything + explicit `!` re-includes for the few hand-kept files.
 CLAUDE.md
 /AGENTS.md
-/GEMINI.md
 /.mcp.json
 .vscode/mcp.json
 .codex/

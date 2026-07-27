@@ -6,10 +6,19 @@ import {
   withAdvisoryXactLock,
   type EventBus,
 } from '@openora/core/server';
-import { eq, and, or, gt, gte, lte, like, desc, sql } from 'drizzle-orm';
+import { eq, and, or, gt, gte, lte, like, asc, desc, sql } from 'drizzle-orm';
 import type { AuditWritePort } from '@openora/core/contracts';
 import { auditLog, type AuditLog } from '../schema/index.js';
 import type { AuditListFilters, AuditExportFilters } from '../contract/index.js';
+
+const AUDIT_SORT_COLS = {
+  createdAt: auditLog.createdAt,
+  action: auditLog.action,
+  actorId: auditLog.actorId,
+  actorType: auditLog.actorType,
+  resourceType: auditLog.resourceType,
+  resourceId: auditLog.resourceId,
+} as const;
 
 // Key order is deterministic - changes here BREAK the chain for existing rows.
 // Treat this as an append-only list. before/after/result are IN the chain - a row's
@@ -73,6 +82,16 @@ function likePrefix(prefix: string): string {
   return `${prefix.replace(/[\\%_]/g, '\\$&')}%`;
 }
 
+export function startOfDayUtc(dateStr: string): Date {
+  const d = new Date(dateStr);
+  return new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate(), 0, 0, 0, 0));
+}
+
+export function endOfDayUtc(dateStr: string): Date {
+  const d = new Date(dateStr);
+  return new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate(), 23, 59, 59, 999));
+}
+
 function buildWhere(filters: AuditExportFilters) {
   const {
     actorId,
@@ -85,6 +104,7 @@ function buildWhere(filters: AuditExportFilters) {
     fromDate,
     toDate,
   } = filters;
+
   return and(
     actorId ? eq(auditLog.actorId, actorId) : undefined,
     actorType ? eq(auditLog.actorType, actorType as AuditLog['actorType']) : undefined,
@@ -93,8 +113,8 @@ function buildWhere(filters: AuditExportFilters) {
     resourceType ? eq(auditLog.resourceType, resourceType) : undefined,
     resourceId ? eq(auditLog.resourceId, resourceId) : undefined,
     q ? or(eq(auditLog.actorId, q), eq(auditLog.resourceId, q)) : undefined,
-    fromDate ? gte(auditLog.createdAt, new Date(fromDate)) : undefined,
-    toDate ? lte(auditLog.createdAt, new Date(toDate)) : undefined,
+    fromDate ? gte(auditLog.createdAt, startOfDayUtc(fromDate)) : undefined,
+    toDate ? lte(auditLog.createdAt, endOfDayUtc(toDate)) : undefined,
   );
 }
 
@@ -164,13 +184,15 @@ export class AuditService {
     const offset = pageToOffset(page, limit);
 
     const where = buildWhere(filters);
+    const sortBy = filters.sortBy ?? 'createdAt';
+    const dir = (filters.sortOrder ?? 'desc') === 'asc' ? asc : desc;
 
     const [rows, countResult] = await Promise.all([
       db
         .select()
         .from(auditLog)
         .where(where)
-        .orderBy(desc(auditLog.seq))
+        .orderBy(dir(AUDIT_SORT_COLS[sortBy]), dir(auditLog.seq))
         .limit(limit)
         .offset(offset),
       db
@@ -197,11 +219,14 @@ export class AuditService {
     const db = this.drizzle.db;
     const where = buildWhere(filters);
 
+    const sortBy = filters.sortBy ?? 'createdAt';
+    const dir = (filters.sortOrder ?? 'asc') === 'asc' ? asc : desc;
+
     const rows = await db
       .select()
       .from(auditLog)
       .where(where)
-      .orderBy(auditLog.seq)
+      .orderBy(dir(AUDIT_SORT_COLS[sortBy]), dir(auditLog.seq))
       .limit(AuditService.EXPORT_MAX_ROWS);
 
     const header =

@@ -1,5 +1,12 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { mock, readPrivate, makeDrizzle, makeEvents, makePayment } from '../../testing/mock.js';
+import {
+  mock,
+  readPrivate,
+  makeDrizzle,
+  makeEvents,
+  makePayment,
+  NO_CLIENT_META,
+} from '../../testing/mock.js';
 import type { AutoWithdrawalConfig } from '@openora/core/contracts';
 import { WalletService } from '../service/wallet.service.js';
 
@@ -110,7 +117,12 @@ describe('WalletService.withdraw auto-approval', () => {
       autoWithdrawal: { fiatThreshold: '1000' },
     });
 
-    const result = await svc.withdraw({ userId: 'u-1', amount: '40', currency: 'USD' });
+    const result = await svc.withdraw({
+      userId: 'u-1',
+      amount: '40',
+      currency: 'USD',
+      ...NO_CLIENT_META,
+    });
 
     expect(result).toEqual({ transactionId: 'tx-1', status: 'completed' });
     expect(payment.processWithdrawal).toHaveBeenCalledTimes(1);
@@ -157,7 +169,7 @@ describe('WalletService.withdraw auto-approval', () => {
       autoWithdrawal: { fiatThreshold: '1000', dailyCapCount: 1 },
     });
 
-    await svc.withdraw({ userId: 'u-1', amount: '40', currency: 'USD' });
+    await svc.withdraw({ userId: 'u-1', amount: '40', currency: 'USD', ...NO_CLIENT_META });
 
     expect(executeSpy).toHaveBeenCalledTimes(1);
     const lockOrder = executeSpy.mock.invocationCallOrder.at(0);
@@ -216,7 +228,12 @@ describe('WalletService.withdraw auto-approval', () => {
     });
     audit.record.mockRejectedValueOnce(new Error('audit down'));
 
-    const result = await svc.withdraw({ userId: 'u-1', amount: '40', currency: 'USD' });
+    const result = await svc.withdraw({
+      userId: 'u-1',
+      amount: '40',
+      currency: 'USD',
+      ...NO_CLIENT_META,
+    });
 
     expect(result).toEqual({ transactionId: 'tx-1', status: 'pending' });
     expect(payment.processWithdrawal).not.toHaveBeenCalled();
@@ -247,7 +264,12 @@ describe('WalletService.withdraw auto-approval', () => {
       autoWithdrawal: { fiatThreshold: '1000' },
     });
 
-    const result = await svc.withdraw({ userId: 'u-1', amount: '40', currency: 'USD' });
+    const result = await svc.withdraw({
+      userId: 'u-1',
+      amount: '40',
+      currency: 'USD',
+      ...NO_CLIENT_META,
+    });
 
     expect(result.status).toBe('pending');
     expect(payment.processWithdrawal).not.toHaveBeenCalled();
@@ -267,7 +289,12 @@ describe('WalletService.withdraw auto-approval', () => {
       autoWithdrawal: { fiatThreshold: '1000', excludeRiskFlags: ['high_risk'] },
     });
 
-    const result = await svc.withdraw({ userId: 'u-1', amount: '40', currency: 'USD' });
+    const result = await svc.withdraw({
+      userId: 'u-1',
+      amount: '40',
+      currency: 'USD',
+      ...NO_CLIENT_META,
+    });
 
     expect(result.status).toBe('pending');
     expect(payment.processWithdrawal).not.toHaveBeenCalled();
@@ -303,7 +330,12 @@ describe('WalletService.withdraw auto-approval', () => {
       autoWithdrawal: { fiatThreshold: '1000', excludeRiskFlags: ['withdrawal_review'] },
     });
 
-    const result = await svc.withdraw({ userId: 'u-1', amount: '40', currency: 'USD' });
+    const result = await svc.withdraw({
+      userId: 'u-1',
+      amount: '40',
+      currency: 'USD',
+      ...NO_CLIENT_META,
+    });
 
     // Ordering proof: the synchronous command-port call happened, and completed, before
     // auto-approval's risk-tag read - never the reverse, and never concurrent/unawaited.
@@ -330,7 +362,12 @@ describe('WalletService.withdraw auto-approval', () => {
       autoWithdrawal: { fiatThreshold: '1000' },
     });
 
-    const result = await svc.withdraw({ userId: 'u-1', amount: '40', currency: 'USD' });
+    const result = await svc.withdraw({
+      userId: 'u-1',
+      amount: '40',
+      currency: 'USD',
+      ...NO_CLIENT_META,
+    });
 
     expect(result.status).toBe('pending');
     expect(payment.processWithdrawal).not.toHaveBeenCalled();
@@ -347,7 +384,12 @@ describe('WalletService.withdraw auto-approval', () => {
       autoWithdrawal: { fiatThreshold: '1000', dailyCapCount: 1 },
     });
 
-    const result = await svc.withdraw({ userId: 'u-1', amount: '40', currency: 'USD' });
+    const result = await svc.withdraw({
+      userId: 'u-1',
+      amount: '40',
+      currency: 'USD',
+      ...NO_CLIENT_META,
+    });
 
     expect(result.status).toBe('pending');
     expect(payment.processWithdrawal).not.toHaveBeenCalled();
@@ -364,7 +406,12 @@ describe('WalletService.withdraw auto-approval', () => {
       autoWithdrawal: { fiatThreshold: '1000', dailyCapAmount: '100' },
     });
 
-    const result = await svc.withdraw({ userId: 'u-1', amount: '40', currency: 'USD' });
+    const result = await svc.withdraw({
+      userId: 'u-1',
+      amount: '40',
+      currency: 'USD',
+      ...NO_CLIENT_META,
+    });
 
     expect(result.status).toBe('pending');
     expect(payment.processWithdrawal).not.toHaveBeenCalled();
@@ -381,7 +428,12 @@ describe('WalletService.withdraw auto-approval', () => {
       autoWithdrawal: { fiatThreshold: '1000', excludeRiskFlags: ['high_risk'] },
     });
 
-    const result = await svc.withdraw({ userId: 'u-1', amount: '40', currency: 'USD' });
+    const result = await svc.withdraw({
+      userId: 'u-1',
+      amount: '40',
+      currency: 'USD',
+      ...NO_CLIENT_META,
+    });
 
     expect(result.status).toBe('pending');
     expect(payment.processWithdrawal).not.toHaveBeenCalled();
@@ -398,7 +450,12 @@ describe('WalletService.withdraw auto-approval', () => {
       autoWithdrawal: { fiatThreshold: '1000' },
     });
 
-    const result = await svc.withdraw({ userId: 'u-1', amount: '40', currency: 'USD' });
+    const result = await svc.withdraw({
+      userId: 'u-1',
+      amount: '40',
+      currency: 'USD',
+      ...NO_CLIENT_META,
+    });
 
     expect(result.status).toBe('pending');
     expect(payment.processWithdrawal).not.toHaveBeenCalled();
@@ -424,6 +481,7 @@ describe('WalletService.withdraw auto-approval', () => {
       amount: '1',
       currency: 'BTC',
       destinationAddress: 'bc1qtest',
+      ...NO_CLIENT_META,
     });
 
     expect(result.status).toBe('pending');
@@ -477,6 +535,7 @@ describe('WalletService.withdraw auto-approval', () => {
       amount: '0.5',
       currency: 'BTC',
       destinationAddress: 'bc1qtest',
+      ...NO_CLIENT_META,
     });
 
     expect(result).toEqual({ transactionId: 'tx-1', status: 'completed' });
@@ -505,6 +564,7 @@ describe('WalletService.withdraw auto-approval', () => {
       amount: '5',
       currency: 'BTC',
       destinationAddress: 'bc1qtest',
+      ...NO_CLIENT_META,
     });
 
     expect(result.status).toBe('pending');
@@ -530,6 +590,7 @@ describe('WalletService.withdraw auto-approval', () => {
       amount: '0.5',
       currency: 'BTC',
       destinationAddress: 'bc1qtest',
+      ...NO_CLIENT_META,
     });
 
     expect(result.status).toBe('pending');
@@ -547,7 +608,12 @@ describe('WalletService.withdraw auto-approval', () => {
       autoWithdrawal: {}, // enabled, but no fiatThreshold
     });
 
-    const result = await svc.withdraw({ userId: 'u-1', amount: '40', currency: 'USD' });
+    const result = await svc.withdraw({
+      userId: 'u-1',
+      amount: '40',
+      currency: 'USD',
+      ...NO_CLIENT_META,
+    });
 
     expect(result.status).toBe('pending');
     expect(payment.processWithdrawal).not.toHaveBeenCalled();
@@ -567,7 +633,12 @@ describe('WalletService.withdraw auto-approval', () => {
       autoWithdrawal: { fiatThreshold: '1000' },
     });
 
-    const result = await svc.withdraw({ userId: 'u-1', amount: '40', currency: 'USD' });
+    const result = await svc.withdraw({
+      userId: 'u-1',
+      amount: '40',
+      currency: 'USD',
+      ...NO_CLIENT_META,
+    });
 
     expect(result.status).toBe('pending');
     expect(payment.processWithdrawal).not.toHaveBeenCalled();
@@ -590,7 +661,12 @@ describe('WalletService.withdraw auto-approval', () => {
       autoWithdrawal: { fiatThreshold: '10' },
     });
 
-    const result = await svc.withdraw({ userId: 'u-1', amount: '40', currency: 'USD' });
+    const result = await svc.withdraw({
+      userId: 'u-1',
+      amount: '40',
+      currency: 'USD',
+      ...NO_CLIENT_META,
+    });
 
     expect(result.status).toBe('completed');
     expect(payment.processWithdrawal).toHaveBeenCalledTimes(1);

@@ -19,6 +19,7 @@ export const statement = {
   'player-note': ['view', 'create'] as const,
   'tag-rule': ['view', 'update'] as const,
   tag: ['view', 'create', 'delete'] as const,
+  'chat-room': ['view', 'create', 'update', 'delete'] as const,
 } as const;
 
 export const ac = createAccessControl(statement);
@@ -42,6 +43,7 @@ export const adminRole = ac.newRole({
   'player-note': ['view', 'create'],
   'tag-rule': ['view', 'update'],
   tag: ['view', 'create', 'delete'],
+  'chat-room': ['view', 'create', 'update', 'delete'],
 });
 
 export const supportRole = ac.newRole({

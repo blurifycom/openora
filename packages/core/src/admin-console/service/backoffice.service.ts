@@ -3,10 +3,12 @@ import type {
   AdminTxDetail,
   AdminTxRow,
   AdminUserDirectory,
+  AdminUserListOptions,
   AdminUserRow,
   AdminWalletReporting,
   User,
   UserRole,
+  ClientMeta,
 } from '@openora/core/contracts';
 import { makeNotFoundError, serializeRow } from '@openora/core/server';
 import type { TransactionFilter } from '../contract/index.js';
@@ -51,8 +53,8 @@ export class BackofficeService {
     };
   }
 
-  async listUsers(page: number, limit: number, search?: string) {
-    const { rows, total } = await this.users.list({ page, limit, search });
+  async listUsers({ page, limit, search, sortBy, sortOrder }: AdminUserListOptions) {
+    const { rows, total } = await this.users.list({ page, limit, search, sortBy, sortOrder });
     return { items: rows.map(toAdminUser), total, page, limit };
   }
 
@@ -68,8 +70,9 @@ export class BackofficeService {
     userId: User['id'],
     data: { isActive?: boolean; role?: UserRole },
     actorId: User['id'],
+    meta?: ClientMeta,
   ) {
-    const row = await this.users.update(userId, data, actorId);
+    const row = await this.users.update(userId, data, actorId, meta);
     if (!row) {
       throw new UserNotFoundError(userId);
     }
@@ -90,6 +93,8 @@ export class BackofficeService {
       amountMin,
       amountMax,
       player,
+      sortBy,
+      sortOrder,
     } = filters;
 
     // `userId` = exact wallet.userId match; `player` = free-text resolved to ids.
@@ -117,6 +122,8 @@ export class BackofficeService {
       dateTo: dateTo ? new Date(dateTo) : undefined,
       amountMin,
       amountMax,
+      sortBy,
+      sortOrder,
     });
 
     const players = await this.lookupPlayerMap(rows.map((r) => r.userId));
