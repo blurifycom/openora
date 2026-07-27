@@ -4,6 +4,7 @@ import { eq, sql } from 'drizzle-orm';
 import type {
   AdminPlayerSummary,
   AdminUserDirectory,
+  EmailTemplateRenderer,
   LoginEnforcementPort,
   SendEmailPort,
 } from '@openora/core/contracts';
@@ -21,15 +22,22 @@ import {
 
 let db: TestDb;
 
-type Notifier = { email: SendEmailPort; directory: AdminUserDirectory };
+type Notifier = {
+  email: SendEmailPort;
+  directory: AdminUserDirectory;
+  templateRenderer: EmailTemplateRenderer;
+};
 
 function makeNotifier(email = 'player@example.com'): Notifier {
   return {
     email: mock<SendEmailPort>({ send: vi.fn(async () => undefined) }),
     directory: mock<AdminUserDirectory>({
       lookupPlayers: vi.fn(async (ids: string[]) =>
-        ids.map((userId) => mock<AdminPlayerSummary>({ userId, email })),
+        ids.map((userId) => mock<AdminPlayerSummary>({ userId, email, language: 'en' })),
       ),
+    }),
+    templateRenderer: mock<EmailTemplateRenderer>({
+      render: vi.fn(async () => ({ subject: 'subject', body: 'body' })),
     }),
   };
 }
@@ -42,10 +50,11 @@ function makeService(notifier?: Notifier) {
   });
   const svc = new RgService({
     drizzle: db.drizzle,
-    events: events,
+    events,
     loginEnforcement: enforcement,
     email: notifier?.email ?? null,
     directory: notifier?.directory ?? null,
+    templateRenderer: notifier?.templateRenderer ?? null,
   });
   return { svc, events, enforcement };
 }
@@ -163,7 +172,7 @@ describe('RgService.setPlayerLimit (real PG)', () => {
     expect(dto).toMatchObject({ minutes: 60, amount: null });
   });
 
-  it('emails the player when a mail port and directory are bound', async () => {
+  it('emails the player when a mail port, directory, and template renderer are bound', async () => {
     const notifier = makeNotifier();
     const { svc } = makeService(notifier);
     const userId = randomUUID();
@@ -174,8 +183,9 @@ describe('RgService.setPlayerLimit (real PG)', () => {
       randomUUID(),
     );
 
+    expect(notifier.templateRenderer.render).toHaveBeenCalled();
     expect(notifier.email.send).toHaveBeenCalledWith(
-      expect.objectContaining({ to: 'player@example.com' }),
+      expect.objectContaining({ to: 'player@example.com', subject: 'subject', body: 'body' }),
     );
   });
 
@@ -277,23 +287,34 @@ describe('RgService.activateSelfExclusion (real PG)', () => {
     expect(enforcement.block).toHaveBeenCalledWith(userId, { until: null });
     expect(events.emit).toHaveBeenCalledWith(
       'rg.self_exclusion.activated',
-      expect.objectContaining({ isPermanent: true, expiresAt: null }),
+      expect.objectContaining({ isPermanent: true, durationMonths: null, expiresAt: null }),
     );
   });
 
-  it('stores a fixed-term expiry but still blocks indefinitely', async () => {
-    const { svc, enforcement } = makeService();
+  it('stores a fixed-term expiry, keeps the indefinite block, and emits the chosen term', async () => {
+    const { svc, events, enforcement } = makeService();
     const userId = randomUUID();
+    const actorId = randomUUID();
 
     await svc.activateSelfExclusion(
       userId,
       { userId, isPermanent: false, durationMonths: 6, reason: 'break', confirm: true },
-      randomUUID(),
+      actorId,
     );
 
     const [row] = await exclusionsOf(userId);
     expect(row?.expiresAt).toBeInstanceOf(Date);
     expect(enforcement.block).toHaveBeenCalledWith(userId, { until: null });
+    expect(events.emit).toHaveBeenCalledWith(
+      'rg.self_exclusion.activated',
+      expect.objectContaining({
+        userId,
+        actorId,
+        isPermanent: false,
+        durationMonths: 6,
+        reason: 'break',
+      }),
+    );
   });
 
   it('rejects a second active self-exclusion', async () => {
@@ -394,6 +415,52 @@ describe('RgService.liftSelfExclusion (real PG)', () => {
 
     const rows = await exclusionsOf(userId);
     expect(rows.filter((r) => r.status === 'active')).toHaveLength(1);
+  });
+});
+
+describe('RgService.liftCoolingOff (real PG)', () => {
+  it('throws when the player has no active cooling-off', async () => {
+    const { svc } = makeService();
+    const userId = randomUUID();
+
+    await expect(
+      svc.liftCoolingOff(userId, { userId, reason: 'ok' }, randomUUID()),
+    ).rejects.toBeInstanceOf(ExclusionNotFoundError);
+  });
+
+  it('lifts an active cooling-off, records the lift metadata, and unblocks', async () => {
+    const { svc, events, enforcement } = makeService();
+    const userId = randomUUID();
+    const actorId = randomUUID();
+    const existing = await seedExclusion({ userId, kind: 'cooling_off', expiresAt: future() });
+
+    await svc.liftCoolingOff(userId, { userId, reason: 'support ticket 42' }, actorId);
+
+    const [row] = await exclusionsOf(userId);
+    expect(row).toMatchObject({
+      id: existing.id,
+      kind: 'cooling_off',
+      status: 'lifted',
+      liftedReason: 'support ticket 42',
+      liftedBy: actorId,
+    });
+    expect(enforcement.unblock).toHaveBeenCalledWith(userId);
+    expect(events.emit).toHaveBeenCalledWith(
+      'rg.cooling_off.lifted',
+      expect.objectContaining({ userId, actorId, reason: 'support ticket 42' }),
+    );
+  });
+
+  it('keeps an indefinite block when the player is also self-excluded', async () => {
+    const { svc, enforcement } = makeService();
+    const userId = randomUUID();
+    await seedExclusion({ userId, kind: 'cooling_off', expiresAt: future() });
+    await seedExclusion({ userId, kind: 'self_exclusion', isPermanent: true, expiresAt: null });
+
+    await svc.liftCoolingOff(userId, { userId, reason: 'ok' }, randomUUID());
+
+    expect(enforcement.block).toHaveBeenCalledWith(userId, { until: null });
+    expect(enforcement.unblock).not.toHaveBeenCalled();
   });
 });
 

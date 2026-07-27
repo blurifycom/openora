@@ -6,7 +6,6 @@ import type { AdminGuard } from '@openora/core/server';
 import type {
   AdminUserDirectory,
   KycAdapter,
-  KycStatusWriter,
   KycWebhookVerifier,
   LoginEnforcementPort,
   SendEmailPort,
@@ -16,10 +15,10 @@ import { mock, makeEventBus, makeAdminGuard, testContext } from '../../testing/m
 import { migrate } from '../migrate.js';
 import { userLimit, rgExclusion, rgFlag } from '../schema/index.js';
 import { createComplianceRouter } from '../router/index.js';
-import { ComplianceService } from '../service/compliance.service.js';
-import { KycVerificationService } from '../service/kyc.service.js';
+import type { ComplianceService } from '../service/compliance.service.js';
+import type { KycVerificationService } from '../service/kyc.service.js';
 import { RgService } from '../service/rg.service.js';
-import { RgMonitoringService } from '../service/rg-monitoring.service.js';
+import type { RgMonitoringService } from '../service/rg-monitoring.service.js';
 
 const CTX = testContext();
 const USER = '11111111-1111-4111-8111-111111111111';
@@ -53,35 +52,29 @@ function build(adminGuard: AdminGuard) {
   });
   const rg = new RgService({
     drizzle: db.drizzle,
-    events: events,
+    events,
     loginEnforcement: enforcement,
     email: mock<SendEmailPort>({ send: vi.fn(async () => undefined) }),
     directory: mock<AdminUserDirectory>({ lookupPlayers: vi.fn(async () => []) }),
   });
-  const rgMonitoring = new RgMonitoringService({ drizzle: db.drizzle, directory: null });
-  const kycAdapter = mock<KycAdapter>({
-    submit: vi.fn(async () => ({ referenceId: randomUUID(), status: 'approved' as const })),
-    getStatus: vi.fn(async () => 'approved' as const),
-  });
   const router = createComplianceRouter({
-    compliance: new ComplianceService(db.drizzle, events),
+    compliance: mock<ComplianceService>({}),
     adminGuard,
-    kyc: new KycVerificationService({
-      drizzle: db.drizzle,
-      events: events,
-      kycAdapter,
-      statusWriter: mock<KycStatusWriter>({ setStatus: vi.fn(async () => undefined) }),
-    }),
-    kycAdapter,
+    kyc: mock<KycVerificationService>({}),
+    kycAdapter: mock<KycAdapter>({}),
     webhookVerifier: mock<KycWebhookVerifier>({}),
     rg,
-    rgMonitoring,
+    rgMonitoring: mock<RgMonitoringService>({}),
   });
   return { router, events, enforcement };
 }
 
 async function limitsOf(userId: string) {
   return db.drizzle.db.select().from(userLimit).where(eq(userLimit.userId, userId));
+}
+
+async function exclusionsOf(userId: string) {
+  return db.drizzle.db.select().from(rgExclusion).where(eq(rgExclusion.userId, userId));
 }
 
 async function seedExclusion(overrides: Partial<typeof rgExclusion.$inferInsert> = {}) {
@@ -125,6 +118,14 @@ describe('compliance RG router authz', () => {
       ),
     ).rejects.toBeInstanceOf(ORPCError);
     expect(enforcement.block).not.toHaveBeenCalled();
+  });
+
+  it('liftCoolingOff requires compliance:manage-rg', async () => {
+    const { router } = build(guardAllowing([]));
+
+    await expect(
+      call(router.liftCoolingOff, { userId: USER, reason: 'x' }, { context: CTX }),
+    ).rejects.toBeInstanceOf(ORPCError);
   });
 
   it('getRgSection requires compliance:view', async () => {
@@ -173,10 +174,7 @@ describe('compliance RG router writes', () => {
       { context: CTX },
     );
 
-    const [stored] = await db.drizzle.db
-      .select()
-      .from(rgExclusion)
-      .where(eq(rgExclusion.userId, USER));
+    const [stored] = await exclusionsOf(USER);
     expect(stored).toMatchObject({ status: 'active', isPermanent: true });
     expect(enforcement.block).toHaveBeenCalled();
   });
@@ -192,6 +190,34 @@ describe('compliance RG router writes', () => {
         { context: CTX },
       ),
     ).rejects.toMatchObject({ code: 'CONFLICT' });
+  });
+
+  it('maps a missing cooling-off to a NOT_FOUND error', async () => {
+    const { router } = build(guardAllowing(['compliance:manage-rg']));
+
+    await expect(
+      call(router.liftCoolingOff, { userId: USER, reason: 'x' }, { context: CTX }),
+    ).rejects.toMatchObject({ code: 'NOT_FOUND' });
+  });
+
+  it('passes the caller id to liftCoolingOff when authorized', async () => {
+    await seedExclusion({ kind: 'cooling_off', expiresAt: new Date(Date.now() + 24 * HOURS) });
+    const { router, enforcement } = build(guardAllowing(['compliance:manage-rg']));
+
+    await call(
+      router.liftCoolingOff,
+      { userId: USER, reason: 'raised in error' },
+      { context: CTX },
+    );
+
+    const [stored] = await exclusionsOf(USER);
+    expect(stored).toMatchObject({
+      kind: 'cooling_off',
+      status: 'lifted',
+      liftedBy: CALLER,
+      liftedReason: 'raised in error',
+    });
+    expect(enforcement.unblock).toHaveBeenCalledWith(USER);
   });
 
   it('maps a min-period lift rejection to a CONFLICT error', async () => {

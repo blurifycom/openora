@@ -14,6 +14,16 @@
       ]
     },
     {
+      "id": "analytics",
+      "group": "analytics",
+      "tables": [],
+      "routes": [
+        "analytics.conversion",
+        "analytics.ggr",
+        "analytics.summary"
+      ]
+    },
+    {
       "id": "audit",
       "group": "audit",
       "tables": [
@@ -100,6 +110,7 @@
         "compliance.getPlayerKyc",
         "compliance.getRgSection",
         "compliance.kycWebhook",
+        "compliance.liftCoolingOff",
         "compliance.liftSelfExclusion",
         "compliance.listGeoRules",
         "compliance.listRgFlags",
@@ -363,6 +374,7 @@
       "token": "CACHE",
       "status": "wired",
       "boundIn": [
+        "packages/core/src/analytics/plugin.ts",
         "packages/core/src/casino/lobby/plugin.ts",
         "packages/core/src/cms/plugin.ts",
         "packages/core/src/iam/plugin.ts",
@@ -386,6 +398,7 @@
       "token": "EMAIL_TEMPLATE_RENDERER",
       "status": "wired",
       "boundIn": [
+        "packages/core/src/compliance/plugin.ts",
         "packages/core/src/pam/identity/plugin.ts"
       ]
     },
@@ -496,6 +509,17 @@
       ]
     },
     {
+      "category": "play-eligibility",
+      "interface": "PlayEligibilityPort",
+      "token": "PLAY_ELIGIBILITY",
+      "status": "wired",
+      "boundIn": [
+        "packages/core/src/casino/gaming/plugin.ts",
+        "packages/core/src/pam/identity/plugin.ts",
+        "packages/core/src/wallet/plugin.ts"
+      ]
+    },
+    {
       "category": "player-tags",
       "interface": "PlayerTags",
       "token": "PLAYER_TAGS",
@@ -539,6 +563,7 @@
       "token": "WALLET_COMMANDS",
       "status": "wired",
       "boundIn": [
+        "packages/core/src/casino/gaming/plugin.ts",
         "packages/core/src/wallet/plugin.ts"
       ]
     },
@@ -607,6 +632,7 @@
     "identity.user.unlocked",
     "notifications.created",
     "rg.cooling_off.activated",
+    "rg.cooling_off.lifted",
     "rg.exclusion.login_blocked",
     "rg.limit.set",
     "rg.self_exclusion.activated",
@@ -792,6 +818,10 @@
       "file": "packages/core/src/contracts/schemas/common.ts"
     },
     {
+      "name": "ConversionFunnelSchema",
+      "file": "packages/core/src/analytics/contract/funnel.ts"
+    },
+    {
       "name": "CountryCodeSchema",
       "file": "packages/core/src/contracts/schemas/igaming-config.ts"
     },
@@ -810,6 +840,10 @@
     {
       "name": "CurrencyCodeSchema",
       "file": "packages/core/src/contracts/schemas/igaming-config.ts"
+    },
+    {
+      "name": "DateRangeSchema",
+      "file": "packages/core/src/contracts/schemas/reporting.ts"
     },
     {
       "name": "deleteTagSchema",
@@ -872,6 +906,30 @@
       "file": "packages/core/src/contracts/schemas/platform-config.ts"
     },
     {
+      "name": "FinancialGgrQuerySchema",
+      "file": "packages/core/src/analytics/contract/financial.ts"
+    },
+    {
+      "name": "FinancialSummaryQuerySchema",
+      "file": "packages/core/src/analytics/contract/financial.ts"
+    },
+    {
+      "name": "FinancialSummarySchema",
+      "file": "packages/core/src/analytics/contract/financial.ts"
+    },
+    {
+      "name": "FunnelQuerySchema",
+      "file": "packages/core/src/analytics/contract/funnel.ts"
+    },
+    {
+      "name": "FunnelStageNameSchema",
+      "file": "packages/core/src/analytics/contract/funnel.ts"
+    },
+    {
+      "name": "FunnelStageSchema",
+      "file": "packages/core/src/analytics/contract/funnel.ts"
+    },
+    {
       "name": "GameRoundSchema",
       "file": "packages/core/src/casino/gaming/contract/index.ts"
     },
@@ -896,8 +954,20 @@
       "file": "packages/core/src/compliance/contract/index.ts"
     },
     {
+      "name": "GgrPointSchema",
+      "file": "packages/core/src/analytics/contract/financial.ts"
+    },
+    {
+      "name": "GgrSeriesSchema",
+      "file": "packages/core/src/analytics/contract/financial.ts"
+    },
+    {
       "name": "GrantInputSchema",
       "file": "packages/core/src/iam/contract/index.ts"
+    },
+    {
+      "name": "GranularitySchema",
+      "file": "packages/core/src/contracts/schemas/reporting.ts"
     },
     {
       "name": "IamAssignmentSortBySchema",
@@ -956,6 +1026,10 @@
       "file": "packages/core/src/contracts/schemas/identity.ts"
     },
     {
+      "name": "LiftCoolingOffInputSchema",
+      "file": "packages/core/src/compliance/contract/rg.ts"
+    },
+    {
       "name": "LiftSelfExclusionInputSchema",
       "file": "packages/core/src/compliance/contract/rg.ts"
     },
@@ -1006,6 +1080,14 @@
     {
       "name": "MoneyAmountSchema",
       "file": "packages/core/src/contracts/schemas/common.ts"
+    },
+    {
+      "name": "MoneyByCurrencyRailSchema",
+      "file": "packages/core/src/analytics/contract/financial.ts"
+    },
+    {
+      "name": "MoneyByCurrencySchema",
+      "file": "packages/core/src/analytics/contract/financial.ts"
     },
     {
       "name": "NotificationSchema",
@@ -1136,6 +1218,10 @@
       "file": "packages/core/src/pam/player-management/contract/index.ts"
     },
     {
+      "name": "PositiveMoneyAmountSchema",
+      "file": "packages/core/src/casino/gaming/contract/index.ts"
+    },
+    {
       "name": "ProviderSelectionSchema",
       "file": "packages/core/src/contracts/schemas/igaming-config.ts"
     },
@@ -1218,6 +1304,10 @@
     {
       "name": "SetPlayerLimitInputSchema",
       "file": "packages/core/src/compliance/contract/rg.ts"
+    },
+    {
+      "name": "SignedMoneyAmountSchema",
+      "file": "packages/core/src/analytics/contract/financial.ts"
     },
     {
       "name": "SortOrderSchema",
@@ -1406,6 +1496,9 @@
     "DELETE /players/{playerId}",
     "DELETE /tag/{key}",
     "DELETE /wallet/auto-withdrawal-rules/{userId}",
+    "GET /analytics/financial/ggr",
+    "GET /analytics/financial/summary",
+    "GET /analytics/funnel/conversion",
     "GET /audit/export",
     "GET /audit/logs",
     "GET /backoffice/chat/rooms",
@@ -1487,6 +1580,7 @@
     "POST /compliance/kyc",
     "POST /compliance/kyc/webhook",
     "POST /compliance/players/{userId}/cooling-off",
+    "POST /compliance/players/{userId}/cooling-off/lift",
     "POST /compliance/players/{userId}/self-exclusion",
     "POST /compliance/players/{userId}/self-exclusion/lift",
     "POST /gaming/rounds/start",

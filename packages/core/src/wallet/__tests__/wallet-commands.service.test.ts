@@ -1,14 +1,22 @@
-import { describe, it, expect, beforeAll, afterAll, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeAll, afterAll, beforeEach } from 'vitest';
 import { randomUUID } from 'node:crypto';
 import { eq, sql } from 'drizzle-orm';
+import type { PlayEligibilityPort } from '@openora/core/contracts';
 import { createTestDb, type TestDb } from '@openora/core/testing';
+import { mock } from '../../testing/mock.js';
 import { migrate } from '../migrate.js';
 import { wallet, walletTransaction } from '../schema/index.js';
-import { WalletCommandsService } from '../service/wallet-commands.service.js';
+import {
+  WalletCommandsService,
+  WalletRgRestrictedError,
+} from '../service/wallet-commands.service.js';
 
 let db: TestDb;
 
-const svc = new WalletCommandsService();
+const eligibility = (isRestricted: boolean) =>
+  mock<PlayEligibilityPort>({ isRestricted: vi.fn().mockResolvedValue(isRestricted) });
+
+const svc = new WalletCommandsService(eligibility(false));
 
 async function seedWallet(overrides: Partial<typeof wallet.$inferInsert> = {}) {
   const [row] = await db.drizzle.db
@@ -42,6 +50,36 @@ beforeEach(async () => {
   await db.drizzle.db.execute(
     sql`TRUNCATE ${walletTransaction}, ${wallet} RESTART IDENTITY CASCADE`,
   );
+});
+
+describe('WalletCommandsService responsible-gambling gate (real PG)', () => {
+  it('refuses a bet debit for a restricted player without touching the ledger', async () => {
+    const w = await seedWallet({ balance: '100' });
+    const restricted = new WalletCommandsService(eligibility(true));
+
+    await expect(
+      restricted.debit(db.drizzle.db, { userId: w.userId, amount: '10', type: 'bet' }),
+    ).rejects.toBeInstanceOf(WalletRgRestrictedError);
+    expect(await balanceOf(w.userId)).toBe(100);
+    expect(await txRows(w.id)).toHaveLength(0);
+  });
+
+  it('leaves a non-bet debit unaffected for a restricted player', async () => {
+    const w = await seedWallet({ balance: '100' });
+    const restricted = new WalletCommandsService(eligibility(true));
+
+    const res = await restricted.debit(db.drizzle.db, {
+      userId: w.userId,
+      amount: '0',
+      type: 'loss',
+    });
+
+    expect(res).toMatchObject({ ok: true });
+    expect(Number((res as { newBalance: string }).newBalance)).toBe(100);
+    expect(await balanceOf(w.userId)).toBe(100);
+    expect(await txRows(w.id)).toHaveLength(1);
+    expect((await txRows(w.id))[0]).toMatchObject({ type: 'loss' });
+  });
 });
 
 describe('WalletCommandsService.debit (real PG)', () => {

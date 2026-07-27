@@ -16,6 +16,7 @@ const CORE_PLUGIN_MODULES: ReadonlyArray<{ id: string; specifier: string }> = [
   { id: 'profile', specifier: '@openora/core/pam/plugins/profile' },
   { id: 'tag', specifier: '@openora/core/pam/plugins/tag' },
   { id: 'admin-console', specifier: '@openora/core/admin-console/plugin' },
+  { id: 'analytics', specifier: '@openora/core/analytics/plugin' },
   { id: 'player-note', specifier: '@openora/core/pam/plugins/player-note' },
   { id: 'cms', specifier: '@openora/core/cms/plugins/cms' },
   { id: 'player-management', specifier: '@openora/core/pam/plugins/player-management' },

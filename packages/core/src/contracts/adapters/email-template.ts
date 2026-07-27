@@ -1,11 +1,32 @@
 import { createToken, type Token } from './token.js';
 
-export type EmailTemplateKey = 'verifyEmail' | 'resetPasswordOtp';
+export type EmailTemplateKey =
+  | 'verifyEmail'
+  | 'resetPasswordOtp'
+  | 'rgLimitUpdated'
+  | 'rgCoolingOffActivated'
+  | 'rgCoolingOffLifted'
+  | 'rgSelfExclusionActivated'
+  | 'rgSelfExclusionLifted';
 
 export type EmailTemplateData = {
   verifyEmail: { url: string; token: string };
   resetPasswordOtp: { otp: string };
+  rgLimitUpdated: { period: string; type: string; description: string };
+  rgCoolingOffActivated: { expiresAt: Date };
+  rgCoolingOffLifted: Record<string, never>;
+  rgSelfExclusionActivated: { expiresAt: Date | null; isPermanent: boolean };
+  rgSelfExclusionLifted: Record<string, never>;
 };
+
+const formatEmailDate = (value: Date | null): string =>
+  value === null
+    ? 'further notice'
+    : `${new Intl.DateTimeFormat('en-GB', {
+        dateStyle: 'long',
+        timeStyle: 'short',
+        timeZone: 'UTC',
+      }).format(value)} UTC`;
 
 export type EmailTemplateRenderer = {
   render<K extends EmailTemplateKey>(
@@ -34,5 +55,27 @@ export const DEFAULT_EMAIL_TEMPLATES: {
   resetPasswordOtp: (data) => ({
     subject: 'Reset your password',
     body: `Your password reset code is: ${data.otp}`,
+  }),
+  rgLimitUpdated: (data) => ({
+    subject: 'Your gambling limit was updated',
+    body: `A ${data.period} ${data.type} limit of ${data.description} is now active on your account.`,
+  }),
+  rgCoolingOffActivated: (data) => ({
+    subject: 'Your cooling-off period has started',
+    body: `A cooling-off period is active on your account until ${formatEmailDate(data.expiresAt)}.\n\nYou will not be able to log in or place bets until then.`,
+  }),
+  rgCoolingOffLifted: () => ({
+    subject: 'Your cooling-off period has ended',
+    body: 'Your cooling-off period has been ended and you can log in again.',
+  }),
+  rgSelfExclusionActivated: (data) => ({
+    subject: 'Your self-exclusion has started',
+    body: data.isPermanent
+      ? 'Your account has been permanently self-excluded and you will not be able to log in.'
+      : `Your account is self-excluded until ${formatEmailDate(data.expiresAt)}.\n\nYou will not be able to log in until then.`,
+  }),
+  rgSelfExclusionLifted: () => ({
+    subject: 'Your self-exclusion has been lifted',
+    body: 'Your self-exclusion has been lifted and you can log in again.',
   }),
 };

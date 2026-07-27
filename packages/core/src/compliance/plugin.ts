@@ -10,6 +10,7 @@ import {
   LOGIN_ENFORCEMENT,
   PLATFORM_CONFIG,
   SEND_EMAIL,
+  EMAIL_TEMPLATE_RENDERER,
   UuidSchema,
   domainEventSchemas,
   queue,
@@ -155,6 +156,7 @@ export default definePlugin({
         loginEnforcement: c.get(LOGIN_ENFORCEMENT),
         email: c.has(SEND_EMAIL) ? c.get(SEND_EMAIL) : null,
         directory,
+        templateRenderer: c.has(EMAIL_TEMPLATE_RENDERER) ? c.get(EMAIL_TEMPLATE_RENDERER) : null,
       });
       rgRef = rg;
       const rgMonitoring = new RgMonitoringService({ drizzle: c.get(DRIZZLE), directory });

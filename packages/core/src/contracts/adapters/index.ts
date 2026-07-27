@@ -147,3 +147,5 @@ export { IDENTITY_OPTIONS, SESSION_COMMANDS } from './identity.js';
 
 export type { LoginEnforcementPort } from './login-enforcement.js';
 export { LOGIN_ENFORCEMENT } from './login-enforcement.js';
+export type { PlayEligibilityPort } from './play-eligibility.js';
+export { PLAY_ELIGIBILITY } from './play-eligibility.js';

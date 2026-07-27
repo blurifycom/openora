@@ -45,6 +45,7 @@ export type AdminPlayerSummary = {
   username: string;
   email: string;
   kycStatus: KycStatus | null;
+  language: string | null;
 };
 
 export type AdminUserDirectory = {
