@@ -69,7 +69,7 @@ export class WalletCommandsService implements WalletCommands {
 
     if (type === 'loss') {
       await this.writeLedgerRow(txn, row, 'loss', '0');
-      return { ok: true, newBalance: available };
+      return { ok: true, newBalance: available, currency: row.currency };
     }
 
     // The UPDATE ... RETURNING gives the new balance straight from Postgres numeric
@@ -86,7 +86,7 @@ export class WalletCommandsService implements WalletCommands {
 
     await this.writeLedgerRow(txn, row, type, amount);
 
-    return { ok: true, newBalance };
+    return { ok: true, newBalance, currency: row.currency };
   }
 
   async credit(

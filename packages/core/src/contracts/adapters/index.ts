@@ -149,3 +149,6 @@ export type { LoginEnforcementPort } from './login-enforcement.js';
 export { LOGIN_ENFORCEMENT } from './login-enforcement.js';
 export type { PlayEligibilityPort } from './play-eligibility.js';
 export { PLAY_ELIGIBILITY } from './play-eligibility.js';
+
+export type { ChatSystemMessage, ChatSystemWriter } from './chat-system-writer.js';
+export { CHAT_SYSTEM_WRITER } from './chat-system-writer.js';

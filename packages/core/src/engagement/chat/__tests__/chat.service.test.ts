@@ -9,9 +9,9 @@ import {
   NO_CLIENT_META,
 } from '../../../testing/mock.js';
 import { describe, it, expect, vi } from 'vitest';
+import { chatChannel } from '@openora/core/contracts';
 import {
   ChatService,
-  chatChannel,
   ChatRoomNotFoundError,
   ChatMessageNotFoundError,
   ChatMessageOwnershipError,

@@ -294,6 +294,31 @@
       "import": "./dist/engagement/notifications/plugin.js",
       "default": "./dist/engagement/notifications/plugin.js"
     },
+    "./engagement/contracts/chat-commands": {
+      "types": "./dist/engagement/chat-commands/contract/index.d.ts",
+      "import": "./dist/engagement/chat-commands/contract/index.js",
+      "default": "./dist/engagement/chat-commands/contract/index.js"
+    },
+    "./engagement/schema/chat-commands": {
+      "types": "./dist/engagement/chat-commands/schema/index.d.ts",
+      "import": "./dist/engagement/chat-commands/schema/index.js",
+      "default": "./dist/engagement/chat-commands/schema/index.js"
+    },
+    "./engagement/plugins/chat-commands": {
+      "types": "./dist/engagement/chat-commands/plugin.d.ts",
+      "import": "./dist/engagement/chat-commands/plugin.js",
+      "default": "./dist/engagement/chat-commands/plugin.js"
+    },
+    "./engagement/migrate/chat-commands": {
+      "types": "./dist/engagement/chat-commands/migrate.d.ts",
+      "import": "./dist/engagement/chat-commands/migrate.js",
+      "default": "./dist/engagement/chat-commands/migrate.js"
+    },
+    "./engagement/seed/chat-commands": {
+      "types": "./dist/engagement/chat-commands/seed/index.d.ts",
+      "import": "./dist/engagement/chat-commands/seed/index.js",
+      "default": "./dist/engagement/chat-commands/seed/index.js"
+    },
     "./iam": {
       "types": "./dist/iam/index.d.ts",
       "import": "./dist/iam/index.js",

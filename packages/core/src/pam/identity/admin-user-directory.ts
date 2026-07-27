@@ -140,16 +140,19 @@ export class DrizzleAdminUserDirectory implements AdminUserDirectory {
   // Substring search is index-backed by the pg_trgm GIN indexes on user.email and
   // player.display_name; the 1000 cap is a safety bound on the id set, not a perf
   // crutch - it is effectively unreachable for a real admin search term.
-  async findPlayerIds(query: string) {
+  async findPlayerIds(query: string, limit = 1000) {
     const term = `%${query}%`;
-    const cap = 1000;
     const [byEmail, byName] = await Promise.all([
-      this.drizzle.db.select({ id: user.id }).from(user).where(ilike(user.email, term)).limit(cap),
+      this.drizzle.db
+        .select({ id: user.id })
+        .from(user)
+        .where(ilike(user.email, term))
+        .limit(limit),
       this.drizzle.db
         .select({ userId: player.userId })
         .from(player)
         .where(ilike(player.displayName, term))
-        .limit(cap),
+        .limit(limit),
     ]);
     const ids = new Set<string>();
     for (const r of byEmail) {
@@ -158,6 +161,6 @@ export class DrizzleAdminUserDirectory implements AdminUserDirectory {
     for (const r of byName) {
       ids.add(r.userId);
     }
-    return [...ids].slice(0, cap);
+    return [...ids].slice(0, limit);
   }
 }

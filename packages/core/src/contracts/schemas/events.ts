@@ -294,6 +294,28 @@ export const domainEventSchemas = {
     actorId: UuidSchema,
     after: z.record(z.string(), z.unknown()),
   }),
+
+  // Chat command events. fromUserId/toUserId are the player UUIDs; amount is a decimal string.
+  'chat.gift.sent': z.object({
+    fromUserId: UuidSchema,
+    toUserId: UuidSchema,
+    amount: MoneyAmountSchema,
+    currency: z.string(),
+    messageId: z.string(),
+  }),
+  'chat.rain.distributed': z.object({
+    fromUserId: UuidSchema,
+    recipientCount: z.number().int(),
+    totalAmount: MoneyAmountSchema,
+    currency: z.string(),
+    roomId: UuidSchema,
+  }),
+  'chat.user.mentioned': z.object({
+    mentionedUserId: UuidSchema,
+    byUserId: UuidSchema,
+    roomId: UuidSchema.nullable(),
+    messageId: z.string(),
+  }),
 } as const;
 
 export type DomainEventName = keyof typeof domainEventSchemas;

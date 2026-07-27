@@ -11,8 +11,15 @@ import {
   serializeRow,
   pageToOffset,
   withAdvisoryXactLock,
+  type DrizzleDb,
 } from '@openora/core/server';
-import type { ClientMeta, RealtimeTransport } from '@openora/core/contracts';
+import type {
+  ClientMeta,
+  RealtimeTransport,
+  CommandMetadata,
+  ChatSystemMessage,
+} from '@openora/core/contracts';
+import { chatChannel } from '@openora/core/contracts';
 import { eq, and, isNull, lt, desc, asc, notInArray, inArray, count, ne } from 'drizzle-orm';
 import { user } from '@openora/core/pam/schema/identity';
 import type { User } from '@openora/core/pam/schema/identity';
@@ -38,10 +45,6 @@ import {
   PRIVATE_ROOM_SLUG_PREFIX,
 } from '../contract/constants.js';
 import { moderateContent } from '../moderation/index.js';
-
-export function chatChannel(roomId: ChatRoom['id'] | null) {
-  return roomId ? `chat:room:${roomId}` : 'chat:global';
-}
 
 export const ChatRoomNotFoundError = makeNotFoundError('ChatRoom');
 export const ChatMessageNotFoundError = makeNotFoundError('ChatMessage');
@@ -872,6 +875,36 @@ export class ChatService {
     });
     await this.transport.revokeClient?.(userId);
     return { success: true } as const;
+  }
+
+  async postSystemMessage(args: {
+    roomId: ChatRoom['id'] | null;
+    actorId: User['id'];
+    metadata: CommandMetadata;
+    tx?: unknown;
+  }): Promise<ChatSystemMessage> {
+    const db = (args.tx as DrizzleDb | undefined) ?? this.drizzle.db;
+    const [record] = await db
+      .insert(chatMessage)
+      .values({
+        roomId: args.roomId,
+        userId: args.actorId,
+        username: 'system',
+        content: '',
+        type: 'system',
+        metadata: args.metadata,
+      })
+      .returning();
+    const msg: ChatSystemMessage = {
+      id: record.id,
+      roomId: record.roomId ?? null,
+      actorId: args.actorId,
+      content: record.content,
+      metadata: args.metadata,
+      createdAt: record.createdAt.toISOString(),
+    };
+    void this.transport.publish(chatChannel(args.roomId), msg);
+    return msg;
   }
 
   async listRoomMembers({ roomId, viewerId }: { roomId: ChatRoom['id']; viewerId?: User['id'] }) {

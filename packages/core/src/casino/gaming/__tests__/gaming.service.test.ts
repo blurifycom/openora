@@ -79,7 +79,7 @@ describe('GamingService lobby', () => {
       noopEvents,
       noopAdapter,
       unrestricted,
-      makeWalletCommands({ ok: true, newBalance: '0' }),
+      makeWalletCommands({ ok: true, newBalance: '0', currency: 'USD' }),
     );
 
     const games = await svc.listGames();
@@ -99,7 +99,7 @@ describe('GamingService responsible-gambling gate', () => {
       noopEvents,
       mock<GameAdapter>({ launchGame }),
       eligibility(true),
-      makeWalletCommands({ ok: true, newBalance: '0' }),
+      makeWalletCommands({ ok: true, newBalance: '0', currency: 'USD' }),
     );
 
     await expect(svc.startRound('user-1', 'game-1', 'EUR', '10')).rejects.toBeInstanceOf(
@@ -115,7 +115,7 @@ describe('GamingService responsible-gambling gate', () => {
       noopEvents,
       mock<GameAdapter>({ launchGame }),
       unrestricted,
-      makeWalletCommands({ ok: true, newBalance: '0' }),
+      makeWalletCommands({ ok: true, newBalance: '0', currency: 'USD' }),
     );
 
     await expect(svc.startRound('user-1', 'missing-game', 'EUR', '10')).rejects.toBeInstanceOf(
@@ -145,7 +145,7 @@ describe('GamingService.startRound', () => {
         ],
       ],
     });
-    const walletCommands = makeWalletCommands({ ok: true, newBalance: '90' });
+    const walletCommands = makeWalletCommands({ ok: true, newBalance: '90', currency: 'USD' });
     const adapter = mock<GameAdapter>({
       launchGame: vi.fn().mockResolvedValue({ launchUrl: 'https://mock/play', token: 'tok' }),
     });

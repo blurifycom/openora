@@ -3,16 +3,26 @@ import {
   REALTIME_TRANSPORT,
   REALTIME_CLIENT_AUTHORIZER,
   RATE_LIMITER,
+  CHAT_SYSTEM_WRITER,
+  createToken,
 } from '@openora/core/contracts';
 import { ChatService } from './service/chat.service.js';
 import { createChatRouter } from './router/index.js';
 
+const CHAT_SERVICE = createToken<ChatService>('_ChatService');
+
 export default definePlugin({
   id: 'chat',
   register(ctx) {
+    ctx.provide(
+      CHAT_SERVICE,
+      (c) => new ChatService(c.get(DRIZZLE), c.get(EVENT_BUS), c.get(REALTIME_TRANSPORT)),
+    );
+    ctx.provide(CHAT_SYSTEM_WRITER, (c) => c.get(CHAT_SERVICE));
+
     ctx.routers.add('chat', (c) =>
       createChatRouter({
-        chatService: new ChatService(c.get(DRIZZLE), c.get(EVENT_BUS), c.get(REALTIME_TRANSPORT)),
+        chatService: c.get(CHAT_SERVICE),
         authorizer: c.get(REALTIME_CLIENT_AUTHORIZER),
         adminGuard: c.get(ADMIN_GUARD),
         limiter: c.get(RATE_LIMITER),

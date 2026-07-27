@@ -462,6 +462,11 @@ const SUBSCRIBED_TOPICS: DomainEventName[] = [
   'chat.room.member.left',
   'chat.room.member.kicked',
   'chat.room.member.banned',
+  // chat.gift.sent and chat.rain.distributed are NOT subscribed here: the
+  // chat-commands service writes a direct audit.record() after each operation,
+  // which captures actorId/resourceId correctly. Subscribing here would produce
+  // a second, anonymised row (payload has fromUserId, not userId).
+  'chat.user.mentioned',
   'compliance.limit.upserted',
   'compliance.limit.removed',
   'rg.limit.set',

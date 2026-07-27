@@ -31,6 +31,9 @@ export type RealtimeTransport = {
   // Revoke managed-provider credentials for a client after access is removed.
   revokeClient?: (clientId: string) => void | Promise<void>;
   presence?: RealtimePresence;
+  // Returns the set of authenticated user IDs currently online in `channel`.
+  // Anonymous connections (memberIds beginning with 'anonymous:') are excluded.
+  getOnlineUserIds(channel: string): Promise<string[]>;
 };
 
 export const REALTIME_TRANSPORT: Token<RealtimeTransport> = createToken('REALTIME_TRANSPORT');

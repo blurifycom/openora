@@ -11,13 +11,13 @@ import {
 import {
   makeRateLimitKey,
   RATE_LIMIT_KEYS,
+  chatChannel,
   type RateLimiterAdapter,
   type RealtimeClientAuthorizer,
 } from '@openora/core/contracts';
 import { chatContract } from '../contract/index.js';
 import {
   ChatService,
-  chatChannel,
   ChatRoomNotFoundError,
   ChatRoomNotMemberError,
   ChatRoomNotModeratorError,

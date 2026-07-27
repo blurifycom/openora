@@ -62,7 +62,7 @@ describe('WalletCommandsService responsible-gambling gate', () => {
 
     const res = await restricted.debit(txn, { userId: 'u1', amount: '0', type: 'loss' });
 
-    expect(res).toEqual({ ok: true, newBalance: '100' });
+    expect(res).toEqual({ ok: true, newBalance: '100', currency: 'USD' });
     expect(inserts[0]).toMatchObject({ type: 'loss' });
   });
 });
@@ -76,7 +76,7 @@ describe('WalletCommandsService.debit', () => {
 
     const res = await svc.debit(txn, { userId: 'u1', amount: '10', type: 'bet' });
 
-    expect(res).toEqual({ ok: true, newBalance: '90' });
+    expect(res).toEqual({ ok: true, newBalance: '90', currency: 'USD' });
     expect(calls.update).toBe(1);
     expect(inserts[0]).toMatchObject({
       walletId: 'w1',
@@ -93,7 +93,7 @@ describe('WalletCommandsService.debit', () => {
 
     const res = await svc.debit(txn, { userId: 'u1', amount: '0', type: 'loss' });
 
-    expect(res).toEqual({ ok: true, newBalance: '100' });
+    expect(res).toEqual({ ok: true, newBalance: '100', currency: 'USD' });
     expect(calls.update).toBe(0);
     expect(inserts[0]).toMatchObject({ type: 'loss', amount: '0', status: 'completed' });
   });

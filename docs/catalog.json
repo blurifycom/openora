@@ -71,6 +71,19 @@
       ]
     },
     {
+      "id": "chat-commands",
+      "group": "engagement",
+      "tables": [
+        "chat_command_config"
+      ],
+      "routes": [
+        "chat-commands.adminUpdateCommand",
+        "chat-commands.execute",
+        "chat-commands.listCommands",
+        "chat-commands.mentionSearch"
+      ]
+    },
+    {
       "id": "cms",
       "group": "cms",
       "tables": [
@@ -325,6 +338,7 @@
       "boundIn": [
         "packages/core/src/admin-console/plugin.ts",
         "packages/core/src/compliance/plugin.ts",
+        "packages/core/src/engagement/chat-commands/plugin.ts",
         "packages/core/src/engagement/notifications/plugin.ts",
         "packages/core/src/pam/identity/plugin.ts",
         "packages/core/src/wallet/plugin.ts"
@@ -355,6 +369,7 @@
       "boundIn": [
         "packages/core/src/admin-console/plugin.ts",
         "packages/core/src/audit/plugin.ts",
+        "packages/core/src/engagement/chat-commands/plugin.ts",
         "packages/core/src/wallet/plugin.ts"
       ]
     },
@@ -379,6 +394,16 @@
         "packages/core/src/cms/plugin.ts",
         "packages/core/src/iam/plugin.ts",
         "packages/core/src/pam/identity/plugin.ts"
+      ]
+    },
+    {
+      "category": "chat-system-writer",
+      "interface": "ChatSystemWriter",
+      "token": "CHAT_SYSTEM_WRITER",
+      "status": "wired",
+      "boundIn": [
+        "packages/core/src/engagement/chat-commands/plugin.ts",
+        "packages/core/src/engagement/chat/plugin.ts"
       ]
     },
     {
@@ -535,6 +560,7 @@
       "token": "REALTIME_TRANSPORT",
       "status": "wired",
       "boundIn": [
+        "packages/core/src/engagement/chat-commands/plugin.ts",
         "packages/core/src/engagement/chat/plugin.ts"
       ]
     },
@@ -564,6 +590,7 @@
       "status": "wired",
       "boundIn": [
         "packages/core/src/casino/gaming/plugin.ts",
+        "packages/core/src/engagement/chat-commands/plugin.ts",
         "packages/core/src/wallet/plugin.ts"
       ]
     },
@@ -579,8 +606,10 @@
     }
   ],
   "events": [
+    "chat.gift.sent",
     "chat.message.sent",
     "chat.private_room.created",
+    "chat.rain.distributed",
     "chat.room.created",
     "chat.room.deleted",
     "chat.room.member.banned",
@@ -782,12 +811,24 @@
       "file": "packages/core/src/contracts/schemas/identity.ts"
     },
     {
+      "name": "ChatCommandDescriptorSchema",
+      "file": "packages/core/src/engagement/chat-commands/contract/index.ts"
+    },
+    {
+      "name": "ChatCommandTypeSchema",
+      "file": "packages/core/src/engagement/chat-commands/contract/index.ts"
+    },
+    {
       "name": "ChatConnectionGrantSchema",
       "file": "packages/core/src/engagement/chat/contract/index.ts"
     },
     {
       "name": "ChatMessageSchema",
       "file": "packages/core/src/engagement/chat/contract/index.ts"
+    },
+    {
+      "name": "ChatMessageTypeSchema",
+      "file": "packages/core/src/contracts/schemas/chat-command.ts"
     },
     {
       "name": "ChatOnlineCountSchema",
@@ -816,6 +857,14 @@
     {
       "name": "ClientMetaSchema",
       "file": "packages/core/src/contracts/schemas/common.ts"
+    },
+    {
+      "name": "CommandConfigSchema",
+      "file": "packages/core/src/engagement/chat-commands/contract/index.ts"
+    },
+    {
+      "name": "CommandMetadataSchema",
+      "file": "packages/core/src/contracts/schemas/chat-command.ts"
     },
     {
       "name": "ConversionFunnelSchema",
@@ -1074,6 +1123,10 @@
       "file": "packages/core/src/contracts/schemas/identity.ts"
     },
     {
+      "name": "MentionResultSchema",
+      "file": "packages/core/src/engagement/chat-commands/contract/index.ts"
+    },
+    {
       "name": "MessageContentSchema",
       "file": "packages/core/src/engagement/chat/contract/index.ts"
     },
@@ -1330,6 +1383,10 @@
       "file": "packages/core/src/compliance/contract/index.ts"
     },
     {
+      "name": "SystemChatMessageSchema",
+      "file": "packages/core/src/contracts/schemas/chat-command.ts"
+    },
+    {
       "name": "TagKeySchema",
       "file": "packages/core/src/contracts/schemas/tag.ts"
     },
@@ -1507,6 +1564,8 @@
     "GET /backoffice/transactions/{id}",
     "GET /backoffice/users",
     "GET /backoffice/users/{userId}",
+    "GET /chat-command/commands",
+    "GET /chat-command/mention-search",
     "GET /chat/blocks",
     "GET /chat/connection",
     "GET /chat/global",
@@ -1561,11 +1620,13 @@
     "GET /wallet/withdrawals",
     "PATCH /backoffice/chat/rooms/{id}",
     "PATCH /backoffice/users/{userId}",
+    "PATCH /chat-command/admin/commands/{key}",
     "PATCH /iam/roles/{roleId}",
     "PATCH /identity/profile",
     "PATCH /players/{playerId}",
     "PATCH /profile",
     "POST /backoffice/chat/rooms",
+    "POST /chat-command/execute",
     "POST /chat/blocks",
     "POST /chat/global",
     "POST /chat/rooms/join",

@@ -4,14 +4,18 @@ import {
   uuid,
   text,
   boolean,
+  jsonb,
   timestamp,
   uniqueIndex,
   index,
 } from 'drizzle-orm/pg-core';
 import { CHAT_ROOM_CATEGORIES, CHAT_ROOM_ROLES } from '../contract/index.js';
+import { CHAT_MESSAGE_TYPES } from '@openora/core/contracts';
+import type { CommandMetadata } from '@openora/core/contracts';
 
 export const chatRoomRole = pgEnum('chat_room_role', CHAT_ROOM_ROLES);
 export const chatRoomCategory = pgEnum('chat_room_category', CHAT_ROOM_CATEGORIES);
+export const chatMessageType = pgEnum('chat_message_type', CHAT_MESSAGE_TYPES);
 
 export const chatRoom = pgTable(
   'chat_room',
@@ -43,6 +47,8 @@ export const chatMessage = pgTable(
     userId: uuid().notNull(),
     username: text().notNull(),
     content: text().notNull(),
+    type: chatMessageType().notNull().default('user'),
+    metadata: jsonb().$type<CommandMetadata>(),
     isDeleted: boolean().notNull().default(false),
     createdAt: timestamp({ withTimezone: true }).notNull().defaultNow(),
   },
