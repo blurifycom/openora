@@ -6,8 +6,8 @@
  * Non-interactive; safe to run in CI (exits non-zero on any failure).
  *
  * Usage:
- *   pnpm eval:scaffold          # scaffold, verify, clean up
- *   pnpm eval:scaffold --keep   # leave generated files in place
+ *   pnpm test:scaffold          # scaffold, verify, clean up
+ *   pnpm test:scaffold --keep   # leave generated files in place
  *
  * Requires a clean working tree (or --keep). On a dirty tree the cleanup step
  * prints a warning and skips; use `git status` to inspect.

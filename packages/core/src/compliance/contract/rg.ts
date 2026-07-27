@@ -11,7 +11,7 @@ import {
   RgFlagStatusSchema,
   MoneyAmountSchema,
 } from '@openora/core/contracts';
-import { PageQuerySchema, paginated } from '@openora/core/contracts/kit';
+import { PageQuerySchema, SortOrderSchema, paginated } from '@openora/core/contracts/kit';
 import { LimitSchema, isConsistentLimit, isConsistentLimitAmount } from './limits.js';
 
 export const RgExclusionSchema = z.object({
@@ -81,6 +81,12 @@ export const LiftSelfExclusionInputSchema = z.object({
 });
 export type LiftSelfExclusionInput = z.infer<typeof LiftSelfExclusionInputSchema>;
 
+export const LiftCoolingOffInputSchema = z.object({
+  userId: UuidSchema,
+  reason: z.string().trim().min(1),
+});
+export type LiftCoolingOffInput = z.infer<typeof LiftCoolingOffInputSchema>;
+
 export const RgSectionSchema = z.object({
   limits: z.array(LimitSchema),
   coolingOff: RgExclusionSchema.nullable(),
@@ -127,12 +133,25 @@ export const RgFlagListItemSchema = z.object({
 });
 export type RgFlagListItem = z.infer<typeof RgFlagListItemSchema>;
 
+export const RG_FLAG_SORT_BY_VALUES = [
+  'flaggedAt',
+  'limitType',
+  'flagType',
+  'status',
+  'clearedAt',
+  'userId',
+] as const;
+export const RgFlagSortBySchema = z.enum(RG_FLAG_SORT_BY_VALUES).default('flaggedAt');
+export type RgFlagSortBy = z.infer<typeof RgFlagSortBySchema>;
+
 export const ListRgFlagsInputSchema = PageQuerySchema.extend({
   flagType: RgFlagTypeSchema.optional(),
   limitType: LimitTypeSchema.optional(),
   status: RgFlagStatusSchema.optional(),
   fromDate: z.string().optional(),
   toDate: z.string().optional(),
+  sortBy: RgFlagSortBySchema.optional(),
+  sortOrder: SortOrderSchema.default('desc').optional(),
 });
 export type ListRgFlagsInput = z.infer<typeof ListRgFlagsInputSchema>;
 
@@ -155,6 +174,11 @@ export const rgContract = {
   liftSelfExclusion: oc
     .route({ method: 'POST', path: '/compliance/players/{userId}/self-exclusion/lift' })
     .input(LiftSelfExclusionInputSchema)
+    .output(RgExclusionSchema),
+
+  liftCoolingOff: oc
+    .route({ method: 'POST', path: '/compliance/players/{userId}/cooling-off/lift' })
+    .input(LiftCoolingOffInputSchema)
     .output(RgExclusionSchema),
 
   getRgSection: oc

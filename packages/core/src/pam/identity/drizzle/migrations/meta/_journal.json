@@ -36,6 +36,13 @@
       "when": 1784032154664,
       "tag": "0004_round_giant_girl",
       "breakpoints": true
+    },
+    {
+      "idx": 5,
+      "version": "7",
+      "when": 1785015619157,
+      "tag": "0005_daily_black_tom",
+      "breakpoints": true
     }
   ]
 }

@@ -1,14 +1,27 @@
 import { createHash, randomInt, randomUUID } from 'node:crypto';
 import { ORPCError } from '@orpc/server';
-import { type EventBus, DrizzleService, assertRateLimit } from '@openora/core/server';
+import {
+  type EventBus,
+  type Auth,
+  DrizzleService,
+  assertRateLimit,
+  signSessionCookie,
+  createLogger,
+  invalidate,
+} from '@openora/core/server';
 import { and, eq, gt, sql } from 'drizzle-orm';
-import type {
-  RateLimiterAdapter,
-  SmsAdapter,
-  PhoneLoginRequestInput,
-  PhoneLoginRequestOutput,
-  PhoneLoginVerifyInput,
-  User,
+import {
+  PhoneLoginErrorReasonSchema,
+  PhoneLoginOtpInvalidReasonSchema,
+  type PhoneLoginOtpInvalidReason,
+  type CacheAdapter,
+  type RateLimiterAdapter,
+  type SmsAdapter,
+  type PhoneLoginRequestInput,
+  type PhoneLoginRequestOutput,
+  type PhoneLoginVerifyInput,
+  type User,
+  ClientMeta,
 } from '@openora/core/contracts';
 import { user, session, smsOtpSession } from '../schema/index.js';
 import { isRgBlocked } from './rg-guard.service.js';
@@ -31,6 +44,16 @@ const OTP_VERIFY_RATE_LIMIT = {
   onUnavailable: 'deny',
 } as const;
 
+const FAKE_OTP_SHADOW_TTL_MS = 7 * 24 * 60 * 60 * 1000;
+
+type FakeOtpShadow = { createdAt: number; failedAttempts: number };
+
+function phoneOtpShadowKey(phone: string): string {
+  return `phone-otp-shadow:${phone}`;
+}
+
+const logger = createLogger('phone-otp-shadow');
+
 /** Resend requested before the 60s cooldown elapsed. */
 export function OtpCooldownError(retryAfterMs: number) {
   return new ORPCError('TOO_MANY_REQUESTS', {
@@ -39,11 +62,10 @@ export function OtpCooldownError(retryAfterMs: number) {
   });
 }
 
-/** Wrong or expired code, session still alive. */
-export function OtpInvalidError(attemptsRemaining: number) {
+export function OtpInvalidError(attemptsRemaining: number, reason: PhoneLoginOtpInvalidReason) {
   return new ORPCError('UNPROCESSABLE_CONTENT', {
-    message: 'The code is invalid or has expired.',
-    data: { attemptsRemaining },
+    message: reason === 'expired' ? 'The code has expired.' : 'The code is invalid.',
+    data: { attemptsRemaining, reason: PhoneLoginOtpInvalidReasonSchema.enum[reason] },
   });
 }
 
@@ -51,6 +73,7 @@ export function OtpInvalidError(attemptsRemaining: number) {
 export function OtpCancelledError() {
   return new ORPCError('FORBIDDEN', {
     message: 'Too many incorrect attempts. Please request a new code.',
+    data: { reason: PhoneLoginErrorReasonSchema.enum.otp_cancelled },
   });
 }
 
@@ -102,6 +125,8 @@ export type PhoneLoginServiceDeps = {
   events: EventBus;
   sms: SmsAdapter;
   limiter: RateLimiterAdapter;
+  auth: Auth;
+  cache?: CacheAdapter;
 };
 
 export class PhoneLoginService {
@@ -109,17 +134,42 @@ export class PhoneLoginService {
   private readonly events: EventBus;
   private readonly sms: SmsAdapter;
   private readonly limiter: RateLimiterAdapter;
+  private readonly auth: Auth;
+  private readonly cache?: CacheAdapter;
 
-  constructor({ drizzle, events, sms, limiter }: PhoneLoginServiceDeps) {
+  constructor({ drizzle, events, sms, limiter, auth, cache }: PhoneLoginServiceDeps) {
     this.drizzle = drizzle;
     this.events = events;
     this.sms = sms;
     this.limiter = limiter;
+    this.auth = auth;
+    this.cache = cache;
   }
 
-  async requestOtp(
-    input: PhoneLoginRequestInput & { ip?: string | null; userAgent?: string | null },
-  ): Promise<PhoneLoginRequestOutput> {
+  private async shadowGet(key: string): Promise<FakeOtpShadow | undefined> {
+    if (!this.cache) {
+      return undefined;
+    }
+    try {
+      return await this.cache.get<FakeOtpShadow>(key);
+    } catch (err) {
+      logger.warn({ key, err }, 'phone-otp shadow cache read failed');
+      return undefined;
+    }
+  }
+
+  private async shadowSet(key: string, value: FakeOtpShadow): Promise<void> {
+    if (!this.cache) {
+      return;
+    }
+    try {
+      await this.cache.set(key, value, { ttlMs: FAKE_OTP_SHADOW_TTL_MS });
+    } catch (err) {
+      logger.warn({ key, err }, 'phone-otp shadow cache write failed');
+    }
+  }
+
+  async requestOtp(input: PhoneLoginRequestInput & ClientMeta): Promise<PhoneLoginRequestOutput> {
     const { phone } = input;
     await assertRateLimit(this.limiter, `phone-otp-req:${phone}`, OTP_REQUEST_RATE_LIMIT);
 
@@ -137,6 +187,12 @@ export class PhoneLoginService {
     // response, minus the SMS. A caller cannot distinguish a real verified number from
     // a fake or unverified one.
     if (!account || !account.phoneVerified) {
+      const key = phoneOtpShadowKey(phone);
+      const shadow = await this.shadowGet(key);
+      if (shadow && now - shadow.createdAt < RESEND_COOLDOWN_MS) {
+        throw OtpCooldownError(RESEND_COOLDOWN_MS - (now - shadow.createdAt));
+      }
+      await this.shadowSet(key, { createdAt: now, failedAttempts: 0 });
       return { expiresAt: expiresAt.toISOString(), resendAfter: resendAfter.toISOString() };
     }
 
@@ -165,20 +221,22 @@ export class PhoneLoginService {
 
     // Emit events only after SMS delivery so a send failure leaves no misleading
     // audit trail (no cancelled-without-requested orphan in the audit log).
+    const ip = input.ip ?? null;
+    const userAgent = input.userAgent ?? null;
     if (existing) {
       this.events.emit('identity.phone_otp.cancelled', {
         userId: account.id,
         reason: 'new_otp_requested',
+        ip,
+        userAgent,
       });
     }
-    this.events.emit('identity.phone_otp.requested', { userId: account.id });
+    this.events.emit('identity.phone_otp.requested', { userId: account.id, ip, userAgent });
 
     return { expiresAt: expiresAt.toISOString(), resendAfter: resendAfter.toISOString() };
   }
 
-  async verifyOtp(
-    input: PhoneLoginVerifyInput & { ip?: string | null; userAgent?: string | null },
-  ) {
+  async verifyOtp(input: PhoneLoginVerifyInput & ClientMeta, resHeaders: Headers) {
     const { phone, code, rememberMe, ip = null, userAgent = null } = input;
     await assertRateLimit(this.limiter, `phone-otp-verify:${phone}`, OTP_VERIFY_RATE_LIMIT);
 
@@ -195,10 +253,24 @@ export class PhoneLoginService {
       .limit(1);
 
     if (!otp) {
-      throw OtpInvalidError(0);
+      const key = phoneOtpShadowKey(phone);
+      const shadow = await this.shadowGet(key);
+      if (!shadow) {
+        throw OtpInvalidError(MAX_VERIFY_ATTEMPTS - 1, 'wrong_code');
+      }
+      if (Date.now() - shadow.createdAt >= OTP_TTL_MS) {
+        throw OtpInvalidError(MAX_VERIFY_ATTEMPTS - shadow.failedAttempts, 'expired');
+      }
+      const newAttempts = shadow.failedAttempts + 1;
+      if (newAttempts >= MAX_VERIFY_ATTEMPTS) {
+        await invalidate(this.cache, key);
+        throw OtpCancelledError();
+      }
+      await this.shadowSet(key, { createdAt: shadow.createdAt, failedAttempts: newAttempts });
+      throw OtpInvalidError(MAX_VERIFY_ATTEMPTS - newAttempts, 'wrong_code');
     }
     if (otp.expiresAt.getTime() < Date.now()) {
-      throw OtpInvalidError(MAX_VERIFY_ATTEMPTS - otp.failedAttempts);
+      throw OtpInvalidError(MAX_VERIFY_ATTEMPTS - otp.failedAttempts, 'expired');
     }
 
     if (hashCode(code) !== otp.codeHash) {
@@ -223,11 +295,13 @@ export class PhoneLoginService {
           this.events.emit('identity.phone_otp.cancelled', {
             userId: otp.userId,
             reason: 'max_attempts',
+            ip,
+            userAgent,
           });
         }
         throw OtpCancelledError();
       }
-      throw OtpInvalidError(MAX_VERIFY_ATTEMPTS - newAttempts);
+      throw OtpInvalidError(MAX_VERIFY_ATTEMPTS - newAttempts, 'wrong_code');
     }
 
     // Resolve the account before entering the transaction so the RG check can short-
@@ -261,6 +335,7 @@ export class PhoneLoginService {
       this.events.emit('rg.exclusion.login_blocked', { userId: account.id, ip, userAgent });
       throw new ORPCError('FORBIDDEN', {
         message: 'Account access is currently restricted (responsible gambling).',
+        data: { reason: PhoneLoginErrorReasonSchema.enum.rg_blocked },
       });
     }
 
@@ -292,6 +367,32 @@ export class PhoneLoginService {
       ip,
       userAgent,
     });
+
+    const authContext = await this.auth.$context;
+
+    const maxAgeSeconds = rememberMe
+      ? Math.max(0, Math.round((sessionExpiresAt.getTime() - Date.now()) / 1000))
+      : undefined;
+    resHeaders.append(
+      'set-cookie',
+      signSessionCookie({
+        token,
+        sessionCookie: authContext.authCookies.sessionToken,
+        secret: authContext.secret,
+        maxAgeSeconds,
+      }),
+    );
+
+    if (!rememberMe) {
+      resHeaders.append(
+        'set-cookie',
+        signSessionCookie({
+          token: 'true',
+          sessionCookie: authContext.authCookies.dontRememberToken,
+          secret: authContext.secret,
+        }),
+      );
+    }
 
     return {
       user: serializeUser(account),

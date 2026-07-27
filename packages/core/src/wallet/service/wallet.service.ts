@@ -27,8 +27,10 @@ import {
   type TagEvaluationCommands,
   type TagKey,
   type User,
+  type ClientMeta,
+  type PaginationOptions,
 } from '@openora/core/contracts';
-import { eq, desc, sql, and, gte, lte, count, inArray } from 'drizzle-orm';
+import { eq, asc, desc, sql, and, gte, lte, count, inArray } from 'drizzle-orm';
 import { createHash } from 'node:crypto';
 import {
   wallet,
@@ -44,6 +46,7 @@ import type {
   WithdrawalQueueItem,
   WithdrawalQueueFilter,
   AutoWithdrawalRule,
+  WalletTransactionSortBy,
 } from '../contract/index.js';
 
 const logger = createLogger('wallet');
@@ -460,13 +463,15 @@ export class WalletService {
     currency,
     idempotencyKey,
     destinationAddress,
+    ip,
+    userAgent,
   }: {
     userId: User['id'];
     amount: string;
     currency: string;
     idempotencyKey?: string;
     destinationAddress?: string;
-  }): Promise<TransactionResult> {
+  } & ClientMeta): Promise<TransactionResult> {
     await this.rateLimit(userId);
     await this.assertKycForWithdrawal(userId);
     if (railFor(currency) === 'crypto' && !destinationAddress) {
@@ -569,6 +574,8 @@ export class WalletService {
       amount,
       currency,
       transactionId,
+      ip: ip ?? null,
+      userAgent: userAgent ?? null,
     });
 
     // Fail-closed post-step: decides who approves (system vs manual queue), never throws out of withdraw() - failure leaves the row pending.
@@ -612,12 +619,22 @@ export class WalletService {
 
     // Bounded queue: fetch all SQL-matching rows, then enrich + kycStatus-filter + paginate in memory,
     // else DB-side pagination makes `total` wrong once kycStatus prunes.
+    const wdSortBy = filters.sortBy ?? 'createdAt';
+    const wdDir = (filters.sortOrder ?? 'desc') === 'asc' ? asc : desc;
+    const WD_SORT_COLS = {
+      createdAt: walletTransaction.createdAt,
+      amount: walletTransaction.amount,
+      status: walletTransaction.status,
+      currency: walletTransaction.currency,
+      rail: walletTransaction.rail,
+      reviewedAt: walletTransaction.reviewedAt,
+    } as const;
     const rows = await db
       .select({ tx: walletTransaction, userId: wallet.userId })
       .from(walletTransaction)
       .innerJoin(wallet, eq(wallet.id, walletTransaction.walletId))
       .where(and(...conditions))
-      .orderBy(desc(walletTransaction.createdAt));
+      .orderBy(wdDir(WD_SORT_COLS[wdSortBy]), desc(walletTransaction.id));
 
     const userIds = [...new Set(rows.map((r) => r.userId))];
     const summaries = this.directory ? await this.directory.lookupPlayers(userIds) : [];
@@ -670,13 +687,14 @@ export class WalletService {
   async approveWithdrawal(
     adminId: User['id'],
     withdrawalId: WalletTransaction['id'],
+    meta?: ClientMeta,
   ): Promise<TransactionResult> {
     // Two-phase: commit the `processing` flip first (FOR UPDATE lock), then call the PSP OUTSIDE
     // the tx (a failure refunds in a second tx). Never inline the PSP call inside the hold transaction.
     const tx = await this.drizzle.db.transaction((txn) =>
       this.flipToProcessing({ txn, withdrawalId, adminId }),
     );
-    return this.settleApproved(tx, adminId);
+    return this.settleApproved(tx, adminId, meta);
   }
 
   // Phase one: the pending -> processing flip under a FOR UPDATE lock. Extracted so the auto path can run it
@@ -724,6 +742,7 @@ export class WalletService {
   private async settleApproved(
     tx: WalletTransaction,
     adminId: User['id'] | null,
+    meta?: ClientMeta,
   ): Promise<TransactionResult> {
     const userId = await this.userIdForWallet(tx.walletId);
     const amount = tx.amount;
@@ -736,6 +755,8 @@ export class WalletService {
         currency: tx.currency,
         transactionId: tx.id,
         adminId,
+        ip: meta?.ip ?? null,
+        userAgent: meta?.userAgent ?? null,
       });
     }
 
@@ -1179,6 +1200,7 @@ export class WalletService {
     adminId: User['id'],
     withdrawalId: WalletTransaction['id'],
     reason: string,
+    meta?: ClientMeta,
   ): Promise<TransactionResult> {
     const reviewedAt = new Date();
 
@@ -1219,25 +1241,44 @@ export class WalletService {
       transactionId: tx.id,
       adminId,
       reason,
+      ip: meta?.ip ?? null,
+      userAgent: meta?.userAgent ?? null,
     });
 
     return { transactionId: tx.id, status: 'rejected' };
   }
 
-  async getTransactions(userId: User['id'], page: number, limit: number) {
+  async getTransactions({
+    userId,
+    page,
+    limit,
+    sortBy,
+    sortOrder,
+  }: PaginationOptions<{ userId: User['id'] }, WalletTransactionSortBy>) {
     const db = this.drizzle.db;
 
     const [walletRecord] = await db.select().from(wallet).where(eq(wallet.userId, userId));
     if (!walletRecord) {
       return { items: [], total: 0, page, limit };
     }
+    const dir = (sortOrder ?? 'desc') === 'asc' ? asc : desc;
+    const TX_SORT_COLS = {
+      createdAt: walletTransaction.createdAt,
+      amount: walletTransaction.amount,
+      type: walletTransaction.type,
+      status: walletTransaction.status,
+      currency: walletTransaction.currency,
+      rail: walletTransaction.rail,
+      reviewedAt: walletTransaction.reviewedAt,
+    } as const;
+    const col = TX_SORT_COLS[sortBy ?? 'createdAt'];
     const where = eq(walletTransaction.walletId, walletRecord.id);
     const [txs, [{ n }]] = await Promise.all([
       db
         .select()
         .from(walletTransaction)
         .where(where)
-        .orderBy(desc(walletTransaction.createdAt))
+        .orderBy(dir(col), desc(walletTransaction.id))
         .limit(limit)
         .offset(pageToOffset(page, limit)),
       db.select({ n: count() }).from(walletTransaction).where(where),

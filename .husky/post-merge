@@ -1,0 +1,3 @@
+# A pull that fast-forwards never fires post-checkout, so mirror the regen here
+# too - new .rulesync sources must reach AGENTS.md / CLAUDE.md immediately.
+pnpm gen:agents

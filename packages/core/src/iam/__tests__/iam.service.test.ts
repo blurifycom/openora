@@ -1,5 +1,5 @@
 import { describe, it, expect, vi } from 'vitest';
-import { mock, mockDb, readPrivate } from '../../testing/mock.js';
+import { mock, mockDb, readPrivate, NO_CLIENT_META } from '../../testing/mock.js';
 import * as core from '@openora/core/server';
 import {
   levelToActions,
@@ -48,7 +48,7 @@ function inContext<T>(fn: () => T): T {
   return core.withRequestContext({ userId: 'caller', traceId: 't' }, fn);
 }
 
-const ADMIN_CALLER = { userId: 'admin-1', role: 'admin' };
+const ADMIN_CALLER = { userId: 'admin-1', role: 'admin', ...NO_CLIENT_META };
 
 function routingDrizzle(byTable: {
   role?: unknown[];
@@ -300,7 +300,7 @@ describe('IamService.setRolePermissions', () => {
         svc.setRolePermissions({
           roleId: 'role-1',
           grants: [{ resource: 'player', level: 'read' }],
-          caller: { userId: 'sup-1', role: 'support' },
+          caller: { userId: 'sup-1', role: 'support', ...NO_CLIENT_META },
         }),
       ),
     ).rejects.toBeInstanceOf(NotSuperAdminError);
@@ -500,11 +500,15 @@ describe('IamService.deleteRole', () => {
       roleId: 'role-1',
       userId: 'user-a',
       actorId: 'admin-1',
+      ip: null,
+      userAgent: null,
     });
     expect(events.emit).toHaveBeenCalledWith('iam.role.revoked', {
       roleId: 'role-1',
       userId: 'user-b',
       actorId: 'admin-1',
+      ip: null,
+      userAgent: null,
     });
     const revokeCalls = (events.emit as ReturnType<typeof vi.fn>).mock.calls.filter(
       (c) => c[0] === 'iam.role.revoked',
@@ -796,7 +800,7 @@ describe('IamService.inviteAdmin', () => {
         svc.inviteAdmin({
           email: 'new@admin.com',
           roleId: 'role-1',
-          caller: { userId: 'sup-1', role: 'support' },
+          caller: { userId: 'sup-1', role: 'support', ...NO_CLIENT_META },
         }),
       ),
     ).rejects.toBeInstanceOf(NotSuperAdminError);
@@ -813,6 +817,7 @@ function paginatedDrizzle(rows: unknown[], total: number) {
         from: vi.fn(() => chain),
         innerJoin: vi.fn(() => chain),
         where: vi.fn(() => chain),
+        orderBy: vi.fn(() => chain),
         limit: vi.fn(() => chain),
         offset: vi.fn(() => chain),
       };
@@ -883,7 +888,7 @@ describe('IamService.forceLogout', () => {
       inContext(() =>
         svc.forceLogout({
           userId: 'target-user',
-          caller: { userId: 'sup-1', role: 'support' },
+          caller: { userId: 'sup-1', role: 'support', ...NO_CLIENT_META },
         }),
       ),
     ).rejects.toBeInstanceOf(NotSuperAdminError);

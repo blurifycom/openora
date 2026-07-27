@@ -1,11 +1,11 @@
 import { describe, it, expect, vi } from 'vitest';
-import { mock } from '../../testing/mock.js';
+import { mock, testContext } from '../../testing/mock.js';
 import { call, ORPCError } from '@orpc/server';
 import type { AdminGuard } from '@openora/core/server';
 import { createCmsRouter } from '../router/index.js';
 import type { CmsService } from '../service/cms.service.js';
 
-const CTX = { request: { headers: {} } };
+const CTX = testContext();
 const PAGE_ID = '11111111-1111-4111-8111-111111111111';
 const BANNER_ID = '22222222-2222-4222-8222-222222222222';
 

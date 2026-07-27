@@ -1,0 +1,14 @@
+import { pgTable, uuid, timestamp } from 'drizzle-orm/pg-core';
+
+// Drizzle tables owned by the {{pascalCase name}} module.
+// Rules:
+//   - Column names come from the key via the snake_case casing config - never pass
+//     an explicit string (lint: drizzle-snake-case).
+//   - Timestamps are always `withTimezone` (lint: no-naive-timestamp).
+//   - Do NOT add FK references to tables owned by another domain - reference by id.
+export const {{camelCase name}} = pgTable('{{snakeCase name}}', {
+  id: uuid().primaryKey().defaultRandom(),
+  createdAt: timestamp({ withTimezone: true }).notNull().defaultNow(),
+});
+
+export type {{pascalCase name}} = typeof {{camelCase name}}.$inferSelect;

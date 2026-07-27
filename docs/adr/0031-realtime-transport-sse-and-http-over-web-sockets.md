@@ -39,8 +39,7 @@ The forces:
 - **WebSockets have real but narrow strengths**: cheap high-frequency _client→server_
   messages on an already-open connection, and true full-duplex - which matter for an
   exchange order book or micro-betting, not for fixed-odds push + transactional bets.
-- **The product roadmap needs no duplex channel.** Mapping the roadmap (Confluence:
-  "Roadmap & Future Plans", "BetFeel Consumer & Collaboration", 2026-07) onto transport
+- **The product roadmap needs no duplex channel.** Mapping the roadmap onto transport
   requirements: v1 chat/friends/lobby/balance is low-rate push; the v2 PvP games
   (CoinFlip/Mines/Dice) are turn-based - a command every few seconds, HTTP RTT invisible
   next to animation time; pooled gambling (streamer + audience) is a large fan-out of

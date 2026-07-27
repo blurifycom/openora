@@ -4,6 +4,7 @@ import type {
   WalletTransactionStatus,
   WalletTransactionType,
 } from '../schemas/wallet-tx.js';
+import type { SortOrder } from '../kit.js';
 
 // Admin/back-office reporting over wallet money movement. Owned + bound by the
 // wallet module; the back-office depends only on this port, never on the wallet
@@ -29,6 +30,17 @@ export type AdminTxDetail = AdminTxRow & {
   reviewReason: string | null;
 };
 
+export const ADMIN_TX_SORT_BY_VALUES = [
+  'createdAt',
+  'amount',
+  'type',
+  'status',
+  'currency',
+  'rail',
+  'reviewedAt',
+] as const;
+export type AdminTxSortBy = (typeof ADMIN_TX_SORT_BY_VALUES)[number];
+
 export type AdminTxListOptions = {
   page: number;
   limit: number;
@@ -41,6 +53,8 @@ export type AdminTxListOptions = {
   dateTo?: Date;
   amountMin?: string;
   amountMax?: string;
+  sortBy?: AdminTxSortBy;
+  sortOrder?: SortOrder;
 };
 
 export type AdminWalletReporting = {

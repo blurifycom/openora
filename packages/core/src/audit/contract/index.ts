@@ -1,7 +1,7 @@
 import { oc } from '@orpc/contract';
 import * as z from 'zod';
 import { TimestampSchema, UuidSchema } from '@openora/core/contracts';
-import { PageQuerySchema, paginated } from '@openora/core/contracts/kit';
+import { PageQuerySchema, SortOrderSchema, paginated } from '@openora/core/contracts/kit';
 
 // The value tuple is the single source of truth: `z.enum` derives the contract here
 // and the Drizzle `pgEnum` in audit/schema derives the DB enum from the same tuple,
@@ -39,6 +39,17 @@ export const AuditLogEntrySchema = z.object({
 });
 export type AuditLogEntry = z.infer<typeof AuditLogEntrySchema>;
 
+export const AUDIT_SORT_BY_VALUES = [
+  'createdAt',
+  'action',
+  'actorId',
+  'actorType',
+  'resourceType',
+  'resourceId',
+] as const;
+export const AuditSortBySchema = z.enum(AUDIT_SORT_BY_VALUES).default('createdAt');
+export type AuditSortBy = z.infer<typeof AuditSortBySchema>;
+
 export const AuditListFiltersSchema = PageQuerySchema.extend({
   actorId: z.string().optional(),
   actorType: AuditActorTypeSchema.optional(),
@@ -49,12 +60,21 @@ export const AuditListFiltersSchema = PageQuerySchema.extend({
   resourceId: z.string().optional(),
   // Single search box: exact-match the subject against actorId OR resourceId.
   q: z.string().trim().min(1).optional(),
-  fromDate: z.string().optional(),
-  toDate: z.string().optional(),
+  fromDate: z.iso.date().optional(),
+  toDate: z.iso.date().optional(),
+  sortBy: AuditSortBySchema.optional(),
+  sortOrder: SortOrderSchema.default('desc').optional(),
 });
 export type AuditListFilters = z.infer<typeof AuditListFiltersSchema>;
 
-export const AuditExportFiltersSchema = AuditListFiltersSchema.omit({ page: true, limit: true });
+// Export inherits sortBy/sortOrder from the list schema; override default sort order to
+// ascending (chronological) to match prior exportCsv behaviour (asc by seq).
+export const AuditExportFiltersSchema = AuditListFiltersSchema.omit({
+  page: true,
+  limit: true,
+}).extend({
+  sortOrder: SortOrderSchema.default('asc').optional(),
+});
 export type AuditExportFilters = z.infer<typeof AuditExportFiltersSchema>;
 
 export const auditContract = {

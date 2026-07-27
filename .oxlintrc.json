@@ -9,8 +9,6 @@
   "rules": {
     "unicorn/filename-case": ["error", { "case": "kebabCase" }],
     "oss-boundaries/no-adhoc-zod-in-router": "error",
-    "oss-boundaries/no-core-to-addon": "error",
-    "oss-boundaries/no-cross-addon": "error",
     "oss-boundaries/no-contracts-to-runtime": "error",
     "oss-boundaries/no-module-contract-to-runtime": "error",
     "oss-boundaries/no-react-to-runtime": "error",
@@ -46,12 +44,11 @@
       "rules": {
         "typescript/no-explicit-any": "off",
         "unicorn/no-thenable": "off",
-        "oss-boundaries/no-cross-addon": "off",
         "oss-boundaries/no-cross-core-domain": "off"
       }
     },
     {
-      "files": ["tools/**", "**/scripts/**"],
+      "files": ["tools/**", "**/scripts/**", "packages/create-openora/src/**"],
       "rules": {
         "no-console": "off"
       }

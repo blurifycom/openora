@@ -10,11 +10,15 @@ import {
   assignPlayerTagSchema,
   removePlayerTagSchema,
 } from '@openora/core/contracts';
-import { PageQuerySchema, paginated } from '@openora/core/contracts/kit';
+import { PageQuerySchema, SortOrderSchema, paginated } from '@openora/core/contracts/kit';
 import z from 'zod';
 import { HighRiskAssignMetadataSchema } from './player-tag-assign-metadata.js';
 
 export * from './player-tag-assign-metadata.js';
+
+export const PLAYER_TAG_SORT_BY_VALUES = ['createdAt', 'assignActor'] as const;
+export const PlayerTagSortBySchema = z.enum(PLAYER_TAG_SORT_BY_VALUES).default('createdAt');
+export type PlayerTagSortBy = z.infer<typeof PlayerTagSortBySchema>;
 
 export const PlayerTagWithTagSchema = playerTagSchema.extend({
   tag: tagSchema.pick({ key: true }),
@@ -35,7 +39,13 @@ export const tagContract = {
 
   listPlayerTags: oc
     .route({ method: 'GET', path: '/player/{playerId}/player-tag' })
-    .input(PageQuerySchema.extend({ playerId: UuidSchema }))
+    .input(
+      PageQuerySchema.extend({
+        playerId: UuidSchema,
+        sortBy: PlayerTagSortBySchema.optional(),
+        sortOrder: SortOrderSchema.default('desc').optional(),
+      }),
+    )
     .output(paginated(PlayerTagWithTagSchema)),
 
   assignPlayerTag: oc

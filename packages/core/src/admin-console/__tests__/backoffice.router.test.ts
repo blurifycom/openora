@@ -1,12 +1,12 @@
 import { describe, it, expect, vi } from 'vitest';
-import { mock } from '../../testing/mock.js';
+import { mock, adminCaller, testContext } from '../../testing/mock.js';
 import { call, ORPCError } from '@orpc/server';
 import type { AdminGuard } from '@openora/core/server';
 import type { AuditWritePort } from '@openora/core/contracts';
 import { createBackofficeRouter } from '../router/index.js';
 import type { BackofficeService } from '../service/backoffice.service.js';
 
-const CTX = { request: { headers: {} } };
+const CTX = testContext();
 const USER_ID = '63d3c264-3bf4-4d08-9b92-ea3eaf40a440';
 
 const USER = {
@@ -25,7 +25,7 @@ function fakeGuard(opts: { isSuper: boolean }): AdminGuard {
       if (resource === 'admin' && !opts.isSuper) {
         throw new ORPCError('FORBIDDEN', { message: 'Missing permission: admin:update' });
       }
-      return { userId: 'caller-1', role: opts.isSuper ? 'admin' : 'support' };
+      return adminCaller({ userId: 'caller-1', role: opts.isSuper ? 'admin' : 'support' });
     }),
   });
 }
@@ -46,7 +46,7 @@ function fakeTransactionDenyingGuard(): AdminGuard {
       if (resource === 'transaction') {
         throw new ORPCError('FORBIDDEN', { message: 'Missing permission: transaction:view' });
       }
-      return { userId: 'caller-1', role: 'support' };
+      return adminCaller({ userId: 'caller-1', role: 'support' });
     }),
   });
 }

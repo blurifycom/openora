@@ -4,10 +4,10 @@ import {
   pageToOffset,
   makeNotFoundError,
 } from '@openora/core/server';
-import { eq, desc, and, gt, count, sql } from 'drizzle-orm';
-import type { User } from '@openora/core/contracts';
+import { eq, asc, desc, and, gt, count, sql } from 'drizzle-orm';
+import type { ClientMeta, User, PaginationOptions } from '@openora/core/contracts';
 import { session } from '../schema/index.js';
-import { type SessionItem } from '../contract/index.js';
+import { type SessionItem, type SessionSortBy } from '../contract/index.js';
 
 export const SessionNotFoundError = makeNotFoundError('Session');
 
@@ -25,17 +25,30 @@ export class SessionService {
     this.events = events;
   }
 
-  async listSessions(userId: User['id'], page: number, limit: number) {
+  async listSessions({
+    userId,
+    page,
+    limit,
+    sortBy,
+    sortOrder,
+  }: PaginationOptions<{ userId: User['id'] }, SessionSortBy>) {
     const where = eq(session.userId, userId);
     const db = this.drizzle.db;
-    // Active sessions first (expiresAt > now), newest-first within each group.
+    // Active sessions first (expiresAt > now), then user-chosen sort within each group.
     const activeFirst = sql<number>`CASE WHEN ${session.expiresAt} > NOW() THEN 0 ELSE 1 END`;
+    const dir = (sortOrder ?? 'desc') === 'asc' ? asc : desc;
+    const col =
+      sortBy === 'expiresAt'
+        ? session.expiresAt
+        : sortBy === 'updatedAt'
+          ? session.updatedAt
+          : session.createdAt;
     const [rows, [{ n }]] = await Promise.all([
       db
         .select()
         .from(session)
         .where(where)
-        .orderBy(activeFirst, desc(session.createdAt))
+        .orderBy(...(sortBy ? [dir(col)] : [activeFirst, dir(col)]))
         .limit(limit)
         .offset(pageToOffset(page, limit)),
       db.select({ n: count() }).from(session).where(where),
@@ -56,7 +69,7 @@ export class SessionService {
     };
   }
 
-  async revokeSession(userId: User['id'], id: string, actorId?: User['id']) {
+  async revokeSession(userId: User['id'], id: string, actorId?: User['id'], meta?: ClientMeta) {
     const updated = await this.drizzle.db
       .update(session)
       .set({ expiresAt: sql`now()` })
@@ -68,20 +81,27 @@ export class SessionService {
     }
 
     this.events.emit('identity.session.revoked', {
-      userId: userId,
+      userId,
       sessionId: id,
       actorId,
+      ip: meta?.ip ?? null,
+      userAgent: meta?.userAgent ?? null,
     });
     return { success: true as const };
   }
 
-  async revokeAllSessions(userId: User['id'], actorId?: User['id']) {
+  async revokeAllSessions(userId: User['id'], actorId?: User['id'], meta?: ClientMeta) {
     await this.drizzle.db
       .update(session)
       .set({ expiresAt: sql`now()` })
       .where(and(eq(session.userId, userId), gt(session.expiresAt, sql`now()`)));
 
-    this.events.emit('identity.sessions.revoked_all', { userId: userId, actorId });
+    this.events.emit('identity.sessions.revoked_all', {
+      userId,
+      actorId,
+      ip: meta?.ip ?? null,
+      userAgent: meta?.userAgent ?? null,
+    });
     return { success: true as const };
   }
 }

@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 /**
  * Emits docs/openapi.json from the assembled contract - no server boot, no DB.
- * Runs via `pnpm regen` and in CI via `pnpm verify:drift`.
+ * Runs via `pnpm regen` and in CI via `pnpm check:drift`.
  */
 import { generateOpenApiSpec } from '@openora/core/server';
 import { buildContract } from './build-contract.js';
@@ -12,8 +12,7 @@ const here = dirname(fileURLToPath(import.meta.url));
 const outputPath = resolve(here, '../../docs/openapi.json');
 
 async function main() {
-  // Core surface only - gated add-on routes excluded so the artifact stays edition-stable.
-  const outPath = await generateOpenApiSpec(buildContract({ includeAddons: false }), {
+  const outPath = await generateOpenApiSpec(buildContract(), {
     info: { title: 'OSS Igaming API', version: '0.0.1' },
     outputPath,
   });

@@ -8,7 +8,7 @@
     "build": "tsc",
     "dev": "node --watch dist/main.js",
     "start": "node dist/main.js",
-    "typecheck": "tsc --noEmit"
+    "check:types": "tsc --noEmit"
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "1.29.0",

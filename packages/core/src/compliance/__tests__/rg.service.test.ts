@@ -1,6 +1,6 @@
 import { describe, it, expect, vi } from 'vitest';
 import type { DrizzleService } from '@openora/core/server';
-import type { LoginEnforcementPort } from '@openora/core/contracts';
+import { domainEventSchemas, type LoginEnforcementPort } from '@openora/core/contracts';
 import { mock, mockDb } from '../../testing/mock.js';
 import { userLimit, rgExclusion } from '../schema/index.js';
 import {
@@ -113,6 +113,9 @@ function exclusionRow(overrides: Record<string, unknown> = {}) {
 
 const USER = 'user-1';
 const ADMIN = 'admin-1';
+const USER_UUID = '11111111-1111-4111-8111-111111111111';
+const ADMIN_UUID = '22222222-2222-4222-8222-222222222222';
+const EXCLUSION_UUID = '33333333-3333-4333-8333-333333333333';
 const future = () => new Date(Date.now() + 200 * 24 * 3600_000);
 
 describe('RgService.setPlayerLimit', () => {
@@ -207,8 +210,38 @@ describe('RgService.activateSelfExclusion', () => {
     expect(enforcement.block).toHaveBeenCalledWith(USER, { until: null });
     expect(events.emit).toHaveBeenCalledWith(
       'rg.self_exclusion.activated',
-      expect.objectContaining({ isPermanent: true, expiresAt: null }),
+      expect.objectContaining({ isPermanent: true, durationMonths: null, expiresAt: null }),
     );
+  });
+
+  it('carries the chosen term and a matching expiry for a fixed-term exclusion', async () => {
+    const expiresAt = future();
+    const row = exclusionRow({
+      id: EXCLUSION_UUID,
+      userId: USER_UUID,
+      isPermanent: false,
+      expiresAt,
+    });
+    const db = routingDb({
+      rgExclusion: [[], [{ kind: 'self_exclusion', expiresAt }]],
+      returning: [row],
+    });
+    const { svc, events, enforcement } = newSvc(db);
+    await svc.activateSelfExclusion(
+      USER_UUID,
+      { userId: USER_UUID, isPermanent: false, durationMonths: 6, reason: 'stop', confirm: true },
+      ADMIN_UUID,
+    );
+    expect(enforcement.block).toHaveBeenCalledWith(USER_UUID, { until: null });
+    const [topic, payload] = events.emit.mock.calls[0] ?? [];
+    expect(topic).toBe('rg.self_exclusion.activated');
+    expect(domainEventSchemas['rg.self_exclusion.activated'].parse(payload)).toMatchObject({
+      isPermanent: false,
+      durationMonths: 6,
+      reason: 'stop',
+      actorId: ADMIN_UUID,
+      userId: USER_UUID,
+    });
   });
 });
 
@@ -265,5 +298,73 @@ describe('RgService.liftSelfExclusion', () => {
     await svc.liftSelfExclusion(USER, { userId: USER, reason: 'ok', confirm: true }, ADMIN);
     expect(enforcement.block).toHaveBeenCalledWith(USER, { until: expect.any(Date) });
     expect(enforcement.unblock).not.toHaveBeenCalled();
+  });
+});
+
+describe('RgService.liftCoolingOff', () => {
+  const coolingOffRow = (overrides: Record<string, unknown> = {}) =>
+    exclusionRow({ kind: 'cooling_off', expiresAt: future(), ...overrides });
+
+  it('rejects when the player has no active cooling-off', async () => {
+    const { svc } = newSvc(routingDb({ rgExclusion: [[]] }));
+    await expect(svc.liftCoolingOff(USER, { userId: USER, reason: 'ok' }, ADMIN)).rejects.toThrow(
+      ExclusionNotFoundError,
+    );
+  });
+
+  it('lifts before expiry and unblocks when nothing else is active', async () => {
+    const existing = coolingOffRow();
+    const db = routingDb({
+      rgExclusion: [[existing], []],
+      returning: [{ ...existing, status: 'lifted' }],
+    });
+    const { svc, events, enforcement } = newSvc(db);
+
+    const lifted = await svc.liftCoolingOff(
+      USER,
+      { userId: USER, reason: 'raised in error' },
+      ADMIN,
+    );
+
+    expect(lifted.status).toBe('lifted');
+    expect(enforcement.unblock).toHaveBeenCalledWith(USER);
+    expect(events.emit).toHaveBeenCalledWith(
+      'rg.cooling_off.lifted',
+      expect.objectContaining({ userId: USER, actorId: ADMIN, reason: 'raised in error' }),
+    );
+  });
+
+  it('keeps an indefinite block when the player is also self-excluded', async () => {
+    const existing = coolingOffRow();
+    const db = routingDb({
+      rgExclusion: [[existing], [{ kind: 'self_exclusion', expiresAt: null }]],
+      returning: [{ ...existing, status: 'lifted' }],
+    });
+    const { svc, enforcement } = newSvc(db);
+
+    await svc.liftCoolingOff(USER, { userId: USER, reason: 'ok' }, ADMIN);
+
+    expect(enforcement.block).toHaveBeenCalledWith(USER, { until: null });
+    expect(enforcement.unblock).not.toHaveBeenCalled();
+  });
+
+  it('records the actor and reason on the lifted row', async () => {
+    const existing = coolingOffRow();
+    const db = routingDb({
+      rgExclusion: [[existing], []],
+      returning: [
+        { ...existing, status: 'lifted', liftedBy: ADMIN, liftedReason: 'support ticket 42' },
+      ],
+    });
+    const { svc } = newSvc(db);
+
+    const lifted = await svc.liftCoolingOff(
+      USER,
+      { userId: USER, reason: 'support ticket 42' },
+      ADMIN,
+    );
+
+    expect(lifted.liftedBy).toBe(ADMIN);
+    expect(lifted.liftedReason).toBe('support ticket 42');
   });
 });

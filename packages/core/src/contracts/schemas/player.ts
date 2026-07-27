@@ -2,7 +2,7 @@ import * as z from 'zod';
 import { MoneyAmountSchema, TimestampSchema, UuidSchema } from './common.js';
 import { CurrencyCodeSchema } from './igaming-config.js';
 import { TagKeySchema } from './tag.js';
-import { PageQuerySchema } from '../kit.js';
+import { PageQuerySchema, SortOrderSchema } from '../kit.js';
 
 export const PLAYER_STATUSES = [
   'active',
@@ -47,9 +47,24 @@ export const PlayerSearchArgsSchema = z.object({
   tags: z.array(TagKeySchema).optional(),
 });
 
+export const PLAYER_SORT_BY_VALUES = [
+  'createdAt',
+  'displayName',
+  'status',
+  'kycStatus',
+  'totalWagered',
+  'totalDeposits',
+  'lastSeenAt',
+  'level',
+] as const;
+export const PlayerSortBySchema = z.enum(PLAYER_SORT_BY_VALUES).default('createdAt');
+export type PlayerSortBy = z.infer<typeof PlayerSortBySchema>;
+
 export const PaginatedPlayerSearchArgsSchema = z.object({
   ...PlayerSearchArgsSchema.shape,
   ...PageQuerySchema.shape,
+  sortBy: PlayerSortBySchema.optional(),
+  sortOrder: SortOrderSchema.default('desc').optional(),
 });
 
 export type Player = z.infer<typeof PlayerSchema>;

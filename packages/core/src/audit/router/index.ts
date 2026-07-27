@@ -16,18 +16,13 @@ export function createAuditRouter(svc: AuditService, adminGuard: AdminGuard) {
       await adminGuard.assert(context, 'audit', 'export');
       const csv = await svc.exportCsv(input);
       // Record AFTER producing the CSV so an export failure is not logged as a success.
-      const ip =
-        (context.request.headers['x-forwarded-for'] as string | undefined)?.split(',')[0]?.trim() ??
-        null;
-      const userAgent = (context.request.headers['user-agent'] as string | undefined) ?? null;
       await svc.record({
         actorId: getUserId(context),
         actorType: 'admin',
         action: 'audit.export',
         resourceType: 'audit',
         after: { filters: input },
-        ip,
-        userAgent,
+        ...context.clientMeta,
         result: 'success',
       });
       return { csv };

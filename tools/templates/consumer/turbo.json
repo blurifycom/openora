@@ -1,6 +1,7 @@
 {
   "$schema": "https://turbo.build/schema.json",
   "ui": "tui",
+  "globalDependencies": [".oxlintrc.json"],
   "tasks": {
     "build": {
       "dependsOn": ["^build"],
@@ -10,8 +11,19 @@
       "cache": false,
       "persistent": true
     },
-    "typecheck": {
-      "dependsOn": ["^build"]
+    "check:types": {
+      "dependsOn": ["^build"],
+      "outputs": []
+    },
+    "//#check:lint": {
+      "inputs": [
+        "**/*.{ts,tsx,mts,cts,js,mjs,cjs,jsx}",
+        "!.turbo/**",
+        "!**/node_modules/**",
+        "!**/dist/**",
+        "!**/.next/**"
+      ],
+      "outputs": []
     }
   }
 }

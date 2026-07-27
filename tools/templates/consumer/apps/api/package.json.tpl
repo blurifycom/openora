@@ -7,12 +7,11 @@
     "build": "tsc",
     "dev": "node --import tsx --watch --env-file-if-exists=../../.env src/main.ts",
     "start": "node --import tsx --env-file-if-exists=../../.env src/main.ts",
-    "db:migrate": "node --import tsx --env-file-if-exists=../../.env src/migrate.ts",
     "db:seed": "node --import tsx --env-file-if-exists=../../.env src/seed.ts",
-    "typecheck": "tsc --noEmit"
+    "check:types": "tsc --noEmit"
   },
   "dependencies": {
-    "@openora/core": "latest"
+    "@openora/core": "{{coreVersion}}"
   },
   "devDependencies": {
     "tsx": "4.22.2",

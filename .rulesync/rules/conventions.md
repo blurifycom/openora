@@ -187,6 +187,7 @@ Headless repo - only the SDK consumption layer (hooks, typed client, auth, realt
 - **Fail fast at boundaries with typed errors** - `Schema.parse(raw)` throws early.
 - **No silent catches** - log with context and rethrow, or handle explicitly.
 - **Typed, named error classes mapped to transport at the edge.** Use the shared factories (`makeNotFoundError`/`makeOwnershipError`/`makeConflictError`); the router's `mapErrors` keys off the exported class. `export const WalletNotFoundError = makeNotFoundError('Wallet');`
+- **`ORPCError.message` is an English fallback for logs/tooling, not player-facing copy** - never render it directly in a UI. Consumers key UI copy off `.code` (the error category) plus typed `.data` fields (e.g. a `reason` discriminator); add a new field to `data`, not to `message`, when a UI needs to tell cases apart.
 - **Money / critical paths are transactional and idempotent** - a DB guard inside the transaction, not just an `idempotencyKey` (delivery is at-least-once):
   ```ts
   await db.transaction(async (t) => {
@@ -220,9 +221,9 @@ Headless repo - only the SDK consumption layer (hooks, typed client, auth, realt
 
 ## 13. Enforcement
 
-- `pnpm verify` = typecheck + unit tests + oxlint + module-shape + `pnpm boundaries` (dependency-cruiser).
+- `pnpm verify` = typecheck + unit tests + oxlint + module-shape + `pnpm check:boundaries` (dependency-cruiser).
 - Two-layer boundaries (per-edit oxlint + whole-graph cruiser) - don't work around a violation; fix the import.
 - Module structure + naming are lint-enforced (`oss-module-shape/*` oxlint JS plugin): files sit in a canonical layer dir, `service/` files end `.service.ts`, `__tests__/` files end `.test.ts`, filenames kebab-case, no inline `pgEnum` value arrays.
 - oxlint config is split: the published `@openora/core/oxlint/oxlintrc.json` holds the universal, stack-agnostic rules (base rules, `typescript/no-explicit-any`, `typescript/no-non-null-assertion`, `typescript/consistent-type-definitions`, `import/no-cycle`, `import/no-duplicates`) - the single source of truth a consumer extends via `"extends": ["./node_modules/@openora/core/oxlint/oxlintrc.json"]`. The root `.oxlintrc.json` here `extends` that shared config and adds only OSS-internal rules (`oss-boundaries/*`, `oss-module-shape/*`, `unicorn/filename-case`) that need the local `jsPlugins`.
-- Pre-commit runs `pnpm boundaries`; CI runs `pnpm verify` + the no-drift check.
-- Agent rules mirror this standard - generated from `.rulesync/` via `pnpm sync:agents`.
+- Pre-commit runs `pnpm check:boundaries`; CI runs `pnpm verify` + the no-drift check.
+- Agent rules mirror this standard - generated from `.rulesync/` via `pnpm gen:agents`.

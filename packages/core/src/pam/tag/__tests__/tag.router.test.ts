@@ -1,5 +1,5 @@
 import { describe, it, expect, vi } from 'vitest';
-import { mock } from '../../../testing/mock.js';
+import { mock, testContext } from '../../../testing/mock.js';
 import { call, ORPCError } from '@orpc/server';
 import type { AdminGuard } from '@openora/core/server';
 import { createTagRouter } from '../router/index.js';
@@ -14,10 +14,10 @@ import type { TagRuleService } from '../service/tag-rule.service.js';
 
 const UID = '11111111-1111-4111-8111-111111111111';
 
-const CTX = { request: { headers: {} } };
+const CTX = testContext();
 // assignPlayerTag/removePlayerTag also call getUserId(context) directly (independent
 // of adminGuard.assert's return value), which requires a resolvable auth.userId.
-const AUTHED_CTX = { request: { headers: {} }, auth: { userId: UID } };
+const AUTHED_CTX = testContext({ auth: { userId: UID } });
 
 function fakeDenyingGuard(): AdminGuard {
   return mock<AdminGuard>({

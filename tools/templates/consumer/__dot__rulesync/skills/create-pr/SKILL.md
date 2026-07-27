@@ -31,7 +31,7 @@ If the current branch isn't in the table, target `dev`.
 3. **Commit.** Conventional-commit message (`feat:`, `fix:`, `docs:`, `refactor:`,
    `chore:`); for ticket work prefix the ticket key (e.g. `feat(<KEY>-123): ...`).
 4. **Verify before pushing** (cheap insurance): run the repo's check (e.g.
-   `pnpm typecheck && pnpm lint`). Don't push a red tree.
+   `pnpm check:types && pnpm check:lint`). Don't push a red tree.
 5. **Push** the current branch - but STOP and get an explicit per-action "yes push"
    from the user FIRST. Report the commit SHA, then ask. Invoking this skill is NOT
    push authorization. Pushing to a shared/env branch (`dev`, `stage`, `prod`)

@@ -14,8 +14,7 @@ import type {
   HighRiskAmountBreachDetail,
   HighRiskCountBreachDetail,
 } from '@openora/core/pam/contracts/tag';
-
-export const SYSTEM_ACTOR_ID = '00000000-0000-0000-0000-000000000000';
+import { SYSTEM_ACTOR_ID } from './tag-mappers.js';
 
 const EVAL_CHUNK_SIZE = 100;
 

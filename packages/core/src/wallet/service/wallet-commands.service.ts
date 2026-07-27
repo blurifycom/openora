@@ -1,4 +1,5 @@
 import type {
+  PlayEligibilityPort,
   WalletCommands,
   WalletDebitArgs,
   WalletDebitOutcome,
@@ -6,7 +7,7 @@ import type {
   WalletCreditOutcome,
   WalletTransactionType,
 } from '@openora/core/contracts';
-import { createDomainError, type DrizzleDb } from '@openora/core/server';
+import { createDomainError, makeConflictError, type DrizzleDb } from '@openora/core/server';
 import { and, eq, gte, sql } from 'drizzle-orm';
 import { wallet, walletTransaction } from '../schema/index.js';
 import { railFor } from './wallet.service.js';
@@ -23,7 +24,14 @@ export const WalletCommandAmountError = createDomainError<[operation: string, am
 // (status `completed`, internal settlement so no provider ref) so gameplay shows in
 // transaction history. The `balance >= amount` guard in the UPDATE makes concurrent
 // debits safe (a lost race updates zero rows and we report the shortfall).
+export const WalletRgRestrictedError = makeConflictError(
+  'WalletRgRestrictedError',
+  'wager is restricted by an active responsible-gambling exclusion',
+);
+
 export class WalletCommandsService implements WalletCommands {
+  constructor(private readonly playEligibility: PlayEligibilityPort) {}
+
   // Completed, internal-settlement ledger row (no provider ref) shared by every gameplay move.
   private writeLedgerRow(
     txn: DrizzleDb,
@@ -43,6 +51,10 @@ export class WalletCommandsService implements WalletCommands {
 
   async debit(tx: unknown, { userId, amount, type }: WalletDebitArgs): Promise<WalletDebitOutcome> {
     const txn = tx as DrizzleDb;
+
+    if (type === 'bet' && (await this.playEligibility.isRestricted(userId))) {
+      throw new WalletRgRestrictedError();
+    }
 
     // `loss` is informational (stake already left at bet time): 0-amount row, balance untouched. Every other debit is real money.
     if (type !== 'loss' && Number(amount) <= 0) {
