@@ -141,14 +141,14 @@ describe('KycVerificationService.submit (real PG)', () => {
     expect(row).toMatchObject({ status: 'pending', decidedAt: null });
   });
 
-  it('keeps the history append-only across repeated submissions', async () => {
+  it('updates the existing verification when the vendor reuses a reference id', async () => {
     const { svc } = makeService();
     const userId = randomUUID();
 
     await svc.submit(userId, passportSubmission);
     await svc.submit(userId, passportSubmission);
 
-    expect(await verificationsOf(userId)).toHaveLength(2);
+    expect(await verificationsOf(userId)).toHaveLength(1);
   });
 
   it('passes a hosted-session verificationUrl through', async () => {

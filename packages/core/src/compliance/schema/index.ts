@@ -95,7 +95,7 @@ export const kycVerification = pgTable(
   },
   (t) => [
     index('kyc_verification_user_id_created_at_idx').on(t.userId, t.createdAt),
-    index('kyc_verification_reference_id_idx').on(t.referenceId),
+    uniqueIndex('kyc_verification_reference_id_key').on(t.referenceId),
     index('kyc_verification_status_idx').on(t.status),
   ],
 );

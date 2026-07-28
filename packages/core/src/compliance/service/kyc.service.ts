@@ -166,6 +166,20 @@ export class KycVerificationService {
             decidedAt: decided ? new Date() : null,
             decisionReceivedAt: new Date(),
           })
+          .onConflictDoUpdate({
+            target: kycVerification.referenceId,
+            set: {
+              userId,
+              provider: this.provider,
+              status,
+              documentTypes: input.documents.map((d) => d.type),
+              decisionReason,
+              checks: result.checks ?? null,
+              triggeredBy: 'submission',
+              decidedAt: decided ? new Date() : null,
+              decisionReceivedAt: new Date(),
+            },
+          })
           .returning(),
         new KycVerificationNotFoundError(userId),
       );

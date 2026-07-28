@@ -401,8 +401,10 @@ describe('seed idempotency: multi_account and level tag rows', () => {
     const keys = rows.map((r) => r.key);
     const multiAccountCount = keys.filter((k) => k === 'multi_account').length;
     const levelCount = keys.filter((k) => k === 'level').length;
+    const dormantHighRollerCount = keys.filter((k) => k === 'dormant_high_roller').length;
     expect(multiAccountCount).toBe(1);
     expect(levelCount).toBe(1);
+    expect(dormantHighRollerCount).toBe(1);
   });
 });
 
