@@ -1,106 +1,219 @@
-import { describe, it, expect, vi } from 'vitest';
-import { mock, mockDb } from '../../../testing/mock.js';
+import { describe, it, expect, vi, beforeAll, afterAll, beforeEach } from 'vitest';
+import { randomUUID } from 'node:crypto';
+import { eq, sql } from 'drizzle-orm';
 import type { EventBus } from '@openora/core/server';
+import { createTestDb, type TestDb } from '@openora/core/testing';
+import { player } from '@openora/core/pam/schema/profile';
+import { migrate as migrateProfile } from '@openora/core/pam/migrate/profile';
+import { mock, NO_CLIENT_META } from '../../../testing/mock.js';
+import { migrate } from '../migrate.js';
+import { user } from '../schema/index.js';
 import { DrizzleAdminUserDirectory } from '../admin-user-directory.js';
 
-function makeDir(existing: { isActive: boolean }) {
-  const row = {
-    id: 'u1',
-    email: 'a@b.c',
-    name: 'A',
-    role: 'player',
-    createdAt: new Date(0),
-    isActive: existing.isActive,
-  };
-  const db = {
-    select: () => ({ from: () => ({ where: async () => [row] }) }),
-    update: () => ({
-      set: (s: Record<string, unknown>) => ({
-        where: () => ({ returning: async () => [{ ...row, ...s }] }),
-      }),
-    }),
-  };
+let db: TestDb;
+
+function makeDirectory() {
   const emit = vi.fn();
-  const dir = new DrizzleAdminUserDirectory(mockDb(db), mock<EventBus>({ emit }));
-  return { dir, emit };
+  return {
+    dir: new DrizzleAdminUserDirectory(db.drizzle, mock<EventBus>({ emit, on: vi.fn() })),
+    emit,
+  };
 }
 
-describe('DrizzleAdminUserDirectory.update active-status events', () => {
-  it('emits identity.user.deactivated (with actor) when isActive flips true -> false', async () => {
-    const { dir, emit } = makeDir({ isActive: true });
-    await dir.update('u1', { isActive: false }, 'admin-1');
+async function seedUser(overrides: Partial<typeof user.$inferInsert> = {}) {
+  const [row] = await db.drizzle.db
+    .insert(user)
+    .values({
+      name: 'Alice',
+      email: `${randomUUID()}@example.com`,
+      emailVerified: true,
+      ...overrides,
+    })
+    .returning();
+  return row!;
+}
+
+async function seedPlayer(userId: string, overrides: Partial<typeof player.$inferInsert> = {}) {
+  const [row] = await db.drizzle.db
+    .insert(player)
+    .values({ userId, displayName: 'alice', ...overrides })
+    .returning();
+  return row!;
+}
+
+beforeAll(async () => {
+  db = await createTestDb([migrate, migrateProfile]);
+});
+
+afterAll(async () => {
+  await db.drop();
+});
+
+beforeEach(async () => {
+  await db.drizzle.db.execute(sql`TRUNCATE ${player}, ${user} RESTART IDENTITY CASCADE`);
+});
+
+describe('DrizzleAdminUserDirectory.update (real PG)', () => {
+  it('emits deactivated and persists the flip when isActive goes true -> false', async () => {
+    const { dir, emit } = makeDirectory();
+    const account = await seedUser({ isActive: true });
+    const actorId = randomUUID();
+
+    const updated = await dir.update(account.id, { isActive: false }, actorId, NO_CLIENT_META);
+
+    expect(updated).toMatchObject({ isActive: false });
+    const [stored] = await db.drizzle.db.select().from(user).where(eq(user.id, account.id));
+    expect(stored?.isActive).toBe(false);
     expect(emit).toHaveBeenCalledWith('identity.user.deactivated', {
-      userId: 'u1',
-      actorId: 'admin-1',
+      userId: account.id,
+      actorId,
       ip: null,
       userAgent: null,
     });
   });
 
-  it('emits identity.user.reactivated (with actor) when isActive flips false -> true', async () => {
-    const { dir, emit } = makeDir({ isActive: false });
-    await dir.update('u1', { isActive: true }, 'admin-1');
+  it('emits reactivated when isActive goes false -> true', async () => {
+    const { dir, emit } = makeDirectory();
+    const account = await seedUser({ isActive: false });
+    const actorId = randomUUID();
+
+    await dir.update(account.id, { isActive: true }, actorId, NO_CLIENT_META);
+
     expect(emit).toHaveBeenCalledWith('identity.user.reactivated', {
-      userId: 'u1',
-      actorId: 'admin-1',
+      userId: account.id,
+      actorId,
       ip: null,
       userAgent: null,
     });
   });
 
-  it('does not emit when isActive is unchanged', async () => {
-    const { dir, emit } = makeDir({ isActive: true });
-    await dir.update('u1', { isActive: true }, 'admin-1');
+  it('stays quiet when isActive is written unchanged', async () => {
+    const { dir, emit } = makeDirectory();
+    const account = await seedUser({ isActive: true });
+
+    await dir.update(account.id, { isActive: true }, randomUUID());
+
     expect(emit).not.toHaveBeenCalled();
   });
 
-  it('does not emit on a role-only update', async () => {
-    const { dir, emit } = makeDir({ isActive: true });
-    await dir.update('u1', { role: 'admin' }, 'admin-1');
+  it('stays quiet on a role-only update but still writes the role', async () => {
+    const { dir, emit } = makeDirectory();
+    const account = await seedUser({ isActive: true });
+
+    const updated = await dir.update(account.id, { role: 'admin' }, randomUUID());
+
+    expect(updated).toMatchObject({ role: 'admin' });
+    expect(emit).not.toHaveBeenCalled();
+  });
+
+  it('returns null for an unknown user', async () => {
+    const { dir, emit } = makeDirectory();
+
+    expect(await dir.update(randomUUID(), { isActive: false }, randomUUID())).toBeNull();
     expect(emit).not.toHaveBeenCalled();
   });
 });
 
-function makeDirWithSelect(rows: Record<string, unknown>[][]) {
-  const queue = [...rows];
-  const db = {
-    select: () => ({
-      from: () => ({
-        innerJoin: () => ({ where: async () => queue.shift() ?? [] }),
-        where: () => ({ limit: async () => queue.shift() ?? [] }),
-      }),
-    }),
-  };
-  return new DrizzleAdminUserDirectory(mockDb(db), mock<EventBus>({ emit: vi.fn() }));
-}
+describe('DrizzleAdminUserDirectory reads (real PG)', () => {
+  it('counts every user row', async () => {
+    const { dir } = makeDirectory();
+    await seedUser();
+    await seedUser();
 
-describe('DrizzleAdminUserDirectory.lookupPlayers', () => {
-  it('returns an empty array for no ids without querying', async () => {
-    const dir = makeDirWithSelect([]);
+    expect(await dir.count()).toBe(2);
+  });
+
+  it('gets a single user, or null when unknown', async () => {
+    const { dir } = makeDirectory();
+    const account = await seedUser();
+
+    expect(await dir.get(account.id)).toMatchObject({ id: account.id, email: account.email });
+    expect(await dir.get(randomUUID())).toBeNull();
+  });
+
+  it('filters the list by an email substring and reports the filtered total', async () => {
+    const { dir } = makeDirectory();
+    await seedUser({ email: 'match-me@example.com' });
+    await seedUser({ email: 'other@example.com' });
+
+    const result = await dir.list({ page: 1, limit: 10, search: 'match-me' });
+
+    expect(result.total).toBe(1);
+    expect(result.rows[0]?.email).toBe('match-me@example.com');
+  });
+
+  it('sorts by email ascending when asked', async () => {
+    const { dir } = makeDirectory();
+    await seedUser({ email: 'b@example.com' });
+    await seedUser({ email: 'a@example.com' });
+
+    const result = await dir.list({ page: 1, limit: 10, sortBy: 'email', sortOrder: 'asc' });
+
+    expect(result.rows.map((r) => r.email)).toEqual(['a@example.com', 'b@example.com']);
+  });
+
+  it('pages while the total covers the whole set', async () => {
+    const { dir } = makeDirectory();
+    await seedUser();
+    await seedUser();
+    await seedUser();
+
+    const result = await dir.list({ page: 2, limit: 2 });
+
+    expect(result.total).toBe(3);
+    expect(result.rows).toHaveLength(1);
+  });
+});
+
+describe('DrizzleAdminUserDirectory.lookupPlayers (real PG)', () => {
+  it('returns an empty array for no ids', async () => {
+    const { dir } = makeDirectory();
+
     expect(await dir.lookupPlayers([])).toEqual([]);
   });
 
-  it('includes email joined from the user table and coerces unknown kyc to null', async () => {
-    const dir = makeDirWithSelect([
-      [{ userId: 'u1', username: 'alice', kycStatus: 'bogus', email: 'alice@example.com' }],
-    ]);
-    const [summary] = await dir.lookupPlayers(['u1']);
+  it('joins the email from the user table onto the player summary', async () => {
+    const { dir } = makeDirectory();
+    const account = await seedUser({ email: 'alice@example.com' });
+    await seedPlayer(account.id, { displayName: 'alice', kycStatus: 'verified' });
+
+    const [summary] = await dir.lookupPlayers([account.id]);
+
     expect(summary).toEqual({
-      userId: 'u1',
+      userId: account.id,
       username: 'alice',
       email: 'alice@example.com',
-      kycStatus: null,
+      kycStatus: 'verified',
+      language: 'en',
     });
+  });
+
+  it('skips a user id that has no player profile', async () => {
+    const { dir } = makeDirectory();
+    const account = await seedUser();
+
+    expect(await dir.lookupPlayers([account.id])).toEqual([]);
   });
 });
 
-describe('DrizzleAdminUserDirectory.findPlayerIds', () => {
-  it('unions email + displayName matches into a deduped id set', async () => {
-    const dir = makeDirWithSelect([
-      [{ id: 'u1' }, { id: 'u2' }],
-      [{ userId: 'u2' }, { userId: 'u3' }],
-    ]);
-    const ids = await dir.findPlayerIds('a');
-    expect([...ids].sort()).toEqual(['u1', 'u2', 'u3']);
+describe('DrizzleAdminUserDirectory.findPlayerIds (real PG)', () => {
+  it('unions email and displayName matches into a deduped id set', async () => {
+    const { dir } = makeDirectory();
+    const byEmailOnly = await seedUser({ email: 'anna@example.com' });
+    const byBoth = await seedUser({ email: 'anton@example.com' });
+    await seedPlayer(byBoth.id, { displayName: 'anton' });
+    const byNameOnly = await seedUser({ email: 'zoe@example.com' });
+    await seedPlayer(byNameOnly.id, { displayName: 'annabel' });
+
+    const ids = await dir.findPlayerIds('an');
+
+    expect([...ids].sort()).toEqual([byEmailOnly.id, byBoth.id, byNameOnly.id].sort());
+  });
+
+  it('returns nothing when the term matches neither column', async () => {
+    const { dir } = makeDirectory();
+    await seedUser({ email: 'alice@example.com' });
+
+    expect(await dir.findPlayerIds('zzzz')).toEqual([]);
   });
 });

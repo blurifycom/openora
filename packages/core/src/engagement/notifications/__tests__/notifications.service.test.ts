@@ -1,99 +1,180 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { mockDb } from '../../../testing/mock.js';
+import { describe, it, expect, beforeAll, afterAll, beforeEach } from 'vitest';
+import { randomUUID } from 'node:crypto';
+import { eq, sql } from 'drizzle-orm';
+import { createTestDb, type TestDb } from '@openora/core/testing';
+import { makeEventBus } from '../../../testing/mock.js';
+import { migrate } from '../migrate.js';
+import { notification } from '../schema/index.js';
 import {
   NotificationsService,
   NotificationNotFoundError,
   NotificationOwnershipError,
 } from '../service/notifications.service.js';
 
-function chain(result: unknown): any {
-  const proxy: any = new Proxy(function () {}, {
-    get(_t, prop) {
-      if (prop === 'then') {
-        return (res: (v: unknown) => unknown) => res(result);
-      }
-      return () => proxy;
-    },
-    apply: () => proxy,
-  });
-  return proxy;
+let db: TestDb;
+
+function makeService() {
+  const events = makeEventBus();
+  return { svc: new NotificationsService(db.drizzle, events), events };
 }
 
-function makeDrizzle(r: { select?: unknown; insert?: unknown; update?: unknown } = {}) {
-  const db = {
-    select: vi.fn(() => chain(r.select ?? [])),
-    insert: vi.fn(() => chain(r.insert ?? [])),
-    update: vi.fn(() => chain(r.update ?? [])),
-  };
-  return mockDb(db);
+async function seedNotification(overrides: Partial<typeof notification.$inferInsert> = {}) {
+  const [row] = await db.drizzle.db
+    .insert(notification)
+    .values({
+      userId: randomUUID(),
+      type: 'withdrawal.approved',
+      title: 'Payout approved',
+      body: 'Your withdrawal is on its way.',
+      ...overrides,
+    })
+    .returning();
+  return row!;
 }
 
-function makeEvents() {
-  return { emit: vi.fn(), on: vi.fn() };
-}
+beforeAll(async () => {
+  db = await createTestDb([migrate]);
+});
 
-describe('NotificationsService', () => {
-  let events: ReturnType<typeof makeEvents>;
+afterAll(async () => {
+  await db.drop();
+});
 
-  beforeEach(() => {
-    events = makeEvents();
-  });
+beforeEach(async () => {
+  await db.drizzle.db.execute(sql`TRUNCATE ${notification} RESTART IDENTITY CASCADE`);
+});
 
-  it('create inserts a notification and emits an event', async () => {
-    const now = new Date();
-    const drizzle = makeDrizzle({
-      insert: [
-        {
-          id: 'n1',
-          userId: 'u1',
-          type: 'withdrawal.approved',
-          title: 'Hello',
-          body: 'World',
-          readAt: null,
-          createdAt: now,
-        },
-      ],
-    });
-    const service = new NotificationsService(drizzle as never, events as never);
+describe('NotificationsService.create (real PG)', () => {
+  it('persists an unread notification and emits created', async () => {
+    const { svc, events } = makeService();
+    const userId = randomUUID();
 
-    const result = await service.create({
-      userId: 'u1',
+    const created = await svc.create({
+      userId,
       type: 'withdrawal.approved',
       title: 'Hello',
       body: 'World',
     });
 
-    expect(result.id).toBe('n1');
+    expect(created).toMatchObject({ userId, title: 'Hello', readAt: null });
+    expect(await db.drizzle.db.select().from(notification)).toHaveLength(1);
     expect(events.emit).toHaveBeenCalledWith('notifications.created', {
-      notificationId: 'n1',
-      userId: 'u1',
+      notificationId: created.id,
+      userId,
     });
   });
+});
 
-  it('listForUser returns notifications from the db', async () => {
-    const rows = [{ id: 'n1', userId: 'u1' }];
-    const drizzle = makeDrizzle({ select: rows });
-    const service = new NotificationsService(drizzle as never, events as never);
-    const result = await service.listForUser('u1');
-    expect(result).toEqual(rows);
+describe('NotificationsService.listForUser (real PG)', () => {
+  it('returns only the requesting player rows, newest first', async () => {
+    const { svc } = makeService();
+    const userId = randomUUID();
+    const older = await seedNotification({
+      userId,
+      createdAt: new Date('2026-01-01T00:00:00.000Z'),
+    });
+    const newer = await seedNotification({
+      userId,
+      createdAt: new Date('2026-02-01T00:00:00.000Z'),
+    });
+    await seedNotification();
+
+    const rows = await svc.listForUser(userId);
+
+    expect(rows.map((r) => r.id)).toEqual([newer.id, older.id]);
   });
 
-  it('markRead throws NotificationNotFoundError when missing', async () => {
-    const drizzle = makeDrizzle({ select: [] });
-    const service = new NotificationsService(drizzle as never, events as never);
-    await expect(service.markRead('x', 'u1')).rejects.toBeInstanceOf(NotificationNotFoundError);
+  it('returns an empty list for a player with nothing on file', async () => {
+    const { svc } = makeService();
+
+    expect(await svc.listForUser(randomUUID())).toEqual([]);
   });
 
-  it('markRead throws NotificationOwnershipError on wrong user', async () => {
-    const drizzle = makeDrizzle({ select: [{ id: 'n1', userId: 'other' }] });
-    const service = new NotificationsService(drizzle as never, events as never);
-    await expect(service.markRead('n1', 'u1')).rejects.toBeInstanceOf(NotificationOwnershipError);
+  it('caps the feed at fifty rows', async () => {
+    const { svc } = makeService();
+    const userId = randomUUID();
+    await db.drizzle.db.insert(notification).values(
+      Array.from({ length: 55 }, () => ({
+        userId,
+        type: 'withdrawal.approved' as const,
+        title: 'Payout approved',
+        body: 'body',
+      })),
+    );
+
+    expect(await svc.listForUser(userId)).toHaveLength(50);
+  });
+});
+
+describe('NotificationsService.markRead (real PG)', () => {
+  it('stamps readAt on the owned notification', async () => {
+    const { svc } = makeService();
+    const row = await seedNotification();
+
+    const updated = await svc.markRead(row.id, row.userId);
+
+    expect(updated.readAt).toBeInstanceOf(Date);
+    const [stored] = await db.drizzle.db
+      .select()
+      .from(notification)
+      .where(eq(notification.id, row.id));
+    expect(stored?.readAt).toBeInstanceOf(Date);
   });
 
-  it('markAllRead returns count from the number of updated rows', async () => {
-    const drizzle = makeDrizzle({ update: [{ id: 'a' }, { id: 'b' }, { id: 'c' }] });
-    const service = new NotificationsService(drizzle as never, events as never);
-    const result = await service.markAllRead('u1');
-    expect(result).toEqual({ count: 3 });
+  it('throws NotificationNotFoundError for an unknown id', async () => {
+    const { svc } = makeService();
+
+    await expect(svc.markRead(randomUUID(), randomUUID())).rejects.toBeInstanceOf(
+      NotificationNotFoundError,
+    );
+  });
+
+  it('refuses another players notification and leaves it unread', async () => {
+    const { svc } = makeService();
+    const row = await seedNotification();
+
+    await expect(svc.markRead(row.id, randomUUID())).rejects.toBeInstanceOf(
+      NotificationOwnershipError,
+    );
+    const [stored] = await db.drizzle.db
+      .select()
+      .from(notification)
+      .where(eq(notification.id, row.id));
+    expect(stored?.readAt).toBeNull();
+  });
+});
+
+describe('NotificationsService.markAllRead (real PG)', () => {
+  it('counts only the rows it actually flipped', async () => {
+    const { svc } = makeService();
+    const userId = randomUUID();
+    await seedNotification({ userId });
+    await seedNotification({ userId });
+    await seedNotification({ userId, readAt: new Date() });
+
+    expect(await svc.markAllRead(userId)).toEqual({ count: 2 });
+  });
+
+  it('leaves other players notifications untouched', async () => {
+    const { svc } = makeService();
+    const userId = randomUUID();
+    await seedNotification({ userId });
+    const other = await seedNotification();
+
+    await svc.markAllRead(userId);
+
+    const [stored] = await db.drizzle.db
+      .select()
+      .from(notification)
+      .where(eq(notification.id, other.id));
+    expect(stored?.readAt).toBeNull();
+  });
+
+  it('reports zero when everything is already read', async () => {
+    const { svc } = makeService();
+    const userId = randomUUID();
+    await seedNotification({ userId, readAt: new Date() });
+
+    expect(await svc.markAllRead(userId)).toEqual({ count: 0 });
   });
 });

@@ -31,9 +31,10 @@ runs:
       run: pnpm install --frozen-lockfile
 
     # Same key per commit -> the build job's cache is an exact hit for every downstream job.
+    # turbo 2.x writes to .turbo/cache at the repo root, not node_modules/.cache/turbo.
     - name: Cache turbo
       uses: actions/cache@v4
       with:
-        path: node_modules/.cache/turbo
+        path: .turbo/cache
         key: turbo-${{ runner.os }}-${{ github.sha }}
         restore-keys: turbo-${{ runner.os }}-

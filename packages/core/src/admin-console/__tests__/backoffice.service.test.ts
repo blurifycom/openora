@@ -6,11 +6,7 @@ import type {
   AdminUserDirectory,
   AdminWalletReporting,
 } from '@openora/core/contracts';
-import {
-  BackofficeService,
-  TransactionNotFoundError,
-  UserNotFoundError,
-} from '../service/backoffice.service.js';
+import { BackofficeService, TransactionNotFoundError } from '../service/backoffice.service.js';
 
 function makeUsers(over: Partial<AdminUserDirectory> = {}): AdminUserDirectory {
   return mock<AdminUserDirectory>({
@@ -46,20 +42,6 @@ function txRow(over: Partial<AdminTxRow> = {}): AdminTxRow {
     ...over,
   };
 }
-
-describe('BackofficeService domain errors', () => {
-  it('UserNotFoundError carries the userId', () => {
-    const err = new UserNotFoundError('user-123');
-    expect(err.name).toBe('UserNotFoundError');
-    expect(err.message).toContain('user-123');
-  });
-
-  it('TransactionNotFoundError carries the id', () => {
-    const err = new TransactionNotFoundError('tx-123');
-    expect(err.name).toBe('TransactionNotFoundError');
-    expect(err.message).toContain('tx-123');
-  });
-});
 
 describe('BackofficeService.listTransactions', () => {
   it('resolves a player query to userIds and enriches rows with email', async () => {

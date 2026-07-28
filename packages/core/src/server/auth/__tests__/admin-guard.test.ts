@@ -1,171 +1,199 @@
-import { describe, it, expect, vi } from 'vitest';
-import { mock, mockDb } from '../../../testing/mock.js';
-import type { EventBus } from '@openora/core/server';
+import { describe, it, expect, vi, beforeAll, afterAll, beforeEach } from 'vitest';
+import { randomUUID } from 'node:crypto';
+import { sql } from 'drizzle-orm';
 import type { AdminPermissionResolver } from '@openora/core/contracts';
+import { createTestDb, type TestDb } from '@openora/core/testing';
+import { mock, makeEventBus } from '../../../testing/mock.js';
 import { AdminGuard } from '../admin-guard.js';
 import type { SessionResolver } from '../session-resolver.js';
 
-describe('AdminGuard - unauthorized access logging', () => {
-  it('emits identity.user.unauthorized_access when dynamic permission check fails', async () => {
-    const drizzle = mockDb({
-      execute: vi.fn().mockResolvedValue({
-        rows: [{ id: 'u1', role: 'admin' }],
-      }),
-    });
-    const sessions = mock<SessionResolver>({
-      resolveUserId: vi.fn().mockResolvedValue('u1'),
-    });
-    const permissionResolver = mock<AdminPermissionResolver>({
-      getGrants: vi.fn().mockResolvedValue([]),
-    });
-    const events = mock<EventBus>({
-      emit: vi.fn(),
-    });
+let db: TestDb;
 
-    const guard = new AdminGuard(drizzle, sessions, permissionResolver, events);
-    const context = {
-      request: {
-        headers: {
-          'x-real-ip': '127.0.0.1',
-          'user-agent': 'Mozilla/5.0',
-        },
-      },
-    };
+const requestContext = (headers: Record<string, string>) => ({ request: { headers } });
 
-    await expect(guard.assert(context, 'admin', 'delete')).rejects.toThrow(
-      expect.objectContaining({ code: 'FORBIDDEN' }),
-    );
+const ADMIN_HEADERS = { 'x-real-ip': '127.0.0.1', 'user-agent': 'Mozilla/5.0' };
 
-    expect(events.emit).toHaveBeenCalledWith(
-      'identity.user.unauthorized_access',
-      expect.objectContaining({
-        userId: 'u1',
-        resource: 'admin',
-        action: 'delete',
-        ip: '127.0.0.1',
-        userAgent: 'Mozilla/5.0',
-        role: 'admin',
-      }),
+function makeGuard({
+  userId,
+  grants,
+}: { userId?: string; grants?: { resource: string; action: string }[] } = {}) {
+  const events = makeEventBus();
+  const sessions = mock<SessionResolver>({ resolveUserId: vi.fn(async () => userId) });
+  const permissionResolver = grants
+    ? mock<AdminPermissionResolver>({ getGrants: vi.fn(async () => grants) })
+    : undefined;
+  const guard = new AdminGuard(db.drizzle, sessions, permissionResolver, events);
+  return { guard, events };
+}
+
+async function seedUser(role: string) {
+  const id = randomUUID();
+  await db.drizzle.db.execute(sql`INSERT INTO "user" (id, role) VALUES (${id}, ${role})`);
+  return id;
+}
+
+beforeAll(async () => {
+  db = await createTestDb([
+    async (databaseUrl) => {
+      process.env['DATABASE_URL'] = databaseUrl;
+    },
+  ]);
+  await db.drizzle.db.execute(sql`CREATE TABLE "user" (id uuid PRIMARY KEY, role text NOT NULL)`);
+});
+
+afterAll(async () => {
+  await db.drop();
+});
+
+beforeEach(async () => {
+  await db.drizzle.db.execute(sql`TRUNCATE "user"`);
+});
+
+describe('AdminGuard.assert - authentication (real PG)', () => {
+  it('throws UNAUTHORIZED when the context carries no request', async () => {
+    const { guard } = makeGuard();
+
+    await expect(guard.assert({})).rejects.toThrow(
+      expect.objectContaining({ code: 'UNAUTHORIZED' }),
     );
   });
 
-  it('emits identity.user.unauthorized_access when static role permission check fails', async () => {
-    const drizzle = mockDb({
-      execute: vi.fn().mockResolvedValue({
-        rows: [{ id: 'u1', role: 'support' }],
-      }),
-    });
-    const sessions = mock<SessionResolver>({
-      resolveUserId: vi.fn().mockResolvedValue('u1'),
-    });
-    const events = mock<EventBus>({
-      emit: vi.fn(),
-    });
+  it('throws UNAUTHORIZED when no session resolves', async () => {
+    const { guard, events } = makeGuard();
 
-    const guard = new AdminGuard(drizzle, sessions, undefined, events);
-    const context = {
-      request: {
-        headers: {
-          'x-forwarded-for': '192.168.1.1, 10.0.0.1',
-          'user-agent': 'Mozilla/5.0',
-        },
-      },
-    };
+    await expect(guard.assert(requestContext(ADMIN_HEADERS))).rejects.toThrow(
+      expect.objectContaining({ code: 'UNAUTHORIZED' }),
+    );
+    expect(events.emit).not.toHaveBeenCalled();
+  });
 
-    await expect(guard.assert(context, 'admin', 'delete')).rejects.toThrow(
+  it('throws FORBIDDEN and emits when the session points at a missing user row', async () => {
+    const userId = randomUUID();
+    const { guard, events } = makeGuard({ userId });
+
+    await expect(guard.assert(requestContext(ADMIN_HEADERS))).rejects.toThrow(
       expect.objectContaining({ code: 'FORBIDDEN' }),
     );
+    expect(events.emit).toHaveBeenCalledWith(
+      'identity.user.unauthorized_access',
+      expect.objectContaining({ userId, resource: 'admin', action: 'access', role: undefined }),
+    );
+  });
+});
 
+describe('AdminGuard.assert - static role fallback (real PG)', () => {
+  it('returns the caller for an admin with a granted permission', async () => {
+    const userId = await seedUser('admin');
+    const { guard, events } = makeGuard({ userId });
+
+    const caller = await guard.assert(requestContext(ADMIN_HEADERS), 'admin', 'delete');
+
+    expect(caller).toMatchObject({
+      userId,
+      role: 'admin',
+      ip: '127.0.0.1',
+      userAgent: 'Mozilla/5.0',
+    });
+    expect(events.emit).not.toHaveBeenCalled();
+  });
+
+  it('passes the coarse check for an admin with no resource requested', async () => {
+    const userId = await seedUser('admin');
+    const { guard } = makeGuard({ userId });
+
+    await expect(guard.assert(requestContext(ADMIN_HEADERS))).resolves.toMatchObject({
+      role: 'admin',
+    });
+  });
+
+  it('denies a support role a permission its static role lacks', async () => {
+    const userId = await seedUser('support');
+    const { guard, events } = makeGuard({ userId });
+
+    await expect(
+      guard.assert(
+        requestContext({ 'x-forwarded-for': '192.168.1.1, 10.0.0.1', 'user-agent': 'Mozilla/5.0' }),
+        'admin',
+        'delete',
+      ),
+    ).rejects.toThrow(expect.objectContaining({ code: 'FORBIDDEN' }));
     expect(events.emit).toHaveBeenCalledWith(
       'identity.user.unauthorized_access',
       expect.objectContaining({
-        userId: 'u1',
+        userId,
         resource: 'admin',
         action: 'delete',
         ip: '192.168.1.1',
-        userAgent: 'Mozilla/5.0',
         role: 'support',
       }),
     );
   });
 
-  it('emits identity.user.unauthorized_access when user has no static role (e.g. player role)', async () => {
-    const drizzle = mockDb({
-      execute: vi.fn().mockResolvedValue({
-        rows: [{ id: 'u1', role: 'player' }],
-      }),
-    });
-    const sessions = mock<SessionResolver>({
-      resolveUserId: vi.fn().mockResolvedValue('u1'),
-    });
-    const events = mock<EventBus>({
-      emit: vi.fn(),
-    });
+  it('allows a support role the permissions it does hold', async () => {
+    const userId = await seedUser('support');
+    const { guard } = makeGuard({ userId });
 
-    const guard = new AdminGuard(drizzle, sessions, undefined, events);
-    const context = {
-      request: {
-        headers: {
-          'x-real-ip': '127.0.0.1',
-          'user-agent': 'Mozilla/5.0',
-        },
-      },
-    };
+    await expect(
+      guard.assert(requestContext(ADMIN_HEADERS), 'player', 'view'),
+    ).resolves.toMatchObject({ role: 'support' });
+  });
 
-    await expect(guard.assert(context, 'admin', 'delete')).rejects.toThrow(
+  it('denies a role with no entry in the static table', async () => {
+    const userId = await seedUser('player');
+    const { guard, events } = makeGuard({ userId });
+
+    await expect(guard.assert(requestContext(ADMIN_HEADERS), 'admin', 'delete')).rejects.toThrow(
       expect.objectContaining({ code: 'FORBIDDEN' }),
     );
-
     expect(events.emit).toHaveBeenCalledWith(
       'identity.user.unauthorized_access',
-      expect.objectContaining({
-        userId: 'u1',
-        resource: 'admin',
-        action: 'delete',
-        ip: '127.0.0.1',
-        userAgent: 'Mozilla/5.0',
-        role: 'player',
-      }),
+      expect.objectContaining({ userId, role: 'player', action: 'delete' }),
     );
   });
 
-  it('emits identity.user.unauthorized_access with default admin:access when coarse check fails for player role', async () => {
-    const drizzle = mockDb({
-      execute: vi.fn().mockResolvedValue({
-        rows: [{ id: 'u1', role: 'player' }],
-      }),
-    });
-    const sessions = mock<SessionResolver>({
-      resolveUserId: vi.fn().mockResolvedValue('u1'),
-    });
-    const events = mock<EventBus>({
-      emit: vi.fn(),
-    });
+  it('denies the coarse check for a non-admin role with the default admin:access pair', async () => {
+    const userId = await seedUser('player');
+    const { guard, events } = makeGuard({ userId });
 
-    const guard = new AdminGuard(drizzle, sessions, undefined, events);
-    const context = {
-      request: {
-        headers: {
-          'x-real-ip': '127.0.0.1',
-          'user-agent': 'Mozilla/5.0',
-        },
-      },
-    };
-
-    await expect(guard.assert(context)).rejects.toThrow(
+    await expect(guard.assert(requestContext(ADMIN_HEADERS))).rejects.toThrow(
       expect.objectContaining({ code: 'FORBIDDEN' }),
     );
-
     expect(events.emit).toHaveBeenCalledWith(
       'identity.user.unauthorized_access',
-      expect.objectContaining({
-        userId: 'u1',
-        resource: 'admin',
-        action: 'access',
-        ip: '127.0.0.1',
-        userAgent: 'Mozilla/5.0',
-        role: 'player',
-      }),
+      expect.objectContaining({ resource: 'admin', action: 'access', role: 'player' }),
+    );
+  });
+});
+
+describe('AdminGuard.assert - DB grants (real PG)', () => {
+  it('allows a permission the resolver grants', async () => {
+    const userId = await seedUser('admin');
+    const { guard } = makeGuard({ userId, grants: [{ resource: 'admin', action: 'delete' }] });
+
+    await expect(
+      guard.assert(requestContext(ADMIN_HEADERS), 'admin', 'delete'),
+    ).resolves.toMatchObject({ userId });
+  });
+
+  it('denies and emits when the resolver returns no matching grant', async () => {
+    const userId = await seedUser('admin');
+    const { guard, events } = makeGuard({ userId, grants: [] });
+
+    await expect(guard.assert(requestContext(ADMIN_HEADERS), 'admin', 'delete')).rejects.toThrow(
+      expect.objectContaining({ code: 'FORBIDDEN' }),
+    );
+    expect(events.emit).toHaveBeenCalledWith(
+      'identity.user.unauthorized_access',
+      expect.objectContaining({ userId, resource: 'admin', action: 'delete', role: 'admin' }),
+    );
+  });
+
+  it('lets DB grants override what the static role would have allowed', async () => {
+    const userId = await seedUser('admin');
+    const { guard } = makeGuard({ userId, grants: [{ resource: 'player', action: 'view' }] });
+
+    await expect(guard.assert(requestContext(ADMIN_HEADERS), 'admin', 'delete')).rejects.toThrow(
+      expect.objectContaining({ code: 'FORBIDDEN' }),
     );
   });
 });

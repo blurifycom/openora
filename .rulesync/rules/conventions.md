@@ -43,17 +43,17 @@ Goal: code that is clean, separated, scalable, and extendible - easy to understa
   import type { Player } from '@openora/core/contracts'; // good
   ```
 - **No type casts (`as`) to silence the compiler - fix the root cause.** (`as const` is fine.) `as unknown as X` turns type-checking off entirely. If a symbol needs a type, give it one at the source (`createToken<T>()`), don't cast at use sites. Exactly two sanctioned exceptions:
-  1. **Test doubles** - route through the `mock` / `mockDb` / `readPrivate` helpers (`packages/core/src/testing/mock.ts`) so the cast lives in one audited place, never inline in a test.
+  1. **Test doubles** - route through the `mock` helper (`packages/core/src/testing/mock.ts`) so the cast lives in one audited place, never inline in a test.
   2. **Third-party type-inference boundaries** a library gives you no honest way to satisfy - one cast with a one-line `// Library boundary:` note.
 
   ```ts
   // bad
   const user = data as User;
-  const svc = { db } as unknown as DrizzleService;
+  const directory = { lookupPlayers } as unknown as AdminUserDirectory;
   // good
   const user = UserSchema.parse(data);
   const TOKEN = createToken<Config>('CONFIG');
-  const svc = mockDb(db); // test double, cast confined to the helper
+  const directory = mock<AdminUserDirectory>({ lookupPlayers }); // cast confined to the helper
   ```
 
 - **Never `!` non-null assertions** - narrow or restructure instead (lint: `typescript/no-non-null-assertion`).
@@ -148,9 +148,13 @@ Goal: code that is clean, separated, scalable, and extendible - easy to understa
 
 ## 5. Comments and documentation
 
-- **Default to zero comments.** Add one only when the code can't say it: architectural context (why this order, why not the obvious approach) or an implicit constraint/invariant/workaround. `// Stripe rounds half-to-even; mirror it so our totals reconcile.` - never `// increment the counter`.
-- **If a block needs a comment to be understood, rename/extract first.**
-- **No section-divider comments** (`// ---`, `// ===`).
+- **Zero comments. A comment is an exception you must justify, not a nicety.** Assume the answer is "no comment" and let the code carry the meaning.
+- **The only thing that earns one: a fact the code CANNOT contain** - an external system's behaviour, a third-party bug, a spec/regulatory constraint. The test is whether a careful reader would otherwise "fix" the code and break it. `// Stripe rounds half-to-even; mirror it so our totals reconcile.`
+- **A reason is not a fact - it does not earn a comment.** Why this order, why 2 retries and not 4, why not the obvious approach, what a block does, what changed: all of that goes in the commit message, the PR description, or an ADR. Those are versioned and reviewed; an inline rationale is neither, and it rots in place. Naming the thing well (`PLAYER_FACING_TIMEOUT_MS`) beats a paragraph above it.
+- **If a block needs a comment to be understood, rename or extract first** - a comment is the fallback after that fails, never the first move. Writing one is the signal that the naming or the decomposition is wrong.
+- **Never in tests.** A test name states the behaviour and the assertions state the evidence. Seeded values, fixture choices and timing tricks get named constants or helpers, not narration.
+- **Same bar in config, CI and infra files** (`turbo.json`, workflow YAML, compose). Step names and keys are self-describing; step ordering and tuning rationale belong in the commit that introduced them.
+- **Never** restate a name (`// increment the counter`), narrate steps (`// step 2`), announce edits (`// added for X`), or divide sections (`// ---`, `// ===`).
 - **JSDoc on every exported function/class >~15 lines or with non-obvious params.** Multiline `/** ... */` block (opening and closing on their own lines). Document the surprising contract, not the name.
 - **`// TODO:` for deferred work, `// FIXME:` for known-broken code** - greppable, with context and an issue key where one exists. Never bare.
   ```ts
@@ -198,10 +202,12 @@ Headless repo - only the SDK consumption layer (hooks, typed client, auth, realt
 
 ## 10. Testing
 
-- **Co-locate as `__tests__/<name>.test.ts` (Vitest).** Service tests use a vi-mocked Drizzle.
-- **Test behaviour, not implementation** - assertions survive a safe refactor: `expect(await service.get(id)).toEqual(user)`, not `expect(service._cache.size).toBe(1)`.
+- **Co-locate as `__tests__/<name>.test.ts` (Vitest).**
+- **Anything that touches the database is tested against real Postgres** - `createTestDb([migrate])` (`@openora/core/testing`) gives the file its own ephemeral database; `createTestRedis()` gives it a per-worker Redis logical DB. Never fake a query builder: a mocked chain proves a call order, not a result, so it survives the regressions that matter (unique-index dedupe, `FOR UPDATE` under concurrency, conditional atomic updates, cache invalidation).
+- **What stays mocked:** external vendors (PSP, KYC, email, SMS, better-auth) and cross-module ports (`WALLET_COMMANDS`, `IdentityReader`, `EventBus`, `Logger`) - via the shared doubles in `packages/core/src/testing/mock.ts` (`mock`, `makeEventBus`, `makeAuditWriter`, `makeAdminGuard`, `testContext`), never a hand-rolled one in the test file. Engine (`server/**`) tests cannot import a domain schema (ADR-0024/0025), so they use the in-process implementations re-exported from `@openora/core/testing`.
+- **Test behaviour, not implementation** - assert the resulting rows, cache state, and return value, not that a builder method was called: `expect(await service.get(id)).toEqual(user)`, not `expect(db.select).toHaveBeenCalled()`.
 - **Cover new logic as part of the change** - unit for pure fns; always include authz negatives.
-- **Deterministic and isolated:** no shared mutable state, no real network, seedable data.
+- **Deterministic and isolated:** no shared mutable state, no real network, seedable data. Real-infra suites stay parallel-safe - own your database and Redis keys, never assume an empty shared one.
 
 ## 11. Dependencies
 

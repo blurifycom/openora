@@ -38,6 +38,18 @@ type AssignPlayerTagArgs = AssignPlayerTagInput & {
   assignMetadata?: PlayerTagAssignMetadata | null;
 };
 
+function pgErrorCode(e: unknown): string | undefined {
+  if (e instanceof DatabaseError) {
+    return e.code;
+  }
+  // drizzle-orm wraps every driver-thrown error in DrizzleQueryError, exposing the
+  // real pg DatabaseError only via `.cause`.
+  if (e instanceof Error && e.cause instanceof DatabaseError) {
+    return e.cause.code;
+  }
+  return undefined;
+}
+
 export const TagNotFoundError = makeNotFoundError('Tag');
 export const TagAlreadyInUseError = alreadyInUseError('Tag');
 export const TagAssignmentNotFoundError = makeNotFoundError('Tag Assignment');
@@ -137,7 +149,7 @@ export class TagService implements PlayerTags {
       void this.event.emit('tag.created', { key: result.key, isSticky: result.isSticky, actorId });
       return result;
     } catch (e) {
-      if (e instanceof DatabaseError && e.code === '23505') {
+      if (pgErrorCode(e) === '23505') {
         throw new TagKeyConflictError();
       }
       mapDbError(e);
@@ -157,7 +169,7 @@ export class TagService implements PlayerTags {
       void this.event.emit('tag.deleted', { key: args.key, actorId });
       return true;
     } catch (e) {
-      if (e instanceof DatabaseError && e.code === '23503') {
+      if (pgErrorCode(e) === '23503') {
         throw new TagInUseError();
       }
       mapDbError(e);

@@ -72,4 +72,4 @@ Error factories keep the SAME exported const identifier (`export const WalletNot
 
 ## Testing
 
-Co-locate as `__tests__/<name>.test.ts` (Vitest); service tests use a vi-mocked Drizzle (via the `mock`/`mockDb` helpers in `packages/core/src/testing/mock.ts`). Keep new logic covered.
+Co-locate as `__tests__/<name>.test.ts` (Vitest). A service test runs against real Postgres - `createTestDb([migrate])` from `@openora/core/testing` per file, plus `createTestRedis()` where the service caches or rate-limits. Only external vendors and cross-module ports are doubled, through the `mock` helper (`packages/core/src/testing/mock.ts`). Keep new logic covered; details in `conventions` section 10.

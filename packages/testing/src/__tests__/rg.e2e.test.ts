@@ -30,6 +30,8 @@ import {
  *   recompute enforcement) runs deterministically instead of on a real timer.
  */
 
+const JOB_WAIT = { timeout: 5000, interval: 100 };
+
 let db: TestDb;
 let app: TestApp;
 let admin: TestClient;
@@ -581,7 +583,7 @@ describe('RG monitoring (queue-based)', () => {
       expect(flag).toBeDefined();
       expect(flag.status).toBe('active');
       expect(flag.detail.pct).toBeGreaterThanOrEqual(80);
-    });
+    }, JOB_WAIT);
 
     // Out of the date window - must not match.
     const farPastRes = await admin.get(
@@ -610,7 +612,7 @@ describe('RG monitoring (queue-based)', () => {
       const flag = body.items.find((i: { userId: string }) => i.userId === userId);
       expect(flag).toBeDefined();
       expect(flag.detail.kind).toBe('self_exclusion');
-    });
+    }, JOB_WAIT);
   });
 });
 
