@@ -15,6 +15,20 @@
       "when": 1783854980666,
       "tag": "0001_neat_iron_monger",
       "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "7",
+      "when": 1784268208305,
+      "tag": "0002_silent_skaar",
+      "breakpoints": true
+    },
+    {
+      "idx": 3,
+      "version": "7",
+      "when": 1784892288786,
+      "tag": "0003_overconfident_guardian",
+      "breakpoints": true
     }
   ]
 }

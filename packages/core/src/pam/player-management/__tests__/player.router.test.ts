@@ -11,7 +11,7 @@ import { player } from '@openora/core/pam/schema/profile';
 import { migrate as migrateProfile } from '@openora/core/pam/migrate/profile';
 import { tag, playerTag } from '@openora/core/pam/schema/tag';
 import { migrate as migrateTag } from '@openora/core/pam/migrate/tag';
-import { mock, makeAdminGuard, testContext } from '../../../testing/mock.js';
+import { mock, makeAdminGuard, makeEventBus, testContext } from '../../../testing/mock.js';
 import { createPlayerRouter } from '../router/index.js';
 import { PlayerService } from '../service/player.service.js';
 
@@ -39,7 +39,7 @@ const guardAllowing = (allow: readonly string[]) =>
 
 function build(adminGuard: AdminGuard) {
   const kycStatusWriter = mock<KycStatusWriter>({ setStatus: vi.fn() });
-  const service = new PlayerService(db.drizzle, kycStatusWriter);
+  const service = new PlayerService(db.drizzle, kycStatusWriter, makeEventBus());
   return { router: createPlayerRouter(service, adminGuard), kycStatusWriter };
 }
 

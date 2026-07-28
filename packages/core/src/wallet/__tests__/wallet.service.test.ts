@@ -5,6 +5,7 @@ import type {
   AdminUserDirectory,
   PaymentAdapter,
   AdminPlayerSummary,
+  TagEvaluationCommands,
 } from '@openora/core/contracts';
 import { createTestDb, type TestDb } from '@openora/core/testing';
 import { mock, makeEventBus, NO_CLIENT_META, makeAuditWriter } from '../../testing/mock.js';
@@ -269,6 +270,60 @@ describe('WalletService.withdraw (real PG)', () => {
     expect(settled.filter((s) => s.status === 'fulfilled')).toHaveLength(1);
     expect(await balanceOf(w.userId)).toBe(40);
     expect(await txRows(w.id)).toHaveLength(1);
+  });
+});
+
+describe('WalletService.withdraw - synchronous tag evaluation (TAG_EVALUATION_COMMANDS) (real PG)', () => {
+  it('calls evaluateWithdrawalRequested on the withdrawal transaction handle, with userId/amount, before returning', async () => {
+    const tagEvaluationCommands = mock<TagEvaluationCommands>({
+      evaluateWithdrawalRequested: vi.fn().mockResolvedValue(undefined),
+    });
+    const { svc } = makeService({ tagEvaluationCommands });
+    const w = await seedWallet({ balance: '100' });
+
+    const result = await svc.withdraw({
+      userId: w.userId,
+      amount: '40',
+      currency: 'USD',
+      ...NO_CLIENT_META,
+    });
+
+    expect(result.status).toBe('pending');
+    expect(tagEvaluationCommands.evaluateWithdrawalRequested).toHaveBeenCalledWith(
+      expect.anything(),
+      { userId: w.userId, amount: '40' },
+    );
+  });
+
+  it('is never called when unbound (matches the pre-existing async-event-only behavior)', async () => {
+    const { svc } = makeService();
+    const w = await seedWallet({ balance: '100' });
+
+    const result = await svc.withdraw({
+      userId: w.userId,
+      amount: '40',
+      currency: 'USD',
+      ...NO_CLIENT_META,
+    });
+
+    expect(result.status).toBe('pending');
+  });
+
+  it('propagates an unexpected error and aborts the withdrawal (fail-closed: a review-gate failure must block the withdrawal, not silently skip review)', async () => {
+    const dbError = new Error('tag module db unavailable');
+    const tagEvaluationCommands = mock<TagEvaluationCommands>({
+      evaluateWithdrawalRequested: vi.fn().mockRejectedValue(dbError),
+    });
+    const { svc, events, psp } = makeService({ tagEvaluationCommands });
+    const w = await seedWallet({ balance: '100' });
+
+    await expect(
+      svc.withdraw({ userId: w.userId, amount: '40', currency: 'USD', ...NO_CLIENT_META }),
+    ).rejects.toBe(dbError);
+    // The transaction rolled back before the requested event/auto-approval step ran.
+    expect(events.emit).not.toHaveBeenCalled();
+    expect(psp.processWithdrawal).not.toHaveBeenCalled();
+    expect(await balanceOf(w.userId)).toBe(100);
   });
 });
 

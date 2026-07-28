@@ -16,6 +16,13 @@ export const DEFAULT_TAG_RULES: UpsertTagRuleInput[] = [
     thresholdCount: null,
   },
   {
+    tagKey: 'bonus_abuser',
+    isEnabled: true,
+    threshold: null,
+    thresholdDays: null,
+    thresholdCount: null,
+  },
+  {
     tagKey: 'high_risk',
     isEnabled: false,
     threshold: null,
@@ -39,6 +46,27 @@ export const DEFAULT_TAG_RULES: UpsertTagRuleInput[] = [
   {
     tagKey: 'kyc_rejected',
     isEnabled: true,
+    threshold: null,
+    thresholdDays: null,
+    thresholdCount: null,
+  },
+  {
+    tagKey: 'multi_account',
+    isEnabled: true,
+    threshold: null,
+    thresholdDays: null,
+    thresholdCount: null,
+  },
+  {
+    tagKey: 'dormant_high_roller',
+    isEnabled: false,
+    threshold: null,
+    thresholdDays: null,
+    thresholdCount: null,
+  },
+  {
+    tagKey: 'withdrawal_review',
+    isEnabled: false,
     threshold: null,
     thresholdDays: null,
     thresholdCount: null,

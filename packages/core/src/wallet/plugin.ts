@@ -10,6 +10,7 @@ import {
   PLATFORM_CONFIG,
   RATE_LIMITER,
   PLAYER_TAGS,
+  TAG_EVALUATION_COMMANDS,
   PLAY_ELIGIBILITY,
   AUDIT_WRITER,
 } from '@openora/core/contracts';
@@ -23,9 +24,9 @@ import { HmacPaymentWebhookVerifier } from './adapters/hmac-payment-webhook-veri
 
 export default definePlugin({
   // NOT dependsOn 'tag': that would cycle (tag hard-depends on wallet's WALLET_READER).
-  // wallet's use of tag's PLAYER_TAGS is optional and resolved lazily in the router
-  // factory (`c.has(PLAYER_TAGS)`), which runs after every plugin has registered - so
-  // the port is bound by then regardless of load order.
+  // wallet's use of tag's PLAYER_TAGS / TAG_EVALUATION_COMMANDS is optional and resolved
+  // lazily in the router factory (`c.has(...)`), which runs after every plugin has
+  // registered - so both ports are bound by then regardless of load order.
   id: 'wallet',
   dependsOn: ['identity', 'audit'],
   register(ctx) {
@@ -53,6 +54,9 @@ export default definePlugin({
           platformConfig: c.has(PLATFORM_CONFIG) ? c.get(PLATFORM_CONFIG) : undefined,
           limiter: c.get(RATE_LIMITER),
           riskTags: c.has(PLAYER_TAGS) ? c.get(PLAYER_TAGS) : undefined,
+          tagEvaluationCommands: c.has(TAG_EVALUATION_COMMANDS)
+            ? c.get(TAG_EVALUATION_COMMANDS)
+            : undefined,
           audit: c.get(AUDIT_WRITER),
         }),
         c.get(ADMIN_GUARD),

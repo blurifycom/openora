@@ -11,8 +11,11 @@ import { createTagRouter } from '../router/index.js';
 import { TagService } from '../service/tag.service.js';
 import { TagRuleService } from '../service/tag-rule.service.js';
 
-const CTX = testContext();
+const UID = '11111111-1111-4111-8111-111111111111';
 const CALLER = '55555555-5555-4555-8555-555555555555';
+
+const CTX = testContext();
+const AUTHED_CTX = testContext({ auth: { userId: CALLER } });
 
 const RULE_INPUT = {
   tagKey: 'high_roller' as TagKey,
@@ -73,6 +76,72 @@ describe('tag router authz', () => {
     );
     expect(await storedRules()).toHaveLength(0);
   });
+
+  it('rejects listPlayerTags for a non-privileged caller', async () => {
+    const { router } = build(denyingGuard());
+
+    await expect(
+      call(router.listPlayerTags, { playerId: UID, page: 1, limit: 20 }, { context: CTX }),
+    ).rejects.toBeInstanceOf(ORPCError);
+  });
+
+  it('rejects listAssignableTags for a non-privileged caller', async () => {
+    const { router } = build(denyingGuard());
+
+    await expect(
+      call(router.listAssignableTags, { playerId: UID }, { context: CTX }),
+    ).rejects.toBeInstanceOf(ORPCError);
+  });
+
+  it('rejects createTag for a non-privileged caller', async () => {
+    const { router } = build(denyingGuard());
+
+    await expect(
+      call(router.createTag, { key: 'high_roller', isSticky: false }, { context: CTX }),
+    ).rejects.toBeInstanceOf(ORPCError);
+  });
+
+  it('rejects assignPlayerTag for a non-privileged caller', async () => {
+    const { router } = build(denyingGuard());
+
+    await expect(
+      call(
+        router.assignPlayerTag,
+        {
+          playerId: UID,
+          tagKey: 'high_roller',
+          assignReason: 'manual review',
+          assignActor: 'manual',
+        },
+        { context: CTX },
+      ),
+    ).rejects.toBeInstanceOf(ORPCError);
+  });
+
+  it('rejects deleteTag for a non-privileged caller', async () => {
+    const { router } = build(denyingGuard());
+
+    await expect(
+      call(router.deleteTag, { key: 'high_roller' }, { context: CTX }),
+    ).rejects.toBeInstanceOf(ORPCError);
+  });
+
+  it('rejects removePlayerTag for a non-privileged caller', async () => {
+    const { router } = build(denyingGuard());
+
+    await expect(
+      call(
+        router.removePlayerTag,
+        {
+          playerId: UID,
+          tagKey: 'high_roller',
+          removalReason: 'manual review',
+          removalActor: 'manual',
+        },
+        { context: CTX },
+      ),
+    ).rejects.toBeInstanceOf(ORPCError);
+  });
 });
 
 describe('tag router rule administration', () => {
@@ -116,5 +185,59 @@ describe('tag router rule administration', () => {
 
     await expect(call(router.upsertTagRule, RULE_INPUT, { context: CTX })).rejects.toThrow();
     expect(await storedRules()).toHaveLength(0);
+  });
+});
+
+describe('tag router error mapping', () => {
+  it('maps TagAlreadyInUseError to a CONFLICT response instead of a raw 500', async () => {
+    const { router } = build(allowingGuard());
+    await seedTag('high_roller');
+    const assignInput = {
+      playerId: UID,
+      tagKey: 'high_roller' as TagKey,
+      assignReason: 'manual review',
+      assignActor: 'manual' as const,
+    };
+    await call(router.assignPlayerTag, assignInput, { context: AUTHED_CTX });
+
+    await expect(
+      call(router.assignPlayerTag, assignInput, { context: AUTHED_CTX }),
+    ).rejects.toMatchObject({ code: 'CONFLICT' });
+  });
+
+  it('maps TagKeyConflictError (duplicate tag key) to a CONFLICT response', async () => {
+    const { router } = build(allowingGuard());
+    await call(router.createTag, { key: 'high_roller', isSticky: false }, { context: AUTHED_CTX });
+
+    await expect(
+      call(router.createTag, { key: 'high_roller', isSticky: false }, { context: AUTHED_CTX }),
+    ).rejects.toMatchObject({ code: 'CONFLICT' });
+  });
+
+  it('maps TagInUseError (FK-restrict on delete) to a CONFLICT response', async () => {
+    const { router } = build(allowingGuard());
+    await seedTag('high_roller');
+    await call(
+      router.assignPlayerTag,
+      {
+        playerId: UID,
+        tagKey: 'high_roller',
+        assignReason: 'manual review',
+        assignActor: 'manual',
+      },
+      { context: AUTHED_CTX },
+    );
+
+    await expect(
+      call(router.deleteTag, { key: 'high_roller' }, { context: AUTHED_CTX }),
+    ).rejects.toMatchObject({ code: 'CONFLICT' });
+  });
+
+  it('maps TagNotFoundError (deleting a nonexistent key) to a NOT_FOUND response', async () => {
+    const { router } = build(allowingGuard());
+
+    await expect(
+      call(router.deleteTag, { key: 'high_roller' }, { context: AUTHED_CTX }),
+    ).rejects.toMatchObject({ code: 'NOT_FOUND' });
   });
 });

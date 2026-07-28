@@ -9,7 +9,7 @@ import { player } from '@openora/core/pam/schema/profile';
 import { migrate as migrateProfile } from '@openora/core/pam/migrate/profile';
 import { tag, playerTag } from '@openora/core/pam/schema/tag';
 import { migrate as migrateTag } from '@openora/core/pam/migrate/tag';
-import { mock } from '../../../testing/mock.js';
+import { mock, makeEventBus } from '../../../testing/mock.js';
 import {
   PlayerService,
   PlayerNotFoundError,
@@ -20,7 +20,8 @@ let db: TestDb;
 
 function makeService(writer: Partial<KycStatusWriter> = { setStatus: vi.fn() }) {
   const kycStatusWriter = mock<KycStatusWriter>(writer);
-  return { svc: new PlayerService(db.drizzle, kycStatusWriter), kycStatusWriter };
+  const events = makeEventBus();
+  return { svc: new PlayerService(db.drizzle, kycStatusWriter, events), kycStatusWriter, events };
 }
 
 async function seedUser(overrides: Partial<typeof user.$inferInsert> = {}) {
@@ -325,5 +326,39 @@ describe('PlayerService.update (real PG)', () => {
     await expect(
       svc.update(randomUUID(), { displayName: 'X' }, randomUUID()),
     ).rejects.toBeInstanceOf(PlayerNotFoundError);
+  });
+});
+
+describe('PlayerService.update player.level.changed emission (real PG)', () => {
+  it('emits player.level.changed with previousLevel/newLevel/actorId when level changes', async () => {
+    const { svc, events } = makeService();
+    const { player: seeded, account } = await seedPlayerWithUser({}, { level: 1 });
+
+    await svc.update(seeded.id, { level: 5 }, account.id);
+
+    expect(events.emit).toHaveBeenCalledWith('player.level.changed', {
+      userId: account.id,
+      previousLevel: 1,
+      newLevel: 5,
+      actorId: account.id,
+    });
+  });
+
+  it('does not emit when level is omitted from the patch', async () => {
+    const { svc, events } = makeService();
+    const { player: seeded, account } = await seedPlayerWithUser({}, { level: 1 });
+
+    await svc.update(seeded.id, { displayName: 'New Name' }, account.id);
+
+    expect(events.emit).not.toHaveBeenCalledWith('player.level.changed', expect.anything());
+  });
+
+  it('does not emit when level is unchanged', async () => {
+    const { svc, events } = makeService();
+    const { player: seeded, account } = await seedPlayerWithUser({}, { level: 3 });
+
+    await svc.update(seeded.id, { level: 3 }, account.id);
+
+    expect(events.emit).not.toHaveBeenCalledWith('player.level.changed', expect.anything());
   });
 });

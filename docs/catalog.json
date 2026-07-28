@@ -558,6 +558,16 @@
       ]
     },
     {
+      "category": "tag-evaluation-commands",
+      "interface": "TagEvaluationWithdrawalRequestedArgs",
+      "token": "TAG_EVALUATION_COMMANDS",
+      "status": "wired",
+      "boundIn": [
+        "packages/core/src/pam/tag/plugin.ts",
+        "packages/core/src/wallet/plugin.ts"
+      ]
+    },
+    {
       "category": "wallet-commands",
       "interface": "WalletDebitArgs",
       "token": "WALLET_COMMANDS",
@@ -631,12 +641,15 @@
     "identity.user.registered",
     "identity.user.unlocked",
     "notifications.created",
+    "player.level.changed",
     "rg.cooling_off.activated",
     "rg.cooling_off.lifted",
     "rg.exclusion.login_blocked",
     "rg.limit.set",
     "rg.self_exclusion.activated",
     "rg.self_exclusion.lifted",
+    "tag.created",
+    "tag.deleted",
     "tag.player.assigned",
     "tag.player.removed",
     "tag.rule.upserted",
@@ -970,6 +983,18 @@
       "file": "packages/core/src/contracts/schemas/reporting.ts"
     },
     {
+      "name": "HighRiskAmountBreachDetailSchema",
+      "file": "packages/core/src/pam/tag/contract/player-tag-assign-metadata.ts"
+    },
+    {
+      "name": "HighRiskAssignMetadataSchema",
+      "file": "packages/core/src/pam/tag/contract/player-tag-assign-metadata.ts"
+    },
+    {
+      "name": "HighRiskCountBreachDetailSchema",
+      "file": "packages/core/src/pam/tag/contract/player-tag-assign-metadata.ts"
+    },
+    {
       "name": "IamAssignmentSortBySchema",
       "file": "packages/core/src/iam/contract/index.ts"
     },
@@ -1198,6 +1223,10 @@
       "file": "packages/core/src/pam/player-management/contract/index.ts"
     },
     {
+      "name": "PlayerTagAssignMetadataSchema",
+      "file": "packages/core/src/pam/tag/contract/player-tag-assign-metadata.ts"
+    },
+    {
       "name": "playerTagSchema",
       "file": "packages/core/src/contracts/schemas/tag.ts"
     },
@@ -1235,6 +1264,10 @@
     },
     {
       "name": "removePlayerTagSchema",
+      "file": "packages/core/src/contracts/schemas/tag.ts"
+    },
+    {
+      "name": "replacePlayerTagSchema",
       "file": "packages/core/src/contracts/schemas/tag.ts"
     },
     {

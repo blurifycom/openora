@@ -24,6 +24,7 @@ import {
   type WalletRail,
   type PlayerTags,
   type AuditWritePort,
+  type TagEvaluationCommands,
   type TagKey,
   type User,
   type ClientMeta,
@@ -180,6 +181,11 @@ export type WalletServiceDeps = {
   limiter?: RateLimiterAdapter<RateLimitKey>;
   // Optional: bound by the tag module. If risk-flag exclusions are configured but this is absent, auto-approval fails closed.
   riskTags?: PlayerTags;
+  // Optional: bound by the tag module. Not hard-`dependsOn`-wired (would cycle - tag
+  // depends on wallet's WALLET_READER), resolved lazily like riskTags/PLAYER_TAGS above.
+  // Absent = withdrawal_review evaluation is simply skipped (matches the pre-existing
+  // async-event-only behavior when the tag module isn't loaded).
+  tagEvaluationCommands?: TagEvaluationCommands;
   // Required: the auto-approval audit trail is a regulatory invariant, so wallet hard-depends on audit.
   audit: AuditWritePort;
 };
@@ -200,6 +206,7 @@ export class WalletService {
   private readonly platformConfig?: PlatformConfig;
   private readonly limiter?: RateLimiterAdapter<RateLimitKey>;
   private readonly riskTags?: PlayerTags;
+  private readonly tagEvaluationCommands?: TagEvaluationCommands;
   private readonly audit: AuditWritePort;
 
   constructor({
@@ -210,6 +217,7 @@ export class WalletService {
     platformConfig,
     limiter,
     riskTags,
+    tagEvaluationCommands,
     audit,
   }: WalletServiceDeps) {
     this.drizzle = drizzle;
@@ -219,6 +227,7 @@ export class WalletService {
     this.platformConfig = platformConfig;
     this.limiter = limiter;
     this.riskTags = riskTags;
+    this.tagEvaluationCommands = tagEvaluationCommands;
     this.audit = audit;
   }
 
@@ -535,6 +544,15 @@ export class WalletService {
           .returning({ id: wallet.id });
         if (debited.length !== 1) {
           throw new InsufficientBalanceError(current.balance, amount);
+        }
+
+        // Synchronous, transactional withdrawal_review evaluation - on this SAME txn, so
+        // the assignment (if any) commits atomically with this withdrawal request and is
+        // guaranteed visible before maybeAutoApprove reads risk tags below. Must run
+        // BEFORE that read; never move this after the transaction returns (see
+        // TagEvaluationService.evaluateWithdrawalRequested for the race this closes).
+        if (this.tagEvaluationCommands) {
+          await this.tagEvaluationCommands.evaluateWithdrawalRequested(txn, { userId, amount });
         }
 
         return {

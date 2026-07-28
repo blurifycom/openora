@@ -284,6 +284,10 @@ export const domainEventSchemas = {
   'iam.role.assigned': iamRoleEventBase.extend({ userId: UuidSchema }),
   'iam.role.revoked': iamRoleEventBase.extend({ userId: UuidSchema }),
 
+  // Emitted after an admin creates or deletes a tag catalog definition (the tag
+  // itself, not a player assignment - see tag.player.assigned/removed for that).
+  'tag.created': z.object({ key: TagKeySchema, isSticky: z.boolean(), actorId: UuidSchema }),
+  'tag.deleted': z.object({ key: TagKeySchema, actorId: UuidSchema }),
   // Emitted after any tag is assigned to or removed from a player (both automated and manual).
   // actorId is the user performing the action (SYSTEM_ACTOR_ID for automated ops).
   'tag.player.assigned': tagPlayerEventBase,
@@ -293,6 +297,15 @@ export const domainEventSchemas = {
     tagKey: TagKeySchema,
     actorId: UuidSchema,
     after: z.record(z.string(), z.unknown()),
+  }),
+
+  // A player's level changed via the admin PlayerService.update() path. actorId is the
+  // acting admin. Consumed by the tag module to keep the single mutable `level` tag in sync.
+  'player.level.changed': z.object({
+    userId: UuidSchema,
+    previousLevel: z.number().int(),
+    newLevel: z.number().int(),
+    actorId: UuidSchema,
   }),
 } as const;
 

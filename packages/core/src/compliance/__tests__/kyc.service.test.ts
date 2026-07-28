@@ -122,6 +122,11 @@ describe('KycVerificationService.submit (real PG)', () => {
       actorId: null,
       source: 'vendor',
     });
+    const statusCallOrder = vi.mocked(statusWriter.setStatus).mock.invocationCallOrder[0];
+    const emitCallOrder = vi.mocked(events.emit).mock.invocationCallOrder[0];
+    expect(statusCallOrder).toEqual(expect.any(Number));
+    expect(emitCallOrder).toEqual(expect.any(Number));
+    expect(statusCallOrder ?? Number.POSITIVE_INFINITY).toBeLessThan(emitCallOrder ?? 0);
   });
 
   it('leaves decidedAt unset while the vendor is still deciding', async () => {

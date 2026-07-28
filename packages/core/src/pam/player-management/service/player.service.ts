@@ -5,6 +5,7 @@ import {
   findOneOrThrow,
   pageToOffset,
 } from '@openora/core/server';
+import type { EventBus } from '@openora/core/server';
 import type {
   KycStatusWriter,
   PlayerStatus,
@@ -32,6 +33,7 @@ export class PlayerService {
   constructor(
     private readonly drizzle: DrizzleService,
     private readonly kycStatusWriter: KycStatusWriter,
+    private readonly events: EventBus,
   ) {}
 
   async list({
@@ -226,6 +228,18 @@ export class PlayerService {
         new PlayerNotFoundError(playerId),
       );
     });
+
+    // Emitted AFTER commit (not inside the transaction callback, unlike the
+    // KYC_STATUS_WRITER emit above) - a level change is a best-effort fan-out, not a
+    // regulated single-writer seam, so it follows the standard post-commit event idiom.
+    if (data.level !== undefined && data.level !== existing.level) {
+      this.events.emit('player.level.changed', {
+        userId: existing.userId,
+        previousLevel: existing.level,
+        newLevel: data.level,
+        actorId,
+      });
+    }
 
     return this.fetchOneWithTags(playerId);
   }
