@@ -1,5 +1,6 @@
 import { describe, it, expect, vi } from 'vitest';
-import { mockDb } from '../../../testing/mock.js';
+import type { DrizzleService } from '@openora/core/server';
+import { mock } from '../../../testing/mock.js';
 import { DrizzleAdminGameReporting } from '../admin-reporting.js';
 
 type Row = Record<string, unknown>;
@@ -24,7 +25,7 @@ function makeDrizzle(rows: Row[]) {
   // oxlint-disable-next-line unicorn/no-thenable -- builder must be awaitable to mimic Drizzle.
   builder['then'] = (resolve: (v: Row[]) => unknown) => resolve(rows);
   const db = { ...builder } as unknown;
-  return { drizzle: mockDb(db), whereArgs, orderByArgs };
+  return { drizzle: mock<DrizzleService>({ db }), whereArgs, orderByArgs };
 }
 
 function row(over: Row = {}): Row {

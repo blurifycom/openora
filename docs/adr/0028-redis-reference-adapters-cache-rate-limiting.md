@@ -4,6 +4,8 @@
 **Status**: Accepted
 **Superseded in part by [ADR-0030](./0030-distributed-only-production-seams.md) (2026-07-16)**: the in-process fallback for `CACHE`/`RATE_LIMITER`/`JOB_QUEUE` was removed from the production path - production is distributed-only, `createApp` now requires `REDIS_URL` (auto-binding `RedisCache`/`RedisRateLimiter`/`BullMqJobQueue` exactly as decided here) or an explicit overlay binding, and throws with an actionable error otherwise. `InProcessCache`/`InProcessRateLimiter` survive as test-only doubles (`@openora/core/testing`); dev/test still runs with zero infra via `bootTestApp`. The Redis driver choice, the Lua-script atomic rate limiter, and the fail-open/fail-closed semantics below are unchanged.
 
+> **Update (2026-07-25)**: [ADR-0032](./0032-tests-run-the-production-seams.md) deleted `InProcessCache`/`InProcessRateLimiter` and ended the zero-infra path - `bootTestApp` binds `RedisCache`/`RedisRateLimiter`, so Redis is now a prerequisite for the suite. The driver choice and the semantics below are unchanged.
+
 ## Context
 
 Caching (`CACHE`) and rate limiting (`RATE_LIMITER`) live behind DI ports in

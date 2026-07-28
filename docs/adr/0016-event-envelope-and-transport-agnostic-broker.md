@@ -5,6 +5,8 @@
 **Amended by ADR-0026 (2026-06-18)**: the envelope's `tenantId` field was removed when the platform went single-tenant. `eventId`/`topic`/`payload`/`occurredAt`/`schemaVersion` + optional `orderingKey`/`traceId` remain.
 **Superseded in part by [ADR-0030](./0030-distributed-only-production-seams.md) (2026-07-16)**: the in-process `InMemoryBroker` default was removed from the production path - production is distributed-only and `createApp` throws unless a durable `MESSAGE_BROKER` is bound. `REDIS_URL` auto-binds the in-core `RedisStreamsBroker` reference driver; RabbitMQ/Kafka remain overlay swaps, and `InMemoryBroker` survives as a test-only double in `@openora/core/testing`. The envelope shape, `MessageBrokerAdapter` interface, and the Kafka/Redpanda forward-mapping table are unchanged.
 
+> **Update (2026-07-25)**: [ADR-0032](./0032-tests-run-the-production-seams.md) deleted `InMemoryBroker` - every tier binds `RedisStreamsBroker`. The envelope shape and the adapter interface are still exactly as decided here.
+
 ## Context
 
 ADR-0010 chose event-driven inter-module communication behind a `MESSAGE_BROKER`

@@ -1,261 +1,372 @@
-import { describe, it, expect, vi } from 'vitest';
-import { KycVerificationService, type KycVerificationDeps } from '../service/kyc.service.js';
-import { CumulativeDepositReKycTrigger } from '../service/re-kyc-trigger.js';
-import type { DrizzleService } from '@openora/core/server';
-import type { KycVendorStatus } from '@openora/core/contracts';
-import { mock, mockDb } from '../../testing/mock.js';
+import { describe, it, expect, vi, beforeAll, afterAll, beforeEach } from 'vitest';
+import { randomUUID } from 'node:crypto';
+import { desc, eq, sql } from 'drizzle-orm';
+import type {
+  KycAdapter,
+  KycStatusWriter,
+  KycVendorStatus,
+  PlatformConfig,
+} from '@openora/core/contracts';
+import { createTestDb, type TestDb } from '@openora/core/testing';
+import { player } from '@openora/core/pam/schema/profile';
+import { wallet, walletTransaction } from '@openora/core/wallet/schema';
+import { migrate as migrateProfile } from '@openora/core/pam/migrate/profile';
+import { migrate as migrateWallet } from '@openora/core/wallet/migrate';
+import { mock, makeEventBus } from '../../testing/mock.js';
+import { migrate } from '../migrate.js';
+import { kycVerification } from '../schema/index.js';
+import { KycVerificationService } from '../service/kyc.service.js';
 
-// A chainable Drizzle stub: every builder method returns the builder; awaiting it yields
-// `selectResult`, while `.returning()` yields `insertResult`.
-function makeDb(selectResult: unknown, insertResult: unknown): DrizzleService {
-  const builder: unknown = new Proxy(function () {}, {
-    get(_t, prop) {
-      if (prop === 'then') {
-        return (res: (v: unknown) => unknown) => res(selectResult);
-      }
-      if (prop === 'returning') {
-        return () => Promise.resolve(insertResult);
-      }
-      return () => builder;
-    },
-    apply: () => builder,
+let db: TestDb;
+
+type AdapterResult = { referenceId: string; status: KycVendorStatus; verificationUrl?: string };
+
+function makeService(options: { adapter?: Partial<AdapterResult>; config?: PlatformConfig } = {}) {
+  const events = makeEventBus();
+  const adapterResult: AdapterResult = {
+    referenceId: randomUUID(),
+    status: 'approved',
+    ...options.adapter,
+  };
+  const kycAdapter = mock<KycAdapter>({
+    submit: vi.fn(async () => adapterResult),
+    getStatus: vi.fn(async () => adapterResult.status),
   });
-  return mockDb(builder);
+  const statusWriter = mock<KycStatusWriter>({ setStatus: vi.fn(async () => undefined) });
+  const svc = new KycVerificationService({
+    drizzle: db.drizzle,
+    events: events,
+    kycAdapter,
+    statusWriter,
+    ...(options.config ? { platformConfig: options.config } : {}),
+  });
+  return { svc, events, kycAdapter, statusWriter, adapterResult };
 }
 
-function makeEvents() {
-  return { emit: vi.fn(), on: vi.fn() };
+const passportSubmission = { documents: [{ type: 'passport' as const, frontUrl: 'https://f' }] };
+
+async function seedPlayer(overrides: Partial<typeof player.$inferInsert> = {}) {
+  const [row] = await db.drizzle.db
+    .insert(player)
+    .values({
+      userId: randomUUID(),
+      displayName: 'Player',
+      currency: 'USD',
+      kycStatus: 'verified',
+      ...overrides,
+    })
+    .returning();
+  return row!;
 }
 
-function makeAdapter(status: KycVendorStatus = 'approved') {
-  return {
-    submit: vi.fn().mockResolvedValue({ referenceId: 'ref-1', status }),
-    getStatus: vi.fn().mockResolvedValue(status),
-  };
+async function seedDeposit(userId: string, amount: string, currency = 'USD') {
+  const [walletRow] = await db.drizzle.db
+    .insert(wallet)
+    .values({ userId, balance: amount, currency })
+    .onConflictDoNothing()
+    .returning();
+  const [existing] = await db.drizzle.db.select().from(wallet).where(eq(wallet.userId, userId));
+  await db.drizzle.db.insert(walletTransaction).values({
+    walletId: (walletRow ?? existing)!.id,
+    type: 'deposit',
+    amount,
+    currency,
+    status: 'completed',
+  });
 }
 
-function makeWriter() {
-  return { setStatus: vi.fn() };
+async function verificationsOf(userId: string) {
+  return db.drizzle.db
+    .select()
+    .from(kycVerification)
+    .where(eq(kycVerification.userId, userId))
+    .orderBy(desc(kycVerification.createdAt));
 }
 
-function fullRow(overrides: Record<string, unknown> = {}) {
-  const now = new Date();
-  return {
-    id: 'kyc-1',
-    userId: 'user-1',
-    provider: 'mock',
-    referenceId: 'ref-1',
-    status: 'pending',
-    documentTypes: ['passport'],
-    decisionReason: null,
-    triggeredBy: 'submission',
-    submittedAt: now,
-    decidedAt: null,
-    createdAt: now,
-    updatedAt: now,
-    ...overrides,
-  };
-}
+beforeAll(async () => {
+  db = await createTestDb([migrate, migrateProfile, migrateWallet]);
+});
 
-function newSvc(opts: {
-  db: DrizzleService;
-  events?: ReturnType<typeof makeEvents>;
-  adapter?: ReturnType<typeof makeAdapter>;
-  writer?: ReturnType<typeof makeWriter>;
-  config?: unknown;
-}) {
-  return new KycVerificationService(
-    mock<KycVerificationDeps>({
-      drizzle: opts.db,
-      events: opts.events ?? makeEvents(),
-      kycAdapter: opts.adapter ?? makeAdapter(),
-      statusWriter: opts.writer ?? makeWriter(),
-      platformConfig: opts.config,
-    }),
+afterAll(async () => {
+  await db.drop();
+});
+
+beforeEach(async () => {
+  await db.drizzle.db.execute(
+    sql`TRUNCATE ${kycVerification}, ${walletTransaction}, ${wallet}, ${player} RESTART IDENTITY CASCADE`,
   );
-}
+});
 
-describe('KycVerificationService.submit', () => {
-  it('inserts a record and emits compliance.kyc.submitted', async () => {
-    const events = makeEvents();
-    const writer = makeWriter();
-    const adapter = makeAdapter('approved');
-    const svc = newSvc({
-      db: makeDb([], [fullRow({ status: 'verified', decidedAt: new Date() })]),
-      events,
-      adapter,
-      writer,
+describe('KycVerificationService.submit (real PG)', () => {
+  it('appends a decided record, emits submitted, and pushes the status through the writer', async () => {
+    const { svc, events, statusWriter, adapterResult } = makeService();
+    const userId = randomUUID();
+
+    const result = await svc.submit(userId, passportSubmission);
+
+    const rows = await verificationsOf(userId);
+    expect(rows).toHaveLength(1);
+    expect(rows[0]).toMatchObject({
+      referenceId: adapterResult.referenceId,
+      status: 'approved',
+      triggeredBy: 'submission',
+      documentTypes: ['passport'],
     });
-    const dto = await svc.submit('user-1', { documents: [{ type: 'passport', frontUrl: 'u' }] });
-    expect(adapter.submit).toHaveBeenCalledWith('user-1', [
-      { type: 'passport', frontUrl: 'u', backUrl: undefined },
-    ]);
+    expect(rows[0]?.decidedAt).toBeInstanceOf(Date);
+    expect(result.status).toBe('approved');
     expect(events.emit).toHaveBeenCalledWith(
       'compliance.kyc.submitted',
-      expect.objectContaining({ userId: 'user-1', referenceId: 'ref-1' }),
+      expect.objectContaining({ userId, referenceId: adapterResult.referenceId }),
     );
-    expect(writer.setStatus).toHaveBeenCalledWith(
-      'user-1',
-      'verified',
-      expect.objectContaining({ source: 'vendor' }),
+    expect(statusWriter.setStatus).toHaveBeenCalledWith(
+      userId,
+      'approved',
+      { actorId: null, source: 'vendor' },
+      expect.anything(),
     );
-    expect(dto.status).toBe('verified');
+    const statusCallOrder = vi.mocked(statusWriter.setStatus).mock.invocationCallOrder[0];
+    const emitCallOrder = vi.mocked(events.emit).mock.invocationCallOrder[0];
+    expect(statusCallOrder).toEqual(expect.any(Number));
+    expect(emitCallOrder).toEqual(expect.any(Number));
+    expect(statusCallOrder ?? Number.POSITIVE_INFINITY).toBeLessThan(emitCallOrder ?? 0);
   });
 
-  it('passes verificationUrl through from a hosted-session adapter result', async () => {
-    const adapter = {
-      submit: vi.fn().mockResolvedValue({
-        referenceId: 'ref-1',
-        status: 'pending',
-        verificationUrl: 'https://vendor.example/session/abc',
-      }),
-      getStatus: vi.fn().mockResolvedValue('pending'),
-    };
-    const svc = newSvc({
-      db: makeDb([], [fullRow({ status: 'pending' })]),
-      adapter,
+  it('leaves decidedAt unset while the vendor is still deciding', async () => {
+    const { svc } = makeService({ adapter: { status: 'pending' } });
+    const userId = randomUUID();
+
+    await svc.submit(userId, passportSubmission);
+
+    const [row] = await verificationsOf(userId);
+    expect(row).toMatchObject({ status: 'pending', decidedAt: null });
+  });
+
+  it('keeps the history append-only across repeated submissions', async () => {
+    const { svc } = makeService();
+    const userId = randomUUID();
+
+    await svc.submit(userId, passportSubmission);
+    await svc.submit(userId, passportSubmission);
+
+    expect(await verificationsOf(userId)).toHaveLength(2);
+  });
+
+  it('passes a hosted-session verificationUrl through', async () => {
+    const { svc } = makeService({
+      adapter: { status: 'pending', verificationUrl: 'https://vendor/session' },
     });
-    const dto = await svc.submit('user-1', { documents: [{ type: 'passport', frontUrl: 'u' }] });
-    expect(dto.verificationUrl).toBe('https://vendor.example/session/abc');
+
+    const result = await svc.submit(randomUUID(), passportSubmission);
+
+    expect(result.verificationUrl).toBe('https://vendor/session');
   });
 
   it('omits verificationUrl when the adapter does not return one', async () => {
-    const svc = newSvc({
-      db: makeDb([], [fullRow({ status: 'verified', decidedAt: new Date() })]),
-    });
-    const dto = await svc.submit('user-1', { documents: [{ type: 'passport', frontUrl: 'u' }] });
-    expect(dto.verificationUrl).toBeUndefined();
+    const { svc } = makeService();
+
+    const result = await svc.submit(randomUUID(), passportSubmission);
+
+    expect(result.verificationUrl).toBeUndefined();
   });
 });
 
-describe('KycVerificationService.reconcile', () => {
-  it('maps vendor approved -> app verified and calls the status writer', async () => {
-    const writer = makeWriter();
-    const svc = newSvc({
-      db: makeDb(
-        [fullRow({ status: 'pending', decidedAt: null })],
-        [fullRow({ status: 'verified', decidedAt: new Date() })],
-      ),
-      writer,
+describe('KycVerificationService.reconcile (real PG)', () => {
+  it('maps an approved vendor decision onto verified and notifies the writer', async () => {
+    const { svc, statusWriter, adapterResult } = makeService({ adapter: { status: 'pending' } });
+    const userId = randomUUID();
+    await svc.submit(userId, passportSubmission);
+
+    const result = await svc.reconcile(adapterResult.referenceId, 'approved', {
+      reason: 'docs ok',
     });
-    const dto = await svc.reconcile('ref-1', 'approved');
-    expect(writer.setStatus).toHaveBeenCalledWith(
-      'user-1',
-      'verified',
-      expect.objectContaining({ source: 'webhook' }),
+
+    expect(result).toMatchObject({ status: 'approved', decisionReason: 'docs ok' });
+    expect(statusWriter.setStatus).toHaveBeenLastCalledWith(
+      userId,
+      'approved',
+      expect.objectContaining({ source: 'webhook', reason: 'docs ok' }),
+      expect.anything(),
     );
-    expect(dto?.status).toBe('verified');
   });
 
-  it('is idempotent - no writer call when the latest record already holds the mapped status', async () => {
-    const writer = makeWriter();
-    const svc = newSvc({
-      db: makeDb([fullRow({ status: 'verified', decidedAt: new Date() })], []),
-      writer,
+  it('maps a rejected vendor decision onto rejected', async () => {
+    const { svc, adapterResult } = makeService({ adapter: { status: 'pending' } });
+    await svc.submit(randomUUID(), passportSubmission);
+
+    const result = await svc.reconcile(adapterResult.referenceId, 'rejected', {
+      reason: 'blurry scan',
     });
-    await svc.reconcile('ref-1', 'approved');
-    expect(writer.setStatus).not.toHaveBeenCalled();
+
+    expect(result?.status).toBe('rejected');
+  });
+
+  it('is idempotent when the record already holds the mapped decision', async () => {
+    const { svc, statusWriter, adapterResult } = makeService();
+    await svc.submit(randomUUID(), passportSubmission);
+    statusWriter.setStatus = vi.fn(async () => undefined);
+
+    await svc.reconcile(adapterResult.referenceId, 'approved');
+
+    expect(statusWriter.setStatus).not.toHaveBeenCalled();
+  });
+
+  it('returns null for an unknown reference id', async () => {
+    const { svc } = makeService();
+
+    expect(await svc.reconcile(randomUUID(), 'approved')).toBeNull();
   });
 });
 
-describe('KycVerificationService.handleDeposit (threshold re-KYC)', () => {
-  const cfg = { kyc: { reverifyThresholds: { USD: '500' } } };
+describe('KycVerificationService.getForPlayer (real PG)', () => {
+  it('returns the newest record as current with the full history behind it', async () => {
+    const { svc } = makeService({ adapter: { status: 'pending' } });
+    const userId = randomUUID();
+    await svc.submit(userId, passportSubmission);
+    await db.drizzle.db
+      .update(kycVerification)
+      .set({ createdAt: new Date(Date.now() - 60_000) })
+      .where(eq(kycVerification.userId, userId));
+    const { svc: second, adapterResult } = makeService({ adapter: { status: 'pending' } });
+    await second.submit(userId, passportSubmission);
 
-  it('flips a verified player to resubmission_requested once the threshold is crossed', async () => {
-    const events = makeEvents();
-    const writer = makeWriter();
-    const svc = newSvc({
-      db: makeDb([{ currency: 'USD', kycStatus: 'verified', total: '1000' }], []),
-      events,
-      writer,
-      config: cfg,
+    const view = await svc.getForPlayer(userId);
+
+    expect(view.history).toHaveLength(2);
+    expect(view.current?.referenceId).toBe(adapterResult.referenceId);
+  });
+
+  it('returns an empty view for a player with no submissions', async () => {
+    const { svc } = makeService();
+
+    expect(await svc.getForPlayer(randomUUID())).toEqual({ current: null, history: [] });
+  });
+});
+
+describe('KycVerificationService.handleDeposit - threshold re-KYC (real PG)', () => {
+  const config = mock<PlatformConfig>({ kyc: { reverifyThresholds: { USD: '500' } } });
+
+  it('flips a verified player to resubmission_requested once deposits cross the band', async () => {
+    const { svc, events, statusWriter } = makeService({ config });
+    const { userId } = await seedPlayer();
+    await seedDeposit(userId, '1000');
+
+    await svc.handleDeposit(userId);
+
+    const [row] = await verificationsOf(userId);
+    expect(row).toMatchObject({
+      status: 'resubmission_requested',
+      triggeredBy: 'reverify_threshold',
     });
-    await svc.handleDeposit('user-1');
-    expect(writer.setStatus).toHaveBeenCalledWith(
-      'user-1',
+    expect(Number(row?.triggerDeposits)).toBe(1000);
+    expect(statusWriter.setStatus).toHaveBeenCalledWith(
+      userId,
       'resubmission_requested',
       expect.objectContaining({ source: 'reverify' }),
     );
     expect(events.emit).toHaveBeenCalledWith(
       'compliance.kyc.reverify_required',
-      expect.objectContaining({ userId: 'user-1' }),
+      expect.objectContaining({ userId }),
     );
   });
 
-  it('does not re-fire once the player is already out of the verified pass-set', async () => {
-    const writer = makeWriter();
-    const svc = newSvc({
-      db: makeDb([{ currency: 'USD', kycStatus: 'resubmission_requested', total: '2000' }], []),
-      writer,
-      config: cfg,
-    });
-    await svc.handleDeposit('user-1');
-    expect(writer.setStatus).not.toHaveBeenCalled();
-  });
-
   it('does not fire below the threshold', async () => {
-    const writer = makeWriter();
-    const svc = newSvc({
-      db: makeDb([{ currency: 'USD', kycStatus: 'verified', total: '100' }], []),
-      writer,
-      config: cfg,
+    const { svc, statusWriter } = makeService({ config });
+    const { userId } = await seedPlayer();
+    await seedDeposit(userId, '100');
+
+    await svc.handleDeposit(userId);
+
+    expect(statusWriter.setStatus).not.toHaveBeenCalled();
+    expect(await verificationsOf(userId)).toHaveLength(0);
+  });
+
+  it('does not fire when the player is already out of the verified pass-set', async () => {
+    const { svc, statusWriter } = makeService({ config });
+    const { userId } = await seedPlayer({ kycStatus: 'resubmission_requested' });
+    await seedDeposit(userId, '2000');
+
+    await svc.handleDeposit(userId);
+
+    expect(statusWriter.setStatus).not.toHaveBeenCalled();
+  });
+
+  it('ignores deposits in another currency than the player account', async () => {
+    const { svc, statusWriter } = makeService({ config });
+    const { userId } = await seedPlayer({ currency: 'EUR' });
+    await seedDeposit(userId, '2000', 'EUR');
+
+    await svc.handleDeposit(userId);
+
+    expect(statusWriter.setStatus).not.toHaveBeenCalled();
+  });
+
+  it('ignores a pending deposit that has not settled', async () => {
+    const { svc, statusWriter } = makeService({ config });
+    const { userId } = await seedPlayer();
+    const [walletRow] = await db.drizzle.db
+      .insert(wallet)
+      .values({ userId, balance: '0', currency: 'USD' })
+      .returning();
+    await db.drizzle.db.insert(walletTransaction).values({
+      walletId: walletRow!.id,
+      type: 'deposit',
+      amount: '2000',
+      currency: 'USD',
+      status: 'pending',
     });
-    await svc.handleDeposit('user-1');
-    expect(writer.setStatus).not.toHaveBeenCalled();
-  });
-});
 
-describe('CumulativeDepositReKycTrigger', () => {
-  const trigger = new CumulativeDepositReKycTrigger();
+    await svc.handleDeposit(userId);
 
-  it('fires on the first crossing at or above the per-currency threshold', () => {
-    expect(
-      trigger.requiresReverify(
-        { totalDeposits: '500', currency: 'USD', lastTriggeredDeposits: '0' },
-        { USD: '500' },
-      ),
-    ).toBe(true);
-    expect(
-      trigger.requiresReverify(
-        { totalDeposits: '900', currency: 'USD', lastTriggeredDeposits: '0' },
-        { USD: '500' },
-      ),
-    ).toBe(true);
+    expect(statusWriter.setStatus).not.toHaveBeenCalled();
   });
 
-  it('does not re-fire within the same band, but fires again on a fresh band (watermark)', () => {
-    expect(
-      trigger.requiresReverify(
-        { totalDeposits: '950', currency: 'USD', lastTriggeredDeposits: '900' },
-        { USD: '500' },
-      ),
-    ).toBe(false);
-    expect(
-      trigger.requiresReverify(
-        { totalDeposits: '1000', currency: 'USD', lastTriggeredDeposits: '900' },
-        { USD: '500' },
-      ),
-    ).toBe(true);
+  it('does not re-fire inside the same band once the watermark is written', async () => {
+    const { svc } = makeService({ config });
+    const { userId } = await seedPlayer();
+    await seedDeposit(userId, '600');
+    await svc.handleDeposit(userId);
+    await db.drizzle.db
+      .update(player)
+      .set({ kycStatus: 'verified' })
+      .where(eq(player.userId, userId));
+    await seedDeposit(userId, '50');
+
+    await svc.handleDeposit(userId);
+
+    expect(await verificationsOf(userId)).toHaveLength(1);
   });
 
-  it('does not fire below the threshold or when the currency has none', () => {
-    expect(
-      trigger.requiresReverify(
-        { totalDeposits: '100', currency: 'USD', lastTriggeredDeposits: '0' },
-        { USD: '500' },
-      ),
-    ).toBe(false);
-    expect(
-      trigger.requiresReverify(
-        { totalDeposits: '9999', currency: 'EUR', lastTriggeredDeposits: '0' },
-        { USD: '500' },
-      ),
-    ).toBe(false);
-    expect(
-      trigger.requiresReverify(
-        { totalDeposits: '9999', currency: 'USD', lastTriggeredDeposits: '0' },
-        undefined,
-      ),
-    ).toBe(false);
+  it('fires again once a fresh band is crossed', async () => {
+    const { svc } = makeService({ config });
+    const { userId } = await seedPlayer();
+    await seedDeposit(userId, '600');
+    await svc.handleDeposit(userId);
+    await db.drizzle.db
+      .update(player)
+      .set({ kycStatus: 'verified' })
+      .where(eq(player.userId, userId));
+    await seedDeposit(userId, '600');
+
+    await svc.handleDeposit(userId);
+
+    expect(await verificationsOf(userId)).toHaveLength(2);
+  });
+
+  it('is a no-op for a user with no player profile', async () => {
+    const { svc, statusWriter } = makeService({ config });
+
+    await svc.handleDeposit(randomUUID());
+
+    expect(statusWriter.setStatus).not.toHaveBeenCalled();
+  });
+
+  it('never fires when no thresholds are configured', async () => {
+    const { svc, statusWriter } = makeService();
+    const { userId } = await seedPlayer();
+    await seedDeposit(userId, '99999');
+
+    await svc.handleDeposit(userId);
+
+    expect(statusWriter.setStatus).not.toHaveBeenCalled();
   });
 });

@@ -5,7 +5,6 @@ import {
   LiftCoolingOffInputSchema,
   LiftSelfExclusionInputSchema,
   RgFlagListItemSchema,
-  SetPlayerLimitInputSchema,
 } from '../contract/rg.js';
 
 const USER = '11111111-1111-4111-8111-111111111111';
@@ -32,38 +31,6 @@ describe('RgFlagListItemSchema.detail resilience', () => {
         detail: { sessionMinutes: 65, limitMinutes: 60, pct: 108 },
       }).success,
     ).toBe(true);
-  });
-});
-
-describe('SetPlayerLimitInputSchema session invariant', () => {
-  const money = { userId: USER, amount: '100', minutes: null };
-  const session = { userId: USER, amount: null, minutes: 100 };
-  it('allows a session-time limit only with the session period', () => {
-    expect(
-      SetPlayerLimitInputSchema.safeParse({ ...session, type: 'session', period: 'session' })
-        .success,
-    ).toBe(true);
-    expect(
-      SetPlayerLimitInputSchema.safeParse({ ...money, type: 'deposit', period: 'daily' }).success,
-    ).toBe(true);
-  });
-  it('rejects a mismatched type/period', () => {
-    expect(
-      SetPlayerLimitInputSchema.safeParse({ ...money, type: 'deposit', period: 'session' }).success,
-    ).toBe(false);
-    expect(
-      SetPlayerLimitInputSchema.safeParse({ ...session, type: 'session', period: 'daily' }).success,
-    ).toBe(false);
-  });
-  it('rejects a money-type limit carrying minutes instead of amount', () => {
-    expect(
-      SetPlayerLimitInputSchema.safeParse({ ...session, type: 'deposit', period: 'daily' }).success,
-    ).toBe(false);
-  });
-  it('rejects a session limit carrying amount instead of minutes', () => {
-    expect(
-      SetPlayerLimitInputSchema.safeParse({ ...money, type: 'session', period: 'session' }).success,
-    ).toBe(false);
   });
 });
 

@@ -18,7 +18,7 @@ export function mapDbError(err: unknown): never {
         throw new ValidationError('Invalid value');
 
       default:
-        throw new AppError('DB_ERROR', 'Database error', {
+        throw new AppError('Database error', 'DB_ERROR', {
           code: err.code,
         });
     }

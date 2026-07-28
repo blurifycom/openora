@@ -1,165 +1,318 @@
-import { describe, it, expect, vi } from 'vitest';
-import { PlayerService, PlayerNotFoundError } from '../service/player.service.js';
+import { describe, it, expect, beforeAll, afterAll, beforeEach } from 'vitest';
+import { randomUUID } from 'node:crypto';
+import { eq, sql } from 'drizzle-orm';
+import type { TagKey } from '@openora/core/contracts';
+import { createTestDb, type TestDb } from '@openora/core/testing';
+import { user } from '@openora/core/pam/schema/identity';
+import { migrate as migrateIdentity } from '@openora/core/pam/migrate/identity';
+import { player } from '@openora/core/pam/schema/profile';
+import { migrate as migrateProfile } from '@openora/core/pam/migrate/profile';
+import { tag, playerTag } from '@openora/core/pam/schema/tag';
+import { migrate as migrateTag } from '@openora/core/pam/migrate/tag';
+import { makeEventBus } from '../../../testing/mock.js';
+import {
+  PlayerService,
+  PlayerNotFoundError,
+  DuplicateEmailError,
+} from '../service/player.service.js';
 
-type DayCountRow = { date: string; n: number };
+let db: TestDb;
 
-function chain(result: unknown): any {
-  const proxy: any = new Proxy(function () {}, {
-    get(_t, prop) {
-      if (prop === 'then') {
-        return (res: (v: unknown) => unknown) => res(result);
-      }
-      return () => proxy;
-    },
-    apply: () => proxy,
-  });
-  return proxy;
+function makeService() {
+  const events = makeEventBus();
+  return { svc: new PlayerService(db.drizzle, events), events };
 }
 
-// Chainable proxy that captures the first non-undefined argument passed to .where()
-function makeCapturingChain(results: unknown[]): { proxy: any; captured: { where: unknown[] } } {
-  const captured = { where: [] as unknown[] };
-  let callIdx = 0;
-  const proxy: any = new Proxy(function () {}, {
-    get(_t, prop) {
-      if (prop === 'then') {
-        const result = results[callIdx++ % results.length];
-        return (res: (v: unknown) => unknown) => res(result);
-      }
-      if (prop === 'where') {
-        return (clause: unknown) => {
-          captured.where.push(clause);
-          return proxy;
-        };
-      }
-      return () => proxy;
-    },
-    apply: () => proxy,
-  });
-  return { proxy, captured };
+async function seedUser(overrides: Partial<typeof user.$inferInsert> = {}) {
+  const [row] = await db.drizzle.db
+    .insert(user)
+    .values({ name: 'Player', email: `${randomUUID()}@example.com`, ...overrides })
+    .returning();
+  return row!;
 }
 
-function makeService(dayCounts: DayCountRow[] = []): PlayerService {
-  const db = { select: vi.fn(() => chain(dayCounts)) };
-  const writer = { setStatus: vi.fn() } as never;
-  return new PlayerService({ db } as never, writer);
+async function seedPlayer(userId: string, overrides: Partial<typeof player.$inferInsert> = {}) {
+  const [row] = await db.drizzle.db
+    .insert(player)
+    .values({ userId, displayName: 'Player', ...overrides })
+    .returning();
+  return row!;
 }
 
-describe('PlayerService domain errors', () => {
-  it('PlayerNotFoundError carries the playerId', () => {
-    const err = new PlayerNotFoundError('p-123');
-    expect(err).toBeInstanceOf(Error);
-    expect(err.name).toBe('PlayerNotFoundError');
-    expect(err.message).toContain('p-123');
+async function seedPlayerWithUser(
+  userOverrides: Partial<typeof user.$inferInsert> = {},
+  playerOverrides: Partial<typeof player.$inferInsert> = {},
+) {
+  const account = await seedUser(userOverrides);
+  const row = await seedPlayer(account.id, playerOverrides);
+  return { account, player: row };
+}
+
+async function seedTag(key: TagKey) {
+  const [row] = await db.drizzle.db.insert(tag).values({ key }).returning();
+  return row!;
+}
+
+async function assignTag(playerId: string, tagId: string) {
+  await db.drizzle.db.insert(playerTag).values({
+    playerId,
+    tagId,
+    assignReason: 'test',
+    assignActor: 'manual',
+    assignActorUserId: null,
   });
+}
+
+async function rowById(playerId: string) {
+  const [row] = await db.drizzle.db.select().from(player).where(eq(player.id, playerId));
+  return row;
+}
+
+beforeAll(async () => {
+  db = await createTestDb([migrateIdentity, migrateProfile, migrateTag]);
 });
 
-describe('PlayerService.remove', () => {
-  function makeRemoveService(existing: unknown[]) {
-    const setArgs: unknown[] = [];
-    const update = vi.fn(() => ({
-      set: vi.fn((patch: unknown) => {
-        setArgs.push(patch);
-        return { where: vi.fn(() => Promise.resolve()) };
-      }),
-    }));
-    const db = { select: vi.fn(() => chain(existing)), update };
-    const svc = new PlayerService({ db } as never, { setStatus: vi.fn() } as never);
-    return { svc, db, setArgs };
-  }
+afterAll(async () => {
+  await db.drop();
+});
 
+beforeEach(async () => {
+  await db.drizzle.db.execute(
+    sql`TRUNCATE ${playerTag}, ${tag}, ${player}, ${user} RESTART IDENTITY CASCADE`,
+  );
+});
+
+describe('PlayerService.remove (real PG)', () => {
   it('soft-deletes by closing the player, never deletes the row', async () => {
-    const { svc, db, setArgs } = makeRemoveService([{ id: 'p-1' }]);
-    const result = await svc.remove('p-1');
+    const { svc } = makeService();
+    const { player: seeded } = await seedPlayerWithUser();
+
+    const result = await svc.remove(seeded.id);
+
     expect(result).toEqual({ success: true });
-    expect(setArgs).toEqual([{ status: 'closed' }]);
-    expect((db as { delete?: unknown }).delete).toBeUndefined();
+    expect(await rowById(seeded.id)).toMatchObject({ status: 'closed' });
   });
 
   it('throws PlayerNotFoundError when the player does not exist', async () => {
-    const { svc } = makeRemoveService([]);
-    await expect(svc.remove('missing')).rejects.toThrow(PlayerNotFoundError);
+    const { svc } = makeService();
+
+    await expect(svc.remove(randomUUID())).rejects.toBeInstanceOf(PlayerNotFoundError);
   });
 });
 
-describe('PlayerService.getByUserId', () => {
+describe('PlayerService.getByUserId (real PG)', () => {
+  it('returns the player enriched with the identity email', async () => {
+    const { svc } = makeService();
+    const { account, player: seeded } = await seedPlayerWithUser({ email: 'jordan@example.com' });
+
+    const result = await svc.getByUserId(account.id);
+
+    expect(result).toMatchObject({
+      id: seeded.id,
+      userId: account.id,
+      email: 'jordan@example.com',
+    });
+  });
+
   it('throws PlayerNotFoundError when no player owns the userId', async () => {
-    const db = { select: vi.fn(() => chain([])) };
-    const svc = new PlayerService({ db } as never, { setStatus: vi.fn() } as never);
-    await expect(svc.getByUserId('u-missing')).rejects.toThrow(PlayerNotFoundError);
+    const { svc } = makeService();
+
+    await expect(svc.getByUserId(randomUUID())).rejects.toBeInstanceOf(PlayerNotFoundError);
   });
 });
 
-describe('PlayerService.registrationsOverTime', () => {
+describe('PlayerService.registrationsOverTime (real PG)', () => {
   it('returns one zero-filled bucket per day in the window', async () => {
-    const svc = makeService([]);
+    const { svc } = makeService();
+
     const points = await svc.registrationsOverTime(7);
+
     expect(points).toHaveLength(7);
     expect(points.every((p) => p.count === 0)).toBe(true);
     const dates = points.map((p) => p.date);
     expect(new Set(dates).size).toBe(7);
     expect(dates).toEqual([...dates].sort());
-    expect(dates[0]).toMatch(/^\d{4}-\d{2}-\d{2}$/);
   });
 
-  it('places the DB day-count into its matching day bucket', async () => {
+  it('places each days registrations into its matching bucket', async () => {
+    const { svc } = makeService();
     const todayKey = new Date().toISOString().slice(0, 10);
-    const svc = makeService([{ date: todayKey, n: 3 }]);
+    await seedPlayer(randomUUID(), { createdAt: new Date() });
+    await seedPlayer(randomUUID(), { createdAt: new Date() });
+    await seedPlayer(randomUUID(), { createdAt: new Date() });
+
     const points = await svc.registrationsOverTime(7);
+
     const today = points.find((p) => p.date === todayKey);
     expect(today?.count).toBe(3);
     expect(points.filter((p) => p.date !== todayKey).every((p) => p.count === 0)).toBe(true);
   });
 });
 
-describe('PlayerService.list tag filter', () => {
-  const emptyPlayerRow = {
-    player: {
-      id: 'p-1',
-      userId: 'u-1',
-      displayName: 'Player',
-      status: 'active',
-      kycStatus: 'pending',
-      level: 1,
-      totalWagered: '0',
-      totalDeposits: '0',
-      lastSeenAt: null,
-      createdAt: new Date(),
-      updatedAt: new Date(),
-    },
-    email: 'p@test.com',
-    tags: [],
-  };
+describe('PlayerService.list (real PG)', () => {
+  it('filters by status', async () => {
+    const { svc } = makeService();
+    await seedPlayerWithUser({}, { status: 'active' });
+    await seedPlayerWithUser({}, { status: 'suspended' });
 
-  it('applies a WHERE clause when tags are provided', async () => {
-    const { proxy, captured } = makeCapturingChain([[emptyPlayerRow], [{ n: 0 }]]);
-    const db = { select: vi.fn(() => proxy) };
-    const svc = new PlayerService({ db } as never, { setStatus: vi.fn() } as never);
+    const { items, total } = await svc.list({ page: 1, limit: 20, status: 'suspended' });
 
-    await svc.list({ page: 1, limit: 20, tags: ['self_excluded', 'kyc_rejected'] }).catch(() => {});
-
-    // At least one .where() call must have received a non-undefined clause
-    expect(captured.where.some((c) => c !== undefined)).toBe(true);
+    expect(total).toBe(1);
+    expect(items[0]?.status).toBe('suspended');
   });
 
-  it('applies no WHERE clause when tags are absent', async () => {
-    const { proxy, captured } = makeCapturingChain([[emptyPlayerRow], [{ n: 0 }]]);
-    const db = { select: vi.fn(() => proxy) };
-    const svc = new PlayerService({ db } as never, { setStatus: vi.fn() } as never);
+  it('matches players by a display name substring', async () => {
+    const { svc } = makeService();
+    await seedPlayerWithUser({}, { displayName: 'Alice Anderson' });
+    await seedPlayerWithUser({}, { displayName: 'Bob Baker' });
 
-    await svc.list({ page: 1, limit: 20 }).catch(() => {});
+    const { items, total } = await svc.list({ page: 1, limit: 20, search: 'ander' });
 
-    // All .where() calls should receive undefined when no filter is active
-    expect(captured.where.every((c) => c === undefined)).toBe(true);
+    expect(total).toBe(1);
+    expect(items[0]?.displayName).toBe('Alice Anderson');
   });
 
-  it('applies no WHERE clause when tags is an empty array', async () => {
-    const { proxy, captured } = makeCapturingChain([[emptyPlayerRow], [{ n: 0 }]]);
-    const db = { select: vi.fn(() => proxy) };
-    const svc = new PlayerService({ db } as never, { setStatus: vi.fn() } as never);
+  it('matches players by an email substring', async () => {
+    const { svc } = makeService();
+    await seedPlayerWithUser({ email: 'searchable-target@example.com' });
+    await seedPlayerWithUser({ email: 'someone-else@example.com' });
 
-    await svc.list({ page: 1, limit: 20, tags: [] }).catch(() => {});
+    const { items, total } = await svc.list({ page: 1, limit: 20, search: 'searchable-target' });
 
-    expect(captured.where.every((c) => c === undefined)).toBe(true);
+    expect(total).toBe(1);
+    expect(items[0]?.email).toBe('searchable-target@example.com');
+  });
+
+  it('restricts results to players carrying any of the given tags, excluding removed assignments', async () => {
+    const { svc } = makeService();
+    const vip = await seedTag('vip');
+    const highRisk = await seedTag('high_risk');
+    const { player: tagged } = await seedPlayerWithUser();
+    const { player: removedTag } = await seedPlayerWithUser();
+    const { player: untagged } = await seedPlayerWithUser();
+    await assignTag(tagged.id, vip.id);
+    await assignTag(removedTag.id, highRisk.id);
+    await db.drizzle.db
+      .update(playerTag)
+      .set({ removedAt: new Date() })
+      .where(eq(playerTag.playerId, removedTag.id));
+
+    const { items, total } = await svc.list({ page: 1, limit: 20, tags: ['vip', 'high_risk'] });
+
+    expect(total).toBe(1);
+    expect(items.map((i) => i.id)).toEqual([tagged.id]);
+    expect(items.map((i) => i.id)).not.toContain(untagged.id);
+  });
+
+  it('keeps the total across the whole filtered set, not just the returned page', async () => {
+    const { svc } = makeService();
+    await seedPlayerWithUser({}, { status: 'active' });
+    await seedPlayerWithUser({}, { status: 'active' });
+    await seedPlayerWithUser({}, { status: 'active' });
+    await seedPlayerWithUser({}, { status: 'suspended' });
+
+    const { items, total } = await svc.list({ page: 2, limit: 2, status: 'active' });
+
+    expect(total).toBe(3);
+    expect(items).toHaveLength(1);
+  });
+
+  it('orders by the requested sort field and direction', async () => {
+    const { svc } = makeService();
+    await seedPlayerWithUser({}, { displayName: 'Charlie' });
+    await seedPlayerWithUser({}, { displayName: 'Alice' });
+    await seedPlayerWithUser({}, { displayName: 'Bob' });
+
+    const { items } = await svc.list({
+      page: 1,
+      limit: 20,
+      sortBy: 'displayName',
+      sortOrder: 'asc',
+    });
+
+    expect(items.map((i) => i.displayName)).toEqual(['Alice', 'Bob', 'Charlie']);
+  });
+});
+
+describe('PlayerService.get / getExtended (real PG)', () => {
+  it('returns the player with its assigned tags', async () => {
+    const { svc } = makeService();
+    const vip = await seedTag('vip');
+    const { player: seeded } = await seedPlayerWithUser();
+    await assignTag(seeded.id, vip.id);
+
+    const result = await svc.get(seeded.id);
+
+    expect(result.tags).toEqual(['vip']);
+  });
+
+  it('throws PlayerNotFoundError for an unknown id', async () => {
+    const { svc } = makeService();
+
+    await expect(svc.get(randomUUID())).rejects.toBeInstanceOf(PlayerNotFoundError);
+  });
+});
+
+describe('PlayerService.update (real PG)', () => {
+  it('persists simple field changes and returns the enriched row', async () => {
+    const { svc } = makeService();
+    const { player: seeded, account } = await seedPlayerWithUser();
+
+    const result = await svc.update(seeded.id, { displayName: 'Renamed', level: 5 }, account.id);
+
+    expect(result).toMatchObject({ displayName: 'Renamed', level: 5 });
+    expect(await rowById(seeded.id)).toMatchObject({ displayName: 'Renamed', level: 5 });
+  });
+
+  it('throws DuplicateEmailError when the new email is already used by a different user', async () => {
+    const { svc } = makeService();
+    const taken = await seedUser({ email: 'taken@example.com' });
+    const { player: seeded, account } = await seedPlayerWithUser();
+
+    await expect(svc.update(seeded.id, { email: taken.email }, account.id)).rejects.toBeInstanceOf(
+      DuplicateEmailError,
+    );
+  });
+
+  it('throws PlayerNotFoundError for an unknown id', async () => {
+    const { svc } = makeService();
+
+    await expect(
+      svc.update(randomUUID(), { displayName: 'X' }, randomUUID()),
+    ).rejects.toBeInstanceOf(PlayerNotFoundError);
+  });
+});
+
+describe('PlayerService.update player.level.changed emission (real PG)', () => {
+  it('emits player.level.changed with previousLevel/newLevel/actorId when level changes', async () => {
+    const { svc, events } = makeService();
+    const { player: seeded, account } = await seedPlayerWithUser({}, { level: 1 });
+
+    await svc.update(seeded.id, { level: 5 }, account.id);
+
+    expect(events.emit).toHaveBeenCalledWith('player.level.changed', {
+      userId: account.id,
+      previousLevel: 1,
+      newLevel: 5,
+      actorId: account.id,
+    });
+  });
+
+  it('does not emit when level is omitted from the patch', async () => {
+    const { svc, events } = makeService();
+    const { player: seeded, account } = await seedPlayerWithUser({}, { level: 1 });
+
+    await svc.update(seeded.id, { displayName: 'New Name' }, account.id);
+
+    expect(events.emit).not.toHaveBeenCalledWith('player.level.changed', expect.anything());
+  });
+
+  it('does not emit when level is unchanged', async () => {
+    const { svc, events } = makeService();
+    const { player: seeded, account } = await seedPlayerWithUser({}, { level: 3 });
+
+    await svc.update(seeded.id, { level: 3 }, account.id);
+
+    expect(events.emit).not.toHaveBeenCalledWith('player.level.changed', expect.anything());
   });
 });

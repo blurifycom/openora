@@ -106,6 +106,7 @@
         "compliance.activateCoolingOff",
         "compliance.activateSelfExclusion",
         "compliance.addGeoRule",
+        "compliance.bulkApproveKyc",
         "compliance.deleteLimit",
         "compliance.geoCheck",
         "compliance.getLimits",
@@ -116,6 +117,8 @@
         "compliance.liftSelfExclusion",
         "compliance.listGeoRules",
         "compliance.listRgFlags",
+        "compliance.overrideKycStatus",
+        "compliance.requestKycResubmission",
         "compliance.setPlayerLimit",
         "compliance.submitKyc",
         "compliance.upsertLimit"
@@ -349,6 +352,7 @@
         "packages/core/src/compliance/plugin.ts",
         "packages/core/src/engagement/notifications/plugin.ts",
         "packages/core/src/pam/identity/plugin.ts",
+        "packages/core/src/pam/tag/plugin.ts",
         "packages/core/src/wallet/plugin.ts"
       ]
     },
@@ -377,6 +381,8 @@
       "boundIn": [
         "packages/core/src/admin-console/plugin.ts",
         "packages/core/src/audit/plugin.ts",
+        "packages/core/src/compliance/plugin.ts",
+        "packages/core/src/pam/player-management/plugin.ts",
         "packages/core/src/wallet/plugin.ts"
       ]
     },
@@ -399,6 +405,7 @@
         "packages/core/src/analytics/plugin.ts",
         "packages/core/src/casino/lobby/plugin.ts",
         "packages/core/src/cms/plugin.ts",
+        "packages/core/src/compliance/plugin.ts",
         "packages/core/src/iam/plugin.ts",
         "packages/core/src/pam/identity/plugin.ts"
       ]
@@ -477,6 +484,7 @@
       "status": "wired",
       "boundIn": [
         "packages/core/src/compliance/plugin.ts",
+        "packages/core/src/engagement/notifications/plugin.ts",
         "packages/core/src/pam/tag/plugin.ts",
         "packages/core/src/server/runtime/create-app.ts"
       ]
@@ -580,6 +588,16 @@
       ]
     },
     {
+      "category": "tag-evaluation-commands",
+      "interface": "TagEvaluationWithdrawalRequestedArgs",
+      "token": "TAG_EVALUATION_COMMANDS",
+      "status": "wired",
+      "boundIn": [
+        "packages/core/src/pam/tag/plugin.ts",
+        "packages/core/src/wallet/plugin.ts"
+      ]
+    },
+    {
       "category": "wallet-commands",
       "interface": "WalletDebitArgs",
       "token": "WALLET_COMMANDS",
@@ -620,6 +638,7 @@
     "cms.page.published",
     "cms.page.updated",
     "compliance.geo-rule.added",
+    "compliance.kyc.high_risk_signal_detected",
     "compliance.kyc.reverify_required",
     "compliance.kyc.submitted",
     "compliance.kyc.updated",
@@ -653,12 +672,15 @@
     "identity.user.registered",
     "identity.user.unlocked",
     "notifications.created",
+    "player.level.changed",
     "rg.cooling_off.activated",
     "rg.cooling_off.lifted",
     "rg.exclusion.login_blocked",
     "rg.limit.set",
     "rg.self_exclusion.activated",
     "rg.self_exclusion.lifted",
+    "tag.created",
+    "tag.deleted",
     "tag.player.assigned",
     "tag.player.removed",
     "tag.rule.upserted",
@@ -790,6 +812,18 @@
     {
       "name": "BrandSchema",
       "file": "packages/core/src/contracts/schemas/platform-config.ts"
+    },
+    {
+      "name": "BulkApproveKycInputSchema",
+      "file": "packages/core/src/compliance/contract/index.ts"
+    },
+    {
+      "name": "BulkApproveKycOutputSchema",
+      "file": "packages/core/src/compliance/contract/index.ts"
+    },
+    {
+      "name": "BulkApproveKycResultSchema",
+      "file": "packages/core/src/compliance/contract/index.ts"
     },
     {
       "name": "CatalogEntrySchema",
@@ -1012,6 +1046,18 @@
       "file": "packages/core/src/contracts/schemas/reporting.ts"
     },
     {
+      "name": "HighRiskAmountBreachDetailSchema",
+      "file": "packages/core/src/pam/tag/contract/player-tag-assign-metadata.ts"
+    },
+    {
+      "name": "HighRiskAssignMetadataSchema",
+      "file": "packages/core/src/pam/tag/contract/player-tag-assign-metadata.ts"
+    },
+    {
+      "name": "HighRiskCountBreachDetailSchema",
+      "file": "packages/core/src/pam/tag/contract/player-tag-assign-metadata.ts"
+    },
+    {
       "name": "IamAssignmentSortBySchema",
       "file": "packages/core/src/iam/contract/index.ts"
     },
@@ -1040,6 +1086,14 @@
       "file": "packages/core/src/contracts/schemas/iam.ts"
     },
     {
+      "name": "KycCheckResultSchema",
+      "file": "packages/core/src/contracts/adapters/kyc.ts"
+    },
+    {
+      "name": "KycCheckStatusSchema",
+      "file": "packages/core/src/contracts/adapters/kyc.ts"
+    },
+    {
       "name": "KycConfigSchema",
       "file": "packages/core/src/contracts/schemas/platform-config.ts"
     },
@@ -1052,7 +1106,19 @@
       "file": "packages/core/src/compliance/contract/index.ts"
     },
     {
+      "name": "KycOverrideStatusSchema",
+      "file": "packages/core/src/compliance/contract/index.ts"
+    },
+    {
+      "name": "KycRiskSignalsSchema",
+      "file": "packages/core/src/compliance/contract/index.ts"
+    },
+    {
       "name": "KycStatusSchema",
+      "file": "packages/core/src/contracts/schemas/player.ts"
+    },
+    {
+      "name": "KycStatusSourceSchema",
       "file": "packages/core/src/contracts/schemas/player.ts"
     },
     {
@@ -1142,6 +1208,10 @@
     {
       "name": "OrganizationSchema",
       "file": "packages/core/src/contracts/schemas/identity.ts"
+    },
+    {
+      "name": "OverrideKycStatusInputSchema",
+      "file": "packages/core/src/compliance/contract/index.ts"
     },
     {
       "name": "PageQuerySchema",
@@ -1248,6 +1318,10 @@
       "file": "packages/core/src/pam/player-management/contract/index.ts"
     },
     {
+      "name": "PlayerTagAssignMetadataSchema",
+      "file": "packages/core/src/pam/tag/contract/player-tag-assign-metadata.ts"
+    },
+    {
       "name": "playerTagSchema",
       "file": "packages/core/src/contracts/schemas/tag.ts"
     },
@@ -1290,6 +1364,14 @@
     {
       "name": "removePlayerTagSchema",
       "file": "packages/core/src/contracts/schemas/tag.ts"
+    },
+    {
+      "name": "replacePlayerTagSchema",
+      "file": "packages/core/src/contracts/schemas/tag.ts"
+    },
+    {
+      "name": "RequestKycResubmissionInputSchema",
+      "file": "packages/core/src/compliance/contract/index.ts"
     },
     {
       "name": "RequestPasswordResetInputSchema",
@@ -1646,9 +1728,12 @@
     "POST /cms/pages",
     "POST /compliance/geo-rules",
     "POST /compliance/kyc",
+    "POST /compliance/kyc/bulk-approve",
     "POST /compliance/kyc/webhook",
     "POST /compliance/players/{userId}/cooling-off",
     "POST /compliance/players/{userId}/cooling-off/lift",
+    "POST /compliance/players/{userId}/kyc/override",
+    "POST /compliance/players/{userId}/kyc/resubmit",
     "POST /compliance/players/{userId}/self-exclusion",
     "POST /compliance/players/{userId}/self-exclusion/lift",
     "POST /gaming/rounds/start",

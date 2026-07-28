@@ -18,6 +18,7 @@ export const statement = {
   sessions: ['view', 'revoke'] as const,
   'player-note': ['view', 'create'] as const,
   'tag-rule': ['view', 'update'] as const,
+  tag: ['view', 'create', 'delete'] as const,
   'chat-room': ['view', 'create', 'update', 'delete'] as const,
 } as const;
 
@@ -41,6 +42,7 @@ export const adminRole = ac.newRole({
   sessions: ['view', 'revoke'],
   'player-note': ['view', 'create'],
   'tag-rule': ['view', 'update'],
+  tag: ['view', 'create', 'delete'],
   'chat-room': ['view', 'create', 'update', 'delete'],
 });
 

@@ -5,6 +5,14 @@ export type WalletReader = {
   getLifetimeDeposit(userId: string): Promise<string>;
   /** Count of completed withdrawals for a player within the last windowDays days. Used for high_risk evaluation. */
   getWithdrawalCountInWindow(userId: string, windowDays: number): Promise<number>;
+  /**
+   * Completed-withdrawal counts within the last windowDays days for a batch of players,
+   * keyed by userId (absent key = 0). Used for the high_risk daily resweep. Optional so an
+   * external/consumer WalletReader implementation that predates this batched method still
+   * satisfies the port - a caller without it falls back to looping the singular
+   * getWithdrawalCountInWindow (see TagEvaluationService's high_risk resweep).
+   */
+  getWithdrawalCountsInWindow?(userIds: string[], windowDays: number): Promise<Map<string, number>>;
 };
 
 export const WALLET_READER = createToken<WalletReader>('WALLET_READER');

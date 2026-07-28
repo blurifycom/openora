@@ -1,49 +1,131 @@
-import { describe, it, expect, vi } from 'vitest';
+import { describe, it, expect, vi, beforeAll, afterAll, beforeEach } from 'vitest';
+import { randomUUID } from 'node:crypto';
+import { eq } from 'drizzle-orm';
 import { call, ORPCError } from '@orpc/server';
-import { mock, testContext } from '../../testing/mock.js';
 import type { AdminGuard } from '@openora/core/server';
 import type {
-  AuditWritePort,
   PaymentAdapter,
   PaymentWebhookEvent,
   PaymentWebhookVerifier,
 } from '@openora/core/contracts';
+import { createTestDb, type TestDb } from '@openora/core/testing';
+import { mock, makeEventBus, testContext, makeAuditWriter } from '../../testing/mock.js';
+import { migrate } from '../migrate.js';
+import { wallet, walletTransaction, walletDepositAddress } from '../schema/index.js';
 import { createWalletRouter } from '../router/index.js';
-import type { WalletService } from '../service/wallet.service.js';
+import { WalletService } from '../service/wallet.service.js';
 
-const fakeAudit = (): AuditWritePort => mock<AuditWritePort>({ record: vi.fn() });
-const fakeGuard = (): AdminGuard => mock<AdminGuard>({ assert: vi.fn() });
+const USER_ID = '63d3c264-3bf4-4d08-9b92-ea3eaf40a440';
+const DEPOSIT_ADDRESS = 'bc1qxyz';
 
-function fakeWallet(): WalletService {
-  return mock<WalletService>({
-    creditDepositByAddress: vi.fn().mockResolvedValue(undefined),
-    reconcileWithdrawalStatus: vi.fn().mockResolvedValue(undefined),
+let db: TestDb;
+
+beforeAll(async () => {
+  db = await createTestDb([migrate]);
+});
+
+afterAll(async () => {
+  await db.drop();
+});
+
+beforeEach(async () => {
+  await db.drizzle.db.delete(walletTransaction);
+  await db.drizzle.db.delete(walletDepositAddress);
+  await db.drizzle.db.delete(wallet);
+});
+
+function routerWith(payment: PaymentAdapter, verifier: PaymentWebhookVerifier) {
+  const service = new WalletService({
+    drizzle: db.drizzle,
+    events: makeEventBus(),
+    payment,
+    audit: makeAuditWriter(),
   });
+  return createWalletRouter(
+    service,
+    mock<AdminGuard>({ assert: vi.fn() }),
+    makeAuditWriter(),
+    payment,
+    verifier,
+  );
 }
+
+const verifierReturning = (result: boolean) =>
+  mock<PaymentWebhookVerifier>({ verify: vi.fn().mockReturnValue(result) });
+
+const paymentParsing = (event: PaymentWebhookEvent | null) =>
+  mock<PaymentAdapter>({ parseWebhook: vi.fn().mockReturnValue(event) });
 
 function ctx(rawBody: string, headers: Record<string, string> = {}) {
   return { context: testContext({ request: { headers }, rawBody }) };
 }
 
+async function seedWallet(currency = 'BTC') {
+  const [row] = await db.drizzle.db
+    .insert(wallet)
+    .values({ userId: USER_ID, balance: '0', currency })
+    .returning();
+  return row!;
+}
+
+async function seedDepositAddress(currency = 'BTC') {
+  await db.drizzle.db.insert(walletDepositAddress).values({
+    userId: USER_ID,
+    currency,
+    address: DEPOSIT_ADDRESS,
+    providerName: 'fireblocks',
+  });
+}
+
+async function seedProcessingWithdrawal(walletId: string, externalId: string) {
+  const [row] = await db.drizzle.db
+    .insert(walletTransaction)
+    .values({
+      walletId,
+      type: 'withdrawal',
+      amount: '1',
+      currency: 'BTC',
+      status: 'processing',
+      rail: 'crypto',
+      providerRefId: externalId,
+    })
+    .returning();
+  return row!;
+}
+
+async function ledgerFor(walletId: string) {
+  return db.drizzle.db
+    .select()
+    .from(walletTransaction)
+    .where(eq(walletTransaction.walletId, walletId));
+}
+
+const depositEvent: PaymentWebhookEvent = {
+  kind: 'deposit',
+  address: DEPOSIT_ADDRESS,
+  amount: '0.5',
+  currency: 'BTC',
+  txHash: '0xabc',
+  externalId: 'vendor-ext-1',
+};
+
 describe('wallet webhook route (M2M, no admin session)', () => {
   it('rejects when the signature verifier fails (fail closed)', async () => {
-    const wallet = fakeWallet();
-    const payment = mock<PaymentAdapter>({ parseWebhook: vi.fn() });
-    const verifier = mock<PaymentWebhookVerifier>({ verify: vi.fn().mockReturnValue(false) });
-    const router = createWalletRouter(wallet, fakeGuard(), fakeAudit(), payment, verifier);
+    const w = await seedWallet();
+    await seedDepositAddress();
+    const payment = paymentParsing(depositEvent);
+    const router = routerWith(payment, verifierReturning(false));
 
     await expect(
       call(router.webhook, {}, ctx('{}', { 'x-payment-signature': 'bad' })),
     ).rejects.toBeInstanceOf(ORPCError);
     expect(payment.parseWebhook).not.toHaveBeenCalled();
-    expect(wallet.creditDepositByAddress).not.toHaveBeenCalled();
+    expect(await ledgerFor(w.id)).toHaveLength(0);
   });
 
   it('rejects when no raw body was captured', async () => {
-    const wallet = fakeWallet();
-    const payment = mock<PaymentAdapter>({ parseWebhook: vi.fn() });
-    const verifier = mock<PaymentWebhookVerifier>({ verify: vi.fn().mockReturnValue(true) });
-    const router = createWalletRouter(wallet, fakeGuard(), fakeAudit(), payment, verifier);
+    const verifier = verifierReturning(true);
+    const router = routerWith(paymentParsing(depositEvent), verifier);
 
     await expect(call(router.webhook, {}, { context: testContext() })).rejects.toBeInstanceOf(
       ORPCError,
@@ -51,55 +133,77 @@ describe('wallet webhook route (M2M, no admin session)', () => {
     expect(verifier.verify).not.toHaveBeenCalled();
   });
 
-  it('dispatches a verified deposit event to creditDepositByAddress', async () => {
-    const wallet = fakeWallet();
-    const event: PaymentWebhookEvent = {
-      kind: 'deposit',
-      address: 'bc1qxyz',
-      amount: '0.5',
-      currency: 'BTC',
-      txHash: '0xabc',
-      externalId: 'vendor-ext-1',
-    };
-    const payment = mock<PaymentAdapter>({ parseWebhook: vi.fn().mockReturnValue(event) });
-    const verifier = mock<PaymentWebhookVerifier>({ verify: vi.fn().mockReturnValue(true) });
-    const router = createWalletRouter(wallet, fakeGuard(), fakeAudit(), payment, verifier);
+  it('credits the player wallet on a verified deposit event', async () => {
+    const w = await seedWallet();
+    await seedDepositAddress();
+    const router = routerWith(paymentParsing(depositEvent), verifierReturning(true));
 
     const result = await call(router.webhook, {}, ctx('{"event":"deposit"}'));
 
     expect(result).toEqual({ ok: true });
-    expect(wallet.creditDepositByAddress).toHaveBeenCalledWith(event);
-    expect(wallet.reconcileWithdrawalStatus).not.toHaveBeenCalled();
+    const ledger = await ledgerFor(w.id);
+    expect(ledger).toHaveLength(1);
+    expect(ledger[0]).toMatchObject({
+      type: 'deposit',
+      status: 'completed',
+      amount: '0.50000000',
+      providerRefId: 'vendor-ext-1',
+      txHash: '0xabc',
+    });
+    const [credited] = await db.drizzle.db.select().from(wallet).where(eq(wallet.id, w.id));
+    expect(credited?.balance).toBe('0.50000000');
   });
 
-  it('dispatches a verified withdrawal event to reconcileWithdrawalStatus', async () => {
-    const wallet = fakeWallet();
-    const event: PaymentWebhookEvent = {
-      kind: 'withdrawal',
-      externalId: 'vendor-ext-2',
-      status: 'completed',
-    };
-    const payment = mock<PaymentAdapter>({ parseWebhook: vi.fn().mockReturnValue(event) });
-    const verifier = mock<PaymentWebhookVerifier>({ verify: vi.fn().mockReturnValue(true) });
-    const router = createWalletRouter(wallet, fakeGuard(), fakeAudit(), payment, verifier);
+  it('credits a replayed deposit event exactly once', async () => {
+    const w = await seedWallet();
+    await seedDepositAddress();
+    const router = routerWith(paymentParsing(depositEvent), verifierReturning(true));
+
+    await call(router.webhook, {}, ctx('{"event":"deposit"}'));
+    await call(router.webhook, {}, ctx('{"event":"deposit"}'));
+
+    expect(await ledgerFor(w.id)).toHaveLength(1);
+    const [credited] = await db.drizzle.db.select().from(wallet).where(eq(wallet.id, w.id));
+    expect(credited?.balance).toBe('0.50000000');
+  });
+
+  it('settles the matching withdrawal on a verified withdrawal event', async () => {
+    const w = await seedWallet();
+    const externalId = randomUUID();
+    const withdrawal = await seedProcessingWithdrawal(w.id, externalId);
+    const router = routerWith(
+      paymentParsing({ kind: 'withdrawal', externalId, status: 'completed', txHash: '0xdef' }),
+      verifierReturning(true),
+    );
 
     const result = await call(router.webhook, {}, ctx('{"event":"withdrawal"}'));
 
     expect(result).toEqual({ ok: true });
-    expect(wallet.reconcileWithdrawalStatus).toHaveBeenCalledWith(event);
-    expect(wallet.creditDepositByAddress).not.toHaveBeenCalled();
+    const [settled] = await db.drizzle.db
+      .select()
+      .from(walletTransaction)
+      .where(eq(walletTransaction.id, withdrawal.id));
+    expect(settled).toMatchObject({ status: 'completed', txHash: '0xdef' });
   });
 
-  it('returns ok without dispatching when parseWebhook does not recognize the body', async () => {
-    const wallet = fakeWallet();
-    const payment = mock<PaymentAdapter>({ parseWebhook: vi.fn().mockReturnValue(null) });
-    const verifier = mock<PaymentWebhookVerifier>({ verify: vi.fn().mockReturnValue(true) });
-    const router = createWalletRouter(wallet, fakeGuard(), fakeAudit(), payment, verifier);
+  it('returns ok without touching the ledger when parseWebhook does not recognize the body', async () => {
+    const w = await seedWallet();
+    await seedDepositAddress();
+    const router = routerWith(paymentParsing(null), verifierReturning(true));
 
     const result = await call(router.webhook, {}, ctx('{"event":"unknown"}'));
 
     expect(result).toEqual({ ok: true });
-    expect(wallet.creditDepositByAddress).not.toHaveBeenCalled();
-    expect(wallet.reconcileWithdrawalStatus).not.toHaveBeenCalled();
+    expect(await ledgerFor(w.id)).toHaveLength(0);
+  });
+
+  it('returns ok and credits nothing when the deposit address is unknown', async () => {
+    const w = await seedWallet();
+    const router = routerWith(paymentParsing(depositEvent), verifierReturning(true));
+
+    const result = await call(router.webhook, {}, ctx('{"event":"deposit"}'));
+
+    expect(result).toEqual({ ok: true });
+    expect(await ledgerFor(w.id)).toHaveLength(0);
   });
 });

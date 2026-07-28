@@ -1,5 +1,10 @@
 import type { Container, Factory } from '../kernel/index.js';
-import type { SealedToken, Token, WorkerRegistration } from '@openora/core/contracts';
+import type {
+  EventEnvelope,
+  SealedToken,
+  Token,
+  WorkerRegistration,
+} from '@openora/core/contracts';
 
 export type McpToolDefinition = {
   name: string;
@@ -11,7 +16,7 @@ export type McpToolDefinition = {
 // Runs once at boot, after every plugin has registered its providers, so adapter overrides (last registration wins) are in effect.
 export type RouterFactory = (c: Container) => unknown;
 
-export type EventHandler = (payload: unknown) => void | Promise<void>;
+export type EventHandler = (payload: unknown, envelope?: EventEnvelope) => void | Promise<void>;
 
 export type ModuleRegistry = {
   // Last registration wins - an overlay loaded after a module can rebind its adapter token.

@@ -20,6 +20,7 @@ export function toPlayerTagWithTag(
     assignReason: pt.assignReason,
     assignActor: pt.assignActor,
     assignActorUserId: pt.assignActorUserId ?? null,
+    assignMetadata: pt.assignMetadata ?? null,
     removedAt: pt.removedAt ?? null,
     removalReason: pt.removalReason ?? null,
     removalActor: pt.removalActor ?? null,

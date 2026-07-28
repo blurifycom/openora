@@ -16,10 +16,10 @@ describe('FinancialAnalyticsService.summary', () => {
     const drizzle = makeDrizzle({
       select: [
         [
-          { currency: 'USD', rail: 'fiat', type: 'deposit', total: '500.00' },
-          { currency: 'USD', rail: 'crypto', type: 'withdrawal', total: '120.00' },
-          { currency: 'EUR', rail: null, type: 'deposit', total: '75.00' },
+          { currency: 'USD', rail: 'fiat', total: '500.00' },
+          { currency: 'EUR', rail: null, total: '75.00' },
         ],
+        [{ currency: 'USD', rail: 'crypto', total: '120.00' }],
         [
           { currency: 'USD', netRevenue: '350.00', bonusCost: '30.00' },
           { currency: 'EUR', netRevenue: '75.00', bonusCost: '0' },

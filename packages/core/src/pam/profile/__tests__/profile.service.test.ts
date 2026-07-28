@@ -1,51 +1,121 @@
-import { describe, it, expect, vi } from 'vitest';
+import { describe, it, expect, beforeAll, afterAll, beforeEach } from 'vitest';
+import { randomUUID } from 'node:crypto';
+import { eq, sql } from 'drizzle-orm';
+import { createTestDb, type TestDb } from '@openora/core/testing';
+import { user } from '@openora/core/pam/schema/identity';
+import { migrate as migrateIdentity } from '@openora/core/pam/migrate/identity';
+import { player } from '../schema/index.js';
+import { migrate } from '../migrate.js';
 import { ProfileService } from '../service/profile.service.js';
 
-function chain(result: unknown): any {
-  const proxy: any = new Proxy(function () {}, {
-    get(_t, prop) {
-      if (prop === 'then') {
-        return (res: (v: unknown) => unknown) => res(result);
-      }
-      return () => proxy;
-    },
-    apply: () => proxy,
-  });
-  return proxy;
-}
-
-const playerRow = {
-  id: 'player-1',
-  userId: 'user-1',
-  displayName: 'Player One',
-  country: null,
-  currency: 'USD',
-  status: 'active',
-  kycStatus: 'pending',
-  level: 1,
-  totalWagered: '0',
-  totalDeposits: '0',
-  lastSeenAt: null,
-  createdAt: new Date(),
-  updatedAt: new Date(),
-};
+let db: TestDb;
 
 function makeService(): ProfileService {
-  const select = vi
-    .fn()
-    .mockReturnValueOnce(chain([playerRow]))
-    .mockReturnValueOnce(chain([{ email: 'player@example.com' }]))
-    .mockReturnValueOnce(chain([{ email: 'player@example.com' }]));
-  const update = vi.fn(() => chain([{ ...playerRow, country: 'US' }]));
-  const db = { select, update };
-  return new ProfileService({ db } as never);
+  return new ProfileService(db.drizzle);
 }
 
-describe('ProfileService.updateMyProfile', () => {
-  it('persists profile fields and returns the mapped player', async () => {
+async function seedUser(overrides: Partial<typeof user.$inferInsert> = {}) {
+  const [row] = await db.drizzle.db
+    .insert(user)
+    .values({ name: 'Player One', email: `${randomUUID()}@example.com`, ...overrides })
+    .returning();
+  return row!;
+}
+
+async function seedPlayer(userId: string, overrides: Partial<typeof player.$inferInsert> = {}) {
+  const [row] = await db.drizzle.db
+    .insert(player)
+    .values({ userId, displayName: 'Player One', ...overrides })
+    .returning();
+  return row!;
+}
+
+async function playersFor(userId: string) {
+  return db.drizzle.db.select().from(player).where(eq(player.userId, userId));
+}
+
+beforeAll(async () => {
+  db = await createTestDb([migrateIdentity, migrate]);
+});
+
+afterAll(async () => {
+  await db.drop();
+});
+
+beforeEach(async () => {
+  await db.drizzle.db.execute(sql`TRUNCATE ${player}, ${user} RESTART IDENTITY CASCADE`);
+});
+
+describe('ProfileService.getMyProfile (real PG)', () => {
+  it('materializes a player row from the users name on first access', async () => {
     const svc = makeService();
-    const result = await svc.updateMyProfile('user-1', { country: 'US' });
-    expect(result.country).toBe('US');
-    expect(result.email).toBe('player@example.com');
+    const account = await seedUser({ name: 'Jordan' });
+
+    const profile = await svc.getMyProfile(account.id);
+
+    expect(profile).toMatchObject({
+      userId: account.id,
+      displayName: 'Jordan',
+      email: account.email,
+    });
+    expect(await playersFor(account.id)).toHaveLength(1);
+  });
+
+  it('returns the existing row without inserting a second one on a later call', async () => {
+    const svc = makeService();
+    const account = await seedUser();
+    await seedPlayer(account.id, { displayName: 'Existing', country: 'US' });
+
+    const profile = await svc.getMyProfile(account.id);
+
+    expect(profile).toMatchObject({ displayName: 'Existing', country: 'US' });
+    expect(await playersFor(account.id)).toHaveLength(1);
+  });
+
+  it('creates exactly one player row when two first accesses race on the same user', async () => {
+    const svc = makeService();
+    const account = await seedUser();
+
+    const [a, b] = await Promise.all([svc.getMyProfile(account.id), svc.getMyProfile(account.id)]);
+
+    expect(a.id).toBe(b.id);
+    expect(await playersFor(account.id)).toHaveLength(1);
+  });
+});
+
+describe('ProfileService.updateMyProfile (real PG)', () => {
+  it('persists profile fields and returns the mapped player with email', async () => {
+    const svc = makeService();
+    const account = await seedUser({ name: 'Player One' });
+    await seedPlayer(account.id, { country: null });
+
+    const result = await svc.updateMyProfile(account.id, { country: 'US' });
+
+    expect(result).toMatchObject({ country: 'US', email: account.email });
+    const [row] = await playersFor(account.id);
+    expect(row?.country).toBe('US');
+  });
+
+  it('materializes the profile first when update is the first call for a user', async () => {
+    const svc = makeService();
+    const account = await seedUser({ name: 'Fresh' });
+
+    const result = await svc.updateMyProfile(account.id, { currency: 'EUR' });
+
+    expect(result).toMatchObject({ displayName: 'Fresh', currency: 'EUR' });
+    expect(await playersFor(account.id)).toHaveLength(1);
+  });
+
+  it('leaves other players untouched', async () => {
+    const svc = makeService();
+    const account = await seedUser();
+    const other = await seedUser();
+    await seedPlayer(account.id, { country: 'US' });
+    await seedPlayer(other.id, { country: 'CA' });
+
+    await svc.updateMyProfile(account.id, { country: 'FR' });
+
+    const [otherRow] = await playersFor(other.id);
+    expect(otherRow?.country).toBe('CA');
   });
 });

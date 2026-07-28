@@ -1,5 +1,5 @@
 import type { AdminUserDirectory, AdminUserListOptions, ClientMeta } from '@openora/core/contracts';
-import { KycStatusSchema, UserRoleSchema } from '@openora/core/contracts';
+import { KycStatusSchema, UserRoleSchema, normalizeKycStatus } from '@openora/core/contracts';
 import { DrizzleService, pageToOffset } from '@openora/core/server';
 import type { EventBus } from '@openora/core/server';
 import { asc, count, desc, eq, ilike, inArray } from 'drizzle-orm';
@@ -128,11 +128,14 @@ export class DrizzleAdminUserDirectory implements AdminUserDirectory {
       .where(inArray(player.userId, [...userIds]));
     return rows.map((r) => {
       // The player table stores kycStatus as free text; coerce unknown values to null
-      // so the port's KycStatus contract holds without a cast.
+      // so the port's KycStatus contract holds without a cast. Normalize the deprecated
+      // `verified` value to `approved` here - the single read boundary every admin
+      // consumer (wallet queue filter, tag evaluation, admin-console) goes through -
+      // so a legacy row is indistinguishable from a fresh one downstream.
       const kyc = KycStatusSchema.safeParse(r.kycStatus);
       return {
         ...r,
-        kycStatus: kyc.success ? kyc.data : null,
+        kycStatus: kyc.success ? normalizeKycStatus(kyc.data) : null,
       };
     });
   }

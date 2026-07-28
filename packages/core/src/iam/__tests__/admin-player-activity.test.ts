@@ -1,10 +1,11 @@
 import { describe, it, expect, vi } from 'vitest';
-import { mockDb } from '../../testing/mock.js';
+import type { DrizzleService } from '@openora/core/server';
+import { mock } from '../../testing/mock.js';
 import { DrizzleAdminPlayerActivity } from '../adapters/admin-player-activity.js';
 
 function makeDrizzle(rows: Record<string, unknown>[]) {
   const execute = vi.fn().mockResolvedValue({ rows });
-  return { drizzle: mockDb({ execute }), execute };
+  return { drizzle: mock<DrizzleService>({ db: { execute } }), execute };
 }
 
 describe('DrizzleAdminPlayerActivity.getRegistrationsOverTime', () => {

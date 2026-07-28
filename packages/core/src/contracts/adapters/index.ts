@@ -29,6 +29,12 @@ export { WALLET_COMMANDS } from './wallet-commands.js';
 export type { WalletReader } from './wallet-reader.js';
 export { WALLET_READER } from './wallet-reader.js';
 
+export type {
+  TagEvaluationCommands,
+  TagEvaluationWithdrawalRequestedArgs,
+} from './tag-evaluation-commands.js';
+export { TAG_EVALUATION_COMMANDS } from './tag-evaluation-commands.js';
+
 export type { IdentityReader } from './identity-reader.js';
 export { IDENTITY_READER } from './identity-reader.js';
 
@@ -75,11 +81,21 @@ export type {
   KycVendorStatus,
   KycDocument,
   KycResult,
+  KycRiskSignals,
   KycStatusWriter,
-  KycStatusSource,
   KycWebhookVerifier,
+  KycCheckStatus,
+  KycCheckResult,
 } from './kyc.js';
-export { KYC_ADAPTER, KYC_STATUS_WRITER, KYC_WEBHOOK_VERIFIER } from './kyc.js';
+export {
+  KYC_ADAPTER,
+  KYC_STATUS_WRITER,
+  KYC_WEBHOOK_VERIFIER,
+  KYC_VENDOR_STATUSES,
+  KYC_CHECK_STATUSES,
+  KycCheckStatusSchema,
+  KycCheckResultSchema,
+} from './kyc.js';
 
 export type { PaymentAdapter, PaymentWebhookEvent, PaymentWebhookVerifier } from './payment.js';
 export { PAYMENT_ADAPTER, PAYMENT_WEBHOOK_VERIFIER } from './payment.js';

@@ -1,6 +1,11 @@
+import { randomUUID } from 'node:crypto';
 import {
   createApp,
-  createLogger,
+  createRedisClient,
+  BullMqJobQueue,
+  RedisCache,
+  RedisRateLimiter,
+  RedisStreamsBroker,
   type CreateAppConfig,
   type Container,
 } from '@openora/core/server';
@@ -13,14 +18,8 @@ import {
   REALTIME_CLIENT_AUTHORIZER,
 } from '@openora/core/contracts';
 import { user, session, account, verification, twoFactor } from '@openora/core/pam/schema/identity';
-import {
-  InMemoryBroker,
-  InProcessJobQueue,
-  InProcessCache,
-  InProcessRateLimiter,
-  InProcessRealtimeTransport,
-  SseClientAuthorizer,
-} from '@openora/core/testing';
+import { InProcessRealtimeTransport, SseClientAuthorizer } from '@openora/core/testing';
+import { acquireTestRedisDatabase } from './redis.js';
 import type { Hono } from 'hono';
 
 export type TestApp = {
@@ -28,7 +27,7 @@ export type TestApp = {
   app: Hono;
   /** The composition container, for resolving services/tokens in assertions. */
   container: Container;
-  /** Dispose the container (closes the DB pool, drains workers). */
+  /** Dispose the container (closes the DB pool, drains workers, frees the Redis db). */
   close(): Promise<void>;
 };
 
@@ -44,16 +43,24 @@ export type BootTestAppConfig = Pick<CreateAppConfig, 'plugins' | 'contract' | '
  * Pass the same `plugins` + `contract` the real entrypoint uses (in OSS that is
  * `loadExtensions()` + `@openora/core/contracts`; a consumer passes its own).
  *
- * Production is distributed-only (ADR-0030) - `createApp` no longer ships in-process
- * defaults for `MESSAGE_BROKER`/`JOB_QUEUE`/`CACHE`/`RATE_LIMITER` and throws if they're
- * unbound. This `configure` callback binds the `@openora/core/testing` fakes as a
- * FALLBACK (only when a plugin hasn't already bound the token) before `createApp`'s
- * durable-seam assertion runs, so the suite still boots with zero infra by default,
- * while a test that wants to exercise a real broker/queue overlay via `config.plugins`
- * keeps that overlay's binding instead of being silently overridden.
+ * The four durable seams run on the SAME drivers production uses - Redis Streams,
+ * BullMQ, Redis cache and Redis rate limiter - so event fan-out, job retries and
+ * throttling are exercised for real rather than through an in-process stand-in.
+ * Each booted app claims its own Redis logical database, so several apps in one
+ * test file cannot compete for each other's events, jobs or cache entries.
+ *
+ * The broker reads from `startId: '0'` here, unlike production's `$`: a test acts
+ * within milliseconds of boot, and a group created lazily at `$` would silently drop
+ * anything published before it existed. Replay is harmless against a flushed database.
+ *
+ * Realtime stays on the in-process fakes - core ships no realtime driver, so there is
+ * nothing real to bind (production expects a managed vendor overlay).
  */
 // Mirrors what the consumer composition root does. See ADR-0025.
 export async function bootTestApp(config: BootTestAppConfig): Promise<TestApp> {
+  const redisDatabase = await acquireTestRedisDatabase();
+  const serviceName = `test-${randomUUID()}`;
+
   const created = await createApp({
     plugins: config.plugins,
     ...(config.contract ? { contract: config.contract } : {}),
@@ -62,36 +69,22 @@ export async function bootTestApp(config: BootTestAppConfig): Promise<TestApp> {
     authSchema: { user, session, account, verification, twoFactor },
     openapi: { enabled: false },
     configure(container: Container) {
-      if (!container.has(MESSAGE_BROKER)) {
-        container.register(MESSAGE_BROKER, () => {
-          const broker = new InMemoryBroker();
-          container.onDispose(() => broker.close());
-          return broker;
-        });
-      }
-      if (!container.has(JOB_QUEUE)) {
-        container.register(JOB_QUEUE, () => {
-          const q = new InProcessJobQueue(createLogger('job-queue'));
-          container.onDispose(() => q.close());
-          return q;
-        });
-      }
-      if (!container.has(CACHE)) {
-        container.register(CACHE, () => {
-          const cache = new InProcessCache();
-          container.onDispose(() => cache.close());
-          return cache;
-        });
-      }
-      if (!container.has(RATE_LIMITER)) {
-        container.register(RATE_LIMITER, () => {
-          const limiter = new InProcessRateLimiter();
-          container.onDispose(() => limiter.close());
-          return limiter;
-        });
-      }
-      // REALTIME stays lazy in production (throws on first use), but the suite may
-      // exercise realtime routes - bind the fakes so those tests run with zero infra.
+      const redis = createRedisClient(redisDatabase.url);
+      container.onDispose(() => redis.close());
+
+      container.register(MESSAGE_BROKER, () => {
+        const broker = new RedisStreamsBroker(redis, { serviceName, startId: '0' });
+        container.onDispose(() => broker.close());
+        return broker;
+      });
+      container.register(JOB_QUEUE, () => {
+        const queue = new BullMqJobQueue(redisDatabase.url);
+        container.onDispose(() => queue.close());
+        return queue;
+      });
+      container.register(CACHE, () => new RedisCache(redis));
+      container.register(RATE_LIMITER, () => new RedisRateLimiter(redis));
+
       if (!container.has(REALTIME_TRANSPORT)) {
         container.register(REALTIME_TRANSPORT, () => new InProcessRealtimeTransport());
       }
@@ -104,6 +97,9 @@ export async function bootTestApp(config: BootTestAppConfig): Promise<TestApp> {
   return {
     app: created.app,
     container: created.container,
-    close: created.close,
+    async close(): Promise<void> {
+      await created.close();
+      await redisDatabase.release();
+    },
   };
 }

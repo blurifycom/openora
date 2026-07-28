@@ -2,7 +2,11 @@ import { oc } from '@orpc/contract';
 import * as z from 'zod';
 import { IdInputSchema, TimestampSchema, UuidSchema } from '@openora/core/contracts';
 
-export const NOTIFICATION_TYPES = ['withdrawal.approved', 'withdrawal.rejected'] as const;
+export const NOTIFICATION_TYPES = [
+  'withdrawal.approved',
+  'withdrawal.rejected',
+  'kyc.resubmission_requested',
+] as const;
 export const NotificationTypeSchema = z.enum(NOTIFICATION_TYPES);
 export type NotificationType = z.infer<typeof NotificationTypeSchema>;
 

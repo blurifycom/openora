@@ -69,7 +69,7 @@ export class RgMonitoringService {
       }
       const limitAmount = limit.amount;
       const { from } = periodWindow(limit.period as LimitPeriod, now);
-      const actualAmount = await this.spendFor(userId, limit.type as LimitType, from, now);
+      const actualAmount = await this.spendFor(userId, limit.type as LimitType, from);
       // Threshold comparison is a review-flag decision, not a ledger write - moneyToNumber
       // is the documented single conversion point (see the helper's own doc comment).
       if (isAtThreshold(moneyToNumber(actualAmount), moneyToNumber(limitAmount))) {
@@ -198,15 +198,18 @@ export class RgMonitoringService {
     return { items, total: countResult[0]?.count ?? 0, page, limit };
   }
 
-  private async spendFor(userId: User['id'], type: LimitType, from: Date, to: Date) {
+  private async spendFor(userId: User['id'], type: LimitType, from: Date) {
     if (type === 'deposit') {
-      return this.depositsSum(userId, from, to);
+      return this.depositsSum(userId, from);
     }
-    return this.betsSum(userId, from, to);
+    return this.betsSum(userId, from);
   }
 
   // Decimal string, matching userLimit.amount (same unit as walletTransaction.amount).
-  private async depositsSum(userId: User['id'], from: Date, to: Date) {
+  // Open-ended at the top: the window's `to` is a JS clock reading, so a row the
+  // database stamped microseconds ahead of it would drop out of the very evaluation
+  // that row triggered.
+  private async depositsSum(userId: User['id'], from: Date) {
     const [row] = await this.drizzle.db
       .select({ total: sql<string>`coalesce(sum(${walletTransaction.amount}), 0)` })
       .from(walletTransaction)
@@ -217,24 +220,18 @@ export class RgMonitoringService {
           eq(walletTransaction.type, 'deposit'),
           eq(walletTransaction.status, 'completed'),
           gte(walletTransaction.createdAt, from),
-          lte(walletTransaction.createdAt, to),
+          lte(walletTransaction.createdAt, new Date()),
         ),
       );
     return row?.total ?? '0';
   }
 
   // Decimal string, matching userLimit.amount (same unit as gameRound.betAmount).
-  private async betsSum(userId: User['id'], from: Date, to: Date) {
+  private async betsSum(userId: User['id'], from: Date) {
     const [rounds] = await this.drizzle.db
       .select({ total: sql<string>`coalesce(sum(${gameRound.betAmount}), 0)` })
       .from(gameRound)
-      .where(
-        and(
-          eq(gameRound.userId, userId),
-          gte(gameRound.startedAt, from),
-          lte(gameRound.startedAt, to),
-        ),
-      );
+      .where(and(eq(gameRound.userId, userId), gte(gameRound.startedAt, from)));
     return rounds?.total ?? '0';
   }
 
