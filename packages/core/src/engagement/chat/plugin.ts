@@ -4,6 +4,7 @@ import {
   REALTIME_CLIENT_AUTHORIZER,
   RATE_LIMITER,
   CHAT_SYSTEM_WRITER,
+  CHAT_BLOCK_WRITER,
   createToken,
 } from '@openora/core/contracts';
 import { ChatService } from './service/chat.service.js';
@@ -19,6 +20,7 @@ export default definePlugin({
       (c) => new ChatService(c.get(DRIZZLE), c.get(EVENT_BUS), c.get(REALTIME_TRANSPORT)),
     );
     ctx.provide(CHAT_SYSTEM_WRITER, (c) => c.get(CHAT_SERVICE));
+    ctx.provide(CHAT_BLOCK_WRITER, (c) => c.get(CHAT_SERVICE));
 
     ctx.routers.add('chat', (c) =>
       createChatRouter({

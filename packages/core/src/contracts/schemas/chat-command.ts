@@ -14,8 +14,9 @@ export const CommandMetadataSchema = z.discriminatedUnion('command', [
   }),
   z.object({
     command: z.literal('gift'),
-    fromUserId: UuidSchema,
-    toUserId: UuidSchema,
+    giftId: UuidSchema,
+    senderId: UuidSchema,
+    senderUsername: z.string(),
     amount: MoneyAmountSchema,
     currency: z.string(),
   }),
@@ -26,6 +27,16 @@ export const CommandMetadataSchema = z.discriminatedUnion('command', [
     currency: z.string(),
     recipientCount: z.number().int(),
     perRecipient: MoneyAmountSchema,
+  }),
+  z.object({
+    command: z.literal('block'),
+    targetUserId: UuidSchema,
+    displayName: z.string(),
+  }),
+  z.object({
+    command: z.literal('ignore'),
+    targetUserId: UuidSchema,
+    displayName: z.string(),
   }),
 ]);
 export type CommandMetadata = z.infer<typeof CommandMetadataSchema>;

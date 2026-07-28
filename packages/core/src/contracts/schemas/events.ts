@@ -295,13 +295,24 @@ export const domainEventSchemas = {
     after: z.record(z.string(), z.unknown()),
   }),
 
-  // Chat command events. fromUserId/toUserId are the player UUIDs; amount is a decimal string.
+  // Chat command events. amount is a decimal string; giftId is the chat_gift row id.
   'chat.gift.sent': z.object({
-    fromUserId: UuidSchema,
-    toUserId: UuidSchema,
+    giftId: UuidSchema,
+    senderId: UuidSchema,
+    senderUsername: z.string(),
     amount: MoneyAmountSchema,
     currency: z.string(),
-    messageId: z.string(),
+    roomId: UuidSchema,
+    messageId: UuidSchema,
+  }),
+  'chat.gift.claimed': z.object({
+    giftId: UuidSchema,
+    claimerId: UuidSchema,
+    claimerUsername: z.string(),
+    senderId: UuidSchema,
+    amount: MoneyAmountSchema,
+    currency: z.string(),
+    roomId: UuidSchema,
   }),
   'chat.rain.distributed': z.object({
     fromUserId: UuidSchema,
@@ -330,6 +341,8 @@ export const domainEventVersions: Partial<Record<DomainEventName, number>> = {
   // v2: sessionToken (the raw bearer credential) replaced with sessionId - the token
   // must never be persisted to the audit log or handed back to any caller.
   'identity.session.revoked': 2,
+  // v2: claimable gift-card mechanic - giftId/senderId/senderUsername/roomId replaces fromUserId/toUserId.
+  'chat.gift.sent': 2,
   // v2: exact decimal-string amount (+ currency), never a JS number.
   'wallet.deposit.completed': 2,
   'wallet.withdrawal.completed': 2,

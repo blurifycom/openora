@@ -29,6 +29,18 @@ export async function seedChatCommands(db: DrizzleDb): Promise<void> {
         label: 'Rain',
         description: 'Split tokens among online room members',
       },
+      {
+        key: 'block',
+        enabled: true,
+        label: 'Block',
+        description: 'Block a player — their messages will be hidden from you',
+      },
+      {
+        key: 'ignore',
+        enabled: true,
+        label: 'Ignore',
+        description: 'Ignore a player — their messages will be hidden from you',
+      },
     ])
     .onConflictDoNothing();
 }

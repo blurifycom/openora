@@ -2,12 +2,20 @@ import { oc } from '@orpc/contract';
 import * as z from 'zod';
 import { UuidSchema, MoneyAmountSchema, SystemChatMessageSchema } from '@openora/core/contracts';
 
-export const CHAT_COMMAND_TYPES = ['mention', 'profile', 'gift', 'rain'] as const;
+export const CHAT_COMMAND_TYPES = [
+  'mention',
+  'profile',
+  'gift',
+  'rain',
+  'block',
+  'ignore',
+] as const;
 export const ChatCommandTypeSchema = z.enum(CHAT_COMMAND_TYPES);
 export type ChatCommandType = z.infer<typeof ChatCommandTypeSchema>;
 
 export const CommandConfigSchema = z.object({
   maxAmount: MoneyAmountSchema.optional(),
+  minAmount: MoneyAmountSchema.optional(),
   maxRecipients: z.number().int().positive().optional(),
 });
 export type CommandConfig = z.infer<typeof CommandConfigSchema>;
@@ -29,6 +37,26 @@ export type MentionResult = z.infer<typeof MentionResultSchema>;
 
 export { SystemChatMessageSchema };
 
+export const GiftStateSchema = z.object({
+  id: UuidSchema,
+  senderId: UuidSchema,
+  senderUsername: z.string(),
+  amount: MoneyAmountSchema,
+  currency: z.string(),
+  claimedBy: UuidSchema.nullable(),
+  claimedByUsername: z.string().nullable(),
+  claimedAt: z.string().nullable(),
+  createdAt: z.string(),
+});
+export type GiftState = z.infer<typeof GiftStateSchema>;
+
+export const ClaimGiftOutputSchema = z.object({
+  claimedBy: UuidSchema,
+  claimedByUsername: z.string(),
+  claimedAt: z.string(),
+});
+export type ClaimGiftOutput = z.infer<typeof ClaimGiftOutputSchema>;
+
 export const chatCommandsContract = {
   listCommands: oc
     .route({ method: 'GET', path: '/chat-command/commands' })
@@ -46,25 +74,44 @@ export const chatCommandsContract = {
         }),
         z.object({
           type: z.literal('gift'),
-          targetUsername: z.string().min(1),
           amount: MoneyAmountSchema,
-          roomId: UuidSchema.nullable(),
+          roomId: UuidSchema,
         }),
         z.object({
           type: z.literal('rain'),
           amount: MoneyAmountSchema,
           roomId: UuidSchema,
         }),
+        z.object({
+          type: z.literal('block'),
+          targetUsername: z.string().min(1),
+          roomId: UuidSchema.nullable(),
+        }),
+        z.object({
+          type: z.literal('ignore'),
+          targetUsername: z.string().min(1),
+          roomId: UuidSchema.nullable(),
+        }),
       ]),
     )
     .output(SystemChatMessageSchema),
+
+  getGift: oc
+    .route({ method: 'GET', path: '/chat-command/gift/{id}' })
+    .input(z.object({ id: UuidSchema }))
+    .output(GiftStateSchema),
+
+  claimGift: oc
+    .route({ method: 'POST', path: '/chat-command/gift/{id}/claim' })
+    .input(z.object({ id: UuidSchema }))
+    .output(ClaimGiftOutputSchema),
 
   mentionSearch: oc
     .route({ method: 'GET', path: '/chat-command/mention-search' })
     .input(
       z.object({
         q: z.string().min(1).max(50),
-        limit: z.coerce.number().int().min(1).max(20).default(10),
+        limit: z.coerce.number().int().min(1).max(100).default(50),
       }),
     )
     .output(z.array(MentionResultSchema)),

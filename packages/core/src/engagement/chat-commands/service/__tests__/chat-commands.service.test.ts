@@ -3,6 +3,7 @@ import { mock, makeDrizzle, makeEvents } from '../../../../testing/mock.js';
 import type {
   ChatSystemMessage,
   ChatSystemWriter,
+  ChatBlockWriter,
   WalletCommands,
   AdminUserDirectory,
   AuditWritePort,
@@ -12,14 +13,18 @@ import {
   ChatCommandsService,
   CommandDisabledError,
   InsufficientBalanceError,
+  BelowMinimumError,
   NoOnlineUsersError,
-  ChatPlayerNotFoundError,
+  GiftNotFoundError,
+  GiftAlreadyClaimedError,
+  GiftSelfClaimError,
 } from '../chat-commands.service.js';
 
 const ACTOR_ID = '00000000-0000-0000-0000-000000000001';
-const TARGET_ID = '00000000-0000-0000-0000-000000000002';
+const CLAIMER_ID = '00000000-0000-0000-0000-000000000002';
 const ROOM_ID = '00000000-0000-0000-0000-000000000003';
 const MSG_ID = '00000000-0000-0000-0000-000000000004';
+const GIFT_ID = '00000000-0000-0000-0000-000000000005';
 
 const ENABLED_ROW = {
   key: 'gift',
@@ -39,12 +44,28 @@ const SYSTEM_MSG: ChatSystemMessage = {
   content: '',
   metadata: {
     command: 'gift',
-    fromUserId: ACTOR_ID,
-    toUserId: TARGET_ID,
+    giftId: GIFT_ID,
+    senderId: ACTOR_ID,
+    senderUsername: 'bob',
     amount: '10.00000000',
     currency: 'USD',
   },
   createdAt: new Date().toISOString(),
+};
+
+/** Gift row as returned from the DB (dates as Date objects, amount as string). */
+const GIFT_ROW = {
+  id: GIFT_ID,
+  messageId: MSG_ID,
+  senderId: ACTOR_ID,
+  senderUsername: 'bob',
+  amount: '10.00000000',
+  currency: 'USD',
+  roomId: ROOM_ID,
+  claimedBy: null,
+  claimedByUsername: null,
+  claimedAt: null,
+  createdAt: new Date(),
 };
 
 function makeWriter(): ChatSystemWriter {
@@ -66,18 +87,28 @@ function makeWallet(ok = true): WalletCommands {
   });
 }
 
-function makeDirectory(ids: string[] = [TARGET_ID]): AdminUserDirectory {
+function makeDirectory(senderUsername = 'bob', claimerUsername = 'alice'): AdminUserDirectory {
   return mock<AdminUserDirectory>({
-    findPlayerIds: vi.fn().mockResolvedValue(ids),
-    lookupPlayers: vi.fn().mockResolvedValue([
-      {
-        userId: TARGET_ID,
-        username: 'alice',
-        email: 'alice@example.com',
-        kycStatus: null,
-        language: null,
-      },
-    ]),
+    findPlayerIds: vi.fn().mockResolvedValue([ACTOR_ID]),
+    lookupPlayers: vi.fn().mockImplementation((ids: string[]) => {
+      const all = [
+        {
+          userId: ACTOR_ID,
+          username: senderUsername,
+          email: 'bob@example.com',
+          kycStatus: null,
+          language: null,
+        },
+        {
+          userId: CLAIMER_ID,
+          username: claimerUsername,
+          email: 'alice@example.com',
+          kycStatus: null,
+          language: null,
+        },
+      ];
+      return Promise.resolve(all.filter((p) => ids.includes(p.userId)));
+    }),
   });
 }
 
@@ -85,9 +116,14 @@ function makeAudit(): AuditWritePort {
   return mock<AuditWritePort>({ record: vi.fn().mockResolvedValue(undefined) });
 }
 
-function makeTransport(onlineIds: string[] = [TARGET_ID]): RealtimeTransport {
+function makeBlockWriter(): ChatBlockWriter {
+  return mock<ChatBlockWriter>({ blockUser: vi.fn().mockResolvedValue(undefined) });
+}
+
+function makeTransport(onlineIds: string[] = [CLAIMER_ID]): RealtimeTransport {
   return mock<RealtimeTransport>({
     getOnlineUserIds: vi.fn().mockResolvedValue(onlineIds),
+    publish: vi.fn().mockResolvedValue(undefined),
   });
 }
 
@@ -102,6 +138,7 @@ function makeSvc(
     wallet?: WalletCommands;
     directory?: AdminUserDirectory;
     transport?: RealtimeTransport;
+    audit?: AuditWritePort;
   } = {},
 ) {
   const drizzle = makeDrizzle({
@@ -114,16 +151,18 @@ function makeSvc(
     overrides.writer ?? makeWriter(),
     overrides.wallet ?? makeWallet(),
     overrides.directory ?? makeDirectory(),
-    makeAudit(),
+    overrides.audit ?? makeAudit(),
     overrides.transport ?? makeTransport(),
     mock(makeEvents()),
+    makeBlockWriter(),
   );
 }
 
 describe('ChatCommandsService.listCommands', () => {
   it('returns only enabled commands by default', async () => {
+    // mock simulates DB returning only enabled rows (WHERE enabled = true applied at SQL level)
     const svc = makeSvc({
-      drizzleRows: { select: [[ENABLED_ROW, DISABLED_ROW]] },
+      drizzleRows: { select: [[ENABLED_ROW]] },
     });
     const result = await svc.listCommands();
     expect(result).toHaveLength(1);
@@ -131,6 +170,7 @@ describe('ChatCommandsService.listCommands', () => {
   });
 
   it('returns all commands when includeDisabled is true', async () => {
+    // mock simulates DB returning all rows (no WHERE clause)
     const svc = makeSvc({
       drizzleRows: { select: [[ENABLED_ROW, DISABLED_ROW]] },
     });
@@ -141,79 +181,151 @@ describe('ChatCommandsService.listCommands', () => {
 
 describe('ChatCommandsService.searchMentions', () => {
   it('passes limit to findPlayerIds', async () => {
-    const directory = makeDirectory([TARGET_ID]);
+    const directory = makeDirectory();
     const svc = makeSvc({ directory });
     await svc.searchMentions('ali', 5);
     expect(directory.findPlayerIds).toHaveBeenCalledWith('ali', 5);
   });
 
   it('returns empty array when no ids found', async () => {
-    const directory = makeDirectory([]);
+    const directory = mock<AdminUserDirectory>({
+      findPlayerIds: vi.fn().mockResolvedValue([]),
+      lookupPlayers: vi.fn().mockResolvedValue([]),
+    });
     const svc = makeSvc({ directory });
     const result = await svc.searchMentions('xyz', 10);
     expect(result).toEqual([]);
   });
 });
 
-describe('ChatCommandsService.executeCommand', () => {
+describe('ChatCommandsService.executeCommand (gift)', () => {
   it('throws CommandDisabledError when command row is missing', async () => {
     const svc = makeSvc({ drizzleRows: { select: [[]] } });
     await expect(
-      svc.executeCommand(
-        { type: 'gift', targetUsername: 'alice', amount: '10', roomId: ROOM_ID },
-        ACTOR_ID,
-      ),
+      svc.executeCommand({ type: 'gift', amount: '10', roomId: ROOM_ID }, ACTOR_ID),
     ).rejects.toThrow(CommandDisabledError);
   });
 
   it('throws CommandDisabledError when command is disabled', async () => {
     const svc = makeSvc({ drizzleRows: { select: [[DISABLED_ROW]] } });
     await expect(
-      svc.executeCommand(
-        { type: 'gift', targetUsername: 'alice', amount: '10', roomId: ROOM_ID },
-        ACTOR_ID,
-      ),
+      svc.executeCommand({ type: 'gift', amount: '10', roomId: ROOM_ID }, ACTOR_ID),
     ).rejects.toThrow(CommandDisabledError);
-  });
-
-  it('throws ChatPlayerNotFoundError when target username has no match', async () => {
-    const svc = makeSvc({
-      drizzleRows: { select: [[ENABLED_ROW]] },
-      directory: makeDirectory([]),
-    });
-    await expect(
-      svc.executeCommand(
-        { type: 'gift', targetUsername: 'ghost', amount: '10', roomId: ROOM_ID },
-        ACTOR_ID,
-      ),
-    ).rejects.toThrow(ChatPlayerNotFoundError);
   });
 
   it('throws InsufficientBalanceError when wallet debit fails', async () => {
     const svc = makeSvc({
-      drizzleRows: { select: [[ENABLED_ROW]] },
+      drizzleRows: {
+        select: [[ENABLED_ROW]],
+        // First returning is for chatGift insert (never reached); wallet fails first.
+        returning: [],
+      },
       wallet: makeWallet(false),
     });
     await expect(
-      svc.executeCommand(
-        { type: 'gift', targetUsername: 'alice', amount: '10', roomId: ROOM_ID },
-        ACTOR_ID,
-      ),
+      svc.executeCommand({ type: 'gift', amount: '10', roomId: ROOM_ID }, ACTOR_ID),
     ).rejects.toThrow(InsufficientBalanceError);
   });
 
-  it('posts system message and returns it on a successful gift', async () => {
+  it('posts system message with new gift metadata on success', async () => {
     const writer = makeWriter();
     const svc = makeSvc({
-      drizzleRows: { select: [[ENABLED_ROW]] },
+      drizzleRows: {
+        select: [[ENABLED_ROW]],
+        // First returning: chatGift insert; second returning: messageId back-fill update.
+        returning: [[{ ...GIFT_ROW }], []],
+      },
       writer,
     });
     const result = await svc.executeCommand(
-      { type: 'gift', targetUsername: 'alice', amount: '10.00000000', roomId: ROOM_ID },
+      { type: 'gift', amount: '10.00000000', roomId: ROOM_ID },
       ACTOR_ID,
     );
     expect(writer.postSystemMessage).toHaveBeenCalledOnce();
+    expect(writer.postSystemMessage).toHaveBeenCalledWith(
+      expect.objectContaining({
+        metadata: expect.objectContaining({
+          command: 'gift',
+          giftId: GIFT_ID,
+          senderId: ACTOR_ID,
+          senderUsername: 'bob',
+        }),
+      }),
+    );
     expect(result.id).toBe(MSG_ID);
+  });
+
+  it('enforces minAmount from config', async () => {
+    const svc = makeSvc({
+      drizzleRows: {
+        select: [[{ ...ENABLED_ROW, config: { minAmount: '5.00000000' } }]],
+      },
+    });
+    await expect(
+      svc.executeCommand({ type: 'gift', amount: '1.00000000', roomId: ROOM_ID }, ACTOR_ID),
+    ).rejects.toThrow(BelowMinimumError);
+  });
+});
+
+describe('ChatCommandsService.claimGift', () => {
+  it('credits the claimer and returns claim info on happy path', async () => {
+    const wallet = makeWallet();
+    const svc = makeSvc({
+      drizzleRows: {
+        // select[0]: gift lookup; returning[0]: atomic update result
+        select: [[GIFT_ROW]],
+        returning: [
+          [
+            {
+              ...GIFT_ROW,
+              claimedBy: CLAIMER_ID,
+              claimedByUsername: 'alice',
+              claimedAt: new Date(),
+            },
+          ],
+        ],
+      },
+      wallet,
+    });
+    const result = await svc.claimGift(GIFT_ID, CLAIMER_ID);
+    expect(wallet.credit).toHaveBeenCalledOnce();
+    expect(wallet.credit).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({ userId: CLAIMER_ID, type: 'gift' }),
+    );
+    expect(result.claimedBy).toBe(CLAIMER_ID);
+    expect(result.claimedByUsername).toBe('alice');
+    expect(result.claimedAt).toEqual(expect.any(String));
+  });
+
+  it('throws GiftSelfClaimError when sender tries to claim their own gift', async () => {
+    const svc = makeSvc({
+      drizzleRows: {
+        select: [[GIFT_ROW]], // senderId === ACTOR_ID
+        returning: [],
+      },
+    });
+    await expect(svc.claimGift(GIFT_ID, ACTOR_ID)).rejects.toThrow(GiftSelfClaimError);
+  });
+
+  it('throws GiftAlreadyClaimedError when update returns no rows (race lost)', async () => {
+    const svc = makeSvc({
+      drizzleRows: {
+        select: [[GIFT_ROW]],
+        returning: [[]], // empty = already claimed
+      },
+    });
+    await expect(svc.claimGift(GIFT_ID, CLAIMER_ID)).rejects.toThrow(GiftAlreadyClaimedError);
+  });
+
+  it('throws GiftNotFoundError when gift does not exist', async () => {
+    const svc = makeSvc({
+      drizzleRows: {
+        select: [[]], // no gift row
+        returning: [],
+      },
+    });
+    await expect(svc.claimGift(GIFT_ID, CLAIMER_ID)).rejects.toThrow(GiftNotFoundError);
   });
 });
 
@@ -240,6 +352,7 @@ describe('ChatCommandsService.adminUpdateCommand', () => {
       audit,
       makeTransport(),
       mock(makeEvents()),
+      makeBlockWriter(),
     );
     await svcWithAudit.adminUpdateCommand({ key: 'rain', enabled: false }, ACTOR_ID);
     expect(audit.record).toHaveBeenCalledWith(
@@ -267,7 +380,7 @@ describe('ChatCommandsService.handleRain', () => {
   });
 
   it('distributes to online recipients excluding the actor', async () => {
-    const RECIPIENT_2 = '00000000-0000-0000-0000-000000000005';
+    const RECIPIENT_2 = '00000000-0000-0000-0000-000000000006';
     const wallet = makeWallet();
     const svc = makeSvc({
       drizzleRows: {
@@ -275,12 +388,12 @@ describe('ChatCommandsService.handleRain', () => {
         execute: [[{ per_recipient: '5.00000000' }]],
       },
       wallet,
-      transport: makeTransport([ACTOR_ID, TARGET_ID, RECIPIENT_2]),
+      transport: makeTransport([ACTOR_ID, CLAIMER_ID, RECIPIENT_2]),
     });
     await svc.executeCommand({ type: 'rain', amount: '10.00000000', roomId: ROOM_ID }, ACTOR_ID);
     expect(wallet.credit).toHaveBeenCalledTimes(2);
     expect(wallet.credit).toHaveBeenCalledWith(expect.anything(), {
-      userId: TARGET_ID,
+      userId: CLAIMER_ID,
       amount: '5.00000000',
       type: 'rain',
     });
@@ -296,9 +409,9 @@ describe('ChatCommandsService.handleRain', () => {
       },
       wallet,
       transport: makeTransport([
-        TARGET_ID,
-        '00000000-0000-0000-0000-000000000005',
+        CLAIMER_ID,
         '00000000-0000-0000-0000-000000000006',
+        '00000000-0000-0000-0000-000000000007',
       ]),
     });
     await svc.executeCommand({ type: 'rain', amount: '1.00000000', roomId: ROOM_ID }, ACTOR_ID);

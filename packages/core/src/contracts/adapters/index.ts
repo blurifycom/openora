@@ -152,3 +152,6 @@ export { PLAY_ELIGIBILITY } from './play-eligibility.js';
 
 export type { ChatSystemMessage, ChatSystemWriter } from './chat-system-writer.js';
 export { CHAT_SYSTEM_WRITER } from './chat-system-writer.js';
+
+export type { ChatBlockWriter } from './chat-block-writer.js';
+export { CHAT_BLOCK_WRITER } from './chat-block-writer.js';

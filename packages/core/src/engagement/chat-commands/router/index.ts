@@ -8,8 +8,12 @@ import {
   ChatPlayerNotFoundError,
   InsufficientBalanceError,
   ExceedsLimitError,
+  BelowMinimumError,
   NoOnlineUsersError,
   RainCreditError,
+  GiftNotFoundError,
+  GiftAlreadyClaimedError,
+  GiftSelfClaimError,
 } from '../service/chat-commands.service.js';
 
 const cc = populateContractRouterPaths({ chatCommands: chatCommandsContract }).chatCommands;
@@ -28,11 +32,27 @@ export function createChatCommandsRouter(svc: ChatCommandsService, adminGuard: A
           CONFLICT: [
             InsufficientBalanceError,
             ExceedsLimitError,
+            BelowMinimumError,
             NoOnlineUsersError,
             RainCreditError,
           ],
         },
         () => svc.executeCommand(input, actorId),
+      );
+    }),
+
+    getGift: os.getGift.handler(({ input }) =>
+      mapErrors({ NOT_FOUND: [GiftNotFoundError] }, () => svc.getGift(input.id)),
+    ),
+
+    claimGift: os.claimGift.handler(({ input, context }) => {
+      const claimerId = getUserId(context);
+      return mapErrors(
+        {
+          NOT_FOUND: [GiftNotFoundError],
+          CONFLICT: [GiftAlreadyClaimedError, GiftSelfClaimError],
+        },
+        () => svc.claimGift(input.id, claimerId),
       );
     }),
 

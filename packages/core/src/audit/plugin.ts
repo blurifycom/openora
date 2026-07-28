@@ -450,8 +450,6 @@ const SUBSCRIBED_TOPICS: DomainEventName[] = [
   'wallet.withdrawal.failed',
   'gaming.round.started',
   'gaming.round.ended',
-  // chat.message.sent is intentionally NOT audited: it is high-volume content
-  // already persisted in chatMessage; the moderation/block actions are what we audit.
   'chat.user.blocked',
   'chat.user.unblocked',
   'chat.private_room.created',
@@ -462,10 +460,8 @@ const SUBSCRIBED_TOPICS: DomainEventName[] = [
   'chat.room.member.left',
   'chat.room.member.kicked',
   'chat.room.member.banned',
-  // chat.gift.sent and chat.rain.distributed are NOT subscribed here: the
-  // chat-commands service writes a direct audit.record() after each operation,
-  // which captures actorId/resourceId correctly. Subscribing here would produce
-  // a second, anonymised row (payload has fromUserId, not userId).
+  // chat.gift.sent
+  // chat.rain.distributed
   'chat.user.mentioned',
   'compliance.limit.upserted',
   'compliance.limit.removed',

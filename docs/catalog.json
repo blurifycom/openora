@@ -74,11 +74,14 @@
       "id": "chat-commands",
       "group": "engagement",
       "tables": [
-        "chat_command_config"
+        "chat_command_config",
+        "chat_gift"
       ],
       "routes": [
         "chat-commands.adminUpdateCommand",
+        "chat-commands.claimGift",
         "chat-commands.execute",
+        "chat-commands.getGift",
         "chat-commands.listCommands",
         "chat-commands.mentionSearch"
       ]
@@ -397,6 +400,16 @@
       ]
     },
     {
+      "category": "chat-block-writer",
+      "interface": "ChatBlockWriter",
+      "token": "CHAT_BLOCK_WRITER",
+      "status": "wired",
+      "boundIn": [
+        "packages/core/src/engagement/chat-commands/plugin.ts",
+        "packages/core/src/engagement/chat/plugin.ts"
+      ]
+    },
+    {
       "category": "chat-system-writer",
       "interface": "ChatSystemWriter",
       "token": "CHAT_SYSTEM_WRITER",
@@ -606,6 +619,7 @@
     }
   ],
   "events": [
+    "chat.gift.claimed",
     "chat.gift.sent",
     "chat.message.sent",
     "chat.private_room.created",
@@ -855,6 +869,10 @@
       "file": "packages/core/src/engagement/chat/contract/index.ts"
     },
     {
+      "name": "ClaimGiftOutputSchema",
+      "file": "packages/core/src/engagement/chat-commands/contract/index.ts"
+    },
+    {
       "name": "ClientMetaSchema",
       "file": "packages/core/src/contracts/schemas/common.ts"
     },
@@ -1009,6 +1027,10 @@
     {
       "name": "GgrSeriesSchema",
       "file": "packages/core/src/analytics/contract/financial.ts"
+    },
+    {
+      "name": "GiftStateSchema",
+      "file": "packages/core/src/engagement/chat-commands/contract/index.ts"
     },
     {
       "name": "GrantInputSchema",
@@ -1565,6 +1587,7 @@
     "GET /backoffice/users",
     "GET /backoffice/users/{userId}",
     "GET /chat-command/commands",
+    "GET /chat-command/gift/{id}",
     "GET /chat-command/mention-search",
     "GET /chat/blocks",
     "GET /chat/connection",
@@ -1627,6 +1650,7 @@
     "PATCH /profile",
     "POST /backoffice/chat/rooms",
     "POST /chat-command/execute",
+    "POST /chat-command/gift/{id}/claim",
     "POST /chat/blocks",
     "POST /chat/global",
     "POST /chat/rooms/join",
