@@ -5,6 +5,8 @@
       "group": "admin-console",
       "tables": [],
       "routes": [
+        "admin-console.getGamePerformance",
+        "admin-console.getPlayerActivity",
         "admin-console.getStats",
         "admin-console.getTransaction",
         "admin-console.getUser",
@@ -311,6 +313,16 @@
   ],
   "adapters": [
     {
+      "category": "admin-game-reporting",
+      "interface": "GamePerformanceSortBy",
+      "token": "ADMIN_GAME_REPORTING",
+      "status": "wired",
+      "boundIn": [
+        "packages/core/src/admin-console/plugin.ts",
+        "packages/core/src/casino/gaming/plugin.ts"
+      ]
+    },
+    {
       "category": "admin-permission",
       "interface": "AdminGrant",
       "token": "ADMIN_PERMISSION_RESOLVER",
@@ -318,6 +330,16 @@
       "boundIn": [
         "packages/core/src/iam/plugin.ts",
         "packages/core/src/server/runtime/create-app.ts"
+      ]
+    },
+    {
+      "category": "admin-player-activity",
+      "interface": "PlayerActivityFilter",
+      "token": "ADMIN_PLAYER_ACTIVITY",
+      "status": "wired",
+      "boundIn": [
+        "packages/core/src/admin-console/plugin.ts",
+        "packages/core/src/iam/plugin.ts"
       ]
     },
     {
@@ -680,6 +702,10 @@
       "file": "packages/core/src/compliance/contract/rg.ts"
     },
     {
+      "name": "ActiveUsersTrendPointSchema",
+      "file": "packages/core/src/admin-console/contract/index.ts"
+    },
+    {
       "name": "AddGeoRuleInputSchema",
       "file": "packages/core/src/compliance/contract/index.ts"
     },
@@ -964,6 +990,18 @@
       "file": "packages/core/src/analytics/contract/funnel.ts"
     },
     {
+      "name": "GamePerformanceFilterSchema",
+      "file": "packages/core/src/admin-console/contract/index.ts"
+    },
+    {
+      "name": "GamePerformanceSchema",
+      "file": "packages/core/src/admin-console/contract/index.ts"
+    },
+    {
+      "name": "GamePerformanceSortBySchema",
+      "file": "packages/core/src/admin-console/contract/index.ts"
+    },
+    {
       "name": "GameRoundSchema",
       "file": "packages/core/src/casino/gaming/contract/index.ts"
     },
@@ -978,6 +1016,10 @@
     {
       "name": "GameSummarySchema",
       "file": "packages/core/src/casino/lobby/contract/index.ts"
+    },
+    {
+      "name": "GameTypeSchema",
+      "file": "packages/core/src/contracts/schemas/game.ts"
     },
     {
       "name": "GeoRuleActionSchema",
@@ -1224,6 +1266,14 @@
       "file": "packages/core/src/admin-console/contract/index.ts"
     },
     {
+      "name": "PlayerActivityFilterSchema",
+      "file": "packages/core/src/admin-console/contract/index.ts"
+    },
+    {
+      "name": "PlayerActivitySchema",
+      "file": "packages/core/src/admin-console/contract/index.ts"
+    },
+    {
       "name": "PlayerEmailSchema",
       "file": "packages/core/src/admin-console/contract/index.ts"
     },
@@ -1304,6 +1354,10 @@
       "file": "packages/core/src/contracts/schemas/identity.ts"
     },
     {
+      "name": "RegistrationsOverTimePointSchema",
+      "file": "packages/core/src/admin-console/contract/index.ts"
+    },
+    {
       "name": "RejectWithdrawalInputSchema",
       "file": "packages/core/src/wallet/contract/index.ts"
     },
@@ -1326,6 +1380,10 @@
     {
       "name": "ResetPasswordInputSchema",
       "file": "packages/core/src/contracts/schemas/identity.ts"
+    },
+    {
+      "name": "RetentionCohortRowSchema",
+      "file": "packages/core/src/admin-console/contract/index.ts"
     },
     {
       "name": "RgExclusionSchema",
@@ -1389,7 +1447,15 @@
     },
     {
       "name": "SignedMoneyAmountSchema",
+      "file": "packages/core/src/contracts/schemas/common.ts"
+    },
+    {
+      "name": "SignedMoneyAmountSchema",
       "file": "packages/core/src/analytics/contract/financial.ts"
+    },
+    {
+      "name": "SortDirectionSchema",
+      "file": "packages/core/src/admin-console/contract/index.ts"
     },
     {
       "name": "SortOrderSchema",
@@ -1583,6 +1649,8 @@
     "GET /analytics/funnel/conversion",
     "GET /audit/export",
     "GET /audit/logs",
+    "GET /backoffice/analytics/games",
+    "GET /backoffice/analytics/players",
     "GET /backoffice/chat/rooms",
     "GET /backoffice/stats",
     "GET /backoffice/transactions",

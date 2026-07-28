@@ -15,6 +15,13 @@
       "when": 1783860249138,
       "tag": "0001_easy_ben_grimm",
       "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "7",
+      "when": 1784711670685,
+      "tag": "0002_yummy_lifeguard",
+      "breakpoints": true
     }
   ]
 }

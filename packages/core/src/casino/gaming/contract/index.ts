@@ -2,10 +2,13 @@ import { oc } from '@orpc/contract';
 import * as z from 'zod';
 import {
   CurrencyCodeSchema,
+  GameTypeSchema,
   IdInputSchema,
   MoneyAmountSchema,
   UuidSchema,
 } from '@openora/core/contracts';
+
+export { GameTypeSchema } from '@openora/core/contracts';
 
 export const GAME_ROUND_STATUSES = ['active', 'completed', 'cancelled'] as const;
 export const GameRoundStatusSchema = z.enum(GAME_ROUND_STATUSES);
@@ -16,6 +19,7 @@ export const GameSchema = z.object({
   name: z.string(),
   provider: z.string(),
   category: z.string(),
+  gameType: GameTypeSchema,
   thumbnailUrl: z.string().nullable(),
   isActive: z.boolean(),
   metadata: z.unknown().nullable(),

@@ -83,5 +83,15 @@ export function createBackofficeRouter(
         backofficeService.getTransaction(input.id),
       );
     }),
+
+    getGamePerformance: os.getGamePerformance.handler(async ({ input, context }) => {
+      await adminGuard.assert(context, 'report', 'view');
+      return backofficeService.getGamePerformance(input);
+    }),
+
+    getPlayerActivity: os.getPlayerActivity.handler(async ({ input, context }) => {
+      await adminGuard.assert(context, 'report', 'view');
+      return backofficeService.getPlayerActivity(input);
+    }),
   });
 }

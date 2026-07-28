@@ -4,9 +4,11 @@ import {
   ADMIN_TX_SORT_BY_VALUES,
   ADMIN_USER_SORT_BY_VALUES,
   CurrencyCodeSchema,
+  GameTypeSchema,
   IdInputSchema,
   KycStatusSchema,
   MoneyAmountSchema,
+  SignedMoneyAmountSchema,
   TimestampSchema,
   UserIdInputSchema,
   UserRoleSchema,
@@ -92,6 +94,71 @@ export const AdminTransactionDetailSchema = AdminTransactionSchema.extend({
   reviewReason: z.string().nullable(),
 });
 
+export const GAME_PERFORMANCE_SORT_FIELDS = [
+  'name',
+  'gameType',
+  'volume',
+  'revenue',
+  'uniquePlayers',
+  'roundsPlayed',
+] as const;
+export const GamePerformanceSortBySchema = z.enum(GAME_PERFORMANCE_SORT_FIELDS);
+export const SortDirectionSchema = z.enum(['asc', 'desc']);
+
+export const GamePerformanceFilterSchema = z.object({
+  gameType: GameTypeSchema.optional(),
+  dateFrom: TimestampSchema.optional(),
+  dateTo: TimestampSchema.optional(),
+  sortBy: GamePerformanceSortBySchema.optional(),
+  sortDir: SortDirectionSchema.optional(),
+});
+
+// `revenue` (GGR = volume - payouts) uses the signed variant - it legitimately goes
+// negative over a short/unlucky-for-the-house window.
+export const GamePerformanceSchema = z.object({
+  gameId: UuidSchema,
+  name: z.string(),
+  gameType: GameTypeSchema,
+  volume: MoneyAmountSchema,
+  revenue: SignedMoneyAmountSchema,
+  uniquePlayers: z.number().int(),
+  roundsPlayed: z.number().int(),
+});
+
+export const PlayerActivityFilterSchema = z.object({
+  dateFrom: TimestampSchema.optional(),
+  dateTo: TimestampSchema.optional(),
+});
+
+export const RegistrationsOverTimePointSchema = z.object({
+  date: z.iso.date(),
+  registrations: z.number().int(),
+});
+
+export const ActiveUsersTrendPointSchema = z.object({
+  date: z.iso.date(),
+  dau: z.number().int(),
+  wau: z.number().int(),
+  mau: z.number().int(),
+});
+
+export const RetentionCohortRowSchema = z.object({
+  cohortDate: z.iso.date(),
+  cohortSize: z.number().int(),
+  returned: z.number().int(),
+  returnRate: z.number(),
+  isComplete: z.boolean(),
+});
+
+export const PlayerActivitySchema = z.object({
+  registrationsOverTime: z.array(RegistrationsOverTimePointSchema),
+  activeUsersTrend: z.array(ActiveUsersTrendPointSchema),
+  retention: z.object({
+    sevenDay: z.array(RetentionCohortRowSchema),
+    thirtyDay: z.array(RetentionCohortRowSchema),
+  }),
+});
+
 export const backofficeContract = {
   getStats: oc.route({ method: 'GET', path: '/backoffice/stats' }).output(PlatformStatsSchema),
 
@@ -131,7 +198,21 @@ export const backofficeContract = {
     .route({ method: 'GET', path: '/backoffice/transactions/{id}' })
     .input(IdInputSchema)
     .output(AdminTransactionDetailSchema),
+
+  getGamePerformance: oc
+    .route({ method: 'GET', path: '/backoffice/analytics/games' })
+    .input(GamePerformanceFilterSchema)
+    .output(z.array(GamePerformanceSchema)),
+
+  getPlayerActivity: oc
+    .route({ method: 'GET', path: '/backoffice/analytics/players' })
+    .input(PlayerActivityFilterSchema)
+    .output(PlayerActivitySchema),
 };
 
 export type TransactionFilter = z.infer<typeof TransactionFilterSchema>;
 export type AdminUser = z.infer<typeof AdminUserSchema>;
+export type GamePerformanceFilter = z.infer<typeof GamePerformanceFilterSchema>;
+export type GamePerformance = z.infer<typeof GamePerformanceSchema>;
+export type PlayerActivityFilter = z.infer<typeof PlayerActivityFilterSchema>;
+export type PlayerActivity = z.infer<typeof PlayerActivitySchema>;

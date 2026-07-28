@@ -35,6 +35,7 @@ function toGame(record: typeof game.$inferSelect) {
     name: record.name,
     provider: record.provider,
     category: record.category,
+    gameType: record.gameType,
     thumbnailUrl: record.thumbnailUrl,
     isActive: record.isActive,
     metadata: record.metadata,

@@ -1,6 +1,7 @@
 import { definePlugin, EVENT_BUS, DRIZZLE, ADMIN_GUARD, createLogger } from '@openora/core/server';
 import {
   ADMIN_PERMISSION_RESOLVER,
+  ADMIN_PLAYER_ACTIVITY,
   SEND_EMAIL,
   SESSION_COMMANDS,
   CACHE,
@@ -8,6 +9,7 @@ import {
 } from '@openora/core/contracts';
 import { IamService, DbAdminPermissionResolver } from './service/iam.service.js';
 import { createIamRouter } from './router/index.js';
+import { DrizzleAdminPlayerActivity } from './adapters/admin-player-activity.js';
 
 const logger = createLogger('iam');
 
@@ -53,6 +55,8 @@ export default definePlugin({
         .invalidateRole(parsed.data.roleId)
         .catch((err) => logger.error({ err }, 'grant cache purge failed'));
     });
+
+    ctx.provide(ADMIN_PLAYER_ACTIVITY, (c) => new DrizzleAdminPlayerActivity(c.get(DRIZZLE)));
 
     ctx.routers.add('iam', (c) =>
       createIamRouter(
