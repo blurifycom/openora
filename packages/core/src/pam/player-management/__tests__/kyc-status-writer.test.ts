@@ -6,6 +6,7 @@ import { player } from '@openora/core/pam/schema/profile';
 import { migrate as migrateProfile } from '@openora/core/pam/migrate/profile';
 import { makeEventBus } from '../../../testing/mock.js';
 import { PlayerKycStatusWriter } from '../service/kyc-status-writer.js';
+import { PlayerNotFoundError } from '../service/player.service.js';
 
 let db: TestDb;
 
@@ -53,6 +54,8 @@ describe('PlayerKycStatusWriter.setStatus (real PG)', () => {
       actorId,
       status: 'verified',
       previousStatus: 'pending',
+      reason: null,
+      source: 'manual',
     });
   });
 
@@ -65,11 +68,12 @@ describe('PlayerKycStatusWriter.setStatus (real PG)', () => {
     expect(events.emit).not.toHaveBeenCalled();
   });
 
-  it('is a no-op for a user with no player profile', async () => {
+  it('throws PlayerNotFoundError for a user with no player profile and emits nothing', async () => {
     const { writer, events } = makeWriter();
 
-    await writer.setStatus(randomUUID(), 'verified', { actorId: null, source: 'vendor' });
-
+    await expect(
+      writer.setStatus(randomUUID(), 'verified', { actorId: null, source: 'vendor' }),
+    ).rejects.toBeInstanceOf(PlayerNotFoundError);
     expect(events.emit).not.toHaveBeenCalled();
   });
 

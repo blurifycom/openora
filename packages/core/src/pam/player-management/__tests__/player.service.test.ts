@@ -1,7 +1,7 @@
-import { describe, it, expect, vi, beforeAll, afterAll, beforeEach } from 'vitest';
+import { describe, it, expect, beforeAll, afterAll, beforeEach } from 'vitest';
 import { randomUUID } from 'node:crypto';
 import { eq, sql } from 'drizzle-orm';
-import type { KycStatusWriter, TagKey } from '@openora/core/contracts';
+import type { TagKey } from '@openora/core/contracts';
 import { createTestDb, type TestDb } from '@openora/core/testing';
 import { user } from '@openora/core/pam/schema/identity';
 import { migrate as migrateIdentity } from '@openora/core/pam/migrate/identity';
@@ -9,7 +9,7 @@ import { player } from '@openora/core/pam/schema/profile';
 import { migrate as migrateProfile } from '@openora/core/pam/migrate/profile';
 import { tag, playerTag } from '@openora/core/pam/schema/tag';
 import { migrate as migrateTag } from '@openora/core/pam/migrate/tag';
-import { mock, makeEventBus } from '../../../testing/mock.js';
+import { makeEventBus } from '../../../testing/mock.js';
 import {
   PlayerService,
   PlayerNotFoundError,
@@ -18,10 +18,9 @@ import {
 
 let db: TestDb;
 
-function makeService(writer: Partial<KycStatusWriter> = { setStatus: vi.fn() }) {
-  const kycStatusWriter = mock<KycStatusWriter>(writer);
+function makeService() {
   const events = makeEventBus();
-  return { svc: new PlayerService(db.drizzle, kycStatusWriter, events), kycStatusWriter, events };
+  return { svc: new PlayerService(db.drizzle, events), events };
 }
 
 async function seedUser(overrides: Partial<typeof user.$inferInsert> = {}) {
@@ -273,51 +272,6 @@ describe('PlayerService.update (real PG)', () => {
     await expect(svc.update(seeded.id, { email: taken.email }, account.id)).rejects.toBeInstanceOf(
       DuplicateEmailError,
     );
-  });
-
-  it('delegates a kycStatus change to the KYC_STATUS_WRITER on the same transaction', async () => {
-    const setStatus = vi.fn(async () => undefined);
-    const { svc } = makeService({ setStatus });
-    const { player: seeded, account } = await seedPlayerWithUser({}, { kycStatus: 'pending' });
-
-    await svc.update(seeded.id, { kycStatus: 'verified' }, account.id);
-
-    expect(setStatus).toHaveBeenCalledWith(
-      account.id,
-      'verified',
-      { actorId: account.id, source: 'manual' },
-      expect.anything(),
-    );
-  });
-
-  it('does not call the KYC_STATUS_WRITER when kycStatus is unchanged', async () => {
-    const setStatus = vi.fn(async () => undefined);
-    const { svc } = makeService({ setStatus });
-    const { player: seeded, account } = await seedPlayerWithUser({}, { kycStatus: 'verified' });
-
-    await svc.update(seeded.id, { kycStatus: 'verified' }, account.id);
-
-    expect(setStatus).not.toHaveBeenCalled();
-  });
-
-  it('rolls the whole update back when the KYC_STATUS_WRITER throws', async () => {
-    const setStatus = vi.fn(async () => {
-      throw new Error('writer down');
-    });
-    const { svc } = makeService({ setStatus });
-    const { player: seeded, account } = await seedPlayerWithUser(
-      {},
-      { displayName: 'Original', kycStatus: 'pending' },
-    );
-
-    await expect(
-      svc.update(seeded.id, { displayName: 'Renamed', kycStatus: 'verified' }, account.id),
-    ).rejects.toThrow('writer down');
-
-    expect(await rowById(seeded.id)).toMatchObject({
-      displayName: 'Original',
-      kycStatus: 'pending',
-    });
   });
 
   it('throws PlayerNotFoundError for an unknown id', async () => {

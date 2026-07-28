@@ -17,6 +17,22 @@ import { createLogger } from './logger.js';
 
 type AnyWorker = WorkerRegistration<unknown>;
 
+// BullMQ's default behavior is to retain every completed/failed job forever. Combined
+// with `jobId` (`idempotencyKey`) dedup, that means an id can NEVER be reused - "add a
+// job with an id that already exists" is silently a no-op regardless of how long ago or
+// how differently the world has moved on since the earlier job with that id ran. A
+// caller who legitimately re-derives the SAME idempotencyKey for a genuinely new unit of
+// work (eg a status-and-reference-keyed sync job re-firing after an intervening
+// different decision) would have that later, real job dropped forever with no error.
+// Bounding retention lets BullMQ evict old completed/failed jobs so the id becomes
+// reusable again - a systemic safety net for every queue on this driver, not just one
+// caller's workaround. This does not replace an idempotencyKey scheme that makes
+// dedup-vs-genuinely-new unambiguous in the first place (see compliance's
+// `kyc-decision-sync` for that) - it only bounds unlimited Redis growth and stops a
+// dedup key from becoming permanently poisoned.
+const RETAIN_COMPLETED = { age: 24 * 60 * 60, count: 10_000 };
+const RETAIN_FAILED = { age: 7 * 24 * 60 * 60, count: 10_000 };
+
 // The wire shape stored on every BullMQ job: the caller payload plus carried meta.
 // The worker validates `payload` against the registration schema before the handler
 // runs, exactly as the in-process driver does.
@@ -78,6 +94,8 @@ export class BullMqJobQueue implements JobQueueAdapter {
       backoff: opts.backoff ? { type: opts.backoff.type, delay: opts.backoff.delayMs } : undefined,
       priority: opts.priority,
       // ttlMs has no native BullMQ equivalent - ignored (the port allows driver variance).
+      removeOnComplete: RETAIN_COMPLETED,
+      removeOnFail: RETAIN_FAILED,
     };
 
     return this.getQueue(queue)

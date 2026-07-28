@@ -10,6 +10,7 @@ import {
   TAG_EVALUATION_COMMANDS,
   WALLET_READER,
   IDENTITY_READER,
+  ADMIN_USER_DIRECTORY,
   JOB_QUEUE,
   queue,
 } from '@openora/core/contracts';
@@ -39,12 +40,13 @@ export default definePlugin({
     // never blocked on this module's own router having mounted first.
     let evalSvc: TagEvaluationService | null = null;
     const tagEvaluationService = (c: Container) =>
-      (evalSvc ??= new TagEvaluationService(
-        tagService(c),
-        ruleService(c),
-        c.get(WALLET_READER),
-        c.get(IDENTITY_READER),
-      ));
+      (evalSvc ??= new TagEvaluationService({
+        tag: tagService(c),
+        rule: ruleService(c),
+        walletReader: c.get(WALLET_READER),
+        identityReader: c.get(IDENTITY_READER),
+        adminUserDirectory: c.get(ADMIN_USER_DIRECTORY),
+      }));
 
     ctx.provide(PLAYER_TAGS, tagService);
     // Synchronous counterpart to the wallet.withdrawal.requested subscription below - see
@@ -62,6 +64,10 @@ export default definePlugin({
     ctx.events.on('identity.user.phone_login', (p) => evalSvc?.onUserPhoneLogin(p));
     ctx.events.on('compliance.kyc.submitted', (p) => evalSvc?.onKycSubmitted(p));
     ctx.events.on('compliance.kyc.updated', (p) => evalSvc?.onKycStatusUpdated(p));
+    ctx.events.on('compliance.kyc.reverify_required', (p) => evalSvc?.onKycReverifyRequired(p));
+    ctx.events.on('compliance.kyc.high_risk_signal_detected', (p) =>
+      evalSvc?.onKycHighRiskSignalDetected(p),
+    );
     ctx.events.on('rg.self_exclusion.activated', (p) => evalSvc?.onSelfExclusionActivated(p));
     ctx.events.on('rg.self_exclusion.lifted', (p) => evalSvc?.onSelfExclusionLifted(p));
     ctx.events.on('player.level.changed', (p) => evalSvc?.onPlayerLevelChanged(p));

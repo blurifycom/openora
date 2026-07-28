@@ -1,14 +1,26 @@
+import * as z from 'zod';
 import {
   ADMIN_USER_DIRECTORY,
+  JOB_QUEUE,
   NOTIFICATION_DELIVERY_ADAPTER,
+  UuidSchema,
   domainEventSchemas,
+  queue,
   type AdminUserDirectory,
+  type JobQueueAdapter,
   type NotificationDeliveryAdapter,
 } from '@openora/core/contracts';
 import { createLogger, definePlugin, EVENT_BUS, DRIZZLE } from '@openora/core/server';
 import { MockNotificationDeliveryAdapter } from './adapters/mock/mock-notification-adapter.js';
 import { createNotificationsRouter } from './router/index.js';
 import { NotificationsService } from './service/notifications.service.js';
+
+const KYC_RESUBMISSION_NOTIFY_QUEUE = queue('kyc-resubmission-notify');
+
+const KycResubmissionNotifyJobSchema = z.object({
+  userId: UuidSchema,
+  reason: z.string().nullable(),
+});
 
 export default definePlugin({
   id: 'notifications',
@@ -25,6 +37,7 @@ export default definePlugin({
     let svcRef: NotificationsService | null = null;
     let deliveryRef: NotificationDeliveryAdapter | null = null;
     let directoryRef: AdminUserDirectory | null = null;
+    let jobQueueRef: JobQueueAdapter | null = null;
 
     // Best-effort email alongside the in-app notification; a missing user or delivery
     // failure is logged, never thrown - the in-app notification already landed.
@@ -37,12 +50,12 @@ export default definePlugin({
         .get(userId)
         .then((user) => {
           if (!user?.email) {
-            logger.warn({ userId }, 'withdrawal email skipped: no email for user');
+            logger.warn({ userId }, 'notification email skipped: no email for user');
             return;
           }
           return delivery.sendEmail(user.email, title, body);
         })
-        .catch((err) => logger.error({ err }, 'withdrawal email delivery failed'));
+        .catch((err) => logger.error({ err }, 'notification email delivery failed'));
     };
 
     ctx.events.on('wallet.withdrawal.approved', (payload) => {
@@ -74,11 +87,50 @@ export default definePlugin({
       sendEmail(p.userId, title, body);
     });
 
+    ctx.events.on('compliance.kyc.updated', (payload, envelope) => {
+      const parsed = domainEventSchemas['compliance.kyc.updated'].safeParse(payload);
+      if (!parsed.success || !jobQueueRef) {
+        return;
+      }
+      const p = parsed.data;
+      if (p.status !== 'resubmission_requested' || p.source !== 'manual') {
+        return;
+      }
+      jobQueueRef
+        .enqueue(
+          KYC_RESUBMISSION_NOTIFY_QUEUE,
+          { userId: p.userId, reason: p.reason },
+          { idempotencyKey: `kyc-resubmission-notify:${envelope?.eventId ?? p.userId}` },
+        )
+        .catch((err) => logger.error({ err }, 'kyc-resubmission-notify enqueue failed'));
+    });
+
+    ctx.jobs.worker({
+      queue: KYC_RESUBMISSION_NOTIFY_QUEUE,
+      schema: KycResubmissionNotifyJobSchema,
+      handler: async ({ payload }) => {
+        if (!svcRef) {
+          return;
+        }
+        const reasonText = payload.reason ? ` Reason: ${payload.reason}.` : '';
+        const title = 'Document resubmission required';
+        const body = `An admin has requested you resubmit your verification documents.${reasonText}`;
+        await svcRef.create({
+          userId: payload.userId,
+          type: 'kyc.resubmission_requested',
+          title,
+          body,
+        });
+        sendEmail(payload.userId, title, body);
+      },
+    });
+
     ctx.routers.add('notifications', (c) => {
       const svc = new NotificationsService(c.get(DRIZZLE), c.get(EVENT_BUS));
       svcRef = svc;
       deliveryRef = c.get(NOTIFICATION_DELIVERY_ADAPTER);
       directoryRef = c.get(ADMIN_USER_DIRECTORY);
+      jobQueueRef = c.get(JOB_QUEUE);
       return createNotificationsRouter(svc);
     });
   },

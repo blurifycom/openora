@@ -15,6 +15,8 @@ export const tagKeys = [
   'self_excluded',
   'kyc_pending',
   'kyc_rejected',
+  'basic_kyc_needed',
+  'advanced_kyc_needed',
   'test_account',
   'dormant_high_roller',
   'withdrawal_review',

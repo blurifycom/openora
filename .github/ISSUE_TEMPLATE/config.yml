@@ -1,0 +1,11 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Question or setup problem
+    url: https://github.com/blurifycom/openora/discussions/categories/q-a
+    about: Something does not run, or the docs do not cover it. Ask in Q&A - issues are for confirmed bugs.
+  - name: Propose a module, adapter or contract change
+    url: https://github.com/blurifycom/openora/discussions/categories/ideas
+    about: Ideas and RFCs are discussed before any code is written.
+  - name: Report a security vulnerability
+    url: https://github.com/blurifycom/openora/security/advisories/new
+    about: Please report privately, never as a public issue.

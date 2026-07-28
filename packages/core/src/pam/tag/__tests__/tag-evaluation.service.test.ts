@@ -1,7 +1,13 @@
 import { describe, it, expect, vi, beforeAll, afterAll, beforeEach } from 'vitest';
 import { randomUUID } from 'node:crypto';
 import { and, eq, isNull, sql } from 'drizzle-orm';
-import type { WalletReader, IdentityReader, TagKey, KycStatus } from '@openora/core/contracts';
+import type {
+  WalletReader,
+  IdentityReader,
+  AdminUserDirectory,
+  TagKey,
+  KycStatus,
+} from '@openora/core/contracts';
 import { createTestDb, type TestDb } from '@openora/core/testing';
 import { user } from '@openora/core/pam/schema/identity';
 import { migrate as migrateIdentity } from '@openora/core/pam/migrate/identity';
@@ -143,6 +149,7 @@ function makeServices(
   overrides: {
     walletReader?: Partial<WalletReader>;
     identityReader?: Partial<IdentityReader>;
+    adminUserDirectory?: Partial<AdminUserDirectory>;
   } = {},
 ) {
   const events = makeEventBus();
@@ -162,8 +169,18 @@ function makeServices(
     getPlayerUserIdsSharingLoginIp: vi.fn().mockResolvedValue([]),
     ...overrides.identityReader,
   });
-  const service = new TagEvaluationService(tagService, ruleService, walletReader, identityReader);
-  return { service, tagService, ruleService, walletReader, identityReader };
+  const adminUserDirectory = mock<AdminUserDirectory>({
+    lookupPlayers: vi.fn().mockResolvedValue([]),
+    ...overrides.adminUserDirectory,
+  });
+  const service = new TagEvaluationService({
+    tag: tagService,
+    rule: ruleService,
+    walletReader,
+    identityReader,
+    adminUserDirectory,
+  });
+  return { service, tagService, ruleService, walletReader, identityReader, adminUserDirectory };
 }
 
 function depositPayload(userId: string, amount: number) {
@@ -173,7 +190,14 @@ function withdrawalPayload(userId: string, amount: number) {
   return { userId, amount: String(amount), currency: 'USD', transactionId: randomUUID() };
 }
 function kycUpdatedPayload(userId: string, status: KycStatus) {
-  return { userId, actorId: SYSTEM_ACTOR_ID, status, previousStatus: 'pending' };
+  return {
+    userId,
+    actorId: SYSTEM_ACTOR_ID,
+    status,
+    previousStatus: 'pending',
+    reason: null,
+    source: 'webhook',
+  };
 }
 
 beforeAll(async () => {
