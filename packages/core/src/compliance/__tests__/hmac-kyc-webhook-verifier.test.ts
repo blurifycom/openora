@@ -1,7 +1,23 @@
 import { createHmac } from 'node:crypto';
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, beforeAll, afterEach, afterAll } from 'vitest';
 import type { CacheAdapter } from '@openora/core/contracts';
+import { RedisCache } from '@openora/core/server';
+import { createTestRedis, type TestRedis } from '@openora/core/testing';
 import { HmacKycWebhookVerifier } from '../adapters/hmac-kyc-webhook-verifier.js';
+
+let redis: TestRedis;
+
+beforeAll(async () => {
+  redis = await createTestRedis();
+});
+
+afterEach(async () => {
+  await redis.flush();
+});
+
+afterAll(async () => {
+  await redis.quit();
+});
 
 const SECRET = 'shh';
 const BODY = '{"event":"decision"}';
@@ -11,18 +27,7 @@ function sign(body: string, secret = SECRET) {
 }
 
 function makeCache(): CacheAdapter {
-  const store = new Map<string, unknown>();
-  return {
-    get: async (key: string) => store.get(key) as never,
-    set: async (key: string, value: unknown) => {
-      store.set(key, value);
-    },
-    delete: async (key: string | string[]) => {
-      for (const k of Array.isArray(key) ? key : [key]) {
-        store.delete(k);
-      }
-    },
-  };
+  return new RedisCache(redis.client);
 }
 
 function unavailableCache(): CacheAdapter {
@@ -41,10 +46,12 @@ describe('HmacKycWebhookVerifier (fail closed)', () => {
   it('accepts a correct signature (with and without sha256= prefix)', async () => {
     const v = new HmacKycWebhookVerifier(SECRET, makeCache());
     await expect(v.verify(BODY, { 'x-kyc-signature': sign(BODY) })).resolves.toBe(true);
+
+    const prefixedBody = '{"event":"decision-2"}';
     const v2 = new HmacKycWebhookVerifier(SECRET, makeCache());
-    await expect(v2.verify(BODY, { 'x-kyc-signature': `sha256=${sign(BODY)}` })).resolves.toBe(
-      true,
-    );
+    await expect(
+      v2.verify(prefixedBody, { 'x-kyc-signature': `sha256=${sign(prefixedBody)}` }),
+    ).resolves.toBe(true);
   });
 
   it('extracts the signature header case-insensitively', async () => {
