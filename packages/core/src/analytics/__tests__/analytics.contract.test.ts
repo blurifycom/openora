@@ -24,6 +24,24 @@ describe('analytics contract schemas', () => {
     expect(() => FunnelQuerySchema.parse({})).not.toThrow();
   });
 
+  it('rejects a funnel query whose dateFrom is after its dateTo', () => {
+    expect(() =>
+      FunnelQuerySchema.parse({
+        dateFrom: '2026-02-01T00:00:00.000Z',
+        dateTo: '2026-01-01T00:00:00.000Z',
+      }),
+    ).toThrow();
+  });
+
+  it('rejects a financial summary query whose dateFrom is after its dateTo', () => {
+    expect(() =>
+      FinancialSummaryQuerySchema.parse({
+        dateFrom: '2026-02-01T00:00:00.000Z',
+        dateTo: '2026-01-01T00:00:00.000Z',
+      }),
+    ).toThrow();
+  });
+
   it('rejects a funnel stage count below zero', () => {
     expect(() =>
       FunnelStageSchema.parse({ stage: 'registered', count: -1, dropOffRate: 0 }),
