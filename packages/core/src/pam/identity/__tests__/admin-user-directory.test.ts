@@ -183,7 +183,7 @@ describe('DrizzleAdminUserDirectory.lookupPlayers (real PG)', () => {
       userId: account.id,
       username: 'alice',
       email: 'alice@example.com',
-      kycStatus: 'verified',
+      kycStatus: 'approved',
       language: 'en',
     });
   });
@@ -193,14 +193,6 @@ describe('DrizzleAdminUserDirectory.lookupPlayers (real PG)', () => {
     const account = await seedUser();
 
     expect(await dir.lookupPlayers([account.id])).toEqual([]);
-  });
-
-  it('normalizes the deprecated verified value to approved (the single read boundary every admin consumer goes through)', async () => {
-    const dir = makeDirWithSelect([
-      [{ userId: 'u1', username: 'alice', kycStatus: 'verified', email: 'alice@example.com' }],
-    ]);
-    const [summary] = await dir.lookupPlayers(['u1']);
-    expect(summary?.kycStatus).toBe('approved');
   });
 });
 

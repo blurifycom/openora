@@ -387,8 +387,7 @@ export class TagEvaluationService {
     if (!rule) {
       return;
     }
-    await this.tryRemoveTag({ userId, tagKey: 'basic_kyc_needed', reason: 'kyc resubmitted' });
-    await this.tryRemoveTag({ userId, tagKey: 'advanced_kyc_needed', reason: 'kyc resubmitted' });
+    await this.removeKycNeededTags(userId, 'kyc resubmitted');
     const status = await this.identityReader.getPlayerKycStatusByUserId(userId);
     if (!status || !isPendingKycStatus(status)) {
       return;
@@ -398,6 +397,15 @@ export class TagEvaluationService {
       tagKey: 'kyc_pending',
       reason: 'kyc verification initiated',
     });
+  }
+
+  private async removeKycNeededTags(userId: User['id'], reason: string) {
+    for (const tagKey of ['basic_kyc_needed', 'advanced_kyc_needed'] as const) {
+      const rule = await this.getEnabledRule(tagKey);
+      if (rule) {
+        await this.tryRemoveTag({ userId, tagKey, reason });
+      }
+    }
   }
 
   private async evaluateBasicKycNeededOnRejection(userId: User['id']) {
@@ -436,8 +444,7 @@ export class TagEvaluationService {
     if (normalizeKycStatus(status) === 'approved' || status === 'manually_overridden') {
       await this.tryRemoveTag({ userId, tagKey: 'kyc_pending', reason: 'kyc approved' });
       await this.tryRemoveTag({ userId, tagKey: 'kyc_rejected', reason: 'kyc approved' });
-      await this.tryRemoveTag({ userId, tagKey: 'basic_kyc_needed', reason: 'kyc approved' });
-      await this.tryRemoveTag({ userId, tagKey: 'advanced_kyc_needed', reason: 'kyc approved' });
+      await this.removeKycNeededTags(userId, 'kyc approved');
       return;
     }
 

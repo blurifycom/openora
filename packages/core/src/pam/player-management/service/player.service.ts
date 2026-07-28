@@ -182,6 +182,7 @@ export class PlayerService {
   async update(
     playerId: Player['id'],
     data: Partial<Pick<Player, 'displayName' | 'status' | 'level' | 'email'>>,
+    actorId: User['id'],
   ) {
     const existing = findOneOrThrow(
       await this.drizzle.db.select().from(player).where(eq(player.id, playerId)),

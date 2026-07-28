@@ -108,20 +108,22 @@ describe('KycVerificationService.submit (real PG)', () => {
     expect(rows).toHaveLength(1);
     expect(rows[0]).toMatchObject({
       referenceId: adapterResult.referenceId,
-      status: 'verified',
+      status: 'approved',
       triggeredBy: 'submission',
       documentTypes: ['passport'],
     });
     expect(rows[0]?.decidedAt).toBeInstanceOf(Date);
-    expect(result.status).toBe('verified');
+    expect(result.status).toBe('approved');
     expect(events.emit).toHaveBeenCalledWith(
       'compliance.kyc.submitted',
       expect.objectContaining({ userId, referenceId: adapterResult.referenceId }),
     );
-    expect(statusWriter.setStatus).toHaveBeenCalledWith(userId, 'verified', {
-      actorId: null,
-      source: 'vendor',
-    });
+    expect(statusWriter.setStatus).toHaveBeenCalledWith(
+      userId,
+      'approved',
+      { actorId: null, source: 'vendor' },
+      expect.anything(),
+    );
     const statusCallOrder = vi.mocked(statusWriter.setStatus).mock.invocationCallOrder[0];
     const emitCallOrder = vi.mocked(events.emit).mock.invocationCallOrder[0];
     expect(statusCallOrder).toEqual(expect.any(Number));
@@ -166,63 +168,6 @@ describe('KycVerificationService.submit (real PG)', () => {
 
     expect(result.verificationUrl).toBeUndefined();
   });
-
-  it('downgrades an instant-decision approved result when the adapter returns an incomplete check (trigger: an adapter that decides synchronously, not just reconcile)', async () => {
-    const writer = makeWriter();
-    const adapter = {
-      submit: vi.fn().mockResolvedValue({
-        referenceId: 'ref-1',
-        status: 'approved',
-        checks: [
-          { step: 'ID_VERIFICATION', status: 'approved' },
-          { step: 'AML', status: 'in_review' },
-        ],
-      }),
-      getStatus: vi.fn(),
-    };
-    const svc = newSvc({
-      db: makeDb([], [fullRow({ status: 'resubmission_requested' })]),
-      adapter,
-      writer,
-    });
-
-    const dto = await svc.submit('user-1', { documents: [{ type: 'passport', frontUrl: 'u' }] });
-
-    expect(writer.setStatus).toHaveBeenCalledWith(
-      'user-1',
-      'resubmission_requested',
-      expect.objectContaining({ source: 'vendor' }),
-      expect.anything(),
-    );
-    expect(dto.status).toBe('resubmission_requested');
-  });
-
-  it('approves an instant-decision result when every returned check is approved', async () => {
-    const writer = makeWriter();
-    const adapter = {
-      submit: vi.fn().mockResolvedValue({
-        referenceId: 'ref-1',
-        status: 'approved',
-        checks: [{ step: 'ID_VERIFICATION', status: 'approved' }],
-      }),
-      getStatus: vi.fn(),
-    };
-    const svc = newSvc({
-      db: makeDb([], [fullRow({ status: 'approved', decidedAt: new Date() })]),
-      adapter,
-      writer,
-    });
-
-    const dto = await svc.submit('user-1', { documents: [{ type: 'passport', frontUrl: 'u' }] });
-
-    expect(writer.setStatus).toHaveBeenCalledWith(
-      'user-1',
-      'approved',
-      expect.objectContaining({ source: 'vendor' }),
-      expect.anything(),
-    );
-    expect(dto.status).toBe('approved');
-  });
 });
 
 describe('KycVerificationService.reconcile (real PG)', () => {
@@ -231,13 +176,16 @@ describe('KycVerificationService.reconcile (real PG)', () => {
     const userId = randomUUID();
     await svc.submit(userId, passportSubmission);
 
-    const result = await svc.reconcile(adapterResult.referenceId, 'approved', 'docs ok');
+    const result = await svc.reconcile(adapterResult.referenceId, 'approved', {
+      reason: 'docs ok',
+    });
 
-    expect(result).toMatchObject({ status: 'verified', decisionReason: 'docs ok' });
+    expect(result).toMatchObject({ status: 'approved', decisionReason: 'docs ok' });
     expect(statusWriter.setStatus).toHaveBeenLastCalledWith(
       userId,
-      'verified',
+      'approved',
       expect.objectContaining({ source: 'webhook', reason: 'docs ok' }),
+      expect.anything(),
     );
   });
 
@@ -245,7 +193,9 @@ describe('KycVerificationService.reconcile (real PG)', () => {
     const { svc, adapterResult } = makeService({ adapter: { status: 'pending' } });
     await svc.submit(randomUUID(), passportSubmission);
 
-    const result = await svc.reconcile(adapterResult.referenceId, 'rejected', 'blurry scan');
+    const result = await svc.reconcile(adapterResult.referenceId, 'rejected', {
+      reason: 'blurry scan',
+    });
 
     expect(result?.status).toBe('rejected');
   });

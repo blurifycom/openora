@@ -34,11 +34,15 @@ export function createPlayerRouter(
         // NOTE: `input.email` is accepted by the contract and by PlayerService.update's
         // signature but is NOT forwarded here - that gap predates this change (present
         // on `dev` too) and is out of scope for this fix; flagged, not silently patched.
-        const updated = await player.update(input.playerId, {
-          displayName: input.displayName,
-          status: input.status,
-          level: input.level,
-        });
+        const updated = await player.update(
+          input.playerId,
+          {
+            displayName: input.displayName,
+            status: input.status,
+            level: input.level,
+          },
+          adminId,
+        );
         await audit.record({
           actorId: adminId,
           actorType: 'admin',
