@@ -70,7 +70,7 @@ Then use `list-modules`, `list-routes`, `query-openapi`, `get-drizzle-schema`, `
 
 ```bash
 pnpm install                                  # install workspace deps
-docker compose up -d                          # start Postgres (library-first: only the db)
+docker compose up -d                          # start Postgres + Redis (library-first: no app containers)
 pnpm gen:drizzle             # generate Drizzle migrations
 pnpm db:migrate                            # apply them
 pnpm db:seed                                     # demo data

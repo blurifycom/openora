@@ -1,7 +1,13 @@
-import { describe, it, expect, vi } from 'vitest';
-import { mock, mockDb } from '../../../testing/mock.js';
-import type { EventBus } from '@openora/core/server';
-import type { Tag, PlayerTag } from '../schema/index.js';
+import { describe, it, expect, beforeAll, afterAll, beforeEach } from 'vitest';
+import { randomUUID } from 'node:crypto';
+import { eq, sql } from 'drizzle-orm';
+import type { TagKey } from '@openora/core/contracts';
+import { createTestDb, type TestDb } from '@openora/core/testing';
+import { player } from '@openora/core/pam/schema/profile';
+import { migrate as migrateProfile } from '@openora/core/pam/migrate/profile';
+import { makeEventBus } from '../../../testing/mock.js';
+import { migrate } from '../migrate.js';
+import { playerTag, tag } from '../schema/index.js';
 import {
   TagService,
   TagNotFoundError,
@@ -9,300 +15,306 @@ import {
   TagAssignmentNotFoundError,
 } from '../service/tag.service.js';
 
-const PLAYER_ID = '11111111-1111-4111-8111-111111111111';
-const ACTOR_ID = '22222222-2222-4222-8222-222222222222';
-const TAG_ID = '33333333-3333-4333-8333-333333333333';
-const PT_ID = '44444444-4444-4444-8444-444444444444';
+let db: TestDb;
 
-type Row = Record<string, unknown>;
-
-/**
- * Chainable, awaitable Drizzle query double. Chain methods return the same builder;
- * awaiting it (via `then`) pops the next entry from `results.select`; calling
- * `.returning()` pops from `results.returning`. Supply results in call order.
- */
-function makeQueryBuilder(results: { select: Row[][]; returning: Row[][] }) {
-  const builder: Record<string, unknown> = {};
-  const chain = () => builder;
-  builder['select'] = vi.fn(chain);
-  builder['from'] = vi.fn(chain);
-  builder['innerJoin'] = vi.fn(chain);
-  builder['where'] = vi.fn(chain);
-  builder['limit'] = vi.fn(chain);
-  builder['offset'] = vi.fn(chain);
-  builder['insert'] = vi.fn(chain);
-  builder['values'] = vi.fn(chain);
-  builder['update'] = vi.fn(chain);
-  builder['set'] = vi.fn(chain);
-  builder['delete'] = vi.fn(chain);
-  builder['orderBy'] = vi.fn(chain);
-  builder['returning'] = vi.fn(() => Promise.resolve(results.returning.shift() ?? []));
-  // oxlint-disable-next-line unicorn/no-thenable -- builder must be awaitable to mimic Drizzle
-  builder['then'] = (resolve: (v: Row[]) => unknown) => resolve(results.select.shift() ?? []);
-  return builder;
+function makeService() {
+  const events = makeEventBus();
+  return { svc: new TagService(db.drizzle, events), events };
 }
 
-function makeDrizzle(results: { select?: Row[][]; returning?: Row[][] } = {}) {
-  const state = { select: results.select ?? [], returning: results.returning ?? [] };
-  const builder = makeQueryBuilder(state);
-  const db = {
-    ...builder,
-    transaction: vi.fn(async (fn: (txn: unknown) => Promise<unknown>) => fn(builder)),
-  };
-  return { drizzle: mockDb(db), db };
+async function seedTag(key: TagKey, isSticky = false) {
+  const [row] = await db.drizzle.db.insert(tag).values({ key, isSticky }).returning();
+  return row!;
 }
 
-function makeEvents() {
-  return mock<EventBus>({ emit: vi.fn(), on: vi.fn() });
+async function seedPlayer(overrides: Partial<typeof player.$inferInsert> = {}) {
+  const [row] = await db.drizzle.db
+    .insert(player)
+    .values({ userId: randomUUID(), displayName: 'Player', ...overrides })
+    .returning();
+  return row!;
 }
 
-function makeTag(overrides: Partial<Tag> = {}): Tag {
-  return {
-    id: TAG_ID,
-    key: 'high_roller',
-    isSticky: false,
-    createdAt: new Date('2024-01-01'),
-    updatedAt: new Date('2024-01-01'),
-    ...overrides,
-  };
+const assignment = (playerId: string, tagKey: TagKey, actorId: string) => ({
+  playerId,
+  tagKey,
+  assignReason: 'manual review',
+  assignActor: 'manual' as const,
+  assignActorUserId: actorId,
+});
+
+const removal = (playerId: string, tagKey: TagKey, actorId: string) => ({
+  playerId,
+  tagKey,
+  removalReason: 'no longer applies',
+  removalActor: 'manual' as const,
+  removalActorUserId: actorId,
+});
+
+async function playerTagsOf(playerId: string) {
+  return db.drizzle.db.select().from(playerTag).where(eq(playerTag.playerId, playerId));
 }
 
-function makePlayerTag(overrides: Partial<PlayerTag> = {}): PlayerTag {
-  return {
-    id: PT_ID,
-    playerId: PLAYER_ID,
-    tagId: TAG_ID,
-    assignReason: 'test assign reason',
-    assignActor: 'manual',
-    assignActorUserId: ACTOR_ID,
-    removedAt: null,
-    removalReason: null,
-    removalActor: null,
-    removalActorUserId: null,
-    createdAt: new Date('2024-01-01'),
-    updatedAt: new Date('2024-01-01'),
-    ...overrides,
-  };
-}
+beforeAll(async () => {
+  db = await createTestDb([migrate, migrateProfile]);
+});
 
-describe('TagService', () => {
-  describe('createTag', () => {
-    it('inserts and returns the created tag with serialized dates', async () => {
-      const tagRow = makeTag();
-      const { drizzle } = makeDrizzle({ returning: [[tagRow]] });
-      const svc = new TagService(drizzle, makeEvents());
-      const result = await svc.createTag({ key: 'high_roller', isSticky: false });
-      expect(result).toEqual({
-        ...tagRow,
-        createdAt: tagRow.createdAt.toISOString(),
-        updatedAt: tagRow.updatedAt.toISOString(),
-      });
-    });
+afterAll(async () => {
+  await db.drop();
+});
+
+beforeEach(async () => {
+  await db.drizzle.db.execute(
+    sql`TRUNCATE ${playerTag}, ${tag}, ${player} RESTART IDENTITY CASCADE`,
+  );
+});
+
+describe('TagService.createTag (real PG)', () => {
+  it('persists the tag and returns it with serialized dates', async () => {
+    const { svc } = makeService();
+
+    const created = await svc.createTag({ key: 'high_roller', isSticky: false });
+
+    expect(created).toMatchObject({ key: 'high_roller', isSticky: false });
+    expect(typeof created?.createdAt).toBe('string');
+    expect(await db.drizzle.db.select().from(tag)).toHaveLength(1);
   });
 
-  describe('deleteTag', () => {
-    it('deletes and returns true', async () => {
-      const { drizzle } = makeDrizzle({ select: [[]] });
-      const svc = new TagService(drizzle, makeEvents());
-      const result = await svc.deleteTag({ key: 'high_roller' });
-      expect(result).toBe(true);
-    });
+  it('rejects a duplicate tag key on the unique constraint', async () => {
+    const { svc } = makeService();
+    await svc.createTag({ key: 'vip', isSticky: false });
+
+    await expect(svc.createTag({ key: 'vip', isSticky: false })).rejects.toThrow();
+    expect(await db.drizzle.db.select().from(tag)).toHaveLength(1);
+  });
+});
+
+describe('TagService.deleteTag (real PG)', () => {
+  it('removes an unused tag', async () => {
+    const { svc } = makeService();
+    await seedTag('vip');
+
+    expect(await svc.deleteTag({ key: 'vip' })).toBe(true);
+    expect(await db.drizzle.db.select().from(tag)).toHaveLength(0);
   });
 
-  describe('listPlayerTags', () => {
-    it('returns paginated items with total', async () => {
-      const pt = makePlayerTag();
-      const { drizzle } = makeDrizzle({
-        select: [[{ pt, tagKey: 'high_roller' }], [{ n: 1 }]],
-      });
-      const svc = new TagService(drizzle, makeEvents());
-      const result = await svc.listPlayerTags({ playerId: PLAYER_ID, page: 1, limit: 10 });
-      expect(result.items).toHaveLength(1);
-      expect(result.items[0]).toMatchObject({ playerId: PLAYER_ID, tag: { key: 'high_roller' } });
-      expect(result.total).toBe(1);
-      expect(result.page).toBe(1);
-      expect(result.limit).toBe(10);
-    });
+  it('refuses to delete a tag that is still assigned', async () => {
+    const { svc } = makeService();
+    const t = await seedTag('vip');
+    const p = await seedPlayer();
+    await svc.assignPlayerTag(assignment(p.id, 'vip', randomUUID()));
 
-    it('returns an empty page when the player has no active tags', async () => {
-      const { drizzle } = makeDrizzle({ select: [[], [{ n: 0 }]] });
-      const svc = new TagService(drizzle, makeEvents());
-      const result = await svc.listPlayerTags({ playerId: PLAYER_ID, page: 1, limit: 10 });
-      expect(result.items).toHaveLength(0);
-      expect(result.total).toBe(0);
+    await expect(svc.deleteTag({ key: 'vip' })).rejects.toThrow();
+    expect(await db.drizzle.db.select().from(tag).where(eq(tag.id, t.id))).toHaveLength(1);
+  });
+});
+
+describe('TagService.assignPlayerTag (real PG)', () => {
+  it('writes the assignment with its actor trail and emits assigned', async () => {
+    const { svc, events } = makeService();
+    await seedTag('high_roller');
+    const p = await seedPlayer();
+    const actorId = randomUUID();
+
+    const result = await svc.assignPlayerTag(assignment(p.id, 'high_roller', actorId));
+
+    expect(result).toMatchObject({ playerId: p.id, tag: { key: 'high_roller' } });
+    const rows = await playerTagsOf(p.id);
+    expect(rows).toHaveLength(1);
+    expect(rows[0]).toMatchObject({
+      assignActor: 'manual',
+      assignActorUserId: actorId,
+      removedAt: null,
     });
+    expect(events.emit).toHaveBeenCalledWith(
+      'tag.player.assigned',
+      expect.objectContaining({ playerId: p.id, tagKey: 'high_roller', actorId }),
+    );
   });
 
-  describe('listAssignableTags', () => {
-    it('returns tags not already assigned to the player with serialized dates', async () => {
-      const tagRow = makeTag();
-      const { drizzle } = makeDrizzle({ select: [[tagRow]] });
-      const svc = new TagService(drizzle, makeEvents());
-      const result = await svc.listAssignableTags(PLAYER_ID);
-      expect(result).toEqual([
-        {
-          ...tagRow,
-          createdAt: tagRow.createdAt.toISOString(),
-          updatedAt: tagRow.updatedAt.toISOString(),
-        },
-      ]);
-    });
+  it('throws TagNotFoundError for an unknown tag key', async () => {
+    const { svc, events } = makeService();
+    const p = await seedPlayer();
 
-    it('returns an empty array when all tags are already assigned', async () => {
-      const { drizzle } = makeDrizzle({ select: [[]] });
-      const svc = new TagService(drizzle, makeEvents());
-      expect(await svc.listAssignableTags(PLAYER_ID)).toEqual([]);
-    });
+    await expect(svc.assignPlayerTag(assignment(p.id, 'vip', randomUUID()))).rejects.toBeInstanceOf(
+      TagNotFoundError,
+    );
+    expect(events.emit).not.toHaveBeenCalled();
   });
 
-  describe('assignPlayerTag', () => {
-    it('creates the assignment, returns PlayerTagWithTag, and emits tag.player.assigned', async () => {
-      const tagRow = makeTag();
-      const ptRow = makePlayerTag();
-      const events = makeEvents();
-      const { drizzle } = makeDrizzle({
-        select: [[tagRow], []],
-        returning: [[ptRow]],
-      });
-      const svc = new TagService(drizzle, events);
+  it('throws TagAlreadyInUseError on a second active assignment of the same tag', async () => {
+    const { svc } = makeService();
+    await seedTag('vip');
+    const p = await seedPlayer();
+    await svc.assignPlayerTag(assignment(p.id, 'vip', randomUUID()));
 
-      const result = await svc.assignPlayerTag({
-        playerId: PLAYER_ID,
-        tagKey: 'high_roller',
-        assignReason: 'test reason',
-        assignActor: 'manual',
-        assignActorUserId: ACTOR_ID,
-      });
-
-      expect(result).toMatchObject({ playerId: PLAYER_ID, tag: { key: 'high_roller' } });
-      expect(events.emit).toHaveBeenCalledWith(
-        'tag.player.assigned',
-        expect.objectContaining({ playerId: PLAYER_ID, tagKey: 'high_roller', actorId: ACTOR_ID }),
-      );
-    });
-
-    it('throws TagNotFoundError when the tag key does not exist', async () => {
-      const { drizzle } = makeDrizzle({ select: [[]] });
-      const svc = new TagService(drizzle, makeEvents());
-      await expect(
-        svc.assignPlayerTag({
-          playerId: PLAYER_ID,
-          tagKey: 'high_roller',
-          assignReason: 'test reason',
-          assignActor: 'manual',
-          assignActorUserId: ACTOR_ID,
-        }),
-      ).rejects.toBeInstanceOf(TagNotFoundError);
-    });
-
-    it('throws TagAlreadyInUseError when the tag is already active for the player', async () => {
-      const tagRow = makeTag();
-      const existingPt = makePlayerTag();
-      const { drizzle } = makeDrizzle({ select: [[tagRow], [existingPt]] });
-      const svc = new TagService(drizzle, makeEvents());
-      await expect(
-        svc.assignPlayerTag({
-          playerId: PLAYER_ID,
-          tagKey: 'high_roller',
-          assignReason: 'test reason',
-          assignActor: 'manual',
-          assignActorUserId: ACTOR_ID,
-        }),
-      ).rejects.toBeInstanceOf(TagAlreadyInUseError);
-    });
-
-    it('does not emit when the assignment fails', async () => {
-      const events = makeEvents();
-      const { drizzle } = makeDrizzle({ select: [[]] });
-      const svc = new TagService(drizzle, events);
-      await svc
-        .assignPlayerTag({
-          playerId: PLAYER_ID,
-          tagKey: 'high_roller',
-          assignReason: 'test reason',
-          assignActor: 'manual',
-          assignActorUserId: ACTOR_ID,
-        })
-        .catch(() => undefined);
-      expect(events.emit).not.toHaveBeenCalled();
-    });
+    await expect(svc.assignPlayerTag(assignment(p.id, 'vip', randomUUID()))).rejects.toBeInstanceOf(
+      TagAlreadyInUseError,
+    );
+    expect(await playerTagsOf(p.id)).toHaveLength(1);
   });
 
-  describe('removePlayerTag', () => {
-    it('soft-deletes the assignment, returns PlayerTagWithTag, and emits tag.player.removed', async () => {
-      const tagRow = makeTag();
-      const activePt = makePlayerTag();
-      const removedPt = makePlayerTag({
-        removedAt: new Date(),
-        removalReason: 'test removal',
-        removalActor: 'manual',
-        removalActorUserId: ACTOR_ID,
-      });
-      const events = makeEvents();
-      const { drizzle } = makeDrizzle({
-        select: [[tagRow], [activePt]],
-        returning: [[removedPt]],
-      });
-      const svc = new TagService(drizzle, events);
+  it('allows a re-assignment once the previous one was removed', async () => {
+    const { svc } = makeService();
+    await seedTag('vip');
+    const p = await seedPlayer();
+    const actorId = randomUUID();
+    await svc.assignPlayerTag(assignment(p.id, 'vip', actorId));
+    await svc.removePlayerTag(removal(p.id, 'vip', actorId));
 
-      const result = await svc.removePlayerTag({
-        playerId: PLAYER_ID,
-        tagKey: 'high_roller',
-        removalReason: 'test removal',
-        removalActor: 'manual',
-        removalActorUserId: ACTOR_ID,
-      });
+    await svc.assignPlayerTag(assignment(p.id, 'vip', actorId));
 
-      expect(result).toMatchObject({ playerId: PLAYER_ID, tag: { key: 'high_roller' } });
-      expect(events.emit).toHaveBeenCalledWith(
-        'tag.player.removed',
-        expect.objectContaining({ playerId: PLAYER_ID, tagKey: 'high_roller', actorId: ACTOR_ID }),
-      );
+    const rows = await playerTagsOf(p.id);
+    expect(rows).toHaveLength(2);
+    expect(rows.filter((r) => r.removedAt === null)).toHaveLength(1);
+  });
+
+  it('keeps the same tag assignable to different players', async () => {
+    const { svc } = makeService();
+    await seedTag('vip');
+    const first = await seedPlayer();
+    const second = await seedPlayer();
+    const actorId = randomUUID();
+
+    await svc.assignPlayerTag(assignment(first.id, 'vip', actorId));
+    await svc.assignPlayerTag(assignment(second.id, 'vip', actorId));
+
+    expect(await playerTagsOf(first.id)).toHaveLength(1);
+    expect(await playerTagsOf(second.id)).toHaveLength(1);
+  });
+});
+
+describe('TagService.removePlayerTag (real PG)', () => {
+  it('soft-deletes the assignment with its removal trail and emits removed', async () => {
+    const { svc, events } = makeService();
+    await seedTag('vip');
+    const p = await seedPlayer();
+    const actorId = randomUUID();
+    await svc.assignPlayerTag(assignment(p.id, 'vip', actorId));
+
+    const result = await svc.removePlayerTag(removal(p.id, 'vip', actorId));
+
+    expect(result).toMatchObject({ tag: { key: 'vip' } });
+    const [row] = await playerTagsOf(p.id);
+    expect(row).toMatchObject({
+      removalReason: 'no longer applies',
+      removalActor: 'manual',
+      removalActorUserId: actorId,
     });
+    expect(row?.removedAt).toBeInstanceOf(Date);
+    expect(events.emit).toHaveBeenCalledWith(
+      'tag.player.removed',
+      expect.objectContaining({ playerId: p.id, tagKey: 'vip', actorId }),
+    );
+  });
 
-    it('throws TagNotFoundError when the tag key does not exist', async () => {
-      const { drizzle } = makeDrizzle({ select: [[]] });
-      const svc = new TagService(drizzle, makeEvents());
-      await expect(
-        svc.removePlayerTag({
-          playerId: PLAYER_ID,
-          tagKey: 'high_roller',
-          removalReason: 'test removal',
-          removalActor: 'manual',
-          removalActorUserId: ACTOR_ID,
-        }),
-      ).rejects.toBeInstanceOf(TagNotFoundError);
-    });
+  it('throws TagNotFoundError for an unknown tag key', async () => {
+    const { svc } = makeService();
+    const p = await seedPlayer();
 
-    it('throws TagAssignmentNotFoundError when there is no active assignment', async () => {
-      const tagRow = makeTag();
-      const { drizzle } = makeDrizzle({ select: [[tagRow], []] });
-      const svc = new TagService(drizzle, makeEvents());
-      await expect(
-        svc.removePlayerTag({
-          playerId: PLAYER_ID,
-          tagKey: 'high_roller',
-          removalReason: 'test removal',
-          removalActor: 'manual',
-          removalActorUserId: ACTOR_ID,
-        }),
-      ).rejects.toBeInstanceOf(TagAssignmentNotFoundError);
-    });
+    await expect(svc.removePlayerTag(removal(p.id, 'vip', randomUUID()))).rejects.toBeInstanceOf(
+      TagNotFoundError,
+    );
+  });
 
-    it('does not emit when the removal fails', async () => {
-      const events = makeEvents();
-      const { drizzle } = makeDrizzle({ select: [[]] });
-      const svc = new TagService(drizzle, events);
-      await svc
-        .removePlayerTag({
-          playerId: PLAYER_ID,
-          tagKey: 'high_roller',
-          removalReason: 'test removal',
-          removalActor: 'manual',
-          removalActorUserId: ACTOR_ID,
-        })
-        .catch(() => undefined);
-      expect(events.emit).not.toHaveBeenCalled();
-    });
+  it('throws TagAssignmentNotFoundError when nothing is active', async () => {
+    const { svc, events } = makeService();
+    await seedTag('vip');
+    const p = await seedPlayer();
+
+    await expect(svc.removePlayerTag(removal(p.id, 'vip', randomUUID()))).rejects.toBeInstanceOf(
+      TagAssignmentNotFoundError,
+    );
+    expect(events.emit).not.toHaveBeenCalled();
+  });
+
+  it('refuses to remove twice', async () => {
+    const { svc } = makeService();
+    await seedTag('vip');
+    const p = await seedPlayer();
+    const actorId = randomUUID();
+    await svc.assignPlayerTag(assignment(p.id, 'vip', actorId));
+    await svc.removePlayerTag(removal(p.id, 'vip', actorId));
+
+    await expect(svc.removePlayerTag(removal(p.id, 'vip', actorId))).rejects.toBeInstanceOf(
+      TagAssignmentNotFoundError,
+    );
+  });
+});
+
+describe('TagService.listPlayerTags (real PG)', () => {
+  it('lists only the active assignments with a matching total', async () => {
+    const { svc } = makeService();
+    await seedTag('vip');
+    await seedTag('high_roller');
+    const p = await seedPlayer();
+    const actorId = randomUUID();
+    await svc.assignPlayerTag(assignment(p.id, 'vip', actorId));
+    await svc.assignPlayerTag(assignment(p.id, 'high_roller', actorId));
+    await svc.removePlayerTag(removal(p.id, 'vip', actorId));
+
+    const result = await svc.listPlayerTags({ playerId: p.id, page: 1, limit: 20 });
+
+    expect(result.total).toBe(1);
+    expect(result.items[0]).toMatchObject({ tag: { key: 'high_roller' } });
+  });
+
+  it('returns an empty page for a player with no tags', async () => {
+    const { svc } = makeService();
+
+    const result = await svc.listPlayerTags({ playerId: randomUUID(), page: 1, limit: 20 });
+
+    expect(result).toMatchObject({ items: [], total: 0 });
+  });
+
+  it('pages while the total covers the whole active set', async () => {
+    const { svc } = makeService();
+    const actorId = randomUUID();
+    const p = await seedPlayer();
+    for (const key of ['vip', 'high_roller', 'inactive'] as const) {
+      await seedTag(key);
+      await svc.assignPlayerTag(assignment(p.id, key, actorId));
+    }
+
+    const result = await svc.listPlayerTags({ playerId: p.id, page: 2, limit: 2 });
+
+    expect(result.total).toBe(3);
+    expect(result.items).toHaveLength(1);
+  });
+});
+
+describe('TagService.listAssignableTags (real PG)', () => {
+  it('excludes tags the player already carries', async () => {
+    const { svc } = makeService();
+    await seedTag('vip');
+    await seedTag('high_roller');
+    const p = await seedPlayer();
+    await svc.assignPlayerTag(assignment(p.id, 'vip', randomUUID()));
+
+    const assignable = await svc.listAssignableTags(p.id);
+
+    expect(assignable.map((t) => t.key)).toEqual(['high_roller']);
+  });
+
+  it('offers a tag again once its assignment was removed', async () => {
+    const { svc } = makeService();
+    await seedTag('vip');
+    const p = await seedPlayer();
+    const actorId = randomUUID();
+    await svc.assignPlayerTag(assignment(p.id, 'vip', actorId));
+    await svc.removePlayerTag(removal(p.id, 'vip', actorId));
+
+    const assignable = await svc.listAssignableTags(p.id);
+
+    expect(assignable.map((t) => t.key)).toEqual(['vip']);
+  });
+
+  it('returns nothing when every tag is already assigned', async () => {
+    const { svc } = makeService();
+    await seedTag('vip');
+    const p = await seedPlayer();
+    await svc.assignPlayerTag(assignment(p.id, 'vip', randomUUID()));
+
+    expect(await svc.listAssignableTags(p.id)).toEqual([]);
   });
 });

@@ -14,7 +14,7 @@ Sibling rules (load on demand; don't reopen settled questions): `conventions` (c
 
 ## Mission
 
-Open-source, headless, plugin-based, AI-native igaming platform. Consumers clone/install and extend it with their own modules, plugins, and adapters; the frontend lives in their consumer repo. The default backend is fully featured (auth, wallet, lobby, chat, compliance, backoffice, CMS). Nothing consumer-specific lives here.
+Open-source, headless, plugin-based, AI-native igaming framework. Consumers clone/install and extend it with their own modules, plugins, and adapters; the frontend lives in their consumer repo. The default backend is fully featured (auth, wallet, lobby, chat, compliance, backoffice). Nothing consumer-specific lives here.
 
 ## Enhance the ask first (pre-step)
 
@@ -27,7 +27,7 @@ Before acting on any non-trivial request - and before delegating - run the `enha
 3. **Plugin host.** `definePlugin({ id, dependsOn, register })` is the only way new functionality enters. Everything (core modules included) loads through `extensions.config.ts`.
 4. **Headless.** Backend modules + contracts + SDK surface only. UI lives in the consumer, which imports `@openora/core/react` (hooks, typed client, auth, realtime). No UI packages here.
 5. **Explicit > magic.** No auto-discovery, no decorators. Everything greppable; every wiring point a typed call.
-6. **AI-friendly.** Every module has an `AGENTS.md`; every scaffold a command; contracts queryable via the `oss-dev` MCP server + generated `docs/catalog.json`.
+6. **AI-first.** Every module has an `AGENTS.md`; every scaffold a command; contracts queryable via the `oss-dev` MCP server + generated `docs/catalog.json`.
 7. **Functional & declarative.** Pure functions, immutable data, composition. A `class` only as a thin DI shell delegating to pure functions. Rationale + examples in `conventions`.
 
 ## Repo map
@@ -36,7 +36,6 @@ Ships `@openora/core` (domains + engine), the SDK, tooling. The API server lives
 
 ```
 apps/
-  docs/            # Fumadocs site
   mcp-server-dev/  # MCP dev server (stdio) - agents connect via .mcp.json
 packages/
   config/          # tsconfig, vitest, oxlint presets; boundary lint plugins

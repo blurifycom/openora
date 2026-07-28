@@ -1,8 +1,9 @@
-import { describe, it, expect, vi } from 'vitest';
-import type { EventBus } from '@openora/core/server';
-import { InProcessRateLimiter } from '@openora/core/testing';
+import { describe, it, expect, vi, beforeAll, afterAll, beforeEach } from 'vitest';
+import { RedisRateLimiter } from '@openora/core/server';
+import { createTestDb, createTestRedis, type TestDb, type TestRedis } from '@openora/core/testing';
 import type { EmailTemplateRenderer, RateLimiterAdapter } from '@openora/core/contracts';
-import { mock, mockDb } from '../../../testing/mock.js';
+import { mock, makeEventBus } from '../../../testing/mock.js';
+import { migrate } from '../migrate.js';
 import { IdentityService, type IdentityServiceDeps } from '../service/identity.service.js';
 
 const testTemplateRenderer: EmailTemplateRenderer = {
@@ -13,9 +14,8 @@ function withTemplateRenderer(deps: Omit<IdentityServiceDeps, 'templateRenderer'
   return new IdentityService({ templateRenderer: testTemplateRenderer, ...deps });
 }
 
-// Keep the real @openora/core/server (so assertRateLimit is real; InProcessRateLimiter
-// comes from @openora/core/testing, unaffected by this mock); only stub createAuth so
-// the constructor doesn't touch a real DB.
+// Keep the real @openora/core/server (so assertRateLimit + RedisRateLimiter are real); only
+// stub createAuth so the constructor doesn't touch a real DB.
 vi.mock('@openora/core/server', async (importOriginal) => {
   const actual = await importOriginal<typeof import('@openora/core/server')>();
   return {
@@ -26,13 +26,32 @@ vi.mock('@openora/core/server', async (importOriginal) => {
   };
 });
 
-const drizzle = mockDb({});
-const events = mock<EventBus>({ emit: vi.fn(), on: vi.fn() });
+const events = makeEventBus();
 
-describe('IdentityService - rate limiting', () => {
+let db: TestDb;
+let drizzle: IdentityServiceDeps['drizzle'];
+let redis: TestRedis;
+const makeLimiter = () => new RedisRateLimiter(redis.client);
+
+beforeAll(async () => {
+  db = await createTestDb([migrate]);
+  drizzle = db.drizzle;
+  redis = await createTestRedis();
+});
+
+afterAll(async () => {
+  await db.drop();
+  await redis.quit();
+});
+
+beforeEach(async () => {
+  await redis.flush();
+});
+
+describe('IdentityService - rate limiting (real Redis)', () => {
   it('rejects register with a 429 once the per-email limit is exhausted', async () => {
     const email = 'abuse@x.dev';
-    const limiter = new InProcessRateLimiter();
+    const limiter = makeLimiter();
     // Pre-exhaust the register bucket (5 per 15min) so the service's own consume is denied.
     for (let i = 0; i < 5; i++) {
       await limiter.consume(`register:${email}`, { limit: 5, windowMs: 15 * 60 * 1000 });
@@ -45,7 +64,6 @@ describe('IdentityService - rate limiting', () => {
       code: 'TOO_MANY_REQUESTS',
       data: { retryAfterMs: expect.any(Number) },
     });
-    limiter.close();
   });
 
   it('allows register when no limiter is bound (test/no-auth edition)', async () => {
@@ -60,7 +78,7 @@ describe('IdentityService - rate limiting', () => {
 
 describe('IdentityService - verify2fa rate-limit key stability (ABC-208 finding #3)', () => {
   it('keys on the two_factor cookie VALUE, not the raw Cookie header, so junk cookie pairs cannot churn the bucket', async () => {
-    const limiter = new InProcessRateLimiter();
+    const limiter = makeLimiter();
     const twoFactorIdentifier = 'pending-2fa-identifier-abc';
     for (let i = 0; i < 5; i++) {
       await limiter.consume(`verify2fa:${twoFactorIdentifier}`, {
@@ -80,13 +98,12 @@ describe('IdentityService - verify2fa rate-limit key stability (ABC-208 finding 
         ),
       ).rejects.toMatchObject({ code: 'TOO_MANY_REQUESTS' });
     }
-    limiter.close();
   });
 });
 
 describe('IdentityService - rate limiting on secret-guessing routes (ABC-208 finding #6)', () => {
   it('rejects changePassword with a 429 once the per-caller limit is exhausted', async () => {
-    const limiter = new InProcessRateLimiter();
+    const limiter = makeLimiter();
     for (let i = 0; i < 5; i++) {
       await limiter.consume('change-password:anonymous', { limit: 5, windowMs: 15 * 60 * 1000 });
     }
@@ -99,11 +116,10 @@ describe('IdentityService - rate limiting on secret-guessing routes (ABC-208 fin
         new Headers(),
       ),
     ).rejects.toMatchObject({ code: 'TOO_MANY_REQUESTS' });
-    limiter.close();
   });
 
   it('rejects verifyEmail with a 429 once the per-caller limit is exhausted', async () => {
-    const limiter = new InProcessRateLimiter();
+    const limiter = makeLimiter();
     for (let i = 0; i < 5; i++) {
       await limiter.consume('verify-email:anonymous', { limit: 5, windowMs: 15 * 60 * 1000 });
     }
@@ -112,11 +128,10 @@ describe('IdentityService - rate limiting on secret-guessing routes (ABC-208 fin
     await expect(svc.verifyEmail({ token: 'sometoken' }, {})).rejects.toMatchObject({
       code: 'TOO_MANY_REQUESTS',
     });
-    limiter.close();
   });
 
   it('rejects enableTwoFactor with a 429 once the per-caller limit is exhausted', async () => {
-    const limiter = new InProcessRateLimiter();
+    const limiter = makeLimiter();
     for (let i = 0; i < 5; i++) {
       await limiter.consume('enable2fa:anonymous', { limit: 5, windowMs: 5 * 60 * 1000 });
     }
@@ -125,11 +140,10 @@ describe('IdentityService - rate limiting on secret-guessing routes (ABC-208 fin
     await expect(
       svc.enableTwoFactor({ password: 'currentpw1' }, {}, new Headers()),
     ).rejects.toMatchObject({ code: 'TOO_MANY_REQUESTS' });
-    limiter.close();
   });
 
   it('rejects disableTwoFactor with a 429 once the per-caller limit is exhausted', async () => {
-    const limiter = new InProcessRateLimiter();
+    const limiter = makeLimiter();
     for (let i = 0; i < 5; i++) {
       await limiter.consume('disable2fa:anonymous', { limit: 5, windowMs: 5 * 60 * 1000 });
     }
@@ -138,14 +152,14 @@ describe('IdentityService - rate limiting on secret-guessing routes (ABC-208 fin
     await expect(
       svc.disableTwoFactor({ password: 'currentpw1' }, {}, new Headers()),
     ).rejects.toMatchObject({ code: 'TOO_MANY_REQUESTS' });
-    limiter.close();
   });
 });
 
 describe('IdentityService - fail-closed limiter policy for credential-guessing keys', () => {
   // A spy limiter that always denies: consume is the first await on each of these
   // paths, so the 429 short-circuits before any auth/DB work and we can assert the
-  // exact options the service passed for the key.
+  // exact options the service passed for the key. (The RedisRateLimiter's own
+  // fail-closed behaviour is covered in the kernel redis-rate-limiter suite.)
   function denyingLimiter() {
     const consume = vi.fn(async () => ({ allowed: false, retryAfterMs: 1 }));
     return { limiter: mock<RateLimiterAdapter>({ consume }), consume };

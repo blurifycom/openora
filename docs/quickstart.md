@@ -20,7 +20,7 @@ Prefer the explicit steps?
 
 ```bash
 pnpm install
-docker compose up -d                  # Postgres only (library-first)
+docker compose up -d                  # Postgres + Redis (library-first: no app containers)
 pnpm gen:drizzle        # generate Drizzle migrations
 pnpm db:migrate                   # apply them
 pnpm db:seed

@@ -1,52 +1,64 @@
-import { describe, it, expect, vi } from 'vitest';
-import { mockDb } from '../../../testing/mock.js';
-import { InProcessCache } from '@openora/core/testing';
+import { describe, it, expect, beforeAll, afterAll, beforeEach } from 'vitest';
+import { eq, sql } from 'drizzle-orm';
+import { RedisCache } from '@openora/core/server';
+import { createTestDb, createTestRedis, type TestDb, type TestRedis } from '@openora/core/testing';
+import { game } from '@openora/core/casino/schema/gaming';
+import { migrate as migrateGaming } from '@openora/core/casino/migrate/gaming';
+import { migrate as migrateLobby } from '@openora/core/casino/migrate/lobby';
+import { featuredSlot } from '../schema/index.js';
 import { LobbyService } from '../service/lobby.service.js';
 
-function makeDb(slotRows: unknown[], gameRows: unknown[]) {
-  const featuredChain = {
-    from: vi.fn().mockReturnThis(),
-    where: vi.fn().mockReturnThis(),
-    orderBy: vi.fn().mockResolvedValue(slotRows),
-  };
-  const gameChain = {
-    from: vi.fn().mockReturnThis(),
-    where: vi.fn().mockResolvedValue(gameRows),
-  };
-  let selectCallIndex = 0;
-  const select = vi.fn(() => {
-    selectCallIndex++;
-    return selectCallIndex % 2 === 1 ? featuredChain : gameChain;
-  });
-  return { select };
-}
+let db: TestDb;
+let redis: TestRedis;
 
-describe('LobbyService featured cache', () => {
-  it('serves the second read within the ttl from cache without re-querying', async () => {
-    const slotRow = { id: 's1', title: 'Big Win', gameId: 'g1', placement: 'home', sortOrder: 0 };
-    const gameRow = { id: 'g1', name: 'Aces', thumbnailUrl: 'aces.png' };
+beforeAll(async () => {
+  db = await createTestDb([migrateGaming, migrateLobby]);
+  redis = await createTestRedis();
+});
 
-    const db = makeDb([slotRow], [gameRow]);
-    const cache = new InProcessCache();
-    const svc = new LobbyService(mockDb(db), cache);
+afterAll(async () => {
+  await db.drop();
+  await redis.quit();
+});
+
+beforeEach(async () => {
+  await db.drizzle.db.execute(sql`TRUNCATE ${featuredSlot}, ${game} RESTART IDENTITY CASCADE`);
+  await redis.flush();
+});
+
+describe('LobbyService featured cache (real PG + real Redis)', () => {
+  it('serves the second read from cache under a 30s TTL, ignoring later DB writes', async () => {
+    const [g] = await db.drizzle.db
+      .insert(game)
+      .values({ name: 'Aces', provider: 'acme', category: 'slots', thumbnailUrl: 'aces.png' })
+      .returning();
+    const [slot] = await db.drizzle.db
+      .insert(featuredSlot)
+      .values({ gameId: g.id, title: 'Big Win', placement: 'home', sortOrder: 0, isActive: true })
+      .returning();
+
+    const svc = new LobbyService(db.drizzle, new RedisCache(redis.client));
 
     const first = await svc.getFeatured();
-    const second = await svc.getFeatured();
-
-    expect(second).toEqual(first);
     expect(first).toEqual([
       {
-        id: 's1',
+        id: slot.id,
         title: 'Big Win',
-        gameId: 'g1',
+        gameId: g.id,
         gameName: 'Aces',
         thumbnailUrl: 'aces.png',
         placement: 'home',
         sortOrder: 0,
       },
     ]);
-    expect(db.select).toHaveBeenCalledTimes(2);
 
-    cache.close();
+    const pttl = await redis.client.pTTL('cache:lobby:featured');
+    expect(pttl).toBeGreaterThan(0);
+    expect(pttl).toBeLessThanOrEqual(30_000);
+
+    // TTL-only cache (no invalidation): a direct DB write stays invisible until the TTL lapses.
+    await db.drizzle.db.update(game).set({ name: 'Renamed' }).where(eq(game.id, g.id));
+    const second = await svc.getFeatured();
+    expect(second).toEqual(first);
   });
 });

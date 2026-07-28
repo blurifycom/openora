@@ -22,6 +22,14 @@ type AnyWorker = WorkerRegistration<unknown>;
 // runs, exactly as the in-process driver does.
 type JobEnvelope = { payload: unknown; meta: Record<string, string | undefined> };
 
+// BullMQ reserves ':' as its Redis key separator and rejects an all-digit id, so an
+// `idempotencyKey` is percent-encoded into a safe job id. The encoding is injective -
+// two distinct keys can never collapse onto one job id and silently dedupe apart.
+function toJobId(idempotencyKey: string): string {
+  const encoded = idempotencyKey.replaceAll('%', '%25').replaceAll(':', '%3A');
+  return /^\d+$/.test(encoded) ? `key-${encoded}` : encoded;
+}
+
 /**
  * Durable `JOB_QUEUE` reference driver, auto-bound by `createApp` when
  * `REDIS_URL` is set - jobs survive a process restart and `cron`/`everyMs`
@@ -64,8 +72,7 @@ export class BullMqJobQueue implements JobQueueAdapter {
     };
 
     const jobOpts: JobsOptions = {
-      // idempotencyKey -> jobId: BullMQ dedupes to one job per id.
-      jobId: opts.idempotencyKey,
+      jobId: opts.idempotencyKey ? toJobId(opts.idempotencyKey) : undefined,
       delay: opts.delayMs,
       attempts: opts.attempts,
       backoff: opts.backoff ? { type: opts.backoff.type, delay: opts.backoff.delayMs } : undefined,

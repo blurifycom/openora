@@ -1,20 +1,22 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { randomUUID } from 'node:crypto';
+import { describe, it, expect, vi, beforeAll, afterAll, beforeEach } from 'vitest';
+import { eq, sql } from 'drizzle-orm';
+import { ORPCError } from '@orpc/server';
+import { createTestDb, createTestRedis, type TestDb, type TestRedis } from '@openora/core/testing';
+import { migrate as migrateIdentity } from '@openora/core/pam/migrate/identity';
+import type {
+  EmailTemplateRenderer,
+  PlatformConfig,
+  RateLimiterAdapter,
+} from '@openora/core/contracts';
 import {
   IdentityService,
   SESSION_DURATION_IN_SECONDS,
   type IdentityServiceDeps,
 } from '../service/identity.service.js';
 import { UnsupportedLanguageError } from '../../shared/language.js';
-import type {
-  EmailTemplateRenderer,
-  SendEmailPort,
-  PlatformConfig,
-  RateLimiterAdapter,
-} from '@openora/core/contracts';
-import { ORPCError } from '@orpc/server';
-import { mock } from '../../../testing/mock.js';
-import { InProcessCache } from '../../../testing/fakes/cache.js';
-import type { DrizzleService, EventBus } from '@openora/core/server';
+import { user, session } from '../schema/index.js';
+import { mock, makeEventBus } from '../../../testing/mock.js';
 
 const {
   signInEmailMock,
@@ -62,43 +64,28 @@ vi.mock('@openora/core/server', async (importOriginal) => ({
   }),
 }));
 
-type DrizzleRows = { selectRows?: unknown[][]; updateReturning?: unknown[][] };
+const { RedisCache } = await import('@openora/core/server');
 
-function makeDrizzle({ selectRows = [], updateReturning = [] }: DrizzleRows = {}) {
-  const selectQueue = [...selectRows];
-  const returningQueue = [...updateReturning];
-  const update = vi.fn(() => ({
-    set: () => ({
-      where: () =>
-        Object.assign(Promise.resolve(undefined), {
-          returning: () => Promise.resolve(returningQueue.shift() ?? []),
-        }),
-    }),
-  }));
-  const select = vi.fn(() => ({
-    from: () => ({ where: () => ({ limit: () => Promise.resolve(selectQueue.shift() ?? []) }) }),
-  }));
-  return mock<
-    DrizzleService & { update: ReturnType<typeof vi.fn>; select: ReturnType<typeof vi.fn> }
-  >({
-    db: { select, update } as any,
-    update,
-    select,
+let db: TestDb;
+let redis: TestRedis;
+
+const allowLimiter = () =>
+  mock<RateLimiterAdapter>({
+    consume: vi.fn().mockResolvedValue({ allowed: true, retryAfterMs: 0 }),
+    reset: vi.fn().mockResolvedValue(undefined),
   });
-}
 
-function makeEvents() {
-  return mock<EventBus>({ emit: vi.fn(), on: vi.fn() });
-}
-
-// createAuth() is mocked below, so the renderer is never actually invoked - this fake only
-// satisfies IdentityService's required `templateRenderer` dependency at construction time.
 const testTemplateRenderer: EmailTemplateRenderer = {
   render: () => ({ subject: 'subject', body: 'body' }),
 };
 
-function withTemplateRenderer(deps: Omit<IdentityServiceDeps, 'templateRenderer'>) {
-  return new IdentityService({ templateRenderer: testTemplateRenderer, ...deps });
+function buildService(deps: Partial<Omit<IdentityServiceDeps, 'templateRenderer'>> = {}) {
+  return new IdentityService({
+    templateRenderer: testTemplateRenderer,
+    drizzle: db.drizzle,
+    events: makeEventBus(),
+    ...deps,
+  });
 }
 
 function jsonResponse(body: unknown, status: number) {
@@ -117,82 +104,113 @@ const betterAuthUser = {
   updatedAt: '2020-01-01T00:00:00.000Z',
 };
 
-beforeEach(() => {
+const EMAIL = 'a@b.dev';
+
+async function seedUser(over: Partial<typeof user.$inferInsert> = {}) {
+  const [row] = await db.drizzle.db
+    .insert(user)
+    .values({ name: 'A', email: EMAIL, emailVerified: true, ...over })
+    .returning();
+  return row;
+}
+
+async function readUser(userId: string) {
+  const [row] = await db.drizzle.db.select().from(user).where(eq(user.id, userId));
+  return row;
+}
+
+const realCache = () => new RedisCache(redis.client);
+
+const signInSuccess = (userId: string) =>
+  jsonResponse(
+    {
+      user: { ...betterAuthUser, id: userId },
+      token: 'tok',
+      session: { expiresAt: '2020-02-01T00:00:00.000Z' },
+    },
+    200,
+  );
+
+beforeAll(async () => {
+  db = await createTestDb([migrateIdentity]);
+  redis = await createTestRedis();
+});
+
+afterAll(async () => {
+  await db.drop();
+  await redis.quit();
+});
+
+beforeEach(async () => {
   vi.clearAllMocks();
   getSessionMock.mockResolvedValue(null);
+  await db.drizzle.db.execute(sql`TRUNCATE ${user}, ${session} RESTART IDENTITY CASCADE`);
+  await redis.flush();
 });
 
-describe('IdentityService - SendEmailPort seam', () => {
-  it('constructs without a SendEmailPort (email delivery silently skipped)', () => {
-    const svc = withTemplateRenderer({
-      drizzle: makeDrizzle(),
-      events: makeEvents(),
-    });
-    expect(svc).toBeInstanceOf(IdentityService);
-  });
-
-  it('constructs with a stub SendEmailPort and exposes it for use', () => {
-    const stub: SendEmailPort = { send: vi.fn().mockResolvedValue(undefined) };
-    const svc = withTemplateRenderer({
-      drizzle: makeDrizzle(),
-      events: makeEvents(),
-      email: stub,
-    });
-    expect(svc).toBeInstanceOf(IdentityService);
-  });
-
-  it('me returns null when no session exists', async () => {
-    const svc = withTemplateRenderer({
-      drizzle: makeDrizzle(),
-      events: makeEvents(),
-    });
-    const result = await svc.me({});
-    expect(result).toBeNull();
+describe('IdentityService.me', () => {
+  it('returns null when no session exists', async () => {
+    expect(await buildService().me({})).toBeNull();
   });
 });
 
-describe('IdentityService - login lockout', () => {
+describe('IdentityService - login lockout (real PG + real Redis)', () => {
   it('locks the account once failed attempts reach the threshold and emits lockout.triggered', async () => {
-    const drizzle = makeDrizzle({
-      selectRows: [[{ id: 'u1', failedLoginAttempts: 4, lockoutUntil: null }]],
-      updateReturning: [[{ failedLoginAttempts: 5 }]],
-    });
-    const events = makeEvents();
+    const account = await seedUser({ failedLoginAttempts: 4 });
+    const events = makeEventBus();
+    const limiter = allowLimiter();
     signInEmailMock.mockResolvedValue(jsonResponse({ message: 'Invalid' }, 401));
-    const limiter = mock<RateLimiterAdapter>({
-      consume: vi.fn().mockResolvedValue({ allowed: true, retryAfterMs: 0 }),
-      reset: vi.fn().mockResolvedValue(undefined),
-    });
-    const svc = withTemplateRenderer({ drizzle: drizzle, events: events, limiter });
+    const svc = buildService({ events, limiter });
 
     await expect(
       svc.login({ email: 'A@B.dev', password: 'wrongpass1' }, {}, new Headers()),
     ).rejects.toThrow();
 
+    const row = await readUser(account.id);
+    expect(row.failedLoginAttempts).toBe(5);
+    expect(row.lockoutUntil?.getTime()).toBeGreaterThan(Date.now());
+    expect(row.lockoutCount).toBe(1);
     expect(events.emit).toHaveBeenCalledWith(
       'identity.user.lockout.triggered',
-      expect.objectContaining({ userId: 'u1', email: 'a@b.dev' }),
+      expect.objectContaining({ userId: account.id, email: EMAIL }),
     );
+    expect(limiter.reset).toHaveBeenCalledWith(`login:${EMAIL}`);
+  });
 
-    expect(limiter.reset).toHaveBeenCalledWith('login:a@b.dev');
+  it('escalates the lockout duration on a repeat lockout inside the 24h window', async () => {
+    const account = await seedUser({
+      failedLoginAttempts: 4,
+      lockoutCount: 1,
+      lastLockoutAt: new Date(Date.now() - 60_000),
+    });
+    signInEmailMock.mockResolvedValue(jsonResponse({ message: 'Invalid' }, 401));
+    const svc = buildService();
+
+    await expect(
+      svc.login({ email: EMAIL, password: 'wrongpass1' }, {}, new Headers()),
+    ).rejects.toThrow();
+
+    const row = await readUser(account.id);
+    expect(row.lockoutCount).toBe(2);
+    expect(row.lockoutUntil?.getTime()).toBeGreaterThan(Date.now() + 60_000);
   });
 
   it('emits login.failed (not lockout) while still below the threshold', async () => {
-    const drizzle = makeDrizzle({
-      selectRows: [[{ id: 'u1', failedLoginAttempts: 0, lockoutUntil: null }]],
-      updateReturning: [[{ failedLoginAttempts: 1 }]],
-    });
-    const events = makeEvents();
+    const account = await seedUser();
+    const events = makeEventBus();
     signInEmailMock.mockResolvedValue(jsonResponse({ message: 'Invalid' }, 401));
-    const svc = withTemplateRenderer({ drizzle: drizzle, events: events });
+    const svc = buildService({ events });
 
     await expect(
-      svc.login({ email: 'a@b.dev', password: 'wrongpass1' }, {}, new Headers()),
+      svc.login({ email: EMAIL, password: 'wrongpass1' }, {}, new Headers()),
     ).rejects.toThrow();
 
+    const row = await readUser(account.id);
+    expect(row.failedLoginAttempts).toBe(1);
+    expect(row.lockoutUntil).toBeNull();
     expect(events.emit).toHaveBeenCalledWith(
       'identity.user.login.failed',
-      expect.objectContaining({ email: 'a@b.dev', reason: 'invalid_credentials' }),
+      expect.objectContaining({ email: EMAIL, reason: 'invalid_credentials' }),
     );
     expect(events.emit).not.toHaveBeenCalledWith(
       'identity.user.lockout.triggered',
@@ -200,14 +218,26 @@ describe('IdentityService - login lockout', () => {
     );
   });
 
+  it('counts concurrent credential failures exactly once each (atomic SQL increment)', async () => {
+    const account = await seedUser();
+    signInEmailMock.mockResolvedValue(jsonResponse({ message: 'Invalid' }, 401));
+    const svc = buildService();
+
+    await Promise.allSettled(
+      Array.from({ length: 3 }, () =>
+        svc.login({ email: EMAIL, password: 'wrongpass1' }, {}, new Headers()),
+      ),
+    );
+
+    expect((await readUser(account.id)).failedLoginAttempts).toBe(3);
+  });
+
   it('rejects a currently-locked account before attempting sign-in', async () => {
     const future = new Date(Date.now() + 60_000);
-    const drizzle = makeDrizzle({
-      selectRows: [[{ id: 'u1', failedLoginAttempts: 5, lockoutUntil: future }]],
-    });
-    const svc = withTemplateRenderer({ drizzle: drizzle, events: makeEvents() });
+    await seedUser({ failedLoginAttempts: 5, lockoutUntil: future });
+    const svc = buildService();
 
-    const promise = svc.login({ email: 'a@b.dev', password: 'whatever1' }, {}, new Headers());
+    const promise = svc.login({ email: EMAIL, password: 'whatever1' }, {}, new Headers());
     await expect(promise).rejects.toThrow(ORPCError);
     await expect(promise).rejects.toMatchObject({
       code: 'UNAUTHORIZED',
@@ -221,51 +251,41 @@ describe('IdentityService - login lockout', () => {
   });
 
   it('clears the counter and emits login on success', async () => {
-    const drizzle = makeDrizzle({
-      selectRows: [[{ id: 'u1', failedLoginAttempts: 2, lockoutUntil: null }]],
-    });
-    const events = makeEvents();
-    signInEmailMock.mockResolvedValue(
-      jsonResponse(
-        { user: betterAuthUser, token: 'tok', session: { expiresAt: '2020-02-01T00:00:00.000Z' } },
-        200,
-      ),
-    );
-    const svc = withTemplateRenderer({ drizzle: drizzle, events: events });
+    const account = await seedUser({ failedLoginAttempts: 2 });
+    const events = makeEventBus();
+    signInEmailMock.mockResolvedValue(signInSuccess(account.id));
+    const svc = buildService({ events });
 
-    const result = await svc.login({ email: 'a@b.dev', password: 'rightpass1' }, {}, new Headers());
+    const result = await svc.login({ email: EMAIL, password: 'rightpass1' }, {}, new Headers());
 
     expect(result).toMatchObject({ session: { token: 'tok' } });
+    expect((await readUser(account.id)).failedLoginAttempts).toBe(0);
     expect(events.emit).toHaveBeenCalledWith(
       'identity.user.login',
-      expect.objectContaining({ userId: 'u1' }),
+      expect.objectContaining({ userId: account.id }),
     );
-    expect(drizzle.update).toHaveBeenCalled();
   });
 
   it('bypasses lockout for admins if configured with bypassForAdmins: true', async () => {
-    const drizzle = makeDrizzle({
-      selectRows: [[{ id: 'u1', failedLoginAttempts: 4, lockoutUntil: null, role: 'admin' }]],
+    const account = await seedUser({
+      email: 'admin@b.dev',
+      role: 'admin',
+      failedLoginAttempts: 4,
     });
-    const events = makeEvents();
+    const events = makeEventBus();
     signInEmailMock.mockResolvedValue(jsonResponse({ message: 'Invalid' }, 401));
-    const svc = withTemplateRenderer({
-      drizzle: drizzle,
-      events: events,
-      options: {
-        lockout: {
-          enabled: true,
-          bypassForAdmins: true,
-        },
-      },
+    const svc = buildService({
+      events,
+      options: { lockout: { enabled: true, bypassForAdmins: true } },
     });
 
     await expect(
       svc.login({ email: 'admin@b.dev', password: 'wrongpass1' }, {}, new Headers()),
     ).rejects.toThrow();
 
-    // It should not increment the failed attempts or trigger lockout
-    expect(drizzle.update).not.toHaveBeenCalled();
+    const row = await readUser(account.id);
+    expect(row.failedLoginAttempts).toBe(4);
+    expect(row.lockoutUntil).toBeNull();
     expect(events.emit).toHaveBeenCalledWith(
       'identity.user.login.failed',
       expect.objectContaining({ email: 'admin@b.dev' }),
@@ -277,48 +297,36 @@ describe('IdentityService - login lockout', () => {
   });
 
   it('does not bypass lockout for other backoffice roles if bypassForAdmins is true', async () => {
-    const drizzle = makeDrizzle({
-      selectRows: [
-        [{ id: 'u1', failedLoginAttempts: 4, lockoutUntil: null, role: 'support' }],
-        [{ failedLoginAttempts: 5 }],
-      ],
+    const account = await seedUser({
+      email: 'support@b.dev',
+      role: 'support',
+      failedLoginAttempts: 4,
     });
-    const events = makeEvents();
+    const events = makeEventBus();
     signInEmailMock.mockResolvedValue(jsonResponse({ message: 'Invalid' }, 401));
-    const svc = withTemplateRenderer({
-      drizzle: drizzle,
-      events: events,
-      options: {
-        lockout: {
-          enabled: true,
-          bypassForAdmins: true,
-          maxAttempts: 5,
-        },
-      },
+    const svc = buildService({
+      events,
+      options: { lockout: { enabled: true, bypassForAdmins: true, maxAttempts: 5 } },
     });
 
     await expect(
       svc.login({ email: 'support@b.dev', password: 'wrongpass1' }, {}, new Headers()),
     ).rejects.toThrow();
 
-    // It should increment the failed attempts and trigger lockout
-    expect(drizzle.update).toHaveBeenCalled();
+    const row = await readUser(account.id);
+    expect(row.failedLoginAttempts).toBe(5);
+    expect(row.lockoutUntil?.getTime()).toBeGreaterThan(Date.now());
     expect(events.emit).toHaveBeenCalledWith(
       'identity.user.lockout.triggered',
-      expect.objectContaining({ userId: 'u1', email: 'support@b.dev' }),
+      expect.objectContaining({ userId: account.id, email: 'support@b.dev' }),
     );
   });
 
   it('anti-enumeration: locks a nonexistent email once failed attempts reach the threshold, mirroring a real account, without emitting lockout.triggered', async () => {
-    const drizzle = makeDrizzle({ selectRows: [[], [], [], [], []] });
-    const events = makeEvents();
+    const events = makeEventBus();
+    const limiter = allowLimiter();
     signInEmailMock.mockImplementation(async () => jsonResponse({ message: 'Invalid' }, 401));
-    const limiter = mock<RateLimiterAdapter>({
-      consume: vi.fn().mockResolvedValue({ allowed: true, retryAfterMs: 0 }),
-      reset: vi.fn().mockResolvedValue(undefined),
-    });
-    const cache = new InProcessCache();
-    const svc = withTemplateRenderer({ drizzle, events, limiter, cache });
+    const svc = buildService({ events, limiter, cache: realCache() });
 
     for (let i = 0; i < 4; i++) {
       await expect(
@@ -340,11 +348,29 @@ describe('IdentityService - login lockout', () => {
     );
   });
 
-  it('never locks a nonexistent email when cache is not provided (degrades to the pre-mirroring behavior)', async () => {
-    const drizzle = makeDrizzle({ selectRows: [[], [], [], [], [], []] });
-    const events = makeEvents();
+  it('anti-enumeration: the shadow lockout survives a fresh service instance (state lives in Redis, not memory)', async () => {
     signInEmailMock.mockImplementation(async () => jsonResponse({ message: 'Invalid' }, 401));
-    const svc = withTemplateRenderer({ drizzle, events });
+
+    for (let i = 0; i < 5; i++) {
+      const svc = buildService({ cache: realCache() });
+      await expect(
+        svc.login({ email: 'nobody@b.dev', password: 'wrongpass1' }, {}, new Headers()),
+      ).rejects.toThrow();
+    }
+
+    await expect(
+      buildService({ cache: realCache() }).login(
+        { email: 'nobody@b.dev', password: 'wrongpass1' },
+        {},
+        new Headers(),
+      ),
+    ).rejects.toMatchObject({ data: { code: 'ACCOUNT_LOCKED' } });
+  });
+
+  it('never locks a nonexistent email when cache is not provided (degrades to the pre-mirroring behavior)', async () => {
+    const events = makeEventBus();
+    signInEmailMock.mockImplementation(async () => jsonResponse({ message: 'Invalid' }, 401));
+    const svc = buildService({ events });
 
     for (let i = 0; i < 6; i++) {
       await expect(
@@ -361,228 +387,156 @@ describe('IdentityService - login lockout', () => {
 
 describe('IdentityService - login banned-user 403 (not the RG block)', () => {
   it('surfaces a banned-user 403 from signInEmail as FORBIDDEN and still emits login.failed', async () => {
-    const drizzle = makeDrizzle({
-      selectRows: [
-        [
-          {
-            id: 'u1',
-            failedLoginAttempts: 0,
-            lockoutUntil: null,
-            rgBlocked: false,
-            rgBlockedUntil: null,
-          },
-        ],
-      ],
-    });
-    const events = makeEvents();
+    await seedUser();
+    const events = makeEventBus();
     signInEmailMock.mockResolvedValue(jsonResponse({ message: 'BANNED_USER' }, 403));
-    const svc = withTemplateRenderer({ drizzle: drizzle, events: events });
+    const svc = buildService({ events });
 
     await expect(
-      svc.login({ email: 'a@b.dev', password: 'whatever1' }, {}, new Headers()),
+      svc.login({ email: EMAIL, password: 'whatever1' }, {}, new Headers()),
     ).rejects.toMatchObject({ code: 'FORBIDDEN' });
 
     expect(events.emit).toHaveBeenCalledWith(
       'identity.user.login.failed',
-      expect.objectContaining({ email: 'a@b.dev', reason: 'error' }),
+      expect.objectContaining({ email: EMAIL, reason: 'error' }),
     );
     expect(events.emit).not.toHaveBeenCalledWith('rg.exclusion.login_blocked', expect.anything());
   });
 });
 
-describe('IdentityService - RG login gate', () => {
-  it('blocks a self-excluded login AFTER credentials verify and emits rg.exclusion.login_blocked', async () => {
-    const drizzle = makeDrizzle({
-      selectRows: [
-        [
-          {
-            id: 'u1',
-            failedLoginAttempts: 0,
-            lockoutUntil: null,
-            rgBlocked: true,
-            rgBlockedUntil: null,
-          },
-        ],
-      ],
-    });
-    const events = makeEvents();
+describe('IdentityService - RG login gate (real PG)', () => {
+  it('blocks a self-excluded login AFTER credentials verify, expires the issued session, and emits rg.exclusion.login_blocked', async () => {
+    const account = await seedUser({ rgBlocked: true, rgBlockedUntil: null });
+    const live = new Date(Date.now() + 24 * 60 * 60 * 1000);
+    await db.drizzle.db
+      .insert(session)
+      .values({ userId: account.id, token: randomUUID(), expiresAt: live });
+    const events = makeEventBus();
     // Valid credentials (200) - the gate must still block.
-    signInEmailMock.mockResolvedValue(
-      jsonResponse({ user: betterAuthUser, token: 'tok', session: {} }, 200),
-    );
-    const svc = withTemplateRenderer({ drizzle: drizzle, events: events });
+    signInEmailMock.mockResolvedValue(signInSuccess(account.id));
+    const svc = buildService({ events });
 
     await expect(
-      svc.login({ email: 'a@b.dev', password: 'rightpass1' }, {}, new Headers()),
+      svc.login({ email: EMAIL, password: 'rightpass1' }, {}, new Headers()),
     ).rejects.toMatchObject({ code: 'FORBIDDEN' });
 
     expect(signInEmailMock).toHaveBeenCalled();
     expect(events.emit).toHaveBeenCalledWith(
       'rg.exclusion.login_blocked',
-      expect.objectContaining({ userId: 'u1' }),
+      expect.objectContaining({ userId: account.id }),
     );
     expect(events.emit).not.toHaveBeenCalledWith('identity.user.login', expect.anything());
     expect(events.emit).not.toHaveBeenCalledWith('identity.user.login.failed', expect.anything());
-    // The just-issued session is revoked.
-    expect(drizzle.update).toHaveBeenCalled();
+
+    const [revoked] = await db.drizzle.db
+      .select()
+      .from(session)
+      .where(eq(session.userId, account.id));
+    expect(revoked.expiresAt.getTime()).toBeLessThanOrEqual(Date.now());
   });
 
   it('allows login once a lapsed cooling-off block has elapsed', async () => {
-    const past = new Date(Date.now() - 60_000);
-    const drizzle = makeDrizzle({
-      selectRows: [
-        [
-          {
-            id: 'u1',
-            failedLoginAttempts: 0,
-            lockoutUntil: null,
-            rgBlocked: true,
-            rgBlockedUntil: past,
-          },
-        ],
-      ],
+    const account = await seedUser({
+      rgBlocked: true,
+      rgBlockedUntil: new Date(Date.now() - 60_000),
     });
-    const events = makeEvents();
-    signInEmailMock.mockResolvedValue(
-      jsonResponse({ user: betterAuthUser, token: 'tok', session: {} }, 200),
-    );
-    const svc = withTemplateRenderer({ drizzle: drizzle, events: events });
+    const events = makeEventBus();
+    signInEmailMock.mockResolvedValue(signInSuccess(account.id));
+    const svc = buildService({ events });
 
-    const result = await svc.login({ email: 'a@b.dev', password: 'rightpass1' }, {}, new Headers());
+    const result = await svc.login({ email: EMAIL, password: 'rightpass1' }, {}, new Headers());
 
     expect(result).toMatchObject({ session: { token: 'tok' } });
     expect(events.emit).toHaveBeenCalledWith(
       'identity.user.login',
-      expect.objectContaining({ userId: 'u1' }),
+      expect.objectContaining({ userId: account.id }),
     );
     expect(events.emit).not.toHaveBeenCalledWith('rg.exclusion.login_blocked', expect.anything());
   });
 });
 
-describe('IdentityService - unlockUser', () => {
-  it('clears the lockout and emits unlocked with the prior state', async () => {
-    const drizzle = makeDrizzle({
-      selectRows: [
-        [
-          {
-            id: 'u1',
-            email: 'a@b.dev',
-            failedLoginAttempts: 5,
-            lockoutUntil: new Date('2020-01-01T00:00:00.000Z'),
-          },
-        ],
-      ],
-    });
-    const events = makeEvents();
-    const svc = withTemplateRenderer({ drizzle: drizzle, events: events });
+describe('IdentityService.unlockUser (real PG)', () => {
+  it('clears the lockout row and emits unlocked with the prior state', async () => {
+    const lockedUntil = new Date('2020-01-01T00:00:00.000Z');
+    const account = await seedUser({ failedLoginAttempts: 5, lockoutUntil: lockedUntil });
+    const events = makeEventBus();
+    const svc = buildService({ events });
 
-    const res = await svc.unlockUser('u1', 'admin1');
+    const res = await svc.unlockUser(account.id, 'admin1');
 
     expect(res).toEqual({ success: true });
-    expect(drizzle.update).toHaveBeenCalled();
+    const row = await readUser(account.id);
+    expect(row.failedLoginAttempts).toBe(0);
+    expect(row.lockoutUntil).toBeNull();
     expect(events.emit).toHaveBeenCalledWith(
       'identity.user.unlocked',
       expect.objectContaining({
-        userId: 'u1',
+        userId: account.id,
         actorId: 'admin1',
         previousFailedAttempts: 5,
-        previousLockoutUntil: '2020-01-01T00:00:00.000Z',
+        previousLockoutUntil: lockedUntil.toISOString(),
       }),
     );
   });
 
   it('throws when the user does not exist', async () => {
-    const drizzle = makeDrizzle({ selectRows: [[]] });
-    const svc = withTemplateRenderer({ drizzle: drizzle, events: makeEvents() });
-    await expect(svc.unlockUser('missing', 'admin1')).rejects.toThrow();
+    await expect(buildService().unlockUser(randomUUID(), 'admin1')).rejects.toThrow();
   });
 
   it('resets the login rate-limit window for the unlocked user', async () => {
-    const drizzle = makeDrizzle({
-      selectRows: [
-        [
-          {
-            id: 'u1',
-            email: 'A@B.DEV',
-            failedLoginAttempts: 5,
-            lockoutUntil: new Date('2020-01-01'),
-          },
-        ],
-      ],
+    const account = await seedUser({
+      failedLoginAttempts: 5,
+      lockoutUntil: new Date('2020-01-01'),
     });
-    const resetMock = vi.fn().mockResolvedValue(undefined);
-    const limiter = {
-      consume: vi.fn(),
-      reset: resetMock,
-    } satisfies import('@openora/core/contracts').RateLimiterAdapter;
-    const svc = withTemplateRenderer({
-      drizzle: drizzle as never,
-      events: makeEvents() as never,
-      limiter,
-    });
+    const limiter = allowLimiter();
+    const svc = buildService({ limiter });
 
-    await svc.unlockUser('u1', 'admin1');
+    await svc.unlockUser(account.id, 'admin1');
 
-    expect(resetMock).toHaveBeenCalledWith('login:a@b.dev');
+    expect(limiter.reset).toHaveBeenCalledWith(`login:${EMAIL}`);
   });
 });
 
 describe('IdentityService.requestPasswordReset', () => {
   it('calls the non-deprecated requestPasswordResetEmailOTP endpoint and returns SUCCESS', async () => {
     requestPasswordResetEmailOTPMock.mockResolvedValue(jsonResponse({ success: true }, 200));
-    const svc = withTemplateRenderer({
-      drizzle: makeDrizzle(),
-      events: makeEvents(),
-    });
 
-    const result = await svc.requestPasswordReset({ email: 'a@b.dev' });
+    const result = await buildService().requestPasswordReset({ email: EMAIL });
 
     expect(result).toEqual({ success: true });
     expect(requestPasswordResetEmailOTPMock).toHaveBeenCalledWith(
-      expect.objectContaining({ body: { email: 'a@b.dev' } }),
+      expect.objectContaining({ body: { email: EMAIL } }),
     );
   });
 
   it('swallows a failure and still returns SUCCESS (anti-enumeration)', async () => {
     requestPasswordResetEmailOTPMock.mockRejectedValue(new Error('boom'));
-    const svc = withTemplateRenderer({
-      drizzle: makeDrizzle(),
-      events: makeEvents(),
-    });
 
-    await expect(svc.requestPasswordReset({ email: 'unregistered@x.dev' })).resolves.toEqual({
-      success: true,
-    });
+    await expect(
+      buildService().requestPasswordReset({ email: 'unregistered@x.dev' }),
+    ).resolves.toEqual({ success: true });
   });
 });
 
 describe('IdentityService.verifyPasswordResetOtp', () => {
   it('calls checkVerificationOTP with type forget-password and returns SUCCESS', async () => {
     checkVerificationOTPMock.mockResolvedValue(jsonResponse({ success: true }, 200));
-    const svc = withTemplateRenderer({
-      drizzle: makeDrizzle(),
-      events: makeEvents(),
-    });
 
-    const result = await svc.verifyPasswordResetOtp({ email: 'a@b.dev', otp: '123456' });
+    const result = await buildService().verifyPasswordResetOtp({ email: EMAIL, otp: '123456' });
 
     expect(result).toEqual({ success: true });
     expect(checkVerificationOTPMock).toHaveBeenCalledWith(
       expect.objectContaining({
-        body: { email: 'a@b.dev', type: 'forget-password', otp: '123456' },
+        body: { email: EMAIL, type: 'forget-password', otp: '123456' },
       }),
     );
   });
 
   it('surfaces an invalid OTP (400) response as ORPCError BAD_REQUEST with a generic message', async () => {
     checkVerificationOTPMock.mockResolvedValue(jsonResponse({ message: 'INVALID_OTP' }, 400));
-    const svc = withTemplateRenderer({
-      drizzle: makeDrizzle(),
-      events: makeEvents(),
-    });
 
     await expect(
-      svc.verifyPasswordResetOtp({ email: 'a@b.dev', otp: '000000' }),
+      buildService().verifyPasswordResetOtp({ email: EMAIL, otp: '000000' }),
     ).rejects.toMatchObject({
       code: 'BAD_REQUEST',
       message: 'Invalid or expired verification code',
@@ -594,13 +548,9 @@ describe('IdentityService.verifyPasswordResetOtp', () => {
     // unregistered email produces a distinct raw message ("User not found") that must never
     // reach the caller - it would let an unauthenticated caller learn whether an email exists.
     checkVerificationOTPMock.mockResolvedValue(jsonResponse({ message: 'User not found' }, 400));
-    const svc = withTemplateRenderer({
-      drizzle: makeDrizzle(),
-      events: makeEvents(),
-    });
 
     await expect(
-      svc.verifyPasswordResetOtp({ email: 'unregistered@x.dev', otp: '000000' }),
+      buildService().verifyPasswordResetOtp({ email: 'unregistered@x.dev', otp: '000000' }),
     ).rejects.toMatchObject({
       code: 'BAD_REQUEST',
       message: 'Invalid or expired verification code',
@@ -609,13 +559,9 @@ describe('IdentityService.verifyPasswordResetOtp', () => {
 
   it('surfaces a TOO_MANY_ATTEMPTS (403) response as ORPCError BAD_REQUEST (masked)', async () => {
     checkVerificationOTPMock.mockResolvedValue(jsonResponse({ message: 'TOO_MANY_ATTEMPTS' }, 403));
-    const svc = withTemplateRenderer({
-      drizzle: makeDrizzle(),
-      events: makeEvents(),
-    });
 
     await expect(
-      svc.verifyPasswordResetOtp({ email: 'a@b.dev', otp: '000000' }),
+      buildService().verifyPasswordResetOtp({ email: EMAIL, otp: '000000' }),
     ).rejects.toMatchObject({ code: 'BAD_REQUEST' });
   });
 });
@@ -623,13 +569,9 @@ describe('IdentityService.verifyPasswordResetOtp', () => {
 describe('IdentityService.resetPassword', () => {
   it('calls resetPasswordEmailOTP with the right body and returns SUCCESS', async () => {
     resetPasswordEmailOTPMock.mockResolvedValue(jsonResponse({ success: true }, 200));
-    const svc = withTemplateRenderer({
-      drizzle: makeDrizzle(),
-      events: makeEvents(),
-    });
 
-    const result = await svc.resetPassword({
-      email: 'a@b.dev',
+    const result = await buildService().resetPassword({
+      email: EMAIL,
       otp: '123456',
       newPassword: 'newpassword1',
     });
@@ -637,7 +579,7 @@ describe('IdentityService.resetPassword', () => {
     expect(result).toEqual({ success: true });
     expect(resetPasswordEmailOTPMock).toHaveBeenCalledWith(
       expect.objectContaining({
-        body: { email: 'a@b.dev', otp: '123456', password: 'newpassword1' },
+        body: { email: EMAIL, otp: '123456', password: 'newpassword1' },
       }),
     );
   });
@@ -646,38 +588,37 @@ describe('IdentityService.resetPassword', () => {
     resetPasswordEmailOTPMock.mockResolvedValue(
       jsonResponse({ message: 'TOO_MANY_ATTEMPTS' }, 403),
     );
-    const svc = withTemplateRenderer({
-      drizzle: makeDrizzle(),
-      events: makeEvents(),
-    });
 
     await expect(
-      svc.resetPassword({ email: 'a@b.dev', otp: '000000', newPassword: 'newpassword1' }),
+      buildService().resetPassword({ email: EMAIL, otp: '000000', newPassword: 'newpassword1' }),
     ).rejects.toMatchObject({ code: 'BAD_REQUEST' });
   });
 });
 
 describe('IdentityService onPasswordReset hook (wired via createAuth)', () => {
-  it('clears the lockout and emits identity.password.reset when better-auth invokes the hook', async () => {
-    const drizzle = makeDrizzle();
-    const events = makeEvents();
-    withTemplateRenderer({ drizzle: drizzle, events: events });
+  it('clears the lockout row and emits identity.password.reset when better-auth invokes the hook', async () => {
+    const account = await seedUser({
+      failedLoginAttempts: 5,
+      lockoutUntil: new Date(Date.now() + 60_000),
+    });
+    const events = makeEventBus();
+    buildService({ events });
 
-    await capturedAuthOptions.current?.onPasswordReset?.({ id: 'u1', email: 'a@b.dev' });
+    await capturedAuthOptions.current?.onPasswordReset?.({ id: account.id, email: EMAIL });
 
     expect(events.emit).toHaveBeenCalledWith(
       'identity.password.reset',
-      expect.objectContaining({ userId: 'u1' }),
+      expect.objectContaining({ userId: account.id }),
     );
-    expect(drizzle.update).toHaveBeenCalled();
+    const row = await readUser(account.id);
+    expect(row.failedLoginAttempts).toBe(0);
+    expect(row.lockoutUntil).toBeNull();
   });
 });
 
 describe('IdentityService.updateProfile language validation', () => {
   it('rejects an unsupported language before calling updateUser', async () => {
-    const svc = withTemplateRenderer({
-      drizzle: makeDrizzle(),
-      events: makeEvents(),
+    const svc = buildService({
       platformConfig: mock<PlatformConfig>({ supportedLanguages: ['en', 'fr'] }),
     });
 
@@ -690,9 +631,7 @@ describe('IdentityService.updateProfile language validation', () => {
   it('accepts a supported language and forwards it to updateUser', async () => {
     updateUserMock.mockResolvedValue(jsonResponse({ status: true }, 200));
     getSessionMock.mockResolvedValueOnce({ user: { ...betterAuthUser, language: 'fr' } });
-    const svc = withTemplateRenderer({
-      drizzle: makeDrizzle(),
-      events: makeEvents(),
+    const svc = buildService({
       platformConfig: mock<PlatformConfig>({ supportedLanguages: ['en', 'fr'] }),
     });
 
