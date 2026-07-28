@@ -42,7 +42,8 @@ function makeCapturingChain(results: unknown[]): { proxy: any; captured: { where
 function makeService(dayCounts: DayCountRow[] = []): PlayerService {
   const db = { select: vi.fn(() => chain(dayCounts)) };
   const writer = { setStatus: vi.fn() } as never;
-  return new PlayerService({ db } as never, writer);
+  const events = { emit: vi.fn() } as never;
+  return new PlayerService({ db } as never, writer, events);
 }
 
 describe('PlayerService domain errors', () => {
@@ -64,7 +65,11 @@ describe('PlayerService.remove', () => {
       }),
     }));
     const db = { select: vi.fn(() => chain(existing)), update };
-    const svc = new PlayerService({ db } as never, { setStatus: vi.fn() } as never);
+    const svc = new PlayerService(
+      { db } as never,
+      { setStatus: vi.fn() } as never,
+      { emit: vi.fn() } as never,
+    );
     return { svc, db, setArgs };
   }
 
@@ -85,7 +90,11 @@ describe('PlayerService.remove', () => {
 describe('PlayerService.getByUserId', () => {
   it('throws PlayerNotFoundError when no player owns the userId', async () => {
     const db = { select: vi.fn(() => chain([])) };
-    const svc = new PlayerService({ db } as never, { setStatus: vi.fn() } as never);
+    const svc = new PlayerService(
+      { db } as never,
+      { setStatus: vi.fn() } as never,
+      { emit: vi.fn() } as never,
+    );
     await expect(svc.getByUserId('u-missing')).rejects.toThrow(PlayerNotFoundError);
   });
 });
@@ -134,7 +143,11 @@ describe('PlayerService.list tag filter', () => {
   it('applies a WHERE clause when tags are provided', async () => {
     const { proxy, captured } = makeCapturingChain([[emptyPlayerRow], [{ n: 0 }]]);
     const db = { select: vi.fn(() => proxy) };
-    const svc = new PlayerService({ db } as never, { setStatus: vi.fn() } as never);
+    const svc = new PlayerService(
+      { db } as never,
+      { setStatus: vi.fn() } as never,
+      { emit: vi.fn() } as never,
+    );
 
     await svc.list({ page: 1, limit: 20, tags: ['self_excluded', 'kyc_rejected'] }).catch(() => {});
 
@@ -145,7 +158,11 @@ describe('PlayerService.list tag filter', () => {
   it('applies no WHERE clause when tags are absent', async () => {
     const { proxy, captured } = makeCapturingChain([[emptyPlayerRow], [{ n: 0 }]]);
     const db = { select: vi.fn(() => proxy) };
-    const svc = new PlayerService({ db } as never, { setStatus: vi.fn() } as never);
+    const svc = new PlayerService(
+      { db } as never,
+      { setStatus: vi.fn() } as never,
+      { emit: vi.fn() } as never,
+    );
 
     await svc.list({ page: 1, limit: 20 }).catch(() => {});
 
@@ -156,10 +173,84 @@ describe('PlayerService.list tag filter', () => {
   it('applies no WHERE clause when tags is an empty array', async () => {
     const { proxy, captured } = makeCapturingChain([[emptyPlayerRow], [{ n: 0 }]]);
     const db = { select: vi.fn(() => proxy) };
-    const svc = new PlayerService({ db } as never, { setStatus: vi.fn() } as never);
+    const svc = new PlayerService(
+      { db } as never,
+      { setStatus: vi.fn() } as never,
+      { emit: vi.fn() } as never,
+    );
 
     await svc.list({ page: 1, limit: 20, tags: [] }).catch(() => {});
 
     expect(captured.where.every((c) => c === undefined)).toBe(true);
+  });
+});
+
+describe('PlayerService.update player.level.changed emission', () => {
+  const PLAYER_ID = 'p-1';
+  const USER_ID = 'u-1';
+  const ACTOR_ID = 'admin-1';
+
+  function existingRow(level: number) {
+    return {
+      id: PLAYER_ID,
+      userId: USER_ID,
+      displayName: 'Player',
+      status: 'active',
+      kycStatus: 'pending',
+      level,
+      totalWagered: '0',
+      totalDeposits: '0',
+      lastSeenAt: null,
+      createdAt: new Date(),
+      updatedAt: new Date(),
+    };
+  }
+
+  function fetchRow(level: number) {
+    return { player: existingRow(level), email: 'p@test.com', tags: [] };
+  }
+
+  function makeUpdateService(currentLevel: number) {
+    const events = { emit: vi.fn() };
+    const writer = { setStatus: vi.fn() };
+    const selectResults = [chain([existingRow(currentLevel)]), chain([fetchRow(currentLevel)])];
+    let callIdx = 0;
+    const db = {
+      select: vi.fn(() => selectResults[callIdx++] ?? selectResults[selectResults.length - 1]),
+      transaction: vi.fn(async (cb: (trx: unknown) => Promise<void>) => {
+        const trx = {
+          update: vi.fn(() => ({
+            set: vi.fn(() => ({ where: vi.fn(() => Promise.resolve()) })),
+          })),
+          select: vi.fn(() => chain([existingRow(currentLevel)])),
+        };
+        await cb(trx);
+      }),
+    };
+    const svc = new PlayerService({ db } as never, writer as never, events as never);
+    return { svc, events };
+  }
+
+  it('emits player.level.changed with previousLevel/newLevel/actorId when level changes', async () => {
+    const { svc, events } = makeUpdateService(1);
+    await svc.update(PLAYER_ID, { level: 5 }, ACTOR_ID);
+    expect(events.emit).toHaveBeenCalledWith('player.level.changed', {
+      userId: USER_ID,
+      previousLevel: 1,
+      newLevel: 5,
+      actorId: ACTOR_ID,
+    });
+  });
+
+  it('does not emit when level is omitted from the patch', async () => {
+    const { svc, events } = makeUpdateService(1);
+    await svc.update(PLAYER_ID, { displayName: 'New Name' }, ACTOR_ID);
+    expect(events.emit).not.toHaveBeenCalled();
+  });
+
+  it('does not emit when level is unchanged', async () => {
+    const { svc, events } = makeUpdateService(3);
+    await svc.update(PLAYER_ID, { level: 3 }, ACTOR_ID);
+    expect(events.emit).not.toHaveBeenCalled();
   });
 });

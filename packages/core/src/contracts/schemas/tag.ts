@@ -18,6 +18,8 @@ export const tagKeys = [
   'test_account',
   'dormant_high_roller',
   'withdrawal_review',
+  'multi_account',
+  'level',
 ] as const;
 export const TagKeySchema = z.enum(tagKeys);
 export type TagKey = z.infer<typeof TagKeySchema>;
@@ -72,6 +74,13 @@ export const removePlayerTagSchema = playerTagSchema.pick({ playerId: true }).ex
   removalActorUserId: UuidSchema.nullable(),
 });
 export type RemovePlayerTagInput = z.infer<typeof removePlayerTagSchema>;
+
+// Atomic same-key swap (the mutable `level` tag): one actor performs both halves,
+// so the assign actor fields double as the removal actor fields.
+export const replacePlayerTagSchema = assignPlayerTagSchema.extend({
+  removalReason: z.string().min(5),
+});
+export type ReplacePlayerTagInput = z.infer<typeof replacePlayerTagSchema>;
 
 export const tagRuleSchema = z.object({
   id: UuidSchema,

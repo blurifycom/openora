@@ -683,4 +683,92 @@ describe('TagService', () => {
       expect(events.emit).not.toHaveBeenCalled();
     });
   });
+
+  describe('replacePlayerTag', () => {
+    const levelTag = () => makeTag({ key: 'level' });
+    const replaceArgs = {
+      playerId: PLAYER_ID,
+      tagKey: 'level',
+      removalReason: 'player level changed',
+      assignReason: 'player level set to 4',
+      assignActor: 'scheduled',
+      assignActorUserId: ACTOR_ID,
+    } as const;
+
+    it('removes the prior row and assigns the new one in ONE transaction, emitting both events', async () => {
+      const priorPt = makePlayerTag({ assignReason: 'player level set to 3' });
+      const removedPt = makePlayerTag({ removedAt: new Date() });
+      const newPt = makePlayerTag({ assignReason: 'player level set to 4' });
+      const events = makeEvents();
+      // Query order inside the single tx: find tag (remove half), select active row,
+      // update.returning; then find tag (assign half), pre-check select, insert.returning.
+      const { drizzle, db } = makeDrizzle({
+        select: [[levelTag()], [priorPt], [levelTag()], []],
+        returning: [[removedPt], [newPt]],
+      });
+      const svc = new TagService(drizzle, events);
+
+      const result = await svc.replacePlayerTag(replaceArgs);
+
+      expect(result).toMatchObject({ playerId: PLAYER_ID, tag: { key: 'level' } });
+      expect(db.transaction).toHaveBeenCalledTimes(1);
+      expect(events.emit).toHaveBeenCalledWith(
+        'tag.player.removed',
+        expect.objectContaining({
+          playerId: PLAYER_ID,
+          tagKey: 'level',
+          reason: 'player level changed',
+          actorId: ACTOR_ID,
+        }),
+      );
+      expect(events.emit).toHaveBeenCalledWith(
+        'tag.player.assigned',
+        expect.objectContaining({
+          playerId: PLAYER_ID,
+          tagKey: 'level',
+          reason: 'player level set to 4',
+          actorId: ACTOR_ID,
+        }),
+      );
+    });
+
+    it('treats a missing active row as a no-op removal and only emits tag.player.assigned', async () => {
+      const newPt = makePlayerTag({ assignReason: 'player level set to 4' });
+      const events = makeEvents();
+      const { drizzle, db } = makeDrizzle({
+        select: [[levelTag()], [], [levelTag()], []],
+        returning: [[newPt]],
+      });
+      const svc = new TagService(drizzle, events);
+
+      const result = await svc.replacePlayerTag(replaceArgs);
+
+      expect(result).toMatchObject({ playerId: PLAYER_ID });
+      expect(db.transaction).toHaveBeenCalledTimes(1);
+      expect(events.emit).toHaveBeenCalledTimes(1);
+      expect(events.emit).toHaveBeenCalledWith('tag.player.assigned', expect.anything());
+    });
+
+    it('throws TagAlreadyInUseError and emits nothing when the assign half loses a concurrent race', async () => {
+      const priorPt = makePlayerTag();
+      const removedPt = makePlayerTag({ removedAt: new Date() });
+      const events = makeEvents();
+      // Assign half's pre-check finds an active row a concurrent replace committed
+      // between our removal and insert - the whole swap rejects, nothing emits.
+      const { drizzle } = makeDrizzle({
+        select: [[levelTag()], [priorPt], [levelTag()], [makePlayerTag()]],
+        returning: [[removedPt]],
+      });
+      const svc = new TagService(drizzle, events);
+
+      await expect(svc.replacePlayerTag(replaceArgs)).rejects.toBeInstanceOf(TagAlreadyInUseError);
+      expect(events.emit).not.toHaveBeenCalled();
+    });
+
+    it('throws TagNotFoundError when the tag key does not exist', async () => {
+      const { drizzle } = makeDrizzle({ select: [[]] });
+      const svc = new TagService(drizzle, makeEvents());
+      await expect(svc.replacePlayerTag(replaceArgs)).rejects.toBeInstanceOf(TagNotFoundError);
+    });
+  });
 });

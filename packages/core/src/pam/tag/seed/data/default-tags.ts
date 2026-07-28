@@ -13,4 +13,6 @@ export const DEFAULT_TAGS: CreateTagInput[] = [
   { key: 'test_account', isSticky: true },
   { key: 'dormant_high_roller', isSticky: false },
   { key: 'withdrawal_review', isSticky: true },
+  { key: 'multi_account', isSticky: true },
+  { key: 'level', isSticky: false },
 ];

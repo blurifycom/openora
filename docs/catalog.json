@@ -641,6 +641,7 @@
     "identity.user.registered",
     "identity.user.unlocked",
     "notifications.created",
+    "player.level.changed",
     "rg.cooling_off.activated",
     "rg.cooling_off.lifted",
     "rg.exclusion.login_blocked",
@@ -1263,6 +1264,10 @@
     },
     {
       "name": "removePlayerTagSchema",
+      "file": "packages/core/src/contracts/schemas/tag.ts"
+    },
+    {
+      "name": "replacePlayerTagSchema",
       "file": "packages/core/src/contracts/schemas/tag.ts"
     },
     {

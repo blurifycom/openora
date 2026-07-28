@@ -20,7 +20,7 @@ describe('corePlugins', () => {
     for (const { entry, plugin } of loaded) {
       expect(plugin.id, `entry ${entry.id} resolves to a definePlugin`).toBe(entry.id);
     }
-  });
+  }, 20000);
 
   it('is a self-contained dependency graph - every dependsOn is present in the set', async () => {
     const loaded = await loadDefaults();

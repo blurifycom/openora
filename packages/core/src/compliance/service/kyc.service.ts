@@ -107,6 +107,7 @@ export class KycVerificationService {
         .returning(),
       new KycVerificationNotFoundError(userId),
     );
+    await this.statusWriter.setStatus(userId, status, { actorId: null, source: 'vendor' });
     this.events.emit('compliance.kyc.submitted', {
       userId,
       referenceId: result.referenceId,
@@ -114,7 +115,6 @@ export class KycVerificationService {
       ip: meta?.ip ?? null,
       userAgent: meta?.userAgent ?? null,
     });
-    await this.statusWriter.setStatus(userId, status, { actorId: null, source: 'vendor' });
     return { ...toDto(row), verificationUrl: result.verificationUrl };
   }
 

@@ -15,6 +15,7 @@ import {
   CreateTagInput,
   DeleteTagInput,
   RemovePlayerTagInput,
+  ReplacePlayerTagInput,
   type PlayerTags,
   type Player,
   type TagKey,
@@ -327,6 +328,35 @@ export class TagService implements PlayerTags {
     }
   }
 
+  private async _removePlayerTagOnTx(trx: DrizzleTx, args: RemovePlayerTagInput) {
+    const foundTag = await this._findTagByKeyOrThrow(args.tagKey, trx);
+    const active = findOneOrThrow(
+      await trx
+        .select()
+        .from(playerTag)
+        .where(
+          and(
+            eq(playerTag.tagId, foundTag.id),
+            eq(playerTag.playerId, args.playerId),
+            isNull(playerTag.removedAt),
+          ),
+        )
+        .limit(1),
+      new TagAssignmentNotFoundError(args.playerId),
+    );
+    const [updated] = await trx
+      .update(playerTag)
+      .set({
+        removedAt: new Date(),
+        removalReason: args.removalReason,
+        removalActor: args.removalActor,
+        removalActorUserId: args.removalActorUserId,
+      })
+      .where(eq(playerTag.id, active.id))
+      .returning();
+    return toPlayerTagWithTag(updated, foundTag.key);
+  }
+
   public async removePlayerTag(args: RemovePlayerTagInput, meta?: ClientMeta) {
     try {
       const db = this.drizzle.db;
@@ -367,6 +397,70 @@ export class TagService implements PlayerTags {
         userAgent: meta?.userAgent ?? null,
       });
       return result;
+    } catch (e) {
+      mapDbError(e);
+    }
+  }
+
+  /**
+   * Atomically replaces a player's active assignment of tagKey - the same-key value
+   * swap the mutable `level` tag needs. Both halves run on ONE transaction: a missing
+   * active row makes the removal a silent no-op (unlike removePlayerTag), and a
+   * failure in the assign half rolls the removal back too, so the swap can never
+   * commit half-way and strand the player with no active row. Under a genuine
+   * concurrent replace for the same (tag, player), the loser serializes on the row
+   * lock + the player_tag_active_key unique index and throws TagAlreadyInUseError
+   * with NOTHING committed. Emits tag.player.removed (only when a row was actually
+   * removed) and tag.player.assigned after the commit.
+   */
+  public async replacePlayerTag(args: ReplacePlayerTagInput) {
+    try {
+      const db = this.drizzle.db;
+      const { removalReason, ...assignArgs } = args;
+      const result = await db.transaction(async (trx) => {
+        let removed = false;
+        try {
+          // App-level throw from findOneOrThrow, not a failed SQL statement, so
+          // catching it here does not abort the surrounding Postgres transaction.
+          await this._removePlayerTagOnTx(trx, {
+            playerId: args.playerId,
+            tagKey: args.tagKey,
+            removalReason,
+            removalActor: args.assignActor,
+            removalActorUserId: args.assignActorUserId,
+          });
+          removed = true;
+        } catch (e) {
+          if (!(e instanceof TagAssignmentNotFoundError)) {
+            throw e;
+          }
+        }
+        const assigned = await this._assignPlayerTagOnTx(trx, assignArgs);
+        if (assigned.status === 'already_active') {
+          // Unlike assignPlayerTag/assignPlayerTagInTx (where a lost race is an
+          // idempotent no-op that must still let a metadata merge commit), a lost
+          // race HERE must roll back the whole swap, including the removal above -
+          // see the class doc: nothing may commit half-way. Throwing inside this
+          // db.transaction callback is exactly how that rollback happens.
+          throw new TagAlreadyInUseError();
+        }
+        return { row: assigned.row, removed };
+      });
+      if (result.removed) {
+        void this.event.emit('tag.player.removed', {
+          playerId: args.playerId,
+          tagKey: args.tagKey,
+          reason: removalReason,
+          actorId: args.assignActorUserId ?? SYSTEM_ACTOR_ID,
+        });
+      }
+      void this.event.emit('tag.player.assigned', {
+        playerId: args.playerId,
+        tagKey: args.tagKey,
+        reason: args.assignReason,
+        actorId: args.assignActorUserId ?? SYSTEM_ACTOR_ID,
+      });
+      return result.row;
     } catch (e) {
       mapDbError(e);
     }

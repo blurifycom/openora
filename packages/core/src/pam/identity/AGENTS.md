@@ -14,7 +14,11 @@ A standalone method for players with a verified phone (`user.phone_number` E.164
 
 Wrong codes increment `failed_attempts` (5-attempt cap, then the session cancels) and throw `OtpInvalidError` (`UNPROCESSABLE_CONTENT`) with `data: { attemptsRemaining, reason }` so the caller can tell `wrong_code` from `expired` instead of inferring it. Unknown, unverified, or just-cancelled phones are mirrored through the same shadow-record trick (`phone-otp-shadow:<phone>`, 7d physical TTL, logical 5min expiry derived from the stored `createdAt`), so cooldown/attempt/expiry behavior is indistinguishable from a real session - same optional-cache, silent-degrade contract as lockout.
 
+`IDENTITY_READER` is the sanctioned read port for other PAM modules. Besides inactive-player lookups and user->player resolution, it exposes the current player KYC status and a shared-login-IP lookup used by tag evaluation for BF-317 multi-account/bonus-abuse signals. Keep raw IP addresses inside identity; consumers receive only matched user ids and must not persist the IP in tag/audit reasons.
+
 ## Rate limiting
+
+Rate limiting: `login`, `register`, `requestPasswordReset`, `verifyPasswordResetOtp`, `resetPassword`, `verify2fa`, and `sendEmailVerification` consume a per-identifier budget via the `RATE_LIMITER` port (keyed by normalized email/token/session, never IP) before doing work - exceeding it throws a 429 (`TOO_MANY_REQUESTS`) with `retryAfterMs`. Defaults are named constants in `identity.service.ts` (login 10/5min, register 5/15min, reset-request 3/15min, reset-verify 5/5min, reset 5/15min, verify2fa 5/5min, email-verification 3/15min); an overlay rebinds `RATE_LIMITER` to a Redis backend to change policy backend, not the numbers.
 
 Auth-sensitive routes consume a per-identifier budget via `RATE_LIMITER` (keyed by normalized email/token/session, NEVER IP) before doing any work, then throw 429 with `retryAfterMs`. The numbers are named constants in `identity.service.ts`; an overlay rebinds `RATE_LIMITER` to change the backend, not the policy.
 
