@@ -1,6 +1,12 @@
 import { vi, type Mock } from 'vitest';
 import { ORPCError } from '@orpc/server';
-import type { AdminCaller, AdminGuard, EventBus, OssContext } from '@openora/core/server';
+import type {
+  AdminCaller,
+  AdminGuard,
+  DrizzleService,
+  EventBus,
+  OssContext,
+} from '@openora/core/server';
 import type { AuditWritePort, ClientMeta } from '@openora/core/contracts';
 
 // The one sanctioned home for test-double type assertions. A unit test standing in
@@ -14,7 +20,7 @@ export const mock = <T>(partial: object = {}): T => partial as unknown as T;
 
 export const NO_CLIENT_META: ClientMeta = { ip: null, userAgent: null };
 
-const adminCaller = (over: Partial<AdminCaller> = {}): AdminCaller => ({
+export const adminCaller = (over: Partial<AdminCaller> = {}): AdminCaller => ({
   userId: 'admin-1',
   role: 'admin',
   ...NO_CLIENT_META,
@@ -26,6 +32,56 @@ export const testContext = (over: Partial<OssContext> = {}): OssContext => ({
   clientMeta: NO_CLIENT_META,
   ...over,
 });
+
+type Row = Record<string, unknown>;
+
+const CHAIN_METHODS = [
+  'select',
+  'from',
+  'innerJoin',
+  'leftJoin',
+  'orderBy',
+  'groupBy',
+  'limit',
+  'offset',
+  'for',
+  'insert',
+  'values',
+  'onConflictDoNothing',
+  'onConflictDoUpdate',
+  'update',
+  'set',
+  'delete',
+  'where',
+] as const;
+
+/** Chainable, awaitable Drizzle double: awaiting the builder pops the next `select` queue
+ * entry, `.returning()` pops the `returning` queue - a test supplies per-statement results
+ * in call order. */
+const makeQueryBuilder = (results: { select: Row[][]; returning: Row[][] }) => {
+  const builder: Record<string, unknown> = {};
+  const chain = () => builder;
+  for (const m of CHAIN_METHODS) {
+    builder[m] = vi.fn(chain);
+  }
+  builder['returning'] = vi.fn(() => Promise.resolve(results.returning.shift() ?? []));
+  builder['execute'] = vi.fn(() => Promise.resolve({ rows: [] }));
+  // oxlint-disable-next-line unicorn/no-thenable -- the builder must be awaitable to mimic Drizzle.
+  builder['then'] = (resolve: (v: Row[]) => unknown) => resolve(results.select.shift() ?? []);
+  return builder;
+};
+
+/** Fake `DrizzleService` for tests asserting call order/shape rather than committed state -
+ * reach for `createTestDb` when a real unique index, lock or transaction outcome matters. */
+export const makeDrizzle = (results: { select?: Row[][]; returning?: Row[][] } = {}) => {
+  const state = { select: results.select ?? [], returning: results.returning ?? [] };
+  const builder = makeQueryBuilder(state);
+  const db = {
+    ...builder,
+    transaction: vi.fn(async (fn: (txn: unknown) => Promise<unknown>) => fn(builder)),
+  };
+  return { db } as unknown as DrizzleService;
+};
 
 type MockedEventBus = EventBus & { emit: Mock; on: Mock; emitInTransaction: Mock };
 

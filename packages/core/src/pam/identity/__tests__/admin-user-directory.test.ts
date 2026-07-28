@@ -184,6 +184,7 @@ describe('DrizzleAdminUserDirectory.lookupPlayers (real PG)', () => {
       username: 'alice',
       email: 'alice@example.com',
       kycStatus: 'verified',
+      language: 'en',
     });
   });
 
