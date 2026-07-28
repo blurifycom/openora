@@ -604,7 +604,6 @@
     "check:types": "tsc --noEmit",
     "clean": "rm -rf dist",
     "test:unit": "vitest run --passWithNoTests",
-    "test:integration": "vitest run --passWithNoTests",
     "gen:drizzle": "node scripts/generate-all.mjs"
   },
   "dependencies": {

@@ -1,44 +1,102 @@
-import { describe, it, expect, vi } from 'vitest';
-import type { EventBus } from '@openora/core/server';
+import { describe, it, expect, beforeAll, afterAll, beforeEach } from 'vitest';
+import { randomUUID } from 'node:crypto';
+import { eq, sql } from 'drizzle-orm';
+import type { TagKey } from '@openora/core/contracts';
+import { createTestDb, type TestDb } from '@openora/core/testing';
+import { player } from '@openora/core/pam/schema/profile';
+import { migrate as migrateProfile } from '@openora/core/pam/migrate/profile';
+import { makeEventBus } from '../../../testing/mock.js';
+import { migrate } from '../migrate.js';
+import { playerTag, tag } from '../schema/index.js';
 import { TagService } from '../service/tag.service.js';
-import { mock, mockDb } from '../../../testing/mock.js';
 
-function makeDb(rows: unknown) {
-  const builder: unknown = new Proxy(function () {}, {
-    get(_t, prop) {
-      if (prop === 'then') {
-        return (res: (v: unknown) => unknown) => res(rows);
-      }
-      return () => builder;
-    },
-    apply: () => builder,
-  });
-  return mockDb(builder);
+let db: TestDb;
+let svc: TagService;
+
+async function tagIdFor(key: TagKey) {
+  const [existing] = await db.drizzle.db.select().from(tag).where(eq(tag.key, key));
+  if (existing) {
+    return existing.id;
+  }
+  const [created] = await db.drizzle.db.insert(tag).values({ key }).returning();
+  return created!.id;
 }
 
-function makeService(rows: unknown) {
-  return new TagService(makeDb(rows), mock<EventBus>({ emit: vi.fn(), on: vi.fn() }));
+async function seedPlayerWithTags(activeKeys: TagKey[], removedKeys: TagKey[] = []) {
+  const userId = randomUUID();
+  const [playerRow] = await db.drizzle.db
+    .insert(player)
+    .values({ userId, displayName: 'Player' })
+    .returning();
+  for (const key of [...activeKeys, ...removedKeys]) {
+    await db.drizzle.db.insert(playerTag).values({
+      playerId: playerRow!.id,
+      tagId: await tagIdFor(key),
+      assignReason: 'seed',
+      assignActor: 'manual',
+      assignActorUserId: randomUUID(),
+      removedAt: removedKeys.includes(key) ? new Date() : null,
+    });
+  }
+  return userId;
 }
 
-describe('TagService.getActiveTagKeys', () => {
+beforeAll(async () => {
+  db = await createTestDb([migrate, migrateProfile]);
+  svc = new TagService(db.drizzle, makeEventBus());
+});
+
+afterAll(async () => {
+  await db.drop();
+});
+
+beforeEach(async () => {
+  await db.drizzle.db.execute(
+    sql`TRUNCATE ${playerTag}, ${tag}, ${player} RESTART IDENTITY CASCADE`,
+  );
+});
+
+describe('TagService.getActiveTagKeys (real PG)', () => {
   it('groups active tag keys per user, keyed by auth userId', async () => {
-    const svc = makeService([
-      { userId: 'u-1', key: 'high_risk' },
-      { userId: 'u-1', key: 'bonus_abuser' },
-      { userId: 'u-2', key: 'vip' },
-    ]);
+    const tagged = await seedPlayerWithTags(['high_risk', 'bonus_abuser']);
+    const vip = await seedPlayerWithTags(['vip']);
+    const untagged = randomUUID();
 
-    const map = await svc.getActiveTagKeys(['u-1', 'u-2', 'u-3']);
+    const map = await svc.getActiveTagKeys([tagged, vip, untagged]);
 
-    expect(map.get('u-1')).toEqual(['high_risk', 'bonus_abuser']);
-    expect(map.get('u-2')).toEqual(['vip']);
-    // A user with no active tags is simply absent - callers treat that as "no tags".
-    expect(map.has('u-3')).toBe(false);
+    expect(map.get(tagged)?.sort()).toEqual(['bonus_abuser', 'high_risk']);
+    expect(map.get(vip)).toEqual(['vip']);
+    expect(map.has(untagged)).toBe(false);
   });
 
-  it('returns an empty map without querying for an empty input', async () => {
-    const svc = makeService([{ userId: 'u-1', key: 'high_risk' }]);
-    const map = await svc.getActiveTagKeys([]);
-    expect(map.size).toBe(0);
+  it('excludes assignments that were removed', async () => {
+    const userId = await seedPlayerWithTags(['vip'], ['high_risk']);
+
+    const map = await svc.getActiveTagKeys([userId]);
+
+    expect(map.get(userId)).toEqual(['vip']);
+  });
+
+  it('omits a user whose every tag was removed', async () => {
+    const userId = await seedPlayerWithTags([], ['high_risk']);
+
+    const map = await svc.getActiveTagKeys([userId]);
+
+    expect(map.has(userId)).toBe(false);
+  });
+
+  it('ignores users outside the requested set', async () => {
+    const wanted = await seedPlayerWithTags(['vip']);
+    const other = await seedPlayerWithTags(['high_risk']);
+
+    const map = await svc.getActiveTagKeys([wanted]);
+
+    expect(map.has(other)).toBe(false);
+  });
+
+  it('returns an empty map for an empty input', async () => {
+    await seedPlayerWithTags(['vip']);
+
+    expect((await svc.getActiveTagKeys([])).size).toBe(0);
   });
 });

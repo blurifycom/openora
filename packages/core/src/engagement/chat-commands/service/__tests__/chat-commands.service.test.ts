@@ -1,5 +1,5 @@
 import { describe, it, expect, vi } from 'vitest';
-import { mock, makeDrizzle, makeEvents } from '../../../../testing/mock.js';
+import { mock, makeDrizzle, makeEventBus } from '../../../../testing/mock.js';
 import type {
   ChatSystemMessage,
   ChatSystemWriter,
@@ -153,7 +153,7 @@ function makeSvc(
     overrides.directory ?? makeDirectory(),
     overrides.audit ?? makeAudit(),
     overrides.transport ?? makeTransport(),
-    mock(makeEvents()),
+    mock(makeEventBus()),
     makeBlockWriter(),
   );
 }
@@ -351,7 +351,7 @@ describe('ChatCommandsService.adminUpdateCommand', () => {
       makeDirectory(),
       audit,
       makeTransport(),
-      mock(makeEvents()),
+      mock(makeEventBus()),
       makeBlockWriter(),
     );
     await svcWithAudit.adminUpdateCommand({ key: 'rain', enabled: false }, ACTOR_ID);

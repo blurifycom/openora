@@ -78,23 +78,26 @@ export class FinancialAnalyticsService {
       baseConditions.push(eq(walletTransaction.currency, currency));
     }
 
-    const [byRail, byCurrency] = await Promise.all([
+    const totalsByRail = (type: 'deposit' | 'withdrawal') =>
       db
         .select({
           currency: walletTransaction.currency,
           rail: walletTransaction.rail,
-          type: walletTransaction.type,
           total: sql<string>`sum(${walletTransaction.amount})`,
         })
         .from(walletTransaction)
         .where(
           and(
             eq(walletTransaction.status, COMPLETED_STATUS),
-            inArray(walletTransaction.type, ['deposit', 'withdrawal']),
+            eq(walletTransaction.type, type),
             ...baseConditions,
           ),
         )
-        .groupBy(walletTransaction.currency, walletTransaction.rail, walletTransaction.type),
+        .groupBy(walletTransaction.currency, walletTransaction.rail);
+
+    const [deposits, withdrawals, byCurrency] = await Promise.all([
+      totalsByRail('deposit'),
+      totalsByRail('withdrawal'),
       db
         .select({
           currency: walletTransaction.currency,
@@ -117,12 +120,8 @@ export class FinancialAnalyticsService {
     ]);
 
     return {
-      deposits: byRail
-        .filter((r) => r.type === 'deposit')
-        .map((r) => ({ currency: r.currency, rail: r.rail, total: r.total })),
-      withdrawals: byRail
-        .filter((r) => r.type === 'withdrawal')
-        .map((r) => ({ currency: r.currency, rail: r.rail, total: r.total })),
+      deposits,
+      withdrawals,
       netRevenue: byCurrency.map((r) => ({ currency: r.currency, total: r.netRevenue })),
       bonusCost: byCurrency.map((r) => ({ currency: r.currency, total: r.bonusCost })),
     };

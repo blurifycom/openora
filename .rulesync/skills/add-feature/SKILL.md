@@ -51,7 +51,7 @@ Pick the implementer per slice: `expert` (fuzzy -> requirements, advisory), `mod
 
 ### 4. Unit + integration tests
 
-The implementer ships co-located Vitest tests with the slice (vi-mocked Drizzle for services; `bootTestApp` for integration) - part of the deliverable, not an afterthought.
+The implementer ships co-located Vitest tests with the slice (`createTestDb` against real Postgres for services; `bootTestApp` for integration) - part of the deliverable, not an afterthought.
 
 ### 5. E2E
 

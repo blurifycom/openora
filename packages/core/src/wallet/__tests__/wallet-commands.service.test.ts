@@ -1,243 +1,211 @@
-import { describe, it, expect, vi } from 'vitest';
-import type { PlayEligibilityPort, WalletTransactionType } from '@openora/core/contracts';
+import { describe, it, expect, vi, beforeAll, afterAll, beforeEach } from 'vitest';
+import { randomUUID } from 'node:crypto';
+import { eq, sql } from 'drizzle-orm';
+import type { PlayEligibilityPort } from '@openora/core/contracts';
+import { createTestDb, type TestDb } from '@openora/core/testing';
 import { mock } from '../../testing/mock.js';
+import { migrate } from '../migrate.js';
+import { wallet, walletTransaction } from '../schema/index.js';
 import {
   WalletCommandsService,
   WalletRgRestrictedError,
 } from '../service/wallet-commands.service.js';
 
-type Row = Record<string, unknown>;
-
-// Chainable Drizzle double: `select` returns the seeded wallet, the guarded `update` reports the
-// new balance (as Postgres numeric arithmetic would) via `returning`, and every `insert().values()`
-// is captured for assertion.
-function makeTxn({ walletRow, updateReturns }: { walletRow?: Row; updateReturns?: Row[] }) {
-  const inserts: Row[] = [];
-  const calls = { update: 0 };
-  const txn = {
-    select: () => ({
-      from: () => ({ where: () => Promise.resolve(walletRow ? [walletRow] : []) }),
-    }),
-    update: () => ({
-      set: () => ({
-        where: () => ({
-          returning: async () => {
-            calls.update++;
-            return updateReturns ?? [{ balance: '0' }];
-          },
-        }),
-      }),
-    }),
-    insert: () => ({
-      values: (v: Row) => {
-        inserts.push(v);
-        return Promise.resolve([]);
-      },
-    }),
-  };
-  return { txn, inserts, calls };
-}
+let db: TestDb;
 
 const eligibility = (isRestricted: boolean) =>
   mock<PlayEligibilityPort>({ isRestricted: vi.fn().mockResolvedValue(isRestricted) });
 
 const svc = new WalletCommandsService(eligibility(false));
-const usdWallet = { id: 'w1', userId: 'u1', balance: '100', currency: 'USD' };
 
-describe('WalletCommandsService responsible-gambling gate', () => {
+async function seedWallet(overrides: Partial<typeof wallet.$inferInsert> = {}) {
+  const [row] = await db.drizzle.db
+    .insert(wallet)
+    .values({ userId: randomUUID(), balance: '0', currency: 'USD', ...overrides })
+    .returning();
+  return row!;
+}
+
+async function balanceOf(userId: string) {
+  const [row] = await db.drizzle.db.select().from(wallet).where(eq(wallet.userId, userId));
+  return Number(row?.balance);
+}
+
+async function txRows(walletId: string) {
+  return db.drizzle.db
+    .select()
+    .from(walletTransaction)
+    .where(eq(walletTransaction.walletId, walletId));
+}
+
+beforeAll(async () => {
+  db = await createTestDb([migrate]);
+});
+
+afterAll(async () => {
+  await db.drop();
+});
+
+beforeEach(async () => {
+  await db.drizzle.db.execute(
+    sql`TRUNCATE ${walletTransaction}, ${wallet} RESTART IDENTITY CASCADE`,
+  );
+});
+
+describe('WalletCommandsService responsible-gambling gate (real PG)', () => {
   it('refuses a bet debit for a restricted player without touching the ledger', async () => {
+    const w = await seedWallet({ balance: '100' });
     const restricted = new WalletCommandsService(eligibility(true));
-    const { txn, inserts, calls } = makeTxn({ walletRow: usdWallet });
 
     await expect(
-      restricted.debit(txn, { userId: 'u1', amount: '10', type: 'bet' }),
+      restricted.debit(db.drizzle.db, { userId: w.userId, amount: '10', type: 'bet' }),
     ).rejects.toBeInstanceOf(WalletRgRestrictedError);
-    expect(calls.update).toBe(0);
-    expect(inserts).toHaveLength(0);
+    expect(await balanceOf(w.userId)).toBe(100);
+    expect(await txRows(w.id)).toHaveLength(0);
   });
 
   it('leaves a non-bet debit unaffected for a restricted player', async () => {
+    const w = await seedWallet({ balance: '100' });
     const restricted = new WalletCommandsService(eligibility(true));
-    const { txn, inserts } = makeTxn({ walletRow: usdWallet });
 
-    const res = await restricted.debit(txn, { userId: 'u1', amount: '0', type: 'loss' });
+    const res = await restricted.debit(db.drizzle.db, {
+      userId: w.userId,
+      amount: '0',
+      type: 'loss',
+    });
 
-    expect(res).toEqual({ ok: true, newBalance: '100', currency: 'USD' });
-    expect(inserts[0]).toMatchObject({ type: 'loss' });
+    expect(res).toMatchObject({ ok: true });
+    expect(Number((res as { newBalance: string }).newBalance)).toBe(100);
+    expect(await balanceOf(w.userId)).toBe(100);
+    expect(await txRows(w.id)).toHaveLength(1);
+    expect((await txRows(w.id))[0]).toMatchObject({ type: 'loss' });
   });
 });
 
-describe('WalletCommandsService.debit', () => {
+describe('WalletCommandsService.debit (real PG)', () => {
   it('debits the balance and writes a completed bet ledger row', async () => {
-    const { txn, inserts, calls } = makeTxn({
-      walletRow: usdWallet,
-      updateReturns: [{ balance: '90' }],
-    });
+    const w = await seedWallet({ balance: '100' });
 
-    const res = await svc.debit(txn, { userId: 'u1', amount: '10', type: 'bet' });
+    const res = await svc.debit(db.drizzle.db, { userId: w.userId, amount: '10', type: 'bet' });
 
-    expect(res).toEqual({ ok: true, newBalance: '90', currency: 'USD' });
-    expect(calls.update).toBe(1);
-    expect(inserts[0]).toMatchObject({
-      walletId: 'w1',
+    expect(res.ok).toBe(true);
+    expect(Number((res as { newBalance: string }).newBalance)).toBe(90);
+    const rows = await txRows(w.id);
+    expect(rows).toHaveLength(1);
+    expect(rows[0]).toMatchObject({
+      walletId: w.id,
       type: 'bet',
-      amount: '10',
-      currency: 'USD',
       status: 'completed',
       rail: 'fiat',
     });
+    expect(Number(rows[0]?.amount)).toBe(10);
   });
 
   it('loss writes a 0-amount informational row and never touches the balance', async () => {
-    const { txn, inserts, calls } = makeTxn({ walletRow: usdWallet });
+    const w = await seedWallet({ balance: '100' });
 
-    const res = await svc.debit(txn, { userId: 'u1', amount: '0', type: 'loss' });
+    const res = await svc.debit(db.drizzle.db, { userId: w.userId, amount: '0', type: 'loss' });
 
-    expect(res).toEqual({ ok: true, newBalance: '100', currency: 'USD' });
-    expect(calls.update).toBe(0);
-    expect(inserts[0]).toMatchObject({ type: 'loss', amount: '0', status: 'completed' });
+    expect(res).toMatchObject({ ok: true });
+    expect(Number((res as { newBalance: string }).newBalance)).toBe(100);
+    expect(await balanceOf(w.userId)).toBe(100);
+    const rows = await txRows(w.id);
+    expect(rows).toHaveLength(1);
+    expect(rows[0]).toMatchObject({ type: 'loss', status: 'completed' });
+    expect(Number(rows[0]?.amount)).toBe(0);
   });
 
   it('rejects a non-positive amount for a real-money debit', async () => {
-    const { txn, inserts } = makeTxn({ walletRow: usdWallet });
+    const w = await seedWallet({ balance: '100' });
 
-    await expect(svc.debit(txn, { userId: 'u1', amount: '0', type: 'bet' })).rejects.toThrow(
-      /positive/,
-    );
-    expect(inserts).toHaveLength(0);
+    await expect(
+      svc.debit(db.drizzle.db, { userId: w.userId, amount: '0', type: 'bet' }),
+    ).rejects.toThrow(/positive/);
+    expect(await txRows(w.id)).toHaveLength(0);
   });
 
-  it('fails with the shortfall and writes no ledger row when the guard debits zero rows', async () => {
-    const { txn, inserts } = makeTxn({
-      walletRow: { ...usdWallet, balance: '5' },
-      updateReturns: [],
-    });
+  it('fails with the shortfall and leaves the balance untouched when funds are insufficient', async () => {
+    const w = await seedWallet({ balance: '5' });
 
-    const res = await svc.debit(txn, { userId: 'u1', amount: '10', type: 'bet' });
+    const res = await svc.debit(db.drizzle.db, { userId: w.userId, amount: '10', type: 'bet' });
 
-    expect(res).toEqual({ ok: false, available: '5' });
-    expect(inserts).toHaveLength(0);
+    expect(res.ok).toBe(false);
+    expect(Number((res as { available: string }).available)).toBe(5);
+    expect(await txRows(w.id)).toHaveLength(0);
+    expect(await balanceOf(w.userId)).toBe(5);
+  });
+
+  it('rolls the debit back when the caller transaction later throws', async () => {
+    const w = await seedWallet({ balance: '100' });
+
+    await expect(
+      db.drizzle.db.transaction(async (tx) => {
+        const result = await svc.debit(tx, { userId: w.userId, amount: '40', type: 'bet' });
+        expect(result.ok).toBe(true);
+        throw new Error('caller failed after the debit');
+      }),
+    ).rejects.toThrow('caller failed after the debit');
+
+    expect(await balanceOf(w.userId)).toBe(100);
+    expect(await txRows(w.id)).toHaveLength(0);
   });
 });
 
-describe('WalletCommandsService.credit', () => {
+describe('WalletCommandsService.credit (real PG)', () => {
   it('increases the balance and writes a completed win ledger row', async () => {
-    const { txn, inserts } = makeTxn({
-      walletRow: { ...usdWallet, balance: '50' },
-      updateReturns: [{ balance: '70' }],
-    });
+    const w = await seedWallet({ balance: '50' });
 
-    const res = await svc.credit(txn, { userId: 'u1', amount: '20', type: 'win' });
+    const res = await svc.credit(db.drizzle.db, { userId: w.userId, amount: '20', type: 'win' });
 
-    expect(res).toEqual({ ok: true, newBalance: '70' });
-    expect(inserts[0]).toMatchObject({
-      walletId: 'w1',
+    expect(res.ok).toBe(true);
+    expect(Number((res as { newBalance: string }).newBalance)).toBe(70);
+    const rows = await txRows(w.id);
+    expect(rows[0]).toMatchObject({
+      walletId: w.id,
       type: 'win',
-      amount: '20',
       status: 'completed',
       rail: 'fiat',
     });
   });
 
-  it('returns the exact decimal-string newBalance from the DB (no float drift)', async () => {
-    const { txn } = makeTxn({
-      walletRow: { ...usdWallet, balance: '50' },
-      updateReturns: [{ balance: '70' }],
-    });
+  it('returns the exact decimal newBalance from SQL numeric arithmetic, with no float drift', async () => {
+    const w = await seedWallet({ balance: '0.1' });
 
-    const res = await svc.credit(txn, {
-      userId: 'u1',
-      amount: '20',
-      type: 'win',
-    });
+    const res = await svc.credit(db.drizzle.db, { userId: w.userId, amount: '0.2', type: 'win' });
 
-    expect(res).toEqual({ ok: true, newBalance: '70' });
+    expect(res.ok).toBe(true);
+    expect(Number((res as { newBalance: string }).newBalance)).toBe(0.3);
   });
 
   it('fails closed on a missing wallet rather than creating one', async () => {
-    const { txn, inserts } = makeTxn({});
+    const userId = randomUUID();
 
-    const res = await svc.credit(txn, { userId: 'u1', amount: '20', type: 'win' });
+    const res = await svc.credit(db.drizzle.db, { userId, amount: '20', type: 'win' });
 
     expect(res).toEqual({ ok: false, reason: 'wallet not found' });
-    expect(inserts).toHaveLength(0);
+    const [row] = await db.drizzle.db.select().from(wallet).where(eq(wallet.userId, userId));
+    expect(row).toBeUndefined();
   });
 
   it('rejects a non-positive credit', async () => {
-    const { txn } = makeTxn({ walletRow: usdWallet });
+    const w = await seedWallet({ balance: '100' });
 
-    await expect(svc.credit(txn, { userId: 'u1', amount: '0', type: 'win' })).rejects.toThrow(
-      /positive/,
-    );
+    await expect(
+      svc.credit(db.drizzle.db, { userId: w.userId, amount: '0', type: 'win' }),
+    ).rejects.toThrow(/positive/);
   });
 });
 
-// Balance must equal Σ credits − Σ debits − Σ held withdrawals, checked against a stateful
-// double through a deposit → bet → hold → settle(win) sequence. The mock queues the post-mutation
-// balance per call (the real DB does this arithmetic in numeric SQL, never JS).
-describe('wallet ledger reconciliation', () => {
-  it('balance equals credits − debits − held withdrawals after deposit/bet/settle', async () => {
-    const rows: Row[] = [];
-    const updateResults: Row[] = [
-      { balance: '100' }, // deposit credit: 0 + 100
-      { balance: '70' }, // bet debit: 100 - 30
-      { balance: '110' }, // win credit: 50 (after the -20 hold below) + 60
-    ];
-    let updateIdx = 0;
-    const txn = {
-      select: () => ({
-        from: () => ({
-          where: () => Promise.resolve([{ id: 'w1', userId: 'u1', currency: 'USD' }]),
-        }),
-      }),
-      update: () => ({
-        set: () => ({ where: () => ({ returning: async () => [updateResults[updateIdx++]] }) }),
-      }),
-      insert: () => ({
-        values: (v: Row) => {
-          rows.push(v);
-          return Promise.resolve([]);
-        },
-      }),
-    };
+describe('WalletCommandsService ledger sequence (real PG)', () => {
+  it('nets a deposit-like credit, a bet debit, and a win credit into one running balance', async () => {
+    const w = await seedWallet({ balance: '0' });
 
-    const deposit = await svc.credit(txn, { userId: 'u1', amount: '100', type: 'deposit' });
-    let balance = Number((deposit as { newBalance: string }).newBalance);
+    await svc.credit(db.drizzle.db, { userId: w.userId, amount: '100', type: 'deposit' });
+    await svc.debit(db.drizzle.db, { userId: w.userId, amount: '30', type: 'bet' });
+    await svc.credit(db.drizzle.db, { userId: w.userId, amount: '60', type: 'win' });
 
-    const bet = await svc.debit(txn, { userId: 'u1', amount: '30', type: 'bet' });
-    balance = Number((bet as { newBalance: string }).newBalance);
-
-    // A pending withdrawal hold: balance debited at request time, row stays pending. Exercises the held term.
-    rows.push({ type: 'withdrawal', status: 'pending', amount: '20' });
-    balance -= 20;
-
-    const win = await svc.credit(txn, { userId: 'u1', amount: '60', type: 'win' });
-    balance = Number((win as { newBalance: string }).newBalance);
-
-    const isCredit = (t: WalletTransactionType) =>
-      t === 'deposit' || t === 'win' || t === 'bonus' || t === 'tip';
-    const num = (v: unknown) => Number(v);
-
-    let credits = 0;
-    let debits = 0;
-    let held = 0;
-    for (const r of rows) {
-      const type = r['type'] as WalletTransactionType | 'withdrawal';
-      const amount = num(r['amount']);
-      if (type === 'withdrawal') {
-        if (r['status'] === 'pending' || r['status'] === 'processing') {
-          held += amount;
-        }
-      } else if (isCredit(type)) {
-        if (r['status'] === 'completed') {
-          credits += amount;
-        }
-      } else {
-        debits += amount;
-      }
-    }
-
-    expect(credits - debits - held).toBe(balance);
-    expect(balance).toBe(110);
+    expect(await balanceOf(w.userId)).toBe(130);
+    const rows = await txRows(w.id);
+    expect(rows.map((r) => r.type).sort()).toEqual(['bet', 'deposit', 'win']);
   });
 });

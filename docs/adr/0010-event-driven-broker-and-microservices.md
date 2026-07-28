@@ -4,6 +4,8 @@
 **Status**: Accepted; foundation implemented (typed bus + broker seam + wiring + atomic money). Only a concrete durable driver remains - see "Implementation backlog".
 **Superseded in part by [ADR-0030](./0030-distributed-only-production-seams.md) (2026-07-16)**: the in-process `InMemoryBroker` default was removed from the production path - production is distributed-only, `createApp` now requires a durable `MESSAGE_BROKER` binding and throws otherwise. `REDIS_URL` auto-binds the in-core `RedisStreamsBroker` reference driver; RabbitMQ/Kafka remain overlay swaps. `InMemoryBroker` survives as a test-only double (`@openora/core/testing`). Everything else here (event-driven decoupling, the broker seam shape, synchronous/atomic money, modular-monolith-now-extract-later) still stands.
 
+> **Update (2026-07-25)**: [ADR-0032](./0032-tests-run-the-production-seams.md) deleted `InMemoryBroker` outright - the test suite binds `RedisStreamsBroker` too, so the "survives as a test-only double" clause above no longer holds. Nothing else in this ADR changes.
+
 ## Context
 
 Modules must stay decoupled so the platform scales both in load and in team/organisational terms, and so an operator can extract a hot module into its own service later. Today modules already communicate via an in-process `EventBus` (`EVENT_BUS`) and read each other's tables through the `@openora/modules/<group>/<name>/schema` subpath - never by importing another module. We want to make event-driven communication the primary, intentional pattern and define how it grows into a real broker and, eventually, microservices - without committing to a broker product prematurely.

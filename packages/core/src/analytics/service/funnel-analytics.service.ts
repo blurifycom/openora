@@ -84,18 +84,13 @@ export class FunnelAnalyticsService {
       first_bet: Number(row?.first_bet ?? 0),
     };
 
-    const orderedCounts = [
-      counts.registered,
-      counts.email_verified,
-      counts.first_deposit,
-      counts.first_bet,
-    ];
-
-    return FUNNEL_STAGES.map((stage, index) => ({
-      stage,
-      count: orderedCounts[index] ?? 0,
-      dropOffRate:
-        index === 0 ? 0 : dropOffRate(orderedCounts[index - 1] ?? 0, orderedCounts[index] ?? 0),
-    }));
+    return FUNNEL_STAGES.map((stage, index) => {
+      const previousStage = FUNNEL_STAGES[index - 1];
+      return {
+        stage,
+        count: counts[stage],
+        dropOffRate: previousStage ? dropOffRate(counts[previousStage], counts[stage]) : 0,
+      };
+    });
   }
 }

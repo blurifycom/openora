@@ -1,125 +1,50 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeAll, afterEach, afterAll } from 'vitest';
+import { Queue } from 'bullmq';
 import { z } from 'zod';
 import { queue } from '@openora/core/contracts';
-
-type FakeJob = {
-  id?: string;
-  name: string;
-  data: { payload: unknown; meta: Record<string, string | undefined> };
-  attemptsMade: number;
-  timestamp: number;
-  opts: { attempts?: number };
-};
-type FakeProcessor = (job: FakeJob) => Promise<void>;
-type FailedHandler = (job: FakeJob | undefined, error: Error) => void;
-
-const { queues, workers, closeOrder, FakeQueue, FakeWorker } = vi.hoisted(() => {
-  const closeOrder: string[] = [];
-
-  class FakeQueue {
-    readonly add = vi.fn(async () => ({ id: 'job-1' }));
-    readonly upsertJobScheduler = vi.fn(async () => ({}));
-    readonly removeJobScheduler = vi.fn(async () => true);
-    readonly close = vi.fn(async () => {
-      closeOrder.push('queue');
-    });
-    constructor(
-      readonly name: string,
-      readonly opts: unknown,
-    ) {
-      queues.push(this);
-    }
-  }
-
-  class FakeWorker {
-    readonly handlers = new Map<string, FailedHandler>();
-    readonly close = vi.fn(async () => {
-      closeOrder.push('worker');
-    });
-    constructor(
-      readonly name: string,
-      readonly processor: FakeProcessor,
-      readonly opts: { concurrency?: number },
-    ) {
-      workers.push(this);
-    }
-    on(event: string, cb: FailedHandler): this {
-      this.handlers.set(event, cb);
-      return this;
-    }
-  }
-
-  const queues: FakeQueue[] = [];
-  const workers: FakeWorker[] = [];
-  return { queues, workers, closeOrder, FakeQueue, FakeWorker };
-});
-
-vi.mock('bullmq', () => ({ Queue: FakeQueue, Worker: FakeWorker }));
-
-const { BullMqJobQueue } = await import('../bullmq-job-queue.js');
+import { createTestRedis, redisUrlForWorker, type TestRedis } from '@openora/core/testing';
+import { BullMqJobQueue } from '../bullmq-job-queue.js';
 
 const Payload = z.object({ value: z.string() });
-const flush = () => new Promise((r) => setTimeout(r, 0));
-const REDIS_URL = 'redis://localhost:6379';
+const POLL = { timeout: 5000, interval: 20 };
 
-beforeEach(() => {
-  queues.length = 0;
-  workers.length = 0;
-  closeOrder.length = 0;
+let redis: TestRedis;
+const instances: BullMqJobQueue[] = [];
+const rawQueues: Queue[] = [];
+
+function makeQueue(): BullMqJobQueue {
+  const q = new BullMqJobQueue(redisUrlForWorker());
+  instances.push(q);
+  return q;
+}
+
+function rawQueue(name: string): Queue {
+  const q = new Queue(name, {
+    connection: { url: redisUrlForWorker(), maxRetriesPerRequest: null },
+  });
+  rawQueues.push(q);
+  return q;
+}
+
+beforeAll(async () => {
+  redis = await createTestRedis();
+});
+
+afterEach(async () => {
+  await Promise.allSettled(instances.map((q) => q.close()));
+  await Promise.allSettled(rawQueues.map((q) => q.close()));
+  instances.length = 0;
+  rawQueues.length = 0;
+  await redis.flush();
+});
+
+afterAll(async () => {
+  await redis.quit();
 });
 
 describe('BullMqJobQueue', () => {
-  it('maps enqueue options to BullMQ job options and wraps the payload in an envelope', async () => {
-    const q = new BullMqJobQueue(REDIS_URL);
-
-    const result = await q.enqueue(
-      queue('demo'),
-      { value: 'hi' },
-      {
-        idempotencyKey: 'k1',
-        delayMs: 5000,
-        attempts: 3,
-        backoff: { type: 'exponential', delayMs: 500 },
-        priority: 2,
-        meta: { correlationId: 'c1' },
-      },
-    );
-
-    expect(result).toEqual({ id: 'job-1' });
-    expect(queues[0]?.add).toHaveBeenCalledTimes(1);
-    expect(queues[0]?.add).toHaveBeenCalledWith(
-      'demo',
-      { payload: { value: 'hi' }, meta: { correlationId: 'c1', idempotencyKey: 'k1' } },
-      {
-        jobId: 'k1',
-        delay: 5000,
-        attempts: 3,
-        backoff: { type: 'exponential', delay: 500 },
-        priority: 2,
-      },
-    );
-  });
-
-  it('returns the BullMQ-assigned id when no idempotencyKey is given', async () => {
-    const q = new BullMqJobQueue(REDIS_URL);
-    const result = await q.enqueue(queue('demo'), { value: 'hi' });
-
-    expect(result).toEqual({ id: 'job-1' });
-    expect(queues[0]?.add).toHaveBeenCalledWith(
-      'demo',
-      { payload: { value: 'hi' }, meta: { idempotencyKey: undefined } },
-      {
-        jobId: undefined,
-        delay: undefined,
-        attempts: undefined,
-        backoff: undefined,
-        priority: undefined,
-      },
-    );
-  });
-
-  it('validates the payload and builds a JobContext with attempt = attemptsMade + 1 and carried meta', async () => {
-    const q = new BullMqJobQueue(REDIS_URL);
+  it('enqueues, validates the payload, and hands the worker a JobContext', async () => {
+    const q = makeQueue();
     const seen: Array<Record<string, unknown>> = [];
     q.registerWorker({
       queue: queue('demo'),
@@ -129,128 +54,248 @@ describe('BullMqJobQueue', () => {
       },
     });
 
-    await workers[0]?.processor({
-      id: 'j1',
-      name: 'demo',
-      data: { payload: { value: 'hi' }, meta: { idempotencyKey: 'k1' } },
-      attemptsMade: 1,
-      timestamp: 1000,
-      opts: { attempts: 3 },
+    const result = await q.enqueue(
+      queue('demo'),
+      { value: 'hi' },
+      { idempotencyKey: 'k1', meta: { correlationId: 'c1' } },
+    );
+    expect(result.id).toBe('k1');
+
+    await vi.waitFor(() => expect(seen).toHaveLength(1), POLL);
+    const ctx = seen[0]!;
+    expect(ctx['id']).toBe('k1');
+    expect(ctx['name']).toBe('demo');
+    expect(ctx['payload']).toEqual({ value: 'hi' });
+    expect(ctx['attempt']).toBe(1);
+    expect(ctx['meta']).toEqual({ correlationId: 'c1', idempotencyKey: 'k1' });
+    expect(ctx['enqueuedAt']).toBeInstanceOf(Date);
+  });
+
+  it('dedupes concurrent enqueues that share an idempotencyKey', async () => {
+    const q = makeQueue();
+    let count = 0;
+    q.registerWorker({
+      queue: queue('dedupe'),
+      schema: Payload,
+      handler: () => {
+        count += 1;
+      },
     });
 
-    expect(seen[0]).toEqual({
-      id: 'j1',
-      name: 'demo',
-      payload: { value: 'hi' },
-      attempt: 2,
-      enqueuedAt: new Date(1000),
-      meta: { idempotencyKey: 'k1' },
+    await q.enqueue(queue('dedupe'), { value: 'a' }, { idempotencyKey: 'k1' });
+    await q.enqueue(queue('dedupe'), { value: 'b' }, { idempotencyKey: 'k1' });
+
+    await vi.waitFor(() => expect(count).toBe(1), POLL);
+    await new Promise((r) => setTimeout(r, 150));
+    expect(count).toBe(1);
+  });
+
+  it('runs a job whose idempotencyKey contains the reserved colon separator', async () => {
+    const q = makeQueue();
+    const seen: string[] = [];
+    q.registerWorker({
+      queue: queue('colon-key'),
+      schema: Payload,
+      handler: ({ payload }) => {
+        seen.push(payload.value);
+      },
     });
+
+    await q.enqueue(queue('colon-key'), { value: 'a' }, { idempotencyKey: 'rg-eval:user-1' });
+
+    await vi.waitFor(() => expect(seen).toEqual(['a']), POLL);
+  });
+
+  it('keeps the original idempotencyKey in meta after encoding it into a job id', async () => {
+    const q = makeQueue();
+    const seen: Array<Record<string, string | undefined>> = [];
+    q.registerWorker({
+      queue: queue('colon-meta'),
+      schema: Payload,
+      handler: ({ meta }) => {
+        seen.push(meta);
+      },
+    });
+
+    await q.enqueue(queue('colon-meta'), { value: 'a' }, { idempotencyKey: 'rg-eval:user-1' });
+
+    await vi.waitFor(() => expect(seen).toHaveLength(1), POLL);
+    expect(seen[0]?.['idempotencyKey']).toBe('rg-eval:user-1');
+  });
+
+  it('does not collapse two colon keys that differ only where the separator sits', async () => {
+    const q = makeQueue();
+    let count = 0;
+    q.registerWorker({
+      queue: queue('colon-distinct'),
+      schema: Payload,
+      handler: () => {
+        count += 1;
+      },
+    });
+
+    await q.enqueue(queue('colon-distinct'), { value: 'a' }, { idempotencyKey: 'a:b' });
+    await q.enqueue(queue('colon-distinct'), { value: 'b' }, { idempotencyKey: 'a%3Ab' });
+
+    await vi.waitFor(() => expect(count).toBe(2), POLL);
+  });
+
+  it('runs a job whose idempotencyKey is all digits, which BullMQ rejects as a raw id', async () => {
+    const q = makeQueue();
+    const seen: string[] = [];
+    q.registerWorker({
+      queue: queue('digit-key'),
+      schema: Payload,
+      handler: ({ payload }) => {
+        seen.push(payload.value);
+      },
+    });
+
+    await q.enqueue(queue('digit-key'), { value: 'a' }, { idempotencyKey: '12345' });
+
+    await vi.waitFor(() => expect(seen).toEqual(['a']), POLL);
+  });
+
+  it('delays processing by delayMs', async () => {
+    const q = makeQueue();
+    const enqueuedAt = Date.now();
+    let processedAt = 0;
+    q.registerWorker({
+      queue: queue('delayed'),
+      schema: Payload,
+      handler: () => {
+        processedAt = Date.now();
+      },
+    });
+
+    await q.enqueue(queue('delayed'), { value: 'hi' }, { delayMs: 300 });
+
+    await vi.waitFor(() => expect(processedAt).toBeGreaterThan(0), POLL);
+    expect(processedAt - enqueuedAt).toBeGreaterThanOrEqual(250);
+  });
+
+  it('retries a failing handler up to attempts with backoff, then dead-letters', async () => {
+    const q = makeQueue();
+    const attempts: number[] = [];
+    const deadLettered: Array<{ attempt: number; error: string }> = [];
+    q.registerWorker({
+      queue: queue('retry'),
+      schema: Payload,
+      handler: (ctx) => {
+        attempts.push(ctx.attempt);
+        throw new Error('always fails');
+      },
+      onDeadLetter: (ctx, error) => {
+        deadLettered.push({ attempt: ctx.attempt, error: error.message });
+      },
+    });
+
+    await q.enqueue(
+      queue('retry'),
+      { value: 'hi' },
+      { attempts: 2, backoff: { type: 'fixed', delayMs: 30 } },
+    );
+
+    await vi.waitFor(() => expect(attempts).toEqual([1, 2]), POLL);
+    await vi.waitFor(() => expect(deadLettered).toHaveLength(1), POLL);
+    expect(deadLettered[0]).toEqual({ attempt: 2, error: 'always fails' });
+  });
+
+  it('dead-letters only once retries are exhausted and swallows a throwing hook', async () => {
+    const q = makeQueue();
+    let deadLetterCalls = 0;
+    q.registerWorker({
+      queue: queue('poison'),
+      schema: Payload,
+      handler: () => {
+        throw new Error('boom');
+      },
+      onDeadLetter: async () => {
+        deadLetterCalls += 1;
+        throw new Error('hook boom');
+      },
+    });
+
+    await q.enqueue(
+      queue('poison'),
+      { value: 'hi' },
+      { attempts: 2, backoff: { type: 'fixed', delayMs: 30 } },
+    );
+
+    await vi.waitFor(() => expect(deadLetterCalls).toBe(1), POLL);
+    // The hook threw, but the queue kept running (no unhandled rejection) - still one call.
+    await new Promise((r) => setTimeout(r, 120));
+    expect(deadLetterCalls).toBe(1);
   });
 
   it('fails the job when the payload does not match the schema', async () => {
-    const q = new BullMqJobQueue(REDIS_URL);
-    q.registerWorker({ queue: queue('demo'), schema: Payload, handler: () => undefined });
-
-    await expect(
-      workers[0]?.processor({
-        id: 'j1',
-        name: 'demo',
-        data: { payload: { value: 42 }, meta: {} },
-        attemptsMade: 0,
-        timestamp: 1000,
-        opts: { attempts: 1 },
-      }),
-    ).rejects.toThrow();
-  });
-
-  it('passes worker concurrency through to BullMQ', () => {
-    const q = new BullMqJobQueue(REDIS_URL);
+    const q = makeQueue();
+    let handlerCalls = 0;
+    const deadLettered: unknown[] = [];
     q.registerWorker({
-      queue: queue('demo'),
+      queue: queue('validate'),
       schema: Payload,
-      handler: () => undefined,
-      options: { concurrency: 5 },
+      handler: () => {
+        handlerCalls += 1;
+      },
+      onDeadLetter: (ctx) => {
+        deadLettered.push(ctx.payload);
+      },
     });
-    expect(workers[0]?.opts.concurrency).toBe(5);
+
+    await q.enqueue(queue('validate'), { value: 42 } as never);
+
+    await vi.waitFor(() => expect(deadLettered).toHaveLength(1), POLL);
+    expect(handlerCalls).toBe(0);
+    expect(deadLettered[0]).toEqual({ value: 42 });
   });
 
-  it('dead-letters only on terminal failure and swallows a throwing hook', async () => {
-    const q = new BullMqJobQueue(REDIS_URL);
-    const onDeadLetter = vi.fn(async () => {
-      throw new Error('hook boom');
-    });
-    q.registerWorker({
-      queue: queue('demo'),
-      schema: Payload,
-      handler: () => undefined,
-      onDeadLetter,
-    });
-    const failed = workers[0]?.handlers.get('failed');
-    const err = new Error('boom');
-    const job: FakeJob = {
-      id: 'j1',
-      name: 'demo',
-      data: { payload: { value: 'hi' }, meta: { idempotencyKey: 'k1' } },
-      attemptsMade: 1,
-      timestamp: 1000,
-      opts: { attempts: 3 },
-    };
-
-    failed?.(job, err);
-    await flush();
-    expect(onDeadLetter).not.toHaveBeenCalled();
-
-    failed?.({ ...job, attemptsMade: 3 }, err);
-    await flush();
-    expect(onDeadLetter).toHaveBeenCalledWith(
-      expect.objectContaining({
-        id: 'j1',
-        name: 'demo',
-        attempt: 3,
-        payload: { value: 'hi' },
-        meta: { idempotencyKey: 'k1' },
-      }),
-      err,
-    );
-  });
-
-  it('maps a cron schedule to a job scheduler and unschedules by id', async () => {
-    const q = new BullMqJobQueue(REDIS_URL);
-
+  it('registers a cron job scheduler and removes it on unschedule', async () => {
+    const q = makeQueue();
     await q.schedule(
       queue('sched'),
       'daily',
       { value: 'x' },
       { cron: '0 0 * * *', timezone: 'UTC' },
     );
-    expect(queues[0]?.upsertJobScheduler).toHaveBeenCalledWith(
-      'daily',
-      { pattern: '0 0 * * *', every: undefined, tz: 'UTC' },
-      { name: 'sched', data: { payload: { value: 'x' }, meta: {} } },
-    );
+
+    const raw = rawQueue('sched');
+    const scheduled = await raw.getJobSchedulers();
+    const daily = scheduled.find((s) => s.key === 'daily');
+    expect(daily?.pattern).toBe('0 0 * * *');
+    expect(daily?.tz).toBe('UTC');
 
     await q.unschedule(queue('sched'), 'daily');
-    expect(queues[0]?.removeJobScheduler).toHaveBeenCalledWith('daily');
+    expect(await raw.getJobSchedulers()).toHaveLength(0);
   });
 
-  it('maps an everyMs schedule to the every option', async () => {
-    const q = new BullMqJobQueue(REDIS_URL);
-    await q.schedule(queue('sched'), 'tick', { value: 'x' }, { everyMs: 60000 });
-    expect(queues[0]?.upsertJobScheduler).toHaveBeenCalledWith(
-      'tick',
-      { pattern: undefined, every: 60000, tz: undefined },
-      { name: 'sched', data: { payload: { value: 'x' }, meta: {} } },
-    );
+  it('registers an everyMs job scheduler', async () => {
+    const q = makeQueue();
+    await q.schedule(queue('tick'), 'interval', { value: 'x' }, { everyMs: 60000 });
+
+    const raw = rawQueue('tick');
+    const interval = (await raw.getJobSchedulers()).find((s) => s.key === 'interval');
+    expect(interval?.every).toBe(60000);
   });
 
-  it('closes workers before queues', async () => {
-    const q = new BullMqJobQueue(REDIS_URL);
-    q.registerWorker({ queue: queue('demo'), schema: Payload, handler: () => undefined });
-    await q.enqueue(queue('demo'), { value: 'hi' });
+  it('close drains an in-flight job before resolving', async () => {
+    const q = makeQueue();
+    let started = false;
+    let finished = false;
+    q.registerWorker({
+      queue: queue('drain'),
+      schema: Payload,
+      handler: async () => {
+        started = true;
+        await new Promise((r) => setTimeout(r, 100));
+        finished = true;
+      },
+    });
+
+    await q.enqueue(queue('drain'), { value: 'hi' });
+    await vi.waitFor(() => expect(started).toBe(true), POLL);
 
     await q.close();
-
-    expect(closeOrder).toEqual(['worker', 'queue']);
+    expect(finished).toBe(true);
   });
 });
