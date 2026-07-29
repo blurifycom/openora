@@ -316,10 +316,20 @@ export const domainEventSchemas = {
   }),
   'chat.rain.distributed': z.object({
     fromUserId: UuidSchema,
+    recipients: z.array(UuidSchema),
     recipientCount: z.number().int(),
     totalAmount: MoneyAmountSchema,
     currency: z.string(),
     roomId: UuidSchema,
+  }),
+  'chat.donate.sent': z.object({
+    senderId: UuidSchema,
+    senderUsername: z.string(),
+    recipientId: UuidSchema,
+    recipientUsername: z.string(),
+    amount: MoneyAmountSchema,
+    currency: z.string(),
+    roomId: UuidSchema.nullable(),
   }),
   'chat.user.mentioned': z.object({
     mentionedUserId: UuidSchema,
@@ -343,6 +353,8 @@ export const domainEventVersions: Partial<Record<DomainEventName, number>> = {
   'identity.session.revoked': 2,
   // v2: claimable gift-card mechanic - giftId/senderId/senderUsername/roomId replaces fromUserId/toUserId.
   'chat.gift.sent': 2,
+  // v2: recipients array added for per-player notification delivery.
+  'chat.rain.distributed': 2,
   // v2: exact decimal-string amount (+ currency), never a JS number.
   'wallet.deposit.completed': 2,
   'wallet.withdrawal.completed': 2,

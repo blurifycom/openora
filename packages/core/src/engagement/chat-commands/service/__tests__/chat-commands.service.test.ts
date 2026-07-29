@@ -15,9 +15,13 @@ import {
   InsufficientBalanceError,
   BelowMinimumError,
   NoOnlineUsersError,
+  ExceedsLimitError,
   GiftNotFoundError,
   GiftAlreadyClaimedError,
   GiftSelfClaimError,
+  DonateSelfError,
+  ChatPlayerNotFoundError,
+  TooManyRecipientsError,
 } from '../chat-commands.service.js';
 
 const ACTOR_ID = '00000000-0000-0000-0000-000000000001';
@@ -375,7 +379,10 @@ describe('ChatCommandsService.handleRain', () => {
       transport: makeTransport([ACTOR_ID]),
     });
     await expect(
-      svc.executeCommand({ type: 'rain', amount: '10.00000000', roomId: ROOM_ID }, ACTOR_ID),
+      svc.executeCommand(
+        { type: 'rain', amount: '10.00000000', recipientCount: 5, roomId: ROOM_ID },
+        ACTOR_ID,
+      ),
     ).rejects.toThrow(NoOnlineUsersError);
   });
 
@@ -390,7 +397,10 @@ describe('ChatCommandsService.handleRain', () => {
       wallet,
       transport: makeTransport([ACTOR_ID, CLAIMER_ID, RECIPIENT_2]),
     });
-    await svc.executeCommand({ type: 'rain', amount: '10.00000000', roomId: ROOM_ID }, ACTOR_ID);
+    await svc.executeCommand(
+      { type: 'rain', amount: '10.00000000', recipientCount: 2, roomId: ROOM_ID },
+      ACTOR_ID,
+    );
     expect(wallet.credit).toHaveBeenCalledTimes(2);
     expect(wallet.credit).toHaveBeenCalledWith(expect.anything(), {
       userId: CLAIMER_ID,
@@ -404,8 +414,7 @@ describe('ChatCommandsService.handleRain', () => {
     const svc = makeSvc({
       drizzleRows: {
         select: [[RAIN_ROW]],
-        // Postgres floor(1::numeric / 3)::text = '0.33333333' (scale 8 from the input)
-        execute: [[{ per_recipient: '0.33333333' }]],
+        execute: [[{ per_recipient: '3.33333333' }]],
       },
       wallet,
       transport: makeTransport([
@@ -414,11 +423,211 @@ describe('ChatCommandsService.handleRain', () => {
         '00000000-0000-0000-0000-000000000007',
       ]),
     });
-    await svc.executeCommand({ type: 'rain', amount: '1.00000000', roomId: ROOM_ID }, ACTOR_ID);
+    await svc.executeCommand(
+      { type: 'rain', amount: '10.00000000', recipientCount: 3, roomId: ROOM_ID },
+      ACTOR_ID,
+    );
     expect(wallet.credit).toHaveBeenCalledWith(expect.anything(), {
       userId: expect.any(String),
-      amount: '0.33333333',
+      amount: '3.33333333',
       type: 'rain',
     });
+  });
+
+  it('throws BelowMinimumError when amount is below config minAmount', async () => {
+    const svc = makeSvc({
+      drizzleRows: {
+        select: [[{ ...RAIN_ROW, config: { minAmount: '5.00000000' } }]],
+      },
+    });
+    await expect(
+      svc.executeCommand(
+        { type: 'rain', amount: '1.00000000', recipientCount: 1, roomId: ROOM_ID },
+        ACTOR_ID,
+      ),
+    ).rejects.toThrow(BelowMinimumError);
+  });
+
+  it('throws ExceedsLimitError when amount is above config maxAmount', async () => {
+    const svc = makeSvc({
+      drizzleRows: {
+        select: [[{ ...RAIN_ROW, config: { maxAmount: '10.00000000' } }]],
+      },
+    });
+    await expect(
+      svc.executeCommand(
+        { type: 'rain', amount: '50.00000000', recipientCount: 1, roomId: ROOM_ID },
+        ACTOR_ID,
+      ),
+    ).rejects.toThrow(ExceedsLimitError);
+  });
+
+  it('throws ExceedsLimitError when recipientCount exceeds config maxRecipients', async () => {
+    const svc = makeSvc({
+      drizzleRows: {
+        select: [[{ ...RAIN_ROW, config: { maxRecipients: 10 } }]],
+      },
+    });
+    await expect(
+      svc.executeCommand(
+        { type: 'rain', amount: '100.00000000', recipientCount: 11, roomId: ROOM_ID },
+        ACTOR_ID,
+      ),
+    ).rejects.toThrow(ExceedsLimitError);
+  });
+
+  it('throws TooManyRecipientsError when recipientCount exceeds the whole-dollar amount', async () => {
+    const svc = makeSvc({
+      drizzleRows: { select: [[RAIN_ROW]] },
+    });
+    await expect(
+      svc.executeCommand(
+        { type: 'rain', amount: '3.00000000', recipientCount: 4, roomId: ROOM_ID },
+        ACTOR_ID,
+      ),
+    ).rejects.toThrow(TooManyRecipientsError);
+  });
+});
+
+const DONATE_ROW = {
+  key: 'donate',
+  enabled: true,
+  label: 'Donate',
+  description: 'Send a direct tip to a specific player',
+  config: null,
+  updatedAt: new Date(),
+};
+
+const DONATE_SYSTEM_MSG: import('@openora/core/contracts').ChatSystemMessage = {
+  id: MSG_ID,
+  roomId: ROOM_ID,
+  actorId: ACTOR_ID,
+  content: '',
+  metadata: {
+    command: 'donate',
+    recipientId: CLAIMER_ID,
+    recipientUsername: 'alice',
+    amount: '10.00000000',
+    currency: 'USD',
+  },
+  createdAt: new Date().toISOString(),
+};
+
+/**
+ * Directory mock where findPlayerIds resolves the RECIPIENT (CLAIMER_ID = 'alice').
+ * Used for donate tests that target 'alice' — the default makeDirectory() always
+ * returns ACTOR_ID which only has username 'bob', so alice is never found.
+ */
+function makeRecipientDirectory(): import('@openora/core/contracts').AdminUserDirectory {
+  return mock<import('@openora/core/contracts').AdminUserDirectory>({
+    findPlayerIds: vi.fn().mockResolvedValue([CLAIMER_ID]),
+    lookupPlayers: vi.fn().mockImplementation((ids: string[]) => {
+      const all = [
+        {
+          userId: ACTOR_ID,
+          username: 'bob',
+          email: 'bob@example.com',
+          kycStatus: null,
+          language: null,
+        },
+        {
+          userId: CLAIMER_ID,
+          username: 'alice',
+          email: 'alice@example.com',
+          kycStatus: null,
+          language: null,
+        },
+      ];
+      return Promise.resolve(all.filter((p) => ids.includes(p.userId)));
+    }),
+  });
+}
+
+describe('ChatCommandsService.handleDonate', () => {
+  it('debits sender, credits recipient, and returns system message on success', async () => {
+    const wallet = makeWallet();
+    const writer = mock<import('@openora/core/contracts').ChatSystemWriter>({
+      postSystemMessage: vi.fn().mockResolvedValue(DONATE_SYSTEM_MSG),
+    });
+    const svc = makeSvc({
+      drizzleRows: { select: [[DONATE_ROW]] },
+      wallet,
+      writer,
+      directory: makeRecipientDirectory(),
+    });
+    const result = await svc.executeCommand(
+      { type: 'donate', targetUsername: 'alice', amount: '10.00000000', roomId: ROOM_ID },
+      ACTOR_ID,
+    );
+    expect(wallet.debit).toHaveBeenCalledWith(expect.anything(), {
+      userId: ACTOR_ID,
+      amount: '10.00000000',
+      type: 'tip',
+    });
+    expect(wallet.credit).toHaveBeenCalledWith(expect.anything(), {
+      userId: CLAIMER_ID,
+      amount: '10.00000000',
+      type: 'tip',
+    });
+    expect(result.id).toBe(MSG_ID);
+  });
+
+  it('throws DonateSelfError when sender targets themselves', async () => {
+    // Default makeDirectory() returns ACTOR_ID ('bob') from findPlayerIds — correct for self-target.
+    const svc = makeSvc({
+      drizzleRows: { select: [[DONATE_ROW]] },
+    });
+    await expect(
+      svc.executeCommand(
+        { type: 'donate', targetUsername: 'bob', amount: '10.00000000', roomId: ROOM_ID },
+        ACTOR_ID,
+      ),
+    ).rejects.toThrow(DonateSelfError);
+  });
+
+  it('throws ChatPlayerNotFoundError when target username does not exist', async () => {
+    const directory = mock<import('@openora/core/contracts').AdminUserDirectory>({
+      findPlayerIds: vi.fn().mockResolvedValue([]),
+      lookupPlayers: vi.fn().mockResolvedValue([]),
+    });
+    const svc = makeSvc({
+      drizzleRows: { select: [[DONATE_ROW]] },
+      directory,
+    });
+    await expect(
+      svc.executeCommand(
+        { type: 'donate', targetUsername: 'ghost', amount: '10.00000000', roomId: ROOM_ID },
+        ACTOR_ID,
+      ),
+    ).rejects.toThrow(ChatPlayerNotFoundError);
+  });
+
+  it('throws InsufficientBalanceError when sender wallet debit fails', async () => {
+    const svc = makeSvc({
+      drizzleRows: { select: [[DONATE_ROW]] },
+      wallet: makeWallet(false),
+      directory: makeRecipientDirectory(),
+    });
+    await expect(
+      svc.executeCommand(
+        { type: 'donate', targetUsername: 'alice', amount: '10.00000000', roomId: ROOM_ID },
+        ACTOR_ID,
+      ),
+    ).rejects.toThrow(InsufficientBalanceError);
+  });
+
+  it('throws BelowMinimumError when amount is below config minAmount', async () => {
+    // Amount check fires before directory lookup, so directory mock does not matter here.
+    const svc = makeSvc({
+      drizzleRows: {
+        select: [[{ ...DONATE_ROW, config: { minAmount: '5.00000000' } }]],
+      },
+    });
+    await expect(
+      svc.executeCommand(
+        { type: 'donate', targetUsername: 'alice', amount: '1.00000000', roomId: ROOM_ID },
+        ACTOR_ID,
+      ),
+    ).rejects.toThrow(BelowMinimumError);
   });
 });

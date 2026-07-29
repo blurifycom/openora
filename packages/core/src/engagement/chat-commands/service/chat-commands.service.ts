@@ -61,16 +61,36 @@ export const GiftSelfClaimError = makeConflictError(
   'GiftSelfClaim',
   'You cannot claim your own gift',
 );
+export const DonateSelfError = makeConflictError('DonateSelf', 'You cannot donate to yourself');
+export const TooManyRecipientsError = makeConflictError(
+  'TooManyRecipients',
+  'Amount too small: you need at least $1 per recipient',
+);
 
 type ProfileInput = { type: 'profile'; targetUsername: string; roomId: Uuid | null };
 type GiftInput = { type: 'gift'; amount: string; roomId: Uuid };
-type RainInput = { type: 'rain'; amount: string; roomId: Uuid };
+type RainInput = { type: 'rain'; amount: string; recipientCount: number; roomId: Uuid };
+type DonateInput = { type: 'donate'; targetUsername: string; amount: string; roomId: Uuid | null };
 type BlockActionInput = {
   type: 'block' | 'ignore';
   targetUsername: string;
   roomId: Uuid | null;
 };
-type ExecuteInput = ProfileInput | GiftInput | RainInput | BlockActionInput;
+type ExecuteInput = ProfileInput | GiftInput | RainInput | DonateInput | BlockActionInput;
+
+function shuffleArray<T>(arr: readonly T[]): T[] {
+  const result = [...arr];
+  for (let i = result.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1));
+    const a = result.at(i);
+    const b = result.at(j);
+    if (a !== undefined && b !== undefined) {
+      result[i] = b;
+      result[j] = a;
+    }
+  }
+  return result;
+}
 
 function toDescriptor(row: typeof chatCommandConfig.$inferSelect): ChatCommandDescriptor {
   return {
@@ -127,6 +147,9 @@ export class ChatCommandsService {
     }
     if (input.type === 'gift') {
       return this.handleGift(input, actorId, row.config ?? null);
+    }
+    if (input.type === 'donate') {
+      return this.handleDonate(input, actorId, row.config ?? null);
     }
     if (input.type === 'block' || input.type === 'ignore') {
       return this.handleBlockAction(input, actorId);
@@ -378,9 +401,32 @@ export class ChatCommandsService {
     actorId: Uuid,
     config: CommandConfig | null,
   ): Promise<ChatSystemMessage> {
+    if (
+      config?.maxAmount !== undefined &&
+      moneyToNumber(input.amount) > moneyToNumber(config.maxAmount)
+    ) {
+      throw new ExceedsLimitError();
+    }
+    if (
+      config?.minAmount !== undefined &&
+      moneyToNumber(input.amount) < moneyToNumber(config.minAmount)
+    ) {
+      throw new BelowMinimumError();
+    }
+
+    const configMax = config?.maxRecipients ?? 50;
+    if (input.recipientCount > configMax) {
+      throw new ExceedsLimitError();
+    }
+    const amountUnits = Math.floor(moneyToNumber(input.amount));
+    if (input.recipientCount > amountUnits) {
+      throw new TooManyRecipientsError();
+    }
     const allOnline = await this.transport.getOnlineUserIds(chatChannel(input.roomId));
-    const maxRecipients = config?.maxRecipients ?? 50;
-    const recipients = allOnline.filter((id) => id !== actorId).slice(0, maxRecipients);
+    const recipients = shuffleArray(allOnline.filter((id) => id !== actorId)).slice(
+      0,
+      input.recipientCount,
+    );
     if (recipients.length === 0) {
       throw new NoOnlineUsersError();
     }
@@ -427,14 +473,111 @@ export class ChatCommandsService {
       before: null,
       after: { amount: input.amount, recipientCount: recipients.length },
     });
-    /* Should be used to notify receiver using map() */
     void this.events.emit('chat.rain.distributed', {
       fromUserId: actorId,
+      recipients,
       recipientCount: recipients.length,
       totalAmount: input.amount,
       currency,
       roomId: input.roomId,
     });
+    return msg;
+  }
+
+  private async handleDonate(
+    input: DonateInput,
+    actorId: Uuid,
+    config: CommandConfig | null,
+  ): Promise<ChatSystemMessage> {
+    if (
+      config?.maxAmount !== undefined &&
+      moneyToNumber(input.amount) > moneyToNumber(config.maxAmount)
+    ) {
+      throw new ExceedsLimitError();
+    }
+    if (
+      config?.minAmount !== undefined &&
+      moneyToNumber(input.amount) < moneyToNumber(config.minAmount)
+    ) {
+      throw new BelowMinimumError();
+    }
+
+    const ids = await this.directory.findPlayerIds(input.targetUsername, 20);
+    if (ids.length === 0) {
+      throw new ChatPlayerNotFoundError(input.targetUsername);
+    }
+    const summaries = await this.directory.lookupPlayers(ids);
+    const target = summaries.find(
+      (s) => s.username.toLowerCase() === input.targetUsername.toLowerCase(),
+    );
+    if (!target) {
+      throw new ChatPlayerNotFoundError(input.targetUsername);
+    }
+
+    if (target.userId === actorId) {
+      throw new DonateSelfError();
+    }
+
+    const senderSummaries = await this.directory.lookupPlayers([actorId]);
+    const sender = senderSummaries.find((s) => s.userId === actorId);
+    if (!sender) {
+      throw new ChatPlayerNotFoundError(actorId);
+    }
+
+    const { msg, currency } = await this.drizzle.db.transaction(async (tx) => {
+      const debit = await this.wallet.debit(tx, {
+        userId: actorId,
+        amount: input.amount,
+        type: 'tip',
+      });
+      if (!debit.ok) {
+        throw new InsufficientBalanceError();
+      }
+
+      const credit = await this.wallet.credit(tx, {
+        userId: target.userId,
+        amount: input.amount,
+        type: 'tip',
+      });
+      if (!credit.ok) {
+        throw new ChatPlayerNotFoundError(target.userId);
+      }
+
+      const systemMsg = await this.systemWriter.postSystemMessage({
+        roomId: input.roomId,
+        actorId,
+        tx,
+        metadata: {
+          command: 'donate',
+          recipientId: target.userId,
+          recipientUsername: target.username,
+          amount: input.amount,
+          currency: debit.currency,
+        },
+      });
+      return { msg: systemMsg, currency: debit.currency };
+    });
+
+    await this.audit.record({
+      actorId,
+      actorType: 'player',
+      action: 'chat.donate',
+      resourceType: 'chat_donation',
+      resourceId: msg.id,
+      before: null,
+      after: { recipientId: target.userId, amount: input.amount, currency },
+    });
+
+    void this.events.emit('chat.donate.sent', {
+      senderId: actorId,
+      senderUsername: sender.username,
+      recipientId: target.userId,
+      recipientUsername: target.username,
+      amount: input.amount,
+      currency,
+      roomId: input.roomId,
+    });
+
     return msg;
   }
 

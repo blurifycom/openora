@@ -7,6 +7,7 @@ export const CHAT_COMMAND_TYPES = [
   'profile',
   'gift',
   'rain',
+  'donate',
   'block',
   'ignore',
 ] as const;
@@ -80,7 +81,14 @@ export const chatCommandsContract = {
         z.object({
           type: z.literal('rain'),
           amount: MoneyAmountSchema,
+          recipientCount: z.number().int().positive(),
           roomId: UuidSchema,
+        }),
+        z.object({
+          type: z.literal('donate'),
+          targetUsername: z.string().min(1),
+          amount: MoneyAmountSchema,
+          roomId: UuidSchema.nullable(),
         }),
         z.object({
           type: z.literal('block'),

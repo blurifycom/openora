@@ -1,43 +1,25 @@
 import * as z from 'zod';
-import { UuidSchema, MoneyAmountSchema } from './common.js';
+import { UuidSchema } from './common.js';
+import {
+  ProfileCommandMetadataSchema,
+  GiftCommandMetadataSchema,
+  RainCommandMetadataSchema,
+  BlockCommandMetadataSchema,
+  IgnoreCommandMetadataSchema,
+  DonateCommandMetadataSchema,
+} from './chat-command-metadata.js';
 
 export const CHAT_MESSAGE_TYPES = ['user', 'system'] as const;
 export const ChatMessageTypeSchema = z.enum(CHAT_MESSAGE_TYPES);
 export type ChatMessageType = z.infer<typeof ChatMessageTypeSchema>;
 
 export const CommandMetadataSchema = z.discriminatedUnion('command', [
-  z.object({
-    command: z.literal('profile'),
-    targetUserId: UuidSchema,
-    displayName: z.string(),
-    level: z.number().int(),
-  }),
-  z.object({
-    command: z.literal('gift'),
-    giftId: UuidSchema,
-    senderId: UuidSchema,
-    senderUsername: z.string(),
-    amount: MoneyAmountSchema,
-    currency: z.string(),
-  }),
-  z.object({
-    command: z.literal('rain'),
-    fromUserId: UuidSchema,
-    amount: MoneyAmountSchema,
-    currency: z.string(),
-    recipientCount: z.number().int(),
-    perRecipient: MoneyAmountSchema,
-  }),
-  z.object({
-    command: z.literal('block'),
-    targetUserId: UuidSchema,
-    displayName: z.string(),
-  }),
-  z.object({
-    command: z.literal('ignore'),
-    targetUserId: UuidSchema,
-    displayName: z.string(),
-  }),
+  ProfileCommandMetadataSchema,
+  GiftCommandMetadataSchema,
+  RainCommandMetadataSchema,
+  BlockCommandMetadataSchema,
+  IgnoreCommandMetadataSchema,
+  DonateCommandMetadataSchema,
 ]);
 export type CommandMetadata = z.infer<typeof CommandMetadataSchema>;
 

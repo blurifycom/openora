@@ -14,6 +14,8 @@ import {
   GiftNotFoundError,
   GiftAlreadyClaimedError,
   GiftSelfClaimError,
+  DonateSelfError,
+  TooManyRecipientsError,
 } from '../service/chat-commands.service.js';
 
 const cc = populateContractRouterPaths({ chatCommands: chatCommandsContract }).chatCommands;
@@ -35,6 +37,8 @@ export function createChatCommandsRouter(svc: ChatCommandsService, adminGuard: A
             BelowMinimumError,
             NoOnlineUsersError,
             RainCreditError,
+            DonateSelfError,
+            TooManyRecipientsError,
           ],
         },
         () => svc.executeCommand(input, actorId),
