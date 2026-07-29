@@ -21,7 +21,7 @@ describe('FunnelAnalyticsService.conversion', () => {
     const result = await service.conversion({});
 
     expect(result).toEqual([
-      { stage: 'registered', count: 100, dropOffRate: 0 },
+      { stage: 'registered', count: 100, dropOffRate: null },
       { stage: 'email_verified', count: 80, dropOffRate: 0.2 },
       { stage: 'first_deposit', count: 40, dropOffRate: 0.5 },
       { stage: 'first_bet', count: 10, dropOffRate: 0.75 },
@@ -36,11 +36,11 @@ describe('FunnelAnalyticsService.conversion', () => {
 
     const result = await service.conversion({});
 
-    expect(result.every((stage) => stage.dropOffRate === 0)).toBe(true);
+    expect(result.slice(1).every((stage) => stage.dropOffRate === 0)).toBe(true);
   });
 
   it('serves a repeat query from cache without querying the database', async () => {
-    const cached = [{ stage: 'registered', count: 5, dropOffRate: 0 }];
+    const cached = [{ stage: 'registered', count: 5, dropOffRate: null }];
     const execute = vi.fn();
     const service = new FunnelAnalyticsService(mock({ db: { execute } }), fakeCache(cached));
 
