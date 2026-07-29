@@ -1,5 +1,5 @@
 import type { AdminUserDirectory, AdminUserListOptions, ClientMeta } from '@openora/core/contracts';
-import { KycStatusSchema, UserRoleSchema, normalizeKycStatus } from '@openora/core/contracts';
+import { KycStatusSchema, normalizeKycStatus } from '@openora/core/contracts';
 import { DrizzleService, pageToOffset } from '@openora/core/server';
 import type { EventBus } from '@openora/core/server';
 import { asc, count, desc, eq, ilike, inArray } from 'drizzle-orm';
@@ -18,7 +18,7 @@ function toRow(r: typeof user.$inferSelect) {
     name: r.name ?? null,
     createdAt: r.createdAt,
     isActive: r.isActive,
-    role: UserRoleSchema.parse(r.role),
+    role: r.role,
     failedLoginAttempts: r.failedLoginAttempts,
     lockoutUntil: r.lockoutUntil,
   };

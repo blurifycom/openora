@@ -44,7 +44,7 @@ export const AdminUserSchema = z.object({
   name: z.string().nullable(),
   createdAt: TimestampSchema,
   isActive: z.boolean(),
-  role: UserRoleSchema,
+  role: z.string().min(1),
   failedLoginAttempts: z.number().int().optional(),
   lockoutUntil: TimestampSchema.nullable().optional(),
 });
