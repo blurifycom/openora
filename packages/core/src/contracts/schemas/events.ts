@@ -39,6 +39,15 @@ const walletTxnBase = z.object({
   transactionId: UuidSchema,
 });
 
+export const KycStatusUpdatedSchema = z.object({
+  userId: UuidSchema,
+  actorId: UuidSchema.nullable(),
+  status: KycStatusSchema,
+  previousStatus: KycStatusSchema,
+  reason: z.string().nullable(),
+  source: KycStatusSourceSchema,
+});
+
 export const domainEventSchemas = {
   'identity.user.registered': authContextBase.extend({ userId: UuidSchema }),
   'identity.user.login': authContextBase.extend({ userId: UuidSchema }),
@@ -225,14 +234,7 @@ export const domainEventSchemas = {
   // A player's KYC status changed. userId = subject player; actorId = the admin who
   // acted, or null for system-driven changes (vendor decision, webhook, threshold
   // re-KYC). before/after status records the transition for the audit log.
-  'compliance.kyc.updated': z.object({
-    userId: UuidSchema,
-    actorId: UuidSchema.nullable(),
-    status: KycStatusSchema,
-    previousStatus: KycStatusSchema,
-    reason: z.string().nullable(),
-    source: KycStatusSourceSchema,
-  }),
+  'compliance.kyc.updated': KycStatusUpdatedSchema,
 
   // A player submitted KYC documents; a verification record was created and sent to
   // the provider. userId = the submitting player; referenceId = the provider reference.

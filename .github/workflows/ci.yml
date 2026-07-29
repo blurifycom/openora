@@ -49,12 +49,20 @@ jobs:
           --health-timeout 5s
           --health-retries 10
     env:
+      DATABASE_ADMIN_URL: postgres://postgres:postgres@localhost:5432/oss_igaming_test
+      DATABASE_URL: postgres://postgres:postgres@localhost:5432/oss_igaming_test
       TEST_ADMIN_DATABASE_URL: postgresql://postgres:postgres@localhost:5432/postgres
       TEST_REDIS_URL: redis://localhost:6379
       TEST_DATABASE_URL: postgres://postgres:postgres@localhost:5432/oss_igaming_test
     steps:
       - uses: actions/checkout@v4
       - uses: ./.github/actions/bootstrap
+      - name: Prepare migration database
+        run: pnpm db:setup:test
+      - name: Build migration runner
+        run: pnpm --filter @openora/core build
+      - name: Run migrations
+        run: pnpm db:migrate
       # Fans out types, lint, format, boundaries, module shape, deprecations, unit
       # + tool tests through turbo (parallel + cached). `build` runs implicitly as
       # the `check:types` dependency.

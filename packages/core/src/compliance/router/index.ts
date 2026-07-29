@@ -1,14 +1,22 @@
 import { createHash } from 'node:crypto';
 import { implement, ORPCError } from '@orpc/server';
-import { AdminGuard, getUserId, mapErrors, type OssContext } from '@openora/core/server';
+import {
+  AdminGuard,
+  createEventStreamGenerator,
+  getUserId,
+  mapErrors,
+  type OssContext,
+} from '@openora/core/server';
 import type {
   AuditWritePort,
   JobQueueAdapter,
   KycAdapter,
   KycWebhookVerifier,
   QueueName,
+  RealtimeTransport,
+  User,
 } from '@openora/core/contracts';
-import { complianceContract } from '../contract/index.js';
+import { complianceContract, type KycStatusUpdate } from '../contract/index.js';
 import {
   ComplianceService,
   LimitNotFoundError,
@@ -24,6 +32,21 @@ import {
 } from '../service/rg.service.js';
 import { RgMonitoringService } from '../service/rg-monitoring.service.js';
 
+export function kycStatusChannel(userId: User['id']): string {
+  return `compliance:kyc-status:${userId}`;
+}
+
+export function createKycStatusStream(
+  realtime: RealtimeTransport,
+  userId: User['id'],
+  signal: AbortSignal | undefined,
+): AsyncGenerator<KycStatusUpdate> {
+  return createEventStreamGenerator(
+    (push) => realtime.subscribe<KycStatusUpdate>(kycStatusChannel(userId), push),
+    { signal },
+  );
+}
+
 export function createComplianceRouter({
   compliance,
   adminGuard,
@@ -33,6 +56,7 @@ export function createComplianceRouter({
   webhookVerifier,
   jobQueue,
   kycDecisionSyncQueue,
+  realtime,
   rg,
   rgMonitoring,
 }: {
@@ -46,6 +70,7 @@ export function createComplianceRouter({
   webhookVerifier: KycWebhookVerifier;
   jobQueue: JobQueueAdapter;
   kycDecisionSyncQueue: QueueName;
+  realtime: RealtimeTransport;
 }) {
   const os = implement(complianceContract).$context<OssContext>();
 
@@ -90,6 +115,10 @@ export function createComplianceRouter({
 
     submitKyc: os.submitKyc.handler(({ input, context }) => {
       return kyc.submit(getUserId(context), input, context.clientMeta);
+    }),
+
+    streamKycStatus: os.streamKycStatus.handler(({ signal, context }) => {
+      return createKycStatusStream(realtime, getUserId(context), signal);
     }),
 
     // M2M provider webhook - no admin session. Verify the verbatim bytes against the

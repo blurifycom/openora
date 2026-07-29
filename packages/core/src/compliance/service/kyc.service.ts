@@ -1,3 +1,4 @@
+import { randomUUID } from 'node:crypto';
 import {
   DrizzleService,
   createLogger,
@@ -400,7 +401,7 @@ export class KycVerificationService {
     await this.drizzle.db.insert(kycVerification).values({
       userId,
       provider: this.provider,
-      referenceId: `reverify-${userId}-${Date.now()}`,
+      referenceId: `reverify-${randomUUID()}`,
       status: 'resubmission_requested',
       documentTypes: [],
       triggeredBy: 'reverify_threshold',
@@ -440,7 +441,7 @@ export class KycVerificationService {
         .values({
           userId: params.userId,
           provider: MANUAL_PROVIDER,
-          referenceId: `${params.referenceIdPrefix}-${params.userId}-${Date.now()}`,
+          referenceId: `${params.referenceIdPrefix}-${params.userId}-${randomUUID()}`,
           status: params.status,
           documentTypes: [],
           triggeredBy: 'manual',

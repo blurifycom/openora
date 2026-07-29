@@ -120,6 +120,7 @@
         "compliance.overrideKycStatus",
         "compliance.requestKycResubmission",
         "compliance.setPlayerLimit",
+        "compliance.streamKycStatus",
         "compliance.submitKyc",
         "compliance.upsertLimit"
       ]
@@ -565,6 +566,7 @@
       "token": "REALTIME_TRANSPORT",
       "status": "wired",
       "boundIn": [
+        "packages/core/src/compliance/plugin.ts",
         "packages/core/src/engagement/chat/plugin.ts"
       ]
     },
@@ -1122,6 +1124,14 @@
       "file": "packages/core/src/contracts/schemas/player.ts"
     },
     {
+      "name": "KycStatusUpdatedSchema",
+      "file": "packages/core/src/contracts/schemas/events.ts"
+    },
+    {
+      "name": "KycStatusUpdateSchema",
+      "file": "packages/core/src/compliance/contract/index.ts"
+    },
+    {
       "name": "KycTriggeredBySchema",
       "file": "packages/core/src/compliance/contract/index.ts"
     },
@@ -1672,6 +1682,7 @@
     "GET /cms/pages/{slug}",
     "GET /compliance/geo-check",
     "GET /compliance/geo-rules",
+    "GET /compliance/kyc/stream",
     "GET /compliance/limits",
     "GET /compliance/players/{userId}/kyc",
     "GET /compliance/players/{userId}/rg",

@@ -10,7 +10,7 @@ import {
   type KycStatusWriter,
   type KycWebhookVerifier,
 } from '@openora/core/contracts';
-import { createTestDb, type TestDb } from '@openora/core/testing';
+import { createTestDb, InProcessRealtimeTransport, type TestDb } from '@openora/core/testing';
 import { player } from '@openora/core/pam/schema/profile';
 import { migrate as migrateProfile } from '@openora/core/pam/migrate/profile';
 import { mock, makeEventBus, makeAuditWriter, NO_CLIENT_META } from '../../testing/mock.js';
@@ -72,6 +72,7 @@ function build(guard: AdminGuard) {
     webhookVerifier: mock<KycWebhookVerifier>({}),
     jobQueue: mock<JobQueueAdapter>({}),
     kycDecisionSyncQueue: queue('kyc-decision-sync'),
+    realtime: new InProcessRealtimeTransport(),
     rg: mock<RgService>({}),
     rgMonitoring: mock<RgMonitoringService>({}),
   });

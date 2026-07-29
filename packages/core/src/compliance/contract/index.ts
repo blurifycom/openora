@@ -1,4 +1,4 @@
-import { oc } from '@orpc/contract';
+import { eventIterator, oc } from '@orpc/contract';
 import * as z from 'zod';
 import {
   UuidSchema,
@@ -63,6 +63,11 @@ export const PlayerKycViewSchema = z.object({
 });
 export type PlayerKycView = z.infer<typeof PlayerKycViewSchema>;
 export type KycVerification = z.infer<typeof KycVerificationSchema>;
+
+export const KycStatusUpdateSchema = z.object({
+  status: KycStatusSchema,
+});
+export type KycStatusUpdate = z.infer<typeof KycStatusUpdateSchema>;
 
 const NonEmptyReasonSchema = z.string().trim().min(1);
 
@@ -158,6 +163,10 @@ export const complianceContract = {
     .route({ method: 'POST', path: '/compliance/kyc' })
     .input(SubmitKycInputSchema)
     .output(SubmitKycOutputSchema),
+
+  streamKycStatus: oc
+    .route({ method: 'GET', path: '/compliance/kyc/stream' })
+    .output(eventIterator(KycStatusUpdateSchema)),
 
   kycWebhook: oc
     .route({ method: 'POST', path: '/compliance/kyc/webhook' })

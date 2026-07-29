@@ -12,7 +12,7 @@ import type {
   JobQueueAdapter,
 } from '@openora/core/contracts';
 import { queue } from '@openora/core/contracts';
-import { createTestDb, type TestDb } from '@openora/core/testing';
+import { createTestDb, InProcessRealtimeTransport, type TestDb } from '@openora/core/testing';
 import {
   mock,
   makeEventBus,
@@ -74,6 +74,7 @@ function build(adminGuard: AdminGuard) {
     webhookVerifier: mock<KycWebhookVerifier>({}),
     jobQueue: mock<JobQueueAdapter>({ enqueue: vi.fn(async () => ({ id: 'job-1' })) }),
     kycDecisionSyncQueue: queue('kyc-decision-sync'),
+    realtime: new InProcessRealtimeTransport(),
     rg,
     rgMonitoring: mock<RgMonitoringService>({}),
   });

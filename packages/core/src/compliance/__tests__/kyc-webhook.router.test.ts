@@ -10,9 +10,18 @@ import {
   type KycWebhookVerifier,
   type QueueName,
 } from '@openora/core/contracts';
-import { createTestRedis, redisUrlForWorker, type TestRedis } from '@openora/core/testing';
+import {
+  createTestRedis,
+  InProcessRealtimeTransport,
+  redisUrlForWorker,
+  type TestRedis,
+} from '@openora/core/testing';
 import { mock, makeAuditWriter, NO_CLIENT_META } from '../../testing/mock.js';
-import { createComplianceRouter } from '../router/index.js';
+import {
+  createComplianceRouter,
+  createKycStatusStream,
+  kycStatusChannel,
+} from '../router/index.js';
 import type { ComplianceService } from '../service/compliance.service.js';
 import type { KycVerificationService } from '../service/kyc.service.js';
 import type { RgService } from '../service/rg.service.js';
@@ -63,6 +72,7 @@ function build(opts: {
   webhookVerifier: KycWebhookVerifier;
   kycAdapter: KycAdapter;
   jobQueue: BullMqJobQueue;
+  realtime?: InProcessRealtimeTransport;
 }) {
   return createComplianceRouter({
     compliance: mock<ComplianceService>({}),
@@ -73,6 +83,7 @@ function build(opts: {
     webhookVerifier: opts.webhookVerifier,
     jobQueue: opts.jobQueue,
     kycDecisionSyncQueue: KYC_DECISION_SYNC_QUEUE,
+    realtime: opts.realtime ?? new InProcessRealtimeTransport(),
     rg: mock<RgService>({}),
     rgMonitoring: mock<RgMonitoringService>({}),
   });
@@ -87,6 +98,26 @@ function bodyHashKey(rawBody: string): string {
 }
 
 const acceptingVerifier = () => mock<KycWebhookVerifier>({ verify: vi.fn().mockReturnValue(true) });
+
+describe('compliance streamKycStatus router', () => {
+  it('streams only player-safe updates from the player channel', async () => {
+    const realtime = new InProcessRealtimeTransport();
+    const iterator = createKycStatusStream(realtime, 'user-1', undefined)[Symbol.asyncIterator]();
+    const next = iterator.next();
+    await Promise.resolve();
+
+    realtime.publish(kycStatusChannel('other-user'), { status: 'rejected' });
+    realtime.publish(kycStatusChannel('user-1'), { status: 'approved' });
+
+    await expect(next).resolves.toEqual({
+      done: false,
+      value: {
+        status: 'approved',
+      },
+    });
+    await iterator.return?.(undefined);
+  });
+});
 
 describe('compliance kycWebhook router (real Redis-backed JOB_QUEUE)', () => {
   it('acks 2xx and enqueues a kyc-decision-sync job without calling the vendor', async () => {
