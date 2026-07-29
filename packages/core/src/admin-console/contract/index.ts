@@ -4,6 +4,7 @@ import {
   ADMIN_TX_SORT_BY_VALUES,
   ADMIN_USER_SORT_BY_VALUES,
   CurrencyCodeSchema,
+  GAME_PERFORMANCE_SORT_FIELDS,
   GameTypeSchema,
   IdInputSchema,
   KycStatusSchema,
@@ -94,19 +95,12 @@ export const AdminTransactionDetailSchema = AdminTransactionSchema.extend({
   reviewReason: z.string().nullable(),
 });
 
-export const GAME_PERFORMANCE_SORT_FIELDS = [
-  'name',
-  'gameType',
-  'volume',
-  'revenue',
-  'uniquePlayers',
-  'roundsPlayed',
-] as const;
 export const GamePerformanceSortBySchema = z.enum(GAME_PERFORMANCE_SORT_FIELDS);
 export const SortDirectionSchema = z.enum(['asc', 'desc']);
 
 export const GamePerformanceFilterSchema = z.object({
   gameType: GameTypeSchema.optional(),
+  currency: CurrencyCodeSchema.optional(),
   dateFrom: TimestampSchema.optional(),
   dateTo: TimestampSchema.optional(),
   sortBy: GamePerformanceSortBySchema.optional(),

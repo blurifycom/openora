@@ -14,20 +14,24 @@ export class DrizzleAdminGameReporting implements AdminGameReporting {
   async listGamePerformance(filter: GamePerformanceFilter): Promise<GamePerformanceRow[]> {
     const db = this.drizzle.db;
 
-    // status/date filters scope which ROUNDS count towards a game's metrics, so they
-    // live in the join condition, not WHERE - a game with zero completed rounds in
-    // range still appears with all-zero metrics rather than being dropped from the
+    // status/date/currency filters scope which ROUNDS count towards a game's metrics,
+    // so they live in the join condition, not WHERE - a game with zero completed rounds
+    // in range still appears with all-zero metrics rather than being dropped from the
     // report. `gameType` narrows which GAMES appear at all, so it stays in WHERE.
     const joinConditions = [
       eq(gameRound.gameId, game.id),
       eq(gameRound.status, 'completed'),
       filter.dateFrom ? gte(gameRound.startedAt, filter.dateFrom) : undefined,
       filter.dateTo ? lte(gameRound.startedAt, filter.dateTo) : undefined,
+      filter.currency ? eq(gameRound.currency, filter.currency) : undefined,
     ].filter(Boolean);
     const where = filter.gameType ? eq(game.gameType, filter.gameType) : undefined;
 
     const volume = sql<string>`coalesce(sum(${gameRound.betAmount}), 0)`;
     // GGR - can be negative when a game pays out more than it takes in over the range.
+    // TODO: winAmount is never set today - endRound has no way to report a win, so it
+    // stays at its schema default('0') and revenue always equals volume until round
+    // settlement actually computes payouts.
     const revenue = sql<string>`coalesce(sum(${gameRound.betAmount}) - sum(${gameRound.winAmount}), 0)`;
     const uniquePlayers = sql<number>`count(distinct ${gameRound.userId})`;
     const roundsPlayed = sql<number>`count(${gameRound.id})`;

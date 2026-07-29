@@ -1,77 +1,164 @@
-import { describe, it, expect, vi } from 'vitest';
-import type { DrizzleService } from '@openora/core/server';
-import { mock } from '../../testing/mock.js';
+import { randomUUID } from 'node:crypto';
+import { describe, it, expect, beforeAll, afterAll, beforeEach } from 'vitest';
+import { sql } from 'drizzle-orm';
+import { createTestDb, type TestDb } from '@openora/core/testing';
+import { migrate as migrateIdentity } from '@openora/core/pam/migrate/identity';
+import { user, session } from '@openora/core/pam/schema/identity';
 import { DrizzleAdminPlayerActivity } from '../adapters/admin-player-activity.js';
 
-function makeDrizzle(rows: Record<string, unknown>[]) {
-  const execute = vi.fn().mockResolvedValue({ rows });
-  return { drizzle: mock<DrizzleService>({ db: { execute } }), execute };
+let db: TestDb;
+let activity: DrizzleAdminPlayerActivity;
+
+const AT = (iso: string) => new Date(iso);
+
+async function seedUser(createdAt: Date) {
+  const [row] = await db.drizzle.db
+    .insert(user)
+    .values({ name: 'U', email: `${randomUUID()}@x.dev`, createdAt })
+    .returning();
+  return row!;
 }
 
-describe('DrizzleAdminPlayerActivity.getRegistrationsOverTime', () => {
-  it('maps rows to { date, registrations } with a numeric count', async () => {
-    const { drizzle } = makeDrizzle([{ date: '2026-01-01', registrations: '3' }]);
-    const svc = new DrizzleAdminPlayerActivity(drizzle);
-
-    const rows = await svc.getRegistrationsOverTime({});
-
-    expect(rows).toEqual([{ date: '2026-01-01', registrations: 3 }]);
+async function seedSession(userId: string, updatedAt: Date) {
+  await db.drizzle.db.insert(session).values({
+    userId,
+    token: randomUUID(),
+    expiresAt: new Date(updatedAt.getTime() + 24 * 60 * 60 * 1000),
+    createdAt: updatedAt,
+    updatedAt,
   });
+}
 
-  it('runs a single query even without an explicit date range (defaults applied)', async () => {
-    const { drizzle, execute } = makeDrizzle([]);
-    const svc = new DrizzleAdminPlayerActivity(drizzle);
-
-    await svc.getRegistrationsOverTime({});
-
-    expect(execute).toHaveBeenCalledOnce();
-  });
+beforeAll(async () => {
+  db = await createTestDb([migrateIdentity]);
+  activity = new DrizzleAdminPlayerActivity(db.drizzle);
 });
 
-describe('DrizzleAdminPlayerActivity.getActiveUsersTrend', () => {
-  it('maps rows to { date, dau, wau, mau } as numbers', async () => {
-    const { drizzle } = makeDrizzle([{ date: '2026-01-01', dau: '1', wau: '4', mau: '10' }]);
-    const svc = new DrizzleAdminPlayerActivity(drizzle);
-
-    const rows = await svc.getActiveUsersTrend({});
-
-    expect(rows).toEqual([{ date: '2026-01-01', dau: 1, wau: 4, mau: 10 }]);
-  });
+afterAll(async () => {
+  await db.drop();
 });
 
-describe('DrizzleAdminPlayerActivity.getRetentionCohorts', () => {
-  it('computes returnRate from cohortSize/returned and passes through isComplete', async () => {
-    const { drizzle } = makeDrizzle([
-      { cohort_date: '2026-01-01', cohort_size: '10', returned: '4', is_complete: true },
-    ]);
-    const svc = new DrizzleAdminPlayerActivity(drizzle);
+beforeEach(async () => {
+  await db.drizzle.db.execute(sql`TRUNCATE ${session}, ${user} RESTART IDENTITY CASCADE`);
+});
 
-    const rows = await svc.getRetentionCohorts({}, 7);
+describe('DrizzleAdminPlayerActivity.getRegistrationsOverTime (real PG)', () => {
+  it('counts registrations per day and includes zero-registration days', async () => {
+    await seedUser(AT('2026-01-01T10:00:00.000Z'));
+    await seedUser(AT('2026-01-01T15:00:00.000Z'));
+    await seedUser(AT('2026-01-03T00:00:00.000Z'));
+
+    const rows = await activity.getRegistrationsOverTime({
+      dateFrom: AT('2026-01-01T00:00:00.000Z'),
+      dateTo: AT('2026-01-03T00:00:00.000Z'),
+    });
 
     expect(rows).toEqual([
-      { cohortDate: '2026-01-01', cohortSize: 10, returned: 4, returnRate: 0.4, isComplete: true },
+      { date: '2026-01-01', registrations: 2 },
+      { date: '2026-01-02', registrations: 0 },
+      { date: '2026-01-03', registrations: 1 },
     ]);
+  });
+});
+
+describe('DrizzleAdminPlayerActivity.getActiveUsersTrend (real PG)', () => {
+  it('computes distinct DAU/WAU/MAU per day from session activity', async () => {
+    const alice = await seedUser(AT('2025-11-01T00:00:00.000Z'));
+    const bob = await seedUser(AT('2025-11-01T00:00:00.000Z'));
+    // Alice active on the target day; Bob active 5 days earlier (inside WAU/MAU, outside DAU).
+    await seedSession(alice.id, AT('2026-01-10T12:00:00.000Z'));
+    await seedSession(bob.id, AT('2026-01-05T12:00:00.000Z'));
+
+    const rows = await activity.getActiveUsersTrend({
+      dateFrom: AT('2026-01-10T00:00:00.000Z'),
+      dateTo: AT('2026-01-10T00:00:00.000Z'),
+    });
+
+    expect(rows).toEqual([{ date: '2026-01-10', dau: 1, wau: 2, mau: 2 }]);
+  });
+
+  it('excludes a session outside every window from all three counts', async () => {
+    const alice = await seedUser(AT('2025-11-01T00:00:00.000Z'));
+    await seedSession(alice.id, AT('2025-12-01T00:00:00.000Z'));
+
+    const rows = await activity.getActiveUsersTrend({
+      dateFrom: AT('2026-01-10T00:00:00.000Z'),
+      dateTo: AT('2026-01-10T00:00:00.000Z'),
+    });
+
+    expect(rows).toEqual([{ date: '2026-01-10', dau: 0, wau: 0, mau: 0 }]);
+  });
+
+  it('counts a user with two sessions on the same day only once', async () => {
+    const alice = await seedUser(AT('2025-11-01T00:00:00.000Z'));
+    await seedSession(alice.id, AT('2026-01-10T08:00:00.000Z'));
+    await seedSession(alice.id, AT('2026-01-10T18:00:00.000Z'));
+
+    const rows = await activity.getActiveUsersTrend({
+      dateFrom: AT('2026-01-10T00:00:00.000Z'),
+      dateTo: AT('2026-01-10T00:00:00.000Z'),
+    });
+
+    expect(rows).toEqual([{ date: '2026-01-10', dau: 1, wau: 1, mau: 1 }]);
+  });
+});
+
+describe('DrizzleAdminPlayerActivity.getRetentionCohorts (real PG)', () => {
+  it('does not count the registration-day session itself as a return', async () => {
+    const alice = await seedUser(AT('2026-01-01T10:00:00.000Z'));
+    // Only session is the one created at registration - should NOT count as returned.
+    await seedSession(alice.id, AT('2026-01-01T10:00:00.000Z'));
+
+    const rows = await activity.getRetentionCohorts(
+      { dateFrom: AT('2026-01-01T00:00:00.000Z'), dateTo: AT('2026-01-02T00:00:00.000Z') },
+      7,
+    );
+
+    expect(rows).toEqual([
+      { cohortDate: '2026-01-01', cohortSize: 1, returned: 0, returnRate: 0, isComplete: true },
+    ]);
+  });
+
+  it('counts a session on the day after registration as returned', async () => {
+    const alice = await seedUser(AT('2026-01-01T10:00:00.000Z'));
+    await seedSession(alice.id, AT('2026-01-02T10:00:00.000Z'));
+
+    const rows = await activity.getRetentionCohorts(
+      { dateFrom: AT('2026-01-01T00:00:00.000Z'), dateTo: AT('2026-01-02T00:00:00.000Z') },
+      7,
+    );
+
+    expect(rows[0]).toMatchObject({ cohortSize: 1, returned: 1, returnRate: 1 });
+  });
+
+  it('excludes a session after the retention window from the count', async () => {
+    const alice = await seedUser(AT('2026-01-01T10:00:00.000Z'));
+    await seedSession(alice.id, AT('2026-01-10T10:00:00.000Z'));
+
+    const rows = await activity.getRetentionCohorts(
+      { dateFrom: AT('2026-01-01T00:00:00.000Z'), dateTo: AT('2026-01-02T00:00:00.000Z') },
+      7,
+    );
+
+    expect(rows[0]).toMatchObject({ cohortSize: 1, returned: 0, returnRate: 0 });
   });
 
   it('flags an incomplete cohort whose window has not elapsed yet', async () => {
-    const { drizzle } = makeDrizzle([
-      { cohort_date: '2026-07-20', cohort_size: '5', returned: '1', is_complete: false },
-    ]);
-    const svc = new DrizzleAdminPlayerActivity(drizzle);
+    const now = new Date();
+    await seedUser(now);
 
-    const rows = await svc.getRetentionCohorts({}, 30);
+    const rows = await activity.getRetentionCohorts({ dateFrom: now, dateTo: now }, 30);
 
+    expect(rows).toHaveLength(1);
     expect(rows[0]?.isComplete).toBe(false);
   });
 
-  it('returns a 0 rate for an empty cohort instead of dividing by zero', async () => {
-    const { drizzle } = makeDrizzle([
-      { cohort_date: '2026-01-01', cohort_size: '0', returned: '0', is_complete: false },
-    ]);
-    const svc = new DrizzleAdminPlayerActivity(drizzle);
+  it('has no rows when nobody registered in the requested range', async () => {
+    const rows = await activity.getRetentionCohorts(
+      { dateFrom: AT('2026-01-01T00:00:00.000Z'), dateTo: AT('2026-01-01T00:00:00.000Z') },
+      30,
+    );
 
-    const rows = await svc.getRetentionCohorts({}, 30);
-
-    expect(rows[0]?.returnRate).toBe(0);
+    expect(rows).toEqual([]);
   });
 });
