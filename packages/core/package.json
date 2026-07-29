@@ -573,26 +573,6 @@
       "types": "./dist/player/server.d.ts",
       "import": "./dist/player/server.js",
       "default": "./dist/player/server.js"
-    },
-    "./player/contracts/eval-tournament": {
-      "types": "./dist/player/eval-tournament/contract/index.d.ts",
-      "import": "./dist/player/eval-tournament/contract/index.js",
-      "default": "./dist/player/eval-tournament/contract/index.js"
-    },
-    "./player/schema/eval-tournament": {
-      "types": "./dist/player/eval-tournament/schema/index.d.ts",
-      "import": "./dist/player/eval-tournament/schema/index.js",
-      "default": "./dist/player/eval-tournament/schema/index.js"
-    },
-    "./player/plugins/eval-tournament": {
-      "types": "./dist/player/eval-tournament/plugin.d.ts",
-      "import": "./dist/player/eval-tournament/plugin.js",
-      "default": "./dist/player/eval-tournament/plugin.js"
-    },
-    "./player/migrate/eval-tournament": {
-      "types": "./dist/player/eval-tournament/migrate.d.ts",
-      "import": "./dist/player/eval-tournament/migrate.js",
-      "default": "./dist/player/eval-tournament/migrate.js"
     }
   },
   "publishConfig": {

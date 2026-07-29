@@ -39,6 +39,7 @@ describe('toPlayerTagWithTag', () => {
         assignReason: 'reason',
         assignActor: 'manual',
         assignActorUserId: ACTOR_ID,
+        assignMetadata: null,
         removedAt: null,
         removalReason: null,
         removalActor: null,
@@ -55,6 +56,7 @@ describe('toPlayerTagWithTag', () => {
       assignReason: 'reason',
       assignActor: 'manual',
       assignActorUserId: ACTOR_ID,
+      assignMetadata: null,
       removedAt: null,
       removalReason: null,
       removalActor: null,
@@ -75,6 +77,7 @@ describe('toPlayerTagWithTag', () => {
         assignReason: 'reason',
         assignActor: 'scheduled',
         assignActorUserId: null,
+        assignMetadata: null,
         removedAt,
         removalReason: 'lapsed',
         removalActor: 'scheduled',
@@ -86,6 +89,32 @@ describe('toPlayerTagWithTag', () => {
     );
     expect(result.removedAt).toEqual(removedAt);
     expect(result.tag).toEqual({ key: 'inactive' });
+  });
+
+  it('passes a populated assignMetadata object through unchanged', () => {
+    const assignMetadata = {
+      amountBreach: { amount: '1500', threshold: '1000' },
+      countBreach: null,
+    };
+    const result = toPlayerTagWithTag(
+      {
+        id: PT_ID,
+        playerId: PLAYER_ID,
+        tagId: TAG_ID,
+        assignReason: 'reason',
+        assignActor: 'scheduled',
+        assignActorUserId: null,
+        assignMetadata,
+        removedAt: null,
+        removalReason: null,
+        removalActor: null,
+        removalActorUserId: null,
+        createdAt: DATE,
+        updatedAt: DATE,
+      },
+      'high_risk',
+    );
+    expect(result.assignMetadata).toEqual(assignMetadata);
   });
 });
 

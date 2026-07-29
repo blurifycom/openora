@@ -1,15 +1,19 @@
 import { tagAssignRemoveSource, tagKeys } from '@openora/core/contracts';
+import { isNull } from 'drizzle-orm';
 import {
   pgTable,
   uuid,
   text,
   timestamp,
   index,
+  uniqueIndex,
   boolean,
   pgEnum,
   integer,
   decimal,
+  jsonb,
 } from 'drizzle-orm/pg-core';
+import type { PlayerTagAssignMetadata } from '../contract/player-tag-assign-metadata.js';
 
 export const tagAssignRemoveSourceEnum = pgEnum('tag_assign_remove_source', tagAssignRemoveSource);
 export const tagKeyEnum = pgEnum('tag_key', tagKeys);
@@ -38,6 +42,7 @@ export const playerTag = pgTable(
     assignReason: text().notNull(),
     assignActor: tagAssignRemoveSourceEnum().notNull(),
     assignActorUserId: uuid() /* Potential FKey - user; null = system actor */,
+    assignMetadata: jsonb().$type<PlayerTagAssignMetadata>(),
     /* Removal data */
     removedAt: timestamp({ withTimezone: true }),
     removalReason: text(),
@@ -49,7 +54,16 @@ export const playerTag = pgTable(
       .$onUpdateFn(() => new Date()),
     createdAt: timestamp({ withTimezone: true }).notNull().defaultNow(),
   },
-  (table) => [index('player_tag_player_tag_idx').on(table.playerId, table.tagId)],
+  (table) => [
+    index('player_tag_player_tag_idx').on(table.playerId, table.tagId),
+    index('player_tag_tag_id_idx').on(table.tagId).where(isNull(table.removedAt)),
+    // DB-level source of truth for "at most one active assignment per (tag, player)" -
+    // the service pre-check is a friendly fast path only; this index is what actually
+    // closes the concurrent-insert / at-least-once-redelivery race.
+    uniqueIndex('player_tag_active_key')
+      .on(table.tagId, table.playerId)
+      .where(isNull(table.removedAt)),
+  ],
 );
 
 export type Tag = typeof tag.$inferSelect;

@@ -1,6 +1,101 @@
-import { describe, expect, it, vi } from 'vitest';
+import { describe, expect, it, vi, beforeEach } from 'vitest';
 import type { MigrationMeta } from 'drizzle-orm/migrator';
-import { applyMigrationsIndividually, withMigrationAdvisoryLock } from '../migrate.js';
+
+const { calls, poolInstances, failOnSql, FakePool, readMigrationFilesMock } = vi.hoisted(() => {
+  const calls: string[] = [];
+  const poolInstances: unknown[] = [];
+  const failOnSql = { value: null as string | null };
+
+  class FakeClient {
+    readonly query = vi.fn(async (sql: string) => {
+      if (failOnSql.value !== null && sql === failOnSql.value) {
+        throw new Error(`boom: ${sql}`);
+      }
+      calls.push(sql);
+      return { rows: [] };
+    });
+    readonly release = vi.fn();
+  }
+
+  class FakePool {
+    readonly query = vi.fn(async (sql: string) => {
+      if (failOnSql.value !== null && sql === failOnSql.value) {
+        throw new Error(`boom: ${sql}`);
+      }
+      calls.push(sql);
+      return { rows: [] };
+    });
+    readonly connect = vi.fn(async () => new FakeClient());
+    readonly end = vi.fn(async () => {
+      calls.push('end');
+    });
+    constructor(readonly opts: { connectionString: string }) {
+      poolInstances.push(this);
+    }
+  }
+
+  const readMigrationFilesMock = vi.fn(() => [] as MigrationMeta[]);
+
+  return { calls, poolInstances, failOnSql, FakePool, readMigrationFilesMock };
+});
+
+vi.mock('pg', () => ({ Pool: FakePool }));
+vi.mock('drizzle-orm/migrator', () => ({ readMigrationFiles: readMigrationFilesMock }));
+
+const { runMigrations, applyMigrationsIndividually, withMigrationAdvisoryLock } =
+  await import('../migrate.js');
+
+describe('runMigrations', () => {
+  beforeEach(() => {
+    calls.length = 0;
+    poolInstances.length = 0;
+    failOnSql.value = null;
+    readMigrationFilesMock.mockClear();
+  });
+
+  it('runs extensions, then preSql, before reading pending migrations', async () => {
+    await runMigrations({
+      migrationsFolder: '/tmp/migrations',
+      databaseUrl: 'postgres://test',
+      extensions: ['pg_trgm'],
+      preSql: ['UPDATE foo SET bar = 1', 'UPDATE baz SET qux = 2'],
+    });
+
+    const presqlIndex = calls.indexOf('UPDATE foo SET bar = 1');
+    const readIndex = calls.indexOf('SELECT hash FROM "drizzle"."__drizzle_migrations"');
+    expect(calls).toContain('CREATE EXTENSION IF NOT EXISTS pg_trgm');
+    expect(calls).toEqual(
+      expect.arrayContaining(['UPDATE foo SET bar = 1', 'UPDATE baz SET qux = 2']),
+    );
+    expect(presqlIndex).toBeLessThan(readIndex);
+    expect(calls).toContain('end');
+  });
+
+  it('is a no-op (beyond bookkeeping) when preSql is omitted', async () => {
+    await runMigrations({
+      migrationsFolder: '/tmp/migrations',
+      databaseUrl: 'postgres://test',
+    });
+
+    expect(calls).not.toContain(undefined);
+    expect(calls).toContain('end');
+  });
+
+  it('closes the pool even when a preSql statement throws, and never reads pending migrations', async () => {
+    failOnSql.value = 'THIS WILL FAIL';
+
+    await expect(
+      runMigrations({
+        migrationsFolder: '/tmp/migrations',
+        databaseUrl: 'postgres://test',
+        preSql: ['THIS WILL FAIL'],
+      }),
+    ).rejects.toThrow('boom: THIS WILL FAIL');
+
+    expect(readMigrationFilesMock).not.toHaveBeenCalled();
+    expect(calls).toContain('end');
+  });
+});
 
 const migrations: MigrationMeta[] = [
   {

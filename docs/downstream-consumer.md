@@ -174,7 +174,7 @@ Until OSS packages are published to npm, downstream consumers point at this work
   "overrides": {
     // Everything is folded into one package (ADR-0025): link @openora/core and you
     // get every domain as a subpath.
-    "@openora/core": "link:../oss/packages/core"
+    "@openora/core": "link:../openora/packages/core"
   }
 }
 ```

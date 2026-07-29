@@ -5,6 +5,8 @@
       "group": "admin-console",
       "tables": [],
       "routes": [
+        "admin-console.getGamePerformance",
+        "admin-console.getPlayerActivity",
         "admin-console.getStats",
         "admin-console.getTransaction",
         "admin-console.getUser",
@@ -120,6 +122,7 @@
         "compliance.activateCoolingOff",
         "compliance.activateSelfExclusion",
         "compliance.addGeoRule",
+        "compliance.bulkApproveKyc",
         "compliance.deleteLimit",
         "compliance.geoCheck",
         "compliance.getLimits",
@@ -130,7 +133,10 @@
         "compliance.liftSelfExclusion",
         "compliance.listGeoRules",
         "compliance.listRgFlags",
+        "compliance.overrideKycStatus",
+        "compliance.requestKycResubmission",
         "compliance.setPlayerLimit",
+        "compliance.streamKycStatus",
         "compliance.submitKyc",
         "compliance.upsertLimit"
       ]
@@ -324,6 +330,16 @@
   ],
   "adapters": [
     {
+      "category": "admin-game-reporting",
+      "interface": "GamePerformanceSortBy",
+      "token": "ADMIN_GAME_REPORTING",
+      "status": "wired",
+      "boundIn": [
+        "packages/core/src/admin-console/plugin.ts",
+        "packages/core/src/casino/gaming/plugin.ts"
+      ]
+    },
+    {
       "category": "admin-permission",
       "interface": "AdminGrant",
       "token": "ADMIN_PERMISSION_RESOLVER",
@@ -331,6 +347,16 @@
       "boundIn": [
         "packages/core/src/iam/plugin.ts",
         "packages/core/src/server/runtime/create-app.ts"
+      ]
+    },
+    {
+      "category": "admin-player-activity",
+      "interface": "PlayerActivityFilter",
+      "token": "ADMIN_PLAYER_ACTIVITY",
+      "status": "wired",
+      "boundIn": [
+        "packages/core/src/admin-console/plugin.ts",
+        "packages/core/src/iam/plugin.ts"
       ]
     },
     {
@@ -344,6 +370,7 @@
         "packages/core/src/engagement/chat-commands/plugin.ts",
         "packages/core/src/engagement/notifications/plugin.ts",
         "packages/core/src/pam/identity/plugin.ts",
+        "packages/core/src/pam/tag/plugin.ts",
         "packages/core/src/wallet/plugin.ts"
       ]
     },
@@ -372,7 +399,9 @@
       "boundIn": [
         "packages/core/src/admin-console/plugin.ts",
         "packages/core/src/audit/plugin.ts",
+        "packages/core/src/compliance/plugin.ts",
         "packages/core/src/engagement/chat-commands/plugin.ts",
+        "packages/core/src/pam/player-management/plugin.ts",
         "packages/core/src/wallet/plugin.ts"
       ]
     },
@@ -395,6 +424,7 @@
         "packages/core/src/analytics/plugin.ts",
         "packages/core/src/casino/lobby/plugin.ts",
         "packages/core/src/cms/plugin.ts",
+        "packages/core/src/compliance/plugin.ts",
         "packages/core/src/iam/plugin.ts",
         "packages/core/src/pam/identity/plugin.ts"
       ]
@@ -493,6 +523,7 @@
       "status": "wired",
       "boundIn": [
         "packages/core/src/compliance/plugin.ts",
+        "packages/core/src/engagement/notifications/plugin.ts",
         "packages/core/src/pam/tag/plugin.ts",
         "packages/core/src/server/runtime/create-app.ts"
       ]
@@ -573,6 +604,7 @@
       "token": "REALTIME_TRANSPORT",
       "status": "wired",
       "boundIn": [
+        "packages/core/src/compliance/plugin.ts",
         "packages/core/src/engagement/chat-commands/plugin.ts",
         "packages/core/src/engagement/chat/plugin.ts"
       ]
@@ -594,6 +626,16 @@
       "boundIn": [
         "packages/core/src/pam/identity/adapters/mock/mock-sms-adapter.ts",
         "packages/core/src/pam/identity/plugin.ts"
+      ]
+    },
+    {
+      "category": "tag-evaluation-commands",
+      "interface": "TagEvaluationWithdrawalRequestedArgs",
+      "token": "TAG_EVALUATION_COMMANDS",
+      "status": "wired",
+      "boundIn": [
+        "packages/core/src/pam/tag/plugin.ts",
+        "packages/core/src/wallet/plugin.ts"
       ]
     },
     {
@@ -642,6 +684,7 @@
     "cms.page.published",
     "cms.page.updated",
     "compliance.geo-rule.added",
+    "compliance.kyc.high_risk_signal_detected",
     "compliance.kyc.reverify_required",
     "compliance.kyc.submitted",
     "compliance.kyc.updated",
@@ -675,12 +718,15 @@
     "identity.user.registered",
     "identity.user.unlocked",
     "notifications.created",
+    "player.level.changed",
     "rg.cooling_off.activated",
     "rg.cooling_off.lifted",
     "rg.exclusion.login_blocked",
     "rg.limit.set",
     "rg.self_exclusion.activated",
     "rg.self_exclusion.lifted",
+    "tag.created",
+    "tag.deleted",
     "tag.player.assigned",
     "tag.player.removed",
     "tag.rule.upserted",
@@ -700,6 +746,10 @@
     {
       "name": "ActivateSelfExclusionInputSchema",
       "file": "packages/core/src/compliance/contract/rg.ts"
+    },
+    {
+      "name": "ActiveUsersTrendPointSchema",
+      "file": "packages/core/src/admin-console/contract/index.ts"
     },
     {
       "name": "AddGeoRuleInputSchema",
@@ -812,6 +862,18 @@
     {
       "name": "BrandSchema",
       "file": "packages/core/src/contracts/schemas/platform-config.ts"
+    },
+    {
+      "name": "BulkApproveKycInputSchema",
+      "file": "packages/core/src/compliance/contract/index.ts"
+    },
+    {
+      "name": "BulkApproveKycOutputSchema",
+      "file": "packages/core/src/compliance/contract/index.ts"
+    },
+    {
+      "name": "BulkApproveKycResultSchema",
+      "file": "packages/core/src/compliance/contract/index.ts"
     },
     {
       "name": "CatalogEntrySchema",
@@ -1006,6 +1068,18 @@
       "file": "packages/core/src/analytics/contract/funnel.ts"
     },
     {
+      "name": "GamePerformanceFilterSchema",
+      "file": "packages/core/src/admin-console/contract/index.ts"
+    },
+    {
+      "name": "GamePerformanceSchema",
+      "file": "packages/core/src/admin-console/contract/index.ts"
+    },
+    {
+      "name": "GamePerformanceSortBySchema",
+      "file": "packages/core/src/admin-console/contract/index.ts"
+    },
+    {
       "name": "GameRoundSchema",
       "file": "packages/core/src/casino/gaming/contract/index.ts"
     },
@@ -1020,6 +1094,10 @@
     {
       "name": "GameSummarySchema",
       "file": "packages/core/src/casino/lobby/contract/index.ts"
+    },
+    {
+      "name": "GameTypeSchema",
+      "file": "packages/core/src/contracts/schemas/game.ts"
     },
     {
       "name": "GeoRuleActionSchema",
@@ -1054,6 +1132,18 @@
       "file": "packages/core/src/contracts/schemas/reporting.ts"
     },
     {
+      "name": "HighRiskAmountBreachDetailSchema",
+      "file": "packages/core/src/pam/tag/contract/player-tag-assign-metadata.ts"
+    },
+    {
+      "name": "HighRiskAssignMetadataSchema",
+      "file": "packages/core/src/pam/tag/contract/player-tag-assign-metadata.ts"
+    },
+    {
+      "name": "HighRiskCountBreachDetailSchema",
+      "file": "packages/core/src/pam/tag/contract/player-tag-assign-metadata.ts"
+    },
+    {
       "name": "IamAssignmentSortBySchema",
       "file": "packages/core/src/iam/contract/index.ts"
     },
@@ -1086,6 +1176,14 @@
       "file": "packages/core/src/contracts/schemas/iam.ts"
     },
     {
+      "name": "KycCheckResultSchema",
+      "file": "packages/core/src/contracts/adapters/kyc.ts"
+    },
+    {
+      "name": "KycCheckStatusSchema",
+      "file": "packages/core/src/contracts/adapters/kyc.ts"
+    },
+    {
       "name": "KycConfigSchema",
       "file": "packages/core/src/contracts/schemas/platform-config.ts"
     },
@@ -1098,8 +1196,28 @@
       "file": "packages/core/src/compliance/contract/index.ts"
     },
     {
+      "name": "KycOverrideStatusSchema",
+      "file": "packages/core/src/compliance/contract/index.ts"
+    },
+    {
+      "name": "KycRiskSignalsSchema",
+      "file": "packages/core/src/compliance/contract/index.ts"
+    },
+    {
       "name": "KycStatusSchema",
       "file": "packages/core/src/contracts/schemas/player.ts"
+    },
+    {
+      "name": "KycStatusSourceSchema",
+      "file": "packages/core/src/contracts/schemas/player.ts"
+    },
+    {
+      "name": "KycStatusUpdatedSchema",
+      "file": "packages/core/src/contracts/schemas/events.ts"
+    },
+    {
+      "name": "KycStatusUpdateSchema",
+      "file": "packages/core/src/compliance/contract/index.ts"
     },
     {
       "name": "KycTriggeredBySchema",
@@ -1194,6 +1312,10 @@
       "file": "packages/core/src/contracts/schemas/identity.ts"
     },
     {
+      "name": "OverrideKycStatusInputSchema",
+      "file": "packages/core/src/compliance/contract/index.ts"
+    },
+    {
       "name": "PageQuerySchema",
       "file": "packages/core/src/contracts/kit.ts"
     },
@@ -1246,6 +1368,14 @@
       "file": "packages/core/src/admin-console/contract/index.ts"
     },
     {
+      "name": "PlayerActivityFilterSchema",
+      "file": "packages/core/src/admin-console/contract/index.ts"
+    },
+    {
+      "name": "PlayerActivitySchema",
+      "file": "packages/core/src/admin-console/contract/index.ts"
+    },
+    {
       "name": "PlayerEmailSchema",
       "file": "packages/core/src/admin-console/contract/index.ts"
     },
@@ -1290,6 +1420,10 @@
       "file": "packages/core/src/pam/player-management/contract/index.ts"
     },
     {
+      "name": "PlayerTagAssignMetadataSchema",
+      "file": "packages/core/src/pam/tag/contract/player-tag-assign-metadata.ts"
+    },
+    {
       "name": "playerTagSchema",
       "file": "packages/core/src/contracts/schemas/tag.ts"
     },
@@ -1330,6 +1464,10 @@
       "file": "packages/core/src/contracts/schemas/identity.ts"
     },
     {
+      "name": "RegistrationsOverTimePointSchema",
+      "file": "packages/core/src/admin-console/contract/index.ts"
+    },
+    {
       "name": "RejectWithdrawalInputSchema",
       "file": "packages/core/src/wallet/contract/index.ts"
     },
@@ -1338,12 +1476,24 @@
       "file": "packages/core/src/contracts/schemas/tag.ts"
     },
     {
+      "name": "replacePlayerTagSchema",
+      "file": "packages/core/src/contracts/schemas/tag.ts"
+    },
+    {
+      "name": "RequestKycResubmissionInputSchema",
+      "file": "packages/core/src/compliance/contract/index.ts"
+    },
+    {
       "name": "RequestPasswordResetInputSchema",
       "file": "packages/core/src/contracts/schemas/identity.ts"
     },
     {
       "name": "ResetPasswordInputSchema",
       "file": "packages/core/src/contracts/schemas/identity.ts"
+    },
+    {
+      "name": "RetentionCohortRowSchema",
+      "file": "packages/core/src/admin-console/contract/index.ts"
     },
     {
       "name": "RgExclusionSchema",
@@ -1407,7 +1557,15 @@
     },
     {
       "name": "SignedMoneyAmountSchema",
+      "file": "packages/core/src/contracts/schemas/common.ts"
+    },
+    {
+      "name": "SignedMoneyAmountSchema",
       "file": "packages/core/src/analytics/contract/financial.ts"
+    },
+    {
+      "name": "SortDirectionSchema",
+      "file": "packages/core/src/admin-console/contract/index.ts"
     },
     {
       "name": "SortOrderSchema",
@@ -1605,6 +1763,8 @@
     "GET /analytics/funnel/conversion",
     "GET /audit/export",
     "GET /audit/logs",
+    "GET /backoffice/analytics/games",
+    "GET /backoffice/analytics/players",
     "GET /backoffice/chat/rooms",
     "GET /backoffice/stats",
     "GET /backoffice/transactions",
@@ -1629,6 +1789,7 @@
     "GET /cms/pages/{slug}",
     "GET /compliance/geo-check",
     "GET /compliance/geo-rules",
+    "GET /compliance/kyc/stream",
     "GET /compliance/limits",
     "GET /compliance/players/{userId}/kyc",
     "GET /compliance/players/{userId}/rg",
@@ -1688,9 +1849,12 @@
     "POST /cms/pages",
     "POST /compliance/geo-rules",
     "POST /compliance/kyc",
+    "POST /compliance/kyc/bulk-approve",
     "POST /compliance/kyc/webhook",
     "POST /compliance/players/{userId}/cooling-off",
     "POST /compliance/players/{userId}/cooling-off/lift",
+    "POST /compliance/players/{userId}/kyc/override",
+    "POST /compliance/players/{userId}/kyc/resubmit",
     "POST /compliance/players/{userId}/self-exclusion",
     "POST /compliance/players/{userId}/self-exclusion/lift",
     "POST /gaming/rounds/start",

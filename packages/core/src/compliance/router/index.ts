@@ -1,13 +1,28 @@
+import { createHash } from 'node:crypto';
 import { implement, ORPCError } from '@orpc/server';
-import { AdminGuard, getUserId, mapErrors, type OssContext } from '@openora/core/server';
-import type { KycAdapter, KycWebhookVerifier } from '@openora/core/contracts';
-import { complianceContract } from '../contract/index.js';
+import {
+  AdminGuard,
+  createEventStreamGenerator,
+  getUserId,
+  mapErrors,
+  type OssContext,
+} from '@openora/core/server';
+import type {
+  AuditWritePort,
+  JobQueueAdapter,
+  KycAdapter,
+  KycWebhookVerifier,
+  QueueName,
+  RealtimeTransport,
+  User,
+} from '@openora/core/contracts';
+import { complianceContract, type KycStatusUpdate } from '../contract/index.js';
 import {
   ComplianceService,
   LimitNotFoundError,
   LimitOwnershipError,
 } from '../service/compliance.service.js';
-import { KycVerificationService } from '../service/kyc.service.js';
+import { KycVerificationService, PlayerNotFoundError } from '../service/kyc.service.js';
 import {
   RgService,
   ExclusionNotFoundError,
@@ -17,12 +32,31 @@ import {
 } from '../service/rg.service.js';
 import { RgMonitoringService } from '../service/rg-monitoring.service.js';
 
+export function kycStatusChannel(userId: User['id']): string {
+  return `compliance:kyc-status:${userId}`;
+}
+
+export function createKycStatusStream(
+  realtime: RealtimeTransport,
+  userId: User['id'],
+  signal: AbortSignal | undefined,
+): AsyncGenerator<KycStatusUpdate> {
+  return createEventStreamGenerator(
+    (push) => realtime.subscribe<KycStatusUpdate>(kycStatusChannel(userId), push),
+    { signal },
+  );
+}
+
 export function createComplianceRouter({
   compliance,
   adminGuard,
+  audit,
   kyc,
   kycAdapter,
   webhookVerifier,
+  jobQueue,
+  kycDecisionSyncQueue,
+  realtime,
   rg,
   rgMonitoring,
 }: {
@@ -30,9 +64,13 @@ export function createComplianceRouter({
   rgMonitoring: RgMonitoringService;
   compliance: ComplianceService;
   adminGuard: AdminGuard;
+  audit: AuditWritePort;
   kyc: KycVerificationService;
   kycAdapter: KycAdapter;
   webhookVerifier: KycWebhookVerifier;
+  jobQueue: JobQueueAdapter;
+  kycDecisionSyncQueue: QueueName;
+  realtime: RealtimeTransport;
 }) {
   const os = implement(complianceContract).$context<OssContext>();
 
@@ -79,18 +117,82 @@ export function createComplianceRouter({
       return kyc.submit(getUserId(context), input, context.clientMeta);
     }),
 
+    streamKycStatus: os.streamKycStatus.handler(({ signal, context }) => {
+      return createKycStatusStream(realtime, getUserId(context), signal);
+    }),
+
     // M2M provider webhook - no admin session. Verify the verbatim bytes against the
     // signature header or reject (fail closed); never fall back to an empty body.
     kycWebhook: os.kycWebhook.handler(async ({ context }) => {
       const rawBody = context.rawBody;
-      if (rawBody === undefined || !webhookVerifier.verify(rawBody, context.request.headers)) {
+      if (
+        rawBody === undefined ||
+        !(await webhookVerifier.verify(rawBody, context.request.headers))
+      ) {
         throw new ORPCError('UNAUTHORIZED', { message: 'Invalid KYC webhook signature' });
       }
       const decision = kycAdapter.parseWebhook?.(rawBody, context.request.headers);
       if (decision) {
-        await kyc.reconcile(decision.referenceId, decision.status);
+        // Dedup on a hash of the verbatim delivery bytes, never on referenceId:status.
+        // The vendor-neutral KycResult carries no delivery/event id, so the only
+        // signal that reliably distinguishes "the SAME decision resent" (retry storm
+        // within the vendor's own SLA - collapse it) from "a genuinely NEW decision
+        // that happens to land on a status we've seen before" (eg
+        // rejected -> approved -> rejected again - must run) is the raw body itself:
+        // a true redelivery is byte-identical: a new decision is not. Keying on
+        // referenceId:status instead would give BullMQ's permanent-by-default jobId
+        // dedup (see bullmq-job-queue.ts) a key that legitimately repeats, silently
+        // dropping the later, real decision forever.
+        const idempotencyKey = `kyc-decision-sync:${createHash('sha256').update(rawBody).digest('hex')}`;
+        // Stamped HERE, at webhook-arrival time - never in the job handler - so the
+        // reconcile monotonicity guard has the true delivery order even when the job
+        // queue (which ignores orderingKey) runs two decisions for the same reference
+        // out of order.
+        const receivedAt = new Date().toISOString();
+        await jobQueue.enqueue(
+          kycDecisionSyncQueue,
+          { referenceId: decision.referenceId, status: decision.status, receivedAt },
+          {
+            idempotencyKey,
+            orderingKey: decision.referenceId,
+            attempts: 5,
+            backoff: { type: 'exponential', delayMs: 1_000 },
+          },
+        );
       }
       return { ok: true as const };
+    }),
+
+    requestKycResubmission: os.requestKycResubmission.handler(async ({ input, context }) => {
+      const caller = await adminGuard.assert(context, 'compliance', 'override-limit');
+      return mapErrors({ NOT_FOUND: PlayerNotFoundError }, () =>
+        kyc.requestResubmission(input.userId, input.reason, caller.userId),
+      );
+    }),
+
+    overrideKycStatus: os.overrideKycStatus.handler(async ({ input, context }) => {
+      const caller = await adminGuard.assert(context, 'compliance', 'override-limit');
+      return mapErrors({ NOT_FOUND: PlayerNotFoundError }, () =>
+        kyc.overrideStatus(input.userId, input.status, input.reason, caller.userId),
+      );
+    }),
+
+    bulkApproveKyc: os.bulkApproveKyc.handler(async ({ input, context }) => {
+      const caller = await adminGuard.assert(context, 'compliance', 'override-limit');
+      const results = await kyc.bulkApprove(input.userIds, input.reason, caller.userId);
+      // A per-item failure never reaches overrideStatus, so it leaves no
+      // compliance.kyc.updated trail of its own - record the WHOLE attempted batch here
+      // (every userId, success/failure per item) so a probe of nonexistent ids is still
+      // visible in the audit log even when nothing downstream changed.
+      await audit.record({
+        actorId: caller.userId,
+        actorType: 'admin',
+        action: 'compliance.kyc.bulk_approve',
+        resourceType: 'compliance',
+        resourceId: null,
+        after: { reason: input.reason, results },
+      });
+      return { results };
     }),
 
     setPlayerLimit: os.setPlayerLimit.handler(async ({ input, context }) => {

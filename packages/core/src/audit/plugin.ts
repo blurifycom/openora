@@ -32,7 +32,11 @@ function mapEventToRecord(topic: string, p: Record<string, unknown>): RecordInpu
       resourceType: 'player',
       resourceId: str(p['userId']),
       before: { kycStatus: p['previousStatus'] ?? null },
-      after: { kycStatus: p['status'] ?? null },
+      after: {
+        kycStatus: p['status'] ?? null,
+        reason: p['reason'] ?? null,
+        source: p['source'] ?? null,
+      },
     };
   }
 
@@ -56,6 +60,22 @@ function mapEventToRecord(topic: string, p: Record<string, unknown>): RecordInpu
       resourceType: 'player',
       resourceId: str(p['userId']),
       after: { reason: p['reason'] ?? null },
+    };
+  }
+
+  if (topic === 'compliance.kyc.high_risk_signal_detected') {
+    return {
+      ...base,
+      actorType: 'system',
+      resourceType: 'player',
+      resourceId: str(p['userId']),
+      after: {
+        referenceId: p['referenceId'] ?? null,
+        vpnOrTorDetected: p['vpnOrTorDetected'] ?? null,
+        dataCenterIpDetected: p['dataCenterIpDetected'] ?? null,
+        duplicateDeviceDetected: p['duplicateDeviceDetected'] ?? null,
+        highRiskCountryDetected: p['highRiskCountryDetected'] ?? null,
+      },
     };
   }
 
@@ -306,6 +326,20 @@ function mapEventToRecord(topic: string, p: Record<string, unknown>): RecordInpu
     };
   }
 
+  // Admin changed a player's level via PlayerService.update(). resource = the
+  // subject player; before/after carry the level transition.
+  if (topic === 'player.level.changed') {
+    return {
+      ...base,
+      actorType: 'admin',
+      actorId: str(p['actorId']),
+      resourceType: 'player',
+      resourceId: str(p['userId']),
+      before: { level: p['previousLevel'] ?? null },
+      after: { level: p['newLevel'] ?? null },
+    };
+  }
+
   // System-automated or admin-manual tag assignment/removal.
   // actorId = SYSTEM_ACTOR_ID (zero UUID) for automated ops; admin user id for manual.
   if (topic === 'tag.player.assigned' || topic === 'tag.player.removed') {
@@ -361,6 +395,17 @@ function mapEventToRecord(topic: string, p: Record<string, unknown>): RecordInpu
       resourceType: 'tag-rule',
       resourceId: str(p['tagKey']),
       after: isRecord(p['after']) ? p['after'] : null,
+    };
+  }
+  // Admin created or deleted a tag catalog definition (the tag itself, not a
+  // player assignment - see the tag.player.assigned/removed branch for that).
+  if (topic === 'tag.created' || topic === 'tag.deleted') {
+    return {
+      ...base,
+      actorType: 'admin',
+      actorId: str(p['actorId']),
+      resourceType: 'tag',
+      resourceId: str(p['key']),
     };
   }
   // RG admin actions. `userId` = subject player (resource), `actorId` = acting admin.
@@ -474,6 +519,7 @@ const SUBSCRIBED_TOPICS: DomainEventName[] = [
   'compliance.kyc.updated',
   'compliance.kyc.submitted',
   'compliance.kyc.reverify_required',
+  'compliance.kyc.high_risk_signal_detected',
   'compliance.geo-rule.added',
   'cms.page.published',
   'cms.page.created',
@@ -490,9 +536,12 @@ const SUBSCRIBED_TOPICS: DomainEventName[] = [
   'iam.role.permissions.changed',
   'iam.role.assigned',
   'iam.role.revoked',
+  'tag.created',
+  'tag.deleted',
   'tag.player.assigned',
   'tag.player.removed',
   'tag.rule.upserted',
+  'player.level.changed',
 ] as const;
 
 export default definePlugin({

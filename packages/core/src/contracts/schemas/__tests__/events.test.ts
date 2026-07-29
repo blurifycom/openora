@@ -14,7 +14,7 @@ describe('getEventVersion', () => {
 
   it('returns the pinned version for a topic that has been bumped', () => {
     expect(getEventVersion('wallet.deposit.completed')).toBe(2);
-    expect(getEventVersion('compliance.kyc.updated')).toBe(3);
+    expect(getEventVersion('compliance.kyc.updated')).toBe(4);
   });
 
   it('defaults an unknown topic to 1 rather than throwing', () => {

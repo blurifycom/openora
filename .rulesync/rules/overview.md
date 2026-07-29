@@ -14,7 +14,7 @@ Sibling rules (load on demand; don't reopen settled questions): `conventions` (c
 
 ## Mission
 
-Open-source, headless, plugin-based, AI-native igaming framework. Consumers clone/install and extend it with their own modules, plugins, and adapters; the frontend lives in their consumer repo. The default backend is fully featured (auth, wallet, lobby, chat, compliance, backoffice). Nothing consumer-specific lives here.
+Open-source, headless, plugin-based, AI-native igaming framework. Consumers clone/install and extend it with their own modules, plugins, and adapters; the frontend lives in their consumer repo. The default backend covers auth, wallet, player management, compliance, audit, chat and backoffice; game lobby and CMS are early, and bonuses/tournaments/affiliates/jackpots are not built yet. Nothing consumer-specific lives here.
 
 ## Enhance the ask first (pre-step)
 
@@ -151,3 +151,4 @@ For platform development (this repo); consumer agents ship in `tools/templates/c
 - Read the touched module's `AGENTS.md` before editing it; keep it updated when invariants or extension seams change. Every `AGENTS.md` (this one included) stays lean: only what code can't say - invariants, rationale, gotchas, extension seams. Never route/table/event listings or "see `contract/`" pointers; agents already know to read `contract/`, `schema/`, `docs/catalog.json`. Claude Code loads them via generated per-module `CLAUDE.md` stubs (`tools/gen/gen-claude-stubs.mjs`, gitignored).
 - Small PRs scoped to one module; cross-module changes need human approval. Never commit unless asked; never push without explicit per-action confirmation.
 - ASCII only in code; short dashes (-) only, never long dashes.
+- **Never run two agents that both call `pnpm regen` (or `pnpm sync:agents`) against the same working tree.** Both rewrite shared generated state - drizzle migration journals, `docs/catalog.json`, `docs/openapi.json` - and the second run silently discards the first agent's freshly generated migration. The tree then holds a new enum value or table with NO migration: unit tests, lint and `boundaries` all still pass, so it surfaces at deploy, not in CI. Parallelise agents only across disjoint modules with regen serialised afterwards by one owner, and `git status -- '**/drizzle/migrations/**'` before handing off.

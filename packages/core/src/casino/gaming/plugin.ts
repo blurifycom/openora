@@ -1,5 +1,6 @@
 import { definePlugin, EVENT_BUS, DRIZZLE } from '@openora/core/server';
 import {
+  ADMIN_GAME_REPORTING,
   GAME_ADAPTER,
   PLAY_ELIGIBILITY,
   RNG_ADAPTER,
@@ -9,6 +10,7 @@ import { GamingService } from './service/gaming.service.js';
 import { createGamingRouter } from './router/index.js';
 import { MockGameAdapter } from './adapters/mock/mock-game-adapter.js';
 import { MockRngAdapter } from './adapters/mock/mock-rng-adapter.js';
+import { DrizzleAdminGameReporting } from './admin-reporting.js';
 
 export default definePlugin({
   id: 'gaming',
@@ -17,6 +19,7 @@ export default definePlugin({
   register(ctx) {
     ctx.provide(GAME_ADAPTER, () => new MockGameAdapter());
     ctx.provide(RNG_ADAPTER, () => new MockRngAdapter());
+    ctx.provide(ADMIN_GAME_REPORTING, (c) => new DrizzleAdminGameReporting(c.get(DRIZZLE)));
     ctx.routers.add('gaming', (c) =>
       createGamingRouter(
         new GamingService(

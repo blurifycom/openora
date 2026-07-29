@@ -2,19 +2,24 @@ import { definePlugin, EVENT_BUS, DRIZZLE, ADMIN_GUARD, createLogger } from '@op
 import * as z from 'zod';
 import {
   ADMIN_USER_DIRECTORY,
+  AUDIT_WRITER,
+  CACHE,
   GEO_IP_ADAPTER,
   JOB_QUEUE,
   KYC_ADAPTER,
   KYC_STATUS_WRITER,
+  KYC_VENDOR_STATUSES,
   KYC_WEBHOOK_VERIFIER,
   LOGIN_ENFORCEMENT,
   PLATFORM_CONFIG,
+  REALTIME_TRANSPORT,
   SEND_EMAIL,
   EMAIL_TEMPLATE_RENDERER,
   UuidSchema,
   domainEventSchemas,
   queue,
   type JobQueueAdapter,
+  type RealtimeTransport,
 } from '@openora/core/contracts';
 import { ComplianceService } from './service/compliance.service.js';
 import { KycVerificationService } from './service/kyc.service.js';
@@ -24,23 +29,31 @@ import {
   RG_EVAL_TRIGGERS,
   type RgEvalTrigger,
 } from './service/rg-monitoring.service.js';
-import { createComplianceRouter } from './router/index.js';
+import { createComplianceRouter, kycStatusChannel } from './router/index.js';
 import { HmacKycWebhookVerifier } from './adapters/hmac-kyc-webhook-verifier.js';
 
 const logger = createLogger('compliance');
 
 const RG_EVAL_QUEUE = queue('rg-eval');
 const RG_MONITOR_QUEUE = queue('rg-monitor');
+const KYC_DECISION_SYNC_QUEUE = queue('kyc-decision-sync');
 
 const RgEvalJobSchema = z.object({
   userId: UuidSchema,
   trigger: z.enum(RG_EVAL_TRIGGERS),
 });
 const RgMonitorJobSchema = z.object({});
+const KycDecisionSyncJobSchema = z.object({
+  referenceId: z.string().min(1),
+  status: z.enum(KYC_VENDOR_STATUSES),
+  // Webhook-arrival time, stamped by the router before enqueue - the monotonicity
+  // watermark `reconcile` compares against, immune to job-processing reordering.
+  receivedAt: z.iso.datetime(),
+});
 
 export default definePlugin({
   id: 'compliance',
-  dependsOn: ['player-management', 'identity', 'wallet', 'gaming'],
+  dependsOn: ['player-management', 'identity', 'wallet', 'gaming', 'audit'],
   requiresPorts: [LOGIN_ENFORCEMENT],
   register(ctx) {
     ctx.provide(KYC_WEBHOOK_VERIFIER, (c) => {
@@ -51,7 +64,7 @@ export default definePlugin({
         .min(1)
         .optional()
         .parse(process.env[envName] || undefined);
-      return new HmacKycWebhookVerifier(webhookSecret);
+      return new HmacKycWebhookVerifier(webhookSecret, c.get(CACHE));
     });
 
     // svcRefs are null at registration (subscriptions wire before router factories run)
@@ -60,6 +73,18 @@ export default definePlugin({
     let rgRef: RgService | null = null;
     let monitorRef: RgMonitoringService | null = null;
     let jobQueueRef: JobQueueAdapter | null = null;
+    let realtimeTransport: RealtimeTransport | null = null;
+
+    ctx.events.on('compliance.kyc.updated', (payload, envelope) => {
+      const parsed = domainEventSchemas['compliance.kyc.updated'].safeParse(payload);
+      if (!parsed.success || !realtimeTransport || !envelope) {
+        return;
+      }
+      return realtimeTransport.publish(kycStatusChannel(parsed.data.userId), {
+        eventId: envelope.eventId,
+        status: parsed.data.status,
+      });
+    });
 
     ctx.events.on('wallet.deposit.completed', (payload) => {
       const parsed = domainEventSchemas['wallet.deposit.completed'].safeParse(payload);
@@ -125,8 +150,22 @@ export default definePlugin({
         }
       },
     });
+    ctx.jobs.worker({
+      queue: KYC_DECISION_SYNC_QUEUE,
+      schema: KycDecisionSyncJobSchema,
+      handler: async ({ payload }) => {
+        if (kycRef) {
+          await kycRef.syncDecision(
+            payload.referenceId,
+            payload.status,
+            new Date(payload.receivedAt),
+          );
+        }
+      },
+    });
 
     ctx.routers.add('compliance', (c) => {
+      realtimeTransport = c.get(REALTIME_TRANSPORT);
       const platformConfig = c.has(PLATFORM_CONFIG) ? c.get(PLATFORM_CONFIG) : undefined;
       const kycAdapter = c.get(KYC_ADAPTER);
       // A KYC-gated withdrawal is meaningless while an auto-approving adapter (the default
@@ -174,9 +213,13 @@ export default definePlugin({
           c.has(GEO_IP_ADAPTER) ? c.get(GEO_IP_ADAPTER) : null,
         ),
         adminGuard: c.get(ADMIN_GUARD),
+        audit: c.get(AUDIT_WRITER),
         kyc,
         kycAdapter,
         webhookVerifier: c.get(KYC_WEBHOOK_VERIFIER),
+        jobQueue: jobQueueRef,
+        kycDecisionSyncQueue: KYC_DECISION_SYNC_QUEUE,
+        realtime: realtimeTransport,
         rg,
         rgMonitoring,
       });

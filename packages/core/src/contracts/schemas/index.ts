@@ -4,6 +4,7 @@ export * from './iam.js';
 export * from './compliance.js';
 export * from './player.js';
 export * from './wallet-tx.js';
+export * from './game.js';
 export * from './igaming-config.js';
 export * from './tag.js';
 export * from './platform-config.js';

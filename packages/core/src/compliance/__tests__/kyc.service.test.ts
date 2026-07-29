@@ -108,20 +108,27 @@ describe('KycVerificationService.submit (real PG)', () => {
     expect(rows).toHaveLength(1);
     expect(rows[0]).toMatchObject({
       referenceId: adapterResult.referenceId,
-      status: 'verified',
+      status: 'approved',
       triggeredBy: 'submission',
       documentTypes: ['passport'],
     });
     expect(rows[0]?.decidedAt).toBeInstanceOf(Date);
-    expect(result.status).toBe('verified');
+    expect(result.status).toBe('approved');
     expect(events.emit).toHaveBeenCalledWith(
       'compliance.kyc.submitted',
       expect.objectContaining({ userId, referenceId: adapterResult.referenceId }),
     );
-    expect(statusWriter.setStatus).toHaveBeenCalledWith(userId, 'verified', {
-      actorId: null,
-      source: 'vendor',
-    });
+    expect(statusWriter.setStatus).toHaveBeenCalledWith(
+      userId,
+      'approved',
+      { actorId: null, source: 'vendor' },
+      expect.anything(),
+    );
+    const statusCallOrder = vi.mocked(statusWriter.setStatus).mock.invocationCallOrder[0];
+    const emitCallOrder = vi.mocked(events.emit).mock.invocationCallOrder[0];
+    expect(statusCallOrder).toEqual(expect.any(Number));
+    expect(emitCallOrder).toEqual(expect.any(Number));
+    expect(statusCallOrder ?? Number.POSITIVE_INFINITY).toBeLessThan(emitCallOrder ?? 0);
   });
 
   it('leaves decidedAt unset while the vendor is still deciding', async () => {
@@ -134,14 +141,14 @@ describe('KycVerificationService.submit (real PG)', () => {
     expect(row).toMatchObject({ status: 'pending', decidedAt: null });
   });
 
-  it('keeps the history append-only across repeated submissions', async () => {
+  it('updates the existing verification when the vendor reuses a reference id', async () => {
     const { svc } = makeService();
     const userId = randomUUID();
 
     await svc.submit(userId, passportSubmission);
     await svc.submit(userId, passportSubmission);
 
-    expect(await verificationsOf(userId)).toHaveLength(2);
+    expect(await verificationsOf(userId)).toHaveLength(1);
   });
 
   it('passes a hosted-session verificationUrl through', async () => {
@@ -169,13 +176,16 @@ describe('KycVerificationService.reconcile (real PG)', () => {
     const userId = randomUUID();
     await svc.submit(userId, passportSubmission);
 
-    const result = await svc.reconcile(adapterResult.referenceId, 'approved', 'docs ok');
+    const result = await svc.reconcile(adapterResult.referenceId, 'approved', {
+      reason: 'docs ok',
+    });
 
-    expect(result).toMatchObject({ status: 'verified', decisionReason: 'docs ok' });
+    expect(result).toMatchObject({ status: 'approved', decisionReason: 'docs ok' });
     expect(statusWriter.setStatus).toHaveBeenLastCalledWith(
       userId,
-      'verified',
+      'approved',
       expect.objectContaining({ source: 'webhook', reason: 'docs ok' }),
+      expect.anything(),
     );
   });
 
@@ -183,7 +193,9 @@ describe('KycVerificationService.reconcile (real PG)', () => {
     const { svc, adapterResult } = makeService({ adapter: { status: 'pending' } });
     await svc.submit(randomUUID(), passportSubmission);
 
-    const result = await svc.reconcile(adapterResult.referenceId, 'rejected', 'blurry scan');
+    const result = await svc.reconcile(adapterResult.referenceId, 'rejected', {
+      reason: 'blurry scan',
+    });
 
     expect(result?.status).toBe('rejected');
   });

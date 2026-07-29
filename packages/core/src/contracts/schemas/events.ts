@@ -9,7 +9,7 @@ import {
 import { TagKeySchema } from './tag.js';
 import { CurrencyCodeSchema, CountryCodeSchema } from './igaming-config.js';
 import { PermissionLevelSchema } from './iam.js';
-import { KycStatusSchema } from './player.js';
+import { KycStatusSchema, KycStatusSourceSchema } from './player.js';
 
 // Optional request-origin metadata shared by HTTP-triggered events; both fields may be absent.
 const authContextBase = ClientMetaSchema.partial();
@@ -37,6 +37,15 @@ const walletTxnBase = z.object({
   amount: MoneyAmountSchema,
   currency: CurrencyCodeSchema,
   transactionId: UuidSchema,
+});
+
+export const KycStatusUpdatedSchema = z.object({
+  userId: UuidSchema,
+  actorId: UuidSchema.nullable(),
+  status: KycStatusSchema,
+  previousStatus: KycStatusSchema,
+  reason: z.string().nullable(),
+  source: KycStatusSourceSchema,
 });
 
 export const domainEventSchemas = {
@@ -225,12 +234,7 @@ export const domainEventSchemas = {
   // A player's KYC status changed. userId = subject player; actorId = the admin who
   // acted, or null for system-driven changes (vendor decision, webhook, threshold
   // re-KYC). before/after status records the transition for the audit log.
-  'compliance.kyc.updated': z.object({
-    userId: UuidSchema,
-    actorId: UuidSchema.nullable(),
-    status: KycStatusSchema,
-    previousStatus: KycStatusSchema,
-  }),
+  'compliance.kyc.updated': KycStatusUpdatedSchema,
 
   // A player submitted KYC documents; a verification record was created and sent to
   // the provider. userId = the submitting player; referenceId = the provider reference.
@@ -245,6 +249,15 @@ export const domainEventSchemas = {
   'compliance.kyc.reverify_required': z.object({
     userId: UuidSchema,
     reason: z.string(),
+  }),
+
+  'compliance.kyc.high_risk_signal_detected': z.object({
+    userId: UuidSchema,
+    referenceId: z.string(),
+    vpnOrTorDetected: z.boolean(),
+    dataCenterIpDetected: z.boolean(),
+    duplicateDeviceDetected: z.boolean(),
+    highRiskCountryDetected: z.boolean(),
   }),
 
   'notifications.created': z.object({ notificationId: UuidSchema, userId: UuidSchema }),
@@ -284,6 +297,10 @@ export const domainEventSchemas = {
   'iam.role.assigned': iamRoleEventBase.extend({ userId: UuidSchema }),
   'iam.role.revoked': iamRoleEventBase.extend({ userId: UuidSchema }),
 
+  // Emitted after an admin creates or deletes a tag catalog definition (the tag
+  // itself, not a player assignment - see tag.player.assigned/removed for that).
+  'tag.created': z.object({ key: TagKeySchema, isSticky: z.boolean(), actorId: UuidSchema }),
+  'tag.deleted': z.object({ key: TagKeySchema, actorId: UuidSchema }),
   // Emitted after any tag is assigned to or removed from a player (both automated and manual).
   // actorId is the user performing the action (SYSTEM_ACTOR_ID for automated ops).
   'tag.player.assigned': tagPlayerEventBase,
@@ -337,6 +354,12 @@ export const domainEventSchemas = {
     roomId: UuidSchema.nullable(),
     messageId: z.string(),
   }),
+  'player.level.changed': z.object({
+    userId: UuidSchema,
+    previousLevel: z.number().int(),
+    newLevel: z.number().int(),
+    actorId: UuidSchema,
+  }),
 } as const;
 
 export type DomainEventName = keyof typeof domainEventSchemas;
@@ -347,7 +370,7 @@ export type DomainEventPayload<K extends DomainEventName> = z.infer<(typeof doma
 export const domainEventVersions: Partial<Record<DomainEventName, number>> = {
   // v3: actorId is nullable - null marks a system-driven flip (vendor/webhook/reverify),
   // which the audit writer records as actorType 'system'.
-  'compliance.kyc.updated': 3,
+  'compliance.kyc.updated': 4,
   // v2: sessionToken (the raw bearer credential) replaced with sessionId - the token
   // must never be persisted to the audit log or handed back to any caller.
   'identity.session.revoked': 2,

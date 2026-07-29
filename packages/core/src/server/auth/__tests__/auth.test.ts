@@ -86,4 +86,33 @@ describe('createAuth', () => {
       expect(sendEmail).not.toHaveBeenCalled();
     });
   });
+
+  describe('cookie domain', () => {
+    it('leaves the session cookie host-only by default', () => {
+      createAuth({ db: {} as never });
+
+      expect(betterAuthMock.mock.calls[0][0].advanced.crossSubDomainCookies).toBeUndefined();
+    });
+
+    it('widens the session cookie to the domain passed in options', () => {
+      createAuth({ db: {} as never, cookieDomain: '.example.com' });
+
+      expect(betterAuthMock.mock.calls[0][0].advanced.crossSubDomainCookies).toEqual({
+        enabled: true,
+        domain: '.example.com',
+      });
+    });
+
+    it('falls back to AUTH_COOKIE_DOMAIN when no option is passed', () => {
+      vi.stubEnv('AUTH_COOKIE_DOMAIN', '.env-example.com');
+
+      createAuth({ db: {} as never });
+
+      expect(betterAuthMock.mock.calls[0][0].advanced.crossSubDomainCookies).toEqual({
+        enabled: true,
+        domain: '.env-example.com',
+      });
+      vi.unstubAllEnvs();
+    });
+  });
 });

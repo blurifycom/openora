@@ -2,13 +2,117 @@
 
 Rule-based player tagging. A tag lands on a player either manually (admin, actor stamped) or by rule evaluation on subscribed wallet/identity/compliance events; `playerTag` keeps the full assign/removal history rather than a current-state row, so removals stay auditable.
 
-## Invariants
+Tag keys: `high_roller`, `vip`, `bonus_abuser`, `high_risk`, `inactive`, `large_depositor`, `self_excluded`, `kyc_pending`, `kyc_rejected`, `basic_kyc_needed`, `advanced_kyc_needed`, `test_account`, `dormant_high_roller`, `withdrawal_review`, `multi_account`, `level`.
 
-- Sticky tags (`isSticky=true`) are never auto-removed - only a manual removal clears them.
-- Rule-driven assignment is threshold-based and deterministic per rule type; re-evaluating the same event is a no-op.
-- The daily inactive-player sweep (cron `0 2 * * *`) is idempotent - it may re-run without duplicating assignments.
+Routes: `createTag`/`deleteTag`/`listPlayerTags`/`listAssignableTags`/`assignPlayerTag`/`removePlayerTag` (all `adminGuard`-gated on the `tag` resource: `view`/`create`/`delete`), admin rule CRUD (`listTagRules`, `upsertTagRule`, gated on `tag-rule`). Players are never notified of tags applied to their account - no player-facing route exists.
 
-## Extension points
+Subscribes to wallet.deposit.completed, wallet.withdrawal.completed, wallet.withdrawal.requested, identity.user.login, identity.user.phone_login, compliance.kyc.submitted, compliance.kyc.updated, compliance.kyc.reverify_required, compliance.kyc.high_risk_signal_detected, rg.self*exclusion.activated, rg.self_exclusion.lifted, player.level.changed; evaluates rules on each event. `withdrawal_review` triggers on the \_requested* event (the attempt, before funds move), not `completed` - by the time a withdrawal completes the review purpose is defeated. `rg.self_exclusion.activated`/`.lifted` are a direct 1:1 mapping onto `self_excluded` (`onSelfExclusionActivated` -> `tryAssignTag`, `onSelfExclusionLifted` -> `tryRemoveTag`) - no threshold, no rule row, just a tag mirror of the RG exclusion lifecycle. `player.level.changed` (emitted by player-management's `PlayerService.update()` after commit, only when an admin edits `player.level`) drives `onPlayerLevelChanged`: an ATOMIC same-key swap via `TagService.replacePlayerTag` - removal of the prior active `level` row (silent no-op when absent) + insert of the new one with the level value in a fresh `assignReason`, both on ONE transaction. Never the two-transaction `tryRemoveTag`/`tryAssignTag` pair: a mid-swap failure there would strand the player with the old row removed and no new one committed (the handler's rejection is swallowed by `EventBus.on`, no retry). The loser of a genuine concurrent replace serializes on the row lock + `player_tag_active_key` and throws `TagAlreadyInUseError` with nothing committed - the handler swallows it as the usual idempotent no-op. Residual (accepted, cosmetic): under two rapid interleaved level edits the surviving row's `assignReason` may reflect the race winner rather than the last emit - `player.level` on the player row stays the source of truth; the tag text is a display convenience.
 
-- Provides `PLAYER_TAGS` for other modules to query a player's active tags.
-- Consumes wallet + identity reader ports; `dependsOn` those modules.
+`level` is a single mutable tag key, `isSticky: false`, NOT one enum value per level number - the numeric level lives only in `assignReason` text (`` `player level set to ${newLevel}` ``), never in the tag key itself. It is assigned/replaced exclusively via the `player.level.changed` event above; there is no player-creation-time bootstrap/hook, so a player an admin has never edited the level of has no `level` tag at all. Like every event-driven tag, its `player_tag` rows carry `assignActor: 'scheduled'` / `assignActorUserId: SYSTEM_ACTOR_ID` even though the triggering event names the real admin `actorId` - the per-row trail does NOT identify the admin; the platform audit log (which subscribes to `player.level.changed` directly) is what records the real actor.
+
+`multi_account` is a sticky automatic risk tag backed by an enabled, no-threshold `tagRule`: on password or phone login, `TagEvaluationService` asks the `IDENTITY_READER` port for other player users that authenticated from the same login IP. When at least one match exists, it assigns `multi_account` to the current player and every matched player. The tag reason deliberately names only the identity signal; it must not copy the IP address or other raw PII into `player_tag.assign_reason`.
+
+`bonus_abuser` remains manually assignable/removable through the generic admin routes, and is also automatically assigned by the shared-login-IP multi-account risk path above when its enabled, no-threshold rule exists. That coupling is intentional for BF-317: the concrete risk signal is multi-account behavior, while the bonus-abuse designation stays sticky until an admin clears it.
+
+`withdrawal_review` evaluation has TWO paths, both idempotent against each other via `TagAlreadyInUseError`: (1) the async `wallet.withdrawal.requested` subscription above (`onWithdrawalRequested` -> `tryAssignTag`, best-effort fan-out for other consumers), and (2) the synchronous `TAG_EVALUATION_COMMANDS` command port (`evaluateWithdrawalRequested`, bound in `plugin.ts`) that wallet's `withdraw()` calls and awaits, on its OWN withdrawal transaction handle, before its auto-approval decision reads risk tags. Money/AML-adjacent decisions never depend on an `EventBus` emit alone (`EventBus.emit` is never awaited by the emitter - see `messaging-and-microservices` "money never flows over events"), so path (2) is the one that actually gates auto-approval; path (1) exists only for other subscribers. `evaluateWithdrawalRequested` writes through `TagService.assignPlayerTagInTx(trx, args)` - the caller-supplied-tx counterpart to `assignPlayerTag` (same idempotent-insert core, factored into a shared private `_assignPlayerTagOnTx`) - so the assignment commits atomically with the caller's own write. Any unexpected error from `evaluateWithdrawalRequested` propagates and aborts the caller's withdrawal (fail-closed: a review-gate evaluation failure must block the withdrawal, not silently skip review).
+
+Daily scheduled job (cron 0 2 \* \* \*, idempotent, queue `tag.daily-evaluation`) runs three independent sweeps:
+
+- **inactive**: assigns to players inactive for `thresholdDays`; removed on next login (`onUserLogin`).
+- **dormant_high_roller**: a co-occurrence check, not a history lookup - `high_roller` is only re-evaluated on deposit, so a dormant player never loses it that way. Assigns when a player is both currently inactive (its own `thresholdDays`, independent of the `inactive` rule's) AND currently holds an active `high_roller` tag. Removed on next login; `high_roller` itself is left untouched.
+- **high_risk resweep (removal only, frequency dimension only)**: `high_risk` is assign-only via `onWithdrawalCompleted`; a rolling withdrawal-count window can drop back under threshold with no new withdrawal, so this sweep batch-rechecks every current holder's windowed count in one `getWithdrawalCountsInWindow` call and removes the tag once the count falls below `thresholdCount`. `getWithdrawalCountsInWindow` is optional on the `WalletReader` port (so an external/consumer implementation that predates it still satisfies the port) - when absent, the resweep falls back to `mapConcurrent`-bounded fan-out over the singular `getWithdrawalCountInWindow`, one call per holder. Deliberately does NOT recheck the amount dimension: assignment's amount check has no time bound (a single withdrawal, ever), so a windowed recheck would silently de-designate a still-risky player once their triggering withdrawal ages out of the window - an AML false negative. Skipped entirely when the rule's `thresholdDays` OR `thresholdCount` is null (an amount-only rule isn't resweepable by the cron; stays until an admin clears it or a future withdrawal re-triggers assignment). `playerTag.assignMetadata` records which breach condition(s) fired at assignment (`amountBreach`, `countBreach`, or both) - the resweep additionally skips any holder whose metadata shows an amount breach (same amount-dimension-is-never-resweepable rule, now enforced per-holder instead of only at the rule level) or whose metadata is `null` (pre-migration/legacy row, or a row the resweep can't attribute to a known breach) - a null-metadata holder stays tagged until an admin manually clears it or a future `onWithdrawalCompleted` re-assignment populates metadata. A subsequent breach discovered while `high_risk` is already active is not silently dropped by the idempotent no-op: `_assignPlayerTagOnTx` merges it into the existing row's `assignMetadata`, filling only a dimension that was previously null and never overwriting one already recorded - this is what keeps the resweep's amount-dimension gate accurate over the tag's whole active lifetime, not just at first assignment.
+
+`withdrawal_review` is sticky (isSticky=true, seeded disabled) - assign-only, never auto-removed by any code path; requires manual admin removal via `removePlayerTag`.
+
+Provides `PLAYER_TAGS` (read active tags) and `TAG_EVALUATION_COMMANDS` (synchronous withdrawal_review evaluation, see above) ports for other modules. `listActiveHoldersByTagKey` on `TagService` is internal to this module (used only by the high_risk resweep) - deliberately not exposed on the `PLAYER_TAGS` port. Depends on wallet and identity modules for reader ports (`WALLET_READER`, `IDENTITY_READER`, `ADMIN_USER_DIRECTORY` - the last for a live KYC-status read, since the tag module owns no KYC data of its own) - this is why wallet can't `dependsOn: ['tag']` in return (it would cycle); wallet resolves both `PLAYER_TAGS` and `TAG_EVALUATION_COMMANDS` lazily via `c.has(...)` in its router factory instead, same as every other optional cross-domain port in this repo.
+
+KYC tags are lifecycle-managed but sticky where required: `kyc_pending` is assigned only while the profile status is `pending` or `resubmission_requested`; `kyc_rejected` is assigned on `rejected` and is not removed by resubmission/submission. It is cleared only once KYC reaches `verified` or `manually_overridden`. Cleanup on terminal approval runs even if a rule is disabled so stale rows cannot strand.
+
+Sticky tags (isSticky=true) are not auto-removed except where a lifecycle explicitly defines the removal (`kyc_rejected` on approval, `self_excluded` on lift). Manual assignment/removal always works. Event-driven assignment is rule-threshold-based or deterministic per signal type.
+
+`assignPlayerTag`'s "at most one active assignment per (tag, player)" guarantee is DB-enforced, not just app-level: a partial unique index (`player_tag_active_key` on `(tagId, playerId) WHERE removedAt IS NULL`) backs an `onConflictDoNothing` insert. The service's pre-check SELECT is a fast/friendly path only; the loser of a genuine concurrent race (or the same at-least-once event redelivered) hits the index and throws `TagAlreadyInUseError` from the insert itself, closing the race window completely. `tryAssignTag` (`TagEvaluationService`) already treats that error as an idempotent no-op, so redelivery stays correctly silent while no longer producing a duplicate active row.
+
+`migrate.ts`'s `preSql` (the `runMigrations` escape hatch for raw pre-migration SQL, alongside `extensions`) runs a dedupe `UPDATE` before every migration apply, not just once: a database that predates `player_tag_active_key` could have accumulated duplicate active `(tagId, playerId)` rows from the pre-fix race described above, and `CREATE UNIQUE INDEX` aborts outright on a live violation. The dedupe keeps the earliest row (by `createdAt`) per pair and soft-removes the rest via the same `removedAt`/`removalReason`/`removalActor` columns `removePlayerTag` uses, so the cleanup is audit-visible rather than a silent `DELETE`. It's guarded by `to_regclass('public.player_tag')` so it no-ops on a fresh install (where `preSql` runs before migration `0000` even creates the table) and is idempotent on every subsequent run (nothing left to dedupe once at most one active row remains per pair).
+
+Router handlers wire `mapErrors` (`createTag` -> `CONFLICT: TagKeyConflictError` on a duplicate `tag.key`; `deleteTag` -> `NOT_FOUND: TagNotFoundError` when the key does not exist (no row deleted) / `CONFLICT: TagInUseError` on an FK-restrict violation (a `playerTag`/`tagRule` row still references the key); `assignPlayerTag` -> `NOT_FOUND: TagNotFoundError` / `CONFLICT: TagAlreadyInUseError`; `removePlayerTag` -> `NOT_FOUND: [TagNotFoundError, TagAssignmentNotFoundError]`; `upsertTagRule` -> `NOT_FOUND: TagRuleNotFoundError`) so domain errors surface as the correct HTTP status instead of leaking as a raw 500. `deleteTag` checks `.returning()` on the delete before emitting `tag.deleted` - a no-op delete of a missing key must not produce a false "deleted" audit entry. `TagKeyConflictError`/`TagInUseError` are named factories from `server/kernel/domain-error.ts` (the sanctioned per-entity pattern every other module uses), not the generic `AppError` classes - `TagService` detects the specific Postgres constraint violation (23505 for `createTag`, 23503 for `deleteTag`) before falling back to the module's generic `mapDbError` for anything else. `TagInUseError` is distinct from `TagAlreadyInUseError`: the former means "tag key still referenced, can't delete the catalog entry"; the latter means "player already holds this tag active".
+
+`createTag`/`deleteTag` emit `tag.created`/`tag.deleted` (actor = the admin caller, threaded from the router via `getUserId(context)`) after the DB commit, subscribed by the audit module alongside `tag.player.assigned`/`removed`/`tag.rule.upserted` - these routes became real, accountable admin mutations once they were gated by `adminGuard` in this same change, so they inherit the audit obligation.
+
+**Migrations never seed data (this module included)** - the `tag`/`tagRule` catalog rows (including `dormant_high_roller`/`withdrawal_review`) are created by `seedTag()` (`seed/index.ts`, wired into `pnpm seed` via `tools/db/seed.ts`), not baked into a migration, consistent with every other module. Both `seedTags` and `seedTagRules` are idempotent (`onConflictDoUpdate`), safe to re-run against a database that already has rows. Migration `0002_silent_skaar.sql` (adds the `dormant_high_roller`/`withdrawal_review` enum values + supporting indexes) does NOT create their `tag`/`tagRule` rows - **on an already-migrated database, re-run `pnpm seed` after applying that migration** so those two tags exist before the daily sweep/resweep (or any admin `assignPlayerTag` call) references them by key.
+
+## KYC filter tags (`kyc_pending`, `kyc_rejected`, `basic_kyc_needed`, `advanced_kyc_needed`)
+
+Four backoffice filter tags over the player's KYC state, all driven by `TagEvaluationService`
+and gated by their own `tagRule.isEnabled` row (all four ship enabled by default, no
+threshold - the condition is the KYC status itself, not a configurable amount/count).
+
+- `kyc_pending` (not sticky) - KYC submitted, awaiting a decision.
+- `kyc_rejected` (sticky) - most recent decision was a rejection.
+- `basic_kyc_needed` (not sticky) - **best-guess semantics, not a product spec**: KYC
+  status is `not_started` or `rejected` AND the player has at least one completed
+  deposit. An untouched, deposit-free account is not worth chasing. Two independent
+  triggers implement the OR/AND, since no single event carries both halves:
+  - `TagEvaluationService.evaluateBasicKycNeededOnDeposit` (called from
+    `onDepositCompleted`) - catches "still not_started" or "still rejected" the moment
+    a (further) deposit lands. Reads the LIVE status via `ADMIN_USER_DIRECTORY.lookupPlayers`
+    (normalized through `normalizeKycStatus` first).
+  - `TagEvaluationService.evaluateBasicKycNeededOnRejection` (called from
+    `onKycStatusUpdated`'s `rejected` branch) - catches the case where the deposit
+    predates the rejection (submit -> deposit already happened -> later rejected), via
+    `WALLET_READER.getLifetimeDeposit(userId) > 0`.
+  - Removed on `compliance.kyc.submitted` (fresh submission - no longer `not_started`)
+    and on `compliance.kyc.updated` `approved`/`manually_overridden` (resolved).
+  - **Known limitation**: the `not_started` arm has no direct signal for "this player
+    was manually approved (`source: 'manual'`) without ever submitting" - it infers
+    `not_started` purely from the live `player.kycStatus` read, which is correct in
+    that case too (a manual approval sets `kycStatus: 'approved'`, so the live read
+    already reflects it). The proxy that WOULD be wrong - inferring from tag **history**
+    (ever held `kyc_pending`) - was deliberately not used; the live `ADMIN_USER_DIRECTORY`
+    read is exact. No known gap remains for this arm.
+- `advanced_kyc_needed` (sticky) - the player's cumulative deposits crossed the
+  re-KYC threshold band, i.e. the same condition that fires compliance's
+  `reverify_threshold` re-KYC path (`KycVerificationService.handleDeposit`). This
+  module does NOT re-derive that threshold check - it subscribes to
+  `compliance.kyc.reverify_required` (compliance's own signal for "this fired") and
+  applies the tag as a pure label, so the two can never drift. Removed on
+  `compliance.kyc.submitted` (re-verification submitted) and on
+  `compliance.kyc.updated` approved/manually_overridden (resolved). Marked sticky -
+  same rationale as `kyc_rejected` (see below): a materially higher-stakes,
+  AML-relevant signal that should stay visible for backoffice review rather than
+  silently clear the instant a follow-up event fires; it is still explicitly
+  removed on the deliberate resolution transitions above (same precedent as
+  `kyc_rejected`'s explicit clears), never by a blanket sweep.
+
+**Stickiness decisions for the two new tags** (the brief left this open; existing
+precedent - `kyc_pending` not sticky, `kyc_rejected` sticky - guided the calls above):
+`basic_kyc_needed` mirrors `kyc_pending` (a transient funnel label that should vanish
+automatically the moment the condition no longer holds, so operators don't chase an
+already-fixed player); `advanced_kyc_needed` mirrors `kyc_rejected` (a compliance-review
+signal worth keeping visible, not silently swallowed by routine event churn).
+
+**Vendor-workflow caveat (important - read before treating these as enforcement):**
+the platform ships exactly ONE vendor KYC workflow (`MockKycAdapter`/a real vendor's
+single hosted flow) that performs ID + liveness + face match + proof-of-address + AML
+screening all in a single pass - see `compliance/AGENTS.md`. "Basic" (ID + liveness +
+face match) vs "Advanced" (Basic + proof of address + AML) is therefore a LABELLING
+convention layered over that one pass, driven by deposit-threshold triggers - it is
+NOT two separate, independently enforced verification tiers. Nothing in the platform
+gates a player's ability to deposit/withdraw differently based on which of these two
+tags they carry; they only drive the backoffice player-list filter. A real tier split
+(a player who cleared "basic" but not "advanced" being unable to withdraw past some
+limit, for instance) would need two separate vendor workflows/decisions and is a
+product decision out of scope here.
+
+## `high_risk` - second trigger: KYC device/IP risk signals
+
+`high_risk` (sticky) has two independent triggers, both assign-only (never
+auto-removed - risk designation requires an explicit admin clear):
+
+- `onWithdrawalCompleted` - existing withdrawal amount/frequency threshold rule.
+- `onKycHighRiskSignalDetected` - compliance.kyc.high_risk_signal_detected, fired when
+  the player's KYC device/IP screening (see `compliance/AGENTS.md`) trips compliance's
+  own `warrantsHighRiskTag` rule (duplicate device or high-risk country; never a bare
+  VPN/Tor or datacenter-IP signal). This module does not re-derive which of the four
+  booleans qualify - it subscribes to compliance's own decision and applies the tag as
+  a pure label, the same precedent as `advanced_kyc_needed` reacting to
+  `compliance.kyc.reverify_required`.

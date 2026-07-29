@@ -1,8 +1,9 @@
-import { oc } from '@orpc/contract';
+import { eventIterator, oc } from '@orpc/contract';
 import * as z from 'zod';
 import {
   UuidSchema,
   KycStatusSchema,
+  KycCheckResultSchema,
   TimestampSchema,
   CountryCodeSchema,
   GeoRuleActionSchema,
@@ -21,6 +22,14 @@ export const KycDocumentSchema = z.object({
   backUrl: z.string().min(1).optional(),
 });
 
+export const KycRiskSignalsSchema = z.object({
+  vpnOrTorDetected: z.boolean(),
+  dataCenterIpDetected: z.boolean(),
+  duplicateDeviceDetected: z.boolean(),
+  highRiskCountryDetected: z.boolean(),
+  deviceFingerprints: z.array(z.string()),
+});
+
 export const KycVerificationSchema = z.object({
   id: UuidSchema,
   userId: UuidSchema,
@@ -30,6 +39,8 @@ export const KycVerificationSchema = z.object({
   documentTypes: z.array(KycDocumentTypeSchema),
   decisionReason: z.string().nullable(),
   triggeredBy: KycTriggeredBySchema,
+  riskSignals: KycRiskSignalsSchema.nullable(),
+  checks: z.array(KycCheckResultSchema).nullable(),
   submittedAt: TimestampSchema,
   decidedAt: TimestampSchema.nullable(),
   createdAt: TimestampSchema,
@@ -52,6 +63,54 @@ export const PlayerKycViewSchema = z.object({
 });
 export type PlayerKycView = z.infer<typeof PlayerKycViewSchema>;
 export type KycVerification = z.infer<typeof KycVerificationSchema>;
+
+export const KycStatusUpdateSchema = z.object({
+  eventId: UuidSchema,
+  status: KycStatusSchema,
+});
+export type KycStatusUpdate = z.infer<typeof KycStatusUpdateSchema>;
+
+const NonEmptyReasonSchema = z.string().trim().min(1);
+
+export const RequestKycResubmissionInputSchema = z.object({
+  userId: UuidSchema,
+  reason: NonEmptyReasonSchema,
+});
+export type RequestKycResubmissionInput = z.infer<typeof RequestKycResubmissionInputSchema>;
+
+export const KycOverrideStatusSchema = KycStatusSchema.exclude(['verified', 'manually_overridden']);
+export type KycOverrideStatus = z.infer<typeof KycOverrideStatusSchema>;
+
+export const OverrideKycStatusInputSchema = z.object({
+  userId: UuidSchema,
+  status: KycOverrideStatusSchema,
+  reason: NonEmptyReasonSchema,
+});
+export type OverrideKycStatusInput = z.infer<typeof OverrideKycStatusInputSchema>;
+
+const MAX_BULK_KYC_APPROVE_USERS = 100;
+
+export const BulkApproveKycInputSchema = z.object({
+  userIds: z
+    .array(UuidSchema)
+    .min(1)
+    .max(MAX_BULK_KYC_APPROVE_USERS)
+    .refine((ids) => new Set(ids).size === ids.length, { message: 'userIds must be unique' }),
+  reason: NonEmptyReasonSchema,
+});
+export type BulkApproveKycInput = z.infer<typeof BulkApproveKycInputSchema>;
+
+export const BulkApproveKycResultSchema = z.object({
+  userId: UuidSchema,
+  success: z.boolean(),
+  error: z.string().nullable(),
+});
+export type BulkApproveKycResult = z.infer<typeof BulkApproveKycResultSchema>;
+
+export const BulkApproveKycOutputSchema = z.object({
+  results: z.array(BulkApproveKycResultSchema),
+});
+export type BulkApproveKycOutput = z.infer<typeof BulkApproveKycOutputSchema>;
 
 export const GeoRuleSchema = z.object({
   id: UuidSchema,
@@ -106,10 +165,29 @@ export const complianceContract = {
     .input(SubmitKycInputSchema)
     .output(SubmitKycOutputSchema),
 
+  streamKycStatus: oc
+    .route({ method: 'GET', path: '/compliance/kyc/stream' })
+    .output(eventIterator(KycStatusUpdateSchema)),
+
   kycWebhook: oc
     .route({ method: 'POST', path: '/compliance/kyc/webhook' })
     .input(z.record(z.string(), z.unknown()))
     .output(z.object({ ok: z.literal(true) })),
+
+  requestKycResubmission: oc
+    .route({ method: 'POST', path: '/compliance/players/{userId}/kyc/resubmit' })
+    .input(RequestKycResubmissionInputSchema)
+    .output(KycVerificationSchema),
+
+  overrideKycStatus: oc
+    .route({ method: 'POST', path: '/compliance/players/{userId}/kyc/override' })
+    .input(OverrideKycStatusInputSchema)
+    .output(KycVerificationSchema),
+
+  bulkApproveKyc: oc
+    .route({ method: 'POST', path: '/compliance/kyc/bulk-approve' })
+    .input(BulkApproveKycInputSchema)
+    .output(BulkApproveKycOutputSchema),
 
   ...rgContract,
 };

@@ -495,6 +495,10 @@ export class IdentityService {
         await this.clearLockout(existingUser.id);
       }
 
+      await this.drizzle.db
+        .update(session)
+        .set({ ipAddress: ip, userAgent })
+        .where(eq(session.token, body.token));
       this.events.emit('identity.user.login', { userId: body.user.id, ip, userAgent });
       const sessionDurationSeconds =
         this.auth.options.session?.expiresIn ?? SESSION_DURATION_IN_SECONDS;

@@ -8,10 +8,11 @@
 [![pnpm](https://img.shields.io/badge/pnpm-11%2B-F69220?logo=pnpm&logoColor=white)](#requirements)
 [![PRs welcome](https://img.shields.io/badge/PRs-welcome-brightgreen.svg)](./CONTRIBUTING.md)
 [![Code of Conduct](https://img.shields.io/badge/code%20of%20conduct-v2.1-ff69b4.svg)](./CODE_OF_CONDUCT.md)
+[![Discussions](https://img.shields.io/github/discussions/blurifycom/openora?label=discussions&color=6f42c1)](https://github.com/blurifycom/openora/discussions)
 
 > Open-source, headless, plugin-based, AI-native iGaming framework. Clone it, extend it, deploy it - without forking core.
 
-The platform ships the full backend surface (auth, wallet, lobby, chat, compliance, backoffice, CMS) as composable modules and a typed SDK. Your frontend, branding, and vendor adapters live in your own consumer repo and talk to it over HTTP. Nothing operator-specific lives here.
+The platform ships the backend surface (auth, wallet, player management, compliance, audit, chat, backoffice) as composable modules and a typed SDK. Game lobby and CMS are early; bonuses, tournaments, affiliates and jackpots are not built yet - the order is being picked in [Discussions](https://github.com/blurifycom/openora/discussions/24). Your frontend, branding, and vendor adapters live in your own consumer repo and talk to it over HTTP. Nothing operator-specific lives here.
 
 > [!WARNING]
 > **Status: alpha (pre-1.0).** Contracts, package layout, and APIs may change between releases. Not yet recommended for production without your own review. See the [roadmap](#roadmap).
@@ -36,6 +37,7 @@ The platform ships the full backend surface (auth, wallet, lobby, chat, complian
 - [Frontend](#frontend)
 - [Roadmap](#roadmap)
 - [Documentation](#documentation)
+- [Community](#community)
 - [Contributing](#contributing)
 - [Security](#security)
 - [License](#license)
@@ -154,6 +156,17 @@ Planned work and progress live on the public board: **[openora roadmap](https://
 - Pillars & decision tree: [AGENTS.md](./AGENTS.md)
 - ADRs: [docs/adr/](./docs/adr/)
 - Adapter binding guides (KYC, payment, ...): [docs/adapters/](./docs/adapters/)
+
+## Community
+
+[GitHub Discussions](https://github.com/blurifycom/openora/discussions) is where the project talks.
+
+- [Q&A](https://github.com/blurifycom/openora/discussions/categories/q-a) - something does not run, or the docs do not cover it.
+- [Ideas](https://github.com/blurifycom/openora/discussions/categories/ideas) - propose a module, an adapter, or a contract change; RFCs land here before any code.
+- [Announcements](https://github.com/blurifycom/openora/discussions/categories/announcements) - releases, breaking changes, roadmap updates.
+- [General](https://github.com/blurifycom/openora/discussions/categories/general) - introductions, what you are building, architecture talk.
+
+Picking the next module happens in the open: [What should we build next?](https://github.com/blurifycom/openora/discussions/24)
 
 ## Contributing
 

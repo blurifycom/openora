@@ -21,6 +21,8 @@ import {
   limitTypes,
   limitPeriods,
   geoRuleActions,
+  type KycRiskSignals,
+  type KycCheckResult,
 } from '@openora/core/contracts';
 import { KYC_DOCUMENT_TYPES, KYC_TRIGGERED_BY } from '../contract/enums.js';
 import type { RgFlagDetail } from '../contract/rg.js';
@@ -72,10 +74,18 @@ export const kycVerification = pgTable(
     status: kycVerificationStatus().notNull(),
     documentTypes: jsonb().$type<(typeof KYC_DOCUMENT_TYPES)[number][]>().notNull().default([]),
     decisionReason: text(),
+    riskSignals: jsonb().$type<KycRiskSignals>(),
+    checks: jsonb().$type<KycCheckResult[]>(),
     triggeredBy: kycTriggeredBy().notNull(),
     // High-water mark of deposits at the last reverify_threshold fire, so re-KYC triggers
     // once per fresh threshold band rather than on every deposit.
     triggerDeposits: decimal({ precision: 18, scale: 2 }),
+    // The wall-clock time THIS decision was received (webhook arrival / submit time),
+    // never job-processing time - a job/webhook retry or out-of-order worker execution
+    // must not reorder this. `reconcile` refuses to apply an incoming decision older
+    // than this watermark, closing the window where two vendor decisions (eg
+    // approved then rejected) interleave out of order and leave the wrong one applied.
+    decisionReceivedAt: timestamp({ withTimezone: true }),
     submittedAt: timestamp({ withTimezone: true }).notNull().defaultNow(),
     decidedAt: timestamp({ withTimezone: true }),
     createdAt: timestamp({ withTimezone: true }).notNull().defaultNow(),
@@ -85,7 +95,7 @@ export const kycVerification = pgTable(
   },
   (t) => [
     index('kyc_verification_user_id_created_at_idx').on(t.userId, t.createdAt),
-    index('kyc_verification_reference_id_idx').on(t.referenceId),
+    uniqueIndex('kyc_verification_reference_id_key').on(t.referenceId),
     index('kyc_verification_status_idx').on(t.status),
   ],
 );

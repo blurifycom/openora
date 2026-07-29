@@ -1,6 +1,8 @@
 import { describe, it, expect, vi } from 'vitest';
 import { call, ORPCError } from '@orpc/server';
 import type {
+  AdminGameReporting,
+  AdminPlayerActivity,
   AdminUserDirectory,
   AdminUserRow,
   AdminWalletReporting,
@@ -44,7 +46,19 @@ function realService(over: { directory?: Partial<AdminUserDirectory> } = {}) {
     listTransactions: vi.fn().mockResolvedValue({ rows: [], total: 0 }),
     getTransaction: vi.fn().mockResolvedValue(null),
   });
-  return { service: new BackofficeService(users, reporting), users, stored };
+  const gameReporting = mock<AdminGameReporting>({
+    listGamePerformance: vi.fn().mockResolvedValue([]),
+  });
+  const playerActivity = mock<AdminPlayerActivity>({
+    getRegistrationsOverTime: vi.fn().mockResolvedValue([]),
+    getActiveUsersTrend: vi.fn().mockResolvedValue([]),
+    getRetentionCohorts: vi.fn().mockResolvedValue([]),
+  });
+  return {
+    service: new BackofficeService(users, reporting, gameReporting, playerActivity),
+    users,
+    stored,
+  };
 }
 
 const guardWhereOnlySuperAdminClearsAdmin = (isSuper: boolean) =>

@@ -15,6 +15,27 @@
       "when": 1783854980971,
       "tag": "0001_funny_vance_astro",
       "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "7",
+      "when": 1784488907835,
+      "tag": "0002_condemned_monster_badoon",
+      "breakpoints": true
+    },
+    {
+      "idx": 3,
+      "version": "7",
+      "when": 1784494569044,
+      "tag": "0003_public_spirit",
+      "breakpoints": true
+    },
+    {
+      "idx": 4,
+      "version": "7",
+      "when": 1785274181833,
+      "tag": "0004_military_silk_fever",
+      "breakpoints": true
     }
   ]
 }

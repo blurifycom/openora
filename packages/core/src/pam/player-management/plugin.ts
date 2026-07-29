@@ -1,5 +1,5 @@
 import { definePlugin, EVENT_BUS, DRIZZLE, ADMIN_GUARD } from '@openora/core/server';
-import { KYC_STATUS_WRITER } from '@openora/core/contracts';
+import { AUDIT_WRITER, KYC_STATUS_WRITER } from '@openora/core/contracts';
 import { PlayerService } from './service/player.service.js';
 import { PlayerKycStatusWriter } from './service/kyc-status-writer.js';
 import { createPlayerRouter } from './router/index.js';
@@ -8,6 +8,7 @@ import { createPlayerRouter } from './router/index.js';
 // (compliance + the admin override route consume it). Reads identity via /schema. See ADR-0020.
 export default definePlugin({
   id: 'player-management',
+  dependsOn: ['audit'],
   register(ctx) {
     ctx.provide(
       KYC_STATUS_WRITER,
@@ -15,8 +16,9 @@ export default definePlugin({
     );
     ctx.routers.add('player', (c) =>
       createPlayerRouter(
-        new PlayerService(c.get(DRIZZLE), c.get(KYC_STATUS_WRITER)),
+        new PlayerService(c.get(DRIZZLE), c.get(EVENT_BUS)),
         c.get(ADMIN_GUARD),
+        c.get(AUDIT_WRITER),
       ),
     );
   },

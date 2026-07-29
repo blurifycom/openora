@@ -24,6 +24,17 @@ export type RunMigrationsOptions = {
    * trgm index) declares it here instead of hand-editing a regenerated migration.
    */
   extensions?: string[];
+  /**
+   * Raw SQL statements to run, in order, before the migrator applies any pending migration.
+   * Unlike `extensions` (a bare identifier interpolated into a fixed `CREATE EXTENSION`
+   * template, hence the strict name check), each entry here is a full statement the caller is
+   * trusted to have written safely - these are literal string constants in module source, never
+   * user input. This is for data cleanup drizzle-kit has no way to generate because it isn't a
+   * schema diff at all (eg deduping rows that violate a new constraint a pending migration is
+   * about to add) - a module declares it here instead of hand-editing a regenerated migration,
+   * same rationale as `extensions`, different problem shape.
+   */
+  preSql?: string[];
 };
 
 function migrateUrl(override?: string): string {
@@ -80,6 +91,9 @@ export async function runMigrations(opts: RunMigrationsOptions) {
         throw new Error(`Invalid extension name: ${ext}`);
       }
       await pool.query(`CREATE EXTENSION IF NOT EXISTS ${ext}`);
+    }
+    for (const sql of opts.preSql ?? []) {
+      await pool.query(sql);
     }
     const migrationsTable = opts.migrationsTable ?? '__drizzle_migrations';
     const migrationsSchema = opts.migrationsSchema ?? 'drizzle';

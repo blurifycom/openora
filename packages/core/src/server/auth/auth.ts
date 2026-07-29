@@ -27,6 +27,7 @@ export type AuthOptions = {
   onPasswordReset?: (user: { id: string; email: string }) => Promise<void> | void;
   templateRenderer?: EmailTemplateRenderer;
   getUserLanguage?: (email: string) => Promise<string | null>;
+  cookieDomain?: string;
 };
 
 // Used only by SessionResolver's createAuth() call, which never sends email (getSession
@@ -46,10 +47,16 @@ const fallbackTemplateRenderer: EmailTemplateRenderer = {
  * when omitted (eg tests) rather than throwing. The explicit `BetterAuthType`
  * return annotation is load-bearing, not stylistic - it dodges a TS2883 Zod v4
  * `$strip` portability error the inferred type would otherwise surface.
+ *
+ * `cookieDomain` (or `AUTH_COOKIE_DOMAIN`) widens the session cookie to a parent
+ * domain, so a frontend on `app.example.com` still sends it to an API on
+ * `api.example.com`. Left unset the cookie stays host-only, which is correct when
+ * both run on one host and is the safer default everywhere else.
  */
 export function createAuth(options: AuthOptions): BetterAuthType {
   const sendEmail: SendEmail = options.sendEmail ?? (() => {});
   const templateRenderer = options.templateRenderer ?? fallbackTemplateRenderer;
+  const cookieDomain = options.cookieDomain ?? process.env['AUTH_COOKIE_DOMAIN'];
   return betterAuth({
     database: drizzleAdapter(options.db, {
       provider: 'pg',
@@ -59,6 +66,7 @@ export function createAuth(options: AuthOptions): BetterAuthType {
       database: {
         generateId: () => randomUUID(),
       },
+      ...(cookieDomain ? { crossSubDomainCookies: { enabled: true, domain: cookieDomain } } : {}),
     },
     session: {
       expiresIn: 30 * 24 * 60 * 60,

@@ -1,4 +1,6 @@
 import type {
+  AdminGameReporting,
+  AdminPlayerActivity,
   AdminPlayerSummary,
   AdminTxDetail,
   AdminTxRow,
@@ -11,7 +13,11 @@ import type {
   ClientMeta,
 } from '@openora/core/contracts';
 import { makeNotFoundError, serializeRow } from '@openora/core/server';
-import type { TransactionFilter } from '../contract/index.js';
+import type {
+  GamePerformanceFilter,
+  PlayerActivityFilter,
+  TransactionFilter,
+} from '../contract/index.js';
 
 export const UserNotFoundError = makeNotFoundError('User');
 export const TransactionNotFoundError = makeNotFoundError('Transaction');
@@ -40,6 +46,8 @@ export class BackofficeService {
   constructor(
     private readonly users: AdminUserDirectory,
     private readonly reporting: AdminWalletReporting,
+    private readonly gameReporting: AdminGameReporting,
+    private readonly playerActivity: AdminPlayerActivity,
   ) {}
 
   async getStats() {
@@ -151,5 +159,31 @@ export class BackofficeService {
     }
     const summaries = await this.users.lookupPlayers(unique);
     return new Map(summaries.map((s) => [s.userId, s]));
+  }
+
+  // The port's row shape already matches GamePerformanceSchema field-for-field (no
+  // Date/Decimal to serialize - volume/revenue are already decimal strings) - no mapping.
+  async getGamePerformance(filter: GamePerformanceFilter) {
+    return this.gameReporting.listGamePerformance({
+      dateFrom: filter.dateFrom ? new Date(filter.dateFrom) : undefined,
+      dateTo: filter.dateTo ? new Date(filter.dateTo) : undefined,
+      gameType: filter.gameType,
+      sortBy: filter.sortBy,
+      sortDir: filter.sortDir,
+    });
+  }
+
+  async getPlayerActivity(filter: PlayerActivityFilter) {
+    const portFilter = {
+      dateFrom: filter.dateFrom ? new Date(filter.dateFrom) : undefined,
+      dateTo: filter.dateTo ? new Date(filter.dateTo) : undefined,
+    };
+    const [registrationsOverTime, activeUsersTrend, sevenDay, thirtyDay] = await Promise.all([
+      this.playerActivity.getRegistrationsOverTime(portFilter),
+      this.playerActivity.getActiveUsersTrend(portFilter),
+      this.playerActivity.getRetentionCohorts(portFilter, 7),
+      this.playerActivity.getRetentionCohorts(portFilter, 30),
+    ]);
+    return { registrationsOverTime, activeUsersTrend, retention: { sevenDay, thirtyDay } };
   }
 }

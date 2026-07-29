@@ -1,7 +1,7 @@
-import { describe, it, expect, vi, beforeAll, afterAll, beforeEach } from 'vitest';
+import { describe, it, expect, beforeAll, afterAll, beforeEach } from 'vitest';
 import { randomUUID } from 'node:crypto';
 import { eq, sql } from 'drizzle-orm';
-import type { KycStatusWriter, TagKey } from '@openora/core/contracts';
+import type { TagKey } from '@openora/core/contracts';
 import { createTestDb, type TestDb } from '@openora/core/testing';
 import { user } from '@openora/core/pam/schema/identity';
 import { migrate as migrateIdentity } from '@openora/core/pam/migrate/identity';
@@ -9,7 +9,7 @@ import { player } from '@openora/core/pam/schema/profile';
 import { migrate as migrateProfile } from '@openora/core/pam/migrate/profile';
 import { tag, playerTag } from '@openora/core/pam/schema/tag';
 import { migrate as migrateTag } from '@openora/core/pam/migrate/tag';
-import { mock } from '../../../testing/mock.js';
+import { makeEventBus } from '../../../testing/mock.js';
 import {
   PlayerService,
   PlayerNotFoundError,
@@ -18,9 +18,9 @@ import {
 
 let db: TestDb;
 
-function makeService(writer: Partial<KycStatusWriter> = { setStatus: vi.fn() }) {
-  const kycStatusWriter = mock<KycStatusWriter>(writer);
-  return { svc: new PlayerService(db.drizzle, kycStatusWriter), kycStatusWriter };
+function makeService() {
+  const events = makeEventBus();
+  return { svc: new PlayerService(db.drizzle, events), events };
 }
 
 async function seedUser(overrides: Partial<typeof user.$inferInsert> = {}) {
@@ -274,56 +274,45 @@ describe('PlayerService.update (real PG)', () => {
     );
   });
 
-  it('delegates a kycStatus change to the KYC_STATUS_WRITER on the same transaction', async () => {
-    const setStatus = vi.fn(async () => undefined);
-    const { svc } = makeService({ setStatus });
-    const { player: seeded, account } = await seedPlayerWithUser({}, { kycStatus: 'pending' });
-
-    await svc.update(seeded.id, { kycStatus: 'verified' }, account.id);
-
-    expect(setStatus).toHaveBeenCalledWith(
-      account.id,
-      'verified',
-      { actorId: account.id, source: 'manual' },
-      expect.anything(),
-    );
-  });
-
-  it('does not call the KYC_STATUS_WRITER when kycStatus is unchanged', async () => {
-    const setStatus = vi.fn(async () => undefined);
-    const { svc } = makeService({ setStatus });
-    const { player: seeded, account } = await seedPlayerWithUser({}, { kycStatus: 'verified' });
-
-    await svc.update(seeded.id, { kycStatus: 'verified' }, account.id);
-
-    expect(setStatus).not.toHaveBeenCalled();
-  });
-
-  it('rolls the whole update back when the KYC_STATUS_WRITER throws', async () => {
-    const setStatus = vi.fn(async () => {
-      throw new Error('writer down');
-    });
-    const { svc } = makeService({ setStatus });
-    const { player: seeded, account } = await seedPlayerWithUser(
-      {},
-      { displayName: 'Original', kycStatus: 'pending' },
-    );
-
-    await expect(
-      svc.update(seeded.id, { displayName: 'Renamed', kycStatus: 'verified' }, account.id),
-    ).rejects.toThrow('writer down');
-
-    expect(await rowById(seeded.id)).toMatchObject({
-      displayName: 'Original',
-      kycStatus: 'pending',
-    });
-  });
-
   it('throws PlayerNotFoundError for an unknown id', async () => {
     const { svc } = makeService();
 
     await expect(
       svc.update(randomUUID(), { displayName: 'X' }, randomUUID()),
     ).rejects.toBeInstanceOf(PlayerNotFoundError);
+  });
+});
+
+describe('PlayerService.update player.level.changed emission (real PG)', () => {
+  it('emits player.level.changed with previousLevel/newLevel/actorId when level changes', async () => {
+    const { svc, events } = makeService();
+    const { player: seeded, account } = await seedPlayerWithUser({}, { level: 1 });
+
+    await svc.update(seeded.id, { level: 5 }, account.id);
+
+    expect(events.emit).toHaveBeenCalledWith('player.level.changed', {
+      userId: account.id,
+      previousLevel: 1,
+      newLevel: 5,
+      actorId: account.id,
+    });
+  });
+
+  it('does not emit when level is omitted from the patch', async () => {
+    const { svc, events } = makeService();
+    const { player: seeded, account } = await seedPlayerWithUser({}, { level: 1 });
+
+    await svc.update(seeded.id, { displayName: 'New Name' }, account.id);
+
+    expect(events.emit).not.toHaveBeenCalledWith('player.level.changed', expect.anything());
+  });
+
+  it('does not emit when level is unchanged', async () => {
+    const { svc, events } = makeService();
+    const { player: seeded, account } = await seedPlayerWithUser({}, { level: 3 });
+
+    await svc.update(seeded.id, { level: 3 }, account.id);
+
+    expect(events.emit).not.toHaveBeenCalledWith('player.level.changed', expect.anything());
   });
 });

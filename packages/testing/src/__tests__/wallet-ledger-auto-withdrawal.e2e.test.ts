@@ -56,8 +56,11 @@ async function setRole(container: Container, userId: string, role: string) {
   await container.get(DRIZZLE).db.update(user).set({ role }).where(eq(user.id, userId));
 }
 
-async function verifyKyc(admin: TestClient, playerId: string) {
-  const res = await admin.patch(`/players/${playerId}`, { kycStatus: 'verified' });
+async function verifyKyc(admin: TestClient, userId: string) {
+  const res = await admin.post(`/compliance/players/${userId}/kyc/override`, {
+    status: 'approved',
+    reason: 'e2e fixture verification',
+  });
   if (res.status !== 200) {
     throw new Error(`verifyKyc failed (${res.status}): ${await res.text()}`);
   }
@@ -119,9 +122,9 @@ afterAll(async () => {
 describe('Auto-withdrawal: single-shot gates (appGated - fiatThreshold 2)', () => {
   it('auto-completes a fiat withdrawal under threshold, with a KYC-verified untagged player', async () => {
     const email = `auto-ok-${randomUUID()}@e2e.test`;
-    const { client, playerId, userId } = await registerAndMaterializePlayer(appGated.app, email);
+    const { client, userId } = await registerAndMaterializePlayer(appGated.app, email);
     const admin = await asAdmin(appGated.app);
-    await verifyKyc(admin, playerId);
+    await verifyKyc(admin, userId);
 
     await client.post('/wallet/deposit', { amount: '5', currency: 'USD' });
     const res = await client.post('/wallet/withdraw', { amount: '0.5', currency: 'USD' });
@@ -146,7 +149,7 @@ describe('Auto-withdrawal: single-shot gates (appGated - fiatThreshold 2)', () =
         userId,
         threshold: '2',
         thresholdSource: 'global',
-        kycStatus: 'verified',
+        kycStatus: 'manually_overridden',
         riskTagsEvaluated: [],
       });
     });
@@ -172,9 +175,9 @@ describe('Auto-withdrawal: single-shot gates (appGated - fiatThreshold 2)', () =
 
   it('stays pending when the player carries an excluded risk tag', async () => {
     const email = `auto-risk-tag-${randomUUID()}@e2e.test`;
-    const { client, playerId } = await registerAndMaterializePlayer(appGated.app, email);
+    const { client, playerId, userId } = await registerAndMaterializePlayer(appGated.app, email);
     const admin = await asAdmin(appGated.app);
-    await verifyKyc(admin, playerId);
+    await verifyKyc(admin, userId);
     await assignTag(admin, playerId, 'high_risk');
 
     await client.post('/wallet/deposit', { amount: '3', currency: 'USD' });
@@ -189,9 +192,9 @@ describe('Auto-withdrawal: single-shot gates (appGated - fiatThreshold 2)', () =
 
   it('stays pending when the amount exceeds the resolved threshold', async () => {
     const email = `auto-over-threshold-${randomUUID()}@e2e.test`;
-    const { client, playerId } = await registerAndMaterializePlayer(appGated.app, email);
+    const { client, userId } = await registerAndMaterializePlayer(appGated.app, email);
     const admin = await asAdmin(appGated.app);
-    await verifyKyc(admin, playerId);
+    await verifyKyc(admin, userId);
 
     await client.post('/wallet/deposit', { amount: '5', currency: 'USD' });
     const res = await client.post('/wallet/withdraw', { amount: '2.5', currency: 'USD' });
@@ -205,9 +208,9 @@ describe('Auto-withdrawal: single-shot gates (appGated - fiatThreshold 2)', () =
 
   it('never auto-approves the crypto rail, regardless of config', async () => {
     const email = `auto-crypto-${randomUUID()}@e2e.test`;
-    const { client, playerId } = await registerAndMaterializePlayer(appGated.app, email);
+    const { client, userId } = await registerAndMaterializePlayer(appGated.app, email);
     const admin = await asAdmin(appGated.app);
-    await verifyKyc(admin, playerId);
+    await verifyKyc(admin, userId);
 
     await client.post('/wallet/deposit', { amount: '0.1', currency: 'BTC' });
     const res = await client.post('/wallet/withdraw', {
@@ -225,9 +228,9 @@ describe('Auto-withdrawal: single-shot gates (appGated - fiatThreshold 2)', () =
 
   it('a lower per-player rule blocks what the global threshold would allow', async () => {
     const email = `auto-rule-blocks-${randomUUID()}@e2e.test`;
-    const { client, playerId, userId } = await registerAndMaterializePlayer(appGated.app, email);
+    const { client, userId } = await registerAndMaterializePlayer(appGated.app, email);
     const admin = await asAdmin(appGated.app);
-    await verifyKyc(admin, playerId);
+    await verifyKyc(admin, userId);
 
     const setRes = await admin.put(`/wallet/auto-withdrawal-rules/${userId}`, {
       threshold: '0.1',
@@ -244,9 +247,9 @@ describe('Auto-withdrawal: single-shot gates (appGated - fiatThreshold 2)', () =
 
   it('a higher per-player rule allows what the global threshold would block', async () => {
     const email = `auto-rule-allows-${randomUUID()}@e2e.test`;
-    const { client, playerId, userId } = await registerAndMaterializePlayer(appGated.app, email);
+    const { client, userId } = await registerAndMaterializePlayer(appGated.app, email);
     const admin = await asAdmin(appGated.app);
-    await verifyKyc(admin, playerId);
+    await verifyKyc(admin, userId);
 
     const setRes = await admin.put(`/wallet/auto-withdrawal-rules/${userId}`, {
       threshold: '3',
@@ -276,9 +279,9 @@ describe('Auto-withdrawal: single-shot gates (appGated - fiatThreshold 2)', () =
 describe('Auto-withdrawal: daily cap (appCapGated - dailyCapCount 1)', () => {
   it('auto-approves the first fiat withdrawal, then stays pending once the daily cap is used', async () => {
     const email = `auto-cap-${randomUUID()}@e2e.test`;
-    const { client, playerId } = await registerAndMaterializePlayer(appCapGated.app, email);
+    const { client, userId } = await registerAndMaterializePlayer(appCapGated.app, email);
     const admin = await asAdmin(appCapGated.app);
-    await verifyKyc(admin, playerId);
+    await verifyKyc(admin, userId);
 
     await client.post('/wallet/deposit', { amount: '5', currency: 'USD' });
 

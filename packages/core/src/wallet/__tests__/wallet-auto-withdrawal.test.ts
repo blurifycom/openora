@@ -10,6 +10,7 @@ import type {
   PlatformConfig,
   AdminPlayerSummary,
   PlayerTags,
+  TagEvaluationCommands,
   TagKey,
 } from '@openora/core/contracts';
 import { createTestDb, type TestDb } from '@openora/core/testing';
@@ -277,6 +278,76 @@ describe('WalletService.withdraw auto-approval (real PG)', () => {
     });
 
     expect(result.status).toBe('pending');
+  });
+
+  it('awaits the synchronous tag evaluation (TAG_EVALUATION_COMMANDS) before reading risk tags, so a withdrawal_review assignment it makes is honored by auto-approval instead of raced by the async event handler', async () => {
+    const callOrder: string[] = [];
+    // Stands in for TagEvaluationService.evaluateWithdrawalRequested committing a
+    // withdrawal_review assignment on the caller's own tx (see wallet.service.ts's
+    // withdraw()) - by the time this resolves, the tag must be visible to any later read.
+    const assignedTags = new Set<TagKey>();
+    const tagEvaluationCommands = mock<TagEvaluationCommands>({
+      evaluateWithdrawalRequested: vi.fn(async () => {
+        callOrder.push('evaluateWithdrawalRequested');
+        assignedTags.add('withdrawal_review');
+      }),
+    });
+    const riskTags = mock<PlayerTags>({
+      getActiveTagKeys: vi.fn(async (ids: readonly string[]) => {
+        callOrder.push('getActiveTagKeys');
+        return new Map(ids.map((id) => [id, [...assignedTags]]));
+      }),
+    });
+    const directory = mock<AdminUserDirectory>({
+      lookupPlayers: vi.fn(async (ids: string[]) =>
+        ids.map((userId) =>
+          mock<AdminPlayerSummary>({ userId, username: 'player', kycStatus: 'verified' }),
+        ),
+      ),
+    });
+    const platformConfig = mock<PlatformConfig>({
+      autoWithdrawal: {
+        enabled: true,
+        fiatThreshold: '1000',
+        excludeRiskFlags: ['withdrawal_review'],
+      },
+    });
+    const payment = mock<PaymentAdapter>({
+      processWithdrawal: vi.fn(async () => ({
+        externalId: randomUUID(),
+        status: 'completed' as const,
+      })),
+    });
+    const svc = new WalletService({
+      drizzle: db.drizzle,
+      events: makeEventBus(),
+      payment,
+      audit: mock<AuditWritePort>(makeAuditWriter()),
+      directory,
+      platformConfig,
+      riskTags,
+      tagEvaluationCommands,
+    });
+    const w = await seedWallet();
+
+    const result = await svc.withdraw({
+      userId: w.userId,
+      amount: '40',
+      currency: 'USD',
+      ...NO_CLIENT_META,
+    });
+
+    // Ordering proof: the synchronous command-port call happened, and completed, before
+    // auto-approval's risk-tag read - never the reverse, and never concurrent/unawaited.
+    expect(callOrder).toEqual(['evaluateWithdrawalRequested', 'getActiveTagKeys']);
+    expect(tagEvaluationCommands.evaluateWithdrawalRequested).toHaveBeenCalledWith(
+      expect.anything(),
+      { userId: w.userId, amount: '40' },
+    );
+    // Causality proof: auto-approval saw the tag the synchronous call just assigned and
+    // declined to pay out - the exact race the fire-and-forget event emit alone could lose.
+    expect(result.status).toBe('pending');
+    expect(payment.processWithdrawal).not.toHaveBeenCalled();
   });
 
   it('auto-approves when the player carries only unrelated tags', async () => {
