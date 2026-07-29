@@ -65,6 +65,7 @@ export type PlayerKycView = z.infer<typeof PlayerKycViewSchema>;
 export type KycVerification = z.infer<typeof KycVerificationSchema>;
 
 export const KycStatusUpdateSchema = z.object({
+  eventId: UuidSchema,
   status: KycStatusSchema,
 });
 export type KycStatusUpdate = z.infer<typeof KycStatusUpdateSchema>;

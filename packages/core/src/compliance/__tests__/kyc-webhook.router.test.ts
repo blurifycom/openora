@@ -106,12 +106,19 @@ describe('compliance streamKycStatus router', () => {
     const next = iterator.next();
     await Promise.resolve();
 
-    realtime.publish(kycStatusChannel('other-user'), { status: 'rejected' });
-    realtime.publish(kycStatusChannel('user-1'), { status: 'approved' });
+    realtime.publish(kycStatusChannel('other-user'), {
+      eventId: '11111111-1111-4111-8111-111111111111',
+      status: 'rejected',
+    });
+    realtime.publish(kycStatusChannel('user-1'), {
+      eventId: '22222222-2222-4222-8222-222222222222',
+      status: 'approved',
+    });
 
     await expect(next).resolves.toEqual({
       done: false,
       value: {
+        eventId: '22222222-2222-4222-8222-222222222222',
         status: 'approved',
       },
     });

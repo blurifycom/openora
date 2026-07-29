@@ -75,12 +75,13 @@ export default definePlugin({
     let jobQueueRef: JobQueueAdapter | null = null;
     let realtimeTransport: RealtimeTransport | null = null;
 
-    ctx.events.on('compliance.kyc.updated', (payload) => {
+    ctx.events.on('compliance.kyc.updated', (payload, envelope) => {
       const parsed = domainEventSchemas['compliance.kyc.updated'].safeParse(payload);
-      if (!parsed.success || !realtimeTransport) {
+      if (!parsed.success || !realtimeTransport || !envelope) {
         return;
       }
       return realtimeTransport.publish(kycStatusChannel(parsed.data.userId), {
+        eventId: envelope.eventId,
         status: parsed.data.status,
       });
     });
