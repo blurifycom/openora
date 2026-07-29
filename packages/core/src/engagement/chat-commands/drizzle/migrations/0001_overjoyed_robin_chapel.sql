@@ -27,6 +27,6 @@ CREATE TABLE "chat_gift" (
     Hope to release this update as soon as possible
 */
 
--- ALTER TABLE "chat_command_config" DROP CONSTRAINT "<constraint_name>";--> statement-breakpoint
+ALTER TABLE "chat_command_config" DROP CONSTRAINT "chat_command_config_pkey";--> statement-breakpoint
 ALTER TABLE "chat_command_config" ADD COLUMN "id" uuid PRIMARY KEY DEFAULT gen_random_uuid() NOT NULL;--> statement-breakpoint
 ALTER TABLE "chat_command_config" ADD CONSTRAINT "chat_command_config_key_unique" UNIQUE("key");

@@ -167,6 +167,10 @@ export const domainEventSchemas = {
     roomId: UuidSchema,
     creatorId: UuidSchema,
   }),
+  'chat.private_room.deleted': authContextBase.extend({
+    roomId: UuidSchema,
+    creatorId: UuidSchema,
+  }),
   'chat.room.member.joined': authContextBase.extend({ roomId: UuidSchema, userId: UuidSchema }),
   'chat.room.member.left': authContextBase.extend({ roomId: UuidSchema, userId: UuidSchema }),
   'chat.room.member.kicked': authContextBase.extend({

@@ -160,6 +160,11 @@ export const chatContract = {
     .input(z.object({ name: z.string().trim().min(1).max(ROOM_NAME_MAX_LENGTH) }))
     .output(ChatRoomSchema),
 
+  deletePrivateRoom: oc
+    .route({ method: 'DELETE', path: '/chat/rooms/{roomId}' })
+    .input(RoomIdInput)
+    .output(z.object({ success: z.literal(true) })),
+
   joinRoom: oc
     .route({ method: 'POST', path: '/chat/rooms/join' })
     .input(z.object({ joinCode: ChatJoinCodeSchema }))

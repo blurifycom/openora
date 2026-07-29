@@ -47,6 +47,7 @@ import {
 import { moderateContent } from '../moderation/index.js';
 
 export const ChatRoomNotFoundError = makeNotFoundError('ChatRoom');
+export const ChatRoomOwnershipError = makeOwnershipError('ChatRoom');
 export const ChatMessageNotFoundError = makeNotFoundError('ChatMessage');
 export const ChatMessageOwnershipError = makeOwnershipError('ChatMessage');
 
@@ -594,6 +595,42 @@ export class ChatService {
       userAgent: userAgent ?? null,
     });
     return toRoom(updated);
+  }
+
+  async deletePrivateRoom({
+    roomId,
+    userId,
+    ip,
+    userAgent,
+  }: {
+    roomId: ChatRoom['id'];
+    userId: User['id'];
+  } & ClientMeta) {
+    const room = findOneOrThrow(
+      await this.drizzle.db
+        .select()
+        .from(chatRoom)
+        .where(
+          and(eq(chatRoom.id, roomId), eq(chatRoom.isPublic, false), isNull(chatRoom.deletedAt)),
+        )
+        .limit(1),
+      new ChatRoomNotFoundError(roomId),
+    );
+    if (!room.creatorId) {
+      throw new ChatRoomOwnershipError();
+    }
+    assertOwnership(room.creatorId, userId, new ChatRoomOwnershipError());
+    await this.drizzle.db
+      .update(chatRoom)
+      .set({ deletedAt: new Date() })
+      .where(eq(chatRoom.id, roomId));
+    this.events.emit('chat.private_room.deleted', {
+      roomId,
+      creatorId: userId,
+      ip: ip ?? null,
+      userAgent: userAgent ?? null,
+    });
+    return { success: true } as const;
   }
 
   async deleteRoom(id: ChatRoom['id'], actorId?: User['id'], meta?: ClientMeta) {

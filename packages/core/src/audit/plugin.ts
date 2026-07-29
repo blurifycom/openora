@@ -268,8 +268,8 @@ function mapEventToRecord(topic: string, p: Record<string, unknown>): RecordInpu
     };
   }
 
-  // actorId = the player who created the room; resource = the new room.
-  if (topic === 'chat.private_room.created') {
+  // actorId = the player who created/deleted the room; resource = the room.
+  if (topic === 'chat.private_room.created' || topic === 'chat.private_room.deleted') {
     return {
       ...base,
       actorType: 'player',
@@ -498,6 +498,7 @@ const SUBSCRIBED_TOPICS: DomainEventName[] = [
   'chat.user.blocked',
   'chat.user.unblocked',
   'chat.private_room.created',
+  'chat.private_room.deleted',
   'chat.room.created',
   'chat.room.updated',
   'chat.room.deleted',

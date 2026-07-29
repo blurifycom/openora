@@ -19,6 +19,7 @@ import { chatContract } from '../contract/index.js';
 import {
   ChatService,
   ChatRoomNotFoundError,
+  ChatRoomOwnershipError,
   ChatRoomNotMemberError,
   ChatRoomNotModeratorError,
   ChatRoomSelfModerationError,
@@ -197,6 +198,15 @@ export function createChatRouter({
       const userId = getUserId(context);
       return mapErrors({ CONFLICT: ChatRoomLimitReachedError }, () =>
         chatService.createPrivateRoom({ userId, name: input.name, ...context.clientMeta }),
+      );
+    }),
+
+    deletePrivateRoom: os.deletePrivateRoom.handler(({ input, context }) => {
+      const userId = getUserId(context);
+      return mapErrors(
+        { NOT_FOUND: ChatRoomNotFoundError, FORBIDDEN: ChatRoomOwnershipError },
+        () =>
+          chatService.deletePrivateRoom({ roomId: input.roomId, userId, ...context.clientMeta }),
       );
     }),
 
