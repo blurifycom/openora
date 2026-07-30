@@ -36,7 +36,7 @@ Match effort to the ask: a small task gets a one-line restatement, not a full br
 - **Objective** - the outcome, in priority order.
 - **Scope** - what's in; what's explicitly out.
 - **Context** - the load-bearing facts found, with links (issue, doc, `file:line`).
-- **Constraints** - conventions, clean-architecture layering, minimal-dependency + token budget, the public / open-source surface.
+- **Constraints** - conventions, module layering (`docs/standards/module-structure.md`), minimal-dependency + token budget, the public / open-source surface.
 - **Deliverables** - what "done" produces.
 - **Guardrails** - what not to touch; reversible-only; confirm-before-X.
 - **Open questions** - only the blocking ones.

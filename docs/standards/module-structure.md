@@ -1,16 +1,6 @@
----
-root: false
-targets:
-  - '*'
-description: Clean-architecture conventions - module layering, DI, ports-and-adapters, and the shared helpers to reuse instead of re-rolling.
-globs:
-  - 'packages/**'
-  - 'extensions/**'
----
+# Module structure, DI, and ports
 
-# Clean architecture
-
-Settled conventions - don't reopen. Style: `conventions`. Here: structure + the syntax that prevents recurring mistakes.
+Detail for the boundary lines in `conventions`. Read this when creating a module, wiring DI, or adding an integration. Settled conventions - don't reopen.
 
 ## Module layering (`packages/core/src/<domain>/<module>/`)
 
@@ -32,6 +22,26 @@ Service methods are data-in/data-out; side effects (DB writes, event emits, adap
 - Services take deps by type via constructor; never touch the container. `plugin.ts` builds them: `ctx.routers.add('wallet', (c) => createWalletRouter(new WalletService(c.get(DRIZZLE), c.get(EVENT_BUS), c.get(PAYMENT_ADAPTER))))`.
 - A dep captured in a closure is a smell - make it a port + token (canonical fix: `SEND_EMAIL` in identity).
 
+```ts
+// bad - the service reaches into the container and hides what it depends on
+export class WalletService {
+  constructor(private readonly container: Container) {}
+  async deposit() {
+    const psp = this.container.get(PAYMENT_ADAPTER);
+  }
+}
+// good - deps are constructor params of their port type; plugin.ts does the resolving
+export class WalletService {
+  constructor(
+    private readonly db: DrizzleService,
+    private readonly events: EventBus,
+    private readonly payments: PaymentAdapter,
+  ) {}
+}
+```
+
+Canonical wiring to copy: `packages/core/src/wallet/plugin.ts` (provides `PAYMENT_ADAPTER`, `WALLET_COMMANDS`, `ADMIN_WALLET_REPORTING`, then builds the router).
+
 ## Ports & adapters (hexagonal)
 
 Ports = interfaces + tokens in `packages/core/src/contracts/adapters/` (`PAYMENT_ADAPTER`, `KYC_ADAPTER`, `MESSAGE_BROKER`, `JOB_QUEUE`, `REALTIME_TRANSPORT`, `SEND_EMAIL`, ...). Adapters = impls in modules, bound in `plugin.ts`, swapped by a later-loading overlay re-`provide`ing the token. Services depend only on the port. A third-party integration is always a port + impl, never an inline `fetch`/SDK call.
@@ -39,6 +49,16 @@ Ports = interfaces + tokens in `packages/core/src/contracts/adapters/` (`PAYMENT
 ## Cross-module communication (lint-enforced)
 
 Sanctioned paths only: domain **events** (`EventBus`), **command ports** (a token the owner binds, eg `WALLET_COMMANDS`), shared **contracts**, read-only table reads via the owner's `/schema` subpath. Never import another module's internals (`no-cross-domain` = error; `pnpm check:boundaries` is the whole-graph gate). ADR-0015.
+
+```ts
+// bad - reaches into another module's service; check:boundaries fails
+import { TagService } from '../../pam/tag/service/tag.service.js';
+// good - the owner binds a command port, the caller resolves the token
+const tags = ctx.container.get(TAG_EVALUATION_COMMANDS);
+await tags.evaluate(tx, { playerId });
+```
+
+Canonical seams to copy: `wallet -> tag` via `TAG_EVALUATION_COMMANDS` (optional port, resolved lazily with `c.has(...)` in the router factory), `compliance -> pam` via the `kyc.status.changed` domain event.
 
 Money + any needed-now mutation stay synchronous/transactional, never over events - use a command port: caller passes its own `tx` (`WALLET_COMMANDS.debit(tx, ...)`), atomic in-process yet splittable later; declare `dependsOn: ['<owner>']`. Cross-module schema reads are sanctioned but each one is an extraction blocker. ADR-0017.
 
@@ -68,8 +88,21 @@ Lint-enforced by `oss-module-shape/no-relative-zone-escape` (folded domains AND 
 | push subscription -> SSE async generator     | `createEventStreamGenerator((push) => svc.subscribe(push), { signal, prime })`                  | `@openora/core/server`    |
 | canonical id/userId/pagination input         | `IdInputSchema` / `UserIdInputSchema` / `PageQuerySchema`                                       | `@openora/core/contracts` |
 
-Error factories keep the SAME exported const identifier (`export const WalletNotFoundError = makeNotFoundError('Wallet')`) - routers import the class and `mapErrors` keys off it.
-
-## Testing
-
-Co-locate as `__tests__/<name>.test.ts` (Vitest). A service test runs against real Postgres - `createTestDb([migrate])` from `@openora/core/testing` per file, plus `createTestRedis()` where the service caches or rate-limits. Only external vendors and cross-module ports are doubled, through the `mock` helper (`packages/core/src/testing/mock.ts`). Keep new logic covered; details in `conventions` section 10.
+```ts
+// bad - re-rolls first-row-or-throw and the DTO mapping by hand
+const rows = await db.select().from(wallet).where(eq(wallet.id, id));
+if (rows.length === 0) {
+  throw new WalletNotFoundError(id);
+}
+return {
+  ...rows[0]!,
+  balance: String(rows[0]!.balance),
+  createdAt: rows[0]!.createdAt.toISOString(),
+};
+// good
+const row = findOneOrThrow(
+  await db.select().from(wallet).where(eq(wallet.id, id)),
+  new WalletNotFoundError(id),
+);
+return serializeRow(row, { dateFields: ['createdAt'], decimalFields: ['balance'] });
+```

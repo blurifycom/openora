@@ -21,7 +21,7 @@ Any other branch: target `dev`.
 
 1. **Determine source + target.** `git branch --show-current` -> the table above.
 2. **Scope the commit.** `git status -s`. Commit ONLY changes belonging to this unit of work. Foreign/pre-existing edits in the tree: stage your files explicitly, tell the user what you left out. Never `git add -A` blindly.
-3. **Commit.** Conventional-commit message with a valid scope (see `conventions` section 12). No AI attribution trailers. Keep the message free of sensitive/internal data (below).
+3. **Commit.** Conventional-commit message with a valid scope (see `docs/standards/git-delivery.md`). No AI attribution trailers. Keep the message free of sensitive/internal data (below).
 4. **Verify before pushing:** `pnpm verify`. Don't push a red tree.
 5. **Push - STOP first.** Report the commit SHA, then ask for an explicit per-action "yes push". Invoking this skill is NOT push authorization; shared branches (`dev`, `stage`) especially. Only after the yes: `git push -u origin <current>`.
 6. **Open the PR** (after the confirmed push). Read `.github/pull_request_template.md` and fill it - it is the source of truth for the structure, so follow whatever sections it currently defines and don't invent your own. Answer the HTML comment in each section, then delete the comment. Drop a section it tells you to drop; tick a box only if it actually holds.
