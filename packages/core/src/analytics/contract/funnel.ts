@@ -14,7 +14,7 @@ export type FunnelStageName = z.infer<typeof FunnelStageNameSchema>;
 export const FunnelStageSchema = z.object({
   stage: FunnelStageNameSchema,
   count: z.number().int().nonnegative(),
-  dropOffRate: z.number().min(0).max(1),
+  dropOffRate: z.number().min(0).max(1).nullable(),
 });
 export type FunnelStage = z.infer<typeof FunnelStageSchema>;
 
