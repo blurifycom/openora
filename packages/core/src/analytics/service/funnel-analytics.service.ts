@@ -93,6 +93,7 @@ export class FunnelAnalyticsService {
       };
     });
     console.log('FUNNEL_OUT', out.map((s) => String(s.dropOffRate)).join('|'));
+    console.log('FUNNEL_WHERE', import.meta.url);
     console.log(
       'FUNNEL_SRC',
       String(FunnelAnalyticsService.prototype['computeConversion']).slice(-400),
