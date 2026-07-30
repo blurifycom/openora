@@ -89,7 +89,7 @@ export class FunnelAnalyticsService {
       return {
         stage,
         count: counts[stage],
-        dropOffRate: previousStage ? dropOffRate(counts[previousStage], counts[stage]) : 0,
+        dropOffRate: previousStage ? dropOffRate(counts[previousStage], counts[stage]) : null,
       };
     });
   }
