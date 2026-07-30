@@ -97,7 +97,7 @@ export class FunnelAnalyticsService {
       'FUNNEL_SRC',
       String(FunnelAnalyticsService.prototype['computeConversion']).slice(-400),
     );
-    console.log('FUNNEL_TS', process.env['npm_package_devDependencies_typescript'] ?? 'n/a');
+
     return out;
   }
 }
