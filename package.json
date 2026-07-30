@@ -14,7 +14,7 @@
     "build": "turbo run build",
     "dev": "turbo run dev",
     "clean": "turbo run clean && rm -rf node_modules",
-    "verify": "turbo run check:types check:lint check:format check:boundaries check:shape check:deprecations test:unit test:tools && pnpm check:drift",
+    "verify": "turbo run check:types check:lint check:format check:boundaries check:shape check:deprecations test:unit test:integration test:tools && pnpm check:drift",
     "check:types": "turbo run check:types",
     "check:lint": "oxlint .",
     "check:format": "oxfmt --check",
@@ -38,6 +38,7 @@
     "db:migrate": "openora-migrate",
     "db:seed": "tsx tools/db/seed.ts",
     "db:setup:test": "tsx tools/db/setup-test-db.ts",
+    "db:setup:test:fresh": "tsx tools/db/setup-test-db.ts --fresh",
     "create:app": "tsx tools/create/create-igaming-app.ts",
     "create:service": "tsx tools/create/create-service.ts",
     "setup": "tsx tools/setup/setup-agent.ts",
@@ -65,7 +66,7 @@
     "rulesync": "15.1.0",
     "tsx": "4.23.1",
     "turbo": "2.10.7",
-    "typescript": "6.0.3"
+    "typescript": "7.0.2"
   },
   "engines": {
     "node": ">=26.0.0",
