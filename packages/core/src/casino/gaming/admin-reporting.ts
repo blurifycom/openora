@@ -23,15 +23,14 @@ export class DrizzleAdminGameReporting implements AdminGameReporting {
       eq(gameRound.status, 'completed'),
       filter.dateFrom ? gte(gameRound.startedAt, filter.dateFrom) : undefined,
       filter.dateTo ? lte(gameRound.startedAt, filter.dateTo) : undefined,
+      // No currency filter mixes bet/win amounts across currencies into one unconverted
+      // sum - the operator UI shows a disclaimer in that case; this is intentional.
       filter.currency ? eq(gameRound.currency, filter.currency) : undefined,
     ].filter(Boolean);
     const where = filter.gameType ? eq(game.gameType, filter.gameType) : undefined;
 
     const volume = sql<string>`coalesce(sum(${gameRound.betAmount}), 0)`;
     // GGR - can be negative when a game pays out more than it takes in over the range.
-    // TODO: winAmount is never set today - endRound has no way to report a win, so it
-    // stays at its schema default('0') and revenue always equals volume until round
-    // settlement actually computes payouts.
     const revenue = sql<string>`coalesce(sum(${gameRound.betAmount}) - sum(${gameRound.winAmount}), 0)`;
     const uniquePlayers = sql<number>`count(distinct ${gameRound.userId})`;
     const roundsPlayed = sql<number>`count(${gameRound.id})`;

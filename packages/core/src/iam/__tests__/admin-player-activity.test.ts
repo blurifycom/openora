@@ -119,6 +119,18 @@ describe('DrizzleAdminPlayerActivity.getRetentionCohorts (real PG)', () => {
     ]);
   });
 
+  it('counts a session the next calendar day even if less than 24h after registration', async () => {
+    const alice = await seedUser(AT('2026-01-01T23:00:00.000Z'));
+    await seedSession(alice.id, AT('2026-01-02T09:00:00.000Z'));
+
+    const rows = await activity.getRetentionCohorts(
+      { dateFrom: AT('2026-01-01T00:00:00.000Z'), dateTo: AT('2026-01-02T00:00:00.000Z') },
+      7,
+    );
+
+    expect(rows[0]).toMatchObject({ cohortSize: 1, returned: 1, returnRate: 1 });
+  });
+
   it('counts a session on the day after registration as returned', async () => {
     const alice = await seedUser(AT('2026-01-01T10:00:00.000Z'));
     await seedSession(alice.id, AT('2026-01-02T10:00:00.000Z'));

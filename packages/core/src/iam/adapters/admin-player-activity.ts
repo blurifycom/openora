@@ -94,8 +94,7 @@ export class DrizzleAdminPlayerActivity implements AdminPlayerActivity {
       is_complete: boolean;
     }>(sql`
       with cohort_users as (
-        select ${user.id} as user_id, date_trunc('day', ${user.createdAt}) as cohort_date,
-          ${user.createdAt} as registered_at
+        select ${user.id} as user_id, date_trunc('day', ${user.createdAt}) as cohort_date
         from ${user}
         where ${user.createdAt} >= ${from} and ${user.createdAt} <= ${to}
       ),
@@ -104,8 +103,8 @@ export class DrizzleAdminPlayerActivity implements AdminPlayerActivity {
         from cohort_users cu
         inner join ${session}
           on ${session.userId} = cu.user_id
-          and ${session.updatedAt} >= cu.registered_at + interval '1 day'
-          and ${session.updatedAt} <= cu.registered_at + interval '1 day' * ${windowDays}
+          and ${session.updatedAt} >= cu.cohort_date + interval '1 day'
+          and ${session.updatedAt} <= cu.cohort_date + interval '1 day' * ${windowDays}
       )
       select
         cu.cohort_date::date::text as cohort_date,
