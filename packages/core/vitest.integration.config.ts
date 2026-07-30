@@ -6,7 +6,9 @@ export default defineConfig({
   test: {
     globals: true,
     environment: 'node',
-    include: ['src/**/*.{test,spec}.ts'],
-    exclude: ['dist/**', 'node_modules/**', 'src/**/*.int.{test,spec}.ts'],
+    include: ['src/**/*.int.{test,spec}.ts'],
+    exclude: ['dist/**', 'node_modules/**'],
+    testTimeout: 30_000,
+    hookTimeout: 30_000,
   },
 });
