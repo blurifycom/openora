@@ -71,7 +71,12 @@ export type {
   RealtimeClientAuthorizer,
   RealtimeClientAuthorizerInput,
 } from './realtime.js';
-export { REALTIME_TRANSPORT, REALTIME_CLIENT_AUTHORIZER } from './realtime.js';
+export {
+  REALTIME_TRANSPORT,
+  REALTIME_CLIENT_AUTHORIZER,
+  CHAT_REALTIME_TRANSPORT,
+  CHAT_REALTIME_CLIENT_AUTHORIZER,
+} from './realtime.js';
 
 export type { GameAdapter } from './game.js';
 export { GAME_ADAPTER } from './game.js';

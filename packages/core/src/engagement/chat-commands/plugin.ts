@@ -3,7 +3,7 @@ import {
   WALLET_COMMANDS,
   ADMIN_USER_DIRECTORY,
   AUDIT_WRITER,
-  REALTIME_TRANSPORT,
+  CHAT_REALTIME_TRANSPORT,
   CHAT_SYSTEM_WRITER,
   CHAT_BLOCK_WRITER,
 } from '@openora/core/contracts';
@@ -21,7 +21,7 @@ export default definePlugin({
         c.get(WALLET_COMMANDS),
         c.get(ADMIN_USER_DIRECTORY),
         c.get(AUDIT_WRITER),
-        c.get(REALTIME_TRANSPORT),
+        c.get(CHAT_REALTIME_TRANSPORT),
         c.get(EVENT_BUS),
         c.get(CHAT_BLOCK_WRITER),
       );

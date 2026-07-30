@@ -605,9 +605,7 @@
       "token": "REALTIME_TRANSPORT",
       "status": "wired",
       "boundIn": [
-        "packages/core/src/compliance/plugin.ts",
-        "packages/core/src/engagement/chat-commands/plugin.ts",
-        "packages/core/src/engagement/chat/plugin.ts"
+        "packages/core/src/compliance/plugin.ts"
       ]
     },
     {
