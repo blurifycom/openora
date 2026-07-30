@@ -84,7 +84,7 @@ export class FunnelAnalyticsService {
       first_bet: Number(row?.first_bet ?? 0),
     };
 
-    const out = FUNNEL_STAGES.map((stage, index) => {
+    return FUNNEL_STAGES.map((stage, index) => {
       const previousStage = FUNNEL_STAGES[index - 1];
       return {
         stage,
@@ -92,13 +92,5 @@ export class FunnelAnalyticsService {
         dropOffRate: previousStage ? dropOffRate(counts[previousStage], counts[stage]) : 0,
       };
     });
-    console.log('FUNNEL_OUT', out.map((s) => String(s.dropOffRate)).join('|'));
-    console.log('FUNNEL_WHERE', import.meta.url);
-    console.log(
-      'FUNNEL_SRC',
-      String(FunnelAnalyticsService.prototype['computeConversion']).slice(-400),
-    );
-
-    return out;
   }
 }
