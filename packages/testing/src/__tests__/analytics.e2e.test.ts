@@ -164,7 +164,7 @@ describe('analytics e2e', () => {
     const stages = (await readJson(res)) as Array<{
       stage: string;
       count: number;
-      dropOffRate: number;
+      dropOffRate: number | null;
     }>;
 
     const byStage = new Map(stages.map((s) => [s.stage, s]));
@@ -183,7 +183,7 @@ describe('analytics e2e', () => {
     expect(firstDeposit?.count).toBeLessThanOrEqual(emailVerified?.count ?? 0);
     expect(firstBet?.count).toBeLessThanOrEqual(firstDeposit?.count ?? 0);
     expect(firstBet?.count).toBeGreaterThanOrEqual(1);
-    expect(registered?.dropOffRate).toBe(0);
+    expect(registered?.dropOffRate).toBeNull();
   });
 
   it('rejects an analytics read from a non-admin caller', async () => {
