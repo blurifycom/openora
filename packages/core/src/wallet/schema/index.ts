@@ -124,7 +124,22 @@ export const walletDepositAddress = pgTable(
   ],
 );
 
+// Global fiat/crypto auto-withdrawal thresholds (BF-211), Super-Admin-editable at runtime.
+// singletonKey's unique constraint DB-enforces exactly one row ever ('global').
+export const walletAutoWithdrawalConfig = pgTable('wallet_auto_withdrawal_config', {
+  id: uuid().primaryKey().defaultRandom(),
+  singletonKey: text().notNull().unique().default('global'),
+  fiatThreshold: decimal({ precision: 18, scale: 8 }).notNull(),
+  cryptoThreshold: decimal({ precision: 18, scale: 8 }).notNull(),
+  updatedBy: uuid(),
+  updatedAt: timestamp({ withTimezone: true })
+    .notNull()
+    .$onUpdateFn(() => new Date()),
+  createdAt: timestamp({ withTimezone: true }).notNull().defaultNow(),
+});
+
 export type Wallet = typeof wallet.$inferSelect;
 export type WalletTransaction = typeof walletTransaction.$inferSelect;
 export type AutoWithdrawalRule = typeof autoWithdrawalRule.$inferSelect;
 export type WalletDepositAddress = typeof walletDepositAddress.$inferSelect;
+export type WalletAutoWithdrawalConfig = typeof walletAutoWithdrawalConfig.$inferSelect;

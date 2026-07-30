@@ -4,6 +4,8 @@ import { fileURLToPath } from 'node:url';
 import { eq } from 'drizzle-orm';
 import { loadExtensions, DRIZZLE, type Container } from '@openora/core/server';
 import { user } from '@openora/core/pam/schema/identity';
+import { walletAutoWithdrawalConfig } from '@openora/core/wallet/schema';
+import { seedAutoWithdrawalConfig } from '@openora/core/wallet/seed';
 import {
   setupTestDb,
   bootTestApp,
@@ -109,6 +111,18 @@ beforeAll(async () => {
     databaseUrl: db.url,
   });
 
+  // BF-211 moved the global fiat/crypto threshold from static PLATFORM_CONFIG to the
+  // DB-backed wallet_auto_withdrawal_config singleton. appGated/appCapGated share this
+  // physical database with appDefault, so seeding it once here (fiatThreshold '2', matching
+  // what the two fixtures used to set statically) covers both single-shot gate and daily-cap
+  // scenarios below - the seed default ('0'/'0') would otherwise leave auto-approval off.
+  await seedAutoWithdrawalConfig(appDefault.container.get(DRIZZLE).db);
+  await appDefault.container
+    .get(DRIZZLE)
+    .db.update(walletAutoWithdrawalConfig)
+    .set({ fiatThreshold: '2' })
+    .where(eq(walletAutoWithdrawalConfig.singletonKey, 'global'));
+
   await seedMinimal(appDefault.container, { playerCount: 0 });
 }, 60_000);
 
@@ -147,7 +161,7 @@ describe('Auto-withdrawal: single-shot gates (appGated - fiatThreshold 2)', () =
       expect(auditBody.items[0].actorType).toBe('system');
       expect(auditBody.items[0].after).toMatchObject({
         userId,
-        threshold: '2',
+        threshold: '2.00000000',
         thresholdSource: 'global',
         kycStatus: 'manually_overridden',
         riskTagsEvaluated: [],

@@ -439,6 +439,11 @@
       "import": "./dist/wallet/contract/index.js",
       "default": "./dist/wallet/contract/index.js"
     },
+    "./wallet/seed": {
+      "types": "./dist/wallet/seed/index.d.ts",
+      "import": "./dist/wallet/seed/index.js",
+      "default": "./dist/wallet/seed/index.js"
+    },
     "./audit/migrate": {
       "types": "./dist/audit/migrate.d.ts",
       "import": "./dist/audit/migrate.js",

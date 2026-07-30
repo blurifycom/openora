@@ -292,6 +292,7 @@
       "tables": [
         "auto_withdrawal_rule",
         "wallet",
+        "wallet_auto_withdrawal_config",
         "wallet_deposit_address",
         "wallet_transaction"
       ],
@@ -300,12 +301,14 @@
         "wallet.delete",
         "wallet.deposit",
         "wallet.get",
+        "wallet.get",
         "wallet.getAddress",
         "wallet.getBalance",
         "wallet.list",
         "wallet.listPlayerTransactions",
         "wallet.listTransactions",
         "wallet.reject",
+        "wallet.set",
         "wallet.set",
         "wallet.webhook",
         "wallet.withdraw"
@@ -1456,6 +1459,10 @@
       "file": "packages/core/src/compliance/contract/rg.ts"
     },
     {
+      "name": "SetWalletAutoWithdrawalConfigInputSchema",
+      "file": "packages/core/src/wallet/contract/index.ts"
+    },
+    {
       "name": "SignedMoneyAmountSchema",
       "file": "packages/core/src/contracts/schemas/common.ts"
     },
@@ -1562,6 +1569,10 @@
     {
       "name": "VerifyPasswordResetOtpInputSchema",
       "file": "packages/core/src/contracts/schemas/identity.ts"
+    },
+    {
+      "name": "WalletAutoWithdrawalConfigSchema",
+      "file": "packages/core/src/wallet/contract/index.ts"
     },
     {
       "name": "WalletBalanceSchema",
@@ -1715,6 +1726,7 @@
     "GET /players/{playerId}",
     "GET /profile",
     "GET /tag-rule",
+    "GET /wallet/auto-withdrawal-config",
     "GET /wallet/auto-withdrawal-rules/{userId}",
     "GET /wallet/balance",
     "GET /wallet/transactions",
@@ -1790,6 +1802,7 @@
     "PUT /compliance/players/{userId}/limits",
     "PUT /iam/roles/{roleId}/permissions",
     "PUT /tag-rule/{tagKey}",
+    "PUT /wallet/auto-withdrawal-config",
     "PUT /wallet/auto-withdrawal-rules/{userId}"
   ]
 }

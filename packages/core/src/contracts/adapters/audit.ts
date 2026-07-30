@@ -17,7 +17,8 @@ export type DirectAuditAction =
   | 'compliance.kyc.bulk_approve'
   | 'wallet.withdrawal.auto_approved'
   | 'wallet.auto_withdrawal_rule.set'
-  | 'wallet.auto_withdrawal_rule.deleted';
+  | 'wallet.auto_withdrawal_rule.deleted'
+  | 'wallet.auto_withdrawal_config.set';
 
 // Every value the audit `action` column legitimately holds: a cross-module domain
 // event topic (recorded by the audit plugin's subscriptions) or a direct admin

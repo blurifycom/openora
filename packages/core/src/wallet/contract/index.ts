@@ -133,6 +133,21 @@ export const SetAutoWithdrawalRuleInputSchema = z.object({
 
 export const AutoWithdrawalRuleKeySchema = z.object({ userId: UuidSchema });
 
+export const WalletAutoWithdrawalConfigSchema = z.object({
+  id: UuidSchema,
+  fiatThreshold: MoneyAmountSchema,
+  cryptoThreshold: MoneyAmountSchema,
+  updatedBy: UuidSchema.nullable(),
+  updatedAt: TimestampSchema,
+  createdAt: TimestampSchema,
+});
+export type WalletAutoWithdrawalConfig = z.infer<typeof WalletAutoWithdrawalConfigSchema>;
+
+export const SetWalletAutoWithdrawalConfigInputSchema = z.object({
+  fiatThreshold: MoneyAmountSchema,
+  cryptoThreshold: MoneyAmountSchema,
+});
+
 export const ApproveWithdrawalInputSchema = z.object({ withdrawalId: UuidSchema });
 
 export const RejectWithdrawalInputSchema = z.object({
@@ -209,6 +224,17 @@ export const walletContract = {
       .route({ method: 'DELETE', path: '/wallet/auto-withdrawal-rules/{userId}' })
       .input(AutoWithdrawalRuleKeySchema)
       .output(z.boolean()),
+  },
+
+  autoWithdrawalConfig: {
+    get: oc
+      .route({ method: 'GET', path: '/wallet/auto-withdrawal-config' })
+      .output(WalletAutoWithdrawalConfigSchema),
+
+    set: oc
+      .route({ method: 'PUT', path: '/wallet/auto-withdrawal-config' })
+      .input(SetWalletAutoWithdrawalConfigInputSchema)
+      .output(WalletAutoWithdrawalConfigSchema),
   },
 
   deposits: {

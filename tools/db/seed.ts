@@ -21,6 +21,7 @@
 import { createAuth, createDrizzleDb } from '@openora/core/server';
 import { seedIam } from '@openora/core/iam/seed';
 import { seedTag } from '@openora/core/pam/tag/seed';
+import { seedAutoWithdrawalConfig } from '@openora/core/wallet/seed';
 import { seedDemoData } from '@openora/testing';
 import { user, session, account, verification, twoFactor } from '@openora/core/pam/schema/identity';
 
@@ -43,6 +44,8 @@ async function main() {
   console.log('  Reference roles ready.');
   await seedTag(db);
   console.log('  Default tags ready.');
+  await seedAutoWithdrawalConfig(db);
+  console.log('  Auto-withdrawal config ready.');
 
   const result = await seedDemoData({
     db,
