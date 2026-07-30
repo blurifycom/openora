@@ -167,6 +167,7 @@ describe('analytics e2e', () => {
       dropOffRate: number;
     }>;
 
+    console.log('FUNNEL_DEBUG', JSON.stringify(stages));
     const byStage = new Map(stages.map((s) => [s.stage, s]));
     const registered = byStage.get('registered');
     const emailVerified = byStage.get('email_verified');
