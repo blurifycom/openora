@@ -84,6 +84,7 @@ export class FunnelAnalyticsService {
       first_bet: Number(row?.first_bet ?? 0),
     };
 
+    console.log('FUNNEL_SRV', JSON.stringify({ row, counts, stages: FUNNEL_STAGES, len: FUNNEL_STAGES.length }));
     return FUNNEL_STAGES.map((stage, index) => {
       const previousStage = FUNNEL_STAGES[index - 1];
       return {
