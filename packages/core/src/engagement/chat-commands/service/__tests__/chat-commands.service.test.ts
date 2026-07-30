@@ -6,6 +6,7 @@ import type {
   ChatBlockWriter,
   WalletCommands,
   AdminUserDirectory,
+  AdminGameReporting,
   AuditWritePort,
   RealtimeTransport,
 } from '@openora/core/contracts';
@@ -22,6 +23,7 @@ import {
   DonateSelfError,
   ChatPlayerNotFoundError,
   TooManyRecipientsError,
+  SelfModerationActionError,
 } from '../chat-commands.service.js';
 
 const ACTOR_ID = '00000000-0000-0000-0000-000000000001';
@@ -91,6 +93,8 @@ function makeWallet(ok = true): WalletCommands {
   });
 }
 
+const DIRECTORY_CREATED_AT = new Date('2026-01-01T00:00:00.000Z');
+
 function makeDirectory(senderUsername = 'bob', claimerUsername = 'alice'): AdminUserDirectory {
   return mock<AdminUserDirectory>({
     findPlayerIds: vi.fn().mockResolvedValue([ACTOR_ID]),
@@ -102,6 +106,10 @@ function makeDirectory(senderUsername = 'bob', claimerUsername = 'alice'): Admin
           email: 'bob@example.com',
           kycStatus: null,
           language: null,
+          avatarUrl: null,
+          createdAt: DIRECTORY_CREATED_AT,
+          level: 3,
+          currency: 'USD',
         },
         {
           userId: CLAIMER_ID,
@@ -109,6 +117,10 @@ function makeDirectory(senderUsername = 'bob', claimerUsername = 'alice'): Admin
           email: 'alice@example.com',
           kycStatus: null,
           language: null,
+          avatarUrl: null,
+          createdAt: DIRECTORY_CREATED_AT,
+          level: 1,
+          currency: 'USD',
         },
       ];
       return Promise.resolve(all.filter((p) => ids.includes(p.userId)));
@@ -121,7 +133,17 @@ function makeAudit(): AuditWritePort {
 }
 
 function makeBlockWriter(): ChatBlockWriter {
-  return mock<ChatBlockWriter>({ blockUser: vi.fn().mockResolvedValue(undefined) });
+  return mock<ChatBlockWriter>({
+    blockUser: vi.fn().mockResolvedValue(undefined),
+    ignoreUser: vi.fn().mockResolvedValue(undefined),
+    getExcludedUserIds: vi.fn().mockResolvedValue([]),
+  });
+}
+
+function makeGameReporting(): AdminGameReporting {
+  return mock<AdminGameReporting>({
+    getPlayerStats: vi.fn().mockResolvedValue({ totalWagered: '100.00000000', totalBets: 5 }),
+  });
 }
 
 function makeTransport(onlineIds: string[] = [CLAIMER_ID]): RealtimeTransport {
@@ -143,6 +165,8 @@ function makeSvc(
     directory?: AdminUserDirectory;
     transport?: RealtimeTransport;
     audit?: AuditWritePort;
+    gameReporting?: AdminGameReporting;
+    blockWriter?: ChatBlockWriter;
   } = {},
 ) {
   const drizzle = makeDrizzle({
@@ -158,7 +182,8 @@ function makeSvc(
     overrides.audit ?? makeAudit(),
     overrides.transport ?? makeTransport(),
     mock(makeEventBus()),
-    makeBlockWriter(),
+    overrides.blockWriter ?? makeBlockWriter(),
+    overrides.gameReporting ?? makeGameReporting(),
   );
 }
 
@@ -187,7 +212,7 @@ describe('ChatCommandsService.searchMentions', () => {
   it('passes limit to findPlayerIds', async () => {
     const directory = makeDirectory();
     const svc = makeSvc({ directory });
-    await svc.searchMentions('ali', 5);
+    await svc.searchMentions('ali', 5, CLAIMER_ID);
     expect(directory.findPlayerIds).toHaveBeenCalledWith('ali', 5);
   });
 
@@ -197,8 +222,81 @@ describe('ChatCommandsService.searchMentions', () => {
       lookupPlayers: vi.fn().mockResolvedValue([]),
     });
     const svc = makeSvc({ directory });
-    const result = await svc.searchMentions('xyz', 10);
+    const result = await svc.searchMentions('xyz', 10, CLAIMER_ID);
     expect(result).toEqual([]);
+  });
+
+  it('excludes ids the viewer has blocked or ignored', async () => {
+    const directory = makeDirectory();
+    const blockWriter = mock<ChatBlockWriter>({
+      blockUser: vi.fn().mockResolvedValue(undefined),
+      ignoreUser: vi.fn().mockResolvedValue(undefined),
+      getExcludedUserIds: vi.fn().mockResolvedValue([ACTOR_ID]),
+    });
+    const svc = makeSvc({ directory, blockWriter });
+    const result = await svc.searchMentions('bo', 5, CLAIMER_ID);
+    expect(blockWriter.getExcludedUserIds).toHaveBeenCalledWith(CLAIMER_ID);
+    expect(result).toEqual([]);
+  });
+});
+
+describe('ChatCommandsService.searchPlayers', () => {
+  it('returns mapped player search results', async () => {
+    const directory = makeDirectory();
+    const svc = makeSvc({ directory });
+    const result = await svc.searchPlayers('bo', 5, CLAIMER_ID);
+    expect(directory.findPlayerIds).toHaveBeenCalledWith('bo', 5);
+    expect(result).toEqual([{ userId: ACTOR_ID, username: 'bob', avatarUrl: null, level: 3 }]);
+  });
+
+  it('returns empty array when no matches', async () => {
+    const directory = mock<AdminUserDirectory>({
+      findPlayerIds: vi.fn().mockResolvedValue([]),
+      lookupPlayers: vi.fn().mockResolvedValue([]),
+    });
+    const svc = makeSvc({ directory });
+    const result = await svc.searchPlayers('xyz', 10, CLAIMER_ID);
+    expect(result).toEqual([]);
+  });
+
+  it('excludes ids the viewer has blocked or ignored', async () => {
+    const directory = makeDirectory();
+    const blockWriter = mock<ChatBlockWriter>({
+      blockUser: vi.fn().mockResolvedValue(undefined),
+      ignoreUser: vi.fn().mockResolvedValue(undefined),
+      getExcludedUserIds: vi.fn().mockResolvedValue([ACTOR_ID]),
+    });
+    const svc = makeSvc({ directory, blockWriter });
+    const result = await svc.searchPlayers('bo', 5, CLAIMER_ID);
+    expect(blockWriter.getExcludedUserIds).toHaveBeenCalledWith(CLAIMER_ID);
+    expect(result).toEqual([]);
+  });
+});
+
+describe('ChatCommandsService.getPlayerProfile', () => {
+  it('returns the full profile card on the happy path', async () => {
+    const gameReporting = makeGameReporting();
+    const svc = makeSvc({ directory: makeDirectory(), gameReporting });
+    const result = await svc.getPlayerProfile(ACTOR_ID);
+    expect(gameReporting.getPlayerStats).toHaveBeenCalledWith(ACTOR_ID);
+    expect(result).toEqual({
+      userId: ACTOR_ID,
+      username: 'bob',
+      avatarUrl: null,
+      level: 3,
+      joinedAt: DIRECTORY_CREATED_AT.toISOString(),
+      totalWagered: '100.00000000',
+      totalBets: 5,
+      currency: 'USD',
+    });
+  });
+
+  it('throws ChatPlayerNotFoundError for an unknown userId', async () => {
+    const directory = mock<AdminUserDirectory>({
+      lookupPlayers: vi.fn().mockResolvedValue([]),
+    });
+    const svc = makeSvc({ directory });
+    await expect(svc.getPlayerProfile(CLAIMER_ID)).rejects.toThrow(ChatPlayerNotFoundError);
   });
 });
 
@@ -357,6 +455,7 @@ describe('ChatCommandsService.adminUpdateCommand', () => {
       makeTransport(),
       mock(makeEventBus()),
       makeBlockWriter(),
+      makeGameReporting(),
     );
     await svcWithAudit.adminUpdateCommand({ key: 'rain', enabled: false }, ACTOR_ID);
     expect(audit.record).toHaveBeenCalledWith(
@@ -529,6 +628,10 @@ function makeRecipientDirectory(): import('@openora/core/contracts').AdminUserDi
           email: 'bob@example.com',
           kycStatus: null,
           language: null,
+          avatarUrl: null,
+          createdAt: DIRECTORY_CREATED_AT,
+          level: 3,
+          currency: 'USD',
         },
         {
           userId: CLAIMER_ID,
@@ -536,6 +639,10 @@ function makeRecipientDirectory(): import('@openora/core/contracts').AdminUserDi
           email: 'alice@example.com',
           kycStatus: null,
           language: null,
+          avatarUrl: null,
+          createdAt: DIRECTORY_CREATED_AT,
+          level: 1,
+          currency: 'USD',
         },
       ];
       return Promise.resolve(all.filter((p) => ids.includes(p.userId)));
@@ -629,5 +736,61 @@ describe('ChatCommandsService.handleDonate', () => {
         ACTOR_ID,
       ),
     ).rejects.toThrow(BelowMinimumError);
+  });
+});
+
+const BLOCK_ROW = { ...ENABLED_ROW, key: 'block', label: 'Block' };
+const IGNORE_ROW = { ...ENABLED_ROW, key: 'ignore', label: 'Ignore' };
+
+describe('ChatCommandsService.handleBlockAction', () => {
+  it('dispatches "block" to blockWriter.blockUser, not ignoreUser', async () => {
+    const blockWriter = makeBlockWriter();
+    const svc = makeSvc({
+      drizzleRows: { select: [[BLOCK_ROW]] },
+      directory: makeRecipientDirectory(),
+      blockWriter,
+    });
+
+    await svc.executeCommand({ type: 'block', targetUsername: 'alice', roomId: ROOM_ID }, ACTOR_ID);
+
+    expect(blockWriter.blockUser).toHaveBeenCalledWith(ACTOR_ID, CLAIMER_ID);
+    expect(blockWriter.ignoreUser).not.toHaveBeenCalled();
+  });
+
+  it('dispatches "ignore" to blockWriter.ignoreUser, not blockUser', async () => {
+    const blockWriter = makeBlockWriter();
+    const svc = makeSvc({
+      drizzleRows: { select: [[IGNORE_ROW]] },
+      directory: makeRecipientDirectory(),
+      blockWriter,
+    });
+
+    await svc.executeCommand(
+      { type: 'ignore', targetUsername: 'alice', roomId: ROOM_ID },
+      ACTOR_ID,
+    );
+
+    expect(blockWriter.ignoreUser).toHaveBeenCalledWith(ACTOR_ID, CLAIMER_ID);
+    expect(blockWriter.blockUser).not.toHaveBeenCalled();
+  });
+
+  it('throws SelfModerationActionError on self-block', async () => {
+    const svc = makeSvc({
+      drizzleRows: { select: [[BLOCK_ROW]] },
+    });
+
+    await expect(
+      svc.executeCommand({ type: 'block', targetUsername: 'bob', roomId: ROOM_ID }, ACTOR_ID),
+    ).rejects.toThrow(SelfModerationActionError);
+  });
+
+  it('throws SelfModerationActionError on self-ignore', async () => {
+    const svc = makeSvc({
+      drizzleRows: { select: [[IGNORE_ROW]] },
+    });
+
+    await expect(
+      svc.executeCommand({ type: 'ignore', targetUsername: 'bob', roomId: ROOM_ID }, ACTOR_ID),
+    ).rejects.toThrow(SelfModerationActionError);
   });
 });

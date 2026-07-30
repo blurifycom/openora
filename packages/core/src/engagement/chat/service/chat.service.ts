@@ -27,6 +27,7 @@ import {
   chatRoom,
   chatMessage,
   chatUserBlock,
+  chatUserIgnore,
   chatRoomMember,
   chatRoomBan,
 } from '../schema/index.js';
@@ -59,6 +60,11 @@ export const ChatMessageBlockedError = createDomainError(
 export const ChatSelfBlockError = createDomainError(
   'ChatSelfBlockError',
   () => 'You cannot block yourself',
+);
+
+export const ChatSelfIgnoreError = createDomainError(
+  'ChatSelfIgnoreError',
+  () => 'You cannot ignore yourself',
 );
 
 export const ChatRoomSlugConflictError = makeConflictError(
@@ -166,7 +172,7 @@ export class ChatService {
       }
     };
     if (viewerId) {
-      this.blockedIdsFor(viewerId)
+      this.excludedSenderIdsFor(viewerId)
         .catch(() => new Set<User['id']>())
         .then((ids) => {
           blocked = ids;
@@ -200,6 +206,22 @@ export class ChatService {
       .from(chatUserBlock)
       .where(eq(chatUserBlock.blockerId, viewerId));
     return new Set(rows.map((r) => r.blockedId));
+  }
+
+  private async ignoredIdsFor(viewerId: User['id']) {
+    const rows = await this.drizzle.db
+      .select({ ignoredId: chatUserIgnore.ignoredId })
+      .from(chatUserIgnore)
+      .where(eq(chatUserIgnore.ignorerId, viewerId));
+    return new Set(rows.map((r) => r.ignoredId));
+  }
+
+  private async excludedSenderIdsFor(viewerId: User['id']) {
+    const [blocked, ignored] = await Promise.all([
+      this.blockedIdsFor(viewerId),
+      this.ignoredIdsFor(viewerId),
+    ]);
+    return new Set([...blocked, ...ignored]);
   }
 
   private async resolveDisplayName(userId: User['id'], fallback: string) {
@@ -324,7 +346,7 @@ export class ChatService {
     if (before) {
       conditions.push(lt(chatMessage.createdAt, new Date(before)));
     }
-    await this.appendBlockFilter(conditions, viewerId);
+    await this.appendExcludedSendersFilter(conditions, viewerId);
     const messages = await this.drizzle.db
       .select()
       .from(chatMessage)
@@ -334,13 +356,16 @@ export class ChatService {
     return messages.map(toMessage);
   }
 
-  private async appendBlockFilter(conditions: ReturnType<typeof eq>[], viewerId?: User['id']) {
+  private async appendExcludedSendersFilter(
+    conditions: ReturnType<typeof eq>[],
+    viewerId?: User['id'],
+  ) {
     if (!viewerId) {
       return;
     }
-    const blocked = await this.blockedIdsFor(viewerId);
-    if (blocked.size > 0) {
-      conditions.push(notInArray(chatMessage.userId, [...blocked]));
+    const excluded = await this.excludedSenderIdsFor(viewerId);
+    if (excluded.size > 0) {
+      conditions.push(notInArray(chatMessage.userId, [...excluded]));
     }
   }
 
@@ -398,7 +423,7 @@ export class ChatService {
 
   async getGlobalMessages(limit = DEFAULT_MESSAGE_LIMIT, viewerId?: User['id']) {
     const conditions = [isNull(chatMessage.roomId), eq(chatMessage.isDeleted, false)];
-    await this.appendBlockFilter(conditions, viewerId);
+    await this.appendExcludedSendersFilter(conditions, viewerId);
     const messages = await this.drizzle.db
       .select()
       .from(chatMessage)
@@ -480,6 +505,59 @@ export class ChatService {
       });
     }
     return { success: true } as const;
+  }
+
+  async listIgnoredUsers(ignorerId: User['id']) {
+    const rows = await this.drizzle.db
+      .select({ ignoredId: chatUserIgnore.ignoredId, createdAt: chatUserIgnore.createdAt })
+      .from(chatUserIgnore)
+      .where(eq(chatUserIgnore.ignorerId, ignorerId))
+      .orderBy(desc(chatUserIgnore.createdAt));
+    return rows.map((r) => serializeRow(r, { dateFields: ['createdAt'] }));
+  }
+
+  async ignoreUser(ignorerId: User['id'], ignoredId: User['id'], meta?: ClientMeta) {
+    if (ignorerId === ignoredId) {
+      throw new ChatSelfIgnoreError();
+    }
+
+    // Idempotent: re-ignoring is a no-op, so only the first ignore emits an event.
+    const inserted = await this.drizzle.db
+      .insert(chatUserIgnore)
+      .values({ ignorerId, ignoredId })
+      .onConflictDoNothing({ target: [chatUserIgnore.ignorerId, chatUserIgnore.ignoredId] })
+      .returning();
+
+    if (inserted.length > 0) {
+      this.events.emit('chat.user.ignored', {
+        ignorerId,
+        ignoredId,
+        ip: meta?.ip ?? null,
+        userAgent: meta?.userAgent ?? null,
+      });
+    }
+    return { success: true } as const;
+  }
+
+  async unignoreUser(ignorerId: User['id'], ignoredId: User['id'], meta?: ClientMeta) {
+    const removed = await this.drizzle.db
+      .delete(chatUserIgnore)
+      .where(and(eq(chatUserIgnore.ignorerId, ignorerId), eq(chatUserIgnore.ignoredId, ignoredId)))
+      .returning();
+
+    if (removed.length > 0) {
+      this.events.emit('chat.user.unignored', {
+        ignorerId,
+        ignoredId,
+        ip: meta?.ip ?? null,
+        userAgent: meta?.userAgent ?? null,
+      });
+    }
+    return { success: true } as const;
+  }
+
+  async getExcludedUserIds(viewerId: User['id']): Promise<string[]> {
+    return [...(await this.excludedSenderIdsFor(viewerId))];
   }
 
   async createRoom({

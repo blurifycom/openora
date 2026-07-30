@@ -24,6 +24,7 @@ import {
   ChatMessageOwnershipError,
   ChatMessageBlockedError,
   ChatSelfBlockError,
+  ChatSelfIgnoreError,
   ChatRoomSlugConflictError,
   ChatRoomJoinCodeNotFoundError,
   ChatRoomBannedError,
@@ -39,6 +40,7 @@ import {
   chatRoomMember,
   chatRoomBan,
   chatUserBlock,
+  chatUserIgnore,
 } from '../schema/index.js';
 let db: TestDb;
 
@@ -103,7 +105,7 @@ afterAll(async () => {
 
 beforeEach(async () => {
   await db.drizzle.db.execute(
-    sql`TRUNCATE ${chatMessage}, ${chatRoomMember}, ${chatRoomBan}, ${chatUserBlock}, ${chatRoom}, ${user} RESTART IDENTITY CASCADE`,
+    sql`TRUNCATE ${chatMessage}, ${chatRoomMember}, ${chatRoomBan}, ${chatUserBlock}, ${chatUserIgnore}, ${chatRoom}, ${user} RESTART IDENTITY CASCADE`,
   );
 });
 
@@ -220,6 +222,22 @@ describe('ChatService.subscribeMessages per-viewer block filtering (real PG)', (
 
     expect(got).toHaveLength(1);
   });
+
+  it('hides messages from an ignored (not blocked) sender for the viewer', async () => {
+    const { svc, transport } = makeService();
+    const viewerId = randomUUID();
+    const ignoredId = randomUUID();
+    await svc.ignoreUser(viewerId, ignoredId);
+
+    const got: ChatMessage[] = [];
+    svc.subscribeMessages(null, (m) => got.push(m), viewerId);
+    transport.publish(chatChannel(null), { ...sample, userId: 'other-user' });
+    await waitFor(() => got.length === 1);
+
+    transport.publish(chatChannel(null), { ...sample, userId: ignoredId });
+
+    expect(got.map((m) => m.userId)).toEqual(['other-user']);
+  });
 });
 
 describe('ChatService.sendGlobalMessage (real PG)', () => {
@@ -306,6 +324,19 @@ describe('ChatService message reads (real PG)', () => {
     expect(messages.map((m) => m.id)).toEqual([visible.id]);
   });
 
+  it('filters out senders the viewer has ignored (not blocked)', async () => {
+    const { svc } = makeService();
+    const viewerId = randomUUID();
+    const ignoredId = randomUUID();
+    await svc.ignoreUser(viewerId, ignoredId);
+    await seedMessage({ userId: ignoredId });
+    const visible = await seedMessage();
+
+    const messages = await svc.getGlobalMessages(50, viewerId);
+
+    expect(messages.map((m) => m.id)).toEqual([visible.id]);
+  });
+
   it('scopes room messages to the room and honours the before cursor', async () => {
     const { svc } = makeService();
     const room = await seedRoom();
@@ -322,6 +353,20 @@ describe('ChatService message reads (real PG)', () => {
     });
 
     expect(messages.map((m) => m.id)).toEqual([old.id]);
+  });
+
+  it('filters out room senders the viewer has ignored (not blocked)', async () => {
+    const { svc } = makeService();
+    const viewerId = randomUUID();
+    const ignoredId = randomUUID();
+    const room = await seedRoom();
+    await svc.ignoreUser(viewerId, ignoredId);
+    await seedMessage({ roomId: room.id, userId: ignoredId });
+    const visible = await seedMessage({ roomId: room.id });
+
+    const messages = await svc.getRoomMessages({ roomId: room.id, viewerId });
+
+    expect(messages.map((m) => m.id)).toEqual([visible.id]);
   });
 });
 
@@ -442,6 +487,71 @@ describe('ChatService block list (real PG)', () => {
     const rows = await svc.listBlockedUsers(blockerId);
 
     expect(rows.map((r) => r.blockedId)).toEqual([second, first]);
+  });
+});
+
+describe('ChatService ignore list (real PG)', () => {
+  it('rejects ignoring yourself', async () => {
+    const { svc } = makeService();
+    const userId = randomUUID();
+
+    await expect(svc.ignoreUser(userId, userId)).rejects.toThrow(ChatSelfIgnoreError);
+  });
+
+  it('emits only on the first ignore of a pair', async () => {
+    const { svc, events } = makeService();
+    const ignorerId = randomUUID();
+    const ignoredId = randomUUID();
+
+    await svc.ignoreUser(ignorerId, ignoredId, NO_CLIENT_META);
+    await svc.ignoreUser(ignorerId, ignoredId, NO_CLIENT_META);
+
+    expect(await db.drizzle.db.select().from(chatUserIgnore)).toHaveLength(1);
+    expect(events.emit.mock.calls.filter(([topic]) => topic === 'chat.user.ignored')).toHaveLength(
+      1,
+    );
+  });
+
+  it('emits on unignore only when a row was actually removed', async () => {
+    const { svc, events } = makeService();
+    const ignorerId = randomUUID();
+    const ignoredId = randomUUID();
+    await svc.ignoreUser(ignorerId, ignoredId);
+
+    await svc.unignoreUser(ignorerId, ignoredId, NO_CLIENT_META);
+    await svc.unignoreUser(ignorerId, ignoredId, NO_CLIENT_META);
+
+    expect(await db.drizzle.db.select().from(chatUserIgnore)).toHaveLength(0);
+    expect(
+      events.emit.mock.calls.filter(([topic]) => topic === 'chat.user.unignored'),
+    ).toHaveLength(1);
+  });
+
+  it('lists the ignored ids newest-first', async () => {
+    const { svc } = makeService();
+    const ignorerId = randomUUID();
+    const first = randomUUID();
+    const second = randomUUID();
+    await db.drizzle.db.insert(chatUserIgnore).values([
+      { ignorerId, ignoredId: first, createdAt: new Date('2026-01-01T00:00:00.000Z') },
+      { ignorerId, ignoredId: second, createdAt: new Date('2026-02-01T00:00:00.000Z') },
+    ]);
+
+    const rows = await svc.listIgnoredUsers(ignorerId);
+
+    expect(rows.map((r) => r.ignoredId)).toEqual([second, first]);
+  });
+
+  it('a block and an ignore are independent relationships (blocking does not ignore, and vice versa)', async () => {
+    const { svc } = makeService();
+    const viewerId = randomUUID();
+    const blockedId = randomUUID();
+    const ignoredId = randomUUID();
+    await svc.blockUser(viewerId, blockedId);
+    await svc.ignoreUser(viewerId, ignoredId);
+
+    expect((await svc.listBlockedUsers(viewerId)).map((r) => r.blockedId)).toEqual([blockedId]);
+    expect((await svc.listIgnoredUsers(viewerId)).map((r) => r.ignoredId)).toEqual([ignoredId]);
   });
 });
 

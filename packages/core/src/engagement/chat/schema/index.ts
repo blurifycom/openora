@@ -74,6 +74,23 @@ export const chatUserBlock = pgTable(
   ],
 );
 
+// A directional soft-mute: `ignorerId` no longer sees messages from `ignoredId`.
+// A separate relationship from chatUserBlock (not an alias) - same message-hiding
+// effect for now, but block vs ignore may diverge further later.
+export const chatUserIgnore = pgTable(
+  'chat_user_ignore',
+  {
+    id: uuid().primaryKey().defaultRandom(),
+    ignorerId: uuid().notNull(),
+    ignoredId: uuid().notNull(),
+    createdAt: timestamp({ withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    uniqueIndex('chat_user_ignore_pair_key').on(t.ignorerId, t.ignoredId),
+    index('chat_user_ignore_ignorer_idx').on(t.ignorerId),
+  ],
+);
+
 export const chatRoomMember = pgTable(
   'chat_room_member',
   {
@@ -112,5 +129,6 @@ export const chatRoomBan = pgTable(
 export type ChatRoom = typeof chatRoom.$inferSelect;
 export type ChatMessage = typeof chatMessage.$inferSelect;
 export type ChatUserBlock = typeof chatUserBlock.$inferSelect;
+export type ChatUserIgnore = typeof chatUserIgnore.$inferSelect;
 export type ChatRoomMember = typeof chatRoomMember.$inferSelect;
 export type ChatRoomBan = typeof chatRoomBan.$inferSelect;

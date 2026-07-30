@@ -58,6 +58,26 @@ export const ClaimGiftOutputSchema = z.object({
 });
 export type ClaimGiftOutput = z.infer<typeof ClaimGiftOutputSchema>;
 
+export const PlayerSearchResultSchema = z.object({
+  userId: UuidSchema,
+  username: z.string(),
+  avatarUrl: z.string().nullable(),
+  level: z.number().int(),
+});
+export type PlayerSearchResult = z.infer<typeof PlayerSearchResultSchema>;
+
+export const PlayerProfileCardSchema = z.object({
+  userId: UuidSchema,
+  username: z.string(),
+  avatarUrl: z.string().nullable(),
+  level: z.number().int(),
+  joinedAt: z.string(),
+  totalWagered: MoneyAmountSchema,
+  totalBets: z.number().int(),
+  currency: z.string(),
+});
+export type PlayerProfileCard = z.infer<typeof PlayerProfileCardSchema>;
+
 export const chatCommandsContract = {
   listCommands: oc
     .route({ method: 'GET', path: '/chat-command/commands' })
@@ -68,11 +88,6 @@ export const chatCommandsContract = {
     .route({ method: 'POST', path: '/chat-command/execute' })
     .input(
       z.discriminatedUnion('type', [
-        z.object({
-          type: z.literal('profile'),
-          targetUsername: z.string().min(1),
-          roomId: UuidSchema.nullable(),
-        }),
         z.object({
           type: z.literal('gift'),
           amount: MoneyAmountSchema,
@@ -123,6 +138,21 @@ export const chatCommandsContract = {
       }),
     )
     .output(z.array(MentionResultSchema)),
+
+  playerSearch: oc
+    .route({ method: 'GET', path: '/chat-command/player-search' })
+    .input(
+      z.object({
+        q: z.string().min(1).max(50),
+        limit: z.coerce.number().int().min(1).max(100).default(20),
+      }),
+    )
+    .output(z.array(PlayerSearchResultSchema)),
+
+  playerProfile: oc
+    .route({ method: 'GET', path: '/chat-command/player-profile/{userId}' })
+    .input(z.object({ userId: UuidSchema }))
+    .output(PlayerProfileCardSchema),
 
   adminUpdateCommand: oc
     .route({ method: 'PATCH', path: '/chat-command/admin/commands/{key}' })

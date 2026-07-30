@@ -28,6 +28,27 @@ function makeDrizzle(rows: Row[]) {
   return { drizzle: mock<DrizzleService>({ db }), whereArgs, orderByArgs };
 }
 
+describe('DrizzleAdminGameReporting.getPlayerStats', () => {
+  it('returns total wagered and total bets for a player', async () => {
+    const { drizzle, whereArgs } = makeDrizzle([{ totalWagered: '250.00000000', totalBets: '4' }]);
+    const reporting = new DrizzleAdminGameReporting(drizzle);
+
+    const stats = await reporting.getPlayerStats('user-1');
+
+    expect(stats).toEqual({ totalWagered: '250.00000000', totalBets: 4 });
+    expect(whereArgs).toEqual([expect.anything()]);
+  });
+
+  it('defaults to zero stats for a player with no completed rounds', async () => {
+    const { drizzle } = makeDrizzle([]);
+    const reporting = new DrizzleAdminGameReporting(drizzle);
+
+    const stats = await reporting.getPlayerStats('user-1');
+
+    expect(stats).toEqual({ totalWagered: '0', totalBets: 0 });
+  });
+});
+
 function row(over: Row = {}): Row {
   return {
     gameId: 'g-1',

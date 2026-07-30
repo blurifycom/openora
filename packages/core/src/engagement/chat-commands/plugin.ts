@@ -2,6 +2,7 @@ import { definePlugin, DRIZZLE, EVENT_BUS, ADMIN_GUARD } from '@openora/core/ser
 import {
   WALLET_COMMANDS,
   ADMIN_USER_DIRECTORY,
+  ADMIN_GAME_REPORTING,
   AUDIT_WRITER,
   CHAT_REALTIME_TRANSPORT,
   CHAT_SYSTEM_WRITER,
@@ -12,7 +13,7 @@ import { createChatCommandsRouter } from './router/index.js';
 
 export default definePlugin({
   id: 'chat-commands',
-  dependsOn: ['chat', 'wallet', 'iam', 'audit'],
+  dependsOn: ['chat', 'wallet', 'iam', 'audit', 'gaming'],
   register(ctx) {
     ctx.routers.add('chat-commands', (c) => {
       const svc = new ChatCommandsService(
@@ -24,6 +25,7 @@ export default definePlugin({
         c.get(CHAT_REALTIME_TRANSPORT),
         c.get(EVENT_BUS),
         c.get(CHAT_BLOCK_WRITER),
+        c.get(ADMIN_GAME_REPORTING),
       );
       return createChatCommandsRouter(svc, c.get(ADMIN_GUARD));
     });

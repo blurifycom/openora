@@ -86,6 +86,11 @@ export const BlockedUserSchema = z.object({
   createdAt: TimestampSchema,
 });
 
+export const IgnoredUserSchema = z.object({
+  ignoredId: UuidSchema,
+  createdAt: TimestampSchema,
+});
+
 export const ChatOnlineCountSchema = z.object({ count: z.number().int().min(0) });
 
 // `.loose()` keeps this an open union so a managed-vendor overlay (eg Ably) can return extra fields without a contract change.
@@ -161,6 +166,20 @@ export const chatContract = {
   unblockUser: oc
     .route({ method: 'DELETE', path: '/chat/blocks/{blockedId}' })
     .input(z.object({ blockedId: UuidSchema }))
+    .output(z.object({ success: z.literal(true) })),
+
+  listIgnoredUsers: oc
+    .route({ method: 'GET', path: '/chat/ignores' })
+    .output(z.array(IgnoredUserSchema)),
+
+  ignoreUser: oc
+    .route({ method: 'POST', path: '/chat/ignores' })
+    .input(z.object({ ignoredId: UuidSchema }))
+    .output(z.object({ success: z.literal(true) })),
+
+  unignoreUser: oc
+    .route({ method: 'DELETE', path: '/chat/ignores/{ignoredId}' })
+    .input(z.object({ ignoredId: UuidSchema }))
     .output(z.object({ success: z.literal(true) })),
 
   createPrivateRoom: oc

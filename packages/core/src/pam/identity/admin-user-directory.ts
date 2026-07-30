@@ -122,6 +122,10 @@ export class DrizzleAdminUserDirectory implements AdminUserDirectory {
         kycStatus: player.kycStatus,
         email: user.email,
         language: user.language,
+        avatarUrl: user.image,
+        createdAt: player.createdAt,
+        level: player.level,
+        currency: player.currency,
       })
       .from(player)
       .innerJoin(user, eq(player.userId, user.id))

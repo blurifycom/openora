@@ -46,6 +46,10 @@ export type AdminPlayerSummary = {
   email: string;
   kycStatus: KycStatus | null;
   language: string | null;
+  avatarUrl: string | null;
+  createdAt: Date;
+  level: number;
+  currency: string;
 };
 
 export type AdminUserDirectory = {

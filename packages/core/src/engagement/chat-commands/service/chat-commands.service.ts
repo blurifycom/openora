@@ -16,6 +16,7 @@ import type {
   ChatBlockWriter,
   WalletCommands,
   AdminUserDirectory,
+  AdminGameReporting,
   AuditWritePort,
   RealtimeTransport,
 } from '@openora/core/contracts';
@@ -26,6 +27,8 @@ import type {
   CommandConfig,
   GiftState,
   ClaimGiftOutput,
+  PlayerSearchResult,
+  PlayerProfileCard,
 } from '../contract/index.js';
 import { ChatCommandTypeSchema } from '../contract/index.js';
 import { chatCommandConfig, chatGift } from '../schema/index.js';
@@ -62,12 +65,15 @@ export const GiftSelfClaimError = makeConflictError(
   'You cannot claim your own gift',
 );
 export const DonateSelfError = makeConflictError('DonateSelf', 'You cannot donate to yourself');
+export const SelfModerationActionError = makeConflictError(
+  'SelfModerationAction',
+  'You cannot block or ignore yourself',
+);
 export const TooManyRecipientsError = makeConflictError(
   'TooManyRecipients',
   'Amount too small: you need at least $1 per recipient',
 );
 
-type ProfileInput = { type: 'profile'; targetUsername: string; roomId: Uuid | null };
 type GiftInput = { type: 'gift'; amount: string; roomId: Uuid };
 type RainInput = { type: 'rain'; amount: string; recipientCount: number; roomId: Uuid };
 type DonateInput = { type: 'donate'; targetUsername: string; amount: string; roomId: Uuid | null };
@@ -76,7 +82,7 @@ type BlockActionInput = {
   targetUsername: string;
   roomId: Uuid | null;
 };
-type ExecuteInput = ProfileInput | GiftInput | RainInput | DonateInput | BlockActionInput;
+type ExecuteInput = GiftInput | RainInput | DonateInput | BlockActionInput;
 
 function shuffleArray<T>(arr: readonly T[]): T[] {
   const result = [...arr];
@@ -112,6 +118,7 @@ export class ChatCommandsService {
     private readonly transport: RealtimeTransport,
     private readonly events: EventBus,
     private readonly blockWriter: ChatBlockWriter,
+    private readonly gameReporting: AdminGameReporting,
   ) {}
 
   async listCommands(includeDisabled = false): Promise<ChatCommandDescriptor[]> {
@@ -122,13 +129,56 @@ export class ChatCommandsService {
     return rows.map(toDescriptor);
   }
 
-  async searchMentions(q: string, limit: number) {
+  async searchMentions(q: string, limit: number, viewerId: Uuid) {
     const ids = await this.directory.findPlayerIds(q, limit);
     if (ids.length === 0) {
       return [];
     }
-    const summaries = await this.directory.lookupPlayers(ids);
+    const excluded = new Set(await this.blockWriter.getExcludedUserIds(viewerId));
+    const filteredIds = ids.filter((id) => !excluded.has(id));
+    if (filteredIds.length === 0) {
+      return [];
+    }
+    const summaries = await this.directory.lookupPlayers(filteredIds);
     return summaries.map((s) => ({ userId: s.userId, username: s.username }));
+  }
+
+  async searchPlayers(q: string, limit: number, viewerId: Uuid): Promise<PlayerSearchResult[]> {
+    const ids = await this.directory.findPlayerIds(q, limit);
+    if (ids.length === 0) {
+      return [];
+    }
+    const excluded = new Set(await this.blockWriter.getExcludedUserIds(viewerId));
+    const filteredIds = ids.filter((id) => !excluded.has(id));
+    if (filteredIds.length === 0) {
+      return [];
+    }
+    const summaries = await this.directory.lookupPlayers(filteredIds);
+    return summaries.map((s) => ({
+      userId: s.userId,
+      username: s.username,
+      avatarUrl: s.avatarUrl,
+      level: s.level,
+    }));
+  }
+
+  async getPlayerProfile(userId: Uuid): Promise<PlayerProfileCard> {
+    const summaries = await this.directory.lookupPlayers([userId]);
+    const summary = summaries.find((s) => s.userId === userId);
+    if (!summary) {
+      throw new ChatPlayerNotFoundError(userId);
+    }
+    const stats = await this.gameReporting.getPlayerStats(userId);
+    return {
+      userId: summary.userId,
+      username: summary.username,
+      avatarUrl: summary.avatarUrl,
+      level: summary.level,
+      joinedAt: summary.createdAt.toISOString(),
+      totalWagered: stats.totalWagered,
+      totalBets: stats.totalBets,
+      currency: summary.currency,
+    };
   }
 
   async executeCommand(input: ExecuteInput, actorId: Uuid): Promise<ChatSystemMessage> {
@@ -142,9 +192,6 @@ export class ChatCommandsService {
       throw new CommandDisabledError(input.type);
     }
 
-    if (input.type === 'profile') {
-      return this.handleProfile(input, actorId, row.config ?? null);
-    }
     if (input.type === 'gift') {
       return this.handleGift(input, actorId, row.config ?? null);
     }
@@ -159,35 +206,6 @@ export class ChatCommandsService {
     }
     // exhaustive — TypeScript cannot narrow a union-literal discriminant ('block'|'ignore') away
     throw new CommandDisabledError(input.type);
-  }
-
-  private async handleProfile(
-    input: ProfileInput,
-    actorId: Uuid,
-    _config: CommandConfig | null,
-  ): Promise<ChatSystemMessage> {
-    const ids = await this.directory.findPlayerIds(input.targetUsername, 20);
-    if (ids.length === 0) {
-      throw new ChatPlayerNotFoundError(input.targetUsername);
-    }
-    const summaries = await this.directory.lookupPlayers(ids);
-    const summary = summaries.find(
-      (s) => s.username.toLowerCase() === input.targetUsername.toLowerCase(),
-    );
-    if (!summary) {
-      throw new ChatPlayerNotFoundError(input.targetUsername);
-    }
-    return this.systemWriter.postSystemMessage({
-      roomId: input.roomId,
-      actorId,
-      metadata: {
-        command: 'profile',
-        targetUserId: summary.userId,
-        displayName: summary.username,
-        // TODO: replace with real level once the player-level system lands
-        level: 0,
-      },
-    });
   }
 
   private async handleGift(
@@ -597,7 +615,14 @@ export class ChatCommandsService {
     if (!summary) {
       throw new ChatPlayerNotFoundError(input.targetUsername);
     }
-    await this.blockWriter.blockUser(actorId, summary.userId);
+    if (summary.userId === actorId) {
+      throw new SelfModerationActionError();
+    }
+    if (input.type === 'block') {
+      await this.blockWriter.blockUser(actorId, summary.userId);
+    } else {
+      await this.blockWriter.ignoreUser(actorId, summary.userId);
+    }
     return this.systemWriter.postSystemMessage({
       roomId: input.roomId,
       actorId,

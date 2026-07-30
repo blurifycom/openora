@@ -141,6 +141,8 @@ export const domainEventSchemas = {
   // A player muted/unmuted another player's messages for themselves (ABC-45 AC11).
   'chat.user.blocked': authContextBase.extend({ blockerId: UuidSchema, blockedId: UuidSchema }),
   'chat.user.unblocked': authContextBase.extend({ blockerId: UuidSchema, blockedId: UuidSchema }),
+  'chat.user.ignored': authContextBase.extend({ ignorerId: UuidSchema, ignoredId: UuidSchema }),
+  'chat.user.unignored': authContextBase.extend({ ignorerId: UuidSchema, ignoredId: UuidSchema }),
 
   // Admin room CRUD (actorId = acting admin UUID).
   'chat.room.created': authContextBase.extend({

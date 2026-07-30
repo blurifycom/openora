@@ -255,6 +255,17 @@ function mapEventToRecord(topic: string, p: Record<string, unknown>): RecordInpu
     };
   }
 
+  // actorId = the player who (un)ignored; resource = the ignored player.
+  if (topic === 'chat.user.ignored' || topic === 'chat.user.unignored') {
+    return {
+      ...base,
+      actorType: 'player',
+      actorId: str(p['ignorerId']),
+      resourceType: 'player',
+      resourceId: str(p['ignoredId']),
+    };
+  }
+
   // actorId = the moderator who acted; resource = the affected player in that room.
   if (topic === 'chat.room.member.kicked' || topic === 'chat.room.member.banned') {
     const actorKey = topic === 'chat.room.member.kicked' ? 'kickedBy' : 'bannedBy';
@@ -497,6 +508,8 @@ const SUBSCRIBED_TOPICS: DomainEventName[] = [
   'gaming.round.ended',
   'chat.user.blocked',
   'chat.user.unblocked',
+  'chat.user.ignored',
+  'chat.user.unignored',
   'chat.private_room.created',
   'chat.private_room.deleted',
   'chat.room.created',

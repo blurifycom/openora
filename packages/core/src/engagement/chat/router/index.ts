@@ -29,6 +29,7 @@ import {
   ChatMessageOwnershipError,
   ChatMessageBlockedError,
   ChatSelfBlockError,
+  ChatSelfIgnoreError,
   ChatRoomSlugConflictError,
   ChatRoomJoinCodeNotFoundError,
   ChatRoomBannedError,
@@ -192,6 +193,21 @@ export function createChatRouter({
 
     unblockUser: os.unblockUser.handler(({ input, context }) => {
       return chatService.unblockUser(getUserId(context), input.blockedId, context.clientMeta);
+    }),
+
+    listIgnoredUsers: os.listIgnoredUsers.handler(({ context }) =>
+      chatService.listIgnoredUsers(getUserId(context)),
+    ),
+
+    ignoreUser: os.ignoreUser.handler(({ input, context }) => {
+      const userId = getUserId(context);
+      return mapErrors({ BAD_REQUEST: ChatSelfIgnoreError }, () =>
+        chatService.ignoreUser(userId, input.ignoredId, context.clientMeta),
+      );
+    }),
+
+    unignoreUser: os.unignoreUser.handler(({ input, context }) => {
+      return chatService.unignoreUser(getUserId(context), input.ignoredId, context.clientMeta);
     }),
 
     createPrivateRoom: os.createPrivateRoom.handler(({ input, context }) => {

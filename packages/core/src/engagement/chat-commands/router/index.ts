@@ -16,6 +16,7 @@ import {
   GiftSelfClaimError,
   DonateSelfError,
   TooManyRecipientsError,
+  SelfModerationActionError,
 } from '../service/chat-commands.service.js';
 
 const cc = populateContractRouterPaths({ chatCommands: chatCommandsContract }).chatCommands;
@@ -39,6 +40,7 @@ export function createChatCommandsRouter(svc: ChatCommandsService, adminGuard: A
             RainCreditError,
             DonateSelfError,
             TooManyRecipientsError,
+            SelfModerationActionError,
           ],
         },
         () => svc.executeCommand(input, actorId),
@@ -61,8 +63,20 @@ export function createChatCommandsRouter(svc: ChatCommandsService, adminGuard: A
     }),
 
     mentionSearch: os.mentionSearch.handler(({ input, context }) => {
+      const viewerId = getUserId(context);
+      return svc.searchMentions(input.q, input.limit, viewerId);
+    }),
+
+    playerSearch: os.playerSearch.handler(({ input, context }) => {
+      const viewerId = getUserId(context);
+      return svc.searchPlayers(input.q, input.limit, viewerId);
+    }),
+
+    playerProfile: os.playerProfile.handler(({ input, context }) => {
       getUserId(context);
-      return svc.searchMentions(input.q, input.limit);
+      return mapErrors({ NOT_FOUND: [ChatPlayerNotFoundError] }, () =>
+        svc.getPlayerProfile(input.userId),
+      );
     }),
 
     adminUpdateCommand: os.adminUpdateCommand.handler(async ({ input, context }) => {
