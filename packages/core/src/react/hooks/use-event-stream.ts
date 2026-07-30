@@ -16,14 +16,16 @@ export type UseEventStreamResult<T> = {
   status: EventStreamStatus;
 };
 
+const MAX_RETRY_DELAY_MS = 30_000;
+
 /**
  * Generic client-side real-time transport. Consumes any async-iterable source
  * (eg an oRPC event iterator served as SSE: `client.x.stream(undefined, { signal })`).
  *
  * Owns an AbortController per active subscription, loops `for await` over the
- * iterable, calls `onEvent` and tracks the latest value + connection status,
- * and aborts on unmount or when `enabled` flips false. Re-subscribes when
- * `subscribe` identity changes, so memoize it at the call site.
+ * iterable, calls `onEvent` and tracks the latest value + connection status.
+ * Re-subscribes when `subscribe` identity changes, so memoize it at the call site.
+ * Reconnects automatically with exponential backoff when the stream drops unexpectedly.
  */
 export function useEventStream<T>(
   subscribe: (signal: AbortSignal) => Promise<AsyncIterable<T>>,
@@ -43,39 +45,53 @@ export function useEventStream<T>(
       return;
     }
 
-    const controller = new AbortController();
     let cancelled = false;
-    setStatus('connecting');
+    let currentController: AbortController | null = null;
+    let retryCount = 0;
+    let retryTimer: ReturnType<typeof setTimeout> | undefined;
 
-    (async () => {
-      try {
-        const iterable = await subscribe(controller.signal);
-        if (cancelled) {
-          return;
-        }
-        setStatus('open');
-        for await (const event of iterable) {
+    const connect = () => {
+      const controller = new AbortController();
+      currentController = controller;
+      setStatus('connecting');
+
+      (async () => {
+        try {
+          const iterable = await subscribe(controller.signal);
           if (cancelled) {
-            break;
+            return;
           }
-          onEventRef.current?.(event);
-          setLast(event);
+          retryCount = 0;
+          setStatus('open');
+          for await (const event of iterable) {
+            if (cancelled) {
+              break;
+            }
+            onEventRef.current?.(event);
+            setLast(event);
+          }
+        } catch (err) {
+          // Intentional teardown — do not reconnect.
+          if (cancelled || (err as Error)?.name === 'AbortError') {
+            return;
+          }
+        } finally {
+          if (!cancelled) {
+            // Unexpected close: reconnect with exponential backoff.
+            const delay = Math.min(1000 * 2 ** retryCount, MAX_RETRY_DELAY_MS);
+            retryCount += 1;
+            retryTimer = setTimeout(connect, delay);
+          }
         }
-      } catch (err) {
-        // An AbortError on unmount/disable is expected teardown - swallow it.
-        if (!cancelled && (err as Error)?.name !== 'AbortError') {
-          // Stream closed; status is updated in finally.
-        }
-      } finally {
-        if (!cancelled) {
-          setStatus('closed');
-        }
-      }
-    })();
+      })();
+    };
+
+    connect();
 
     return () => {
       cancelled = true;
-      controller.abort();
+      clearTimeout(retryTimer);
+      currentController?.abort();
     };
   }, [subscribe, enabled]);
 

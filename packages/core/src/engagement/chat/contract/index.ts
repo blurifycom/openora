@@ -1,6 +1,12 @@
 import { oc, eventIterator } from '@orpc/contract';
 import * as z from 'zod';
-import { IdInputSchema, TimestampSchema, UuidSchema } from '@openora/core/contracts';
+import {
+  IdInputSchema,
+  TimestampSchema,
+  UuidSchema,
+  ChatMessageTypeSchema,
+  CommandMetadataSchema,
+} from '@openora/core/contracts';
 import { PageQuerySchema, SortOrderSchema, paginated } from '@openora/core/contracts/kit';
 import {
   MAX_MESSAGE_LENGTH,
@@ -68,6 +74,8 @@ export const ChatMessageSchema = z.object({
   // UNTRUSTED user text: profanity-gated and URL-defanged server-side but NOT HTML-escaped.
   // Consumers MUST render as text or escape before injecting into HTML.
   content: z.string(),
+  type: ChatMessageTypeSchema,
+  metadata: CommandMetadataSchema.nullable(),
   isDeleted: z.boolean(),
   createdAt: TimestampSchema,
 });

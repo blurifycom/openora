@@ -125,6 +125,8 @@ describe('ChatService realtime wiring', () => {
     userId: 'u1',
     username: 'alice',
     content: 'hi',
+    type: 'user',
+    metadata: null,
     isDeleted: false,
     createdAt: '2026-05-29T00:00:00.000Z',
   };
@@ -170,6 +172,8 @@ describe('ChatService.subscribeMessages per-viewer block filtering (real PG)', (
     userId: 'sender',
     username: 'alice',
     content: 'hi',
+    type: 'user',
+    metadata: null,
     isDeleted: false,
     createdAt: '2026-05-29T00:00:00.000Z',
   };

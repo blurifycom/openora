@@ -254,11 +254,6 @@
       "import": "./dist/engagement/server.js",
       "default": "./dist/engagement/server.js"
     },
-    "./engagement/react": {
-      "types": "./dist/engagement/react.d.ts",
-      "import": "./dist/engagement/react.js",
-      "default": "./dist/engagement/react.js"
-    },
     "./engagement/contracts": {
       "types": "./dist/engagement/contracts.d.ts",
       "import": "./dist/engagement/contracts.js",
@@ -607,7 +602,7 @@
     "zod": "4.4.3"
   },
   "devDependencies": {
-    "@tanstack/react-query": "5.101.0",
+    "@tanstack/react-query": "5.101.4",
     "@turbo/gen": "2.9.16",
     "@types/node": "25.9.2",
     "@types/pg": "8.20.0",
