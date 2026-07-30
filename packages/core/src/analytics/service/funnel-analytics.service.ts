@@ -92,7 +92,12 @@ export class FunnelAnalyticsService {
         dropOffRate: previousStage ? dropOffRate(counts[previousStage], counts[stage]) : 0,
       };
     });
-    console.log('FUNNEL_OUT', JSON.stringify(out), out.map((s) => String(s.dropOffRate)).join('|'));
+    console.log('FUNNEL_OUT', out.map((s) => String(s.dropOffRate)).join('|'));
+    console.log(
+      'FUNNEL_SRC',
+      String(FunnelAnalyticsService.prototype['computeConversion']).slice(-400),
+    );
+    console.log('FUNNEL_TS', process.env['npm_package_devDependencies_typescript'] ?? 'n/a');
     return out;
   }
 }
