@@ -21,8 +21,6 @@ function resolveRange(filter: PlayerActivityFilter): { from: Date; to: Date } {
   return { from, to };
 }
 
-// See ADR-0017/0025. iam/AGENTS.md documents why this port lives here even though
-// identity owns the underlying tables.
 export class DrizzleAdminPlayerActivity implements AdminPlayerActivity {
   constructor(private readonly drizzle: DrizzleService) {}
 
@@ -47,6 +45,9 @@ export class DrizzleAdminPlayerActivity implements AdminPlayerActivity {
   // the same "active" definition reused below for retention's "has a session row" check.
   async getActiveUsersTrend(filter: PlayerActivityFilter): Promise<ActiveUsersTrendPoint[]> {
     const { from, to } = resolveRange(filter);
+    // A single join bounded by the widest (MAU) window, then FILTER narrows the
+    // distinct-user count per day - one pass over `session` instead of three
+    // correlated subqueries re-scanning it for every generated day.
     const result = await this.drizzle.db.execute<{
       date: string;
       dau: string;
@@ -55,15 +56,22 @@ export class DrizzleAdminPlayerActivity implements AdminPlayerActivity {
     }>(sql`
       select
         gs::date::text as date,
-        (select count(distinct ${session.userId}) from ${session}
-          where ${session.updatedAt} >= gs and ${session.updatedAt} < gs + interval '1 day') as dau,
-        (select count(distinct ${session.userId}) from ${session}
+        count(distinct ${session.userId}) filter (
+          where ${session.updatedAt} >= gs and ${session.updatedAt} < gs + interval '1 day'
+        ) as dau,
+        count(distinct ${session.userId}) filter (
           where ${session.updatedAt} >= gs - interval '6 days'
-            and ${session.updatedAt} < gs + interval '1 day') as wau,
-        (select count(distinct ${session.userId}) from ${session}
+            and ${session.updatedAt} < gs + interval '1 day'
+        ) as wau,
+        count(distinct ${session.userId}) filter (
           where ${session.updatedAt} >= gs - interval '29 days'
-            and ${session.updatedAt} < gs + interval '1 day') as mau
+            and ${session.updatedAt} < gs + interval '1 day'
+        ) as mau
       from generate_series(${from}::date, ${to}::date, interval '1 day') as gs
+      left join ${session}
+        on ${session.updatedAt} >= gs - interval '29 days'
+        and ${session.updatedAt} < gs + interval '1 day'
+      group by gs
       order by gs
     `);
     return result.rows.map((r) => ({
@@ -86,18 +94,17 @@ export class DrizzleAdminPlayerActivity implements AdminPlayerActivity {
       is_complete: boolean;
     }>(sql`
       with cohort_users as (
-        select ${user.id} as user_id, date_trunc('day', ${user.createdAt}) as cohort_date,
-          ${user.createdAt} as registered_at
+        select ${user.id} as user_id, date_trunc('day', ${user.createdAt}) as cohort_date
         from ${user}
         where ${user.createdAt} >= ${from} and ${user.createdAt} <= ${to}
       ),
       returned_users as (
         select distinct cu.user_id
         from cohort_users cu
-        inner join ${session} s
-          on s.user_id = cu.user_id
-          and s.updated_at >= cu.registered_at
-          and s.updated_at <= cu.registered_at + interval '1 day' * ${windowDays}
+        inner join ${session}
+          on ${session.userId} = cu.user_id
+          and ${session.updatedAt} >= cu.cohort_date + interval '1 day'
+          and ${session.updatedAt} <= cu.cohort_date + interval '1 day' * ${windowDays}
       )
       select
         cu.cohort_date::date::text as cohort_date,

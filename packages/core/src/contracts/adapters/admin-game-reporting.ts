@@ -20,6 +20,7 @@ export type GamePerformanceFilter = {
   dateFrom?: Date;
   dateTo?: Date;
   gameType?: GameType;
+  currency?: string;
   sortBy?: GamePerformanceSortBy;
   sortDir?: 'asc' | 'desc';
 };

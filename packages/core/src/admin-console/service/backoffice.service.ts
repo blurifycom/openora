@@ -168,6 +168,7 @@ export class BackofficeService {
       dateFrom: filter.dateFrom ? new Date(filter.dateFrom) : undefined,
       dateTo: filter.dateTo ? new Date(filter.dateTo) : undefined,
       gameType: filter.gameType,
+      currency: filter.currency,
       sortBy: filter.sortBy,
       sortDir: filter.sortDir,
     });

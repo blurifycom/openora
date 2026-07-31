@@ -1,130 +1,159 @@
-import { describe, it, expect, vi } from 'vitest';
-import type { DrizzleService } from '@openora/core/server';
-import { mock } from '../../../testing/mock.js';
+import { randomUUID } from 'node:crypto';
+import { describe, it, expect, beforeAll, afterAll, beforeEach } from 'vitest';
+import { sql } from 'drizzle-orm';
+import { createTestDb, type TestDb } from '@openora/core/testing';
+import { migrate } from '../migrate.js';
+import { game, gameRound } from '../schema/index.js';
 import { DrizzleAdminGameReporting } from '../admin-reporting.js';
 
-type Row = Record<string, unknown>;
+let db: TestDb;
+let reporting: DrizzleAdminGameReporting;
 
-function makeDrizzle(rows: Row[]) {
-  const whereArgs: unknown[] = [];
-  const orderByArgs: unknown[] = [];
-  const builder: Record<string, unknown> = {};
-  const chain = () => builder;
-  builder['select'] = vi.fn(chain);
-  builder['from'] = vi.fn(chain);
-  builder['leftJoin'] = vi.fn(chain);
-  builder['groupBy'] = vi.fn(chain);
-  builder['orderBy'] = vi.fn((arg: unknown) => {
-    orderByArgs.push(arg);
-    return builder;
-  });
-  builder['where'] = vi.fn((arg: unknown) => {
-    whereArgs.push(arg);
-    return builder;
-  });
-  // oxlint-disable-next-line unicorn/no-thenable -- builder must be awaitable to mimic Drizzle.
-  builder['then'] = (resolve: (v: Row[]) => unknown) => resolve(rows);
-  const db = { ...builder } as unknown;
-  return { drizzle: mock<DrizzleService>({ db }), whereArgs, orderByArgs };
+const AT = (iso: string) => new Date(iso);
+
+async function seedGame(overrides: Partial<typeof game.$inferInsert> = {}) {
+  const [row] = await db.drizzle.db
+    .insert(game)
+    .values({ name: 'Aces', provider: 'p', category: 'slots', ...overrides })
+    .returning();
+  return row!;
 }
 
-describe('DrizzleAdminGameReporting.getPlayerStats', () => {
-  it('returns total wagered and total bets for a player', async () => {
-    const { drizzle, whereArgs } = makeDrizzle([{ totalWagered: '250.00000000', totalBets: '4' }]);
-    const reporting = new DrizzleAdminGameReporting(drizzle);
+async function seedRound(gameId: string, overrides: Partial<typeof gameRound.$inferInsert> = {}) {
+  const [row] = await db.drizzle.db
+    .insert(gameRound)
+    .values({
+      gameId,
+      userId: randomUUID(),
+      status: 'completed',
+      betAmount: '100',
+      winAmount: '0',
+      currency: 'USD',
+      startedAt: AT('2026-01-01T00:00:00.000Z'),
+      ...overrides,
+    })
+    .returning();
+  return row!;
+}
 
-    const stats = await reporting.getPlayerStats('user-1');
-
-    expect(stats).toEqual({ totalWagered: '250.00000000', totalBets: 4 });
-    expect(whereArgs).toEqual([expect.anything()]);
-  });
-
-  it('defaults to zero stats for a player with no completed rounds', async () => {
-    const { drizzle } = makeDrizzle([]);
-    const reporting = new DrizzleAdminGameReporting(drizzle);
-
-    const stats = await reporting.getPlayerStats('user-1');
-
-    expect(stats).toEqual({ totalWagered: '0', totalBets: 0 });
-  });
+beforeAll(async () => {
+  db = await createTestDb([migrate]);
+  reporting = new DrizzleAdminGameReporting(db.drizzle);
 });
 
-function row(over: Row = {}): Row {
-  return {
-    gameId: 'g-1',
-    name: 'Aces',
-    gameType: 'casino',
-    volume: '1000',
-    revenue: '200',
-    uniquePlayers: '3',
-    roundsPlayed: '10',
-    ...over,
-  };
-}
+afterAll(async () => {
+  await db.drop();
+});
 
-describe('DrizzleAdminGameReporting.listGamePerformance', () => {
-  it('maps rows and coerces count columns to numbers', async () => {
-    const { drizzle } = makeDrizzle([row()]);
-    const reporting = new DrizzleAdminGameReporting(drizzle);
+beforeEach(async () => {
+  await db.drizzle.db.execute(sql`TRUNCATE ${gameRound}, ${game} RESTART IDENTITY CASCADE`);
+});
 
-    const rows = await reporting.listGamePerformance({});
+describe('DrizzleAdminGameReporting.listGamePerformance (real PG)', () => {
+  it('sums volume/revenue and counts distinct players/rounds for completed rounds', async () => {
+    const g = await seedGame();
+    await seedRound(g.id, { betAmount: '100', winAmount: '20' });
+    await seedRound(g.id, { betAmount: '50', winAmount: '80' });
 
-    expect(rows).toEqual([
-      {
-        gameId: 'g-1',
-        name: 'Aces',
-        gameType: 'casino',
-        volume: '1000',
-        revenue: '200',
-        uniquePlayers: 3,
-        roundsPlayed: 10,
-      },
-    ]);
+    const [row] = await reporting.listGamePerformance({});
+
+    expect(row).toMatchObject({
+      gameId: g.id,
+      name: 'Aces',
+      gameType: 'casino',
+      uniquePlayers: 2,
+      roundsPlayed: 2,
+    });
+    expect(Number(row?.volume)).toBe(150);
+    expect(Number(row?.revenue)).toBe(50);
   });
 
-  it('keeps a negative revenue string intact (GGR can go negative)', async () => {
-    const { drizzle } = makeDrizzle([row({ revenue: '-50' })]);
-    const reporting = new DrizzleAdminGameReporting(drizzle);
+  it('keeps revenue negative when a game pays out more than it takes in (GGR can go negative)', async () => {
+    const g = await seedGame();
+    await seedRound(g.id, { betAmount: '10', winAmount: '100' });
 
-    const rows = await reporting.listGamePerformance({});
+    const [row] = await reporting.listGamePerformance({});
 
-    expect(rows[0]?.revenue).toBe('-50');
+    expect(Number(row?.revenue)).toBe(-90);
   });
 
-  it('adds a WHERE clause when gameType is filtered', async () => {
-    const { drizzle, whereArgs } = makeDrizzle([]);
-    const reporting = new DrizzleAdminGameReporting(drizzle);
+  it('still lists a game with zero completed rounds in range, with all-zero metrics', async () => {
+    const g = await seedGame({ name: 'Empty' });
+    await seedRound(g.id, { status: 'active' });
 
-    await reporting.listGamePerformance({ gameType: 'sportsbook' });
+    const [row] = await reporting.listGamePerformance({});
 
-    expect(whereArgs).toEqual([expect.anything()]);
+    expect(row).toMatchObject({ gameId: g.id, uniquePlayers: 0, roundsPlayed: 0 });
+    expect(Number(row?.volume)).toBe(0);
+    expect(Number(row?.revenue)).toBe(0);
   });
 
-  it('passes an undefined WHERE when no gameType filter is given', async () => {
-    const { drizzle, whereArgs } = makeDrizzle([]);
-    const reporting = new DrizzleAdminGameReporting(drizzle);
+  it('ignores non-completed rounds when summing metrics', async () => {
+    const g = await seedGame();
+    await seedRound(g.id, { status: 'active', betAmount: '999' });
+    await seedRound(g.id, { status: 'cancelled', betAmount: '999' });
+    const counted = await seedRound(g.id, { status: 'completed', betAmount: '10' });
 
-    await reporting.listGamePerformance({});
+    const [row] = await reporting.listGamePerformance({});
 
-    expect(whereArgs).toEqual([undefined]);
+    expect(row?.roundsPlayed).toBe(1);
+    expect(Number(row?.volume)).toBe(10);
+    void counted;
+  });
+
+  it('filters by gameType, dropping non-matching games entirely', async () => {
+    const casino = await seedGame({ gameType: 'casino' });
+    await seedGame({ gameType: 'sportsbook' });
+
+    const rows = await reporting.listGamePerformance({ gameType: 'sportsbook' });
+
+    expect(rows.map((r) => r.gameId)).not.toContain(casino.id);
+  });
+
+  it('scopes rounds by dateFrom/dateTo without dropping the game', async () => {
+    const g = await seedGame();
+    await seedRound(g.id, { betAmount: '10', startedAt: AT('2025-01-01T00:00:00.000Z') });
+    await seedRound(g.id, { betAmount: '20', startedAt: AT('2026-01-15T00:00:00.000Z') });
+
+    const [row] = await reporting.listGamePerformance({
+      dateFrom: AT('2026-01-01T00:00:00.000Z'),
+      dateTo: AT('2026-02-01T00:00:00.000Z'),
+    });
+
+    expect(row?.roundsPlayed).toBe(1);
+    expect(Number(row?.volume)).toBe(20);
+  });
+
+  it('scopes rounds by currency without dropping the game or mixing currencies', async () => {
+    const g = await seedGame();
+    await seedRound(g.id, { betAmount: '100', currency: 'USD' });
+    await seedRound(g.id, { betAmount: '50', currency: 'EUR' });
+
+    const [row] = await reporting.listGamePerformance({ currency: 'USD' });
+
+    expect(row?.roundsPlayed).toBe(1);
+    expect(Number(row?.volume)).toBe(100);
   });
 
   it('sorts by the requested column and direction', async () => {
-    const { drizzle, orderByArgs } = makeDrizzle([]);
-    const reporting = new DrizzleAdminGameReporting(drizzle);
+    const low = await seedGame({ name: 'Low' });
+    const high = await seedGame({ name: 'High' });
+    await seedRound(low.id, { betAmount: '10' });
+    await seedRound(high.id, { betAmount: '100' });
 
-    await reporting.listGamePerformance({ sortBy: 'name', sortDir: 'asc' });
+    const rows = await reporting.listGamePerformance({ sortBy: 'volume', sortDir: 'asc' });
 
-    expect(orderByArgs).toHaveLength(1);
+    expect(rows.map((r) => r.gameId)).toEqual([low.id, high.id]);
   });
 
-  it('defaults to a defined sort when sortBy is omitted', async () => {
-    const { drizzle, orderByArgs } = makeDrizzle([]);
-    const reporting = new DrizzleAdminGameReporting(drizzle);
+  it('defaults to sorting by volume descending when sortBy is omitted', async () => {
+    const low = await seedGame({ name: 'Low' });
+    const high = await seedGame({ name: 'High' });
+    await seedRound(low.id, { betAmount: '10' });
+    await seedRound(high.id, { betAmount: '100' });
 
-    await reporting.listGamePerformance({});
+    const rows = await reporting.listGamePerformance({});
 
-    expect(orderByArgs).toHaveLength(1);
-    expect(orderByArgs[0]).toBeDefined();
+    expect(rows.map((r) => r.gameId)).toEqual([high.id, low.id]);
   });
 });
