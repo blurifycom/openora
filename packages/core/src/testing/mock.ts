@@ -131,4 +131,5 @@ export const makeAdminGuard = (
       }
       return adminCaller(options.caller);
     }),
+    recordDeniedAccess: vi.fn(async () => ({ recorded: true })),
   });

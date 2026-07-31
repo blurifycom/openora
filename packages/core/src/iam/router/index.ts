@@ -114,5 +114,10 @@ export function createIamRouter(svc: IamService, adminGuard: AdminGuard) {
       const caller = await adminGuard.assert(context);
       return svc.previewEffectivePermissions({ userId: caller.userId });
     }),
+
+    reportAccessDenied: os.reportAccessDenied.handler(async ({ input, context }) => {
+      const caller = await adminGuard.assert(context);
+      return adminGuard.recordDeniedAccess(caller, input.resource, input.level);
+    }),
   });
 }

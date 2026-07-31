@@ -2,20 +2,28 @@ import { ORPCError } from '@orpc/server';
 import {
   createToken,
   AuthGuardReasonSchema,
+  RATE_LIMIT_KEYS,
+  makeRateLimitKey,
   type Token,
   type AdminPermissionResolver,
+  type AdminGrant,
   type ClientMeta,
+  type RateLimiterAdapter,
+  type RateLimitKey,
 } from '@openora/core/contracts';
 import { DrizzleService } from '../db/index.js';
 import { sql } from 'drizzle-orm';
 import { SessionResolver } from './session-resolver.js';
-import { roles, type ResourceName, type ActionOf } from './permissions.js';
+import { statement, roles, type ResourceName, type ActionOf } from './permissions.js';
+import { levelToActions, type PermissionLevel } from './permission-levels.js';
 import type { OssContext, EventBus } from '../kernel/index.js';
 import { extractClientMeta } from '../kernel/router-utils.js';
 
 export const ADMIN_GUARD: Token<AdminGuard> = createToken('ADMIN_GUARD');
 
 export type AdminCaller = { userId: string; role: string } & ClientMeta;
+
+const DENIED_ACCESS_THROTTLE_MS = 60_000;
 
 /**
  * The single admin-enforcement point - every admin route calls `assert()` as its
@@ -37,6 +45,8 @@ export class AdminGuard {
     // When bound (iam module loaded), grants come from DB; otherwise falls back to static roles.
     private readonly permissionResolver?: AdminPermissionResolver,
     private readonly events?: EventBus,
+    // Throttles recordDeniedAccess(); unbound just means no throttling (best-effort).
+    private readonly rateLimiter?: RateLimiterAdapter<RateLimitKey>,
   ) {}
 
   async assert(context: unknown): Promise<AdminCaller>;
@@ -105,41 +115,105 @@ export class AdminGuard {
     }
 
     if (resource !== undefined && action !== undefined) {
-      const grants = this.permissionResolver
-        ? await this.permissionResolver.getGrants(userId)
-        : null;
-
-      if (grants !== null) {
-        const allowed = grants.some((g) => g.resource === resource && g.action === action);
-        if (!allowed) {
-          this.emitUnauthorized(userId, userRecord.role, resource, action, ip, userAgent);
-          throw new ORPCError('FORBIDDEN', {
-            message: `Missing permission: ${String(resource)}:${String(action)}`,
-            data: {
-              reason: AuthGuardReasonSchema.enum.permission_denied,
-              resource: String(resource),
-              action: String(action),
-            },
-          });
-        }
-      } else {
-        // Bootstrap path: seed admin has user.role='admin' but no DB assignment row. DB revocation is NOT authoritative while a static role still grants - revoke the static role to fully deny.
-        const check = userRole.authorize({ [resource]: [action] });
-        if (!check.success) {
-          this.emitUnauthorized(userId, userRecord.role, resource, action, ip, userAgent);
-          throw new ORPCError('FORBIDDEN', {
-            message: `Missing permission: ${String(resource)}:${String(action)}`,
-            data: {
-              reason: AuthGuardReasonSchema.enum.permission_denied,
-              resource: String(resource),
-              action: String(action),
-            },
-          });
-        }
+      const grants = await this.resolveGrants(userId);
+      const allowed = this.checkGrant(grants, userRole, resource, action);
+      if (!allowed) {
+        this.emitUnauthorized(userId, userRecord.role, resource, action, ip, userAgent);
+        throw new ORPCError('FORBIDDEN', {
+          message: `Missing permission: ${String(resource)}:${String(action)}`,
+          data: {
+            reason: AuthGuardReasonSchema.enum.permission_denied,
+            resource: String(resource),
+            action: String(action),
+          },
+        });
       }
     }
 
     return { userId, role: userRecord.role, ip, userAgent };
+  }
+
+  async recordDeniedAccess(
+    caller: AdminCaller,
+    resource: string,
+    level: PermissionLevel,
+  ): Promise<{ recorded: boolean }> {
+    const knownActions = statement[resource as ResourceName] as readonly string[] | undefined;
+    if (!knownActions) {
+      throw new ORPCError('BAD_REQUEST', { message: `Unknown resource: ${resource}` });
+    }
+    if (level === 'no_access') {
+      throw new ORPCError('BAD_REQUEST', { message: 'level must not be no_access' });
+    }
+    // levelToActions('read') on a view-less module (eg `content`) is deliberately []
+    // (see permission-levels.ts) - fall back to the full action set rather than
+    // treating that as "nothing to check", which would wrongly no-op the report.
+    const derivedActions = levelToActions(resource, level);
+    const actions = derivedActions.length > 0 ? derivedActions : knownActions;
+
+    const userRole = roles[caller.role as keyof typeof roles];
+    // Fresh (uncached) grants: a cached `getGrants` could still reflect the
+    // pre-grant state for up to its TTL, which would let a caller who was JUST
+    // given this permission report a denial it no longer has - self-forging a
+    // false audit entry in the gap before the cache purge lands.
+    const grants = await this.resolveFreshGrants(caller.userId);
+    const missingAction = actions.find(
+      (action) => !this.checkGrant(grants, userRole, resource, action),
+    );
+    if (!missingAction) {
+      return { recorded: false };
+    }
+
+    if (this.rateLimiter) {
+      const key = makeRateLimitKey(
+        RATE_LIMIT_KEYS.ACCESS_DENIED_REPORT,
+        `${caller.userId}:${resource}:${level}`,
+      );
+      const { allowed } = await this.rateLimiter.consume(key, {
+        limit: 1,
+        windowMs: DENIED_ACCESS_THROTTLE_MS,
+      });
+      if (!allowed) {
+        return { recorded: false };
+      }
+    }
+
+    this.emitUnauthorized(
+      caller.userId,
+      caller.role,
+      resource,
+      missingAction,
+      caller.ip,
+      caller.userAgent,
+    );
+    return { recorded: true };
+  }
+
+  private resolveGrants(userId: string): Promise<AdminGrant[] | null> {
+    return this.permissionResolver
+      ? this.permissionResolver.getGrants(userId)
+      : Promise.resolve(null);
+  }
+
+  private resolveFreshGrants(userId: string): Promise<AdminGrant[] | null> {
+    if (!this.permissionResolver) {
+      return Promise.resolve(null);
+    }
+    return this.permissionResolver.getFreshGrants
+      ? this.permissionResolver.getFreshGrants(userId)
+      : this.permissionResolver.getGrants(userId);
+  }
+
+  private checkGrant(
+    grants: AdminGrant[] | null,
+    userRole: (typeof roles)[keyof typeof roles] | undefined,
+    resource: string,
+    action: string,
+  ): boolean {
+    if (grants !== null) {
+      return grants.some((g) => g.resource === resource && g.action === action);
+    }
+    return userRole?.authorize({ [resource]: [action] }).success ?? false;
   }
 
   private emitUnauthorized(

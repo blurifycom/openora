@@ -74,6 +74,10 @@ export const EffectivePermissionsSchema = z.object({
   permissions: z.array(RolePermissionLevelSchema),
 });
 
+export const ReportAccessDeniedSchema = z.object({
+  recorded: z.boolean(),
+});
+
 export const IAM_ROLE_SORT_BY_VALUES = ['name', 'createdAt', 'key'] as const;
 export const IamRoleSortBySchema = z.enum(IAM_ROLE_SORT_BY_VALUES).default('name');
 export type IamRoleSortBy = z.infer<typeof IamRoleSortBySchema>;
@@ -189,6 +193,11 @@ export const iamContract = {
   getMyPermissions: oc
     .route({ method: 'GET', path: '/iam/my-permissions' })
     .output(EffectivePermissionsSchema),
+
+  reportAccessDenied: oc
+    .route({ method: 'POST', path: '/iam/access-denied' })
+    .input(z.object({ resource: z.string(), level: PermissionLevelSchema }))
+    .output(ReportAccessDeniedSchema),
 };
 
 export type AdminRole = z.infer<typeof AdminRoleSchema>;
@@ -201,3 +210,4 @@ export type Catalog = z.infer<typeof CatalogSchema>;
 export type GrantInput = z.infer<typeof GrantInputSchema>;
 export type RolePermissionLevel = z.infer<typeof RolePermissionLevelSchema>;
 export type EffectivePermissions = z.infer<typeof EffectivePermissionsSchema>;
+export type ReportAccessDenied = z.infer<typeof ReportAccessDeniedSchema>;

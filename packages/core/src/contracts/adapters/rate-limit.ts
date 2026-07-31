@@ -21,6 +21,7 @@ export const RATE_LIMIT_KEYS = {
   WALLET_MUTATION: 'wallet-mutation',
   CHAT_ROOM_JOIN: 'chat-room-join',
   CHAT_SEND: 'chat-send',
+  ACCESS_DENIED_REPORT: 'access-denied-report',
 } as const;
 
 export type RateLimitKeyPrefix = (typeof RATE_LIMIT_KEYS)[keyof typeof RATE_LIMIT_KEYS];

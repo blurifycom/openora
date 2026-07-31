@@ -163,6 +163,7 @@
         "iam.listInvitations",
         "iam.listRoles",
         "iam.previewEffectivePermissions",
+        "iam.reportAccessDenied",
         "iam.setRolePermissions",
         "iam.unassignRole",
         "iam.updateRole"
@@ -672,6 +673,7 @@
     "identity.user.phone_login",
     "identity.user.reactivated",
     "identity.user.registered",
+    "identity.user.unauthorized_access",
     "identity.user.unlocked",
     "notifications.created",
     "player.level.changed",
@@ -1380,6 +1382,10 @@
       "file": "packages/core/src/contracts/schemas/tag.ts"
     },
     {
+      "name": "ReportAccessDeniedSchema",
+      "file": "packages/core/src/iam/contract/index.ts"
+    },
+    {
       "name": "RequestKycResubmissionInputSchema",
       "file": "packages/core/src/compliance/contract/index.ts"
     },
@@ -1749,6 +1755,7 @@
     "POST /compliance/players/{userId}/self-exclusion/lift",
     "POST /gaming/rounds/start",
     "POST /gaming/rounds/{roundId}/end",
+    "POST /iam/access-denied",
     "POST /iam/assignments",
     "POST /iam/assignments/force-logout",
     "POST /iam/effective-permissions",

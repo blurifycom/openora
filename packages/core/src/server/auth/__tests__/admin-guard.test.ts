@@ -1,9 +1,13 @@
 import { describe, it, expect, vi, beforeAll, afterAll, beforeEach } from 'vitest';
 import { randomUUID } from 'node:crypto';
 import { sql } from 'drizzle-orm';
-import type { AdminPermissionResolver } from '@openora/core/contracts';
+import type {
+  AdminPermissionResolver,
+  RateLimiterAdapter,
+  RateLimitKey,
+} from '@openora/core/contracts';
 import { createTestDb, type TestDb } from '@openora/core/testing';
-import { mock, makeEventBus } from '../../../testing/mock.js';
+import { mock, makeEventBus, adminCaller } from '../../../testing/mock.js';
 import { AdminGuard } from '../admin-guard.js';
 import type { SessionResolver } from '../session-resolver.js';
 
@@ -16,14 +20,35 @@ const ADMIN_HEADERS = { 'x-real-ip': '127.0.0.1', 'user-agent': 'Mozilla/5.0' };
 function makeGuard({
   userId,
   grants,
-}: { userId?: string; grants?: { resource: string; action: string }[] } = {}) {
+  rateLimiter,
+}: {
+  userId?: string;
+  grants?: { resource: string; action: string }[];
+  rateLimiter?: RateLimiterAdapter<RateLimitKey>;
+} = {}) {
   const events = makeEventBus();
   const sessions = mock<SessionResolver>({ resolveUserId: vi.fn(async () => userId) });
   const permissionResolver = grants
     ? mock<AdminPermissionResolver>({ getGrants: vi.fn(async () => grants) })
     : undefined;
-  const guard = new AdminGuard(db.drizzle, sessions, permissionResolver, events);
+  const guard = new AdminGuard(db.drizzle, sessions, permissionResolver, events, rateLimiter);
   return { guard, events };
+}
+
+/** In-memory fixed-window RateLimiterAdapter double - state carries across calls within one test. */
+function fakeStatefulRateLimiter(): RateLimiterAdapter<RateLimitKey> {
+  const counts = new Map<string, number>();
+  return mock<RateLimiterAdapter<RateLimitKey>>({
+    consume: vi.fn(async (key: string, opts: { limit: number }) => {
+      const count = (counts.get(key) ?? 0) + 1;
+      counts.set(key, count);
+      const allowed = count <= opts.limit;
+      return { allowed, retryAfterMs: allowed ? 0 : 1000 };
+    }),
+    reset: vi.fn(async (key: string) => {
+      counts.delete(key);
+    }),
+  });
 }
 
 async function seedUser(role: string) {
@@ -195,5 +220,145 @@ describe('AdminGuard.assert - DB grants (real PG)', () => {
     await expect(guard.assert(requestContext(ADMIN_HEADERS), 'admin', 'delete')).rejects.toThrow(
       expect.objectContaining({ code: 'FORBIDDEN' }),
     );
+  });
+});
+
+describe('AdminGuard.recordDeniedAccess', () => {
+  it('emits and records when the caller genuinely lacks the level (static role fallback)', async () => {
+    const { guard, events } = makeGuard();
+    const caller = adminCaller({ role: 'support' }); // supportRole has no `game` grant
+
+    await expect(guard.recordDeniedAccess(caller, 'game', 'read')).resolves.toEqual({
+      recorded: true,
+    });
+    expect(events.emit).toHaveBeenCalledWith(
+      'identity.user.unauthorized_access',
+      expect.objectContaining({
+        userId: caller.userId,
+        resource: 'game',
+        action: 'view',
+        role: 'support',
+      }),
+    );
+  });
+
+  it('is a no-op when the caller already holds the level (static role fallback) - anti-forgery', async () => {
+    const { guard, events } = makeGuard();
+    const caller = adminCaller({ role: 'admin' }); // adminRole grants game:view/enable/disable
+
+    await expect(guard.recordDeniedAccess(caller, 'game', 'read')).resolves.toEqual({
+      recorded: false,
+    });
+    expect(events.emit).not.toHaveBeenCalled();
+  });
+
+  it('is a no-op when DB grants already cover the level - anti-forgery via the DB path', async () => {
+    const { guard, events } = makeGuard({ grants: [{ resource: 'game', action: 'view' }] });
+    const caller = adminCaller({ role: 'support' }); // static role would deny, DB grants allow
+
+    await expect(guard.recordDeniedAccess(caller, 'game', 'read')).resolves.toEqual({
+      recorded: false,
+    });
+    expect(events.emit).not.toHaveBeenCalled();
+  });
+
+  it('throws BAD_REQUEST for a resource with no entry in the permission statement', async () => {
+    const { guard } = makeGuard();
+    const caller = adminCaller();
+
+    await expect(guard.recordDeniedAccess(caller, 'not-a-resource', 'read')).rejects.toThrow(
+      expect.objectContaining({ code: 'BAD_REQUEST' }),
+    );
+  });
+
+  it('throws BAD_REQUEST for level: no_access', async () => {
+    const { guard } = makeGuard();
+    const caller = adminCaller();
+
+    await expect(guard.recordDeniedAccess(caller, 'game', 'no_access')).rejects.toThrow(
+      expect.objectContaining({ code: 'BAD_REQUEST' }),
+    );
+  });
+
+  it('reports the actually-missing action, not just the first action for the level - partial grant', async () => {
+    // `game` grants view/enable/disable at read_write; a caller who holds only
+    // `view` is missing enable/disable, NOT view - the audit must name a real gap.
+    const { guard, events } = makeGuard({ grants: [{ resource: 'game', action: 'view' }] });
+    const caller = adminCaller({ role: 'support' });
+
+    await expect(guard.recordDeniedAccess(caller, 'game', 'read_write')).resolves.toEqual({
+      recorded: true,
+    });
+    expect(events.emit).toHaveBeenCalledWith(
+      'identity.user.unauthorized_access',
+      expect.objectContaining({ resource: 'game', action: 'enable' }),
+    );
+    expect(events.emit).not.toHaveBeenCalledWith(
+      'identity.user.unauthorized_access',
+      expect.objectContaining({ action: 'view' }),
+    );
+  });
+
+  it('falls back to the full action set for a view-less resource + read (content)', async () => {
+    // `content` has no `view` action, so levelToActions('content', 'read') is [] -
+    // that must not be mistaken for "nothing to check" (which would wrongly no-op).
+    const { guard, events } = makeGuard();
+    const caller = adminCaller({ role: 'support' }); // supportRole has no `content` grant
+
+    await expect(guard.recordDeniedAccess(caller, 'content', 'read')).resolves.toEqual({
+      recorded: true,
+    });
+    expect(events.emit).toHaveBeenCalledWith(
+      'identity.user.unauthorized_access',
+      expect.objectContaining({ resource: 'content' }),
+    );
+  });
+
+  it('re-checks against FRESH grants, not a stale cached getGrants - anti-forgery under a TOCTOU race', async () => {
+    // Simulates the window between a real grant and its async cache purge: getGrants
+    // (cached) still says "no game grant"; getFreshGrants (uncached, direct read)
+    // says the caller was just given it. The report must trust the fresh read.
+    const getGrants = vi.fn(async () => []);
+    const getFreshGrants = vi.fn(async () => [{ resource: 'game', action: 'view' }]);
+    const permissionResolver = mock<AdminPermissionResolver>({ getGrants, getFreshGrants });
+    const events = makeEventBus();
+    const sessions = mock<SessionResolver>({ resolveUserId: vi.fn(async () => undefined) });
+    const guard = new AdminGuard(db.drizzle, sessions, permissionResolver, events);
+    const caller = adminCaller({ role: 'support' });
+
+    await expect(guard.recordDeniedAccess(caller, 'game', 'read')).resolves.toEqual({
+      recorded: false,
+    });
+    expect(getFreshGrants).toHaveBeenCalledWith(caller.userId);
+    expect(getGrants).not.toHaveBeenCalled();
+    expect(events.emit).not.toHaveBeenCalled();
+  });
+
+  it('throttles repeated denials for the same (user, resource, level) within the window', async () => {
+    const rateLimiter = fakeStatefulRateLimiter();
+    const { guard, events } = makeGuard({ rateLimiter });
+    const caller = adminCaller({ role: 'support' });
+
+    await expect(guard.recordDeniedAccess(caller, 'game', 'read')).resolves.toEqual({
+      recorded: true,
+    });
+    await expect(guard.recordDeniedAccess(caller, 'game', 'read')).resolves.toEqual({
+      recorded: false,
+    });
+    await expect(guard.recordDeniedAccess(caller, 'game', 'read')).resolves.toEqual({
+      recorded: false,
+    });
+    expect(events.emit).toHaveBeenCalledTimes(1);
+  });
+
+  it('does not throttle across different resources for the same user', async () => {
+    const rateLimiter = fakeStatefulRateLimiter();
+    const { guard, events } = makeGuard({ rateLimiter });
+    const caller = adminCaller({ role: 'support' });
+
+    await guard.recordDeniedAccess(caller, 'game', 'read');
+    await guard.recordDeniedAccess(caller, 'game-config', 'read');
+
+    expect(events.emit).toHaveBeenCalledTimes(2);
   });
 });

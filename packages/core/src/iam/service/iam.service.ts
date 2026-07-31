@@ -187,6 +187,12 @@ export class DbAdminPermissionResolver implements AdminPermissionResolver {
     );
   }
 
+  // Bypasses the cache entirely - for callers that must not act on a not-yet-purged
+  // stale entry (see the AdminPermissionResolver.getFreshGrants doc).
+  getFreshGrants(userId: User['id']): Promise<AdminGrant[] | null> {
+    return this.loadGrants(userId);
+  }
+
   private async loadGrants(userId: User['id']): Promise<AdminGrant[] | null> {
     // One indexed join (on admin_role_assignment_user_id_idx) replaces the old
     // 2 + N-per-role fan-out. leftJoin keeps super-admin roles (no permission rows)
@@ -293,8 +299,20 @@ export class IamService {
 
   private async assertSuperAdmin(caller: Caller) {
     if (!(await this.isSuperAdmin(caller))) {
+      this.emitDenied(caller, 'admin', 'update');
       throw new NotSuperAdminError();
     }
+  }
+
+  private emitDenied(caller: Caller, resource: string, action: string) {
+    this.events.emit('identity.user.unauthorized_access', {
+      userId: caller.userId,
+      resource,
+      action,
+      ip: caller.ip,
+      userAgent: caller.userAgent,
+      role: caller.role,
+    });
   }
 
   listCatalog() {
@@ -488,6 +506,7 @@ export class IamService {
       }
       const have = callerMap[g.resource] ?? 'no_access';
       if (!isLevelSufficient(have, g.level)) {
+        this.emitDenied(input.caller, g.resource, 'update');
         throw new GrantEscalationError();
       }
     }
