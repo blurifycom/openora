@@ -14,15 +14,18 @@ export class DrizzleAdminGameReporting implements AdminGameReporting {
   async listGamePerformance(filter: GamePerformanceFilter): Promise<GamePerformanceRow[]> {
     const db = this.drizzle.db;
 
-    // status/date filters scope which ROUNDS count towards a game's metrics, so they
-    // live in the join condition, not WHERE - a game with zero completed rounds in
-    // range still appears with all-zero metrics rather than being dropped from the
+    // status/date/currency filters scope which ROUNDS count towards a game's metrics,
+    // so they live in the join condition, not WHERE - a game with zero completed rounds
+    // in range still appears with all-zero metrics rather than being dropped from the
     // report. `gameType` narrows which GAMES appear at all, so it stays in WHERE.
     const joinConditions = [
       eq(gameRound.gameId, game.id),
       eq(gameRound.status, 'completed'),
       filter.dateFrom ? gte(gameRound.startedAt, filter.dateFrom) : undefined,
       filter.dateTo ? lte(gameRound.startedAt, filter.dateTo) : undefined,
+      // No currency filter mixes bet/win amounts across currencies into one unconverted
+      // sum - the operator UI shows a disclaimer in that case; this is intentional.
+      filter.currency ? eq(gameRound.currency, filter.currency) : undefined,
     ].filter(Boolean);
     const where = filter.gameType ? eq(game.gameType, filter.gameType) : undefined;
 
