@@ -35,7 +35,6 @@ function makeGuard({
   return { guard, events };
 }
 
-/** In-memory fixed-window RateLimiterAdapter double - state carries across calls within one test. */
 function fakeStatefulRateLimiter(): RateLimiterAdapter<RateLimitKey> {
   const counts = new Map<string, number>();
   return mock<RateLimiterAdapter<RateLimitKey>>({
@@ -226,7 +225,7 @@ describe('AdminGuard.assert - DB grants (real PG)', () => {
 describe('AdminGuard.recordDeniedAccess', () => {
   it('emits and records when the caller genuinely lacks the level (static role fallback)', async () => {
     const { guard, events } = makeGuard();
-    const caller = adminCaller({ role: 'support' }); // supportRole has no `game` grant
+    const caller = adminCaller({ role: 'support' });
 
     await expect(guard.recordDeniedAccess(caller, 'game', 'read')).resolves.toEqual({
       recorded: true,
@@ -244,7 +243,7 @@ describe('AdminGuard.recordDeniedAccess', () => {
 
   it('is a no-op when the caller already holds the level (static role fallback) - anti-forgery', async () => {
     const { guard, events } = makeGuard();
-    const caller = adminCaller({ role: 'admin' }); // adminRole grants game:view/enable/disable
+    const caller = adminCaller({ role: 'admin' });
 
     await expect(guard.recordDeniedAccess(caller, 'game', 'read')).resolves.toEqual({
       recorded: false,
@@ -254,7 +253,7 @@ describe('AdminGuard.recordDeniedAccess', () => {
 
   it('is a no-op when DB grants already cover the level - anti-forgery via the DB path', async () => {
     const { guard, events } = makeGuard({ grants: [{ resource: 'game', action: 'view' }] });
-    const caller = adminCaller({ role: 'support' }); // static role would deny, DB grants allow
+    const caller = adminCaller({ role: 'support' });
 
     await expect(guard.recordDeniedAccess(caller, 'game', 'read')).resolves.toEqual({
       recorded: false,
@@ -281,8 +280,6 @@ describe('AdminGuard.recordDeniedAccess', () => {
   });
 
   it('reports the actually-missing action, not just the first action for the level - partial grant', async () => {
-    // `game` grants view/enable/disable at read_write; a caller who holds only
-    // `view` is missing enable/disable, NOT view - the audit must name a real gap.
     const { guard, events } = makeGuard({ grants: [{ resource: 'game', action: 'view' }] });
     const caller = adminCaller({ role: 'support' });
 
@@ -300,10 +297,8 @@ describe('AdminGuard.recordDeniedAccess', () => {
   });
 
   it('falls back to the full action set for a view-less resource + read (content)', async () => {
-    // `content` has no `view` action, so levelToActions('content', 'read') is [] -
-    // that must not be mistaken for "nothing to check" (which would wrongly no-op).
     const { guard, events } = makeGuard();
-    const caller = adminCaller({ role: 'support' }); // supportRole has no `content` grant
+    const caller = adminCaller({ role: 'support' });
 
     await expect(guard.recordDeniedAccess(caller, 'content', 'read')).resolves.toEqual({
       recorded: true,
@@ -315,9 +310,6 @@ describe('AdminGuard.recordDeniedAccess', () => {
   });
 
   it('re-checks against FRESH grants, not a stale cached getGrants - anti-forgery under a TOCTOU race', async () => {
-    // Simulates the window between a real grant and its async cache purge: getGrants
-    // (cached) still says "no game grant"; getFreshGrants (uncached, direct read)
-    // says the caller was just given it. The report must trust the fresh read.
     const getGrants = vi.fn(async () => []);
     const getFreshGrants = vi.fn(async () => [{ resource: 'game', action: 'view' }]);
     const permissionResolver = mock<AdminPermissionResolver>({ getGrants, getFreshGrants });

@@ -45,7 +45,6 @@ export class AdminGuard {
     // When bound (iam module loaded), grants come from DB; otherwise falls back to static roles.
     private readonly permissionResolver?: AdminPermissionResolver,
     private readonly events?: EventBus,
-    // Throttles recordDeniedAccess(); unbound just means no throttling (best-effort).
     private readonly rateLimiter?: RateLimiterAdapter<RateLimitKey>,
   ) {}
 
@@ -145,17 +144,10 @@ export class AdminGuard {
     if (level === 'no_access') {
       throw new ORPCError('BAD_REQUEST', { message: 'level must not be no_access' });
     }
-    // levelToActions('read') on a view-less module (eg `content`) is deliberately []
-    // (see permission-levels.ts) - fall back to the full action set rather than
-    // treating that as "nothing to check", which would wrongly no-op the report.
     const derivedActions = levelToActions(resource, level);
     const actions = derivedActions.length > 0 ? derivedActions : knownActions;
 
     const userRole = roles[caller.role as keyof typeof roles];
-    // Fresh (uncached) grants: a cached `getGrants` could still reflect the
-    // pre-grant state for up to its TTL, which would let a caller who was JUST
-    // given this permission report a denial it no longer has - self-forging a
-    // false audit entry in the gap before the cache purge lands.
     const grants = await this.resolveFreshGrants(caller.userId);
     const missingAction = actions.find(
       (action) => !this.checkGrant(grants, userRole, resource, action),
