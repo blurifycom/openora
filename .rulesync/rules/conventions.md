@@ -148,20 +148,13 @@ Goal: code that is clean, separated, scalable, and extendible - easy to understa
 
 ## 5. Comments and documentation
 
-- **Zero comments. A comment is an exception you must justify, not a nicety.** Assume the answer is "no comment" and let the code carry the meaning.
-- **The only thing that earns one: a fact the code CANNOT contain** - an external system's behaviour, a third-party bug, a spec/regulatory constraint. The test is whether a careful reader would otherwise "fix" the code and break it. `// Stripe rounds half-to-even; mirror it so our totals reconcile.`
-- **A reason is not a fact - it does not earn a comment.** Why this order, why 2 retries and not 4, why not the obvious approach, what a block does, what changed: all of that goes in the commit message, the PR description, or an ADR. Those are versioned and reviewed; an inline rationale is neither, and it rots in place. Naming the thing well (`PLAYER_FACING_TIMEOUT_MS`) beats a paragraph above it.
-- **If a block needs a comment to be understood, rename or extract first** - a comment is the fallback after that fails, never the first move. Writing one is the signal that the naming or the decomposition is wrong.
-- **Never in tests.** A test name states the behaviour and the assertions state the evidence. Seeded values, fixture choices and timing tricks get named constants or helpers, not narration.
-- **Same bar in config, CI and infra files** (`turbo.json`, workflow YAML, compose). Step names and keys are self-describing; step ordering and tuning rationale belong in the commit that introduced them.
-- **Never** restate a name (`// increment the counter`), narrate steps (`// step 2`), announce edits (`// added for X`), or divide sections (`// ---`, `// ===`).
-- **JSDoc on every exported function/class >~15 lines or with non-obvious params.** Multiline `/** ... */` block (opening and closing on their own lines). Document the surprising contract, not the name.
-- **`// TODO:` for deferred work, `// FIXME:` for known-broken code** - greppable, with context and an issue key where one exists. Never bare.
+- **No comments by default.** Code, tests, config, and CI must be clear through names, structure, and decomposition. Do not add explanatory comments, rationale, narration, section dividers, or JSDoc.
+- **The only exception is unfinished work that remains after this PR:** use a short `// TODO:` for deferred work or `// FIXME:` for known-broken code. Include an issue key when one exists; never leave either bare.
   ```ts
-  // TODO: replace polling with the webhook once BE ships it (ABC-312)
-  // FIXME: race - two admins approving the same withdrawal double-credit the player
+  // TODO: replace polling after ABC-312
+  // FIXME: concurrent approvals can double-credit
   ```
-- **`// mock:` marks placeholder data / stubbed behavior** so throwaway code stays findable. `// mock: fixed rate until the FX adapter lands`
+- **Fix it in this PR when practical; otherwise keep the exception short and actionable.** Never use comments to describe what code does or why an approach was chosen - put decision context in the PR description or ADR instead.
 
 ## 6. Structure and boundaries
 
@@ -222,7 +215,7 @@ Headless repo - only the SDK consumption layer (hooks, typed client, auth, realt
 - **One PR = one concern.** Stage files explicitly; never `git add -A` with foreign changes in the tree.
 - **Green before review:** `pnpm verify` passes; `pnpm regen` after any contract/schema change.
 - **Branch off `dev`; never commit directly to `dev`/`stage`.** Promotion chain `dev -> stage` + release tags. Never push without an explicit per-action confirmation.
-- **PR description carries intent:** what / why / acceptance criteria / ticket key.
+- **PR description is reviewer-oriented:** Summary, Why, Alternatives considered, and Risks. Do not repeat CI commands, test counts, check status, or the diff itself. Include manual evidence only when CI cannot provide it.
 - **No sensitive/internal data in titles, descriptions, or commits** - they are the public record. Bare ticket key (`ABC-45`), never the URL; no internal links, hostnames, secrets, PII. When in doubt, leave it out.
 
 ## 13. Enforcement
