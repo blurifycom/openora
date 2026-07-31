@@ -11,19 +11,20 @@ description: Engineering code conventions (TS, headless backend) - apply to ever
 
 # Engineering Conventions
 
-The always-on core of the code standard: what you must obey while typing. Detail, examples and rationale live in `docs/standards/` - read the one file that matches the change instead of carrying all of it. Async seams: `messaging-and-microservices`. SQL / Drizzle: `db-conventions`. Repo map, decision tree, dependency rules: `overview`.
+The always-on core of the code standard: what you must obey while typing. Detail, examples and rationale live in `docs/standards/` - read the one file that matches the change instead of carrying all of it. Async seams: `messaging-and-microservices`. SQL / Drizzle: `db-conventions`, then `docs/standards/database.md`. Repo map, decision tree, dependency rules: `overview`.
 
-| Change you are making                 | Read first                           |
-| ------------------------------------- | ------------------------------------ |
-| schema, type, enum-like value set     | `docs/standards/types.md`            |
-| function, service method, constructor | `docs/standards/functions.md`        |
-| new module, DI wiring, integration    | `docs/standards/module-structure.md` |
-| error class, catch, money path        | `docs/standards/errors.md`           |
-| a test                                | `docs/standards/testing.md`          |
-| a comment or JSDoc                    | `docs/standards/comments.md`         |
-| a hook / the typed client             | `docs/standards/react-sdk.md`        |
-| commit, PR                            | `docs/standards/git-delivery.md`     |
-| a failing gate, a new lint rule       | `docs/standards/enforcement.md`      |
+| Change you are making                  | Read first                           |
+| -------------------------------------- | ------------------------------------ |
+| schema, type, enum-like value set      | `docs/standards/types.md`            |
+| SQL, Drizzle, migration, seed, DB tool | `docs/standards/database.md`         |
+| function, service method, constructor  | `docs/standards/functions.md`        |
+| new module, DI wiring, integration     | `docs/standards/module-structure.md` |
+| error class, catch, money path         | `docs/standards/errors.md`           |
+| a test                                 | `docs/standards/testing.md`          |
+| a comment or JSDoc                     | `docs/standards/comments.md`         |
+| a hook / the typed client              | `docs/standards/react-sdk.md`        |
+| commit, PR                             | `docs/standards/git-delivery.md`     |
+| a failing gate, a new lint rule        | `docs/standards/enforcement.md`      |
 
 ## Philosophy
 
@@ -39,7 +40,7 @@ The always-on core of the code standard: what you must obey while typing. Detail
 - `any` (tests included), `!` non-null assertions, `arr[i]!`, `as` casts to silence the compiler (`as const` is fine; test doubles go through the `mock` helper).
 - `interface`, TS `enum`, decorators, inheritance for reuse, default exports (except `plugin.ts` + `drizzle.config.ts`).
 - Hand-written duplicates of an inferrable type, re-inferring an imported schema, re-typing derived schema fields.
-- Raw `z.uuid()` (use `UuidSchema`), inline `z.enum([...])` outside a contract dir, inline `pgEnum` value arrays.
+- Raw `z.uuid()` (use `UuidSchema`), inline `z.enum([...])` outside a contract dir.
 - Inline `fetch`/`axios` in module code - third-party access is a port + adapter bound at the root.
 - Comments. The only exception is a fact the code cannot contain (external-system behaviour, a spec constraint) and JSDoc on a public export. A rationale is not a fact - it goes in the commit or an ADR.
 - Deep (`../../`+) relative imports that leave your zone/module, imports of another module's internals, import cycles, deep `dist/`/`src/` paths into another package.
