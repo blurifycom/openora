@@ -25,6 +25,7 @@ import {
   TooManyRecipientsError,
   SelfModerationActionError,
   ChatCommandIdempotencyKeyReuseError,
+  fingerprintCommand,
 } from '../chat-commands.service.js';
 
 const ACTOR_ID = '00000000-0000-0000-0000-000000000001';
@@ -32,6 +33,7 @@ const CLAIMER_ID = '00000000-0000-0000-0000-000000000002';
 const ROOM_ID = '00000000-0000-0000-0000-000000000003';
 const MSG_ID = '00000000-0000-0000-0000-000000000004';
 const GIFT_ID = '00000000-0000-0000-0000-000000000005';
+const OTHER_ROOM_ID = '00000000-0000-0000-0000-000000000009';
 
 const ENABLED_ROW = {
   key: 'gift',
@@ -306,18 +308,27 @@ describe('ChatCommandsService.getPlayerProfile', () => {
   });
 });
 
+const IDEMPOTENCY_KEY = '00000000-0000-0000-0000-0000000000aa';
+const IDEMPOTENCY_ROW_ID = '00000000-0000-0000-0000-0000000000bb';
+
 describe('ChatCommandsService.executeCommand (gift)', () => {
   it('throws CommandDisabledError when command row is missing', async () => {
     const svc = makeSvc({ drizzleRows: { select: [[]] } });
     await expect(
-      svc.executeCommand({ type: 'gift', amount: '10', roomId: ROOM_ID }, ACTOR_ID),
+      svc.executeCommand(
+        { type: 'gift', amount: '10', roomId: ROOM_ID, idempotencyKey: IDEMPOTENCY_KEY },
+        ACTOR_ID,
+      ),
     ).rejects.toThrow(CommandDisabledError);
   });
 
   it('throws CommandDisabledError when command is disabled', async () => {
     const svc = makeSvc({ drizzleRows: { select: [[DISABLED_ROW]] } });
     await expect(
-      svc.executeCommand({ type: 'gift', amount: '10', roomId: ROOM_ID }, ACTOR_ID),
+      svc.executeCommand(
+        { type: 'gift', amount: '10', roomId: ROOM_ID, idempotencyKey: IDEMPOTENCY_KEY },
+        ACTOR_ID,
+      ),
     ).rejects.toThrow(CommandDisabledError);
   });
 
@@ -325,13 +336,16 @@ describe('ChatCommandsService.executeCommand (gift)', () => {
     const svc = makeSvc({
       drizzleRows: {
         select: [[ENABLED_ROW]],
-        // First returning is for chatGift insert (never reached); wallet fails first.
-        returning: [],
+        // Only the idempotency guard insert is reached; wallet fails before the gift insert.
+        returning: [[{ id: IDEMPOTENCY_ROW_ID }]],
       },
       wallet: makeWallet(false),
     });
     await expect(
-      svc.executeCommand({ type: 'gift', amount: '10', roomId: ROOM_ID }, ACTOR_ID),
+      svc.executeCommand(
+        { type: 'gift', amount: '10', roomId: ROOM_ID, idempotencyKey: IDEMPOTENCY_KEY },
+        ACTOR_ID,
+      ),
     ).rejects.toThrow(InsufficientBalanceError);
   });
 
@@ -340,13 +354,13 @@ describe('ChatCommandsService.executeCommand (gift)', () => {
     const svc = makeSvc({
       drizzleRows: {
         select: [[ENABLED_ROW]],
-        // First returning: chatGift insert; second returning: messageId back-fill update.
-        returning: [[{ ...GIFT_ROW }], []],
+        // First returning: idempotency guard insert; second: chatGift insert.
+        returning: [[{ id: IDEMPOTENCY_ROW_ID }], [{ ...GIFT_ROW }]],
       },
       writer,
     });
     const result = await svc.executeCommand(
-      { type: 'gift', amount: '10.00000000', roomId: ROOM_ID },
+      { type: 'gift', amount: '10.00000000', roomId: ROOM_ID, idempotencyKey: IDEMPOTENCY_KEY },
       ACTOR_ID,
     );
     expect(writer.postSystemMessage).toHaveBeenCalledOnce();
@@ -370,13 +384,18 @@ describe('ChatCommandsService.executeCommand (gift)', () => {
       },
     });
     await expect(
-      svc.executeCommand({ type: 'gift', amount: '1.00000000', roomId: ROOM_ID }, ACTOR_ID),
+      svc.executeCommand(
+        {
+          type: 'gift',
+          amount: '1.00000000',
+          roomId: ROOM_ID,
+          idempotencyKey: IDEMPOTENCY_KEY,
+        },
+        ACTOR_ID,
+      ),
     ).rejects.toThrow(BelowMinimumError);
   });
 });
-
-const IDEMPOTENCY_KEY = '00000000-0000-0000-0000-0000000000aa';
-const IDEMPOTENCY_ROW_ID = '00000000-0000-0000-0000-0000000000bb';
 
 describe('ChatCommandsService.executeCommand (gift idempotency)', () => {
   it('inserts the idempotency guard row and debits once when a fresh key is supplied', async () => {
@@ -398,12 +417,19 @@ describe('ChatCommandsService.executeCommand (gift idempotency)', () => {
 
   it('replays the stored result without debiting the wallet again', async () => {
     const wallet = makeWallet();
+    const giftInput = {
+      type: 'gift' as const,
+      amount: '10.00000000',
+      roomId: ROOM_ID,
+      idempotencyKey: IDEMPOTENCY_KEY,
+    };
     const storedRow = {
       id: IDEMPOTENCY_ROW_ID,
       actorId: ACTOR_ID,
       commandType: 'gift',
       idempotencyKey: IDEMPOTENCY_KEY,
       amount: '10.00000000',
+      fingerprint: fingerprintCommand(giftInput),
       result: SYSTEM_MSG,
       createdAt: new Date(),
     };
@@ -411,10 +437,7 @@ describe('ChatCommandsService.executeCommand (gift idempotency)', () => {
       drizzleRows: { select: [[ENABLED_ROW], [storedRow]] },
       wallet,
     });
-    const result = await svc.executeCommand(
-      { type: 'gift', amount: '10.00000000', roomId: ROOM_ID, idempotencyKey: IDEMPOTENCY_KEY },
-      ACTOR_ID,
-    );
+    const result = await svc.executeCommand(giftInput, ACTOR_ID);
     expect(wallet.debit).not.toHaveBeenCalled();
     expect(result).toEqual(SYSTEM_MSG);
   });
@@ -426,6 +449,39 @@ describe('ChatCommandsService.executeCommand (gift idempotency)', () => {
       commandType: 'gift',
       idempotencyKey: IDEMPOTENCY_KEY,
       amount: '5.00000000',
+      fingerprint: fingerprintCommand({
+        type: 'gift',
+        amount: '5.00000000',
+        roomId: ROOM_ID,
+        idempotencyKey: IDEMPOTENCY_KEY,
+      }),
+      result: SYSTEM_MSG,
+      createdAt: new Date(),
+    };
+    const svc = makeSvc({
+      drizzleRows: { select: [[ENABLED_ROW], [storedRow]] },
+    });
+    await expect(
+      svc.executeCommand(
+        { type: 'gift', amount: '10.00000000', roomId: ROOM_ID, idempotencyKey: IDEMPOTENCY_KEY },
+        ACTOR_ID,
+      ),
+    ).rejects.toThrow(ChatCommandIdempotencyKeyReuseError);
+  });
+
+  it('throws ChatCommandIdempotencyKeyReuseError when the same key+amount is reused for a different room', async () => {
+    const storedRow = {
+      id: IDEMPOTENCY_ROW_ID,
+      actorId: ACTOR_ID,
+      commandType: 'gift',
+      idempotencyKey: IDEMPOTENCY_KEY,
+      amount: '10.00000000',
+      fingerprint: fingerprintCommand({
+        type: 'gift',
+        amount: '10.00000000',
+        roomId: OTHER_ROOM_ID,
+        idempotencyKey: IDEMPOTENCY_KEY,
+      }),
       result: SYSTEM_MSG,
       createdAt: new Date(),
     };
@@ -551,7 +607,13 @@ describe('ChatCommandsService.handleRain', () => {
     });
     await expect(
       svc.executeCommand(
-        { type: 'rain', amount: '10.00000000', recipientCount: 5, roomId: ROOM_ID },
+        {
+          type: 'rain',
+          amount: '10.00000000',
+          recipientCount: 5,
+          roomId: ROOM_ID,
+          idempotencyKey: IDEMPOTENCY_KEY,
+        },
         ACTOR_ID,
       ),
     ).rejects.toThrow(NoOnlineUsersError);
@@ -563,13 +625,20 @@ describe('ChatCommandsService.handleRain', () => {
     const svc = makeSvc({
       drizzleRows: {
         select: [[RAIN_ROW]],
+        returning: [[{ id: IDEMPOTENCY_ROW_ID }]],
         execute: [[{ per_recipient: '5.00000000', total_distributed: '10.00000000' }]],
       },
       wallet,
       transport: makeTransport([ACTOR_ID, CLAIMER_ID, RECIPIENT_2]),
     });
     await svc.executeCommand(
-      { type: 'rain', amount: '10.00000000', recipientCount: 2, roomId: ROOM_ID },
+      {
+        type: 'rain',
+        amount: '10.00000000',
+        recipientCount: 2,
+        roomId: ROOM_ID,
+        idempotencyKey: IDEMPOTENCY_KEY,
+      },
       ACTOR_ID,
     );
     expect(wallet.credit).toHaveBeenCalledTimes(2);
@@ -585,6 +654,7 @@ describe('ChatCommandsService.handleRain', () => {
     const svc = makeSvc({
       drizzleRows: {
         select: [[RAIN_ROW]],
+        returning: [[{ id: IDEMPOTENCY_ROW_ID }]],
         execute: [[{ per_recipient: '3.33333333', total_distributed: '9.99999999' }]],
       },
       wallet,
@@ -595,7 +665,13 @@ describe('ChatCommandsService.handleRain', () => {
       ]),
     });
     await svc.executeCommand(
-      { type: 'rain', amount: '10.00000000', recipientCount: 3, roomId: ROOM_ID },
+      {
+        type: 'rain',
+        amount: '10.00000000',
+        recipientCount: 3,
+        roomId: ROOM_ID,
+        idempotencyKey: IDEMPOTENCY_KEY,
+      },
       ACTOR_ID,
     );
     expect(wallet.credit).toHaveBeenCalledWith(expect.anything(), {
@@ -610,6 +686,7 @@ describe('ChatCommandsService.handleRain', () => {
     const svc = makeSvc({
       drizzleRows: {
         select: [[RAIN_ROW]],
+        returning: [[{ id: IDEMPOTENCY_ROW_ID }]],
         execute: [[{ per_recipient: '1.00000000', total_distributed: '10.00000000' }]],
       },
       wallet,
@@ -618,7 +695,13 @@ describe('ChatCommandsService.handleRain', () => {
       ),
     });
     await svc.executeCommand(
-      { type: 'rain', amount: '10.99000000', recipientCount: 10, roomId: ROOM_ID },
+      {
+        type: 'rain',
+        amount: '10.99000000',
+        recipientCount: 10,
+        roomId: ROOM_ID,
+        idempotencyKey: IDEMPOTENCY_KEY,
+      },
       ACTOR_ID,
     );
     expect(wallet.debit).toHaveBeenCalledWith(expect.anything(), {
@@ -636,7 +719,13 @@ describe('ChatCommandsService.handleRain', () => {
     });
     await expect(
       svc.executeCommand(
-        { type: 'rain', amount: '1.00000000', recipientCount: 1, roomId: ROOM_ID },
+        {
+          type: 'rain',
+          amount: '1.00000000',
+          recipientCount: 1,
+          roomId: ROOM_ID,
+          idempotencyKey: IDEMPOTENCY_KEY,
+        },
         ACTOR_ID,
       ),
     ).rejects.toThrow(BelowMinimumError);
@@ -650,7 +739,13 @@ describe('ChatCommandsService.handleRain', () => {
     });
     await expect(
       svc.executeCommand(
-        { type: 'rain', amount: '50.00000000', recipientCount: 1, roomId: ROOM_ID },
+        {
+          type: 'rain',
+          amount: '50.00000000',
+          recipientCount: 1,
+          roomId: ROOM_ID,
+          idempotencyKey: IDEMPOTENCY_KEY,
+        },
         ACTOR_ID,
       ),
     ).rejects.toThrow(ExceedsLimitError);
@@ -664,7 +759,13 @@ describe('ChatCommandsService.handleRain', () => {
     });
     await expect(
       svc.executeCommand(
-        { type: 'rain', amount: '100.00000000', recipientCount: 11, roomId: ROOM_ID },
+        {
+          type: 'rain',
+          amount: '100.00000000',
+          recipientCount: 11,
+          roomId: ROOM_ID,
+          idempotencyKey: IDEMPOTENCY_KEY,
+        },
         ACTOR_ID,
       ),
     ).rejects.toThrow(ExceedsLimitError);
@@ -676,7 +777,13 @@ describe('ChatCommandsService.handleRain', () => {
     });
     await expect(
       svc.executeCommand(
-        { type: 'rain', amount: '3.00000000', recipientCount: 4, roomId: ROOM_ID },
+        {
+          type: 'rain',
+          amount: '3.00000000',
+          recipientCount: 4,
+          roomId: ROOM_ID,
+          idempotencyKey: IDEMPOTENCY_KEY,
+        },
         ACTOR_ID,
       ),
     ).rejects.toThrow(TooManyRecipientsError);
@@ -757,13 +864,22 @@ describe('ChatCommandsService.handleDonate', () => {
       postSystemMessage: vi.fn().mockResolvedValue(DONATE_SYSTEM_MSG),
     });
     const svc = makeSvc({
-      drizzleRows: { select: [[DONATE_ROW]] },
+      drizzleRows: {
+        select: [[DONATE_ROW]],
+        returning: [[{ id: IDEMPOTENCY_ROW_ID }]],
+      },
       wallet,
       writer,
       directory: makeRecipientDirectory(),
     });
     const result = await svc.executeCommand(
-      { type: 'donate', targetUsername: 'alice', amount: '10.00000000', roomId: ROOM_ID },
+      {
+        type: 'donate',
+        targetUsername: 'alice',
+        amount: '10.00000000',
+        roomId: ROOM_ID,
+        idempotencyKey: IDEMPOTENCY_KEY,
+      },
       ACTOR_ID,
     );
     expect(wallet.debit).toHaveBeenCalledWith(expect.anything(), {
@@ -786,7 +902,13 @@ describe('ChatCommandsService.handleDonate', () => {
     });
     await expect(
       svc.executeCommand(
-        { type: 'donate', targetUsername: 'bob', amount: '10.00000000', roomId: ROOM_ID },
+        {
+          type: 'donate',
+          targetUsername: 'bob',
+          amount: '10.00000000',
+          roomId: ROOM_ID,
+          idempotencyKey: IDEMPOTENCY_KEY,
+        },
         ACTOR_ID,
       ),
     ).rejects.toThrow(DonateSelfError);
@@ -804,7 +926,13 @@ describe('ChatCommandsService.handleDonate', () => {
     });
     await expect(
       svc.executeCommand(
-        { type: 'donate', targetUsername: 'ghost', amount: '10.00000000', roomId: ROOM_ID },
+        {
+          type: 'donate',
+          targetUsername: 'ghost',
+          amount: '10.00000000',
+          roomId: ROOM_ID,
+          idempotencyKey: IDEMPOTENCY_KEY,
+        },
         ACTOR_ID,
       ),
     ).rejects.toThrow(ChatPlayerNotFoundError);
@@ -812,13 +940,22 @@ describe('ChatCommandsService.handleDonate', () => {
 
   it('throws InsufficientBalanceError when sender wallet debit fails', async () => {
     const svc = makeSvc({
-      drizzleRows: { select: [[DONATE_ROW]] },
+      drizzleRows: {
+        select: [[DONATE_ROW]],
+        returning: [[{ id: IDEMPOTENCY_ROW_ID }]],
+      },
       wallet: makeWallet(false),
       directory: makeRecipientDirectory(),
     });
     await expect(
       svc.executeCommand(
-        { type: 'donate', targetUsername: 'alice', amount: '10.00000000', roomId: ROOM_ID },
+        {
+          type: 'donate',
+          targetUsername: 'alice',
+          amount: '10.00000000',
+          roomId: ROOM_ID,
+          idempotencyKey: IDEMPOTENCY_KEY,
+        },
         ACTOR_ID,
       ),
     ).rejects.toThrow(InsufficientBalanceError);
@@ -833,7 +970,13 @@ describe('ChatCommandsService.handleDonate', () => {
     });
     await expect(
       svc.executeCommand(
-        { type: 'donate', targetUsername: 'alice', amount: '1.00000000', roomId: ROOM_ID },
+        {
+          type: 'donate',
+          targetUsername: 'alice',
+          amount: '1.00000000',
+          roomId: ROOM_ID,
+          idempotencyKey: IDEMPOTENCY_KEY,
+        },
         ACTOR_ID,
       ),
     ).rejects.toThrow(BelowMinimumError);

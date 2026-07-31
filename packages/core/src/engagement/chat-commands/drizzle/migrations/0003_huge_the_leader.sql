@@ -1,0 +1,1 @@
+ALTER TABLE "chat_command_idempotency" ADD COLUMN "fingerprint" text NOT NULL;

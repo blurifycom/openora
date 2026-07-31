@@ -62,7 +62,10 @@ export type ChatGift = typeof chatGift.$inferSelect;
  * touch money; the caller re-reads the winner's row instead (mirrors wallet's
  * insertIdempotentTransaction). `result` is jsonb because chat-commands doesn't own
  * chatMessage (chat module does) - storing the full ChatSystemMessage here avoids a
- * cross-module read on replay.
+ * cross-module read on replay. `fingerprint` is a sha256 hash of the FULL command
+ * input (every field, not just amount) - a replay must match the whole request, not
+ * just the amount, or a reused key with a different room/recipient/donate target
+ * would silently return the wrong stored result.
  */
 export const chatCommandIdempotency = pgTable(
   'chat_command_idempotency',
@@ -72,6 +75,7 @@ export const chatCommandIdempotency = pgTable(
     commandType: chatCommandTypeEnum().notNull(),
     idempotencyKey: uuid().notNull(),
     amount: decimal({ precision: 18, scale: 8 }).notNull(),
+    fingerprint: text().notNull(),
     result: jsonb().$type<ChatSystemMessage>(),
     createdAt: timestamp({ withTimezone: true }).notNull().defaultNow(),
   },

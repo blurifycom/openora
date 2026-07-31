@@ -14,18 +14,23 @@ Each row in `chat_command_config` holds `enabled`, `label`, `description`, and a
 
 ## Idempotency for money-moving commands (gift/rain/donate)
 
-`gift`/`rain`/`donate` accept an optional client `idempotencyKey` (uuid), backed by the
-`chat_command_idempotency` table (unique on `actorId, commandType, idempotencyKey`). The row IS
-the atomic guard - `guardCommandIdempotency` inserts it (with `result: null`) as the FIRST
-statement inside the same money-moving transaction, before any debit; `onConflictDoNothing`
-means a concurrent duplicate loses the race and throws `ConcurrentCommandReplayError` rather than
-touching money. The final `ChatSystemMessage` is backfilled onto the row right before the
-transaction returns - the same insert-placeholder-then-backfill idiom `chatGift.messageId` uses.
-Before entering the transaction, `findCommandReplay` checks for an existing row: a matching
-amount is a genuine replay (returns the stored result, no wallet call at all); a matching key
-with a DIFFERENT amount is a reused key, not a replay (`ChatCommandIdempotencyKeyReuseError`).
-`result` is jsonb rather than a foreign read because chat-commands doesn't own `chatMessage` (the
-`chat` module does).
+`gift`/`rain`/`donate` REQUIRE a client `idempotencyKey` (uuid) - it is mandatory on the contract,
+not optional, so every money-moving request carries a retry guard; a timeout followed by a plain
+client retry must never double-debit. Backed by the `chat_command_idempotency` table (unique on
+`actorId, commandType, idempotencyKey`). The row IS the atomic guard - `guardCommandIdempotency`
+inserts it (with `result: null`) as the FIRST statement inside the same money-moving transaction,
+before any debit; `onConflictDoNothing` means a concurrent duplicate loses the race and throws
+`ConcurrentCommandReplayError` rather than touching money. The final `ChatSystemMessage` is
+backfilled onto the row right before the transaction returns - the same
+insert-placeholder-then-backfill idiom `chatGift.messageId` uses. Before entering the transaction,
+`findCommandReplay` checks for an existing row: comparison is against `fingerprint`, a sha256 hash
+of the FULL request (type, amount, roomId, and any command-specific field like `recipientCount`/
+`targetUsername`) computed by `fingerprintCommand` - NOT just the amount. A matching fingerprint is
+a genuine replay (returns the stored result, no wallet call at all); a matching key with a
+DIFFERENT fingerprint is a reused key, not a replay (`ChatCommandIdempotencyKeyReuseError`) -
+comparing only the amount would let the same key/amount replay into a different room, recipient
+count, or donate target. `result` is jsonb rather than a foreign read because chat-commands
+doesn't own `chatMessage` (the `chat` module does).
 
 ## Publish-after-commit for gift/rain/donate
 

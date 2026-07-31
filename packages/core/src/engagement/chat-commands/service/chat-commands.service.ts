@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto';
 import { and, eq, isNull, sql } from 'drizzle-orm';
 import {
   DrizzleService,
@@ -76,27 +77,27 @@ export const TooManyRecipientsError = makeConflictError(
 );
 export const ChatCommandIdempotencyKeyReuseError = makeConflictError(
   'ChatCommandIdempotencyKeyReuse',
-  'This idempotency key was already used with a different amount',
+  'This idempotency key was already used with different request parameters',
 );
 export const ConcurrentCommandReplayError = makeConflictError(
   'ConcurrentCommandReplay',
   'This request is already being processed - please retry',
 );
 
-type GiftInput = { type: 'gift'; amount: string; roomId: Uuid; idempotencyKey?: Uuid };
+type GiftInput = { type: 'gift'; amount: string; roomId: Uuid; idempotencyKey: Uuid };
 type RainInput = {
   type: 'rain';
   amount: string;
   recipientCount: number;
   roomId: Uuid;
-  idempotencyKey?: Uuid;
+  idempotencyKey: Uuid;
 };
 type DonateInput = {
   type: 'donate';
   targetUsername: string;
   amount: string;
   roomId: Uuid | null;
-  idempotencyKey?: Uuid;
+  idempotencyKey: Uuid;
 };
 type BlockActionInput = {
   type: 'block' | 'ignore';
@@ -104,6 +105,31 @@ type BlockActionInput = {
   roomId: Uuid | null;
 };
 type ExecuteInput = GiftInput | RainInput | DonateInput | BlockActionInput;
+type MoneyMovingInput = GiftInput | RainInput | DonateInput;
+
+// The replay guard must match on the COMPLETE request, not just the amount - a reused
+// key with a different room, recipient count, or donate target is a distinct request,
+// not a replay of the original. `idempotencyKey` itself is excluded so the fingerprint
+// is stable for the row it guards.
+export function fingerprintCommand(input: MoneyMovingInput): string {
+  const canonical: Record<string, unknown> =
+    input.type === 'gift'
+      ? { type: input.type, amount: input.amount, roomId: input.roomId }
+      : input.type === 'rain'
+        ? {
+            type: input.type,
+            amount: input.amount,
+            recipientCount: input.recipientCount,
+            roomId: input.roomId,
+          }
+        : {
+            type: input.type,
+            amount: input.amount,
+            targetUsername: input.targetUsername,
+            roomId: input.roomId,
+          };
+  return createHash('sha256').update(JSON.stringify(canonical)).digest('hex');
+}
 
 function shuffleArray<T>(arr: readonly T[]): T[] {
   const result = [...arr];
@@ -230,13 +256,14 @@ export class ChatCommandsService {
   }
 
   // Pre-transaction replay check shared by gift/rain/donate: a stored row with a
-  // matching amount is a genuine replay (return its stored result); a matching key
-  // with a DIFFERENT amount is a reused key, not a replay (ChatCommandIdempotencyKeyReuseError).
+  // matching fingerprint (hash of the full request, not just the amount) is a genuine
+  // replay (return its stored result); a matching key with a DIFFERENT fingerprint is a
+  // reused key, not a replay (ChatCommandIdempotencyKeyReuseError).
   private async findCommandReplay(
     commandType: 'gift' | 'rain' | 'donate',
     actorId: Uuid,
     idempotencyKey: Uuid,
-    amount: string,
+    fingerprint: string,
   ): Promise<ChatSystemMessage | null> {
     const [row] = await this.drizzle.db
       .select()
@@ -252,7 +279,7 @@ export class ChatCommandsService {
     if (!row) {
       return null;
     }
-    if (moneyToNumber(row.amount) !== moneyToNumber(amount)) {
+    if (row.fingerprint !== fingerprint) {
       throw new ChatCommandIdempotencyKeyReuseError();
     }
     return row.result ?? null;
@@ -262,21 +289,18 @@ export class ChatCommandsService {
   // transaction, before any debit - the row IS the atomic guard. A concurrent duplicate
   // loses the unique-index race (onConflictDoNothing) and must not touch money, so it
   // throws ConcurrentCommandReplayError rather than silently proceeding; the caller's
-  // own retry then finds the row via findCommandReplay instead. Returns undefined when
-  // no idempotencyKey was supplied (guard is a no-op).
+  // own retry then finds the row via findCommandReplay instead.
   private async guardCommandIdempotency(
     tx: DrizzleTx,
     commandType: 'gift' | 'rain' | 'donate',
     actorId: Uuid,
-    idempotencyKey: Uuid | undefined,
+    idempotencyKey: Uuid,
     amount: string,
-  ): Promise<Uuid | undefined> {
-    if (!idempotencyKey) {
-      return undefined;
-    }
+    fingerprint: string,
+  ): Promise<Uuid> {
     const [inserted] = await tx
       .insert(chatCommandIdempotency)
-      .values({ actorId, commandType, idempotencyKey, amount, result: null })
+      .values({ actorId, commandType, idempotencyKey, amount, fingerprint, result: null })
       .onConflictDoNothing({
         target: [
           chatCommandIdempotency.actorId,
@@ -321,16 +345,10 @@ export class ChatCommandsService {
       throw new BelowMinimumError();
     }
 
-    if (input.idempotencyKey) {
-      const replay = await this.findCommandReplay(
-        'gift',
-        actorId,
-        input.idempotencyKey,
-        input.amount,
-      );
-      if (replay) {
-        return replay;
-      }
+    const fingerprint = fingerprintCommand(input);
+    const replay = await this.findCommandReplay('gift', actorId, input.idempotencyKey, fingerprint);
+    if (replay) {
+      return replay;
     }
 
     // Resolve sender's username for the gift card metadata.
@@ -348,6 +366,7 @@ export class ChatCommandsService {
         actorId,
         input.idempotencyKey,
         input.amount,
+        fingerprint,
       );
 
       const debit = await this.wallet.debit(tx, {
@@ -395,12 +414,10 @@ export class ChatCommandsService {
       // Back-fill the real message id now that we have it.
       await tx.update(chatGift).set({ messageId: systemMsg.id }).where(eq(chatGift.id, giftRow.id));
 
-      if (idempotencyRowId) {
-        await tx
-          .update(chatCommandIdempotency)
-          .set({ result: systemMsg })
-          .where(eq(chatCommandIdempotency.id, idempotencyRowId));
-      }
+      await tx
+        .update(chatCommandIdempotency)
+        .set({ result: systemMsg })
+        .where(eq(chatCommandIdempotency.id, idempotencyRowId));
 
       return { msg: systemMsg, giftId: giftRow.id, currency: debit.currency };
     });
@@ -575,16 +592,10 @@ export class ChatCommandsService {
       throw new NoOnlineUsersError();
     }
 
-    if (input.idempotencyKey) {
-      const replay = await this.findCommandReplay(
-        'rain',
-        actorId,
-        input.idempotencyKey,
-        input.amount,
-      );
-      if (replay) {
-        return replay;
-      }
+    const fingerprint = fingerprintCommand(input);
+    const replay = await this.findCommandReplay('rain', actorId, input.idempotencyKey, fingerprint);
+    if (replay) {
+      return replay;
     }
 
     const { msg, currency, totalDistributed } = await this.drizzle.db.transaction(async (tx) => {
@@ -594,6 +605,7 @@ export class ChatCommandsService {
         actorId,
         input.idempotencyKey,
         input.amount,
+        fingerprint,
       );
 
       const splitResult = await tx.execute(
@@ -634,12 +646,10 @@ export class ChatCommandsService {
         },
       });
 
-      if (idempotencyRowId) {
-        await tx
-          .update(chatCommandIdempotency)
-          .set({ result: systemMsg })
-          .where(eq(chatCommandIdempotency.id, idempotencyRowId));
-      }
+      await tx
+        .update(chatCommandIdempotency)
+        .set({ result: systemMsg })
+        .where(eq(chatCommandIdempotency.id, idempotencyRowId));
 
       return { msg: systemMsg, currency: debit.currency, totalDistributed };
     });
@@ -696,16 +706,15 @@ export class ChatCommandsService {
       throw new ChatPlayerNotFoundError(actorId);
     }
 
-    if (input.idempotencyKey) {
-      const replay = await this.findCommandReplay(
-        'donate',
-        actorId,
-        input.idempotencyKey,
-        input.amount,
-      );
-      if (replay) {
-        return replay;
-      }
+    const fingerprint = fingerprintCommand(input);
+    const replay = await this.findCommandReplay(
+      'donate',
+      actorId,
+      input.idempotencyKey,
+      fingerprint,
+    );
+    if (replay) {
+      return replay;
     }
 
     const { msg, currency } = await this.drizzle.db.transaction(async (tx) => {
@@ -715,6 +724,7 @@ export class ChatCommandsService {
         actorId,
         input.idempotencyKey,
         input.amount,
+        fingerprint,
       );
 
       const debit = await this.wallet.debit(tx, {
@@ -748,12 +758,10 @@ export class ChatCommandsService {
         },
       });
 
-      if (idempotencyRowId) {
-        await tx
-          .update(chatCommandIdempotency)
-          .set({ result: systemMsg })
-          .where(eq(chatCommandIdempotency.id, idempotencyRowId));
-      }
+      await tx
+        .update(chatCommandIdempotency)
+        .set({ result: systemMsg })
+        .where(eq(chatCommandIdempotency.id, idempotencyRowId));
 
       return { msg: systemMsg, currency: debit.currency };
     });

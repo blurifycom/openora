@@ -17,6 +17,8 @@ import {
   DonateSelfError,
   TooManyRecipientsError,
   SelfModerationActionError,
+  ChatCommandIdempotencyKeyReuseError,
+  ConcurrentCommandReplayError,
 } from '../service/chat-commands.service.js';
 
 const cc = populateContractRouterPaths({ chatCommands: chatCommandsContract }).chatCommands;
@@ -41,6 +43,8 @@ export function createChatCommandsRouter(svc: ChatCommandsService, adminGuard: A
             DonateSelfError,
             TooManyRecipientsError,
             SelfModerationActionError,
+            ChatCommandIdempotencyKeyReuseError,
+            ConcurrentCommandReplayError,
           ],
         },
         () => svc.executeCommand(input, actorId),
