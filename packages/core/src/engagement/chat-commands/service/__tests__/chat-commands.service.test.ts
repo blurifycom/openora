@@ -24,6 +24,7 @@ import {
   ChatPlayerNotFoundError,
   TooManyRecipientsError,
   SelfModerationActionError,
+  ChatCommandIdempotencyKeyReuseError,
 } from '../chat-commands.service.js';
 
 const ACTOR_ID = '00000000-0000-0000-0000-000000000001';
@@ -96,34 +97,39 @@ function makeWallet(ok = true): WalletCommands {
 const DIRECTORY_CREATED_AT = new Date('2026-01-01T00:00:00.000Z');
 
 function makeDirectory(senderUsername = 'bob', claimerUsername = 'alice'): AdminUserDirectory {
+  const all = [
+    {
+      userId: ACTOR_ID,
+      username: senderUsername,
+      email: 'bob@example.com',
+      kycStatus: null,
+      language: null,
+      avatarUrl: null,
+      createdAt: DIRECTORY_CREATED_AT,
+      level: 3,
+      currency: 'USD',
+    },
+    {
+      userId: CLAIMER_ID,
+      username: claimerUsername,
+      email: 'alice@example.com',
+      kycStatus: null,
+      language: null,
+      avatarUrl: null,
+      createdAt: DIRECTORY_CREATED_AT,
+      level: 1,
+      currency: 'USD',
+    },
+  ];
   return mock<AdminUserDirectory>({
     findPlayerIds: vi.fn().mockResolvedValue([ACTOR_ID]),
     lookupPlayers: vi.fn().mockImplementation((ids: string[]) => {
-      const all = [
-        {
-          userId: ACTOR_ID,
-          username: senderUsername,
-          email: 'bob@example.com',
-          kycStatus: null,
-          language: null,
-          avatarUrl: null,
-          createdAt: DIRECTORY_CREATED_AT,
-          level: 3,
-          currency: 'USD',
-        },
-        {
-          userId: CLAIMER_ID,
-          username: claimerUsername,
-          email: 'alice@example.com',
-          kycStatus: null,
-          language: null,
-          avatarUrl: null,
-          createdAt: DIRECTORY_CREATED_AT,
-          level: 1,
-          currency: 'USD',
-        },
-      ];
       return Promise.resolve(all.filter((p) => ids.includes(p.userId)));
+    }),
+    getPlayerByUsername: vi.fn().mockImplementation((username: string) => {
+      return Promise.resolve(
+        all.find((p) => p.username.toLowerCase() === username.toLowerCase()) ?? null,
+      );
     }),
   });
 }
@@ -369,6 +375,72 @@ describe('ChatCommandsService.executeCommand (gift)', () => {
   });
 });
 
+const IDEMPOTENCY_KEY = '00000000-0000-0000-0000-0000000000aa';
+const IDEMPOTENCY_ROW_ID = '00000000-0000-0000-0000-0000000000bb';
+
+describe('ChatCommandsService.executeCommand (gift idempotency)', () => {
+  it('inserts the idempotency guard row and debits once when a fresh key is supplied', async () => {
+    const wallet = makeWallet();
+    const svc = makeSvc({
+      drizzleRows: {
+        select: [[ENABLED_ROW], []],
+        returning: [[{ id: IDEMPOTENCY_ROW_ID }], [{ ...GIFT_ROW }]],
+      },
+      wallet,
+    });
+    const result = await svc.executeCommand(
+      { type: 'gift', amount: '10.00000000', roomId: ROOM_ID, idempotencyKey: IDEMPOTENCY_KEY },
+      ACTOR_ID,
+    );
+    expect(wallet.debit).toHaveBeenCalledOnce();
+    expect(result.id).toBe(MSG_ID);
+  });
+
+  it('replays the stored result without debiting the wallet again', async () => {
+    const wallet = makeWallet();
+    const storedRow = {
+      id: IDEMPOTENCY_ROW_ID,
+      actorId: ACTOR_ID,
+      commandType: 'gift',
+      idempotencyKey: IDEMPOTENCY_KEY,
+      amount: '10.00000000',
+      result: SYSTEM_MSG,
+      createdAt: new Date(),
+    };
+    const svc = makeSvc({
+      drizzleRows: { select: [[ENABLED_ROW], [storedRow]] },
+      wallet,
+    });
+    const result = await svc.executeCommand(
+      { type: 'gift', amount: '10.00000000', roomId: ROOM_ID, idempotencyKey: IDEMPOTENCY_KEY },
+      ACTOR_ID,
+    );
+    expect(wallet.debit).not.toHaveBeenCalled();
+    expect(result).toEqual(SYSTEM_MSG);
+  });
+
+  it('throws ChatCommandIdempotencyKeyReuseError when the same key is reused with a different amount', async () => {
+    const storedRow = {
+      id: IDEMPOTENCY_ROW_ID,
+      actorId: ACTOR_ID,
+      commandType: 'gift',
+      idempotencyKey: IDEMPOTENCY_KEY,
+      amount: '5.00000000',
+      result: SYSTEM_MSG,
+      createdAt: new Date(),
+    };
+    const svc = makeSvc({
+      drizzleRows: { select: [[ENABLED_ROW], [storedRow]] },
+    });
+    await expect(
+      svc.executeCommand(
+        { type: 'gift', amount: '10.00000000', roomId: ROOM_ID, idempotencyKey: IDEMPOTENCY_KEY },
+        ACTOR_ID,
+      ),
+    ).rejects.toThrow(ChatCommandIdempotencyKeyReuseError);
+  });
+});
+
 describe('ChatCommandsService.claimGift', () => {
   it('credits the claimer and returns claim info on happy path', async () => {
     const wallet = makeWallet();
@@ -491,7 +563,7 @@ describe('ChatCommandsService.handleRain', () => {
     const svc = makeSvc({
       drizzleRows: {
         select: [[RAIN_ROW]],
-        execute: [[{ per_recipient: '5.00000000' }]],
+        execute: [[{ per_recipient: '5.00000000', total_distributed: '10.00000000' }]],
       },
       wallet,
       transport: makeTransport([ACTOR_ID, CLAIMER_ID, RECIPIENT_2]),
@@ -513,7 +585,7 @@ describe('ChatCommandsService.handleRain', () => {
     const svc = makeSvc({
       drizzleRows: {
         select: [[RAIN_ROW]],
-        execute: [[{ per_recipient: '3.33333333' }]],
+        execute: [[{ per_recipient: '3.33333333', total_distributed: '9.99999999' }]],
       },
       wallet,
       transport: makeTransport([
@@ -529,6 +601,29 @@ describe('ChatCommandsService.handleRain', () => {
     expect(wallet.credit).toHaveBeenCalledWith(expect.anything(), {
       userId: expect.any(String),
       amount: '3.33333333',
+      type: 'rain',
+    });
+  });
+
+  it('debits only the amount actually distributed (floor(amount/n)*n), never the raw player-typed amount', async () => {
+    const wallet = makeWallet();
+    const svc = makeSvc({
+      drizzleRows: {
+        select: [[RAIN_ROW]],
+        execute: [[{ per_recipient: '1.00000000', total_distributed: '10.00000000' }]],
+      },
+      wallet,
+      transport: makeTransport(
+        Array.from({ length: 10 }, (_, i) => `00000000-0000-0000-0000-0000000000${10 + i}`),
+      ),
+    });
+    await svc.executeCommand(
+      { type: 'rain', amount: '10.99000000', recipientCount: 10, roomId: ROOM_ID },
+      ACTOR_ID,
+    );
+    expect(wallet.debit).toHaveBeenCalledWith(expect.anything(), {
+      userId: ACTOR_ID,
+      amount: '10.00000000',
       type: 'rain',
     });
   });
@@ -618,34 +713,39 @@ const DONATE_SYSTEM_MSG: import('@openora/core/contracts').ChatSystemMessage = {
  * returns ACTOR_ID which only has username 'bob', so alice is never found.
  */
 function makeRecipientDirectory(): import('@openora/core/contracts').AdminUserDirectory {
+  const all = [
+    {
+      userId: ACTOR_ID,
+      username: 'bob',
+      email: 'bob@example.com',
+      kycStatus: null,
+      language: null,
+      avatarUrl: null,
+      createdAt: DIRECTORY_CREATED_AT,
+      level: 3,
+      currency: 'USD',
+    },
+    {
+      userId: CLAIMER_ID,
+      username: 'alice',
+      email: 'alice@example.com',
+      kycStatus: null,
+      language: null,
+      avatarUrl: null,
+      createdAt: DIRECTORY_CREATED_AT,
+      level: 1,
+      currency: 'USD',
+    },
+  ];
   return mock<import('@openora/core/contracts').AdminUserDirectory>({
     findPlayerIds: vi.fn().mockResolvedValue([CLAIMER_ID]),
     lookupPlayers: vi.fn().mockImplementation((ids: string[]) => {
-      const all = [
-        {
-          userId: ACTOR_ID,
-          username: 'bob',
-          email: 'bob@example.com',
-          kycStatus: null,
-          language: null,
-          avatarUrl: null,
-          createdAt: DIRECTORY_CREATED_AT,
-          level: 3,
-          currency: 'USD',
-        },
-        {
-          userId: CLAIMER_ID,
-          username: 'alice',
-          email: 'alice@example.com',
-          kycStatus: null,
-          language: null,
-          avatarUrl: null,
-          createdAt: DIRECTORY_CREATED_AT,
-          level: 1,
-          currency: 'USD',
-        },
-      ];
       return Promise.resolve(all.filter((p) => ids.includes(p.userId)));
+    }),
+    getPlayerByUsername: vi.fn().mockImplementation((username: string) => {
+      return Promise.resolve(
+        all.find((p) => p.username.toLowerCase() === username.toLowerCase()) ?? null,
+      );
     }),
   });
 }
@@ -696,6 +796,7 @@ describe('ChatCommandsService.handleDonate', () => {
     const directory = mock<import('@openora/core/contracts').AdminUserDirectory>({
       findPlayerIds: vi.fn().mockResolvedValue([]),
       lookupPlayers: vi.fn().mockResolvedValue([]),
+      getPlayerByUsername: vi.fn().mockResolvedValue(null),
     });
     const svc = makeSvc({
       drizzleRows: { select: [[DONATE_ROW]] },

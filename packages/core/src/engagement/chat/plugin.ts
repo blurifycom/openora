@@ -5,6 +5,7 @@ import {
   RATE_LIMITER,
   CHAT_SYSTEM_WRITER,
   CHAT_BLOCK_WRITER,
+  ADMIN_USER_DIRECTORY,
   createToken,
 } from '@openora/core/contracts';
 import { ChatService } from './service/chat.service.js';
@@ -14,10 +15,17 @@ const CHAT_SERVICE = createToken<ChatService>('_ChatService');
 
 export default definePlugin({
   id: 'chat',
+  dependsOn: ['identity'],
   register(ctx) {
     ctx.provide(
       CHAT_SERVICE,
-      (c) => new ChatService(c.get(DRIZZLE), c.get(EVENT_BUS), c.get(CHAT_REALTIME_TRANSPORT)),
+      (c) =>
+        new ChatService(
+          c.get(DRIZZLE),
+          c.get(EVENT_BUS),
+          c.get(CHAT_REALTIME_TRANSPORT),
+          c.get(ADMIN_USER_DIRECTORY),
+        ),
     );
     ctx.provide(CHAT_SYSTEM_WRITER, (c) => c.get(CHAT_SERVICE));
     ctx.provide(CHAT_BLOCK_WRITER, (c) => c.get(CHAT_SERVICE));

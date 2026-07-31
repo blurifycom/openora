@@ -82,6 +82,7 @@
       "group": "engagement",
       "tables": [
         "chat_command_config",
+        "chat_command_idempotency",
         "chat_gift"
       ],
       "routes": [
@@ -376,6 +377,7 @@
         "packages/core/src/admin-console/plugin.ts",
         "packages/core/src/compliance/plugin.ts",
         "packages/core/src/engagement/chat-commands/plugin.ts",
+        "packages/core/src/engagement/chat/plugin.ts",
         "packages/core/src/engagement/notifications/plugin.ts",
         "packages/core/src/pam/identity/plugin.ts",
         "packages/core/src/pam/tag/plugin.ts",

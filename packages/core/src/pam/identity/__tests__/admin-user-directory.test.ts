@@ -200,6 +200,33 @@ describe('DrizzleAdminUserDirectory.lookupPlayers (real PG)', () => {
   });
 });
 
+describe('DrizzleAdminUserDirectory.getPlayerByUsername (real PG)', () => {
+  it('returns an exact case-insensitive match', async () => {
+    const { dir } = makeDirectory();
+    const account = await seedUser({ email: 'anna@example.com' });
+    await seedPlayer(account.id, { displayName: 'AnnaBell' });
+
+    const summary = await dir.getPlayerByUsername('annabell');
+
+    expect(summary).toMatchObject({ userId: account.id, username: 'AnnaBell' });
+  });
+
+  it('returns null when no player matches', async () => {
+    const { dir } = makeDirectory();
+
+    expect(await dir.getPlayerByUsername('ghost')).toBeNull();
+  });
+
+  it('does not substring-match, unlike findPlayerIds', async () => {
+    const { dir } = makeDirectory();
+    const account = await seedUser({ email: 'annabell@example.com' });
+    await seedPlayer(account.id, { displayName: 'AnnaBell' });
+
+    expect(await dir.getPlayerByUsername('Anna')).toBeNull();
+    expect(await dir.findPlayerIds('Anna')).toEqual([account.id]);
+  });
+});
+
 describe('DrizzleAdminUserDirectory.findPlayerIds (real PG)', () => {
   it('unions email and displayName matches into a deduped id set', async () => {
     const { dir } = makeDirectory();

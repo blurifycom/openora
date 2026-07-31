@@ -70,6 +70,12 @@ export type AdminUserDirectory = {
   // email (user table) OR username/displayName (player table). Empty = no match.
   // limit caps both sub-queries and the merged set; defaults to 1000 (the implementation cap).
   findPlayerIds(query: string, limit?: number): Promise<string[]>;
+  // Exact-match resolution by display name (case-insensitive) - for callers that
+  // already have a complete, known username (not a partial search term), eg chat
+  // commands' /donate, /block, /ignore. Distinct from findPlayerIds' capped fuzzy
+  // substring search: a short/common username can substring-collide with more than
+  // the 20-row cap of unrelated accounts and silently drop the real exact match.
+  getPlayerByUsername(username: string): Promise<AdminPlayerSummary | null>;
 };
 
 export const ADMIN_USER_DIRECTORY: Token<AdminUserDirectory> = createToken('ADMIN_USER_DIRECTORY');

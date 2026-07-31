@@ -18,6 +18,7 @@ import type {
   RealtimeTransport,
   CommandMetadata,
   ChatSystemMessage,
+  AdminUserDirectory,
 } from '@openora/core/contracts';
 import { chatChannel } from '@openora/core/contracts';
 import { eq, and, isNull, lt, desc, asc, notInArray, inArray, count, ne } from 'drizzle-orm';
@@ -152,6 +153,7 @@ export class ChatService {
     private readonly drizzle: DrizzleService,
     private readonly events: EventBus,
     private readonly transport: RealtimeTransport,
+    private readonly directory: AdminUserDirectory,
   ) {}
 
   subscribeMessages(
@@ -1018,7 +1020,13 @@ export class ChatService {
       metadata: args.metadata,
       createdAt: record.createdAt.toISOString(),
     };
-    void this.transport.publish(chatChannel(args.roomId), msg);
+    // Only auto-publish when this call owns the write (no caller-managed transaction).
+    // When `tx` is passed, the caller's transaction hasn't committed yet - publishing
+    // here would leak a message to clients before (or even if) it actually commits.
+    // The caller must publish itself after its transaction resolves.
+    if (!args.tx) {
+      void this.transport.publish(chatChannel(args.roomId), msg);
+    }
     return msg;
   }
 
@@ -1033,6 +1041,13 @@ export class ChatService {
       .from(chatRoomMember)
       .where(eq(chatRoomMember.roomId, roomId))
       .orderBy(asc(chatRoomMember.joinedAt));
-    return members.map((m) => serializeRow(m, { dateFields: ['joinedAt'] }));
+    const summaries = await this.directory.lookupPlayers(members.map((m) => m.userId));
+    const usernameByUserId = new Map(summaries.map((s) => [s.userId, s.username]));
+    return members.map((m) =>
+      serializeRow(
+        { ...m, username: usernameByUserId.get(m.userId) ?? null },
+        { dateFields: ['joinedAt'] },
+      ),
+    );
   }
 }

@@ -4,7 +4,8 @@ import { eq, sql } from 'drizzle-orm';
 import { createTestDb, InProcessRealtimeTransport, type TestDb } from '@openora/core/testing';
 import { user } from '@openora/core/pam/schema/identity';
 import { migrate as migrateIdentity } from '@openora/core/pam/migrate/identity';
-import { NO_CLIENT_META, makeEventBus } from '../../../testing/mock.js';
+import type { AdminUserDirectory, AdminPlayerSummary } from '@openora/core/contracts';
+import { NO_CLIENT_META, makeEventBus, mock } from '../../../testing/mock.js';
 import { CHAT_ROOM_CATEGORIES, type ChatMessage } from '../contract/index.js';
 import { MAX_PRIVATE_ROOMS_PER_PLAYER } from '../contract/constants.js';
 import { migrate } from '../migrate.js';
@@ -44,10 +45,12 @@ import {
 } from '../schema/index.js';
 let db: TestDb;
 
-function makeService() {
+function makeService(
+  directory: AdminUserDirectory = mock<AdminUserDirectory>({ lookupPlayers: async () => [] }),
+) {
   const transport = new InProcessRealtimeTransport();
   const events = makeEventBus();
-  return { svc: new ChatService(db.drizzle, events, transport), events, transport };
+  return { svc: new ChatService(db.drizzle, events, transport, directory), events, transport };
 }
 
 async function seedUser(name = 'Player') {
@@ -969,20 +972,60 @@ describe('ChatService.verifyRoomAccess and listings (real PG)', () => {
     expect(viewer.map((r) => r.id).sort()).toEqual([publicRoom.id, mine.id].sort());
   });
 
-  it('lists room members oldest-first', async () => {
-    const { svc } = makeService();
+  it('lists room members oldest-first, resolving usernames via the directory', async () => {
+    const moderatorId = randomUUID();
+    const memberId = randomUUID();
+    const now = new Date();
+    function summary(userId: string, username: string): AdminPlayerSummary {
+      return {
+        userId,
+        username,
+        email: `${username}@example.test`,
+        kycStatus: null,
+        language: null,
+        avatarUrl: null,
+        createdAt: now,
+        level: 1,
+        currency: 'USD',
+      };
+    }
+    const directory = mock<AdminUserDirectory>({
+      lookupPlayers: async (ids: readonly string[]) =>
+        [summary(moderatorId, 'Moderator'), summary(memberId, 'SilentMember')].filter((s) =>
+          ids.includes(s.userId),
+        ),
+    });
+    const { svc } = makeService(directory);
+    const room = await svc.createPrivateRoom({
+      userId: moderatorId,
+      name: 'Room',
+      ...NO_CLIENT_META,
+    });
+    // memberId joins via invite code and never sends a message - the exact repro:
+    // a never-posted member must still resolve a real username, not their raw id.
+    await svc.joinRoom({ userId: memberId, joinCode: room.joinCode!, ...NO_CLIENT_META });
+
+    const members = await svc.listRoomMembers({ roomId: room.id, viewerId: moderatorId });
+
+    expect(members.map((m) => ({ userId: m.userId, username: m.username }))).toEqual([
+      { userId: moderatorId, username: 'Moderator' },
+      { userId: memberId, username: 'SilentMember' },
+    ]);
+    expect(members[0]).toMatchObject({ role: 'moderator' });
+  });
+
+  it('returns username: null when the directory does not resolve a member', async () => {
+    const directory = mock<AdminUserDirectory>({ lookupPlayers: async () => [] });
+    const { svc } = makeService(directory);
     const moderatorId = randomUUID();
     const room = await svc.createPrivateRoom({
       userId: moderatorId,
       name: 'Room',
       ...NO_CLIENT_META,
     });
-    const memberId = randomUUID();
-    await svc.joinRoom({ userId: memberId, joinCode: room.joinCode!, ...NO_CLIENT_META });
 
     const members = await svc.listRoomMembers({ roomId: room.id, viewerId: moderatorId });
 
-    expect(members.map((m) => m.userId)).toEqual([moderatorId, memberId]);
-    expect(members[0]).toMatchObject({ role: 'moderator' });
+    expect(members).toEqual([expect.objectContaining({ userId: moderatorId, username: null })]);
   });
 });

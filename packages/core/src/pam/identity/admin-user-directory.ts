@@ -144,6 +144,31 @@ export class DrizzleAdminUserDirectory implements AdminUserDirectory {
     });
   }
 
+  async getPlayerByUsername(username: string) {
+    const rows = await this.drizzle.db
+      .select({
+        userId: player.userId,
+        username: player.displayName,
+        kycStatus: player.kycStatus,
+        email: user.email,
+        language: user.language,
+        avatarUrl: user.image,
+        createdAt: player.createdAt,
+        level: player.level,
+        currency: player.currency,
+      })
+      .from(player)
+      .innerJoin(user, eq(player.userId, user.id))
+      .where(ilike(player.displayName, username))
+      .limit(1);
+    const [row] = rows;
+    if (!row) {
+      return null;
+    }
+    const kyc = KycStatusSchema.safeParse(row.kycStatus);
+    return { ...row, kycStatus: kyc.success ? normalizeKycStatus(kyc.data) : null };
+  }
+
   // Substring search is index-backed by the pg_trgm GIN indexes on user.email and
   // player.display_name; the 1000 cap is a safety bound on the id set, not a perf
   // crutch - it is effectively unreachable for a real admin search term.

@@ -8,6 +8,7 @@ import {
   findOneOrThrow,
   serializeRow,
   type EventBus,
+  type DrizzleTx,
 } from '@openora/core/server';
 import type {
   Uuid,
@@ -31,7 +32,7 @@ import type {
   PlayerProfileCard,
 } from '../contract/index.js';
 import { ChatCommandTypeSchema } from '../contract/index.js';
-import { chatCommandConfig, chatGift } from '../schema/index.js';
+import { chatCommandConfig, chatGift, chatCommandIdempotency } from '../schema/index.js';
 
 export const CommandDisabledError = makeNotFoundError('ChatCommand');
 export const NoOnlineUsersError = makeConflictError(
@@ -73,10 +74,30 @@ export const TooManyRecipientsError = makeConflictError(
   'TooManyRecipients',
   'Amount too small: you need at least $1 per recipient',
 );
+export const ChatCommandIdempotencyKeyReuseError = makeConflictError(
+  'ChatCommandIdempotencyKeyReuse',
+  'This idempotency key was already used with a different amount',
+);
+export const ConcurrentCommandReplayError = makeConflictError(
+  'ConcurrentCommandReplay',
+  'This request is already being processed - please retry',
+);
 
-type GiftInput = { type: 'gift'; amount: string; roomId: Uuid };
-type RainInput = { type: 'rain'; amount: string; recipientCount: number; roomId: Uuid };
-type DonateInput = { type: 'donate'; targetUsername: string; amount: string; roomId: Uuid | null };
+type GiftInput = { type: 'gift'; amount: string; roomId: Uuid; idempotencyKey?: Uuid };
+type RainInput = {
+  type: 'rain';
+  amount: string;
+  recipientCount: number;
+  roomId: Uuid;
+  idempotencyKey?: Uuid;
+};
+type DonateInput = {
+  type: 'donate';
+  targetUsername: string;
+  amount: string;
+  roomId: Uuid | null;
+  idempotencyKey?: Uuid;
+};
 type BlockActionInput = {
   type: 'block' | 'ignore';
   targetUsername: string;
@@ -208,6 +229,80 @@ export class ChatCommandsService {
     throw new CommandDisabledError(input.type);
   }
 
+  // Pre-transaction replay check shared by gift/rain/donate: a stored row with a
+  // matching amount is a genuine replay (return its stored result); a matching key
+  // with a DIFFERENT amount is a reused key, not a replay (ChatCommandIdempotencyKeyReuseError).
+  private async findCommandReplay(
+    commandType: 'gift' | 'rain' | 'donate',
+    actorId: Uuid,
+    idempotencyKey: Uuid,
+    amount: string,
+  ): Promise<ChatSystemMessage | null> {
+    const [row] = await this.drizzle.db
+      .select()
+      .from(chatCommandIdempotency)
+      .where(
+        and(
+          eq(chatCommandIdempotency.actorId, actorId),
+          eq(chatCommandIdempotency.commandType, commandType),
+          eq(chatCommandIdempotency.idempotencyKey, idempotencyKey),
+        ),
+      )
+      .limit(1);
+    if (!row) {
+      return null;
+    }
+    if (moneyToNumber(row.amount) !== moneyToNumber(amount)) {
+      throw new ChatCommandIdempotencyKeyReuseError();
+    }
+    return row.result ?? null;
+  }
+
+  // Inserted (result: null) as the FIRST statement inside the caller's money-moving
+  // transaction, before any debit - the row IS the atomic guard. A concurrent duplicate
+  // loses the unique-index race (onConflictDoNothing) and must not touch money, so it
+  // throws ConcurrentCommandReplayError rather than silently proceeding; the caller's
+  // own retry then finds the row via findCommandReplay instead. Returns undefined when
+  // no idempotencyKey was supplied (guard is a no-op).
+  private async guardCommandIdempotency(
+    tx: DrizzleTx,
+    commandType: 'gift' | 'rain' | 'donate',
+    actorId: Uuid,
+    idempotencyKey: Uuid | undefined,
+    amount: string,
+  ): Promise<Uuid | undefined> {
+    if (!idempotencyKey) {
+      return undefined;
+    }
+    const [inserted] = await tx
+      .insert(chatCommandIdempotency)
+      .values({ actorId, commandType, idempotencyKey, amount, result: null })
+      .onConflictDoNothing({
+        target: [
+          chatCommandIdempotency.actorId,
+          chatCommandIdempotency.commandType,
+          chatCommandIdempotency.idempotencyKey,
+        ],
+      })
+      .returning();
+    if (!inserted) {
+      throw new ConcurrentCommandReplayError();
+    }
+    return inserted.id;
+  }
+
+  // Exact, case-insensitive username resolution for callers holding a complete, already-known
+  // username (never a partial search term) - `/donate`, `/block`, `/ignore`. Distinct from
+  // findPlayerIds' capped fuzzy substring search, which can silently drop the real match once
+  // more than 20 unrelated accounts substring-collide with a short/common username.
+  private async resolveExactPlayer(username: string) {
+    const summary = await this.directory.getPlayerByUsername(username);
+    if (!summary) {
+      throw new ChatPlayerNotFoundError(username);
+    }
+    return summary;
+  }
+
   private async handleGift(
     input: GiftInput,
     actorId: Uuid,
@@ -226,6 +321,18 @@ export class ChatCommandsService {
       throw new BelowMinimumError();
     }
 
+    if (input.idempotencyKey) {
+      const replay = await this.findCommandReplay(
+        'gift',
+        actorId,
+        input.idempotencyKey,
+        input.amount,
+      );
+      if (replay) {
+        return replay;
+      }
+    }
+
     // Resolve sender's username for the gift card metadata.
     const senderSummaries = await this.directory.lookupPlayers([actorId]);
     const senderSummary = senderSummaries.find((s) => s.userId === actorId);
@@ -235,6 +342,14 @@ export class ChatCommandsService {
     const senderUsername = senderSummary.username;
 
     const { msg, giftId, currency } = await this.drizzle.db.transaction(async (tx) => {
+      const idempotencyRowId = await this.guardCommandIdempotency(
+        tx,
+        'gift',
+        actorId,
+        input.idempotencyKey,
+        input.amount,
+      );
+
       const debit = await this.wallet.debit(tx, {
         userId: actorId,
         amount: input.amount,
@@ -280,8 +395,19 @@ export class ChatCommandsService {
       // Back-fill the real message id now that we have it.
       await tx.update(chatGift).set({ messageId: systemMsg.id }).where(eq(chatGift.id, giftRow.id));
 
+      if (idempotencyRowId) {
+        await tx
+          .update(chatCommandIdempotency)
+          .set({ result: systemMsg })
+          .where(eq(chatCommandIdempotency.id, idempotencyRowId));
+      }
+
       return { msg: systemMsg, giftId: giftRow.id, currency: debit.currency };
     });
+
+    // The caller now owns the commit boundary: postSystemMessage was passed `tx` above so
+    // it did not auto-publish - publish only now that this transaction has committed.
+    void this.transport.publish(chatChannel(input.roomId), msg);
 
     await this.audit.record({
       actorId,
@@ -448,14 +574,41 @@ export class ChatCommandsService {
     if (recipients.length === 0) {
       throw new NoOnlineUsersError();
     }
-    const { msg, currency } = await this.drizzle.db.transaction(async (tx) => {
-      const splitResult = await tx.execute(
-        sql`SELECT (floor(${input.amount}::numeric / ${recipients.length}))::text AS per_recipient`,
+
+    if (input.idempotencyKey) {
+      const replay = await this.findCommandReplay(
+        'rain',
+        actorId,
+        input.idempotencyKey,
+        input.amount,
       );
-      const perRecipient = (splitResult.rows[0] as { per_recipient: string }).per_recipient;
+      if (replay) {
+        return replay;
+      }
+    }
+
+    const { msg, currency, totalDistributed } = await this.drizzle.db.transaction(async (tx) => {
+      const idempotencyRowId = await this.guardCommandIdempotency(
+        tx,
+        'rain',
+        actorId,
+        input.idempotencyKey,
+        input.amount,
+      );
+
+      const splitResult = await tx.execute(
+        sql`SELECT
+              (floor(${input.amount}::numeric / ${recipients.length}))::text AS per_recipient,
+              (floor(${input.amount}::numeric / ${recipients.length}) * ${recipients.length})::text AS total_distributed`,
+      );
+      const { per_recipient: perRecipient, total_distributed: totalDistributed } = splitResult
+        .rows[0] as {
+        per_recipient: string;
+        total_distributed: string;
+      };
       const debit = await this.wallet.debit(tx, {
         userId: actorId,
-        amount: input.amount,
+        amount: totalDistributed,
         type: 'rain',
       });
       if (!debit.ok) {
@@ -474,14 +627,25 @@ export class ChatCommandsService {
         metadata: {
           command: 'rain',
           fromUserId: actorId,
-          amount: input.amount,
+          amount: totalDistributed,
           currency: debit.currency,
           recipientCount: recipients.length,
           perRecipient,
         },
       });
-      return { msg: systemMsg, currency: debit.currency };
+
+      if (idempotencyRowId) {
+        await tx
+          .update(chatCommandIdempotency)
+          .set({ result: systemMsg })
+          .where(eq(chatCommandIdempotency.id, idempotencyRowId));
+      }
+
+      return { msg: systemMsg, currency: debit.currency, totalDistributed };
     });
+
+    void this.transport.publish(chatChannel(input.roomId), msg);
+
     await this.audit.record({
       actorId,
       actorType: 'player',
@@ -489,13 +653,13 @@ export class ChatCommandsService {
       resourceType: 'chat_room',
       resourceId: input.roomId,
       before: null,
-      after: { amount: input.amount, recipientCount: recipients.length },
+      after: { amount: totalDistributed, recipientCount: recipients.length },
     });
     void this.events.emit('chat.rain.distributed', {
       fromUserId: actorId,
       recipients,
       recipientCount: recipients.length,
-      totalAmount: input.amount,
+      totalAmount: totalDistributed,
       currency,
       roomId: input.roomId,
     });
@@ -520,17 +684,7 @@ export class ChatCommandsService {
       throw new BelowMinimumError();
     }
 
-    const ids = await this.directory.findPlayerIds(input.targetUsername, 20);
-    if (ids.length === 0) {
-      throw new ChatPlayerNotFoundError(input.targetUsername);
-    }
-    const summaries = await this.directory.lookupPlayers(ids);
-    const target = summaries.find(
-      (s) => s.username.toLowerCase() === input.targetUsername.toLowerCase(),
-    );
-    if (!target) {
-      throw new ChatPlayerNotFoundError(input.targetUsername);
-    }
+    const target = await this.resolveExactPlayer(input.targetUsername);
 
     if (target.userId === actorId) {
       throw new DonateSelfError();
@@ -542,7 +696,27 @@ export class ChatCommandsService {
       throw new ChatPlayerNotFoundError(actorId);
     }
 
+    if (input.idempotencyKey) {
+      const replay = await this.findCommandReplay(
+        'donate',
+        actorId,
+        input.idempotencyKey,
+        input.amount,
+      );
+      if (replay) {
+        return replay;
+      }
+    }
+
     const { msg, currency } = await this.drizzle.db.transaction(async (tx) => {
+      const idempotencyRowId = await this.guardCommandIdempotency(
+        tx,
+        'donate',
+        actorId,
+        input.idempotencyKey,
+        input.amount,
+      );
+
       const debit = await this.wallet.debit(tx, {
         userId: actorId,
         amount: input.amount,
@@ -573,8 +747,18 @@ export class ChatCommandsService {
           currency: debit.currency,
         },
       });
+
+      if (idempotencyRowId) {
+        await tx
+          .update(chatCommandIdempotency)
+          .set({ result: systemMsg })
+          .where(eq(chatCommandIdempotency.id, idempotencyRowId));
+      }
+
       return { msg: systemMsg, currency: debit.currency };
     });
+
+    void this.transport.publish(chatChannel(input.roomId), msg);
 
     await this.audit.record({
       actorId,
@@ -604,17 +788,7 @@ export class ChatCommandsService {
     input: BlockActionInput,
     actorId: Uuid,
   ): Promise<ChatSystemMessage> {
-    const ids = await this.directory.findPlayerIds(input.targetUsername, 20);
-    if (ids.length === 0) {
-      throw new ChatPlayerNotFoundError(input.targetUsername);
-    }
-    const summaries = await this.directory.lookupPlayers(ids);
-    const summary = summaries.find(
-      (s) => s.username.toLowerCase() === input.targetUsername.toLowerCase(),
-    );
-    if (!summary) {
-      throw new ChatPlayerNotFoundError(input.targetUsername);
-    }
+    const summary = await this.resolveExactPlayer(input.targetUsername);
     if (summary.userId === actorId) {
       throw new SelfModerationActionError();
     }

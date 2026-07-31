@@ -15,6 +15,13 @@
       "when": 1785227229512,
       "tag": "0001_overjoyed_robin_chapel",
       "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "7",
+      "when": 1785486987199,
+      "tag": "0002_robust_zombie",
+      "breakpoints": true
     }
   ]
 }

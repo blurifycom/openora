@@ -63,6 +63,7 @@ export const ChatRoomMemberSchema = z.object({
   userId: UuidSchema,
   role: ChatRoomRoleSchema,
   joinedAt: TimestampSchema,
+  username: z.string().nullable(),
 });
 export type ChatRoomMember = z.infer<typeof ChatRoomMemberSchema>;
 
