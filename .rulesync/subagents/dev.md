@@ -24,7 +24,7 @@ Your prompt contains requirements + acceptance criteria. Build to those. If the 
 
 ## Before writing code
 
-1. Read root `AGENTS.md` (decision tree, boundaries, forbidden patterns) and the sibling rules (`conventions`, `messaging-and-microservices`, `db-conventions`) plus the `docs/standards/` file matching what you are changing. Follow exactly.
+1. Read root `AGENTS.md` (decision tree, boundaries, forbidden patterns) and the sibling rules (`conventions`, `messaging-and-microservices`) plus the `docs/standards/` file matching what you are changing. Follow exactly.
 2. Read the touched module's `AGENTS.md` and any related `docs/adr/`.
 3. Inspect current state via `oss-dev` MCP: `list-modules`, `describe-module`, `list-routes` (collision check), `query-openapi`, `get-drizzle-schema`, `propose-table-change` (before any table), `schema-get`.
 4. Pick the home via the decision tree. Use the scaffolders (`pnpm gen module|route|plugin|adapter|job-worker`) - don't hand-write skeletons.

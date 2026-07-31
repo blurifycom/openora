@@ -6,12 +6,23 @@ globs:
   - '**/*.ts'
   - '**/*.tsx'
   - '**/*.mjs'
-description: Engineering code conventions (TS, headless backend) - apply to every code change.
+  - 'packages/**/schema/**'
+  - 'packages/**/service/**'
+  - 'packages/**/adapters/**'
+  - 'packages/core/src/**/admin-*.ts'
+  - 'packages/**/seed/**'
+  - 'packages/**/drizzle/**'
+  - 'packages/**/drizzle.config.ts'
+  - 'packages/**/migrate.ts'
+  - 'packages/core/src/server/db/**'
+  - 'packages/testing/src/**'
+  - 'tools/db/**'
+description: Engineering conventions - code, SQL, Drizzle, migrations, and database tooling.
 ---
 
 # Engineering Conventions
 
-The always-on core of the code standard: what you must obey while typing. Detail, examples and rationale live in `docs/standards/` - read the one file that matches the change instead of carrying all of it. Async seams: `messaging-and-microservices`. SQL / Drizzle: `db-conventions`, then `docs/standards/database.md`. Repo map, decision tree, dependency rules: `overview`.
+The always-on core of the code standard: what you must obey while typing. Detail, examples and rationale live in `docs/standards/` - read the one file that matches the change instead of carrying all of it. Async seams: `messaging-and-microservices`. SQL / Drizzle: `docs/standards/database.md`. Repo map, decision tree, dependency rules: `overview`.
 
 | Change you are making                  | Read first                           |
 | -------------------------------------- | ------------------------------------ |
