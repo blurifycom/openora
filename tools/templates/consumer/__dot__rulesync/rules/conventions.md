@@ -78,6 +78,7 @@ Applies when this repo hosts UI apps; a headless api-only consumer can skip this
 - Extract a repeated utility-class recipe into a shared component or constant on the third occurrence.
 - Import helpers like `cn()` from the shared UI package barrel - never deep-import.
 - Server state is not client state - key/cache/invalidate via the query lib, never `useEffect(fetch)`, never shadowed in ad-hoc caches.
+- No label or text is allowed to overflow its container - never leave text unconstrained by default. Pick per element, based on whether the full text is load-bearing: `truncate` + a `title` attribute holding the full string when a single line is the right shape and hiding the tail is acceptable (a table cell, a narrow badge); `line-clamp-N` + a reserved `min-h-[NlH]` when several lines are the right shape or the content differs in length across siblings that must stay visually aligned (a KPI tile label, a card title) - the reserved height keeps every sibling the same height whether or not its text actually wraps. A tooltip/popover with the full text is the fallback only when neither fits the UX.
 
 ## Modular architecture (every app)
 
