@@ -51,7 +51,7 @@ Components use `useTranslation(ns)`; no hardcoded copy. Non-`en` files mirror `e
 - No cross-module imports - cross-module effects go through query cache invalidation, never a direct import.
 - Outside code imports ONLY the barrel via `@/modules/<name>`; inside the module use relative paths.
 - Hooks take their clients (oRPC/API) as parameters (see `roles/hooks/use-iam-client-deps.ts`) so they're testable without global mocks.
-- Follow the conventions rule's Frontend + Modular architecture sections (daisyUI, theme tokens, hoisted `styles` const, React Compiler - no manual memo).
+- Follow `frontend-conventions` (daisyUI, theme tokens, hoisted `styles` const, React Compiler - no manual memo).
 
 ## 5. Verify
 

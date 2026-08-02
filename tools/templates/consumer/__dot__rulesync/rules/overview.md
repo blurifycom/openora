@@ -20,7 +20,8 @@ This repo is a downstream igaming operator built on the OSS platform (`@openora/
 
 Apply every rule file in `.rulesync/rules/`:
 
-- `conventions` - the code standard (naming, types, functions, frontend, module + package structure, errors, testing, git).
+- `conventions` - the stack-agnostic code standard (naming, types, functions, package structure, errors, testing, git).
+- `frontend-conventions` - React/UI rules (component library, theming, i18n, modular architecture) for this repo's UI apps and shared UI package. Delete it if this repo is headless/api-only.
 - `oss-boundaries` - OSS core is read-only; enforced import/module boundaries.
 - `db-conventions` - SQL / Drizzle rules for tables an overlay owns.
 - `e2e-conventions` - dual-mode Playwright specs, fixtures, mocks, page objects.
