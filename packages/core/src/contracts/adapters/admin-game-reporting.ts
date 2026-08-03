@@ -20,6 +20,7 @@ export type GamePerformanceFilter = {
   dateFrom?: Date;
   dateTo?: Date;
   gameType?: GameType;
+  currency?: string;
   sortBy?: GamePerformanceSortBy;
   sortDir?: 'asc' | 'desc';
 };
@@ -38,8 +39,14 @@ export type GamePerformanceRow = {
   roundsPlayed: number;
 };
 
+export type PlayerGameStats = {
+  totalWagered: string;
+  totalBets: number;
+};
+
 export type AdminGameReporting = {
   listGamePerformance(filter: GamePerformanceFilter): Promise<GamePerformanceRow[]>;
+  getPlayerStats(userId: string): Promise<PlayerGameStats>;
 };
 
 export const ADMIN_GAME_REPORTING: Token<AdminGameReporting> = createToken('ADMIN_GAME_REPORTING');

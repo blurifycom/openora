@@ -11,15 +11,15 @@ import {
 import {
   makeRateLimitKey,
   RATE_LIMIT_KEYS,
+  chatChannel,
   type RateLimiterAdapter,
   type RealtimeClientAuthorizer,
 } from '@openora/core/contracts';
 import { chatContract } from '../contract/index.js';
 import {
   ChatService,
-  chatChannel,
   ChatRoomNotFoundError,
-  ChatRoomNotMemberError,
+  ChatRoomOwnershipError,
   ChatRoomNotModeratorError,
   ChatRoomSelfModerationError,
   ChatRoomLastModeratorError,
@@ -28,9 +28,11 @@ import {
   ChatMessageOwnershipError,
   ChatMessageBlockedError,
   ChatSelfBlockError,
+  ChatSelfIgnoreError,
   ChatRoomSlugConflictError,
   ChatRoomJoinCodeNotFoundError,
   ChatRoomBannedError,
+  ChatRoomNotMemberError,
 } from '../service/chat.service.js';
 
 const chat = populateContractRouterPaths({ chat: chatContract }).chat;
@@ -193,10 +195,34 @@ export function createChatRouter({
       return chatService.unblockUser(getUserId(context), input.blockedId, context.clientMeta);
     }),
 
+    listIgnoredUsers: os.listIgnoredUsers.handler(({ context }) =>
+      chatService.listIgnoredUsers(getUserId(context)),
+    ),
+
+    ignoreUser: os.ignoreUser.handler(({ input, context }) => {
+      const userId = getUserId(context);
+      return mapErrors({ BAD_REQUEST: ChatSelfIgnoreError }, () =>
+        chatService.ignoreUser(userId, input.ignoredId, context.clientMeta),
+      );
+    }),
+
+    unignoreUser: os.unignoreUser.handler(({ input, context }) => {
+      return chatService.unignoreUser(getUserId(context), input.ignoredId, context.clientMeta);
+    }),
+
     createPrivateRoom: os.createPrivateRoom.handler(({ input, context }) => {
       const userId = getUserId(context);
       return mapErrors({ CONFLICT: ChatRoomLimitReachedError }, () =>
         chatService.createPrivateRoom({ userId, name: input.name, ...context.clientMeta }),
+      );
+    }),
+
+    deletePrivateRoom: os.deletePrivateRoom.handler(({ input, context }) => {
+      const userId = getUserId(context);
+      return mapErrors(
+        { NOT_FOUND: ChatRoomNotFoundError, FORBIDDEN: ChatRoomOwnershipError },
+        () =>
+          chatService.deletePrivateRoom({ roomId: input.roomId, userId, ...context.clientMeta }),
       );
     }),
 

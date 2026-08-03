@@ -45,6 +45,7 @@ export const adminRole = ac.newRole({
   'tag-rule': ['view', 'update'],
   tag: ['view', 'create', 'delete'],
   'chat-room': ['view', 'create', 'update', 'delete'],
+  'auto-withdrawal-config': ['view', 'update'],
 });
 
 export const supportRole = ac.newRole({

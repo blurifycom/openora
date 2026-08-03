@@ -20,6 +20,7 @@ export const extensions = [
   { id: 'gaming', path: './packages/core/dist/casino/gaming/plugin.js' },
   { id: 'lobby', path: './packages/core/dist/casino/lobby/plugin.js' },
   { id: 'chat', path: './packages/core/dist/engagement/chat/plugin.js' },
+  { id: 'chat-commands', path: './packages/core/dist/engagement/chat-commands/plugin.js' },
   // Player self-profile (owns the `player` table); the admin PAM surface is
   // player-management below, which reads that table via the /schema subpath.
   { id: 'profile', path: './packages/core/dist/pam/profile/plugin.js' },

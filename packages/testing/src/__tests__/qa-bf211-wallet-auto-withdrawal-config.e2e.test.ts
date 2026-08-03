@@ -39,6 +39,7 @@ let appUnseeded: TestApp;
 let superAdmin: TestClient;
 let paymentsManager: TestClient;
 let plainAdmin: TestClient;
+let bootstrapAdmin: TestClient;
 
 // oxlint-disable-next-line typescript/no-explicit-any -- ad-hoc JSON shape assertions in tests
 async function readJson(res: Response): Promise<any> {
@@ -190,8 +191,14 @@ beforeAll(async () => {
     appMain.app,
     plainAdminEmail,
   );
-  await setStaticRole(appMain.container, plainAdminUserId, 'admin');
+  await assignIamRoleByKey(appMain.container, plainAdminUserId, 'admin');
   plainAdmin = plainAdminClient;
+
+  const bootstrapAdminEmail = `bf211-bootstrap-admin-${randomUUID()}@e2e.test`;
+  const { client: bootstrapAdminClient, userId: bootstrapAdminUserId } =
+    await registerAndMaterializePlayer(appMain.app, bootstrapAdminEmail);
+  await setStaticRole(appMain.container, bootstrapAdminUserId, 'admin');
+  bootstrapAdmin = bootstrapAdminClient;
 }, 60_000);
 
 afterAll(async () => {
@@ -236,6 +243,17 @@ describe('BF-211 authz: auto-withdrawal-config is super-admin only (real DB-back
       cryptoThreshold: '1',
     });
     expect(setRes.status).toBe(403);
+  });
+
+  it('bootstrap admin (static role fallback, no IAM assignment) succeeds on GET and PUT', async () => {
+    const getRes = await bootstrapAdmin.get('/wallet/auto-withdrawal-config');
+    expect(getRes.status).toBe(200);
+
+    const setRes = await bootstrapAdmin.put('/wallet/auto-withdrawal-config', {
+      fiatThreshold: '1',
+      cryptoThreshold: '1',
+    });
+    expect(setRes.status).toBe(200);
   });
 
   it('anonymous (no session) gets 401, not 403', async () => {

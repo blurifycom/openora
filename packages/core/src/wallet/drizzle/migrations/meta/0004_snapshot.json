@@ -1,5 +1,5 @@
 {
-  "id": "a94db42c-0cad-414c-8151-14cf49a4c150",
+  "id": "004d59f7-7a59-4271-9518-0a856c6b62c7",
   "prevId": "dc212a38-53e8-4ed3-9b0b-4e6eb50d9477",
   "version": "7",
   "dialect": "postgresql",
@@ -615,7 +615,7 @@
     "public.wallet_transaction_type": {
       "name": "wallet_transaction_type",
       "schema": "public",
-      "values": ["deposit", "withdrawal", "bet", "win", "loss", "bonus", "tip"]
+      "values": ["deposit", "withdrawal", "bet", "win", "loss", "bonus", "tip", "gift", "rain"]
     }
   },
   "schemas": {},

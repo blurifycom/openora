@@ -15,6 +15,20 @@
       "when": 1784721152596,
       "tag": "0001_cloudy_groot",
       "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "7",
+      "when": 1785142633864,
+      "tag": "0002_steep_zodiak",
+      "breakpoints": true
+    },
+    {
+      "idx": 3,
+      "version": "7",
+      "when": 1785446950360,
+      "tag": "0003_stormy_king_bedlam",
+      "breakpoints": true
     }
   ]
 }

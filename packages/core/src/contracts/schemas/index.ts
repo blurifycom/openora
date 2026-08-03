@@ -10,3 +10,5 @@ export * from './tag.js';
 export * from './platform-config.js';
 export * from './events.js';
 export * from './reporting.js';
+export * from './chat-command-metadata.js';
+export * from './chat-command.js';

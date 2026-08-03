@@ -13,6 +13,7 @@ import { profileContract } from '@openora/core/pam/contracts/profile';
 import { cmsContract } from '@openora/core/cms/contracts';
 import { notificationsContract } from '@openora/core/engagement/contracts/notifications';
 import { chatContract } from '@openora/core/engagement/contracts/chat';
+import { chatCommandsContract } from '@openora/core/engagement/contracts/chat-commands';
 import { walletContract } from '@openora/core/wallet/contract';
 import { gamingContract } from '@openora/core/casino/contracts/gaming';
 import { lobbyContract } from '@openora/core/casino/contracts/lobby';
@@ -36,6 +37,7 @@ const SLICES: Record<string, AnyContract> = {
   wallet: walletContract,
   gaming: gamingContract,
   chat: chatContract,
+  'chat-commands': chatCommandsContract,
   lobby: lobbyContract,
   backoffice: backofficeContract,
   analytics: analyticsContract,

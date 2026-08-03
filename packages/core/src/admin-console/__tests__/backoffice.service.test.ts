@@ -1,4 +1,6 @@
-import { describe, it, expect, vi } from 'vitest';
+import { randomUUID } from 'node:crypto';
+import { describe, it, expect, vi, beforeAll, afterAll, beforeEach } from 'vitest';
+import { sql } from 'drizzle-orm';
 import { mock } from '../../testing/mock.js';
 import type {
   AdminGameReporting,
@@ -8,6 +10,10 @@ import type {
   AdminUserDirectory,
   AdminWalletReporting,
 } from '@openora/core/contracts';
+import { createTestDb, type TestDb } from '@openora/core/testing';
+import { migrate as migrateGaming } from '@openora/core/casino/migrate/gaming';
+import { game, gameRound } from '@openora/core/casino/schema/gaming';
+import { DrizzleAdminGameReporting } from '@openora/core/casino/server';
 import { BackofficeService, TransactionNotFoundError } from '../service/backoffice.service.js';
 
 function makeUsers(over: Partial<AdminUserDirectory> = {}): AdminUserDirectory {
@@ -230,75 +236,81 @@ describe('BackofficeService.getTransaction', () => {
   });
 });
 
-describe('BackofficeService.getGamePerformance', () => {
-  it('converts ISO date filters to Date and passes gameType/sort through to the port', async () => {
-    const listGamePerformance = vi.fn().mockResolvedValue([]);
-    const svc = new BackofficeService(
-      makeUsers(),
-      makeReporting(),
-      makeGameReporting({ listGamePerformance }),
-      makePlayerActivity(),
-    );
+describe('BackofficeService.getGamePerformance (real PG)', () => {
+  let db: TestDb;
+  let gameReporting: DrizzleAdminGameReporting;
 
-    await svc.getGamePerformance({
+  beforeAll(async () => {
+    db = await createTestDb([migrateGaming]);
+    gameReporting = new DrizzleAdminGameReporting(db.drizzle);
+  });
+
+  afterAll(async () => {
+    await db.drop();
+  });
+
+  beforeEach(async () => {
+    await db.drizzle.db.execute(sql`TRUNCATE ${gameRound}, ${game} RESTART IDENTITY CASCADE`);
+  });
+
+  function makeService() {
+    return new BackofficeService(makeUsers(), makeReporting(), gameReporting, makePlayerActivity());
+  }
+
+  async function seedGame(overrides: Partial<typeof game.$inferInsert> = {}) {
+    const [row] = await db.drizzle.db
+      .insert(game)
+      .values({ name: 'Aces', provider: 'p', category: 'slots', ...overrides })
+      .returning();
+    return row!;
+  }
+
+  async function seedRound(gameId: string, overrides: Partial<typeof gameRound.$inferInsert> = {}) {
+    await db.drizzle.db.insert(gameRound).values({
+      gameId,
+      userId: randomUUID(),
+      status: 'completed',
+      betAmount: '100',
+      winAmount: '0',
+      currency: 'USD',
+      startedAt: new Date('2026-01-15T00:00:00.000Z'),
+      ...overrides,
+    });
+  }
+
+  it('converts ISO date filters to Date and passes gameType/currency/sort through to the port', async () => {
+    const g = await seedGame({ gameType: 'casino' });
+    await seedGame({ gameType: 'sportsbook' });
+    await seedRound(g.id, { betAmount: '100', winAmount: '20', currency: 'EUR' });
+    await seedRound(g.id, { betAmount: '50', currency: 'USD' });
+
+    const rows = await makeService().getGamePerformance({
       dateFrom: '2026-01-01T00:00:00.000Z',
       dateTo: '2026-02-01T00:00:00.000Z',
-      gameType: 'sportsbook',
+      gameType: 'casino',
+      currency: 'EUR',
       sortBy: 'revenue',
       sortDir: 'asc',
     });
 
-    expect(listGamePerformance).toHaveBeenCalledWith({
-      dateFrom: new Date('2026-01-01T00:00:00.000Z'),
-      dateTo: new Date('2026-02-01T00:00:00.000Z'),
-      gameType: 'sportsbook',
-      sortBy: 'revenue',
-      sortDir: 'asc',
-    });
+    expect(rows).toHaveLength(1);
+    expect(rows[0]).toMatchObject({ gameId: g.id, roundsPlayed: 1 });
+    expect(Number(rows[0]?.volume)).toBe(100);
   });
 
-  it('returns the port rows unchanged (no Date/Decimal fields to serialize)', async () => {
-    const rows = [
-      {
-        gameId: 'g-1',
-        name: 'Aces',
-        gameType: 'casino' as const,
-        volume: '100',
-        revenue: '20',
-        uniquePlayers: 2,
-        roundsPlayed: 5,
-      },
-    ];
-    const svc = new BackofficeService(
-      makeUsers(),
-      makeReporting(),
-      makeGameReporting({ listGamePerformance: vi.fn().mockResolvedValue(rows) }),
-      makePlayerActivity(),
-    );
+  it('returns an empty array when there are no games at all', async () => {
+    const rows = await makeService().getGamePerformance({});
 
-    const res = await svc.getGamePerformance({});
-
-    expect(res).toEqual(rows);
+    expect(rows).toEqual([]);
   });
 
-  it('leaves dateFrom/dateTo undefined for the port when the filter omits them', async () => {
-    const listGamePerformance = vi.fn().mockResolvedValue([]);
-    const svc = new BackofficeService(
-      makeUsers(),
-      makeReporting(),
-      makeGameReporting({ listGamePerformance }),
-      makePlayerActivity(),
-    );
+  it('leaves dateFrom/dateTo unbounded for the port when the filter omits them', async () => {
+    const g = await seedGame();
+    await seedRound(g.id, { startedAt: new Date('2020-01-01T00:00:00.000Z') });
 
-    await svc.getGamePerformance({});
+    const rows = await makeService().getGamePerformance({});
 
-    expect(listGamePerformance).toHaveBeenCalledWith({
-      dateFrom: undefined,
-      dateTo: undefined,
-      gameType: undefined,
-      sortBy: undefined,
-      sortDir: undefined,
-    });
+    expect(rows[0]).toMatchObject({ gameId: g.id, roundsPlayed: 1 });
   });
 });
 

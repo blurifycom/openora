@@ -134,48 +134,51 @@ export class AuditService {
   // crash can never leave a 'pending' hash. Serialized via pg advisory lock so
   // concurrent record() calls cannot fork the chain. Append-only.
   async record(input: RecordInput) {
-    const row = await this.drizzle.db.transaction((tx) =>
-      withAdvisoryXactLock(tx, 'audit_log', async () => {
-        const [latest] = await tx
-          .select({ hash: auditLog.hash })
-          .from(auditLog)
-          .orderBy(desc(auditLog.seq))
-          .limit(1);
-        const prevHash = latest?.hash ?? null;
-
-        const seqResult = await tx.execute<{ seq: string | number }>(
-          sql`SELECT nextval(pg_get_serial_sequence('audit_log', 'seq')) AS seq`,
-        );
-        const seq = +(seqResult.rows.at(0)?.seq ?? 0);
-
-        const id = randomUUID();
-        const createdAt = new Date();
-
-        const hash = computeHash({
-          id,
-          actorId: input.actorId ?? null,
-          actorType: input.actorType,
-          action: input.action,
-          resourceType: input.resourceType,
-          resourceId: input.resourceId ?? null,
-          before: input.before ?? null,
-          after: input.after ?? null,
-          result: input.result ?? null,
-          seq,
-          createdAt: createdAt.toISOString(),
-          prevHash,
-        });
-
-        const [inserted] = await tx
-          .insert(auditLog)
-          .values({ ...input, id, seq, prevHash, createdAt, hash })
-          .returning();
-
-        return inserted;
-      }),
-    );
-
+    const row = await this.drizzle.db.transaction((tx) => this.recordInTransaction(tx, input));
     return toDto(row);
+  }
+
+  async recordInTransaction(tx: unknown, input: RecordInput): Promise<AuditLog> {
+    const txn = tx as Parameters<typeof withAdvisoryXactLock>[0];
+    const row = await withAdvisoryXactLock(txn, 'audit_log', async () => {
+      const [latest] = await txn
+        .select({ hash: auditLog.hash })
+        .from(auditLog)
+        .orderBy(desc(auditLog.seq))
+        .limit(1);
+      const prevHash = latest?.hash ?? null;
+
+      const seqResult = await txn.execute<{ seq: string | number }>(
+        sql`SELECT nextval(pg_get_serial_sequence('audit_log', 'seq')) AS seq`,
+      );
+      const seq = +(seqResult.rows.at(0)?.seq ?? 0);
+
+      const id = randomUUID();
+      const createdAt = new Date();
+
+      const hash = computeHash({
+        id,
+        actorId: input.actorId ?? null,
+        actorType: input.actorType,
+        action: input.action,
+        resourceType: input.resourceType,
+        resourceId: input.resourceId ?? null,
+        before: input.before ?? null,
+        after: input.after ?? null,
+        result: input.result ?? null,
+        seq,
+        createdAt: createdAt.toISOString(),
+        prevHash,
+      });
+
+      const [inserted] = await txn
+        .insert(auditLog)
+        .values({ ...input, id, seq, prevHash, createdAt, hash })
+        .returning();
+
+      return inserted;
+    });
+    return row;
   }
 
   async list(filters: AuditListFilters) {

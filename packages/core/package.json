@@ -254,11 +254,6 @@
       "import": "./dist/engagement/server.js",
       "default": "./dist/engagement/server.js"
     },
-    "./engagement/react": {
-      "types": "./dist/engagement/react.d.ts",
-      "import": "./dist/engagement/react.js",
-      "default": "./dist/engagement/react.js"
-    },
     "./engagement/contracts": {
       "types": "./dist/engagement/contracts.d.ts",
       "import": "./dist/engagement/contracts.js",
@@ -293,6 +288,31 @@
       "types": "./dist/engagement/notifications/plugin.d.ts",
       "import": "./dist/engagement/notifications/plugin.js",
       "default": "./dist/engagement/notifications/plugin.js"
+    },
+    "./engagement/contracts/chat-commands": {
+      "types": "./dist/engagement/chat-commands/contract/index.d.ts",
+      "import": "./dist/engagement/chat-commands/contract/index.js",
+      "default": "./dist/engagement/chat-commands/contract/index.js"
+    },
+    "./engagement/schema/chat-commands": {
+      "types": "./dist/engagement/chat-commands/schema/index.d.ts",
+      "import": "./dist/engagement/chat-commands/schema/index.js",
+      "default": "./dist/engagement/chat-commands/schema/index.js"
+    },
+    "./engagement/plugins/chat-commands": {
+      "types": "./dist/engagement/chat-commands/plugin.d.ts",
+      "import": "./dist/engagement/chat-commands/plugin.js",
+      "default": "./dist/engagement/chat-commands/plugin.js"
+    },
+    "./engagement/migrate/chat-commands": {
+      "types": "./dist/engagement/chat-commands/migrate.d.ts",
+      "import": "./dist/engagement/chat-commands/migrate.js",
+      "default": "./dist/engagement/chat-commands/migrate.js"
+    },
+    "./engagement/seed/chat-commands": {
+      "types": "./dist/engagement/chat-commands/seed/index.d.ts",
+      "import": "./dist/engagement/chat-commands/seed/index.js",
+      "default": "./dist/engagement/chat-commands/seed/index.js"
     },
     "./iam": {
       "types": "./dist/iam/index.d.ts",
@@ -587,13 +607,16 @@
     "zod": "4.4.3"
   },
   "devDependencies": {
-    "@tanstack/react-query": "5.101.0",
+    "@tanstack/react-query": "5.101.4",
+    "@testing-library/dom": "10.4.1",
+    "@testing-library/react": "16.3.2",
     "@turbo/gen": "2.9.16",
     "@types/node": "25.9.2",
     "@types/pg": "8.20.0",
     "@types/react": "19.2.17",
     "@types/react-dom": "19.2.3",
     "drizzle-kit": "0.31.10",
+    "jsdom": "29.1.1",
     "typescript": "6.0.3",
     "vitest": "4.1.8"
   },

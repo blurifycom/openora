@@ -10,12 +10,13 @@ export type WalletDebitArgs = {
 };
 
 export type WalletDebitOutcome =
-  | { ok: true; newBalance: string }
+  | { ok: true; newBalance: string; currency: string }
   | { ok: false; available: string };
 
 export type WalletCreditArgs = {
   userId: string;
   amount: string;
+  currency: string;
   type: WalletTransactionType;
 };
 
