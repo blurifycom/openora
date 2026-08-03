@@ -710,6 +710,30 @@ describe('WalletService auto-approval threshold resolution (real PG)', () => {
     );
   });
 
+  it('stays pending for a player with a per-player override when the global config row is missing (fail-closed)', async () => {
+    const { svc } = await makeService({
+      autoWithdrawal: {},
+      fiatThreshold: '1000',
+      skipConfigSeed: true,
+    });
+    const w = await seedWallet();
+    await svc.setAutoWithdrawalRule({
+      userId: w.userId,
+      threshold: '1000',
+      reason: 'trusted',
+      createdBy: randomUUID(),
+    });
+
+    const result = await svc.withdraw({
+      userId: w.userId,
+      amount: '40',
+      currency: 'USD',
+      ...NO_CLIENT_META,
+    });
+
+    expect(result.status).toBe('pending');
+  });
+
   it('a per-player rule overrides the crypto threshold too', async () => {
     const { svc } = await makeService({ autoWithdrawal: {}, cryptoThreshold: '0.5' });
     const w = await seedWallet({ currency: 'BTC', balance: '10' });

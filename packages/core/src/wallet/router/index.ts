@@ -181,25 +181,9 @@ export function createWalletRouter(
           ip,
           userAgent,
         } = await adminGuard.assert(context, 'auto-withdrawal-config', 'update');
-        // Non-throwing read: the row may legitimately be missing on an unseeded
-        // install, and `set` below self-heals it via upsert - a missing `before`
-        // must not block that self-heal.
-        const before = await wallet.getAutoWithdrawalConfigOrNull();
-        const config = await wallet.setAutoWithdrawalConfig(adminId, input);
-        await audit.record({
-          actorId: adminId,
-          actorType: 'admin',
-          action: 'wallet.auto_withdrawal_config.set',
-          resourceType: 'auto_withdrawal_config',
-          resourceId: config.id,
-          before: before
-            ? { fiatThreshold: before.fiatThreshold, cryptoThreshold: before.cryptoThreshold }
-            : null,
-          after: { fiatThreshold: config.fiatThreshold, cryptoThreshold: config.cryptoThreshold },
-          ip,
-          userAgent,
-        });
-        return config;
+        // The before-read, upsert, and audit write all run inside one transaction in
+        // the service - an audit failure rolls back the threshold change too.
+        return wallet.setAutoWithdrawalConfig(adminId, input, { ip, userAgent });
       }),
 
       get: os.autoWithdrawalConfig.get.handler(async ({ context }) => {

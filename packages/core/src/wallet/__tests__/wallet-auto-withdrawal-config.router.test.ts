@@ -140,6 +140,7 @@ describe('wallet auto-withdrawal-config routes', () => {
       ),
     ).rejects.toBeInstanceOf(ORPCError);
     expect(audit.record).not.toHaveBeenCalled();
+    expect(audit.recordInTransaction).not.toHaveBeenCalled();
   });
 
   it('set: rejects plain admin and writes nothing', async () => {
@@ -153,6 +154,7 @@ describe('wallet auto-withdrawal-config routes', () => {
       ),
     ).rejects.toBeInstanceOf(ORPCError);
     expect(audit.record).not.toHaveBeenCalled();
+    expect(audit.recordInTransaction).not.toHaveBeenCalled();
   });
 
   it('set: rejects a negative fiat threshold', async () => {
@@ -179,6 +181,18 @@ describe('wallet auto-withdrawal-config routes', () => {
     ).rejects.toThrow();
   });
 
+  it('set: rejects a fiat threshold exceeding the decimal(18,8) integer-digit budget', async () => {
+    const { router } = routerWith(superAdminGuard());
+
+    await expect(
+      call(
+        router.autoWithdrawalConfig.set,
+        { fiatThreshold: '10000000000', cryptoThreshold: '1' },
+        { context: CTX },
+      ),
+    ).rejects.toThrow();
+  });
+
   it('set: super-admin updates both thresholds, GET reflects immediately, and writes an admin audit entry with before/after', async () => {
     const { router, audit } = routerWith(superAdminGuard());
 
@@ -198,7 +212,8 @@ describe('wallet auto-withdrawal-config routes', () => {
       fiatThreshold: '500.00000000',
       cryptoThreshold: '1.00000000',
     });
-    expect(audit.record).toHaveBeenCalledWith(
+    expect(audit.recordInTransaction).toHaveBeenCalledWith(
+      expect.anything(),
       expect.objectContaining({
         actorId: CALLER_ID,
         actorType: 'admin',
@@ -239,7 +254,8 @@ describe('wallet auto-withdrawal-config routes', () => {
     });
     expect(aboveResult.status).toBe('pending');
 
-    expect(audit.record).toHaveBeenCalledWith(
+    expect(audit.recordInTransaction).toHaveBeenCalledWith(
+      expect.anything(),
       expect.objectContaining({ action: 'wallet.auto_withdrawal_config.set' }),
     );
     expect(audit.record).toHaveBeenCalledWith(
