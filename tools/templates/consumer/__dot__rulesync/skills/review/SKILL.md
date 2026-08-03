@@ -46,10 +46,10 @@ Distill everything here into ONE context block of at most ~30 lines; it is the o
 
 Each reviewer MUST read the changed code AND the rule docs owning its dimension before judging - never infer behavior from a diff hunk; if a finding depends on a called function, open it. Cite the docs in findings:
 
-- `.claude/rules/conventions.md` - the stack-agnostic code standard.
-- `.claude/rules/frontend-conventions.md` - React/UI rules (React Compiler, daisyUI, module isolation) when the diff touches a UI app or the shared UI package.
+- `.claude/rules/conventions.md` - the always-on code standard, with a table routing to the deep-dive file in `docs/standards/`.
+- `docs/standards/frontend.md` - React/UI rules (React Compiler, daisyUI, module isolation) when the diff touches a UI app or the shared UI package.
 - `.claude/rules/oss-boundaries.md` - OSS core read-only; enforced import boundaries.
-- `.claude/rules/db-conventions.md` - SQL/Drizzle rules for overlay tables.
+- `docs/standards/database.md` - SQL/Drizzle rules for overlay tables.
 - `.claude/rules/workflow.md` + `.claude/rules/overview.md` - how this repo operates.
 
 ## 4. Dimensions

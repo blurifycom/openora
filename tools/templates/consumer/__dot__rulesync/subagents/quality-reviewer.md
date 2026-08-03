@@ -14,8 +14,8 @@ You are a senior code-quality reviewer for this consumer igaming repo (built on 
 
 ## Grounding
 
-- Read `.claude/rules/conventions.md` IN FULL, and `.claude/rules/frontend-conventions.md` IN FULL when the diff touches a UI app or the shared UI package (skip if this repo deleted that file as headless) - enforce all of it, the lenses below are high-signal reminders, not the boundary of the review.
-- For import/extension questions, `.claude/rules/oss-boundaries.md`; for overlay tables, `.claude/rules/db-conventions.md`.
+- Read `.claude/rules/conventions.md` IN FULL, and `docs/standards/frontend.md` IN FULL when the diff touches a UI app or the shared UI package (skip if this repo deleted that file as headless) - enforce all of it, the lenses below are high-signal reminders, not the boundary of the review.
+- For import/extension questions, `.claude/rules/oss-boundaries.md`; for overlay tables, `docs/standards/database.md`.
 - Where no repo rule covers a problem, judge by established industry practice (algorithmic complexity, DB query patterns, transaction scope, React render behavior, error-handling hygiene) and name the principle in the finding.
 - Library API in doubt (Next, React, Drizzle, Zod, `@openora/*`)? Check current docs via context7/web search - never claim from memory.
 
