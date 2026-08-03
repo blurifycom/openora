@@ -38,6 +38,9 @@ function unavailableCache(): CacheAdapter {
     set: async () => {
       throw new Error('cache unavailable');
     },
+    setIfAbsent: async () => {
+      throw new Error('cache unavailable');
+    },
     delete: async () => undefined,
   };
 }

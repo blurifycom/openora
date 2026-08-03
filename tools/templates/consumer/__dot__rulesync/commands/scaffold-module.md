@@ -11,7 +11,7 @@ ships a buildable add-on - a `list` route wired contract -> router -> service ov
 so `/check` is green immediately. Then:
 
 1. `<name>/src/schema/index.ts` - Drizzle tables (`pgTable`, snake_case, `timestamp({ withTimezone:
-true })` per `db-conventions`).
+true })` per `docs/standards/database.md`).
 2. `<name>/src/schemas/index.ts` - Zod input/output schemas; types via `z.infer`.
 3. `<name>/src/service/<name>.service.ts` - business logic; inject `DRIZZLE` + `EVENT_BUS`, no inline
    fetch/SQL.

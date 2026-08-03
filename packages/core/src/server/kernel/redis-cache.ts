@@ -31,6 +31,17 @@ export class RedisCache implements CacheAdapter {
     });
   }
 
+  async setIfAbsent<T>(key: string, value: T, opts: { ttlMs: number }): Promise<boolean> {
+    if (!this.client.isReady) {
+      throw new Error('Redis is not ready');
+    }
+    const result = await this.client.set(PREFIX + key, JSON.stringify(value), {
+      expiration: { type: 'PX', value: opts.ttlMs },
+      NX: true,
+    });
+    return result === 'OK';
+  }
+
   async delete(key: string | string[]): Promise<void> {
     if (!this.client.isReady) {
       return;

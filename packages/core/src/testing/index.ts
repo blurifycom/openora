@@ -1,5 +1,9 @@
 export { InProcessRealtimeTransport, SseClientAuthorizer } from '@openora/core/server';
 export {
+  runRealtimeTransportConformanceSuite,
+  type RealtimeTransportHarness,
+} from './realtime-transport-conformance.js';
+export {
   createTestDb,
   createTestRedis,
   redisUrlForWorker,

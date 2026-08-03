@@ -4,25 +4,28 @@ import { eq, sql } from 'drizzle-orm';
 import { createTestDb, InProcessRealtimeTransport, type TestDb } from '@openora/core/testing';
 import { user } from '@openora/core/pam/schema/identity';
 import { migrate as migrateIdentity } from '@openora/core/pam/migrate/identity';
-import { NO_CLIENT_META, makeEventBus } from '../../../testing/mock.js';
+import type { AdminUserDirectory, AdminPlayerSummary } from '@openora/core/contracts';
+import { NO_CLIENT_META, makeEventBus, mock } from '../../../testing/mock.js';
 import { CHAT_ROOM_CATEGORIES, type ChatMessage } from '../contract/index.js';
 import { MAX_PRIVATE_ROOMS_PER_PLAYER } from '../contract/constants.js';
 import { migrate } from '../migrate.js';
-import {
-  chatRoom,
-  chatMessage,
-  chatUserBlock,
-  chatRoomMember,
-  chatRoomBan,
-} from '../schema/index.js';
+// import {
+//   mock,
+//   mockDb,
+//   makeDrizzle,
+//   makeEvents,
+//   readPrivate,
+//   NO_CLIENT_META,
+// } from '../../../testing/mock.js';
+import { chatChannel } from '@openora/core/contracts';
 import {
   ChatService,
-  chatChannel,
   ChatRoomNotFoundError,
   ChatMessageNotFoundError,
   ChatMessageOwnershipError,
   ChatMessageBlockedError,
   ChatSelfBlockError,
+  ChatSelfIgnoreError,
   ChatRoomSlugConflictError,
   ChatRoomJoinCodeNotFoundError,
   ChatRoomBannedError,
@@ -32,13 +35,22 @@ import {
   ChatRoomNotModeratorError,
   ChatRoomSelfModerationError,
 } from '../service/chat.service.js';
-
+import {
+  chatMessage,
+  chatRoom,
+  chatRoomMember,
+  chatRoomBan,
+  chatUserBlock,
+  chatUserIgnore,
+} from '../schema/index.js';
 let db: TestDb;
 
-function makeService() {
+function makeService(
+  directory: AdminUserDirectory = mock<AdminUserDirectory>({ lookupPlayers: async () => [] }),
+) {
   const transport = new InProcessRealtimeTransport();
   const events = makeEventBus();
-  return { svc: new ChatService(db.drizzle, events, transport), events, transport };
+  return { svc: new ChatService(db.drizzle, events, transport, directory), events, transport };
 }
 
 async function seedUser(name = 'Player') {
@@ -96,7 +108,7 @@ afterAll(async () => {
 
 beforeEach(async () => {
   await db.drizzle.db.execute(
-    sql`TRUNCATE ${chatMessage}, ${chatRoomMember}, ${chatRoomBan}, ${chatUserBlock}, ${chatRoom}, ${user} RESTART IDENTITY CASCADE`,
+    sql`TRUNCATE ${chatMessage}, ${chatRoomMember}, ${chatRoomBan}, ${chatUserBlock}, ${chatUserIgnore}, ${chatRoom}, ${user} RESTART IDENTITY CASCADE`,
   );
 });
 
@@ -118,6 +130,8 @@ describe('ChatService realtime wiring', () => {
     userId: 'u1',
     username: 'alice',
     content: 'hi',
+    type: 'user',
+    metadata: null,
     isDeleted: false,
     createdAt: '2026-05-29T00:00:00.000Z',
   };
@@ -163,6 +177,8 @@ describe('ChatService.subscribeMessages per-viewer block filtering (real PG)', (
     userId: 'sender',
     username: 'alice',
     content: 'hi',
+    type: 'user',
+    metadata: null,
     isDeleted: false,
     createdAt: '2026-05-29T00:00:00.000Z',
   };
@@ -208,6 +224,22 @@ describe('ChatService.subscribeMessages per-viewer block filtering (real PG)', (
     transport.publish(chatChannel(null), sample);
 
     expect(got).toHaveLength(1);
+  });
+
+  it('hides messages from an ignored (not blocked) sender for the viewer', async () => {
+    const { svc, transport } = makeService();
+    const viewerId = randomUUID();
+    const ignoredId = randomUUID();
+    await svc.ignoreUser(viewerId, ignoredId);
+
+    const got: ChatMessage[] = [];
+    svc.subscribeMessages(null, (m) => got.push(m), viewerId);
+    transport.publish(chatChannel(null), { ...sample, userId: 'other-user' });
+    await waitFor(() => got.length === 1);
+
+    transport.publish(chatChannel(null), { ...sample, userId: ignoredId });
+
+    expect(got.map((m) => m.userId)).toEqual(['other-user']);
   });
 });
 
@@ -295,6 +327,19 @@ describe('ChatService message reads (real PG)', () => {
     expect(messages.map((m) => m.id)).toEqual([visible.id]);
   });
 
+  it('filters out senders the viewer has ignored (not blocked)', async () => {
+    const { svc } = makeService();
+    const viewerId = randomUUID();
+    const ignoredId = randomUUID();
+    await svc.ignoreUser(viewerId, ignoredId);
+    await seedMessage({ userId: ignoredId });
+    const visible = await seedMessage();
+
+    const messages = await svc.getGlobalMessages(50, viewerId);
+
+    expect(messages.map((m) => m.id)).toEqual([visible.id]);
+  });
+
   it('scopes room messages to the room and honours the before cursor', async () => {
     const { svc } = makeService();
     const room = await seedRoom();
@@ -311,6 +356,20 @@ describe('ChatService message reads (real PG)', () => {
     });
 
     expect(messages.map((m) => m.id)).toEqual([old.id]);
+  });
+
+  it('filters out room senders the viewer has ignored (not blocked)', async () => {
+    const { svc } = makeService();
+    const viewerId = randomUUID();
+    const ignoredId = randomUUID();
+    const room = await seedRoom();
+    await svc.ignoreUser(viewerId, ignoredId);
+    await seedMessage({ roomId: room.id, userId: ignoredId });
+    const visible = await seedMessage({ roomId: room.id });
+
+    const messages = await svc.getRoomMessages({ roomId: room.id, viewerId });
+
+    expect(messages.map((m) => m.id)).toEqual([visible.id]);
   });
 });
 
@@ -431,6 +490,71 @@ describe('ChatService block list (real PG)', () => {
     const rows = await svc.listBlockedUsers(blockerId);
 
     expect(rows.map((r) => r.blockedId)).toEqual([second, first]);
+  });
+});
+
+describe('ChatService ignore list (real PG)', () => {
+  it('rejects ignoring yourself', async () => {
+    const { svc } = makeService();
+    const userId = randomUUID();
+
+    await expect(svc.ignoreUser(userId, userId)).rejects.toThrow(ChatSelfIgnoreError);
+  });
+
+  it('emits only on the first ignore of a pair', async () => {
+    const { svc, events } = makeService();
+    const ignorerId = randomUUID();
+    const ignoredId = randomUUID();
+
+    await svc.ignoreUser(ignorerId, ignoredId, NO_CLIENT_META);
+    await svc.ignoreUser(ignorerId, ignoredId, NO_CLIENT_META);
+
+    expect(await db.drizzle.db.select().from(chatUserIgnore)).toHaveLength(1);
+    expect(events.emit.mock.calls.filter(([topic]) => topic === 'chat.user.ignored')).toHaveLength(
+      1,
+    );
+  });
+
+  it('emits on unignore only when a row was actually removed', async () => {
+    const { svc, events } = makeService();
+    const ignorerId = randomUUID();
+    const ignoredId = randomUUID();
+    await svc.ignoreUser(ignorerId, ignoredId);
+
+    await svc.unignoreUser(ignorerId, ignoredId, NO_CLIENT_META);
+    await svc.unignoreUser(ignorerId, ignoredId, NO_CLIENT_META);
+
+    expect(await db.drizzle.db.select().from(chatUserIgnore)).toHaveLength(0);
+    expect(
+      events.emit.mock.calls.filter(([topic]) => topic === 'chat.user.unignored'),
+    ).toHaveLength(1);
+  });
+
+  it('lists the ignored ids newest-first', async () => {
+    const { svc } = makeService();
+    const ignorerId = randomUUID();
+    const first = randomUUID();
+    const second = randomUUID();
+    await db.drizzle.db.insert(chatUserIgnore).values([
+      { ignorerId, ignoredId: first, createdAt: new Date('2026-01-01T00:00:00.000Z') },
+      { ignorerId, ignoredId: second, createdAt: new Date('2026-02-01T00:00:00.000Z') },
+    ]);
+
+    const rows = await svc.listIgnoredUsers(ignorerId);
+
+    expect(rows.map((r) => r.ignoredId)).toEqual([second, first]);
+  });
+
+  it('a block and an ignore are independent relationships (blocking does not ignore, and vice versa)', async () => {
+    const { svc } = makeService();
+    const viewerId = randomUUID();
+    const blockedId = randomUUID();
+    const ignoredId = randomUUID();
+    await svc.blockUser(viewerId, blockedId);
+    await svc.ignoreUser(viewerId, ignoredId);
+
+    expect((await svc.listBlockedUsers(viewerId)).map((r) => r.blockedId)).toEqual([blockedId]);
+    expect((await svc.listIgnoredUsers(viewerId)).map((r) => r.ignoredId)).toEqual([ignoredId]);
   });
 });
 
@@ -848,20 +972,60 @@ describe('ChatService.verifyRoomAccess and listings (real PG)', () => {
     expect(viewer.map((r) => r.id).sort()).toEqual([publicRoom.id, mine.id].sort());
   });
 
-  it('lists room members oldest-first', async () => {
-    const { svc } = makeService();
+  it('lists room members oldest-first, resolving usernames via the directory', async () => {
+    const moderatorId = randomUUID();
+    const memberId = randomUUID();
+    const now = new Date();
+    function summary(userId: string, username: string): AdminPlayerSummary {
+      return {
+        userId,
+        username,
+        email: `${username}@example.test`,
+        kycStatus: null,
+        language: null,
+        avatarUrl: null,
+        createdAt: now,
+        level: 1,
+        currency: 'USD',
+      };
+    }
+    const directory = mock<AdminUserDirectory>({
+      lookupPlayers: async (ids: readonly string[]) =>
+        [summary(moderatorId, 'Moderator'), summary(memberId, 'SilentMember')].filter((s) =>
+          ids.includes(s.userId),
+        ),
+    });
+    const { svc } = makeService(directory);
+    const room = await svc.createPrivateRoom({
+      userId: moderatorId,
+      name: 'Room',
+      ...NO_CLIENT_META,
+    });
+    // memberId joins via invite code and never sends a message - the exact repro:
+    // a never-posted member must still resolve a real username, not their raw id.
+    await svc.joinRoom({ userId: memberId, joinCode: room.joinCode!, ...NO_CLIENT_META });
+
+    const members = await svc.listRoomMembers({ roomId: room.id, viewerId: moderatorId });
+
+    expect(members.map((m) => ({ userId: m.userId, username: m.username }))).toEqual([
+      { userId: moderatorId, username: 'Moderator' },
+      { userId: memberId, username: 'SilentMember' },
+    ]);
+    expect(members[0]).toMatchObject({ role: 'moderator' });
+  });
+
+  it('returns username: null when the directory does not resolve a member', async () => {
+    const directory = mock<AdminUserDirectory>({ lookupPlayers: async () => [] });
+    const { svc } = makeService(directory);
     const moderatorId = randomUUID();
     const room = await svc.createPrivateRoom({
       userId: moderatorId,
       name: 'Room',
       ...NO_CLIENT_META,
     });
-    const memberId = randomUUID();
-    await svc.joinRoom({ userId: memberId, joinCode: room.joinCode!, ...NO_CLIENT_META });
 
     const members = await svc.listRoomMembers({ roomId: room.id, viewerId: moderatorId });
 
-    expect(members.map((m) => m.userId)).toEqual([moderatorId, memberId]);
-    expect(members[0]).toMatchObject({ role: 'moderator' });
+    expect(members).toEqual([expect.objectContaining({ userId: moderatorId, username: null })]);
   });
 });

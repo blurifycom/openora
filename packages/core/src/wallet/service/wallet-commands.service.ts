@@ -69,7 +69,7 @@ export class WalletCommandsService implements WalletCommands {
 
     if (type === 'loss') {
       await this.writeLedgerRow(txn, row, 'loss', '0');
-      return { ok: true, newBalance: available };
+      return { ok: true, newBalance: available, currency: row.currency };
     }
 
     // The UPDATE ... RETURNING gives the new balance straight from Postgres numeric
@@ -86,12 +86,12 @@ export class WalletCommandsService implements WalletCommands {
 
     await this.writeLedgerRow(txn, row, type, amount);
 
-    return { ok: true, newBalance };
+    return { ok: true, newBalance, currency: row.currency };
   }
 
   async credit(
     tx: unknown,
-    { userId, amount, type }: WalletCreditArgs,
+    { userId, amount, currency, type }: WalletCreditArgs,
   ): Promise<WalletCreditOutcome> {
     const txn = tx as DrizzleDb;
 
@@ -103,6 +103,9 @@ export class WalletCommandsService implements WalletCommands {
     // Fail closed: a credit never creates a wallet - a missing one is a caller bug.
     if (!row) {
       return { ok: false, reason: 'wallet not found' };
+    }
+    if (row.currency !== currency) {
+      return { ok: false, reason: 'currency mismatch' };
     }
 
     const [credited] = await txn

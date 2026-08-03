@@ -155,7 +155,12 @@ describe('WalletCommandsService.credit (real PG)', () => {
   it('increases the balance and writes a completed win ledger row', async () => {
     const w = await seedWallet({ balance: '50' });
 
-    const res = await svc.credit(db.drizzle.db, { userId: w.userId, amount: '20', type: 'win' });
+    const res = await svc.credit(db.drizzle.db, {
+      userId: w.userId,
+      amount: '20',
+      currency: 'USD',
+      type: 'win',
+    });
 
     expect(res.ok).toBe(true);
     expect(Number((res as { newBalance: string }).newBalance)).toBe(70);
@@ -171,7 +176,12 @@ describe('WalletCommandsService.credit (real PG)', () => {
   it('returns the exact decimal newBalance from SQL numeric arithmetic, with no float drift', async () => {
     const w = await seedWallet({ balance: '0.1' });
 
-    const res = await svc.credit(db.drizzle.db, { userId: w.userId, amount: '0.2', type: 'win' });
+    const res = await svc.credit(db.drizzle.db, {
+      userId: w.userId,
+      amount: '0.2',
+      currency: 'USD',
+      type: 'win',
+    });
 
     expect(res.ok).toBe(true);
     expect(Number((res as { newBalance: string }).newBalance)).toBe(0.3);
@@ -180,7 +190,12 @@ describe('WalletCommandsService.credit (real PG)', () => {
   it('fails closed on a missing wallet rather than creating one', async () => {
     const userId = randomUUID();
 
-    const res = await svc.credit(db.drizzle.db, { userId, amount: '20', type: 'win' });
+    const res = await svc.credit(db.drizzle.db, {
+      userId,
+      amount: '20',
+      currency: 'USD',
+      type: 'win',
+    });
 
     expect(res).toEqual({ ok: false, reason: 'wallet not found' });
     const [row] = await db.drizzle.db.select().from(wallet).where(eq(wallet.userId, userId));
@@ -191,7 +206,12 @@ describe('WalletCommandsService.credit (real PG)', () => {
     const w = await seedWallet({ balance: '100' });
 
     await expect(
-      svc.credit(db.drizzle.db, { userId: w.userId, amount: '0', type: 'win' }),
+      svc.credit(db.drizzle.db, {
+        userId: w.userId,
+        amount: '0',
+        currency: 'USD',
+        type: 'win',
+      }),
     ).rejects.toThrow(/positive/);
   });
 });
@@ -200,9 +220,19 @@ describe('WalletCommandsService ledger sequence (real PG)', () => {
   it('nets a deposit-like credit, a bet debit, and a win credit into one running balance', async () => {
     const w = await seedWallet({ balance: '0' });
 
-    await svc.credit(db.drizzle.db, { userId: w.userId, amount: '100', type: 'deposit' });
+    await svc.credit(db.drizzle.db, {
+      userId: w.userId,
+      amount: '100',
+      currency: 'USD',
+      type: 'deposit',
+    });
     await svc.debit(db.drizzle.db, { userId: w.userId, amount: '30', type: 'bet' });
-    await svc.credit(db.drizzle.db, { userId: w.userId, amount: '60', type: 'win' });
+    await svc.credit(db.drizzle.db, {
+      userId: w.userId,
+      amount: '60',
+      currency: 'USD',
+      type: 'win',
+    });
 
     expect(await balanceOf(w.userId)).toBe(130);
     const rows = await txRows(w.id);

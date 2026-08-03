@@ -71,7 +71,12 @@ export type {
   RealtimeClientAuthorizer,
   RealtimeClientAuthorizerInput,
 } from './realtime.js';
-export { REALTIME_TRANSPORT, REALTIME_CLIENT_AUTHORIZER } from './realtime.js';
+export {
+  REALTIME_TRANSPORT,
+  REALTIME_CLIENT_AUTHORIZER,
+  CHAT_REALTIME_TRANSPORT,
+  CHAT_REALTIME_CLIENT_AUTHORIZER,
+} from './realtime.js';
 
 export type { GameAdapter } from './game.js';
 export { GAME_ADAPTER } from './game.js';
@@ -159,6 +164,7 @@ export type {
   GamePerformanceFilter,
   GamePerformanceRow,
   AdminGameReporting,
+  PlayerGameStats,
 } from './admin-game-reporting.js';
 export { GAME_PERFORMANCE_SORT_FIELDS, ADMIN_GAME_REPORTING } from './admin-game-reporting.js';
 
@@ -182,3 +188,11 @@ export type { LoginEnforcementPort } from './login-enforcement.js';
 export { LOGIN_ENFORCEMENT } from './login-enforcement.js';
 export type { PlayEligibilityPort } from './play-eligibility.js';
 export { PLAY_ELIGIBILITY } from './play-eligibility.js';
+
+export type { ChatSystemMessage, ChatSystemWriter } from './chat-system-writer.js';
+export { CHAT_SYSTEM_WRITER } from './chat-system-writer.js';
+
+export type { ChatBlockWriter } from './chat-block-writer.js';
+export { CHAT_BLOCK_WRITER } from './chat-block-writer.js';
+export type { ChatRoomAccess } from './chat-room-access.js';
+export { CHAT_ROOM_ACCESS } from './chat-room-access.js';
