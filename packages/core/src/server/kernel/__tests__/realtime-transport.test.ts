@@ -1,5 +1,17 @@
 import { describe, it, expect } from 'vitest';
 import { InProcessRealtimeTransport } from '../realtime-transport.js';
+import { runRealtimeTransportConformanceSuite } from '../../../testing/realtime-transport-conformance.js';
+
+runRealtimeTransportConformanceSuite({
+  name: 'InProcessRealtimeTransport',
+  create: () => new InProcessRealtimeTransport(),
+  supportsServerSideSubscribe: true,
+  addPresence: (transport, channel, entries) => {
+    for (const { userId, connectionId } of entries) {
+      transport.presence?.join(channel, userId, connectionId);
+    }
+  },
+});
 
 describe('InProcessRealtimeTransport', () => {
   it('fans a published event out to every subscriber of the channel', () => {

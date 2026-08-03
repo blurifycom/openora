@@ -15,8 +15,6 @@ import {
   RedisCache,
   RedisRateLimiter,
   RedisStreamsBroker,
-  InProcessRealtimeTransport,
-  SseClientAuthorizer,
   createEventBus,
   createLogger,
   createRedisClient,
@@ -40,8 +38,6 @@ import {
   IGAMING_CONFIG,
   type IgamingConfig,
   PLATFORM_CONFIG,
-  REALTIME_TRANSPORT,
-  REALTIME_CLIENT_AUTHORIZER,
 } from '@openora/core/contracts';
 import { DrizzleService, DRIZZLE, DrizzleOutboxWriter, OutboxRelay } from '../db/index.js';
 import { AdminGuard, ADMIN_GUARD, SessionResolver, AUTH_SESSION } from '../auth/index.js';
@@ -236,8 +232,6 @@ export async function createApp(config: CreateAppConfig): Promise<CreatedApp> {
       outboxEnabled ? c.get(OUTBOX) : undefined,
     ),
   );
-  container.register(REALTIME_TRANSPORT, () => new InProcessRealtimeTransport());
-  container.register(REALTIME_CLIENT_AUTHORIZER, () => new SseClientAuthorizer());
   // When REDIS_URL is set, JOB_QUEUE, the rate limiter, the cache and the message
   // broker bind to the shipped Redis reference adapters: BullMQ-backed durable jobs
   // (survive restarts, real cron), distributed throttling, cross-replica cache

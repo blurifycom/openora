@@ -2,7 +2,7 @@ import type { AdminUserDirectory, AdminUserListOptions, ClientMeta } from '@open
 import { KycStatusSchema, normalizeKycStatus } from '@openora/core/contracts';
 import { DrizzleService, pageToOffset } from '@openora/core/server';
 import type { EventBus } from '@openora/core/server';
-import { asc, count, desc, eq, ilike, inArray } from 'drizzle-orm';
+import { asc, count, desc, eq, ilike, inArray, sql } from 'drizzle-orm';
 import { user } from './schema/index.js';
 // Read-only cross-domain read of the player/profile table via the public /schema
 // subpath (allowed per ADR-0020) so back-office lists can label players by
@@ -122,6 +122,10 @@ export class DrizzleAdminUserDirectory implements AdminUserDirectory {
         kycStatus: player.kycStatus,
         email: user.email,
         language: user.language,
+        avatarUrl: user.image,
+        createdAt: player.createdAt,
+        level: player.level,
+        currency: player.currency,
       })
       .from(player)
       .innerJoin(user, eq(player.userId, user.id))
@@ -140,19 +144,49 @@ export class DrizzleAdminUserDirectory implements AdminUserDirectory {
     });
   }
 
+  async getPlayerByUsername(username: string) {
+    const rows = await this.drizzle.db
+      .select({
+        userId: player.userId,
+        username: player.displayName,
+        kycStatus: player.kycStatus,
+        email: user.email,
+        language: user.language,
+        avatarUrl: user.image,
+        createdAt: player.createdAt,
+        level: player.level,
+        currency: player.currency,
+      })
+      .from(player)
+      .innerJoin(user, eq(player.userId, user.id))
+      // Exact, case-insensitive match - ILIKE would let % and _ in `username` act as
+      // wildcards, letting a caller-supplied pattern select an arbitrary matching player.
+      .where(eq(sql`lower(${player.displayName})`, username.toLowerCase()))
+      .limit(1);
+    const [row] = rows;
+    if (!row) {
+      return null;
+    }
+    const kyc = KycStatusSchema.safeParse(row.kycStatus);
+    return { ...row, kycStatus: kyc.success ? normalizeKycStatus(kyc.data) : null };
+  }
+
   // Substring search is index-backed by the pg_trgm GIN indexes on user.email and
   // player.display_name; the 1000 cap is a safety bound on the id set, not a perf
   // crutch - it is effectively unreachable for a real admin search term.
-  async findPlayerIds(query: string) {
+  async findPlayerIds(query: string, limit = 1000) {
     const term = `%${query}%`;
-    const cap = 1000;
     const [byEmail, byName] = await Promise.all([
-      this.drizzle.db.select({ id: user.id }).from(user).where(ilike(user.email, term)).limit(cap),
+      this.drizzle.db
+        .select({ id: user.id })
+        .from(user)
+        .where(ilike(user.email, term))
+        .limit(limit),
       this.drizzle.db
         .select({ userId: player.userId })
         .from(player)
         .where(ilike(player.displayName, term))
-        .limit(cap),
+        .limit(limit),
     ]);
     const ids = new Set<string>();
     for (const r of byEmail) {
@@ -161,6 +195,6 @@ export class DrizzleAdminUserDirectory implements AdminUserDirectory {
     for (const r of byName) {
       ids.add(r.userId);
     }
-    return [...ids].slice(0, cap);
+    return [...ids].slice(0, limit);
   }
 }

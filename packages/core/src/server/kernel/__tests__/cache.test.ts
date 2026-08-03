@@ -54,6 +54,7 @@ describe('invalidate', () => {
     const failing: CacheAdapter = {
       get: async () => undefined,
       set: async () => {},
+      setIfAbsent: async () => false,
       delete: async () => {
         throw new Error('backend down');
       },

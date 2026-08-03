@@ -39,7 +39,7 @@ function makeService({
     endRound: vi.fn(),
   }),
   playEligibility = unrestricted,
-  walletCommands = makeWalletCommands({ ok: true, newBalance: '0' }),
+  walletCommands = makeWalletCommands({ ok: true, newBalance: '0', currency: 'USD' }),
 }: {
   provider?: GameAdapter;
   playEligibility?: PlayEligibilityPort;
@@ -123,7 +123,7 @@ describe('GamingService.startRound (real PG)', () => {
 
   it('debits the stake and persists the round on sufficient balance', async () => {
     const created = await seedGame({ id: '00000000-0000-0000-0000-0000000000a1', name: 'Aces' });
-    const walletCommands = makeWalletCommands({ ok: true, newBalance: '90' });
+    const walletCommands = makeWalletCommands({ ok: true, newBalance: '90', currency: 'USD' });
     const launchGame = vi.fn().mockResolvedValue({ launchUrl: 'https://mock/play', token: 'tok' });
     const svc = makeService({
       provider: mock<GameAdapter>({ launchGame, endRound: vi.fn() }),

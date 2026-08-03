@@ -255,6 +255,17 @@ function mapEventToRecord(topic: string, p: Record<string, unknown>): RecordInpu
     };
   }
 
+  // actorId = the player who (un)ignored; resource = the ignored player.
+  if (topic === 'chat.user.ignored' || topic === 'chat.user.unignored') {
+    return {
+      ...base,
+      actorType: 'player',
+      actorId: str(p['ignorerId']),
+      resourceType: 'player',
+      resourceId: str(p['ignoredId']),
+    };
+  }
+
   // actorId = the moderator who acted; resource = the affected player in that room.
   if (topic === 'chat.room.member.kicked' || topic === 'chat.room.member.banned') {
     const actorKey = topic === 'chat.room.member.kicked' ? 'kickedBy' : 'bannedBy';
@@ -268,8 +279,8 @@ function mapEventToRecord(topic: string, p: Record<string, unknown>): RecordInpu
     };
   }
 
-  // actorId = the player who created the room; resource = the new room.
-  if (topic === 'chat.private_room.created') {
+  // actorId = the player who created/deleted the room; resource = the room.
+  if (topic === 'chat.private_room.created' || topic === 'chat.private_room.deleted') {
     return {
       ...base,
       actorType: 'player',
@@ -495,11 +506,12 @@ const SUBSCRIBED_TOPICS: DomainEventName[] = [
   'wallet.withdrawal.failed',
   'gaming.round.started',
   'gaming.round.ended',
-  // chat.message.sent is intentionally NOT audited: it is high-volume content
-  // already persisted in chatMessage; the moderation/block actions are what we audit.
   'chat.user.blocked',
   'chat.user.unblocked',
+  'chat.user.ignored',
+  'chat.user.unignored',
   'chat.private_room.created',
+  'chat.private_room.deleted',
   'chat.room.created',
   'chat.room.updated',
   'chat.room.deleted',
@@ -507,6 +519,9 @@ const SUBSCRIBED_TOPICS: DomainEventName[] = [
   'chat.room.member.left',
   'chat.room.member.kicked',
   'chat.room.member.banned',
+  // chat.gift.sent
+  // chat.rain.distributed
+  'chat.user.mentioned',
   'compliance.limit.upserted',
   'compliance.limit.removed',
   'rg.limit.set',
@@ -556,6 +571,8 @@ export default definePlugin({
       const svc = new AuditService(c.get(DRIZZLE), c.get(EVENT_BUS));
       return {
         record: (entry) => svc.record(entry).then(() => undefined),
+        recordInTransaction: (tx, entry) =>
+          svc.recordInTransaction(tx, entry).then(() => undefined),
       };
     });
 
