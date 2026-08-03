@@ -13,6 +13,9 @@
 //     current tree.
 //   layer-file-naming - files directly in service/ end .service.ts (plus a short surveyed
 //     allowlist of pre-existing exceptions); files in __tests__/ end .test.ts.
+//   int-test-file-naming - a test file importing createTestDb/createTestRedis must end
+//     .int.test.ts, so `test:unit` stays the infra-free suite and `test:integration` owns
+//     everything that needs docker Postgres + Redis.
 //   no-inline-pg-enum - pgEnum('name', [...]) with an inline array literal is an error;
 //     values must come from a named tuple (see packages/core/src/wallet/schema/index.ts).
 //   no-relative-zone-escape - a relative import that leaves its module root must instead use
@@ -775,11 +778,39 @@ const noInlineZEnumOutsideContract = {
   },
 };
 
+const REAL_INFRA_FACTORIES = new Set(['createTestDb', 'createTestRedis']);
+
+const intTestFileNaming = {
+  create(context) {
+    const file = filename(context);
+    if (!file.endsWith('.test.ts') || file.endsWith('.int.test.ts')) {
+      return {};
+    }
+    return {
+      ImportDeclaration(node) {
+        const usesRealInfra = node.specifiers.some(
+          (s) => s.imported && REAL_INFRA_FACTORIES.has(s.imported.name),
+        );
+        if (!usesRealInfra) {
+          return;
+        }
+        context.report({
+          node,
+          message:
+            `${file.split('/').pop()} imports ${[...REAL_INFRA_FACTORIES].join('/')} but is not ` +
+            'named *.int.test.ts - rename it so it runs in test:integration, not test:unit.',
+        });
+      },
+    };
+  },
+};
+
 export default {
   meta: { name: 'oss-module-shape' },
   rules: {
     'module-file-placement': moduleFilePlacement,
     'layer-file-naming': layerFileNaming,
+    'int-test-file-naming': intTestFileNaming,
     'no-inline-pg-enum': noInlinePgEnum,
     'no-relative-zone-escape': noRelativeZoneEscape,
     'no-reinfer-imported-schema': noReinferImportedSchema,
