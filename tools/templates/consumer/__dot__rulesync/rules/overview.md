@@ -18,11 +18,10 @@ run `pnpm gen:agents`. Do not hand-edit the generated files.
 
 This repo is a downstream igaming operator built on the OSS platform (`@openora/*`).
 
-Apply every rule file in `.rulesync/rules/`:
+Sibling rules (load on demand; don't reopen settled questions):
 
-- `conventions` - the code standard (naming, types, functions, frontend, module + package structure, errors, testing, git).
+- `conventions` - the always-on code standard (naming, types, functions, package structure, errors, testing, git, frontend, DB), with a table routing each kind of change to its deep-dive file in `docs/standards/`.
 - `oss-boundaries` - OSS core is read-only; enforced import/module boundaries.
-- `db-conventions` - SQL / Drizzle rules for tables an overlay owns.
 - `e2e-conventions` - dual-mode Playwright specs, fixtures, mocks, page objects.
 
 ## HARD RULE: never modify OSS core
