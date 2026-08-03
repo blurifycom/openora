@@ -20,7 +20,6 @@ import {
   ChatService,
   ChatRoomNotFoundError,
   ChatRoomOwnershipError,
-  ChatRoomNotMemberError,
   ChatRoomNotModeratorError,
   ChatRoomSelfModerationError,
   ChatRoomLastModeratorError,
@@ -33,6 +32,7 @@ import {
   ChatRoomSlugConflictError,
   ChatRoomJoinCodeNotFoundError,
   ChatRoomBannedError,
+  ChatRoomNotMemberError,
 } from '../service/chat.service.js';
 
 const chat = populateContractRouterPaths({ chat: chatContract }).chat;

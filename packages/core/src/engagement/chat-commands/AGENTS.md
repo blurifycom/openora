@@ -14,23 +14,13 @@ Each row in `chat_command_config` holds `enabled`, `label`, `description`, and a
 
 ## Idempotency for money-moving commands (gift/rain/donate)
 
-`gift`/`rain`/`donate` REQUIRE a client `idempotencyKey` (uuid) - it is mandatory on the contract,
-not optional, so every money-moving request carries a retry guard; a timeout followed by a plain
-client retry must never double-debit. Backed by the `chat_command_idempotency` table (unique on
-`actorId, commandType, idempotencyKey`). The row IS the atomic guard - `guardCommandIdempotency`
-inserts it (with `result: null`) as the FIRST statement inside the same money-moving transaction,
-before any debit; `onConflictDoNothing` means a concurrent duplicate loses the race and throws
-`ConcurrentCommandReplayError` rather than touching money. The final `ChatSystemMessage` is
-backfilled onto the row right before the transaction returns - the same
-insert-placeholder-then-backfill idiom `chatGift.messageId` uses. Before entering the transaction,
-`findCommandReplay` checks for an existing row: comparison is against `fingerprint`, a sha256 hash
-of the FULL request (type, amount, roomId, and any command-specific field like `recipientCount`/
-`targetUsername`) computed by `fingerprintCommand` - NOT just the amount. A matching fingerprint is
-a genuine replay (returns the stored result, no wallet call at all); a matching key with a
-DIFFERENT fingerprint is a reused key, not a replay (`ChatCommandIdempotencyKeyReuseError`) -
-comparing only the amount would let the same key/amount replay into a different room, recipient
-count, or donate target. `result` is jsonb rather than a foreign read because chat-commands
-doesn't own `chatMessage` (the `chat` module does).
+`gift`/`rain`/`donate` require a client `idempotencyKey` (uuid). The `CACHE` port reserves
+`chat-command:idempotency:{actorId}:{commandType}:{idempotencyKey}` atomically with a five-minute
+TTL, stores the full-request fingerprint, and then stores the completed `ChatSystemMessage` under
+the same key. A matching fingerprint replays without another wallet call; a different fingerprint
+throws `ChatCommandIdempotencyKeyReuseError`; a concurrent in-flight request throws
+`ConcurrentCommandReplayError`. Failed money transactions release the reservation. The cache must
+provide atomic `setIfAbsent` - a plain get-then-set is not safe for money.
 
 ## Publish-after-commit for gift/rain/donate
 
@@ -73,10 +63,13 @@ use `findPlayerIds` correctly - those genuinely are partial-query autocomplete s
 ## Ports consumed
 
 - `CHAT_SYSTEM_WRITER` — posts system messages into the chat stream (bound by the `chat` plugin; implemented by `ChatService.sendSystemMessage`).
+- `CACHE` — atomic Redis-backed idempotency reservation and short-lived replay result storage.
 - `WALLET_COMMANDS` — debits the actor and credits recipient(s) within a single transaction; money never flows over events.
 - `ADMIN_USER_DIRECTORY` — `findPlayerIds` for autocomplete-style username search, `lookupPlayers` for batch profile resolution, `getPlayerByUsername` for exact-match resolution of an already-known username (`/donate`, `/block`, `/ignore`).
 - `ADMIN_GAME_REPORTING` — `getPlayerStats` for total-wagered/total-bets on the profile card (owned by casino/gaming).
-- `AUDIT_WRITER` — direct `record()` after each gift send and gift claim for the regulatory trail.
+- `AUDIT_WRITER` — transactional `recordInTransaction()` for gift/rain/donate money paths, so the
+  audit row commits or rolls back with the wallet move; non-money command configuration still uses
+  `record()`.
 - `CHAT_REALTIME_TRANSPORT` — `getOnlineUserIds(channel)` for rain recipient discovery; `publish(channel, event)` for gift-claimed push. The chat-scoped token, not the generic `REALTIME_TRANSPORT` - this module publishes on the same `chat:*` channels chat itself uses, so it must ride whatever transport chat is bound to (see `chat/AGENTS.md`), never a different one.
 
 ## Extension points
@@ -94,5 +87,6 @@ Add a new command type by:
 - Gift claim: the `UPDATE ... WHERE claimed_by IS NULL` is the idempotency guard — no separate lock needed. Self-claim is rejected before the update attempt.
 - Rain recipients are capped by `config.maxRecipients` (default 50) and filtered to exclude the actor.
 - All money movement is transactional: debit + credits + system message happen atomically.
+- Money-moving audit rows are written through the same transaction as the debit/credit and system message.
 - `mapConcurrent` (limit 10) is used for rain credits — never `Promise.all` on an unbounded recipient list.
 - `adminUpdateCommand` uses an upsert so a missing config row is created on first admin call.

@@ -19,6 +19,7 @@ import {
   SelfModerationActionError,
   ChatCommandIdempotencyKeyReuseError,
   ConcurrentCommandReplayError,
+  ChatRoomNotMemberError,
 } from '../service/chat-commands.service.js';
 
 const cc = populateContractRouterPaths({ chatCommands: chatCommandsContract }).chatCommands;
@@ -46,20 +47,26 @@ export function createChatCommandsRouter(svc: ChatCommandsService, adminGuard: A
             ChatCommandIdempotencyKeyReuseError,
             ConcurrentCommandReplayError,
           ],
+          FORBIDDEN: [ChatRoomNotMemberError],
         },
         () => svc.executeCommand(input, actorId),
       );
     }),
 
-    getGift: os.getGift.handler(({ input }) =>
-      mapErrors({ NOT_FOUND: [GiftNotFoundError] }, () => svc.getGift(input.id)),
-    ),
+    getGift: os.getGift.handler(({ input, context }) => {
+      const viewerId = getUserId(context);
+      return mapErrors(
+        { NOT_FOUND: [GiftNotFoundError], FORBIDDEN: [ChatRoomNotMemberError] },
+        () => svc.getGift(input.id, viewerId),
+      );
+    }),
 
     claimGift: os.claimGift.handler(({ input, context }) => {
       const claimerId = getUserId(context);
       return mapErrors(
         {
           NOT_FOUND: [GiftNotFoundError],
+          FORBIDDEN: [ChatRoomNotMemberError],
           CONFLICT: [GiftAlreadyClaimedError, GiftSelfClaimError],
         },
         () => svc.claimGift(input.id, claimerId),
@@ -77,9 +84,9 @@ export function createChatCommandsRouter(svc: ChatCommandsService, adminGuard: A
     }),
 
     playerProfile: os.playerProfile.handler(({ input, context }) => {
-      getUserId(context);
+      const viewerId = getUserId(context);
       return mapErrors({ NOT_FOUND: [ChatPlayerNotFoundError] }, () =>
-        svc.getPlayerProfile(input.userId),
+        svc.getPlayerProfile(input.userId, viewerId),
       );
     }),
 

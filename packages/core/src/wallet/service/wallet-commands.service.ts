@@ -91,7 +91,7 @@ export class WalletCommandsService implements WalletCommands {
 
   async credit(
     tx: unknown,
-    { userId, amount, type }: WalletCreditArgs,
+    { userId, amount, currency, type }: WalletCreditArgs,
   ): Promise<WalletCreditOutcome> {
     const txn = tx as DrizzleDb;
 
@@ -103,6 +103,9 @@ export class WalletCommandsService implements WalletCommands {
     // Fail closed: a credit never creates a wallet - a missing one is a caller bug.
     if (!row) {
       return { ok: false, reason: 'wallet not found' };
+    }
+    if (row.currency !== currency) {
+      return { ok: false, reason: 'currency mismatch' };
     }
 
     const [credited] = await txn

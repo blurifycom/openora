@@ -16,6 +16,7 @@ export type WalletDebitOutcome =
 export type WalletCreditArgs = {
   userId: string;
   amount: string;
+  currency: string;
   type: WalletTransactionType;
 };
 

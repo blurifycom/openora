@@ -38,6 +38,19 @@ export type AuditWritePort = {
       correlationId?: string | null;
     } & Partial<ClientMeta>,
   ): Promise<void>;
+  recordInTransaction(
+    tx: unknown,
+    entry: {
+      actorId?: string | null;
+      actorType: 'player' | 'admin' | 'system';
+      action: AuditAction;
+      resourceType: string;
+      resourceId?: string | null;
+      before?: Record<string, unknown> | null;
+      after?: Record<string, unknown> | null;
+      correlationId?: string | null;
+    } & Partial<ClientMeta>,
+  ): Promise<void>;
 };
 
 export const AUDIT_WRITER: SealedToken<AuditWritePort> =

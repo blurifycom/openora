@@ -9,6 +9,8 @@ import type {
   AdminGameReporting,
   AuditWritePort,
   RealtimeTransport,
+  ChatRoomAccess,
+  CacheAdapter,
 } from '@openora/core/contracts';
 import {
   ChatCommandsService,
@@ -137,7 +139,10 @@ function makeDirectory(senderUsername = 'bob', claimerUsername = 'alice'): Admin
 }
 
 function makeAudit(): AuditWritePort {
-  return mock<AuditWritePort>({ record: vi.fn().mockResolvedValue(undefined) });
+  return mock<AuditWritePort>({
+    record: vi.fn().mockResolvedValue(undefined),
+    recordInTransaction: vi.fn().mockResolvedValue(undefined),
+  });
 }
 
 function makeBlockWriter(): ChatBlockWriter {
@@ -161,6 +166,32 @@ function makeTransport(onlineIds: string[] = [CLAIMER_ID]): RealtimeTransport {
   });
 }
 
+function makeRoomAccess(): ChatRoomAccess {
+  return mock<ChatRoomAccess>({ verifyRoomAccess: vi.fn().mockResolvedValue(undefined) });
+}
+
+function makeCache(initial: Record<string, unknown> = {}): CacheAdapter {
+  const values = new Map<string, unknown>(Object.entries(initial));
+  return {
+    get: async <T>(key: string): Promise<T | undefined> => values.get(key) as T | undefined,
+    set: vi.fn(async (key: string, value: unknown) => {
+      values.set(key, value);
+    }),
+    setIfAbsent: vi.fn(async (key: string, value: unknown) => {
+      if (values.has(key)) {
+        return false;
+      }
+      values.set(key, value);
+      return true;
+    }),
+    delete: vi.fn(async (key: string | string[]) => {
+      for (const item of Array.isArray(key) ? key : [key]) {
+        values.delete(item);
+      }
+    }),
+  };
+}
+
 function makeSvc(
   overrides: {
     drizzleRows?: {
@@ -175,6 +206,8 @@ function makeSvc(
     audit?: AuditWritePort;
     gameReporting?: AdminGameReporting;
     blockWriter?: ChatBlockWriter;
+    roomAccess?: ChatRoomAccess;
+    cache?: CacheAdapter;
   } = {},
 ) {
   const drizzle = makeDrizzle({
@@ -192,6 +225,8 @@ function makeSvc(
     mock(makeEventBus()),
     overrides.blockWriter ?? makeBlockWriter(),
     overrides.gameReporting ?? makeGameReporting(),
+    overrides.roomAccess ?? makeRoomAccess(),
+    overrides.cache ?? makeCache(),
   );
 }
 
@@ -285,7 +320,7 @@ describe('ChatCommandsService.getPlayerProfile', () => {
   it('returns the full profile card on the happy path', async () => {
     const gameReporting = makeGameReporting();
     const svc = makeSvc({ directory: makeDirectory(), gameReporting });
-    const result = await svc.getPlayerProfile(ACTOR_ID);
+    const result = await svc.getPlayerProfile(ACTOR_ID, ACTOR_ID);
     expect(gameReporting.getPlayerStats).toHaveBeenCalledWith(ACTOR_ID);
     expect(result).toEqual({
       userId: ACTOR_ID,
@@ -304,11 +339,32 @@ describe('ChatCommandsService.getPlayerProfile', () => {
       lookupPlayers: vi.fn().mockResolvedValue([]),
     });
     const svc = makeSvc({ directory });
-    await expect(svc.getPlayerProfile(CLAIMER_ID)).rejects.toThrow(ChatPlayerNotFoundError);
+    await expect(svc.getPlayerProfile(CLAIMER_ID, ACTOR_ID)).rejects.toThrow(
+      ChatPlayerNotFoundError,
+    );
+  });
+
+  it('redacts private profile fields for another viewer', async () => {
+    const gameReporting = makeGameReporting();
+    const svc = makeSvc({ directory: makeDirectory(), gameReporting });
+    const result = await svc.getPlayerProfile(ACTOR_ID, CLAIMER_ID);
+    expect(result).toMatchObject({
+      userId: ACTOR_ID,
+      username: 'bob',
+      avatarUrl: null,
+      level: 3,
+      joinedAt: null,
+      totalWagered: null,
+      totalBets: null,
+      currency: null,
+    });
+    expect(gameReporting.getPlayerStats).not.toHaveBeenCalled();
   });
 });
 
 const IDEMPOTENCY_KEY = '00000000-0000-0000-0000-0000000000aa';
+const IDEMPOTENCY_CACHE_KEY = `chat-command:idempotency:${ACTOR_ID}:gift:${IDEMPOTENCY_KEY}`;
+const RAIN_IDEMPOTENCY_CACHE_KEY = `chat-command:idempotency:${ACTOR_ID}:rain:${IDEMPOTENCY_KEY}`;
 const IDEMPOTENCY_ROW_ID = '00000000-0000-0000-0000-0000000000bb';
 
 describe('ChatCommandsService.executeCommand (gift)', () => {
@@ -355,7 +411,7 @@ describe('ChatCommandsService.executeCommand (gift)', () => {
       drizzleRows: {
         select: [[ENABLED_ROW]],
         // First returning: idempotency guard insert; second: chatGift insert.
-        returning: [[{ id: IDEMPOTENCY_ROW_ID }], [{ ...GIFT_ROW }]],
+        returning: [[{ ...GIFT_ROW }]],
       },
       writer,
     });
@@ -434,7 +490,10 @@ describe('ChatCommandsService.executeCommand (gift idempotency)', () => {
       createdAt: new Date(),
     };
     const svc = makeSvc({
-      drizzleRows: { select: [[ENABLED_ROW], [storedRow]] },
+      drizzleRows: { select: [[ENABLED_ROW]] },
+      cache: makeCache({
+        [IDEMPOTENCY_CACHE_KEY]: { fingerprint: storedRow.fingerprint, result: SYSTEM_MSG },
+      }),
       wallet,
     });
     const result = await svc.executeCommand(giftInput, ACTOR_ID);
@@ -459,7 +518,10 @@ describe('ChatCommandsService.executeCommand (gift idempotency)', () => {
       createdAt: new Date(),
     };
     const svc = makeSvc({
-      drizzleRows: { select: [[ENABLED_ROW], [storedRow]] },
+      drizzleRows: { select: [[ENABLED_ROW]] },
+      cache: makeCache({
+        [IDEMPOTENCY_CACHE_KEY]: { fingerprint: storedRow.fingerprint, result: SYSTEM_MSG },
+      }),
     });
     await expect(
       svc.executeCommand(
@@ -486,7 +548,10 @@ describe('ChatCommandsService.executeCommand (gift idempotency)', () => {
       createdAt: new Date(),
     };
     const svc = makeSvc({
-      drizzleRows: { select: [[ENABLED_ROW], [storedRow]] },
+      drizzleRows: { select: [[ENABLED_ROW]] },
+      cache: makeCache({
+        [IDEMPOTENCY_CACHE_KEY]: { fingerprint: storedRow.fingerprint, result: SYSTEM_MSG },
+      }),
     });
     await expect(
       svc.executeCommand(
@@ -584,6 +649,8 @@ describe('ChatCommandsService.adminUpdateCommand', () => {
       mock(makeEventBus()),
       makeBlockWriter(),
       makeGameReporting(),
+      makeRoomAccess(),
+      makeCache(),
     );
     await svcWithAudit.adminUpdateCommand({ key: 'rain', enabled: false }, ACTOR_ID);
     expect(audit.record).toHaveBeenCalledWith(
@@ -619,6 +686,47 @@ describe('ChatCommandsService.handleRain', () => {
     ).rejects.toThrow(NoOnlineUsersError);
   });
 
+  it('replays before discovering online presence', async () => {
+    const transport = makeTransport();
+    const storedRow = {
+      id: IDEMPOTENCY_ROW_ID,
+      actorId: ACTOR_ID,
+      commandType: 'rain',
+      idempotencyKey: IDEMPOTENCY_KEY,
+      amount: '10.99000000',
+      fingerprint: fingerprintCommand({
+        type: 'rain',
+        amount: '10.99000000',
+        recipientCount: 10,
+        roomId: ROOM_ID,
+        idempotencyKey: IDEMPOTENCY_KEY,
+      }),
+      result: SYSTEM_MSG,
+      createdAt: new Date(),
+    };
+    const svc = makeSvc({
+      drizzleRows: { select: [[RAIN_ROW]] },
+      transport,
+      cache: makeCache({
+        [RAIN_IDEMPOTENCY_CACHE_KEY]: { fingerprint: storedRow.fingerprint, result: SYSTEM_MSG },
+      }),
+    });
+
+    await expect(
+      svc.executeCommand(
+        {
+          type: 'rain',
+          amount: '10.99000000',
+          recipientCount: 10,
+          roomId: ROOM_ID,
+          idempotencyKey: IDEMPOTENCY_KEY,
+        },
+        ACTOR_ID,
+      ),
+    ).resolves.toEqual(SYSTEM_MSG);
+    expect(transport.getOnlineUserIds).not.toHaveBeenCalled();
+  });
+
   it('distributes to online recipients excluding the actor', async () => {
     const RECIPIENT_2 = '00000000-0000-0000-0000-000000000006';
     const wallet = makeWallet();
@@ -645,6 +753,7 @@ describe('ChatCommandsService.handleRain', () => {
     expect(wallet.credit).toHaveBeenCalledWith(expect.anything(), {
       userId: CLAIMER_ID,
       amount: '5.00000000',
+      currency: 'USD',
       type: 'rain',
     });
   });
@@ -677,6 +786,7 @@ describe('ChatCommandsService.handleRain', () => {
     expect(wallet.credit).toHaveBeenCalledWith(expect.anything(), {
       userId: expect.any(String),
       amount: '3.33333333',
+      currency: 'USD',
       type: 'rain',
     });
   });
@@ -890,6 +1000,7 @@ describe('ChatCommandsService.handleDonate', () => {
     expect(wallet.credit).toHaveBeenCalledWith(expect.anything(), {
       userId: CLAIMER_ID,
       amount: '10.00000000',
+      currency: 'USD',
       type: 'tip',
     });
     expect(result.id).toBe(MSG_ID);

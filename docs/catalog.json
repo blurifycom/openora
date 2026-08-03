@@ -82,7 +82,6 @@
       "group": "engagement",
       "tables": [
         "chat_command_config",
-        "chat_command_idempotency",
         "chat_gift"
       ],
       "routes": [
@@ -435,6 +434,7 @@
         "packages/core/src/casino/lobby/plugin.ts",
         "packages/core/src/cms/plugin.ts",
         "packages/core/src/compliance/plugin.ts",
+        "packages/core/src/engagement/chat-commands/plugin.ts",
         "packages/core/src/iam/plugin.ts",
         "packages/core/src/pam/identity/plugin.ts"
       ]
@@ -443,6 +443,16 @@
       "category": "chat-block-writer",
       "interface": "ChatBlockWriter",
       "token": "CHAT_BLOCK_WRITER",
+      "status": "wired",
+      "boundIn": [
+        "packages/core/src/engagement/chat-commands/plugin.ts",
+        "packages/core/src/engagement/chat/plugin.ts"
+      ]
+    },
+    {
+      "category": "chat-room-access",
+      "interface": "ChatRoomAccess",
+      "token": "CHAT_ROOM_ACCESS",
       "status": "wired",
       "boundIn": [
         "packages/core/src/engagement/chat-commands/plugin.ts",
@@ -614,7 +624,8 @@
       "token": "REALTIME_TRANSPORT",
       "status": "wired",
       "boundIn": [
-        "packages/core/src/compliance/plugin.ts"
+        "packages/core/src/compliance/plugin.ts",
+        "packages/core/src/engagement/chat/plugin.ts"
       ]
     },
     {

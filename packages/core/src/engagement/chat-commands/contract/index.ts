@@ -71,10 +71,10 @@ export const PlayerProfileCardSchema = z.object({
   username: z.string(),
   avatarUrl: z.string().nullable(),
   level: z.number().int(),
-  joinedAt: z.string(),
-  totalWagered: MoneyAmountSchema,
-  totalBets: z.number().int(),
-  currency: z.string(),
+  joinedAt: z.string().nullable(),
+  totalWagered: MoneyAmountSchema.nullable(),
+  totalBets: z.number().int().nullable(),
+  currency: z.string().nullable(),
 });
 export type PlayerProfileCard = z.infer<typeof PlayerProfileCardSchema>;
 

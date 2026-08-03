@@ -5,29 +5,8 @@
     {
       "idx": 0,
       "version": "7",
-      "when": 1785142634091,
-      "tag": "0000_chemical_grandmaster",
-      "breakpoints": true
-    },
-    {
-      "idx": 1,
-      "version": "7",
-      "when": 1785227229512,
-      "tag": "0001_overjoyed_robin_chapel",
-      "breakpoints": true
-    },
-    {
-      "idx": 2,
-      "version": "7",
-      "when": 1785486987199,
-      "tag": "0002_robust_zombie",
-      "breakpoints": true
-    },
-    {
-      "idx": 3,
-      "version": "7",
-      "when": 1785501886661,
-      "tag": "0003_huge_the_leader",
+      "when": 1785744212797,
+      "tag": "0000_daffy_lady_bullseye",
       "breakpoints": true
     }
   ]

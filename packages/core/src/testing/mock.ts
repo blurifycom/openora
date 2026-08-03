@@ -100,6 +100,7 @@ export const makeEventBus = (): MockedEventBus =>
 
 export const makeAuditWriter = (): AuditWritePort & { record: Mock } => ({
   record: vi.fn(async () => undefined),
+  recordInTransaction: vi.fn(async () => undefined),
 });
 
 const matches = (refs: readonly string[], resource: string, action: string) =>

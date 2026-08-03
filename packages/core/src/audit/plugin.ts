@@ -571,6 +571,8 @@ export default definePlugin({
       const svc = new AuditService(c.get(DRIZZLE), c.get(EVENT_BUS));
       return {
         record: (entry) => svc.record(entry).then(() => undefined),
+        recordInTransaction: (tx, entry) =>
+          svc.recordInTransaction(tx, entry).then(() => undefined),
       };
     });
 

@@ -47,7 +47,6 @@ import {
   PRIVATE_ROOM_SLUG_PREFIX,
 } from '../contract/constants.js';
 import { moderateContent } from '../moderation/index.js';
-
 export const ChatRoomNotFoundError = makeNotFoundError('ChatRoom');
 export const ChatRoomOwnershipError = makeOwnershipError('ChatRoom');
 export const ChatMessageNotFoundError = makeNotFoundError('ChatMessage');
