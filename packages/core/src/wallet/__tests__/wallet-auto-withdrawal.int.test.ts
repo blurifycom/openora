@@ -22,9 +22,20 @@ import {
   autoWithdrawalRule,
   walletAutoWithdrawalConfig,
 } from '../schema/index.js';
-import { WalletService, COMPLIANCE_FLOOR_TAGS } from '../service/wallet.service.js';
+import { WalletService } from '../service/wallet.service.js';
 
 let db: TestDb;
+
+// The migration-level column DEFAULT (0006_lush_morg.sql) - a starting value for
+// upgraded installs, not a server-enforced floor. A Super Admin can clear or
+// change any of it via setAutoWithdrawalConfig.
+const MIGRATION_DEFAULT_EXCLUDE_RISK_FLAGS: readonly TagKey[] = [
+  'high_risk',
+  'bonus_abuser',
+  'kyc_rejected',
+  'withdrawal_review',
+  'multi_account',
+];
 
 type ServiceOptions = {
   autoWithdrawal?: Partial<AutoWithdrawalConfig>;
@@ -35,7 +46,7 @@ type ServiceOptions = {
   fiatThreshold?: string;
   cryptoThreshold?: string;
   // The DB row's tag-exclusion column (BF-319). Undefined = let the column's
-  // migration DEFAULT apply (the 5 compliance-floor tags); pass an explicit
+  // migration DEFAULT apply (the 5-tag starting value); pass an explicit
   // array (incl. []) to seed exactly that set instead.
   excludeRiskFlags?: readonly TagKey[];
   // Leaves the singleton config row unseeded, to exercise the row-missing
@@ -411,9 +422,8 @@ describe('WalletService.withdraw auto-approval (real PG)', () => {
     const { svc } = await makeService({
       autoWithdrawal: {},
       fiatThreshold: '1000',
-      // Explicit empty array proves an unrelated-tag player only trips the
-      // non-removable compliance floor (which 'vip' is not part of), not an
-      // empty exclusion set colliding with the column's non-empty DB default.
+      // Explicit empty array proves the exclusion set is genuinely empty here,
+      // not the column's non-empty DB default leaking through.
       excludeRiskFlags: [],
       riskTags: ['vip'],
     });
@@ -448,36 +458,16 @@ describe('WalletService.withdraw auto-approval (real PG)', () => {
     expect(result.status).toBe('pending');
   });
 
-  it('a floor tag stays pending even when the DB row explicitly sets excludeRiskFlags to an empty array (the floor cannot be zeroed out)', async () => {
+  it('setAutoWithdrawalConfig clearing excludeRiskFlags to [] lets a high_risk-tagged player auto-approve', async () => {
     const { svc } = await makeService({
       autoWithdrawal: {},
       fiatThreshold: '1000',
-      excludeRiskFlags: [],
       riskTags: ['high_risk'],
     });
-    const w = await seedWallet();
-
-    const result = await svc.withdraw({
-      userId: w.userId,
-      amount: '40',
-      currency: 'USD',
-      ...NO_CLIENT_META,
-    });
-
-    expect(result.status).toBe('pending');
-  });
-
-  it("setAutoWithdrawalConfig cannot weaken the compliance floor - a player carrying a floor tag OMITTED from the admin's submitted excludeRiskFlags still stays pending", async () => {
-    const { svc } = await makeService({
-      autoWithdrawal: {},
-      fiatThreshold: '1000',
-      riskTags: ['bonus_abuser'],
-    });
-    const submitted = COMPLIANCE_FLOOR_TAGS.filter((t) => t !== 'bonus_abuser');
     await svc.setAutoWithdrawalConfig(randomUUID(), {
       fiatThreshold: '1000',
       cryptoThreshold: '0',
-      excludeRiskFlags: [...submitted],
+      excludeRiskFlags: [],
     });
     const w = await seedWallet();
 
@@ -488,10 +478,10 @@ describe('WalletService.withdraw auto-approval (real PG)', () => {
       ...NO_CLIENT_META,
     });
 
-    expect(result.status).toBe('pending');
+    expect(result.status).toBe('completed');
   });
 
-  it('a per-player auto_withdrawal_rule override that clears the threshold gate does NOT bypass the tag-exclusion gate - a floor-tagged player still stays pending', async () => {
+  it('a per-player auto_withdrawal_rule override that clears the threshold gate does NOT bypass the tag-exclusion gate - a tag-excluded player still stays pending', async () => {
     const { svc } = await makeService({
       autoWithdrawal: {},
       fiatThreshold: '10',
@@ -501,7 +491,7 @@ describe('WalletService.withdraw auto-approval (real PG)', () => {
     await svc.setAutoWithdrawalRule({
       userId: w.userId,
       threshold: '1000',
-      reason: 'trusted, but still carries a floor tag',
+      reason: 'trusted, but still carries an excluded tag',
       createdBy: randomUUID(),
     });
 
@@ -515,12 +505,12 @@ describe('WalletService.withdraw auto-approval (real PG)', () => {
     expect(result.status).toBe('pending');
   });
 
-  it('an upgraded install with a pre-existing config row (no explicit excludeRiskFlags) gets the migration DEFAULT floor tags without any admin edit', async () => {
+  it('an upgraded install with a pre-existing config row (no explicit excludeRiskFlags) gets the migration DEFAULT tags without any admin edit', async () => {
     const { svc } = await makeService({ autoWithdrawal: {}, fiatThreshold: '1000' });
 
     const config = await svc.getAutoWithdrawalConfig();
 
-    expect(new Set(config.excludeRiskFlags)).toEqual(new Set(COMPLIANCE_FLOOR_TAGS));
+    expect(new Set(config.excludeRiskFlags)).toEqual(new Set(MIGRATION_DEFAULT_EXCLUDE_RISK_FLAGS));
   });
 
   it('stays pending on the large_amount heuristic regardless of the threshold', async () => {

@@ -132,17 +132,6 @@ function namespacedIdempotencyKey(namespace: string, rawKey: string): string {
 // moneyToNumber is the sanctioned JS conversion point for this heuristic comparison only.
 const LARGE_WITHDRAWAL_THRESHOLD = '5000';
 
-// Non-removable compliance floor (BF-319): always unioned into the DB-editable
-// wallet_auto_withdrawal_config.excludeRiskFlags, so a Super Admin can widen the
-// exclusion set at runtime but can never narrow it below this set via `.set`.
-export const COMPLIANCE_FLOOR_TAGS: readonly TagKey[] = [
-  'withdrawal_review',
-  'kyc_rejected',
-  'multi_account',
-  'high_risk',
-  'bonus_abuser',
-];
-
 // ponytail: >=3 withdrawals in a 24h window flags velocity; a flat count, not a per-tier rule.
 const HIGH_FREQUENCY_WINDOW_MS = 24 * 60 * 60 * 1000;
 const HIGH_FREQUENCY_MIN_COUNT = 3;
@@ -1042,13 +1031,9 @@ export class WalletService {
       return null;
     }
 
-    // The DB-editable exclusion set can only ever be widened by a Super Admin - the
-    // compliance floor is unioned in so `.set` can never weaken it.
-    const effectiveExcludeTags = [
-      ...new Set([...threshold.config.excludeRiskFlags, ...COMPLIANCE_FLOOR_TAGS]),
-    ];
+    const effectiveExcludeTags = threshold.config.excludeRiskFlags;
 
-    const riskTags = await this.autoApprovalRiskTags(userId);
+    const riskTags = await this.autoApprovalRiskTags(userId, effectiveExcludeTags);
     // null = exclusions configured but the lookup port is unavailable => fail closed.
     if (riskTags === null) {
       return null;
@@ -1189,10 +1174,14 @@ export class WalletService {
     return summary?.kycStatus ?? null;
   }
 
-  // Active tag keys; null when the port is unbound (fail closed) - the compliance floor
-  // (BF-319, see COMPLIANCE_FLOOR_TAGS) makes the caller's exclusion set permanently non-empty,
-  // so PLAYER_TAGS is effectively a hard dependency for auto-approval, not just an opt-in one.
-  private async autoApprovalRiskTags(userId: User['id']): Promise<TagKey[] | null> {
+  // Active tag keys; [] when no exclusions configured or none carried; null when configured but the port is unbound (fail closed).
+  private async autoApprovalRiskTags(
+    userId: User['id'],
+    excludeRiskFlags: readonly TagKey[],
+  ): Promise<TagKey[] | null> {
+    if (excludeRiskFlags.length === 0) {
+      return [];
+    }
     if (!this.riskTags) {
       return null;
     }
