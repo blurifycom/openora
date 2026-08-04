@@ -4,7 +4,7 @@ import {
   DRIZZLE,
   ADMIN_GUARD,
   createLogger,
-  type CoreTokenCatalog,
+  CORE_TOKEN_CATALOG,
 } from '@openora/core/server';
 import * as z from 'zod';
 import {
@@ -58,7 +58,7 @@ const KycDecisionSyncJobSchema = z.object({
   receivedAt: z.iso.datetime(),
 });
 
-export default definePlugin<CoreTokenCatalog>()({
+export default definePlugin(CORE_TOKEN_CATALOG, {
   id: 'compliance',
   dependsOn: ['player-management', 'identity', 'wallet', 'gaming', 'audit'],
   requiresPorts: [LOGIN_ENFORCEMENT],

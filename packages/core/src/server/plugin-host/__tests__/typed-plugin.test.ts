@@ -39,7 +39,7 @@ function assertTypedContainer() {
 
 void assertTypedContainer;
 
-const typedPlugin = definePlugin<typeof catalog>()({
+const typedPlugin = definePlugin(catalog, {
   id: 'typed-plugin',
   dependsOn: ['foundation'],
   register(ctx) {
@@ -55,7 +55,7 @@ const typedPlugin = definePlugin<typeof catalog>()({
   },
 });
 
-definePlugin<typeof catalog>()({
+definePlugin(catalog, {
   id: 'invalid-typed-plugin',
   register(ctx) {
     // @ts-expect-error A provider must return the catalog token value.
@@ -74,22 +74,7 @@ definePlugin<typeof catalog>()({
 });
 
 const typedPluginId: 'typed-plugin' = typedPlugin.id;
-const typedDependency: readonly ['foundation'] = typedPlugin.dependsOn ?? ['foundation'];
-
-// The original, single-call, uncatalogued form still works and still infers
-// literal id/dependsOn types - definePlugin() was never renamed.
-const uncataloguedPlugin = definePlugin({
-  id: 'uncatalogued-plugin',
-  dependsOn: ['foundation'],
-  register(ctx) {
-    ctx.provide(OTHER, () => 'anything goes without a catalog');
-  },
-});
-
-const uncataloguedPluginId: 'uncatalogued-plugin' = uncataloguedPlugin.id;
-const uncataloguedDependency: readonly ['foundation'] = uncataloguedPlugin.dependsOn ?? [
-  'foundation',
-];
+const typedDependency: readonly ['foundation'] = typedPlugin.dependsOn;
 
 const validGraph = defineExtensions([
   { id: 'foundation', path: './foundation.js' },
@@ -106,7 +91,7 @@ defineExtensions([
 ]);
 
 describe('typed plugin surface', () => {
-  it('keeps literal plugin metadata and resolves catalog services', () => {
+  it('resolves catalog services through a catalogued plugin', () => {
     const container = new Container<typeof catalog>();
     const registry = new ModuleRegistryImpl<typeof catalog>(container);
 
@@ -117,11 +102,6 @@ describe('typed plugin surface', () => {
     expect(typedDependency).toEqual(['foundation']);
     expect(validGraph[1]?.dependsOn).toEqual(['foundation']);
     expect(container.get(COUNT)).toBe(42);
-  });
-
-  it('keeps the uncatalogued single-call form working', () => {
-    expect(uncataloguedPluginId).toBe('uncatalogued-plugin');
-    expect(uncataloguedDependency).toEqual(['foundation']);
   });
 
   it('keeps router factories on the catalogued container view', () => {

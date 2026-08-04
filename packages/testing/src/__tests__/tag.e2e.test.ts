@@ -1,7 +1,13 @@
 import { describe, it, expect, beforeAll, afterAll, vi } from 'vitest';
 import { randomUUID } from 'node:crypto';
 import { eq } from 'drizzle-orm';
-import { loadExtensions, DRIZZLE, EVENT_BUS, type Container } from '@openora/core/server';
+import {
+  loadExtensions,
+  DRIZZLE,
+  EVENT_BUS,
+  type Container,
+  type CoreTokenCatalog,
+} from '@openora/core/server';
 import { JOB_QUEUE, queue } from '@openora/core/contracts';
 import { session } from '@openora/core/pam/schema/identity';
 import { walletTransaction } from '@openora/core/wallet/schema';
@@ -51,7 +57,11 @@ async function registerAndMaterializePlayer(honoApp: TestApp['app'], email: stri
   return { client, playerId: profile.id, userId: profile.userId };
 }
 
-async function backdateSessions(container: Container, userId: string, daysAgo: number) {
+async function backdateSessions(
+  container: Container<CoreTokenCatalog>,
+  userId: string,
+  daysAgo: number,
+) {
   const past = new Date(Date.now() - daysAgo * 24 * 60 * 60 * 1000);
   await container
     .get(DRIZZLE)
@@ -60,7 +70,11 @@ async function backdateSessions(container: Container, userId: string, daysAgo: n
     .where(eq(session.userId, userId));
 }
 
-async function backdateTransaction(container: Container, transactionId: string, daysAgo: number) {
+async function backdateTransaction(
+  container: Container<CoreTokenCatalog>,
+  transactionId: string,
+  daysAgo: number,
+) {
   const past = new Date(Date.now() - daysAgo * 24 * 60 * 60 * 1000);
   await container
     .get(DRIZZLE)
@@ -96,7 +110,7 @@ async function assignTagManually(admin: TestClient, playerId: string, tagKey: st
   return readJson(res);
 }
 
-async function runDailySweep(container: Container) {
+async function runDailySweep(container: Container<CoreTokenCatalog>) {
   await container.get(JOB_QUEUE).enqueue(queue('tag.daily-evaluation'), {});
 }
 

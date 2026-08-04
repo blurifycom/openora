@@ -4,6 +4,7 @@ import {
   DRIZZLE,
   ADMIN_GUARD,
   type TypedContainer,
+  CORE_TOKEN_CATALOG,
   type CoreTokenCatalog,
 } from '@openora/core/server';
 import {
@@ -21,7 +22,7 @@ import { TagRuleService } from './service/tag-rule.service.js';
 import { TagEvaluationService } from './service/tag-evaluation.service.js';
 import { createTagRouter } from './router/index.js';
 
-export default definePlugin<CoreTokenCatalog>()({
+export default definePlugin(CORE_TOKEN_CATALOG, {
   id: 'tag',
   dependsOn: ['wallet', 'identity'],
   register(ctx) {

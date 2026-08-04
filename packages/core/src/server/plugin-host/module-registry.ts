@@ -10,11 +10,11 @@ import type {
   ModuleRegistry,
   McpToolDefinition,
   RouterFactory,
-  ContainerView,
+  TypedContainer,
   EventHandler,
 } from './define-plugin.js';
 
-export class ModuleRegistryImpl<C extends TokenCatalog = never> implements ModuleRegistry<C> {
+export class ModuleRegistryImpl<C extends TokenCatalog> implements ModuleRegistry<C> {
   private _routers = new Map<string, RouterFactory<C>>();
   private _slots = new Map<string, unknown>();
   private _events = new Map<string, EventHandler[]>();
@@ -30,7 +30,7 @@ export class ModuleRegistryImpl<C extends TokenCatalog = never> implements Modul
   // Canonical sealed list lives in `@openora/core/compliance`.
   provide = <T extends Token<unknown>>(
     token: T,
-    factory: (container: ContainerView<C>) => TokenValue<T>,
+    factory: (container: TypedContainer<C>) => TokenValue<T>,
   ): void => {
     const desc = token.description ?? '';
     if (desc.startsWith('sealed:')) {
@@ -51,7 +51,7 @@ export class ModuleRegistryImpl<C extends TokenCatalog = never> implements Modul
   // of silently rebinding (there is no "last-wins" for a sealed token).
   provideSealed = <T extends SealedToken<unknown>>(
     token: T,
-    factory: (container: ContainerView<C>) => TokenValue<T>,
+    factory: (container: TypedContainer<C>) => TokenValue<T>,
   ): void => {
     if (this._sealedBound.has(token)) {
       throw new Error(

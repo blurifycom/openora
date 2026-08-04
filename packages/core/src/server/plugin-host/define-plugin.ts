@@ -1,4 +1,3 @@
-import type { Container } from '../kernel/index.js';
 import type {
   EventEnvelope,
   SealedToken,
@@ -15,48 +14,38 @@ export type McpToolDefinition = {
   handler: (input: unknown) => unknown | Promise<unknown>;
 };
 
-// Runs once at boot, after every plugin has registered its providers, so adapter overrides (last registration wins) are in effect.
-export type RouterFactory<C extends TokenCatalog = never> = (c: ContainerView<C>) => unknown;
-
+/**
+ * Container view a plugin's `provide()`/`provideSealed()` factory and router
+ * factories receive: read-only (`get`/`has`/`onDispose`) and catalog-constrained
+ * - never the full `Container`, so plugin code can't call `register()` directly
+ * and bypass ModuleRegistry's sealed-token rejection.
+ */
 export type TypedContainer<C extends TokenCatalog> = {
   get<T extends C[keyof C]>(token: T): TokenValue<T>;
   has<T extends C[keyof C]>(token: T): boolean;
   onDispose(fn: () => void | Promise<void>): void;
 };
 
+// Runs once at boot, after every plugin has registered its providers, so adapter overrides (last registration wins) are in effect.
+export type RouterFactory<C extends TokenCatalog> = (c: TypedContainer<C>) => unknown;
+
 export type EventHandler = (payload: unknown, envelope?: EventEnvelope) => void | Promise<void>;
 
-// The container view a factory receives: the full Container when uncatalogued, or
-// a view restricted to the catalog's own tokens otherwise.
-export type ContainerView<C extends TokenCatalog> = [C] extends [never]
-  ? Container
-  : TypedContainer<C>;
-
-// The token shape provide()/provideSealed() accept: any Token/SealedToken when
-// uncatalogued, or a catalog-listed one when C is a real catalog. T is inferred
-// directly from the token argument (never a keyof reverse lookup) - that's what
-// makes TokenValue<T> resolve to that one entry instead of a union of every
-// catalog value.
-type ProviderToken<C extends TokenCatalog> = [C] extends [never]
-  ? Token<unknown>
-  : C[keyof C] & Token<unknown>;
-
-type SealedProviderToken<C extends TokenCatalog> = [C] extends [never]
-  ? SealedToken<unknown>
-  : C[keyof C] & SealedToken<unknown>;
-
-export type ModuleRegistry<C extends TokenCatalog = never> = {
+export type ModuleRegistry<C extends TokenCatalog> = {
   // Last registration wins - an overlay loaded after a module can rebind its adapter token.
-  provide<T extends ProviderToken<C>>(
+  // T is inferred directly from the token argument (never a keyof reverse lookup) -
+  // that's what makes TokenValue<T> resolve to that one catalog entry instead of a
+  // union of every catalog value.
+  provide<T extends C[keyof C] & Token<unknown>>(
     token: T,
-    factory: (container: ContainerView<C>) => TokenValue<T>,
+    factory: (container: TypedContainer<C>) => TokenValue<T>,
   ): void;
   // Bind-once, owner-only. The ONLY legitimate way to bind a SealedToken - provide()
   // rejects sealed tokens outright. A second call for the same token (an overlay
   // trying to override a regulator-mandated service) throws instead of rebinding.
-  provideSealed<T extends SealedProviderToken<C>>(
+  provideSealed<T extends C[keyof C] & SealedToken<unknown>>(
     token: T,
-    factory: (container: ContainerView<C>) => TokenValue<T>,
+    factory: (container: TypedContainer<C>) => TokenValue<T>,
   ): void;
   routers: {
     add(namespace: string, factory: RouterFactory<C>): void;
@@ -81,57 +70,39 @@ export type ModuleRegistry<C extends TokenCatalog = never> = {
   };
 };
 
-export type PluginContext<C extends TokenCatalog = never> = ModuleRegistry<C>;
+export type PluginContext<C extends TokenCatalog> = ModuleRegistry<C>;
 
 export type PluginDefinition<
-  C extends TokenCatalog = never,
+  C extends TokenCatalog,
   Id extends string = string,
-  Dependencies extends readonly string[] = string[],
+  Dependencies extends readonly string[] = readonly string[],
 > = {
   id: Id;
+  // Kept as literals so extensions.config.ts can type-check the whole dependency
+  // graph (unknown ids + cycles) through defineExtensions.
   dependsOn?: Dependencies;
   // Verified once after all plugins register - a missing port fails fast. See ADR-0024.
-  requiresPorts?: ProviderToken<C>[];
+  requiresPorts?: Array<C[keyof C] & Token<unknown>>;
   register(ctx: PluginContext<C>): void | Promise<void>;
 };
 
 export type Plugin<
-  C extends TokenCatalog = never,
+  C extends TokenCatalog,
   Id extends string = string,
-  Dependencies extends readonly string[] = string[],
+  Dependencies extends readonly string[] = readonly string[],
 > = PluginDefinition<C, Id, Dependencies>;
 
-// `requiresPorts` is widened to a plain Token[] here only: TS can't prove the
-// deferred `ProviderToken<C>` conditional (unresolved for a generic C) is
-// assignable against the never-catalog overload's resolved branch, even though
-// every real instantiation of C does resolve safely - a checker limitation on
-// this one field, not a hole in the constraint itself.
-type LooseDefinition<C extends TokenCatalog> = Omit<PluginDefinition<C>, 'requiresPorts'> & {
-  requiresPorts?: Token<unknown>[];
-};
-
-// Uncatalogued: definePlugin({ id, register }) - the plugin host's original,
-// single-call form. Unchanged for consumer overlays and scaffolded modules that
-// don't need catalog-constrained container access.
-export function definePlugin<
-  const Id extends string = string,
-  const Dependencies extends readonly string[] = [],
->(definition: PluginDefinition<never, Id, Dependencies>): Plugin<never, Id, Dependencies>;
-// Catalogued: definePlugin<CoreTokenCatalog>()({ id, register }). C is fixed by the
-// first (argument-less) call so the second call's Id/Dependencies still infer from
-// the literal object - TypeScript won't infer a trailing `const` type parameter
-// past one supplied explicitly in the same call.
-export function definePlugin<C extends TokenCatalog>(): <
-  const Id extends string,
-  const Dependencies extends readonly string[] = [],
->(
-  definition: PluginDefinition<C, Id, Dependencies>,
-) => Plugin<C, Id, Dependencies>;
-export function definePlugin<C extends TokenCatalog = never>(
-  definition?: LooseDefinition<C>,
-): LooseDefinition<C> | ((definition: LooseDefinition<C>) => LooseDefinition<C>) {
-  if (definition === undefined) {
-    return (inner: LooseDefinition<C>) => inner;
-  }
+// Every plugin declares the token catalog it needs: definePlugin(CORE_TOKEN_CATALOG, { id, register }).
+// The catalog is a VALUE argument, not a type argument, deliberately - TypeScript
+// only fills in unspecified trailing type parameters from their declared defaults,
+// never by inferring them from the call, so an explicit `definePlugin<C>({...})`
+// would silently widen `id`/`dependsOn` to `string`/`string[]`. Inferring C from a
+// same-call value argument alongside the literal `definition` (via `const T`) lets
+// both infer correctly together.
+export function definePlugin<C extends TokenCatalog, const T extends PluginDefinition<C>>(
+  catalog: C,
+  definition: T,
+): T {
+  void catalog;
   return definition;
 }

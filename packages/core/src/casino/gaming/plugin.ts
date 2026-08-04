@@ -1,4 +1,4 @@
-import { definePlugin, EVENT_BUS, DRIZZLE, type CoreTokenCatalog } from '@openora/core/server';
+import { definePlugin, EVENT_BUS, DRIZZLE, CORE_TOKEN_CATALOG } from '@openora/core/server';
 import {
   ADMIN_GAME_REPORTING,
   GAME_ADAPTER,
@@ -12,7 +12,7 @@ import { MockGameAdapter } from './adapters/mock/mock-game-adapter.js';
 import { MockRngAdapter } from './adapters/mock/mock-rng-adapter.js';
 import { DrizzleAdminGameReporting } from './admin-reporting.js';
 
-export default definePlugin<CoreTokenCatalog>()({
+export default definePlugin(CORE_TOKEN_CATALOG, {
   id: 'gaming',
   requiresPorts: [PLAY_ELIGIBILITY],
   dependsOn: ['wallet'],

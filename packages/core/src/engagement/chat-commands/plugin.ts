@@ -3,7 +3,7 @@ import {
   DRIZZLE,
   EVENT_BUS,
   ADMIN_GUARD,
-  type CoreTokenCatalog,
+  CORE_TOKEN_CATALOG,
 } from '@openora/core/server';
 import {
   WALLET_COMMANDS,
@@ -19,7 +19,7 @@ import {
 import { ChatCommandsService } from './service/chat-commands.service.js';
 import { createChatCommandsRouter } from './router/index.js';
 
-export default definePlugin<CoreTokenCatalog>()({
+export default definePlugin(CORE_TOKEN_CATALOG, {
   id: 'chat-commands',
   dependsOn: ['chat', 'wallet', 'iam', 'audit', 'gaming'],
   register(ctx) {

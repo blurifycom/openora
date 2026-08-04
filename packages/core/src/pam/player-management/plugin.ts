@@ -3,7 +3,7 @@ import {
   EVENT_BUS,
   DRIZZLE,
   ADMIN_GUARD,
-  type CoreTokenCatalog,
+  CORE_TOKEN_CATALOG,
 } from '@openora/core/server';
 import { AUDIT_WRITER, KYC_STATUS_WRITER } from '@openora/core/contracts';
 import { PlayerService } from './service/player.service.js';
@@ -12,7 +12,7 @@ import { createPlayerRouter } from './router/index.js';
 
 // Owns the player table writes, so it binds the single KYC_STATUS_WRITER seam
 // (compliance + the admin override route consume it). Reads identity via /schema. See ADR-0020.
-export default definePlugin<CoreTokenCatalog>()({
+export default definePlugin(CORE_TOKEN_CATALOG, {
   id: 'player-management',
   dependsOn: ['audit'],
   register(ctx) {

@@ -8,13 +8,7 @@ import type { AnyToken, TokenCatalog, TokenValue } from '@openora/core/contracts
 // sealed/overlay-rejection rules live one layer up, in ModuleRegistry's
 // provide()/provideSealed() (see plugin-host/module-registry.ts).
 
-export type Factory<T, C extends TokenCatalog = never> = (c: Container<C>) => T;
-
-// The token shape register()/has()/get() accept: any token when uncatalogued, or a
-// catalog-listed one otherwise. T is inferred directly from the token argument
-// (never a keyof reverse lookup), which is what makes TokenValue<T> resolve to
-// that one entry instead of a union of every catalog value.
-type ContainerToken<C extends TokenCatalog> = [C] extends [never] ? AnyToken<unknown> : C[keyof C];
+export type Factory<T, C extends TokenCatalog> = (c: Container<C>) => T;
 
 /**
  * Functional DI container - no decorators, no reflection. `get()` resolves
@@ -26,13 +20,13 @@ type ContainerToken<C extends TokenCatalog> = [C] extends [never] ? AnyToken<unk
  * `dispose()` runs every `onDispose` callback in REVERSE registration order -
  * register dependencies before their dependents so teardown happens safely.
  */
-export class Container<C extends TokenCatalog = never> {
+export class Container<C extends TokenCatalog> {
   private readonly factories = new Map<symbol, Factory<unknown, C>>();
   private readonly instances = new Map<symbol, unknown>();
   private readonly resolving = new Set<symbol>();
   private readonly disposers: Array<() => void | Promise<void>> = [];
 
-  register<T extends ContainerToken<C>>(
+  register<T extends C[keyof C]>(
     token: T,
     factory: (container: Container<C>) => TokenValue<T>,
   ): void {
@@ -44,11 +38,11 @@ export class Container<C extends TokenCatalog = never> {
     this.instances.delete(token);
   }
 
-  has<T extends ContainerToken<C>>(token: T): boolean {
+  has<T extends C[keyof C]>(token: T): boolean {
     return this.factories.has(token);
   }
 
-  get<T extends ContainerToken<C>>(token: T): TokenValue<T> {
+  get<T extends C[keyof C]>(token: T): TokenValue<T> {
     if (this.instances.has(token)) {
       return this.instances.get(token) as TokenValue<T>;
     }

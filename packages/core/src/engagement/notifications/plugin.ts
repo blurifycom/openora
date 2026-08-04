@@ -15,7 +15,7 @@ import {
   definePlugin,
   EVENT_BUS,
   DRIZZLE,
-  type CoreTokenCatalog,
+  CORE_TOKEN_CATALOG,
 } from '@openora/core/server';
 import { MockNotificationDeliveryAdapter } from './adapters/mock/mock-notification-adapter.js';
 import { createNotificationsRouter } from './router/index.js';
@@ -28,7 +28,7 @@ const KycResubmissionNotifyJobSchema = z.object({
   reason: z.string().nullable(),
 });
 
-export default definePlugin<CoreTokenCatalog>()({
+export default definePlugin(CORE_TOKEN_CATALOG, {
   id: 'notifications',
   // ADMIN_USER_DIRECTORY (owned by identity) resolves the player's email for the
   // withdrawal delivery emails; pin load order so a split still finds the port. See ADR-0017.

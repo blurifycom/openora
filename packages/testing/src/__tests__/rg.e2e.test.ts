@@ -1,7 +1,12 @@
 import { describe, it, expect, beforeAll, afterAll, vi } from 'vitest';
 import { randomUUID } from 'node:crypto';
 import { eq } from 'drizzle-orm';
-import { loadExtensions, DRIZZLE, type Container } from '@openora/core/server';
+import {
+  loadExtensions,
+  DRIZZLE,
+  type Container,
+  type CoreTokenCatalog,
+} from '@openora/core/server';
 import { JOB_QUEUE, PLAY_ELIGIBILITY, queue } from '@openora/core/contracts';
 import { rgExclusion } from '@openora/core/compliance/schema';
 import { user } from '@openora/core/pam/schema/identity';
@@ -63,11 +68,11 @@ async function attemptLogin(email: string, password: string) {
   });
 }
 
-async function setRole(container: Container, userId: string, role: string) {
+async function setRole(container: Container<CoreTokenCatalog>, userId: string, role: string) {
   await container.get(DRIZZLE).db.update(user).set({ role }).where(eq(user.id, userId));
 }
 
-async function expireExclusion(container: Container, exclusionId: string) {
+async function expireExclusion(container: Container<CoreTokenCatalog>, exclusionId: string) {
   await container
     .get(DRIZZLE)
     .db.update(rgExclusion)
@@ -75,7 +80,7 @@ async function expireExclusion(container: Container, exclusionId: string) {
     .where(eq(rgExclusion.id, exclusionId));
 }
 
-async function exclusionStatus(container: Container, exclusionId: string) {
+async function exclusionStatus(container: Container<CoreTokenCatalog>, exclusionId: string) {
   const [row] = await container
     .get(DRIZZLE)
     .db.select({ status: rgExclusion.status })
@@ -84,7 +89,7 @@ async function exclusionStatus(container: Container, exclusionId: string) {
   return row?.status;
 }
 
-async function triggerRgMonitorSweep(container: Container) {
+async function triggerRgMonitorSweep(container: Container<CoreTokenCatalog>) {
   await container.get(JOB_QUEUE).enqueue(queue('rg-monitor'), {});
 }
 

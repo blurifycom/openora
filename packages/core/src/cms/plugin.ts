@@ -3,13 +3,13 @@ import {
   EVENT_BUS,
   DRIZZLE,
   ADMIN_GUARD,
-  type CoreTokenCatalog,
+  CORE_TOKEN_CATALOG,
 } from '@openora/core/server';
 import { CACHE } from '@openora/core/contracts';
 import { CmsService } from './service/cms.service.js';
 import { createCmsRouter } from './router/index.js';
 
-export default definePlugin<CoreTokenCatalog>()({
+export default definePlugin(CORE_TOKEN_CATALOG, {
   id: 'cms',
   register(ctx) {
     ctx.routers.add('cms', (c) =>

@@ -20,7 +20,7 @@ import {
   EVENT_BUS,
   DRIZZLE,
   AUTH_SESSION,
-  type CoreTokenCatalog,
+  CORE_TOKEN_CATALOG,
 } from '@openora/core/server';
 import { MockKycAdapter } from './adapters/mock/mock-kyc-adapter.js';
 import { MockSmsAdapter } from './adapters/mock/mock-sms-adapter.js';
@@ -34,7 +34,7 @@ import { SessionService } from './service/session.service.js';
 import { LoginEnforcementService } from './service/login-enforcement.service.js';
 import { PlayEligibilityService } from './service/play-eligibility.service.js';
 
-export default definePlugin<CoreTokenCatalog>()({
+export default definePlugin(CORE_TOKEN_CATALOG, {
   id: 'identity',
   register(ctx) {
     ctx.provide(KYC_ADAPTER, () => new MockKycAdapter());

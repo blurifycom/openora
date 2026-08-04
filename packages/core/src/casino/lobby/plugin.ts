@@ -1,9 +1,9 @@
-import { definePlugin, DRIZZLE, type CoreTokenCatalog } from '@openora/core/server';
+import { definePlugin, DRIZZLE, CORE_TOKEN_CATALOG } from '@openora/core/server';
 import { CACHE } from '@openora/core/contracts';
 import { LobbyService } from './service/lobby.service.js';
 import { createLobbyRouter } from './router/index.js';
 
-export default definePlugin<CoreTokenCatalog>()({
+export default definePlugin(CORE_TOKEN_CATALOG, {
   id: 'lobby',
   register(ctx) {
     ctx.routers.add('lobby', (c) =>

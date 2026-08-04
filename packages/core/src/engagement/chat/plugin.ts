@@ -3,7 +3,7 @@ import {
   EVENT_BUS,
   DRIZZLE,
   ADMIN_GUARD,
-  type CoreTokenCatalog,
+  CORE_TOKEN_CATALOG,
 } from '@openora/core/server';
 import {
   CHAT_REALTIME_TRANSPORT,
@@ -22,7 +22,7 @@ import { createChatRouter } from './router/index.js';
 
 const CHAT_SERVICE = createToken<ChatService>('_ChatService');
 
-export default definePlugin<CoreTokenCatalog>()({
+export default definePlugin(CORE_TOKEN_CATALOG, {
   id: 'chat',
   dependsOn: ['identity'],
   register(ctx) {
