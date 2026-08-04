@@ -1706,6 +1706,10 @@
       "file": "packages/core/src/wallet/contract/index.ts"
     },
     {
+      "name": "WalletConfigSchema",
+      "file": "packages/core/src/contracts/schemas/platform-config.ts"
+    },
+    {
       "name": "WalletRailSchema",
       "file": "packages/core/src/contracts/schemas/wallet-tx.ts"
     },

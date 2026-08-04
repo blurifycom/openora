@@ -40,7 +40,14 @@ export default definePlugin({
       return new HmacPaymentWebhookVerifier(webhookSecret);
     });
     // Other modules debit through this port within their own transaction (never importing wallet tables). See ADR-0016.
-    ctx.provide(WALLET_COMMANDS, (c) => new WalletCommandsService(c.get(PLAY_ELIGIBILITY)));
+    ctx.provide(
+      WALLET_COMMANDS,
+      (c) =>
+        new WalletCommandsService(
+          c.get(PLAY_ELIGIBILITY),
+          c.has(PLATFORM_CONFIG) ? c.get(PLATFORM_CONFIG) : undefined,
+        ),
+    );
     // Read-only queries for cross-module consumers (eg tag evaluation). Never exposes wallet internals.
     ctx.provide(WALLET_READER, (c) => new WalletReaderService(c.get(DRIZZLE)));
     ctx.provide(ADMIN_WALLET_REPORTING, (c) => new DrizzleAdminWalletReporting(c.get(DRIZZLE)));
