@@ -134,7 +134,7 @@ export function topoSort<C extends TokenCatalog>(plugins: Plugin<C>[]): Plugin<C
   return sorted;
 }
 
-export async function loadPlugins<C extends TokenCatalog>(
+export async function loadPlugins<C extends TokenCatalog = never>(
   entries: PluginEntry[],
   container: Container<C>,
 ): Promise<ModuleRegistryImpl<C>> {
@@ -172,7 +172,7 @@ export async function loadPlugins<C extends TokenCatalog>(
  * registration and throw one actionable error naming the plugin, the port, and the
  * likely-missing package.
  */
-export function assertRequiredPorts<C extends TokenCatalog>(
+export function assertRequiredPorts<C extends TokenCatalog = never>(
   plugins: Plugin<C>[],
   container: Container<C>,
 ): void {

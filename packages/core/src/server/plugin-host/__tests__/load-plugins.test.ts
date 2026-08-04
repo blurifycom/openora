@@ -1,11 +1,8 @@
 import { describe, expect, it } from 'vitest';
-import type { TokenCatalog } from '@openora/core/contracts';
 import type { Plugin } from '../define-plugin.js';
 import { topoSort } from '../load-plugins.js';
 
-const catalog = {} satisfies TokenCatalog;
-
-function plugin(id: string, dependsOn: string[] = []): Plugin<typeof catalog> {
+function plugin(id: string, dependsOn: string[] = []): Plugin {
   return {
     id,
     dependsOn,

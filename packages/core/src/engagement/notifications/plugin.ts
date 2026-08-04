@@ -12,7 +12,7 @@ import {
 } from '@openora/core/contracts';
 import {
   createLogger,
-  definePluginWithCatalog,
+  definePlugin,
   EVENT_BUS,
   DRIZZLE,
   type CoreTokenCatalog,
@@ -28,7 +28,7 @@ const KycResubmissionNotifyJobSchema = z.object({
   reason: z.string().nullable(),
 });
 
-export default definePluginWithCatalog<CoreTokenCatalog>()({
+export default definePlugin<CoreTokenCatalog>()({
   id: 'notifications',
   // ADMIN_USER_DIRECTORY (owned by identity) resolves the player's email for the
   // withdrawal delivery emails; pin load order so a split still finds the port. See ADR-0017.

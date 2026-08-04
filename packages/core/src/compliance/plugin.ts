@@ -1,5 +1,5 @@
 import {
-  definePluginWithCatalog,
+  definePlugin,
   EVENT_BUS,
   DRIZZLE,
   ADMIN_GUARD,
@@ -58,7 +58,7 @@ const KycDecisionSyncJobSchema = z.object({
   receivedAt: z.iso.datetime(),
 });
 
-export default definePluginWithCatalog<CoreTokenCatalog>()({
+export default definePlugin<CoreTokenCatalog>()({
   id: 'compliance',
   dependsOn: ['player-management', 'identity', 'wallet', 'gaming', 'audit'],
   requiresPorts: [LOGIN_ENFORCEMENT],

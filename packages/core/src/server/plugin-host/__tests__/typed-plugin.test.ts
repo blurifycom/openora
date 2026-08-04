@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { createToken, type TokenCatalog } from '@openora/core/contracts';
-import { Container, createContainer } from '../../kernel/index.js';
-import { defineExtensions, definePluginWithCatalog, ModuleRegistryImpl } from '../index.js';
+import { Container } from '../../kernel/index.js';
+import { defineExtensions, definePlugin, ModuleRegistryImpl } from '../index.js';
 
 const COUNT = createToken<number>('COUNT');
 const SEED = createToken<number>('SEED');
@@ -20,7 +20,7 @@ const typedCatalogWrongValue = {
 void typedCatalogWrongValue;
 
 function assertTypedContainer() {
-  const typedContainer = createContainer(catalog);
+  const typedContainer = new Container<typeof catalog>();
   const typedCount: number = typedContainer.get(COUNT);
   void typedCount;
 
@@ -39,12 +39,7 @@ function assertTypedContainer() {
 
 void assertTypedContainer;
 
-// @ts-expect-error Containers are created from an explicit token catalog.
-const untypedContainer = new Container();
-
-void untypedContainer;
-
-const typedPlugin = definePluginWithCatalog<typeof catalog>()({
+const typedPlugin = definePlugin<typeof catalog>()({
   id: 'typed-plugin',
   dependsOn: ['foundation'],
   register(ctx) {
@@ -60,7 +55,7 @@ const typedPlugin = definePluginWithCatalog<typeof catalog>()({
   },
 });
 
-definePluginWithCatalog<typeof catalog>()({
+definePlugin<typeof catalog>()({
   id: 'invalid-typed-plugin',
   register(ctx) {
     // @ts-expect-error A provider must return the catalog token value.
@@ -81,6 +76,21 @@ definePluginWithCatalog<typeof catalog>()({
 const typedPluginId: 'typed-plugin' = typedPlugin.id;
 const typedDependency: readonly ['foundation'] = typedPlugin.dependsOn ?? ['foundation'];
 
+// The original, single-call, uncatalogued form still works and still infers
+// literal id/dependsOn types - definePlugin() was never renamed.
+const uncataloguedPlugin = definePlugin({
+  id: 'uncatalogued-plugin',
+  dependsOn: ['foundation'],
+  register(ctx) {
+    ctx.provide(OTHER, () => 'anything goes without a catalog');
+  },
+});
+
+const uncataloguedPluginId: 'uncatalogued-plugin' = uncataloguedPlugin.id;
+const uncataloguedDependency: readonly ['foundation'] = uncataloguedPlugin.dependsOn ?? [
+  'foundation',
+];
+
 const validGraph = defineExtensions([
   { id: 'foundation', path: './foundation.js' },
   { id: 'feature', path: './feature.js', dependsOn: ['foundation'] },
@@ -97,7 +107,7 @@ defineExtensions([
 
 describe('typed plugin surface', () => {
   it('keeps literal plugin metadata and resolves catalog services', () => {
-    const container = createContainer(catalog);
+    const container = new Container<typeof catalog>();
     const registry = new ModuleRegistryImpl<typeof catalog>(container);
 
     container.register(SEED, () => 41);
@@ -109,8 +119,13 @@ describe('typed plugin surface', () => {
     expect(container.get(COUNT)).toBe(42);
   });
 
+  it('keeps the uncatalogued single-call form working', () => {
+    expect(uncataloguedPluginId).toBe('uncatalogued-plugin');
+    expect(uncataloguedDependency).toEqual(['foundation']);
+  });
+
   it('keeps router factories on the catalogued container view', () => {
-    const container = createContainer(catalog);
+    const container = new Container<typeof catalog>();
     const registry = new ModuleRegistryImpl<typeof catalog>(container);
 
     container.register(SEED, () => 7);

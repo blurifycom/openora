@@ -10,11 +10,11 @@ import type {
   ModuleRegistry,
   McpToolDefinition,
   RouterFactory,
-  TypedContainer,
+  ContainerView,
   EventHandler,
 } from './define-plugin.js';
 
-export class ModuleRegistryImpl<C extends TokenCatalog> implements ModuleRegistry<C> {
+export class ModuleRegistryImpl<C extends TokenCatalog = never> implements ModuleRegistry<C> {
   private _routers = new Map<string, RouterFactory<C>>();
   private _slots = new Map<string, unknown>();
   private _events = new Map<string, EventHandler[]>();
@@ -28,9 +28,9 @@ export class ModuleRegistryImpl<C extends TokenCatalog> implements ModuleRegistr
   // Sealed tokens (Symbol description prefixed `sealed:`) are rejected at runtime
   // even though the type system already blocks them - catches plain-JS callers and cast escapes.
   // Canonical sealed list lives in `@openora/core/compliance`.
-  provide = <T extends C[keyof C] & Token<unknown>>(
+  provide = <T extends Token<unknown>>(
     token: T,
-    factory: (container: TypedContainer<C>) => TokenValue<T>,
+    factory: (container: ContainerView<C>) => TokenValue<T>,
   ): void => {
     const desc = token.description ?? '';
     if (desc.startsWith('sealed:')) {
@@ -42,16 +42,16 @@ export class ModuleRegistryImpl<C extends TokenCatalog> implements ModuleRegistr
           `See @openora/core/compliance for the canonical list.`,
       );
     }
-    this.container.register(token, factory);
+    this.container.registerUnsafe(token, factory);
   };
 
   // Bind-once. The owning module calls this during its own register() to bind the
   // canonical implementation; a second call for the same token - an overlay trying
   // to slip past provide()'s rejection, or a duplicate registration - throws instead
   // of silently rebinding (there is no "last-wins" for a sealed token).
-  provideSealed = <T extends C[keyof C] & SealedToken<unknown>>(
+  provideSealed = <T extends SealedToken<unknown>>(
     token: T,
-    factory: (container: TypedContainer<C>) => TokenValue<T>,
+    factory: (container: ContainerView<C>) => TokenValue<T>,
   ): void => {
     if (this._sealedBound.has(token)) {
       throw new Error(
@@ -60,7 +60,7 @@ export class ModuleRegistryImpl<C extends TokenCatalog> implements ModuleRegistr
       );
     }
     this._sealedBound.add(token);
-    this.container.register(token, factory);
+    this.container.registerUnsafe(token, factory);
   };
 
   routers = {

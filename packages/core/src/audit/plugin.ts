@@ -1,5 +1,5 @@
 import {
-  definePluginWithCatalog,
+  definePlugin,
   EVENT_BUS,
   DRIZZLE,
   ADMIN_GUARD,
@@ -565,7 +565,7 @@ const SUBSCRIBED_TOPICS: DomainEventName[] = [
   'player.level.changed',
 ] as const;
 
-export default definePluginWithCatalog<CoreTokenCatalog>()({
+export default definePlugin<CoreTokenCatalog>()({
   id: 'audit',
   register(ctx) {
     const logger = createLogger('audit');

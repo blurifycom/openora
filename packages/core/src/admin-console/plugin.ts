@@ -5,11 +5,11 @@ import {
   ADMIN_WALLET_REPORTING,
   AUDIT_WRITER,
 } from '@openora/core/contracts';
-import { definePluginWithCatalog, ADMIN_GUARD, type CoreTokenCatalog } from '@openora/core/server';
+import { definePlugin, ADMIN_GUARD, type CoreTokenCatalog } from '@openora/core/server';
 import { BackofficeService } from './service/backoffice.service.js';
 import { createBackofficeRouter } from './router/index.js';
 
-export default definePluginWithCatalog<CoreTokenCatalog>()({
+export default definePlugin<CoreTokenCatalog>()({
   id: 'admin-console',
   dependsOn: ['identity', 'wallet', 'audit', 'gaming', 'iam'],
   register(ctx) {

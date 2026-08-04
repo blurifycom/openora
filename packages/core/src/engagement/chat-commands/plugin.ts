@@ -1,5 +1,5 @@
 import {
-  definePluginWithCatalog,
+  definePlugin,
   DRIZZLE,
   EVENT_BUS,
   ADMIN_GUARD,
@@ -19,7 +19,7 @@ import {
 import { ChatCommandsService } from './service/chat-commands.service.js';
 import { createChatCommandsRouter } from './router/index.js';
 
-export default definePluginWithCatalog<CoreTokenCatalog>()({
+export default definePlugin<CoreTokenCatalog>()({
   id: 'chat-commands',
   dependsOn: ['chat', 'wallet', 'iam', 'audit', 'gaming'],
   register(ctx) {

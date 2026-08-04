@@ -1,15 +1,10 @@
 import { CACHE } from '@openora/core/contracts';
-import {
-  definePluginWithCatalog,
-  ADMIN_GUARD,
-  DRIZZLE,
-  type CoreTokenCatalog,
-} from '@openora/core/server';
+import { definePlugin, ADMIN_GUARD, DRIZZLE, type CoreTokenCatalog } from '@openora/core/server';
 import { FinancialAnalyticsService } from './service/financial-analytics.service.js';
 import { FunnelAnalyticsService } from './service/funnel-analytics.service.js';
 import { createAnalyticsRouter } from './router/index.js';
 
-export default definePluginWithCatalog<CoreTokenCatalog>()({
+export default definePlugin<CoreTokenCatalog>()({
   id: 'analytics',
   dependsOn: ['wallet', 'identity', 'profile', 'gaming'],
   register(ctx) {

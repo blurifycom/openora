@@ -1,10 +1,10 @@
 import {
-  definePluginWithCatalog,
+  definePlugin,
   EVENT_BUS,
   DRIZZLE,
   ADMIN_GUARD,
-  type CoreTokenCatalog,
   type TypedContainer,
+  type CoreTokenCatalog,
 } from '@openora/core/server';
 import {
   PLAYER_TAGS,
@@ -21,7 +21,7 @@ import { TagRuleService } from './service/tag-rule.service.js';
 import { TagEvaluationService } from './service/tag-evaluation.service.js';
 import { createTagRouter } from './router/index.js';
 
-export default definePluginWithCatalog<CoreTokenCatalog>()({
+export default definePlugin<CoreTokenCatalog>()({
   id: 'tag',
   dependsOn: ['wallet', 'identity'],
   register(ctx) {

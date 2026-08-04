@@ -1,4 +1,4 @@
-import type { TokenCatalog, TokenValue } from '@openora/core/contracts';
+import type { AnyToken, TokenCatalog, TokenValue } from '@openora/core/contracts';
 
 // Functional DI container. Resolution is lazy and cached; last `register` for a
 // token wins - overlays rebind adapters by registering after the default binding.
@@ -8,7 +8,13 @@ import type { TokenCatalog, TokenValue } from '@openora/core/contracts';
 // sealed/overlay-rejection rules live one layer up, in ModuleRegistry's
 // provide()/provideSealed() (see plugin-host/module-registry.ts).
 
-export type Factory<T, C extends TokenCatalog> = (c: Container<C>) => T;
+export type Factory<T, C extends TokenCatalog = never> = (c: Container<C>) => T;
+
+// The token shape register()/has()/get() accept: any token when uncatalogued, or a
+// catalog-listed one otherwise. T is inferred directly from the token argument
+// (never a keyof reverse lookup), which is what makes TokenValue<T> resolve to
+// that one entry instead of a union of every catalog value.
+type ContainerToken<C extends TokenCatalog> = [C] extends [never] ? AnyToken<unknown> : C[keyof C];
 
 /**
  * Functional DI container - no decorators, no reflection. `get()` resolves
@@ -20,35 +26,31 @@ export type Factory<T, C extends TokenCatalog> = (c: Container<C>) => T;
  * `dispose()` runs every `onDispose` callback in REVERSE registration order -
  * register dependencies before their dependents so teardown happens safely.
  */
-export class Container<C extends TokenCatalog> {
+export class Container<C extends TokenCatalog = never> {
   private readonly factories = new Map<symbol, Factory<unknown, C>>();
   private readonly instances = new Map<symbol, unknown>();
   private readonly resolving = new Set<symbol>();
   private readonly disposers: Array<() => void | Promise<void>> = [];
 
-  private constructor(_catalog: C) {}
-
-  static create<const C extends TokenCatalog>(catalog: C): Container<C> {
-    return new Container(catalog);
-  }
-
-  register<T extends C[keyof C]>(
+  register<T extends ContainerToken<C>>(
     token: T,
     factory: (container: Container<C>) => TokenValue<T>,
   ): void {
-    this.factories.set(token, factory);
+    this.registerUnsafe(token, factory);
+  }
+
+  registerUnsafe<T>(token: AnyToken<T>, factory: Factory<T, C>): void {
+    this.factories.set(token, factory as Factory<unknown, C>);
     this.instances.delete(token);
   }
 
-  has<T extends C[keyof C]>(token: T): boolean;
-  has(token: C[keyof C]): boolean {
+  has<T extends ContainerToken<C>>(token: T): boolean {
     return this.factories.has(token);
   }
 
-  get<T extends C[keyof C]>(token: T): TokenValue<T>;
-  get<T>(token: C[keyof C]): T {
+  get<T extends ContainerToken<C>>(token: T): TokenValue<T> {
     if (this.instances.has(token)) {
-      return this.instances.get(token) as T;
+      return this.instances.get(token) as TokenValue<T>;
     }
 
     const factory = this.factories.get(token);
@@ -62,7 +64,7 @@ export class Container<C extends TokenCatalog> {
     }
 
     this.resolving.add(token);
-    const instance = factory(this) as T;
+    const instance = factory(this) as TokenValue<T>;
     this.resolving.delete(token);
     this.instances.set(token, instance);
     return instance;
@@ -77,9 +79,4 @@ export class Container<C extends TokenCatalog> {
       await fn();
     }
   }
-}
-
-/** Creates a container whose token catalog is inferred from the catalog value. */
-export function createContainer<const C extends TokenCatalog>(catalog: C): Container<C> {
-  return Container.create(catalog);
 }

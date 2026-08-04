@@ -1,5 +1,5 @@
 import {
-  definePluginWithCatalog,
+  definePlugin,
   EVENT_BUS,
   DRIZZLE,
   ADMIN_GUARD,
@@ -20,7 +20,7 @@ import { DrizzleAdminPlayerActivity } from './adapters/admin-player-activity.js'
 
 const logger = createLogger('iam');
 
-export default definePluginWithCatalog<CoreTokenCatalog>()({
+export default definePlugin<CoreTokenCatalog>()({
   id: 'iam',
   dependsOn: ['identity'],
   register(ctx) {

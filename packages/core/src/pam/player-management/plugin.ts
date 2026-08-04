@@ -1,5 +1,5 @@
 import {
-  definePluginWithCatalog,
+  definePlugin,
   EVENT_BUS,
   DRIZZLE,
   ADMIN_GUARD,
@@ -12,7 +12,7 @@ import { createPlayerRouter } from './router/index.js';
 
 // Owns the player table writes, so it binds the single KYC_STATUS_WRITER seam
 // (compliance + the admin override route consume it). Reads identity via /schema. See ADR-0020.
-export default definePluginWithCatalog<CoreTokenCatalog>()({
+export default definePlugin<CoreTokenCatalog>()({
   id: 'player-management',
   dependsOn: ['audit'],
   register(ctx) {
