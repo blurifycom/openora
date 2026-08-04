@@ -212,31 +212,6 @@ function wireCoreExports(domain: string, name: string): string {
     : 'no new @openora/core exports needed';
 }
 
-/**
- * Registers the module's contract slice in the composition root so its routes
- * reach the emitted OpenAPI spec and the typed client.
- */
-function wireBuildContract(domain: string, name: string): string {
-  const file = join(root(), 'tools', 'gen', 'build-contract.ts');
-  if (!existsSync(file)) {
-    return 'no tools/gen/build-contract.ts (skipped)';
-  }
-  const camel = toCamel(name);
-  const contractName = `${camel}Contract`;
-  let src = readFileSync(file, 'utf8');
-  if (src.includes(contractName)) {
-    return `build-contract.ts already composes '${camel}'`;
-  }
-  const importLine = `import { ${contractName} } from '@openora/core/${domain}/contracts/${name}';`;
-  src = src.replace(/(\n\n\/\/ oxlint-disable-next-line)/, `\n${importLine}$1`);
-  src = src.replace(
-    /(const SLICES: Record<string, AnyContract> = \{)/,
-    `$1\n  ${camel}: ${contractName},`,
-  );
-  writeFileSync(file, src);
-  return `composed '${camel}' in tools/gen/build-contract.ts`;
-}
-
 function appendRoute(
   domain: string,
   moduleName: string,
@@ -317,7 +292,6 @@ export default function generator(plop: PlopTypes.NodePlopAPI): void {
         file('AGENTS.md', 'module/agents.hbs'),
         () => wireDomainBarrels(domain, name),
         () => wireCoreExports(domain, name),
-        () => wireBuildContract(domain, name),
         () => registerExtension(name, `./packages/core/dist/${domain}/${name}/plugin.js`),
         () =>
           `next: pnpm gen:drizzle (this module's migration history) && pnpm regen && pnpm verify`,

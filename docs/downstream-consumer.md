@@ -55,18 +55,18 @@ import { extensions } from './extensions.config.js'; // their own plugin list
 // Compose only the modules you enable (composeContract adds `health` itself).
 const contract = composeContract({ identity: identityContract, wallet: walletContract });
 
-const { listen, emitOpenApiSpec } = await createApp({
+const { listen } = await createApp({
   plugins: extensions,
   contract,
   authSchema: { user, session, account, verification, twoFactor },
   port: 3001,
   cors: { origins: ['https://my-igaming.example'] },
-  openapi: { info: { title: 'my-igaming API', version: '1.0.0' } },
 });
 
 await listen();
-await emitOpenApiSpec();
 ```
+
+`createApp` serves a live API reference at `/docs` and its matching OpenAPI document at `/openapi.json`.
 
 Downstream consumers create their own thin entrypoint that calls `createApp` and bring
 their own `extensions.config.ts`. See `tools/templates/consumer/apps/api/src/main.ts` for the reference.

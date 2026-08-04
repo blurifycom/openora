@@ -1,14 +1,13 @@
 import { OpenAPIHandler } from '@orpc/openapi/fetch';
+import { OpenAPIReferencePlugin } from '@orpc/openapi/plugins';
 import { implement, onError, ORPCError, type AnyRouter } from '@orpc/server';
 import { ResponseHeadersPlugin } from '@orpc/server/plugins';
-import type { ContractRouter } from '@orpc/contract';
+import { ZodToJsonSchemaConverter } from '@orpc/zod/zod4';
 import { Hono } from 'hono';
 import { cors } from 'hono/cors';
 import { etag } from 'hono/etag';
 import { HTTPException } from 'hono/http-exception';
 import { serve, type ServerType } from '@hono/node-server';
-import { resolve } from 'node:path';
-import { generateOpenApiSpec } from './openapi.js';
 import {
   Container,
   BullMqJobQueue,
@@ -33,7 +32,6 @@ import {
   RATE_LIMITER,
   CACHE,
   ERROR_TRACKING,
-  composeContract,
   healthContract,
   IGAMING_CONFIG,
   type IgamingConfig,
@@ -104,17 +102,6 @@ export type CreateAppConfig = {
 
   databaseUrl?: string;
 
-  // The shape is genuinely unknown at this factory boundary (an external oRPC generic) -
-  // the documented `any` exception for an external library's untyped surface.
-  // oxlint-disable-next-line typescript/no-explicit-any
-  contract?: ContractRouter<any>;
-
-  openapi?: {
-    enabled?: boolean;
-    info?: { title?: string; version?: string };
-    outputPath?: string;
-  };
-
   igaming?: IgamingConfig;
 
   // GET-only, path-prefix-matched Cache-Control on PUBLIC_HTTP_CACHE_PATHS (or a
@@ -131,7 +118,6 @@ export type CreatedApp = {
   container: Container<CoreTokenCatalog>;
   port: number;
   listen(): Promise<void>;
-  emitOpenApiSpec(): Promise<string | null>;
   close(): Promise<void>;
 };
 
@@ -335,7 +321,14 @@ export async function createApp(config: CreateAppConfig): Promise<CreatedApp> {
   }
 
   const handler = new OpenAPIHandler(router, {
-    plugins: [new ResponseHeadersPlugin()],
+    plugins: [
+      new OpenAPIReferencePlugin({
+        docsPath: '/docs',
+        specPath: '/openapi.json',
+        schemaConverters: [new ZodToJsonSchemaConverter()],
+      }),
+      new ResponseHeadersPlugin(),
+    ],
     interceptors: [
       onError((error) => {
         // oRPC wraps a thrown native error (a DB failure, a bug) into an
@@ -459,17 +452,6 @@ export async function createApp(config: CreateAppConfig): Promise<CreatedApp> {
     async listen() {
       server = serve({ fetch: app.fetch, port });
       process.stdout.write(`API listening on :${port}\n`);
-    },
-    async emitOpenApiSpec() {
-      if (config.openapi?.enabled === false) {
-        return null;
-      }
-      const outPath = await generateOpenApiSpec(config.contract ?? composeContract({}), {
-        info: config.openapi?.info,
-        outputPath: config.openapi?.outputPath ?? resolve(process.cwd(), 'docs/openapi.json'),
-      });
-      process.stdout.write(`OpenAPI spec written to ${outPath}\n`);
-      return outPath;
     },
     async close() {
       server?.close();

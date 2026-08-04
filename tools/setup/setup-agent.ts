@@ -50,7 +50,7 @@ async function main() {
     console.log('\n--- Dependencies: already installed ---');
   }
 
-  console.log('\n--- Generating OpenAPI spec (pnpm regen) ---');
+  console.log('\n--- Generating derived artifacts (pnpm regen) ---');
   run('pnpm regen');
 
   console.log('\n--- Starting dev infra (docker compose up -d) ---');

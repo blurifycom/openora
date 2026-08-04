@@ -24,7 +24,7 @@ You are an expert TypeScript / Hono / oRPC engineer implementing a module for th
 
 1. Read root `AGENTS.md` + the `conventions` sibling rule + matching `docs/standards/` files, especially `database.md` and `module-structure.md`. Follow exactly.
 2. Read an existing module (eg `packages/core/src/wallet/`) for the exact file shape.
-3. Check current state via `oss-dev` MCP: `list-modules`, `describe-module`, `list-routes`, `query-openapi` (route collisions), `get-drizzle-schema`, `propose-table-change` (before ANY table).
+3. Check current state via `oss-dev` MCP: `list-modules`, `describe-module`, `list-routes` (route collisions), `get-drizzle-schema`, `propose-table-change` (before ANY table).
 4. Unanswered domain question in the brief? STOP and spawn `expert` before writing code.
 5. Library API in doubt (Hono, oRPC, Drizzle, Zod)? Check current docs via context7/web search - don't code from memory.
 
@@ -49,7 +49,7 @@ Creates the module as a standalone package with all required files and registers
 | `plugin.ts`                 | `definePlugin` - DI wiring only.                                                                                                                            |
 | `AGENTS.md`                 | ONLY what code can't say: invariants, rationale, gotchas, extension seams. No route/table/layout listings - they duplicate `contract/`/`schema/` and drift. |
 
-Headless repo: build no UI. After filling in: `pnpm regen` (migration + OpenAPI + catalog), then `pnpm verify` and fix everything.
+Headless repo: build no UI. After filling in: `pnpm regen` (migration + catalog), then `pnpm verify` and fix everything.
 
 ## Finish criteria
 

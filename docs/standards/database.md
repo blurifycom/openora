@@ -76,6 +76,6 @@ await db.transaction(async (t) => {
 
 ## Migrations
 
-- Never hand-edit generated migrations, `docs/openapi.json`, or `docs/catalog.json`. Change the `pgTable`, then run `pnpm regen`.
+- Never hand-edit generated migrations or `docs/catalog.json`. Change the `pgTable`, then run `pnpm regen`.
 - Every module owns its own `drizzle/migrations/` + `__drizzle_migrations_<id>` tracking table, co-located with its schema. One shared database, one journal per module.
 - A Postgres extension an index needs (for example `pg_trgm`) goes in the module `migrate()` `extensions` option, never hand-edited into a regenerated migration.

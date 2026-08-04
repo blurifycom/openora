@@ -4,8 +4,8 @@
  * consumer's AI agent reads INSTEAD of grepping node_modules. Emits:
  *   docs/catalog.json  - structured, consumed at runtime by the published @openora/mcp
  *                        server (a consumer's node_modules has no platform source).
- * Human/agent-readable access is the MCP dev server (describe-module, list-routes,
- * query-openapi) and each module's AGENTS.md - no monolithic markdown dump.
+ * Human/agent-readable access is the MCP dev server (describe-module, list-routes)
+ * and each module's AGENTS.md - no monolithic markdown dump.
  *
  * It captures: modules (+ tables + routes), adapter seams (+ wired-vs-stub
  * status), domain events, UI slots, Zod schema index, the igaming-config shape,
@@ -246,26 +246,6 @@ function collectPluginSurface(): string[] {
   return [...body.matchAll(/^\s{2}(\w+):/gm)].map((m) => m[1] ?? '').sort();
 }
 
-function collectOpenApiRoutes(): string[] {
-  const spec = read(join(repoRoot, 'docs', 'openapi.json'));
-  if (!spec) {
-    return [];
-  }
-  try {
-    const json = JSON.parse(spec);
-    const paths = Object.keys(json.paths ?? {});
-    const out: string[] = [];
-    for (const p of paths) {
-      for (const method of Object.keys(json.paths[p])) {
-        out.push(`${method.toUpperCase()} ${p}`);
-      }
-    }
-    return out.sort();
-  } catch {
-    return [];
-  }
-}
-
 const catalog = {
   modules: collectModules(),
   adapters: collectAdapters(),
@@ -278,7 +258,6 @@ const catalog = {
     fields: collectConfigFields(),
   },
   pluginContract: collectPluginSurface(),
-  httpRoutes: collectOpenApiRoutes(),
 };
 
 const docsDir = join(repoRoot, 'docs');

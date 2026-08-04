@@ -103,9 +103,7 @@ process.env['SERVICE_MANIFEST'] ??= '${manifest.join(',')}';
 
 async function bootstrap() {
   const plugins = await loadExtensions();
-  // Routes come from the loaded plugins. To emit an OpenAPI spec for this
-  // service, compose its slices with composeContract({ ... }) from
-  // @openora/core/contracts and pass it as \`contract\`. See tools/gen/build-contract.ts.
+  // Routes come from the loaded plugins; createApp exposes runtime API docs.
   const { listen } = await createApp({ plugins });
   await listen();
 }

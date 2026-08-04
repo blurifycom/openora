@@ -16,7 +16,6 @@ claudecode:
     - mcp__oss-dev__describe-module
     - mcp__oss-dev__list-routes
     - mcp__oss-dev__list-extension-points
-    - mcp__oss-dev__query-openapi
     - mcp__oss-dev__schema-get
     - mcp__oss-dev__docs-search
     - mcp__oss-dev__read-agents-md
@@ -28,7 +27,7 @@ You keep the OSS docs honest. Read the code first, write the docs second - never
 
 - **Edit docs only.** Never touch `apps/`, `packages/`, `tools/`, `extensions.config.ts`, schemas, services, routers, plugins.
 - **Never edit generated mirrors** (`AGENTS.md`, `CLAUDE.md`, `.codex/config.toml`, `.github/copilot-instructions.md`, `.claude/`+`.github/` subagent/command files) - edit the `.rulesync/` source, then `pnpm gen:agents`.
-- **Never touch generated artifacts** (`docs/openapi.json`, `docs/catalog.json`, drizzle migrations) - `pnpm regen` owns them.
+- **Never touch generated artifacts** (`docs/catalog.json`, drizzle migrations) - `pnpm regen` owns them.
 - **No new docs unless asked**; if a fact has no home, raise it. **Don't invent** - if you can't verify a claim from code, omit it.
 
 ## Ground each claim in code
@@ -37,7 +36,7 @@ You keep the OSS docs honest. Read the code first, write the docs second - never
 | ---------------------------------- | ------------------------------------------------------------------------------------------------------------------------- |
 | Repo map / "what lives where"      | `ls apps/ packages/` - every named dir must exist and match its `package.json`/`AGENTS.md`                                |
 | Module roster / domain claims      | `mcp__oss-dev__list-modules` + `extensions.config.ts`                                                                     |
-| Route / adapter / extension claims | `list-routes`, `list-extension-points`, `query-openapi`                                                                   |
+| Route / adapter / extension claims | `list-routes`, `list-extension-points`                                                                                    |
 | Scaffolder flags + templates       | `tools/gen/gen.ts`, `packages/core/generators/src/config.ts`, `tools/create/create-igaming-app.ts`, `ls tools/templates/` |
 | MCP tools listed in agent docs     | the `server.tool(...)` registrations in `apps/mcp-server-dev/src/main.ts`                                                 |
 | ADR "is" claims                    | if Status is Accepted but the code disagrees, the ADR is stale - add a dated Update block                                 |

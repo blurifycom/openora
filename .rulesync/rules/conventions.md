@@ -55,7 +55,7 @@ The always-on core of the code standard: what you must obey while typing. Detail
 - Inline `fetch`/`axios` in module code - third-party access is a port + adapter bound at the root.
 - Comments. The only exception is a fact the code cannot contain (external-system behaviour, a spec constraint) and JSDoc on a public export. A rationale is not a fact - it goes in the commit or an ADR.
 - Deep (`../../`+) relative imports that leave your zone/module, imports of another module's internals, import cycles, deep `dist/`/`src/` paths into another package.
-- Hand-edited generated files: migrations, `docs/openapi.json`, `docs/catalog.json`, per-tool agent mirrors.
+- Hand-edited generated files: migrations, `docs/catalog.json`, per-tool agent mirrors.
 
 ## Always
 

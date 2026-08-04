@@ -55,14 +55,14 @@ flowchart TB
   subgraph SDK["@openora/core/react · headless SDK (browser)"]
     HOOKS["data hooks · auth · transport"]
     TC["typed oRPC client<br/>(zero codegen)"]
-    OAPI["docs/openapi.json (emitted)"]
+    OAPI["runtime OpenAPI reference"]
   end
 
   %% ============ ENGINE (@openora/core/server) ============
   subgraph RT["@openora/core/server · createApp() (node engine)"]
     PH["plugin-host<br/>definePlugin · ModuleRegistry · applyServiceManifest"]
     DI["Container<br/>tokens to factories (last-wins overlay)"]
-    HONO["Hono + oRPC OpenAPIHandler<br/>validation · OpenAPI emit"]
+    HONO["Hono + oRPC OpenAPIHandler<br/>validation · live OpenAPI reference"]
     GATE["SERVICE_MANIFEST module filter"]
   end
 

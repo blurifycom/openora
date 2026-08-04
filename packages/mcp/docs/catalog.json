@@ -481,6 +481,5 @@
     "providers",
     "routers",
     "slots"
-  ],
-  "httpRoutes": []
+  ]
 }

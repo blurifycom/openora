@@ -22,8 +22,8 @@ Before acting on any non-trivial request - and before delegating - run the `enha
 
 ## Architecture pillars
 
-1. **Zod-first contracts.** Every shape is a Zod schema; types are `z.infer`'d, never hand-written. Cross-cutting schemas in `packages/core/src/contracts/schemas/`; each module OWNS its route contract + req/res schemas + `z.infer`'d types in its `contract/` dir - the single source of wire truth, nothing else re-declares a wire shape. `composeContract` (`@openora/core/contracts`) owns only `health`; the composition root (`tools/gen/build-contract.ts` here, the consumer's entry when deployed) composes each enabled module's `/contract` slice into the one runtime contract the SDK links against. ADR-0021/0025.
-2. **oRPC + Hono.** oRPC owns route definition + Zod validation + OpenAPI emit; its `OpenAPIHandler` mounts on a Hono server. DI is a functional `Container` (`@openora/core/server`) - typed-token factories, no decorators, no `reflect-metadata`. ADR-0009.
+1. **Zod-first contracts.** Every shape is a Zod schema; types are `z.infer`'d, never hand-written. Cross-cutting schemas in `packages/core/src/contracts/schemas/`; each module OWNS its route contract + req/res schemas + `z.infer`'d types in its `contract/` dir - the single source of wire truth, nothing else re-declares a wire shape. `composeContract` (`@openora/core/contracts`) owns only `health`; the consumer composition root composes each enabled module's `/contract` slice into the one runtime contract the SDK links against. ADR-0021/0025.
+2. **oRPC + Hono.** oRPC owns route definition + Zod validation; its `OpenAPIHandler` mounts on a Hono server with a live OpenAPI reference. DI is a functional `Container` (`@openora/core/server`) - typed-token factories, no decorators, no `reflect-metadata`. ADR-0009.
 3. **Plugin host.** `definePlugin({ id, dependsOn, register })` is the only way new functionality enters. Everything (core modules included) loads through `extensions.config.ts`.
 4. **Headless.** Backend modules + contracts + SDK surface only. UI lives in the consumer, which imports `@openora/core/react` (hooks, typed client, auth, realtime). No UI packages here.
 5. **Explicit > magic.** No auto-discovery, no decorators. Everything greppable; every wiring point a typed call.
@@ -51,13 +51,13 @@ packages/
 docs/
   adr/             # architecture decision records
   catalog.json     # generated surface (routes/schemas/adapters/slots/events); read by @openora/mcp
-tools/             # grouped: gen/ (gen.ts scaffolder, build-contract, gen-openapi, gen-catalog), lint/ (oxlint plugins, verify-module-shape), create/, db/ (seed), setup/
+tools/             # grouped: gen/ (gen.ts scaffolder, gen-catalog), lint/ (oxlint plugins, verify-module-shape), create/, db/ (seed), setup/
 extensions.config.ts # the single registry of enabled plugins
 ```
 
 ## Where does X go? (decision tree)
 
-- **New business domain** (eg "tournaments") -> `pnpm gen module <domain> <name>` creates `packages/core/src/<domain>/<name>/`, wires the domain barrels + the `@openora/core` exports map + the `/contract` slice in `tools/gen/build-contract.ts`, and registers it in `extensions.config.ts`. Every module owns its `drizzle.config.ts` + migration history. ADR-0024/0025/0027.
+- **New business domain** (eg "tournaments") -> `pnpm gen module <domain> <name>` creates `packages/core/src/<domain>/<name>/`, wires the domain barrels + the `@openora/core` exports map, and registers it in `extensions.config.ts`. Every module owns its `drizzle.config.ts` + migration history. ADR-0024/0025/0027.
 - **Extend/override an existing module** -> overlay plugin: `pnpm gen plugin <name>` -> `extensions/<name>/plugin.ts` (repo root here; the consumer's app when deployed).
 - **New HTTP route** -> the module's `router/index.ts` via `pnpm gen route <module> <method> <path>`. Player routes resolve the caller from `x-user-id`; admin routes MUST be guarded (next).
 - **Admin-only route** -> `plugin.ts` resolves `AdminGuard` (`c.get(ADMIN_GUARD)`, seeded by `createApp`) and passes it into the router; `await adminGuard.assert(context)` is the handler's FIRST line. The single admin-enforcement point - never re-implement the role check.
@@ -105,13 +105,13 @@ Scripts are grouped by prefix - `check:*` reports, `fix:*` rewrites, `gen:*` emi
 ```
 pnpm setup         # first time: docker + db + mcp + summary
 pnpm dev           # turbo dev (docs, mcp)
-pnpm regen         # tsconfig paths + openapi emit + drizzle generate + catalog
+pnpm regen         # tsconfig paths + drizzle generate + catalog
 pnpm db:seed       # demo data (idempotent; admin@oss.dev / password123)
 pnpm verify        # the full gate: every check:* + test:unit + test:integration + test:tools, in parallel
 pnpm test:unit         # infra-free suite (~4s); *.int.test.ts run in test:integration (docker pg + redis)
 pnpm db:setup:test:fresh   # recreate the shared e2e db after editing an already-applied migration
 pnpm check:boundaries  # just the whole-graph boundary + cycle gate
-pnpm check:drift       # catalog/openapi staleness (CI-only; not part of verify)
+pnpm check:drift       # catalog staleness (CI-only; not part of verify)
 pnpm fix:lint          # oxlint --fix; pair with fix:format
 pnpm -F @openora/core vitest run <path>   # one test file/dir, eg src/iam/__tests__
 ```
@@ -148,9 +148,9 @@ For platform development (this repo); consumer agents ship in `tools/templates/c
 
 ## Working rules for agents
 
-- Use the `oss-dev` MCP server (`.mcp.json`, pre-approved) for read-only inspection: `read-agents-md`, `list-modules`, `describe-module`, `list-routes`, `list-extension-points`, `query-openapi`, `get-drizzle-schema`, `propose-table-change`, `schema-get`, `docs-search`, `db-query-readonly`. Faster than grep, reflects current state.
-- Before a route: `query-openapi`. Before a table: `propose-table-change`. After any change: `pnpm verify --filter <package>`; fix failures before continuing.
+- Use the `oss-dev` MCP server (`.mcp.json`, pre-approved) for read-only inspection: `read-agents-md`, `list-modules`, `describe-module`, `list-routes`, `list-extension-points`, `get-drizzle-schema`, `propose-table-change`, `schema-get`, `docs-search`, `db-query-readonly`. Faster than grep, reflects current state.
+- Before a route: `list-routes`. Before a table: `propose-table-change`. After any change: `pnpm verify --filter <package>`; fix failures before continuing.
 - Read the touched module's `AGENTS.md` before editing it; keep it updated when invariants or extension seams change. Every `AGENTS.md` (this one included) stays lean: only what code can't say - invariants, rationale, gotchas, extension seams. Never route/table/event listings or "see `contract/`" pointers; agents already know to read `contract/`, `schema/`, `docs/catalog.json`. Claude Code loads them via generated per-module `CLAUDE.md` stubs (`tools/gen/gen-claude-stubs.mjs`, gitignored).
 - Small PRs scoped to one module; cross-module changes need human approval. Never commit unless asked; never push without explicit per-action confirmation.
 - ASCII only in code; short dashes (-) only, never long dashes.
-- **Never run two agents that both call `pnpm regen` (or `pnpm sync:agents`) against the same working tree.** Both rewrite shared generated state - drizzle migration journals, `docs/catalog.json`, `docs/openapi.json` - and the second run silently discards the first agent's freshly generated migration. The tree then holds a new enum value or table with NO migration: unit tests, lint and `boundaries` all still pass, so it surfaces at deploy, not in CI. Parallelise agents only across disjoint modules with regen serialised afterwards by one owner, and `git status -- '**/drizzle/migrations/**'` before handing off.
+- **Never run two agents that both call `pnpm regen` (or `pnpm sync:agents`) against the same working tree.** Both rewrite shared generated state - drizzle migration journals and `docs/catalog.json` - and the second run silently discards the first agent's freshly generated migration. The tree then holds a new enum value or table with NO migration: unit tests, lint and `boundaries` all still pass, so it surfaces at deploy, not in CI. Parallelise agents only across disjoint modules with regen serialised afterwards by one owner, and `git status -- '**/drizzle/migrations/**'` before handing off.
