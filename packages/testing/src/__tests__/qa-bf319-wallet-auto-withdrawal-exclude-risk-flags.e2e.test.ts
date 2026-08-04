@@ -19,13 +19,15 @@ import {
 /**
  * Independent QA verification of BF-319 (wallet auto-withdrawal tag-exclusion list moved
  * from static platform config to the DB-backed `wallet_auto_withdrawal_config` singleton's
- * `excludeRiskFlags` column, runtime-editable via `autoWithdrawalConfig.set`, always UNIONED
- * with a non-removable server-side `COMPLIANCE_FLOOR_TAGS` set at evaluation time), driven
- * through the REAL app (bootTestApp: real Hono + oRPC + Postgres + Redis + real tag module)
- * rather than the implementer's own unit/router-level tests (which mock PLAYER_TAGS /
- * AdminGuard and never exercise a real tag assignment through the real tag module + real
- * IAM RBAC resolver end to end) - same rationale as the sibling BF-211 QA suite this file
- * extends.
+ * `excludeRiskFlags` column, runtime-editable via `autoWithdrawalConfig.set`). The column
+ * DEFAULT (5 tags, set at the migration level) is only a starting value for upgraded
+ * installs - the DB value is the entire, sole source of truth at evaluation time, verbatim,
+ * with no server-side floor unioned in; a Super Admin can clear it to `[]` to disable all
+ * tag-based exclusion. Driven through the REAL app (bootTestApp: real Hono + oRPC + Postgres
+ * + Redis + real tag module) rather than the implementer's own unit/router-level tests (which
+ * mock PLAYER_TAGS / AdminGuard and never exercise a real tag assignment through the real tag
+ * module + real IAM RBAC resolver end to end) - same rationale as the sibling BF-211 QA suite
+ * this file extends.
  */
 
 let db: TestDb;
@@ -139,13 +141,14 @@ afterAll(async () => {
   await db?.dispose();
 });
 
-describe('BF-319 upgraded install: the migration DEFAULT floor tags gate before any admin ever edits excludeRiskFlags', () => {
-  it('a singleton row seeded with NO explicit excludeRiskFlags (column DEFAULT applies) gates a floor-tagged player and lets a clean player through', async () => {
+describe('BF-319 upgraded install: the migration DEFAULT tags gate before any admin ever edits excludeRiskFlags', () => {
+  it('a singleton row seeded with NO explicit excludeRiskFlags (column DEFAULT applies) gates a tagged player and lets a clean player through', async () => {
     // Directly insert the singleton row the way `seedAutoWithdrawalConfig` does in
     // production - a positive threshold so the tag gate (not the threshold gate) is what's
     // under test, and deliberately OMITTING excludeRiskFlags so the column's migration-level
-    // DEFAULT (the 5 compliance-floor tags) applies, matching a genuine "just upgraded,
-    // never touched by an admin" install. Delete any pre-existing row first: this file's
+    // DEFAULT (5 tags, a starting value only - not an enforced floor) applies, matching a
+    // genuine "just upgraded, never touched by an admin" install. Delete any pre-existing
+    // row first: this file's
     // apps share one physical test database across the whole `test:integration` run (per
     // @openora/testing's AGENTS.md), so a sibling suite may have already seeded/edited the
     // singleton before this file runs - this test needs the row to be genuinely
@@ -185,7 +188,7 @@ describe('BF-319 upgraded install: the migration DEFAULT floor tags gate before 
 });
 
 describe('BF-319 immediate effect: PUT excludeRiskFlags, GET reflects it right away, no restart needed', () => {
-  it('a super-admin widens the exclusion set with a non-floor tag and GET reflects it immediately', async () => {
+  it('a super-admin widens the exclusion set with a tag and GET reflects it immediately', async () => {
     const set = await setConfig({
       fiatThreshold: '1000',
       cryptoThreshold: '0',
@@ -212,8 +215,8 @@ describe('BF-319 immediate effect: PUT excludeRiskFlags, GET reflects it right a
   });
 });
 
-describe('BF-319 compliance floor: submitting excludeRiskFlags without a floor tag does not weaken enforcement', () => {
-  it('an admin submits an empty excludeRiskFlags array, GET reflects the empty array, but a floor-tagged player still routes to review', async () => {
+describe('BF-319 full admin control: excludeRiskFlags is the sole source of truth, no server-side floor', () => {
+  it('an admin submits an empty excludeRiskFlags array, GET reflects the empty array, and a previously-excluded tag no longer blocks auto-approval', async () => {
     const set = await setConfig({
       fiatThreshold: '1000',
       cryptoThreshold: '0',
@@ -223,7 +226,7 @@ describe('BF-319 compliance floor: submitting excludeRiskFlags without a floor t
     const got = await readJson(await superAdmin.get('/wallet/auto-withdrawal-config'));
     expect(got.excludeRiskFlags).toEqual([]);
 
-    const email = `bf319-empty-array-floor-${randomUUID()}@e2e.test`;
+    const email = `bf319-empty-array-clears-exclusion-${randomUUID()}@e2e.test`;
     const { client, userId, playerId } = await registerAndMaterializePlayer(appMain.app, email);
     await verifyKyc(superAdmin, userId);
     await assignTag(superAdmin, playerId, 'high_risk');
@@ -231,19 +234,21 @@ describe('BF-319 compliance floor: submitting excludeRiskFlags without a floor t
     const res = await readJson(
       await client.post('/wallet/withdraw', { amount: '50', currency: 'USD' }),
     );
-    expect(res.status).toBe('pending');
+    expect(res.status).toBe('completed');
   });
 
-  it("an admin's excludeRiskFlags submission that omits a specific floor tag still leaves that tag excluded (union, never narrowed)", async () => {
-    // Submit every floor tag EXCEPT kyc_rejected, plus a widen tag - proves the floor
-    // tag missing from the admin's own list is still enforced via the server-side union.
+  it("an admin's excludeRiskFlags submission is authoritative - a tag omitted from the submitted list is no longer excluded, even one that used to be part of the migration DEFAULT", async () => {
+    // Submit every migration-DEFAULT tag EXCEPT kyc_rejected - proves the admin's own list,
+    // not any server-side union, decides what's excluded. kyc_rejected is a plain KYC-status
+    // gate elsewhere (autoApprovalKycStatus), so keep this player's KYC status passing and
+    // rely solely on the tag to isolate the tag-exclusion gate under test.
     await setConfig({
       fiatThreshold: '1000',
       cryptoThreshold: '0',
       excludeRiskFlags: ['withdrawal_review', 'multi_account', 'high_risk', 'bonus_abuser'],
     });
 
-    const email = `bf319-omitted-floor-tag-${randomUUID()}@e2e.test`;
+    const email = `bf319-omitted-tag-no-longer-excluded-${randomUUID()}@e2e.test`;
     const { client, userId, playerId } = await registerAndMaterializePlayer(appMain.app, email);
     await verifyKyc(superAdmin, userId);
     await assignTag(superAdmin, playerId, 'kyc_rejected');
@@ -251,12 +256,12 @@ describe('BF-319 compliance floor: submitting excludeRiskFlags without a floor t
     const res = await readJson(
       await client.post('/wallet/withdraw', { amount: '50', currency: 'USD' }),
     );
-    expect(res.status).toBe('pending');
+    expect(res.status).toBe('completed');
   });
 });
 
-describe('BF-319 effective set = floor UNION configured: excluded regardless of amount when otherwise eligible', () => {
-  it('a player carrying a configured (non-floor) tag stays pending even for a tiny, well-under-threshold amount', async () => {
+describe('BF-319 effective set = the DB value verbatim: excluded regardless of amount when otherwise eligible', () => {
+  it('a player carrying a configured tag stays pending even for a tiny, well-under-threshold amount', async () => {
     await setConfig({
       fiatThreshold: '5000',
       cryptoThreshold: '0',
@@ -295,20 +300,20 @@ describe('BF-319 regression (no weakening): a player with no excluded tag, under
 });
 
 describe('BF-319 per-player override does not bypass the tag-exclusion gate', () => {
-  it('a per-player threshold override far above the amount still leaves a floor-tagged player pending', async () => {
+  it('a per-player threshold override far above the amount still leaves a tag-excluded player pending', async () => {
     await setConfig({
       fiatThreshold: '10',
       cryptoThreshold: '0',
-      excludeRiskFlags: [],
+      excludeRiskFlags: ['multi_account'],
     });
 
-    const email = `bf319-rule-override-floor-tag-${randomUUID()}@e2e.test`;
+    const email = `bf319-rule-override-excluded-tag-${randomUUID()}@e2e.test`;
     const { client, userId, playerId } = await registerAndMaterializePlayer(appMain.app, email);
     await verifyKyc(superAdmin, userId);
     await assignTag(superAdmin, playerId, 'multi_account');
     await superAdmin.put(`/wallet/auto-withdrawal-rules/${userId}`, {
       threshold: '10000',
-      reason: 'BF-319 QA: trusted-looking player, still carries a floor tag',
+      reason: 'BF-319 QA: trusted-looking player, still carries an excluded tag',
     });
 
     await client.post('/wallet/deposit', { amount: '500', currency: 'USD' });
@@ -339,7 +344,7 @@ describe('BF-319 audit trail', () => {
     expect(set.excludeRiskFlags).toEqual(['vip', 'large_depositor']);
   });
 
-  it('the auto-approval audit record includes effectiveExcludeTags (floor UNION configured), not just riskTagsEvaluated', async () => {
+  it('the auto-approval audit record includes effectiveExcludeTags as the DB value verbatim, not just riskTagsEvaluated', async () => {
     await setConfig({
       fiatThreshold: '1000',
       cryptoThreshold: '0',
@@ -361,16 +366,7 @@ describe('BF-319 audit trail', () => {
     const audit = await readJson(auditRes);
     expect(audit.items.length).toBeGreaterThanOrEqual(1);
     const after = audit.items[0].after;
-    expect(new Set(after.effectiveExcludeTags)).toEqual(
-      new Set([
-        'large_depositor',
-        'withdrawal_review',
-        'kyc_rejected',
-        'multi_account',
-        'high_risk',
-        'bonus_abuser',
-      ]),
-    );
+    expect(after.effectiveExcludeTags).toEqual(['large_depositor']);
     expect(after.riskTagsEvaluated).toEqual([]);
   });
 });

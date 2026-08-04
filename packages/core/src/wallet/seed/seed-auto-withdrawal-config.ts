@@ -6,8 +6,8 @@ import { walletAutoWithdrawalConfig } from '../schema/index.js';
  * thresholds reproduce today's "off until a Super Admin configures it"
  * default (see wallet.service.ts's evaluateAutoApproval: a threshold <= 0
  * never auto-approves). Does not set `excludeRiskFlags` - the column's
- * migration-level DEFAULT (the five compliance-floor tags) applies on
- * insert, same idempotent-no-op reasoning as the thresholds.
+ * migration-level DEFAULT (five starting tags, not an enforced floor)
+ * applies on insert, same idempotent-no-op reasoning as the thresholds.
  */
 export async function seedAutoWithdrawalConfig(db: DrizzleDb): Promise<void> {
   await db

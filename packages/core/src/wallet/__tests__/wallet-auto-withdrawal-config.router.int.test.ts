@@ -74,9 +74,10 @@ function routerWith(adminGuard: AdminGuard, platformConfig?: Partial<PlatformCon
       ),
     ),
   });
-  // The compliance floor (BF-319) is always non-empty, so evaluateAutoApproval always
-  // needs PLAYER_TAGS bound to check it - bind an empty-tags double by default so tests
-  // that aren't specifically exercising risk-tag exclusion still reach auto-approval.
+  // excludeRiskFlags defaults to the migration's 5-tag DEFAULT (non-empty), so
+  // evaluateAutoApproval needs PLAYER_TAGS bound to check it - bind an empty-tags double by
+  // default so tests that aren't specifically exercising risk-tag exclusion still reach
+  // auto-approval.
   const riskTags = mock<PlayerTags>({
     getActiveTagKeys: vi.fn(async (ids: readonly string[]) => new Map(ids.map((id) => [id, []]))),
   });
@@ -236,7 +237,7 @@ describe('wallet auto-withdrawal-config routes', () => {
           fiatThreshold: '0.00000000',
           cryptoThreshold: '0.00000000',
           // The beforeEach seed omits excludeRiskFlags, so the column's migration
-          // DEFAULT (the compliance floor) is what "before" captures here.
+          // DEFAULT (a starting value, not an enforced floor) is what "before" captures here.
           excludeRiskFlags: [
             'high_risk',
             'bonus_abuser',
