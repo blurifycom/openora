@@ -1,14 +1,22 @@
 import { definePlugin, EVENT_BUS, DRIZZLE, ADMIN_GUARD } from '@openora/core/server';
-import { AUDIT_WRITER, KYC_STATUS_WRITER } from '@openora/core/contracts';
+import {
+  AUDIT_WRITER,
+  KYC_STATUS_WRITER,
+  ADMIN_USER_DIRECTORY,
+  ADMIN_GAME_REPORTING,
+  CHAT_BLOCK_WRITER,
+} from '@openora/core/contracts';
 import { PlayerService } from './service/player.service.js';
 import { PlayerKycStatusWriter } from './service/kyc-status-writer.js';
 import { createPlayerRouter } from './router/index.js';
 
 // Owns the player table writes, so it binds the single KYC_STATUS_WRITER seam
 // (compliance + the admin override route consume it). Reads identity via /schema. See ADR-0020.
+// Depends on `chat` for CHAT_BLOCK_WRITER (search/profile-card moderation
+// exclusion, ported from chat-commands - see AGENTS.md).
 export default definePlugin({
   id: 'player-management',
-  dependsOn: ['audit'],
+  dependsOn: ['chat', 'gaming', 'audit'],
   register(ctx) {
     ctx.provide(
       KYC_STATUS_WRITER,
@@ -16,7 +24,13 @@ export default definePlugin({
     );
     ctx.routers.add('player', (c) =>
       createPlayerRouter(
-        new PlayerService(c.get(DRIZZLE), c.get(EVENT_BUS)),
+        new PlayerService(
+          c.get(DRIZZLE),
+          c.get(EVENT_BUS),
+          c.get(ADMIN_USER_DIRECTORY),
+          c.get(ADMIN_GAME_REPORTING),
+          c.get(CHAT_BLOCK_WRITER),
+        ),
         c.get(ADMIN_GUARD),
         c.get(AUDIT_WRITER),
       ),

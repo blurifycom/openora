@@ -568,6 +568,26 @@
       "types": "./dist/player/server.d.ts",
       "import": "./dist/player/server.js",
       "default": "./dist/player/server.js"
+    },
+    "./engagement/contracts/social-transfers": {
+      "types": "./dist/engagement/social-transfers/contract/index.d.ts",
+      "import": "./dist/engagement/social-transfers/contract/index.js",
+      "default": "./dist/engagement/social-transfers/contract/index.js"
+    },
+    "./engagement/schema/social-transfers": {
+      "types": "./dist/engagement/social-transfers/schema/index.d.ts",
+      "import": "./dist/engagement/social-transfers/schema/index.js",
+      "default": "./dist/engagement/social-transfers/schema/index.js"
+    },
+    "./engagement/plugins/social-transfers": {
+      "types": "./dist/engagement/social-transfers/plugin.d.ts",
+      "import": "./dist/engagement/social-transfers/plugin.js",
+      "default": "./dist/engagement/social-transfers/plugin.js"
+    },
+    "./engagement/migrate/social-transfers": {
+      "types": "./dist/engagement/social-transfers/migrate.d.ts",
+      "import": "./dist/engagement/social-transfers/migrate.js",
+      "default": "./dist/engagement/social-transfers/migrate.js"
     }
   },
   "publishConfig": {

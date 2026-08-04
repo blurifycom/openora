@@ -1,92 +1,65 @@
 # chat-commands
 
-Player-facing slash commands (`/profile`, `/gift`, `/rain`) and `@mention` for the chat UI. Commands are stored in `chat_command_config` keyed by command type; operators can toggle or reconfigure any command via `adminUpdateCommand` without a deploy.
+Player-facing slash commands (`/gift`, `/rain`) and `@mention` for the chat UI, plus the `listCommands` catalog descriptor. This module owns none of the money/limit/idempotency logic for gift/rain - `social-transfers` does, behind the `GIFT_COMMANDS`/`RAIN_COMMANDS` ports. `/donate` is social-transfers' own oRPC operation entirely (not reachable through this module).
 
-## DB-backed command registry
+## DB-backed command registry (read-only now)
 
-Each row in `chat_command_config` holds `enabled`, `label`, `description`, and a `config` jsonb column (`maxAmount`, `minAmount`, `maxRecipients`). The service checks the row before dispatching — a missing or disabled row throws `CommandDisabledError` (404). Seed data lives in `seed/index.ts` (`seedChatCommands`), called from `tools/db/seed.ts`. Four default commands: `mention`, `profile`, `gift`, `rain`.
+Each row in `chat_command_config` holds `enabled`, `label`, `description`, and a `config` jsonb column (`maxAmount`, `minAmount`, `maxRecipients`) - seeded via `seed/index.ts` (`seedChatCommands`). `listCommands` reads this table for the catalog descriptor only. There is no longer an admin route to mutate it (the old `adminUpdateCommand` was removed with this module's other money/search operations) - social-transfers reads the SAME table (via its `/schema` subpath, cross-module read-only) to gate and limit-check `/gift`, `/rain`, `/donate`.
 
-`mention` is special: it does not go through `POST /chat-command/execute`. The `@username` pattern is typed inline in a message; `GET /chat-command/mention-search` powers the type-ahead. The registry entry exists so operators can disable @mentions platform-wide.
+`mention` is special: it does not go through a POST route. The `@username` pattern is typed inline in a message; `GET /chat-command/mention-search` powers the type-ahead. `searchMentions` takes a `viewerId` and excludes any player the caller has blocked or ignored via `CHAT_BLOCK_WRITER.getExcludedUserIds(viewerId)`.
 
-`profile` is also special like `mention` - it does not go through `POST /chat-command/execute`; `GET /chat-command/player-search` powers the search step and `GET /chat-command/player-profile/{userId}` (lookup by userId only, never username) returns the full profile card. Neither route posts to chat.
+## postGift / claimGift / postRain are pure delegation - zero money/limit/chat-write business logic here
 
-`/block` and `/ignore` write to separate tables (`chatUserBlock` vs `chatUserIgnore`, owned by `chat`) via `CHAT_BLOCK_WRITER.blockUser`/`ignoreUser` respectively - they used to both call `blockUser`, now `handleBlockAction` dispatches on `input.type`. Both self-actions (blocking/ignoring yourself) are rejected via `SelfModerationActionError` (409), checked after the target username resolves. `searchPlayers`/`searchMentions` both take a `viewerId` and exclude any player the caller has blocked or ignored via `CHAT_BLOCK_WRITER.getExcludedUserIds(viewerId)` - a blocked/ignored player will not surface in player search or @mention autocomplete.
+`postGift` (`POST /chat-command/gift`), `claimGift` (`POST /chat-command/gift/{id}/claim`), and
+`postRain` (`POST /chat-command/rain`) resolve the `GIFT_COMMANDS`/`RAIN_COMMANDS` ports (bound by
+`social-transfers`) and forward the call - no config checks, no idempotency, no wallet calls, no
+chat-message posting, no DB writes happen in this module for any of the three. `GIFT_COMMANDS.sendGift`/`claimGift`
+and `RAIN_COMMANDS.sendRain` return a discriminated result (`{ ok: true, ... } | { ok: false, reason }`)
+rather than throwing, because a thrown error class from another module can't be `instanceof`-matched
+by this module's router (`mapErrors`) without a cross-module internals import, which the boundary
+rules forbid. `ChatCommandsService.postGift`/`claimGift`/`postRain` translate `reason` into this
+module's own typed errors (`CommandDisabledError`, `InsufficientBalanceError`, etc. - the SAME error
+class identities the router's `mapErrors` checks), so the router logic stays the standard
+`mapErrors` pattern.
 
-## Idempotency for money-moving commands (gift/rain/donate)
+## This module owns presence for `/rain` - nothing else
 
-`gift`/`rain`/`donate` require a client `idempotencyKey` (uuid). The `CACHE` port reserves
-`chat-command:idempotency:{actorId}:{commandType}:{idempotencyKey}` atomically with a five-minute
-TTL, stores the full-request fingerprint, and then stores the completed `ChatSystemMessage` under
-the same key. A matching fingerprint replays without another wallet call; a different fingerprint
-throws `ChatCommandIdempotencyKeyReuseError`; a concurrent in-flight request throws
-`ConcurrentCommandReplayError`. Failed money transactions release the reservation. The cache must
-provide atomic `setIfAbsent` - a plain get-then-set is not safe for money.
+`postRain` (`POST /chat-command/rain`) resolves who is online in the room via
+`CHAT_REALTIME_TRANSPORT.getOnlineUserIds(chatChannel(roomId))` and passes the plain
+`onlineUserIds` list into `RAIN_COMMANDS.sendRain(input, actorId)` - that is its entire
+responsibility. `social-transfers` posts and publishes rain's system message itself, inside its
+own money-moving transaction, exactly like `/gift` and `/donate` - `postRain` never touches
+`CHAT_SYSTEM_WRITER` or `CHAT_REALTIME_TRANSPORT.publish`.
 
-## Publish-after-commit for gift/rain/donate
-
-`ChatSystemWriter.postSystemMessage` only auto-publishes to realtime when it owns the write (no
-`tx` argument). `handleGift`/`handleRain`/`handleDonate` all pass their own `tx`, so they own the
-commit boundary and must call `this.transport.publish(chatChannel(...), msg)` themselves, AFTER
-their `db.transaction(...)` call resolves - never before, or a client could see a gift/rain/donate
-message for money that was never actually moved (transaction rolled back after the publish).
-`handleBlockAction` does not pass `tx`, so it still relies on `postSystemMessage`'s own auto-publish.
-
-## Claimable gift mechanic
-
-`/gift <amount>` is a two-step flow: the sender is debited immediately and a `chat_gift` row (status: unclaimed) is created atomically with the system message. Any other player calls `POST /chat-command/gift/:id/claim` to win the credit. The atomic claim uses `UPDATE ... WHERE claimed_by IS NULL RETURNING *` — first caller wins, zero balance goes unreturned. Realtime push fires on claim via `CHAT_REALTIME_TRANSPORT.publish(chatChannel(roomId), ...)` so frontends can update the card live.
-
-`chatGift.messageId` is a plain UUID with no FK — cross-module boundary rule applies.
-
-## Rain split has a remainder - debit the distributed amount, not the typed amount
-
-`/rain <amount>` splits `floor(amount / recipientCount)` to each recipient - `perRecipient *
-recipientCount` can be LESS than the player-typed `amount` (eg `10.99` split 10 ways credits
-`10.00` total). `handleRain` debits `totalDistributed` (`floor(amount/n)*n`, computed in the same
-SQL statement as `perRecipient`), never the raw `input.amount` - otherwise the undistributed
-remainder is silently taken from the sender and never credited anywhere. The metadata, audit
-`after.amount`, and the `chat.rain.distributed` event's `totalAmount` all report `totalDistributed`
-too, since that is what actually left the sender's wallet. The pre-transaction `maxAmount`/
-`minAmount`/`amountUnits` limit checks still validate against the player-typed `input.amount` -
-that happens before the split is known and is correct as-is.
-
-## Exact username resolution for `/donate`, `/block`, `/ignore`
-
-These three commands resolve an EXACT, already-known username (typed in full or picked from
-autocomplete, never a partial search term) via the shared `resolveExactPlayer` helper, which calls
-`ADMIN_USER_DIRECTORY.getPlayerByUsername` - a real exact, case-insensitive match. They do NOT use
-`findPlayerIds` (that method is a capped, unordered `ILIKE '%query%'` substring search meant for
-autocomplete-style fuzzy search): a short/common username can substring-collide with more than the
-20-row cap of unrelated accounts, so the real target could fall outside the first 20 rows Postgres
-happens to return and get a false `ChatPlayerNotFoundError`. `searchMentions`/`searchPlayers` still
-use `findPlayerIds` correctly - those genuinely are partial-query autocomplete search.
+This split (presence resolved here, everything else in `social-transfers`) exists because
+`chat-commands` already depends on `social-transfers` (for `GIFT_COMMANDS`) - a reverse dependency
+from `social-transfers` back onto `chat-commands`, or onto `chat`'s `CHAT_REALTIME_TRANSPORT.getOnlineUserIds`
+specifically for presence, would create an import cycle the plugin loader's topological sort cannot
+resolve. Presence is the ONLY piece that needed to move to the caller for that reason - the actual
+chat write stays inside `social-transfers`' transaction because it must commit or roll back
+atomically with the wallet move, and `social-transfers` has no way to receive a `tx` handle from a
+caller that doesn't hold it.
 
 ## Ports consumed
 
-- `CHAT_SYSTEM_WRITER` — posts system messages into the chat stream (bound by the `chat` plugin; implemented by `ChatService.sendSystemMessage`).
-- `CACHE` — atomic Redis-backed idempotency reservation and short-lived replay result storage.
-- `WALLET_COMMANDS` — debits the actor and credits recipient(s) within a single transaction; money never flows over events.
-- `ADMIN_USER_DIRECTORY` — `findPlayerIds` for autocomplete-style username search, `lookupPlayers` for batch profile resolution, `getPlayerByUsername` for exact-match resolution of an already-known username (`/donate`, `/block`, `/ignore`).
-- `ADMIN_GAME_REPORTING` — `getPlayerStats` for total-wagered/total-bets on the profile card (owned by casino/gaming).
-- `AUDIT_WRITER` — transactional `recordInTransaction()` for gift/rain/donate money paths, so the
-  audit row commits or rolls back with the wallet move; non-money command configuration still uses
-  `record()`.
-- `CHAT_REALTIME_TRANSPORT` — `getOnlineUserIds(channel)` for rain recipient discovery; `publish(channel, event)` for gift-claimed push. The chat-scoped token, not the generic `REALTIME_TRANSPORT` - this module publishes on the same `chat:*` channels chat itself uses, so it must ride whatever transport chat is bound to (see `chat/AGENTS.md`), never a different one.
+- `ADMIN_USER_DIRECTORY` - `findPlayerIds`/`lookupPlayers` for `mentionSearch`.
+- `CHAT_BLOCK_WRITER` - `getExcludedUserIds` to keep blocked/ignored players out of `@mention` autocomplete.
+- `CHAT_REALTIME_TRANSPORT` - `getOnlineUserIds(channel)` for `/rain` recipient discovery. The chat-scoped token, not the generic `REALTIME_TRANSPORT`.
+- `GIFT_COMMANDS` / `RAIN_COMMANDS` - `sendGift`/`claimGift`/`sendRain`, bound by `social-transfers`. Declared via `dependsOn: ['chat', 'social-transfers']`.
+
+## What moved to social-transfers (and why)
+
+`execute` (the gift/rain/donate/block/ignore discriminated union), `getGift`, `adminUpdateCommand`, `playerSearch`, `playerProfile` were removed from this module entirely:
+
+- Gift/rain/donate money movement, limit checks, and idempotency -> `social-transfers` (`packages/core/src/engagement/social-transfers/`). See that module's AGENTS.md for the idempotency/publish-after-commit/rain-remainder/exact-username invariants - they did not change, only moved.
+- `block`/`ignore` were pure duplication of `chat.blockUser`/`chat.ignoreUser` (backed by the same `CHAT_BLOCK_WRITER`) - deleted outright, not moved. Consumers call the `chat` module's operations directly.
+- `playerSearch`/`playerProfile` -> `player-management` (`playerSearch`/`playerProfile` on `playerContract`), since they are player-directory lookups, not chat commands.
+- The old `chat_gift` table and its migration are left untouched here (no new writes target it) - see `social-transfers/AGENTS.md` for the successor `player_gift` table and the deliberately-deferred migration decision for it.
 
 ## Extension points
 
-Add a new command type by:
+Add a new NON-money command type by:
 
 1. Adding the key to `CHAT_COMMAND_TYPES` in `contract/index.ts`.
-2. Adding a handler method in `ChatCommandsService`.
-3. Adding a dispatch branch in `executeCommand`.
-4. Inserting a seed row in `tools/db/seed.ts`.
-
-## Invariants
-
-- Gift send: debit + `chatGift` insert + system message are atomic in one transaction. `messageId` is back-filled in the same transaction after `postSystemMessage` returns.
-- Gift claim: the `UPDATE ... WHERE claimed_by IS NULL` is the idempotency guard — no separate lock needed. Self-claim is rejected before the update attempt.
-- Rain recipients are capped by `config.maxRecipients` (default 50) and filtered to exclude the actor.
-- All money movement is transactional: debit + credits + system message happen atomically.
-- Money-moving audit rows are written through the same transaction as the debit/credit and system message.
-- `mapConcurrent` (limit 10) is used for rain credits — never `Promise.all` on an unbounded recipient list.
-- `adminUpdateCommand` uses an upsert so a missing config row is created on first admin call.
+2. Inserting a seed row in `seed/index.ts`.
+3. Adding the route + handler here if it's a chat-command-owned lookup (like `mentionSearch`), or in the owning module if it needs money/limits (follow the `social-transfers` pattern via a dedicated command port).

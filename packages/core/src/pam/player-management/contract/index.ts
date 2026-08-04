@@ -8,6 +8,7 @@ import {
   UuidSchema,
   TagKeySchema,
   PaginatedPlayerSearchArgsSchema,
+  MoneyAmountSchema,
 } from '@openora/core/contracts';
 import { paginated } from '@openora/core/contracts/kit';
 
@@ -30,6 +31,28 @@ export const PlayerSummarySchema = z.object({
   newLastWeek: z.number().int(),
   selfExcluded: z.number().int(),
 });
+
+// Ported from chat-commands: powers the chat `/profile` command's search step
+// and profile card. See AGENTS.md "block/ignore search exclusion".
+export const PlayerSearchResultSchema = z.object({
+  userId: UuidSchema,
+  username: z.string(),
+  avatarUrl: z.string().nullable(),
+  level: z.number().int(),
+});
+export type PlayerSearchResult = z.infer<typeof PlayerSearchResultSchema>;
+
+export const PlayerProfileCardSchema = z.object({
+  userId: UuidSchema,
+  username: z.string(),
+  avatarUrl: z.string().nullable(),
+  level: z.number().int(),
+  joinedAt: z.string().nullable(),
+  totalWagered: MoneyAmountSchema.nullable(),
+  totalBets: z.number().int().nullable(),
+  currency: z.string().nullable(),
+});
+export type PlayerProfileCard = z.infer<typeof PlayerProfileCardSchema>;
 
 export const playerContract = populateContractRouterPaths({
   list: oc
@@ -77,4 +100,22 @@ export const playerContract = populateContractRouterPaths({
     .output(z.array(PlayerRegistrationPointSchema)),
 
   summary: oc.route({ method: 'GET', path: '/players/stats/summary' }).output(PlayerSummarySchema),
+
+  // Chat `/profile` command's search step - excludes players the caller has
+  // blocked/ignored (moderation). See AGENTS.md.
+  playerSearch: oc
+    .route({ method: 'GET', path: '/players/search' })
+    .input(
+      z.object({
+        q: z.string().min(1).max(50),
+        limit: z.coerce.number().int().min(1).max(100).default(20),
+      }),
+    )
+    .output(z.array(PlayerSearchResultSchema)),
+
+  // Looked up by identity userId (like getByUserId), never the PAM playerId.
+  playerProfile: oc
+    .route({ method: 'GET', path: '/players/{userId}/profile-card' })
+    .input(z.object({ userId: UuidSchema }))
+    .output(PlayerProfileCardSchema),
 });

@@ -38,18 +38,20 @@ export type MentionResult = z.infer<typeof MentionResultSchema>;
 
 export { SystemChatMessageSchema };
 
-export const GiftStateSchema = z.object({
-  id: UuidSchema,
-  senderId: UuidSchema,
-  senderUsername: z.string(),
+export const PostGiftInputSchema = z.object({
   amount: MoneyAmountSchema,
-  currency: z.string(),
-  claimedBy: UuidSchema.nullable(),
-  claimedByUsername: z.string().nullable(),
-  claimedAt: z.string().nullable(),
-  createdAt: z.string(),
+  roomId: UuidSchema,
+  idempotencyKey: UuidSchema,
 });
-export type GiftState = z.infer<typeof GiftStateSchema>;
+export type PostGiftInput = z.infer<typeof PostGiftInputSchema>;
+
+export const PostRainInputSchema = z.object({
+  amount: MoneyAmountSchema,
+  recipientCount: z.number().int().positive(),
+  roomId: UuidSchema,
+  idempotencyKey: UuidSchema,
+});
+export type PostRainInput = z.infer<typeof PostRainInputSchema>;
 
 export const ClaimGiftOutputSchema = z.object({
   claimedBy: UuidSchema,
@@ -58,79 +60,33 @@ export const ClaimGiftOutputSchema = z.object({
 });
 export type ClaimGiftOutput = z.infer<typeof ClaimGiftOutputSchema>;
 
-export const PlayerSearchResultSchema = z.object({
-  userId: UuidSchema,
-  username: z.string(),
-  avatarUrl: z.string().nullable(),
-  level: z.number().int(),
-});
-export type PlayerSearchResult = z.infer<typeof PlayerSearchResultSchema>;
-
-export const PlayerProfileCardSchema = z.object({
-  userId: UuidSchema,
-  username: z.string(),
-  avatarUrl: z.string().nullable(),
-  level: z.number().int(),
-  joinedAt: z.string().nullable(),
-  totalWagered: MoneyAmountSchema.nullable(),
-  totalBets: z.number().int().nullable(),
-  currency: z.string().nullable(),
-});
-export type PlayerProfileCard = z.infer<typeof PlayerProfileCardSchema>;
-
 export const chatCommandsContract = {
   listCommands: oc
     .route({ method: 'GET', path: '/chat-command/commands' })
     .input(z.object({}))
     .output(z.array(ChatCommandDescriptorSchema)),
 
-  execute: oc
-    .route({ method: 'POST', path: '/chat-command/execute' })
-    .input(
-      z.discriminatedUnion('type', [
-        z.object({
-          type: z.literal('gift'),
-          amount: MoneyAmountSchema,
-          roomId: UuidSchema,
-          idempotencyKey: UuidSchema,
-        }),
-        z.object({
-          type: z.literal('rain'),
-          amount: MoneyAmountSchema,
-          recipientCount: z.number().int().positive(),
-          roomId: UuidSchema,
-          idempotencyKey: UuidSchema,
-        }),
-        z.object({
-          type: z.literal('donate'),
-          targetUsername: z.string().min(1),
-          amount: MoneyAmountSchema,
-          roomId: UuidSchema.nullable(),
-          idempotencyKey: UuidSchema,
-        }),
-        z.object({
-          type: z.literal('block'),
-          targetUsername: z.string().min(1),
-          roomId: UuidSchema.nullable(),
-        }),
-        z.object({
-          type: z.literal('ignore'),
-          targetUsername: z.string().min(1),
-          roomId: UuidSchema.nullable(),
-        }),
-      ]),
-    )
+  // Dedicated gift-send operation - money/limit/idempotency logic lives in the
+  // social-transfers module behind the GIFT_COMMANDS port; this module only
+  // wires the route. See AGENTS.md.
+  postGift: oc
+    .route({ method: 'POST', path: '/chat-command/gift' })
+    .input(PostGiftInputSchema)
     .output(SystemChatMessageSchema),
-
-  getGift: oc
-    .route({ method: 'GET', path: '/chat-command/gift/{id}' })
-    .input(z.object({ id: UuidSchema }))
-    .output(GiftStateSchema),
 
   claimGift: oc
     .route({ method: 'POST', path: '/chat-command/gift/{id}/claim' })
     .input(z.object({ id: UuidSchema }))
     .output(ClaimGiftOutputSchema),
+
+  // Dedicated rain-send operation - this module resolves the online recipient
+  // list (it owns presence lookups for the chat command surface) and hands it
+  // to the RAIN_COMMANDS port; money/limit/idempotency logic lives in
+  // social-transfers. See AGENTS.md.
+  postRain: oc
+    .route({ method: 'POST', path: '/chat-command/rain' })
+    .input(PostRainInputSchema)
+    .output(SystemChatMessageSchema),
 
   mentionSearch: oc
     .route({ method: 'GET', path: '/chat-command/mention-search' })
@@ -141,30 +97,4 @@ export const chatCommandsContract = {
       }),
     )
     .output(z.array(MentionResultSchema)),
-
-  playerSearch: oc
-    .route({ method: 'GET', path: '/chat-command/player-search' })
-    .input(
-      z.object({
-        q: z.string().min(1).max(50),
-        limit: z.coerce.number().int().min(1).max(100).default(20),
-      }),
-    )
-    .output(z.array(PlayerSearchResultSchema)),
-
-  playerProfile: oc
-    .route({ method: 'GET', path: '/chat-command/player-profile/{userId}' })
-    .input(z.object({ userId: UuidSchema }))
-    .output(PlayerProfileCardSchema),
-
-  adminUpdateCommand: oc
-    .route({ method: 'PATCH', path: '/chat-command/admin/commands/{key}' })
-    .input(
-      z.object({
-        key: ChatCommandTypeSchema,
-        enabled: z.boolean(),
-        config: CommandConfigSchema.optional(),
-      }),
-    )
-    .output(ChatCommandDescriptorSchema),
 };

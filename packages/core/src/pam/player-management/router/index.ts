@@ -1,5 +1,5 @@
 import { implement } from '@orpc/server';
-import { AdminGuard, mapErrors, type OssContext } from '@openora/core/server';
+import { AdminGuard, mapErrors, getUserId, type OssContext } from '@openora/core/server';
 import type { AuditWritePort } from '@openora/core/contracts';
 import { playerContract } from '../contract/index.js';
 import { PlayerService, PlayerNotFoundError } from '../service/player.service.js';
@@ -92,6 +92,20 @@ export function createPlayerRouter(
     summary: os.summary.handler(async ({ context }) => {
       await adminGuard.assert(context, 'analytics', 'view');
       return player.summary();
+    }),
+
+    // Player-facing (not adminGuard-gated) - powers the chat `/profile` command,
+    // same as the routes this replaces in chat-commands.
+    playerSearch: os.playerSearch.handler(({ input, context }) => {
+      const viewerId = getUserId(context);
+      return player.searchPlayers(input.q, input.limit, viewerId);
+    }),
+
+    playerProfile: os.playerProfile.handler(({ input, context }) => {
+      const viewerId = getUserId(context);
+      return mapErrors({ NOT_FOUND: PlayerNotFoundError }, () =>
+        player.getPlayerProfile(input.userId, viewerId),
+      );
     }),
   });
 }

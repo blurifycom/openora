@@ -85,14 +85,11 @@
         "chat_gift"
       ],
       "routes": [
-        "chat-commands.adminUpdateCommand",
         "chat-commands.claimGift",
-        "chat-commands.execute",
-        "chat-commands.getGift",
         "chat-commands.listCommands",
         "chat-commands.mentionSearch",
-        "chat-commands.playerProfile",
-        "chat-commands.playerSearch"
+        "chat-commands.postGift",
+        "chat-commands.postRain"
       ]
     },
     {
@@ -262,6 +259,8 @@
         "player-management.get",
         "player-management.getByUserId",
         "player-management.list",
+        "player-management.playerProfile",
+        "player-management.playerSearch",
         "player-management.registrationsOverTime",
         "player-management.remove",
         "player-management.summary",
@@ -288,6 +287,19 @@
       "routes": [
         "profile.get",
         "profile.update"
+      ]
+    },
+    {
+      "id": "social-transfers",
+      "group": "engagement",
+      "tables": [
+        "player_donate",
+        "player_gift",
+        "player_rain",
+        "player_rain_receiver"
+      ],
+      "routes": [
+        "social-transfers.sendDonate"
       ]
     },
     {
@@ -344,7 +356,7 @@
       "boundIn": [
         "packages/core/src/admin-console/plugin.ts",
         "packages/core/src/casino/gaming/plugin.ts",
-        "packages/core/src/engagement/chat-commands/plugin.ts"
+        "packages/core/src/pam/player-management/plugin.ts"
       ]
     },
     {
@@ -378,7 +390,9 @@
         "packages/core/src/engagement/chat-commands/plugin.ts",
         "packages/core/src/engagement/chat/plugin.ts",
         "packages/core/src/engagement/notifications/plugin.ts",
+        "packages/core/src/engagement/social-transfers/plugin.ts",
         "packages/core/src/pam/identity/plugin.ts",
+        "packages/core/src/pam/player-management/plugin.ts",
         "packages/core/src/pam/tag/plugin.ts",
         "packages/core/src/wallet/plugin.ts"
       ]
@@ -409,7 +423,7 @@
         "packages/core/src/admin-console/plugin.ts",
         "packages/core/src/audit/plugin.ts",
         "packages/core/src/compliance/plugin.ts",
-        "packages/core/src/engagement/chat-commands/plugin.ts",
+        "packages/core/src/engagement/social-transfers/plugin.ts",
         "packages/core/src/pam/player-management/plugin.ts",
         "packages/core/src/wallet/plugin.ts"
       ]
@@ -434,7 +448,7 @@
         "packages/core/src/casino/lobby/plugin.ts",
         "packages/core/src/cms/plugin.ts",
         "packages/core/src/compliance/plugin.ts",
-        "packages/core/src/engagement/chat-commands/plugin.ts",
+        "packages/core/src/engagement/social-transfers/plugin.ts",
         "packages/core/src/iam/plugin.ts",
         "packages/core/src/pam/identity/plugin.ts"
       ]
@@ -446,7 +460,8 @@
       "status": "wired",
       "boundIn": [
         "packages/core/src/engagement/chat-commands/plugin.ts",
-        "packages/core/src/engagement/chat/plugin.ts"
+        "packages/core/src/engagement/chat/plugin.ts",
+        "packages/core/src/pam/player-management/plugin.ts"
       ]
     },
     {
@@ -455,8 +470,8 @@
       "token": "CHAT_ROOM_ACCESS",
       "status": "wired",
       "boundIn": [
-        "packages/core/src/engagement/chat-commands/plugin.ts",
-        "packages/core/src/engagement/chat/plugin.ts"
+        "packages/core/src/engagement/chat/plugin.ts",
+        "packages/core/src/engagement/social-transfers/plugin.ts"
       ]
     },
     {
@@ -465,8 +480,8 @@
       "token": "CHAT_SYSTEM_WRITER",
       "status": "wired",
       "boundIn": [
-        "packages/core/src/engagement/chat-commands/plugin.ts",
-        "packages/core/src/engagement/chat/plugin.ts"
+        "packages/core/src/engagement/chat/plugin.ts",
+        "packages/core/src/engagement/social-transfers/plugin.ts"
       ]
     },
     {
@@ -515,6 +530,16 @@
       "status": "wired",
       "boundIn": [
         "packages/core/src/compliance/plugin.ts"
+      ]
+    },
+    {
+      "category": "gift-commands",
+      "interface": "SendGiftArgs",
+      "token": "GIFT_COMMANDS",
+      "status": "wired",
+      "boundIn": [
+        "packages/core/src/engagement/chat-commands/plugin.ts",
+        "packages/core/src/engagement/social-transfers/plugin.ts"
       ]
     },
     {
@@ -619,6 +644,16 @@
       ]
     },
     {
+      "category": "rain-commands",
+      "interface": "SendRainArgs",
+      "token": "RAIN_COMMANDS",
+      "status": "wired",
+      "boundIn": [
+        "packages/core/src/engagement/chat-commands/plugin.ts",
+        "packages/core/src/engagement/social-transfers/plugin.ts"
+      ]
+    },
+    {
       "category": "realtime",
       "interface": "RealtimePresence",
       "token": "REALTIME_TRANSPORT",
@@ -664,7 +699,7 @@
       "status": "wired",
       "boundIn": [
         "packages/core/src/casino/gaming/plugin.ts",
-        "packages/core/src/engagement/chat-commands/plugin.ts",
+        "packages/core/src/engagement/social-transfers/plugin.ts",
         "packages/core/src/wallet/plugin.ts"
       ]
     },
@@ -1142,10 +1177,6 @@
       "file": "packages/core/src/contracts/schemas/chat-command-metadata.ts"
     },
     {
-      "name": "GiftStateSchema",
-      "file": "packages/core/src/engagement/chat-commands/contract/index.ts"
-    },
-    {
       "name": "GrantInputSchema",
       "file": "packages/core/src/iam/contract/index.ts"
     },
@@ -1419,7 +1450,7 @@
     },
     {
       "name": "PlayerProfileCardSchema",
-      "file": "packages/core/src/engagement/chat-commands/contract/index.ts"
+      "file": "packages/core/src/pam/player-management/contract/index.ts"
     },
     {
       "name": "PlayerRegistrationPointSchema",
@@ -1435,7 +1466,7 @@
     },
     {
       "name": "PlayerSearchResultSchema",
-      "file": "packages/core/src/engagement/chat-commands/contract/index.ts"
+      "file": "packages/core/src/pam/player-management/contract/index.ts"
     },
     {
       "name": "PlayerSearchSchema",
@@ -1480,6 +1511,14 @@
     {
       "name": "PositiveMoneyAmountSchema",
       "file": "packages/core/src/casino/gaming/contract/index.ts"
+    },
+    {
+      "name": "PostGiftInputSchema",
+      "file": "packages/core/src/engagement/chat-commands/contract/index.ts"
+    },
+    {
+      "name": "PostRainInputSchema",
+      "file": "packages/core/src/engagement/chat-commands/contract/index.ts"
     },
     {
       "name": "ProfileCommandMetadataSchema",
@@ -1564,6 +1603,10 @@
     {
       "name": "SelfExcludedLoginDetailSchema",
       "file": "packages/core/src/compliance/contract/rg.ts"
+    },
+    {
+      "name": "SendDonateInputSchema",
+      "file": "packages/core/src/engagement/social-transfers/contract/index.ts"
     },
     {
       "name": "SessionItemSchema",
@@ -1808,10 +1851,7 @@
     "GET /backoffice/users",
     "GET /backoffice/users/{userId}",
     "GET /chat-command/commands",
-    "GET /chat-command/gift/{id}",
     "GET /chat-command/mention-search",
-    "GET /chat-command/player-profile/{userId}",
-    "GET /chat-command/player-search",
     "GET /chat/blocks",
     "GET /chat/connection",
     "GET /chat/global",
@@ -1856,9 +1896,11 @@
     "GET /player/{playerId}/player-tag",
     "GET /players",
     "GET /players/by-user/{userId}",
+    "GET /players/search",
     "GET /players/stats/registrations",
     "GET /players/stats/summary",
     "GET /players/{playerId}",
+    "GET /players/{userId}/profile-card",
     "GET /profile",
     "GET /tag-rule",
     "GET /wallet/auto-withdrawal-rules/{userId}",
@@ -1868,14 +1910,14 @@
     "GET /wallet/withdrawals",
     "PATCH /backoffice/chat/rooms/{id}",
     "PATCH /backoffice/users/{userId}",
-    "PATCH /chat-command/admin/commands/{key}",
     "PATCH /iam/roles/{roleId}",
     "PATCH /identity/profile",
     "PATCH /players/{playerId}",
     "PATCH /profile",
     "POST /backoffice/chat/rooms",
-    "POST /chat-command/execute",
+    "POST /chat-command/gift",
     "POST /chat-command/gift/{id}/claim",
+    "POST /chat-command/rain",
     "POST /chat/blocks",
     "POST /chat/global",
     "POST /chat/ignores",
@@ -1927,6 +1969,7 @@
     "POST /notifications/{id}/read",
     "POST /player/{playerId}/note",
     "POST /player/{playerId}/player-tag",
+    "POST /social-transfers/donate",
     "POST /tag",
     "POST /wallet/deposit",
     "POST /wallet/deposits/address",

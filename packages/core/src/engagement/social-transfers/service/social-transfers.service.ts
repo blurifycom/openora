@@ -1,0 +1,872 @@
+import { createHash } from 'node:crypto';
+import { and, eq, isNull, sql } from 'drizzle-orm';
+import {
+  DrizzleService,
+  makeNotFoundError,
+  makeConflictError,
+  mapConcurrent,
+  moneyToNumber,
+  findOneOrThrow,
+  createDomainError,
+  type EventBus,
+} from '@openora/core/server';
+import type {
+  Uuid,
+  ChatSystemMessage,
+  ChatSystemWriter,
+  WalletCommands,
+  AdminUserDirectory,
+  AuditWritePort,
+  RealtimeTransport,
+  ChatRoomAccess,
+  CacheAdapter,
+  SendGiftArgs,
+  SendGiftResult,
+  ClaimGiftResult,
+  GiftCommands,
+  SendRainArgs,
+  SendRainResult,
+  RainCommands,
+} from '@openora/core/contracts';
+import { chatChannel } from '@openora/core/contracts';
+import { chatCommandConfig } from '@openora/core/engagement/schema/chat-commands';
+import type { SendDonateInput } from '../contract/index.js';
+import { playerGift, playerDonate, playerRain, playerRainReceiver } from '../schema/index.js';
+
+export const CommandDisabledError = makeNotFoundError('ChatCommand');
+export const NoOnlineUsersError = makeConflictError(
+  'NoOnlineUsers',
+  'No other users are online in this room',
+);
+export const InsufficientBalanceError = makeConflictError(
+  'InsufficientBalance',
+  'Not enough balance',
+);
+export const ExceedsLimitError = makeConflictError(
+  'ExceedsLimit',
+  'Amount exceeds the command limit',
+);
+export const BelowMinimumError = makeConflictError(
+  'BelowMinimum',
+  'Amount is below the minimum for this command',
+);
+export const RainCreditError = makeConflictError(
+  'RainCreditError',
+  'A recipient wallet is unavailable; rain aborted',
+);
+export const ChatPlayerNotFoundError = makeNotFoundError('ChatPlayer');
+export const GiftNotFoundError = makeNotFoundError('ChatGift');
+export const GiftAlreadyClaimedError = makeConflictError(
+  'GiftAlreadyClaimed',
+  'This gift has already been claimed',
+);
+export const GiftSelfClaimError = makeConflictError(
+  'GiftSelfClaim',
+  'You cannot claim your own gift',
+);
+export const DonateSelfError = makeConflictError('DonateSelf', 'You cannot donate to yourself');
+export const TooManyRecipientsError = makeConflictError(
+  'TooManyRecipients',
+  'Amount too small: you need at least $1 per recipient',
+);
+export const ChatCommandIdempotencyKeyReuseError = makeConflictError(
+  'ChatCommandIdempotencyKeyReuse',
+  'This idempotency key was already used with different request parameters',
+);
+export const ConcurrentCommandReplayError = makeConflictError(
+  'ConcurrentCommandReplay',
+  'This request is already being processed - please retry',
+);
+export const ChatRoomNotMemberError = createDomainError(
+  'ChatRoomNotMemberError',
+  (roomId: Uuid) => `You are not a member of room: ${roomId}`,
+);
+
+type GiftArgs = { amount: string; roomId: Uuid; idempotencyKey: Uuid };
+type RainFingerprintArgs = Pick<
+  SendRainArgs,
+  'amount' | 'recipientCount' | 'roomId' | 'idempotencyKey'
+>;
+type DonateArgs = {
+  targetUsername: string;
+  amount: string;
+  roomId: Uuid | null;
+  idempotencyKey: Uuid;
+};
+type MoneyMovingInput =
+  | ({ type: 'gift' } & GiftArgs)
+  | ({ type: 'rain' } & RainFingerprintArgs)
+  | ({ type: 'donate' } & DonateArgs);
+
+const COMMAND_IDEMPOTENCY_TTL_MS = 5 * 60 * 1000;
+type CommandIdempotencyRecord = {
+  fingerprint: string;
+  result: ChatSystemMessage | null;
+};
+
+// The replay guard must match on the COMPLETE request, not just the amount - a reused
+// key with a different room, recipient count, or donate target is a distinct request,
+// not a replay of the original. `idempotencyKey` itself is excluded so the fingerprint
+// is stable for the row it guards. The cache-key namespace stays `chat-command:*` even
+// though this logic now lives here - see AGENTS.md.
+export function fingerprintCommand(input: MoneyMovingInput): string {
+  const canonical: Record<string, unknown> =
+    input.type === 'gift'
+      ? { type: input.type, amount: input.amount, roomId: input.roomId }
+      : input.type === 'rain'
+        ? {
+            type: input.type,
+            amount: input.amount,
+            recipientCount: input.recipientCount,
+            roomId: input.roomId,
+          }
+        : {
+            type: input.type,
+            amount: input.amount,
+            targetUsername: input.targetUsername,
+            roomId: input.roomId,
+          };
+  return createHash('sha256').update(JSON.stringify(canonical)).digest('hex');
+}
+
+function shuffleArray<T>(arr: readonly T[]): T[] {
+  const result = [...arr];
+  for (let i = result.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1));
+    const a = result.at(i);
+    const b = result.at(j);
+    if (a !== undefined && b !== undefined) {
+      result[i] = b;
+      result[j] = a;
+    }
+  }
+  return result;
+}
+
+// Translates a thrown domain error into the GIFT_COMMANDS port's discriminated
+// result so chat-commands never needs to import this module's error classes
+// (module boundary) - only genuinely unexpected errors still throw across the
+// port. `.name`-based fallback covers an error surfacing from CHAT_ROOM_ACCESS
+// (a different module's class), mirroring the sender-side room-access guard.
+function toSendGiftResult(error: unknown): SendGiftResult {
+  if (error instanceof CommandDisabledError) {
+    return { ok: false, reason: 'disabled' };
+  }
+  if (error instanceof InsufficientBalanceError) {
+    return { ok: false, reason: 'insufficient_balance' };
+  }
+  if (error instanceof ExceedsLimitError) {
+    return { ok: false, reason: 'exceeds_limit' };
+  }
+  if (error instanceof BelowMinimumError) {
+    return { ok: false, reason: 'below_minimum' };
+  }
+  if (error instanceof ChatCommandIdempotencyKeyReuseError) {
+    return { ok: false, reason: 'idempotency_key_reuse' };
+  }
+  if (error instanceof ConcurrentCommandReplayError) {
+    return { ok: false, reason: 'concurrent_replay' };
+  }
+  if (
+    error instanceof ChatRoomNotMemberError ||
+    (error instanceof Error && error.name === 'ChatRoomNotMemberError')
+  ) {
+    return { ok: false, reason: 'room_not_member' };
+  }
+  throw error;
+}
+
+function toClaimGiftResult(error: unknown): ClaimGiftResult {
+  if (error instanceof GiftNotFoundError) {
+    return { ok: false, reason: 'gift_not_found' };
+  }
+  if (error instanceof GiftAlreadyClaimedError) {
+    return { ok: false, reason: 'already_claimed' };
+  }
+  if (error instanceof GiftSelfClaimError) {
+    return { ok: false, reason: 'self_claim' };
+  }
+  if (
+    error instanceof ChatRoomNotMemberError ||
+    (error instanceof Error && error.name === 'ChatRoomNotMemberError')
+  ) {
+    return { ok: false, reason: 'room_not_member' };
+  }
+  throw error;
+}
+
+function toSendRainResult(error: unknown): SendRainResult {
+  if (error instanceof CommandDisabledError) {
+    return { ok: false, reason: 'disabled' };
+  }
+  if (error instanceof InsufficientBalanceError) {
+    return { ok: false, reason: 'insufficient_balance' };
+  }
+  if (error instanceof ExceedsLimitError) {
+    return { ok: false, reason: 'exceeds_limit' };
+  }
+  if (error instanceof BelowMinimumError) {
+    return { ok: false, reason: 'below_minimum' };
+  }
+  if (error instanceof NoOnlineUsersError) {
+    return { ok: false, reason: 'no_online_users' };
+  }
+  if (error instanceof TooManyRecipientsError) {
+    return { ok: false, reason: 'too_many_recipients' };
+  }
+  if (error instanceof RainCreditError) {
+    return { ok: false, reason: 'rain_credit_failed' };
+  }
+  if (error instanceof ChatCommandIdempotencyKeyReuseError) {
+    return { ok: false, reason: 'idempotency_key_reuse' };
+  }
+  if (error instanceof ConcurrentCommandReplayError) {
+    return { ok: false, reason: 'concurrent_replay' };
+  }
+  if (
+    error instanceof ChatRoomNotMemberError ||
+    (error instanceof Error && error.name === 'ChatRoomNotMemberError')
+  ) {
+    return { ok: false, reason: 'room_not_member' };
+  }
+  throw error;
+}
+
+export class SocialTransfersService implements GiftCommands, RainCommands {
+  constructor(
+    private readonly drizzle: DrizzleService,
+    private readonly systemWriter: ChatSystemWriter,
+    private readonly wallet: WalletCommands,
+    private readonly directory: AdminUserDirectory,
+    private readonly audit: AuditWritePort,
+    private readonly transport: RealtimeTransport,
+    private readonly events: EventBus,
+    private readonly roomAccess: ChatRoomAccess,
+    private readonly cache: CacheAdapter,
+    private readonly idempotencyTtlMs = COMMAND_IDEMPOTENCY_TTL_MS,
+  ) {}
+
+  // GIFT_COMMANDS port impl, consumed by chat-commands via DI - never throws,
+  // every failure the caller must distinguish comes back as a typed `reason`.
+  async sendGift(input: SendGiftArgs, actorId: Uuid): Promise<SendGiftResult> {
+    try {
+      const message = await this.doSendGift(input, actorId);
+      return { ok: true, message };
+    } catch (error) {
+      return toSendGiftResult(error);
+    }
+  }
+
+  async claimGift(giftId: Uuid, claimerId: Uuid): Promise<ClaimGiftResult> {
+    try {
+      return await this.doClaimGift(giftId, claimerId);
+    } catch (error) {
+      return toClaimGiftResult(error);
+    }
+  }
+
+  // RAIN_COMMANDS port impl, consumed by chat-commands via DI - never throws.
+  // `input.onlineUserIds` is resolved by the caller (chat-commands owns
+  // presence via its own dependency on `chat`); this module never queries
+  // online status itself.
+  async sendRain(input: SendRainArgs, actorId: Uuid): Promise<SendRainResult> {
+    try {
+      const message = await this.doSendRain(input, actorId);
+      return { ok: true, message };
+    } catch (error) {
+      return toSendRainResult(error);
+    }
+  }
+
+  async sendDonate(input: SendDonateInput, actorId: Uuid): Promise<ChatSystemMessage> {
+    return this.doSendDonate(input, actorId);
+  }
+
+  private async loadCommandConfig(key: 'gift' | 'rain' | 'donate') {
+    const [row] = await this.drizzle.db
+      .select()
+      .from(chatCommandConfig)
+      .where(eq(chatCommandConfig.key, key))
+      .limit(1);
+    if (!row || !row.enabled) {
+      throw new CommandDisabledError(key);
+    }
+    return row.config ?? null;
+  }
+
+  private async verifyRoomAccessIfNeeded(roomId: Uuid | null, actorId: Uuid): Promise<void> {
+    if (!roomId) {
+      return;
+    }
+    try {
+      await this.roomAccess.verifyRoomAccess(roomId, actorId);
+    } catch (error) {
+      if (error instanceof Error && error.name === 'ChatRoomNotMemberError') {
+        throw new ChatRoomNotMemberError(roomId);
+      }
+      throw error;
+    }
+  }
+
+  private async findCommandReplay(
+    commandType: 'gift' | 'rain' | 'donate',
+    actorId: Uuid,
+    idempotencyKey: Uuid,
+    fingerprint: string,
+  ): Promise<ChatSystemMessage | null> {
+    const record = await this.cache.get<CommandIdempotencyRecord>(
+      this.idempotencyCacheKey(commandType, actorId, idempotencyKey),
+    );
+    if (!record) {
+      return null;
+    }
+    if (record.fingerprint !== fingerprint) {
+      throw new ChatCommandIdempotencyKeyReuseError();
+    }
+    if (!record.result) {
+      throw new ConcurrentCommandReplayError();
+    }
+    return record.result;
+  }
+
+  private idempotencyCacheKey(
+    commandType: 'gift' | 'rain' | 'donate',
+    actorId: Uuid,
+    idempotencyKey: Uuid,
+  ): string {
+    return `chat-command:idempotency:${actorId}:${commandType}:${idempotencyKey}`;
+  }
+
+  private async reserveCommandIdempotency(
+    commandType: 'gift' | 'rain' | 'donate',
+    actorId: Uuid,
+    idempotencyKey: Uuid,
+    fingerprint: string,
+  ): Promise<void> {
+    const reserved = await this.cache.setIfAbsent(
+      this.idempotencyCacheKey(commandType, actorId, idempotencyKey),
+      { fingerprint, result: null } satisfies CommandIdempotencyRecord,
+      { ttlMs: this.idempotencyTtlMs },
+    );
+    if (!reserved) {
+      throw new ConcurrentCommandReplayError();
+    }
+  }
+
+  private async completeCommandIdempotency(
+    commandType: 'gift' | 'rain' | 'donate',
+    actorId: Uuid,
+    idempotencyKey: Uuid,
+    fingerprint: string,
+    result: ChatSystemMessage,
+  ): Promise<void> {
+    await this.cache.set(
+      this.idempotencyCacheKey(commandType, actorId, idempotencyKey),
+      { fingerprint, result } satisfies CommandIdempotencyRecord,
+      { ttlMs: this.idempotencyTtlMs },
+    );
+  }
+
+  private async runWithCommandReservation<T>(
+    commandType: 'gift' | 'rain' | 'donate',
+    actorId: Uuid,
+    idempotencyKey: Uuid,
+    work: () => Promise<T>,
+  ): Promise<T> {
+    try {
+      return await work();
+    } catch (error) {
+      await this.cache.delete(this.idempotencyCacheKey(commandType, actorId, idempotencyKey));
+      throw error;
+    }
+  }
+
+  // Exact, case-insensitive username resolution for callers holding a complete, already-known
+  // username (never a partial search term) - `/donate`. Distinct from findPlayerIds' capped
+  // fuzzy substring search, which can silently drop the real match once more than 20 unrelated
+  // accounts substring-collide with a short/common username.
+  private async resolveExactPlayer(username: string) {
+    const summary = await this.directory.getPlayerByUsername(username);
+    if (!summary) {
+      throw new ChatPlayerNotFoundError(username);
+    }
+    return summary;
+  }
+
+  private async doSendGift(input: GiftArgs, actorId: Uuid): Promise<ChatSystemMessage> {
+    await this.verifyRoomAccessIfNeeded(input.roomId, actorId);
+    const config = await this.loadCommandConfig('gift');
+    if (
+      config?.maxAmount !== undefined &&
+      moneyToNumber(input.amount) > moneyToNumber(config.maxAmount)
+    ) {
+      throw new ExceedsLimitError();
+    }
+    if (
+      config?.minAmount !== undefined &&
+      moneyToNumber(input.amount) < moneyToNumber(config.minAmount)
+    ) {
+      throw new BelowMinimumError();
+    }
+
+    const fingerprint = fingerprintCommand({ type: 'gift', ...input });
+    const replay = await this.findCommandReplay('gift', actorId, input.idempotencyKey, fingerprint);
+    if (replay) {
+      return replay;
+    }
+    await this.reserveCommandIdempotency('gift', actorId, input.idempotencyKey, fingerprint);
+
+    const senderSummaries = await this.directory.lookupPlayers([actorId]);
+    const senderSummary = senderSummaries.find((s) => s.userId === actorId);
+    if (!senderSummary) {
+      throw new ChatPlayerNotFoundError(actorId);
+    }
+    const senderUsername = senderSummary.username;
+
+    const { msg, giftId, currency } = await this.runWithCommandReservation(
+      'gift',
+      actorId,
+      input.idempotencyKey,
+      () =>
+        this.drizzle.db.transaction(async (tx) => {
+          const debit = await this.wallet.debit(tx, {
+            userId: actorId,
+            amount: input.amount,
+            type: 'gift',
+          });
+          if (!debit.ok) {
+            throw new InsufficientBalanceError();
+          }
+
+          const [giftRow] = await tx
+            .insert(playerGift)
+            .values({
+              senderId: actorId,
+              senderUsername,
+              amount: input.amount,
+              currency: debit.currency,
+              roomId: input.roomId,
+              // messageId is back-filled below, in the same transaction, once the
+              // system message exists (same insert-then-update pattern as before).
+              messageId: '00000000-0000-0000-0000-000000000000',
+            })
+            .returning();
+
+          if (!giftRow) {
+            throw new InsufficientBalanceError();
+          }
+
+          const systemMsg = await this.systemWriter.postSystemMessage({
+            roomId: input.roomId,
+            actorId,
+            tx,
+            metadata: {
+              command: 'gift',
+              giftId: giftRow.id,
+              senderId: actorId,
+              senderUsername,
+              amount: input.amount,
+              currency: debit.currency,
+            },
+          });
+
+          await tx
+            .update(playerGift)
+            .set({ messageId: systemMsg.id })
+            .where(eq(playerGift.id, giftRow.id));
+
+          await this.audit.recordInTransaction(tx, {
+            actorId,
+            actorType: 'player',
+            action: 'chat.gift',
+            resourceType: 'player_gift',
+            resourceId: giftRow.id,
+            before: null,
+            after: { amount: input.amount, roomId: input.roomId },
+          });
+
+          return { msg: systemMsg, giftId: giftRow.id, currency: debit.currency };
+        }),
+    );
+    await this.completeCommandIdempotency('gift', actorId, input.idempotencyKey, fingerprint, msg);
+
+    // The caller now owns the commit boundary: postSystemMessage was passed `tx` above so
+    // it did not auto-publish - publish only now that this transaction has committed.
+    void this.transport.publish(chatChannel(input.roomId), msg);
+
+    void this.events.emit('chat.gift.sent', {
+      giftId,
+      senderId: actorId,
+      senderUsername,
+      amount: input.amount,
+      currency,
+      roomId: input.roomId,
+      messageId: msg.id,
+    });
+
+    return msg;
+  }
+
+  private async doClaimGift(giftId: Uuid, claimerId: Uuid): Promise<ClaimGiftResult> {
+    const claimerSummaries = await this.directory.lookupPlayers([claimerId]);
+    const claimerSummary = claimerSummaries.find((s) => s.userId === claimerId);
+    if (!claimerSummary) {
+      throw new GiftNotFoundError(claimerId);
+    }
+    const claimerUsername = claimerSummary.username;
+
+    const existing = await this.drizzle.db
+      .select()
+      .from(playerGift)
+      .where(eq(playerGift.id, giftId))
+      .limit(1);
+    const giftRow = findOneOrThrow(existing, new GiftNotFoundError(giftId));
+    await this.verifyRoomAccessIfNeeded(giftRow.roomId, claimerId);
+
+    if (giftRow.senderId === claimerId) {
+      throw new GiftSelfClaimError();
+    }
+
+    const { claimed, currency, roomId } = await this.drizzle.db.transaction(async (tx) => {
+      const claimedAt = new Date();
+      const results = await tx
+        .update(playerGift)
+        .set({ claimedBy: claimerId, claimedByUsername: claimerUsername, claimedAt })
+        .where(and(eq(playerGift.id, giftId), isNull(playerGift.claimedBy)))
+        .returning();
+
+      if (results.length === 0) {
+        // Another claimer won the race.
+        throw new GiftAlreadyClaimedError();
+      }
+
+      const updated = findOneOrThrow(results, new GiftAlreadyClaimedError());
+
+      const credit = await this.wallet.credit(tx, {
+        userId: claimerId,
+        amount: updated.amount,
+        currency: updated.currency,
+        type: 'gift',
+      });
+      if (!credit.ok) {
+        throw new GiftNotFoundError(claimerId);
+      }
+
+      await this.audit.recordInTransaction(tx, {
+        actorId: claimerId,
+        actorType: 'player',
+        action: 'chat.gift.claimed',
+        resourceType: 'player_gift',
+        resourceId: giftId,
+        before: null,
+        after: { claimedBy: claimerId, amount: updated.amount },
+      });
+
+      return { claimed: updated, currency: updated.currency, roomId: updated.roomId };
+    });
+
+    const claimedAtIso = claimed.claimedAt?.toISOString() ?? new Date().toISOString();
+
+    void this.transport.publish(chatChannel(roomId), {
+      event: 'gift.claimed',
+      giftId,
+      claimedBy: claimerId,
+      claimedByUsername: claimerUsername,
+      claimedAt: claimedAtIso,
+    });
+
+    void this.events.emit('chat.gift.claimed', {
+      giftId,
+      claimerId,
+      claimerUsername,
+      senderId: giftRow.senderId,
+      amount: claimed.amount,
+      currency,
+      roomId,
+    });
+
+    return {
+      ok: true,
+      claimedBy: claimerId,
+      claimedByUsername: claimerUsername,
+      claimedAt: claimedAtIso,
+    };
+  }
+
+  private async doSendRain(input: SendRainArgs, actorId: Uuid): Promise<ChatSystemMessage> {
+    await this.verifyRoomAccessIfNeeded(input.roomId, actorId);
+    const config = await this.loadCommandConfig('rain');
+    if (
+      config?.maxAmount !== undefined &&
+      moneyToNumber(input.amount) > moneyToNumber(config.maxAmount)
+    ) {
+      throw new ExceedsLimitError();
+    }
+    if (
+      config?.minAmount !== undefined &&
+      moneyToNumber(input.amount) < moneyToNumber(config.minAmount)
+    ) {
+      throw new BelowMinimumError();
+    }
+
+    const configMax = config?.maxRecipients ?? 50;
+    if (input.recipientCount > configMax) {
+      throw new ExceedsLimitError();
+    }
+    const amountUnits = Math.floor(moneyToNumber(input.amount));
+    if (input.recipientCount > amountUnits) {
+      throw new TooManyRecipientsError();
+    }
+    const fingerprint = fingerprintCommand({ type: 'rain', ...input });
+    const replay = await this.findCommandReplay('rain', actorId, input.idempotencyKey, fingerprint);
+    if (replay) {
+      return replay;
+    }
+    await this.reserveCommandIdempotency('rain', actorId, input.idempotencyKey, fingerprint);
+
+    const recipients = shuffleArray(input.onlineUserIds.filter((id) => id !== actorId)).slice(
+      0,
+      input.recipientCount,
+    );
+    if (recipients.length === 0) {
+      throw new NoOnlineUsersError();
+    }
+
+    const { msg, currency, totalDistributed, recipientIds } = await this.runWithCommandReservation(
+      'rain',
+      actorId,
+      input.idempotencyKey,
+      () =>
+        this.drizzle.db.transaction(async (tx) => {
+          const splitResult = await tx.execute(
+            sql`SELECT
+              (floor(floor(${input.amount}::numeric) / ${recipients.length}))::text AS per_recipient,
+              (floor(floor(${input.amount}::numeric) / ${recipients.length}) * ${recipients.length})::text AS total_distributed`,
+          );
+          const { per_recipient: perRecipient, total_distributed: totalDistributed } = splitResult
+            .rows[0] as {
+            per_recipient: string;
+            total_distributed: string;
+          };
+          const debit = await this.wallet.debit(tx, {
+            userId: actorId,
+            amount: totalDistributed,
+            type: 'rain',
+          });
+          if (!debit.ok) {
+            throw new InsufficientBalanceError();
+          }
+          const credits = await mapConcurrent(recipients, 10, (userId) =>
+            this.wallet.credit(tx, {
+              userId,
+              amount: perRecipient,
+              currency: debit.currency,
+              type: 'rain',
+            }),
+          );
+          if (credits.some((c) => !c.ok)) {
+            throw new RainCreditError();
+          }
+
+          const [rainRow] = await tx
+            .insert(playerRain)
+            .values({
+              senderId: actorId,
+              amount: totalDistributed,
+              perRecipient,
+              currency: debit.currency,
+              roomId: input.roomId,
+              recipientCount: recipients.length,
+            })
+            .returning();
+          if (!rainRow) {
+            throw new RainCreditError();
+          }
+          await tx.insert(playerRainReceiver).values(
+            recipients.map((recipientId) => ({
+              rainId: rainRow.id,
+              recipientId,
+              amount: perRecipient,
+            })),
+          );
+
+          const systemMsg = await this.systemWriter.postSystemMessage({
+            roomId: input.roomId,
+            actorId,
+            tx,
+            metadata: {
+              command: 'rain',
+              fromUserId: actorId,
+              amount: totalDistributed,
+              currency: debit.currency,
+              recipientCount: recipients.length,
+              perRecipient,
+            },
+          });
+
+          await this.audit.recordInTransaction(tx, {
+            actorId,
+            actorType: 'player',
+            action: 'chat.rain',
+            resourceType: 'player_rain',
+            resourceId: rainRow.id,
+            before: null,
+            after: { amount: totalDistributed, recipientCount: recipients.length },
+          });
+
+          return {
+            msg: systemMsg,
+            currency: debit.currency,
+            totalDistributed,
+            perRecipient,
+            recipientIds: recipients,
+          };
+        }),
+    );
+    await this.completeCommandIdempotency('rain', actorId, input.idempotencyKey, fingerprint, msg);
+
+    // The caller now owns the commit boundary: postSystemMessage was passed `tx` above so
+    // it did not auto-publish - publish only now that this transaction has committed.
+    void this.transport.publish(chatChannel(input.roomId), msg);
+
+    void this.events.emit('chat.rain.distributed', {
+      fromUserId: actorId,
+      recipients: recipientIds,
+      recipientCount: recipientIds.length,
+      totalAmount: totalDistributed,
+      currency,
+      roomId: input.roomId,
+    });
+    return msg;
+  }
+
+  private async doSendDonate(input: DonateArgs, actorId: Uuid): Promise<ChatSystemMessage> {
+    await this.verifyRoomAccessIfNeeded(input.roomId, actorId);
+    const config = await this.loadCommandConfig('donate');
+    if (
+      config?.maxAmount !== undefined &&
+      moneyToNumber(input.amount) > moneyToNumber(config.maxAmount)
+    ) {
+      throw new ExceedsLimitError();
+    }
+    if (
+      config?.minAmount !== undefined &&
+      moneyToNumber(input.amount) < moneyToNumber(config.minAmount)
+    ) {
+      throw new BelowMinimumError();
+    }
+
+    const target = await this.resolveExactPlayer(input.targetUsername);
+
+    if (target.userId === actorId) {
+      throw new DonateSelfError();
+    }
+
+    const senderSummaries = await this.directory.lookupPlayers([actorId]);
+    const sender = senderSummaries.find((s) => s.userId === actorId);
+    if (!sender) {
+      throw new ChatPlayerNotFoundError(actorId);
+    }
+
+    const fingerprint = fingerprintCommand({ type: 'donate', ...input });
+    const replay = await this.findCommandReplay(
+      'donate',
+      actorId,
+      input.idempotencyKey,
+      fingerprint,
+    );
+    if (replay) {
+      return replay;
+    }
+    await this.reserveCommandIdempotency('donate', actorId, input.idempotencyKey, fingerprint);
+
+    const { msg, currency } = await this.runWithCommandReservation(
+      'donate',
+      actorId,
+      input.idempotencyKey,
+      () =>
+        this.drizzle.db.transaction(async (tx) => {
+          const debit = await this.wallet.debit(tx, {
+            userId: actorId,
+            amount: input.amount,
+            type: 'tip',
+          });
+          if (!debit.ok) {
+            throw new InsufficientBalanceError();
+          }
+
+          const credit = await this.wallet.credit(tx, {
+            userId: target.userId,
+            amount: input.amount,
+            currency: debit.currency,
+            type: 'tip',
+          });
+          if (!credit.ok) {
+            throw new ChatPlayerNotFoundError(target.userId);
+          }
+
+          const systemMsg = await this.systemWriter.postSystemMessage({
+            roomId: input.roomId,
+            actorId,
+            tx,
+            metadata: {
+              command: 'donate',
+              recipientId: target.userId,
+              recipientUsername: target.username,
+              amount: input.amount,
+              currency: debit.currency,
+            },
+          });
+
+          const [donateRow] = await tx
+            .insert(playerDonate)
+            .values({
+              senderId: actorId,
+              senderUsername: sender.username,
+              recipientId: target.userId,
+              recipientUsername: target.username,
+              amount: input.amount,
+              currency: debit.currency,
+              roomId: input.roomId,
+            })
+            .returning();
+          if (!donateRow) {
+            throw new ChatPlayerNotFoundError(target.userId);
+          }
+
+          await this.audit.recordInTransaction(tx, {
+            actorId,
+            actorType: 'player',
+            action: 'chat.donate',
+            resourceType: 'player_donate',
+            resourceId: donateRow.id,
+            before: null,
+            after: { recipientId: target.userId, amount: input.amount, currency: debit.currency },
+          });
+
+          return { msg: systemMsg, currency: debit.currency };
+        }),
+    );
+    await this.completeCommandIdempotency(
+      'donate',
+      actorId,
+      input.idempotencyKey,
+      fingerprint,
+      msg,
+    );
+
+    void this.transport.publish(chatChannel(input.roomId), msg);
+
+    void this.events.emit('chat.donate.sent', {
+      senderId: actorId,
+      senderUsername: sender.username,
+      recipientId: target.userId,
+      recipientUsername: target.username,
+      amount: input.amount,
+      currency,
+      roomId: input.roomId,
+    });
+
+    return msg;
+  }
+}

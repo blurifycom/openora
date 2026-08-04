@@ -24,12 +24,14 @@ import { auditContract } from '@openora/core/audit/contract';
 import { playerContract } from '@openora/core/pam/contracts/player';
 import { tagContract } from '@openora/core/pam/contracts/tag';
 import { playerNoteContract } from '@openora/core/pam/contracts/player-note';
+import { socialTransfersContract } from '@openora/core/engagement/contracts/social-transfers';
 
 // oxlint-disable-next-line typescript/no-explicit-any -- root contract is an external oRPC generic
 type AnyContract = ContractRouter<any>;
 
 // Order mirrors the historical aggregate so the emitted OpenAPI paths stay stable.
 const SLICES: Record<string, AnyContract> = {
+  socialTransfers: socialTransfersContract,
   identity: identityContract,
   cms: cmsContract,
   compliance: complianceContract,

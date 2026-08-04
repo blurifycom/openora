@@ -15,12 +15,16 @@ import {
   type TagKey,
   type PlayerSortBy,
   type PaginationOptions,
+  type AdminUserDirectory,
+  type AdminGameReporting,
+  type ChatBlockWriter,
 } from '@openora/core/contracts';
 import { eq, ilike, count, or, and, gte, asc, desc, sql, ne, inArray, isNull } from 'drizzle-orm';
 import { player } from '@openora/core/pam/schema/profile';
 import { user } from '@openora/core/pam/schema/identity';
 import { playerTag, tag } from '@openora/core/pam/schema/tag';
 import { toPlayer, fetchEmailByUserId } from '../../shared/player-mapper.js';
+import type { PlayerSearchResult, PlayerProfileCard } from '../contract/index.js';
 
 export const PlayerNotFoundError = makeNotFoundError('Player');
 export const DuplicateEmailError = makeConflictError('DuplicateEmail', 'Email is already in use');
@@ -33,6 +37,9 @@ export class PlayerService {
   constructor(
     private readonly drizzle: DrizzleService,
     private readonly events: EventBus,
+    private readonly userDirectory: AdminUserDirectory,
+    private readonly gameReporting: AdminGameReporting,
+    private readonly blockWriter: ChatBlockWriter,
   ) {}
 
   async list({
@@ -294,5 +301,54 @@ export class PlayerService {
         .then(([r]) => Number(r?.n ?? 0)),
     ]);
     return { total, active, newLastWeek, selfExcluded };
+  }
+
+  // Ported from chat-commands' ChatCommandsService.searchPlayers - powers the
+  // chat `/profile` command's search step. Excludes players the viewer has
+  // blocked/ignored (moderation) - see AGENTS.md.
+  async searchPlayers(
+    q: string,
+    limit: number,
+    viewerId: User['id'],
+  ): Promise<PlayerSearchResult[]> {
+    const ids = await this.userDirectory.findPlayerIds(q, limit);
+    if (ids.length === 0) {
+      return [];
+    }
+    const excluded = new Set(await this.blockWriter.getExcludedUserIds(viewerId));
+    const filteredIds = ids.filter((id) => !excluded.has(id));
+    if (filteredIds.length === 0) {
+      return [];
+    }
+    const summaries = await this.userDirectory.lookupPlayers(filteredIds);
+    return summaries.map((s) => ({
+      userId: s.userId,
+      username: s.username,
+      avatarUrl: s.avatarUrl,
+      level: s.level,
+    }));
+  }
+
+  // Ported from chat-commands' ChatCommandsService.getPlayerProfile. Wagered
+  // totals/currency are self-only - a viewer looking at someone else's card
+  // only sees username/level/avatar.
+  async getPlayerProfile(userId: User['id'], viewerId: User['id']): Promise<PlayerProfileCard> {
+    const summaries = await this.userDirectory.lookupPlayers([userId]);
+    const summary = summaries.find((s) => s.userId === userId);
+    if (!summary) {
+      throw new PlayerNotFoundError(userId);
+    }
+    const isSelf = userId === viewerId;
+    const stats = isSelf ? await this.gameReporting.getPlayerStats(userId) : null;
+    return {
+      userId: summary.userId,
+      username: summary.username,
+      avatarUrl: summary.avatarUrl,
+      level: summary.level,
+      joinedAt: isSelf ? summary.createdAt.toISOString() : null,
+      totalWagered: stats?.totalWagered ?? null,
+      totalBets: stats?.totalBets ?? null,
+      currency: isSelf ? summary.currency : null,
+    };
   }
 }
