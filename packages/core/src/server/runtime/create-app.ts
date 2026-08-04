@@ -7,8 +7,6 @@ import { cors } from 'hono/cors';
 import { etag } from 'hono/etag';
 import { HTTPException } from 'hono/http-exception';
 import { serve, type ServerType } from '@hono/node-server';
-import { resolve } from 'node:path';
-import { generateOpenApiSpec } from './openapi.js';
 import {
   Container,
   BullMqJobQueue,
@@ -33,7 +31,6 @@ import {
   RATE_LIMITER,
   CACHE,
   ERROR_TRACKING,
-  composeContract,
   healthContract,
   IGAMING_CONFIG,
   type IgamingConfig,
@@ -109,19 +106,11 @@ export type CreateAppConfig = {
   // oxlint-disable-next-line typescript/no-explicit-any
   contract?: ContractRouter<any>;
 
-  openapi?: {
-    enabled?: boolean;
-    info?: { title?: string; version?: string };
-    outputPath?: string;
-  };
-
   igaming?: IgamingConfig;
 
   // GET-only, path-prefix-matched Cache-Control on PUBLIC_HTTP_CACHE_PATHS (or a
   // supplied override). `false` disables HTTP response caching entirely.
   httpCache?: { paths?: string[]; maxAgeSeconds?: number } | false;
-
-  configure?: (container: Container<CoreTokenCatalog>) => void | Promise<void>;
 
   disableHealthModule?: boolean;
 };
@@ -131,7 +120,6 @@ export type CreatedApp = {
   container: Container<CoreTokenCatalog>;
   port: number;
   listen(): Promise<void>;
-  emitOpenApiSpec(): Promise<string | null>;
   close(): Promise<void>;
 };
 
@@ -203,7 +191,10 @@ async function captureRawBody(req: Request): Promise<string | undefined> {
  * before the DB closes. A router namespace registered by more than one plugin
  * throws at boot, not at request time.
  */
-export async function createApp(config: CreateAppConfig): Promise<CreatedApp> {
+export async function createApp(
+  config: CreateAppConfig,
+  configure?: (container: Container<CoreTokenCatalog>) => void | Promise<void>,
+): Promise<CreatedApp> {
   if (config.databaseUrl) {
     process.env['DATABASE_URL'] = config.databaseUrl;
   }
@@ -286,7 +277,7 @@ export async function createApp(config: CreateAppConfig): Promise<CreatedApp> {
   container.register(PLATFORM_CONFIG, () => loadPlatformConfig(resolvePlatformConfigPath()));
 
   const registry = await loadPlugins(config.plugins, container);
-  await config.configure?.(container);
+  await configure?.(container);
 
   assertDurableSeamsBound(container);
 
@@ -459,17 +450,6 @@ export async function createApp(config: CreateAppConfig): Promise<CreatedApp> {
     async listen() {
       server = serve({ fetch: app.fetch, port });
       process.stdout.write(`API listening on :${port}\n`);
-    },
-    async emitOpenApiSpec() {
-      if (config.openapi?.enabled === false) {
-        return null;
-      }
-      const outPath = await generateOpenApiSpec(config.contract ?? composeContract({}), {
-        info: config.openapi?.info,
-        outputPath: config.openapi?.outputPath ?? resolve(process.cwd(), 'docs/openapi.json'),
-      });
-      process.stdout.write(`OpenAPI spec written to ${outPath}\n`);
-      return outPath;
     },
     async close() {
       server?.close();

@@ -1,4 +1,4 @@
-import { definePlugin, CORE_TOKEN_CATALOG } from '@openora/core/server';
+import type { CoreTokenCatalog, Plugin } from '@openora/core/server';
 import {
   PLATFORM_CONFIG,
   KYC_ADAPTER,
@@ -43,7 +43,7 @@ class ControllablePendingKycAdapter implements KycAdapter {
  * `KYC_ADAPTER` for a controllable stub. Append last in a test's `plugins` array so both
  * bindings win over the defaults (last-registration-wins; see docs/standards/module-structure.md > ports).
  */
-export default definePlugin(CORE_TOKEN_CATALOG, {
+export default {
   id: 'test-kyc-config',
   dependsOn: ['identity'],
   register(ctx) {
@@ -57,4 +57,4 @@ export default definePlugin(CORE_TOKEN_CATALOG, {
     );
     ctx.provide(KYC_ADAPTER, () => new ControllablePendingKycAdapter());
   },
-});
+} as const satisfies Plugin<CoreTokenCatalog>;

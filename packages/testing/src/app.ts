@@ -62,14 +62,15 @@ export async function bootTestApp(config: BootTestAppConfig): Promise<TestApp> {
   const redisDatabase = await acquireTestRedisDatabase();
   const serviceName = `test-${randomUUID()}`;
 
-  const created = await createApp({
-    plugins: config.plugins,
-    ...(config.contract ? { contract: config.contract } : {}),
-    ...(config.igaming ? { igaming: config.igaming } : {}),
-    databaseUrl: config.databaseUrl,
-    authSchema: { user, session, account, verification, twoFactor },
-    openapi: { enabled: false },
-    configure(container: Container<CoreTokenCatalog>) {
+  const created = await createApp(
+    {
+      plugins: config.plugins,
+      ...(config.contract ? { contract: config.contract } : {}),
+      ...(config.igaming ? { igaming: config.igaming } : {}),
+      databaseUrl: config.databaseUrl,
+      authSchema: { user, session, account, verification, twoFactor },
+    },
+    (container: Container<CoreTokenCatalog>) => {
       const redis = createRedisClient(redisDatabase.url);
       container.onDispose(() => redis.close());
 
@@ -93,7 +94,7 @@ export async function bootTestApp(config: BootTestAppConfig): Promise<TestApp> {
         container.register(REALTIME_CLIENT_AUTHORIZER, () => new SseClientAuthorizer());
       }
     },
-  });
+  );
 
   return {
     app: created.app,

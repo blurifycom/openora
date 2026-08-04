@@ -149,7 +149,7 @@ generator and fails on an uncommitted diff. So if you touched schemas or routes,
 - Anything that touches the database is tested against real Postgres (`createTestDb` from
   `@openora/core/testing`), never a faked query builder. Only external vendors and cross-module
   ports are doubled.
-- New functionality enters only via `definePlugin`. No auto-discovery, no magic.
+- New functionality enters only via a plugin object. No auto-discovery, no magic.
 - ASCII only in code. Short dashes (-) only.
 - Don't hand-edit generated files: drizzle migrations, `docs/openapi.json`, `docs/catalog.json`,
   and the rulesync-generated agent files (`AGENTS.md`, `CLAUDE.md`, `.codex/config.toml`,

@@ -12,7 +12,7 @@ repo and talks to the API over HTTP.
 - **Headless** - backend modules, contracts, and an SDK only. Bring your own UI.
 - **Contract-first** - every shape is a Zod schema; types are inferred, never hand-written.
   oRPC turns a schema into a validated route plus OpenAPI.
-- **Plugin host** - new functionality enters through `definePlugin`. No forking, no decorator
+- **Plugin host** - new functionality enters through typed plugin objects. No forking, no decorator
   magic; every wiring point is an explicit, typed function call.
 - **Swappable seams** - payments, KYC, messaging, realtime, and jobs are ports you bind to any
   vendor.

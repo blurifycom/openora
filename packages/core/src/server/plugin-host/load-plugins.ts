@@ -97,7 +97,7 @@ export async function loadPlugins<C extends TokenCatalog>(
     const mod = (await import(entry.path)) as { default?: Plugin<C> };
     const plugin = mod.default;
     if (!plugin || typeof plugin.register !== 'function') {
-      throw new Error(`Plugin at "${entry.path}" does not export a valid definePlugin result`);
+      throw new Error(`Plugin at "${entry.path}" does not default-export a valid plugin`);
     }
     assertEntryMatchesPlugin(entry, plugin);
     plugins.push(plugin);
