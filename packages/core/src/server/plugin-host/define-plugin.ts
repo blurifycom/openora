@@ -51,10 +51,6 @@ export type ModuleRegistry<C extends TokenCatalog> = {
     add(namespace: string, factory: RouterFactory<C>): void;
     getAll(): Map<string, RouterFactory<C>>;
   };
-  slots: {
-    fill(slotName: string, component: unknown): void;
-    getAll(): Map<string, unknown>;
-  };
   events: {
     on(event: string, handler: EventHandler): void;
     getAll(): Map<string, EventHandler[]>;
@@ -78,8 +74,6 @@ export type PluginDefinition<
   Dependencies extends readonly string[] = readonly string[],
 > = {
   id: Id;
-  // Kept as literals so extensions.config.ts can type-check the whole dependency
-  // graph (unknown ids + cycles) through defineExtensions.
   dependsOn?: Dependencies;
   // Verified once after all plugins register - a missing port fails fast. See ADR-0024.
   requiresPorts?: Array<C[keyof C] & Token<unknown>>;
@@ -92,13 +86,10 @@ export type Plugin<
   Dependencies extends readonly string[] = readonly string[],
 > = PluginDefinition<C, Id, Dependencies>;
 
-// Every plugin declares the token catalog it needs: definePlugin(CORE_TOKEN_CATALOG, { id, register }).
-// The catalog is a VALUE argument, not a type argument, deliberately - TypeScript
-// only fills in unspecified trailing type parameters from their declared defaults,
-// never by inferring them from the call, so an explicit `definePlugin<C>({...})`
-// would silently widen `id`/`dependsOn` to `string`/`string[]`. Inferring C from a
-// same-call value argument alongside the literal `definition` (via `const T`) lets
-// both infer correctly together.
+export function definePlugin<C extends TokenCatalog, const T extends PluginDefinition<C>>(
+  catalog: C,
+  definition: T,
+): T;
 export function definePlugin<C extends TokenCatalog, const T extends PluginDefinition<C>>(
   catalog: C,
   definition: T,

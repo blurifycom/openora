@@ -1,28 +1,17 @@
 import type { Container } from '../kernel/index.js';
 import type { TokenCatalog } from '@openora/core/contracts';
 import type { Plugin } from './define-plugin.js';
-import type { PluginGraphError } from './plugin-graph.js';
 import { ModuleRegistryImpl } from './module-registry.js';
 
-export type PluginEntry<
-  Id extends string = string,
-  Dependencies extends readonly string[] = readonly string[],
-> = {
-  id: Id;
+export type PluginEntry = {
+  id: string;
   path: string;
-  dependsOn?: Dependencies;
   // 'module' (default) = a domain module, selectable by a service manifest.
   // 'infra' = a broker/queue driver overlay that always loads, even for a
   // single-module service, because a standalone process still needs its
   // durable transport. See applyServiceManifest.
   kind?: 'module' | 'infra';
 };
-
-export function defineExtensions<const Entries extends readonly PluginEntry[]>(
-  entries: Entries & PluginGraphError<Entries>,
-): Entries {
-  return entries;
-}
 
 function validateEntries(entries: unknown): asserts entries is PluginEntry[] {
   if (!Array.isArray(entries)) {

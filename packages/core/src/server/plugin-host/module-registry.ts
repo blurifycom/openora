@@ -16,7 +16,6 @@ import type {
 
 export class ModuleRegistryImpl<C extends TokenCatalog> implements ModuleRegistry<C> {
   private _routers = new Map<string, RouterFactory<C>>();
-  private _slots = new Map<string, unknown>();
   private _events = new Map<string, EventHandler[]>();
   private _jobs: WorkerRegistration<unknown>[] = [];
   private _mcpTools: McpToolDefinition[] = [];
@@ -71,13 +70,6 @@ export class ModuleRegistryImpl<C extends TokenCatalog> implements ModuleRegistr
       this._routers.set(namespace, factory);
     },
     getAll: () => this._routers,
-  };
-
-  slots = {
-    fill: (slotName: string, component: unknown) => {
-      this._slots.set(slotName, component);
-    },
-    getAll: () => this._slots,
   };
 
   events = {

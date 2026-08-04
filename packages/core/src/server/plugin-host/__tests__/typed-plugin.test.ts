@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { createToken, type TokenCatalog } from '@openora/core/contracts';
 import { Container } from '../../kernel/index.js';
-import { defineExtensions, definePlugin, ModuleRegistryImpl } from '../index.js';
+import { definePlugin, ModuleRegistryImpl } from '../index.js';
 
 const COUNT = createToken<number>('COUNT');
 const SEED = createToken<number>('SEED');
@@ -76,20 +76,6 @@ definePlugin(catalog, {
 const typedPluginId: 'typed-plugin' = typedPlugin.id;
 const typedDependency: readonly ['foundation'] = typedPlugin.dependsOn;
 
-const validGraph = defineExtensions([
-  { id: 'foundation', path: './foundation.js' },
-  { id: 'feature', path: './feature.js', dependsOn: ['foundation'] },
-]);
-
-// @ts-expect-error The registry must reject an unknown dependency.
-defineExtensions([{ id: 'feature', path: './feature.js', dependsOn: ['missing'] }]);
-
-// @ts-expect-error The registry must reject a dependency cycle.
-defineExtensions([
-  { id: 'a', path: './a.js', dependsOn: ['b'] },
-  { id: 'b', path: './b.js', dependsOn: ['a'] },
-]);
-
 describe('typed plugin surface', () => {
   it('resolves catalog services through a catalogued plugin', () => {
     const container = new Container<typeof catalog>();
@@ -100,7 +86,6 @@ describe('typed plugin surface', () => {
 
     expect(typedPluginId).toBe('typed-plugin');
     expect(typedDependency).toEqual(['foundation']);
-    expect(validGraph[1]?.dependsOn).toEqual(['foundation']);
     expect(container.get(COUNT)).toBe(42);
   });
 
