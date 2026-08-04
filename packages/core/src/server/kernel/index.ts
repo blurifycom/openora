@@ -20,7 +20,7 @@ export { RedisStreamsBroker } from './redis-streams-broker.js';
 export { InProcessRealtimeTransport } from './realtime-transport.js';
 export { SseClientAuthorizer } from './realtime-authorizer.js';
 
-export { Container } from './container.js';
+export { Container, createContainer } from './container.js';
 export type { Factory } from './container.js';
 
 export { createLogger } from './logger.js';

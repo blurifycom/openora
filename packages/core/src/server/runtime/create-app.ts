@@ -10,7 +10,7 @@ import { serve, type ServerType } from '@hono/node-server';
 import { resolve } from 'node:path';
 import { generateOpenApiSpec } from './openapi.js';
 import {
-  Container,
+  createContainer,
   BullMqJobQueue,
   RedisCache,
   RedisRateLimiter,
@@ -22,6 +22,7 @@ import {
   setErrorReporter,
   EVENT_BUS,
   extractClientMeta,
+  type Container,
   type OssContext,
 } from '../kernel/index.js';
 import { randomUUID } from 'node:crypto';
@@ -44,6 +45,7 @@ import { AdminGuard, ADMIN_GUARD, SessionResolver, AUTH_SESSION } from '../auth/
 import { loadPlugins, type PluginEntry } from '../plugin-host/index.js';
 import { assertDurableSeamsBound } from './assert-durable-seams.js';
 import { loadPlatformConfig, resolvePlatformConfigPath } from '../kernel/platform-config-loader.js';
+import { CORE_TOKEN_CATALOG, type CoreTokenCatalog } from './core-token-catalog.js';
 
 // Path prefixes safe to cache at the HTTP layer: public, non-personalized reads
 // only (lobby feeds, public CMS content, the game catalogue). NOTHING
@@ -120,14 +122,14 @@ export type CreateAppConfig = {
   // supplied override). `false` disables HTTP response caching entirely.
   httpCache?: { paths?: string[]; maxAgeSeconds?: number } | false;
 
-  configure?: (container: Container) => void | Promise<void>;
+  configure?: (container: Container<CoreTokenCatalog>) => void | Promise<void>;
 
   disableHealthModule?: boolean;
 };
 
 export type CreatedApp = {
   app: Hono;
-  container: Container;
+  container: Container<CoreTokenCatalog>;
   port: number;
   listen(): Promise<void>;
   emitOpenApiSpec(): Promise<string | null>;
@@ -207,7 +209,7 @@ export async function createApp(config: CreateAppConfig): Promise<CreatedApp> {
     process.env['DATABASE_URL'] = config.databaseUrl;
   }
 
-  const container = new Container();
+  const container = createContainer(CORE_TOKEN_CATALOG);
   container.register(DRIZZLE, () => {
     const svc = new DrizzleService();
     container.onDispose(() => svc.dispose());

@@ -14,7 +14,14 @@ import {
   SESSION_COMMANDS,
   SMS_ADAPTER,
 } from '@openora/core/contracts';
-import { definePlugin, ADMIN_GUARD, EVENT_BUS, DRIZZLE, AUTH_SESSION } from '@openora/core/server';
+import {
+  definePluginWithCatalog,
+  ADMIN_GUARD,
+  EVENT_BUS,
+  DRIZZLE,
+  AUTH_SESSION,
+  type CoreTokenCatalog,
+} from '@openora/core/server';
 import { MockKycAdapter } from './adapters/mock/mock-kyc-adapter.js';
 import { MockSmsAdapter } from './adapters/mock/mock-sms-adapter.js';
 import { PhoneLoginService } from './service/phone-login.service.js';
@@ -27,7 +34,7 @@ import { SessionService } from './service/session.service.js';
 import { LoginEnforcementService } from './service/login-enforcement.service.js';
 import { PlayEligibilityService } from './service/play-eligibility.service.js';
 
-export default definePlugin({
+export default definePluginWithCatalog<CoreTokenCatalog>()({
   id: 'identity',
   register(ctx) {
     ctx.provide(KYC_ADAPTER, () => new MockKycAdapter());

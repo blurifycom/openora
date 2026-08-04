@@ -1,4 +1,4 @@
-export { definePlugin, definePluginWithCatalog } from './define-plugin.js';
+export { definePluginWithCatalog } from './define-plugin.js';
 export type {
   Plugin,
   PluginDefinition,

@@ -1,4 +1,11 @@
-import { definePlugin, EVENT_BUS, DRIZZLE, ADMIN_GUARD, createLogger } from '@openora/core/server';
+import {
+  definePluginWithCatalog,
+  EVENT_BUS,
+  DRIZZLE,
+  ADMIN_GUARD,
+  createLogger,
+  type CoreTokenCatalog,
+} from '@openora/core/server';
 import {
   ADMIN_PERMISSION_RESOLVER,
   ADMIN_PLAYER_ACTIVITY,
@@ -13,7 +20,7 @@ import { DrizzleAdminPlayerActivity } from './adapters/admin-player-activity.js'
 
 const logger = createLogger('iam');
 
-export default definePlugin({
+export default definePluginWithCatalog<CoreTokenCatalog>()({
   id: 'iam',
   dependsOn: ['identity'],
   register(ctx) {

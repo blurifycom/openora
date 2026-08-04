@@ -1,13 +1,20 @@
-import type { Container, Factory } from '../kernel/index.js';
-import type { SealedToken, Token, TokenCatalog, WorkerRegistration } from '@openora/core/contracts';
+import type { Container } from '../kernel/index.js';
+import type {
+  SealedToken,
+  Token,
+  TokenCatalog,
+  TokenValue,
+  WorkerRegistration,
+} from '@openora/core/contracts';
 import type {
   ModuleRegistry,
   McpToolDefinition,
   RouterFactory,
+  TypedContainer,
   EventHandler,
 } from './define-plugin.js';
 
-export class ModuleRegistryImpl<C extends TokenCatalog = never> implements ModuleRegistry<C> {
+export class ModuleRegistryImpl<C extends TokenCatalog> implements ModuleRegistry<C> {
   private _routers = new Map<string, RouterFactory<C>>();
   private _slots = new Map<string, unknown>();
   private _events = new Map<string, EventHandler[]>();
@@ -21,7 +28,10 @@ export class ModuleRegistryImpl<C extends TokenCatalog = never> implements Modul
   // Sealed tokens (Symbol description prefixed `sealed:`) are rejected at runtime
   // even though the type system already blocks them - catches plain-JS callers and cast escapes.
   // Canonical sealed list lives in `@openora/core/compliance`.
-  provide = <T>(token: Token<T>, factory: Factory<T, C>): void => {
+  provide = <T extends C[keyof C] & Token<unknown>>(
+    token: T,
+    factory: (container: TypedContainer<C>) => TokenValue<T>,
+  ): void => {
     const desc = token.description ?? '';
     if (desc.startsWith('sealed:')) {
       throw new Error(
@@ -32,14 +42,17 @@ export class ModuleRegistryImpl<C extends TokenCatalog = never> implements Modul
           `See @openora/core/compliance for the canonical list.`,
       );
     }
-    this.container.registerUnsafe(token, factory);
+    this.container.register(token, factory);
   };
 
   // Bind-once. The owning module calls this during its own register() to bind the
   // canonical implementation; a second call for the same token - an overlay trying
   // to slip past provide()'s rejection, or a duplicate registration - throws instead
   // of silently rebinding (there is no "last-wins" for a sealed token).
-  provideSealed = <T>(token: SealedToken<T>, factory: Factory<T, C>): void => {
+  provideSealed = <T extends C[keyof C] & SealedToken<unknown>>(
+    token: T,
+    factory: (container: TypedContainer<C>) => TokenValue<T>,
+  ): void => {
     if (this._sealedBound.has(token)) {
       throw new Error(
         `[plugin-host] Sealed token (${token.description ?? '(unnamed)'}) is already bound. ` +
@@ -47,7 +60,7 @@ export class ModuleRegistryImpl<C extends TokenCatalog = never> implements Modul
       );
     }
     this._sealedBound.add(token);
-    this.container.registerUnsafe(token, factory);
+    this.container.register(token, factory);
   };
 
   routers = {

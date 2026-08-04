@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { createToken, type TokenCatalog } from '@openora/core/contracts';
-import { Container } from '../../kernel/index.js';
+import { Container, createContainer } from '../../kernel/index.js';
 import { defineExtensions, definePluginWithCatalog, ModuleRegistryImpl } from '../index.js';
 
 const COUNT = createToken<number>('COUNT');
@@ -20,7 +20,7 @@ const typedCatalogWrongValue = {
 void typedCatalogWrongValue;
 
 function assertTypedContainer() {
-  const typedContainer = new Container<typeof catalog>();
+  const typedContainer = createContainer(catalog);
   const typedCount: number = typedContainer.get(COUNT);
   void typedCount;
 
@@ -38,6 +38,11 @@ function assertTypedContainer() {
 }
 
 void assertTypedContainer;
+
+// @ts-expect-error Containers are created from an explicit token catalog.
+const untypedContainer = new Container();
+
+void untypedContainer;
 
 const typedPlugin = definePluginWithCatalog<typeof catalog>()({
   id: 'typed-plugin',
@@ -92,7 +97,7 @@ defineExtensions([
 
 describe('typed plugin surface', () => {
   it('keeps literal plugin metadata and resolves catalog services', () => {
-    const container = new Container<typeof catalog>();
+    const container = createContainer(catalog);
     const registry = new ModuleRegistryImpl<typeof catalog>(container);
 
     container.register(SEED, () => 41);
@@ -105,7 +110,7 @@ describe('typed plugin surface', () => {
   });
 
   it('keeps router factories on the catalogued container view', () => {
-    const container = new Container<typeof catalog>();
+    const container = createContainer(catalog);
     const registry = new ModuleRegistryImpl<typeof catalog>(container);
 
     container.register(SEED, () => 7);

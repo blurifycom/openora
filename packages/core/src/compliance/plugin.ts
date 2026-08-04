@@ -1,4 +1,11 @@
-import { definePlugin, EVENT_BUS, DRIZZLE, ADMIN_GUARD, createLogger } from '@openora/core/server';
+import {
+  definePluginWithCatalog,
+  EVENT_BUS,
+  DRIZZLE,
+  ADMIN_GUARD,
+  createLogger,
+  type CoreTokenCatalog,
+} from '@openora/core/server';
 import * as z from 'zod';
 import {
   ADMIN_USER_DIRECTORY,
@@ -51,7 +58,7 @@ const KycDecisionSyncJobSchema = z.object({
   receivedAt: z.iso.datetime(),
 });
 
-export default definePlugin({
+export default definePluginWithCatalog<CoreTokenCatalog>()({
   id: 'compliance',
   dependsOn: ['player-management', 'identity', 'wallet', 'gaming', 'audit'],
   requiresPorts: [LOGIN_ENFORCEMENT],

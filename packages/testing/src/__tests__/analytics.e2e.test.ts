@@ -1,7 +1,12 @@
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import { randomUUID } from 'node:crypto';
 import { eq } from 'drizzle-orm';
-import { loadExtensions, DRIZZLE, type Container } from '@openora/core/server';
+import {
+  loadExtensions,
+  DRIZZLE,
+  type Container,
+  type CoreTokenCatalog,
+} from '@openora/core/server';
 import { user } from '@openora/core/pam/schema/identity';
 import { wallet, walletTransaction } from '@openora/core/wallet/schema';
 import {
@@ -37,7 +42,7 @@ async function registerPlayer(email: string) {
   return body.user.id;
 }
 
-async function verifyEmail(container: Container, userId: string) {
+async function verifyEmail(container: Container<CoreTokenCatalog>, userId: string) {
   await container
     .get(DRIZZLE)
     .db.update(user)
@@ -52,7 +57,10 @@ async function deposit(client: TestClient, amount: string, currency = 'USD') {
   }
 }
 
-async function walletIdFor(container: Container, userId: string): Promise<string> {
+async function walletIdFor(
+  container: Container<CoreTokenCatalog>,
+  userId: string,
+): Promise<string> {
   const [row] = await container
     .get(DRIZZLE)
     .db.select()
@@ -65,7 +73,7 @@ async function walletIdFor(container: Container, userId: string): Promise<string
 }
 
 async function insertTransaction(
-  container: Container,
+  container: Container<CoreTokenCatalog>,
   walletId: string,
   type: 'bonus' | 'bet' | 'win',
   amount: string,
