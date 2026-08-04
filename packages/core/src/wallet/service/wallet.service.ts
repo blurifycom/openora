@@ -562,11 +562,6 @@ export class WalletService {
           throw new InsufficientBalanceError(current.balance, amount);
         }
 
-        // Synchronous, transactional withdrawal_review evaluation - on this SAME txn, so
-        // the assignment (if any) commits atomically with this withdrawal request and is
-        // guaranteed visible before maybeAutoApprove reads risk tags below. Must run
-        // BEFORE that read; never move this after the transaction returns (see
-        // TagEvaluationService.evaluateWithdrawalRequested for the race this closes).
         if (this.tagEvaluationCommands) {
           await this.tagEvaluationCommands.evaluateWithdrawalRequested(txn, { userId, amount });
         }
