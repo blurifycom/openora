@@ -15,6 +15,7 @@ import {
   WALLET_TRANSACTION_TYPES,
   type WalletRail,
   type WalletTransactionStatus,
+  type TagKey,
 } from '@openora/core/contracts';
 
 // Enum values derive from the canonical tuples so the DB enum can never drift from
@@ -131,6 +132,13 @@ export const walletAutoWithdrawalConfig = pgTable('wallet_auto_withdrawal_config
   singletonKey: text().notNull().unique().default('global'),
   fiatThreshold: decimal({ precision: 18, scale: 8 }).notNull(),
   cryptoThreshold: decimal({ precision: 18, scale: 8 }).notNull(),
+  excludeRiskFlags: text()
+    .array()
+    .$type<TagKey[]>()
+    .notNull()
+    .default(
+      sql`ARRAY['high_risk','bonus_abuser','kyc_rejected','withdrawal_review','multi_account']::text[]`,
+    ),
   updatedBy: uuid(),
   updatedAt: timestamp({ withTimezone: true })
     .notNull()

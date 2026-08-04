@@ -132,6 +132,17 @@ function namespacedIdempotencyKey(namespace: string, rawKey: string): string {
 // moneyToNumber is the sanctioned JS conversion point for this heuristic comparison only.
 const LARGE_WITHDRAWAL_THRESHOLD = '5000';
 
+// Non-removable compliance floor (BF-319): always unioned into the DB-editable
+// wallet_auto_withdrawal_config.excludeRiskFlags, so a Super Admin can widen the
+// exclusion set at runtime but can never narrow it below this set via `.set`.
+export const COMPLIANCE_FLOOR_TAGS: readonly TagKey[] = [
+  'withdrawal_review',
+  'kyc_rejected',
+  'multi_account',
+  'high_risk',
+  'bonus_abuser',
+];
+
 // ponytail: >=3 withdrawals in a 24h window flags velocity; a flat count, not a per-tier rule.
 const HIGH_FREQUENCY_WINDOW_MS = 24 * 60 * 60 * 1000;
 const HIGH_FREQUENCY_MIN_COUNT = 3;
@@ -146,6 +157,7 @@ type AutoApprovalDecision = {
   thresholdSource: 'per-player' | 'global';
   kycStatus: KycStatus;
   riskTagsEvaluated: TagKey[];
+  effectiveExcludeTags: TagKey[];
   dailyCapAmount: string | null;
   dailyCapCount: number | null;
   cumulativeAmountUsed: string;
@@ -155,7 +167,7 @@ type AutoApprovalDecision = {
 // The pre-lock portion of the decision, resolvable without the advisory-locked cap read.
 type AutoApprovalGates = Pick<
   AutoApprovalDecision,
-  'threshold' | 'thresholdSource' | 'kycStatus' | 'riskTagsEvaluated'
+  'threshold' | 'thresholdSource' | 'kycStatus' | 'riskTagsEvaluated' | 'effectiveExcludeTags'
 >;
 
 function toAutoWithdrawalRuleDto(row: AutoWithdrawalRuleRow): AutoWithdrawalRule {
@@ -175,6 +187,7 @@ function toAutoWithdrawalConfigDto(row: WalletAutoWithdrawalConfigRow): WalletAu
     id: row.id,
     fiatThreshold: row.fiatThreshold,
     cryptoThreshold: row.cryptoThreshold,
+    excludeRiskFlags: row.excludeRiskFlags,
     updatedBy: row.updatedBy,
     updatedAt: row.updatedAt.toISOString(),
     createdAt: row.createdAt.toISOString(),
@@ -1029,12 +1042,18 @@ export class WalletService {
       return null;
     }
 
-    const riskTags = await this.autoApprovalRiskTags(userId, cfg.excludeRiskFlags);
+    // The DB-editable exclusion set can only ever be widened by a Super Admin - the
+    // compliance floor is unioned in so `.set` can never weaken it.
+    const effectiveExcludeTags = [
+      ...new Set([...threshold.config.excludeRiskFlags, ...COMPLIANCE_FLOOR_TAGS]),
+    ];
+
+    const riskTags = await this.autoApprovalRiskTags(userId);
     // null = exclusions configured but the lookup port is unavailable => fail closed.
     if (riskTags === null) {
       return null;
     }
-    if (riskTags.some((t) => cfg.excludeRiskFlags.includes(t))) {
+    if (riskTags.some((t) => effectiveExcludeTags.includes(t))) {
       return null;
     }
 
@@ -1048,13 +1067,18 @@ export class WalletService {
       thresholdSource: threshold.source,
       kycStatus,
       riskTagsEvaluated: riskTags,
+      effectiveExcludeTags,
     };
   }
 
   private async resolveAutoThreshold(
     userId: User['id'],
     rail: WalletRail,
-  ): Promise<{ value: string; source: 'per-player' | 'global' } | null> {
+  ): Promise<{
+    value: string;
+    source: 'per-player' | 'global';
+    config: WalletAutoWithdrawalConfig;
+  } | null> {
     // Always read the global singleton first, even when a per-player override may end up
     // winning below - an unseeded install (missing row) must fail closed for EVERY player,
     // not just those without an override. getAutoWithdrawalConfig() throws when absent.
@@ -1064,10 +1088,10 @@ export class WalletService {
       .from(autoWithdrawalRule)
       .where(eq(autoWithdrawalRule.userId, userId));
     if (rule) {
-      return { value: rule.threshold, source: 'per-player' };
+      return { value: rule.threshold, source: 'per-player', config };
     }
     const global = rail === 'crypto' ? config.cryptoThreshold : config.fiatThreshold;
-    return { value: global, source: 'global' };
+    return { value: global, source: 'global', config };
   }
 
   // The row always exists in a properly-seeded install (seeded once, BF-211) - a
@@ -1103,7 +1127,11 @@ export class WalletService {
   // the threshold change too, or the config could change with no audit trail (BF-211 review).
   async setAutoWithdrawalConfig(
     adminId: User['id'],
-    { fiatThreshold, cryptoThreshold }: { fiatThreshold: string; cryptoThreshold: string },
+    {
+      fiatThreshold,
+      cryptoThreshold,
+      excludeRiskFlags,
+    }: { fiatThreshold: string; cryptoThreshold: string; excludeRiskFlags: TagKey[] },
     meta?: ClientMeta,
   ): Promise<WalletAutoWithdrawalConfig> {
     return this.drizzle.db.transaction(async (txn) => {
@@ -1113,10 +1141,16 @@ export class WalletService {
         .where(eq(walletAutoWithdrawalConfig.singletonKey, 'global'));
       const rows = await txn
         .insert(walletAutoWithdrawalConfig)
-        .values({ singletonKey: 'global', fiatThreshold, cryptoThreshold, updatedBy: adminId })
+        .values({
+          singletonKey: 'global',
+          fiatThreshold,
+          cryptoThreshold,
+          excludeRiskFlags,
+          updatedBy: adminId,
+        })
         .onConflictDoUpdate({
           target: walletAutoWithdrawalConfig.singletonKey,
-          set: { fiatThreshold, cryptoThreshold, updatedBy: adminId },
+          set: { fiatThreshold, cryptoThreshold, excludeRiskFlags, updatedBy: adminId },
         })
         .returning();
       const config = toAutoWithdrawalConfigDto(
@@ -1129,9 +1163,17 @@ export class WalletService {
         resourceType: 'auto_withdrawal_config',
         resourceId: config.id,
         before: before
-          ? { fiatThreshold: before.fiatThreshold, cryptoThreshold: before.cryptoThreshold }
+          ? {
+              fiatThreshold: before.fiatThreshold,
+              cryptoThreshold: before.cryptoThreshold,
+              excludeRiskFlags: before.excludeRiskFlags,
+            }
           : null,
-        after: { fiatThreshold: config.fiatThreshold, cryptoThreshold: config.cryptoThreshold },
+        after: {
+          fiatThreshold: config.fiatThreshold,
+          cryptoThreshold: config.cryptoThreshold,
+          excludeRiskFlags: config.excludeRiskFlags,
+        },
         ...meta,
       });
       return config;
@@ -1147,14 +1189,10 @@ export class WalletService {
     return summary?.kycStatus ?? null;
   }
 
-  // Active tag keys; [] when no exclusions configured or none carried; null when configured but the port is unbound (fail closed).
-  private async autoApprovalRiskTags(
-    userId: User['id'],
-    excludeRiskFlags: readonly TagKey[],
-  ): Promise<TagKey[] | null> {
-    if (excludeRiskFlags.length === 0) {
-      return [];
-    }
+  // Active tag keys; null when the port is unbound (fail closed) - the compliance floor
+  // (BF-319, see COMPLIANCE_FLOOR_TAGS) makes the caller's exclusion set permanently non-empty,
+  // so PLAYER_TAGS is effectively a hard dependency for auto-approval, not just an opt-in one.
+  private async autoApprovalRiskTags(userId: User['id']): Promise<TagKey[] | null> {
     if (!this.riskTags) {
       return null;
     }

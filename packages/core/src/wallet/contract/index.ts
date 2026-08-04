@@ -3,6 +3,7 @@ import * as z from 'zod';
 import {
   KycStatusSchema,
   MoneyAmountSchema,
+  TagKeySchema,
   TimestampSchema,
   UuidSchema,
   WalletRailSchema,
@@ -137,6 +138,7 @@ export const WalletAutoWithdrawalConfigSchema = z.object({
   id: UuidSchema,
   fiatThreshold: MoneyAmountSchema,
   cryptoThreshold: MoneyAmountSchema,
+  excludeRiskFlags: z.array(TagKeySchema),
   updatedBy: UuidSchema.nullable(),
   updatedAt: TimestampSchema,
   createdAt: TimestampSchema,
@@ -155,6 +157,7 @@ const WalletAutoWithdrawalThresholdSchema = MoneyAmountSchema.refine(
 export const SetWalletAutoWithdrawalConfigInputSchema = z.object({
   fiatThreshold: WalletAutoWithdrawalThresholdSchema,
   cryptoThreshold: WalletAutoWithdrawalThresholdSchema,
+  excludeRiskFlags: z.array(TagKeySchema),
 });
 
 export const ApproveWithdrawalInputSchema = z.object({ withdrawalId: UuidSchema });
