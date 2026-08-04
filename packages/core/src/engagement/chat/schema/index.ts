@@ -1,3 +1,4 @@
+import { sql } from 'drizzle-orm';
 import {
   pgTable,
   pgEnum,
@@ -60,6 +61,10 @@ export const chatMessage = pgTable(
 
 // A directional mute: `blockerId` no longer sees messages from `blockedId`.
 // Scoped to the blocker only - the blocked player is unaffected (ABC-45 AC11).
+// Soft-deleted: unblock sets removedAt rather than deleting the row, so the pair's
+// block history survives. The unique pair index is partial (active rows only) so a
+// block -> unblock -> re-block cycle inserts a new active row instead of conflicting
+// with the removed one - see chat.service.ts blockUser/unblockUser.
 export const chatUserBlock = pgTable(
   'chat_user_block',
   {
@@ -67,16 +72,20 @@ export const chatUserBlock = pgTable(
     blockerId: uuid().notNull(),
     blockedId: uuid().notNull(),
     createdAt: timestamp({ withTimezone: true }).notNull().defaultNow(),
+    removedAt: timestamp({ withTimezone: true }),
   },
   (t) => [
-    uniqueIndex('chat_user_block_pair_key').on(t.blockerId, t.blockedId),
+    uniqueIndex('chat_user_block_pair_key')
+      .on(t.blockerId, t.blockedId)
+      .where(sql`${t.removedAt} IS NULL`),
     index('chat_user_block_blocker_idx').on(t.blockerId),
   ],
 );
 
 // A directional soft-mute: `ignorerId` no longer sees messages from `ignoredId`.
 // A separate relationship from chatUserBlock (not an alias) - same message-hiding
-// effect for now, but block vs ignore may diverge further later.
+// effect for now, but block vs ignore may diverge further later. Soft-deleted the
+// same way as chatUserBlock - see the comment there.
 export const chatUserIgnore = pgTable(
   'chat_user_ignore',
   {
@@ -84,9 +93,12 @@ export const chatUserIgnore = pgTable(
     ignorerId: uuid().notNull(),
     ignoredId: uuid().notNull(),
     createdAt: timestamp({ withTimezone: true }).notNull().defaultNow(),
+    removedAt: timestamp({ withTimezone: true }),
   },
   (t) => [
-    uniqueIndex('chat_user_ignore_pair_key').on(t.ignorerId, t.ignoredId),
+    uniqueIndex('chat_user_ignore_pair_key')
+      .on(t.ignorerId, t.ignoredId)
+      .where(sql`${t.removedAt} IS NULL`),
     index('chat_user_ignore_ignorer_idx').on(t.ignorerId),
   ],
 );

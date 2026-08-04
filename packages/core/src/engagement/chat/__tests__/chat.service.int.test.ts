@@ -471,10 +471,31 @@ describe('ChatService block list (real PG)', () => {
     await svc.unblockUser(blockerId, blockedId, NO_CLIENT_META);
     await svc.unblockUser(blockerId, blockedId, NO_CLIENT_META);
 
-    expect(await db.drizzle.db.select().from(chatUserBlock)).toHaveLength(0);
+    // Soft-delete: the row survives with removedAt set, not physically removed.
+    const rows = await db.drizzle.db.select().from(chatUserBlock);
+    expect(rows).toHaveLength(1);
+    expect(rows[0]?.removedAt).not.toBeNull();
     expect(
       events.emit.mock.calls.filter(([topic]) => topic === 'chat.user.unblocked'),
     ).toHaveLength(1);
+  });
+
+  it('re-blocking after an unblock inserts a fresh active row and re-excludes the sender', async () => {
+    const { svc, events } = makeService();
+    const blockerId = randomUUID();
+    const blockedId = randomUUID();
+    await svc.blockUser(blockerId, blockedId);
+    await svc.unblockUser(blockerId, blockedId, NO_CLIENT_META);
+
+    await svc.blockUser(blockerId, blockedId);
+
+    const rows = await db.drizzle.db.select().from(chatUserBlock);
+    expect(rows).toHaveLength(2);
+    expect(rows.filter((r) => r.removedAt === null)).toHaveLength(1);
+    expect(events.emit.mock.calls.filter(([topic]) => topic === 'chat.user.blocked')).toHaveLength(
+      2,
+    );
+    expect(await svc.getExcludedUserIds(blockerId)).toContain(blockedId);
   });
 
   it('lists the blocked ids newest-first', async () => {
@@ -524,7 +545,10 @@ describe('ChatService ignore list (real PG)', () => {
     await svc.unignoreUser(ignorerId, ignoredId, NO_CLIENT_META);
     await svc.unignoreUser(ignorerId, ignoredId, NO_CLIENT_META);
 
-    expect(await db.drizzle.db.select().from(chatUserIgnore)).toHaveLength(0);
+    // Soft-delete: the row survives with removedAt set, not physically removed.
+    const rows = await db.drizzle.db.select().from(chatUserIgnore);
+    expect(rows).toHaveLength(1);
+    expect(rows[0]?.removedAt).not.toBeNull();
     expect(
       events.emit.mock.calls.filter(([topic]) => topic === 'chat.user.unignored'),
     ).toHaveLength(1);

@@ -977,6 +977,10 @@
       "file": "packages/core/src/engagement/chat/contract/index.ts"
     },
     {
+      "name": "ChatRoomIdSchema",
+      "file": "packages/core/src/contracts/schemas/chat-command.ts"
+    },
+    {
       "name": "ChatRoomMemberSchema",
       "file": "packages/core/src/engagement/chat/contract/index.ts"
     },
@@ -1695,6 +1699,14 @@
     {
       "name": "TransactionResultSchema",
       "file": "packages/core/src/wallet/contract/index.ts"
+    },
+    {
+      "name": "UnblockCommandMetadataSchema",
+      "file": "packages/core/src/contracts/schemas/chat-command-metadata.ts"
+    },
+    {
+      "name": "UnignoreCommandMetadataSchema",
+      "file": "packages/core/src/contracts/schemas/chat-command-metadata.ts"
     },
     {
       "name": "UpdatePlayerProfileInputSchema",

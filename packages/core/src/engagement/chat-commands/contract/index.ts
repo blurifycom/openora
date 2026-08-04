@@ -1,6 +1,11 @@
 import { oc } from '@orpc/contract';
 import * as z from 'zod';
-import { UuidSchema, MoneyAmountSchema, SystemChatMessageSchema } from '@openora/core/contracts';
+import {
+  UuidSchema,
+  MoneyAmountSchema,
+  SystemChatMessageSchema,
+  ChatRoomIdSchema,
+} from '@openora/core/contracts';
 
 export const CHAT_COMMAND_TYPES = [
   'mention',
@@ -9,7 +14,9 @@ export const CHAT_COMMAND_TYPES = [
   'rain',
   'donate',
   'block',
+  'unblock',
   'ignore',
+  'unignore',
 ] as const;
 export const ChatCommandTypeSchema = z.enum(CHAT_COMMAND_TYPES);
 export type ChatCommandType = z.infer<typeof ChatCommandTypeSchema>;
@@ -40,7 +47,7 @@ export { SystemChatMessageSchema };
 
 export const PostGiftInputSchema = z.object({
   amount: MoneyAmountSchema,
-  roomId: UuidSchema,
+  roomId: ChatRoomIdSchema,
   idempotencyKey: UuidSchema,
 });
 export type PostGiftInput = z.infer<typeof PostGiftInputSchema>;
@@ -48,7 +55,7 @@ export type PostGiftInput = z.infer<typeof PostGiftInputSchema>;
 export const PostRainInputSchema = z.object({
   amount: MoneyAmountSchema,
   recipientCount: z.number().int().positive(),
-  roomId: UuidSchema,
+  roomId: ChatRoomIdSchema,
   idempotencyKey: UuidSchema,
 });
 export type PostRainInput = z.infer<typeof PostRainInputSchema>;

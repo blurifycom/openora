@@ -205,7 +205,7 @@ export class ChatService {
     const rows = await this.drizzle.db
       .select({ blockedId: chatUserBlock.blockedId })
       .from(chatUserBlock)
-      .where(eq(chatUserBlock.blockerId, viewerId));
+      .where(and(eq(chatUserBlock.blockerId, viewerId), isNull(chatUserBlock.removedAt)));
     return new Set(rows.map((r) => r.blockedId));
   }
 
@@ -213,7 +213,7 @@ export class ChatService {
     const rows = await this.drizzle.db
       .select({ ignoredId: chatUserIgnore.ignoredId })
       .from(chatUserIgnore)
-      .where(eq(chatUserIgnore.ignorerId, viewerId));
+      .where(and(eq(chatUserIgnore.ignorerId, viewerId), isNull(chatUserIgnore.removedAt)));
     return new Set(rows.map((r) => r.ignoredId));
   }
 
@@ -463,7 +463,7 @@ export class ChatService {
     const rows = await this.drizzle.db
       .select({ blockedId: chatUserBlock.blockedId, createdAt: chatUserBlock.createdAt })
       .from(chatUserBlock)
-      .where(eq(chatUserBlock.blockerId, blockerId))
+      .where(and(eq(chatUserBlock.blockerId, blockerId), isNull(chatUserBlock.removedAt)))
       .orderBy(desc(chatUserBlock.createdAt));
     return rows.map((r) => serializeRow(r, { dateFields: ['createdAt'] }));
   }
@@ -473,11 +473,15 @@ export class ChatService {
       throw new ChatSelfBlockError();
     }
 
-    // Idempotent: re-blocking is a no-op, so only the first block emits an event.
+    // Idempotent: re-blocking while already (actively) blocked is a no-op, so only
+    // the first block emits an event. The pair unique index is partial (removedAt
+    // IS NULL), so a block after a prior unblock conflicts with nothing and inserts
+    // a fresh active row - the removed row stays as history. No explicit conflict
+    // target: this table has exactly one unique constraint (the partial pair index).
     const inserted = await this.drizzle.db
       .insert(chatUserBlock)
       .values({ blockerId, blockedId })
-      .onConflictDoNothing({ target: [chatUserBlock.blockerId, chatUserBlock.blockedId] })
+      .onConflictDoNothing()
       .returning();
 
     if (inserted.length > 0) {
@@ -492,9 +496,18 @@ export class ChatService {
   }
 
   async unblockUser(blockerId: User['id'], blockedId: User['id'], meta?: ClientMeta) {
+    // Soft-delete: the partial unique index guarantees at most one active (removedAt
+    // IS NULL) row per pair, so this is that row, or no-op if already unblocked.
     const removed = await this.drizzle.db
-      .delete(chatUserBlock)
-      .where(and(eq(chatUserBlock.blockerId, blockerId), eq(chatUserBlock.blockedId, blockedId)))
+      .update(chatUserBlock)
+      .set({ removedAt: new Date() })
+      .where(
+        and(
+          eq(chatUserBlock.blockerId, blockerId),
+          eq(chatUserBlock.blockedId, blockedId),
+          isNull(chatUserBlock.removedAt),
+        ),
+      )
       .returning();
 
     if (removed.length > 0) {
@@ -512,7 +525,7 @@ export class ChatService {
     const rows = await this.drizzle.db
       .select({ ignoredId: chatUserIgnore.ignoredId, createdAt: chatUserIgnore.createdAt })
       .from(chatUserIgnore)
-      .where(eq(chatUserIgnore.ignorerId, ignorerId))
+      .where(and(eq(chatUserIgnore.ignorerId, ignorerId), isNull(chatUserIgnore.removedAt)))
       .orderBy(desc(chatUserIgnore.createdAt));
     return rows.map((r) => serializeRow(r, { dateFields: ['createdAt'] }));
   }
@@ -522,11 +535,11 @@ export class ChatService {
       throw new ChatSelfIgnoreError();
     }
 
-    // Idempotent: re-ignoring is a no-op, so only the first ignore emits an event.
+    // Idempotent + soft-delete-aware - see blockUser's comment, same pattern.
     const inserted = await this.drizzle.db
       .insert(chatUserIgnore)
       .values({ ignorerId, ignoredId })
-      .onConflictDoNothing({ target: [chatUserIgnore.ignorerId, chatUserIgnore.ignoredId] })
+      .onConflictDoNothing()
       .returning();
 
     if (inserted.length > 0) {
@@ -541,9 +554,17 @@ export class ChatService {
   }
 
   async unignoreUser(ignorerId: User['id'], ignoredId: User['id'], meta?: ClientMeta) {
+    // Soft-delete - see unblockUser's comment, same pattern.
     const removed = await this.drizzle.db
-      .delete(chatUserIgnore)
-      .where(and(eq(chatUserIgnore.ignorerId, ignorerId), eq(chatUserIgnore.ignoredId, ignoredId)))
+      .update(chatUserIgnore)
+      .set({ removedAt: new Date() })
+      .where(
+        and(
+          eq(chatUserIgnore.ignorerId, ignorerId),
+          eq(chatUserIgnore.ignoredId, ignoredId),
+          isNull(chatUserIgnore.removedAt),
+        ),
+      )
       .returning();
 
     if (removed.length > 0) {

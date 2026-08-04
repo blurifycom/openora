@@ -12,7 +12,8 @@ import type { ChatSystemMessage as SystemChatMessage } from './chat-system-write
 
 export type SendGiftArgs = {
   amount: string;
-  roomId: Uuid;
+  // null = global chat (the GLOBAL_CHAT_ROOM_ID sentinel on the wire, contracts/schemas/chat-command.ts).
+  roomId: Uuid | null;
   idempotencyKey: Uuid;
 };
 

@@ -45,10 +45,22 @@ export async function seedChatCommands(db: DrizzleDb): Promise<void> {
         description: 'Block a player — their messages will be hidden from you',
       },
       {
+        key: 'unblock',
+        enabled: true,
+        label: 'Unblock',
+        description: 'Unblock a player — their messages will be visible to you again',
+      },
+      {
         key: 'ignore',
         enabled: true,
         label: 'Ignore',
         description: 'Ignore a player — their messages will be hidden from you',
+      },
+      {
+        key: 'unignore',
+        enabled: true,
+        label: 'Unignore',
+        description: 'Unignore a player — their messages will be visible to you again',
       },
     ])
     .onConflictDoNothing();

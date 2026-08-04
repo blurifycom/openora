@@ -2,6 +2,20 @@
 
 Owns all player-to-player money movement that flows through the chat command surface: `/gift` (claimable gift card), `/rain` (split among online room members), `/donate` (direct tip to a known username). Ported from `chat-commands`, which used to implement all three directly - see that module's AGENTS.md for what moved and why. `sendDonate` is this module's own oRPC operation; gift send/claim and rain send are exposed to `chat-commands` only through the `GIFT_COMMANDS`/`RAIN_COMMANDS` command ports - `chat-commands`' `postGift`/`claimGift`/`postRain` are pure delegation, this module owns every part of the mechanics, including posting and publishing the resulting chat message.
 
+## Global chat uses the GLOBAL_CHAT_ROOM_ID sentinel on the wire, `null` internally
+
+`/gift`, `/rain`, and `/donate` can all target global chat, not just a room. The wire contract
+(`PostGiftInputSchema`/`PostRainInputSchema` in `chat-commands/contract/`, `SendDonateInputSchema`
+here) types `roomId` as `ChatRoomIdSchema` (`packages/core/src/contracts/schemas/chat-command.ts`):
+a real room UUID, or the literal string `GLOBAL_CHAT_ROOM_ID` (`'__global'`) - callers never send a
+raw `null`. The schema's `.transform()` normalizes `'__global'` to `null` before the handler ever
+runs, so every internal type (`SendGiftArgs`/`SendRainArgs`/`DonateArgs.roomId`, `player_gift.roomId`,
+`player_rain.roomId`) is `Uuid | null`, `null` meaning global chat - the same representation
+`chatChannel()` and the `chat` module's own `roomId: null` already use. `verifyRoomAccessIfNeeded`
+skips room-membership verification entirely when `roomId` is `null` (global chat has no membership
+gate). Never reintroduce a raw nullable `roomId` on a wire schema here - always `ChatRoomIdSchema`,
+so there is exactly one way to address global chat at the HTTP boundary.
+
 ## This module never queries chat's presence tracking - it takes recipient ids as input
 
 `/rain` needs to know who is online, but that lookup does NOT happen here. `chat-commands` already depends on this module (for `GIFT_COMMANDS`), so this module depending back on `chat-commands` - or on `chat`'s `CHAT_REALTIME_TRANSPORT.getOnlineUserIds` specifically for presence - would create an import cycle. Instead `RAIN_COMMANDS.sendRain`'s input carries `onlineUserIds: Uuid[]`, resolved by `chat-commands` (which owns presence for the whole chat-command surface) BEFORE it calls this port. `doSendRain` does exactly what it always did with that list - filter out the actor, shuffle, cap to `recipientCount`, report `no_online_users` if nothing is left - it just no longer fetches the list itself. See `chat-commands/AGENTS.md` for the full reasoning.
@@ -47,8 +61,11 @@ four commands; there is no exception.
 `/gift <amount>` is a two-step flow: the sender is debited immediately and a `player_gift` row
 (status: unclaimed) is created atomically with the system message. Any other player calls
 `GIFT_COMMANDS.claimGift` (via `chat-commands`' `POST /chat-command/gift/:id/claim`) to win the
-credit. The atomic claim uses `UPDATE ... WHERE claimed_by IS NULL RETURNING *` - first caller wins,
-zero balance goes unreturned. Realtime push fires on claim via
+credit. `doClaimGift` opens its transaction with `SELECT ... FOR UPDATE` on the target `player_gift`
+row (same pattern as wallet's guarded debit) to serialize concurrent claims, THEN checks
+self-claim/already-claimed against the locked read, THEN does a guarded conditional
+`UPDATE ... WHERE claimed_by IS NULL RETURNING *` as defense-in-depth on top of the lock - first
+caller wins, zero balance goes unreturned. Realtime push fires on claim via
 `CHAT_REALTIME_TRANSPORT.publish(chatChannel(roomId), ...)`.
 
 `playerGift.messageId` is a plain UUID with no FK - cross-module boundary rule applies.
@@ -132,8 +149,9 @@ calls it), so it stays throw-based like every other module's router-facing servi
 
 - Gift send: debit + `playerGift` insert + system message are atomic in one transaction.
   `messageId` is back-filled in the same transaction after `postSystemMessage` returns.
-- Gift claim: the `UPDATE ... WHERE claimed_by IS NULL` is the idempotency guard - no separate lock
-  needed. Self-claim is rejected before the update attempt.
+- Gift claim: the row is locked with `SELECT ... FOR UPDATE` at the top of the transaction, then the
+  `UPDATE ... WHERE claimed_by IS NULL` runs as a guarded conditional write on top of that lock.
+  Self-claim and already-claimed are both rejected against the locked read, before the update.
 - Rain recipients are capped by `config.maxRecipients` (default 50) and filtered to exclude the actor
   from the caller-supplied `onlineUserIds` list.
 - Gift/rain/donate money movement is fully transactional: debit + credits + system message +

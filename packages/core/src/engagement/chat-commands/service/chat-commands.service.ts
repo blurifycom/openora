@@ -68,7 +68,8 @@ export const ConcurrentCommandReplayError = makeConflictError(
 );
 export const ChatRoomNotMemberError = createDomainError(
   'ChatRoomNotMemberError',
-  (roomId: Uuid) => `You are not a member of room: ${roomId}`,
+  (roomId: Uuid | null) =>
+    roomId ? `You are not a member of room: ${roomId}` : 'You are not a member of global chat',
 );
 
 function toDescriptor(row: typeof chatCommandConfig.$inferSelect): ChatCommandDescriptor {

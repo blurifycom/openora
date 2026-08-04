@@ -1,13 +1,18 @@
 import { oc } from '@orpc/contract';
 import * as z from 'zod';
-import { UuidSchema, MoneyAmountSchema, SystemChatMessageSchema } from '@openora/core/contracts';
+import {
+  UuidSchema,
+  MoneyAmountSchema,
+  SystemChatMessageSchema,
+  ChatRoomIdSchema,
+} from '@openora/core/contracts';
 
 export { SystemChatMessageSchema };
 
 export const SendDonateInputSchema = z.object({
   targetUsername: z.string().min(1),
   amount: MoneyAmountSchema,
-  roomId: UuidSchema.nullable(),
+  roomId: ChatRoomIdSchema,
   idempotencyKey: UuidSchema,
 });
 export type SendDonateInput = z.infer<typeof SendDonateInputSchema>;

@@ -325,7 +325,7 @@ export const domainEventSchemas = {
     senderUsername: z.string(),
     amount: MoneyAmountSchema,
     currency: z.string(),
-    roomId: UuidSchema,
+    roomId: UuidSchema.nullable(),
     messageId: UuidSchema,
   }),
   'chat.gift.claimed': z.object({
@@ -335,7 +335,7 @@ export const domainEventSchemas = {
     senderId: UuidSchema,
     amount: MoneyAmountSchema,
     currency: z.string(),
-    roomId: UuidSchema,
+    roomId: UuidSchema.nullable(),
   }),
   'chat.rain.distributed': z.object({
     fromUserId: UuidSchema,
@@ -343,7 +343,7 @@ export const domainEventSchemas = {
     recipientCount: z.number().int(),
     totalAmount: MoneyAmountSchema,
     currency: z.string(),
-    roomId: UuidSchema,
+    roomId: UuidSchema.nullable(),
   }),
   'chat.donate.sent': z.object({
     senderId: UuidSchema,
@@ -381,9 +381,13 @@ export const domainEventVersions: Partial<Record<DomainEventName, number>> = {
   // must never be persisted to the audit log or handed back to any caller.
   'identity.session.revoked': 2,
   // v2: claimable gift-card mechanic - giftId/senderId/senderUsername/roomId replaces fromUserId/toUserId.
-  'chat.gift.sent': 2,
+  // v3: roomId nullable - a gift can be sent into global chat (GLOBAL_CHAT_ROOM_ID sentinel on the wire).
+  'chat.gift.sent': 3,
+  // v2: roomId nullable - a claimed gift's room can be global chat.
+  'chat.gift.claimed': 2,
   // v2: recipients array added for per-player notification delivery.
-  'chat.rain.distributed': 2,
+  // v3: roomId nullable - rain can be sent into global chat (GLOBAL_CHAT_ROOM_ID sentinel on the wire).
+  'chat.rain.distributed': 3,
   // v2: exact decimal-string amount (+ currency), never a JS number.
   'wallet.deposit.completed': 2,
   'wallet.withdrawal.completed': 2,

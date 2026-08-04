@@ -14,7 +14,8 @@ import type { ChatSystemMessage } from './chat-system-writer.js';
 export type SendRainArgs = {
   amount: string;
   recipientCount: number;
-  roomId: Uuid;
+  // null = global chat (the GLOBAL_CHAT_ROOM_ID sentinel on the wire, contracts/schemas/chat-command.ts).
+  roomId: Uuid | null;
   idempotencyKey: Uuid;
   // Every user id currently online in the room (may include the actor) -
   // resolved by the caller BEFORE this port is called. social-transfers

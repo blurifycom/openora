@@ -4,7 +4,8 @@ import { pgTable, uuid, text, decimal, integer, timestamp } from 'drizzle-orm/pg
  * Claimable gift card: sender is debited on send, first other player to claim
  * wins the credit. Successor to chat-commands' `chat_gift` table (left in
  * place, untouched - see chat-commands/AGENTS.md and this module's AGENTS.md).
- * No FK to chatMessage - cross-module boundary rule.
+ * No FK to chatMessage - cross-module boundary rule. roomId is nullable: a
+ * gift can be sent into global chat (GLOBAL_CHAT_ROOM_ID sentinel on the wire).
  */
 export const playerGift = pgTable('player_gift', {
   id: uuid().primaryKey().defaultRandom(),
@@ -14,7 +15,7 @@ export const playerGift = pgTable('player_gift', {
   senderUsername: text().notNull(),
   amount: decimal({ precision: 18, scale: 8 }).notNull(),
   currency: text().notNull(),
-  roomId: uuid().notNull(),
+  roomId: uuid(),
   claimedBy: uuid(),
   claimedByUsername: text(),
   claimedAt: timestamp({ withTimezone: true }),
@@ -39,7 +40,8 @@ export type PlayerDonate = typeof playerDonate.$inferSelect;
 /**
  * Header row per `/rain` event. `amount` is the ACTUALLY-distributed total
  * (`floor(typedAmount / recipientCount) * recipientCount`), never the raw
- * player-typed amount - see this module's AGENTS.md.
+ * player-typed amount - see this module's AGENTS.md. roomId is nullable: rain
+ * can be sent into global chat (GLOBAL_CHAT_ROOM_ID sentinel on the wire).
  */
 export const playerRain = pgTable('player_rain', {
   id: uuid().primaryKey().defaultRandom(),
@@ -47,7 +49,7 @@ export const playerRain = pgTable('player_rain', {
   amount: decimal({ precision: 18, scale: 8 }).notNull(),
   perRecipient: decimal({ precision: 18, scale: 8 }).notNull(),
   currency: text().notNull(),
-  roomId: uuid().notNull(),
+  roomId: uuid(),
   recipientCount: integer().notNull(),
   createdAt: timestamp({ withTimezone: true }).notNull().defaultNow(),
 });

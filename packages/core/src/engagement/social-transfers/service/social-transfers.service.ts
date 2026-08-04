@@ -82,7 +82,7 @@ export const ChatRoomNotMemberError = createDomainError(
   (roomId: Uuid) => `You are not a member of room: ${roomId}`,
 );
 
-type GiftArgs = { amount: string; roomId: Uuid; idempotencyKey: Uuid };
+type GiftArgs = { amount: string; roomId: Uuid | null; idempotencyKey: Uuid };
 type RainFingerprintArgs = Pick<
   SendRainArgs,
   'amount' | 'recipientCount' | 'roomId' | 'idempotencyKey'
@@ -515,55 +515,62 @@ export class SocialTransfersService implements GiftCommands, RainCommands {
     }
     const claimerUsername = claimerSummary.username;
 
-    const existing = await this.drizzle.db
-      .select()
-      .from(playerGift)
-      .where(eq(playerGift.id, giftId))
-      .limit(1);
-    const giftRow = findOneOrThrow(existing, new GiftNotFoundError(giftId));
-    await this.verifyRoomAccessIfNeeded(giftRow.roomId, claimerId);
+    const { claimed, currency, roomId, senderId } = await this.drizzle.db.transaction(
+      async (tx) => {
+        // FOR UPDATE serializes concurrent claims against the same gift row under READ COMMITTED.
+        const giftRow = findOneOrThrow(
+          await tx.select().from(playerGift).where(eq(playerGift.id, giftId)).for('update'),
+          new GiftNotFoundError(giftId),
+        );
 
-    if (giftRow.senderId === claimerId) {
-      throw new GiftSelfClaimError();
-    }
+        await this.verifyRoomAccessIfNeeded(giftRow.roomId, claimerId);
 
-    const { claimed, currency, roomId } = await this.drizzle.db.transaction(async (tx) => {
-      const claimedAt = new Date();
-      const results = await tx
-        .update(playerGift)
-        .set({ claimedBy: claimerId, claimedByUsername: claimerUsername, claimedAt })
-        .where(and(eq(playerGift.id, giftId), isNull(playerGift.claimedBy)))
-        .returning();
+        if (giftRow.senderId === claimerId) {
+          throw new GiftSelfClaimError();
+        }
+        if (giftRow.claimedBy) {
+          throw new GiftAlreadyClaimedError();
+        }
 
-      if (results.length === 0) {
-        // Another claimer won the race.
-        throw new GiftAlreadyClaimedError();
-      }
+        const claimedAt = new Date();
+        // Guarded conditional update: WHERE claimed_by IS NULL stays as defense-in-depth
+        // alongside the row lock above (same pattern as wallet's guarded debit).
+        const results = await tx
+          .update(playerGift)
+          .set({ claimedBy: claimerId, claimedByUsername: claimerUsername, claimedAt })
+          .where(and(eq(playerGift.id, giftId), isNull(playerGift.claimedBy)))
+          .returning();
 
-      const updated = findOneOrThrow(results, new GiftAlreadyClaimedError());
+        const updated = findOneOrThrow(results, new GiftAlreadyClaimedError());
 
-      const credit = await this.wallet.credit(tx, {
-        userId: claimerId,
-        amount: updated.amount,
-        currency: updated.currency,
-        type: 'gift',
-      });
-      if (!credit.ok) {
-        throw new GiftNotFoundError(claimerId);
-      }
+        const credit = await this.wallet.credit(tx, {
+          userId: claimerId,
+          amount: updated.amount,
+          currency: updated.currency,
+          type: 'gift',
+        });
+        if (!credit.ok) {
+          throw new GiftNotFoundError(claimerId);
+        }
 
-      await this.audit.recordInTransaction(tx, {
-        actorId: claimerId,
-        actorType: 'player',
-        action: 'chat.gift.claimed',
-        resourceType: 'player_gift',
-        resourceId: giftId,
-        before: null,
-        after: { claimedBy: claimerId, amount: updated.amount },
-      });
+        await this.audit.recordInTransaction(tx, {
+          actorId: claimerId,
+          actorType: 'player',
+          action: 'chat.gift.claimed',
+          resourceType: 'player_gift',
+          resourceId: giftId,
+          before: null,
+          after: { claimedBy: claimerId, amount: updated.amount },
+        });
 
-      return { claimed: updated, currency: updated.currency, roomId: updated.roomId };
-    });
+        return {
+          claimed: updated,
+          currency: updated.currency,
+          roomId: updated.roomId,
+          senderId: giftRow.senderId,
+        };
+      },
+    );
 
     const claimedAtIso = claimed.claimedAt?.toISOString() ?? new Date().toISOString();
 
@@ -579,7 +586,7 @@ export class SocialTransfersService implements GiftCommands, RainCommands {
       giftId,
       claimerId,
       claimerUsername,
-      senderId: giftRow.senderId,
+      senderId,
       amount: claimed.amount,
       currency,
       roomId,

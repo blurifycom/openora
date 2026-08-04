@@ -8,6 +8,17 @@ Each row in `chat_command_config` holds `enabled`, `label`, `description`, and a
 
 `mention` is special: it does not go through a POST route. The `@username` pattern is typed inline in a message; `GET /chat-command/mention-search` powers the type-ahead. `searchMentions` takes a `viewerId` and excludes any player the caller has blocked or ignored via `CHAT_BLOCK_WRITER.getExcludedUserIds(viewerId)`.
 
+## `roomId` on `/gift` and `/rain` accepts a room UUID or the GLOBAL_CHAT_ROOM_ID sentinel
+
+`PostGiftInputSchema`/`PostRainInputSchema` type `roomId` as `ChatRoomIdSchema`
+(`@openora/core/contracts`, backed by `contracts/schemas/chat-command.ts`) - a real room UUID or the
+literal `GLOBAL_CHAT_ROOM_ID` (`'__global'`). There is no raw-`null` wire form; the schema's
+`.transform()` normalizes the sentinel to `null` before `postGift`/`postRain` ever run, so both
+handlers just forward `input.roomId: Uuid | null` straight into the `GIFT_COMMANDS`/`RAIN_COMMANDS`
+ports unchanged - social-transfers owns what `null` means (global chat). `postRain`'s presence
+lookup already worked with `roomId: null` before this (`chatChannel(null)` resolves to
+`chat:global`), so no change was needed there beyond the type.
+
 ## postGift / claimGift / postRain are pure delegation - zero money/limit/chat-write business logic here
 
 `postGift` (`POST /chat-command/gift`), `claimGift` (`POST /chat-command/gift/{id}/claim`), and
@@ -52,7 +63,7 @@ caller that doesn't hold it.
 `execute` (the gift/rain/donate/block/ignore discriminated union), `getGift`, `adminUpdateCommand`, `playerSearch`, `playerProfile` were removed from this module entirely:
 
 - Gift/rain/donate money movement, limit checks, and idempotency -> `social-transfers` (`packages/core/src/engagement/social-transfers/`). See that module's AGENTS.md for the idempotency/publish-after-commit/rain-remainder/exact-username invariants - they did not change, only moved.
-- `block`/`ignore` were pure duplication of `chat.blockUser`/`chat.ignoreUser` (backed by the same `CHAT_BLOCK_WRITER`) - deleted outright, not moved. Consumers call the `chat` module's operations directly.
+- `block`/`ignore` (and their `unblock`/`unignore` counterparts) were pure duplication of `chat.blockUser`/`chat.unblockUser`/`chat.ignoreUser`/`chat.unignoreUser` (backed by the same `CHAT_BLOCK_WRITER`) - deleted outright, not moved. Consumers call the `chat` module's operations directly. `block`/`unblock`/`ignore`/`unignore` still exist as `CHAT_COMMAND_TYPES` catalog entries (`listCommands`) and `CommandMetadataSchema` union members purely for command-palette discovery and wire-shape symmetry - this module never executes them and never posts a system message for any of the four.
 - `playerSearch`/`playerProfile` -> `player-management` (`playerSearch`/`playerProfile` on `playerContract`), since they are player-directory lookups, not chat commands.
 - The old `chat_gift` table and its migration are left untouched here (no new writes target it) - see `social-transfers/AGENTS.md` for the successor `player_gift` table and the deliberately-deferred migration decision for it.
 
