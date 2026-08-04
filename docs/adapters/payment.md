@@ -128,4 +128,4 @@ The address-based/async recipe is the same shape regardless of vendor:
    (idempotent - a replayed or stray webhook for an already-terminal/unmatched row
    no-ops).
 
-See `wallet/AGENTS.md` for the exact route/service contracts.
+See the wallet contract and service for the exact route behavior.

@@ -759,7 +759,6 @@
     "wallet.withdrawal.rejected",
     "wallet.withdrawal.requested"
   ],
-  "uiSlots": [],
   "schemas": [
     {
       "name": "ActivateCoolingOffInputSchema",

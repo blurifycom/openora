@@ -19,7 +19,7 @@ fetches vendor-neutral device/IP risk signals (`vpnOrTorDetected`, `dataCenterIp
 id. These only exist as part of a vendor's hosted verification session - never at signup -
 so only a hosted-session vendor implements it; document-forwarding vendors and
 `MockKycAdapter` omit it. The `kyc-decision-sync` job calls it alongside `resolveDecision`
-and persists the result on the `kyc_verification` row; see `compliance/AGENTS.md` for the
+and persists the result on the `kyc_verification` row; see the compliance contract and schema for the
 storage and auto-tagging rule.
 
 ## Webhook verifier
@@ -40,7 +40,7 @@ implementation ALSO enforces replay protection - a signature already accepted wi
 10-minute window (via the `CACHE` seam) is rejected, since HMAC alone has no expiry and a
 captured valid body+signature would otherwise be replayable forever. A vendor overlay
 rebinding `KYC_WEBHOOK_VERIFIER` should carry the same replay guard unless the vendor's
-own delivery protocol already provides one; see `compliance/AGENTS.md` > Replay protection
+own delivery protocol already provides one; see the compliance service's replay protection
 for the full rationale (including why a signed-timestamp check alone is not enough for a
 vendor like Didit that signs only the body).
 

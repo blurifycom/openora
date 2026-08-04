@@ -34,7 +34,7 @@ Report both: test files written (with pass/fail) AND a short walkthrough log (wh
 ## Bug triage
 
 1. **Reproduce** - run the flow twice; flaky = not confirmed.
-2. **Known gap?** - check `docs/catalog.json` + the module's `AGENTS.md`; stub/partial = expected.
+2. **Known gap?** - check `docs/catalog.json` plus the module's contract, schema, and plugin; stub/partial = expected.
 3. **Domain doubt** (KYC threshold, wagering math, geo logic) - spawn `expert`.
 4. **Confirmed bug** - spawn `dev` with: exact request, expected vs actual, code path (file:line if found), blocker vs papercut.
 

@@ -38,7 +38,7 @@ Everything enters through plugins - `definePlugin({ id, dependsOn, register })` 
 - **Zod-first** - every wire shape is a schema; types are inferred, never hand-written.
 - **Swappable vendor seams** - PSP, KYC, game aggregator, realtime, job queue, and message broker are ports with in-process defaults and adapter overrides.
 - **Regulatory-grade audit** - append-only, sha256 hash-chained log; every state-changing action leaves a trail.
-- **AI-native** - machine-readable catalog, per-module agent docs, and a queryable MCP server ([`@openora/mcp`](https://www.npmjs.com/package/@openora/mcp)).
+- **AI-native** - machine-readable catalog and a queryable MCP server ([`@openora/mcp`](https://www.npmjs.com/package/@openora/mcp)).
 
 ## Getting started
 

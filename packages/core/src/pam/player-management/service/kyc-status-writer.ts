@@ -12,7 +12,7 @@ type ConditionalUpdateRow = { previous_status: KycStatus };
  * change - admin override, vendor decision, webhook, threshold re-KYC - flows through
  * here, so there is exactly one write path + one `compliance.kyc.updated` emit. The
  * guard-then-write is a single conditional UPDATE, never a select-then-update, so
- * concurrent callers cannot double-emit - see `pam/player-management/AGENTS.md`.
+ * concurrent callers cannot double-emit.
  */
 export class PlayerKycStatusWriter implements KycStatusWriter {
   constructor(

@@ -2,8 +2,8 @@ import { createToken, type Token } from './token.js';
 
 /**
  * Admin/back-office reporting over player registration + engagement activity.
- * Owned + bound by iam (see iam/AGENTS.md for why - it centralizes admin reporting
- * concerns even though the underlying `user`/`session` tables belong to identity,
+ * Owned + bound by iam; it centralizes admin reporting concerns even though the
+ * underlying `user`/`session` tables belong to identity,
  * read via that module's read-only /schema subpath); the back-office depends only
  * on this port. A query port like ADMIN_WALLET_REPORTING/ADMIN_GAME_REPORTING.
  * See ADR-0017/0025.

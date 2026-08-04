@@ -17,58 +17,34 @@ globs:
   - 'packages/core/src/server/db/**'
   - 'packages/testing/src/**'
   - 'tools/db/**'
-description: Engineering conventions - code, SQL, Drizzle, migrations, and database tooling.
+description: Engineering conventions - compact universal baseline and routing to topical standards.
 ---
 
-# Engineering Conventions
+# Engineering conventions
 
-The always-on core of the code standard: what you must obey while typing. Detail, examples and rationale live in `docs/standards/` - read the one file that matches the change instead of carrying all of it. Async seams: `messaging-and-microservices`. SQL / Drizzle: `docs/standards/database.md`. Repo map, decision tree, dependency rules: `overview`.
+Use pure, composable functions and explicit typed wiring. Match local naming and structure. Prefer clear names, guard clauses, immutable construction, and side effects at boundaries. Reuse an existing helper before adding one.
 
-| Change you are making                  | Read first                           |
-| -------------------------------------- | ------------------------------------ |
-| schema, type, enum-like value set      | `docs/standards/types.md`            |
-| SQL, Drizzle, migration, seed, DB tool | `docs/standards/database.md`         |
-| function, service method, constructor  | `docs/standards/functions.md`        |
-| new module, DI wiring, integration     | `docs/standards/module-structure.md` |
-| error class, catch, money path         | `docs/standards/errors.md`           |
-| a test                                 | `docs/standards/testing.md`          |
-| a comment or JSDoc                     | `docs/standards/comments.md`         |
-| a hook / the typed client              | `docs/standards/react-sdk.md`        |
-| commit, PR                             | `docs/standards/git-delivery.md`     |
-| a failing gate, a new lint rule        | `docs/standards/enforcement.md`      |
+| Change                                                  | Read first                           |
+| ------------------------------------------------------- | ------------------------------------ |
+| schema, type, enum-like value set                       | `docs/standards/types.md`            |
+| SQL, Drizzle, migration, seed, DB tool                  | `docs/standards/database.md`         |
+| function, service method, constructor                   | `docs/standards/functions.md`        |
+| module, DI wiring, integration, cross-module dependency | `docs/standards/module-structure.md` |
+| error class or catch                                    | `docs/standards/errors.md`           |
+| money movement or payment settlement                    | `docs/standards/money.md`            |
+| KYC or responsible gambling                             | `docs/standards/compliance.md`       |
+| audit production or consumption                         | `docs/standards/audit.md`            |
+| async seam, event, job, or realtime                     | `messaging-and-microservices`        |
+| test                                                    | `docs/standards/testing.md`          |
+| comment or JSDoc                                        | `docs/standards/comments.md`         |
+| hook or typed client                                    | `docs/standards/react-sdk.md`        |
+| commit or PR                                            | `docs/standards/git-delivery.md`     |
+| failing gate or lint rule                               | `docs/standards/enforcement.md`      |
 
-## Philosophy
+## Universal baseline
 
-- **Functional and declarative by default.** Pure functions, immutable data, composition over imperative mutation and stateful classes.
-- **Explicit over magic.** No auto-discovery, no decorator/reflection soup; every wiring point is a greppable, typed call.
-- **Self-documenting.** Clear names beat comments.
-- **Small and composable.** One concept per file; `parseUser()` + `sendWelcomeEmail()`, not `parseUserAndSendEmail()`.
-- **YAGNI + DRY, in that order.** Abstract on the third occurrence, not the first.
-- **Boring and consistent.** Match the surrounding code's idiom, naming, and density.
-
-## Never (lint-enforced unless noted)
-
-- `any` (tests included), `!` non-null assertions, `arr[i]!`, `as` casts to silence the compiler (`as const` is fine; test doubles go through the `mock` helper).
-- `interface`, TS `enum`, decorators, inheritance for reuse, default exports (except `plugin.ts` + `drizzle.config.ts`).
-- Hand-written duplicates of an inferrable type, re-inferring an imported schema, re-typing derived schema fields.
-- Raw `z.uuid()` (use `UuidSchema`), inline `z.enum([...])` outside a contract dir.
-- Inline `fetch`/`axios` in module code - third-party access is a port + adapter bound at the root.
-- Comments. The only exception is a fact the code cannot contain (external-system behaviour, a spec constraint) and JSDoc on a public export. A rationale is not a fact - it goes in the commit or an ADR.
-- Deep (`../../`+) relative imports that leave your zone/module, imports of another module's internals, import cycles, deep `dist/`/`src/` paths into another package.
-- Hand-edited generated files: migrations, `docs/catalog.json`, per-tool agent mirrors.
-
-## Always
-
-- **One source of truth per shape - infer, never hand-write:** `z.infer<typeof XSchema>`, `typeof x.$inferSelect`.
-- **Schema-first at every boundary** (HTTP, config, env, events); validate once at the edge, trust the type after.
-- **Enum-like sets are a values + schema + type triple on the contract surface**; `pgEnum` derives from the tuple.
-- **Entity ids typed through their owning type** (`roleId: AdminRole['id']`, never a bare `string`).
-- **Guard clauses first, main path last; brace every control statement; >3 params -> one named object.**
-- **Construct objects by spread + override**, never a hand-copied field list.
-- **Side effects at the edges**; events emit after the DB commit; money paths are transactional AND idempotent (a DB guard inside the transaction, not just an idempotency key).
-- **Typed, named error classes** from the shared factories, mapped to transport in the router's `mapErrors`.
-- **Cross-module coupling only via** a domain event, a command port, a shared contract, or a read-only `/schema` subpath.
-- **Reuse the shared helpers** (`findOneOrThrow`, `pageToOffset`, `assertOwnership`, `serializeRow`, `createEventStreamGenerator`, `IdInputSchema`/`PageQuerySchema`) instead of re-rolling them - full table in `docs/standards/module-structure.md`.
-- **Tests co-locate in `__tests__/`**; a file using `createTestDb`/`createTestRedis` is named `*.int.test.ts` (integration tier, needs docker pg + redis). Test behaviour, not the query builder; always cover authz negatives.
-- **Pin exact dependency versions** (no `^`/`~`), and add a dependency deliberately.
-- **Green before review:** `pnpm verify` passes, `pnpm regen` after any contract/schema change. Conventional commits, lowercase subject, one PR per concern. Never push without explicit confirmation.
+- Schema-first at trust boundaries. Infer types from their owning schema or row; do not hand-write duplicates.
+- No `any`, `interface`, decorators, reuse inheritance, suppressive casts, or default exports except `plugin.ts` and `drizzle.config.ts`.
+- Keep third-party access behind an owning adapter port. Do not import another module's internals or create cycles.
+- Do not hand-edit generated artifacts: migrations, `docs/catalog.json`, or per-tool agent mirrors.
+- State-changing work is transactional where its standard requires it. Money work is also idempotent with a durable database guard inside that transaction.
