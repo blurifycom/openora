@@ -41,7 +41,7 @@ class ControllablePendingKycAdapter implements KycAdapter {
 /**
  * Test-fixture overlay - binds `PLATFORM_CONFIG` (kyc gate + re-KYC thresholds) and swaps
  * `KYC_ADAPTER` for a controllable stub. Append last in a test's `plugins` array so both
- * bindings win over the defaults (last-registration-wins; see clean-architecture > ports).
+ * bindings win over the defaults (last-registration-wins; see docs/standards/module-structure.md > ports).
  */
 export default definePlugin({
   id: 'test-kyc-config',

@@ -162,7 +162,7 @@ const noAdhocZodInRouter = {
               `Ad-hoc Zod (z.${callee.property.name}(...)) in a router. Define the shape in ` +
               "the module's contract slice (its /contract dir, exported as @openora/<module>/contracts) - " +
               'the source of truth for validation + OpenAPI + the typed client - and reference it. ' +
-              'See clean-architecture.md.',
+              'See docs/standards/module-structure.md.',
           });
         }
       },

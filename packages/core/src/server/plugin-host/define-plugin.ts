@@ -1,8 +1,10 @@
-import type { Container, Factory } from '../kernel/index.js';
+import type { Container } from '../kernel/index.js';
 import type {
   EventEnvelope,
   SealedToken,
   Token,
+  TokenCatalog,
+  TokenValue,
   WorkerRegistration,
 } from '@openora/core/contracts';
 
@@ -16,15 +18,27 @@ export type McpToolDefinition = {
 // Runs once at boot, after every plugin has registered its providers, so adapter overrides (last registration wins) are in effect.
 export type RouterFactory = (c: Container) => unknown;
 
+export type TypedContainer<C extends TokenCatalog> = {
+  get<K extends keyof C>(token: C[K]): TokenValue<C[K]>;
+  has<K extends keyof C>(token: C[K]): boolean;
+  onDispose(fn: () => void | Promise<void>): void;
+};
+
 export type EventHandler = (payload: unknown, envelope?: EventEnvelope) => void | Promise<void>;
 
-export type ModuleRegistry = {
+export type ModuleRegistry<C extends TokenCatalog = never> = {
   // Last registration wins - an overlay loaded after a module can rebind its adapter token.
-  provide<T>(token: Token<T>, factory: Factory<T>): void;
+  provide<T>(
+    token: [C] extends [never] ? Token<T> : C[keyof C] & Token<T>,
+    factory: (container: [C] extends [never] ? Container : TypedContainer<C>) => T,
+  ): void;
   // Bind-once, owner-only. The ONLY legitimate way to bind a SealedToken - provide()
   // rejects sealed tokens outright. A second call for the same token (an overlay
   // trying to override a regulator-mandated service) throws instead of rebinding.
-  provideSealed<T>(token: SealedToken<T>, factory: Factory<T>): void;
+  provideSealed<T>(
+    token: [C] extends [never] ? SealedToken<T> : C[keyof C] & SealedToken<T>,
+    factory: (container: [C] extends [never] ? Container : TypedContainer<C>) => T,
+  ): void;
   routers: {
     add(namespace: string, factory: RouterFactory): void;
     getAll(): Map<string, RouterFactory>;
@@ -48,21 +62,37 @@ export type ModuleRegistry = {
   };
 };
 
-export type Plugin = {
-  id: string;
-  dependsOn?: string[];
+export type PluginDefinition<
+  C extends TokenCatalog = never,
+  Id extends string = string,
+  Dependencies extends readonly string[] = string[],
+> = {
+  id: Id;
+  dependsOn?: Dependencies;
   // Verified once after all plugins register - a missing port fails fast. See ADR-0024.
   requiresPorts?: Token<unknown>[];
-  register: (ctx: ModuleRegistry) => void | Promise<void>;
+  register: (ctx: ModuleRegistry<C>) => void | Promise<void>;
 };
 
-export type PluginDefinition = {
-  id: string;
-  dependsOn?: string[];
-  requiresPorts?: Token<unknown>[];
-  register: (ctx: ModuleRegistry) => void | Promise<void>;
-};
+export type Plugin<
+  C extends TokenCatalog = never,
+  Id extends string = string,
+  Dependencies extends readonly string[] = string[],
+> = PluginDefinition<C, Id, Dependencies>;
 
-export function definePlugin(definition: PluginDefinition): Plugin {
+export function definePlugin<
+  C extends TokenCatalog = never,
+  const Id extends string = string,
+  const Dependencies extends readonly string[] = [],
+>(definition: PluginDefinition<C, Id, Dependencies>): Plugin<C, Id, Dependencies> {
   return definition;
+}
+
+export function definePluginWithCatalog<C extends TokenCatalog>() {
+  return function defineCataloguedPlugin<
+    const Id extends string,
+    const Dependencies extends readonly string[] = [],
+  >(definition: PluginDefinition<C, Id, Dependencies>): Plugin<C, Id, Dependencies> {
+    return definition;
+  };
 }

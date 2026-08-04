@@ -18,7 +18,7 @@ Then:
 
 1. Register the plugin in `apps/api/src/extensions.config.ts`. Last registration of a DI token wins -
    list an adapter swap AFTER the module that owns the default binding.
-2. Tables go in the overlay's own `src/schema/index.ts` (follow `db-conventions`); run `pnpm db:migrate`.
+2. Tables go in the overlay's own `src/schema/index.ts` (follow `docs/standards/database.md`); run `pnpm db:migrate`.
 3. Audit every state-changing action (emit an event the `audit` add-on consumes, or `AUDIT_WRITER.record`).
 4. `/check` to confirm wiring compiles and boundary lint passes.
 

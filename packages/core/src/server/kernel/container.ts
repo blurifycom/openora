@@ -1,4 +1,4 @@
-import type { AnyToken } from '@openora/core/contracts';
+import type { AnyToken, TokenCatalog, TokenValue } from '@openora/core/contracts';
 
 // Functional DI container. Resolution is lazy and cached; last `register` for a
 // token wins - overlays rebind adapters by registering after the default binding.
@@ -20,7 +20,7 @@ export type Factory<T> = (c: Container) => T;
  * `dispose()` runs every `onDispose` callback in REVERSE registration order -
  * register dependencies before their dependents so teardown happens safely.
  */
-export class Container {
+export class Container<C extends TokenCatalog = never> {
   private readonly factories = new Map<symbol, Factory<unknown>>();
   private readonly instances = new Map<symbol, unknown>();
   private readonly resolving = new Set<symbol>();
@@ -31,10 +31,14 @@ export class Container {
     this.instances.delete(token);
   }
 
+  has<K extends keyof C>(token: C[K]): boolean;
+  has(token: AnyToken<unknown>): boolean;
   has(token: AnyToken<unknown>): boolean {
     return this.factories.has(token);
   }
 
+  get<K extends keyof C>(token: C[K]): TokenValue<C[K]>;
+  get<T>(token: AnyToken<T>): T;
   get<T>(token: AnyToken<T>): T {
     if (this.instances.has(token)) {
       return this.instances.get(token) as T;

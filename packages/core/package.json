@@ -599,6 +599,7 @@
     "check:types": "tsc --noEmit",
     "clean": "rm -rf dist",
     "test:unit": "vitest run --passWithNoTests",
+    "test:integration": "vitest run --config vitest.integration.config.ts --passWithNoTests",
     "gen:drizzle": "node scripts/generate-all.mjs"
   },
   "dependencies": {
@@ -633,6 +634,7 @@
     "drizzle-kit": "0.31.10",
     "jsdom": "29.1.1",
     "typescript": "6.0.3",
+    "vite-tsconfig-paths": "6.1.1",
     "vitest": "4.1.8"
   },
   "peerDependencies": {
