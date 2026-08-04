@@ -1,14 +1,18 @@
-// Audit-write seam. AML/SAR audit writes are a regulator-mandated invariant under
-// MGA/UKGC - the audit module binds the sole implementation via ctx.provideSealed()
-// (bind-once, owner-only); no overlay can rebind it (ctx.provide() rejects any
-// sealed token outright, and provideSealed() itself refuses a second bind). Other
-// modules resolve this port read-only (container.get(AUDIT_WRITER)) to call it.
+/**
+ * Audit-write seam. AML/SAR audit writes are a regulator-mandated invariant under
+ * MGA/UKGC - the audit module binds the sole implementation via ctx.provideSealed()
+ * (bind-once, owner-only); no overlay can rebind it (ctx.provide() rejects any
+ * sealed token outright, and provideSealed() itself refuses a second bind). Other
+ * modules resolve this port read-only (container.get(AUDIT_WRITER)) to call it.
+ */
 import type { DomainEventName } from '../schemas/events.js';
 import type { ClientMeta } from '../schemas/common.js';
 import { createSealedToken, type SealedToken } from './token.js';
 
-// Admin actions that are recorded directly (not via a domain-event subscription)
-// and so have no entry in `domainEventSchemas`. Add new direct actions here.
+/**
+ * Admin actions that are recorded directly (not via a domain-event subscription)
+ * and so have no entry in `domainEventSchemas`. Add new direct actions here.
+ */
 export type DirectAuditAction =
   | 'admin.user.updated'
   | 'admin.player.updated'
@@ -19,10 +23,12 @@ export type DirectAuditAction =
   | 'wallet.auto_withdrawal_rule.set'
   | 'wallet.auto_withdrawal_rule.deleted';
 
-// Every value the audit `action` column legitimately holds: a cross-module domain
-// event topic (recorded by the audit plugin's subscriptions) or a direct admin
-// action. The `string & {}` arm keeps literal autocomplete while still accepting
-// overlay-defined actions, so it constrains nothing at runtime - it just guides.
+/**
+ * Every value the audit `action` column legitimately holds: a cross-module domain
+ * event topic (recorded by the audit plugin's subscriptions) or a direct admin
+ * action. The `string & {}` arm keeps literal autocomplete while still accepting
+ * overlay-defined actions, so it constrains nothing at runtime - it just guides.
+ */
 export type AuditAction = DomainEventName | DirectAuditAction | (string & {});
 
 export type AuditWritePort = {

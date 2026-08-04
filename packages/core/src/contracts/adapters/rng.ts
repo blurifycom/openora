@@ -1,12 +1,14 @@
-// Random number generator seam. For dev / demo / non-certified game contexts.
-//
-// IMPORTANT: production game outcomes are governed by the SEALED
-// `GAME_OUTCOME_AUTHORITY` token in `@openora/core/compliance` (regulator
-// mandate - GLI / eCOGRA / BMM / iTechLabs). `RNG_ADAPTER` is NOT a substitute
-// for a lab-certified RGS. Use this seam to swap deterministic mocks in tests,
-// to plug in a seedable provider for replay debugging, or to back demo games
-// that never resolve real money. Real-money RTP must flow through the sealed
-// authority.
+/**
+ * Random number generator seam. For dev / demo / non-certified game contexts.
+ *
+ * IMPORTANT: production game outcomes are governed by the SEALED
+ * `GAME_OUTCOME_AUTHORITY` token in `@openora/core/compliance` (regulator
+ * mandate - GLI / eCOGRA / BMM / iTechLabs). `RNG_ADAPTER` is NOT a substitute
+ * for a lab-certified RGS. Use this seam to swap deterministic mocks in tests,
+ * to plug in a seedable provider for replay debugging, or to back demo games
+ * that never resolve real money. Real-money RTP must flow through the sealed
+ * authority.
+ */
 import { createToken, type Token } from './token.js';
 
 export type RngAdapter = {

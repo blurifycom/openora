@@ -6,9 +6,11 @@ import type {
 } from '../schemas/wallet-tx.js';
 import type { SortOrder } from '../kit.js';
 
-// Admin/back-office reporting over wallet money movement. Owned + bound by the
-// wallet module; the back-office depends only on this port, never on the wallet
-// schema. A query port like WALLET_COMMANDS. See ADR-0017/0025.
+/**
+ * Admin/back-office reporting over wallet money movement. Owned + bound by the
+ * wallet module; the back-office depends only on this port, never on the wallet
+ * schema. A query port like WALLET_COMMANDS. See ADR-0017/0025.
+ */
 
 export type AdminTxRow = {
   id: string;
@@ -24,7 +26,7 @@ export type AdminTxRow = {
 export type AdminTxDetail = AdminTxRow & {
   providerRefId: string | null;
   providerName: string | null;
-  // UUID of the admin who reviewed the transaction (matches wallet.reviewedBy column).
+  /** UUID of the admin who reviewed the transaction (matches wallet.reviewedBy column). */
   reviewedBy: string | null;
   reviewedAt: Date | null;
   reviewReason: string | null;

@@ -1,5 +1,7 @@
-// Wallet command port: another module moves money on the caller's own `tx`, so the move is
-// atomic with the caller's writes yet the modules stay decoupled and independently extractable. ADR-0017.
+/**
+ * Wallet command port: another module moves money on the caller's own `tx`, so the move is
+ * atomic with the caller's writes yet the modules stay decoupled and independently extractable. ADR-0017.
+ */
 import type { WalletTransactionType } from '../schemas/wallet-tx.js';
 import { createToken, type Token } from './token.js';
 
