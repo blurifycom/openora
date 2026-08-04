@@ -9,6 +9,7 @@ export type {
   SealedToken,
   ClientPageToken,
   TokenCatalog,
+  TokenCatalogValues,
   TokenValue,
 } from './token.js';
 export { createToken, createSealedToken, createClientPageToken } from './token.js';

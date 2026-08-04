@@ -174,7 +174,7 @@ export async function loadPlugins<C extends TokenCatalog = never>(
  */
 export function assertRequiredPorts<C extends TokenCatalog = never>(
   plugins: Plugin<C>[],
-  container: Container,
+  container: Container<C>,
 ): void {
   const unbound = plugins.flatMap((plugin) =>
     (plugin.requiresPorts ?? [])

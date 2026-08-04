@@ -8,7 +8,7 @@ import type {
 } from './define-plugin.js';
 
 export class ModuleRegistryImpl<C extends TokenCatalog = never> implements ModuleRegistry<C> {
-  private _routers = new Map<string, RouterFactory>();
+  private _routers = new Map<string, RouterFactory<C>>();
   private _slots = new Map<string, unknown>();
   private _events = new Map<string, EventHandler[]>();
   private _jobs: WorkerRegistration<unknown>[] = [];
@@ -21,7 +21,7 @@ export class ModuleRegistryImpl<C extends TokenCatalog = never> implements Modul
   // Sealed tokens (Symbol description prefixed `sealed:`) are rejected at runtime
   // even though the type system already blocks them - catches plain-JS callers and cast escapes.
   // Canonical sealed list lives in `@openora/core/compliance`.
-  provide = <T>(token: Token<T>, factory: Factory<T>): void => {
+  provide = <T>(token: Token<T>, factory: Factory<T, C>): void => {
     const desc = token.description ?? '';
     if (desc.startsWith('sealed:')) {
       throw new Error(
@@ -32,14 +32,14 @@ export class ModuleRegistryImpl<C extends TokenCatalog = never> implements Modul
           `See @openora/core/compliance for the canonical list.`,
       );
     }
-    this.container.register(token, factory);
+    this.container.registerUnsafe(token, factory);
   };
 
   // Bind-once. The owning module calls this during its own register() to bind the
   // canonical implementation; a second call for the same token - an overlay trying
   // to slip past provide()'s rejection, or a duplicate registration - throws instead
   // of silently rebinding (there is no "last-wins" for a sealed token).
-  provideSealed = <T>(token: SealedToken<T>, factory: Factory<T>): void => {
+  provideSealed = <T>(token: SealedToken<T>, factory: Factory<T, C>): void => {
     if (this._sealedBound.has(token)) {
       throw new Error(
         `[plugin-host] Sealed token (${token.description ?? '(unnamed)'}) is already bound. ` +
@@ -47,11 +47,11 @@ export class ModuleRegistryImpl<C extends TokenCatalog = never> implements Modul
       );
     }
     this._sealedBound.add(token);
-    this.container.register(token, factory);
+    this.container.registerUnsafe(token, factory);
   };
 
   routers = {
-    add: (namespace: string, factory: RouterFactory) => {
+    add: (namespace: string, factory: RouterFactory<C>) => {
       if (this._routers.has(namespace)) {
         throw new Error(`Router namespace "${namespace}" is already registered`);
       }

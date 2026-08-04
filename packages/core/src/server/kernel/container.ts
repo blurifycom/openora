@@ -8,7 +8,7 @@ import type { AnyToken, TokenCatalog, TokenValue } from '@openora/core/contracts
 // sealed/overlay-rejection rules live one layer up, in ModuleRegistry's
 // provide()/provideSealed() (see plugin-host/module-registry.ts).
 
-export type Factory<T> = (c: Container) => T;
+export type Factory<T, C extends TokenCatalog = never> = (c: Container<C>) => T;
 
 /**
  * Functional DI container - no decorators, no reflection. `get()` resolves
@@ -21,24 +21,33 @@ export type Factory<T> = (c: Container) => T;
  * register dependencies before their dependents so teardown happens safely.
  */
 export class Container<C extends TokenCatalog = never> {
-  private readonly factories = new Map<symbol, Factory<unknown>>();
+  private readonly factories = new Map<symbol, Factory<unknown, C>>();
   private readonly instances = new Map<symbol, unknown>();
   private readonly resolving = new Set<symbol>();
   private readonly disposers: Array<() => void | Promise<void>> = [];
 
-  register<T>(token: AnyToken<T>, factory: Factory<T>): void {
-    this.factories.set(token, factory as Factory<unknown>);
+  register<K extends keyof C>(
+    token: C[K],
+    factory: (container: Container<C>) => TokenValue<C[K]>,
+  ): void;
+  register<T>(token: [C] extends [never] ? AnyToken<T> : never, factory: Factory<T, C>): void;
+  register<T>(token: AnyToken<T>, factory: Factory<T, C>): void {
+    this.registerUnsafe(token, factory);
+  }
+
+  registerUnsafe<T>(token: AnyToken<T>, factory: Factory<T, C>): void {
+    this.factories.set(token, factory);
     this.instances.delete(token);
   }
 
   has<K extends keyof C>(token: C[K]): boolean;
-  has(token: AnyToken<unknown>): boolean;
+  has(token: [C] extends [never] ? AnyToken<unknown> : C[keyof C] & AnyToken<unknown>): boolean;
   has(token: AnyToken<unknown>): boolean {
     return this.factories.has(token);
   }
 
   get<K extends keyof C>(token: C[K]): TokenValue<C[K]>;
-  get<T>(token: AnyToken<T>): T;
+  get<T>(token: [C] extends [never] ? AnyToken<T> : never): T;
   get<T>(token: AnyToken<T>): T {
     if (this.instances.has(token)) {
       return this.instances.get(token) as T;

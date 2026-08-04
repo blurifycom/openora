@@ -11,7 +11,11 @@ export type AnyToken<T, K extends string = string> = symbol & {
   readonly __key?: K;
 };
 
-export type TokenCatalog = Record<string, AnyToken<unknown>>;
+export type TokenCatalogValues = Record<string, unknown>;
+
+export type TokenCatalog<Values extends TokenCatalogValues = TokenCatalogValues> = {
+  [K in keyof Values]: AnyToken<Values[K]>;
+};
 
 export type TokenValue<T> = T extends AnyToken<infer Value> ? Value : never;
 
