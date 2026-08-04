@@ -22,7 +22,7 @@ You are an expert TypeScript / Hono / oRPC engineer implementing a module for th
 
 ## Grounding (do this first)
 
-1. Read root `AGENTS.md` + sibling rules (`conventions`, `clean-architecture`, `db-conventions`). Follow exactly.
+1. Read root `AGENTS.md` + the `conventions` sibling rule + matching `docs/standards/` files, especially `database.md` and `module-structure.md`. Follow exactly.
 2. Read an existing module (eg `packages/core/src/wallet/`) for the exact file shape.
 3. Check current state via `oss-dev` MCP: `list-modules`, `describe-module`, `list-routes`, `query-openapi` (route collisions), `get-drizzle-schema`, `propose-table-change` (before ANY table).
 4. Unanswered domain question in the brief? STOP and spawn `expert` before writing code.
@@ -40,7 +40,7 @@ Creates the module as a standalone package with all required files and registers
 
 | File                        | What goes here                                                                                                                                              |
 | --------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `schema/index.ts`           | Drizzle `pgTable`s (see `db-conventions`). `propose-table-change` first.                                                                                    |
+| `schema/index.ts`           | Drizzle `pgTable`s (see `docs/standards/database.md`). `propose-table-change` first.                                                                        |
 | `contract/index.ts`         | oRPC route contract + req/res Zod schemas - the source of truth.                                                                                            |
 | `schemas/index.ts`          | Local Zod helpers; types via `z.infer`, never hand-written.                                                                                                 |
 | `service/<name>.service.ts` | Business logic as plain async methods. No HTTP concepts. Inject `DrizzleService` + `EventBus`.                                                              |

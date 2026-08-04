@@ -1,16 +1,78 @@
 import type { Container } from '../kernel/index.js';
+import type { TokenCatalog } from '@openora/core/contracts';
 import type { Plugin } from './define-plugin.js';
 import { ModuleRegistryImpl } from './module-registry.js';
 
-export type PluginEntry = {
-  id: string;
+export type PluginEntry<
+  Id extends string = string,
+  Dependencies extends readonly string[] = readonly string[],
+> = {
+  id: Id;
   path: string;
+  dependsOn?: Dependencies;
   // 'module' (default) = a domain module, selectable by a service manifest.
   // 'infra' = a broker/queue driver overlay that always loads, even for a
   // single-module service, because a standalone process still needs its
   // durable transport. See applyServiceManifest.
   kind?: 'module' | 'infra';
 };
+
+type EntryIds<Entries extends readonly PluginEntry[]> = Entries[number]['id'];
+
+type EntryDependencies<Entry extends PluginEntry> = Entry['dependsOn'] extends readonly string[]
+  ? Entry['dependsOn'][number]
+  : never;
+
+type MissingDependencies<Entries extends readonly PluginEntry[]> =
+  Entries[number] extends infer Entry
+    ? Entry extends PluginEntry
+      ? Exclude<EntryDependencies<Entry>, EntryIds<Entries>>
+      : never
+    : never;
+
+type EntryById<
+  Entries extends readonly PluginEntry[],
+  Id extends string,
+> = Entries[number] extends infer Entry ? (Entry extends PluginEntry<Id> ? Entry : never) : never;
+
+type HasDependencyCycle<
+  Entries extends readonly PluginEntry[],
+  Id extends string,
+  Trail extends readonly string[] = [],
+> = Id extends Trail[number]
+  ? true
+  : EntryById<Entries, Id> extends infer Entry
+    ? Entry extends PluginEntry
+      ? HasDependencyCycleFor<Entries, EntryDependencies<Entry>, [...Trail, Id]>
+      : false
+    : false;
+
+type HasDependencyCycleFor<
+  Entries extends readonly PluginEntry[],
+  Ids extends string,
+  Trail extends readonly string[],
+> = true extends (Ids extends string ? HasDependencyCycle<Entries, Ids, Trail> : never)
+  ? true
+  : false;
+
+type GraphHasCycle<
+  Entries extends readonly PluginEntry[],
+  Ids extends string = EntryIds<Entries>,
+> = true extends (Ids extends string ? HasDependencyCycle<Entries, Ids> : never) ? true : false;
+
+type PluginGraphError<Entries extends readonly PluginEntry[]> = [
+  MissingDependencies<Entries>,
+] extends [never]
+  ? GraphHasCycle<Entries> extends true
+    ? { readonly __pluginGraphError: 'circular dependency' }
+    : unknown
+  : { readonly __pluginGraphError: 'unknown dependency' };
+
+export function defineExtensions<const Entries extends readonly PluginEntry[]>(
+  entries: Entries & PluginGraphError<Entries>,
+): Entries {
+  return entries;
+}
 
 function validateEntries(entries: unknown): asserts entries is PluginEntry[] {
   if (!Array.isArray(entries)) {
@@ -40,12 +102,12 @@ function validateEntries(entries: unknown): asserts entries is PluginEntry[] {
   });
 }
 
-function topoSort(plugins: Plugin[]): Plugin[] {
-  const byId = new Map(plugins.map((p) => [p.id, p]));
+export function topoSort<C extends TokenCatalog>(plugins: Plugin<C>[]): Plugin<C>[] {
+  const byId = new Map<string, Plugin<C>>(plugins.map((p) => [p.id, p]));
   const visited = new Set<string>();
-  const sorted: Plugin[] = [];
+  const sorted: Plugin<C>[] = [];
 
-  function visit(plugin: Plugin, stack: Set<string>) {
+  function visit(plugin: Plugin<C>, stack: Set<string>) {
     if (visited.has(plugin.id)) {
       return;
     }
@@ -72,15 +134,15 @@ function topoSort(plugins: Plugin[]): Plugin[] {
   return sorted;
 }
 
-export async function loadPlugins(
+export async function loadPlugins<C extends TokenCatalog = never>(
   entries: PluginEntry[],
-  container: Container,
-): Promise<ModuleRegistryImpl> {
+  container: Container<C>,
+): Promise<ModuleRegistryImpl<C>> {
   validateEntries(entries);
-  const plugins: Plugin[] = [];
+  const plugins: Plugin<C>[] = [];
 
   for (const entry of entries) {
-    const mod = (await import(entry.path)) as { default?: Plugin };
+    const mod = (await import(entry.path)) as { default?: Plugin<C> };
     const plugin = mod.default;
     if (!plugin || typeof plugin.register !== 'function') {
       throw new Error(`Plugin at "${entry.path}" does not export a valid definePlugin result`);
@@ -89,7 +151,7 @@ export async function loadPlugins(
   }
 
   const ordered = topoSort(plugins);
-  const registry = new ModuleRegistryImpl(container);
+  const registry = new ModuleRegistryImpl<C>(container);
 
   for (const plugin of ordered) {
     await plugin.register(registry);
@@ -110,7 +172,10 @@ export async function loadPlugins(
  * registration and throw one actionable error naming the plugin, the port, and the
  * likely-missing package.
  */
-export function assertRequiredPorts(plugins: Plugin[], container: Container): void {
+export function assertRequiredPorts<C extends TokenCatalog = never>(
+  plugins: Plugin<C>[],
+  container: Container,
+): void {
   const unbound = plugins.flatMap((plugin) =>
     (plugin.requiresPorts ?? [])
       .filter((token) => !container.has(token))

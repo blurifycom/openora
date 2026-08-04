@@ -22,6 +22,19 @@
       "dependsOn": ["^build", "build"],
       "outputs": []
     },
+    "@openora/testing#test:integration": {
+      "dependsOn": ["^build", "build", "@openora/core#test:integration"],
+      "cache": false,
+      "passThroughEnv": [
+        "TEST_DATABASE_URL",
+        "DATABASE_URL",
+        "DATABASE_ADMIN_URL",
+        "TEST_ADMIN_DATABASE_URL",
+        "TEST_REDIS_URL",
+        "BETTER_AUTH_SECRET",
+        "BETTER_AUTH_URL"
+      ]
+    },
     "test:integration": {
       "dependsOn": ["^build", "build"],
       "cache": false,

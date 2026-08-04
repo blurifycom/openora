@@ -1,5 +1,5 @@
 import type { Container, Factory } from '../kernel/index.js';
-import type { SealedToken, Token, WorkerRegistration } from '@openora/core/contracts';
+import type { SealedToken, Token, TokenCatalog, WorkerRegistration } from '@openora/core/contracts';
 import type {
   ModuleRegistry,
   McpToolDefinition,
@@ -7,7 +7,7 @@ import type {
   EventHandler,
 } from './define-plugin.js';
 
-export class ModuleRegistryImpl implements ModuleRegistry {
+export class ModuleRegistryImpl<C extends TokenCatalog = never> implements ModuleRegistry<C> {
   private _routers = new Map<string, RouterFactory>();
   private _slots = new Map<string, unknown>();
   private _events = new Map<string, EventHandler[]>();
@@ -15,7 +15,7 @@ export class ModuleRegistryImpl implements ModuleRegistry {
   private _mcpTools: McpToolDefinition[] = [];
   private _sealedBound = new Set<symbol>();
 
-  constructor(private readonly container: Container) {}
+  constructor(private readonly container: Container<C>) {}
 
   // Last-wins, so an overlay loaded after a module can rebind its adapter token.
   // Sealed tokens (Symbol description prefixed `sealed:`) are rejected at runtime

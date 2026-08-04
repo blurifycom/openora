@@ -1,4 +1,4 @@
-export { definePlugin } from './define-plugin.js';
+export { definePlugin, definePluginWithCatalog } from './define-plugin.js';
 export type {
   Plugin,
   PluginDefinition,
@@ -6,9 +6,10 @@ export type {
   McpToolDefinition,
   RouterFactory,
   EventHandler,
+  TypedContainer,
 } from './define-plugin.js';
 export { ModuleRegistryImpl } from './module-registry.js';
-export { loadPlugins } from './load-plugins.js';
+export { defineExtensions, loadPlugins, topoSort } from './load-plugins.js';
 export type { PluginEntry } from './load-plugins.js';
 export { applyServiceManifest, parseServiceManifest } from './service-manifest.js';
 export { loadExtensions } from './load-extensions.js';

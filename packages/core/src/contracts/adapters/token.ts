@@ -6,16 +6,25 @@
 // Common shape both Token and SealedToken share - what Container itself accepts.
 // Container is a type-erased-at-runtime symbol map; it doesn't care whether a
 // token is sealed, only ModuleRegistry.provide()/provideSealed() do.
-export type AnyToken<T> = symbol & { readonly __token?: T };
+export type AnyToken<T, K extends string = string> = symbol & {
+  readonly __token?: T;
+  readonly __key?: K;
+};
+
+export type TokenCatalog = Record<string, AnyToken<unknown>>;
+
+export type TokenValue<T> = T extends AnyToken<infer Value> ? Value : never;
 
 // The `__sealed?: never` brand makes Token<T> structurally incompatible with
 // SealedToken<T> (which has `__sealed: true`). That mismatch is what lets the
 // `provide<T>(token: Token<T>, ...)` signature reject sealed tokens at the
 // call site - see SealedToken below.
-export type Token<T> = AnyToken<T> & { readonly __sealed?: never };
+export type Token<T, K extends string = string> = AnyToken<T, K> & {
+  readonly __sealed?: never;
+};
 
-export function createToken<T>(description: string): Token<T> {
-  return Symbol(description) as Token<T>;
+export function createToken<T, const K extends string = string>(key: K): Token<T, K> {
+  return Symbol(key) as Token<T, K>;
 }
 
 /**
@@ -35,12 +44,12 @@ export function createToken<T>(description: string): Token<T> {
  * See `@openora/core/compliance` for the canonical list and the regulatory
  * citation per token.
  */
-export type SealedToken<T> = AnyToken<T> & {
+export type SealedToken<T, K extends string = string> = AnyToken<T, K> & {
   readonly __sealed: true;
 };
 
-export function createSealedToken<T>(description: string): SealedToken<T> {
-  return Symbol(`sealed:${description}`) as SealedToken<T>;
+export function createSealedToken<T, const K extends string = string>(key: K): SealedToken<T, K> {
+  return Symbol(`sealed:${key}`) as SealedToken<T, K>;
 }
 
 /**

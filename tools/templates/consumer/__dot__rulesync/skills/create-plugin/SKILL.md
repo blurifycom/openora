@@ -30,7 +30,7 @@ Hand off via the `add-feature` skill's `handoff.md`. Do not patch the linked OSS
 ## 2. Ground first
 
 - Read `.claude/rules/overview.md` (what you may and may not touch) and
-  `.claude/rules/db-conventions.md` (if the extension owns tables).
+  `docs/standards/database.md` (if the extension owns tables).
 - Inspect what already exists with the `oss` MCP: `catalog-overview`, `list-adapters` (token +
   default binding to swap), `list-routes` (collision check), `list-slots`, `list-events`.
 - For a domain rule you can't safely assume (a limit, a KYC threshold, a jurisdiction behavior),
@@ -54,8 +54,8 @@ plugins: [myCustomPspAdapter, walletModule];
 
 - **Boundaries**: import only package entrypoints (`@openora/core`, not `.../src` or `.../dist`).
   No imports between extensions; cross-extension data goes through the oRPC client or a schema subpath.
-- **Tables**: live in the overlay's own `src/schema/index.ts`; follow `db-conventions` (snake_case,
-  `timestamp({ withTimezone: true })`). Run `pnpm db:migrate` after.
+- **Tables**: live in the overlay's own `src/schema/index.ts`; follow `docs/standards/database.md`
+  (snake_case, `timestamp({ withTimezone: true })`). Run `pnpm db:migrate` after.
 - **Audit every mutation**: each state-changing action emits a domain event the `audit` add-on
   subscribes to, or resolves `AUDIT_WRITER` and calls `record(...)`. A mutation with no audit is not done.
 - **Validate at the edge**: Zod schemas for every route input/output; no inline `fetch`/SQL in handlers.
