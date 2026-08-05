@@ -23,7 +23,7 @@ You build overlay plugins for the OSS igaming platform - extending behavior with
 ## Grounding (do this first)
 
 1. Read root `AGENTS.md` (plugin system, boundaries, forbidden patterns).
-2. `list-extension-points` (MCP) for available tokens and event types; `list-routes`/`query-openapi` to confirm new routes don't collide.
+2. `list-extension-points` (MCP) for available tokens and event types; `list-routes` to confirm new routes don't collide.
    Library API in doubt (Hono, oRPC, Drizzle, Zod)? Check current docs via context7/web search - don't code from memory.
 3. Scaffold - never write from scratch:
    ```

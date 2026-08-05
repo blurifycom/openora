@@ -22,10 +22,10 @@ flowchart TB
   subgraph contracts["@openora/core/contracts - the source of truth (isomorphic)"]
     zod["/contracts schemas<br/>single Zod root"]
     orpc["/contracts composeContract<br/>(health only; no aggregation)"]
-    openapi["docs/openapi.json<br/>(emitted)"]
+    openapi["runtime OpenAPI reference<br/>(Scalar/Swagger)"]
     client["typed client<br/>(zero codegen)"]
     zod --> orpc
-    orpc --> openapi
+    hono --> openapi
     orpc --> client
   end
 
@@ -33,7 +33,7 @@ flowchart TB
     cfg["extensions.config.ts<br/>plugin registry"]
     host["plugin-host<br/>Plugin / ModuleRegistry"]
     container["Container<br/>functional composition (tokens -> factories)"]
-    hono["Hono + oRPC OpenAPIHandler<br/>validation, OpenAPI emit"]
+    hono["Hono + oRPC OpenAPIHandler<br/>validation, live OpenAPI reference"]
     cfg --> host
     host --> container
     container --> hono
@@ -88,13 +88,13 @@ Solid arrows are runtime/build dependencies; dashed arrows are **adapter seams**
 **Contracts**
 
 - **`@openora/core/contracts` schemas** - shared Zod schemas (cross-cutting primitives + identity) under `contracts/schemas/`. Per-module request/response schemas live in that module's `contract/` dir. Every type is `z.infer`'d, never hand-written. ADR-0004.
-- **`composeContract`** (`@openora/core/contracts`) - the composition root composes each enabled module's contract slice into one runtime contract. From it the build emits `docs/openapi.json` and a fully typed client (no codegen step). ADR-0001.
+- **`composeContract`** (`@openora/core/contracts`) - the composition root composes each enabled module's contract slice into one runtime contract and the typed client consumes that same contract (no codegen step). ADR-0001.
 
 **API runtime**
 
 - **extensions.config.ts** - the one list of enabled plugins (modules + overlays). The only place wiring is turned on.
 - **plugin-host** - `Plugin<CoreTokenCatalog>` + `ModuleRegistry`. In `register(ctx)` a plugin binds providers (`ctx.provide(token, factory)`), mounts routers (`ctx.routers.add(namespace, (c) => router)`), subscribes to events, and registers MCP tools. Overlays add their own `pgTable` in their module's `schema/index.ts`. ADR-0002.
-- **Hono + oRPC** - oRPC defines routes and validates I/O against the Zod contract; its `OpenAPIHandler` is mounted on a Hono server and emits `docs/openapi.json`. Dependency wiring is a small **functional composition `Container`** (`@openora/core/server`): typed-token factories, lazy + last-wins, no decorators. Downstream consumers call `createApp()` from `@openora/core/server` to boot their API entry. ADR-0009.
+- **Hono + oRPC** - oRPC defines routes and validates I/O against the Zod contract; its `OpenAPIHandler` is mounted on a Hono server with a live API reference. Dependency wiring is a small **functional composition `Container`** (`@openora/core/server`): typed-token factories, lazy + last-wins, no decorators. Downstream consumers call `createApp()` from `@openora/core/server` to boot their API entry. ADR-0009.
 
 **Engine** (`@openora/core/server`) - the node runtime, all under one subpath: `db` (Drizzle client, drizzle-kit migrations, `DrizzleService`, the framework-free `@openora/core/server/orm` re-export), `auth` (better-auth + the shared `AdminGuard`), `kernel` (logger, typed `EventBus`, composition `Container`), `plugin-host` (the plugin loader), and `createApp()` - which is domain-agnostic (the consumer injects the PAM identity schema, ADR-0025/0026: single-tenant, no resolveTenant).
 
@@ -113,7 +113,7 @@ Solid arrows are runtime/build dependencies; dashed arrows are **adapter seams**
 
 **AI dev surface**
 
-- **mcp-server-dev** - a stdio MCP server (registered in `.mcp.json`, not a port) exposing read-only inspection (`list-modules`, `list-routes`, `query-openapi`, `get-drizzle-schema`, ...) and write tools that delegate to the scaffolder.
+- **mcp-server-dev** - a stdio MCP server (registered in `.mcp.json`, not a port) exposing read-only inspection (`list-modules`, `list-routes`, `get-drizzle-schema`, ...) and write tools that delegate to the scaffolder.
 - **tools/gen/gen.ts** (-> `@openora/core/generators`) - deterministic code-mods behind the `/scaffold-*` slash commands (module, plugin, route).
 - **AGENTS.md** - per-package brief; the first thing an agent reads.
 

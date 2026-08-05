@@ -58,7 +58,7 @@ Edit the module's `contract/` dir (`packages/core/src/<domain>/<module>/contract
 
 ```
 schema-get name=<EntityName>
-query-openapi keyword="<entity>"
+list-routes
 ```
 
 If a shared schema exists in `@openora/core/contracts`, re-export it instead of duplicating.

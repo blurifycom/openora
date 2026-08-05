@@ -5,7 +5,7 @@ description: 'Add an oRPC route stub to an overlay or local add-on. Args: <targe
 Parse `$ARGUMENTS` as `<target> <method> <path>`.
 
 First confirm the route does not already exist - `list-routes` (oss MCP) for the namespace, or
-`query-openapi` with the path.
+`list-routes` to confirm the route does not already exist.
 
 Run `pnpm gen route <target> <method> <path>` in the repo root. The generator adds both a contract
 procedure and a matching router handler - no inline Zod in the router.

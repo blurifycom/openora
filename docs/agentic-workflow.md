@@ -73,7 +73,7 @@ When you want to drive implementation yourself instead of `/add-feature`:
 Fill in the `// AGENT: implement here` regions (or tell the agent to), then after any schema/contract edit:
 
 ```
-/regen                        # migrations + openapi + catalog
+/regen                        # migrations + catalog
 /verify                       # typecheck + lint + unit tests, same as CI
 /verify --filter @openora/core   # scoped to one package (faster)
 ```
@@ -99,7 +99,7 @@ Read-only inspection via the `oss-dev` MCP tools - any agent can answer these di
 
 ```
 what modules exist?                       # list-modules
-does a route for X already exist?         # list-routes / query-openapi
+does a route for X already exist?         # list-routes
 what does the wallet schema look like?    # get-drizzle-schema module=wallet
 would table "tournament_entry" collide?   # propose-table-change
 ```

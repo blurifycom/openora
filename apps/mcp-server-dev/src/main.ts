@@ -276,7 +276,7 @@ function buildPlaybook(
     case 'feature':
       return [
         '## Where it goes',
-        'A new business domain -> a new module under `packages/core/src/<domain>/<name>/` (registered in extensions.config.ts, contract slice composed in tools/gen/build-contract.ts).',
+        'A new business domain -> a new module under `packages/core/src/<domain>/<name>/` (registered in extensions.config.ts).',
         '',
         '## Existing modules (avoid name collisions)',
         moduleList,
@@ -287,7 +287,7 @@ function buildPlaybook(
         '3. Run `scaffold-module <domain> <name>` (MCP tool). In a consumer repo, an overlay is `pnpm gen plugin` instead.',
         '4. Fill the `// AGENT: implement here` regions: schema/ (pgTable), contract/ (Zod), service/, router/. Leave the wiring alone.',
         '5. Add routes with `scaffold-route <domain> <module> <METHOD> <path>`. Admin routes MUST `await adminGuard.assert(context)` first.',
-        '6. Run `regen` (drizzle migration + OpenAPI + SDK + catalog), then `run-verify`.',
+        '6. Run `regen` (drizzle migration + catalog), then `run-verify`.',
         '7. Hand the build to `module-author` (or `dev`) with the spec from step 1.',
       ].join('\n');
     case 'adapter':
@@ -324,7 +324,7 @@ function buildPlaybook(
         moduleList,
         '',
         '## Playbook',
-        '1. Call `query-openapi <keyword>` first to confirm the route does not already exist.',
+        '1. Call `list-routes` first to confirm the route does not already exist.',
         '2. Run `scaffold-route <domain> <module> <METHOD> <path>`.',
         '3. Player routes resolve the caller from the verified better-auth session (getUserId); admin routes MUST assert AdminGuard as the first line.',
         '4. Run `regen` then `run-verify`.',
@@ -561,46 +561,6 @@ server.registerTool(
 );
 
 server.registerTool(
-  'query-openapi',
-  {
-    description: 'Search the generated OpenAPI spec for paths or operations matching a keyword.',
-    inputSchema: { keyword: z.string() },
-  },
-  async ({ keyword }) => {
-    const specPath = repoPath('docs', 'openapi.json');
-    if (!existsSync(specPath)) {
-      return {
-        content: [
-          { type: 'text', text: 'OpenAPI spec not generated yet. Run `pnpm regen` first.' },
-        ],
-      };
-    }
-    const spec = JSON.parse(readFileSync(specPath, 'utf8'));
-    const kw = keyword.toLowerCase();
-    const matches: string[] = [];
-    for (const [path, methods] of Object.entries(spec.paths ?? {})) {
-      if (path.toLowerCase().includes(kw)) {
-        const methodList = Object.keys(methods as object)
-          .join(', ')
-          .toUpperCase();
-        matches.push(`${methodList} ${path}`);
-      }
-    }
-    return {
-      content: [
-        {
-          type: 'text',
-          text:
-            matches.length > 0
-              ? `Routes matching "${keyword}":\n${matches.join('\n')}`
-              : `No routes match "${keyword}"`,
-        },
-      ],
-    };
-  },
-);
-
-server.registerTool(
   'scaffold-module',
   {
     description: 'Scaffold a new business module under packages/core/src/<domain>/<name>.',
@@ -698,7 +658,7 @@ server.registerTool(
   'regen',
   {
     description:
-      'Run pnpm regen: drizzle-kit generate (migrations from pgTable schemas) + emit OpenAPI spec + regenerate the typed SDK.',
+      'Run pnpm regen: drizzle-kit generate (migrations from pgTable schemas) + regenerate the catalog.',
     inputSchema: {},
   },
   async () => {

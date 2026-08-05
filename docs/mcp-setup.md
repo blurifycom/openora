@@ -63,7 +63,6 @@ The server uses stdio transport (no port). Add this to your editor's MCP config:
 | `describe-module`       | Full module surface: AGENTS.md + tables + schemas + routes in one call                     |
 | `list-routes`           | oRPC route namespaces (filter by module name)                                              |
 | `list-extension-points` | UI slots, exported events, adapter port interfaces                                         |
-| `query-openapi`         | Search the generated OpenAPI spec by keyword                                               |
 | `get-drizzle-schema`    | pgTable definitions across all modules (filter by module)                                  |
 | `propose-table-change`  | Collision-check a new table name before adding it                                          |
 | `schema-get`            | Find a Zod schema by name with its file location                                           |
@@ -82,7 +81,7 @@ The server uses stdio transport (no port). Add this to your editor's MCP config:
 | `scaffold-plugin` | Creates a new overlay extension skeleton                                                   |
 | `scaffold-route`  | Adds an oRPC route stub to a module                                                        |
 | `scaffold-app`    | Bootstraps a new downstream consumer repo (api + web + backoffice) linked to this checkout |
-| `regen`           | Runs drizzle-kit generate + OpenAPI emit + catalog regeneration                            |
+| `regen`           | Runs drizzle-kit generate + catalog regeneration                                           |
 | `run-verify`      | Runs pnpm verify (typecheck + lint + tests)                                                |
 
 ## The consumer-facing server (`@openora/mcp`)

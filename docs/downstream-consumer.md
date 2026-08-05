@@ -66,6 +66,8 @@ const { listen } = await createApp({
 await listen();
 ```
 
+`createApp` serves a live API reference at `/docs` and its matching OpenAPI document at `/openapi.json`.
+
 Downstream consumers create their own thin entrypoint that calls `createApp` and bring
 their own `extensions.config.ts`. See `tools/templates/consumer/apps/api/src/main.ts` for the reference.
 

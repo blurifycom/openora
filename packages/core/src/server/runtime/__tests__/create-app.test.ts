@@ -32,6 +32,14 @@ describe('createApp - distributed-only durable seams (ADR-0030)', () => {
       expect(res.status).toBe(200);
       expect(await res.json()).toMatchObject({ status: 'ok' });
 
+      const spec = await created.app.request('/openapi.json');
+      expect(spec.status).toBe(200);
+      expect(await spec.json()).toMatchObject({ openapi: expect.any(String) });
+
+      const docs = await created.app.request('/docs');
+      expect(docs.status).toBe(200);
+      expect(await docs.text()).toContain('API Reference');
+
       await created.close();
     } finally {
       if (saved === undefined) {

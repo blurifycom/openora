@@ -1,7 +1,8 @@
 import { OpenAPIHandler } from '@orpc/openapi/fetch';
+import { OpenAPIReferencePlugin } from '@orpc/openapi/plugins';
 import { implement, onError, ORPCError, type AnyRouter } from '@orpc/server';
 import { ResponseHeadersPlugin } from '@orpc/server/plugins';
-import type { ContractRouter } from '@orpc/contract';
+import { ZodToJsonSchemaConverter } from '@orpc/zod/zod4';
 import { Hono } from 'hono';
 import { cors } from 'hono/cors';
 import { etag } from 'hono/etag';
@@ -100,11 +101,6 @@ export type CreateAppConfig = {
   cors?: boolean | { origins?: string | string[] };
 
   databaseUrl?: string;
-
-  // The shape is genuinely unknown at this factory boundary (an external oRPC generic) -
-  // the documented `any` exception for an external library's untyped surface.
-  // oxlint-disable-next-line typescript/no-explicit-any
-  contract?: ContractRouter<any>;
 
   igaming?: IgamingConfig;
 
@@ -326,7 +322,14 @@ export async function createApp(
   }
 
   const handler = new OpenAPIHandler(router, {
-    plugins: [new ResponseHeadersPlugin()],
+    plugins: [
+      new OpenAPIReferencePlugin({
+        docsPath: '/docs',
+        specPath: '/openapi.json',
+        schemaConverters: [new ZodToJsonSchemaConverter()],
+      }),
+      new ResponseHeadersPlugin(),
+    ],
     interceptors: [
       onError((error) => {
         // oRPC wraps a thrown native error (a DB failure, a bug) into an

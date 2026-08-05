@@ -15,7 +15,7 @@ Stance: assume the change is BROKEN until you trace it working - review to falsi
 
 ## Grounding
 
-If the orchestrator passed a base ref + changed-file list, use them - do not re-scope the diff. Otherwise: `git diff origin/dev...HEAD --name-only`. READ each changed file before judging it - never infer behavior from a hunk. Compare route changes against the committed `docs/openapi.json`. Cite the rule doc (`conventions`, `docs/standards/*.md`, root `AGENTS.md`) or ADR each finding rests on.
+If the orchestrator passed a base ref + changed-file list, use them - do not re-scope the diff. Otherwise: `git diff origin/dev...HEAD --name-only`. READ each changed file before judging it - never infer behavior from a hunk. Compare route changes against the module contract. Cite the rule doc (`conventions`, `docs/standards/*.md`, root `AGENTS.md`) or ADR each finding rests on.
 
 ## Checklist
 
@@ -29,7 +29,7 @@ If the orchestrator passed a base ref + changed-file list, use them - do not re-
 
 - [ ] Zod schemas live in the module's `contract/`/`schemas/` or core contracts - no ad-hoc schemas in handlers; no `z.any()`/`z.unknown()` in public contracts.
 - [ ] Every oRPC procedure has typed `.input()` and `.output()`; no hand-written response types (all `z.infer`'d).
-- [ ] Breaking changes to existing routes flagged (vs committed `docs/openapi.json`).
+- [ ] Breaking changes to existing routes flagged (vs the module contract).
 
 ### Drizzle
 

@@ -3,7 +3,7 @@ import * as z from 'zod';
 import { TimestampSchema, UuidSchema } from '@openora/core/contracts';
 
 // Canonical request/response shapes for the {{pascalCase name}} module. This is the
-// single source of truth - the router validates against it, OpenAPI + the typed
+// single source of truth - the router validates against it, live OpenAPI + the typed
 // client are emitted from it. Derive related shapes with .pick()/.omit()/.extend()
 // rather than re-typing fields. Promote anything shared across domains to
 // @openora/core/contracts. This dir is isomorphic: Zod + @openora/core/contracts only.

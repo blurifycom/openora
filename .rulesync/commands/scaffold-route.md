@@ -6,7 +6,7 @@ description: 'Add an oRPC route stub to an existing module. Args: <domain> <modu
 
 Parse $ARGUMENTS as: <domain> <module> <method> <path>. The domain is the module's dir under `packages/core/src/`.
 
-Before adding, call the MCP tool `query-openapi` with the path to confirm the route doesn't already exist.
+Before adding, call the MCP tool `list-routes` to confirm the route doesn't already exist.
 
 Run `pnpm gen route <domain> <module> <method> <path>` in the repo root. The generator adds BOTH a contract procedure (in the module's `contract/index.ts`) and a matching router handler - no inline Zod in the router.
 

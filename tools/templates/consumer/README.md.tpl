@@ -28,7 +28,7 @@ newest release; pin an exact version if you need reproducible installs.
 ```bash
 pnpm install               # pulls @openora/* from npm
 pnpm setup:mcp             # trust the MCP server + install the /start onboarding flow
-pnpm regen                 # regenerate OpenAPI + catalog + Drizzle client (after schema changes)
+pnpm regen                 # regenerate catalog + Drizzle client (after schema changes)
 cp .env.example .env       # set DATABASE_URL + AUTH_SECRET
 pnpm db:migrate            # apply the OSS schema to your database
 pnpm dev                   # api :3001

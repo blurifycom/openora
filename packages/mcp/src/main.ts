@@ -46,7 +46,6 @@ type Catalog = {
   schemas: CatalogSchema[];
   config: CatalogConfig;
   pluginContract: string[];
-  httpRoutes: string[];
 };
 
 const NOT_FOUND_MESSAGE =
@@ -121,8 +120,7 @@ server.registerTool(
     const lines: string[] = ['=== OSS igaming platform catalog ==='];
     lines.push(
       `modules: ${c.modules.length}  adapters: ${c.adapters.length}  events: ${c.events.length}  ` +
-        `schemas: ${c.schemas.length}  ` +
-        `httpRoutes: ${c.httpRoutes.length}`,
+        `schemas: ${c.schemas.length}`,
     );
 
     lines.push('\n--- Adapter seams (implement an interface, bind to the token) ---');
@@ -172,7 +170,7 @@ server.registerTool(
   'list-routes',
   {
     description:
-      'List oRPC route namespaces exposed by the platform modules. Pass `module` to scope to a single module. Includes top-level httpRoutes when present.',
+      'List oRPC route namespaces exposed by the platform modules. Pass `module` to scope to a single module.',
     inputSchema: {
       module: z.string().optional().describe('Module id to filter by (e.g. "wallet")'),
     },
@@ -199,9 +197,6 @@ server.registerTool(
       if (m.routes.length > 0) {
         lines.push(`${m.id}:\n${m.routes.map((r) => `  ${r}`).join('\n')}`);
       }
-    }
-    if (!mod && c.httpRoutes.length > 0) {
-      lines.push(`httpRoutes:\n${c.httpRoutes.map((r) => `  ${r}`).join('\n')}`);
     }
     const text = lines.join('\n\n') || 'No routes defined in the catalog yet.';
     return { content: [{ type: 'text' as const, text }] };

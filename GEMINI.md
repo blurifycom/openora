@@ -31,8 +31,8 @@ Before acting on any non-trivial request - and before delegating to an agent - r
 
 ## Architecture pillars
 
-1. **Zod-first contracts.** Every shape is a Zod schema; types are `z.infer`'d, never hand-written. Cross-cutting schemas in `packages/core/src/contracts/schemas/`; each module OWNS its route contract + req/res schemas + `z.infer`'d types in its `contract/` dir - the single source of wire truth, nothing else re-declares a wire shape. `composeContract` (`@openora/core/contracts`) owns only `health`; the composition root (`tools/gen/build-contract.ts` here, the consumer's entry when deployed) composes each enabled module's `/contract` slice into the one runtime contract the SDK links against. ADR-0021/0025.
-2. **oRPC + Hono.** oRPC owns route definition + Zod validation + OpenAPI emit; its `OpenAPIHandler` mounts on a Hono server. DI is a functional `Container` (`@openora/core/server`) - typed-token factories, no decorators, no `reflect-metadata`. ADR-0009.
+1. **Zod-first contracts.** Every shape is a Zod schema; types are `z.infer`'d, never hand-written. Cross-cutting schemas in `packages/core/src/contracts/schemas/`; each module OWNS its route contract + req/res schemas + `z.infer`'d types in its `contract/` dir - the single source of wire truth, nothing else re-declares a wire shape. `composeContract` (`@openora/core/contracts`) owns only `health`; the consumer composition root composes each enabled module's `/contract` slice into the one runtime contract the SDK links against. ADR-0021/0025.
+2. **oRPC + Hono.** oRPC owns route definition + Zod validation; its `OpenAPIHandler` mounts on a Hono server with a live OpenAPI reference. DI is a functional `Container` (`@openora/core/server`) - typed-token factories, no decorators, no `reflect-metadata`. ADR-0009.
 3. **Plugin host.** Typed plugin objects are the only way new functionality enters. Everything (core modules included) loads through `extensions.config.ts`.
 4. **Headless.** Backend modules + contracts + SDK surface only. UI lives in the consumer, which imports `@openora/core/react` (hooks, typed client, auth, realtime). No UI packages here.
 5. **Explicit > magic.** No auto-discovery, no decorators. Everything greppable; every wiring point a typed call.
@@ -62,13 +62,13 @@ packages/
 docs/
   adr/             # architecture decision records
   catalog.json     # generated surface (routes/schemas/adapters/slots/events); read by @openora/mcp
-tools/             # grouped: gen/ (gen.ts scaffolder, build-contract, gen-openapi, gen-catalog), lint/ (oxlint plugins, verify-module-shape), create/, db/ (seed, migrate-all), setup/
+tools/             # grouped: gen/ (gen.ts scaffolder, gen-catalog), lint/ (oxlint plugins, verify-module-shape), create/, db/ (seed, migrate-all), setup/
 extensions.config.ts # the single registry of enabled plugins
 ```
 
 ## Where does X go? (decision tree)
 
-- **New business domain** (eg "tournaments") -> `pnpm gen module <name>` creates `@openora-addons/<name>` under `packages/addons/<name>/` and registers it in `extensions.config.ts` (no `kind` = core, `kind: 'addon'` = gated). Core: add its `/contract` slice to `tools/gen/build-contract.ts`. Every module owns its `drizzle.config.ts` + migration history. ADR-0021/0024/0027.
+- **New business domain** (eg "tournaments") -> `pnpm gen module <name>` creates `@openora-addons/<name>` under `packages/addons/<name>/` and registers it in `extensions.config.ts` (no `kind` = core, `kind: 'addon'` = gated). Every module owns its `drizzle.config.ts` + migration history. ADR-0021/0024/0027.
 - **Extend/override an existing module** -> overlay plugin: `pnpm gen plugin <name>` -> `extensions/<name>/plugin.ts` (repo root here; the consumer's app when deployed).
 - **New HTTP route** -> the module's `router/index.ts` via `pnpm gen route <module> <method> <path>`. Player routes resolve the caller from `x-user-id`; admin routes MUST be guarded (next).
 - **Admin-only route** -> `plugin.ts` resolves `AdminGuard` (`c.get(ADMIN_GUARD)`, seeded by `createApp`) and passes it into the router; `await adminGuard.assert(context)` is the handler's FIRST line. The single admin-enforcement point - never re-implement the role check.
@@ -113,7 +113,7 @@ Lint-enforced cross-cutting bans in `conventions`: `any` outside tests, `interfa
 ```
 pnpm setup:agent   # first time: docker + db + mcp + summary
 pnpm dev           # turbo dev (docs, mcp)
-pnpm regen         # openapi emit + drizzle-kit generate + catalog
+pnpm regen         # drizzle-kit generate + catalog
 pnpm seed          # demo data (idempotent; admin@oss.dev / password123)
 pnpm boundaries    # whole-graph boundary + cycle gate
 pnpm -F @openora/core vitest run <path>   # one test file/dir, eg src/iam/__tests__
@@ -152,8 +152,8 @@ For platform development (this repo); consumer agents ship in `tools/templates/c
 
 ## Working rules for agents
 
-- Use the `oss-dev` MCP server (`.mcp.json`, pre-approved) for read-only inspection: `read-agents-md`, `list-modules`, `describe-module`, `list-routes`, `list-extension-points`, `query-openapi`, `get-drizzle-schema`, `propose-table-change`, `schema-get`, `docs-search`, `db-query-readonly`. Faster than grep, reflects current state.
-- Before a route: `query-openapi`. Before a table: `propose-table-change`. After any change: `pnpm verify --filter <package>`; fix failures before continuing.
+- Use the `oss-dev` MCP server (`.mcp.json`, pre-approved) for read-only inspection: `read-agents-md`, `list-modules`, `describe-module`, `list-routes`, `list-extension-points`, `get-drizzle-schema`, `propose-table-change`, `schema-get`, `docs-search`, `db-query-readonly`. Faster than grep, reflects current state.
+- Before a route: `list-routes`. Before a table: `propose-table-change`. After any change: `pnpm verify --filter <package>`; fix failures before continuing.
 - Read the touched module's `AGENTS.md` before editing it; keep it updated when invariants or extension seams change. An `AGENTS.md` holds ONLY what code can't say: invariants, rationale, gotchas, extension seams, and where-to-look pointers - never route/table/layout/event listings (they duplicate `contract/`, `schema/`, `docs/catalog.json` and drift). Claude Code loads them via generated per-module `CLAUDE.md` stubs (`tools/gen/gen-claude-stubs.mjs`, gitignored).
 - Small PRs scoped to one module; cross-module changes need human approval. Never commit unless asked; never push without explicit per-action confirmation.
 - ASCII only in code; short dashes (-) only, never long dashes.

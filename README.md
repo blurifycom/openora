@@ -21,7 +21,7 @@ The platform ships the backend surface (auth, wallet, player management, complia
 
 - **Headless by design** - backend modules, contracts, and an SDK consumption surface only. No UI ships here; you own the frontend.
 - **Plugin host** - typed plugin objects are the single way new functionality enters the system. Overlay a folder or install an npm package; same contract.
-- **Zod-first contracts** - every shape is a Zod schema; types are inferred, never hand-written. Routes are oRPC on Hono with OpenAPI emitted at build time.
+- **Zod-first contracts** - every shape is a Zod schema; types are inferred, never hand-written. Routes are oRPC on Hono with a live OpenAPI reference.
 - **Explicit wiring** - a small functional DI container with typed tokens. No decorators, no auto-discovery; everything is greppable.
 - **Swappable vendor seams** - PSP, KYC, aggregator, chat, realtime transport, job queue, and message broker are ports with default in-process drivers and adapter overrides.
 - **Regulatory audit log** - append-only, sha256 hash-chained. Every state-changing action leaves a trail.
@@ -66,7 +66,7 @@ The `oss-dev` MCP dev server is wired in [`.mcp.json`](./.mcp.json) (stdio, laun
 claude mcp list    # verify the oss-dev server is connected
 ```
 
-Then use `list-modules`, `list-routes`, `query-openapi`, `get-drizzle-schema`, `propose-table-change`, `docs-search`, `db-query-readonly`, and the `scaffold-*` tools. See [docs/agent-quickstart.md](./docs/agent-quickstart.md).
+Then use `list-modules`, `list-routes`, `get-drizzle-schema`, `propose-table-change`, `docs-search`, `db-query-readonly`, and the `scaffold-*` tools. See [docs/agent-quickstart.md](./docs/agent-quickstart.md).
 
 ### 2. Manual run
 
