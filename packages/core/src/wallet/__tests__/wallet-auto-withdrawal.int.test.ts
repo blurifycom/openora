@@ -16,24 +16,48 @@ import type {
 import { createTestDb, type TestDb } from '@openora/core/testing';
 import { mock, makeEventBus, NO_CLIENT_META, makeAuditWriter } from '../../testing/mock.js';
 import { migrate } from '../migrate.js';
-import { wallet, walletTransaction, autoWithdrawalRule } from '../schema/index.js';
+import {
+  wallet,
+  walletTransaction,
+  autoWithdrawalRule,
+  walletAutoWithdrawalConfig,
+} from '../schema/index.js';
 import { WalletService } from '../service/wallet.service.js';
 
 let db: TestDb;
 
 type ServiceOptions = {
   autoWithdrawal?: Partial<AutoWithdrawalConfig>;
+  // The global fiat/crypto thresholds are DB-backed (BF-211), not part of
+  // PlatformConfig any more - seeded into wallet_auto_withdrawal_config here
+  // whenever `autoWithdrawal` is passed, mirroring the production seed
+  // default ('0'/'0' = auto-approval off until configured).
+  fiatThreshold?: string;
+  cryptoThreshold?: string;
+  // Leaves the singleton config row unseeded, to exercise the row-missing
+  // fail-closed path.
+  skipConfigSeed?: boolean;
   kycStatus?: KycStatus | null;
   directoryThrows?: boolean;
   riskTags?: TagKey[] | 'unbound';
 };
 
-function makeService({
+async function makeService({
   autoWithdrawal,
+  fiatThreshold,
+  cryptoThreshold,
+  skipConfigSeed = false,
   kycStatus = 'verified',
   directoryThrows = false,
   riskTags = [],
 }: ServiceOptions = {}) {
+  if (autoWithdrawal && !skipConfigSeed) {
+    await db.drizzle.db.insert(walletAutoWithdrawalConfig).values({
+      singletonKey: 'global',
+      fiatThreshold: fiatThreshold ?? '0',
+      cryptoThreshold: cryptoThreshold ?? '0',
+    });
+  }
   const events = makeEventBus();
   const psp = {
     processWithdrawal: vi.fn(async () => ({
@@ -103,13 +127,16 @@ afterAll(async () => {
 
 beforeEach(async () => {
   await db.drizzle.db.execute(
-    sql`TRUNCATE ${walletTransaction}, ${autoWithdrawalRule}, ${wallet} RESTART IDENTITY CASCADE`,
+    sql`TRUNCATE ${walletTransaction}, ${autoWithdrawalRule}, ${walletAutoWithdrawalConfig}, ${wallet} RESTART IDENTITY CASCADE`,
   );
 });
 
 describe('WalletService.withdraw auto-approval (real PG)', () => {
   it('auto-approves a fiat withdrawal that clears every gate, marking the system as reviewer', async () => {
-    const { svc, psp, audit, events } = makeService({ autoWithdrawal: { fiatThreshold: '1000' } });
+    const { svc, psp, audit, events } = await makeService({
+      autoWithdrawal: {},
+      fiatThreshold: '1000',
+    });
     const w = await seedWallet();
 
     const result = await svc.withdraw({
@@ -138,7 +165,7 @@ describe('WalletService.withdraw auto-approval (real PG)', () => {
         resourceType: 'wallet_transaction',
         resourceId: result.transactionId,
         after: expect.objectContaining({
-          threshold: '1000',
+          threshold: '1000.00000000',
           thresholdSource: 'global',
           kycStatus: 'verified',
           cumulativeCountUsed: 0,
@@ -148,7 +175,7 @@ describe('WalletService.withdraw auto-approval (real PG)', () => {
   });
 
   it('reverts the flip to pending when the audit write fails instead of stranding it processing', async () => {
-    const { svc, audit, psp } = makeService({ autoWithdrawal: { fiatThreshold: '1000' } });
+    const { svc, audit, psp } = await makeService({ autoWithdrawal: {}, fiatThreshold: '1000' });
     audit.record.mockRejectedValueOnce(new Error('audit sink down'));
     const w = await seedWallet();
 
@@ -170,7 +197,7 @@ describe('WalletService.withdraw auto-approval (real PG)', () => {
   });
 
   it('holds the funds even when auto-approval declines', async () => {
-    const { svc } = makeService({ autoWithdrawal: { fiatThreshold: '10' } });
+    const { svc } = await makeService({ autoWithdrawal: {}, fiatThreshold: '10' });
     const w = await seedWallet({ balance: '100' });
 
     const result = await svc.withdraw({
@@ -186,7 +213,7 @@ describe('WalletService.withdraw auto-approval (real PG)', () => {
   });
 
   it('stays pending when the amount exceeds the configured threshold', async () => {
-    const { svc, psp } = makeService({ autoWithdrawal: { fiatThreshold: '10' } });
+    const { svc, psp } = await makeService({ autoWithdrawal: {}, fiatThreshold: '10' });
     const w = await seedWallet();
 
     const result = await svc.withdraw({
@@ -201,7 +228,25 @@ describe('WalletService.withdraw auto-approval (real PG)', () => {
   });
 
   it('stays pending when no threshold is configured at all', async () => {
-    const { svc } = makeService({ autoWithdrawal: {} });
+    const { svc } = await makeService({ autoWithdrawal: {} });
+    const w = await seedWallet();
+
+    const result = await svc.withdraw({
+      userId: w.userId,
+      amount: '40',
+      currency: 'USD',
+      ...NO_CLIENT_META,
+    });
+
+    expect(result.status).toBe('pending');
+  });
+
+  it('stays pending, without throwing, when the auto-withdrawal config row is missing entirely', async () => {
+    const { svc } = await makeService({
+      autoWithdrawal: {},
+      fiatThreshold: '1000',
+      skipConfigSeed: true,
+    });
     const w = await seedWallet();
 
     const result = await svc.withdraw({
@@ -215,7 +260,7 @@ describe('WalletService.withdraw auto-approval (real PG)', () => {
   });
 
   it('stays pending when auto-withdrawal is not enabled', async () => {
-    const { svc, audit } = makeService();
+    const { svc, audit } = await makeService();
     const w = await seedWallet();
 
     const result = await svc.withdraw({
@@ -230,8 +275,9 @@ describe('WalletService.withdraw auto-approval (real PG)', () => {
   });
 
   it('stays pending when KYC is not passing even though gateWithdrawals is off', async () => {
-    const { svc } = makeService({
-      autoWithdrawal: { fiatThreshold: '1000' },
+    const { svc } = await makeService({
+      autoWithdrawal: {},
+      fiatThreshold: '1000',
       kycStatus: 'pending',
     });
     const w = await seedWallet();
@@ -247,8 +293,9 @@ describe('WalletService.withdraw auto-approval (real PG)', () => {
   });
 
   it('fails closed to pending when the directory throws during the KYC check', async () => {
-    const { svc } = makeService({
-      autoWithdrawal: { fiatThreshold: '1000' },
+    const { svc } = await makeService({
+      autoWithdrawal: {},
+      fiatThreshold: '1000',
       directoryThrows: true,
     });
     const w = await seedWallet();
@@ -264,8 +311,9 @@ describe('WalletService.withdraw auto-approval (real PG)', () => {
   });
 
   it('stays pending when the player carries an excluded risk flag', async () => {
-    const { svc } = makeService({
-      autoWithdrawal: { fiatThreshold: '1000', excludeRiskFlags: ['bonus_abuser'] },
+    const { svc } = await makeService({
+      autoWithdrawal: { excludeRiskFlags: ['bonus_abuser'] },
+      fiatThreshold: '1000',
       riskTags: ['bonus_abuser'],
     });
     const w = await seedWallet();
@@ -305,10 +353,12 @@ describe('WalletService.withdraw auto-approval (real PG)', () => {
         ),
       ),
     });
+    await db.drizzle.db
+      .insert(walletAutoWithdrawalConfig)
+      .values({ singletonKey: 'global', fiatThreshold: '1000', cryptoThreshold: '0' });
     const platformConfig = mock<PlatformConfig>({
       autoWithdrawal: {
         enabled: true,
-        fiatThreshold: '1000',
         excludeRiskFlags: ['withdrawal_review'],
       },
     });
@@ -351,8 +401,9 @@ describe('WalletService.withdraw auto-approval (real PG)', () => {
   });
 
   it('auto-approves when the player carries only unrelated tags', async () => {
-    const { svc } = makeService({
-      autoWithdrawal: { fiatThreshold: '1000', excludeRiskFlags: ['bonus_abuser'] },
+    const { svc } = await makeService({
+      autoWithdrawal: { excludeRiskFlags: ['bonus_abuser'] },
+      fiatThreshold: '1000',
       riskTags: ['vip'],
     });
     const w = await seedWallet();
@@ -368,8 +419,9 @@ describe('WalletService.withdraw auto-approval (real PG)', () => {
   });
 
   it('fails closed to pending when risk flags are configured but the tags port is unbound', async () => {
-    const { svc } = makeService({
-      autoWithdrawal: { fiatThreshold: '1000', excludeRiskFlags: ['bonus_abuser'] },
+    const { svc } = await makeService({
+      autoWithdrawal: { excludeRiskFlags: ['bonus_abuser'] },
+      fiatThreshold: '1000',
       riskTags: 'unbound',
     });
     const w = await seedWallet();
@@ -385,7 +437,7 @@ describe('WalletService.withdraw auto-approval (real PG)', () => {
   });
 
   it('stays pending on the large_amount heuristic regardless of the threshold', async () => {
-    const { svc } = makeService({ autoWithdrawal: { fiatThreshold: '100000' } });
+    const { svc } = await makeService({ autoWithdrawal: {}, fiatThreshold: '100000' });
     const w = await seedWallet();
 
     const result = await svc.withdraw({
@@ -399,7 +451,7 @@ describe('WalletService.withdraw auto-approval (real PG)', () => {
   });
 
   it('stays pending once the wallet hits the high_frequency velocity flag', async () => {
-    const { svc } = makeService({ autoWithdrawal: { fiatThreshold: '1000' } });
+    const { svc } = await makeService({ autoWithdrawal: {}, fiatThreshold: '1000' });
     const w = await seedWallet();
     await db.drizzle.db.insert(walletTransaction).values([
       { walletId: w.id, type: 'withdrawal', amount: '1', currency: 'USD', status: 'completed' },
@@ -417,7 +469,7 @@ describe('WalletService.withdraw auto-approval (real PG)', () => {
   });
 
   it('ignores withdrawals outside the velocity window', async () => {
-    const { svc } = makeService({ autoWithdrawal: { fiatThreshold: '1000' } });
+    const { svc } = await makeService({ autoWithdrawal: {}, fiatThreshold: '1000' });
     const w = await seedWallet();
     const outsideWindow = new Date(Date.now() - 48 * 60 * 60 * 1000);
     await db.drizzle.db.insert(walletTransaction).values([
@@ -450,7 +502,10 @@ describe('WalletService.withdraw auto-approval (real PG)', () => {
   });
 
   it('stays pending when a configured daily count cap would be exceeded', async () => {
-    const { svc } = makeService({ autoWithdrawal: { fiatThreshold: '1000', dailyCapCount: 1 } });
+    const { svc } = await makeService({
+      autoWithdrawal: { dailyCapCount: 1 },
+      fiatThreshold: '1000',
+    });
     const w = await seedWallet();
     await db.drizzle.db.insert(walletTransaction).values({
       walletId: w.id,
@@ -472,8 +527,9 @@ describe('WalletService.withdraw auto-approval (real PG)', () => {
   });
 
   it('stays pending when a configured daily amount cap would be exceeded', async () => {
-    const { svc } = makeService({
-      autoWithdrawal: { fiatThreshold: '1000', dailyCapAmount: '50' },
+    const { svc } = await makeService({
+      autoWithdrawal: { dailyCapAmount: '50' },
+      fiatThreshold: '1000',
     });
     const w = await seedWallet();
     await db.drizzle.db.insert(walletTransaction).values({
@@ -496,7 +552,10 @@ describe('WalletService.withdraw auto-approval (real PG)', () => {
   });
 
   it('counts only auto-approved payouts towards the daily cap', async () => {
-    const { svc } = makeService({ autoWithdrawal: { fiatThreshold: '1000', dailyCapCount: 1 } });
+    const { svc } = await makeService({
+      autoWithdrawal: { dailyCapCount: 1 },
+      fiatThreshold: '1000',
+    });
     const w = await seedWallet();
     await db.drizzle.db.insert(walletTransaction).values({
       walletId: w.id,
@@ -518,7 +577,10 @@ describe('WalletService.withdraw auto-approval (real PG)', () => {
   });
 
   it('serializes concurrent withdrawals so a count cap of one cannot be bypassed', async () => {
-    const { svc } = makeService({ autoWithdrawal: { fiatThreshold: '1000', dailyCapCount: 1 } });
+    const { svc } = await makeService({
+      autoWithdrawal: { dailyCapCount: 1 },
+      fiatThreshold: '1000',
+    });
     const w = await seedWallet();
 
     const results = await Promise.all([
@@ -533,7 +595,7 @@ describe('WalletService.withdraw auto-approval (real PG)', () => {
 
 describe('WalletService.withdraw auto-approval - crypto rail (real PG)', () => {
   it('stays pending when no cryptoThreshold is configured, even with a fiat one', async () => {
-    const { svc } = makeService({ autoWithdrawal: { fiatThreshold: '1000' } });
+    const { svc } = await makeService({ autoWithdrawal: {}, fiatThreshold: '1000' });
     const w = await seedWallet({ currency: 'BTC', balance: '10' });
 
     const result = await svc.withdraw({
@@ -548,7 +610,7 @@ describe('WalletService.withdraw auto-approval - crypto rail (real PG)', () => {
   });
 
   it('auto-approves once an operator configures a positive cryptoThreshold', async () => {
-    const { svc } = makeService({ autoWithdrawal: { cryptoThreshold: '2' } });
+    const { svc } = await makeService({ autoWithdrawal: {}, cryptoThreshold: '2' });
     const w = await seedWallet({ currency: 'BTC', balance: '10' });
 
     const result = await svc.withdraw({
@@ -568,7 +630,7 @@ describe('WalletService.withdraw auto-approval - crypto rail (real PG)', () => {
   });
 
   it('stays pending when the crypto amount exceeds cryptoThreshold', async () => {
-    const { svc } = makeService({ autoWithdrawal: { cryptoThreshold: '0.5' } });
+    const { svc } = await makeService({ autoWithdrawal: {}, cryptoThreshold: '0.5' });
     const w = await seedWallet({ currency: 'BTC', balance: '10' });
 
     const result = await svc.withdraw({
@@ -583,8 +645,9 @@ describe('WalletService.withdraw auto-approval - crypto rail (real PG)', () => {
   });
 
   it('applies the same KYC guard as the fiat rail', async () => {
-    const { svc } = makeService({
-      autoWithdrawal: { cryptoThreshold: '2' },
+    const { svc } = await makeService({
+      autoWithdrawal: {},
+      cryptoThreshold: '2',
       kycStatus: 'rejected',
     });
     const w = await seedWallet({ currency: 'BTC', balance: '10' });
@@ -603,7 +666,7 @@ describe('WalletService.withdraw auto-approval - crypto rail (real PG)', () => {
 
 describe('WalletService auto-approval threshold resolution (real PG)', () => {
   it('a per-player rule below the global threshold blocks what global would allow', async () => {
-    const { svc } = makeService({ autoWithdrawal: { fiatThreshold: '1000' } });
+    const { svc } = await makeService({ autoWithdrawal: {}, fiatThreshold: '1000' });
     const w = await seedWallet();
     await svc.setAutoWithdrawalRule({
       userId: w.userId,
@@ -623,7 +686,7 @@ describe('WalletService auto-approval threshold resolution (real PG)', () => {
   });
 
   it('a per-player rule above the global threshold allows what global would block', async () => {
-    const { svc, audit } = makeService({ autoWithdrawal: { fiatThreshold: '10' } });
+    const { svc, audit } = await makeService({ autoWithdrawal: {}, fiatThreshold: '10' });
     const w = await seedWallet();
     await svc.setAutoWithdrawalRule({
       userId: w.userId,
@@ -647,8 +710,32 @@ describe('WalletService auto-approval threshold resolution (real PG)', () => {
     );
   });
 
+  it('stays pending for a player with a per-player override when the global config row is missing (fail-closed)', async () => {
+    const { svc } = await makeService({
+      autoWithdrawal: {},
+      fiatThreshold: '1000',
+      skipConfigSeed: true,
+    });
+    const w = await seedWallet();
+    await svc.setAutoWithdrawalRule({
+      userId: w.userId,
+      threshold: '1000',
+      reason: 'trusted',
+      createdBy: randomUUID(),
+    });
+
+    const result = await svc.withdraw({
+      userId: w.userId,
+      amount: '40',
+      currency: 'USD',
+      ...NO_CLIENT_META,
+    });
+
+    expect(result.status).toBe('pending');
+  });
+
   it('a per-player rule overrides the crypto threshold too', async () => {
-    const { svc } = makeService({ autoWithdrawal: { cryptoThreshold: '0.5' } });
+    const { svc } = await makeService({ autoWithdrawal: {}, cryptoThreshold: '0.5' });
     const w = await seedWallet({ currency: 'BTC', balance: '10' });
     await svc.setAutoWithdrawalRule({
       userId: w.userId,
@@ -669,7 +756,7 @@ describe('WalletService auto-approval threshold resolution (real PG)', () => {
   });
 
   it('a zero per-player threshold turns auto-approval off for that player', async () => {
-    const { svc } = makeService({ autoWithdrawal: { fiatThreshold: '1000' } });
+    const { svc } = await makeService({ autoWithdrawal: {}, fiatThreshold: '1000' });
     const w = await seedWallet();
     await svc.setAutoWithdrawalRule({
       userId: w.userId,
@@ -691,7 +778,7 @@ describe('WalletService auto-approval threshold resolution (real PG)', () => {
 
 describe('WalletService auto-withdrawal rule methods (real PG)', () => {
   it('setAutoWithdrawalRule inserts, then upserts on a repeat for the same player', async () => {
-    const { svc } = makeService();
+    const { svc } = await makeService();
     const userId = randomUUID();
     const createdBy = randomUUID();
 
@@ -719,13 +806,13 @@ describe('WalletService auto-withdrawal rule methods (real PG)', () => {
   });
 
   it('getAutoWithdrawalRule returns null when no rule exists', async () => {
-    const { svc } = makeService();
+    const { svc } = await makeService();
 
     expect(await svc.getAutoWithdrawalRule(randomUUID())).toBeNull();
   });
 
   it('getAutoWithdrawalRule serializes the timestamps as ISO strings', async () => {
-    const { svc } = makeService();
+    const { svc } = await makeService();
     const userId = randomUUID();
     await svc.setAutoWithdrawalRule({
       userId,
@@ -740,7 +827,7 @@ describe('WalletService auto-withdrawal rule methods (real PG)', () => {
   });
 
   it('deleteAutoWithdrawalRule reports whether a row was removed', async () => {
-    const { svc } = makeService();
+    const { svc } = await makeService();
     const userId = randomUUID();
     await svc.setAutoWithdrawalRule({
       userId,
@@ -752,5 +839,32 @@ describe('WalletService auto-withdrawal rule methods (real PG)', () => {
     expect(await svc.deleteAutoWithdrawalRule(userId)).toBe(true);
     expect(await svc.deleteAutoWithdrawalRule(userId)).toBe(false);
     expect(await svc.getAutoWithdrawalRule(userId)).toBeNull();
+  });
+});
+
+describe('WalletService auto-withdrawal config methods (real PG)', () => {
+  it('setAutoWithdrawalConfig updates the singleton row and stamps the admin', async () => {
+    const { svc } = await makeService({ autoWithdrawal: {} });
+    const adminId = randomUUID();
+
+    const updated = await svc.setAutoWithdrawalConfig(adminId, {
+      fiatThreshold: '2500',
+      cryptoThreshold: '3',
+    });
+
+    expect(updated.fiatThreshold).toBe('2500.00000000');
+    expect(updated.cryptoThreshold).toBe('3.00000000');
+    expect(updated.updatedBy).toBe(adminId);
+    expect(await svc.getAutoWithdrawalConfig()).toMatchObject({
+      fiatThreshold: '2500.00000000',
+      cryptoThreshold: '3.00000000',
+      updatedBy: adminId,
+    });
+  });
+
+  it('getAutoWithdrawalConfig throws a typed not-found error when the singleton row is missing', async () => {
+    const { svc } = await makeService();
+
+    await expect(svc.getAutoWithdrawalConfig()).rejects.toThrow();
   });
 });

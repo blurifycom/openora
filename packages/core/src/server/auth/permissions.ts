@@ -20,6 +20,7 @@ export const statement = {
   'tag-rule': ['view', 'update'] as const,
   tag: ['view', 'create', 'delete'] as const,
   'chat-room': ['view', 'create', 'update', 'delete'] as const,
+  'auto-withdrawal-config': ['view', 'update'] as const,
 } as const;
 
 export const ac = createAccessControl(statement);
@@ -44,6 +45,7 @@ export const adminRole = ac.newRole({
   'tag-rule': ['view', 'update'],
   tag: ['view', 'create', 'delete'],
   'chat-room': ['view', 'create', 'update', 'delete'],
+  'auto-withdrawal-config': ['view', 'update'],
 });
 
 export const supportRole = ac.newRole({

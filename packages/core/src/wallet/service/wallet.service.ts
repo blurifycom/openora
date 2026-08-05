@@ -37,16 +37,19 @@ import {
   wallet,
   walletTransaction,
   autoWithdrawalRule,
+  walletAutoWithdrawalConfig,
   walletDepositAddress,
   type Wallet,
   type WalletTransaction,
   type AutoWithdrawalRule as AutoWithdrawalRuleRow,
+  type WalletAutoWithdrawalConfig as WalletAutoWithdrawalConfigRow,
 } from '../schema/index.js';
 import type {
   TransactionResult,
   WithdrawalQueueItem,
   WithdrawalQueueFilter,
   AutoWithdrawalRule,
+  WalletAutoWithdrawalConfig,
   WalletTransactionSortBy,
 } from '../contract/index.js';
 
@@ -54,6 +57,7 @@ const logger = createLogger('wallet');
 
 export const WalletNotFoundError = makeNotFoundError('Wallet');
 export const WithdrawalNotFoundError = makeNotFoundError('Withdrawal');
+export const AutoWithdrawalConfigNotFoundError = makeNotFoundError('AutoWithdrawalConfig');
 
 export const InsufficientBalanceError = createDomainError<[available: string, requested: string]>(
   'InsufficientBalanceError',
@@ -163,6 +167,17 @@ function toAutoWithdrawalRuleDto(row: AutoWithdrawalRuleRow): AutoWithdrawalRule
     createdBy: row.createdBy,
     createdAt: row.createdAt.toISOString(),
     updatedAt: row.updatedAt.toISOString(),
+  };
+}
+
+function toAutoWithdrawalConfigDto(row: WalletAutoWithdrawalConfigRow): WalletAutoWithdrawalConfig {
+  return {
+    id: row.id,
+    fiatThreshold: row.fiatThreshold,
+    cryptoThreshold: row.cryptoThreshold,
+    updatedBy: row.updatedBy,
+    updatedAt: row.updatedAt.toISOString(),
+    createdAt: row.createdAt.toISOString(),
   };
 }
 
@@ -1040,6 +1055,10 @@ export class WalletService {
     userId: User['id'],
     rail: WalletRail,
   ): Promise<{ value: string; source: 'per-player' | 'global' } | null> {
+    // Always read the global singleton first, even when a per-player override may end up
+    // winning below - an unseeded install (missing row) must fail closed for EVERY player,
+    // not just those without an override. getAutoWithdrawalConfig() throws when absent.
+    const config = await this.getAutoWithdrawalConfig();
     const [rule] = await this.drizzle.db
       .select()
       .from(autoWithdrawalRule)
@@ -1047,14 +1066,76 @@ export class WalletService {
     if (rule) {
       return { value: rule.threshold, source: 'per-player' };
     }
-    const global =
-      rail === 'crypto'
-        ? this.platformConfig?.autoWithdrawal?.cryptoThreshold
-        : this.platformConfig?.autoWithdrawal?.fiatThreshold;
-    if (global !== undefined) {
-      return { value: global, source: 'global' };
+    const global = rail === 'crypto' ? config.cryptoThreshold : config.fiatThreshold;
+    return { value: global, source: 'global' };
+  }
+
+  // The row always exists in a properly-seeded install (seeded once, BF-211) - a
+  // missing row is an unexpected failure mode on the READ path, not a normal
+  // "unconfigured" state, so this throws rather than silently defaulting.
+  // maybeAutoApprove's outer try/catch handles that thrown error the same as any
+  // other unexpected error: fail closed to pending.
+  async getAutoWithdrawalConfig(): Promise<WalletAutoWithdrawalConfig> {
+    const config = await this.getAutoWithdrawalConfigOrNull();
+    if (!config) {
+      throw new AutoWithdrawalConfigNotFoundError('global');
     }
-    return null;
+    return config;
+  }
+
+  // Non-throwing variant for callers that need to tell "missing" from "found"
+  // without a try/catch (eg the router's audit `before` read).
+  async getAutoWithdrawalConfigOrNull(): Promise<WalletAutoWithdrawalConfig | null> {
+    const [row] = await this.drizzle.db
+      .select()
+      .from(walletAutoWithdrawalConfig)
+      .where(eq(walletAutoWithdrawalConfig.singletonKey, 'global'));
+    return row ? toAutoWithdrawalConfigDto(row) : null;
+  }
+
+  // Upsert, not a plain UPDATE: the WRITE path lets a Super Admin self-heal a
+  // missing singleton row (eg an install that skipped the seed step) through the
+  // existing route with zero new surface. The READ path (getAutoWithdrawalConfig,
+  // resolveAutoThreshold) still throws on a missing row and stays fail-closed -
+  // a withdrawal must never silently create config.
+  //
+  // Update + audit write run in one transaction: an audit-write failure must roll back
+  // the threshold change too, or the config could change with no audit trail (BF-211 review).
+  async setAutoWithdrawalConfig(
+    adminId: User['id'],
+    { fiatThreshold, cryptoThreshold }: { fiatThreshold: string; cryptoThreshold: string },
+    meta?: ClientMeta,
+  ): Promise<WalletAutoWithdrawalConfig> {
+    return this.drizzle.db.transaction(async (txn) => {
+      const [before] = await txn
+        .select()
+        .from(walletAutoWithdrawalConfig)
+        .where(eq(walletAutoWithdrawalConfig.singletonKey, 'global'));
+      const rows = await txn
+        .insert(walletAutoWithdrawalConfig)
+        .values({ singletonKey: 'global', fiatThreshold, cryptoThreshold, updatedBy: adminId })
+        .onConflictDoUpdate({
+          target: walletAutoWithdrawalConfig.singletonKey,
+          set: { fiatThreshold, cryptoThreshold, updatedBy: adminId },
+        })
+        .returning();
+      const config = toAutoWithdrawalConfigDto(
+        findOneOrThrow(rows, new AutoWithdrawalConfigNotFoundError('global')),
+      );
+      await this.audit.recordInTransaction(txn, {
+        actorId: adminId,
+        actorType: 'admin',
+        action: 'wallet.auto_withdrawal_config.set',
+        resourceType: 'auto_withdrawal_config',
+        resourceId: config.id,
+        before: before
+          ? { fiatThreshold: before.fiatThreshold, cryptoThreshold: before.cryptoThreshold }
+          : null,
+        after: { fiatThreshold: config.fiatThreshold, cryptoThreshold: config.cryptoThreshold },
+        ...meta,
+      });
+      return config;
+    });
   }
 
   private async autoApprovalKycStatus(userId: User['id']): Promise<KycStatus | null> {
