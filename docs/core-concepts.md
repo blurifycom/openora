@@ -73,17 +73,18 @@ export function createWalletRouter(wallet: WalletService) {
 
 ## Plugins
 
-`definePlugin` is the only way new functionality enters the system. In `register(ctx)` you bind
+Typed plugin objects are the only way new functionality enters the system. In `register(ctx)` you bind
 adapters, add routers, subscribe to events, and register MCP tools.
 
 ```ts
-import { definePlugin, EVENT_BUS, DRIZZLE } from '@openora/core/server';
+import { EVENT_BUS, DRIZZLE } from '@openora/core/server';
+import type { CoreTokenCatalog, Plugin } from '@openora/core/server';
 import { PAYMENT_ADAPTER } from '@openora/core/contracts';
 import { WalletService } from './service/wallet.service.js';
 import { createWalletRouter } from './router/index.js';
 import { MockPaymentAdapter } from './adapters/mock/mock-payment-adapter.js';
 
-export default definePlugin({
+export default {
   id: 'wallet',
   dependsOn: [], // optional load-order hints
   register(ctx) {
@@ -94,7 +95,7 @@ export default definePlugin({
       ),
     );
   },
-});
+} as const satisfies Plugin<CoreTokenCatalog>;
 ```
 
 ## Ports & adapters

@@ -3,6 +3,7 @@ import * as z from 'zod';
 import {
   KycStatusSchema,
   MoneyAmountSchema,
+  TagKeySchema,
   TimestampSchema,
   UuidSchema,
   WalletRailSchema,
@@ -133,6 +134,32 @@ export const SetAutoWithdrawalRuleInputSchema = z.object({
 
 export const AutoWithdrawalRuleKeySchema = z.object({ userId: UuidSchema });
 
+export const WalletAutoWithdrawalConfigSchema = z.object({
+  id: UuidSchema,
+  fiatThreshold: MoneyAmountSchema,
+  cryptoThreshold: MoneyAmountSchema,
+  excludeRiskFlags: z.array(TagKeySchema),
+  updatedBy: UuidSchema.nullable(),
+  updatedAt: TimestampSchema,
+  createdAt: TimestampSchema,
+});
+export type WalletAutoWithdrawalConfig = z.infer<typeof WalletAutoWithdrawalConfigSchema>;
+
+// wallet_auto_withdrawal_config.{fiatThreshold,cryptoThreshold} are decimal(18,8) - 10
+// integer digits max. Bounded here (not in the shared MoneyAmountSchema, which also backs
+// decimal(18,2) columns with a different integer-digit budget) so an out-of-range value is
+// a 4xx at the contract boundary instead of a DB overflow 500.
+const WalletAutoWithdrawalThresholdSchema = MoneyAmountSchema.refine(
+  (v) => (v.split('.').at(0) ?? '').length <= 10,
+  { message: 'must have at most 10 integer digits' },
+);
+
+export const SetWalletAutoWithdrawalConfigInputSchema = z.object({
+  fiatThreshold: WalletAutoWithdrawalThresholdSchema,
+  cryptoThreshold: WalletAutoWithdrawalThresholdSchema,
+  excludeRiskFlags: z.array(TagKeySchema),
+});
+
 export const ApproveWithdrawalInputSchema = z.object({ withdrawalId: UuidSchema });
 
 export const RejectWithdrawalInputSchema = z.object({
@@ -209,6 +236,17 @@ export const walletContract = {
       .route({ method: 'DELETE', path: '/wallet/auto-withdrawal-rules/{userId}' })
       .input(AutoWithdrawalRuleKeySchema)
       .output(z.boolean()),
+  },
+
+  autoWithdrawalConfig: {
+    get: oc
+      .route({ method: 'GET', path: '/wallet/auto-withdrawal-config' })
+      .output(WalletAutoWithdrawalConfigSchema),
+
+    set: oc
+      .route({ method: 'PUT', path: '/wallet/auto-withdrawal-config' })
+      .input(SetWalletAutoWithdrawalConfigInputSchema)
+      .output(WalletAutoWithdrawalConfigSchema),
   },
 
   deposits: {

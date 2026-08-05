@@ -1,10 +1,9 @@
 import {
-  definePlugin,
   EVENT_BUS,
   DRIZZLE,
   ADMIN_GUARD,
+  type Plugin,
   type TypedContainer,
-  CORE_TOKEN_CATALOG,
   type CoreTokenCatalog,
 } from '@openora/core/server';
 import {
@@ -22,7 +21,7 @@ import { TagRuleService } from './service/tag-rule.service.js';
 import { TagEvaluationService } from './service/tag-evaluation.service.js';
 import { createTagRouter } from './router/index.js';
 
-export default definePlugin(CORE_TOKEN_CATALOG, {
+export default {
   id: 'tag',
   dependsOn: ['wallet', 'identity'],
   register(ctx) {
@@ -103,4 +102,4 @@ export default definePlugin(CORE_TOKEN_CATALOG, {
       return createTagRouter(tagSvc, ruleSvcForRouter, c.get(ADMIN_GUARD));
     });
   },
-});
+} as const satisfies Plugin<CoreTokenCatalog>;

@@ -46,7 +46,7 @@ Creates the module as a standalone package with all required files and registers
 | `service/<name>.service.ts` | Business logic as plain async methods. No HTTP concepts. Inject `DrizzleService` + `EventBus`.                                                              |
 | `adapters/<vendor>/`        | Impls of any adapter ports (port + token in `packages/core/src/contracts/adapters/`).                                                                       |
 | `router/index.ts`           | Thin oRPC wiring; admin routes call `await adminGuard.assert(context)` first.                                                                               |
-| `plugin.ts`                 | `definePlugin` - DI wiring only.                                                                                                                            |
+| `plugin.ts`                 | `Plugin<CoreTokenCatalog>` object - DI wiring only.                                                                                                         |
 | `AGENTS.md`                 | ONLY what code can't say: invariants, rationale, gotchas, extension seams. No route/table/layout listings - they duplicate `contract/`/`schema/` and drift. |
 
 Headless repo: build no UI. After filling in: `pnpm regen` (migration + catalog), then `pnpm verify` and fix everything.

@@ -43,7 +43,7 @@ ctx.jobs.worker({ queue, schema, handler, onDeadLetter }); // process JOB_QUEUE 
 ctx.mcp.tool(definition); // expose a new MCP tool
 ```
 
-No decorators, no controllers - `definePlugin({ id, dependsOn, register })` wired by the functional Container (ADR-0009). DB tables: a `pgTable` in the plugin's own `schema/index.ts`, then `pnpm regen`.
+No decorators, no controllers - `{ id, dependsOn, register } satisfies Plugin<CoreTokenCatalog>` wired by the functional Container (ADR-0009). DB tables: a `pgTable` in the plugin's own `schema/index.ts`, then `pnpm regen`.
 
 ## Swapping a vendor adapter
 

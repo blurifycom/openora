@@ -1,10 +1,11 @@
 import { CACHE } from '@openora/core/contracts';
-import { definePlugin, ADMIN_GUARD, DRIZZLE, CORE_TOKEN_CATALOG } from '@openora/core/server';
+import { ADMIN_GUARD, DRIZZLE } from '@openora/core/server';
+import type { CoreTokenCatalog, Plugin } from '@openora/core/server';
 import { FinancialAnalyticsService } from './service/financial-analytics.service.js';
 import { FunnelAnalyticsService } from './service/funnel-analytics.service.js';
 import { createAnalyticsRouter } from './router/index.js';
 
-export default definePlugin(CORE_TOKEN_CATALOG, {
+export default {
   id: 'analytics',
   dependsOn: ['wallet', 'identity', 'profile', 'gaming'],
   register(ctx) {
@@ -16,4 +17,4 @@ export default definePlugin(CORE_TOKEN_CATALOG, {
       ),
     );
   },
-});
+} as const satisfies Plugin<CoreTokenCatalog>;

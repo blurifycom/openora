@@ -1,11 +1,12 @@
-import { definePlugin, EVENT_BUS, DRIZZLE } from '@openora/core/server';
+import { EVENT_BUS, DRIZZLE } from '@openora/core/server';
+import type { CoreTokenCatalog, Plugin } from '@openora/core/server';
 import { {{pascalCase name}}Service } from './service/{{kebabCase name}}.service.js';
 import { create{{pascalCase name}}Router } from './router/index.js';
 
 // DI wiring only - no business logic here. The router factory resolves deps from
 // the container at boot (after every plugin registered), so an overlay can rebind
 // an adapter token (last registration wins) without a fork.
-export default definePlugin({
+export default {
   id: '{{kebabCase name}}',
   // dependsOn: ['identity'], // declare deps so the loader boots them first
   register(ctx) {
@@ -15,4 +16,4 @@ export default definePlugin({
       create{{pascalCase name}}Router(new {{pascalCase name}}Service(c.get(DRIZZLE), c.get(EVENT_BUS))),
     );
   },
-});
+} as const satisfies Plugin<CoreTokenCatalog>;

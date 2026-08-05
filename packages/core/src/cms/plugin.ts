@@ -1,15 +1,10 @@
-import {
-  definePlugin,
-  EVENT_BUS,
-  DRIZZLE,
-  ADMIN_GUARD,
-  CORE_TOKEN_CATALOG,
-} from '@openora/core/server';
+import { EVENT_BUS, DRIZZLE, ADMIN_GUARD } from '@openora/core/server';
+import type { CoreTokenCatalog, Plugin } from '@openora/core/server';
 import { CACHE } from '@openora/core/contracts';
 import { CmsService } from './service/cms.service.js';
 import { createCmsRouter } from './router/index.js';
 
-export default definePlugin(CORE_TOKEN_CATALOG, {
+export default {
   id: 'cms',
   register(ctx) {
     ctx.routers.add('cms', (c) =>
@@ -19,4 +14,4 @@ export default definePlugin(CORE_TOKEN_CATALOG, {
       ),
     );
   },
-});
+} as const satisfies Plugin<CoreTokenCatalog>;

@@ -68,32 +68,10 @@ export type ModuleRegistry<C extends TokenCatalog> = {
 
 export type PluginContext<C extends TokenCatalog> = ModuleRegistry<C>;
 
-export type PluginDefinition<
-  C extends TokenCatalog,
-  Id extends string = string,
-  Dependencies extends readonly string[] = readonly string[],
-> = {
-  id: Id;
-  dependsOn?: Dependencies;
+export type Plugin<C extends TokenCatalog> = {
+  id: string;
+  dependsOn?: readonly string[];
   // Verified once after all plugins register - a missing port fails fast. See ADR-0024.
-  requiresPorts?: Array<C[keyof C] & Token<unknown>>;
+  requiresPorts?: readonly (C[keyof C] & Token<unknown>)[];
   register(ctx: PluginContext<C>): void | Promise<void>;
 };
-
-export type Plugin<
-  C extends TokenCatalog,
-  Id extends string = string,
-  Dependencies extends readonly string[] = readonly string[],
-> = PluginDefinition<C, Id, Dependencies>;
-
-export function definePlugin<C extends TokenCatalog, const T extends PluginDefinition<C>>(
-  catalog: C,
-  definition: T,
-): T;
-export function definePlugin<C extends TokenCatalog, const T extends PluginDefinition<C>>(
-  catalog: C,
-  definition: T,
-): T {
-  void catalog;
-  return definition;
-}

@@ -71,7 +71,7 @@ export type AssignPlayerTagInput = z.infer<typeof assignPlayerTagSchema>;
 
 export const removePlayerTagSchema = playerTagSchema.pick({ playerId: true }).extend({
   tagKey: TagKeySchema,
-  removalReason: z.string().min(5),
+  removalReason: z.string().trim().min(5).optional(),
   removalActor: tagAssignRemoveSourceSchema,
   removalActorUserId: UuidSchema.nullable(),
 });
@@ -80,7 +80,7 @@ export type RemovePlayerTagInput = z.infer<typeof removePlayerTagSchema>;
 // Atomic same-key swap (the mutable `level` tag): one actor performs both halves,
 // so the assign actor fields double as the removal actor fields.
 export const replacePlayerTagSchema = assignPlayerTagSchema.extend({
-  removalReason: z.string().min(5),
+  removalReason: z.string().trim().min(5),
 });
 export type ReplacePlayerTagInput = z.infer<typeof replacePlayerTagSchema>;
 

@@ -94,8 +94,6 @@ const coreTokenCatalog = {
   TAG_EVALUATION_COMMANDS,
   WALLET_COMMANDS,
   WALLET_READER,
-};
+} satisfies TokenCatalog;
 
-export const CORE_TOKEN_CATALOG = coreTokenCatalog satisfies TokenCatalog;
-
-export type CoreTokenCatalog = typeof CORE_TOKEN_CATALOG;
+export type CoreTokenCatalog = typeof coreTokenCatalog;

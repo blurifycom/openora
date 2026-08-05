@@ -1,12 +1,1 @@
-# Code owners for oss (the platform core).
-# GitHub uses this to request reviewers on PRs into protected branches.
-#
-# Ownership by area, not by person - team can change:
-#   - Backend core (contracts, domains, server, tooling) -> platform maintainer + backend dev
-#   - Frontend SDK (react consumption layer) -> frontend owner, reviewed with the maintainer
-# Consumers read this repo as upstream; they don't edit it.
-
-* @zaxovaiko @agniev-a-hub @klaudia-blazyczek-blurify
-
-# Frontend SDK (react consumption layer)
-/packages/core/src/react/   @klaudia-blazyczek-blurify @zaxovaiko
+* @zaxovaiko @agniev-a-hub @klaudia-blazyczek-blurify @marek-chmielowski-blurify

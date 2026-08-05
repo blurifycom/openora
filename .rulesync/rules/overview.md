@@ -24,7 +24,7 @@ Before acting on any non-trivial request - and before delegating - run the `enha
 
 1. **Zod-first contracts.** Every shape is a Zod schema; types are `z.infer`'d, never hand-written. Cross-cutting schemas in `packages/core/src/contracts/schemas/`; each module OWNS its route contract + req/res schemas + `z.infer`'d types in its `contract/` dir - the single source of wire truth, nothing else re-declares a wire shape. `composeContract` (`@openora/core/contracts`) owns only `health`; the consumer composition root composes each enabled module's `/contract` slice into the one runtime contract the SDK links against. ADR-0021/0025.
 2. **oRPC + Hono.** oRPC owns route definition + Zod validation; its `OpenAPIHandler` mounts on a Hono server with a live OpenAPI reference. DI is a functional `Container` (`@openora/core/server`) - typed-token factories, no decorators, no `reflect-metadata`. ADR-0009.
-3. **Plugin host.** `definePlugin({ id, dependsOn, register })` is the only way new functionality enters. Everything (core modules included) loads through `extensions.config.ts`.
+3. **Plugin host.** Typed plugin objects are the only way new functionality enters. Everything (core modules included) loads through `extensions.config.ts`.
 4. **Headless.** Backend modules + contracts + SDK surface only. UI lives in the consumer, which imports `@openora/core/react` (hooks, typed client, auth, realtime). No UI packages here.
 5. **Explicit > magic.** No auto-discovery, no decorators. Everything greppable; every wiring point a typed call.
 6. **AI-first.** Every module has an `AGENTS.md`; every scaffold a command; contracts queryable via the `oss-dev` MCP server + generated `docs/catalog.json`.
@@ -42,7 +42,7 @@ packages/
   core/            # @openora/core - THE single published package (ADR-0025). Subpaths:
     src/contracts/   # isomorphic: composeContract + healthContract, base zod schemas (schemas/), adapter interfaces + DI tokens (adapters/)
     src/react/       # domain-agnostic SDK: createClient, typed client, auth, realtime. No UI.
-    src/server/      # node engine: kernel (logger, EventBus + EVENT_BUS, Container), plugin-host (definePlugin, ModuleRegistry, loader), db (DrizzleService), auth (better-auth + AdminGuard), runtime (createApp - domain-agnostic, single-tenant). Subpaths: /orm, /migrate
+    src/server/      # node engine: kernel (logger, EventBus + EVENT_BUS, Container), plugin-host (Plugin, ModuleRegistry, loader), db (DrizzleService), auth (better-auth + AdminGuard), runtime (createApp - domain-agnostic, single-tenant). Subpaths: /orm, /migrate
     src/compliance/  # sealed-token list + assertSealedServicesBound (engine); also the compliance domain (/contracts, /schema, /plugins)
     src/<domain>/    # 9 folded domains (casino, cms, compliance, engagement, pam, wallet, iam, audit, admin-console), exposed as @openora/core/<domain>/{contracts,schema,plugins,server,react}. The BARE root (@openora/core/<domain>) is the public consumer surface: an isomorphic contract barrel (schemas, enum triples, z.infer types; multi-slice domains namespace per slice, eg `import { chat } from '@openora/core/engagement'`) - never server code. Services/routers/plugin live under /server; tables under /schema. A domain imports engine zones + a sibling's read-only /schema only - never a sibling's internals.
     src/<domain>/<module>/drizzle/  # each module owns its drizzle.config.ts + migrations/ history (ADR-0027); scripts/generate-all.mjs runs them all

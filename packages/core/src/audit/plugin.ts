@@ -1,11 +1,5 @@
-import {
-  definePlugin,
-  EVENT_BUS,
-  DRIZZLE,
-  ADMIN_GUARD,
-  createLogger,
-  CORE_TOKEN_CATALOG,
-} from '@openora/core/server';
+import { EVENT_BUS, DRIZZLE, ADMIN_GUARD, createLogger } from '@openora/core/server';
+import type { CoreTokenCatalog, Plugin } from '@openora/core/server';
 import { AUDIT_WRITER, type DomainEventName } from '@openora/core/contracts';
 import { AuditService, type RecordInput } from './service/audit.service.js';
 import { createAuditRouter } from './router/index.js';
@@ -565,7 +559,7 @@ const SUBSCRIBED_TOPICS: DomainEventName[] = [
   'player.level.changed',
 ] as const;
 
-export default definePlugin(CORE_TOKEN_CATALOG, {
+export default {
   id: 'audit',
   register(ctx) {
     const logger = createLogger('audit');
@@ -600,4 +594,4 @@ export default definePlugin(CORE_TOKEN_CATALOG, {
       return createAuditRouter(svc, c.get(ADMIN_GUARD));
     });
   },
-});
+} as const satisfies Plugin<CoreTokenCatalog>;
