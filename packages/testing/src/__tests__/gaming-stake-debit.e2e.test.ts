@@ -1,7 +1,12 @@
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import { randomUUID } from 'node:crypto';
 import { eq } from 'drizzle-orm';
-import { loadExtensions, DRIZZLE, type Container } from '@openora/core/server';
+import {
+  loadExtensions,
+  DRIZZLE,
+  type Container,
+  type CoreTokenCatalog,
+} from '@openora/core/server';
 import { game, gameRound } from '@openora/core/casino/schema/gaming';
 import { wallet, walletTransaction } from '@openora/core/wallet/schema';
 import {
@@ -43,7 +48,7 @@ async function deposit(client: TestClient, amount: string, currency = 'USD') {
   }
 }
 
-async function balanceOf(container: Container, userId: string): Promise<string> {
+async function balanceOf(container: Container<CoreTokenCatalog>, userId: string): Promise<string> {
   const [row] = await container
     .get(DRIZZLE)
     .db.select()

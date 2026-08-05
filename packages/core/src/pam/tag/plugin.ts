@@ -1,9 +1,10 @@
 import {
-  definePlugin,
   EVENT_BUS,
   DRIZZLE,
   ADMIN_GUARD,
-  type Container,
+  type Plugin,
+  type TypedContainer,
+  type CoreTokenCatalog,
 } from '@openora/core/server';
 import {
   PLAYER_TAGS,
@@ -20,17 +21,18 @@ import { TagRuleService } from './service/tag-rule.service.js';
 import { TagEvaluationService } from './service/tag-evaluation.service.js';
 import { createTagRouter } from './router/index.js';
 
-export default definePlugin({
+export default {
   id: 'tag',
   dependsOn: ['wallet', 'identity'],
   register(ctx) {
     // One memoized instance backs the PLAYER_TAGS port and the router closure.
     let svc: TagService | null = null;
-    const tagService = (c: Container) => (svc ??= new TagService(c.get(DRIZZLE), c.get(EVENT_BUS)));
+    const tagService = (c: TypedContainer<CoreTokenCatalog>) =>
+      (svc ??= new TagService(c.get(DRIZZLE), c.get(EVENT_BUS)));
 
     // One memoized instance backs the router closure and the TAG_EVALUATION_COMMANDS port.
     let ruleSvc: TagRuleService | null = null;
-    const ruleService = (c: Container) =>
+    const ruleService = (c: TypedContainer<CoreTokenCatalog>) =>
       (ruleSvc ??= new TagRuleService(c.get(DRIZZLE), c.get(EVENT_BUS)));
 
     // One memoized instance backs the daily job, the event subscriptions below, and the
@@ -39,7 +41,7 @@ export default definePlugin({
     // inside the router factory, so wallet's synchronous TAG_EVALUATION_COMMANDS call is
     // never blocked on this module's own router having mounted first.
     let evalSvc: TagEvaluationService | null = null;
-    const tagEvaluationService = (c: Container) =>
+    const tagEvaluationService = (c: TypedContainer<CoreTokenCatalog>) =>
       (evalSvc ??= new TagEvaluationService({
         tag: tagService(c),
         rule: ruleService(c),
@@ -100,4 +102,4 @@ export default definePlugin({
       return createTagRouter(tagSvc, ruleSvcForRouter, c.get(ADMIN_GUARD));
     });
   },
-});
+} as const satisfies Plugin<CoreTokenCatalog>;

@@ -1,4 +1,5 @@
-import { definePlugin, ADMIN_GUARD, EVENT_BUS, DRIZZLE } from '@openora/core/server';
+import { ADMIN_GUARD, EVENT_BUS, DRIZZLE } from '@openora/core/server';
+import type { CoreTokenCatalog, Plugin } from '@openora/core/server';
 import * as z from 'zod';
 import {
   ADMIN_USER_DIRECTORY,
@@ -22,7 +23,7 @@ import { createWalletRouter } from './router/index.js';
 import { MockPaymentAdapter } from './adapters/mock/mock-payment-adapter.js';
 import { HmacPaymentWebhookVerifier } from './adapters/hmac-payment-webhook-verifier.js';
 
-export default definePlugin({
+export default {
   // NOT dependsOn 'tag': that would cycle (tag hard-depends on wallet's WALLET_READER).
   // wallet's use of tag's PLAYER_TAGS / TAG_EVALUATION_COMMANDS is optional and resolved
   // lazily in the router factory (`c.has(...)`), which runs after every plugin has
@@ -73,4 +74,4 @@ export default definePlugin({
       ),
     );
   },
-});
+} as const satisfies Plugin<CoreTokenCatalog>;

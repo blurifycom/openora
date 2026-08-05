@@ -1,4 +1,4 @@
-import { definePlugin } from '@openora/core/server';
+import type { CoreTokenCatalog, Plugin } from '@openora/core/server';
 import { PLATFORM_CONFIG, definePlatformConfig } from '@openora/core/contracts';
 
 // PLATFORM_CONFIG overlay for the auto-withdrawal e2e suite: autoWithdrawal enabled (the fiat
@@ -8,7 +8,7 @@ import { PLATFORM_CONFIG, definePlatformConfig } from '@openora/core/contracts';
 // DEFAULT, left untouched by this suite) - no excludeRiskFlags field here any more.
 // kyc.gateWithdrawals stays false so the KYC-not-passing scenario hits the auto-approval KYC
 // gate, not the withdraw-time one. Append last so this binding wins.
-export default definePlugin({
+export default {
   id: 'test-wallet-auto-withdrawal-config',
   dependsOn: ['identity'],
   register(ctx) {
@@ -23,4 +23,4 @@ export default definePlugin({
       }),
     );
   },
-});
+} as const satisfies Plugin<CoreTokenCatalog>;

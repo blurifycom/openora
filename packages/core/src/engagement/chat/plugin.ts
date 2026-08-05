@@ -1,4 +1,5 @@
-import { definePlugin, EVENT_BUS, DRIZZLE, ADMIN_GUARD } from '@openora/core/server';
+import { EVENT_BUS, DRIZZLE, ADMIN_GUARD } from '@openora/core/server';
+import type { CoreTokenCatalog, Plugin } from '@openora/core/server';
 import {
   CHAT_REALTIME_TRANSPORT,
   CHAT_REALTIME_CLIENT_AUTHORIZER,
@@ -16,7 +17,7 @@ import { createChatRouter } from './router/index.js';
 
 const CHAT_SERVICE = createToken<ChatService>('_ChatService');
 
-export default definePlugin({
+export default {
   id: 'chat',
   dependsOn: ['identity'],
   register(ctx) {
@@ -49,4 +50,4 @@ export default definePlugin({
       }),
     );
   },
-});
+} as const satisfies Plugin<CoreTokenCatalog>;

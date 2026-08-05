@@ -1,4 +1,5 @@
-import { definePlugin, DRIZZLE, EVENT_BUS, ADMIN_GUARD } from '@openora/core/server';
+import { DRIZZLE, EVENT_BUS, ADMIN_GUARD } from '@openora/core/server';
+import type { CoreTokenCatalog, Plugin } from '@openora/core/server';
 import {
   WALLET_COMMANDS,
   ADMIN_USER_DIRECTORY,
@@ -13,7 +14,7 @@ import {
 import { ChatCommandsService } from './service/chat-commands.service.js';
 import { createChatCommandsRouter } from './router/index.js';
 
-export default definePlugin({
+export default {
   id: 'chat-commands',
   dependsOn: ['chat', 'wallet', 'iam', 'audit', 'gaming'],
   register(ctx) {
@@ -34,4 +35,4 @@ export default definePlugin({
       return createChatCommandsRouter(svc, c.get(ADMIN_GUARD));
     });
   },
-});
+} as const satisfies Plugin<CoreTokenCatalog>;

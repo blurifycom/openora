@@ -2,7 +2,12 @@ import { describe, it, expect, beforeAll, afterAll, vi } from 'vitest';
 import { createHmac, randomUUID } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import { eq } from 'drizzle-orm';
-import { loadExtensions, DRIZZLE, type Container } from '@openora/core/server';
+import {
+  loadExtensions,
+  DRIZZLE,
+  type Container,
+  type CoreTokenCatalog,
+} from '@openora/core/server';
 import { player } from '@openora/core/pam/schema/profile';
 import {
   setupTestDb,
@@ -71,7 +76,7 @@ async function registerAndMaterializePlayer(app: TestApp['app'], email: string) 
   return { client, playerId: profile.id, userId: profile.userId };
 }
 
-async function seedLegacyVerifiedStatus(container: Container, userId: string) {
+async function seedLegacyVerifiedStatus(container: Container<CoreTokenCatalog>, userId: string) {
   await container
     .get(DRIZZLE)
     .db.update(player)

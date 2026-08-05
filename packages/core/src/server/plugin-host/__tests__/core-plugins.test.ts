@@ -18,7 +18,7 @@ describe('corePlugins', () => {
   it('resolves every entry to an importable plugin whose id matches the entry id', async () => {
     const loaded = await loadDefaults();
     for (const { entry, plugin } of loaded) {
-      expect(plugin.id, `entry ${entry.id} resolves to a definePlugin`).toBe(entry.id);
+      expect(plugin.id, `entry ${entry.id} resolves to a plugin`).toBe(entry.id);
     }
   }, 20000);
 

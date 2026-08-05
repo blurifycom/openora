@@ -1,5 +1,7 @@
-// Gaming integration seam. A game studio/RGS implements GameAdapter; bind a
-// concrete adapter to GAME_ADAPTER in the module's plugin.ts.
+/**
+ * Gaming integration seam. A game studio/RGS implements GameAdapter; bind a
+ * concrete adapter to GAME_ADAPTER in the module's plugin.ts.
+ */
 import { createToken, type Token } from './token.js';
 
 export type GameAdapter = {

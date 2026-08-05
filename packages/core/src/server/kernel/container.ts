@@ -8,7 +8,7 @@ import type { AnyToken, TokenCatalog, TokenValue } from '@openora/core/contracts
 // sealed/overlay-rejection rules live one layer up, in ModuleRegistry's
 // provide()/provideSealed() (see plugin-host/module-registry.ts).
 
-export type Factory<T> = (c: Container) => T;
+export type Factory<T, C extends TokenCatalog> = (c: Container<C>) => T;
 
 /**
  * Functional DI container - no decorators, no reflection. `get()` resolves
@@ -20,28 +20,31 @@ export type Factory<T> = (c: Container) => T;
  * `dispose()` runs every `onDispose` callback in REVERSE registration order -
  * register dependencies before their dependents so teardown happens safely.
  */
-export class Container<C extends TokenCatalog = never> {
-  private readonly factories = new Map<symbol, Factory<unknown>>();
+export class Container<C extends TokenCatalog> {
+  private readonly factories = new Map<symbol, Factory<unknown, C>>();
   private readonly instances = new Map<symbol, unknown>();
   private readonly resolving = new Set<symbol>();
   private readonly disposers: Array<() => void | Promise<void>> = [];
 
-  register<T>(token: AnyToken<T>, factory: Factory<T>): void {
-    this.factories.set(token, factory as Factory<unknown>);
+  register<T extends C[keyof C]>(
+    token: T,
+    factory: (container: Container<C>) => TokenValue<T>,
+  ): void {
+    this.registerUnsafe(token, factory);
+  }
+
+  registerUnsafe<T>(token: AnyToken<T>, factory: Factory<T, C>): void {
+    this.factories.set(token, factory as Factory<unknown, C>);
     this.instances.delete(token);
   }
 
-  has<K extends keyof C>(token: C[K]): boolean;
-  has(token: AnyToken<unknown>): boolean;
-  has(token: AnyToken<unknown>): boolean {
+  has<T extends C[keyof C]>(token: T): boolean {
     return this.factories.has(token);
   }
 
-  get<K extends keyof C>(token: C[K]): TokenValue<C[K]>;
-  get<T>(token: AnyToken<T>): T;
-  get<T>(token: AnyToken<T>): T {
+  get<T extends C[keyof C]>(token: T): TokenValue<T> {
     if (this.instances.has(token)) {
-      return this.instances.get(token) as T;
+      return this.instances.get(token) as TokenValue<T>;
     }
 
     const factory = this.factories.get(token);
@@ -55,7 +58,7 @@ export class Container<C extends TokenCatalog = never> {
     }
 
     this.resolving.add(token);
-    const instance = factory(this) as T;
+    const instance = factory(this) as TokenValue<T>;
     this.resolving.delete(token);
     this.instances.set(token, instance);
     return instance;

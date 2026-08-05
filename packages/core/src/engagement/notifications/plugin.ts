@@ -10,7 +10,8 @@ import {
   type JobQueueAdapter,
   type NotificationDeliveryAdapter,
 } from '@openora/core/contracts';
-import { createLogger, definePlugin, EVENT_BUS, DRIZZLE } from '@openora/core/server';
+import { createLogger, EVENT_BUS, DRIZZLE } from '@openora/core/server';
+import type { CoreTokenCatalog, Plugin } from '@openora/core/server';
 import { MockNotificationDeliveryAdapter } from './adapters/mock/mock-notification-adapter.js';
 import { createNotificationsRouter } from './router/index.js';
 import { NotificationsService } from './service/notifications.service.js';
@@ -22,7 +23,7 @@ const KycResubmissionNotifyJobSchema = z.object({
   reason: z.string().nullable(),
 });
 
-export default definePlugin({
+export default {
   id: 'notifications',
   // ADMIN_USER_DIRECTORY (owned by identity) resolves the player's email for the
   // withdrawal delivery emails; pin load order so a split still finds the port. See ADR-0017.
@@ -134,4 +135,4 @@ export default definePlugin({
       return createNotificationsRouter(svc);
     });
   },
-});
+} as const satisfies Plugin<CoreTokenCatalog>;

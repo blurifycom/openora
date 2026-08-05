@@ -8,6 +8,7 @@ import {
   RedisStreamsBroker,
   type CreateAppConfig,
   type Container,
+  type CoreTokenCatalog,
 } from '@openora/core/server';
 import {
   MESSAGE_BROKER,
@@ -26,7 +27,7 @@ export type TestApp = {
   /** The Hono app - drive it directly with `app.request(path, init)`. */
   app: Hono;
   /** The composition container, for resolving services/tokens in assertions. */
-  container: Container;
+  container: Container<CoreTokenCatalog>;
   /** Dispose the container (closes the DB pool, drains workers, frees the Redis db). */
   close(): Promise<void>;
 };
@@ -61,14 +62,15 @@ export async function bootTestApp(config: BootTestAppConfig): Promise<TestApp> {
   const redisDatabase = await acquireTestRedisDatabase();
   const serviceName = `test-${randomUUID()}`;
 
-  const created = await createApp({
-    plugins: config.plugins,
-    ...(config.contract ? { contract: config.contract } : {}),
-    ...(config.igaming ? { igaming: config.igaming } : {}),
-    databaseUrl: config.databaseUrl,
-    authSchema: { user, session, account, verification, twoFactor },
-    openapi: { enabled: false },
-    configure(container: Container) {
+  const created = await createApp(
+    {
+      plugins: config.plugins,
+      ...(config.contract ? { contract: config.contract } : {}),
+      ...(config.igaming ? { igaming: config.igaming } : {}),
+      databaseUrl: config.databaseUrl,
+      authSchema: { user, session, account, verification, twoFactor },
+    },
+    (container: Container<CoreTokenCatalog>) => {
       const redis = createRedisClient(redisDatabase.url);
       container.onDispose(() => redis.close());
 
@@ -92,7 +94,7 @@ export async function bootTestApp(config: BootTestAppConfig): Promise<TestApp> {
         container.register(REALTIME_CLIENT_AUTHORIZER, () => new SseClientAuthorizer());
       }
     },
-  });
+  );
 
   return {
     app: created.app,

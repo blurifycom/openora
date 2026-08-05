@@ -1,4 +1,4 @@
-import { definePlugin } from '@openora/plugin-host';
+import type { CoreTokenCatalog, Plugin } from '@openora/core/server';
 import { queue } from '@openora/adapters';
 import * as z from 'zod';
 
@@ -13,7 +13,7 @@ const {{camelCase name}}Payload = z.object({
   id: z.string(),
 });
 
-export default definePlugin({
+export default {
   id: '{{kebabCase name}}-worker',
   register(ctx) {
     ctx.jobs.worker({
@@ -31,4 +31,4 @@ export default definePlugin({
       },
     });
   },
-});
+} as const satisfies Plugin<CoreTokenCatalog>;

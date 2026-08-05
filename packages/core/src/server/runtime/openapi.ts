@@ -11,8 +11,7 @@ export type GenerateOpenApiSpecOptions = {
 
 /**
  * Generate the OpenAPI spec from a contract and write it to disk.
- * Pure codegen - no server boot, no DB. Used by `createApp().emitOpenApiSpec()`
- * and by the standalone `codegen` script (`pnpm regen`).
+ * Pure codegen - no server boot, no DB. Used by the standalone `codegen` script (`pnpm regen`).
  */
 export async function generateOpenApiSpec(
   // oxlint-disable-next-line typescript/no-explicit-any

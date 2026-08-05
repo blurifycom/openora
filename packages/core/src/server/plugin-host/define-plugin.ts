@@ -1,4 +1,3 @@
-import type { Container } from '../kernel/index.js';
 import type {
   EventEnvelope,
   SealedToken,
@@ -15,37 +14,42 @@ export type McpToolDefinition = {
   handler: (input: unknown) => unknown | Promise<unknown>;
 };
 
-// Runs once at boot, after every plugin has registered its providers, so adapter overrides (last registration wins) are in effect.
-export type RouterFactory = (c: Container) => unknown;
-
+/**
+ * Container view a plugin's `provide()`/`provideSealed()` factory and router
+ * factories receive: read-only (`get`/`has`/`onDispose`) and catalog-constrained
+ * - never the full `Container`, so plugin code can't call `register()` directly
+ * and bypass ModuleRegistry's sealed-token rejection.
+ */
 export type TypedContainer<C extends TokenCatalog> = {
-  get<K extends keyof C>(token: C[K]): TokenValue<C[K]>;
-  has<K extends keyof C>(token: C[K]): boolean;
+  get<T extends C[keyof C]>(token: T): TokenValue<T>;
+  has<T extends C[keyof C]>(token: T): boolean;
   onDispose(fn: () => void | Promise<void>): void;
 };
 
+// Runs once at boot, after every plugin has registered its providers, so adapter overrides (last registration wins) are in effect.
+export type RouterFactory<C extends TokenCatalog> = (c: TypedContainer<C>) => unknown;
+
 export type EventHandler = (payload: unknown, envelope?: EventEnvelope) => void | Promise<void>;
 
-export type ModuleRegistry<C extends TokenCatalog = never> = {
+export type ModuleRegistry<C extends TokenCatalog> = {
   // Last registration wins - an overlay loaded after a module can rebind its adapter token.
-  provide<T>(
-    token: [C] extends [never] ? Token<T> : C[keyof C] & Token<T>,
-    factory: (container: [C] extends [never] ? Container : TypedContainer<C>) => T,
+  // T is inferred directly from the token argument (never a keyof reverse lookup) -
+  // that's what makes TokenValue<T> resolve to that one catalog entry instead of a
+  // union of every catalog value.
+  provide<T extends C[keyof C] & Token<unknown>>(
+    token: T,
+    factory: (container: TypedContainer<C>) => TokenValue<T>,
   ): void;
   // Bind-once, owner-only. The ONLY legitimate way to bind a SealedToken - provide()
   // rejects sealed tokens outright. A second call for the same token (an overlay
   // trying to override a regulator-mandated service) throws instead of rebinding.
-  provideSealed<T>(
-    token: [C] extends [never] ? SealedToken<T> : C[keyof C] & SealedToken<T>,
-    factory: (container: [C] extends [never] ? Container : TypedContainer<C>) => T,
+  provideSealed<T extends C[keyof C] & SealedToken<unknown>>(
+    token: T,
+    factory: (container: TypedContainer<C>) => TokenValue<T>,
   ): void;
   routers: {
-    add(namespace: string, factory: RouterFactory): void;
-    getAll(): Map<string, RouterFactory>;
-  };
-  slots: {
-    fill(slotName: string, component: unknown): void;
-    getAll(): Map<string, unknown>;
+    add(namespace: string, factory: RouterFactory<C>): void;
+    getAll(): Map<string, RouterFactory<C>>;
   };
   events: {
     on(event: string, handler: EventHandler): void;
@@ -62,37 +66,12 @@ export type ModuleRegistry<C extends TokenCatalog = never> = {
   };
 };
 
-export type PluginDefinition<
-  C extends TokenCatalog = never,
-  Id extends string = string,
-  Dependencies extends readonly string[] = string[],
-> = {
-  id: Id;
-  dependsOn?: Dependencies;
+export type PluginContext<C extends TokenCatalog> = ModuleRegistry<C>;
+
+export type Plugin<C extends TokenCatalog> = {
+  id: string;
+  dependsOn?: readonly string[];
   // Verified once after all plugins register - a missing port fails fast. See ADR-0024.
-  requiresPorts?: Token<unknown>[];
-  register: (ctx: ModuleRegistry<C>) => void | Promise<void>;
+  requiresPorts?: readonly (C[keyof C] & Token<unknown>)[];
+  register(ctx: PluginContext<C>): void | Promise<void>;
 };
-
-export type Plugin<
-  C extends TokenCatalog = never,
-  Id extends string = string,
-  Dependencies extends readonly string[] = string[],
-> = PluginDefinition<C, Id, Dependencies>;
-
-export function definePlugin<
-  C extends TokenCatalog = never,
-  const Id extends string = string,
-  const Dependencies extends readonly string[] = [],
->(definition: PluginDefinition<C, Id, Dependencies>): Plugin<C, Id, Dependencies> {
-  return definition;
-}
-
-export function definePluginWithCatalog<C extends TokenCatalog>() {
-  return function defineCataloguedPlugin<
-    const Id extends string,
-    const Dependencies extends readonly string[] = [],
-  >(definition: PluginDefinition<C, Id, Dependencies>): Plugin<C, Id, Dependencies> {
-    return definition;
-  };
-}

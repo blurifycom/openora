@@ -3,7 +3,12 @@ import { randomUUID } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import { Client } from 'pg';
 import { eq } from 'drizzle-orm';
-import { loadExtensions, DRIZZLE, type Container } from '@openora/core/server';
+import {
+  loadExtensions,
+  DRIZZLE,
+  type Container,
+  type CoreTokenCatalog,
+} from '@openora/core/server';
 import { user } from '@openora/core/pam/schema/identity';
 import { adminRole, adminRoleAssignment } from '@openora/core/iam/schema';
 import { walletAutoWithdrawalConfig } from '@openora/core/wallet/schema';
@@ -89,7 +94,11 @@ async function verifyKyc(admin: TestClient, userId: string) {
  * So a DB-backed role (super-admin, payments-manager, ...) needs BOTH the static
  * `user.role = 'admin'` coarse flag AND the specific admin_role_assignment row.
  */
-async function assignIamRoleByKey(container: Container, userId: string, roleKey: string) {
+async function assignIamRoleByKey(
+  container: Container<CoreTokenCatalog>,
+  userId: string,
+  roleKey: string,
+) {
   const drizzle = container.get(DRIZZLE).db;
   await drizzle.update(user).set({ role: 'admin' }).where(eq(user.id, userId));
   const [role] = await drizzle.select().from(adminRole).where(eq(adminRole.key, roleKey));
@@ -102,7 +111,7 @@ async function assignIamRoleByKey(container: Container, userId: string, roleKey:
     .onConflictDoNothing();
 }
 
-async function setStaticRole(container: Container, userId: string, role: string) {
+async function setStaticRole(container: Container<CoreTokenCatalog>, userId: string, role: string) {
   await container.get(DRIZZLE).db.update(user).set({ role }).where(eq(user.id, userId));
 }
 

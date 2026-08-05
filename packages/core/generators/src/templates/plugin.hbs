@@ -1,4 +1,4 @@
-import { definePlugin } from '@openora/plugin-host';
+import type { CoreTokenCatalog, Plugin } from '@openora/core/server';
 
 // Overlay plugin. Registered in extensions.config.ts (auto-wired in the OSS repo;
 // in a consumer repo add it to your apps/api/src/extensions.config.ts).
@@ -10,11 +10,11 @@ import { definePlugin } from '@openora/plugin-host';
 //   ctx.jobs.worker({ queue, schema, handler })  - register a background-job worker
 //   ctx.slots.fill(slotName, component)          - contribute a UI slot
 //   ctx.mcp.tool({ name, description, inputSchema, handler }) - expose an MCP tool
-export default definePlugin({
+export default {
   id: '{{kebabCase name}}',
   // dependsOn: ['wallet'], // load after the plugin that owns a token you rebind
   register(ctx) {
     void ctx;
     // AGENT: implement here
   },
-});
+} as const satisfies Plugin<CoreTokenCatalog>;

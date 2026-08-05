@@ -23,11 +23,6 @@ type CatalogAdapter = {
   boundIn: string[];
 };
 
-type CatalogUiSlot = {
-  name: string;
-  description: string;
-};
-
 type CatalogSchema = {
   name: string;
   file: string;
@@ -48,7 +43,6 @@ type Catalog = {
   modules: CatalogModule[];
   adapters: CatalogAdapter[];
   events: string[];
-  uiSlots: CatalogUiSlot[];
   schemas: CatalogSchema[];
   config: CatalogConfig;
   pluginContract: string[];
@@ -120,14 +114,14 @@ server.registerTool(
   'catalog-overview',
   {
     description:
-      'START HERE. A concise "what can I extend" summary of the OSS igaming platform you are consuming: counts of modules/events/slots/schemas, the adapter swap-seam table (category/interface/token/status), and the igaming-config fields. Read this first to orient before drilling into the other tools.',
+      'START HERE. A concise "what can I extend" summary of the OSS igaming platform you are consuming: counts of modules/events/schemas, the adapter swap-seam table (category/interface/token/status), and the igaming-config fields. Read this first to orient before drilling into the other tools.',
     inputSchema: {},
   },
   withCatalog((c) => {
     const lines: string[] = ['=== OSS igaming platform catalog ==='];
     lines.push(
       `modules: ${c.modules.length}  adapters: ${c.adapters.length}  events: ${c.events.length}  ` +
-        `uiSlots: ${c.uiSlots.length}  schemas: ${c.schemas.length}  ` +
+        `schemas: ${c.schemas.length}  ` +
         `httpRoutes: ${c.httpRoutes.length}`,
     );
 
@@ -142,7 +136,7 @@ server.registerTool(
     }
 
     lines.push(
-      '\nNext: list-adapters | list-routes | list-events | list-slots | describe-module <name> | schema-get <name> | get-config-schema',
+      '\nNext: list-adapters | list-routes | list-events | describe-module <name> | schema-get <name> | get-config-schema',
     );
     return lines.join('\n');
   }),
@@ -226,25 +220,6 @@ server.registerTool(
       return 'No events in the catalog.';
     }
     return `=== Domain events (${c.events.length}) ===\n${c.events.map((e) => `- ${e}`).join('\n')}`;
-  }),
-);
-
-server.registerTool(
-  'list-slots',
-  {
-    description:
-      'List the named UI slots you can fill from a client-side UI plugin (ctx.<slot>.add(...)) to extend the backoffice without forking: nav items, table columns, dashboard tiles, detail sections. Includes each slot description and subject type.',
-    inputSchema: {},
-  },
-  withCatalog((c) => {
-    if (c.uiSlots.length === 0) {
-      return 'No UI slots in the catalog.';
-    }
-    const lines: string[] = ['=== UI slots ==='];
-    for (const s of c.uiSlots) {
-      lines.push(`- ${s.name}${s.description ? `  # ${s.description}` : ''}`);
-    }
-    return lines.join('\n');
   }),
 );
 
@@ -364,7 +339,7 @@ function classifyIntent(ask: string): IntentKind {
 
 function buildConsumerPlaybook(
   kind: IntentKind,
-  ctx: { modules: string[]; tokens: string[]; slots: string[] },
+  ctx: { modules: string[]; tokens: string[] },
 ): string {
   const moduleList = ctx.modules.length
     ? ctx.modules.map((m) => `- ${m}`).join('\n')
@@ -373,7 +348,7 @@ function buildConsumerPlaybook(
     case 'feature':
       return [
         '## Where it goes',
-        'New behavior in a consumer repo -> an overlay plugin (`pnpm gen plugin`). It can add routes, subscribe to events, rebind adapters, and fill UI slots without touching OSS core.',
+        'New behavior in a consumer repo -> an overlay plugin (`pnpm gen plugin`). It can add routes, subscribe to events, and rebind adapters without touching OSS core.',
         'If this is a new business domain that should be in the OSS platform itself, open an issue on the OSS repo instead.',
         '',
         '## Existing platform modules you can hook into',
@@ -381,7 +356,7 @@ function buildConsumerPlaybook(
         '',
         '## Playbook',
         '1. Spawn the `expert` agent (Task tool) to turn this ask into requirements + acceptance criteria (player journey, jurisdiction rules, edge cases). Skip only for a trivial change.',
-        '2. Spawn the `builder` agent to implement: `pnpm gen plugin`, then in `register(ctx)` add routes (`ctx.routers.add`), subscribe to events (`ctx.events.on`), fill slots (`ctx.slots.fill`).',
+        '2. Spawn the `builder` agent to implement: `pnpm gen plugin`, then in `register(ctx)` add routes (`ctx.routers.add`) and subscribe to events (`ctx.events.on`).',
         '3. Register the plugin in `extensions.config.ts` at the repo root.',
         '4. Spawn the `qa` agent to write/run a Playwright E2E test for the acceptance criteria.',
         '5. Run `pnpm check:types && pnpm check:lint`.',
@@ -414,15 +389,10 @@ function buildConsumerPlaybook(
     case 'ui-page':
       return [
         '## Where it goes',
-        'The platform is headless - pages live in your own frontend repo and consume the api via `@openora/core/react`. Fill named UI slots from a client-side UI plugin.',
-        '',
-        '## Named UI slots you can fill (via defineUIPlugin)',
-        ctx.slots.length
-          ? ctx.slots.map((s) => `- ${s}`).join('\n')
-          : '- (run list-slots for details)',
+        'The platform is headless - pages live in your own frontend repo and consume the api via `@openora/core/react`.',
         '',
         '## Playbook',
-        '1. Spawn the `builder` agent to implement the page in your frontend repo, or extend an existing surface via `defineUIPlugin` into a slot above.',
+        '1. Spawn the `builder` agent to implement the page in your frontend repo.',
         '2. Spawn the `qa` agent to verify the page renders and behaves in a browser.',
         '3. Run `pnpm check:types`.',
         '',
@@ -498,7 +468,7 @@ server.registerTool(
   'enhance-intent',
   {
     description:
-      'Turn a fuzzy "I want to build X" ask into a grounded, consumer-context brief. Uses the platform catalog (live module/adapter/slot list) to return a classified intent, a requirements checklist to collect from the user, a step-by-step playbook using the consumer pnpm gen commands, and an acceptance-criteria stub.',
+      'Turn a fuzzy "I want to build X" ask into a grounded, consumer-context brief. Uses the platform catalog (live module and adapter list) to return a classified intent, a requirements checklist to collect from the user, a step-by-step playbook using the consumer pnpm gen commands, and an acceptance-criteria stub.',
     inputSchema: {
       ask: z
         .string()
@@ -516,7 +486,6 @@ server.registerTool(
     const ctx = {
       modules: catalog?.modules.map((m) => `${m.group}/${m.id}`) ?? [],
       tokens: catalog?.adapters.map((a) => a.token) ?? [],
-      slots: catalog?.uiSlots.map((s) => s.name) ?? [],
     };
     const detected = kind && kind !== 'unsure' ? '' : ' (auto-detected)';
     const text = [
@@ -573,7 +542,6 @@ server.registerTool(
       const playbook = buildConsumerPlaybook(resolved, {
         modules,
         tokens,
-        slots: catalog?.uiSlots.map((s) => s.name) ?? [],
       });
       return {
         content: [

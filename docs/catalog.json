@@ -1792,8 +1792,7 @@
     "events",
     "jobs",
     "mcp",
-    "routers",
-    "slots"
+    "routers"
   ],
   "httpRoutes": [
     "DELETE /backoffice/chat/rooms/{id}",

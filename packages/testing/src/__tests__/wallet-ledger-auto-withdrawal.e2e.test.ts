@@ -2,7 +2,12 @@ import { describe, it, expect, beforeAll, afterAll, vi } from 'vitest';
 import { randomUUID } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import { eq } from 'drizzle-orm';
-import { loadExtensions, DRIZZLE, type Container } from '@openora/core/server';
+import {
+  loadExtensions,
+  DRIZZLE,
+  type Container,
+  type CoreTokenCatalog,
+} from '@openora/core/server';
 import { user } from '@openora/core/pam/schema/identity';
 import { walletAutoWithdrawalConfig } from '@openora/core/wallet/schema';
 import { seedAutoWithdrawalConfig } from '@openora/core/wallet/seed';
@@ -54,7 +59,7 @@ async function registerAndMaterializePlayer(app: TestApp['app'], email: string) 
   return { client, playerId: profile.id, userId: profile.userId };
 }
 
-async function setRole(container: Container, userId: string, role: string) {
+async function setRole(container: Container<CoreTokenCatalog>, userId: string, role: string) {
   await container.get(DRIZZLE).db.update(user).set({ role }).where(eq(user.id, userId));
 }
 
