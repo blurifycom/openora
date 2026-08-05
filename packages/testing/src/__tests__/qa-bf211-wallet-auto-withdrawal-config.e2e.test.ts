@@ -219,6 +219,7 @@ describe('BF-211 authz: auto-withdrawal-config is super-admin only (real DB-back
     const setRes = await superAdmin.put('/wallet/auto-withdrawal-config', {
       fiatThreshold: '1',
       cryptoThreshold: '1',
+      excludeRiskFlags: [],
     });
     expect(setRes.status).toBe(200);
   });
@@ -230,6 +231,7 @@ describe('BF-211 authz: auto-withdrawal-config is super-admin only (real DB-back
     const setRes = await paymentsManager.put('/wallet/auto-withdrawal-config', {
       fiatThreshold: '1',
       cryptoThreshold: '1',
+      excludeRiskFlags: [],
     });
     expect(setRes.status).toBe(403);
   });
@@ -241,6 +243,7 @@ describe('BF-211 authz: auto-withdrawal-config is super-admin only (real DB-back
     const setRes = await plainAdmin.put('/wallet/auto-withdrawal-config', {
       fiatThreshold: '1',
       cryptoThreshold: '1',
+      excludeRiskFlags: [],
     });
     expect(setRes.status).toBe(403);
   });
@@ -252,6 +255,7 @@ describe('BF-211 authz: auto-withdrawal-config is super-admin only (real DB-back
     const setRes = await bootstrapAdmin.put('/wallet/auto-withdrawal-config', {
       fiatThreshold: '1',
       cryptoThreshold: '1',
+      excludeRiskFlags: [],
     });
     expect(setRes.status).toBe(200);
   });
@@ -267,6 +271,7 @@ describe('BF-211 validation: threshold input', () => {
     const res = await superAdmin.put('/wallet/auto-withdrawal-config', {
       fiatThreshold: '-1',
       cryptoThreshold: '0',
+      excludeRiskFlags: [],
     });
     expect(res.status).toBeGreaterThanOrEqual(400);
     expect(res.status).toBeLessThan(500);
@@ -276,6 +281,7 @@ describe('BF-211 validation: threshold input', () => {
     const res = await superAdmin.put('/wallet/auto-withdrawal-config', {
       fiatThreshold: '0',
       cryptoThreshold: 'not-a-number',
+      excludeRiskFlags: [],
     });
     expect(res.status).toBeGreaterThanOrEqual(400);
     expect(res.status).toBeLessThan(500);
@@ -286,6 +292,7 @@ describe('BF-211 validation: threshold input', () => {
     await superAdmin.put('/wallet/auto-withdrawal-config', {
       fiatThreshold: '-999',
       cryptoThreshold: '0',
+      excludeRiskFlags: [],
     });
     const after = await readJson(await superAdmin.get('/wallet/auto-withdrawal-config'));
     expect(after).toMatchObject({
@@ -300,6 +307,7 @@ describe('BF-211 happy path: set -> immediate GET -> below/above threshold -> au
     const setRes = await superAdmin.put('/wallet/auto-withdrawal-config', {
       fiatThreshold: '100',
       cryptoThreshold: '0.01',
+      excludeRiskFlags: [],
     });
     expect(setRes.status).toBe(200);
     const set = await readJson(setRes);
@@ -314,6 +322,7 @@ describe('BF-211 happy path: set -> immediate GET -> below/above threshold -> au
     await superAdmin.put('/wallet/auto-withdrawal-config', {
       fiatThreshold: '100',
       cryptoThreshold: '0.01',
+      excludeRiskFlags: [],
     });
 
     const configAuditRes = await superAdmin.get(
@@ -383,6 +392,7 @@ describe('BF-211 immediate effect: two consecutive config changes in one run', (
     await superAdmin.put('/wallet/auto-withdrawal-config', {
       fiatThreshold: '10',
       cryptoThreshold: '0',
+      excludeRiskFlags: [],
     });
     const first = await readJson(
       await client.post('/wallet/withdraw', { amount: '20', currency: 'USD' }),
@@ -392,6 +402,7 @@ describe('BF-211 immediate effect: two consecutive config changes in one run', (
     await superAdmin.put('/wallet/auto-withdrawal-config', {
       fiatThreshold: '30',
       cryptoThreshold: '0',
+      excludeRiskFlags: [],
     });
     const second = await readJson(
       await client.post('/wallet/withdraw', { amount: '20', currency: 'USD' }),
@@ -401,6 +412,7 @@ describe('BF-211 immediate effect: two consecutive config changes in one run', (
     await superAdmin.put('/wallet/auto-withdrawal-config', {
       fiatThreshold: '5',
       cryptoThreshold: '0',
+      excludeRiskFlags: [],
     });
     const third = await readJson(
       await client.post('/wallet/withdraw', { amount: '20', currency: 'USD' }),
@@ -414,6 +426,7 @@ describe('BF-211 precedence: per-player auto_withdrawal_rule vs the global confi
     await superAdmin.put('/wallet/auto-withdrawal-config', {
       fiatThreshold: '10',
       cryptoThreshold: '0',
+      excludeRiskFlags: [],
     });
     const email = `bf211-rule-above-${randomUUID()}@e2e.test`;
     const { client, userId } = await registerAndMaterializePlayer(appMain.app, email);
@@ -440,6 +453,7 @@ describe('BF-211 precedence: per-player auto_withdrawal_rule vs the global confi
     await superAdmin.put('/wallet/auto-withdrawal-config', {
       fiatThreshold: '1000',
       cryptoThreshold: '0',
+      excludeRiskFlags: [],
     });
     const email = `bf211-rule-below-${randomUUID()}@e2e.test`;
     const { client, userId } = await registerAndMaterializePlayer(appMain.app, email);
@@ -506,6 +520,7 @@ describe('BF-211 fail-closed: the singleton config row is missing', () => {
     const res = await client.put('/wallet/auto-withdrawal-config', {
       fiatThreshold: '100',
       cryptoThreshold: '1',
+      excludeRiskFlags: [],
     });
     expect(res.status).toBe(200);
     const body = await readJson(res);
@@ -520,19 +535,26 @@ describe('BF-211 fail-closed: the singleton config row is missing', () => {
 });
 
 describe('BF-211 regression spot-check: static platform-config.yaml AutoWithdrawalConfigSchema', () => {
-  it('still accepts the fields that stay static: enabled, excludeRiskFlags, dailyCapAmount, dailyCapCount', () => {
+  it('still accepts the fields that stay static: enabled, dailyCapAmount, dailyCapCount', () => {
     const parsed = AutoWithdrawalConfigSchema.parse({
       enabled: true,
-      excludeRiskFlags: ['high_risk'],
       dailyCapAmount: '5000',
       dailyCapCount: 10,
     });
     expect(parsed).toMatchObject({
       enabled: true,
-      excludeRiskFlags: ['high_risk'],
       dailyCapAmount: '5000',
       dailyCapCount: 10,
     });
+  });
+
+  it('BF-319: excludeRiskFlags moved to the DB-backed wallet_auto_withdrawal_config singleton and is no longer a static schema field', () => {
+    expect(() =>
+      AutoWithdrawalConfigSchema.parse({
+        enabled: true,
+        excludeRiskFlags: ['high_risk'],
+      }),
+    ).toThrow('excludeRiskFlags');
   });
 
   it('BUG: fiatThreshold/cryptoThreshold were removed from the static schema but two shipped e2e fixtures still set them, breaking pnpm build and bootTestApp at runtime', () => {

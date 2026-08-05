@@ -8,6 +8,7 @@ import type {
   PaymentAdapter,
   PaymentWebhookVerifier,
   PlatformConfig,
+  PlayerTags,
 } from '@openora/core/contracts';
 import { createTestDb, type TestDb } from '@openora/core/testing';
 import {
@@ -73,6 +74,13 @@ function routerWith(adminGuard: AdminGuard, platformConfig?: Partial<PlatformCon
       ),
     ),
   });
+  // excludeRiskFlags defaults to the migration's 5-tag DEFAULT (non-empty), so
+  // evaluateAutoApproval needs PLAYER_TAGS bound to check it - bind an empty-tags double by
+  // default so tests that aren't specifically exercising risk-tag exclusion still reach
+  // auto-approval.
+  const riskTags = mock<PlayerTags>({
+    getActiveTagKeys: vi.fn(async (ids: readonly string[]) => new Map(ids.map((id) => [id, []]))),
+  });
   const service = new WalletService({
     drizzle: db.drizzle,
     events: makeEventBus(),
@@ -85,6 +93,7 @@ function routerWith(adminGuard: AdminGuard, platformConfig?: Partial<PlatformCon
     audit,
     directory,
     platformConfig: platformConfig ? mock<PlatformConfig>(platformConfig) : undefined,
+    riskTags,
   });
   const router = createWalletRouter(
     service,
@@ -111,6 +120,9 @@ describe('wallet auto-withdrawal-config routes', () => {
     const result = await call(router.autoWithdrawalConfig.get, {}, { context: CTX });
 
     expect(result).toMatchObject({ fiatThreshold: '0.00000000', cryptoThreshold: '0.00000000' });
+    expect(result.excludeRiskFlags).toEqual(
+      expect.arrayContaining(['high_risk', 'bonus_abuser', 'kyc_rejected']),
+    );
   });
 
   it('get: rejects payments-manager', async () => {
@@ -135,7 +147,7 @@ describe('wallet auto-withdrawal-config routes', () => {
     await expect(
       call(
         router.autoWithdrawalConfig.set,
-        { fiatThreshold: '500', cryptoThreshold: '1' },
+        { fiatThreshold: '500', cryptoThreshold: '1', excludeRiskFlags: [] },
         { context: CTX },
       ),
     ).rejects.toBeInstanceOf(ORPCError);
@@ -149,7 +161,7 @@ describe('wallet auto-withdrawal-config routes', () => {
     await expect(
       call(
         router.autoWithdrawalConfig.set,
-        { fiatThreshold: '500', cryptoThreshold: '1' },
+        { fiatThreshold: '500', cryptoThreshold: '1', excludeRiskFlags: [] },
         { context: CTX },
       ),
     ).rejects.toBeInstanceOf(ORPCError);
@@ -163,7 +175,7 @@ describe('wallet auto-withdrawal-config routes', () => {
     await expect(
       call(
         router.autoWithdrawalConfig.set,
-        { fiatThreshold: '-1', cryptoThreshold: '1' },
+        { fiatThreshold: '-1', cryptoThreshold: '1', excludeRiskFlags: [] },
         { context: CTX },
       ),
     ).rejects.toThrow();
@@ -175,7 +187,7 @@ describe('wallet auto-withdrawal-config routes', () => {
     await expect(
       call(
         router.autoWithdrawalConfig.set,
-        { fiatThreshold: '1', cryptoThreshold: '-1' },
+        { fiatThreshold: '1', cryptoThreshold: '-1', excludeRiskFlags: [] },
         { context: CTX },
       ),
     ).rejects.toThrow();
@@ -187,30 +199,32 @@ describe('wallet auto-withdrawal-config routes', () => {
     await expect(
       call(
         router.autoWithdrawalConfig.set,
-        { fiatThreshold: '10000000000', cryptoThreshold: '1' },
+        { fiatThreshold: '10000000000', cryptoThreshold: '1', excludeRiskFlags: [] },
         { context: CTX },
       ),
     ).rejects.toThrow();
   });
 
-  it('set: super-admin updates both thresholds, GET reflects immediately, and writes an admin audit entry with before/after', async () => {
+  it('set: super-admin updates both thresholds and excludeRiskFlags, GET reflects immediately, and writes an admin audit entry with before/after', async () => {
     const { router, audit } = routerWith(superAdminGuard());
 
     const result = await call(
       router.autoWithdrawalConfig.set,
-      { fiatThreshold: '500', cryptoThreshold: '1' },
+      { fiatThreshold: '500', cryptoThreshold: '1', excludeRiskFlags: ['bonus_abuser'] },
       { context: CTX },
     );
 
     expect(result).toMatchObject({
       fiatThreshold: '500.00000000',
       cryptoThreshold: '1.00000000',
+      excludeRiskFlags: ['bonus_abuser'],
       updatedBy: CALLER_ID,
     });
     const fetched = await call(router.autoWithdrawalConfig.get, {}, { context: CTX });
     expect(fetched).toMatchObject({
       fiatThreshold: '500.00000000',
       cryptoThreshold: '1.00000000',
+      excludeRiskFlags: ['bonus_abuser'],
     });
     expect(audit.recordInTransaction).toHaveBeenCalledWith(
       expect.anything(),
@@ -219,20 +233,36 @@ describe('wallet auto-withdrawal-config routes', () => {
         actorType: 'admin',
         action: 'wallet.auto_withdrawal_config.set',
         resourceType: 'auto_withdrawal_config',
-        before: { fiatThreshold: '0.00000000', cryptoThreshold: '0.00000000' },
-        after: { fiatThreshold: '500.00000000', cryptoThreshold: '1.00000000' },
+        before: {
+          fiatThreshold: '0.00000000',
+          cryptoThreshold: '0.00000000',
+          // The beforeEach seed omits excludeRiskFlags, so the column's migration
+          // DEFAULT (a starting value, not an enforced floor) is what "before" captures here.
+          excludeRiskFlags: [
+            'high_risk',
+            'bonus_abuser',
+            'kyc_rejected',
+            'withdrawal_review',
+            'multi_account',
+          ],
+        },
+        after: {
+          fiatThreshold: '500.00000000',
+          cryptoThreshold: '1.00000000',
+          excludeRiskFlags: ['bonus_abuser'],
+        },
       }),
     );
   });
 
   it('end-to-end: after a super-admin sets the fiat threshold, a withdrawal below it auto-approves and one above it stays pending, both leaving an audit trail', async () => {
     const { router, audit, service } = routerWith(superAdminGuard(), {
-      autoWithdrawal: { enabled: true, excludeRiskFlags: [] },
+      autoWithdrawal: { enabled: true },
     });
 
     await call(
       router.autoWithdrawalConfig.set,
-      { fiatThreshold: '100', cryptoThreshold: '0' },
+      { fiatThreshold: '100', cryptoThreshold: '0', excludeRiskFlags: [] },
       { context: CTX },
     );
 

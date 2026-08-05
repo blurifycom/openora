@@ -116,10 +116,16 @@ beforeAll(async () => {
   // physical database with appDefault, so seeding it once here (fiatThreshold '2', matching
   // what the two fixtures used to set statically) covers both single-shot gate and daily-cap
   // scenarios below - the seed default ('0'/'0') would otherwise leave auto-approval off.
-  await seedAutoWithdrawalConfig(appDefault.container.get(DRIZZLE).db);
-  await appDefault.container
-    .get(DRIZZLE)
-    .db.update(walletAutoWithdrawalConfig)
+  // Delete any pre-existing row first: this suite's excluded-risk-tag scenario below relies
+  // on the column's migration DEFAULT for excludeRiskFlags, and this file's apps share one
+  // physical test database with every other e2e file in the run (per @openora/testing's
+  // AGENTS.md) - a sibling suite (eg BF-319's) may have already left the singleton with an
+  // admin-edited excludeRiskFlags value that no longer includes the tag this suite tests.
+  const configDb = appDefault.container.get(DRIZZLE).db;
+  await configDb.delete(walletAutoWithdrawalConfig);
+  await seedAutoWithdrawalConfig(configDb);
+  await configDb
+    .update(walletAutoWithdrawalConfig)
     .set({ fiatThreshold: '2' })
     .where(eq(walletAutoWithdrawalConfig.singletonKey, 'global'));
 

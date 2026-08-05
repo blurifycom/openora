@@ -26,6 +26,17 @@ import { WalletService } from '../service/wallet.service.js';
 
 let db: TestDb;
 
+// The migration-level column DEFAULT (0006_lush_morg.sql) - a starting value for
+// upgraded installs, not a server-enforced floor. A Super Admin can clear or
+// change any of it via setAutoWithdrawalConfig.
+const MIGRATION_DEFAULT_EXCLUDE_RISK_FLAGS: readonly TagKey[] = [
+  'high_risk',
+  'bonus_abuser',
+  'kyc_rejected',
+  'withdrawal_review',
+  'multi_account',
+];
+
 type ServiceOptions = {
   autoWithdrawal?: Partial<AutoWithdrawalConfig>;
   // The global fiat/crypto thresholds are DB-backed (BF-211), not part of
@@ -34,6 +45,10 @@ type ServiceOptions = {
   // default ('0'/'0' = auto-approval off until configured).
   fiatThreshold?: string;
   cryptoThreshold?: string;
+  // The DB row's tag-exclusion column (BF-319). Undefined = let the column's
+  // migration DEFAULT apply (the 5-tag starting value); pass an explicit
+  // array (incl. []) to seed exactly that set instead.
+  excludeRiskFlags?: readonly TagKey[];
   // Leaves the singleton config row unseeded, to exercise the row-missing
   // fail-closed path.
   skipConfigSeed?: boolean;
@@ -46,6 +61,7 @@ async function makeService({
   autoWithdrawal,
   fiatThreshold,
   cryptoThreshold,
+  excludeRiskFlags,
   skipConfigSeed = false,
   kycStatus = 'verified',
   directoryThrows = false,
@@ -56,6 +72,7 @@ async function makeService({
       singletonKey: 'global',
       fiatThreshold: fiatThreshold ?? '0',
       cryptoThreshold: cryptoThreshold ?? '0',
+      ...(excludeRiskFlags !== undefined ? { excludeRiskFlags: [...excludeRiskFlags] } : {}),
     });
   }
   const events = makeEventBus();
@@ -77,9 +94,7 @@ async function makeService({
     }),
   });
   const platformConfig = mock<PlatformConfig>(
-    autoWithdrawal
-      ? { autoWithdrawal: { enabled: true, excludeRiskFlags: [], ...autoWithdrawal } }
-      : {},
+    autoWithdrawal ? { autoWithdrawal: { enabled: true, ...autoWithdrawal } } : {},
   );
   const svc = new WalletService({
     drizzle: db.drizzle,
@@ -312,8 +327,9 @@ describe('WalletService.withdraw auto-approval (real PG)', () => {
 
   it('stays pending when the player carries an excluded risk flag', async () => {
     const { svc } = await makeService({
-      autoWithdrawal: { excludeRiskFlags: ['bonus_abuser'] },
+      autoWithdrawal: {},
       fiatThreshold: '1000',
+      excludeRiskFlags: ['bonus_abuser'],
       riskTags: ['bonus_abuser'],
     });
     const w = await seedWallet();
@@ -353,13 +369,15 @@ describe('WalletService.withdraw auto-approval (real PG)', () => {
         ),
       ),
     });
-    await db.drizzle.db
-      .insert(walletAutoWithdrawalConfig)
-      .values({ singletonKey: 'global', fiatThreshold: '1000', cryptoThreshold: '0' });
+    await db.drizzle.db.insert(walletAutoWithdrawalConfig).values({
+      singletonKey: 'global',
+      fiatThreshold: '1000',
+      cryptoThreshold: '0',
+      excludeRiskFlags: ['withdrawal_review'],
+    });
     const platformConfig = mock<PlatformConfig>({
       autoWithdrawal: {
         enabled: true,
-        excludeRiskFlags: ['withdrawal_review'],
       },
     });
     const payment = mock<PaymentAdapter>({
@@ -402,8 +420,11 @@ describe('WalletService.withdraw auto-approval (real PG)', () => {
 
   it('auto-approves when the player carries only unrelated tags', async () => {
     const { svc } = await makeService({
-      autoWithdrawal: { excludeRiskFlags: ['bonus_abuser'] },
+      autoWithdrawal: {},
       fiatThreshold: '1000',
+      // Explicit empty array proves the exclusion set is genuinely empty here,
+      // not the column's non-empty DB default leaking through.
+      excludeRiskFlags: [],
       riskTags: ['vip'],
     });
     const w = await seedWallet();
@@ -420,8 +441,9 @@ describe('WalletService.withdraw auto-approval (real PG)', () => {
 
   it('fails closed to pending when risk flags are configured but the tags port is unbound', async () => {
     const { svc } = await makeService({
-      autoWithdrawal: { excludeRiskFlags: ['bonus_abuser'] },
+      autoWithdrawal: {},
       fiatThreshold: '1000',
+      excludeRiskFlags: ['bonus_abuser'],
       riskTags: 'unbound',
     });
     const w = await seedWallet();
@@ -434,6 +456,61 @@ describe('WalletService.withdraw auto-approval (real PG)', () => {
     });
 
     expect(result.status).toBe('pending');
+  });
+
+  it('setAutoWithdrawalConfig clearing excludeRiskFlags to [] lets a high_risk-tagged player auto-approve', async () => {
+    const { svc } = await makeService({
+      autoWithdrawal: {},
+      fiatThreshold: '1000',
+      riskTags: ['high_risk'],
+    });
+    await svc.setAutoWithdrawalConfig(randomUUID(), {
+      fiatThreshold: '1000',
+      cryptoThreshold: '0',
+      excludeRiskFlags: [],
+    });
+    const w = await seedWallet();
+
+    const result = await svc.withdraw({
+      userId: w.userId,
+      amount: '40',
+      currency: 'USD',
+      ...NO_CLIENT_META,
+    });
+
+    expect(result.status).toBe('completed');
+  });
+
+  it('a per-player auto_withdrawal_rule override that clears the threshold gate does NOT bypass the tag-exclusion gate - a tag-excluded player still stays pending', async () => {
+    const { svc } = await makeService({
+      autoWithdrawal: {},
+      fiatThreshold: '10',
+      riskTags: ['kyc_rejected'],
+    });
+    const w = await seedWallet();
+    await svc.setAutoWithdrawalRule({
+      userId: w.userId,
+      threshold: '1000',
+      reason: 'trusted, but still carries an excluded tag',
+      createdBy: randomUUID(),
+    });
+
+    const result = await svc.withdraw({
+      userId: w.userId,
+      amount: '40',
+      currency: 'USD',
+      ...NO_CLIENT_META,
+    });
+
+    expect(result.status).toBe('pending');
+  });
+
+  it('an upgraded install with a pre-existing config row (no explicit excludeRiskFlags) gets the migration DEFAULT tags without any admin edit', async () => {
+    const { svc } = await makeService({ autoWithdrawal: {}, fiatThreshold: '1000' });
+
+    const config = await svc.getAutoWithdrawalConfig();
+
+    expect(new Set(config.excludeRiskFlags)).toEqual(new Set(MIGRATION_DEFAULT_EXCLUDE_RISK_FLAGS));
   });
 
   it('stays pending on the large_amount heuristic regardless of the threshold', async () => {
@@ -850,10 +927,12 @@ describe('WalletService auto-withdrawal config methods (real PG)', () => {
     const updated = await svc.setAutoWithdrawalConfig(adminId, {
       fiatThreshold: '2500',
       cryptoThreshold: '3',
+      excludeRiskFlags: ['bonus_abuser'],
     });
 
     expect(updated.fiatThreshold).toBe('2500.00000000');
     expect(updated.cryptoThreshold).toBe('3.00000000');
+    expect(updated.excludeRiskFlags).toEqual(['bonus_abuser']);
     expect(updated.updatedBy).toBe(adminId);
     expect(await svc.getAutoWithdrawalConfig()).toMatchObject({
       fiatThreshold: '2500.00000000',
