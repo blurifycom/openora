@@ -4,6 +4,7 @@ import {
   AuthGuardReasonSchema,
   type Token,
   type AdminPermissionResolver,
+  type AdminGrant,
   type ClientMeta,
 } from '@openora/core/contracts';
 import { DrizzleService } from '../db/index.js';
@@ -105,41 +106,40 @@ export class AdminGuard {
     }
 
     if (resource !== undefined && action !== undefined) {
-      const grants = this.permissionResolver
-        ? await this.permissionResolver.getGrants(userId)
-        : null;
-
-      if (grants !== null) {
-        const allowed = grants.some((g) => g.resource === resource && g.action === action);
-        if (!allowed) {
-          this.emitUnauthorized(userId, userRecord.role, resource, action, ip, userAgent);
-          throw new ORPCError('FORBIDDEN', {
-            message: `Missing permission: ${String(resource)}:${String(action)}`,
-            data: {
-              reason: AuthGuardReasonSchema.enum.permission_denied,
-              resource: String(resource),
-              action: String(action),
-            },
-          });
-        }
-      } else {
-        // Bootstrap path: seed admin has user.role='admin' but no DB assignment row. DB revocation is NOT authoritative while a static role still grants - revoke the static role to fully deny.
-        const check = userRole.authorize({ [resource]: [action] });
-        if (!check.success) {
-          this.emitUnauthorized(userId, userRecord.role, resource, action, ip, userAgent);
-          throw new ORPCError('FORBIDDEN', {
-            message: `Missing permission: ${String(resource)}:${String(action)}`,
-            data: {
-              reason: AuthGuardReasonSchema.enum.permission_denied,
-              resource: String(resource),
-              action: String(action),
-            },
-          });
-        }
+      const grants = await this.resolveGrants(userId);
+      const allowed = this.checkGrant(grants, userRole, resource, action);
+      if (!allowed) {
+        this.emitUnauthorized(userId, userRecord.role, resource, action, ip, userAgent);
+        throw new ORPCError('FORBIDDEN', {
+          message: `Missing permission: ${String(resource)}:${String(action)}`,
+          data: {
+            reason: AuthGuardReasonSchema.enum.permission_denied,
+            resource: String(resource),
+            action: String(action),
+          },
+        });
       }
     }
 
     return { userId, role: userRecord.role, ip, userAgent };
+  }
+
+  private resolveGrants(userId: string): Promise<AdminGrant[] | null> {
+    return this.permissionResolver
+      ? this.permissionResolver.getGrants(userId)
+      : Promise.resolve(null);
+  }
+
+  private checkGrant(
+    grants: AdminGrant[] | null,
+    userRole: (typeof roles)[keyof typeof roles] | undefined,
+    resource: string,
+    action: string,
+  ): boolean {
+    if (grants !== null) {
+      return grants.some((g) => g.resource === resource && g.action === action);
+    }
+    return userRole?.authorize({ [resource]: [action] }).success ?? false;
   }
 
   private emitUnauthorized(

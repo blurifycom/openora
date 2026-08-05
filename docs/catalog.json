@@ -741,6 +741,7 @@
     "identity.user.phone_login",
     "identity.user.reactivated",
     "identity.user.registered",
+    "identity.user.unauthorized_access",
     "identity.user.unlocked",
     "notifications.created",
     "player.level.changed",

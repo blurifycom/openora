@@ -16,7 +16,10 @@ const ADMIN_HEADERS = { 'x-real-ip': '127.0.0.1', 'user-agent': 'Mozilla/5.0' };
 function makeGuard({
   userId,
   grants,
-}: { userId?: string; grants?: { resource: string; action: string }[] } = {}) {
+}: {
+  userId?: string;
+  grants?: { resource: string; action: string }[];
+} = {}) {
   const events = makeEventBus();
   const sessions = mock<SessionResolver>({ resolveUserId: vi.fn(async () => userId) });
   const permissionResolver = grants
