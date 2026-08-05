@@ -53,10 +53,10 @@ provide it; loading the overlay last makes its binding win.
 ```ts
 // extensions/sentry/plugin.ts (consumer)
 import { ERROR_TRACKING } from '@openora/core/contracts';
-import { definePlugin } from '@openora/core/server';
+import type { CoreTokenCatalog, Plugin } from '@openora/core/server';
 import * as Sentry from '@sentry/node';
 
-export default definePlugin({
+export default {
   id: 'sentry',
   register(ctx) {
     const dsn = process.env['SENTRY_DSN'];
@@ -74,7 +74,7 @@ export default definePlugin({
       },
     }));
   },
-});
+} as const satisfies Plugin<CoreTokenCatalog>;
 ```
 
 Register it last in `extensions.config.ts` (a `kind: 'infra'` overlay). A PostHog/Rollbar shop

@@ -5,7 +5,7 @@ forking core. The root `AGENTS.md` links here; this is the detail an agent loads
 actually wiring a consumer.
 
 See [`catalog.json`](./catalog.json) for the machine-readable surface (routes, schemas, adapter
-tokens, slots, events, config schema) an agent reads instead of grepping `node_modules`.
+tokens, events, config schema) an agent reads instead of grepping `node_modules`.
 
 ## Fastest path: scaffold the repo
 
@@ -55,18 +55,18 @@ import { extensions } from './extensions.config.js'; // their own plugin list
 // Compose only the modules you enable (composeContract adds `health` itself).
 const contract = composeContract({ identity: identityContract, wallet: walletContract });
 
-const { listen, emitOpenApiSpec } = await createApp({
+const { listen } = await createApp({
   plugins: extensions,
   contract,
   authSchema: { user, session, account, verification, twoFactor },
   port: 3001,
   cors: { origins: ['https://my-igaming.example'] },
-  openapi: { info: { title: 'my-igaming API', version: '1.0.0' } },
 });
 
 await listen();
-await emitOpenApiSpec();
 ```
+
+`createApp` serves a live API reference at `/docs` and its matching OpenAPI document at `/openapi.json`.
 
 Downstream consumers create their own thin entrypoint that calls `createApp` and bring
 their own `extensions.config.ts`. See `tools/templates/consumer/apps/api/src/main.ts` for the reference.
@@ -162,7 +162,7 @@ consumer's own physical copy; drizzle's protected-member classes then fail nomin
 against `DrizzleService.db` (which uses `@openora/core/server`'s copy). `@openora/core/server/orm` re-exports the
 framework-free drizzle surface from the single shared instance.
 
-Full hooks guide: `packages/core/src/react/AGENTS.md`.
+Full hooks guide: `docs/standards/react-sdk.md`.
 
 ## Local dev linking to a sibling consumer
 

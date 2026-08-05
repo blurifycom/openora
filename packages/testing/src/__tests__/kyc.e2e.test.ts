@@ -2,7 +2,12 @@ import { describe, it, expect, beforeAll, afterAll, vi } from 'vitest';
 import { createHmac, randomUUID } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import { eq } from 'drizzle-orm';
-import { loadExtensions, DRIZZLE, type Container } from '@openora/core/server';
+import {
+  loadExtensions,
+  DRIZZLE,
+  type Container,
+  type CoreTokenCatalog,
+} from '@openora/core/server';
 import { player } from '@openora/core/pam/schema/profile';
 import {
   setupTestDb,
@@ -71,7 +76,7 @@ async function registerAndMaterializePlayer(app: TestApp['app'], email: string) 
   return { client, playerId: profile.id, userId: profile.userId };
 }
 
-async function seedLegacyVerifiedStatus(container: Container, userId: string) {
+async function seedLegacyVerifiedStatus(container: Container<CoreTokenCatalog>, userId: string) {
   await container
     .get(DRIZZLE)
     .db.update(player)
@@ -478,8 +483,7 @@ describe('KYC status writer concurrency (real Postgres FOR UPDATE)', () => {
     // Two real HTTP requests racing through the full router -> service -> Postgres
     // stack, genuinely concurrent transactions - not a mocked DB scripted to return
     // zero rows on the second call. Exercises the FOR UPDATE row lock +
-    // conditional-UPDATE semantics documented in compliance/AGENTS.md and
-    // pam/player-management/AGENTS.md.
+    // conditional-UPDATE semantics documented in docs/standards/compliance.md.
     const [resA, resB] = await Promise.all([
       admin.post(`/compliance/players/${userId}/kyc/override`, {
         status: 'approved',

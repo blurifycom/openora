@@ -31,14 +31,14 @@ Scripts are grouped by prefix: `check:*` reports, `fix:*` rewrites, `gen:*` emit
 | ------------------------- | ---------------------------------------------------------------------------- |
 | `pnpm dev`                | turbo dev across docs, mcp                                                   |
 | `pnpm verify`             | the full gate - every `check:*` plus `test:unit` + `test:tools`, in parallel |
-| `pnpm regen`              | tsconfig paths + openapi emit + drizzle generate + catalog                   |
+| `pnpm regen`              | tsconfig paths + drizzle generate + catalog                                  |
 | `pnpm check:types`        | `tsc --noEmit` across the workspace                                          |
 | `pnpm check:lint`         | oxlint (incl. the `oss-boundaries/*` plugin)                                 |
 | `pnpm check:format`       | oxfmt in check mode                                                          |
 | `pnpm check:boundaries`   | dependency-cruiser whole-graph boundary + cycle gate                         |
 | `pnpm check:shape`        | module layout conformance                                                    |
 | `pnpm check:deprecations` | fails on any use of a `@deprecated` symbol                                   |
-| `pnpm check:drift`        | regenerates catalog/openapi and fails if the committed output is stale       |
+| `pnpm check:drift`        | regenerates the catalog and fails if the committed output is stale           |
 | `pnpm fix:lint`           | oxlint `--fix`                                                               |
 | `pnpm fix:format`         | oxfmt write + final-newline pass                                             |
 | `pnpm test:unit`          | vitest, no external services                                                 |
@@ -149,9 +149,9 @@ generator and fails on an uncommitted diff. So if you touched schemas or routes,
 - Anything that touches the database is tested against real Postgres (`createTestDb` from
   `@openora/core/testing`), never a faked query builder. Only external vendors and cross-module
   ports are doubled.
-- New functionality enters only via `definePlugin`. No auto-discovery, no magic.
+- New functionality enters only via a plugin object. No auto-discovery, no magic.
 - ASCII only in code. Short dashes (-) only.
-- Don't hand-edit generated files: drizzle migrations, `docs/openapi.json`, `docs/catalog.json`,
+- Don't hand-edit generated files: drizzle migrations, `docs/catalog.json`,
   and the rulesync-generated agent files (`AGENTS.md`, `CLAUDE.md`, `.codex/config.toml`,
   `.github/copilot-instructions.md`, and the `.claude/`, `.github/` mirrors) - edit
   `.rulesync/` and run `pnpm gen:agents`.
@@ -179,6 +179,6 @@ relicensing right above, say so in your MR so we can discuss before merging.
 
 ## Working with AI agents
 
-Every module ships an `AGENTS.md`. The `oss-dev` MCP server (stdio, see `.mcp.json`) exposes
+The `oss-dev` MCP server (stdio, see `.mcp.json`) exposes
 the schema registry, route catalog, plugin manifest, and scaffolders as tools. Start at
 [docs/agent-quickstart.md](./docs/agent-quickstart.md).

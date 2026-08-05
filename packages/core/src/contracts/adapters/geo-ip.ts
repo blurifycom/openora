@@ -1,5 +1,7 @@
-// Geo-IP seam. A vendor (eg MaxMind) implements GeoIpAdapter; bind a concrete
-// adapter to GEO_IP_ADAPTER in the compliance module's plugin.ts.
+/**
+ * Geo-IP seam. A vendor (eg MaxMind) implements GeoIpAdapter; bind a concrete
+ * adapter to GEO_IP_ADAPTER in the compliance module's plugin.ts.
+ */
 import { createToken, type Token } from './token.js';
 
 export type GeoIpAdapter = {

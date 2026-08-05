@@ -1,7 +1,7 @@
 ---
 targets:
   - '*'
-description: 'Run the full pre-PR gate locally - `pnpm verify` plus the drift check CI runs (`pnpm check:drift`), which `pnpm verify` alone does NOT cover. Catches stale catalog/openapi/agent-docs before push.'
+description: 'Run the full pre-PR gate locally - `pnpm verify` plus the drift check CI runs (`pnpm check:drift`), which `pnpm verify` alone does NOT cover. Catches stale catalog/agent-docs before push.'
 ---
 
 Run the same gate CI enforces, in order. Stop at the first failure and report it.

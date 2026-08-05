@@ -37,16 +37,19 @@ import {
   wallet,
   walletTransaction,
   autoWithdrawalRule,
+  walletAutoWithdrawalConfig,
   walletDepositAddress,
   type Wallet,
   type WalletTransaction,
   type AutoWithdrawalRule as AutoWithdrawalRuleRow,
+  type WalletAutoWithdrawalConfig as WalletAutoWithdrawalConfigRow,
 } from '../schema/index.js';
 import type {
   TransactionResult,
   WithdrawalQueueItem,
   WithdrawalQueueFilter,
   AutoWithdrawalRule,
+  WalletAutoWithdrawalConfig,
   WalletTransactionSortBy,
 } from '../contract/index.js';
 
@@ -54,6 +57,7 @@ const logger = createLogger('wallet');
 
 export const WalletNotFoundError = makeNotFoundError('Wallet');
 export const WithdrawalNotFoundError = makeNotFoundError('Withdrawal');
+export const AutoWithdrawalConfigNotFoundError = makeNotFoundError('AutoWithdrawalConfig');
 
 export const InsufficientBalanceError = createDomainError<[available: string, requested: string]>(
   'InsufficientBalanceError',
@@ -95,15 +99,19 @@ export const CurrencyMismatchError = createDomainError(
 
 // Crypto currencies settle on the crypto rail (Fireblocks); everything else on the
 // fiat rail (a PSP). The concrete provider is recorded per transaction, not here.
-const CRYPTO_CURRENCIES = new Set(['BTC', 'ETH', 'USDT']);
+// Overridable per-operator via `platformConfig.wallet.cryptoCurrencies` - see `railFor`.
+const DEFAULT_CRYPTO_CURRENCIES = new Set(['BTC', 'ETH', 'USDT', 'USDC']);
 
 // Per-user throttle on money mutations - guards a runaway/misbehaving client, not
 // fraud (idempotency + the ledger guard cover correctness). An overlay rebinds
 // RATE_LIMITER to change the backend, not this policy.
 const WALLET_MUTATION_RATE_LIMIT = { limit: 30, windowMs: 60 * 1000 };
 
-export function railFor(currency: string): WalletRail {
-  return CRYPTO_CURRENCIES.has(currency.toUpperCase()) ? 'crypto' : 'fiat';
+export function railFor(currency: string, cryptoCurrencies?: readonly string[]): WalletRail {
+  const set = cryptoCurrencies
+    ? new Set(cryptoCurrencies.map((c) => c.toUpperCase()))
+    : DEFAULT_CRYPTO_CURRENCIES;
+  return set.has(currency.toUpperCase()) ? 'crypto' : 'fiat';
 }
 
 // Namespace the key per operation so the same raw key on a deposit then a withdraw can't
@@ -142,6 +150,7 @@ type AutoApprovalDecision = {
   thresholdSource: 'per-player' | 'global';
   kycStatus: KycStatus;
   riskTagsEvaluated: TagKey[];
+  effectiveExcludeTags: TagKey[];
   dailyCapAmount: string | null;
   dailyCapCount: number | null;
   cumulativeAmountUsed: string;
@@ -151,7 +160,7 @@ type AutoApprovalDecision = {
 // The pre-lock portion of the decision, resolvable without the advisory-locked cap read.
 type AutoApprovalGates = Pick<
   AutoApprovalDecision,
-  'threshold' | 'thresholdSource' | 'kycStatus' | 'riskTagsEvaluated'
+  'threshold' | 'thresholdSource' | 'kycStatus' | 'riskTagsEvaluated' | 'effectiveExcludeTags'
 >;
 
 function toAutoWithdrawalRuleDto(row: AutoWithdrawalRuleRow): AutoWithdrawalRule {
@@ -163,6 +172,18 @@ function toAutoWithdrawalRuleDto(row: AutoWithdrawalRuleRow): AutoWithdrawalRule
     createdBy: row.createdBy,
     createdAt: row.createdAt.toISOString(),
     updatedAt: row.updatedAt.toISOString(),
+  };
+}
+
+function toAutoWithdrawalConfigDto(row: WalletAutoWithdrawalConfigRow): WalletAutoWithdrawalConfig {
+  return {
+    id: row.id,
+    fiatThreshold: row.fiatThreshold,
+    cryptoThreshold: row.cryptoThreshold,
+    excludeRiskFlags: row.excludeRiskFlags,
+    updatedBy: row.updatedBy,
+    updatedAt: row.updatedAt.toISOString(),
+    createdAt: row.createdAt.toISOString(),
   };
 }
 
@@ -229,6 +250,10 @@ export class WalletService {
     this.riskTags = riskTags;
     this.tagEvaluationCommands = tagEvaluationCommands;
     this.audit = audit;
+  }
+
+  private resolveRail(currency: string): WalletRail {
+    return railFor(currency, this.platformConfig?.wallet?.cryptoCurrencies);
   }
 
   private rateLimit(userId: User['id']) {
@@ -340,7 +365,7 @@ export class WalletService {
           amount,
           currency,
           status: 'completed',
-          rail: railFor(currency),
+          rail: this.resolveRail(currency),
           providerName: provider,
           providerRefId: psp.externalId,
         },
@@ -489,7 +514,7 @@ export class WalletService {
   } & ClientMeta): Promise<TransactionResult> {
     await this.rateLimit(userId);
     await this.assertKycForWithdrawal(userId);
-    if (railFor(currency) === 'crypto' && !destinationAddress) {
+    if (this.resolveRail(currency) === 'crypto' && !destinationAddress) {
       throw new DestinationAddressRequiredError();
     }
 
@@ -519,7 +544,7 @@ export class WalletService {
               status: existing.status,
               replayed: true,
               walletId: current.id,
-              rail: railFor(currency),
+              rail: this.resolveRail(currency),
             };
           }
         }
@@ -536,7 +561,7 @@ export class WalletService {
             amount,
             currency,
             status: 'pending',
-            rail: railFor(currency),
+            rail: this.resolveRail(currency),
             destinationAddress: destinationAddress ?? null,
           },
         });
@@ -547,7 +572,7 @@ export class WalletService {
             status: row.status,
             replayed,
             walletId: current.id,
-            rail: railFor(currency),
+            rail: this.resolveRail(currency),
           };
         }
 
@@ -561,11 +586,6 @@ export class WalletService {
           throw new InsufficientBalanceError(current.balance, amount);
         }
 
-        // Synchronous, transactional withdrawal_review evaluation - on this SAME txn, so
-        // the assignment (if any) commits atomically with this withdrawal request and is
-        // guaranteed visible before maybeAutoApprove reads risk tags below. Must run
-        // BEFORE that read; never move this after the transaction returns (see
-        // TagEvaluationService.evaluateWithdrawalRequested for the race this closes).
         if (this.tagEvaluationCommands) {
           await this.tagEvaluationCommands.evaluateWithdrawalRequested(txn, { userId, amount });
         }
@@ -575,7 +595,7 @@ export class WalletService {
           status: row.status,
           replayed,
           walletId: current.id,
-          rail: railFor(currency),
+          rail: this.resolveRail(currency),
         };
       },
     );
@@ -1030,12 +1050,14 @@ export class WalletService {
       return null;
     }
 
-    const riskTags = await this.autoApprovalRiskTags(userId, cfg.excludeRiskFlags);
+    const effectiveExcludeTags = threshold.config.excludeRiskFlags;
+
+    const riskTags = await this.autoApprovalRiskTags(userId, effectiveExcludeTags);
     // null = exclusions configured but the lookup port is unavailable => fail closed.
     if (riskTags === null) {
       return null;
     }
-    if (riskTags.some((t) => cfg.excludeRiskFlags.includes(t))) {
+    if (riskTags.some((t) => effectiveExcludeTags.includes(t))) {
       return null;
     }
 
@@ -1049,28 +1071,117 @@ export class WalletService {
       thresholdSource: threshold.source,
       kycStatus,
       riskTagsEvaluated: riskTags,
+      effectiveExcludeTags,
     };
   }
 
   private async resolveAutoThreshold(
     userId: User['id'],
     rail: WalletRail,
-  ): Promise<{ value: string; source: 'per-player' | 'global' } | null> {
+  ): Promise<{
+    value: string;
+    source: 'per-player' | 'global';
+    config: WalletAutoWithdrawalConfig;
+  } | null> {
+    // Always read the global singleton first, even when a per-player override may end up
+    // winning below - an unseeded install (missing row) must fail closed for EVERY player,
+    // not just those without an override. getAutoWithdrawalConfig() throws when absent.
+    const config = await this.getAutoWithdrawalConfig();
     const [rule] = await this.drizzle.db
       .select()
       .from(autoWithdrawalRule)
       .where(eq(autoWithdrawalRule.userId, userId));
     if (rule) {
-      return { value: rule.threshold, source: 'per-player' };
+      return { value: rule.threshold, source: 'per-player', config };
     }
-    const global =
-      rail === 'crypto'
-        ? this.platformConfig?.autoWithdrawal?.cryptoThreshold
-        : this.platformConfig?.autoWithdrawal?.fiatThreshold;
-    if (global !== undefined) {
-      return { value: global, source: 'global' };
+    const global = rail === 'crypto' ? config.cryptoThreshold : config.fiatThreshold;
+    return { value: global, source: 'global', config };
+  }
+
+  // The row always exists in a properly-seeded install (seeded once, BF-211) - a
+  // missing row is an unexpected failure mode on the READ path, not a normal
+  // "unconfigured" state, so this throws rather than silently defaulting.
+  // maybeAutoApprove's outer try/catch handles that thrown error the same as any
+  // other unexpected error: fail closed to pending.
+  async getAutoWithdrawalConfig(): Promise<WalletAutoWithdrawalConfig> {
+    const config = await this.getAutoWithdrawalConfigOrNull();
+    if (!config) {
+      throw new AutoWithdrawalConfigNotFoundError('global');
     }
-    return null;
+    return config;
+  }
+
+  // Non-throwing variant for callers that need to tell "missing" from "found"
+  // without a try/catch (eg the router's audit `before` read).
+  async getAutoWithdrawalConfigOrNull(): Promise<WalletAutoWithdrawalConfig | null> {
+    const [row] = await this.drizzle.db
+      .select()
+      .from(walletAutoWithdrawalConfig)
+      .where(eq(walletAutoWithdrawalConfig.singletonKey, 'global'));
+    return row ? toAutoWithdrawalConfigDto(row) : null;
+  }
+
+  // Upsert, not a plain UPDATE: the WRITE path lets a Super Admin self-heal a
+  // missing singleton row (eg an install that skipped the seed step) through the
+  // existing route with zero new surface. The READ path (getAutoWithdrawalConfig,
+  // resolveAutoThreshold) still throws on a missing row and stays fail-closed -
+  // a withdrawal must never silently create config.
+  //
+  // Update + audit write run in one transaction: an audit-write failure must roll back
+  // the threshold change too, or the config could change with no audit trail (BF-211 review).
+  async setAutoWithdrawalConfig(
+    adminId: User['id'],
+    {
+      fiatThreshold,
+      cryptoThreshold,
+      excludeRiskFlags,
+    }: { fiatThreshold: string; cryptoThreshold: string; excludeRiskFlags: TagKey[] },
+    meta?: ClientMeta,
+  ): Promise<WalletAutoWithdrawalConfig> {
+    return this.drizzle.db.transaction(async (txn) => {
+      const [before] = await txn
+        .select()
+        .from(walletAutoWithdrawalConfig)
+        .where(eq(walletAutoWithdrawalConfig.singletonKey, 'global'));
+      const rows = await txn
+        .insert(walletAutoWithdrawalConfig)
+        .values({
+          singletonKey: 'global',
+          fiatThreshold,
+          cryptoThreshold,
+          excludeRiskFlags,
+          updatedBy: adminId,
+        })
+        .onConflictDoUpdate({
+          target: walletAutoWithdrawalConfig.singletonKey,
+          set: { fiatThreshold, cryptoThreshold, excludeRiskFlags, updatedBy: adminId },
+        })
+        .returning();
+      const config = toAutoWithdrawalConfigDto(
+        findOneOrThrow(rows, new AutoWithdrawalConfigNotFoundError('global')),
+      );
+      await this.audit.recordInTransaction(txn, {
+        actorId: adminId,
+        actorType: 'admin',
+        action: 'wallet.auto_withdrawal_config.set',
+        resourceType: 'auto_withdrawal_config',
+        resourceId: config.id,
+        before: before
+          ? {
+              fiatThreshold: before.fiatThreshold,
+              cryptoThreshold: before.cryptoThreshold,
+              excludeRiskFlags: before.excludeRiskFlags,
+            }
+          : null,
+        after: {
+          fiatThreshold: config.fiatThreshold,
+          cryptoThreshold: config.cryptoThreshold,
+          excludeRiskFlags: config.excludeRiskFlags,
+        },
+        ...meta,
+      });
+      return config;
+    });
   }
 
   private async autoApprovalKycStatus(userId: User['id']): Promise<KycStatus | null> {
@@ -1343,7 +1454,7 @@ export class WalletService {
         userId,
         currency,
         address: issued.address,
-        providerName: providerNameFor(railFor(currency)),
+        providerName: providerNameFor(this.resolveRail(currency)),
       })
       .onConflictDoNothing()
       .returning();
@@ -1399,7 +1510,7 @@ export class WalletService {
           amount: event.amount,
           currency: event.currency,
           status: 'completed',
-          rail: railFor(event.currency),
+          rail: this.resolveRail(event.currency),
           providerName: depositAddress.providerName,
           providerRefId: event.externalId,
           destinationAddress: event.address,

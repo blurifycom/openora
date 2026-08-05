@@ -293,8 +293,20 @@ export class IamService {
 
   private async assertSuperAdmin(caller: Caller) {
     if (!(await this.isSuperAdmin(caller))) {
+      this.emitDenied(caller, 'admin', 'update');
       throw new NotSuperAdminError();
     }
+  }
+
+  private emitDenied(caller: Caller, resource: string, action: string) {
+    this.events.emit('identity.user.unauthorized_access', {
+      userId: caller.userId,
+      resource,
+      action,
+      ip: caller.ip,
+      userAgent: caller.userAgent,
+      role: caller.role,
+    });
   }
 
   listCatalog() {
@@ -488,6 +500,7 @@ export class IamService {
       }
       const have = callerMap[g.resource] ?? 'no_access';
       if (!isLevelSufficient(have, g.level)) {
+        this.emitDenied(input.caller, g.resource, 'update');
         throw new GrantEscalationError();
       }
     }

@@ -1,4 +1,5 @@
-import { definePlugin, EVENT_BUS, DRIZZLE } from '@openora/core/server';
+import { EVENT_BUS, DRIZZLE } from '@openora/core/server';
+import type { CoreTokenCatalog, Plugin } from '@openora/core/server';
 import {
   CHAT_SYSTEM_WRITER,
   WALLET_COMMANDS,
@@ -24,7 +25,7 @@ const SOCIAL_TRANSFERS_SERVICE = createToken<SocialTransfersService>('_SocialTra
 // threaded through its own db.transaction, so it must own them directly) -
 // but it never queries chat's presence tracking: chat-commands resolves
 // online recipients and passes them into RAIN_COMMANDS.sendRain.
-export default definePlugin({
+export default {
   id: 'social-transfers',
   dependsOn: ['chat', 'wallet', 'iam', 'audit'],
   register(ctx) {
@@ -50,4 +51,4 @@ export default definePlugin({
       createSocialTransfersRouter(c.get(SOCIAL_TRANSFERS_SERVICE)),
     );
   },
-});
+} as const satisfies Plugin<CoreTokenCatalog>;

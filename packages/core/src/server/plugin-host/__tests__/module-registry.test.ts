@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { Container } from '../../kernel/index.js';
-import { createToken, createSealedToken } from '@openora/core/contracts';
+import { createToken, createSealedToken, type Token } from '@openora/core/contracts';
 import { ModuleRegistryImpl } from '../module-registry.js';
 
 function newRegistry() {
@@ -20,7 +20,9 @@ describe('ModuleRegistryImpl', () => {
   it('provide() refuses to bind a sealed token', () => {
     const { reg } = newRegistry();
     const SEALED = createSealedToken<string>('rg-enforcement');
-    expect(() => reg.provide(SEALED as never, () => 'x')).toThrow(/sealed token/i);
+    expect(() => reg.provide(SEALED as unknown as Token<string>, () => 'x')).toThrow(
+      /sealed token/i,
+    );
   });
 
   it('provideSealed() binds a sealed token exactly once', () => {

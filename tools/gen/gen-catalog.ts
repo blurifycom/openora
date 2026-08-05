@@ -4,11 +4,11 @@
  * consumer's AI agent reads INSTEAD of grepping node_modules. Emits:
  *   docs/catalog.json  - structured, consumed at runtime by the published @openora/mcp
  *                        server (a consumer's node_modules has no platform source).
- * Human/agent-readable access is the MCP dev server (describe-module, list-routes,
- * query-openapi) and each module's AGENTS.md - no monolithic markdown dump.
+ * Human/agent-readable access is the MCP dev server (describe-module, list-routes)
+ * plus each module's contract, schema, and plugin - no monolithic markdown dump.
  *
  * It captures: modules (+ tables + routes), adapter seams (+ wired-vs-stub
- * status), domain events, UI slots, Zod schema index, the igaming-config shape,
+ * status), domain events, Zod schema index, the igaming-config shape,
  * and the plugin-contract surface.
  *
  * Pure filesystem parsing - no package imports - so it is robust and DETERMINISTIC
@@ -167,26 +167,6 @@ function collectEvents(): string[] {
   return [...set].sort();
 }
 
-function collectSlots(): Array<{ name: string; description: string }> {
-  const file = join(repoRoot, 'packages', 'sdks', 'react-sdk', 'src', 'ui-plugin', 'slots.ts');
-  const src = read(file);
-  const out: Array<{ name: string; description: string }> = [];
-  let pending = '';
-  for (const line of src.split('\n')) {
-    const jsdoc = line.match(/\/\*\*\s*(.+?)\s*\*\//);
-    if (jsdoc) {
-      pending = (jsdoc[1] ?? '').trim();
-      continue;
-    }
-    const slot = line.match(/:\s*'([a-z][a-z:]+)'/);
-    if (slot) {
-      out.push({ name: slot[1] ?? '', description: pending });
-      pending = '';
-    }
-  }
-  return out.sort((a, b) => a.name.localeCompare(b.name));
-}
-
 // Each module owns its route contract under contract/, so the schema index spans both the cross-cutting core contracts zone and every module contract dir. See ADR-0021.
 function collectSchemas(): Array<{ name: string; file: string }> {
   const out: Array<{ name: string; file: string }> = [];
@@ -246,31 +226,10 @@ function collectPluginSurface(): string[] {
   return [...body.matchAll(/^\s{2}(\w+):/gm)].map((m) => m[1] ?? '').sort();
 }
 
-function collectOpenApiRoutes(): string[] {
-  const spec = read(join(repoRoot, 'docs', 'openapi.json'));
-  if (!spec) {
-    return [];
-  }
-  try {
-    const json = JSON.parse(spec);
-    const paths = Object.keys(json.paths ?? {});
-    const out: string[] = [];
-    for (const p of paths) {
-      for (const method of Object.keys(json.paths[p])) {
-        out.push(`${method.toUpperCase()} ${p}`);
-      }
-    }
-    return out.sort();
-  } catch {
-    return [];
-  }
-}
-
 const catalog = {
   modules: collectModules(),
   adapters: collectAdapters(),
   events: collectEvents(),
-  uiSlots: collectSlots(),
   schemas: collectSchemas(),
   config: {
     token: 'IGAMING_CONFIG',
@@ -278,7 +237,6 @@ const catalog = {
     fields: collectConfigFields(),
   },
   pluginContract: collectPluginSurface(),
-  httpRoutes: collectOpenApiRoutes(),
 };
 
 const docsDir = join(repoRoot, 'docs');
@@ -287,6 +245,6 @@ writeFileSync(join(docsDir, 'catalog.json'), JSON.stringify(catalog, null, 2) + 
 console.log(
   `[catalog] ${catalog.modules.length} modules, ${catalog.adapters.length} adapters ` +
     `(${catalog.adapters.filter((a) => a.status === 'wired').length} wired), ` +
-    `${catalog.events.length} events, ${catalog.uiSlots.length} slots, ${catalog.schemas.length} schemas`,
+    `${catalog.events.length} events, ${catalog.schemas.length} schemas`,
 );
 console.log('[catalog] wrote docs/catalog.json');

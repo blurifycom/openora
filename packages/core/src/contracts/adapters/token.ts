@@ -1,24 +1,34 @@
-// Typed DI token. A token is a plain Symbol at runtime; the phantom `__token`
-// field only carries the resolved type so the composition container can infer
-// what `container.get(TOKEN)` returns. No decorators, no reflection - the type
-// travels with the symbol. See @openora/core/server `Container`.
+/**
+ * Typed DI token. A token is a plain Symbol at runtime; the phantom `__token`
+ * field only carries the resolved type so the composition container can infer
+ * what `container.get(TOKEN)` returns. No decorators, no reflection - the type
+ * travels with the symbol. See @openora/core/server `Container`.
+ */
 
-// Common shape both Token and SealedToken share - what Container itself accepts.
-// Container is a type-erased-at-runtime symbol map; it doesn't care whether a
-// token is sealed, only ModuleRegistry.provide()/provideSealed() do.
+/**
+ * Common shape both Token and SealedToken share - what Container itself accepts.
+ * Container is a type-erased-at-runtime symbol map; it doesn't care whether a
+ * token is sealed, only ModuleRegistry.provide()/provideSealed() do.
+ */
 export type AnyToken<T, K extends string = string> = symbol & {
   readonly __token?: T;
   readonly __key?: K;
 };
 
-export type TokenCatalog = Record<string, AnyToken<unknown>>;
+export type TokenCatalogValues = Record<string, unknown>;
+
+export type TokenCatalog<Values extends TokenCatalogValues = TokenCatalogValues> = {
+  [K in keyof Values]: AnyToken<Values[K]>;
+};
 
 export type TokenValue<T> = T extends AnyToken<infer Value> ? Value : never;
 
-// The `__sealed?: never` brand makes Token<T> structurally incompatible with
-// SealedToken<T> (which has `__sealed: true`). That mismatch is what lets the
-// `provide<T>(token: Token<T>, ...)` signature reject sealed tokens at the
-// call site - see SealedToken below.
+/**
+ * The `__sealed?: never` brand makes Token<T> structurally incompatible with
+ * SealedToken<T> (which has `__sealed: true`). That mismatch is what lets the
+ * `provide<T>(token: Token<T>, ...)` signature reject sealed tokens at the
+ * call site - see SealedToken below.
+ */
 export type Token<T, K extends string = string> = AnyToken<T, K> & {
   readonly __sealed?: never;
 };

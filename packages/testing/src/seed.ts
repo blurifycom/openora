@@ -1,7 +1,13 @@
 import { Pool } from 'pg';
 import { drizzle } from 'drizzle-orm/node-postgres';
 import { seedDemoData, type SeedResult } from './seed-demo-data.js';
-import { createAuth, DRIZZLE, type DrizzleDb, Container } from '@openora/core/server';
+import {
+  createAuth,
+  DRIZZLE,
+  type DrizzleDb,
+  Container,
+  type CoreTokenCatalog,
+} from '@openora/core/server';
 import { seedIam } from '@openora/core/iam/seed';
 import { seedTag } from '@openora/core/pam/tag/seed';
 import { user, session, account, verification } from '@openora/core/pam/schema/identity';
@@ -23,7 +29,7 @@ export type SeedMinimalOptions = {
  * for the direct table inserts (players, wallets, ...).
  */
 export async function seedMinimal(
-  container: Container,
+  container: Container<CoreTokenCatalog>,
   options: SeedMinimalOptions = {},
 ): Promise<SeedResult> {
   const drizzleSvc = container.get(DRIZZLE);

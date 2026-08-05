@@ -1,4 +1,5 @@
-import { definePlugin, DRIZZLE } from '@openora/core/server';
+import { DRIZZLE } from '@openora/core/server';
+import type { CoreTokenCatalog, Plugin } from '@openora/core/server';
 import {
   ADMIN_USER_DIRECTORY,
   CHAT_BLOCK_WRITER,
@@ -9,7 +10,7 @@ import {
 import { ChatCommandsService } from './service/chat-commands.service.js';
 import { createChatCommandsRouter } from './router/index.js';
 
-export default definePlugin({
+export default {
   id: 'chat-commands',
   dependsOn: ['chat', 'social-transfers'],
   register(ctx) {
@@ -25,4 +26,4 @@ export default definePlugin({
       return createChatCommandsRouter(svc);
     });
   },
-});
+} as const satisfies Plugin<CoreTokenCatalog>;

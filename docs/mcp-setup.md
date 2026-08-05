@@ -21,7 +21,7 @@ It is idempotent and does three things against the current repo:
 
 Then restart your editor (or run `/mcp`) and run **`/start`**: it asks what you want to build,
 calls the `enhance-intent` tool to turn your fuzzy ask into a grounded spec (classified against
-the decision tree, with live module/adapter/slot context), and drives the right scaffold flow.
+the decision tree, with live module and adapter context), and drives the right scaffold flow.
 
 A `create:app` consumer ships the same script (`pnpm setup:mcp`, delegating to this checkout) -
 run it once in the generated repo so its own agents get the toolbelt.
@@ -58,16 +58,15 @@ The server uses stdio transport (no port). Add this to your editor's MCP config:
 
 | Tool                    | What it returns                                                                            |
 | ----------------------- | ------------------------------------------------------------------------------------------ |
-| `read-agents-md`        | A named section from root or per-module AGENTS.md                                          |
+| `read-agents-md`        | A named section from root AGENTS.md                                                        |
 | `list-modules`          | All registered modules + their group, tables, routes                                       |
-| `describe-module`       | Full module surface: AGENTS.md + tables + schemas + routes in one call                     |
+| `describe-module`       | Full module surface: tables + schemas + routes in one call                                 |
 | `list-routes`           | oRPC route namespaces (filter by module name)                                              |
-| `list-extension-points` | UI slots, exported events, adapter port interfaces                                         |
-| `query-openapi`         | Search the generated OpenAPI spec by keyword                                               |
+| `list-extension-points` | Exported events and adapter port interfaces                                                |
 | `get-drizzle-schema`    | pgTable definitions across all modules (filter by module)                                  |
 | `propose-table-change`  | Collision-check a new table name before adding it                                          |
 | `schema-get`            | Find a Zod schema by name with its file location                                           |
-| `docs-search`           | Full-text search across all docs/ and AGENTS.md files                                      |
+| `docs-search`           | Full-text search across docs, README, and root AGENTS.md                                   |
 | `db-query-readonly`     | Run a read-only SQL query against the dev database                                         |
 | `list-slash-commands`   | List available slash commands (scaffold shortcuts)                                         |
 | `enhance-intent`        | Turn a fuzzy "build X" ask into a classified, grounded brief + step-by-step playbook       |
@@ -82,7 +81,7 @@ The server uses stdio transport (no port). Add this to your editor's MCP config:
 | `scaffold-plugin` | Creates a new overlay extension skeleton                                                   |
 | `scaffold-route`  | Adds an oRPC route stub to a module                                                        |
 | `scaffold-app`    | Bootstraps a new downstream consumer repo (api + web + backoffice) linked to this checkout |
-| `regen`           | Runs drizzle-kit generate + OpenAPI emit + catalog regeneration                            |
+| `regen`           | Runs drizzle-kit generate + catalog regeneration                                           |
 | `run-verify`      | Runs pnpm verify (typecheck + lint + tests)                                                |
 
 ## The consumer-facing server (`@openora/mcp`)

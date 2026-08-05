@@ -7,6 +7,7 @@ Detail for the testing lines in `conventions`. Read this before adding or restru
 - **Co-locate as `__tests__/<name>.test.ts` (Vitest).**
 - **A file that calls `createTestDb`/`createTestRedis` is named `<name>.int.test.ts`** and runs in `test:integration` (needs docker Postgres + Redis); `test:unit` is the infra-free suite and stays a ~4s loop. Lint-enforced by `oss-module-shape/int-test-file-naming`.
 - The end-to-end tier lives in `@openora/testing` (`bootTestApp` against a shared test db). Recreate that db with `pnpm db:setup:test:fresh` if a migration was edited after it was applied locally - drizzle hashes each migration file's bytes, so a stale hash re-runs an applied migration.
+- Integration Vitest configs using `@openora/testing` run with `poolOptions.threads.singleThread = true`: the harness shares one test database. Build before `pnpm test:integration`, because extension loading resolves compiled plugins.
 
 ## What is real, what is doubled
 
@@ -36,4 +37,5 @@ Detail for the testing lines in `conventions`. Read this before adding or restru
 
 - **Cover new logic as part of the change** - unit for pure fns; always include authz negatives.
 - **Deterministic and isolated:** no shared mutable state, no real network, seedable data. Real-infra suites stay parallel-safe - own your database and Redis keys, never assume an empty shared one.
+- `@openora/testing` is test-only. Never import it from production code or point `TEST_DATABASE_URL` at a real or development database: its cleanup truncates data.
 - Run one file or dir with `pnpm -F @openora/core vitest run <path>`; find the tests touching a file with `pnpm -F @openora/core vitest related <path>`.

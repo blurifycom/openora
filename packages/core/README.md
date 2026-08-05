@@ -21,16 +21,16 @@ The rolling `canary` dev channel (`@openora/core@canary`) publishes on every `de
 
 ## What's inside (subpath exports)
 
-| Subpath                          | Surface                                                                                        |
-| -------------------------------- | ---------------------------------------------------------------------------------------------- |
-| `@openora/core/contracts`        | Isomorphic Zod schemas, contract composition, adapter ports + DI tokens                        |
-| `@openora/core/server`           | The engine: `createApp`, plugin host (`definePlugin`), DI container, EventBus, Drizzle service |
-| `@openora/core/react`            | Typed client, auth, realtime hooks for your frontend (no UI components)                        |
-| `@openora/core/<domain>`         | A domain's public contract surface, eg `wallet`, `compliance`, `engagement`                    |
-| `@openora/core/<domain>/schema`  | Read-only Drizzle tables for cross-module reads                                                |
-| `@openora/core/<domain>/plugins` | The domain's plugin entry for your composition root                                            |
+| Subpath                          | Surface                                                                                  |
+| -------------------------------- | ---------------------------------------------------------------------------------------- |
+| `@openora/core/contracts`        | Isomorphic Zod schemas, contract composition, adapter ports + DI tokens                  |
+| `@openora/core/server`           | The engine: `createApp`, plugin host (`Plugin`), DI container, EventBus, Drizzle service |
+| `@openora/core/react`            | Typed client, auth, realtime hooks for your frontend (no UI components)                  |
+| `@openora/core/<domain>`         | A domain's public contract surface, eg `wallet`, `compliance`, `engagement`              |
+| `@openora/core/<domain>/schema`  | Read-only Drizzle tables for cross-module reads                                          |
+| `@openora/core/<domain>/plugins` | The domain's plugin entry for your composition root                                      |
 
-Everything enters through plugins - `definePlugin({ id, dependsOn, register })` - wired explicitly in your app's `extensions.config.ts`. No decorators, no auto-discovery.
+Everything enters through typed plugin objects - `{ id, dependsOn, register } satisfies Plugin<CoreTokenCatalog>` - wired explicitly in your app's `extensions.config.ts`. No decorators, no auto-discovery.
 
 ## Principles
 
@@ -38,7 +38,7 @@ Everything enters through plugins - `definePlugin({ id, dependsOn, register })` 
 - **Zod-first** - every wire shape is a schema; types are inferred, never hand-written.
 - **Swappable vendor seams** - PSP, KYC, game aggregator, realtime, job queue, and message broker are ports with in-process defaults and adapter overrides.
 - **Regulatory-grade audit** - append-only, sha256 hash-chained log; every state-changing action leaves a trail.
-- **AI-native** - machine-readable catalog, per-module agent docs, and a queryable MCP server ([`@openora/mcp`](https://www.npmjs.com/package/@openora/mcp)).
+- **AI-native** - machine-readable catalog and a queryable MCP server ([`@openora/mcp`](https://www.npmjs.com/package/@openora/mcp)).
 
 ## Getting started
 

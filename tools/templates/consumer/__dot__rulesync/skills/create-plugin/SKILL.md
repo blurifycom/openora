@@ -32,7 +32,7 @@ Hand off via the `add-feature` skill's `handoff.md`. Do not patch the linked OSS
 - Read `.claude/rules/overview.md` (what you may and may not touch) and
   `docs/standards/database.md` (if the extension owns tables).
 - Inspect what already exists with the `oss` MCP: `catalog-overview`, `list-adapters` (token +
-  default binding to swap), `list-routes` (collision check), `list-slots`, `list-events`.
+  default binding to swap), `list-routes` (collision check), `list-events`.
 - For a domain rule you can't safely assume (a limit, a KYC threshold, a jurisdiction behavior),
   spawn `expert` before scaffolding.
 

@@ -243,32 +243,7 @@ function readAdapterTokens(): string[] {
   return out.sort();
 }
 
-/**
- * Resolves an AGENTS.md from a module name, a package name, or a repo-relative path -
- * module docs live at packages/core/src/<domain>[/<module>]/AGENTS.md, package docs at
- * packages/<name>/AGENTS.md.
- */
-function resolveAgentsMd(target: string): string | null {
-  const bare = target.replace(/^@openora(-[a-z]+)?\//, '');
-  const moduleDir = findModuleDir(bare);
-  const candidates = [
-    ...(moduleDir ? [join(moduleDir, 'AGENTS.md')] : []),
-    repoPath(target, 'AGENTS.md'),
-    repoPath('packages', bare, 'AGENTS.md'),
-    repoPath('apps', bare, 'AGENTS.md'),
-  ];
-  return candidates.find(existsSync) ?? null;
-}
-
-/** Named UI slot identifiers - the platform is headless; slots live in the consumer frontend. */
-function readSlots(): string[] {
-  return [];
-}
-
-function buildPlaybook(
-  kind: IntentKind,
-  ctx: { modules: string[]; tokens: string[]; slots: string[] },
-): string {
+function buildPlaybook(kind: IntentKind, ctx: { modules: string[]; tokens: string[] }): string {
   const moduleList = ctx.modules.length
     ? ctx.modules.map((m) => `- ${m}`).join('\n')
     : '- (none yet)';
@@ -276,7 +251,7 @@ function buildPlaybook(
     case 'feature':
       return [
         '## Where it goes',
-        'A new business domain -> a new module under `packages/core/src/<domain>/<name>/` (registered in extensions.config.ts, contract slice composed in tools/gen/build-contract.ts).',
+        'A new business domain -> a new module under `packages/core/src/<domain>/<name>/` (registered in extensions.config.ts).',
         '',
         '## Existing modules (avoid name collisions)',
         moduleList,
@@ -287,7 +262,7 @@ function buildPlaybook(
         '3. Run `scaffold-module <domain> <name>` (MCP tool). In a consumer repo, an overlay is `pnpm gen plugin` instead.',
         '4. Fill the `// AGENT: implement here` regions: schema/ (pgTable), contract/ (Zod), service/, router/. Leave the wiring alone.',
         '5. Add routes with `scaffold-route <domain> <module> <METHOD> <path>`. Admin routes MUST `await adminGuard.assert(context)` first.',
-        '6. Run `regen` (drizzle migration + OpenAPI + SDK + catalog), then `run-verify`.',
+        '6. Run `regen` (drizzle migration + catalog), then `run-verify`.',
         '7. Hand the build to `module-author` (or `dev`) with the spec from step 1.',
       ].join('\n');
     case 'adapter':
@@ -312,8 +287,7 @@ function buildPlaybook(
         '',
         '## Playbook',
         '1. Implement the page in your frontend repo using `@openora/core/react` data hooks.',
-        '2. To extend an existing surface without forking it, fill a named slot via your frontend UI plugin (ADR-0006).',
-        '3. Run `run-verify`. Delegate backend routes to `dev`.',
+        '2. Run `run-verify`. Delegate backend routes to `dev`.',
       ].join('\n');
     case 'route':
       return [
@@ -324,7 +298,7 @@ function buildPlaybook(
         moduleList,
         '',
         '## Playbook',
-        '1. Call `query-openapi <keyword>` first to confirm the route does not already exist.',
+        '1. Call `list-routes` first to confirm the route does not already exist.',
         '2. Run `scaffold-route <domain> <module> <METHOD> <path>`.',
         '3. Player routes resolve the caller from the verified better-auth session (getUserId); admin routes MUST assert AdminGuard as the first line.',
         '4. Run `regen` then `run-verify`.',
@@ -384,19 +358,13 @@ const server = new McpServer({
 server.registerTool(
   'read-agents-md',
   {
-    description: 'Read a section of AGENTS.md (or a package-level AGENTS.md) by heading name.',
+    description: 'Read a section of the root AGENTS.md by heading name.',
     inputSchema: {
       section: z.string().optional().describe('H2 heading to read (omit for the full file)'),
-      package: z
-        .string()
-        .optional()
-        .describe('Package name or path relative to repo root (omit for root AGENTS.md)'),
     },
   },
-  async ({ section, package: pkg }) => {
-    const filePath = pkg
-      ? (resolveAgentsMd(pkg) ?? repoPath(pkg, 'AGENTS.md'))
-      : repoPath('AGENTS.md');
+  async ({ section }) => {
+    const filePath = repoPath('AGENTS.md');
     const content = readFile(filePath);
     if (!content) {
       return { content: [{ type: 'text', text: `No AGENTS.md found at ${filePath}` }] };
@@ -435,14 +403,14 @@ server.registerTool(
   'describe-module',
   {
     description:
-      'Everything you need to edit a module in one call: its AGENTS.md, Drizzle tables, Zod schemas, and router surface. Prefer this over reading the files individually.',
+      'Everything you need to edit a module in one call: Drizzle tables, Zod schemas, and router surface. Prefer this over reading the files individually.',
     inputSchema: {
       name: z.string().describe('Module name (kebab-case)'),
       response_format: z
         .enum(['concise', 'detailed'])
         .optional()
         .describe(
-          'concise (default): AGENTS.md + table/schema/route names only. detailed: full source of every file.',
+          'concise (default): table/schema/route names only. detailed: full source of every file.',
         ),
     },
   },
@@ -465,10 +433,7 @@ server.registerTool(
     const schemaSrc = readFile(join(dir, 'schema', 'index.ts'));
     const zodSrc = readFile(join(dir, 'contract', 'index.ts'));
     const routerSrc = readFile(join(dir, 'router', 'index.ts'));
-    const parts: string[] = [
-      `=== Module: ${name} ===\n`,
-      readFile(join(dir, 'AGENTS.md')) || '(no AGENTS.md)',
-    ];
+    const parts: string[] = [`=== Module: ${name} ===\n`];
 
     if (detailed) {
       parts.push('\n--- Drizzle tables (src/schema/index.ts) ---', schemaSrc || '(no tables)');
@@ -557,46 +522,6 @@ server.registerTool(
     }
 
     return { content: [{ type: 'text', text: parts.join('\n') }] };
-  },
-);
-
-server.registerTool(
-  'query-openapi',
-  {
-    description: 'Search the generated OpenAPI spec for paths or operations matching a keyword.',
-    inputSchema: { keyword: z.string() },
-  },
-  async ({ keyword }) => {
-    const specPath = repoPath('docs', 'openapi.json');
-    if (!existsSync(specPath)) {
-      return {
-        content: [
-          { type: 'text', text: 'OpenAPI spec not generated yet. Run `pnpm regen` first.' },
-        ],
-      };
-    }
-    const spec = JSON.parse(readFileSync(specPath, 'utf8'));
-    const kw = keyword.toLowerCase();
-    const matches: string[] = [];
-    for (const [path, methods] of Object.entries(spec.paths ?? {})) {
-      if (path.toLowerCase().includes(kw)) {
-        const methodList = Object.keys(methods as object)
-          .join(', ')
-          .toUpperCase();
-        matches.push(`${methodList} ${path}`);
-      }
-    }
-    return {
-      content: [
-        {
-          type: 'text',
-          text:
-            matches.length > 0
-              ? `Routes matching "${keyword}":\n${matches.join('\n')}`
-              : `No routes match "${keyword}"`,
-        },
-      ],
-    };
   },
 );
 
@@ -698,7 +623,7 @@ server.registerTool(
   'regen',
   {
     description:
-      'Run pnpm regen: drizzle-kit generate (migrations from pgTable schemas) + emit OpenAPI spec + regenerate the typed SDK.',
+      'Run pnpm regen: drizzle-kit generate (migrations from pgTable schemas) + regenerate the catalog.',
     inputSchema: {},
   },
   async () => {
@@ -857,7 +782,7 @@ server.registerTool(
   'docs-search',
   {
     description:
-      'Search markdown docs (docs/, README, AGENTS.md, ADRs, per-package AGENTS.md) for a keyword. Returns matching lines with locations.',
+      'Search markdown docs, README, and root AGENTS.md for a keyword. Returns matching lines with locations.',
     inputSchema: {
       query: z.string().describe('Case-insensitive substring to search for'),
       limit: z.number().optional().describe('Max matching lines to return (default 60)'),
@@ -989,7 +914,7 @@ server.registerTool(
   'enhance-intent',
   {
     description:
-      'Turn a fuzzy "what I want to build" ask into a grounded, structured brief. Classifies the intent against the platform decision tree, injects LIVE repo context (existing modules, adapter tokens, UI slots), and returns an exact step-by-step playbook (which scaffold-* tool to run, which agent to delegate to, propose-table-change + run-verify reminders) plus an acceptance-criteria stub. Call this from the /start onboarding flow, or any time a user describes a feature in vague terms.',
+      'Turn a fuzzy "what I want to build" ask into a grounded, structured brief. Classifies the intent against the platform decision tree, injects live repo context (existing modules and adapter tokens), and returns an exact step-by-step playbook (which scaffold-* tool to run, which agent to delegate to, propose-table-change + run-verify reminders) plus an acceptance-criteria stub. Call this from the /start onboarding flow, or any time a user describes a feature in vague terms.',
     inputSchema: {
       ask: z
         .string()
@@ -1007,7 +932,6 @@ server.registerTool(
     const ctx = {
       modules: listAllModules().map((m) => `${m.group}/${m.name}`),
       tokens: readAdapterTokens(),
-      slots: readSlots(),
     };
     const tree = parseAgentsMdSection(
       readFile(repoPath('AGENTS.md')),
@@ -1116,7 +1040,7 @@ server.registerTool(
 
     if (ask) {
       const resolved = classifyIntent(ask);
-      const playbook = buildPlaybook(resolved, { modules, tokens, slots: readSlots() });
+      const playbook = buildPlaybook(resolved, { modules, tokens });
       const text = [
         '# Onboarding',
         `The user opened with: **${ask}**  (looks like: ${resolved})`,

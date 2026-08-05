@@ -103,9 +103,7 @@ process.env['SERVICE_MANIFEST'] ??= '${manifest.join(',')}';
 
 async function bootstrap() {
   const plugins = await loadExtensions();
-  // Routes come from the loaded plugins. To emit an OpenAPI spec for this
-  // service, compose its slices with composeContract({ ... }) from
-  // @openora/core/contracts and pass it as \`contract\`. See tools/gen/build-contract.ts.
+  // Routes come from the loaded plugins; createApp exposes runtime API docs.
   const { listen } = await createApp({ plugins });
   await listen();
 }
@@ -128,5 +126,5 @@ console.log(`  pnpm -F ${pkgName} dev        # boots the baked-in manifest`);
 console.log(`  SERVICE_MANIFEST=... pnpm -F ${pkgName} dev   # override at runtime`);
 console.log('To exclude these modules from the monolith, drop them from extensions.config.ts');
 console.log(
-  'and run them only via this host (events flow once a durable broker is set: AMQP_URL).',
+  'and run them only via this host (set REDIS_URL or bind MESSAGE_BROKER in an overlay; AMQP_URL only enables the outbox).',
 );

@@ -37,16 +37,16 @@ export class MyEmailAdapter implements NotificationDeliveryAdapter {
 ```ts
 // apps/api/src/extensions/email-delivery/plugin.ts
 import { NOTIFICATION_DELIVERY_ADAPTER } from '@openora/core/contracts';
-import { definePlugin } from '@openora/core/server';
+import type { CoreTokenCatalog, Plugin } from '@openora/core/server';
 import { MyEmailAdapter } from './src/my-email-adapter.js';
 
-export default definePlugin({
+export default {
   id: 'email-delivery',
   dependsOn: ['notifications'],
   register(ctx) {
     ctx.provide(NOTIFICATION_DELIVERY_ADAPTER, () => new MyEmailAdapter());
   },
-});
+} as const satisfies Plugin<CoreTokenCatalog>;
 ```
 
 4. Register in `extensions.config.ts` **after** the `notifications` entry.

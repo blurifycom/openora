@@ -7,7 +7,7 @@ import type { PlopTypes } from '@turbo/gen';
 // dir - used by both the OSS monorepo and downstream consumer repos (a consumer's
 // `turbo/generators/config.ts` re-exports this default). Humans run `pnpm gen
 // <type> ...`; AI agents call the same via the MCP `scaffold-*` tools. See the
-// "How to add ..." sections in AGENTS.md.
+// Root instructions document the available generators.
 //
 //   pnpm gen module <domain> <name>  - business module (schema/service/router/plugin)
 //   pnpm gen route <module> <M> <p>  - oRPC procedure + contract entry
@@ -212,31 +212,6 @@ function wireCoreExports(domain: string, name: string): string {
     : 'no new @openora/core exports needed';
 }
 
-/**
- * Registers the module's contract slice in the composition root so its routes
- * reach the emitted OpenAPI spec and the typed client.
- */
-function wireBuildContract(domain: string, name: string): string {
-  const file = join(root(), 'tools', 'gen', 'build-contract.ts');
-  if (!existsSync(file)) {
-    return 'no tools/gen/build-contract.ts (skipped)';
-  }
-  const camel = toCamel(name);
-  const contractName = `${camel}Contract`;
-  let src = readFileSync(file, 'utf8');
-  if (src.includes(contractName)) {
-    return `build-contract.ts already composes '${camel}'`;
-  }
-  const importLine = `import { ${contractName} } from '@openora/core/${domain}/contracts/${name}';`;
-  src = src.replace(/(\n\n\/\/ oxlint-disable-next-line)/, `\n${importLine}$1`);
-  src = src.replace(
-    /(const SLICES: Record<string, AnyContract> = \{)/,
-    `$1\n  ${camel}: ${contractName},`,
-  );
-  writeFileSync(file, src);
-  return `composed '${camel}' in tools/gen/build-contract.ts`;
-}
-
 function appendRoute(
   domain: string,
   moduleName: string,
@@ -314,10 +289,8 @@ export default function generator(plop: PlopTypes.NodePlopAPI): void {
         file('index.ts', 'module/index.hbs'),
         file('migrate.ts', 'module/migrate.hbs'),
         file('drizzle.config.ts', 'module/drizzle.config.hbs'),
-        file('AGENTS.md', 'module/agents.hbs'),
         () => wireDomainBarrels(domain, name),
         () => wireCoreExports(domain, name),
-        () => wireBuildContract(domain, name),
         () => registerExtension(name, `./packages/core/dist/${domain}/${name}/plugin.js`),
         () =>
           `next: pnpm gen:drizzle (this module's migration history) && pnpm regen && pnpm verify`,

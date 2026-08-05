@@ -1,5 +1,6 @@
 import type {
   PlayEligibilityPort,
+  PlatformConfig,
   WalletCommands,
   WalletDebitArgs,
   WalletDebitOutcome,
@@ -30,7 +31,10 @@ export const WalletRgRestrictedError = makeConflictError(
 );
 
 export class WalletCommandsService implements WalletCommands {
-  constructor(private readonly playEligibility: PlayEligibilityPort) {}
+  constructor(
+    private readonly playEligibility: PlayEligibilityPort,
+    private readonly platformConfig?: PlatformConfig,
+  ) {}
 
   // Completed, internal-settlement ledger row (no provider ref) shared by every gameplay move.
   private writeLedgerRow(
@@ -45,7 +49,7 @@ export class WalletCommandsService implements WalletCommands {
       amount,
       currency: row.currency,
       status: 'completed',
-      rail: railFor(row.currency),
+      rail: railFor(row.currency, this.platformConfig?.wallet?.cryptoCurrencies),
     });
   }
 

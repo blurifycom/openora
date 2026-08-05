@@ -67,18 +67,16 @@ process.env['EXTENSIONS_CONFIG'] ??= resolve(
 );
 
 async function bootstrap() {
-  const { listen, emitOpenApiSpec } = await createApp({
+  const { listen } = await createApp({
     plugins: await loadExtensions(),
     contract,
     authSchema: { user, session, account, verification, twoFactor },
     igaming,
     port: Number(process.env['PORT'] ?? 3001),
     cors: { origins: process.env['CORS_ORIGINS']?.split(',') ?? '*' },
-    openapi: { info: { title: '{{name}} API', version: '0.1.0' } },
   });
 
   await listen();
-  await emitOpenApiSpec();
 }
 
 void bootstrap();

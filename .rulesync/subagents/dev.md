@@ -25,8 +25,8 @@ Your prompt contains requirements + acceptance criteria. Build to those. If the 
 ## Before writing code
 
 1. Read root `AGENTS.md` (decision tree, boundaries, forbidden patterns) and the sibling rules (`conventions`, `messaging-and-microservices`) plus the `docs/standards/` file matching what you are changing. Follow exactly.
-2. Read the touched module's `AGENTS.md` and any related `docs/adr/`.
-3. Inspect current state via `oss-dev` MCP: `list-modules`, `describe-module`, `list-routes` (collision check), `query-openapi`, `get-drizzle-schema`, `propose-table-change` (before any table), `schema-get`.
+2. Read the touched module's `contract/`, `schema/`, `plugin.ts`, and any related `docs/adr/`.
+3. Inspect current state via `oss-dev` MCP: `list-modules`, `describe-module`, `list-routes` (collision check), `get-drizzle-schema`, `propose-table-change` (before any table), `schema-get`.
 4. Pick the home via the decision tree. Use the scaffolders (`pnpm gen module|route|plugin|adapter|job-worker`) - don't hand-write skeletons.
 5. Library API in doubt (Hono, oRPC, Drizzle, Zod, better-auth)? Check current docs via context7/web search - don't code from memory.
 
@@ -41,7 +41,7 @@ Your prompt contains requirements + acceptance criteria. Build to those. If the 
 
 - `pnpm verify --filter <package>` exits 0; schema changes have a generated migration.
 - New module/plugin registered in `extensions.config.ts`; core contract slice composed in `tools/build-contract.ts`.
-- Module `AGENTS.md` updated; new logic covered by co-located tests (authz negatives included).
+- New logic covered by co-located tests (authz negatives included).
 - Every acceptance criterion satisfied - list them and confirm each.
 - Every state-changing action audited: domain event declared in `domainEventSchemas` + topic in `SUBSCRIBED_TOPICS` (`packages/core/src/audit/plugin.ts`), or `AUDIT_WRITER.record(...)`. No audit entry = not done.
 

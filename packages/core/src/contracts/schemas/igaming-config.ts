@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { createToken } from '../adapters/token.js';
 
 // Centralized, schema-validated igaming configuration. A downstream operator
 // declares one of these and passes it to `createApp({ igaming })`; it is the single
@@ -93,4 +94,4 @@ export function defineIgamingConfig(config: IgamingConfigInput): IgamingConfig {
 }
 
 /** DI token to inject the active IgamingConfig into services/adapters. */
-export const IGAMING_CONFIG = Symbol('IGAMING_CONFIG');
+export const IGAMING_CONFIG = createToken<IgamingConfig>('IGAMING_CONFIG');

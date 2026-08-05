@@ -1,5 +1,7 @@
-// Identity options token. Downstream operators can provide this to configure
-// identity behaviors such as login rate-limiting/lockouts.
+/**
+ * Identity options token. Downstream operators can provide this to configure
+ * identity behaviors such as login rate-limiting/lockouts.
+ */
 import { createToken, type Token } from './token.js';
 
 export type IdentityLockoutOptions = {

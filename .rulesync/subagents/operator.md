@@ -19,7 +19,7 @@ You are a technical founder standing up a new online igaming on top of `@openora
 
 ## Verify outside-in
 
-- Don't trust docs - run things. `list-modules`/`list-routes`/`query-openapi` (MCP) for the declared surface; boot the probe app + `pnpm db:seed`, hit endpoints via curl to confirm they work, not just that they're declared.
+- Don't trust docs - run things. `list-modules`/`list-routes` (MCP) for the declared surface; boot the probe app + `pnpm db:seed`, hit endpoints via curl to confirm they work, not just that they're declared.
 - Check each module's ports + `adapters/` to confirm vendor seams are real and overridable (KYC/PSP/notifications). `docs/catalog.json` marks each adapter wired vs stub - note stub-only ones.
 
 ## Readiness checklist (score Have / Partial / Missing, with the specific gap)

@@ -1,6 +1,8 @@
-// Payment seam. A PSP (card/bank/e-wallet) or a custody/address-issuing crypto vendor
-// implements PaymentAdapter; bind a concrete adapter to PAYMENT_ADAPTER in the wallet
-// module's plugin.ts. See docs/adapters/payment.md for the full binding guide.
+/**
+ * Payment seam. A PSP (card/bank/e-wallet) or a custody/address-issuing crypto vendor
+ * implements PaymentAdapter; bind a concrete adapter to PAYMENT_ADAPTER in the wallet
+ * module's plugin.ts. See docs/adapters/payment.md for the full binding guide.
+ */
 import { createToken, type Token } from './token.js';
 
 /**

@@ -23,7 +23,7 @@ You build overlay plugins for the OSS igaming platform - extending behavior with
 ## Grounding (do this first)
 
 1. Read root `AGENTS.md` (plugin system, boundaries, forbidden patterns).
-2. `list-extension-points` (MCP) for available tokens and event types; `list-routes`/`query-openapi` to confirm new routes don't collide.
+2. `list-extension-points` (MCP) for available tokens and event types; `list-routes` to confirm new routes don't collide.
    Library API in doubt (Hono, oRPC, Drizzle, Zod)? Check current docs via context7/web search - don't code from memory.
 3. Scaffold - never write from scratch:
    ```
@@ -43,7 +43,7 @@ ctx.jobs.worker({ queue, schema, handler, onDeadLetter }); // process JOB_QUEUE 
 ctx.mcp.tool(definition); // expose a new MCP tool
 ```
 
-No decorators, no controllers - `definePlugin({ id, dependsOn, register })` wired by the functional Container (ADR-0009). DB tables: a `pgTable` in the plugin's own `schema/index.ts`, then `pnpm regen`.
+No decorators, no controllers - `{ id, dependsOn, register } satisfies Plugin<CoreTokenCatalog>` wired by the functional Container (ADR-0009). DB tables: a `pgTable` in the plugin's own `schema/index.ts`, then `pnpm regen`.
 
 ## Swapping a vendor adapter
 
@@ -61,5 +61,4 @@ No decorators, no controllers - `definePlugin({ id, dependsOn, register })` wire
 ## Finish criteria
 
 - `pnpm verify` exits 0; plugin boots (smoke-test via health check).
-- Plugin `AGENTS.md` documents what it does, tokens swapped, events consumed.
 - Every state-changing action audited (domain event the `audit` module subscribes to, or `AUDIT_WRITER.record(...)`). No audit entry = not done.

@@ -187,52 +187,6 @@
     "wallet.deposit.completed",
     "wallet.withdrawal.completed"
   ],
-  "uiSlots": [
-    {
-      "name": "append",
-      "description": ""
-    },
-    {
-      "name": "dashboard:tiles",
-      "description": "Stat cards in the dashboard grid. Subject: void"
-    },
-    {
-      "name": "games:columns",
-      "description": "Games list page."
-    },
-    {
-      "name": "player:detail:actions",
-      "description": "Action buttons in the player detail page header. Subject: Player"
-    },
-    {
-      "name": "player:detail:sections",
-      "description": "Collapsible sections in the player detail body. Subject: Player"
-    },
-    {
-      "name": "players:columns",
-      "description": ""
-    },
-    {
-      "name": "players:toolbar",
-      "description": "Toolbar controls above the players DataTable. Subject: void"
-    },
-    {
-      "name": "user:detail:actions",
-      "description": "Action buttons in the user detail page header. Subject: AdminUser"
-    },
-    {
-      "name": "user:detail:sections",
-      "description": "Sections in the user detail body. Subject: AdminUser"
-    },
-    {
-      "name": "users:columns",
-      "description": ""
-    },
-    {
-      "name": "users:toolbar",
-      "description": "Toolbar controls above the users DataTable. Subject: void"
-    }
-  ],
   "schemas": [
     {
       "name": "AdminTransactionSchema",
@@ -479,8 +433,6 @@
     "imports",
     "mcp",
     "providers",
-    "routers",
-    "slots"
-  ],
-  "httpRoutes": []
+    "routers"
+  ]
 }

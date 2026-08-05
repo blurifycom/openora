@@ -11,9 +11,9 @@ const DUMMY_DATABASE_URL = 'postgres://test:test@127.0.0.1:1/create_app_test';
 
 describe('createApp - distributed-only durable seams (ADR-0030)', () => {
   it('throws a clear, actionable error when no durable seam is bound', async () => {
-    await expect(
-      createApp({ plugins: [], databaseUrl: DUMMY_DATABASE_URL, openapi: { enabled: false } }),
-    ).rejects.toThrow(/MESSAGE_BROKER.*JOB_QUEUE.*CACHE.*RATE_LIMITER/s);
+    await expect(createApp({ plugins: [], databaseUrl: DUMMY_DATABASE_URL })).rejects.toThrow(
+      /MESSAGE_BROKER.*JOB_QUEUE.*CACHE.*RATE_LIMITER/s,
+    );
   });
 
   it('boots and serves once REDIS_URL auto-binds all four seams', async () => {
@@ -23,7 +23,6 @@ describe('createApp - distributed-only durable seams (ADR-0030)', () => {
       const created = await createApp({
         plugins: [],
         databaseUrl: DUMMY_DATABASE_URL,
-        openapi: { enabled: false },
       });
 
       for (const token of [MESSAGE_BROKER, JOB_QUEUE, CACHE, RATE_LIMITER]) {
@@ -32,6 +31,14 @@ describe('createApp - distributed-only durable seams (ADR-0030)', () => {
       const res = await created.app.request('/health');
       expect(res.status).toBe(200);
       expect(await res.json()).toMatchObject({ status: 'ok' });
+
+      const spec = await created.app.request('/openapi.json');
+      expect(spec.status).toBe(200);
+      expect(await spec.json()).toMatchObject({ openapi: expect.any(String) });
+
+      const docs = await created.app.request('/docs');
+      expect(docs.status).toBe(200);
+      expect(await docs.text()).toContain('API Reference');
 
       await created.close();
     } finally {
@@ -70,8 +77,8 @@ describe('createApp - service name for the Redis Streams consumer group', () => 
     process.env['SERVICE_MANIFEST'] = 'wallet,iam';
     delete process.env['SERVICE_NAME'];
 
-    await expect(
-      createApp({ plugins: [], databaseUrl: DUMMY_DATABASE_URL, openapi: { enabled: false } }),
-    ).rejects.toThrow(/SERVICE_MANIFEST is set but SERVICE_NAME is not/);
+    await expect(createApp({ plugins: [], databaseUrl: DUMMY_DATABASE_URL })).rejects.toThrow(
+      /SERVICE_MANIFEST is set but SERVICE_NAME is not/,
+    );
   });
 });

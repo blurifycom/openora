@@ -1,6 +1,5 @@
 import { z } from 'zod';
 import { LimitsSchema } from './igaming-config.js';
-import { TagKeySchema } from './tag.js';
 import { MoneyAmountSchema } from './common.js';
 import { createToken } from '../adapters/token.js';
 
@@ -51,11 +50,6 @@ export const KycConfigSchema = z
 export const AutoWithdrawalConfigSchema = z
   .object({
     enabled: z.boolean().default(false),
-    /** Fiat-rail auto-approval ceiling; a per-player rule overrides it. */
-    fiatThreshold: MoneyAmountSchema.optional(),
-    cryptoThreshold: MoneyAmountSchema.optional(),
-    /** Active tag keys that veto auto-approval and force manual review. */
-    excludeRiskFlags: z.array(TagKeySchema).default([]),
     /** Amount cap on auto-approved payouts per player per trailing 24h. Absent = no cap. */
     dailyCapAmount: MoneyAmountSchema.optional(),
     /** Count cap on auto-approved payouts per player per trailing 24h. Absent = no cap. */
@@ -64,6 +58,20 @@ export const AutoWithdrawalConfigSchema = z
   .strict();
 
 export type AutoWithdrawalConfig = z.infer<typeof AutoWithdrawalConfigSchema>;
+
+export const WalletConfigSchema = z
+  .object({
+    /**
+     * Currency codes routed to the crypto rail by `railFor` (case-insensitive).
+     * Absent = the built-in default (BTC, ETH, USDT, USDC). Lets an operator add or
+     * swap crypto assets (eg a custody vendor's supported asset list) without a
+     * core code change.
+     */
+    cryptoCurrencies: z.array(z.string().min(1)).optional(),
+  })
+  .strict();
+
+export type WalletConfig = z.infer<typeof WalletConfigSchema>;
 
 export const PlatformConfigSchema = z
   .object({
@@ -96,6 +104,8 @@ export const PlatformConfigSchema = z
     kyc: KycConfigSchema.optional(),
     /** Auto-approve withdrawals that clear every risk gate instead of queuing them for manual review. Absent = always manual. */
     autoWithdrawal: AutoWithdrawalConfigSchema.optional(),
+    /** Wallet rail-routing knobs (currently: the crypto currency set). Absent = built-in default. */
+    wallet: WalletConfigSchema.optional(),
     /**
      * Player-facing language codes the operator supports (eg `['en', 'es']`).
      * Undefined or empty means no restriction - any value is accepted.

@@ -8,6 +8,7 @@ import {
   TagAssignmentNotFoundError,
   TagKeyConflictError,
   TagInUseError,
+  TagRemovalReasonRequiredError,
 } from '../service/tag.service.js';
 import { TagRuleService, TagRuleNotFoundError } from '../service/tag-rule.service.js';
 
@@ -52,11 +53,16 @@ export function createTagRouter(tag: TagService, rule: TagRuleService, adminGuar
 
     removePlayerTag: os.removePlayerTag.handler(async ({ context, input }) => {
       await adminGuard.assert(context, 'tag', 'delete');
-      return mapErrors({ NOT_FOUND: [TagNotFoundError, TagAssignmentNotFoundError] }, () =>
-        tag.removePlayerTag(
-          { ...input, removalActorUserId: getUserId(context) },
-          context.clientMeta,
-        ),
+      return mapErrors(
+        {
+          BAD_REQUEST: TagRemovalReasonRequiredError,
+          NOT_FOUND: [TagNotFoundError, TagAssignmentNotFoundError],
+        },
+        () =>
+          tag.removePlayerTag(
+            { ...input, removalActorUserId: getUserId(context) },
+            context.clientMeta,
+          ),
       );
     }),
 

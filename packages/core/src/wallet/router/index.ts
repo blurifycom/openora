@@ -17,6 +17,7 @@ import {
   IdempotencyKeyReuseError,
   DepositAddressUnsupportedError,
   DestinationAddressRequiredError,
+  AutoWithdrawalConfigNotFoundError,
 } from '../service/wallet.service.js';
 
 export function createWalletRouter(
@@ -170,6 +171,26 @@ export function createWalletRouter(
           });
         }
         return deleted;
+      }),
+    },
+
+    autoWithdrawalConfig: {
+      set: os.autoWithdrawalConfig.set.handler(async ({ input, context }) => {
+        const {
+          userId: adminId,
+          ip,
+          userAgent,
+        } = await adminGuard.assert(context, 'auto-withdrawal-config', 'update');
+        // The before-read, upsert, and audit write all run inside one transaction in
+        // the service - an audit failure rolls back the threshold change too.
+        return wallet.setAutoWithdrawalConfig(adminId, input, { ip, userAgent });
+      }),
+
+      get: os.autoWithdrawalConfig.get.handler(async ({ context }) => {
+        await adminGuard.assert(context, 'auto-withdrawal-config', 'view');
+        return mapErrors({ NOT_FOUND: AutoWithdrawalConfigNotFoundError }, () =>
+          wallet.getAutoWithdrawalConfig(),
+        );
       }),
     },
 

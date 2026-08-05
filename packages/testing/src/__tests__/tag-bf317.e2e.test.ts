@@ -1,7 +1,12 @@
 import { describe, it, expect, beforeAll, afterAll, vi } from 'vitest';
 import { randomUUID } from 'node:crypto';
 import { eq } from 'drizzle-orm';
-import { loadExtensions, DRIZZLE, type Container } from '@openora/core/server';
+import {
+  loadExtensions,
+  DRIZZLE,
+  type Container,
+  type CoreTokenCatalog,
+} from '@openora/core/server';
 import { rgExclusion } from '@openora/core/compliance/schema';
 import {
   setupTestDb,
@@ -84,7 +89,11 @@ async function activeTagKeys(admin: TestClient, playerId: string): Promise<strin
   return (await activeTags(admin, playerId)).map((t) => t.key);
 }
 
-async function backdateExclusionExpiry(container: Container, exclusionId: string, daysAgo: number) {
+async function backdateExclusionExpiry(
+  container: Container<CoreTokenCatalog>,
+  exclusionId: string,
+  daysAgo: number,
+) {
   const past = new Date(Date.now() - daysAgo * 24 * 60 * 60 * 1000);
   await container
     .get(DRIZZLE)

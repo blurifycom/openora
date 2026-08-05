@@ -58,7 +58,7 @@ Edit the module's `contract/` dir (`packages/core/src/<domain>/<module>/contract
 
 ```
 schema-get name=<EntityName>
-query-openapi keyword="<entity>"
+list-routes
 ```
 
 If a shared schema exists in `@openora/core/contracts`, re-export it instead of duplicating.
@@ -89,7 +89,7 @@ list-routes module=<name>
 
 ## Step 8: Wire the plugin
 
-Edit `packages/core/src/<domain>/<module>/plugin.ts`. Confirm the service is added to `ctx.providers` and the router is added to `ctx.routers`. The registry surface is: `providers`, `controllers`, `routers`, `slots`, `events`, `mcp`, `imports`.
+Edit `packages/core/src/<domain>/<module>/plugin.ts`. Confirm the service is registered and the router is added through the plugin host.
 
 ## Step 9: Add frontend consumption layer
 
@@ -97,18 +97,7 @@ The platform is headless backend only - pages, components, and styling live in t
 
 - **A new data hook** (eg `useAdminUsers`, `usePlayerWallet`) -> `packages/core/src/react/src/hooks/`. `@openora/core/react` is the supported frontend consumption surface (data hooks, auth, realtime transport - no components).
 
-## Step 10: Update AGENTS.md
-
-Edit `packages/core/src/<domain>/<module>/AGENTS.md`. It holds ONLY what code can't say:
-
-- What the module does (one paragraph) + where-to-look pointers (`contract/`, `schema/index.ts`, `domainEventSchemas`).
-- Invariants and rationale: fail-closed branches, DB guards, race windows accepted by design, "X is the single writer of Y".
-- Extension seams: ports provided/consumed, what an overlay can rebind.
-- Module-specific don'ts (global rules are lint-enforced - don't repeat them).
-
-Never route/table/layout/event listings - they duplicate `contract/`/`schema/`/`docs/catalog.json` and drift.
-
-## Step 11: Verify
+## Step 10: Verify
 
 ```
 /verify --filter @openora/core
@@ -116,7 +105,7 @@ Never route/table/layout/event listings - they duplicate `contract/`/`schema/`/`
 
 Fix any typecheck, lint, boundary, or test failures before considering the work done.
 
-## Step 12: Integration check
+## Step 11: Integration check
 
 Start the full stack:
 

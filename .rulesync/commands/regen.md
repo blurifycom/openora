@@ -1,20 +1,19 @@
 ---
 targets:
   - '*'
-description: 'Regenerate all derived artifacts - oRPC OpenAPI spec, Drizzle client, and the machine-readable docs/catalog.json. Run after any change to Drizzle tables or oRPC contracts.'
+description: 'Regenerate all derived artifacts - Drizzle client and the machine-readable docs/catalog.json. Run after any change to Drizzle tables or oRPC contracts.'
 ---
 
 Run `pnpm regen` in the repo root.
 
 This runs in order (see root `package.json`):
 
-1. `turbo run check:types` - emits `docs/openapi.json` from the composed oRPC contract and
-   regenerates any per-package codegen registered with turbo.
+1. `pnpm gen:tsconfig` - synchronizes TypeScript path aliases.
 2. `pnpm gen:drizzle` (`scripts/generate-all.mjs`) - discovers every module's
    `src/**/drizzle.config.ts` and runs `drizzle-kit generate` per module, against that module's own
    co-located `drizzle/migrations/` history (ADR-0027).
 3. `pnpm run gen:catalog` (`tsx tools/gen/gen-catalog.ts`) - emits `docs/catalog.json`: the
-   machine-readable surface listing routes / schemas / adapters / slots / events. The MCP
+   machine-readable surface listing routes / schemas / adapters / events. The MCP
    dev server and AI catalogs read from this file.
 
 `regen` does NOT create a migration. After it succeeds and you've changed table shape,

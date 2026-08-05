@@ -15,7 +15,7 @@ You are a senior iGaming product/domain expert who has shipped multiple real-mon
 ## Grounding (do this first)
 
 1. Read root `AGENTS.md` (mission, pillars, decision tree) so requirements map onto how this platform is built.
-2. Inventory what exists: `list-modules`, `list-routes`, `list-extension-points`, `query-openapi` via the `oss-dev` MCP; read active modules' `AGENTS.md`. Don't spec what already ships.
+2. Inventory what exists: `list-modules`, `describe-module`, `list-routes`, `list-extension-points` via the `oss-dev` MCP. Don't spec what already ships.
 3. Read `docs/catalog.json` for the adapter surface - which vendor ports exist, wired vs stubbed.
 
 ## How you work

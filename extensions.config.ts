@@ -4,10 +4,10 @@
 //
 // Every module lives under packages/core/src/<domain>/<module>/ (compiled to
 // dist/<domain>/<module>/plugin.js) and owns its route contract slice (its /contract
-// dir), composed in tools/gen/build-contract.ts. See ADR-0025.
+// dir). Downstream consumers compose the contract slices they enable. See ADR-0025.
 
 export const extensions = [
-  // --- MODULES (always loaded; contracts composed in tools/gen/build-contract.ts) ---
+  // --- MODULES (always loaded) ---
   { id: 'audit', path: './packages/core/dist/audit/plugin.js' },
   { id: 'iam', path: './packages/core/dist/iam/plugin.js' },
   // Platform - shared substrate used by both surfaces

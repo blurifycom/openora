@@ -1,4 +1,5 @@
-import { definePlugin, ADMIN_GUARD, EVENT_BUS, DRIZZLE } from '@openora/core/server';
+import { ADMIN_GUARD, EVENT_BUS, DRIZZLE } from '@openora/core/server';
+import type { CoreTokenCatalog, Plugin } from '@openora/core/server';
 import * as z from 'zod';
 import {
   ADMIN_USER_DIRECTORY,
@@ -22,7 +23,7 @@ import { createWalletRouter } from './router/index.js';
 import { MockPaymentAdapter } from './adapters/mock/mock-payment-adapter.js';
 import { HmacPaymentWebhookVerifier } from './adapters/hmac-payment-webhook-verifier.js';
 
-export default definePlugin({
+export default {
   // NOT dependsOn 'tag': that would cycle (tag hard-depends on wallet's WALLET_READER).
   // wallet's use of tag's PLAYER_TAGS / TAG_EVALUATION_COMMANDS is optional and resolved
   // lazily in the router factory (`c.has(...)`), which runs after every plugin has
@@ -40,7 +41,14 @@ export default definePlugin({
       return new HmacPaymentWebhookVerifier(webhookSecret);
     });
     // Other modules debit through this port within their own transaction (never importing wallet tables). See ADR-0016.
-    ctx.provide(WALLET_COMMANDS, (c) => new WalletCommandsService(c.get(PLAY_ELIGIBILITY)));
+    ctx.provide(
+      WALLET_COMMANDS,
+      (c) =>
+        new WalletCommandsService(
+          c.get(PLAY_ELIGIBILITY),
+          c.has(PLATFORM_CONFIG) ? c.get(PLATFORM_CONFIG) : undefined,
+        ),
+    );
     // Read-only queries for cross-module consumers (eg tag evaluation). Never exposes wallet internals.
     ctx.provide(WALLET_READER, (c) => new WalletReaderService(c.get(DRIZZLE)));
     ctx.provide(ADMIN_WALLET_REPORTING, (c) => new DrizzleAdminWalletReporting(c.get(DRIZZLE)));
@@ -66,4 +74,4 @@ export default definePlugin({
       ),
     );
   },
-});
+} as const satisfies Plugin<CoreTokenCatalog>;
