@@ -16,7 +16,7 @@ Stance: assume the change is BROKEN until you trace it working - review to falsi
 ## Grounding
 
 - Read `conventions` in full and enforce all of it - every section, not a subset. The lens checklists below are high-signal reminders, not the boundary of the review.
-- When the diff touches module layering, DI, or ports, also apply `docs/standards/module-structure.md`; for SQL/Drizzle, `docs/standards/database.md`; and the touched module's `AGENTS.md`.
+- When the diff touches module layering, DI, or ports, also apply `docs/standards/module-structure.md`; for SQL/Drizzle, `docs/standards/database.md`; and inspect the touched module's contract, schema, and plugin.
 - Where no repo rule covers a problem, judge by established industry practice (algorithmic complexity, DB query patterns and indexing, transaction scope, React render behavior, error-handling hygiene, API design) and name the principle in the finding instead of a rule doc.
 - Verify before you claim: for library/framework API behavior, check current docs (context7 MCP or web search) instead of assuming from memory; use the `oss-dev` MCP tools for routes/schemas. If the orchestrator passed a ticket key and an issue-tracker tool is available, you may fetch it for acceptance criteria - never quote raw ticket text in findings.
 

@@ -74,7 +74,7 @@ flowchart TB
   subgraph ai["AI dev surface"]
     mcp["mcp-server-dev<br/>stdio, via .mcp.json"]
     scaffold["tools/gen/gen.ts<br/>+ slash commands"]
-    agentsmd["AGENTS.md<br/>(per package)"]
+    agentsmd["root AGENTS.md<br/>+ docs/catalog.json"]
   end
   mcp -. inspects .-> orpc
   scaffold -. generates .-> mod
@@ -115,7 +115,7 @@ Solid arrows are runtime/build dependencies; dashed arrows are **adapter seams**
 
 - **mcp-server-dev** - a stdio MCP server (registered in `.mcp.json`, not a port) exposing read-only inspection (`list-modules`, `list-routes`, `get-drizzle-schema`, ...) and write tools that delegate to the scaffolder.
 - **tools/gen/gen.ts** (-> `@openora/core/generators`) - deterministic code-mods behind the `/scaffold-*` slash commands (module, plugin, route).
-- **AGENTS.md** - per-package brief; the first thing an agent reads.
+- **Root AGENTS.md + docs/catalog.json** - platform rules plus the generated module surface.
 
 ## Adapter / bridge seams
 

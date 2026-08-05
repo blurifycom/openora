@@ -25,7 +25,7 @@ The platform ships the backend surface (auth, wallet, player management, complia
 - **Explicit wiring** - a small functional DI container with typed tokens. No decorators, no auto-discovery; everything is greppable.
 - **Swappable vendor seams** - PSP, KYC, aggregator, chat, realtime transport, job queue, and message broker are ports with default in-process drivers and adapter overrides.
 - **Regulatory audit log** - append-only, sha256 hash-chained. Every state-changing action leaves a trail.
-- **AI-native** - an `AGENTS.md` in every module, scaffolders as slash commands, a queryable MCP dev server, and a generated machine-readable `catalog.json`.
+- **AI-native** - scaffolders as slash commands, a queryable MCP dev server, and a generated machine-readable `catalog.json`.
 
 ## Table of contents
 

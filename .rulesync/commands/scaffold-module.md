@@ -1,7 +1,7 @@
 ---
 targets:
   - '*'
-description: 'Generate a new OSS module via turbo gen. Creates schema, contract, service, router, plugin.ts, a working `list` route, AGENTS.md, and wires the domain barrels, @openora/core exports, contract slice, and extensions.config.ts.'
+description: 'Generate a new OSS module via turbo gen. Creates schema, contract, service, router, plugin.ts, a working `list` route, and wires the domain barrels, @openora/core exports, contract slice, and extensions.config.ts.'
 ---
 
 Run `pnpm gen module $ARGUMENTS` (args: `<domain> <name>`, eg `casino tournaments`) in the repo root. The module lands in `packages/core/src/<domain>/<name>/`; the domain may be new.

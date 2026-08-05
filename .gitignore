@@ -22,12 +22,8 @@ routeTree.gen.ts
 .tanstack
 
 # AI-agent instruction files - ALL generated, never commit. Regenerated on
-# `pnpm install` (prepare) or `pnpm gen:agents`; nested CLAUDE.md stubs by
-# tools/gen/gen-claude-stubs.mjs. Never hand-write a CLAUDE.md anywhere (git
-# silently skips it) - module docs belong in the module's committed AGENTS.md.
-# AGENTS.md is root-anchored so per-package AGENTS.md (hand-written) stay tracked.
-# CLAUDE.md is NOT anchored: every per-module CLAUDE.md is a generated `@AGENTS.md`
-# redirect stub, so none of them belong in git at any depth.
+# `pnpm install` (prepare) or `pnpm gen:agents`. Never hand-write a CLAUDE.md
+# anywhere; root instructions are generated from `.rulesync/`.
 CLAUDE.md
 /AGENTS.md
 /.mcp.json

@@ -7,7 +7,7 @@ import type { PlopTypes } from '@turbo/gen';
 // dir - used by both the OSS monorepo and downstream consumer repos (a consumer's
 // `turbo/generators/config.ts` re-exports this default). Humans run `pnpm gen
 // <type> ...`; AI agents call the same via the MCP `scaffold-*` tools. See the
-// "How to add ..." sections in AGENTS.md.
+// Root instructions document the available generators.
 //
 //   pnpm gen module <domain> <name>  - business module (schema/service/router/plugin)
 //   pnpm gen route <module> <M> <p>  - oRPC procedure + contract entry
@@ -289,7 +289,6 @@ export default function generator(plop: PlopTypes.NodePlopAPI): void {
         file('index.ts', 'module/index.hbs'),
         file('migrate.ts', 'module/migrate.hbs'),
         file('drizzle.config.ts', 'module/drizzle.config.hbs'),
-        file('AGENTS.md', 'module/agents.hbs'),
         () => wireDomainBarrels(domain, name),
         () => wireCoreExports(domain, name),
         () => registerExtension(name, `./packages/core/dist/${domain}/${name}/plugin.js`),

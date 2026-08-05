@@ -61,5 +61,4 @@ No decorators, no controllers - `{ id, dependsOn, register } satisfies Plugin<Co
 ## Finish criteria
 
 - `pnpm verify` exits 0; plugin boots (smoke-test via health check).
-- Plugin `AGENTS.md` documents what it does, tokens swapped, events consumed.
 - Every state-changing action audited (domain event the `audit` module subscribes to, or `AUDIT_WRITER.record(...)`). No audit entry = not done.

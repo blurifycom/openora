@@ -32,7 +32,7 @@
     "gen:catalog": "tsx tools/gen/gen-catalog.ts",
     "gen:drizzle": "pnpm -F @openora/core gen:drizzle",
     "gen:tsconfig": "tsx tools/gen/sync-tsconfig-paths.ts",
-    "gen:agents": "rulesync generate && node tools/gen/gen-claude-stubs.mjs",
+    "gen:agents": "rulesync generate",
     "regen": "pnpm run gen:tsconfig && pnpm run gen:drizzle && pnpm run gen:catalog",
     "db:migrate": "openora-migrate",
     "db:seed": "tsx tools/db/seed.ts",

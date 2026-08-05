@@ -5,7 +5,7 @@ forking core. The root `AGENTS.md` links here; this is the detail an agent loads
 actually wiring a consumer.
 
 See [`catalog.json`](./catalog.json) for the machine-readable surface (routes, schemas, adapter
-tokens, slots, events, config schema) an agent reads instead of grepping `node_modules`.
+tokens, events, config schema) an agent reads instead of grepping `node_modules`.
 
 ## Fastest path: scaffold the repo
 
@@ -162,7 +162,7 @@ consumer's own physical copy; drizzle's protected-member classes then fail nomin
 against `DrizzleService.db` (which uses `@openora/core/server`'s copy). `@openora/core/server/orm` re-exports the
 framework-free drizzle surface from the single shared instance.
 
-Full hooks guide: `packages/core/src/react/AGENTS.md`.
+Full hooks guide: `docs/standards/react-sdk.md`.
 
 ## Local dev linking to a sibling consumer
 

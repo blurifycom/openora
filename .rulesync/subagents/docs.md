@@ -34,7 +34,7 @@ You keep the OSS docs honest. Read the code first, write the docs second - never
 
 | Doc claim                          | Verify against                                                                                                            |
 | ---------------------------------- | ------------------------------------------------------------------------------------------------------------------------- |
-| Repo map / "what lives where"      | `ls apps/ packages/` - every named dir must exist and match its `package.json`/`AGENTS.md`                                |
+| Repo map / "what lives where"      | `ls apps/ packages/` - every named dir must exist and match its `package.json`                                            |
 | Module roster / domain claims      | `mcp__oss-dev__list-modules` + `extensions.config.ts`                                                                     |
 | Route / adapter / extension claims | `list-routes`, `list-extension-points`                                                                                    |
 | Scaffolder flags + templates       | `tools/gen/gen.ts`, `packages/core/generators/src/config.ts`, `tools/create/create-igaming-app.ts`, `ls tools/templates/` |
@@ -44,7 +44,7 @@ You keep the OSS docs honest. Read the code first, write the docs second - never
 
 ## Scope
 
-Edit directly: `.rulesync/rules/*.md` (canonical brief + rules), `.rulesync/subagents|commands|skills/`, root `README.md`, `docs/*.md`, `docs/adr/*.md` (Update blocks only), `packages/**/AGENTS.md`, `apps/**/AGENTS.md`, `tools/templates/consumer/__dot__rulesync/**`.
+Edit directly: `.rulesync/rules/*.md` (canonical brief + rules), `.rulesync/subagents|commands|skills/`, root `README.md`, `docs/*.md`, `docs/adr/*.md` (Update blocks only), and `tools/templates/consumer/__dot__rulesync/**`.
 
 ADRs: never rewrite the original Context/Decision - add `> **Update (YYYY-MM-DD)**: ...` at the top. Obsolete docs get `Status: Superseded by ADR-XXXX`, not deletion.
 

@@ -220,7 +220,7 @@ export class KycVerificationService {
    * call is about to persist (`opts.checks`, falling back to the existing row's `checks`
    * when the caller supplies none - the SAME value written below, so the gate can never
    * evaluate a different set of checks than the one that ends up on the row) contain any
-   * non-`approved` entry - see `compliance/AGENTS.md` > KYC workflow completeness.
+   * non-`approved` entry.
    */
   // referenceId is the KYC vendor's own reference, not an internal Uuid - stays a plain string.
   async reconcile(
@@ -313,8 +313,8 @@ export class KycVerificationService {
    * `kyc-decision-sync` job handler, run off the webhook request path. Enriches the
    * reconcile through `resolveDecision`/`resolveRiskSignals` when the bound adapter
    * implements them, falling back to a status-only reconcile when it does not. Errors
-   * (notably `PlayerNotFoundError`) propagate so the job queue retries the decision -
-   * see `compliance/AGENTS.md` > Webhook -> job flow. `receivedAt` is the webhook's
+   * (notably `PlayerNotFoundError`) propagate so the job queue retries the decision.
+   * `receivedAt` is the webhook's
    * arrival time (stamped by the router before enqueue, carried on the job payload) -
    * passed through to `reconcile` as the monotonicity watermark so a job that runs
    * out of arrival order (the driver ignores `orderingKey`) can't overwrite a newer
@@ -419,9 +419,8 @@ export class KycVerificationService {
   /**
    * Shared transaction body for `requestResubmission`/`overrideStatus`: inserts the
    * manual `kyc_verification` history row and calls `KYC_STATUS_WRITER.setStatus` in
-   * the SAME transaction (extracted so the two documented locking/idempotency rules
-   * in `compliance/AGENTS.md` > Admin KYC actions cannot silently diverge between the
-   * two call sites). Caller has already run the idempotency pre-check
+   * the SAME transaction so the locking and idempotency rules cannot diverge between
+   * the two call sites. Caller has already run the idempotency pre-check
    * (`requirePlayerRowForUpdate` + a status compare) before calling this.
    */
   private async applyManualDecision(
@@ -463,8 +462,7 @@ export class KycVerificationService {
   /**
    * Admin-initiated: requests the player resubmit documents. Idempotent on a repeat
    * call while the player is already at `resubmission_requested` - no duplicate history
-   * row, no duplicate `compliance.kyc.updated` emit. See `compliance/AGENTS.md` >
-   * Admin KYC actions for why the `FOR UPDATE` lock has to sit inside the transaction.
+   * row or `compliance.kyc.updated` emit.
    */
   async requestResubmission(userId: User['id'], reason: string, actorId: User['id']) {
     return this.drizzle.db.transaction(async (trx) => {
@@ -488,8 +486,7 @@ export class KycVerificationService {
    * Admin-initiated: forces the player to an operator-chosen status, guarded by the
    * router's `compliance:override-limit`. `resolveManualStatus` remaps an `approved`
    * choice to `manually_overridden`; every other choice is written verbatim. Idempotent
-   * on a repeat call resolving to the status the player already holds. Rationale for
-   * both: `compliance/AGENTS.md` > Admin KYC actions.
+   * on a repeat call resolving to the status the player already holds.
    */
   async overrideStatus(
     userId: User['id'],
@@ -520,7 +517,7 @@ export class KycVerificationService {
    * `overrideStatus('approved', ...)` path, so a bulk approval is recorded identically
    * to a single one. Bounded fan-out with per-player error isolation - one failure is
    * captured as a result row rather than aborting the batch, and the returned message
-   * is a fixed string, never the raw exception text (`compliance/AGENTS.md`).
+   * is a fixed string, never the raw exception text.
    */
   async bulkApprove(
     userIds: User['id'][],

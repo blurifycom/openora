@@ -57,19 +57,7 @@ function checkDomain(dir: string, id: string): Check[] {
   const hasRuntime = keys.some(
     (k) => k === `./${id}/plugin` || k === `./${id}/server` || k.startsWith(`./${id}/plugins/`),
   );
-  const moduleDirs = has('plugin.ts')
-    ? [{ rel: '', dir }]
-    : readdirSync(dir)
-        .sort()
-        .map((m) => ({ rel: `${m}/`, dir: join(dir, m) }))
-        .filter(({ dir: m }) => statSync(m).isDirectory() && existsSync(join(m, 'plugin.ts')));
-
   return [
-    ...moduleDirs.map(({ rel }) => ({
-      label: `${rel}AGENTS.md`,
-      ok: existsSync(join(dir, rel, 'AGENTS.md')),
-      hint: 'every module ships an AGENTS.md (what it does, extension points, do/dont)',
-    })),
     {
       label: 'index.ts (slice root)',
       ok: has('index.ts'),

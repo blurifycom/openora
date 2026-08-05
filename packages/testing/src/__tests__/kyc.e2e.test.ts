@@ -483,8 +483,7 @@ describe('KYC status writer concurrency (real Postgres FOR UPDATE)', () => {
     // Two real HTTP requests racing through the full router -> service -> Postgres
     // stack, genuinely concurrent transactions - not a mocked DB scripted to return
     // zero rows on the second call. Exercises the FOR UPDATE row lock +
-    // conditional-UPDATE semantics documented in compliance/AGENTS.md and
-    // pam/player-management/AGENTS.md.
+    // conditional-UPDATE semantics documented in docs/standards/compliance.md.
     const [resA, resB] = await Promise.all([
       admin.post(`/compliance/players/${userId}/kyc/override`, {
         status: 'approved',

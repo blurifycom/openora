@@ -126,5 +126,5 @@ console.log(`  pnpm -F ${pkgName} dev        # boots the baked-in manifest`);
 console.log(`  SERVICE_MANIFEST=... pnpm -F ${pkgName} dev   # override at runtime`);
 console.log('To exclude these modules from the monolith, drop them from extensions.config.ts');
 console.log(
-  'and run them only via this host (events flow once a durable broker is set: AMQP_URL).',
+  'and run them only via this host (set REDIS_URL or bind MESSAGE_BROKER in an overlay; AMQP_URL only enables the outbox).',
 );

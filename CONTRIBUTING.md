@@ -179,6 +179,6 @@ relicensing right above, say so in your MR so we can discuss before merging.
 
 ## Working with AI agents
 
-Every module ships an `AGENTS.md`. The `oss-dev` MCP server (stdio, see `.mcp.json`) exposes
+The `oss-dev` MCP server (stdio, see `.mcp.json`) exposes
 the schema registry, route catalog, plugin manifest, and scaffolders as tools. Start at
 [docs/agent-quickstart.md](./docs/agent-quickstart.md).
