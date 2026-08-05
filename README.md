@@ -20,7 +20,7 @@ The platform ships the backend surface (auth, wallet, player management, complia
 ## Highlights
 
 - **Headless by design** - backend modules, contracts, and an SDK consumption surface only. No UI ships here; you own the frontend.
-- **Plugin host** - `definePlugin({ id, dependsOn, register })` is the single way new functionality enters the system. Overlay a folder or install an npm package; same contract.
+- **Plugin host** - typed plugin objects are the single way new functionality enters the system. Overlay a folder or install an npm package; same contract.
 - **Zod-first contracts** - every shape is a Zod schema; types are inferred, never hand-written. Routes are oRPC on Hono with a live OpenAPI reference.
 - **Explicit wiring** - a small functional DI container with typed tokens. No decorators, no auto-discovery; everything is greppable.
 - **Swappable vendor seams** - PSP, KYC, aggregator, chat, realtime transport, job queue, and message broker are ports with default in-process drivers and adapter overrides.
@@ -108,13 +108,13 @@ Generates the module under `packages/core/src/<domain>/<name>/`, wires its domai
 
 ### Add an extension (overlay plugin)
 
-Drop a folder under `extensions/<name>/` or point to an npm package. Both use the same `definePlugin` contract:
+Drop a folder under `extensions/<name>/` or point to an npm package. Both use the same plugin-object contract:
 
 ```typescript
 // extensions/my-feature/plugin.ts
-import { definePlugin } from '@openora/core/server';
+import type { CoreTokenCatalog, Plugin } from '@openora/core/server';
 
-export default definePlugin({
+export default {
   id: 'my-feature',
   dependsOn: ['identity', 'wallet'], // optional load-order hint
   register(ctx) {
@@ -123,7 +123,7 @@ export default definePlugin({
     ctx.events.on('wallet.deposit.completed', handler);
     ctx.mcp.tool({ name: 'my-tool', description: '...', handler });
   },
-});
+} as const satisfies Plugin<CoreTokenCatalog>;
 ```
 
 Then register it in `extensions.config.ts`.

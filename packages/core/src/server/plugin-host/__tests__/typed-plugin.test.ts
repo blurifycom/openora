@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { createToken, type TokenCatalog } from '@openora/core/contracts';
 import { Container } from '../../kernel/index.js';
-import { definePlugin, ModuleRegistryImpl } from '../index.js';
+import { ModuleRegistryImpl, type Plugin } from '../index.js';
 
 const COUNT = createToken<number>('COUNT');
 const SEED = createToken<number>('SEED');
@@ -39,9 +39,10 @@ function assertTypedContainer() {
 
 void assertTypedContainer;
 
-const typedPlugin = definePlugin(catalog, {
+const typedPlugin = {
   id: 'typed-plugin',
-  dependsOn: ['foundation'],
+  dependsOn: ['foundation'] as const,
+  requiresPorts: [SEED] as const,
   register(ctx) {
     ctx.provide(COUNT, (container) => container.get(SEED) + 1);
 
@@ -53,9 +54,9 @@ const typedPlugin = definePlugin(catalog, {
     // @ts-expect-error A token outside the catalog is not a valid provider.
     ctx.provide(OTHER, () => 'not-registered');
   },
-});
+} as const satisfies Plugin<typeof catalog>;
 
-definePlugin(catalog, {
+const invalidTypedPlugin = {
   id: 'invalid-typed-plugin',
   register(ctx) {
     // @ts-expect-error A provider must return the catalog token value.
@@ -71,10 +72,13 @@ definePlugin(catalog, {
       return undefined;
     });
   },
-});
+} as const satisfies Plugin<typeof catalog>;
+
+void invalidTypedPlugin;
 
 const typedPluginId: 'typed-plugin' = typedPlugin.id;
 const typedDependency: readonly ['foundation'] = typedPlugin.dependsOn;
+const typedRequiredPort: typeof SEED = typedPlugin.requiresPorts[0];
 
 describe('typed plugin surface', () => {
   it('resolves catalog services through a catalogued plugin', () => {
@@ -86,6 +90,7 @@ describe('typed plugin surface', () => {
 
     expect(typedPluginId).toBe('typed-plugin');
     expect(typedDependency).toEqual(['foundation']);
+    expect(typedRequiredPort).toBe(SEED);
     expect(container.get(COUNT)).toBe(42);
   });
 

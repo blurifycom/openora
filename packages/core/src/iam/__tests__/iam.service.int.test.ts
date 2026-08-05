@@ -197,9 +197,10 @@ describe('DbAdminPermissionResolver caching (real Redis read-through)', () => {
 });
 
 describe('IamService.setRolePermissions', () => {
-  it('rejects a non-super-admin caller', async () => {
+  it('rejects a non-super-admin caller and audits the denial', async () => {
     const role = await seedRole();
-    const svc = new IamService(db.drizzle, makeEventBus(), makeEmail());
+    const events = makeEventBus();
+    const svc = new IamService(db.drizzle, events, makeEmail());
     await expect(
       svc.setRolePermissions({
         roleId: role.id,
@@ -207,6 +208,15 @@ describe('IamService.setRolePermissions', () => {
         caller: SUPPORT_CALLER,
       }),
     ).rejects.toBeInstanceOf(NotSuperAdminError);
+    expect(events.emit).toHaveBeenCalledWith(
+      'identity.user.unauthorized_access',
+      expect.objectContaining({
+        userId: SUPPORT_CALLER.userId,
+        resource: 'admin',
+        action: 'update',
+        role: 'support',
+      }),
+    );
   });
 
   it('throws RoleNotFoundError when the role does not exist', async () => {

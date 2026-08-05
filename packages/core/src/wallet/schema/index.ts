@@ -15,6 +15,7 @@ import {
   WALLET_TRANSACTION_TYPES,
   type WalletRail,
   type WalletTransactionStatus,
+  type TagKey,
 } from '@openora/core/contracts';
 
 // Enum values derive from the canonical tuples so the DB enum can never drift from
@@ -124,7 +125,29 @@ export const walletDepositAddress = pgTable(
   ],
 );
 
+// Global fiat/crypto auto-withdrawal thresholds (BF-211), Super-Admin-editable at runtime.
+// singletonKey's unique constraint DB-enforces exactly one row ever ('global').
+export const walletAutoWithdrawalConfig = pgTable('wallet_auto_withdrawal_config', {
+  id: uuid().primaryKey().defaultRandom(),
+  singletonKey: text().notNull().unique().default('global'),
+  fiatThreshold: decimal({ precision: 18, scale: 8 }).notNull(),
+  cryptoThreshold: decimal({ precision: 18, scale: 8 }).notNull(),
+  excludeRiskFlags: text()
+    .array()
+    .$type<TagKey[]>()
+    .notNull()
+    .default(
+      sql`ARRAY['high_risk','bonus_abuser','kyc_rejected','withdrawal_review','multi_account']::text[]`,
+    ),
+  updatedBy: uuid(),
+  updatedAt: timestamp({ withTimezone: true })
+    .notNull()
+    .$onUpdateFn(() => new Date()),
+  createdAt: timestamp({ withTimezone: true }).notNull().defaultNow(),
+});
+
 export type Wallet = typeof wallet.$inferSelect;
 export type WalletTransaction = typeof walletTransaction.$inferSelect;
 export type AutoWithdrawalRule = typeof autoWithdrawalRule.$inferSelect;
 export type WalletDepositAddress = typeof walletDepositAddress.$inferSelect;
+export type WalletAutoWithdrawalConfig = typeof walletAutoWithdrawalConfig.$inferSelect;

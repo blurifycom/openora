@@ -1,4 +1,4 @@
-import { definePlugin } from '@openora/plugin-host';
+import type { CoreTokenCatalog, Plugin } from '@openora/core/server';
 import { {{token}}, type {{pascalCase token}} } from '@openora/adapters';
 
 // Overlay that swaps the {{token}} binding. Registered AFTER `{{dependsOn}}` (which
@@ -10,10 +10,10 @@ function create{{pascalCase name}}Adapter(): {{pascalCase token}} {
   throw new Error('{{kebabCase name}} adapter is not implemented yet');
 }
 
-export default definePlugin({
+export default {
   id: '{{kebabCase name}}',
   dependsOn: ['{{dependsOn}}'],
   register(ctx) {
     ctx.provide({{token}}, () => create{{pascalCase name}}Adapter());
   },
-});
+} as const satisfies Plugin<CoreTokenCatalog>;

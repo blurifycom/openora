@@ -60,7 +60,7 @@ flowchart TB
 
   %% ============ ENGINE (@openora/core/server) ============
   subgraph RT["@openora/core/server · createApp() (node engine)"]
-    PH["plugin-host<br/>definePlugin · ModuleRegistry · applyServiceManifest"]
+    PH["plugin-host<br/>Plugin · ModuleRegistry · applyServiceManifest"]
     DI["Container<br/>tokens to factories (last-wins overlay)"]
     HONO["Hono + oRPC OpenAPIHandler<br/>validation · live OpenAPI reference"]
     GATE["SERVICE_MANIFEST module filter"]

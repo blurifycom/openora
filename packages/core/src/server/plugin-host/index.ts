@@ -1,7 +1,5 @@
-export { definePlugin } from './define-plugin.js';
 export type {
   Plugin,
-  PluginDefinition,
   ModuleRegistry,
   PluginContext,
   RouterFactory,

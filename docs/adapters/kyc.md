@@ -98,16 +98,16 @@ export class SumsubKycAdapter implements KycAdapter {
 ```ts
 // extensions/sumsub-kyc/plugin.ts
 import { KYC_ADAPTER } from '@openora/core/contracts';
-import { definePlugin } from '@openora/core/server';
+import type { CoreTokenCatalog, Plugin } from '@openora/core/server';
 import { SumsubKycAdapter } from './src/sumsub-kyc-adapter.js';
 
-export default definePlugin({
+export default {
   id: 'sumsub-kyc',
   dependsOn: ['identity'],
   register(ctx) {
     ctx.provide(KYC_ADAPTER, () => new SumsubKycAdapter());
   },
-});
+} as const satisfies Plugin<CoreTokenCatalog>;
 ```
 
 4. Register in `extensions.config.ts` **after** the `identity` entry.
@@ -182,11 +182,11 @@ export class HostedKycAdapter implements KycAdapter {
 ```ts
 // extensions/hosted-kyc/plugin.ts
 import { KYC_ADAPTER, KYC_WEBHOOK_VERIFIER } from '@openora/core/contracts';
-import { definePlugin } from '@openora/core/server';
+import type { CoreTokenCatalog, Plugin } from '@openora/core/server';
 import { HostedKycAdapter } from './src/hosted-kyc-adapter.js';
 import { HostedKycWebhookVerifier } from './src/hosted-kyc-webhook-verifier.js';
 
-export default definePlugin({
+export default {
   id: 'hosted-kyc',
   dependsOn: ['identity'],
   register(ctx) {
@@ -196,7 +196,7 @@ export default definePlugin({
       () => new HostedKycWebhookVerifier(process.env.HOSTED_KYC_WEBHOOK_SECRET),
     );
   },
-});
+} as const satisfies Plugin<CoreTokenCatalog>;
 ```
 
 4. Register in `extensions.config.ts` **after** the `identity` entry. The consumer's

@@ -95,17 +95,17 @@ export class CustodyPaymentAdapter implements PaymentAdapter {
 ```ts
 // extensions/custody-payment/plugin.ts
 import { PAYMENT_ADAPTER, PAYMENT_WEBHOOK_VERIFIER } from '@openora/core/contracts';
-import { definePlugin } from '@openora/core/server';
+import type { CoreTokenCatalog, Plugin } from '@openora/core/server';
 import { CustodyPaymentAdapter } from './src/custody-payment-adapter.js';
 
-export default definePlugin({
+export default {
   id: 'custody-payment',
   dependsOn: ['wallet'],
   register(ctx) {
     ctx.provide(PAYMENT_ADAPTER, () => new CustodyPaymentAdapter());
     // Omit this line to keep the default HmacPaymentWebhookVerifier (PAYMENT_WEBHOOK_SECRET env var).
   },
-});
+} as const satisfies Plugin<CoreTokenCatalog>;
 ```
 
 4. Register in `extensions.config.ts` **after** the `wallet` entry.

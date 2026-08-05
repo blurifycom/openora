@@ -108,8 +108,6 @@ export type CreateAppConfig = {
   // supplied override). `false` disables HTTP response caching entirely.
   httpCache?: { paths?: string[]; maxAgeSeconds?: number } | false;
 
-  configure?: (container: Container<CoreTokenCatalog>) => void | Promise<void>;
-
   disableHealthModule?: boolean;
 };
 
@@ -189,7 +187,10 @@ async function captureRawBody(req: Request): Promise<string | undefined> {
  * before the DB closes. A router namespace registered by more than one plugin
  * throws at boot, not at request time.
  */
-export async function createApp(config: CreateAppConfig): Promise<CreatedApp> {
+export async function createApp(
+  config: CreateAppConfig,
+  configure?: (container: Container<CoreTokenCatalog>) => void | Promise<void>,
+): Promise<CreatedApp> {
   if (config.databaseUrl) {
     process.env['DATABASE_URL'] = config.databaseUrl;
   }
@@ -272,7 +273,7 @@ export async function createApp(config: CreateAppConfig): Promise<CreatedApp> {
   container.register(PLATFORM_CONFIG, () => loadPlatformConfig(resolvePlatformConfigPath()));
 
   const registry = await loadPlugins(config.plugins, container);
-  await config.configure?.(container);
+  await configure?.(container);
 
   assertDurableSeamsBound(container);
 

@@ -4,22 +4,22 @@ import type { PluginEntry } from './load-plugins.js';
 const nodeRequire = createRequire(import.meta.url);
 
 const CORE_PLUGIN_MODULES = [
-  { id: 'audit', specifier: '@openora/core/audit/plugin' },
-  { id: 'identity', specifier: '@openora/core/pam/plugins/identity' },
-  { id: 'iam', specifier: '@openora/core/iam/plugin' },
-  { id: 'notifications', specifier: '@openora/core/engagement/plugins/notifications' },
-  { id: 'wallet', specifier: '@openora/core/wallet/plugins/wallet' },
-  { id: 'gaming', specifier: '@openora/core/casino/plugins/gaming' },
-  { id: 'lobby', specifier: '@openora/core/casino/plugins/lobby' },
-  { id: 'chat', specifier: '@openora/core/engagement/plugins/chat' },
-  { id: 'profile', specifier: '@openora/core/pam/plugins/profile' },
-  { id: 'tag', specifier: '@openora/core/pam/plugins/tag' },
-  { id: 'player-management', specifier: '@openora/core/pam/plugins/player-management' },
-  { id: 'compliance', specifier: '@openora/core/compliance/plugins/compliance' },
-  { id: 'admin-console', specifier: '@openora/core/admin-console/plugin' },
-  { id: 'analytics', specifier: '@openora/core/analytics/plugin' },
-  { id: 'player-note', specifier: '@openora/core/pam/plugins/player-note' },
-  { id: 'cms', specifier: '@openora/core/cms/plugins/cms' },
+  { id: 'audit', path: '@openora/core/audit/plugin' },
+  { id: 'identity', path: '@openora/core/pam/plugins/identity' },
+  { id: 'iam', path: '@openora/core/iam/plugin' },
+  { id: 'notifications', path: '@openora/core/engagement/plugins/notifications' },
+  { id: 'wallet', path: '@openora/core/wallet/plugins/wallet' },
+  { id: 'gaming', path: '@openora/core/casino/plugins/gaming' },
+  { id: 'lobby', path: '@openora/core/casino/plugins/lobby' },
+  { id: 'chat', path: '@openora/core/engagement/plugins/chat' },
+  { id: 'profile', path: '@openora/core/pam/plugins/profile' },
+  { id: 'tag', path: '@openora/core/pam/plugins/tag' },
+  { id: 'player-management', path: '@openora/core/pam/plugins/player-management' },
+  { id: 'compliance', path: '@openora/core/compliance/plugins/compliance' },
+  { id: 'admin-console', path: '@openora/core/admin-console/plugin' },
+  { id: 'analytics', path: '@openora/core/analytics/plugin' },
+  { id: 'player-note', path: '@openora/core/pam/plugins/player-note' },
+  { id: 'cms', path: '@openora/core/cms/plugins/cms' },
 ] as const;
 
 /**
@@ -38,6 +38,6 @@ const CORE_PLUGIN_MODULES = [
 export function corePlugins(): PluginEntry[] {
   return CORE_PLUGIN_MODULES.map((module) => ({
     id: module.id,
-    path: nodeRequire.resolve(module.specifier),
+    path: nodeRequire.resolve(module.path),
   }));
 }

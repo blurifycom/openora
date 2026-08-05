@@ -46,17 +46,17 @@ my-igaming/
 2. Create `apps/api/src/extensions/<vendor>/plugin.ts`:
 
    ```ts
-   import { definePlugin } from '@openora/plugin-host';
+   import type { CoreTokenCatalog, Plugin } from '@openora/core/server';
    import { KYC_ADAPTER } from '@openora/adapters';
    import { MyKycAdapter } from './src/my-kyc-adapter.js';
 
-   export default definePlugin({
+   export default {
      id: 'my-kyc',
      dependsOn: ['identity'], // always load after the default-binding module
      register(ctx) {
        ctx.provide(KYC_ADAPTER, () => new MyKycAdapter());
      },
-   });
+   } as const satisfies Plugin<CoreTokenCatalog>;
    ```
 
 3. Register it in `extensions.config.ts` AFTER the module that owns the default binding.

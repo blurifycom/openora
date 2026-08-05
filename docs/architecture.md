@@ -31,7 +31,7 @@ flowchart TB
 
   subgraph runtime["API runtime (consumer's createApp() entry)"]
     cfg["extensions.config.ts<br/>plugin registry"]
-    host["plugin-host<br/>definePlugin / ModuleRegistry"]
+    host["plugin-host<br/>Plugin / ModuleRegistry"]
     container["Container<br/>functional composition (tokens -> factories)"]
     hono["Hono + oRPC OpenAPIHandler<br/>validation, live OpenAPI reference"]
     cfg --> host
@@ -93,7 +93,7 @@ Solid arrows are runtime/build dependencies; dashed arrows are **adapter seams**
 **API runtime**
 
 - **extensions.config.ts** - the one list of enabled plugins (modules + overlays). The only place wiring is turned on.
-- **plugin-host** - `definePlugin({ id, dependsOn, register })` + `ModuleRegistry`. In `register(ctx)` a plugin binds providers (`ctx.provide(token, factory)`), mounts routers (`ctx.routers.add(namespace, (c) => router)`), subscribes to events, and registers MCP tools. Overlays add their own `pgTable` in their module's `schema/index.ts`. ADR-0002.
+- **plugin-host** - `Plugin<CoreTokenCatalog>` + `ModuleRegistry`. In `register(ctx)` a plugin binds providers (`ctx.provide(token, factory)`), mounts routers (`ctx.routers.add(namespace, (c) => router)`), subscribes to events, and registers MCP tools. Overlays add their own `pgTable` in their module's `schema/index.ts`. ADR-0002.
 - **Hono + oRPC** - oRPC defines routes and validates I/O against the Zod contract; its `OpenAPIHandler` is mounted on a Hono server with a live API reference. Dependency wiring is a small **functional composition `Container`** (`@openora/core/server`): typed-token factories, lazy + last-wins, no decorators. Downstream consumers call `createApp()` from `@openora/core/server` to boot their API entry. ADR-0009.
 
 **Engine** (`@openora/core/server`) - the node runtime, all under one subpath: `db` (Drizzle client, drizzle-kit migrations, `DrizzleService`, the framework-free `@openora/core/server/orm` re-export), `auth` (better-auth + the shared `AdminGuard`), `kernel` (logger, typed `EventBus`, composition `Container`), `plugin-host` (the plugin loader), and `createApp()` - which is domain-agnostic (the consumer injects the PAM identity schema, ADR-0025/0026: single-tenant, no resolveTenant).
@@ -123,7 +123,7 @@ These are the swap points - the reason the platform is "headless" and extensible
 
 | Seam           | Interface side                        | Implementation side                               | Swap to...                                       |
 | -------------- | ------------------------------------- | ------------------------------------------------- | ------------------------------------------------ |
-| Plugin host    | `definePlugin` contract               | a module or overlay folder                        | add/remove features without touching core        |
+| Plugin host    | `Plugin` object contract              | a module or overlay folder                        | add/remove features without touching core        |
 | Vendor adapter | `@openora/core/contracts` (interface) | impl under `<domain>/<module>/adapters/<vendor>/` | a different PSP, KYC, or aggregator              |
 | Consumer link  | `createApp()` + `@openora/core`       | the consumer's own `apps/api` entry               | publish to npm and bump the tag (no code change) |
 
