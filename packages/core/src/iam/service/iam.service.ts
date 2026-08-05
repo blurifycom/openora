@@ -877,12 +877,6 @@ export class IamService {
     return { success: true as const };
   }
 
-  /**
-   * Server-side verification for a client-side page-guard denial (e.g. the consumer's
-   * PermissionGate). Re-checks the caller's actual level so a caller who genuinely holds
-   * the permission cannot produce a false denial entry, then records the same
-   * `identity.user.unauthorized_access` event AdminGuard emits for a real denial.
-   */
   async reportAccessDenied(input: {
     resource: string;
     level: PermissionLevel;
@@ -898,8 +892,6 @@ export class IamService {
         RATE_LIMIT_KEYS.REPORT_ACCESS_DENIED,
         `${input.caller.userId}:${input.resource}`,
       );
-      // Throttle only, never reject: this is a fire-and-forget report, not an abuse-prone
-      // mutation, so a throttled repeat is silently skipped rather than surfaced as a 429.
       const { allowed } = await this.rateLimiter.consume(key, { limit: 1, windowMs: 60_000 });
       if (!allowed) {
         return { recorded: false };
