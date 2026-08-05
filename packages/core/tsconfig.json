@@ -109,6 +109,7 @@
       "@openora/core/wallet/plugin": ["./src/wallet/plugin.ts"],
       "@openora/core/wallet/plugins/wallet": ["./src/wallet/plugin.ts"],
       "@openora/core/wallet/schema": ["./src/wallet/schema/index.ts"],
+      "@openora/core/wallet/seed": ["./src/wallet/seed/index.ts"],
       "@openora/core/wallet/server": ["./src/wallet/server.ts"]
     }
   },

@@ -1,0 +1,1 @@
+ALTER TABLE "wallet_auto_withdrawal_config" ADD COLUMN "exclude_risk_flags" text[] DEFAULT ARRAY['high_risk','bonus_abuser','kyc_rejected','withdrawal_review','multi_account']::text[] NOT NULL;

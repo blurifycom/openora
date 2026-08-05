@@ -56,6 +56,10 @@ async function seedTag(key: TagKey) {
   await db.drizzle.db.insert(tag).values({ key });
 }
 
+async function storedPlayerTags() {
+  return db.drizzle.db.select().from(playerTag);
+}
+
 async function storedRules() {
   return db.drizzle.db.select().from(tagRule);
 }
@@ -239,5 +243,109 @@ describe('tag router error mapping', () => {
     await expect(
       call(router.deleteTag, { key: 'high_roller' }, { context: AUTHED_CTX }),
     ).rejects.toMatchObject({ code: 'NOT_FOUND' });
+  });
+});
+
+describe('tag router player-tag removal', () => {
+  it('normalizes the removal reason before persistence and audit emission', async () => {
+    await seedTag('high_roller');
+    const { router, events } = build(allowingGuard());
+    const assignInput = {
+      playerId: UID,
+      tagKey: 'high_roller' as TagKey,
+      assignReason: 'manual review',
+      assignActor: 'manual' as const,
+    };
+    await call(router.assignPlayerTag, assignInput, { context: AUTHED_CTX });
+    events.emit.mockClear();
+
+    const result = await call(
+      router.removePlayerTag,
+      {
+        playerId: UID,
+        tagKey: 'high_roller',
+        removalReason: '  cleared after review  ',
+        removalActor: 'manual',
+      },
+      { context: AUTHED_CTX },
+    );
+
+    expect(result.removalReason).toBe('cleared after review');
+    expect((await storedPlayerTags()).at(0)?.removalReason).toBe('cleared after review');
+    expect(events.emit).toHaveBeenCalledWith(
+      'tag.player.removed',
+      expect.objectContaining({ reason: 'cleared after review' }),
+    );
+  });
+
+  it('rejects a whitespace-only removal reason at the API boundary', async () => {
+    await seedTag('high_roller');
+    const { router } = build(allowingGuard());
+
+    await expect(
+      call(
+        router.removePlayerTag,
+        {
+          playerId: UID,
+          tagKey: 'high_roller',
+          removalReason: '   ',
+          removalActor: 'manual',
+        },
+        { context: AUTHED_CTX },
+      ),
+    ).rejects.toBeInstanceOf(ORPCError);
+    expect(await storedPlayerTags()).toHaveLength(0);
+  });
+
+  it('requires a reason when removing a sticky tag', async () => {
+    await db.drizzle.db.insert(tag).values({ key: 'vip', isSticky: true });
+    const { router } = build(allowingGuard());
+    await call(
+      router.assignPlayerTag,
+      {
+        playerId: UID,
+        tagKey: 'vip',
+        assignReason: 'manual review',
+        assignActor: 'manual',
+      },
+      { context: AUTHED_CTX },
+    );
+
+    await expect(
+      call(
+        router.removePlayerTag,
+        { playerId: UID, tagKey: 'vip', removalActor: 'manual' },
+        { context: AUTHED_CTX },
+      ),
+    ).rejects.toMatchObject({ code: 'BAD_REQUEST' });
+    expect((await storedPlayerTags()).at(0)?.removedAt).toBeNull();
+  });
+
+  it('allows removing a non-sticky tag without a reason', async () => {
+    await seedTag('high_roller');
+    const { router, events } = build(allowingGuard());
+    await call(
+      router.assignPlayerTag,
+      {
+        playerId: UID,
+        tagKey: 'high_roller',
+        assignReason: 'manual review',
+        assignActor: 'manual',
+      },
+      { context: AUTHED_CTX },
+    );
+    events.emit.mockClear();
+
+    await call(
+      router.removePlayerTag,
+      { playerId: UID, tagKey: 'high_roller', removalActor: 'manual' },
+      { context: AUTHED_CTX },
+    );
+
+    expect((await storedPlayerTags()).at(0)?.removalReason).toBe('manual tag removal');
+    expect(events.emit).toHaveBeenCalledWith(
+      'tag.player.removed',
+      expect.objectContaining({ reason: 'manual tag removal' }),
+    );
   });
 });

@@ -1,6 +1,6 @@
 {
-  "id": "004d59f7-7a59-4271-9518-0a856c6b62c7",
-  "prevId": "dc212a38-53e8-4ed3-9b0b-4e6eb50d9477",
+  "id": "3d78e70f-0ee9-4049-87df-137db89043d2",
+  "prevId": "004d59f7-7a59-4271-9518-0a856c6b62c7",
   "version": "7",
   "dialect": "postgresql",
   "tables": {
@@ -148,6 +148,13 @@
           "type": "numeric(18, 8)",
           "primaryKey": false,
           "notNull": true
+        },
+        "exclude_risk_flags": {
+          "name": "exclude_risk_flags",
+          "type": "text[]",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "ARRAY['high_risk','bonus_abuser','kyc_rejected','withdrawal_review','multi_account']::text[]"
         },
         "updated_by": {
           "name": "updated_by",
