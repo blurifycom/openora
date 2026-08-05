@@ -99,15 +99,19 @@ export const CurrencyMismatchError = createDomainError(
 
 // Crypto currencies settle on the crypto rail (Fireblocks); everything else on the
 // fiat rail (a PSP). The concrete provider is recorded per transaction, not here.
-const CRYPTO_CURRENCIES = new Set(['BTC', 'ETH', 'USDT']);
+// Overridable per-operator via `platformConfig.wallet.cryptoCurrencies` - see `railFor`.
+const DEFAULT_CRYPTO_CURRENCIES = new Set(['BTC', 'ETH', 'USDT', 'USDC']);
 
 // Per-user throttle on money mutations - guards a runaway/misbehaving client, not
 // fraud (idempotency + the ledger guard cover correctness). An overlay rebinds
 // RATE_LIMITER to change the backend, not this policy.
 const WALLET_MUTATION_RATE_LIMIT = { limit: 30, windowMs: 60 * 1000 };
 
-export function railFor(currency: string): WalletRail {
-  return CRYPTO_CURRENCIES.has(currency.toUpperCase()) ? 'crypto' : 'fiat';
+export function railFor(currency: string, cryptoCurrencies?: readonly string[]): WalletRail {
+  const set = cryptoCurrencies
+    ? new Set(cryptoCurrencies.map((c) => c.toUpperCase()))
+    : DEFAULT_CRYPTO_CURRENCIES;
+  return set.has(currency.toUpperCase()) ? 'crypto' : 'fiat';
 }
 
 // Namespace the key per operation so the same raw key on a deposit then a withdraw can't
@@ -248,6 +252,10 @@ export class WalletService {
     this.audit = audit;
   }
 
+  private resolveRail(currency: string): WalletRail {
+    return railFor(currency, this.platformConfig?.wallet?.cryptoCurrencies);
+  }
+
   private rateLimit(userId: User['id']) {
     return this.limiter
       ? assertRateLimit(this.limiter, `wallet-mutation:${userId}`, WALLET_MUTATION_RATE_LIMIT)
@@ -341,7 +349,7 @@ export class WalletService {
           amount,
           currency,
           status: 'completed',
-          rail: railFor(currency),
+          rail: this.resolveRail(currency),
           providerName: provider,
           providerRefId: psp.externalId,
         },
@@ -490,7 +498,7 @@ export class WalletService {
   } & ClientMeta): Promise<TransactionResult> {
     await this.rateLimit(userId);
     await this.assertKycForWithdrawal(userId);
-    if (railFor(currency) === 'crypto' && !destinationAddress) {
+    if (this.resolveRail(currency) === 'crypto' && !destinationAddress) {
       throw new DestinationAddressRequiredError();
     }
 
@@ -520,7 +528,7 @@ export class WalletService {
               status: existing.status,
               replayed: true,
               walletId: current.id,
-              rail: railFor(currency),
+              rail: this.resolveRail(currency),
             };
           }
         }
@@ -537,7 +545,7 @@ export class WalletService {
             amount,
             currency,
             status: 'pending',
-            rail: railFor(currency),
+            rail: this.resolveRail(currency),
             destinationAddress: destinationAddress ?? null,
           },
         });
@@ -548,7 +556,7 @@ export class WalletService {
             status: row.status,
             replayed,
             walletId: current.id,
-            rail: railFor(currency),
+            rail: this.resolveRail(currency),
           };
         }
 
@@ -571,7 +579,7 @@ export class WalletService {
           status: row.status,
           replayed,
           walletId: current.id,
-          rail: railFor(currency),
+          rail: this.resolveRail(currency),
         };
       },
     );
@@ -1430,7 +1438,7 @@ export class WalletService {
         userId,
         currency,
         address: issued.address,
-        providerName: providerNameFor(railFor(currency)),
+        providerName: providerNameFor(this.resolveRail(currency)),
       })
       .onConflictDoNothing()
       .returning();
@@ -1486,7 +1494,7 @@ export class WalletService {
           amount: event.amount,
           currency: event.currency,
           status: 'completed',
-          rail: railFor(event.currency),
+          rail: this.resolveRail(event.currency),
           providerName: depositAddress.providerName,
           providerRefId: event.externalId,
           destinationAddress: event.address,
