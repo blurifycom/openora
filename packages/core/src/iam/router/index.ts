@@ -114,5 +114,13 @@ export function createIamRouter(svc: IamService, adminGuard: AdminGuard) {
       const caller = await adminGuard.assert(context);
       return svc.previewEffectivePermissions({ userId: caller.userId });
     }),
+
+    // Just a valid admin session - the resource-specific check happens inside the service
+    // via level comparison, not adminGuard.assert(context, resource, action), because this
+    // route's whole point is auditing an attempted-but-denied access, not gating one.
+    reportAccessDenied: os.reportAccessDenied.handler(async ({ input, context }) => {
+      const caller = await adminGuard.assert(context);
+      return svc.reportAccessDenied({ ...input, caller });
+    }),
   });
 }

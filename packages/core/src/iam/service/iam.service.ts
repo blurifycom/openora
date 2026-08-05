@@ -33,7 +33,10 @@ import type {
   SortOrder,
   PageQuery,
   PaginationOptions,
+  RateLimiterAdapter,
+  RateLimitKey,
 } from '@openora/core/contracts';
+import { RATE_LIMIT_KEYS, makeRateLimitKey } from '@openora/core/contracts';
 import {
   adminRole,
   adminRolePermission,
@@ -262,6 +265,7 @@ export class IamService {
     private readonly events: EventBus,
     private readonly email: SendEmailPort,
     private readonly sessionCommands?: SessionCommands,
+    private readonly rateLimiter?: RateLimiterAdapter<RateLimitKey>,
   ) {}
 
   private async callerGrants(caller: Caller) {
@@ -871,5 +875,37 @@ export class IamService {
     }
     await this.sessionCommands.revokeAll(input.userId, input.caller.userId);
     return { success: true as const };
+  }
+
+  /**
+   * Server-side verification for a client-side page-guard denial (e.g. the consumer's
+   * PermissionGate). Re-checks the caller's actual level so a caller who genuinely holds
+   * the permission cannot produce a false denial entry, then records the same
+   * `identity.user.unauthorized_access` event AdminGuard emits for a real denial.
+   */
+  async reportAccessDenied(input: {
+    resource: string;
+    level: PermissionLevel;
+    caller: Caller;
+  }): Promise<{ recorded: boolean }> {
+    const grantMap = grantsToLevelMap(await this.callerGrants(input.caller));
+    const actualLevel = grantMap[input.resource] ?? 'no_access';
+    if (isLevelSufficient(actualLevel, input.level)) {
+      return { recorded: false };
+    }
+    if (this.rateLimiter) {
+      const key = makeRateLimitKey(
+        RATE_LIMIT_KEYS.REPORT_ACCESS_DENIED,
+        `${input.caller.userId}:${input.resource}`,
+      );
+      // Throttle only, never reject: this is a fire-and-forget report, not an abuse-prone
+      // mutation, so a throttled repeat is silently skipped rather than surfaced as a 429.
+      const { allowed } = await this.rateLimiter.consume(key, { limit: 1, windowMs: 60_000 });
+      if (!allowed) {
+        return { recorded: false };
+      }
+    }
+    this.emitDenied(input.caller, input.resource, 'access');
+    return { recorded: true };
   }
 }

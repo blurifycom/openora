@@ -189,6 +189,14 @@ export const iamContract = {
   getMyPermissions: oc
     .route({ method: 'GET', path: '/iam/my-permissions' })
     .output(EffectivePermissionsSchema),
+
+  // Server-side verification for a client-side page-guard denial: the consumer's
+  // PermissionGate redirect never reaches the server on its own, so it never audits.
+  // This route re-checks the caller's actual level and records the denial only when real.
+  reportAccessDenied: oc
+    .route({ method: 'POST', path: '/iam/report-access-denied' })
+    .input(GrantInputSchema)
+    .output(z.object({ recorded: z.boolean() })),
 };
 
 export type AdminRole = z.infer<typeof AdminRoleSchema>;
