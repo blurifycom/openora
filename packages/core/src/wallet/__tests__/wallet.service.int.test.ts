@@ -173,6 +173,17 @@ describe('WalletService.deposit (real PG)', () => {
 
     expect(await balanceOf(w.userId)).toBe(11);
   });
+
+  it('throws CurrencyMismatchError when the deposit currency differs from the wallet, without calling the PSP or crediting the balance', async () => {
+    const { svc, psp } = makeService();
+    const w = await seedWallet({ balance: '100', currency: 'USD' });
+
+    await expect(
+      svc.deposit({ userId: w.userId, amount: '10', currency: 'EUR' }),
+    ).rejects.toBeInstanceOf(CurrencyMismatchError);
+    expect(psp.processDeposit).not.toHaveBeenCalled();
+    expect(await balanceOf(w.userId)).toBe(100);
+  });
 });
 
 describe('WalletService.withdraw (real PG)', () => {

@@ -29,6 +29,10 @@ After the hold commits, `maybeAutoApprove` decides WHO approves - system or manu
 - Every auto-approval writes an `AUDIT_WRITER` entry (`actorType: 'system'`) capturing the full rationale BEFORE the PSP call, so the AML/SAR trail survives a PSP failure.
 - Crypto uses the SAME mechanism and gates as fiat (BF-211), safe because `cryptoThreshold` is absent by default - unset/zero resolves to "never auto-approve", so an upgrade never silently activates it. The per-player rule is a single global column, not rail-aware.
 
+## Single-currency wallet
+
+`wallet.currency` is set once, on the row's first insert, and never updated after. Both `deposit()` and `withdraw()` reject a request whose `currency` differs from the wallet's currency with `CurrencyMismatchError` (mapped to `BAD_REQUEST`) rather than coercing or converting - there is no FX/exchange-rate logic anywhere in this module. `deposit()` checks BEFORE calling the PSP (a pre-fetch read, safe because currency is immutable once set) so a wrong-currency request never charges the vendor; the same check also runs inside the deposit transaction as a defense-in-depth guard against the wallet being created concurrently with a different currency. A brand-new wallet has nothing to mismatch against - it adopts the first deposit's currency.
+
 ## Idempotency and races
 
 - Client-supplied `idempotencyKey` (optional uuid) on deposit/withdraw: partial unique index on `(wallet_id, idempotency_key)`. A matching key returns the ORIGINAL stored transaction (same shape, no second insert, no re-emitted event); a reused key with a DIFFERENT amount -> `IdempotencyKeyReuseError` (CONFLICT).

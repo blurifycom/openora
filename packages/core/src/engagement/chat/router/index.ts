@@ -180,8 +180,8 @@ export function createChatRouter({
       return chatService.getOnlineCount(roomId);
     }),
 
-    listBlockedUsers: os.listBlockedUsers.handler(({ context }) =>
-      chatService.listBlockedUsers(getUserId(context)),
+    listBlockedUsers: os.listBlockedUsers.handler(({ input, context }) =>
+      chatService.listBlockedUsers({ blockerId: getUserId(context), ...input }),
     ),
 
     blockUser: os.blockUser.handler(({ input, context }) => {
@@ -195,8 +195,8 @@ export function createChatRouter({
       return chatService.unblockUser(getUserId(context), input.blockedId, context.clientMeta);
     }),
 
-    listIgnoredUsers: os.listIgnoredUsers.handler(({ context }) =>
-      chatService.listIgnoredUsers(getUserId(context)),
+    listIgnoredUsers: os.listIgnoredUsers.handler(({ input, context }) =>
+      chatService.listIgnoredUsers({ ignorerId: getUserId(context), ...input }),
     ),
 
     ignoreUser: os.ignoreUser.handler(({ input, context }) => {

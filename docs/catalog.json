@@ -913,6 +913,10 @@
       "file": "packages/core/src/engagement/chat/contract/index.ts"
     },
     {
+      "name": "BlockedUserSortBySchema",
+      "file": "packages/core/src/engagement/chat/contract/index.ts"
+    },
+    {
       "name": "BrandingSchema",
       "file": "packages/core/src/contracts/schemas/igaming-config.ts"
     },
@@ -1230,6 +1234,10 @@
     },
     {
       "name": "IgnoredUserSchema",
+      "file": "packages/core/src/engagement/chat/contract/index.ts"
+    },
+    {
+      "name": "IgnoredUserSortBySchema",
       "file": "packages/core/src/engagement/chat/contract/index.ts"
     },
     {

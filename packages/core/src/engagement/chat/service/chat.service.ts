@@ -34,6 +34,8 @@ import {
 } from '../schema/index.js';
 import type {
   AdminRoomSortBy,
+  BlockedUserSortBy,
+  IgnoredUserSortBy,
   ChatRoom,
   ChatMessage,
   ChatRoomCategory,
@@ -123,6 +125,15 @@ function toRoom(record: typeof chatRoom.$inferSelect) {
 function toMessage(record: typeof chatMessage.$inferSelect) {
   return serializeRow(record, { dateFields: ['createdAt'] });
 }
+
+const BLOCKED_USER_SORT_COLUMNS = { createdAt: chatUserBlock.createdAt } as const satisfies Record<
+  BlockedUserSortBy,
+  unknown
+>;
+
+const IGNORED_USER_SORT_COLUMNS = {
+  createdAt: chatUserIgnore.createdAt,
+} as const satisfies Record<IgnoredUserSortBy, unknown>;
 
 function generateJoinCode(): string {
   return Array.from({ length: JOIN_CODE_LENGTH }, () => {
@@ -459,13 +470,38 @@ export class ChatService {
     return message;
   }
 
-  async listBlockedUsers(blockerId: User['id']) {
-    const rows = await this.drizzle.db
-      .select({ blockedId: chatUserBlock.blockedId, createdAt: chatUserBlock.createdAt })
-      .from(chatUserBlock)
-      .where(and(eq(chatUserBlock.blockerId, blockerId), isNull(chatUserBlock.removedAt)))
-      .orderBy(desc(chatUserBlock.createdAt));
-    return rows.map((r) => serializeRow(r, { dateFields: ['createdAt'] }));
+  async listBlockedUsers({
+    blockerId,
+    page,
+    limit,
+    sortBy,
+    sortOrder,
+  }: {
+    blockerId: User['id'];
+    page: number;
+    limit: number;
+    sortBy: BlockedUserSortBy;
+    sortOrder: SortOrder;
+  }) {
+    const dir = sortOrder === 'asc' ? asc : desc;
+    const col = BLOCKED_USER_SORT_COLUMNS[sortBy];
+    const where = and(eq(chatUserBlock.blockerId, blockerId), isNull(chatUserBlock.removedAt));
+    const [rows, [{ n }]] = await Promise.all([
+      this.drizzle.db
+        .select({ blockedId: chatUserBlock.blockedId, createdAt: chatUserBlock.createdAt })
+        .from(chatUserBlock)
+        .where(where)
+        .orderBy(dir(col))
+        .limit(limit)
+        .offset(pageToOffset(page, limit)),
+      this.drizzle.db.select({ n: count() }).from(chatUserBlock).where(where),
+    ]);
+    return {
+      items: rows.map((r) => serializeRow(r, { dateFields: ['createdAt'] })),
+      total: Number(n),
+      page,
+      limit,
+    };
   }
 
   async blockUser(blockerId: User['id'], blockedId: User['id'], meta?: ClientMeta) {
@@ -521,13 +557,38 @@ export class ChatService {
     return { success: true } as const;
   }
 
-  async listIgnoredUsers(ignorerId: User['id']) {
-    const rows = await this.drizzle.db
-      .select({ ignoredId: chatUserIgnore.ignoredId, createdAt: chatUserIgnore.createdAt })
-      .from(chatUserIgnore)
-      .where(and(eq(chatUserIgnore.ignorerId, ignorerId), isNull(chatUserIgnore.removedAt)))
-      .orderBy(desc(chatUserIgnore.createdAt));
-    return rows.map((r) => serializeRow(r, { dateFields: ['createdAt'] }));
+  async listIgnoredUsers({
+    ignorerId,
+    page,
+    limit,
+    sortBy,
+    sortOrder,
+  }: {
+    ignorerId: User['id'];
+    page: number;
+    limit: number;
+    sortBy: IgnoredUserSortBy;
+    sortOrder: SortOrder;
+  }) {
+    const dir = sortOrder === 'asc' ? asc : desc;
+    const col = IGNORED_USER_SORT_COLUMNS[sortBy];
+    const where = and(eq(chatUserIgnore.ignorerId, ignorerId), isNull(chatUserIgnore.removedAt));
+    const [rows, [{ n }]] = await Promise.all([
+      this.drizzle.db
+        .select({ ignoredId: chatUserIgnore.ignoredId, createdAt: chatUserIgnore.createdAt })
+        .from(chatUserIgnore)
+        .where(where)
+        .orderBy(dir(col))
+        .limit(limit)
+        .offset(pageToOffset(page, limit)),
+      this.drizzle.db.select({ n: count() }).from(chatUserIgnore).where(where),
+    ]);
+    return {
+      items: rows.map((r) => serializeRow(r, { dateFields: ['createdAt'] })),
+      total: Number(n),
+      page,
+      limit,
+    };
   }
 
   async ignoreUser(ignorerId: User['id'], ignoredId: User['id'], meta?: ClientMeta) {
