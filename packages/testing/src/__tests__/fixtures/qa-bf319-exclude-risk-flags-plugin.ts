@@ -1,4 +1,4 @@
-import { definePlugin } from '@openora/core/server';
+import type { CoreTokenCatalog, Plugin } from '@openora/core/server';
 import { PLATFORM_CONFIG, definePlatformConfig } from '@openora/core/contracts';
 
 // PLATFORM_CONFIG overlay for the BF-319 QA suite (excludeRiskFlags moved off static
@@ -8,7 +8,7 @@ import { PLATFORM_CONFIG, definePlatformConfig } from '@openora/core/contracts';
 // BF-319 moves the exclusion list). Caps set high so they never interfere with the
 // tag-exclusion gate under test. kyc.gateWithdrawals stays false so a not-yet-verified
 // player hits the auto-approval KYC gate, not the withdraw-time one.
-export default definePlugin({
+export default {
   id: 'qa-bf319-exclude-risk-flags',
   dependsOn: ['identity'],
   register(ctx) {
@@ -23,4 +23,4 @@ export default definePlugin({
       }),
     );
   },
-});
+} as const satisfies Plugin<CoreTokenCatalog>;

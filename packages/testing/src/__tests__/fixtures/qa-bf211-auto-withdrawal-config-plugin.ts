@@ -1,4 +1,4 @@
-import { definePlugin } from '@openora/core/server';
+import type { CoreTokenCatalog, Plugin } from '@openora/core/server';
 import { PLATFORM_CONFIG, definePlatformConfig } from '@openora/core/contracts';
 
 // PLATFORM_CONFIG overlay for the BF-211 QA suite: autoWithdrawal enabled with NO
@@ -8,7 +8,7 @@ import { PLATFORM_CONFIG, definePlatformConfig } from '@openora/core/contracts';
 // the DB row's excludeRiskFlags column, seeded via seedAutoWithdrawalConfig's migration
 // default, drives exclusion now. kyc.gateWithdrawals stays false so KYC-not-passing
 // scenarios exercise the auto-approval KYC gate, not the withdraw-time one.
-export default definePlugin({
+export default {
   id: 'qa-bf211-auto-withdrawal-config',
   dependsOn: ['identity'],
   register(ctx) {
@@ -23,4 +23,4 @@ export default definePlugin({
       }),
     );
   },
-});
+} as const satisfies Plugin<CoreTokenCatalog>;

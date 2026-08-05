@@ -2,7 +2,12 @@ import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import { randomUUID } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import { eq } from 'drizzle-orm';
-import { loadExtensions, DRIZZLE, type Container } from '@openora/core/server';
+import {
+  loadExtensions,
+  DRIZZLE,
+  type Container,
+  type CoreTokenCatalog,
+} from '@openora/core/server';
 import { user } from '@openora/core/pam/schema/identity';
 import { adminRole, adminRoleAssignment } from '@openora/core/iam/schema';
 import { walletAutoWithdrawalConfig } from '@openora/core/wallet/schema';
@@ -85,7 +90,11 @@ async function assignTag(admin: TestClient, playerId: string, tagKey: string) {
 // user.role='admin' coarse gate, then attach the real DB-backed super-admin role
 // assignment - both are required before the DB-backed permission resolver becomes
 // authoritative (see BF-211 suite's own doc comment on AdminGuard.assert's two-stage gate).
-async function makeSuperAdmin(app: TestApp['app'], container: Container, email: string) {
+async function makeSuperAdmin(
+  app: TestApp['app'],
+  container: Container<CoreTokenCatalog>,
+  email: string,
+) {
   const { client, userId } = await registerAndMaterializePlayer(app, email);
   const drizzle = container.get(DRIZZLE).db;
   await drizzle.update(user).set({ role: 'admin' }).where(eq(user.id, userId));
