@@ -16,14 +16,17 @@ export type UseEventStreamResult<T> = {
   status: EventStreamStatus;
 };
 
+const MAX_RETRY_DELAY_MS = 30_000;
+const STABLE_CONNECTION_MS = 5_000;
+
 /**
  * Generic client-side real-time transport. Consumes any async-iterable source
  * (eg an oRPC event iterator served as SSE: `client.x.stream(undefined, { signal })`).
  *
  * Owns an AbortController per active subscription, loops `for await` over the
- * iterable, calls `onEvent` and tracks the latest value + connection status,
- * and aborts on unmount or when `enabled` flips false. Re-subscribes when
- * `subscribe` identity changes, so memoize it at the call site.
+ * iterable, calls `onEvent` and tracks the latest value + connection status.
+ * Re-subscribes when `subscribe` identity changes, so memoize it at the call site.
+ * Reconnects automatically with exponential backoff when the stream drops unexpectedly.
  */
 export function useEventStream<T>(
   subscribe: (signal: AbortSignal) => Promise<AsyncIterable<T>>,
@@ -43,39 +46,72 @@ export function useEventStream<T>(
       return;
     }
 
-    const controller = new AbortController();
     let cancelled = false;
-    setStatus('connecting');
+    let currentController: AbortController | null = null;
+    let retryCount = 0;
+    let retryTimer: ReturnType<typeof setTimeout> | undefined;
 
-    (async () => {
-      try {
-        const iterable = await subscribe(controller.signal);
-        if (cancelled) {
-          return;
-        }
-        setStatus('open');
-        for await (const event of iterable) {
-          if (cancelled) {
-            break;
+    const connect = () => {
+      const controller = new AbortController();
+      currentController = controller;
+      setStatus('connecting');
+
+      (async () => {
+        let stableTimer: ReturnType<typeof setTimeout> | undefined;
+        let stabilized = false;
+        const markStable = () => {
+          if (stabilized) {
+            return;
           }
-          onEventRef.current?.(event);
-          setLast(event);
+          stabilized = true;
+          retryCount = 0;
+          clearTimeout(stableTimer);
+        };
+
+        try {
+          const iterable = await subscribe(controller.signal);
+          if (cancelled) {
+            return;
+          }
+          setStatus('open');
+          // Only trust this connection - and reset the backoff - once it has
+          // stayed open a while or delivered something. Resetting the instant
+          // subscribe() resolves means a connection accepted then dropped
+          // immediately (idle-timeout proxy, server ending the generator
+          // early) reconnects at a fixed ~1s delay forever instead of backing off.
+          stableTimer = setTimeout(markStable, STABLE_CONNECTION_MS);
+          for await (const event of iterable) {
+            if (cancelled) {
+              break;
+            }
+            markStable();
+            onEventRef.current?.(event);
+            setLast(event);
+          }
+        } catch (err) {
+          // Intentional teardown — do not reconnect.
+          if (cancelled || (err as Error)?.name === 'AbortError') {
+            return;
+          }
+        } finally {
+          clearTimeout(stableTimer);
+          if (!cancelled) {
+            // Unexpected close: reconnect with exponential backoff.
+            setStatus('closed');
+            const delay = Math.min(1000 * 2 ** retryCount, MAX_RETRY_DELAY_MS);
+            retryCount += 1;
+            retryTimer = setTimeout(connect, delay);
+          }
         }
-      } catch (err) {
-        // An AbortError on unmount/disable is expected teardown - swallow it.
-        if (!cancelled && (err as Error)?.name !== 'AbortError') {
-          // Stream closed; status is updated in finally.
-        }
-      } finally {
-        if (!cancelled) {
-          setStatus('closed');
-        }
-      }
-    })();
+      })();
+    };
+
+    connect();
 
     return () => {
       cancelled = true;
-      controller.abort();
+      clearTimeout(retryTimer);
+      currentController?.abort();
     };
   }, [subscribe, enabled]);
 

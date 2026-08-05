@@ -2,6 +2,7 @@ import type {
   AdminGameReporting,
   GamePerformanceFilter,
   GamePerformanceRow,
+  PlayerGameStats,
 } from '@openora/core/contracts';
 import { DrizzleService } from '@openora/core/server';
 import { and, asc, desc, eq, gte, lte, sql } from 'drizzle-orm';
@@ -70,5 +71,20 @@ export class DrizzleAdminGameReporting implements AdminGameReporting {
       uniquePlayers: Number(r.uniquePlayers),
       roundsPlayed: Number(r.roundsPlayed),
     }));
+  }
+
+  async getPlayerStats(userId: string): Promise<PlayerGameStats> {
+    const db = this.drizzle.db;
+    const [row] = await db
+      .select({
+        totalWagered: sql<string>`coalesce(sum(${gameRound.betAmount}), 0)`,
+        totalBets: sql<number>`count(${gameRound.id})`,
+      })
+      .from(gameRound)
+      .where(and(eq(gameRound.userId, userId), eq(gameRound.status, 'completed')));
+    return {
+      totalWagered: row?.totalWagered ?? '0',
+      totalBets: Number(row?.totalBets ?? 0),
+    };
   }
 }

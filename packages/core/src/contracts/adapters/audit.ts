@@ -17,7 +17,8 @@ export type DirectAuditAction =
   | 'compliance.kyc.bulk_approve'
   | 'wallet.withdrawal.auto_approved'
   | 'wallet.auto_withdrawal_rule.set'
-  | 'wallet.auto_withdrawal_rule.deleted';
+  | 'wallet.auto_withdrawal_rule.deleted'
+  | 'wallet.auto_withdrawal_config.set';
 
 // Every value the audit `action` column legitimately holds: a cross-module domain
 // event topic (recorded by the audit plugin's subscriptions) or a direct admin
@@ -27,6 +28,19 @@ export type AuditAction = DomainEventName | DirectAuditAction | (string & {});
 
 export type AuditWritePort = {
   record(
+    entry: {
+      actorId?: string | null;
+      actorType: 'player' | 'admin' | 'system';
+      action: AuditAction;
+      resourceType: string;
+      resourceId?: string | null;
+      before?: Record<string, unknown> | null;
+      after?: Record<string, unknown> | null;
+      correlationId?: string | null;
+    } & Partial<ClientMeta>,
+  ): Promise<void>;
+  recordInTransaction(
+    tx: unknown,
     entry: {
       actorId?: string | null;
       actorType: 'player' | 'admin' | 'system';

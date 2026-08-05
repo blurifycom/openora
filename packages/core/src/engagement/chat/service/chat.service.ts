@@ -11,8 +11,16 @@ import {
   serializeRow,
   pageToOffset,
   withAdvisoryXactLock,
+  type DrizzleDb,
 } from '@openora/core/server';
-import type { ClientMeta, RealtimeTransport } from '@openora/core/contracts';
+import type {
+  ClientMeta,
+  RealtimeTransport,
+  CommandMetadata,
+  ChatSystemMessage,
+  AdminUserDirectory,
+} from '@openora/core/contracts';
+import { chatChannel } from '@openora/core/contracts';
 import { eq, and, isNull, lt, desc, asc, notInArray, inArray, count, ne } from 'drizzle-orm';
 import { user } from '@openora/core/pam/schema/identity';
 import type { User } from '@openora/core/pam/schema/identity';
@@ -20,6 +28,7 @@ import {
   chatRoom,
   chatMessage,
   chatUserBlock,
+  chatUserIgnore,
   chatRoomMember,
   chatRoomBan,
 } from '../schema/index.js';
@@ -38,12 +47,8 @@ import {
   PRIVATE_ROOM_SLUG_PREFIX,
 } from '../contract/constants.js';
 import { moderateContent } from '../moderation/index.js';
-
-export function chatChannel(roomId: ChatRoom['id'] | null) {
-  return roomId ? `chat:room:${roomId}` : 'chat:global';
-}
-
 export const ChatRoomNotFoundError = makeNotFoundError('ChatRoom');
+export const ChatRoomOwnershipError = makeOwnershipError('ChatRoom');
 export const ChatMessageNotFoundError = makeNotFoundError('ChatMessage');
 export const ChatMessageOwnershipError = makeOwnershipError('ChatMessage');
 
@@ -55,6 +60,11 @@ export const ChatMessageBlockedError = createDomainError(
 export const ChatSelfBlockError = createDomainError(
   'ChatSelfBlockError',
   () => 'You cannot block yourself',
+);
+
+export const ChatSelfIgnoreError = createDomainError(
+  'ChatSelfIgnoreError',
+  () => 'You cannot ignore yourself',
 );
 
 export const ChatRoomSlugConflictError = makeConflictError(
@@ -142,6 +152,7 @@ export class ChatService {
     private readonly drizzle: DrizzleService,
     private readonly events: EventBus,
     private readonly transport: RealtimeTransport,
+    private readonly directory: AdminUserDirectory,
   ) {}
 
   subscribeMessages(
@@ -162,7 +173,7 @@ export class ChatService {
       }
     };
     if (viewerId) {
-      this.blockedIdsFor(viewerId)
+      this.excludedSenderIdsFor(viewerId)
         .catch(() => new Set<User['id']>())
         .then((ids) => {
           blocked = ids;
@@ -196,6 +207,22 @@ export class ChatService {
       .from(chatUserBlock)
       .where(eq(chatUserBlock.blockerId, viewerId));
     return new Set(rows.map((r) => r.blockedId));
+  }
+
+  private async ignoredIdsFor(viewerId: User['id']) {
+    const rows = await this.drizzle.db
+      .select({ ignoredId: chatUserIgnore.ignoredId })
+      .from(chatUserIgnore)
+      .where(eq(chatUserIgnore.ignorerId, viewerId));
+    return new Set(rows.map((r) => r.ignoredId));
+  }
+
+  private async excludedSenderIdsFor(viewerId: User['id']) {
+    const [blocked, ignored] = await Promise.all([
+      this.blockedIdsFor(viewerId),
+      this.ignoredIdsFor(viewerId),
+    ]);
+    return new Set([...blocked, ...ignored]);
   }
 
   private async resolveDisplayName(userId: User['id'], fallback: string) {
@@ -320,7 +347,7 @@ export class ChatService {
     if (before) {
       conditions.push(lt(chatMessage.createdAt, new Date(before)));
     }
-    await this.appendBlockFilter(conditions, viewerId);
+    await this.appendExcludedSendersFilter(conditions, viewerId);
     const messages = await this.drizzle.db
       .select()
       .from(chatMessage)
@@ -330,13 +357,16 @@ export class ChatService {
     return messages.map(toMessage);
   }
 
-  private async appendBlockFilter(conditions: ReturnType<typeof eq>[], viewerId?: User['id']) {
+  private async appendExcludedSendersFilter(
+    conditions: ReturnType<typeof eq>[],
+    viewerId?: User['id'],
+  ) {
     if (!viewerId) {
       return;
     }
-    const blocked = await this.blockedIdsFor(viewerId);
-    if (blocked.size > 0) {
-      conditions.push(notInArray(chatMessage.userId, [...blocked]));
+    const excluded = await this.excludedSenderIdsFor(viewerId);
+    if (excluded.size > 0) {
+      conditions.push(notInArray(chatMessage.userId, [...excluded]));
     }
   }
 
@@ -394,7 +424,7 @@ export class ChatService {
 
   async getGlobalMessages(limit = DEFAULT_MESSAGE_LIMIT, viewerId?: User['id']) {
     const conditions = [isNull(chatMessage.roomId), eq(chatMessage.isDeleted, false)];
-    await this.appendBlockFilter(conditions, viewerId);
+    await this.appendExcludedSendersFilter(conditions, viewerId);
     const messages = await this.drizzle.db
       .select()
       .from(chatMessage)
@@ -476,6 +506,59 @@ export class ChatService {
       });
     }
     return { success: true } as const;
+  }
+
+  async listIgnoredUsers(ignorerId: User['id']) {
+    const rows = await this.drizzle.db
+      .select({ ignoredId: chatUserIgnore.ignoredId, createdAt: chatUserIgnore.createdAt })
+      .from(chatUserIgnore)
+      .where(eq(chatUserIgnore.ignorerId, ignorerId))
+      .orderBy(desc(chatUserIgnore.createdAt));
+    return rows.map((r) => serializeRow(r, { dateFields: ['createdAt'] }));
+  }
+
+  async ignoreUser(ignorerId: User['id'], ignoredId: User['id'], meta?: ClientMeta) {
+    if (ignorerId === ignoredId) {
+      throw new ChatSelfIgnoreError();
+    }
+
+    // Idempotent: re-ignoring is a no-op, so only the first ignore emits an event.
+    const inserted = await this.drizzle.db
+      .insert(chatUserIgnore)
+      .values({ ignorerId, ignoredId })
+      .onConflictDoNothing({ target: [chatUserIgnore.ignorerId, chatUserIgnore.ignoredId] })
+      .returning();
+
+    if (inserted.length > 0) {
+      this.events.emit('chat.user.ignored', {
+        ignorerId,
+        ignoredId,
+        ip: meta?.ip ?? null,
+        userAgent: meta?.userAgent ?? null,
+      });
+    }
+    return { success: true } as const;
+  }
+
+  async unignoreUser(ignorerId: User['id'], ignoredId: User['id'], meta?: ClientMeta) {
+    const removed = await this.drizzle.db
+      .delete(chatUserIgnore)
+      .where(and(eq(chatUserIgnore.ignorerId, ignorerId), eq(chatUserIgnore.ignoredId, ignoredId)))
+      .returning();
+
+    if (removed.length > 0) {
+      this.events.emit('chat.user.unignored', {
+        ignorerId,
+        ignoredId,
+        ip: meta?.ip ?? null,
+        userAgent: meta?.userAgent ?? null,
+      });
+    }
+    return { success: true } as const;
+  }
+
+  async getExcludedUserIds(viewerId: User['id']): Promise<string[]> {
+    return [...(await this.excludedSenderIdsFor(viewerId))];
   }
 
   async createRoom({
@@ -591,6 +674,42 @@ export class ChatService {
       userAgent: userAgent ?? null,
     });
     return toRoom(updated);
+  }
+
+  async deletePrivateRoom({
+    roomId,
+    userId,
+    ip,
+    userAgent,
+  }: {
+    roomId: ChatRoom['id'];
+    userId: User['id'];
+  } & ClientMeta) {
+    const room = findOneOrThrow(
+      await this.drizzle.db
+        .select()
+        .from(chatRoom)
+        .where(
+          and(eq(chatRoom.id, roomId), eq(chatRoom.isPublic, false), isNull(chatRoom.deletedAt)),
+        )
+        .limit(1),
+      new ChatRoomNotFoundError(roomId),
+    );
+    if (!room.creatorId) {
+      throw new ChatRoomOwnershipError();
+    }
+    assertOwnership(room.creatorId, userId, new ChatRoomOwnershipError());
+    await this.drizzle.db
+      .update(chatRoom)
+      .set({ deletedAt: new Date() })
+      .where(eq(chatRoom.id, roomId));
+    this.events.emit('chat.private_room.deleted', {
+      roomId,
+      creatorId: userId,
+      ip: ip ?? null,
+      userAgent: userAgent ?? null,
+    });
+    return { success: true } as const;
   }
 
   async deleteRoom(id: ChatRoom['id'], actorId?: User['id'], meta?: ClientMeta) {
@@ -874,6 +993,42 @@ export class ChatService {
     return { success: true } as const;
   }
 
+  async postSystemMessage(args: {
+    roomId: ChatRoom['id'] | null;
+    actorId: User['id'];
+    metadata: CommandMetadata;
+    tx?: unknown;
+  }): Promise<ChatSystemMessage> {
+    const db = (args.tx as DrizzleDb | undefined) ?? this.drizzle.db;
+    const [record] = await db
+      .insert(chatMessage)
+      .values({
+        roomId: args.roomId,
+        userId: args.actorId,
+        username: 'system',
+        content: '',
+        type: 'system',
+        metadata: args.metadata,
+      })
+      .returning();
+    const msg: ChatSystemMessage = {
+      id: record.id,
+      roomId: record.roomId ?? null,
+      actorId: args.actorId,
+      content: record.content,
+      metadata: args.metadata,
+      createdAt: record.createdAt.toISOString(),
+    };
+    // Only auto-publish when this call owns the write (no caller-managed transaction).
+    // When `tx` is passed, the caller's transaction hasn't committed yet - publishing
+    // here would leak a message to clients before (or even if) it actually commits.
+    // The caller must publish itself after its transaction resolves.
+    if (!args.tx) {
+      void this.transport.publish(chatChannel(args.roomId), msg);
+    }
+    return msg;
+  }
+
   async listRoomMembers({ roomId, viewerId }: { roomId: ChatRoom['id']; viewerId?: User['id'] }) {
     await this.verifyRoomAccess(roomId, viewerId);
     const members = await this.drizzle.db
@@ -885,6 +1040,13 @@ export class ChatService {
       .from(chatRoomMember)
       .where(eq(chatRoomMember.roomId, roomId))
       .orderBy(asc(chatRoomMember.joinedAt));
-    return members.map((m) => serializeRow(m, { dateFields: ['joinedAt'] }));
+    const summaries = await this.directory.lookupPlayers(members.map((m) => m.userId));
+    const usernameByUserId = new Map(summaries.map((s) => [s.userId, s.username]));
+    return members.map((m) =>
+      serializeRow(
+        { ...m, username: usernameByUserId.get(m.userId) ?? null },
+        { dateFields: ['joinedAt'] },
+      ),
+    );
   }
 }

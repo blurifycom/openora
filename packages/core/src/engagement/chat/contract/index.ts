@@ -1,6 +1,12 @@
 import { oc, eventIterator } from '@orpc/contract';
 import * as z from 'zod';
-import { IdInputSchema, TimestampSchema, UuidSchema } from '@openora/core/contracts';
+import {
+  IdInputSchema,
+  TimestampSchema,
+  UuidSchema,
+  ChatMessageTypeSchema,
+  CommandMetadataSchema,
+} from '@openora/core/contracts';
 import { PageQuerySchema, SortOrderSchema, paginated } from '@openora/core/contracts/kit';
 import {
   MAX_MESSAGE_LENGTH,
@@ -57,6 +63,7 @@ export const ChatRoomMemberSchema = z.object({
   userId: UuidSchema,
   role: ChatRoomRoleSchema,
   joinedAt: TimestampSchema,
+  username: z.string().nullable(),
 });
 export type ChatRoomMember = z.infer<typeof ChatRoomMemberSchema>;
 
@@ -68,6 +75,8 @@ export const ChatMessageSchema = z.object({
   // UNTRUSTED user text: profanity-gated and URL-defanged server-side but NOT HTML-escaped.
   // Consumers MUST render as text or escape before injecting into HTML.
   content: z.string(),
+  type: ChatMessageTypeSchema,
+  metadata: CommandMetadataSchema.nullable(),
   isDeleted: z.boolean(),
   createdAt: TimestampSchema,
 });
@@ -75,6 +84,11 @@ export type ChatMessage = z.infer<typeof ChatMessageSchema>;
 
 export const BlockedUserSchema = z.object({
   blockedId: UuidSchema,
+  createdAt: TimestampSchema,
+});
+
+export const IgnoredUserSchema = z.object({
+  ignoredId: UuidSchema,
   createdAt: TimestampSchema,
 });
 
@@ -155,10 +169,29 @@ export const chatContract = {
     .input(z.object({ blockedId: UuidSchema }))
     .output(z.object({ success: z.literal(true) })),
 
+  listIgnoredUsers: oc
+    .route({ method: 'GET', path: '/chat/ignores' })
+    .output(z.array(IgnoredUserSchema)),
+
+  ignoreUser: oc
+    .route({ method: 'POST', path: '/chat/ignores' })
+    .input(z.object({ ignoredId: UuidSchema }))
+    .output(z.object({ success: z.literal(true) })),
+
+  unignoreUser: oc
+    .route({ method: 'DELETE', path: '/chat/ignores/{ignoredId}' })
+    .input(z.object({ ignoredId: UuidSchema }))
+    .output(z.object({ success: z.literal(true) })),
+
   createPrivateRoom: oc
     .route({ method: 'POST', path: '/chat/rooms/private' })
     .input(z.object({ name: z.string().trim().min(1).max(ROOM_NAME_MAX_LENGTH) }))
     .output(ChatRoomSchema),
+
+  deletePrivateRoom: oc
+    .route({ method: 'DELETE', path: '/chat/rooms/{roomId}' })
+    .input(RoomIdInput)
+    .output(z.object({ success: z.literal(true) })),
 
   joinRoom: oc
     .route({ method: 'POST', path: '/chat/rooms/join' })

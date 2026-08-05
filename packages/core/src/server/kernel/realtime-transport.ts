@@ -31,12 +31,22 @@ class InProcessPresence implements RealtimePresence {
   count(channel: string): number {
     return this.members.get(channel)?.size ?? 0;
   }
+
+  /** Returns authenticated member IDs (excludes anonymous:* entries). */
+  getUserIds(channel: string): string[] {
+    const channelMembers = this.members.get(channel);
+    if (!channelMembers) {
+      return [];
+    }
+    return Array.from(channelMembers.keys()).filter((id) => !id.startsWith('anonymous:'));
+  }
 }
 
 /** First-party process-local fan-out used by the default SSE transport. */
 export class InProcessRealtimeTransport implements RealtimeTransport {
   private readonly channels = new Map<string, Set<Handler>>();
-  readonly presence: RealtimePresence = new InProcessPresence();
+  private readonly inProcessPresence = new InProcessPresence();
+  readonly presence: RealtimePresence = this.inProcessPresence;
 
   publish<T>(channel: string, event: T): void {
     const subscribers = this.channels.get(channel);
@@ -67,5 +77,9 @@ export class InProcessRealtimeTransport implements RealtimeTransport {
         this.channels.delete(channel);
       }
     };
+  }
+
+  getOnlineUserIds(channel: string): Promise<string[]> {
+    return Promise.resolve(this.inProcessPresence.getUserIds(channel));
   }
 }

@@ -187,12 +187,6 @@ export class DbAdminPermissionResolver implements AdminPermissionResolver {
     );
   }
 
-  // Bypasses the cache entirely - for callers that must not act on a not-yet-purged
-  // stale entry (see the AdminPermissionResolver.getFreshGrants doc).
-  getFreshGrants(userId: User['id']): Promise<AdminGrant[] | null> {
-    return this.loadGrants(userId);
-  }
-
   private async loadGrants(userId: User['id']): Promise<AdminGrant[] | null> {
     // One indexed join (on admin_role_assignment_user_id_idx) replaces the old
     // 2 + N-per-role fan-out. leftJoin keeps super-admin roles (no permission rows)

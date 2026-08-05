@@ -141,6 +141,8 @@ export const domainEventSchemas = {
   // A player muted/unmuted another player's messages for themselves (ABC-45 AC11).
   'chat.user.blocked': authContextBase.extend({ blockerId: UuidSchema, blockedId: UuidSchema }),
   'chat.user.unblocked': authContextBase.extend({ blockerId: UuidSchema, blockedId: UuidSchema }),
+  'chat.user.ignored': authContextBase.extend({ ignorerId: UuidSchema, ignoredId: UuidSchema }),
+  'chat.user.unignored': authContextBase.extend({ ignorerId: UuidSchema, ignoredId: UuidSchema }),
 
   // Admin room CRUD (actorId = acting admin UUID).
   'chat.room.created': authContextBase.extend({
@@ -164,6 +166,10 @@ export const domainEventSchemas = {
 
   // Private room lifecycle: creation and member membership changes.
   'chat.private_room.created': authContextBase.extend({
+    roomId: UuidSchema,
+    creatorId: UuidSchema,
+  }),
+  'chat.private_room.deleted': authContextBase.extend({
     roomId: UuidSchema,
     creatorId: UuidSchema,
   }),
@@ -312,8 +318,48 @@ export const domainEventSchemas = {
     after: z.record(z.string(), z.unknown()),
   }),
 
-  // A player's level changed via the admin PlayerService.update() path. actorId is the
-  // acting admin. Consumed by the tag module to keep the single mutable `level` tag in sync.
+  // Chat command events. amount is a decimal string; giftId is the chat_gift row id.
+  'chat.gift.sent': z.object({
+    giftId: UuidSchema,
+    senderId: UuidSchema,
+    senderUsername: z.string(),
+    amount: MoneyAmountSchema,
+    currency: z.string(),
+    roomId: UuidSchema,
+    messageId: UuidSchema,
+  }),
+  'chat.gift.claimed': z.object({
+    giftId: UuidSchema,
+    claimerId: UuidSchema,
+    claimerUsername: z.string(),
+    senderId: UuidSchema,
+    amount: MoneyAmountSchema,
+    currency: z.string(),
+    roomId: UuidSchema,
+  }),
+  'chat.rain.distributed': z.object({
+    fromUserId: UuidSchema,
+    recipients: z.array(UuidSchema),
+    recipientCount: z.number().int(),
+    totalAmount: MoneyAmountSchema,
+    currency: z.string(),
+    roomId: UuidSchema,
+  }),
+  'chat.donate.sent': z.object({
+    senderId: UuidSchema,
+    senderUsername: z.string(),
+    recipientId: UuidSchema,
+    recipientUsername: z.string(),
+    amount: MoneyAmountSchema,
+    currency: z.string(),
+    roomId: UuidSchema.nullable(),
+  }),
+  'chat.user.mentioned': z.object({
+    mentionedUserId: UuidSchema,
+    byUserId: UuidSchema,
+    roomId: UuidSchema.nullable(),
+    messageId: z.string(),
+  }),
   'player.level.changed': z.object({
     userId: UuidSchema,
     previousLevel: z.number().int(),
@@ -334,6 +380,10 @@ export const domainEventVersions: Partial<Record<DomainEventName, number>> = {
   // v2: sessionToken (the raw bearer credential) replaced with sessionId - the token
   // must never be persisted to the audit log or handed back to any caller.
   'identity.session.revoked': 2,
+  // v2: claimable gift-card mechanic - giftId/senderId/senderUsername/roomId replaces fromUserId/toUserId.
+  'chat.gift.sent': 2,
+  // v2: recipients array added for per-player notification delivery.
+  'chat.rain.distributed': 2,
   // v2: exact decimal-string amount (+ currency), never a JS number.
   'wallet.deposit.completed': 2,
   'wallet.withdrawal.completed': 2,

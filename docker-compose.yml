@@ -21,7 +21,7 @@ services:
   # broker by setting AMQP_URL and adding its own overlay. Management UI on
   # :15672 (guest/guest). See ADR-0016.
   rabbitmq:
-    profiles: ['broker']
+    # profiles: ['broker']
     image: rabbitmq:3-management
     ports:
       - '5672:5672'

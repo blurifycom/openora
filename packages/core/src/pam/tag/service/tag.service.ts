@@ -65,6 +65,20 @@ export const TagInUseError = makeConflictError(
   'TagInUseError',
   'Tag is still referenced by a player tag or tag rule and cannot be deleted',
 );
+export const TagRemovalReasonRequiredError = makeConflictError(
+  'TagRemovalReasonRequiredError',
+  'A removal reason is required for sticky tags',
+);
+
+const DEFAULT_MANUAL_REMOVAL_REASON = 'manual tag removal';
+
+function resolveRemovalReason(reason: string | undefined, isSticky: boolean) {
+  const normalized = reason?.trim();
+  if (isSticky && !normalized) {
+    throw new TagRemovalReasonRequiredError();
+  }
+  return normalized ?? DEFAULT_MANUAL_REMOVAL_REASON;
+}
 
 // "First evidence wins per breach dimension, but a dimension that was never recorded gets
 // filled in the moment it's observed." Never overwrites an already-populated dimension with
@@ -342,6 +356,7 @@ export class TagService implements PlayerTags {
 
   private async _removePlayerTagOnTx(trx: DrizzleTx, args: RemovePlayerTagInput) {
     const foundTag = await this._findTagByKeyOrThrow(args.tagKey, trx);
+    const removalReason = resolveRemovalReason(args.removalReason, foundTag.isSticky);
     const active = findOneOrThrow(
       await trx
         .select()
@@ -360,7 +375,7 @@ export class TagService implements PlayerTags {
       .update(playerTag)
       .set({
         removedAt: new Date(),
-        removalReason: args.removalReason,
+        removalReason,
         removalActor: args.removalActor,
         removalActorUserId: args.removalActorUserId,
       })
@@ -374,6 +389,7 @@ export class TagService implements PlayerTags {
       const db = this.drizzle.db;
       const result = await db.transaction(async (trx) => {
         const foundTag = await this._findTagByKeyOrThrow(args.tagKey, trx);
+        const removalReason = resolveRemovalReason(args.removalReason, foundTag.isSticky);
         const active = findOneOrThrow(
           await trx
             .select()
@@ -392,7 +408,7 @@ export class TagService implements PlayerTags {
           .update(playerTag)
           .set({
             removedAt: new Date(),
-            removalReason: args.removalReason,
+            removalReason,
             removalActor: args.removalActor,
             removalActorUserId: args.removalActorUserId,
           })
@@ -403,7 +419,7 @@ export class TagService implements PlayerTags {
       void this.event.emit('tag.player.removed', {
         playerId: args.playerId,
         tagKey: args.tagKey,
-        reason: args.removalReason,
+        reason: result.removalReason ?? DEFAULT_MANUAL_REMOVAL_REASON,
         actorId: args.removalActorUserId ?? SYSTEM_ACTOR_ID,
         ip: meta?.ip ?? null,
         userAgent: meta?.userAgent ?? null,

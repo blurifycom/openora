@@ -11,6 +11,7 @@
 import { createDrizzleDb } from '@openora/core/server';
 import { seedRoles } from '@openora/core/iam/seed';
 import { seedTag } from '@openora/core/pam/tag/seed';
+import { seedAutoWithdrawalConfig } from '@openora/core/wallet/seed';
 // import additional module seeders here as you enable them
 
 async function main() {
@@ -29,6 +30,7 @@ async function main() {
 
   await seedRoles(db);
   await seedTag(db);
+  await seedAutoWithdrawalConfig(db);
   console.log('Reference data seeded.');
 }
 

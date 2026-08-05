@@ -240,7 +240,9 @@ function collectPluginSurface(): string[] {
     join(repoRoot, 'packages', 'core', 'src', 'server', 'plugin-host', 'define-plugin.ts'),
   );
   const body =
-    src.match(/export (?:interface|type) ModuleRegistry (?:= )?\{([\s\S]*?)\n\}/)?.[1] ?? '';
+    src.match(
+      /export (?:interface|type) ModuleRegistry(?:<[^>]+>)? (?:= )?\{([\s\S]*?)\n\}/,
+    )?.[1] ?? '';
   return [...body.matchAll(/^\s{2}(\w+):/gm)].map((m) => m[1] ?? '').sort();
 }
 
