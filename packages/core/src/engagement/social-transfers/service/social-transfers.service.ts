@@ -82,6 +82,18 @@ export const ChatRoomNotMemberError = createDomainError(
   (roomId: Uuid) => `You are not a member of room: ${roomId}`,
 );
 
+// Internal-only: createDomainError instances don't expose their constructor args as
+// properties, so this carries the gift's roomId across the doClaimGift -> toClaimGiftResult
+// boundary - without it, the ClaimGiftResult's room_not_member reason has no roomId, and
+// chat-commands (which only has giftId in scope) would build a ChatRoomNotMemberError with
+// the wrong id. Never crosses the GIFT_COMMANDS port boundary itself.
+class GiftRoomAccessError extends Error {
+  constructor(readonly roomId: Uuid | null) {
+    super('room_not_member');
+    this.name = 'GiftRoomAccessError';
+  }
+}
+
 type GiftArgs = { amount: string; roomId: Uuid | null; idempotencyKey: Uuid };
 type RainFingerprintArgs = Pick<
   SendRainArgs,
@@ -186,11 +198,8 @@ function toClaimGiftResult(error: unknown): ClaimGiftResult {
   if (error instanceof GiftSelfClaimError) {
     return { ok: false, reason: 'self_claim' };
   }
-  if (
-    error instanceof ChatRoomNotMemberError ||
-    (error instanceof Error && error.name === 'ChatRoomNotMemberError')
-  ) {
-    return { ok: false, reason: 'room_not_member' };
+  if (error instanceof GiftRoomAccessError) {
+    return { ok: false, reason: 'room_not_member', roomId: error.roomId };
   }
   throw error;
 }
@@ -409,19 +418,23 @@ export class SocialTransfersService implements GiftCommands, RainCommands {
       throw new BelowMinimumError();
     }
 
-    const fingerprint = fingerprintCommand({ type: 'gift', ...input });
-    const replay = await this.findCommandReplay('gift', actorId, input.idempotencyKey, fingerprint);
-    if (replay) {
-      return replay;
-    }
-    await this.reserveCommandIdempotency('gift', actorId, input.idempotencyKey, fingerprint);
-
     const senderSummaries = await this.directory.lookupPlayers([actorId]);
     const senderSummary = senderSummaries.find((s) => s.userId === actorId);
     if (!senderSummary) {
       throw new ChatPlayerNotFoundError(actorId);
     }
     const senderUsername = senderSummary.username;
+
+    // Sender resolved BEFORE reserving (mirrors doSendDonate): runWithCommandReservation
+    // only releases the reservation on a failure inside its own callback, so anything
+    // between reserveCommandIdempotency and that callback would otherwise leak a stuck
+    // reservation for the full TTL on a transient directory error.
+    const fingerprint = fingerprintCommand({ type: 'gift', ...input });
+    const replay = await this.findCommandReplay('gift', actorId, input.idempotencyKey, fingerprint);
+    if (replay) {
+      return replay;
+    }
+    await this.reserveCommandIdempotency('gift', actorId, input.idempotencyKey, fingerprint);
 
     const { msg, giftId, currency } = await this.runWithCommandReservation(
       'gift',
@@ -523,7 +536,14 @@ export class SocialTransfersService implements GiftCommands, RainCommands {
           new GiftNotFoundError(giftId),
         );
 
-        await this.verifyRoomAccessIfNeeded(giftRow.roomId, claimerId);
+        try {
+          await this.verifyRoomAccessIfNeeded(giftRow.roomId, claimerId);
+        } catch (error) {
+          if (error instanceof Error && error.name === 'ChatRoomNotMemberError') {
+            throw new GiftRoomAccessError(giftRow.roomId);
+          }
+          throw error;
+        }
 
         if (giftRow.senderId === claimerId) {
           throw new GiftSelfClaimError();

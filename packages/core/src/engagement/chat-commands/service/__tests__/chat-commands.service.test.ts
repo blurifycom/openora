@@ -265,6 +265,21 @@ describe('ChatCommandsService.claimGift (delegates to GIFT_COMMANDS)', () => {
 
     await expect(svc.claimGift(GIFT_ID, CLAIMER_ID)).rejects.toThrow(GiftAlreadyClaimedError);
   });
+
+  it('maps a "room_not_member" port result to ChatRoomNotMemberError using the port\'s roomId, not the giftId', async () => {
+    const giftCommands = makeGiftCommands({
+      claimGift: vi.fn().mockResolvedValue({
+        ok: false,
+        reason: 'room_not_member',
+        roomId: ROOM_ID,
+      } satisfies ClaimGiftResult),
+    });
+    const svc = makeSvc({ giftCommands });
+
+    await expect(svc.claimGift(GIFT_ID, CLAIMER_ID)).rejects.toThrow(
+      new ChatRoomNotMemberError(ROOM_ID),
+    );
+  });
 });
 
 describe('ChatCommandsService.postRain (resolves presence, delegates to RAIN_COMMANDS)', () => {

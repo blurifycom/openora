@@ -421,6 +421,19 @@ describe('SocialTransfersService.claimGift', () => {
     const result = await svc.claimGift(GIFT_ID, CLAIMER_ID);
     expect(result).toEqual({ ok: false, reason: 'gift_not_found' });
   });
+
+  it('returns { ok: false, reason: "room_not_member", roomId: <the gift\'s room> } when the claimer is not a room member', async () => {
+    const notMember = Object.assign(new Error('not a member'), { name: 'ChatRoomNotMemberError' });
+    const roomAccess = mock<ChatRoomAccess>({
+      verifyRoomAccess: vi.fn().mockRejectedValue(notMember),
+    });
+    const svc = makeSvc({
+      drizzleRows: { select: [[GIFT_ROW]], returning: [] },
+      roomAccess,
+    });
+    const result = await svc.claimGift(GIFT_ID, CLAIMER_ID);
+    expect(result).toEqual({ ok: false, reason: 'room_not_member', roomId: GIFT_ROW.roomId });
+  });
 });
 
 describe('SocialTransfersService.sendRain (RAIN_COMMANDS port)', () => {

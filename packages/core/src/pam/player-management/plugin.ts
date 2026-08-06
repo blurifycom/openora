@@ -15,7 +15,7 @@ import { createPlayerRouter } from './router/index.js';
 // (compliance + the admin override route consume it). Reads identity via /schema. See ADR-0020.
 export default {
   id: 'player-management',
-  dependsOn: ['chat', 'gaming', 'audit'],
+  dependsOn: ['chat', 'gaming', 'audit', 'identity'],
   register(ctx) {
     ctx.provide(
       KYC_STATUS_WRITER,

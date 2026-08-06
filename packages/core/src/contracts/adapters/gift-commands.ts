@@ -38,7 +38,10 @@ export type ClaimGiftFailureReason =
 
 export type ClaimGiftResult =
   | { ok: true; claimedBy: Uuid; claimedByUsername: string; claimedAt: string }
-  | { ok: false; reason: ClaimGiftFailureReason };
+  // roomId is set (and only meaningful) for reason: 'room_not_member' - the gift's own
+  // room, since the caller only has giftId and can't otherwise build a correct
+  // ChatRoomNotMemberError (which reports a room, not a gift).
+  | { ok: false; reason: ClaimGiftFailureReason; roomId?: Uuid | null };
 
 export type GiftCommands = {
   sendGift(input: SendGiftArgs, actorId: Uuid): Promise<SendGiftResult>;

@@ -154,7 +154,7 @@ export class ChatCommandsService {
       case 'self_claim':
         throw new GiftSelfClaimError();
       case 'room_not_member':
-        throw new ChatRoomNotMemberError(giftId);
+        throw new ChatRoomNotMemberError(result.roomId ?? null);
     }
   }
 
