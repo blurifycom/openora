@@ -17,6 +17,7 @@ export type DirectAuditAction =
   | 'admin.user.updated'
   | 'admin.player.updated'
   | 'admin.player.removed'
+  | 'admin.player_note.created'
   | 'audit.export'
   | 'compliance.kyc.bulk_approve'
   | 'wallet.withdrawal.auto_approved'
