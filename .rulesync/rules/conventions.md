@@ -44,6 +44,7 @@ Use pure, composable functions and explicit typed wiring. Match local naming and
 ## Universal baseline
 
 - Schema-first at trust boundaries. Infer types from their owning schema or row; do not hand-write duplicates.
+- Literal config arrays/objects (option lists, key sets) use `as const`, not an explicit union type annotation - let TypeScript infer the literal types.
 - No `any`, `interface`, decorators, reuse inheritance, suppressive casts, or default exports except `plugin.ts` and `drizzle.config.ts`.
 - Keep third-party access behind an owning adapter port. Do not import another module's internals or create cycles.
 - Do not hand-edit generated artifacts: migrations, `docs/catalog.json`, or per-tool agent mirrors.

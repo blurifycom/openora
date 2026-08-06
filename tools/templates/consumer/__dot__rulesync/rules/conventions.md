@@ -66,6 +66,8 @@ above) if this repo has no UI apps.
   `currency` field alongside it, never `amountCents`.
 - **One source of truth per shape** - infer, never hand-write: `z.infer<typeof XSchema>`,
   `typeof x.$inferSelect`. Full detail: `docs/standards/types.md`.
+- **Literal config arrays/objects (option lists, key sets) use `as const`**, not an explicit union
+  type annotation - let TypeScript infer the literal types.
 - **Schema-first at every boundary** (HTTP, config, env, events); validate once at the edge, trust
   the type after.
 - **Entity ids typed through their owning type** (`playerId: Player['id']`), never a bare
