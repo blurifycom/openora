@@ -5,7 +5,12 @@ import { user } from '@openora/core/pam/schema/identity';
 import { player } from '@openora/core/pam/schema/profile';
 import { wallet, walletTransaction } from '@openora/core/wallet/schema';
 import { game } from '@openora/core/casino/schema/gaming';
-import { chatRoom, chatMessage } from '@openora/core/engagement/schema/chat';
+import {
+  chatRoom,
+  chatMessage,
+  chatUserBlock,
+  chatUserIgnore,
+} from '@openora/core/engagement/schema/chat';
 import type { ChatRoomCategory } from '@openora/core/engagement/contracts/chat';
 
 export type SeedAuth = {
@@ -225,13 +230,20 @@ const CHAT_ROOMS: readonly ChatRoomSeed[] = [
     messages: [
       'Big match tonight - who are you backing?',
       'Odds are looking great on the underdog.',
+      'Anyone else watching the derby this weekend?',
+      'That live-betting swing was wild.',
     ],
   },
   {
     slug: 'jackpot-wheel',
     name: 'Jackpot Wheel',
     category: 'games-sports',
-    messages: ['Share your wins here!', 'Jackpot season has begun!'],
+    messages: [
+      'Share your wins here!',
+      'Jackpot season has begun!',
+      'So close to the wheel bonus, ugh 😅',
+      'Congrats on the big spin!',
+    ],
   },
   {
     slug: 'latam',
@@ -337,6 +349,20 @@ const CHAT_ROOMS: readonly ChatRoomSeed[] = [
   },
 ];
 
+// Global chat (roomId: null) - authored by random seeded players, oldest first.
+const GLOBAL_CHAT = [
+  'Good luck everyone! 🍀',
+  'Anyone on the new slots tonight?',
+  'Big win on Aviator just now 🚀',
+  'gl hf all',
+  'Tried Sweet Bonanza today, pretty fun',
+  'That Book of Dead session was rough 😅',
+  'Lightning Roulette hitting hard tonight ⚡',
+  'Remember to set your limits, stay safe out there',
+  'Who is up for a Gates of Olympus run?',
+  'Cashed out just in time, phew',
+] as const;
+
 export async function seedDemoData(options: SeedOptions): Promise<SeedResult> {
   const { db, auth, playerCount = 36, windowDays = 90, log = () => {} } = options;
   const admin = options.admin ?? {
@@ -348,6 +374,8 @@ export async function seedDemoData(options: SeedOptions): Promise<SeedResult> {
   const rng = makeRng(0x5eed);
 
   log('Clearing existing demo content (player, wallet, transaction, game, chat)...');
+  await db.delete(chatUserBlock);
+  await db.delete(chatUserIgnore);
   await db.delete(chatMessage);
   await db.delete(chatRoom);
   await db.delete(walletTransaction);
@@ -376,50 +404,19 @@ export async function seedDemoData(options: SeedOptions): Promise<SeedResult> {
   );
   log(`Created ${GAMES.length} games.`);
 
-  let roomCount = 0;
-  if (adminUser) {
-    const insertedRooms = await db
-      .insert(chatRoom)
-      .values(
-        CHAT_ROOMS.map((r) => ({
-          name: r.name,
-          slug: r.slug,
-          category: r.category,
-          isPublic: r.isPublic ?? true,
-          joinCode: r.joinCode ?? null,
-          creatorId: r.category === 'private-channels' ? null : adminUser.id,
-        })),
-      )
-      .returning();
-
-    const messageRows: (typeof chatMessage.$inferInsert)[] = insertedRooms.flatMap((room) => {
-      const def = CHAT_ROOMS.find((r) => r.slug === room.slug);
-      return (def?.messages ?? []).map((content) => ({
-        roomId: room.id,
-        userId: adminUser.id,
-        username: admin.name,
-        content,
-      }));
-    });
-    if (messageRows.length > 0) {
-      await db.insert(chatMessage).values(messageRows);
-    }
-
-    roomCount = insertedRooms.length;
-    log(`Created ${roomCount} chat rooms with demo messages.`);
-  }
-
   let userCount = adminUser ? 1 : 0;
   let txCount = 0;
   const now = Date.now();
   const dayMs = 86_400_000;
+  const players: { id: string; displayName: string }[] = [];
 
   for (let i = 0; i < playerCount; i++) {
     const first = pick(rng, FIRST_NAMES);
     const last = pick(rng, LAST_NAMES);
     const displayName = `${first} ${last}`;
     const email = `player.${i + 1}@demo.igaming.dev`;
-    const [country, currency] = pick(rng, LOCALES);
+    const [country] = pick(rng, LOCALES);
+    const currency = 'USD';
     const status = weighted(rng, STATUS_WEIGHTS);
     const kycStatus = weighted(rng, KYC_WEIGHTS);
     const level = 1 + Math.floor(rng() * 10);
@@ -447,6 +444,7 @@ export async function seedDemoData(options: SeedOptions): Promise<SeedResult> {
       continue;
     }
     userCount++;
+    players.push({ id: playerUser.id, displayName });
 
     const totalDeposits = round2(rng() * 8000 + (level - 1) * 400);
     const totalWagered = round2(totalDeposits * (1.5 + rng() * 4));
@@ -515,6 +513,83 @@ export async function seedDemoData(options: SeedOptions): Promise<SeedResult> {
   }
 
   log(`Created ${playerCount} players with wallets and ${txCount} transactions.`);
+
+  // Room + global chat messages are authored by the seeded players (falling back to
+  // admin only if somehow no player got created), so demo chat reads like real activity.
+  const chatAuthors =
+    players.length > 0 ? players : adminUser ? [{ id: adminUser.id, displayName: admin.name }] : [];
+
+  let roomCount = 0;
+  let chatMessageCount = 0;
+  if (adminUser) {
+    const insertedRooms = await db
+      .insert(chatRoom)
+      .values(
+        CHAT_ROOMS.map((r) => ({
+          name: r.name,
+          slug: r.slug,
+          category: r.category,
+          isPublic: r.isPublic ?? true,
+          joinCode: r.joinCode ?? null,
+          creatorId: r.category === 'private-channels' ? null : adminUser.id,
+        })),
+      )
+      .returning();
+    roomCount = insertedRooms.length;
+
+    if (chatAuthors.length > 0) {
+      const roomMessageRows: (typeof chatMessage.$inferInsert)[] = insertedRooms.flatMap((room) => {
+        const def = CHAT_ROOMS.find((r) => r.slug === room.slug);
+        const messages = def?.messages ?? [];
+        return messages.map((content, idx) => {
+          const author = pick(rng, chatAuthors);
+          return {
+            roomId: room.id,
+            userId: author.id,
+            username: author.displayName,
+            content,
+            createdAt: new Date(now - (messages.length - idx) * 15 * 60_000),
+          };
+        });
+      });
+
+      const globalMessageRows: (typeof chatMessage.$inferInsert)[] = GLOBAL_CHAT.map(
+        (content, idx) => {
+          const author = pick(rng, chatAuthors);
+          return {
+            roomId: null,
+            userId: author.id,
+            username: author.displayName,
+            content,
+            createdAt: new Date(now - (GLOBAL_CHAT.length - idx) * 10 * 60_000),
+          };
+        },
+      );
+
+      const messageRows = [...roomMessageRows, ...globalMessageRows];
+      if (messageRows.length > 0) {
+        await db.insert(chatMessage).values(messageRows);
+        chatMessageCount = messageRows.length;
+      }
+    }
+
+    log(`Created ${roomCount} chat rooms and ${chatMessageCount} chat messages.`);
+  }
+
+  if (adminUser && players.length >= 2) {
+    // Deterministic pick of two distinct players: a random index, then a random
+    // non-zero offset (mod length) so the second index can never land on the first.
+    const blockedIndex = Math.floor(rng() * players.length);
+    const offset = 1 + Math.floor(rng() * (players.length - 1));
+    const ignoredIndex = (blockedIndex + offset) % players.length;
+    const blocked = players[blockedIndex];
+    const ignored = players[ignoredIndex];
+    if (blocked && ignored) {
+      await db.insert(chatUserBlock).values({ blockerId: adminUser.id, blockedId: blocked.id });
+      await db.insert(chatUserIgnore).values({ ignorerId: adminUser.id, ignoredId: ignored.id });
+      log(`Admin blocked ${blocked.displayName} and ignored ${ignored.displayName}.`);
+    }
+  }
 
   return {
     adminEmail: admin.email,
