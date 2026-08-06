@@ -6,6 +6,7 @@ import {
   SEND_EMAIL,
   SESSION_COMMANDS,
   CACHE,
+  RATE_LIMITER,
   domainEventSchemas,
 } from '@openora/core/contracts';
 import { IamService, DbAdminPermissionResolver } from './service/iam.service.js';
@@ -66,6 +67,7 @@ export default {
           c.get(EVENT_BUS),
           c.get(SEND_EMAIL),
           c.get(SESSION_COMMANDS),
+          c.get(RATE_LIMITER),
         ),
         c.get(ADMIN_GUARD),
       ),

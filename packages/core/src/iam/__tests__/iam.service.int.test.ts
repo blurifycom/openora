@@ -2,7 +2,13 @@ import { randomUUID } from 'node:crypto';
 import { describe, it, expect, vi, beforeAll, afterAll, beforeEach } from 'vitest';
 import { sql, eq } from 'drizzle-orm';
 import { mock, NO_CLIENT_META, makeEventBus } from '../../testing/mock.js';
-import { statement, findOneOrThrow, RedisCache, type ResourceName } from '@openora/core/server';
+import {
+  statement,
+  findOneOrThrow,
+  RedisCache,
+  RedisRateLimiter,
+  type ResourceName,
+} from '@openora/core/server';
 import type { SendEmailPort, SessionCommands } from '@openora/core/contracts';
 import { createTestDb, createTestRedis, type TestDb, type TestRedis } from '@openora/core/testing';
 import { migrate as migrateIam } from '@openora/core/iam/migrate';
@@ -655,6 +661,68 @@ describe('IamService paginated lists', () => {
     expect(result.total).toBe(1);
     expect(result.items).toHaveLength(1);
     expect(findOneOrThrow(result.items, new Error('expected an item')).roleName).toBe('Ops');
+  });
+});
+
+describe('IamService.reportAccessDenied', () => {
+  it('records and audits a genuine denial (caller lacks the resource/level)', async () => {
+    const events = makeEventBus();
+    const svc = new IamService(db.drizzle, events, makeEmail());
+
+    const result = await svc.reportAccessDenied({
+      resource: 'withdrawal',
+      level: 'read',
+      caller: SUPPORT_CALLER,
+    });
+
+    expect(result).toEqual({ recorded: true });
+    expect(events.emit).toHaveBeenCalledWith(
+      'identity.user.unauthorized_access',
+      expect.objectContaining({
+        userId: SUPPORT_CALLER.userId,
+        resource: 'withdrawal',
+        action: 'access',
+        role: 'support',
+      }),
+    );
+  });
+
+  it('does not record or emit when the caller genuinely holds the permission', async () => {
+    const events = makeEventBus();
+    const svc = new IamService(db.drizzle, events, makeEmail());
+
+    const result = await svc.reportAccessDenied({
+      resource: 'player',
+      level: 'read_write',
+      caller: ADMIN_CALLER,
+    });
+
+    expect(result).toEqual({ recorded: false });
+    expect(events.emit).not.toHaveBeenCalled();
+  });
+
+  it('with a rate limiter wired, a repeat report within the window is throttled and not recorded again', async () => {
+    const events = makeEventBus();
+    const limiter = new RedisRateLimiter(redis.client);
+    const svc = new IamService(db.drizzle, events, makeEmail(), undefined, limiter);
+
+    const first = await svc.reportAccessDenied({
+      resource: 'withdrawal',
+      level: 'read',
+      caller: SUPPORT_CALLER,
+    });
+    const second = await svc.reportAccessDenied({
+      resource: 'withdrawal',
+      level: 'read',
+      caller: SUPPORT_CALLER,
+    });
+
+    expect(first).toEqual({ recorded: true });
+    expect(second).toEqual({ recorded: false });
+    const denialCalls = (events.emit as ReturnType<typeof vi.fn>).mock.calls.filter(
+      (c) => c[0] === 'identity.user.unauthorized_access',
+    );
+    expect(denialCalls).toHaveLength(1);
   });
 });
 

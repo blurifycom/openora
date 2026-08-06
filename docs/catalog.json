@@ -183,6 +183,7 @@
         "iam.listInvitations",
         "iam.listRoles",
         "iam.previewEffectivePermissions",
+        "iam.reportAccessDenied",
         "iam.setRolePermissions",
         "iam.unassignRole",
         "iam.updateRole"

@@ -189,6 +189,11 @@ export const iamContract = {
   getMyPermissions: oc
     .route({ method: 'GET', path: '/iam/my-permissions' })
     .output(EffectivePermissionsSchema),
+
+  reportAccessDenied: oc
+    .route({ method: 'POST', path: '/iam/report-access-denied' })
+    .input(GrantInputSchema)
+    .output(z.object({ recorded: z.boolean() })),
 };
 
 export type AdminRole = z.infer<typeof AdminRoleSchema>;
