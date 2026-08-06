@@ -429,6 +429,7 @@
         "packages/core/src/compliance/plugin.ts",
         "packages/core/src/engagement/social-transfers/plugin.ts",
         "packages/core/src/pam/player-management/plugin.ts",
+        "packages/core/src/pam/player-note/plugin.ts",
         "packages/core/src/wallet/plugin.ts"
       ]
     },
