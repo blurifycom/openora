@@ -8,7 +8,7 @@
 // AGENTS.md).
 import { createToken, type Token } from './token.js';
 import type { Uuid } from '../schemas/common.js';
-import type { ChatSystemMessage as SystemChatMessage } from './chat-system-writer.js';
+import type { CommandChatMessage } from './chat-system-writer.js';
 
 export type SendGiftArgs = {
   amount: string;
@@ -27,7 +27,7 @@ export type SendGiftFailureReason =
   | 'room_not_member';
 
 export type SendGiftResult =
-  | { ok: true; message: SystemChatMessage }
+  | { ok: true; message: CommandChatMessage }
   | { ok: false; reason: SendGiftFailureReason };
 
 export type ClaimGiftFailureReason =

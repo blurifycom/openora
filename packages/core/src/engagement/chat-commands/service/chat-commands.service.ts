@@ -9,7 +9,7 @@ import {
 } from '@openora/core/server';
 import type {
   Uuid,
-  ChatSystemMessage,
+  CommandChatMessage,
   ChatBlockWriter,
   AdminUserDirectory,
   GiftCommands,
@@ -193,7 +193,7 @@ export class ChatCommandsService {
     return summaries.map((s) => ({ userId: s.userId, username: s.username }));
   }
 
-  async postGift(input: PostGiftInput, actorId: Uuid): Promise<ChatSystemMessage> {
+  async postGift(input: PostGiftInput, actorId: Uuid): Promise<CommandChatMessage> {
     const result = await this.giftCommands.sendGift(input, actorId);
     if (result.ok) {
       return result.message;
@@ -258,7 +258,7 @@ export class ChatCommandsService {
   // who is online (it owns presence for the whole chat-command surface via
   // its own dependency on `chat`) and translates the port's discriminated
   // result into the typed errors this module's router maps to transport codes.
-  async postRain(input: PostRainInput, actorId: Uuid): Promise<ChatSystemMessage> {
+  async postRain(input: PostRainInput, actorId: Uuid): Promise<CommandChatMessage> {
     const onlineUserIds = await this.transport.getOnlineUserIds(chatChannel(input.roomId));
     const result = await this.rainCommands.sendRain({ ...input, onlineUserIds }, actorId);
     if (result.ok) {

@@ -37,6 +37,20 @@ export const SystemChatMessageSchema = z.object({
 });
 export type SystemChatMessage = z.infer<typeof SystemChatMessageSchema>;
 
+/** A user-authored chat message carrying structured command metadata. */
+export const CommandChatMessageSchema = z.object({
+  id: UuidSchema,
+  roomId: UuidSchema.nullable(),
+  userId: UuidSchema,
+  username: z.string(),
+  content: z.string(),
+  type: z.literal('user'),
+  metadata: CommandMetadataSchema,
+  isDeleted: z.boolean(),
+  createdAt: z.string(),
+});
+export type CommandChatMessage = z.infer<typeof CommandChatMessageSchema>;
+
 /**
  * Client-facing sentinel for global chat wherever a chat command's `roomId`
  * field is otherwise a real room UUID (`/gift`, `/rain`, `/donate`) - the

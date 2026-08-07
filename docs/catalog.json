@@ -1033,6 +1033,10 @@
       "file": "packages/core/src/contracts/schemas/common.ts"
     },
     {
+      "name": "CommandChatMessageSchema",
+      "file": "packages/core/src/contracts/schemas/chat-command.ts"
+    },
+    {
       "name": "CommandConfigSchema",
       "file": "packages/core/src/engagement/chat-commands/contract/index.ts"
     },

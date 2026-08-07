@@ -18,6 +18,7 @@ import type {
   RealtimeTransport,
   CommandMetadata,
   ChatSystemMessage,
+  CommandChatMessage,
   AdminUserDirectory,
 } from '@openora/core/contracts';
 import { chatChannel } from '@openora/core/contracts';
@@ -1183,6 +1184,50 @@ export class ChatService {
       void this.transport.publish(chatChannel(args.roomId), msg);
     }
     return msg;
+  }
+
+  async postCommandMessage(args: {
+    roomId: ChatRoom['id'] | null;
+    userId: User['id'];
+    username: string;
+    metadata: CommandMetadata;
+    tx?: unknown;
+  }): Promise<CommandChatMessage> {
+    const db = (args.tx as DrizzleDb | undefined) ?? this.drizzle.db;
+    const [record] = await db
+      .insert(chatMessage)
+      .values({
+        roomId: args.roomId,
+        userId: args.userId,
+        username: args.username,
+        content: '',
+        type: 'user',
+        metadata: args.metadata,
+      })
+      .returning();
+    const message = toMessage(record);
+    if (!args.tx) {
+      void this.transport.publish(chatChannel(args.roomId), message);
+    }
+    return message as CommandChatMessage;
+  }
+
+  async updateCommandMessage(args: {
+    messageId: ChatMessage['id'];
+    metadata: CommandMetadata;
+    tx?: unknown;
+  }): Promise<CommandChatMessage> {
+    const db = (args.tx as DrizzleDb | undefined) ?? this.drizzle.db;
+    const [record] = await db
+      .update(chatMessage)
+      .set({ metadata: args.metadata })
+      .where(eq(chatMessage.id, args.messageId))
+      .returning();
+    const message = toMessage(record);
+    if (!args.tx) {
+      void this.transport.publish(chatChannel(message.roomId), message);
+    }
+    return message as CommandChatMessage;
   }
 
   async listRoomMembers({ roomId, viewerId }: { roomId: ChatRoom['id']; viewerId?: User['id'] }) {

@@ -12,7 +12,7 @@ import {
 } from '@openora/core/server';
 import type {
   Uuid,
-  ChatSystemMessage,
+  CommandChatMessage,
   ChatSystemWriter,
   WalletCommands,
   AdminUserDirectory,
@@ -119,7 +119,7 @@ type MoneyMovingInput =
 const COMMAND_IDEMPOTENCY_TTL_MS = 5 * 60 * 1000;
 type CommandIdempotencyRecord = {
   fingerprint: string;
-  result: ChatSystemMessage | null;
+  result: CommandChatMessage | null;
 };
 
 // The replay guard must match on the COMPLETE request, not just the amount - a reused
@@ -315,7 +315,7 @@ export class SocialTransfersService implements GiftCommands, RainCommands {
     }
   }
 
-  async sendDonate(input: SendDonateInput, actorId: Uuid): Promise<ChatSystemMessage> {
+  async sendDonate(input: SendDonateInput, actorId: Uuid): Promise<CommandChatMessage> {
     return this.doSendDonate(input, actorId);
   }
 
@@ -350,7 +350,7 @@ export class SocialTransfersService implements GiftCommands, RainCommands {
     actorId: Uuid,
     idempotencyKey: Uuid,
     fingerprint: string,
-  ): Promise<ChatSystemMessage | null> {
+  ): Promise<CommandChatMessage | null> {
     const record = await this.cache.get<CommandIdempotencyRecord>(
       this.idempotencyCacheKey(commandType, actorId, idempotencyKey),
     );
@@ -395,7 +395,7 @@ export class SocialTransfersService implements GiftCommands, RainCommands {
     actorId: Uuid,
     idempotencyKey: Uuid,
     fingerprint: string,
-    result: ChatSystemMessage,
+    result: CommandChatMessage,
   ): Promise<void> {
     await this.cache.set(
       this.idempotencyCacheKey(commandType, actorId, idempotencyKey),
@@ -430,7 +430,7 @@ export class SocialTransfersService implements GiftCommands, RainCommands {
     return summary;
   }
 
-  private async doSendGift(input: GiftArgs, actorId: Uuid): Promise<ChatSystemMessage> {
+  private async doSendGift(input: GiftArgs, actorId: Uuid): Promise<CommandChatMessage> {
     await this.verifyRoomAccessIfNeeded(input.roomId, actorId);
     const config = await this.loadCommandConfig('gift');
     if (
@@ -497,9 +497,10 @@ export class SocialTransfersService implements GiftCommands, RainCommands {
             throw new InsufficientBalanceError();
           }
 
-          const systemMsg = await this.systemWriter.postSystemMessage({
+          const message = await this.systemWriter.postCommandMessage({
             roomId: input.roomId,
-            actorId,
+            userId: actorId,
+            username: senderUsername,
             tx,
             metadata: {
               command: 'gift',
@@ -508,12 +509,16 @@ export class SocialTransfersService implements GiftCommands, RainCommands {
               senderUsername,
               amount: input.amount,
               currency: debit.currency,
+              status: 'available',
+              claimedBy: null,
+              claimedByUsername: null,
+              claimedAt: null,
             },
           });
 
           await tx
             .update(playerGift)
-            .set({ messageId: systemMsg.id })
+            .set({ messageId: message.id })
             .where(eq(playerGift.id, giftRow.id));
 
           await this.audit.recordInTransaction(tx, {
@@ -526,12 +531,12 @@ export class SocialTransfersService implements GiftCommands, RainCommands {
             after: { amount: input.amount, roomId: input.roomId },
           });
 
-          return { msg: systemMsg, giftId: giftRow.id, currency: debit.currency };
+          return { msg: message, giftId: giftRow.id, currency: debit.currency };
         }),
     );
     await this.completeCommandIdempotency('gift', actorId, input.idempotencyKey, fingerprint, msg);
 
-    // The caller now owns the commit boundary: postSystemMessage was passed `tx` above so
+    // The caller now owns the commit boundary: postCommandMessage was passed `tx` above so
     // it did not auto-publish - publish only now that this transaction has committed.
     void this.transport.publish(chatChannel(input.roomId), msg);
 
@@ -556,7 +561,7 @@ export class SocialTransfersService implements GiftCommands, RainCommands {
     }
     const claimerUsername = claimerSummary.username;
 
-    const { claimed, currency, roomId, senderId } = await this.drizzle.db.transaction(
+    const { claimed, currency, roomId, senderId, message } = await this.drizzle.db.transaction(
       async (tx) => {
         // FOR UPDATE serializes concurrent claims against the same gift row under READ COMMITTED.
         const giftRow = findOneOrThrow(
@@ -611,17 +616,36 @@ export class SocialTransfersService implements GiftCommands, RainCommands {
           after: { claimedBy: claimerId, amount: updated.amount },
         });
 
+        const updatedMessage = await this.systemWriter.updateCommandMessage({
+          messageId: giftRow.messageId,
+          tx,
+          metadata: {
+            command: 'gift',
+            giftId: giftRow.id,
+            senderId: giftRow.senderId,
+            senderUsername: giftRow.senderUsername,
+            amount: giftRow.amount,
+            currency: updated.currency,
+            status: 'claimed',
+            claimedBy: claimerId,
+            claimedByUsername: claimerUsername,
+            claimedAt: claimedAt.toISOString(),
+          },
+        });
+
         return {
           claimed: updated,
           currency: updated.currency,
           roomId: updated.roomId,
           senderId: giftRow.senderId,
+          message: updatedMessage,
         };
       },
     );
 
     const claimedAtIso = claimed.claimedAt?.toISOString() ?? new Date().toISOString();
 
+    void this.transport.publish(chatChannel(roomId), message);
     void this.transport.publish(chatChannel(roomId), {
       event: 'gift.claimed',
       giftId,
@@ -677,7 +701,7 @@ export class SocialTransfersService implements GiftCommands, RainCommands {
     };
   }
 
-  private async doSendRain(input: SendRainArgs, actorId: Uuid): Promise<ChatSystemMessage> {
+  private async doSendRain(input: SendRainArgs, actorId: Uuid): Promise<CommandChatMessage> {
     await this.verifyRoomAccessIfNeeded(input.roomId, actorId);
     const config = await this.loadCommandConfig('rain');
     if (
@@ -701,6 +725,11 @@ export class SocialTransfersService implements GiftCommands, RainCommands {
     if (input.recipientCount > amountUnits) {
       throw new TooManyRecipientsError();
     }
+    const senderSummaries = await this.directory.lookupPlayers([actorId]);
+    const sender = senderSummaries.find((s) => s.userId === actorId);
+    if (!sender) {
+      throw new ChatPlayerNotFoundError(actorId);
+    }
     const fingerprint = fingerprintCommand({ type: 'rain', ...input });
     const replay = await this.findCommandReplay('rain', actorId, input.idempotencyKey, fingerprint);
     if (replay) {
@@ -719,7 +748,7 @@ export class SocialTransfersService implements GiftCommands, RainCommands {
       'rain',
       actorId,
       input.idempotencyKey,
-      () => {
+      async () => {
         const recipients = shuffleArray(input.onlineUserIds.filter((id) => id !== actorId)).slice(
           0,
           input.recipientCount,
@@ -727,6 +756,14 @@ export class SocialTransfersService implements GiftCommands, RainCommands {
         if (recipients.length === 0) {
           throw new NoOnlineUsersError();
         }
+        const recipientSummaries = await this.directory.lookupPlayers(recipients);
+        const recipientDetails = recipients.map((recipientId) => {
+          const summary = recipientSummaries.find((s) => s.userId === recipientId);
+          if (!summary) {
+            throw new ChatPlayerNotFoundError(recipientId);
+          }
+          return { userId: summary.userId, username: summary.username };
+        });
         return this.drizzle.db.transaction(async (tx) => {
           const splitResult = await tx.execute(
             sql`SELECT
@@ -780,17 +817,20 @@ export class SocialTransfersService implements GiftCommands, RainCommands {
             })),
           );
 
-          const systemMsg = await this.systemWriter.postSystemMessage({
+          const message = await this.systemWriter.postCommandMessage({
             roomId: input.roomId,
-            actorId,
+            userId: actorId,
+            username: sender.username,
             tx,
             metadata: {
               command: 'rain',
               fromUserId: actorId,
+              fromUsername: sender.username,
               amount: totalDistributed,
               currency: debit.currency,
               recipientCount: recipients.length,
               perRecipient,
+              recipients: recipientDetails,
             },
           });
 
@@ -805,7 +845,7 @@ export class SocialTransfersService implements GiftCommands, RainCommands {
           });
 
           return {
-            msg: systemMsg,
+            msg: message,
             currency: debit.currency,
             totalDistributed,
             perRecipient,
@@ -816,7 +856,7 @@ export class SocialTransfersService implements GiftCommands, RainCommands {
     );
     await this.completeCommandIdempotency('rain', actorId, input.idempotencyKey, fingerprint, msg);
 
-    // The caller now owns the commit boundary: postSystemMessage was passed `tx` above so
+    // The caller now owns the commit boundary: postCommandMessage was passed `tx` above so
     // it did not auto-publish - publish only now that this transaction has committed.
     void this.transport.publish(chatChannel(input.roomId), msg);
 
@@ -831,7 +871,7 @@ export class SocialTransfersService implements GiftCommands, RainCommands {
     return msg;
   }
 
-  private async doSendDonate(input: DonateArgs, actorId: Uuid): Promise<ChatSystemMessage> {
+  private async doSendDonate(input: DonateArgs, actorId: Uuid): Promise<CommandChatMessage> {
     await this.verifyRoomAccessIfNeeded(input.roomId, actorId);
     const config = await this.loadCommandConfig('donate');
     if (
@@ -896,12 +936,15 @@ export class SocialTransfersService implements GiftCommands, RainCommands {
             throw new ChatPlayerNotFoundError(target.userId);
           }
 
-          const systemMsg = await this.systemWriter.postSystemMessage({
+          const message = await this.systemWriter.postCommandMessage({
             roomId: input.roomId,
-            actorId,
+            userId: actorId,
+            username: sender.username,
             tx,
             metadata: {
               command: 'donate',
+              senderId: actorId,
+              senderUsername: sender.username,
               recipientId: target.userId,
               recipientUsername: target.username,
               amount: input.amount,
@@ -935,7 +978,7 @@ export class SocialTransfersService implements GiftCommands, RainCommands {
             after: { recipientId: target.userId, amount: input.amount, currency: debit.currency },
           });
 
-          return { msg: systemMsg, currency: debit.currency };
+          return { msg: message, currency: debit.currency };
         }),
     );
     await this.completeCommandIdempotency(
