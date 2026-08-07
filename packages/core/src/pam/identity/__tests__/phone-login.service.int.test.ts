@@ -5,6 +5,8 @@ import { sql } from 'drizzle-orm';
 import { RedisCache } from '@openora/core/server';
 import { createTestDb, createTestRedis, type TestDb, type TestRedis } from '@openora/core/testing';
 import { migrate as migrateIdentity } from '@openora/core/pam/migrate/identity';
+import { player } from '@openora/core/pam/schema/profile';
+import { migrate as migrateProfile } from '@openora/core/pam/migrate/profile';
 import type { Auth } from '@openora/core/server';
 import type { CacheAdapter, RateLimiterAdapter, SmsAdapter } from '@openora/core/contracts';
 import { PhoneLoginService } from '../service/phone-login.service.js';
@@ -112,7 +114,7 @@ const otpRows = () => db.drizzle.db.select().from(smsOtpSession);
 const sessionRows = () => db.drizzle.db.select().from(session);
 
 beforeAll(async () => {
-  db = await createTestDb([migrateIdentity]);
+  db = await createTestDb([migrateIdentity, migrateProfile]);
   redis = await createTestRedis();
 });
 
@@ -123,7 +125,7 @@ afterAll(async () => {
 
 beforeEach(async () => {
   await db.drizzle.db.execute(
-    sql`TRUNCATE ${user}, ${session}, ${smsOtpSession} RESTART IDENTITY CASCADE`,
+    sql`TRUNCATE ${user}, ${session}, ${smsOtpSession}, ${player} RESTART IDENTITY CASCADE`,
   );
   await redis.flush();
 });
@@ -456,6 +458,33 @@ describe('PhoneLoginService.verifyOtp (real PG + real Redis)', () => {
     expect(events.emit).toHaveBeenCalledWith(
       'rg.exclusion.login_blocked',
       expect.objectContaining({ userId: account.id }),
+    );
+    expect(events.emit).not.toHaveBeenCalledWith('identity.user.phone_login', expect.anything());
+  });
+
+  it('suspended player is forbidden after the OTP passes, and neither the session nor the OTP is consumed', async () => {
+    const code = '123456';
+    const account = await seedUser();
+    await db.drizzle.db
+      .insert(player)
+      .values({ userId: account.id, displayName: 'x', status: 'suspended' });
+    await seedOtp(account.id, { codeHash: hash(code) });
+    const { svc, events } = build();
+    const resHeaders = new Headers();
+
+    await expect(
+      svc.verifyOtp({ phone: PHONE, code, ...NO_CLIENT_META }, resHeaders),
+    ).rejects.toMatchObject({
+      code: 'FORBIDDEN',
+      data: { reason: 'account_suspended' },
+    });
+
+    expect(resHeaders.get('set-cookie')).toBeNull();
+    expect(await sessionRows()).toHaveLength(0);
+    expect(await otpRows()).toHaveLength(1);
+    expect(events.emit).toHaveBeenCalledWith(
+      'player.login_blocked',
+      expect.objectContaining({ userId: account.id, status: 'suspended' }),
     );
     expect(events.emit).not.toHaveBeenCalledWith('identity.user.phone_login', expect.anything());
   });

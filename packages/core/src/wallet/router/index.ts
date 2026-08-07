@@ -33,7 +33,7 @@ export function createWalletRouter(
     getBalance: os.getBalance.handler(({ context }) => wallet.getBalance(getUserId(context))),
 
     deposit: os.deposit.handler(({ input, context }) =>
-      mapErrors({ CONFLICT: IdempotencyKeyReuseError }, () =>
+      mapErrors({ BAD_REQUEST: CurrencyMismatchError, CONFLICT: IdempotencyKeyReuseError }, () =>
         wallet.deposit({
           userId: getUserId(context),
           amount: input.amount,

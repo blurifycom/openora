@@ -1,7 +1,13 @@
-import { describe, it, expect, beforeAll, afterAll, beforeEach } from 'vitest';
+import { describe, it, expect, beforeAll, afterAll, beforeEach, vi } from 'vitest';
 import { randomUUID } from 'node:crypto';
 import { eq, sql } from 'drizzle-orm';
-import type { TagKey } from '@openora/core/contracts';
+import type {
+  TagKey,
+  AdminUserDirectory,
+  AdminGameReporting,
+  ChatBlockWriter,
+  SessionCommands,
+} from '@openora/core/contracts';
 import { createTestDb, type TestDb } from '@openora/core/testing';
 import { user } from '@openora/core/pam/schema/identity';
 import { migrate as migrateIdentity } from '@openora/core/pam/migrate/identity';
@@ -9,7 +15,7 @@ import { player } from '@openora/core/pam/schema/profile';
 import { migrate as migrateProfile } from '@openora/core/pam/migrate/profile';
 import { tag, playerTag } from '@openora/core/pam/schema/tag';
 import { migrate as migrateTag } from '@openora/core/pam/migrate/tag';
-import { makeEventBus } from '../../../testing/mock.js';
+import { mock, makeEventBus } from '../../../testing/mock.js';
 import {
   PlayerService,
   PlayerNotFoundError,
@@ -18,9 +24,82 @@ import {
 
 let db: TestDb;
 
-function makeService() {
+function makeService(
+  overrides: {
+    userDirectory?: AdminUserDirectory;
+    gameReporting?: AdminGameReporting;
+    blockWriter?: ChatBlockWriter;
+    sessionCommands?: SessionCommands;
+  } = {},
+) {
   const events = makeEventBus();
-  return { svc: new PlayerService(db.drizzle, events), events };
+  const userDirectory = overrides.userDirectory ?? mock<AdminUserDirectory>({});
+  const gameReporting = overrides.gameReporting ?? mock<AdminGameReporting>({});
+  const blockWriter = overrides.blockWriter ?? mock<ChatBlockWriter>({});
+  const sessionCommands =
+    overrides.sessionCommands ??
+    mock<SessionCommands>({ revokeAll: vi.fn().mockResolvedValue({ success: true }) });
+  return {
+    svc: new PlayerService(
+      db.drizzle,
+      events,
+      userDirectory,
+      gameReporting,
+      blockWriter,
+      sessionCommands,
+    ),
+    events,
+    sessionCommands,
+  };
+}
+
+const SEARCH_VIEWER_ID = '00000000-0000-0000-0000-0000000000a1';
+const SEARCH_OTHER_ID = '00000000-0000-0000-0000-0000000000a2';
+const SEARCH_CREATED_AT = new Date('2026-01-01T00:00:00.000Z');
+
+function makeUserDirectory(): AdminUserDirectory {
+  const all = [
+    {
+      userId: SEARCH_VIEWER_ID,
+      username: 'bob',
+      email: 'bob@example.com',
+      kycStatus: null,
+      language: null,
+      avatarUrl: null,
+      createdAt: SEARCH_CREATED_AT,
+      level: 3,
+      currency: 'USD',
+    },
+    {
+      userId: SEARCH_OTHER_ID,
+      username: 'alice',
+      email: 'alice@example.com',
+      kycStatus: null,
+      language: null,
+      avatarUrl: null,
+      createdAt: SEARCH_CREATED_AT,
+      level: 1,
+      currency: 'USD',
+    },
+  ];
+  return mock<AdminUserDirectory>({
+    findPlayerIds: vi.fn().mockResolvedValue([SEARCH_VIEWER_ID]),
+    lookupPlayers: vi.fn().mockImplementation((ids: string[]) => {
+      return Promise.resolve(all.filter((p) => ids.includes(p.userId)));
+    }),
+  });
+}
+
+function makeGameReporting(): AdminGameReporting {
+  return mock<AdminGameReporting>({
+    getPlayerStats: vi.fn().mockResolvedValue({ totalWagered: '100.00000000', totalBets: 5 }),
+  });
+}
+
+function makeBlockWriter(excluded: string[] = []): ChatBlockWriter {
+  return mock<ChatBlockWriter>({
+    getExcludedUserIds: vi.fn().mockResolvedValue(excluded),
+  });
 }
 
 async function seedUser(overrides: Partial<typeof user.$inferInsert> = {}) {
@@ -82,21 +161,32 @@ beforeEach(async () => {
   );
 });
 
+const ACTOR_ID = '00000000-0000-0000-0000-0000000000ff';
+
 describe('PlayerService.remove (real PG)', () => {
   it('soft-deletes by closing the player, never deletes the row', async () => {
     const { svc } = makeService();
     const { player: seeded } = await seedPlayerWithUser();
 
-    const result = await svc.remove(seeded.id);
+    const result = await svc.remove(seeded.id, ACTOR_ID);
 
     expect(result).toEqual({ success: true });
     expect(await rowById(seeded.id)).toMatchObject({ status: 'closed' });
   });
 
+  it('revokes every session for the removed player, passing the userId and the actor id', async () => {
+    const { svc, sessionCommands } = makeService();
+    const { account, player: seeded } = await seedPlayerWithUser();
+
+    await svc.remove(seeded.id, ACTOR_ID);
+
+    expect(sessionCommands.revokeAll).toHaveBeenCalledWith(account.id, ACTOR_ID);
+  });
+
   it('throws PlayerNotFoundError when the player does not exist', async () => {
     const { svc } = makeService();
 
-    await expect(svc.remove(randomUUID())).rejects.toBeInstanceOf(PlayerNotFoundError);
+    await expect(svc.remove(randomUUID(), ACTOR_ID)).rejects.toBeInstanceOf(PlayerNotFoundError);
   });
 });
 
@@ -283,6 +373,36 @@ describe('PlayerService.update (real PG)', () => {
   });
 });
 
+describe('PlayerService.update session revocation on block (real PG)', () => {
+  it('revokes every session when a player transitions active -> suspended, with the userId and actor id', async () => {
+    const { svc, sessionCommands } = makeService();
+    const { account, player: seeded } = await seedPlayerWithUser({}, { status: 'active' });
+
+    await svc.update(seeded.id, { status: 'suspended' }, ACTOR_ID);
+
+    expect(sessionCommands.revokeAll).toHaveBeenCalledTimes(1);
+    expect(sessionCommands.revokeAll).toHaveBeenCalledWith(account.id, ACTOR_ID);
+  });
+
+  it('does not revoke sessions on a transition to a non-blocking status (dormant)', async () => {
+    const { svc, sessionCommands } = makeService();
+    const { player: seeded } = await seedPlayerWithUser({}, { status: 'active' });
+
+    await svc.update(seeded.id, { status: 'dormant' }, ACTOR_ID);
+
+    expect(sessionCommands.revokeAll).not.toHaveBeenCalled();
+  });
+
+  it('does not revoke sessions when the status is set to suspended but was already suspended (no transition)', async () => {
+    const { svc, sessionCommands } = makeService();
+    const { player: seeded } = await seedPlayerWithUser({}, { status: 'suspended' });
+
+    await svc.update(seeded.id, { status: 'suspended' }, ACTOR_ID);
+
+    expect(sessionCommands.revokeAll).not.toHaveBeenCalled();
+  });
+});
+
 describe('PlayerService.update player.level.changed emission (real PG)', () => {
   it('emits player.level.changed with previousLevel/newLevel/actorId when level changes', async () => {
     const { svc, events } = makeService();
@@ -314,5 +434,95 @@ describe('PlayerService.update player.level.changed emission (real PG)', () => {
     await svc.update(seeded.id, { level: 3 }, account.id);
 
     expect(events.emit).not.toHaveBeenCalledWith('player.level.changed', expect.anything());
+  });
+});
+
+// Ported from chat-commands.service.test.ts (ChatCommandsService.searchPlayers/
+// getPlayerProfile) - these methods never touch the DB, only the injected ports.
+describe('PlayerService.searchPlayers', () => {
+  it('returns mapped player search results', async () => {
+    const userDirectory = makeUserDirectory();
+    const { svc } = makeService({ userDirectory, blockWriter: makeBlockWriter() });
+
+    const result = await svc.searchPlayers('bo', 5, SEARCH_VIEWER_ID);
+
+    expect(userDirectory.findPlayerIds).toHaveBeenCalledWith('bo', 5);
+    expect(result).toEqual([
+      { userId: SEARCH_VIEWER_ID, username: 'bob', avatarUrl: null, level: 3 },
+    ]);
+  });
+
+  it('returns empty array when no matches', async () => {
+    const userDirectory = mock<AdminUserDirectory>({
+      findPlayerIds: vi.fn().mockResolvedValue([]),
+      lookupPlayers: vi.fn().mockResolvedValue([]),
+    });
+    const { svc } = makeService({ userDirectory });
+
+    const result = await svc.searchPlayers('xyz', 10, SEARCH_VIEWER_ID);
+
+    expect(result).toEqual([]);
+  });
+
+  it('excludes ids the viewer has blocked or ignored', async () => {
+    const userDirectory = makeUserDirectory();
+    const blockWriter = makeBlockWriter([SEARCH_VIEWER_ID]);
+    const { svc } = makeService({ userDirectory, blockWriter });
+
+    const result = await svc.searchPlayers('bo', 5, SEARCH_OTHER_ID);
+
+    expect(blockWriter.getExcludedUserIds).toHaveBeenCalledWith(SEARCH_OTHER_ID);
+    expect(result).toEqual([]);
+  });
+});
+
+describe('PlayerService.getPlayerProfile', () => {
+  it('returns the full profile card on the happy path (self view)', async () => {
+    const gameReporting = makeGameReporting();
+    const { svc } = makeService({ userDirectory: makeUserDirectory(), gameReporting });
+
+    const result = await svc.getPlayerProfile(SEARCH_VIEWER_ID, SEARCH_VIEWER_ID);
+
+    expect(gameReporting.getPlayerStats).toHaveBeenCalledWith(SEARCH_VIEWER_ID);
+    expect(result).toEqual({
+      userId: SEARCH_VIEWER_ID,
+      username: 'bob',
+      avatarUrl: null,
+      level: 3,
+      joinedAt: SEARCH_CREATED_AT.toISOString(),
+      totalWagered: '100.00000000',
+      totalBets: 5,
+      currency: 'USD',
+    });
+  });
+
+  it('throws PlayerNotFoundError for an unknown userId', async () => {
+    const userDirectory = mock<AdminUserDirectory>({
+      lookupPlayers: vi.fn().mockResolvedValue([]),
+    });
+    const { svc } = makeService({ userDirectory });
+
+    await expect(svc.getPlayerProfile(SEARCH_OTHER_ID, SEARCH_VIEWER_ID)).rejects.toBeInstanceOf(
+      PlayerNotFoundError,
+    );
+  });
+
+  it('redacts private profile fields for another viewer', async () => {
+    const gameReporting = makeGameReporting();
+    const { svc } = makeService({ userDirectory: makeUserDirectory(), gameReporting });
+
+    const result = await svc.getPlayerProfile(SEARCH_VIEWER_ID, SEARCH_OTHER_ID);
+
+    expect(result).toMatchObject({
+      userId: SEARCH_VIEWER_ID,
+      username: 'bob',
+      avatarUrl: null,
+      level: 3,
+      joinedAt: null,
+      totalWagered: null,
+      totalBets: null,
+      currency: null,
+    });
+    expect(gameReporting.getPlayerStats).not.toHaveBeenCalled();
   });
 });

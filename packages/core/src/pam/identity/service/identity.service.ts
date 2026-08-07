@@ -14,6 +14,7 @@ import {
 import { parseCookies } from 'better-auth/cookies';
 import { eq, sql } from 'drizzle-orm';
 import { user, session, account, verification, twoFactor } from '../schema/index.js';
+import { player } from '@openora/core/pam/schema/profile';
 import type {
   CacheAdapter,
   RateLimiterAdapter,
@@ -478,6 +479,34 @@ export class IdentityService {
         });
       }
 
+      // Backoffice-initiated account block (status suspended/closed). Same shape as the
+      // RG gate above: applied only AFTER credentials verify, kills the just-issued
+      // session and withholds its cookie. Distinct mechanism from RG (self_excluded is
+      // out of scope here) - a suspended/closed player can never log back in.
+      if (existingUser) {
+        const [playerRow] = await this.drizzle.db
+          .select({ status: player.status })
+          .from(player)
+          .where(eq(player.userId, existingUser.id))
+          .limit(1);
+        if (playerRow && (playerRow.status === 'suspended' || playerRow.status === 'closed')) {
+          await this.drizzle.db
+            .update(session)
+            .set({ expiresAt: new Date() })
+            .where(eq(session.userId, existingUser.id));
+          this.events.emit('player.login_blocked', {
+            userId: existingUser.id,
+            status: playerRow.status,
+            ip,
+            userAgent,
+          });
+          throw new ORPCError('FORBIDDEN', {
+            message: 'This account has been suspended and can no longer be used.',
+            data: { code: 'ACCOUNT_SUSPENDED' },
+          });
+        }
+      }
+
       this.forwardCookies(authResponse, resHeaders);
 
       const body = (await authResponse.json()) as {
@@ -518,7 +547,9 @@ export class IdentityService {
       if (
         error instanceof ORPCError &&
         error.code === 'FORBIDDEN' &&
-        (error.data as { code?: string } | undefined)?.code === 'RG_BLOCKED'
+        ['RG_BLOCKED', 'ACCOUNT_SUSPENDED'].includes(
+          (error.data as { code?: string } | undefined)?.code ?? '',
+        )
       ) {
         throw error;
       }

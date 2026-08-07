@@ -9,7 +9,7 @@ import {
 import { TagKeySchema } from './tag.js';
 import { CurrencyCodeSchema, CountryCodeSchema } from './igaming-config.js';
 import { PermissionLevelSchema } from './iam.js';
-import { KycStatusSchema, KycStatusSourceSchema } from './player.js';
+import { KycStatusSchema, KycStatusSourceSchema, PlayerStatusSchema } from './player.js';
 
 // Optional request-origin metadata shared by HTTP-triggered events; both fields may be absent.
 const authContextBase = ClientMetaSchema.partial();
@@ -325,7 +325,7 @@ export const domainEventSchemas = {
     senderUsername: z.string(),
     amount: MoneyAmountSchema,
     currency: z.string(),
-    roomId: UuidSchema,
+    roomId: UuidSchema.nullable(),
     messageId: UuidSchema,
   }),
   'chat.gift.claimed': z.object({
@@ -335,7 +335,7 @@ export const domainEventSchemas = {
     senderId: UuidSchema,
     amount: MoneyAmountSchema,
     currency: z.string(),
-    roomId: UuidSchema,
+    roomId: UuidSchema.nullable(),
   }),
   'chat.rain.distributed': z.object({
     fromUserId: UuidSchema,
@@ -343,7 +343,7 @@ export const domainEventSchemas = {
     recipientCount: z.number().int(),
     totalAmount: MoneyAmountSchema,
     currency: z.string(),
-    roomId: UuidSchema,
+    roomId: UuidSchema.nullable(),
   }),
   'chat.donate.sent': z.object({
     senderId: UuidSchema,
@@ -366,6 +366,13 @@ export const domainEventSchemas = {
     newLevel: z.number().int(),
     actorId: UuidSchema,
   }),
+  // System-driven login rejection for a player the Backoffice blocked (status
+  // suspended/closed). No admin acted at login time - the block was set earlier; this
+  // is a failure outcome. userId = the subject player; status = the blocking status.
+  'player.login_blocked': authContextBase.extend({
+    userId: UuidSchema,
+    status: PlayerStatusSchema,
+  }),
 } as const;
 
 export type DomainEventName = keyof typeof domainEventSchemas;
@@ -381,9 +388,13 @@ export const domainEventVersions: Partial<Record<DomainEventName, number>> = {
   // must never be persisted to the audit log or handed back to any caller.
   'identity.session.revoked': 2,
   // v2: claimable gift-card mechanic - giftId/senderId/senderUsername/roomId replaces fromUserId/toUserId.
-  'chat.gift.sent': 2,
+  // v3: roomId nullable - a gift can be sent into global chat (GLOBAL_CHAT_ROOM_ID sentinel on the wire).
+  'chat.gift.sent': 3,
+  // v2: roomId nullable - a claimed gift's room can be global chat.
+  'chat.gift.claimed': 2,
   // v2: recipients array added for per-player notification delivery.
-  'chat.rain.distributed': 2,
+  // v3: roomId nullable - rain can be sent into global chat (GLOBAL_CHAT_ROOM_ID sentinel on the wire).
+  'chat.rain.distributed': 3,
   // v2: exact decimal-string amount (+ currency), never a JS number.
   'wallet.deposit.completed': 2,
   'wallet.withdrawal.completed': 2,

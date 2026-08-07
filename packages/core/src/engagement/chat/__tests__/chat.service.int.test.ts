@@ -471,10 +471,31 @@ describe('ChatService block list (real PG)', () => {
     await svc.unblockUser(blockerId, blockedId, NO_CLIENT_META);
     await svc.unblockUser(blockerId, blockedId, NO_CLIENT_META);
 
-    expect(await db.drizzle.db.select().from(chatUserBlock)).toHaveLength(0);
+    // Soft-delete: the row survives with removedAt set, not physically removed.
+    const rows = await db.drizzle.db.select().from(chatUserBlock);
+    expect(rows).toHaveLength(1);
+    expect(rows[0]?.removedAt).not.toBeNull();
     expect(
       events.emit.mock.calls.filter(([topic]) => topic === 'chat.user.unblocked'),
     ).toHaveLength(1);
+  });
+
+  it('re-blocking after an unblock inserts a fresh active row and re-excludes the sender', async () => {
+    const { svc, events } = makeService();
+    const blockerId = randomUUID();
+    const blockedId = randomUUID();
+    await svc.blockUser(blockerId, blockedId);
+    await svc.unblockUser(blockerId, blockedId, NO_CLIENT_META);
+
+    await svc.blockUser(blockerId, blockedId);
+
+    const rows = await db.drizzle.db.select().from(chatUserBlock);
+    expect(rows).toHaveLength(2);
+    expect(rows.filter((r) => r.removedAt === null)).toHaveLength(1);
+    expect(events.emit.mock.calls.filter(([topic]) => topic === 'chat.user.blocked')).toHaveLength(
+      2,
+    );
+    expect(await svc.getExcludedUserIds(blockerId)).toContain(blockedId);
   });
 
   it('lists the blocked ids newest-first', async () => {
@@ -487,9 +508,112 @@ describe('ChatService block list (real PG)', () => {
       { blockerId, blockedId: second, createdAt: new Date('2026-02-01T00:00:00.000Z') },
     ]);
 
-    const rows = await svc.listBlockedUsers(blockerId);
+    const { items } = await svc.listBlockedUsers({
+      blockerId,
+      page: 1,
+      limit: 100,
+      sortBy: 'createdAt',
+      sortOrder: 'desc',
+    });
 
-    expect(rows.map((r) => r.blockedId)).toEqual([second, first]);
+    expect(items.map((r) => r.blockedId)).toEqual([second, first]);
+  });
+
+  it('paginates and sorts oldest-first when asked, reporting the total across all pages', async () => {
+    const { svc } = makeService();
+    const blockerId = randomUUID();
+    const first = randomUUID();
+    const second = randomUUID();
+    const third = randomUUID();
+    await db.drizzle.db.insert(chatUserBlock).values([
+      { blockerId, blockedId: first, createdAt: new Date('2026-01-01T00:00:00.000Z') },
+      { blockerId, blockedId: second, createdAt: new Date('2026-02-01T00:00:00.000Z') },
+      { blockerId, blockedId: third, createdAt: new Date('2026-03-01T00:00:00.000Z') },
+    ]);
+
+    const page1 = await svc.listBlockedUsers({
+      blockerId,
+      page: 1,
+      limit: 2,
+      sortBy: 'createdAt',
+      sortOrder: 'asc',
+    });
+    const page2 = await svc.listBlockedUsers({
+      blockerId,
+      page: 2,
+      limit: 2,
+      sortBy: 'createdAt',
+      sortOrder: 'asc',
+    });
+
+    expect(page1.items.map((r) => r.blockedId)).toEqual([first, second]);
+    expect(page1.total).toBe(3);
+    expect(page2.items.map((r) => r.blockedId)).toEqual([third]);
+    expect(page2.total).toBe(3);
+  });
+
+  it('excludes an unblocked user from the list', async () => {
+    const { svc } = makeService();
+    const blockerId = randomUUID();
+    const blockedId = randomUUID();
+    await svc.blockUser(blockerId, blockedId);
+    await svc.unblockUser(blockerId, blockedId);
+
+    const { items, total } = await svc.listBlockedUsers({
+      blockerId,
+      page: 1,
+      limit: 100,
+      sortBy: 'createdAt',
+      sortOrder: 'desc',
+    });
+
+    expect(items).toHaveLength(0);
+    expect(total).toBe(0);
+  });
+});
+
+describe('ChatService.adminListBlockedUsers (real PG, site-wide)', () => {
+  it('lists every users blocks, not just one callers, including who blocked whom', async () => {
+    const { svc } = makeService();
+    const blockerA = randomUUID();
+    const blockerB = randomUUID();
+    const blockedA = randomUUID();
+    const blockedB = randomUUID();
+    await svc.blockUser(blockerA, blockedA);
+    await svc.blockUser(blockerB, blockedB);
+
+    const { items, total } = await svc.adminListBlockedUsers({
+      page: 1,
+      limit: 100,
+      sortBy: 'createdAt',
+      sortOrder: 'desc',
+    });
+
+    expect(total).toBe(2);
+    expect(items).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ blockerId: blockerA, blockedId: blockedA }),
+        expect.objectContaining({ blockerId: blockerB, blockedId: blockedB }),
+      ]),
+    );
+  });
+
+  it('excludes an unblocked (soft-removed) relationship', async () => {
+    const { svc } = makeService();
+    const blockerId = randomUUID();
+    const blockedId = randomUUID();
+    await svc.blockUser(blockerId, blockedId);
+    await svc.unblockUser(blockerId, blockedId);
+
+    const { items, total } = await svc.adminListBlockedUsers({
+      page: 1,
+      limit: 100,
+      sortBy: 'createdAt',
+      sortOrder: 'desc',
+    });
+
+    expect(items).toHaveLength(0);
+    expect(total).toBe(0);
   });
 });
 
@@ -524,7 +648,10 @@ describe('ChatService ignore list (real PG)', () => {
     await svc.unignoreUser(ignorerId, ignoredId, NO_CLIENT_META);
     await svc.unignoreUser(ignorerId, ignoredId, NO_CLIENT_META);
 
-    expect(await db.drizzle.db.select().from(chatUserIgnore)).toHaveLength(0);
+    // Soft-delete: the row survives with removedAt set, not physically removed.
+    const rows = await db.drizzle.db.select().from(chatUserIgnore);
+    expect(rows).toHaveLength(1);
+    expect(rows[0]?.removedAt).not.toBeNull();
     expect(
       events.emit.mock.calls.filter(([topic]) => topic === 'chat.user.unignored'),
     ).toHaveLength(1);
@@ -540,9 +667,67 @@ describe('ChatService ignore list (real PG)', () => {
       { ignorerId, ignoredId: second, createdAt: new Date('2026-02-01T00:00:00.000Z') },
     ]);
 
-    const rows = await svc.listIgnoredUsers(ignorerId);
+    const { items } = await svc.listIgnoredUsers({
+      ignorerId,
+      page: 1,
+      limit: 100,
+      sortBy: 'createdAt',
+      sortOrder: 'desc',
+    });
 
-    expect(rows.map((r) => r.ignoredId)).toEqual([second, first]);
+    expect(items.map((r) => r.ignoredId)).toEqual([second, first]);
+  });
+
+  it('paginates and sorts oldest-first when asked, reporting the total across all pages', async () => {
+    const { svc } = makeService();
+    const ignorerId = randomUUID();
+    const first = randomUUID();
+    const second = randomUUID();
+    const third = randomUUID();
+    await db.drizzle.db.insert(chatUserIgnore).values([
+      { ignorerId, ignoredId: first, createdAt: new Date('2026-01-01T00:00:00.000Z') },
+      { ignorerId, ignoredId: second, createdAt: new Date('2026-02-01T00:00:00.000Z') },
+      { ignorerId, ignoredId: third, createdAt: new Date('2026-03-01T00:00:00.000Z') },
+    ]);
+
+    const page1 = await svc.listIgnoredUsers({
+      ignorerId,
+      page: 1,
+      limit: 2,
+      sortBy: 'createdAt',
+      sortOrder: 'asc',
+    });
+    const page2 = await svc.listIgnoredUsers({
+      ignorerId,
+      page: 2,
+      limit: 2,
+      sortBy: 'createdAt',
+      sortOrder: 'asc',
+    });
+
+    expect(page1.items.map((r) => r.ignoredId)).toEqual([first, second]);
+    expect(page1.total).toBe(3);
+    expect(page2.items.map((r) => r.ignoredId)).toEqual([third]);
+    expect(page2.total).toBe(3);
+  });
+
+  it('excludes an unignored user from the list', async () => {
+    const { svc } = makeService();
+    const ignorerId = randomUUID();
+    const ignoredId = randomUUID();
+    await svc.ignoreUser(ignorerId, ignoredId);
+    await svc.unignoreUser(ignorerId, ignoredId);
+
+    const { items, total } = await svc.listIgnoredUsers({
+      ignorerId,
+      page: 1,
+      limit: 100,
+      sortBy: 'createdAt',
+      sortOrder: 'desc',
+    });
+
+    expect(items).toHaveLength(0);
+    expect(total).toBe(0);
   });
 
   it('a block and an ignore are independent relationships (blocking does not ignore, and vice versa)', async () => {
@@ -553,8 +738,67 @@ describe('ChatService ignore list (real PG)', () => {
     await svc.blockUser(viewerId, blockedId);
     await svc.ignoreUser(viewerId, ignoredId);
 
-    expect((await svc.listBlockedUsers(viewerId)).map((r) => r.blockedId)).toEqual([blockedId]);
-    expect((await svc.listIgnoredUsers(viewerId)).map((r) => r.ignoredId)).toEqual([ignoredId]);
+    const defaultPage = {
+      page: 1,
+      limit: 100,
+      sortBy: 'createdAt' as const,
+      sortOrder: 'desc' as const,
+    };
+    expect(
+      (await svc.listBlockedUsers({ blockerId: viewerId, ...defaultPage })).items.map(
+        (r) => r.blockedId,
+      ),
+    ).toEqual([blockedId]);
+    expect(
+      (await svc.listIgnoredUsers({ ignorerId: viewerId, ...defaultPage })).items.map(
+        (r) => r.ignoredId,
+      ),
+    ).toEqual([ignoredId]);
+  });
+});
+
+describe('ChatService.adminListIgnoredUsers (real PG, site-wide)', () => {
+  it('lists every users ignores, not just one callers, including who ignored whom', async () => {
+    const { svc } = makeService();
+    const ignorerA = randomUUID();
+    const ignorerB = randomUUID();
+    const ignoredA = randomUUID();
+    const ignoredB = randomUUID();
+    await svc.ignoreUser(ignorerA, ignoredA);
+    await svc.ignoreUser(ignorerB, ignoredB);
+
+    const { items, total } = await svc.adminListIgnoredUsers({
+      page: 1,
+      limit: 100,
+      sortBy: 'createdAt',
+      sortOrder: 'desc',
+    });
+
+    expect(total).toBe(2);
+    expect(items).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ ignorerId: ignorerA, ignoredId: ignoredA }),
+        expect.objectContaining({ ignorerId: ignorerB, ignoredId: ignoredB }),
+      ]),
+    );
+  });
+
+  it('excludes an unignored (soft-removed) relationship', async () => {
+    const { svc } = makeService();
+    const ignorerId = randomUUID();
+    const ignoredId = randomUUID();
+    await svc.ignoreUser(ignorerId, ignoredId);
+    await svc.unignoreUser(ignorerId, ignoredId);
+
+    const { items, total } = await svc.adminListIgnoredUsers({
+      page: 1,
+      limit: 100,
+      sortBy: 'createdAt',
+      sortOrder: 'desc',
+    });
+
+    expect(items).toHaveLength(0);
+    expect(total).toBe(0);
   });
 });
 

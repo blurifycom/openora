@@ -15,15 +15,22 @@ import {
   type TagKey,
   type PlayerSortBy,
   type PaginationOptions,
+  type AdminUserDirectory,
+  type AdminGameReporting,
+  type ChatBlockWriter,
+  type SessionCommands,
 } from '@openora/core/contracts';
 import { eq, ilike, count, or, and, gte, asc, desc, sql, ne, inArray, isNull } from 'drizzle-orm';
 import { player } from '@openora/core/pam/schema/profile';
 import { user } from '@openora/core/pam/schema/identity';
 import { playerTag, tag } from '@openora/core/pam/schema/tag';
 import { toPlayer, fetchEmailByUserId } from '../../shared/player-mapper.js';
+import type { PlayerSearchResult, PlayerProfileCard } from '../contract/index.js';
 
 export const PlayerNotFoundError = makeNotFoundError('Player');
 export const DuplicateEmailError = makeConflictError('DuplicateEmail', 'Email is already in use');
+
+const BLOCKING_PLAYER_STATUSES = new Set<PlayerStatus>(['suspended', 'closed']);
 
 function toDateKey(d: Date): string {
   return d.toISOString().slice(0, 10);
@@ -33,6 +40,10 @@ export class PlayerService {
   constructor(
     private readonly drizzle: DrizzleService,
     private readonly events: EventBus,
+    private readonly userDirectory: AdminUserDirectory,
+    private readonly gameReporting: AdminGameReporting,
+    private readonly blockWriter: ChatBlockWriter,
+    private readonly sessionCommands: SessionCommands,
   ) {}
 
   async list({
@@ -237,15 +248,29 @@ export class PlayerService {
       });
     }
 
+    // A transition into a blocking status must kill every active session immediately -
+    // AC: "Blocking a player immediately prevents login and all platform activity."
+    // Session validity is checked on every request (SessionResolver -> better-auth
+    // getSession), so revoking here cuts off in-progress activity; IdentityService.login
+    // additionally blocks a fresh login for the same account (mirrors the RG login gate).
+    if (
+      data.status !== undefined &&
+      data.status !== existing.status &&
+      BLOCKING_PLAYER_STATUSES.has(data.status)
+    ) {
+      await this.sessionCommands.revokeAll(existing.userId, actorId);
+    }
+
     return this.fetchOneWithTags(playerId);
   }
 
-  async remove(playerId: Player['id']) {
-    findOneOrThrow(
+  async remove(playerId: Player['id'], actorId: User['id']) {
+    const existing = findOneOrThrow(
       await this.drizzle.db.select().from(player).where(eq(player.id, playerId)),
       new PlayerNotFoundError(playerId),
     );
     await this.drizzle.db.update(player).set({ status: 'closed' }).where(eq(player.id, playerId));
+    await this.sessionCommands.revokeAll(existing.userId, actorId);
     return { success: true };
   }
 
@@ -294,5 +319,54 @@ export class PlayerService {
         .then(([r]) => Number(r?.n ?? 0)),
     ]);
     return { total, active, newLastWeek, selfExcluded };
+  }
+
+  // Ported from chat-commands' ChatCommandsService.searchPlayers - powers the
+  // chat `/profile` command's search step. Excludes players the viewer has
+  // blocked/ignored (moderation) - see AGENTS.md.
+  async searchPlayers(
+    q: string,
+    limit: number,
+    viewerId: User['id'],
+  ): Promise<PlayerSearchResult[]> {
+    const ids = await this.userDirectory.findPlayerIds(q, limit);
+    if (ids.length === 0) {
+      return [];
+    }
+    const excluded = new Set(await this.blockWriter.getExcludedUserIds(viewerId));
+    const filteredIds = ids.filter((id) => !excluded.has(id));
+    if (filteredIds.length === 0) {
+      return [];
+    }
+    const summaries = await this.userDirectory.lookupPlayers(filteredIds);
+    return summaries.map((s) => ({
+      userId: s.userId,
+      username: s.username,
+      avatarUrl: s.avatarUrl,
+      level: s.level,
+    }));
+  }
+
+  // Ported from chat-commands' ChatCommandsService.getPlayerProfile. Wagered
+  // totals/currency are self-only - a viewer looking at someone else's card
+  // only sees username/level/avatar.
+  async getPlayerProfile(userId: User['id'], viewerId: User['id']): Promise<PlayerProfileCard> {
+    const summaries = await this.userDirectory.lookupPlayers([userId]);
+    const summary = summaries.find((s) => s.userId === userId);
+    if (!summary) {
+      throw new PlayerNotFoundError(userId);
+    }
+    const isSelf = userId === viewerId;
+    const stats = isSelf ? await this.gameReporting.getPlayerStats(userId) : null;
+    return {
+      userId: summary.userId,
+      username: summary.username,
+      avatarUrl: summary.avatarUrl,
+      level: summary.level,
+      joinedAt: isSelf ? summary.createdAt.toISOString() : null,
+      totalWagered: stats?.totalWagered ?? null,
+      totalBets: stats?.totalBets ?? null,
+      currency: isSelf ? summary.currency : null,
+    };
   }
 }

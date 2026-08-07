@@ -206,3 +206,24 @@ export type { ChatBlockWriter } from './chat-block-writer.js';
 export { CHAT_BLOCK_WRITER } from './chat-block-writer.js';
 export type { ChatRoomAccess } from './chat-room-access.js';
 export { CHAT_ROOM_ACCESS } from './chat-room-access.js';
+
+export type {
+  SendGiftArgs,
+  SendGiftFailureReason,
+  SendGiftResult,
+  ClaimGiftFailureReason,
+  ClaimGiftResult,
+  GiftSnapshot,
+  GetGiftFailureReason,
+  GetGiftResult,
+  GiftCommands,
+} from './gift-commands.js';
+export { GIFT_COMMANDS } from './gift-commands.js';
+
+export type {
+  SendRainArgs,
+  SendRainFailureReason,
+  SendRainResult,
+  RainCommands,
+} from './rain-commands.js';
+export { RAIN_COMMANDS } from './rain-commands.js';

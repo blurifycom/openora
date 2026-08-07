@@ -34,6 +34,8 @@ import {
 } from '../schema/index.js';
 import type {
   AdminRoomSortBy,
+  BlockedUserSortBy,
+  IgnoredUserSortBy,
   ChatRoom,
   ChatMessage,
   ChatRoomCategory,
@@ -124,6 +126,15 @@ function toMessage(record: typeof chatMessage.$inferSelect) {
   return serializeRow(record, { dateFields: ['createdAt'] });
 }
 
+const BLOCKED_USER_SORT_COLUMNS = { createdAt: chatUserBlock.createdAt } as const satisfies Record<
+  BlockedUserSortBy,
+  unknown
+>;
+
+const IGNORED_USER_SORT_COLUMNS = {
+  createdAt: chatUserIgnore.createdAt,
+} as const satisfies Record<IgnoredUserSortBy, unknown>;
+
 function generateJoinCode(): string {
   return Array.from({ length: JOIN_CODE_LENGTH }, () => {
     const ch = JOIN_CODE_ALPHABET[randomInt(0, JOIN_CODE_ALPHABET.length)];
@@ -205,7 +216,7 @@ export class ChatService {
     const rows = await this.drizzle.db
       .select({ blockedId: chatUserBlock.blockedId })
       .from(chatUserBlock)
-      .where(eq(chatUserBlock.blockerId, viewerId));
+      .where(and(eq(chatUserBlock.blockerId, viewerId), isNull(chatUserBlock.removedAt)));
     return new Set(rows.map((r) => r.blockedId));
   }
 
@@ -213,7 +224,7 @@ export class ChatService {
     const rows = await this.drizzle.db
       .select({ ignoredId: chatUserIgnore.ignoredId })
       .from(chatUserIgnore)
-      .where(eq(chatUserIgnore.ignorerId, viewerId));
+      .where(and(eq(chatUserIgnore.ignorerId, viewerId), isNull(chatUserIgnore.removedAt)));
     return new Set(rows.map((r) => r.ignoredId));
   }
 
@@ -459,13 +470,75 @@ export class ChatService {
     return message;
   }
 
-  async listBlockedUsers(blockerId: User['id']) {
-    const rows = await this.drizzle.db
-      .select({ blockedId: chatUserBlock.blockedId, createdAt: chatUserBlock.createdAt })
-      .from(chatUserBlock)
-      .where(eq(chatUserBlock.blockerId, blockerId))
-      .orderBy(desc(chatUserBlock.createdAt));
-    return rows.map((r) => serializeRow(r, { dateFields: ['createdAt'] }));
+  async listBlockedUsers({
+    blockerId,
+    page,
+    limit,
+    sortBy,
+    sortOrder,
+  }: {
+    blockerId: User['id'];
+    page: number;
+    limit: number;
+    sortBy: BlockedUserSortBy;
+    sortOrder: SortOrder;
+  }) {
+    const dir = sortOrder === 'asc' ? asc : desc;
+    const col = BLOCKED_USER_SORT_COLUMNS[sortBy];
+    const where = and(eq(chatUserBlock.blockerId, blockerId), isNull(chatUserBlock.removedAt));
+    const [rows, [{ n }]] = await Promise.all([
+      this.drizzle.db
+        .select({ blockedId: chatUserBlock.blockedId, createdAt: chatUserBlock.createdAt })
+        .from(chatUserBlock)
+        .where(where)
+        .orderBy(dir(col))
+        .limit(limit)
+        .offset(pageToOffset(page, limit)),
+      this.drizzle.db.select({ n: count() }).from(chatUserBlock).where(where),
+    ]);
+    return {
+      items: rows.map((r) => serializeRow(r, { dateFields: ['createdAt'] })),
+      total: Number(n),
+      page,
+      limit,
+    };
+  }
+
+  /** Backoffice-only, site-wide: every active block relationship, not just the caller's. */
+  async adminListBlockedUsers({
+    page,
+    limit,
+    sortBy,
+    sortOrder,
+  }: {
+    page: number;
+    limit: number;
+    sortBy: BlockedUserSortBy;
+    sortOrder: SortOrder;
+  }) {
+    const dir = sortOrder === 'asc' ? asc : desc;
+    const col = BLOCKED_USER_SORT_COLUMNS[sortBy];
+    const where = isNull(chatUserBlock.removedAt);
+    const [rows, [{ n }]] = await Promise.all([
+      this.drizzle.db
+        .select({
+          blockerId: chatUserBlock.blockerId,
+          blockedId: chatUserBlock.blockedId,
+          createdAt: chatUserBlock.createdAt,
+        })
+        .from(chatUserBlock)
+        .where(where)
+        .orderBy(dir(col))
+        .limit(limit)
+        .offset(pageToOffset(page, limit)),
+      this.drizzle.db.select({ n: count() }).from(chatUserBlock).where(where),
+    ]);
+    return {
+      items: rows.map((r) => serializeRow(r, { dateFields: ['createdAt'] })),
+      total: Number(n),
+      page,
+      limit,
+    };
   }
 
   async blockUser(blockerId: User['id'], blockedId: User['id'], meta?: ClientMeta) {
@@ -473,11 +546,15 @@ export class ChatService {
       throw new ChatSelfBlockError();
     }
 
-    // Idempotent: re-blocking is a no-op, so only the first block emits an event.
+    // Idempotent: re-blocking while already (actively) blocked is a no-op, so only
+    // the first block emits an event. The pair unique index is partial (removedAt
+    // IS NULL), so a block after a prior unblock conflicts with nothing and inserts
+    // a fresh active row - the removed row stays as history. No explicit conflict
+    // target: this table has exactly one unique constraint (the partial pair index).
     const inserted = await this.drizzle.db
       .insert(chatUserBlock)
       .values({ blockerId, blockedId })
-      .onConflictDoNothing({ target: [chatUserBlock.blockerId, chatUserBlock.blockedId] })
+      .onConflictDoNothing()
       .returning();
 
     if (inserted.length > 0) {
@@ -492,9 +569,18 @@ export class ChatService {
   }
 
   async unblockUser(blockerId: User['id'], blockedId: User['id'], meta?: ClientMeta) {
+    // Soft-delete: the partial unique index guarantees at most one active (removedAt
+    // IS NULL) row per pair, so this is that row, or no-op if already unblocked.
     const removed = await this.drizzle.db
-      .delete(chatUserBlock)
-      .where(and(eq(chatUserBlock.blockerId, blockerId), eq(chatUserBlock.blockedId, blockedId)))
+      .update(chatUserBlock)
+      .set({ removedAt: new Date() })
+      .where(
+        and(
+          eq(chatUserBlock.blockerId, blockerId),
+          eq(chatUserBlock.blockedId, blockedId),
+          isNull(chatUserBlock.removedAt),
+        ),
+      )
       .returning();
 
     if (removed.length > 0) {
@@ -508,13 +594,75 @@ export class ChatService {
     return { success: true } as const;
   }
 
-  async listIgnoredUsers(ignorerId: User['id']) {
-    const rows = await this.drizzle.db
-      .select({ ignoredId: chatUserIgnore.ignoredId, createdAt: chatUserIgnore.createdAt })
-      .from(chatUserIgnore)
-      .where(eq(chatUserIgnore.ignorerId, ignorerId))
-      .orderBy(desc(chatUserIgnore.createdAt));
-    return rows.map((r) => serializeRow(r, { dateFields: ['createdAt'] }));
+  async listIgnoredUsers({
+    ignorerId,
+    page,
+    limit,
+    sortBy,
+    sortOrder,
+  }: {
+    ignorerId: User['id'];
+    page: number;
+    limit: number;
+    sortBy: IgnoredUserSortBy;
+    sortOrder: SortOrder;
+  }) {
+    const dir = sortOrder === 'asc' ? asc : desc;
+    const col = IGNORED_USER_SORT_COLUMNS[sortBy];
+    const where = and(eq(chatUserIgnore.ignorerId, ignorerId), isNull(chatUserIgnore.removedAt));
+    const [rows, [{ n }]] = await Promise.all([
+      this.drizzle.db
+        .select({ ignoredId: chatUserIgnore.ignoredId, createdAt: chatUserIgnore.createdAt })
+        .from(chatUserIgnore)
+        .where(where)
+        .orderBy(dir(col))
+        .limit(limit)
+        .offset(pageToOffset(page, limit)),
+      this.drizzle.db.select({ n: count() }).from(chatUserIgnore).where(where),
+    ]);
+    return {
+      items: rows.map((r) => serializeRow(r, { dateFields: ['createdAt'] })),
+      total: Number(n),
+      page,
+      limit,
+    };
+  }
+
+  /** Backoffice-only, site-wide: every active ignore relationship, not just the caller's. */
+  async adminListIgnoredUsers({
+    page,
+    limit,
+    sortBy,
+    sortOrder,
+  }: {
+    page: number;
+    limit: number;
+    sortBy: IgnoredUserSortBy;
+    sortOrder: SortOrder;
+  }) {
+    const dir = sortOrder === 'asc' ? asc : desc;
+    const col = IGNORED_USER_SORT_COLUMNS[sortBy];
+    const where = isNull(chatUserIgnore.removedAt);
+    const [rows, [{ n }]] = await Promise.all([
+      this.drizzle.db
+        .select({
+          ignorerId: chatUserIgnore.ignorerId,
+          ignoredId: chatUserIgnore.ignoredId,
+          createdAt: chatUserIgnore.createdAt,
+        })
+        .from(chatUserIgnore)
+        .where(where)
+        .orderBy(dir(col))
+        .limit(limit)
+        .offset(pageToOffset(page, limit)),
+      this.drizzle.db.select({ n: count() }).from(chatUserIgnore).where(where),
+    ]);
+    return {
+      items: rows.map((r) => serializeRow(r, { dateFields: ['createdAt'] })),
+      total: Number(n),
+      page,
+      limit,
+    };
   }
 
   async ignoreUser(ignorerId: User['id'], ignoredId: User['id'], meta?: ClientMeta) {
@@ -522,11 +670,11 @@ export class ChatService {
       throw new ChatSelfIgnoreError();
     }
 
-    // Idempotent: re-ignoring is a no-op, so only the first ignore emits an event.
+    // Idempotent + soft-delete-aware - see blockUser's comment, same pattern.
     const inserted = await this.drizzle.db
       .insert(chatUserIgnore)
       .values({ ignorerId, ignoredId })
-      .onConflictDoNothing({ target: [chatUserIgnore.ignorerId, chatUserIgnore.ignoredId] })
+      .onConflictDoNothing()
       .returning();
 
     if (inserted.length > 0) {
@@ -541,9 +689,17 @@ export class ChatService {
   }
 
   async unignoreUser(ignorerId: User['id'], ignoredId: User['id'], meta?: ClientMeta) {
+    // Soft-delete - see unblockUser's comment, same pattern.
     const removed = await this.drizzle.db
-      .delete(chatUserIgnore)
-      .where(and(eq(chatUserIgnore.ignorerId, ignorerId), eq(chatUserIgnore.ignoredId, ignoredId)))
+      .update(chatUserIgnore)
+      .set({ removedAt: new Date() })
+      .where(
+        and(
+          eq(chatUserIgnore.ignorerId, ignorerId),
+          eq(chatUserIgnore.ignoredId, ignoredId),
+          isNull(chatUserIgnore.removedAt),
+        ),
+      )
       .returning();
 
     if (removed.length > 0) {

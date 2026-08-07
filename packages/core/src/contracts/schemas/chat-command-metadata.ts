@@ -36,12 +36,26 @@ export const BlockCommandMetadataSchema = z.object({
 });
 export type BlockCommandMetadata = z.infer<typeof BlockCommandMetadataSchema>;
 
+export const UnblockCommandMetadataSchema = z.object({
+  command: z.literal('unblock'),
+  targetUserId: UuidSchema,
+  displayName: z.string(),
+});
+export type UnblockCommandMetadata = z.infer<typeof UnblockCommandMetadataSchema>;
+
 export const IgnoreCommandMetadataSchema = z.object({
   command: z.literal('ignore'),
   targetUserId: UuidSchema,
   displayName: z.string(),
 });
 export type IgnoreCommandMetadata = z.infer<typeof IgnoreCommandMetadataSchema>;
+
+export const UnignoreCommandMetadataSchema = z.object({
+  command: z.literal('unignore'),
+  targetUserId: UuidSchema,
+  displayName: z.string(),
+});
+export type UnignoreCommandMetadata = z.infer<typeof UnignoreCommandMetadataSchema>;
 
 export const DonateCommandMetadataSchema = z.object({
   command: z.literal('donate'),

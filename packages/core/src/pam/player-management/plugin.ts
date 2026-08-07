@@ -1,6 +1,13 @@
 import { EVENT_BUS, DRIZZLE, ADMIN_GUARD } from '@openora/core/server';
+import {
+  AUDIT_WRITER,
+  KYC_STATUS_WRITER,
+  ADMIN_USER_DIRECTORY,
+  ADMIN_GAME_REPORTING,
+  CHAT_BLOCK_WRITER,
+  SESSION_COMMANDS,
+} from '@openora/core/contracts';
 import type { CoreTokenCatalog, Plugin } from '@openora/core/server';
-import { AUDIT_WRITER, KYC_STATUS_WRITER } from '@openora/core/contracts';
 import { PlayerService } from './service/player.service.js';
 import { PlayerKycStatusWriter } from './service/kyc-status-writer.js';
 import { createPlayerRouter } from './router/index.js';
@@ -9,7 +16,7 @@ import { createPlayerRouter } from './router/index.js';
 // (compliance + the admin override route consume it). Reads identity via /schema. See ADR-0020.
 export default {
   id: 'player-management',
-  dependsOn: ['audit'],
+  dependsOn: ['chat', 'gaming', 'audit', 'identity'],
   register(ctx) {
     ctx.provide(
       KYC_STATUS_WRITER,
@@ -17,7 +24,14 @@ export default {
     );
     ctx.routers.add('player', (c) =>
       createPlayerRouter(
-        new PlayerService(c.get(DRIZZLE), c.get(EVENT_BUS)),
+        new PlayerService(
+          c.get(DRIZZLE),
+          c.get(EVENT_BUS),
+          c.get(ADMIN_USER_DIRECTORY),
+          c.get(ADMIN_GAME_REPORTING),
+          c.get(CHAT_BLOCK_WRITER),
+          c.get(SESSION_COMMANDS),
+        ),
         c.get(ADMIN_GUARD),
         c.get(AUDIT_WRITER),
       ),

@@ -87,7 +87,29 @@ export const BlockedUserSchema = z.object({
   createdAt: TimestampSchema,
 });
 
+export const BLOCKED_USER_SORT_BY_VALUES = ['createdAt'] as const;
+export const BlockedUserSortBySchema = z.enum(BLOCKED_USER_SORT_BY_VALUES).default('createdAt');
+export type BlockedUserSortBy = z.infer<typeof BlockedUserSortBySchema>;
+
 export const IgnoredUserSchema = z.object({
+  ignoredId: UuidSchema,
+  createdAt: TimestampSchema,
+});
+
+export const IGNORED_USER_SORT_BY_VALUES = ['createdAt'] as const;
+export const IgnoredUserSortBySchema = z.enum(IGNORED_USER_SORT_BY_VALUES).default('createdAt');
+export type IgnoredUserSortBy = z.infer<typeof IgnoredUserSortBySchema>;
+
+// Backoffice-only, site-wide views (distinct from the per-caller BlockedUserSchema/
+// IgnoredUserSchema above): who blocked/ignored whom, across every user.
+export const AdminBlockedUserSchema = z.object({
+  blockerId: UuidSchema,
+  blockedId: UuidSchema,
+  createdAt: TimestampSchema,
+});
+
+export const AdminIgnoredUserSchema = z.object({
+  ignorerId: UuidSchema,
   ignoredId: UuidSchema,
   createdAt: TimestampSchema,
 });
@@ -157,7 +179,14 @@ export const chatContract = {
 
   listBlockedUsers: oc
     .route({ method: 'GET', path: '/chat/blocks' })
-    .output(z.array(BlockedUserSchema)),
+    .input(
+      z.object({
+        ...PageQuerySchema.shape,
+        sortBy: BlockedUserSortBySchema,
+        sortOrder: SortOrderSchema.default('desc'),
+      }),
+    )
+    .output(paginated(BlockedUserSchema)),
 
   blockUser: oc
     .route({ method: 'POST', path: '/chat/blocks' })
@@ -171,7 +200,14 @@ export const chatContract = {
 
   listIgnoredUsers: oc
     .route({ method: 'GET', path: '/chat/ignores' })
-    .output(z.array(IgnoredUserSchema)),
+    .input(
+      z.object({
+        ...PageQuerySchema.shape,
+        sortBy: IgnoredUserSortBySchema,
+        sortOrder: SortOrderSchema.default('desc'),
+      }),
+    )
+    .output(paginated(IgnoredUserSchema)),
 
   ignoreUser: oc
     .route({ method: 'POST', path: '/chat/ignores' })
@@ -269,4 +305,26 @@ export const chatContract = {
     .route({ method: 'DELETE', path: '/backoffice/chat/rooms/{id}' })
     .input(IdInputSchema)
     .output(z.object({ success: z.literal(true) })),
+
+  adminListBlockedUsers: oc
+    .route({ method: 'GET', path: '/backoffice/chat/blocks' })
+    .input(
+      z.object({
+        ...PageQuerySchema.shape,
+        sortBy: BlockedUserSortBySchema,
+        sortOrder: SortOrderSchema.default('desc'),
+      }),
+    )
+    .output(paginated(AdminBlockedUserSchema)),
+
+  adminListIgnoredUsers: oc
+    .route({ method: 'GET', path: '/backoffice/chat/ignores' })
+    .input(
+      z.object({
+        ...PageQuerySchema.shape,
+        sortBy: IgnoredUserSortBySchema,
+        sortOrder: SortOrderSchema.default('desc'),
+      }),
+    )
+    .output(paginated(AdminIgnoredUserSchema)),
 };

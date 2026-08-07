@@ -39,7 +39,11 @@ export const PhoneLoginVerifyInputSchema = z.object({
   rememberMe: z.boolean().optional(),
 });
 
-export const PHONE_LOGIN_ERROR_REASONS = ['otp_cancelled', 'rg_blocked'] as const;
+export const PHONE_LOGIN_ERROR_REASONS = [
+  'otp_cancelled',
+  'rg_blocked',
+  'account_suspended',
+] as const;
 export const PhoneLoginErrorReasonSchema = z.enum(PHONE_LOGIN_ERROR_REASONS);
 
 export const PHONE_LOGIN_OTP_INVALID_REASONS = ['expired', 'wrong_code'] as const;

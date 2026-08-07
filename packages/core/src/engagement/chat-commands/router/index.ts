@@ -1,22 +1,20 @@
 import { implement } from '@orpc/server';
 import { populateContractRouterPaths } from '@orpc/contract';
-import { mapErrors, getUserId, AdminGuard, type OssContext } from '@openora/core/server';
+import { mapErrors, getUserId, type OssContext, type AdminGuard } from '@openora/core/server';
 import { chatCommandsContract } from '../contract/index.js';
 import {
   ChatCommandsService,
   CommandDisabledError,
-  ChatPlayerNotFoundError,
   InsufficientBalanceError,
   ExceedsLimitError,
   BelowMinimumError,
   NoOnlineUsersError,
+  TooManyRecipientsError,
   RainCreditError,
   GiftNotFoundError,
   GiftAlreadyClaimedError,
   GiftSelfClaimError,
-  DonateSelfError,
-  TooManyRecipientsError,
-  SelfModerationActionError,
+  GiftCreditError,
   ChatCommandIdempotencyKeyReuseError,
   ConcurrentCommandReplayError,
   ChatRoomNotMemberError,
@@ -30,34 +28,31 @@ export function createChatCommandsRouter(svc: ChatCommandsService, adminGuard: A
   return os.router({
     listCommands: os.listCommands.handler(() => svc.listCommands()),
 
-    execute: os.execute.handler(({ input, context }) => {
+    adminListCommands: os.adminListCommands.handler(async ({ input, context }) => {
+      await adminGuard.assert(context, 'chat-command', 'view');
+      return svc.adminListCommands(input);
+    }),
+
+    adminUpdateCommand: os.adminUpdateCommand.handler(async ({ input, context }) => {
+      const { userId } = await adminGuard.assert(context, 'chat-command', 'update');
+      return svc.adminUpdateCommand(input, userId);
+    }),
+
+    postGift: os.postGift.handler(({ input, context }) => {
       const actorId = getUserId(context);
       return mapErrors(
         {
-          NOT_FOUND: [CommandDisabledError, ChatPlayerNotFoundError],
+          NOT_FOUND: [CommandDisabledError],
           CONFLICT: [
             InsufficientBalanceError,
             ExceedsLimitError,
             BelowMinimumError,
-            NoOnlineUsersError,
-            RainCreditError,
-            DonateSelfError,
-            TooManyRecipientsError,
-            SelfModerationActionError,
             ChatCommandIdempotencyKeyReuseError,
             ConcurrentCommandReplayError,
           ],
           FORBIDDEN: [ChatRoomNotMemberError],
         },
-        () => svc.executeCommand(input, actorId),
-      );
-    }),
-
-    getGift: os.getGift.handler(({ input, context }) => {
-      const viewerId = getUserId(context);
-      return mapErrors(
-        { NOT_FOUND: [GiftNotFoundError], FORBIDDEN: [ChatRoomNotMemberError] },
-        () => svc.getGift(input.id, viewerId),
+        () => svc.postGift(input, actorId),
       );
     }),
 
@@ -67,33 +62,47 @@ export function createChatCommandsRouter(svc: ChatCommandsService, adminGuard: A
         {
           NOT_FOUND: [GiftNotFoundError],
           FORBIDDEN: [ChatRoomNotMemberError],
-          CONFLICT: [GiftAlreadyClaimedError, GiftSelfClaimError],
+          CONFLICT: [GiftAlreadyClaimedError, GiftSelfClaimError, GiftCreditError],
         },
         () => svc.claimGift(input.id, claimerId),
+      );
+    }),
+
+    getGift: os.getGift.handler(({ input, context }) => {
+      const viewerId = getUserId(context);
+      return mapErrors(
+        {
+          NOT_FOUND: [GiftNotFoundError],
+          FORBIDDEN: [ChatRoomNotMemberError],
+        },
+        () => svc.getGift(input.id, viewerId),
+      );
+    }),
+
+    postRain: os.postRain.handler(({ input, context }) => {
+      const actorId = getUserId(context);
+      return mapErrors(
+        {
+          NOT_FOUND: [CommandDisabledError],
+          CONFLICT: [
+            InsufficientBalanceError,
+            ExceedsLimitError,
+            BelowMinimumError,
+            NoOnlineUsersError,
+            TooManyRecipientsError,
+            RainCreditError,
+            ChatCommandIdempotencyKeyReuseError,
+            ConcurrentCommandReplayError,
+          ],
+          FORBIDDEN: [ChatRoomNotMemberError],
+        },
+        () => svc.postRain(input, actorId),
       );
     }),
 
     mentionSearch: os.mentionSearch.handler(({ input, context }) => {
       const viewerId = getUserId(context);
       return svc.searchMentions(input.q, input.limit, viewerId);
-    }),
-
-    playerSearch: os.playerSearch.handler(({ input, context }) => {
-      const viewerId = getUserId(context);
-      return svc.searchPlayers(input.q, input.limit, viewerId);
-    }),
-
-    playerProfile: os.playerProfile.handler(({ input, context }) => {
-      const viewerId = getUserId(context);
-      return mapErrors({ NOT_FOUND: [ChatPlayerNotFoundError] }, () =>
-        svc.getPlayerProfile(input.userId, viewerId),
-      );
-    }),
-
-    adminUpdateCommand: os.adminUpdateCommand.handler(async ({ input, context }) => {
-      await adminGuard.assert(context);
-      const actorId = getUserId(context);
-      return svc.adminUpdateCommand(input, actorId);
     }),
   });
 }

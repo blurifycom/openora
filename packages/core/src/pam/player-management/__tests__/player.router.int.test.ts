@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeAll, afterAll, beforeEach } from 'vitest';
+import { describe, it, expect, beforeAll, afterAll, beforeEach, vi } from 'vitest';
 import { randomUUID } from 'node:crypto';
 import { eq, sql } from 'drizzle-orm';
 import { call } from '@orpc/server';
@@ -10,7 +10,14 @@ import { player } from '@openora/core/pam/schema/profile';
 import { migrate as migrateProfile } from '@openora/core/pam/migrate/profile';
 import { tag, playerTag } from '@openora/core/pam/schema/tag';
 import { migrate as migrateTag } from '@openora/core/pam/migrate/tag';
+import type {
+  AdminUserDirectory,
+  AdminGameReporting,
+  ChatBlockWriter,
+  SessionCommands,
+} from '@openora/core/contracts';
 import {
+  mock,
   makeAdminGuard,
   makeAuditWriter,
   makeEventBus,
@@ -41,8 +48,22 @@ beforeEach(async () => {
 const guardAllowing = (allow: readonly string[]) =>
   makeAdminGuard({ allow, caller: { userId: CALLER } });
 
-function build(adminGuard: AdminGuard) {
-  const service = new PlayerService(db.drizzle, makeEventBus());
+function build(
+  adminGuard: AdminGuard,
+  overrides: {
+    userDirectory?: AdminUserDirectory;
+    gameReporting?: AdminGameReporting;
+    blockWriter?: ChatBlockWriter;
+  } = {},
+) {
+  const service = new PlayerService(
+    db.drizzle,
+    makeEventBus(),
+    overrides.userDirectory ?? mock<AdminUserDirectory>({}),
+    overrides.gameReporting ?? mock<AdminGameReporting>({}),
+    overrides.blockWriter ?? mock<ChatBlockWriter>({}),
+    mock<SessionCommands>({ revokeAll: vi.fn().mockResolvedValue({ success: true }) }),
+  );
   const audit = makeAuditWriter();
   return { router: createPlayerRouter(service, adminGuard, audit), audit };
 }
@@ -113,6 +134,42 @@ describe('player router update', () => {
 
     await expect(
       call(router.update, { playerId: randomUUID(), displayName: 'New' }, { context: CTX }),
+    ).rejects.toMatchObject({ code: 'NOT_FOUND' });
+  });
+});
+
+// playerSearch/playerProfile are player-facing (no adminGuard call) - any
+// authenticated caller can reach them, unlike every other route in this router.
+describe('player router playerSearch / playerProfile', () => {
+  const VIEWER = '55555555-5555-4555-8555-555555555555';
+  const VIEWER_CTX = testContext({ auth: { userId: VIEWER } });
+
+  it('rejects an unauthenticated caller with UNAUTHORIZED', async () => {
+    const { router } = build(guardAllowing([]));
+
+    await expect(
+      call(router.playerSearch, { q: 'bob', limit: 10 }, { context: CTX }),
+    ).rejects.toMatchObject({ code: 'UNAUTHORIZED' });
+  });
+
+  it('does not require the admin guard for an authenticated player', async () => {
+    const userDirectory = mock<AdminUserDirectory>({
+      findPlayerIds: async () => [],
+      lookupPlayers: async () => [],
+    });
+    const { router } = build(guardAllowing([]), { userDirectory });
+
+    await expect(
+      call(router.playerSearch, { q: 'bob', limit: 10 }, { context: VIEWER_CTX }),
+    ).resolves.toEqual([]);
+  });
+
+  it('maps an unknown profile userId to NOT_FOUND', async () => {
+    const userDirectory = mock<AdminUserDirectory>({ lookupPlayers: async () => [] });
+    const { router } = build(guardAllowing([]), { userDirectory });
+
+    await expect(
+      call(router.playerProfile, { userId: randomUUID() }, { context: VIEWER_CTX }),
     ).rejects.toMatchObject({ code: 'NOT_FOUND' });
   });
 });

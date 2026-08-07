@@ -321,6 +321,18 @@ export class WalletService {
         return found.replay;
       }
       preResolvedWallet = found.walletRecord;
+    } else {
+      [preResolvedWallet] = await this.drizzle.db
+        .select()
+        .from(wallet)
+        .where(eq(wallet.userId, userId));
+    }
+
+    // Single-currency wallet: reject a mismatch BEFORE the PSP call so a wrong-currency
+    // request never charges the vendor. A brand-new wallet has no currency to mismatch
+    // against yet - it adopts this deposit's currency on insert below.
+    if (preResolvedWallet && currency.toUpperCase() !== preResolvedWallet.currency.toUpperCase()) {
+      throw new CurrencyMismatchError(currency, preResolvedWallet.currency);
     }
 
     const psp = await this.payment.processDeposit(amount, currency, { userId, provider });
@@ -335,6 +347,10 @@ export class WalletService {
           await txn.insert(wallet).values({ userId, balance: '0', currency }).returning(),
           new WalletNotFoundError(userId),
         );
+      }
+      // Single-currency wallet: reject a mismatch rather than coerce it onto the wrong rail.
+      if (currency.toUpperCase() !== walletRecord.currency.toUpperCase()) {
+        throw new CurrencyMismatchError(currency, walletRecord.currency);
       }
 
       const { row, replayed } = await this.insertIdempotentTransaction(txn, {
