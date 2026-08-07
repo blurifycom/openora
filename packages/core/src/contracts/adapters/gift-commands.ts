@@ -43,9 +43,31 @@ export type ClaimGiftResult =
   // ChatRoomNotMemberError (which reports a room, not a gift).
   | { ok: false; reason: ClaimGiftFailureReason; roomId?: Uuid | null };
 
+export type GiftSnapshot = {
+  id: Uuid;
+  senderId: Uuid;
+  senderUsername: string;
+  amount: string;
+  currency: string;
+  claimedBy: Uuid | null;
+  claimedByUsername: string | null;
+  claimedAt: string | null;
+  createdAt: string;
+};
+
+export type GetGiftFailureReason = 'gift_not_found' | 'room_not_member';
+
+export type GetGiftResult =
+  | { ok: true; gift: GiftSnapshot }
+  // roomId mirrors ClaimGiftResult's room_not_member shape - the caller only
+  // has giftId in scope and can't otherwise build a correct
+  // ChatRoomNotMemberError.
+  | { ok: false; reason: GetGiftFailureReason; roomId?: Uuid | null };
+
 export type GiftCommands = {
   sendGift(input: SendGiftArgs, actorId: Uuid): Promise<SendGiftResult>;
   claimGift(giftId: Uuid, claimerId: Uuid): Promise<ClaimGiftResult>;
+  getGift(giftId: Uuid, viewerId: Uuid): Promise<GetGiftResult>;
 };
 
 export const GIFT_COMMANDS: Token<GiftCommands> = createToken('GIFT_COMMANDS');

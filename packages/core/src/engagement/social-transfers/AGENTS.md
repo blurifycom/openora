@@ -70,6 +70,12 @@ caller wins, zero balance goes unreturned. Realtime push fires on claim via
 
 `playerGift.messageId` is a plain UUID with no FK - cross-module boundary rule applies.
 
+Reading a gift's current state is a separate, read-only capability: `GIFT_COMMANDS.getGift` (via
+`chat-commands`' `GET /chat-command/gift/{id}`) returns a `GiftSnapshot` (claimed/unclaimed,
+claimed-by-whom) and enforces the same room-membership check as `claimGift` - a viewer must be a
+member of the gift's room to poll its status. Unlike `doClaimGift`, `doGetGift` takes no row lock
+(`SELECT` without `FOR UPDATE`): it's read-only, nothing to serialize against.
+
 ### The old `chat_gift` table is a deliberate, deferred follow-up
 
 `player_gift` is the successor to chat-commands' `chat_gift` table (same shape). `chat_gift` and its
@@ -117,15 +123,16 @@ somewhere.
 
 ## GIFT_COMMANDS / RAIN_COMMANDS ports - result type, not throw, across the module boundary
 
-`sendGift`/`claimGift`/`sendRain` never throw for an EXPECTED failure (disabled, insufficient
-balance, limits, no online users, too many recipients, idempotency reuse/replay, room membership,
-gift not found/claimed/self-claim) - they return `{ ok: false, reason }` instead, because
+`sendGift`/`claimGift`/`getGift`/`sendRain` never throw for an EXPECTED failure (disabled,
+insufficient balance, limits, no online users, too many recipients, idempotency reuse/replay, room
+membership, gift not found/claimed/self-claim) - they return `{ ok: false, reason }` instead, because
 `chat-commands`' router can't `instanceof`-match an error class defined in this module without a
-forbidden cross-module internals import. `toSendGiftResult`/`toClaimGiftResult`/`toSendRainResult` do
-this translation once, at the very edge of each port implementation; only a genuinely unexpected
-error still throws across the port (mirrors `WALLET_COMMANDS`' `{ ok: false, ... }` outcome pattern -
-ADR-0017). `sendDonate` is NOT behind a port (it's this module's own route, `chat-commands` never
-calls it), so it stays throw-based like every other module's router-facing service method.
+forbidden cross-module internals import. `toSendGiftResult`/`toClaimGiftResult`/`toGetGiftResult`/
+`toSendRainResult` do this translation once, at the very edge of each port implementation; only a
+genuinely unexpected error still throws across the port (mirrors `WALLET_COMMANDS`' `{ ok: false,
+... }` outcome pattern - ADR-0017). `sendDonate` is NOT behind a port (it's this module's own route,
+`chat-commands` never calls it), so it stays throw-based like every other module's router-facing
+service method.
 
 ## Ports consumed
 

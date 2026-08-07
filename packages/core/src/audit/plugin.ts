@@ -459,6 +459,19 @@ function mapEventToRecord(topic: string, p: Record<string, unknown>): RecordInpu
     };
   }
 
+  // System-driven login rejection for a suspended/closed player account (Backoffice-
+  // initiated block, not an admin action happening right now) - actorType 'system',
+  // outcome 'failure'.
+  if (topic === 'player.login_blocked') {
+    return {
+      ...base,
+      actorType: 'system',
+      resourceType: 'player',
+      resourceId: str(p['userId']),
+      result: 'failure',
+    };
+  }
+
   // Wallet events carry the txn ref in transactionId; surface it as resourceId so
   // a transaction reference is searchable (it otherwise stays buried in `after`).
   if (topic.startsWith('wallet.')) {
@@ -557,6 +570,7 @@ const SUBSCRIBED_TOPICS: DomainEventName[] = [
   'tag.player.removed',
   'tag.rule.upserted',
   'player.level.changed',
+  'player.login_blocked',
 ] as const;
 
 export default {

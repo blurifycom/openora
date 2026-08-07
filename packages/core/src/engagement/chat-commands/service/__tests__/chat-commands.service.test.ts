@@ -7,6 +7,7 @@ import type {
   GiftCommands,
   SendGiftResult,
   ClaimGiftResult,
+  GetGiftResult,
   RainCommands,
   SendRainResult,
   RealtimeTransport,
@@ -76,6 +77,18 @@ function makeBlockWriter(excluded: string[] = []): ChatBlockWriter {
   });
 }
 
+const GIFT_STATE = {
+  id: GIFT_ID,
+  senderId: ACTOR_ID,
+  senderUsername: 'bob',
+  amount: '10.00000000',
+  currency: 'USD',
+  claimedBy: null,
+  claimedByUsername: null,
+  claimedAt: null,
+  createdAt: new Date().toISOString(),
+};
+
 function makeGiftCommands(overrides: Partial<GiftCommands> = {}): GiftCommands {
   return mock<GiftCommands>({
     sendGift: vi.fn().mockResolvedValue({ ok: true, message: SYSTEM_MSG } satisfies SendGiftResult),
@@ -85,6 +98,7 @@ function makeGiftCommands(overrides: Partial<GiftCommands> = {}): GiftCommands {
       claimedByUsername: 'alice',
       claimedAt: new Date().toISOString(),
     } satisfies ClaimGiftResult),
+    getGift: vi.fn().mockResolvedValue({ ok: true, gift: GIFT_STATE } satisfies GetGiftResult),
     ...overrides,
   });
 }
@@ -277,6 +291,44 @@ describe('ChatCommandsService.claimGift (delegates to GIFT_COMMANDS)', () => {
     const svc = makeSvc({ giftCommands });
 
     await expect(svc.claimGift(GIFT_ID, CLAIMER_ID)).rejects.toThrow(
+      new ChatRoomNotMemberError(ROOM_ID),
+    );
+  });
+});
+
+describe('ChatCommandsService.getGift (delegates to GIFT_COMMANDS)', () => {
+  it('returns the gift state from the port on success', async () => {
+    const giftCommands = makeGiftCommands();
+    const svc = makeSvc({ giftCommands });
+
+    const result = await svc.getGift(GIFT_ID, CLAIMER_ID);
+
+    expect(giftCommands.getGift).toHaveBeenCalledWith(GIFT_ID, CLAIMER_ID);
+    expect(result).toEqual(GIFT_STATE);
+  });
+
+  it('maps a "gift_not_found" port result to GiftNotFoundError', async () => {
+    const giftCommands = makeGiftCommands({
+      getGift: vi
+        .fn()
+        .mockResolvedValue({ ok: false, reason: 'gift_not_found' } satisfies GetGiftResult),
+    });
+    const svc = makeSvc({ giftCommands });
+
+    await expect(svc.getGift(GIFT_ID, CLAIMER_ID)).rejects.toThrow(GiftNotFoundError);
+  });
+
+  it('maps a "room_not_member" port result to ChatRoomNotMemberError using the port\'s roomId', async () => {
+    const giftCommands = makeGiftCommands({
+      getGift: vi.fn().mockResolvedValue({
+        ok: false,
+        reason: 'room_not_member',
+        roomId: ROOM_ID,
+      } satisfies GetGiftResult),
+    });
+    const svc = makeSvc({ giftCommands });
+
+    await expect(svc.getGift(GIFT_ID, CLAIMER_ID)).rejects.toThrow(
       new ChatRoomNotMemberError(ROOM_ID),
     );
   });

@@ -18,6 +18,7 @@ import {
   type AdminUserDirectory,
   type AdminGameReporting,
   type ChatBlockWriter,
+  type SessionCommands,
 } from '@openora/core/contracts';
 import { eq, ilike, count, or, and, gte, asc, desc, sql, ne, inArray, isNull } from 'drizzle-orm';
 import { player } from '@openora/core/pam/schema/profile';
@@ -28,6 +29,8 @@ import type { PlayerSearchResult, PlayerProfileCard } from '../contract/index.js
 
 export const PlayerNotFoundError = makeNotFoundError('Player');
 export const DuplicateEmailError = makeConflictError('DuplicateEmail', 'Email is already in use');
+
+const BLOCKING_PLAYER_STATUSES = new Set<PlayerStatus>(['suspended', 'closed']);
 
 function toDateKey(d: Date): string {
   return d.toISOString().slice(0, 10);
@@ -40,6 +43,7 @@ export class PlayerService {
     private readonly userDirectory: AdminUserDirectory,
     private readonly gameReporting: AdminGameReporting,
     private readonly blockWriter: ChatBlockWriter,
+    private readonly sessionCommands: SessionCommands,
   ) {}
 
   async list({
@@ -244,15 +248,29 @@ export class PlayerService {
       });
     }
 
+    // A transition into a blocking status must kill every active session immediately -
+    // AC: "Blocking a player immediately prevents login and all platform activity."
+    // Session validity is checked on every request (SessionResolver -> better-auth
+    // getSession), so revoking here cuts off in-progress activity; IdentityService.login
+    // additionally blocks a fresh login for the same account (mirrors the RG login gate).
+    if (
+      data.status !== undefined &&
+      data.status !== existing.status &&
+      BLOCKING_PLAYER_STATUSES.has(data.status)
+    ) {
+      await this.sessionCommands.revokeAll(existing.userId, actorId);
+    }
+
     return this.fetchOneWithTags(playerId);
   }
 
-  async remove(playerId: Player['id']) {
-    findOneOrThrow(
+  async remove(playerId: Player['id'], actorId: User['id']) {
+    const existing = findOneOrThrow(
       await this.drizzle.db.select().from(player).where(eq(player.id, playerId)),
       new PlayerNotFoundError(playerId),
     );
     await this.drizzle.db.update(player).set({ status: 'closed' }).where(eq(player.id, playerId));
+    await this.sessionCommands.revokeAll(existing.userId, actorId);
     return { success: true };
   }
 

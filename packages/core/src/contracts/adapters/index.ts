@@ -213,6 +213,9 @@ export type {
   SendGiftResult,
   ClaimGiftFailureReason,
   ClaimGiftResult,
+  GiftSnapshot,
+  GetGiftFailureReason,
+  GetGiftResult,
   GiftCommands,
 } from './gift-commands.js';
 export { GIFT_COMMANDS } from './gift-commands.js';

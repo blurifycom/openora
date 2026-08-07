@@ -6,6 +6,7 @@ import type {
   AdminUserDirectory,
   AdminGameReporting,
   ChatBlockWriter,
+  SessionCommands,
 } from '@openora/core/contracts';
 import { createTestDb, type TestDb } from '@openora/core/testing';
 import { user } from '@openora/core/pam/schema/identity';
@@ -28,15 +29,27 @@ function makeService(
     userDirectory?: AdminUserDirectory;
     gameReporting?: AdminGameReporting;
     blockWriter?: ChatBlockWriter;
+    sessionCommands?: SessionCommands;
   } = {},
 ) {
   const events = makeEventBus();
   const userDirectory = overrides.userDirectory ?? mock<AdminUserDirectory>({});
   const gameReporting = overrides.gameReporting ?? mock<AdminGameReporting>({});
   const blockWriter = overrides.blockWriter ?? mock<ChatBlockWriter>({});
+  const sessionCommands =
+    overrides.sessionCommands ??
+    mock<SessionCommands>({ revokeAll: vi.fn().mockResolvedValue({ success: true }) });
   return {
-    svc: new PlayerService(db.drizzle, events, userDirectory, gameReporting, blockWriter),
+    svc: new PlayerService(
+      db.drizzle,
+      events,
+      userDirectory,
+      gameReporting,
+      blockWriter,
+      sessionCommands,
+    ),
     events,
+    sessionCommands,
   };
 }
 
@@ -148,21 +161,32 @@ beforeEach(async () => {
   );
 });
 
+const ACTOR_ID = '00000000-0000-0000-0000-0000000000ff';
+
 describe('PlayerService.remove (real PG)', () => {
   it('soft-deletes by closing the player, never deletes the row', async () => {
     const { svc } = makeService();
     const { player: seeded } = await seedPlayerWithUser();
 
-    const result = await svc.remove(seeded.id);
+    const result = await svc.remove(seeded.id, ACTOR_ID);
 
     expect(result).toEqual({ success: true });
     expect(await rowById(seeded.id)).toMatchObject({ status: 'closed' });
   });
 
+  it('revokes every session for the removed player, passing the userId and the actor id', async () => {
+    const { svc, sessionCommands } = makeService();
+    const { account, player: seeded } = await seedPlayerWithUser();
+
+    await svc.remove(seeded.id, ACTOR_ID);
+
+    expect(sessionCommands.revokeAll).toHaveBeenCalledWith(account.id, ACTOR_ID);
+  });
+
   it('throws PlayerNotFoundError when the player does not exist', async () => {
     const { svc } = makeService();
 
-    await expect(svc.remove(randomUUID())).rejects.toBeInstanceOf(PlayerNotFoundError);
+    await expect(svc.remove(randomUUID(), ACTOR_ID)).rejects.toBeInstanceOf(PlayerNotFoundError);
   });
 });
 
@@ -346,6 +370,36 @@ describe('PlayerService.update (real PG)', () => {
     await expect(
       svc.update(randomUUID(), { displayName: 'X' }, randomUUID()),
     ).rejects.toBeInstanceOf(PlayerNotFoundError);
+  });
+});
+
+describe('PlayerService.update session revocation on block (real PG)', () => {
+  it('revokes every session when a player transitions active -> suspended, with the userId and actor id', async () => {
+    const { svc, sessionCommands } = makeService();
+    const { account, player: seeded } = await seedPlayerWithUser({}, { status: 'active' });
+
+    await svc.update(seeded.id, { status: 'suspended' }, ACTOR_ID);
+
+    expect(sessionCommands.revokeAll).toHaveBeenCalledTimes(1);
+    expect(sessionCommands.revokeAll).toHaveBeenCalledWith(account.id, ACTOR_ID);
+  });
+
+  it('does not revoke sessions on a transition to a non-blocking status (dormant)', async () => {
+    const { svc, sessionCommands } = makeService();
+    const { player: seeded } = await seedPlayerWithUser({}, { status: 'active' });
+
+    await svc.update(seeded.id, { status: 'dormant' }, ACTOR_ID);
+
+    expect(sessionCommands.revokeAll).not.toHaveBeenCalled();
+  });
+
+  it('does not revoke sessions when the status is set to suspended but was already suspended (no transition)', async () => {
+    const { svc, sessionCommands } = makeService();
+    const { player: seeded } = await seedPlayerWithUser({}, { status: 'suspended' });
+
+    await svc.update(seeded.id, { status: 'suspended' }, ACTOR_ID);
+
+    expect(sessionCommands.revokeAll).not.toHaveBeenCalled();
   });
 });
 

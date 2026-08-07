@@ -67,6 +67,19 @@ export const ClaimGiftOutputSchema = z.object({
 });
 export type ClaimGiftOutput = z.infer<typeof ClaimGiftOutputSchema>;
 
+export const GiftStateSchema = z.object({
+  id: UuidSchema,
+  senderId: UuidSchema,
+  senderUsername: z.string(),
+  amount: MoneyAmountSchema,
+  currency: z.string(),
+  claimedBy: UuidSchema.nullable(),
+  claimedByUsername: z.string().nullable(),
+  claimedAt: z.string().nullable(),
+  createdAt: z.string(),
+});
+export type GiftState = z.infer<typeof GiftStateSchema>;
+
 export const chatCommandsContract = {
   listCommands: oc
     .route({ method: 'GET', path: '/chat-command/commands' })
@@ -85,6 +98,11 @@ export const chatCommandsContract = {
     .route({ method: 'POST', path: '/chat-command/gift/{id}/claim' })
     .input(z.object({ id: UuidSchema }))
     .output(ClaimGiftOutputSchema),
+
+  getGift: oc
+    .route({ method: 'GET', path: '/chat-command/gift/{id}' })
+    .input(z.object({ id: UuidSchema }))
+    .output(GiftStateSchema),
 
   // Dedicated rain-send operation - this module resolves the online recipient
   // list (it owns presence lookups for the chat command surface) and hands it

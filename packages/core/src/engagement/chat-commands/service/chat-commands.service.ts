@@ -20,6 +20,7 @@ import type {
   PostGiftInput,
   PostRainInput,
   ClaimGiftOutput,
+  GiftState,
 } from '../contract/index.js';
 import { ChatCommandTypeSchema } from '../contract/index.js';
 import { chatCommandConfig } from '../schema/index.js';
@@ -153,6 +154,19 @@ export class ChatCommandsService {
         throw new GiftAlreadyClaimedError();
       case 'self_claim':
         throw new GiftSelfClaimError();
+      case 'room_not_member':
+        throw new ChatRoomNotMemberError(result.roomId ?? null);
+    }
+  }
+
+  async getGift(giftId: Uuid, viewerId: Uuid): Promise<GiftState> {
+    const result = await this.giftCommands.getGift(giftId, viewerId);
+    if (result.ok) {
+      return result.gift;
+    }
+    switch (result.reason) {
+      case 'gift_not_found':
+        throw new GiftNotFoundError(giftId);
       case 'room_not_member':
         throw new ChatRoomNotMemberError(result.roomId ?? null);
     }

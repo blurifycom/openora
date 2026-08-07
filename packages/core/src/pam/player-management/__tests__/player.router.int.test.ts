@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeAll, afterAll, beforeEach } from 'vitest';
+import { describe, it, expect, beforeAll, afterAll, beforeEach, vi } from 'vitest';
 import { randomUUID } from 'node:crypto';
 import { eq, sql } from 'drizzle-orm';
 import { call } from '@orpc/server';
@@ -14,6 +14,7 @@ import type {
   AdminUserDirectory,
   AdminGameReporting,
   ChatBlockWriter,
+  SessionCommands,
 } from '@openora/core/contracts';
 import {
   mock,
@@ -61,6 +62,7 @@ function build(
     overrides.userDirectory ?? mock<AdminUserDirectory>({}),
     overrides.gameReporting ?? mock<AdminGameReporting>({}),
     overrides.blockWriter ?? mock<ChatBlockWriter>({}),
+    mock<SessionCommands>({ revokeAll: vi.fn().mockResolvedValue({ success: true }) }),
   );
   const audit = makeAuditWriter();
   return { router: createPlayerRouter(service, adminGuard, audit), audit };

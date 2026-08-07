@@ -57,6 +57,17 @@ export function createChatCommandsRouter(svc: ChatCommandsService) {
       );
     }),
 
+    getGift: os.getGift.handler(({ input, context }) => {
+      const viewerId = getUserId(context);
+      return mapErrors(
+        {
+          NOT_FOUND: [GiftNotFoundError],
+          FORBIDDEN: [ChatRoomNotMemberError],
+        },
+        () => svc.getGift(input.id, viewerId),
+      );
+    }),
+
     postRain: os.postRain.handler(({ input, context }) => {
       const actorId = getUserId(context);
       return mapErrors(

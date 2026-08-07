@@ -4,6 +4,8 @@ import { eq, sql } from 'drizzle-orm';
 import { ORPCError } from '@orpc/server';
 import { createTestDb, createTestRedis, type TestDb, type TestRedis } from '@openora/core/testing';
 import { migrate as migrateIdentity } from '@openora/core/pam/migrate/identity';
+import { player } from '@openora/core/pam/schema/profile';
+import { migrate as migrateProfile } from '@openora/core/pam/migrate/profile';
 import type {
   EmailTemplateRenderer,
   PlatformConfig,
@@ -132,7 +134,7 @@ const signInSuccess = (userId: string) =>
   );
 
 beforeAll(async () => {
-  db = await createTestDb([migrateIdentity]);
+  db = await createTestDb([migrateIdentity, migrateProfile]);
   redis = await createTestRedis();
 });
 
@@ -144,7 +146,9 @@ afterAll(async () => {
 beforeEach(async () => {
   vi.clearAllMocks();
   getSessionMock.mockResolvedValue(null);
-  await db.drizzle.db.execute(sql`TRUNCATE ${user}, ${session} RESTART IDENTITY CASCADE`);
+  await db.drizzle.db.execute(
+    sql`TRUNCATE ${user}, ${session}, ${player} RESTART IDENTITY CASCADE`,
+  );
   await redis.flush();
 });
 
@@ -452,6 +456,65 @@ describe('IdentityService - RG login gate (real PG)', () => {
       expect.objectContaining({ userId: account.id }),
     );
     expect(events.emit).not.toHaveBeenCalledWith('rg.exclusion.login_blocked', expect.anything());
+  });
+});
+
+describe('IdentityService - player-status login gate (real PG)', () => {
+  async function seedBlockedPlayer(status: 'suspended' | 'closed') {
+    const account = await seedUser();
+    await db.drizzle.db.insert(player).values({ userId: account.id, displayName: 'x', status });
+    const live = new Date(Date.now() + 24 * 60 * 60 * 1000);
+    await db.drizzle.db
+      .insert(session)
+      .values({ userId: account.id, token: randomUUID(), expiresAt: live });
+    return account;
+  }
+
+  for (const status of ['suspended', 'closed'] as const) {
+    it(`blocks a ${status} player AFTER credentials verify, expires the issued session, and emits player.login_blocked`, async () => {
+      const account = await seedBlockedPlayer(status);
+      const events = makeEventBus();
+      // Valid credentials (200) - the gate must still block.
+      signInEmailMock.mockResolvedValue(signInSuccess(account.id));
+      const svc = buildService({ events });
+
+      await expect(
+        svc.login({ email: EMAIL, password: 'rightpass1' }, {}, new Headers()),
+      ).rejects.toMatchObject({ code: 'FORBIDDEN', data: { code: 'ACCOUNT_SUSPENDED' } });
+
+      expect(signInEmailMock).toHaveBeenCalled();
+      expect(events.emit).toHaveBeenCalledWith(
+        'player.login_blocked',
+        expect.objectContaining({ userId: account.id, status }),
+      );
+      expect(events.emit).not.toHaveBeenCalledWith('identity.user.login', expect.anything());
+      expect(events.emit).not.toHaveBeenCalledWith('identity.user.login.failed', expect.anything());
+
+      const [revoked] = await db.drizzle.db
+        .select()
+        .from(session)
+        .where(eq(session.userId, account.id));
+      expect(revoked.expiresAt.getTime()).toBeLessThanOrEqual(Date.now());
+    });
+  }
+
+  it('allows login for an active player (no regression)', async () => {
+    const account = await seedUser();
+    await db.drizzle.db
+      .insert(player)
+      .values({ userId: account.id, displayName: 'x', status: 'active' });
+    const events = makeEventBus();
+    signInEmailMock.mockResolvedValue(signInSuccess(account.id));
+    const svc = buildService({ events });
+
+    const result = await svc.login({ email: EMAIL, password: 'rightpass1' }, {}, new Headers());
+
+    expect(result).toMatchObject({ session: { token: 'tok' } });
+    expect(events.emit).toHaveBeenCalledWith(
+      'identity.user.login',
+      expect.objectContaining({ userId: account.id }),
+    );
+    expect(events.emit).not.toHaveBeenCalledWith('player.login_blocked', expect.anything());
   });
 });
 

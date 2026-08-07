@@ -436,6 +436,46 @@ describe('SocialTransfersService.claimGift', () => {
   });
 });
 
+describe('SocialTransfersService.getGift', () => {
+  it('returns { ok: true, gift } for a gift in a room the viewer is a member of', async () => {
+    const svc = makeSvc({ drizzleRows: { select: [[GIFT_ROW]] } });
+    const result = await svc.getGift(GIFT_ID, CLAIMER_ID);
+    expect(result).toEqual({
+      ok: true,
+      gift: {
+        id: GIFT_ROW.id,
+        senderId: GIFT_ROW.senderId,
+        senderUsername: GIFT_ROW.senderUsername,
+        amount: GIFT_ROW.amount,
+        currency: GIFT_ROW.currency,
+        claimedBy: null,
+        claimedByUsername: null,
+        claimedAt: null,
+        createdAt: GIFT_ROW.createdAt.toISOString(),
+      },
+    });
+  });
+
+  it('returns { ok: false, reason: "gift_not_found" } when the gift does not exist', async () => {
+    const svc = makeSvc({ drizzleRows: { select: [[]] } });
+    const result = await svc.getGift(GIFT_ID, CLAIMER_ID);
+    expect(result).toEqual({ ok: false, reason: 'gift_not_found' });
+  });
+
+  it('returns { ok: false, reason: "room_not_member", roomId: <the gift\'s room> } when the viewer is not a room member', async () => {
+    const notMember = Object.assign(new Error('not a member'), { name: 'ChatRoomNotMemberError' });
+    const roomAccess = mock<ChatRoomAccess>({
+      verifyRoomAccess: vi.fn().mockRejectedValue(notMember),
+    });
+    const svc = makeSvc({
+      drizzleRows: { select: [[GIFT_ROW]] },
+      roomAccess,
+    });
+    const result = await svc.getGift(GIFT_ID, CLAIMER_ID);
+    expect(result).toEqual({ ok: false, reason: 'room_not_member', roomId: GIFT_ROW.roomId });
+  });
+});
+
 describe('SocialTransfersService.sendRain (RAIN_COMMANDS port)', () => {
   const RAIN_ROW = { ...ENABLED_ROW, key: 'rain', label: 'Rain' };
 

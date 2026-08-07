@@ -70,7 +70,7 @@ export function createPlayerRouter(
       const { userId: adminId } = await adminGuard.assert(context, 'player', 'ban');
       return mapErrors({ NOT_FOUND: PlayerNotFoundError }, async () => {
         const before = await player.get(input.playerId);
-        const result = await player.remove(input.playerId);
+        const result = await player.remove(input.playerId, adminId);
         await audit.record({
           actorId: adminId,
           actorType: 'admin',

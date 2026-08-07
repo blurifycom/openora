@@ -9,7 +9,7 @@ import {
 import { TagKeySchema } from './tag.js';
 import { CurrencyCodeSchema, CountryCodeSchema } from './igaming-config.js';
 import { PermissionLevelSchema } from './iam.js';
-import { KycStatusSchema, KycStatusSourceSchema } from './player.js';
+import { KycStatusSchema, KycStatusSourceSchema, PlayerStatusSchema } from './player.js';
 
 // Optional request-origin metadata shared by HTTP-triggered events; both fields may be absent.
 const authContextBase = ClientMetaSchema.partial();
@@ -365,6 +365,13 @@ export const domainEventSchemas = {
     previousLevel: z.number().int(),
     newLevel: z.number().int(),
     actorId: UuidSchema,
+  }),
+  // System-driven login rejection for a player the Backoffice blocked (status
+  // suspended/closed). No admin acted at login time - the block was set earlier; this
+  // is a failure outcome. userId = the subject player; status = the blocking status.
+  'player.login_blocked': authContextBase.extend({
+    userId: UuidSchema,
+    status: PlayerStatusSchema,
   }),
 } as const;
 

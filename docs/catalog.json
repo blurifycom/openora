@@ -86,6 +86,7 @@
       ],
       "routes": [
         "chat-commands.claimGift",
+        "chat-commands.getGift",
         "chat-commands.listCommands",
         "chat-commands.mentionSearch",
         "chat-commands.postGift",
@@ -782,6 +783,7 @@
     "identity.user.unlocked",
     "notifications.created",
     "player.level.changed",
+    "player.login_blocked",
     "rg.cooling_off.activated",
     "rg.cooling_off.lifted",
     "rg.exclusion.login_blocked",
@@ -1188,6 +1190,10 @@
     {
       "name": "GiftCommandMetadataSchema",
       "file": "packages/core/src/contracts/schemas/chat-command-metadata.ts"
+    },
+    {
+      "name": "GiftStateSchema",
+      "file": "packages/core/src/engagement/chat-commands/contract/index.ts"
     },
     {
       "name": "GrantInputSchema",

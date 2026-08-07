@@ -5,6 +5,7 @@ import {
   ADMIN_USER_DIRECTORY,
   ADMIN_GAME_REPORTING,
   CHAT_BLOCK_WRITER,
+  SESSION_COMMANDS,
 } from '@openora/core/contracts';
 import type { CoreTokenCatalog, Plugin } from '@openora/core/server';
 import { PlayerService } from './service/player.service.js';
@@ -29,6 +30,7 @@ export default {
           c.get(ADMIN_USER_DIRECTORY),
           c.get(ADMIN_GAME_REPORTING),
           c.get(CHAT_BLOCK_WRITER),
+          c.get(SESSION_COMMANDS),
         ),
         c.get(ADMIN_GUARD),
         c.get(AUDIT_WRITER),

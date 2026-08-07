@@ -23,6 +23,8 @@ import type {
   SendGiftArgs,
   SendGiftResult,
   ClaimGiftResult,
+  GetGiftResult,
+  GiftSnapshot,
   GiftCommands,
   SendRainArgs,
   SendRainResult,
@@ -204,6 +206,16 @@ function toClaimGiftResult(error: unknown): ClaimGiftResult {
   throw error;
 }
 
+function toGetGiftResult(error: unknown): GetGiftResult {
+  if (error instanceof GiftNotFoundError) {
+    return { ok: false, reason: 'gift_not_found' };
+  }
+  if (error instanceof GiftRoomAccessError) {
+    return { ok: false, reason: 'room_not_member', roomId: error.roomId };
+  }
+  throw error;
+}
+
 function toSendRainResult(error: unknown): SendRainResult {
   if (error instanceof CommandDisabledError) {
     return { ok: false, reason: 'disabled' };
@@ -271,6 +283,15 @@ export class SocialTransfersService implements GiftCommands, RainCommands {
       return await this.doClaimGift(giftId, claimerId);
     } catch (error) {
       return toClaimGiftResult(error);
+    }
+  }
+
+  async getGift(giftId: Uuid, viewerId: Uuid): Promise<GetGiftResult> {
+    try {
+      const gift = await this.doGetGift(giftId, viewerId);
+      return { ok: true, gift };
+    } catch (error) {
+      return toGetGiftResult(error);
     }
   }
 
@@ -617,6 +638,35 @@ export class SocialTransfersService implements GiftCommands, RainCommands {
       claimedBy: claimerId,
       claimedByUsername: claimerUsername,
       claimedAt: claimedAtIso,
+    };
+  }
+
+  private async doGetGift(giftId: Uuid, viewerId: Uuid): Promise<GiftSnapshot> {
+    const rows = await this.drizzle.db.select().from(playerGift).where(eq(playerGift.id, giftId));
+    const giftRow = findOneOrThrow(rows, new GiftNotFoundError(giftId));
+
+    // Same room-membership boundary as doClaimGift: a viewer must be a member
+    // of the gift's room to poll its status. No FOR UPDATE - read-only, no
+    // mutation, no need to serialize against concurrent claims.
+    try {
+      await this.verifyRoomAccessIfNeeded(giftRow.roomId, viewerId);
+    } catch (error) {
+      if (error instanceof Error && error.name === 'ChatRoomNotMemberError') {
+        throw new GiftRoomAccessError(giftRow.roomId);
+      }
+      throw error;
+    }
+
+    return {
+      id: giftRow.id,
+      senderId: giftRow.senderId,
+      senderUsername: giftRow.senderUsername,
+      amount: giftRow.amount,
+      currency: giftRow.currency,
+      claimedBy: giftRow.claimedBy,
+      claimedByUsername: giftRow.claimedByUsername,
+      claimedAt: giftRow.claimedAt ? giftRow.claimedAt.toISOString() : null,
+      createdAt: giftRow.createdAt.toISOString(),
     };
   }
 
