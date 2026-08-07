@@ -1,6 +1,6 @@
 import { implement } from '@orpc/server';
 import { populateContractRouterPaths } from '@orpc/contract';
-import { mapErrors, getUserId, type OssContext } from '@openora/core/server';
+import { mapErrors, getUserId, type OssContext, type AdminGuard } from '@openora/core/server';
 import { chatCommandsContract } from '../contract/index.js';
 import {
   ChatCommandsService,
@@ -14,6 +14,7 @@ import {
   GiftNotFoundError,
   GiftAlreadyClaimedError,
   GiftSelfClaimError,
+  GiftCreditError,
   ChatCommandIdempotencyKeyReuseError,
   ConcurrentCommandReplayError,
   ChatRoomNotMemberError,
@@ -21,11 +22,21 @@ import {
 
 const cc = populateContractRouterPaths({ chatCommands: chatCommandsContract }).chatCommands;
 
-export function createChatCommandsRouter(svc: ChatCommandsService) {
+export function createChatCommandsRouter(svc: ChatCommandsService, adminGuard: AdminGuard) {
   const os = implement(cc).$context<OssContext>();
 
   return os.router({
     listCommands: os.listCommands.handler(() => svc.listCommands()),
+
+    adminListCommands: os.adminListCommands.handler(async ({ input, context }) => {
+      await adminGuard.assert(context, 'chat-command', 'view');
+      return svc.adminListCommands(input);
+    }),
+
+    adminUpdateCommand: os.adminUpdateCommand.handler(async ({ input, context }) => {
+      const { userId } = await adminGuard.assert(context, 'chat-command', 'update');
+      return svc.adminUpdateCommand(input, userId);
+    }),
 
     postGift: os.postGift.handler(({ input, context }) => {
       const actorId = getUserId(context);
@@ -51,7 +62,7 @@ export function createChatCommandsRouter(svc: ChatCommandsService) {
         {
           NOT_FOUND: [GiftNotFoundError],
           FORBIDDEN: [ChatRoomNotMemberError],
-          CONFLICT: [GiftAlreadyClaimedError, GiftSelfClaimError],
+          CONFLICT: [GiftAlreadyClaimedError, GiftSelfClaimError, GiftCreditError],
         },
         () => svc.claimGift(input.id, claimerId),
       );

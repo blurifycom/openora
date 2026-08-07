@@ -1,9 +1,11 @@
-import { eq } from 'drizzle-orm';
+import { eq, asc, desc, count } from 'drizzle-orm';
 import {
   DrizzleService,
   makeNotFoundError,
   makeConflictError,
   createDomainError,
+  findOneOrThrow,
+  pageToOffset,
 } from '@openora/core/server';
 import type {
   Uuid,
@@ -13,14 +15,19 @@ import type {
   GiftCommands,
   RainCommands,
   RealtimeTransport,
+  AuditWritePort,
 } from '@openora/core/contracts';
 import { chatChannel } from '@openora/core/contracts';
+import type { SortOrder } from '@openora/core/contracts/kit';
 import type {
   ChatCommandDescriptor,
+  ChatCommandType,
+  CommandConfig,
   PostGiftInput,
   PostRainInput,
   ClaimGiftOutput,
   GiftState,
+  AdminCommandSortBy,
 } from '../contract/index.js';
 import { ChatCommandTypeSchema } from '../contract/index.js';
 import { chatCommandConfig } from '../schema/index.js';
@@ -59,6 +66,10 @@ export const GiftSelfClaimError = makeConflictError(
   'GiftSelfClaim',
   'You cannot claim your own gift',
 );
+export const GiftCreditError = makeConflictError(
+  'GiftCreditError',
+  'Recipient wallet is unavailable; gift claim aborted',
+);
 export const ChatCommandIdempotencyKeyReuseError = makeConflictError(
   'ChatCommandIdempotencyKeyReuse',
   'This idempotency key was already used with different request parameters',
@@ -80,8 +91,14 @@ function toDescriptor(row: typeof chatCommandConfig.$inferSelect): ChatCommandDe
     label: row.label,
     description: row.description ?? null,
     config: row.config ?? null,
+    updatedAt: row.updatedAt.toISOString(),
   };
 }
+
+const ADMIN_COMMAND_SORT_COLUMNS = {
+  key: chatCommandConfig.key,
+  updatedAt: chatCommandConfig.updatedAt,
+} as const satisfies Record<AdminCommandSortBy, unknown>;
 
 export class ChatCommandsService {
   constructor(
@@ -91,6 +108,7 @@ export class ChatCommandsService {
     private readonly giftCommands: GiftCommands,
     private readonly rainCommands: RainCommands,
     private readonly transport: RealtimeTransport,
+    private readonly audit: AuditWritePort,
   ) {}
 
   async listCommands(includeDisabled = false): Promise<ChatCommandDescriptor[]> {
@@ -99,6 +117,66 @@ export class ChatCommandsService {
       .from(chatCommandConfig)
       .where(includeDisabled ? undefined : eq(chatCommandConfig.enabled, true));
     return rows.map(toDescriptor);
+  }
+
+  async adminListCommands({
+    page,
+    limit,
+    sortBy,
+    sortOrder,
+  }: {
+    page: number;
+    limit: number;
+    sortBy: AdminCommandSortBy;
+    sortOrder: SortOrder;
+  }) {
+    const dir = sortOrder === 'asc' ? asc : desc;
+    const col = ADMIN_COMMAND_SORT_COLUMNS[sortBy];
+    const [rows, [{ n }]] = await Promise.all([
+      this.drizzle.db
+        .select()
+        .from(chatCommandConfig)
+        .orderBy(dir(col))
+        .limit(limit)
+        .offset(pageToOffset(page, limit)),
+      this.drizzle.db.select({ n: count() }).from(chatCommandConfig),
+    ]);
+    return { items: rows.map(toDescriptor), total: Number(n), page, limit };
+  }
+
+  async adminUpdateCommand(
+    input: { key: ChatCommandType; enabled: boolean; config?: CommandConfig },
+    actorId: Uuid,
+  ): Promise<ChatCommandDescriptor> {
+    const rows = await this.drizzle.db
+      .insert(chatCommandConfig)
+      .values({
+        key: input.key,
+        enabled: input.enabled,
+        label: input.key.charAt(0).toUpperCase() + input.key.slice(1),
+        config: input.config ?? null,
+        updatedAt: new Date(),
+      })
+      .onConflictDoUpdate({
+        target: chatCommandConfig.key,
+        set: {
+          enabled: input.enabled,
+          ...(input.config !== undefined ? { config: input.config } : {}),
+          updatedAt: new Date(),
+        },
+      })
+      .returning();
+    const row = findOneOrThrow(rows, new CommandDisabledError(input.key));
+    await this.audit.record({
+      actorId,
+      actorType: 'admin',
+      action: 'chat.command.updated',
+      resourceType: 'chat_command',
+      resourceId: input.key,
+      before: null,
+      after: { enabled: input.enabled, config: input.config ?? null },
+    });
+    return toDescriptor(row);
   }
 
   async searchMentions(q: string, limit: number, viewerId: Uuid) {
@@ -156,6 +234,8 @@ export class ChatCommandsService {
         throw new GiftSelfClaimError();
       case 'room_not_member':
         throw new ChatRoomNotMemberError(result.roomId ?? null);
+      case 'gift_credit_failed':
+        throw new GiftCreditError();
     }
   }
 

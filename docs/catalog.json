@@ -48,6 +48,8 @@
         "chat_user_ignore"
       ],
       "routes": [
+        "chat.adminListBlockedUsers",
+        "chat.adminListIgnoredUsers",
         "chat.banMember",
         "chat.blockUser",
         "chat.createPrivateRoom",
@@ -85,6 +87,8 @@
         "chat_gift"
       ],
       "routes": [
+        "chat-commands.adminListCommands",
+        "chat-commands.adminUpdateCommand",
         "chat-commands.claimGift",
         "chat-commands.getGift",
         "chat-commands.listCommands",
@@ -428,6 +432,7 @@
         "packages/core/src/admin-console/plugin.ts",
         "packages/core/src/audit/plugin.ts",
         "packages/core/src/compliance/plugin.ts",
+        "packages/core/src/engagement/chat-commands/plugin.ts",
         "packages/core/src/engagement/social-transfers/plugin.ts",
         "packages/core/src/pam/player-management/plugin.ts",
         "packages/core/src/pam/player-note/plugin.ts",
@@ -818,6 +823,18 @@
     {
       "name": "AddGeoRuleInputSchema",
       "file": "packages/core/src/compliance/contract/index.ts"
+    },
+    {
+      "name": "AdminBlockedUserSchema",
+      "file": "packages/core/src/engagement/chat/contract/index.ts"
+    },
+    {
+      "name": "AdminCommandSortBySchema",
+      "file": "packages/core/src/engagement/chat-commands/contract/index.ts"
+    },
+    {
+      "name": "AdminIgnoredUserSchema",
+      "file": "packages/core/src/engagement/chat/contract/index.ts"
     },
     {
       "name": "AdminInvitationSchema",

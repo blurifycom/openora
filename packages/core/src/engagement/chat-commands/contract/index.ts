@@ -5,7 +5,9 @@ import {
   MoneyAmountSchema,
   SystemChatMessageSchema,
   ChatRoomIdSchema,
+  TimestampSchema,
 } from '@openora/core/contracts';
+import { PageQuerySchema, SortOrderSchema, paginated } from '@openora/core/contracts/kit';
 
 export const CHAT_COMMAND_TYPES = [
   'mention',
@@ -34,8 +36,13 @@ export const ChatCommandDescriptorSchema = z.object({
   label: z.string(),
   description: z.string().nullable(),
   config: CommandConfigSchema.nullable(),
+  updatedAt: TimestampSchema,
 });
 export type ChatCommandDescriptor = z.infer<typeof ChatCommandDescriptorSchema>;
+
+export const AdminCommandSortByValues = ['key', 'updatedAt'] as const;
+export const AdminCommandSortBySchema = z.enum(AdminCommandSortByValues).default('key');
+export type AdminCommandSortBy = z.infer<typeof AdminCommandSortBySchema>;
 
 export const MentionResultSchema = z.object({
   userId: UuidSchema,
@@ -122,4 +129,26 @@ export const chatCommandsContract = {
       }),
     )
     .output(z.array(MentionResultSchema)),
+
+  adminListCommands: oc
+    .route({ method: 'GET', path: '/backoffice/chat-command/commands' })
+    .input(
+      z.object({
+        ...PageQuerySchema.shape,
+        sortBy: AdminCommandSortBySchema,
+        sortOrder: SortOrderSchema.default('asc'),
+      }),
+    )
+    .output(paginated(ChatCommandDescriptorSchema)),
+
+  adminUpdateCommand: oc
+    .route({ method: 'PATCH', path: '/backoffice/chat-command/commands/{key}' })
+    .input(
+      z.object({
+        key: ChatCommandTypeSchema,
+        enabled: z.boolean(),
+        config: CommandConfigSchema.optional(),
+      }),
+    )
+    .output(ChatCommandDescriptorSchema),
 };

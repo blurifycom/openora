@@ -11,6 +11,7 @@ import type {
   RainCommands,
   SendRainResult,
   RealtimeTransport,
+  AuditWritePort,
 } from '@openora/core/contracts';
 import {
   ChatCommandsService,
@@ -116,17 +117,31 @@ function makeTransport(onlineIds: string[] = [CLAIMER_ID]): RealtimeTransport {
   });
 }
 
+function makeAudit(): AuditWritePort {
+  return mock<AuditWritePort>({
+    record: vi.fn().mockResolvedValue(undefined),
+    recordInTransaction: vi.fn().mockResolvedValue(undefined),
+  });
+}
+
 function makeSvc(
   overrides: {
-    drizzleRows?: { select?: Record<string, unknown>[][] };
+    drizzleRows?: {
+      select?: Record<string, unknown>[][];
+      returning?: Record<string, unknown>[][];
+    };
     directory?: AdminUserDirectory;
     blockWriter?: ChatBlockWriter;
     giftCommands?: GiftCommands;
     rainCommands?: RainCommands;
     transport?: RealtimeTransport;
+    audit?: AuditWritePort;
   } = {},
 ) {
-  const drizzle = makeDrizzle({ select: overrides.drizzleRows?.select ?? [] });
+  const drizzle = makeDrizzle({
+    select: overrides.drizzleRows?.select ?? [],
+    returning: overrides.drizzleRows?.returning ?? [],
+  });
   return new ChatCommandsService(
     drizzle,
     overrides.directory ?? makeDirectory(),
@@ -134,6 +149,7 @@ function makeSvc(
     overrides.giftCommands ?? makeGiftCommands(),
     overrides.rainCommands ?? makeRainCommands(),
     overrides.transport ?? makeTransport(),
+    overrides.audit ?? makeAudit(),
   );
 }
 
@@ -426,5 +442,75 @@ describe('ChatCommandsService.postRain (resolves presence, delegates to RAIN_COM
         ACTOR_ID,
       ),
     ).rejects.toThrow(ChatRoomNotMemberError);
+  });
+});
+
+describe('ChatCommandsService.adminListCommands', () => {
+  it('returns disabled commands too, unlike listCommands', async () => {
+    const svc = makeSvc({
+      drizzleRows: { select: [[ENABLED_ROW, DISABLED_ROW], [{ n: 2 }]] },
+    });
+
+    const result = await svc.adminListCommands({
+      page: 1,
+      limit: 10,
+      sortBy: 'key',
+      sortOrder: 'asc',
+    });
+
+    expect(result.items).toHaveLength(2);
+    expect(result.total).toBe(2);
+    expect(result.items.map((c) => c.enabled)).toEqual([true, false]);
+  });
+});
+
+describe('ChatCommandsService.adminUpdateCommand', () => {
+  it('creates a new config row when none exists', async () => {
+    const row = { ...ENABLED_ROW, key: 'donate', label: 'Donate' };
+    const svc = makeSvc({ drizzleRows: { returning: [[row]] } });
+
+    const result = await svc.adminUpdateCommand({ key: 'donate', enabled: true }, ACTOR_ID);
+
+    expect(result).toMatchObject({ key: 'donate', label: 'Donate', enabled: true });
+  });
+
+  it('updates an existing config row', async () => {
+    const row = { ...ENABLED_ROW, enabled: false, config: { maxAmount: '100.00000000' } };
+    const svc = makeSvc({ drizzleRows: { returning: [[row]] } });
+
+    const result = await svc.adminUpdateCommand(
+      { key: 'gift', enabled: false, config: { maxAmount: '100.00000000' } },
+      ACTOR_ID,
+    );
+
+    expect(result).toMatchObject({ key: 'gift', enabled: false });
+  });
+
+  it('records an audit entry describing the change', async () => {
+    const audit = makeAudit();
+    const svc = makeSvc({ audit, drizzleRows: { returning: [[ENABLED_ROW]] } });
+
+    await svc.adminUpdateCommand(
+      { key: 'gift', enabled: true, config: { maxAmount: '50.00000000' } },
+      ACTOR_ID,
+    );
+
+    expect(audit.record).toHaveBeenCalledWith({
+      actorId: ACTOR_ID,
+      actorType: 'admin',
+      action: 'chat.command.updated',
+      resourceType: 'chat_command',
+      resourceId: 'gift',
+      before: null,
+      after: { enabled: true, config: { maxAmount: '50.00000000' } },
+    });
+  });
+
+  it('throws CommandDisabledError when the insert/update returns no row', async () => {
+    const svc = makeSvc({ drizzleRows: { returning: [[]] } });
+
+    await expect(svc.adminUpdateCommand({ key: 'gift', enabled: true }, ACTOR_ID)).rejects.toThrow(
+      CommandDisabledError,
+    );
   });
 });

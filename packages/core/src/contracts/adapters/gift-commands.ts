@@ -34,7 +34,8 @@ export type ClaimGiftFailureReason =
   | 'gift_not_found'
   | 'already_claimed'
   | 'self_claim'
-  | 'room_not_member';
+  | 'room_not_member'
+  | 'gift_credit_failed';
 
 export type ClaimGiftResult =
   | { ok: true; claimedBy: Uuid; claimedByUsername: string; claimedAt: string }

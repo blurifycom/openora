@@ -323,5 +323,15 @@ export function createChatRouter({
         chatService.deleteRoom(input.id, userId, { ip, userAgent }),
       );
     }),
+
+    adminListBlockedUsers: os.adminListBlockedUsers.handler(async ({ input, context }) => {
+      await adminGuard.assert(context, 'chat-moderation', 'view');
+      return chatService.adminListBlockedUsers(input);
+    }),
+
+    adminListIgnoredUsers: os.adminListIgnoredUsers.handler(async ({ input, context }) => {
+      await adminGuard.assert(context, 'chat-moderation', 'view');
+      return chatService.adminListIgnoredUsers(input);
+    }),
   });
 }

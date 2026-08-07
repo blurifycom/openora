@@ -1,4 +1,4 @@
-import { DRIZZLE } from '@openora/core/server';
+import { DRIZZLE, ADMIN_GUARD } from '@openora/core/server';
 import type { CoreTokenCatalog, Plugin } from '@openora/core/server';
 import {
   ADMIN_USER_DIRECTORY,
@@ -6,13 +6,14 @@ import {
   CHAT_REALTIME_TRANSPORT,
   GIFT_COMMANDS,
   RAIN_COMMANDS,
+  AUDIT_WRITER,
 } from '@openora/core/contracts';
 import { ChatCommandsService } from './service/chat-commands.service.js';
 import { createChatCommandsRouter } from './router/index.js';
 
 export default {
   id: 'chat-commands',
-  dependsOn: ['chat', 'social-transfers'],
+  dependsOn: ['chat', 'social-transfers', 'audit'],
   register(ctx) {
     ctx.routers.add('chat-commands', (c) => {
       const svc = new ChatCommandsService(
@@ -22,8 +23,9 @@ export default {
         c.get(GIFT_COMMANDS),
         c.get(RAIN_COMMANDS),
         c.get(CHAT_REALTIME_TRANSPORT),
+        c.get(AUDIT_WRITER),
       );
-      return createChatCommandsRouter(svc);
+      return createChatCommandsRouter(svc, c.get(ADMIN_GUARD));
     });
   },
 } as const satisfies Plugin<CoreTokenCatalog>;

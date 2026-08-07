@@ -66,6 +66,10 @@ export const GiftSelfClaimError = makeConflictError(
   'GiftSelfClaim',
   'You cannot claim your own gift',
 );
+export const GiftCreditError = makeConflictError(
+  'GiftCreditError',
+  'Recipient wallet is unavailable; gift claim aborted',
+);
 export const DonateSelfError = makeConflictError('DonateSelf', 'You cannot donate to yourself');
 export const TooManyRecipientsError = makeConflictError(
   'TooManyRecipients',
@@ -202,6 +206,9 @@ function toClaimGiftResult(error: unknown): ClaimGiftResult {
   }
   if (error instanceof GiftRoomAccessError) {
     return { ok: false, reason: 'room_not_member', roomId: error.roomId };
+  }
+  if (error instanceof GiftCreditError) {
+    return { ok: false, reason: 'gift_credit_failed' };
   }
   throw error;
 }
@@ -591,7 +598,7 @@ export class SocialTransfersService implements GiftCommands, RainCommands {
           type: 'gift',
         });
         if (!credit.ok) {
-          throw new GiftNotFoundError(claimerId);
+          throw new GiftCreditError();
         }
 
         await this.audit.recordInTransaction(tx, {
@@ -701,20 +708,26 @@ export class SocialTransfersService implements GiftCommands, RainCommands {
     }
     await this.reserveCommandIdempotency('rain', actorId, input.idempotencyKey, fingerprint);
 
-    const recipients = shuffleArray(input.onlineUserIds.filter((id) => id !== actorId)).slice(
-      0,
-      input.recipientCount,
-    );
-    if (recipients.length === 0) {
-      throw new NoOnlineUsersError();
-    }
-
+    // Recipients resolved INSIDE runWithCommandReservation's callback (unlike doSendGift's
+    // pre-reservation directory lookup): runWithCommandReservation only releases the reservation
+    // on a failure inside its own callback, so throwing NoOnlineUsersError here - after
+    // reserveCommandIdempotency but before the callback - would otherwise leak a stuck reservation
+    // for the full TTL. It must also stay after findCommandReplay/reserveCommandIdempotency so a
+    // replay with a now-empty onlineUserIds list (the caller retried after everyone left) still
+    // returns the original stored result instead of a spurious NoOnlineUsersError.
     const { msg, currency, totalDistributed, recipientIds } = await this.runWithCommandReservation(
       'rain',
       actorId,
       input.idempotencyKey,
-      () =>
-        this.drizzle.db.transaction(async (tx) => {
+      () => {
+        const recipients = shuffleArray(input.onlineUserIds.filter((id) => id !== actorId)).slice(
+          0,
+          input.recipientCount,
+        );
+        if (recipients.length === 0) {
+          throw new NoOnlineUsersError();
+        }
+        return this.drizzle.db.transaction(async (tx) => {
           const splitResult = await tx.execute(
             sql`SELECT
               (floor(floor(${input.amount}::numeric) / ${recipients.length}))::text AS per_recipient,
@@ -798,7 +811,8 @@ export class SocialTransfersService implements GiftCommands, RainCommands {
             perRecipient,
             recipientIds: recipients,
           };
-        }),
+        });
+      },
     );
     await this.completeCommandIdempotency('rain', actorId, input.idempotencyKey, fingerprint, msg);
 

@@ -13,8 +13,11 @@ Each row in `chat_command_config` holds `enabled`, `label`, `description`, and a
 column (`maxAmount`, `minAmount`, `maxRecipients`) - the same row `social-transfers` reads
 read-only via the sanctioned cross-module `/schema` import (`db-conventions`/`clean-architecture`).
 `listCommands` filters to `enabled: true` by default. Seed data lives in `seed/index.ts`
-(`seedChatCommands`). Toggling a command's config is out of scope until an admin route is
-reintroduced (see `social-transfers/AGENTS.md`).
+(`seedChatCommands`). `adminListCommands` (`GET /backoffice/chat-command/commands`, paginated, all
+rows including disabled) and `adminUpdateCommand` (`PATCH /backoffice/chat-command/commands/{key}`,
+upserts by `key`) cover backoffice toggling/reconfiguration - both are `AdminGuard`-gated on the
+`chat-command` resource (`view`/`update`) and `adminUpdateCommand` records a
+`chat.command.updated` audit entry via `AUDIT_WRITER`.
 
 `mention` is special: it does not go through a dedicated post route. The `@username` pattern is
 typed inline in a message; `GET /chat-command/mention-search` powers the type-ahead, excluding any
@@ -48,6 +51,7 @@ split exists.
   gift/rain mechanics itself.
 - `CHAT_REALTIME_TRANSPORT` - `getOnlineUserIds(channel)` for rain recipient discovery. The
   chat-scoped token, not the generic `REALTIME_TRANSPORT`.
+- `AUDIT_WRITER` - `record(...)` for `adminUpdateCommand`'s `chat.command.updated` audit entry.
 
 ## Don't
 

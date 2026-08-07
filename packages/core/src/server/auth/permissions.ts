@@ -21,6 +21,8 @@ export const statement = {
   tag: ['view', 'create', 'delete'] as const,
   'chat-room': ['view', 'create', 'update', 'delete'] as const,
   'auto-withdrawal-config': ['view', 'update'] as const,
+  'chat-command': ['view', 'update'] as const,
+  'chat-moderation': ['view'] as const,
 } as const;
 
 export const ac = createAccessControl(statement);
@@ -46,6 +48,8 @@ export const adminRole = ac.newRole({
   tag: ['view', 'create', 'delete'],
   'chat-room': ['view', 'create', 'update', 'delete'],
   'auto-withdrawal-config': ['view', 'update'],
+  'chat-command': ['view', 'update'],
+  'chat-moderation': ['view'],
 });
 
 export const supportRole = ac.newRole({

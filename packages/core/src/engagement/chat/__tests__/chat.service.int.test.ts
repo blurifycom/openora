@@ -572,6 +572,51 @@ describe('ChatService block list (real PG)', () => {
   });
 });
 
+describe('ChatService.adminListBlockedUsers (real PG, site-wide)', () => {
+  it('lists every users blocks, not just one callers, including who blocked whom', async () => {
+    const { svc } = makeService();
+    const blockerA = randomUUID();
+    const blockerB = randomUUID();
+    const blockedA = randomUUID();
+    const blockedB = randomUUID();
+    await svc.blockUser(blockerA, blockedA);
+    await svc.blockUser(blockerB, blockedB);
+
+    const { items, total } = await svc.adminListBlockedUsers({
+      page: 1,
+      limit: 100,
+      sortBy: 'createdAt',
+      sortOrder: 'desc',
+    });
+
+    expect(total).toBe(2);
+    expect(items).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ blockerId: blockerA, blockedId: blockedA }),
+        expect.objectContaining({ blockerId: blockerB, blockedId: blockedB }),
+      ]),
+    );
+  });
+
+  it('excludes an unblocked (soft-removed) relationship', async () => {
+    const { svc } = makeService();
+    const blockerId = randomUUID();
+    const blockedId = randomUUID();
+    await svc.blockUser(blockerId, blockedId);
+    await svc.unblockUser(blockerId, blockedId);
+
+    const { items, total } = await svc.adminListBlockedUsers({
+      page: 1,
+      limit: 100,
+      sortBy: 'createdAt',
+      sortOrder: 'desc',
+    });
+
+    expect(items).toHaveLength(0);
+    expect(total).toBe(0);
+  });
+});
+
 describe('ChatService ignore list (real PG)', () => {
   it('rejects ignoring yourself', async () => {
     const { svc } = makeService();
@@ -709,6 +754,51 @@ describe('ChatService ignore list (real PG)', () => {
         (r) => r.ignoredId,
       ),
     ).toEqual([ignoredId]);
+  });
+});
+
+describe('ChatService.adminListIgnoredUsers (real PG, site-wide)', () => {
+  it('lists every users ignores, not just one callers, including who ignored whom', async () => {
+    const { svc } = makeService();
+    const ignorerA = randomUUID();
+    const ignorerB = randomUUID();
+    const ignoredA = randomUUID();
+    const ignoredB = randomUUID();
+    await svc.ignoreUser(ignorerA, ignoredA);
+    await svc.ignoreUser(ignorerB, ignoredB);
+
+    const { items, total } = await svc.adminListIgnoredUsers({
+      page: 1,
+      limit: 100,
+      sortBy: 'createdAt',
+      sortOrder: 'desc',
+    });
+
+    expect(total).toBe(2);
+    expect(items).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ ignorerId: ignorerA, ignoredId: ignoredA }),
+        expect.objectContaining({ ignorerId: ignorerB, ignoredId: ignoredB }),
+      ]),
+    );
+  });
+
+  it('excludes an unignored (soft-removed) relationship', async () => {
+    const { svc } = makeService();
+    const ignorerId = randomUUID();
+    const ignoredId = randomUUID();
+    await svc.ignoreUser(ignorerId, ignoredId);
+    await svc.unignoreUser(ignorerId, ignoredId);
+
+    const { items, total } = await svc.adminListIgnoredUsers({
+      page: 1,
+      limit: 100,
+      sortBy: 'createdAt',
+      sortOrder: 'desc',
+    });
+
+    expect(items).toHaveLength(0);
+    expect(total).toBe(0);
   });
 });
 

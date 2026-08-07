@@ -504,6 +504,43 @@ export class ChatService {
     };
   }
 
+  /** Backoffice-only, site-wide: every active block relationship, not just the caller's. */
+  async adminListBlockedUsers({
+    page,
+    limit,
+    sortBy,
+    sortOrder,
+  }: {
+    page: number;
+    limit: number;
+    sortBy: BlockedUserSortBy;
+    sortOrder: SortOrder;
+  }) {
+    const dir = sortOrder === 'asc' ? asc : desc;
+    const col = BLOCKED_USER_SORT_COLUMNS[sortBy];
+    const where = isNull(chatUserBlock.removedAt);
+    const [rows, [{ n }]] = await Promise.all([
+      this.drizzle.db
+        .select({
+          blockerId: chatUserBlock.blockerId,
+          blockedId: chatUserBlock.blockedId,
+          createdAt: chatUserBlock.createdAt,
+        })
+        .from(chatUserBlock)
+        .where(where)
+        .orderBy(dir(col))
+        .limit(limit)
+        .offset(pageToOffset(page, limit)),
+      this.drizzle.db.select({ n: count() }).from(chatUserBlock).where(where),
+    ]);
+    return {
+      items: rows.map((r) => serializeRow(r, { dateFields: ['createdAt'] })),
+      total: Number(n),
+      page,
+      limit,
+    };
+  }
+
   async blockUser(blockerId: User['id'], blockedId: User['id'], meta?: ClientMeta) {
     if (blockerId === blockedId) {
       throw new ChatSelfBlockError();
@@ -576,6 +613,43 @@ export class ChatService {
     const [rows, [{ n }]] = await Promise.all([
       this.drizzle.db
         .select({ ignoredId: chatUserIgnore.ignoredId, createdAt: chatUserIgnore.createdAt })
+        .from(chatUserIgnore)
+        .where(where)
+        .orderBy(dir(col))
+        .limit(limit)
+        .offset(pageToOffset(page, limit)),
+      this.drizzle.db.select({ n: count() }).from(chatUserIgnore).where(where),
+    ]);
+    return {
+      items: rows.map((r) => serializeRow(r, { dateFields: ['createdAt'] })),
+      total: Number(n),
+      page,
+      limit,
+    };
+  }
+
+  /** Backoffice-only, site-wide: every active ignore relationship, not just the caller's. */
+  async adminListIgnoredUsers({
+    page,
+    limit,
+    sortBy,
+    sortOrder,
+  }: {
+    page: number;
+    limit: number;
+    sortBy: IgnoredUserSortBy;
+    sortOrder: SortOrder;
+  }) {
+    const dir = sortOrder === 'asc' ? asc : desc;
+    const col = IGNORED_USER_SORT_COLUMNS[sortBy];
+    const where = isNull(chatUserIgnore.removedAt);
+    const [rows, [{ n }]] = await Promise.all([
+      this.drizzle.db
+        .select({
+          ignorerId: chatUserIgnore.ignorerId,
+          ignoredId: chatUserIgnore.ignoredId,
+          createdAt: chatUserIgnore.createdAt,
+        })
         .from(chatUserIgnore)
         .where(where)
         .orderBy(dir(col))

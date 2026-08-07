@@ -118,8 +118,9 @@ keyed by command type) - a missing or disabled row throws `CommandDisabledError`
 imports the `chatCommandConfig` table definition from `@openora/core/engagement/schema/chat-commands`
 (the sanctioned read-only cross-module `/schema` import - `db-conventions`/`clean-architecture`) and
 queries it with its own `DRIZZLE` connection (one shared Postgres database). It never writes that
-table - toggling a command is out of scope for both modules until an admin route is reintroduced
-somewhere.
+table - toggling a command's config is done by `chat-commands`' own `adminUpdateCommand`
+(`PATCH /backoffice/chat-command/commands/{key}`, AdminGuard-gated on the `chat-command` resource);
+see `chat-commands/AGENTS.md`.
 
 ## GIFT_COMMANDS / RAIN_COMMANDS ports - result type, not throw, across the module boundary
 

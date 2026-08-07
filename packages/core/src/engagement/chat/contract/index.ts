@@ -100,6 +100,20 @@ export const IGNORED_USER_SORT_BY_VALUES = ['createdAt'] as const;
 export const IgnoredUserSortBySchema = z.enum(IGNORED_USER_SORT_BY_VALUES).default('createdAt');
 export type IgnoredUserSortBy = z.infer<typeof IgnoredUserSortBySchema>;
 
+// Backoffice-only, site-wide views (distinct from the per-caller BlockedUserSchema/
+// IgnoredUserSchema above): who blocked/ignored whom, across every user.
+export const AdminBlockedUserSchema = z.object({
+  blockerId: UuidSchema,
+  blockedId: UuidSchema,
+  createdAt: TimestampSchema,
+});
+
+export const AdminIgnoredUserSchema = z.object({
+  ignorerId: UuidSchema,
+  ignoredId: UuidSchema,
+  createdAt: TimestampSchema,
+});
+
 export const ChatOnlineCountSchema = z.object({ count: z.number().int().min(0) });
 
 // `.loose()` keeps this an open union so a managed-vendor overlay (eg Ably) can return extra fields without a contract change.
@@ -291,4 +305,26 @@ export const chatContract = {
     .route({ method: 'DELETE', path: '/backoffice/chat/rooms/{id}' })
     .input(IdInputSchema)
     .output(z.object({ success: z.literal(true) })),
+
+  adminListBlockedUsers: oc
+    .route({ method: 'GET', path: '/backoffice/chat/blocks' })
+    .input(
+      z.object({
+        ...PageQuerySchema.shape,
+        sortBy: BlockedUserSortBySchema,
+        sortOrder: SortOrderSchema.default('desc'),
+      }),
+    )
+    .output(paginated(AdminBlockedUserSchema)),
+
+  adminListIgnoredUsers: oc
+    .route({ method: 'GET', path: '/backoffice/chat/ignores' })
+    .input(
+      z.object({
+        ...PageQuerySchema.shape,
+        sortBy: IgnoredUserSortBySchema,
+        sortOrder: SortOrderSchema.default('desc'),
+      }),
+    )
+    .output(paginated(AdminIgnoredUserSchema)),
 };
