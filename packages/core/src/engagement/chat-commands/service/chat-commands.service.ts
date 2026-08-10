@@ -33,6 +33,7 @@ import { ChatCommandTypeSchema } from '../contract/index.js';
 import { chatCommandConfig } from '../schema/index.js';
 
 export const CommandDisabledError = makeNotFoundError('ChatCommand');
+export const ChatPlayerNotFoundError = makeNotFoundError('ChatPlayer');
 export const InsufficientBalanceError = makeConflictError(
   'InsufficientBalance',
   'Not enough balance',
@@ -201,6 +202,8 @@ export class ChatCommandsService {
     switch (result.reason) {
       case 'disabled':
         throw new CommandDisabledError('gift');
+      case 'player_not_found':
+        throw new ChatPlayerNotFoundError(result.playerId);
       case 'insufficient_balance':
         throw new InsufficientBalanceError();
       case 'exceeds_limit':
@@ -267,6 +270,8 @@ export class ChatCommandsService {
     switch (result.reason) {
       case 'disabled':
         throw new CommandDisabledError('rain');
+      case 'player_not_found':
+        throw new ChatPlayerNotFoundError(result.playerId);
       case 'insufficient_balance':
         throw new InsufficientBalanceError();
       case 'exceeds_limit':

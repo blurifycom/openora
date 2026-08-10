@@ -1,6 +1,7 @@
 import { randomInt, randomUUID } from 'node:crypto';
 import {
   type EventBus,
+  createLogger,
   makeNotFoundError,
   makeOwnershipError,
   makeConflictError,
@@ -50,6 +51,16 @@ import {
   PRIVATE_ROOM_SLUG_PREFIX,
 } from '../contract/constants.js';
 import { moderateContent } from '../moderation/index.js';
+const logger = createLogger('chat');
+
+function publishChatEvent<T>(transport: RealtimeTransport, roomId: string | null, event: T): void {
+  void Promise.resolve()
+    .then(() => transport.publish(chatChannel(roomId), event))
+    .catch((err: unknown) => {
+      logger.error({ err, roomId }, 'chat realtime publish failed');
+    });
+}
+
 export const ChatRoomNotFoundError = makeNotFoundError('ChatRoom');
 export const ChatRoomOwnershipError = makeOwnershipError('ChatRoom');
 export const ChatMessageNotFoundError = makeNotFoundError('ChatMessage');
@@ -125,6 +136,18 @@ function toRoom(record: typeof chatRoom.$inferSelect) {
 
 function toMessage(record: typeof chatMessage.$inferSelect) {
   return serializeRow(record, { dateFields: ['createdAt'] });
+}
+
+function toSystemMessage(record: typeof chatMessage.$inferSelect): ChatSystemMessage {
+  const message = toMessage(record);
+  return { ...message, actorId: message.userId } as ChatSystemMessage;
+}
+
+function toPublicMessage(record: typeof chatMessage.$inferSelect): ChatMessage {
+  if (record.type === 'system') {
+    return toSystemMessage(record);
+  }
+  return toMessage(record) as ChatMessage;
 }
 
 const BLOCKED_USER_SORT_COLUMNS = { createdAt: chatUserBlock.createdAt } as const satisfies Record<
@@ -366,7 +389,7 @@ export class ChatService {
       .where(and(...conditions))
       .orderBy(desc(chatMessage.createdAt))
       .limit(limit);
-    return messages.map(toMessage);
+    return messages.map(toPublicMessage);
   }
 
   private async appendExcludedSendersFilter(
@@ -414,8 +437,8 @@ export class ChatService {
       userId,
     });
 
-    const message = toMessage(record);
-    void this.transport.publish(chatChannel(roomId), message);
+    const message = toPublicMessage(record);
+    publishChatEvent(this.transport, roomId, message);
     return message;
   }
 
@@ -443,7 +466,7 @@ export class ChatService {
       .where(and(...conditions))
       .orderBy(desc(chatMessage.createdAt))
       .limit(limit);
-    return messages.map(toMessage);
+    return messages.map(toPublicMessage);
   }
 
   async sendGlobalMessage(userId: User['id'], username: string, content: string) {
@@ -466,8 +489,8 @@ export class ChatService {
       userId,
     });
 
-    const message = toMessage(record);
-    void this.transport.publish(chatChannel(null), message);
+    const message = toPublicMessage(record);
+    publishChatEvent(this.transport, null, message);
     return message;
   }
 
@@ -1168,20 +1191,13 @@ export class ChatService {
         metadata: args.metadata,
       })
       .returning();
-    const msg: ChatSystemMessage = {
-      id: record.id,
-      roomId: record.roomId ?? null,
-      actorId: args.actorId,
-      content: record.content,
-      metadata: args.metadata,
-      createdAt: record.createdAt.toISOString(),
-    };
+    const msg = toSystemMessage(record);
     // Only auto-publish when this call owns the write (no caller-managed transaction).
     // When `tx` is passed, the caller's transaction hasn't committed yet - publishing
     // here would leak a message to clients before (or even if) it actually commits.
     // The caller must publish itself after its transaction resolves.
     if (!args.tx) {
-      void this.transport.publish(chatChannel(args.roomId), msg);
+      publishChatEvent(this.transport, args.roomId, msg);
     }
     return msg;
   }
@@ -1193,23 +1209,12 @@ export class ChatService {
     metadata: CommandMetadata;
     tx?: unknown;
   }): Promise<CommandChatMessage> {
-    const db = (args.tx as DrizzleDb | undefined) ?? this.drizzle.db;
-    const [record] = await db
-      .insert(chatMessage)
-      .values({
-        roomId: args.roomId,
-        userId: args.userId,
-        username: args.username,
-        content: '',
-        type: 'user',
-        metadata: args.metadata,
-      })
-      .returning();
-    const message = toMessage(record);
-    if (!args.tx) {
-      void this.transport.publish(chatChannel(args.roomId), message);
-    }
-    return message as CommandChatMessage;
+    return this.postSystemMessage({
+      roomId: args.roomId,
+      actorId: args.userId,
+      metadata: args.metadata,
+      tx: args.tx,
+    });
   }
 
   async updateCommandMessage(args: {
@@ -1223,9 +1228,9 @@ export class ChatService {
       .set({ metadata: args.metadata })
       .where(eq(chatMessage.id, args.messageId))
       .returning();
-    const message = toMessage(record);
+    const message = toSystemMessage(record);
     if (!args.tx) {
-      void this.transport.publish(chatChannel(message.roomId), message);
+      publishChatEvent(this.transport, message.roomId, message);
     }
     return message as CommandChatMessage;
   }

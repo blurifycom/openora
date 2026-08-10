@@ -44,10 +44,11 @@ const DISABLED_ROW = { ...ENABLED_ROW, enabled: false };
 const SYSTEM_MSG: CommandChatMessage = {
   id: MSG_ID,
   roomId: ROOM_ID,
+  actorId: ACTOR_ID,
   userId: ACTOR_ID,
-  username: 'bob',
+  username: 'system',
   content: '',
-  type: 'user',
+  type: 'system',
   isDeleted: false,
   metadata: {
     command: 'gift',

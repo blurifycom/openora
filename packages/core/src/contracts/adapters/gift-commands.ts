@@ -28,7 +28,8 @@ export type SendGiftFailureReason =
 
 export type SendGiftResult =
   | { ok: true; message: CommandChatMessage }
-  | { ok: false; reason: SendGiftFailureReason };
+  | { ok: false; reason: SendGiftFailureReason }
+  | { ok: false; reason: 'player_not_found'; playerId: Uuid };
 
 export type ClaimGiftFailureReason =
   | 'gift_not_found'

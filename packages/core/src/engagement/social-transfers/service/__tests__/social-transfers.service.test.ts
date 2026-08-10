@@ -41,10 +41,11 @@ const DISABLED_ROW = { ...ENABLED_ROW, enabled: false };
 const SYSTEM_MSG: CommandChatMessage = {
   id: MSG_ID,
   roomId: ROOM_ID,
+  actorId: ACTOR_ID,
   userId: ACTOR_ID,
-  username: 'bob',
+  username: 'system',
   content: '',
-  type: 'user',
+  type: 'system',
   isDeleted: false,
   metadata: {
     command: 'gift',
@@ -78,6 +79,7 @@ const GIFT_ROW = {
 
 function makeWriter(): ChatSystemWriter {
   return mock<ChatSystemWriter>({
+    postSystemMessage: vi.fn().mockResolvedValue(SYSTEM_MSG),
     postCommandMessage: vi.fn().mockResolvedValue(SYSTEM_MSG),
     updateCommandMessage: vi.fn().mockResolvedValue(SYSTEM_MSG),
   });
@@ -260,6 +262,21 @@ describe('SocialTransfersService.sendGift (GIFT_COMMANDS port)', () => {
     expect(result).toEqual({ ok: false, reason: 'disabled' });
   });
 
+  it('returns { ok: false, reason: "player_not_found" } when the sender is missing', async () => {
+    const directory = mock<AdminUserDirectory>({
+      lookupPlayers: vi.fn().mockResolvedValue([]),
+    });
+    const svc = makeSvc({
+      drizzleRows: { select: [[ENABLED_ROW]] },
+      directory,
+    });
+    const result = await svc.sendGift(
+      { amount: '10', roomId: ROOM_ID, idempotencyKey: IDEMPOTENCY_KEY },
+      ACTOR_ID,
+    );
+    expect(result).toEqual({ ok: false, reason: 'player_not_found', playerId: ACTOR_ID });
+  });
+
   it('returns { ok: false, reason: "insufficient_balance" } when the wallet debit fails', async () => {
     const svc = makeSvc({
       drizzleRows: {
@@ -288,9 +305,10 @@ describe('SocialTransfersService.sendGift (GIFT_COMMANDS port)', () => {
       { amount: '10.00000000', roomId: ROOM_ID, idempotencyKey: IDEMPOTENCY_KEY },
       ACTOR_ID,
     );
-    expect(writer.postCommandMessage).toHaveBeenCalledOnce();
-    expect(writer.postCommandMessage).toHaveBeenCalledWith(
+    expect(writer.postSystemMessage).toHaveBeenCalledOnce();
+    expect(writer.postSystemMessage).toHaveBeenCalledWith(
       expect.objectContaining({
+        actorId: ACTOR_ID,
         metadata: expect.objectContaining({
           command: 'gift',
           giftId: GIFT_ID,
@@ -527,6 +545,31 @@ describe('SocialTransfersService.getGift', () => {
 describe('SocialTransfersService.sendRain (RAIN_COMMANDS port)', () => {
   const RAIN_ROW = { ...ENABLED_ROW, key: 'rain', label: 'Rain' };
 
+  it('returns { ok: false, reason: "player_not_found" } when a recipient is missing', async () => {
+    const directory = mock<AdminUserDirectory>({
+      lookupPlayers: vi
+        .fn()
+        .mockImplementation((ids: string[]) =>
+          Promise.resolve(ids.includes(ACTOR_ID) ? [{ userId: ACTOR_ID, username: 'bob' }] : []),
+        ),
+    });
+    const svc = makeSvc({
+      drizzleRows: { select: [[RAIN_ROW]] },
+      directory,
+    });
+    const result = await svc.sendRain(
+      {
+        amount: '10.00000000',
+        recipientCount: 1,
+        roomId: ROOM_ID,
+        idempotencyKey: IDEMPOTENCY_KEY,
+        onlineUserIds: [CLAIMER_ID],
+      },
+      ACTOR_ID,
+    );
+    expect(result).toEqual({ ok: false, reason: 'player_not_found', playerId: CLAIMER_ID });
+  });
+
   it('returns { ok: false, reason: "no_online_users" } when onlineUserIds only contains the actor', async () => {
     const svc = makeSvc({ drizzleRows: { select: [[RAIN_ROW]] } });
     const result = await svc.sendRain(
@@ -607,12 +650,11 @@ describe('SocialTransfersService.sendRain (RAIN_COMMANDS port)', () => {
       currency: 'USD',
       type: 'rain',
     });
-    expect(writer.postCommandMessage).toHaveBeenCalledOnce();
-    expect(writer.postCommandMessage).toHaveBeenCalledWith(
+    expect(writer.postSystemMessage).toHaveBeenCalledOnce();
+    expect(writer.postSystemMessage).toHaveBeenCalledWith(
       expect.objectContaining({
         roomId: ROOM_ID,
-        userId: ACTOR_ID,
-        username: 'bob',
+        actorId: ACTOR_ID,
         metadata: expect.objectContaining({
           command: 'rain',
           fromUserId: ACTOR_ID,
@@ -745,10 +787,11 @@ const DONATE_ROW = {
 const DONATE_SYSTEM_MSG: CommandChatMessage = {
   id: MSG_ID,
   roomId: ROOM_ID,
+  actorId: ACTOR_ID,
   userId: ACTOR_ID,
-  username: 'bob',
+  username: 'system',
   content: '',
-  type: 'user',
+  type: 'system',
   isDeleted: false,
   metadata: {
     command: 'donate',
@@ -809,7 +852,7 @@ describe('SocialTransfersService.sendDonate', () => {
   it('debits sender, credits recipient, and returns the system message on success', async () => {
     const wallet = makeWallet();
     const writer = mock<ChatSystemWriter>({
-      postCommandMessage: vi.fn().mockResolvedValue(DONATE_SYSTEM_MSG),
+      postSystemMessage: vi.fn().mockResolvedValue(DONATE_SYSTEM_MSG),
     });
     const svc = makeSvc({
       drizzleRows: {

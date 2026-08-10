@@ -4,8 +4,8 @@ import {
   IdInputSchema,
   TimestampSchema,
   UuidSchema,
-  ChatMessageTypeSchema,
   CommandMetadataSchema,
+  SystemChatMessageSchema,
 } from '@openora/core/contracts';
 import { PageQuerySchema, SortOrderSchema, paginated } from '@openora/core/contracts/kit';
 import {
@@ -67,7 +67,7 @@ export const ChatRoomMemberSchema = z.object({
 });
 export type ChatRoomMember = z.infer<typeof ChatRoomMemberSchema>;
 
-export const ChatMessageSchema = z.object({
+const UserChatMessageSchema = z.object({
   id: UuidSchema,
   roomId: UuidSchema.nullable(),
   userId: UuidSchema,
@@ -75,11 +75,15 @@ export const ChatMessageSchema = z.object({
   // UNTRUSTED user text: profanity-gated and URL-defanged server-side but NOT HTML-escaped.
   // Consumers MUST render as text or escape before injecting into HTML.
   content: z.string(),
-  type: ChatMessageTypeSchema,
+  type: z.literal('user'),
   metadata: CommandMetadataSchema.nullable(),
   isDeleted: z.boolean(),
   createdAt: TimestampSchema,
 });
+export const ChatMessageSchema = z.discriminatedUnion('type', [
+  UserChatMessageSchema,
+  SystemChatMessageSchema,
+]);
 export type ChatMessage = z.infer<typeof ChatMessageSchema>;
 
 export const BlockedUserSchema = z.object({

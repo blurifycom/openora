@@ -2,6 +2,7 @@ import { createHash } from 'node:crypto';
 import { and, eq, isNull, sql } from 'drizzle-orm';
 import {
   DrizzleService,
+  createLogger,
   makeNotFoundError,
   makeConflictError,
   mapConcurrent,
@@ -35,6 +36,16 @@ import { chatCommandConfig } from '@openora/core/engagement/schema/chat-commands
 import type { SendDonateInput } from '../contract/index.js';
 import { playerGift, playerDonate, playerRain, playerRainReceiver } from '../schema/index.js';
 
+const logger = createLogger('social-transfers');
+
+function publishChatEvent<T>(transport: RealtimeTransport, roomId: Uuid | null, event: T): void {
+  void Promise.resolve()
+    .then(() => transport.publish(chatChannel(roomId), event))
+    .catch((err: unknown) => {
+      logger.error({ err, roomId }, 'chat realtime publish failed');
+    });
+}
+
 export const CommandDisabledError = makeNotFoundError('ChatCommand');
 export const NoOnlineUsersError = makeConflictError(
   'NoOnlineUsers',
@@ -56,7 +67,13 @@ export const RainCreditError = makeConflictError(
   'RainCreditError',
   'A recipient wallet is unavailable; rain aborted',
 );
-export const ChatPlayerNotFoundError = makeNotFoundError('ChatPlayer');
+export class ChatPlayerNotFoundError extends Error {
+  constructor(readonly playerId: string) {
+    super(`ChatPlayer not found: ${playerId}`);
+    this.name = 'ChatPlayerNotFoundError';
+  }
+}
+
 export const GiftNotFoundError = makeNotFoundError('ChatGift');
 export const GiftAlreadyClaimedError = makeConflictError(
   'GiftAlreadyClaimed',
@@ -179,6 +196,9 @@ function toSendGiftResult(error: unknown): SendGiftResult {
   if (error instanceof BelowMinimumError) {
     return { ok: false, reason: 'below_minimum' };
   }
+  if (error instanceof ChatPlayerNotFoundError) {
+    return { ok: false, reason: 'player_not_found', playerId: error.playerId };
+  }
   if (error instanceof ChatCommandIdempotencyKeyReuseError) {
     return { ok: false, reason: 'idempotency_key_reuse' };
   }
@@ -235,6 +255,9 @@ function toSendRainResult(error: unknown): SendRainResult {
   }
   if (error instanceof BelowMinimumError) {
     return { ok: false, reason: 'below_minimum' };
+  }
+  if (error instanceof ChatPlayerNotFoundError) {
+    return { ok: false, reason: 'player_not_found', playerId: error.playerId };
   }
   if (error instanceof NoOnlineUsersError) {
     return { ok: false, reason: 'no_online_users' };
@@ -397,11 +420,18 @@ export class SocialTransfersService implements GiftCommands, RainCommands {
     fingerprint: string,
     result: CommandChatMessage,
   ): Promise<void> {
-    await this.cache.set(
-      this.idempotencyCacheKey(commandType, actorId, idempotencyKey),
-      { fingerprint, result } satisfies CommandIdempotencyRecord,
-      { ttlMs: this.idempotencyTtlMs },
-    );
+    try {
+      await this.cache.set(
+        this.idempotencyCacheKey(commandType, actorId, idempotencyKey),
+        { fingerprint, result } satisfies CommandIdempotencyRecord,
+        { ttlMs: this.idempotencyTtlMs },
+      );
+    } catch (err) {
+      logger.error(
+        { err, commandType, actorId, idempotencyKey },
+        'idempotency result cache failed',
+      );
+    }
   }
 
   private async runWithCommandReservation<T>(
@@ -413,7 +443,14 @@ export class SocialTransfersService implements GiftCommands, RainCommands {
     try {
       return await work();
     } catch (error) {
-      await this.cache.delete(this.idempotencyCacheKey(commandType, actorId, idempotencyKey));
+      try {
+        await this.cache.delete(this.idempotencyCacheKey(commandType, actorId, idempotencyKey));
+      } catch (cleanupError) {
+        logger.error(
+          { err: cleanupError, commandType, actorId, idempotencyKey },
+          'idempotency reservation cleanup failed',
+        );
+      }
       throw error;
     }
   }
@@ -497,10 +534,9 @@ export class SocialTransfersService implements GiftCommands, RainCommands {
             throw new InsufficientBalanceError();
           }
 
-          const message = await this.systemWriter.postCommandMessage({
+          const message = await this.systemWriter.postSystemMessage({
             roomId: input.roomId,
-            userId: actorId,
-            username: senderUsername,
+            actorId,
             tx,
             metadata: {
               command: 'gift',
@@ -536,9 +572,9 @@ export class SocialTransfersService implements GiftCommands, RainCommands {
     );
     await this.completeCommandIdempotency('gift', actorId, input.idempotencyKey, fingerprint, msg);
 
-    // The caller now owns the commit boundary: postCommandMessage was passed `tx` above so
+    // The caller now owns the commit boundary: postSystemMessage was passed `tx` above so
     // it did not auto-publish - publish only now that this transaction has committed.
-    void this.transport.publish(chatChannel(input.roomId), msg);
+    publishChatEvent(this.transport, input.roomId, msg);
 
     void this.events.emit('chat.gift.sent', {
       giftId,
@@ -645,14 +681,7 @@ export class SocialTransfersService implements GiftCommands, RainCommands {
 
     const claimedAtIso = claimed.claimedAt?.toISOString() ?? new Date().toISOString();
 
-    void this.transport.publish(chatChannel(roomId), message);
-    void this.transport.publish(chatChannel(roomId), {
-      event: 'gift.claimed',
-      giftId,
-      claimedBy: claimerId,
-      claimedByUsername: claimerUsername,
-      claimedAt: claimedAtIso,
-    });
+    publishChatEvent(this.transport, roomId, message);
 
     void this.events.emit('chat.gift.claimed', {
       giftId,
@@ -817,10 +846,9 @@ export class SocialTransfersService implements GiftCommands, RainCommands {
             })),
           );
 
-          const message = await this.systemWriter.postCommandMessage({
+          const message = await this.systemWriter.postSystemMessage({
             roomId: input.roomId,
-            userId: actorId,
-            username: sender.username,
+            actorId,
             tx,
             metadata: {
               command: 'rain',
@@ -856,9 +884,9 @@ export class SocialTransfersService implements GiftCommands, RainCommands {
     );
     await this.completeCommandIdempotency('rain', actorId, input.idempotencyKey, fingerprint, msg);
 
-    // The caller now owns the commit boundary: postCommandMessage was passed `tx` above so
+    // The caller now owns the commit boundary: postSystemMessage was passed `tx` above so
     // it did not auto-publish - publish only now that this transaction has committed.
-    void this.transport.publish(chatChannel(input.roomId), msg);
+    publishChatEvent(this.transport, input.roomId, msg);
 
     void this.events.emit('chat.rain.distributed', {
       fromUserId: actorId,
@@ -936,10 +964,9 @@ export class SocialTransfersService implements GiftCommands, RainCommands {
             throw new ChatPlayerNotFoundError(target.userId);
           }
 
-          const message = await this.systemWriter.postCommandMessage({
+          const message = await this.systemWriter.postSystemMessage({
             roomId: input.roomId,
-            userId: actorId,
-            username: sender.username,
+            actorId,
             tx,
             metadata: {
               command: 'donate',
@@ -989,7 +1016,7 @@ export class SocialTransfersService implements GiftCommands, RainCommands {
       msg,
     );
 
-    void this.transport.publish(chatChannel(input.roomId), msg);
+    publishChatEvent(this.transport, input.roomId, msg);
 
     void this.events.emit('chat.donate.sent', {
       senderId: actorId,

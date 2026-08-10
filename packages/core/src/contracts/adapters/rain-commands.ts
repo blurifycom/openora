@@ -37,7 +37,8 @@ export type SendRainFailureReason =
 
 export type SendRainResult =
   | { ok: true; message: CommandChatMessage }
-  | { ok: false; reason: SendRainFailureReason };
+  | { ok: false; reason: SendRainFailureReason }
+  | { ok: false; reason: 'player_not_found'; playerId: Uuid };
 
 export type RainCommands = {
   sendRain(input: SendRainArgs, actorId: Uuid): Promise<SendRainResult>;

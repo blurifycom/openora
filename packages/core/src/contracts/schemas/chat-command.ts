@@ -31,25 +31,19 @@ export const SystemChatMessageSchema = z.object({
   id: UuidSchema,
   roomId: UuidSchema.nullable(),
   actorId: UuidSchema,
-  content: z.string(),
-  metadata: CommandMetadataSchema,
-  createdAt: z.string(),
-});
-export type SystemChatMessage = z.infer<typeof SystemChatMessageSchema>;
-
-/** A user-authored chat message carrying structured command metadata. */
-export const CommandChatMessageSchema = z.object({
-  id: UuidSchema,
-  roomId: UuidSchema.nullable(),
   userId: UuidSchema,
   username: z.string(),
   content: z.string(),
-  type: z.literal('user'),
+  type: z.literal('system'),
   metadata: CommandMetadataSchema,
   isDeleted: z.boolean(),
   createdAt: z.string(),
 });
-export type CommandChatMessage = z.infer<typeof CommandChatMessageSchema>;
+export type SystemChatMessage = z.infer<typeof SystemChatMessageSchema>;
+
+/** A system-authored chat message carrying structured command metadata. */
+export const CommandChatMessageSchema = SystemChatMessageSchema;
+export type CommandChatMessage = SystemChatMessage;
 
 /**
  * Client-facing sentinel for global chat wherever a chat command's `roomId`
