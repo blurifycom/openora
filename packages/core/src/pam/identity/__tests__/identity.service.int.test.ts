@@ -560,6 +560,52 @@ describe('IdentityService.unlockUser (real PG)', () => {
   });
 });
 
+describe('IdentityService.adminRequestPasswordReset (real PG)', () => {
+  it('requests an OTP for the user email, sets the admin-marker in cache, and emits the audit event', async () => {
+    requestPasswordResetEmailOTPMock.mockResolvedValue(jsonResponse({ success: true }, 200));
+    const account = await seedUser();
+    const events = makeEventBus();
+    const cache = realCache();
+    const svc = buildService({ events, cache });
+
+    const res = await svc.adminRequestPasswordReset(account.id, 'admin1', {
+      ip: '1.2.3.4',
+      userAgent: 'ua',
+    });
+
+    expect(res).toEqual({ success: true });
+    expect(requestPasswordResetEmailOTPMock).toHaveBeenCalledWith(
+      expect.objectContaining({ body: { email: EMAIL } }),
+    );
+    expect(await cache.get(`admin-password-reset:${EMAIL}`)).toBe(true);
+    expect(events.emit).toHaveBeenCalledWith(
+      'identity.password.admin_reset_requested',
+      expect.objectContaining({
+        userId: account.id,
+        email: EMAIL,
+        actorId: 'admin1',
+        ip: '1.2.3.4',
+        userAgent: 'ua',
+      }),
+    );
+  });
+
+  it('throws NOT_FOUND when the user does not exist', async () => {
+    await expect(
+      buildService().adminRequestPasswordReset(randomUUID(), 'admin1'),
+    ).rejects.toThrow();
+  });
+
+  it('swallows an OTP-send failure and still returns SUCCESS', async () => {
+    requestPasswordResetEmailOTPMock.mockRejectedValue(new Error('boom'));
+    const account = await seedUser();
+
+    await expect(buildService().adminRequestPasswordReset(account.id, 'admin1')).resolves.toEqual({
+      success: true,
+    });
+  });
+});
+
 describe('IdentityService.requestPasswordReset', () => {
   it('calls the non-deprecated requestPasswordResetEmailOTP endpoint and returns SUCCESS', async () => {
     requestPasswordResetEmailOTPMock.mockResolvedValue(jsonResponse({ success: true }, 200));

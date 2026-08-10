@@ -103,6 +103,13 @@ export const domainEventSchemas = {
     action: z.string(),
     role: z.string().optional(),
   }),
+  // An admin triggered a password-reset OTP send on a player's behalf (backoffice
+  // "send reset link" action). userId = subject player, actorId = the admin.
+  'identity.password.admin_reset_requested': authContextBase.extend({
+    userId: UuidSchema,
+    email: z.email(),
+    actorId: UuidSchema,
+  }),
 
   'wallet.deposit.completed': walletTxnBase,
   'wallet.withdrawal.completed': walletTxnBase,

@@ -144,6 +144,11 @@ export const identityContract = {
     .input(z.object({ userId: UuidSchema }))
     .output(IdentitySuccessSchema),
 
+  adminRequestPasswordReset: oc
+    .route({ method: 'POST', path: '/identity/admin/password-reset' })
+    .input(z.object({ userId: UuidSchema }))
+    .output(IdentitySuccessSchema),
+
   sessions: {
     list: oc
       .route({ method: 'GET', path: '/identity/sessions' })
