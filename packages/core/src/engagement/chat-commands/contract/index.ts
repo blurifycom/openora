@@ -4,6 +4,7 @@ import {
   UuidSchema,
   MoneyAmountSchema,
   SystemChatMessageSchema,
+  CommandChatMessageSchema,
   ChatRoomIdSchema,
   TimestampSchema,
 } from '@openora/core/contracts';
@@ -50,7 +51,7 @@ export const MentionResultSchema = z.object({
 });
 export type MentionResult = z.infer<typeof MentionResultSchema>;
 
-export { SystemChatMessageSchema };
+export { SystemChatMessageSchema, CommandChatMessageSchema };
 
 export const PostGiftInputSchema = z.object({
   amount: MoneyAmountSchema,
@@ -99,7 +100,7 @@ export const chatCommandsContract = {
   postGift: oc
     .route({ method: 'POST', path: '/chat-command/gift' })
     .input(PostGiftInputSchema)
-    .output(SystemChatMessageSchema),
+    .output(CommandChatMessageSchema),
 
   claimGift: oc
     .route({ method: 'POST', path: '/chat-command/gift/{id}/claim' })
@@ -118,7 +119,7 @@ export const chatCommandsContract = {
   postRain: oc
     .route({ method: 'POST', path: '/chat-command/rain' })
     .input(PostRainInputSchema)
-    .output(SystemChatMessageSchema),
+    .output(CommandChatMessageSchema),
 
   mentionSearch: oc
     .route({ method: 'GET', path: '/chat-command/mention-search' })

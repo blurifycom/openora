@@ -23,7 +23,7 @@ import { seedIam } from '@openora/core/iam/seed';
 import { seedTag } from '@openora/core/pam/tag/seed';
 import { seedAutoWithdrawalConfig } from '@openora/core/wallet/seed';
 import { seedChatCommands } from '@openora/core/engagement/seed/chat-commands';
-import { seedDemoData } from '@openora/testing';
+import { seedDemoData } from '@openora/testing/seed-demo-data';
 import { user, session, account, verification, twoFactor } from '@openora/core/pam/schema/identity';
 
 function arg(name: string): string | undefined {

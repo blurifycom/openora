@@ -16,16 +16,31 @@ export const GiftCommandMetadataSchema = z.object({
   senderUsername: z.string(),
   amount: MoneyAmountSchema,
   currency: z.string(),
+  // Optional for compatibility with gift messages persisted before claim state
+  // was included in command metadata. New gift messages always populate these.
+  status: z.enum(['available', 'claimed']).optional(),
+  claimedBy: UuidSchema.nullable().optional(),
+  claimedByUsername: z.string().nullable().optional(),
+  claimedAt: z.string().nullable().optional(),
 });
 export type GiftCommandMetadata = z.infer<typeof GiftCommandMetadataSchema>;
 
 export const RainCommandMetadataSchema = z.object({
   command: z.literal('rain'),
   fromUserId: UuidSchema,
+  fromUsername: z.string().optional(),
   amount: MoneyAmountSchema,
   currency: z.string(),
   recipientCount: z.number().int(),
   perRecipient: MoneyAmountSchema,
+  recipients: z
+    .array(
+      z.object({
+        userId: UuidSchema,
+        username: z.string(),
+      }),
+    )
+    .optional(),
 });
 export type RainCommandMetadata = z.infer<typeof RainCommandMetadataSchema>;
 
@@ -59,6 +74,8 @@ export type UnignoreCommandMetadata = z.infer<typeof UnignoreCommandMetadataSche
 
 export const DonateCommandMetadataSchema = z.object({
   command: z.literal('donate'),
+  senderId: UuidSchema.optional(),
+  senderUsername: z.string().optional(),
   recipientId: UuidSchema,
   recipientUsername: z.string(),
   amount: MoneyAmountSchema,

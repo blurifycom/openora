@@ -408,7 +408,7 @@ export async function seedDemoData(options: SeedOptions): Promise<SeedResult> {
   let txCount = 0;
   const now = Date.now();
   const dayMs = 86_400_000;
-  const players: { id: string; displayName: string }[] = [];
+  const players: { id: string; displayName: string; role: string; currency: string }[] = [];
 
   for (let i = 0; i < playerCount; i++) {
     const first = pick(rng, FIRST_NAMES);
@@ -416,7 +416,6 @@ export async function seedDemoData(options: SeedOptions): Promise<SeedResult> {
     const displayName = `${first} ${last}`;
     const email = `player.${i + 1}@demo.igaming.dev`;
     const [country] = pick(rng, LOCALES);
-    const currency = 'USD';
     const status = weighted(rng, STATUS_WEIGHTS);
     const kycStatus = weighted(rng, KYC_WEIGHTS);
     const level = 1 + Math.floor(rng() * 10);
@@ -444,7 +443,10 @@ export async function seedDemoData(options: SeedOptions): Promise<SeedResult> {
       continue;
     }
     userCount++;
-    players.push({ id: playerUser.id, displayName });
+    /* Restricted USD and 1 EUR currency picks due to not ready currency conversion */
+    const currency =
+      playerUser.role === 'admin' || players.some((p) => p.currency === 'EUR') ? 'USD' : 'EUR';
+    players.push({ id: playerUser.id, displayName, role: playerUser.role, currency });
 
     const totalDeposits = round2(rng() * 8000 + (level - 1) * 400);
     const totalWagered = round2(totalDeposits * (1.5 + rng() * 4));
@@ -619,20 +621,27 @@ async function ensureUser(
   db: DrizzleDb,
   auth: SeedAuth,
   input: EnsureUserInput,
-): Promise<{ id: string } | null> {
-  let [existing] = await db.select({ id: user.id }).from(user).where(eq(user.email, input.email));
+): Promise<{ id: string; role: string } | null> {
+  let [existing] = await db
+    .select({ id: user.id, role: user.role })
+    .from(user)
+    .where(eq(user.email, input.email));
   if (!existing) {
     await auth.api.signUpEmail({
       body: { email: input.email, password: input.password, name: input.name },
     });
-    [existing] = await db.select({ id: user.id }).from(user).where(eq(user.email, input.email));
+    [existing] = await db
+      .select({ id: user.id, role: user.role })
+      .from(user)
+      .where(eq(user.email, input.email));
   }
   if (!existing) {
     return null;
   }
+  const role = existing.role === 'admin' || input.role === 'admin' ? 'admin' : input.role;
   const patch: Partial<typeof user.$inferInsert> = {
     name: input.name,
-    role: input.role,
+    role,
     isActive: input.isActive,
   };
   if (input.createdAt) {
@@ -648,5 +657,5 @@ async function ensureUser(
     patch.phoneVerifiedAt = input.phoneVerifiedAt;
   }
   await db.update(user).set(patch).where(eq(user.id, existing.id));
-  return { id: existing.id };
+  return { id: existing.id, role };
 }

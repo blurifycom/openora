@@ -4,10 +4,11 @@ import {
   UuidSchema,
   MoneyAmountSchema,
   SystemChatMessageSchema,
+  CommandChatMessageSchema,
   ChatRoomIdSchema,
 } from '@openora/core/contracts';
 
-export { SystemChatMessageSchema };
+export { SystemChatMessageSchema, CommandChatMessageSchema };
 
 export const SendDonateInputSchema = z.object({
   targetUsername: z.string().min(1),
@@ -25,5 +26,5 @@ export const socialTransfersContract = {
   sendDonate: oc
     .route({ method: 'POST', path: '/social-transfers/donate' })
     .input(SendDonateInputSchema)
-    .output(SystemChatMessageSchema),
+    .output(CommandChatMessageSchema),
 };

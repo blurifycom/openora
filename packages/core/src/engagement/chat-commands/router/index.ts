@@ -18,6 +18,7 @@ import {
   ChatCommandIdempotencyKeyReuseError,
   ConcurrentCommandReplayError,
   ChatRoomNotMemberError,
+  ChatPlayerNotFoundError,
 } from '../service/chat-commands.service.js';
 
 const cc = populateContractRouterPaths({ chatCommands: chatCommandsContract }).chatCommands;
@@ -42,7 +43,7 @@ export function createChatCommandsRouter(svc: ChatCommandsService, adminGuard: A
       const actorId = getUserId(context);
       return mapErrors(
         {
-          NOT_FOUND: [CommandDisabledError],
+          NOT_FOUND: [CommandDisabledError, ChatPlayerNotFoundError],
           CONFLICT: [
             InsufficientBalanceError,
             ExceedsLimitError,
@@ -83,7 +84,7 @@ export function createChatCommandsRouter(svc: ChatCommandsService, adminGuard: A
       const actorId = getUserId(context);
       return mapErrors(
         {
-          NOT_FOUND: [CommandDisabledError],
+          NOT_FOUND: [CommandDisabledError, ChatPlayerNotFoundError],
           CONFLICT: [
             InsufficientBalanceError,
             ExceedsLimitError,
