@@ -80,8 +80,7 @@ const GIFT_ROW = {
 function makeWriter(): ChatSystemWriter {
   return mock<ChatSystemWriter>({
     postSystemMessage: vi.fn().mockResolvedValue(SYSTEM_MSG),
-    postCommandMessage: vi.fn().mockResolvedValue(SYSTEM_MSG),
-    updateCommandMessage: vi.fn().mockResolvedValue(SYSTEM_MSG),
+    updateSystemMessage: vi.fn().mockResolvedValue(SYSTEM_MSG),
   });
 }
 
@@ -451,7 +450,7 @@ describe('SocialTransfersService.claimGift', () => {
       expect(result.claimedByUsername).toBe('alice');
       expect(result.claimedAt).toEqual(expect.any(String));
     }
-    expect(writer.updateCommandMessage).toHaveBeenCalledWith(
+    expect(writer.updateSystemMessage).toHaveBeenCalledWith(
       expect.objectContaining({
         messageId: MSG_ID,
         metadata: expect.objectContaining({

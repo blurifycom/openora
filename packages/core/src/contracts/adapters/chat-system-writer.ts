@@ -15,15 +15,7 @@ export type ChatSystemWriter = {
     metadata: CommandMetadata;
     tx?: unknown;
   }): Promise<SystemChatMessage>;
-  /** @deprecated Use postSystemMessage; retained for adapter compatibility. */
-  postCommandMessage(args: {
-    roomId: string | null;
-    userId: string;
-    username: string;
-    metadata: CommandMetadata;
-    tx?: unknown;
-  }): Promise<CommandChatMessage>;
-  updateCommandMessage(args: {
+  updateSystemMessage(args: {
     messageId: string;
     metadata: CommandMetadata;
     tx?: unknown;

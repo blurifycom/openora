@@ -652,7 +652,7 @@ export class SocialTransfersService implements GiftCommands, RainCommands {
           after: { claimedBy: claimerId, amount: updated.amount },
         });
 
-        const updatedMessage = await this.systemWriter.updateCommandMessage({
+        const updatedMessage = await this.systemWriter.updateSystemMessage({
           messageId: giftRow.messageId,
           tx,
           metadata: {

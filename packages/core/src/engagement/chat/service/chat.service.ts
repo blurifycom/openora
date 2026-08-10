@@ -1202,22 +1202,7 @@ export class ChatService {
     return msg;
   }
 
-  async postCommandMessage(args: {
-    roomId: ChatRoom['id'] | null;
-    userId: User['id'];
-    username: string;
-    metadata: CommandMetadata;
-    tx?: unknown;
-  }): Promise<CommandChatMessage> {
-    return this.postSystemMessage({
-      roomId: args.roomId,
-      actorId: args.userId,
-      metadata: args.metadata,
-      tx: args.tx,
-    });
-  }
-
-  async updateCommandMessage(args: {
+  async updateSystemMessage(args: {
     messageId: ChatMessage['id'];
     metadata: CommandMetadata;
     tx?: unknown;
