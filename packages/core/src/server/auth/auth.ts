@@ -118,7 +118,7 @@ export function createAuth(options: AuthOptions): BetterAuthType {
           const locale = (await options.getUserLanguage?.(email)) ?? 'en';
           const { subject, body } = await templateRenderer.render(
             'resetPasswordOtp',
-            { otp },
+            { otp, email },
             locale,
           );
           await sendEmail({ to: email, subject, body });

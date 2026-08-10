@@ -50,7 +50,7 @@ describe('createAuth', () => {
       expect(getUserLanguage).toHaveBeenCalledWith('test@example.com');
       expect(templateRenderer.render).toHaveBeenCalledWith(
         'resetPasswordOtp',
-        { otp: '123456' },
+        { otp: '123456', email: 'test@example.com' },
         'pl',
       );
       expect(sendEmail).toHaveBeenCalledWith({
