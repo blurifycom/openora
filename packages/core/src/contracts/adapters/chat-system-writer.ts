@@ -12,6 +12,7 @@ export type ChatSystemWriter = {
   postSystemMessage(args: {
     roomId: string | null;
     actorId: string;
+    username: string;
     metadata: CommandMetadata;
     tx?: unknown;
   }): Promise<SystemChatMessage>;

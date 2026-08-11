@@ -1176,6 +1176,7 @@ export class ChatService {
   async postSystemMessage(args: {
     roomId: ChatRoom['id'] | null;
     actorId: User['id'];
+    username: User['name'];
     metadata: CommandMetadata;
     tx?: unknown;
   }): Promise<ChatSystemMessage> {
@@ -1185,7 +1186,7 @@ export class ChatService {
       .values({
         roomId: args.roomId,
         userId: args.actorId,
-        username: 'system',
+        username: args.username,
         content: '',
         type: 'system',
         metadata: args.metadata,

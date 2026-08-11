@@ -538,6 +538,7 @@ export class SocialTransfersService implements GiftCommands, RainCommands {
             roomId: input.roomId,
             actorId,
             tx,
+            username: senderUsername,
             metadata: {
               command: 'gift',
               giftId: giftRow.id,
@@ -850,6 +851,7 @@ export class SocialTransfersService implements GiftCommands, RainCommands {
             roomId: input.roomId,
             actorId,
             tx,
+            username: sender.username,
             metadata: {
               command: 'rain',
               fromUserId: actorId,
@@ -968,6 +970,7 @@ export class SocialTransfersService implements GiftCommands, RainCommands {
             roomId: input.roomId,
             actorId,
             tx,
+            username: sender.username,
             metadata: {
               command: 'donate',
               senderId: actorId,
