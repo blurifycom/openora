@@ -103,7 +103,7 @@ export function createChatCommandsRouter(svc: ChatCommandsService, adminGuard: A
 
     mentionSearch: os.mentionSearch.handler(({ input, context }) => {
       const viewerId = getUserId(context);
-      return svc.searchMentions(input.q, input.limit, viewerId);
+      return svc.searchMentions({ ...input, viewerId });
     }),
   });
 }
