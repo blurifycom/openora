@@ -9,7 +9,7 @@
 // import. ADR-0017.
 import { createToken, type Token } from './token.js';
 import type { Uuid } from '../schemas/common.js';
-import type { ChatSystemMessage } from './chat-system-writer.js';
+import type { CommandChatMessage } from './chat-system-writer.js';
 
 export type SendRainArgs = {
   amount: string;
@@ -36,8 +36,9 @@ export type SendRainFailureReason =
   | 'room_not_member';
 
 export type SendRainResult =
-  | { ok: true; message: ChatSystemMessage }
-  | { ok: false; reason: SendRainFailureReason };
+  | { ok: true; message: CommandChatMessage }
+  | { ok: false; reason: SendRainFailureReason }
+  | { ok: false; reason: 'player_not_found'; playerId: Uuid };
 
 export type RainCommands = {
   sendRain(input: SendRainArgs, actorId: Uuid): Promise<SendRainResult>;

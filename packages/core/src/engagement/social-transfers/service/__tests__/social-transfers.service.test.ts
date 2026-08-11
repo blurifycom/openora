@@ -1,7 +1,7 @@
 import { describe, it, expect, vi } from 'vitest';
 import { mock, makeDrizzle, makeEventBus } from '../../../../testing/mock.js';
 import type {
-  ChatSystemMessage,
+  CommandChatMessage,
   ChatSystemWriter,
   WalletCommands,
   AdminUserDirectory,
@@ -21,6 +21,7 @@ import {
 
 const ACTOR_ID = '00000000-0000-0000-0000-000000000001';
 const CLAIMER_ID = '00000000-0000-0000-0000-000000000002';
+const RECIPIENT_2 = '00000000-0000-0000-0000-000000000006';
 const ROOM_ID = '00000000-0000-0000-0000-000000000003';
 const MSG_ID = '00000000-0000-0000-0000-000000000004';
 const GIFT_ID = '00000000-0000-0000-0000-000000000005';
@@ -37,11 +38,15 @@ const ENABLED_ROW = {
 
 const DISABLED_ROW = { ...ENABLED_ROW, enabled: false };
 
-const SYSTEM_MSG: ChatSystemMessage = {
+const SYSTEM_MSG: CommandChatMessage = {
   id: MSG_ID,
   roomId: ROOM_ID,
   actorId: ACTOR_ID,
+  userId: ACTOR_ID,
+  username: 'system',
   content: '',
+  type: 'system',
+  isDeleted: false,
   metadata: {
     command: 'gift',
     giftId: GIFT_ID,
@@ -49,6 +54,10 @@ const SYSTEM_MSG: ChatSystemMessage = {
     senderUsername: 'bob',
     amount: '10.00000000',
     currency: 'USD',
+    status: 'available',
+    claimedBy: null,
+    claimedByUsername: null,
+    claimedAt: null,
   },
   createdAt: new Date().toISOString(),
 };
@@ -71,6 +80,7 @@ const GIFT_ROW = {
 function makeWriter(): ChatSystemWriter {
   return mock<ChatSystemWriter>({
     postSystemMessage: vi.fn().mockResolvedValue(SYSTEM_MSG),
+    updateSystemMessage: vi.fn().mockResolvedValue(SYSTEM_MSG),
   });
 }
 
@@ -89,7 +99,11 @@ function makeWallet(ok = true): WalletCommands {
 
 const DIRECTORY_CREATED_AT = new Date('2026-01-01T00:00:00.000Z');
 
-function makeDirectory(senderUsername = 'bob', claimerUsername = 'alice'): AdminUserDirectory {
+function makeDirectory(
+  senderUsername = 'bob',
+  claimerUsername = 'alice',
+  extraUserIds: string[] = [],
+): AdminUserDirectory {
   const all = [
     {
       userId: ACTOR_ID,
@@ -113,6 +127,28 @@ function makeDirectory(senderUsername = 'bob', claimerUsername = 'alice'): Admin
       level: 1,
       currency: 'USD',
     },
+    {
+      userId: RECIPIENT_2,
+      username: 'charlie',
+      email: 'charlie@example.com',
+      kycStatus: null,
+      language: null,
+      avatarUrl: null,
+      createdAt: DIRECTORY_CREATED_AT,
+      level: 1,
+      currency: 'USD',
+    },
+    ...extraUserIds.map((userId, index) => ({
+      userId,
+      username: `player${index}`,
+      email: `player${index}@example.com`,
+      kycStatus: null,
+      language: null,
+      avatarUrl: null,
+      createdAt: DIRECTORY_CREATED_AT,
+      level: 1,
+      currency: 'USD',
+    })),
   ];
   return mock<AdminUserDirectory>({
     findPlayerIds: vi.fn().mockResolvedValue([ACTOR_ID]),
@@ -225,6 +261,21 @@ describe('SocialTransfersService.sendGift (GIFT_COMMANDS port)', () => {
     expect(result).toEqual({ ok: false, reason: 'disabled' });
   });
 
+  it('returns { ok: false, reason: "player_not_found" } when the sender is missing', async () => {
+    const directory = mock<AdminUserDirectory>({
+      lookupPlayers: vi.fn().mockResolvedValue([]),
+    });
+    const svc = makeSvc({
+      drizzleRows: { select: [[ENABLED_ROW]] },
+      directory,
+    });
+    const result = await svc.sendGift(
+      { amount: '10', roomId: ROOM_ID, idempotencyKey: IDEMPOTENCY_KEY },
+      ACTOR_ID,
+    );
+    expect(result).toEqual({ ok: false, reason: 'player_not_found', playerId: ACTOR_ID });
+  });
+
   it('returns { ok: false, reason: "insufficient_balance" } when the wallet debit fails', async () => {
     const svc = makeSvc({
       drizzleRows: {
@@ -256,6 +307,7 @@ describe('SocialTransfersService.sendGift (GIFT_COMMANDS port)', () => {
     expect(writer.postSystemMessage).toHaveBeenCalledOnce();
     expect(writer.postSystemMessage).toHaveBeenCalledWith(
       expect.objectContaining({
+        actorId: ACTOR_ID,
         metadata: expect.objectContaining({
           command: 'gift',
           giftId: GIFT_ID,
@@ -368,6 +420,7 @@ describe('SocialTransfersService.sendGift idempotency', () => {
 describe('SocialTransfersService.claimGift', () => {
   it('credits the claimer and returns { ok: true } on happy path', async () => {
     const wallet = makeWallet();
+    const writer = makeWriter();
     const svc = makeSvc({
       drizzleRows: {
         select: [[GIFT_ROW]],
@@ -383,6 +436,7 @@ describe('SocialTransfersService.claimGift', () => {
         ],
       },
       wallet,
+      writer,
     });
     const result = await svc.claimGift(GIFT_ID, CLAIMER_ID);
     expect(wallet.credit).toHaveBeenCalledOnce();
@@ -396,6 +450,17 @@ describe('SocialTransfersService.claimGift', () => {
       expect(result.claimedByUsername).toBe('alice');
       expect(result.claimedAt).toEqual(expect.any(String));
     }
+    expect(writer.updateSystemMessage).toHaveBeenCalledWith(
+      expect.objectContaining({
+        messageId: MSG_ID,
+        metadata: expect.objectContaining({
+          command: 'gift',
+          status: 'claimed',
+          claimedBy: CLAIMER_ID,
+          claimedByUsername: 'alice',
+        }),
+      }),
+    );
   });
 
   it('returns { ok: false, reason: "self_claim" } when the sender tries to claim their own gift', async () => {
@@ -479,6 +544,31 @@ describe('SocialTransfersService.getGift', () => {
 describe('SocialTransfersService.sendRain (RAIN_COMMANDS port)', () => {
   const RAIN_ROW = { ...ENABLED_ROW, key: 'rain', label: 'Rain' };
 
+  it('returns { ok: false, reason: "player_not_found" } when a recipient is missing', async () => {
+    const directory = mock<AdminUserDirectory>({
+      lookupPlayers: vi
+        .fn()
+        .mockImplementation((ids: string[]) =>
+          Promise.resolve(ids.includes(ACTOR_ID) ? [{ userId: ACTOR_ID, username: 'bob' }] : []),
+        ),
+    });
+    const svc = makeSvc({
+      drizzleRows: { select: [[RAIN_ROW]] },
+      directory,
+    });
+    const result = await svc.sendRain(
+      {
+        amount: '10.00000000',
+        recipientCount: 1,
+        roomId: ROOM_ID,
+        idempotencyKey: IDEMPOTENCY_KEY,
+        onlineUserIds: [CLAIMER_ID],
+      },
+      ACTOR_ID,
+    );
+    expect(result).toEqual({ ok: false, reason: 'player_not_found', playerId: CLAIMER_ID });
+  });
+
   it('returns { ok: false, reason: "no_online_users" } when onlineUserIds only contains the actor', async () => {
     const svc = makeSvc({ drizzleRows: { select: [[RAIN_ROW]] } });
     const result = await svc.sendRain(
@@ -528,7 +618,6 @@ describe('SocialTransfersService.sendRain (RAIN_COMMANDS port)', () => {
   });
 
   it('distributes to online recipients excluding the actor, persists a player_rain row + receivers, posts a system message with rain metadata inside the transaction, and publishes after commit', async () => {
-    const RECIPIENT_2 = '00000000-0000-0000-0000-000000000006';
     const wallet = makeWallet();
     const writer = makeWriter();
     const transport = makeTransport();
@@ -565,14 +654,19 @@ describe('SocialTransfersService.sendRain (RAIN_COMMANDS port)', () => {
       expect.objectContaining({
         roomId: ROOM_ID,
         actorId: ACTOR_ID,
-        metadata: {
+        metadata: expect.objectContaining({
           command: 'rain',
           fromUserId: ACTOR_ID,
+          fromUsername: 'bob',
           amount: '10.00000000',
           currency: 'USD',
           recipientCount: 2,
           perRecipient: '5.00000000',
-        },
+          recipients: expect.arrayContaining([
+            { userId: CLAIMER_ID, username: 'alice' },
+            { userId: RECIPIENT_2, username: 'charlie' },
+          ]),
+        }),
       }),
     );
     expect(transport.publish).toHaveBeenCalledWith(`chat:room:${ROOM_ID}`, SYSTEM_MSG);
@@ -587,6 +681,11 @@ describe('SocialTransfersService.sendRain (RAIN_COMMANDS port)', () => {
         execute: [[{ per_recipient: '1.00000000', total_distributed: '10.00000000' }]],
       },
       wallet,
+      directory: makeDirectory(
+        'bob',
+        'alice',
+        Array.from({ length: 10 }, (_, i) => `00000000-0000-0000-0000-0000000000${10 + i}`),
+      ),
     });
     await svc.sendRain(
       {
@@ -684,13 +783,19 @@ const DONATE_ROW = {
   updatedAt: new Date(),
 };
 
-const DONATE_SYSTEM_MSG: ChatSystemMessage = {
+const DONATE_SYSTEM_MSG: CommandChatMessage = {
   id: MSG_ID,
   roomId: ROOM_ID,
   actorId: ACTOR_ID,
+  userId: ACTOR_ID,
+  username: 'system',
   content: '',
+  type: 'system',
+  isDeleted: false,
   metadata: {
     command: 'donate',
+    senderId: ACTOR_ID,
+    senderUsername: 'bob',
     recipientId: CLAIMER_ID,
     recipientUsername: 'alice',
     amount: '10.00000000',

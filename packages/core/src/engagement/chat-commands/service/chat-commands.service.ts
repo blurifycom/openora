@@ -9,7 +9,7 @@ import {
 } from '@openora/core/server';
 import type {
   Uuid,
-  ChatSystemMessage,
+  CommandChatMessage,
   ChatBlockWriter,
   AdminUserDirectory,
   GiftCommands,
@@ -33,6 +33,7 @@ import { ChatCommandTypeSchema } from '../contract/index.js';
 import { chatCommandConfig } from '../schema/index.js';
 
 export const CommandDisabledError = makeNotFoundError('ChatCommand');
+export const ChatPlayerNotFoundError = makeNotFoundError('ChatPlayer');
 export const InsufficientBalanceError = makeConflictError(
   'InsufficientBalance',
   'Not enough balance',
@@ -193,7 +194,7 @@ export class ChatCommandsService {
     return summaries.map((s) => ({ userId: s.userId, username: s.username }));
   }
 
-  async postGift(input: PostGiftInput, actorId: Uuid): Promise<ChatSystemMessage> {
+  async postGift(input: PostGiftInput, actorId: Uuid): Promise<CommandChatMessage> {
     const result = await this.giftCommands.sendGift(input, actorId);
     if (result.ok) {
       return result.message;
@@ -201,6 +202,8 @@ export class ChatCommandsService {
     switch (result.reason) {
       case 'disabled':
         throw new CommandDisabledError('gift');
+      case 'player_not_found':
+        throw new ChatPlayerNotFoundError(result.playerId);
       case 'insufficient_balance':
         throw new InsufficientBalanceError();
       case 'exceeds_limit':
@@ -258,7 +261,7 @@ export class ChatCommandsService {
   // who is online (it owns presence for the whole chat-command surface via
   // its own dependency on `chat`) and translates the port's discriminated
   // result into the typed errors this module's router maps to transport codes.
-  async postRain(input: PostRainInput, actorId: Uuid): Promise<ChatSystemMessage> {
+  async postRain(input: PostRainInput, actorId: Uuid): Promise<CommandChatMessage> {
     const onlineUserIds = await this.transport.getOnlineUserIds(chatChannel(input.roomId));
     const result = await this.rainCommands.sendRain({ ...input, onlineUserIds }, actorId);
     if (result.ok) {
@@ -267,6 +270,8 @@ export class ChatCommandsService {
     switch (result.reason) {
       case 'disabled':
         throw new CommandDisabledError('rain');
+      case 'player_not_found':
+        throw new ChatPlayerNotFoundError(result.playerId);
       case 'insufficient_balance':
         throw new InsufficientBalanceError();
       case 'exceeds_limit':

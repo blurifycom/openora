@@ -1,7 +1,7 @@
 import { describe, it, expect, vi } from 'vitest';
 import { mock, makeDrizzle } from '../../../../testing/mock.js';
 import type {
-  ChatSystemMessage,
+  CommandChatMessage,
   ChatBlockWriter,
   AdminUserDirectory,
   GiftCommands,
@@ -41,11 +41,15 @@ const ENABLED_ROW = {
 
 const DISABLED_ROW = { ...ENABLED_ROW, enabled: false };
 
-const SYSTEM_MSG: ChatSystemMessage = {
+const SYSTEM_MSG: CommandChatMessage = {
   id: MSG_ID,
   roomId: ROOM_ID,
   actorId: ACTOR_ID,
+  userId: ACTOR_ID,
+  username: 'system',
   content: '',
+  type: 'system',
+  isDeleted: false,
   metadata: {
     command: 'gift',
     giftId: GIFT_ID,
@@ -53,6 +57,10 @@ const SYSTEM_MSG: ChatSystemMessage = {
     senderUsername: 'bob',
     amount: '10.00000000',
     currency: 'USD',
+    status: 'available',
+    claimedBy: null,
+    claimedByUsername: null,
+    claimedAt: null,
   },
   createdAt: new Date().toISOString(),
 };

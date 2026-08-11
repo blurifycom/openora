@@ -11,6 +11,11 @@
       "import": "./dist/index.js",
       "require": "./dist/index.js",
       "types": "./dist/index.d.ts"
+    },
+    "./seed-demo-data": {
+      "import": "./dist/seed-demo-data.js",
+      "require": "./dist/seed-demo-data.js",
+      "types": "./dist/seed-demo-data.d.ts"
     }
   },
   "scripts": {
