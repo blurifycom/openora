@@ -182,10 +182,6 @@ export class AuditService {
     return row;
   }
 
-  // Resolves the PAM `player.id` for a subject `user.id`, so player-typed audit
-  // records store the true player row id rather than the identity user id.
-  // `player` is read via the profile module's sanctioned read-only /schema
-  // subpath (plain query, no FK/dependsOn needed).
   async resolvePlayerId(userId: string | null): Promise<string | null> {
     if (!userId) {
       return null;
