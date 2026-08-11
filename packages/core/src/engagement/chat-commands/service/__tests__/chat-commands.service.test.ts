@@ -119,7 +119,7 @@ function makeRainCommands(overrides: Partial<RainCommands> = {}): RainCommands {
   });
 }
 
-function makeTransport(onlineIds: string[] = [CLAIMER_ID]): RealtimeTransport {
+function makeTransport(onlineIds: string[] = [ACTOR_ID, CLAIMER_ID]): RealtimeTransport {
   return mock<RealtimeTransport>({
     getOnlineUserIds: vi.fn().mockResolvedValue(onlineIds),
   });
@@ -180,7 +180,7 @@ describe('ChatCommandsService.searchMentions', () => {
   it('passes limit to findPlayerIds', async () => {
     const directory = makeDirectory();
     const svc = makeSvc({ directory });
-    await svc.searchMentions('ali', 5, CLAIMER_ID);
+    await svc.searchMentions({ q: 'ali', limit: 5, roomId: ROOM_ID, viewerId: CLAIMER_ID });
     expect(directory.findPlayerIds).toHaveBeenCalledWith('ali', 5);
   });
 
@@ -190,7 +190,12 @@ describe('ChatCommandsService.searchMentions', () => {
       lookupPlayers: vi.fn().mockResolvedValue([]),
     });
     const svc = makeSvc({ directory });
-    const result = await svc.searchMentions('xyz', 10, CLAIMER_ID);
+    const result = await svc.searchMentions({
+      q: 'xyz',
+      limit: 10,
+      roomId: ROOM_ID,
+      viewerId: CLAIMER_ID,
+    });
     expect(result).toEqual([]);
   });
 
@@ -198,9 +203,70 @@ describe('ChatCommandsService.searchMentions', () => {
     const directory = makeDirectory();
     const blockWriter = makeBlockWriter([ACTOR_ID]);
     const svc = makeSvc({ directory, blockWriter });
-    const result = await svc.searchMentions('bo', 5, CLAIMER_ID);
+    const result = await svc.searchMentions({
+      q: 'bo',
+      limit: 5,
+      roomId: ROOM_ID,
+      viewerId: CLAIMER_ID,
+    });
     expect(blockWriter.getExcludedUserIds).toHaveBeenCalledWith(CLAIMER_ID);
     expect(result).toEqual([]);
+  });
+
+  it('returns only online users in the requested chat', async () => {
+    const onlineUser = ACTOR_ID;
+    const offlineUser = CLAIMER_ID;
+    const directory = mock<AdminUserDirectory>({
+      findPlayerIds: vi.fn().mockResolvedValue([onlineUser, offlineUser]),
+      lookupPlayers: vi.fn().mockResolvedValue([{ userId: onlineUser, username: 'online' }]),
+    });
+    const transport = makeTransport([onlineUser]);
+    const svc = makeSvc({ directory, transport });
+
+    const result = await svc.searchMentions({
+      q: 'on',
+      limit: 5,
+      roomId: ROOM_ID,
+      viewerId: CLAIMER_ID,
+    });
+
+    expect(transport.getOnlineUserIds).toHaveBeenCalledWith(`chat:room:${ROOM_ID}`);
+    expect(result).toEqual([{ userId: onlineUser, username: 'online' }]);
+    expect(directory.lookupPlayers).toHaveBeenCalledWith([onlineUser]);
+  });
+
+  it('does not return the viewer as a mention target', async () => {
+    const directory = mock<AdminUserDirectory>({
+      findPlayerIds: vi.fn().mockResolvedValue([CLAIMER_ID, ACTOR_ID]),
+      lookupPlayers: vi.fn().mockResolvedValue([{ userId: ACTOR_ID, username: 'bob' }]),
+    });
+    const svc = makeSvc({ directory, transport: makeTransport([CLAIMER_ID, ACTOR_ID]) });
+
+    const result = await svc.searchMentions({
+      q: 'bo',
+      limit: 5,
+      roomId: ROOM_ID,
+      viewerId: CLAIMER_ID,
+    });
+
+    expect(result).toEqual([{ userId: ACTOR_ID, username: 'bob' }]);
+    expect(directory.lookupPlayers).toHaveBeenCalledWith([ACTOR_ID]);
+  });
+
+  it('returns no mentions when the chat has no online users', async () => {
+    const directory = makeDirectory();
+    const transport = makeTransport([]);
+    const svc = makeSvc({ directory, transport });
+
+    const result = await svc.searchMentions({
+      q: 'bo',
+      limit: 5,
+      roomId: null,
+      viewerId: CLAIMER_ID,
+    });
+
+    expect(result).toEqual([]);
+    expect(directory.findPlayerIds).not.toHaveBeenCalled();
   });
 });
 
