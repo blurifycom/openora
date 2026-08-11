@@ -1,8 +1,12 @@
 import { describe, it, expect, beforeAll, afterAll, beforeEach } from 'vitest';
+import { randomUUID } from 'node:crypto';
 import { eq, sql } from 'drizzle-orm';
 import { createTestDb, type TestDb } from '@openora/core/testing';
+import { player } from '@openora/core/pam/schema/profile';
+import { migrate as migrateProfile } from '@openora/core/pam/migrate/profile';
 import { makeEventBus } from '../../testing/mock.js';
 import { migrate } from '../migrate.js';
+import { mapEventToRecord } from '../plugin.js';
 import { auditLog } from '../schema/index.js';
 import { AuditService, computeHash, startOfDayUtc, endOfDayUtc } from '../service/audit.service.js';
 import { AuditListFiltersSchema } from '../contract/index.js';
@@ -87,8 +91,16 @@ function makeService() {
   return new AuditService(db.drizzle, makeEventBus());
 }
 
+async function seedPlayer(overrides: Partial<typeof player.$inferInsert> = {}) {
+  const [row] = await db.drizzle.db
+    .insert(player)
+    .values({ userId: randomUUID(), displayName: 'Player', ...overrides })
+    .returning();
+  return row!;
+}
+
 beforeAll(async () => {
-  db = await createTestDb([migrate]);
+  db = await createTestDb([migrate, migrateProfile]);
 });
 
 afterAll(async () => {
@@ -96,7 +108,7 @@ afterAll(async () => {
 });
 
 beforeEach(async () => {
-  await db.drizzle.db.execute(sql`TRUNCATE ${auditLog} RESTART IDENTITY CASCADE`);
+  await db.drizzle.db.execute(sql`TRUNCATE ${auditLog}, ${player} RESTART IDENTITY CASCADE`);
 });
 
 describe('AuditService.record() (real PG)', () => {
@@ -408,5 +420,188 @@ describe('AuditService.exportCsv() (real PG)', () => {
     const csv = await makeService().exportCsv({});
 
     expect(csv).toContain('has ""quotes""');
+  });
+});
+
+describe('AuditService.resolvePlayerId() (real PG)', () => {
+  it('returns the true player.id for a userId with a matching player row', async () => {
+    const row = await seedPlayer();
+
+    const resolved = await makeService().resolvePlayerId(row.userId);
+
+    expect(resolved).toBe(row.id);
+    expect(resolved).not.toBe(row.userId);
+  });
+
+  it('returns null when no player row exists for that userId', async () => {
+    expect(await makeService().resolvePlayerId(randomUUID())).toBeNull();
+  });
+
+  it('returns null when passed null', async () => {
+    expect(await makeService().resolvePlayerId(null)).toBeNull();
+  });
+});
+
+describe('mapEventToRecord() player.id resolution (BF-335)', () => {
+  // Exercises the exact composition the plugin's event handler uses: topic + raw
+  // payload -> mapEventToRecord(..., svc.resolvePlayerId) -> record(). Uses the
+  // real AuditService.resolvePlayerId against Postgres rather than a stub, so the
+  // DB lookup itself is covered, not just the branch wiring.
+  async function mapAndRecord(topic: string, payload: Record<string, unknown>) {
+    const svc = makeService();
+    const record = await mapEventToRecord(topic, payload, (userId) => svc.resolvePlayerId(userId));
+    return svc.record(record);
+  }
+
+  it('compliance.kyc.updated: resourceId is the player.id, not the event userId', async () => {
+    const p = await seedPlayer();
+
+    const row = await mapAndRecord('compliance.kyc.updated', {
+      userId: p.userId,
+      actorId: null,
+      previousStatus: 'pending',
+      status: 'verified',
+    });
+
+    expect(row.resourceId).toBe(p.id);
+    expect(row.resourceId).not.toBe(p.userId);
+    expect(row.resourceType).toBe('player');
+  });
+
+  it('compliance.kyc.updated: resourceId is null when the subject has no player row', async () => {
+    const row = await mapAndRecord('compliance.kyc.updated', {
+      userId: randomUUID(),
+      actorId: null,
+      previousStatus: 'pending',
+      status: 'verified',
+    });
+
+    expect(row.resourceId).toBeNull();
+  });
+
+  it('compliance.kyc.submitted: resourceId resolves to player.id while actorId keeps the raw userId', async () => {
+    const p = await seedPlayer();
+
+    const row = await mapAndRecord('compliance.kyc.submitted', {
+      userId: p.userId,
+      referenceId: 'ref-1',
+      provider: 'sumsub',
+    });
+
+    expect(row.resourceId).toBe(p.id);
+    expect(row.actorId).toBe(p.userId);
+  });
+
+  it('compliance.kyc.reverify_required: resourceId resolves to player.id', async () => {
+    const p = await seedPlayer();
+
+    const row = await mapAndRecord('compliance.kyc.reverify_required', {
+      userId: p.userId,
+      reason: 'address change',
+    });
+
+    expect(row.resourceId).toBe(p.id);
+  });
+
+  it('compliance.kyc.high_risk_signal_detected: resourceId resolves to player.id', async () => {
+    const p = await seedPlayer();
+
+    const row = await mapAndRecord('compliance.kyc.high_risk_signal_detected', {
+      userId: p.userId,
+      referenceId: 'ref-2',
+    });
+
+    expect(row.resourceId).toBe(p.id);
+  });
+
+  it('chat.user.blocked: resourceId resolves blockedId to player.id, not blockerId', async () => {
+    const blocker = await seedPlayer();
+    const blocked = await seedPlayer();
+
+    const row = await mapAndRecord('chat.user.blocked', {
+      blockerId: blocker.userId,
+      blockedId: blocked.userId,
+    });
+
+    expect(row.resourceId).toBe(blocked.id);
+    expect(row.actorId).toBe(blocker.userId);
+  });
+
+  it('chat.user.ignored: resourceId resolves ignoredId to player.id, not ignorerId', async () => {
+    const ignorer = await seedPlayer();
+    const ignored = await seedPlayer();
+
+    const row = await mapAndRecord('chat.user.ignored', {
+      ignorerId: ignorer.userId,
+      ignoredId: ignored.userId,
+    });
+
+    expect(row.resourceId).toBe(ignored.id);
+    expect(row.actorId).toBe(ignorer.userId);
+  });
+
+  it('player.level.changed: resourceId resolves to player.id', async () => {
+    const p = await seedPlayer();
+
+    const row = await mapAndRecord('player.level.changed', {
+      userId: p.userId,
+      actorId: randomUUID(),
+      previousLevel: 1,
+      newLevel: 2,
+    });
+
+    expect(row.resourceId).toBe(p.id);
+  });
+
+  it('rg.limit.set / rg.self_exclusion.activated / rg.cooling_off.lifted: shared branch resolves resourceId to player.id', async () => {
+    const p = await seedPlayer();
+
+    for (const topic of ['rg.limit.set', 'rg.self_exclusion.activated', 'rg.cooling_off.lifted']) {
+      const row = await mapAndRecord(topic, { userId: p.userId, actorId: randomUUID() });
+      expect(row.resourceId).toBe(p.id);
+    }
+  });
+
+  it('rg.exclusion.login_blocked: resourceId resolves to player.id', async () => {
+    const p = await seedPlayer();
+
+    const row = await mapAndRecord('rg.exclusion.login_blocked', { userId: p.userId });
+
+    expect(row.resourceId).toBe(p.id);
+  });
+
+  it('player.login_blocked: resourceId resolves to player.id', async () => {
+    const p = await seedPlayer();
+
+    const row = await mapAndRecord('player.login_blocked', { userId: p.userId });
+
+    expect(row.resourceId).toBe(p.id);
+  });
+
+  it('tag.player.assigned is unaffected - resourceId still comes straight from playerId (already a player.id)', async () => {
+    const p = await seedPlayer();
+
+    const row = await mapAndRecord('tag.player.assigned', {
+      playerId: p.id,
+      actorId: randomUUID(),
+      tagKey: 'vip',
+      reason: 'manual',
+    });
+
+    expect(row.resourceId).toBe(p.id);
+  });
+
+  it('wallet.withdrawal.requested is unaffected - actorId still comes straight from userId, no resolution', async () => {
+    const p = await seedPlayer();
+
+    const row = await mapAndRecord('wallet.withdrawal.requested', {
+      userId: p.userId,
+      transactionId: 'txn-1',
+      amount: '10.00',
+      currency: 'USD',
+    });
+
+    expect(row.actorId).toBe(p.userId);
+    expect(row.actorId).not.toBe(p.id);
   });
 });

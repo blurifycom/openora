@@ -117,7 +117,7 @@ afterAll(async () => {
 describe('KYC submit (default MockKycAdapter) + admin read + authz', () => {
   it('auto-verifies via the mock vendor, is admin-readable, and is denied to non-admins', async () => {
     const email = `kyc-submit-${randomUUID()}@e2e.test`;
-    const { client, userId } = await registerAndMaterializePlayer(appDefault.app, email);
+    const { client, userId, playerId } = await registerAndMaterializePlayer(appDefault.app, email);
 
     const submitRes = await client.post('/compliance/kyc', {
       documents: [{ type: 'passport', frontUrl: 'https://example.test/front.jpg' }],
@@ -145,7 +145,7 @@ describe('KYC submit (default MockKycAdapter) + admin read + authz', () => {
 
     await vi.waitFor(async () => {
       const res = await admin.get(
-        `/audit/logs?resourceId=${userId}&action=compliance.kyc.submitted`,
+        `/audit/logs?resourceId=${playerId}&action=compliance.kyc.submitted`,
       );
       const body = await readJson(res);
       expect(body.items.length).toBeGreaterThanOrEqual(1);
@@ -154,7 +154,9 @@ describe('KYC submit (default MockKycAdapter) + admin read + authz', () => {
     });
 
     await vi.waitFor(async () => {
-      const res = await admin.get(`/audit/logs?resourceId=${userId}&action=compliance.kyc.updated`);
+      const res = await admin.get(
+        `/audit/logs?resourceId=${playerId}&action=compliance.kyc.updated`,
+      );
       const body = await readJson(res);
       expect(body.items.length).toBeGreaterThanOrEqual(1);
       expect(body.items[0].before).toMatchObject({ kycStatus: 'pending' });
@@ -169,7 +171,7 @@ describe('KYC submit (default MockKycAdapter) + admin read + authz', () => {
 describe('KYC webhook reconcile (gated stack)', () => {
   it('a valid HMAC signature reconciles; a forged/missing one is rejected and changes nothing', async () => {
     const email = `kyc-webhook-${randomUUID()}@e2e.test`;
-    const { client, userId } = await registerAndMaterializePlayer(appGated.app, email);
+    const { client, userId, playerId } = await registerAndMaterializePlayer(appGated.app, email);
     const admin = await asAdmin(appGated.app);
 
     const submitRes = await client.post('/compliance/kyc', {
@@ -216,7 +218,9 @@ describe('KYC webhook reconcile (gated stack)', () => {
     });
 
     await vi.waitFor(async () => {
-      const res = await admin.get(`/audit/logs?resourceId=${userId}&action=compliance.kyc.updated`);
+      const res = await admin.get(
+        `/audit/logs?resourceId=${playerId}&action=compliance.kyc.updated`,
+      );
       const body = await readJson(res);
       expect(body.items.length).toBeGreaterThanOrEqual(1);
       expect(body.items[0].actorType).toBe('system');
@@ -232,7 +236,7 @@ describe('KYC webhook reconcile (gated stack)', () => {
 describe('KYC withdrawal gate (gated stack)', () => {
   it('blocks an unapproved withdrawal, then allows it once an admin marks the player approved', async () => {
     const email = `kyc-withdraw-${randomUUID()}@e2e.test`;
-    const { client, userId } = await registerAndMaterializePlayer(appGated.app, email);
+    const { client, userId, playerId } = await registerAndMaterializePlayer(appGated.app, email);
     const admin = await asAdmin(appGated.app);
 
     const depositRes = await client.post('/wallet/deposit', { amount: '2', currency: 'USD' });
@@ -258,7 +262,9 @@ describe('KYC withdrawal gate (gated stack)', () => {
     expect(allowed.transactionId).toBeTruthy();
 
     await vi.waitFor(async () => {
-      const res = await admin.get(`/audit/logs?resourceId=${userId}&action=compliance.kyc.updated`);
+      const res = await admin.get(
+        `/audit/logs?resourceId=${playerId}&action=compliance.kyc.updated`,
+      );
       const body = await readJson(res);
       expect(body.items.length).toBeGreaterThanOrEqual(1);
       expect(body.items[0].actorType).toBe('admin');
@@ -306,7 +312,7 @@ describe('KYC threshold re-KYC on deposit (gated stack)', () => {
 describe('KYC admin actions: resubmit / override / bulk-approve (default stack)', () => {
   it('requestKycResubmission writes a manual history row, audits it, and notifies the player through the job queue', async () => {
     const email = `kyc-resubmit-${randomUUID()}@e2e.test`;
-    const { client, userId } = await registerAndMaterializePlayer(appDefault.app, email);
+    const { client, userId, playerId } = await registerAndMaterializePlayer(appDefault.app, email);
     const admin = await asAdmin(appDefault.app);
 
     const anonRes = await appDefault.app.request(`/compliance/players/${userId}/kyc/resubmit`, {
@@ -336,7 +342,7 @@ describe('KYC admin actions: resubmit / override / bulk-approve (default stack)'
 
     await vi.waitFor(async () => {
       const auditRes = await admin.get(
-        `/audit/logs?resourceId=${userId}&action=compliance.kyc.updated`,
+        `/audit/logs?resourceId=${playerId}&action=compliance.kyc.updated`,
       );
       const body = await readJson(auditRes);
       expect(body.items.length).toBeGreaterThanOrEqual(1);
@@ -369,7 +375,7 @@ describe('KYC admin actions: resubmit / override / bulk-approve (default stack)'
 
   it('overrideKycStatus writes a rejected choice verbatim (no manually_overridden remap) with reason + actor in the audit log', async () => {
     const email = `kyc-override-reject-${randomUUID()}@e2e.test`;
-    const { userId } = await registerAndMaterializePlayer(appDefault.app, email);
+    const { userId, playerId } = await registerAndMaterializePlayer(appDefault.app, email);
     const admin = await asAdmin(appDefault.app);
 
     const emptyReasonRes = await admin.post(`/compliance/players/${userId}/kyc/override`, {
@@ -387,7 +393,7 @@ describe('KYC admin actions: resubmit / override / bulk-approve (default stack)'
 
     await vi.waitFor(async () => {
       const auditRes = await admin.get(
-        `/audit/logs?resourceId=${userId}&action=compliance.kyc.updated`,
+        `/audit/logs?resourceId=${playerId}&action=compliance.kyc.updated`,
       );
       const body = await readJson(auditRes);
       expect(body.items[0].after).toMatchObject({
@@ -401,8 +407,14 @@ describe('KYC admin actions: resubmit / override / bulk-approve (default stack)'
   it('bulkApproveKyc approves multiple players (one audit entry each) and isolates a not-found id without losing the rest of the batch', async () => {
     const emailA = `kyc-bulk-a-${randomUUID()}@e2e.test`;
     const emailB = `kyc-bulk-b-${randomUUID()}@e2e.test`;
-    const { userId: userA } = await registerAndMaterializePlayer(appDefault.app, emailA);
-    const { userId: userB } = await registerAndMaterializePlayer(appDefault.app, emailB);
+    const { userId: userA, playerId: playerA } = await registerAndMaterializePlayer(
+      appDefault.app,
+      emailA,
+    );
+    const { userId: userB, playerId: playerB } = await registerAndMaterializePlayer(
+      appDefault.app,
+      emailB,
+    );
     const missingUserId = randomUUID();
     const admin = await asAdmin(appDefault.app);
 
@@ -429,9 +441,9 @@ describe('KYC admin actions: resubmit / override / bulk-approve (default stack)'
     }
 
     await vi.waitFor(async () => {
-      for (const userId of [userA, userB]) {
+      for (const playerId of [playerA, playerB]) {
         const auditRes = await admin.get(
-          `/audit/logs?resourceId=${userId}&action=compliance.kyc.updated`,
+          `/audit/logs?resourceId=${playerId}&action=compliance.kyc.updated`,
         );
         const auditBody = await readJson(auditRes);
         expect(auditBody.items.length).toBeGreaterThanOrEqual(1);
@@ -477,7 +489,7 @@ describe('Backoffice player list KYC status filter (legacy verified compatibilit
 describe('KYC status writer concurrency (real Postgres FOR UPDATE)', () => {
   it('two concurrent overrideKycStatus calls to the same target status write exactly one history row and one audit entry', async () => {
     const email = `kyc-concurrent-override-${randomUUID()}@e2e.test`;
-    const { userId } = await registerAndMaterializePlayer(appDefault.app, email);
+    const { userId, playerId } = await registerAndMaterializePlayer(appDefault.app, email);
     const admin = await asAdmin(appDefault.app);
 
     // Two real HTTP requests racing through the full router -> service -> Postgres
@@ -503,7 +515,7 @@ describe('KYC status writer concurrency (real Postgres FOR UPDATE)', () => {
 
     await vi.waitFor(async () => {
       const auditRes = await admin.get(
-        `/audit/logs?resourceId=${userId}&action=compliance.kyc.updated`,
+        `/audit/logs?resourceId=${playerId}&action=compliance.kyc.updated`,
       );
       const auditBody = await readJson(auditRes);
       expect(auditBody.items).toHaveLength(1);

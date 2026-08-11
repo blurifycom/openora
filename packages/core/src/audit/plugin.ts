@@ -10,7 +10,11 @@ function isRecord(v: unknown): v is Record<string, unknown> {
   return typeof v === 'object' && v !== null;
 }
 
-function mapEventToRecord(topic: string, p: Record<string, unknown>): RecordInput {
+export async function mapEventToRecord(
+  topic: string,
+  p: Record<string, unknown>,
+  resolvePlayerId: (userId: string | null) => Promise<string | null>,
+): Promise<RecordInput> {
   const result = /\.(failed|rejected|declined)$/.test(topic) ? 'failure' : 'success';
 
   const base: RecordInput = {
@@ -31,7 +35,7 @@ function mapEventToRecord(topic: string, p: Record<string, unknown>): RecordInpu
       actorType: p['actorId'] ? 'admin' : 'system',
       actorId: str(p['actorId']),
       resourceType: 'player',
-      resourceId: str(p['userId']),
+      resourceId: await resolvePlayerId(str(p['userId'])),
       before: { kycStatus: p['previousStatus'] ?? null },
       after: {
         kycStatus: p['status'] ?? null,
@@ -48,7 +52,7 @@ function mapEventToRecord(topic: string, p: Record<string, unknown>): RecordInpu
       actorType: 'player',
       actorId: str(p['userId']),
       resourceType: 'player',
-      resourceId: str(p['userId']),
+      resourceId: await resolvePlayerId(str(p['userId'])),
       after: { referenceId: p['referenceId'] ?? null, provider: p['provider'] ?? null },
     };
   }
@@ -59,7 +63,7 @@ function mapEventToRecord(topic: string, p: Record<string, unknown>): RecordInpu
       ...base,
       actorType: 'system',
       resourceType: 'player',
-      resourceId: str(p['userId']),
+      resourceId: await resolvePlayerId(str(p['userId'])),
       after: { reason: p['reason'] ?? null },
     };
   }
@@ -69,7 +73,7 @@ function mapEventToRecord(topic: string, p: Record<string, unknown>): RecordInpu
       ...base,
       actorType: 'system',
       resourceType: 'player',
-      resourceId: str(p['userId']),
+      resourceId: await resolvePlayerId(str(p['userId'])),
       after: {
         referenceId: p['referenceId'] ?? null,
         vpnOrTorDetected: p['vpnOrTorDetected'] ?? null,
@@ -265,7 +269,7 @@ function mapEventToRecord(topic: string, p: Record<string, unknown>): RecordInpu
       actorType: 'player',
       actorId: str(p['blockerId']),
       resourceType: 'player',
-      resourceId: str(p['blockedId']),
+      resourceId: await resolvePlayerId(str(p['blockedId'])),
     };
   }
 
@@ -276,7 +280,7 @@ function mapEventToRecord(topic: string, p: Record<string, unknown>): RecordInpu
       actorType: 'player',
       actorId: str(p['ignorerId']),
       resourceType: 'player',
-      resourceId: str(p['ignoredId']),
+      resourceId: await resolvePlayerId(str(p['ignoredId'])),
     };
   }
 
@@ -359,7 +363,7 @@ function mapEventToRecord(topic: string, p: Record<string, unknown>): RecordInpu
       actorType: 'admin',
       actorId: str(p['actorId']),
       resourceType: 'player',
-      resourceId: str(p['userId']),
+      resourceId: await resolvePlayerId(str(p['userId'])),
       before: { level: p['previousLevel'] ?? null },
       after: { level: p['newLevel'] ?? null },
     };
@@ -453,7 +457,7 @@ function mapEventToRecord(topic: string, p: Record<string, unknown>): RecordInpu
       actorType: 'admin',
       actorId: str(p['actorId']),
       resourceType: 'player',
-      resourceId: str(p['userId']),
+      resourceId: await resolvePlayerId(str(p['userId'])),
       before,
       after: p,
     };
@@ -467,7 +471,7 @@ function mapEventToRecord(topic: string, p: Record<string, unknown>): RecordInpu
       ...base,
       actorType: 'system',
       resourceType: 'player',
-      resourceId: str(p['userId']),
+      resourceId: await resolvePlayerId(str(p['userId'])),
       result: 'failure',
     };
   }
@@ -480,7 +484,7 @@ function mapEventToRecord(topic: string, p: Record<string, unknown>): RecordInpu
       ...base,
       actorType: 'system',
       resourceType: 'player',
-      resourceId: str(p['userId']),
+      resourceId: await resolvePlayerId(str(p['userId'])),
       result: 'failure',
     };
   }
@@ -610,8 +614,9 @@ export default {
         if (!svcRef || !isRecord(payload)) {
           return;
         }
-        void svcRef
-          .record(mapEventToRecord(topic, payload))
+        const svc = svcRef;
+        void mapEventToRecord(topic, payload, (userId) => svc.resolvePlayerId(userId))
+          .then((record) => svc.record(record))
           .catch((err) => logger.error({ err, topic }, 'audit record failed'));
       });
     }

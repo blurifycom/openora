@@ -178,7 +178,7 @@ describe('level: atomic replace-on-change driven by player.level.changed', () =>
   it('sets level, verifies the tag + reason, changes it again, verifies exactly one active row', async () => {
     const admin = await asAdmin(app.app);
     const email = `level-${randomUUID()}@e2e.test`;
-    const { playerId, userId } = await registerAndMaterializePlayer(app.app, email);
+    const { playerId } = await registerAndMaterializePlayer(app.app, email);
 
     // no level tag before any admin edit
     expect(await activeTagKeys(admin, playerId)).not.toContain('level');
@@ -203,9 +203,10 @@ describe('level: atomic replace-on-change driven by player.level.changed', () =>
       expect(levelTags[0]?.reason).toBe('player level set to 7');
     });
 
-    // player.level.changed's audit resourceId is the identity userId (the subject
-    // player), not the PAM playerId - see audit/plugin.ts mapEventToRecord.
-    await auditHasEntry(admin, userId, 'player.level.changed');
+    // player.level.changed's audit resourceId is the PAM playerId (resolved from the
+    // subject's identity userId), not the raw userId - see audit/plugin.ts
+    // mapEventToRecord / AuditService.resolvePlayerId.
+    await auditHasEntry(admin, playerId, 'player.level.changed');
   });
 
   it('no-op: updating a field other than level does not touch the level tag', async () => {
