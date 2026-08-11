@@ -167,6 +167,19 @@ function mapEventToRecord(topic: string, p: Record<string, unknown>): RecordInpu
     };
   }
 
+  // Admin triggered a password-reset OTP send for a player. resource = the subject
+  // player; actor = the admin who acted.
+  if (topic === 'identity.password.admin_reset_requested') {
+    return {
+      ...base,
+      actorType: 'admin',
+      actorId: str(p['actorId']),
+      resourceType: 'user',
+      resourceId: str(p['userId']),
+      after: { email: p['email'] ?? null },
+    };
+  }
+
   if (topic === 'identity.user.unauthorized_access') {
     const resource = str(p['resource']) ?? 'admin';
     const action = str(p['action']);
@@ -498,6 +511,7 @@ const SUBSCRIBED_TOPICS: DomainEventName[] = [
   'identity.user.login.failed',
   'identity.user.lockout.triggered',
   'identity.user.unlocked',
+  'identity.password.admin_reset_requested',
   'identity.user.logout',
   'identity.user.phone_login',
   'identity.phone_otp.requested',

@@ -206,6 +206,7 @@
         "verification"
       ],
       "routes": [
+        "identity.adminRequestPasswordReset",
         "identity.changeEmail",
         "identity.changePassword",
         "identity.disable2fa",
@@ -770,6 +771,7 @@
     "identity.2fa.disabled",
     "identity.2fa.enabled",
     "identity.email.verified",
+    "identity.password.admin_reset_requested",
     "identity.password.reset",
     "identity.phone_otp.cancelled",
     "identity.phone_otp.requested",

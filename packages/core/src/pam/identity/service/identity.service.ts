@@ -241,6 +241,7 @@ function loginShadowKey(email: string): string {
 }
 
 const loginShadowLogger = createLogger('login-shadow');
+const identityLogger = createLogger('identity');
 
 function computeLockoutState({
   attempts,
@@ -687,6 +688,53 @@ export class IdentityService {
     } catch (err) {
       loginShadowLogger.warn({ key, err }, 'login shadow cache write failed');
     }
+  }
+
+  // Read by a downstream custom EmailTemplateRenderer (same CACHE binding) to tell an
+  // admin-triggered reset apart from a self-service one within the synchronous
+  // sendVerificationOTP -> templateRenderer.render call chain below.
+  private adminPasswordResetMarkerKey(email: string): string {
+    return `admin-password-reset:${email.toLowerCase()}`;
+  }
+
+  async adminRequestPasswordReset(userId: User['id'], actorId: User['id'], meta?: ClientMeta) {
+    const existingUser = findOneOrThrow(
+      await this.drizzle.db
+        .select({ id: user.id, email: user.email })
+        .from(user)
+        .where(eq(user.id, userId))
+        .limit(1),
+      new UserNotFoundError(userId),
+    );
+    const email = existingUser.email.toLowerCase();
+
+    try {
+      await this.cache?.set(this.adminPasswordResetMarkerKey(email), true, { ttlMs: 120_000 });
+    } catch (err) {
+      identityLogger.warn({ email, err }, 'admin password reset marker cache write failed');
+    }
+
+    // Mirrors requestPasswordReset: the OTP email (if any) is delivered through the
+    // sendEmail hook -> notifications; any underlying error is swallowed the same way.
+    try {
+      await this.api.requestPasswordResetEmailOTP({
+        body: { email },
+        headers: new Headers(),
+        asResponse: true,
+      });
+    } catch {
+      // intentionally ignored
+    }
+
+    this.events.emit('identity.password.admin_reset_requested', {
+      userId,
+      email,
+      actorId,
+      ip: meta?.ip ?? null,
+      userAgent: meta?.userAgent ?? null,
+    });
+
+    return SUCCESS;
   }
 
   async unlockUser(userId: User['id'], actorId: User['id'], meta?: ClientMeta) {

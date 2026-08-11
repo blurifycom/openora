@@ -11,7 +11,7 @@ export type EmailTemplateKey =
 
 export type EmailTemplateData = {
   verifyEmail: { url: string; token: string };
-  resetPasswordOtp: { otp: string };
+  resetPasswordOtp: { otp: string; email: string };
   rgLimitUpdated: { period: string; type: string; description: string };
   rgCoolingOffActivated: { expiresAt: Date };
   rgCoolingOffLifted: Record<string, never>;

@@ -139,6 +139,16 @@ export function createIdentityRouter(
       );
     }),
 
+    adminRequestPasswordReset: os.adminRequestPasswordReset.handler(async ({ input, context }) => {
+      const caller = await adminGuard.assert(context, 'player', 'update');
+      return mapErrors({ NOT_FOUND: UserNotFoundError }, () =>
+        identity.adminRequestPasswordReset(input.userId, caller.userId, {
+          ip: caller.ip,
+          userAgent: caller.userAgent,
+        }),
+      );
+    }),
+
     sessions: {
       list: os.sessions.list.handler(async ({ input, context }) => {
         await adminGuard.assert(context, 'sessions', 'view');

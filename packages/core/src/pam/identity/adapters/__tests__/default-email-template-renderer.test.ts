@@ -18,7 +18,11 @@ describe('DefaultEmailTemplateRenderer', () => {
   });
 
   it('renders the resetPasswordOtp template with the otp interpolated', () => {
-    const result = renderer.render('resetPasswordOtp', { otp: '123456' }, 'fr');
+    const result = renderer.render(
+      'resetPasswordOtp',
+      { otp: '123456', email: 'test@example.com' },
+      'fr',
+    );
 
     expect(result).toEqual({
       subject: 'Reset your password',
@@ -27,8 +31,16 @@ describe('DefaultEmailTemplateRenderer', () => {
   });
 
   it('ignores locale - always English', () => {
-    const en = renderer.render('resetPasswordOtp', { otp: '000000' }, 'en');
-    const de = renderer.render('resetPasswordOtp', { otp: '000000' }, 'de');
+    const en = renderer.render(
+      'resetPasswordOtp',
+      { otp: '000000', email: 'test@example.com' },
+      'en',
+    );
+    const de = renderer.render(
+      'resetPasswordOtp',
+      { otp: '000000', email: 'test@example.com' },
+      'de',
+    );
 
     expect(en).toEqual(de);
   });
