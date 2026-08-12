@@ -380,6 +380,32 @@ function mapEventToRecord(topic: string, p: Record<string, unknown>): RecordInpu
     };
   }
 
+  // A player sent a friend request. actorId = the requester; resourceId = the
+  // friendship row; recipient carried in after so the trail shows who was notified.
+  if (topic === 'social.friend_request.sent') {
+    return {
+      ...base,
+      actorType: 'player',
+      actorId: str(p['requesterId']),
+      resourceType: 'friendship',
+      resourceId: str(p['friendshipId']),
+      after: { addresseeId: str(p['addresseeId']), status: 'pending' },
+    };
+  }
+
+  // A pending friend request became a friendship. actorId = whoever's action
+  // triggered the accept (accepterId - see events.ts for the mutual-request case).
+  if (topic === 'social.friend_request.accepted') {
+    return {
+      ...base,
+      actorType: 'player',
+      actorId: str(p['accepterId']),
+      resourceType: 'friendship',
+      resourceId: str(p['friendshipId']),
+      after: { status: 'accepted' },
+    };
+  }
+
   // Admin CMS page/banner CRUD. actorId = acting admin; resourceId = the page/banner.
   if (
     topic === 'cms.page.created' ||
@@ -585,6 +611,8 @@ const SUBSCRIBED_TOPICS: DomainEventName[] = [
   'tag.rule.upserted',
   'player.level.changed',
   'player.login_blocked',
+  'social.friend_request.sent',
+  'social.friend_request.accepted',
 ] as const;
 
 export default {

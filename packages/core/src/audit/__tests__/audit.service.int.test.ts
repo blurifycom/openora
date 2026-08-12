@@ -1,4 +1,5 @@
 import { describe, it, expect, beforeAll, afterAll, beforeEach } from 'vitest';
+import { randomUUID } from 'node:crypto';
 import { eq, sql } from 'drizzle-orm';
 import { createTestDb, type TestDb } from '@openora/core/testing';
 import { makeEventBus } from '../../testing/mock.js';
@@ -144,6 +145,57 @@ describe('AuditService.record() (real PG)', () => {
     expect(second.prevHash).toBe(first.hash);
     expect(second.seq).toBeGreaterThan(first.seq);
     expect((await svc.verifyChain()).valid).toBe(true);
+  });
+
+  it('records the row a social.friend_request.sent branch would produce', async () => {
+    const friendshipId = randomUUID();
+    const requesterId = randomUUID();
+    const addresseeId = randomUUID();
+
+    const result = await makeService().record({
+      actorType: 'player',
+      actorId: requesterId,
+      action: 'social.friend_request.sent',
+      resourceType: 'friendship',
+      resourceId: friendshipId,
+      after: { addresseeId, status: 'pending' },
+      result: 'success',
+    });
+
+    expect(result).toMatchObject({
+      actorType: 'player',
+      actorId: requesterId,
+      action: 'social.friend_request.sent',
+      resourceType: 'friendship',
+      resourceId: friendshipId,
+      after: { addresseeId, status: 'pending' },
+      result: 'success',
+    });
+  });
+
+  it('records the row a social.friend_request.accepted branch would produce', async () => {
+    const friendshipId = randomUUID();
+    const accepterId = randomUUID();
+
+    const result = await makeService().record({
+      actorType: 'player',
+      actorId: accepterId,
+      action: 'social.friend_request.accepted',
+      resourceType: 'friendship',
+      resourceId: friendshipId,
+      after: { status: 'accepted' },
+      result: 'success',
+    });
+
+    expect(result).toMatchObject({
+      actorType: 'player',
+      actorId: accepterId,
+      action: 'social.friend_request.accepted',
+      resourceType: 'friendship',
+      resourceId: friendshipId,
+      after: { status: 'accepted' },
+      result: 'success',
+    });
   });
 });
 

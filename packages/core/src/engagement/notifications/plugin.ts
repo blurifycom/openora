@@ -88,6 +88,34 @@ export default {
       sendEmail(p.userId, title, body);
     });
 
+    ctx.events.on('social.friend_request.sent', (payload) => {
+      const parsed = domainEventSchemas['social.friend_request.sent'].safeParse(payload);
+      if (!parsed.success || !svcRef) {
+        return;
+      }
+      const p = parsed.data;
+      const title = 'New friend request';
+      const body = `${p.requesterDisplayName} sent you a friend request.`;
+      svcRef
+        .create({ userId: p.addresseeId, type: 'social.friend_request.received', title, body })
+        .catch((err) => logger.error({ err }, 'social.friend_request.sent notification failed'));
+    });
+
+    ctx.events.on('social.friend_request.accepted', (payload) => {
+      const parsed = domainEventSchemas['social.friend_request.accepted'].safeParse(payload);
+      if (!parsed.success || !svcRef) {
+        return;
+      }
+      const p = parsed.data;
+      const title = 'Friend request accepted';
+      const body = `${p.accepterDisplayName} accepted your friend request.`;
+      svcRef
+        .create({ userId: p.requesterId, type: 'social.friend_request.accepted', title, body })
+        .catch((err) =>
+          logger.error({ err }, 'social.friend_request.accepted notification failed'),
+        );
+    });
+
     ctx.events.on('compliance.kyc.updated', (payload, envelope) => {
       const parsed = domainEventSchemas['compliance.kyc.updated'].safeParse(payload);
       if (!parsed.success || !jobQueueRef) {

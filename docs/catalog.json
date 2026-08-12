@@ -297,6 +297,18 @@
       ]
     },
     {
+      "id": "social",
+      "group": "engagement",
+      "tables": [
+        "friendship",
+        "social_user_block"
+      ],
+      "routes": [
+        "social.getRelationships",
+        "social.sendFriendRequest"
+      ]
+    },
+    {
       "id": "social-transfers",
       "group": "engagement",
       "tables": [
@@ -797,6 +809,8 @@
     "rg.limit.set",
     "rg.self_exclusion.activated",
     "rg.self_exclusion.lifted",
+    "social.friend_request.accepted",
+    "social.friend_request.sent",
     "tag.created",
     "tag.deleted",
     "tag.player.assigned",
@@ -1151,6 +1165,14 @@
       "file": "packages/core/src/analytics/contract/financial.ts"
     },
     {
+      "name": "FriendshipSchema",
+      "file": "packages/core/src/engagement/social/contract/index.ts"
+    },
+    {
+      "name": "FriendshipStatusSchema",
+      "file": "packages/core/src/engagement/social/contract/index.ts"
+    },
+    {
       "name": "FunnelQuerySchema",
       "file": "packages/core/src/analytics/contract/funnel.ts"
     },
@@ -1201,6 +1223,10 @@
     {
       "name": "GeoRuleSchema",
       "file": "packages/core/src/compliance/contract/index.ts"
+    },
+    {
+      "name": "GetRelationshipsInputSchema",
+      "file": "packages/core/src/engagement/social/contract/index.ts"
     },
     {
       "name": "GgrPointSchema",
@@ -1591,6 +1617,14 @@
       "file": "packages/core/src/wallet/contract/index.ts"
     },
     {
+      "name": "RelationshipSchema",
+      "file": "packages/core/src/engagement/social/contract/index.ts"
+    },
+    {
+      "name": "RelationshipStatusSchema",
+      "file": "packages/core/src/engagement/social/contract/index.ts"
+    },
+    {
       "name": "removePlayerTagSchema",
       "file": "packages/core/src/contracts/schemas/tag.ts"
     },
@@ -1653,6 +1687,10 @@
     {
       "name": "SendDonateInputSchema",
       "file": "packages/core/src/engagement/social-transfers/contract/index.ts"
+    },
+    {
+      "name": "SendFriendRequestInputSchema",
+      "file": "packages/core/src/engagement/social/contract/index.ts"
     },
     {
       "name": "SessionItemSchema",
