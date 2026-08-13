@@ -15,6 +15,8 @@ export type {
   TokenValue,
 } from './token.js';
 export { createToken, createSealedToken, createClientPageToken } from './token.js';
+export type { ChatModeration, ChatModerationEntry, ChatPlatformBan } from './chat-moderation.js';
+export { CHAT_MODERATION } from './chat-moderation.js';
 
 export type {
   EventEnvelope,

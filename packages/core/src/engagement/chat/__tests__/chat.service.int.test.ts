@@ -24,8 +24,6 @@ import { migrate } from '../migrate.js';
 import { chatChannel } from '@openora/core/contracts';
 import {
   ChatService,
-  ChatRoomNotFoundError,
-  ChatMessageNotFoundError,
   ChatMessageOwnershipError,
   ChatMessageBlockedError,
   ChatSelfBlockError,
@@ -38,14 +36,23 @@ import {
   ChatRoomNotMemberError,
   ChatRoomNotModeratorError,
   ChatRoomSelfModerationError,
+} from '../service/chat.service.js';
+import {
+  ChatModerationService,
+  ChatRoomNotFoundError,
+  ChatMessageNotFoundError,
   ChatPlayerMutedError,
   ChatPlayerBannedError,
-} from '../service/chat.service.js';
+} from '../service/chat-moderation.service.js';
 import {
   chatMessage,
   chatRoom,
   chatRoomMember,
   chatRoomBan,
+  chatRoomRule,
+  chatRoomConfiguration,
+  chatRoomMute,
+  chatRoomRemove,
   chatUserBlock,
   chatUserIgnore,
   chatMute,
@@ -62,8 +69,10 @@ function makeService(
     record: vi.fn().mockResolvedValue(undefined),
     recordInTransaction: vi.fn().mockResolvedValue(undefined),
   });
+  const moderation = new ChatModerationService(db.drizzle, transport, audit);
   return {
-    svc: new ChatService(db.drizzle, events, transport, directory, audit),
+    moderation,
+    svc: new ChatService(db.drizzle, events, transport, directory, audit, moderation),
     events,
     transport,
     audit,
@@ -125,7 +134,7 @@ afterAll(async () => {
 
 beforeEach(async () => {
   await db.drizzle.db.execute(
-    sql`TRUNCATE ${chatMessage}, ${chatRoomMember}, ${chatRoomBan}, ${chatMute}, ${chatPlatformBan}, ${chatUserBlock}, ${chatUserIgnore}, ${chatRoom}, ${user} RESTART IDENTITY CASCADE`,
+    sql`TRUNCATE ${chatMessage}, ${chatRoomRule}, ${chatRoomConfiguration}, ${chatRoomMember}, ${chatRoomBan}, ${chatRoomMute}, ${chatRoomRemove}, ${chatMute}, ${chatPlatformBan}, ${chatUserBlock}, ${chatUserIgnore}, ${chatRoom}, ${user} RESTART IDENTITY CASCADE`,
   );
 });
 
@@ -992,6 +1001,44 @@ describe('ChatService.createPrivateRoom (real PG)', () => {
 });
 
 describe('ChatService.joinRoom (real PG)', () => {
+  it('joins a public room by its room id', async () => {
+    const { svc } = makeService();
+    const room = await seedRoom({ isPublic: true, joinCode: 'PUB123' });
+    const userId = randomUUID();
+
+    await expect(
+      svc.joinPublicRoom({ roomId: room.id, userId, ...NO_CLIENT_META }),
+    ).resolves.toMatchObject({ id: room.id });
+
+    const members = await db.drizzle.db
+      .select()
+      .from(chatRoomMember)
+      .where(eq(chatRoomMember.roomId, room.id));
+    expect(members.map((member) => member.userId)).toContain(userId);
+  });
+
+  it('creates a default-disabled configuration for new private rooms', async () => {
+    const { svc } = makeService();
+    const room = await svc.createPrivateRoom({
+      userId: randomUUID(),
+      name: 'Configured room',
+      ...NO_CLIENT_META,
+    });
+
+    const [configuration] = await db.drizzle.db
+      .select()
+      .from(chatRoomConfiguration)
+      .where(eq(chatRoomConfiguration.roomId, room.id));
+    expect(configuration).toMatchObject({
+      slowMode: false,
+      slowModeSeconds: 0,
+      readOnlyMode: false,
+      onlyInvitedCanJoin: false,
+      lockRoom: false,
+      moderatorInvite: false,
+    });
+  });
+
   it('joins by code and records the membership once', async () => {
     const { svc, events } = makeService();
     const creatorId = randomUUID();
@@ -1083,7 +1130,7 @@ describe('ChatService.leaveRoom (real PG)', () => {
 
 describe('ChatService moderation (real PG)', () => {
   async function roomWithMember() {
-    const { svc, events, audit } = makeService();
+    const { svc, events, audit, moderation } = makeService();
     const moderatorId = randomUUID();
     const room = await svc.createPrivateRoom({
       userId: moderatorId,
@@ -1092,7 +1139,7 @@ describe('ChatService moderation (real PG)', () => {
     });
     const memberId = randomUUID();
     await svc.joinRoom({ userId: memberId, joinCode: room.joinCode!, ...NO_CLIENT_META });
-    return { svc, events, room, moderatorId, memberId, audit };
+    return { svc, events, room, moderatorId, memberId, audit, moderation };
   }
 
   it('kicks a member, who can then rejoin with the code', async () => {
@@ -1201,10 +1248,10 @@ describe('ChatService moderation (real PG)', () => {
   });
 
   it('allows muted users to read but rejects sends for the configured channel', async () => {
-    const { svc, audit } = makeService();
+    const { svc, audit, moderation } = makeService();
     const room = await seedRoom();
     const userId = randomUUID();
-    await svc.adminMute({
+    await moderation.mute({
       userId,
       roomId: room.id,
       durationSeconds: 60,
@@ -1223,9 +1270,9 @@ describe('ChatService moderation (real PG)', () => {
   });
 
   it('enforces a reversible platform ban only on public chat', async () => {
-    const { svc, room, memberId } = await roomWithMember();
+    const { svc, room, memberId, moderation } = await roomWithMember();
     const userId = memberId;
-    await svc.adminBan({ userId, reason: 'abuse', actorId: randomUUID(), ...NO_CLIENT_META });
+    await moderation.ban({ userId, reason: 'abuse', actorId: randomUUID(), ...NO_CLIENT_META });
 
     await expect(svc.sendGlobalMessage(userId, 'Banned', 'hello')).rejects.toBeInstanceOf(
       ChatPlayerBannedError,
@@ -1234,19 +1281,19 @@ describe('ChatService moderation (real PG)', () => {
       svc.sendRoomMessage({ userId, username: 'Banned', roomId: room.id, content: 'hello' }),
     ).resolves.toMatchObject({ userId });
 
-    await svc.adminUnban({ userId, actorId: randomUUID(), ...NO_CLIENT_META });
+    await moderation.unban({ userId, actorId: randomUUID(), ...NO_CLIENT_META });
     await expect(svc.sendGlobalMessage(userId, 'Banned', 'hello')).resolves.toMatchObject({
       userId,
     });
   });
 
   it('admin deletion publishes a tombstone and records audit data', async () => {
-    const { svc, audit } = makeService();
+    const { svc, audit, moderation } = makeService();
     const message = await seedMessage({ content: 'bad content' });
     const received: ChatMessage[] = [];
     svc.subscribeMessages(null, (event) => received.push(event));
 
-    await svc.adminDeleteMessage(message.id, randomUUID(), NO_CLIENT_META);
+    await moderation.deleteMessage(message.id, randomUUID(), NO_CLIENT_META);
 
     expect(received[0]).toMatchObject({ id: message.id, isDeleted: true });
     expect(audit.record).toHaveBeenCalledWith(

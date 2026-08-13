@@ -12,19 +12,18 @@ import {
   makeRateLimitKey,
   RATE_LIMIT_KEYS,
   chatChannel,
+  type ChatModeration,
   type RateLimiterAdapter,
   type RealtimeClientAuthorizer,
 } from '@openora/core/contracts';
 import { chatContract } from '../contract/index.js';
 import {
   ChatService,
-  ChatRoomNotFoundError,
   ChatRoomOwnershipError,
   ChatRoomNotModeratorError,
   ChatRoomSelfModerationError,
   ChatRoomLastModeratorError,
   ChatRoomLimitReachedError,
-  ChatMessageNotFoundError,
   ChatMessageOwnershipError,
   ChatMessageBlockedError,
   ChatSelfBlockError,
@@ -33,10 +32,15 @@ import {
   ChatRoomJoinCodeNotFoundError,
   ChatRoomBannedError,
   ChatRoomNotMemberError,
+  ChatRoomRuleNotFoundError,
+} from '../service/chat.service.js';
+import {
+  ChatMessageNotFoundError,
   ChatPlayerMutedError,
   ChatPlayerBannedError,
   ChatAdminPrivateRoomModerationError,
-} from '../service/chat.service.js';
+  ChatRoomNotFoundError,
+} from '../service/chat-moderation.service.js';
 
 const chat = populateContractRouterPaths({ chat: chatContract }).chat;
 const JOIN_ROOM_RATE_LIMIT = {
@@ -67,11 +71,13 @@ function resolveViewerId(context: OssContext) {
 
 export function createChatRouter({
   chatService,
+  moderationService,
   authorizer,
   adminGuard,
   limiter,
 }: {
   chatService: ChatService;
+  moderationService: ChatModeration;
   authorizer: RealtimeClientAuthorizer;
   adminGuard: AdminGuard;
   limiter: RateLimiterAdapter;
@@ -249,6 +255,18 @@ export function createChatRouter({
       );
     }),
 
+    joinPublicRoom: os.joinPublicRoom.handler(async ({ input, context }) => {
+      const userId = getUserId(context);
+      await assertRateLimit(
+        limiter,
+        makeRateLimitKey(RATE_LIMIT_KEYS.CHAT_ROOM_JOIN, userId),
+        JOIN_ROOM_RATE_LIMIT,
+      );
+      return mapErrors({ NOT_FOUND: ChatRoomNotFoundError, FORBIDDEN: ChatRoomBannedError }, () =>
+        chatService.joinPublicRoom({ roomId: input.roomId, userId, ...context.clientMeta }),
+      );
+    }),
+
     leaveRoom: os.leaveRoom.handler(({ input, context }) => {
       const userId = getUserId(context);
       return mapErrors({ BAD_REQUEST: ChatRoomLastModeratorError }, () =>
@@ -262,7 +280,61 @@ export function createChatRouter({
       ),
     ),
 
-    kickMember: os.kickMember.handler(({ input, context }) => {
+    getRoomRules: os.getRoomRules.handler(({ input, context }) =>
+      mapErrors({ NOT_FOUND: ChatRoomNotFoundError, FORBIDDEN: ChatRoomNotMemberError }, () =>
+        chatService.listRoomRules(input.roomId, resolveViewerId(context)),
+      ),
+    ),
+
+    createRoomRule: os.createRoomRule.handler(({ input, context }) =>
+      mapErrors(
+        {
+          NOT_FOUND: ChatRoomNotFoundError,
+          FORBIDDEN: [ChatRoomNotMemberError, ChatRoomNotModeratorError],
+        },
+        () => chatService.createRoomRule({ ...input, actorId: getUserId(context) }),
+      ),
+    ),
+
+    updateRoomRule: os.updateRoomRule.handler(({ input, context }) =>
+      mapErrors(
+        { FORBIDDEN: ChatRoomNotModeratorError, BAD_REQUEST: ChatRoomRuleNotFoundError },
+        () => chatService.updateRoomRule({ ...input, actorId: getUserId(context) }),
+      ),
+    ),
+
+    deleteRoomRule: os.deleteRoomRule.handler(({ input, context }) =>
+      mapErrors(
+        { FORBIDDEN: ChatRoomNotModeratorError, BAD_REQUEST: ChatRoomRuleNotFoundError },
+        () => chatService.deleteRoomRule({ ...input, actorId: getUserId(context) }),
+      ),
+    ),
+
+    getRoomConfiguration: os.getRoomConfiguration.handler(({ input, context }) =>
+      mapErrors({ NOT_FOUND: ChatRoomNotFoundError, FORBIDDEN: ChatRoomNotMemberError }, () =>
+        chatService.getRoomConfiguration(input.roomId, resolveViewerId(context)),
+      ),
+    ),
+
+    updateRoomConfiguration: os.updateRoomConfiguration.handler(({ input, context }) =>
+      mapErrors({ FORBIDDEN: ChatRoomNotModeratorError }, () =>
+        chatService.updateRoomConfiguration({ ...input, actorId: getUserId(context) }),
+      ),
+    ),
+
+    listRoomUsers: os.listRoomUsers.handler(({ input, context }) =>
+      mapErrors({ FORBIDDEN: ChatRoomNotModeratorError }, () =>
+        chatService.listRoomUsers({ ...input, actorId: getUserId(context) }),
+      ),
+    ),
+
+    listRoomBlockedUsers: os.listRoomBlockedUsers.handler(({ input, context }) =>
+      mapErrors({ FORBIDDEN: ChatRoomNotModeratorError }, () =>
+        chatService.listRoomBlockedUsers({ ...input, actorId: getUserId(context) }),
+      ),
+    ),
+
+    removeMember: os.removeMember.handler(({ input, context }) => {
       const moderatorId = getUserId(context);
       return mapErrors(
         {
@@ -271,7 +343,7 @@ export function createChatRouter({
           BAD_REQUEST: ChatRoomSelfModerationError,
         },
         () =>
-          chatService.kickMember({
+          chatService.removeMember({
             moderatorId,
             roomId: input.roomId,
             userId: input.userId,
@@ -280,7 +352,7 @@ export function createChatRouter({
       );
     }),
 
-    banMember: os.banMember.handler(({ input, context }) => {
+    banRoomMember: os.banRoomMember.handler(({ input, context }) => {
       const moderatorId = getUserId(context);
       return mapErrors(
         {
@@ -293,10 +365,36 @@ export function createChatRouter({
             moderatorId,
             roomId: input.roomId,
             userId: input.userId,
+            durationSeconds: input.durationSeconds,
+            reason: input.reason,
             ...context.clientMeta,
           }),
       );
     }),
+
+    unbanRoomMember: os.unbanRoomMember.handler(({ input, context }) =>
+      mapErrors({ FORBIDDEN: ChatRoomNotModeratorError }, () =>
+        chatService.unbanMember({ ...input, moderatorId: getUserId(context) }),
+      ),
+    ),
+
+    muteRoomMember: os.muteRoomMember.handler(({ input, context }) =>
+      mapErrors({ FORBIDDEN: ChatRoomNotModeratorError }, () =>
+        chatService.muteRoomMember({
+          roomId: input.roomId,
+          userId: input.userId,
+          moderatorId: getUserId(context),
+          durationSeconds: input.durationSeconds,
+          reason: input.reason,
+        }),
+      ),
+    ),
+
+    unmuteRoomMember: os.unmuteRoomMember.handler(({ input, context }) =>
+      mapErrors({ FORBIDDEN: ChatRoomNotModeratorError }, () =>
+        chatService.unmuteRoomMember({ ...input, moderatorId: getUserId(context) }),
+      ),
+    ),
 
     listRoomMembers: os.listRoomMembers.handler(({ input, context }) =>
       mapErrors({ NOT_FOUND: ChatRoomNotFoundError, FORBIDDEN: ChatRoomNotMemberError }, () =>
@@ -355,7 +453,7 @@ export function createChatRouter({
           NOT_FOUND: ChatRoomNotFoundError,
           BAD_REQUEST: ChatAdminPrivateRoomModerationError,
         },
-        () => chatService.adminMute({ ...input, actorId: userId, ip, userAgent }),
+        () => moderationService.mute({ ...input, actorId: userId, ip, userAgent }),
       );
     }),
 
@@ -365,12 +463,12 @@ export function createChatRouter({
         'chat-moderation',
         'moderate',
       );
-      return chatService.adminUnmute({ ...input, actorId: userId, ip, userAgent });
+      return moderationService.unmute({ ...input, actorId: userId, ip, userAgent });
     }),
 
     adminListMutes: os.adminListMutes.handler(async ({ input, context }) => {
       await adminGuard.assert(context, 'chat-moderation', 'view');
-      return chatService.adminListMutes(input.userId);
+      return moderationService.listMutes(input.userId);
     }),
 
     adminBan: os.adminBan.handler(async ({ input, context }) => {
@@ -379,7 +477,7 @@ export function createChatRouter({
         'chat-moderation',
         'moderate',
       );
-      return chatService.adminBan({ ...input, actorId: userId, ip, userAgent });
+      return moderationService.ban({ ...input, actorId: userId, ip, userAgent });
     }),
 
     adminUnban: os.adminUnban.handler(async ({ input, context }) => {
@@ -388,12 +486,12 @@ export function createChatRouter({
         'chat-moderation',
         'moderate',
       );
-      return chatService.adminUnban({ ...input, actorId: userId, ip, userAgent });
+      return moderationService.unban({ ...input, actorId: userId, ip, userAgent });
     }),
 
     adminListBans: os.adminListBans.handler(async ({ input, context }) => {
       await adminGuard.assert(context, 'chat-moderation', 'view');
-      return chatService.adminListBans(input.userId);
+      return moderationService.listBans(input.userId);
     }),
 
     adminDeleteMessage: os.adminDeleteMessage.handler(async ({ input, context }) => {
@@ -403,7 +501,7 @@ export function createChatRouter({
         'moderate',
       );
       return mapErrors({ NOT_FOUND: ChatMessageNotFoundError }, () =>
-        chatService.adminDeleteMessage(input.id, userId, { ip, userAgent }),
+        moderationService.deleteMessage(input.id, userId, { ip, userAgent }),
       );
     }),
   });

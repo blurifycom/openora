@@ -8,6 +8,7 @@ import { game } from '@openora/core/casino/schema/gaming';
 import {
   chatRoom,
   chatRoomMember,
+  chatRoomConfiguration,
   chatMessage,
   chatUserBlock,
   chatUserIgnore,
@@ -53,6 +54,18 @@ function makeRng(seed: number): () => number {
 
 function pick<T>(rng: () => number, arr: readonly T[]): T {
   return arr[Math.floor(rng() * arr.length)] as T;
+}
+
+const SEED_JOIN_CODE_ALPHABET = 'ABCDEFGHJKMNPQRSTUVWXYZ23456789';
+
+function seedJoinCode(index: number): string {
+  let value = index + 1;
+  let code = '';
+  for (let position = 0; position < 6; position += 1) {
+    code = SEED_JOIN_CODE_ALPHABET[value % SEED_JOIN_CODE_ALPHABET.length] + code;
+    value = Math.floor(value / SEED_JOIN_CODE_ALPHABET.length);
+  }
+  return code;
 }
 
 function weighted<T>(rng: () => number, table: readonly (readonly [T, number])[]): T {
@@ -217,7 +230,7 @@ const GAMES = [
 type ChatRoomSeed = {
   slug: string;
   name: string;
-  category: ChatRoomCategory;
+  category: ChatRoomCategory | null;
   isPublic?: boolean;
   joinCode?: string;
   messages: readonly string[];
@@ -227,7 +240,7 @@ const CHAT_ROOMS: readonly ChatRoomSeed[] = [
   {
     slug: '__global',
     name: 'Global',
-    category: 'games-sports',
+    category: null,
     messages: [],
   },
   {
@@ -534,17 +547,29 @@ export async function seedDemoData(options: SeedOptions): Promise<SeedResult> {
     const insertedRooms = await db
       .insert(chatRoom)
       .values(
-        CHAT_ROOMS.map((r) => ({
+        CHAT_ROOMS.map((r, index) => ({
           name: r.name,
           slug: r.slug,
           category: r.category,
           isPublic: r.isPublic ?? true,
-          joinCode: r.joinCode ?? null,
+          joinCode: r.joinCode ?? seedJoinCode(index),
           creatorId: r.category === 'private-channels' ? null : adminUser.id,
         })),
       )
       .returning();
     roomCount = insertedRooms.length;
+
+    await db.insert(chatRoomConfiguration).values(
+      insertedRooms.map((room) => ({
+        roomId: room.id,
+        slowMode: false,
+        slowModeSeconds: 0,
+        readOnlyMode: false,
+        onlyInvitedCanJoin: false,
+        lockRoom: false,
+        moderatorInvite: false,
+      })),
+    );
 
     const adminOwnedRooms = insertedRooms
       .filter((room) => room.isPublic || room.creatorId === adminUser.id)

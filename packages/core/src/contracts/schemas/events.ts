@@ -156,19 +156,19 @@ export const domainEventSchemas = {
     roomId: UuidSchema,
     name: z.string(),
     slug: z.string(),
-    category: z.string(),
+    category: z.string().nullable(),
     actorId: UuidSchema.optional(),
   }),
   'chat.room.deleted': authContextBase.extend({
     roomId: UuidSchema,
     actorId: UuidSchema.optional(),
-    before: z.object({ name: z.string(), slug: z.string(), category: z.string() }),
+    before: z.object({ name: z.string(), slug: z.string(), category: z.string().nullable() }),
   }),
   'chat.room.updated': authContextBase.extend({
     roomId: UuidSchema,
     actorId: UuidSchema.optional(),
-    before: z.object({ name: z.string(), slug: z.string(), category: z.string() }),
-    after: z.object({ name: z.string(), slug: z.string(), category: z.string() }),
+    before: z.object({ name: z.string(), slug: z.string(), category: z.string().nullable() }),
+    after: z.object({ name: z.string(), slug: z.string(), category: z.string().nullable() }),
   }),
 
   // Private room lifecycle: creation and member membership changes.
@@ -186,6 +186,11 @@ export const domainEventSchemas = {
     roomId: UuidSchema,
     userId: UuidSchema,
     kickedBy: UuidSchema,
+  }),
+  'chat.room.member.removed': authContextBase.extend({
+    roomId: UuidSchema,
+    userId: UuidSchema,
+    removedBy: UuidSchema,
   }),
   'chat.room.member.banned': authContextBase.extend({
     roomId: UuidSchema,

@@ -45,7 +45,11 @@
         "chat_platform_ban",
         "chat_room",
         "chat_room_ban",
+        "chat_room_configuration",
         "chat_room_member",
+        "chat_room_mute",
+        "chat_room_remove",
+        "chat_room_rule",
         "chat_user_block",
         "chat_user_ignore"
       ],
@@ -59,33 +63,45 @@
         "chat.adminMute",
         "chat.adminUnban",
         "chat.adminUnmute",
-        "chat.banMember",
+        "chat.banRoomMember",
         "chat.blockUser",
         "chat.createPrivateRoom",
         "chat.createRoom",
+        "chat.createRoomRule",
         "chat.deleteMessage",
         "chat.deletePrivateRoom",
         "chat.deleteRoom",
+        "chat.deleteRoomRule",
         "chat.getConnection",
         "chat.getGlobalMessages",
         "chat.getOnlineCount",
         "chat.getRoom",
+        "chat.getRoomConfiguration",
         "chat.getRoomMessages",
+        "chat.getRoomRules",
         "chat.ignoreUser",
+        "chat.joinPublicRoom",
         "chat.joinRoom",
-        "chat.kickMember",
         "chat.leaveRoom",
         "chat.listAdminRooms",
         "chat.listBlockedUsers",
         "chat.listIgnoredUsers",
+        "chat.listRoomBlockedUsers",
         "chat.listRoomMembers",
+        "chat.listRoomUsers",
         "chat.listRooms",
+        "chat.muteRoomMember",
+        "chat.removeMember",
         "chat.sendGlobalMessage",
         "chat.sendRoomMessage",
         "chat.streamMessages",
+        "chat.unbanRoomMember",
         "chat.unblockUser",
         "chat.unignoreUser",
-        "chat.updateRoom"
+        "chat.unmuteRoomMember",
+        "chat.updateRoom",
+        "chat.updateRoomConfiguration",
+        "chat.updateRoomRule"
       ]
     },
     {
@@ -487,6 +503,15 @@
       ]
     },
     {
+      "category": "chat-moderation",
+      "interface": "ChatModerationEntry",
+      "token": "CHAT_MODERATION",
+      "status": "wired",
+      "boundIn": [
+        "packages/core/src/engagement/chat/plugin.ts"
+      ]
+    },
+    {
       "category": "chat-room-access",
       "interface": "ChatRoomAccess",
       "token": "CHAT_ROOM_ACCESS",
@@ -748,8 +773,8 @@
     "chat.room.deleted",
     "chat.room.member.banned",
     "chat.room.member.joined",
-    "chat.room.member.kicked",
     "chat.room.member.left",
+    "chat.room.member.removed",
     "chat.room.updated",
     "chat.user.blocked",
     "chat.user.ignored",
@@ -1025,7 +1050,19 @@
       "file": "packages/core/src/engagement/chat/contract/index.ts"
     },
     {
+      "name": "ChatRoomAccessStatusSchema",
+      "file": "packages/core/src/engagement/chat/contract/index.ts"
+    },
+    {
+      "name": "ChatRoomBanSchema",
+      "file": "packages/core/src/engagement/chat/contract/index.ts"
+    },
+    {
       "name": "ChatRoomCategorySchema",
+      "file": "packages/core/src/engagement/chat/contract/index.ts"
+    },
+    {
+      "name": "ChatRoomConfigurationSchema",
       "file": "packages/core/src/engagement/chat/contract/index.ts"
     },
     {
@@ -1041,11 +1078,19 @@
       "file": "packages/core/src/engagement/chat/contract/index.ts"
     },
     {
+      "name": "ChatRoomRuleSchema",
+      "file": "packages/core/src/engagement/chat/contract/index.ts"
+    },
+    {
       "name": "ChatRoomSchema",
       "file": "packages/core/src/engagement/chat/contract/index.ts"
     },
     {
       "name": "ChatRoomSlugSchema",
+      "file": "packages/core/src/engagement/chat/contract/index.ts"
+    },
+    {
+      "name": "ChatRoomUserSchema",
       "file": "packages/core/src/engagement/chat/contract/index.ts"
     },
     {
