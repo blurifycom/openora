@@ -41,6 +41,8 @@
       "group": "engagement",
       "tables": [
         "chat_message",
+        "chat_mute",
+        "chat_platform_ban",
         "chat_room",
         "chat_room_ban",
         "chat_room_member",
@@ -48,8 +50,15 @@
         "chat_user_ignore"
       ],
       "routes": [
+        "chat.adminBan",
+        "chat.adminDeleteMessage",
+        "chat.adminListBans",
         "chat.adminListBlockedUsers",
         "chat.adminListIgnoredUsers",
+        "chat.adminListMutes",
+        "chat.adminMute",
+        "chat.adminUnban",
+        "chat.adminUnmute",
         "chat.banMember",
         "chat.blockUser",
         "chat.createPrivateRoom",
@@ -434,6 +443,7 @@
         "packages/core/src/audit/plugin.ts",
         "packages/core/src/compliance/plugin.ts",
         "packages/core/src/engagement/chat-commands/plugin.ts",
+        "packages/core/src/engagement/chat/plugin.ts",
         "packages/core/src/engagement/social-transfers/plugin.ts",
         "packages/core/src/pam/player-management/plugin.ts",
         "packages/core/src/pam/player-note/plugin.ts",
@@ -999,7 +1009,19 @@
       "file": "packages/core/src/contracts/schemas/chat-command.ts"
     },
     {
+      "name": "ChatModerationEntrySchema",
+      "file": "packages/core/src/engagement/chat/contract/index.ts"
+    },
+    {
+      "name": "ChatModerationResultSchema",
+      "file": "packages/core/src/engagement/chat/contract/index.ts"
+    },
+    {
       "name": "ChatOnlineCountSchema",
+      "file": "packages/core/src/engagement/chat/contract/index.ts"
+    },
+    {
+      "name": "ChatPlatformBanSchema",
       "file": "packages/core/src/engagement/chat/contract/index.ts"
     },
     {

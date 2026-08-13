@@ -128,6 +128,32 @@ export const ChatConnectionGrantSchema = z
   })
   .loose();
 
+export const ChatModerationResultSchema = z.object({ success: z.literal(true) });
+export const ChatModerationEntrySchema = z.object({
+  id: UuidSchema,
+  userId: UuidSchema,
+  roomId: UuidSchema.nullable(),
+  reason: z.string(),
+  createdAt: TimestampSchema,
+  expiresAt: TimestampSchema.nullable(),
+});
+export const ChatPlatformBanSchema = z.object({
+  id: UuidSchema,
+  userId: UuidSchema,
+  reason: z.string(),
+  createdAt: TimestampSchema,
+  liftedAt: TimestampSchema.nullable(),
+});
+
+const AdminModerationInput = z.object({
+  userId: UuidSchema,
+  reason: z.string().trim().min(1).max(500),
+});
+const AdminMuteInput = AdminModerationInput.extend({
+  roomId: UuidSchema.nullable(),
+  durationSeconds: z.number().int().positive().max(31_536_000).nullable(),
+});
+
 const RoomIdInput = z.object({ roomId: UuidSchema });
 const RoomUserInput = z.object({ roomId: UuidSchema, userId: UuidSchema });
 const ChatJoinCodeSchema = z.string().trim().min(1).max(JOIN_CODE_INPUT_MAX_LENGTH);
@@ -331,4 +357,39 @@ export const chatContract = {
       }),
     )
     .output(paginated(AdminIgnoredUserSchema)),
+
+  adminMute: oc
+    .route({ method: 'POST', path: '/backoffice/chat/mutes' })
+    .input(AdminMuteInput)
+    .output(ChatModerationResultSchema),
+
+  adminUnmute: oc
+    .route({ method: 'POST', path: '/backoffice/chat/mutes/lift' })
+    .input(z.object({ userId: UuidSchema, roomId: UuidSchema.nullable() }))
+    .output(ChatModerationResultSchema),
+
+  adminListMutes: oc
+    .route({ method: 'GET', path: '/backoffice/chat/mutes' })
+    .input(z.object({ userId: UuidSchema.optional() }))
+    .output(z.array(ChatModerationEntrySchema)),
+
+  adminBan: oc
+    .route({ method: 'POST', path: '/backoffice/chat/bans' })
+    .input(AdminModerationInput)
+    .output(ChatModerationResultSchema),
+
+  adminUnban: oc
+    .route({ method: 'POST', path: '/backoffice/chat/bans/lift' })
+    .input(z.object({ userId: UuidSchema }))
+    .output(ChatModerationResultSchema),
+
+  adminListBans: oc
+    .route({ method: 'GET', path: '/backoffice/chat/bans' })
+    .input(z.object({ userId: UuidSchema.optional() }))
+    .output(z.array(ChatPlatformBanSchema)),
+
+  adminDeleteMessage: oc
+    .route({ method: 'DELETE', path: '/backoffice/chat/messages/{id}' })
+    .input(IdInputSchema)
+    .output(ChatModerationResultSchema),
 };

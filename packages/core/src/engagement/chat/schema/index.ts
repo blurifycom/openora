@@ -138,9 +138,49 @@ export const chatRoomBan = pgTable(
   ],
 );
 
+export const chatPlatformBan = pgTable(
+  'chat_platform_ban',
+  {
+    id: uuid().primaryKey().defaultRandom(),
+    userId: uuid().notNull(),
+    bannedBy: uuid().notNull(),
+    reason: text().notNull(),
+    createdAt: timestamp({ withTimezone: true }).notNull().defaultNow(),
+    liftedAt: timestamp({ withTimezone: true }),
+    liftedBy: uuid(),
+  },
+  (t) => [
+    uniqueIndex('chat_platform_ban_active_user_key')
+      .on(t.userId)
+      .where(sql`${t.liftedAt} IS NULL`),
+    index('chat_platform_ban_user_idx').on(t.userId),
+  ],
+);
+
+export const chatMute = pgTable(
+  'chat_mute',
+  {
+    id: uuid().primaryKey().defaultRandom(),
+    userId: uuid().notNull(),
+    roomId: uuid(), // null = global chat; public room ids are channel-scoped mutes
+    mutedBy: uuid().notNull(),
+    reason: text().notNull(),
+    createdAt: timestamp({ withTimezone: true }).notNull().defaultNow(),
+    expiresAt: timestamp({ withTimezone: true }),
+    liftedAt: timestamp({ withTimezone: true }),
+    liftedBy: uuid(),
+  },
+  (t) => [
+    index('chat_mute_user_room_idx').on(t.userId, t.roomId),
+    index('chat_mute_expires_at_idx').on(t.expiresAt),
+  ],
+);
+
 export type ChatRoom = typeof chatRoom.$inferSelect;
 export type ChatMessage = typeof chatMessage.$inferSelect;
 export type ChatUserBlock = typeof chatUserBlock.$inferSelect;
 export type ChatUserIgnore = typeof chatUserIgnore.$inferSelect;
 export type ChatRoomMember = typeof chatRoomMember.$inferSelect;
 export type ChatRoomBan = typeof chatRoomBan.$inferSelect;
+export type ChatPlatformBan = typeof chatPlatformBan.$inferSelect;
+export type ChatMute = typeof chatMute.$inferSelect;

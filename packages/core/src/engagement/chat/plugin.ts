@@ -11,6 +11,7 @@ import {
   createToken,
   REALTIME_TRANSPORT,
   REALTIME_CLIENT_AUTHORIZER,
+  AUDIT_WRITER,
 } from '@openora/core/contracts';
 import { ChatService } from './service/chat.service.js';
 import { createChatRouter } from './router/index.js';
@@ -19,7 +20,7 @@ const CHAT_SERVICE = createToken<ChatService>('_ChatService');
 
 export default {
   id: 'chat',
-  dependsOn: ['identity'],
+  dependsOn: ['identity', 'audit'],
   register(ctx) {
     ctx.provide(CHAT_REALTIME_TRANSPORT, (c) => c.get(REALTIME_TRANSPORT));
     ctx.provide(CHAT_REALTIME_CLIENT_AUTHORIZER, (c) => c.get(REALTIME_CLIENT_AUTHORIZER));
@@ -31,6 +32,7 @@ export default {
           c.get(EVENT_BUS),
           c.get(CHAT_REALTIME_TRANSPORT),
           c.get(ADMIN_USER_DIRECTORY),
+          c.get(AUDIT_WRITER),
         ),
     );
     ctx.provide(CHAT_SYSTEM_WRITER, (c) => c.get(CHAT_SERVICE));

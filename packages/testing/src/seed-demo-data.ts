@@ -7,6 +7,7 @@ import { wallet, walletTransaction } from '@openora/core/wallet/schema';
 import { game } from '@openora/core/casino/schema/gaming';
 import {
   chatRoom,
+  chatRoomMember,
   chatMessage,
   chatUserBlock,
   chatUserIgnore,
@@ -223,6 +224,12 @@ type ChatRoomSeed = {
 };
 
 const CHAT_ROOMS: readonly ChatRoomSeed[] = [
+  {
+    slug: '__global',
+    name: 'Global',
+    category: 'games-sports',
+    messages: [],
+  },
   {
     slug: 'sports',
     name: 'Sports',
@@ -538,6 +545,13 @@ export async function seedDemoData(options: SeedOptions): Promise<SeedResult> {
       )
       .returning();
     roomCount = insertedRooms.length;
+
+    const adminOwnedRooms = insertedRooms
+      .filter((room) => room.isPublic || room.creatorId === adminUser.id)
+      .map((room) => ({ roomId: room.id, userId: adminUser.id, role: 'owner' as const }));
+    if (adminOwnedRooms.length > 0) {
+      await db.insert(chatRoomMember).values(adminOwnedRooms);
+    }
 
     if (chatAuthors.length > 0) {
       const roomMessageRows: (typeof chatMessage.$inferInsert)[] = insertedRooms.flatMap((room) => {

@@ -33,6 +33,9 @@ import {
   ChatRoomJoinCodeNotFoundError,
   ChatRoomBannedError,
   ChatRoomNotMemberError,
+  ChatPlayerMutedError,
+  ChatPlayerBannedError,
+  ChatAdminPrivateRoomModerationError,
 } from '../service/chat.service.js';
 
 const chat = populateContractRouterPaths({ chat: chatContract }).chat;
@@ -83,7 +86,10 @@ export function createChatRouter({
     getRoomMessages: os.getRoomMessages.handler(({ input, context }) => {
       const viewerId = resolveViewerId(context);
       return mapErrors(
-        { NOT_FOUND: ChatRoomNotFoundError, FORBIDDEN: ChatRoomNotMemberError },
+        {
+          NOT_FOUND: ChatRoomNotFoundError,
+          FORBIDDEN: [ChatRoomNotMemberError, ChatPlayerMutedError, ChatPlayerBannedError],
+        },
         () =>
           chatService.getRoomMessages({
             roomId: input.roomId,
@@ -105,7 +111,7 @@ export function createChatRouter({
       return mapErrors(
         {
           NOT_FOUND: ChatRoomNotFoundError,
-          FORBIDDEN: ChatRoomNotMemberError,
+          FORBIDDEN: [ChatRoomNotMemberError, ChatPlayerMutedError, ChatPlayerBannedError],
           BAD_REQUEST: ChatMessageBlockedError,
         },
         () =>
@@ -138,8 +144,12 @@ export function createChatRouter({
         makeRateLimitKey(RATE_LIMIT_KEYS.CHAT_SEND, userId),
         SEND_MESSAGE_RATE_LIMIT,
       );
-      return mapErrors({ BAD_REQUEST: ChatMessageBlockedError }, () =>
-        chatService.sendGlobalMessage(userId, username, input.content),
+      return mapErrors(
+        {
+          BAD_REQUEST: ChatMessageBlockedError,
+          FORBIDDEN: [ChatPlayerMutedError, ChatPlayerBannedError],
+        },
+        () => chatService.sendGlobalMessage(userId, username, input.content),
       );
     }),
 
@@ -332,6 +342,69 @@ export function createChatRouter({
     adminListIgnoredUsers: os.adminListIgnoredUsers.handler(async ({ input, context }) => {
       await adminGuard.assert(context, 'chat-moderation', 'view');
       return chatService.adminListIgnoredUsers(input);
+    }),
+
+    adminMute: os.adminMute.handler(async ({ input, context }) => {
+      const { userId, ip, userAgent } = await adminGuard.assert(
+        context,
+        'chat-moderation',
+        'moderate',
+      );
+      return mapErrors(
+        {
+          NOT_FOUND: ChatRoomNotFoundError,
+          BAD_REQUEST: ChatAdminPrivateRoomModerationError,
+        },
+        () => chatService.adminMute({ ...input, actorId: userId, ip, userAgent }),
+      );
+    }),
+
+    adminUnmute: os.adminUnmute.handler(async ({ input, context }) => {
+      const { userId, ip, userAgent } = await adminGuard.assert(
+        context,
+        'chat-moderation',
+        'moderate',
+      );
+      return chatService.adminUnmute({ ...input, actorId: userId, ip, userAgent });
+    }),
+
+    adminListMutes: os.adminListMutes.handler(async ({ input, context }) => {
+      await adminGuard.assert(context, 'chat-moderation', 'view');
+      return chatService.adminListMutes(input.userId);
+    }),
+
+    adminBan: os.adminBan.handler(async ({ input, context }) => {
+      const { userId, ip, userAgent } = await adminGuard.assert(
+        context,
+        'chat-moderation',
+        'moderate',
+      );
+      return chatService.adminBan({ ...input, actorId: userId, ip, userAgent });
+    }),
+
+    adminUnban: os.adminUnban.handler(async ({ input, context }) => {
+      const { userId, ip, userAgent } = await adminGuard.assert(
+        context,
+        'chat-moderation',
+        'moderate',
+      );
+      return chatService.adminUnban({ ...input, actorId: userId, ip, userAgent });
+    }),
+
+    adminListBans: os.adminListBans.handler(async ({ input, context }) => {
+      await adminGuard.assert(context, 'chat-moderation', 'view');
+      return chatService.adminListBans(input.userId);
+    }),
+
+    adminDeleteMessage: os.adminDeleteMessage.handler(async ({ input, context }) => {
+      const { userId, ip, userAgent } = await adminGuard.assert(
+        context,
+        'chat-moderation',
+        'moderate',
+      );
+      return mapErrors({ NOT_FOUND: ChatMessageNotFoundError }, () =>
+        chatService.adminDeleteMessage(input.id, userId, { ip, userAgent }),
+      );
     }),
   });
 }

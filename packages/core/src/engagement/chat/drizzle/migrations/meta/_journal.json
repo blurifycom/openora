@@ -36,6 +36,20 @@
       "when": 1785847639753,
       "tag": "0004_panoramic_robin_chapel",
       "breakpoints": true
+    },
+    {
+      "idx": 5,
+      "version": "7",
+      "when": 1786552412551,
+      "tag": "0005_wonderful_the_hunter",
+      "breakpoints": true
+    },
+    {
+      "idx": 6,
+      "version": "7",
+      "when": 1786555694770,
+      "tag": "0006_blue_wasp",
+      "breakpoints": true
     }
   ]
 }
