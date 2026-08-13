@@ -412,6 +412,7 @@ describe('PlayerService.update player.level.changed emission (real PG)', () => {
 
     expect(events.emit).toHaveBeenCalledWith('player.level.changed', {
       userId: account.id,
+      playerId: seeded.id,
       previousLevel: 1,
       newLevel: 5,
       actorId: account.id,

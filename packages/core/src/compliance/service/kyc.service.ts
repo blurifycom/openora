@@ -18,6 +18,7 @@ import {
   type KycVendorStatus,
   type KycStatus,
   type PlatformConfig,
+  type IdentityReader,
   type User,
   ClientMeta,
 } from '@openora/core/contracts';
@@ -114,6 +115,7 @@ export type KycVerificationDeps = {
   events: EventBus;
   kycAdapter: KycAdapter;
   statusWriter: KycStatusWriter;
+  identityReader: IdentityReader;
   platformConfig?: PlatformConfig;
   reKycTrigger?: ReKycTrigger;
 };
@@ -123,6 +125,7 @@ export class KycVerificationService {
   private readonly events: EventBus;
   private readonly kycAdapter: KycAdapter;
   private readonly statusWriter: KycStatusWriter;
+  private readonly identityReader: IdentityReader;
   private readonly platformConfig?: PlatformConfig;
   private readonly reKycTrigger: ReKycTrigger;
 
@@ -131,6 +134,7 @@ export class KycVerificationService {
     this.events = deps.events;
     this.kycAdapter = deps.kycAdapter;
     this.statusWriter = deps.statusWriter;
+    this.identityReader = deps.identityReader;
     this.platformConfig = deps.platformConfig;
     this.reKycTrigger = deps.reKycTrigger ?? new CumulativeDepositReKycTrigger();
   }
@@ -190,6 +194,7 @@ export class KycVerificationService {
 
     this.events.emit('compliance.kyc.submitted', {
       userId,
+      playerId: await this.identityReader.getPlayerIdByUserIdSafe(userId),
       referenceId: result.referenceId,
       provider: this.provider,
       ip: meta?.ip ?? null,
@@ -299,6 +304,7 @@ export class KycVerificationService {
     if (opts.riskSignals && warrantsHighRiskTag(opts.riskSignals)) {
       this.events.emit('compliance.kyc.high_risk_signal_detected', {
         userId: existing.userId,
+        playerId: await this.identityReader.getPlayerIdByUserIdSafe(existing.userId),
         referenceId,
         vpnOrTorDetected: opts.riskSignals.vpnOrTorDetected,
         dataCenterIpDetected: opts.riskSignals.dataCenterIpDetected,
@@ -354,7 +360,7 @@ export class KycVerificationService {
    */
   async handleDeposit(userId: User['id']) {
     const [current] = await this.drizzle.db
-      .select({ currency: player.currency, kycStatus: player.kycStatus })
+      .select({ id: player.id, currency: player.currency, kycStatus: player.kycStatus })
       .from(player)
       .where(eq(player.userId, userId));
     if (!current || normalizeKycStatus(current.kycStatus) !== 'approved') {
@@ -413,7 +419,7 @@ export class KycVerificationService {
       source: 'reverify',
       reason,
     });
-    this.events.emit('compliance.kyc.reverify_required', { userId, reason });
+    this.events.emit('compliance.kyc.reverify_required', { userId, playerId: current.id, reason });
   }
 
   /**

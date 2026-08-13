@@ -9,7 +9,8 @@ import type {
   SendEmailPort,
 } from '@openora/core/contracts';
 import { createTestDb, type TestDb } from '@openora/core/testing';
-import { mock, makeEventBus } from '../../testing/mock.js';
+import { migrate as migrateProfile } from '@openora/core/pam/migrate/profile';
+import { makeIdentityReader, mock, makeEventBus } from '../../testing/mock.js';
 import { migrate } from '../migrate.js';
 import { userLimit, rgExclusion } from '../schema/index.js';
 import {
@@ -55,6 +56,7 @@ function makeService(notifier?: Notifier) {
     email: notifier?.email ?? null,
     directory: notifier?.directory ?? null,
     templateRenderer: notifier?.templateRenderer ?? null,
+    identityReader: makeIdentityReader(),
   });
   return { svc, events, enforcement };
 }
@@ -84,7 +86,7 @@ const future = () => new Date(Date.now() + 200 * 24 * HOURS);
 const past = () => new Date(Date.now() - 1000);
 
 beforeAll(async () => {
-  db = await createTestDb([migrate]);
+  db = await createTestDb([migrate, migrateProfile]);
 });
 
 afterAll(async () => {

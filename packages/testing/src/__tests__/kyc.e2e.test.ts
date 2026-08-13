@@ -150,7 +150,7 @@ describe('KYC submit (default MockKycAdapter) + admin read + authz', () => {
       const body = await readJson(res);
       expect(body.items.length).toBeGreaterThanOrEqual(1);
       expect(body.items[0].actorType).toBe('player');
-      expect(body.items[0].actorId).toBe(userId);
+      expect(body.items[0].actorId).toBe(playerId);
     });
 
     await vi.waitFor(async () => {

@@ -5,7 +5,7 @@ import { eq, sql } from 'drizzle-orm';
 import { player } from '@openora/core/pam/schema/profile';
 import { PlayerNotFoundError } from './player.service.js';
 
-type ConditionalUpdateRow = { previous_status: KycStatus };
+type ConditionalUpdateRow = { previous_status: KycStatus; player_id: string };
 
 /**
  * The single writer of `player.kycStatus` (the KYC_STATUS_WRITER seam). Every status
@@ -35,7 +35,7 @@ export class PlayerKycStatusWriter implements KycStatusWriter {
       SET kyc_status = ${status}
       FROM (SELECT kyc_status FROM player WHERE user_id = ${userId} FOR UPDATE) AS prev
       WHERE player.user_id = ${userId} AND prev.kyc_status <> ${status}
-      RETURNING prev.kyc_status AS previous_status
+      RETURNING prev.kyc_status AS previous_status, player.id AS player_id
     `);
     const changed = rows[0];
 
@@ -52,6 +52,7 @@ export class PlayerKycStatusWriter implements KycStatusWriter {
 
     this.events.emit('compliance.kyc.updated', {
       userId,
+      playerId: changed.player_id,
       actorId: opts.actorId,
       status,
       previousStatus: changed.previous_status,

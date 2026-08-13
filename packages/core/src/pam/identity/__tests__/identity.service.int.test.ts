@@ -18,7 +18,7 @@ import {
 } from '../service/identity.service.js';
 import { UnsupportedLanguageError } from '../../shared/language.js';
 import { user, session } from '../schema/index.js';
-import { mock, makeEventBus } from '../../../testing/mock.js';
+import { makeIdentityReader, mock, makeEventBus } from '../../../testing/mock.js';
 
 const {
   signInEmailMock,
@@ -86,6 +86,7 @@ function buildService(deps: Partial<Omit<IdentityServiceDeps, 'templateRenderer'
     templateRenderer: testTemplateRenderer,
     drizzle: db.drizzle,
     events: makeEventBus(),
+    identityReader: makeIdentityReader(),
     ...deps,
   });
 }
@@ -98,7 +99,7 @@ function jsonResponse(body: unknown, status: number) {
 }
 
 const betterAuthUser = {
-  id: 'u1',
+  id: '00000000-0000-4000-8000-000000000001',
   email: 'a@b.dev',
   name: 'A',
   emailVerified: true,

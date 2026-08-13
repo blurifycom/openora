@@ -21,6 +21,7 @@ import type {
   ChatSystemMessage,
   CommandChatMessage,
   AdminUserDirectory,
+  IdentityReader,
 } from '@openora/core/contracts';
 import { chatChannel } from '@openora/core/contracts';
 import { eq, and, isNull, lt, desc, asc, notInArray, inArray, count, ne } from 'drizzle-orm';
@@ -188,6 +189,7 @@ export class ChatService {
     private readonly events: EventBus,
     private readonly transport: RealtimeTransport,
     private readonly directory: AdminUserDirectory,
+    private readonly identityReader: IdentityReader,
   ) {}
 
   subscribeMessages(
@@ -584,7 +586,9 @@ export class ChatService {
     if (inserted.length > 0) {
       this.events.emit('chat.user.blocked', {
         blockerId,
+        actorPlayerId: await this.identityReader.getPlayerIdByUserIdSafe(blockerId),
         blockedId,
+        playerId: await this.identityReader.getPlayerIdByUserIdSafe(blockedId),
         ip: meta?.ip ?? null,
         userAgent: meta?.userAgent ?? null,
       });
@@ -610,7 +614,9 @@ export class ChatService {
     if (removed.length > 0) {
       this.events.emit('chat.user.unblocked', {
         blockerId,
+        actorPlayerId: await this.identityReader.getPlayerIdByUserIdSafe(blockerId),
         blockedId,
+        playerId: await this.identityReader.getPlayerIdByUserIdSafe(blockedId),
         ip: meta?.ip ?? null,
         userAgent: meta?.userAgent ?? null,
       });
@@ -704,7 +710,9 @@ export class ChatService {
     if (inserted.length > 0) {
       this.events.emit('chat.user.ignored', {
         ignorerId,
+        actorPlayerId: await this.identityReader.getPlayerIdByUserIdSafe(ignorerId),
         ignoredId,
+        playerId: await this.identityReader.getPlayerIdByUserIdSafe(ignoredId),
         ip: meta?.ip ?? null,
         userAgent: meta?.userAgent ?? null,
       });
@@ -729,7 +737,9 @@ export class ChatService {
     if (removed.length > 0) {
       this.events.emit('chat.user.unignored', {
         ignorerId,
+        actorPlayerId: await this.identityReader.getPlayerIdByUserIdSafe(ignorerId),
         ignoredId,
+        playerId: await this.identityReader.getPlayerIdByUserIdSafe(ignoredId),
         ip: meta?.ip ?? null,
         userAgent: meta?.userAgent ?? null,
       });
@@ -886,6 +896,7 @@ export class ChatService {
     this.events.emit('chat.private_room.deleted', {
       roomId,
       creatorId: userId,
+      playerId: await this.identityReader.getPlayerIdByUserIdSafe(userId),
       ip: ip ?? null,
       userAgent: userAgent ?? null,
     });
@@ -925,6 +936,7 @@ export class ChatService {
     userId: User['id'];
     name: string;
   } & ClientMeta) {
+    const playerId = await this.identityReader.getPlayerIdByUserIdSafe(userId);
     for (let attempt = 1; attempt <= 3; attempt++) {
       const joinCode = generateJoinCode();
       const slug = generatePrivateRoomSlug(joinCode);
@@ -966,6 +978,7 @@ export class ChatService {
         this.events.emit('chat.private_room.created', {
           roomId: record.id,
           creatorId: userId,
+          playerId,
           ip: ip ?? null,
           userAgent: userAgent ?? null,
         });
@@ -1035,6 +1048,7 @@ export class ChatService {
       this.events.emit('chat.room.member.joined', {
         roomId: room.id,
         userId,
+        playerId: await this.identityReader.getPlayerIdByUserIdSafe(userId),
         ip: ip ?? null,
         userAgent: userAgent ?? null,
       });
@@ -1078,6 +1092,7 @@ export class ChatService {
       this.events.emit('chat.room.member.left', {
         roomId,
         userId,
+        playerId: await this.identityReader.getPlayerIdByUserIdSafe(userId),
         ip: ip ?? null,
         userAgent: userAgent ?? null,
       });
@@ -1119,6 +1134,7 @@ export class ChatService {
         roomId,
         userId,
         kickedBy: moderatorId,
+        playerId: await this.identityReader.getPlayerIdByUserIdSafe(moderatorId),
         ip: ip ?? null,
         userAgent: userAgent ?? null,
       });
@@ -1166,6 +1182,7 @@ export class ChatService {
       roomId,
       userId,
       bannedBy: moderatorId,
+      playerId: await this.identityReader.getPlayerIdByUserIdSafe(moderatorId),
       ip: ip ?? null,
       userAgent: userAgent ?? null,
     });

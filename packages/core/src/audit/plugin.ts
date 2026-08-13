@@ -13,7 +13,6 @@ function isRecord(v: unknown): v is Record<string, unknown> {
 export async function mapEventToRecord(
   topic: string,
   p: Record<string, unknown>,
-  resolvePlayerId: (userId: string | null) => Promise<string | null>,
 ): Promise<RecordInput> {
   const result = /\.(failed|rejected|declined)$/.test(topic) ? 'failure' : 'success';
 
@@ -35,7 +34,7 @@ export async function mapEventToRecord(
       actorType: p['actorId'] ? 'admin' : 'system',
       actorId: str(p['actorId']),
       resourceType: 'player',
-      resourceId: await resolvePlayerId(str(p['userId'])),
+      resourceId: str(p['playerId']),
       before: { kycStatus: p['previousStatus'] ?? null },
       after: {
         kycStatus: p['status'] ?? null,
@@ -45,14 +44,15 @@ export async function mapEventToRecord(
     };
   }
 
-  // Player submitted KYC documents. actorId = the player; resourceId = the player.
+  // Player submitted KYC documents. actorId = resourceId = the player (self-action),
+  // both resolved by the emitter as playerId.
   if (topic === 'compliance.kyc.submitted') {
     return {
       ...base,
       actorType: 'player',
-      actorId: str(p['userId']),
+      actorId: str(p['playerId']),
       resourceType: 'player',
-      resourceId: await resolvePlayerId(str(p['userId'])),
+      resourceId: str(p['playerId']),
       after: { referenceId: p['referenceId'] ?? null, provider: p['provider'] ?? null },
     };
   }
@@ -63,7 +63,7 @@ export async function mapEventToRecord(
       ...base,
       actorType: 'system',
       resourceType: 'player',
-      resourceId: await resolvePlayerId(str(p['userId'])),
+      resourceId: str(p['playerId']),
       after: { reason: p['reason'] ?? null },
     };
   }
@@ -73,7 +73,7 @@ export async function mapEventToRecord(
       ...base,
       actorType: 'system',
       resourceType: 'player',
-      resourceId: await resolvePlayerId(str(p['userId'])),
+      resourceId: str(p['playerId']),
       after: {
         referenceId: p['referenceId'] ?? null,
         vpnOrTorDetected: p['vpnOrTorDetected'] ?? null,
@@ -96,13 +96,13 @@ export async function mapEventToRecord(
     };
   }
 
-  // Player requested a withdrawal (funds held). actorId = the player; resourceId =
-  // the withdrawal transaction.
+  // Player requested a withdrawal (funds held). actorId = the player (resolved
+  // playerId); resourceId = the withdrawal transaction.
   if (topic === 'wallet.withdrawal.requested') {
     return {
       ...base,
       actorType: 'player',
-      actorId: str(p['userId']),
+      actorId: str(p['playerId']),
       resourceType: 'withdrawal',
       resourceId: str(p['transactionId']),
       after: { amount: p['amount'], currency: p['currency'] },
@@ -184,14 +184,17 @@ export async function mapEventToRecord(
     };
   }
 
+  // actorId = the resolved playerId when the caller was a player, else the raw
+  // (admin) userId.
   if (topic === 'identity.user.unauthorized_access') {
     const resource = str(p['resource']) ?? 'admin';
     const action = str(p['action']);
     const role = p['role'] ? str(p['role']) : undefined;
+    const isPlayer = role === 'player';
     return {
       ...base,
-      actorType: role === 'player' ? 'player' : 'admin',
-      actorId: str(p['userId']),
+      actorType: isPlayer ? 'player' : 'admin',
+      actorId: isPlayer ? str(p['playerId']) : str(p['userId']),
       resourceType: resource,
       resourceId: action ? `${resource}:${action}` : null,
       result: 'failure',
@@ -203,7 +206,7 @@ export async function mapEventToRecord(
     return {
       ...base,
       actorType: 'player',
-      actorId: str(p['userId']),
+      actorId: str(p['playerId']),
       resourceType: 'user',
       resourceId: str(p['userId']),
       result: 'success',
@@ -249,10 +252,12 @@ export async function mapEventToRecord(
   }
 
   // Player/Admin revoked one or all of their own sessions, or an admin forced it.
+  // actorId = the resolved playerId on the self-revoke path, else the acting admin's
+  // raw userId (never resolved - actor is an admin, not the subject player).
   if (topic === 'identity.session.revoked' || topic === 'identity.sessions.revoked_all') {
     const isSingle = topic === 'identity.session.revoked';
-    const actorId = p['actorId'] ? str(p['actorId']) : str(p['userId']);
     const isForced = !!p['actorId'];
+    const actorId = isForced ? str(p['actorId']) : str(p['playerId']);
     return {
       ...base,
       actorType: isForced ? 'admin' : 'player',
@@ -262,47 +267,49 @@ export async function mapEventToRecord(
     };
   }
 
-  // actorId = the player who (un)blocked; resource = the blocked player.
+  // actorId = the (un)blocking player's resolved playerId; resource = the
+  // blocked/unblocked player's resolved playerId.
   if (topic === 'chat.user.blocked' || topic === 'chat.user.unblocked') {
     return {
       ...base,
       actorType: 'player',
-      actorId: str(p['blockerId']),
+      actorId: str(p['actorPlayerId']),
       resourceType: 'player',
-      resourceId: await resolvePlayerId(str(p['blockedId'])),
+      resourceId: str(p['playerId']),
     };
   }
 
-  // actorId = the player who (un)ignored; resource = the ignored player.
+  // actorId = the (un)ignoring player's resolved playerId; resource = the
+  // ignored/unignored player's resolved playerId.
   if (topic === 'chat.user.ignored' || topic === 'chat.user.unignored') {
     return {
       ...base,
       actorType: 'player',
-      actorId: str(p['ignorerId']),
+      actorId: str(p['actorPlayerId']),
       resourceType: 'player',
-      resourceId: await resolvePlayerId(str(p['ignoredId'])),
+      resourceId: str(p['playerId']),
     };
   }
 
-  // actorId = the moderator who acted; resource = the affected player in that room.
+  // actorId = the moderator's resolved playerId; resource = the affected player in
+  // that room (not player-typed - resourceId stays the raw member userId).
   if (topic === 'chat.room.member.kicked' || topic === 'chat.room.member.banned') {
-    const actorKey = topic === 'chat.room.member.kicked' ? 'kickedBy' : 'bannedBy';
     return {
       ...base,
       actorType: 'player',
-      actorId: str(p[actorKey]),
+      actorId: str(p['playerId']),
       resourceType: 'chat_room_member',
       resourceId: str(p['userId']),
       after: { roomId: str(p['roomId']) },
     };
   }
 
-  // actorId = the player who created/deleted the room; resource = the room.
+  // actorId = the creating/deleting player's resolved playerId; resource = the room.
   if (topic === 'chat.private_room.created' || topic === 'chat.private_room.deleted') {
     return {
       ...base,
       actorType: 'player',
-      actorId: str(p['creatorId']),
+      actorId: str(p['playerId']),
       resourceType: 'chat_room',
       resourceId: str(p['roomId']),
     };
@@ -329,11 +336,13 @@ export async function mapEventToRecord(
     };
   }
 
+  // actorId = the joining/leaving player's resolved playerId; resource is not
+  // player-typed - resourceId stays the raw member userId.
   if (topic === 'chat.room.member.joined' || topic === 'chat.room.member.left') {
     return {
       ...base,
       actorType: 'player',
-      actorId: str(p['userId']),
+      actorId: str(p['playerId']),
       resourceType: 'chat_room_member',
       resourceId: str(p['userId']),
       after: { roomId: str(p['roomId']) },
@@ -363,7 +372,7 @@ export async function mapEventToRecord(
       actorType: 'admin',
       actorId: str(p['actorId']),
       resourceType: 'player',
-      resourceId: await resolvePlayerId(str(p['userId'])),
+      resourceId: str(p['playerId']),
       before: { level: p['previousLevel'] ?? null },
       after: { level: p['newLevel'] ?? null },
     };
@@ -457,7 +466,7 @@ export async function mapEventToRecord(
       actorType: 'admin',
       actorId: str(p['actorId']),
       resourceType: 'player',
-      resourceId: await resolvePlayerId(str(p['userId'])),
+      resourceId: str(p['playerId']),
       before,
       after: p,
     };
@@ -471,7 +480,7 @@ export async function mapEventToRecord(
       ...base,
       actorType: 'system',
       resourceType: 'player',
-      resourceId: await resolvePlayerId(str(p['userId'])),
+      resourceId: str(p['playerId']),
       result: 'failure',
     };
   }
@@ -484,26 +493,31 @@ export async function mapEventToRecord(
       ...base,
       actorType: 'system',
       resourceType: 'player',
-      resourceId: await resolvePlayerId(str(p['userId'])),
+      resourceId: str(p['playerId']),
       result: 'failure',
     };
   }
 
   // Wallet events carry the txn ref in transactionId; surface it as resourceId so
   // a transaction reference is searchable (it otherwise stays buried in `after`).
+  // actorId = the resolved playerId (the wallet owner).
   if (topic.startsWith('wallet.')) {
     return {
       ...base,
       actorType: 'player',
-      actorId: str(p['userId']),
+      actorId: str(p['playerId']),
       resourceType: 'transaction',
       resourceId: str(p['transactionId']),
       after: p,
     };
   }
 
+  // Generic player-self-action fallback (login/logout/registered/2fa/password
+  // reset/email verified/profile updated, gaming rounds, self-service RG limits,
+  // ...): actorId = the resolved playerId. `identity.user.registered` legitimately
+  // has no player row yet at emit time, so this can be null.
   if (typeof p['userId'] === 'string') {
-    return { ...base, actorId: p['userId'], actorType: 'player' };
+    return { ...base, actorId: str(p['playerId']), actorType: 'player' };
   }
 
   return base;
@@ -615,7 +629,7 @@ export default {
           return;
         }
         const svc = svcRef;
-        void mapEventToRecord(topic, payload, (userId) => svc.resolvePlayerId(userId))
+        void mapEventToRecord(topic, payload)
           .then((record) => svc.record(record))
           .catch((err) => logger.error({ err, topic }, 'audit record failed'));
       });

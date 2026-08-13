@@ -10,7 +10,7 @@ import {
 import { eq } from 'drizzle-orm';
 import { userLimit, geoRule } from '../schema/index.js';
 import type { UpsertLimitInput, AddGeoRuleInput } from '../contract/index.js';
-import { type ClientMeta, type GeoIpAdapter, type User } from '@openora/core/contracts';
+import type { ClientMeta, GeoIpAdapter, IdentityReader, User } from '@openora/core/contracts';
 
 export const LimitNotFoundError = makeNotFoundError('Limit');
 
@@ -22,7 +22,8 @@ export class ComplianceService {
   constructor(
     private readonly drizzle: DrizzleService,
     private readonly events: EventBus,
-    private readonly geoIp: GeoIpAdapter | null = null,
+    private readonly geoIp: GeoIpAdapter | null,
+    private readonly identityReader: IdentityReader,
   ) {}
 
   async getLimitsForUser(userId: User['id']) {
@@ -44,6 +45,7 @@ export class ComplianceService {
     );
     this.events.emit('compliance.limit.upserted', {
       userId,
+      playerId: await this.identityReader.getPlayerIdByUserIdSafe(userId),
       limitId: row.id,
       ip: meta?.ip ?? null,
       userAgent: meta?.userAgent ?? null,
@@ -60,6 +62,7 @@ export class ComplianceService {
     await this.drizzle.db.delete(userLimit).where(eq(userLimit.id, id));
     this.events.emit('compliance.limit.removed', {
       userId,
+      playerId: await this.identityReader.getPlayerIdByUserIdSafe(userId),
       limitId: id,
       ip: meta?.ip ?? null,
       userAgent: meta?.userAgent ?? null,

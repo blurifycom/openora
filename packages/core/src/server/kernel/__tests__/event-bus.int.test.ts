@@ -56,6 +56,7 @@ describe('createEventBus over Redis Streams', () => {
 
     bus.emit('wallet.deposit.completed', {
       userId: 'u1',
+      playerId: null,
       amount: '50',
       currency: 'USD',
       transactionId: 'tx1',
@@ -64,7 +65,7 @@ describe('createEventBus over Redis Streams', () => {
     await vi.waitFor(
       () =>
         expect(received).toEqual([
-          { userId: 'u1', amount: '50', currency: 'USD', transactionId: 'tx1' },
+          { userId: 'u1', playerId: null, amount: '50', currency: 'USD', transactionId: 'tx1' },
         ]),
       DELIVERY,
     );
@@ -83,6 +84,7 @@ describe('createEventBus over Redis Streams', () => {
 
     bus.emit('wallet.deposit.completed', {
       userId: 'u1',
+      playerId: null,
       amount: '10',
       currency: 'USD',
       transactionId: 'tx2',
@@ -112,12 +114,14 @@ describe('createEventBus over Redis Streams', () => {
 
     bus.emit('wallet.deposit.completed', {
       userId: 'u1',
+      playerId: null,
       amount: '1',
       currency: 'USD',
       transactionId: 'a',
     });
     bus.emit('wallet.deposit.completed', {
       userId: 'u1',
+      playerId: null,
       amount: '2',
       currency: 'USD',
       transactionId: 'b',
@@ -143,7 +147,7 @@ describe('createEventBus over Redis Streams', () => {
       group: serviceName,
     });
 
-    bus.emit('identity.user.registered', { userId: 'u1' });
+    bus.emit('identity.user.registered', { userId: 'u1', playerId: null });
 
     await vi.waitFor(() => expect(order).toEqual(['first', 'second']), DELIVERY);
     expect(logger.error).toHaveBeenCalledWith(
@@ -182,7 +186,7 @@ describe('createEventBus over Redis Streams', () => {
     };
     const bus = createEventBus(rejectingBroker, logger);
 
-    bus.emit('gaming.round.ended', { roundId: 'r1', userId: 'u1' });
+    bus.emit('gaming.round.ended', { roundId: 'r1', userId: 'u1', playerId: null });
     await flush();
 
     expect(logger.error).toHaveBeenCalledWith(
@@ -202,11 +206,11 @@ describe('createEventBus over Redis Streams', () => {
     };
     const bus = createEventBus(fakeBroker, fakeLogger());
 
-    bus.emit('gaming.round.ended', { roundId: 'r1', userId: 'u1' });
+    bus.emit('gaming.round.ended', { roundId: 'r1', userId: 'u1', playerId: null });
 
     expect(published).toHaveLength(1);
     expect(published[0]?.topic).toBe('gaming.round.ended');
-    expect(published[0]?.payload).toEqual({ roundId: 'r1', userId: 'u1' });
+    expect(published[0]?.payload).toEqual({ roundId: 'r1', userId: 'u1', playerId: null });
     expect(typeof published[0]?.eventId).toBe('string');
   });
 });

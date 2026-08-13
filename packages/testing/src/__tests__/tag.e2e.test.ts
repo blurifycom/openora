@@ -31,6 +31,7 @@ import {
 
 let db: TestDb;
 let app: TestApp;
+let admin: TestClient;
 
 // oxlint-disable-next-line typescript/no-explicit-any -- ad-hoc JSON shape assertions in tests
 async function readJson(res: Response): Promise<any> {
@@ -131,6 +132,9 @@ beforeAll(async () => {
   const plugins = await loadExtensions();
   app = await bootTestApp({ plugins, databaseUrl: db.url });
   await seedMinimal(app.container, { playerCount: 0 });
+  // Reuse one admin session across the file; the identity login rate limit is
+  // intentionally bounded and this suite performs many admin requests.
+  admin = await asAdmin(app.app);
 }, 60_000);
 
 afterAll(async () => {
@@ -140,7 +144,6 @@ afterAll(async () => {
 
 describe('withdrawal_review: assign on wallet.withdrawal.requested', () => {
   it('assigns the tag when a withdrawal attempt meets the threshold, not below it', async () => {
-    const admin = await asAdmin(app.app);
     await upsertRule(admin, 'withdrawal_review', {
       isEnabled: true,
       threshold: '500',
@@ -182,7 +185,6 @@ describe('withdrawal_review: assign on wallet.withdrawal.requested', () => {
   });
 
   it('is sticky - the withdrawal completing afterwards never removes it (no automated removal path exists)', async () => {
-    const admin = await asAdmin(app.app);
     const email = `wr-sticky-${randomUUID()}@e2e.test`;
     const { client, playerId } = await registerAndMaterializePlayer(app.app, email);
     await client.post('/wallet/deposit', { amount: '1000', currency: 'USD' });
@@ -210,7 +212,6 @@ describe('withdrawal_review: assign on wallet.withdrawal.requested', () => {
 
 describe('dormant_high_roller: co-occurrence sweep + login removal', () => {
   it('assigns only to inactive players who also hold high_roller, then removes on login without touching high_roller', async () => {
-    const admin = await asAdmin(app.app);
     await upsertRule(admin, 'dormant_high_roller', {
       isEnabled: true,
       threshold: null,
@@ -259,7 +260,6 @@ describe('dormant_high_roller: co-occurrence sweep + login removal', () => {
   });
 
   it('rule disabled: sweep takes no action for the tag', async () => {
-    const admin = await asAdmin(app.app);
     await upsertRule(admin, 'dormant_high_roller', {
       isEnabled: false,
       threshold: null,
@@ -288,7 +288,6 @@ describe('dormant_high_roller: co-occurrence sweep + login removal', () => {
 
 describe('high_risk: existing assign path unaffected, frequency-only resweep', () => {
   it('amount-only rule (no thresholdDays/thresholdCount): the daily sweep never resweeps/removes it', async () => {
-    const admin = await asAdmin(app.app);
     await upsertRule(admin, 'high_risk', {
       isEnabled: true,
       threshold: '999999',
@@ -306,7 +305,6 @@ describe('high_risk: existing assign path unaffected, frequency-only resweep', (
   });
 
   it('assigns via withdrawal count breach (existing path), then the resweep removes it once the window ages the withdrawals out', async () => {
-    const admin = await asAdmin(app.app);
     await upsertRule(admin, 'high_risk', {
       isEnabled: true,
       threshold: '999999',
@@ -355,7 +353,6 @@ describe('high_risk: existing assign path unaffected, frequency-only resweep', (
 
 describe('idempotency: at-least-once event delivery does not throw', () => {
   it('re-emitting wallet.withdrawal.requested for an already-tagged player does not throw (literal AC wording)', async () => {
-    const admin = await asAdmin(app.app);
     await upsertRule(admin, 'withdrawal_review', {
       isEnabled: true,
       threshold: '500',
@@ -367,7 +364,13 @@ describe('idempotency: at-least-once event delivery does not throw', () => {
     const { userId, playerId } = await registerAndMaterializePlayer(app.app, email);
 
     const eventBus = app.container.get(EVENT_BUS);
-    const payload = { userId, amount: '600', currency: 'USD', transactionId: randomUUID() };
+    const payload = {
+      userId,
+      playerId: null,
+      amount: '600',
+      currency: 'USD',
+      transactionId: randomUUID(),
+    };
     eventBus.emit('wallet.withdrawal.requested', payload);
     eventBus.emit('wallet.withdrawal.requested', payload);
 
@@ -386,7 +389,6 @@ describe('idempotency: at-least-once event delivery does not throw', () => {
   });
 
   it('exactly one of 5 concurrent assignPlayerTag calls succeeds; the rest are rejected as a conflict (race repro, fixed by the player_tag_active_key unique index)', async () => {
-    const admin = await asAdmin(app.app);
     const email = `race-assign-${randomUUID()}@e2e.test`;
     const { playerId } = await registerAndMaterializePlayer(app.app, email);
 
@@ -424,8 +426,8 @@ describe('idempotency: at-least-once event delivery does not throw', () => {
     const { userId } = await registerAndMaterializePlayer(app.app, email);
 
     const eventBus = app.container.get(EVENT_BUS);
-    eventBus.emit('identity.user.login', { userId });
-    eventBus.emit('identity.user.login', { userId });
+    eventBus.emit('identity.user.login', { userId, playerId: null });
+    eventBus.emit('identity.user.login', { userId, playerId: null });
 
     // No assertion beyond "did not crash the process" - tryRemoveTag swallows
     // TagAssignmentNotFoundError; give the async handlers a beat to run.
@@ -507,7 +509,6 @@ describe('authz: the 6 previously-unguarded tag routes', () => {
 
     // Positive control: a legitimate admin session succeeds on listPlayerTags and
     // listAssignableTags for the same player - proves the guard isn't too broad.
-    const admin = await asAdmin(app.app);
     const adminListRes = await admin.get(`/player/${playerId}/player-tag?page=1&limit=20`);
     expect(adminListRes.status).toBe(200);
     const adminAssignableRes = await admin.get(`/player/${playerId}/assignable-tags`);
@@ -516,7 +517,6 @@ describe('authz: the 6 previously-unguarded tag routes', () => {
 
   it('players never see their own tags: a non-admin player cannot read tags even on their own profile', async () => {
     const email = `authz-selfread-${randomUUID()}@e2e.test`;
-    const admin = await asAdmin(app.app);
     const { client, playerId } = await registerAndMaterializePlayer(app.app, email);
     await assignTagManually(admin, playerId, 'vip');
 

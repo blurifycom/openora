@@ -28,6 +28,7 @@ import {
   type TagEvaluationCommands,
   type TagKey,
   type User,
+  type IdentityReader,
   type ClientMeta,
   type PaginationOptions,
 } from '@openora/core/contracts';
@@ -197,6 +198,7 @@ export type WalletServiceDeps = {
   drizzle: DrizzleService;
   events: EventBus;
   payment: PaymentAdapter;
+  identityReader: IdentityReader;
   directory?: AdminUserDirectory;
   platformConfig?: PlatformConfig;
   limiter?: RateLimiterAdapter<RateLimitKey>;
@@ -223,6 +225,7 @@ export class WalletService {
   private readonly drizzle: DrizzleService;
   private readonly events: EventBus;
   private readonly payment: PaymentAdapter;
+  private readonly identityReader: IdentityReader;
   private readonly directory?: AdminUserDirectory;
   private readonly platformConfig?: PlatformConfig;
   private readonly limiter?: RateLimiterAdapter<RateLimitKey>;
@@ -235,6 +238,7 @@ export class WalletService {
     events,
     payment,
     directory,
+    identityReader,
     platformConfig,
     limiter,
     riskTags,
@@ -245,6 +249,7 @@ export class WalletService {
     this.events = events;
     this.payment = payment;
     this.directory = directory;
+    this.identityReader = identityReader;
     this.platformConfig = platformConfig;
     this.limiter = limiter;
     this.riskTags = riskTags;
@@ -384,6 +389,7 @@ export class WalletService {
     if (!replayed) {
       this.events.emit('wallet.deposit.completed', {
         userId,
+        playerId: await this.identityReader.getPlayerIdByUserIdSafe(userId),
         amount,
         currency,
         transactionId,
@@ -606,6 +612,7 @@ export class WalletService {
 
     this.events.emit('wallet.withdrawal.requested', {
       userId,
+      playerId: await this.identityReader.getPlayerIdByUserIdSafe(userId),
       amount,
       currency,
       transactionId,
@@ -844,6 +851,7 @@ export class WalletService {
       .where(eq(walletTransaction.id, tx.id));
     this.events.emit('wallet.withdrawal.completed', {
       userId,
+      playerId: await this.identityReader.getPlayerIdByUserIdSafe(userId),
       amount,
       currency: tx.currency,
       transactionId: tx.id,
@@ -918,6 +926,7 @@ export class WalletService {
       }
       this.events.emit('wallet.withdrawal.completed', {
         userId,
+        playerId: await this.identityReader.getPlayerIdByUserIdSafe(userId),
         amount: tx.amount,
         currency: tx.currency,
         transactionId: tx.id,
@@ -1542,6 +1551,7 @@ export class WalletService {
     if (!replayed) {
       this.events.emit('wallet.deposit.completed', {
         userId: depositAddress.userId,
+        playerId: await this.identityReader.getPlayerIdByUserIdSafe(depositAddress.userId),
         amount: event.amount,
         currency: event.currency,
         transactionId,

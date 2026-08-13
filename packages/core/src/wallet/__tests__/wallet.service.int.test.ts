@@ -8,7 +8,14 @@ import type {
   TagEvaluationCommands,
 } from '@openora/core/contracts';
 import { createTestDb, type TestDb } from '@openora/core/testing';
-import { mock, makeEventBus, NO_CLIENT_META, makeAuditWriter } from '../../testing/mock.js';
+import { migrate as migrateProfile } from '@openora/core/pam/migrate/profile';
+import {
+  mock,
+  makeEventBus,
+  makeIdentityReader,
+  NO_CLIENT_META,
+  makeAuditWriter,
+} from '../../testing/mock.js';
 import { migrate } from '../migrate.js';
 import { wallet, walletTransaction, walletDepositAddress } from '../schema/index.js';
 import {
@@ -45,6 +52,7 @@ function makeService(overrides: Partial<WalletServiceDeps> = {}) {
     events: events,
     payment: mock<PaymentAdapter>(psp),
     audit,
+    identityReader: makeIdentityReader(),
     ...overrides,
   });
   return { svc, events, psp, audit };
@@ -109,7 +117,7 @@ const emittedTopics = (events: ReturnType<typeof makeEventBus>) =>
   events.emit.mock.calls.map(([topic]) => topic);
 
 beforeAll(async () => {
-  db = await createTestDb([migrate]);
+  db = await createTestDb([migrate, migrateProfile]);
 });
 
 afterAll(async () => {

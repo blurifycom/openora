@@ -423,33 +423,14 @@ describe('AuditService.exportCsv() (real PG)', () => {
   });
 });
 
-describe('AuditService.resolvePlayerId() (real PG)', () => {
-  it('returns the true player.id for a userId with a matching player row', async () => {
-    const row = await seedPlayer();
-
-    const resolved = await makeService().resolvePlayerId(row.userId);
-
-    expect(resolved).toBe(row.id);
-    expect(resolved).not.toBe(row.userId);
-  });
-
-  it('returns null when no player row exists for that userId', async () => {
-    expect(await makeService().resolvePlayerId(randomUUID())).toBeNull();
-  });
-
-  it('returns null when passed null', async () => {
-    expect(await makeService().resolvePlayerId(null)).toBeNull();
-  });
-});
-
 describe('mapEventToRecord() player.id resolution (BF-335)', () => {
-  // Exercises the exact composition the plugin's event handler uses: topic + raw
-  // payload -> mapEventToRecord(..., svc.resolvePlayerId) -> record(). Uses the
-  // real AuditService.resolvePlayerId against Postgres rather than a stub, so the
-  // DB lookup itself is covered, not just the branch wiring.
+  // The emitter (never mapEventToRecord/AuditService) resolves playerId before the
+  // event is published - these tests exercise the mapper as a pure function that
+  // just reads p['playerId']/p['actorPlayerId'] straight off an already-resolved
+  // payload, exactly as the real event bus delivers it.
   async function mapAndRecord(topic: string, payload: Record<string, unknown>) {
     const svc = makeService();
-    const record = await mapEventToRecord(topic, payload, (userId) => svc.resolvePlayerId(userId));
+    const record = await mapEventToRecord(topic, payload);
     return svc.record(record);
   }
 
@@ -458,6 +439,7 @@ describe('mapEventToRecord() player.id resolution (BF-335)', () => {
 
     const row = await mapAndRecord('compliance.kyc.updated', {
       userId: p.userId,
+      playerId: p.id,
       actorId: null,
       previousStatus: 'pending',
       status: 'verified',
@@ -468,9 +450,10 @@ describe('mapEventToRecord() player.id resolution (BF-335)', () => {
     expect(row.resourceType).toBe('player');
   });
 
-  it('compliance.kyc.updated: resourceId is null when the subject has no player row', async () => {
+  it('compliance.kyc.updated: resourceId is null when the payload carries no playerId', async () => {
     const row = await mapAndRecord('compliance.kyc.updated', {
       userId: randomUUID(),
+      playerId: null,
       actorId: null,
       previousStatus: 'pending',
       status: 'verified',
@@ -479,72 +462,80 @@ describe('mapEventToRecord() player.id resolution (BF-335)', () => {
     expect(row.resourceId).toBeNull();
   });
 
-  it('compliance.kyc.submitted: resourceId resolves to player.id while actorId keeps the raw userId', async () => {
+  it('compliance.kyc.submitted: actorId and resourceId both come from the resolved playerId (self-action)', async () => {
     const p = await seedPlayer();
 
     const row = await mapAndRecord('compliance.kyc.submitted', {
       userId: p.userId,
+      playerId: p.id,
       referenceId: 'ref-1',
       provider: 'sumsub',
     });
 
     expect(row.resourceId).toBe(p.id);
-    expect(row.actorId).toBe(p.userId);
+    expect(row.actorId).toBe(p.id);
   });
 
-  it('compliance.kyc.reverify_required: resourceId resolves to player.id', async () => {
+  it('compliance.kyc.reverify_required: resourceId comes from the payload playerId', async () => {
     const p = await seedPlayer();
 
     const row = await mapAndRecord('compliance.kyc.reverify_required', {
       userId: p.userId,
+      playerId: p.id,
       reason: 'address change',
     });
 
     expect(row.resourceId).toBe(p.id);
   });
 
-  it('compliance.kyc.high_risk_signal_detected: resourceId resolves to player.id', async () => {
+  it('compliance.kyc.high_risk_signal_detected: resourceId comes from the payload playerId', async () => {
     const p = await seedPlayer();
 
     const row = await mapAndRecord('compliance.kyc.high_risk_signal_detected', {
       userId: p.userId,
+      playerId: p.id,
       referenceId: 'ref-2',
     });
 
     expect(row.resourceId).toBe(p.id);
   });
 
-  it('chat.user.blocked: resourceId resolves blockedId to player.id, not blockerId', async () => {
+  it('chat.user.blocked: resourceId is the blocked player, actorId is the blocking player', async () => {
     const blocker = await seedPlayer();
     const blocked = await seedPlayer();
 
     const row = await mapAndRecord('chat.user.blocked', {
       blockerId: blocker.userId,
+      actorPlayerId: blocker.id,
       blockedId: blocked.userId,
+      playerId: blocked.id,
     });
 
     expect(row.resourceId).toBe(blocked.id);
-    expect(row.actorId).toBe(blocker.userId);
+    expect(row.actorId).toBe(blocker.id);
   });
 
-  it('chat.user.ignored: resourceId resolves ignoredId to player.id, not ignorerId', async () => {
+  it('chat.user.ignored: resourceId is the ignored player, actorId is the ignoring player', async () => {
     const ignorer = await seedPlayer();
     const ignored = await seedPlayer();
 
     const row = await mapAndRecord('chat.user.ignored', {
       ignorerId: ignorer.userId,
+      actorPlayerId: ignorer.id,
       ignoredId: ignored.userId,
+      playerId: ignored.id,
     });
 
     expect(row.resourceId).toBe(ignored.id);
-    expect(row.actorId).toBe(ignorer.userId);
+    expect(row.actorId).toBe(ignorer.id);
   });
 
-  it('player.level.changed: resourceId resolves to player.id', async () => {
+  it('player.level.changed: resourceId comes from the payload playerId', async () => {
     const p = await seedPlayer();
 
     const row = await mapAndRecord('player.level.changed', {
       userId: p.userId,
+      playerId: p.id,
       actorId: randomUUID(),
       previousLevel: 1,
       newLevel: 2,
@@ -553,27 +544,34 @@ describe('mapEventToRecord() player.id resolution (BF-335)', () => {
     expect(row.resourceId).toBe(p.id);
   });
 
-  it('rg.limit.set / rg.self_exclusion.activated / rg.cooling_off.lifted: shared branch resolves resourceId to player.id', async () => {
+  it('rg.limit.set / rg.self_exclusion.activated / rg.cooling_off.lifted: shared branch resolves resourceId from the payload playerId', async () => {
     const p = await seedPlayer();
 
     for (const topic of ['rg.limit.set', 'rg.self_exclusion.activated', 'rg.cooling_off.lifted']) {
-      const row = await mapAndRecord(topic, { userId: p.userId, actorId: randomUUID() });
+      const row = await mapAndRecord(topic, {
+        userId: p.userId,
+        playerId: p.id,
+        actorId: randomUUID(),
+      });
       expect(row.resourceId).toBe(p.id);
     }
   });
 
-  it('rg.exclusion.login_blocked: resourceId resolves to player.id', async () => {
+  it('rg.exclusion.login_blocked: resourceId comes from the payload playerId', async () => {
     const p = await seedPlayer();
 
-    const row = await mapAndRecord('rg.exclusion.login_blocked', { userId: p.userId });
+    const row = await mapAndRecord('rg.exclusion.login_blocked', {
+      userId: p.userId,
+      playerId: p.id,
+    });
 
     expect(row.resourceId).toBe(p.id);
   });
 
-  it('player.login_blocked: resourceId resolves to player.id', async () => {
+  it('player.login_blocked: resourceId comes from the payload playerId', async () => {
     const p = await seedPlayer();
 
-    const row = await mapAndRecord('player.login_blocked', { userId: p.userId });
+    const row = await mapAndRecord('player.login_blocked', { userId: p.userId, playerId: p.id });
 
     expect(row.resourceId).toBe(p.id);
   });
@@ -591,17 +589,18 @@ describe('mapEventToRecord() player.id resolution (BF-335)', () => {
     expect(row.resourceId).toBe(p.id);
   });
 
-  it('wallet.withdrawal.requested is unaffected - actorId still comes straight from userId, no resolution', async () => {
+  it('wallet.withdrawal.requested: actorId comes from the resolved playerId, not the raw userId', async () => {
     const p = await seedPlayer();
 
     const row = await mapAndRecord('wallet.withdrawal.requested', {
       userId: p.userId,
+      playerId: p.id,
       transactionId: 'txn-1',
       amount: '10.00',
       currency: 'USD',
     });
 
-    expect(row.actorId).toBe(p.userId);
-    expect(row.actorId).not.toBe(p.id);
+    expect(row.actorId).toBe(p.id);
+    expect(row.actorId).not.toBe(p.userId);
   });
 });
