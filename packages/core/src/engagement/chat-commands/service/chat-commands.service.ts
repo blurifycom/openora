@@ -180,13 +180,31 @@ export class ChatCommandsService {
     return toDescriptor(row);
   }
 
-  async searchMentions(q: string, limit: number, viewerId: Uuid) {
-    const ids = await this.directory.findPlayerIds(q, limit);
+  async searchMentions({
+    q,
+    limit,
+    roomId,
+    viewerId,
+  }: {
+    q: string;
+    limit: number;
+    roomId: Uuid | null;
+    viewerId: Uuid;
+  }) {
+    const onlineUserIds = await this.transport.getOnlineUserIds(chatChannel(roomId));
+    if (onlineUserIds.length === 0) {
+      return [];
+    }
+
+    const onlineIds = new Set(onlineUserIds);
+    const ids = await this.directory.findPlayerIds(q, Math.max(limit, onlineUserIds.length));
     if (ids.length === 0) {
       return [];
     }
     const excluded = new Set(await this.blockWriter.getExcludedUserIds(viewerId));
-    const filteredIds = ids.filter((id) => !excluded.has(id));
+    const filteredIds = ids
+      .filter((id) => id !== viewerId && onlineIds.has(id) && !excluded.has(id))
+      .slice(0, limit);
     if (filteredIds.length === 0) {
       return [];
     }
