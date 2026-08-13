@@ -445,7 +445,48 @@ export class TagService implements PlayerTags {
     try {
       const db = this.drizzle.db;
       const { removalReason, ...assignArgs } = args;
+      const [activeAtStart] = await db
+        .select({ id: playerTag.id })
+        .from(playerTag)
+        .innerJoin(tag, eq(tag.id, playerTag.tagId))
+        .where(
+          and(
+            eq(playerTag.playerId, args.playerId),
+            eq(tag.key, args.tagKey),
+            isNull(playerTag.removedAt),
+          ),
+        )
+        .limit(1);
       const result = await db.transaction(async (trx) => {
+        // Serialize replacements for the same player before inspecting/removing the
+        // current assignment. The partial unique index protects the insert, but without
+        // this lock a second transaction can wait for the first to commit, observe its
+        // newly-created active row, remove it, and complete a second successful swap.
+        await trx
+          .select({ id: player.id })
+          .from(player)
+          .where(eq(player.id, args.playerId))
+          .for('update');
+
+        const [activeAfterWait] = await trx
+          .select({ id: playerTag.id })
+          .from(playerTag)
+          .innerJoin(tag, eq(tag.id, playerTag.tagId))
+          .where(
+            and(
+              eq(playerTag.playerId, args.playerId),
+              eq(tag.key, args.tagKey),
+              isNull(playerTag.removedAt),
+            ),
+          )
+          .limit(1);
+        if (
+          activeAfterWait &&
+          (activeAtStart === undefined || activeAfterWait.id !== activeAtStart.id)
+        ) {
+          throw new TagAlreadyInUseError();
+        }
+
         let removed = false;
         try {
           // App-level throw from findOneOrThrow, not a failed SQL statement, so
