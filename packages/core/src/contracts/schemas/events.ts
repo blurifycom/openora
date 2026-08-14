@@ -477,6 +477,26 @@ export const domainEventSchemas = {
     playerId: UuidSchema.nullable(),
     status: PlayerStatusSchema,
   }),
+
+  // A player sent a friend request to another player (social/friends surface, BF-425).
+  'social.friend_request.sent': authContextBase.extend({
+    friendshipId: UuidSchema,
+    requesterId: UuidSchema,
+    addresseeId: UuidSchema,
+    requesterDisplayName: z.string(),
+  }),
+  // A pending friend request became a friendship. requesterId/addresseeId are the
+  // ORIGINAL sender/recipient of the pending request (unchanged); accepterId is
+  // whoever's action flipped it to accepted - always addresseeId for a normal
+  // accept, but can equal requesterId for the mutual/simultaneous-request
+  // auto-accept case (see social.service.ts sendFriendRequest).
+  'social.friend_request.accepted': authContextBase.extend({
+    friendshipId: UuidSchema,
+    requesterId: UuidSchema,
+    addresseeId: UuidSchema,
+    accepterId: UuidSchema,
+    accepterDisplayName: z.string(),
+  }),
 } as const;
 
 export type DomainEventName = keyof typeof domainEventSchemas;

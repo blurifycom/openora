@@ -1,0 +1,1 @@
+ALTER TABLE "friendship" ADD CONSTRAINT "friendship_one_decision_key" CHECK (NOT ("friendship"."accepted_at" IS NOT NULL AND "friendship"."refused_at" IS NOT NULL));

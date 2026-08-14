@@ -18,6 +18,7 @@ import { migrate as migrateGaming } from '@openora/core/casino/migrate/gaming';
 import { migrate as migrateLobby } from '@openora/core/casino/migrate/lobby';
 import { migrate as migrateChat } from '@openora/core/engagement/migrate/chat';
 import { migrate as migrateNotifications } from '@openora/core/engagement/migrate/notifications';
+import { migrate as migrateSocial } from '@openora/core/engagement/migrate/social';
 
 const DEFAULT_TEST_URL = 'postgres://postgres:postgres@localhost:5432/oss_igaming_test';
 
@@ -36,6 +37,7 @@ async function applyAllMigrations(url: string): Promise<void> {
   await migrateLobby(url);
   await migrateChat(url);
   await migrateNotifications(url);
+  await migrateSocial(url);
 }
 
 export async function applyMigrations(url: string): Promise<void> {

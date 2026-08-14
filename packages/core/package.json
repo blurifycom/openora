@@ -593,6 +593,26 @@
       "types": "./dist/engagement/social-transfers/migrate.d.ts",
       "import": "./dist/engagement/social-transfers/migrate.js",
       "default": "./dist/engagement/social-transfers/migrate.js"
+    },
+    "./engagement/contracts/social": {
+      "types": "./dist/engagement/social/contract/index.d.ts",
+      "import": "./dist/engagement/social/contract/index.js",
+      "default": "./dist/engagement/social/contract/index.js"
+    },
+    "./engagement/schema/social": {
+      "types": "./dist/engagement/social/schema/index.d.ts",
+      "import": "./dist/engagement/social/schema/index.js",
+      "default": "./dist/engagement/social/schema/index.js"
+    },
+    "./engagement/plugins/social": {
+      "types": "./dist/engagement/social/plugin.d.ts",
+      "import": "./dist/engagement/social/plugin.js",
+      "default": "./dist/engagement/social/plugin.js"
+    },
+    "./engagement/migrate/social": {
+      "types": "./dist/engagement/social/migrate.d.ts",
+      "import": "./dist/engagement/social/migrate.js",
+      "default": "./dist/engagement/social/migrate.js"
     }
   },
   "publishConfig": {

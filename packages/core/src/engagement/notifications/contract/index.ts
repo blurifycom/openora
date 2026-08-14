@@ -6,6 +6,8 @@ export const NOTIFICATION_TYPES = [
   'withdrawal.approved',
   'withdrawal.rejected',
   'kyc.resubmission_requested',
+  'social.friend_request.received',
+  'social.friend_request.accepted',
 ] as const;
 export const NotificationTypeSchema = z.enum(NOTIFICATION_TYPES);
 export type NotificationType = z.infer<typeof NotificationTypeSchema>;
