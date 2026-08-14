@@ -8,8 +8,9 @@ import {
   serializeRow,
 } from '@openora/core/server';
 import { type Uuid } from '@openora/core/contracts';
+import { chatUserBlock } from '@openora/core/engagement/schema/chat';
 import { player } from '@openora/core/pam/schema/profile';
-import { friendship, socialUserBlock } from '../schema/index.js';
+import { friendship } from '../schema/index.js';
 import { type Friendship, type Relationship } from '../contract/index.js';
 
 type FriendshipRow = typeof friendship.$inferSelect;
@@ -20,13 +21,22 @@ export const SelfFriendRequestError = createDomainError(
   () => 'You cannot send a friend request to yourself',
 );
 
-// Covers BOTH "target player doesn't exist" and "target is suspended/closed" and
-// "target has blocked the caller" - the SAME error/class in every case so a caller
-// can never distinguish a moderated/blocking account from one that never existed.
+// A genuinely nonexistent target only - never thrown for a target that exists but
+// can't be requested (moderated or blocking), so an API consumer can trust that a
+// NOT_FOUND means "no such player" and not have to guess.
 export const FriendRequestTargetNotFoundError = makeNotFoundError('FriendRequestTarget');
 
-// The caller has blocked the target themselves - disclosed (unlike the target
-// blocking the caller) because it is the caller's own state, not the target's.
+// The target exists but can't receive requests right now - covers BOTH "suspended
+// or closed" and "target has blocked the caller" behind the SAME code/message so
+// callers still cannot distinguish a blocking account from a moderated one (the
+// block itself stays undisclosed); this only stops lying that the account is
+// missing entirely.
+export const FriendRequestUnavailableError = makeConflictError(
+  'FRIEND_REQUEST_UNAVAILABLE',
+  'This player cannot receive friend requests right now',
+);
+
+// The caller's own chat block is disclosed because it is the caller's state.
 export const BlockedBySelfError = makeConflictError(
   'BLOCKED_BY_SELF',
   'You have blocked this player - unblock them first',
@@ -38,6 +48,10 @@ export const AlreadyFriendsError = makeConflictError(
 export const RequestAlreadyPendingError = makeConflictError(
   'REQUEST_ALREADY_PENDING',
   'A friend request to this player is already pending',
+);
+export const FriendRequestRefusedError = makeConflictError(
+  'FRIEND_REQUEST_REFUSED',
+  'This friend request was refused',
 );
 
 // Postgres unique-violation. friendship has exactly one unique index
@@ -64,7 +78,9 @@ function isUniqueConstraintViolation(e: unknown): boolean {
 }
 
 function toFriendshipDto(row: FriendshipRow) {
-  return serializeRow(row, { dateFields: ['createdAt'] });
+  return serializeRow(row, {
+    dateFields: ['createdAt', 'acceptedAt', 'refusedAt'],
+  });
 }
 
 // Finds the single row for a pair regardless of who is requester/addressee - the
@@ -104,8 +120,11 @@ export class SocialService {
     const targetPlayer = players.find((p) => p.userId === targetUserId);
     const callerPlayer = players.find((p) => p.userId === callerId);
 
-    if (!targetPlayer || targetPlayer.status === 'suspended' || targetPlayer.status === 'closed') {
+    if (!targetPlayer) {
       throw new FriendRequestTargetNotFoundError(targetUserId);
+    }
+    if (targetPlayer.status === 'suspended' || targetPlayer.status === 'closed') {
+      throw new FriendRequestUnavailableError();
     }
     if (!callerPlayer) {
       // Invariant: an authenticated caller always has a player row. Not a domain
@@ -115,12 +134,12 @@ export class SocialService {
 
     // Both directions checked in one query: at most the two rows for this pair exist.
     const blocks = await this.drizzle.db
-      .select({ blockerId: socialUserBlock.blockerId, blockedId: socialUserBlock.blockedId })
-      .from(socialUserBlock)
-      .where(and(isNull(socialUserBlock.removedAt), pairBlockCondition(callerId, targetUserId)));
+      .select({ blockerId: chatUserBlock.blockerId, blockedId: chatUserBlock.blockedId })
+      .from(chatUserBlock)
+      .where(and(isNull(chatUserBlock.removedAt), pairBlockCondition(callerId, targetUserId)));
     if (blocks.some((b) => b.blockerId === targetUserId && b.blockedId === callerId)) {
-      // Target has blocked the caller - never disclosed, same error as "doesn't exist".
-      throw new FriendRequestTargetNotFoundError(targetUserId);
+      // Target has blocked the caller - never disclosed, same error as "suspended".
+      throw new FriendRequestUnavailableError();
     }
     if (blocks.some((b) => b.blockerId === callerId && b.blockedId === targetUserId)) {
       throw new BlockedBySelfError();
@@ -130,7 +149,7 @@ export class SocialService {
     try {
       const rows = await this.drizzle.db
         .insert(friendship)
-        .values({ requesterId: callerId, addresseeId: targetUserId, status: 'pending' })
+        .values({ requesterId: callerId, addresseeId: targetUserId })
         .returning();
       inserted = rows[0];
     } catch (error) {
@@ -180,7 +199,10 @@ export class SocialService {
         // safe to surface as "no longer pending", the caller can retry.
         throw new RequestAlreadyPendingError();
       }
-      if (existing.status === 'accepted') {
+      if (existing.refusedAt !== null) {
+        throw new FriendRequestRefusedError();
+      }
+      if (existing.acceptedAt !== null) {
         throw new AlreadyFriendsError();
       }
       if (existing.requesterId === callerId) {
@@ -191,7 +213,7 @@ export class SocialService {
       // pending row was already addressed TO the caller.
       const updatedRows = await tx
         .update(friendship)
-        .set({ status: 'accepted', respondedAt: new Date() })
+        .set({ acceptedAt: new Date(), refusedAt: null })
         .where(eq(friendship.id, existing.id))
         .returning();
       const updated = updatedRows[0];
@@ -238,19 +260,19 @@ export class SocialService {
     }
 
     const blocks = await this.drizzle.db
-      .select({ blockerId: socialUserBlock.blockerId, blockedId: socialUserBlock.blockedId })
-      .from(socialUserBlock)
+      .select({ blockerId: chatUserBlock.blockerId, blockedId: chatUserBlock.blockedId })
+      .from(chatUserBlock)
       .where(
         and(
-          isNull(socialUserBlock.removedAt),
+          isNull(chatUserBlock.removedAt),
           or(
             and(
-              eq(socialUserBlock.blockerId, callerId),
-              inArray(socialUserBlock.blockedId, uniqueTargetIds),
+              eq(chatUserBlock.blockerId, callerId),
+              inArray(chatUserBlock.blockedId, uniqueTargetIds),
             ),
             and(
-              inArray(socialUserBlock.blockerId, uniqueTargetIds),
-              eq(socialUserBlock.blockedId, callerId),
+              inArray(chatUserBlock.blockerId, uniqueTargetIds),
+              eq(chatUserBlock.blockedId, callerId),
             ),
           ),
         ),
@@ -277,10 +299,17 @@ export class SocialService {
       }
 
       const existing = friendshipByTargetId.get(userId);
-      if (existing?.status === 'accepted') {
+      if (existing?.refusedAt !== null && existing?.refusedAt !== undefined) {
+        return { userId, status: 'refused', friendshipId: existing.id, canSendRequest: false };
+      }
+      if (existing?.acceptedAt !== null && existing?.acceptedAt !== undefined) {
         return { userId, status: 'friends', friendshipId: existing.id, canSendRequest: false };
       }
-      if (existing?.status === 'pending' && existing.requesterId === callerId) {
+      if (
+        existing?.acceptedAt === null &&
+        existing?.refusedAt === null &&
+        existing?.requesterId === callerId
+      ) {
         return {
           userId,
           status: 'pending_outgoing',
@@ -288,7 +317,11 @@ export class SocialService {
           canSendRequest: false,
         };
       }
-      if (existing?.status === 'pending' && existing.requesterId === userId) {
+      if (
+        existing?.acceptedAt === null &&
+        existing?.refusedAt === null &&
+        existing?.requesterId === userId
+      ) {
         return {
           userId,
           status: 'pending_incoming',
@@ -303,7 +336,7 @@ export class SocialService {
 
 function pairBlockCondition(callerId: Uuid, targetUserId: Uuid) {
   return or(
-    and(eq(socialUserBlock.blockerId, targetUserId), eq(socialUserBlock.blockedId, callerId)),
-    and(eq(socialUserBlock.blockerId, callerId), eq(socialUserBlock.blockedId, targetUserId)),
+    and(eq(chatUserBlock.blockerId, targetUserId), eq(chatUserBlock.blockedId, callerId)),
+    and(eq(chatUserBlock.blockerId, callerId), eq(chatUserBlock.blockedId, targetUserId)),
   );
 }

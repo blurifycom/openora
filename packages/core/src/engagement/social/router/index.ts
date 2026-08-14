@@ -5,8 +5,10 @@ import {
   SocialService,
   SelfFriendRequestError,
   FriendRequestTargetNotFoundError,
+  FriendRequestUnavailableError,
   AlreadyFriendsError,
   RequestAlreadyPendingError,
+  FriendRequestRefusedError,
   BlockedBySelfError,
 } from '../service/social.service.js';
 
@@ -23,7 +25,13 @@ export function createSocialRouter(social: SocialService) {
         {
           BAD_REQUEST: [SelfFriendRequestError],
           NOT_FOUND: [FriendRequestTargetNotFoundError],
-          CONFLICT: [AlreadyFriendsError, RequestAlreadyPendingError, BlockedBySelfError],
+          CONFLICT: [
+            AlreadyFriendsError,
+            RequestAlreadyPendingError,
+            FriendRequestRefusedError,
+            FriendRequestUnavailableError,
+            BlockedBySelfError,
+          ],
         },
         () => social.sendFriendRequest(callerId, input.targetUserId),
       );

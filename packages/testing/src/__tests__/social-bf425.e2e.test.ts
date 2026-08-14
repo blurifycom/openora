@@ -8,7 +8,8 @@ import {
   type CoreTokenCatalog,
 } from '@openora/core/server';
 import { player } from '@openora/core/pam/schema/profile';
-import { friendship, socialUserBlock } from '@openora/core/engagement/schema/social';
+import { friendship } from '@openora/core/engagement/schema/social';
+import { chatUserBlock } from '@openora/core/engagement/schema/chat';
 import {
   setupTestDb,
   bootTestApp,
@@ -35,8 +36,8 @@ import {
  * self-block-disclosed), notification+audit side effects, and a concurrent
  * double-submit race.
  *
- * social_user_block has no write route yet (schema-only this PR, per the
- * schema file's own comment) - block rows are seeded directly via Drizzle.
+ * chat_user_block has no write route in this walkthrough - block rows are
+ * seeded directly via Drizzle.
  * Likewise there is no explicit "accept" route: the only way to reach an
  * `accepted` friendship is the mutual/simultaneous-request auto-accept path,
  * so that describe block doubles as the fixture for the "already friends"
@@ -85,7 +86,7 @@ async function insertBlock(
   blockerId: string,
   blockedId: string,
 ) {
-  await container.get(DRIZZLE).db.insert(socialUserBlock).values({ blockerId, blockedId });
+  await container.get(DRIZZLE).db.insert(chatUserBlock).values({ blockerId, blockedId });
 }
 
 async function friendshipRowCount(
@@ -143,7 +144,8 @@ describe('BF-425 AC: relationship button-state + pending-on-send', () => {
     expect(sent).toMatchObject({
       requesterId: a.userId,
       addresseeId: b.userId,
-      status: 'pending',
+      acceptedAt: null,
+      refusedAt: null,
     });
 
     // AC: "changes the option to Pending on the sender's side immediately" - no
@@ -246,7 +248,8 @@ describe('BF-425 AC: duplicate request while pending is rejected, not silently a
     const first = await readJson(
       await a.client.post('/social/friend-requests', { targetUserId: b.userId }),
     );
-    expect(first.status).toBe('pending');
+    expect(first.acceptedAt).toBeNull();
+    expect(first.refusedAt).toBeNull();
 
     const secondRes = await a.client.post('/social/friend-requests', { targetUserId: b.userId });
     expect(secondRes.status).toBe(409);
@@ -262,7 +265,7 @@ describe('BF-425 AC: duplicate request while pending is rejected, not silently a
 });
 
 describe('BF-425 AC: "Add Friend" not offered when the recipient has blocked the sender (undisclosed)', () => {
-  it('sendFriendRequest maps to NOT_FOUND (identical shape to a nonexistent target) and getRelationships returns unavailable', async () => {
+  it('sendFriendRequest maps to CONFLICT (identical shape to a suspended target, distinct from a nonexistent one) and getRelationships returns unavailable', async () => {
     const target = await registerAndMaterializePlayer(
       app.app,
       `bf425-blk-target-${randomUUID()}@e2e.test`,
@@ -278,24 +281,33 @@ describe('BF-425 AC: "Add Friend" not offered when the recipient has blocked the
     const sendRes = await blockedSender.client.post('/social/friend-requests', {
       targetUserId: target.userId,
     });
-    expect(sendRes.status).toBe(404);
+    // Not a 404: the target genuinely exists, so the API doesn't lie about that -
+    // it only withholds WHY the request can't go through (see FriendRequestUnavailableError).
+    expect(sendRes.status).toBe(409);
     const sendBody = await readJson(sendRes);
     expect(String(sendBody.message).toLowerCase()).not.toContain('block');
 
-    // Compare against a genuinely nonexistent target: the caller must not be able
-    // to distinguish "blocked me" from "doesn't exist" from the response shape.
-    const randomTargetId = randomUUID();
+    // A genuinely nonexistent target is a real, distinct 404 - the API no longer
+    // conflates "blocked me" with "doesn't exist".
     const nonexistentRes = await blockedSender.client.post('/social/friend-requests', {
-      targetUserId: randomTargetId,
+      targetUserId: randomUUID(),
     });
     expect(nonexistentRes.status).toBe(404);
-    const nonexistentBody = await readJson(nonexistentRes);
-    // Same error class -> same message template ("FriendRequestTarget not found:
-    // <id>"), with only the target id (something the caller already supplied,
-    // so it discloses nothing new) differing between the two responses.
-    expect(sendBody.message.replace(target.userId, '<ID>')).toBe(
-      nonexistentBody.message.replace(randomTargetId, '<ID>'),
+
+    // But a suspended target gets the SAME 409 shape as a block: the caller still
+    // cannot distinguish "blocked me" from "moderated" from the response.
+    const suspendedTarget = await registerAndMaterializePlayer(
+      app.app,
+      `bf425-blk-mod-${randomUUID()}@e2e.test`,
+      'Grace Moderated BF425',
     );
+    await setPlayerStatus(app.container, suspendedTarget.userId, 'suspended');
+    const suspendedRes = await blockedSender.client.post('/social/friend-requests', {
+      targetUserId: suspendedTarget.userId,
+    });
+    expect(suspendedRes.status).toBe(409);
+    const suspendedBody = await readJson(suspendedRes);
+    expect(sendBody.message).toBe(suspendedBody.message);
 
     const relRes = await blockedSender.client.post('/social/relationships', {
       userIds: [target.userId],
@@ -358,14 +370,16 @@ describe('BF-425 locked decision: mutual/simultaneous request auto-accepts', () 
     const first = await readJson(
       await a.client.post('/social/friend-requests', { targetUserId: b.userId }),
     );
-    expect(first.status).toBe('pending');
+    expect(first.acceptedAt).toBeNull();
+    expect(first.refusedAt).toBeNull();
 
     // B -> A (reverse direction) must resolve the EXISTING row, not create a new one.
     const second = await readJson(
       await b.client.post('/social/friend-requests', { targetUserId: a.userId }),
     );
     expect(second.id).toBe(first.id);
-    expect(second.status).toBe('accepted');
+    expect(second.acceptedAt).toEqual(expect.any(String));
+    expect(second.refusedAt).toBeNull();
 
     expect(await friendshipRowCount(app.container, a.userId, b.userId)).toBe(1);
 
@@ -402,8 +416,8 @@ describe('BF-425 locked decision: mutual/simultaneous request auto-accepts', () 
   });
 });
 
-describe('BF-425 locked decision: a suspended/closed target behaves identically to a nonexistent one', () => {
-  it('suspended and closed targets both 404 on send and are unavailable in getRelationships, moderation status never disclosed', async () => {
+describe('BF-425 locked decision: a suspended/closed target is unavailable, not a false 404', () => {
+  it('suspended and closed targets both CONFLICT on send and are unavailable in getRelationships, moderation status never disclosed', async () => {
     const caller = await registerAndMaterializePlayer(
       app.app,
       `bf425-mod-caller-${randomUUID()}@e2e.test`,
@@ -421,7 +435,9 @@ describe('BF-425 locked decision: a suspended/closed target behaves identically 
       const sendRes = await caller.client.post('/social/friend-requests', {
         targetUserId: target.userId,
       });
-      expect(sendRes.status).toBe(404);
+      // The target genuinely exists - a real 404 would be a lie a downstream API
+      // consumer could act on incorrectly (e.g. "no such player").
+      expect(sendRes.status).toBe(409);
       const body = await readJson(sendRes);
       expect(String(body.message).toLowerCase()).not.toContain(status);
 

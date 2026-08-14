@@ -3,11 +3,13 @@ import { randomUUID } from 'node:crypto';
 import { sql } from 'drizzle-orm';
 import { call, ORPCError } from '@orpc/server';
 import { createTestDb, type TestDb } from '@openora/core/testing';
+import { migrate as migrateChat } from '@openora/core/engagement/migrate/chat';
+import { chatUserBlock } from '@openora/core/engagement/schema/chat';
 import { player } from '@openora/core/pam/schema/profile';
 import { migrate as migrateProfile } from '@openora/core/pam/migrate/profile';
 import { makeEventBus, testContext } from '../../../testing/mock.js';
 import { migrate } from '../migrate.js';
-import { friendship, socialUserBlock } from '../schema/index.js';
+import { friendship } from '../schema/index.js';
 import { createSocialRouter } from '../router/index.js';
 import { SocialService } from '../service/social.service.js';
 
@@ -29,7 +31,7 @@ async function seedPlayer(overrides: Partial<typeof player.$inferInsert> = {}) {
 const ctxFor = (userId: string) => testContext({ auth: { userId } });
 
 beforeAll(async () => {
-  db = await createTestDb([migrate, migrateProfile]);
+  db = await createTestDb([migrate, migrateProfile, migrateChat]);
 });
 
 afterAll(async () => {
@@ -38,7 +40,7 @@ afterAll(async () => {
 
 beforeEach(async () => {
   await db.drizzle.db.execute(
-    sql`TRUNCATE ${friendship}, ${socialUserBlock}, ${player} RESTART IDENTITY CASCADE`,
+    sql`TRUNCATE ${friendship}, ${chatUserBlock}, ${player} RESTART IDENTITY CASCADE`,
   );
 });
 
@@ -75,7 +77,8 @@ describe('social router sendFriendRequest', () => {
     expect(result).toMatchObject({
       requesterId: requester.userId,
       addresseeId: target.userId,
-      status: 'pending',
+      acceptedAt: null,
+      refusedAt: null,
     });
   });
 

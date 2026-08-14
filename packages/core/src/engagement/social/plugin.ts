@@ -10,6 +10,7 @@ import { createSocialRouter } from './router/index.js';
 // registration order.
 export default {
   id: 'social',
+  dependsOn: ['chat'],
   register(ctx) {
     ctx.routers.add('social', (c) =>
       createSocialRouter(new SocialService(c.get(DRIZZLE), c.get(EVENT_BUS))),

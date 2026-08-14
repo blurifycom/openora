@@ -300,8 +300,7 @@
       "id": "social",
       "group": "engagement",
       "tables": [
-        "friendship",
-        "social_user_block"
+        "friendship"
       ],
       "routes": [
         "social.getRelationships",
@@ -1166,10 +1165,6 @@
     },
     {
       "name": "FriendshipSchema",
-      "file": "packages/core/src/engagement/social/contract/index.ts"
-    },
-    {
-      "name": "FriendshipStatusSchema",
       "file": "packages/core/src/engagement/social/contract/index.ts"
     },
     {

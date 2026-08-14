@@ -8,14 +8,6 @@ import { TimestampSchema, UuidSchema } from '@openora/core/contracts';
 // rather than re-typing fields. Promote anything shared across domains to
 // @openora/core/contracts. This dir is isomorphic: Zod + @openora/core/contracts only.
 
-// The DB enum in schema/index.ts derives from this tuple (see docs/standards/database.md
-// "Enums - pgEnum derives from the contract tuple") - never an inline value array there.
-// decline/cancel/remove all delete the row (product decision) - never add
-// 'declined'/'removed' states here.
-export const FRIENDSHIP_STATUSES = ['pending', 'accepted'] as const;
-export const FriendshipStatusSchema = z.enum(FRIENDSHIP_STATUSES);
-export type FriendshipStatus = z.infer<typeof FriendshipStatusSchema>;
-
 export const SendFriendRequestInputSchema = z.object({
   targetUserId: UuidSchema,
 });
@@ -25,8 +17,9 @@ export const FriendshipSchema = z.object({
   id: UuidSchema,
   requesterId: UuidSchema,
   addresseeId: UuidSchema,
-  status: FriendshipStatusSchema,
   createdAt: TimestampSchema,
+  acceptedAt: TimestampSchema.nullable(),
+  refusedAt: TimestampSchema.nullable(),
 });
 export type Friendship = z.infer<typeof FriendshipSchema>;
 
@@ -39,6 +32,7 @@ export const RELATIONSHIP_STATUSES = [
   'pending_outgoing',
   'pending_incoming',
   'friends',
+  'refused',
   'blocked_by_me',
   'unavailable',
 ] as const;

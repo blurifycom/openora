@@ -2,17 +2,21 @@ import { describe, it, expect, beforeAll, afterAll, beforeEach } from 'vitest';
 import { randomUUID } from 'node:crypto';
 import { sql } from 'drizzle-orm';
 import { createTestDb, type TestDb } from '@openora/core/testing';
+import { migrate as migrateChat } from '@openora/core/engagement/migrate/chat';
+import { chatUserBlock } from '@openora/core/engagement/schema/chat';
 import { player } from '@openora/core/pam/schema/profile';
 import { migrate as migrateProfile } from '@openora/core/pam/migrate/profile';
 import { makeEventBus } from '../../../testing/mock.js';
 import { migrate } from '../migrate.js';
-import { friendship, socialUserBlock } from '../schema/index.js';
+import { friendship } from '../schema/index.js';
 import {
   SocialService,
   SelfFriendRequestError,
   FriendRequestTargetNotFoundError,
+  FriendRequestUnavailableError,
   AlreadyFriendsError,
   RequestAlreadyPendingError,
+  FriendRequestRefusedError,
   BlockedBySelfError,
 } from '../service/social.service.js';
 
@@ -32,11 +36,11 @@ async function seedPlayer(overrides: Partial<typeof player.$inferInsert> = {}) {
 }
 
 async function seedBlock(blockerId: string, blockedId: string) {
-  await db.drizzle.db.insert(socialUserBlock).values({ blockerId, blockedId });
+  await db.drizzle.db.insert(chatUserBlock).values({ blockerId, blockedId });
 }
 
 beforeAll(async () => {
-  db = await createTestDb([migrate, migrateProfile]);
+  db = await createTestDb([migrate, migrateProfile, migrateChat]);
 });
 
 afterAll(async () => {
@@ -45,7 +49,7 @@ afterAll(async () => {
 
 beforeEach(async () => {
   await db.drizzle.db.execute(
-    sql`TRUNCATE ${friendship}, ${socialUserBlock}, ${player} RESTART IDENTITY CASCADE`,
+    sql`TRUNCATE ${friendship}, ${chatUserBlock}, ${player} RESTART IDENTITY CASCADE`,
   );
 });
 
@@ -60,7 +64,8 @@ describe('SocialService.sendFriendRequest (real PG)', () => {
     expect(result).toMatchObject({
       requesterId: requester.userId,
       addresseeId: addressee.userId,
-      status: 'pending',
+      acceptedAt: null,
+      refusedAt: null,
     });
     expect(typeof result.createdAt).toBe('string');
     expect(await db.drizzle.db.select().from(friendship)).toHaveLength(1);
@@ -92,26 +97,26 @@ describe('SocialService.sendFriendRequest (real PG)', () => {
   });
 
   it.each(['suspended', 'closed'] as const)(
-    'throws FriendRequestTargetNotFoundError when the target is %s',
+    'throws FriendRequestUnavailableError when the target is %s',
     async (status) => {
       const { svc } = makeService();
       const requester = await seedPlayer();
       const target = await seedPlayer({ status });
 
       await expect(svc.sendFriendRequest(requester.userId, target.userId)).rejects.toBeInstanceOf(
-        FriendRequestTargetNotFoundError,
+        FriendRequestUnavailableError,
       );
     },
   );
 
-  it('throws FriendRequestTargetNotFoundError (never leaking the block) when the target has blocked the caller', async () => {
+  it('throws FriendRequestUnavailableError (never leaking the block, same as suspended) when the target has blocked the caller', async () => {
     const { svc, events } = makeService();
     const requester = await seedPlayer();
     const target = await seedPlayer();
     await seedBlock(target.userId, requester.userId);
 
     await expect(svc.sendFriendRequest(requester.userId, target.userId)).rejects.toBeInstanceOf(
-      FriendRequestTargetNotFoundError,
+      FriendRequestUnavailableError,
     );
     expect(events.emit).not.toHaveBeenCalled();
   });
@@ -167,10 +172,11 @@ describe('SocialService.sendFriendRequest (real PG)', () => {
 
     expect(result).toMatchObject({
       id: first.id,
-      status: 'accepted',
       requesterId: alice.userId,
       addresseeId: bob.userId,
+      refusedAt: null,
     });
+    expect(result.acceptedAt).toEqual(expect.any(String));
     expect(events.emit).toHaveBeenCalledWith('social.friend_request.accepted', {
       friendshipId: first.id,
       requesterId: alice.userId,
@@ -180,8 +186,37 @@ describe('SocialService.sendFriendRequest (real PG)', () => {
     });
     const rows = await db.drizzle.db.select().from(friendship);
     expect(rows).toHaveLength(1);
-    expect(rows[0]?.status).toBe('accepted');
-    expect(rows[0]?.respondedAt).toBeInstanceOf(Date);
+    expect(rows[0]?.acceptedAt).toBeInstanceOf(Date);
+    expect(rows[0]?.refusedAt).toBeNull();
+  });
+
+  it('keeps a refused request refused and does not auto-accept a new request for the pair', async () => {
+    const { svc, events } = makeService();
+    const requester = await seedPlayer();
+    const addressee = await seedPlayer();
+    const [refused] = await db.drizzle.db
+      .insert(friendship)
+      .values({
+        requesterId: requester.userId,
+        addresseeId: addressee.userId,
+        refusedAt: new Date(),
+      })
+      .returning();
+
+    const relationship = await svc.getRelationships(requester.userId, [addressee.userId]);
+
+    expect(relationship).toEqual([
+      {
+        userId: addressee.userId,
+        status: 'refused',
+        friendshipId: refused?.id,
+        canSendRequest: false,
+      },
+    ]);
+    await expect(svc.sendFriendRequest(requester.userId, addressee.userId)).rejects.toBeInstanceOf(
+      FriendRequestRefusedError,
+    );
+    expect(events.emit).not.toHaveBeenCalled();
   });
 });
 
