@@ -53,6 +53,22 @@ import {
   chatRoomRemove,
 } from '../schema/index.js';
 import { ChatMessageNotFoundError, ChatRoomNotFoundError } from './chat-moderation.service.js';
+export {
+  ChatRoomNotMemberError,
+  ChatRoomNotModeratorError,
+  ChatRoomSelfModerationError,
+  ChatRoomLastModeratorError,
+  ChatRoomJoinCodeNotFoundError,
+  ChatRoomBannedError,
+} from './errors/chat-moderation.errors.js';
+import {
+  ChatRoomNotMemberError,
+  ChatRoomNotModeratorError,
+  ChatRoomSelfModerationError,
+  ChatRoomLastModeratorError,
+  ChatRoomJoinCodeNotFoundError,
+  ChatRoomBannedError,
+} from './errors/chat-moderation.errors.js';
 import type {
   AdminRoomSortBy,
   BlockedUserSortBy,
@@ -82,7 +98,6 @@ function publishChatEvent<T>(transport: RealtimeTransport, roomId: string | null
 }
 
 export const ChatRoomOwnershipError = makeOwnershipError('ChatRoom');
-export const ChatMessageOwnershipError = makeOwnershipError('ChatMessage');
 
 export const ChatMessageBlockedError = createDomainError(
   'ChatMessageBlockedError',
@@ -109,35 +124,6 @@ export const ChatRoomLimitReachedError = makeConflictError(
   'Private room limit reached',
 );
 
-export const ChatRoomLastModeratorError = makeConflictError(
-  'ChatRoomLastModeratorError',
-  'Cannot leave: you are the sole moderator of this room',
-);
-
-export const ChatRoomJoinCodeNotFoundError = createDomainError(
-  'ChatRoomJoinCodeNotFoundError',
-  (code: string) => `No room found with join code: ${code}`,
-);
-
-export const ChatRoomBannedError = createDomainError(
-  'ChatRoomBannedError',
-  (roomId: ChatRoom['id']) => `You are banned from room: ${roomId}`,
-);
-
-export const ChatRoomNotMemberError = createDomainError(
-  'ChatRoomNotMemberError',
-  (roomId: ChatRoom['id']) => `You are not a member of room: ${roomId}`,
-);
-
-export const ChatRoomNotModeratorError = createDomainError(
-  'ChatRoomNotModeratorError',
-  (roomId: ChatRoom['id']) => `You are not a moderator of room: ${roomId}`,
-);
-
-export const ChatRoomSelfModerationError = createDomainError(
-  'ChatRoomSelfModerationError',
-  () => 'You cannot kick or ban yourself',
-);
 export const ChatRoomRuleNotFoundError = createDomainError(
   'ChatRoomRuleNotFoundError',
   (id: string) => `Chat room rule not found: ${id}`,
@@ -643,7 +629,11 @@ export class ChatService {
   }) {
     await this.verifyRoomAccess(roomId, viewerId);
 
-    const conditions = [eq(chatMessage.roomId, roomId), eq(chatMessage.isDeleted, false)];
+    const conditions = [
+      eq(chatMessage.roomId, roomId),
+      eq(chatMessage.isDeleted, false),
+      isNull(chatMessage.deletedAt),
+    ];
     if (before) {
       conditions.push(lt(chatMessage.createdAt, new Date(before)));
     }
@@ -708,23 +698,33 @@ export class ChatService {
     return message;
   }
 
-  async deleteMessage(id: ChatMessage['id'], userId: User['id']) {
+  async deleteMessage(id: ChatMessage['id'], userId: User['id'], meta?: ClientMeta) {
     const message = findOneOrThrow(
       await this.drizzle.db.select().from(chatMessage).where(eq(chatMessage.id, id)),
       new ChatMessageNotFoundError(id),
     );
-    assertOwnership(message.userId, userId, new ChatMessageOwnershipError());
-
-    await this.drizzle.db
-      .update(chatMessage)
-      .set({ isDeleted: true })
-      .where(eq(chatMessage.id, id));
-
-    return { success: true } as const;
+    let roomId = message.roomId;
+    if (roomId === null) {
+      const [globalRoom] = await this.drizzle.db
+        .select({ id: chatRoom.id })
+        .from(chatRoom)
+        .where(and(eq(chatRoom.slug, '__global'), isNull(chatRoom.deletedAt)))
+        .limit(1);
+      if (!globalRoom) {
+        throw new ChatRoomNotFoundError('__global');
+      }
+      roomId = globalRoom.id;
+    }
+    await this.assertRoomModerator(roomId, userId);
+    return this.moderation.deleteMessage(id, userId, meta, 'player');
   }
 
   async getGlobalMessages(limit = DEFAULT_MESSAGE_LIMIT, viewerId?: User['id']) {
-    const conditions = [isNull(chatMessage.roomId), eq(chatMessage.isDeleted, false)];
+    const conditions = [
+      isNull(chatMessage.roomId),
+      eq(chatMessage.isDeleted, false),
+      isNull(chatMessage.deletedAt),
+    ];
     await this.appendExcludedSendersFilter(conditions, viewerId);
     const messages = await this.drizzle.db
       .select()
@@ -1036,6 +1036,11 @@ export class ChatService {
         .values({ name, slug, category, joinCode: generateJoinCode() })
         .returning();
       await this.drizzle.db.insert(chatRoomConfiguration).values({ roomId: record.id });
+      if (actorId) {
+        await this.drizzle.db
+          .insert(chatRoomMember)
+          .values({ roomId: record.id, userId: actorId, role: 'owner' });
+      }
     } catch (error) {
       if (isUniqueConstraintViolation(error)) {
         throw new ChatRoomSlugConflictError();
@@ -1381,6 +1386,52 @@ export class ChatService {
     return toRoom(room);
   }
 
+  async adminJoinRoom({
+    roomId,
+    userId,
+    ip,
+    userAgent,
+  }: {
+    roomId: ChatRoom['id'];
+    userId: User['id'];
+  } & ClientMeta) {
+    const [candidate] = await this.drizzle.db
+      .select({ id: chatRoom.id })
+      .from(chatRoom)
+      .where(and(eq(chatRoom.id, roomId), isNull(chatRoom.deletedAt)))
+      .limit(1);
+    if (!candidate) {
+      throw new ChatRoomNotFoundError(roomId);
+    }
+    const { room, inserted } = await this.drizzle.db.transaction((t) =>
+      withAdvisoryXactLock(t, `chat-room:${roomId}`, async () => {
+        const [room] = await t
+          .select()
+          .from(chatRoom)
+          .where(and(eq(chatRoom.id, roomId), isNull(chatRoom.deletedAt)))
+          .limit(1);
+        if (!room) {
+          throw new ChatRoomNotFoundError(roomId);
+        }
+        const inserted = await t
+          .insert(chatRoomMember)
+          .values({ roomId, userId, role: 'moderator' })
+          .onConflictDoNothing()
+          .returning();
+        return { room, inserted };
+      }),
+    );
+    if (inserted.length > 0) {
+      this.events.emit('chat.room.member.joined', {
+        roomId,
+        userId,
+        ip: ip ?? null,
+        userAgent: userAgent ?? null,
+      });
+    }
+    return toRoom(room);
+  }
+
   async leaveRoom({
     userId,
     roomId,
@@ -1483,10 +1534,6 @@ export class ChatService {
     }
     await this.transport.revokeClient?.(userId);
     return { success: true } as const;
-  }
-
-  async kickMember(args: Parameters<ChatService['removeMember']>[0]) {
-    return this.removeMember(args);
   }
 
   async banMember({

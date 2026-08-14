@@ -55,7 +55,7 @@
       ],
       "routes": [
         "chat.adminBan",
-        "chat.adminDeleteMessage",
+        "chat.adminJoinRoom",
         "chat.adminListBans",
         "chat.adminListBlockedUsers",
         "chat.adminListIgnoredUsers",

@@ -24,7 +24,6 @@ import { migrate } from '../migrate.js';
 import { chatChannel } from '@openora/core/contracts';
 import {
   ChatService,
-  ChatMessageOwnershipError,
   ChatMessageBlockedError,
   ChatSelfBlockError,
   ChatSelfIgnoreError,
@@ -435,17 +434,23 @@ describe('ChatService.sendRoomMessage (real PG)', () => {
 });
 
 describe('ChatService.deleteMessage (real PG)', () => {
-  it('soft-deletes the senders own message', async () => {
+  it('soft-deletes a message for a room owner and publishes a tombstone', async () => {
     const { svc } = makeService();
+    const ownerId = randomUUID();
+    const globalRoom = await seedRoom({ slug: '__global', isPublic: true });
+    await db.drizzle.db
+      .insert(chatRoomMember)
+      .values({ roomId: globalRoom.id, userId: ownerId, role: 'owner' });
     const message = await seedMessage();
 
-    await expect(svc.deleteMessage(message.id, message.userId)).resolves.toEqual({ success: true });
+    await expect(svc.deleteMessage(message.id, ownerId)).resolves.toEqual({ success: true });
 
     const [stored] = await db.drizzle.db
       .select()
       .from(chatMessage)
       .where(eq(chatMessage.id, message.id));
     expect(stored?.isDeleted).toBe(true);
+    expect(stored?.deletedAt).toBeInstanceOf(Date);
   });
 
   it('throws ChatMessageNotFoundError for an unknown id', async () => {
@@ -456,12 +461,19 @@ describe('ChatService.deleteMessage (real PG)', () => {
     );
   });
 
-  it('refuses to delete another players message', async () => {
+  it('refuses deletion by a regular room member', async () => {
     const { svc } = makeService();
+    const ownerId = randomUUID();
+    const memberId = randomUUID();
+    const globalRoom = await seedRoom({ slug: '__global', isPublic: true });
+    await db.drizzle.db.insert(chatRoomMember).values([
+      { roomId: globalRoom.id, userId: ownerId, role: 'owner' },
+      { roomId: globalRoom.id, userId: memberId, role: 'member' },
+    ]);
     const message = await seedMessage();
 
-    await expect(svc.deleteMessage(message.id, randomUUID())).rejects.toBeInstanceOf(
-      ChatMessageOwnershipError,
+    await expect(svc.deleteMessage(message.id, memberId)).rejects.toBeInstanceOf(
+      ChatRoomNotModeratorError,
     );
   });
 });
@@ -1145,7 +1157,7 @@ describe('ChatService moderation (real PG)', () => {
   it('kicks a member, who can then rejoin with the code', async () => {
     const { svc, room, moderatorId, memberId } = await roomWithMember();
 
-    await svc.kickMember({ moderatorId, roomId: room.id, userId: memberId, ...NO_CLIENT_META });
+    await svc.removeMember({ moderatorId, roomId: room.id, userId: memberId, ...NO_CLIENT_META });
 
     const afterKick = await db.drizzle.db
       .select()
@@ -1187,7 +1199,7 @@ describe('ChatService moderation (real PG)', () => {
     await svc.joinRoom({ userId: otherId, joinCode: room.joinCode!, ...NO_CLIENT_META });
 
     await expect(
-      svc.kickMember({
+      svc.removeMember({
         moderatorId: memberId,
         roomId: room.id,
         userId: otherId,
@@ -1204,7 +1216,7 @@ describe('ChatService moderation (real PG)', () => {
       .values({ roomId: room.id, userId: ownerId, role: 'owner' });
 
     await expect(
-      svc.kickMember({
+      svc.removeMember({
         moderatorId: ownerId,
         roomId: room.id,
         userId: memberId,
@@ -1217,7 +1229,7 @@ describe('ChatService moderation (real PG)', () => {
     const { svc, room, memberId } = await roomWithMember();
 
     await expect(
-      svc.kickMember({
+      svc.removeMember({
         moderatorId: randomUUID(),
         roomId: room.id,
         userId: memberId,
@@ -1230,7 +1242,7 @@ describe('ChatService moderation (real PG)', () => {
     const { svc, room, moderatorId } = await roomWithMember();
 
     await expect(
-      svc.kickMember({
+      svc.removeMember({
         moderatorId,
         roomId: room.id,
         userId: moderatorId,

@@ -14,6 +14,14 @@ runRealtimeTransportConformanceSuite({
 });
 
 describe('InProcessRealtimeTransport', () => {
+  it('fans a removal tombstone out through the same stream', () => {
+    const t = new InProcessRealtimeTransport();
+    const got: Array<{ id: string; isDeleted: boolean }> = [];
+    t.subscribe('c', (event: { id: string; isDeleted: boolean }) => got.push(event));
+    t.remove('c', { id: 'message-1', isDeleted: true });
+    expect(got).toEqual([{ id: 'message-1', isDeleted: true }]);
+  });
+
   it('fans a published event out to every subscriber of the channel', () => {
     const t = new InProcessRealtimeTransport();
     const a: number[] = [];

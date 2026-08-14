@@ -15,6 +15,9 @@ import {
 } from '@openora/core/contracts';
 import { ChatService } from './service/chat.service.js';
 import { ChatModerationService } from './service/chat-moderation.service.js';
+import { ChatRoomMembershipService } from './service/chat-room-membership.service.js';
+import { ChatRoomBanService } from './service/chat-room-ban.service.js';
+import { ChatRoomMuteService } from './service/chat-room-mute.service.js';
 import { createChatRouter } from './router/index.js';
 
 export default {
@@ -43,6 +46,15 @@ export default {
         c.get(AUDIT_WRITER),
         c.get(CHAT_MODERATION),
       );
+    const createMembershipService = (
+      c: Parameters<typeof ctx.routers.add>[1] extends (c: infer C) => unknown ? C : never,
+    ) =>
+      new ChatRoomMembershipService(
+        c.get(DRIZZLE),
+        c.get(EVENT_BUS),
+        c.get(AUDIT_WRITER),
+        c.get(CHAT_REALTIME_TRANSPORT),
+      );
     ctx.provide(CHAT_SYSTEM_WRITER, createChatService);
     ctx.provide(CHAT_BLOCK_WRITER, createChatService);
     ctx.provide(CHAT_ROOM_ACCESS, (c) => ({
@@ -51,14 +63,23 @@ export default {
       },
     }));
 
-    ctx.routers.add('chat', (c) =>
-      createChatRouter({
-        chatService: createChatService(c),
+    ctx.routers.add('chat', (c) => {
+      const chatService = createChatService(c);
+      return createChatRouter({
+        chatService,
+        membershipService: createMembershipService(c),
+        roomBanService: new ChatRoomBanService(
+          c.get(DRIZZLE),
+          c.get(EVENT_BUS),
+          c.get(AUDIT_WRITER),
+          c.get(CHAT_REALTIME_TRANSPORT),
+        ),
+        roomMuteService: new ChatRoomMuteService(c.get(DRIZZLE), c.get(AUDIT_WRITER)),
         moderationService: c.get(CHAT_MODERATION),
         authorizer: c.get(CHAT_REALTIME_CLIENT_AUTHORIZER),
         adminGuard: c.get(ADMIN_GUARD),
         limiter: c.get(RATE_LIMITER),
-      }),
-    );
+      });
+    });
   },
 } as const satisfies Plugin<CoreTokenCatalog>;

@@ -44,6 +44,13 @@ export function runRealtimeTransportConformanceSuite(harness: RealtimeTransportH
       ).resolves.toBeUndefined();
     });
 
+    it('remove never throws or rejects, even to a channel with no subscribers', async () => {
+      const transport = harness.create();
+      await expect(
+        Promise.resolve(transport.remove('nobody-listening', { id: 'message-1', isDeleted: true })),
+      ).resolves.toBeUndefined();
+    });
+
     it('subscribe returns an unsubscribe function that is idempotent', () => {
       const transport = harness.create();
       const unsubscribe = transport.subscribe('c', () => {});

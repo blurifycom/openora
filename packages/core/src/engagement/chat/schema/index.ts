@@ -53,11 +53,13 @@ export const chatMessage = pgTable(
     type: chatMessageType().notNull().default('user'),
     metadata: jsonb().$type<CommandMetadata>(),
     isDeleted: boolean().notNull().default(false),
+    deletedAt: timestamp({ withTimezone: true }),
     createdAt: timestamp({ withTimezone: true }).notNull().defaultNow(),
   },
   (t) => [
     index('chat_msg_room_id_created_at_idx').on(t.roomId, t.createdAt),
     index('chat_msg_created_at_idx').on(t.createdAt),
+    index('chat_msg_deleted_at_idx').on(t.deletedAt),
   ],
 );
 

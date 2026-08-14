@@ -63,6 +63,10 @@ export class InProcessRealtimeTransport implements RealtimeTransport {
     }
   }
 
+  remove<T>(channel: string, event: T): void {
+    this.publish(channel, event);
+  }
+
   subscribe<T>(channel: string, handler: (event: T) => void): () => void {
     const subscribers = this.channels.get(channel) ?? new Set<Handler>();
     subscribers.add(handler as Handler);

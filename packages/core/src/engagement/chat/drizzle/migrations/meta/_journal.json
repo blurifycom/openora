@@ -64,6 +64,13 @@
       "when": 1786653027437,
       "tag": "0008_yellow_bug",
       "breakpoints": true
+    },
+    {
+      "idx": 9,
+      "version": "7",
+      "when": 1786715123787,
+      "tag": "0009_keen_dagger",
+      "breakpoints": true
     }
   ]
 }

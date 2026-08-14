@@ -23,6 +23,7 @@ export type ChatModeration = {
     id: string,
     actorId: string,
     meta?: { ip: string | null; userAgent: string | null },
+    actorType?: 'admin' | 'player',
   ): Promise<{ success: true }>;
   mute(input: {
     userId: string;

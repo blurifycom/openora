@@ -323,6 +323,11 @@ export const chatContract = {
     .input(RoomIdInput)
     .output(ChatRoomSchema),
 
+  adminJoinRoom: oc
+    .route({ method: 'POST', path: '/backoffice/chat/rooms/{roomId}/join' })
+    .input(RoomIdInput)
+    .output(ChatRoomSchema),
+
   leaveRoom: oc
     .route({ method: 'POST', path: '/chat/rooms/{roomId}/leave' })
     .input(RoomIdInput)
@@ -528,9 +533,4 @@ export const chatContract = {
     .route({ method: 'GET', path: '/backoffice/chat/bans' })
     .input(z.object({ userId: UuidSchema.optional() }))
     .output(z.array(ChatPlatformBanSchema)),
-
-  adminDeleteMessage: oc
-    .route({ method: 'DELETE', path: '/backoffice/chat/messages/{id}' })
-    .input(IdInputSchema)
-    .output(ChatModerationResultSchema),
 };
