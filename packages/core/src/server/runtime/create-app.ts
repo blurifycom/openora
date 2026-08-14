@@ -29,6 +29,7 @@ import {
   JOB_QUEUE,
   OUTBOX,
   ADMIN_PERMISSION_RESOLVER,
+  IDENTITY_READER,
   RATE_LIMITER,
   CACHE,
   ERROR_TRACKING,
@@ -261,6 +262,8 @@ export async function createApp(
         // has() avoids throwing on an unbound token so boot works without the iam module.
         c.has(ADMIN_PERMISSION_RESOLVER) ? c.get(ADMIN_PERMISSION_RESOLVER) : undefined,
         c.get(EVENT_BUS),
+        // has() avoids throwing on an unbound token so boot works without the identity module.
+        c.has(IDENTITY_READER) ? c.get(IDENTITY_READER) : undefined,
       ),
   );
   if (config.igaming) {

@@ -242,6 +242,7 @@ export class PlayerService {
     if (data.level !== undefined && data.level !== existing.level) {
       this.events.emit('player.level.changed', {
         userId: existing.userId,
+        playerId,
         previousLevel: existing.level,
         newLevel: data.level,
         actorId,

@@ -12,7 +12,7 @@ import { player } from '@openora/core/pam/schema/profile';
 import { wallet, walletTransaction } from '@openora/core/wallet/schema';
 import { migrate as migrateProfile } from '@openora/core/pam/migrate/profile';
 import { migrate as migrateWallet } from '@openora/core/wallet/migrate';
-import { mock, makeEventBus } from '../../testing/mock.js';
+import { makeIdentityReader, mock, makeEventBus } from '../../testing/mock.js';
 import { migrate } from '../migrate.js';
 import { kycVerification } from '../schema/index.js';
 import { KycVerificationService } from '../service/kyc.service.js';
@@ -38,6 +38,7 @@ function makeService(options: { adapter?: Partial<AdapterResult>; config?: Platf
     events: events,
     kycAdapter,
     statusWriter,
+    identityReader: makeIdentityReader(),
     ...(options.config ? { platformConfig: options.config } : {}),
   });
   return { svc, events, kycAdapter, statusWriter, adapterResult };

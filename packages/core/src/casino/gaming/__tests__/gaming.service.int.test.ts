@@ -7,7 +7,8 @@ import type {
   WalletDebitOutcome,
 } from '@openora/core/contracts';
 import { createTestDb, type TestDb } from '@openora/core/testing';
-import { mock, makeEventBus } from '../../../testing/mock.js';
+import { migrate as migrateProfile } from '@openora/core/pam/migrate/profile';
+import { mock, makeEventBus, makeIdentityReader } from '../../../testing/mock.js';
 import { migrate } from '../migrate.js';
 import { game, gameRound } from '../schema/index.js';
 import {
@@ -45,7 +46,14 @@ function makeService({
   playEligibility?: PlayEligibilityPort;
   walletCommands?: WalletCommands;
 } = {}) {
-  return new GamingService(db.drizzle, noopEvents, provider, playEligibility, walletCommands);
+  return new GamingService(
+    db.drizzle,
+    noopEvents,
+    provider,
+    playEligibility,
+    walletCommands,
+    makeIdentityReader(),
+  );
 }
 
 async function seedGame(overrides: Partial<typeof game.$inferInsert> = {}) {
@@ -57,7 +65,7 @@ async function seedGame(overrides: Partial<typeof game.$inferInsert> = {}) {
 }
 
 beforeAll(async () => {
-  db = await createTestDb([migrate]);
+  db = await createTestDb([migrate, migrateProfile]);
 });
 
 afterAll(async () => {

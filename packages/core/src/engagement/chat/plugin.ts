@@ -8,6 +8,7 @@ import {
   CHAT_BLOCK_WRITER,
   CHAT_ROOM_ACCESS,
   ADMIN_USER_DIRECTORY,
+  IDENTITY_READER,
   createToken,
   REALTIME_TRANSPORT,
   REALTIME_CLIENT_AUTHORIZER,
@@ -31,6 +32,7 @@ export default {
           c.get(EVENT_BUS),
           c.get(CHAT_REALTIME_TRANSPORT),
           c.get(ADMIN_USER_DIRECTORY),
+          c.get(IDENTITY_READER),
         ),
     );
     ctx.provide(CHAT_SYSTEM_WRITER, (c) => c.get(CHAT_SERVICE));

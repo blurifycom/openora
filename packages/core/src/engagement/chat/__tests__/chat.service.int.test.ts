@@ -4,8 +4,9 @@ import { eq, sql } from 'drizzle-orm';
 import { createTestDb, InProcessRealtimeTransport, type TestDb } from '@openora/core/testing';
 import { user } from '@openora/core/pam/schema/identity';
 import { migrate as migrateIdentity } from '@openora/core/pam/migrate/identity';
+import { migrate as migrateProfile } from '@openora/core/pam/migrate/profile';
 import type { AdminUserDirectory, AdminPlayerSummary } from '@openora/core/contracts';
-import { NO_CLIENT_META, makeEventBus, mock } from '../../../testing/mock.js';
+import { NO_CLIENT_META, makeEventBus, makeIdentityReader, mock } from '../../../testing/mock.js';
 import { CHAT_ROOM_CATEGORIES, type ChatMessage } from '../contract/index.js';
 import { MAX_PRIVATE_ROOMS_PER_PLAYER } from '../contract/constants.js';
 import { migrate } from '../migrate.js';
@@ -50,7 +51,11 @@ function makeService(
 ) {
   const transport = new InProcessRealtimeTransport();
   const events = makeEventBus();
-  return { svc: new ChatService(db.drizzle, events, transport, directory), events, transport };
+  return {
+    svc: new ChatService(db.drizzle, events, transport, directory, makeIdentityReader()),
+    events,
+    transport,
+  };
 }
 
 async function seedUser(name = 'Player') {
@@ -99,7 +104,7 @@ async function waitFor(predicate: () => boolean, timeoutMs = 2000) {
 }
 
 beforeAll(async () => {
-  db = await createTestDb([migrate, migrateIdentity]);
+  db = await createTestDb([migrate, migrateIdentity, migrateProfile]);
 });
 
 afterAll(async () => {

@@ -5,7 +5,7 @@ import {
   makeNotFoundError,
 } from '@openora/core/server';
 import { eq, asc, desc, and, gt, count, sql } from 'drizzle-orm';
-import type { ClientMeta, User, PaginationOptions } from '@openora/core/contracts';
+import type { ClientMeta, IdentityReader, User, PaginationOptions } from '@openora/core/contracts';
 import { session } from '../schema/index.js';
 import { type SessionItem, type SessionSortBy } from '../contract/index.js';
 
@@ -14,15 +14,18 @@ export const SessionNotFoundError = makeNotFoundError('Session');
 export type SessionServiceDeps = {
   drizzle: DrizzleService;
   events: EventBus;
+  identityReader: IdentityReader;
 };
 
 export class SessionService {
   private readonly drizzle: DrizzleService;
   private readonly events: EventBus;
+  private readonly identityReader: IdentityReader;
 
-  constructor({ drizzle, events }: SessionServiceDeps) {
+  constructor({ drizzle, events, identityReader }: SessionServiceDeps) {
     this.drizzle = drizzle;
     this.events = events;
+    this.identityReader = identityReader;
   }
 
   async listSessions({
@@ -82,6 +85,7 @@ export class SessionService {
 
     this.events.emit('identity.session.revoked', {
       userId,
+      playerId: await this.identityReader.getPlayerIdByUserIdSafe(userId),
       sessionId: id,
       actorId,
       ip: meta?.ip ?? null,
@@ -98,6 +102,7 @@ export class SessionService {
 
     this.events.emit('identity.sessions.revoked_all', {
       userId,
+      playerId: await this.identityReader.getPlayerIdByUserIdSafe(userId),
       actorId,
       ip: meta?.ip ?? null,
       userAgent: meta?.userAgent ?? null,

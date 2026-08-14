@@ -3,6 +3,7 @@ import type { CoreTokenCatalog, Plugin } from '@openora/core/server';
 import {
   ADMIN_PERMISSION_RESOLVER,
   ADMIN_PLAYER_ACTIVITY,
+  IDENTITY_READER,
   SEND_EMAIL,
   SESSION_COMMANDS,
   CACHE,
@@ -66,6 +67,7 @@ export default {
           c.get(DRIZZLE),
           c.get(EVENT_BUS),
           c.get(SEND_EMAIL),
+          c.get(IDENTITY_READER),
           c.get(SESSION_COMMANDS),
           c.get(RATE_LIMITER),
         ),
