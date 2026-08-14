@@ -3,7 +3,8 @@ import { randomUUID } from 'node:crypto';
 import { eq, sql } from 'drizzle-orm';
 import type { GeoIpAdapter } from '@openora/core/contracts';
 import { createTestDb, type TestDb } from '@openora/core/testing';
-import { mock, makeEventBus } from '../../testing/mock.js';
+import { migrate as migrateProfile } from '@openora/core/pam/migrate/profile';
+import { mock, makeEventBus, makeIdentityReader } from '../../testing/mock.js';
 import { migrate } from '../migrate.js';
 import { userLimit, geoRule } from '../schema/index.js';
 import {
@@ -20,7 +21,7 @@ function makeService(countryCode?: string | null) {
     countryCode === undefined
       ? null
       : mock<GeoIpAdapter>({ lookup: vi.fn(async () => ({ countryCode })) });
-  const svc = new ComplianceService(db.drizzle, events, geoIp);
+  const svc = new ComplianceService(db.drizzle, events, geoIp, makeIdentityReader());
   return { svc, events };
 }
 
@@ -40,7 +41,7 @@ async function seedLimit(userId: string, overrides: Partial<typeof userLimit.$in
 }
 
 beforeAll(async () => {
-  db = await createTestDb([migrate]);
+  db = await createTestDb([migrate, migrateProfile]);
 });
 
 afterAll(async () => {

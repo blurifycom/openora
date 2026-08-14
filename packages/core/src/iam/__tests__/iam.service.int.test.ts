@@ -1,7 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import { describe, it, expect, vi, beforeAll, afterAll, beforeEach } from 'vitest';
 import { sql, eq } from 'drizzle-orm';
-import { mock, NO_CLIENT_META, makeEventBus } from '../../testing/mock.js';
+import { makeIdentityReader, mock, NO_CLIENT_META, makeEventBus } from '../../testing/mock.js';
 import {
   statement,
   findOneOrThrow,
@@ -9,7 +9,12 @@ import {
   RedisRateLimiter,
   type ResourceName,
 } from '@openora/core/server';
-import type { SendEmailPort, SessionCommands } from '@openora/core/contracts';
+import type {
+  RateLimiterAdapter,
+  RateLimitKey,
+  SendEmailPort,
+  SessionCommands,
+} from '@openora/core/contracts';
 import { createTestDb, createTestRedis, type TestDb, type TestRedis } from '@openora/core/testing';
 import { migrate as migrateIam } from '@openora/core/iam/migrate';
 import { migrate as migrateIdentity } from '@openora/core/pam/migrate/identity';
@@ -37,6 +42,17 @@ let db: TestDb;
 let redis: TestRedis;
 
 const makeEmail = () => mock<SendEmailPort>({ send: vi.fn().mockResolvedValue(undefined) });
+const identityReader = makeIdentityReader();
+
+function makeIamService(
+  drizzle: typeof db.drizzle,
+  events: ReturnType<typeof makeEventBus>,
+  email: SendEmailPort,
+  sessionCommands?: SessionCommands,
+  rateLimiter?: RateLimiterAdapter<RateLimitKey>,
+) {
+  return new IamService(drizzle, events, email, identityReader, sessionCommands, rateLimiter);
+}
 
 // Bootstrap super-admin: no DB assignment row + user.role === 'admin' passes the static fallback.
 const ADMIN_CALLER = { userId: randomUUID(), role: 'admin', ...NO_CLIENT_META };
@@ -101,7 +117,7 @@ beforeEach(async () => {
 
 describe('IamService.listCatalog', () => {
   it('omits the admin module from the assignable catalog', () => {
-    const svc = new IamService(db.drizzle, makeEventBus(), makeEmail());
+    const svc = makeIamService(db.drizzle, makeEventBus(), makeEmail());
     const catalog = svc.listCatalog();
     expect(catalog.modules.some((m) => m.resource === 'admin')).toBe(false);
     expect(catalog.modules.some((m) => m.resource === 'player')).toBe(true);
@@ -206,7 +222,7 @@ describe('IamService.setRolePermissions', () => {
   it('rejects a non-super-admin caller and audits the denial', async () => {
     const role = await seedRole();
     const events = makeEventBus();
-    const svc = new IamService(db.drizzle, events, makeEmail());
+    const svc = makeIamService(db.drizzle, events, makeEmail());
     await expect(
       svc.setRolePermissions({
         roleId: role.id,
@@ -226,7 +242,7 @@ describe('IamService.setRolePermissions', () => {
   });
 
   it('throws RoleNotFoundError when the role does not exist', async () => {
-    const svc = new IamService(db.drizzle, makeEventBus(), makeEmail());
+    const svc = makeIamService(db.drizzle, makeEventBus(), makeEmail());
     await expect(
       svc.setRolePermissions({
         roleId: randomUUID(),
@@ -238,7 +254,7 @@ describe('IamService.setRolePermissions', () => {
 
   it('throws InvalidGrantError for an unknown module', async () => {
     const role = await seedRole();
-    const svc = new IamService(db.drizzle, makeEventBus(), makeEmail());
+    const svc = makeIamService(db.drizzle, makeEventBus(), makeEmail());
     await expect(
       svc.setRolePermissions({
         roleId: role.id,
@@ -250,7 +266,7 @@ describe('IamService.setRolePermissions', () => {
 
   it('rejects a grant targeting the admin module (super-admin-only, A6)', async () => {
     const role = await seedRole();
-    const svc = new IamService(db.drizzle, makeEventBus(), makeEmail());
+    const svc = makeIamService(db.drizzle, makeEventBus(), makeEmail());
     await expect(
       svc.setRolePermissions({
         roleId: role.id,
@@ -262,7 +278,7 @@ describe('IamService.setRolePermissions', () => {
 
   it('blocks editing a super-admin role (always full)', async () => {
     const role = await seedRole({ isSuperAdmin: true, isSystem: true });
-    const svc = new IamService(db.drizzle, makeEventBus(), makeEmail());
+    const svc = makeIamService(db.drizzle, makeEventBus(), makeEmail());
     await expect(
       svc.setRolePermissions({
         roleId: role.id,
@@ -274,7 +290,7 @@ describe('IamService.setRolePermissions', () => {
 
   it('a super caller may grant any level and the rows are persisted', async () => {
     const role = await seedRole();
-    const svc = new IamService(db.drizzle, makeEventBus(), makeEmail());
+    const svc = makeIamService(db.drizzle, makeEventBus(), makeEmail());
     const result = await svc.setRolePermissions({
       roleId: role.id,
       grants: [{ resource: 'withdrawal', level: 'read_write' }],
@@ -293,7 +309,7 @@ describe('IamService.setRolePermissions', () => {
   it('emits iam.role.permissions.changed with actorId', async () => {
     const role = await seedRole();
     const events = makeEventBus();
-    const svc = new IamService(db.drizzle, events, makeEmail());
+    const svc = makeIamService(db.drizzle, events, makeEmail());
     await svc.setRolePermissions({
       roleId: role.id,
       grants: [{ resource: 'player', level: 'read' }],
@@ -309,7 +325,7 @@ describe('IamService.setRolePermissions', () => {
 describe('IamService.updateRole', () => {
   it('blocks renaming the super-admin role', async () => {
     const role = await seedRole({ isSuperAdmin: true, isSystem: true });
-    const svc = new IamService(db.drizzle, makeEventBus(), makeEmail());
+    const svc = makeIamService(db.drizzle, makeEventBus(), makeEmail());
     await expect(
       svc.updateRole({ roleId: role.id, name: 'Renamed', caller: ADMIN_CALLER }),
     ).rejects.toBeInstanceOf(ProtectedRoleError);
@@ -318,7 +334,7 @@ describe('IamService.updateRole', () => {
   it('allows renaming a predefined (isSystem, non-super) role', async () => {
     const role = await seedRole({ isSystem: true, isSuperAdmin: false });
     const events = makeEventBus();
-    const svc = new IamService(db.drizzle, events, makeEmail());
+    const svc = makeIamService(db.drizzle, events, makeEmail());
     const result = await svc.updateRole({ roleId: role.id, name: 'Renamed', caller: ADMIN_CALLER });
     expect(result.name).toBe('Renamed');
     expect(events.emit).toHaveBeenCalledWith(
@@ -334,7 +350,7 @@ describe('IamService.updateRole', () => {
 describe('IamService.deleteRole', () => {
   it('blocks deleting a system role', async () => {
     const role = await seedRole({ isSystem: true });
-    const svc = new IamService(db.drizzle, makeEventBus(), makeEmail());
+    const svc = makeIamService(db.drizzle, makeEventBus(), makeEmail());
     await expect(svc.deleteRole({ roleId: role.id, caller: ADMIN_CALLER })).rejects.toBeInstanceOf(
       ProtectedRoleError,
     );
@@ -342,7 +358,7 @@ describe('IamService.deleteRole', () => {
 
   it('blocks deleting a super-admin role', async () => {
     const role = await seedRole({ isSuperAdmin: true });
-    const svc = new IamService(db.drizzle, makeEventBus(), makeEmail());
+    const svc = makeIamService(db.drizzle, makeEventBus(), makeEmail());
     await expect(svc.deleteRole({ roleId: role.id, caller: ADMIN_CALLER })).rejects.toBeInstanceOf(
       ProtectedRoleError,
     );
@@ -351,7 +367,7 @@ describe('IamService.deleteRole', () => {
   it('deletes a custom role with no assignments and emits only iam.role.deleted', async () => {
     const role = await seedRole();
     const events = makeEventBus();
-    const svc = new IamService(db.drizzle, events, makeEmail());
+    const svc = makeIamService(db.drizzle, events, makeEmail());
     const result = await svc.deleteRole({ roleId: role.id, caller: ADMIN_CALLER });
     expect(result).toEqual({ success: true });
     expect(events.emit).toHaveBeenCalledWith(
@@ -372,7 +388,7 @@ describe('IamService.deleteRole', () => {
     await seedAssignment(userA, role.id);
     await seedAssignment(userB, role.id);
     const events = makeEventBus();
-    const svc = new IamService(db.drizzle, events, makeEmail());
+    const svc = makeIamService(db.drizzle, events, makeEmail());
 
     const result = await svc.deleteRole({ roleId: role.id, caller: ADMIN_CALLER });
     expect(result).toEqual({ success: true });
@@ -407,7 +423,7 @@ describe('IamService.assignRole', () => {
     const target = await seedUser('admin');
     await seedAssignment(target.id, role.id);
     const events = makeEventBus();
-    const svc = new IamService(db.drizzle, events, makeEmail());
+    const svc = makeIamService(db.drizzle, events, makeEmail());
 
     const result = await svc.assignRole({
       userId: target.id,
@@ -424,7 +440,7 @@ describe('IamService.assignRole', () => {
   it('rejects assigning a role to a non-admin (player) account', async () => {
     const role = await seedRole();
     const player = await seedUser('player');
-    const svc = new IamService(db.drizzle, makeEventBus(), makeEmail());
+    const svc = makeIamService(db.drizzle, makeEventBus(), makeEmail());
     await expect(
       svc.assignRole({ userId: player.id, roleId: role.id, caller: ADMIN_CALLER }),
     ).rejects.toThrow(NotAnAdminUserError);
@@ -432,7 +448,7 @@ describe('IamService.assignRole', () => {
 
   it('rejects assigning a role to an unknown user', async () => {
     const role = await seedRole();
-    const svc = new IamService(db.drizzle, makeEventBus(), makeEmail());
+    const svc = makeIamService(db.drizzle, makeEventBus(), makeEmail());
     await expect(
       svc.assignRole({ userId: randomUUID(), roleId: role.id, caller: ADMIN_CALLER }),
     ).rejects.toThrow(AdminUserNotFoundError);
@@ -441,7 +457,7 @@ describe('IamService.assignRole', () => {
   it('the unique index keeps two concurrent assigns from double-inserting', async () => {
     const role = await seedRole();
     const target = await seedUser('admin');
-    const svc = new IamService(db.drizzle, makeEventBus(), makeEmail());
+    const svc = makeIamService(db.drizzle, makeEventBus(), makeEmail());
 
     await Promise.allSettled([
       svc.assignRole({ userId: target.id, roleId: role.id, caller: ADMIN_CALLER }),
@@ -461,7 +477,7 @@ describe('IamService.unassignRole', () => {
     const superRole = await seedRole({ isSuperAdmin: true, isSystem: true });
     const target = randomUUID();
     await seedAssignment(target, superRole.id);
-    const svc = new IamService(db.drizzle, makeEventBus(), makeEmail());
+    const svc = makeIamService(db.drizzle, makeEventBus(), makeEmail());
 
     await expect(
       svc.unassignRole({ userId: target, roleId: superRole.id, caller: ADMIN_CALLER }),
@@ -473,7 +489,7 @@ describe('IamService.unassignRole', () => {
   it('returns success but emits no revoked event when nothing was deleted', async () => {
     const role = await seedRole();
     const events = makeEventBus();
-    const svc = new IamService(db.drizzle, events, makeEmail());
+    const svc = makeIamService(db.drizzle, events, makeEmail());
     const result = await svc.unassignRole({
       userId: randomUUID(),
       roleId: role.id,
@@ -488,7 +504,7 @@ describe('IamService.unassignRole', () => {
     const target = randomUUID();
     await seedAssignment(target, role.id);
     const events = makeEventBus();
-    const svc = new IamService(db.drizzle, events, makeEmail());
+    const svc = makeIamService(db.drizzle, events, makeEmail());
 
     await svc.unassignRole({ userId: target, roleId: role.id, caller: ADMIN_CALLER });
     expect(events.emit).toHaveBeenCalledWith(
@@ -504,7 +520,7 @@ describe('IamService.unassignRole', () => {
     const userB = randomUUID();
     await seedAssignment(userA, superRole.id);
     await seedAssignment(userB, superRole.id);
-    const svc = new IamService(db.drizzle, makeEventBus(), makeEmail());
+    const svc = makeIamService(db.drizzle, makeEventBus(), makeEmail());
 
     const results = await Promise.allSettled([
       svc.unassignRole({ userId: userA, roleId: superRole.id, caller: ADMIN_CALLER }),
@@ -526,7 +542,7 @@ describe('IamService.previewEffectivePermissions', () => {
     await seedPermission(roleA.id, 'player', 'read');
     await seedPermission(roleA.id, 'withdrawal', 'read');
     await seedPermission(roleB.id, 'player', 'read_write');
-    const svc = new IamService(db.drizzle, makeEventBus(), makeEmail());
+    const svc = makeIamService(db.drizzle, makeEventBus(), makeEmail());
 
     const result = await svc.previewEffectivePermissions({ roleIds: [roleA.id, roleB.id] });
     expect(result.permissions).toContainEqual({ resource: 'player', level: 'read_write' });
@@ -536,7 +552,7 @@ describe('IamService.previewEffectivePermissions', () => {
 
   it('super-admin role in the set yields all modules read_write', async () => {
     const superRole = await seedRole({ isSuperAdmin: true });
-    const svc = new IamService(db.drizzle, makeEventBus(), makeEmail());
+    const svc = makeIamService(db.drizzle, makeEventBus(), makeEmail());
     const result = await svc.previewEffectivePermissions({ roleIds: [superRole.id] });
     expect(result.permissions).toHaveLength(Object.keys(statement).length);
     expect(result.permissions.every((p) => p.level === 'read_write')).toBe(true);
@@ -544,7 +560,7 @@ describe('IamService.previewEffectivePermissions', () => {
 
   it('falls back to static role permissions when the user has no dynamic role assignments', async () => {
     const u = await seedUser('support');
-    const svc = new IamService(db.drizzle, makeEventBus(), makeEmail());
+    const svc = makeIamService(db.drizzle, makeEventBus(), makeEmail());
     const result = await svc.previewEffectivePermissions({ userId: u.id });
     expect(result.permissions).not.toHaveLength(0);
     expect(result.permissions).toContainEqual({ resource: 'player', level: 'read' });
@@ -568,7 +584,7 @@ describe('IamService.acceptInvitation', () => {
   it('accepts once and emits exactly one event; a replay conflicts and emits nothing more', async () => {
     const token = await seedInvitation();
     const events = makeEventBus();
-    const svc = new IamService(db.drizzle, events, makeEmail());
+    const svc = makeIamService(db.drizzle, events, makeEmail());
 
     const first = await svc.acceptInvitation(token);
     expect(first).toEqual({ success: true, email: 'who@admin.com' });
@@ -579,7 +595,7 @@ describe('IamService.acceptInvitation', () => {
   it('two concurrent accepts: exactly one succeeds, one event (atomic conditional UPDATE)', async () => {
     const token = await seedInvitation();
     const events = makeEventBus();
-    const svc = new IamService(db.drizzle, events, makeEmail());
+    const svc = makeIamService(db.drizzle, events, makeEmail());
 
     const results = await Promise.allSettled([
       svc.acceptInvitation(token),
@@ -598,7 +614,7 @@ describe('IamService.inviteAdmin', () => {
   it('creates a pending invitation and calls SEND_EMAIL when caller is super-admin', async () => {
     const role = await seedRole();
     const email = makeEmail();
-    const svc = new IamService(db.drizzle, makeEventBus(), email);
+    const svc = makeIamService(db.drizzle, makeEventBus(), email);
     const result = await svc.inviteAdmin({
       email: 'new@admin.com',
       roleId: role.id,
@@ -617,7 +633,7 @@ describe('IamService.inviteAdmin', () => {
   it('rejects a non-super-admin caller', async () => {
     const role = await seedRole();
     const email = makeEmail();
-    const svc = new IamService(db.drizzle, makeEventBus(), email);
+    const svc = makeIamService(db.drizzle, makeEventBus(), email);
     await expect(
       svc.inviteAdmin({ email: 'new@admin.com', roleId: role.id, caller: SUPPORT_CALLER }),
     ).rejects.toBeInstanceOf(NotSuperAdminError);
@@ -628,7 +644,7 @@ describe('IamService.inviteAdmin', () => {
 describe('IamService paginated lists', () => {
   it('listRoles returns { items, total, page, limit }', async () => {
     const role = await seedRole();
-    const svc = new IamService(db.drizzle, makeEventBus(), makeEmail());
+    const svc = makeIamService(db.drizzle, makeEventBus(), makeEmail());
     const result = await svc.listRoles({ page: 1, limit: 10 });
     expect(result.total).toBe(1);
     expect(result.page).toBe(1);
@@ -646,7 +662,7 @@ describe('IamService paginated lists', () => {
       status: 'pending',
       expiresAt: new Date(Date.now() + 60_000),
     });
-    const svc = new IamService(db.drizzle, makeEventBus(), makeEmail());
+    const svc = makeIamService(db.drizzle, makeEventBus(), makeEmail());
     const result = await svc.listInvitations({ page: 1, limit: 20 });
     expect(result.total).toBe(1);
     expect(result.items).toHaveLength(1);
@@ -656,7 +672,7 @@ describe('IamService paginated lists', () => {
   it('listAssignments returns the paginated wrapper with joined role fields', async () => {
     const role = await seedRole({ name: 'Ops' });
     await seedAssignment(randomUUID(), role.id);
-    const svc = new IamService(db.drizzle, makeEventBus(), makeEmail());
+    const svc = makeIamService(db.drizzle, makeEventBus(), makeEmail());
     const result = await svc.listAssignments({ page: 1, limit: 20 });
     expect(result.total).toBe(1);
     expect(result.items).toHaveLength(1);
@@ -667,7 +683,7 @@ describe('IamService paginated lists', () => {
 describe('IamService.reportAccessDenied', () => {
   it('records and audits a genuine denial (caller lacks the resource/level)', async () => {
     const events = makeEventBus();
-    const svc = new IamService(db.drizzle, events, makeEmail());
+    const svc = makeIamService(db.drizzle, events, makeEmail());
 
     const result = await svc.reportAccessDenied({
       resource: 'withdrawal',
@@ -689,7 +705,7 @@ describe('IamService.reportAccessDenied', () => {
 
   it('does not record or emit when the caller genuinely holds the permission', async () => {
     const events = makeEventBus();
-    const svc = new IamService(db.drizzle, events, makeEmail());
+    const svc = makeIamService(db.drizzle, events, makeEmail());
 
     const result = await svc.reportAccessDenied({
       resource: 'player',
@@ -704,7 +720,7 @@ describe('IamService.reportAccessDenied', () => {
   it('with a rate limiter wired, a repeat report within the window is throttled and not recorded again', async () => {
     const events = makeEventBus();
     const limiter = new RedisRateLimiter(redis.client);
-    const svc = new IamService(db.drizzle, events, makeEmail(), undefined, limiter);
+    const svc = makeIamService(db.drizzle, events, makeEmail(), undefined, limiter);
 
     const first = await svc.reportAccessDenied({
       resource: 'withdrawal',
@@ -728,7 +744,7 @@ describe('IamService.reportAccessDenied', () => {
 
 describe('IamService.forceLogout', () => {
   it('rejects a non-super-admin caller', async () => {
-    const svc = new IamService(db.drizzle, makeEventBus(), makeEmail());
+    const svc = makeIamService(db.drizzle, makeEventBus(), makeEmail());
     await expect(
       svc.forceLogout({ userId: randomUUID(), caller: SUPPORT_CALLER }),
     ).rejects.toBeInstanceOf(NotSuperAdminError);
@@ -739,7 +755,7 @@ describe('IamService.forceLogout', () => {
     const sessionCommands = mock<SessionCommands>({
       revokeAll: vi.fn().mockResolvedValue({ success: true }),
     });
-    const svc = new IamService(db.drizzle, events, makeEmail(), sessionCommands);
+    const svc = makeIamService(db.drizzle, events, makeEmail(), sessionCommands);
     const targetUserId = randomUUID();
     const result = await svc.forceLogout({ userId: targetUserId, caller: ADMIN_CALLER });
     expect(result).toEqual({ success: true });

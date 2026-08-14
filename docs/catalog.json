@@ -580,8 +580,14 @@
       "token": "IDENTITY_READER",
       "status": "wired",
       "boundIn": [
+        "packages/core/src/casino/gaming/plugin.ts",
+        "packages/core/src/compliance/plugin.ts",
+        "packages/core/src/engagement/chat/plugin.ts",
+        "packages/core/src/iam/plugin.ts",
         "packages/core/src/pam/identity/plugin.ts",
-        "packages/core/src/pam/tag/plugin.ts"
+        "packages/core/src/pam/tag/plugin.ts",
+        "packages/core/src/server/runtime/create-app.ts",
+        "packages/core/src/wallet/plugin.ts"
       ]
     },
     {

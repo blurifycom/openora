@@ -5,6 +5,7 @@ import {
   type Token,
   type AdminPermissionResolver,
   type AdminGrant,
+  type IdentityReader,
   type ClientMeta,
 } from '@openora/core/contracts';
 import { DrizzleService } from '../db/index.js';
@@ -12,9 +13,12 @@ import { sql } from 'drizzle-orm';
 import { SessionResolver } from './session-resolver.js';
 import { roles, type ResourceName, type ActionOf } from './permissions.js';
 import type { OssContext, EventBus } from '../kernel/index.js';
+import { createLogger } from '../kernel/logger.js';
 import { extractClientMeta } from '../kernel/router-utils.js';
 
 export const ADMIN_GUARD: Token<AdminGuard> = createToken('ADMIN_GUARD');
+
+const logger = createLogger('admin-guard');
 
 export type AdminCaller = { userId: string; role: string } & ClientMeta;
 
@@ -38,6 +42,10 @@ export class AdminGuard {
     // When bound (iam module loaded), grants come from DB; otherwise falls back to static roles.
     private readonly permissionResolver?: AdminPermissionResolver,
     private readonly events?: EventBus,
+    // When bound (identity module loaded), resolves the PAM player.id for a
+    // player-role denial's audit attribution. This engine-zone file must not import
+    // the player schema directly (ADR-0019/0025), so it goes through this port instead.
+    private readonly identityReader?: IdentityReader,
   ) {}
 
   async assert(context: unknown): Promise<AdminCaller>;
@@ -150,13 +158,24 @@ export class AdminGuard {
     ip: string | null,
     userAgent: string | null,
   ) {
-    this.events?.emit('identity.user.unauthorized_access', {
-      userId,
-      resource,
-      action,
-      ip,
-      userAgent,
-      role,
-    });
+    void (async () => {
+      const playerId =
+        role === 'player'
+          ? ((await this.identityReader?.getPlayerIdByUserIdSafe(userId)) ?? null)
+          : null;
+      try {
+        this.events?.emit('identity.user.unauthorized_access', {
+          userId,
+          playerId,
+          resource,
+          action,
+          ip,
+          userAgent,
+          role,
+        });
+      } catch (err) {
+        logger.error({ err, userId, resource, action }, 'denial audit event failed');
+      }
+    })();
   }
 }

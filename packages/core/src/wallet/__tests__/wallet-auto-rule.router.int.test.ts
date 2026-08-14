@@ -10,6 +10,7 @@ import {
   testContext,
   makeAuditWriter,
   makeAdminGuard,
+  makeIdentityReader,
 } from '../../testing/mock.js';
 import { migrate } from '../migrate.js';
 import { autoWithdrawalRule } from '../schema/index.js';
@@ -49,6 +50,7 @@ function routerWith(adminGuard: AdminGuard) {
     events: makeEventBus(),
     payment: mock<PaymentAdapter>({}),
     audit,
+    identityReader: makeIdentityReader(),
   });
   const router = createWalletRouter(
     service,

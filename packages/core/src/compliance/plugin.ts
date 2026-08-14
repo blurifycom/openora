@@ -8,6 +8,7 @@ import {
   GEO_IP_ADAPTER,
   JOB_QUEUE,
   KYC_ADAPTER,
+  IDENTITY_READER,
   KYC_STATUS_WRITER,
   KYC_VENDOR_STATUSES,
   KYC_WEBHOOK_VERIFIER,
@@ -185,6 +186,7 @@ export default {
         events: c.get(EVENT_BUS),
         kycAdapter,
         statusWriter: c.get(KYC_STATUS_WRITER),
+        identityReader: c.get(IDENTITY_READER),
         platformConfig,
       });
       kycRef = kyc;
@@ -194,6 +196,7 @@ export default {
         drizzle: c.get(DRIZZLE),
         events: c.get(EVENT_BUS),
         loginEnforcement: c.get(LOGIN_ENFORCEMENT),
+        identityReader: c.get(IDENTITY_READER),
         email: c.has(SEND_EMAIL) ? c.get(SEND_EMAIL) : null,
         directory,
         templateRenderer: c.has(EMAIL_TEMPLATE_RENDERER) ? c.get(EMAIL_TEMPLATE_RENDERER) : null,
@@ -212,6 +215,7 @@ export default {
           c.get(DRIZZLE),
           c.get(EVENT_BUS),
           c.has(GEO_IP_ADAPTER) ? c.get(GEO_IP_ADAPTER) : null,
+          c.get(IDENTITY_READER),
         ),
         adminGuard: c.get(ADMIN_GUARD),
         audit: c.get(AUDIT_WRITER),

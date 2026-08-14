@@ -13,7 +13,13 @@ import {
 import { createTestDb, InProcessRealtimeTransport, type TestDb } from '@openora/core/testing';
 import { player } from '@openora/core/pam/schema/profile';
 import { migrate as migrateProfile } from '@openora/core/pam/migrate/profile';
-import { mock, makeEventBus, makeAuditWriter, NO_CLIENT_META } from '../../testing/mock.js';
+import {
+  makeIdentityReader,
+  mock,
+  makeEventBus,
+  makeAuditWriter,
+  NO_CLIENT_META,
+} from '../../testing/mock.js';
 import { migrate } from '../migrate.js';
 import { kycVerification } from '../schema/index.js';
 import { createComplianceRouter } from '../router/index.js';
@@ -61,6 +67,7 @@ function build(guard: AdminGuard) {
     events,
     kycAdapter: mock<KycAdapter>({}),
     statusWriter,
+    identityReader: makeIdentityReader(),
   });
   const audit = makeAuditWriter();
   const router = createComplianceRouter({

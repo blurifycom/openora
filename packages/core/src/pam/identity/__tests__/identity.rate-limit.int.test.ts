@@ -1,8 +1,12 @@
 import { describe, it, expect, vi, beforeAll, afterAll, beforeEach } from 'vitest';
 import { RedisRateLimiter } from '@openora/core/server';
 import { createTestDb, createTestRedis, type TestDb, type TestRedis } from '@openora/core/testing';
-import type { EmailTemplateRenderer, RateLimiterAdapter } from '@openora/core/contracts';
-import { mock, makeEventBus } from '../../../testing/mock.js';
+import type {
+  EmailTemplateRenderer,
+  IdentityReader,
+  RateLimiterAdapter,
+} from '@openora/core/contracts';
+import { makeIdentityReader, mock, makeEventBus } from '../../../testing/mock.js';
 import { migrate } from '../migrate.js';
 import { IdentityService, type IdentityServiceDeps } from '../service/identity.service.js';
 
@@ -10,8 +14,16 @@ const testTemplateRenderer: EmailTemplateRenderer = {
   render: () => ({ subject: 'subject', body: 'body' }),
 };
 
-function withTemplateRenderer(deps: Omit<IdentityServiceDeps, 'templateRenderer'>) {
-  return new IdentityService({ templateRenderer: testTemplateRenderer, ...deps });
+function withTemplateRenderer(
+  deps: Omit<IdentityServiceDeps, 'templateRenderer' | 'identityReader'> & {
+    identityReader?: IdentityReader;
+  },
+) {
+  return new IdentityService({
+    templateRenderer: testTemplateRenderer,
+    ...deps,
+    identityReader: deps.identityReader ?? makeIdentityReader(),
+  });
 }
 
 // Keep the real @openora/core/server (so assertRateLimit + RedisRateLimiter are real); only

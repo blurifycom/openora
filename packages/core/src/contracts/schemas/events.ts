@@ -41,6 +41,7 @@ const walletTxnBase = z.object({
 
 export const KycStatusUpdatedSchema = z.object({
   userId: UuidSchema,
+  playerId: UuidSchema.nullable(),
   actorId: UuidSchema.nullable(),
   status: KycStatusSchema,
   previousStatus: KycStatusSchema,
@@ -49,16 +50,26 @@ export const KycStatusUpdatedSchema = z.object({
 });
 
 export const domainEventSchemas = {
-  'identity.user.registered': authContextBase.extend({ userId: UuidSchema }),
-  'identity.user.login': authContextBase.extend({ userId: UuidSchema }),
+  'identity.user.registered': authContextBase.extend({
+    userId: UuidSchema,
+    playerId: UuidSchema.nullable(),
+  }),
+  'identity.user.login': authContextBase.extend({
+    userId: UuidSchema,
+    playerId: UuidSchema.nullable(),
+  }),
   'identity.user.login.failed': authContextBase.extend({
     email: z.email(),
     reason: z.string().nullable().optional(),
     attemptsRemaining: z.number().int().optional(),
   }),
-  'identity.user.logout': authContextBase.extend({ userId: UuidSchema }),
+  'identity.user.logout': authContextBase.extend({
+    userId: UuidSchema,
+    playerId: UuidSchema.nullable(),
+  }),
   'identity.user.phone_login': authContextBase.extend({
     userId: UuidSchema,
+    playerId: UuidSchema.nullable(),
     method: z.literal('phone'),
   }),
   'identity.phone_otp.requested': authContextBase.extend({ userId: UuidSchema }),
@@ -78,11 +89,26 @@ export const domainEventSchemas = {
     previousFailedAttempts: z.number().int().optional(),
     previousLockoutUntil: TimestampSchema.nullable().optional(),
   }),
-  'identity.2fa.enabled': authContextBase.extend({ userId: UuidSchema }),
-  'identity.2fa.disabled': authContextBase.extend({ userId: UuidSchema }),
-  'identity.password.reset': authContextBase.extend({ userId: UuidSchema }),
-  'identity.email.verified': authContextBase.extend({ userId: UuidSchema }),
-  'identity.profile.updated': authContextBase.extend({ userId: UuidSchema }),
+  'identity.2fa.enabled': authContextBase.extend({
+    userId: UuidSchema,
+    playerId: UuidSchema.nullable(),
+  }),
+  'identity.2fa.disabled': authContextBase.extend({
+    userId: UuidSchema,
+    playerId: UuidSchema.nullable(),
+  }),
+  'identity.password.reset': authContextBase.extend({
+    userId: UuidSchema,
+    playerId: UuidSchema.nullable(),
+  }),
+  'identity.email.verified': authContextBase.extend({
+    userId: UuidSchema,
+    playerId: UuidSchema.nullable(),
+  }),
+  'identity.profile.updated': authContextBase.extend({
+    userId: UuidSchema,
+    playerId: UuidSchema.nullable(),
+  }),
   // An admin toggled a user's active status (the only user-lifecycle flow today;
   // users are deactivated, never hard-deleted). userId = subject, actorId = the
   // admin who acted (for a complete audit trail).
@@ -90,15 +116,18 @@ export const domainEventSchemas = {
   'identity.user.reactivated': authContextBase.extend({ userId: UuidSchema, actorId: UuidSchema }),
   'identity.session.revoked': authContextBase.extend({
     userId: UuidSchema,
+    playerId: UuidSchema.nullable(),
     sessionId: UuidSchema,
     actorId: UuidSchema.optional(),
   }),
   'identity.sessions.revoked_all': authContextBase.extend({
     userId: UuidSchema,
+    playerId: UuidSchema.nullable(),
     actorId: UuidSchema.optional(),
   }),
   'identity.user.unauthorized_access': authContextBase.extend({
     userId: UuidSchema,
+    playerId: UuidSchema.nullable(),
     resource: z.string(),
     action: z.string(),
     role: z.string().optional(),
@@ -111,11 +140,13 @@ export const domainEventSchemas = {
     actorId: UuidSchema,
   }),
 
-  'wallet.deposit.completed': walletTxnBase,
-  'wallet.withdrawal.completed': walletTxnBase,
+  'wallet.deposit.completed': walletTxnBase.extend({ playerId: UuidSchema.nullable() }),
+  'wallet.withdrawal.completed': walletTxnBase.extend({ playerId: UuidSchema.nullable() }),
   // A player requested a withdrawal; funds are held (balance debited) and the
   // request enters the back-office approval queue as `pending`.
-  'wallet.withdrawal.requested': walletTxnBase.extend(authContextBase.shape),
+  'wallet.withdrawal.requested': walletTxnBase
+    .extend({ playerId: UuidSchema.nullable() })
+    .extend(authContextBase.shape),
   // A payments admin approved a pending withdrawal; it moves to `processing` and
   // is sent to the PSP/Fireblocks rail. `adminId` is the acting reviewer.
   'wallet.withdrawal.approved': walletTxnBase
@@ -134,9 +165,14 @@ export const domainEventSchemas = {
     roundId: UuidSchema,
     gameId: UuidSchema,
     userId: UuidSchema,
+    playerId: UuidSchema.nullable(),
     currency: CurrencyCodeSchema,
   }),
-  'gaming.round.ended': z.object({ roundId: UuidSchema, userId: UuidSchema }),
+  'gaming.round.ended': z.object({
+    roundId: UuidSchema,
+    userId: UuidSchema,
+    playerId: UuidSchema.nullable(),
+  }),
 
   'chat.message.sent': z.object({
     messageId: UuidSchema,
@@ -146,10 +182,31 @@ export const domainEventSchemas = {
   }),
 
   // A player muted/unmuted another player's messages for themselves (ABC-45 AC11).
-  'chat.user.blocked': authContextBase.extend({ blockerId: UuidSchema, blockedId: UuidSchema }),
-  'chat.user.unblocked': authContextBase.extend({ blockerId: UuidSchema, blockedId: UuidSchema }),
-  'chat.user.ignored': authContextBase.extend({ ignorerId: UuidSchema, ignoredId: UuidSchema }),
-  'chat.user.unignored': authContextBase.extend({ ignorerId: UuidSchema, ignoredId: UuidSchema }),
+  // actorPlayerId = the blocker/ignorer; playerId = the blocked/ignored subject (resourceId).
+  'chat.user.blocked': authContextBase.extend({
+    blockerId: UuidSchema,
+    actorPlayerId: UuidSchema.nullable(),
+    blockedId: UuidSchema,
+    playerId: UuidSchema.nullable(),
+  }),
+  'chat.user.unblocked': authContextBase.extend({
+    blockerId: UuidSchema,
+    actorPlayerId: UuidSchema.nullable(),
+    blockedId: UuidSchema,
+    playerId: UuidSchema.nullable(),
+  }),
+  'chat.user.ignored': authContextBase.extend({
+    ignorerId: UuidSchema,
+    actorPlayerId: UuidSchema.nullable(),
+    ignoredId: UuidSchema,
+    playerId: UuidSchema.nullable(),
+  }),
+  'chat.user.unignored': authContextBase.extend({
+    ignorerId: UuidSchema,
+    actorPlayerId: UuidSchema.nullable(),
+    ignoredId: UuidSchema,
+    playerId: UuidSchema.nullable(),
+  }),
 
   // Admin room CRUD (actorId = acting admin UUID).
   'chat.room.created': authContextBase.extend({
@@ -175,22 +232,34 @@ export const domainEventSchemas = {
   'chat.private_room.created': authContextBase.extend({
     roomId: UuidSchema,
     creatorId: UuidSchema,
+    playerId: UuidSchema.nullable(),
   }),
   'chat.private_room.deleted': authContextBase.extend({
     roomId: UuidSchema,
     creatorId: UuidSchema,
+    playerId: UuidSchema.nullable(),
   }),
-  'chat.room.member.joined': authContextBase.extend({ roomId: UuidSchema, userId: UuidSchema }),
-  'chat.room.member.left': authContextBase.extend({ roomId: UuidSchema, userId: UuidSchema }),
+  'chat.room.member.joined': authContextBase.extend({
+    roomId: UuidSchema,
+    userId: UuidSchema,
+    playerId: UuidSchema.nullable(),
+  }),
+  'chat.room.member.left': authContextBase.extend({
+    roomId: UuidSchema,
+    userId: UuidSchema,
+    playerId: UuidSchema.nullable(),
+  }),
   'chat.room.member.kicked': authContextBase.extend({
     roomId: UuidSchema,
     userId: UuidSchema,
     kickedBy: UuidSchema,
+    playerId: UuidSchema.nullable(),
   }),
   'chat.room.member.banned': authContextBase.extend({
     roomId: UuidSchema,
     userId: UuidSchema,
     bannedBy: UuidSchema,
+    playerId: UuidSchema.nullable(),
   }),
 
   // An admin added or changed a geo (country) rule (regulatory). `actorId` is the
@@ -201,8 +270,16 @@ export const domainEventSchemas = {
     actorId: UuidSchema.optional(),
   }),
 
-  'compliance.limit.upserted': authContextBase.extend({ userId: UuidSchema, limitId: UuidSchema }),
-  'compliance.limit.removed': authContextBase.extend({ userId: UuidSchema, limitId: UuidSchema }),
+  'compliance.limit.upserted': authContextBase.extend({
+    userId: UuidSchema,
+    playerId: UuidSchema.nullable(),
+    limitId: UuidSchema,
+  }),
+  'compliance.limit.removed': authContextBase.extend({
+    userId: UuidSchema,
+    playerId: UuidSchema.nullable(),
+    limitId: UuidSchema,
+  }),
 
   // Responsible-Gambling admin actions. `userId` = the subject player, `actorId` =
   // the acting admin (the envelope carries no caller, so it is explicit for the audit
@@ -213,6 +290,7 @@ export const domainEventSchemas = {
   // when this is the first limit of that (type, period).
   'rg.limit.set': authContextBase.extend({
     userId: UuidSchema,
+    playerId: UuidSchema.nullable(),
     actorId: UuidSchema,
     limitId: UuidSchema,
     type: LimitTypeSchema,
@@ -223,13 +301,19 @@ export const domainEventSchemas = {
     previousMinutes: z.number().int().nullable(),
   }),
   'rg.cooling_off.activated': actorReasonBase
-    .extend({ userId: UuidSchema, exclusionId: UuidSchema, expiresAt: TimestampSchema })
+    .extend({
+      userId: UuidSchema,
+      playerId: UuidSchema.nullable(),
+      exclusionId: UuidSchema,
+      expiresAt: TimestampSchema,
+    })
     .extend(authContextBase.shape),
   // durationMonths is the admin's chosen term, null when permanent - the regulatory
   // export reads the decision as made rather than re-deriving it from expiresAt.
   'rg.self_exclusion.activated': actorReasonBase
     .extend({
       userId: UuidSchema,
+      playerId: UuidSchema.nullable(),
       exclusionId: UuidSchema,
       isPermanent: z.boolean(),
       durationMonths: z.number().int().nullable(),
@@ -237,12 +321,20 @@ export const domainEventSchemas = {
     })
     .extend(authContextBase.shape),
   'rg.self_exclusion.lifted': actorReasonBase
-    .extend({ userId: UuidSchema, exclusionId: UuidSchema, kind: ExclusionKindSchema })
+    .extend({
+      userId: UuidSchema,
+      playerId: UuidSchema.nullable(),
+      exclusionId: UuidSchema,
+      kind: ExclusionKindSchema,
+    })
     .extend(authContextBase.shape),
   'rg.cooling_off.lifted': actorReasonBase
-    .extend({ userId: UuidSchema, exclusionId: UuidSchema })
+    .extend({ userId: UuidSchema, playerId: UuidSchema.nullable(), exclusionId: UuidSchema })
     .extend(authContextBase.shape),
-  'rg.exclusion.login_blocked': authContextBase.extend({ userId: UuidSchema }),
+  'rg.exclusion.login_blocked': authContextBase.extend({
+    userId: UuidSchema,
+    playerId: UuidSchema.nullable(),
+  }),
 
   // A player's KYC status changed. userId = subject player; actorId = the admin who
   // acted, or null for system-driven changes (vendor decision, webhook, threshold
@@ -253,6 +345,7 @@ export const domainEventSchemas = {
   // the provider. userId = the submitting player; referenceId = the provider reference.
   'compliance.kyc.submitted': authContextBase.extend({
     userId: UuidSchema,
+    playerId: UuidSchema.nullable(),
     referenceId: z.string(),
     provider: z.string(),
   }),
@@ -261,11 +354,13 @@ export const domainEventSchemas = {
   // System-driven (no admin actor); reason records the metric that crossed.
   'compliance.kyc.reverify_required': z.object({
     userId: UuidSchema,
+    playerId: UuidSchema.nullable(),
     reason: z.string(),
   }),
 
   'compliance.kyc.high_risk_signal_detected': z.object({
     userId: UuidSchema,
+    playerId: UuidSchema.nullable(),
     referenceId: z.string(),
     vpnOrTorDetected: z.boolean(),
     dataCenterIpDetected: z.boolean(),
@@ -369,6 +464,7 @@ export const domainEventSchemas = {
   }),
   'player.level.changed': z.object({
     userId: UuidSchema,
+    playerId: UuidSchema.nullable(),
     previousLevel: z.number().int(),
     newLevel: z.number().int(),
     actorId: UuidSchema,
@@ -378,6 +474,7 @@ export const domainEventSchemas = {
   // is a failure outcome. userId = the subject player; status = the blocking status.
   'player.login_blocked': authContextBase.extend({
     userId: UuidSchema,
+    playerId: UuidSchema.nullable(),
     status: PlayerStatusSchema,
   }),
 

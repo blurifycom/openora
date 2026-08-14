@@ -11,12 +11,14 @@ import type {
   PlayerTags,
 } from '@openora/core/contracts';
 import { createTestDb, type TestDb } from '@openora/core/testing';
+import { migrate as migrateProfile } from '@openora/core/pam/migrate/profile';
 import {
   mock,
   makeEventBus,
   testContext,
   makeAuditWriter,
   makeAdminGuard,
+  makeIdentityReader,
   NO_CLIENT_META,
 } from '../../testing/mock.js';
 import { migrate } from '../migrate.js';
@@ -30,7 +32,7 @@ const CALLER_ID = '9a2f7c11-0000-4000-8000-0000000000bb';
 let db: TestDb;
 
 beforeAll(async () => {
-  db = await createTestDb([migrate]);
+  db = await createTestDb([migrate, migrateProfile]);
 });
 
 afterAll(async () => {
@@ -91,6 +93,7 @@ function routerWith(adminGuard: AdminGuard, platformConfig?: Partial<PlatformCon
       })),
     }),
     audit,
+    identityReader: makeIdentityReader(),
     directory,
     platformConfig: platformConfig ? mock<PlatformConfig>(platformConfig) : undefined,
     riskTags,

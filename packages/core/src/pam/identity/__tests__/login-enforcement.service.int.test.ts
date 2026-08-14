@@ -2,7 +2,8 @@ import { describe, it, expect, beforeAll, afterAll, beforeEach } from 'vitest';
 import { randomUUID } from 'node:crypto';
 import { eq, sql } from 'drizzle-orm';
 import { createTestDb, type TestDb } from '@openora/core/testing';
-import { makeEventBus } from '../../../testing/mock.js';
+import { migrate as migrateProfile } from '@openora/core/pam/migrate/profile';
+import { makeEventBus, makeIdentityReader } from '../../../testing/mock.js';
 import { migrate } from '../migrate.js';
 import { user, session } from '../schema/index.js';
 import { LoginEnforcementService } from '../service/login-enforcement.service.js';
@@ -14,7 +15,11 @@ let db: TestDb;
 
 function makeService() {
   const events = makeEventBus();
-  const sessions = new SessionService({ drizzle: db.drizzle, events: events });
+  const sessions = new SessionService({
+    drizzle: db.drizzle,
+    events,
+    identityReader: makeIdentityReader(),
+  });
   return { svc: new LoginEnforcementService(db.drizzle, sessions), events };
 }
 
@@ -57,7 +62,7 @@ async function activeSessionCount(userId: string) {
 }
 
 beforeAll(async () => {
-  db = await createTestDb([migrate]);
+  db = await createTestDb([migrate, migrateProfile]);
 });
 
 afterAll(async () => {

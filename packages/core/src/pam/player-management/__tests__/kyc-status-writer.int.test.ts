@@ -43,7 +43,7 @@ beforeEach(async () => {
 describe('PlayerKycStatusWriter.setStatus (real PG)', () => {
   it('writes the new status and emits the change with its previous value', async () => {
     const { writer, events } = makeWriter();
-    const { userId } = await seedPlayer({ kycStatus: 'pending' });
+    const { id: playerId, userId } = await seedPlayer({ kycStatus: 'pending' });
     const actorId = randomUUID();
 
     await writer.setStatus(userId, 'verified', { actorId, source: 'manual' });
@@ -51,6 +51,7 @@ describe('PlayerKycStatusWriter.setStatus (real PG)', () => {
     expect(await statusOf(userId)).toBe('verified');
     expect(events.emit).toHaveBeenCalledWith('compliance.kyc.updated', {
       userId,
+      playerId,
       actorId,
       status: 'verified',
       previousStatus: 'pending',

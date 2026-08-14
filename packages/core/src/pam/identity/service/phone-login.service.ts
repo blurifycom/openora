@@ -330,10 +330,24 @@ export class PhoneLoginService {
       throw new ORPCError('INTERNAL_SERVER_ERROR', { message: 'Account not found.' });
     }
 
+    // Resolved once, before either gate below, so both the RG-block and the
+    // Backoffice-block events - and the eventual phone-login success event - can all
+    // carry playerId.
+    const [playerRow] = await this.drizzle.db
+      .select({ id: player.id, status: player.status })
+      .from(player)
+      .where(eq(player.userId, account.id))
+      .limit(1);
+
     // RG login block applied only AFTER the OTP verifies so a probe can't distinguish
     // a restricted account from a wrong code.
     if (isRgBlocked(account)) {
-      this.events.emit('rg.exclusion.login_blocked', { userId: account.id, ip, userAgent });
+      this.events.emit('rg.exclusion.login_blocked', {
+        userId: account.id,
+        playerId: playerRow?.id ?? null,
+        ip,
+        userAgent,
+      });
       throw new ORPCError('FORBIDDEN', {
         message: 'Account access is currently restricted (responsible gambling).',
         data: { reason: PhoneLoginErrorReasonSchema.enum.rg_blocked },
@@ -345,14 +359,10 @@ export class PhoneLoginService {
     // the email path there is nothing to revoke here; the OTP is left unconsumed so the
     // gate reads the same as the RG block above. Distinct from RG (self_excluded is out of
     // scope) - a suspended/closed player can never complete phone login.
-    const [playerRow] = await this.drizzle.db
-      .select({ status: player.status })
-      .from(player)
-      .where(eq(player.userId, account.id))
-      .limit(1);
     if (playerRow && (playerRow.status === 'suspended' || playerRow.status === 'closed')) {
       this.events.emit('player.login_blocked', {
         userId: account.id,
+        playerId: playerRow.id,
         status: playerRow.status,
         ip,
         userAgent,
@@ -387,6 +397,7 @@ export class PhoneLoginService {
 
     this.events.emit('identity.user.phone_login', {
       userId: account.id,
+      playerId: playerRow?.id ?? null,
       method: 'phone',
       ip,
       userAgent,

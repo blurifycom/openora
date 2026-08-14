@@ -9,6 +9,8 @@ export type IdentityReader = {
   getPlayerIdsInactiveSince(sinceDate: Date): Promise<User['id'][]>;
   /** Resolves the player profile id for a given auth user id, or null when no profile exists yet. */
   getPlayerIdByUserId(userId: User['id']): Promise<Player['id'] | null>;
+  /** Best-effort variant for optional event enrichment; lookup failures resolve to null. */
+  getPlayerIdByUserIdSafe(userId: User['id']): Promise<Player['id'] | null>;
   /** Resolves the player's current KYC status from PAM, or null when no profile exists yet. */
   getPlayerKycStatusByUserId(userId: User['id']): Promise<KycStatus | null>;
   /** Returns other player user ids that have authenticated from the same login IP. */

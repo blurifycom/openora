@@ -3,8 +3,9 @@ import { randomUUID } from 'node:crypto';
 import { sql } from 'drizzle-orm';
 import { RedisRateLimiter } from '@openora/core/server';
 import { createTestDb, createTestRedis, type TestDb, type TestRedis } from '@openora/core/testing';
+import { migrate as migrateProfile } from '@openora/core/pam/migrate/profile';
 import type { PaymentAdapter, AuditWritePort } from '@openora/core/contracts';
-import { mock, NO_CLIENT_META, makeEventBus } from '../../testing/mock.js';
+import { mock, NO_CLIENT_META, makeEventBus, makeIdentityReader } from '../../testing/mock.js';
 import { migrate } from '../migrate.js';
 import { wallet, walletTransaction } from '../schema/index.js';
 import { WalletService } from '../service/wallet.service.js';
@@ -24,6 +25,7 @@ const makeService = () =>
     events,
     payment,
     audit,
+    identityReader: makeIdentityReader(),
     limiter: new RedisRateLimiter(redis.client),
   });
 
@@ -36,7 +38,7 @@ async function seedWallet() {
 }
 
 beforeAll(async () => {
-  db = await createTestDb([migrate]);
+  db = await createTestDb([migrate, migrateProfile]);
   redis = await createTestRedis();
 });
 

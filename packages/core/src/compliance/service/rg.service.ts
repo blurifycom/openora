@@ -15,6 +15,7 @@ import type {
   EmailTemplateData,
   EmailTemplateKey,
   AdminUserDirectory,
+  IdentityReader,
   User,
   ClientMeta,
 } from '@openora/core/contracts';
@@ -74,6 +75,7 @@ export type RgServiceDeps = {
   loginEnforcement: LoginEnforcementPort;
   email?: SendEmailPort | null;
   directory?: AdminUserDirectory | null;
+  identityReader: IdentityReader;
   templateRenderer?: EmailTemplateRenderer | null;
 };
 
@@ -92,6 +94,7 @@ export class RgService {
   private readonly loginEnforcement: LoginEnforcementPort;
   private readonly email: SendEmailPort | null;
   private readonly directory: AdminUserDirectory | null;
+  private readonly identityReader: IdentityReader;
   private readonly templateRenderer: EmailTemplateRenderer | null;
 
   constructor(deps: RgServiceDeps) {
@@ -100,6 +103,7 @@ export class RgService {
     this.loginEnforcement = deps.loginEnforcement;
     this.email = deps.email ?? null;
     this.directory = deps.directory ?? null;
+    this.identityReader = deps.identityReader;
     this.templateRenderer = deps.templateRenderer ?? null;
   }
 
@@ -133,6 +137,7 @@ export class RgService {
     );
     this.events.emit('rg.limit.set', {
       userId,
+      playerId: await this.identityReader.getPlayerIdByUserIdSafe(userId),
       actorId,
       limitId: row.id,
       type: input.type,
@@ -185,6 +190,7 @@ export class RgService {
     });
     this.events.emit('rg.cooling_off.activated', {
       userId,
+      playerId: await this.identityReader.getPlayerIdByUserIdSafe(userId),
       actorId,
       exclusionId: row.id,
       expiresAt: expiresAt.toISOString(),
@@ -236,6 +242,7 @@ export class RgService {
     });
     this.events.emit('rg.self_exclusion.activated', {
       userId,
+      playerId: await this.identityReader.getPlayerIdByUserIdSafe(userId),
       actorId,
       exclusionId: row.id,
       isPermanent: input.isPermanent,
@@ -303,6 +310,7 @@ export class RgService {
     });
     this.events.emit('rg.self_exclusion.lifted', {
       userId,
+      playerId: await this.identityReader.getPlayerIdByUserIdSafe(userId),
       actorId,
       exclusionId: row.id,
       kind: 'self_exclusion',
@@ -356,6 +364,7 @@ export class RgService {
     });
     this.events.emit('rg.cooling_off.lifted', {
       userId,
+      playerId: await this.identityReader.getPlayerIdByUserIdSafe(userId),
       actorId,
       exclusionId: row.id,
       reason: input.reason,
