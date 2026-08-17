@@ -262,7 +262,6 @@ export class ChatService {
     return new Set([...blocked, ...ignored]);
   }
 
-  /** Batch username resolution for a list of userIds - one lookupPlayers call, not N+1. */
   private async usernamesFor(userIds: readonly User['id'][]) {
     const summaries = await this.directory.lookupPlayers(userIds);
     return new Map(summaries.map((s) => [s.userId, s.username]));

@@ -14,10 +14,6 @@ import { PlayerKycStatusWriter } from './service/kyc-status-writer.js';
 import { DrizzlePlayerActivityTracker } from './service/player-activity-tracker.service.js';
 import { createPlayerRouter } from './router/index.js';
 
-// Owns the player table writes, so it binds the single KYC_STATUS_WRITER seam
-// (compliance + the admin override route consume it) and PLAYER_ACTIVITY_TRACKER
-// (the per-request auth middleware's fire-and-forget lastSeenAt writer, see
-// create-app.ts). Reads identity via /schema. See ADR-0020.
 export default {
   id: 'player-management',
   dependsOn: ['chat', 'gaming', 'audit', 'identity'],

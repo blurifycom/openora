@@ -24,9 +24,6 @@ import {
 
 let db: TestDb;
 
-// Resolves against the real seeded `player` rows (not a stubbed constant) so
-// assertions on the emitted actorPlayerId reflect the actual lookup social.service
-// performs via IdentityReader.getPlayerIdByUserIdSafe.
 function realIdentityReader(): IdentityReader {
   return {
     ...makeIdentityReader(),
@@ -449,8 +446,6 @@ describe('SocialService.removeFriend (real PG)', () => {
       FriendshipNotFoundError,
     );
 
-    // Re-sending after removal must succeed - the partial pair index only guards
-    // active (removedAt IS NULL) rows.
     const resent = await svc.sendFriendRequest(alice.userId, bob.userId);
     expect(resent.acceptedAt).toBeNull();
     const rows = await db.drizzle.db.select().from(friendship);
@@ -523,7 +518,6 @@ describe('SocialService.listFriends (real PG)', () => {
     });
     await makeFriends(svc, caller.userId, removedFriend.userId);
     await svc.removeFriend(caller.userId, removedFriend.userId);
-    // Unrelated friendship the caller isn't part of - must never leak into the caller's list.
     await makeFriends(svc, strangerA.userId, strangerB.userId);
 
     const result = await svc.listFriends(caller.userId, { page: 1, limit: 20 });
@@ -547,7 +541,6 @@ describe('SocialService.listFriends (real PG)', () => {
     await makeFriends(svc, caller.userId, ignoredFriend.userId);
     await makeFriends(svc, caller.userId, plainFriend.userId);
     await seedIgnore(caller.userId, ignoredFriend.userId);
-    // The friend ignoring the CALLER must never flip the caller's own flag.
     await seedIgnore(plainFriend.userId, caller.userId);
 
     const result = await svc.listFriends(caller.userId, { page: 1, limit: 20 });
@@ -598,9 +591,7 @@ describe('SocialService.listFriends (real PG)', () => {
     const caller = await seedPlayer({ displayName: 'Caller' });
     const friend = await seedPlayer({ displayName: 'Friend' });
     await makeFriends(svc, caller.userId, friend.userId);
-    // An accepted friendship pointing at a userId with no player row - friendship
-    // has no FK to player (cross-module, ADR-0020), so this is reachable in
-    // practice, not just a test artifact.
+
     await db.drizzle.db.insert(friendship).values({
       requesterId: caller.userId,
       addresseeId: randomUUID(),

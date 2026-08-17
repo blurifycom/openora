@@ -60,17 +60,8 @@ export const FriendRequestRefusedError = makeConflictError(
   'This friend request was refused',
 );
 
-// No active, accepted friendship exists for the pair - thrown by removeFriend (a
-// direct user action) only. dissolveFriendshipOnBlock silently no-ops instead: it
-// runs from an event handler, not a user action, so "not friends" is a normal case.
 export const FriendshipNotFoundError = makeNotFoundError('Friendship');
 
-// Postgres unique-violation. friendship has exactly one unique index
-// (friendship_pair_key), so any 23505 on an insert into it is unambiguous - no
-// constraint-name check needed. drizzle-orm wraps the driver error in a
-// DrizzleQueryError, so the pg error (and its `.code`) is on `.cause`, not the
-// thrown error itself - checked against a real Postgres unique-index violation
-// in social.service.int.test.ts (a mocked query builder can't catch this).
 function pgErrorCode(e: unknown): string | undefined {
   if (typeof e !== 'object' || e === null) {
     return undefined;
@@ -265,8 +256,6 @@ export class SocialService {
               eq(friendship.addresseeId, callerId),
             ),
           ),
-          // A soft-removed friendship reads as "none" (able to re-friend), not stale
-          // friends/refused state.
           isNull(friendship.removedAt),
         ),
       );
@@ -438,10 +427,6 @@ export class SocialService {
               })
               .from(player)
               .where(inArray(player.userId, otherUserIds)),
-            // The caller's OWN ignore state on each friend - Confluence Scenario 3
-            // requires the menu to read "Unignore" for a friend already ignored.
-            // Never the reverse direction: the other party ignoring the caller is
-            // their own state, not disclosed here.
             this.drizzle.db
               .select({ ignoredId: chatUserIgnore.ignoredId })
               .from(chatUserIgnore)
@@ -458,9 +443,7 @@ export class SocialService {
     const ignoredIds = new Set(ignores.map((i) => i.ignoredId));
 
     const now = Date.now();
-    // Player row should always exist (players are deactivated, never hard-deleted -
-    // see module-structure.md), so a miss means an orphaned friendship row, not a
-    // normal case - log it and drop the entry rather than render a blank-name row.
+
     const items = rows.flatMap((row) => {
       const userId = row.requesterId === callerId ? row.addresseeId : row.requesterId;
       const targetPlayer = playerByUserId.get(userId);

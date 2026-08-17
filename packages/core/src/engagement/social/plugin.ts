@@ -6,24 +6,12 @@ import { createSocialRouter } from './router/index.js';
 
 const logger = createLogger('social');
 
-// DI wiring only - no business logic here. sendFriendRequest/getRelationships read
-// the `player` table via the read-only @openora/core/pam/schema/profile subpath
-// (ADR-0020), not a DI token/command port, so that access needs no dependsOn entry -
-// the imported pgTable is a plain object available regardless of plugin registration
-// order. `dependsOn: ['identity']` is for IDENTITY_READER below (resolves the raw
-// actor userId to a player.id for audit attribution).
 export default {
   id: 'social',
   dependsOn: ['chat', 'identity'],
   register(ctx) {
-    // Subscriptions are wired before router factories run (create-app.ts boot order),
-    // so svcRef is null at registration but set before any real event arrives - see
-    // notifications/plugin.ts and tag/plugin.ts for the same pattern.
     let socialRef: SocialService | null = null;
 
-    // Blocking a player must also dissolve any active friendship with them (BF-427) -
-    // reuses the chat module's existing block infra rather than duplicating it. Never
-    // throws into the event bus dispatch: a failure here is logged, not propagated.
     ctx.events.on('chat.user.blocked', (payload) => {
       const parsed = domainEventSchemas['chat.user.blocked'].safeParse(payload);
       if (!parsed.success || !socialRef) {

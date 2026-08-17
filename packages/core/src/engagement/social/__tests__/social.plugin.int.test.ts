@@ -20,10 +20,6 @@ import { friendship } from '../schema/index.js';
 import { SocialService } from '../service/social.service.js';
 import socialPlugin from '../plugin.js';
 
-// Exercises the ACTUAL plugin wiring (plugin.ts's register()), not just the service
-// method - proves the 'chat.user.blocked' subscriber the plugin registers is the one
-// that resolves to SocialService.dissolveFriendshipOnBlock, with the real event
-// payload shape from domainEventSchemas.
 let db: TestDb;
 
 async function seedPlayer(overrides: Partial<typeof player.$inferInsert> = {}) {
@@ -57,8 +53,6 @@ function boot() {
   const registry = new ModuleRegistryImpl<CoreTokenCatalog>(container);
 
   socialPlugin.register(registry);
-  // Router factories run once, after every plugin has registered (create-app.ts boot
-  // order) - this is what makes socialRef non-null before any real event arrives.
   registry.routers.getAll().get('social')?.(container);
 
   const chatUserBlockedHandlers = registry.events.getAll().get('chat.user.blocked') ?? [];
@@ -73,9 +67,6 @@ async function makeFriends(alice: string, bob: string) {
   return first;
 }
 
-// The plugin's handler is intentionally fire-and-forget (matches notifications/tag
-// plugin.ts's convention: `.catch(err => logger.error(...))`, never `return`ed), so
-// it does not hand back a promise the test can await - poll for the effect instead.
 async function waitUntil(
   fn: () => Promise<boolean>,
   { timeoutMs = 2000, intervalMs = 20 } = {},
