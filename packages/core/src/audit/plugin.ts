@@ -538,10 +538,34 @@ export async function mapEventToRecord(
     };
   }
 
-  // Generic player-self-action fallback (login/logout/registered/2fa/password
-  // reset/email verified/profile updated, gaming rounds, self-service RG limits,
-  // ...): actorId = the resolved playerId. `identity.user.registered` legitimately
-  // has no player row yet at emit time, so this can be null.
+  // Registration always precedes player-row creation (public sign-up only, no
+  // admin path): actorType stays 'player' even though playerId is legitimately
+  // null at emit time, before the async listener creates the row.
+  if (topic === 'identity.user.registered') {
+    return { ...base, actorId: str(p['playerId']), actorType: 'player' };
+  }
+
+  // Shared identity self-action topics: the same `/identity/*` endpoints serve
+  // both player and admin accounts, so playerId only resolves for a player. A
+  // null playerId means the account has no player row - attribute to the
+  // admin's own userId instead of mislabeling them as a player.
+  if (
+    topic === 'identity.user.login' ||
+    topic === 'identity.user.logout' ||
+    topic === 'identity.2fa.enabled' ||
+    topic === 'identity.2fa.disabled' ||
+    topic === 'identity.password.reset' ||
+    topic === 'identity.email.verified' ||
+    topic === 'identity.profile.updated'
+  ) {
+    const playerId = p['playerId'];
+    return playerId
+      ? { ...base, actorId: str(playerId), actorType: 'player' }
+      : { ...base, actorId: str(p['userId']), actorType: 'admin' };
+  }
+
+  // Generic player-self-action fallback (gaming rounds, chat, self-service RG
+  // limits, ...): actorId = the resolved playerId.
   if (typeof p['userId'] === 'string') {
     return { ...base, actorId: str(p['playerId']), actorType: 'player' };
   }
