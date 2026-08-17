@@ -53,11 +53,18 @@ export const friendship = pgTable(
       'friendship_one_decision_key',
       sql`NOT (${t.acceptedAt} IS NOT NULL AND ${t.refusedAt} IS NOT NULL)`,
     ),
-    // A friendship can only be soft-removed once it was actually accepted - never a
-    // pending or refused row.
+    // A refused row can never also be soft-removed - refusal is a permanent block on
+    // re-requesting the pair (see FriendRequestRefusedError), and removedAt must never
+    // be set on a refused row (by convention, enforced here) so that permanence holds.
+    // This otherwise allows removedAt on EITHER an accepted row (existing
+    // remove-friend/dissolve-on-block flow) OR a still-pending row (never decided) -
+    // the latter is what lets SocialService.cancelFriendRequest soft-remove a pending
+    // request via the same mechanism: removedAt set, refusedAt left null, so the pair
+    // drops out of the partial unique index (WHERE removedAt IS NULL) and can be
+    // re-requested later (BF-426).
     check(
-      'friendship_removed_requires_accepted_key',
-      sql`NOT (${t.removedAt} IS NOT NULL AND ${t.acceptedAt} IS NULL)`,
+      'friendship_removed_excludes_refused_key',
+      sql`NOT (${t.removedAt} IS NOT NULL AND ${t.refusedAt} IS NOT NULL)`,
     ),
   ],
 );

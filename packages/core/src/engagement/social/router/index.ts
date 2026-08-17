@@ -11,6 +11,7 @@ import {
   FriendRequestRefusedError,
   BlockedBySelfError,
   FriendshipNotFoundError,
+  FriendRequestNotFoundError,
 } from '../service/social.service.js';
 
 // oRPC router factory for Social. plugin.ts builds the service from the
@@ -52,6 +53,38 @@ export function createSocialRouter(social: SocialService) {
       const callerId = getUserId(context);
       return mapErrors({ NOT_FOUND: [FriendshipNotFoundError] }, async () => {
         await social.removeFriend(callerId, input.targetUserId);
+        return { success: true as const };
+      });
+    }),
+
+    listFriendRequests: os.listFriendRequests.handler(({ input, context }) => {
+      const callerId = getUserId(context);
+      return social.listFriendRequests(callerId, {
+        direction: input.direction,
+        page: input.page,
+        limit: input.limit,
+      });
+    }),
+
+    acceptFriendRequest: os.acceptFriendRequest.handler(({ input, context }) => {
+      const callerId = getUserId(context);
+      return mapErrors({ NOT_FOUND: [FriendRequestNotFoundError] }, () =>
+        social.acceptFriendRequest(callerId, input.friendshipId),
+      );
+    }),
+
+    declineFriendRequest: os.declineFriendRequest.handler(({ input, context }) => {
+      const callerId = getUserId(context);
+      return mapErrors({ NOT_FOUND: [FriendRequestNotFoundError] }, async () => {
+        await social.declineFriendRequest(callerId, input.friendshipId);
+        return { success: true as const };
+      });
+    }),
+
+    cancelFriendRequest: os.cancelFriendRequest.handler(({ input, context }) => {
+      const callerId = getUserId(context);
+      return mapErrors({ NOT_FOUND: [FriendRequestNotFoundError] }, async () => {
+        await social.cancelFriendRequest(callerId, input.friendshipId);
         return { success: true as const };
       });
     }),

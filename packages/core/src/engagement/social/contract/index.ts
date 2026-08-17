@@ -75,6 +75,37 @@ export const RemoveFriendInputSchema = z.object({
 });
 export type RemoveFriendInput = z.infer<typeof RemoveFriendInputSchema>;
 
+// Requests-tab entries (BF-426): a pending (never decided) friendship row, from the
+// caller's perspective. `direction` tells the consumer which side of the pair the
+// caller is on: incoming = caller is addresseeId, outgoing = caller is requesterId.
+export const FRIEND_REQUEST_DIRECTIONS = ['incoming', 'outgoing'] as const;
+export const FriendRequestDirectionSchema = z.enum(FRIEND_REQUEST_DIRECTIONS);
+export type FriendRequestDirection = z.infer<typeof FriendRequestDirectionSchema>;
+
+export const ListFriendRequestsInputSchema = z.object({
+  ...PageQuerySchema.shape,
+  direction: FriendRequestDirectionSchema,
+});
+export type ListFriendRequestsInput = z.infer<typeof ListFriendRequestsInputSchema>;
+
+// mutualFriendsCount is only computed for direction: 'incoming' (null for outgoing -
+// the AC doesn't require it there, and it would need a symmetric, equally-batched
+// query on demand-not-value).
+export const FriendRequestEntrySchema = z.object({
+  friendshipId: UuidSchema,
+  userId: UuidSchema,
+  displayName: z.string(),
+  direction: FriendRequestDirectionSchema,
+  createdAt: TimestampSchema,
+  mutualFriendsCount: z.number().int().min(0).nullable(),
+});
+export type FriendRequestEntry = z.infer<typeof FriendRequestEntrySchema>;
+
+export const FriendRequestIdInputSchema = z.object({
+  friendshipId: UuidSchema,
+});
+export type FriendRequestIdInput = z.infer<typeof FriendRequestIdInputSchema>;
+
 export const socialContract = {
   sendFriendRequest: oc
     .route({ method: 'POST', path: '/social/friend-requests' })
@@ -95,5 +126,25 @@ export const socialContract = {
   removeFriend: oc
     .route({ method: 'DELETE', path: '/social/friends/{targetUserId}' })
     .input(RemoveFriendInputSchema)
+    .output(z.object({ success: z.literal(true) })),
+
+  listFriendRequests: oc
+    .route({ method: 'GET', path: '/social/friend-requests' })
+    .input(ListFriendRequestsInputSchema)
+    .output(paginated(FriendRequestEntrySchema)),
+
+  acceptFriendRequest: oc
+    .route({ method: 'POST', path: '/social/friend-requests/{friendshipId}/accept' })
+    .input(FriendRequestIdInputSchema)
+    .output(FriendshipSchema),
+
+  declineFriendRequest: oc
+    .route({ method: 'POST', path: '/social/friend-requests/{friendshipId}/decline' })
+    .input(FriendRequestIdInputSchema)
+    .output(z.object({ success: z.literal(true) })),
+
+  cancelFriendRequest: oc
+    .route({ method: 'DELETE', path: '/social/friend-requests/{friendshipId}' })
+    .input(FriendRequestIdInputSchema)
     .output(z.object({ success: z.literal(true) })),
 };

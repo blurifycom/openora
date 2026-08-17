@@ -510,6 +510,22 @@ export const domainEventSchemas = {
     otherUserId: UuidSchema,
     reason: z.enum(['removed_by_player', 'blocked']),
   }),
+  // A pending friend request was declined by its addressee (BF-426, Requests tab).
+  // Audit-trail only - deliberately NOT subscribed to by the notifications module
+  // (the sender must not be notified of a decline).
+  'social.friend_request.declined': authContextBase.extend({
+    friendshipId: UuidSchema,
+    requesterId: UuidSchema,
+    addresseeId: UuidSchema,
+  }),
+  // A pending friend request was cancelled by its requester (BF-426, Requests tab).
+  // Audit-trail only - deliberately NOT subscribed to by the notifications module
+  // (the recipient must not be notified of a cancel).
+  'social.friend_request.cancelled': authContextBase.extend({
+    friendshipId: UuidSchema,
+    requesterId: UuidSchema,
+    addresseeId: UuidSchema,
+  }),
 } as const;
 
 export type DomainEventName = keyof typeof domainEventSchemas;

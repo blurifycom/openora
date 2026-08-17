@@ -1,0 +1,2 @@
+ALTER TABLE "friendship" DROP CONSTRAINT "friendship_removed_requires_accepted_key";--> statement-breakpoint
+ALTER TABLE "friendship" ADD CONSTRAINT "friendship_removed_excludes_refused_key" CHECK (NOT ("friendship"."removed_at" IS NOT NULL AND "friendship"."refused_at" IS NOT NULL));

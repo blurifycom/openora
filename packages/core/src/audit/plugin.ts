@@ -436,6 +436,30 @@ export async function mapEventToRecord(
     };
   }
 
+  // A pending friend request was declined by its addressee - audit-only (see events.ts).
+  if (topic === 'social.friend_request.declined') {
+    return {
+      ...base,
+      actorType: 'player',
+      actorId: str(p['addresseeId']),
+      resourceType: 'friendship',
+      resourceId: str(p['friendshipId']),
+      after: { status: 'declined' },
+    };
+  }
+
+  // A pending friend request was cancelled by its requester - audit-only (see events.ts).
+  if (topic === 'social.friend_request.cancelled') {
+    return {
+      ...base,
+      actorType: 'player',
+      actorId: str(p['requesterId']),
+      resourceType: 'friendship',
+      resourceId: str(p['friendshipId']),
+      after: { status: 'cancelled' },
+    };
+  }
+
   // Admin CMS page/banner CRUD. actorId = acting admin; resourceId = the page/banner.
   if (
     topic === 'cms.page.created' ||
@@ -673,6 +697,8 @@ const SUBSCRIBED_TOPICS: DomainEventName[] = [
   'social.friend_request.sent',
   'social.friend_request.accepted',
   'social.friendship.removed',
+  'social.friend_request.declined',
+  'social.friend_request.cancelled',
 ] as const;
 
 export default {

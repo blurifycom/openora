@@ -303,7 +303,11 @@
         "friendship"
       ],
       "routes": [
+        "social.acceptFriendRequest",
+        "social.cancelFriendRequest",
+        "social.declineFriendRequest",
         "social.getRelationships",
+        "social.listFriendRequests",
         "social.listFriends",
         "social.removeFriend",
         "social.sendFriendRequest"
@@ -828,6 +832,8 @@
     "rg.self_exclusion.activated",
     "rg.self_exclusion.lifted",
     "social.friend_request.accepted",
+    "social.friend_request.cancelled",
+    "social.friend_request.declined",
     "social.friend_request.sent",
     "social.friendship.removed",
     "tag.created",
@@ -1188,6 +1194,18 @@
       "file": "packages/core/src/engagement/social/contract/index.ts"
     },
     {
+      "name": "FriendRequestDirectionSchema",
+      "file": "packages/core/src/engagement/social/contract/index.ts"
+    },
+    {
+      "name": "FriendRequestEntrySchema",
+      "file": "packages/core/src/engagement/social/contract/index.ts"
+    },
+    {
+      "name": "FriendRequestIdInputSchema",
+      "file": "packages/core/src/engagement/social/contract/index.ts"
+    },
+    {
       "name": "FriendshipSchema",
       "file": "packages/core/src/engagement/social/contract/index.ts"
     },
@@ -1406,6 +1424,10 @@
     {
       "name": "LimitTypeSchema",
       "file": "packages/core/src/contracts/schemas/compliance.ts"
+    },
+    {
+      "name": "ListFriendRequestsInputSchema",
+      "file": "packages/core/src/engagement/social/contract/index.ts"
     },
     {
       "name": "ListRgFlagsInputSchema",
