@@ -2,7 +2,7 @@ import type { AdminUserDirectory, AdminUserListOptions, ClientMeta } from '@open
 import { KycStatusSchema, normalizeKycStatus } from '@openora/core/contracts';
 import { DrizzleService, pageToOffset } from '@openora/core/server';
 import type { EventBus } from '@openora/core/server';
-import { asc, count, desc, eq, ilike, inArray, sql } from 'drizzle-orm';
+import { and, asc, count, desc, eq, ilike, inArray, sql } from 'drizzle-orm';
 import { user } from './schema/index.js';
 // Read-only cross-domain read of the player/profile table via the public /schema
 // subpath (allowed per ADR-0020) so back-office lists can label players by
@@ -129,7 +129,7 @@ export class DrizzleAdminUserDirectory implements AdminUserDirectory {
       })
       .from(player)
       .innerJoin(user, eq(player.userId, user.id))
-      .where(inArray(player.userId, [...userIds]));
+      .where(and(inArray(player.userId, [...userIds]), eq(user.role, 'player')));
     return rows.map((r) => {
       // The player table stores kycStatus as free text; coerce unknown values to null
       // so the port's KycStatus contract holds without a cast. Normalize the deprecated

@@ -4,6 +4,7 @@ export type ChatModerationEntry = {
   id: string;
   userId: string;
   roomId: string | null;
+  scope: ChatModerationRoomId;
   reason: string;
   createdAt: string;
   expiresAt: string | null;
@@ -15,7 +16,12 @@ export type ChatPlatformBan = {
   reason: string;
   createdAt: string;
   liftedAt: string | null;
+  bannedUntil: string | null;
+  roomId: string | null;
+  scope: ChatModerationRoomId;
 };
+
+export type ChatModerationRoomId = string | '__global' | '__all_public' | '__all';
 
 export type ChatModeration = {
   assertCanSend(userId: string, roomId: string | null, isPublic?: boolean): Promise<void>;
@@ -27,8 +33,8 @@ export type ChatModeration = {
   ): Promise<{ success: true }>;
   mute(input: {
     userId: string;
-    roomId: string | null;
-    durationSeconds: number | null;
+    roomId: ChatModerationRoomId;
+    durationSeconds?: number | null;
     reason: string;
     actorId: string;
     ip: string | null;
@@ -36,7 +42,7 @@ export type ChatModeration = {
   }): Promise<{ success: true }>;
   unmute(input: {
     userId: string;
-    roomId: string | null;
+    roomId: ChatModerationRoomId;
     actorId: string;
     ip: string | null;
     userAgent: string | null;
@@ -44,6 +50,8 @@ export type ChatModeration = {
   listMutes(userId?: string): Promise<ChatModerationEntry[]>;
   ban(input: {
     userId: string;
+    roomId: ChatModerationRoomId;
+    durationSeconds: number | null;
     reason: string;
     actorId: string;
     ip: string | null;
@@ -51,6 +59,7 @@ export type ChatModeration = {
   }): Promise<{ success: true }>;
   unban(input: {
     userId: string;
+    roomId: ChatModerationRoomId;
     actorId: string;
     ip: string | null;
     userAgent: string | null;

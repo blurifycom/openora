@@ -465,7 +465,7 @@ describe('ChatCommandsService.postRain (resolves presence, delegates to RAIN_COM
         recipientCount: 2,
         roomId: ROOM_ID,
         idempotencyKey: IDEMPOTENCY_KEY,
-        onlineUserIds: [ACTOR_ID, CLAIMER_ID, RECIPIENT_2],
+        onlineUserIds: [ACTOR_ID],
       },
       ACTOR_ID,
     );

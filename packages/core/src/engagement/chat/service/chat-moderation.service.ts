@@ -38,7 +38,7 @@ export class ChatModerationService implements ChatModeration {
   }
 
   mute(input: Parameters<ChatModeration['mute']>[0]) {
-    return this.mutes.mute(input);
+    return this.mutes.mute({ ...input, durationSeconds: input.durationSeconds ?? null });
   }
 
   unmute(input: Parameters<ChatModeration['unmute']>[0]) {
@@ -50,7 +50,7 @@ export class ChatModerationService implements ChatModeration {
   }
 
   ban(input: Parameters<ChatModeration['ban']>[0]) {
-    return this.bans.ban(input);
+    return this.bans.ban({ ...input, durationSeconds: input.durationSeconds ?? null });
   }
 
   unban(input: Parameters<ChatModeration['unban']>[0]) {

@@ -238,6 +238,8 @@ export const domainEventSchemas = {
     roomId: UuidSchema,
     creatorId: UuidSchema,
     playerId: UuidSchema.nullable(),
+    before: z.object({ name: z.string(), slug: z.string(), category: z.string().nullable() }),
+    after: z.object({ deletedAt: z.string() }),
   }),
   'chat.room.member.joined': authContextBase.extend({
     roomId: UuidSchema,

@@ -11,13 +11,21 @@ import {
   uniqueIndex,
   index,
 } from 'drizzle-orm/pg-core';
-import { CHAT_ROOM_CATEGORIES, CHAT_ROOM_ROLES } from '../contract/index.js';
+import {
+  CHAT_ROOM_CATEGORIES,
+  CHAT_ROOM_ROLES,
+  CHAT_MODERATION_SCOPES,
+} from '../contract/index.js';
 import { CHAT_MESSAGE_TYPES } from '@openora/core/contracts';
 import type { CommandMetadata } from '@openora/core/contracts';
 
 export const chatRoomRole = pgEnum('chat_room_role', CHAT_ROOM_ROLES);
 export const chatRoomCategory = pgEnum('chat_room_category', CHAT_ROOM_CATEGORIES);
 export const chatMessageType = pgEnum('chat_message_type', CHAT_MESSAGE_TYPES);
+export const chatModerationScope = pgEnum('chat_moderation_scope', [
+  ...CHAT_MODERATION_SCOPES,
+  'room',
+] as const);
 
 export const chatRoom = pgTable(
   'chat_room',
@@ -235,8 +243,11 @@ export const chatPlatformBan = pgTable(
     id: uuid().primaryKey().defaultRandom(),
     userId: uuid().notNull(),
     bannedBy: uuid().notNull(),
+    scope: chatModerationScope().notNull().default('__all_public'),
+    roomId: uuid().references(() => chatRoom.id),
     reason: text().notNull(),
     createdAt: timestamp({ withTimezone: true }).notNull().defaultNow(),
+    expiresAt: timestamp({ withTimezone: true }),
     liftedAt: timestamp({ withTimezone: true }),
     liftedBy: uuid(),
   },
@@ -254,6 +265,7 @@ export const chatMute = pgTable(
     id: uuid().primaryKey().defaultRandom(),
     userId: uuid().notNull(),
     roomId: uuid(), // null = global chat; public room ids are channel-scoped mutes
+    scope: chatModerationScope().notNull().default('__global'),
     mutedBy: uuid().notNull(),
     reason: text().notNull(),
     createdAt: timestamp({ withTimezone: true }).notNull().defaultNow(),

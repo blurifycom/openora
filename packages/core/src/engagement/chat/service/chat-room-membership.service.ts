@@ -23,7 +23,10 @@ const MODERATOR_ROLES = ['moderator', 'owner'] as const;
 
 function toRoom(record: typeof chatRoom.$inferSelect) {
   const { deletedAt: _deletedAt, ...room } = record;
-  return serializeRow(room, { dateFields: ['createdAt'] });
+  return serializeRow(
+    { ...room, isBanned: false, bannedUntil: null },
+    { dateFields: ['createdAt', 'bannedUntil'] },
+  );
 }
 
 export class ChatRoomMembershipService {

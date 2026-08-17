@@ -285,7 +285,11 @@ export class ChatCommandsService {
   // result into the typed errors this module's router maps to transport codes.
   async postRain(input: PostRainInput, actorId: Uuid): Promise<CommandChatMessage> {
     const onlineUserIds = await this.transport.getOnlineUserIds(chatChannel(input.roomId));
-    const result = await this.rainCommands.sendRain({ ...input, onlineUserIds }, actorId);
+    const visiblePlayers = await this.directory.lookupPlayers(onlineUserIds);
+    const result = await this.rainCommands.sendRain(
+      { ...input, onlineUserIds: visiblePlayers.map((player) => player.userId) },
+      actorId,
+    );
     if (result.ok) {
       return result.message;
     }

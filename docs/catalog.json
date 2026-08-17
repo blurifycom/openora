@@ -55,11 +55,14 @@
       ],
       "routes": [
         "chat.adminBan",
+        "chat.adminDeleteMessage",
         "chat.adminJoinRoom",
         "chat.adminListBans",
         "chat.adminListBlockedUsers",
         "chat.adminListIgnoredUsers",
+        "chat.adminListMessages",
         "chat.adminListMutes",
+        "chat.adminListRoomMessages",
         "chat.adminMute",
         "chat.adminUnban",
         "chat.adminUnmute",
@@ -86,6 +89,7 @@
         "chat.listAdminRooms",
         "chat.listBlockedUsers",
         "chat.listIgnoredUsers",
+        "chat.listModeratedRooms",
         "chat.listRoomBlockedUsers",
         "chat.listRoomMembers",
         "chat.listRoomUsers",
@@ -884,6 +888,14 @@
       "file": "packages/core/src/engagement/chat/contract/index.ts"
     },
     {
+      "name": "AdminChatMessageDetailSchema",
+      "file": "packages/core/src/engagement/chat/contract/index.ts"
+    },
+    {
+      "name": "AdminChatMessageSchema",
+      "file": "packages/core/src/engagement/chat/contract/index.ts"
+    },
+    {
       "name": "AdminCommandSortBySchema",
       "file": "packages/core/src/engagement/chat-commands/contract/index.ts"
     },
@@ -1057,6 +1069,10 @@
     },
     {
       "name": "ChatModerationResultSchema",
+      "file": "packages/core/src/engagement/chat/contract/index.ts"
+    },
+    {
+      "name": "ChatModerationRoomIdSchema",
       "file": "packages/core/src/engagement/chat/contract/index.ts"
     },
     {
@@ -1481,6 +1497,10 @@
     },
     {
       "name": "MessageContentSchema",
+      "file": "packages/core/src/engagement/chat/contract/index.ts"
+    },
+    {
+      "name": "ModeratedRoomSortBySchema",
       "file": "packages/core/src/engagement/chat/contract/index.ts"
     },
     {

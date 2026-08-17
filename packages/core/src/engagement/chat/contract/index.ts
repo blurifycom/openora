@@ -22,8 +22,15 @@ export * from './constants.js';
 export const AdminRoomSortByValues = ['name', 'createdAt'] as const;
 export const AdminRoomSortBySchema = z.enum(AdminRoomSortByValues).default('createdAt');
 export type AdminRoomSortBy = z.infer<typeof AdminRoomSortBySchema>;
+export const ModeratedRoomSortBySchema = z.enum(['name', 'createdAt']).default('name');
+export type ModeratedRoomSortBy = z.infer<typeof ModeratedRoomSortBySchema>;
 
 export type SortOrder = z.infer<typeof SortOrderSchema>;
+
+const QueryBooleanSchema = z.preprocess(
+  (value) => (value === 'true' ? true : value === 'false' ? false : value),
+  z.boolean(),
+);
 
 // kebab-case slug: lowercase alphanum + hyphens, no leading/trailing hyphen.
 export const ChatRoomSlugSchema = z
@@ -58,6 +65,8 @@ export const ChatRoomSchema = z.object({
   joinCode: z.string().nullable(),
   creatorId: UuidSchema.nullable(),
   createdAt: TimestampSchema,
+  isBanned: z.boolean(),
+  bannedUntil: TimestampSchema.nullable(),
 });
 export type ChatRoom = z.infer<typeof ChatRoomSchema>;
 
@@ -137,6 +146,22 @@ export const ChatMessageSchema = z.discriminatedUnion('type', [
 ]);
 export type ChatMessage = z.infer<typeof ChatMessageSchema>;
 
+export const AdminChatMessageDetailSchema = ChatMessageSchema.and(
+  z.object({ playerId: UuidSchema.nullable() }),
+);
+export type AdminChatMessageDetail = z.infer<typeof AdminChatMessageDetailSchema>;
+
+export const AdminChatMessageSchema = z.object({
+  id: UuidSchema,
+  date: TimestampSchema,
+  roomId: UuidSchema.or(z.literal(GLOBAL_CHAT_ROOM_ID)),
+  playerId: UuidSchema.nullable(),
+  roomName: z.string(),
+  content: z.string(),
+  time: z.string(),
+});
+export type AdminChatMessage = z.infer<typeof AdminChatMessageSchema>;
+
 export const BlockedUserSchema = z.object({
   blockedId: UuidSchema,
   createdAt: TimestampSchema,
@@ -180,10 +205,14 @@ export const ChatConnectionGrantSchema = z
   .loose();
 
 export const ChatModerationResultSchema = z.object({ success: z.literal(true) });
+export const CHAT_MODERATION_SCOPES = ['__global', '__all_public', '__all'] as const;
+export const ChatModerationRoomIdSchema = z.union([UuidSchema, z.enum(CHAT_MODERATION_SCOPES)]);
+export type ChatModerationRoomId = z.infer<typeof ChatModerationRoomIdSchema>;
 export const ChatModerationEntrySchema = z.object({
   id: UuidSchema,
   userId: UuidSchema,
   roomId: UuidSchema.nullable(),
+  scope: ChatModerationRoomIdSchema,
   reason: z.string(),
   createdAt: TimestampSchema,
   expiresAt: TimestampSchema.nullable(),
@@ -194,16 +223,18 @@ export const ChatPlatformBanSchema = z.object({
   reason: z.string(),
   createdAt: TimestampSchema,
   liftedAt: TimestampSchema.nullable(),
+  bannedUntil: TimestampSchema.nullable(),
+  roomId: UuidSchema.nullable(),
+  scope: ChatModerationRoomIdSchema,
 });
 
 const AdminModerationInput = z.object({
   userId: UuidSchema,
   reason: z.string().trim().min(1).max(500),
+  roomId: ChatModerationRoomIdSchema,
+  durationSeconds: z.number().int().positive().max(31_536_000).nullable().default(null),
 });
-const AdminMuteInput = AdminModerationInput.extend({
-  roomId: UuidSchema.nullable(),
-  durationSeconds: z.number().int().positive().max(31_536_000).nullable(),
-});
+const AdminMuteInput = AdminModerationInput.extend({});
 
 const RoomIdInput = z.object({ roomId: UuidSchema });
 const RoomRulesInput = z.object({ roomId: UuidSchema.or(z.literal(GLOBAL_CHAT_ROOM_ID)) });
@@ -216,6 +247,18 @@ const ChatJoinCodeSchema = z.string().trim().min(1).max(JOIN_CODE_INPUT_MAX_LENG
 
 export const chatContract = {
   listRooms: oc.route({ method: 'GET', path: '/chat/rooms' }).output(z.array(ChatRoomSchema)),
+
+  listModeratedRooms: oc
+    .route({ method: 'GET', path: '/chat/rooms/moderated' })
+    .input(
+      z.object({
+        ...PageQuerySchema.shape,
+        name: z.string().trim().max(ROOM_NAME_MAX_LENGTH).optional(),
+        sortBy: ModeratedRoomSortBySchema,
+        sortOrder: SortOrderSchema.default('asc'),
+      }),
+    )
+    .output(paginated(ChatRoomSchema)),
 
   getRoomMessages: oc
     .route({ method: 'GET', path: '/chat/rooms/{roomId}/messages' })
@@ -473,11 +516,45 @@ export const chatContract = {
     .input(
       z.object({
         ...PageQuerySchema.shape,
+        name: z.string().trim().max(ROOM_NAME_MAX_LENGTH).optional(),
         sortBy: AdminRoomSortBySchema,
         sortOrder: SortOrderSchema.default('desc'),
       }),
     )
     .output(paginated(ChatRoomSchema)),
+
+  adminListRoomMessages: oc
+    .route({ method: 'GET', path: '/backoffice/chat/rooms/{roomId}/messages' })
+    .input(
+      z.object({
+        roomId: UuidSchema.or(z.literal(GLOBAL_CHAT_ROOM_ID)),
+        ...PageQuerySchema.shape,
+        senderId: UuidSchema.optional(),
+        playerId: UuidSchema.optional(),
+        includeDeleted: QueryBooleanSchema.default(false),
+      }),
+    )
+    .output(paginated(AdminChatMessageDetailSchema)),
+
+  adminListMessages: oc
+    .route({ method: 'GET', path: '/backoffice/chat/messages' })
+    .input(
+      z.object({
+        ...PageQuerySchema.shape,
+        roomId: UuidSchema.or(z.literal(GLOBAL_CHAT_ROOM_ID)).optional(),
+        senderId: UuidSchema.optional(),
+        playerId: UuidSchema.optional(),
+        search: z.string().trim().max(MAX_MESSAGE_LENGTH).optional(),
+        includeDeleted: QueryBooleanSchema.default(false),
+        sortOrder: SortOrderSchema.default('desc'),
+      }),
+    )
+    .output(paginated(AdminChatMessageSchema)),
+
+  adminDeleteMessage: oc
+    .route({ method: 'DELETE', path: '/backoffice/chat/messages/{id}' })
+    .input(IdInputSchema)
+    .output(z.object({ success: z.literal(true) })),
 
   deleteRoom: oc
     .route({ method: 'DELETE', path: '/backoffice/chat/rooms/{id}' })
@@ -513,7 +590,7 @@ export const chatContract = {
 
   adminUnmute: oc
     .route({ method: 'POST', path: '/backoffice/chat/mutes/lift' })
-    .input(z.object({ userId: UuidSchema, roomId: UuidSchema.nullable() }))
+    .input(z.object({ userId: UuidSchema, roomId: ChatModerationRoomIdSchema }))
     .output(ChatModerationResultSchema),
 
   adminListMutes: oc
@@ -528,7 +605,7 @@ export const chatContract = {
 
   adminUnban: oc
     .route({ method: 'POST', path: '/backoffice/chat/bans/lift' })
-    .input(z.object({ userId: UuidSchema }))
+    .input(z.object({ userId: UuidSchema, roomId: ChatModerationRoomIdSchema }))
     .output(ChatModerationResultSchema),
 
   adminListBans: oc

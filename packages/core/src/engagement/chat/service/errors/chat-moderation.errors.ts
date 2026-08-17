@@ -3,14 +3,35 @@ import type { Uuid } from '@openora/core/contracts';
 
 export const ChatRoomNotFoundError = makeNotFoundError('ChatRoom');
 export const ChatMessageNotFoundError = makeNotFoundError('ChatMessage');
-export const ChatPlayerMutedError = createDomainError(
-  'ChatPlayerMutedError',
-  () => 'You are muted in this chat channel',
-);
-export const ChatPlayerBannedError = createDomainError(
-  'ChatPlayerBannedError',
-  () => 'You are banned from public chat',
-);
+export type ChatRestrictionData = { until: string | null };
+
+export class ChatPlayerMutedError extends Error {
+  readonly data: ChatRestrictionData;
+
+  constructor(until: Date | string | null) {
+    super(
+      until === null
+        ? "You are muted until a chat moderator's decision"
+        : `You are muted until ${until instanceof Date ? until.toISOString() : until}`,
+    );
+    this.name = 'ChatPlayerMutedError';
+    this.data = { until: until instanceof Date ? until.toISOString() : until };
+  }
+}
+
+export class ChatPlayerBannedError extends Error {
+  readonly data: ChatRestrictionData;
+
+  constructor(until: Date | string | null) {
+    super(
+      until === null
+        ? "You are banned until a chat moderator's decision"
+        : `You are banned until ${until instanceof Date ? until.toISOString() : until}`,
+    );
+    this.name = 'ChatPlayerBannedError';
+    this.data = { until: until instanceof Date ? until.toISOString() : until };
+  }
+}
 export const ChatAdminPrivateRoomModerationError = createDomainError(
   'ChatAdminPrivateRoomModerationError',
   () => 'Admin mutes only apply to global or public chat rooms',

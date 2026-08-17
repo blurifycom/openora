@@ -36,6 +36,7 @@ import {
   ChatRoomNotMemberError,
   ChatRoomNotModeratorError,
   ChatRoomSelfModerationError,
+  ChatRoomOwnershipError,
 } from '../service/chat.service.js';
 import {
   ChatModerationService,
@@ -886,6 +887,11 @@ describe('ChatService admin rooms (real PG)', () => {
 
     expect(room).toMatchObject({ slug: 'jackpot-wheel', isPublic: true });
     expect(typeof room.createdAt).toBe('string');
+    const [configuration] = await db.drizzle.db
+      .select()
+      .from(chatRoomConfiguration)
+      .where(eq(chatRoomConfiguration.roomId, room.id));
+    expect(configuration).toMatchObject({ roomId: room.id });
     expect(events.emit).toHaveBeenCalledWith(
       'chat.room.created',
       expect.objectContaining({ roomId: room.id, slug: 'jackpot-wheel' }),
@@ -978,6 +984,36 @@ describe('ChatService admin rooms (real PG)', () => {
     await svc.deleteRoom(room.id);
 
     await expect(svc.deleteRoom(room.id)).rejects.toBeInstanceOf(ChatRoomNotFoundError);
+  });
+
+  it('ends a private room only for its owner and emits auditable before/after state', async () => {
+    const { svc, events } = makeService();
+    const ownerId = randomUUID();
+    const otherUserId = randomUUID();
+    const room = await svc.createPrivateRoom({
+      userId: ownerId,
+      name: 'End me',
+      ...NO_CLIENT_META,
+    });
+
+    await expect(
+      svc.deletePrivateRoom({ roomId: room.id, userId: otherUserId, ...NO_CLIENT_META }),
+    ).rejects.toBeInstanceOf(ChatRoomOwnershipError);
+
+    await expect(
+      svc.deletePrivateRoom({ roomId: room.id, userId: ownerId, ...NO_CLIENT_META }),
+    ).resolves.toEqual({ success: true });
+    const [stored] = await db.drizzle.db.select().from(chatRoom).where(eq(chatRoom.id, room.id));
+    expect(stored?.deletedAt).toBeInstanceOf(Date);
+    expect(events.emit).toHaveBeenCalledWith(
+      'chat.private_room.deleted',
+      expect.objectContaining({
+        roomId: room.id,
+        creatorId: ownerId,
+        before: { name: 'End me', slug: room.slug, category: 'private-channels' },
+        after: { deletedAt: expect.any(String) },
+      }),
+    );
   });
 });
 
@@ -1317,7 +1353,14 @@ describe('ChatService moderation (real PG)', () => {
   it('enforces a reversible platform ban only on public chat', async () => {
     const { svc, room, memberId, moderation } = await roomWithMember();
     const userId = memberId;
-    await moderation.ban({ userId, reason: 'abuse', actorId: randomUUID(), ...NO_CLIENT_META });
+    await moderation.ban({
+      userId,
+      roomId: '__all_public',
+      durationSeconds: null,
+      reason: 'abuse',
+      actorId: randomUUID(),
+      ...NO_CLIENT_META,
+    });
 
     await expect(svc.sendGlobalMessage(userId, 'Banned', 'hello')).rejects.toBeInstanceOf(
       ChatPlayerBannedError,
@@ -1326,7 +1369,12 @@ describe('ChatService moderation (real PG)', () => {
       svc.sendRoomMessage({ userId, username: 'Banned', roomId: room.id, content: 'hello' }),
     ).resolves.toMatchObject({ userId });
 
-    await moderation.unban({ userId, actorId: randomUUID(), ...NO_CLIENT_META });
+    await moderation.unban({
+      userId,
+      roomId: '__all_public',
+      actorId: randomUUID(),
+      ...NO_CLIENT_META,
+    });
     await expect(svc.sendGlobalMessage(userId, 'Banned', 'hello')).resolves.toMatchObject({
       userId,
     });

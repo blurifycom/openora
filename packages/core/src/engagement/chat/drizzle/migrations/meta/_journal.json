@@ -71,6 +71,13 @@
       "when": 1786715123787,
       "tag": "0009_keen_dagger",
       "breakpoints": true
+    },
+    {
+      "idx": 10,
+      "version": "7",
+      "when": 1786955092524,
+      "tag": "0010_early_blazing_skull",
+      "breakpoints": true
     }
   ]
 }
