@@ -654,4 +654,50 @@ describe('mapEventToRecord() player.id resolution (BF-335)', () => {
     expect(row.actorId).toBe(p.id);
     expect(row.actorId).not.toBe(p.userId);
   });
+
+  it('identity.user.login: no player row (admin account) - actorType is admin, actorId is the userId', async () => {
+    const userId = randomUUID();
+
+    const row = await mapAndRecord('identity.user.login', {
+      userId,
+      playerId: null,
+    });
+
+    expect(row.actorType).toBe('admin');
+    expect(row.actorId).toBe(userId);
+  });
+
+  it('identity.user.login: resolved playerId (player account) - actorType is player, actorId is the player.id', async () => {
+    const p = await seedPlayer();
+
+    const row = await mapAndRecord('identity.user.login', {
+      userId: p.userId,
+      playerId: p.id,
+    });
+
+    expect(row.actorType).toBe('player');
+    expect(row.actorId).toBe(p.id);
+  });
+
+  it('identity.user.registered: no player row yet - still actorType player, actorId null (unchanged carve-out)', async () => {
+    const row = await mapAndRecord('identity.user.registered', {
+      userId: randomUUID(),
+      playerId: null,
+    });
+
+    expect(row.actorType).toBe('player');
+    expect(row.actorId).toBeNull();
+  });
+
+  it('identity.profile.updated: no player row (admin account) - actorType is admin, actorId is the userId', async () => {
+    const userId = randomUUID();
+
+    const row = await mapAndRecord('identity.profile.updated', {
+      userId,
+      playerId: null,
+    });
+
+    expect(row.actorType).toBe('admin');
+    expect(row.actorId).toBe(userId);
+  });
 });
