@@ -40,6 +40,10 @@ export type AdminUserListOptions = {
   sortOrder?: SortOrder;
 };
 
+/**
+ * Player-facing back-office enrichment (username + KYC). Lets a back-office
+ * consumer label a player row without reaching into the player/profile tables.
+ */
 export type AdminPlayerSummary = {
   playerId: Player['id'];
   userId: string;
