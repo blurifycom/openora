@@ -1,7 +1,13 @@
 import { and, eq, isNull } from 'drizzle-orm';
 import { DrizzleService, withAdvisoryXactLock } from '@openora/core/server';
 import type { EventBus } from '@openora/core/server';
-import type { AuditWritePort, ClientMeta, RealtimeTransport, Uuid } from '@openora/core/contracts';
+import type {
+  AuditWritePort,
+  ClientMeta,
+  IdentityReader,
+  RealtimeTransport,
+  Uuid,
+} from '@openora/core/contracts';
 import { chatRoomBan, chatRoomMember } from '../schema/index.js';
 import {
   ChatRoomNotModeratorError,
@@ -14,6 +20,7 @@ export class ChatRoomBanService {
     private readonly events: EventBus,
     private readonly audit: AuditWritePort,
     private readonly transport: RealtimeTransport,
+    private readonly identityReader: IdentityReader,
   ) {}
 
   private async assertModerator(roomId: Uuid, actorId: Uuid, targetId?: Uuid) {
@@ -95,6 +102,7 @@ export class ChatRoomBanService {
       roomId,
       userId,
       bannedBy: moderatorId,
+      playerId: await this.identityReader.getPlayerIdByUserIdSafe(moderatorId),
       ip: ip ?? null,
       userAgent: userAgent ?? null,
     });

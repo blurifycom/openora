@@ -33,6 +33,7 @@ import type {
   UpdateProfileInput,
   Theme,
   User,
+  IdentityReader,
   ChangePasswordInput,
   ChangeEmailInput,
   IdentityServiceOptions,
@@ -261,6 +262,7 @@ function computeLockoutState({
 export type IdentityServiceDeps = {
   drizzle: DrizzleService;
   events: EventBus;
+  identityReader: IdentityReader;
   email?: SendEmailPort;
   templateRenderer: EmailTemplateRenderer;
   options?: IdentityServiceOptions;
@@ -282,6 +284,7 @@ export class IdentityService {
   private readonly auth: ReturnType<typeof createAuth>;
   private readonly drizzle: DrizzleService;
   private readonly events: EventBus;
+  private readonly identityReader: IdentityReader;
   private readonly email?: SendEmailPort;
   private readonly templateRenderer: EmailTemplateRenderer;
   private readonly options?: IdentityServiceOptions;
@@ -292,6 +295,7 @@ export class IdentityService {
   constructor({
     drizzle,
     events,
+    identityReader,
     email,
     templateRenderer,
     options,
@@ -301,6 +305,7 @@ export class IdentityService {
   }: IdentityServiceDeps) {
     this.drizzle = drizzle;
     this.events = events;
+    this.identityReader = identityReader;
     this.email = email;
     this.templateRenderer = templateRenderer;
     this.options = options;
@@ -316,6 +321,7 @@ export class IdentityService {
       onPasswordReset: async (resetUser) => {
         this.events.emit('identity.password.reset', {
           userId: resetUser.id,
+          playerId: await this.identityReader.getPlayerIdByUserIdSafe(resetUser.id),
           ...getCurrentClientMeta(),
         });
         await this.clearLockout(resetUser.id);
@@ -375,7 +381,12 @@ export class IdentityService {
     this.forwardCookies(authResponse, resHeaders);
     const body = (await authResponse.json()) as { user: BetterAuthUser };
 
-    this.events.emit('identity.user.registered', { userId: body.user.id, ip, userAgent });
+    this.events.emit('identity.user.registered', {
+      userId: body.user.id,
+      playerId: await this.identityReader.getPlayerIdByUserIdSafe(body.user.id),
+      ip,
+      userAgent,
+    });
     return { user: toUser(body.user) };
   }
 
@@ -464,6 +475,18 @@ export class IdentityService {
       });
       await ensureOk(authResponse);
 
+      // Resolved once (only when a user was found), before either gate below, so both
+      // the RG-block and the Backoffice-block events - and the eventual login success
+      // event - can all carry playerId.
+      let playerRow: Pick<typeof player.$inferSelect, 'id' | 'status'> | undefined;
+      if (existingUser) {
+        [playerRow] = await this.drizzle.db
+          .select({ id: player.id, status: player.status })
+          .from(player)
+          .where(eq(player.userId, existingUser.id))
+          .limit(1);
+      }
+
       // RG login block, applied only AFTER credentials verify so a pre-auth probe can't
       // distinguish a restricted account from a wrong password. Kill the session
       // better-auth just issued and never forward its cookie. Cooling-off auto-expires
@@ -473,7 +496,12 @@ export class IdentityService {
           .update(session)
           .set({ expiresAt: new Date() })
           .where(eq(session.userId, existingUser.id));
-        this.events.emit('rg.exclusion.login_blocked', { userId: existingUser.id, ip, userAgent });
+        this.events.emit('rg.exclusion.login_blocked', {
+          userId: existingUser.id,
+          playerId: playerRow?.id ?? null,
+          ip,
+          userAgent,
+        });
         throw new ORPCError('FORBIDDEN', {
           message: 'Account access is currently restricted (responsible gambling).',
           data: { code: 'RG_BLOCKED' },
@@ -484,28 +512,26 @@ export class IdentityService {
       // RG gate above: applied only AFTER credentials verify, kills the just-issued
       // session and withholds its cookie. Distinct mechanism from RG (self_excluded is
       // out of scope here) - a suspended/closed player can never log back in.
-      if (existingUser) {
-        const [playerRow] = await this.drizzle.db
-          .select({ status: player.status })
-          .from(player)
-          .where(eq(player.userId, existingUser.id))
-          .limit(1);
-        if (playerRow && (playerRow.status === 'suspended' || playerRow.status === 'closed')) {
-          await this.drizzle.db
-            .update(session)
-            .set({ expiresAt: new Date() })
-            .where(eq(session.userId, existingUser.id));
-          this.events.emit('player.login_blocked', {
-            userId: existingUser.id,
-            status: playerRow.status,
-            ip,
-            userAgent,
-          });
-          throw new ORPCError('FORBIDDEN', {
-            message: 'This account has been suspended and can no longer be used.',
-            data: { code: 'ACCOUNT_SUSPENDED' },
-          });
-        }
+      if (
+        existingUser &&
+        playerRow &&
+        (playerRow.status === 'suspended' || playerRow.status === 'closed')
+      ) {
+        await this.drizzle.db
+          .update(session)
+          .set({ expiresAt: new Date() })
+          .where(eq(session.userId, existingUser.id));
+        this.events.emit('player.login_blocked', {
+          userId: existingUser.id,
+          playerId: playerRow.id,
+          status: playerRow.status,
+          ip,
+          userAgent,
+        });
+        throw new ORPCError('FORBIDDEN', {
+          message: 'This account has been suspended and can no longer be used.',
+          data: { code: 'ACCOUNT_SUSPENDED' },
+        });
       }
 
       this.forwardCookies(authResponse, resHeaders);
@@ -529,7 +555,12 @@ export class IdentityService {
         .update(session)
         .set({ ipAddress: ip, userAgent })
         .where(eq(session.token, body.token));
-      this.events.emit('identity.user.login', { userId: body.user.id, ip, userAgent });
+      this.events.emit('identity.user.login', {
+        userId: body.user.id,
+        playerId: playerRow?.id ?? null,
+        ip,
+        userAgent,
+      });
       const sessionDurationSeconds =
         this.auth.options.session?.expiresIn ?? SESSION_DURATION_IN_SECONDS;
       const expiresAt = body.session?.expiresAt
@@ -779,7 +810,12 @@ export class IdentityService {
     const authResponse = await this.auth.api.signOut({ headers, asResponse: true });
     this.forwardCookies(authResponse, resHeaders);
     if (userId) {
-      this.events.emit('identity.user.logout', { userId, ip, userAgent });
+      this.events.emit('identity.user.logout', {
+        userId,
+        playerId: await this.identityReader.getPlayerIdByUserIdSafe(userId),
+        ip,
+        userAgent,
+      });
     }
     return SUCCESS;
   }
@@ -827,7 +863,12 @@ export class IdentityService {
     this.forwardCookies(res, resHeaders);
     const userId = await this.currentUserId(headers);
     if (userId) {
-      this.events.emit('identity.2fa.enabled', { userId, ip, userAgent });
+      this.events.emit('identity.2fa.enabled', {
+        userId,
+        playerId: await this.identityReader.getPlayerIdByUserIdSafe(userId),
+        ip,
+        userAgent,
+      });
     }
     return SUCCESS;
   }
@@ -849,7 +890,12 @@ export class IdentityService {
     await ensureOk(res);
     this.forwardCookies(res, resHeaders);
     if (userId) {
-      this.events.emit('identity.2fa.disabled', { userId, ip, userAgent });
+      this.events.emit('identity.2fa.disabled', {
+        userId,
+        playerId: await this.identityReader.getPlayerIdByUserIdSafe(userId),
+        ip,
+        userAgent,
+      });
     }
     return SUCCESS;
   }
@@ -962,7 +1008,12 @@ export class IdentityService {
     });
     await ensureOk(res);
     if (userId) {
-      this.events.emit('identity.email.verified', { userId, ip, userAgent });
+      this.events.emit('identity.email.verified', {
+        userId,
+        playerId: await this.identityReader.getPlayerIdByUserIdSafe(userId),
+        ip,
+        userAgent,
+      });
     }
     return SUCCESS;
   }
@@ -999,7 +1050,12 @@ export class IdentityService {
     const session = await this.auth.api.getSession({ headers });
     const current = session?.user as BetterAuthUser | undefined;
     if (current) {
-      this.events.emit('identity.profile.updated', { userId: current.id, ip, userAgent });
+      this.events.emit('identity.profile.updated', {
+        userId: current.id,
+        playerId: await this.identityReader.getPlayerIdByUserIdSafe(current.id),
+        ip,
+        userAgent,
+      });
     }
     if (!current) {
       throw new Error('Profile update succeeded but session could not be re-read');

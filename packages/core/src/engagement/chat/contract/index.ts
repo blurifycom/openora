@@ -4,6 +4,7 @@ import {
   IdInputSchema,
   TimestampSchema,
   UuidSchema,
+  GLOBAL_CHAT_ROOM_ID,
   CommandMetadataSchema,
   SystemChatMessageSchema,
 } from '@openora/core/contracts';
@@ -205,6 +206,7 @@ const AdminMuteInput = AdminModerationInput.extend({
 });
 
 const RoomIdInput = z.object({ roomId: UuidSchema });
+const RoomRulesInput = z.object({ roomId: UuidSchema.or(z.literal(GLOBAL_CHAT_ROOM_ID)) });
 const RoomUserInput = z.object({ roomId: UuidSchema, userId: UuidSchema });
 const RoomModerationInput = RoomUserInput.extend({
   reason: z.string().trim().min(1).max(500).default(''),
@@ -340,7 +342,7 @@ export const chatContract = {
 
   getRoomRules: oc
     .route({ method: 'GET', path: '/chat/rooms/{roomId}/rules' })
-    .input(RoomIdInput)
+    .input(RoomRulesInput)
     .output(z.array(ChatRoomRuleSchema)),
 
   createRoomRule: oc

@@ -13,7 +13,9 @@ import type {
 } from '@openora/core/contracts';
 import { queue } from '@openora/core/contracts';
 import { createTestDb, InProcessRealtimeTransport, type TestDb } from '@openora/core/testing';
+import { migrate as migrateProfile } from '@openora/core/pam/migrate/profile';
 import {
+  makeIdentityReader,
   mock,
   makeEventBus,
   makeAdminGuard,
@@ -36,7 +38,7 @@ const HOURS = 3600_000;
 let db: TestDb;
 
 beforeAll(async () => {
-  db = await createTestDb([migrate]);
+  db = await createTestDb([migrate, migrateProfile]);
 });
 
 afterAll(async () => {
@@ -64,6 +66,7 @@ function build(adminGuard: AdminGuard) {
     loginEnforcement: enforcement,
     email: mock<SendEmailPort>({ send: vi.fn(async () => undefined) }),
     directory: mock<AdminUserDirectory>({ lookupPlayers: vi.fn(async () => []) }),
+    identityReader: makeIdentityReader(),
   });
   const router = createComplianceRouter({
     compliance: mock<ComplianceService>({}),

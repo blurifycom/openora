@@ -12,6 +12,7 @@ import {
   REALTIME_TRANSPORT,
   REALTIME_CLIENT_AUTHORIZER,
   AUDIT_WRITER,
+  IDENTITY_READER,
 } from '@openora/core/contracts';
 import { ChatService } from './service/chat.service.js';
 import { ChatModerationService } from './service/chat-moderation.service.js';
@@ -45,6 +46,7 @@ export default {
         c.get(ADMIN_USER_DIRECTORY),
         c.get(AUDIT_WRITER),
         c.get(CHAT_MODERATION),
+        c.get(IDENTITY_READER),
       );
     const createMembershipService = (
       c: Parameters<typeof ctx.routers.add>[1] extends (c: infer C) => unknown ? C : never,
@@ -54,6 +56,7 @@ export default {
         c.get(EVENT_BUS),
         c.get(AUDIT_WRITER),
         c.get(CHAT_REALTIME_TRANSPORT),
+        c.get(IDENTITY_READER),
       );
     ctx.provide(CHAT_SYSTEM_WRITER, createChatService);
     ctx.provide(CHAT_BLOCK_WRITER, createChatService);
@@ -73,6 +76,7 @@ export default {
           c.get(EVENT_BUS),
           c.get(AUDIT_WRITER),
           c.get(CHAT_REALTIME_TRANSPORT),
+          c.get(IDENTITY_READER),
         ),
         roomMuteService: new ChatRoomMuteService(c.get(DRIZZLE), c.get(AUDIT_WRITER)),
         moderationService: c.get(CHAT_MODERATION),

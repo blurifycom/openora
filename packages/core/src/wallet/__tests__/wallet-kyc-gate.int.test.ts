@@ -9,7 +9,14 @@ import type {
   AdminPlayerSummary,
 } from '@openora/core/contracts';
 import { createTestDb, type TestDb } from '@openora/core/testing';
-import { mock, makeEventBus, NO_CLIENT_META, makeAuditWriter } from '../../testing/mock.js';
+import { migrate as migrateProfile } from '@openora/core/pam/migrate/profile';
+import {
+  mock,
+  makeEventBus,
+  makeIdentityReader,
+  NO_CLIENT_META,
+  makeAuditWriter,
+} from '../../testing/mock.js';
 import { migrate } from '../migrate.js';
 import { wallet, walletTransaction } from '../schema/index.js';
 import { WalletService, KycRequiredError } from '../service/wallet.service.js';
@@ -29,6 +36,7 @@ function makeService(kycStatus: KycStatus | null, gateWithdrawals: boolean) {
     events: makeEventBus(),
     payment: mock<PaymentAdapter>({ processWithdrawal: vi.fn() }),
     audit: makeAuditWriter(),
+    identityReader: makeIdentityReader(),
     directory,
     platformConfig: mock<PlatformConfig>({ kyc: { gateWithdrawals } }),
   });
@@ -52,7 +60,7 @@ async function txCount(walletId: string) {
 }
 
 beforeAll(async () => {
-  db = await createTestDb([migrate]);
+  db = await createTestDb([migrate, migrateProfile]);
 });
 
 afterAll(async () => {

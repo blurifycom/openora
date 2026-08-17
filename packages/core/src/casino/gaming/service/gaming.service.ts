@@ -12,6 +12,7 @@ import {
   type GameAdapter,
   type PlayEligibilityPort,
   type WalletCommands,
+  type IdentityReader,
   type User,
 } from '@openora/core/contracts';
 import { game, gameRound, type Game, type GameRound } from '../schema/index.js';
@@ -53,6 +54,7 @@ export class GamingService {
     private readonly provider: GameAdapter,
     private readonly playEligibility: PlayEligibilityPort,
     private readonly walletCommands: WalletCommands,
+    private readonly identityReader: IdentityReader,
   ) {}
 
   async listGames() {
@@ -109,6 +111,7 @@ export class GamingService {
       roundId: round.id,
       gameId,
       userId,
+      playerId: await this.identityReader.getPlayerIdByUserIdSafe(userId),
       currency,
     });
 
@@ -135,7 +138,11 @@ export class GamingService {
       .set({ status: 'completed', endedAt: new Date() })
       .where(and(eq(gameRound.id, roundId), eq(gameRound.userId, userId)));
 
-    this.events.emit('gaming.round.ended', { roundId, userId });
+    this.events.emit('gaming.round.ended', {
+      roundId,
+      userId,
+      playerId: await this.identityReader.getPlayerIdByUserIdSafe(userId),
+    });
 
     return { success: true };
   }

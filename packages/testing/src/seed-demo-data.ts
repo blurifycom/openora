@@ -9,6 +9,7 @@ import {
   chatRoom,
   chatRoomMember,
   chatRoomConfiguration,
+  chatRoomRule,
   chatMessage,
   chatUserBlock,
   chatUserIgnore,
@@ -369,6 +370,21 @@ const CHAT_ROOMS: readonly ChatRoomSeed[] = [
   },
 ];
 
+const CHAT_RULES = [
+  "Don't spam & don't use excessive capital letters when chatting.",
+  "Don't harass or be offensive to other users or BetFeel staff.",
+  "Don't share any personal information (including socials) of you or other players.",
+  "Don't beg or ask for loans, rains or tips.",
+  "Don't use alternative (alts) accounts on chat, that is strictly forbidden.",
+  'No suspicious behavior that can be seen as potential scams.',
+  "Don't engage in any forms of advertising/trading/selling/buying or offering services.",
+  'No discussion of streamers or Twitch or any other similar platforms.',
+  "Don't use URL shortening services. Always submit the full link.",
+  "Don't share codes, scripts or any other bot service.",
+  'Only use the language specified in the chat channel, potential abuse will be sanctioned.',
+  'No politics & no religion talk in chat, this one is strictly forbidden.',
+] as const;
+
 // Global chat (roomId: null) - authored by random seeded players, oldest first.
 const GLOBAL_CHAT = [
   'Good luck everyone! 🍀',
@@ -414,6 +430,20 @@ export async function seedDemoData(options: SeedOptions): Promise<SeedResult> {
     log(`Admin ready: ${admin.email} / ${admin.password}`);
   }
 
+  const moderator = {
+    email: 'moderator@oss.dev',
+    password: 'password123',
+    name: 'Chat Moderator',
+  };
+  const moderatorUser = await ensureUser(db, auth, {
+    ...moderator,
+    role: 'admin',
+    isActive: true,
+  });
+  if (moderatorUser) {
+    log(`Chat moderator ready: ${moderator.email} / ${moderator.password}`);
+  }
+
   await db.insert(game).values(
     GAMES.map(([name, provider, category]) => ({
       name,
@@ -425,6 +455,9 @@ export async function seedDemoData(options: SeedOptions): Promise<SeedResult> {
   log(`Created ${GAMES.length} games.`);
 
   let userCount = adminUser ? 1 : 0;
+  if (moderatorUser && moderatorUser.id !== adminUser?.id) {
+    userCount += 1;
+  }
   let txCount = 0;
   const now = Date.now();
   const dayMs = 86_400_000;
@@ -569,6 +602,18 @@ export async function seedDemoData(options: SeedOptions): Promise<SeedResult> {
         lockRoom: false,
         moderatorInvite: false,
       })),
+    );
+
+    await db.insert(chatRoomRule).values(
+      insertedRooms.flatMap((room) => {
+        const ruleCount = room.isPublic ? CHAT_RULES.length : 3;
+        return CHAT_RULES.slice(0, ruleCount).map((content, index) => ({
+          roomId: room.id,
+          createdBy: adminUser.id,
+          orderNum: index + 1,
+          content,
+        }));
+      }),
     );
 
     const adminOwnedRooms = insertedRooms

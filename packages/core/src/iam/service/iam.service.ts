@@ -16,6 +16,7 @@ import {
   isLevelSufficient,
   cached,
   invalidate,
+  createLogger,
   actionsToLevel,
   type ResourceName,
   type RoleName,
@@ -26,6 +27,7 @@ import type {
   SendEmailPort,
   AdminPermissionResolver,
   AdminGrant,
+  IdentityReader,
   CacheAdapter,
   SessionCommands,
   User,
@@ -51,6 +53,8 @@ import type {
   IamRoleSortBy,
   IamInvitationSortBy,
 } from '../contract/index.js';
+
+const logger = createLogger('iam-service');
 
 export const RoleNotFoundError = makeNotFoundError('AdminRole');
 export const InvitationNotFoundError = makeNotFoundError('AdminInvitation');
@@ -264,6 +268,7 @@ export class IamService {
     private readonly drizzle: DrizzleService,
     private readonly events: EventBus,
     private readonly email: SendEmailPort,
+    private readonly identityReader: IdentityReader,
     private readonly sessionCommands?: SessionCommands,
     private readonly rateLimiter?: RateLimiterAdapter<RateLimitKey>,
   ) {}
@@ -303,14 +308,25 @@ export class IamService {
   }
 
   private emitDenied(caller: Caller, resource: string, action: string) {
-    this.events.emit('identity.user.unauthorized_access', {
-      userId: caller.userId,
-      resource,
-      action,
-      ip: caller.ip,
-      userAgent: caller.userAgent,
-      role: caller.role,
-    });
+    void (async () => {
+      const playerId =
+        caller.role === 'player'
+          ? await this.identityReader.getPlayerIdByUserIdSafe(caller.userId)
+          : null;
+      try {
+        this.events.emit('identity.user.unauthorized_access', {
+          userId: caller.userId,
+          playerId,
+          resource,
+          action,
+          ip: caller.ip,
+          userAgent: caller.userAgent,
+          role: caller.role,
+        });
+      } catch (err) {
+        logger.error({ err, userId: caller.userId, resource, action }, 'denial audit event failed');
+      }
+    })();
   }
 
   listCatalog() {

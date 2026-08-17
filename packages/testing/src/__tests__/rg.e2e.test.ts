@@ -57,7 +57,12 @@ async function registerPlayer(email: string) {
   }
   const body = (await readJson(res)) as { user: { id: string } };
   const client = await asPlayer(app.app, { email });
-  return { client, userId: body.user.id };
+  // Materialize the PAM player row (get-or-create) so RG actions taken against this
+  // user resolve to a real player.id for the audit trail - see audit/plugin.ts
+  // mapEventToRecord's resolvePlayerId.
+  const profileRes = await client.get('/profile');
+  const profile = (await profileRes.json()) as { id: string };
+  return { client, userId: body.user.id, playerId: profile.id };
 }
 
 async function attemptLogin(email: string, password: string) {
@@ -372,7 +377,9 @@ describe('RG cooling-off lift', () => {
   });
 
   it('records the lift in the audit trail with actor, reason and subject', async () => {
-    const { userId } = await registerPlayer(`rg-cooloff-lift-audit-${randomUUID()}@e2e.test`);
+    const { userId, playerId } = await registerPlayer(
+      `rg-cooloff-lift-audit-${randomUUID()}@e2e.test`,
+    );
 
     await admin.post(`/compliance/players/${userId}/cooling-off`, {
       durationHours: 24,
@@ -383,7 +390,9 @@ describe('RG cooling-off lift', () => {
     });
 
     await vi.waitFor(async () => {
-      const res = await admin.get(`/audit/logs?resourceId=${userId}&action=rg.cooling_off.lifted`);
+      const res = await admin.get(
+        `/audit/logs?resourceId=${playerId}&action=rg.cooling_off.lifted`,
+      );
       const body = await readJson(res);
       expect(body.items).toHaveLength(1);
       expect(body.items[0].actorType).toBe('admin');
@@ -623,7 +632,7 @@ describe('RG monitoring (queue-based)', () => {
 
 describe('RG audit trail', () => {
   it('every RG mutation leaves an audit row with the right actor + before/after', async () => {
-    const { userId } = await registerPlayer(`rg-audit-${randomUUID()}@e2e.test`);
+    const { userId, playerId } = await registerPlayer(`rg-audit-${randomUUID()}@e2e.test`);
 
     const limitRes = await admin.put(`/compliance/players/${userId}/limits`, {
       type: 'deposit',
@@ -658,7 +667,7 @@ describe('RG audit trail', () => {
     expect(liftRes.status).toBe(200);
 
     await vi.waitFor(async () => {
-      const res = await admin.get(`/audit/logs?resourceId=${userId}&action=rg.limit.set`);
+      const res = await admin.get(`/audit/logs?resourceId=${playerId}&action=rg.limit.set`);
       const body = await readJson(res);
       expect(body.items).toHaveLength(1);
       expect(body.items[0].actorType).toBe('admin');
@@ -667,7 +676,7 @@ describe('RG audit trail', () => {
 
     await vi.waitFor(async () => {
       const res = await admin.get(
-        `/audit/logs?resourceId=${userId}&action=rg.cooling_off.activated`,
+        `/audit/logs?resourceId=${playerId}&action=rg.cooling_off.activated`,
       );
       const body = await readJson(res);
       expect(body.items).toHaveLength(1);
@@ -676,7 +685,7 @@ describe('RG audit trail', () => {
 
     await vi.waitFor(async () => {
       const res = await admin.get(
-        `/audit/logs?resourceId=${userId}&action=rg.self_exclusion.activated`,
+        `/audit/logs?resourceId=${playerId}&action=rg.self_exclusion.activated`,
       );
       const body = await readJson(res);
       expect(body.items).toHaveLength(1);
@@ -693,7 +702,7 @@ describe('RG audit trail', () => {
 
     await vi.waitFor(async () => {
       const res = await admin.get(
-        `/audit/logs?resourceId=${userId}&action=rg.self_exclusion.lifted`,
+        `/audit/logs?resourceId=${playerId}&action=rg.self_exclusion.lifted`,
       );
       const body = await readJson(res);
       expect(body.items).toHaveLength(1);
@@ -704,7 +713,7 @@ describe('RG audit trail', () => {
 
   it('records a system-actor audit row for a blocked login attempt', async () => {
     const email = `rg-audit-login-${randomUUID()}@e2e.test`;
-    const { userId } = await registerPlayer(email);
+    const { userId, playerId } = await registerPlayer(email);
 
     await admin.post(`/compliance/players/${userId}/self-exclusion`, {
       isPermanent: true,
@@ -715,7 +724,7 @@ describe('RG audit trail', () => {
 
     await vi.waitFor(async () => {
       const res = await admin.get(
-        `/audit/logs?resourceId=${userId}&action=rg.exclusion.login_blocked`,
+        `/audit/logs?resourceId=${playerId}&action=rg.exclusion.login_blocked`,
       );
       const body = await readJson(res);
       expect(body.items).toHaveLength(1);
@@ -725,7 +734,7 @@ describe('RG audit trail', () => {
   });
 
   it('exportCsv({actionPrefix: "rg."}) returns only rg.* rows', async () => {
-    const { userId } = await registerPlayer(`rg-audit-export-${randomUUID()}@e2e.test`);
+    const { userId, playerId } = await registerPlayer(`rg-audit-export-${randomUUID()}@e2e.test`);
 
     const limitRes = await admin.put(`/compliance/players/${userId}/limits`, {
       type: 'wager',
@@ -736,11 +745,11 @@ describe('RG audit trail', () => {
     expect(limitRes.status).toBe(200);
 
     await vi.waitFor(async () => {
-      const res = await admin.get(`/audit/logs?resourceId=${userId}&action=rg.limit.set`);
+      const res = await admin.get(`/audit/logs?resourceId=${playerId}&action=rg.limit.set`);
       expect((await readJson(res)).items).toHaveLength(1);
     });
 
-    const exportRes = await admin.get(`/audit/export?actionPrefix=rg.&resourceId=${userId}`);
+    const exportRes = await admin.get(`/audit/export?actionPrefix=rg.&resourceId=${playerId}`);
     expect(exportRes.status).toBe(200);
     const { csv } = await readJson(exportRes);
     expect(csv).toContain('rg.limit.set');

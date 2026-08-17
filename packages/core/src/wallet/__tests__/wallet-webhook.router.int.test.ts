@@ -9,7 +9,14 @@ import type {
   PaymentWebhookVerifier,
 } from '@openora/core/contracts';
 import { createTestDb, type TestDb } from '@openora/core/testing';
-import { mock, makeEventBus, testContext, makeAuditWriter } from '../../testing/mock.js';
+import { migrate as migrateProfile } from '@openora/core/pam/migrate/profile';
+import {
+  mock,
+  makeEventBus,
+  makeIdentityReader,
+  testContext,
+  makeAuditWriter,
+} from '../../testing/mock.js';
 import { migrate } from '../migrate.js';
 import { wallet, walletTransaction, walletDepositAddress } from '../schema/index.js';
 import { createWalletRouter } from '../router/index.js';
@@ -21,7 +28,7 @@ const DEPOSIT_ADDRESS = 'bc1qxyz';
 let db: TestDb;
 
 beforeAll(async () => {
-  db = await createTestDb([migrate]);
+  db = await createTestDb([migrate, migrateProfile]);
 });
 
 afterAll(async () => {
@@ -40,6 +47,7 @@ function routerWith(payment: PaymentAdapter, verifier: PaymentWebhookVerifier) {
     events: makeEventBus(),
     payment,
     audit: makeAuditWriter(),
+    identityReader: makeIdentityReader(),
   });
   return createWalletRouter(
     service,

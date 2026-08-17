@@ -14,7 +14,14 @@ import type {
   TagKey,
 } from '@openora/core/contracts';
 import { createTestDb, type TestDb } from '@openora/core/testing';
-import { mock, makeEventBus, NO_CLIENT_META, makeAuditWriter } from '../../testing/mock.js';
+import { migrate as migrateProfile } from '@openora/core/pam/migrate/profile';
+import {
+  mock,
+  makeEventBus,
+  makeIdentityReader,
+  NO_CLIENT_META,
+  makeAuditWriter,
+} from '../../testing/mock.js';
 import { migrate } from '../migrate.js';
 import {
   wallet,
@@ -101,6 +108,7 @@ async function makeService({
     events: events,
     payment: mock<PaymentAdapter>(psp),
     audit: mock<AuditWritePort>(audit),
+    identityReader: makeIdentityReader(),
     directory,
     platformConfig,
     ...(riskTags === 'unbound'
@@ -133,7 +141,7 @@ async function txById(id: string) {
 }
 
 beforeAll(async () => {
-  db = await createTestDb([migrate]);
+  db = await createTestDb([migrate, migrateProfile]);
 });
 
 afterAll(async () => {
@@ -391,6 +399,7 @@ describe('WalletService.withdraw auto-approval (real PG)', () => {
       events: makeEventBus(),
       payment,
       audit: mock<AuditWritePort>(makeAuditWriter()),
+      identityReader: makeIdentityReader(),
       directory,
       platformConfig,
       riskTags,

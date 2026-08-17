@@ -10,6 +10,7 @@ import {
   testContext,
   makeAuditWriter,
   makeAdminGuard,
+  makeIdentityReader,
 } from '../../testing/mock.js';
 import { migrate } from '../migrate.js';
 import { wallet, walletTransaction } from '../schema/index.js';
@@ -40,6 +41,7 @@ function realWalletService() {
     events: makeEventBus(),
     payment: mock<PaymentAdapter>({}),
     audit: makeAuditWriter(),
+    identityReader: makeIdentityReader(),
   });
 }
 

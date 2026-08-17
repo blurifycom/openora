@@ -1,8 +1,10 @@
-import { DrizzleService } from '@openora/core/server';
+import { createLogger, DrizzleService } from '@openora/core/server';
 import type { IdentityReader, KycStatus, Player, User } from '@openora/core/contracts';
 import { and, eq, isNull, lt, max, ne, or } from 'drizzle-orm';
 import { session, user } from '../schema/index.js';
 import { player } from '@openora/core/pam/schema/profile';
+
+const logger = createLogger('identity-reader');
 
 export class IdentityReaderService implements IdentityReader {
   constructor(private readonly drizzle: DrizzleService) {}
@@ -47,6 +49,15 @@ export class IdentityReaderService implements IdentityReader {
       .where(eq(player.userId, userId))
       .limit(1);
     return row?.id ?? null;
+  }
+
+  async getPlayerIdByUserIdSafe(userId: User['id']): Promise<Player['id'] | null> {
+    try {
+      return await this.getPlayerIdByUserId(userId);
+    } catch (err) {
+      logger.warn({ err, userId }, 'player id lookup failed for event enrichment');
+      return null;
+    }
   }
 
   async getPlayerKycStatusByUserId(userId: User['id']): Promise<KycStatus | null> {

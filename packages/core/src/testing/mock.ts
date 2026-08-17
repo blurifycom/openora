@@ -7,7 +7,7 @@ import type {
   EventBus,
   OssContext,
 } from '@openora/core/server';
-import type { AuditWritePort, ClientMeta } from '@openora/core/contracts';
+import type { AuditWritePort, ClientMeta, IdentityReader } from '@openora/core/contracts';
 
 // The one sanctioned home for test-double type assertions. A unit test standing in
 // for a collaborator is inherently partial, so the cast lives here - documented and
@@ -102,6 +102,16 @@ export const makeAuditWriter = (): AuditWritePort & { record: Mock } => ({
   record: vi.fn(async () => undefined),
   recordInTransaction: vi.fn(async () => undefined),
 });
+
+export const makeIdentityReader = (): IdentityReader =>
+  mock<IdentityReader>({
+    getLastLoginAt: vi.fn().mockResolvedValue(null),
+    getPlayerIdsInactiveSince: vi.fn().mockResolvedValue([]),
+    getPlayerIdByUserId: vi.fn().mockResolvedValue(null),
+    getPlayerIdByUserIdSafe: vi.fn().mockResolvedValue(null),
+    getPlayerKycStatusByUserId: vi.fn().mockResolvedValue(null),
+    getPlayerUserIdsSharingLoginIp: vi.fn().mockResolvedValue([]),
+  });
 
 const matches = (refs: readonly string[], resource: string, action: string) =>
   refs.includes(resource) || refs.includes(`${resource}:${action}`);

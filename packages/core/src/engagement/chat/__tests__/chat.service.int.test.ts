@@ -9,7 +9,8 @@ import type {
   AdminPlayerSummary,
   AuditWritePort,
 } from '@openora/core/contracts';
-import { NO_CLIENT_META, makeEventBus, mock } from '../../../testing/mock.js';
+import { migrate as migrateProfile } from '@openora/core/pam/migrate/profile';
+import { NO_CLIENT_META, makeEventBus, makeIdentityReader, mock } from '../../../testing/mock.js';
 import { CHAT_ROOM_CATEGORIES, type ChatMessage } from '../contract/index.js';
 import { MAX_PRIVATE_ROOMS_PER_PLAYER } from '../contract/constants.js';
 import { migrate } from '../migrate.js';
@@ -57,6 +58,9 @@ import {
   chatMute,
   chatPlatformBan,
 } from '../schema/index.js';
+import { ChatRoomMembershipService } from '../service/chat-room-membership.service.js';
+import { ChatRoomBanService } from '../service/chat-room-ban.service.js';
+import { ChatRoomMuteService } from '../service/chat-room-mute.service.js';
 let db: TestDb;
 
 function makeService(
@@ -69,9 +73,38 @@ function makeService(
     recordInTransaction: vi.fn().mockResolvedValue(undefined),
   });
   const moderation = new ChatModerationService(db.drizzle, transport, audit);
+  const identityReader = makeIdentityReader();
+  const chatService = new ChatService(
+    db.drizzle,
+    events,
+    transport,
+    directory,
+    audit,
+    moderation,
+    identityReader,
+  );
+  const membership = new ChatRoomMembershipService(
+    db.drizzle,
+    events,
+    audit,
+    transport,
+    identityReader,
+  );
+  const roomBan = new ChatRoomBanService(db.drizzle, events, audit, transport, identityReader);
+  const roomMute = new ChatRoomMuteService(db.drizzle, audit);
   return {
     moderation,
-    svc: new ChatService(db.drizzle, events, transport, directory, audit, moderation),
+    svc: Object.assign(chatService, {
+      joinRoom: membership.joinRoom.bind(membership),
+      joinPublicRoom: membership.joinPublicRoom.bind(membership),
+      adminJoinRoom: membership.adminJoinRoom.bind(membership),
+      leaveRoom: membership.leaveRoom.bind(membership),
+      removeMember: membership.removeMember.bind(membership),
+      banMember: roomBan.banMember.bind(roomBan),
+      unbanMember: roomBan.unbanMember.bind(roomBan),
+      muteRoomMember: roomMute.muteRoomMember.bind(roomMute),
+      unmuteRoomMember: roomMute.unmuteRoomMember.bind(roomMute),
+    }),
     events,
     transport,
     audit,
@@ -124,7 +157,7 @@ async function waitFor(predicate: () => boolean, timeoutMs = 2000) {
 }
 
 beforeAll(async () => {
-  db = await createTestDb([migrate, migrateIdentity]);
+  db = await createTestDb([migrate, migrateIdentity, migrateProfile]);
 });
 
 afterAll(async () => {

@@ -63,6 +63,46 @@ describe('NotificationsService.create (real PG)', () => {
       userId,
     });
   });
+
+  it('persists the row a social.friend_request.sent subscriber would create', async () => {
+    const { svc } = makeService();
+    const addresseeId = randomUUID();
+
+    const created = await svc.create({
+      userId: addresseeId,
+      type: 'social.friend_request.received',
+      title: 'New friend request',
+      body: 'Alex sent you a friend request.',
+    });
+
+    expect(created).toMatchObject({
+      userId: addresseeId,
+      type: 'social.friend_request.received',
+      title: 'New friend request',
+      body: 'Alex sent you a friend request.',
+      readAt: null,
+    });
+  });
+
+  it('persists the row a social.friend_request.accepted subscriber would create', async () => {
+    const { svc } = makeService();
+    const requesterId = randomUUID();
+
+    const created = await svc.create({
+      userId: requesterId,
+      type: 'social.friend_request.accepted',
+      title: 'Friend request accepted',
+      body: 'Sam accepted your friend request.',
+    });
+
+    expect(created).toMatchObject({
+      userId: requesterId,
+      type: 'social.friend_request.accepted',
+      title: 'Friend request accepted',
+      body: 'Sam accepted your friend request.',
+      readAt: null,
+    });
+  });
 });
 
 describe('NotificationsService.listForUser (real PG)', () => {

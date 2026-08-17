@@ -197,7 +197,11 @@ export class ChatCommandsService {
     }
 
     const onlineIds = new Set(onlineUserIds);
-    const ids = await this.directory.findPlayerIds(q, Math.max(limit, onlineUserIds.length));
+    const query = q.trim();
+    const ids =
+      query.length === 0
+        ? onlineUserIds
+        : await this.directory.findPlayerIds(query, Math.max(limit, onlineUserIds.length));
     if (ids.length === 0) {
       return [];
     }

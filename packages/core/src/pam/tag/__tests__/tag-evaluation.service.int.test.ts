@@ -165,6 +165,7 @@ function makeServices(
     getLastLoginAt: vi.fn().mockResolvedValue(null),
     getPlayerIdsInactiveSince: vi.fn().mockResolvedValue([]),
     getPlayerIdByUserId: vi.fn(async (uid: string) => uid),
+    getPlayerIdByUserIdSafe: vi.fn(async (uid: string) => uid),
     getPlayerKycStatusByUserId: vi.fn().mockResolvedValue('pending'),
     getPlayerUserIdsSharingLoginIp: vi.fn().mockResolvedValue([]),
     ...overrides.identityReader,
@@ -184,14 +185,27 @@ function makeServices(
 }
 
 function depositPayload(userId: string, amount: number) {
-  return { userId, amount: String(amount), currency: 'USD', transactionId: randomUUID() };
+  return {
+    userId,
+    playerId: null,
+    amount: String(amount),
+    currency: 'USD',
+    transactionId: randomUUID(),
+  };
 }
 function withdrawalPayload(userId: string, amount: number) {
-  return { userId, amount: String(amount), currency: 'USD', transactionId: randomUUID() };
+  return {
+    userId,
+    playerId: null,
+    amount: String(amount),
+    currency: 'USD',
+    transactionId: randomUUID(),
+  };
 }
 function kycUpdatedPayload(userId: string, status: KycStatus) {
   return {
     userId,
+    playerId: null,
     actorId: SYSTEM_ACTOR_ID,
     status,
     previousStatus: 'pending',
@@ -470,7 +484,7 @@ describe('TagEvaluationService.onUserLogin (real PG)', () => {
     const { inactiveTag } = await seedLoginCleanupTags();
     await seedActiveAssignment(userId, inactiveTag);
 
-    await service.onUserLogin({ userId });
+    await service.onUserLogin({ userId, playerId: null });
 
     expect(await activeTagKeys(userId)).not.toContain('inactive');
     const row = await assignmentRow(userId, inactiveTag);
@@ -483,7 +497,7 @@ describe('TagEvaluationService.onUserLogin (real PG)', () => {
     const { dormantTag } = await seedLoginCleanupTags();
     await seedActiveAssignment(userId, dormantTag);
 
-    await service.onUserLogin({ userId });
+    await service.onUserLogin({ userId, playerId: null });
 
     expect(await activeTagKeys(userId)).not.toContain('dormant_high_roller');
   });
@@ -493,7 +507,7 @@ describe('TagEvaluationService.onUserLogin (real PG)', () => {
     const { service } = makeServices();
     await seedLoginCleanupTags();
 
-    await expect(service.onUserLogin({ userId })).resolves.toBeUndefined();
+    await expect(service.onUserLogin({ userId, playerId: null })).resolves.toBeUndefined();
   });
 
   it('assigns multi_account and bonus_abuser to both player accounts when login IP is shared', async () => {
@@ -506,7 +520,7 @@ describe('TagEvaluationService.onUserLogin (real PG)', () => {
     await seedRule('multi_account');
     await seedRule('bonus_abuser');
 
-    await service.onUserLogin({ userId, ip: '203.0.113.10', userAgent: null });
+    await service.onUserLogin({ userId, playerId: null, ip: '203.0.113.10', userAgent: null });
 
     expect(identityReader.getPlayerUserIdsSharingLoginIp).toHaveBeenCalledWith(
       userId,
@@ -527,7 +541,7 @@ describe('TagEvaluationService.onUserLogin (real PG)', () => {
     await seedRule('multi_account');
     await seedRule('bonus_abuser');
 
-    await service.onUserLogin({ userId });
+    await service.onUserLogin({ userId, playerId: null });
 
     expect(identityReader.getPlayerUserIdsSharingLoginIp).not.toHaveBeenCalled();
   });
@@ -544,6 +558,7 @@ describe('TagEvaluationService.onUserLogin (real PG)', () => {
 
     await service.onUserPhoneLogin({
       userId,
+      playerId: null,
       method: 'phone',
       ip: '203.0.113.11',
       userAgent: null,
@@ -564,7 +579,12 @@ describe('TagEvaluationService.onKycSubmitted (real PG)', () => {
     const { service } = makeServices();
     await seedKycPendingRule();
 
-    await service.onKycSubmitted({ userId, referenceId: 'ref-1', provider: 'sumsub' });
+    await service.onKycSubmitted({
+      userId,
+      playerId: null,
+      referenceId: 'ref-1',
+      provider: 'sumsub',
+    });
 
     expect(await activeTagKeys(userId)).toContain('kyc_pending');
   });
@@ -575,7 +595,12 @@ describe('TagEvaluationService.onKycSubmitted (real PG)', () => {
     const { kycRejectedTag } = await seedKycPendingRule();
     await seedActiveAssignment(userId, kycRejectedTag);
 
-    await service.onKycSubmitted({ userId, referenceId: 'ref-1', provider: 'sumsub' });
+    await service.onKycSubmitted({
+      userId,
+      playerId: null,
+      referenceId: 'ref-1',
+      provider: 'sumsub',
+    });
 
     expect(await activeTagKeys(userId)).toContain('kyc_pending');
     expect(await activeTagKeys(userId)).toContain('kyc_rejected');
@@ -588,7 +613,12 @@ describe('TagEvaluationService.onKycSubmitted (real PG)', () => {
     });
     await seedKycPendingRule();
 
-    await service.onKycSubmitted({ userId, referenceId: 'ref-1', provider: 'sumsub' });
+    await service.onKycSubmitted({
+      userId,
+      playerId: null,
+      referenceId: 'ref-1',
+      provider: 'sumsub',
+    });
 
     expect(await activeTagKeys(userId)).toEqual([]);
   });
@@ -598,7 +628,12 @@ describe('TagEvaluationService.onKycSubmitted (real PG)', () => {
     const { service } = makeServices();
     await seedRule('kyc_pending', { isEnabled: false });
 
-    await service.onKycSubmitted({ userId, referenceId: 'ref-1', provider: 'sumsub' });
+    await service.onKycSubmitted({
+      userId,
+      playerId: null,
+      referenceId: 'ref-1',
+      provider: 'sumsub',
+    });
 
     expect(await activeTagKeys(userId)).toEqual([]);
   });
@@ -610,7 +645,7 @@ describe('TagEvaluationService.onKycSubmitted (real PG)', () => {
     await seedActiveAssignment(userId, kycPendingTag);
 
     await expect(
-      service.onKycSubmitted({ userId, referenceId: 'ref-1', provider: 'sumsub' }),
+      service.onKycSubmitted({ userId, playerId: null, referenceId: 'ref-1', provider: 'sumsub' }),
     ).resolves.toBeUndefined();
 
     const rows = await db.drizzle.db
@@ -1063,6 +1098,7 @@ describe('TagEvaluationService.onSelfExclusionActivated / onSelfExclusionLifted 
 
     await service.onSelfExclusionActivated({
       userId,
+      playerId: null,
       actorId: SYSTEM_ACTOR_ID,
       reason: 'player requested self-exclusion',
       exclusionId: randomUUID(),
@@ -1083,6 +1119,7 @@ describe('TagEvaluationService.onSelfExclusionActivated / onSelfExclusionLifted 
     await expect(
       service.onSelfExclusionActivated({
         userId,
+        playerId: null,
         actorId: SYSTEM_ACTOR_ID,
         reason: 'player requested self-exclusion',
         exclusionId: randomUUID(),
@@ -1101,6 +1138,7 @@ describe('TagEvaluationService.onSelfExclusionActivated / onSelfExclusionLifted 
 
     await service.onSelfExclusionLifted({
       userId,
+      playerId: null,
       actorId: SYSTEM_ACTOR_ID,
       reason: 'exclusion period expired',
       exclusionId: randomUUID(),
@@ -1118,6 +1156,7 @@ describe('TagEvaluationService.onSelfExclusionActivated / onSelfExclusionLifted 
     await expect(
       service.onSelfExclusionLifted({
         userId,
+        playerId: null,
         actorId: SYSTEM_ACTOR_ID,
         reason: 'exclusion period expired',
         exclusionId: randomUUID(),
@@ -1136,6 +1175,7 @@ describe('TagEvaluationService.onPlayerLevelChanged (real PG)', () => {
 
     await service.onPlayerLevelChanged({
       userId,
+      playerId: null,
       previousLevel: 3,
       newLevel: 4,
       actorId: SYSTEM_ACTOR_ID,
@@ -1158,12 +1198,14 @@ describe('TagEvaluationService.onPlayerLevelChanged (real PG)', () => {
       Promise.all([
         service.onPlayerLevelChanged({
           userId,
+          playerId: null,
           previousLevel: 0,
           newLevel: 1,
           actorId: SYSTEM_ACTOR_ID,
         }),
         service.onPlayerLevelChanged({
           userId,
+          playerId: null,
           previousLevel: 0,
           newLevel: 2,
           actorId: SYSTEM_ACTOR_ID,
@@ -1193,6 +1235,7 @@ describe('TagEvaluationService.onPlayerLevelChanged (real PG)', () => {
     await expect(
       service.onPlayerLevelChanged({
         userId,
+        playerId: null,
         previousLevel: 0,
         newLevel: 1,
         actorId: SYSTEM_ACTOR_ID,
@@ -1210,6 +1253,7 @@ describe('TagEvaluationService.onPlayerLevelChanged (real PG)', () => {
     await expect(
       service.onPlayerLevelChanged({
         userId,
+        playerId: null,
         previousLevel: 3,
         newLevel: 4,
         actorId: SYSTEM_ACTOR_ID,
@@ -1240,7 +1284,7 @@ describe('TagEvaluationService idempotency (real PG)', () => {
     const { service } = makeServices();
     await seedLoginCleanupTags();
 
-    await expect(service.onUserLogin({ userId })).resolves.toBeUndefined();
+    await expect(service.onUserLogin({ userId, playerId: null })).resolves.toBeUndefined();
     expect(await activeTagKeys(userId)).toEqual([]);
   });
 });

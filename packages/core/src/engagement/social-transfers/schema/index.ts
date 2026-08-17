@@ -2,8 +2,7 @@ import { pgTable, uuid, text, decimal, integer, timestamp } from 'drizzle-orm/pg
 
 /**
  * Claimable gift card: sender is debited on send, first other player to claim
- * wins the credit. Successor to chat-commands' `chat_gift` table (left in
- * place, untouched - see chat-commands/AGENTS.md and this module's AGENTS.md).
+ * wins the credit. This module owns the gift persistence table.
  * No FK to chatMessage - cross-module boundary rule. roomId is nullable: a
  * gift can be sent into global chat (GLOBAL_CHAT_ROOM_ID sentinel on the wire).
  */

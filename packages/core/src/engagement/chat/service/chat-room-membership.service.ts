@@ -1,7 +1,13 @@
 import { and, count, eq, gt, inArray, isNull, or } from 'drizzle-orm';
 import { DrizzleService, withAdvisoryXactLock, serializeRow } from '@openora/core/server';
 import type { EventBus } from '@openora/core/server';
-import type { AuditWritePort, ClientMeta, RealtimeTransport, Uuid } from '@openora/core/contracts';
+import type {
+  AuditWritePort,
+  ClientMeta,
+  IdentityReader,
+  RealtimeTransport,
+  Uuid,
+} from '@openora/core/contracts';
 import { chatRoom, chatRoomBan, chatRoomMember, chatRoomRemove } from '../schema/index.js';
 import {
   ChatRoomBannedError,
@@ -24,8 +30,9 @@ export class ChatRoomMembershipService {
   constructor(
     private readonly drizzle: DrizzleService,
     private readonly events: EventBus,
-    private readonly audit?: AuditWritePort,
-    private readonly transport?: RealtimeTransport,
+    private readonly audit: AuditWritePort,
+    private readonly transport: RealtimeTransport,
+    private readonly identityReader: IdentityReader,
   ) {}
 
   private async join(
@@ -67,6 +74,7 @@ export class ChatRoomMembershipService {
       this.events.emit('chat.room.member.joined', {
         roomId,
         userId,
+        playerId: await this.identityReader.getPlayerIdByUserIdSafe(userId),
         ip: meta.ip ?? null,
         userAgent: meta.userAgent ?? null,
       });
@@ -155,6 +163,7 @@ export class ChatRoomMembershipService {
       this.events.emit('chat.room.member.left', {
         roomId,
         userId,
+        playerId: await this.identityReader.getPlayerIdByUserIdSafe(userId),
         ip: ip ?? null,
         userAgent: userAgent ?? null,
       });
@@ -179,7 +188,10 @@ export class ChatRoomMembershipService {
         .from(chatRoomMember)
         .where(and(eq(chatRoomMember.roomId, roomId), eq(chatRoomMember.userId, moderatorId)))
         .limit(1);
-      if (!moderator || (moderator.role !== 'moderator' && moderator.role !== 'owner')) {
+      if (!moderator) {
+        throw new ChatRoomNotMemberError(roomId);
+      }
+      if (moderator.role !== 'moderator' && moderator.role !== 'owner') {
         throw new ChatRoomNotModeratorError(roomId);
       }
       const removed = await t

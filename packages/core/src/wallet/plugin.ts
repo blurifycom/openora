@@ -3,6 +3,7 @@ import type { CoreTokenCatalog, Plugin } from '@openora/core/server';
 import * as z from 'zod';
 import {
   ADMIN_USER_DIRECTORY,
+  IDENTITY_READER,
   ADMIN_WALLET_REPORTING,
   PAYMENT_ADAPTER,
   PAYMENT_WEBHOOK_VERIFIER,
@@ -58,6 +59,7 @@ export default {
           drizzle: c.get(DRIZZLE),
           events: c.get(EVENT_BUS),
           payment: c.get(PAYMENT_ADAPTER),
+          identityReader: c.get(IDENTITY_READER),
           directory: c.get(ADMIN_USER_DIRECTORY),
           platformConfig: c.has(PLATFORM_CONFIG) ? c.get(PLATFORM_CONFIG) : undefined,
           limiter: c.get(RATE_LIMITER),

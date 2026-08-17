@@ -108,8 +108,7 @@
       "id": "chat-commands",
       "group": "engagement",
       "tables": [
-        "chat_command_config",
-        "chat_gift"
+        "chat_command_config"
       ],
       "routes": [
         "chat-commands.adminListCommands",
@@ -319,6 +318,17 @@
       "routes": [
         "profile.get",
         "profile.update"
+      ]
+    },
+    {
+      "id": "social",
+      "group": "engagement",
+      "tables": [
+        "friendship"
+      ],
+      "routes": [
+        "social.getRelationships",
+        "social.sendFriendRequest"
       ]
     },
     {
@@ -604,8 +614,14 @@
       "token": "IDENTITY_READER",
       "status": "wired",
       "boundIn": [
+        "packages/core/src/casino/gaming/plugin.ts",
+        "packages/core/src/compliance/plugin.ts",
+        "packages/core/src/engagement/chat/plugin.ts",
+        "packages/core/src/iam/plugin.ts",
         "packages/core/src/pam/identity/plugin.ts",
-        "packages/core/src/pam/tag/plugin.ts"
+        "packages/core/src/pam/tag/plugin.ts",
+        "packages/core/src/server/runtime/create-app.ts",
+        "packages/core/src/wallet/plugin.ts"
       ]
     },
     {
@@ -832,6 +848,8 @@
     "rg.limit.set",
     "rg.self_exclusion.activated",
     "rg.self_exclusion.lifted",
+    "social.friend_request.accepted",
+    "social.friend_request.sent",
     "tag.created",
     "tag.deleted",
     "tag.player.assigned",
@@ -1218,6 +1236,10 @@
       "file": "packages/core/src/analytics/contract/financial.ts"
     },
     {
+      "name": "FriendshipSchema",
+      "file": "packages/core/src/engagement/social/contract/index.ts"
+    },
+    {
       "name": "FunnelQuerySchema",
       "file": "packages/core/src/analytics/contract/funnel.ts"
     },
@@ -1268,6 +1290,10 @@
     {
       "name": "GeoRuleSchema",
       "file": "packages/core/src/compliance/contract/index.ts"
+    },
+    {
+      "name": "GetRelationshipsInputSchema",
+      "file": "packages/core/src/engagement/social/contract/index.ts"
     },
     {
       "name": "GgrPointSchema",
@@ -1658,6 +1684,14 @@
       "file": "packages/core/src/wallet/contract/index.ts"
     },
     {
+      "name": "RelationshipSchema",
+      "file": "packages/core/src/engagement/social/contract/index.ts"
+    },
+    {
+      "name": "RelationshipStatusSchema",
+      "file": "packages/core/src/engagement/social/contract/index.ts"
+    },
+    {
       "name": "removePlayerTagSchema",
       "file": "packages/core/src/contracts/schemas/tag.ts"
     },
@@ -1720,6 +1754,10 @@
     {
       "name": "SendDonateInputSchema",
       "file": "packages/core/src/engagement/social-transfers/contract/index.ts"
+    },
+    {
+      "name": "SendFriendRequestInputSchema",
+      "file": "packages/core/src/engagement/social/contract/index.ts"
     },
     {
       "name": "SessionItemSchema",

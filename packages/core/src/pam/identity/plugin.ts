@@ -54,12 +54,20 @@ export default {
       (c) =>
         new LoginEnforcementService(
           c.get(DRIZZLE),
-          new SessionService({ drizzle: c.get(DRIZZLE), events: c.get(EVENT_BUS) }),
+          new SessionService({
+            drizzle: c.get(DRIZZLE),
+            events: c.get(EVENT_BUS),
+            identityReader: c.get(IDENTITY_READER),
+          }),
         ),
     );
     ctx.provide(PLAY_ELIGIBILITY, (c) => new PlayEligibilityService(c.get(DRIZZLE)));
     ctx.provide(SESSION_COMMANDS, (c) => {
-      const sessionSvc = new SessionService({ drizzle: c.get(DRIZZLE), events: c.get(EVENT_BUS) });
+      const sessionSvc = new SessionService({
+        drizzle: c.get(DRIZZLE),
+        events: c.get(EVENT_BUS),
+        identityReader: c.get(IDENTITY_READER),
+      });
       return {
         revokeAll: (userId, actorId) => sessionSvc.revokeAllSessions(userId, actorId),
       };
@@ -69,6 +77,7 @@ export default {
         new IdentityService({
           drizzle: c.get(DRIZZLE),
           events: c.get(EVENT_BUS),
+          identityReader: c.get(IDENTITY_READER),
           email: c.get(SEND_EMAIL),
           templateRenderer: c.get(EMAIL_TEMPLATE_RENDERER),
           options: c.has(IDENTITY_OPTIONS) ? c.get(IDENTITY_OPTIONS) : undefined,
@@ -76,7 +85,11 @@ export default {
           platformConfig: c.has(PLATFORM_CONFIG) ? c.get(PLATFORM_CONFIG) : undefined,
           cache: c.get(CACHE),
         }),
-        new SessionService({ drizzle: c.get(DRIZZLE), events: c.get(EVENT_BUS) }),
+        new SessionService({
+          drizzle: c.get(DRIZZLE),
+          events: c.get(EVENT_BUS),
+          identityReader: c.get(IDENTITY_READER),
+        }),
         new PhoneLoginService({
           drizzle: c.get(DRIZZLE),
           events: c.get(EVENT_BUS),

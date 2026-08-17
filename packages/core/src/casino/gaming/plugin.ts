@@ -3,6 +3,7 @@ import type { CoreTokenCatalog, Plugin } from '@openora/core/server';
 import {
   ADMIN_GAME_REPORTING,
   GAME_ADAPTER,
+  IDENTITY_READER,
   PLAY_ELIGIBILITY,
   RNG_ADAPTER,
   WALLET_COMMANDS,
@@ -15,7 +16,7 @@ import { DrizzleAdminGameReporting } from './admin-reporting.js';
 
 export default {
   id: 'gaming',
-  requiresPorts: [PLAY_ELIGIBILITY],
+  requiresPorts: [PLAY_ELIGIBILITY, IDENTITY_READER],
   dependsOn: ['wallet'],
   register(ctx) {
     ctx.provide(GAME_ADAPTER, () => new MockGameAdapter());
@@ -29,6 +30,7 @@ export default {
           c.get(GAME_ADAPTER),
           c.get(PLAY_ELIGIBILITY),
           c.get(WALLET_COMMANDS),
+          c.get(IDENTITY_READER),
         ),
       ),
     );

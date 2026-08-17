@@ -74,7 +74,7 @@ export type AdminUserDirectory = {
   lookupPlayers(userIds: readonly string[]): Promise<AdminPlayerSummary[]>;
   /**
    * Resolves a free-text player filter to a capped set of userIds, matched against
-   * email (user table) OR username/displayName (player table). Empty = no match.
+   * email (user table) OR username/displayName (player table). Empty = all candidates.
    * limit caps both sub-queries and the merged set; defaults to 1000 (the implementation cap).
    */
   findPlayerIds(query: string, limit?: number): Promise<string[]>;

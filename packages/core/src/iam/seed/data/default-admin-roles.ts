@@ -48,6 +48,9 @@ export const DEFAULT_ADMIN_ROLES: readonly DefaultAdminRole[] = [
       affiliate: R,
       sessions: RW,
       'player-note': RW,
+      'chat-room': RW,
+      'chat-command': RW,
+      'chat-moderation': RW,
     },
   },
   {
