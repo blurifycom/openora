@@ -186,10 +186,15 @@ export const RejectWithdrawalInputSchema = z.object({
 export const PaymentWebhookInputSchema = z.record(z.string(), z.unknown());
 export const PaymentWebhookOutputSchema = z.object({ ok: z.literal(true) });
 
-export const DepositAddressInputSchema = z.object({ currency: WalletCurrencyInputSchema });
+export const DepositAddressInputSchema = z.object({
+  currency: WalletCurrencyInputSchema,
+  network: z.string().min(1).optional(),
+});
 export const DepositAddressSchema = z.object({
   address: z.string(),
   currency: WalletCurrencyCodeSchema,
+  network: z.string().optional(),
+  tag: z.string().optional(),
 });
 
 export const walletContract = {

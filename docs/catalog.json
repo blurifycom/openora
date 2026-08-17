@@ -377,6 +377,7 @@
         "wallet_auto_withdrawal_config",
         "wallet_balance",
         "wallet_deposit_address",
+        "wallet_provider_vault",
         "wallet_transaction"
       ],
       "routes": [

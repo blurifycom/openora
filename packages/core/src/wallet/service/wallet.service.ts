@@ -33,7 +33,7 @@ import {
   type ClientMeta,
   type PaginationOptions,
 } from '@openora/core/contracts';
-import { eq, asc, desc, sql, and, gte, lte, count, inArray } from 'drizzle-orm';
+import { eq, asc, desc, sql, and, gte, lte, count, inArray, isNull } from 'drizzle-orm';
 import { createHash } from 'node:crypto';
 import {
   wallet,
@@ -43,6 +43,7 @@ import {
   walletAutoWithdrawalConfig,
   walletDepositAddress,
   type Wallet,
+  type WalletDepositAddress,
   type WalletTransaction,
   type AutoWithdrawalRule as AutoWithdrawalRuleRow,
   type WalletAutoWithdrawalConfig as WalletAutoWithdrawalConfigRow,
@@ -226,6 +227,22 @@ type AutoApprovalGates = Pick<
   AutoApprovalDecision,
   'threshold' | 'thresholdSource' | 'kycStatus' | 'riskTagsEvaluated' | 'effectiveExcludeTags'
 >;
+
+type DepositAddressResult = {
+  address: string;
+  currency: string;
+  network?: string;
+  tag?: string;
+};
+
+function toDepositAddressResult(row: WalletDepositAddress): DepositAddressResult {
+  return {
+    address: row.address,
+    currency: row.currency,
+    ...(row.network === null ? {} : { network: row.network }),
+    ...(row.tag === null ? {} : { tag: row.tag }),
+  };
+}
 
 function toAutoWithdrawalRuleDto(row: AutoWithdrawalRuleRow): AutoWithdrawalRule {
   return {
@@ -1517,45 +1534,48 @@ export class WalletService {
   async getOrCreateDepositAddress(
     userId: User['id'],
     currency: string,
-  ): Promise<{ address: string; currency: string }> {
-    const existing = await this.findDepositAddress(userId, currency);
+    network?: string,
+  ): Promise<DepositAddressResult> {
+    const existing = await this.findDepositAddress(userId, currency, network);
     if (existing) {
-      return { address: existing.address, currency: existing.currency };
+      return toDepositAddressResult(existing);
     }
     if (!this.payment.issueDepositAddress) {
       throw new DepositAddressUnsupportedError();
     }
-    const issued = await this.payment.issueDepositAddress(userId, currency);
+    const issued = await this.payment.issueDepositAddress(userId, currency, network);
 
     const [row] = await this.drizzle.db
       .insert(walletDepositAddress)
       .values({
         userId,
         currency,
+        network: network ?? null,
         address: issued.address,
+        tag: issued.tag ?? null,
         providerName: providerNameFor(this.resolveRail(currency)),
       })
       .onConflictDoNothing()
       .returning();
     if (row) {
-      return { address: row.address, currency: row.currency };
+      return toDepositAddressResult(row);
     }
-    const winner = await this.findDepositAddress(userId, currency);
+    const winner = await this.findDepositAddress(userId, currency, network);
     if (!winner) {
       throw new Error(
-        `wallet deposit address: idempotency conflict but no row found (userId=${userId}, currency=${currency})`,
+        `wallet deposit address: idempotency conflict but no row found (userId=${userId}, currency=${currency}, network=${network ?? 'none'})`,
       );
     }
-    return { address: winner.address, currency: winner.currency };
+    return toDepositAddressResult(winner);
   }
 
   async creditDepositByAddress(
     event: Extract<PaymentWebhookEvent, { kind: 'deposit' }>,
   ): Promise<void> {
-    const depositAddress = await this.findDepositAddressByAddress(event.address);
+    const depositAddress = await this.findDepositAddressByAddress(event.address, event.tag);
     if (!depositAddress) {
       logger.warn(
-        { address: event.address },
+        { address: event.address, tag: event.tag },
         'payment webhook: no wallet_deposit_address for inbound deposit',
       );
       return;
@@ -1652,21 +1672,32 @@ export class WalletService {
     return existing;
   }
 
-  private async findDepositAddress(userId: User['id'], currency: string) {
+  private async findDepositAddress(userId: User['id'], currency: string, network?: string) {
     const [row] = await this.drizzle.db
       .select()
       .from(walletDepositAddress)
       .where(
-        and(eq(walletDepositAddress.userId, userId), eq(walletDepositAddress.currency, currency)),
+        and(
+          eq(walletDepositAddress.userId, userId),
+          eq(walletDepositAddress.currency, currency),
+          network === undefined
+            ? isNull(walletDepositAddress.network)
+            : eq(walletDepositAddress.network, network),
+        ),
       );
     return row;
   }
 
-  private async findDepositAddressByAddress(address: string) {
+  private async findDepositAddressByAddress(address: string, tag?: string) {
     const [row] = await this.drizzle.db
       .select()
       .from(walletDepositAddress)
-      .where(eq(walletDepositAddress.address, address));
+      .where(
+        and(
+          eq(walletDepositAddress.address, address),
+          tag === undefined ? isNull(walletDepositAddress.tag) : eq(walletDepositAddress.tag, tag),
+        ),
+      );
     return row;
   }
 }

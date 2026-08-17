@@ -134,13 +134,43 @@ export const walletDepositAddress = pgTable(
     id: uuid().primaryKey().defaultRandom(),
     userId: uuid().notNull(),
     currency: text().notNull(),
+    network: text(),
     address: text().notNull(),
+    tag: text(),
     providerName: text().notNull(),
     createdAt: timestamp({ withTimezone: true }).notNull().defaultNow(),
   },
   (t) => [
-    uniqueIndex('wallet_deposit_address_user_id_currency_idx').on(t.userId, t.currency),
-    index('wallet_deposit_address_address_idx').on(t.address),
+    uniqueIndex('wallet_deposit_address_user_id_currency_network_idx')
+      .on(t.userId, t.currency, t.network)
+      .where(sql`${t.network} IS NOT NULL`),
+    uniqueIndex('wallet_deposit_address_user_id_currency_idx')
+      .on(t.userId, t.currency)
+      .where(sql`${t.network} IS NULL`),
+    uniqueIndex('wallet_deposit_address_address_tag_idx')
+      .on(t.address, t.tag)
+      .where(sql`${t.tag} IS NOT NULL`),
+    uniqueIndex('wallet_deposit_address_address_idx')
+      .on(t.address)
+      .where(sql`${t.tag} IS NULL`),
+  ],
+);
+
+export const walletProviderVault = pgTable(
+  'wallet_provider_vault',
+  {
+    id: uuid().primaryKey().defaultRandom(),
+    userId: uuid().notNull(),
+    providerName: text().notNull(),
+    vaultAccountId: text().notNull(),
+    createdAt: timestamp({ withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    uniqueIndex('wallet_provider_vault_user_id_provider_name_idx').on(t.userId, t.providerName),
+    uniqueIndex('wallet_provider_vault_provider_name_vault_account_id_idx').on(
+      t.providerName,
+      t.vaultAccountId,
+    ),
   ],
 );
 
