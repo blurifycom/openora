@@ -126,17 +126,20 @@ async function makeService({
   return { svc, events, psp, audit };
 }
 
-async function seedWallet(overrides: Partial<typeof wallet.$inferInsert> = {}) {
+async function seedWallet({
+  balance = '100000',
+  ...overrides
+}: Partial<typeof wallet.$inferInsert> & { balance?: string } = {}) {
   const row = findOneOrThrow(
     await db.drizzle.db
       .insert(wallet)
-      .values({ userId: randomUUID(), balance: '100000', currency: 'USD', ...overrides })
+      .values({ userId: randomUUID(), currency: 'USD', ...overrides })
       .returning(),
     new Error('seedWallet: query returned no row'),
   );
   await db.drizzle.db
     .insert(walletBalance)
-    .values({ walletId: row.id, currency: row.currency, amount: row.balance });
+    .values({ walletId: row.id, currency: row.currency, amount: balance });
   return row;
 }
 

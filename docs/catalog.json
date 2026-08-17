@@ -387,12 +387,14 @@
         "wallet.get",
         "wallet.getAddress",
         "wallet.getBalance",
+        "wallet.getBalances",
         "wallet.list",
         "wallet.listPlayerTransactions",
         "wallet.listTransactions",
         "wallet.reject",
         "wallet.set",
         "wallet.set",
+        "wallet.setActiveCurrency",
         "wallet.webhook",
         "wallet.withdraw"
       ]
@@ -876,6 +878,10 @@
     {
       "name": "ActivateSelfExclusionInputSchema",
       "file": "packages/core/src/compliance/contract/rg.ts"
+    },
+    {
+      "name": "ActiveCurrencySchema",
+      "file": "packages/core/src/wallet/contract/index.ts"
     },
     {
       "name": "ActiveUsersTrendPointSchema",
@@ -1802,6 +1808,10 @@
       "file": "packages/core/src/compliance/contract/rg.ts"
     },
     {
+      "name": "SetActiveCurrencyInputSchema",
+      "file": "packages/core/src/wallet/contract/index.ts"
+    },
+    {
       "name": "SetAutoWithdrawalRuleInputSchema",
       "file": "packages/core/src/wallet/contract/index.ts"
     },
@@ -1935,6 +1945,10 @@
     },
     {
       "name": "WalletBalanceSchema",
+      "file": "packages/core/src/wallet/contract/index.ts"
+    },
+    {
+      "name": "WalletBalancesSchema",
       "file": "packages/core/src/wallet/contract/index.ts"
     },
     {

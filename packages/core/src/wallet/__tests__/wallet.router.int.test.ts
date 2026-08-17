@@ -63,10 +63,7 @@ const allowingGuard = () => makeAdminGuard({ caller: { userId: 'caller-1' } });
 
 async function seedLedger(userId: string, amounts: string[]) {
   const row = findOneOrThrow(
-    await db.drizzle.db
-      .insert(wallet)
-      .values({ userId, balance: '0', currency: 'USD' })
-      .returning(),
+    await db.drizzle.db.insert(wallet).values({ userId, currency: 'USD' }).returning(),
     new Error('seedLedger: query returned no row'),
   );
   for (const amount of amounts) {

@@ -19,17 +19,20 @@ const eligibility = (isRestricted: boolean) =>
 
 const svc = new WalletCommandsService(eligibility(false));
 
-async function seedWallet(overrides: Partial<typeof wallet.$inferInsert> = {}) {
+async function seedWallet({
+  balance = '0',
+  ...overrides
+}: Partial<typeof wallet.$inferInsert> & { balance?: string } = {}) {
   const row = findOneOrThrow(
     await db.drizzle.db
       .insert(wallet)
-      .values({ userId: randomUUID(), balance: '0', currency: 'USD', ...overrides })
+      .values({ userId: randomUUID(), currency: 'USD', ...overrides })
       .returning(),
     new Error('seedWallet: query returned no row'),
   );
   await db.drizzle.db
     .insert(walletBalance)
-    .values({ walletId: row.id, currency: row.currency, amount: row.balance });
+    .values({ walletId: row.id, currency: row.currency, amount: balance });
   return row;
 }
 
