@@ -81,7 +81,10 @@ above) if this repo has no UI apps.
   `mapErrors`.
 - **Pin exact dependency versions** (no `^`/`~`); add a dependency deliberately - std lib or a few
   lines often beat a tree.
-- **Tests co-locate in `__tests__/`**; test behaviour, not implementation; always cover authz
-  negatives. Detail: `docs/standards/testing.md`.
+- **Test at the outermost tier that reaches the behaviour:** a UI journey -> browser E2E; an API
+  route, an overlay, a vendor adapter, anything with SQL -> API E2E against real Postgres with the
+  vendor stubbed at its HTTP boundary; a pure function -> a co-located unit test in `__tests__/`.
+  Never fake a query builder and never let a spy assertion be the point of a test; always cover
+  authz negatives. Detail: `docs/standards/testing.md`.
 - **Green before review:** `pnpm verify` passes. Conventional commits, lowercase subject, one PR
   per concern. Never push without explicit confirmation. Detail: `docs/standards/git-delivery.md`.
