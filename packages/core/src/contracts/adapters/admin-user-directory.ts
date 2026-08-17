@@ -1,5 +1,5 @@
 import { createToken, type Token } from './token.js';
-import type { KycStatus } from '../schemas/player.js';
+import type { KycStatus, Player } from '../schemas/player.js';
 import type { UserRole } from '../schemas/iam.js';
 import type { ClientMeta } from '../schemas/common.js';
 import type { SortOrder } from '../kit.js';
@@ -40,11 +40,8 @@ export type AdminUserListOptions = {
   sortOrder?: SortOrder;
 };
 
-/**
- * Player-facing back-office enrichment (username + KYC). Lets a back-office
- * consumer label a player row without reaching into the player/profile tables.
- */
 export type AdminPlayerSummary = {
+  playerId: Player['id'];
   userId: string;
   username: string;
   email: string;

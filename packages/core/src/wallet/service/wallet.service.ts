@@ -716,6 +716,7 @@ export class WalletService {
       return {
         transactionId: r.tx.id,
         userId: r.userId,
+        playerId: summary?.playerId ?? null,
         username: summary?.username ?? '',
         amount: r.tx.amount,
         currency: r.tx.currency,

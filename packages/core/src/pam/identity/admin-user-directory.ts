@@ -117,6 +117,7 @@ export class DrizzleAdminUserDirectory implements AdminUserDirectory {
     }
     const rows = await this.drizzle.db
       .select({
+        playerId: player.id,
         userId: player.userId,
         username: player.displayName,
         kycStatus: player.kycStatus,
@@ -147,6 +148,7 @@ export class DrizzleAdminUserDirectory implements AdminUserDirectory {
   async getPlayerByUsername(username: string) {
     const rows = await this.drizzle.db
       .select({
+        playerId: player.id,
         userId: player.userId,
         username: player.displayName,
         kycStatus: player.kycStatus,
@@ -176,7 +178,7 @@ export class DrizzleAdminUserDirectory implements AdminUserDirectory {
   // crutch - it is effectively unreachable for a real admin search term.
   async findPlayerIds(query: string, limit = 1000) {
     const term = `%${query}%`;
-    const [byEmail, byName] = await Promise.all([
+    const [byEmail, byName, byPlayerId, byUserId] = await Promise.all([
       this.drizzle.db
         .select({ id: user.id })
         .from(user)
@@ -187,12 +189,28 @@ export class DrizzleAdminUserDirectory implements AdminUserDirectory {
         .from(player)
         .where(ilike(player.displayName, term))
         .limit(limit),
+      this.drizzle.db
+        .select({ userId: player.userId })
+        .from(player)
+        .where(ilike(sql`${player.id}::text`, query))
+        .limit(limit),
+      this.drizzle.db
+        .select({ userId: player.userId })
+        .from(player)
+        .where(ilike(sql`${player.userId}::text`, query))
+        .limit(limit),
     ]);
     const ids = new Set<string>();
     for (const r of byEmail) {
       ids.add(r.id);
     }
     for (const r of byName) {
+      ids.add(r.userId);
+    }
+    for (const r of byPlayerId) {
+      ids.add(r.userId);
+    }
+    for (const r of byUserId) {
       ids.add(r.userId);
     }
     return [...ids].slice(0, limit);

@@ -1227,6 +1227,7 @@ describe('ChatService.verifyRoomAccess and listings (real PG)', () => {
     const now = new Date();
     function summary(userId: string, username: string): AdminPlayerSummary {
       return {
+        playerId: randomUUID(),
         userId,
         username,
         email: `${username}@example.test`,

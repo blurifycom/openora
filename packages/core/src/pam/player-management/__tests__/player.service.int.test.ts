@@ -57,9 +57,13 @@ const SEARCH_VIEWER_ID = '00000000-0000-0000-0000-0000000000a1';
 const SEARCH_OTHER_ID = '00000000-0000-0000-0000-0000000000a2';
 const SEARCH_CREATED_AT = new Date('2026-01-01T00:00:00.000Z');
 
+const SEARCH_VIEWER_PLAYER_ID = '00000000-0000-0000-0000-0000000000b1';
+const SEARCH_OTHER_PLAYER_ID = '00000000-0000-0000-0000-0000000000b2';
+
 function makeUserDirectory(): AdminUserDirectory {
   const all = [
     {
+      playerId: SEARCH_VIEWER_PLAYER_ID,
       userId: SEARCH_VIEWER_ID,
       username: 'bob',
       email: 'bob@example.com',
@@ -71,6 +75,7 @@ function makeUserDirectory(): AdminUserDirectory {
       currency: 'USD',
     },
     {
+      playerId: SEARCH_OTHER_PLAYER_ID,
       userId: SEARCH_OTHER_ID,
       username: 'alice',
       email: 'alice@example.com',

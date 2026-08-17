@@ -175,11 +175,15 @@ describe('DrizzleAdminUserDirectory.lookupPlayers (real PG)', () => {
   it('joins the email from the user table onto the player summary', async () => {
     const { dir } = makeDirectory();
     const account = await seedUser({ email: 'alice@example.com' });
-    await seedPlayer(account.id, { displayName: 'alice', kycStatus: 'verified' });
+    const seededPlayer = await seedPlayer(account.id, {
+      displayName: 'alice',
+      kycStatus: 'verified',
+    });
 
     const [summary] = await dir.lookupPlayers([account.id]);
 
     expect(summary).toEqual({
+      playerId: seededPlayer.id,
       userId: account.id,
       username: 'alice',
       email: 'alice@example.com',
@@ -190,6 +194,8 @@ describe('DrizzleAdminUserDirectory.lookupPlayers (real PG)', () => {
       level: 1,
       currency: 'USD',
     });
+    expect(summary?.playerId).toBe(seededPlayer.id);
+    expect(summary?.playerId).not.toBe(summary?.userId);
   });
 
   it('skips a user id that has no player profile', async () => {
@@ -204,11 +210,17 @@ describe('DrizzleAdminUserDirectory.getPlayerByUsername (real PG)', () => {
   it('returns an exact case-insensitive match', async () => {
     const { dir } = makeDirectory();
     const account = await seedUser({ email: 'anna@example.com' });
-    await seedPlayer(account.id, { displayName: 'AnnaBell' });
+    const seededPlayer = await seedPlayer(account.id, { displayName: 'AnnaBell' });
 
     const summary = await dir.getPlayerByUsername('annabell');
 
-    expect(summary).toMatchObject({ userId: account.id, username: 'AnnaBell' });
+    expect(summary).toMatchObject({
+      playerId: seededPlayer.id,
+      userId: account.id,
+      username: 'AnnaBell',
+    });
+    expect(summary?.playerId).toBe(seededPlayer.id);
+    expect(summary?.playerId).not.toBe(summary?.userId);
   });
 
   it('returns null when no player matches', async () => {
@@ -246,5 +258,29 @@ describe('DrizzleAdminUserDirectory.findPlayerIds (real PG)', () => {
     await seedUser({ email: 'alice@example.com' });
 
     expect(await dir.findPlayerIds('zzzz')).toEqual([]);
+  });
+
+  it('matches an exact playerId', async () => {
+    const { dir } = makeDirectory();
+    const account = await seedUser({ email: 'carlos@example.com' });
+    const seededPlayer = await seedPlayer(account.id, { displayName: 'carlos' });
+
+    expect(await dir.findPlayerIds(seededPlayer.id)).toEqual([account.id]);
+  });
+
+  it('matches an exact identity userId', async () => {
+    const { dir } = makeDirectory();
+    const account = await seedUser({ email: 'dana@example.com' });
+    await seedPlayer(account.id, { displayName: 'dana' });
+
+    expect(await dir.findPlayerIds(account.id)).toEqual([account.id]);
+  });
+
+  it('does not substring-match a playerId, unlike email/displayName', async () => {
+    const { dir } = makeDirectory();
+    const account = await seedUser({ email: 'erin@example.com' });
+    const seededPlayer = await seedPlayer(account.id, { displayName: 'erin' });
+
+    expect(await dir.findPlayerIds(seededPlayer.id.slice(0, 8))).toEqual([]);
   });
 });
