@@ -25,6 +25,7 @@ import {
 import { migrate } from '../migrate.js';
 import {
   wallet,
+  walletBalance,
   walletTransaction,
   autoWithdrawalRule,
   walletAutoWithdrawalConfig,
@@ -129,6 +130,9 @@ async function seedWallet(overrides: Partial<typeof wallet.$inferInsert> = {}) {
     .insert(wallet)
     .values({ userId: randomUUID(), balance: '100000', currency: 'USD', ...overrides })
     .returning();
+  await db.drizzle.db
+    .insert(walletBalance)
+    .values({ walletId: row!.id, currency: row!.currency, amount: row!.balance });
   return row!;
 }
 
@@ -231,8 +235,11 @@ describe('WalletService.withdraw auto-approval (real PG)', () => {
     });
 
     expect(result.status).toBe('pending');
-    const [row] = await db.drizzle.db.select().from(wallet).where(eq(wallet.id, w.id));
-    expect(Number(row?.balance)).toBe(60);
+    const [row] = await db.drizzle.db
+      .select()
+      .from(walletBalance)
+      .where(eq(walletBalance.walletId, w.id));
+    expect(Number(row?.amount)).toBe(60);
   });
 
   it('stays pending when the amount exceeds the configured threshold', async () => {

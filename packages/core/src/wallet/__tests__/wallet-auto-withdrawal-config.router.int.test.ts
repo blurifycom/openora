@@ -22,7 +22,12 @@ import {
   NO_CLIENT_META,
 } from '../../testing/mock.js';
 import { migrate } from '../migrate.js';
-import { wallet, walletTransaction, walletAutoWithdrawalConfig } from '../schema/index.js';
+import {
+  wallet,
+  walletBalance,
+  walletTransaction,
+  walletAutoWithdrawalConfig,
+} from '../schema/index.js';
 import { createWalletRouter } from '../router/index.js';
 import { WalletService } from '../service/wallet.service.js';
 
@@ -113,6 +118,9 @@ async function seedPlayerWallet(overrides: Partial<typeof wallet.$inferInsert> =
     .insert(wallet)
     .values({ userId: randomUUID(), balance: '100000', currency: 'USD', ...overrides })
     .returning();
+  await db.drizzle.db
+    .insert(walletBalance)
+    .values({ walletId: row!.id, currency: row!.currency, amount: row!.balance });
   return row!;
 }
 

@@ -37,6 +37,7 @@ import { eq, asc, desc, sql, and, gte, lte, count, inArray } from 'drizzle-orm';
 import { createHash } from 'node:crypto';
 import {
   wallet,
+  walletBalance,
   walletTransaction,
   autoWithdrawalRule,
   walletAutoWithdrawalConfig,
@@ -114,6 +115,56 @@ export function railFor(currency: string, cryptoCurrencies?: readonly string[]):
     ? new Set(cryptoCurrencies.map((c) => c.toUpperCase()))
     : DEFAULT_CRYPTO_CURRENCIES;
   return set.has(currency.toUpperCase()) ? 'crypto' : 'fiat';
+}
+
+export function creditWalletBalance(
+  txn: DrizzleDb,
+  walletId: Wallet['id'],
+  currency: string,
+  amount: string,
+) {
+  return txn
+    .insert(walletBalance)
+    .values({ walletId, currency, amount })
+    .onConflictDoUpdate({
+      target: [walletBalance.walletId, walletBalance.currency],
+      set: {
+        amount: sql`${walletBalance.amount} + ${amount}::numeric`,
+        updatedAt: new Date(),
+      },
+    })
+    .returning({ amount: walletBalance.amount });
+}
+
+export function debitWalletBalance(
+  txn: DrizzleDb,
+  walletId: Wallet['id'],
+  currency: string,
+  amount: string,
+) {
+  return txn
+    .update(walletBalance)
+    .set({ amount: sql`${walletBalance.amount} - ${amount}::numeric` })
+    .where(
+      and(
+        eq(walletBalance.walletId, walletId),
+        eq(walletBalance.currency, currency),
+        gte(walletBalance.amount, amount),
+      ),
+    )
+    .returning({ amount: walletBalance.amount });
+}
+
+export async function readWalletBalance(
+  txn: DrizzleDb,
+  walletId: Wallet['id'],
+  currency: string,
+): Promise<string> {
+  const [row] = await txn
+    .select({ amount: walletBalance.amount })
+    .from(walletBalance)
+    .where(and(eq(walletBalance.walletId, walletId), eq(walletBalance.currency, currency)));
+  return row?.amount ?? '0';
 }
 
 // Namespace the key per operation so the same raw key on a deposit then a withdraw can't
@@ -286,7 +337,7 @@ export class WalletService {
     }
 
     return {
-      balance: record.balance,
+      balance: await readWalletBalance(this.drizzle.db, record.id, record.currency),
       currency: record.currency,
     };
   }
@@ -378,10 +429,7 @@ export class WalletService {
       });
 
       if (!replayed) {
-        await txn
-          .update(wallet)
-          .set({ balance: sql`${wallet.balance} + ${amount}::numeric` })
-          .where(eq(wallet.id, walletRecord.id));
+        await creditWalletBalance(txn, walletRecord.id, currency, amount);
       }
 
       return { transactionId: row.id, replayed };
@@ -585,13 +633,12 @@ export class WalletService {
         }
 
         // Guarded conditional debit: the WHERE makes balance>=amount atomic with the write; 0 rows back rolls back the whole tx.
-        const debited = await txn
-          .update(wallet)
-          .set({ balance: sql`${wallet.balance} - ${amount}::numeric` })
-          .where(and(eq(wallet.id, current.id), gte(wallet.balance, amount)))
-          .returning({ id: wallet.id });
+        const debited = await debitWalletBalance(txn, current.id, currency, amount);
         if (debited.length !== 1) {
-          throw new InsufficientBalanceError(current.balance, amount);
+          throw new InsufficientBalanceError(
+            await readWalletBalance(txn, current.id, currency),
+            amount,
+          );
         }
 
         if (this.tagEvaluationCommands) {
@@ -883,10 +930,7 @@ export class WalletService {
       if (updated.length === 0) {
         return false;
       }
-      await txn
-        .update(wallet)
-        .set({ balance: sql`${wallet.balance} + ${amount}::numeric` })
-        .where(eq(wallet.id, tx.walletId));
+      await creditWalletBalance(txn, tx.walletId, tx.currency, amount);
       return true;
     });
     if (transitioned && adminId) {
@@ -1374,10 +1418,7 @@ export class WalletService {
         new WithdrawalNotFoundError(withdrawalId),
       );
 
-      await txn
-        .update(wallet)
-        .set({ balance: sql`${wallet.balance} + ${updated.amount}::numeric` })
-        .where(eq(wallet.id, updated.walletId));
+      await creditWalletBalance(txn, updated.walletId, updated.currency, updated.amount);
 
       return updated;
     });
@@ -1532,10 +1573,7 @@ export class WalletService {
         .returning();
 
       if (inserted) {
-        await txn
-          .update(wallet)
-          .set({ balance: sql`${wallet.balance} + ${event.amount}::numeric` })
-          .where(eq(wallet.id, walletRecord.id));
+        await creditWalletBalance(txn, walletRecord.id, event.currency, event.amount);
         return { transactionId: inserted.id, replayed: false };
       }
 

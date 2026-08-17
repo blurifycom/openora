@@ -3,7 +3,7 @@ import { findOneOrThrow, type DrizzleDb } from '@openora/core/server';
 import { eq } from 'drizzle-orm';
 import { user } from '@openora/core/pam/schema/identity';
 import { player } from '@openora/core/pam/schema/profile';
-import { wallet, walletTransaction } from '@openora/core/wallet/schema';
+import { wallet, walletBalance, walletTransaction } from '@openora/core/wallet/schema';
 import { game } from '@openora/core/casino/schema/gaming';
 import {
   chatRoom,
@@ -415,6 +415,7 @@ export async function seedDemoData(options: SeedOptions): Promise<SeedResult> {
   await db.delete(chatMessage);
   await db.delete(chatRoom);
   await db.delete(walletTransaction);
+  await db.delete(walletBalance);
   await db.delete(wallet);
   await db.delete(player);
   await db.delete(game);
@@ -535,6 +536,9 @@ export async function seedDemoData(options: SeedOptions): Promise<SeedResult> {
         .returning(),
       new Error('seed: expected the wallet insert to return a row'),
     );
+    await db
+      .insert(walletBalance)
+      .values({ walletId: walletRow.id, currency, amount: walletRow.balance });
 
     const deposits = 1 + Math.floor(rng() * 4);
     let depositSum = 0;

@@ -7,7 +7,7 @@ import { migrate as migrateProfile } from '@openora/core/pam/migrate/profile';
 import type { PaymentAdapter, AuditWritePort } from '@openora/core/contracts';
 import { mock, NO_CLIENT_META, makeEventBus, makeIdentityReader } from '../../testing/mock.js';
 import { migrate } from '../migrate.js';
-import { wallet, walletTransaction } from '../schema/index.js';
+import { wallet, walletBalance, walletTransaction } from '../schema/index.js';
 import { WalletService } from '../service/wallet.service.js';
 
 const events = makeEventBus();
@@ -34,6 +34,9 @@ async function seedWallet() {
     .insert(wallet)
     .values({ userId: randomUUID(), balance: '1000', currency: 'USD' })
     .returning();
+  await db.drizzle.db
+    .insert(walletBalance)
+    .values({ walletId: row!.id, currency: row!.currency, amount: row!.balance });
   return row!;
 }
 

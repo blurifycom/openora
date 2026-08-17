@@ -5,7 +5,7 @@ import type { PlayEligibilityPort } from '@openora/core/contracts';
 import { createTestDb, type TestDb } from '@openora/core/testing';
 import { mock } from '../../testing/mock.js';
 import { migrate } from '../migrate.js';
-import { wallet, walletTransaction } from '../schema/index.js';
+import { wallet, walletBalance, walletTransaction } from '../schema/index.js';
 import {
   WalletCommandsService,
   WalletRgRestrictedError,
@@ -23,12 +23,19 @@ async function seedWallet(overrides: Partial<typeof wallet.$inferInsert> = {}) {
     .insert(wallet)
     .values({ userId: randomUUID(), balance: '0', currency: 'USD', ...overrides })
     .returning();
+  await db.drizzle.db
+    .insert(walletBalance)
+    .values({ walletId: row!.id, currency: row!.currency, amount: row!.balance });
   return row!;
 }
 
 async function balanceOf(userId: string) {
-  const [row] = await db.drizzle.db.select().from(wallet).where(eq(wallet.userId, userId));
-  return Number(row?.balance);
+  const [row] = await db.drizzle.db
+    .select({ amount: walletBalance.amount })
+    .from(walletBalance)
+    .innerJoin(wallet, eq(wallet.id, walletBalance.walletId))
+    .where(eq(wallet.userId, userId));
+  return Number(row?.amount ?? 0);
 }
 
 async function txRows(walletId: string) {

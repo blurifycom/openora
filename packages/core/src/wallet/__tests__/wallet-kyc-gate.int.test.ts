@@ -18,7 +18,7 @@ import {
   makeAuditWriter,
 } from '../../testing/mock.js';
 import { migrate } from '../migrate.js';
-import { wallet, walletTransaction } from '../schema/index.js';
+import { wallet, walletBalance, walletTransaction } from '../schema/index.js';
 import { WalletService, KycRequiredError } from '../service/wallet.service.js';
 
 let db: TestDb;
@@ -48,6 +48,9 @@ async function seedWallet() {
     .insert(wallet)
     .values({ userId: randomUUID(), balance: '100', currency: 'USD' })
     .returning();
+  await db.drizzle.db
+    .insert(walletBalance)
+    .values({ walletId: row!.id, currency: row!.currency, amount: row!.balance });
   return row!;
 }
 

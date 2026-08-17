@@ -8,7 +8,7 @@ import {
   type CoreTokenCatalog,
 } from '@openora/core/server';
 import { game, gameRound } from '@openora/core/casino/schema/gaming';
-import { wallet, walletTransaction } from '@openora/core/wallet/schema';
+import { wallet, walletBalance, walletTransaction } from '@openora/core/wallet/schema';
 import {
   setupTestDb,
   bootTestApp,
@@ -51,10 +51,11 @@ async function deposit(client: TestClient, amount: string, currency = 'USD') {
 async function balanceOf(container: Container<CoreTokenCatalog>, userId: string): Promise<string> {
   const [row] = await container
     .get(DRIZZLE)
-    .db.select()
-    .from(wallet)
+    .db.select({ amount: walletBalance.amount })
+    .from(walletBalance)
+    .innerJoin(wallet, eq(wallet.id, walletBalance.walletId))
     .where(eq(wallet.userId, userId));
-  return row?.balance ?? '0';
+  return row?.amount ?? '0';
 }
 
 beforeAll(async () => {
