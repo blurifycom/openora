@@ -7,5 +7,6 @@ Detail for the delivery lines in `conventions`. Read this before committing, ope
 - **One PR = one concern.** Stage files explicitly; never `git add -A` with foreign changes in the tree.
 - **Green before review:** `pnpm verify` passes; `pnpm regen` after any contract/schema change.
 - **Branch off `dev`; never commit directly to `dev`/`stage`.** Promotion chain `dev -> stage` + release tags. Never push without an explicit per-action confirmation.
-- **PR description carries intent:** what / why / acceptance criteria / ticket key.
+- **PR description carries intent:** what / why / acceptance criteria / ticket key. Follow `.github/pull_request_template.md`; do not invent extra sections.
+- **No test plan or CI checklist in the description.** The `verify` and `commitlint` checks are already on the PR, so "typecheck clean", "159/159 passing" or "full gate passed" is noise a reviewer can see for themselves. Only write down verification CI cannot show: a manual walkthrough, a sandbox call against a vendor, a data migration run by hand.
 - **No sensitive/internal data in titles, descriptions, or commits** - they are the public record. Bare ticket key (`ABC-45`), never the URL; no internal links, hostnames, secrets, PII. When in doubt, leave it out.
