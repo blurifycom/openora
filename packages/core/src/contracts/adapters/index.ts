@@ -211,6 +211,9 @@ export { CHAT_BLOCK_WRITER } from './chat-block-writer.js';
 export type { ChatRoomAccess } from './chat-room-access.js';
 export { CHAT_ROOM_ACCESS } from './chat-room-access.js';
 
+export type { PlayerActivityTracker } from './player-activity.js';
+export { PLAYER_ACTIVITY_TRACKER } from './player-activity.js';
+
 export type {
   SendGiftArgs,
   SendGiftFailureReason,

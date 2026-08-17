@@ -419,6 +419,19 @@ export async function mapEventToRecord(
     };
   }
 
+  // A friendship was dissolved - either the player removed it, or blocking the
+  // other party implicitly dissolved it (reason carries which).
+  if (topic === 'social.friendship.removed') {
+    return {
+      ...base,
+      actorType: 'player',
+      actorId: str(p['actorId']),
+      resourceType: 'friendship',
+      resourceId: str(p['friendshipId']),
+      after: { status: 'removed', reason: p['reason'] },
+    };
+  }
+
   // Admin CMS page/banner CRUD. actorId = acting admin; resourceId = the page/banner.
   if (
     topic === 'cms.page.created' ||
@@ -655,6 +668,7 @@ const SUBSCRIBED_TOPICS: DomainEventName[] = [
   'player.login_blocked',
   'social.friend_request.sent',
   'social.friend_request.accepted',
+  'social.friendship.removed',
 ] as const;
 
 export default {

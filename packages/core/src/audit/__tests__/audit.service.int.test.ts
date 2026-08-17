@@ -581,6 +581,39 @@ describe('mapEventToRecord() player.id resolution (BF-335)', () => {
     expect(row.actorId).toBe(ignorer.id);
   });
 
+  it('social.friendship.removed: resourceId is the friendshipId, actorId is whoever dissolved it', async () => {
+    const actor = await seedPlayer();
+    const other = await seedPlayer();
+    const friendshipId = randomUUID();
+
+    const row = await mapAndRecord('social.friendship.removed', {
+      friendshipId,
+      actorId: actor.userId,
+      otherUserId: other.userId,
+      reason: 'removed_by_player',
+    });
+
+    expect(row.resourceType).toBe('friendship');
+    expect(row.resourceId).toBe(friendshipId);
+    expect(row.actorId).toBe(actor.userId);
+    expect(row.after).toMatchObject({ status: 'removed', reason: 'removed_by_player' });
+  });
+
+  it('social.friendship.removed: carries reason "blocked" through to after', async () => {
+    const actor = await seedPlayer();
+    const other = await seedPlayer();
+    const friendshipId = randomUUID();
+
+    const row = await mapAndRecord('social.friendship.removed', {
+      friendshipId,
+      actorId: actor.userId,
+      otherUserId: other.userId,
+      reason: 'blocked',
+    });
+
+    expect(row.after).toMatchObject({ status: 'removed', reason: 'blocked' });
+  });
+
   it('player.level.changed: resourceId comes from the payload playerId', async () => {
     const p = await seedPlayer();
 

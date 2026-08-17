@@ -10,6 +10,7 @@ import {
   RequestAlreadyPendingError,
   FriendRequestRefusedError,
   BlockedBySelfError,
+  FriendshipNotFoundError,
 } from '../service/social.service.js';
 
 // oRPC router factory for Social. plugin.ts builds the service from the
@@ -40,6 +41,19 @@ export function createSocialRouter(social: SocialService) {
     getRelationships: os.getRelationships.handler(({ input, context }) => {
       const callerId = getUserId(context);
       return social.getRelationships(callerId, input.userIds);
+    }),
+
+    listFriends: os.listFriends.handler(({ input, context }) => {
+      const callerId = getUserId(context);
+      return social.listFriends(callerId, { page: input.page, limit: input.limit });
+    }),
+
+    removeFriend: os.removeFriend.handler(({ input, context }) => {
+      const callerId = getUserId(context);
+      return mapErrors({ NOT_FOUND: [FriendshipNotFoundError] }, async () => {
+        await social.removeFriend(callerId, input.targetUserId);
+        return { success: true as const };
+      });
     }),
   });
 }

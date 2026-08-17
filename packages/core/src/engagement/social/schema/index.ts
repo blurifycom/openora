@@ -14,6 +14,12 @@ import { pgTable, uuid, timestamp, uniqueIndex, index, check } from 'drizzle-orm
 // INSERT is attempted directly (no pre-SELECT), and a unique-violation on the pair
 // key is caught and resolved. A request is pending while both decision timestamps
 // are null, accepted when acceptedAt is set, and refused when refusedAt is set.
+// A friendship is soft-removed (removedAt set) when either side dissolves it -
+// SocialService.removeFriend (explicit) or dissolveFriendshipOnBlock (implicit, via
+// the chat.user.blocked event) - same soft-delete pattern as chatUserBlock/
+// chatUserIgnore (see chat/schema/index.ts): the pair unique index is partial
+// (removedAt IS NULL) so re-friending after a removal inserts a fresh active row
+// instead of conflicting with the removed one.
 export const friendship = pgTable(
   'friendship',
   {
@@ -27,20 +33,31 @@ export const friendship = pgTable(
       .$onUpdateFn(() => new Date()),
     acceptedAt: timestamp({ withTimezone: true }),
     refusedAt: timestamp({ withTimezone: true }),
+    removedAt: timestamp({ withTimezone: true }),
   },
   (t) => [
-    // Canonical-pair unique index: the same two users can never have two rows
+    // Canonical-pair unique index: the same two users can never have two ACTIVE rows
     // regardless of who sent the request. LEAST/GREATEST normalize the pair so
-    // (A, B) and (B, A) collide on the same index entry.
-    uniqueIndex('friendship_pair_key').on(
-      sql`LEAST(${t.requesterId}, ${t.addresseeId})`,
-      sql`GREATEST(${t.requesterId}, ${t.addresseeId})`,
-    ),
+    // (A, B) and (B, A) collide on the same index entry. Partial (removedAt IS NULL)
+    // so a removed friendship's row survives as history without blocking a fresh
+    // request for the same pair - see chatUserBlock's pair index for the same pattern.
+    uniqueIndex('friendship_pair_key')
+      .on(
+        sql`LEAST(${t.requesterId}, ${t.addresseeId})`,
+        sql`GREATEST(${t.requesterId}, ${t.addresseeId})`,
+      )
+      .where(sql`${t.removedAt} IS NULL`),
     index('friendship_addressee_idx').on(t.addresseeId),
     index('friendship_requester_idx').on(t.requesterId),
     check(
       'friendship_one_decision_key',
       sql`NOT (${t.acceptedAt} IS NOT NULL AND ${t.refusedAt} IS NOT NULL)`,
+    ),
+    // A friendship can only be soft-removed once it was actually accepted - never a
+    // pending or refused row.
+    check(
+      'friendship_removed_requires_accepted_key',
+      sql`NOT (${t.removedAt} IS NOT NULL AND ${t.acceptedAt} IS NULL)`,
     ),
   ],
 );

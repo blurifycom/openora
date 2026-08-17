@@ -1,6 +1,7 @@
 import { oc } from '@orpc/contract';
 import * as z from 'zod';
 import { TimestampSchema, UuidSchema } from '@openora/core/contracts';
+import { PageQuerySchema, paginated } from '@openora/core/contracts/kit';
 
 // Canonical request/response shapes for the Social module. This is the
 // single source of truth - the router validates against it, live OpenAPI + the typed
@@ -52,6 +53,28 @@ export const RelationshipSchema = z.object({
 });
 export type Relationship = z.infer<typeof RelationshipSchema>;
 
+// A friends-tab entry - the OTHER party's view, from the caller's perspective.
+// Rank badge and avatar are deliberately absent: no rank/loyalty module exists yet
+// and there is no avatar column anywhere in the platform (BF-427). isIgnored reflects
+// the CALLER's own chatUserIgnore row on this friend (Confluence Scenario 3: the
+// friend stays in the list, but the menu must toggle Ignore/Unignore) - block does
+// NOT get an equivalent flag because blocking always dissolves the friendship, so a
+// blocked user never appears in this list at all.
+export const FriendListEntrySchema = z.object({
+  userId: UuidSchema,
+  friendshipId: UuidSchema,
+  displayName: z.string(),
+  status: z.enum(['online', 'offline']),
+  lastSeenAt: TimestampSchema.nullable(),
+  isIgnored: z.boolean(),
+});
+export type FriendListEntry = z.infer<typeof FriendListEntrySchema>;
+
+export const RemoveFriendInputSchema = z.object({
+  targetUserId: UuidSchema,
+});
+export type RemoveFriendInput = z.infer<typeof RemoveFriendInputSchema>;
+
 export const socialContract = {
   sendFriendRequest: oc
     .route({ method: 'POST', path: '/social/friend-requests' })
@@ -63,4 +86,14 @@ export const socialContract = {
     .route({ method: 'POST', path: '/social/relationships' })
     .input(GetRelationshipsInputSchema)
     .output(z.array(RelationshipSchema)),
+
+  listFriends: oc
+    .route({ method: 'GET', path: '/social/friends' })
+    .input(PageQuerySchema)
+    .output(paginated(FriendListEntrySchema)),
+
+  removeFriend: oc
+    .route({ method: 'DELETE', path: '/social/friends/{targetUserId}' })
+    .input(RemoveFriendInputSchema)
+    .output(z.object({ success: z.literal(true) })),
 };

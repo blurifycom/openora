@@ -304,6 +304,8 @@
       ],
       "routes": [
         "social.getRelationships",
+        "social.listFriends",
+        "social.removeFriend",
         "social.sendFriendRequest"
       ]
     },
@@ -663,6 +665,16 @@
       ]
     },
     {
+      "category": "player-activity",
+      "interface": "PlayerActivityTracker",
+      "token": "PLAYER_ACTIVITY_TRACKER",
+      "status": "wired",
+      "boundIn": [
+        "packages/core/src/pam/player-management/plugin.ts",
+        "packages/core/src/server/runtime/create-app.ts"
+      ]
+    },
+    {
       "category": "player-tags",
       "interface": "PlayerTags",
       "token": "PLAYER_TAGS",
@@ -816,6 +828,7 @@
     "rg.self_exclusion.lifted",
     "social.friend_request.accepted",
     "social.friend_request.sent",
+    "social.friendship.removed",
     "tag.created",
     "tag.deleted",
     "tag.player.assigned",
@@ -1168,6 +1181,10 @@
     {
       "name": "FinancialSummarySchema",
       "file": "packages/core/src/analytics/contract/financial.ts"
+    },
+    {
+      "name": "FriendListEntrySchema",
+      "file": "packages/core/src/engagement/social/contract/index.ts"
     },
     {
       "name": "FriendshipSchema",
@@ -1623,6 +1640,10 @@
     },
     {
       "name": "RelationshipStatusSchema",
+      "file": "packages/core/src/engagement/social/contract/index.ts"
+    },
+    {
+      "name": "RemoveFriendInputSchema",
       "file": "packages/core/src/engagement/social/contract/index.ts"
     },
     {

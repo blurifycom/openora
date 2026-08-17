@@ -6,14 +6,18 @@ import {
   ADMIN_GAME_REPORTING,
   CHAT_BLOCK_WRITER,
   SESSION_COMMANDS,
+  PLAYER_ACTIVITY_TRACKER,
 } from '@openora/core/contracts';
 import type { CoreTokenCatalog, Plugin } from '@openora/core/server';
 import { PlayerService } from './service/player.service.js';
 import { PlayerKycStatusWriter } from './service/kyc-status-writer.js';
+import { DrizzlePlayerActivityTracker } from './service/player-activity-tracker.service.js';
 import { createPlayerRouter } from './router/index.js';
 
 // Owns the player table writes, so it binds the single KYC_STATUS_WRITER seam
-// (compliance + the admin override route consume it). Reads identity via /schema. See ADR-0020.
+// (compliance + the admin override route consume it) and PLAYER_ACTIVITY_TRACKER
+// (the per-request auth middleware's fire-and-forget lastSeenAt writer, see
+// create-app.ts). Reads identity via /schema. See ADR-0020.
 export default {
   id: 'player-management',
   dependsOn: ['chat', 'gaming', 'audit', 'identity'],
@@ -22,6 +26,7 @@ export default {
       KYC_STATUS_WRITER,
       (c) => new PlayerKycStatusWriter(c.get(DRIZZLE), c.get(EVENT_BUS)),
     );
+    ctx.provide(PLAYER_ACTIVITY_TRACKER, (c) => new DrizzlePlayerActivityTracker(c.get(DRIZZLE)));
     ctx.routers.add('player', (c) =>
       createPlayerRouter(
         new PlayerService(

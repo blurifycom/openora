@@ -60,6 +60,90 @@ describe('social router authz', () => {
       call(router.getRelationships, { userIds: [randomUUID()] }, { context: testContext() }),
     ).rejects.toBeInstanceOf(ORPCError);
   });
+
+  it('rejects listFriends for an unauthenticated caller', async () => {
+    const { router } = build();
+
+    await expect(
+      call(router.listFriends, { page: 1, limit: 20 }, { context: testContext() }),
+    ).rejects.toBeInstanceOf(ORPCError);
+  });
+
+  it('rejects removeFriend for an unauthenticated caller', async () => {
+    const { router } = build();
+
+    await expect(
+      call(router.removeFriend, { targetUserId: randomUUID() }, { context: testContext() }),
+    ).rejects.toBeInstanceOf(ORPCError);
+  });
+});
+
+describe('social router listFriends', () => {
+  it('returns the accepted, non-removed friends for the caller', async () => {
+    const { router } = build();
+    const caller = await seedPlayer({ displayName: 'Caller' });
+    const friend = await seedPlayer({ displayName: 'Friend' });
+    await call(
+      router.sendFriendRequest,
+      { targetUserId: friend.userId },
+      { context: ctxFor(caller.userId) },
+    );
+    await call(
+      router.sendFriendRequest,
+      { targetUserId: caller.userId },
+      { context: ctxFor(friend.userId) },
+    );
+
+    const result = await call(
+      router.listFriends,
+      { page: 1, limit: 20 },
+      { context: ctxFor(caller.userId) },
+    );
+
+    expect(result.total).toBe(1);
+    expect(result.items[0]).toMatchObject({ userId: friend.userId, displayName: 'Friend' });
+  });
+});
+
+describe('social router removeFriend', () => {
+  it('dissolves an active friendship', async () => {
+    const { router } = build();
+    const caller = await seedPlayer();
+    const friend = await seedPlayer();
+    await call(
+      router.sendFriendRequest,
+      { targetUserId: friend.userId },
+      { context: ctxFor(caller.userId) },
+    );
+    await call(
+      router.sendFriendRequest,
+      { targetUserId: caller.userId },
+      { context: ctxFor(friend.userId) },
+    );
+
+    const result = await call(
+      router.removeFriend,
+      { targetUserId: friend.userId },
+      { context: ctxFor(caller.userId) },
+    );
+
+    expect(result).toEqual({ success: true });
+  });
+
+  it('maps a nonexistent friendship to NOT_FOUND', async () => {
+    const { router } = build();
+    const caller = await seedPlayer();
+    const stranger = await seedPlayer();
+
+    const error: unknown = await call(
+      router.removeFriend,
+      { targetUserId: stranger.userId },
+      { context: ctxFor(caller.userId) },
+    ).catch((e: unknown) => e);
+
+    expect(error).toBeInstanceOf(ORPCError);
+    expect((error as ORPCError<'removeFriend', unknown>).code).toBe('NOT_FOUND');
+  });
 });
 
 describe('social router sendFriendRequest', () => {
