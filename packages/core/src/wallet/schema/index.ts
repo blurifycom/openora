@@ -42,6 +42,24 @@ export const wallet = pgTable('wallet', {
     .$onUpdateFn(() => new Date()),
 });
 
+export const walletBalance = pgTable(
+  'wallet_balance',
+  {
+    id: uuid().primaryKey().defaultRandom(),
+    walletId: uuid()
+      .notNull()
+      .references(() => wallet.id),
+    currency: text().notNull(),
+    amount: decimal({ precision: 18, scale: 8 }).notNull().default('0'),
+    createdAt: timestamp({ withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp({ withTimezone: true })
+      .notNull()
+      .defaultNow()
+      .$onUpdateFn(() => new Date()),
+  },
+  (t) => [uniqueIndex('wallet_balance_wallet_id_currency_idx').on(t.walletId, t.currency)],
+);
+
 export const walletTransaction = pgTable(
   'wallet_transaction',
   {
