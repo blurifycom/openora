@@ -1,4 +1,4 @@
-import { domainEventSchemas } from '@openora/core/contracts';
+import { domainEventSchemas, IDENTITY_READER } from '@openora/core/contracts';
 import { EVENT_BUS, DRIZZLE, createLogger } from '@openora/core/server';
 import type { CoreTokenCatalog, Plugin } from '@openora/core/server';
 import { SocialService } from './service/social.service.js';
@@ -8,12 +8,13 @@ const logger = createLogger('social');
 
 // DI wiring only - no business logic here. sendFriendRequest/getRelationships read
 // the `player` table via the read-only @openora/core/pam/schema/profile subpath
-// (ADR-0020), not a DI token/command port, so no dependsOn is needed to pin load
-// order - the imported pgTable is a plain object available regardless of plugin
-// registration order.
+// (ADR-0020), not a DI token/command port, so that access needs no dependsOn entry -
+// the imported pgTable is a plain object available regardless of plugin registration
+// order. `dependsOn: ['identity']` is for IDENTITY_READER below (resolves the raw
+// actor userId to a player.id for audit attribution).
 export default {
   id: 'social',
-  dependsOn: ['chat'],
+  dependsOn: ['chat', 'identity'],
   register(ctx) {
     // Subscriptions are wired before router factories run (create-app.ts boot order),
     // so svcRef is null at registration but set before any real event arrives - see
@@ -35,7 +36,7 @@ export default {
     });
 
     ctx.routers.add('social', (c) => {
-      socialRef = new SocialService(c.get(DRIZZLE), c.get(EVENT_BUS));
+      socialRef = new SocialService(c.get(DRIZZLE), c.get(EVENT_BUS), c.get(IDENTITY_READER));
       return createSocialRouter(socialRef);
     });
   },

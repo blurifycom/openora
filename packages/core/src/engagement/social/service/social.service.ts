@@ -9,7 +9,7 @@ import {
   pageToOffset,
   serializeRow,
 } from '@openora/core/server';
-import { type Uuid } from '@openora/core/contracts';
+import { type IdentityReader, type Uuid } from '@openora/core/contracts';
 import { chatUserBlock, chatUserIgnore } from '@openora/core/engagement/schema/chat';
 import { player } from '@openora/core/pam/schema/profile';
 import { friendship } from '../schema/index.js';
@@ -17,13 +17,7 @@ import { type Friendship, type FriendListEntry, type Relationship } from '../con
 
 const logger = createLogger('social');
 
-// A friend counts as "online" if the platform observed activity from them within
-// this window (see PLAYER_ACTIVITY_TRACKER, the writer of player.lastSeenAt); older
-// or null collapses to "offline" - "Away" is out of scope for BF-427. Must stay
-// LARGER than that tracker's write-throttle window (currently 1 minute, see
-// player-activity-tracker.service.ts) - otherwise a genuinely active player could
-// read as offline in the gap between two throttled writes.
-const ONLINE_STATUS_WINDOW_MS = 2 * 60 * 1000;
+const ONLINE_STATUS_WINDOW_MS = 3 * 60 * 1000;
 
 type FriendshipRow = typeof friendship.$inferSelect;
 
@@ -113,6 +107,7 @@ export class SocialService {
   constructor(
     private readonly drizzle: DrizzleService,
     private readonly events: EventBus,
+    private readonly identityReader: IdentityReader,
   ) {}
 
   /**
@@ -380,6 +375,7 @@ export class SocialService {
     this.events.emit('social.friendship.removed', {
       friendshipId: removed.id,
       actorId,
+      actorPlayerId: await this.identityReader.getPlayerIdByUserIdSafe(actorId),
       otherUserId: removed.requesterId === actorId ? removed.addresseeId : removed.requesterId,
       reason,
     });

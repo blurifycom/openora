@@ -8,12 +8,13 @@ import {
   EVENT_BUS,
   type CoreTokenCatalog,
 } from '@openora/core/server';
+import { IDENTITY_READER } from '@openora/core/contracts';
 import { createTestDb, type TestDb } from '@openora/core/testing';
 import { migrate as migrateChat } from '@openora/core/engagement/migrate/chat';
 import { chatUserBlock } from '@openora/core/engagement/schema/chat';
 import { player } from '@openora/core/pam/schema/profile';
 import { migrate as migrateProfile } from '@openora/core/pam/migrate/profile';
-import { makeEventBus } from '../../../testing/mock.js';
+import { makeEventBus, makeIdentityReader } from '../../../testing/mock.js';
 import { migrate } from '../migrate.js';
 import { friendship } from '../schema/index.js';
 import { SocialService } from '../service/social.service.js';
@@ -52,6 +53,7 @@ function boot() {
   const events = makeEventBus();
   container.register(DRIZZLE, () => db.drizzle);
   container.register(EVENT_BUS, () => events);
+  container.register(IDENTITY_READER, () => makeIdentityReader());
   const registry = new ModuleRegistryImpl<CoreTokenCatalog>(container);
 
   socialPlugin.register(registry);
@@ -65,7 +67,7 @@ function boot() {
 
 async function makeFriends(alice: string, bob: string) {
   const eventsForSetup = makeEventBus();
-  const svc = new SocialService(db.drizzle, eventsForSetup);
+  const svc = new SocialService(db.drizzle, eventsForSetup, makeIdentityReader());
   const first = await svc.sendFriendRequest(alice, bob);
   await svc.sendFriendRequest(bob, alice); // mutual auto-accept
   return first;

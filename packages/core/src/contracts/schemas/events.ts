@@ -499,10 +499,14 @@ export const domainEventSchemas = {
   }),
   // An accepted friendship was dissolved - either the player explicitly removed the
   // friend, or blocking them (chat.user.blocked) implicitly dissolved it.
-  // actorId = whoever's action caused the removal; otherUserId = the other party.
+  // actorId = whoever's action caused the removal (raw userId); actorPlayerId is the
+  // same actor resolved to a player.id, null when the caller has no player row (see
+  // chat.user.blocked for the same actorId/actorPlayerId split). otherUserId = the
+  // other party.
   'social.friendship.removed': authContextBase.extend({
     friendshipId: UuidSchema,
     actorId: UuidSchema,
+    actorPlayerId: UuidSchema.nullable(),
     otherUserId: UuidSchema,
     reason: z.enum(['removed_by_player', 'blocked']),
   }),

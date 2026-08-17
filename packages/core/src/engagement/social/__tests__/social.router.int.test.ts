@@ -7,7 +7,7 @@ import { migrate as migrateChat } from '@openora/core/engagement/migrate/chat';
 import { chatUserBlock } from '@openora/core/engagement/schema/chat';
 import { player } from '@openora/core/pam/schema/profile';
 import { migrate as migrateProfile } from '@openora/core/pam/migrate/profile';
-import { makeEventBus, testContext } from '../../../testing/mock.js';
+import { makeEventBus, makeIdentityReader, testContext } from '../../../testing/mock.js';
 import { migrate } from '../migrate.js';
 import { friendship } from '../schema/index.js';
 import { createSocialRouter } from '../router/index.js';
@@ -17,7 +17,10 @@ let db: TestDb;
 
 function build() {
   const events = makeEventBus();
-  return { router: createSocialRouter(new SocialService(db.drizzle, events)), events };
+  return {
+    router: createSocialRouter(new SocialService(db.drizzle, events, makeIdentityReader())),
+    events,
+  };
 }
 
 async function seedPlayer(overrides: Partial<typeof player.$inferInsert> = {}) {

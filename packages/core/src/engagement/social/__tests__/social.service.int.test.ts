@@ -1,12 +1,13 @@
 import { describe, it, expect, beforeAll, afterAll, beforeEach } from 'vitest';
 import { randomUUID } from 'node:crypto';
-import { sql } from 'drizzle-orm';
+import { eq, sql } from 'drizzle-orm';
+import type { IdentityReader } from '@openora/core/contracts';
 import { createTestDb, type TestDb } from '@openora/core/testing';
 import { migrate as migrateChat } from '@openora/core/engagement/migrate/chat';
 import { chatUserBlock, chatUserIgnore } from '@openora/core/engagement/schema/chat';
 import { player } from '@openora/core/pam/schema/profile';
 import { migrate as migrateProfile } from '@openora/core/pam/migrate/profile';
-import { makeEventBus } from '../../../testing/mock.js';
+import { makeEventBus, makeIdentityReader } from '../../../testing/mock.js';
 import { migrate } from '../migrate.js';
 import { friendship } from '../schema/index.js';
 import {
@@ -23,9 +24,25 @@ import {
 
 let db: TestDb;
 
+// Resolves against the real seeded `player` rows (not a stubbed constant) so
+// assertions on the emitted actorPlayerId reflect the actual lookup social.service
+// performs via IdentityReader.getPlayerIdByUserIdSafe.
+function realIdentityReader(): IdentityReader {
+  return {
+    ...makeIdentityReader(),
+    getPlayerIdByUserIdSafe: async (userId) => {
+      const [row] = await db.drizzle.db
+        .select({ id: player.id })
+        .from(player)
+        .where(eq(player.userId, userId));
+      return row?.id ?? null;
+    },
+  };
+}
+
 function makeService() {
   const events = makeEventBus();
-  return { svc: new SocialService(db.drizzle, events), events };
+  return { svc: new SocialService(db.drizzle, events, realIdentityReader()), events };
 }
 
 async function seedPlayer(overrides: Partial<typeof player.$inferInsert> = {}) {
@@ -342,6 +359,7 @@ describe('SocialService.removeFriend (real PG)', () => {
     expect(events.emit).toHaveBeenCalledWith('social.friendship.removed', {
       friendshipId: friendshipRow.id,
       actorId: alice.userId,
+      actorPlayerId: alice.id,
       otherUserId: bob.userId,
       reason: 'removed_by_player',
     });
@@ -361,9 +379,28 @@ describe('SocialService.removeFriend (real PG)', () => {
     expect(events.emit).toHaveBeenCalledWith('social.friendship.removed', {
       friendshipId: friendshipRow.id,
       actorId: bob.userId,
+      actorPlayerId: bob.id,
       otherUserId: alice.userId,
       reason: 'removed_by_player',
     });
+  });
+
+  it('emits a null actorPlayerId when the caller has no player row (BF-427 audit fix)', async () => {
+    const { svc, events } = makeService();
+    const alice = await seedPlayer();
+    const staffCallerId = randomUUID(); // an identity userId with no `player` row
+    await db.drizzle.db.insert(friendship).values({
+      requesterId: staffCallerId,
+      addresseeId: alice.userId,
+      acceptedAt: new Date(),
+    });
+
+    await svc.removeFriend(staffCallerId, alice.userId);
+
+    expect(events.emit).toHaveBeenCalledWith(
+      'social.friendship.removed',
+      expect.objectContaining({ actorId: staffCallerId, actorPlayerId: null }),
+    );
   });
 
   it('throws FriendshipNotFoundError when the pair was never friended', async () => {
@@ -457,6 +494,7 @@ describe('SocialService.dissolveFriendshipOnBlock (real PG)', () => {
     expect(events.emit).toHaveBeenCalledWith('social.friendship.removed', {
       friendshipId: friendshipRow.id,
       actorId: alice.userId,
+      actorPlayerId: alice.id,
       otherUserId: bob.userId,
       reason: 'blocked',
     });

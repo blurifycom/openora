@@ -581,7 +581,7 @@ describe('mapEventToRecord() player.id resolution (BF-335)', () => {
     expect(row.actorId).toBe(ignorer.id);
   });
 
-  it('social.friendship.removed: resourceId is the friendshipId, actorId is whoever dissolved it', async () => {
+  it('social.friendship.removed: resourceId is the friendshipId, actorId is the resolved playerId of whoever dissolved it', async () => {
     const actor = await seedPlayer();
     const other = await seedPlayer();
     const friendshipId = randomUUID();
@@ -589,13 +589,15 @@ describe('mapEventToRecord() player.id resolution (BF-335)', () => {
     const row = await mapAndRecord('social.friendship.removed', {
       friendshipId,
       actorId: actor.userId,
+      actorPlayerId: actor.id,
       otherUserId: other.userId,
       reason: 'removed_by_player',
     });
 
     expect(row.resourceType).toBe('friendship');
     expect(row.resourceId).toBe(friendshipId);
-    expect(row.actorId).toBe(actor.userId);
+    expect(row.actorType).toBe('player');
+    expect(row.actorId).toBe(actor.id);
     expect(row.after).toMatchObject({ status: 'removed', reason: 'removed_by_player' });
   });
 
@@ -607,11 +609,29 @@ describe('mapEventToRecord() player.id resolution (BF-335)', () => {
     const row = await mapAndRecord('social.friendship.removed', {
       friendshipId,
       actorId: actor.userId,
+      actorPlayerId: actor.id,
       otherUserId: other.userId,
       reason: 'blocked',
     });
 
     expect(row.after).toMatchObject({ status: 'removed', reason: 'blocked' });
+  });
+
+  it('social.friendship.removed: falls back to actorType admin and the raw actorId when the caller has no player row (BF-427 audit fix)', async () => {
+    const other = await seedPlayer();
+    const friendshipId = randomUUID();
+    const staffCallerId = randomUUID();
+
+    const row = await mapAndRecord('social.friendship.removed', {
+      friendshipId,
+      actorId: staffCallerId,
+      actorPlayerId: null,
+      otherUserId: other.userId,
+      reason: 'removed_by_player',
+    });
+
+    expect(row.actorType).toBe('admin');
+    expect(row.actorId).toBe(staffCallerId);
   });
 
   it('player.level.changed: resourceId comes from the payload playerId', async () => {
