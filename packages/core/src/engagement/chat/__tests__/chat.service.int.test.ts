@@ -1,11 +1,15 @@
-import { describe, it, expect, beforeAll, afterAll, beforeEach } from 'vitest';
+import { describe, it, expect, beforeAll, afterAll, beforeEach, vi } from 'vitest';
 import { randomUUID } from 'node:crypto';
 import { eq, sql } from 'drizzle-orm';
 import { createTestDb, InProcessRealtimeTransport, type TestDb } from '@openora/core/testing';
 import { user } from '@openora/core/pam/schema/identity';
 import { migrate as migrateIdentity } from '@openora/core/pam/migrate/identity';
 import { migrate as migrateProfile } from '@openora/core/pam/migrate/profile';
-import type { AdminUserDirectory, AdminPlayerSummary } from '@openora/core/contracts';
+import type {
+  AdminUserDirectory,
+  AdminPlayerSummary,
+  SocialCommands,
+} from '@openora/core/contracts';
 import { NO_CLIENT_META, makeEventBus, makeIdentityReader, mock } from '../../../testing/mock.js';
 import { CHAT_ROOM_CATEGORIES, type ChatMessage } from '../contract/index.js';
 import { MAX_PRIVATE_ROOMS_PER_PLAYER } from '../contract/constants.js';
@@ -48,11 +52,19 @@ let db: TestDb;
 
 function makeService(
   directory: AdminUserDirectory = mock<AdminUserDirectory>({ lookupPlayers: async () => [] }),
+  socialCommands?: SocialCommands,
 ) {
   const transport = new InProcessRealtimeTransport();
   const events = makeEventBus();
   return {
-    svc: new ChatService(db.drizzle, events, transport, directory, makeIdentityReader()),
+    svc: new ChatService(
+      db.drizzle,
+      events,
+      transport,
+      directory,
+      makeIdentityReader(),
+      socialCommands,
+    ),
     events,
     transport,
   };
@@ -451,6 +463,43 @@ describe('ChatService block list (real PG)', () => {
     const userId = randomUUID();
 
     await expect(svc.blockUser(userId, userId)).rejects.toThrow(ChatSelfBlockError);
+  });
+
+  it('dissolves any friendship on the same tx as the block insert, before returning', async () => {
+    const dissolveFriendshipOnBlock = vi.fn(async () => {});
+    const { svc } = makeService(undefined, mock<SocialCommands>({ dissolveFriendshipOnBlock }));
+    const blockerId = randomUUID();
+    const blockedId = randomUUID();
+
+    await svc.blockUser(blockerId, blockedId, NO_CLIENT_META);
+
+    expect(dissolveFriendshipOnBlock).toHaveBeenCalledTimes(1);
+    expect(dissolveFriendshipOnBlock).toHaveBeenCalledWith(expect.anything(), blockerId, blockedId);
+  });
+
+  it('does not call the social port again on a no-op re-block', async () => {
+    const dissolveFriendshipOnBlock = vi.fn(async () => {});
+    const { svc } = makeService(undefined, mock<SocialCommands>({ dissolveFriendshipOnBlock }));
+    const blockerId = randomUUID();
+    const blockedId = randomUUID();
+
+    await svc.blockUser(blockerId, blockedId);
+    await svc.blockUser(blockerId, blockedId);
+
+    expect(dissolveFriendshipOnBlock).toHaveBeenCalledTimes(1);
+  });
+
+  it('rolls back the block insert when the social port fails, instead of leaving a block with no dissolve', async () => {
+    const dissolveFriendshipOnBlock = vi.fn(async () => {
+      throw new Error('boom');
+    });
+    const { svc } = makeService(undefined, mock<SocialCommands>({ dissolveFriendshipOnBlock }));
+    const blockerId = randomUUID();
+    const blockedId = randomUUID();
+
+    await expect(svc.blockUser(blockerId, blockedId)).rejects.toThrow('boom');
+
+    expect(await db.drizzle.db.select().from(chatUserBlock)).toHaveLength(0);
   });
 
   it('emits only on the first block of a pair', async () => {

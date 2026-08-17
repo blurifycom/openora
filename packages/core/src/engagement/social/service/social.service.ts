@@ -1,5 +1,6 @@
 import { and, count, desc, eq, inArray, isNotNull, isNull, or } from 'drizzle-orm';
 import {
+  type DrizzleDb,
   type DrizzleService,
   type EventBus,
   createDomainError,
@@ -340,12 +341,13 @@ export class SocialService {
   }
 
   private async dissolveFriendship(
+    tx: DrizzleDb,
     userA: Uuid,
     userB: Uuid,
     actorId: Uuid,
     reason: 'removed_by_player' | 'blocked',
   ): Promise<FriendshipRow | undefined> {
-    const rows = await this.drizzle.db
+    const rows = await tx
       .update(friendship)
       .set({ removedAt: new Date() })
       .where(
@@ -373,6 +375,7 @@ export class SocialService {
 
   async removeFriend(callerId: Uuid, targetUserId: Uuid): Promise<void> {
     const removed = await this.dissolveFriendship(
+      this.drizzle.db,
       callerId,
       targetUserId,
       callerId,
@@ -383,8 +386,8 @@ export class SocialService {
     }
   }
 
-  async dissolveFriendshipOnBlock(blockerId: Uuid, blockedId: Uuid): Promise<void> {
-    await this.dissolveFriendship(blockerId, blockedId, blockerId, 'blocked');
+  async dissolveFriendshipOnBlock(tx: unknown, blockerId: Uuid, blockedId: Uuid): Promise<void> {
+    await this.dissolveFriendship(tx as DrizzleDb, blockerId, blockedId, blockerId, 'blocked');
   }
 
   async listFriends(

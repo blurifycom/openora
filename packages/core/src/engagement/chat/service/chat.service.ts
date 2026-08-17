@@ -22,6 +22,7 @@ import type {
   CommandChatMessage,
   AdminUserDirectory,
   IdentityReader,
+  SocialCommands,
 } from '@openora/core/contracts';
 import { chatChannel } from '@openora/core/contracts';
 import { eq, and, isNull, lt, desc, asc, notInArray, inArray, count, ne } from 'drizzle-orm';
@@ -190,6 +191,7 @@ export class ChatService {
     private readonly transport: RealtimeTransport,
     private readonly directory: AdminUserDirectory,
     private readonly identityReader: IdentityReader,
+    private readonly socialCommands?: SocialCommands,
   ) {}
 
   subscribeMessages(
@@ -588,11 +590,20 @@ export class ChatService {
     // IS NULL), so a block after a prior unblock conflicts with nothing and inserts
     // a fresh active row - the removed row stays as history. No explicit conflict
     // target: this table has exactly one unique constraint (the partial pair index).
-    const inserted = await this.drizzle.db
-      .insert(chatUserBlock)
-      .values({ blockerId, blockedId })
-      .onConflictDoNothing()
-      .returning();
+    // Any active friendship dissolves on the same tx as the block insert, so a block
+    // can never leave a friendship (and the blocked user) still reachable from
+    // /social/friends.
+    const inserted = await this.drizzle.db.transaction(async (tx) => {
+      const rows = await tx
+        .insert(chatUserBlock)
+        .values({ blockerId, blockedId })
+        .onConflictDoNothing()
+        .returning();
+      if (rows.length > 0) {
+        await this.socialCommands?.dissolveFriendshipOnBlock(tx, blockerId, blockedId);
+      }
+      return rows;
+    });
 
     if (inserted.length > 0) {
       this.events.emit('chat.user.blocked', {

@@ -459,7 +459,9 @@ describe('SocialService.dissolveFriendshipOnBlock (real PG)', () => {
     const alice = await seedPlayer();
     const bob = await seedPlayer();
 
-    await expect(svc.dissolveFriendshipOnBlock(alice.userId, bob.userId)).resolves.toBeUndefined();
+    await expect(
+      svc.dissolveFriendshipOnBlock(db.drizzle.db, alice.userId, bob.userId),
+    ).resolves.toBeUndefined();
     expect(events.emit).not.toHaveBeenCalled();
   });
 
@@ -470,7 +472,7 @@ describe('SocialService.dissolveFriendshipOnBlock (real PG)', () => {
     await svc.sendFriendRequest(alice.userId, bob.userId);
     events.emit.mockClear();
 
-    await svc.dissolveFriendshipOnBlock(alice.userId, bob.userId);
+    await svc.dissolveFriendshipOnBlock(db.drizzle.db, alice.userId, bob.userId);
 
     expect(events.emit).not.toHaveBeenCalled();
     const [row] = await db.drizzle.db.select().from(friendship);
@@ -484,7 +486,7 @@ describe('SocialService.dissolveFriendshipOnBlock (real PG)', () => {
     const friendshipRow = await makeFriends(svc, alice.userId, bob.userId);
     events.emit.mockClear();
 
-    await svc.dissolveFriendshipOnBlock(alice.userId, bob.userId);
+    await svc.dissolveFriendshipOnBlock(db.drizzle.db, alice.userId, bob.userId);
 
     expect(events.emit).toHaveBeenCalledWith('social.friendship.removed', {
       friendshipId: friendshipRow.id,
