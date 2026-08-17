@@ -262,6 +262,12 @@ export class ChatService {
     return new Set([...blocked, ...ignored]);
   }
 
+  /** Batch username resolution for a list of userIds - one lookupPlayers call, not N+1. */
+  private async usernamesFor(userIds: readonly User['id'][]) {
+    const summaries = await this.directory.lookupPlayers(userIds);
+    return new Map(summaries.map((s) => [s.userId, s.username]));
+  }
+
   private async resolveDisplayName(userId: User['id'], fallback: string) {
     const [row] = await this.drizzle.db
       .select({ name: user.name })
@@ -522,8 +528,14 @@ export class ChatService {
         .offset(pageToOffset(page, limit)),
       this.drizzle.db.select({ n: count() }).from(chatUserBlock).where(where),
     ]);
+    const usernameByUserId = await this.usernamesFor(rows.map((r) => r.blockedId));
     return {
-      items: rows.map((r) => serializeRow(r, { dateFields: ['createdAt'] })),
+      items: rows.map((r) =>
+        serializeRow(
+          { ...r, username: usernameByUserId.get(r.blockedId) ?? null },
+          { dateFields: ['createdAt'] },
+        ),
+      ),
       total: Number(n),
       page,
       limit,
@@ -650,8 +662,14 @@ export class ChatService {
         .offset(pageToOffset(page, limit)),
       this.drizzle.db.select({ n: count() }).from(chatUserIgnore).where(where),
     ]);
+    const usernameByUserId = await this.usernamesFor(rows.map((r) => r.ignoredId));
     return {
-      items: rows.map((r) => serializeRow(r, { dateFields: ['createdAt'] })),
+      items: rows.map((r) =>
+        serializeRow(
+          { ...r, username: usernameByUserId.get(r.ignoredId) ?? null },
+          { dateFields: ['createdAt'] },
+        ),
+      ),
       total: Number(n),
       page,
       limit,

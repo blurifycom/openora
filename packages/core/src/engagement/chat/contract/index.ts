@@ -88,6 +88,8 @@ export type ChatMessage = z.infer<typeof ChatMessageSchema>;
 
 export const BlockedUserSchema = z.object({
   blockedId: UuidSchema,
+  // Null only if the blocked account can no longer be resolved (see AdminUserDirectory.lookupPlayers) - never the normal case, since players are deactivated, not hard-deleted.
+  username: z.string().nullable(),
   createdAt: TimestampSchema,
 });
 
@@ -97,6 +99,8 @@ export type BlockedUserSortBy = z.infer<typeof BlockedUserSortBySchema>;
 
 export const IgnoredUserSchema = z.object({
   ignoredId: UuidSchema,
+  // Null only if the ignored account can no longer be resolved (see AdminUserDirectory.lookupPlayers) - never the normal case, since players are deactivated, not hard-deleted.
+  username: z.string().nullable(),
   createdAt: TimestampSchema,
 });
 

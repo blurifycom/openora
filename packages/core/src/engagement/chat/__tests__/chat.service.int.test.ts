@@ -524,6 +524,46 @@ describe('ChatService block list (real PG)', () => {
     expect(items.map((r) => r.blockedId)).toEqual([second, first]);
   });
 
+  it('enriches each entry with the blocked users username, and falls back to null when unresolvable', async () => {
+    const blockedId = randomUUID();
+    const unresolvableId = randomUUID();
+    const directory = mock<AdminUserDirectory>({
+      lookupPlayers: async (userIds: readonly string[]) =>
+        userIds
+          .filter((id) => id === blockedId)
+          .map(
+            (userId): AdminPlayerSummary => ({
+              userId,
+              username: 'BlockedPlayer',
+              email: 'blocked@test.dev',
+              kycStatus: null,
+              language: null,
+              avatarUrl: null,
+              createdAt: new Date(),
+              level: 1,
+              currency: 'USD',
+            }),
+          ),
+    });
+    const { svc } = makeService(directory);
+    const blockerId = randomUUID();
+    await db.drizzle.db.insert(chatUserBlock).values([
+      { blockerId, blockedId, createdAt: new Date('2026-01-01T00:00:00.000Z') },
+      { blockerId, blockedId: unresolvableId, createdAt: new Date('2026-01-02T00:00:00.000Z') },
+    ]);
+
+    const { items } = await svc.listBlockedUsers({
+      blockerId,
+      page: 1,
+      limit: 100,
+      sortBy: 'createdAt',
+      sortOrder: 'desc',
+    });
+
+    expect(items.find((r) => r.blockedId === blockedId)?.username).toBe('BlockedPlayer');
+    expect(items.find((r) => r.blockedId === unresolvableId)?.username).toBeNull();
+  });
+
   it('paginates and sorts oldest-first when asked, reporting the total across all pages', async () => {
     const { svc } = makeService();
     const blockerId = randomUUID();
@@ -681,6 +721,46 @@ describe('ChatService ignore list (real PG)', () => {
     });
 
     expect(items.map((r) => r.ignoredId)).toEqual([second, first]);
+  });
+
+  it('enriches each entry with the ignored users username, and falls back to null when unresolvable', async () => {
+    const ignoredId = randomUUID();
+    const unresolvableId = randomUUID();
+    const directory = mock<AdminUserDirectory>({
+      lookupPlayers: async (userIds: readonly string[]) =>
+        userIds
+          .filter((id) => id === ignoredId)
+          .map(
+            (userId): AdminPlayerSummary => ({
+              userId,
+              username: 'IgnoredPlayer',
+              email: 'ignored@test.dev',
+              kycStatus: null,
+              language: null,
+              avatarUrl: null,
+              createdAt: new Date(),
+              level: 1,
+              currency: 'USD',
+            }),
+          ),
+    });
+    const { svc } = makeService(directory);
+    const ignorerId = randomUUID();
+    await db.drizzle.db.insert(chatUserIgnore).values([
+      { ignorerId, ignoredId, createdAt: new Date('2026-01-01T00:00:00.000Z') },
+      { ignorerId, ignoredId: unresolvableId, createdAt: new Date('2026-01-02T00:00:00.000Z') },
+    ]);
+
+    const { items } = await svc.listIgnoredUsers({
+      ignorerId,
+      page: 1,
+      limit: 100,
+      sortBy: 'createdAt',
+      sortOrder: 'desc',
+    });
+
+    expect(items.find((r) => r.ignoredId === ignoredId)?.username).toBe('IgnoredPlayer');
+    expect(items.find((r) => r.ignoredId === unresolvableId)?.username).toBeNull();
   });
 
   it('paginates and sorts oldest-first when asked, reporting the total across all pages', async () => {
