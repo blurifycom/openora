@@ -20,6 +20,10 @@ export class IdentityReaderService implements IdentityReader {
   async getPlayerIdsInactiveSince(sinceDate: Date): Promise<User['id'][]> {
     // Join users to their most-recent session. Players with no session at all
     // (registered but never logged in) are included via the LEFT JOIN + isNull check.
+    // The `.as('last_at')` below resolves to the non-deprecated `SQL.prototype.as`
+    // overload, but depretec flags any `.as` call since 2 of its 3 overloads carry
+    // @deprecated - see the matching package.json `check:deprecations` exclude and
+    // the same note in social.service.ts's getMutualFriendsCounts.
     const lastSessionPerUser = this.drizzle.db
       .select({ userId: session.userId, lastAt: max(session.createdAt).as('last_at') })
       .from(session)

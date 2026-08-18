@@ -299,37 +299,17 @@ export class SocialService {
       }
 
       const existing = friendshipByTargetId.get(userId);
-      if (existing?.refusedAt !== null && existing?.refusedAt !== undefined) {
+      if (!existing) {
+        return { userId, status: 'none', friendshipId: null, canSendRequest: true };
+      }
+      if (existing.refusedAt !== null) {
         return { userId, status: 'refused', friendshipId: existing.id, canSendRequest: false };
       }
-      if (existing?.acceptedAt !== null && existing?.acceptedAt !== undefined) {
+      if (existing.acceptedAt !== null) {
         return { userId, status: 'friends', friendshipId: existing.id, canSendRequest: false };
       }
-      if (
-        existing?.acceptedAt === null &&
-        existing?.refusedAt === null &&
-        existing?.requesterId === callerId
-      ) {
-        return {
-          userId,
-          status: 'pending_outgoing',
-          friendshipId: existing.id,
-          canSendRequest: false,
-        };
-      }
-      if (
-        existing?.acceptedAt === null &&
-        existing?.refusedAt === null &&
-        existing?.requesterId === userId
-      ) {
-        return {
-          userId,
-          status: 'pending_incoming',
-          friendshipId: existing.id,
-          canSendRequest: false,
-        };
-      }
-      return { userId, status: 'none', friendshipId: null, canSendRequest: true };
+      const status = existing.requesterId === callerId ? 'pending_outgoing' : 'pending_incoming';
+      return { userId, status, friendshipId: existing.id, canSendRequest: false };
     });
   }
 
@@ -476,6 +456,34 @@ export class SocialService {
   }
 
   async acceptFriendRequest(callerId: Uuid, friendshipId: Uuid): Promise<Friendship> {
+    const [pending] = await this.drizzle.db
+      .select({ requesterId: friendship.requesterId })
+      .from(friendship)
+      .where(
+        and(
+          eq(friendship.id, friendshipId),
+          eq(friendship.addresseeId, callerId),
+          isNull(friendship.acceptedAt),
+          isNull(friendship.refusedAt),
+          isNull(friendship.removedAt),
+        ),
+      );
+    if (!pending) {
+      throw new FriendRequestNotFoundError(friendshipId);
+    }
+
+    // A block can land after the request was sent but before it's accepted -
+    // re-check both directions here, same as sendFriendRequest.
+    const blocks = await this.drizzle.db
+      .select({ blockerId: chatUserBlock.blockerId })
+      .from(chatUserBlock)
+      .where(
+        and(isNull(chatUserBlock.removedAt), pairBlockCondition(callerId, pending.requesterId)),
+      );
+    if (blocks.length > 0) {
+      throw new FriendRequestUnavailableError();
+    }
+
     const rows = await this.drizzle.db
       .update(friendship)
       .set({ acceptedAt: new Date() })
@@ -515,9 +523,13 @@ export class SocialService {
   }
 
   async declineFriendRequest(callerId: Uuid, friendshipId: Uuid): Promise<void> {
+    // removedAt (not refusedAt - the two are mutually exclusive, see the
+    // friendship_removed_excludes_refused_key check constraint) frees the pair's
+    // partial-unique slot, same as cancelFriendRequest - decline and cancel both
+    // let either side send a new request afterwards.
     const rows = await this.drizzle.db
       .update(friendship)
-      .set({ refusedAt: new Date() })
+      .set({ removedAt: new Date() })
       .where(
         and(
           eq(friendship.id, friendshipId),
@@ -602,7 +614,11 @@ export class SocialService {
     const [players, mutualCounts] = await Promise.all([
       counterpartIds.length > 0
         ? this.drizzle.db
-            .select({ userId: player.userId, displayName: player.displayName })
+            .select({
+              userId: player.userId,
+              displayName: player.displayName,
+              status: player.status,
+            })
             .from(player)
             .where(inArray(player.userId, counterpartIds))
         : Promise.resolve([]),
@@ -625,6 +641,9 @@ export class SocialService {
         );
         return [];
       }
+      if (counterpartPlayer.status === 'suspended' || counterpartPlayer.status === 'closed') {
+        return [];
+      }
       return [
         serializeRow(
           {
@@ -644,6 +663,12 @@ export class SocialService {
     return { items, total: Number(countRows[0]?.n ?? 0), page, limit };
   }
 
+  // The `.as(alias)` calls below resolve to the non-deprecated
+  // `SQL.prototype.as(alias: string): SQL.Aliased<T>` overload (T already bound by
+  // the `sql<T>` tag), but depretec flags any call to `.as` because two of the
+  // three overloads on that name carry @deprecated - see the identical
+  // pam/identity/adapters/identity-reader.service.ts exclude. Hence the
+  // package.json `check:deprecations` exclude for this file.
   private async getMutualFriendsCounts(
     callerId: Uuid,
     requesterIds: readonly Uuid[],

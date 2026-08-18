@@ -690,6 +690,37 @@ describe('SocialService.acceptFriendRequest (real PG)', () => {
     );
     expect(events.emit).not.toHaveBeenCalled();
   });
+
+  it.each([
+    [
+      'addressee blocked requester',
+      (requesterId: string, addresseeId: string) => seedBlock(addresseeId, requesterId),
+    ],
+    [
+      'requester blocked addressee',
+      (requesterId: string, addresseeId: string) => seedBlock(requesterId, addresseeId),
+    ],
+  ])(
+    'throws FriendRequestUnavailableError when a block landed after the request was sent (%s)',
+    async (_label, seedTheBlock) => {
+      const { svc, events } = makeService();
+      const requester = await seedPlayer();
+      const addressee = await seedPlayer();
+      const request = await svc.sendFriendRequest(requester.userId, addressee.userId);
+      await seedTheBlock(requester.userId, addressee.userId);
+      events.emit.mockClear();
+
+      await expect(svc.acceptFriendRequest(addressee.userId, request.id)).rejects.toBeInstanceOf(
+        FriendRequestUnavailableError,
+      );
+      expect(events.emit).not.toHaveBeenCalled();
+      const [row] = await db.drizzle.db
+        .select()
+        .from(friendship)
+        .where(eq(friendship.id, request.id));
+      expect(row?.acceptedAt).toBeNull();
+    },
+  );
 });
 
 describe('SocialService.declineFriendRequest (real PG)', () => {
@@ -715,11 +746,11 @@ describe('SocialService.declineFriendRequest (real PG)', () => {
       .select()
       .from(friendship)
       .where(eq(friendship.id, request.id));
-    expect(row?.refusedAt).toBeInstanceOf(Date);
-    expect(row?.removedAt).toBeNull();
+    expect(row?.refusedAt).toBeNull();
+    expect(row?.removedAt).toBeInstanceOf(Date);
   });
 
-  it('permanently blocks re-requesting the pair after a decline (regression: unchanged behavior)', async () => {
+  it('allows re-requesting the pair after a decline (regression: previously blocked forever)', async () => {
     const { svc } = makeService();
     const requester = await seedPlayer();
     const addressee = await seedPlayer();
@@ -727,9 +758,11 @@ describe('SocialService.declineFriendRequest (real PG)', () => {
 
     await svc.declineFriendRequest(addressee.userId, request.id);
 
-    await expect(svc.sendFriendRequest(requester.userId, addressee.userId)).rejects.toBeInstanceOf(
-      FriendRequestRefusedError,
-    );
+    const resent = await svc.sendFriendRequest(requester.userId, addressee.userId);
+    expect(resent.id).not.toBe(request.id);
+    expect(resent.acceptedAt).toBeNull();
+    const rows = await db.drizzle.db.select().from(friendship);
+    expect(rows).toHaveLength(2);
   });
 
   it('throws FriendRequestNotFoundError when the caller is not the addressee', async () => {
@@ -866,6 +899,30 @@ describe('SocialService.listFriendRequests (real PG)', () => {
     expect(incoming.total).toBe(1);
     expect(incoming.items[0]?.userId).toBe(pending.userId);
   });
+
+  it.each(['suspended', 'closed'] as const)(
+    'drops a pending sender whose account is %s',
+    async (status) => {
+      const { svc } = makeService();
+      const caller = await seedPlayer();
+      const sender = await seedPlayer({ displayName: 'Sender' });
+      const unavailableSender = await seedPlayer({ displayName: 'Unavailable' });
+      await svc.sendFriendRequest(sender.userId, caller.userId);
+      await svc.sendFriendRequest(unavailableSender.userId, caller.userId);
+      await db.drizzle.db
+        .update(player)
+        .set({ status })
+        .where(eq(player.userId, unavailableSender.userId));
+
+      const result = await svc.listFriendRequests(caller.userId, {
+        direction: 'incoming',
+        page: 1,
+        limit: 20,
+      });
+
+      expect(result.items.map((i) => i.userId)).toEqual([sender.userId]);
+    },
+  );
 
   it('paginates results', async () => {
     const { svc } = makeService();
