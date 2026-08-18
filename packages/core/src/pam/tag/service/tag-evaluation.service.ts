@@ -12,12 +12,12 @@ import {
 import { moneyToNumber, mapConcurrent, type DrizzleTx } from '@openora/core/server';
 import { TagService, TagAlreadyInUseError, TagAssignmentNotFoundError } from './tag.service.js';
 import { TagRuleService, TagRuleNotFoundError } from './tag-rule.service.js';
-import type {
-  PlayerTagAssignMetadata,
-  HighRiskAmountBreachDetail,
-  HighRiskCountBreachDetail,
+import {
+  SYSTEM_ACTOR_ID,
+  type PlayerTagAssignMetadata,
+  type HighRiskAmountBreachDetail,
+  type HighRiskCountBreachDetail,
 } from '@openora/core/pam/contracts/tag';
-import { SYSTEM_ACTOR_ID } from './tag-mappers.js';
 
 const EVAL_CHUNK_SIZE = 100;
 const MULTI_ACCOUNT_REASON = 'identity signal matched another player account';
