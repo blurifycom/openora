@@ -100,7 +100,10 @@ describe('wallet router listPlayerTransactions authz', () => {
     );
 
     expect(result.total).toBe(2);
-    expect(result.items.map((t) => t.amount).sort()).toEqual(['10.00000000', '25.50000000']);
+    expect(result.items.map((t) => t.amount).sort()).toEqual([
+      '10.000000000000000000',
+      '25.500000000000000000',
+    ]);
   });
 
   it('reads only the requested player, never a neighbour ledger', async () => {
@@ -114,6 +117,6 @@ describe('wallet router listPlayerTransactions authz', () => {
     );
 
     expect(result.total).toBe(1);
-    expect(result.items[0]?.amount).toBe('10.00000000');
+    expect(result.items[0]?.amount).toBe('10.000000000000000000');
   });
 });

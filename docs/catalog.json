@@ -1818,10 +1818,6 @@
       "file": "packages/core/src/contracts/schemas/common.ts"
     },
     {
-      "name": "SignedMoneyAmountSchema",
-      "file": "packages/core/src/analytics/contract/financial.ts"
-    },
-    {
       "name": "SortDirectionSchema",
       "file": "packages/core/src/admin-console/contract/index.ts"
     },

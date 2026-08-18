@@ -188,7 +188,7 @@ describe('WalletService.withdraw auto-approval (real PG)', () => {
         resourceType: 'wallet_transaction',
         resourceId: result.transactionId,
         after: expect.objectContaining({
-          threshold: '1000.00000000',
+          threshold: '1000.000000000000000000',
           thresholdSource: 'global',
           kycStatus: 'verified',
           cumulativeCountUsed: 0,
@@ -939,13 +939,13 @@ describe('WalletService auto-withdrawal config methods (real PG)', () => {
       excludeRiskFlags: ['bonus_abuser'],
     });
 
-    expect(updated.fiatThreshold).toBe('2500.00000000');
-    expect(updated.cryptoThreshold).toBe('3.00000000');
+    expect(updated.fiatThreshold).toBe('2500.000000000000000000');
+    expect(updated.cryptoThreshold).toBe('3.000000000000000000');
     expect(updated.excludeRiskFlags).toEqual(['bonus_abuser']);
     expect(updated.updatedBy).toBe(adminId);
     expect(await svc.getAutoWithdrawalConfig()).toMatchObject({
-      fiatThreshold: '2500.00000000',
-      cryptoThreshold: '3.00000000',
+      fiatThreshold: '2500.000000000000000000',
+      cryptoThreshold: '3.000000000000000000',
       updatedBy: adminId,
     });
   });

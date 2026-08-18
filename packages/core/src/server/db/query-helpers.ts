@@ -1,3 +1,4 @@
+import { MONEY_SCALE } from '@openora/core/contracts';
 import { sql } from 'drizzle-orm';
 import type { DrizzleTx } from './drizzle.js';
 
@@ -19,6 +20,19 @@ export function pageToOffset(page: number, limit: number) {
 // where float precision loss at the margins does not change the outcome.
 export function moneyToNumber(amount: string): number {
   return Number(amount);
+}
+
+// Exact equality for two decimal-string money amounts, ignoring notation ("10" === "10.00").
+// Never route this through moneyToNumber: a float carries ~15 significant digits, so at
+// MONEY_SCALE two genuinely different amounts compare equal and an idempotency replay
+// accepts a mismatched retry. Scaling to integer minor units keeps the compare exact.
+export function moneyEquals(a: string, b: string): boolean {
+  return toMinorUnits(a) === toMinorUnits(b);
+}
+
+function toMinorUnits(amount: string): bigint {
+  const [whole, fraction = ''] = amount.split('.');
+  return BigInt(whole + fraction.padEnd(MONEY_SCALE, '0').slice(0, MONEY_SCALE));
 }
 
 // Run `fn` over `items` with at most `concurrency` promises in flight, results in input

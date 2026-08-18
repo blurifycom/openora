@@ -5,13 +5,11 @@ import {
   DateRangeSchema,
   GranularitySchema,
   MoneyAmountSchema,
+  SignedMoneyAmountSchema,
   WalletRailSchema,
 } from '@openora/core/contracts';
 
-export const SignedMoneyAmountSchema = z
-  .string()
-  .regex(/^-?\d+(\.\d{1,8})?$/, 'must be a decimal string with at most 8 decimal places');
-export type SignedMoneyAmount = z.infer<typeof SignedMoneyAmountSchema>;
+export { SignedMoneyAmountSchema, type SignedMoneyAmount } from '@openora/core/contracts';
 
 export const MoneyByCurrencyRailSchema = z.object({
   currency: CurrencyCodeSchema,

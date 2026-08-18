@@ -97,7 +97,7 @@ describe('gaming stake debit e2e', () => {
     expect(res.status).toBe(200);
     const body = (await readJson(res)) as { roundId: string };
 
-    expect(await balanceOf(app.container, userId)).toBe('70.00000000');
+    expect(await balanceOf(app.container, userId)).toBe('70.000000000000000000');
 
     const [round] = await app.container
       .get(DRIZZLE)
@@ -118,7 +118,7 @@ describe('gaming stake debit e2e', () => {
       .from(walletTransaction)
       .where(eq(walletTransaction.walletId, walletRow?.id ?? ''));
     const betRow = betRows.find((r) => r.type === 'bet');
-    expect(betRow?.amount).toBe('30.00000000');
+    expect(betRow?.amount).toBe('30.000000000000000000');
     expect(betRow?.status).toBe('completed');
   });
 

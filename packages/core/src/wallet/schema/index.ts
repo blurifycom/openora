@@ -16,6 +16,8 @@ import {
   type WalletRail,
   type WalletTransactionStatus,
   type TagKey,
+  MONEY_PRECISION,
+  MONEY_SCALE,
 } from '@openora/core/contracts';
 
 // Enum values derive from the canonical tuples so the DB enum can never drift from
@@ -35,7 +37,7 @@ export const walletRailEnum = pgEnum('wallet_rail', WALLET_RAILS);
 export const wallet = pgTable('wallet', {
   id: uuid().primaryKey().defaultRandom(),
   userId: uuid().notNull().unique('wallet_user_id_unique'),
-  balance: decimal({ precision: 18, scale: 8 }).notNull().default('0'),
+  balance: decimal({ precision: MONEY_PRECISION, scale: MONEY_SCALE }).notNull().default('0'),
   currency: text().notNull().default('USD'),
   updatedAt: timestamp({ withTimezone: true })
     .notNull()
@@ -50,7 +52,7 @@ export const walletBalance = pgTable(
       .notNull()
       .references(() => wallet.id),
     currency: text().notNull(),
-    amount: decimal({ precision: 18, scale: 8 }).notNull().default('0'),
+    amount: decimal({ precision: MONEY_PRECISION, scale: MONEY_SCALE }).notNull().default('0'),
     createdAt: timestamp({ withTimezone: true }).notNull().defaultNow(),
     updatedAt: timestamp({ withTimezone: true })
       .notNull()
@@ -68,7 +70,7 @@ export const walletTransaction = pgTable(
       .notNull()
       .references(() => wallet.id),
     type: walletTransactionTypeEnum().notNull(),
-    amount: decimal({ precision: 18, scale: 8 }).notNull(),
+    amount: decimal({ precision: MONEY_PRECISION, scale: MONEY_SCALE }).notNull(),
     currency: text().notNull(),
     status: walletTransactionStatusEnum()
       .$type<WalletTransactionStatus>()
@@ -118,7 +120,7 @@ export const walletTransaction = pgTable(
 export const autoWithdrawalRule = pgTable('auto_withdrawal_rule', {
   id: uuid().primaryKey().defaultRandom(),
   userId: uuid().notNull().unique('auto_withdrawal_rule_user_id_unique'),
-  threshold: decimal({ precision: 18, scale: 8 }).notNull(),
+  threshold: decimal({ precision: MONEY_PRECISION, scale: MONEY_SCALE }).notNull(),
   reason: text().notNull(),
   createdBy: uuid().notNull(),
   createdAt: timestamp({ withTimezone: true }).notNull().defaultNow(),
@@ -148,8 +150,8 @@ export const walletDepositAddress = pgTable(
 export const walletAutoWithdrawalConfig = pgTable('wallet_auto_withdrawal_config', {
   id: uuid().primaryKey().defaultRandom(),
   singletonKey: text().notNull().unique().default('global'),
-  fiatThreshold: decimal({ precision: 18, scale: 8 }).notNull(),
-  cryptoThreshold: decimal({ precision: 18, scale: 8 }).notNull(),
+  fiatThreshold: decimal({ precision: MONEY_PRECISION, scale: MONEY_SCALE }).notNull(),
+  cryptoThreshold: decimal({ precision: MONEY_PRECISION, scale: MONEY_SCALE }).notNull(),
   excludeRiskFlags: text()
     .array()
     .$type<TagKey[]>()

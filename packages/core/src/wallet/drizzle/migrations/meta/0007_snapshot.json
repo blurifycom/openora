@@ -1,5 +1,5 @@
 {
-  "id": "039f0fb5-656f-4239-ae93-8e98fea417bc",
+  "id": "e81c83ab-29ec-4f13-b8c5-803c3a568188",
   "prevId": "3d78e70f-0ee9-4049-87df-137db89043d2",
   "version": "7",
   "dialect": "postgresql",
@@ -23,7 +23,7 @@
         },
         "threshold": {
           "name": "threshold",
-          "type": "numeric(18, 8)",
+          "type": "numeric(38, 18)",
           "primaryKey": false,
           "notNull": true
         },
@@ -86,7 +86,7 @@
         },
         "balance": {
           "name": "balance",
-          "type": "numeric(18, 8)",
+          "type": "numeric(38, 18)",
           "primaryKey": false,
           "notNull": true,
           "default": "'0'"
@@ -139,13 +139,13 @@
         },
         "fiat_threshold": {
           "name": "fiat_threshold",
-          "type": "numeric(18, 8)",
+          "type": "numeric(38, 18)",
           "primaryKey": false,
           "notNull": true
         },
         "crypto_threshold": {
           "name": "crypto_threshold",
-          "type": "numeric(18, 8)",
+          "type": "numeric(38, 18)",
           "primaryKey": false,
           "notNull": true
         },
@@ -215,7 +215,7 @@
         },
         "amount": {
           "name": "amount",
-          "type": "numeric(18, 8)",
+          "type": "numeric(38, 18)",
           "primaryKey": false,
           "notNull": true,
           "default": "'0'"
@@ -389,7 +389,7 @@
         },
         "amount": {
           "name": "amount",
-          "type": "numeric(18, 8)",
+          "type": "numeric(38, 18)",
           "primaryKey": false,
           "notNull": true
         },
