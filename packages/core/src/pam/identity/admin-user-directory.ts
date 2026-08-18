@@ -1,5 +1,5 @@
 import type { AdminUserDirectory, AdminUserListOptions, ClientMeta } from '@openora/core/contracts';
-import { KycStatusSchema, normalizeKycStatus } from '@openora/core/contracts';
+import { KycStatusSchema, normalizeKycStatus, UuidSchema } from '@openora/core/contracts';
 import { DrizzleService, pageToOffset } from '@openora/core/server';
 import type { EventBus } from '@openora/core/server';
 import { asc, count, desc, eq, ilike, inArray, or, sql } from 'drizzle-orm';
@@ -173,24 +173,17 @@ export class DrizzleAdminUserDirectory implements AdminUserDirectory {
     return { ...row, kycStatus: kyc.success ? normalizeKycStatus(kyc.data) : null };
   }
 
-  // Substring search is index-backed by the pg_trgm GIN indexes on user.email and
-  // player.display_name; the id branches are exact matches on the ::text cast, not
-  // substring, so a UUID fragment can't coincidentally match. One query, deduped and
-  // capped by Postgres via DISTINCT + LIMIT, rather than four round trips merged in JS.
   async findPlayerIds(query: string, limit = 1000) {
     const term = `%${query}%`;
+    const conditions = [ilike(user.email, term), ilike(player.displayName, term)];
+    if (UuidSchema.safeParse(query).success) {
+      conditions.push(eq(player.id, query), eq(player.userId, query));
+    }
     const rows = await this.drizzle.db
       .selectDistinct({ id: user.id })
       .from(user)
       .leftJoin(player, eq(player.userId, user.id))
-      .where(
-        or(
-          ilike(user.email, term),
-          ilike(player.displayName, term),
-          ilike(sql`${player.id}::text`, query),
-          ilike(sql`${player.userId}::text`, query),
-        ),
-      )
+      .where(or(...conditions))
       .limit(limit);
     return rows.map((r) => r.id);
   }
