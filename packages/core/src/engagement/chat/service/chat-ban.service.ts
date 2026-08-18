@@ -1,5 +1,5 @@
 import { and, desc, eq, gt, isNull, or } from 'drizzle-orm';
-import { DrizzleService, serializeRow } from '@openora/core/server';
+import { DrizzleService, serializeRow, withAdvisoryXactLock } from '@openora/core/server';
 import type {
   AuditWritePort,
   ChatModerationRoomId,
@@ -9,6 +9,10 @@ import type {
 } from '@openora/core/contracts';
 import { chatChannel } from '@openora/core/contracts';
 import { chatPlatformBan, chatRoom } from '../schema/index.js';
+import {
+  ChatAdminPrivateRoomModerationError,
+  ChatRoomNotFoundError,
+} from './errors/chat-moderation.errors.js';
 
 export class ChatBanService {
   constructor(
@@ -35,13 +39,54 @@ export class ChatBanService {
     const scope =
       roomId === '__global' || roomId === '__all_public' || roomId === '__all' ? roomId : 'room';
     const concreteRoomId = scope === 'room' ? roomId : null;
+    if (concreteRoomId) {
+      const [room] = await this.drizzle.db
+        .select({ id: chatRoom.id, isPublic: chatRoom.isPublic })
+        .from(chatRoom)
+        .where(and(eq(chatRoom.id, concreteRoomId), isNull(chatRoom.deletedAt)))
+        .limit(1);
+      if (!room) {
+        throw new ChatRoomNotFoundError(concreteRoomId);
+      }
+      if (!room.isPublic) {
+        throw new ChatAdminPrivateRoomModerationError();
+      }
+    }
     const expiresAt =
       durationSeconds === null ? null : new Date(Date.now() + durationSeconds * 1000);
-    const [created] = await this.drizzle.db
-      .insert(chatPlatformBan)
-      .values({ userId, bannedBy: actorId, roomId: concreteRoomId, scope, reason, expiresAt })
-      .onConflictDoNothing()
-      .returning();
+    const created = await this.drizzle.db.transaction((t) =>
+      withAdvisoryXactLock(t, `chat-platform-ban:${userId}`, async () => {
+        const now = new Date();
+        const [existing] = await t
+          .select({ id: chatPlatformBan.id, expiresAt: chatPlatformBan.expiresAt })
+          .from(chatPlatformBan)
+          .where(
+            and(
+              eq(chatPlatformBan.userId, userId),
+              eq(chatPlatformBan.scope, scope),
+              concreteRoomId
+                ? eq(chatPlatformBan.roomId, concreteRoomId)
+                : isNull(chatPlatformBan.roomId),
+              isNull(chatPlatformBan.liftedAt),
+            ),
+          )
+          .limit(1);
+        if (existing && (!existing.expiresAt || existing.expiresAt > now)) {
+          return existing;
+        }
+        if (existing) {
+          await t
+            .update(chatPlatformBan)
+            .set({ liftedAt: now, liftedBy: actorId })
+            .where(eq(chatPlatformBan.id, existing.id));
+        }
+        const [inserted] = await t
+          .insert(chatPlatformBan)
+          .values({ userId, bannedBy: actorId, roomId: concreteRoomId, scope, reason, expiresAt })
+          .returning();
+        return inserted;
+      }),
+    );
     await this.audit.record({
       actorId,
       actorType: 'admin',

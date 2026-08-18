@@ -1,12 +1,13 @@
 import { and, count, eq, gt, inArray, isNull, or } from 'drizzle-orm';
 import { DrizzleService, withAdvisoryXactLock, serializeRow } from '@openora/core/server';
 import type { EventBus } from '@openora/core/server';
-import type {
-  AuditWritePort,
-  ClientMeta,
-  IdentityReader,
-  RealtimeTransport,
-  Uuid,
+import {
+  chatChannel,
+  type AuditWritePort,
+  type ClientMeta,
+  type IdentityReader,
+  type RealtimeTransport,
+  type Uuid,
 } from '@openora/core/contracts';
 import { chatRoom, chatRoomBan, chatRoomMember, chatRoomRemove } from '../schema/index.js';
 import {
@@ -197,6 +198,14 @@ export class ChatRoomMembershipService {
       if (moderator.role !== 'moderator' && moderator.role !== 'owner') {
         throw new ChatRoomNotModeratorError(roomId);
       }
+      const [target] = await t
+        .select({ role: chatRoomMember.role })
+        .from(chatRoomMember)
+        .where(and(eq(chatRoomMember.roomId, roomId), eq(chatRoomMember.userId, userId)))
+        .limit(1);
+      if (moderator.role !== 'owner' && target && target.role !== 'member') {
+        throw new ChatRoomNotModeratorError(roomId);
+      }
       const removed = await t
         .delete(chatRoomMember)
         .where(and(eq(chatRoomMember.roomId, roomId), eq(chatRoomMember.userId, userId)))
@@ -225,7 +234,7 @@ export class ChatRoomMembershipService {
         userAgent: userAgent ?? null,
       });
     }
-    await this.transport?.revokeClient?.(userId);
+    await this.transport?.revokeClientFromChannel?.(userId, chatChannel(roomId));
     return { success: true } as const;
   }
 }

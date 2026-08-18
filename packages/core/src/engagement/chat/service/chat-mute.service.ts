@@ -1,10 +1,11 @@
 import { and, desc, eq, gt, isNull, or } from 'drizzle-orm';
 import { DrizzleService, serializeRow } from '@openora/core/server';
-import type {
-  AuditWritePort,
-  ClientMeta,
-  ChatModerationRoomId,
-  Uuid,
+import {
+  GLOBAL_CHAT_ROOM_ID,
+  type AuditWritePort,
+  type ClientMeta,
+  type ChatModerationRoomId,
+  type Uuid,
 } from '@openora/core/contracts';
 import {
   chatMute,
@@ -28,6 +29,22 @@ export class ChatMuteService {
 
   async assertCanSend(userId: Uuid, roomId: Uuid | null, isPublic = true) {
     const now = new Date();
+    const [config] =
+      roomId === null
+        ? await this.drizzle.db
+            .select({ readOnlyMode: chatRoomConfiguration.readOnlyMode })
+            .from(chatRoomConfiguration)
+            .innerJoin(chatRoom, eq(chatRoomConfiguration.roomId, chatRoom.id))
+            .where(and(eq(chatRoom.slug, GLOBAL_CHAT_ROOM_ID), isNull(chatRoom.deletedAt)))
+            .limit(1)
+        : await this.drizzle.db
+            .select({ readOnlyMode: chatRoomConfiguration.readOnlyMode })
+            .from(chatRoomConfiguration)
+            .where(eq(chatRoomConfiguration.roomId, roomId))
+            .limit(1);
+    if (config?.readOnlyMode) {
+      throw new ChatPlayerMutedError(null);
+    }
     if (roomId !== null) {
       const [roomMute] = await this.drizzle.db
         .select({ id: chatRoomMute.id, expiresAt: chatRoomMute.expiresAt })
@@ -43,14 +60,6 @@ export class ChatMuteService {
         .limit(1);
       if (roomMute) {
         throw new ChatPlayerMutedError(roomMute.expiresAt);
-      }
-      const [config] = await this.drizzle.db
-        .select({ readOnlyMode: chatRoomConfiguration.readOnlyMode })
-        .from(chatRoomConfiguration)
-        .where(eq(chatRoomConfiguration.roomId, roomId))
-        .limit(1);
-      if (config?.readOnlyMode) {
-        throw new ChatPlayerMutedError(null);
       }
       if (!isPublic) {
         return;

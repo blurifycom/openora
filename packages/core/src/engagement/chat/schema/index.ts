@@ -252,9 +252,12 @@ export const chatPlatformBan = pgTable(
     liftedBy: uuid(),
   },
   (t) => [
-    uniqueIndex('chat_platform_ban_active_user_key')
-      .on(t.userId)
-      .where(sql`${t.liftedAt} IS NULL`),
+    uniqueIndex('chat_platform_ban_active_scope_key')
+      .on(t.userId, t.scope)
+      .where(sql`${t.liftedAt} IS NULL AND ${t.roomId} IS NULL`),
+    uniqueIndex('chat_platform_ban_active_room_key')
+      .on(t.userId, t.scope, t.roomId)
+      .where(sql`${t.liftedAt} IS NULL AND ${t.roomId} IS NOT NULL`),
     index('chat_platform_ban_user_idx').on(t.userId),
   ],
 );

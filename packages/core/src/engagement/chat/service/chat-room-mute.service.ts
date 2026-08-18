@@ -1,5 +1,5 @@
 import { and, eq, isNull } from 'drizzle-orm';
-import { DrizzleService } from '@openora/core/server';
+import { DrizzleService, withAdvisoryXactLock } from '@openora/core/server';
 import type { AuditWritePort, Uuid } from '@openora/core/contracts';
 import { chatRoomMember, chatRoomMute } from '../schema/index.js';
 import {
@@ -51,29 +51,39 @@ export class ChatRoomMuteService {
       throw new ChatRoomSelfModerationError();
     }
     await this.assertModerator(roomId, moderatorId, userId);
-    const [active] = await this.drizzle.db
-      .select({ id: chatRoomMute.id })
-      .from(chatRoomMute)
-      .where(
-        and(
-          eq(chatRoomMute.roomId, roomId),
-          eq(chatRoomMute.userId, userId),
-          isNull(chatRoomMute.liftedAt),
-        ),
-      )
-      .limit(1);
-    if (!active) {
-      const [created] = await this.drizzle.db
-        .insert(chatRoomMute)
-        .values({
-          roomId,
-          userId,
-          mutedBy: moderatorId,
-          reason,
-          expiresAt:
-            durationSeconds === null ? null : new Date(Date.now() + durationSeconds * 1000),
-        })
-        .returning({ id: chatRoomMute.id });
+    const expiresAt =
+      durationSeconds === null ? null : new Date(Date.now() + durationSeconds * 1000);
+    const created = await this.drizzle.db.transaction((t) =>
+      withAdvisoryXactLock(t, `chat-room-mute:${roomId}:${userId}`, async () => {
+        const now = new Date();
+        const [active] = await t
+          .select({ id: chatRoomMute.id, expiresAt: chatRoomMute.expiresAt })
+          .from(chatRoomMute)
+          .where(
+            and(
+              eq(chatRoomMute.roomId, roomId),
+              eq(chatRoomMute.userId, userId),
+              isNull(chatRoomMute.liftedAt),
+            ),
+          )
+          .limit(1);
+        if (active && (!active.expiresAt || active.expiresAt > now)) {
+          return null;
+        }
+        if (active) {
+          await t
+            .update(chatRoomMute)
+            .set({ liftedAt: now, liftedBy: moderatorId })
+            .where(eq(chatRoomMute.id, active.id));
+        }
+        const [inserted] = await t
+          .insert(chatRoomMute)
+          .values({ roomId, userId, mutedBy: moderatorId, reason, expiresAt })
+          .returning({ id: chatRoomMute.id });
+        return inserted;
+      }),
+    );
+    if (created) {
       await this.audit.record({
         actorId: moderatorId,
         actorType: 'player',

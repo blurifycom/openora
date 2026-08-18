@@ -1,0 +1,3 @@
+DROP INDEX "chat_platform_ban_active_user_key";--> statement-breakpoint
+CREATE UNIQUE INDEX "chat_platform_ban_active_scope_key" ON "chat_platform_ban" USING btree ("user_id","scope") WHERE "chat_platform_ban"."lifted_at" IS NULL AND "chat_platform_ban"."room_id" IS NULL;--> statement-breakpoint
+CREATE UNIQUE INDEX "chat_platform_ban_active_room_key" ON "chat_platform_ban" USING btree ("user_id","scope","room_id") WHERE "chat_platform_ban"."lifted_at" IS NULL AND "chat_platform_ban"."room_id" IS NOT NULL;
