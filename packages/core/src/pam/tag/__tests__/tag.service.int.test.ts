@@ -707,6 +707,12 @@ describe('TagService.replacePlayerTag (real PG)', () => {
     };
     const otherArgs = { ...args, assignReason: 'player level set to 2' };
 
+    // Both replaces must actually overlap at the DB for one of them to lose. The seeds
+    // above leave a single warm connection in the pool, so without this the second call
+    // pays a TCP connect + startup handshake and can begin only after the first has
+    // already committed - a legitimate sequential replace, and both succeed.
+    await Promise.all([playerTagsOf(p.id), playerTagsOf(p.id)]);
+
     const results = await Promise.allSettled([
       svc.replacePlayerTag(args),
       svc.replacePlayerTag(otherArgs),
