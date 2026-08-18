@@ -88,6 +88,7 @@ export const ListPlayerTransactionsArgs = PageQuerySchema.extend({
 export const WithdrawalQueueItemSchema = z.object({
   transactionId: UuidSchema,
   userId: UuidSchema,
+  playerId: UuidSchema.nullable(),
   username: z.string(),
   amount: MoneyAmountSchema,
   currency: WalletCurrencyCodeSchema,

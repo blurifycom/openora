@@ -71,8 +71,8 @@ export const TransactionFilterSchema = PageQuerySchema.extend({
   sortOrder: SortOrderSchema.default('desc').optional(),
 });
 
-// The list row carries only the player email as the identifying label; the fuller
-// player info (username, KYC) lives on the detail view fetched on "view".
+// The list row carries the playerId and player email as the identifying labels;
+// the fuller player info (username, KYC) lives on the detail view fetched on "view".
 export const AdminTransactionSchema = z.object({
   id: UuidSchema,
   userId: UuidSchema,
@@ -81,6 +81,7 @@ export const AdminTransactionSchema = z.object({
   currency: CurrencyCodeSchema,
   status: WalletTransactionStatusSchema,
   rail: WalletRailSchema.nullable(),
+  playerId: UuidSchema.nullable(),
   playerEmail: PlayerEmailSchema.nullable(),
   createdAt: TimestampSchema,
 });

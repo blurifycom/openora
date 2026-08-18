@@ -29,6 +29,7 @@ function toAdminUser(r: AdminUserRow) {
 function toAdminTransaction(r: AdminTxRow, player?: AdminPlayerSummary) {
   return {
     ...serializeRow(r, { dateFields: ['createdAt'] }),
+    playerId: player?.playerId ?? null,
     playerEmail: player?.email ?? null,
   };
 }
@@ -36,6 +37,7 @@ function toAdminTransaction(r: AdminTxRow, player?: AdminPlayerSummary) {
 function toAdminTransactionDetail(r: AdminTxDetail, player?: AdminPlayerSummary) {
   return {
     ...serializeRow(r, { dateFields: ['createdAt', 'reviewedAt'] }),
+    playerId: player?.playerId ?? null,
     playerEmail: player?.email ?? null,
     playerUsername: player?.username ?? null,
     playerKycStatus: player?.kycStatus ?? null,
