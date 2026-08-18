@@ -375,6 +375,7 @@
         "auto_withdrawal_rule",
         "wallet",
         "wallet_auto_withdrawal_config",
+        "wallet_balance",
         "wallet_deposit_address",
         "wallet_transaction"
       ],
@@ -1815,10 +1816,6 @@
     {
       "name": "SignedMoneyAmountSchema",
       "file": "packages/core/src/contracts/schemas/common.ts"
-    },
-    {
-      "name": "SignedMoneyAmountSchema",
-      "file": "packages/core/src/analytics/contract/financial.ts"
     },
     {
       "name": "SortDirectionSchema",

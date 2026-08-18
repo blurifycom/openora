@@ -5,6 +5,7 @@ export {
   pageToOffset,
   withAdvisoryXactLock,
   moneyToNumber,
+  moneyEquals,
   mapConcurrent,
 } from './query-helpers.js';
 

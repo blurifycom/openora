@@ -158,7 +158,7 @@ describe('Auto-withdrawal: single-shot gates (appGated - fiatThreshold 2)', () =
     expect(body.status).toBe('completed');
 
     const balance = (await readJson(await client.get('/wallet/balance'))).balance;
-    expect(balance).toBe('4.50000000');
+    expect(balance).toBe('4.500000000000000000');
 
     const pending = await pendingWithdrawalIds(admin);
     expect(pending.has(body.transactionId)).toBe(false);
@@ -172,7 +172,7 @@ describe('Auto-withdrawal: single-shot gates (appGated - fiatThreshold 2)', () =
       expect(auditBody.items[0].actorType).toBe('system');
       expect(auditBody.items[0].after).toMatchObject({
         userId,
-        threshold: '2.00000000',
+        threshold: '2.000000000000000000',
         thresholdSource: 'global',
         kycStatus: 'manually_overridden',
         riskTagsEvaluated: [],
@@ -294,7 +294,7 @@ describe('Auto-withdrawal: single-shot gates (appGated - fiatThreshold 2)', () =
       );
       const auditBody = await readJson(auditRes);
       expect(auditBody.items[0].after).toMatchObject({
-        threshold: '3.00000000',
+        threshold: '3.000000000000000000',
         thresholdSource: 'per-player',
       });
     });
@@ -372,11 +372,15 @@ describe('Auto-withdrawal-rule routes: authz + audit', () => {
     });
     expect(setRes.status).toBe(200);
     const rule = await readJson(setRes);
-    expect(rule).toMatchObject({ userId, threshold: '1.50000000', reason: 'admin round trip' });
+    expect(rule).toMatchObject({
+      userId,
+      threshold: '1.500000000000000000',
+      reason: 'admin round trip',
+    });
 
     const getRes = await admin.get(`/wallet/auto-withdrawal-rules/${userId}`);
     expect(getRes.status).toBe(200);
-    expect(await readJson(getRes)).toMatchObject({ threshold: '1.50000000' });
+    expect(await readJson(getRes)).toMatchObject({ threshold: '1.500000000000000000' });
 
     await vi.waitFor(async () => {
       const auditRes = await admin.get(
@@ -385,7 +389,7 @@ describe('Auto-withdrawal-rule routes: authz + audit', () => {
       const auditBody = await readJson(auditRes);
       expect(auditBody.items.length).toBeGreaterThanOrEqual(1);
       expect(auditBody.items[0].after).toMatchObject({
-        threshold: '1.50000000',
+        threshold: '1.500000000000000000',
         reason: 'admin round trip',
       });
     });
@@ -420,7 +424,7 @@ describe('Manual withdrawal approve/reject regression (appDefault - autoWithdraw
     );
     expect(w1.status).toBe('pending');
     const balanceAfterHold = (await readJson(await client.get('/wallet/balance'))).balance;
-    expect(balanceAfterHold).toBe('2.40000000');
+    expect(balanceAfterHold).toBe('2.400000000000000000');
 
     const approveRes = await admin.post(`/wallet/withdrawals/${w1.transactionId}/approve`, {
       withdrawalId: w1.transactionId,
@@ -433,7 +437,7 @@ describe('Manual withdrawal approve/reject regression (appDefault - autoWithdraw
     );
     expect(w2.status).toBe('pending');
     const balanceAfterSecondHold = (await readJson(await client.get('/wallet/balance'))).balance;
-    expect(balanceAfterSecondHold).toBe('2.00000000');
+    expect(balanceAfterSecondHold).toBe('2.000000000000000000');
 
     const rejectRes = await admin.post(`/wallet/withdrawals/${w2.transactionId}/reject`, {
       withdrawalId: w2.transactionId,
@@ -443,6 +447,6 @@ describe('Manual withdrawal approve/reject regression (appDefault - autoWithdraw
     expect((await readJson(rejectRes)).status).toBe('rejected');
 
     const balanceAfterReject = (await readJson(await client.get('/wallet/balance'))).balance;
-    expect(balanceAfterReject).toBe('2.40000000');
+    expect(balanceAfterReject).toBe('2.400000000000000000');
   });
 });

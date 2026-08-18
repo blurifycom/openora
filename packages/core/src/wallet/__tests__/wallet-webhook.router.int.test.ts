@@ -154,12 +154,12 @@ describe('wallet webhook route (M2M, no admin session)', () => {
     expect(ledger[0]).toMatchObject({
       type: 'deposit',
       status: 'completed',
-      amount: '0.50000000',
+      amount: '0.500000000000000000',
       providerRefId: 'vendor-ext-1',
       txHash: '0xabc',
     });
     const [credited] = await db.drizzle.db.select().from(wallet).where(eq(wallet.id, w.id));
-    expect(credited?.balance).toBe('0.50000000');
+    expect(credited?.balance).toBe('0.500000000000000000');
   });
 
   it('credits a replayed deposit event exactly once', async () => {
@@ -172,7 +172,7 @@ describe('wallet webhook route (M2M, no admin session)', () => {
 
     expect(await ledgerFor(w.id)).toHaveLength(1);
     const [credited] = await db.drizzle.db.select().from(wallet).where(eq(wallet.id, w.id));
-    expect(credited?.balance).toBe('0.50000000');
+    expect(credited?.balance).toBe('0.500000000000000000');
   });
 
   it('settles the matching withdrawal on a verified withdrawal event', async () => {

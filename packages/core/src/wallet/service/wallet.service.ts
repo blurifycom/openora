@@ -12,6 +12,7 @@ import {
   assertRateLimit,
   createLogger,
   moneyToNumber,
+  moneyEquals,
 } from '@openora/core/server';
 import {
   normalizeKycStatus,
@@ -431,11 +432,12 @@ export class WalletService {
     return { walletRecord, replay: { transactionId: existing.id, status: existing.status } };
   }
 
-  // Replay comparison only (not a ledger write) - moneyToNumber avoids a false mismatch
-  // between an unnormalized caller string (eg "10") and the DB's fixed-scale value ("10.00").
+  // Replay comparison only (not a ledger write). moneyEquals avoids a false mismatch between
+  // an unnormalized caller string (eg "10") and the DB's fixed-scale value ("10.00") while
+  // staying exact - a float compare would let two amounts differing past the 15th digit pass.
   private assertReplayMatches(existing: WalletTransaction, amount: string, currency: string): void {
     if (
-      moneyToNumber(existing.amount) !== moneyToNumber(amount) ||
+      !moneyEquals(existing.amount, amount) ||
       existing.currency.toUpperCase() !== currency.toUpperCase()
     ) {
       throw new IdempotencyKeyReuseError();
