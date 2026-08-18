@@ -15,7 +15,7 @@ import { player } from '@openora/core/pam/schema/profile';
 import { migrate as migrateProfile } from '@openora/core/pam/migrate/profile';
 import { mock, makeEventBus } from '../../../testing/mock.js';
 import { TagEvaluationService } from '../service/tag-evaluation.service.js';
-import { SYSTEM_ACTOR_ID } from '../service/tag-mappers.js';
+import { SYSTEM_ACTOR_ID } from '../contract/index.js';
 import { TagService } from '../service/tag.service.js';
 import { TagRuleService } from '../service/tag-rule.service.js';
 import { migrate } from '../migrate.js';
