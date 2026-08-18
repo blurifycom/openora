@@ -2,7 +2,7 @@ import type { AdminUserDirectory, AdminUserListOptions, ClientMeta } from '@open
 import { KycStatusSchema, normalizeKycStatus } from '@openora/core/contracts';
 import { DrizzleService, pageToOffset } from '@openora/core/server';
 import type { EventBus } from '@openora/core/server';
-import { asc, count, desc, eq, ilike, inArray, sql } from 'drizzle-orm';
+import { asc, count, desc, eq, ilike, inArray, or, sql } from 'drizzle-orm';
 import { user } from './schema/index.js';
 // Read-only cross-domain read of the player/profile table via the public /schema
 // subpath (allowed per ADR-0020) so back-office lists can label players by
@@ -174,45 +174,24 @@ export class DrizzleAdminUserDirectory implements AdminUserDirectory {
   }
 
   // Substring search is index-backed by the pg_trgm GIN indexes on user.email and
-  // player.display_name; the 1000 cap is a safety bound on the id set, not a perf
-  // crutch - it is effectively unreachable for a real admin search term.
+  // player.display_name; the id branches are exact matches on the ::text cast, not
+  // substring, so a UUID fragment can't coincidentally match. One query, deduped and
+  // capped by Postgres via DISTINCT + LIMIT, rather than four round trips merged in JS.
   async findPlayerIds(query: string, limit = 1000) {
     const term = `%${query}%`;
-    const [byEmail, byName, byPlayerId, byUserId] = await Promise.all([
-      this.drizzle.db
-        .select({ id: user.id })
-        .from(user)
-        .where(ilike(user.email, term))
-        .limit(limit),
-      this.drizzle.db
-        .select({ userId: player.userId })
-        .from(player)
-        .where(ilike(player.displayName, term))
-        .limit(limit),
-      this.drizzle.db
-        .select({ userId: player.userId })
-        .from(player)
-        .where(ilike(sql`${player.id}::text`, query))
-        .limit(limit),
-      this.drizzle.db
-        .select({ userId: player.userId })
-        .from(player)
-        .where(ilike(sql`${player.userId}::text`, query))
-        .limit(limit),
-    ]);
-    const ids = new Set<string>();
-    for (const r of byEmail) {
-      ids.add(r.id);
-    }
-    for (const r of byName) {
-      ids.add(r.userId);
-    }
-    for (const r of byPlayerId) {
-      ids.add(r.userId);
-    }
-    for (const r of byUserId) {
-      ids.add(r.userId);
-    }
-    return [...ids].slice(0, limit);
+    const rows = await this.drizzle.db
+      .selectDistinct({ id: user.id })
+      .from(user)
+      .leftJoin(player, eq(player.userId, user.id))
+      .where(
+        or(
+          ilike(user.email, term),
+          ilike(player.displayName, term),
+          ilike(sql`${player.id}::text`, query),
+          ilike(sql`${player.userId}::text`, query),
+        ),
+      )
+      .limit(limit);
+    return rows.map((r) => r.id);
   }
 }
