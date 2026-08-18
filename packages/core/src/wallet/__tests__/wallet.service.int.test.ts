@@ -26,6 +26,7 @@ import {
   WithdrawalNotFoundError,
   WithdrawalNotPendingError,
   InsufficientBalanceError,
+  AmbiguousDepositAddressError,
   CurrencyMismatchError,
   IdempotencyKeyReuseError,
   DepositAddressUnsupportedError,
@@ -1064,10 +1065,10 @@ describe('WalletService.getOrCreateDepositAddress (real PG)', () => {
 });
 
 describe('WalletService.creditDepositByAddress (real PG)', () => {
-  async function seedAddress(userId: string, address: string, currency = 'BTC') {
+  async function seedAddress(userId: string, address: string, currency = 'BTC', network?: string) {
     await db.drizzle.db
       .insert(walletDepositAddress)
-      .values({ userId, currency, address, providerName: 'fireblocks' });
+      .values({ userId, currency, address, network, providerName: 'fireblocks' });
   }
 
   it('resolves the address, credits the wallet, and emits deposit.completed', async () => {
@@ -1140,5 +1141,62 @@ describe('WalletService.creditDepositByAddress (real PG)', () => {
         txHash: '0xmismatch',
       }),
     ).rejects.toBeInstanceOf(CurrencyMismatchError);
+  });
+
+  it('credits a token that shares the EVM address issued for another currency', async () => {
+    const { svc } = makeService();
+    const w = await seedWallet({ currency: 'ETH', balance: '0' });
+    await seedAddress(w.userId, '0xshared', 'ETH', 'ERC20');
+
+    await svc.creditDepositByAddress({
+      kind: 'deposit',
+      address: '0xshared',
+      network: 'ERC20',
+      amount: '25',
+      currency: 'USDT',
+      externalId: randomUUID(),
+      txHash: '0xtoken',
+    });
+
+    expect(await balanceOf(w.userId, 'USDT')).toBe(25);
+  });
+
+  it('picks the row matching the event network when one address serves two chains', async () => {
+    const { svc } = makeService();
+    const w = await seedWallet({ currency: 'ETH', balance: '0' });
+    await seedAddress(w.userId, '0xmultichain', 'USDT', 'ERC20');
+    await seedAddress(w.userId, '0xmultichain', 'USDT', 'BEP20');
+
+    await svc.creditDepositByAddress({
+      kind: 'deposit',
+      address: '0xmultichain',
+      network: 'BEP20',
+      amount: '10',
+      currency: 'USDT',
+      externalId: randomUUID(),
+      txHash: '0xbsc',
+    });
+
+    expect(await balanceOf(w.userId, 'USDT')).toBe(10);
+  });
+
+  it('refuses to credit an address issued to more than one user', async () => {
+    const { svc } = makeService();
+    const first = await seedWallet({ currency: 'ETH', balance: '0' });
+    const second = await seedWallet({ currency: 'ETH', balance: '0' });
+    await seedAddress(first.userId, '0xcollision', 'ETH', 'ERC20');
+    await seedAddress(second.userId, '0xcollision', 'USDT', 'ERC20');
+
+    await expect(
+      svc.creditDepositByAddress({
+        kind: 'deposit',
+        address: '0xcollision',
+        network: 'ERC20',
+        amount: '1',
+        currency: 'ETH',
+        externalId: randomUUID(),
+        txHash: '0xcollide',
+      }),
+    ).rejects.toBeInstanceOf(AmbiguousDepositAddressError);
   });
 });

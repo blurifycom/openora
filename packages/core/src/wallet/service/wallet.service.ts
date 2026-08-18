@@ -33,7 +33,7 @@ import {
   type ClientMeta,
   type PaginationOptions,
 } from '@openora/core/contracts';
-import { eq, asc, desc, sql, and, gte, lte, count, inArray, isNull } from 'drizzle-orm';
+import { eq, asc, desc, sql, and, gte, lte, count, inArray, isNull, or } from 'drizzle-orm';
 import { createHash } from 'node:crypto';
 import {
   wallet,
@@ -99,6 +99,12 @@ export const CurrencyMismatchError = createDomainError(
   'CurrencyMismatchError',
   (requested, walletCurrency) =>
     `Currency mismatch: requested ${requested}, wallet holds ${walletCurrency}`,
+);
+
+export const AmbiguousDepositAddressError = createDomainError(
+  'AmbiguousDepositAddressError',
+  (address, network) =>
+    `Deposit address ${address} on ${network ?? 'an unknown network'} is issued to more than one user`,
 );
 
 // Crypto currencies settle on the crypto rail (Fireblocks); everything else on the
@@ -1572,15 +1578,18 @@ export class WalletService {
   async creditDepositByAddress(
     event: Extract<PaymentWebhookEvent, { kind: 'deposit' }>,
   ): Promise<void> {
-    const depositAddress = await this.findDepositAddressByAddress(event.address, event.tag);
+    const depositAddress = await this.findDepositAddressByAddress(event);
     if (!depositAddress) {
       logger.warn(
-        { address: event.address, tag: event.tag },
+        { address: event.address, network: event.network, tag: event.tag },
         'payment webhook: no wallet_deposit_address for inbound deposit',
       );
       return;
     }
-    if (event.currency.toUpperCase() !== depositAddress.currency.toUpperCase()) {
+    if (
+      event.network === undefined &&
+      event.currency.toUpperCase() !== depositAddress.currency.toUpperCase()
+    ) {
       throw new CurrencyMismatchError(event.currency, depositAddress.currency);
     }
 
@@ -1688,16 +1697,35 @@ export class WalletService {
     return row;
   }
 
-  private async findDepositAddressByAddress(address: string, tag?: string) {
-    const [row] = await this.drizzle.db
+  private async findDepositAddressByAddress({
+    address,
+    network,
+    tag,
+    currency,
+  }: Extract<PaymentWebhookEvent, { kind: 'deposit' }>) {
+    const rows = await this.drizzle.db
       .select()
       .from(walletDepositAddress)
       .where(
         and(
           eq(walletDepositAddress.address, address),
           tag === undefined ? isNull(walletDepositAddress.tag) : eq(walletDepositAddress.tag, tag),
+          network === undefined
+            ? undefined
+            : or(eq(walletDepositAddress.network, network), isNull(walletDepositAddress.network)),
         ),
       );
-    return row;
+
+    const owners = new Set(rows.map((row) => row.userId));
+    if (owners.size > 1) {
+      throw new AmbiguousDepositAddressError(address, network);
+    }
+    return (
+      rows.find(
+        (row) => row.network === network && row.currency.toUpperCase() === currency.toUpperCase(),
+      ) ??
+      rows.find((row) => row.network === network) ??
+      rows[0]
+    );
   }
 }

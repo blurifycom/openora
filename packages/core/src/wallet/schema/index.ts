@@ -150,9 +150,10 @@ export const walletDepositAddress = pgTable(
     uniqueIndex('wallet_deposit_address_address_tag_idx')
       .on(t.address, t.tag)
       .where(sql`${t.tag} IS NOT NULL`),
-    uniqueIndex('wallet_deposit_address_address_idx')
-      .on(t.address)
-      .where(sql`${t.tag} IS NULL`),
+    uniqueIndex('wallet_deposit_address_address_network_currency_idx')
+      .on(t.address, t.network, t.currency)
+      .where(sql`${t.tag} IS NULL AND ${t.network} IS NOT NULL`),
+    index('wallet_deposit_address_address_idx').on(t.address),
   ],
 );
 

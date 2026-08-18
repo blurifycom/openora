@@ -12,11 +12,17 @@ import { createToken, type Token } from './token.js';
  * event reports a status transition for a withdrawal already sent to the vendor via
  * `processWithdrawal`. `externalId` is the vendor's reference id for the underlying
  * settlement - the dedup key the wallet module reconciles against.
+ *
+ * A deposit carries `network` because an address does not identify a chain: an EVM vault
+ * hands out one address that is shared across every EVM chain AND every token on them, so
+ * `address` alone maps to many issued rows. Omitting it falls back to address-only lookup,
+ * which is safe only for a vendor that issues a distinct address per currency.
  */
 export type PaymentWebhookEvent =
   | {
       kind: 'deposit';
       address: string;
+      network?: string;
       tag?: string;
       amount: string;
       currency: string;

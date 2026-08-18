@@ -1,5 +1,5 @@
 {
-  "id": "e63dfbcd-c89a-4631-bd1d-b49c97792e32",
+  "id": "20f1d527-a76e-4e11-bf66-f54b849d008b",
   "prevId": "54b693bf-a918-4bf1-a1a9-1003d806a0a4",
   "version": "7",
   "dialect": "postgresql",
@@ -396,6 +396,34 @@
           "method": "btree",
           "with": {}
         },
+        "wallet_deposit_address_address_network_currency_idx": {
+          "name": "wallet_deposit_address_address_network_currency_idx",
+          "columns": [
+            {
+              "expression": "address",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "network",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "currency",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": true,
+          "where": "\"wallet_deposit_address\".\"tag\" IS NULL AND \"wallet_deposit_address\".\"network\" IS NOT NULL",
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        },
         "wallet_deposit_address_address_idx": {
           "name": "wallet_deposit_address_address_idx",
           "columns": [
@@ -406,8 +434,7 @@
               "nulls": "last"
             }
           ],
-          "isUnique": true,
-          "where": "\"wallet_deposit_address\".\"tag\" IS NULL",
+          "isUnique": false,
           "concurrently": false,
           "method": "btree",
           "with": {}
