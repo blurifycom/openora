@@ -954,6 +954,25 @@ describe('ChatService admin rooms (real PG)', () => {
     );
   });
 
+  it('allows only the private-room creator to update its name', async () => {
+    const { svc } = makeService();
+    const ownerId = randomUUID();
+    const room = await svc.createPrivateRoom({ userId: ownerId, name: 'Old', ...NO_CLIENT_META });
+
+    await expect(
+      svc.updatePrivateRoom({ id: room.id, name: 'New', actorId: ownerId, ...NO_CLIENT_META }),
+    ).resolves.toMatchObject({ id: room.id, name: 'New' });
+
+    await expect(
+      svc.updatePrivateRoom({
+        id: room.id,
+        name: 'Hijacked',
+        actorId: randomUUID(),
+        ...NO_CLIENT_META,
+      }),
+    ).rejects.toBeInstanceOf(ChatRoomOwnershipError);
+  });
+
   it('rejects an update that collides with another rooms slug', async () => {
     const { svc } = makeService();
     await seedRoom({ slug: 'taken' });

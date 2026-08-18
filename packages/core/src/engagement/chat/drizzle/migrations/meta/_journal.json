@@ -40,43 +40,8 @@
     {
       "idx": 5,
       "version": "7",
-      "when": 1786552412551,
-      "tag": "0005_wonderful_the_hunter",
-      "breakpoints": true
-    },
-    {
-      "idx": 6,
-      "version": "7",
-      "when": 1786555694770,
-      "tag": "0006_blue_wasp",
-      "breakpoints": true
-    },
-    {
-      "idx": 7,
-      "version": "7",
-      "when": 1786628325780,
-      "tag": "0007_premium_sinister_six",
-      "breakpoints": true
-    },
-    {
-      "idx": 8,
-      "version": "7",
-      "when": 1786653027437,
-      "tag": "0008_yellow_bug",
-      "breakpoints": true
-    },
-    {
-      "idx": 9,
-      "version": "7",
-      "when": 1786715123787,
-      "tag": "0009_keen_dagger",
-      "breakpoints": true
-    },
-    {
-      "idx": 10,
-      "version": "7",
-      "when": 1786955092524,
-      "tag": "0010_early_blazing_skull",
+      "when": 1787007709566,
+      "tag": "0005_tranquil_gwen_stacy",
       "breakpoints": true
     }
   ]

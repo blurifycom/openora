@@ -60,6 +60,7 @@ export type AdminUserDirectory = {
   count(): Promise<number>;
   list(opts: AdminUserListOptions): Promise<{ rows: AdminUserRow[]; total: number }>;
   get(id: string): Promise<AdminUserRow | null>;
+  lookupUsers(userIds: readonly string[]): Promise<AdminUserRow[]>;
   /** actorId = the admin performing the change (for audit attribution on an isActive flip). */
   update(
     id: string,

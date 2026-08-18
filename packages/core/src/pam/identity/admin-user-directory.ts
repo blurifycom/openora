@@ -75,6 +75,17 @@ export class DrizzleAdminUserDirectory implements AdminUserDirectory {
     return r ? toRow(r) : null;
   }
 
+  async lookupUsers(userIds: readonly string[]) {
+    if (userIds.length === 0) {
+      return [];
+    }
+    const rows = await this.drizzle.db
+      .select()
+      .from(user)
+      .where(inArray(user.id, [...userIds]));
+    return rows.map(toRow);
+  }
+
   async update(
     id: string,
     patch: { isActive?: boolean; role?: string },

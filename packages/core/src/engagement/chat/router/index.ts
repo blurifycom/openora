@@ -367,6 +367,16 @@ export function createChatRouter({
       ),
     ),
 
+    updatePrivateRoom: os.updatePrivateRoom.handler(({ input, context }) =>
+      mapErrors({ NOT_FOUND: ChatRoomNotFoundError, FORBIDDEN: ChatRoomOwnershipError }, () =>
+        chatService.updatePrivateRoom({
+          ...input,
+          actorId: getUserId(context),
+          ...context.clientMeta,
+        }),
+      ),
+    ),
+
     createRoomRule: os.createRoomRule.handler(({ input, context }) =>
       mapErrors(
         {

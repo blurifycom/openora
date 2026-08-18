@@ -103,6 +103,7 @@
         "chat.unblockUser",
         "chat.unignoreUser",
         "chat.unmuteRoomMember",
+        "chat.updatePrivateRoom",
         "chat.updateRoom",
         "chat.updateRoomConfiguration",
         "chat.updateRoomRule"

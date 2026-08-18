@@ -415,6 +415,16 @@ export const chatContract = {
     )
     .output(ChatRoomRuleSchema),
 
+  updatePrivateRoom: oc
+    .route({ method: 'PATCH', path: '/chat/rooms/{id}' })
+    .input(
+      z.object({
+        id: UuidSchema,
+        name: z.string().trim().min(1).max(ROOM_NAME_MAX_LENGTH),
+      }),
+    )
+    .output(ChatRoomSchema),
+
   deleteRoomRule: oc
     .route({ method: 'DELETE', path: '/chat/rooms/{roomId}/rules/{id}' })
     .input(z.object({ roomId: UuidSchema, id: UuidSchema }))

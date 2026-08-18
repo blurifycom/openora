@@ -773,15 +773,18 @@ export class ChatService {
   }) {
     await this.assertRoomModerator(roomId, actorId);
     const role = status === 'all' ? undefined : status;
+    const canSeeAdminUsers = await this.canSeeAdminUsers(actorId);
     const members = await this.drizzle.db
-      .select({ member: chatRoomMember })
+      .select({ member: chatRoomMember, username: user.name })
       .from(chatRoomMember)
       .leftJoin(user, eq(user.id, chatRoomMember.userId))
       .where(
         and(
           eq(chatRoomMember.roomId, roomId),
           role ? eq(chatRoomMember.role, role) : undefined,
-          or(isNull(user.id), notInArray(user.role, ['admin', 'super-admin'])),
+          canSeeAdminUsers
+            ? undefined
+            : or(isNull(user.id), notInArray(user.role, ['admin', 'super-admin'])),
         ),
       )
       .orderBy(asc(chatRoomMember.joinedAt));
@@ -797,12 +800,12 @@ export class ChatService {
     );
     const names = await this.directory.lookupPlayers(members.map(({ member }) => member.userId));
     const nameById = new Map(names.map((name) => [name.userId, name.username]));
-    return members.map(({ member }) => {
+    return members.map(({ member, username }) => {
       const ban = activeBans.get(member.userId);
       return serializeRow(
         {
           userId: member.userId,
-          username: nameById.get(member.userId) ?? null,
+          username: nameById.get(member.userId) ?? username ?? null,
           role: member.role,
           joinedAt: member.joinedAt,
           blocked: Boolean(ban),
@@ -1499,6 +1502,32 @@ export class ChatService {
     return toRoom(updated);
   }
 
+  async updatePrivateRoom({
+    id,
+    name,
+    actorId,
+    ip,
+    userAgent,
+  }: {
+    id: ChatRoom['id'];
+    name: string;
+    actorId: User['id'];
+  } & ClientMeta) {
+    const room = findOneOrThrow(
+      await this.drizzle.db
+        .select()
+        .from(chatRoom)
+        .where(and(eq(chatRoom.id, id), eq(chatRoom.isPublic, false), isNull(chatRoom.deletedAt)))
+        .limit(1),
+      new ChatRoomNotFoundError(id),
+    );
+    if (!room.creatorId) {
+      throw new ChatRoomOwnershipError();
+    }
+    assertOwnership(room.creatorId, actorId, new ChatRoomOwnershipError());
+    return this.updateRoom({ id, name, actorId, ip, userAgent });
+  }
+
   async deletePrivateRoom({
     roomId,
     userId,
@@ -1678,18 +1707,22 @@ export class ChatService {
 
   async listRoomMembers({ roomId, viewerId }: { roomId: ChatRoom['id']; viewerId?: User['id'] }) {
     await this.verifyRoomAccess(roomId, viewerId);
+    const canSeeAdminUsers = viewerId ? await this.canSeeAdminUsers(viewerId) : false;
     const members = await this.drizzle.db
       .select({
         userId: chatRoomMember.userId,
         role: chatRoomMember.role,
         joinedAt: chatRoomMember.joinedAt,
+        username: user.name,
       })
       .from(chatRoomMember)
       .leftJoin(user, eq(user.id, chatRoomMember.userId))
       .where(
         and(
           eq(chatRoomMember.roomId, roomId),
-          or(isNull(user.id), notInArray(user.role, ['admin', 'super-admin'])),
+          canSeeAdminUsers
+            ? undefined
+            : or(isNull(user.id), notInArray(user.role, ['admin', 'super-admin'])),
         ),
       )
       .orderBy(asc(chatRoomMember.joinedAt));
@@ -1697,9 +1730,18 @@ export class ChatService {
     const usernameByUserId = new Map(summaries.map((s) => [s.userId, s.username]));
     return members.map((m) =>
       serializeRow(
-        { ...m, username: usernameByUserId.get(m.userId) ?? null },
+        { ...m, username: usernameByUserId.get(m.userId) ?? m.username ?? null },
         { dateFields: ['joinedAt'] },
       ),
     );
+  }
+
+  private async canSeeAdminUsers(viewerId: User['id']) {
+    const [viewer] = await this.drizzle.db
+      .select({ role: user.role })
+      .from(user)
+      .where(eq(user.id, viewerId))
+      .limit(1);
+    return viewer?.role === 'admin' || viewer?.role === 'super-admin';
   }
 }
