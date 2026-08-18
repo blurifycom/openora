@@ -35,7 +35,7 @@ async function seedWallet() {
       .insert(wallet)
       .values({ userId: randomUUID(), balance: '1000', currency: 'USD' })
       .returning(),
-    new Error('expected a row'),
+    new Error('seedWallet: query returned no row'),
   );
   await db.drizzle.db
     .insert(walletBalance)

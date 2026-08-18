@@ -25,7 +25,7 @@ async function seedWallet(overrides: Partial<typeof wallet.$inferInsert> = {}) {
       .insert(wallet)
       .values({ userId: randomUUID(), balance: '0', currency: 'USD', ...overrides })
       .returning(),
-    new Error('expected a row'),
+    new Error('seedWallet: query returned no row'),
   );
   await db.drizzle.db
     .insert(walletBalance)
@@ -34,14 +34,11 @@ async function seedWallet(overrides: Partial<typeof wallet.$inferInsert> = {}) {
 }
 
 async function balanceOf(userId: string) {
-  const row = findOneOrThrow(
-    await db.drizzle.db
-      .select({ amount: walletBalance.amount })
-      .from(walletBalance)
-      .innerJoin(wallet, eq(wallet.id, walletBalance.walletId))
-      .where(eq(wallet.userId, userId)),
-    new Error('expected a row'),
-  );
+  const [row] = await db.drizzle.db
+    .select({ amount: walletBalance.amount })
+    .from(walletBalance)
+    .innerJoin(wallet, eq(wallet.id, walletBalance.walletId))
+    .where(eq(wallet.userId, userId));
   return Number(row?.amount ?? 0);
 }
 

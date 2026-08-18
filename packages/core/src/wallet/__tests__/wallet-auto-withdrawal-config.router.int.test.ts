@@ -120,7 +120,7 @@ async function seedPlayerWallet(overrides: Partial<typeof wallet.$inferInsert> =
       .insert(wallet)
       .values({ userId: randomUUID(), balance: '100000', currency: 'USD', ...overrides })
       .returning(),
-    new Error('expected a row'),
+    new Error('seedPlayerWallet: query returned no row'),
   );
   await db.drizzle.db
     .insert(walletBalance)

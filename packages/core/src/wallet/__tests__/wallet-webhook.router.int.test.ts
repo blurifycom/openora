@@ -76,7 +76,7 @@ async function seedWallet(currency = 'BTC') {
       .insert(wallet)
       .values({ userId: USER_ID, balance: '0', currency })
       .returning(),
-    new Error('expected a row'),
+    new Error('seedWallet: query returned no row'),
   );
   await db.drizzle.db
     .insert(walletBalance)
@@ -107,7 +107,7 @@ async function seedProcessingWithdrawal(walletId: string, externalId: string) {
         providerRefId: externalId,
       })
       .returning(),
-    new Error('expected a row'),
+    new Error('seedProcessingWithdrawal: query returned no row'),
   );
   return row;
 }

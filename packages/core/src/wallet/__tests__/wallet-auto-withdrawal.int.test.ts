@@ -132,7 +132,7 @@ async function seedWallet(overrides: Partial<typeof wallet.$inferInsert> = {}) {
       .insert(wallet)
       .values({ userId: randomUUID(), balance: '100000', currency: 'USD', ...overrides })
       .returning(),
-    new Error('expected a row'),
+    new Error('seedWallet: query returned no row'),
   );
   await db.drizzle.db
     .insert(walletBalance)
@@ -143,7 +143,7 @@ async function seedWallet(overrides: Partial<typeof wallet.$inferInsert> = {}) {
 async function txById(id: string) {
   const row = findOneOrThrow(
     await db.drizzle.db.select().from(walletTransaction).where(eq(walletTransaction.id, id)),
-    new Error('expected a row'),
+    new Error('txById: query returned no row'),
   );
   return row;
 }
@@ -241,9 +241,9 @@ describe('WalletService.withdraw auto-approval (real PG)', () => {
     expect(result.status).toBe('pending');
     const row = findOneOrThrow(
       await db.drizzle.db.select().from(walletBalance).where(eq(walletBalance.walletId, w.id)),
-      new Error('expected a row'),
+      new Error('no wallet_balance row'),
     );
-    expect(Number(row?.amount)).toBe(60);
+    expect(Number(row.amount)).toBe(60);
   });
 
   it('stays pending when the amount exceeds the configured threshold', async () => {

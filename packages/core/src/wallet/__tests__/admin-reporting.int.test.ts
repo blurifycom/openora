@@ -18,7 +18,7 @@ async function seedWallet(overrides: Partial<typeof wallet.$inferInsert> = {}) {
       .insert(wallet)
       .values({ userId: randomUUID(), currency: 'USD', ...overrides })
       .returning(),
-    new Error('expected a row'),
+    new Error('seedWallet: query returned no row'),
   );
   return row;
 }
@@ -41,7 +41,7 @@ async function seedTx(
         ...overrides,
       })
       .returning(),
-    new Error('expected a row'),
+    new Error('seedTx: query returned no row'),
   );
   return row;
 }

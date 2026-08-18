@@ -67,7 +67,7 @@ async function seedLedger(userId: string, amounts: string[]) {
       .insert(wallet)
       .values({ userId, balance: '0', currency: 'USD' })
       .returning(),
-    new Error('expected a row'),
+    new Error('seedLedger: query returned no row'),
   );
   for (const amount of amounts) {
     await db.drizzle.db.insert(walletTransaction).values({
