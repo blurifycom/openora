@@ -8,11 +8,21 @@ import {
   SESSION_COMMANDS,
   PLAYER_ACTIVITY_TRACKER,
 } from '@openora/core/contracts';
-import type { CoreTokenCatalog, Plugin } from '@openora/core/server';
+import type { CoreTokenCatalog, Plugin, TypedContainer } from '@openora/core/server';
 import { PlayerService } from './service/player.service.js';
 import { PlayerKycStatusWriter } from './service/kyc-status-writer.js';
-import { DrizzlePlayerActivityTracker } from './service/player-activity-tracker.service.js';
 import { createPlayerRouter } from './router/index.js';
+
+function makePlayerService(c: TypedContainer<CoreTokenCatalog>) {
+  return new PlayerService(
+    c.get(DRIZZLE),
+    c.get(EVENT_BUS),
+    c.get(ADMIN_USER_DIRECTORY),
+    c.get(ADMIN_GAME_REPORTING),
+    c.get(CHAT_BLOCK_WRITER),
+    c.get(SESSION_COMMANDS),
+  );
+}
 
 export default {
   id: 'player-management',
@@ -22,20 +32,9 @@ export default {
       KYC_STATUS_WRITER,
       (c) => new PlayerKycStatusWriter(c.get(DRIZZLE), c.get(EVENT_BUS)),
     );
-    ctx.provide(PLAYER_ACTIVITY_TRACKER, (c) => new DrizzlePlayerActivityTracker(c.get(DRIZZLE)));
+    ctx.provide(PLAYER_ACTIVITY_TRACKER, (c) => makePlayerService(c));
     ctx.routers.add('player', (c) =>
-      createPlayerRouter(
-        new PlayerService(
-          c.get(DRIZZLE),
-          c.get(EVENT_BUS),
-          c.get(ADMIN_USER_DIRECTORY),
-          c.get(ADMIN_GAME_REPORTING),
-          c.get(CHAT_BLOCK_WRITER),
-          c.get(SESSION_COMMANDS),
-        ),
-        c.get(ADMIN_GUARD),
-        c.get(AUDIT_WRITER),
-      ),
+      createPlayerRouter(makePlayerService(c), c.get(ADMIN_GUARD), c.get(AUDIT_WRITER)),
     );
   },
 } as const satisfies Plugin<CoreTokenCatalog>;
