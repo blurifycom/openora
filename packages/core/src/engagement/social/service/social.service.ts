@@ -1,4 +1,4 @@
-import { and, count, desc, eq, inArray, isNotNull, isNull, or, sql } from 'drizzle-orm';
+import { and, count, desc, eq, inArray, isNotNull, isNull, or, SQL, sql } from 'drizzle-orm';
 import {
   type DrizzleDb,
   type DrizzleService,
@@ -663,12 +663,6 @@ export class SocialService {
     return { items, total: Number(countRows[0]?.n ?? 0), page, limit };
   }
 
-  // The `.as(alias)` calls below resolve to the non-deprecated
-  // `SQL.prototype.as(alias: string): SQL.Aliased<T>` overload (T already bound by
-  // the `sql<T>` tag), but depretec flags any call to `.as` because two of the
-  // three overloads on that name carry @deprecated - see the identical
-  // pam/identity/adapters/identity-reader.service.ts exclude. Hence the
-  // package.json `check:deprecations` exclude for this file.
   private async getMutualFriendsCounts(
     callerId: Uuid,
     requesterIds: readonly Uuid[],
@@ -677,10 +671,10 @@ export class SocialService {
 
     const callerFriends = this.drizzle.db
       .select({
-        friendId:
-          sql<string>`CASE WHEN ${eq(friendship.requesterId, callerId)} THEN ${friendship.addresseeId} ELSE ${friendship.requesterId} END`.as(
-            'caller_friend_id',
-          ),
+        friendId: new SQL.Aliased<string>(
+          sql<string>`CASE WHEN ${eq(friendship.requesterId, callerId)} THEN ${friendship.addresseeId} ELSE ${friendship.requesterId} END`,
+          'caller_friend_id',
+        ),
       })
       .from(friendship)
       .where(
@@ -694,14 +688,14 @@ export class SocialService {
 
     const requesterFriends = this.drizzle.db
       .select({
-        otherId:
-          sql<string>`CASE WHEN ${requesterInSet} THEN ${friendship.requesterId} ELSE ${friendship.addresseeId} END`.as(
-            'other_id',
-          ),
-        friendId:
-          sql<string>`CASE WHEN ${requesterInSet} THEN ${friendship.addresseeId} ELSE ${friendship.requesterId} END`.as(
-            'requester_friend_id',
-          ),
+        otherId: new SQL.Aliased<string>(
+          sql<string>`CASE WHEN ${requesterInSet} THEN ${friendship.requesterId} ELSE ${friendship.addresseeId} END`,
+          'other_id',
+        ),
+        friendId: new SQL.Aliased<string>(
+          sql<string>`CASE WHEN ${requesterInSet} THEN ${friendship.addresseeId} ELSE ${friendship.requesterId} END`,
+          'requester_friend_id',
+        ),
       })
       .from(friendship)
       .where(

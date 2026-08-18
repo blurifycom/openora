@@ -20,7 +20,7 @@
     "check:format": "oxfmt --check",
     "check:boundaries": "depcruise apps packages --config .dependency-cruiser.cjs",
     "check:shape": "tsx tools/lint/verify-module-shape.ts",
-    "check:deprecations": "depretec --fail-on-found --exclude packages/core/src/pam/identity/adapters/identity-reader.service.ts --exclude packages/core/src/engagement/social/service/social.service.ts",
+    "check:deprecations": "depretec --fail-on-found",
     "check:drift": "tsx tools/gen/sync-tsconfig-paths.ts --check && tsx tools/gen/gen-catalog.ts && git diff --exit-code -- docs/catalog.json",
     "fix:lint": "oxlint . --fix",
     "fix:format": "oxfmt && node tools/lint/ensure-final-newline.mjs",
