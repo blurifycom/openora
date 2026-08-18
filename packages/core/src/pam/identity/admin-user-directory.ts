@@ -2,7 +2,7 @@ import type { AdminUserDirectory, AdminUserListOptions, ClientMeta } from '@open
 import { KycStatusSchema, normalizeKycStatus, UuidSchema } from '@openora/core/contracts';
 import { DrizzleService, pageToOffset } from '@openora/core/server';
 import type { EventBus } from '@openora/core/server';
-import { asc, count, desc, eq, ilike, inArray, or, sql } from 'drizzle-orm';
+import { asc, count, desc, eq, ilike, inArray, or, sql, and } from 'drizzle-orm';
 import { user } from './schema/index.js';
 // Read-only cross-domain read of the player/profile table via the public /schema
 // subpath (allowed per ADR-0020) so back-office lists can label players by
@@ -75,6 +75,17 @@ export class DrizzleAdminUserDirectory implements AdminUserDirectory {
     return r ? toRow(r) : null;
   }
 
+  async lookupUsers(userIds: readonly string[]) {
+    if (userIds.length === 0) {
+      return [];
+    }
+    const rows = await this.drizzle.db
+      .select()
+      .from(user)
+      .where(inArray(user.id, [...userIds]));
+    return rows.map(toRow);
+  }
+
   async update(
     id: string,
     patch: { isActive?: boolean; role?: string },
@@ -130,7 +141,7 @@ export class DrizzleAdminUserDirectory implements AdminUserDirectory {
       })
       .from(player)
       .innerJoin(user, eq(player.userId, user.id))
-      .where(inArray(player.userId, [...userIds]));
+      .where(and(inArray(player.userId, [...userIds]), eq(user.role, 'player')));
     return rows.map((r) => {
       // The player table stores kycStatus as free text; coerce unknown values to null
       // so the port's KycStatus contract holds without a cast. Normalize the deprecated

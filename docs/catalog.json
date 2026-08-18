@@ -41,50 +41,79 @@
       "group": "engagement",
       "tables": [
         "chat_message",
+        "chat_mute",
+        "chat_platform_ban",
         "chat_room",
         "chat_room_ban",
+        "chat_room_configuration",
         "chat_room_member",
+        "chat_room_mute",
+        "chat_room_remove",
+        "chat_room_rule",
         "chat_user_block",
         "chat_user_ignore"
       ],
       "routes": [
+        "chat.adminBan",
+        "chat.adminDeleteMessage",
+        "chat.adminJoinRoom",
+        "chat.adminListBans",
         "chat.adminListBlockedUsers",
         "chat.adminListIgnoredUsers",
-        "chat.banMember",
+        "chat.adminListMessages",
+        "chat.adminListMutes",
+        "chat.adminListRoomMessages",
+        "chat.adminMute",
+        "chat.adminUnban",
+        "chat.adminUnmute",
+        "chat.banRoomMember",
         "chat.blockUser",
         "chat.createPrivateRoom",
         "chat.createRoom",
+        "chat.createRoomRule",
         "chat.deleteMessage",
         "chat.deletePrivateRoom",
         "chat.deleteRoom",
+        "chat.deleteRoomRule",
         "chat.getConnection",
         "chat.getGlobalMessages",
         "chat.getOnlineCount",
         "chat.getRoom",
+        "chat.getRoomConfiguration",
         "chat.getRoomMessages",
+        "chat.getRoomRules",
         "chat.ignoreUser",
+        "chat.joinPublicRoom",
         "chat.joinRoom",
-        "chat.kickMember",
         "chat.leaveRoom",
         "chat.listAdminRooms",
         "chat.listBlockedUsers",
         "chat.listIgnoredUsers",
+        "chat.listModeratedRooms",
+        "chat.listRoomBlockedUsers",
         "chat.listRoomMembers",
+        "chat.listRoomUsers",
         "chat.listRooms",
+        "chat.muteRoomMember",
+        "chat.removeMember",
         "chat.sendGlobalMessage",
         "chat.sendRoomMessage",
         "chat.streamMessages",
+        "chat.unbanRoomMember",
         "chat.unblockUser",
         "chat.unignoreUser",
-        "chat.updateRoom"
+        "chat.unmuteRoomMember",
+        "chat.updatePrivateRoom",
+        "chat.updateRoom",
+        "chat.updateRoomConfiguration",
+        "chat.updateRoomRule"
       ]
     },
     {
       "id": "chat-commands",
       "group": "engagement",
       "tables": [
-        "chat_command_config",
-        "chat_gift"
+        "chat_command_config"
       ],
       "routes": [
         "chat-commands.adminListCommands",
@@ -445,6 +474,7 @@
         "packages/core/src/audit/plugin.ts",
         "packages/core/src/compliance/plugin.ts",
         "packages/core/src/engagement/chat-commands/plugin.ts",
+        "packages/core/src/engagement/chat/plugin.ts",
         "packages/core/src/engagement/social-transfers/plugin.ts",
         "packages/core/src/pam/player-management/plugin.ts",
         "packages/core/src/pam/player-note/plugin.ts",
@@ -485,6 +515,15 @@
         "packages/core/src/engagement/chat-commands/plugin.ts",
         "packages/core/src/engagement/chat/plugin.ts",
         "packages/core/src/pam/player-management/plugin.ts"
+      ]
+    },
+    {
+      "category": "chat-moderation",
+      "interface": "ChatModerationEntry",
+      "token": "CHAT_MODERATION",
+      "status": "wired",
+      "boundIn": [
+        "packages/core/src/engagement/chat/plugin.ts"
       ]
     },
     {
@@ -755,8 +794,8 @@
     "chat.room.deleted",
     "chat.room.member.banned",
     "chat.room.member.joined",
-    "chat.room.member.kicked",
     "chat.room.member.left",
+    "chat.room.member.removed",
     "chat.room.updated",
     "chat.user.blocked",
     "chat.user.ignored",
@@ -847,6 +886,14 @@
     },
     {
       "name": "AdminBlockedUserSchema",
+      "file": "packages/core/src/engagement/chat/contract/index.ts"
+    },
+    {
+      "name": "AdminChatMessageDetailSchema",
+      "file": "packages/core/src/engagement/chat/contract/index.ts"
+    },
+    {
+      "name": "AdminChatMessageSchema",
       "file": "packages/core/src/engagement/chat/contract/index.ts"
     },
     {
@@ -1018,11 +1065,43 @@
       "file": "packages/core/src/contracts/schemas/chat-command.ts"
     },
     {
+      "name": "ChatModerationEntrySchema",
+      "file": "packages/core/src/engagement/chat/contract/index.ts"
+    },
+    {
+      "name": "ChatModerationResultSchema",
+      "file": "packages/core/src/engagement/chat/contract/index.ts"
+    },
+    {
+      "name": "ChatModerationRoomIdSchema",
+      "file": "packages/core/src/engagement/chat/contract/index.ts"
+    },
+    {
+      "name": "ChatModerationScopeSchema",
+      "file": "packages/core/src/engagement/chat/contract/index.ts"
+    },
+    {
       "name": "ChatOnlineCountSchema",
       "file": "packages/core/src/engagement/chat/contract/index.ts"
     },
     {
+      "name": "ChatPlatformBanSchema",
+      "file": "packages/core/src/engagement/chat/contract/index.ts"
+    },
+    {
+      "name": "ChatRoomAccessStatusSchema",
+      "file": "packages/core/src/engagement/chat/contract/index.ts"
+    },
+    {
+      "name": "ChatRoomBanSchema",
+      "file": "packages/core/src/engagement/chat/contract/index.ts"
+    },
+    {
       "name": "ChatRoomCategorySchema",
+      "file": "packages/core/src/engagement/chat/contract/index.ts"
+    },
+    {
+      "name": "ChatRoomConfigurationSchema",
       "file": "packages/core/src/engagement/chat/contract/index.ts"
     },
     {
@@ -1038,11 +1117,19 @@
       "file": "packages/core/src/engagement/chat/contract/index.ts"
     },
     {
+      "name": "ChatRoomRuleSchema",
+      "file": "packages/core/src/engagement/chat/contract/index.ts"
+    },
+    {
       "name": "ChatRoomSchema",
       "file": "packages/core/src/engagement/chat/contract/index.ts"
     },
     {
       "name": "ChatRoomSlugSchema",
+      "file": "packages/core/src/engagement/chat/contract/index.ts"
+    },
+    {
+      "name": "ChatRoomUserSchema",
       "file": "packages/core/src/engagement/chat/contract/index.ts"
     },
     {
@@ -1415,6 +1502,10 @@
     },
     {
       "name": "MessageContentSchema",
+      "file": "packages/core/src/engagement/chat/contract/index.ts"
+    },
+    {
+      "name": "ModeratedRoomSortBySchema",
       "file": "packages/core/src/engagement/chat/contract/index.ts"
     },
     {

@@ -312,6 +312,12 @@ export async function mapEventToRecord(
       actorId: str(p['playerId']),
       resourceType: 'chat_room',
       resourceId: str(p['roomId']),
+      ...(topic === 'chat.private_room.deleted'
+        ? {
+            before: isRecord(p['before']) ? p['before'] : null,
+            after: isRecord(p['after']) ? p['after'] : null,
+          }
+        : {}),
     };
   }
 

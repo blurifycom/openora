@@ -268,6 +268,23 @@ describe('ChatCommandsService.searchMentions', () => {
     expect(result).toEqual([]);
     expect(directory.findPlayerIds).not.toHaveBeenCalled();
   });
+
+  it('returns online users when the mention query is empty', async () => {
+    const onlineUser = ACTOR_ID;
+    const directory = makeDirectory();
+    const transport = makeTransport([onlineUser]);
+    const svc = makeSvc({ directory, transport });
+
+    const result = await svc.searchMentions({
+      q: '',
+      limit: 5,
+      roomId: null,
+      viewerId: CLAIMER_ID,
+    });
+
+    expect(result).toEqual([{ userId: onlineUser, username: 'bob' }]);
+    expect(directory.findPlayerIds).not.toHaveBeenCalled();
+  });
 });
 
 describe('ChatCommandsService.postGift (delegates to GIFT_COMMANDS)', () => {
@@ -448,7 +465,7 @@ describe('ChatCommandsService.postRain (resolves presence, delegates to RAIN_COM
         recipientCount: 2,
         roomId: ROOM_ID,
         idempotencyKey: IDEMPOTENCY_KEY,
-        onlineUserIds: [ACTOR_ID, CLAIMER_ID, RECIPIENT_2],
+        onlineUserIds: [ACTOR_ID],
       },
       ACTOR_ID,
     );

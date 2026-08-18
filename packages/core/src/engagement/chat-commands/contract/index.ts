@@ -125,7 +125,7 @@ export const chatCommandsContract = {
     .route({ method: 'GET', path: '/chat-command/mention-search' })
     .input(
       z.object({
-        q: z.string().min(1).max(50),
+        q: z.string().trim().max(50),
         limit: z.coerce.number().int().min(1).max(100).default(50),
         roomId: ChatRoomIdSchema,
       }),

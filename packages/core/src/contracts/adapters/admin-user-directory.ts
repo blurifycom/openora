@@ -61,6 +61,7 @@ export type AdminUserDirectory = {
   count(): Promise<number>;
   list(opts: AdminUserListOptions): Promise<{ rows: AdminUserRow[]; total: number }>;
   get(id: string): Promise<AdminUserRow | null>;
+  lookupUsers(userIds: readonly string[]): Promise<AdminUserRow[]>;
   /** actorId = the admin performing the change (for audit attribution on an isActive flip). */
   update(
     id: string,
@@ -75,7 +76,7 @@ export type AdminUserDirectory = {
   lookupPlayers(userIds: readonly string[]): Promise<AdminPlayerSummary[]>;
   /**
    * Resolves a free-text player filter to a capped set of userIds, matched against
-   * email (user table) OR username/displayName (player table). Empty = no match.
+   * email (user table) OR username/displayName (player table). Empty = all candidates.
    * limit caps both sub-queries and the merged set; defaults to 1000 (the implementation cap).
    */
   findPlayerIds(query: string, limit?: number): Promise<string[]>;

@@ -6,50 +6,84 @@ import {
   RATE_LIMITER,
   CHAT_SYSTEM_WRITER,
   CHAT_BLOCK_WRITER,
+  CHAT_MODERATION,
   CHAT_ROOM_ACCESS,
   ADMIN_USER_DIRECTORY,
-  IDENTITY_READER,
-  createToken,
   REALTIME_TRANSPORT,
   REALTIME_CLIENT_AUTHORIZER,
+  AUDIT_WRITER,
+  IDENTITY_READER,
 } from '@openora/core/contracts';
 import { ChatService } from './service/chat.service.js';
+import { ChatModerationService } from './service/chat-moderation.service.js';
+import { ChatRoomMembershipService } from './service/chat-room-membership.service.js';
+import { ChatRoomBanService } from './service/chat-room-ban.service.js';
+import { ChatRoomMuteService } from './service/chat-room-mute.service.js';
 import { createChatRouter } from './router/index.js';
-
-const CHAT_SERVICE = createToken<ChatService>('_ChatService');
 
 export default {
   id: 'chat',
-  dependsOn: ['identity'],
+  dependsOn: ['identity', 'audit'],
   register(ctx) {
     ctx.provide(CHAT_REALTIME_TRANSPORT, (c) => c.get(REALTIME_TRANSPORT));
     ctx.provide(CHAT_REALTIME_CLIENT_AUTHORIZER, (c) => c.get(REALTIME_CLIENT_AUTHORIZER));
     ctx.provide(
-      CHAT_SERVICE,
+      CHAT_MODERATION,
       (c) =>
-        new ChatService(
+        new ChatModerationService(
           c.get(DRIZZLE),
-          c.get(EVENT_BUS),
           c.get(CHAT_REALTIME_TRANSPORT),
-          c.get(ADMIN_USER_DIRECTORY),
-          c.get(IDENTITY_READER),
+          c.get(AUDIT_WRITER),
         ),
     );
-    ctx.provide(CHAT_SYSTEM_WRITER, (c) => c.get(CHAT_SERVICE));
-    ctx.provide(CHAT_BLOCK_WRITER, (c) => c.get(CHAT_SERVICE));
+    const createChatService = (
+      c: Parameters<typeof ctx.routers.add>[1] extends (c: infer C) => unknown ? C : never,
+    ) =>
+      new ChatService(
+        c.get(DRIZZLE),
+        c.get(EVENT_BUS),
+        c.get(CHAT_REALTIME_TRANSPORT),
+        c.get(ADMIN_USER_DIRECTORY),
+        c.get(AUDIT_WRITER),
+        c.get(CHAT_MODERATION),
+        c.get(IDENTITY_READER),
+      );
+    const createMembershipService = (
+      c: Parameters<typeof ctx.routers.add>[1] extends (c: infer C) => unknown ? C : never,
+    ) =>
+      new ChatRoomMembershipService(
+        c.get(DRIZZLE),
+        c.get(EVENT_BUS),
+        c.get(AUDIT_WRITER),
+        c.get(CHAT_REALTIME_TRANSPORT),
+        c.get(IDENTITY_READER),
+      );
+    ctx.provide(CHAT_SYSTEM_WRITER, createChatService);
+    ctx.provide(CHAT_BLOCK_WRITER, createChatService);
     ctx.provide(CHAT_ROOM_ACCESS, (c) => ({
       verifyRoomAccess: async (roomId, viewerId) => {
-        await c.get(CHAT_SERVICE).verifyRoomAccess(roomId, viewerId);
+        await createChatService(c).verifyRoomAccess(roomId, viewerId);
       },
     }));
 
-    ctx.routers.add('chat', (c) =>
-      createChatRouter({
-        chatService: c.get(CHAT_SERVICE),
+    ctx.routers.add('chat', (c) => {
+      const chatService = createChatService(c);
+      return createChatRouter({
+        chatService,
+        membershipService: createMembershipService(c),
+        roomBanService: new ChatRoomBanService(
+          c.get(DRIZZLE),
+          c.get(EVENT_BUS),
+          c.get(AUDIT_WRITER),
+          c.get(CHAT_REALTIME_TRANSPORT),
+          c.get(IDENTITY_READER),
+        ),
+        roomMuteService: new ChatRoomMuteService(c.get(DRIZZLE), c.get(AUDIT_WRITER)),
+        moderationService: c.get(CHAT_MODERATION),
         authorizer: c.get(CHAT_REALTIME_CLIENT_AUTHORIZER),
         adminGuard: c.get(ADMIN_GUARD),
         limiter: c.get(RATE_LIMITER),
-      }),
-    );
+      });
+    });
   },
 } as const satisfies Plugin<CoreTokenCatalog>;

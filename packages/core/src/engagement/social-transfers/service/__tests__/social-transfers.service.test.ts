@@ -891,6 +891,18 @@ describe('SocialTransfersService.sendDonate', () => {
       currency: 'USD',
       type: 'tip',
     });
+    expect(writer.postSystemMessage).toHaveBeenCalledWith(
+      expect.objectContaining({
+        actorId: ACTOR_ID,
+        metadata: expect.objectContaining({
+          command: 'donate',
+          senderId: ACTOR_ID,
+          senderUsername: 'bob',
+          recipientId: CLAIMER_ID,
+          recipientUsername: 'alice',
+        }),
+      }),
+    );
     expect(result.id).toBe(MSG_ID);
   });
 
