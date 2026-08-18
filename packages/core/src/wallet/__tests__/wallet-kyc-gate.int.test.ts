@@ -1,4 +1,5 @@
 import { describe, it, expect, vi, beforeAll, afterAll, beforeEach } from 'vitest';
+import { findOneOrThrow } from '@openora/core/server';
 import { randomUUID } from 'node:crypto';
 import { eq, sql } from 'drizzle-orm';
 import type {
@@ -44,14 +45,17 @@ function makeService(kycStatus: KycStatus | null, gateWithdrawals: boolean) {
 }
 
 async function seedWallet() {
-  const [row] = await db.drizzle.db
-    .insert(wallet)
-    .values({ userId: randomUUID(), balance: '100', currency: 'USD' })
-    .returning();
+  const row = findOneOrThrow(
+    await db.drizzle.db
+      .insert(wallet)
+      .values({ userId: randomUUID(), balance: '100', currency: 'USD' })
+      .returning(),
+    new Error('expected a row'),
+  );
   await db.drizzle.db
     .insert(walletBalance)
-    .values({ walletId: row!.id, currency: row!.currency, amount: row!.balance });
-  return row!;
+    .values({ walletId: row.id, currency: row.currency, amount: row.balance });
+  return row;
 }
 
 async function txCount(walletId: string) {

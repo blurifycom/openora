@@ -1,4 +1,5 @@
 import { describe, it, expect, vi, beforeAll, afterAll, beforeEach } from 'vitest';
+import { findOneOrThrow } from '@openora/core/server';
 import { randomUUID } from 'node:crypto';
 import { call, ORPCError } from '@orpc/server';
 import type { AdminGuard } from '@openora/core/server';
@@ -61,13 +62,16 @@ const transactionDenyingGuard = () =>
 const allowingGuard = () => makeAdminGuard({ caller: { userId: 'caller-1' } });
 
 async function seedLedger(userId: string, amounts: string[]) {
-  const [row] = await db.drizzle.db
-    .insert(wallet)
-    .values({ userId, balance: '0', currency: 'USD' })
-    .returning();
+  const row = findOneOrThrow(
+    await db.drizzle.db
+      .insert(wallet)
+      .values({ userId, balance: '0', currency: 'USD' })
+      .returning(),
+    new Error('expected a row'),
+  );
   for (const amount of amounts) {
     await db.drizzle.db.insert(walletTransaction).values({
-      walletId: row!.id,
+      walletId: row.id,
       type: 'deposit',
       amount,
       currency: 'USD',

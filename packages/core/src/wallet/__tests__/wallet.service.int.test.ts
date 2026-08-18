@@ -1,4 +1,5 @@
 import { describe, it, expect, vi, beforeAll, afterAll, beforeEach } from 'vitest';
+import { findOneOrThrow } from '@openora/core/server';
 import { randomUUID } from 'node:crypto';
 import { eq, sql } from 'drizzle-orm';
 import type {
@@ -68,41 +69,50 @@ function makeDirectory(summaries: AdminPlayerSummary[]) {
 }
 
 async function seedWallet(overrides: Partial<typeof wallet.$inferInsert> = {}) {
-  const [row] = await db.drizzle.db
-    .insert(wallet)
-    .values({ userId: randomUUID(), balance: '0', currency: 'USD', ...overrides })
-    .returning();
+  const row = findOneOrThrow(
+    await db.drizzle.db
+      .insert(wallet)
+      .values({ userId: randomUUID(), balance: '0', currency: 'USD', ...overrides })
+      .returning(),
+    new Error('expected a row'),
+  );
   await db.drizzle.db
     .insert(walletBalance)
-    .values({ walletId: row!.id, currency: row!.currency, amount: row!.balance });
-  return row!;
+    .values({ walletId: row.id, currency: row.currency, amount: row.balance });
+  return row;
 }
 
 async function seedTx(
   walletId: string,
   overrides: Partial<typeof walletTransaction.$inferInsert> = {},
 ) {
-  const [row] = await db.drizzle.db
-    .insert(walletTransaction)
-    .values({
-      walletId,
-      type: 'withdrawal',
-      amount: '10',
-      currency: 'USD',
-      status: 'pending',
-      rail: 'fiat',
-      ...overrides,
-    })
-    .returning();
-  return row!;
+  const row = findOneOrThrow(
+    await db.drizzle.db
+      .insert(walletTransaction)
+      .values({
+        walletId,
+        type: 'withdrawal',
+        amount: '10',
+        currency: 'USD',
+        status: 'pending',
+        rail: 'fiat',
+        ...overrides,
+      })
+      .returning(),
+    new Error('expected a row'),
+  );
+  return row;
 }
 
 async function balanceOf(userId: string) {
-  const [row] = await db.drizzle.db
-    .select({ amount: walletBalance.amount })
-    .from(walletBalance)
-    .innerJoin(wallet, eq(wallet.id, walletBalance.walletId))
-    .where(eq(wallet.userId, userId));
+  const row = findOneOrThrow(
+    await db.drizzle.db
+      .select({ amount: walletBalance.amount })
+      .from(walletBalance)
+      .innerJoin(wallet, eq(wallet.id, walletBalance.walletId))
+      .where(eq(wallet.userId, userId)),
+    new Error('expected a row'),
+  );
   return Number(row?.amount ?? 0);
 }
 
@@ -114,11 +124,11 @@ async function txRows(walletId: string) {
 }
 
 async function txById(id: string) {
-  const [row] = await db.drizzle.db
-    .select()
-    .from(walletTransaction)
-    .where(eq(walletTransaction.id, id));
-  return row!;
+  const row = findOneOrThrow(
+    await db.drizzle.db.select().from(walletTransaction).where(eq(walletTransaction.id, id)),
+    new Error('expected a row'),
+  );
+  return row;
 }
 
 const emittedTopics = (events: ReturnType<typeof makeEventBus>) =>

@@ -1,7 +1,7 @@
 import { describe, it, expect, vi, beforeAll, afterAll, beforeEach } from 'vitest';
 import { randomUUID } from 'node:crypto';
 import { sql } from 'drizzle-orm';
-import { RedisRateLimiter } from '@openora/core/server';
+import { findOneOrThrow, RedisRateLimiter } from '@openora/core/server';
 import { createTestDb, createTestRedis, type TestDb, type TestRedis } from '@openora/core/testing';
 import { migrate as migrateProfile } from '@openora/core/pam/migrate/profile';
 import type { PaymentAdapter, AuditWritePort } from '@openora/core/contracts';
@@ -30,14 +30,17 @@ const makeService = () =>
   });
 
 async function seedWallet() {
-  const [row] = await db.drizzle.db
-    .insert(wallet)
-    .values({ userId: randomUUID(), balance: '1000', currency: 'USD' })
-    .returning();
+  const row = findOneOrThrow(
+    await db.drizzle.db
+      .insert(wallet)
+      .values({ userId: randomUUID(), balance: '1000', currency: 'USD' })
+      .returning(),
+    new Error('expected a row'),
+  );
   await db.drizzle.db
     .insert(walletBalance)
-    .values({ walletId: row!.id, currency: row!.currency, amount: row!.balance });
-  return row!;
+    .values({ walletId: row.id, currency: row.currency, amount: row.balance });
+  return row;
 }
 
 beforeAll(async () => {

@@ -1,4 +1,5 @@
 import { describe, it, expect, vi, beforeAll, afterAll, beforeEach } from 'vitest';
+import { findOneOrThrow } from '@openora/core/server';
 import { randomUUID } from 'node:crypto';
 import { eq, sql } from 'drizzle-orm';
 import type { PlayEligibilityPort } from '@openora/core/contracts';
@@ -19,22 +20,28 @@ const eligibility = (isRestricted: boolean) =>
 const svc = new WalletCommandsService(eligibility(false));
 
 async function seedWallet(overrides: Partial<typeof wallet.$inferInsert> = {}) {
-  const [row] = await db.drizzle.db
-    .insert(wallet)
-    .values({ userId: randomUUID(), balance: '0', currency: 'USD', ...overrides })
-    .returning();
+  const row = findOneOrThrow(
+    await db.drizzle.db
+      .insert(wallet)
+      .values({ userId: randomUUID(), balance: '0', currency: 'USD', ...overrides })
+      .returning(),
+    new Error('expected a row'),
+  );
   await db.drizzle.db
     .insert(walletBalance)
-    .values({ walletId: row!.id, currency: row!.currency, amount: row!.balance });
-  return row!;
+    .values({ walletId: row.id, currency: row.currency, amount: row.balance });
+  return row;
 }
 
 async function balanceOf(userId: string) {
-  const [row] = await db.drizzle.db
-    .select({ amount: walletBalance.amount })
-    .from(walletBalance)
-    .innerJoin(wallet, eq(wallet.id, walletBalance.walletId))
-    .where(eq(wallet.userId, userId));
+  const row = findOneOrThrow(
+    await db.drizzle.db
+      .select({ amount: walletBalance.amount })
+      .from(walletBalance)
+      .innerJoin(wallet, eq(wallet.id, walletBalance.walletId))
+      .where(eq(wallet.userId, userId)),
+    new Error('expected a row'),
+  );
   return Number(row?.amount ?? 0);
 }
 
@@ -205,8 +212,8 @@ describe('WalletCommandsService.credit (real PG)', () => {
     });
 
     expect(res).toEqual({ ok: false, reason: 'wallet not found' });
-    const [row] = await db.drizzle.db.select().from(wallet).where(eq(wallet.userId, userId));
-    expect(row).toBeUndefined();
+    const rows = await db.drizzle.db.select().from(wallet).where(eq(wallet.userId, userId));
+    expect(rows).toEqual([]);
   });
 
   it('rejects a non-positive credit', async () => {

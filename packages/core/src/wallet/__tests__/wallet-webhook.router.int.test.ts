@@ -1,4 +1,5 @@
 import { describe, it, expect, vi, beforeAll, afterAll, beforeEach } from 'vitest';
+import { findOneOrThrow } from '@openora/core/server';
 import { randomUUID } from 'node:crypto';
 import { eq } from 'drizzle-orm';
 import { call, ORPCError } from '@orpc/server';
@@ -70,14 +71,17 @@ function ctx(rawBody: string, headers: Record<string, string> = {}) {
 }
 
 async function seedWallet(currency = 'BTC') {
-  const [row] = await db.drizzle.db
-    .insert(wallet)
-    .values({ userId: USER_ID, balance: '0', currency })
-    .returning();
+  const row = findOneOrThrow(
+    await db.drizzle.db
+      .insert(wallet)
+      .values({ userId: USER_ID, balance: '0', currency })
+      .returning(),
+    new Error('expected a row'),
+  );
   await db.drizzle.db
     .insert(walletBalance)
-    .values({ walletId: row!.id, currency: row!.currency, amount: row!.balance });
-  return row!;
+    .values({ walletId: row.id, currency: row.currency, amount: row.balance });
+  return row;
 }
 
 async function seedDepositAddress(currency = 'BTC') {
@@ -90,19 +94,22 @@ async function seedDepositAddress(currency = 'BTC') {
 }
 
 async function seedProcessingWithdrawal(walletId: string, externalId: string) {
-  const [row] = await db.drizzle.db
-    .insert(walletTransaction)
-    .values({
-      walletId,
-      type: 'withdrawal',
-      amount: '1',
-      currency: 'BTC',
-      status: 'processing',
-      rail: 'crypto',
-      providerRefId: externalId,
-    })
-    .returning();
-  return row!;
+  const row = findOneOrThrow(
+    await db.drizzle.db
+      .insert(walletTransaction)
+      .values({
+        walletId,
+        type: 'withdrawal',
+        amount: '1',
+        currency: 'BTC',
+        status: 'processing',
+        rail: 'crypto',
+        providerRefId: externalId,
+      })
+      .returning(),
+    new Error('expected a row'),
+  );
+  return row;
 }
 
 async function ledgerFor(walletId: string) {
