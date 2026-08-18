@@ -1,4 +1,5 @@
 import { describe, it, expect, vi, beforeAll, afterAll, beforeEach } from 'vitest';
+import { findOneOrThrow } from '@openora/core/server';
 import { randomUUID } from 'node:crypto';
 import { eq } from 'drizzle-orm';
 import { call, ORPCError } from '@orpc/server';
@@ -18,7 +19,7 @@ import {
   makeAuditWriter,
 } from '../../testing/mock.js';
 import { migrate } from '../migrate.js';
-import { wallet, walletTransaction, walletDepositAddress } from '../schema/index.js';
+import { wallet, walletBalance, walletTransaction, walletDepositAddress } from '../schema/index.js';
 import { createWalletRouter } from '../router/index.js';
 import { WalletService } from '../service/wallet.service.js';
 
@@ -38,6 +39,7 @@ afterAll(async () => {
 beforeEach(async () => {
   await db.drizzle.db.delete(walletTransaction);
   await db.drizzle.db.delete(walletDepositAddress);
+  await db.drizzle.db.delete(walletBalance);
   await db.drizzle.db.delete(wallet);
 });
 
@@ -69,11 +71,17 @@ function ctx(rawBody: string, headers: Record<string, string> = {}) {
 }
 
 async function seedWallet(currency = 'BTC') {
-  const [row] = await db.drizzle.db
-    .insert(wallet)
-    .values({ userId: USER_ID, balance: '0', currency })
-    .returning();
-  return row!;
+  const row = findOneOrThrow(
+    await db.drizzle.db
+      .insert(wallet)
+      .values({ userId: USER_ID, balance: '0', currency })
+      .returning(),
+    new Error('seedWallet: query returned no row'),
+  );
+  await db.drizzle.db
+    .insert(walletBalance)
+    .values({ walletId: row.id, currency: row.currency, amount: row.balance });
+  return row;
 }
 
 async function seedDepositAddress(currency = 'BTC') {
@@ -86,19 +94,22 @@ async function seedDepositAddress(currency = 'BTC') {
 }
 
 async function seedProcessingWithdrawal(walletId: string, externalId: string) {
-  const [row] = await db.drizzle.db
-    .insert(walletTransaction)
-    .values({
-      walletId,
-      type: 'withdrawal',
-      amount: '1',
-      currency: 'BTC',
-      status: 'processing',
-      rail: 'crypto',
-      providerRefId: externalId,
-    })
-    .returning();
-  return row!;
+  const row = findOneOrThrow(
+    await db.drizzle.db
+      .insert(walletTransaction)
+      .values({
+        walletId,
+        type: 'withdrawal',
+        amount: '1',
+        currency: 'BTC',
+        status: 'processing',
+        rail: 'crypto',
+        providerRefId: externalId,
+      })
+      .returning(),
+    new Error('seedProcessingWithdrawal: query returned no row'),
+  );
+  return row;
 }
 
 async function ledgerFor(walletId: string) {
@@ -158,8 +169,11 @@ describe('wallet webhook route (M2M, no admin session)', () => {
       providerRefId: 'vendor-ext-1',
       txHash: '0xabc',
     });
-    const [credited] = await db.drizzle.db.select().from(wallet).where(eq(wallet.id, w.id));
-    expect(credited?.balance).toBe('0.500000000000000000');
+    const [credited] = await db.drizzle.db
+      .select()
+      .from(walletBalance)
+      .where(eq(walletBalance.walletId, w.id));
+    expect(credited?.amount).toBe('0.500000000000000000');
   });
 
   it('credits a replayed deposit event exactly once', async () => {
@@ -171,8 +185,11 @@ describe('wallet webhook route (M2M, no admin session)', () => {
     await call(router.webhook, {}, ctx('{"event":"deposit"}'));
 
     expect(await ledgerFor(w.id)).toHaveLength(1);
-    const [credited] = await db.drizzle.db.select().from(wallet).where(eq(wallet.id, w.id));
-    expect(credited?.balance).toBe('0.500000000000000000');
+    const [credited] = await db.drizzle.db
+      .select()
+      .from(walletBalance)
+      .where(eq(walletBalance.walletId, w.id));
+    expect(credited?.amount).toBe('0.500000000000000000');
   });
 
   it('settles the matching withdrawal on a verified withdrawal event', async () => {

@@ -1,4 +1,5 @@
 import { describe, it, expect, vi, beforeAll, afterAll, beforeEach } from 'vitest';
+import { findOneOrThrow } from '@openora/core/server';
 import { randomUUID } from 'node:crypto';
 import { eq, sql } from 'drizzle-orm';
 import type {
@@ -25,6 +26,7 @@ import {
 import { migrate } from '../migrate.js';
 import {
   wallet,
+  walletBalance,
   walletTransaction,
   autoWithdrawalRule,
   walletAutoWithdrawalConfig,
@@ -125,19 +127,25 @@ async function makeService({
 }
 
 async function seedWallet(overrides: Partial<typeof wallet.$inferInsert> = {}) {
-  const [row] = await db.drizzle.db
-    .insert(wallet)
-    .values({ userId: randomUUID(), balance: '100000', currency: 'USD', ...overrides })
-    .returning();
-  return row!;
+  const row = findOneOrThrow(
+    await db.drizzle.db
+      .insert(wallet)
+      .values({ userId: randomUUID(), balance: '100000', currency: 'USD', ...overrides })
+      .returning(),
+    new Error('seedWallet: query returned no row'),
+  );
+  await db.drizzle.db
+    .insert(walletBalance)
+    .values({ walletId: row.id, currency: row.currency, amount: row.balance });
+  return row;
 }
 
 async function txById(id: string) {
-  const [row] = await db.drizzle.db
-    .select()
-    .from(walletTransaction)
-    .where(eq(walletTransaction.id, id));
-  return row!;
+  const row = findOneOrThrow(
+    await db.drizzle.db.select().from(walletTransaction).where(eq(walletTransaction.id, id)),
+    new Error('txById: query returned no row'),
+  );
+  return row;
 }
 
 beforeAll(async () => {
@@ -231,8 +239,11 @@ describe('WalletService.withdraw auto-approval (real PG)', () => {
     });
 
     expect(result.status).toBe('pending');
-    const [row] = await db.drizzle.db.select().from(wallet).where(eq(wallet.id, w.id));
-    expect(Number(row?.balance)).toBe(60);
+    const row = findOneOrThrow(
+      await db.drizzle.db.select().from(walletBalance).where(eq(walletBalance.walletId, w.id)),
+      new Error('no wallet_balance row'),
+    );
+    expect(Number(row.amount)).toBe(60);
   });
 
   it('stays pending when the amount exceeds the configured threshold', async () => {

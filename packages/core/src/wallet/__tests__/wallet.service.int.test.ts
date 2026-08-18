@@ -1,4 +1,5 @@
 import { describe, it, expect, vi, beforeAll, afterAll, beforeEach } from 'vitest';
+import { findOneOrThrow } from '@openora/core/server';
 import { randomUUID } from 'node:crypto';
 import { eq, sql } from 'drizzle-orm';
 import type {
@@ -17,7 +18,7 @@ import {
   makeAuditWriter,
 } from '../../testing/mock.js';
 import { migrate } from '../migrate.js';
-import { wallet, walletTransaction, walletDepositAddress } from '../schema/index.js';
+import { wallet, walletBalance, walletTransaction, walletDepositAddress } from '../schema/index.js';
 import {
   WalletService,
   type WalletServiceDeps,
@@ -68,35 +69,48 @@ function makeDirectory(summaries: AdminPlayerSummary[]) {
 }
 
 async function seedWallet(overrides: Partial<typeof wallet.$inferInsert> = {}) {
-  const [row] = await db.drizzle.db
-    .insert(wallet)
-    .values({ userId: randomUUID(), balance: '0', currency: 'USD', ...overrides })
-    .returning();
-  return row!;
+  const row = findOneOrThrow(
+    await db.drizzle.db
+      .insert(wallet)
+      .values({ userId: randomUUID(), balance: '0', currency: 'USD', ...overrides })
+      .returning(),
+    new Error('seedWallet: query returned no row'),
+  );
+  await db.drizzle.db
+    .insert(walletBalance)
+    .values({ walletId: row.id, currency: row.currency, amount: row.balance });
+  return row;
 }
 
 async function seedTx(
   walletId: string,
   overrides: Partial<typeof walletTransaction.$inferInsert> = {},
 ) {
-  const [row] = await db.drizzle.db
-    .insert(walletTransaction)
-    .values({
-      walletId,
-      type: 'withdrawal',
-      amount: '10',
-      currency: 'USD',
-      status: 'pending',
-      rail: 'fiat',
-      ...overrides,
-    })
-    .returning();
-  return row!;
+  const row = findOneOrThrow(
+    await db.drizzle.db
+      .insert(walletTransaction)
+      .values({
+        walletId,
+        type: 'withdrawal',
+        amount: '10',
+        currency: 'USD',
+        status: 'pending',
+        rail: 'fiat',
+        ...overrides,
+      })
+      .returning(),
+    new Error('seedTx: query returned no row'),
+  );
+  return row;
 }
 
 async function balanceOf(userId: string) {
-  const [row] = await db.drizzle.db.select().from(wallet).where(eq(wallet.userId, userId));
-  return Number(row?.balance);
+  const [row] = await db.drizzle.db
+    .select({ amount: walletBalance.amount })
+    .from(walletBalance)
+    .innerJoin(wallet, eq(wallet.id, walletBalance.walletId))
+    .where(eq(wallet.userId, userId));
+  return Number(row?.amount ?? 0);
 }
 
 async function txRows(walletId: string) {
@@ -107,11 +121,11 @@ async function txRows(walletId: string) {
 }
 
 async function txById(id: string) {
-  const [row] = await db.drizzle.db
-    .select()
-    .from(walletTransaction)
-    .where(eq(walletTransaction.id, id));
-  return row!;
+  const row = findOneOrThrow(
+    await db.drizzle.db.select().from(walletTransaction).where(eq(walletTransaction.id, id)),
+    new Error('txById: query returned no row'),
+  );
+  return row;
 }
 
 const emittedTopics = (events: ReturnType<typeof makeEventBus>) =>
@@ -181,6 +195,20 @@ describe('WalletService.deposit (real PG)', () => {
     await svc.deposit({ userId: w.userId, amount: '0.25', currency: 'USD' });
 
     expect(await balanceOf(w.userId)).toBe(11);
+  });
+
+  it('credits the wallet currency row when the deposit currency differs only in case', async () => {
+    const { svc } = makeService();
+    const w = await seedWallet({ balance: '10', currency: 'USD' });
+
+    await svc.deposit({ userId: w.userId, amount: '5', currency: 'usd' });
+
+    const rows = await db.drizzle.db
+      .select()
+      .from(walletBalance)
+      .where(eq(walletBalance.walletId, w.id));
+    expect(rows).toHaveLength(1);
+    expect(await balanceOf(w.userId)).toBe(15);
   });
 
   it('throws CurrencyMismatchError when the deposit currency differs from the wallet, without calling the PSP or crediting the balance', async () => {

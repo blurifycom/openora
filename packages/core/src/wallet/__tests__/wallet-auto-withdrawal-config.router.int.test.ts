@@ -1,4 +1,5 @@
 import { describe, it, expect, vi, beforeAll, afterAll, beforeEach } from 'vitest';
+import { findOneOrThrow } from '@openora/core/server';
 import { randomUUID } from 'node:crypto';
 import { call, ORPCError } from '@orpc/server';
 import type { AdminGuard } from '@openora/core/server';
@@ -22,7 +23,12 @@ import {
   NO_CLIENT_META,
 } from '../../testing/mock.js';
 import { migrate } from '../migrate.js';
-import { wallet, walletTransaction, walletAutoWithdrawalConfig } from '../schema/index.js';
+import {
+  wallet,
+  walletBalance,
+  walletTransaction,
+  walletAutoWithdrawalConfig,
+} from '../schema/index.js';
 import { createWalletRouter } from '../router/index.js';
 import { WalletService } from '../service/wallet.service.js';
 
@@ -109,11 +115,17 @@ function routerWith(adminGuard: AdminGuard, platformConfig?: Partial<PlatformCon
 }
 
 async function seedPlayerWallet(overrides: Partial<typeof wallet.$inferInsert> = {}) {
-  const [row] = await db.drizzle.db
-    .insert(wallet)
-    .values({ userId: randomUUID(), balance: '100000', currency: 'USD', ...overrides })
-    .returning();
-  return row!;
+  const row = findOneOrThrow(
+    await db.drizzle.db
+      .insert(wallet)
+      .values({ userId: randomUUID(), balance: '100000', currency: 'USD', ...overrides })
+      .returning(),
+    new Error('seedPlayerWallet: query returned no row'),
+  );
+  await db.drizzle.db
+    .insert(walletBalance)
+    .values({ walletId: row.id, currency: row.currency, amount: row.balance });
+  return row;
 }
 
 describe('wallet auto-withdrawal-config routes', () => {
