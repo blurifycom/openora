@@ -66,17 +66,8 @@ export const FriendRequestRefusedError = makeConflictError(
   'This friend request was refused',
 );
 
-// No active, accepted friendship exists for the pair - thrown by removeFriend (a
-// direct user action) only. dissolveFriendshipOnBlock silently no-ops instead: it
-// runs from an event handler, not a user action, so "not friends" is a normal case.
 export const FriendshipNotFoundError = makeNotFoundError('Friendship');
 
-// Thrown by accept/decline/cancel (BF-426, Requests tab) when the friendshipId
-// doesn't exist, is no longer pending (already accepted/refused/removed), or the
-// caller isn't the party entitled to act on it (wrong side of the request) - all
-// collapsed into a single NOT_FOUND, matching this file's "don't disclose" policy for
-// FriendRequestTargetNotFoundError/FriendRequestUnavailableError: a caller can never
-// distinguish "doesn't exist" from "not yours to act on".
 export const FriendRequestNotFoundError = makeNotFoundError('FriendRequest');
 
 // Postgres unique-violation. friendship has exactly one unique index
@@ -124,15 +115,6 @@ export class SocialService {
     private readonly identityReader: IdentityReader,
   ) {}
 
-  /**
-   * Sends a friend request from `callerId` to `targetUserId`. The insert is
-   * attempted directly against the canonical-pair unique index (no pre-SELECT,
-   * avoiding a TOCTOU race); a unique-violation means a row for this pair already
-   * exists, which is resolved by re-reading it - including the mutual/simultaneous
-   * case where the existing row was already addressed TO the caller, which
-   * auto-accepts instead of conflicting. Events are emitted strictly after the
-   * mutating statement/transaction has committed.
-   */
   async sendFriendRequest(callerId: Uuid, targetUserId: Uuid): Promise<Friendship> {
     if (targetUserId === callerId) {
       throw new SelfFriendRequestError();
@@ -205,12 +187,6 @@ export class SocialService {
     return toFriendshipDto(accepted);
   }
 
-  /**
-   * Re-reads the row a unique-violation on `friendship_pair_key` proved already
-   * exists and resolves it: already accepted -> conflict, same-direction duplicate
-   * -> conflict, opposite-direction (mutual/simultaneous request) -> auto-accept.
-   * `FOR UPDATE` serializes this against a concurrent resolution of the same pair.
-   */
   private async resolveExistingPair(callerId: Uuid, targetUserId: Uuid): Promise<FriendshipRow> {
     return this.drizzle.db.transaction(async (tx) => {
       const rows = await tx
@@ -506,14 +482,6 @@ export class SocialService {
     return { items, total: Number(countRows[0]?.n ?? 0), page, limit };
   }
 
-  /**
-   * Accepts a pending incoming request (BF-426, Requests tab). The UPDATE's WHERE
-   * clause is the atomic guard - it only matches a row that is still pending AND
-   * addressed to the caller, so a wrong-caller or already-resolved request always
-   * returns zero rows rather than racing a separate SELECT. Emits the SAME
-   * social.friend_request.accepted event sendFriendRequest's mutual-auto-accept path
-   * emits, so the requester gets the existing accepted-notification wiring for free.
-   */
   async acceptFriendRequest(callerId: Uuid, friendshipId: Uuid): Promise<Friendship> {
     const rows = await this.drizzle.db
       .update(friendship)
@@ -553,13 +521,6 @@ export class SocialService {
     return toFriendshipDto(updated);
   }
 
-  /**
-   * Declines a pending incoming request (BF-426, Requests tab): sets refusedAt,
-   * NEVER removedAt (see friendship_removed_excludes_refused_key) - refusal is a
-   * permanent block on re-requesting the pair, so this row must never become
-   * eligible for re-friending. Emits an audit-only event; deliberately NOT the same
-   * event a notification handler subscribes to, so the requester is never notified.
-   */
   async declineFriendRequest(callerId: Uuid, friendshipId: Uuid): Promise<void> {
     const rows = await this.drizzle.db
       .update(friendship)
@@ -586,13 +547,6 @@ export class SocialService {
     });
   }
 
-  /**
-   * Cancels a pending outgoing request (BF-426, Requests tab): sets removedAt,
-   * NEVER refusedAt, so the row drops out of the partial pair index (WHERE removedAt
-   * IS NULL) and the pair becomes re-requestable - unlike a decline, a cancel is not
-   * a permanent block. Emits an audit-only event; deliberately NOT the same event a
-   * notification handler subscribes to, so the recipient is never notified.
-   */
   async cancelFriendRequest(callerId: Uuid, friendshipId: Uuid): Promise<void> {
     const rows = await this.drizzle.db
       .update(friendship)
@@ -619,13 +573,6 @@ export class SocialService {
     });
   }
 
-  /**
-   * Requests-tab listing (BF-426): pending (never decided) rows on one side of the
-   * pair for `callerId`, newest first. `direction: 'incoming'` additionally resolves
-   * a per-row mutual-friends count via ONE batched query for the whole page
-   * (getMutualFriendsCounts) - never one query per row
-   * (oss-module-shape/no-unbounded-db-fanout).
-   */
   async listFriendRequests(
     callerId: Uuid,
     { direction, page, limit }: { direction: FriendRequestDirection; page: number; limit: number },
@@ -704,22 +651,6 @@ export class SocialService {
     return { items, total: Number(countRows[0]?.n ?? 0), page, limit };
   }
 
-  /**
-   * Batched mutual-friends count across a whole page of incoming-request senders, in
-   * ONE query rather than one per row. Two derived tables (NOT a raw self-join
-   * expression repeated in both the SELECT list and GROUP BY - Postgres treats each
-   * occurrence of a parameterized CASE as a distinct expression and refuses to group
-   * by it, see 42803): `callerFriends` reduces the caller's own accepted, non-removed
-   * friendship rows to the friend's userId; `requesterFriends` reduces the accepted,
-   * non-removed friendship rows of any requester in `requesterIds` to (that
-   * requester's userId, their friend's userId). Joining the two derived tables on
-   * "the friend" and grouping by the derived table's own output COLUMN (a plain
-   * reference, not a re-embedded expression) is what Postgres can validate. A
-   * requester who is ALSO in `requesterIds` and friends with another page-requester is
-   * attributed to only one side of that pair - both are pending requesters (not yet
-   * the caller's friends), so this never affects the caller-mutual count itself, only
-   * a shared-with-each-other tally this feature doesn't need.
-   */
   private async getMutualFriendsCounts(
     callerId: Uuid,
     requesterIds: readonly Uuid[],

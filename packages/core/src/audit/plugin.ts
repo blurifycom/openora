@@ -419,11 +419,6 @@ export async function mapEventToRecord(
     };
   }
 
-  // A friendship was dissolved - either the player removed it, or blocking the
-  // other party implicitly dissolved it (reason carries which). actorPlayerId is
-  // the resolved player.id, null when the caller has no player row - attribute to
-  // the caller's own userId instead of mislabeling a non-player actor as 'player'
-  // (same fix as identity.user.login et al., PR #67).
   if (topic === 'social.friendship.removed') {
     const actorPlayerId = p['actorPlayerId'];
     return {

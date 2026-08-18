@@ -36,11 +36,6 @@ export const friendship = pgTable(
     removedAt: timestamp({ withTimezone: true }),
   },
   (t) => [
-    // Canonical-pair unique index: the same two users can never have two ACTIVE rows
-    // regardless of who sent the request. LEAST/GREATEST normalize the pair so
-    // (A, B) and (B, A) collide on the same index entry. Partial (removedAt IS NULL)
-    // so a removed friendship's row survives as history without blocking a fresh
-    // request for the same pair - see chatUserBlock's pair index for the same pattern.
     uniqueIndex('friendship_pair_key')
       .on(
         sql`LEAST(${t.requesterId}, ${t.addresseeId})`,
@@ -53,15 +48,6 @@ export const friendship = pgTable(
       'friendship_one_decision_key',
       sql`NOT (${t.acceptedAt} IS NOT NULL AND ${t.refusedAt} IS NOT NULL)`,
     ),
-    // A refused row can never also be soft-removed - refusal is a permanent block on
-    // re-requesting the pair (see FriendRequestRefusedError), and removedAt must never
-    // be set on a refused row (by convention, enforced here) so that permanence holds.
-    // This otherwise allows removedAt on EITHER an accepted row (existing
-    // remove-friend/dissolve-on-block flow) OR a still-pending row (never decided) -
-    // the latter is what lets SocialService.cancelFriendRequest soft-remove a pending
-    // request via the same mechanism: removedAt set, refusedAt left null, so the pair
-    // drops out of the partial unique index (WHERE removedAt IS NULL) and can be
-    // re-requested later (BF-426).
     check(
       'friendship_removed_excludes_refused_key',
       sql`NOT (${t.removedAt} IS NOT NULL AND ${t.refusedAt} IS NOT NULL)`,

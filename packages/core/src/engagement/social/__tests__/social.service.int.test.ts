@@ -694,9 +694,6 @@ describe('SocialService.declineFriendRequest (real PG)', () => {
       requesterId: requester.userId,
       addresseeId: addressee.userId,
     });
-    // notifications/plugin.ts only creates a notification off 'sent'/'accepted' -
-    // asserting neither fired is the proxy for "no notification row created" at this
-    // layer (a mocked EventBus, not the real notifications module).
     expect(events.emit).not.toHaveBeenCalledWith(
       'social.friend_request.accepted',
       expect.anything(),

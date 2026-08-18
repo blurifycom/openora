@@ -75,9 +75,6 @@ export const RemoveFriendInputSchema = z.object({
 });
 export type RemoveFriendInput = z.infer<typeof RemoveFriendInputSchema>;
 
-// Requests-tab entries (BF-426): a pending (never decided) friendship row, from the
-// caller's perspective. `direction` tells the consumer which side of the pair the
-// caller is on: incoming = caller is addresseeId, outgoing = caller is requesterId.
 export const FRIEND_REQUEST_DIRECTIONS = ['incoming', 'outgoing'] as const;
 export const FriendRequestDirectionSchema = z.enum(FRIEND_REQUEST_DIRECTIONS);
 export type FriendRequestDirection = z.infer<typeof FriendRequestDirectionSchema>;
@@ -88,9 +85,6 @@ export const ListFriendRequestsInputSchema = z.object({
 });
 export type ListFriendRequestsInput = z.infer<typeof ListFriendRequestsInputSchema>;
 
-// mutualFriendsCount is only computed for direction: 'incoming' (null for outgoing -
-// the AC doesn't require it there, and it would need a symmetric, equally-batched
-// query on demand-not-value).
 export const FriendRequestEntrySchema = z.object({
   friendshipId: UuidSchema,
   userId: UuidSchema,

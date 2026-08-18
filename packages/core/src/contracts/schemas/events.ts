@@ -469,27 +469,18 @@ export const domainEventSchemas = {
     newLevel: z.number().int(),
     actorId: UuidSchema,
   }),
-  // System-driven login rejection for a player the Backoffice blocked (status
-  // suspended/closed). No admin acted at login time - the block was set earlier; this
-  // is a failure outcome. userId = the subject player; status = the blocking status.
   'player.login_blocked': authContextBase.extend({
     userId: UuidSchema,
     playerId: UuidSchema.nullable(),
     status: PlayerStatusSchema,
   }),
 
-  // A player sent a friend request to another player (social/friends surface, BF-425).
   'social.friend_request.sent': authContextBase.extend({
     friendshipId: UuidSchema,
     requesterId: UuidSchema,
     addresseeId: UuidSchema,
     requesterDisplayName: z.string(),
   }),
-  // A pending friend request became a friendship. requesterId/addresseeId are the
-  // ORIGINAL sender/recipient of the pending request (unchanged); accepterId is
-  // whoever's action flipped it to accepted - always addresseeId for a normal
-  // accept, but can equal requesterId for the mutual/simultaneous-request
-  // auto-accept case (see social.service.ts sendFriendRequest).
   'social.friend_request.accepted': authContextBase.extend({
     friendshipId: UuidSchema,
     requesterId: UuidSchema,
@@ -497,12 +488,6 @@ export const domainEventSchemas = {
     accepterId: UuidSchema,
     accepterDisplayName: z.string(),
   }),
-  // An accepted friendship was dissolved - either the player explicitly removed the
-  // friend, or blocking them (chat.user.blocked) implicitly dissolved it.
-  // actorId = whoever's action caused the removal (raw userId); actorPlayerId is the
-  // same actor resolved to a player.id, null when the caller has no player row (see
-  // chat.user.blocked for the same actorId/actorPlayerId split). otherUserId = the
-  // other party.
   'social.friendship.removed': authContextBase.extend({
     friendshipId: UuidSchema,
     actorId: UuidSchema,
@@ -510,17 +495,11 @@ export const domainEventSchemas = {
     otherUserId: UuidSchema,
     reason: z.enum(['removed_by_player', 'blocked']),
   }),
-  // A pending friend request was declined by its addressee (BF-426, Requests tab).
-  // Audit-trail only - deliberately NOT subscribed to by the notifications module
-  // (the sender must not be notified of a decline).
   'social.friend_request.declined': authContextBase.extend({
     friendshipId: UuidSchema,
     requesterId: UuidSchema,
     addresseeId: UuidSchema,
   }),
-  // A pending friend request was cancelled by its requester (BF-426, Requests tab).
-  // Audit-trail only - deliberately NOT subscribed to by the notifications module
-  // (the recipient must not be notified of a cancel).
   'social.friend_request.cancelled': authContextBase.extend({
     friendshipId: UuidSchema,
     requesterId: UuidSchema,
