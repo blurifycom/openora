@@ -33,7 +33,7 @@ import {
   type ClientMeta,
   type PaginationOptions,
 } from '@openora/core/contracts';
-import { eq, asc, desc, sql, and, gte, lte, count, inArray } from 'drizzle-orm';
+import { eq, asc, desc, sql, and, gte, lte, count, inArray, isNull, or } from 'drizzle-orm';
 import { createHash } from 'node:crypto';
 import {
   wallet,
@@ -43,6 +43,7 @@ import {
   walletAutoWithdrawalConfig,
   walletDepositAddress,
   type Wallet,
+  type WalletDepositAddress,
   type WalletTransaction,
   type AutoWithdrawalRule as AutoWithdrawalRuleRow,
   type WalletAutoWithdrawalConfig as WalletAutoWithdrawalConfigRow,
@@ -98,6 +99,12 @@ export const CurrencyMismatchError = createDomainError(
   'CurrencyMismatchError',
   (requested, walletCurrency) =>
     `Currency mismatch: requested ${requested}, wallet holds ${walletCurrency}`,
+);
+
+export const AmbiguousDepositAddressError = createDomainError(
+  'AmbiguousDepositAddressError',
+  (address, network) =>
+    `Deposit address ${address} on ${network ?? 'an unknown network'} is issued to more than one user`,
 );
 
 // Crypto currencies settle on the crypto rail (Fireblocks); everything else on the
@@ -226,6 +233,22 @@ type AutoApprovalGates = Pick<
   AutoApprovalDecision,
   'threshold' | 'thresholdSource' | 'kycStatus' | 'riskTagsEvaluated' | 'effectiveExcludeTags'
 >;
+
+type DepositAddressResult = {
+  address: string;
+  currency: string;
+  network?: string;
+  tag?: string;
+};
+
+function toDepositAddressResult(row: WalletDepositAddress): DepositAddressResult {
+  return {
+    address: row.address,
+    currency: row.currency,
+    ...(row.network === null ? {} : { network: row.network }),
+    ...(row.tag === null ? {} : { tag: row.tag }),
+  };
+}
 
 function toAutoWithdrawalRuleDto(row: AutoWithdrawalRuleRow): AutoWithdrawalRule {
   return {
@@ -1517,50 +1540,56 @@ export class WalletService {
   async getOrCreateDepositAddress(
     userId: User['id'],
     currency: string,
-  ): Promise<{ address: string; currency: string }> {
-    const existing = await this.findDepositAddress(userId, currency);
+    network?: string,
+  ): Promise<DepositAddressResult> {
+    const existing = await this.findDepositAddress(userId, currency, network);
     if (existing) {
-      return { address: existing.address, currency: existing.currency };
+      return toDepositAddressResult(existing);
     }
     if (!this.payment.issueDepositAddress) {
       throw new DepositAddressUnsupportedError();
     }
-    const issued = await this.payment.issueDepositAddress(userId, currency);
+    const issued = await this.payment.issueDepositAddress(userId, currency, network);
 
     const [row] = await this.drizzle.db
       .insert(walletDepositAddress)
       .values({
         userId,
         currency,
+        network: network ?? null,
         address: issued.address,
+        tag: issued.tag ?? null,
         providerName: providerNameFor(this.resolveRail(currency)),
       })
       .onConflictDoNothing()
       .returning();
     if (row) {
-      return { address: row.address, currency: row.currency };
+      return toDepositAddressResult(row);
     }
-    const winner = await this.findDepositAddress(userId, currency);
+    const winner = await this.findDepositAddress(userId, currency, network);
     if (!winner) {
       throw new Error(
-        `wallet deposit address: idempotency conflict but no row found (userId=${userId}, currency=${currency})`,
+        `wallet deposit address: idempotency conflict but no row found (userId=${userId}, currency=${currency}, network=${network ?? 'none'})`,
       );
     }
-    return { address: winner.address, currency: winner.currency };
+    return toDepositAddressResult(winner);
   }
 
   async creditDepositByAddress(
     event: Extract<PaymentWebhookEvent, { kind: 'deposit' }>,
   ): Promise<void> {
-    const depositAddress = await this.findDepositAddressByAddress(event.address);
+    const depositAddress = await this.findDepositAddressByAddress(event);
     if (!depositAddress) {
       logger.warn(
-        { address: event.address },
+        { address: event.address, network: event.network, tag: event.tag },
         'payment webhook: no wallet_deposit_address for inbound deposit',
       );
       return;
     }
-    if (event.currency.toUpperCase() !== depositAddress.currency.toUpperCase()) {
+    if (
+      event.network === undefined &&
+      event.currency.toUpperCase() !== depositAddress.currency.toUpperCase()
+    ) {
       throw new CurrencyMismatchError(event.currency, depositAddress.currency);
     }
 
@@ -1652,21 +1681,44 @@ export class WalletService {
     return existing;
   }
 
-  private async findDepositAddress(userId: User['id'], currency: string) {
+  private async findDepositAddress(userId: User['id'], currency: string, network?: string) {
     const [row] = await this.drizzle.db
       .select()
       .from(walletDepositAddress)
       .where(
-        and(eq(walletDepositAddress.userId, userId), eq(walletDepositAddress.currency, currency)),
+        and(
+          eq(walletDepositAddress.userId, userId),
+          eq(walletDepositAddress.currency, currency),
+          network === undefined
+            ? isNull(walletDepositAddress.network)
+            : eq(walletDepositAddress.network, network),
+        ),
       );
     return row;
   }
 
-  private async findDepositAddressByAddress(address: string) {
-    const [row] = await this.drizzle.db
+  private async findDepositAddressByAddress({
+    address,
+    network,
+    tag,
+  }: Extract<PaymentWebhookEvent, { kind: 'deposit' }>) {
+    const rows = await this.drizzle.db
       .select()
       .from(walletDepositAddress)
-      .where(eq(walletDepositAddress.address, address));
-    return row;
+      .where(
+        and(
+          eq(walletDepositAddress.address, address),
+          tag === undefined ? isNull(walletDepositAddress.tag) : eq(walletDepositAddress.tag, tag),
+          network === undefined
+            ? undefined
+            : or(eq(walletDepositAddress.network, network), isNull(walletDepositAddress.network)),
+        ),
+      );
+
+    const owners = new Set(rows.map((row) => row.userId));
+    if (owners.size > 1) {
+      throw new AmbiguousDepositAddressError(address, network);
+    }
+    return rows.find((row) => row.network === network) ?? rows[0];
   }
 }

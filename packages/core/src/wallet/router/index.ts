@@ -205,14 +205,17 @@ export function createWalletRouter(
     deposits: {
       getAddress: os.deposits.getAddress.handler(({ input, context }) =>
         mapErrors({ CONFLICT: DepositAddressUnsupportedError }, () =>
-          wallet.getOrCreateDepositAddress(getUserId(context), input.currency),
+          wallet.getOrCreateDepositAddress(getUserId(context), input.currency, input.network),
         ),
       ),
     },
 
     webhook: os.webhook.handler(async ({ context }) => {
       const rawBody = context.rawBody;
-      if (rawBody === undefined || !webhookVerifier.verify(rawBody, context.request.headers)) {
+      if (
+        rawBody === undefined ||
+        !(await webhookVerifier.verify(rawBody, context.request.headers))
+      ) {
         throw new ORPCError('UNAUTHORIZED', { message: 'Invalid payment webhook signature' });
       }
       const event = paymentAdapter.parseWebhook?.(rawBody, context.request.headers);
