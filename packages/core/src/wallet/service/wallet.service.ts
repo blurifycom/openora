@@ -1701,7 +1701,6 @@ export class WalletService {
     address,
     network,
     tag,
-    currency,
   }: Extract<PaymentWebhookEvent, { kind: 'deposit' }>) {
     const rows = await this.drizzle.db
       .select()
@@ -1720,12 +1719,6 @@ export class WalletService {
     if (owners.size > 1) {
       throw new AmbiguousDepositAddressError(address, network);
     }
-    return (
-      rows.find(
-        (row) => row.network === network && row.currency.toUpperCase() === currency.toUpperCase(),
-      ) ??
-      rows.find((row) => row.network === network) ??
-      rows[0]
-    );
+    return rows.find((row) => row.network === network) ?? rows[0];
   }
 }
