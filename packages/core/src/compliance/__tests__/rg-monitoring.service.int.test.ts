@@ -28,7 +28,7 @@ async function seedDepositLimit(userId: string, amount: string, period = 'daily'
 async function seedDeposit(userId: string, amount: string, createdAt = new Date()) {
   const [walletRow] = await db.drizzle.db
     .insert(wallet)
-    .values({ userId, balance: '0', currency: 'USD' })
+    .values({ userId, currency: 'USD' })
     .onConflictDoNothing()
     .returning();
   const [existing] = await db.drizzle.db.select().from(wallet).where(eq(wallet.userId, userId));

@@ -33,13 +33,13 @@ async function seedWallet() {
   const row = findOneOrThrow(
     await db.drizzle.db
       .insert(wallet)
-      .values({ userId: randomUUID(), balance: '1000', currency: 'USD' })
+      .values({ userId: randomUUID(), currency: 'USD' })
       .returning(),
     new Error('seedWallet: query returned no row'),
   );
   await db.drizzle.db
     .insert(walletBalance)
-    .values({ walletId: row.id, currency: row.currency, amount: row.balance });
+    .values({ walletId: row.id, currency: row.currency, amount: '1000' });
   return row;
 }
 

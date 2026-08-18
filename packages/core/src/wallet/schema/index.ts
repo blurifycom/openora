@@ -37,7 +37,6 @@ export const walletRailEnum = pgEnum('wallet_rail', WALLET_RAILS);
 export const wallet = pgTable('wallet', {
   id: uuid().primaryKey().defaultRandom(),
   userId: uuid().notNull().unique('wallet_user_id_unique'),
-  balance: decimal({ precision: MONEY_PRECISION, scale: MONEY_SCALE }).notNull().default('0'),
   currency: text().notNull().default('USD'),
   updatedAt: timestamp({ withTimezone: true })
     .notNull()

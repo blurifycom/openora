@@ -72,15 +72,12 @@ function ctx(rawBody: string, headers: Record<string, string> = {}) {
 
 async function seedWallet(currency = 'BTC') {
   const row = findOneOrThrow(
-    await db.drizzle.db
-      .insert(wallet)
-      .values({ userId: USER_ID, balance: '0', currency })
-      .returning(),
+    await db.drizzle.db.insert(wallet).values({ userId: USER_ID, currency }).returning(),
     new Error('seedWallet: query returned no row'),
   );
   await db.drizzle.db
     .insert(walletBalance)
-    .values({ walletId: row.id, currency: row.currency, amount: row.balance });
+    .values({ walletId: row.id, currency: row.currency, amount: '0' });
   return row;
 }
 

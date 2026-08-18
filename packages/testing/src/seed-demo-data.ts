@@ -526,19 +526,12 @@ export async function seedDemoData(options: SeedOptions): Promise<SeedResult> {
     });
 
     const walletRow = findOneOrThrow(
-      await db
-        .insert(wallet)
-        .values({
-          userId: playerUser.id,
-          balance: String(round2(rng() * 1500)),
-          currency,
-        })
-        .returning(),
+      await db.insert(wallet).values({ userId: playerUser.id, currency }).returning(),
       new Error('seed: expected the wallet insert to return a row'),
     );
     await db
       .insert(walletBalance)
-      .values({ walletId: walletRow.id, currency, amount: walletRow.balance });
+      .values({ walletId: walletRow.id, currency, amount: String(round2(rng() * 1500)) });
 
     const deposits = 1 + Math.floor(rng() * 4);
     let depositSum = 0;

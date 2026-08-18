@@ -32,6 +32,14 @@ export function createWalletRouter(
   return os.router({
     getBalance: os.getBalance.handler(({ context }) => wallet.getBalance(getUserId(context))),
 
+    getBalances: os.getBalances.handler(({ context }) => wallet.getBalances(getUserId(context))),
+
+    setActiveCurrency: os.setActiveCurrency.handler(({ input, context }) =>
+      mapErrors({ NOT_FOUND: WalletNotFoundError }, () =>
+        wallet.setActiveCurrency(getUserId(context), input.currency),
+      ),
+    ),
+
     deposit: os.deposit.handler(({ input, context }) =>
       mapErrors({ BAD_REQUEST: CurrencyMismatchError, CONFLICT: IdempotencyKeyReuseError }, () =>
         wallet.deposit({

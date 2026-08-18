@@ -1,7 +1,7 @@
 import { describe, it, expect, vi, beforeAll, afterAll, beforeEach } from 'vitest';
 import { findOneOrThrow } from '@openora/core/server';
 import { randomUUID } from 'node:crypto';
-import { eq, sql } from 'drizzle-orm';
+import { and, eq, sql } from 'drizzle-orm';
 import type {
   AdminUserDirectory,
   PaymentAdapter,
@@ -68,17 +68,20 @@ function makeDirectory(summaries: AdminPlayerSummary[]) {
   });
 }
 
-async function seedWallet(overrides: Partial<typeof wallet.$inferInsert> = {}) {
+async function seedWallet({
+  balance = '0',
+  ...overrides
+}: Partial<typeof wallet.$inferInsert> & { balance?: string } = {}) {
   const row = findOneOrThrow(
     await db.drizzle.db
       .insert(wallet)
-      .values({ userId: randomUUID(), balance: '0', currency: 'USD', ...overrides })
+      .values({ userId: randomUUID(), currency: 'USD', ...overrides })
       .returning(),
     new Error('seedWallet: query returned no row'),
   );
   await db.drizzle.db
     .insert(walletBalance)
-    .values({ walletId: row.id, currency: row.currency, amount: row.balance });
+    .values({ walletId: row.id, currency: row.currency, amount: balance });
   return row;
 }
 
@@ -104,12 +107,19 @@ async function seedTx(
   return row;
 }
 
-async function balanceOf(userId: string) {
+async function balanceOf(userId: string, currency?: string) {
   const [row] = await db.drizzle.db
     .select({ amount: walletBalance.amount })
     .from(walletBalance)
     .innerJoin(wallet, eq(wallet.id, walletBalance.walletId))
-    .where(eq(wallet.userId, userId));
+    .where(
+      and(
+        eq(wallet.userId, userId),
+        currency
+          ? eq(walletBalance.currency, currency)
+          : eq(walletBalance.currency, wallet.currency),
+      ),
+    );
   return Number(row?.amount ?? 0);
 }
 
@@ -211,15 +221,55 @@ describe('WalletService.deposit (real PG)', () => {
     expect(await balanceOf(w.userId)).toBe(15);
   });
 
-  it('throws CurrencyMismatchError when the deposit currency differs from the wallet, without calling the PSP or crediting the balance', async () => {
-    const { svc, psp } = makeService();
+  it('credits a second currency into its own balance row, leaving the active-currency balance untouched', async () => {
+    const { svc } = makeService();
     const w = await seedWallet({ balance: '100', currency: 'USD' });
 
-    await expect(
-      svc.deposit({ userId: w.userId, amount: '10', currency: 'EUR' }),
-    ).rejects.toBeInstanceOf(CurrencyMismatchError);
-    expect(psp.processDeposit).not.toHaveBeenCalled();
-    expect(await balanceOf(w.userId)).toBe(100);
+    await svc.deposit({ userId: w.userId, amount: '10', currency: 'EUR' });
+
+    expect(await balanceOf(w.userId, 'USD')).toBe(100);
+    expect(await balanceOf(w.userId, 'EUR')).toBe(10);
+  });
+});
+
+describe('WalletService.getBalances / setActiveCurrency (real PG)', () => {
+  it('returns every held currency ordered by code alongside the active one', async () => {
+    const { svc } = makeService();
+    const w = await seedWallet({ balance: '100', currency: 'USD' });
+    await svc.deposit({ userId: w.userId, amount: '10', currency: 'EUR' });
+
+    expect(await svc.getBalances(w.userId)).toEqual({
+      activeCurrency: 'USD',
+      balances: [
+        { currency: 'EUR', balance: '10.000000000000000000' },
+        { currency: 'USD', balance: '100.000000000000000000' },
+      ],
+    });
+  });
+
+  it('reads as the default currency with no balances when the user has no wallet, matching getBalance', async () => {
+    const { svc } = makeService();
+    const userId = randomUUID();
+
+    expect(await svc.getBalances(userId)).toEqual({ activeCurrency: 'USD', balances: [] });
+    expect(await svc.getBalance(userId)).toEqual({ balance: '0', currency: 'USD' });
+  });
+
+  it('switches the active currency so getBalance reads the new one', async () => {
+    const { svc } = makeService();
+    const w = await seedWallet({ balance: '100', currency: 'USD' });
+    await svc.deposit({ userId: w.userId, amount: '10', currency: 'EUR' });
+
+    expect(await svc.setActiveCurrency(w.userId, 'EUR')).toEqual({ activeCurrency: 'EUR' });
+    expect(await svc.getBalance(w.userId)).toMatchObject({ currency: 'EUR' });
+  });
+
+  it('throws WalletNotFoundError when setting the active currency without a wallet', async () => {
+    const { svc } = makeService();
+
+    await expect(svc.setActiveCurrency(randomUUID(), 'EUR')).rejects.toBeInstanceOf(
+      WalletNotFoundError,
+    );
   });
 });
 
@@ -276,13 +326,14 @@ describe('WalletService.withdraw (real PG)', () => {
     expect(await balanceOf(w.userId)).toBe(2);
   });
 
-  it('throws CurrencyMismatchError when the request currency differs from the wallet', async () => {
+  it('throws InsufficientBalanceError when withdrawing a currency the wallet holds no balance in', async () => {
     const { svc } = makeService();
     const w = await seedWallet({ balance: '100', currency: 'USD' });
 
     await expect(
       svc.withdraw({ userId: w.userId, amount: '10', currency: 'EUR', ...NO_CLIENT_META }),
-    ).rejects.toBeInstanceOf(CurrencyMismatchError);
+    ).rejects.toBeInstanceOf(InsufficientBalanceError);
+    expect(await balanceOf(w.userId, 'USD')).toBe(100);
   });
 
   it('throws WalletNotFoundError when the user has no wallet', async () => {

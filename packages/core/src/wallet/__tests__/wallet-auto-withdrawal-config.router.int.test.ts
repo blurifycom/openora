@@ -114,17 +114,20 @@ function routerWith(adminGuard: AdminGuard, platformConfig?: Partial<PlatformCon
   return { router, audit, service };
 }
 
-async function seedPlayerWallet(overrides: Partial<typeof wallet.$inferInsert> = {}) {
+async function seedPlayerWallet({
+  balance = '100000',
+  ...overrides
+}: Partial<typeof wallet.$inferInsert> & { balance?: string } = {}) {
   const row = findOneOrThrow(
     await db.drizzle.db
       .insert(wallet)
-      .values({ userId: randomUUID(), balance: '100000', currency: 'USD', ...overrides })
+      .values({ userId: randomUUID(), currency: 'USD', ...overrides })
       .returning(),
     new Error('seedPlayerWallet: query returned no row'),
   );
   await db.drizzle.db
     .insert(walletBalance)
-    .values({ walletId: row.id, currency: row.currency, amount: row.balance });
+    .values({ walletId: row.id, currency: row.currency, amount: balance });
   return row;
 }
 

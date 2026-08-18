@@ -105,6 +105,10 @@ export const CurrencyMismatchError = createDomainError(
 // Overridable per-operator via `platformConfig.wallet.cryptoCurrencies` - see `railFor`.
 const DEFAULT_CRYPTO_CURRENCIES = new Set(['BTC', 'ETH', 'USDT', 'USDC']);
 
+// Mirrors the `wallet.currency` column default: what a player without a wallet row
+// reads as their active currency before one is created on first deposit.
+const DEFAULT_WALLET_CURRENCY = 'USD';
+
 // Per-user throttle on money mutations - guards a runaway/misbehaving client, not
 // fraud (idempotency + the ledger guard cover correctness). An overlay rebinds
 // RATE_LIMITER to change the backend, not this policy.
@@ -340,13 +344,45 @@ export class WalletService {
     const [record] = await this.drizzle.db.select().from(wallet).where(eq(wallet.userId, userId));
 
     if (!record) {
-      return { balance: '0', currency: 'USD' };
+      return { balance: '0', currency: DEFAULT_WALLET_CURRENCY };
     }
 
     return {
       balance: await readWalletBalance(this.drizzle.db, record.id, record.currency),
       currency: record.currency,
     };
+  }
+
+  async getBalances(userId: User['id']) {
+    const [record] = await this.drizzle.db.select().from(wallet).where(eq(wallet.userId, userId));
+
+    if (!record) {
+      return { activeCurrency: DEFAULT_WALLET_CURRENCY, balances: [] };
+    }
+
+    const rows = await this.drizzle.db
+      .select({ currency: walletBalance.currency, balance: walletBalance.amount })
+      .from(walletBalance)
+      .where(eq(walletBalance.walletId, record.id))
+      .orderBy(walletBalance.currency);
+
+    return { activeCurrency: record.currency, balances: rows };
+  }
+
+  // TODO: validate `currency` against a canonical supported-currency list once one
+  // exists - `platformConfig.wallet.cryptoCurrencies` classifies rails, it is not an
+  // allowlist, so today any non-empty string is accepted and persisted.
+  async setActiveCurrency(userId: User['id'], currency: string) {
+    const updated = await this.drizzle.db
+      .update(wallet)
+      .set({ currency })
+      .where(eq(wallet.userId, userId))
+      .returning({ currency: wallet.currency });
+    const record = updated[0];
+    if (!record) {
+      throw new WalletNotFoundError(userId);
+    }
+    return { activeCurrency: record.currency };
   }
 
   /**
@@ -392,13 +428,6 @@ export class WalletService {
         .where(eq(wallet.userId, userId));
     }
 
-    // Single-currency wallet: reject a mismatch BEFORE the PSP call so a wrong-currency
-    // request never charges the vendor. A brand-new wallet has no currency to mismatch
-    // against yet - it adopts this deposit's currency on insert below.
-    if (preResolvedWallet && currency.toUpperCase() !== preResolvedWallet.currency.toUpperCase()) {
-      throw new CurrencyMismatchError(currency, preResolvedWallet.currency);
-    }
-
     const psp = await this.payment.processDeposit(amount, currency, { userId, provider });
 
     const { transactionId, replayed } = await this.drizzle.db.transaction(async (txn) => {
@@ -408,15 +437,10 @@ export class WalletService {
       }
       if (!walletRecord) {
         walletRecord = findOneOrThrow(
-          await txn.insert(wallet).values({ userId, balance: '0', currency }).returning(),
+          await txn.insert(wallet).values({ userId, currency }).returning(),
           new WalletNotFoundError(userId),
         );
       }
-      // Single-currency wallet: reject a mismatch rather than coerce it onto the wrong rail.
-      if (currency.toUpperCase() !== walletRecord.currency.toUpperCase()) {
-        throw new CurrencyMismatchError(currency, walletRecord.currency);
-      }
-
       const { row, replayed } = await this.insertIdempotentTransaction(txn, {
         namespace: DEPOSIT_IDEMPOTENCY_NAMESPACE,
         walletId: walletRecord.id,
@@ -588,11 +612,6 @@ export class WalletService {
           await txn.select().from(wallet).where(eq(wallet.userId, userId)).for('update'),
           new WalletNotFoundError(userId),
         );
-        // Single-currency wallet: reject a mismatch rather than coerce it onto the wrong rail.
-        if (currency.toUpperCase() !== current.currency.toUpperCase()) {
-          throw new CurrencyMismatchError(currency, current.currency);
-        }
-
         // Replay of an already-committed key: return the original untouched. The new-key race is caught by the insert below.
         if (idempotencyKey) {
           const existing = await this.findByIdempotencyKey(
@@ -1554,12 +1573,10 @@ export class WalletService {
         walletRecord = findOneOrThrow(
           await txn
             .insert(wallet)
-            .values({ userId: depositAddress.userId, balance: '0', currency: event.currency })
+            .values({ userId: depositAddress.userId, currency: event.currency })
             .returning(),
           new WalletNotFoundError(depositAddress.userId),
         );
-      } else if (walletRecord.currency.toUpperCase() !== event.currency.toUpperCase()) {
-        throw new CurrencyMismatchError(event.currency, walletRecord.currency);
       }
 
       const [inserted] = await txn

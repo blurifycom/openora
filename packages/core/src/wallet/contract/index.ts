@@ -32,6 +32,15 @@ export const WalletBalanceSchema = z.object({
   currency: WalletCurrencyCodeSchema,
 });
 
+export const WalletBalancesSchema = z.object({
+  activeCurrency: WalletCurrencyCodeSchema,
+  balances: z.array(WalletBalanceSchema),
+});
+
+export const SetActiveCurrencyInputSchema = z.object({ currency: WalletCurrencyCodeSchema });
+
+export const ActiveCurrencySchema = z.object({ activeCurrency: WalletCurrencyCodeSchema });
+
 export const WalletTransactionSchema = z.object({
   id: UuidSchema,
   type: WalletTransactionTypeSchema,
@@ -185,6 +194,13 @@ export const DepositAddressSchema = z.object({
 
 export const walletContract = {
   getBalance: oc.route({ method: 'GET', path: '/wallet/balance' }).output(WalletBalanceSchema),
+
+  getBalances: oc.route({ method: 'GET', path: '/wallet/balances' }).output(WalletBalancesSchema),
+
+  setActiveCurrency: oc
+    .route({ method: 'PUT', path: '/wallet/active-currency' })
+    .input(SetActiveCurrencyInputSchema)
+    .output(ActiveCurrencySchema),
 
   deposit: oc
     .route({ method: 'POST', path: '/wallet/deposit' })

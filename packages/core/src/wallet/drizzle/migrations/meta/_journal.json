@@ -57,6 +57,13 @@
       "when": 1787058824349,
       "tag": "0007_bouncy_swordsman",
       "breakpoints": true
+    },
+    {
+      "idx": 8,
+      "version": "7",
+      "when": 1787059720716,
+      "tag": "0008_gorgeous_colonel_america",
+      "breakpoints": true
     }
   ]
 }
