@@ -63,9 +63,6 @@ export class ChatMuteService {
       if (roomMute) {
         throw new ChatPlayerMutedError(roomMute.expiresAt);
       }
-      if (!isPublic) {
-        return;
-      }
     }
     const [ban] = await this.drizzle.db
       .select({ id: chatPlatformBan.id, expiresAt: chatPlatformBan.expiresAt })
@@ -108,14 +105,15 @@ export class ChatMuteService {
           eq(chatMute.userId, userId),
           isNull(chatMute.liftedAt),
           roomId === null
-            ? eq(chatMute.scope, '__global')
+            ? or(
+                eq(chatMute.scope, '__global'),
+                eq(chatMute.scope, '__all_public'),
+                eq(chatMute.scope, '__all'),
+              )
             : or(
                 eq(chatMute.scope, '__all'),
-                eq(chatMute.scope, '__all_public'),
-                or(
-                  and(eq(chatMute.scope, 'room'), eq(chatMute.roomId, roomId)),
-                  and(eq(chatMute.scope, '__global'), eq(chatMute.roomId, roomId)),
-                ),
+                ...(isPublic ? [eq(chatMute.scope, '__all_public')] : []),
+                and(eq(chatMute.scope, 'room'), eq(chatMute.roomId, roomId)),
               ),
           or(isNull(chatMute.expiresAt), gt(chatMute.expiresAt, now)),
         ),

@@ -1414,6 +1414,45 @@ describe('ChatService moderation (real PG)', () => {
     );
   });
 
+  it.each(['__all_public', '__all'] as const)(
+    'enforces %s mutes on global sends',
+    async (scope) => {
+      const { svc, moderation } = makeService();
+      await moderation.mute({
+        userId: randomUUID(),
+        roomId: scope,
+        durationSeconds: 60,
+        reason: 'spam',
+        actorId: randomUUID(),
+        ...NO_CLIENT_META,
+      });
+      const [mute] = await db.drizzle.db.select().from(chatMute).limit(1);
+
+      await expect(svc.sendGlobalMessage(mute.userId, 'Muted', 'hello')).rejects.toBeInstanceOf(
+        ChatPlayerMutedError,
+      );
+    },
+  );
+
+  it('enforces an all-chat mute in private rooms', async () => {
+    const { svc, moderation } = makeService();
+    const { room } = await roomWithMember();
+    const userId = randomUUID();
+    await svc.joinRoom({ userId, joinCode: room.joinCode!, ...NO_CLIENT_META });
+    await moderation.mute({
+      userId,
+      roomId: '__all',
+      durationSeconds: 60,
+      reason: 'spam',
+      actorId: randomUUID(),
+      ...NO_CLIENT_META,
+    });
+
+    await expect(
+      svc.sendRoomMessage({ userId, username: 'Muted', roomId: room.id, content: 'hello' }),
+    ).rejects.toBeInstanceOf(ChatPlayerMutedError);
+  });
+
   it('replaces an expired private-room mute instead of reusing it', async () => {
     const { svc, room, moderatorId, memberId } = await roomWithMember();
     await db.drizzle.db.insert(chatRoomMute).values({
