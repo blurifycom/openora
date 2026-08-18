@@ -427,6 +427,7 @@ export class SocialService {
                 userId: player.userId,
                 displayName: player.displayName,
                 lastSeenAt: player.lastSeenAt,
+                status: player.status,
               })
               .from(player)
               .where(inArray(player.userId, otherUserIds)),
@@ -455,6 +456,9 @@ export class SocialService {
           { friendshipId: row.id, userId },
           'listFriends: player row missing for friend',
         );
+        return [];
+      }
+      if (targetPlayer.status === 'suspended' || targetPlayer.status === 'closed') {
         return [];
       }
       const isOnline =

@@ -605,4 +605,24 @@ describe('SocialService.listFriends (real PG)', () => {
     expect(result.items).toHaveLength(1);
     expect(result.items[0]?.userId).toBe(friend.userId);
   });
+
+  it.each(['suspended', 'closed'] as const)(
+    'drops a friend whose account is %s',
+    async (status) => {
+      const { svc } = makeService();
+      const caller = await seedPlayer({ displayName: 'Caller' });
+      const friend = await seedPlayer({ displayName: 'Friend' });
+      const unavailableFriend = await seedPlayer({ displayName: 'Unavailable' });
+      await makeFriends(svc, caller.userId, friend.userId);
+      await makeFriends(svc, caller.userId, unavailableFriend.userId);
+      await db.drizzle.db
+        .update(player)
+        .set({ status })
+        .where(eq(player.userId, unavailableFriend.userId));
+
+      const result = await svc.listFriends(caller.userId, { page: 1, limit: 20 });
+
+      expect(result.items.map((i) => i.userId)).toEqual([friend.userId]);
+    },
+  );
 });
