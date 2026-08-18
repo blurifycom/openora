@@ -15,6 +15,7 @@ import { migrate as migrateGaming } from '@openora/core/casino/migrate/gaming';
 import { game, gameRound } from '@openora/core/casino/schema/gaming';
 import { DrizzleAdminGameReporting } from '@openora/core/casino/server';
 import { BackofficeService, TransactionNotFoundError } from '../service/backoffice.service.js';
+import { AdminTransactionSchema } from '../contract/index.js';
 
 function makeUsers(over: Partial<AdminUserDirectory> = {}): AdminUserDirectory {
   return mock<AdminUserDirectory>({
@@ -68,14 +69,23 @@ function txRow(over: Partial<AdminTxRow> = {}): AdminTxRow {
 }
 
 describe('BackofficeService.listTransactions', () => {
-  it('resolves a player query to userIds and enriches rows with email', async () => {
-    const findPlayerIds = vi.fn().mockResolvedValue(['u-1']);
-    const listTransactions = vi.fn().mockResolvedValue({ rows: [txRow()], total: 1 });
-    const lookupPlayers = vi
+  it('resolves a player query to userIds and enriches rows with email and playerId', async () => {
+    const txId = randomUUID();
+    const userId = randomUUID();
+    const playerId = randomUUID();
+    const findPlayerIds = vi.fn().mockResolvedValue([userId]);
+    const listTransactions = vi
       .fn()
-      .mockResolvedValue([
-        { userId: 'u-1', username: 'alice', email: 'alice@example.com', kycStatus: 'verified' },
-      ]);
+      .mockResolvedValue({ rows: [txRow({ id: txId, userId })], total: 1 });
+    const lookupPlayers = vi.fn().mockResolvedValue([
+      {
+        playerId,
+        userId,
+        username: 'alice',
+        email: 'alice@example.com',
+        kycStatus: 'verified',
+      },
+    ]);
     const svc = new BackofficeService(
       makeUsers({ findPlayerIds, lookupPlayers }),
       makeReporting({ listTransactions }),
@@ -84,11 +94,13 @@ describe('BackofficeService.listTransactions', () => {
     );
     const res = await svc.listTransactions({ page: 1, limit: 20, player: 'alice' });
     expect(findPlayerIds).toHaveBeenCalledWith('alice');
-    expect(listTransactions).toHaveBeenCalledWith(expect.objectContaining({ userIds: ['u-1'] }));
+    expect(listTransactions).toHaveBeenCalledWith(expect.objectContaining({ userIds: [userId] }));
     expect(res.items[0]).toMatchObject({
       rail: 'fiat',
+      playerId,
       playerEmail: 'alice@example.com',
     });
+    expect(() => AdminTransactionSchema.parse(res.items[0])).not.toThrow();
   });
 
   it('uses an explicit userId directly when no player query is given', async () => {
@@ -155,7 +167,7 @@ describe('BackofficeService.listTransactions', () => {
       makePlayerActivity(),
     );
     const res = await svc.listTransactions({ page: 1, limit: 20 });
-    expect(res.items[0]).toMatchObject({ playerEmail: null });
+    expect(res.items[0]).toMatchObject({ playerId: null, playerEmail: null });
   });
 
   it('converts ISO date filters to Date for the port', async () => {
@@ -202,11 +214,16 @@ describe('BackofficeService.getTransaction', () => {
   });
 
   it('maps the detail incl. ISO reviewedAt and enriched player', async () => {
-    const lookupPlayers = vi
-      .fn()
-      .mockResolvedValue([
-        { userId: 'u-1', username: 'alice', email: 'alice@example.com', kycStatus: 'verified' },
-      ]);
+    const playerId = randomUUID();
+    const lookupPlayers = vi.fn().mockResolvedValue([
+      {
+        playerId,
+        userId: 'u-1',
+        username: 'alice',
+        email: 'alice@example.com',
+        kycStatus: 'verified',
+      },
+    ]);
     const svc = new BackofficeService(
       makeUsers({ lookupPlayers }),
       makeReporting({ getTransaction: vi.fn().mockResolvedValue(detail()) }),
@@ -218,6 +235,7 @@ describe('BackofficeService.getTransaction', () => {
       providerName: 'stripe',
       providerRefId: 'pi_1',
       reviewedAt: '2026-01-02T00:00:00.000Z',
+      playerId,
       playerEmail: 'alice@example.com',
       playerUsername: 'alice',
       playerKycStatus: 'verified',

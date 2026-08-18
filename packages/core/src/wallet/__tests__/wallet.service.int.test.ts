@@ -30,6 +30,7 @@ import {
   DepositAddressUnsupportedError,
   DestinationAddressRequiredError,
 } from '../service/wallet.service.js';
+import { WithdrawalQueueItemSchema } from '../contract/index.js';
 
 let db: TestDb;
 
@@ -701,10 +702,16 @@ describe('WalletService.rejectWithdrawal (real PG)', () => {
 });
 
 describe('WalletService.listWithdrawals (real PG)', () => {
-  it('enriches rows with username and kycStatus from the directory port', async () => {
+  it('enriches rows with username, kycStatus, and playerId from the directory port', async () => {
     const w = await seedWallet();
+    const playerId = randomUUID();
     const directory = makeDirectory([
-      { userId: w.userId, username: 'player1', kycStatus: 'verified' } as AdminPlayerSummary,
+      {
+        playerId,
+        userId: w.userId,
+        username: 'player1',
+        kycStatus: 'verified',
+      } as AdminPlayerSummary,
     ]);
     const { svc } = makeService({ directory });
     await seedTx(w.id, { amount: '10' });
@@ -714,10 +721,23 @@ describe('WalletService.listWithdrawals (real PG)', () => {
     expect(total).toBe(1);
     expect(items[0]).toMatchObject({
       userId: w.userId,
+      playerId,
       username: 'player1',
       kycStatus: 'verified',
       riskTags: [],
     });
+    expect(() => WithdrawalQueueItemSchema.parse(items[0])).not.toThrow();
+  });
+
+  it('yields playerId: null when the user has no player summary', async () => {
+    const w = await seedWallet();
+    const directory = makeDirectory([]);
+    const { svc } = makeService({ directory });
+    await seedTx(w.id, { amount: '10' });
+
+    const { items } = await svc.listWithdrawals({ page: 1, limit: 20 });
+
+    expect(items[0]).toMatchObject({ userId: w.userId, playerId: null, username: '' });
   });
 
   it('returns rows of every status when no status filter is given', async () => {

@@ -1,8 +1,8 @@
 import type { AdminUserDirectory, AdminUserListOptions, ClientMeta } from '@openora/core/contracts';
-import { KycStatusSchema, normalizeKycStatus } from '@openora/core/contracts';
+import { KycStatusSchema, normalizeKycStatus, UuidSchema } from '@openora/core/contracts';
 import { DrizzleService, pageToOffset } from '@openora/core/server';
 import type { EventBus } from '@openora/core/server';
-import { and, asc, count, desc, eq, ilike, inArray, sql } from 'drizzle-orm';
+import { asc, count, desc, eq, ilike, inArray, or, sql, and } from 'drizzle-orm';
 import { user } from './schema/index.js';
 // Read-only cross-domain read of the player/profile table via the public /schema
 // subpath (allowed per ADR-0020) so back-office lists can label players by
@@ -128,6 +128,7 @@ export class DrizzleAdminUserDirectory implements AdminUserDirectory {
     }
     const rows = await this.drizzle.db
       .select({
+        playerId: player.id,
         userId: player.userId,
         username: player.displayName,
         kycStatus: player.kycStatus,
@@ -158,6 +159,7 @@ export class DrizzleAdminUserDirectory implements AdminUserDirectory {
   async getPlayerByUsername(username: string) {
     const rows = await this.drizzle.db
       .select({
+        playerId: player.id,
         userId: player.userId,
         username: player.displayName,
         kycStatus: player.kycStatus,
@@ -182,30 +184,18 @@ export class DrizzleAdminUserDirectory implements AdminUserDirectory {
     return { ...row, kycStatus: kyc.success ? normalizeKycStatus(kyc.data) : null };
   }
 
-  // Substring search is index-backed by the pg_trgm GIN indexes on user.email and
-  // player.display_name; the 1000 cap is a safety bound on the id set, not a perf
-  // crutch - it is effectively unreachable for a real admin search term.
   async findPlayerIds(query: string, limit = 1000) {
     const term = `%${query}%`;
-    const [byEmail, byName] = await Promise.all([
-      this.drizzle.db
-        .select({ id: user.id })
-        .from(user)
-        .where(ilike(user.email, term))
-        .limit(limit),
-      this.drizzle.db
-        .select({ userId: player.userId })
-        .from(player)
-        .where(ilike(player.displayName, term))
-        .limit(limit),
-    ]);
-    const ids = new Set<string>();
-    for (const r of byEmail) {
-      ids.add(r.id);
+    const conditions = [ilike(user.email, term), ilike(player.displayName, term)];
+    if (UuidSchema.safeParse(query).success) {
+      conditions.push(eq(player.id, query), eq(player.userId, query));
     }
-    for (const r of byName) {
-      ids.add(r.userId);
-    }
-    return [...ids].slice(0, limit);
+    const rows = await this.drizzle.db
+      .selectDistinct({ id: user.id })
+      .from(user)
+      .leftJoin(player, eq(player.userId, user.id))
+      .where(or(...conditions))
+      .limit(limit);
+    return rows.map((r) => r.id);
   }
 }
