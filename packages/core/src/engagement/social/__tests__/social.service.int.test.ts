@@ -253,6 +253,24 @@ describe('SocialService.getRelationships (real PG)', () => {
     ]);
   });
 
+  it('returns none + canSendRequest true for both sides after a decline (regression: previously stuck on refused/canSendRequest:false forever)', async () => {
+    const { svc } = makeService();
+    const requester = await seedPlayer();
+    const addressee = await seedPlayer();
+    const request = await svc.sendFriendRequest(requester.userId, addressee.userId);
+    await svc.declineFriendRequest(addressee.userId, request.id);
+
+    const fromRequester = await svc.getRelationships(requester.userId, [addressee.userId]);
+    const fromAddressee = await svc.getRelationships(addressee.userId, [requester.userId]);
+
+    expect(fromRequester).toEqual([
+      { userId: addressee.userId, status: 'none', friendshipId: null, canSendRequest: true },
+    ]);
+    expect(fromAddressee).toEqual([
+      { userId: requester.userId, status: 'none', friendshipId: null, canSendRequest: true },
+    ]);
+  });
+
   it('returns unavailable for a nonexistent user', async () => {
     const { svc } = makeService();
     const caller = await seedPlayer();

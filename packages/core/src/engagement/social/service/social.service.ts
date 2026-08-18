@@ -645,16 +645,11 @@ export class SocialService {
         : Promise.resolve([]),
     ]);
     const playerByUserId = new Map(players.map((p) => [p.userId, p]));
-    // Either direction hides the pair - a blocked player never appears in the
-    // blocker's requests tab, and the blocker never appears in the blocked
-    // player's either (same policy as getRelationships).
+    // Either direction hides the pair - a blocked player never appears in requests on both sides
     const blockedCounterpartIds = new Set(
       blocks.map((b) => (b.blockerId === callerId ? b.blockedId : b.blockerId)),
     );
 
-    // Player row should always exist (players are deactivated, never hard-deleted) -
-    // a miss means an orphaned friendship row, not a normal case (same policy as
-    // listFriends above).
     const items = rows.flatMap((row) => {
       const counterpartId = direction === 'incoming' ? row.requesterId : row.addresseeId;
       const counterpartPlayer = playerByUserId.get(counterpartId);
