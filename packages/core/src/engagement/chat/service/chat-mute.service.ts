@@ -5,6 +5,8 @@ import {
   type AuditWritePort,
   type ClientMeta,
   type ChatModerationRoomId,
+  type ChatModerationEntry,
+  type ChatModerationScope,
   type Uuid,
 } from '@openora/core/contracts';
 import {
@@ -142,14 +144,21 @@ export class ChatMuteService {
     const scope =
       roomId === '__global' || roomId === '__all_public' || roomId === '__all' ? roomId : 'room';
     const concreteRoomId = scope === 'room' ? roomId : null;
-    if (concreteRoomId) {
+    if (concreteRoomId || scope === GLOBAL_CHAT_ROOM_ID) {
       const [room] = await this.drizzle.db
         .select()
         .from(chatRoom)
-        .where(and(eq(chatRoom.id, concreteRoomId), isNull(chatRoom.deletedAt)))
+        .where(
+          and(
+            concreteRoomId
+              ? eq(chatRoom.id, concreteRoomId)
+              : eq(chatRoom.slug, GLOBAL_CHAT_ROOM_ID),
+            isNull(chatRoom.deletedAt),
+          ),
+        )
         .limit(1);
       if (!room) {
-        throw new ChatRoomNotFoundError(roomId);
+        throw new ChatRoomNotFoundError(concreteRoomId ?? GLOBAL_CHAT_ROOM_ID);
       }
       if (!room.isPublic) {
         throw new ChatAdminPrivateRoomModerationError();
@@ -215,7 +224,7 @@ export class ChatMuteService {
     return { success: true } as const;
   }
 
-  async listMutes(userId?: Uuid) {
+  async listMutes(userId?: Uuid): Promise<ChatModerationEntry[]> {
     const rows = await this.drizzle.db
       .select({
         id: chatMute.id,
@@ -229,6 +238,9 @@ export class ChatMuteService {
       .from(chatMute)
       .where(and(isNull(chatMute.liftedAt), userId ? eq(chatMute.userId, userId) : undefined))
       .orderBy(desc(chatMute.createdAt));
-    return rows.map((row) => serializeRow(row, { dateFields: ['createdAt', 'expiresAt'] }));
+    return rows.map((row) => ({
+      ...serializeRow(row, { dateFields: ['createdAt', 'expiresAt'] }),
+      scope: row.scope as ChatModerationScope,
+    }));
   }
 }

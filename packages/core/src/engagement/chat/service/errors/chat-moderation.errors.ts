@@ -34,7 +34,7 @@ export class ChatPlayerBannedError extends Error {
 }
 export const ChatAdminPrivateRoomModerationError = createDomainError(
   'ChatAdminPrivateRoomModerationError',
-  () => 'Admin mutes only apply to global or public chat rooms',
+  () => 'Admin moderation only applies to global or public chat rooms',
 );
 export const ChatRoomNotMemberError = createDomainError(
   'ChatRoomNotMemberError',

@@ -14,7 +14,7 @@ import {
 import {
   CHAT_ROOM_CATEGORIES,
   CHAT_ROOM_ROLES,
-  CHAT_MODERATION_SCOPES,
+  CHAT_MODERATION_SCOPE_VALUES,
 } from '../contract/index.js';
 import { CHAT_MESSAGE_TYPES } from '@openora/core/contracts';
 import type { CommandMetadata } from '@openora/core/contracts';
@@ -22,10 +22,7 @@ import type { CommandMetadata } from '@openora/core/contracts';
 export const chatRoomRole = pgEnum('chat_room_role', CHAT_ROOM_ROLES);
 export const chatRoomCategory = pgEnum('chat_room_category', CHAT_ROOM_CATEGORIES);
 export const chatMessageType = pgEnum('chat_message_type', CHAT_MESSAGE_TYPES);
-export const chatModerationScope = pgEnum('chat_moderation_scope', [
-  ...CHAT_MODERATION_SCOPES,
-  'room',
-] as const);
+export const chatModerationScope = pgEnum('chat_moderation_scope', CHAT_MODERATION_SCOPE_VALUES);
 
 export const chatRoom = pgTable(
   'chat_room',

@@ -20,6 +20,7 @@ export type {
   ChatModerationEntry,
   ChatPlatformBan,
   ChatModerationRoomId,
+  ChatModerationScope,
 } from './chat-moderation.js';
 export { CHAT_MODERATION } from './chat-moderation.js';
 

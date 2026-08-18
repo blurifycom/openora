@@ -234,7 +234,9 @@ export class ChatRoomMembershipService {
         userAgent: userAgent ?? null,
       });
     }
-    await this.transport?.revokeClientFromChannel?.(userId, chatChannel(roomId));
+    if (removed.length > 0) {
+      await this.transport?.revokeClientFromChannel?.(userId, chatChannel(roomId));
+    }
     return { success: true } as const;
   }
 }

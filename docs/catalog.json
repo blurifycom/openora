@@ -1077,6 +1077,10 @@
       "file": "packages/core/src/engagement/chat/contract/index.ts"
     },
     {
+      "name": "ChatModerationScopeSchema",
+      "file": "packages/core/src/engagement/chat/contract/index.ts"
+    },
+    {
       "name": "ChatOnlineCountSchema",
       "file": "packages/core/src/engagement/chat/contract/index.ts"
     },

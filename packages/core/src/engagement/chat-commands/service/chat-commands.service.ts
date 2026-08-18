@@ -243,7 +243,7 @@ export class ChatCommandsService {
       const account = accountsById.get(userId);
       return account ? { userId, username: account.name ?? account.email } : null;
     });
-    return visible.filter((user): user is { userId: string; username: string } => user !== null);
+    return visible.filter((user): user is { userId: Uuid; username: string } => user !== null);
   }
 
   private async canSeeAdminUsers(viewerId: Uuid) {

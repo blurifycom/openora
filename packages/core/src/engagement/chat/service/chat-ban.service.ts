@@ -3,11 +3,13 @@ import { DrizzleService, serializeRow, withAdvisoryXactLock } from '@openora/cor
 import type {
   AuditWritePort,
   ChatModerationRoomId,
+  ChatPlatformBan,
+  ChatModerationScope,
   ClientMeta,
   RealtimeTransport,
   Uuid,
 } from '@openora/core/contracts';
-import { chatChannel } from '@openora/core/contracts';
+import { GLOBAL_CHAT_ROOM_ID, chatChannel } from '@openora/core/contracts';
 import { chatPlatformBan, chatRoom } from '../schema/index.js';
 import {
   ChatAdminPrivateRoomModerationError,
@@ -39,14 +41,21 @@ export class ChatBanService {
     const scope =
       roomId === '__global' || roomId === '__all_public' || roomId === '__all' ? roomId : 'room';
     const concreteRoomId = scope === 'room' ? roomId : null;
-    if (concreteRoomId) {
+    if (concreteRoomId || scope === GLOBAL_CHAT_ROOM_ID) {
       const [room] = await this.drizzle.db
         .select({ id: chatRoom.id, isPublic: chatRoom.isPublic })
         .from(chatRoom)
-        .where(and(eq(chatRoom.id, concreteRoomId), isNull(chatRoom.deletedAt)))
+        .where(
+          and(
+            concreteRoomId
+              ? eq(chatRoom.id, concreteRoomId)
+              : eq(chatRoom.slug, GLOBAL_CHAT_ROOM_ID),
+            isNull(chatRoom.deletedAt),
+          ),
+        )
         .limit(1);
       if (!room) {
-        throw new ChatRoomNotFoundError(concreteRoomId);
+        throw new ChatRoomNotFoundError(concreteRoomId ?? GLOBAL_CHAT_ROOM_ID);
       }
       if (!room.isPublic) {
         throw new ChatAdminPrivateRoomModerationError();
@@ -113,7 +122,16 @@ export class ChatBanService {
         ),
       ]);
     } else if (scope === '__all') {
-      await this.transport?.revokeClient?.(userId);
+      const rooms = await this.drizzle.db
+        .select({ id: chatRoom.id })
+        .from(chatRoom)
+        .where(isNull(chatRoom.deletedAt));
+      await Promise.all([
+        this.transport?.revokeClientFromChannel?.(userId, chatChannel(null)),
+        ...rooms.map(({ id }) =>
+          this.transport?.revokeClientFromChannel?.(userId, chatChannel(id)),
+        ),
+      ]);
     }
     return { success: true } as const;
   }
@@ -155,7 +173,7 @@ export class ChatBanService {
     return { success: true } as const;
   }
 
-  async listBans(userId?: Uuid) {
+  async listBans(userId?: Uuid): Promise<ChatPlatformBan[]> {
     const rows = await this.drizzle.db
       .select({
         id: chatPlatformBan.id,
@@ -176,8 +194,9 @@ export class ChatBanService {
         ),
       )
       .orderBy(desc(chatPlatformBan.createdAt));
-    return rows.map((row) =>
-      serializeRow(row, { dateFields: ['createdAt', 'liftedAt', 'bannedUntil'] }),
-    );
+    return rows.map((row) => ({
+      ...serializeRow(row, { dateFields: ['createdAt', 'liftedAt', 'bannedUntil'] }),
+      scope: row.scope as ChatModerationScope,
+    }));
   }
 }

@@ -568,7 +568,13 @@ export function createChatRouter({
         'chat-moderation',
         'moderate',
       );
-      return moderationService.ban({ ...input, actorId: userId, ip, userAgent });
+      return mapErrors(
+        {
+          NOT_FOUND: ChatRoomNotFoundError,
+          BAD_REQUEST: ChatAdminPrivateRoomModerationError,
+        },
+        () => moderationService.ban({ ...input, actorId: userId, ip, userAgent }),
+      );
     }),
 
     adminUnban: os.adminUnban.handler(async ({ input, context }) => {

@@ -206,13 +206,16 @@ export const ChatConnectionGrantSchema = z
 
 export const ChatModerationResultSchema = z.object({ success: z.literal(true) });
 export const CHAT_MODERATION_SCOPES = ['__global', '__all_public', '__all'] as const;
+export const CHAT_MODERATION_SCOPE_VALUES = [...CHAT_MODERATION_SCOPES, 'room'] as const;
+export const ChatModerationScopeSchema = z.enum(CHAT_MODERATION_SCOPE_VALUES);
+export type ChatModerationScope = z.infer<typeof ChatModerationScopeSchema>;
 export const ChatModerationRoomIdSchema = z.union([UuidSchema, z.enum(CHAT_MODERATION_SCOPES)]);
 export type ChatModerationRoomId = z.infer<typeof ChatModerationRoomIdSchema>;
 export const ChatModerationEntrySchema = z.object({
   id: UuidSchema,
   userId: UuidSchema,
   roomId: UuidSchema.nullable(),
-  scope: ChatModerationRoomIdSchema,
+  scope: ChatModerationScopeSchema,
   reason: z.string(),
   createdAt: TimestampSchema,
   expiresAt: TimestampSchema.nullable(),
@@ -225,7 +228,7 @@ export const ChatPlatformBanSchema = z.object({
   liftedAt: TimestampSchema.nullable(),
   bannedUntil: TimestampSchema.nullable(),
   roomId: UuidSchema.nullable(),
-  scope: ChatModerationRoomIdSchema,
+  scope: ChatModerationScopeSchema,
 });
 
 const AdminModerationInput = z.object({
