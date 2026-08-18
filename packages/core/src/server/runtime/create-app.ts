@@ -444,9 +444,6 @@ export async function createApp(
 
     context.auth = { userId };
 
-    // Best-effort, fire-and-forget: never blocks the request, never throws into the
-    // request path. Unbound when player-management isn't loaded (has() guard) - see
-    // PLAYER_ACTIVITY_TRACKER's binder for the write's own throttling.
     if (container.has(PLAYER_ACTIVITY_TRACKER)) {
       container
         .get(PLAYER_ACTIVITY_TRACKER)

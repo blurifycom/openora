@@ -729,6 +729,17 @@
       ]
     },
     {
+      "category": "social-commands",
+      "interface": "SocialCommands",
+      "token": "SOCIAL_COMMANDS",
+      "status": "wired",
+      "boundIn": [
+        "packages/core/src/engagement/chat/plugin.ts",
+        "packages/core/src/engagement/social/__tests__/social.plugin.int.test.ts",
+        "packages/core/src/engagement/social/plugin.ts"
+      ]
+    },
+    {
       "category": "tag-evaluation-commands",
       "interface": "TagEvaluationWithdrawalRequestedArgs",
       "token": "TAG_EVALUATION_COMMANDS",

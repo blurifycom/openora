@@ -19,8 +19,23 @@ import {
   type AdminGameReporting,
   type ChatBlockWriter,
   type SessionCommands,
+  type PlayerActivityTracker,
 } from '@openora/core/contracts';
-import { eq, ilike, count, or, and, gte, asc, desc, sql, ne, inArray, isNull } from 'drizzle-orm';
+import {
+  eq,
+  ilike,
+  count,
+  or,
+  and,
+  gte,
+  asc,
+  desc,
+  sql,
+  ne,
+  inArray,
+  isNull,
+  lt,
+} from 'drizzle-orm';
 import { player } from '@openora/core/pam/schema/profile';
 import { user } from '@openora/core/pam/schema/identity';
 import { playerTag, tag } from '@openora/core/pam/schema/tag';
@@ -36,7 +51,7 @@ function toDateKey(d: Date): string {
   return d.toISOString().slice(0, 10);
 }
 
-export class PlayerService {
+export class PlayerService implements PlayerActivityTracker {
   constructor(
     private readonly drizzle: DrizzleService,
     private readonly events: EventBus,
@@ -263,6 +278,18 @@ export class PlayerService {
     }
 
     return this.fetchOneWithTags(playerId);
+  }
+
+  async touchLastSeen(userId: Player['userId']): Promise<void> {
+    await this.drizzle.db
+      .update(player)
+      .set({ lastSeenAt: new Date() })
+      .where(
+        and(
+          eq(player.userId, userId),
+          or(isNull(player.lastSeenAt), lt(player.lastSeenAt, sql`now() - interval '1 minute'`)),
+        ),
+      );
   }
 
   async remove(playerId: Player['id'], actorId: User['id']) {

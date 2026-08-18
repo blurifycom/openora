@@ -234,3 +234,6 @@ export type {
   RainCommands,
 } from './rain-commands.js';
 export { RAIN_COMMANDS } from './rain-commands.js';
+
+export type { SocialCommands } from './social-commands.js';
+export { SOCIAL_COMMANDS } from './social-commands.js';

@@ -1,5 +1,6 @@
 import { and, count, desc, eq, inArray, isNotNull, isNull, or, sql } from 'drizzle-orm';
 import {
+  type DrizzleDb,
   type DrizzleService,
   type EventBus,
   createDomainError,
@@ -70,12 +71,6 @@ export const FriendshipNotFoundError = makeNotFoundError('Friendship');
 
 export const FriendRequestNotFoundError = makeNotFoundError('FriendRequest');
 
-// Postgres unique-violation. friendship has exactly one unique index
-// (friendship_pair_key), so any 23505 on an insert into it is unambiguous - no
-// constraint-name check needed. drizzle-orm wraps the driver error in a
-// DrizzleQueryError, so the pg error (and its `.code`) is on `.cause`, not the
-// thrown error itself - checked against a real Postgres unique-index violation
-// in social.service.int.test.ts (a mocked query builder can't catch this).
 function pgErrorCode(e: unknown): string | undefined {
   if (typeof e !== 'object' || e === null) {
     return undefined;
@@ -255,8 +250,6 @@ export class SocialService {
               eq(friendship.addresseeId, callerId),
             ),
           ),
-          // A soft-removed friendship reads as "none" (able to re-friend), not stale
-          // friends/refused state.
           isNull(friendship.removedAt),
         ),
       );
@@ -341,12 +334,13 @@ export class SocialService {
   }
 
   private async dissolveFriendship(
+    tx: DrizzleDb,
     userA: Uuid,
     userB: Uuid,
     actorId: Uuid,
     reason: 'removed_by_player' | 'blocked',
   ): Promise<FriendshipRow | undefined> {
-    const rows = await this.drizzle.db
+    const rows = await tx
       .update(friendship)
       .set({ removedAt: new Date() })
       .where(
@@ -374,6 +368,7 @@ export class SocialService {
 
   async removeFriend(callerId: Uuid, targetUserId: Uuid): Promise<void> {
     const removed = await this.dissolveFriendship(
+      this.drizzle.db,
       callerId,
       targetUserId,
       callerId,
@@ -384,8 +379,8 @@ export class SocialService {
     }
   }
 
-  async dissolveFriendshipOnBlock(blockerId: Uuid, blockedId: Uuid): Promise<void> {
-    await this.dissolveFriendship(blockerId, blockedId, blockerId, 'blocked');
+  async dissolveFriendshipOnBlock(tx: unknown, blockerId: Uuid, blockedId: Uuid): Promise<void> {
+    await this.dissolveFriendship(tx as DrizzleDb, blockerId, blockedId, blockerId, 'blocked');
   }
 
   async listFriends(
@@ -425,13 +420,10 @@ export class SocialService {
                 userId: player.userId,
                 displayName: player.displayName,
                 lastSeenAt: player.lastSeenAt,
+                status: player.status,
               })
               .from(player)
               .where(inArray(player.userId, otherUserIds)),
-            // The caller's OWN ignore state on each friend - Confluence Scenario 3
-            // requires the menu to read "Unignore" for a friend already ignored.
-            // Never the reverse direction: the other party ignoring the caller is
-            // their own state, not disclosed here.
             this.drizzle.db
               .select({ ignoredId: chatUserIgnore.ignoredId })
               .from(chatUserIgnore)
@@ -448,9 +440,7 @@ export class SocialService {
     const ignoredIds = new Set(ignores.map((i) => i.ignoredId));
 
     const now = Date.now();
-    // Player row should always exist (players are deactivated, never hard-deleted -
-    // see module-structure.md), so a miss means an orphaned friendship row, not a
-    // normal case - log it and drop the entry rather than render a blank-name row.
+
     const items = rows.flatMap((row) => {
       const userId = row.requesterId === callerId ? row.addresseeId : row.requesterId;
       const targetPlayer = playerByUserId.get(userId);
@@ -459,6 +449,9 @@ export class SocialService {
           { friendshipId: row.id, userId },
           'listFriends: player row missing for friend',
         );
+        return [];
+      }
+      if (targetPlayer.status === 'suspended' || targetPlayer.status === 'closed') {
         return [];
       }
       const isOnline =

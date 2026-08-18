@@ -8,7 +8,7 @@ import {
   EVENT_BUS,
   type CoreTokenCatalog,
 } from '@openora/core/server';
-import { IDENTITY_READER } from '@openora/core/contracts';
+import { IDENTITY_READER, SOCIAL_COMMANDS } from '@openora/core/contracts';
 import { createTestDb, type TestDb } from '@openora/core/testing';
 import { migrate as migrateChat } from '@openora/core/engagement/migrate/chat';
 import { chatUserBlock } from '@openora/core/engagement/schema/chat';
@@ -20,10 +20,6 @@ import { friendship } from '../schema/index.js';
 import { SocialService } from '../service/social.service.js';
 import socialPlugin from '../plugin.js';
 
-// Exercises the ACTUAL plugin wiring (plugin.ts's register()), not just the service
-// method - proves the 'chat.user.blocked' subscriber the plugin registers is the one
-// that resolves to SocialService.dissolveFriendshipOnBlock, with the real event
-// payload shape from domainEventSchemas.
 let db: TestDb;
 
 async function seedPlayer(overrides: Partial<typeof player.$inferInsert> = {}) {
@@ -57,12 +53,9 @@ function boot() {
   const registry = new ModuleRegistryImpl<CoreTokenCatalog>(container);
 
   socialPlugin.register(registry);
-  // Router factories run once, after every plugin has registered (create-app.ts boot
-  // order) - this is what makes socialRef non-null before any real event arrives.
   registry.routers.getAll().get('social')?.(container);
 
-  const chatUserBlockedHandlers = registry.events.getAll().get('chat.user.blocked') ?? [];
-  return { events, chatUserBlockedHandlers };
+  return { events, socialCommands: container.get(SOCIAL_COMMANDS) };
 }
 
 async function makeFriends(alice: string, bob: string) {
@@ -73,23 +66,6 @@ async function makeFriends(alice: string, bob: string) {
   return first;
 }
 
-// The plugin's handler is intentionally fire-and-forget (matches notifications/tag
-// plugin.ts's convention: `.catch(err => logger.error(...))`, never `return`ed), so
-// it does not hand back a promise the test can await - poll for the effect instead.
-async function waitUntil(
-  fn: () => Promise<boolean>,
-  { timeoutMs = 2000, intervalMs = 20 } = {},
-): Promise<void> {
-  const deadline = Date.now() + timeoutMs;
-  while (Date.now() < deadline) {
-    if (await fn()) {
-      return;
-    }
-    await new Promise((r) => setTimeout(r, intervalMs));
-  }
-  throw new Error('waitUntil: condition never became true');
-}
-
 async function getFriendshipById(id: string) {
   const [row] = await db.drizzle.db
     .select()
@@ -98,56 +74,59 @@ async function getFriendshipById(id: string) {
   return row;
 }
 
-describe('social plugin chat.user.blocked wiring', () => {
-  it('registers exactly one handler for chat.user.blocked', () => {
-    const { chatUserBlockedHandlers } = boot();
-    expect(chatUserBlockedHandlers).toHaveLength(1);
-  });
-
-  it('dissolves an active friendship when chat.user.blocked fires with the real payload shape', async () => {
-    const { chatUserBlockedHandlers } = boot();
+describe('social plugin SOCIAL_COMMANDS wiring', () => {
+  it('dissolves an active friendship on its own tx, before returning', async () => {
+    const { socialCommands } = boot();
     const alice = await seedPlayer();
     const bob = await seedPlayer();
     const friendshipRow = await makeFriends(alice.userId, bob.userId);
 
-    const handler = chatUserBlockedHandlers[0]!;
-    handler({
-      blockerId: alice.userId,
-      actorPlayerId: null,
-      blockedId: bob.userId,
-      playerId: null,
-    });
+    await db.drizzle.db.transaction((tx) =>
+      socialCommands.dissolveFriendshipOnBlock(tx, alice.userId, bob.userId),
+    );
 
-    await waitUntil(async () => (await getFriendshipById(friendshipRow.id))?.removedAt !== null);
     const row = await getFriendshipById(friendshipRow.id);
     expect(row?.removedAt).toBeInstanceOf(Date);
   });
 
   it('silently no-ops (never throws, never writes) when the pair has no active friendship', async () => {
-    const { chatUserBlockedHandlers } = boot();
+    const { socialCommands } = boot();
     const alice = await seedPlayer();
     const bob = await seedPlayer();
 
-    const handler = chatUserBlockedHandlers[0]!;
-    expect(() =>
-      handler({
-        blockerId: alice.userId,
-        actorPlayerId: null,
-        blockedId: bob.userId,
-        playerId: null,
-      }),
-    ).not.toThrow();
-
-    // Nothing to wait for (no row exists) - a short settle is enough to prove no
-    // deferred write throws/crashes the process.
-    await new Promise((r) => setTimeout(r, 50));
+    await expect(
+      db.drizzle.db.transaction((tx) =>
+        socialCommands.dissolveFriendshipOnBlock(tx, alice.userId, bob.userId),
+      ),
+    ).resolves.toBeUndefined();
     expect(await db.drizzle.db.select().from(friendship)).toHaveLength(0);
   });
 
-  it('ignores a malformed payload instead of throwing', () => {
-    const { chatUserBlockedHandlers } = boot();
-    const handler = chatUserBlockedHandlers[0]!;
+  it('still dissolves correctly when resolved before the social router is mounted', async () => {
+    const container = new Container<CoreTokenCatalog>();
+    const events = makeEventBus();
+    container.register(DRIZZLE, () => db.drizzle);
+    container.register(EVENT_BUS, () => events);
+    container.register(IDENTITY_READER, () => makeIdentityReader());
+    const registry = new ModuleRegistryImpl<CoreTokenCatalog>(container);
 
-    expect(() => handler({ nonsense: true })).not.toThrow();
+    socialPlugin.register(registry);
+    // SOCIAL_COMMANDS resolved BEFORE the social router factory runs - mirrors
+    // chat's plugin.ts resolving it in its own router factory, which may run
+    // before or after social's, depending on plugin load order. Must not freeze
+    // on a not-yet-constructed SocialService.
+    const socialCommands = container.get(SOCIAL_COMMANDS);
+    registry.routers.getAll().get('social')?.(container);
+
+    const alice = await seedPlayer();
+    const bob = await seedPlayer();
+    const friendshipRow = await makeFriends(alice.userId, bob.userId);
+
+    await db.drizzle.db.transaction((tx) =>
+      socialCommands.dissolveFriendshipOnBlock(tx, alice.userId, bob.userId),
+    );
+
+    const row = await getFriendshipById(friendshipRow.id);
+    expect(row?.removedAt).toBeInstanceOf(Date);
   });
 });

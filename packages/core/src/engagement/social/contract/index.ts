@@ -53,13 +53,6 @@ export const RelationshipSchema = z.object({
 });
 export type Relationship = z.infer<typeof RelationshipSchema>;
 
-// A friends-tab entry - the OTHER party's view, from the caller's perspective.
-// Rank badge and avatar are deliberately absent: no rank/loyalty module exists yet
-// and there is no avatar column anywhere in the platform (BF-427). isIgnored reflects
-// the CALLER's own chatUserIgnore row on this friend (Confluence Scenario 3: the
-// friend stays in the list, but the menu must toggle Ignore/Unignore) - block does
-// NOT get an equivalent flag because blocking always dissolves the friendship, so a
-// blocked user never appears in this list at all.
 export const FriendListEntrySchema = z.object({
   userId: UuidSchema,
   friendshipId: UuidSchema,

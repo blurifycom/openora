@@ -9,6 +9,7 @@ import {
   CHAT_ROOM_ACCESS,
   ADMIN_USER_DIRECTORY,
   IDENTITY_READER,
+  SOCIAL_COMMANDS,
   createToken,
   REALTIME_TRANSPORT,
   REALTIME_CLIENT_AUTHORIZER,
@@ -24,6 +25,8 @@ export default {
   register(ctx) {
     ctx.provide(CHAT_REALTIME_TRANSPORT, (c) => c.get(REALTIME_TRANSPORT));
     ctx.provide(CHAT_REALTIME_CLIENT_AUTHORIZER, (c) => c.get(REALTIME_CLIENT_AUTHORIZER));
+    // social's use of SOCIAL_COMMANDS is optional and resolved lazily here (c.has(...)),
+    // which runs after every plugin has registered - no dependsOn cycle either way.
     ctx.provide(
       CHAT_SERVICE,
       (c) =>
@@ -33,6 +36,7 @@ export default {
           c.get(CHAT_REALTIME_TRANSPORT),
           c.get(ADMIN_USER_DIRECTORY),
           c.get(IDENTITY_READER),
+          c.has(SOCIAL_COMMANDS) ? c.get(SOCIAL_COMMANDS) : undefined,
         ),
     );
     ctx.provide(CHAT_SYSTEM_WRITER, (c) => c.get(CHAT_SERVICE));

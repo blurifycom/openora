@@ -1,25 +1,6 @@
 import { sql } from 'drizzle-orm';
 import { pgTable, uuid, timestamp, uniqueIndex, index, check } from 'drizzle-orm/pg-core';
 
-// Drizzle tables owned by the Social module.
-// Rules:
-//   - Column names come from the key via the snake_case casing config - never pass
-//     an explicit string (lint: drizzle-snake-case).
-//   - Timestamps are always `withTimezone` (lint: no-naive-timestamp).
-//   - Do NOT add FK references to tables owned by another domain - reference by id.
-// One row per friendship, directional at creation (requester -> addressee) but the
-// PAIR is what must stay unique regardless of direction - the canonical-pair unique
-// index below is what makes duplicate-request and the mutual/simultaneous-request
-// race condition (see social.service.ts sendFriendRequest) safe at the DB level: an
-// INSERT is attempted directly (no pre-SELECT), and a unique-violation on the pair
-// key is caught and resolved. A request is pending while both decision timestamps
-// are null, accepted when acceptedAt is set, and refused when refusedAt is set.
-// A friendship is soft-removed (removedAt set) when either side dissolves it -
-// SocialService.removeFriend (explicit) or dissolveFriendshipOnBlock (implicit, via
-// the chat.user.blocked event) - same soft-delete pattern as chatUserBlock/
-// chatUserIgnore (see chat/schema/index.ts): the pair unique index is partial
-// (removedAt IS NULL) so re-friending after a removal inserts a fresh active row
-// instead of conflicting with the removed one.
 export const friendship = pgTable(
   'friendship',
   {
