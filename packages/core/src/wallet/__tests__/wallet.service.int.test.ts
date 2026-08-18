@@ -232,6 +232,47 @@ describe('WalletService.deposit (real PG)', () => {
   });
 });
 
+describe('WalletService.getBalances / setActiveCurrency (real PG)', () => {
+  it('returns every held currency ordered by code alongside the active one', async () => {
+    const { svc } = makeService();
+    const w = await seedWallet({ balance: '100', currency: 'USD' });
+    await svc.deposit({ userId: w.userId, amount: '10', currency: 'EUR' });
+
+    expect(await svc.getBalances(w.userId)).toEqual({
+      activeCurrency: 'USD',
+      balances: [
+        { currency: 'EUR', balance: '10.000000000000000000' },
+        { currency: 'USD', balance: '100.000000000000000000' },
+      ],
+    });
+  });
+
+  it('reads as the default currency with no balances when the user has no wallet, matching getBalance', async () => {
+    const { svc } = makeService();
+    const userId = randomUUID();
+
+    expect(await svc.getBalances(userId)).toEqual({ activeCurrency: 'USD', balances: [] });
+    expect(await svc.getBalance(userId)).toEqual({ balance: '0', currency: 'USD' });
+  });
+
+  it('switches the active currency so getBalance reads the new one', async () => {
+    const { svc } = makeService();
+    const w = await seedWallet({ balance: '100', currency: 'USD' });
+    await svc.deposit({ userId: w.userId, amount: '10', currency: 'EUR' });
+
+    expect(await svc.setActiveCurrency(w.userId, 'EUR')).toEqual({ activeCurrency: 'EUR' });
+    expect(await svc.getBalance(w.userId)).toMatchObject({ currency: 'EUR' });
+  });
+
+  it('throws WalletNotFoundError when setting the active currency without a wallet', async () => {
+    const { svc } = makeService();
+
+    await expect(svc.setActiveCurrency(randomUUID(), 'EUR')).rejects.toBeInstanceOf(
+      WalletNotFoundError,
+    );
+  });
+});
+
 describe('WalletService.withdraw (real PG)', () => {
   it('holds the funds immediately, leaves the row pending, and emits requested', async () => {
     const { svc, events } = makeService();

@@ -105,6 +105,10 @@ export const CurrencyMismatchError = createDomainError(
 // Overridable per-operator via `platformConfig.wallet.cryptoCurrencies` - see `railFor`.
 const DEFAULT_CRYPTO_CURRENCIES = new Set(['BTC', 'ETH', 'USDT', 'USDC']);
 
+// Mirrors the `wallet.currency` column default: what a player without a wallet row
+// reads as their active currency before one is created on first deposit.
+const DEFAULT_WALLET_CURRENCY = 'USD';
+
 // Per-user throttle on money mutations - guards a runaway/misbehaving client, not
 // fraud (idempotency + the ledger guard cover correctness). An overlay rebinds
 // RATE_LIMITER to change the backend, not this policy.
@@ -340,7 +344,7 @@ export class WalletService {
     const [record] = await this.drizzle.db.select().from(wallet).where(eq(wallet.userId, userId));
 
     if (!record) {
-      return { balance: '0', currency: 'USD' };
+      return { balance: '0', currency: DEFAULT_WALLET_CURRENCY };
     }
 
     return {
@@ -353,7 +357,7 @@ export class WalletService {
     const [record] = await this.drizzle.db.select().from(wallet).where(eq(wallet.userId, userId));
 
     if (!record) {
-      return { activeCurrency: 'USD', balances: [] };
+      return { activeCurrency: DEFAULT_WALLET_CURRENCY, balances: [] };
     }
 
     const rows = await this.drizzle.db
@@ -365,6 +369,9 @@ export class WalletService {
     return { activeCurrency: record.currency, balances: rows };
   }
 
+  // TODO: validate `currency` against a canonical supported-currency list once one
+  // exists - `platformConfig.wallet.cryptoCurrencies` classifies rails, it is not an
+  // allowlist, so today any non-empty string is accepted and persisted.
   async setActiveCurrency(userId: User['id'], currency: string) {
     const updated = await this.drizzle.db
       .update(wallet)
