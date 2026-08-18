@@ -924,6 +924,49 @@ describe('SocialService.listFriendRequests (real PG)', () => {
     },
   );
 
+  it.each([
+    [
+      'caller blocked the sender',
+      (callerId: string, senderId: string) => seedBlock(callerId, senderId),
+    ],
+    [
+      'sender blocked the caller',
+      (callerId: string, senderId: string) => seedBlock(senderId, callerId),
+    ],
+  ])('drops an incoming pending sender who is blocked (%s)', async (_label, seedTheBlock) => {
+    const { svc } = makeService();
+    const caller = await seedPlayer();
+    const sender = await seedPlayer({ displayName: 'Sender' });
+    const blockedSender = await seedPlayer({ displayName: 'Blocked' });
+    await svc.sendFriendRequest(sender.userId, caller.userId);
+    await svc.sendFriendRequest(blockedSender.userId, caller.userId);
+    await seedTheBlock(caller.userId, blockedSender.userId);
+
+    const result = await svc.listFriendRequests(caller.userId, {
+      direction: 'incoming',
+      page: 1,
+      limit: 20,
+    });
+
+    expect(result.items.map((i) => i.userId)).toEqual([sender.userId]);
+  });
+
+  it('drops an outgoing pending target who is blocked', async () => {
+    const { svc } = makeService();
+    const caller = await seedPlayer();
+    const target = await seedPlayer({ displayName: 'Target' });
+    await svc.sendFriendRequest(caller.userId, target.userId);
+    await seedBlock(target.userId, caller.userId);
+
+    const result = await svc.listFriendRequests(caller.userId, {
+      direction: 'outgoing',
+      page: 1,
+      limit: 20,
+    });
+
+    expect(result.items).toEqual([]);
+  });
+
   it('paginates results', async () => {
     const { svc } = makeService();
     const caller = await seedPlayer();

@@ -472,8 +472,6 @@ export class SocialService {
       throw new FriendRequestNotFoundError(friendshipId);
     }
 
-    // A block can land after the request was sent but before it's accepted -
-    // re-check both directions here, same as sendFriendRequest.
     const blocks = await this.drizzle.db
       .select({ blockerId: chatUserBlock.blockerId })
       .from(chatUserBlock)
@@ -611,7 +609,7 @@ export class SocialService {
       direction === 'incoming' ? row.requesterId : row.addresseeId,
     );
 
-    const [players, mutualCounts] = await Promise.all([
+    const [players, mutualCounts, blocks] = await Promise.all([
       counterpartIds.length > 0
         ? this.drizzle.db
             .select({
@@ -625,8 +623,34 @@ export class SocialService {
       direction === 'incoming' && counterpartIds.length > 0
         ? this.getMutualFriendsCounts(callerId, counterpartIds)
         : Promise.resolve(new Map<string, number>()),
+      counterpartIds.length > 0
+        ? this.drizzle.db
+            .select({ blockerId: chatUserBlock.blockerId, blockedId: chatUserBlock.blockedId })
+            .from(chatUserBlock)
+            .where(
+              and(
+                isNull(chatUserBlock.removedAt),
+                or(
+                  and(
+                    eq(chatUserBlock.blockerId, callerId),
+                    inArray(chatUserBlock.blockedId, counterpartIds),
+                  ),
+                  and(
+                    inArray(chatUserBlock.blockerId, counterpartIds),
+                    eq(chatUserBlock.blockedId, callerId),
+                  ),
+                ),
+              ),
+            )
+        : Promise.resolve([]),
     ]);
     const playerByUserId = new Map(players.map((p) => [p.userId, p]));
+    // Either direction hides the pair - a blocked player never appears in the
+    // blocker's requests tab, and the blocker never appears in the blocked
+    // player's either (same policy as getRelationships).
+    const blockedCounterpartIds = new Set(
+      blocks.map((b) => (b.blockerId === callerId ? b.blockedId : b.blockerId)),
+    );
 
     // Player row should always exist (players are deactivated, never hard-deleted) -
     // a miss means an orphaned friendship row, not a normal case (same policy as
@@ -642,6 +666,9 @@ export class SocialService {
         return [];
       }
       if (counterpartPlayer.status === 'suspended' || counterpartPlayer.status === 'closed') {
+        return [];
+      }
+      if (blockedCounterpartIds.has(counterpartId)) {
         return [];
       }
       return [
