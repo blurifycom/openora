@@ -117,6 +117,11 @@ export function railFor(currency: string, cryptoCurrencies?: readonly string[]):
   return set.has(currency.toUpperCase()) ? 'crypto' : 'fiat';
 }
 
+// Currency checks elsewhere are case-insensitive, so `usd` reaches here for a `USD`
+// wallet. Every read and write of wallet_balance funnels through these three helpers,
+// so normalizing the key here is enough to keep one row per wallet+currency.
+const balanceKey = (currency: string) => currency.toUpperCase();
+
 export function creditWalletBalance(
   txn: DrizzleDb,
   walletId: Wallet['id'],
@@ -125,7 +130,7 @@ export function creditWalletBalance(
 ) {
   return txn
     .insert(walletBalance)
-    .values({ walletId, currency, amount })
+    .values({ walletId, currency: balanceKey(currency), amount })
     .onConflictDoUpdate({
       target: [walletBalance.walletId, walletBalance.currency],
       set: {
@@ -148,7 +153,7 @@ export function debitWalletBalance(
     .where(
       and(
         eq(walletBalance.walletId, walletId),
-        eq(walletBalance.currency, currency),
+        eq(walletBalance.currency, balanceKey(currency)),
         gte(walletBalance.amount, amount),
       ),
     )
@@ -163,7 +168,9 @@ export async function readWalletBalance(
   const [row] = await txn
     .select({ amount: walletBalance.amount })
     .from(walletBalance)
-    .where(and(eq(walletBalance.walletId, walletId), eq(walletBalance.currency, currency)));
+    .where(
+      and(eq(walletBalance.walletId, walletId), eq(walletBalance.currency, balanceKey(currency))),
+    );
   return row?.amount ?? '0';
 }
 

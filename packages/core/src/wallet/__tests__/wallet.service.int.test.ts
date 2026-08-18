@@ -190,6 +190,20 @@ describe('WalletService.deposit (real PG)', () => {
     expect(await balanceOf(w.userId)).toBe(11);
   });
 
+  it('credits the wallet currency row when the deposit currency differs only in case', async () => {
+    const { svc } = makeService();
+    const w = await seedWallet({ balance: '10', currency: 'USD' });
+
+    await svc.deposit({ userId: w.userId, amount: '5', currency: 'usd' });
+
+    const rows = await db.drizzle.db
+      .select()
+      .from(walletBalance)
+      .where(eq(walletBalance.walletId, w.id));
+    expect(rows).toHaveLength(1);
+    expect(await balanceOf(w.userId)).toBe(15);
+  });
+
   it('throws CurrencyMismatchError when the deposit currency differs from the wallet, without calling the PSP or crediting the balance', async () => {
     const { svc, psp } = makeService();
     const w = await seedWallet({ balance: '100', currency: 'USD' });
