@@ -12,11 +12,18 @@ import { createToken, type Token } from './token.js';
  * event reports a status transition for a withdrawal already sent to the vendor via
  * `processWithdrawal`. `externalId` is the vendor's reference id for the underlying
  * settlement - the dedup key the wallet module reconciles against.
+ *
+ * A deposit carries `network` because an address does not identify a chain: an EVM vault
+ * hands out one address that is shared across every EVM chain AND every token on them, so
+ * `address` alone maps to many issued rows. Omitting it falls back to address-only lookup,
+ * which is safe only for a vendor that issues a distinct address per currency.
  */
 export type PaymentWebhookEvent =
   | {
       kind: 'deposit';
       address: string;
+      network?: string;
+      tag?: string;
       amount: string;
       currency: string;
       txHash: string;
@@ -55,10 +62,14 @@ export type PaymentAdapter = {
    * Issue (or return) a deposit address for this user/asset. Only implemented by
    * address-based deposit vendors (eg a custody/MPC crypto rail) - a synchronous PSP
    * or `MockPaymentAdapter` omits it. The wallet module persists the returned address
-   * so re-requesting the same (userId, currency) is idempotent without a second
+   * so re-requesting the same (userId, currency, network) is idempotent without a second
    * vendor call.
    */
-  issueDepositAddress?(userId: string, currency: string): Promise<{ address: string }>;
+  issueDepositAddress?(
+    userId: string,
+    currency: string,
+    network?: string,
+  ): Promise<{ address: string; tag?: string }>;
 
   /**
    * Vendor-specific normalization of a raw webhook into a reconcilable event, or
@@ -81,7 +92,10 @@ export const PAYMENT_ADAPTER: Token<PaymentAdapter> = createToken('PAYMENT_ADAPT
  * absent, or the raw body was not captured.
  */
 export type PaymentWebhookVerifier = {
-  verify(rawBody: string, headers: Record<string, string | string[] | undefined>): boolean;
+  verify(
+    rawBody: string,
+    headers: Record<string, string | string[] | undefined>,
+  ): boolean | Promise<boolean>;
 };
 
 export const PAYMENT_WEBHOOK_VERIFIER: Token<PaymentWebhookVerifier> = createToken(

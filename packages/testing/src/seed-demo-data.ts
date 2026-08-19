@@ -3,10 +3,13 @@ import { findOneOrThrow, type DrizzleDb } from '@openora/core/server';
 import { eq } from 'drizzle-orm';
 import { user } from '@openora/core/pam/schema/identity';
 import { player } from '@openora/core/pam/schema/profile';
-import { wallet, walletTransaction } from '@openora/core/wallet/schema';
+import { wallet, walletBalance, walletTransaction } from '@openora/core/wallet/schema';
 import { game } from '@openora/core/casino/schema/gaming';
 import {
   chatRoom,
+  chatRoomMember,
+  chatRoomConfiguration,
+  chatRoomRule,
   chatMessage,
   chatUserBlock,
   chatUserIgnore,
@@ -52,6 +55,18 @@ function makeRng(seed: number): () => number {
 
 function pick<T>(rng: () => number, arr: readonly T[]): T {
   return arr[Math.floor(rng() * arr.length)] as T;
+}
+
+const SEED_JOIN_CODE_ALPHABET = 'ABCDEFGHJKMNPQRSTUVWXYZ23456789';
+
+function seedJoinCode(index: number): string {
+  let value = index + 1;
+  let code = '';
+  for (let position = 0; position < 6; position += 1) {
+    code = SEED_JOIN_CODE_ALPHABET[value % SEED_JOIN_CODE_ALPHABET.length] + code;
+    value = Math.floor(value / SEED_JOIN_CODE_ALPHABET.length);
+  }
+  return code;
 }
 
 function weighted<T>(rng: () => number, table: readonly (readonly [T, number])[]): T {
@@ -216,13 +231,19 @@ const GAMES = [
 type ChatRoomSeed = {
   slug: string;
   name: string;
-  category: ChatRoomCategory;
+  category: ChatRoomCategory | null;
   isPublic?: boolean;
   joinCode?: string;
   messages: readonly string[];
 };
 
 const CHAT_ROOMS: readonly ChatRoomSeed[] = [
+  {
+    slug: '__global',
+    name: 'Global',
+    category: null,
+    messages: [],
+  },
   {
     slug: 'sports',
     name: 'Sports',
@@ -349,6 +370,21 @@ const CHAT_ROOMS: readonly ChatRoomSeed[] = [
   },
 ];
 
+const CHAT_RULES = [
+  "Don't spam & don't use excessive capital letters when chatting.",
+  "Don't harass or be offensive to other users or BetFeel staff.",
+  "Don't share any personal information (including socials) of you or other players.",
+  "Don't beg or ask for loans, rains or tips.",
+  "Don't use alternative (alts) accounts on chat, that is strictly forbidden.",
+  'No suspicious behavior that can be seen as potential scams.',
+  "Don't engage in any forms of advertising/trading/selling/buying or offering services.",
+  'No discussion of streamers or Twitch or any other similar platforms.',
+  "Don't use URL shortening services. Always submit the full link.",
+  "Don't share codes, scripts or any other bot service.",
+  'Only use the language specified in the chat channel, potential abuse will be sanctioned.',
+  'No politics & no religion talk in chat, this one is strictly forbidden.',
+] as const;
+
 // Global chat (roomId: null) - authored by random seeded players, oldest first.
 const GLOBAL_CHAT = [
   'Good luck everyone! 🍀',
@@ -379,6 +415,7 @@ export async function seedDemoData(options: SeedOptions): Promise<SeedResult> {
   await db.delete(chatMessage);
   await db.delete(chatRoom);
   await db.delete(walletTransaction);
+  await db.delete(walletBalance);
   await db.delete(wallet);
   await db.delete(player);
   await db.delete(game);
@@ -394,6 +431,20 @@ export async function seedDemoData(options: SeedOptions): Promise<SeedResult> {
     log(`Admin ready: ${admin.email} / ${admin.password}`);
   }
 
+  const moderator = {
+    email: 'moderator@oss.dev',
+    password: 'password123',
+    name: 'Chat Moderator',
+  };
+  const moderatorUser = await ensureUser(db, auth, {
+    ...moderator,
+    role: 'admin',
+    isActive: true,
+  });
+  if (moderatorUser) {
+    log(`Chat moderator ready: ${moderator.email} / ${moderator.password}`);
+  }
+
   await db.insert(game).values(
     GAMES.map(([name, provider, category]) => ({
       name,
@@ -405,6 +456,9 @@ export async function seedDemoData(options: SeedOptions): Promise<SeedResult> {
   log(`Created ${GAMES.length} games.`);
 
   let userCount = adminUser ? 1 : 0;
+  if (moderatorUser && moderatorUser.id !== adminUser?.id) {
+    userCount += 1;
+  }
   let txCount = 0;
   const now = Date.now();
   const dayMs = 86_400_000;
@@ -472,16 +526,12 @@ export async function seedDemoData(options: SeedOptions): Promise<SeedResult> {
     });
 
     const walletRow = findOneOrThrow(
-      await db
-        .insert(wallet)
-        .values({
-          userId: playerUser.id,
-          balance: String(round2(rng() * 1500)),
-          currency,
-        })
-        .returning(),
+      await db.insert(wallet).values({ userId: playerUser.id, currency }).returning(),
       new Error('seed: expected the wallet insert to return a row'),
     );
+    await db
+      .insert(walletBalance)
+      .values({ walletId: walletRow.id, currency, amount: String(round2(rng() * 1500)) });
 
     const deposits = 1 + Math.floor(rng() * 4);
     let depositSum = 0;
@@ -527,17 +577,48 @@ export async function seedDemoData(options: SeedOptions): Promise<SeedResult> {
     const insertedRooms = await db
       .insert(chatRoom)
       .values(
-        CHAT_ROOMS.map((r) => ({
+        CHAT_ROOMS.map((r, index) => ({
           name: r.name,
           slug: r.slug,
           category: r.category,
           isPublic: r.isPublic ?? true,
-          joinCode: r.joinCode ?? null,
+          joinCode: r.joinCode ?? seedJoinCode(index),
           creatorId: r.category === 'private-channels' ? null : adminUser.id,
         })),
       )
       .returning();
     roomCount = insertedRooms.length;
+
+    await db.insert(chatRoomConfiguration).values(
+      insertedRooms.map((room) => ({
+        roomId: room.id,
+        slowMode: false,
+        slowModeSeconds: 0,
+        readOnlyMode: false,
+        onlyInvitedCanJoin: false,
+        lockRoom: false,
+        moderatorInvite: false,
+      })),
+    );
+
+    await db.insert(chatRoomRule).values(
+      insertedRooms.flatMap((room) => {
+        const ruleCount = room.isPublic ? CHAT_RULES.length : 3;
+        return CHAT_RULES.slice(0, ruleCount).map((content, index) => ({
+          roomId: room.id,
+          createdBy: adminUser.id,
+          orderNum: index + 1,
+          content,
+        }));
+      }),
+    );
+
+    const adminOwnedRooms = insertedRooms
+      .filter((room) => room.isPublic || room.creatorId === adminUser.id)
+      .map((room) => ({ roomId: room.id, userId: adminUser.id, role: 'owner' as const }));
+    if (adminOwnedRooms.length > 0) {
+      await db.insert(chatRoomMember).values(adminOwnedRooms);
+    }
 
     if (chatAuthors.length > 0) {
       const roomMessageRows: (typeof chatMessage.$inferInsert)[] = insertedRooms.flatMap((room) => {

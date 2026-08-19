@@ -63,7 +63,7 @@ async function seedPlayer(overrides: Partial<typeof player.$inferInsert> = {}) {
 async function seedDeposit(userId: string, amount: string, currency = 'USD') {
   const [walletRow] = await db.drizzle.db
     .insert(wallet)
-    .values({ userId, balance: amount, currency })
+    .values({ userId, currency })
     .onConflictDoNothing()
     .returning();
   const [existing] = await db.drizzle.db.select().from(wallet).where(eq(wallet.userId, userId));
@@ -306,7 +306,7 @@ describe('KycVerificationService.handleDeposit - threshold re-KYC (real PG)', ()
     const { userId } = await seedPlayer();
     const [walletRow] = await db.drizzle.db
       .insert(wallet)
-      .values({ userId, balance: '0', currency: 'USD' })
+      .values({ userId, currency: 'USD' })
       .returning();
     await db.drizzle.db.insert(walletTransaction).values({
       walletId: walletRow!.id,

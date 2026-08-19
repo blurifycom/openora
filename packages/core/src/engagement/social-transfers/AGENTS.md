@@ -76,12 +76,10 @@ claimed-by-whom) and enforces the same room-membership check as `claimGift` - a 
 member of the gift's room to poll its status. Unlike `doClaimGift`, `doGetGift` takes no row lock
 (`SELECT` without `FOR UPDATE`): it's read-only, nothing to serialize against.
 
-### The old `chat_gift` table is a deliberate, deferred follow-up
+### Gift persistence
 
-`player_gift` is the successor to chat-commands' `chat_gift` table (same shape). `chat_gift` and its
-migration are left untouched in `chat-commands` - there may be prod data in it and no migration/
-backfill plan has been decided. New gift rows go to `player_gift` only; nothing reads or writes
-`chat_gift` anymore. Reconciling/retiring the old table is out of scope until that plan exists.
+`player_gift` is the only persistence table for claimable gifts. The former chat-command gift table
+has been retired by the chat-commands migration; new gift rows and all reads use `player_gift`.
 
 ## Rain has a remainder - debit the distributed amount, not the typed amount
 
@@ -171,7 +169,7 @@ service method.
 
 ## Don't
 
-- Don't write to `chat_gift` (chat-commands' table) - it is frozen, not extended.
+- Keep gift persistence in `player_gift`; do not introduce a second gift table in chat-commands.
 - Don't add a DB-backed idempotency table for gift/rain/donate - CACHE/Redis is the single source
   of truth for replay guards here.
 - Don't call `CHAT_REALTIME_TRANSPORT.getOnlineUserIds` (or otherwise reach for chat presence) from

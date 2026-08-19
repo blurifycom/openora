@@ -6,17 +6,23 @@ import {
   text,
   boolean,
   jsonb,
+  integer,
   timestamp,
   uniqueIndex,
   index,
 } from 'drizzle-orm/pg-core';
-import { CHAT_ROOM_CATEGORIES, CHAT_ROOM_ROLES } from '../contract/index.js';
+import {
+  CHAT_ROOM_CATEGORIES,
+  CHAT_ROOM_ROLES,
+  CHAT_MODERATION_SCOPE_VALUES,
+} from '../contract/index.js';
 import { CHAT_MESSAGE_TYPES } from '@openora/core/contracts';
 import type { CommandMetadata } from '@openora/core/contracts';
 
 export const chatRoomRole = pgEnum('chat_room_role', CHAT_ROOM_ROLES);
 export const chatRoomCategory = pgEnum('chat_room_category', CHAT_ROOM_CATEGORIES);
 export const chatMessageType = pgEnum('chat_message_type', CHAT_MESSAGE_TYPES);
+export const chatModerationScope = pgEnum('chat_moderation_scope', CHAT_MODERATION_SCOPE_VALUES);
 
 export const chatRoom = pgTable(
   'chat_room',
@@ -24,7 +30,8 @@ export const chatRoom = pgTable(
     id: uuid().primaryKey().defaultRandom(),
     name: text().notNull(),
     slug: text().notNull(),
-    category: chatRoomCategory().notNull().default('games-sports'),
+    // Global chat is represented by the __global room with no category.
+    category: chatRoomCategory(),
     isPublic: boolean().notNull().default(true),
     // Set only for private rooms; null for public/admin-created rooms.
     joinCode: text(),
@@ -51,11 +58,13 @@ export const chatMessage = pgTable(
     type: chatMessageType().notNull().default('user'),
     metadata: jsonb().$type<CommandMetadata>(),
     isDeleted: boolean().notNull().default(false),
+    deletedAt: timestamp({ withTimezone: true }),
     createdAt: timestamp({ withTimezone: true }).notNull().defaultNow(),
   },
   (t) => [
     index('chat_msg_room_id_created_at_idx').on(t.roomId, t.createdAt),
     index('chat_msg_created_at_idx').on(t.createdAt),
+    index('chat_msg_deleted_at_idx').on(t.deletedAt),
   ],
 );
 
@@ -121,6 +130,44 @@ export const chatRoomMember = pgTable(
   ],
 );
 
+export const chatRoomRule = pgTable(
+  'chat_room_rule',
+  {
+    id: uuid().primaryKey().defaultRandom(),
+    roomId: uuid()
+      .notNull()
+      .references(() => chatRoom.id, { onDelete: 'cascade' }),
+    createdBy: uuid().notNull(),
+    orderNum: integer().notNull(),
+    content: text().notNull(),
+    createdAt: timestamp({ withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp({ withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    index('chat_room_rule_room_order_idx').on(t.roomId, t.orderNum),
+    index('chat_room_rule_room_idx').on(t.roomId),
+  ],
+);
+
+export const chatRoomConfiguration = pgTable(
+  'chat_room_configuration',
+  {
+    id: uuid().primaryKey().defaultRandom(),
+    roomId: uuid()
+      .notNull()
+      .references(() => chatRoom.id, { onDelete: 'cascade' }),
+    slowMode: boolean().notNull().default(false),
+    slowModeSeconds: integer().notNull().default(0),
+    readOnlyMode: boolean().notNull().default(false),
+    onlyInvitedCanJoin: boolean().notNull().default(false),
+    lockRoom: boolean().notNull().default(false),
+    moderatorInvite: boolean().notNull().default(false),
+    createdAt: timestamp({ withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp({ withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [uniqueIndex('chat_room_configuration_room_key').on(t.roomId)],
+);
+
 export const chatRoomBan = pgTable(
   'chat_room_ban',
   {
@@ -131,10 +178,104 @@ export const chatRoomBan = pgTable(
     userId: uuid().notNull(), // banned user - bare id
     bannedBy: uuid().notNull(), // moderator who banned - bare id
     createdAt: timestamp({ withTimezone: true }).notNull().defaultNow(),
+    expiresAt: timestamp({ withTimezone: true }),
+    liftedAt: timestamp({ withTimezone: true }),
+    liftedBy: uuid(),
   },
   (t) => [
-    uniqueIndex('chat_room_ban_room_user_key').on(t.roomId, t.userId),
+    uniqueIndex('chat_room_ban_active_room_user_key')
+      .on(t.roomId, t.userId)
+      .where(sql`${t.liftedAt} IS NULL`),
     index('chat_room_ban_room_idx').on(t.roomId),
+    index('chat_room_ban_user_idx').on(t.userId),
+    index('chat_room_ban_expires_at_idx').on(t.expiresAt),
+  ],
+);
+
+export const chatRoomMute = pgTable(
+  'chat_room_mute',
+  {
+    id: uuid().primaryKey().defaultRandom(),
+    roomId: uuid()
+      .notNull()
+      .references(() => chatRoom.id, { onDelete: 'cascade' }),
+    userId: uuid().notNull(),
+    mutedBy: uuid().notNull(),
+    reason: text().notNull(),
+    createdAt: timestamp({ withTimezone: true }).notNull().defaultNow(),
+    expiresAt: timestamp({ withTimezone: true }),
+    liftedAt: timestamp({ withTimezone: true }),
+    liftedBy: uuid(),
+  },
+  (t) => [
+    uniqueIndex('chat_room_mute_active_room_user_key')
+      .on(t.roomId, t.userId)
+      .where(sql`${t.liftedAt} IS NULL`),
+    index('chat_room_mute_room_user_idx').on(t.roomId, t.userId),
+    index('chat_room_mute_expires_at_idx').on(t.expiresAt),
+  ],
+);
+
+export const chatRoomRemove = pgTable(
+  'chat_room_remove',
+  {
+    id: uuid().primaryKey().defaultRandom(),
+    roomId: uuid()
+      .notNull()
+      .references(() => chatRoom.id, { onDelete: 'cascade' }),
+    userId: uuid().notNull(),
+    removedBy: uuid().notNull(),
+    reason: text().notNull(),
+    createdAt: timestamp({ withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    index('chat_room_remove_room_created_at_idx').on(t.roomId, t.createdAt),
+    index('chat_room_remove_user_idx').on(t.userId),
+  ],
+);
+
+export const chatPlatformBan = pgTable(
+  'chat_platform_ban',
+  {
+    id: uuid().primaryKey().defaultRandom(),
+    userId: uuid().notNull(),
+    bannedBy: uuid().notNull(),
+    scope: chatModerationScope().notNull().default('__all_public'),
+    roomId: uuid().references(() => chatRoom.id),
+    reason: text().notNull(),
+    createdAt: timestamp({ withTimezone: true }).notNull().defaultNow(),
+    expiresAt: timestamp({ withTimezone: true }),
+    liftedAt: timestamp({ withTimezone: true }),
+    liftedBy: uuid(),
+  },
+  (t) => [
+    uniqueIndex('chat_platform_ban_active_scope_key')
+      .on(t.userId, t.scope)
+      .where(sql`${t.liftedAt} IS NULL AND ${t.roomId} IS NULL`),
+    uniqueIndex('chat_platform_ban_active_room_key')
+      .on(t.userId, t.scope, t.roomId)
+      .where(sql`${t.liftedAt} IS NULL AND ${t.roomId} IS NOT NULL`),
+    index('chat_platform_ban_user_idx').on(t.userId),
+  ],
+);
+
+export const chatMute = pgTable(
+  'chat_mute',
+  {
+    id: uuid().primaryKey().defaultRandom(),
+    userId: uuid().notNull(),
+    roomId: uuid(), // null = global chat; public room ids are channel-scoped mutes
+    scope: chatModerationScope().notNull().default('__global'),
+    mutedBy: uuid().notNull(),
+    reason: text().notNull(),
+    createdAt: timestamp({ withTimezone: true }).notNull().defaultNow(),
+    expiresAt: timestamp({ withTimezone: true }),
+    liftedAt: timestamp({ withTimezone: true }),
+    liftedBy: uuid(),
+  },
+  (t) => [
+    index('chat_mute_user_room_idx').on(t.userId, t.roomId),
+    index('chat_mute_expires_at_idx').on(t.expiresAt),
   ],
 );
 
@@ -143,4 +284,10 @@ export type ChatMessage = typeof chatMessage.$inferSelect;
 export type ChatUserBlock = typeof chatUserBlock.$inferSelect;
 export type ChatUserIgnore = typeof chatUserIgnore.$inferSelect;
 export type ChatRoomMember = typeof chatRoomMember.$inferSelect;
+export type ChatRoomRule = typeof chatRoomRule.$inferSelect;
+export type ChatRoomConfiguration = typeof chatRoomConfiguration.$inferSelect;
 export type ChatRoomBan = typeof chatRoomBan.$inferSelect;
+export type ChatRoomMute = typeof chatRoomMute.$inferSelect;
+export type ChatRoomRemove = typeof chatRoomRemove.$inferSelect;
+export type ChatPlatformBan = typeof chatPlatformBan.$inferSelect;
+export type ChatMute = typeof chatMute.$inferSelect;

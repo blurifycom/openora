@@ -8,6 +8,13 @@
       "when": 1785845454833,
       "tag": "0000_clammy_rattler",
       "breakpoints": true
+    },
+    {
+      "idx": 1,
+      "version": "7",
+      "when": 1787058797183,
+      "tag": "0001_fearless_molecule_man",
+      "breakpoints": true
     }
   ]
 }

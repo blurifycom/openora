@@ -8,7 +8,7 @@ import {
   type CoreTokenCatalog,
 } from '@openora/core/server';
 import { game, gameRound } from '@openora/core/casino/schema/gaming';
-import { wallet, walletTransaction } from '@openora/core/wallet/schema';
+import { wallet, walletBalance, walletTransaction } from '@openora/core/wallet/schema';
 import {
   setupTestDb,
   bootTestApp,
@@ -51,10 +51,11 @@ async function deposit(client: TestClient, amount: string, currency = 'USD') {
 async function balanceOf(container: Container<CoreTokenCatalog>, userId: string): Promise<string> {
   const [row] = await container
     .get(DRIZZLE)
-    .db.select()
-    .from(wallet)
+    .db.select({ amount: walletBalance.amount })
+    .from(walletBalance)
+    .innerJoin(wallet, eq(wallet.id, walletBalance.walletId))
     .where(eq(wallet.userId, userId));
-  return row?.balance ?? '0';
+  return row?.amount ?? '0';
 }
 
 beforeAll(async () => {
@@ -97,7 +98,7 @@ describe('gaming stake debit e2e', () => {
     expect(res.status).toBe(200);
     const body = (await readJson(res)) as { roundId: string };
 
-    expect(await balanceOf(app.container, userId)).toBe('70.00000000');
+    expect(await balanceOf(app.container, userId)).toBe('70.000000000000000000');
 
     const [round] = await app.container
       .get(DRIZZLE)
@@ -118,7 +119,7 @@ describe('gaming stake debit e2e', () => {
       .from(walletTransaction)
       .where(eq(walletTransaction.walletId, walletRow?.id ?? ''));
     const betRow = betRows.find((r) => r.type === 'bet');
-    expect(betRow?.amount).toBe('30.00000000');
+    expect(betRow?.amount).toBe('30.000000000000000000');
     expect(betRow?.status).toBe('completed');
   });
 

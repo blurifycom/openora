@@ -44,12 +44,20 @@ export type RealtimeTransport = {
    */
   publish<T>(channel: string, event: T): void | Promise<void>;
   /**
+   * Fan out a deletion/tombstone event to the channel. The transport does not
+   * remove persisted data; callers must complete the database mutation first.
+   * SSE and managed transports deliver this through their normal live stream.
+   */
+  remove<T>(channel: string, event: T): void | Promise<void>;
+  /**
    * Subscribe a handler to a channel. Returns an unsubscribe fn the caller MUST
    * invoke on teardown (eg an SSE handler on request abort).
    */
-  subscribe<T>(channel: string, handler: (event: T) => void): () => void;
+  subscribe<T>(channel: string, handler: (event: T) => void, clientId?: string): () => void;
   /** Revoke managed-provider credentials for a client after access is removed. */
   revokeClient?: (clientId: string) => void | Promise<void>;
+  /** Revoke a managed client's access to one channel without affecting other chats. */
+  revokeClientFromChannel?: (clientId: string, channel: string) => void | Promise<void>;
   presence?: RealtimePresence;
   /**
    * Returns the set of authenticated user IDs currently online in `channel`.

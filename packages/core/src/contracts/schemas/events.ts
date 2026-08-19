@@ -213,19 +213,19 @@ export const domainEventSchemas = {
     roomId: UuidSchema,
     name: z.string(),
     slug: z.string(),
-    category: z.string(),
+    category: z.string().nullable(),
     actorId: UuidSchema.optional(),
   }),
   'chat.room.deleted': authContextBase.extend({
     roomId: UuidSchema,
     actorId: UuidSchema.optional(),
-    before: z.object({ name: z.string(), slug: z.string(), category: z.string() }),
+    before: z.object({ name: z.string(), slug: z.string(), category: z.string().nullable() }),
   }),
   'chat.room.updated': authContextBase.extend({
     roomId: UuidSchema,
     actorId: UuidSchema.optional(),
-    before: z.object({ name: z.string(), slug: z.string(), category: z.string() }),
-    after: z.object({ name: z.string(), slug: z.string(), category: z.string() }),
+    before: z.object({ name: z.string(), slug: z.string(), category: z.string().nullable() }),
+    after: z.object({ name: z.string(), slug: z.string(), category: z.string().nullable() }),
   }),
 
   // Private room lifecycle: creation and member membership changes.
@@ -238,6 +238,8 @@ export const domainEventSchemas = {
     roomId: UuidSchema,
     creatorId: UuidSchema,
     playerId: UuidSchema.nullable(),
+    before: z.object({ name: z.string(), slug: z.string(), category: z.string().nullable() }),
+    after: z.object({ deletedAt: z.string() }),
   }),
   'chat.room.member.joined': authContextBase.extend({
     roomId: UuidSchema,
@@ -254,6 +256,11 @@ export const domainEventSchemas = {
     userId: UuidSchema,
     kickedBy: UuidSchema,
     playerId: UuidSchema.nullable(),
+  }),
+  'chat.room.member.removed': authContextBase.extend({
+    roomId: UuidSchema,
+    userId: UuidSchema,
+    removedBy: UuidSchema,
   }),
   'chat.room.member.banned': authContextBase.extend({
     roomId: UuidSchema,
@@ -420,7 +427,7 @@ export const domainEventSchemas = {
     after: z.record(z.string(), z.unknown()),
   }),
 
-  // Chat command events. amount is a decimal string; giftId is the chat_gift row id.
+  // Chat command events. amount is a decimal string; giftId is the player_gift row id.
   'chat.gift.sent': z.object({
     giftId: UuidSchema,
     senderId: UuidSchema,

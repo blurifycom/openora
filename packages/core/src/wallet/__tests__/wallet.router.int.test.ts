@@ -1,4 +1,5 @@
 import { describe, it, expect, vi, beforeAll, afterAll, beforeEach } from 'vitest';
+import { findOneOrThrow } from '@openora/core/server';
 import { randomUUID } from 'node:crypto';
 import { call, ORPCError } from '@orpc/server';
 import type { AdminGuard } from '@openora/core/server';
@@ -61,13 +62,13 @@ const transactionDenyingGuard = () =>
 const allowingGuard = () => makeAdminGuard({ caller: { userId: 'caller-1' } });
 
 async function seedLedger(userId: string, amounts: string[]) {
-  const [row] = await db.drizzle.db
-    .insert(wallet)
-    .values({ userId, balance: '0', currency: 'USD' })
-    .returning();
+  const row = findOneOrThrow(
+    await db.drizzle.db.insert(wallet).values({ userId, currency: 'USD' }).returning(),
+    new Error('seedLedger: query returned no row'),
+  );
   for (const amount of amounts) {
     await db.drizzle.db.insert(walletTransaction).values({
-      walletId: row!.id,
+      walletId: row.id,
       type: 'deposit',
       amount,
       currency: 'USD',
@@ -100,7 +101,10 @@ describe('wallet router listPlayerTransactions authz', () => {
     );
 
     expect(result.total).toBe(2);
-    expect(result.items.map((t) => t.amount).sort()).toEqual(['10.00000000', '25.50000000']);
+    expect(result.items.map((t) => t.amount).sort()).toEqual([
+      '10.000000000000000000',
+      '25.500000000000000000',
+    ]);
   });
 
   it('reads only the requested player, never a neighbour ledger', async () => {
@@ -114,6 +118,6 @@ describe('wallet router listPlayerTransactions authz', () => {
     );
 
     expect(result.total).toBe(1);
-    expect(result.items[0]?.amount).toBe('10.00000000');
+    expect(result.items[0]?.amount).toBe('10.000000000000000000');
   });
 });

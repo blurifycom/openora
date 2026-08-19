@@ -86,7 +86,7 @@ describe('wallet auto-withdrawal-rule routes', () => {
       { context: CTX },
     );
 
-    expect(result.threshold).toBe('500.00000000');
+    expect(result.threshold).toBe('500.000000000000000000');
     expect(result.createdBy).toBe(CALLER_ID);
     expect((await storedRule(USER_ID))?.reason).toBe('trusted');
     expect(audit.record).toHaveBeenCalledWith(
@@ -95,7 +95,7 @@ describe('wallet auto-withdrawal-rule routes', () => {
         action: 'wallet.auto_withdrawal_rule.set',
         resourceType: 'auto_withdrawal_rule',
         resourceId: USER_ID,
-        after: { threshold: '500.00000000', reason: 'trusted' },
+        after: { threshold: '500.000000000000000000', reason: 'trusted' },
       }),
     );
   });
@@ -180,7 +180,11 @@ describe('wallet auto-withdrawal-rule routes', () => {
       { context: CTX },
     );
 
-    expect(result).toMatchObject({ userId: USER_ID, threshold: '500.00000000', reason: 'trusted' });
+    expect(result).toMatchObject({
+      userId: USER_ID,
+      threshold: '500.000000000000000000',
+      reason: 'trusted',
+    });
   });
 
   it('get: returns null when the player has no rule', async () => {

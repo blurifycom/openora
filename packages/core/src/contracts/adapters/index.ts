@@ -15,6 +15,14 @@ export type {
   TokenValue,
 } from './token.js';
 export { createToken, createSealedToken, createClientPageToken } from './token.js';
+export type {
+  ChatModeration,
+  ChatModerationEntry,
+  ChatPlatformBan,
+  ChatModerationRoomId,
+  ChatModerationScope,
+} from './chat-moderation.js';
+export { CHAT_MODERATION } from './chat-moderation.js';
 
 export type {
   EventEnvelope,
@@ -235,5 +243,5 @@ export type {
 } from './rain-commands.js';
 export { RAIN_COMMANDS } from './rain-commands.js';
 
-export type { SocialCommands } from './social-commands.js';
+export type { SocialCommands, FriendshipDissolvedPayload } from './social-commands.js';
 export { SOCIAL_COMMANDS } from './social-commands.js';

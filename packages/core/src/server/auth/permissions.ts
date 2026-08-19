@@ -22,7 +22,7 @@ export const statement = {
   'chat-room': ['view', 'create', 'update', 'delete'] as const,
   'auto-withdrawal-config': ['view', 'update'] as const,
   'chat-command': ['view', 'update'] as const,
-  'chat-moderation': ['view'] as const,
+  'chat-moderation': ['view', 'moderate'] as const,
 } as const;
 
 export const ac = createAccessControl(statement);
@@ -49,7 +49,7 @@ export const adminRole = ac.newRole({
   'chat-room': ['view', 'create', 'update', 'delete'],
   'auto-withdrawal-config': ['view', 'update'],
   'chat-command': ['view', 'update'],
-  'chat-moderation': ['view'],
+  'chat-moderation': ['view', 'moderate'],
 });
 
 export const supportRole = ac.newRole({

@@ -9,9 +9,14 @@ import type {
   WalletTransactionType,
 } from '@openora/core/contracts';
 import { createDomainError, makeConflictError, type DrizzleDb } from '@openora/core/server';
-import { and, eq, gte, sql } from 'drizzle-orm';
+import { eq } from 'drizzle-orm';
 import { wallet, walletTransaction } from '../schema/index.js';
-import { railFor } from './wallet.service.js';
+import {
+  creditWalletBalance,
+  debitWalletBalance,
+  railFor,
+  readWalletBalance,
+} from './wallet.service.js';
 
 export const WalletCommandAmountError = createDomainError<[operation: string, amount: string]>(
   'WalletCommandAmountError',
@@ -69,7 +74,7 @@ export class WalletCommandsService implements WalletCommands {
     if (!row) {
       return { ok: false, available: '0' };
     }
-    const available = row.balance;
+    const available = await readWalletBalance(txn, row.id, row.currency);
 
     if (type === 'loss') {
       await this.writeLedgerRow(txn, row, 'loss', '0');
@@ -78,12 +83,8 @@ export class WalletCommandsService implements WalletCommands {
 
     // The UPDATE ... RETURNING gives the new balance straight from Postgres numeric
     // arithmetic - no JS float math on either side of the debit.
-    const debited = await txn
-      .update(wallet)
-      .set({ balance: sql`${wallet.balance} - ${amount}::numeric` })
-      .where(and(eq(wallet.id, row.id), gte(wallet.balance, amount)))
-      .returning({ balance: wallet.balance });
-    const newBalance = debited[0]?.balance;
+    const debited = await debitWalletBalance(txn, row.id, row.currency, amount);
+    const newBalance = debited[0]?.amount;
     if (newBalance === undefined) {
       return { ok: false, available };
     }
@@ -112,17 +113,13 @@ export class WalletCommandsService implements WalletCommands {
       return { ok: false, reason: 'currency mismatch' };
     }
 
-    const [credited] = await txn
-      .update(wallet)
-      .set({ balance: sql`${wallet.balance} + ${amount}::numeric` })
-      .where(eq(wallet.id, row.id))
-      .returning({ balance: wallet.balance });
+    const [credited] = await creditWalletBalance(txn, row.id, currency, amount);
     if (!credited) {
       throw new Error('wallet credit: no row');
     }
 
     await this.writeLedgerRow(txn, row, type, amount);
 
-    return { ok: true, newBalance: credited.balance };
+    return { ok: true, newBalance: credited.amount };
   }
 }

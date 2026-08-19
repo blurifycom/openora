@@ -1,4 +1,5 @@
 import { describe, it, expect, vi, beforeAll, afterAll, beforeEach } from 'vitest';
+import { findOneOrThrow } from '@openora/core/server';
 import { randomUUID } from 'node:crypto';
 import { call, ORPCError } from '@orpc/server';
 import type { AdminGuard } from '@openora/core/server';
@@ -22,7 +23,12 @@ import {
   NO_CLIENT_META,
 } from '../../testing/mock.js';
 import { migrate } from '../migrate.js';
-import { wallet, walletTransaction, walletAutoWithdrawalConfig } from '../schema/index.js';
+import {
+  wallet,
+  walletBalance,
+  walletTransaction,
+  walletAutoWithdrawalConfig,
+} from '../schema/index.js';
 import { createWalletRouter } from '../router/index.js';
 import { WalletService } from '../service/wallet.service.js';
 
@@ -108,12 +114,21 @@ function routerWith(adminGuard: AdminGuard, platformConfig?: Partial<PlatformCon
   return { router, audit, service };
 }
 
-async function seedPlayerWallet(overrides: Partial<typeof wallet.$inferInsert> = {}) {
-  const [row] = await db.drizzle.db
-    .insert(wallet)
-    .values({ userId: randomUUID(), balance: '100000', currency: 'USD', ...overrides })
-    .returning();
-  return row!;
+async function seedPlayerWallet({
+  balance = '100000',
+  ...overrides
+}: Partial<typeof wallet.$inferInsert> & { balance?: string } = {}) {
+  const row = findOneOrThrow(
+    await db.drizzle.db
+      .insert(wallet)
+      .values({ userId: randomUUID(), currency: 'USD', ...overrides })
+      .returning(),
+    new Error('seedPlayerWallet: query returned no row'),
+  );
+  await db.drizzle.db
+    .insert(walletBalance)
+    .values({ walletId: row.id, currency: row.currency, amount: balance });
+  return row;
 }
 
 describe('wallet auto-withdrawal-config routes', () => {
@@ -122,7 +137,10 @@ describe('wallet auto-withdrawal-config routes', () => {
 
     const result = await call(router.autoWithdrawalConfig.get, {}, { context: CTX });
 
-    expect(result).toMatchObject({ fiatThreshold: '0.00000000', cryptoThreshold: '0.00000000' });
+    expect(result).toMatchObject({
+      fiatThreshold: '0.000000000000000000',
+      cryptoThreshold: '0.000000000000000000',
+    });
     expect(result.excludeRiskFlags).toEqual(
       expect.arrayContaining(['high_risk', 'bonus_abuser', 'kyc_rejected']),
     );
@@ -218,15 +236,15 @@ describe('wallet auto-withdrawal-config routes', () => {
     );
 
     expect(result).toMatchObject({
-      fiatThreshold: '500.00000000',
-      cryptoThreshold: '1.00000000',
+      fiatThreshold: '500.000000000000000000',
+      cryptoThreshold: '1.000000000000000000',
       excludeRiskFlags: ['bonus_abuser'],
       updatedBy: CALLER_ID,
     });
     const fetched = await call(router.autoWithdrawalConfig.get, {}, { context: CTX });
     expect(fetched).toMatchObject({
-      fiatThreshold: '500.00000000',
-      cryptoThreshold: '1.00000000',
+      fiatThreshold: '500.000000000000000000',
+      cryptoThreshold: '1.000000000000000000',
       excludeRiskFlags: ['bonus_abuser'],
     });
     expect(audit.recordInTransaction).toHaveBeenCalledWith(
@@ -237,8 +255,8 @@ describe('wallet auto-withdrawal-config routes', () => {
         action: 'wallet.auto_withdrawal_config.set',
         resourceType: 'auto_withdrawal_config',
         before: {
-          fiatThreshold: '0.00000000',
-          cryptoThreshold: '0.00000000',
+          fiatThreshold: '0.000000000000000000',
+          cryptoThreshold: '0.000000000000000000',
           // The beforeEach seed omits excludeRiskFlags, so the column's migration
           // DEFAULT (a starting value, not an enforced floor) is what "before" captures here.
           excludeRiskFlags: [
@@ -250,8 +268,8 @@ describe('wallet auto-withdrawal-config routes', () => {
           ],
         },
         after: {
-          fiatThreshold: '500.00000000',
-          cryptoThreshold: '1.00000000',
+          fiatThreshold: '500.000000000000000000',
+          cryptoThreshold: '1.000000000000000000',
           excludeRiskFlags: ['bonus_abuser'],
         },
       }),

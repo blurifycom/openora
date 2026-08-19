@@ -98,8 +98,22 @@ describe('social plugin SOCIAL_COMMANDS wiring', () => {
       db.drizzle.db.transaction((tx) =>
         socialCommands.dissolveFriendshipOnBlock(tx, alice.userId, bob.userId),
       ),
-    ).resolves.toBeUndefined();
+    ).resolves.toBeNull();
     expect(await db.drizzle.db.select().from(friendship)).toHaveLength(0);
+  });
+
+  it('dissolveFriendshipOnBlock never emits by itself - it only returns the payload for the caller to emit after its own commit', async () => {
+    const { socialCommands, events } = boot();
+    const alice = await seedPlayer();
+    const bob = await seedPlayer();
+    const friendshipRow = await makeFriends(alice.userId, bob.userId);
+
+    const dissolved = await db.drizzle.db.transaction((tx) =>
+      socialCommands.dissolveFriendshipOnBlock(tx, alice.userId, bob.userId),
+    );
+
+    expect(dissolved).toMatchObject({ friendshipId: friendshipRow.id, reason: 'blocked' });
+    expect(events.emit).not.toHaveBeenCalled();
   });
 
   it('still dissolves correctly when resolved before the social router is mounted', async () => {
