@@ -8,6 +8,7 @@ import {
   NOTIFICATION_DELIVERY_ADAPTER,
   SEND_EMAIL,
   EMAIL_TEMPLATE_RENDERER,
+  GEO_CHECK_COMMANDS,
   IDENTITY_OPTIONS,
   RATE_LIMITER,
   PLATFORM_CONFIG,
@@ -83,6 +84,7 @@ export default {
           options: c.has(IDENTITY_OPTIONS) ? c.get(IDENTITY_OPTIONS) : undefined,
           limiter: c.get(RATE_LIMITER),
           platformConfig: c.has(PLATFORM_CONFIG) ? c.get(PLATFORM_CONFIG) : undefined,
+          geoCheck: c.has(GEO_CHECK_COMMANDS) ? c.get(GEO_CHECK_COMMANDS) : undefined,
           cache: c.get(CACHE),
         }),
         new SessionService({

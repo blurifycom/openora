@@ -13,6 +13,7 @@ import { chatUserBlock } from '@openora/core/engagement/schema/chat';
 import {
   setupTestDb,
   bootTestApp,
+  registrationRequestHeaders,
   asPlayer,
   asAdmin,
   seedMinimal,
@@ -54,10 +55,21 @@ async function readJson(res: Response): Promise<any> {
 }
 
 async function registerAndMaterializePlayer(hono: TestApp['app'], email: string, name: string) {
+  const usernamePrefix = name
+    .toLowerCase()
+    .replaceAll(/[^a-z0-9_]+/g, '_')
+    .slice(0, 7);
+  const username = `${usernamePrefix}_${randomUUID().replaceAll('-', '').slice(0, 12)}`;
   const registerRes = await hono.request('/identity/register', {
     method: 'POST',
-    headers: { 'content-type': 'application/json' },
-    body: JSON.stringify({ email, password: 'password123', name }),
+    headers: registrationRequestHeaders(),
+    body: JSON.stringify({
+      email,
+      password: 'password123',
+      username,
+      acceptedTerms: true,
+      acceptedAge: true,
+    }),
   });
   if (!registerRes.ok) {
     throw new Error(`register failed (${registerRes.status}): ${await registerRes.text()}`);
@@ -70,7 +82,7 @@ async function registerAndMaterializePlayer(hono: TestApp['app'], email: string,
     );
   }
   const profile = (await profileRes.json()) as { id: string; userId: string };
-  return { client, playerId: profile.id, userId: profile.userId };
+  return { client, playerId: profile.id, userId: profile.userId, username };
 }
 
 async function setPlayerStatus(
@@ -212,7 +224,7 @@ describe('BF-425 AC: recipient gets an in-app notification, type round-trips, an
       // assertion that the type round-trips end to end.
       expect(row).toBeTruthy();
       expect(row?.title).toBe('New friend request');
-      expect(row?.body).toContain('Carol BF425');
+      expect(row?.body).toContain(a.username);
     });
 
     await vi.waitFor(async () => {
@@ -400,7 +412,7 @@ describe('BF-425 locked decision: mutual/simultaneous request auto-accepts', () 
       }>;
       const row = items.find((n) => n.type === 'social.friend_request.accepted');
       expect(row).toBeTruthy();
-      expect(row?.body).toContain('Mona BF425');
+      expect(row?.body).toContain(b.username);
     });
 
     // Already-accepted friendship -> re-send fails ALREADY_FRIENDS, in either direction.

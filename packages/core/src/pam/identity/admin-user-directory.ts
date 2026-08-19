@@ -130,7 +130,7 @@ export class DrizzleAdminUserDirectory implements AdminUserDirectory {
       .select({
         playerId: player.id,
         userId: player.userId,
-        username: player.displayName,
+        username: user.username,
         kycStatus: player.kycStatus,
         email: user.email,
         language: user.language,
@@ -151,6 +151,7 @@ export class DrizzleAdminUserDirectory implements AdminUserDirectory {
       const kyc = KycStatusSchema.safeParse(r.kycStatus);
       return {
         ...r,
+        username: r.username ?? '',
         kycStatus: kyc.success ? normalizeKycStatus(kyc.data) : null,
       };
     });
@@ -161,7 +162,7 @@ export class DrizzleAdminUserDirectory implements AdminUserDirectory {
       .select({
         playerId: player.id,
         userId: player.userId,
-        username: player.displayName,
+        username: user.username,
         kycStatus: player.kycStatus,
         email: user.email,
         language: user.language,
@@ -174,19 +175,23 @@ export class DrizzleAdminUserDirectory implements AdminUserDirectory {
       .innerJoin(user, eq(player.userId, user.id))
       // Exact, case-insensitive match - ILIKE would let % and _ in `username` act as
       // wildcards, letting a caller-supplied pattern select an arbitrary matching player.
-      .where(eq(sql`lower(${player.displayName})`, username.toLowerCase()))
+      .where(eq(sql`lower(${user.username})`, username.toLowerCase()))
       .limit(1);
     const [row] = rows;
     if (!row) {
       return null;
     }
     const kyc = KycStatusSchema.safeParse(row.kycStatus);
-    return { ...row, kycStatus: kyc.success ? normalizeKycStatus(kyc.data) : null };
+    return {
+      ...row,
+      username: row.username ?? '',
+      kycStatus: kyc.success ? normalizeKycStatus(kyc.data) : null,
+    };
   }
 
   async findPlayerIds(query: string, limit = 1000) {
     const term = `%${query}%`;
-    const conditions = [ilike(user.email, term), ilike(player.displayName, term)];
+    const conditions = [ilike(user.email, term), ilike(user.username, term)];
     if (UuidSchema.safeParse(query).success) {
       conditions.push(eq(player.id, query), eq(player.userId, query));
     }

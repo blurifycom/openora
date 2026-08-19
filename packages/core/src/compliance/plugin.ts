@@ -6,6 +6,7 @@ import {
   AUDIT_WRITER,
   CACHE,
   GEO_IP_ADAPTER,
+  GEO_CHECK_COMMANDS,
   JOB_QUEUE,
   KYC_ADAPTER,
   IDENTITY_READER,
@@ -58,6 +59,16 @@ export default {
   dependsOn: ['player-management', 'identity', 'wallet', 'gaming', 'audit'],
   requiresPorts: [LOGIN_ENFORCEMENT],
   register(ctx) {
+    ctx.provide(
+      GEO_CHECK_COMMANDS,
+      (c) =>
+        new ComplianceService(
+          c.get(DRIZZLE),
+          c.get(EVENT_BUS),
+          c.has(GEO_IP_ADAPTER) ? c.get(GEO_IP_ADAPTER) : null,
+          c.get(IDENTITY_READER),
+        ),
+    );
     ctx.provide(KYC_WEBHOOK_VERIFIER, (c) => {
       const cfg = c.has(PLATFORM_CONFIG) ? c.get(PLATFORM_CONFIG) : undefined;
       const envName = cfg?.kyc?.webhookSecretEnv ?? 'KYC_WEBHOOK_SECRET';

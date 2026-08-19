@@ -12,6 +12,7 @@ import { wallet, walletTransaction } from '@openora/core/wallet/schema';
 import {
   setupTestDb,
   bootTestApp,
+  registrationRequestHeaders,
   asPlayer,
   asAdmin,
   seedMinimal,
@@ -32,14 +33,27 @@ async function readJson(res: Response): Promise<any> {
 async function registerPlayer(email: string) {
   const res = await app.app.request('/identity/register', {
     method: 'POST',
-    headers: { 'content-type': 'application/json' },
-    body: JSON.stringify({ email, password: 'password123', name: 'Analytics E2E Player' }),
+    headers: registrationRequestHeaders(),
+    body: JSON.stringify({
+      email,
+      password: 'password123',
+      username: `player_${randomUUID().replaceAll('-', '').slice(0, 12)}`,
+      acceptedTerms: true,
+      acceptedAge: true,
+    }),
   });
   if (!res.ok) {
     throw new Error(`register failed (${res.status}): ${await res.text()}`);
   }
-  const body = (await readJson(res)) as { user: { id: string } };
-  return body.user.id;
+  const [registered] = await app.container
+    .get(DRIZZLE)
+    .db.select({ id: user.id })
+    .from(user)
+    .where(eq(user.email, email));
+  if (!registered) {
+    throw new Error('registered user was not persisted');
+  }
+  return registered.id;
 }
 
 async function verifyEmail(container: Container<CoreTokenCatalog>, userId: string) {

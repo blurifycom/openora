@@ -120,7 +120,12 @@ function makeService(
 async function seedUser(name = 'Player') {
   const [row] = await db.drizzle.db
     .insert(user)
-    .values({ name, email: `${randomUUID()}@test.dev`, emailVerified: true })
+    .values({
+      name,
+      username: name.toLowerCase().replaceAll(/[^a-z0-9_]+/g, '_'),
+      email: `${randomUUID()}@test.dev`,
+      emailVerified: true,
+    })
     .returning();
   return row!;
 }
@@ -308,15 +313,15 @@ describe('ChatService.subscribeMessages per-viewer block filtering (real PG)', (
 });
 
 describe('ChatService.sendGlobalMessage (real PG)', () => {
-  it('stores the display name from the verified user, ignoring the header fallback', async () => {
+  it('stores the username from the verified user, ignoring the header fallback', async () => {
     const { svc, events } = makeService();
     const account = await seedUser('Platform Admin');
 
     const msg = await svc.sendGlobalMessage(account.id, 'spoofed-header-name', 'hi');
 
-    expect(msg.username).toBe('Platform Admin');
+    expect(msg.username).toBe('platform_admin');
     const [stored] = await db.drizzle.db.select().from(chatMessage);
-    expect(stored).toMatchObject({ roomId: null, username: 'Platform Admin' });
+    expect(stored).toMatchObject({ roomId: null, username: 'platform_admin' });
     expect(events.emit).toHaveBeenCalledWith('chat.message.sent', {
       messageId: msg.id,
       roomId: null,
@@ -452,7 +457,7 @@ describe('ChatService.sendRoomMessage (real PG)', () => {
       content: 'hello room',
     });
 
-    expect(msg).toMatchObject({ roomId: room.id, username: 'Alice' });
+    expect(msg).toMatchObject({ roomId: room.id, username: 'alice' });
     expect(delivered.map((m) => m.id)).toEqual([msg.id]);
   });
 

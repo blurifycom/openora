@@ -17,6 +17,7 @@ import {
 } from '@openora/core/contracts';
 import { chatUserBlock, chatUserIgnore } from '@openora/core/engagement/schema/chat';
 import { player } from '@openora/core/pam/schema/profile';
+import { user } from '@openora/core/pam/schema/identity';
 import { friendship } from '../schema/index.js';
 import {
   type Friendship,
@@ -121,8 +122,9 @@ export class SocialService {
 
     // Batched: caller + target resolved in one query rather than two round trips.
     const players = await this.drizzle.db
-      .select({ userId: player.userId, displayName: player.displayName, status: player.status })
+      .select({ userId: player.userId, username: user.username, status: player.status })
       .from(player)
+      .innerJoin(user, eq(user.id, player.userId))
       .where(inArray(player.userId, [callerId, targetUserId]));
     const targetPlayer = players.find((p) => p.userId === targetUserId);
     const callerPlayer = players.find((p) => p.userId === callerId);
@@ -170,7 +172,7 @@ export class SocialService {
         friendshipId: inserted.id,
         requesterId: inserted.requesterId,
         addresseeId: inserted.addresseeId,
-        requesterDisplayName: callerPlayer.displayName,
+        requesterUsername: callerPlayer.username ?? '',
       });
       return toFriendshipDto(inserted);
     }
@@ -181,7 +183,7 @@ export class SocialService {
       requesterId: accepted.requesterId,
       addresseeId: accepted.addresseeId,
       accepterId: callerId,
-      accepterDisplayName: callerPlayer.displayName,
+      accepterUsername: callerPlayer.username ?? '',
     });
     return toFriendshipDto(accepted);
   }
@@ -413,11 +415,12 @@ export class SocialService {
             this.drizzle.db
               .select({
                 userId: player.userId,
-                displayName: player.displayName,
+                username: user.username,
                 lastSeenAt: player.lastSeenAt,
                 status: player.status,
               })
               .from(player)
+              .innerJoin(user, eq(user.id, player.userId))
               .where(inArray(player.userId, otherUserIds)),
             this.drizzle.db
               .select({ ignoredId: chatUserIgnore.ignoredId })
@@ -457,7 +460,7 @@ export class SocialService {
           {
             userId,
             friendshipId: row.id,
-            displayName: targetPlayer.displayName,
+            username: targetPlayer.username ?? '',
             status: isOnline ? ('online' as const) : ('offline' as const),
             lastSeenAt: targetPlayer.lastSeenAt,
             isIgnored: ignoredIds.has(userId),

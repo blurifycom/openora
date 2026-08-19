@@ -13,6 +13,7 @@ import { user } from '@openora/core/pam/schema/identity';
 import {
   setupTestDb,
   bootTestApp,
+  registrationRequestHeaders,
   asPlayer,
   asAdmin,
   seedMinimal,
@@ -49,20 +50,33 @@ async function readJson(res: Response): Promise<any> {
 async function registerPlayer(email: string) {
   const res = await app.app.request('/identity/register', {
     method: 'POST',
-    headers: { 'content-type': 'application/json' },
-    body: JSON.stringify({ email, password: 'password123', name: 'RG E2E Player' }),
+    headers: registrationRequestHeaders(),
+    body: JSON.stringify({
+      email,
+      password: 'password123',
+      username: `player_${randomUUID().replaceAll('-', '').slice(0, 12)}`,
+      acceptedTerms: true,
+      acceptedAge: true,
+    }),
   });
   if (!res.ok) {
     throw new Error(`register failed (${res.status}): ${await res.text()}`);
   }
-  const body = (await readJson(res)) as { user: { id: string } };
   const client = await asPlayer(app.app, { email });
   // Materialize the PAM player row (get-or-create) so RG actions taken against this
   // user resolve to a real player.id for the audit trail - see audit/plugin.ts
   // mapEventToRecord's resolvePlayerId.
   const profileRes = await client.get('/profile');
   const profile = (await profileRes.json()) as { id: string };
-  return { client, userId: body.user.id, playerId: profile.id };
+  const [registered] = await app.container
+    .get(DRIZZLE)
+    .db.select({ id: user.id })
+    .from(user)
+    .where(eq(user.email, email));
+  if (!registered) {
+    throw new Error('registered user was not persisted');
+  }
+  return { client, userId: registered.id, playerId: profile.id };
 }
 
 async function attemptLogin(email: string, password: string) {

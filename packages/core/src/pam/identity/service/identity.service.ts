@@ -8,6 +8,7 @@ import {
   extractClientMeta,
   getCurrentClientMeta,
   findOneOrThrow,
+  makeConflictError,
   makeNotFoundError,
   createLogger,
 } from '@openora/core/server';
@@ -39,6 +40,7 @@ import type {
   IdentityServiceOptions,
   PlatformConfig,
   ClientMeta,
+  GeoCheckCommands,
 } from '@openora/core/contracts';
 import { RATE_LIMIT_KEYS, makeRateLimitKey } from '@openora/core/contracts';
 import { assertSupportedLanguage } from '../../shared/language.js';
@@ -83,6 +85,7 @@ function toUser(u: BetterAuthUser) {
     id: u.id,
     email: u.email,
     name: u.name,
+    username: u.username ?? null,
     emailVerified: u.emailVerified,
     theme: u.theme ?? 'system',
     language: u.language ?? 'en',
@@ -123,6 +126,17 @@ type AuthCall<B> = (opts: {
 }) => Promise<globalThis.Response>;
 
 type ExtendedAuthApi = {
+  signUpEmail: AuthCall<{
+    email: string;
+    password: string;
+    name: string;
+    username: string;
+    termsVersion: string;
+    termsAcceptedAt: Date;
+    ageAcceptedAt: Date;
+    registrationIp: string | null;
+    registrationUserAgent: string | null;
+  }>;
   enableTwoFactor: AuthCall<{ password: string }>;
   verifyTOTP: AuthCall<{ code: string }>;
   disableTwoFactor: AuthCall<{ password: string }>;
@@ -139,6 +153,7 @@ type ExtendedAuthApi = {
 const SUCCESS = { success: true as const };
 
 export const UserNotFoundError = makeNotFoundError('User');
+export const UsernameConflictError = makeConflictError('Username', 'Username is already in use');
 
 // better-auth calls use `asResponse: true`, which returns an error *Response*
 // (4xx/5xx) rather than throwing. Surface those as ORPCErrors so oRPC maps them
@@ -268,6 +283,7 @@ export type IdentityServiceDeps = {
   options?: IdentityServiceOptions;
   limiter?: RateLimiterAdapter<RateLimitKey>;
   platformConfig?: PlatformConfig;
+  geoCheck?: GeoCheckCommands;
   cache?: CacheAdapter;
 };
 
@@ -290,6 +306,7 @@ export class IdentityService {
   private readonly options?: IdentityServiceOptions;
   private readonly limiter?: RateLimiterAdapter<RateLimitKey>;
   private readonly platformConfig?: PlatformConfig;
+  private readonly geoCheck?: GeoCheckCommands;
   private readonly cache?: CacheAdapter;
 
   constructor({
@@ -301,6 +318,7 @@ export class IdentityService {
     options,
     limiter,
     platformConfig,
+    geoCheck,
     cache,
   }: IdentityServiceDeps) {
     this.drizzle = drizzle;
@@ -311,6 +329,7 @@ export class IdentityService {
     this.options = options;
     this.limiter = limiter;
     this.platformConfig = platformConfig;
+    this.geoCheck = geoCheck;
     this.cache = cache;
     this.auth = createAuth({
       db: drizzle.db,
@@ -318,6 +337,15 @@ export class IdentityService {
       ...(email ? { sendEmail: (args) => email.send(args) } : {}),
       templateRenderer: this.templateRenderer,
       getUserLanguage: (lookupEmail) => this.resolveUserLanguage(lookupEmail),
+      registrationWebUrl: this.platformConfig?.registration?.webUrl,
+      onExistingUserSignUp: async (existing) => {
+        const response = await this.api.requestPasswordResetEmailOTP({
+          body: { email: existing.email },
+          headers: new Headers(),
+          asResponse: true,
+        });
+        await ensureOk(response);
+      },
       onPasswordReset: async (resetUser) => {
         this.events.emit('identity.password.reset', {
           userId: resetUser.id,
@@ -366,28 +394,85 @@ export class IdentityService {
   }
 
   async register(input: RegisterInput, reqHeaders: NodeHeaders, resHeaders: Headers) {
+    const registration = this.platformConfig?.registration;
+    if (!registration) {
+      throw new ORPCError('FORBIDDEN', { message: 'Registration is unavailable' });
+    }
+    const { ip, userAgent } = extractClientMeta(reqHeaders);
     await assertRateLimit(
       this.limiter,
       `register:${input.email.toLowerCase()}`,
       REGISTER_RATE_LIMIT,
     );
-    const { ip, userAgent } = extractClientMeta(reqHeaders);
+    await assertRateLimit(this.limiter, `register-ip:${ip ?? 'unknown'}`, REGISTER_RATE_LIMIT);
+    if (this.geoCheck && !(await this.geoCheck.checkRegistration(ip)).allowed) {
+      throw new ORPCError('FORBIDDEN', { message: 'Registration is unavailable' });
+    }
+    const [existingUsername] = await this.drizzle.db
+      .select({ id: user.id })
+      .from(user)
+      .where(eq(user.username, input.username))
+      .limit(1);
+    if (existingUsername) {
+      throw new UsernameConflictError();
+    }
     const headers = nodeHeadersToHeaders(reqHeaders);
-    const authResponse = await this.auth.api.signUpEmail({
-      body: { email: input.email, password: input.password, name: input.name },
+    const authResponse = await this.api.signUpEmail({
+      body: {
+        email: input.email,
+        password: input.password,
+        name: input.username,
+        username: input.username,
+        termsVersion: registration.termsVersion,
+        termsAcceptedAt: new Date(),
+        ageAcceptedAt: new Date(),
+        registrationIp: ip,
+        registrationUserAgent: userAgent,
+      },
       headers,
       asResponse: true,
     });
-    this.forwardCookies(authResponse, resHeaders);
+    if (!authResponse.ok) {
+      // Better Auth intentionally normalizes adapter errors. Its sign-up transaction
+      // has already rolled back; a newly present handle can therefore only be the
+      // concurrent winner of the username unique constraint.
+      const [winner] = await this.drizzle.db
+        .select({ id: user.id })
+        .from(user)
+        .where(eq(user.username, input.username))
+        .limit(1);
+      if (winner) {
+        throw new UsernameConflictError();
+      }
+      await ensureOk(authResponse, { genericMessage: 'Registration is unavailable' });
+    }
     const body = (await authResponse.json()) as { user: BetterAuthUser };
+    const [stored] = await this.drizzle.db
+      .select({ id: user.id })
+      .from(user)
+      .where(eq(user.email, input.email.toLowerCase()))
+      .limit(1);
+    if (stored?.id === body.user.id) {
+      this.events.emit('identity.user.registered', {
+        userId: body.user.id,
+        playerId: await this.identityReader.getPlayerIdByUserIdSafe(body.user.id),
+        ip,
+        userAgent,
+      });
+    }
+    // autoSignIn:false guarantees Better Auth has no session cookie to forward;
+    // the public reply deliberately hides whether this was a new or known email.
+    void resHeaders;
+    return { status: 'check-email' as const };
+  }
 
-    this.events.emit('identity.user.registered', {
-      userId: body.user.id,
-      playerId: await this.identityReader.getPlayerIdByUserIdSafe(body.user.id),
-      ip,
-      userAgent,
-    });
-    return { user: toUser(body.user) };
+  async usernameAvailable(username: string) {
+    const [existing] = await this.drizzle.db
+      .select({ id: user.id })
+      .from(user)
+      .where(eq(user.username, username))
+      .limit(1);
+    return { available: !existing };
   }
 
   /**

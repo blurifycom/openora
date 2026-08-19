@@ -8,6 +8,7 @@ import {
   timestamp,
   index,
   integer,
+  uniqueIndex,
 } from 'drizzle-orm/pg-core';
 import { THEMES } from '@openora/core/contracts';
 
@@ -18,6 +19,7 @@ export const user = pgTable(
   {
     id: uuid().primaryKey().defaultRandom(),
     name: text().notNull(),
+    username: text(),
     email: text().notNull().unique(),
     emailVerified: boolean().notNull().default(false),
     image: text(),
@@ -49,6 +51,11 @@ export const user = pgTable(
     // (self-exclusion); a Date is the cooling-off expiry the login gate auto-clears.
     rgBlocked: boolean().notNull().default(false),
     rgBlockedUntil: timestamp({ withTimezone: true }),
+    termsVersion: text(),
+    termsAcceptedAt: timestamp({ withTimezone: true }),
+    ageAcceptedAt: timestamp({ withTimezone: true }),
+    registrationIp: text(),
+    registrationUserAgent: text(),
     createdAt: timestamp({ withTimezone: true }).notNull().defaultNow(),
     updatedAt: timestamp({ withTimezone: true })
       .notNull()
@@ -57,6 +64,11 @@ export const user = pgTable(
   // Trigram GIN index so the back-office player search (`ILIKE '%term%'` on email)
   // is index-backed instead of a seq scan. Requires the pg_trgm extension.
   (t) => [
+    // Public usernames resolve case-insensitively everywhere, so the database
+    // enforces that same global uniqueness invariant.
+    uniqueIndex('user_username_unique')
+      .on(sql`lower(${t.username})`)
+      .where(sql`${t.username} is not null`),
     index('user_email_trgm_idx').using('gin', sql`${t.email} gin_trgm_ops`),
     index('user_created_at_idx').on(t.createdAt),
   ],

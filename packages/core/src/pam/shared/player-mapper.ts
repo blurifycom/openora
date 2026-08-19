@@ -4,11 +4,11 @@ import type { User } from '@openora/core/contracts';
 import { player } from '../profile/schema/index.js';
 import { user } from '../identity/schema/index.js';
 
-export function toPlayer(row: typeof player.$inferSelect, email: string) {
+export function toPlayer(row: typeof player.$inferSelect, email: string, username: string | null) {
   return {
     id: row.id,
     userId: row.userId,
-    displayName: row.displayName,
+    username: username ?? '',
     email,
     country: row.country,
     currency: row.currency,
@@ -32,4 +32,15 @@ export async function fetchEmailByUserId(
     .from(user)
     .where(eq(user.id, userId));
   return record?.email ?? '';
+}
+
+export async function fetchUsernameByUserId(
+  drizzle: DrizzleService,
+  userId: User['id'],
+): Promise<string | null> {
+  const [record] = await drizzle.db
+    .select({ username: user.username })
+    .from(user)
+    .where(eq(user.id, userId));
+  return record?.username ?? null;
 }

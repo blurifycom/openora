@@ -125,6 +125,8 @@ export { PAYMENT_ADAPTER, PAYMENT_WEBHOOK_VERIFIER } from './payment.js';
 
 export type { GeoIpAdapter } from './geo-ip.js';
 export { GEO_IP_ADAPTER } from './geo-ip.js';
+export type { GeoCheckCommands } from './geo-check-commands.js';
+export { GEO_CHECK_COMMANDS } from './geo-check-commands.js';
 
 export type { NotificationDeliveryAdapter } from './notification.js';
 export { NOTIFICATION_DELIVERY_ADAPTER } from './notification.js';

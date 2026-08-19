@@ -70,22 +70,30 @@ export class ComplianceService {
     return { success: true };
   }
 
-  async geoCheck(ipAddress: string) {
+  async geoCheck(ipAddress: string | null) {
+    const rules = await this.drizzle.db.select({ action: geoRule.action }).from(geoRule);
     let countryCode: string | null = null;
 
-    if (this.geoIp) {
+    if (this.geoIp && ipAddress) {
       const result = await this.geoIp.lookup(ipAddress);
       countryCode = result.countryCode;
     }
 
     if (!countryCode) {
-      return { allowed: true, countryCode: null, reason: null };
+      return {
+        allowed: rules.length === 0,
+        countryCode: null,
+        reason: rules.length === 0 ? null : 'Geolocation could not be determined',
+      };
     }
 
-    const [rule] = await this.drizzle.db
-      .select({ action: geoRule.action })
-      .from(geoRule)
-      .where(eq(geoRule.countryCode, countryCode));
+    const [rule] =
+      rules.length === 0
+        ? []
+        : await this.drizzle.db
+            .select({ action: geoRule.action })
+            .from(geoRule)
+            .where(eq(geoRule.countryCode, countryCode));
 
     if (!rule) {
       return { allowed: true, countryCode, reason: null };
@@ -96,6 +104,11 @@ export class ComplianceService {
     }
 
     return { allowed: true, countryCode, reason: null };
+  }
+
+  async checkRegistration(ipAddress: string | null) {
+    const result = await this.geoCheck(ipAddress);
+    return { allowed: result.allowed };
   }
 
   async addGeoRule(input: AddGeoRuleInput, actorId?: User['id'], meta?: ClientMeta) {

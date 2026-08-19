@@ -27,6 +27,10 @@ export function createIdentityRouter(
       identity.register(input, context.request.headers, context.resHeaders ?? new Headers()),
     ),
 
+    usernameAvailable: os.usernameAvailable.handler(({ input }) =>
+      identity.usernameAvailable(input.username),
+    ),
+
     login: os.login.handler(({ input, context }) =>
       identity.login(input, context.request.headers, context.resHeaders ?? new Headers()),
     ),

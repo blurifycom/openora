@@ -34,6 +34,8 @@ async function seedUser(overrides: Partial<typeof user.$inferInsert> = {}) {
 }
 
 async function seedPlayer(userId: string, overrides: Partial<typeof player.$inferInsert> = {}) {
+  const username = (overrides.displayName ?? 'alice').toLowerCase();
+  await db.drizzle.db.update(user).set({ username }).where(eq(user.id, userId));
   const [row] = await db.drizzle.db
     .insert(player)
     .values({ userId, displayName: 'alice', ...overrides })
@@ -217,7 +219,7 @@ describe('DrizzleAdminUserDirectory.getPlayerByUsername (real PG)', () => {
     expect(summary).toMatchObject({
       playerId: seededPlayer.id,
       userId: account.id,
-      username: 'AnnaBell',
+      username: 'annabell',
     });
     expect(summary?.playerId).toBe(seededPlayer.id);
     expect(summary?.playerId).not.toBe(summary?.userId);
@@ -240,7 +242,7 @@ describe('DrizzleAdminUserDirectory.getPlayerByUsername (real PG)', () => {
 });
 
 describe('DrizzleAdminUserDirectory.findPlayerIds (real PG)', () => {
-  it('unions email and displayName matches into a deduped id set', async () => {
+  it('unions email and username matches into a deduped id set', async () => {
     const { dir } = makeDirectory();
     const byEmailOnly = await seedUser({ email: 'anna@example.com' });
     const byBoth = await seedUser({ email: 'anton@example.com' });

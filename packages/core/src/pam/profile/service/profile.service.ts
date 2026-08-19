@@ -4,21 +4,25 @@ import { eq } from 'drizzle-orm';
 import { player } from '../schema/index.js';
 import { user } from '@openora/core/pam/schema/identity';
 import type { UpdatePlayerProfileInput } from '../contract/index.js';
-import { toPlayer, fetchEmailByUserId } from '../../shared/player-mapper.js';
+import { toPlayer, fetchEmailByUserId, fetchUsernameByUserId } from '../../shared/player-mapper.js';
 
 export class ProfileService {
   constructor(private readonly drizzle: DrizzleService) {}
 
-  // Registration only creates the auth `user`; the `player` row is materialised
-  // lazily so a freshly-registered user always has a profile.
+  // Registration only creates the auth `user`; the player record is materialised
+  // lazily and its legacy displayName is never returned as public identity.
   private async ensureProfile(userId: User['id']) {
     const [existing] = await this.drizzle.db.select().from(player).where(eq(player.userId, userId));
     if (existing) {
-      return toPlayer(existing, await fetchEmailByUserId(this.drizzle, userId));
+      return toPlayer(
+        existing,
+        await fetchEmailByUserId(this.drizzle, userId),
+        await fetchUsernameByUserId(this.drizzle, userId),
+      );
     }
 
     const [u] = await this.drizzle.db
-      .select({ name: user.name, email: user.email })
+      .select({ name: user.name, email: user.email, username: user.username })
       .from(user)
       .where(eq(user.id, userId));
     // Upsert: a concurrent first-hit may insert the row between our select and
@@ -28,11 +32,11 @@ export class ProfileService {
       .insert(player)
       .values({
         userId,
-        displayName: u?.name ?? 'Player',
+        displayName: u?.username ?? u?.name ?? 'Player',
       })
       .onConflictDoUpdate({ target: player.userId, set: { userId } })
       .returning();
-    return toPlayer(created, u?.email ?? '');
+    return toPlayer(created, u?.email ?? '', u?.username ?? null);
   }
 
   async getMyProfile(userId: User['id']) {
@@ -46,6 +50,10 @@ export class ProfileService {
       .set(data)
       .where(eq(player.userId, userId))
       .returning();
-    return toPlayer(record, await fetchEmailByUserId(this.drizzle, userId));
+    return toPlayer(
+      record,
+      await fetchEmailByUserId(this.drizzle, userId),
+      await fetchUsernameByUserId(this.drizzle, userId),
+    );
   }
 }

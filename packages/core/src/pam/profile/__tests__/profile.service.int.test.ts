@@ -17,7 +17,12 @@ function makeService(): ProfileService {
 async function seedUser(overrides: Partial<typeof user.$inferInsert> = {}) {
   const [row] = await db.drizzle.db
     .insert(user)
-    .values({ name: 'Player One', email: `${randomUUID()}@example.com`, ...overrides })
+    .values({
+      name: 'Player One',
+      username: randomUUID().replaceAll('-', '').slice(0, 20),
+      email: `${randomUUID()}@example.com`,
+      ...overrides,
+    })
     .returning();
   return row!;
 }
@@ -47,15 +52,15 @@ beforeEach(async () => {
 });
 
 describe('ProfileService.getMyProfile (real PG)', () => {
-  it('materializes a player row from the users name on first access', async () => {
+  it('materializes a player row from the users username on first access', async () => {
     const svc = makeService();
-    const account = await seedUser({ name: 'Jordan' });
+    const account = await seedUser({ name: 'Jordan', username: 'jordan_player' });
 
     const profile = await svc.getMyProfile(account.id);
 
     expect(profile).toMatchObject({
       userId: account.id,
-      displayName: 'Jordan',
+      username: 'jordan_player',
       email: account.email,
     });
     expect(await playersFor(account.id)).toHaveLength(1);
@@ -68,7 +73,7 @@ describe('ProfileService.getMyProfile (real PG)', () => {
 
     const profile = await svc.getMyProfile(account.id);
 
-    expect(profile).toMatchObject({ displayName: 'Existing', country: 'US' });
+    expect(profile).toMatchObject({ username: account.username, country: 'US' });
     expect(await playersFor(account.id)).toHaveLength(1);
   });
 
@@ -98,11 +103,11 @@ describe('ProfileService.updateMyProfile (real PG)', () => {
 
   it('materializes the profile first when update is the first call for a user', async () => {
     const svc = makeService();
-    const account = await seedUser({ name: 'Fresh' });
+    const account = await seedUser({ name: 'Fresh', username: 'fresh_player' });
 
     const result = await svc.updateMyProfile(account.id, { currency: 'EUR' });
 
-    expect(result).toMatchObject({ displayName: 'Fresh', currency: 'EUR' });
+    expect(result).toMatchObject({ username: 'fresh_player', currency: 'EUR' });
     expect(await playersFor(account.id)).toHaveLength(1);
   });
 

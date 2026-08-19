@@ -10,10 +10,21 @@ export type Theme = z.infer<typeof ThemeSchema>;
 // BCP 47 upper bound - the longest real-world tags stay well under this.
 export const LanguageSchema = z.string().max(35);
 
+// The username is the stable, public player identifier. It deliberately has no
+// display-name fallback: registrations and the backfill must establish it before
+// any player-facing surface can resolve an account.
+export const UsernameSchema = z
+  .string()
+  .min(3)
+  .max(20)
+  .regex(/^[a-zA-Z0-9_]+$/)
+  .transform((value) => value.toLowerCase());
+
 export const UserSchema = z.object({
   id: UuidSchema,
   email: z.email(),
   name: z.string().min(1).max(255),
+  username: UsernameSchema.nullable(),
   emailVerified: z.boolean(),
   image: z.url().nullable().optional(),
   theme: ThemeSchema,
@@ -76,8 +87,16 @@ export const LoginInputSchema = credentialsBase.extend({
 });
 
 export const RegisterInputSchema = credentialsBase.extend({
-  name: z.string().min(1).max(255),
+  username: UsernameSchema,
+  acceptedTerms: z.literal(true),
+  acceptedAge: z.literal(true),
 });
+
+export const RegisterOutputSchema = z.object({ status: z.literal('check-email') });
+
+export const UsernameAvailabilityInputSchema = z.object({ username: UsernameSchema });
+
+export const UsernameAvailabilityOutputSchema = z.object({ available: z.boolean() });
 
 export const Enable2faInputSchema = z.object({
   password: z.string().min(8),
@@ -146,6 +165,9 @@ export type Organization = z.infer<typeof OrganizationSchema>;
 export type Member = z.infer<typeof MemberSchema>;
 export type LoginInput = z.infer<typeof LoginInputSchema>;
 export type RegisterInput = z.infer<typeof RegisterInputSchema>;
+export type RegisterOutput = z.infer<typeof RegisterOutputSchema>;
+export type UsernameAvailabilityInput = z.infer<typeof UsernameAvailabilityInputSchema>;
+export type UsernameAvailabilityOutput = z.infer<typeof UsernameAvailabilityOutputSchema>;
 export type Enable2faInput = z.infer<typeof Enable2faInputSchema>;
 export type Enable2faResult = z.infer<typeof Enable2faResultSchema>;
 export type Verify2faInput = z.infer<typeof Verify2faInputSchema>;

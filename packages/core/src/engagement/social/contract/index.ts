@@ -56,7 +56,7 @@ export type Relationship = z.infer<typeof RelationshipSchema>;
 export const FriendListEntrySchema = z.object({
   userId: UuidSchema,
   friendshipId: UuidSchema,
-  displayName: z.string(),
+  username: z.string(),
   status: z.enum(['online', 'offline']),
   lastSeenAt: TimestampSchema.nullable(),
   isIgnored: z.boolean(),

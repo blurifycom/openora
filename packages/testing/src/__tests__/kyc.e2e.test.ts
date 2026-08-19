@@ -12,6 +12,7 @@ import { player } from '@openora/core/pam/schema/profile';
 import {
   setupTestDb,
   bootTestApp,
+  registrationRequestHeaders,
   asPlayer,
   asAdmin,
   seedMinimal,
@@ -59,8 +60,14 @@ async function readJson(res: Response): Promise<any> {
 async function registerAndMaterializePlayer(app: TestApp['app'], email: string) {
   const registerRes = await app.request('/identity/register', {
     method: 'POST',
-    headers: { 'content-type': 'application/json' },
-    body: JSON.stringify({ email, password: 'password123', name: 'KYC E2E Player' }),
+    headers: registrationRequestHeaders(),
+    body: JSON.stringify({
+      email,
+      password: 'password123',
+      username: `player_${randomUUID().replaceAll('-', '').slice(0, 12)}`,
+      acceptedTerms: true,
+      acceptedAge: true,
+    }),
   });
   if (!registerRes.ok) {
     throw new Error(`register failed (${registerRes.status}): ${await registerRes.text()}`);

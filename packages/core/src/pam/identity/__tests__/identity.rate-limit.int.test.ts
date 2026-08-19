@@ -6,6 +6,7 @@ import type {
   IdentityReader,
   RateLimiterAdapter,
 } from '@openora/core/contracts';
+import { definePlatformConfig } from '@openora/core/contracts';
 import { makeIdentityReader, mock, makeEventBus } from '../../../testing/mock.js';
 import { migrate } from '../migrate.js';
 import { IdentityService, type IdentityServiceDeps } from '../service/identity.service.js';
@@ -68,10 +69,27 @@ describe('IdentityService - rate limiting (real Redis)', () => {
     for (let i = 0; i < 5; i++) {
       await limiter.consume(`register:${email}`, { limit: 5, windowMs: 15 * 60 * 1000 });
     }
-    const svc = withTemplateRenderer({ drizzle, events, limiter });
+    const svc = withTemplateRenderer({
+      drizzle,
+      events,
+      limiter,
+      platformConfig: definePlatformConfig({
+        registration: { termsVersion: '2026-08', webUrl: 'https://app.example.test' },
+      }),
+    });
 
     await expect(
-      svc.register({ email, password: 'password123', name: 'A' }, {}, new Headers()),
+      svc.register(
+        {
+          email,
+          password: 'password123',
+          username: 'alpha',
+          acceptedTerms: true,
+          acceptedAge: true,
+        },
+        {},
+        new Headers(),
+      ),
     ).rejects.toMatchObject({
       code: 'TOO_MANY_REQUESTS',
       data: { retryAfterMs: expect.any(Number) },
@@ -83,7 +101,17 @@ describe('IdentityService - rate limiting (real Redis)', () => {
     // signUpEmail is a bare vi.fn returning undefined; a throw here would be a 429, not the
     // downstream .json() failure we expect, so assert we got past the guard.
     await expect(
-      svc.register({ email: 'ok@x.dev', password: 'password123', name: 'A' }, {}, new Headers()),
+      svc.register(
+        {
+          email: 'ok@x.dev',
+          password: 'password123',
+          username: 'alpha',
+          acceptedTerms: true,
+          acceptedAge: true,
+        },
+        {},
+        new Headers(),
+      ),
     ).rejects.not.toMatchObject({ code: 'TOO_MANY_REQUESTS' });
   });
 });

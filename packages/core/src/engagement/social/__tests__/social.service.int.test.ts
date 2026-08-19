@@ -7,6 +7,8 @@ import { migrate as migrateChat } from '@openora/core/engagement/migrate/chat';
 import { chatUserBlock, chatUserIgnore } from '@openora/core/engagement/schema/chat';
 import { player } from '@openora/core/pam/schema/profile';
 import { migrate as migrateProfile } from '@openora/core/pam/migrate/profile';
+import { user } from '@openora/core/pam/schema/identity';
+import { migrate as migrateIdentity } from '@openora/core/pam/migrate/identity';
 import { makeEventBus, makeIdentityReader } from '../../../testing/mock.js';
 import { migrate } from '../migrate.js';
 import { friendship } from '../schema/index.js';
@@ -44,9 +46,21 @@ function makeService() {
 }
 
 async function seedPlayer(overrides: Partial<typeof player.$inferInsert> = {}) {
+  const userId = overrides.userId ?? randomUUID();
+  const displayName = overrides.displayName ?? 'Player';
+  const username =
+    displayName === 'Player'
+      ? `player_${userId.replaceAll('-', '').slice(0, 12)}`
+      : displayName.toLowerCase();
+  await db.drizzle.db.insert(user).values({
+    id: userId,
+    name: displayName,
+    username,
+    email: `${randomUUID()}@example.com`,
+  });
   const [row] = await db.drizzle.db
     .insert(player)
-    .values({ userId: randomUUID(), displayName: 'Player', ...overrides })
+    .values({ userId, displayName: 'Player', ...overrides })
     .returning();
   return row!;
 }
@@ -60,7 +74,7 @@ async function seedIgnore(ignorerId: string, ignoredId: string) {
 }
 
 beforeAll(async () => {
-  db = await createTestDb([migrate, migrateProfile, migrateChat]);
+  db = await createTestDb([migrateIdentity, migrate, migrateProfile, migrateChat]);
 });
 
 afterAll(async () => {
@@ -69,7 +83,7 @@ afterAll(async () => {
 
 beforeEach(async () => {
   await db.drizzle.db.execute(
-    sql`TRUNCATE ${friendship}, ${chatUserBlock}, ${chatUserIgnore}, ${player} RESTART IDENTITY CASCADE`,
+    sql`TRUNCATE ${friendship}, ${chatUserBlock}, ${chatUserIgnore}, ${player}, ${user} RESTART IDENTITY CASCADE`,
   );
 });
 
@@ -93,7 +107,7 @@ describe('SocialService.sendFriendRequest (real PG)', () => {
       friendshipId: result.id,
       requesterId: requester.userId,
       addresseeId: addressee.userId,
-      requesterDisplayName: 'Alice',
+      requesterUsername: 'alice',
     });
   });
 
@@ -202,7 +216,7 @@ describe('SocialService.sendFriendRequest (real PG)', () => {
       requesterId: alice.userId,
       addresseeId: bob.userId,
       accepterId: bob.userId,
-      accepterDisplayName: 'Bob',
+      accepterUsername: 'bob',
     });
     const rows = await db.drizzle.db.select().from(friendship);
     expect(rows).toHaveLength(1);
@@ -553,7 +567,7 @@ describe('SocialService.listFriends (real PG)', () => {
     expect(result.items).toHaveLength(1);
     expect(result.items[0]).toMatchObject({
       userId: friend.userId,
-      displayName: 'Friend',
+      username: 'friend',
       status: 'offline',
       lastSeenAt: null,
       isIgnored: false,

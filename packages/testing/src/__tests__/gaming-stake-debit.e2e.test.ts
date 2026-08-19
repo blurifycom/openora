@@ -8,10 +8,12 @@ import {
   type CoreTokenCatalog,
 } from '@openora/core/server';
 import { game, gameRound } from '@openora/core/casino/schema/gaming';
+import { user } from '@openora/core/pam/schema/identity';
 import { wallet, walletBalance, walletTransaction } from '@openora/core/wallet/schema';
 import {
   setupTestDb,
   bootTestApp,
+  registrationRequestHeaders,
   asPlayer,
   type TestDb,
   type TestApp,
@@ -30,15 +32,28 @@ async function readJson(res: Response): Promise<any> {
 async function registerAndLogin(email: string): Promise<{ client: TestClient; userId: string }> {
   const res = await app.app.request('/identity/register', {
     method: 'POST',
-    headers: { 'content-type': 'application/json' },
-    body: JSON.stringify({ email, password: 'password123', name: 'Stake Debit E2E Player' }),
+    headers: registrationRequestHeaders(),
+    body: JSON.stringify({
+      email,
+      password: 'password123',
+      username: `player_${randomUUID().replaceAll('-', '').slice(0, 12)}`,
+      acceptedTerms: true,
+      acceptedAge: true,
+    }),
   });
   if (!res.ok) {
     throw new Error(`register failed (${res.status}): ${await res.text()}`);
   }
-  const body = (await readJson(res)) as { user: { id: string } };
   const client = await asPlayer(app.app, { email });
-  return { client, userId: body.user.id };
+  const [registered] = await app.container
+    .get(DRIZZLE)
+    .db.select({ id: user.id })
+    .from(user)
+    .where(eq(user.email, email));
+  if (!registered) {
+    throw new Error('registered user was not persisted');
+  }
+  return { client, userId: registered.id };
 }
 
 async function deposit(client: TestClient, amount: string, currency = 'USD') {

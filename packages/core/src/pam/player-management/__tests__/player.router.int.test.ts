@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeAll, afterAll, beforeEach, vi } from 'vitest';
 import { randomUUID } from 'node:crypto';
-import { eq, sql } from 'drizzle-orm';
+import { sql } from 'drizzle-orm';
 import { call } from '@orpc/server';
 import type { AdminGuard } from '@openora/core/server';
 import { createTestDb, type TestDb } from '@openora/core/testing';
@@ -71,18 +71,17 @@ function build(
 async function seedPlayer() {
   const [account] = await db.drizzle.db
     .insert(user)
-    .values({ name: 'Player', email: `${randomUUID()}@example.com` })
+    .values({
+      name: 'Player',
+      username: randomUUID().replaceAll('-', '').slice(0, 20),
+      email: `${randomUUID()}@example.com`,
+    })
     .returning();
   const [row] = await db.drizzle.db
     .insert(player)
     .values({ userId: account!.id, displayName: 'Player' })
     .returning();
   return row!;
-}
-
-async function storedPlayer(id: string) {
-  const [row] = await db.drizzle.db.select().from(player).where(eq(player.id, id));
-  return row;
 }
 
 describe('player router update', () => {
@@ -92,29 +91,28 @@ describe('player router update', () => {
 
     const result = await call(
       router.update,
-      { playerId: seeded.id, displayName: 'New' },
+      { playerId: seeded.id, username: 'new_player' },
       { context: CTX },
     );
 
-    expect(result.displayName).toBe('New');
-    expect((await storedPlayer(seeded.id))?.displayName).toBe('New');
+    expect(result.username).toBe('new_player');
   });
 
   it('records an admin.player.updated audit entry with before/after snapshots', async () => {
     const seeded = await seedPlayer();
     const { router, audit } = build(guardAllowing(['player:update']));
 
-    await call(router.update, { playerId: seeded.id, displayName: 'New' }, { context: CTX });
+    await call(router.update, { playerId: seeded.id, username: 'new_player' }, { context: CTX });
 
     expect(audit.record).toHaveBeenCalledWith(
       expect.objectContaining({
         actorId: CALLER,
         actorType: 'admin',
-        action: 'admin.player.updated',
+        action: 'admin.player.username_corrected',
         resourceType: 'player',
         resourceId: seeded.id,
-        before: expect.objectContaining({ displayName: 'Player' }),
-        after: expect.objectContaining({ displayName: 'New' }),
+        before: expect.objectContaining({ username: expect.any(String) }),
+        after: expect.objectContaining({ username: 'new_player' }),
       }),
     );
   });
@@ -124,7 +122,7 @@ describe('player router update', () => {
     const { router, audit } = build(guardAllowing([]));
 
     await expect(
-      call(router.update, { playerId: seeded.id, displayName: 'New' }, { context: CTX }),
+      call(router.update, { playerId: seeded.id, username: 'new_player' }, { context: CTX }),
     ).rejects.toBeDefined();
     expect(audit.record).not.toHaveBeenCalled();
   });
@@ -133,7 +131,7 @@ describe('player router update', () => {
     const { router } = build(guardAllowing(['player:update']));
 
     await expect(
-      call(router.update, { playerId: randomUUID(), displayName: 'New' }, { context: CTX }),
+      call(router.update, { playerId: randomUUID(), username: 'new_player' }, { context: CTX }),
     ).rejects.toMatchObject({ code: 'NOT_FOUND' });
   });
 });

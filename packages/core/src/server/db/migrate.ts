@@ -35,6 +35,12 @@ export type RunMigrationsOptions = {
    * same rationale as `extensions`, different problem shape.
    */
   preSql?: string[];
+  /**
+   * Raw SQL statements to run after this module's pending schema migrations.
+   * Use only for idempotent data backfills that depend on columns introduced by
+   * those generated migrations.
+   */
+  postSql?: string[];
 };
 
 function migrateUrl(override?: string): string {
@@ -143,6 +149,11 @@ export async function runMigrations(opts: RunMigrationsOptions) {
               }
             },
           });
+          if (pending.length > 0) {
+            for (const sql of opts.postSql ?? []) {
+              await lockClient.query(sql);
+            }
+          }
         },
       );
     } finally {

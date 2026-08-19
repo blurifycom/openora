@@ -27,6 +27,8 @@ export type AuthOptions = {
   onPasswordReset?: (user: { id: string; email: string }) => Promise<void> | void;
   templateRenderer?: EmailTemplateRenderer;
   getUserLanguage?: (email: string) => Promise<string | null>;
+  registrationWebUrl?: string;
+  onExistingUserSignUp?: (user: { id: string; email: string }) => Promise<void> | void;
   cookieDomain?: string;
 };
 
@@ -78,13 +80,25 @@ export function createAuth(options: AuthOptions): BetterAuthType {
       // are validated at the route (theme against the enum, language against
       // PlatformConfig.supportedLanguages).
       additionalFields: {
+        username: { type: 'string', required: false, input: true },
+        termsVersion: { type: 'string', required: false, input: true },
+        termsAcceptedAt: { type: 'date', required: false, input: true },
+        ageAcceptedAt: { type: 'date', required: false, input: true },
+        registrationIp: { type: 'string', required: false, input: true },
+        registrationUserAgent: { type: 'string', required: false, input: true },
         theme: { type: 'string', required: false, input: true, defaultValue: 'system' },
         language: { type: 'string', required: false, input: true, defaultValue: 'en' },
       },
     },
     emailAndPassword: {
       enabled: true,
+      autoSignIn: false,
       revokeSessionsOnPasswordReset: true,
+      onExistingUserSignUp: options.onExistingUserSignUp
+        ? async ({ user }) => {
+            await options.onExistingUserSignUp?.({ id: user.id, email: user.email });
+          }
+        : undefined,
       onPasswordReset: options.onPasswordReset
         ? async ({ user }) => {
             await options.onPasswordReset?.({ id: user.id, email: user.email });
@@ -92,11 +106,20 @@ export function createAuth(options: AuthOptions): BetterAuthType {
         : undefined,
     },
     emailVerification: {
+      sendOnSignUp: true,
+      expiresIn: 24 * 60 * 60,
       sendVerificationEmail: async ({ user, url, token }) => {
         const locale = (user as { language?: string }).language ?? 'en';
+        const verificationUrl = options.registrationWebUrl
+          ? new URL('/verify-email', options.registrationWebUrl)
+          : undefined;
+        if (verificationUrl) {
+          verificationUrl.searchParams.set('token', token);
+          verificationUrl.searchParams.set('callbackURL', '/');
+        }
         const { subject, body } = await templateRenderer.render(
           'verifyEmail',
-          { url, token },
+          { url: verificationUrl?.toString() ?? url, token },
           locale,
         );
         await sendEmail({ to: user.email, subject, body });
