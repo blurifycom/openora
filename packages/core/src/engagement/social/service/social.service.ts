@@ -1,4 +1,4 @@
-import { and, count, desc, eq, inArray, isNotNull, isNull, or } from 'drizzle-orm';
+import { and, count, desc, eq, inArray, isNotNull, isNull, or, SQL, sql } from 'drizzle-orm';
 import {
   type DrizzleDb,
   type DrizzleService,
@@ -18,7 +18,13 @@ import {
 import { chatUserBlock, chatUserIgnore } from '@openora/core/engagement/schema/chat';
 import { player } from '@openora/core/pam/schema/profile';
 import { friendship } from '../schema/index.js';
-import { type Friendship, type FriendListEntry, type Relationship } from '../contract/index.js';
+import {
+  type Friendship,
+  type FriendListEntry,
+  type FriendRequestDirection,
+  type FriendRequestEntry,
+  type Relationship,
+} from '../contract/index.js';
 
 const logger = createLogger('social');
 
@@ -67,6 +73,8 @@ export const FriendRequestRefusedError = makeConflictError(
 
 export const FriendshipNotFoundError = makeNotFoundError('Friendship');
 
+export const FriendRequestNotFoundError = makeNotFoundError('FriendRequest');
+
 function pgErrorCode(e: unknown): string | undefined {
   if (typeof e !== 'object' || e === null) {
     return undefined;
@@ -106,15 +114,6 @@ export class SocialService {
     private readonly identityReader: IdentityReader,
   ) {}
 
-  /**
-   * Sends a friend request from `callerId` to `targetUserId`. The insert is
-   * attempted directly against the canonical-pair unique index (no pre-SELECT,
-   * avoiding a TOCTOU race); a unique-violation means a row for this pair already
-   * exists, which is resolved by re-reading it - including the mutual/simultaneous
-   * case where the existing row was already addressed TO the caller, which
-   * auto-accepts instead of conflicting. Events are emitted strictly after the
-   * mutating statement/transaction has committed.
-   */
   async sendFriendRequest(callerId: Uuid, targetUserId: Uuid): Promise<Friendship> {
     if (targetUserId === callerId) {
       throw new SelfFriendRequestError();
@@ -187,12 +186,6 @@ export class SocialService {
     return toFriendshipDto(accepted);
   }
 
-  /**
-   * Re-reads the row a unique-violation on `friendship_pair_key` proved already
-   * exists and resolves it: already accepted -> conflict, same-direction duplicate
-   * -> conflict, opposite-direction (mutual/simultaneous request) -> auto-accept.
-   * `FOR UPDATE` serializes this against a concurrent resolution of the same pair.
-   */
   private async resolveExistingPair(callerId: Uuid, targetUserId: Uuid): Promise<FriendshipRow> {
     return this.drizzle.db.transaction(async (tx) => {
       const rows = await tx
@@ -310,37 +303,17 @@ export class SocialService {
       }
 
       const existing = friendshipByTargetId.get(userId);
-      if (existing?.refusedAt !== null && existing?.refusedAt !== undefined) {
+      if (!existing) {
+        return { userId, status: 'none', friendshipId: null, canSendRequest: true };
+      }
+      if (existing.refusedAt !== null) {
         return { userId, status: 'refused', friendshipId: existing.id, canSendRequest: false };
       }
-      if (existing?.acceptedAt !== null && existing?.acceptedAt !== undefined) {
+      if (existing.acceptedAt !== null) {
         return { userId, status: 'friends', friendshipId: existing.id, canSendRequest: false };
       }
-      if (
-        existing?.acceptedAt === null &&
-        existing?.refusedAt === null &&
-        existing?.requesterId === callerId
-      ) {
-        return {
-          userId,
-          status: 'pending_outgoing',
-          friendshipId: existing.id,
-          canSendRequest: false,
-        };
-      }
-      if (
-        existing?.acceptedAt === null &&
-        existing?.refusedAt === null &&
-        existing?.requesterId === userId
-      ) {
-        return {
-          userId,
-          status: 'pending_incoming',
-          friendshipId: existing.id,
-          canSendRequest: false,
-        };
-      }
-      return { userId, status: 'none', friendshipId: null, canSendRequest: true };
+      const status = existing.requesterId === callerId ? 'pending_outgoing' : 'pending_incoming';
+      return { userId, status, friendshipId: existing.id, canSendRequest: false };
     });
   }
 
@@ -495,6 +468,295 @@ export class SocialService {
     });
 
     return { items, total: Number(countRows[0]?.n ?? 0), page, limit };
+  }
+
+  async acceptFriendRequest(callerId: Uuid, friendshipId: Uuid): Promise<Friendship> {
+    const [pending] = await this.drizzle.db
+      .select({ requesterId: friendship.requesterId })
+      .from(friendship)
+      .where(
+        and(
+          eq(friendship.id, friendshipId),
+          eq(friendship.addresseeId, callerId),
+          isNull(friendship.acceptedAt),
+          isNull(friendship.refusedAt),
+          isNull(friendship.removedAt),
+        ),
+      );
+    if (!pending) {
+      throw new FriendRequestNotFoundError(friendshipId);
+    }
+
+    const blocks = await this.drizzle.db
+      .select({ blockerId: chatUserBlock.blockerId })
+      .from(chatUserBlock)
+      .where(
+        and(isNull(chatUserBlock.removedAt), pairBlockCondition(callerId, pending.requesterId)),
+      );
+    if (blocks.length > 0) {
+      throw new FriendRequestUnavailableError();
+    }
+
+    const rows = await this.drizzle.db
+      .update(friendship)
+      .set({ acceptedAt: new Date() })
+      .where(
+        and(
+          eq(friendship.id, friendshipId),
+          eq(friendship.addresseeId, callerId),
+          isNull(friendship.acceptedAt),
+          isNull(friendship.refusedAt),
+          isNull(friendship.removedAt),
+        ),
+      )
+      .returning();
+    const updated = rows[0];
+    if (!updated) {
+      throw new FriendRequestNotFoundError(friendshipId);
+    }
+
+    const [callerPlayer] = await this.drizzle.db
+      .select({ displayName: player.displayName })
+      .from(player)
+      .where(eq(player.userId, callerId));
+    if (!callerPlayer) {
+      // Invariant: an authenticated caller always has a player row (see
+      // sendFriendRequest's same guard).
+      throw new Error(`Player profile missing for authenticated caller: ${callerId}`);
+    }
+
+    this.events.emit('social.friend_request.accepted', {
+      friendshipId: updated.id,
+      requesterId: updated.requesterId,
+      addresseeId: updated.addresseeId,
+      accepterId: callerId,
+      accepterDisplayName: callerPlayer.displayName,
+    });
+    return toFriendshipDto(updated);
+  }
+
+  async declineFriendRequest(callerId: Uuid, friendshipId: Uuid): Promise<void> {
+    // removedAt (not refusedAt - the two are mutually exclusive, see the
+    // friendship_removed_excludes_refused_key check constraint) frees the pair's
+    // partial-unique slot, same as cancelFriendRequest - decline and cancel both
+    // let either side send a new request afterwards.
+    const rows = await this.drizzle.db
+      .update(friendship)
+      .set({ removedAt: new Date() })
+      .where(
+        and(
+          eq(friendship.id, friendshipId),
+          eq(friendship.addresseeId, callerId),
+          isNull(friendship.acceptedAt),
+          isNull(friendship.refusedAt),
+          isNull(friendship.removedAt),
+        ),
+      )
+      .returning();
+    const updated = rows[0];
+    if (!updated) {
+      throw new FriendRequestNotFoundError(friendshipId);
+    }
+
+    this.events.emit('social.friend_request.declined', {
+      friendshipId: updated.id,
+      requesterId: updated.requesterId,
+      addresseeId: updated.addresseeId,
+    });
+  }
+
+  async cancelFriendRequest(callerId: Uuid, friendshipId: Uuid): Promise<void> {
+    const rows = await this.drizzle.db
+      .update(friendship)
+      .set({ removedAt: new Date() })
+      .where(
+        and(
+          eq(friendship.id, friendshipId),
+          eq(friendship.requesterId, callerId),
+          isNull(friendship.acceptedAt),
+          isNull(friendship.refusedAt),
+          isNull(friendship.removedAt),
+        ),
+      )
+      .returning();
+    const updated = rows[0];
+    if (!updated) {
+      throw new FriendRequestNotFoundError(friendshipId);
+    }
+
+    this.events.emit('social.friend_request.cancelled', {
+      friendshipId: updated.id,
+      requesterId: updated.requesterId,
+      addresseeId: updated.addresseeId,
+    });
+  }
+
+  async listFriendRequests(
+    callerId: Uuid,
+    { direction, page, limit }: { direction: FriendRequestDirection; page: number; limit: number },
+  ): Promise<{ items: FriendRequestEntry[]; total: number; page: number; limit: number }> {
+    const directionColumn =
+      direction === 'incoming' ? friendship.addresseeId : friendship.requesterId;
+    const where = and(
+      eq(directionColumn, callerId),
+      isNull(friendship.acceptedAt),
+      isNull(friendship.refusedAt),
+      isNull(friendship.removedAt),
+    );
+
+    const [rows, countRows] = await Promise.all([
+      this.drizzle.db
+        .select({
+          id: friendship.id,
+          requesterId: friendship.requesterId,
+          addresseeId: friendship.addresseeId,
+          createdAt: friendship.createdAt,
+        })
+        .from(friendship)
+        .where(where)
+        .orderBy(desc(friendship.createdAt))
+        .limit(limit)
+        .offset(pageToOffset(page, limit)),
+      this.drizzle.db.select({ n: count() }).from(friendship).where(where),
+    ]);
+
+    const counterpartIds = rows.map((row) =>
+      direction === 'incoming' ? row.requesterId : row.addresseeId,
+    );
+
+    const [players, mutualCounts, blocks] = await Promise.all([
+      counterpartIds.length > 0
+        ? this.drizzle.db
+            .select({
+              userId: player.userId,
+              displayName: player.displayName,
+              status: player.status,
+            })
+            .from(player)
+            .where(inArray(player.userId, counterpartIds))
+        : Promise.resolve([]),
+      direction === 'incoming' && counterpartIds.length > 0
+        ? this.getMutualFriendsCounts(callerId, counterpartIds)
+        : Promise.resolve(new Map<string, number>()),
+      counterpartIds.length > 0
+        ? this.drizzle.db
+            .select({ blockerId: chatUserBlock.blockerId, blockedId: chatUserBlock.blockedId })
+            .from(chatUserBlock)
+            .where(
+              and(
+                isNull(chatUserBlock.removedAt),
+                or(
+                  and(
+                    eq(chatUserBlock.blockerId, callerId),
+                    inArray(chatUserBlock.blockedId, counterpartIds),
+                  ),
+                  and(
+                    inArray(chatUserBlock.blockerId, counterpartIds),
+                    eq(chatUserBlock.blockedId, callerId),
+                  ),
+                ),
+              ),
+            )
+        : Promise.resolve([]),
+    ]);
+    const playerByUserId = new Map(players.map((p) => [p.userId, p]));
+    // Either direction hides the pair - a blocked player never appears in requests on both sides
+    const blockedCounterpartIds = new Set(
+      blocks.map((b) => (b.blockerId === callerId ? b.blockedId : b.blockerId)),
+    );
+
+    const items = rows.flatMap((row) => {
+      const counterpartId = direction === 'incoming' ? row.requesterId : row.addresseeId;
+      const counterpartPlayer = playerByUserId.get(counterpartId);
+      if (!counterpartPlayer) {
+        logger.error(
+          { friendshipId: row.id, counterpartId },
+          'listFriendRequests: player row missing for counterpart',
+        );
+        return [];
+      }
+      if (counterpartPlayer.status === 'suspended' || counterpartPlayer.status === 'closed') {
+        return [];
+      }
+      if (blockedCounterpartIds.has(counterpartId)) {
+        return [];
+      }
+      return [
+        serializeRow(
+          {
+            friendshipId: row.id,
+            userId: counterpartId,
+            displayName: counterpartPlayer.displayName,
+            direction,
+            createdAt: row.createdAt,
+            mutualFriendsCount:
+              direction === 'incoming' ? (mutualCounts.get(counterpartId) ?? 0) : null,
+          },
+          { dateFields: ['createdAt'] as const },
+        ),
+      ];
+    });
+
+    return { items, total: Number(countRows[0]?.n ?? 0), page, limit };
+  }
+
+  private async getMutualFriendsCounts(
+    callerId: Uuid,
+    requesterIds: readonly Uuid[],
+  ): Promise<Map<string, number>> {
+    const requesterInSet = inArray(friendship.requesterId, requesterIds);
+
+    const callerFriends = this.drizzle.db
+      .select({
+        friendId: new SQL.Aliased<string>(
+          sql<string>`CASE WHEN ${eq(friendship.requesterId, callerId)} THEN ${friendship.addresseeId} ELSE ${friendship.requesterId} END`,
+          'caller_friend_id',
+        ),
+      })
+      .from(friendship)
+      .where(
+        and(
+          or(eq(friendship.requesterId, callerId), eq(friendship.addresseeId, callerId)),
+          isNotNull(friendship.acceptedAt),
+          isNull(friendship.removedAt),
+        ),
+      )
+      .as('caller_friends');
+
+    const requesterFriends = this.drizzle.db
+      .select({
+        otherId: new SQL.Aliased<string>(
+          sql<string>`CASE WHEN ${requesterInSet} THEN ${friendship.requesterId} ELSE ${friendship.addresseeId} END`,
+          'other_id',
+        ),
+        friendId: new SQL.Aliased<string>(
+          sql<string>`CASE WHEN ${requesterInSet} THEN ${friendship.addresseeId} ELSE ${friendship.requesterId} END`,
+          'requester_friend_id',
+        ),
+      })
+      .from(friendship)
+      .where(
+        and(
+          or(
+            inArray(friendship.requesterId, requesterIds),
+            inArray(friendship.addresseeId, requesterIds),
+          ),
+          isNotNull(friendship.acceptedAt),
+          isNull(friendship.removedAt),
+        ),
+      )
+      .as('requester_friends');
+
+    const rows = await this.drizzle.db
+      .select({
+        requesterId: requesterFriends.otherId,
+        mutualCount: sql<string>`count(distinct ${callerFriends.friendId})`,
+      })
+      .from(requesterFriends)
+      .innerJoin(callerFriends, eq(requesterFriends.friendId, callerFriends.friendId))
+      .groupBy(requesterFriends.otherId);
+
+    return new Map(rows.map((row) => [row.requesterId, Number(row.mutualCount)]));
   }
 }
 

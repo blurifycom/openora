@@ -29,6 +29,13 @@
       "when": 1786693962441,
       "tag": "0003_fuzzy_shadow_king",
       "breakpoints": true
+    },
+    {
+      "idx": 4,
+      "version": "7",
+      "when": 1786967747341,
+      "tag": "0004_friendship-cancel-constraint",
+      "breakpoints": true
     }
   ]
 }

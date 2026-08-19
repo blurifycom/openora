@@ -79,6 +79,179 @@ describe('social router authz', () => {
       call(router.removeFriend, { targetUserId: randomUUID() }, { context: testContext() }),
     ).rejects.toBeInstanceOf(ORPCError);
   });
+
+  it('rejects listFriendRequests for an unauthenticated caller', async () => {
+    const { router } = build();
+
+    await expect(
+      call(
+        router.listFriendRequests,
+        { page: 1, limit: 20, direction: 'incoming' },
+        { context: testContext() },
+      ),
+    ).rejects.toBeInstanceOf(ORPCError);
+  });
+
+  it('rejects acceptFriendRequest for an unauthenticated caller', async () => {
+    const { router } = build();
+
+    await expect(
+      call(router.acceptFriendRequest, { friendshipId: randomUUID() }, { context: testContext() }),
+    ).rejects.toBeInstanceOf(ORPCError);
+  });
+
+  it('rejects declineFriendRequest for an unauthenticated caller', async () => {
+    const { router } = build();
+
+    await expect(
+      call(router.declineFriendRequest, { friendshipId: randomUUID() }, { context: testContext() }),
+    ).rejects.toBeInstanceOf(ORPCError);
+  });
+
+  it('rejects cancelFriendRequest for an unauthenticated caller', async () => {
+    const { router } = build();
+
+    await expect(
+      call(router.cancelFriendRequest, { friendshipId: randomUUID() }, { context: testContext() }),
+    ).rejects.toBeInstanceOf(ORPCError);
+  });
+});
+
+describe('social router listFriendRequests / accept / decline / cancel', () => {
+  it('lists an incoming pending request and accepts it, removing it from the requests tab', async () => {
+    const { router } = build();
+    const requester = await seedPlayer({ displayName: 'Alice' });
+    const addressee = await seedPlayer({ displayName: 'Bob' });
+    const sent = await call(
+      router.sendFriendRequest,
+      { targetUserId: addressee.userId },
+      { context: ctxFor(requester.userId) },
+    );
+
+    const incoming = await call(
+      router.listFriendRequests,
+      { page: 1, limit: 20, direction: 'incoming' },
+      { context: ctxFor(addressee.userId) },
+    );
+    expect(incoming.items).toHaveLength(1);
+    expect(incoming.items[0]).toMatchObject({
+      friendshipId: sent.id,
+      userId: requester.userId,
+      direction: 'incoming',
+      mutualFriendsCount: 0,
+    });
+
+    const accepted = await call(
+      router.acceptFriendRequest,
+      { friendshipId: sent.id },
+      { context: ctxFor(addressee.userId) },
+    );
+    expect(accepted.acceptedAt).toEqual(expect.any(String));
+
+    const afterAccept = await call(
+      router.listFriendRequests,
+      { page: 1, limit: 20, direction: 'incoming' },
+      { context: ctxFor(addressee.userId) },
+    );
+    expect(afterAccept.items).toHaveLength(0);
+  });
+
+  it('maps accepting a nonexistent/wrong-caller request to NOT_FOUND', async () => {
+    const { router } = build();
+    const caller = await seedPlayer();
+
+    const error: unknown = await call(
+      router.acceptFriendRequest,
+      { friendshipId: randomUUID() },
+      { context: ctxFor(caller.userId) },
+    ).catch((e: unknown) => e);
+
+    expect(error).toBeInstanceOf(ORPCError);
+    expect((error as ORPCError<'acceptFriendRequest', unknown>).code).toBe('NOT_FOUND');
+  });
+
+  it('declines an incoming request, removing it with no acceptance', async () => {
+    const { router } = build();
+    const requester = await seedPlayer();
+    const addressee = await seedPlayer();
+    const sent = await call(
+      router.sendFriendRequest,
+      { targetUserId: addressee.userId },
+      { context: ctxFor(requester.userId) },
+    );
+
+    const result = await call(
+      router.declineFriendRequest,
+      { friendshipId: sent.id },
+      { context: ctxFor(addressee.userId) },
+    );
+    expect(result).toEqual({ success: true });
+
+    const afterDecline = await call(
+      router.listFriendRequests,
+      { page: 1, limit: 20, direction: 'incoming' },
+      { context: ctxFor(addressee.userId) },
+    );
+    expect(afterDecline.items).toHaveLength(0);
+  });
+
+  it('lists an outgoing pending request and cancels it, removing it from the requests tab', async () => {
+    const { router } = build();
+    const requester = await seedPlayer();
+    const addressee = await seedPlayer();
+    const sent = await call(
+      router.sendFriendRequest,
+      { targetUserId: addressee.userId },
+      { context: ctxFor(requester.userId) },
+    );
+
+    const outgoing = await call(
+      router.listFriendRequests,
+      { page: 1, limit: 20, direction: 'outgoing' },
+      { context: ctxFor(requester.userId) },
+    );
+    expect(outgoing.items).toHaveLength(1);
+    expect(outgoing.items[0]).toMatchObject({
+      friendshipId: sent.id,
+      userId: addressee.userId,
+      direction: 'outgoing',
+      mutualFriendsCount: null,
+    });
+
+    const result = await call(
+      router.cancelFriendRequest,
+      { friendshipId: sent.id },
+      { context: ctxFor(requester.userId) },
+    );
+    expect(result).toEqual({ success: true });
+
+    const afterCancel = await call(
+      router.listFriendRequests,
+      { page: 1, limit: 20, direction: 'outgoing' },
+      { context: ctxFor(requester.userId) },
+    );
+    expect(afterCancel.items).toHaveLength(0);
+  });
+
+  it('maps cancelling as the addressee (wrong side) to NOT_FOUND', async () => {
+    const { router } = build();
+    const requester = await seedPlayer();
+    const addressee = await seedPlayer();
+    const sent = await call(
+      router.sendFriendRequest,
+      { targetUserId: addressee.userId },
+      { context: ctxFor(requester.userId) },
+    );
+
+    const error: unknown = await call(
+      router.cancelFriendRequest,
+      { friendshipId: sent.id },
+      { context: ctxFor(addressee.userId) },
+    ).catch((e: unknown) => e);
+
+    expect(error).toBeInstanceOf(ORPCError);
+    expect((error as ORPCError<'cancelFriendRequest', unknown>).code).toBe('NOT_FOUND');
+  });
 });
 
 describe('social router listFriends', () => {
