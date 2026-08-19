@@ -10,7 +10,11 @@ import {
   pageToOffset,
   serializeRow,
 } from '@openora/core/server';
-import { type IdentityReader, type Uuid } from '@openora/core/contracts';
+import {
+  type FriendshipDissolvedPayload,
+  type IdentityReader,
+  type Uuid,
+} from '@openora/core/contracts';
 import { chatUserBlock, chatUserIgnore } from '@openora/core/engagement/schema/chat';
 import { player } from '@openora/core/pam/schema/profile';
 import { friendship } from '../schema/index.js';
@@ -346,7 +350,7 @@ export class SocialService {
     userB: Uuid,
     actorId: Uuid,
     reason: 'removed_by_player' | 'blocked',
-  ): Promise<FriendshipRow | undefined> {
+  ): Promise<FriendshipDissolvedPayload | undefined> {
     const rows = await tx
       .update(friendship)
       .set({ removedAt: new Date() })
@@ -363,31 +367,42 @@ export class SocialService {
       return undefined;
     }
 
-    this.events.emit('social.friendship.removed', {
+    return {
       friendshipId: removed.id,
       actorId,
       actorPlayerId: await this.identityReader.getPlayerIdByUserIdSafe(actorId),
       otherUserId: removed.requesterId === actorId ? removed.addresseeId : removed.requesterId,
       reason,
-    });
-    return removed;
+    };
   }
 
   async removeFriend(callerId: Uuid, targetUserId: Uuid): Promise<void> {
-    const removed = await this.dissolveFriendship(
+    const dissolved = await this.dissolveFriendship(
       this.drizzle.db,
       callerId,
       targetUserId,
       callerId,
       'removed_by_player',
     );
-    if (!removed) {
+    if (!dissolved) {
       throw new FriendshipNotFoundError(targetUserId);
     }
+    this.events.emit('social.friendship.removed', dissolved);
   }
 
-  async dissolveFriendshipOnBlock(tx: unknown, blockerId: Uuid, blockedId: Uuid): Promise<void> {
-    await this.dissolveFriendship(tx as DrizzleDb, blockerId, blockedId, blockerId, 'blocked');
+  async dissolveFriendshipOnBlock(
+    tx: unknown,
+    blockerId: Uuid,
+    blockedId: Uuid,
+  ): Promise<FriendshipDissolvedPayload | null> {
+    const dissolved = await this.dissolveFriendship(
+      tx as DrizzleDb,
+      blockerId,
+      blockedId,
+      blockerId,
+      'blocked',
+    );
+    return dissolved ?? null;
   }
 
   async listFriends(

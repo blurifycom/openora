@@ -8,6 +8,7 @@ import type {
   AdminUserDirectory,
   AdminPlayerSummary,
   AuditWritePort,
+  FriendshipDissolvedPayload,
   SocialCommands,
 } from '@openora/core/contracts';
 import { migrate as migrateProfile } from '@openora/core/pam/migrate/profile';
@@ -546,6 +547,43 @@ describe('ChatService block list (real PG)', () => {
     await svc.blockUser(blockerId, blockedId);
 
     expect(dissolveFriendshipOnBlock).toHaveBeenCalledTimes(1);
+  });
+
+  it('emits the dissolved-friendship event only after the block transaction commits', async () => {
+    const payload: FriendshipDissolvedPayload = {
+      friendshipId: randomUUID(),
+      actorId: randomUUID(),
+      actorPlayerId: randomUUID(),
+      otherUserId: randomUUID(),
+      reason: 'blocked',
+    };
+    const dissolveFriendshipOnBlock = vi.fn(async () => payload);
+    const { svc, events } = makeService(
+      undefined,
+      mock<SocialCommands>({ dissolveFriendshipOnBlock }),
+    );
+    const blockerId = randomUUID();
+    const blockedId = randomUUID();
+
+    await svc.blockUser(blockerId, blockedId, NO_CLIENT_META);
+
+    expect(events.emit).toHaveBeenCalledWith('social.friendship.removed', payload);
+  });
+
+  it('does not emit a dissolved-friendship event when there was no active friendship to dissolve', async () => {
+    const dissolveFriendshipOnBlock = vi.fn(async () => null);
+    const { svc, events } = makeService(
+      undefined,
+      mock<SocialCommands>({ dissolveFriendshipOnBlock }),
+    );
+    const blockerId = randomUUID();
+    const blockedId = randomUUID();
+
+    await svc.blockUser(blockerId, blockedId, NO_CLIENT_META);
+
+    expect(events.emit.mock.calls.some(([topic]) => topic === 'social.friendship.removed')).toBe(
+      false,
+    );
   });
 
   it('rolls back the block insert when the social port fails, instead of leaving a block with no dissolve', async () => {

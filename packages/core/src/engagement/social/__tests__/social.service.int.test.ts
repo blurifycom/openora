@@ -461,7 +461,7 @@ describe('SocialService.dissolveFriendshipOnBlock (real PG)', () => {
 
     await expect(
       svc.dissolveFriendshipOnBlock(db.drizzle.db, alice.userId, bob.userId),
-    ).resolves.toBeUndefined();
+    ).resolves.toBeNull();
     expect(events.emit).not.toHaveBeenCalled();
   });
 
@@ -472,29 +472,35 @@ describe('SocialService.dissolveFriendshipOnBlock (real PG)', () => {
     await svc.sendFriendRequest(alice.userId, bob.userId);
     events.emit.mockClear();
 
-    await svc.dissolveFriendshipOnBlock(db.drizzle.db, alice.userId, bob.userId);
+    await expect(
+      svc.dissolveFriendshipOnBlock(db.drizzle.db, alice.userId, bob.userId),
+    ).resolves.toBeNull();
 
     expect(events.emit).not.toHaveBeenCalled();
     const [row] = await db.drizzle.db.select().from(friendship);
     expect(row?.removedAt).toBeNull();
   });
 
-  it('dissolves an active friendship and emits social.friendship.removed with reason blocked', async () => {
+  it('dissolves an active friendship and returns the removal payload, without emitting yet', async () => {
     const { svc, events } = makeService();
     const alice = await seedPlayer();
     const bob = await seedPlayer();
     const friendshipRow = await makeFriends(svc, alice.userId, bob.userId);
     events.emit.mockClear();
 
-    await svc.dissolveFriendshipOnBlock(db.drizzle.db, alice.userId, bob.userId);
+    const dissolved = await svc.dissolveFriendshipOnBlock(db.drizzle.db, alice.userId, bob.userId);
 
-    expect(events.emit).toHaveBeenCalledWith('social.friendship.removed', {
+    // The row commits (or, on a caller-owned tx, may still roll back) before the
+    // caller decides whether to publish - dissolveFriendshipOnBlock must never emit
+    // itself, or a rollback after this call would ship a "ghost event".
+    expect(dissolved).toEqual({
       friendshipId: friendshipRow.id,
       actorId: alice.userId,
       actorPlayerId: alice.id,
       otherUserId: bob.userId,
       reason: 'blocked',
     });
+    expect(events.emit).not.toHaveBeenCalled();
     const [row] = await db.drizzle.db.select().from(friendship);
     expect(row?.removedAt).toBeInstanceOf(Date);
   });

@@ -22,6 +22,7 @@ import type {
   CommandChatMessage,
   AdminUserDirectory,
   AuditWritePort,
+  FriendshipDissolvedPayload,
   IdentityReader,
   SocialCommands,
   Uuid,
@@ -1212,25 +1213,23 @@ export class ChatService {
       throw new ChatSelfBlockError();
     }
 
-    // Idempotent: re-blocking while already (actively) blocked is a no-op, so only
-    // the first block emits an event. The pair unique index is partial (removedAt
-    // IS NULL), so a block after a prior unblock conflicts with nothing and inserts
-    // a fresh active row - the removed row stays as history. No explicit conflict
-    // target: this table has exactly one unique constraint (the partial pair index).
-    // Any active friendship dissolves on the same tx as the block insert, so a block
-    // can never leave a friendship (and the blocked user) still reachable from
-    // /social/friends.
-    const inserted = await this.drizzle.db.transaction(async (tx) => {
+    const { inserted, dissolvedFriendship } = await this.drizzle.db.transaction(async (tx) => {
       const rows = await tx
         .insert(chatUserBlock)
         .values({ blockerId, blockedId })
         .onConflictDoNothing()
         .returning();
-      if (rows.length > 0) {
-        await this.socialCommands?.dissolveFriendshipOnBlock(tx, blockerId, blockedId);
-      }
-      return rows;
+      const dissolved: FriendshipDissolvedPayload | null =
+        rows.length > 0
+          ? ((await this.socialCommands?.dissolveFriendshipOnBlock(tx, blockerId, blockedId)) ??
+            null)
+          : null;
+      return { inserted: rows, dissolvedFriendship: dissolved };
     });
+
+    if (dissolvedFriendship) {
+      this.events.emit('social.friendship.removed', dissolvedFriendship);
+    }
 
     if (inserted.length > 0) {
       this.events.emit('chat.user.blocked', {
