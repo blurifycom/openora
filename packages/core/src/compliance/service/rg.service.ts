@@ -167,8 +167,8 @@ export class RgService {
     await this.assertNoActiveExclusion(userId, 'cooling_off');
     const now = new Date();
     const expiresAt = new Date(now.getTime() + input.durationHours * HOUR_MS);
-    const row = await this.drizzle.db.transaction(async (tx) => {
-      await this.expireLapsedCoolingOff(userId, tx, now);
+    const { row, lapsed } = await this.drizzle.db.transaction(async (tx) => {
+      const lapsedRows = await this.expireLapsedCoolingOff(userId, tx, now);
       const r = findOneOrThrow(
         await tx
           .insert(rgExclusion)
@@ -186,11 +186,22 @@ export class RgService {
         new ExclusionNotFoundError(userId),
       );
       await this.syncEnforcement(userId, tx);
-      return r;
+      return { row: r, lapsed: lapsedRows };
     });
+    const playerId = await this.identityReader.getPlayerIdByUserIdSafe(userId);
+    for (const lapsedRow of lapsed) {
+      this.events.emit('rg.cooling_off.expired', {
+        userId,
+        playerId,
+        exclusionId: lapsedRow.id,
+        // The lapsed row's own filter (`lte(expiresAt, now)`) only ever matches a
+        // non-null expiresAt - `now` is an unreachable fallback, not a real default.
+        expiresAt: (lapsedRow.expiresAt ?? now).toISOString(),
+      });
+    }
     this.events.emit('rg.cooling_off.activated', {
       userId,
-      playerId: await this.identityReader.getPlayerIdByUserIdSafe(userId),
+      playerId,
       actorId,
       exclusionId: row.id,
       expiresAt: expiresAt.toISOString(),
@@ -411,9 +422,23 @@ export class RgService {
           lte(rgExclusion.expiresAt, now),
         ),
       )
-      .returning({ userId: rgExclusion.userId });
+      .returning({
+        id: rgExclusion.id,
+        userId: rgExclusion.userId,
+        expiresAt: rgExclusion.expiresAt,
+      });
     for (const userId of new Set(lapsed.map((r) => r.userId))) {
       await this.syncEnforcement(userId);
+    }
+    for (const row of lapsed) {
+      this.events.emit('rg.cooling_off.expired', {
+        userId: row.userId,
+        playerId: await this.identityReader.getPlayerIdByUserIdSafe(row.userId),
+        exclusionId: row.id,
+        // The `lte` filter above only ever matches a non-null expiresAt - a cooling-off
+        // row always sets one - so `now` is an unreachable fallback, not a real default.
+        expiresAt: (row.expiresAt ?? now).toISOString(),
+      });
     }
   }
 
@@ -428,7 +453,12 @@ export class RgService {
           eq(rgExclusion.status, 'active'),
           lte(rgExclusion.expiresAt, now),
         ),
-      );
+      )
+      .returning({
+        id: rgExclusion.id,
+        userId: rgExclusion.userId,
+        expiresAt: rgExclusion.expiresAt,
+      });
   }
 
   // The single source of truth for the login block: derive it from the STRONGEST

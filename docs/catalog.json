@@ -880,6 +880,7 @@
     "player.level.changed",
     "player.login_blocked",
     "rg.cooling_off.activated",
+    "rg.cooling_off.expired",
     "rg.cooling_off.lifted",
     "rg.exclusion.login_blocked",
     "rg.limit.set",
