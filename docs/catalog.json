@@ -436,6 +436,16 @@
       ]
     },
     {
+      "category": "admin-role-assignment-directory",
+      "interface": "AdminRoleAssignmentSummary",
+      "token": "ADMIN_ROLE_ASSIGNMENT_DIRECTORY",
+      "status": "wired",
+      "boundIn": [
+        "packages/core/src/admin-console/plugin.ts",
+        "packages/core/src/iam/plugin.ts"
+      ]
+    },
+    {
       "category": "admin-user-directory",
       "interface": "AdminUserRow",
       "token": "ADMIN_USER_DIRECTORY",
