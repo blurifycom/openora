@@ -23,11 +23,11 @@ import {
   type ClientMeta,
   type PaginationOptions,
 } from '@openora/core/contracts';
-import type { PlayerTagSortBy, PlayerTagWithTag } from '../contract/index.js';
+import { SYSTEM_ACTOR_ID, type PlayerTagSortBy, type PlayerTagWithTag } from '../contract/index.js';
 import { player } from '@openora/core/pam/schema/profile';
 import { playerTag, tag } from '../schema/index.js';
 import { mapDbError } from '@openora/core/common/errors';
-import { toTag, toPlayerTagWithTag, SYSTEM_ACTOR_ID } from './tag-mappers.js';
+import { toTag, toPlayerTagWithTag } from './tag-mappers.js';
 import type { PlayerTagAssignMetadata } from '../contract/player-tag-assign-metadata.js';
 
 // AssignPlayerTagInput is the admin wire-contract type (free-text assignReason only -

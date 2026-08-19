@@ -1,5 +1,11 @@
 import { describe, expect, it } from 'vitest';
-import { findOneOrThrow, pageToOffset, moneyToNumber, mapConcurrent } from '../query-helpers.js';
+import {
+  findOneOrThrow,
+  pageToOffset,
+  moneyToNumber,
+  moneyEquals,
+  mapConcurrent,
+} from '../query-helpers.js';
 
 describe('findOneOrThrow', () => {
   it('returns the first row when present', () => {
@@ -43,6 +49,19 @@ describe('moneyToNumber', () => {
 
   it('returns NaN for a non-numeric string rather than silently zeroing it', () => {
     expect(moneyToNumber('abc')).toBeNaN();
+  });
+});
+
+describe('moneyEquals', () => {
+  it('treats the same amount written at different scales as equal', () => {
+    expect(moneyEquals('10', '10.00')).toBe(true);
+    expect(moneyEquals('0', '0.000000000000000000')).toBe(true);
+    expect(moneyEquals('010.5', '10.5')).toBe(true);
+  });
+
+  it('separates two amounts that differ by one wei, where a float compare cannot', () => {
+    expect(moneyEquals('1.000000000000000001', '1.000000000000000002')).toBe(false);
+    expect(moneyToNumber('1.000000000000000001')).toBe(moneyToNumber('1.000000000000000002'));
   });
 });
 

@@ -1,6 +1,7 @@
 import type { RealtimePresence, RealtimeTransport } from '@openora/core/contracts';
 
 type Handler = (event: unknown) => void;
+type Subscription = { handler: Handler; clientId?: string };
 
 class InProcessPresence implements RealtimePresence {
   private readonly members = new Map<string, Map<string, Set<string>>>();
@@ -44,7 +45,7 @@ class InProcessPresence implements RealtimePresence {
 
 /** First-party process-local fan-out used by the default SSE transport. */
 export class InProcessRealtimeTransport implements RealtimeTransport {
-  private readonly channels = new Map<string, Set<Handler>>();
+  private readonly channels = new Map<string, Set<Subscription>>();
   private readonly inProcessPresence = new InProcessPresence();
   readonly presence: RealtimePresence = this.inProcessPresence;
 
@@ -54,7 +55,7 @@ export class InProcessRealtimeTransport implements RealtimeTransport {
       return;
     }
     // Snapshot so a handler that unsubscribes mid-iteration can't corrupt the loop.
-    for (const handler of Array.from(subscribers)) {
+    for (const { handler } of Array.from(subscribers)) {
       try {
         handler(event);
       } catch {
@@ -63,20 +64,40 @@ export class InProcessRealtimeTransport implements RealtimeTransport {
     }
   }
 
-  subscribe<T>(channel: string, handler: (event: T) => void): () => void {
-    const subscribers = this.channels.get(channel) ?? new Set<Handler>();
-    subscribers.add(handler as Handler);
+  remove<T>(channel: string, event: T): void {
+    this.publish(channel, event);
+  }
+
+  subscribe<T>(channel: string, handler: (event: T) => void, clientId?: string): () => void {
+    const subscribers = this.channels.get(channel) ?? new Set<Subscription>();
+    const subscription = { handler: handler as Handler, clientId };
+    subscribers.add(subscription);
     this.channels.set(channel, subscribers);
     return () => {
       const current = this.channels.get(channel);
       if (!current) {
         return;
       }
-      current.delete(handler as Handler);
+      current.delete(subscription);
       if (current.size === 0) {
         this.channels.delete(channel);
       }
     };
+  }
+
+  revokeClientFromChannel(clientId: string, channel: string): void {
+    const subscribers = this.channels.get(channel);
+    if (!subscribers) {
+      return;
+    }
+    for (const subscription of Array.from(subscribers)) {
+      if (subscription.clientId === clientId) {
+        subscribers.delete(subscription);
+      }
+    }
+    if (subscribers.size === 0) {
+      this.channels.delete(channel);
+    }
   }
 
   getOnlineUserIds(channel: string): Promise<string[]> {

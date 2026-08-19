@@ -320,11 +320,17 @@ describe('BF-211 happy path: set -> immediate GET -> below/above threshold -> au
     });
     expect(setRes.status).toBe(200);
     const set = await readJson(setRes);
-    expect(set).toMatchObject({ fiatThreshold: '100.00000000', cryptoThreshold: '0.01000000' });
+    expect(set).toMatchObject({
+      fiatThreshold: '100.000000000000000000',
+      cryptoThreshold: '0.010000000000000000',
+    });
 
     const getRes = await superAdmin.get('/wallet/auto-withdrawal-config');
     const got = await readJson(getRes);
-    expect(got).toMatchObject({ fiatThreshold: '100.00000000', cryptoThreshold: '0.01000000' });
+    expect(got).toMatchObject({
+      fiatThreshold: '100.000000000000000000',
+      cryptoThreshold: '0.010000000000000000',
+    });
   });
 
   it('a withdrawal below the fiat threshold auto-approves; one above stays pending; both leave audit trails', async () => {
@@ -340,8 +346,8 @@ describe('BF-211 happy path: set -> immediate GET -> below/above threshold -> au
     const configAudit = await readJson(configAuditRes);
     expect(configAudit.items.length).toBeGreaterThanOrEqual(1);
     expect(configAudit.items[0].after).toMatchObject({
-      fiatThreshold: '100.00000000',
-      cryptoThreshold: '0.01000000',
+      fiatThreshold: '100.000000000000000000',
+      cryptoThreshold: '0.010000000000000000',
     });
     expect(configAudit.items[0].before).toBeTruthy();
 
@@ -385,7 +391,7 @@ describe('BF-211 happy path: set -> immediate GET -> below/above threshold -> au
     expect(autoApprovedAudit.items[0].actorType).toBe('system');
     expect(autoApprovedAudit.items[0].after).toMatchObject({
       userId: below.userId,
-      threshold: '100.00000000',
+      threshold: '100.000000000000000000',
       thresholdSource: 'global',
     });
   });
@@ -533,13 +539,19 @@ describe('BF-211 fail-closed: the singleton config row is missing', () => {
     });
     expect(res.status).toBe(200);
     const body = await readJson(res);
-    expect(body).toMatchObject({ fiatThreshold: '100.00000000', cryptoThreshold: '1.00000000' });
+    expect(body).toMatchObject({
+      fiatThreshold: '100.000000000000000000',
+      cryptoThreshold: '1.000000000000000000',
+    });
 
     const [row] = await appUnseeded.container
       .get(DRIZZLE)
       .db.select()
       .from(walletAutoWithdrawalConfig);
-    expect(row).toMatchObject({ fiatThreshold: '100.00000000', cryptoThreshold: '1.00000000' });
+    expect(row).toMatchObject({
+      fiatThreshold: '100.000000000000000000',
+      cryptoThreshold: '1.000000000000000000',
+    });
   });
 });
 

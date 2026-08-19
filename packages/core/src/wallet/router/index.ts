@@ -32,6 +32,14 @@ export function createWalletRouter(
   return os.router({
     getBalance: os.getBalance.handler(({ context }) => wallet.getBalance(getUserId(context))),
 
+    getBalances: os.getBalances.handler(({ context }) => wallet.getBalances(getUserId(context))),
+
+    setActiveCurrency: os.setActiveCurrency.handler(({ input, context }) =>
+      mapErrors({ NOT_FOUND: WalletNotFoundError }, () =>
+        wallet.setActiveCurrency(getUserId(context), input.currency),
+      ),
+    ),
+
     deposit: os.deposit.handler(({ input, context }) =>
       mapErrors({ BAD_REQUEST: CurrencyMismatchError, CONFLICT: IdempotencyKeyReuseError }, () =>
         wallet.deposit({
@@ -197,14 +205,17 @@ export function createWalletRouter(
     deposits: {
       getAddress: os.deposits.getAddress.handler(({ input, context }) =>
         mapErrors({ CONFLICT: DepositAddressUnsupportedError }, () =>
-          wallet.getOrCreateDepositAddress(getUserId(context), input.currency),
+          wallet.getOrCreateDepositAddress(getUserId(context), input.currency, input.network),
         ),
       ),
     },
 
     webhook: os.webhook.handler(async ({ context }) => {
       const rawBody = context.rawBody;
-      if (rawBody === undefined || !webhookVerifier.verify(rawBody, context.request.headers)) {
+      if (
+        rawBody === undefined ||
+        !(await webhookVerifier.verify(rawBody, context.request.headers))
+      ) {
         throw new ORPCError('UNAUTHORIZED', { message: 'Invalid payment webhook signature' });
       }
       const event = paymentAdapter.parseWebhook?.(rawBody, context.request.headers);

@@ -19,12 +19,27 @@ const PositiveMoneyAmountSchema = MoneyAmountSchema.refine((v) => Number(v) > 0,
   message: 'must be greater than zero',
 });
 
-const WalletCurrencyCodeSchema = z.string().min(1);
+// ISO 4217 plus longer crypto tickers (USDT, USDC). Codes are canonically uppercase -
+// normalize on the way in so a `usd` request can never diverge from a `USD` wallet.
+const WalletCurrencyCodeSchema = z
+  .string()
+  .regex(/^[A-Za-z]{3,10}$/, 'currency code, e.g. USD or USDT');
+
+const WalletCurrencyInputSchema = WalletCurrencyCodeSchema.transform((c) => c.toUpperCase());
 
 export const WalletBalanceSchema = z.object({
   balance: MoneyAmountSchema,
   currency: WalletCurrencyCodeSchema,
 });
+
+export const WalletBalancesSchema = z.object({
+  activeCurrency: WalletCurrencyCodeSchema,
+  balances: z.array(WalletBalanceSchema),
+});
+
+export const SetActiveCurrencyInputSchema = z.object({ currency: WalletCurrencyCodeSchema });
+
+export const ActiveCurrencySchema = z.object({ activeCurrency: WalletCurrencyCodeSchema });
 
 export const WalletTransactionSchema = z.object({
   id: UuidSchema,
@@ -37,14 +52,14 @@ export const WalletTransactionSchema = z.object({
 
 export const DepositInputSchema = z.object({
   amount: PositiveMoneyAmountSchema,
-  currency: WalletCurrencyCodeSchema,
+  currency: WalletCurrencyInputSchema,
   provider: z.string().optional(),
   idempotencyKey: UuidSchema.optional(),
 });
 
 export const WithdrawInputSchema = z.object({
   amount: PositiveMoneyAmountSchema,
-  currency: WalletCurrencyCodeSchema,
+  currency: WalletCurrencyInputSchema,
   provider: z.string().optional(),
   idempotencyKey: UuidSchema.optional(),
   destinationAddress: z.string().optional(),
@@ -88,6 +103,7 @@ export const ListPlayerTransactionsArgs = PageQuerySchema.extend({
 export const WithdrawalQueueItemSchema = z.object({
   transactionId: UuidSchema,
   userId: UuidSchema,
+  playerId: UuidSchema.nullable(),
   username: z.string(),
   amount: MoneyAmountSchema,
   currency: WalletCurrencyCodeSchema,
@@ -103,7 +119,7 @@ export type WithdrawalQueueItem = z.infer<typeof WithdrawalQueueItemSchema>;
 
 export const WithdrawalQueueFilterSchema = PageQuerySchema.extend({
   status: WalletTransactionStatusSchema.optional(),
-  currency: WalletCurrencyCodeSchema.optional(),
+  currency: WalletCurrencyInputSchema.optional(),
   rail: WalletRailSchema.optional(),
   minAmount: MoneyAmountSchema.optional(),
   maxAmount: MoneyAmountSchema.optional(),
@@ -170,14 +186,26 @@ export const RejectWithdrawalInputSchema = z.object({
 export const PaymentWebhookInputSchema = z.record(z.string(), z.unknown());
 export const PaymentWebhookOutputSchema = z.object({ ok: z.literal(true) });
 
-export const DepositAddressInputSchema = z.object({ currency: WalletCurrencyCodeSchema });
+export const DepositAddressInputSchema = z.object({
+  currency: WalletCurrencyInputSchema,
+  network: z.string().min(1).optional(),
+});
 export const DepositAddressSchema = z.object({
   address: z.string(),
   currency: WalletCurrencyCodeSchema,
+  network: z.string().optional(),
+  tag: z.string().optional(),
 });
 
 export const walletContract = {
   getBalance: oc.route({ method: 'GET', path: '/wallet/balance' }).output(WalletBalanceSchema),
+
+  getBalances: oc.route({ method: 'GET', path: '/wallet/balances' }).output(WalletBalancesSchema),
+
+  setActiveCurrency: oc
+    .route({ method: 'PUT', path: '/wallet/active-currency' })
+    .input(SetActiveCurrencyInputSchema)
+    .output(ActiveCurrencySchema),
 
   deposit: oc
     .route({ method: 'POST', path: '/wallet/deposit' })

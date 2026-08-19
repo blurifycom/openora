@@ -1,4 +1,5 @@
 import { describe, it, expect, vi, beforeAll, afterAll, beforeEach } from 'vitest';
+import { findOneOrThrow } from '@openora/core/server';
 import { randomUUID } from 'node:crypto';
 import { eq, sql } from 'drizzle-orm';
 import type {
@@ -25,6 +26,7 @@ import {
 import { migrate } from '../migrate.js';
 import {
   wallet,
+  walletBalance,
   walletTransaction,
   autoWithdrawalRule,
   walletAutoWithdrawalConfig,
@@ -124,20 +126,29 @@ async function makeService({
   return { svc, events, psp, audit };
 }
 
-async function seedWallet(overrides: Partial<typeof wallet.$inferInsert> = {}) {
-  const [row] = await db.drizzle.db
-    .insert(wallet)
-    .values({ userId: randomUUID(), balance: '100000', currency: 'USD', ...overrides })
-    .returning();
-  return row!;
+async function seedWallet({
+  balance = '100000',
+  ...overrides
+}: Partial<typeof wallet.$inferInsert> & { balance?: string } = {}) {
+  const row = findOneOrThrow(
+    await db.drizzle.db
+      .insert(wallet)
+      .values({ userId: randomUUID(), currency: 'USD', ...overrides })
+      .returning(),
+    new Error('seedWallet: query returned no row'),
+  );
+  await db.drizzle.db
+    .insert(walletBalance)
+    .values({ walletId: row.id, currency: row.currency, amount: balance });
+  return row;
 }
 
 async function txById(id: string) {
-  const [row] = await db.drizzle.db
-    .select()
-    .from(walletTransaction)
-    .where(eq(walletTransaction.id, id));
-  return row!;
+  const row = findOneOrThrow(
+    await db.drizzle.db.select().from(walletTransaction).where(eq(walletTransaction.id, id)),
+    new Error('txById: query returned no row'),
+  );
+  return row;
 }
 
 beforeAll(async () => {
@@ -188,7 +199,7 @@ describe('WalletService.withdraw auto-approval (real PG)', () => {
         resourceType: 'wallet_transaction',
         resourceId: result.transactionId,
         after: expect.objectContaining({
-          threshold: '1000.00000000',
+          threshold: '1000.000000000000000000',
           thresholdSource: 'global',
           kycStatus: 'verified',
           cumulativeCountUsed: 0,
@@ -231,8 +242,11 @@ describe('WalletService.withdraw auto-approval (real PG)', () => {
     });
 
     expect(result.status).toBe('pending');
-    const [row] = await db.drizzle.db.select().from(wallet).where(eq(wallet.id, w.id));
-    expect(Number(row?.balance)).toBe(60);
+    const row = findOneOrThrow(
+      await db.drizzle.db.select().from(walletBalance).where(eq(walletBalance.walletId, w.id)),
+      new Error('no wallet_balance row'),
+    );
+    expect(Number(row.amount)).toBe(60);
   });
 
   it('stays pending when the amount exceeds the configured threshold', async () => {
@@ -939,13 +953,13 @@ describe('WalletService auto-withdrawal config methods (real PG)', () => {
       excludeRiskFlags: ['bonus_abuser'],
     });
 
-    expect(updated.fiatThreshold).toBe('2500.00000000');
-    expect(updated.cryptoThreshold).toBe('3.00000000');
+    expect(updated.fiatThreshold).toBe('2500.000000000000000000');
+    expect(updated.cryptoThreshold).toBe('3.000000000000000000');
     expect(updated.excludeRiskFlags).toEqual(['bonus_abuser']);
     expect(updated.updatedBy).toBe(adminId);
     expect(await svc.getAutoWithdrawalConfig()).toMatchObject({
-      fiatThreshold: '2500.00000000',
-      cryptoThreshold: '3.00000000',
+      fiatThreshold: '2500.000000000000000000',
+      cryptoThreshold: '3.000000000000000000',
       updatedBy: adminId,
     });
   });

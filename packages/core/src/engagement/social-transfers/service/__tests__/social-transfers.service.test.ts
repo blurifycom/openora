@@ -98,6 +98,9 @@ function makeWallet(ok = true): WalletCommands {
 }
 
 const DIRECTORY_CREATED_AT = new Date('2026-01-01T00:00:00.000Z');
+const ACTOR_PLAYER_ID = '00000000-0000-0000-0000-000000000101';
+const CLAIMER_PLAYER_ID = '00000000-0000-0000-0000-000000000102';
+const RECIPIENT_2_PLAYER_ID = '00000000-0000-0000-0000-000000000106';
 
 function makeDirectory(
   senderUsername = 'bob',
@@ -106,6 +109,7 @@ function makeDirectory(
 ): AdminUserDirectory {
   const all = [
     {
+      playerId: ACTOR_PLAYER_ID,
       userId: ACTOR_ID,
       username: senderUsername,
       email: 'bob@example.com',
@@ -117,6 +121,7 @@ function makeDirectory(
       currency: 'USD',
     },
     {
+      playerId: CLAIMER_PLAYER_ID,
       userId: CLAIMER_ID,
       username: claimerUsername,
       email: 'alice@example.com',
@@ -128,6 +133,7 @@ function makeDirectory(
       currency: 'USD',
     },
     {
+      playerId: RECIPIENT_2_PLAYER_ID,
       userId: RECIPIENT_2,
       username: 'charlie',
       email: 'charlie@example.com',
@@ -139,6 +145,7 @@ function makeDirectory(
       currency: 'USD',
     },
     ...extraUserIds.map((userId, index) => ({
+      playerId: `00000000-0000-0000-0000-0000001${String(index).padStart(5, '0')}`,
       userId,
       username: `player${index}`,
       email: `player${index}@example.com`,
@@ -812,6 +819,7 @@ const DONATE_SYSTEM_MSG: CommandChatMessage = {
 function makeRecipientDirectory(): AdminUserDirectory {
   const all = [
     {
+      playerId: ACTOR_PLAYER_ID,
       userId: ACTOR_ID,
       username: 'bob',
       email: 'bob@example.com',
@@ -823,6 +831,7 @@ function makeRecipientDirectory(): AdminUserDirectory {
       currency: 'USD',
     },
     {
+      playerId: CLAIMER_PLAYER_ID,
       userId: CLAIMER_ID,
       username: 'alice',
       email: 'alice@example.com',
@@ -882,6 +891,18 @@ describe('SocialTransfersService.sendDonate', () => {
       currency: 'USD',
       type: 'tip',
     });
+    expect(writer.postSystemMessage).toHaveBeenCalledWith(
+      expect.objectContaining({
+        actorId: ACTOR_ID,
+        metadata: expect.objectContaining({
+          command: 'donate',
+          senderId: ACTOR_ID,
+          senderUsername: 'bob',
+          recipientId: CLAIMER_ID,
+          recipientUsername: 'alice',
+        }),
+      }),
+    );
     expect(result.id).toBe(MSG_ID);
   });
 

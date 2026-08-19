@@ -1,6 +1,7 @@
 import { describe, it, expect, vi, beforeAll, afterAll, beforeEach } from 'vitest';
+import { findOneOrThrow } from '@openora/core/server';
 import { randomUUID } from 'node:crypto';
-import { eq, sql } from 'drizzle-orm';
+import { and, eq, sql } from 'drizzle-orm';
 import type {
   AdminUserDirectory,
   PaymentAdapter,
@@ -17,7 +18,7 @@ import {
   makeAuditWriter,
 } from '../../testing/mock.js';
 import { migrate } from '../migrate.js';
-import { wallet, walletTransaction, walletDepositAddress } from '../schema/index.js';
+import { wallet, walletBalance, walletTransaction, walletDepositAddress } from '../schema/index.js';
 import {
   WalletService,
   type WalletServiceDeps,
@@ -25,11 +26,13 @@ import {
   WithdrawalNotFoundError,
   WithdrawalNotPendingError,
   InsufficientBalanceError,
+  AmbiguousDepositAddressError,
   CurrencyMismatchError,
   IdempotencyKeyReuseError,
   DepositAddressUnsupportedError,
   DestinationAddressRequiredError,
 } from '../service/wallet.service.js';
+import { WithdrawalQueueItemSchema } from '../contract/index.js';
 
 let db: TestDb;
 
@@ -66,36 +69,59 @@ function makeDirectory(summaries: AdminPlayerSummary[]) {
   });
 }
 
-async function seedWallet(overrides: Partial<typeof wallet.$inferInsert> = {}) {
-  const [row] = await db.drizzle.db
-    .insert(wallet)
-    .values({ userId: randomUUID(), balance: '0', currency: 'USD', ...overrides })
-    .returning();
-  return row!;
+async function seedWallet({
+  balance = '0',
+  ...overrides
+}: Partial<typeof wallet.$inferInsert> & { balance?: string } = {}) {
+  const row = findOneOrThrow(
+    await db.drizzle.db
+      .insert(wallet)
+      .values({ userId: randomUUID(), currency: 'USD', ...overrides })
+      .returning(),
+    new Error('seedWallet: query returned no row'),
+  );
+  await db.drizzle.db
+    .insert(walletBalance)
+    .values({ walletId: row.id, currency: row.currency, amount: balance });
+  return row;
 }
 
 async function seedTx(
   walletId: string,
   overrides: Partial<typeof walletTransaction.$inferInsert> = {},
 ) {
-  const [row] = await db.drizzle.db
-    .insert(walletTransaction)
-    .values({
-      walletId,
-      type: 'withdrawal',
-      amount: '10',
-      currency: 'USD',
-      status: 'pending',
-      rail: 'fiat',
-      ...overrides,
-    })
-    .returning();
-  return row!;
+  const row = findOneOrThrow(
+    await db.drizzle.db
+      .insert(walletTransaction)
+      .values({
+        walletId,
+        type: 'withdrawal',
+        amount: '10',
+        currency: 'USD',
+        status: 'pending',
+        rail: 'fiat',
+        ...overrides,
+      })
+      .returning(),
+    new Error('seedTx: query returned no row'),
+  );
+  return row;
 }
 
-async function balanceOf(userId: string) {
-  const [row] = await db.drizzle.db.select().from(wallet).where(eq(wallet.userId, userId));
-  return Number(row?.balance);
+async function balanceOf(userId: string, currency?: string) {
+  const [row] = await db.drizzle.db
+    .select({ amount: walletBalance.amount })
+    .from(walletBalance)
+    .innerJoin(wallet, eq(wallet.id, walletBalance.walletId))
+    .where(
+      and(
+        eq(wallet.userId, userId),
+        currency
+          ? eq(walletBalance.currency, currency)
+          : eq(walletBalance.currency, wallet.currency),
+      ),
+    );
+  return Number(row?.amount ?? 0);
 }
 
 async function txRows(walletId: string) {
@@ -106,11 +132,11 @@ async function txRows(walletId: string) {
 }
 
 async function txById(id: string) {
-  const [row] = await db.drizzle.db
-    .select()
-    .from(walletTransaction)
-    .where(eq(walletTransaction.id, id));
-  return row!;
+  const row = findOneOrThrow(
+    await db.drizzle.db.select().from(walletTransaction).where(eq(walletTransaction.id, id)),
+    new Error('txById: query returned no row'),
+  );
+  return row;
 }
 
 const emittedTopics = (events: ReturnType<typeof makeEventBus>) =>
@@ -182,15 +208,69 @@ describe('WalletService.deposit (real PG)', () => {
     expect(await balanceOf(w.userId)).toBe(11);
   });
 
-  it('throws CurrencyMismatchError when the deposit currency differs from the wallet, without calling the PSP or crediting the balance', async () => {
-    const { svc, psp } = makeService();
+  it('credits the wallet currency row when the deposit currency differs only in case', async () => {
+    const { svc } = makeService();
+    const w = await seedWallet({ balance: '10', currency: 'USD' });
+
+    await svc.deposit({ userId: w.userId, amount: '5', currency: 'usd' });
+
+    const rows = await db.drizzle.db
+      .select()
+      .from(walletBalance)
+      .where(eq(walletBalance.walletId, w.id));
+    expect(rows).toHaveLength(1);
+    expect(await balanceOf(w.userId)).toBe(15);
+  });
+
+  it('credits a second currency into its own balance row, leaving the active-currency balance untouched', async () => {
+    const { svc } = makeService();
     const w = await seedWallet({ balance: '100', currency: 'USD' });
 
-    await expect(
-      svc.deposit({ userId: w.userId, amount: '10', currency: 'EUR' }),
-    ).rejects.toBeInstanceOf(CurrencyMismatchError);
-    expect(psp.processDeposit).not.toHaveBeenCalled();
-    expect(await balanceOf(w.userId)).toBe(100);
+    await svc.deposit({ userId: w.userId, amount: '10', currency: 'EUR' });
+
+    expect(await balanceOf(w.userId, 'USD')).toBe(100);
+    expect(await balanceOf(w.userId, 'EUR')).toBe(10);
+  });
+});
+
+describe('WalletService.getBalances / setActiveCurrency (real PG)', () => {
+  it('returns every held currency ordered by code alongside the active one', async () => {
+    const { svc } = makeService();
+    const w = await seedWallet({ balance: '100', currency: 'USD' });
+    await svc.deposit({ userId: w.userId, amount: '10', currency: 'EUR' });
+
+    expect(await svc.getBalances(w.userId)).toEqual({
+      activeCurrency: 'USD',
+      balances: [
+        { currency: 'EUR', balance: '10.000000000000000000' },
+        { currency: 'USD', balance: '100.000000000000000000' },
+      ],
+    });
+  });
+
+  it('reads as the default currency with no balances when the user has no wallet, matching getBalance', async () => {
+    const { svc } = makeService();
+    const userId = randomUUID();
+
+    expect(await svc.getBalances(userId)).toEqual({ activeCurrency: 'USD', balances: [] });
+    expect(await svc.getBalance(userId)).toEqual({ balance: '0', currency: 'USD' });
+  });
+
+  it('switches the active currency so getBalance reads the new one', async () => {
+    const { svc } = makeService();
+    const w = await seedWallet({ balance: '100', currency: 'USD' });
+    await svc.deposit({ userId: w.userId, amount: '10', currency: 'EUR' });
+
+    expect(await svc.setActiveCurrency(w.userId, 'EUR')).toEqual({ activeCurrency: 'EUR' });
+    expect(await svc.getBalance(w.userId)).toMatchObject({ currency: 'EUR' });
+  });
+
+  it('throws WalletNotFoundError when setting the active currency without a wallet', async () => {
+    const { svc } = makeService();
+
+    await expect(svc.setActiveCurrency(randomUUID(), 'EUR')).rejects.toBeInstanceOf(
+      WalletNotFoundError,
+    );
   });
 });
 
@@ -247,13 +327,14 @@ describe('WalletService.withdraw (real PG)', () => {
     expect(await balanceOf(w.userId)).toBe(2);
   });
 
-  it('throws CurrencyMismatchError when the request currency differs from the wallet', async () => {
+  it('throws InsufficientBalanceError when withdrawing a currency the wallet holds no balance in', async () => {
     const { svc } = makeService();
     const w = await seedWallet({ balance: '100', currency: 'USD' });
 
     await expect(
       svc.withdraw({ userId: w.userId, amount: '10', currency: 'EUR', ...NO_CLIENT_META }),
-    ).rejects.toBeInstanceOf(CurrencyMismatchError);
+    ).rejects.toBeInstanceOf(InsufficientBalanceError);
+    expect(await balanceOf(w.userId, 'USD')).toBe(100);
   });
 
   it('throws WalletNotFoundError when the user has no wallet', async () => {
@@ -701,10 +782,16 @@ describe('WalletService.rejectWithdrawal (real PG)', () => {
 });
 
 describe('WalletService.listWithdrawals (real PG)', () => {
-  it('enriches rows with username and kycStatus from the directory port', async () => {
+  it('enriches rows with username, kycStatus, and playerId from the directory port', async () => {
     const w = await seedWallet();
+    const playerId = randomUUID();
     const directory = makeDirectory([
-      { userId: w.userId, username: 'player1', kycStatus: 'verified' } as AdminPlayerSummary,
+      {
+        playerId,
+        userId: w.userId,
+        username: 'player1',
+        kycStatus: 'verified',
+      } as AdminPlayerSummary,
     ]);
     const { svc } = makeService({ directory });
     await seedTx(w.id, { amount: '10' });
@@ -714,10 +801,23 @@ describe('WalletService.listWithdrawals (real PG)', () => {
     expect(total).toBe(1);
     expect(items[0]).toMatchObject({
       userId: w.userId,
+      playerId,
       username: 'player1',
       kycStatus: 'verified',
       riskTags: [],
     });
+    expect(() => WithdrawalQueueItemSchema.parse(items[0])).not.toThrow();
+  });
+
+  it('yields playerId: null when the user has no player summary', async () => {
+    const w = await seedWallet();
+    const directory = makeDirectory([]);
+    const { svc } = makeService({ directory });
+    await seedTx(w.id, { amount: '10' });
+
+    const { items } = await svc.listWithdrawals({ page: 1, limit: 20 });
+
+    expect(items[0]).toMatchObject({ userId: w.userId, playerId: null, username: '' });
   });
 
   it('returns rows of every status when no status filter is given', async () => {
@@ -965,10 +1065,10 @@ describe('WalletService.getOrCreateDepositAddress (real PG)', () => {
 });
 
 describe('WalletService.creditDepositByAddress (real PG)', () => {
-  async function seedAddress(userId: string, address: string, currency = 'BTC') {
+  async function seedAddress(userId: string, address: string, currency = 'BTC', network?: string) {
     await db.drizzle.db
       .insert(walletDepositAddress)
-      .values({ userId, currency, address, providerName: 'fireblocks' });
+      .values({ userId, currency, address, network, providerName: 'fireblocks' });
   }
 
   it('resolves the address, credits the wallet, and emits deposit.completed', async () => {
@@ -1041,5 +1141,62 @@ describe('WalletService.creditDepositByAddress (real PG)', () => {
         txHash: '0xmismatch',
       }),
     ).rejects.toBeInstanceOf(CurrencyMismatchError);
+  });
+
+  it('credits a token that shares the EVM address issued for another currency', async () => {
+    const { svc } = makeService();
+    const w = await seedWallet({ currency: 'ETH', balance: '0' });
+    await seedAddress(w.userId, '0xshared', 'ETH', 'ERC20');
+
+    await svc.creditDepositByAddress({
+      kind: 'deposit',
+      address: '0xshared',
+      network: 'ERC20',
+      amount: '25',
+      currency: 'USDT',
+      externalId: randomUUID(),
+      txHash: '0xtoken',
+    });
+
+    expect(await balanceOf(w.userId, 'USDT')).toBe(25);
+  });
+
+  it('picks the row matching the event network when one address serves two chains', async () => {
+    const { svc } = makeService();
+    const w = await seedWallet({ currency: 'ETH', balance: '0' });
+    await seedAddress(w.userId, '0xmultichain', 'USDT', 'ERC20');
+    await seedAddress(w.userId, '0xmultichain', 'USDT', 'BEP20');
+
+    await svc.creditDepositByAddress({
+      kind: 'deposit',
+      address: '0xmultichain',
+      network: 'BEP20',
+      amount: '10',
+      currency: 'USDT',
+      externalId: randomUUID(),
+      txHash: '0xbsc',
+    });
+
+    expect(await balanceOf(w.userId, 'USDT')).toBe(10);
+  });
+
+  it('refuses to credit an address issued to more than one user', async () => {
+    const { svc } = makeService();
+    const first = await seedWallet({ currency: 'ETH', balance: '0' });
+    const second = await seedWallet({ currency: 'ETH', balance: '0' });
+    await seedAddress(first.userId, '0xcollision', 'ETH', 'ERC20');
+    await seedAddress(second.userId, '0xcollision', 'USDT', 'ERC20');
+
+    await expect(
+      svc.creditDepositByAddress({
+        kind: 'deposit',
+        address: '0xcollision',
+        network: 'ERC20',
+        amount: '1',
+        currency: 'ETH',
+        externalId: randomUUID(),
+        txHash: '0xcollide',
+      }),
+    ).rejects.toBeInstanceOf(AmbiguousDepositAddressError);
   });
 });

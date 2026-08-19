@@ -12,6 +12,7 @@ import {
   assertRateLimit,
   createLogger,
   moneyToNumber,
+  moneyEquals,
 } from '@openora/core/server';
 import {
   normalizeKycStatus,
@@ -32,15 +33,17 @@ import {
   type ClientMeta,
   type PaginationOptions,
 } from '@openora/core/contracts';
-import { eq, asc, desc, sql, and, gte, lte, count, inArray } from 'drizzle-orm';
+import { eq, asc, desc, sql, and, gte, lte, count, inArray, isNull, or } from 'drizzle-orm';
 import { createHash } from 'node:crypto';
 import {
   wallet,
+  walletBalance,
   walletTransaction,
   autoWithdrawalRule,
   walletAutoWithdrawalConfig,
   walletDepositAddress,
   type Wallet,
+  type WalletDepositAddress,
   type WalletTransaction,
   type AutoWithdrawalRule as AutoWithdrawalRuleRow,
   type WalletAutoWithdrawalConfig as WalletAutoWithdrawalConfigRow,
@@ -98,10 +101,20 @@ export const CurrencyMismatchError = createDomainError(
     `Currency mismatch: requested ${requested}, wallet holds ${walletCurrency}`,
 );
 
+export const AmbiguousDepositAddressError = createDomainError(
+  'AmbiguousDepositAddressError',
+  (address, network) =>
+    `Deposit address ${address} on ${network ?? 'an unknown network'} is issued to more than one user`,
+);
+
 // Crypto currencies settle on the crypto rail (Fireblocks); everything else on the
 // fiat rail (a PSP). The concrete provider is recorded per transaction, not here.
 // Overridable per-operator via `platformConfig.wallet.cryptoCurrencies` - see `railFor`.
 const DEFAULT_CRYPTO_CURRENCIES = new Set(['BTC', 'ETH', 'USDT', 'USDC']);
+
+// Mirrors the `wallet.currency` column default: what a player without a wallet row
+// reads as their active currency before one is created on first deposit.
+const DEFAULT_WALLET_CURRENCY = 'USD';
 
 // Per-user throttle on money mutations - guards a runaway/misbehaving client, not
 // fraud (idempotency + the ledger guard cover correctness). An overlay rebinds
@@ -113,6 +126,63 @@ export function railFor(currency: string, cryptoCurrencies?: readonly string[]):
     ? new Set(cryptoCurrencies.map((c) => c.toUpperCase()))
     : DEFAULT_CRYPTO_CURRENCIES;
   return set.has(currency.toUpperCase()) ? 'crypto' : 'fiat';
+}
+
+// Currency checks elsewhere are case-insensitive, so `usd` reaches here for a `USD`
+// wallet. Every read and write of wallet_balance funnels through these three helpers,
+// so normalizing the key here is enough to keep one row per wallet+currency.
+const balanceKey = (currency: string) => currency.toUpperCase();
+
+export function creditWalletBalance(
+  txn: DrizzleDb,
+  walletId: Wallet['id'],
+  currency: string,
+  amount: string,
+) {
+  return txn
+    .insert(walletBalance)
+    .values({ walletId, currency: balanceKey(currency), amount })
+    .onConflictDoUpdate({
+      target: [walletBalance.walletId, walletBalance.currency],
+      set: {
+        amount: sql`${walletBalance.amount} + ${amount}::numeric`,
+        updatedAt: new Date(),
+      },
+    })
+    .returning({ amount: walletBalance.amount });
+}
+
+export function debitWalletBalance(
+  txn: DrizzleDb,
+  walletId: Wallet['id'],
+  currency: string,
+  amount: string,
+) {
+  return txn
+    .update(walletBalance)
+    .set({ amount: sql`${walletBalance.amount} - ${amount}::numeric` })
+    .where(
+      and(
+        eq(walletBalance.walletId, walletId),
+        eq(walletBalance.currency, balanceKey(currency)),
+        gte(walletBalance.amount, amount),
+      ),
+    )
+    .returning({ amount: walletBalance.amount });
+}
+
+export async function readWalletBalance(
+  txn: DrizzleDb,
+  walletId: Wallet['id'],
+  currency: string,
+): Promise<string> {
+  const [row] = await txn
+    .select({ amount: walletBalance.amount })
+    .from(walletBalance)
+    .where(
+      and(eq(walletBalance.walletId, walletId), eq(walletBalance.currency, balanceKey(currency))),
+    );
+  return row?.amount ?? '0';
 }
 
 // Namespace the key per operation so the same raw key on a deposit then a withdraw can't
@@ -163,6 +233,22 @@ type AutoApprovalGates = Pick<
   AutoApprovalDecision,
   'threshold' | 'thresholdSource' | 'kycStatus' | 'riskTagsEvaluated' | 'effectiveExcludeTags'
 >;
+
+type DepositAddressResult = {
+  address: string;
+  currency: string;
+  network?: string;
+  tag?: string;
+};
+
+function toDepositAddressResult(row: WalletDepositAddress): DepositAddressResult {
+  return {
+    address: row.address,
+    currency: row.currency,
+    ...(row.network === null ? {} : { network: row.network }),
+    ...(row.tag === null ? {} : { tag: row.tag }),
+  };
+}
 
 function toAutoWithdrawalRuleDto(row: AutoWithdrawalRuleRow): AutoWithdrawalRule {
   return {
@@ -281,13 +367,45 @@ export class WalletService {
     const [record] = await this.drizzle.db.select().from(wallet).where(eq(wallet.userId, userId));
 
     if (!record) {
-      return { balance: '0', currency: 'USD' };
+      return { balance: '0', currency: DEFAULT_WALLET_CURRENCY };
     }
 
     return {
-      balance: record.balance,
+      balance: await readWalletBalance(this.drizzle.db, record.id, record.currency),
       currency: record.currency,
     };
+  }
+
+  async getBalances(userId: User['id']) {
+    const [record] = await this.drizzle.db.select().from(wallet).where(eq(wallet.userId, userId));
+
+    if (!record) {
+      return { activeCurrency: DEFAULT_WALLET_CURRENCY, balances: [] };
+    }
+
+    const rows = await this.drizzle.db
+      .select({ currency: walletBalance.currency, balance: walletBalance.amount })
+      .from(walletBalance)
+      .where(eq(walletBalance.walletId, record.id))
+      .orderBy(walletBalance.currency);
+
+    return { activeCurrency: record.currency, balances: rows };
+  }
+
+  // TODO: validate `currency` against a canonical supported-currency list once one
+  // exists - `platformConfig.wallet.cryptoCurrencies` classifies rails, it is not an
+  // allowlist, so today any non-empty string is accepted and persisted.
+  async setActiveCurrency(userId: User['id'], currency: string) {
+    const updated = await this.drizzle.db
+      .update(wallet)
+      .set({ currency })
+      .where(eq(wallet.userId, userId))
+      .returning({ currency: wallet.currency });
+    const record = updated[0];
+    if (!record) {
+      throw new WalletNotFoundError(userId);
+    }
+    return { activeCurrency: record.currency };
   }
 
   /**
@@ -333,13 +451,6 @@ export class WalletService {
         .where(eq(wallet.userId, userId));
     }
 
-    // Single-currency wallet: reject a mismatch BEFORE the PSP call so a wrong-currency
-    // request never charges the vendor. A brand-new wallet has no currency to mismatch
-    // against yet - it adopts this deposit's currency on insert below.
-    if (preResolvedWallet && currency.toUpperCase() !== preResolvedWallet.currency.toUpperCase()) {
-      throw new CurrencyMismatchError(currency, preResolvedWallet.currency);
-    }
-
     const psp = await this.payment.processDeposit(amount, currency, { userId, provider });
 
     const { transactionId, replayed } = await this.drizzle.db.transaction(async (txn) => {
@@ -349,15 +460,10 @@ export class WalletService {
       }
       if (!walletRecord) {
         walletRecord = findOneOrThrow(
-          await txn.insert(wallet).values({ userId, balance: '0', currency }).returning(),
+          await txn.insert(wallet).values({ userId, currency }).returning(),
           new WalletNotFoundError(userId),
         );
       }
-      // Single-currency wallet: reject a mismatch rather than coerce it onto the wrong rail.
-      if (currency.toUpperCase() !== walletRecord.currency.toUpperCase()) {
-        throw new CurrencyMismatchError(currency, walletRecord.currency);
-      }
-
       const { row, replayed } = await this.insertIdempotentTransaction(txn, {
         namespace: DEPOSIT_IDEMPOTENCY_NAMESPACE,
         walletId: walletRecord.id,
@@ -377,10 +483,7 @@ export class WalletService {
       });
 
       if (!replayed) {
-        await txn
-          .update(wallet)
-          .set({ balance: sql`${wallet.balance} + ${amount}::numeric` })
-          .where(eq(wallet.id, walletRecord.id));
+        await creditWalletBalance(txn, walletRecord.id, currency, amount);
       }
 
       return { transactionId: row.id, replayed };
@@ -431,11 +534,12 @@ export class WalletService {
     return { walletRecord, replay: { transactionId: existing.id, status: existing.status } };
   }
 
-  // Replay comparison only (not a ledger write) - moneyToNumber avoids a false mismatch
-  // between an unnormalized caller string (eg "10") and the DB's fixed-scale value ("10.00").
+  // Replay comparison only (not a ledger write). moneyEquals avoids a false mismatch between
+  // an unnormalized caller string (eg "10") and the DB's fixed-scale value ("10.00") while
+  // staying exact - a float compare would let two amounts differing past the 15th digit pass.
   private assertReplayMatches(existing: WalletTransaction, amount: string, currency: string): void {
     if (
-      moneyToNumber(existing.amount) !== moneyToNumber(amount) ||
+      !moneyEquals(existing.amount, amount) ||
       existing.currency.toUpperCase() !== currency.toUpperCase()
     ) {
       throw new IdempotencyKeyReuseError();
@@ -531,11 +635,6 @@ export class WalletService {
           await txn.select().from(wallet).where(eq(wallet.userId, userId)).for('update'),
           new WalletNotFoundError(userId),
         );
-        // Single-currency wallet: reject a mismatch rather than coerce it onto the wrong rail.
-        if (currency.toUpperCase() !== current.currency.toUpperCase()) {
-          throw new CurrencyMismatchError(currency, current.currency);
-        }
-
         // Replay of an already-committed key: return the original untouched. The new-key race is caught by the insert below.
         if (idempotencyKey) {
           const existing = await this.findByIdempotencyKey(
@@ -583,13 +682,12 @@ export class WalletService {
         }
 
         // Guarded conditional debit: the WHERE makes balance>=amount atomic with the write; 0 rows back rolls back the whole tx.
-        const debited = await txn
-          .update(wallet)
-          .set({ balance: sql`${wallet.balance} - ${amount}::numeric` })
-          .where(and(eq(wallet.id, current.id), gte(wallet.balance, amount)))
-          .returning({ id: wallet.id });
+        const debited = await debitWalletBalance(txn, current.id, currency, amount);
         if (debited.length !== 1) {
-          throw new InsufficientBalanceError(current.balance, amount);
+          throw new InsufficientBalanceError(
+            await readWalletBalance(txn, current.id, currency),
+            amount,
+          );
         }
 
         if (this.tagEvaluationCommands) {
@@ -716,6 +814,7 @@ export class WalletService {
       return {
         transactionId: r.tx.id,
         userId: r.userId,
+        playerId: summary?.playerId ?? null,
         username: summary?.username ?? '',
         amount: r.tx.amount,
         currency: r.tx.currency,
@@ -880,10 +979,7 @@ export class WalletService {
       if (updated.length === 0) {
         return false;
       }
-      await txn
-        .update(wallet)
-        .set({ balance: sql`${wallet.balance} + ${amount}::numeric` })
-        .where(eq(wallet.id, tx.walletId));
+      await creditWalletBalance(txn, tx.walletId, tx.currency, amount);
       return true;
     });
     if (transitioned && adminId) {
@@ -1371,10 +1467,7 @@ export class WalletService {
         new WithdrawalNotFoundError(withdrawalId),
       );
 
-      await txn
-        .update(wallet)
-        .set({ balance: sql`${wallet.balance} + ${updated.amount}::numeric` })
-        .where(eq(wallet.id, updated.walletId));
+      await creditWalletBalance(txn, updated.walletId, updated.currency, updated.amount);
 
       return updated;
     });
@@ -1447,50 +1540,56 @@ export class WalletService {
   async getOrCreateDepositAddress(
     userId: User['id'],
     currency: string,
-  ): Promise<{ address: string; currency: string }> {
-    const existing = await this.findDepositAddress(userId, currency);
+    network?: string,
+  ): Promise<DepositAddressResult> {
+    const existing = await this.findDepositAddress(userId, currency, network);
     if (existing) {
-      return { address: existing.address, currency: existing.currency };
+      return toDepositAddressResult(existing);
     }
     if (!this.payment.issueDepositAddress) {
       throw new DepositAddressUnsupportedError();
     }
-    const issued = await this.payment.issueDepositAddress(userId, currency);
+    const issued = await this.payment.issueDepositAddress(userId, currency, network);
 
     const [row] = await this.drizzle.db
       .insert(walletDepositAddress)
       .values({
         userId,
         currency,
+        network: network ?? null,
         address: issued.address,
+        tag: issued.tag ?? null,
         providerName: providerNameFor(this.resolveRail(currency)),
       })
       .onConflictDoNothing()
       .returning();
     if (row) {
-      return { address: row.address, currency: row.currency };
+      return toDepositAddressResult(row);
     }
-    const winner = await this.findDepositAddress(userId, currency);
+    const winner = await this.findDepositAddress(userId, currency, network);
     if (!winner) {
       throw new Error(
-        `wallet deposit address: idempotency conflict but no row found (userId=${userId}, currency=${currency})`,
+        `wallet deposit address: idempotency conflict but no row found (userId=${userId}, currency=${currency}, network=${network ?? 'none'})`,
       );
     }
-    return { address: winner.address, currency: winner.currency };
+    return toDepositAddressResult(winner);
   }
 
   async creditDepositByAddress(
     event: Extract<PaymentWebhookEvent, { kind: 'deposit' }>,
   ): Promise<void> {
-    const depositAddress = await this.findDepositAddressByAddress(event.address);
+    const depositAddress = await this.findDepositAddressByAddress(event);
     if (!depositAddress) {
       logger.warn(
-        { address: event.address },
+        { address: event.address, network: event.network, tag: event.tag },
         'payment webhook: no wallet_deposit_address for inbound deposit',
       );
       return;
     }
-    if (event.currency.toUpperCase() !== depositAddress.currency.toUpperCase()) {
+    if (
+      event.network === undefined &&
+      event.currency.toUpperCase() !== depositAddress.currency.toUpperCase()
+    ) {
       throw new CurrencyMismatchError(event.currency, depositAddress.currency);
     }
 
@@ -1503,12 +1602,10 @@ export class WalletService {
         walletRecord = findOneOrThrow(
           await txn
             .insert(wallet)
-            .values({ userId: depositAddress.userId, balance: '0', currency: event.currency })
+            .values({ userId: depositAddress.userId, currency: event.currency })
             .returning(),
           new WalletNotFoundError(depositAddress.userId),
         );
-      } else if (walletRecord.currency.toUpperCase() !== event.currency.toUpperCase()) {
-        throw new CurrencyMismatchError(event.currency, walletRecord.currency);
       }
 
       const [inserted] = await txn
@@ -1529,10 +1626,7 @@ export class WalletService {
         .returning();
 
       if (inserted) {
-        await txn
-          .update(wallet)
-          .set({ balance: sql`${wallet.balance} + ${event.amount}::numeric` })
-          .where(eq(wallet.id, walletRecord.id));
+        await creditWalletBalance(txn, walletRecord.id, event.currency, event.amount);
         return { transactionId: inserted.id, replayed: false };
       }
 
@@ -1587,21 +1681,44 @@ export class WalletService {
     return existing;
   }
 
-  private async findDepositAddress(userId: User['id'], currency: string) {
+  private async findDepositAddress(userId: User['id'], currency: string, network?: string) {
     const [row] = await this.drizzle.db
       .select()
       .from(walletDepositAddress)
       .where(
-        and(eq(walletDepositAddress.userId, userId), eq(walletDepositAddress.currency, currency)),
+        and(
+          eq(walletDepositAddress.userId, userId),
+          eq(walletDepositAddress.currency, currency),
+          network === undefined
+            ? isNull(walletDepositAddress.network)
+            : eq(walletDepositAddress.network, network),
+        ),
       );
     return row;
   }
 
-  private async findDepositAddressByAddress(address: string) {
-    const [row] = await this.drizzle.db
+  private async findDepositAddressByAddress({
+    address,
+    network,
+    tag,
+  }: Extract<PaymentWebhookEvent, { kind: 'deposit' }>) {
+    const rows = await this.drizzle.db
       .select()
       .from(walletDepositAddress)
-      .where(eq(walletDepositAddress.address, address));
-    return row;
+      .where(
+        and(
+          eq(walletDepositAddress.address, address),
+          tag === undefined ? isNull(walletDepositAddress.tag) : eq(walletDepositAddress.tag, tag),
+          network === undefined
+            ? undefined
+            : or(eq(walletDepositAddress.network, network), isNull(walletDepositAddress.network)),
+        ),
+      );
+
+    const owners = new Set(rows.map((row) => row.userId));
+    if (owners.size > 1) {
+      throw new AmbiguousDepositAddressError(address, network);
+    }
+    return rows.find((row) => row.network === network) ?? rows[0];
   }
 }

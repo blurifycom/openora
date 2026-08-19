@@ -197,7 +197,26 @@ export class ChatCommandsService {
     }
 
     const onlineIds = new Set(onlineUserIds);
-    const ids = await this.directory.findPlayerIds(q, Math.max(limit, onlineUserIds.length));
+    const query = q.trim();
+    const canSeeAdminUsers = await this.canSeeAdminUsers(viewerId);
+    let ids =
+      query.length === 0
+        ? onlineUserIds
+        : await this.directory.findPlayerIds(query, Math.max(limit, onlineUserIds.length));
+    if (canSeeAdminUsers && query.length > 0) {
+      const onlineAccounts = await this.directory.lookupUsers(onlineUserIds);
+      const queryLower = query.toLowerCase();
+      const matchingAdminIds = onlineAccounts
+        .filter(
+          (account) =>
+            (account.role === 'admin' || account.role === 'super-admin') &&
+            [account.name, account.email].some((value) =>
+              value?.toLowerCase().includes(queryLower),
+            ),
+        )
+        .map((account) => account.id);
+      ids = [...new Set([...ids, ...matchingAdminIds])];
+    }
     if (ids.length === 0) {
       return [];
     }
@@ -209,7 +228,30 @@ export class ChatCommandsService {
       return [];
     }
     const summaries = await this.directory.lookupPlayers(filteredIds);
-    return summaries.map((s) => ({ userId: s.userId, username: s.username }));
+    if (!canSeeAdminUsers) {
+      return summaries.map((s) => ({ userId: s.userId, username: s.username }));
+    }
+
+    const summaryById = new Map(summaries.map((summary) => [summary.userId, summary.username]));
+    const accounts = canSeeAdminUsers ? await this.directory.lookupUsers(filteredIds) : [];
+    const accountsById = new Map(accounts.map((account) => [account.id, account]));
+    const visible = filteredIds.map((userId) => {
+      const username = summaryById.get(userId);
+      if (username) {
+        return { userId, username };
+      }
+      const account = accountsById.get(userId);
+      return account ? { userId, username: account.name ?? account.email } : null;
+    });
+    return visible.filter((user): user is { userId: Uuid; username: string } => user !== null);
+  }
+
+  private async canSeeAdminUsers(viewerId: Uuid) {
+    if (typeof this.directory.get !== 'function') {
+      return false;
+    }
+    const viewer = await this.directory.get(viewerId);
+    return viewer?.role === 'admin' || viewer?.role === 'super-admin';
   }
 
   async postGift(input: PostGiftInput, actorId: Uuid): Promise<CommandChatMessage> {
@@ -281,7 +323,11 @@ export class ChatCommandsService {
   // result into the typed errors this module's router maps to transport codes.
   async postRain(input: PostRainInput, actorId: Uuid): Promise<CommandChatMessage> {
     const onlineUserIds = await this.transport.getOnlineUserIds(chatChannel(input.roomId));
-    const result = await this.rainCommands.sendRain({ ...input, onlineUserIds }, actorId);
+    const visiblePlayers = await this.directory.lookupPlayers(onlineUserIds);
+    const result = await this.rainCommands.sendRain(
+      { ...input, onlineUserIds: visiblePlayers.map((player) => player.userId) },
+      actorId,
+    );
     if (result.ok) {
       return result.message;
     }

@@ -1,4 +1,5 @@
 import { describe, it, expect, beforeAll, afterAll, beforeEach } from 'vitest';
+import { findOneOrThrow } from '@openora/core/server';
 import { randomUUID } from 'node:crypto';
 import { sql } from 'drizzle-orm';
 import { createTestDb, type TestDb } from '@openora/core/testing';
@@ -12,31 +13,37 @@ let reporting: DrizzleAdminWalletReporting;
 const AT = (iso: string) => new Date(iso);
 
 async function seedWallet(overrides: Partial<typeof wallet.$inferInsert> = {}) {
-  const [row] = await db.drizzle.db
-    .insert(wallet)
-    .values({ userId: randomUUID(), currency: 'USD', ...overrides })
-    .returning();
-  return row!;
+  const row = findOneOrThrow(
+    await db.drizzle.db
+      .insert(wallet)
+      .values({ userId: randomUUID(), currency: 'USD', ...overrides })
+      .returning(),
+    new Error('seedWallet: query returned no row'),
+  );
+  return row;
 }
 
 async function seedTx(
   walletId: string,
   overrides: Partial<typeof walletTransaction.$inferInsert> = {},
 ) {
-  const [row] = await db.drizzle.db
-    .insert(walletTransaction)
-    .values({
-      walletId,
-      type: 'deposit',
-      amount: '100',
-      currency: 'USD',
-      status: 'completed',
-      rail: 'fiat',
-      createdAt: AT('2026-01-01T00:00:00.000Z'),
-      ...overrides,
-    })
-    .returning();
-  return row!;
+  const row = findOneOrThrow(
+    await db.drizzle.db
+      .insert(walletTransaction)
+      .values({
+        walletId,
+        type: 'deposit',
+        amount: '100',
+        currency: 'USD',
+        status: 'completed',
+        rail: 'fiat',
+        createdAt: AT('2026-01-01T00:00:00.000Z'),
+        ...overrides,
+      })
+      .returning(),
+    new Error('seedTx: query returned no row'),
+  );
+  return row;
 }
 
 beforeAll(async () => {

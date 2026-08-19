@@ -1,13 +1,13 @@
 import { describe, it, expect, vi, beforeAll, afterAll, beforeEach } from 'vitest';
 import { randomUUID } from 'node:crypto';
 import { sql } from 'drizzle-orm';
-import { RedisRateLimiter } from '@openora/core/server';
+import { findOneOrThrow, RedisRateLimiter } from '@openora/core/server';
 import { createTestDb, createTestRedis, type TestDb, type TestRedis } from '@openora/core/testing';
 import { migrate as migrateProfile } from '@openora/core/pam/migrate/profile';
 import type { PaymentAdapter, AuditWritePort } from '@openora/core/contracts';
 import { mock, NO_CLIENT_META, makeEventBus, makeIdentityReader } from '../../testing/mock.js';
 import { migrate } from '../migrate.js';
-import { wallet, walletTransaction } from '../schema/index.js';
+import { wallet, walletBalance, walletTransaction } from '../schema/index.js';
 import { WalletService } from '../service/wallet.service.js';
 
 const events = makeEventBus();
@@ -30,11 +30,17 @@ const makeService = () =>
   });
 
 async function seedWallet() {
-  const [row] = await db.drizzle.db
-    .insert(wallet)
-    .values({ userId: randomUUID(), balance: '1000', currency: 'USD' })
-    .returning();
-  return row!;
+  const row = findOneOrThrow(
+    await db.drizzle.db
+      .insert(wallet)
+      .values({ userId: randomUUID(), currency: 'USD' })
+      .returning(),
+    new Error('seedWallet: query returned no row'),
+  );
+  await db.drizzle.db
+    .insert(walletBalance)
+    .values({ walletId: row.id, currency: row.currency, amount: '1000' });
+  return row;
 }
 
 beforeAll(async () => {

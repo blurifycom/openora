@@ -8,6 +8,13 @@
       "when": 1785744212797,
       "tag": "0000_daffy_lady_bullseye",
       "breakpoints": true
+    },
+    {
+      "idx": 1,
+      "version": "7",
+      "when": 1787009522084,
+      "tag": "0001_sturdy_barracuda",
+      "breakpoints": true
     }
   ]
 }

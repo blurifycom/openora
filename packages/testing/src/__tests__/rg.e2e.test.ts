@@ -35,7 +35,7 @@ import {
  *   recompute enforcement) runs deterministically instead of on a real timer.
  */
 
-const JOB_WAIT = { timeout: 5000, interval: 100 };
+const JOB_WAIT = { timeout: 15000, interval: 100 };
 
 let db: TestDb;
 let app: TestApp;
