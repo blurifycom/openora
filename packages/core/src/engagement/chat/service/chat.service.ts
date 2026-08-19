@@ -22,7 +22,9 @@ import type {
   CommandChatMessage,
   AdminUserDirectory,
   AuditWritePort,
+  FriendshipDissolvedPayload,
   IdentityReader,
+  SocialCommands,
   Uuid,
 } from '@openora/core/contracts';
 import { chatChannel, GLOBAL_CHAT_ROOM_ID } from '@openora/core/contracts';
@@ -217,6 +219,7 @@ export class ChatService {
     private readonly audit: AuditWritePort,
     private readonly moderation: ChatModeration,
     private readonly identityReader: IdentityReader,
+    private readonly socialCommands?: SocialCommands,
   ) {}
 
   subscribeMessages(
@@ -291,6 +294,11 @@ export class ChatService {
       this.ignoredIdsFor(viewerId),
     ]);
     return new Set([...blocked, ...ignored]);
+  }
+
+  private async usernamesFor(userIds: readonly User['id'][]) {
+    const summaries = await this.directory.lookupPlayers(userIds);
+    return new Map(summaries.map((s) => [s.userId, s.username]));
   }
 
   private async resolveDisplayName(userId: User['id'], fallback: string) {
@@ -1149,8 +1157,14 @@ export class ChatService {
         .offset(pageToOffset(page, limit)),
       this.drizzle.db.select({ n: count() }).from(chatUserBlock).where(where),
     ]);
+    const usernameByUserId = await this.usernamesFor(rows.map((r) => r.blockedId));
     return {
-      items: rows.map((r) => serializeRow(r, { dateFields: ['createdAt'] })),
+      items: rows.map((r) =>
+        serializeRow(
+          { ...r, username: usernameByUserId.get(r.blockedId) ?? null },
+          { dateFields: ['createdAt'] },
+        ),
+      ),
       total: Number(n),
       page,
       limit,
@@ -1199,16 +1213,23 @@ export class ChatService {
       throw new ChatSelfBlockError();
     }
 
-    // Idempotent: re-blocking while already (actively) blocked is a no-op, so only
-    // the first block emits an event. The pair unique index is partial (removedAt
-    // IS NULL), so a block after a prior unblock conflicts with nothing and inserts
-    // a fresh active row - the removed row stays as history. No explicit conflict
-    // target: this table has exactly one unique constraint (the partial pair index).
-    const inserted = await this.drizzle.db
-      .insert(chatUserBlock)
-      .values({ blockerId, blockedId })
-      .onConflictDoNothing()
-      .returning();
+    const { inserted, dissolvedFriendship } = await this.drizzle.db.transaction(async (tx) => {
+      const rows = await tx
+        .insert(chatUserBlock)
+        .values({ blockerId, blockedId })
+        .onConflictDoNothing()
+        .returning();
+      const dissolved: FriendshipDissolvedPayload | null =
+        rows.length > 0
+          ? ((await this.socialCommands?.dissolveFriendshipOnBlock(tx, blockerId, blockedId)) ??
+            null)
+          : null;
+      return { inserted: rows, dissolvedFriendship: dissolved };
+    });
+
+    if (dissolvedFriendship) {
+      this.events.emit('social.friendship.removed', dissolvedFriendship);
+    }
 
     if (inserted.length > 0) {
       this.events.emit('chat.user.blocked', {
@@ -1277,8 +1298,14 @@ export class ChatService {
         .offset(pageToOffset(page, limit)),
       this.drizzle.db.select({ n: count() }).from(chatUserIgnore).where(where),
     ]);
+    const usernameByUserId = await this.usernamesFor(rows.map((r) => r.ignoredId));
     return {
-      items: rows.map((r) => serializeRow(r, { dateFields: ['createdAt'] })),
+      items: rows.map((r) =>
+        serializeRow(
+          { ...r, username: usernameByUserId.get(r.ignoredId) ?? null },
+          { dateFields: ['createdAt'] },
+        ),
+      ),
       total: Number(n),
       page,
       limit,

@@ -425,6 +425,18 @@ export async function mapEventToRecord(
     };
   }
 
+  if (topic === 'social.friendship.removed') {
+    const actorPlayerId = p['actorPlayerId'];
+    return {
+      ...base,
+      actorType: actorPlayerId ? 'player' : 'admin',
+      actorId: actorPlayerId ? str(actorPlayerId) : str(p['actorId']),
+      resourceType: 'friendship',
+      resourceId: str(p['friendshipId']),
+      after: { status: 'removed', reason: p['reason'] },
+    };
+  }
+
   // Admin CMS page/banner CRUD. actorId = acting admin; resourceId = the page/banner.
   if (
     topic === 'cms.page.created' ||
@@ -661,6 +673,7 @@ const SUBSCRIBED_TOPICS: DomainEventName[] = [
   'player.login_blocked',
   'social.friend_request.sent',
   'social.friend_request.accepted',
+  'social.friendship.removed',
 ] as const;
 
 export default {

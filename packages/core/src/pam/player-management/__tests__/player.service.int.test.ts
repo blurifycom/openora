@@ -195,6 +195,46 @@ describe('PlayerService.remove (real PG)', () => {
   });
 });
 
+describe('PlayerService.touchLastSeen (real PG)', () => {
+  it('writes lastSeenAt when it was previously null', async () => {
+    const { svc } = makeService();
+    const seeded = await seedPlayer(randomUUID());
+
+    await svc.touchLastSeen(seeded.userId);
+
+    const row = await rowById(seeded.id);
+    expect(row?.lastSeenAt).toBeInstanceOf(Date);
+  });
+
+  it('writes lastSeenAt when it is stale (older than 1 minute)', async () => {
+    const { svc } = makeService();
+    const staleTimestamp = new Date(Date.now() - 5 * 60 * 1000);
+    const seeded = await seedPlayer(randomUUID(), { lastSeenAt: staleTimestamp });
+
+    await svc.touchLastSeen(seeded.userId);
+
+    const row = await rowById(seeded.id);
+    expect(row?.lastSeenAt?.getTime()).toBeGreaterThan(staleTimestamp.getTime());
+  });
+
+  it('skips the write (throttle) when lastSeenAt is recent', async () => {
+    const { svc } = makeService();
+    const recentTimestamp = new Date();
+    const seeded = await seedPlayer(randomUUID(), { lastSeenAt: recentTimestamp });
+
+    await svc.touchLastSeen(seeded.userId);
+
+    const row = await rowById(seeded.id);
+    expect(row?.lastSeenAt?.getTime()).toBe(recentTimestamp.getTime());
+  });
+
+  it('is a no-op for a nonexistent userId (never throws)', async () => {
+    const { svc } = makeService();
+
+    await expect(svc.touchLastSeen(randomUUID())).resolves.toBeUndefined();
+  });
+});
+
 describe('PlayerService.getByUserId (real PG)', () => {
   it('returns the player enriched with the identity email', async () => {
     const { svc } = makeService();

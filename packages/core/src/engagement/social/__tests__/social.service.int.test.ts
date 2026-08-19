@@ -1,12 +1,13 @@
 import { describe, it, expect, beforeAll, afterAll, beforeEach } from 'vitest';
 import { randomUUID } from 'node:crypto';
-import { sql } from 'drizzle-orm';
+import { eq, sql } from 'drizzle-orm';
+import type { IdentityReader } from '@openora/core/contracts';
 import { createTestDb, type TestDb } from '@openora/core/testing';
 import { migrate as migrateChat } from '@openora/core/engagement/migrate/chat';
-import { chatUserBlock } from '@openora/core/engagement/schema/chat';
+import { chatUserBlock, chatUserIgnore } from '@openora/core/engagement/schema/chat';
 import { player } from '@openora/core/pam/schema/profile';
 import { migrate as migrateProfile } from '@openora/core/pam/migrate/profile';
-import { makeEventBus } from '../../../testing/mock.js';
+import { makeEventBus, makeIdentityReader } from '../../../testing/mock.js';
 import { migrate } from '../migrate.js';
 import { friendship } from '../schema/index.js';
 import {
@@ -18,13 +19,27 @@ import {
   RequestAlreadyPendingError,
   FriendRequestRefusedError,
   BlockedBySelfError,
+  FriendshipNotFoundError,
 } from '../service/social.service.js';
 
 let db: TestDb;
 
+function realIdentityReader(): IdentityReader {
+  return {
+    ...makeIdentityReader(),
+    getPlayerIdByUserIdSafe: async (userId) => {
+      const [row] = await db.drizzle.db
+        .select({ id: player.id })
+        .from(player)
+        .where(eq(player.userId, userId));
+      return row?.id ?? null;
+    },
+  };
+}
+
 function makeService() {
   const events = makeEventBus();
-  return { svc: new SocialService(db.drizzle, events), events };
+  return { svc: new SocialService(db.drizzle, events, realIdentityReader()), events };
 }
 
 async function seedPlayer(overrides: Partial<typeof player.$inferInsert> = {}) {
@@ -39,6 +54,10 @@ async function seedBlock(blockerId: string, blockedId: string) {
   await db.drizzle.db.insert(chatUserBlock).values({ blockerId, blockedId });
 }
 
+async function seedIgnore(ignorerId: string, ignoredId: string) {
+  await db.drizzle.db.insert(chatUserIgnore).values({ ignorerId, ignoredId });
+}
+
 beforeAll(async () => {
   db = await createTestDb([migrate, migrateProfile, migrateChat]);
 });
@@ -49,7 +68,7 @@ afterAll(async () => {
 
 beforeEach(async () => {
   await db.drizzle.db.execute(
-    sql`TRUNCATE ${friendship}, ${chatUserBlock}, ${player} RESTART IDENTITY CASCADE`,
+    sql`TRUNCATE ${friendship}, ${chatUserBlock}, ${chatUserIgnore}, ${player} RESTART IDENTITY CASCADE`,
   );
 });
 
@@ -316,4 +335,300 @@ describe('SocialService.getRelationships (real PG)', () => {
 
     expect(result.map((r) => r.userId)).toEqual([b.userId, a.userId, b.userId]);
   });
+});
+
+async function makeFriends(svc: SocialService, aUserId: string, bUserId: string) {
+  const first = await svc.sendFriendRequest(aUserId, bUserId);
+  await svc.sendFriendRequest(bUserId, aUserId); // mutual auto-accept
+  return first;
+}
+
+describe('SocialService.removeFriend (real PG)', () => {
+  it('dissolves an active friendship (caller as requester) and emits social.friendship.removed', async () => {
+    const { svc, events } = makeService();
+    const alice = await seedPlayer();
+    const bob = await seedPlayer();
+    const friendshipRow = await makeFriends(svc, alice.userId, bob.userId);
+    events.emit.mockClear();
+
+    await svc.removeFriend(alice.userId, bob.userId);
+
+    expect(events.emit).toHaveBeenCalledWith('social.friendship.removed', {
+      friendshipId: friendshipRow.id,
+      actorId: alice.userId,
+      actorPlayerId: alice.id,
+      otherUserId: bob.userId,
+      reason: 'removed_by_player',
+    });
+    const [row] = await db.drizzle.db.select().from(friendship);
+    expect(row?.removedAt).toBeInstanceOf(Date);
+  });
+
+  it('dissolves an active friendship (caller as addressee) and emits social.friendship.removed', async () => {
+    const { svc, events } = makeService();
+    const alice = await seedPlayer();
+    const bob = await seedPlayer();
+    const friendshipRow = await makeFriends(svc, alice.userId, bob.userId);
+    events.emit.mockClear();
+
+    await svc.removeFriend(bob.userId, alice.userId);
+
+    expect(events.emit).toHaveBeenCalledWith('social.friendship.removed', {
+      friendshipId: friendshipRow.id,
+      actorId: bob.userId,
+      actorPlayerId: bob.id,
+      otherUserId: alice.userId,
+      reason: 'removed_by_player',
+    });
+  });
+
+  it('emits a null actorPlayerId when the caller has no player row (BF-427 audit fix)', async () => {
+    const { svc, events } = makeService();
+    const alice = await seedPlayer();
+    const staffCallerId = randomUUID(); // an identity userId with no `player` row
+    await db.drizzle.db.insert(friendship).values({
+      requesterId: staffCallerId,
+      addresseeId: alice.userId,
+      acceptedAt: new Date(),
+    });
+
+    await svc.removeFriend(staffCallerId, alice.userId);
+
+    expect(events.emit).toHaveBeenCalledWith(
+      'social.friendship.removed',
+      expect.objectContaining({ actorId: staffCallerId, actorPlayerId: null }),
+    );
+  });
+
+  it('throws FriendshipNotFoundError when the pair was never friended', async () => {
+    const { svc, events } = makeService();
+    const alice = await seedPlayer();
+    const bob = await seedPlayer();
+
+    await expect(svc.removeFriend(alice.userId, bob.userId)).rejects.toBeInstanceOf(
+      FriendshipNotFoundError,
+    );
+    expect(events.emit).not.toHaveBeenCalled();
+  });
+
+  it('throws FriendshipNotFoundError when the request is still pending', async () => {
+    const { svc } = makeService();
+    const alice = await seedPlayer();
+    const bob = await seedPlayer();
+    await svc.sendFriendRequest(alice.userId, bob.userId);
+
+    await expect(svc.removeFriend(alice.userId, bob.userId)).rejects.toBeInstanceOf(
+      FriendshipNotFoundError,
+    );
+  });
+
+  it('throws FriendshipNotFoundError when the request was refused', async () => {
+    const { svc } = makeService();
+    const alice = await seedPlayer();
+    const bob = await seedPlayer();
+    await db.drizzle.db
+      .insert(friendship)
+      .values({ requesterId: alice.userId, addresseeId: bob.userId, refusedAt: new Date() });
+
+    await expect(svc.removeFriend(alice.userId, bob.userId)).rejects.toBeInstanceOf(
+      FriendshipNotFoundError,
+    );
+  });
+
+  it('throws FriendshipNotFoundError when already removed, and allows re-friending afterward (partial index)', async () => {
+    const { svc } = makeService();
+    const alice = await seedPlayer();
+    const bob = await seedPlayer();
+    await makeFriends(svc, alice.userId, bob.userId);
+    await svc.removeFriend(alice.userId, bob.userId);
+
+    await expect(svc.removeFriend(alice.userId, bob.userId)).rejects.toBeInstanceOf(
+      FriendshipNotFoundError,
+    );
+
+    const resent = await svc.sendFriendRequest(alice.userId, bob.userId);
+    expect(resent.acceptedAt).toBeNull();
+    const rows = await db.drizzle.db.select().from(friendship);
+    expect(rows).toHaveLength(2);
+  });
+});
+
+describe('SocialService.dissolveFriendshipOnBlock (real PG)', () => {
+  it('silently no-ops when no friendship exists', async () => {
+    const { svc, events } = makeService();
+    const alice = await seedPlayer();
+    const bob = await seedPlayer();
+
+    await expect(
+      svc.dissolveFriendshipOnBlock(db.drizzle.db, alice.userId, bob.userId),
+    ).resolves.toBeNull();
+    expect(events.emit).not.toHaveBeenCalled();
+  });
+
+  it('silently no-ops when the request is only pending (not yet accepted)', async () => {
+    const { svc, events } = makeService();
+    const alice = await seedPlayer();
+    const bob = await seedPlayer();
+    await svc.sendFriendRequest(alice.userId, bob.userId);
+    events.emit.mockClear();
+
+    await expect(
+      svc.dissolveFriendshipOnBlock(db.drizzle.db, alice.userId, bob.userId),
+    ).resolves.toBeNull();
+
+    expect(events.emit).not.toHaveBeenCalled();
+    const [row] = await db.drizzle.db.select().from(friendship);
+    expect(row?.removedAt).toBeNull();
+  });
+
+  it('dissolves an active friendship and returns the removal payload, without emitting yet', async () => {
+    const { svc, events } = makeService();
+    const alice = await seedPlayer();
+    const bob = await seedPlayer();
+    const friendshipRow = await makeFriends(svc, alice.userId, bob.userId);
+    events.emit.mockClear();
+
+    const dissolved = await svc.dissolveFriendshipOnBlock(db.drizzle.db, alice.userId, bob.userId);
+
+    // The row commits (or, on a caller-owned tx, may still roll back) before the
+    // caller decides whether to publish - dissolveFriendshipOnBlock must never emit
+    // itself, or a rollback after this call would ship a "ghost event".
+    expect(dissolved).toEqual({
+      friendshipId: friendshipRow.id,
+      actorId: alice.userId,
+      actorPlayerId: alice.id,
+      otherUserId: bob.userId,
+      reason: 'blocked',
+    });
+    expect(events.emit).not.toHaveBeenCalled();
+    const [row] = await db.drizzle.db.select().from(friendship);
+    expect(row?.removedAt).toBeInstanceOf(Date);
+  });
+});
+
+describe('SocialService.listFriends (real PG)', () => {
+  it('returns only accepted, non-removed friendships involving the caller', async () => {
+    const { svc } = makeService();
+    const caller = await seedPlayer({ displayName: 'Caller' });
+    const friend = await seedPlayer({ displayName: 'Friend' });
+    const pending = await seedPlayer({ displayName: 'Pending' });
+    const refusedPlayer = await seedPlayer({ displayName: 'Refused' });
+    const removedFriend = await seedPlayer({ displayName: 'Removed' });
+    const strangerA = await seedPlayer({ displayName: 'StrangerA' });
+    const strangerB = await seedPlayer({ displayName: 'StrangerB' });
+
+    await makeFriends(svc, caller.userId, friend.userId);
+    await svc.sendFriendRequest(caller.userId, pending.userId);
+    await db.drizzle.db.insert(friendship).values({
+      requesterId: caller.userId,
+      addresseeId: refusedPlayer.userId,
+      refusedAt: new Date(),
+    });
+    await makeFriends(svc, caller.userId, removedFriend.userId);
+    await svc.removeFriend(caller.userId, removedFriend.userId);
+    await makeFriends(svc, strangerA.userId, strangerB.userId);
+
+    const result = await svc.listFriends(caller.userId, { page: 1, limit: 20 });
+
+    expect(result.total).toBe(1);
+    expect(result.items).toHaveLength(1);
+    expect(result.items[0]).toMatchObject({
+      userId: friend.userId,
+      displayName: 'Friend',
+      status: 'offline',
+      lastSeenAt: null,
+      isIgnored: false,
+    });
+  });
+
+  it("derives isIgnored from the CALLER's own ignore state, not the friend's", async () => {
+    const { svc } = makeService();
+    const caller = await seedPlayer({ displayName: 'Caller' });
+    const ignoredFriend = await seedPlayer({ displayName: 'IgnoredFriend' });
+    const plainFriend = await seedPlayer({ displayName: 'PlainFriend' });
+    await makeFriends(svc, caller.userId, ignoredFriend.userId);
+    await makeFriends(svc, caller.userId, plainFriend.userId);
+    await seedIgnore(caller.userId, ignoredFriend.userId);
+    await seedIgnore(plainFriend.userId, caller.userId);
+
+    const result = await svc.listFriends(caller.userId, { page: 1, limit: 20 });
+
+    const byUserId = new Map(result.items.map((i) => [i.userId, i]));
+    expect(byUserId.get(ignoredFriend.userId)).toMatchObject({ isIgnored: true });
+    expect(byUserId.get(plainFriend.userId)).toMatchObject({ isIgnored: false });
+  });
+
+  it('derives status: online when lastSeenAt is within the online window, offline otherwise', async () => {
+    const { svc } = makeService();
+    const caller = await seedPlayer();
+    const recentlyActive = await seedPlayer({ lastSeenAt: new Date() });
+    const staleActive = await seedPlayer({
+      lastSeenAt: new Date(Date.now() - 10 * 60 * 1000),
+    });
+    await makeFriends(svc, caller.userId, recentlyActive.userId);
+    await makeFriends(svc, caller.userId, staleActive.userId);
+
+    const result = await svc.listFriends(caller.userId, { page: 1, limit: 20 });
+
+    const byUserId = new Map(result.items.map((i) => [i.userId, i]));
+    expect(byUserId.get(recentlyActive.userId)).toMatchObject({ status: 'online' });
+    expect(typeof byUserId.get(recentlyActive.userId)?.lastSeenAt).toBe('string');
+    expect(byUserId.get(staleActive.userId)).toMatchObject({ status: 'offline' });
+  });
+
+  it('paginates results', async () => {
+    const { svc } = makeService();
+    const caller = await seedPlayer();
+    for (let i = 0; i < 3; i++) {
+      const friend = await seedPlayer({ displayName: `Friend${i}` });
+      await makeFriends(svc, caller.userId, friend.userId);
+    }
+
+    const page1 = await svc.listFriends(caller.userId, { page: 1, limit: 2 });
+    const page2 = await svc.listFriends(caller.userId, { page: 2, limit: 2 });
+
+    expect(page1.total).toBe(3);
+    expect(page1.items).toHaveLength(2);
+    expect(page2.items).toHaveLength(1);
+    const allIds = new Set([...page1.items, ...page2.items].map((i) => i.userId));
+    expect(allIds.size).toBe(3);
+  });
+
+  it('drops an entry whose player row is missing instead of rendering a blank name', async () => {
+    const { svc } = makeService();
+    const caller = await seedPlayer({ displayName: 'Caller' });
+    const friend = await seedPlayer({ displayName: 'Friend' });
+    await makeFriends(svc, caller.userId, friend.userId);
+
+    await db.drizzle.db.insert(friendship).values({
+      requesterId: caller.userId,
+      addresseeId: randomUUID(),
+      acceptedAt: new Date(),
+    });
+
+    const result = await svc.listFriends(caller.userId, { page: 1, limit: 20 });
+
+    expect(result.items).toHaveLength(1);
+    expect(result.items[0]?.userId).toBe(friend.userId);
+  });
+
+  it.each(['suspended', 'closed'] as const)(
+    'drops a friend whose account is %s',
+    async (status) => {
+      const { svc } = makeService();
+      const caller = await seedPlayer({ displayName: 'Caller' });
+      const friend = await seedPlayer({ displayName: 'Friend' });
+      const unavailableFriend = await seedPlayer({ displayName: 'Unavailable' });
+      await makeFriends(svc, caller.userId, friend.userId);
+      await makeFriends(svc, caller.userId, unavailableFriend.userId);
+      await db.drizzle.db
+        .update(player)
+        .set({ status })
+        .where(eq(player.userId, unavailableFriend.userId));
+
+      const result = await svc.listFriends(caller.userId, { page: 1, limit: 20 });
+
+      expect(result.items.map((i) => i.userId)).toEqual([friend.userId]);
+    },
+  );
 });

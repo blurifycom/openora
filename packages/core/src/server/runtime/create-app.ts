@@ -37,6 +37,7 @@ import {
   IGAMING_CONFIG,
   type IgamingConfig,
   PLATFORM_CONFIG,
+  PLAYER_ACTIVITY_TRACKER,
 } from '@openora/core/contracts';
 import { DrizzleService, DRIZZLE, DrizzleOutboxWriter, OutboxRelay } from '../db/index.js';
 import { AdminGuard, ADMIN_GUARD, SessionResolver, AUTH_SESSION } from '../auth/index.js';
@@ -442,6 +443,15 @@ export async function createApp(
     }
 
     context.auth = { userId };
+
+    if (container.has(PLAYER_ACTIVITY_TRACKER)) {
+      container
+        .get(PLAYER_ACTIVITY_TRACKER)
+        .touchLastSeen(userId)
+        .catch((err: unknown) =>
+          createLogger('player-activity').error({ err }, 'touchLastSeen failed'),
+        );
+    }
 
     return withRequestContext({ userId, traceId, clientMeta: context.clientMeta }, runHandler);
   });

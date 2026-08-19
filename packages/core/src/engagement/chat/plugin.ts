@@ -9,6 +9,7 @@ import {
   CHAT_MODERATION,
   CHAT_ROOM_ACCESS,
   ADMIN_USER_DIRECTORY,
+  SOCIAL_COMMANDS,
   REALTIME_TRANSPORT,
   REALTIME_CLIENT_AUTHORIZER,
   AUDIT_WRITER,
@@ -47,6 +48,7 @@ export default {
         c.get(AUDIT_WRITER),
         c.get(CHAT_MODERATION),
         c.get(IDENTITY_READER),
+        c.has(SOCIAL_COMMANDS) ? c.get(SOCIAL_COMMANDS) : undefined,
       );
     const createMembershipService = (
       c: Parameters<typeof ctx.routers.add>[1] extends (c: infer C) => unknown ? C : never,

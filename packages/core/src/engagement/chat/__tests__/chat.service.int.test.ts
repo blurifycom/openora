@@ -8,6 +8,8 @@ import type {
   AdminUserDirectory,
   AdminPlayerSummary,
   AuditWritePort,
+  FriendshipDissolvedPayload,
+  SocialCommands,
 } from '@openora/core/contracts';
 import { migrate as migrateProfile } from '@openora/core/pam/migrate/profile';
 import { NO_CLIENT_META, makeEventBus, makeIdentityReader, mock } from '../../../testing/mock.js';
@@ -67,6 +69,7 @@ let db: TestDb;
 
 function makeService(
   directory: AdminUserDirectory = mock<AdminUserDirectory>({ lookupPlayers: async () => [] }),
+  socialCommands?: SocialCommands,
 ) {
   const transport = new InProcessRealtimeTransport();
   const events = makeEventBus();
@@ -84,6 +87,7 @@ function makeService(
     audit,
     moderation,
     identityReader,
+    socialCommands,
   );
   const membership = new ChatRoomMembershipService(
     db.drizzle,
@@ -521,6 +525,80 @@ describe('ChatService block list (real PG)', () => {
     await expect(svc.blockUser(userId, userId)).rejects.toThrow(ChatSelfBlockError);
   });
 
+  it('dissolves any friendship on the same tx as the block insert, before returning', async () => {
+    const dissolveFriendshipOnBlock = vi.fn(async () => {});
+    const { svc } = makeService(undefined, mock<SocialCommands>({ dissolveFriendshipOnBlock }));
+    const blockerId = randomUUID();
+    const blockedId = randomUUID();
+
+    await svc.blockUser(blockerId, blockedId, NO_CLIENT_META);
+
+    expect(dissolveFriendshipOnBlock).toHaveBeenCalledTimes(1);
+    expect(dissolveFriendshipOnBlock).toHaveBeenCalledWith(expect.anything(), blockerId, blockedId);
+  });
+
+  it('does not call the social port again on a no-op re-block', async () => {
+    const dissolveFriendshipOnBlock = vi.fn(async () => {});
+    const { svc } = makeService(undefined, mock<SocialCommands>({ dissolveFriendshipOnBlock }));
+    const blockerId = randomUUID();
+    const blockedId = randomUUID();
+
+    await svc.blockUser(blockerId, blockedId);
+    await svc.blockUser(blockerId, blockedId);
+
+    expect(dissolveFriendshipOnBlock).toHaveBeenCalledTimes(1);
+  });
+
+  it('emits the dissolved-friendship event only after the block transaction commits', async () => {
+    const payload: FriendshipDissolvedPayload = {
+      friendshipId: randomUUID(),
+      actorId: randomUUID(),
+      actorPlayerId: randomUUID(),
+      otherUserId: randomUUID(),
+      reason: 'blocked',
+    };
+    const dissolveFriendshipOnBlock = vi.fn(async () => payload);
+    const { svc, events } = makeService(
+      undefined,
+      mock<SocialCommands>({ dissolveFriendshipOnBlock }),
+    );
+    const blockerId = randomUUID();
+    const blockedId = randomUUID();
+
+    await svc.blockUser(blockerId, blockedId, NO_CLIENT_META);
+
+    expect(events.emit).toHaveBeenCalledWith('social.friendship.removed', payload);
+  });
+
+  it('does not emit a dissolved-friendship event when there was no active friendship to dissolve', async () => {
+    const dissolveFriendshipOnBlock = vi.fn(async () => null);
+    const { svc, events } = makeService(
+      undefined,
+      mock<SocialCommands>({ dissolveFriendshipOnBlock }),
+    );
+    const blockerId = randomUUID();
+    const blockedId = randomUUID();
+
+    await svc.blockUser(blockerId, blockedId, NO_CLIENT_META);
+
+    expect(events.emit.mock.calls.some(([topic]) => topic === 'social.friendship.removed')).toBe(
+      false,
+    );
+  });
+
+  it('rolls back the block insert when the social port fails, instead of leaving a block with no dissolve', async () => {
+    const dissolveFriendshipOnBlock = vi.fn(async () => {
+      throw new Error('boom');
+    });
+    const { svc } = makeService(undefined, mock<SocialCommands>({ dissolveFriendshipOnBlock }));
+    const blockerId = randomUUID();
+    const blockedId = randomUUID();
+
+    await expect(svc.blockUser(blockerId, blockedId)).rejects.toThrow('boom');
+
+    expect(await db.drizzle.db.select().from(chatUserBlock)).toHaveLength(0);
+  });
+
   it('emits only on the first block of a pair', async () => {
     const { svc, events } = makeService();
     const blockerId = randomUUID();
@@ -590,6 +668,47 @@ describe('ChatService block list (real PG)', () => {
     });
 
     expect(items.map((r) => r.blockedId)).toEqual([second, first]);
+  });
+
+  it('enriches each entry with the blocked users username, and falls back to null when unresolvable', async () => {
+    const blockedId = randomUUID();
+    const unresolvableId = randomUUID();
+    const directory = mock<AdminUserDirectory>({
+      lookupPlayers: async (userIds: readonly string[]) =>
+        userIds
+          .filter((id) => id === blockedId)
+          .map(
+            (userId): AdminPlayerSummary => ({
+              playerId: randomUUID(),
+              userId,
+              username: 'BlockedPlayer',
+              email: 'blocked@test.dev',
+              kycStatus: null,
+              language: null,
+              avatarUrl: null,
+              createdAt: new Date(),
+              level: 1,
+              currency: 'USD',
+            }),
+          ),
+    });
+    const { svc } = makeService(directory);
+    const blockerId = randomUUID();
+    await db.drizzle.db.insert(chatUserBlock).values([
+      { blockerId, blockedId, createdAt: new Date('2026-01-01T00:00:00.000Z') },
+      { blockerId, blockedId: unresolvableId, createdAt: new Date('2026-01-02T00:00:00.000Z') },
+    ]);
+
+    const { items } = await svc.listBlockedUsers({
+      blockerId,
+      page: 1,
+      limit: 100,
+      sortBy: 'createdAt',
+      sortOrder: 'desc',
+    });
+
+    expect(items.find((r) => r.blockedId === blockedId)?.username).toBe('BlockedPlayer');
+    expect(items.find((r) => r.blockedId === unresolvableId)?.username).toBeNull();
   });
 
   it('paginates and sorts oldest-first when asked, reporting the total across all pages', async () => {
@@ -749,6 +868,47 @@ describe('ChatService ignore list (real PG)', () => {
     });
 
     expect(items.map((r) => r.ignoredId)).toEqual([second, first]);
+  });
+
+  it('enriches each entry with the ignored users username, and falls back to null when unresolvable', async () => {
+    const ignoredId = randomUUID();
+    const unresolvableId = randomUUID();
+    const directory = mock<AdminUserDirectory>({
+      lookupPlayers: async (userIds: readonly string[]) =>
+        userIds
+          .filter((id) => id === ignoredId)
+          .map(
+            (userId): AdminPlayerSummary => ({
+              playerId: randomUUID(),
+              userId,
+              username: 'IgnoredPlayer',
+              email: 'ignored@test.dev',
+              kycStatus: null,
+              language: null,
+              avatarUrl: null,
+              createdAt: new Date(),
+              level: 1,
+              currency: 'USD',
+            }),
+          ),
+    });
+    const { svc } = makeService(directory);
+    const ignorerId = randomUUID();
+    await db.drizzle.db.insert(chatUserIgnore).values([
+      { ignorerId, ignoredId, createdAt: new Date('2026-01-01T00:00:00.000Z') },
+      { ignorerId, ignoredId: unresolvableId, createdAt: new Date('2026-01-02T00:00:00.000Z') },
+    ]);
+
+    const { items } = await svc.listIgnoredUsers({
+      ignorerId,
+      page: 1,
+      limit: 100,
+      sortBy: 'createdAt',
+      sortOrder: 'desc',
+    });
+
+    expect(items.find((r) => r.ignoredId === ignoredId)?.username).toBe('IgnoredPlayer');
+    expect(items.find((r) => r.ignoredId === unresolvableId)?.username).toBeNull();
   });
 
   it('paginates and sorts oldest-first when asked, reporting the total across all pages', async () => {

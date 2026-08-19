@@ -504,6 +504,13 @@ export const domainEventSchemas = {
     accepterId: UuidSchema,
     accepterDisplayName: z.string(),
   }),
+  'social.friendship.removed': authContextBase.extend({
+    friendshipId: UuidSchema,
+    actorId: UuidSchema,
+    actorPlayerId: UuidSchema.nullable(),
+    otherUserId: UuidSchema,
+    reason: z.enum(['removed_by_player', 'blocked']),
+  }),
 } as const;
 
 export type DomainEventName = keyof typeof domainEventSchemas;

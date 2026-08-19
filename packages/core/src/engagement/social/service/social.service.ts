@@ -1,17 +1,28 @@
-import { and, eq, inArray, isNull, or } from 'drizzle-orm';
+import { and, count, desc, eq, inArray, isNotNull, isNull, or } from 'drizzle-orm';
 import {
+  type DrizzleDb,
   type DrizzleService,
   type EventBus,
   createDomainError,
+  createLogger,
   makeConflictError,
   makeNotFoundError,
+  pageToOffset,
   serializeRow,
 } from '@openora/core/server';
-import { type Uuid } from '@openora/core/contracts';
-import { chatUserBlock } from '@openora/core/engagement/schema/chat';
+import {
+  type FriendshipDissolvedPayload,
+  type IdentityReader,
+  type Uuid,
+} from '@openora/core/contracts';
+import { chatUserBlock, chatUserIgnore } from '@openora/core/engagement/schema/chat';
 import { player } from '@openora/core/pam/schema/profile';
 import { friendship } from '../schema/index.js';
-import { type Friendship, type Relationship } from '../contract/index.js';
+import { type Friendship, type FriendListEntry, type Relationship } from '../contract/index.js';
+
+const logger = createLogger('social');
+
+const ONLINE_STATUS_WINDOW_MS = 3 * 60 * 1000;
 
 type FriendshipRow = typeof friendship.$inferSelect;
 
@@ -54,12 +65,8 @@ export const FriendRequestRefusedError = makeConflictError(
   'This friend request was refused',
 );
 
-// Postgres unique-violation. friendship has exactly one unique index
-// (friendship_pair_key), so any 23505 on an insert into it is unambiguous - no
-// constraint-name check needed. drizzle-orm wraps the driver error in a
-// DrizzleQueryError, so the pg error (and its `.code`) is on `.cause`, not the
-// thrown error itself - checked against a real Postgres unique-index violation
-// in social.service.int.test.ts (a mocked query builder can't catch this).
+export const FriendshipNotFoundError = makeNotFoundError('Friendship');
+
 function pgErrorCode(e: unknown): string | undefined {
   if (typeof e !== 'object' || e === null) {
     return undefined;
@@ -96,6 +103,7 @@ export class SocialService {
   constructor(
     private readonly drizzle: DrizzleService,
     private readonly events: EventBus,
+    private readonly identityReader: IdentityReader,
   ) {}
 
   /**
@@ -190,7 +198,7 @@ export class SocialService {
       const rows = await tx
         .select()
         .from(friendship)
-        .where(pairCondition(callerId, targetUserId))
+        .where(and(pairCondition(callerId, targetUserId), isNull(friendship.removedAt)))
         .for('update')
         .limit(1);
       const existing = rows[0];
@@ -242,15 +250,18 @@ export class SocialService {
       .select()
       .from(friendship)
       .where(
-        or(
-          and(
-            eq(friendship.requesterId, callerId),
-            inArray(friendship.addresseeId, uniqueTargetIds),
+        and(
+          or(
+            and(
+              eq(friendship.requesterId, callerId),
+              inArray(friendship.addresseeId, uniqueTargetIds),
+            ),
+            and(
+              inArray(friendship.requesterId, uniqueTargetIds),
+              eq(friendship.addresseeId, callerId),
+            ),
           ),
-          and(
-            inArray(friendship.requesterId, uniqueTargetIds),
-            eq(friendship.addresseeId, callerId),
-          ),
+          isNull(friendship.removedAt),
         ),
       );
     const friendshipByTargetId = new Map<string, FriendshipRow>();
@@ -331,6 +342,159 @@ export class SocialService {
       }
       return { userId, status: 'none', friendshipId: null, canSendRequest: true };
     });
+  }
+
+  private async dissolveFriendship(
+    tx: DrizzleDb,
+    userA: Uuid,
+    userB: Uuid,
+    actorId: Uuid,
+    reason: 'removed_by_player' | 'blocked',
+  ): Promise<FriendshipDissolvedPayload | undefined> {
+    const rows = await tx
+      .update(friendship)
+      .set({ removedAt: new Date() })
+      .where(
+        and(
+          pairCondition(userA, userB),
+          isNull(friendship.removedAt),
+          isNotNull(friendship.acceptedAt),
+        ),
+      )
+      .returning();
+    const removed = rows[0];
+    if (!removed) {
+      return undefined;
+    }
+
+    return {
+      friendshipId: removed.id,
+      actorId,
+      actorPlayerId: await this.identityReader.getPlayerIdByUserIdSafe(actorId),
+      otherUserId: removed.requesterId === actorId ? removed.addresseeId : removed.requesterId,
+      reason,
+    };
+  }
+
+  async removeFriend(callerId: Uuid, targetUserId: Uuid): Promise<void> {
+    const dissolved = await this.dissolveFriendship(
+      this.drizzle.db,
+      callerId,
+      targetUserId,
+      callerId,
+      'removed_by_player',
+    );
+    if (!dissolved) {
+      throw new FriendshipNotFoundError(targetUserId);
+    }
+    this.events.emit('social.friendship.removed', dissolved);
+  }
+
+  async dissolveFriendshipOnBlock(
+    tx: unknown,
+    blockerId: Uuid,
+    blockedId: Uuid,
+  ): Promise<FriendshipDissolvedPayload | null> {
+    const dissolved = await this.dissolveFriendship(
+      tx as DrizzleDb,
+      blockerId,
+      blockedId,
+      blockerId,
+      'blocked',
+    );
+    return dissolved ?? null;
+  }
+
+  async listFriends(
+    callerId: Uuid,
+    { page, limit }: { page: number; limit: number },
+  ): Promise<{ items: FriendListEntry[]; total: number; page: number; limit: number }> {
+    const where = and(
+      or(eq(friendship.requesterId, callerId), eq(friendship.addresseeId, callerId)),
+      isNotNull(friendship.acceptedAt),
+      isNull(friendship.removedAt),
+    );
+
+    const [rows, countRows] = await Promise.all([
+      this.drizzle.db
+        .select({
+          id: friendship.id,
+          requesterId: friendship.requesterId,
+          addresseeId: friendship.addresseeId,
+          createdAt: friendship.createdAt,
+        })
+        .from(friendship)
+        .where(where)
+        .orderBy(desc(friendship.createdAt))
+        .limit(limit)
+        .offset(pageToOffset(page, limit)),
+      this.drizzle.db.select({ n: count() }).from(friendship).where(where),
+    ]);
+
+    const otherUserIds = rows.map((row) =>
+      row.requesterId === callerId ? row.addresseeId : row.requesterId,
+    );
+    const [players, ignores] =
+      otherUserIds.length > 0
+        ? await Promise.all([
+            this.drizzle.db
+              .select({
+                userId: player.userId,
+                displayName: player.displayName,
+                lastSeenAt: player.lastSeenAt,
+                status: player.status,
+              })
+              .from(player)
+              .where(inArray(player.userId, otherUserIds)),
+            this.drizzle.db
+              .select({ ignoredId: chatUserIgnore.ignoredId })
+              .from(chatUserIgnore)
+              .where(
+                and(
+                  eq(chatUserIgnore.ignorerId, callerId),
+                  isNull(chatUserIgnore.removedAt),
+                  inArray(chatUserIgnore.ignoredId, otherUserIds),
+                ),
+              ),
+          ])
+        : [[], []];
+    const playerByUserId = new Map(players.map((p) => [p.userId, p]));
+    const ignoredIds = new Set(ignores.map((i) => i.ignoredId));
+
+    const now = Date.now();
+
+    const items = rows.flatMap((row) => {
+      const userId = row.requesterId === callerId ? row.addresseeId : row.requesterId;
+      const targetPlayer = playerByUserId.get(userId);
+      if (!targetPlayer) {
+        logger.error(
+          { friendshipId: row.id, userId },
+          'listFriends: player row missing for friend',
+        );
+        return [];
+      }
+      if (targetPlayer.status === 'suspended' || targetPlayer.status === 'closed') {
+        return [];
+      }
+      const isOnline =
+        targetPlayer.lastSeenAt !== null &&
+        now - targetPlayer.lastSeenAt.getTime() <= ONLINE_STATUS_WINDOW_MS;
+      return [
+        serializeRow(
+          {
+            userId,
+            friendshipId: row.id,
+            displayName: targetPlayer.displayName,
+            status: isOnline ? ('online' as const) : ('offline' as const),
+            lastSeenAt: targetPlayer.lastSeenAt,
+            isIgnored: ignoredIds.has(userId),
+          },
+          { dateFields: ['lastSeenAt'] as const },
+        ),
+      ];
+    });
+
+    return { items, total: Number(countRows[0]?.n ?? 0), page, limit };
   }
 }
 

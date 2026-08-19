@@ -164,6 +164,7 @@ export type AdminChatMessage = z.infer<typeof AdminChatMessageSchema>;
 
 export const BlockedUserSchema = z.object({
   blockedId: UuidSchema,
+  username: z.string().nullable(),
   createdAt: TimestampSchema,
 });
 
@@ -173,6 +174,7 @@ export type BlockedUserSortBy = z.infer<typeof BlockedUserSortBySchema>;
 
 export const IgnoredUserSchema = z.object({
   ignoredId: UuidSchema,
+  username: z.string().nullable(),
   createdAt: TimestampSchema,
 });
 

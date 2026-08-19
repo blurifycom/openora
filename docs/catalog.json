@@ -333,6 +333,8 @@
       ],
       "routes": [
         "social.getRelationships",
+        "social.listFriends",
+        "social.removeFriend",
         "social.sendFriendRequest"
       ]
     },
@@ -626,6 +628,7 @@
         "packages/core/src/casino/gaming/plugin.ts",
         "packages/core/src/compliance/plugin.ts",
         "packages/core/src/engagement/chat/plugin.ts",
+        "packages/core/src/engagement/social/plugin.ts",
         "packages/core/src/iam/plugin.ts",
         "packages/core/src/pam/identity/plugin.ts",
         "packages/core/src/pam/tag/plugin.ts",
@@ -706,6 +709,16 @@
       ]
     },
     {
+      "category": "player-activity",
+      "interface": "PlayerActivityTracker",
+      "token": "PLAYER_ACTIVITY_TRACKER",
+      "status": "wired",
+      "boundIn": [
+        "packages/core/src/pam/player-management/plugin.ts",
+        "packages/core/src/server/runtime/create-app.ts"
+      ]
+    },
+    {
       "category": "player-tags",
       "interface": "PlayerTags",
       "token": "PLAYER_TAGS",
@@ -752,6 +765,17 @@
       "boundIn": [
         "packages/core/src/pam/identity/adapters/mock/mock-sms-adapter.ts",
         "packages/core/src/pam/identity/plugin.ts"
+      ]
+    },
+    {
+      "category": "social-commands",
+      "interface": "SocialCommands",
+      "token": "SOCIAL_COMMANDS",
+      "status": "wired",
+      "boundIn": [
+        "packages/core/src/engagement/chat/plugin.ts",
+        "packages/core/src/engagement/social/__tests__/social.plugin.int.test.ts",
+        "packages/core/src/engagement/social/plugin.ts"
       ]
     },
     {
@@ -859,6 +883,7 @@
     "rg.self_exclusion.lifted",
     "social.friend_request.accepted",
     "social.friend_request.sent",
+    "social.friendship.removed",
     "tag.created",
     "tag.deleted",
     "tag.player.assigned",
@@ -1263,6 +1288,10 @@
     {
       "name": "FinancialSummarySchema",
       "file": "packages/core/src/analytics/contract/financial.ts"
+    },
+    {
+      "name": "FriendListEntrySchema",
+      "file": "packages/core/src/engagement/social/contract/index.ts"
     },
     {
       "name": "FriendshipSchema",
@@ -1722,6 +1751,10 @@
     },
     {
       "name": "RelationshipStatusSchema",
+      "file": "packages/core/src/engagement/social/contract/index.ts"
+    },
+    {
+      "name": "RemoveFriendInputSchema",
       "file": "packages/core/src/engagement/social/contract/index.ts"
     },
     {

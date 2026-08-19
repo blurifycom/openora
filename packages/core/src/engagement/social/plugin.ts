@@ -1,19 +1,22 @@
+import { IDENTITY_READER, SOCIAL_COMMANDS } from '@openora/core/contracts';
 import { EVENT_BUS, DRIZZLE } from '@openora/core/server';
-import type { CoreTokenCatalog, Plugin } from '@openora/core/server';
+import type { CoreTokenCatalog, Plugin, TypedContainer } from '@openora/core/server';
 import { SocialService } from './service/social.service.js';
 import { createSocialRouter } from './router/index.js';
 
-// DI wiring only - no business logic here. sendFriendRequest/getRelationships read
-// the `player` table via the read-only @openora/core/pam/schema/profile subpath
-// (ADR-0020), not a DI token/command port, so no dependsOn is needed to pin load
-// order - the imported pgTable is a plain object available regardless of plugin
-// registration order.
 export default {
   id: 'social',
-  dependsOn: ['chat'],
+  dependsOn: ['chat', 'identity'],
   register(ctx) {
-    ctx.routers.add('social', (c) =>
-      createSocialRouter(new SocialService(c.get(DRIZZLE), c.get(EVENT_BUS))),
-    );
+    let svc: SocialService | null = null;
+    const socialService = (c: TypedContainer<CoreTokenCatalog>) =>
+      (svc ??= new SocialService(c.get(DRIZZLE), c.get(EVENT_BUS), c.get(IDENTITY_READER)));
+
+    ctx.provide(SOCIAL_COMMANDS, (c) => ({
+      dissolveFriendshipOnBlock: (tx, blockerId, blockedId) =>
+        socialService(c).dissolveFriendshipOnBlock(tx, blockerId, blockedId),
+    }));
+
+    ctx.routers.add('social', (c) => createSocialRouter(socialService(c)));
   },
 } as const satisfies Plugin<CoreTokenCatalog>;

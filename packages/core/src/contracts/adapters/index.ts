@@ -219,6 +219,9 @@ export { CHAT_BLOCK_WRITER } from './chat-block-writer.js';
 export type { ChatRoomAccess } from './chat-room-access.js';
 export { CHAT_ROOM_ACCESS } from './chat-room-access.js';
 
+export type { PlayerActivityTracker } from './player-activity.js';
+export { PLAYER_ACTIVITY_TRACKER } from './player-activity.js';
+
 export type {
   SendGiftArgs,
   SendGiftFailureReason,
@@ -239,3 +242,6 @@ export type {
   RainCommands,
 } from './rain-commands.js';
 export { RAIN_COMMANDS } from './rain-commands.js';
+
+export type { SocialCommands, FriendshipDissolvedPayload } from './social-commands.js';
+export { SOCIAL_COMMANDS } from './social-commands.js';
