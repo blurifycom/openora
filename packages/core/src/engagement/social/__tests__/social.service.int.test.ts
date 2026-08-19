@@ -683,7 +683,7 @@ describe('SocialService.acceptFriendRequest (real PG)', () => {
       requesterId: requester.userId,
       addresseeId: addressee.userId,
       accepterId: addressee.userId,
-      accepterDisplayName: 'Bob',
+      accepterUsername: 'bob',
     });
     const [row] = await db.drizzle.db
       .select()

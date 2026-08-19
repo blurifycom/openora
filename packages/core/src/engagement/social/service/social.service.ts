@@ -519,8 +519,9 @@ export class SocialService {
     }
 
     const [callerPlayer] = await this.drizzle.db
-      .select({ displayName: player.displayName })
+      .select({ username: user.username })
       .from(player)
+      .innerJoin(user, eq(user.id, player.userId))
       .where(eq(player.userId, callerId));
     if (!callerPlayer) {
       // Invariant: an authenticated caller always has a player row (see
@@ -533,7 +534,7 @@ export class SocialService {
       requesterId: updated.requesterId,
       addresseeId: updated.addresseeId,
       accepterId: callerId,
-      accepterDisplayName: callerPlayer.displayName,
+      accepterUsername: callerPlayer.username ?? '',
     });
     return toFriendshipDto(updated);
   }
