@@ -59,7 +59,7 @@ export function makeLoginSecurityState({
   const active = isActiveLockout(lockoutUntil, nowMs);
   return {
     attemptsRemaining: active ? 0 : Math.max(maxAttempts - failedLoginAttempts, 0),
-    nextLoginAt: active ? (lockoutUntil?.toISOString() ?? null) : null,
+    lockoutUntil: active ? (lockoutUntil?.toISOString() ?? null) : null,
   };
 }
 
@@ -69,7 +69,6 @@ export function createAccountLockedError(lockoutUntil: Date) {
     data: {
       code: 'ACCOUNT_LOCKED',
       attemptsRemaining: 0,
-      nextLoginAt: lockoutUntil.toISOString(),
       lockoutUntil: lockoutUntil.toISOString(),
     },
   });

@@ -237,7 +237,7 @@ describe('PhoneLoginService.verifyOtp (real PG + real Redis)', () => {
     await expect(
       svc.verifyOtp({ phone: PHONE, code: '123456', ...NO_CLIENT_META }, new Headers()),
     ).rejects.toMatchObject({
-      data: { code: 'ACCOUNT_LOCKED', attemptsRemaining: 0, nextLoginAt: expect.any(String) },
+      data: { code: 'ACCOUNT_LOCKED', attemptsRemaining: 0, lockoutUntil: expect.any(String) },
     });
     expect(await sessionRows()).toHaveLength(0);
   });

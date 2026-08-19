@@ -77,7 +77,7 @@ export const LoginInputSchema = credentialsBase.extend({
 
 export const LoginSecurityStateSchema = z.object({
   attemptsRemaining: z.number().int().nonnegative(),
-  nextLoginAt: TimestampSchema.nullable(),
+  lockoutUntil: TimestampSchema.nullable(),
 });
 
 export const RegisterInputSchema = credentialsBase.extend({

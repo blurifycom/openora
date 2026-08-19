@@ -12,7 +12,7 @@ import {
   createLogger,
 } from '@openora/core/server';
 import { parseCookies } from 'better-auth/cookies';
-import { eq, sql } from 'drizzle-orm';
+import { and, eq, isNull, sql } from 'drizzle-orm';
 import { user, session, account, verification, twoFactor } from '../schema/index.js';
 import { player } from '@openora/core/pam/schema/profile';
 import type {
@@ -595,7 +595,12 @@ export class IdentityService {
       }
       // Only a genuine credential rejection counts toward lockout - a transient DB/network
       // error must never lock the account out.
-      const isCredentialFailure = error instanceof ORPCError && error.code === 'UNAUTHORIZED';
+      const isAccountLocked =
+        error instanceof ORPCError &&
+        error.code === 'UNAUTHORIZED' &&
+        (error.data as { code?: string } | undefined)?.code === 'ACCOUNT_LOCKED';
+      const isCredentialFailure =
+        error instanceof ORPCError && error.code === 'UNAUTHORIZED' && !isAccountLocked;
 
       let attemptsRemaining: number | undefined;
       if (lockoutEnabled && existingUser && isCredentialFailure) {
@@ -631,10 +636,28 @@ export class IdentityService {
             fallbackDurationMs,
           });
           const lockoutUntil = new Date(nowMs + durationMs);
-          await this.drizzle.db
+          const [lockoutRow] = await this.drizzle.db
             .update(user)
             .set({ lockoutUntil, lockoutCount: tier, lastLockoutAt: new Date(nowMs) })
-            .where(eq(user.id, existingUser.id));
+            // Only the first request that reaches the threshold creates the lockout.
+            // Other concurrent failures must observe and return the winner's lockout
+            // instead of overwriting its tier or emitting a duplicate event.
+            .where(and(eq(user.id, existingUser.id), isNull(user.lockoutUntil)))
+            .returning({ lockoutUntil: user.lockoutUntil });
+
+          if (!lockoutRow) {
+            const [current] = await this.drizzle.db
+              .select({ lockoutUntil: user.lockoutUntil })
+              .from(user)
+              .where(eq(user.id, existingUser.id))
+              .limit(1);
+            if (current?.lockoutUntil) {
+              throw createAccountLockedError(current.lockoutUntil);
+            }
+            throw new ORPCError('INTERNAL_SERVER_ERROR', {
+              message: 'Unable to establish account lockout.',
+            });
+          }
 
           await this.limiter?.reset(makeLoginRateLimitKey(email));
 
