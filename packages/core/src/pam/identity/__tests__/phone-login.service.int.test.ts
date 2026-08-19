@@ -226,6 +226,22 @@ describe('PhoneLoginService.requestOtp (real PG + real Redis)', () => {
 });
 
 describe('PhoneLoginService.verifyOtp (real PG + real Redis)', () => {
+  it('rejects a correct OTP while the account lockout is active', async () => {
+    const account = await seedUser({
+      failedLoginAttempts: 5,
+      lockoutUntil: new Date(Date.now() + 60_000),
+    });
+    await seedOtp(account.id);
+    const { svc } = build();
+
+    await expect(
+      svc.verifyOtp({ phone: PHONE, code: '123456', ...NO_CLIENT_META }, new Headers()),
+    ).rejects.toMatchObject({
+      data: { code: 'ACCOUNT_LOCKED', attemptsRemaining: 0, nextLoginAt: expect.any(String) },
+    });
+    expect(await sessionRows()).toHaveLength(0);
+  });
+
   it('happy path: correct code mints a session row, consumes the OTP, and emits phone_login', async () => {
     const code = '123456';
     const account = await seedUser();

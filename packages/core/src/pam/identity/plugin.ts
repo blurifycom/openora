@@ -97,6 +97,7 @@ export default {
           limiter: c.get(RATE_LIMITER),
           auth: c.get(AUTH_SESSION).auth,
           cache: c.get(CACHE),
+          options: c.has(IDENTITY_OPTIONS) ? c.get(IDENTITY_OPTIONS) : undefined,
         }),
         c.get(ADMIN_GUARD),
         c.get(EVENT_BUS),
