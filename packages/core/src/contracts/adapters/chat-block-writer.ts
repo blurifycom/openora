@@ -8,6 +8,8 @@ export type ChatBlockWriter = {
    * blocked/ignored players out of player search results.
    */
   getExcludedUserIds(viewerId: string): Promise<string[]>;
+  /** Active block relationships only; ignores do not prevent money transfers. */
+  getBlockedUserIds(viewerId: string): Promise<string[]>;
 };
 
 export const CHAT_BLOCK_WRITER: Token<ChatBlockWriter> = createToken('CHAT_BLOCK_WRITER');

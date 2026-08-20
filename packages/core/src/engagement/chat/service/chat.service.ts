@@ -1417,6 +1417,10 @@ export class ChatService {
     return [...(await this.excludedSenderIdsFor(viewerId))];
   }
 
+  async getBlockedUserIds(viewerId: User['id']): Promise<string[]> {
+    return [...(await this.blockedIdsFor(viewerId))];
+  }
+
   async createRoom({
     name,
     slug,

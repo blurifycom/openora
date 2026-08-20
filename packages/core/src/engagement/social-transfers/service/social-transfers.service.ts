@@ -15,6 +15,7 @@ import type {
   Uuid,
   CommandChatMessage,
   ChatSystemWriter,
+  ChatBlockWriter,
   WalletCommands,
   AdminUserDirectory,
   AuditWritePort,
@@ -88,6 +89,10 @@ export const GiftCreditError = makeConflictError(
   'Recipient wallet is unavailable; gift claim aborted',
 );
 export const DonateSelfError = makeConflictError('DonateSelf', 'You cannot donate to yourself');
+export const BlockedRecipientError = makeConflictError(
+  'BlockedRecipient',
+  'You cannot send money to a user you blocked',
+);
 export const TooManyRecipientsError = makeConflictError(
   'TooManyRecipients',
   'Amount too small: you need at least $1 per recipient',
@@ -224,6 +229,9 @@ function toClaimGiftResult(error: unknown): ClaimGiftResult {
   if (error instanceof GiftSelfClaimError) {
     return { ok: false, reason: 'self_claim' };
   }
+  if (error instanceof BlockedRecipientError) {
+    return { ok: false, reason: 'blocked_recipient' };
+  }
   if (error instanceof GiftRoomAccessError) {
     return { ok: false, reason: 'room_not_member', roomId: error.roomId };
   }
@@ -287,6 +295,7 @@ export class SocialTransfersService implements GiftCommands, RainCommands {
   constructor(
     private readonly drizzle: DrizzleService,
     private readonly systemWriter: ChatSystemWriter,
+    private readonly blockWriter: ChatBlockWriter,
     private readonly wallet: WalletCommands,
     private readonly directory: AdminUserDirectory,
     private readonly audit: AuditWritePort,
@@ -618,6 +627,9 @@ export class SocialTransfersService implements GiftCommands, RainCommands {
         if (giftRow.senderId === claimerId) {
           throw new GiftSelfClaimError();
         }
+        if ((await this.blockWriter.getBlockedUserIds(giftRow.senderId)).includes(claimerId)) {
+          throw new BlockedRecipientError();
+        }
         if (giftRow.claimedBy) {
           throw new GiftAlreadyClaimedError();
         }
@@ -751,10 +763,6 @@ export class SocialTransfersService implements GiftCommands, RainCommands {
     if (input.recipientCount > configMax) {
       throw new ExceedsLimitError();
     }
-    const amountUnits = Math.floor(moneyToNumber(input.amount));
-    if (input.recipientCount > amountUnits) {
-      throw new TooManyRecipientsError();
-    }
     const senderSummaries = await this.directory.lookupPlayers([actorId]);
     const sender = senderSummaries.find((s) => s.userId === actorId);
     if (!sender) {
@@ -797,8 +805,8 @@ export class SocialTransfersService implements GiftCommands, RainCommands {
         return this.drizzle.db.transaction(async (tx) => {
           const splitResult = await tx.execute(
             sql`SELECT
-              (floor(floor(${input.amount}::numeric) / ${input.recipientCount}))::text AS per_recipient,
-              (floor(floor(${input.amount}::numeric) / ${input.recipientCount}) * ${recipients.length})::text AS total_distributed`,
+              (floor(${input.amount}::numeric * 100 / ${input.recipientCount}) / 100)::text AS per_recipient,
+              (floor(${input.amount}::numeric * 100 / ${input.recipientCount}) / 100 * ${recipients.length})::text AS total_distributed`,
           );
           const { per_recipient: perRecipient, total_distributed: totalDistributed } = splitResult
             .rows[0] as {
@@ -921,6 +929,9 @@ export class SocialTransfersService implements GiftCommands, RainCommands {
 
     if (target.userId === actorId) {
       throw new DonateSelfError();
+    }
+    if ((await this.blockWriter.getBlockedUserIds(actorId)).includes(target.userId)) {
+      throw new BlockedRecipientError();
     }
 
     const senderSummaries = await this.directory.lookupPlayers([actorId]);

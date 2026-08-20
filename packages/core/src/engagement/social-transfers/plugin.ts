@@ -2,6 +2,7 @@ import { EVENT_BUS, DRIZZLE } from '@openora/core/server';
 import type { CoreTokenCatalog, Plugin } from '@openora/core/server';
 import {
   CHAT_SYSTEM_WRITER,
+  CHAT_BLOCK_WRITER,
   WALLET_COMMANDS,
   ADMIN_USER_DIRECTORY,
   AUDIT_WRITER,
@@ -35,6 +36,7 @@ export default {
         new SocialTransfersService(
           c.get(DRIZZLE),
           c.get(CHAT_SYSTEM_WRITER),
+          c.get(CHAT_BLOCK_WRITER),
           c.get(WALLET_COMMANDS),
           c.get(ADMIN_USER_DIRECTORY),
           c.get(AUDIT_WRITER),
