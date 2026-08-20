@@ -126,8 +126,15 @@ export type {
   PaymentWebhookEvent,
   PaymentWebhookVerifier,
   CustodyBalance,
+  PaymentProvider,
+  PaymentProviderRegistry,
 } from './payment.js';
-export { PAYMENT_ADAPTER, PAYMENT_WEBHOOK_VERIFIER } from './payment.js';
+export {
+  PAYMENT_ADAPTER,
+  PAYMENT_WEBHOOK_VERIFIER,
+  PAYMENT_PROVIDERS,
+  DEFAULT_PAYMENT_PROVIDER,
+} from './payment.js';
 
 export type { WalletAsset, WalletAssetCatalog } from './wallet-asset-catalog.js';
 export { WALLET_ASSET_CATALOG } from './wallet-asset-catalog.js';

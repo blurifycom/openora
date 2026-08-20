@@ -7,6 +7,8 @@ import {
   ADMIN_WALLET_REPORTING,
   PAYMENT_ADAPTER,
   PAYMENT_WEBHOOK_VERIFIER,
+  PAYMENT_PROVIDERS,
+  DEFAULT_PAYMENT_PROVIDER,
   WALLET_COMMANDS,
   WALLET_READER,
   WALLET_ASSET_CATALOG,
@@ -43,6 +45,19 @@ export default {
         .parse(process.env.PAYMENT_WEBHOOK_SECRET || undefined);
       return new HmacPaymentWebhookVerifier(webhookSecret);
     });
+    // Wraps the single PAYMENT_ADAPTER/PAYMENT_WEBHOOK_VERIFIER tokens as the 'default'
+    // registry entry, so a one-vendor operator changes nothing. Core only looks a
+    // providerName up here - it never discovers vendors itself, because Container.register
+    // is last-wins: two overlays each rebinding the single tokens would clobber each
+    // other, so running more than one vendor at once needs an operator-composed map
+    // (rebind PAYMENT_PROVIDERS entirely) rather than a second core-discovered slot.
+    ctx.provide(PAYMENT_PROVIDERS, (c) => ({
+      get: (name: string) =>
+        name === DEFAULT_PAYMENT_PROVIDER
+          ? { adapter: c.get(PAYMENT_ADAPTER), webhookVerifier: c.get(PAYMENT_WEBHOOK_VERIFIER) }
+          : null,
+      names: () => [DEFAULT_PAYMENT_PROVIDER],
+    }));
     // Other modules debit through this port within their own transaction (never importing wallet tables). See ADR-0016.
     ctx.provide(
       WALLET_COMMANDS,
@@ -64,6 +79,7 @@ export default {
           drizzle: c.get(DRIZZLE),
           events: c.get(EVENT_BUS),
           payment: c.get(PAYMENT_ADAPTER),
+          paymentProviders: c.get(PAYMENT_PROVIDERS),
           identityReader: c.get(IDENTITY_READER),
           directory: c.get(ADMIN_USER_DIRECTORY),
           platformConfig: c.has(PLATFORM_CONFIG) ? c.get(PLATFORM_CONFIG) : undefined,
@@ -76,8 +92,8 @@ export default {
         }),
         c.get(ADMIN_GUARD),
         c.get(AUDIT_WRITER),
-        c.get(PAYMENT_ADAPTER),
-        c.get(PAYMENT_WEBHOOK_VERIFIER),
+        c.get(PAYMENT_PROVIDERS),
+        c.get(RATE_LIMITER),
       ),
     );
   },

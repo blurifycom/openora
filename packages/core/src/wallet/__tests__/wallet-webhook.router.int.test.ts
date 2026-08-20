@@ -6,8 +6,11 @@ import { call, ORPCError } from '@orpc/server';
 import type { AdminGuard } from '@openora/core/server';
 import type {
   PaymentAdapter,
+  PaymentProviderRegistry,
   PaymentWebhookEvent,
   PaymentWebhookVerifier,
+  RateLimiterAdapter,
+  RateLimitKey,
 } from '@openora/core/contracts';
 import { createTestDb, type TestDb } from '@openora/core/testing';
 import { migrate as migrateProfile } from '@openora/core/pam/migrate/profile';
@@ -17,6 +20,7 @@ import {
   makeIdentityReader,
   testContext,
   makeAuditWriter,
+  makePaymentProviderRegistry,
 } from '../../testing/mock.js';
 import { migrate } from '../migrate.js';
 import { wallet, walletBalance, walletTransaction, walletDepositAddress } from '../schema/index.js';
@@ -43,11 +47,28 @@ beforeEach(async () => {
   await db.drizzle.db.delete(wallet);
 });
 
-function routerWith(payment: PaymentAdapter, verifier: PaymentWebhookVerifier) {
+function routerWith(
+  payment: PaymentAdapter,
+  verifier: PaymentWebhookVerifier,
+  limiter?: RateLimiterAdapter<RateLimitKey>,
+) {
+  const paymentProviders = makePaymentProviderRegistry({
+    adapter: payment,
+    webhookVerifier: verifier,
+  });
+  return routerWithProviders(paymentProviders, payment, limiter);
+}
+
+function routerWithProviders(
+  paymentProviders: PaymentProviderRegistry,
+  payment: PaymentAdapter,
+  limiter?: RateLimiterAdapter<RateLimitKey>,
+) {
   const service = new WalletService({
     drizzle: db.drizzle,
     events: makeEventBus(),
     payment,
+    paymentProviders,
     audit: makeAuditWriter(),
     identityReader: makeIdentityReader(),
   });
@@ -55,9 +76,29 @@ function routerWith(payment: PaymentAdapter, verifier: PaymentWebhookVerifier) {
     service,
     mock<AdminGuard>({ assert: vi.fn() }),
     makeAuditWriter(),
-    payment,
-    verifier,
+    paymentProviders,
+    limiter,
   );
+}
+
+// A registry with two DISTINCTLY-behaving named providers, to test that a webhook is
+// never verified with one vendor's key and parsed with another's format.
+function twoProviderRegistry(
+  a: { payment: PaymentAdapter; verifier: PaymentWebhookVerifier },
+  b: { payment: PaymentAdapter; verifier: PaymentWebhookVerifier },
+): PaymentProviderRegistry {
+  return {
+    get: (name) => {
+      if (name === 'vendor-a') {
+        return { adapter: a.payment, webhookVerifier: a.verifier };
+      }
+      if (name === 'vendor-b') {
+        return { adapter: b.payment, webhookVerifier: b.verifier };
+      }
+      return null;
+    },
+    names: () => ['vendor-a', 'vendor-b'],
+  };
 }
 
 const verifierReturning = (result: boolean) =>
@@ -227,5 +268,141 @@ describe('wallet webhook route (M2M, no admin session)', () => {
 
     expect(result).toEqual({ ok: true });
     expect(await ledgerFor(w.id)).toHaveLength(0);
+  });
+});
+
+describe('POST /wallet/webhook/{provider} (multi-provider routing)', () => {
+  it('resolves the verifier AND the adapter from the same named provider entry', async () => {
+    const w = await seedWallet();
+    await seedDepositAddress();
+    const a = { payment: paymentParsing(depositEvent), verifier: verifierReturning(true) };
+    const b = { payment: paymentParsing(depositEvent), verifier: verifierReturning(true) };
+    const router = routerWithProviders(twoProviderRegistry(a, b), a.payment);
+
+    const result = await call(
+      router.webhookForProvider,
+      { provider: 'vendor-a' },
+      ctx('{"event":"deposit"}'),
+    );
+
+    expect(result).toEqual({ ok: true });
+    expect(a.verifier.verify).toHaveBeenCalledTimes(1);
+    expect(a.payment.parseWebhook).toHaveBeenCalledTimes(1);
+    expect(await ledgerFor(w.id)).toHaveLength(1);
+  });
+
+  it('never verifies with one provider and parses with another (signature confusion)', async () => {
+    const a = { payment: paymentParsing(depositEvent), verifier: verifierReturning(true) };
+    const b = { payment: paymentParsing(depositEvent), verifier: verifierReturning(true) };
+    const router = routerWithProviders(twoProviderRegistry(a, b), a.payment);
+
+    await call(router.webhookForProvider, { provider: 'vendor-a' }, ctx('{"event":"deposit"}'));
+
+    expect(a.verifier.verify).toHaveBeenCalledTimes(1);
+    expect(b.verifier.verify).not.toHaveBeenCalled();
+    expect(b.payment.parseWebhook).not.toHaveBeenCalled();
+  });
+
+  it('an unknown provider name fails the same shape as a bad signature, without calling any bound verifier', async () => {
+    const a = { payment: paymentParsing(depositEvent), verifier: verifierReturning(true) };
+    const b = { payment: paymentParsing(depositEvent), verifier: verifierReturning(true) };
+    const router = routerWithProviders(twoProviderRegistry(a, b), a.payment);
+
+    await expect(
+      call(
+        router.webhookForProvider,
+        { provider: 'not-a-bound-vendor' },
+        ctx('{"event":"deposit"}'),
+      ),
+    ).rejects.toMatchObject({ code: 'UNAUTHORIZED' });
+    expect(a.verifier.verify).not.toHaveBeenCalled();
+    expect(b.verifier.verify).not.toHaveBeenCalled();
+  });
+
+  it('rejects a bad signature on the named-provider route the same way as the default route', async () => {
+    const a = { payment: paymentParsing(depositEvent), verifier: verifierReturning(false) };
+    const b = { payment: paymentParsing(depositEvent), verifier: verifierReturning(true) };
+    const router = routerWithProviders(twoProviderRegistry(a, b), a.payment);
+
+    await expect(
+      call(router.webhookForProvider, { provider: 'vendor-a' }, ctx('{"event":"deposit"}')),
+    ).rejects.toMatchObject({ code: 'UNAUTHORIZED' });
+    expect(a.payment.parseWebhook).not.toHaveBeenCalled();
+  });
+
+  it('the unparameterised route keeps working, delegating to the default provider', async () => {
+    const w = await seedWallet();
+    await seedDepositAddress();
+    const router = routerWith(paymentParsing(depositEvent), verifierReturning(true));
+
+    const result = await call(router.webhook, {}, ctx('{"event":"deposit"}'));
+
+    expect(result).toEqual({ ok: true });
+    expect(await ledgerFor(w.id)).toHaveLength(1);
+  });
+});
+
+describe('wallet webhook route - per-IP rate limit', () => {
+  function exhaustedLimiter(): RateLimiterAdapter<RateLimitKey> {
+    return {
+      consume: vi.fn(async () => ({ allowed: false, retryAfterMs: 1000 })),
+      reset: vi.fn(async () => undefined),
+    };
+  }
+
+  it('rejects with 429 once the per-IP limiter denies the request', async () => {
+    const limiter = exhaustedLimiter();
+    const router = routerWith(paymentParsing(null), verifierReturning(true), limiter);
+
+    await expect(
+      call(
+        router.webhook,
+        {},
+        {
+          context: testContext({
+            request: { headers: {} },
+            rawBody: '{}',
+            clientMeta: { ip: '1.2.3.4', userAgent: null },
+          }),
+        },
+      ),
+    ).rejects.toMatchObject({ code: 'TOO_MANY_REQUESTS' });
+    expect(limiter.consume).toHaveBeenCalledTimes(1);
+  });
+
+  it('still rate-limits a request with no IP, under a shared bucket rather than skipping the limiter', async () => {
+    const limiter = exhaustedLimiter();
+    const router = routerWith(paymentParsing(null), verifierReturning(true), limiter);
+
+    await expect(
+      call(
+        router.webhook,
+        {},
+        {
+          context: testContext({
+            request: { headers: {} },
+            rawBody: '{}',
+            clientMeta: { ip: null, userAgent: null },
+          }),
+        },
+      ),
+    ).rejects.toMatchObject({ code: 'TOO_MANY_REQUESTS' });
+    expect(limiter.consume).toHaveBeenCalledTimes(1);
+    const [key] = (limiter.consume as ReturnType<typeof vi.fn>).mock.calls[0] as [string];
+    expect(key).toBe('wallet-webhook:unknown');
+  });
+
+  it('does not consume the limiter twice for the same request beyond the one throttle check', async () => {
+    const limiter: RateLimiterAdapter<RateLimitKey> = {
+      consume: vi.fn(async () => ({ allowed: true, retryAfterMs: 0 })),
+      reset: vi.fn(async () => undefined),
+    };
+    await seedWallet();
+    await seedDepositAddress();
+    const router = routerWith(paymentParsing(depositEvent), verifierReturning(true), limiter);
+
+    await call(router.webhook, {}, ctx('{"event":"deposit"}'));
+
+    expect(limiter.consume).toHaveBeenCalledTimes(1);
   });
 });

@@ -1,9 +1,9 @@
-import { describe, it, expect, vi, beforeAll, afterAll, beforeEach } from 'vitest';
+import { describe, it, expect, beforeAll, afterAll, beforeEach } from 'vitest';
 import { findOneOrThrow } from '@openora/core/server';
 import { randomUUID } from 'node:crypto';
 import { call, ORPCError } from '@orpc/server';
 import type { AdminGuard } from '@openora/core/server';
-import type { PaymentAdapter, PaymentWebhookVerifier } from '@openora/core/contracts';
+import type { PaymentAdapter } from '@openora/core/contracts';
 import { createTestDb, type TestDb } from '@openora/core/testing';
 import {
   mock,
@@ -12,6 +12,7 @@ import {
   makeAuditWriter,
   makeAdminGuard,
   makeIdentityReader,
+  makePaymentProviderRegistry,
 } from '../../testing/mock.js';
 import { migrate } from '../migrate.js';
 import { wallet, walletTransaction } from '../schema/index.js';
@@ -41,6 +42,7 @@ function realWalletService() {
     drizzle: db.drizzle,
     events: makeEventBus(),
     payment: mock<PaymentAdapter>({}),
+    paymentProviders: makePaymentProviderRegistry(),
     audit: makeAuditWriter(),
     identityReader: makeIdentityReader(),
   });
@@ -51,8 +53,7 @@ function routerWith(adminGuard: AdminGuard) {
     realWalletService(),
     adminGuard,
     makeAuditWriter(),
-    mock<PaymentAdapter>({}),
-    mock<PaymentWebhookVerifier>({ verify: vi.fn().mockReturnValue(false) }),
+    makePaymentProviderRegistry(),
   );
 }
 

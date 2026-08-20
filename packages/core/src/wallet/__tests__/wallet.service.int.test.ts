@@ -2,11 +2,12 @@ import { describe, it, expect, vi, beforeAll, afterAll, beforeEach } from 'vites
 import { findOneOrThrow } from '@openora/core/server';
 import { randomUUID } from 'node:crypto';
 import { and, eq, sql } from 'drizzle-orm';
-import type {
-  AdminUserDirectory,
-  PaymentAdapter,
-  AdminPlayerSummary,
-  TagEvaluationCommands,
+import {
+  DEFAULT_PAYMENT_PROVIDER,
+  type AdminUserDirectory,
+  type PaymentAdapter,
+  type AdminPlayerSummary,
+  type TagEvaluationCommands,
 } from '@openora/core/contracts';
 import { createTestDb, type TestDb } from '@openora/core/testing';
 import { migrate as migrateProfile } from '@openora/core/pam/migrate/profile';
@@ -16,6 +17,7 @@ import {
   makeIdentityReader,
   NO_CLIENT_META,
   makeAuditWriter,
+  makePaymentProviderRegistry,
 } from '../../testing/mock.js';
 import { migrate } from '../migrate.js';
 import {
@@ -63,6 +65,7 @@ function makeService(overrides: Partial<WalletServiceDeps> = {}) {
     drizzle: db.drizzle,
     events: events,
     payment: mock<PaymentAdapter>(psp),
+    paymentProviders: makePaymentProviderRegistry(),
     audit,
     identityReader: makeIdentityReader(),
     ...overrides,
@@ -891,7 +894,7 @@ describe('WalletService.approveWithdrawal (real PG)', () => {
     expect(await txById(pending.id)).toMatchObject({
       status: 'completed',
       reviewedBy: adminId,
-      providerName: null,
+      providerName: DEFAULT_PAYMENT_PROVIDER,
     });
     expect(await balanceOf(w.userId)).toBe(60);
     expect(emittedTopics(events)).toEqual([
@@ -900,14 +903,61 @@ describe('WalletService.approveWithdrawal (real PG)', () => {
     ]);
   });
 
-  it('leaves providerName unset for a crypto-rail withdrawal', async () => {
+  it('resolves providerName from the default binding when the pair has no catalog row', async () => {
     const { svc } = makeService();
     const w = await seedWallet({ currency: 'BTC' });
     const pending = await seedTx(w.id, { currency: 'BTC', rail: 'crypto', amount: '1' });
 
     await svc.approveWithdrawal(randomUUID(), pending.id);
 
-    expect(await txById(pending.id)).toMatchObject({ providerName: null });
+    expect(await txById(pending.id)).toMatchObject({ providerName: DEFAULT_PAYMENT_PROVIDER });
+  });
+
+  it("resolves providerName from the (currency, network) catalog row's own providerName", async () => {
+    const { svc } = makeService();
+    await db.drizzle.db.insert(walletAsset).values({
+      currency: 'USDT',
+      network: 'ERC20',
+      providerAssetId: 'USDT_ERC20',
+      minDeposit: '1',
+      minWithdrawal: '1',
+      withdrawalFee: '1',
+      providerName: 'vendor-a',
+    });
+    const w = await seedWallet({ currency: 'USDT' });
+    const pending = await seedTx(w.id, {
+      currency: 'USDT',
+      network: 'ERC20',
+      rail: 'crypto',
+      amount: '5',
+    });
+
+    await svc.approveWithdrawal(randomUUID(), pending.id);
+
+    expect(await txById(pending.id)).toMatchObject({ providerName: 'vendor-a' });
+  });
+
+  it('falls back to the default binding when the catalog row has a null providerName', async () => {
+    const { svc } = makeService();
+    await db.drizzle.db.insert(walletAsset).values({
+      currency: 'USDT',
+      network: 'TRC20',
+      providerAssetId: 'USDT_TRC20',
+      minDeposit: '1',
+      minWithdrawal: '1',
+      withdrawalFee: '1',
+    });
+    const w = await seedWallet({ currency: 'USDT' });
+    const pending = await seedTx(w.id, {
+      currency: 'USDT',
+      network: 'TRC20',
+      rail: 'crypto',
+      amount: '5',
+    });
+
+    await svc.approveWithdrawal(randomUUID(), pending.id);
+
+    expect(await txById(pending.id)).toMatchObject({ providerName: DEFAULT_PAYMENT_PROVIDER });
   });
 
   it('marks failed, refunds the hold, emits failed, and rethrows when the PSP throws', async () => {
@@ -1262,7 +1312,32 @@ describe('WalletService.getOrCreateDepositAddress (real PG)', () => {
       .select()
       .from(walletDepositAddress)
       .where(eq(walletDepositAddress.userId, userId));
-    expect(stored).toMatchObject({ address: 'bc1qnew', providerName: 'custody' });
+    expect(stored).toMatchObject({ address: 'bc1qnew', providerName: DEFAULT_PAYMENT_PROVIDER });
+  });
+
+  it("persists the (currency, network) catalog row's own providerName", async () => {
+    await db.drizzle.db.insert(walletAsset).values({
+      currency: 'USDT',
+      network: 'ERC20',
+      providerAssetId: 'USDT_ERC20',
+      minDeposit: '1',
+      minWithdrawal: '1',
+      withdrawalFee: '1',
+      providerName: 'vendor-a',
+    });
+    const userId = randomUUID();
+    const issueDepositAddress = vi.fn(async () => ({ address: '0xnew' }));
+    const { svc } = makeService({
+      payment: mock<PaymentAdapter>({ ...makePsp(), issueDepositAddress }),
+    });
+
+    await svc.getOrCreateDepositAddress(userId, 'USDT', 'ERC20');
+
+    const [stored] = await db.drizzle.db
+      .select()
+      .from(walletDepositAddress)
+      .where(eq(walletDepositAddress.userId, userId));
+    expect(stored).toMatchObject({ address: '0xnew', providerName: 'vendor-a' });
   });
 
   it('issues one address when two calls race on the same user and currency', async () => {

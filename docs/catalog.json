@@ -404,16 +404,21 @@
         "wallet.getBalances",
         "wallet.list",
         "wallet.list",
+        "wallet.list",
         "wallet.listAssets",
         "wallet.listPlayerTransactions",
         "wallet.listTransactions",
         "wallet.manualAdjustment",
         "wallet.reject",
+        "wallet.resolve",
+        "wallet.run",
+        "wallet.run",
         "wallet.set",
         "wallet.set",
         "wallet.setActiveCurrency",
         "wallet.update",
         "wallet.webhook",
+        "wallet.webhookForProvider",
         "wallet.withdraw"
       ]
     }
@@ -1508,6 +1513,10 @@
       "file": "packages/core/src/contracts/schemas/iam.ts"
     },
     {
+      "name": "JobRunResultSchema",
+      "file": "packages/core/src/wallet/contract/index.ts"
+    },
+    {
       "name": "KycCheckResultSchema",
       "file": "packages/core/src/contracts/adapters/kyc.ts"
     },
@@ -1594,6 +1603,10 @@
     {
       "name": "ListFriendRequestsInputSchema",
       "file": "packages/core/src/engagement/social/contract/index.ts"
+    },
+    {
+      "name": "ListReconciliationFindingsInputSchema",
+      "file": "packages/core/src/wallet/contract/index.ts"
     },
     {
       "name": "ListRgFlagsInputSchema",
@@ -1685,6 +1698,10 @@
     },
     {
       "name": "PaymentWebhookOutputSchema",
+      "file": "packages/core/src/wallet/contract/index.ts"
+    },
+    {
+      "name": "PaymentWebhookProviderInputSchema",
       "file": "packages/core/src/wallet/contract/index.ts"
     },
     {
@@ -1832,6 +1849,10 @@
       "file": "packages/core/src/contracts/schemas/chat-command-metadata.ts"
     },
     {
+      "name": "ReconciliationResolutionSchema",
+      "file": "packages/core/src/wallet/contract/index.ts"
+    },
+    {
       "name": "RegisterInputSchema",
       "file": "packages/core/src/contracts/schemas/identity.ts"
     },
@@ -1882,6 +1903,10 @@
     {
       "name": "ResetPasswordInputSchema",
       "file": "packages/core/src/contracts/schemas/identity.ts"
+    },
+    {
+      "name": "ResolveReconciliationFindingInputSchema",
+      "file": "packages/core/src/wallet/contract/index.ts"
     },
     {
       "name": "RetentionCohortRowSchema",
@@ -2134,6 +2159,10 @@
     {
       "name": "WalletReconciliationFindingKindSchema",
       "file": "packages/core/src/contracts/schemas/wallet-tx.ts"
+    },
+    {
+      "name": "WalletReconciliationFindingSchema",
+      "file": "packages/core/src/wallet/contract/index.ts"
     },
     {
       "name": "WalletReconciliationFindingStatusSchema",

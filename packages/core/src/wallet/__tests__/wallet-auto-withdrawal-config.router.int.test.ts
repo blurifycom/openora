@@ -7,7 +7,6 @@ import type {
   AdminPlayerSummary,
   AdminUserDirectory,
   PaymentAdapter,
-  PaymentWebhookVerifier,
   PlatformConfig,
   PlayerTags,
 } from '@openora/core/contracts';
@@ -20,6 +19,7 @@ import {
   makeAuditWriter,
   makeAdminGuard,
   makeIdentityReader,
+  makePaymentProviderRegistry,
   NO_CLIENT_META,
 } from '../../testing/mock.js';
 import { migrate } from '../migrate.js';
@@ -89,6 +89,7 @@ function routerWith(adminGuard: AdminGuard, platformConfig?: Partial<PlatformCon
   const riskTags = mock<PlayerTags>({
     getActiveTagKeys: vi.fn(async (ids: readonly string[]) => new Map(ids.map((id) => [id, []]))),
   });
+  const paymentProviders = makePaymentProviderRegistry();
   const service = new WalletService({
     drizzle: db.drizzle,
     events: makeEventBus(),
@@ -98,19 +99,14 @@ function routerWith(adminGuard: AdminGuard, platformConfig?: Partial<PlatformCon
         status: 'completed' as const,
       })),
     }),
+    paymentProviders,
     audit,
     identityReader: makeIdentityReader(),
     directory,
     platformConfig: platformConfig ? mock<PlatformConfig>(platformConfig) : undefined,
     riskTags,
   });
-  const router = createWalletRouter(
-    service,
-    adminGuard,
-    audit,
-    mock<PaymentAdapter>({}),
-    mock<PaymentWebhookVerifier>({ verify: vi.fn().mockReturnValue(false) }),
-  );
+  const router = createWalletRouter(service, adminGuard, audit, paymentProviders);
   return { router, audit, service };
 }
 

@@ -7,7 +7,15 @@ import type {
   EventBus,
   OssContext,
 } from '@openora/core/server';
-import type { AuditWritePort, ClientMeta, IdentityReader } from '@openora/core/contracts';
+import {
+  DEFAULT_PAYMENT_PROVIDER,
+  type AuditWritePort,
+  type ClientMeta,
+  type IdentityReader,
+  type PaymentAdapter,
+  type PaymentProviderRegistry,
+  type PaymentWebhookVerifier,
+} from '@openora/core/contracts';
 
 // The one sanctioned home for test-double type assertions. A unit test standing in
 // for a collaborator is inherently partial, so the cast lives here - documented and
@@ -102,6 +110,29 @@ export const makeAuditWriter = (): AuditWritePort & { record: Mock } => ({
   record: vi.fn(async () => undefined),
   recordInTransaction: vi.fn(async () => undefined),
 });
+
+/**
+ * PaymentProviderRegistry double wrapping a single adapter/verifier pair under
+ * DEFAULT_PAYMENT_PROVIDER - mirrors wallet/plugin.ts's default binding, so a test with
+ * one vendor changes nothing about how it builds a WalletService/router. Pass `names` to
+ * simulate an operator with more than one bound vendor (eg for providerName validation).
+ */
+export const makePaymentProviderRegistry = (
+  options: {
+    adapter?: PaymentAdapter;
+    webhookVerifier?: PaymentWebhookVerifier;
+    names?: readonly string[];
+  } = {},
+): PaymentProviderRegistry => {
+  const adapter = options.adapter ?? mock<PaymentAdapter>({});
+  const webhookVerifier =
+    options.webhookVerifier ?? mock<PaymentWebhookVerifier>({ verify: vi.fn(() => false) });
+  const names = options.names ?? [DEFAULT_PAYMENT_PROVIDER];
+  return {
+    get: (name) => (name === DEFAULT_PAYMENT_PROVIDER ? { adapter, webhookVerifier } : null),
+    names: () => names,
+  };
+};
 
 export const makeIdentityReader = (): IdentityReader =>
   mock<IdentityReader>({

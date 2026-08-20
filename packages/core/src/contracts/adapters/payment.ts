@@ -50,6 +50,36 @@ export type CustodyBalance = {
   estimatedFee: string;
 };
 
+/**
+ * Name of the single default `PaymentAdapter`/`PaymentWebhookVerifier` binding, wrapped
+ * as one `PaymentProviderRegistry` entry so an operator with one vendor changes nothing.
+ */
+export const DEFAULT_PAYMENT_PROVIDER = 'default';
+
+/** One named vendor binding: the adapter it settles through and the verifier for its webhooks. */
+export type PaymentProvider = {
+  adapter: PaymentAdapter;
+  webhookVerifier: PaymentWebhookVerifier;
+};
+
+/**
+ * Looks up a named vendor's adapter/verifier pair. `wallet_asset.providerName` is the
+ * key; a webhook route resolves both the verifier AND the adapter from the SAME entry so
+ * a request can never be verified against one vendor's key and parsed by another's
+ * format (signature confusion).
+ *
+ * Core only looks a name up here - it never discovers or enumerates vendors itself. The
+ * operator composes this map in their own plugin because `Container.register` is
+ * last-wins: two overlays each binding the single `PAYMENT_ADAPTER`/`PAYMENT_WEBHOOK_VERIFIER`
+ * tokens would clobber each other, so running a fiat PSP and a crypto custodian at once
+ * needs an operator-owned map from provider name to pair, not a second core-discovered
+ * binding slot.
+ */
+export type PaymentProviderRegistry = {
+  get(providerName: string): PaymentProvider | null;
+  names(): readonly string[];
+};
+
 export type PaymentAdapter = {
   processDeposit(
     amount: string,
@@ -116,8 +146,24 @@ export type PaymentAdapter = {
    * Move one player's balance into the pooled account. Implemented alongside
    * `listSweepableBalances`; the caller owns the policy (dust floor, fee thresholds)
    * and this only performs the transfer it is handed.
+   *
+   * `idempotencyKey` exists because a thrown call cannot be distinguished from a lost
+   * response - the vendor must dedupe the retry on this key rather than double-move
+   * funds. `poolRef` is an opaque vendor-side identifier for the destination pool,
+   * recorded so the ledger can evidence that player funds landed in the player pool and
+   * not an operator account - a regulator asks this.
    */
-  sweepToPool?(balance: CustodyBalance): Promise<{ externalId: string }>;
+  sweepToPool?(
+    balance: CustodyBalance,
+    opts: { idempotencyKey: string },
+  ): Promise<{ externalId: string; poolRef?: string }>;
+
+  /**
+   * Balance currently in the pooled account for this asset. Consulted only when a sweep
+   * is blocked by the fee ceiling, to decide whether paying a high fee beats running the
+   * pool dry. Omit it and the ceiling is absolute.
+   */
+  getPoolBalance?(currency: string, network: string): Promise<string>;
 
   /**
    * Vendor transactions in a window, normalized into the same events `parseWebhook`
@@ -158,3 +204,5 @@ export type PaymentWebhookVerifier = {
 export const PAYMENT_WEBHOOK_VERIFIER: Token<PaymentWebhookVerifier> = createToken(
   'PAYMENT_WEBHOOK_VERIFIER',
 );
+
+export const PAYMENT_PROVIDERS: Token<PaymentProviderRegistry> = createToken('PAYMENT_PROVIDERS');

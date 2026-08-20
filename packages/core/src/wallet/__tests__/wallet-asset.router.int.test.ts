@@ -1,9 +1,9 @@
-import { describe, it, expect, vi, beforeAll, afterAll, beforeEach } from 'vitest';
+import { describe, it, expect, beforeAll, afterAll, beforeEach } from 'vitest';
 import { findOneOrThrow } from '@openora/core/server';
 import { randomUUID } from 'node:crypto';
 import { call, ORPCError } from '@orpc/server';
 import type { AdminGuard } from '@openora/core/server';
-import type { PaymentAdapter, PaymentWebhookVerifier } from '@openora/core/contracts';
+import type { PaymentAdapter } from '@openora/core/contracts';
 import { createTestDb, type TestDb } from '@openora/core/testing';
 import { migrate as migrateProfile } from '@openora/core/pam/migrate/profile';
 import {
@@ -13,6 +13,7 @@ import {
   makeAuditWriter,
   makeAdminGuard,
   makeIdentityReader,
+  makePaymentProviderRegistry,
 } from '../../testing/mock.js';
 import { migrate } from '../migrate.js';
 import { wallet, walletBalance, walletTransaction, walletAsset } from '../schema/index.js';
@@ -61,22 +62,24 @@ const denyingGuard = () =>
     caller: { userId: CALLER_ID, role: 'support' },
   });
 
-function routerWith(guard: AdminGuard, payment?: Partial<PaymentAdapter>) {
+function routerWith(
+  guard: AdminGuard,
+  payment?: Partial<PaymentAdapter>,
+  providerNames?: readonly string[],
+) {
   const audit = makeAuditWriter();
+  const paymentProviders = makePaymentProviderRegistry(
+    providerNames ? { names: providerNames } : {},
+  );
   const service = new WalletService({
     drizzle: db.drizzle,
     events: makeEventBus(),
     payment: mock<PaymentAdapter>(payment ?? {}),
+    paymentProviders,
     audit,
     identityReader: makeIdentityReader(),
   });
-  const router = createWalletRouter(
-    service,
-    guard,
-    audit,
-    mock<PaymentAdapter>({}),
-    mock<PaymentWebhookVerifier>({ verify: vi.fn().mockReturnValue(false) }),
-  );
+  const router = createWalletRouter(service, guard, audit, paymentProviders);
   return { router, audit, service };
 }
 
@@ -142,6 +145,34 @@ describe('wallet asset catalog routes', () => {
     );
   });
 
+  it('create: rejects a providerName not in the bound registry', async () => {
+    const { router } = routerWith(adminGuard(), undefined, ['vendor-a']);
+
+    await expect(
+      call(router.assets.create, { ...USDT_ERC20, providerName: 'vendor-b' }, { context: CTX }),
+    ).rejects.toThrow(ORPCError);
+  });
+
+  it('create: accepts a providerName the registry knows', async () => {
+    const { router } = routerWith(adminGuard(), undefined, ['vendor-a']);
+
+    const created = await call(
+      router.assets.create,
+      { ...USDT_ERC20, providerName: 'vendor-a' },
+      { context: CTX },
+    );
+
+    expect(created).toMatchObject({ providerName: 'vendor-a' });
+  });
+
+  it('create: an omitted providerName falls back to the default binding (null column)', async () => {
+    const { router } = routerWith(adminGuard());
+
+    const created = await call(router.assets.create, { ...USDT_ERC20 }, { context: CTX });
+
+    expect(created.providerName).toBeNull();
+  });
+
   it('listAssets: is public and hides fully-disabled pairs and the vendor id', async () => {
     const { router } = routerWith(adminGuard());
     await call(router.assets.create, { ...USDT_ERC20 }, { context: CTX });
@@ -162,6 +193,38 @@ describe('wallet asset catalog routes', () => {
     expect(listed).toHaveLength(1);
     expect(listed[0]).toMatchObject({ currency: 'USDT', network: 'ERC20' });
     expect(listed[0]).not.toHaveProperty('providerAssetId');
+  });
+
+  it('listAssets: hides providerName, sweepFeeCeiling and poolLiquidityFloor from the public catalog', async () => {
+    const { router } = routerWith(adminGuard(), undefined, ['vendor-a']);
+    await call(
+      router.assets.create,
+      { ...USDT_ERC20, providerName: 'vendor-a', sweepFeeCeiling: '2', poolLiquidityFloor: '100' },
+      { context: CTX },
+    );
+
+    const [listed] = await call(router.listAssets, {}, { context: CTX });
+
+    expect(listed).not.toHaveProperty('providerName');
+    expect(listed).not.toHaveProperty('sweepFeeCeiling');
+    expect(listed).not.toHaveProperty('poolLiquidityFloor');
+  });
+
+  it('list: exposes providerName, sweepFeeCeiling and poolLiquidityFloor for an admin', async () => {
+    const { router } = routerWith(adminGuard(), undefined, ['vendor-a']);
+    await call(
+      router.assets.create,
+      { ...USDT_ERC20, providerName: 'vendor-a', sweepFeeCeiling: '2', poolLiquidityFloor: '100' },
+      { context: CTX },
+    );
+
+    const [listed] = await call(router.assets.list, {}, { context: CTX });
+
+    expect(listed).toMatchObject({
+      providerName: 'vendor-a',
+      sweepFeeCeiling: '2.000000000000000000',
+      poolLiquidityFloor: '100.000000000000000000',
+    });
   });
 
   it('listAssets: keeps a pair enabled on only one side', async () => {
@@ -202,6 +265,21 @@ describe('wallet asset catalog routes', () => {
       expect.anything(),
       expect.objectContaining({ action: 'wallet.wallet_asset.updated' }),
     );
+  });
+
+  it('update: providerName is not an editable field - it stays whatever create set', async () => {
+    const { router } = routerWith(adminGuard(), undefined, ['vendor-a']);
+    await call(router.assets.create, { ...USDT_ERC20, providerName: 'vendor-a' }, { context: CTX });
+
+    const updated = await call(
+      router.assets.update,
+      // No `providerName` key exists on UpdateWalletAssetInputSchema - the type system
+      // (not a runtime check) is what makes this immutable.
+      { currency: 'USDT', network: 'ERC20', withdrawalEnabled: false },
+      { context: CTX },
+    );
+
+    expect(updated.providerName).toBe('vendor-a');
   });
 
   it('update: 404s on a pair that does not exist', async () => {
@@ -249,6 +327,45 @@ describe('wallet asset catalog routes', () => {
     const { router } = routerWith(adminGuard());
     await call(router.assets.create, { ...USDT_ERC20 }, { context: CTX });
     await seedBalance('USDT', '0');
+
+    await expect(
+      call(router.assets.delete, { currency: 'USDT', network: 'ERC20' }, { context: CTX }),
+    ).resolves.toBe(true);
+  });
+
+  it('delete: is blocked while a pending/processing transaction exists for the pair - renaming providerName is a delete + create', async () => {
+    const { router } = routerWith(adminGuard());
+    await call(router.assets.create, { ...USDT_ERC20 }, { context: CTX });
+    const w = await seedBalance('USDT', '0');
+    await db.drizzle.db.insert(walletTransaction).values({
+      walletId: w.id,
+      type: 'withdrawal',
+      amount: '5',
+      currency: 'USDT',
+      network: 'ERC20',
+      status: 'processing',
+      rail: 'crypto',
+    });
+
+    await expect(
+      call(router.assets.delete, { currency: 'USDT', network: 'ERC20' }, { context: CTX }),
+    ).rejects.toThrow(ORPCError);
+    expect(await call(router.assets.list, {}, { context: CTX })).toHaveLength(1);
+  });
+
+  it('delete: allows removal once the in-flight transaction reaches a terminal state', async () => {
+    const { router } = routerWith(adminGuard());
+    await call(router.assets.create, { ...USDT_ERC20 }, { context: CTX });
+    const w = await seedBalance('USDT', '0');
+    await db.drizzle.db.insert(walletTransaction).values({
+      walletId: w.id,
+      type: 'withdrawal',
+      amount: '5',
+      currency: 'USDT',
+      network: 'ERC20',
+      status: 'completed',
+      rail: 'crypto',
+    });
 
     await expect(
       call(router.assets.delete, { currency: 'USDT', network: 'ERC20' }, { context: CTX }),

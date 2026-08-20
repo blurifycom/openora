@@ -1,8 +1,8 @@
-import { describe, it, expect, vi, beforeAll, afterAll, beforeEach } from 'vitest';
+import { describe, it, expect, beforeAll, afterAll, beforeEach } from 'vitest';
 import { eq } from 'drizzle-orm';
 import { call, ORPCError } from '@orpc/server';
 import type { AdminGuard } from '@openora/core/server';
-import type { PaymentAdapter, PaymentWebhookVerifier } from '@openora/core/contracts';
+import type { PaymentAdapter } from '@openora/core/contracts';
 import { createTestDb, type TestDb } from '@openora/core/testing';
 import {
   mock,
@@ -11,6 +11,7 @@ import {
   makeAuditWriter,
   makeAdminGuard,
   makeIdentityReader,
+  makePaymentProviderRegistry,
 } from '../../testing/mock.js';
 import { migrate } from '../migrate.js';
 import { autoWithdrawalRule } from '../schema/index.js';
@@ -45,20 +46,16 @@ const autoRuleDenyingGuard = () =>
 
 function routerWith(adminGuard: AdminGuard) {
   const audit = makeAuditWriter();
+  const paymentProviders = makePaymentProviderRegistry();
   const service = new WalletService({
     drizzle: db.drizzle,
     events: makeEventBus(),
     payment: mock<PaymentAdapter>({}),
+    paymentProviders,
     audit,
     identityReader: makeIdentityReader(),
   });
-  const router = createWalletRouter(
-    service,
-    adminGuard,
-    audit,
-    mock<PaymentAdapter>({}),
-    mock<PaymentWebhookVerifier>({ verify: vi.fn().mockReturnValue(false) }),
-  );
+  const router = createWalletRouter(service, adminGuard, audit, paymentProviders);
   return { router, audit };
 }
 

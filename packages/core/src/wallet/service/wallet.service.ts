@@ -14,10 +14,13 @@ import {
   createLogger,
   moneyToNumber,
   moneyEquals,
+  moneyCompare,
 } from '@openora/core/server';
 import {
   normalizeKycStatus,
+  DEFAULT_PAYMENT_PROVIDER,
   type PaymentAdapter,
+  type PaymentProviderRegistry,
   type PaymentWebhookEvent,
   type AdminUserDirectory,
   type PlatformConfig,
@@ -117,6 +120,16 @@ export const WalletAssetUnsupportedError = makeConflictError(
 export const WalletAssetInUseError = makeConflictError(
   'WalletAssetInUseError',
   'Players still hold a balance in this currency',
+);
+
+export const WalletAssetUnknownProviderError = makeConflictError(
+  'WalletAssetUnknownProviderError',
+  'providerName is not a registered payment provider',
+);
+
+export const WalletAssetHasInFlightTransactionsError = makeConflictError(
+  'WalletAssetHasInFlightTransactionsError',
+  'A pending or processing transaction exists for this currency and network',
 );
 
 export const AmbiguousNetworkError = createDomainError(
@@ -227,7 +240,7 @@ export function assertAboveMinimumWithdrawal(
   const asset = assets.find(
     (candidate) => candidate.withdrawalEnabled && candidate.network.toUpperCase() === network,
   );
-  if (asset && moneyToNumber(amount) < moneyToNumber(asset.minWithdrawal)) {
+  if (asset && moneyCompare(amount, asset.minWithdrawal) < 0) {
     throw new BelowMinimumWithdrawalError(amount, asset.minWithdrawal, currency, asset.network);
   }
 }
@@ -404,6 +417,10 @@ export type WalletServiceDeps = {
   drizzle: DrizzleService;
   events: EventBus;
   payment: PaymentAdapter;
+  // Required: always bound (wallet/plugin.ts wraps the default single PAYMENT_ADAPTER/
+  // PAYMENT_WEBHOOK_VERIFIER tokens under DEFAULT_PAYMENT_PROVIDER), and the asset
+  // catalog's providerName write path needs it to fail closed on an unregistered name.
+  paymentProviders: PaymentProviderRegistry;
   identityReader: IdentityReader;
   directory?: AdminUserDirectory;
   platformConfig?: PlatformConfig;
@@ -431,6 +448,7 @@ export class WalletService {
   private readonly drizzle: DrizzleService;
   private readonly events: EventBus;
   private readonly payment: PaymentAdapter;
+  private readonly paymentProviders: PaymentProviderRegistry;
   private readonly identityReader: IdentityReader;
   private readonly directory?: AdminUserDirectory;
   private readonly platformConfig?: PlatformConfig;
@@ -443,6 +461,7 @@ export class WalletService {
     drizzle,
     events,
     payment,
+    paymentProviders,
     directory,
     identityReader,
     platformConfig,
@@ -454,6 +473,7 @@ export class WalletService {
     this.drizzle = drizzle;
     this.events = events;
     this.payment = payment;
+    this.paymentProviders = paymentProviders;
     this.directory = directory;
     this.identityReader = identityReader;
     this.platformConfig = platformConfig;
@@ -478,6 +498,22 @@ export class WalletService {
 
   private resolveRail(currency: string): WalletRail {
     return railFor(currency, this.platformConfig?.wallet?.cryptoCurrencies);
+  }
+
+  // The concrete vendor a transaction/deposit-address settles through: the catalog row
+  // for the exact (currency, network) pair names the bound provider. Reconciliation
+  // scopes its diff by this column, so a null network (an unconfigured pair - no
+  // catalog row could ever match it) and a configured-but-null providerName column both
+  // resolve to the single default binding rather than leaving the column null.
+  private async providerNameFor(currency: string, network: string | null): Promise<string> {
+    if (network === null) {
+      return DEFAULT_PAYMENT_PROVIDER;
+    }
+    const [row] = await this.drizzle.db
+      .select({ providerName: walletAsset.providerName })
+      .from(walletAsset)
+      .where(and(eq(walletAsset.currency, currency), eq(walletAsset.network, network)));
+    return row?.providerName ?? DEFAULT_PAYMENT_PROVIDER;
   }
 
   private rateLimit(userId: User['id']) {
@@ -1222,8 +1258,10 @@ export class WalletService {
     if (result.status !== 'completed') {
       await this.drizzle.db
         .update(walletTransaction)
-        // providerName resolves from the asset catalog in a later pass; null for now.
-        .set({ providerName: null, providerRefId: result.externalId })
+        .set({
+          providerName: await this.providerNameFor(tx.currency, tx.network),
+          providerRefId: result.externalId,
+        })
         .where(eq(walletTransaction.id, tx.id));
       return { transactionId: tx.id, status: 'processing' };
     }
@@ -1232,8 +1270,7 @@ export class WalletService {
       .update(walletTransaction)
       .set({
         status: 'completed',
-        // providerName resolves from the asset catalog in a later pass; null for now.
-        providerName: null,
+        providerName: await this.providerNameFor(tx.currency, tx.network),
         providerRefId: result.externalId,
       })
       .where(eq(walletTransaction.id, tx.id));
@@ -1610,12 +1647,22 @@ export class WalletService {
     }
   }
 
+  // Same discipline as assertAdapterSupports, for the provider key itself: an
+  // unvalidated typo silently falls back to the default adapter, which means eg a
+  // crypto payout attempted through a PSP. Undefined (the default binding) always passes.
+  private assertProviderNameValid(providerName: string | undefined) {
+    if (providerName !== undefined && !this.paymentProviders.names().includes(providerName)) {
+      throw new WalletAssetUnknownProviderError();
+    }
+  }
+
   async createWalletAsset(
     adminId: User['id'],
     input: CreateWalletAssetInput,
     meta?: ClientMeta,
   ): Promise<WalletAsset> {
     this.assertAdapterSupports(input.currency, input.network);
+    this.assertProviderNameValid(input.providerName);
     return this.drizzle.db.transaction(async (txn) => {
       const rows = await txn.insert(walletAsset).values(input).onConflictDoNothing().returning();
       // Empty => the (currency, network) unique index rejected it.
@@ -1697,6 +1744,24 @@ export class WalletService {
         .where(and(eq(walletBalance.currency, currency), sql`${walletBalance.amount} > 0`));
       if ((held?.n ?? 0) > 0) {
         throw new WalletAssetInUseError();
+      }
+      // Renaming a pair is a delete plus a create (the (currency, network) key AND
+      // providerName are immutable), so this delete is the only way providerName ever
+      // effectively changes. Block it while a pending/processing transaction exists for
+      // this exact (currency, network) pair - otherwise the vendor reference an in-flight
+      // payout is settling through gets rewritten out from under it.
+      const [inFlight] = await txn
+        .select({ n: count() })
+        .from(walletTransaction)
+        .where(
+          and(
+            eq(walletTransaction.currency, currency),
+            eq(walletTransaction.network, network),
+            inArray(walletTransaction.status, ['pending', 'processing']),
+          ),
+        );
+      if ((inFlight?.n ?? 0) > 0) {
+        throw new WalletAssetHasInFlightTransactionsError();
       }
       await txn
         .delete(walletAsset)
@@ -1993,9 +2058,7 @@ export class WalletService {
         network: network ?? null,
         address: issued.address,
         tag: issued.tag ?? null,
-        // Column is notNull; a real vendor key resolves from the asset catalog in a
-        // later pass. 'custody' is a neutral placeholder, not a vendor name.
-        providerName: 'custody',
+        providerName: await this.providerNameFor(currency, network ?? null),
       })
       .onConflictDoNothing()
       .returning();
