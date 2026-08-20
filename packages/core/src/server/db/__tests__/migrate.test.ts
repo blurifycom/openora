@@ -81,24 +81,6 @@ describe('runMigrations', () => {
     expect(calls).toContain('end');
   });
 
-  it('runs migration-specific SQL inside the selected migration transaction', async () => {
-    readMigrationFilesMock.mockReturnValueOnce(migrations);
-
-    await runMigrations({
-      migrationsFolder: '/tmp/migrations',
-      databaseUrl: 'postgres://test',
-      preMigrationSql: (migration) =>
-        migration.hash === 'one' ? ['INSERT INTO wallet_balance SELECT * FROM wallet'] : [],
-    });
-
-    expect(calls.indexOf('BEGIN')).toBeLessThan(
-      calls.indexOf('INSERT INTO wallet_balance SELECT * FROM wallet'),
-    );
-    expect(calls.indexOf('INSERT INTO wallet_balance SELECT * FROM wallet')).toBeLessThan(
-      calls.indexOf(migrations[0].sql[0]),
-    );
-  });
-
   it('closes the pool even when a preSql statement throws, and never reads pending migrations', async () => {
     failOnSql.value = 'THIS WILL FAIL';
 

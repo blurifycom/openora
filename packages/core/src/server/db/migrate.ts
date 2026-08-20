@@ -35,12 +35,6 @@ export type RunMigrationsOptions = {
    * same rationale as `extensions`, different problem shape.
    */
   preSql?: string[];
-  /**
-   * Raw SQL statements to run inside the transaction immediately before a pending migration.
-   * Use this for data preservation that must see the schema created by an earlier migration
-   * but must complete before the selected migration changes or drops that schema.
-   */
-  preMigrationSql?: (migration: MigrationMeta) => readonly string[];
 };
 
 function migrateUrl(override?: string): string {
@@ -133,9 +127,6 @@ export async function runMigrations(opts: RunMigrationsOptions) {
               const client = await pool.connect();
               try {
                 await client.query('BEGIN');
-                for (const statement of opts.preMigrationSql?.(migration) ?? []) {
-                  await client.query(statement);
-                }
                 for (const statement of migration.sql) {
                   await client.query(statement);
                 }
