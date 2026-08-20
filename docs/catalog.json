@@ -384,8 +384,11 @@
         "wallet_asset",
         "wallet_auto_withdrawal_config",
         "wallet_balance",
+        "wallet_custody_sweep",
         "wallet_deposit_address",
+        "wallet_job_run",
         "wallet_provider_vault",
+        "wallet_reconciliation_finding",
         "wallet_transaction"
       ],
       "routes": [
@@ -2117,7 +2120,23 @@
       "file": "packages/core/src/contracts/schemas/platform-config.ts"
     },
     {
+      "name": "WalletCustodySweepStatusSchema",
+      "file": "packages/core/src/contracts/schemas/wallet-tx.ts"
+    },
+    {
+      "name": "WalletJobRunStatusSchema",
+      "file": "packages/core/src/contracts/schemas/wallet-tx.ts"
+    },
+    {
       "name": "WalletRailSchema",
+      "file": "packages/core/src/contracts/schemas/wallet-tx.ts"
+    },
+    {
+      "name": "WalletReconciliationFindingKindSchema",
+      "file": "packages/core/src/contracts/schemas/wallet-tx.ts"
+    },
+    {
+      "name": "WalletReconciliationFindingStatusSchema",
       "file": "packages/core/src/contracts/schemas/wallet-tx.ts"
     },
     {

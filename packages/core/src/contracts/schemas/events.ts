@@ -149,7 +149,7 @@ export const domainEventSchemas = {
     .extend({ playerId: UuidSchema.nullable() })
     .extend(authContextBase.shape),
   // A payments admin approved a pending withdrawal; it moves to `processing` and
-  // is sent to the PSP/Fireblocks rail. `adminId` is the acting reviewer.
+  // is sent to the PSP/custody rail. `adminId` is the acting reviewer.
   'wallet.withdrawal.approved': walletTxnBase
     .extend({ adminId: UuidSchema })
     .extend(authContextBase.shape),
@@ -158,7 +158,7 @@ export const domainEventSchemas = {
   'wallet.withdrawal.rejected': walletTxnBase
     .extend({ adminId: UuidSchema, reason: z.string() })
     .extend(authContextBase.shape),
-  // An approved withdrawal failed at the PSP/Fireblocks rail; the held funds were
+  // An approved withdrawal failed at the PSP/custody rail; the held funds were
   // returned to the player balance and the transaction moved to `failed`.
   'wallet.withdrawal.failed': walletTxnBase.extend({ adminId: UuidSchema }),
 

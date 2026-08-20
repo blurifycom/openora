@@ -86,7 +86,7 @@ async function seedDepositAddress(currency = 'BTC') {
     userId: USER_ID,
     currency,
     address: DEPOSIT_ADDRESS,
-    providerName: 'fireblocks',
+    providerName: 'custody',
   });
 }
 

@@ -155,9 +155,9 @@ export const AmbiguousDepositAddressError = createDomainError(
     `Deposit address ${address} on ${network ?? 'an unknown network'} is issued to more than one user`,
 );
 
-// Crypto currencies settle on the crypto rail (Fireblocks); everything else on the
-// fiat rail (a PSP). The concrete provider is recorded per transaction, not here.
-// Overridable per-operator via `platformConfig.wallet.cryptoCurrencies` - see `railFor`.
+// Crypto currencies settle on the crypto rail through a custody/MPC vendor; everything
+// else on the fiat rail (a PSP). The concrete provider is recorded per transaction, not
+// here. Overridable per-operator via `platformConfig.wallet.cryptoCurrencies` - see `railFor`.
 const DEFAULT_CRYPTO_CURRENCIES = new Set(['BTC', 'ETH', 'USDT', 'USDC']);
 
 // Mirrors the `wallet.currency` column default: what a player without a wallet row
@@ -398,12 +398,6 @@ const PUBLIC_ASSET_COLUMNS = {
 
 function toWalletAssetDto(row: WalletAssetRow): WalletAsset {
   return serializeRow(row, { dateFields: ['createdAt', 'updatedAt'], decimalFields: [] });
-}
-
-// The concrete settlement provider recorded per transaction: the crypto rail settles
-// through Fireblocks, the fiat rail through a PSP.
-function providerNameFor(rail: WalletRail | null): string {
-  return rail === 'crypto' ? 'fireblocks' : 'psp';
 }
 
 export type WalletServiceDeps = {
@@ -1228,7 +1222,8 @@ export class WalletService {
     if (result.status !== 'completed') {
       await this.drizzle.db
         .update(walletTransaction)
-        .set({ providerName: providerNameFor(tx.rail), providerRefId: result.externalId })
+        // providerName resolves from the asset catalog in a later pass; null for now.
+        .set({ providerName: null, providerRefId: result.externalId })
         .where(eq(walletTransaction.id, tx.id));
       return { transactionId: tx.id, status: 'processing' };
     }
@@ -1237,7 +1232,8 @@ export class WalletService {
       .update(walletTransaction)
       .set({
         status: 'completed',
-        providerName: providerNameFor(tx.rail),
+        // providerName resolves from the asset catalog in a later pass; null for now.
+        providerName: null,
         providerRefId: result.externalId,
       })
       .where(eq(walletTransaction.id, tx.id));
@@ -1997,7 +1993,9 @@ export class WalletService {
         network: network ?? null,
         address: issued.address,
         tag: issued.tag ?? null,
-        providerName: providerNameFor(this.resolveRail(currency)),
+        // Column is notNull; a real vendor key resolves from the asset catalog in a
+        // later pass. 'custody' is a neutral placeholder, not a vendor name.
+        providerName: 'custody',
       })
       .onConflictDoNothing()
       .returning();

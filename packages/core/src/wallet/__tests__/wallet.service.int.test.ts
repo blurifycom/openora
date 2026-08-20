@@ -207,7 +207,7 @@ describe('WalletService.deposit (real PG)', () => {
     const { svc } = makeService();
     const w = await seedWallet({ currency: 'BTC' });
 
-    await svc.deposit({ userId: w.userId, amount: '1', currency: 'BTC', provider: 'fireblocks' });
+    await svc.deposit({ userId: w.userId, amount: '1', currency: 'BTC', provider: 'custody' });
 
     const rows = await txRows(w.id);
     expect(rows[0]).toMatchObject({ type: 'deposit', rail: 'crypto' });
@@ -878,7 +878,7 @@ describe('WalletService idempotency - withdraw (real PG)', () => {
 });
 
 describe('WalletService.approveWithdrawal (real PG)', () => {
-  it('moves pending -> completed, records the provider, and emits approved then completed', async () => {
+  it('moves pending -> completed and emits approved then completed', async () => {
     const { svc, events, psp } = makeService();
     const w = await seedWallet({ balance: '60' });
     const adminId = randomUUID();
@@ -891,7 +891,7 @@ describe('WalletService.approveWithdrawal (real PG)', () => {
     expect(await txById(pending.id)).toMatchObject({
       status: 'completed',
       reviewedBy: adminId,
-      providerName: 'psp',
+      providerName: null,
     });
     expect(await balanceOf(w.userId)).toBe(60);
     expect(emittedTopics(events)).toEqual([
@@ -900,14 +900,14 @@ describe('WalletService.approveWithdrawal (real PG)', () => {
     ]);
   });
 
-  it('records the fireblocks provider for a crypto-rail withdrawal', async () => {
+  it('leaves providerName unset for a crypto-rail withdrawal', async () => {
     const { svc } = makeService();
     const w = await seedWallet({ currency: 'BTC' });
     const pending = await seedTx(w.id, { currency: 'BTC', rail: 'crypto', amount: '1' });
 
     await svc.approveWithdrawal(randomUUID(), pending.id);
 
-    expect(await txById(pending.id)).toMatchObject({ providerName: 'fireblocks' });
+    expect(await txById(pending.id)).toMatchObject({ providerName: null });
   });
 
   it('marks failed, refunds the hold, emits failed, and rethrows when the PSP throws', async () => {
@@ -1238,7 +1238,7 @@ describe('WalletService.getOrCreateDepositAddress (real PG)', () => {
       userId,
       currency: 'BTC',
       address: 'bc1qexisting',
-      providerName: 'fireblocks',
+      providerName: 'custody',
     });
 
     expect(await svc.getOrCreateDepositAddress(userId, 'BTC')).toEqual({
@@ -1262,7 +1262,7 @@ describe('WalletService.getOrCreateDepositAddress (real PG)', () => {
       .select()
       .from(walletDepositAddress)
       .where(eq(walletDepositAddress.userId, userId));
-    expect(stored).toMatchObject({ address: 'bc1qnew', providerName: 'fireblocks' });
+    expect(stored).toMatchObject({ address: 'bc1qnew', providerName: 'custody' });
   });
 
   it('issues one address when two calls race on the same user and currency', async () => {
@@ -1298,7 +1298,7 @@ describe('WalletService.creditDepositByAddress (real PG)', () => {
   async function seedAddress(userId: string, address: string, currency = 'BTC', network?: string) {
     await db.drizzle.db
       .insert(walletDepositAddress)
-      .values({ userId, currency, address, network, providerName: 'fireblocks' });
+      .values({ userId, currency, address, network, providerName: 'custody' });
   }
 
   it('resolves the address, credits the wallet, and emits deposit.completed', async () => {

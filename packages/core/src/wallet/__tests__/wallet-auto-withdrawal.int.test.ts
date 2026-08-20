@@ -186,7 +186,7 @@ describe('WalletService.withdraw auto-approval (real PG)', () => {
       status: 'completed',
       reviewedBy: null,
       reviewReason: 'auto-approved',
-      providerName: 'psp',
+      providerName: null,
     });
     expect(events.emit.mock.calls.map(([topic]) => topic)).toEqual([
       'wallet.withdrawal.requested',
@@ -724,7 +724,7 @@ describe('WalletService.withdraw auto-approval - crypto rail (real PG)', () => {
     expect(result.status).toBe('completed');
     expect(await txById(result.transactionId)).toMatchObject({
       rail: 'crypto',
-      providerName: 'fireblocks',
+      providerName: null,
       reviewReason: 'auto-approved',
     });
   });

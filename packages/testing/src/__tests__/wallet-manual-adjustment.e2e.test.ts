@@ -63,7 +63,7 @@ afterAll(async () => {
   await db?.dispose();
 });
 
-describe('BF-410 manual wallet adjustment', () => {
+describe('manual wallet adjustment', () => {
   it('allows Super Admin credit, writes private admin history and audit, and rejects a player', async () => {
     const { player, userId } = await registerPlayer();
     const admin = await asAdmin(testApp.app);
