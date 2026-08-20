@@ -18,7 +18,13 @@ import {
   makeAuditWriter,
 } from '../../testing/mock.js';
 import { migrate } from '../migrate.js';
-import { wallet, walletBalance, walletTransaction, walletDepositAddress } from '../schema/index.js';
+import {
+  wallet,
+  walletBalance,
+  walletTransaction,
+  walletDepositAddress,
+  walletAsset,
+} from '../schema/index.js';
 import {
   WalletService,
   type WalletServiceDeps,
@@ -31,6 +37,9 @@ import {
   IdempotencyKeyReuseError,
   DepositAddressUnsupportedError,
   DestinationAddressRequiredError,
+  AmbiguousNetworkError,
+  BelowMinimumWithdrawalError,
+  WithdrawalDisabledError,
 } from '../service/wallet.service.js';
 import { WithdrawalQueueItemSchema } from '../contract/index.js';
 
@@ -152,7 +161,7 @@ afterAll(async () => {
 
 beforeEach(async () => {
   await db.drizzle.db.execute(
-    sql`TRUNCATE ${walletTransaction}, ${walletDepositAddress}, ${wallet} RESTART IDENTITY CASCADE`,
+    sql`TRUNCATE ${walletTransaction}, ${walletDepositAddress}, ${walletAsset}, ${wallet} RESTART IDENTITY CASCADE`,
   );
 });
 
@@ -315,6 +324,117 @@ describe('WalletService.withdraw (real PG)', () => {
       rail: 'crypto',
       destinationAddress: 'bc1qexample',
     });
+  });
+
+  it('pins the only payable network on the transaction', async () => {
+    const { svc } = makeService();
+    const w = await seedWallet({ balance: '2', currency: 'BTC' });
+    await db.drizzle.db.insert(walletAsset).values({
+      currency: 'BTC',
+      network: 'BITCOIN',
+      providerAssetId: 'BTC',
+      minDeposit: '0',
+      minWithdrawal: '0',
+      withdrawalFee: '0',
+    });
+
+    const result = await svc.withdraw({
+      userId: w.userId,
+      amount: '1',
+      currency: 'BTC',
+      destinationAddress: 'bc1qexample',
+      ...NO_CLIENT_META,
+    });
+
+    expect(await txById(result.transactionId)).toMatchObject({ network: 'BITCOIN' });
+  });
+
+  it('demands a network when the currency is payable on several, holding no funds', async () => {
+    const { svc } = makeService();
+    const w = await seedWallet({ balance: '100', currency: 'USDT' });
+    await db.drizzle.db.insert(walletAsset).values(
+      ['ERC20', 'TRC20'].map((network) => ({
+        currency: 'USDT',
+        network,
+        providerAssetId: `USDT_${network}`,
+        minDeposit: '0',
+        minWithdrawal: '0',
+        withdrawalFee: '0',
+      })),
+    );
+
+    await expect(
+      svc.withdraw({
+        userId: w.userId,
+        amount: '10',
+        currency: 'USDT',
+        destinationAddress: '0xexample',
+        ...NO_CLIENT_META,
+      }),
+    ).rejects.toBeInstanceOf(AmbiguousNetworkError);
+    expect(await balanceOf(w.userId)).toBe(100);
+  });
+
+  it('enforces the minimum of the chosen chain, not the currency', async () => {
+    const { svc } = makeService();
+    const w = await seedWallet({ balance: '100', currency: 'USDT' });
+    await db.drizzle.db.insert(walletAsset).values([
+      {
+        currency: 'USDT',
+        network: 'ERC20',
+        providerAssetId: 'USDT_ERC20',
+        minDeposit: '0',
+        minWithdrawal: '20',
+        withdrawalFee: '0',
+      },
+      {
+        currency: 'USDT',
+        network: 'BEP20',
+        providerAssetId: 'USDT_BSC',
+        minDeposit: '0',
+        minWithdrawal: '1',
+        withdrawalFee: '0',
+      },
+    ]);
+    const args = {
+      userId: w.userId,
+      amount: '5',
+      currency: 'USDT',
+      destinationAddress: '0xexample',
+      ...NO_CLIENT_META,
+    };
+
+    await expect(svc.withdraw({ ...args, network: 'ERC20' })).rejects.toBeInstanceOf(
+      BelowMinimumWithdrawalError,
+    );
+    const ok = await svc.withdraw({ ...args, network: 'BEP20' });
+
+    expect(await txById(ok.transactionId)).toMatchObject({ network: 'BEP20' });
+  });
+
+  it('fails closed when the currency is configured but payable nowhere', async () => {
+    const { svc } = makeService();
+    const w = await seedWallet({ balance: '100', currency: 'USDT' });
+    await db.drizzle.db.insert(walletAsset).values({
+      currency: 'USDT',
+      network: 'ERC20',
+      providerAssetId: 'USDT_ERC20',
+      minDeposit: '0',
+      minWithdrawal: '0',
+      withdrawalFee: '0',
+      withdrawalEnabled: false,
+    });
+
+    await expect(
+      svc.withdraw({
+        userId: w.userId,
+        amount: '10',
+        currency: 'USDT',
+        destinationAddress: '0xexample',
+        ...NO_CLIENT_META,
+      }),
+    ).rejects.toBeInstanceOf(WithdrawalDisabledError);
+    expect(await balanceOf(w.userId)).toBe(100);
   });
 
   it('throws DestinationAddressRequiredError for a crypto withdrawal with no address', async () => {

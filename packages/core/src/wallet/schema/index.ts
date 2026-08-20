@@ -72,6 +72,10 @@ export const walletTransaction = pgTable(
     type: walletTransactionTypeEnum().notNull(),
     amount: decimal({ precision: MONEY_PRECISION, scale: MONEY_SCALE }).notNull(),
     currency: text().notNull(),
+    // The chain this moved on. A currency does not identify one, so reconciliation and
+    // reporting are per (currency, network). Null on a fiat rail and on any internal
+    // transaction type (bet/win/bonus) that never touches a chain.
+    network: text(),
     status: walletTransactionStatusEnum()
       .$type<WalletTransactionStatus>()
       .notNull()
@@ -104,6 +108,7 @@ export const walletTransaction = pgTable(
     index('wallet_transaction_status_idx').on(t.status),
     index('wallet_transaction_rail_idx').on(t.rail),
     index('wallet_transaction_currency_idx').on(t.currency),
+    index('wallet_transaction_currency_network_idx').on(t.currency, t.network),
     index('wallet_transaction_tx_hash_idx').on(t.txHash),
     index('wallet_transaction_status_type_created_at_idx').on(t.status, t.type, t.createdAt),
     index('wallet_transaction_wallet_id_type_status_idx').on(t.walletId, t.type, t.status),

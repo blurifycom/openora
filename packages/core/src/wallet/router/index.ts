@@ -22,6 +22,10 @@ import {
   WalletAssetAlreadyExistsError,
   WalletAssetUnsupportedError,
   WalletAssetInUseError,
+  AmbiguousNetworkError,
+  UnsupportedNetworkError,
+  WithdrawalDisabledError,
+  BelowMinimumWithdrawalError,
 } from '../service/wallet.service.js';
 
 export function createWalletRouter(
@@ -60,14 +64,26 @@ export function createWalletRouter(
       return mapErrors(
         {
           NOT_FOUND: WalletNotFoundError,
-          BAD_REQUEST: [InsufficientBalanceError, CurrencyMismatchError],
-          CONFLICT: [KycRequiredError, IdempotencyKeyReuseError, DestinationAddressRequiredError],
+          BAD_REQUEST: [
+            InsufficientBalanceError,
+            CurrencyMismatchError,
+            AmbiguousNetworkError,
+            UnsupportedNetworkError,
+            BelowMinimumWithdrawalError,
+          ],
+          CONFLICT: [
+            KycRequiredError,
+            IdempotencyKeyReuseError,
+            DestinationAddressRequiredError,
+            WithdrawalDisabledError,
+          ],
         },
         () =>
           wallet.withdraw({
             userId: getUserId(context),
             amount: input.amount,
             currency: input.currency,
+            network: input.network,
             idempotencyKey: input.idempotencyKey,
             destinationAddress: input.destinationAddress,
             ...context.clientMeta,
