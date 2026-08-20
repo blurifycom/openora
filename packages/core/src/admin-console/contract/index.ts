@@ -48,6 +48,7 @@ export const AdminUserSchema = z.object({
   role: z.string().min(1),
   failedLoginAttempts: z.number().int().optional(),
   lockoutUntil: TimestampSchema.nullable().optional(),
+  assignedRoles: z.array(z.object({ roleId: UuidSchema, roleName: z.string() })),
 });
 
 export const AdminUserSortBySchema = z.enum(ADMIN_USER_SORT_BY_VALUES).default('createdAt');
