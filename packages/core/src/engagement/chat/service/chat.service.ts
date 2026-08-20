@@ -268,8 +268,12 @@ export class ChatService {
   }
 
   async getOnlineCount(roomId: ChatRoom['id'] | null) {
-    const count = await this.transport.presence?.count(chatChannel(roomId));
-    return { count: count ?? 0 };
+    const onlineUserIds = await this.transport.getOnlineUserIds(chatChannel(roomId));
+    const onlineUsers = await this.directory.lookupUsers(onlineUserIds);
+    const playerCount = onlineUsers.filter(
+      (onlineUser) => onlineUser.role !== 'admin' && onlineUser.role !== 'super-admin',
+    ).length;
+    return { count: playerCount };
   }
 
   private async blockedIdsFor(viewerId: User['id']) {

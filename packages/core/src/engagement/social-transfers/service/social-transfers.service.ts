@@ -797,8 +797,8 @@ export class SocialTransfersService implements GiftCommands, RainCommands {
         return this.drizzle.db.transaction(async (tx) => {
           const splitResult = await tx.execute(
             sql`SELECT
-              (floor(floor(${input.amount}::numeric) / ${recipients.length}))::text AS per_recipient,
-              (floor(floor(${input.amount}::numeric) / ${recipients.length}) * ${recipients.length})::text AS total_distributed`,
+              (floor(floor(${input.amount}::numeric) / ${input.recipientCount}))::text AS per_recipient,
+              (floor(floor(${input.amount}::numeric) / ${input.recipientCount}) * ${recipients.length})::text AS total_distributed`,
           );
           const { per_recipient: perRecipient, total_distributed: totalDistributed } = splitResult
             .rows[0] as {

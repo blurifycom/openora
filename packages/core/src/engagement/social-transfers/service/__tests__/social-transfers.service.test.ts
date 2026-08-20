@@ -714,6 +714,51 @@ describe('SocialTransfersService.sendRain (RAIN_COMMANDS port)', () => {
     });
   });
 
+  it('fixes the per-recipient amount from the requested count before reducing to available users', async () => {
+    const wallet = makeWallet();
+    const svc = makeSvc({
+      drizzleRows: {
+        select: [[RAIN_ROW]],
+        returning: [[{ id: '00000000-0000-0000-0000-0000000000cc' }]],
+        execute: [[{ per_recipient: '20.00000000', total_distributed: '80.00000000' }]],
+      },
+      wallet,
+      directory: makeDirectory('bob', 'alice', [
+        '00000000-0000-0000-0000-000000000010',
+        '00000000-0000-0000-0000-000000000011',
+      ]),
+    });
+
+    await svc.sendRain(
+      {
+        amount: '100.00000000',
+        recipientCount: 5,
+        roomId: ROOM_ID,
+        idempotencyKey: IDEMPOTENCY_KEY,
+        onlineUserIds: [
+          CLAIMER_ID,
+          RECIPIENT_2,
+          '00000000-0000-0000-0000-000000000010',
+          '00000000-0000-0000-0000-000000000011',
+        ],
+      },
+      ACTOR_ID,
+    );
+
+    expect(wallet.credit).toHaveBeenCalledTimes(4);
+    expect(wallet.credit).toHaveBeenCalledWith(expect.anything(), {
+      userId: CLAIMER_ID,
+      amount: '20.00000000',
+      currency: 'USD',
+      type: 'rain',
+    });
+    expect(wallet.debit).toHaveBeenCalledWith(expect.anything(), {
+      userId: ACTOR_ID,
+      amount: '80.00000000',
+      type: 'rain',
+    });
+  });
+
   it('returns { ok: false, reason: "below_minimum" } when amount is below config minAmount', async () => {
     const svc = makeSvc({
       drizzleRows: { select: [[{ ...RAIN_ROW, config: { minAmount: '5.00000000' } }]] },
