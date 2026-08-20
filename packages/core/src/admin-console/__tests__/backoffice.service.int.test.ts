@@ -5,9 +5,11 @@ import { mock } from '../../testing/mock.js';
 import type {
   AdminGameReporting,
   AdminPlayerActivity,
+  AdminRoleAssignmentDirectory,
   AdminTxDetail,
   AdminTxRow,
   AdminUserDirectory,
+  AdminUserRow,
   AdminWalletReporting,
 } from '@openora/core/contracts';
 import { createTestDb, type TestDb } from '@openora/core/testing';
@@ -54,6 +56,15 @@ function makePlayerActivity(over: Partial<AdminPlayerActivity> = {}): AdminPlaye
   });
 }
 
+function makeRoleAssignments(
+  over: Partial<AdminRoleAssignmentDirectory> = {},
+): AdminRoleAssignmentDirectory {
+  return mock<AdminRoleAssignmentDirectory>({
+    listByUserIds: vi.fn().mockResolvedValue([]),
+    ...over,
+  });
+}
+
 function txRow(over: Partial<AdminTxRow> = {}): AdminTxRow {
   return {
     id: 'tx-1',
@@ -67,6 +78,72 @@ function txRow(over: Partial<AdminTxRow> = {}): AdminTxRow {
     ...over,
   };
 }
+
+function userRow(over: Partial<AdminUserRow> = {}): AdminUserRow {
+  return {
+    id: 'u-1',
+    email: 'p@example.com',
+    name: null,
+    createdAt: new Date('2026-01-01T00:00:00.000Z'),
+    isActive: true,
+    role: 'player',
+    ...over,
+  };
+}
+
+describe('BackofficeService.listUsers', () => {
+  it('returns an empty assignedRoles array for a user with no role assignments', async () => {
+    const listByUserIds = vi.fn().mockResolvedValue([]);
+    const list = vi.fn().mockResolvedValue({ rows: [userRow({ id: 'u-1' })], total: 1 });
+    const svc = new BackofficeService(
+      makeUsers({ list }),
+      makeReporting(),
+      makeGameReporting(),
+      makePlayerActivity(),
+      makeRoleAssignments({ listByUserIds }),
+    );
+    const res = await svc.listUsers({ page: 1, limit: 20 });
+    expect(res.items[0]).toMatchObject({ assignedRoles: [] });
+  });
+
+  it('maps multiple role assignments per user to { roleId, roleName }', async () => {
+    const listByUserIds = vi.fn().mockResolvedValue([
+      { userId: 'u-1', roleId: 'r-1', roleName: 'support' },
+      { userId: 'u-1', roleId: 'r-2', roleName: 'compliance' },
+    ]);
+    const list = vi.fn().mockResolvedValue({ rows: [userRow({ id: 'u-1' })], total: 1 });
+    const svc = new BackofficeService(
+      makeUsers({ list }),
+      makeReporting(),
+      makeGameReporting(),
+      makePlayerActivity(),
+      makeRoleAssignments({ listByUserIds }),
+    );
+    const res = await svc.listUsers({ page: 1, limit: 20 });
+    expect(res.items[0]?.assignedRoles).toEqual([
+      { roleId: 'r-1', roleName: 'support' },
+      { roleId: 'r-2', roleName: 'compliance' },
+    ]);
+  });
+
+  it('batches the role assignment lookup once per listUsers call, not once per row', async () => {
+    const listByUserIds = vi.fn().mockResolvedValue([]);
+    const list = vi.fn().mockResolvedValue({
+      rows: [userRow({ id: 'u-1' }), userRow({ id: 'u-2' })],
+      total: 2,
+    });
+    const svc = new BackofficeService(
+      makeUsers({ list }),
+      makeReporting(),
+      makeGameReporting(),
+      makePlayerActivity(),
+      makeRoleAssignments({ listByUserIds }),
+    );
+    await svc.listUsers({ page: 1, limit: 20 });
+    expect(listByUserIds).toHaveBeenCalledTimes(1);
+    expect(listByUserIds).toHaveBeenCalledWith(['u-1', 'u-2']);
+  });
+});
 
 describe('BackofficeService.listTransactions', () => {
   it('resolves a player query to userIds and enriches rows with email and playerId', async () => {
@@ -91,6 +168,7 @@ describe('BackofficeService.listTransactions', () => {
       makeReporting({ listTransactions }),
       makeGameReporting(),
       makePlayerActivity(),
+      makeRoleAssignments(),
     );
     const res = await svc.listTransactions({ page: 1, limit: 20, player: 'alice' });
     expect(findPlayerIds).toHaveBeenCalledWith('alice');
@@ -111,6 +189,7 @@ describe('BackofficeService.listTransactions', () => {
       makeReporting({ listTransactions }),
       makeGameReporting(),
       makePlayerActivity(),
+      makeRoleAssignments(),
     );
     await svc.listTransactions({ page: 1, limit: 20, userId: 'u-1' });
     expect(findPlayerIds).not.toHaveBeenCalled();
@@ -125,6 +204,7 @@ describe('BackofficeService.listTransactions', () => {
       makeReporting({ listTransactions }),
       makeGameReporting(),
       makePlayerActivity(),
+      makeRoleAssignments(),
     );
     await svc.listTransactions({ page: 1, limit: 20, userId: 'u-2', player: 'al' });
     expect(listTransactions).toHaveBeenCalledWith(expect.objectContaining({ userIds: ['u-2'] }));
@@ -138,6 +218,7 @@ describe('BackofficeService.listTransactions', () => {
       makeReporting({ listTransactions }),
       makeGameReporting(),
       makePlayerActivity(),
+      makeRoleAssignments(),
     );
     const res = await svc.listTransactions({ page: 1, limit: 20, userId: 'u-9', player: 'al' });
     expect(res).toEqual({ items: [], total: 0, page: 1, limit: 20 });
@@ -152,6 +233,7 @@ describe('BackofficeService.listTransactions', () => {
       makeReporting({ listTransactions }),
       makeGameReporting(),
       makePlayerActivity(),
+      makeRoleAssignments(),
     );
     const res = await svc.listTransactions({ page: 1, limit: 20, player: 'ghost' });
     expect(res).toEqual({ items: [], total: 0, page: 1, limit: 20 });
@@ -165,6 +247,7 @@ describe('BackofficeService.listTransactions', () => {
       makeReporting({ listTransactions }),
       makeGameReporting(),
       makePlayerActivity(),
+      makeRoleAssignments(),
     );
     const res = await svc.listTransactions({ page: 1, limit: 20 });
     expect(res.items[0]).toMatchObject({ playerId: null, playerEmail: null });
@@ -177,6 +260,7 @@ describe('BackofficeService.listTransactions', () => {
       makeReporting({ listTransactions }),
       makeGameReporting(),
       makePlayerActivity(),
+      makeRoleAssignments(),
     );
     await svc.listTransactions({
       page: 1,
@@ -209,6 +293,7 @@ describe('BackofficeService.getTransaction', () => {
       makeReporting(),
       makeGameReporting(),
       makePlayerActivity(),
+      makeRoleAssignments(),
     );
     await expect(svc.getTransaction('missing')).rejects.toBeInstanceOf(TransactionNotFoundError);
   });
@@ -229,6 +314,7 @@ describe('BackofficeService.getTransaction', () => {
       makeReporting({ getTransaction: vi.fn().mockResolvedValue(detail()) }),
       makeGameReporting(),
       makePlayerActivity(),
+      makeRoleAssignments(),
     );
     const res = await svc.getTransaction('tx-1');
     expect(res).toMatchObject({
@@ -248,6 +334,7 @@ describe('BackofficeService.getTransaction', () => {
       makeReporting({ getTransaction: vi.fn().mockResolvedValue(detail({ reviewedAt: null })) }),
       makeGameReporting(),
       makePlayerActivity(),
+      makeRoleAssignments(),
     );
     const res = await svc.getTransaction('tx-1');
     expect(res.reviewedAt).toBeNull();
@@ -272,7 +359,13 @@ describe('BackofficeService.getGamePerformance (real PG)', () => {
   });
 
   function makeService() {
-    return new BackofficeService(makeUsers(), makeReporting(), gameReporting, makePlayerActivity());
+    return new BackofficeService(
+      makeUsers(),
+      makeReporting(),
+      gameReporting,
+      makePlayerActivity(),
+      makeRoleAssignments(),
+    );
   }
 
   async function seedGame(overrides: Partial<typeof game.$inferInsert> = {}) {
@@ -355,6 +448,7 @@ describe('BackofficeService.getPlayerActivity', () => {
       makeReporting(),
       makeGameReporting(),
       makePlayerActivity({ getRegistrationsOverTime, getActiveUsersTrend, getRetentionCohorts }),
+      makeRoleAssignments(),
     );
 
     const res = await svc.getPlayerActivity({

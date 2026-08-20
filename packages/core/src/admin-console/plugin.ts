@@ -1,6 +1,7 @@
 import {
   ADMIN_GAME_REPORTING,
   ADMIN_PLAYER_ACTIVITY,
+  ADMIN_ROLE_ASSIGNMENT_DIRECTORY,
   ADMIN_USER_DIRECTORY,
   ADMIN_WALLET_REPORTING,
   AUDIT_WRITER,
@@ -21,6 +22,7 @@ export default {
           c.get(ADMIN_WALLET_REPORTING),
           c.get(ADMIN_GAME_REPORTING),
           c.get(ADMIN_PLAYER_ACTIVITY),
+          c.get(ADMIN_ROLE_ASSIGNMENT_DIRECTORY),
         ),
         c.get(ADMIN_GUARD),
         c.get(AUDIT_WRITER),
