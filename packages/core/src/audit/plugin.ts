@@ -247,7 +247,10 @@ export async function mapEventToRecord(
       resourceType: 'user',
       resourceId: str(p['userId']),
       result: 'failure',
-      after: { lockoutUntil: p['lockoutUntil'] ?? null },
+      after: {
+        tier: p['tier'] ?? null,
+        lockoutUntil: p['lockoutUntil'] ?? null,
+      },
     };
   }
 

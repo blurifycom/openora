@@ -17,6 +17,7 @@ import {
   type CacheAdapter,
   type RateLimiterAdapter,
   type SmsAdapter,
+  type IdentityServiceOptions,
   type PhoneLoginRequestInput,
   type PhoneLoginRequestOutput,
   type PhoneLoginVerifyInput,
@@ -26,6 +27,12 @@ import {
 import { user, session, smsOtpSession } from '../schema/index.js';
 import { player } from '@openora/core/pam/schema/profile';
 import { isRgBlocked } from './rg-guard.service.js';
+import {
+  DEFAULT_MAX_LOGIN_ATTEMPTS,
+  createAccountLockedError,
+  hasFailedLoginWindowExpired,
+  makeLoginSecurityState,
+} from './lockout-policy.service.js';
 
 const MINUTE_MS = 60 * 1000;
 const OTP_TTL_MS = 5 * MINUTE_MS;
@@ -128,6 +135,7 @@ export type PhoneLoginServiceDeps = {
   limiter: RateLimiterAdapter;
   auth: Auth;
   cache?: CacheAdapter;
+  options?: IdentityServiceOptions;
 };
 
 export class PhoneLoginService {
@@ -137,14 +145,16 @@ export class PhoneLoginService {
   private readonly limiter: RateLimiterAdapter;
   private readonly auth: Auth;
   private readonly cache?: CacheAdapter;
+  private readonly options?: IdentityServiceOptions;
 
-  constructor({ drizzle, events, sms, limiter, auth, cache }: PhoneLoginServiceDeps) {
+  constructor({ drizzle, events, sms, limiter, auth, cache, options }: PhoneLoginServiceDeps) {
     this.drizzle = drizzle;
     this.events = events;
     this.sms = sms;
     this.limiter = limiter;
     this.auth = auth;
     this.cache = cache;
+    this.options = options;
   }
 
   private async shadowGet(key: string): Promise<FakeOtpShadow | undefined> {
@@ -307,7 +317,7 @@ export class PhoneLoginService {
 
     // Resolve the account before entering the transaction so the RG check can short-
     // circuit without consuming the OTP: a blocked user can try again once unblocked.
-    const [account] = await this.drizzle.db
+    let [account] = await this.drizzle.db
       .select({
         id: user.id,
         email: user.email,
@@ -322,12 +332,49 @@ export class PhoneLoginService {
         updatedAt: user.updatedAt,
         rgBlocked: user.rgBlocked,
         rgBlockedUntil: user.rgBlockedUntil,
+        failedLoginAttempts: user.failedLoginAttempts,
+        lockoutUntil: user.lockoutUntil,
+        lockoutCount: user.lockoutCount,
+        lastLockoutAt: user.lastLockoutAt,
+        lastFailedLoginAt: user.lastFailedLoginAt,
       })
       .from(user)
       .where(eq(user.id, otp.userId))
       .limit(1);
     if (!account) {
       throw new ORPCError('INTERNAL_SERVER_ERROR', { message: 'Account not found.' });
+    }
+
+    const nowMs = Date.now();
+    if (account.lockoutUntil && account.lockoutUntil.getTime() > nowMs) {
+      throw createAccountLockedError(account.lockoutUntil);
+    }
+
+    if (hasFailedLoginWindowExpired(account.lastFailedLoginAt, account.lastLockoutAt, nowMs)) {
+      await this.drizzle.db
+        .update(user)
+        .set({
+          failedLoginAttempts: 0,
+          lockoutUntil: null,
+          lockoutCount: 0,
+          lastLockoutAt: null,
+          lastFailedLoginAt: null,
+        })
+        .where(eq(user.id, account.id));
+      account = {
+        ...account,
+        failedLoginAttempts: 0,
+        lockoutUntil: null,
+        lockoutCount: 0,
+        lastLockoutAt: null,
+        lastFailedLoginAt: null,
+      };
+    } else if (account.lockoutUntil && account.lockoutUntil.getTime() <= nowMs) {
+      await this.drizzle.db
+        .update(user)
+        .set({ failedLoginAttempts: 0, lockoutUntil: null })
+        .where(eq(user.id, account.id));
+      account = { ...account, failedLoginAttempts: 0, lockoutUntil: null };
     }
 
     // Resolved once, before either gate below, so both the RG-block and the
@@ -393,6 +440,16 @@ export class PhoneLoginService {
         createdAt: new Date(),
         updatedAt: new Date(),
       });
+      await t
+        .update(user)
+        .set({
+          failedLoginAttempts: 0,
+          lockoutUntil: null,
+          lockoutCount: 0,
+          lastLockoutAt: null,
+          lastFailedLoginAt: null,
+        })
+        .where(eq(user.id, account.id));
     });
 
     this.events.emit('identity.user.phone_login', {
@@ -432,6 +489,11 @@ export class PhoneLoginService {
     return {
       user: serializeUser(account),
       session: { token, expiresAt: sessionExpiresAt.toISOString() },
+      security: makeLoginSecurityState({
+        failedLoginAttempts: 0,
+        maxAttempts: this.options?.lockout?.maxAttempts ?? DEFAULT_MAX_LOGIN_ATTEMPTS,
+        lockoutUntil: null,
+      }),
     };
   }
 }

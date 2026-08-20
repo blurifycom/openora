@@ -1,0 +1,1 @@
+ALTER TABLE "user" ADD COLUMN "last_failed_login_at" timestamp with time zone;
