@@ -18,6 +18,10 @@ import {
   DepositAddressUnsupportedError,
   DestinationAddressRequiredError,
   AutoWithdrawalConfigNotFoundError,
+  WalletAssetNotFoundError,
+  WalletAssetAlreadyExistsError,
+  WalletAssetUnsupportedError,
+  WalletAssetInUseError,
 } from '../service/wallet.service.js';
 
 export function createWalletRouter(
@@ -198,6 +202,53 @@ export function createWalletRouter(
         await adminGuard.assert(context, 'auto-withdrawal-config', 'view');
         return mapErrors({ NOT_FOUND: AutoWithdrawalConfigNotFoundError }, () =>
           wallet.getAutoWithdrawalConfig(),
+        );
+      }),
+    },
+
+    listAssets: os.listAssets.handler(() => wallet.listEnabledWalletAssets()),
+
+    assets: {
+      list: os.assets.list.handler(async ({ context }) => {
+        await adminGuard.assert(context, 'wallet-asset', 'view');
+        return wallet.listWalletAssets();
+      }),
+
+      create: os.assets.create.handler(async ({ input, context }) => {
+        const {
+          userId: adminId,
+          ip,
+          userAgent,
+        } = await adminGuard.assert(context, 'wallet-asset', 'create');
+        return mapErrors(
+          { CONFLICT: [WalletAssetAlreadyExistsError, WalletAssetUnsupportedError] },
+          () => wallet.createWalletAsset(adminId, input, { ip, userAgent }),
+        );
+      }),
+
+      update: os.assets.update.handler(async ({ input, context }) => {
+        const {
+          userId: adminId,
+          ip,
+          userAgent,
+        } = await adminGuard.assert(context, 'wallet-asset', 'update');
+        return mapErrors(
+          {
+            NOT_FOUND: WalletAssetNotFoundError,
+            CONFLICT: WalletAssetUnsupportedError,
+          },
+          () => wallet.updateWalletAsset(adminId, input, { ip, userAgent }),
+        );
+      }),
+
+      delete: os.assets.delete.handler(async ({ input, context }) => {
+        const {
+          userId: adminId,
+          ip,
+          userAgent,
+        } = await adminGuard.assert(context, 'wallet-asset', 'delete');
+        return mapErrors({ CONFLICT: WalletAssetInUseError }, () =>
+          wallet.deleteWalletAsset(adminId, input.currency, input.network, { ip, userAgent }),
         );
       }),
     },

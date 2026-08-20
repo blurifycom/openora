@@ -36,6 +36,20 @@ export type PaymentWebhookEvent =
       txHash?: string;
     };
 
+/**
+ * A balance sitting in a per-player custody container that is not yet in the pooled
+ * account withdrawals are paid from. Produced by `PaymentAdapter.listSweepableBalances`
+ * and handed back to `sweepToPool` unchanged.
+ */
+export type CustodyBalance = {
+  userId: string;
+  currency: string;
+  network: string;
+  amount: string;
+  /** Current network cost to move it, same units as `amount`. */
+  estimatedFee: string;
+};
+
 export type PaymentAdapter = {
   processDeposit(
     amount: string,
@@ -80,6 +94,49 @@ export type PaymentAdapter = {
     rawBody: string,
     headers: Record<string, string | string[] | undefined>,
   ): PaymentWebhookEvent | null;
+
+  /**
+   * Whether this adapter can actually serve the given asset. The asset catalog is
+   * operator-editable at runtime, so an admin can name a (currency, network) pair the
+   * bound vendor has never heard of; the catalog's write path calls this first and
+   * rejects rather than letting the pair reach a player's deposit screen. Optional -
+   * an adapter that omits it is assumed to accept anything the operator configures.
+   */
+  supportsAsset?(currency: string, network: string): boolean;
+
+  /**
+   * Per-player balances the vendor holds that are not yet in the pooled account.
+   * Only meaningful for a custody vendor whose per-player deposit containers are
+   * distinct from the account withdrawals are paid out of - a synchronous PSP, which
+   * never holds a per-player balance, omits it.
+   */
+  listSweepableBalances?(): Promise<CustodyBalance[]>;
+
+  /**
+   * Move one player's balance into the pooled account. Implemented alongside
+   * `listSweepableBalances`; the caller owns the policy (dust floor, fee thresholds)
+   * and this only performs the transfer it is handed.
+   */
+  sweepToPool?(balance: CustodyBalance): Promise<{ externalId: string }>;
+
+  /**
+   * Vendor transactions in a window, normalized into the same events `parseWebhook`
+   * produces - reconciliation is that same normalization, polled instead of pushed.
+   * Implemented by a vendor whose ledger can be listed after the fact; a PSP that only
+   * pushes webhooks omits it.
+   */
+  listTransactions?(range: { since: Date; until: Date }): Promise<PaymentWebhookEvent[]>;
+
+  /**
+   * Targeted status lookup for a single withdrawal, or null when the vendor has no
+   * record of it. Not redundant with `listTransactions`: a withdrawal stuck in
+   * `processing` for days falls outside any sane reconciliation window, so finalizing
+   * it needs a direct lookup by `externalId`.
+   */
+  getWithdrawalStatus?(externalId: string): Promise<{
+    status: 'processing' | 'completed' | 'failed';
+    txHash?: string;
+  } | null>;
 };
 
 export const PAYMENT_ADAPTER: Token<PaymentAdapter> = createToken('PAYMENT_ADAPTER');

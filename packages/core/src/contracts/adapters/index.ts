@@ -120,8 +120,16 @@ export {
   KycCheckResultSchema,
 } from './kyc.js';
 
-export type { PaymentAdapter, PaymentWebhookEvent, PaymentWebhookVerifier } from './payment.js';
+export type {
+  PaymentAdapter,
+  PaymentWebhookEvent,
+  PaymentWebhookVerifier,
+  CustodyBalance,
+} from './payment.js';
 export { PAYMENT_ADAPTER, PAYMENT_WEBHOOK_VERIFIER } from './payment.js';
+
+export type { WalletAsset, WalletAssetCatalog } from './wallet-asset-catalog.js';
+export { WALLET_ASSET_CATALOG } from './wallet-asset-catalog.js';
 
 export type { GeoIpAdapter } from './geo-ip.js';
 export { GEO_IP_ADAPTER } from './geo-ip.js';
