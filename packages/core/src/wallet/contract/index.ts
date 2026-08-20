@@ -55,6 +55,7 @@ export const AdminWalletTransactionSchema = WalletTransactionSchema.extend({
   reviewedAt: TimestampSchema.nullable(),
   reviewReason: z.string().nullable(),
 });
+export type AdminWalletTransaction = z.infer<typeof AdminWalletTransactionSchema>;
 
 export const DepositInputSchema = z.object({
   amount: PositiveMoneyAmountSchema,
