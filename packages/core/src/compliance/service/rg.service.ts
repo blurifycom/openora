@@ -194,8 +194,6 @@ export class RgService {
         userId,
         playerId,
         exclusionId: lapsedRow.id,
-        // The lapsed row's own filter (`lte(expiresAt, now)`) only ever matches a
-        // non-null expiresAt - `now` is an unreachable fallback, not a real default.
         expiresAt: (lapsedRow.expiresAt ?? now).toISOString(),
       });
     }
@@ -435,8 +433,6 @@ export class RgService {
         userId: row.userId,
         playerId: await this.identityReader.getPlayerIdByUserIdSafe(row.userId),
         exclusionId: row.id,
-        // The `lte` filter above only ever matches a non-null expiresAt - a cooling-off
-        // row always sets one - so `now` is an unreachable fallback, not a real default.
         expiresAt: (row.expiresAt ?? now).toISOString(),
       });
     }

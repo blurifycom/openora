@@ -540,9 +540,6 @@ export async function mapEventToRecord(
     };
   }
 
-  // System-driven cooling-off expiry (the rg-monitor sweep, no admin actor). Mirrors
-  // the admin-lifted branch above (before: still-active snapshot) but actorType
-  // 'system' and no actorId - the sweep, not a person, ended it.
   if (topic === 'rg.cooling_off.expired') {
     return {
       ...base,
