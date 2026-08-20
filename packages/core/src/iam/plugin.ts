@@ -3,6 +3,7 @@ import type { CoreTokenCatalog, Plugin } from '@openora/core/server';
 import {
   ADMIN_PERMISSION_RESOLVER,
   ADMIN_PLAYER_ACTIVITY,
+  ADMIN_ROLE_ASSIGNMENT_DIRECTORY,
   IDENTITY_READER,
   SEND_EMAIL,
   SESSION_COMMANDS,
@@ -13,6 +14,7 @@ import {
 import { IamService, DbAdminPermissionResolver } from './service/iam.service.js';
 import { createIamRouter } from './router/index.js';
 import { DrizzleAdminPlayerActivity } from './adapters/admin-player-activity.js';
+import { DrizzleAdminRoleAssignmentDirectory } from './adapters/admin-role-assignment-directory.js';
 
 const logger = createLogger('iam');
 
@@ -60,6 +62,10 @@ export default {
     });
 
     ctx.provide(ADMIN_PLAYER_ACTIVITY, (c) => new DrizzleAdminPlayerActivity(c.get(DRIZZLE)));
+    ctx.provide(
+      ADMIN_ROLE_ASSIGNMENT_DIRECTORY,
+      (c) => new DrizzleAdminRoleAssignmentDirectory(c.get(DRIZZLE)),
+    );
 
     ctx.routers.add('iam', (c) =>
       createIamRouter(

@@ -169,6 +169,12 @@ export type {
 export { ADMIN_USER_DIRECTORY, ADMIN_USER_SORT_BY_VALUES } from './admin-user-directory.js';
 
 export type {
+  AdminRoleAssignmentSummary,
+  AdminRoleAssignmentDirectory,
+} from './admin-role-assignment-directory.js';
+export { ADMIN_ROLE_ASSIGNMENT_DIRECTORY } from './admin-role-assignment-directory.js';
+
+export type {
   AdminTxRow,
   AdminTxDetail,
   AdminTxListOptions,
