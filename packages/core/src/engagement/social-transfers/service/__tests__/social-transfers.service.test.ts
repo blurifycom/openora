@@ -240,6 +240,7 @@ function makeSvc(
     overrides.blockWriter ??
       mock<ChatBlockWriter>({
         getBlockedUserIds: vi.fn().mockResolvedValue([]),
+        isBlocked: vi.fn().mockResolvedValue(false),
       }),
     overrides.wallet ?? makeWallet(),
     overrides.directory ?? makeDirectory(),
@@ -490,6 +491,7 @@ describe('SocialTransfersService.claimGift', () => {
       drizzleRows: { select: [[GIFT_ROW]], returning: [] },
       blockWriter: mock<ChatBlockWriter>({
         getBlockedUserIds: vi.fn().mockResolvedValue([CLAIMER_ID]),
+        isBlocked: vi.fn().mockResolvedValue(true),
       }),
     });
     const result = await svc.claimGift(GIFT_ID, CLAIMER_ID);
@@ -788,6 +790,7 @@ describe('SocialTransfersService.sendRain (RAIN_COMMANDS port)', () => {
       wallet,
       blockWriter: mock<ChatBlockWriter>({
         getBlockedUserIds: vi.fn().mockResolvedValue([CLAIMER_ID]),
+        isBlocked: vi.fn().mockResolvedValue(true),
       }),
     });
 
@@ -1046,6 +1049,7 @@ describe('SocialTransfersService.sendDonate', () => {
       directory: makeRecipientDirectory(),
       blockWriter: mock<ChatBlockWriter>({
         getBlockedUserIds: vi.fn().mockResolvedValue([CLAIMER_ID]),
+        isBlocked: vi.fn().mockResolvedValue(true),
       }),
     });
     await expect(

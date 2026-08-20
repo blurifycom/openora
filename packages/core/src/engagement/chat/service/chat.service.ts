@@ -12,6 +12,7 @@ import {
   pageToOffset,
   withAdvisoryXactLock,
   type DrizzleDb,
+  type DrizzleTx,
 } from '@openora/core/server';
 import type {
   ClientMeta,
@@ -1419,6 +1420,21 @@ export class ChatService {
 
   async getBlockedUserIds(viewerId: User['id']): Promise<string[]> {
     return [...(await this.blockedIdsFor(viewerId))];
+  }
+
+  async isBlocked(tx: unknown, blockerId: User['id'], blockedId: User['id']): Promise<boolean> {
+    const [row] = await (tx as DrizzleTx)
+      .select({ blockedId: chatUserBlock.blockedId })
+      .from(chatUserBlock)
+      .where(
+        and(
+          eq(chatUserBlock.blockerId, blockerId),
+          eq(chatUserBlock.blockedId, blockedId),
+          isNull(chatUserBlock.removedAt),
+        ),
+      )
+      .limit(1);
+    return row !== undefined;
   }
 
   async createRoom({

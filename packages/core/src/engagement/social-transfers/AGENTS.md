@@ -86,10 +86,10 @@ has been retired by the chat-commands migration; new gift rows and all reads use
 `/rain <amount>` treats `amount` as the total budget and fixes `perRecipient` from the requested
 `recipientCount` before the live recipient list is reduced. The per-recipient value is floored to
 two decimal places in SQL. If fewer users are available, the same per-recipient amount is paid to
-each selected user; the unused remainder stays with the sender. For example, `44.44` requested for
-3 users fixes `14.81` per recipient; 3 users receive `44.43` total and `0.01` remains with the
-sender. `perRecipient` and `totalDistributed` (`perRecipient * actual
-recipientCount`) are computed in the same SQL transaction. The system-message metadata (built by
+each selected user; the unused remainder stays with the sender. For example, `100` requested for 5
+users fixes `20` per recipient; if only 4 are available, 4 users receive `20` and `80` is debited.
+`perRecipient` and `totalDistributed` (`perRecipient * actual recipientCount`) are computed in the
+same SQL transaction. The system-message metadata (built by
 `doSendRain` itself), audit `after.amount`, the persisted `player_rain.amount`, and the
 `chat.rain.distributed` event's `totalAmount` all report `totalDistributed`, since that is what
 actually left the sender's wallet. The pre-transaction `maxAmount`/`minAmount` limit checks still
