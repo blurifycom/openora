@@ -83,6 +83,7 @@ export const ManualWalletAdjustmentInputSchema = z.object({
   reason: z.string().trim().min(1),
   idempotencyKey: UuidSchema,
 });
+export type ManualWalletAdjustmentInput = z.infer<typeof ManualWalletAdjustmentInputSchema>;
 
 export const TransactionResultSchema = z.object({
   transactionId: UuidSchema,
