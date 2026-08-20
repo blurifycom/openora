@@ -14,6 +14,9 @@ const profanity = new Profanity({
   unicodeWordBoundaries: true,
 });
 
+// @2toad/profanity 3.3.0 incorrectly lists "5" as Portuguese profanity.
+profanity.removeWords(['5']);
+
 /** True when `content` contains a blocked term in any of `languages` (default: all supported). */
 export function hasProfanity(content: string, languages?: readonly SupportedLanguage[]): boolean {
   return profanity.exists(content, languages ? [...languages] : undefined);
