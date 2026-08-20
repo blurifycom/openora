@@ -61,6 +61,9 @@ const transactionDenyingGuard = () =>
 
 const allowingGuard = () => makeAdminGuard({ caller: { userId: 'caller-1' } });
 
+const adjustmentDenyingGuard = () =>
+  makeAdminGuard({ deny: ['admin:update'], caller: { userId: 'caller-1', role: 'admin' } });
+
 async function seedLedger(userId: string, amounts: string[]) {
   const row = findOneOrThrow(
     await db.drizzle.db.insert(wallet).values({ userId, currency: 'USD' }).returning(),
@@ -119,5 +122,29 @@ describe('wallet router listPlayerTransactions authz', () => {
 
     expect(result.total).toBe(1);
     expect(result.items[0]?.amount).toBe('10.000000000000000000');
+  });
+});
+
+describe('wallet router manualAdjustment authz', () => {
+  it('requires the super-admin-only admin:update grant and changes nothing on denial', async () => {
+    const userId = randomUUID();
+
+    await expect(
+      call(
+        routerWith(adjustmentDenyingGuard()).manualAdjustment,
+        {
+          userId,
+          direction: 'credit',
+          amount: '5',
+          currency: 'USD',
+          reason: 'compensation',
+          idempotencyKey: randomUUID(),
+        },
+        { context: CTX },
+      ),
+    ).rejects.toBeInstanceOf(ORPCError);
+
+    expect(await db.drizzle.db.select().from(wallet)).toHaveLength(0);
+    expect(await db.drizzle.db.select().from(walletTransaction)).toHaveLength(0);
   });
 });

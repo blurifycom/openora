@@ -61,6 +61,12 @@ function makeService(overrides: Partial<WalletServiceDeps> = {}) {
   return { svc, events, psp, audit };
 }
 
+function playerIdentityReader() {
+  const identityReader = makeIdentityReader();
+  vi.mocked(identityReader.getPlayerIdByUserId).mockResolvedValue(randomUUID());
+  return identityReader;
+}
+
 const queueService = () => makeService().svc;
 
 function makeDirectory(summaries: AdminPlayerSummary[]) {
@@ -230,6 +236,110 @@ describe('WalletService.deposit (real PG)', () => {
 
     expect(await balanceOf(w.userId, 'USD')).toBe(100);
     expect(await balanceOf(w.userId, 'EUR')).toBe(10);
+  });
+});
+
+describe('WalletService.manualAdjust (real PG)', () => {
+  it('credits, debits, writes an immutable ledger row and replays exactly once', async () => {
+    const { svc, audit, psp } = makeService({ identityReader: playerIdentityReader() });
+    const player = await seedWallet({ balance: '10' });
+    const adminId = randomUUID();
+    const idempotencyKey = randomUUID();
+
+    const credit = await svc.manualAdjust({
+      adminId,
+      userId: player.userId,
+      direction: 'credit',
+      amount: '5',
+      currency: 'USD',
+      reason: 'settlement correction',
+      idempotencyKey,
+      ...NO_CLIENT_META,
+    });
+    const replay = await svc.manualAdjust({
+      adminId,
+      userId: player.userId,
+      direction: 'credit',
+      amount: '5',
+      currency: 'USD',
+      reason: 'settlement correction',
+      idempotencyKey,
+      ...NO_CLIENT_META,
+    });
+    const debit = await svc.manualAdjust({
+      adminId,
+      userId: player.userId,
+      direction: 'debit',
+      amount: '3',
+      currency: 'USD',
+      reason: 'duplicate credit reversal',
+      idempotencyKey: randomUUID(),
+      ...NO_CLIENT_META,
+    });
+
+    expect(replay).toEqual(credit);
+    expect(await balanceOf(player.userId)).toBe(12);
+    expect(await txById(credit.transactionId)).toMatchObject({
+      type: 'manual_credit',
+      status: 'completed',
+      reviewedBy: adminId,
+      reviewReason: 'settlement correction',
+    });
+    expect(await txById(debit.transactionId)).toMatchObject({ type: 'manual_debit' });
+    expect(audit.recordInTransaction).toHaveBeenCalledTimes(2);
+    expect(audit.recordInTransaction).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({
+        action: 'wallet.manual_adjustment.created',
+        actorId: adminId,
+        resourceId: credit.transactionId,
+      }),
+    );
+    expect(psp.processDeposit).not.toHaveBeenCalled();
+    expect(psp.processWithdrawal).not.toHaveBeenCalled();
+  });
+
+  it('rejects an overdraw without a ledger or audit entry', async () => {
+    const { svc, audit } = makeService({ identityReader: playerIdentityReader() });
+    const player = await seedWallet({ balance: '10' });
+
+    await expect(
+      svc.manualAdjust({
+        adminId: randomUUID(),
+        userId: player.userId,
+        direction: 'debit',
+        amount: '11',
+        currency: 'USD',
+        reason: 'correction',
+        idempotencyKey: randomUUID(),
+        ...NO_CLIENT_META,
+      }),
+    ).rejects.toBeInstanceOf(InsufficientBalanceError);
+
+    expect(await balanceOf(player.userId)).toBe(10);
+    expect(await txRows(player.id)).toHaveLength(0);
+    expect(audit.recordInTransaction).not.toHaveBeenCalled();
+  });
+
+  it('creates a selected-currency balance for a player without a wallet', async () => {
+    const { svc } = makeService({ identityReader: playerIdentityReader() });
+    const userId = randomUUID();
+
+    await svc.manualAdjust({
+      adminId: randomUUID(),
+      userId,
+      direction: 'credit',
+      amount: '7',
+      currency: 'EUR',
+      reason: 'goodwill',
+      idempotencyKey: randomUUID(),
+      ...NO_CLIENT_META,
+    });
+
+    expect(await svc.getBalances(userId)).toEqual({
+      activeCurrency: 'EUR',
+      balances: [{ currency: 'EUR', balance: '7.000000000000000000' }],
+    });
   });
 });
 

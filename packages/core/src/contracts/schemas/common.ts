@@ -23,12 +23,13 @@ export type ClientMeta = z.infer<typeof ClientMetaSchema>;
 // and the contract can never drift into truncating each other.
 export const MONEY_SCALE = 18;
 export const MONEY_PRECISION = 38;
+const MONEY_INTEGER_DIGITS = MONEY_PRECISION - MONEY_SCALE;
 
 export const MoneyAmountSchema = z
   .string()
   .regex(
-    new RegExp(`^\\d+(\\.\\d{1,${MONEY_SCALE}})?$`),
-    `must be a non-negative decimal string with at most ${MONEY_SCALE} decimal places`,
+    new RegExp(`^\\d{1,${MONEY_INTEGER_DIGITS}}(\\.\\d{1,${MONEY_SCALE}})?$`),
+    `must be a non-negative decimal string with at most ${MONEY_INTEGER_DIGITS} integer and ${MONEY_SCALE} decimal places`,
   );
 export type MoneyAmount = z.infer<typeof MoneyAmountSchema>;
 
@@ -47,7 +48,7 @@ export type AuthGuardReason = z.infer<typeof AuthGuardReasonSchema>;
 export const SignedMoneyAmountSchema = z
   .string()
   .regex(
-    new RegExp(`^-?\\d+(\\.\\d{1,${MONEY_SCALE}})?$`),
-    `must be a decimal string (optionally negative) with at most ${MONEY_SCALE} decimal places`,
+    new RegExp(`^-?\\d{1,${MONEY_INTEGER_DIGITS}}(\\.\\d{1,${MONEY_SCALE}})?$`),
+    `must be a decimal string (optionally negative) with at most ${MONEY_INTEGER_DIGITS} integer and ${MONEY_SCALE} decimal places`,
   );
 export type SignedMoneyAmount = z.infer<typeof SignedMoneyAmountSchema>;

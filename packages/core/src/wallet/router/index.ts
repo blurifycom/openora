@@ -18,6 +18,7 @@ import {
   DepositAddressUnsupportedError,
   DestinationAddressRequiredError,
   AutoWithdrawalConfigNotFoundError,
+  PlayerNotFoundError,
 } from '../service/wallet.service.js';
 
 export function createWalletRouter(
@@ -71,6 +72,22 @@ export function createWalletRouter(
       );
     }),
 
+    manualAdjustment: os.manualAdjustment.handler(async ({ input, context }) => {
+      const {
+        userId: adminId,
+        ip,
+        userAgent,
+      } = await adminGuard.assert(context, 'admin', 'update');
+      return mapErrors(
+        {
+          NOT_FOUND: PlayerNotFoundError,
+          BAD_REQUEST: InsufficientBalanceError,
+          CONFLICT: IdempotencyKeyReuseError,
+        },
+        () => wallet.manualAdjust({ ...input, adminId, ip, userAgent }),
+      );
+    }),
+
     listTransactions: os.listTransactions.handler(({ context, input }) =>
       wallet.getTransactions({
         userId: getUserId(context),
@@ -89,6 +106,7 @@ export function createWalletRouter(
         limit: input.limit,
         sortBy: input.sortBy,
         sortOrder: input.sortOrder,
+        includeInternal: true,
       });
     }),
 
