@@ -5,7 +5,7 @@
 
 ## Context
 
-BF-219 (Betfeel) asks for a financial-analytics dashboard (deposits/withdrawals by
+A financial-analytics dashboard is requested (deposits/withdrawals by
 currency and rail, net revenue, bonus cost, a GGR trend) and a registration-to-first-bet
 conversion funnel, both filterable by date range and currency. No module in
 `packages/core/src` computes any of this today - the closest thing, `admin-console`'s
@@ -18,15 +18,15 @@ bet/win transactions), `pam/identity` (registration, email verification), and
 should grow one - `admin-console`'s `AGENTS.md` is explicit that it owns no tables and
 stays port-pure, and folding a cross-cutting read model into any single domain (wallet
 being the obvious candidate, since most of the data lives there) would make that
-domain's `AGENTS.md` lie about its own scope the moment BF-217 (dashboard shell) or
-BF-218 (game/player analytics) needs the same treatment for casino/gaming data.
+domain's `AGENTS.md` lie about its own scope the moment a dashboard shell or
+game/player analytics needs the same treatment for casino/gaming data.
 
 Alternatives considered:
 
 - **A slice under `wallet` (`wallet/analytics`)** - no new domain, reuses the existing
   export surface. Rejected: financial data is one thing analytics reports on, not what
   it is: the conversion funnel is a `pam/identity` + `wallet` join with no wallet
-  ownership at all, and per-game analytics (BF-218) has nothing to do with wallet
+  ownership at all, and per-game analytics has nothing to do with wallet
   either. Housing it there is a naming lie that gets more wrong with every added report.
 - **Port-only, no direct schema reads** (`admin-console` stays the caller, each owning
   domain implements an `ANALYTICS_*` port) - the most "orthodox" hexagonal shape. Rejected
@@ -38,7 +38,7 @@ Alternatives considered:
   actual constraint (never sum across currencies, cohort semantics) has to live
   _somewhere_ real, and scattering it across three adapters makes it harder to review as
   one invariant, not easier.
-- **A betfeel-local overlay plugin** - fastest to ship, but the feature is platform-generic
+- **A consumer-local overlay plugin** - fastest to ship, but the feature is platform-generic
   (any igaming operator wants financial + funnel reporting), so it would be rebuilt for
   the next consumer instead of shipping in `@openora/core`.
 
@@ -73,7 +73,7 @@ module id) - the domain earns "CQRS read side" as more than a label.
 
 **Positive:**
 
-- BF-217 (dashboard shell) and BF-218 (game/player analytics) get an obvious, correctly-named
+- A dashboard shell and game/player analytics get an obvious, correctly-named
   home to land beside, instead of a second wallet-shaped lie or a second overlay.
 - The "never sum across currencies" and "cohort, not event-in-range, funnel" invariants
   live in exactly one `AGENTS.md` and one set of services, not scattered across three
@@ -94,7 +94,7 @@ module id) - the domain earns "CQRS read side" as more than a label.
   is regulated game-outcome/RTP territory gated by the sealed, unimplemented
   `GAME_OUTCOME_AUTHORITY` token, not something to fake through a mock adapter. GGR is
   computed from `wallet_transaction` (`bet` minus `win`) rather than from `game_round`,
-  and per-game GGR (BF-218) still needs a certified outcome authority before it can
+  and per-game GGR still needs a certified outcome authority before it can
   exist.
 
 **Neutral:**

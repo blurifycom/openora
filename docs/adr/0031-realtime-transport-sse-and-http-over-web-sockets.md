@@ -41,7 +41,7 @@ The forces:
   exchange order book or micro-betting, not for fixed-odds push + transactional bets.
 - **The product roadmap needs no duplex channel.** Mapping the roadmap onto transport
   requirements: v1 chat/friends/lobby/balance is low-rate push; the v2 PvP games
-  (CoinFlip/Mines/Dice) are turn-based - a command every few seconds, HTTP RTT invisible
+  (a coin toss, a grid reveal, a dice roll) are turn-based - a command every few seconds, HTTP RTT invisible
   next to animation time; pooled gambling (streamer + audience) is a large fan-out of
   shared state (pot, countdown, result) plus bursty _money_ commands that specifically
   want HTTP idempotency + audit, not WS frames; the sportsbook adapter is odds push to

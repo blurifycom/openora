@@ -256,8 +256,8 @@ const CHAT_ROOMS: readonly ChatRoomSeed[] = [
     ],
   },
   {
-    slug: 'jackpot-wheel',
-    name: 'Jackpot Wheel',
+    slug: 'wheel-spin',
+    name: 'Wheel Spin',
     category: 'games-sports',
     messages: [
       'Share your wins here!',
@@ -372,7 +372,7 @@ const CHAT_ROOMS: readonly ChatRoomSeed[] = [
 
 const CHAT_RULES = [
   "Don't spam & don't use excessive capital letters when chatting.",
-  "Don't harass or be offensive to other users or BetFeel staff.",
+  "Don't harass or be offensive to other users or staff.",
   "Don't share any personal information (including socials) of you or other players.",
   "Don't beg or ask for loans, rains or tips.",
   "Don't use alternative (alts) accounts on chat, that is strictly forbidden.",

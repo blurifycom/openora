@@ -81,6 +81,10 @@
       "inputs": ["packages/core/src/**", "tools/lint/verify-module-shape.ts"],
       "outputs": []
     },
+    "//#check:hygiene": {
+      "inputs": ["**/*", "!.turbo/**", "!**/node_modules/**", "!**/dist/**", "!**/.next/**"],
+      "outputs": []
+    },
     "//#check:deprecations": {
       "inputs": ["apps/*/src/**", "packages/*/src/**", "tools/**", "extensions.config.ts"],
       "outputs": []

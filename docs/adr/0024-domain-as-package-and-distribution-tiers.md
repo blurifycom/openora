@@ -47,7 +47,7 @@ Tier is an `.npmrc` scope + an entitlement, **not** a code structure. The same p
 | ------------------- | -------------------------------- | ----------------------------------------------------- |
 | **public**          | GitLab `@openora`, npm later     | `@openora/runtime`, `@openora/pam`, `@openora/casino` |
 | **private/premium** | premium registry, licensed token | `@openora/casino-jackpots`, `@openora/pam-aml-pro`    |
-| **consumer-local**  | the operator's own repo/scope    | `@my-igaming/jackpot-wheel`, `@my-igaming/fireblocks` |
+| **consumer-local**  | the operator's own repo/scope    | `@my-igaming/wheel-game`, `@my-igaming/custody`       |
 
 A premium plugin is just **shape=add-on, tier=private**. The consumer wires all three tiers identically - registry origin is invisible to code:
 
@@ -55,9 +55,9 @@ A premium plugin is just **shape=add-on, tier=private**. The consumer wires all 
 import { createApp } from '@openora/runtime';
 import { casinoPlugin } from '@openora/casino/server'; // public domain
 import { jackpotsPlugin } from '@openora/casino-jackpots/server'; // private premium add-on
-import { jackpotWheelPlugin } from '@my-igaming/jackpot-wheel'; // consumer-local Tier-2
+import { wheelGamePlugin } from '@my-igaming/wheel-game'; // consumer-local Tier-2
 
-createApp({ plugins: [casinoPlugin, jackpotsPlugin, jackpotWheelPlugin] });
+createApp({ plugins: [casinoPlugin, jackpotsPlugin, wheelGamePlugin] });
 ```
 
 ### The rules that keep this safe long-term

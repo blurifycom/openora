@@ -9,7 +9,7 @@
 ## Context
 
 Two foundational capabilities were missing as the first downstream consumer
-began selecting vendors (EveryMatrix, Fireblocks, Ably/GetStream, Text.com, SumSub):
+began selecting vendors (a games aggregator, a crypto custodian, a realtime provider, a comms provider, a KYC provider):
 
 1. **No background-job/worker queue.** Cross-module side effects that must be durable,
    retryable and/or scheduled - webhook ingestion (PSP/aggregator/chat vendors retry

@@ -20,8 +20,8 @@ import {
 } from '../index.js';
 
 /**
- * E2E for BF-317: self_excluded auto-assign/remove on the RG self-exclusion lifecycle,
- * automatic multi_account + bonus_abuser tagging from identity login signals, the
+ * E2E for player-tag lifecycle: self_excluded auto-assign/remove on the RG self-exclusion
+ * lifecycle, automatic multi_account + bonus_abuser tagging from identity login signals, the
  * seeded non-sticky level tag (single mutable row, atomic replace-on-change via
  * TagService.replacePlayerTag driven by player.level.changed), manual sticky-tag
  * cleanup, authz negatives, and the audit trail.
@@ -41,7 +41,7 @@ async function registerAndMaterializePlayer(honoApp: TestApp['app'], email: stri
   const registerRes = await honoApp.request('/identity/register', {
     method: 'POST',
     headers: { 'content-type': 'application/json' },
-    body: JSON.stringify({ email, password: 'password123', name: 'BF-317 E2E Player' }),
+    body: JSON.stringify({ email, password: 'password123', name: 'E2E Player' }),
   });
   if (!registerRes.ok) {
     throw new Error(`register failed (${registerRes.status}): ${await registerRes.text()}`);
@@ -63,7 +63,7 @@ async function loginWithIp(honoApp: TestApp['app'], email: string, ip: string) {
     headers: {
       'content-type': 'application/json',
       'x-real-ip': ip,
-      'user-agent': 'bf-317-e2e',
+      'user-agent': 'tag-lifecycle-e2e',
     },
     body: JSON.stringify({ email, password: 'password123' }),
   });
@@ -144,7 +144,7 @@ describe('self_excluded: auto-assign/remove on rg.self_exclusion.activated/.lift
       userId,
       isPermanent: false,
       durationMonths: 6,
-      reason: 'qa e2e - BF-317 self_excluded happy path',
+      reason: 'qa e2e - self_excluded happy path',
       confirm: true,
     });
     expect(activateRes.status).toBe(200);
@@ -373,7 +373,7 @@ describe('authz negatives: never a success or a 500 without admin credentials', 
   });
 
   it('rejects an authenticated non-admin player with 403 on tag routes and the player update route', async () => {
-    const email = `authz-bf317-${randomUUID()}@e2e.test`;
+    const email = `authz-${randomUUID()}@e2e.test`;
     const { client, playerId } = await registerAndMaterializePlayer(app.app, email);
 
     const listRes = await client.get(`/player/${playerId}/player-tag?page=1&limit=20`);
