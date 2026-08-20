@@ -17,6 +17,8 @@ export const WALLET_TRANSACTION_TYPES = [
   'tip',
   'gift',
   'rain',
+  'manual_credit',
+  'manual_debit',
 ] as const;
 
 export const WALLET_TRANSACTION_STATUSES = [

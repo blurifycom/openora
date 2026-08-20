@@ -404,6 +404,7 @@
         "wallet.listAssets",
         "wallet.listPlayerTransactions",
         "wallet.listTransactions",
+        "wallet.manualAdjustment",
         "wallet.reject",
         "wallet.set",
         "wallet.set",
@@ -1036,6 +1037,10 @@
       "file": "packages/core/src/admin-console/contract/index.ts"
     },
     {
+      "name": "AdminWalletTransactionSchema",
+      "file": "packages/core/src/wallet/contract/index.ts"
+    },
+    {
       "name": "ApproveWithdrawalInputSchema",
       "file": "packages/core/src/wallet/contract/index.ts"
     },
@@ -1606,6 +1611,14 @@
     {
       "name": "LoginSecurityStateSchema",
       "file": "packages/core/src/contracts/schemas/identity.ts"
+    },
+    {
+      "name": "ManualAdjustmentDirectionSchema",
+      "file": "packages/core/src/wallet/contract/index.ts"
+    },
+    {
+      "name": "ManualWalletAdjustmentInputSchema",
+      "file": "packages/core/src/wallet/contract/index.ts"
     },
     {
       "name": "MemberSchema",

@@ -60,6 +60,13 @@ export const WalletTransactionSchema = z.object({
   createdAt: TimestampSchema,
 });
 
+export const AdminWalletTransactionSchema = WalletTransactionSchema.extend({
+  reviewedBy: UuidSchema.nullable(),
+  reviewedAt: TimestampSchema.nullable(),
+  reviewReason: z.string().nullable(),
+});
+export type AdminWalletTransaction = z.infer<typeof AdminWalletTransactionSchema>;
+
 export const DepositInputSchema = z.object({
   amount: PositiveMoneyAmountSchema,
   currency: WalletCurrencyInputSchema,
@@ -77,6 +84,20 @@ export const WithdrawInputSchema = z.object({
   idempotencyKey: UuidSchema.optional(),
   destinationAddress: z.string().optional(),
 });
+
+export const MANUAL_ADJUSTMENT_DIRECTIONS = ['credit', 'debit'] as const;
+export const ManualAdjustmentDirectionSchema = z.enum(MANUAL_ADJUSTMENT_DIRECTIONS);
+export type ManualAdjustmentDirection = z.infer<typeof ManualAdjustmentDirectionSchema>;
+
+export const ManualWalletAdjustmentInputSchema = z.object({
+  userId: UuidSchema,
+  direction: ManualAdjustmentDirectionSchema,
+  currency: WalletCurrencyInputSchema,
+  amount: PositiveMoneyAmountSchema,
+  reason: z.string().trim().min(1),
+  idempotencyKey: UuidSchema,
+});
+export type ManualWalletAdjustmentInput = z.infer<typeof ManualWalletAdjustmentInputSchema>;
 
 export const TransactionResultSchema = z.object({
   transactionId: UuidSchema,
@@ -286,6 +307,11 @@ export const walletContract = {
     .input(WithdrawInputSchema)
     .output(TransactionResultSchema),
 
+  manualAdjustment: oc
+    .route({ method: 'POST', path: '/wallet/manual-adjustments' })
+    .input(ManualWalletAdjustmentInputSchema)
+    .output(TransactionResultSchema),
+
   listTransactions: oc
     .route({ method: 'GET', path: '/wallet/transactions' })
     .input(
@@ -299,7 +325,7 @@ export const walletContract = {
   listPlayerTransactions: oc
     .route({ method: 'GET', path: '/wallet/transactions/{userId}' })
     .input(ListPlayerTransactionsArgs)
-    .output(paginated(WalletTransactionSchema)),
+    .output(paginated(AdminWalletTransactionSchema)),
 
   withdrawals: {
     list: oc

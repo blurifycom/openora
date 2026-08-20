@@ -62,6 +62,7 @@ import type {
   PublicWalletAsset,
   CreateWalletAssetInput,
   UpdateWalletAssetInput,
+  ManualAdjustmentDirection,
 } from '../contract/index.js';
 
 const logger = createLogger('wallet');
@@ -69,6 +70,7 @@ const logger = createLogger('wallet');
 export const WalletNotFoundError = makeNotFoundError('Wallet');
 export const WithdrawalNotFoundError = makeNotFoundError('Withdrawal');
 export const AutoWithdrawalConfigNotFoundError = makeNotFoundError('AutoWithdrawalConfig');
+export const PlayerNotFoundError = makeNotFoundError('Player');
 
 export const InsufficientBalanceError = createDomainError<[available: string, requested: string]>(
   'InsufficientBalanceError',
@@ -299,6 +301,7 @@ export async function readWalletBalance(
 // prefix won't parse - hash namespace + key into a stable pseudo-uuid instead.
 const DEPOSIT_IDEMPOTENCY_NAMESPACE = 'deposit';
 const WITHDRAW_IDEMPOTENCY_NAMESPACE = 'withdraw';
+const MANUAL_ADJUSTMENT_IDEMPOTENCY_NAMESPACE = 'manual-adjustment';
 
 function namespacedIdempotencyKey(namespace: string, rawKey: string): string {
   const hex = createHash('sha256').update(`${namespace}:${rawKey}`).digest('hex');
@@ -638,6 +641,125 @@ export class WalletService {
     return { transactionId, status: 'completed' };
   }
 
+  async manualAdjust({
+    adminId,
+    userId,
+    direction,
+    amount,
+    currency,
+    reason,
+    idempotencyKey,
+    ip,
+    userAgent,
+  }: {
+    adminId: User['id'];
+    userId: User['id'];
+    direction: ManualAdjustmentDirection;
+    amount: string;
+    currency: string;
+    reason: string;
+    idempotencyKey: string;
+  } & ClientMeta): Promise<TransactionResult> {
+    if (!(await this.identityReader.getPlayerIdByUserId(userId))) {
+      throw new PlayerNotFoundError(userId);
+    }
+
+    return this.drizzle.db.transaction(async (txn) => {
+      let walletRecord = (
+        await txn.select().from(wallet).where(eq(wallet.userId, userId)).for('update')
+      ).at(0);
+      if (!walletRecord) {
+        if (direction === 'debit') {
+          throw new InsufficientBalanceError('0', amount);
+        }
+        const [created] = await txn
+          .insert(wallet)
+          .values({ userId, currency })
+          .onConflictDoNothing()
+          .returning();
+        walletRecord =
+          created ??
+          findOneOrThrow(
+            await txn.select().from(wallet).where(eq(wallet.userId, userId)).for('update'),
+            new WalletNotFoundError(userId),
+          );
+      }
+
+      const existing = await this.findByIdempotencyKey(
+        txn,
+        walletRecord.id,
+        namespacedIdempotencyKey(MANUAL_ADJUSTMENT_IDEMPOTENCY_NAMESPACE, idempotencyKey),
+      );
+      if (existing) {
+        this.assertManualAdjustmentReplayMatches(existing, {
+          adminId,
+          direction,
+          amount,
+          currency,
+          reason,
+        });
+        return { transactionId: existing.id, status: existing.status };
+      }
+
+      const balanceBefore = await readWalletBalance(txn, walletRecord.id, currency);
+      const { row, replayed } = await this.insertIdempotentTransaction(txn, {
+        namespace: MANUAL_ADJUSTMENT_IDEMPOTENCY_NAMESPACE,
+        walletId: walletRecord.id,
+        rawIdempotencyKey: idempotencyKey,
+        amount,
+        currency,
+        values: {
+          walletId: walletRecord.id,
+          type: direction === 'credit' ? 'manual_credit' : 'manual_debit',
+          amount,
+          currency,
+          status: 'completed',
+          reviewedBy: adminId,
+          reviewedAt: new Date(),
+          reviewReason: reason,
+        },
+      });
+      if (replayed) {
+        this.assertManualAdjustmentReplayMatches(row, {
+          adminId,
+          direction,
+          amount,
+          currency,
+          reason,
+        });
+        return { transactionId: row.id, status: row.status };
+      }
+
+      const balances =
+        direction === 'credit'
+          ? await creditWalletBalance(txn, walletRecord.id, currency, amount)
+          : await debitWalletBalance(txn, walletRecord.id, currency, amount);
+      const [balance] = balances;
+      if (!balance) {
+        throw new InsufficientBalanceError(balanceBefore, amount);
+      }
+      await this.audit.recordInTransaction(txn, {
+        actorId: adminId,
+        actorType: 'admin',
+        action: 'wallet.manual_adjustment.created',
+        resourceType: 'wallet_transaction',
+        resourceId: row.id,
+        before: { balance: balanceBefore, currency },
+        after: {
+          balance: balance.amount,
+          currency,
+          transactionId: row.id,
+          direction,
+          amount,
+          reason,
+        },
+        ip,
+        userAgent,
+      });
+      return { transactionId: row.id, status: row.status };
+    });
+  }
+
   // Pre-PSP replay check for deposit; also returns the resolved wallet so the transaction
   // below can skip re-selecting it. Throws IdempotencyKeyReuseError on an amount/currency mismatch.
   private async findDepositReplay({
@@ -680,6 +802,32 @@ export class WalletService {
     ) {
       throw new IdempotencyKeyReuseError();
     }
+  }
+
+  private assertManualAdjustmentReplayMatches(
+    existing: WalletTransaction,
+    {
+      adminId,
+      direction,
+      amount,
+      currency,
+      reason,
+    }: {
+      adminId: User['id'];
+      direction: ManualAdjustmentDirection;
+      amount: string;
+      currency: string;
+      reason: string;
+    },
+  ): void {
+    if (
+      existing.type !== (direction === 'credit' ? 'manual_credit' : 'manual_debit') ||
+      existing.reviewedBy !== adminId ||
+      existing.reviewReason !== reason
+    ) {
+      throw new IdempotencyKeyReuseError();
+    }
+    this.assertReplayMatches(existing, amount, currency);
   }
 
   // Two concurrent requests with the same key can both pass the pre-insert check and race
@@ -1775,7 +1923,11 @@ export class WalletService {
     limit,
     sortBy,
     sortOrder,
-  }: PaginationOptions<{ userId: User['id'] }, WalletTransactionSortBy>) {
+    includeInternal = false,
+  }: PaginationOptions<
+    { userId: User['id']; includeInternal?: boolean },
+    WalletTransactionSortBy
+  >) {
     const db = this.drizzle.db;
 
     const [walletRecord] = await db.select().from(wallet).where(eq(wallet.userId, userId));
@@ -1813,6 +1965,9 @@ export class WalletService {
         network: tx.network,
         status: tx.status,
         createdAt: tx.createdAt.toISOString(),
+        reviewedBy: includeInternal ? tx.reviewedBy : null,
+        reviewedAt: includeInternal ? (tx.reviewedAt?.toISOString() ?? null) : null,
+        reviewReason: includeInternal ? tx.reviewReason : null,
       })),
       total: Number(n),
       page,
