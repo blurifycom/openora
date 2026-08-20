@@ -1,6 +1,6 @@
 import { createLogger, DrizzleService } from '@openora/core/server';
 import type { IdentityReader, KycStatus, Player, User } from '@openora/core/contracts';
-import { and, eq, isNull, lt, max, ne, or } from 'drizzle-orm';
+import { and, eq, isNull, lt, max, ne, or, SQL } from 'drizzle-orm';
 import { session, user } from '../schema/index.js';
 import { player } from '@openora/core/pam/schema/profile';
 
@@ -21,7 +21,10 @@ export class IdentityReaderService implements IdentityReader {
     // Join users to their most-recent session. Players with no session at all
     // (registered but never logged in) are included via the LEFT JOIN + isNull check.
     const lastSessionPerUser = this.drizzle.db
-      .select({ userId: session.userId, lastAt: max(session.createdAt).as('last_at') })
+      .select({
+        userId: session.userId,
+        lastAt: new SQL.Aliased<Date | null>(max(session.createdAt), 'last_at'),
+      })
       .from(session)
       .groupBy(session.userId)
       .as('s');

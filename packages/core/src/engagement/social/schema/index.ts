@@ -30,8 +30,8 @@ export const friendship = pgTable(
       sql`NOT (${t.acceptedAt} IS NOT NULL AND ${t.refusedAt} IS NOT NULL)`,
     ),
     check(
-      'friendship_removed_requires_accepted_key',
-      sql`NOT (${t.removedAt} IS NOT NULL AND ${t.acceptedAt} IS NULL)`,
+      'friendship_removed_excludes_refused_key',
+      sql`NOT (${t.removedAt} IS NOT NULL AND ${t.refusedAt} IS NOT NULL)`,
     ),
   ],
 );

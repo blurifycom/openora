@@ -476,27 +476,18 @@ export const domainEventSchemas = {
     newLevel: z.number().int(),
     actorId: UuidSchema,
   }),
-  // System-driven login rejection for a player the Backoffice blocked (status
-  // suspended/closed). No admin acted at login time - the block was set earlier; this
-  // is a failure outcome. userId = the subject player; status = the blocking status.
   'player.login_blocked': authContextBase.extend({
     userId: UuidSchema,
     playerId: UuidSchema.nullable(),
     status: PlayerStatusSchema,
   }),
 
-  // A player sent a friend request to another player (social/friends surface, BF-425).
   'social.friend_request.sent': authContextBase.extend({
     friendshipId: UuidSchema,
     requesterId: UuidSchema,
     addresseeId: UuidSchema,
     requesterDisplayName: z.string(),
   }),
-  // A pending friend request became a friendship. requesterId/addresseeId are the
-  // ORIGINAL sender/recipient of the pending request (unchanged); accepterId is
-  // whoever's action flipped it to accepted - always addresseeId for a normal
-  // accept, but can equal requesterId for the mutual/simultaneous-request
-  // auto-accept case (see social.service.ts sendFriendRequest).
   'social.friend_request.accepted': authContextBase.extend({
     friendshipId: UuidSchema,
     requesterId: UuidSchema,
@@ -510,6 +501,16 @@ export const domainEventSchemas = {
     actorPlayerId: UuidSchema.nullable(),
     otherUserId: UuidSchema,
     reason: z.enum(['removed_by_player', 'blocked']),
+  }),
+  'social.friend_request.declined': authContextBase.extend({
+    friendshipId: UuidSchema,
+    requesterId: UuidSchema,
+    addresseeId: UuidSchema,
+  }),
+  'social.friend_request.cancelled': authContextBase.extend({
+    friendshipId: UuidSchema,
+    requesterId: UuidSchema,
+    addresseeId: UuidSchema,
   }),
 } as const;
 
