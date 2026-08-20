@@ -117,6 +117,28 @@ export const WalletAssetInUseError = makeConflictError(
   'Players still hold a balance in this currency',
 );
 
+export const AmbiguousNetworkError = createDomainError(
+  'AmbiguousNetworkError',
+  (currency, networks) =>
+    `Currency ${currency} settles on several networks (${networks}) - a network is required`,
+);
+
+export const UnsupportedNetworkError = createDomainError(
+  'UnsupportedNetworkError',
+  (currency, network) => `Currency ${currency} is not settled on network ${network}`,
+);
+
+export const WithdrawalDisabledError = createDomainError(
+  'WithdrawalDisabledError',
+  (currency) => `Withdrawals are disabled for ${currency} on every configured network`,
+);
+
+export const BelowMinimumWithdrawalError = createDomainError(
+  'BelowMinimumWithdrawalError',
+  (amount, minimum, currency, network) =>
+    `Withdrawal of ${amount} ${currency} on ${network} is below the ${minimum} ${currency} minimum`,
+);
+
 const KYC_PASS_STATUSES: ReadonlySet<KycStatus> = new Set(['approved', 'manually_overridden']);
 
 export const CurrencyMismatchError = createDomainError(
@@ -144,6 +166,69 @@ const DEFAULT_WALLET_CURRENCY = 'USD';
 // fraud (idempotency + the ledger guard cover correctness). An overlay rebinds
 // RATE_LIMITER to change the backend, not this policy.
 const WALLET_MUTATION_RATE_LIMIT = { limit: 30, windowMs: 60 * 1000 };
+
+/** The catalog fields a payout decision needs - a structural subset of a wallet_asset row. */
+type WithdrawalAsset = {
+  network: string;
+  minWithdrawal: string;
+  withdrawalEnabled: boolean;
+};
+
+/**
+ * Pins the chain a payout settles on. With one payable network the choice is implied; with
+ * several an explicit network is mandatory, because picking one silently would send a
+ * player's USDT over a chain their receiving wallet may not support.
+ *
+ * `assets` is every catalog row for the currency, enabled or not, so the two empty cases
+ * stay distinguishable: no rows at all means the operator never configured this currency
+ * (a fiat PSP), and the caller's choice passes through unchecked; rows that are all
+ * withdrawal-disabled is a deliberate operator decision and fails closed.
+ */
+export function resolveWithdrawalNetwork(
+  assets: readonly WithdrawalAsset[],
+  currency: string,
+  network?: string,
+): string | null {
+  if (assets.length === 0) {
+    return network?.toUpperCase() ?? null;
+  }
+  const payable = assets.filter((asset) => asset.withdrawalEnabled);
+  const [only, ...rest] = payable;
+  if (!only) {
+    throw new WithdrawalDisabledError(currency);
+  }
+  if (network === undefined) {
+    if (rest.length > 0) {
+      throw new AmbiguousNetworkError(currency, payable.map((asset) => asset.network).join(', '));
+    }
+    return only.network.toUpperCase();
+  }
+  const wanted = network.toUpperCase();
+  if (!payable.some((asset) => asset.network.toUpperCase() === wanted)) {
+    throw new UnsupportedNetworkError(currency, wanted);
+  }
+  return wanted;
+}
+
+/**
+ * Rejects a payout worth less than the operator's per-network floor. The floor is per chain,
+ * not per currency: moving USDT costs cents on BEP20 and dollars on ERC20, so one
+ * currency-wide minimum is either too high for the cheap chain or below the fee on the
+ * expensive one.
+ */
+export function assertAboveMinimumWithdrawal(
+  assets: readonly WithdrawalAsset[],
+  amount: string,
+  currency: string,
+  network: string | null,
+): void {
+  const asset = assets.find(
+    (candidate) => candidate.withdrawalEnabled && candidate.network.toUpperCase() === network,
+  );
+  if (asset && moneyToNumber(amount) < moneyToNumber(asset.minWithdrawal)) {
+    throw new BelowMinimumWithdrawalError(amount, asset.minWithdrawal, currency, asset.network);
+  }
+}
 
 export function railFor(currency: string, cryptoCurrencies?: readonly string[]): WalletRail {
   const set = cryptoCurrencies
@@ -379,6 +464,19 @@ export class WalletService {
     this.riskTags = riskTags;
     this.tagEvaluationCommands = tagEvaluationCommands;
     this.audit = audit;
+  }
+
+  // Every catalog row for the currency, enabled or not - resolveWithdrawalNetwork needs
+  // both to tell "never configured" from "deliberately disabled".
+  private assetsForCurrency(currency: string) {
+    return this.drizzle.db
+      .select({
+        network: walletAsset.network,
+        minWithdrawal: walletAsset.minWithdrawal,
+        withdrawalEnabled: walletAsset.withdrawalEnabled,
+      })
+      .from(walletAsset)
+      .where(eq(walletAsset.currency, currency.toUpperCase()));
   }
 
   private resolveRail(currency: string): WalletRail {
@@ -649,6 +747,7 @@ export class WalletService {
     userId,
     amount,
     currency,
+    network,
     idempotencyKey,
     destinationAddress,
     ip,
@@ -657,6 +756,7 @@ export class WalletService {
     userId: User['id'];
     amount: string;
     currency: string;
+    network?: string;
     idempotencyKey?: string;
     destinationAddress?: string;
   } & ClientMeta): Promise<TransactionResult> {
@@ -665,6 +765,9 @@ export class WalletService {
     if (this.resolveRail(currency) === 'crypto' && !destinationAddress) {
       throw new DestinationAddressRequiredError();
     }
+    const assets = await this.assetsForCurrency(currency);
+    const settlementNetwork = resolveWithdrawalNetwork(assets, currency, network);
+    assertAboveMinimumWithdrawal(assets, amount, currency, settlementNetwork);
 
     const { transactionId, status, replayed, walletId, rail } = await this.drizzle.db.transaction(
       async (txn) => {
@@ -705,6 +808,7 @@ export class WalletService {
             currency,
             status: 'pending',
             rail: this.resolveRail(currency),
+            network: settlementNetwork,
             destinationAddress: destinationAddress ?? null,
           },
         });
@@ -856,6 +960,7 @@ export class WalletService {
         username: summary?.username ?? '',
         amount: r.tx.amount,
         currency: r.tx.currency,
+        network: r.tx.network,
         rail: r.tx.rail ?? null,
         status: r.tx.status,
         kycStatus: summary?.kycStatus ?? null,
@@ -958,6 +1063,8 @@ export class WalletService {
         rail: tx.rail,
         adminId,
         destinationAddress: tx.destinationAddress,
+        // Pinned at request time; without it an adapter cannot tell ERC20 USDT from TRC20.
+        network: tx.network,
       });
     } catch (err) {
       // Payout did not happen - mark failed and return the held funds in one transaction.
@@ -1703,6 +1810,7 @@ export class WalletService {
         type: tx.type,
         amount: tx.amount,
         currency: tx.currency,
+        network: tx.network,
         status: tx.status,
         createdAt: tx.createdAt.toISOString(),
       })),
@@ -1792,6 +1900,9 @@ export class WalletService {
           currency: event.currency,
           status: 'completed',
           rail: this.resolveRail(event.currency),
+          // Prefer the chain the vendor reported; fall back to the one the address was
+          // issued on, which is the only network an address-only webhook can imply.
+          network: event.network ?? depositAddress.network,
           providerName: depositAddress.providerName,
           providerRefId: event.externalId,
           destinationAddress: event.address,

@@ -29,6 +29,13 @@ const WalletCurrencyCodeSchema = z
 
 const WalletCurrencyInputSchema = WalletCurrencyCodeSchema.transform((c) => c.toUpperCase());
 
+// A currency does not identify a chain: USDT settles on ERC20, TRC20 and BEP20 with
+// different addresses, fees and minimums. Free-form rather than an enum because each
+// vendor spells chains its own way (ERC20 vs ETHEREUM vs eth-mainnet).
+const WalletNetworkSchema = z.string().trim().min(1).max(32);
+
+const WalletNetworkInputSchema = WalletNetworkSchema.transform((n) => n.toUpperCase());
+
 export const WalletBalanceSchema = z.object({
   balance: MoneyAmountSchema,
   currency: WalletCurrencyCodeSchema,
@@ -48,6 +55,7 @@ export const WalletTransactionSchema = z.object({
   type: WalletTransactionTypeSchema,
   amount: MoneyAmountSchema,
   currency: WalletCurrencyCodeSchema,
+  network: WalletNetworkSchema.nullable(),
   status: WalletTransactionStatusSchema,
   createdAt: TimestampSchema,
 });
@@ -62,6 +70,9 @@ export const DepositInputSchema = z.object({
 export const WithdrawInputSchema = z.object({
   amount: PositiveMoneyAmountSchema,
   currency: WalletCurrencyInputSchema,
+  // Required for any currency the operator settles on more than one chain - a payout is
+  // rejected as ambiguous rather than guessing which chain the player meant.
+  network: WalletNetworkInputSchema.optional(),
   provider: z.string().optional(),
   idempotencyKey: UuidSchema.optional(),
   destinationAddress: z.string().optional(),
@@ -109,6 +120,7 @@ export const WithdrawalQueueItemSchema = z.object({
   username: z.string(),
   amount: MoneyAmountSchema,
   currency: WalletCurrencyCodeSchema,
+  network: WalletNetworkSchema.nullable(),
   rail: WalletRailSchema.nullable(),
   status: WalletTransactionStatusSchema,
   kycStatus: KycStatusSchema.nullable(),
@@ -190,23 +202,14 @@ export const PaymentWebhookOutputSchema = z.object({ ok: z.literal(true) });
 
 export const DepositAddressInputSchema = z.object({
   currency: WalletCurrencyInputSchema,
-  network: z.string().min(1).optional(),
+  network: WalletNetworkInputSchema.optional(),
 });
 export const DepositAddressSchema = z.object({
   address: z.string(),
   currency: WalletCurrencyCodeSchema,
-  network: z.string().optional(),
+  network: WalletNetworkSchema.optional(),
   tag: z.string().optional(),
 });
-
-// Free-form, not an enum: each payment vendor spells chains its own way (ERC20 vs
-// ETHEREUM vs eth-mainnet). Uppercased so casing alone can't duplicate a row.
-const WalletNetworkInputSchema = z
-  .string()
-  .trim()
-  .min(1)
-  .max(32)
-  .transform((n) => n.toUpperCase());
 
 // Bounded to the column's integer-digit budget so an oversized value is a 4xx at the
 // contract boundary instead of a DB overflow 500.
@@ -217,7 +220,7 @@ const WalletAssetAmountSchema = MoneyAmountSchema.refine(
 
 export const PublicWalletAssetSchema = z.object({
   currency: WalletCurrencyCodeSchema,
-  network: z.string(),
+  network: WalletNetworkSchema,
   minDeposit: MoneyAmountSchema,
   minWithdrawal: MoneyAmountSchema,
   withdrawalFee: MoneyAmountSchema,
