@@ -8,6 +8,7 @@ import {
   pgEnum,
   index,
   uniqueIndex,
+  boolean,
 } from 'drizzle-orm/pg-core';
 import {
   WALLET_RAILS,
@@ -196,8 +197,33 @@ export const walletAutoWithdrawalConfig = pgTable('wallet_auto_withdrawal_config
   createdAt: timestamp({ withTimezone: true }).notNull().defaultNow(),
 });
 
+// Chain-level behaviour (how the vendor hands out addresses) is deliberately NOT here -
+// that belongs to the bound payment adapter, which owns its own vendor vocabulary.
+export const walletAsset = pgTable(
+  'wallet_asset',
+  {
+    id: uuid().primaryKey().defaultRandom(),
+    currency: text().notNull(),
+    network: text().notNull(),
+    providerAssetId: text().notNull(),
+    minDeposit: decimal({ precision: MONEY_PRECISION, scale: MONEY_SCALE }).notNull(),
+    minWithdrawal: decimal({ precision: MONEY_PRECISION, scale: MONEY_SCALE }).notNull(),
+    withdrawalFee: decimal({ precision: MONEY_PRECISION, scale: MONEY_SCALE }).notNull(),
+    // Independent: an asset can take deposits before it can pay out.
+    depositEnabled: boolean().notNull().default(true),
+    withdrawalEnabled: boolean().notNull().default(true),
+    createdAt: timestamp({ withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp({ withTimezone: true })
+      .notNull()
+      .defaultNow()
+      .$onUpdateFn(() => new Date()),
+  },
+  (t) => [uniqueIndex('wallet_asset_currency_network_idx').on(t.currency, t.network)],
+);
+
 export type Wallet = typeof wallet.$inferSelect;
 export type WalletTransaction = typeof walletTransaction.$inferSelect;
 export type AutoWithdrawalRule = typeof autoWithdrawalRule.$inferSelect;
 export type WalletDepositAddress = typeof walletDepositAddress.$inferSelect;
 export type WalletAutoWithdrawalConfig = typeof walletAutoWithdrawalConfig.$inferSelect;
+export type WalletAssetRow = typeof walletAsset.$inferSelect;

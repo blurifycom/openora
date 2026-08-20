@@ -3,6 +3,7 @@ import {
   type DrizzleDb,
   type DrizzleTx,
   makeNotFoundError,
+  serializeRow,
   makeConflictError,
   createDomainError,
   DrizzleService,
@@ -42,11 +43,13 @@ import {
   autoWithdrawalRule,
   walletAutoWithdrawalConfig,
   walletDepositAddress,
+  walletAsset,
   type Wallet,
   type WalletDepositAddress,
   type WalletTransaction,
   type AutoWithdrawalRule as AutoWithdrawalRuleRow,
   type WalletAutoWithdrawalConfig as WalletAutoWithdrawalConfigRow,
+  type WalletAssetRow,
 } from '../schema/index.js';
 import type {
   TransactionResult,
@@ -55,6 +58,10 @@ import type {
   AutoWithdrawalRule,
   WalletAutoWithdrawalConfig,
   WalletTransactionSortBy,
+  WalletAsset,
+  PublicWalletAsset,
+  CreateWalletAssetInput,
+  UpdateWalletAssetInput,
 } from '../contract/index.js';
 
 const logger = createLogger('wallet');
@@ -91,6 +98,23 @@ export const DepositAddressUnsupportedError = makeConflictError(
 export const DestinationAddressRequiredError = makeConflictError(
   'DestinationAddressRequiredError',
   'A destination address is required for a crypto-rail withdrawal',
+);
+
+export const WalletAssetNotFoundError = makeNotFoundError('WalletAsset');
+
+export const WalletAssetAlreadyExistsError = makeConflictError(
+  'WalletAssetAlreadyExistsError',
+  'An asset is already configured for this currency and network',
+);
+
+export const WalletAssetUnsupportedError = makeConflictError(
+  'WalletAssetUnsupportedError',
+  'The bound payment adapter cannot serve this currency and network',
+);
+
+export const WalletAssetInUseError = makeConflictError(
+  'WalletAssetInUseError',
+  'Players still hold a balance in this currency',
 );
 
 const KYC_PASS_STATUSES: ReadonlySet<KycStatus> = new Set(['approved', 'manually_overridden']);
@@ -272,6 +296,20 @@ function toAutoWithdrawalConfigDto(row: WalletAutoWithdrawalConfigRow): WalletAu
     updatedAt: row.updatedAt.toISOString(),
     createdAt: row.createdAt.toISOString(),
   };
+}
+
+const PUBLIC_ASSET_COLUMNS = {
+  currency: walletAsset.currency,
+  network: walletAsset.network,
+  minDeposit: walletAsset.minDeposit,
+  minWithdrawal: walletAsset.minWithdrawal,
+  withdrawalFee: walletAsset.withdrawalFee,
+  depositEnabled: walletAsset.depositEnabled,
+  withdrawalEnabled: walletAsset.withdrawalEnabled,
+};
+
+function toWalletAssetDto(row: WalletAssetRow): WalletAsset {
+  return serializeRow(row, { dateFields: ['createdAt', 'updatedAt'], decimalFields: [] });
 }
 
 // The concrete settlement provider recorded per transaction: the crypto rail settles
@@ -1286,6 +1324,143 @@ export class WalletService {
         ...meta,
       });
       return config;
+    });
+  }
+
+  async listWalletAssets(): Promise<WalletAsset[]> {
+    const rows = await this.drizzle.db
+      .select()
+      .from(walletAsset)
+      .orderBy(asc(walletAsset.currency), asc(walletAsset.network));
+    return rows.map(toWalletAssetDto);
+  }
+
+  listEnabledWalletAssets(): Promise<PublicWalletAsset[]> {
+    return this.drizzle.db
+      .select(PUBLIC_ASSET_COLUMNS)
+      .from(walletAsset)
+      .where(or(eq(walletAsset.depositEnabled, true), eq(walletAsset.withdrawalEnabled, true)))
+      .orderBy(asc(walletAsset.currency), asc(walletAsset.network));
+  }
+
+  async getWalletAsset(currency: string, network: string): Promise<WalletAsset | null> {
+    const [row] = await this.drizzle.db
+      .select()
+      .from(walletAsset)
+      .where(and(eq(walletAsset.currency, currency), eq(walletAsset.network, network)));
+    return row ? toWalletAssetDto(row) : null;
+  }
+
+  // The catalog is operator-editable, so an admin can name a pair the bound vendor has
+  // never heard of. Reject at write time rather than at a player's deposit request.
+  private assertAdapterSupports(currency: string, network: string) {
+    if (this.payment.supportsAsset && !this.payment.supportsAsset(currency, network)) {
+      throw new WalletAssetUnsupportedError();
+    }
+  }
+
+  async createWalletAsset(
+    adminId: User['id'],
+    input: CreateWalletAssetInput,
+    meta?: ClientMeta,
+  ): Promise<WalletAsset> {
+    this.assertAdapterSupports(input.currency, input.network);
+    return this.drizzle.db.transaction(async (txn) => {
+      const rows = await txn.insert(walletAsset).values(input).onConflictDoNothing().returning();
+      // Empty => the (currency, network) unique index rejected it.
+      const asset = toWalletAssetDto(findOneOrThrow(rows, new WalletAssetAlreadyExistsError()));
+      await this.audit.recordInTransaction(txn, {
+        actorId: adminId,
+        actorType: 'admin',
+        action: 'wallet.wallet_asset.created',
+        resourceType: 'wallet_asset',
+        resourceId: asset.id,
+        before: null,
+        after: asset,
+        ...meta,
+      });
+      return asset;
+    });
+  }
+
+  // Deliberately touches only the catalog row: a withdrawal already pending or processing
+  // in this currency keeps its own terms and is never cancelled by disabling the pair.
+  async updateWalletAsset(
+    adminId: User['id'],
+    { currency, network, ...changes }: UpdateWalletAssetInput,
+    meta?: ClientMeta,
+  ): Promise<WalletAsset> {
+    if (changes.providerAssetId !== undefined) {
+      this.assertAdapterSupports(currency, network);
+    }
+    return this.drizzle.db.transaction(async (txn) => {
+      const [before] = await txn
+        .select()
+        .from(walletAsset)
+        .where(and(eq(walletAsset.currency, currency), eq(walletAsset.network, network)));
+      if (!before) {
+        throw new WalletAssetNotFoundError(`${currency}/${network}`);
+      }
+      const rows = await txn
+        .update(walletAsset)
+        .set(changes)
+        .where(and(eq(walletAsset.currency, currency), eq(walletAsset.network, network)))
+        .returning();
+      const asset = toWalletAssetDto(
+        findOneOrThrow(rows, new WalletAssetNotFoundError(`${currency}/${network}`)),
+      );
+      await this.audit.recordInTransaction(txn, {
+        actorId: adminId,
+        actorType: 'admin',
+        action: 'wallet.wallet_asset.updated',
+        resourceType: 'wallet_asset',
+        resourceId: asset.id,
+        before: toWalletAssetDto(before),
+        after: asset,
+        ...meta,
+      });
+      return asset;
+    });
+  }
+
+  async deleteWalletAsset(
+    adminId: User['id'],
+    currency: string,
+    network: string,
+    meta?: ClientMeta,
+  ): Promise<boolean> {
+    return this.drizzle.db.transaction(async (txn) => {
+      const [before] = await txn
+        .select()
+        .from(walletAsset)
+        .where(and(eq(walletAsset.currency, currency), eq(walletAsset.network, network)));
+      if (!before) {
+        return false;
+      }
+      // wallet_balance is keyed by currency only (no network column), so this guard is
+      // necessarily currency-wide: removing one network of a currency players still hold
+      // is blocked even if their balance arrived over another network. Fails safe.
+      const [held] = await txn
+        .select({ n: count() })
+        .from(walletBalance)
+        .where(and(eq(walletBalance.currency, currency), sql`${walletBalance.amount} > 0`));
+      if ((held?.n ?? 0) > 0) {
+        throw new WalletAssetInUseError();
+      }
+      await txn
+        .delete(walletAsset)
+        .where(and(eq(walletAsset.currency, currency), eq(walletAsset.network, network)));
+      await this.audit.recordInTransaction(txn, {
+        actorId: adminId,
+        actorType: 'admin',
+        action: 'wallet.wallet_asset.deleted',
+        resourceType: 'wallet_asset',
+        resourceId: before.id,
+        before: toWalletAssetDto(before),
+        after: null,
+        ...meta,
+      });
+      return true;
     });
   }
 

@@ -381,6 +381,7 @@
       "tables": [
         "auto_withdrawal_rule",
         "wallet",
+        "wallet_asset",
         "wallet_auto_withdrawal_config",
         "wallet_balance",
         "wallet_deposit_address",
@@ -389,6 +390,8 @@
       ],
       "routes": [
         "wallet.approve",
+        "wallet.create",
+        "wallet.delete",
         "wallet.delete",
         "wallet.deposit",
         "wallet.get",
@@ -397,12 +400,15 @@
         "wallet.getBalance",
         "wallet.getBalances",
         "wallet.list",
+        "wallet.list",
+        "wallet.listAssets",
         "wallet.listPlayerTransactions",
         "wallet.listTransactions",
         "wallet.reject",
         "wallet.set",
         "wallet.set",
         "wallet.setActiveCurrency",
+        "wallet.update",
         "wallet.webhook",
         "wallet.withdraw"
       ]
@@ -825,6 +831,15 @@
       ]
     },
     {
+      "category": "wallet-asset-catalog",
+      "interface": "WalletAsset",
+      "token": "WALLET_ASSET_CATALOG",
+      "status": "wired",
+      "boundIn": [
+        "packages/core/src/wallet/plugin.ts"
+      ]
+    },
+    {
       "category": "wallet-commands",
       "interface": "WalletDebitArgs",
       "token": "WALLET_COMMANDS",
@@ -1243,6 +1258,10 @@
     {
       "name": "createTagSchema",
       "file": "packages/core/src/contracts/schemas/tag.ts"
+    },
+    {
+      "name": "CreateWalletAssetInputSchema",
+      "file": "packages/core/src/wallet/contract/index.ts"
     },
     {
       "name": "CurrencyCodeSchema",
@@ -1789,6 +1808,10 @@
       "file": "packages/core/src/contracts/schemas/igaming-config.ts"
     },
     {
+      "name": "PublicWalletAssetSchema",
+      "file": "packages/core/src/wallet/contract/index.ts"
+    },
+    {
       "name": "RainCommandMetadataSchema",
       "file": "packages/core/src/contracts/schemas/chat-command-metadata.ts"
     },
@@ -2005,6 +2028,10 @@
       "file": "packages/core/src/contracts/schemas/tag.ts"
     },
     {
+      "name": "UpdateWalletAssetInputSchema",
+      "file": "packages/core/src/wallet/contract/index.ts"
+    },
+    {
       "name": "UpsertLimitInputSchema",
       "file": "packages/core/src/compliance/contract/limits.ts"
     },
@@ -2051,6 +2078,14 @@
     {
       "name": "VerifyPasswordResetOtpInputSchema",
       "file": "packages/core/src/contracts/schemas/identity.ts"
+    },
+    {
+      "name": "WalletAssetKeySchema",
+      "file": "packages/core/src/wallet/contract/index.ts"
+    },
+    {
+      "name": "WalletAssetSchema",
+      "file": "packages/core/src/wallet/contract/index.ts"
     },
     {
       "name": "WalletAutoWithdrawalConfigSchema",

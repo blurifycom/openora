@@ -3,6 +3,8 @@ import * as z from 'zod';
 import {
   KycStatusSchema,
   MoneyAmountSchema,
+  MONEY_PRECISION,
+  MONEY_SCALE,
   TagKeySchema,
   TimestampSchema,
   UuidSchema,
@@ -197,6 +199,70 @@ export const DepositAddressSchema = z.object({
   tag: z.string().optional(),
 });
 
+// Free-form, not an enum: each payment vendor spells chains its own way (ERC20 vs
+// ETHEREUM vs eth-mainnet). Uppercased so casing alone can't duplicate a row.
+const WalletNetworkInputSchema = z
+  .string()
+  .trim()
+  .min(1)
+  .max(32)
+  .transform((n) => n.toUpperCase());
+
+// Bounded to the column's integer-digit budget so an oversized value is a 4xx at the
+// contract boundary instead of a DB overflow 500.
+const WalletAssetAmountSchema = MoneyAmountSchema.refine(
+  (v) => (v.split('.').at(0) ?? '').length <= MONEY_PRECISION - MONEY_SCALE,
+  { message: `must have at most ${MONEY_PRECISION - MONEY_SCALE} integer digits` },
+);
+
+export const PublicWalletAssetSchema = z.object({
+  currency: WalletCurrencyCodeSchema,
+  network: z.string(),
+  minDeposit: MoneyAmountSchema,
+  minWithdrawal: MoneyAmountSchema,
+  withdrawalFee: MoneyAmountSchema,
+  depositEnabled: z.boolean(),
+  withdrawalEnabled: z.boolean(),
+});
+export type PublicWalletAsset = z.infer<typeof PublicWalletAssetSchema>;
+
+export const WalletAssetSchema = PublicWalletAssetSchema.extend({
+  id: UuidSchema,
+  providerAssetId: z.string(),
+  createdAt: TimestampSchema,
+  updatedAt: TimestampSchema,
+});
+export type WalletAsset = z.infer<typeof WalletAssetSchema>;
+
+export const WalletAssetKeySchema = z.object({
+  currency: WalletCurrencyInputSchema,
+  network: WalletNetworkInputSchema,
+});
+
+export const CreateWalletAssetInputSchema = z.object({
+  currency: WalletCurrencyInputSchema,
+  network: WalletNetworkInputSchema,
+  providerAssetId: z.string().trim().min(1),
+  minDeposit: WalletAssetAmountSchema,
+  minWithdrawal: WalletAssetAmountSchema,
+  withdrawalFee: WalletAssetAmountSchema,
+  depositEnabled: z.boolean().default(true),
+  withdrawalEnabled: z.boolean().default(true),
+});
+export type CreateWalletAssetInput = z.infer<typeof CreateWalletAssetInputSchema>;
+
+// The (currency, network) key is not mutable: renaming a pair is a delete plus a create,
+// so an in-flight vendor reference can't be rewritten out from under a pending transaction.
+export const UpdateWalletAssetInputSchema = WalletAssetKeySchema.extend({
+  providerAssetId: z.string().trim().min(1).optional(),
+  minDeposit: WalletAssetAmountSchema.optional(),
+  minWithdrawal: WalletAssetAmountSchema.optional(),
+  withdrawalFee: WalletAssetAmountSchema.optional(),
+  depositEnabled: z.boolean().optional(),
+  withdrawalEnabled: z.boolean().optional(),
+});
+export type UpdateWalletAssetInput = z.infer<typeof UpdateWalletAssetInputSchema>;
+
 export const walletContract = {
   getBalance: oc.route({ method: 'GET', path: '/wallet/balance' }).output(WalletBalanceSchema),
 
@@ -275,6 +341,32 @@ export const walletContract = {
       .route({ method: 'PUT', path: '/wallet/auto-withdrawal-config' })
       .input(SetWalletAutoWithdrawalConfigInputSchema)
       .output(WalletAutoWithdrawalConfigSchema),
+  },
+
+  // Unauthenticated by design - which assets exist is not secret.
+  listAssets: oc
+    .route({ method: 'GET', path: '/wallet/assets' })
+    .output(z.array(PublicWalletAssetSchema)),
+
+  assets: {
+    list: oc
+      .route({ method: 'GET', path: '/wallet/admin/assets' })
+      .output(z.array(WalletAssetSchema)),
+
+    create: oc
+      .route({ method: 'POST', path: '/wallet/admin/assets' })
+      .input(CreateWalletAssetInputSchema)
+      .output(WalletAssetSchema),
+
+    update: oc
+      .route({ method: 'PUT', path: '/wallet/admin/assets/{currency}/{network}' })
+      .input(UpdateWalletAssetInputSchema)
+      .output(WalletAssetSchema),
+
+    delete: oc
+      .route({ method: 'DELETE', path: '/wallet/admin/assets/{currency}/{network}' })
+      .input(WalletAssetKeySchema)
+      .output(z.boolean()),
   },
 
   deposits: {

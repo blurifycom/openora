@@ -9,6 +9,7 @@ import {
   PAYMENT_WEBHOOK_VERIFIER,
   WALLET_COMMANDS,
   WALLET_READER,
+  WALLET_ASSET_CATALOG,
   PLATFORM_CONFIG,
   RATE_LIMITER,
   PLAYER_TAGS,
@@ -19,6 +20,7 @@ import {
 import { WalletService } from './service/wallet.service.js';
 import { WalletCommandsService } from './service/wallet-commands.service.js';
 import { WalletReaderService } from './adapters/wallet-reader.service.js';
+import { WalletAssetCatalogService } from './adapters/wallet-asset-catalog.service.js';
 import { DrizzleAdminWalletReporting } from './admin-reporting.js';
 import { createWalletRouter } from './router/index.js';
 import { MockPaymentAdapter } from './adapters/mock/mock-payment-adapter.js';
@@ -53,6 +55,9 @@ export default {
     // Read-only queries for cross-module consumers (eg tag evaluation). Never exposes wallet internals.
     ctx.provide(WALLET_READER, (c) => new WalletReaderService(c.get(DRIZZLE)));
     ctx.provide(ADMIN_WALLET_REPORTING, (c) => new DrizzleAdminWalletReporting(c.get(DRIZZLE)));
+    // Operator-editable currency/network config, readable by a payment adapter without
+    // importing wallet tables. Overlay-rebindable, but bound here so it always works.
+    ctx.provide(WALLET_ASSET_CATALOG, (c) => new WalletAssetCatalogService(c.get(DRIZZLE)));
     ctx.routers.add('wallet', (c) =>
       createWalletRouter(
         new WalletService({
