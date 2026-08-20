@@ -317,7 +317,7 @@ export class PhoneLoginService {
 
     // Resolve the account before entering the transaction so the RG check can short-
     // circuit without consuming the OTP: a blocked user can try again once unblocked.
-    const [account] = await this.drizzle.db
+    let [account] = await this.drizzle.db
       .select({
         id: user.id,
         email: user.email,
@@ -361,18 +361,20 @@ export class PhoneLoginService {
           lastFailedLoginAt: null,
         })
         .where(eq(user.id, account.id));
-      account.failedLoginAttempts = 0;
-      account.lockoutUntil = null;
-      account.lockoutCount = 0;
-      account.lastLockoutAt = null;
-      account.lastFailedLoginAt = null;
+      account = {
+        ...account,
+        failedLoginAttempts: 0,
+        lockoutUntil: null,
+        lockoutCount: 0,
+        lastLockoutAt: null,
+        lastFailedLoginAt: null,
+      };
     } else if (account.lockoutUntil && account.lockoutUntil.getTime() <= nowMs) {
       await this.drizzle.db
         .update(user)
         .set({ failedLoginAttempts: 0, lockoutUntil: null })
         .where(eq(user.id, account.id));
-      account.failedLoginAttempts = 0;
-      account.lockoutUntil = null;
+      account = { ...account, failedLoginAttempts: 0, lockoutUntil: null };
     }
 
     // Resolved once, before either gate below, so both the RG-block and the
@@ -440,7 +442,13 @@ export class PhoneLoginService {
       });
       await t
         .update(user)
-        .set({ failedLoginAttempts: 0, lockoutUntil: null })
+        .set({
+          failedLoginAttempts: 0,
+          lockoutUntil: null,
+          lockoutCount: 0,
+          lastLockoutAt: null,
+          lastFailedLoginAt: null,
+        })
         .where(eq(user.id, account.id));
     });
 

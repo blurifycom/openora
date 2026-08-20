@@ -216,6 +216,15 @@ function loginShadowKey(email: string): string {
 const loginShadowLogger = createLogger('login-shadow');
 const identityLogger = createLogger('identity');
 
+function hasErrorCode(error: unknown, code: string) {
+  if (typeof error !== 'object' || error === null || !('data' in error)) {
+    return false;
+  }
+
+  const data = error.data;
+  return typeof data === 'object' && data !== null && 'code' in data && data.code === code;
+}
+
 function computeLockoutState({
   attempts,
   maxAttempts,
@@ -587,9 +596,7 @@ export class IdentityService {
       if (
         error instanceof ORPCError &&
         error.code === 'FORBIDDEN' &&
-        ['RG_BLOCKED', 'ACCOUNT_SUSPENDED'].includes(
-          (error.data as { code?: string } | undefined)?.code ?? '',
-        )
+        (hasErrorCode(error, 'RG_BLOCKED') || hasErrorCode(error, 'ACCOUNT_SUSPENDED'))
       ) {
         throw error;
       }
@@ -598,7 +605,7 @@ export class IdentityService {
       const isAccountLocked =
         error instanceof ORPCError &&
         error.code === 'UNAUTHORIZED' &&
-        (error.data as { code?: string } | undefined)?.code === 'ACCOUNT_LOCKED';
+        hasErrorCode(error, 'ACCOUNT_LOCKED');
       const isCredentialFailure =
         error instanceof ORPCError && error.code === 'UNAUTHORIZED' && !isAccountLocked;
 
