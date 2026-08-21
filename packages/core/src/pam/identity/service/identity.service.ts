@@ -84,7 +84,7 @@ function toUser(u: BetterAuthUser) {
     id: u.id,
     email: u.email,
     name: u.name,
-    username: u.username ?? null,
+    username: u.username,
     emailVerified: u.emailVerified,
     theme: u.theme ?? 'system',
     language: u.language ?? 'en',

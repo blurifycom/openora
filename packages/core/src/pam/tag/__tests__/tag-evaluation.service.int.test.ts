@@ -117,7 +117,12 @@ async function activeAssignmentRow(playerId: string, tagRow: { id: string }) {
 async function seedUser(overrides: Partial<typeof user.$inferInsert> = {}) {
   const [row] = await db.drizzle.db
     .insert(user)
-    .values({ name: 'Player', email: `${randomUUID()}@example.com`, ...overrides })
+    .values({
+      name: 'Player',
+      username: `u_${randomUUID().replaceAll('-', '').slice(0, 14)}`,
+      email: `${randomUUID()}@example.com`,
+      ...overrides,
+    })
     .returning();
   return row!;
 }

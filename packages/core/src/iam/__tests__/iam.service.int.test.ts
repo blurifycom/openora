@@ -81,7 +81,12 @@ async function seedRole(
 async function seedUser(role: string) {
   const [row] = await db.drizzle.db
     .insert(user)
-    .values({ name: 'U', email: `${randomUUID()}@x.dev`, role })
+    .values({
+      name: 'U',
+      username: `u_${randomUUID().replaceAll('-', '').slice(0, 14)}`,
+      email: `${randomUUID()}@x.dev`,
+      role,
+    })
     .returning();
   return row;
 }

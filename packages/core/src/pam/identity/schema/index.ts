@@ -19,7 +19,7 @@ export const user = pgTable(
   {
     id: uuid().primaryKey().defaultRandom(),
     name: text().notNull(),
-    username: text(),
+    username: text().notNull(),
     email: text().notNull().unique(),
     emailVerified: boolean().notNull().default(false),
     image: text(),
@@ -60,9 +60,7 @@ export const user = pgTable(
   // Trigram GIN index so the back-office player search (`ILIKE '%term%'` on email)
   // is index-backed instead of a seq scan. Requires the pg_trgm extension.
   (t) => [
-    uniqueIndex('user_username_unique')
-      .on(sql`lower(${t.username})`)
-      .where(sql`${t.username} is not null`),
+    uniqueIndex('user_username_unique').on(sql`lower(${t.username})`),
     index('user_email_trgm_idx').using('gin', sql`${t.email} gin_trgm_ops`),
     index('user_created_at_idx').on(t.createdAt),
   ],

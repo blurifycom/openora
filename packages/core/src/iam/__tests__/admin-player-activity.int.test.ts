@@ -14,7 +14,12 @@ const AT = (iso: string) => new Date(iso);
 async function seedUser(createdAt: Date) {
   const [row] = await db.drizzle.db
     .insert(user)
-    .values({ name: 'U', email: `${randomUUID()}@x.dev`, createdAt })
+    .values({
+      name: 'U',
+      username: `u_${randomUUID().replaceAll('-', '').slice(0, 14)}`,
+      email: `${randomUUID()}@x.dev`,
+      createdAt,
+    })
     .returning();
   return row!;
 }

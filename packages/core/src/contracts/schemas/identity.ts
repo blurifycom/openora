@@ -21,7 +21,7 @@ export const UserSchema = z.object({
   id: UuidSchema,
   email: z.email(),
   name: z.string().min(1).max(255),
-  username: UsernameSchema.nullable(),
+  username: UsernameSchema,
   emailVerified: z.boolean(),
   image: z.url().nullable().optional(),
   theme: ThemeSchema,

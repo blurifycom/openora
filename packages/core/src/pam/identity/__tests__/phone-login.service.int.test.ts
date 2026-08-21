@@ -86,6 +86,7 @@ async function seedUser(over: Partial<typeof user.$inferInsert> = {}) {
     .insert(user)
     .values({
       name: 'A',
+      username: `u_${randomUUID().replaceAll('-', '').slice(0, 14)}`,
       email: `${randomUUID()}@b.dev`,
       emailVerified: true,
       phoneNumber: PHONE,

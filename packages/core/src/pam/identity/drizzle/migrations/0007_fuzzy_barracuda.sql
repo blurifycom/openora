@@ -23,7 +23,7 @@ BEGIN
       ) AS base
     FROM "user" AS u
     LEFT JOIN legacy_display_name AS l ON l.user_id = u.id
-    WHERE u.role = 'player' AND u.username IS NULL
+    WHERE u.username IS NULL
   ), sanitized AS (
     SELECT id, CASE WHEN base IS NULL OR length(base) < 3 THEN 'player' ELSE base END AS base
     FROM normalized

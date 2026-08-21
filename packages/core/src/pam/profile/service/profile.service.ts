@@ -48,7 +48,7 @@ export class ProfileService implements PlayerProvisioning {
       })
       .onConflictDoUpdate({ target: player.userId, set: { userId } })
       .returning();
-    return toPlayer(created, u?.email ?? '', u?.username ?? null);
+    return toPlayer(created, u?.email ?? '', u?.username ?? '');
   }
 
   async getMyProfile(userId: User['id']) {

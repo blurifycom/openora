@@ -112,7 +112,13 @@ const EMAIL = 'a@b.dev';
 async function seedUser(over: Partial<typeof user.$inferInsert> = {}) {
   const [row] = await db.drizzle.db
     .insert(user)
-    .values({ name: 'A', email: EMAIL, emailVerified: true, ...over })
+    .values({
+      name: 'A',
+      username: `u_${randomUUID().replaceAll('-', '').slice(0, 14)}`,
+      email: EMAIL,
+      emailVerified: true,
+      ...over,
+    })
     .returning();
   return row;
 }

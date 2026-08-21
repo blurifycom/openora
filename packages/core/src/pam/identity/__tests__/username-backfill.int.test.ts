@@ -20,9 +20,13 @@ let db: TestDb;
 
 async function seedLegacy(displayName: string | null, name = 'Fallback Name') {
   const userId = randomUUID();
-  await db.drizzle.db
-    .insert(user)
-    .values({ id: userId, name, email: `${userId}@legacy.test`, role: 'player' });
+  await db.drizzle.db.insert(user).values({
+    id: userId,
+    name,
+    username: `seed_${userId.replaceAll('-', '').slice(0, 13)}`,
+    email: `${userId}@legacy.test`,
+    role: 'player',
+  });
   if (displayName !== null) {
     await db.drizzle.db.insert(player).values({ userId, displayName });
   }
@@ -31,8 +35,10 @@ async function seedLegacy(displayName: string | null, name = 'Fallback Name') {
 
 /** Re-runs the backfill against rows that look like they predate the username column. */
 async function runBackfill() {
+  await db.drizzle.db.execute(sql`ALTER TABLE "user" ALTER COLUMN username DROP NOT NULL`);
   await db.drizzle.db.execute(sql`UPDATE "user" SET username = NULL`);
   await db.drizzle.db.execute(sql.raw(BACKFILL_SQL));
+  await db.drizzle.db.execute(sql`ALTER TABLE "user" ALTER COLUMN username SET NOT NULL`);
   const rows = await db.drizzle.db.select({ id: user.id, username: user.username }).from(user);
   return new Map(rows.map((r) => [r.id, r.username]));
 }
@@ -91,13 +97,17 @@ describe('0007 username backfill', () => {
     }
   });
 
-  it('leaves non-player accounts without a username', async () => {
+  it('gives non-player accounts a username too, so the column can be NOT NULL', async () => {
     const userId = randomUUID();
-    await db.drizzle.db
-      .insert(user)
-      .values({ id: userId, name: 'Admin', email: `${userId}@legacy.test`, role: 'admin' });
+    await db.drizzle.db.insert(user).values({
+      id: userId,
+      name: 'Admin',
+      username: `seed_${userId.replaceAll('-', '').slice(0, 13)}`,
+      email: `${userId}@legacy.test`,
+      role: 'admin',
+    });
 
-    expect((await runBackfill()).get(userId)).toBeNull();
+    expect((await runBackfill()).get(userId)).toBe('admin');
   });
 
   it('satisfies the unique index it runs before', async () => {

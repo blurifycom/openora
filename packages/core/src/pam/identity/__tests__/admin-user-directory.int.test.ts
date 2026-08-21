@@ -25,6 +25,7 @@ async function seedUser(overrides: Partial<typeof user.$inferInsert> = {}) {
     .insert(user)
     .values({
       name: 'Alice',
+      username: `u_${randomUUID().replaceAll('-', '').slice(0, 14)}`,
       email: `${randomUUID()}@example.com`,
       emailVerified: true,
       ...overrides,

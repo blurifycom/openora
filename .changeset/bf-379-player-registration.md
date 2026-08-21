@@ -16,7 +16,9 @@ player address needs the verified identity email-change flow.
 
 **Breaking:** `PlayerSchema.displayName` is replaced by `username`, including the
 `player.list` sort key and the social `FriendListEntry` / `FriendRequestEntry`
-payloads.
+payloads. `user.username` is `NOT NULL` and globally unique (case-insensitive), so
+every account carries a public handle and no code path can substitute an empty
+string for a missing one. Any caller creating users directly must supply one.
 
 Registration no longer creates a session, prevents email enumeration, and records
 terms/age consent plus registration IP and user agent on the `player` row through

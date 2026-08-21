@@ -151,7 +151,6 @@ export class DrizzleAdminUserDirectory implements AdminUserDirectory {
       const kyc = KycStatusSchema.safeParse(r.kycStatus);
       return {
         ...r,
-        username: r.username ?? '',
         kycStatus: kyc.success ? normalizeKycStatus(kyc.data) : null,
       };
     });
@@ -184,7 +183,6 @@ export class DrizzleAdminUserDirectory implements AdminUserDirectory {
     const kyc = KycStatusSchema.safeParse(row.kycStatus);
     return {
       ...row,
-      username: row.username ?? '',
       kycStatus: kyc.success ? normalizeKycStatus(kyc.data) : null,
     };
   }

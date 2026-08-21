@@ -161,7 +161,7 @@ export class PlayerService implements PlayerActivityTracker {
         .where(whereClause),
     ]);
     const items = rows.map((r) => ({
-      ...toPlayer(r.player, r.email ?? '', r.username),
+      ...toPlayer(r.player, r.email ?? '', r.username ?? ''),
       tags: r.tags as TagKey[],
     }));
     return { items, total: Number(n), page, limit };
@@ -188,7 +188,10 @@ export class PlayerService implements PlayerActivityTracker {
         .where(eq(player.id, playerId)),
       new PlayerNotFoundError(playerId),
     );
-    return { ...toPlayer(row.player, row.email ?? '', row.username), tags: row.tags as TagKey[] };
+    return {
+      ...toPlayer(row.player, row.email ?? '', row.username ?? ''),
+      tags: row.tags as TagKey[],
+    };
   }
 
   async get(playerId: Player['id']) {
@@ -204,7 +207,7 @@ export class PlayerService implements PlayerActivityTracker {
       .select({ email: user.email, username: user.username })
       .from(user)
       .where(eq(user.id, record.userId));
-    return toPlayer(record, identity?.email ?? '', identity?.username ?? null);
+    return toPlayer(record, identity?.email ?? '', identity?.username ?? '');
   }
 
   async getExtended(playerId: Player['id']) {

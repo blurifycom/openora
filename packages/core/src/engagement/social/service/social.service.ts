@@ -172,7 +172,7 @@ export class SocialService {
         friendshipId: inserted.id,
         requesterId: inserted.requesterId,
         addresseeId: inserted.addresseeId,
-        requesterUsername: callerPlayer.username ?? '',
+        requesterUsername: callerPlayer.username,
       });
       return toFriendshipDto(inserted);
     }
@@ -183,7 +183,7 @@ export class SocialService {
       requesterId: accepted.requesterId,
       addresseeId: accepted.addresseeId,
       accepterId: callerId,
-      accepterUsername: callerPlayer.username ?? '',
+      accepterUsername: callerPlayer.username,
     });
     return toFriendshipDto(accepted);
   }
@@ -460,7 +460,7 @@ export class SocialService {
           {
             userId,
             friendshipId: row.id,
-            username: targetPlayer.username ?? '',
+            username: targetPlayer.username,
             status: isOnline ? ('online' as const) : ('offline' as const),
             lastSeenAt: targetPlayer.lastSeenAt,
             isIgnored: ignoredIds.has(userId),
@@ -534,7 +534,7 @@ export class SocialService {
       requesterId: updated.requesterId,
       addresseeId: updated.addresseeId,
       accepterId: callerId,
-      accepterUsername: callerPlayer.username ?? '',
+      accepterUsername: callerPlayer.username,
     });
     return toFriendshipDto(updated);
   }
@@ -691,7 +691,7 @@ export class SocialService {
           {
             friendshipId: row.id,
             userId: counterpartId,
-            username: counterpartPlayer.username ?? '',
+            username: counterpartPlayer.username,
             direction,
             createdAt: row.createdAt,
             mutualFriendsCount:
