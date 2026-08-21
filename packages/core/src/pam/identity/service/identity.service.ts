@@ -427,13 +427,15 @@ export class IdentityService {
       .where(eq(user.email, input.email.toLowerCase()))
       .limit(1);
     if (stored?.id === body.user.id) {
-      await this.recordRegistrationConsent(provisioning, body.user.id, registration.termsVersion, {
-        ip,
-        userAgent,
-      });
+      const { playerId } = await this.recordRegistrationConsent(
+        provisioning,
+        body.user.id,
+        registration.termsVersion,
+        { ip, userAgent },
+      );
       this.events.emit('identity.user.registered', {
         userId: body.user.id,
-        playerId: await this.identityReader.getPlayerIdByUserIdSafe(body.user.id),
+        playerId: playerId ?? (await this.identityReader.getPlayerIdByUserIdSafe(body.user.id)),
         ip,
         userAgent,
       });
@@ -454,7 +456,7 @@ export class IdentityService {
     { ip, userAgent }: ClientMeta,
   ) {
     const now = new Date();
-    let outcome: { created: boolean };
+    let outcome: { created: boolean; playerId?: string };
     try {
       outcome = await provisioning.createForRegistration({
         userId,
@@ -480,6 +482,7 @@ export class IdentityService {
         'registration consent not stored - player row already existed',
       );
     }
+    return { playerId: outcome.playerId ?? null };
   }
 
   async usernameAvailable(username: string, reqHeaders: NodeHeaders) {

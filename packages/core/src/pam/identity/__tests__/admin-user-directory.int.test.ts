@@ -34,12 +34,15 @@ async function seedUser(overrides: Partial<typeof user.$inferInsert> = {}) {
   return row!;
 }
 
-async function seedPlayer(userId: string, overrides: Partial<typeof player.$inferInsert> = {}) {
-  const username = (overrides.displayName ?? 'alice').toLowerCase();
+async function seedPlayer(
+  userId: string,
+  overrides: Partial<typeof player.$inferInsert> & { username?: string } = {},
+) {
+  const { username = 'alice', ...playerOverrides } = overrides;
   await db.drizzle.db.update(user).set({ username }).where(eq(user.id, userId));
   const [row] = await db.drizzle.db
     .insert(player)
-    .values({ userId, displayName: 'alice', ...overrides })
+    .values({ userId, ...playerOverrides })
     .returning();
   return row!;
 }
@@ -179,7 +182,7 @@ describe('DrizzleAdminUserDirectory.lookupPlayers (real PG)', () => {
     const { dir } = makeDirectory();
     const account = await seedUser({ email: 'alice@example.com' });
     const seededPlayer = await seedPlayer(account.id, {
-      displayName: 'alice',
+      username: 'alice',
       kycStatus: 'verified',
     });
 
@@ -213,7 +216,7 @@ describe('DrizzleAdminUserDirectory.getPlayerByUsername (real PG)', () => {
   it('returns an exact case-insensitive match', async () => {
     const { dir } = makeDirectory();
     const account = await seedUser({ email: 'anna@example.com' });
-    const seededPlayer = await seedPlayer(account.id, { displayName: 'AnnaBell' });
+    const seededPlayer = await seedPlayer(account.id, { username: 'annabell' });
 
     const summary = await dir.getPlayerByUsername('annabell');
 
@@ -235,7 +238,7 @@ describe('DrizzleAdminUserDirectory.getPlayerByUsername (real PG)', () => {
   it('does not substring-match, unlike findPlayerIds', async () => {
     const { dir } = makeDirectory();
     const account = await seedUser({ email: 'annabell@example.com' });
-    await seedPlayer(account.id, { displayName: 'AnnaBell' });
+    await seedPlayer(account.id, { username: 'annabell' });
 
     expect(await dir.getPlayerByUsername('Anna')).toBeNull();
     expect(await dir.findPlayerIds('Anna')).toEqual([account.id]);
@@ -247,9 +250,9 @@ describe('DrizzleAdminUserDirectory.findPlayerIds (real PG)', () => {
     const { dir } = makeDirectory();
     const byEmailOnly = await seedUser({ email: 'anna@example.com' });
     const byBoth = await seedUser({ email: 'anton@example.com' });
-    await seedPlayer(byBoth.id, { displayName: 'anton' });
+    await seedPlayer(byBoth.id, { username: 'anton' });
     const byNameOnly = await seedUser({ email: 'zoe@example.com' });
-    await seedPlayer(byNameOnly.id, { displayName: 'annabel' });
+    await seedPlayer(byNameOnly.id, { username: 'annabel' });
 
     const ids = await dir.findPlayerIds('an');
 
@@ -266,7 +269,7 @@ describe('DrizzleAdminUserDirectory.findPlayerIds (real PG)', () => {
   it('matches an exact playerId', async () => {
     const { dir } = makeDirectory();
     const account = await seedUser({ email: 'carlos@example.com' });
-    const seededPlayer = await seedPlayer(account.id, { displayName: 'carlos' });
+    const seededPlayer = await seedPlayer(account.id, { username: 'carlos' });
 
     expect(await dir.findPlayerIds(seededPlayer.id)).toEqual([account.id]);
   });
@@ -274,7 +277,7 @@ describe('DrizzleAdminUserDirectory.findPlayerIds (real PG)', () => {
   it('matches an exact identity userId', async () => {
     const { dir } = makeDirectory();
     const account = await seedUser({ email: 'dana@example.com' });
-    await seedPlayer(account.id, { displayName: 'dana' });
+    await seedPlayer(account.id, { username: 'dana' });
 
     expect(await dir.findPlayerIds(account.id)).toEqual([account.id]);
   });
@@ -282,7 +285,7 @@ describe('DrizzleAdminUserDirectory.findPlayerIds (real PG)', () => {
   it('does not substring-match a playerId, unlike email/displayName', async () => {
     const { dir } = makeDirectory();
     const account = await seedUser({ email: 'erin@example.com' });
-    const seededPlayer = await seedPlayer(account.id, { displayName: 'erin' });
+    const seededPlayer = await seedPlayer(account.id, { username: 'erin' });
 
     expect(await dir.findPlayerIds(seededPlayer.id.slice(0, 8))).toEqual([]);
   });

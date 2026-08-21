@@ -445,7 +445,7 @@ export class SocialService {
       if (!targetPlayer) {
         logger.error(
           { friendshipId: row.id, userId },
-          'listFriends: player row missing for friend',
+          'listFriends: no player+user pair for friend',
         );
         return [];
       }
@@ -676,7 +676,7 @@ export class SocialService {
       if (!counterpartPlayer) {
         logger.error(
           { friendshipId: row.id, counterpartId },
-          'listFriendRequests: player row missing for counterpart',
+          'listFriendRequests: no player+user pair for counterpart',
         );
         return [];
       }

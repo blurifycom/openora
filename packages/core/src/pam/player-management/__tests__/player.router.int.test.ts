@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeAll, afterAll, beforeEach, vi } from 'vitest';
 import { randomUUID } from 'node:crypto';
-import { sql } from 'drizzle-orm';
+import { eq, sql } from 'drizzle-orm';
 import { call } from '@orpc/server';
 import type { AdminGuard } from '@openora/core/server';
 import { createTestDb, type TestDb } from '@openora/core/testing';
@@ -15,6 +15,7 @@ import type {
   AdminGameReporting,
   ChatBlockWriter,
   SessionCommands,
+  UserCommands,
 } from '@openora/core/contracts';
 import {
   mock,
@@ -63,6 +64,14 @@ function build(
     overrides.gameReporting ?? mock<AdminGameReporting>({}),
     overrides.blockWriter ?? mock<ChatBlockWriter>({}),
     mock<SessionCommands>({ revokeAll: vi.fn().mockResolvedValue({ success: true }) }),
+    mock<UserCommands>({
+      setUsername: vi.fn(async (userId: string, username: string) => {
+        // Stands in for identity's USER_COMMANDS so the round-trip through the
+        // enriched read still holds; the real port is covered in its own module.
+        await db.drizzle.db.update(user).set({ username }).where(eq(user.id, userId));
+        return { success: true };
+      }),
+    }),
   );
   const audit = makeAuditWriter();
   return { router: createPlayerRouter(service, adminGuard, audit), audit };
@@ -77,10 +86,7 @@ async function seedPlayer() {
       email: `${randomUUID()}@example.com`,
     })
     .returning();
-  const [row] = await db.drizzle.db
-    .insert(player)
-    .values({ userId: account!.id, displayName: 'Player' })
-    .returning();
+  const [row] = await db.drizzle.db.insert(player).values({ userId: account!.id }).returning();
   return row!;
 }
 

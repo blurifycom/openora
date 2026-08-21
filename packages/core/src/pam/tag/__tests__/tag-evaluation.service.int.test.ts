@@ -130,7 +130,7 @@ async function seedUser(overrides: Partial<typeof user.$inferInsert> = {}) {
 async function seedPlayer(userId: string, overrides: Partial<typeof player.$inferInsert> = {}) {
   const [row] = await db.drizzle.db
     .insert(player)
-    .values({ userId, displayName: 'Player', ...overrides })
+    .values({ userId, ...overrides })
     .returning();
   return row!;
 }

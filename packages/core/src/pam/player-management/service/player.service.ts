@@ -1,6 +1,5 @@
 import {
   makeNotFoundError,
-  makeConflictError,
   DrizzleService,
   findOneOrThrow,
   pageToOffset,
@@ -19,10 +18,10 @@ import {
   type AdminGameReporting,
   type ChatBlockWriter,
   type SessionCommands,
+  type UserCommands,
   type PlayerActivityTracker,
 } from '@openora/core/contracts';
 import { eq, ilike, count, or, and, gte, asc, desc, sql, inArray, isNull, lt } from 'drizzle-orm';
-import { DatabaseError } from 'pg';
 import { player } from '@openora/core/pam/schema/profile';
 import { user } from '@openora/core/pam/schema/identity';
 import { playerTag, tag } from '@openora/core/pam/schema/tag';
@@ -30,22 +29,7 @@ import { toPlayer } from '../../shared/player-mapper.js';
 import type { PlayerSearchResult, PlayerProfileCard } from '../contract/index.js';
 
 export const PlayerNotFoundError = makeNotFoundError('Player');
-export const DuplicateUsernameError = makeConflictError(
-  'DuplicateUsername',
-  'Username is already in use',
-);
-
 const BLOCKING_PLAYER_STATUSES = new Set<PlayerStatus>(['suspended', 'closed']);
-
-function hasUsernameConstraint(error: unknown): boolean {
-  if (error instanceof DatabaseError) {
-    return error.code === '23505' && error.constraint === 'user_username_unique';
-  }
-  if (error instanceof Error && error.cause instanceof DatabaseError) {
-    return error.cause.code === '23505' && error.cause.constraint === 'user_username_unique';
-  }
-  return false;
-}
 
 function toDateKey(d: Date): string {
   return d.toISOString().slice(0, 10);
@@ -59,6 +43,7 @@ export class PlayerService implements PlayerActivityTracker {
     private readonly gameReporting: AdminGameReporting,
     private readonly blockWriter: ChatBlockWriter,
     private readonly sessionCommands: SessionCommands,
+    private readonly userCommands: UserCommands,
   ) {}
 
   async list({
@@ -232,28 +217,20 @@ export class PlayerService implements PlayerActivityTracker {
       patch.level = data.level;
     }
 
-    try {
-      await this.drizzle.db.transaction(async (trx) => {
-        if (data.username !== undefined) {
-          await trx
-            .update(user)
-            .set({ username: data.username })
-            .where(eq(user.id, existing.userId));
-        }
-        if (Object.keys(patch).length > 0) {
-          await trx.update(player).set(patch).where(eq(player.id, playerId));
-        }
-        findOneOrThrow(
-          await trx.select().from(player).where(eq(player.id, playerId)),
-          new PlayerNotFoundError(playerId),
-        );
-      });
-    } catch (error) {
-      if (hasUsernameConstraint(error)) {
-        throw new DuplicateUsernameError();
-      }
-      throw error;
+    // The username lives on identity's table, so it is written through USER_COMMANDS
+    // rather than joined into this transaction - identity keeps its own invariants.
+    if (data.username !== undefined) {
+      await this.userCommands.setUsername(existing.userId, data.username);
     }
+    await this.drizzle.db.transaction(async (trx) => {
+      if (Object.keys(patch).length > 0) {
+        await trx.update(player).set(patch).where(eq(player.id, playerId));
+      }
+      findOneOrThrow(
+        await trx.select().from(player).where(eq(player.id, playerId)),
+        new PlayerNotFoundError(playerId),
+      );
+    });
 
     // Emitted AFTER commit (not inside the transaction callback, unlike the
     // KYC_STATUS_WRITER emit above) - a level change is a best-effort fan-out, not a

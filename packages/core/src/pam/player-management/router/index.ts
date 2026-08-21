@@ -2,11 +2,7 @@ import { implement } from '@orpc/server';
 import { AdminGuard, mapErrors, getUserId, type OssContext } from '@openora/core/server';
 import type { AuditWritePort } from '@openora/core/contracts';
 import { playerContract } from '../contract/index.js';
-import {
-  DuplicateUsernameError,
-  PlayerService,
-  PlayerNotFoundError,
-} from '../service/player.service.js';
+import { PlayerService, PlayerNotFoundError } from '../service/player.service.js';
 
 export function createPlayerRouter(
   player: PlayerService,
@@ -33,48 +29,45 @@ export function createPlayerRouter(
 
     update: os.update.handler(async ({ input, context }) => {
       const { userId: adminId } = await adminGuard.assert(context, 'player', 'update');
-      return mapErrors(
-        { NOT_FOUND: PlayerNotFoundError, CONFLICT: DuplicateUsernameError },
-        async () => {
-          const before = await player.get(input.playerId);
-          const updated = await player.update(
-            input.playerId,
-            {
-              username: input.username,
-              status: input.status,
-              level: input.level,
-            },
-            adminId,
-          );
-          if (input.username !== undefined && input.username !== before.username) {
-            await audit.record({
-              actorId: adminId,
-              actorType: 'admin',
-              action: 'admin.player.username_corrected',
-              resourceType: 'player',
-              resourceId: input.playerId,
-              before: { username: before.username },
-              after: { username: updated.username },
-            });
-          }
+      return mapErrors({ NOT_FOUND: PlayerNotFoundError }, async () => {
+        const before = await player.get(input.playerId);
+        const updated = await player.update(
+          input.playerId,
+          {
+            username: input.username,
+            status: input.status,
+            level: input.level,
+          },
+          adminId,
+        );
+        if (input.username !== undefined && input.username !== before.username) {
           await audit.record({
             actorId: adminId,
             actorType: 'admin',
-            action: 'admin.player.updated',
+            action: 'admin.player.username_corrected',
             resourceType: 'player',
             resourceId: input.playerId,
-            before: {
-              status: before.status,
-              level: before.level,
-            },
-            after: {
-              status: updated.status,
-              level: updated.level,
-            },
+            before: { username: before.username },
+            after: { username: updated.username },
           });
-          return updated;
-        },
-      );
+        }
+        await audit.record({
+          actorId: adminId,
+          actorType: 'admin',
+          action: 'admin.player.updated',
+          resourceType: 'player',
+          resourceId: input.playerId,
+          before: {
+            status: before.status,
+            level: before.level,
+          },
+          after: {
+            status: updated.status,
+            level: updated.level,
+          },
+        });
+        return updated;
+      });
     }),
 
     remove: os.remove.handler(async ({ input, context }) => {

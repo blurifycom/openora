@@ -7,6 +7,7 @@ import type {
   AdminGameReporting,
   ChatBlockWriter,
   SessionCommands,
+  UserCommands,
 } from '@openora/core/contracts';
 import { createTestDb, type TestDb } from '@openora/core/testing';
 import { user } from '@openora/core/pam/schema/identity';
@@ -16,11 +17,7 @@ import { migrate as migrateProfile } from '@openora/core/pam/migrate/profile';
 import { tag, playerTag } from '@openora/core/pam/schema/tag';
 import { migrate as migrateTag } from '@openora/core/pam/migrate/tag';
 import { mock, makeEventBus } from '../../../testing/mock.js';
-import {
-  PlayerService,
-  PlayerNotFoundError,
-  DuplicateUsernameError,
-} from '../service/player.service.js';
+import { PlayerService, PlayerNotFoundError } from '../service/player.service.js';
 
 let db: TestDb;
 
@@ -30,6 +27,7 @@ function makeService(
     gameReporting?: AdminGameReporting;
     blockWriter?: ChatBlockWriter;
     sessionCommands?: SessionCommands;
+    userCommands?: UserCommands;
   } = {},
 ) {
   const events = makeEventBus();
@@ -39,7 +37,18 @@ function makeService(
   const sessionCommands =
     overrides.sessionCommands ??
     mock<SessionCommands>({ revokeAll: vi.fn().mockResolvedValue({ success: true }) });
+  const userCommands =
+    overrides.userCommands ??
+    mock<UserCommands>({
+      setUsername: vi.fn(async (userId: string, username: string) => {
+        // Stands in for identity's USER_COMMANDS so the round-trip through the
+        // enriched read still holds; the real port is covered in its own module.
+        await db.drizzle.db.update(user).set({ username }).where(eq(user.id, userId));
+        return { success: true };
+      }),
+    });
   return {
+    userCommands,
     svc: new PlayerService(
       db.drizzle,
       events,
@@ -47,6 +56,7 @@ function makeService(
       gameReporting,
       blockWriter,
       sessionCommands,
+      userCommands,
     ),
     events,
     sessionCommands,
@@ -123,7 +133,7 @@ async function seedUser(overrides: Partial<typeof user.$inferInsert> = {}) {
 async function seedPlayer(userId: string, overrides: Partial<typeof player.$inferInsert> = {}) {
   const [row] = await db.drizzle.db
     .insert(player)
-    .values({ userId, displayName: 'Player', ...overrides })
+    .values({ userId, ...overrides })
     .returning();
   return row!;
 }
@@ -404,14 +414,13 @@ describe('PlayerService.update (real PG)', () => {
     expect(await rowById(seeded.id)).toMatchObject({ level: 5 });
   });
 
-  it('maps only the username unique constraint to DuplicateUsernameError', async () => {
-    const { svc } = makeService();
-    await seedUser({ username: 'taken_name' });
+  it('delegates a username change to identity rather than writing the user table', async () => {
+    const { svc, userCommands } = makeService();
     const { player: seeded, account } = await seedPlayerWithUser();
 
-    await expect(
-      svc.update(seeded.id, { username: 'taken_name' }, account.id),
-    ).rejects.toBeInstanceOf(DuplicateUsernameError);
+    await svc.update(seeded.id, { username: 'renamed_here' }, account.id);
+
+    expect(userCommands.setUsername).toHaveBeenCalledWith(seeded.userId, 'renamed_here');
   });
 
   it('throws PlayerNotFoundError for an unknown id', async () => {

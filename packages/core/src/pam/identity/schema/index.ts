@@ -62,6 +62,7 @@ export const user = pgTable(
   (t) => [
     uniqueIndex('user_username_unique').on(sql`lower(${t.username})`),
     index('user_email_trgm_idx').using('gin', sql`${t.email} gin_trgm_ops`),
+    index('user_username_trgm_idx').using('gin', sql`${t.username} gin_trgm_ops`),
     index('user_created_at_idx').on(t.createdAt),
   ],
 );

@@ -18,7 +18,7 @@ const BACKFILL_SQL = readFileSync(
 
 let db: TestDb;
 
-async function seedLegacy(displayName: string | null, name = 'Fallback Name') {
+async function seedLegacy(legacyName: string | null, name = 'Fallback Name') {
   const userId = randomUUID();
   await db.drizzle.db.insert(user).values({
     id: userId,
@@ -27,13 +27,19 @@ async function seedLegacy(displayName: string | null, name = 'Fallback Name') {
     email: `${userId}@legacy.test`,
     role: 'player',
   });
-  if (displayName !== null) {
-    await db.drizzle.db.insert(player).values({ userId, displayName });
+  if (legacyName !== null) {
+    await db.drizzle.db.insert(player).values({ userId });
+    await db.drizzle.db.execute(
+      sql`UPDATE player SET display_name = ${legacyName} WHERE user_id = ${userId}`,
+    );
   }
   return userId;
 }
 
-/** Re-runs the backfill against rows that look like they predate the username column. */
+/**
+ * Rewinds to the shape an existing installation has when 0007 runs: no usernames, and
+ * `player.display_name` still present (profile drops it in a later migration).
+ */
 async function runBackfill() {
   await db.drizzle.db.execute(sql`ALTER TABLE "user" ALTER COLUMN username DROP NOT NULL`);
   await db.drizzle.db.execute(sql`UPDATE "user" SET username = NULL`);
@@ -53,6 +59,7 @@ afterAll(async () => {
 
 beforeEach(async () => {
   await db.drizzle.db.execute(sql`TRUNCATE ${player}, ${user} RESTART IDENTITY CASCADE`);
+  await db.drizzle.db.execute(sql`ALTER TABLE player ADD COLUMN IF NOT EXISTS display_name text`);
 });
 
 describe('0007 username backfill', () => {

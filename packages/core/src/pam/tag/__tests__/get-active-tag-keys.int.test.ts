@@ -24,10 +24,7 @@ async function tagIdFor(key: TagKey) {
 
 async function seedPlayerWithTags(activeKeys: TagKey[], removedKeys: TagKey[] = []) {
   const userId = randomUUID();
-  const [playerRow] = await db.drizzle.db
-    .insert(player)
-    .values({ userId, displayName: 'Player' })
-    .returning();
+  const [playerRow] = await db.drizzle.db.insert(player).values({ userId }).returning();
   for (const key of [...activeKeys, ...removedKeys]) {
     await db.drizzle.db.insert(playerTag).values({
       playerId: playerRow!.id,

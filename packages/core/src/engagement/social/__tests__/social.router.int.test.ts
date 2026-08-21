@@ -122,8 +122,8 @@ describe('social router authz', () => {
 describe('social router listFriendRequests / accept / decline / cancel', () => {
   it('lists an incoming pending request and accepts it, removing it from the requests tab', async () => {
     const { router } = build();
-    const requester = await seedPlayer({ displayName: 'Alice' });
-    const addressee = await seedPlayer({ displayName: 'Bob' });
+    const requester = await seedPlayer({ username: 'alice' });
+    const addressee = await seedPlayer({ username: 'bob' });
     const sent = await call(
       router.sendFriendRequest,
       { targetUserId: addressee.userId },
@@ -259,8 +259,8 @@ describe('social router listFriendRequests / accept / decline / cancel', () => {
 describe('social router listFriends', () => {
   it('returns the accepted, non-removed friends for the caller', async () => {
     const { router } = build();
-    const caller = await seedPlayer({ displayName: 'Caller' });
-    const friend = await seedPlayer({ displayName: 'Friend' });
+    const caller = await seedPlayer({ username: 'caller' });
+    const friend = await seedPlayer({ username: 'friend' });
     await call(
       router.sendFriendRequest,
       { targetUserId: friend.userId },
@@ -327,8 +327,8 @@ describe('social router removeFriend', () => {
 describe('social router sendFriendRequest', () => {
   it('sends a pending friend request for an authenticated caller', async () => {
     const { router } = build();
-    const requester = await seedPlayer({ displayName: 'Alice' });
-    const target = await seedPlayer({ displayName: 'Bob' });
+    const requester = await seedPlayer({ username: 'alice' });
+    const target = await seedPlayer({ username: 'bob' });
 
     const result = await call(
       router.sendFriendRequest,

@@ -53,6 +53,7 @@ export type {
 } from './tag-evaluation-commands.js';
 export { TAG_EVALUATION_COMMANDS } from './tag-evaluation-commands.js';
 
+export type { UserCommands } from './identity.js';
 export type { IdentityReader } from './identity-reader.js';
 export { IDENTITY_READER } from './identity-reader.js';
 
@@ -211,7 +212,7 @@ export type {
   IdentityLockoutOptions,
   SessionCommands,
 } from './identity.js';
-export { IDENTITY_OPTIONS, SESSION_COMMANDS } from './identity.js';
+export { IDENTITY_OPTIONS, SESSION_COMMANDS, USER_COMMANDS } from './identity.js';
 
 export type { LoginEnforcementPort } from './login-enforcement.js';
 export { LOGIN_ENFORCEMENT } from './login-enforcement.js';

@@ -539,7 +539,7 @@ describe('IdentityService - RG login gate (real PG)', () => {
 describe('IdentityService - player-status login gate (real PG)', () => {
   async function seedBlockedPlayer(status: 'suspended' | 'closed') {
     const account = await seedUser();
-    await db.drizzle.db.insert(player).values({ userId: account.id, displayName: 'x', status });
+    await db.drizzle.db.insert(player).values({ userId: account.id, status });
     const live = new Date(Date.now() + 24 * 60 * 60 * 1000);
     await db.drizzle.db
       .insert(session)
@@ -577,9 +577,7 @@ describe('IdentityService - player-status login gate (real PG)', () => {
 
   it('allows login for an active player (no regression)', async () => {
     const account = await seedUser();
-    await db.drizzle.db
-      .insert(player)
-      .values({ userId: account.id, displayName: 'x', status: 'active' });
+    await db.drizzle.db.insert(player).values({ userId: account.id, status: 'active' });
     const events = makeEventBus();
     signInEmailMock.mockResolvedValue(signInSuccess(account.id));
     const svc = buildService({ events });

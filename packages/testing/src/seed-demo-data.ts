@@ -513,7 +513,6 @@ export async function seedDemoData(options: SeedOptions): Promise<SeedResult> {
 
     await db.insert(player).values({
       userId: playerUser.id,
-      displayName,
       country,
       currency,
       status,

@@ -32,3 +32,8 @@ caller already had a session, so the ordinary click-the-link flow left no audit
 trail. Both now resolve the subject from the accepted token.
 Legacy player names are backfilled by the identity migration; the first holder of a
 name keeps it and later holders get a handle suffixed with their user id.
+
+`player.display_name` is dropped: `username` is the public identity, and nothing read
+the column back any more. Its trigram index moves to `user.username`, which is what
+the back-office search now filters on. Sibling modules write identity-owned columns
+through the new `USER_COMMANDS` port instead of updating the `user` table directly.

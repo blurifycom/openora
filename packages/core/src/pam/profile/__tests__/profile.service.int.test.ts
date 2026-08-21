@@ -30,7 +30,7 @@ async function seedUser(overrides: Partial<typeof user.$inferInsert> = {}) {
 async function seedPlayer(userId: string, overrides: Partial<typeof player.$inferInsert> = {}) {
   const [row] = await db.drizzle.db
     .insert(player)
-    .values({ userId, displayName: 'Player One', ...overrides })
+    .values({ userId, ...overrides })
     .returning();
   return row!;
 }
@@ -69,7 +69,7 @@ describe('ProfileService.getMyProfile (real PG)', () => {
   it('returns the existing row without inserting a second one on a later call', async () => {
     const svc = makeService();
     const account = await seedUser();
-    await seedPlayer(account.id, { displayName: 'Existing', country: 'US' });
+    await seedPlayer(account.id, { country: 'US' });
 
     const profile = await svc.getMyProfile(account.id);
 

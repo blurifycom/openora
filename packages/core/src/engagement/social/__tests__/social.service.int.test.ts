@@ -78,8 +78,8 @@ beforeEach(async () => {
 describe('SocialService.sendFriendRequest (real PG)', () => {
   it('inserts a pending row and emits social.friend_request.sent', async () => {
     const { svc, events } = makeService();
-    const requester = await seedPlayer({ displayName: 'Alice' });
-    const addressee = await seedPlayer({ displayName: 'Bob' });
+    const requester = await seedPlayer({ username: 'alice' });
+    const addressee = await seedPlayer({ username: 'bob' });
 
     const result = await svc.sendFriendRequest(requester.userId, addressee.userId);
 
@@ -185,8 +185,8 @@ describe('SocialService.sendFriendRequest (real PG)', () => {
 
   it('auto-accepts a mutual/simultaneous request, updates the SAME row, and emits social.friend_request.accepted', async () => {
     const { svc, events } = makeService();
-    const alice = await seedPlayer({ displayName: 'Alice' });
-    const bob = await seedPlayer({ displayName: 'Bob' });
+    const alice = await seedPlayer({ username: 'alice' });
+    const bob = await seedPlayer({ username: 'bob' });
     const first = await svc.sendFriendRequest(alice.userId, bob.userId);
     events.emit.mockClear();
 
@@ -530,13 +530,13 @@ describe('SocialService.dissolveFriendshipOnBlock (real PG)', () => {
 describe('SocialService.listFriends (real PG)', () => {
   it('returns only accepted, non-removed friendships involving the caller', async () => {
     const { svc } = makeService();
-    const caller = await seedPlayer({ displayName: 'Caller' });
-    const friend = await seedPlayer({ displayName: 'Friend' });
-    const pending = await seedPlayer({ displayName: 'Pending' });
-    const refusedPlayer = await seedPlayer({ displayName: 'Refused' });
-    const removedFriend = await seedPlayer({ displayName: 'Removed' });
-    const strangerA = await seedPlayer({ displayName: 'StrangerA' });
-    const strangerB = await seedPlayer({ displayName: 'StrangerB' });
+    const caller = await seedPlayer({ username: 'caller' });
+    const friend = await seedPlayer({ username: 'friend' });
+    const pending = await seedPlayer({ username: 'pending' });
+    const refusedPlayer = await seedPlayer({ username: 'refused' });
+    const removedFriend = await seedPlayer({ username: 'removed' });
+    const strangerA = await seedPlayer({ username: 'strangera' });
+    const strangerB = await seedPlayer({ username: 'strangerb' });
 
     await makeFriends(svc, caller.userId, friend.userId);
     await svc.sendFriendRequest(caller.userId, pending.userId);
@@ -564,9 +564,9 @@ describe('SocialService.listFriends (real PG)', () => {
 
   it("derives isIgnored from the CALLER's own ignore state, not the friend's", async () => {
     const { svc } = makeService();
-    const caller = await seedPlayer({ displayName: 'Caller' });
-    const ignoredFriend = await seedPlayer({ displayName: 'IgnoredFriend' });
-    const plainFriend = await seedPlayer({ displayName: 'PlainFriend' });
+    const caller = await seedPlayer({ username: 'caller' });
+    const ignoredFriend = await seedPlayer({ username: 'ignoredfriend' });
+    const plainFriend = await seedPlayer({ username: 'plainfriend' });
     await makeFriends(svc, caller.userId, ignoredFriend.userId);
     await makeFriends(svc, caller.userId, plainFriend.userId);
     await seedIgnore(caller.userId, ignoredFriend.userId);
@@ -601,7 +601,7 @@ describe('SocialService.listFriends (real PG)', () => {
     const { svc } = makeService();
     const caller = await seedPlayer();
     for (let i = 0; i < 3; i++) {
-      const friend = await seedPlayer({ displayName: `Friend${i}` });
+      const friend = await seedPlayer({ username: `friend${i}` });
       await makeFriends(svc, caller.userId, friend.userId);
     }
 
@@ -617,8 +617,8 @@ describe('SocialService.listFriends (real PG)', () => {
 
   it('drops an entry whose player row is missing instead of rendering a blank name', async () => {
     const { svc } = makeService();
-    const caller = await seedPlayer({ displayName: 'Caller' });
-    const friend = await seedPlayer({ displayName: 'Friend' });
+    const caller = await seedPlayer({ username: 'caller' });
+    const friend = await seedPlayer({ username: 'friend' });
     await makeFriends(svc, caller.userId, friend.userId);
 
     await db.drizzle.db.insert(friendship).values({
@@ -637,9 +637,9 @@ describe('SocialService.listFriends (real PG)', () => {
     'drops a friend whose account is %s',
     async (status) => {
       const { svc } = makeService();
-      const caller = await seedPlayer({ displayName: 'Caller' });
-      const friend = await seedPlayer({ displayName: 'Friend' });
-      const unavailableFriend = await seedPlayer({ displayName: 'Unavailable' });
+      const caller = await seedPlayer({ username: 'caller' });
+      const friend = await seedPlayer({ username: 'friend' });
+      const unavailableFriend = await seedPlayer({ username: 'unavailable' });
       await makeFriends(svc, caller.userId, friend.userId);
       await makeFriends(svc, caller.userId, unavailableFriend.userId);
       await db.drizzle.db
@@ -657,8 +657,8 @@ describe('SocialService.listFriends (real PG)', () => {
 describe('SocialService.acceptFriendRequest (real PG)', () => {
   it('accepts a pending incoming request and emits social.friend_request.accepted', async () => {
     const { svc, events } = makeService();
-    const requester = await seedPlayer({ displayName: 'Alice' });
-    const addressee = await seedPlayer({ displayName: 'Bob' });
+    const requester = await seedPlayer({ username: 'alice' });
+    const addressee = await seedPlayer({ username: 'bob' });
     const request = await svc.sendFriendRequest(requester.userId, addressee.userId);
     events.emit.mockClear();
 
@@ -860,9 +860,9 @@ describe('SocialService.cancelFriendRequest (real PG)', () => {
 describe('SocialService.listFriendRequests (real PG)', () => {
   it('lists incoming pending requests, newest first, with mutualFriendsCount', async () => {
     const { svc } = makeService();
-    const caller = await seedPlayer({ displayName: 'Caller' });
-    const senderA = await seedPlayer({ displayName: 'SenderA' });
-    const senderB = await seedPlayer({ displayName: 'SenderB' });
+    const caller = await seedPlayer({ username: 'caller' });
+    const senderA = await seedPlayer({ username: 'sendera' });
+    const senderB = await seedPlayer({ username: 'senderb' });
     await svc.sendFriendRequest(senderA.userId, caller.userId);
     await svc.sendFriendRequest(senderB.userId, caller.userId);
 
@@ -883,8 +883,8 @@ describe('SocialService.listFriendRequests (real PG)', () => {
 
   it('lists outgoing pending requests with a null mutualFriendsCount', async () => {
     const { svc } = makeService();
-    const caller = await seedPlayer({ displayName: 'Caller' });
-    const target = await seedPlayer({ displayName: 'Target' });
+    const caller = await seedPlayer({ username: 'caller' });
+    const target = await seedPlayer({ username: 'target' });
     await svc.sendFriendRequest(caller.userId, target.userId);
 
     const result = await svc.listFriendRequests(caller.userId, {
@@ -908,7 +908,7 @@ describe('SocialService.listFriendRequests (real PG)', () => {
     const accepted = await seedPlayer();
     const refused = await seedPlayer();
     const cancelled = await seedPlayer();
-    const pending = await seedPlayer({ displayName: 'StillPending' });
+    const pending = await seedPlayer({ username: 'stillpending' });
     await makeFriends(svc, caller.userId, accepted.userId);
     const refusedReq = await svc.sendFriendRequest(refused.userId, caller.userId);
     await svc.declineFriendRequest(caller.userId, refusedReq.id);
@@ -931,8 +931,8 @@ describe('SocialService.listFriendRequests (real PG)', () => {
     async (status) => {
       const { svc } = makeService();
       const caller = await seedPlayer();
-      const sender = await seedPlayer({ displayName: 'Sender' });
-      const unavailableSender = await seedPlayer({ displayName: 'Unavailable' });
+      const sender = await seedPlayer({ username: 'sender' });
+      const unavailableSender = await seedPlayer({ username: 'unavailable' });
       await svc.sendFriendRequest(sender.userId, caller.userId);
       await svc.sendFriendRequest(unavailableSender.userId, caller.userId);
       await db.drizzle.db
@@ -962,8 +962,8 @@ describe('SocialService.listFriendRequests (real PG)', () => {
   ])('drops an incoming pending sender who is blocked (%s)', async (_label, seedTheBlock) => {
     const { svc } = makeService();
     const caller = await seedPlayer();
-    const sender = await seedPlayer({ displayName: 'Sender' });
-    const blockedSender = await seedPlayer({ displayName: 'Blocked' });
+    const sender = await seedPlayer({ username: 'sender' });
+    const blockedSender = await seedPlayer({ username: 'blocked' });
     await svc.sendFriendRequest(sender.userId, caller.userId);
     await svc.sendFriendRequest(blockedSender.userId, caller.userId);
     await seedTheBlock(caller.userId, blockedSender.userId);
@@ -980,7 +980,7 @@ describe('SocialService.listFriendRequests (real PG)', () => {
   it('drops an outgoing pending target who is blocked', async () => {
     const { svc } = makeService();
     const caller = await seedPlayer();
-    const target = await seedPlayer({ displayName: 'Target' });
+    const target = await seedPlayer({ username: 'target' });
     await svc.sendFriendRequest(caller.userId, target.userId);
     await seedBlock(target.userId, caller.userId);
 
@@ -997,7 +997,7 @@ describe('SocialService.listFriendRequests (real PG)', () => {
     const { svc } = makeService();
     const caller = await seedPlayer();
     for (let i = 0; i < 3; i++) {
-      const sender = await seedPlayer({ displayName: `Sender${i}` });
+      const sender = await seedPlayer({ username: `sender${i}` });
       await svc.sendFriendRequest(sender.userId, caller.userId);
     }
 
@@ -1019,12 +1019,12 @@ describe('SocialService.listFriendRequests (real PG)', () => {
 
   it('computes mutualFriendsCount via one batched query across exactly 2 shared accepted friends', async () => {
     const { svc } = makeService();
-    const caller = await seedPlayer({ displayName: 'Caller' });
-    const requester = await seedPlayer({ displayName: 'Requester' });
-    const mutualA = await seedPlayer({ displayName: 'MutualA' });
-    const mutualB = await seedPlayer({ displayName: 'MutualB' });
-    const callerOnlyFriend = await seedPlayer({ displayName: 'CallerOnlyFriend' });
-    const requesterOnlyFriend = await seedPlayer({ displayName: 'RequesterOnlyFriend' });
+    const caller = await seedPlayer({ username: 'caller' });
+    const requester = await seedPlayer({ username: 'requester' });
+    const mutualA = await seedPlayer({ username: 'mutuala' });
+    const mutualB = await seedPlayer({ username: 'mutualb' });
+    const callerOnlyFriend = await seedPlayer({ username: 'calleronlyfriend' });
+    const requesterOnlyFriend = await seedPlayer({ username: 'requesteronlyfriend' });
 
     // Shared friends: caller <-> mutualA/mutualB, requester <-> mutualA/mutualB.
     await makeFriends(svc, caller.userId, mutualA.userId);

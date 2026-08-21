@@ -482,9 +482,7 @@ describe('PhoneLoginService.verifyOtp (real PG + real Redis)', () => {
   it('suspended player is forbidden after the OTP passes, and neither the session nor the OTP is consumed', async () => {
     const code = '123456';
     const account = await seedUser();
-    await db.drizzle.db
-      .insert(player)
-      .values({ userId: account.id, displayName: 'x', status: 'suspended' });
+    await db.drizzle.db.insert(player).values({ userId: account.id, status: 'suspended' });
     await seedOtp(account.id, { codeHash: hash(code) });
     const { svc, events } = build();
     const resHeaders = new Headers();
