@@ -55,7 +55,7 @@ function routerWith(adminGuard: AdminGuard) {
     audit,
     identityReader: makeIdentityReader(),
   });
-  const router = createWalletRouter(service, adminGuard, audit, paymentProviders);
+  const router = createWalletRouter({ wallet: service, adminGuard, audit, paymentProviders });
   return { router, audit };
 }
 

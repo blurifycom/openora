@@ -31,14 +31,13 @@ function routerWith(guard: AdminGuard, jobQueue?: JobQueueAdapter) {
     audit: makeAuditWriter(),
     identityReader: makeIdentityReader(),
   });
-  return createWalletRouter(
-    service,
-    guard,
-    makeAuditWriter(),
+  return createWalletRouter({
+    wallet: service,
+    adminGuard: guard,
+    audit: makeAuditWriter(),
     paymentProviders,
-    undefined,
     jobQueue,
-  );
+  });
 }
 
 const authorizedGuard = () => makeAdminGuard({ caller: { userId: CALLER_ID, role: 'admin' } });

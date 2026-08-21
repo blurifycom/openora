@@ -79,7 +79,12 @@ function routerWith(
     audit,
     identityReader: makeIdentityReader(),
   });
-  const router = createWalletRouter(service, guard, audit, paymentProviders);
+  const router = createWalletRouter({
+    wallet: service,
+    adminGuard: guard,
+    audit,
+    paymentProviders,
+  });
   return { router, audit, service };
 }
 

@@ -106,7 +106,7 @@ function routerWith(adminGuard: AdminGuard, platformConfig?: Partial<PlatformCon
     platformConfig: platformConfig ? mock<PlatformConfig>(platformConfig) : undefined,
     riskTags,
   });
-  const router = createWalletRouter(service, adminGuard, audit, paymentProviders);
+  const router = createWalletRouter({ wallet: service, adminGuard, audit, paymentProviders });
   return { router, audit, service };
 }
 

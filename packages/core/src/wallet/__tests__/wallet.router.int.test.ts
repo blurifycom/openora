@@ -49,12 +49,12 @@ function realWalletService() {
 }
 
 function routerWith(adminGuard: AdminGuard) {
-  return createWalletRouter(
-    realWalletService(),
+  return createWalletRouter({
+    wallet: realWalletService(),
     adminGuard,
-    makeAuditWriter(),
-    makePaymentProviderRegistry(),
-  );
+    audit: makeAuditWriter(),
+    paymentProviders: makePaymentProviderRegistry(),
+  });
 }
 
 const transactionDenyingGuard = () =>

@@ -72,13 +72,13 @@ function routerWithProviders(
     audit: makeAuditWriter(),
     identityReader: makeIdentityReader(),
   });
-  return createWalletRouter(
-    service,
-    mock<AdminGuard>({ assert: vi.fn() }),
-    makeAuditWriter(),
+  return createWalletRouter({
+    wallet: service,
+    adminGuard: mock<AdminGuard>({ assert: vi.fn() }),
+    audit: makeAuditWriter(),
     paymentProviders,
     limiter,
-  );
+  });
 }
 
 // A registry with two DISTINCTLY-behaving named providers, to test that a webhook is

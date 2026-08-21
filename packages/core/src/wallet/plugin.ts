@@ -119,8 +119,8 @@ export default {
         .schedule(CUSTODY_SWEEP_QUEUE, 'wallet-custody-sweep.cron', {}, { cron: sweepCron })
         .catch((err) => logger.error({ err }, 'wallet-custody-sweep schedule failed'));
 
-      return createWalletRouter(
-        new WalletService({
+      return createWalletRouter({
+        wallet: new WalletService({
           drizzle: c.get(DRIZZLE),
           events: c.get(EVENT_BUS),
           payment: c.get(PAYMENT_ADAPTER),
@@ -135,12 +135,12 @@ export default {
             : undefined,
           audit: c.get(AUDIT_WRITER),
         }),
-        c.get(ADMIN_GUARD),
-        c.get(AUDIT_WRITER),
-        c.get(PAYMENT_PROVIDERS),
-        c.get(RATE_LIMITER),
+        adminGuard: c.get(ADMIN_GUARD),
+        audit: c.get(AUDIT_WRITER),
+        paymentProviders: c.get(PAYMENT_PROVIDERS),
+        limiter: c.get(RATE_LIMITER),
         jobQueue,
-      );
+      });
     });
   },
 } as const satisfies Plugin<CoreTokenCatalog>;

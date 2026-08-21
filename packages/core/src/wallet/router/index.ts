@@ -91,14 +91,29 @@ async function dispatchWebhook(
   return { ok: true as const };
 }
 
-export function createWalletRouter(
-  wallet: WalletService,
-  adminGuard: AdminGuard,
-  audit: AuditWritePort,
-  paymentProviders: PaymentProviderRegistry,
-  limiter?: RateLimiterAdapter<RateLimitKey>,
-  jobQueue?: JobQueueAdapter,
-) {
+/**
+ * Named rather than positional. Half of these are structurally similar ports, so a
+ * positional slip type-checks; and the sweep and reconciliation branches each add their
+ * own dependencies here, which as positional parameters git merges into a signature that
+ * declares one twice without ever reporting a conflict.
+ */
+export type WalletRouterDeps = {
+  wallet: WalletService;
+  adminGuard: AdminGuard;
+  audit: AuditWritePort;
+  paymentProviders: PaymentProviderRegistry;
+  limiter?: RateLimiterAdapter<RateLimitKey>;
+  jobQueue?: JobQueueAdapter;
+};
+
+export function createWalletRouter({
+  wallet,
+  adminGuard,
+  audit,
+  paymentProviders,
+  limiter,
+  jobQueue,
+}: WalletRouterDeps) {
   const os = implement(walletContract).$context<OssContext>();
 
   const throttleWebhook = (context: OssContext) =>
