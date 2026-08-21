@@ -5,6 +5,7 @@ import {
   makeNotFoundError,
   makeConflictError,
   serializeRow,
+  mapConcurrent,
   type EventBus,
 } from '@openora/core/server';
 import { and, eq, or, gt, lte, desc } from 'drizzle-orm';
@@ -52,6 +53,9 @@ export const ExclusionPeriodNotElapsedError = makeConflictError(
 );
 
 const HOUR_MS = 60 * 60 * 1000;
+// Cap in-flight enforcement syncs per sweep tick so a large lapsed-cooling-off batch can't
+// exhaust the shared pg pool (matches SWEEP_CONCURRENCY in rg-monitoring.service.ts).
+const SWEEP_CONCURRENCY = 10;
 
 function addMonths(from: Date, months: number): Date {
   const d = new Date(from);
@@ -425,13 +429,15 @@ export class RgService {
         userId: rgExclusion.userId,
         expiresAt: rgExclusion.expiresAt,
       });
-    for (const userId of new Set(lapsed.map((r) => r.userId))) {
-      await this.syncEnforcement(userId);
-    }
+    const lapsedUserIds = [...new Set(lapsed.map((r) => r.userId))];
+    await mapConcurrent(lapsedUserIds, SWEEP_CONCURRENCY, (userId) => this.syncEnforcement(userId));
+    const playerIds = await this.identityReader.getPlayerIdsByUserIdsSafe(
+      lapsed.map((r) => r.userId),
+    );
     for (const row of lapsed) {
       this.events.emit('rg.cooling_off.expired', {
         userId: row.userId,
-        playerId: await this.identityReader.getPlayerIdByUserIdSafe(row.userId),
+        playerId: playerIds.get(row.userId) ?? null,
         exclusionId: row.id,
         expiresAt: (row.expiresAt ?? now).toISOString(),
       });
