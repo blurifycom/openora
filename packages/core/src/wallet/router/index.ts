@@ -15,6 +15,7 @@ import {
   type JobQueueAdapter,
   type PaymentProviderRegistry,
   type PaymentWebhookEvent,
+  type QueueName,
   type RateLimiterAdapter,
   type RateLimitKey,
 } from '@openora/core/contracts';
@@ -26,7 +27,6 @@ import {
   WithdrawalNotFoundError,
   WithdrawalNotPendingError,
   InsufficientBalanceError,
-  CurrencyMismatchError,
   KycRequiredError,
   IdempotencyKeyReuseError,
   DepositAddressUnsupportedError,
@@ -44,12 +44,12 @@ import {
   BelowMinimumWithdrawalError,
   PlayerNotFoundError,
 } from '../service/wallet.service.js';
-
-// One helper so `grep notImplemented` finds every remaining stub; the count reaching
-// zero is the definition of done for the custody sweep / reconciliation feature set.
-const notImplemented = (): never => {
-  throw new ORPCError('NOT_IMPLEMENTED');
-};
+import {
+  ReconciliationService,
+  ReconciliationFindingNotFoundError,
+  ReconciliationCreditTransactionNotFoundError,
+  ReconciliationCreditMismatchError,
+} from '../service/reconciliation.service.js';
 
 // Unauthenticated route: it costs a signature verification (and, for a custody vendor,
 // a DB lookup) per request with nothing else gating it. Keyed on client IP, not a
@@ -83,7 +83,7 @@ async function dispatchWebhook(
   );
   if (event) {
     if (event.kind === 'deposit') {
-      await wallet.creditDepositByAddress(event);
+      await wallet.creditDepositByAddress(event, providerName);
     } else {
       await wallet.reconcileWithdrawalStatus(event);
     }
@@ -102,8 +102,10 @@ export type WalletRouterDeps = {
   adminGuard: AdminGuard;
   audit: AuditWritePort;
   paymentProviders: PaymentProviderRegistry;
+  reconciliation: ReconciliationService;
+  jobQueue: JobQueueAdapter;
+  reconciliationQueue: QueueName;
   limiter?: RateLimiterAdapter<RateLimitKey>;
-  jobQueue?: JobQueueAdapter;
 };
 
 export function createWalletRouter({
@@ -111,8 +113,10 @@ export function createWalletRouter({
   adminGuard,
   audit,
   paymentProviders,
-  limiter,
+  reconciliation,
   jobQueue,
+  reconciliationQueue,
+  limiter,
 }: WalletRouterDeps) {
   const os = implement(walletContract).$context<OssContext>();
 
@@ -135,7 +139,7 @@ export function createWalletRouter({
     ),
 
     deposit: os.deposit.handler(({ input, context }) =>
-      mapErrors({ BAD_REQUEST: CurrencyMismatchError, CONFLICT: IdempotencyKeyReuseError }, () =>
+      mapErrors({ CONFLICT: IdempotencyKeyReuseError }, () =>
         wallet.deposit({
           userId: getUserId(context),
           amount: input.amount,
@@ -152,7 +156,6 @@ export function createWalletRouter({
           NOT_FOUND: WalletNotFoundError,
           BAD_REQUEST: [
             InsufficientBalanceError,
-            CurrencyMismatchError,
             AmbiguousNetworkError,
             UnsupportedNetworkError,
             BelowMinimumWithdrawalError,
@@ -430,19 +433,39 @@ export function createWalletRouter({
     },
 
     reconciliation: {
-      list: os.reconciliation.list.handler(async ({ context }) => {
+      list: os.reconciliation.list.handler(async ({ input, context }) => {
         await adminGuard.assert(context, 'wallet-reconciliation', 'view');
-        return notImplemented();
+        return reconciliation.listFindings(input);
       }),
 
-      resolve: os.reconciliation.resolve.handler(async ({ context }) => {
-        await adminGuard.assert(context, 'wallet-reconciliation', 'resolve');
-        return notImplemented();
+      resolve: os.reconciliation.resolve.handler(async ({ input, context }) => {
+        const {
+          userId: adminId,
+          ip,
+          userAgent,
+        } = await adminGuard.assert(context, 'wallet-reconciliation', 'resolve');
+        return mapErrors(
+          {
+            NOT_FOUND: [
+              ReconciliationFindingNotFoundError,
+              ReconciliationCreditTransactionNotFoundError,
+            ],
+            CONFLICT: ReconciliationCreditMismatchError,
+          },
+          () =>
+            reconciliation.resolveFinding(adminId, input.id, input.resolution, { ip, userAgent }),
+        );
       }),
 
+      // Enqueues the job and returns the runId immediately - never runs inline. The
+      // eventual worker's own claim (wallet_job_run's partial unique index) stays the
+      // single concurrency authority; this route does not know or care whether its
+      // claim will win.
       run: os.reconciliation.run.handler(async ({ context }) => {
         await adminGuard.assert(context, 'wallet-reconciliation', 'run');
-        return notImplemented();
+        const runId = randomUUID();
+        await jobQueue.enqueue(reconciliationQueue, { runId });
+        return { runId };
       }),
     },
   });

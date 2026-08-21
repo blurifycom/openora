@@ -25,7 +25,10 @@ export type DirectAuditAction =
   | 'wallet.auto_withdrawal_rule.deleted'
   | 'wallet.auto_withdrawal_config.set'
   | 'wallet.manual_adjustment.created'
-  | 'wallet.custody.sweep_cycle';
+  | 'wallet.custody.sweep_cycle'
+  | 'wallet.reconciliation_run.completed'
+  | 'wallet.reconciliation_run.failed'
+  | 'wallet.reconciliation_finding.resolved';
 
 /**
  * Every value the audit `action` column legitimately holds: a cross-module domain
