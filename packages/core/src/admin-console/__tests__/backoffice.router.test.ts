@@ -3,6 +3,7 @@ import { call, ORPCError } from '@orpc/server';
 import type {
   AdminGameReporting,
   AdminPlayerActivity,
+  AdminRoleAssignmentDirectory,
   AdminUserDirectory,
   AdminUserRow,
   AdminWalletReporting,
@@ -54,8 +55,17 @@ function realService(over: { directory?: Partial<AdminUserDirectory> } = {}) {
     getActiveUsersTrend: vi.fn().mockResolvedValue([]),
     getRetentionCohorts: vi.fn().mockResolvedValue([]),
   });
+  const roleAssignments = mock<AdminRoleAssignmentDirectory>({
+    listByUserIds: vi.fn().mockResolvedValue([]),
+  });
   return {
-    service: new BackofficeService(users, reporting, gameReporting, playerActivity),
+    service: new BackofficeService(
+      users,
+      reporting,
+      gameReporting,
+      playerActivity,
+      roleAssignments,
+    ),
     users,
     stored,
   };

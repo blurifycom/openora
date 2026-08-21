@@ -67,6 +67,10 @@ export const GiftSelfClaimError = makeConflictError(
   'GiftSelfClaim',
   'You cannot claim your own gift',
 );
+export const BlockedRecipientError = makeConflictError(
+  'BlockedRecipient',
+  'You cannot receive money from a user you blocked',
+);
 export const GiftCreditError = makeConflictError(
   'GiftCreditError',
   'Recipient wallet is unavailable; gift claim aborted',
@@ -295,6 +299,8 @@ export class ChatCommandsService {
         throw new GiftAlreadyClaimedError();
       case 'self_claim':
         throw new GiftSelfClaimError();
+      case 'blocked_recipient':
+        throw new BlockedRecipientError();
       case 'room_not_member':
         throw new ChatRoomNotMemberError(result.roomId ?? null);
       case 'gift_credit_failed':

@@ -441,6 +441,16 @@
       ]
     },
     {
+      "category": "admin-role-assignment-directory",
+      "interface": "AdminRoleAssignmentSummary",
+      "token": "ADMIN_ROLE_ASSIGNMENT_DIRECTORY",
+      "status": "wired",
+      "boundIn": [
+        "packages/core/src/admin-console/plugin.ts",
+        "packages/core/src/iam/plugin.ts"
+      ]
+    },
+    {
       "category": "admin-user-directory",
       "interface": "AdminUserRow",
       "token": "ADMIN_USER_DIRECTORY",
@@ -525,6 +535,7 @@
       "boundIn": [
         "packages/core/src/engagement/chat-commands/plugin.ts",
         "packages/core/src/engagement/chat/plugin.ts",
+        "packages/core/src/engagement/social-transfers/plugin.ts",
         "packages/core/src/pam/player-management/plugin.ts"
       ]
     },
@@ -891,6 +902,7 @@
     "player.level.changed",
     "player.login_blocked",
     "rg.cooling_off.activated",
+    "rg.cooling_off.expired",
     "rg.cooling_off.lifted",
     "rg.exclusion.login_blocked",
     "rg.limit.set",
@@ -1560,6 +1572,10 @@
     },
     {
       "name": "LoginInputSchema",
+      "file": "packages/core/src/contracts/schemas/identity.ts"
+    },
+    {
+      "name": "LoginSecurityStateSchema",
       "file": "packages/core/src/contracts/schemas/identity.ts"
     },
     {

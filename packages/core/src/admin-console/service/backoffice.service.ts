@@ -2,6 +2,8 @@ import type {
   AdminGameReporting,
   AdminPlayerActivity,
   AdminPlayerSummary,
+  AdminRoleAssignmentDirectory,
+  AdminRoleAssignmentSummary,
   AdminTxDetail,
   AdminTxRow,
   AdminUserDirectory,
@@ -22,8 +24,11 @@ import type {
 export const UserNotFoundError = makeNotFoundError('User');
 export const TransactionNotFoundError = makeNotFoundError('Transaction');
 
-function toAdminUser(r: AdminUserRow) {
-  return serializeRow(r, { dateFields: ['createdAt', 'lockoutUntil'] });
+function toAdminUser(r: AdminUserRow, assignedRoles: AdminRoleAssignmentSummary[]) {
+  return {
+    ...serializeRow(r, { dateFields: ['createdAt', 'lockoutUntil'] }),
+    assignedRoles: assignedRoles.map(({ roleId, roleName }) => ({ roleId, roleName })),
+  };
 }
 
 function toAdminTransaction(r: AdminTxRow, player?: AdminPlayerSummary) {
@@ -50,6 +55,7 @@ export class BackofficeService {
     private readonly reporting: AdminWalletReporting,
     private readonly gameReporting: AdminGameReporting,
     private readonly playerActivity: AdminPlayerActivity,
+    private readonly roleAssignments: AdminRoleAssignmentDirectory,
   ) {}
 
   async getStats() {
@@ -65,7 +71,22 @@ export class BackofficeService {
 
   async listUsers({ page, limit, search, sortBy, sortOrder }: AdminUserListOptions) {
     const { rows, total } = await this.users.list({ page, limit, search, sortBy, sortOrder });
-    return { items: rows.map(toAdminUser), total, page, limit };
+    const assignments = await this.roleAssignments.listByUserIds(rows.map((r) => r.id));
+    const assignmentsByUserId = new Map<string, AdminRoleAssignmentSummary[]>();
+    for (const assignment of assignments) {
+      const existing = assignmentsByUserId.get(assignment.userId);
+      if (existing) {
+        existing.push(assignment);
+      } else {
+        assignmentsByUserId.set(assignment.userId, [assignment]);
+      }
+    }
+    return {
+      items: rows.map((r) => toAdminUser(r, assignmentsByUserId.get(r.id) ?? [])),
+      total,
+      page,
+      limit,
+    };
   }
 
   async getUser(userId: User['id']) {
@@ -73,7 +94,8 @@ export class BackofficeService {
     if (!row) {
       throw new UserNotFoundError(userId);
     }
-    return toAdminUser(row);
+    const assignedRoles = await this.roleAssignments.listByUserIds([row.id]);
+    return toAdminUser(row, assignedRoles);
   }
 
   async updateUser(
@@ -86,7 +108,8 @@ export class BackofficeService {
     if (!row) {
       throw new UserNotFoundError(userId);
     }
-    return toAdminUser(row);
+    const assignedRoles = await this.roleAssignments.listByUserIds([userId]);
+    return toAdminUser(row, assignedRoles);
   }
 
   async listTransactions(filters: TransactionFilter) {

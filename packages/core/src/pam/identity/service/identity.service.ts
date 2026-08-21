@@ -13,7 +13,7 @@ import {
   createLogger,
 } from '@openora/core/server';
 import { parseCookies } from 'better-auth/cookies';
-import { eq, sql } from 'drizzle-orm';
+import { and, eq, isNull, sql } from 'drizzle-orm';
 import { user, session, account, verification, twoFactor } from '../schema/index.js';
 import { player } from '@openora/core/pam/schema/profile';
 import type {
@@ -45,6 +45,14 @@ import type {
 import { RATE_LIMIT_KEYS, makeRateLimitKey } from '@openora/core/contracts';
 import { assertSupportedLanguage } from '../../shared/language.js';
 import { isRgBlocked } from './rg-guard.service.js';
+import {
+  DEFAULT_LOCKOUT_DURATION_MS,
+  DEFAULT_MAX_LOGIN_ATTEMPTS,
+  computeLockoutTier,
+  createAccountLockedError,
+  hasFailedLoginWindowExpired,
+  makeLoginSecurityState,
+} from './lockout-policy.service.js';
 
 function nodeHeadersToHeaders(nodeHeaders: NodeHeaders) {
   const headers = new Headers();
@@ -55,16 +63,6 @@ function nodeHeadersToHeaders(nodeHeaders: NodeHeaders) {
     headers.set(key, Array.isArray(value) ? value.join(', ') : value);
   }
   return headers;
-}
-
-export function createAccountLockedError(lockoutUntil: Date) {
-  return new ORPCError('UNAUTHORIZED', {
-    message: 'Account is temporarily locked. Please try again later.',
-    data: {
-      code: 'ACCOUNT_LOCKED',
-      lockoutUntil: lockoutUntil.toISOString(),
-    },
-  });
 }
 
 // better-auth returns Date objects and may omit theme/language; the public
@@ -189,33 +187,6 @@ async function ensureOk(res: globalThis.Response, opts?: { genericMessage?: stri
   throw new ORPCError(code, { message });
 }
 
-const DEFAULT_MAX_LOGIN_ATTEMPTS = 5;
-const DEFAULT_LOCKOUT_DURATION_MS = 15 * 60 * 1000;
-
-// Progressive lockout: a repeat lockout inside a rolling 24h window escalates the
-// duration (1 min -> 5 min -> 15 min, capped at tier 3). The window resets once the
-// last lockout falls outside it, so an occasional fat-finger never compounds.
-const LOCKOUT_WINDOW_MS = 24 * 60 * 60 * 1000;
-const LOCKOUT_TIER_DURATIONS_MS = [60_000, 5 * 60_000, 15 * 60_000] as const;
-
-function computeLockoutTier({
-  lockoutCount,
-  lastLockoutAt,
-  nowMs,
-  fallbackDurationMs,
-}: {
-  lockoutCount: number;
-  lastLockoutAt: Date | null;
-  nowMs: number;
-  fallbackDurationMs: number;
-}) {
-  const withinWindow =
-    lastLockoutAt !== null && nowMs - lastLockoutAt.getTime() < LOCKOUT_WINDOW_MS;
-  const tier = withinWindow ? lockoutCount + 1 : 1;
-  const durationMs = LOCKOUT_TIER_DURATIONS_MS[Math.min(tier - 1, 2)] ?? fallbackDurationMs;
-  return { tier, durationMs };
-}
-
 const MINUTE_MS = 60 * 1000;
 export const SESSION_DURATION_IN_SECONDS = 30 * 24 * 60 * 60; // 30 days
 // Coarse abuse throttles keyed by the caller identifier the context provides (email/
@@ -250,6 +221,7 @@ type FakeLoginShadow = {
   lockoutUntil: string | null;
   lockoutCount: number;
   lastLockoutAt: string | null;
+  lastFailedLoginAt: string | null;
 };
 
 function loginShadowKey(email: string): string {
@@ -258,6 +230,15 @@ function loginShadowKey(email: string): string {
 
 const loginShadowLogger = createLogger('login-shadow');
 const identityLogger = createLogger('identity');
+
+function hasErrorCode(error: unknown, code: string) {
+  if (typeof error !== 'object' || error === null || !('data' in error)) {
+    return false;
+  }
+
+  const data = error.data;
+  return typeof data === 'object' && data !== null && 'code' in data && data.code === code;
+}
 
 function computeLockoutState({
   attempts,
@@ -510,6 +491,7 @@ export class IdentityService {
         lockoutUntil: user.lockoutUntil,
         lockoutCount: user.lockoutCount,
         lastLockoutAt: user.lastLockoutAt,
+        lastFailedLoginAt: user.lastFailedLoginAt,
         role: user.role,
         rgBlocked: user.rgBlocked,
         rgBlockedUntil: user.rgBlockedUntil,
@@ -525,6 +507,7 @@ export class IdentityService {
           | 'lockoutUntil'
           | 'lockoutCount'
           | 'lastLockoutAt'
+          | 'lastFailedLoginAt'
           | 'role'
           | 'rgBlocked'
           | 'rgBlockedUntil'
@@ -535,8 +518,9 @@ export class IdentityService {
     const bypassForAdmins = this.options?.lockout?.bypassForAdmins ?? false;
     const lockoutEnabled = configLockoutEnabled && !(isAdmin && bypassForAdmins);
 
+    const nowMs = Date.now();
     if (lockoutEnabled && existingUser?.lockoutUntil) {
-      if (new Date(existingUser.lockoutUntil) > new Date()) {
+      if (new Date(existingUser.lockoutUntil) > new Date(nowMs)) {
         throw createAccountLockedError(new Date(existingUser.lockoutUntil));
       }
       // Lock window elapsed: clear it so the next failure starts from a fresh budget
@@ -545,9 +529,37 @@ export class IdentityService {
       existingUser = { ...existingUser, failedLoginAttempts: 0, lockoutUntil: null };
     }
 
+    if (
+      lockoutEnabled &&
+      existingUser &&
+      hasFailedLoginWindowExpired(existingUser.lastFailedLoginAt, existingUser.lastLockoutAt, nowMs)
+    ) {
+      await this.resetLockoutTier(existingUser.id);
+      existingUser = {
+        ...existingUser,
+        failedLoginAttempts: 0,
+        lockoutUntil: null,
+        lockoutCount: 0,
+        lastLockoutAt: null,
+        lastFailedLoginAt: null,
+      };
+    }
+
     let fakeLoginShadow: FakeLoginShadow | undefined;
     if (lockoutEnabled && !existingUser) {
       fakeLoginShadow = await this.loginShadowGet(loginShadowKey(email));
+      if (fakeLoginShadow?.lastFailedLoginAt) {
+        const lastFailedLoginAt = new Date(fakeLoginShadow.lastFailedLoginAt);
+        if (hasFailedLoginWindowExpired(lastFailedLoginAt, null, nowMs)) {
+          fakeLoginShadow = {
+            failedAttempts: 0,
+            lockoutUntil: null,
+            lockoutCount: 0,
+            lastLockoutAt: null,
+            lastFailedLoginAt: null,
+          };
+        }
+      }
       if (fakeLoginShadow?.lockoutUntil) {
         if (new Date(fakeLoginShadow.lockoutUntil) > new Date()) {
           throw createAccountLockedError(new Date(fakeLoginShadow.lockoutUntil));
@@ -674,6 +686,11 @@ export class IdentityService {
       return {
         user: toUser(body.user),
         session: { token: body.token, expiresAt },
+        security: makeLoginSecurityState({
+          failedLoginAttempts: 0,
+          maxAttempts: this.options?.lockout?.maxAttempts ?? DEFAULT_MAX_LOGIN_ATTEMPTS,
+          lockoutUntil: null,
+        }),
       };
     } catch (error) {
       // An RG block is not a credential failure - surface it as-is, without touching the
@@ -684,15 +701,18 @@ export class IdentityService {
       if (
         error instanceof ORPCError &&
         error.code === 'FORBIDDEN' &&
-        ['RG_BLOCKED', 'ACCOUNT_SUSPENDED'].includes(
-          (error.data as { code?: string } | undefined)?.code ?? '',
-        )
+        (hasErrorCode(error, 'RG_BLOCKED') || hasErrorCode(error, 'ACCOUNT_SUSPENDED'))
       ) {
         throw error;
       }
       // Only a genuine credential rejection counts toward lockout - a transient DB/network
       // error must never lock the account out.
-      const isCredentialFailure = error instanceof ORPCError && error.code === 'UNAUTHORIZED';
+      const isAccountLocked =
+        error instanceof ORPCError &&
+        error.code === 'UNAUTHORIZED' &&
+        hasErrorCode(error, 'ACCOUNT_LOCKED');
+      const isCredentialFailure =
+        error instanceof ORPCError && error.code === 'UNAUTHORIZED' && !isAccountLocked;
 
       let attemptsRemaining: number | undefined;
       if (lockoutEnabled && existingUser && isCredentialFailure) {
@@ -702,7 +722,10 @@ export class IdentityService {
         // the threshold (the read-modify-write this replaces was bypassable under load).
         const [row] = await this.drizzle.db
           .update(user)
-          .set({ failedLoginAttempts: sql`${user.failedLoginAttempts} + 1` })
+          .set({
+            failedLoginAttempts: sql`${user.failedLoginAttempts} + 1`,
+            lastFailedLoginAt: new Date(),
+          })
           .where(eq(user.id, existingUser.id))
           .returning({ failedLoginAttempts: user.failedLoginAttempts });
         const newAttempts = row?.failedLoginAttempts ?? existingUser.failedLoginAttempts + 1;
@@ -719,21 +742,41 @@ export class IdentityService {
           // Escalate the lockout duration for repeat offenders inside the 24h window.
           const { tier, durationMs } = computeLockoutTier({
             lockoutCount: existingUser.lockoutCount ?? 0,
-            lastLockoutAt: existingUser.lastLockoutAt ?? null,
+            lastFailedLoginAt: existingUser.lastFailedLoginAt ?? null,
+            fallbackLastLockoutAt: existingUser.lastLockoutAt ?? null,
             nowMs,
             fallbackDurationMs,
           });
           const lockoutUntil = new Date(nowMs + durationMs);
-          await this.drizzle.db
+          const [lockoutRow] = await this.drizzle.db
             .update(user)
             .set({ lockoutUntil, lockoutCount: tier, lastLockoutAt: new Date(nowMs) })
-            .where(eq(user.id, existingUser.id));
+            // Only the first request that reaches the threshold creates the lockout.
+            // Other concurrent failures must observe and return the winner's lockout
+            // instead of overwriting its tier or emitting a duplicate event.
+            .where(and(eq(user.id, existingUser.id), isNull(user.lockoutUntil)))
+            .returning({ lockoutUntil: user.lockoutUntil });
+
+          if (!lockoutRow) {
+            const [current] = await this.drizzle.db
+              .select({ lockoutUntil: user.lockoutUntil })
+              .from(user)
+              .where(eq(user.id, existingUser.id))
+              .limit(1);
+            if (current?.lockoutUntil) {
+              throw createAccountLockedError(current.lockoutUntil);
+            }
+            throw new ORPCError('INTERNAL_SERVER_ERROR', {
+              message: 'Unable to establish account lockout.',
+            });
+          }
 
           await this.limiter?.reset(makeLoginRateLimitKey(email));
 
           this.events.emit('identity.user.lockout.triggered', {
             userId: existingUser.id,
             email,
+            tier,
             lockoutUntil: lockoutUntil.toISOString(),
             ip,
             userAgent,
@@ -757,7 +800,10 @@ export class IdentityService {
           const nowMs = Date.now();
           const { tier, durationMs } = computeLockoutTier({
             lockoutCount: fakeLoginShadow?.lockoutCount ?? 0,
-            lastLockoutAt: fakeLoginShadow?.lastLockoutAt
+            lastFailedLoginAt: fakeLoginShadow?.lastFailedLoginAt
+              ? new Date(fakeLoginShadow.lastFailedLoginAt)
+              : null,
+            fallbackLastLockoutAt: fakeLoginShadow?.lastLockoutAt
               ? new Date(fakeLoginShadow.lastLockoutAt)
               : null,
             nowMs,
@@ -769,6 +815,7 @@ export class IdentityService {
             lockoutUntil: lockoutUntil.toISOString(),
             lockoutCount: tier,
             lastLockoutAt: new Date(nowMs).toISOString(),
+            lastFailedLoginAt: new Date(nowMs).toISOString(),
           });
 
           await this.limiter?.reset(makeLoginRateLimitKey(email));
@@ -781,6 +828,7 @@ export class IdentityService {
           lockoutUntil: null,
           lockoutCount: fakeLoginShadow?.lockoutCount ?? 0,
           lastLockoutAt: fakeLoginShadow?.lastLockoutAt ?? null,
+          lastFailedLoginAt: new Date().toISOString(),
         });
       }
 
@@ -792,6 +840,19 @@ export class IdentityService {
         userAgent,
         ...(attemptsRemaining !== undefined ? { attemptsRemaining } : {}),
       });
+      if (isCredentialFailure && error instanceof ORPCError && attemptsRemaining !== undefined) {
+        const maxAttempts = this.options?.lockout?.maxAttempts ?? DEFAULT_MAX_LOGIN_ATTEMPTS;
+        const security = makeLoginSecurityState({
+          failedLoginAttempts:
+            attemptsRemaining === undefined ? 0 : maxAttempts - attemptsRemaining,
+          maxAttempts,
+          lockoutUntil: null,
+        });
+        throw new ORPCError('UNAUTHORIZED', {
+          message: error.message,
+          data: { ...error.data, ...security },
+        });
+      }
       throw error;
     }
   }
@@ -800,6 +861,19 @@ export class IdentityService {
     return this.drizzle.db
       .update(user)
       .set({ failedLoginAttempts: 0, lockoutUntil: null })
+      .where(eq(user.id, userId));
+  }
+
+  private resetLockoutTier(userId: User['id']) {
+    return this.drizzle.db
+      .update(user)
+      .set({
+        failedLoginAttempts: 0,
+        lockoutUntil: null,
+        lockoutCount: 0,
+        lastLockoutAt: null,
+        lastFailedLoginAt: null,
+      })
       .where(eq(user.id, userId));
   }
 

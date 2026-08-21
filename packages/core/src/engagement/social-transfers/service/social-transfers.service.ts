@@ -10,6 +10,7 @@ import {
   findOneOrThrow,
   createDomainError,
   type EventBus,
+  type DrizzleTx,
 } from '@openora/core/server';
 import type {
   Uuid,
@@ -20,6 +21,7 @@ import type {
   AuditWritePort,
   RealtimeTransport,
   ChatRoomAccess,
+  ChatBlockWriter,
   CacheAdapter,
   SendGiftArgs,
   SendGiftResult,
@@ -88,6 +90,10 @@ export const GiftCreditError = makeConflictError(
   'Recipient wallet is unavailable; gift claim aborted',
 );
 export const DonateSelfError = makeConflictError('DonateSelf', 'You cannot donate to yourself');
+export const BlockedRecipientError = makeConflictError(
+  'BlockedRecipient',
+  'You cannot send money to a user you blocked',
+);
 export const TooManyRecipientsError = makeConflictError(
   'TooManyRecipients',
   'Amount too small: you need at least $1 per recipient',
@@ -132,6 +138,33 @@ type MoneyMovingInput =
   | ({ type: 'gift' } & GiftArgs)
   | ({ type: 'rain' } & RainFingerprintArgs)
   | ({ type: 'donate' } & DonateArgs);
+
+export async function calculateRainSplit(
+  tx: DrizzleTx,
+  amount: string,
+  requestedRecipientCount: number,
+  actualRecipientCount: number,
+): Promise<{ perRecipient: string; totalDistributed: string }> {
+  const splitResult = await tx.execute(
+    sql`SELECT
+      (floor(${amount}::numeric * 100 / ${requestedRecipientCount}) / 100)::text AS per_recipient,
+      (floor(${amount}::numeric * 100 / ${requestedRecipientCount}) / 100 * ${actualRecipientCount})::text AS total_distributed,
+      (floor(${amount}::numeric * 100 / ${requestedRecipientCount}) / 100 > 0) AS has_positive_recipient`,
+  );
+  const {
+    per_recipient: perRecipient,
+    total_distributed: totalDistributed,
+    has_positive_recipient: hasPositiveRecipient,
+  } = splitResult.rows[0] as {
+    per_recipient: string;
+    total_distributed: string;
+    has_positive_recipient: boolean;
+  };
+  if (!hasPositiveRecipient) {
+    throw new TooManyRecipientsError();
+  }
+  return { perRecipient, totalDistributed };
+}
 
 const COMMAND_IDEMPOTENCY_TTL_MS = 5 * 60 * 1000;
 type CommandIdempotencyRecord = {
@@ -224,6 +257,9 @@ function toClaimGiftResult(error: unknown): ClaimGiftResult {
   if (error instanceof GiftSelfClaimError) {
     return { ok: false, reason: 'self_claim' };
   }
+  if (error instanceof BlockedRecipientError) {
+    return { ok: false, reason: 'blocked_recipient' };
+  }
   if (error instanceof GiftRoomAccessError) {
     return { ok: false, reason: 'room_not_member', roomId: error.roomId };
   }
@@ -293,6 +329,7 @@ export class SocialTransfersService implements GiftCommands, RainCommands {
     private readonly transport: RealtimeTransport,
     private readonly events: EventBus,
     private readonly roomAccess: ChatRoomAccess,
+    private readonly blockWriter: ChatBlockWriter,
     private readonly cache: CacheAdapter,
     private readonly idempotencyTtlMs = COMMAND_IDEMPOTENCY_TTL_MS,
   ) {}
@@ -618,6 +655,9 @@ export class SocialTransfersService implements GiftCommands, RainCommands {
         if (giftRow.senderId === claimerId) {
           throw new GiftSelfClaimError();
         }
+        if (await this.blockWriter.isBlocked(tx, giftRow.senderId, claimerId)) {
+          throw new BlockedRecipientError();
+        }
         if (giftRow.claimedBy) {
           throw new GiftAlreadyClaimedError();
         }
@@ -751,10 +791,6 @@ export class SocialTransfersService implements GiftCommands, RainCommands {
     if (input.recipientCount > configMax) {
       throw new ExceedsLimitError();
     }
-    const amountUnits = Math.floor(moneyToNumber(input.amount));
-    if (input.recipientCount > amountUnits) {
-      throw new TooManyRecipientsError();
-    }
     const senderSummaries = await this.directory.lookupPlayers([actorId]);
     const sender = senderSummaries.find((s) => s.userId === actorId);
     if (!sender) {
@@ -795,16 +831,12 @@ export class SocialTransfersService implements GiftCommands, RainCommands {
           return { userId: summary.userId, username: summary.username };
         });
         return this.drizzle.db.transaction(async (tx) => {
-          const splitResult = await tx.execute(
-            sql`SELECT
-              (floor(floor(${input.amount}::numeric) / ${recipients.length}))::text AS per_recipient,
-              (floor(floor(${input.amount}::numeric) / ${recipients.length}) * ${recipients.length})::text AS total_distributed`,
+          const { perRecipient, totalDistributed } = await calculateRainSplit(
+            tx,
+            input.amount,
+            input.recipientCount,
+            recipients.length,
           );
-          const { per_recipient: perRecipient, total_distributed: totalDistributed } = splitResult
-            .rows[0] as {
-            per_recipient: string;
-            total_distributed: string;
-          };
           const debit = await this.wallet.debit(tx, {
             userId: actorId,
             amount: totalDistributed,
@@ -922,7 +954,6 @@ export class SocialTransfersService implements GiftCommands, RainCommands {
     if (target.userId === actorId) {
       throw new DonateSelfError();
     }
-
     const senderSummaries = await this.directory.lookupPlayers([actorId]);
     const sender = senderSummaries.find((s) => s.userId === actorId);
     if (!sender) {
@@ -947,6 +978,9 @@ export class SocialTransfersService implements GiftCommands, RainCommands {
       input.idempotencyKey,
       () =>
         this.drizzle.db.transaction(async (tx) => {
+          if (await this.blockWriter.isBlocked(tx, actorId, target.userId)) {
+            throw new BlockedRecipientError();
+          }
           const debit = await this.wallet.debit(tx, {
             userId: actorId,
             amount: input.amount,
