@@ -7,10 +7,9 @@ terms/age acceptance, and returns `{ status: 'check-email' }` rather than a user
 and session. Consumers must configure `registration.termsVersion` and
 `registration.webUrl` before enabling registration.
 
-Sign-in can require a verified email address via
-`registration.requireEmailVerification`. It defaults to off so an existing
-installation can enable registration without locking out accounts created before
-verification was tracked; turn it on once `user.email_verified` is backfilled.
+**Breaking:** sign-in requires a verified email address. Any installation with
+accounts created before verification was tracked must backfill
+`user.email_verified = true` for them, or those accounts cannot sign in.
 
 **Breaking:** the admin `player.update` route no longer accepts `email`. Changing a
 player address needs the verified identity email-change flow.

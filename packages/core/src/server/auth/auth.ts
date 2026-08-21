@@ -28,7 +28,6 @@ export type AuthOptions = {
   templateRenderer?: EmailTemplateRenderer;
   getUserLanguage?: (email: string) => Promise<string | null>;
   registrationWebUrl?: string;
-  requireEmailVerification?: boolean;
   onExistingUserSignUp?: (user: { id: string; email: string }) => Promise<void> | void;
   cookieDomain?: string;
 };
@@ -89,7 +88,7 @@ export function createAuth(options: AuthOptions): BetterAuthType {
     emailAndPassword: {
       enabled: true,
       autoSignIn: false,
-      requireEmailVerification: options.requireEmailVerification ?? false,
+      requireEmailVerification: true,
       revokeSessionsOnPasswordReset: true,
       onExistingUserSignUp: options.onExistingUserSignUp
         ? async ({ user }) => {

@@ -79,12 +79,6 @@ export const RegistrationConfigSchema = z
     termsVersion: z.string().min(1),
     /** Public consumer origin used in verification-email links. */
     webUrl: z.url(),
-    /**
-     * Blocks sign-in until the address is verified. Defaults to off so an existing
-     * installation can enable registration without locking out accounts created
-     * before verification was tracked; turn it on once those rows are backfilled.
-     */
-    requireEmailVerification: z.boolean().default(false),
   })
   .strict();
 

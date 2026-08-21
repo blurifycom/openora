@@ -319,8 +319,6 @@ export class IdentityService {
       templateRenderer: this.templateRenderer,
       getUserLanguage: (lookupEmail) => this.resolveUserLanguage(lookupEmail),
       registrationWebUrl: this.platformConfig?.registration?.webUrl,
-      requireEmailVerification:
-        this.platformConfig?.registration?.requireEmailVerification ?? false,
       onExistingUserSignUp: async (existing) => {
         const response = await this.api.requestPasswordResetEmailOTP({
           body: { email: existing.email },
