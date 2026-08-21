@@ -39,8 +39,8 @@ export type PlayerDonate = typeof playerDonate.$inferSelect;
 
 /**
  * Header row per `/rain` event. `amount` is the ACTUALLY-distributed total
- * (`floor(typedAmount / recipientCount) * recipientCount`), never the raw
- * player-typed amount - see this module's AGENTS.md. roomId is nullable: rain
+ * (`floor(typedAmount / requestedRecipientCount) * actualRecipientCount`), never
+ * the raw player-typed amount - see this module's AGENTS.md. roomId is nullable: rain
  * can be sent into global chat (GLOBAL_CHAT_ROOM_ID sentinel on the wire).
  */
 export const playerRain = pgTable('player_rain', {

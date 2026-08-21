@@ -14,6 +14,7 @@ import {
   GiftNotFoundError,
   GiftAlreadyClaimedError,
   GiftSelfClaimError,
+  BlockedRecipientError,
   GiftCreditError,
   ChatCommandIdempotencyKeyReuseError,
   ConcurrentCommandReplayError,
@@ -63,7 +64,12 @@ export function createChatCommandsRouter(svc: ChatCommandsService, adminGuard: A
         {
           NOT_FOUND: [GiftNotFoundError],
           FORBIDDEN: [ChatRoomNotMemberError],
-          CONFLICT: [GiftAlreadyClaimedError, GiftSelfClaimError, GiftCreditError],
+          CONFLICT: [
+            GiftAlreadyClaimedError,
+            GiftSelfClaimError,
+            BlockedRecipientError,
+            GiftCreditError,
+          ],
         },
         () => svc.claimGift(input.id, claimerId),
       );
