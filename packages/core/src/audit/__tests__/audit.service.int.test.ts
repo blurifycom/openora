@@ -672,6 +672,21 @@ describe('mapEventToRecord() player.id resolution (BF-335)', () => {
     expect(row.resourceId).toBe(p.id);
   });
 
+  it('rg.cooling_off.expired: system-attributed, resourceId comes from the payload playerId', async () => {
+    const p = await seedPlayer();
+
+    const row = await mapAndRecord('rg.cooling_off.expired', {
+      userId: p.userId,
+      playerId: p.id,
+      exclusionId: randomUUID(),
+      expiresAt: new Date().toISOString(),
+    });
+
+    expect(row.resourceId).toBe(p.id);
+    expect(row.actorType).toBe('system');
+    expect(row.result).toBe('success');
+  });
+
   it('player.login_blocked: resourceId comes from the payload playerId', async () => {
     const p = await seedPlayer();
 

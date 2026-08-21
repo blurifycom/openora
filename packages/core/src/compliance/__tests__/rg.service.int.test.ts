@@ -242,9 +242,14 @@ describe('RgService.activateCoolingOff (real PG)', () => {
   });
 
   it('expires a lapsed cooling-off and lets a fresh one through', async () => {
-    const { svc } = makeService();
+    const { svc, events } = makeService();
     const userId = randomUUID();
-    const lapsed = await seedExclusion({ userId, kind: 'cooling_off', expiresAt: past() });
+    const lapsedExpiresAt = past();
+    const lapsed = await seedExclusion({
+      userId,
+      kind: 'cooling_off',
+      expiresAt: lapsedExpiresAt,
+    });
 
     await svc.activateCoolingOff(
       userId,
@@ -256,6 +261,14 @@ describe('RgService.activateCoolingOff (real PG)', () => {
     expect(rows).toHaveLength(2);
     expect(rows.find((r) => r.id === lapsed.id)?.status).toBe('expired');
     expect(rows.filter((r) => r.status === 'active')).toHaveLength(1);
+    expect(events.emit).toHaveBeenCalledWith(
+      'rg.cooling_off.expired',
+      expect.objectContaining({
+        userId,
+        exclusionId: lapsed.id,
+        expiresAt: lapsedExpiresAt.toISOString(),
+      }),
+    );
   });
 
   it('keeps an indefinite block when a self-exclusion is still active', async () => {
@@ -506,10 +519,15 @@ describe('RgService.getRgSection (real PG)', () => {
 
 describe('RgService.expireLapsedCoolingOffs (real PG)', () => {
   it('expires lapsed rows and unblocks the affected players', async () => {
-    const { svc, enforcement } = makeService();
+    const { svc, events, enforcement } = makeService();
     const lapsedUser = randomUUID();
     const runningUser = randomUUID();
-    await seedExclusion({ userId: lapsedUser, kind: 'cooling_off', expiresAt: past() });
+    const lapsedExpiresAt = past();
+    const lapsedRow = await seedExclusion({
+      userId: lapsedUser,
+      kind: 'cooling_off',
+      expiresAt: lapsedExpiresAt,
+    });
     await seedExclusion({ userId: runningUser, kind: 'cooling_off', expiresAt: future() });
 
     await svc.expireLapsedCoolingOffs();
@@ -520,6 +538,28 @@ describe('RgService.expireLapsedCoolingOffs (real PG)', () => {
     expect(running?.status).toBe('active');
     expect(enforcement.unblock).toHaveBeenCalledWith(lapsedUser);
     expect(enforcement.unblock).not.toHaveBeenCalledWith(runningUser);
+    expect(events.emit).toHaveBeenCalledWith(
+      'rg.cooling_off.expired',
+      expect.objectContaining({
+        userId: lapsedUser,
+        exclusionId: lapsedRow.id,
+        expiresAt: lapsedExpiresAt.toISOString(),
+      }),
+    );
+    expect(events.emit).not.toHaveBeenCalledWith(
+      'rg.cooling_off.expired',
+      expect.objectContaining({ userId: runningUser }),
+    );
+  });
+
+  it('emits nothing when no cooling-off has lapsed', async () => {
+    const { svc, events } = makeService();
+    const userId = randomUUID();
+    await seedExclusion({ userId, kind: 'cooling_off', expiresAt: future() });
+
+    await svc.expireLapsedCoolingOffs();
+
+    expect(events.emit).not.toHaveBeenCalledWith('rg.cooling_off.expired', expect.anything());
   });
 
   it('keeps the indefinite block when the player is also self-excluded', async () => {
