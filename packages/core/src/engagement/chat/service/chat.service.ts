@@ -1422,8 +1422,8 @@ export class ChatService {
     return [...(await this.blockedIdsFor(viewerId))];
   }
 
-  async isBlocked(tx: unknown, blockerId: User['id'], blockedId: User['id']): Promise<boolean> {
-    const [row] = await (tx as DrizzleTx)
+  async isBlocked(tx: DrizzleTx, blockerId: User['id'], blockedId: User['id']): Promise<boolean> {
+    const [row] = await tx
       .select({ blockedId: chatUserBlock.blockedId })
       .from(chatUserBlock)
       .where(
