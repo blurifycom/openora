@@ -83,18 +83,21 @@ has been retired by the chat-commands migration; new gift rows and all reads use
 
 ## Rain has a remainder - debit the distributed amount, not the typed amount
 
-`/rain <amount>` splits `floor(amount / recipientCount)` to each recipient - `perRecipient *
-recipientCount` can be LESS than the player-typed `amount` (eg `10.99` split 10 ways credits
-`10.00` total). `doSendRain` debits `totalDistributed` (`floor(amount/n)*n`, computed in the same
-SQL statement as `perRecipient`), never the raw `input.amount` - otherwise the undistributed
-remainder is silently taken from the sender and never credited anywhere. The system-message
-metadata (built by `doSendRain` itself), audit `after.amount`, the persisted
-`player_rain.amount`, and the `chat.rain.distributed` event's `totalAmount` all report
-`totalDistributed` too, since that is what actually left the sender's wallet. The pre-transaction
-`maxAmount`/`minAmount`/`amountUnits` limit checks still validate against the player-typed
-`input.amount` - that happens before the split is known and is correct as-is. `player_rain` is a new
-header row per rain event (nothing was persisted before this module existed); `player_rain_receiver`
-has one row per recipient, in-module FK to `player_rain.id`.
+`/rain <amount>` treats `amount` as the total budget and fixes `perRecipient` from the requested
+`recipientCount` before the live recipient list is reduced. The per-recipient value is floored to
+two decimal places in SQL. If fewer users are available, the same per-recipient amount is paid to
+each selected user; the unused remainder stays with the sender. For example, `100` requested for 5
+users fixes `20` per recipient; if only 4 are available, 4 users receive `20` and `80` is debited.
+`perRecipient` and `totalDistributed` (`perRecipient * actual recipientCount`) are computed in the
+same SQL transaction. The system-message metadata (built by
+`doSendRain` itself), audit `after.amount`, the persisted `player_rain.amount`, and the
+`chat.rain.distributed` event's `totalAmount` all report `totalDistributed`, since that is what
+actually left the sender's wallet. The pre-transaction `maxAmount`/`minAmount` limit checks still
+validate against the player-typed `input.amount`; `maxRecipients` validates the requested count.
+Non-even totals are valid, and there is no whole-unit amount-versus-recipient check. `player_rain` is
+a new header row per rain event (nothing was persisted before
+this module existed); `player_rain_receiver` has one row per recipient, in-module FK to
+`player_rain.id`.
 
 ## Exact username resolution for `/donate`
 

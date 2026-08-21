@@ -403,6 +403,34 @@ describe('RG cooling-off lift', () => {
   });
 });
 
+describe('RG cooling-off expiry', () => {
+  it('records the sweep-driven expiry in the audit trail, attributed to the system', async () => {
+    const { userId, playerId } = await registerPlayer(`rg-cooloff-expiry-${randomUUID()}@e2e.test`);
+
+    const activateRes = await admin.post(`/compliance/players/${userId}/cooling-off`, {
+      durationHours: 24,
+      reason: 'audit trail check',
+    });
+    expect(activateRes.status).toBe(200);
+    const exclusionId = (await readJson(activateRes)).id as string;
+
+    await expireExclusion(app.container, exclusionId);
+    await triggerRgMonitorSweep(app.container);
+
+    await vi.waitFor(async () => {
+      const res = await admin.get(
+        `/audit/logs?resourceId=${playerId}&action=rg.cooling_off.expired`,
+      );
+      const body = await readJson(res);
+      expect(body.items).toHaveLength(1);
+      expect(body.items[0].actorType).toBe('system');
+      expect(body.items[0].resourceType).toBe('player');
+      expect(body.items[0].before).toMatchObject({ status: 'active' });
+      expect(body.items[0].after).toMatchObject({ exclusionId });
+    });
+  });
+});
+
 describe('RG self-exclusion lift negatives', () => {
   it('rejects lifting before the minimum period elapses', async () => {
     const { userId } = await registerPlayer(`rg-lift-early-${randomUUID()}@e2e.test`);

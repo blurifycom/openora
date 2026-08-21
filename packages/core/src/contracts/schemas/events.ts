@@ -339,6 +339,12 @@ export const domainEventSchemas = {
   'rg.cooling_off.lifted': actorReasonBase
     .extend({ userId: UuidSchema, playerId: UuidSchema.nullable(), exclusionId: UuidSchema })
     .extend(authContextBase.shape),
+  'rg.cooling_off.expired': authContextBase.extend({
+    userId: UuidSchema,
+    playerId: UuidSchema.nullable(),
+    exclusionId: UuidSchema,
+    expiresAt: TimestampSchema,
+  }),
   'rg.exclusion.login_blocked': authContextBase.extend({
     userId: UuidSchema,
     playerId: UuidSchema.nullable(),

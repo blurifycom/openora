@@ -543,6 +543,17 @@ export async function mapEventToRecord(
     };
   }
 
+  if (topic === 'rg.cooling_off.expired') {
+    return {
+      ...base,
+      actorType: 'system',
+      resourceType: 'player',
+      resourceId: str(p['playerId']),
+      before: { status: 'active' },
+      after: p,
+    };
+  }
+
   // System-driven login block on an excluded/cooled-off player. actorType is
   // 'system' (no admin acted here) and the outcome is a failure, not the base
   // regex's default 'success' (the topic doesn't end in failed/rejected/declined).
@@ -670,6 +681,7 @@ const SUBSCRIBED_TOPICS: DomainEventName[] = [
   'rg.self_exclusion.activated',
   'rg.self_exclusion.lifted',
   'rg.cooling_off.lifted',
+  'rg.cooling_off.expired',
   'rg.exclusion.login_blocked',
   'compliance.kyc.updated',
   'compliance.kyc.submitted',

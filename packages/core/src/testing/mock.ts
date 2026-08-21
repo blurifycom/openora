@@ -109,6 +109,7 @@ export const makeIdentityReader = (): IdentityReader =>
     getPlayerIdsInactiveSince: vi.fn().mockResolvedValue([]),
     getPlayerIdByUserId: vi.fn().mockResolvedValue(null),
     getPlayerIdByUserIdSafe: vi.fn().mockResolvedValue(null),
+    getPlayerIdsByUserIdsSafe: vi.fn().mockResolvedValue(new Map()),
     getPlayerKycStatusByUserId: vi.fn().mockResolvedValue(null),
     getPlayerUserIdsSharingLoginIp: vi.fn().mockResolvedValue([]),
   });
