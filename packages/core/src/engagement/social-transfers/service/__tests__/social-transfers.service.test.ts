@@ -9,6 +9,7 @@ import type {
   RealtimeTransport,
   ChatRoomAccess,
   CacheAdapter,
+  ChatBlockWriter,
 } from '@openora/core/contracts';
 import {
   SocialTransfersService,
@@ -16,6 +17,7 @@ import {
   BelowMinimumError,
   DonateSelfError,
   ChatPlayerNotFoundError,
+  DonateBlockedError,
   fingerprintCommand,
 } from '../social-transfers.service.js';
 
@@ -188,6 +190,12 @@ function makeRoomAccess(): ChatRoomAccess {
   return mock<ChatRoomAccess>({ verifyRoomAccess: vi.fn().mockResolvedValue(undefined) });
 }
 
+function makeBlockWriter(blocked = false): ChatBlockWriter {
+  return mock<ChatBlockWriter>({
+    isBlockedBetween: vi.fn().mockResolvedValue(blocked),
+  });
+}
+
 function makeCache(initial: Record<string, unknown> = {}): CacheAdapter {
   const values = new Map<string, unknown>(Object.entries(initial));
   return {
@@ -223,6 +231,7 @@ function makeSvc(
     transport?: RealtimeTransport;
     audit?: AuditWritePort;
     roomAccess?: ChatRoomAccess;
+    blockWriter?: ChatBlockWriter;
     cache?: CacheAdapter;
   } = {},
 ) {
@@ -240,6 +249,7 @@ function makeSvc(
     overrides.transport ?? makeTransport(),
     mock(makeEventBus()),
     overrides.roomAccess ?? makeRoomAccess(),
+    overrides.blockWriter ?? makeBlockWriter(),
     overrides.cache ?? makeCache(),
   );
 }
@@ -919,6 +929,35 @@ describe('SocialTransfersService.sendDonate', () => {
         ACTOR_ID,
       ),
     ).rejects.toThrow(DonateSelfError);
+  });
+
+  it('rejects a donation when either player has blocked the other', async () => {
+    const blockWriter = makeBlockWriter(true);
+    const wallet = makeWallet();
+    const writer = mock<ChatSystemWriter>({
+      postSystemMessage: vi.fn().mockResolvedValue(DONATE_SYSTEM_MSG),
+    });
+    const svc = makeSvc({
+      drizzleRows: { select: [[DONATE_ROW]] },
+      blockWriter,
+      wallet,
+      writer,
+      directory: makeRecipientDirectory(),
+    });
+
+    await expect(
+      svc.sendDonate(
+        {
+          targetUsername: 'alice',
+          amount: '10.00000000',
+          roomId: ROOM_ID,
+          idempotencyKey: IDEMPOTENCY_KEY,
+        },
+        ACTOR_ID,
+      ),
+    ).rejects.toThrow(DonateBlockedError);
+    expect(wallet.debit).not.toHaveBeenCalled();
+    expect(blockWriter.isBlockedBetween).toHaveBeenCalledWith(ACTOR_ID, CLAIMER_ID);
   });
 
   it('throws ChatPlayerNotFoundError when the target username does not exist', async () => {

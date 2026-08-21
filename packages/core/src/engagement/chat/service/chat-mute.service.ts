@@ -142,23 +142,25 @@ export class ChatMuteService {
     const scope =
       roomId === '__global' || roomId === '__all_public' || roomId === '__all' ? roomId : 'room';
     const concreteRoomId = scope === 'room' ? roomId : null;
-    if (concreteRoomId || scope === GLOBAL_CHAT_ROOM_ID) {
+    if (concreteRoomId) {
       const [room] = await this.drizzle.db
         .select()
         .from(chatRoom)
-        .where(
-          and(
-            concreteRoomId
-              ? eq(chatRoom.id, concreteRoomId)
-              : eq(chatRoom.slug, GLOBAL_CHAT_ROOM_ID),
-            isNull(chatRoom.deletedAt),
-          ),
-        )
+        .where(and(eq(chatRoom.id, concreteRoomId), isNull(chatRoom.deletedAt)))
         .limit(1);
       if (!room) {
-        throw new ChatRoomNotFoundError(concreteRoomId ?? GLOBAL_CHAT_ROOM_ID);
+        throw new ChatRoomNotFoundError(concreteRoomId);
       }
       if (!room.isPublic) {
+        throw new ChatAdminPrivateRoomModerationError();
+      }
+    } else if (scope === GLOBAL_CHAT_ROOM_ID) {
+      const [globalRoom] = await this.drizzle.db
+        .select({ isPublic: chatRoom.isPublic })
+        .from(chatRoom)
+        .where(and(eq(chatRoom.slug, GLOBAL_CHAT_ROOM_ID), isNull(chatRoom.deletedAt)))
+        .limit(1);
+      if (globalRoom && !globalRoom.isPublic) {
         throw new ChatAdminPrivateRoomModerationError();
       }
     }

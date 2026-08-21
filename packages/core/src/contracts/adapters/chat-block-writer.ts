@@ -8,6 +8,7 @@ export type ChatBlockWriter = {
    * blocked/ignored players out of player search results.
    */
   getExcludedUserIds(viewerId: string): Promise<string[]>;
+  isBlockedBetween(userA: string, userB: string): Promise<boolean>;
 };
 
 export const CHAT_BLOCK_WRITER: Token<ChatBlockWriter> = createToken('CHAT_BLOCK_WRITER');

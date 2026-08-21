@@ -525,6 +525,19 @@ describe('ChatService block list (real PG)', () => {
     await expect(svc.blockUser(userId, userId)).rejects.toThrow(ChatSelfBlockError);
   });
 
+  it('reports an active block in either direction', async () => {
+    const { svc } = makeService();
+    const blockerId = randomUUID();
+    const blockedId = randomUUID();
+
+    await expect(svc.isBlockedBetween(blockerId, blockedId)).resolves.toBe(false);
+    await svc.blockUser(blockerId, blockedId);
+    await expect(svc.isBlockedBetween(blockerId, blockedId)).resolves.toBe(true);
+    await expect(svc.isBlockedBetween(blockedId, blockerId)).resolves.toBe(true);
+    await svc.unblockUser(blockerId, blockedId, NO_CLIENT_META);
+    await expect(svc.isBlockedBetween(blockerId, blockedId)).resolves.toBe(false);
+  });
+
   it('dissolves any friendship on the same tx as the block insert, before returning', async () => {
     const dissolveFriendshipOnBlock = vi.fn(async () => {});
     const { svc } = makeService(undefined, mock<SocialCommands>({ dissolveFriendshipOnBlock }));
@@ -1593,6 +1606,26 @@ describe('ChatService moderation (real PG)', () => {
       );
     },
   );
+
+  it('supports a global mute when the virtual global room has no row', async () => {
+    const { svc, moderation } = makeService();
+    const userId = randomUUID();
+
+    await expect(
+      moderation.mute({
+        userId,
+        roomId: '__global',
+        durationSeconds: 60,
+        reason: 'spam',
+        actorId: randomUUID(),
+        ...NO_CLIENT_META,
+      }),
+    ).resolves.toEqual({ success: true });
+
+    await expect(svc.sendGlobalMessage(userId, 'Muted', 'hello')).rejects.toBeInstanceOf(
+      ChatPlayerMutedError,
+    );
+  });
 
   it('enforces an all-chat mute in private rooms', async () => {
     const { svc, moderation } = makeService();

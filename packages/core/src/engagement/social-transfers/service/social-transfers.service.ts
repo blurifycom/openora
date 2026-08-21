@@ -20,6 +20,7 @@ import type {
   AuditWritePort,
   RealtimeTransport,
   ChatRoomAccess,
+  ChatBlockWriter,
   CacheAdapter,
   SendGiftArgs,
   SendGiftResult,
@@ -88,6 +89,10 @@ export const GiftCreditError = makeConflictError(
   'Recipient wallet is unavailable; gift claim aborted',
 );
 export const DonateSelfError = makeConflictError('DonateSelf', 'You cannot donate to yourself');
+export const DonateBlockedError = makeConflictError(
+  'DonateBlocked',
+  'You cannot donate to a blocked player',
+);
 export const TooManyRecipientsError = makeConflictError(
   'TooManyRecipients',
   'Amount too small: you need at least $1 per recipient',
@@ -293,6 +298,7 @@ export class SocialTransfersService implements GiftCommands, RainCommands {
     private readonly transport: RealtimeTransport,
     private readonly events: EventBus,
     private readonly roomAccess: ChatRoomAccess,
+    private readonly blockWriter: ChatBlockWriter,
     private readonly cache: CacheAdapter,
     private readonly idempotencyTtlMs = COMMAND_IDEMPOTENCY_TTL_MS,
   ) {}
@@ -921,6 +927,9 @@ export class SocialTransfersService implements GiftCommands, RainCommands {
 
     if (target.userId === actorId) {
       throw new DonateSelfError();
+    }
+    if (await this.blockWriter.isBlockedBetween(actorId, target.userId)) {
+      throw new DonateBlockedError();
     }
 
     const senderSummaries = await this.directory.lookupPlayers([actorId]);

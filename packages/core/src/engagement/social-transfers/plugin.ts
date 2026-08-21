@@ -7,6 +7,7 @@ import {
   AUDIT_WRITER,
   CHAT_REALTIME_TRANSPORT,
   CHAT_ROOM_ACCESS,
+  CHAT_BLOCK_WRITER,
   CACHE,
   GIFT_COMMANDS,
   RAIN_COMMANDS,
@@ -41,6 +42,7 @@ export default {
           c.get(CHAT_REALTIME_TRANSPORT),
           c.get(EVENT_BUS),
           c.get(CHAT_ROOM_ACCESS),
+          c.get(CHAT_BLOCK_WRITER),
           c.get(CACHE),
         ),
     );

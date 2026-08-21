@@ -1413,6 +1413,23 @@ export class ChatService {
     return [...(await this.excludedSenderIdsFor(viewerId))];
   }
 
+  async isBlockedBetween(userA: User['id'], userB: User['id']): Promise<boolean> {
+    const [block] = await this.drizzle.db
+      .select({ blockerId: chatUserBlock.blockerId })
+      .from(chatUserBlock)
+      .where(
+        and(
+          isNull(chatUserBlock.removedAt),
+          or(
+            and(eq(chatUserBlock.blockerId, userA), eq(chatUserBlock.blockedId, userB)),
+            and(eq(chatUserBlock.blockerId, userB), eq(chatUserBlock.blockedId, userA)),
+          ),
+        ),
+      )
+      .limit(1);
+    return block !== undefined;
+  }
+
   async createRoom({
     name,
     slug,
