@@ -15,10 +15,12 @@ export class ProfileService implements PlayerProvisioning {
       .select({ name: user.name, username: user.username })
       .from(user)
       .where(eq(user.id, userId));
-    await this.drizzle.db
+    const inserted = await this.drizzle.db
       .insert(player)
       .values({ userId, displayName: u?.username ?? u?.name ?? 'Player', ...consent })
-      .onConflictDoNothing({ target: player.userId });
+      .onConflictDoNothing({ target: player.userId })
+      .returning({ id: player.id });
+    return { created: inserted.length > 0 };
   }
 
   private async ensureProfile(userId: User['id']) {

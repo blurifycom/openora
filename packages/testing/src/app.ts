@@ -70,6 +70,10 @@ export async function bootTestApp(config: BootTestAppConfig): Promise<TestApp> {
           id: 'testing-registration-config',
           path: fileURLToPath(new URL('./test-registration-config-plugin.ts', import.meta.url)),
         },
+        {
+          id: 'testing-email-capture',
+          path: fileURLToPath(new URL('./test-email-capture-plugin.ts', import.meta.url)),
+        },
         ...config.plugins,
       ],
       ...(config.igaming ? { igaming: config.igaming } : {}),

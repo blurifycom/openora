@@ -9,7 +9,8 @@ import {
   bootTestApp,
   registerPlayer,
   submitRegistration,
-  markEmailVerified,
+  verifyEmailByLink,
+  capturedEmailsFor,
   seedMinimal,
   type TestDb,
   type TestApp,
@@ -60,13 +61,33 @@ describe('registration email verification gate', () => {
     const beforeVerify = await login(email);
     expect(beforeVerify.ok).toBe(false);
 
-    const userId = await userIdFor(email);
-    expect(userId).toBeDefined();
-    await markEmailVerified(app, userId!);
+    await verifyEmailByLink(app, email);
 
     const afterVerify = await login(email);
     expect(afterVerify.ok).toBe(true);
     expect(afterVerify.headers.get('set-cookie')).toBeTruthy();
+  });
+
+  it('hides whether the email was already taken and sends a reset instead', async () => {
+    const email = `reg-enum-${randomUUID()}@e2e.test`;
+    const first = await submitRegistration(app, { email });
+    expect(first.status).toBe(200);
+    const firstBody = await first.json();
+
+    const second = await submitRegistration(app, { email });
+    expect(second.status).toBe(first.status);
+    expect(await second.json()).toEqual(firstBody);
+    expect(second.headers.get('set-cookie')).toBeNull();
+
+    // The known-email branch must not re-provision, and must nudge the real owner
+    // towards a password reset rather than confirming the address exists.
+    const players = await app.container
+      .get(DRIZZLE)
+      .db.select()
+      .from(player)
+      .where(eq(player.userId, (await userIdFor(email)) ?? ''));
+    expect(players).toHaveLength(1);
+    expect(capturedEmailsFor(email).some((e) => /reset/i.test(e.subject))).toBe(true);
   });
 
   it('records the terms and age acceptance on the player row at registration', async () => {

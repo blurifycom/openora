@@ -7,9 +7,10 @@ terms/age acceptance, and returns `{ status: 'check-email' }` rather than a user
 and session. Consumers must configure `registration.termsVersion` and
 `registration.webUrl` before enabling registration.
 
-**Breaking:** sign-in requires a verified email address
-(`emailAndPassword.requireEmailVerification`). Existing installations must mark
-already-trusted accounts `user.email_verified = true` before deploying.
+Sign-in can require a verified email address via
+`registration.requireEmailVerification`. It defaults to off so an existing
+installation can enable registration without locking out accounts created before
+verification was tracked; turn it on once `user.email_verified` is backfilled.
 
 **Breaking:** the admin `player.update` route no longer accepts `email`. Changing a
 player address needs the verified identity email-change flow.
@@ -22,5 +23,11 @@ Registration no longer creates a session, prevents email enumeration, and record
 terms/age consent plus registration IP and user agent on the `player` row through
 the new `PLAYER_PROVISIONING` command port. A public username-availability endpoint
 is rate-limited and resolves case-insensitively against the `lower(username)` index.
+
+Fixes two latent problems that the unauthenticated verification link makes routine:
+`/identity/email/verify` bucketed every session-less caller under one shared
+`anonymous` rate-limit key, and only emitted `identity.email.verified` when the
+caller already had a session, so the ordinary click-the-link flow left no audit
+trail. Both now resolve the subject from the accepted token.
 Legacy player names are backfilled by the identity migration; the first holder of a
 name keeps it and later holders get a handle suffixed with their user id.

@@ -319,6 +319,8 @@ export class IdentityService {
       templateRenderer: this.templateRenderer,
       getUserLanguage: (lookupEmail) => this.resolveUserLanguage(lookupEmail),
       registrationWebUrl: this.platformConfig?.registration?.webUrl,
+      requireEmailVerification:
+        this.platformConfig?.registration?.requireEmailVerification ?? false,
       onExistingUserSignUp: async (existing) => {
         const response = await this.api.requestPasswordResetEmailOTP({
           body: { email: existing.email },
@@ -427,13 +429,9 @@ export class IdentityService {
       .where(eq(user.email, input.email.toLowerCase()))
       .limit(1);
     if (stored?.id === body.user.id) {
-      await provisioning.createForRegistration({
-        userId: body.user.id,
-        termsVersion: registration.termsVersion,
-        termsAcceptedAt: new Date(),
-        ageAcceptedAt: new Date(),
-        registrationIp: ip,
-        registrationUserAgent: userAgent,
+      await this.recordRegistrationConsent(provisioning, body.user.id, registration.termsVersion, {
+        ip,
+        userAgent,
       });
       this.events.emit('identity.user.registered', {
         userId: body.user.id,
@@ -444,6 +442,46 @@ export class IdentityService {
     }
     void resHeaders;
     return { status: 'check-email' as const };
+  }
+
+  /**
+   * Better Auth commits the user inside its own transaction before returning, so a
+   * failure here would otherwise leave an account with no consent record. The user is
+   * deleted instead (sessions and accounts cascade), making registration all-or-nothing.
+   */
+  private async recordRegistrationConsent(
+    provisioning: PlayerProvisioning,
+    userId: User['id'],
+    termsVersion: string,
+    { ip, userAgent }: ClientMeta,
+  ) {
+    const now = new Date();
+    let outcome: { created: boolean };
+    try {
+      outcome = await provisioning.createForRegistration({
+        userId,
+        termsVersion,
+        termsAcceptedAt: now,
+        ageAcceptedAt: now,
+        registrationIp: ip,
+        registrationUserAgent: userAgent,
+      });
+    } catch (err) {
+      identityLogger.error(
+        { err, userId },
+        'registration consent write failed - rolling back user',
+      );
+      await this.drizzle.db.delete(user).where(eq(user.id, userId));
+      throw new ORPCError('INTERNAL_SERVER_ERROR', { message: 'Registration is unavailable' });
+    }
+    if (!outcome.created) {
+      // A player row already existed, so this consent capture was discarded. Never
+      // silent: the acceptance evidence is a compliance record.
+      identityLogger.error(
+        { userId, termsVersion },
+        'registration consent not stored - player row already existed',
+      );
+    }
   }
 
   async usernameAvailable(username: string, reqHeaders: NodeHeaders) {
@@ -1159,10 +1197,12 @@ export class IdentityService {
   async verifyEmail(input: VerifyEmailInput, reqHeaders: NodeHeaders) {
     const { ip, userAgent } = extractClientMeta(reqHeaders);
     const headers = nodeHeadersToHeaders(reqHeaders);
-    const userId = await this.currentUserId(headers);
+    const sessionUserId = await this.currentUserId(headers);
+    // Verification links are followed without a session, so an `anonymous` bucket
+    // would be shared by every caller - one client could stall everyone's sign-up.
     await assertRateLimit(
       this.limiter,
-      `verify-email:${userId ?? 'anonymous'}`,
+      `verify-email:${sessionUserId ?? ip ?? 'unknown'}`,
       VERIFY_EMAIL_RATE_LIMIT,
     );
     const res = await this.api.verifyEmail({
@@ -1171,6 +1211,7 @@ export class IdentityService {
       asResponse: true,
     });
     await ensureOk(res);
+    const userId = sessionUserId ?? (await this.userIdFromVerificationToken(input.token));
     if (userId) {
       this.events.emit('identity.email.verified', {
         userId,
@@ -1180,6 +1221,34 @@ export class IdentityService {
       });
     }
     return SUCCESS;
+  }
+
+  /**
+   * Better Auth answers an unauthenticated verification with `user: null`, so the
+   * subject is recovered from the token it just accepted - otherwise the audit event
+   * would never fire for the ordinary click-the-link flow.
+   */
+  private async userIdFromVerificationToken(token: string) {
+    const payload = token.split('.')[1];
+    if (!payload) {
+      return null;
+    }
+    let email: unknown;
+    try {
+      email = (JSON.parse(Buffer.from(payload, 'base64url').toString()) as { email?: unknown })
+        .email;
+    } catch {
+      return null;
+    }
+    if (typeof email !== 'string') {
+      return null;
+    }
+    const [row] = await this.drizzle.db
+      .select({ id: user.id })
+      .from(user)
+      .where(eq(user.email, email.toLowerCase()))
+      .limit(1);
+    return row?.id ?? null;
   }
 
   async changeEmail(input: ChangeEmailInput, reqHeaders: NodeHeaders, resHeaders: Headers) {

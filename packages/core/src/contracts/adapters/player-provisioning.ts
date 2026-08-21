@@ -1,7 +1,11 @@
 import { createToken, type Token } from './token.js';
 
 export type PlayerProvisioning = {
-  createForRegistration(record: PlayerRegistrationRecord): Promise<void>;
+  /**
+   * `created: false` means a player row already existed, so this consent record was
+   * NOT stored. Callers must surface that - it is a compliance record, not a no-op.
+   */
+  createForRegistration(record: PlayerRegistrationRecord): Promise<{ created: boolean }>;
 };
 
 export type PlayerRegistrationRecord = {

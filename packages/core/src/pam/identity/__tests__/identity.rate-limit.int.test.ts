@@ -163,13 +163,27 @@ describe('IdentityService - rate limiting on secret-guessing routes (ABC-208 fin
   it('rejects verifyEmail with a 429 once the per-caller limit is exhausted', async () => {
     const limiter = makeLimiter();
     for (let i = 0; i < 5; i++) {
-      await limiter.consume('verify-email:anonymous', { limit: 5, windowMs: 15 * 60 * 1000 });
+      await limiter.consume('verify-email:203.0.113.5', { limit: 5, windowMs: 15 * 60 * 1000 });
     }
     const svc = withTemplateRenderer({ drizzle, events, limiter });
 
-    await expect(svc.verifyEmail({ token: 'sometoken' }, {})).rejects.toMatchObject({
-      code: 'TOO_MANY_REQUESTS',
-    });
+    await expect(
+      svc.verifyEmail({ token: 'sometoken' }, { 'x-real-ip': '203.0.113.5' }),
+    ).rejects.toMatchObject({ code: 'TOO_MANY_REQUESTS' });
+  });
+
+  it('buckets unauthenticated verifyEmail callers separately, so one cannot stall the rest', async () => {
+    const limiter = makeLimiter();
+    for (let i = 0; i < 5; i++) {
+      await limiter.consume('verify-email:203.0.113.6', { limit: 5, windowMs: 15 * 60 * 1000 });
+    }
+    const svc = withTemplateRenderer({ drizzle, events, limiter });
+
+    // Verification links are followed without a session. A shared bucket would let the
+    // exhausted caller above block every other sign-up in flight.
+    await expect(
+      svc.verifyEmail({ token: 'sometoken' }, { 'x-real-ip': '203.0.113.7' }),
+    ).rejects.not.toMatchObject({ code: 'TOO_MANY_REQUESTS' });
   });
 
   it('rejects enableTwoFactor with a 429 once the per-caller limit is exhausted', async () => {

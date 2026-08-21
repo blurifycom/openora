@@ -10,6 +10,7 @@ export default {
         registration: {
           termsVersion: 'test-v1',
           webUrl: 'http://localhost:3000',
+          requireEmailVerification: true,
         },
       }),
     );
