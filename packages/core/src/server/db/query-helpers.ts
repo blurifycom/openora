@@ -59,6 +59,18 @@ export function moneyScaleBy(amount: string, factor: string): string {
   return fromMinorUnits(product);
 }
 
+// Exact decimal addition and subtraction over the same bigint minor-units path. Used to
+// derive one side of a balance change from the other: reading the balance separately and
+// then updating it leaves a window for a concurrent writer, and an append-only audit row
+// that records the wrong `before` cannot be corrected afterwards.
+export function moneyAdd(a: string, b: string): string {
+  return fromMinorUnits(toMinorUnits(a) + toMinorUnits(b));
+}
+
+export function moneySubtract(a: string, b: string): string {
+  return fromMinorUnits(toMinorUnits(a) - toMinorUnits(b));
+}
+
 // Run `fn` over `items` with at most `concurrency` promises in flight, results in input
 // order. Use this instead of `Promise.all(items.map(fn))` whenever `items` comes from a
 // query (unbounded) and `fn` touches the DB: an uncapped fan-out opens one pool connection

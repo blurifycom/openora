@@ -953,6 +953,7 @@
     "tag.player.removed",
     "tag.rule.upserted",
     "wallet.deposit.completed",
+    "wallet.manual_adjustment.created",
     "wallet.withdrawal.approved",
     "wallet.withdrawal.completed",
     "wallet.withdrawal.failed",

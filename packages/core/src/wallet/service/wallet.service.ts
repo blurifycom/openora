@@ -14,7 +14,9 @@ import {
   createLogger,
   moneyToNumber,
   moneyEquals,
+  moneyAdd,
   moneyCompare,
+  moneySubtract,
 } from '@openora/core/server';
 import {
   normalizeKycStatus,
@@ -690,11 +692,12 @@ export class WalletService {
     reason: string;
     idempotencyKey: string;
   } & ClientMeta): Promise<TransactionResult> {
-    if (!(await this.identityReader.getPlayerIdByUserId(userId))) {
+    const playerId = await this.identityReader.getPlayerIdByUserId(userId);
+    if (!playerId) {
       throw new PlayerNotFoundError(userId);
     }
 
-    return this.drizzle.db.transaction(async (txn) => {
+    const { result, emitted } = await this.drizzle.db.transaction(async (txn) => {
       let walletRecord = (
         await txn.select().from(wallet).where(eq(wallet.userId, userId)).for('update')
       ).at(0);
@@ -728,10 +731,9 @@ export class WalletService {
           currency,
           reason,
         });
-        return { transactionId: existing.id, status: existing.status };
+        return { result: { transactionId: existing.id, status: existing.status }, emitted: false };
       }
 
-      const balanceBefore = await readWalletBalance(txn, walletRecord.id, currency);
       const { row, replayed } = await this.insertIdempotentTransaction(txn, {
         namespace: MANUAL_ADJUSTMENT_IDEMPOTENCY_NAMESPACE,
         walletId: walletRecord.id,
@@ -757,7 +759,7 @@ export class WalletService {
           currency,
           reason,
         });
-        return { transactionId: row.id, status: row.status };
+        return { result: { transactionId: row.id, status: row.status }, emitted: false };
       }
 
       const balances =
@@ -766,8 +768,19 @@ export class WalletService {
           : await debitWalletBalance(txn, walletRecord.id, currency, amount);
       const [balance] = balances;
       if (!balance) {
-        throw new InsufficientBalanceError(balanceBefore, amount);
+        throw new InsufficientBalanceError(
+          await readWalletBalance(txn, walletRecord.id, currency),
+          amount,
+        );
       }
+      // Derived from the row the update returned, never read separately beforehand. The
+      // wallet row is locked here but the deposit credit path does not take that lock, so
+      // a deposit can commit between a pre-read and this update - and `before` is going
+      // into an append-only audit record that cannot be corrected later.
+      const balanceBefore =
+        direction === 'credit'
+          ? moneySubtract(balance.amount, amount)
+          : moneyAdd(balance.amount, amount);
       await this.audit.recordInTransaction(txn, {
         actorId: adminId,
         actorType: 'admin',
@@ -786,8 +799,27 @@ export class WalletService {
         ip,
         userAgent,
       });
-      return { transactionId: row.id, status: row.status };
+      return { result: { transactionId: row.id, status: row.status }, emitted: true };
     });
+
+    // Every other balance-mutating path on this service emits; without this one an admin
+    // correction moves a real balance while responsible-gaming monitoring, analytics and
+    // any operator subscriber see nothing at all.
+    if (emitted) {
+      this.events.emit('wallet.manual_adjustment.created', {
+        userId,
+        playerId,
+        adminId,
+        amount,
+        currency,
+        transactionId: result.transactionId,
+        direction,
+        reason,
+        ip,
+        userAgent,
+      });
+    }
+    return result;
   }
 
   // Pre-PSP replay check for deposit; also returns the resolved wallet so the transaction

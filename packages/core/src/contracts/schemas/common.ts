@@ -25,12 +25,13 @@ export const MONEY_SCALE = 18;
 export const MONEY_PRECISION = 38;
 const MONEY_INTEGER_DIGITS = MONEY_PRECISION - MONEY_SCALE;
 
-export const MoneyAmountSchema = z
-  .string()
-  .regex(
-    new RegExp(`^\\d{1,${MONEY_INTEGER_DIGITS}}(\\.\\d{1,${MONEY_SCALE}})?$`),
-    `must be a non-negative decimal string with at most ${MONEY_INTEGER_DIGITS} integer and ${MONEY_SCALE} decimal places`,
-  );
+export const MoneyAmountSchema = z.string().regex(
+  // `0*` first so the bound is on the VALUE, not the string. Postgres accepts
+  // `000000000000000000001` into numeric(38,18) - it is the number 1 - and a contract
+  // that counts characters would reject a deposit the database would have stored.
+  new RegExp(`^0*\\d{1,${MONEY_INTEGER_DIGITS}}(\\.\\d{1,${MONEY_SCALE}})?$`),
+  `must be a non-negative decimal string below 10^${MONEY_INTEGER_DIGITS} with at most ${MONEY_SCALE} decimal places`,
+);
 export type MoneyAmount = z.infer<typeof MoneyAmountSchema>;
 
 export const AUTH_GUARD_REASONS = [
