@@ -80,6 +80,7 @@ export const domainEventSchemas = {
   'identity.user.lockout.triggered': authContextBase.extend({
     userId: UuidSchema,
     email: z.email(),
+    tier: z.number().int().positive().optional(),
     lockoutUntil: TimestampSchema,
   }),
   'identity.user.unlocked': authContextBase.extend({

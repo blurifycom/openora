@@ -169,12 +169,16 @@ describe('IdentityService - login lockout (real PG + real Redis)', () => {
 
     await expect(
       svc.login({ email: 'A@B.dev', password: 'wrongpass1' }, {}, new Headers()),
-    ).rejects.toThrow();
+    ).rejects.toMatchObject({
+      data: { attemptsRemaining: 0, lockoutUntil: expect.any(String) },
+    });
 
     const row = await readUser(account.id);
     expect(row.failedLoginAttempts).toBe(5);
     expect(row.lockoutUntil?.getTime()).toBeGreaterThan(Date.now());
+    expect(row.lockoutUntil?.getTime()).toBeLessThanOrEqual(Date.now() + 60_000);
     expect(row.lockoutCount).toBe(1);
+    expect(events.emit).toHaveBeenCalledTimes(1);
     expect(events.emit).toHaveBeenCalledWith(
       'identity.user.lockout.triggered',
       expect.objectContaining({ userId: account.id, email: EMAIL }),
@@ -187,17 +191,46 @@ describe('IdentityService - login lockout (real PG + real Redis)', () => {
       failedLoginAttempts: 4,
       lockoutCount: 1,
       lastLockoutAt: new Date(Date.now() - 60_000),
+      lastFailedLoginAt: new Date(Date.now() - 60_000),
     });
     signInEmailMock.mockResolvedValue(jsonResponse({ message: 'Invalid' }, 401));
     const svc = buildService();
 
     await expect(
       svc.login({ email: EMAIL, password: 'wrongpass1' }, {}, new Headers()),
-    ).rejects.toThrow();
+    ).rejects.toMatchObject({
+      data: { attemptsRemaining: 0, lockoutUntil: expect.any(String) },
+    });
 
     const row = await readUser(account.id);
     expect(row.lockoutCount).toBe(2);
     expect(row.lockoutUntil?.getTime()).toBeGreaterThan(Date.now() + 60_000);
+  });
+
+  it('resets the progressive tier after 24 hours without a failed login', async () => {
+    const account = await seedUser({
+      failedLoginAttempts: 4,
+      lockoutCount: 3,
+      lastLockoutAt: new Date(Date.now() - 25 * 60 * 60 * 1000),
+      lastFailedLoginAt: new Date(Date.now() - 25 * 60 * 60 * 1000),
+    });
+    signInEmailMock.mockResolvedValue(jsonResponse({ message: 'Invalid' }, 401));
+    const svc = buildService();
+
+    for (const attemptsRemaining of [4, 3, 2, 1]) {
+      await expect(
+        svc.login({ email: EMAIL, password: 'wrongpass1' }, {}, new Headers()),
+      ).rejects.toMatchObject({ data: { attemptsRemaining, lockoutUntil: null } });
+    }
+    await expect(
+      svc.login({ email: EMAIL, password: 'wrongpass1' }, {}, new Headers()),
+    ).rejects.toMatchObject({
+      data: { attemptsRemaining: 0, lockoutUntil: expect.any(String) },
+    });
+
+    const row = await readUser(account.id);
+    expect(row.lockoutCount).toBe(1);
+    expect(row.lockoutUntil?.getTime()).toBeLessThanOrEqual(Date.now() + 60_000);
   });
 
   it('emits login.failed (not lockout) while still below the threshold', async () => {
@@ -212,6 +245,7 @@ describe('IdentityService - login lockout (real PG + real Redis)', () => {
 
     const row = await readUser(account.id);
     expect(row.failedLoginAttempts).toBe(1);
+    expect(row.lastFailedLoginAt).not.toBeNull();
     expect(row.lockoutUntil).toBeNull();
     expect(events.emit).toHaveBeenCalledWith(
       'identity.user.login.failed',
@@ -221,6 +255,24 @@ describe('IdentityService - login lockout (real PG + real Redis)', () => {
       'identity.user.lockout.triggered',
       expect.anything(),
     );
+  });
+
+  it('returns the post-increment attempts remaining on every failed login', async () => {
+    await seedUser();
+    signInEmailMock.mockResolvedValue(jsonResponse({ message: 'Invalid' }, 401));
+    const svc = buildService();
+
+    for (const attemptsRemaining of [4, 3, 2, 1]) {
+      await expect(
+        svc.login({ email: EMAIL, password: 'wrongpass1' }, {}, new Headers()),
+      ).rejects.toMatchObject({ data: { attemptsRemaining, lockoutUntil: null } });
+    }
+
+    await expect(
+      svc.login({ email: EMAIL, password: 'wrongpass1' }, {}, new Headers()),
+    ).rejects.toMatchObject({
+      data: { attemptsRemaining: 0, lockoutUntil: expect.any(String) },
+    });
   });
 
   it('counts concurrent credential failures exactly once each (atomic SQL increment)', async () => {
@@ -235,6 +287,24 @@ describe('IdentityService - login lockout (real PG + real Redis)', () => {
     );
 
     expect((await readUser(account.id)).failedLoginAttempts).toBe(3);
+  });
+
+  it('commits only one first-tier lockout when concurrent failures cross the threshold', async () => {
+    const account = await seedUser({ failedLoginAttempts: 4 });
+    const events = makeEventBus();
+    signInEmailMock.mockResolvedValue(jsonResponse({ message: 'Invalid' }, 401));
+    const svc = buildService({ events });
+
+    await Promise.allSettled(
+      Array.from({ length: 2 }, () =>
+        svc.login({ email: EMAIL, password: 'wrongpass1' }, {}, new Headers()),
+      ),
+    );
+
+    const row = await readUser(account.id);
+    expect(row.lockoutCount).toBe(1);
+    expect(row.lockoutUntil?.getTime()).toBeLessThanOrEqual(Date.now() + 60_000);
+    expect(events.emit).toHaveBeenCalledTimes(1);
   });
 
   it('rejects a currently-locked account before attempting sign-in', async () => {

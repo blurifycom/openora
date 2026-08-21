@@ -18,6 +18,7 @@ describe('hasProfanity', () => {
 
   it('returns false for clean content', () => {
     expect(hasProfanity('good luck everyone, nice game')).toBe(false);
+    expect(hasProfanity('5')).toBe(false);
   });
 
   it('can scope to a subset of languages', () => {
@@ -53,6 +54,7 @@ describe('moderateContent', () => {
       ok: true,
       content: 'hi javascript void(0)',
     });
+    expect(moderateContent('5')).toEqual({ ok: true, content: '5' });
   });
 
   it('preserves emoji (AC6)', () => {

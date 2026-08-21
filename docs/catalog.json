@@ -1563,6 +1563,10 @@
       "file": "packages/core/src/contracts/schemas/identity.ts"
     },
     {
+      "name": "LoginSecurityStateSchema",
+      "file": "packages/core/src/contracts/schemas/identity.ts"
+    },
+    {
       "name": "MemberSchema",
       "file": "packages/core/src/contracts/schemas/identity.ts"
     },

@@ -75,6 +75,11 @@ export const LoginInputSchema = credentialsBase.extend({
   rememberMe: z.boolean().optional(),
 });
 
+export const LoginSecurityStateSchema = z.object({
+  attemptsRemaining: z.number().int().nonnegative(),
+  lockoutUntil: TimestampSchema.nullable(),
+});
+
 export const RegisterInputSchema = credentialsBase.extend({
   name: z.string().min(1).max(255),
 });
@@ -145,6 +150,7 @@ export type User = z.infer<typeof UserSchema>;
 export type Organization = z.infer<typeof OrganizationSchema>;
 export type Member = z.infer<typeof MemberSchema>;
 export type LoginInput = z.infer<typeof LoginInputSchema>;
+export type LoginSecurityState = z.infer<typeof LoginSecurityStateSchema>;
 export type RegisterInput = z.infer<typeof RegisterInputSchema>;
 export type Enable2faInput = z.infer<typeof Enable2faInputSchema>;
 export type Enable2faResult = z.infer<typeof Enable2faResultSchema>;

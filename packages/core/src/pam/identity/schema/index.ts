@@ -44,6 +44,7 @@ export const user = pgTable(
     // 1min -> 5min -> 15min. Shared by every login method.
     lockoutCount: integer().notNull().default(0),
     lastLockoutAt: timestamp({ withTimezone: true }),
+    lastFailedLoginAt: timestamp({ withTimezone: true }),
     // Responsible-Gambling login block (cooling-off / self-exclusion). Written only via
     // the LOGIN_ENFORCEMENT port. `rgBlockedUntil` null while blocked = indefinite
     // (self-exclusion); a Date is the cooling-off expiry the login gate auto-clears.
