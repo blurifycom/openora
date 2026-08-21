@@ -176,6 +176,46 @@ export const SetWalletAutoWithdrawalConfigInputSchema = z.object({
   excludeRiskFlags: z.array(TagKeySchema),
 });
 
+// Chat gift/rain credits are bonus balance, locked behind a Super-Admin-configurable
+// wagering multiplier before they can be withdrawn (BF-326). No other credit source
+// carries a rollover requirement today.
+export const BONUS_CREDIT_SOURCE_TYPES = ['gift', 'rain'] as const;
+export const BonusCreditSourceTypeSchema = z.enum(BONUS_CREDIT_SOURCE_TYPES);
+export type BonusCreditSourceType = z.infer<typeof BonusCreditSourceTypeSchema>;
+
+export const BONUS_CREDIT_STATUSES = ['active', 'completed'] as const;
+export const BonusCreditStatusSchema = z.enum(BONUS_CREDIT_STATUSES);
+export type BonusCreditStatus = z.infer<typeof BonusCreditStatusSchema>;
+
+export const BonusCreditSchema = z.object({
+  id: UuidSchema,
+  currency: WalletCurrencyCodeSchema,
+  sourceType: BonusCreditSourceTypeSchema,
+  creditedAmount: MoneyAmountSchema,
+  rolloverMultiplier: MoneyAmountSchema,
+  rolloverRequired: MoneyAmountSchema,
+  rolloverProgress: MoneyAmountSchema,
+  status: BonusCreditStatusSchema,
+  createdAt: TimestampSchema,
+  completedAt: TimestampSchema.nullable(),
+});
+export type BonusCredit = z.infer<typeof BonusCreditSchema>;
+
+export const BonusRolloverStatusSchema = z.object({
+  credits: z.array(BonusCreditSchema),
+});
+
+export const BonusRolloverConfigSchema = z.object({
+  id: UuidSchema,
+  multiplier: MoneyAmountSchema,
+  updatedAt: TimestampSchema,
+});
+export type BonusRolloverConfig = z.infer<typeof BonusRolloverConfigSchema>;
+
+export const SetBonusRolloverConfigInputSchema = z.object({
+  multiplier: PositiveMoneyAmountSchema,
+});
+
 export const ApproveWithdrawalInputSchema = z.object({ withdrawalId: UuidSchema });
 
 export const RejectWithdrawalInputSchema = z.object({
@@ -282,6 +322,21 @@ export const walletContract = {
       .route({ method: 'POST', path: '/wallet/deposits/address' })
       .input(DepositAddressInputSchema)
       .output(DepositAddressSchema),
+  },
+
+  bonusRolloverStatus: oc
+    .route({ method: 'GET', path: '/wallet/bonus-rollover/status' })
+    .output(BonusRolloverStatusSchema),
+
+  bonusRolloverConfig: {
+    get: oc
+      .route({ method: 'GET', path: '/backoffice/wallet/bonus-rollover-config' })
+      .output(BonusRolloverConfigSchema),
+
+    set: oc
+      .route({ method: 'PATCH', path: '/backoffice/wallet/bonus-rollover-config' })
+      .input(SetBonusRolloverConfigInputSchema)
+      .output(BonusRolloverConfigSchema),
   },
 
   webhook: oc

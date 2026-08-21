@@ -174,6 +174,16 @@ export const domainEventSchemas = {
     playerId: UuidSchema.nullable(),
   }),
 
+  // A chat gift/rain bonus credit's rollover requirement was satisfied by a wager
+  // (BF-326). Emitted by `gaming` (the only `type: 'bet'` wallet-debit caller today),
+  // not `wallet` - see gaming.service.ts's startRound for why.
+  'wallet.bonus_rollover.completed': z.object({
+    userId: UuidSchema,
+    creditId: UuidSchema,
+    currency: CurrencyCodeSchema,
+    creditedAmount: MoneyAmountSchema,
+  }),
+
   'chat.message.sent': z.object({
     messageId: UuidSchema,
     // null for global-chat messages (no room); a room id otherwise.

@@ -1,6 +1,8 @@
 import type {
+  AuditWritePort,
   PlayEligibilityPort,
   PlatformConfig,
+  Uuid,
   WalletCommands,
   WalletDebitArgs,
   WalletDebitOutcome,
@@ -9,8 +11,15 @@ import type {
   WalletTransactionType,
 } from '@openora/core/contracts';
 import { createDomainError, makeConflictError, type DrizzleDb } from '@openora/core/server';
-import { eq } from 'drizzle-orm';
-import { wallet, walletTransaction } from '../schema/index.js';
+import { and, asc, eq, sql } from 'drizzle-orm';
+import {
+  wallet,
+  walletTransaction,
+  walletBonusCredit,
+  walletBonusRolloverConfig,
+  type Wallet,
+} from '../schema/index.js';
+import type { BonusCreditSourceType } from '../contract/index.js';
 import {
   creditWalletBalance,
   debitWalletBalance,
@@ -35,9 +44,17 @@ export const WalletRgRestrictedError = makeConflictError(
   'wager is restricted by an active responsible-gambling exclusion',
 );
 
+// A missing config row must never break a `/gift` or `/rain` claim on an install that
+// skipped re-seeding (unlike the admin GET route, which fails closed) - see the
+// contrast with WalletService.getBonusRolloverConfig.
+const DEFAULT_ROLLOVER_MULTIPLIER = '1';
+
+type CompletedBonusCredit = { id: string; currency: string; creditedAmount: string };
+
 export class WalletCommandsService implements WalletCommands {
   constructor(
     private readonly playEligibility: PlayEligibilityPort,
+    private readonly audit: AuditWritePort,
     private readonly platformConfig?: PlatformConfig,
   ) {}
 
@@ -91,6 +108,17 @@ export class WalletCommandsService implements WalletCommands {
 
     await this.writeLedgerRow(txn, row, type, amount);
 
+    // A wager is the only source of rollover progress (BF-326: no per-category
+    // contribution %, gaming is the only wagering vertical today).
+    if (type === 'bet') {
+      const completedBonusCredits = await this.applyBonusRolloverProgress(txn, {
+        userId,
+        currency: row.currency,
+        amount,
+      });
+      return { ok: true, newBalance, currency: row.currency, completedBonusCredits };
+    }
+
     return { ok: true, newBalance, currency: row.currency };
   }
 
@@ -120,6 +148,178 @@ export class WalletCommandsService implements WalletCommands {
 
     await this.writeLedgerRow(txn, row, type, amount);
 
+    // Gift/rain credits are bonus balance, rollover-locked until wagered through
+    // (BF-326). Every other credit type (deposit, tip, refund, ...) is unrestricted.
+    if (type === 'gift' || type === 'rain') {
+      await this.createBonusCredit(txn, {
+        walletId: row.id,
+        userId,
+        currency,
+        amount,
+        sourceType: type,
+      });
+    }
+
     return { ok: true, newBalance: credited.amount };
+  }
+
+  private async resolveRolloverMultiplier(txn: DrizzleDb): Promise<string> {
+    const [row] = await txn
+      .select({ multiplier: walletBonusRolloverConfig.multiplier })
+      .from(walletBonusRolloverConfig)
+      .where(eq(walletBonusRolloverConfig.singletonKey, 'global'));
+    return row?.multiplier ?? DEFAULT_ROLLOVER_MULTIPLIER;
+  }
+
+  private async createBonusCredit(
+    txn: DrizzleDb,
+    {
+      walletId,
+      userId,
+      currency,
+      amount,
+      sourceType,
+    }: {
+      walletId: Wallet['id'];
+      userId: Uuid;
+      currency: string;
+      amount: string;
+      sourceType: BonusCreditSourceType;
+    },
+  ): Promise<void> {
+    const multiplier = await this.resolveRolloverMultiplier(txn);
+
+    const [creditRow] = await txn
+      .insert(walletBonusCredit)
+      .values({
+        walletId,
+        userId,
+        currency,
+        sourceType,
+        creditedAmount: amount,
+        rolloverMultiplier: multiplier,
+        // Computed in SQL numeric arithmetic, never JS float (db-conventions).
+        rolloverRequired: sql`(${amount}::numeric * ${multiplier}::numeric)`,
+        rolloverProgress: '0',
+        status: 'active',
+      })
+      .returning();
+    if (!creditRow) {
+      throw new Error('wallet bonus credit: no row');
+    }
+
+    await this.audit.recordInTransaction(txn, {
+      actorType: 'system',
+      action: 'wallet.bonus_credit.created',
+      resourceType: 'wallet_bonus_credit',
+      resourceId: creditRow.id,
+      after: {
+        userId,
+        currency,
+        sourceType,
+        creditedAmount: amount,
+        rolloverMultiplier: multiplier,
+        rolloverRequired: creditRow.rolloverRequired,
+      },
+    });
+  }
+
+  // Sequential/waterfall clearing: a bet's amount is applied to the OLDEST active
+  // credit's remaining requirement first, and any leftover cascades to the
+  // next-oldest active credit (flagged assumption - see BF-326 plan). Per row: a
+  // `FOR UPDATE` read locks it for the rest of this transaction, then a guarded
+  // `UPDATE ... WHERE status = 'active'` applies the increment - a concurrent debit
+  // against the same credit blocks on the row lock and re-reads the committed result,
+  // so progress can never be double-applied past `rolloverRequired`. `remainingAfter`
+  // is computed entirely in SQL (never a JS decimal subtraction) from the locked
+  // pre-update progress captured just above.
+  private async applyBonusRolloverProgress(
+    txn: DrizzleDb,
+    { userId, currency, amount }: { userId: Uuid; currency: string; amount: string },
+  ): Promise<CompletedBonusCredit[]> {
+    const activeCredits = await txn
+      .select({ id: walletBonusCredit.id })
+      .from(walletBonusCredit)
+      .where(
+        and(
+          eq(walletBonusCredit.userId, userId),
+          eq(walletBonusCredit.currency, currency),
+          eq(walletBonusCredit.status, 'active'),
+        ),
+      )
+      .orderBy(asc(walletBonusCredit.createdAt));
+
+    const completed: CompletedBonusCredit[] = [];
+    let remaining = amount;
+
+    for (const credit of activeCredits) {
+      if (Number(remaining) <= 0) {
+        break;
+      }
+
+      const [locked] = await txn
+        .select({ rolloverProgress: walletBonusCredit.rolloverProgress })
+        .from(walletBonusCredit)
+        .where(and(eq(walletBonusCredit.id, credit.id), eq(walletBonusCredit.status, 'active')))
+        .for('update');
+
+      // Raced away concurrently (already completed by another debit in the meantime)
+      // - skip this row, `remaining` carries forward unchanged.
+      if (!locked) {
+        continue;
+      }
+
+      const [updated] = await txn
+        .update(walletBonusCredit)
+        .set({
+          rolloverProgress: sql`LEAST(${walletBonusCredit.rolloverRequired}, ${walletBonusCredit.rolloverProgress} + ${remaining}::numeric)`,
+          // Explicit enum cast: Postgres allows a bare string literal in an INSERT to
+          // coerce to an enum column, but a computed CASE expression's result type is
+          // `text` and needs an explicit cast to satisfy the column's enum type.
+          status: sql`(CASE WHEN ${walletBonusCredit.rolloverProgress} + ${remaining}::numeric >= ${walletBonusCredit.rolloverRequired} THEN 'completed' ELSE 'active' END)::wallet_bonus_credit_status`,
+          completedAt: sql`CASE WHEN ${walletBonusCredit.rolloverProgress} + ${remaining}::numeric >= ${walletBonusCredit.rolloverRequired} THEN now() ELSE ${walletBonusCredit.completedAt} END`,
+        })
+        .where(and(eq(walletBonusCredit.id, credit.id), eq(walletBonusCredit.status, 'active')))
+        .returning({
+          id: walletBonusCredit.id,
+          status: walletBonusCredit.status,
+          currency: walletBonusCredit.currency,
+          creditedAmount: walletBonusCredit.creditedAmount,
+          rolloverRequired: walletBonusCredit.rolloverRequired,
+          rolloverProgress: walletBonusCredit.rolloverProgress,
+          remainingAfter: sql<string>`(${remaining}::numeric - (${walletBonusCredit.rolloverProgress} - ${locked.rolloverProgress}::numeric))::text`,
+        });
+
+      if (!updated) {
+        continue;
+      }
+
+      remaining = updated.remainingAfter;
+
+      if (updated.status === 'completed') {
+        completed.push({
+          id: updated.id,
+          currency: updated.currency,
+          creditedAmount: updated.creditedAmount,
+        });
+        await this.audit.recordInTransaction(txn, {
+          actorType: 'system',
+          action: 'wallet.bonus_credit.completed',
+          resourceType: 'wallet_bonus_credit',
+          resourceId: updated.id,
+          before: { status: 'active', rolloverProgress: locked.rolloverProgress },
+          after: {
+            userId,
+            currency: updated.currency,
+            creditedAmount: updated.creditedAmount,
+            rolloverRequired: updated.rolloverRequired,
+            rolloverProgress: updated.rolloverProgress,
+            status: updated.status,
+          },
+        });
+      }
+    }
+
+    return completed;
   }
 }

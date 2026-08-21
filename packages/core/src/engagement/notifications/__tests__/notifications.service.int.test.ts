@@ -103,6 +103,26 @@ describe('NotificationsService.create (real PG)', () => {
       readAt: null,
     });
   });
+
+  it('persists the row a wallet.bonus_rollover.completed subscriber would create (BF-326)', async () => {
+    const { svc } = makeService();
+    const userId = randomUUID();
+
+    const created = await svc.create({
+      userId,
+      type: 'wallet.bonus_rollover.completed',
+      title: 'Bonus unlocked',
+      body: 'Your 25.00 USD bonus credit has cleared its rollover requirement and is now fully withdrawable.',
+    });
+
+    expect(created).toMatchObject({
+      userId,
+      type: 'wallet.bonus_rollover.completed',
+      title: 'Bonus unlocked',
+      body: 'Your 25.00 USD bonus credit has cleared its rollover requirement and is now fully withdrawable.',
+      readAt: null,
+    });
+  });
 });
 
 describe('NotificationsService.listForUser (real PG)', () => {

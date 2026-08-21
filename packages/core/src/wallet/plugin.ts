@@ -47,6 +47,7 @@ export default {
       (c) =>
         new WalletCommandsService(
           c.get(PLAY_ELIGIBILITY),
+          c.get(AUDIT_WRITER),
           c.has(PLATFORM_CONFIG) ? c.get(PLATFORM_CONFIG) : undefined,
         ),
     );

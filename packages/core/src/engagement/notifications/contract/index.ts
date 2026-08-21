@@ -8,6 +8,7 @@ export const NOTIFICATION_TYPES = [
   'kyc.resubmission_requested',
   'social.friend_request.received',
   'social.friend_request.accepted',
+  'wallet.bonus_rollover.completed',
 ] as const;
 export const NotificationTypeSchema = z.enum(NOTIFICATION_TYPES);
 export type NotificationType = z.infer<typeof NotificationTypeSchema>;

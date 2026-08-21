@@ -42,11 +42,15 @@ import {
   autoWithdrawalRule,
   walletAutoWithdrawalConfig,
   walletDepositAddress,
+  walletBonusCredit,
+  walletBonusRolloverConfig,
   type Wallet,
   type WalletDepositAddress,
   type WalletTransaction,
   type AutoWithdrawalRule as AutoWithdrawalRuleRow,
   type WalletAutoWithdrawalConfig as WalletAutoWithdrawalConfigRow,
+  type WalletBonusCredit as WalletBonusCreditRow,
+  type WalletBonusRolloverConfig as WalletBonusRolloverConfigRow,
 } from '../schema/index.js';
 import type {
   TransactionResult,
@@ -55,6 +59,8 @@ import type {
   AutoWithdrawalRule,
   WalletAutoWithdrawalConfig,
   WalletTransactionSortBy,
+  BonusCredit,
+  BonusRolloverConfig,
 } from '../contract/index.js';
 
 const logger = createLogger('wallet');
@@ -62,6 +68,7 @@ const logger = createLogger('wallet');
 export const WalletNotFoundError = makeNotFoundError('Wallet');
 export const WithdrawalNotFoundError = makeNotFoundError('Withdrawal');
 export const AutoWithdrawalConfigNotFoundError = makeNotFoundError('AutoWithdrawalConfig');
+export const BonusRolloverConfigNotFoundError = makeNotFoundError('BonusRolloverConfig');
 
 export const InsufficientBalanceError = createDomainError<[available: string, requested: string]>(
   'InsufficientBalanceError',
@@ -91,6 +98,11 @@ export const DepositAddressUnsupportedError = makeConflictError(
 export const DestinationAddressRequiredError = makeConflictError(
   'DestinationAddressRequiredError',
   'A destination address is required for a crypto-rail withdrawal',
+);
+
+export const BonusRolloverLockedError = createDomainError<[locked: string]>(
+  'BonusRolloverLockedError',
+  (locked) => `Withdrawal blocked: ${locked} is locked by an active bonus rollover requirement`,
 );
 
 const KYC_PASS_STATUSES: ReadonlySet<KycStatus> = new Set(['approved', 'manually_overridden']);
@@ -185,6 +197,64 @@ export async function readWalletBalance(
   return row?.amount ?? '0';
 }
 
+// Used ONLY by withdraw(): folds the bonus-rollover lock into the same guarded
+// conditional UPDATE that already enforces `balance >= amount`, rather than a
+// separate read-then-check step - a read-then-check would race against a concurrent
+// bet that, at that same moment, frees up balance by completing a bonus's rollover in
+// a different transaction (db-conventions: a DB guard inside the transaction, not
+// read-then-decide-in-application-code).
+export function debitWithdrawableBalance(
+  txn: DrizzleDb,
+  walletId: Wallet['id'],
+  currency: string,
+  amount: string,
+) {
+  return txn
+    .update(walletBalance)
+    .set({ amount: sql`${walletBalance.amount} - ${amount}::numeric` })
+    .where(
+      and(
+        eq(walletBalance.walletId, walletId),
+        eq(walletBalance.currency, balanceKey(currency)),
+        gte(
+          sql`${walletBalance.amount} - COALESCE((
+            SELECT SUM(${walletBonusCredit.rolloverRequired} - ${walletBonusCredit.rolloverProgress})
+            FROM ${walletBonusCredit}
+            WHERE ${walletBonusCredit.walletId} = ${walletId}
+              AND ${walletBonusCredit.currency} = ${balanceKey(currency)}
+              AND ${walletBonusCredit.status} = 'active'
+          ), 0)`,
+          amount,
+        ),
+      ),
+    )
+    .returning({ amount: walletBalance.amount });
+}
+
+// Read-only, for the withdraw() error-message branch ONLY (never a ledger guard
+// itself - debitWithdrawableBalance's UPDATE ... WHERE is the actual guard). Tells
+// InsufficientBalanceError apart from BonusRolloverLockedError after that guarded
+// UPDATE returns zero rows.
+async function readLockedBonusAmount(
+  txn: DrizzleDb,
+  walletId: Wallet['id'],
+  currency: string,
+): Promise<string> {
+  const [row] = await txn
+    .select({
+      locked: sql<string>`coalesce(sum(${walletBonusCredit.rolloverRequired} - ${walletBonusCredit.rolloverProgress}), 0)`,
+    })
+    .from(walletBonusCredit)
+    .where(
+      and(
+        eq(walletBonusCredit.walletId, walletId),
+        eq(walletBonusCredit.currency, balanceKey(currency)),
+        eq(walletBonusCredit.status, 'active'),
+      ),
+    );
+  return row?.locked ?? '0';
+}
+
 // Namespace the key per operation so the same raw key on a deposit then a withdraw can't
 // collide on the (walletId, idempotencyKey) unique index. The column is a uuid, so a string
 // prefix won't parse - hash namespace + key into a stable pseudo-uuid instead.
@@ -271,6 +341,29 @@ function toAutoWithdrawalConfigDto(row: WalletAutoWithdrawalConfigRow): WalletAu
     updatedBy: row.updatedBy,
     updatedAt: row.updatedAt.toISOString(),
     createdAt: row.createdAt.toISOString(),
+  };
+}
+
+function toBonusCreditDto(row: WalletBonusCreditRow): BonusCredit {
+  return {
+    id: row.id,
+    currency: row.currency,
+    sourceType: row.sourceType,
+    creditedAmount: row.creditedAmount,
+    rolloverMultiplier: row.rolloverMultiplier,
+    rolloverRequired: row.rolloverRequired,
+    rolloverProgress: row.rolloverProgress,
+    status: row.status,
+    createdAt: row.createdAt.toISOString(),
+    completedAt: row.completedAt ? row.completedAt.toISOString() : null,
+  };
+}
+
+function toBonusRolloverConfigDto(row: WalletBonusRolloverConfigRow): BonusRolloverConfig {
+  return {
+    id: row.id,
+    multiplier: row.multiplier,
+    updatedAt: row.updatedAt.toISOString(),
   };
 }
 
@@ -681,13 +774,21 @@ export class WalletService {
           };
         }
 
-        // Guarded conditional debit: the WHERE makes balance>=amount atomic with the write; 0 rows back rolls back the whole tx.
-        const debited = await debitWalletBalance(txn, current.id, currency, amount);
+        // Guarded conditional debit: the WHERE makes balance>=amount AND bonus-rollover-unlocked
+        // atomic with the write; 0 rows back rolls back the whole tx. Folds the bonus lock into
+        // this single guarded UPDATE rather than a separate read-then-check step - see
+        // debitWithdrawableBalance's doc comment for why.
+        const debited = await debitWithdrawableBalance(txn, current.id, currency, amount);
         if (debited.length !== 1) {
-          throw new InsufficientBalanceError(
-            await readWalletBalance(txn, current.id, currency),
-            amount,
-          );
+          // Read-only, after the failed guard - just to tell the player which error applies.
+          const [available, locked] = await Promise.all([
+            readWalletBalance(txn, current.id, currency),
+            readLockedBonusAmount(txn, current.id, currency),
+          ]);
+          if (moneyToNumber(available) < moneyToNumber(amount)) {
+            throw new InsufficientBalanceError(available, amount);
+          }
+          throw new BonusRolloverLockedError(locked);
         }
 
         if (this.tagEvaluationCommands) {
@@ -1283,6 +1384,79 @@ export class WalletService {
           cryptoThreshold: config.cryptoThreshold,
           excludeRiskFlags: config.excludeRiskFlags,
         },
+        ...meta,
+      });
+      return config;
+    });
+  }
+
+  // Caller's own credits, newest first, capped at 50 - the frontend filters
+  // active vs completed by `status` client-side.
+  async getBonusRolloverStatus(userId: User['id']): Promise<{ credits: BonusCredit[] }> {
+    const rows = await this.drizzle.db
+      .select()
+      .from(walletBonusCredit)
+      .where(eq(walletBonusCredit.userId, userId))
+      .orderBy(desc(walletBonusCredit.createdAt))
+      .limit(50);
+    return { credits: rows.map(toBonusCreditDto) };
+  }
+
+  // The row always exists in a properly-seeded install - a missing row on the READ
+  // path is an unexpected failure mode, not a normal "unconfigured" state, so this
+  // throws (mirrors getAutoWithdrawalConfig). This is the admin GET's fail-closed
+  // path; the credit() write path uses a separate, non-throwing '1x' fallback
+  // (wallet-commands.service.ts) so a missing row never breaks a live /gift or /rain.
+  async getBonusRolloverConfig(): Promise<BonusRolloverConfig> {
+    const config = await this.getBonusRolloverConfigOrNull();
+    if (!config) {
+      throw new BonusRolloverConfigNotFoundError('global');
+    }
+    return config;
+  }
+
+  // Non-throwing variant for callers that need to tell "missing" from "found"
+  // without a try/catch (eg the router's audit `before` read).
+  async getBonusRolloverConfigOrNull(): Promise<BonusRolloverConfig | null> {
+    const [row] = await this.drizzle.db
+      .select()
+      .from(walletBonusRolloverConfig)
+      .where(eq(walletBonusRolloverConfig.singletonKey, 'global'));
+    return row ? toBonusRolloverConfigDto(row) : null;
+  }
+
+  // Upsert (self-heals a missing singleton row via the existing route, same reasoning
+  // as setAutoWithdrawalConfig). Update + audit write run in one transaction: an
+  // audit-write failure must roll back the multiplier change too.
+  async setBonusRolloverConfig(
+    adminId: User['id'],
+    { multiplier }: { multiplier: string },
+    meta?: ClientMeta,
+  ): Promise<BonusRolloverConfig> {
+    return this.drizzle.db.transaction(async (txn) => {
+      const [before] = await txn
+        .select()
+        .from(walletBonusRolloverConfig)
+        .where(eq(walletBonusRolloverConfig.singletonKey, 'global'));
+      const rows = await txn
+        .insert(walletBonusRolloverConfig)
+        .values({ singletonKey: 'global', multiplier, updatedBy: adminId })
+        .onConflictDoUpdate({
+          target: walletBonusRolloverConfig.singletonKey,
+          set: { multiplier, updatedBy: adminId },
+        })
+        .returning();
+      const config = toBonusRolloverConfigDto(
+        findOneOrThrow(rows, new BonusRolloverConfigNotFoundError('global')),
+      );
+      await this.audit.recordInTransaction(txn, {
+        actorId: adminId,
+        actorType: 'admin',
+        action: 'wallet.bonus_rollover_config.set',
+        resourceType: 'bonus_rollover_config',
+        resourceId: config.id,
+        before: before ? { multiplier: before.multiplier } : null,
+        after: { multiplier: config.multiplier },
         ...meta,
       });
       return config;

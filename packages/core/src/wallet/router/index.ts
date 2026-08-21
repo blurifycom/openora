@@ -18,6 +18,8 @@ import {
   DepositAddressUnsupportedError,
   DestinationAddressRequiredError,
   AutoWithdrawalConfigNotFoundError,
+  BonusRolloverLockedError,
+  BonusRolloverConfigNotFoundError,
 } from '../service/wallet.service.js';
 
 export function createWalletRouter(
@@ -57,7 +59,12 @@ export function createWalletRouter(
         {
           NOT_FOUND: WalletNotFoundError,
           BAD_REQUEST: [InsufficientBalanceError, CurrencyMismatchError],
-          CONFLICT: [KycRequiredError, IdempotencyKeyReuseError, DestinationAddressRequiredError],
+          CONFLICT: [
+            KycRequiredError,
+            IdempotencyKeyReuseError,
+            DestinationAddressRequiredError,
+            BonusRolloverLockedError,
+          ],
         },
         () =>
           wallet.withdraw({
@@ -208,6 +215,30 @@ export function createWalletRouter(
           wallet.getOrCreateDepositAddress(getUserId(context), input.currency, input.network),
         ),
       ),
+    },
+
+    bonusRolloverStatus: os.bonusRolloverStatus.handler(({ context }) =>
+      wallet.getBonusRolloverStatus(getUserId(context)),
+    ),
+
+    bonusRolloverConfig: {
+      get: os.bonusRolloverConfig.get.handler(async ({ context }) => {
+        await adminGuard.assert(context, 'bonus-rollover-config', 'view');
+        return mapErrors({ NOT_FOUND: BonusRolloverConfigNotFoundError }, () =>
+          wallet.getBonusRolloverConfig(),
+        );
+      }),
+
+      set: os.bonusRolloverConfig.set.handler(async ({ input, context }) => {
+        const {
+          userId: adminId,
+          ip,
+          userAgent,
+        } = await adminGuard.assert(context, 'bonus-rollover-config', 'update');
+        // The before-read, upsert, and audit write all run inside one transaction in
+        // the service - an audit failure rolls back the multiplier change too.
+        return wallet.setBonusRolloverConfig(adminId, input, { ip, userAgent });
+      }),
     },
 
     webhook: os.webhook.handler(async ({ context }) => {

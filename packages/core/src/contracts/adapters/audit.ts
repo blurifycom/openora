@@ -23,7 +23,10 @@ export type DirectAuditAction =
   | 'wallet.withdrawal.auto_approved'
   | 'wallet.auto_withdrawal_rule.set'
   | 'wallet.auto_withdrawal_rule.deleted'
-  | 'wallet.auto_withdrawal_config.set';
+  | 'wallet.auto_withdrawal_config.set'
+  | 'wallet.bonus_credit.created'
+  | 'wallet.bonus_credit.completed'
+  | 'wallet.bonus_rollover_config.set';
 
 /**
  * Every value the audit `action` column legitimately holds: a cross-module domain

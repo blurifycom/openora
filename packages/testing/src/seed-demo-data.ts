@@ -3,7 +3,12 @@ import { findOneOrThrow, type DrizzleDb } from '@openora/core/server';
 import { eq } from 'drizzle-orm';
 import { user } from '@openora/core/pam/schema/identity';
 import { player } from '@openora/core/pam/schema/profile';
-import { wallet, walletBalance, walletTransaction } from '@openora/core/wallet/schema';
+import {
+  wallet,
+  walletBalance,
+  walletTransaction,
+  walletBonusCredit,
+} from '@openora/core/wallet/schema';
 import { game } from '@openora/core/casino/schema/gaming';
 import {
   chatRoom,
@@ -415,6 +420,7 @@ export async function seedDemoData(options: SeedOptions): Promise<SeedResult> {
   await db.delete(chatMessage);
   await db.delete(chatRoom);
   await db.delete(walletTransaction);
+  await db.delete(walletBonusCredit);
   await db.delete(walletBalance);
   await db.delete(wallet);
   await db.delete(player);

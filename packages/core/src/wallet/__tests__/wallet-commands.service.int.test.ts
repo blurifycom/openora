@@ -4,7 +4,7 @@ import { randomUUID } from 'node:crypto';
 import { eq, sql } from 'drizzle-orm';
 import type { PlayEligibilityPort } from '@openora/core/contracts';
 import { createTestDb, type TestDb } from '@openora/core/testing';
-import { mock } from '../../testing/mock.js';
+import { mock, makeAuditWriter } from '../../testing/mock.js';
 import { migrate } from '../migrate.js';
 import { wallet, walletBalance, walletTransaction } from '../schema/index.js';
 import {
@@ -17,7 +17,8 @@ let db: TestDb;
 const eligibility = (isRestricted: boolean) =>
   mock<PlayEligibilityPort>({ isRestricted: vi.fn().mockResolvedValue(isRestricted) });
 
-const svc = new WalletCommandsService(eligibility(false));
+const audit = makeAuditWriter();
+const svc = new WalletCommandsService(eligibility(false), audit);
 
 async function seedWallet({
   balance = '0',
@@ -69,7 +70,7 @@ beforeEach(async () => {
 describe('WalletCommandsService responsible-gambling gate (real PG)', () => {
   it('refuses a bet debit for a restricted player without touching the ledger', async () => {
     const w = await seedWallet({ balance: '100' });
-    const restricted = new WalletCommandsService(eligibility(true));
+    const restricted = new WalletCommandsService(eligibility(true), audit);
 
     await expect(
       restricted.debit(db.drizzle.db, { userId: w.userId, amount: '10', type: 'bet' }),
@@ -80,7 +81,7 @@ describe('WalletCommandsService responsible-gambling gate (real PG)', () => {
 
   it('leaves a non-bet debit unaffected for a restricted player', async () => {
     const w = await seedWallet({ balance: '100' });
-    const restricted = new WalletCommandsService(eligibility(true));
+    const restricted = new WalletCommandsService(eligibility(true), audit);
 
     const res = await restricted.debit(db.drizzle.db, {
       userId: w.userId,

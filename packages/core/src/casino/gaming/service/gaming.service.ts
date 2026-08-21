@@ -81,7 +81,7 @@ export class GamingService {
 
     await this.getGame(gameId);
 
-    const round = await this.drizzle.db.transaction(async (tx) => {
+    const { round, completedBonusCredits } = await this.drizzle.db.transaction(async (tx) => {
       const outcome = await this.walletCommands.debit(tx, {
         userId,
         amount: betAmount,
@@ -90,7 +90,7 @@ export class GamingService {
       if (!outcome.ok) {
         throw new InsufficientBalanceError(outcome.available, betAmount);
       }
-      return findOneOrThrow(
+      const insertedRound = findOneOrThrow(
         await tx
           .insert(gameRound)
           .values({
@@ -103,6 +103,7 @@ export class GamingService {
           .returning(),
         new GameRoundNotFoundError(gameId),
       );
+      return { round: insertedRound, completedBonusCredits: outcome.completedBonusCredits ?? [] };
     });
 
     const { launchUrl, token } = await this.provider.launchGame(gameId, userId, currency);
@@ -114,6 +115,27 @@ export class GamingService {
       playerId: await this.identityReader.getPlayerIdByUserIdSafe(userId),
       currency,
     });
+
+    // wallet's WalletCommandsService.debit() runs INSIDE this method's own transaction
+    // above and never owns its commit boundary, so it cannot safely emit itself - this
+    // caller's transaction could still roll back afterward (it doesn't here, since we're
+    // already past the `await ... transaction(...)` call, but the port contract holds for
+    // every caller). `gaming` - not `wallet` - is the one emitting a `wallet.*`-named
+    // event because it's the transaction owner (BF-326: gaming is the only `type: 'bet'`
+    // wallet-debit caller today; a future second wagering module would repeat this same
+    // thread-the-outcome-out-and-emit-after-commit pattern). Plain `emit()`, not
+    // `emitInTransaction()`: the latter requires the transactional outbox to be
+    // explicitly bound and throws otherwise, which would make every /gift-then-wager
+    // flow fail outright on any install that hasn't opted into the outbox - the wrong
+    // tool for a best-effort notification.
+    for (const credit of completedBonusCredits) {
+      this.events.emit('wallet.bonus_rollover.completed', {
+        userId,
+        creditId: credit.id,
+        currency: credit.currency,
+        creditedAmount: credit.creditedAmount,
+      });
+    }
 
     return { roundId: round.id, launchUrl, token };
   }

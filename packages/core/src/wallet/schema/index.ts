@@ -19,6 +19,12 @@ import {
   MONEY_PRECISION,
   MONEY_SCALE,
 } from '@openora/core/contracts';
+import {
+  BONUS_CREDIT_SOURCE_TYPES,
+  BONUS_CREDIT_STATUSES,
+  type BonusCreditSourceType,
+  type BonusCreditStatus,
+} from '../contract/index.js';
 
 // Enum values derive from the canonical tuples so the DB enum can never drift from
 // the contract. Editing the value set is a one-place change in wallet-tx.ts.
@@ -33,6 +39,16 @@ export const walletTransactionStatusEnum = pgEnum(
 );
 
 export const walletRailEnum = pgEnum('wallet_rail', WALLET_RAILS);
+
+export const walletBonusCreditSourceTypeEnum = pgEnum(
+  'wallet_bonus_credit_source_type',
+  BONUS_CREDIT_SOURCE_TYPES,
+);
+
+export const walletBonusCreditStatusEnum = pgEnum(
+  'wallet_bonus_credit_status',
+  BONUS_CREDIT_STATUSES,
+);
 
 export const wallet = pgTable('wallet', {
   id: uuid().primaryKey().defaultRandom(),
@@ -196,8 +212,59 @@ export const walletAutoWithdrawalConfig = pgTable('wallet_auto_withdrawal_config
   createdAt: timestamp({ withTimezone: true }).notNull().defaultNow(),
 });
 
+// One row per gift/rain credit (BF-326). Rollover-locked until `rolloverProgress`
+// (accumulated 100% of every casino wager while `active`) reaches `rolloverRequired`
+// (creditedAmount * rolloverMultiplier, snapshotted at credit time - a later config
+// change never retroactively changes an already-created row). No FK back to
+// player_gift/player_rain: neither call site has that row's id available at credit
+// time (see wallet-commands.service.ts), and sourceType alone is sufficient.
+export const walletBonusCredit = pgTable(
+  'wallet_bonus_credit',
+  {
+    id: uuid().primaryKey().defaultRandom(),
+    walletId: uuid()
+      .notNull()
+      .references(() => wallet.id),
+    // Bare uuid, not a FK - userId is the identity module's row, out of this module's reach.
+    userId: uuid().notNull(),
+    currency: text().notNull(),
+    sourceType: walletBonusCreditSourceTypeEnum().$type<BonusCreditSourceType>().notNull(),
+    creditedAmount: decimal({ precision: MONEY_PRECISION, scale: MONEY_SCALE }).notNull(),
+    rolloverMultiplier: decimal({ precision: MONEY_PRECISION, scale: MONEY_SCALE }).notNull(),
+    rolloverRequired: decimal({ precision: MONEY_PRECISION, scale: MONEY_SCALE }).notNull(),
+    rolloverProgress: decimal({ precision: MONEY_PRECISION, scale: MONEY_SCALE })
+      .notNull()
+      .default('0'),
+    status: walletBonusCreditStatusEnum().$type<BonusCreditStatus>().notNull().default('active'),
+    createdAt: timestamp({ withTimezone: true }).notNull().defaultNow(),
+    completedAt: timestamp({ withTimezone: true }),
+  },
+  (t) => [
+    // The progress-update lookup (debit-time waterfall) and the withdrawal-lock sum both
+    // filter on exactly this triple, ordered by createdAt for the waterfall.
+    index('wallet_bonus_credit_user_id_currency_status_idx').on(t.userId, t.currency, t.status),
+    index('wallet_bonus_credit_wallet_id_idx').on(t.walletId),
+  ],
+);
+
+// Global rollover-multiplier singleton (BF-326), Super-Admin-editable at runtime.
+// singletonKey's unique constraint DB-enforces exactly one row ever ('global'). No
+// `enabled` toggle - the AC only asks for a configurable multiplier, not a kill switch.
+export const walletBonusRolloverConfig = pgTable('wallet_bonus_rollover_config', {
+  id: uuid().primaryKey().defaultRandom(),
+  singletonKey: text().notNull().unique().default('global'),
+  multiplier: decimal({ precision: MONEY_PRECISION, scale: MONEY_SCALE }).notNull(),
+  updatedBy: uuid(),
+  updatedAt: timestamp({ withTimezone: true })
+    .notNull()
+    .$onUpdateFn(() => new Date()),
+  createdAt: timestamp({ withTimezone: true }).notNull().defaultNow(),
+});
+
 export type Wallet = typeof wallet.$inferSelect;
 export type WalletTransaction = typeof walletTransaction.$inferSelect;
 export type AutoWithdrawalRule = typeof autoWithdrawalRule.$inferSelect;
 export type WalletDepositAddress = typeof walletDepositAddress.$inferSelect;
 export type WalletAutoWithdrawalConfig = typeof walletAutoWithdrawalConfig.$inferSelect;
+export type WalletBonusCredit = typeof walletBonusCredit.$inferSelect;
+export type WalletBonusRolloverConfig = typeof walletBonusRolloverConfig.$inferSelect;

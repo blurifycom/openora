@@ -382,14 +382,18 @@
         "wallet",
         "wallet_auto_withdrawal_config",
         "wallet_balance",
+        "wallet_bonus_credit",
+        "wallet_bonus_rollover_config",
         "wallet_deposit_address",
         "wallet_provider_vault",
         "wallet_transaction"
       ],
       "routes": [
         "wallet.approve",
+        "wallet.bonusRolloverStatus",
         "wallet.delete",
         "wallet.deposit",
+        "wallet.get",
         "wallet.get",
         "wallet.get",
         "wallet.getAddress",
@@ -399,6 +403,7 @@
         "wallet.listPlayerTransactions",
         "wallet.listTransactions",
         "wallet.reject",
+        "wallet.set",
         "wallet.set",
         "wallet.set",
         "wallet.setActiveCurrency",
@@ -905,6 +910,7 @@
     "tag.player.assigned",
     "tag.player.removed",
     "tag.rule.upserted",
+    "wallet.bonus_rollover.completed",
     "wallet.deposit.completed",
     "wallet.withdrawal.approved",
     "wallet.withdrawal.completed",
@@ -1056,6 +1062,26 @@
     {
       "name": "BlockedUserSortBySchema",
       "file": "packages/core/src/engagement/chat/contract/index.ts"
+    },
+    {
+      "name": "BonusCreditSchema",
+      "file": "packages/core/src/wallet/contract/index.ts"
+    },
+    {
+      "name": "BonusCreditSourceTypeSchema",
+      "file": "packages/core/src/wallet/contract/index.ts"
+    },
+    {
+      "name": "BonusCreditStatusSchema",
+      "file": "packages/core/src/wallet/contract/index.ts"
+    },
+    {
+      "name": "BonusRolloverConfigSchema",
+      "file": "packages/core/src/wallet/contract/index.ts"
+    },
+    {
+      "name": "BonusRolloverStatusSchema",
+      "file": "packages/core/src/wallet/contract/index.ts"
     },
     {
       "name": "BrandingSchema",
@@ -1879,6 +1905,10 @@
     },
     {
       "name": "SetAutoWithdrawalRuleInputSchema",
+      "file": "packages/core/src/wallet/contract/index.ts"
+    },
+    {
+      "name": "SetBonusRolloverConfigInputSchema",
       "file": "packages/core/src/wallet/contract/index.ts"
     },
     {
