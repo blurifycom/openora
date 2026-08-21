@@ -180,7 +180,15 @@ describe('CustodySweepService (real PG)', () => {
 
   it('two cycles started concurrently: the second returns immediately and listSweepableBalances is called exactly once', async () => {
     await seedAsset();
-    const listSweepableBalances = vi.fn().mockResolvedValue([makeBalance()]);
+    // The vendor call has to be slow enough to hold the first cycle's claim open while
+    // the second one attempts its own. Resolved immediately, a cycle can finish - and
+    // clear its claim - before the sibling's insert is even issued, at which point both
+    // legitimately succeed as two SEQUENTIAL runs and the test fails without anything
+    // being wrong. That is a race in the test, not in the claim.
+    const balances = [makeBalance()];
+    const listSweepableBalances = vi.fn(
+      () => new Promise((resolve) => setTimeout(() => resolve(balances), 100)),
+    );
     const sweepToPool = vi.fn().mockResolvedValue({ externalId: randomUUID() });
     const { service } = serviceWith(mock<PaymentAdapter>({ listSweepableBalances, sweepToPool }));
 
