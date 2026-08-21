@@ -148,13 +148,21 @@ export async function calculateRainSplit(
   const splitResult = await tx.execute(
     sql`SELECT
       (floor(${amount}::numeric * 100 / ${requestedRecipientCount}) / 100)::text AS per_recipient,
-      (floor(${amount}::numeric * 100 / ${requestedRecipientCount}) / 100 * ${actualRecipientCount})::text AS total_distributed`,
+      (floor(${amount}::numeric * 100 / ${requestedRecipientCount}) / 100 * ${actualRecipientCount})::text AS total_distributed,
+      (floor(${amount}::numeric * 100 / ${requestedRecipientCount}) / 100 > 0) AS has_positive_recipient`,
   );
-  const { per_recipient: perRecipient, total_distributed: totalDistributed } = splitResult
-    .rows[0] as {
+  const {
+    per_recipient: perRecipient,
+    total_distributed: totalDistributed,
+    has_positive_recipient: hasPositiveRecipient,
+  } = splitResult.rows[0] as {
     per_recipient: string;
     total_distributed: string;
+    has_positive_recipient: boolean;
   };
+  if (!hasPositiveRecipient) {
+    throw new TooManyRecipientsError();
+  }
   return { perRecipient, totalDistributed };
 }
 

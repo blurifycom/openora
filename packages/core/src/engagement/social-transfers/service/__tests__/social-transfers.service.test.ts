@@ -652,7 +652,15 @@ describe('SocialTransfersService.sendRain (RAIN_COMMANDS port)', () => {
       drizzleRows: {
         select: [[RAIN_ROW]],
         returning: [[{ id: '00000000-0000-0000-0000-0000000000cc' }]],
-        execute: [[{ per_recipient: '5.00000000', total_distributed: '10.00000000' }]],
+        execute: [
+          [
+            {
+              per_recipient: '5.00000000',
+              total_distributed: '10.00000000',
+              has_positive_recipient: true,
+            },
+          ],
+        ],
       },
       wallet,
       writer,
@@ -705,7 +713,15 @@ describe('SocialTransfersService.sendRain (RAIN_COMMANDS port)', () => {
       drizzleRows: {
         select: [[RAIN_ROW]],
         returning: [[{ id: '00000000-0000-0000-0000-0000000000cc' }]],
-        execute: [[{ per_recipient: '1.09000000', total_distributed: '10.90000000' }]],
+        execute: [
+          [
+            {
+              per_recipient: '1.09000000',
+              total_distributed: '10.90000000',
+              has_positive_recipient: true,
+            },
+          ],
+        ],
       },
       wallet,
       directory: makeDirectory(
@@ -740,7 +756,15 @@ describe('SocialTransfersService.sendRain (RAIN_COMMANDS port)', () => {
       drizzleRows: {
         select: [[RAIN_ROW]],
         returning: [[{ id: '00000000-0000-0000-0000-0000000000cc' }]],
-        execute: [[{ per_recipient: '20.00000000', total_distributed: '80.00000000' }]],
+        execute: [
+          [
+            {
+              per_recipient: '20.00000000',
+              total_distributed: '80.00000000',
+              has_positive_recipient: true,
+            },
+          ],
+        ],
       },
       wallet,
       directory: makeDirectory('bob', 'alice', [
@@ -785,7 +809,15 @@ describe('SocialTransfersService.sendRain (RAIN_COMMANDS port)', () => {
       drizzleRows: {
         select: [[RAIN_ROW]],
         returning: [[{ id: '00000000-0000-0000-0000-0000000000cc' }]],
-        execute: [[{ per_recipient: '5.00000000', total_distributed: '10.00000000' }]],
+        execute: [
+          [
+            {
+              per_recipient: '5.00000000',
+              total_distributed: '10.00000000',
+              has_positive_recipient: true,
+            },
+          ],
+        ],
       },
       wallet,
       blockWriter: mock<ChatBlockWriter>({
@@ -820,7 +852,15 @@ describe('SocialTransfersService.sendRain (RAIN_COMMANDS port)', () => {
       drizzleRows: {
         select: [[RAIN_ROW]],
         returning: [[{ id: '00000000-0000-0000-0000-0000000000cc' }]],
-        execute: [[{ per_recipient: '14.81000000', total_distributed: '44.43000000' }]],
+        execute: [
+          [
+            {
+              per_recipient: '14.81000000',
+              total_distributed: '44.43000000',
+              has_positive_recipient: true,
+            },
+          ],
+        ],
       },
       wallet,
       directory: makeDirectory('bob', 'alice', ['00000000-0000-0000-0000-000000000010']),

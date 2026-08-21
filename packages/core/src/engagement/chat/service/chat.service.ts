@@ -28,7 +28,7 @@ import type {
   SocialCommands,
   Uuid,
 } from '@openora/core/contracts';
-import { chatChannel, GLOBAL_CHAT_ROOM_ID } from '@openora/core/contracts';
+import { chatBlockLockKey, chatChannel, GLOBAL_CHAT_ROOM_ID } from '@openora/core/contracts';
 import {
   eq,
   and,
@@ -1226,19 +1226,21 @@ export class ChatService {
     // Any active friendship dissolves on the same tx as the block insert, so a block
     // can never leave a friendship (and the blocked user) still reachable from
     // /social/friends.
-    const { inserted, dissolvedFriendship } = await this.drizzle.db.transaction(async (tx) => {
-      const rows = await tx
-        .insert(chatUserBlock)
-        .values({ blockerId, blockedId })
-        .onConflictDoNothing()
-        .returning();
-      const dissolved: FriendshipDissolvedPayload | null =
-        rows.length > 0
-          ? ((await this.socialCommands?.dissolveFriendshipOnBlock(tx, blockerId, blockedId)) ??
-            null)
-          : null;
-      return { inserted: rows, dissolvedFriendship: dissolved };
-    });
+    const { inserted, dissolvedFriendship } = await this.drizzle.db.transaction((tx) =>
+      withAdvisoryXactLock(tx, chatBlockLockKey(blockerId, blockedId), async () => {
+        const rows = await tx
+          .insert(chatUserBlock)
+          .values({ blockerId, blockedId })
+          .onConflictDoNothing()
+          .returning();
+        const dissolved: FriendshipDissolvedPayload | null =
+          rows.length > 0
+            ? ((await this.socialCommands?.dissolveFriendshipOnBlock(tx, blockerId, blockedId)) ??
+              null)
+            : null;
+        return { inserted: rows, dissolvedFriendship: dissolved };
+      }),
+    );
 
     if (dissolvedFriendship) {
       this.events.emit('social.friendship.removed', dissolvedFriendship);
@@ -1260,17 +1262,21 @@ export class ChatService {
   async unblockUser(blockerId: User['id'], blockedId: User['id'], meta?: ClientMeta) {
     // Soft-delete: the partial unique index guarantees at most one active (removedAt
     // IS NULL) row per pair, so this is that row, or no-op if already unblocked.
-    const removed = await this.drizzle.db
-      .update(chatUserBlock)
-      .set({ removedAt: new Date() })
-      .where(
-        and(
-          eq(chatUserBlock.blockerId, blockerId),
-          eq(chatUserBlock.blockedId, blockedId),
-          isNull(chatUserBlock.removedAt),
-        ),
-      )
-      .returning();
+    const removed = await this.drizzle.db.transaction((tx) =>
+      withAdvisoryXactLock(tx, chatBlockLockKey(blockerId, blockedId), () =>
+        tx
+          .update(chatUserBlock)
+          .set({ removedAt: new Date() })
+          .where(
+            and(
+              eq(chatUserBlock.blockerId, blockerId),
+              eq(chatUserBlock.blockedId, blockedId),
+              isNull(chatUserBlock.removedAt),
+            ),
+          )
+          .returning(),
+      ),
+    );
 
     if (removed.length > 0) {
       this.events.emit('chat.user.unblocked', {
@@ -1423,17 +1429,22 @@ export class ChatService {
   }
 
   async isBlocked(tx: unknown, blockerId: User['id'], blockedId: User['id']): Promise<boolean> {
-    const [row] = await (tx as DrizzleTx)
-      .select({ blockedId: chatUserBlock.blockedId })
-      .from(chatUserBlock)
-      .where(
-        and(
-          eq(chatUserBlock.blockerId, blockerId),
-          eq(chatUserBlock.blockedId, blockedId),
-          isNull(chatUserBlock.removedAt),
-        ),
-      )
-      .limit(1);
+    const [row] = await withAdvisoryXactLock(
+      tx as DrizzleTx,
+      chatBlockLockKey(blockerId, blockedId),
+      () =>
+        (tx as DrizzleTx)
+          .select({ blockedId: chatUserBlock.blockedId })
+          .from(chatUserBlock)
+          .where(
+            and(
+              eq(chatUserBlock.blockerId, blockerId),
+              eq(chatUserBlock.blockedId, blockedId),
+              isNull(chatUserBlock.removedAt),
+            ),
+          )
+          .limit(1),
+    );
     return row !== undefined;
   }
 

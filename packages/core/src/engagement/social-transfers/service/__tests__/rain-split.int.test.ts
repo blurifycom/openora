@@ -1,7 +1,7 @@
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { createTestDb, type TestDb } from '@openora/core/testing';
 import { migrate } from '../../migrate.js';
-import { calculateRainSplit } from '../social-transfers.service.js';
+import { calculateRainSplit, TooManyRecipientsError } from '../social-transfers.service.js';
 
 let db: TestDb;
 
@@ -30,5 +30,11 @@ describe('calculateRainSplit', () => {
       perRecipient: '20.0000000000000000',
       totalDistributed: '80.0000000000000000',
     });
+  });
+
+  it('rejects a split that would pay zero cents per recipient', async () => {
+    await expect(
+      db.drizzle.db.transaction((tx) => calculateRainSplit(tx, '0.01', 2, 2)),
+    ).rejects.toThrow(TooManyRecipientsError);
   });
 });
