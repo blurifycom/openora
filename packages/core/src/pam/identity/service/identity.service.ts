@@ -191,6 +191,9 @@ export const SESSION_DURATION_IN_SECONDS = 30 * 24 * 60 * 60; // 30 days
 // throttles (register/resend/etc.) keep the default fail-open.
 const LOGIN_RATE_LIMIT = { limit: 10, windowMs: 5 * MINUTE_MS, onUnavailable: 'deny' } as const;
 const REGISTER_RATE_LIMIT = { limit: 5, windowMs: 15 * MINUTE_MS };
+// Keyed on the caller, not the handle: the abuse shape here is enumerating many
+// usernames from one client, not probing one username repeatedly.
+const USERNAME_AVAILABILITY_RATE_LIMIT = { limit: 30, windowMs: MINUTE_MS };
 const PASSWORD_RESET_REQUEST_RATE_LIMIT = { limit: 3, windowMs: 15 * MINUTE_MS };
 const PASSWORD_RESET_RATE_LIMIT = {
   limit: 5,
@@ -443,11 +446,13 @@ export class IdentityService {
     return { status: 'check-email' as const };
   }
 
-  async usernameAvailable(username: string) {
-    await assertRateLimit(this.limiter, `check-username:${username.toLowerCase()}`, {
-      limit: 10,
-      windowMs: 1 * 60 * 1000,
-    });
+  async usernameAvailable(username: string, reqHeaders: NodeHeaders) {
+    const { ip } = extractClientMeta(reqHeaders);
+    await assertRateLimit(
+      this.limiter,
+      `check-username:${ip ?? 'unknown'}`,
+      USERNAME_AVAILABILITY_RATE_LIMIT,
+    );
     const [existing] = await this.drizzle.db
       .select({ id: user.id })
       .from(user)

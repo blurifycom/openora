@@ -33,8 +33,8 @@ export function createIdentityRouter(
       ),
     ),
 
-    usernameAvailable: os.usernameAvailable.handler(({ input }) =>
-      identity.usernameAvailable(input.username),
+    usernameAvailable: os.usernameAvailable.handler(({ input, context }) =>
+      identity.usernameAvailable(input.username, context.request.headers),
     ),
 
     login: os.login.handler(({ input, context }) =>
