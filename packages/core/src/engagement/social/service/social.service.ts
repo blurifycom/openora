@@ -633,10 +633,11 @@ export class SocialService {
         ? this.drizzle.db
             .select({
               userId: player.userId,
-              displayName: player.displayName,
+              username: user.username,
               status: player.status,
             })
             .from(player)
+            .innerJoin(user, eq(user.id, player.userId))
             .where(inArray(player.userId, counterpartIds))
         : Promise.resolve([]),
       direction === 'incoming' && counterpartIds.length > 0
@@ -690,7 +691,7 @@ export class SocialService {
           {
             friendshipId: row.id,
             userId: counterpartId,
-            displayName: counterpartPlayer.displayName,
+            username: counterpartPlayer.username,
             direction,
             createdAt: row.createdAt,
             mutualFriendsCount:

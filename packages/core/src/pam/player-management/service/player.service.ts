@@ -21,21 +21,7 @@ import {
   type SessionCommands,
   type PlayerActivityTracker,
 } from '@openora/core/contracts';
-import {
-  eq,
-  ilike,
-  count,
-  or,
-  and,
-  gte,
-  asc,
-  desc,
-  sql,
-  ne,
-  inArray,
-  isNull,
-  lt,
-} from 'drizzle-orm';
+import { eq, ilike, count, or, and, gte, asc, desc, sql, inArray, isNull, lt } from 'drizzle-orm';
 import { DatabaseError } from 'pg';
 import { player } from '@openora/core/pam/schema/profile';
 import { user } from '@openora/core/pam/schema/identity';
@@ -228,24 +214,13 @@ export class PlayerService implements PlayerActivityTracker {
 
   async update(
     playerId: Player['id'],
-    data: { username?: string; status?: PlayerStatus; level?: number; email?: string },
+    data: { username?: string; status?: PlayerStatus; level?: number },
     actorId: User['id'],
   ) {
     const existing = findOneOrThrow(
       await this.drizzle.db.select().from(player).where(eq(player.id, playerId)),
       new PlayerNotFoundError(playerId),
     );
-
-    if (data.email !== undefined) {
-      const clash = await this.drizzle.db
-        .select({ id: user.id })
-        .from(user)
-        .where(and(eq(user.email, data.email), ne(user.id, existing.userId)))
-        .limit(1);
-      if (clash.length > 0) {
-        throw new DuplicateEmailError();
-      }
-    }
 
     const patch: Partial<typeof player.$inferInsert> = {};
     if (data.status !== undefined) {
@@ -257,19 +232,15 @@ export class PlayerService implements PlayerActivityTracker {
 
     try {
       await this.drizzle.db.transaction(async (trx) => {
-        if (data.email !== undefined || data.username !== undefined) {
+        if (data.username !== undefined) {
           await trx
             .update(user)
-            .set({
-              ...(data.email !== undefined ? { email: data.email } : {}),
-              ...(data.username !== undefined ? { username: data.username } : {}),
-            })
+            .set({ username: data.username })
             .where(eq(user.id, existing.userId));
         }
         if (Object.keys(patch).length > 0) {
           await trx.update(player).set(patch).where(eq(player.id, playerId));
         }
-        // Verify the row still exists after all writes before the txn commits.
         findOneOrThrow(
           await trx.select().from(player).where(eq(player.id, playerId)),
           new PlayerNotFoundError(playerId),

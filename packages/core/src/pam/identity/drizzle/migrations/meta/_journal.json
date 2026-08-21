@@ -43,13 +43,6 @@
       "when": 1785015619157,
       "tag": "0005_daily_black_tom",
       "breakpoints": true
-    },
-    {
-      "idx": 6,
-      "version": "7",
-      "when": 1787137281371,
-      "tag": "0006_far_mephisto",
-      "breakpoints": true
     }
   ]
 }

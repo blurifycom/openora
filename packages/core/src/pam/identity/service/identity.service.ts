@@ -467,10 +467,14 @@ export class IdentityService {
   }
 
   async usernameAvailable(username: string) {
+    await assertRateLimit(this.limiter, `check-username:${username.toLowerCase()}`, {
+      limit: 10,
+      windowMs: 1 * 60 * 1000,
+    });
     const [existing] = await this.drizzle.db
       .select({ id: user.id })
       .from(user)
-      .where(eq(user.username, username))
+      .where(eq(sql`lower(${user.username})`, username.toLowerCase()))
       .limit(1);
     return { available: !existing };
   }
@@ -559,6 +563,22 @@ export class IdentityService {
         asResponse: true,
       });
       await ensureOk(authResponse);
+
+      // Email verification is required - reject login for unverified addresses even after
+      // credentials pass. This prevents an attacker from signing up with a victim's email,
+      // logging in (which fails until verified), and then resetting the victim's password
+      // before the victim finishes signup. better-auth doesn't enforce this by default.
+      const currentUser = await this.auth.api.getSession({ headers });
+      if (currentUser?.user && !currentUser.user.emailVerified) {
+        await this.drizzle.db
+          .update(session)
+          .set({ expiresAt: new Date() })
+          .where(eq(session.userId, currentUser.user.id));
+        throw new ORPCError('FORBIDDEN', {
+          message: 'Please verify your email address before logging in.',
+          data: { code: 'EMAIL_NOT_VERIFIED' },
+        });
+      }
 
       // Resolved once (only when a user was found), before either gate below, so both
       // the RG-block and the Backoffice-block events - and the eventual login success

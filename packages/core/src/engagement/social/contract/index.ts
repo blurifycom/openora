@@ -81,7 +81,7 @@ export type ListFriendRequestsInput = z.infer<typeof ListFriendRequestsInputSche
 export const FriendRequestEntrySchema = z.object({
   friendshipId: UuidSchema,
   userId: UuidSchema,
-  displayName: z.string(),
+  username: z.string(),
   direction: FriendRequestDirectionSchema,
   createdAt: TimestampSchema,
   mutualFriendsCount: z.number().int().min(0).nullable(),

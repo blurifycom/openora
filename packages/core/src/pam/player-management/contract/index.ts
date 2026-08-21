@@ -85,7 +85,6 @@ export const playerContract = populateContractRouterPaths({
         username: UsernameSchema.optional(),
         status: PlayerStatusSchema.optional(),
         level: z.number().int().min(0).max(100).optional(),
-        email: z.email().optional(),
       }),
     )
     .output(PlayerWithTagsSchema),

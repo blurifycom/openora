@@ -43,7 +43,6 @@ export function createPlayerRouter(
               username: input.username,
               status: input.status,
               level: input.level,
-              email: input.email,
             },
             adminId,
           );
@@ -67,12 +66,10 @@ export function createPlayerRouter(
             before: {
               status: before.status,
               level: before.level,
-              email: before.email,
             },
             after: {
               status: updated.status,
               level: updated.level,
-              email: updated.email,
             },
           });
           return updated;
