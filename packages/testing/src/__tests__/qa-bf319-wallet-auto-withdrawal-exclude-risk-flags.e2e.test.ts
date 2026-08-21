@@ -14,7 +14,7 @@ import { walletAutoWithdrawalConfig } from '@openora/core/wallet/schema';
 import {
   setupTestDb,
   bootTestApp,
-  registrationRequestHeaders,
+  registerPlayer,
   asPlayer,
   seedMinimal,
   type TestDb,
@@ -45,22 +45,9 @@ async function readJson(res: Response): Promise<any> {
   return res.json();
 }
 
-async function registerAndMaterializePlayer(app: TestApp['app'], email: string) {
-  const registerRes = await app.request('/identity/register', {
-    method: 'POST',
-    headers: registrationRequestHeaders(),
-    body: JSON.stringify({
-      email,
-      password: 'password123',
-      username: `player_${randomUUID().replaceAll('-', '').slice(0, 12)}`,
-      acceptedTerms: true,
-      acceptedAge: true,
-    }),
-  });
-  if (!registerRes.ok) {
-    throw new Error(`register failed (${registerRes.status}): ${await registerRes.text()}`);
-  }
-  const client = await asPlayer(app, { email });
+async function registerAndMaterializePlayer(testApp: TestApp, email: string) {
+  await registerPlayer(testApp, { email });
+  const client = await asPlayer(testApp.app, { email });
   const profileRes = await client.get('/profile');
   if (!profileRes.ok) {
     throw new Error(
@@ -98,11 +85,11 @@ async function assignTag(admin: TestClient, playerId: string, tagKey: string) {
 // assignment - both are required before the DB-backed permission resolver becomes
 // authoritative (see BF-211 suite's own doc comment on AdminGuard.assert's two-stage gate).
 async function makeSuperAdmin(
-  app: TestApp['app'],
+  testApp: TestApp,
   container: Container<CoreTokenCatalog>,
   email: string,
 ) {
-  const { client, userId } = await registerAndMaterializePlayer(app, email);
+  const { client, userId } = await registerAndMaterializePlayer(testApp, email);
   const drizzle = container.get(DRIZZLE).db;
   await drizzle.update(user).set({ role: 'admin' }).where(eq(user.id, userId));
   const [role] = await drizzle.select().from(adminRole).where(eq(adminRole.key, 'super-admin'));
@@ -148,7 +135,7 @@ beforeAll(async () => {
   await seedMinimal(appMain.container, { playerCount: 0 });
 
   const superAdminEmail = `bf319-super-admin-${randomUUID()}@e2e.test`;
-  const created = await makeSuperAdmin(appMain.app, appMain.container, superAdminEmail);
+  const created = await makeSuperAdmin(appMain, appMain.container, superAdminEmail);
   superAdmin = created.client;
 }, 60_000);
 
@@ -183,7 +170,7 @@ describe('BF-319 upgraded install: the migration DEFAULT tags gate before any ad
     );
 
     const taggedEmail = `bf319-preexisting-tagged-${randomUUID()}@e2e.test`;
-    const tagged = await registerAndMaterializePlayer(appMain.app, taggedEmail);
+    const tagged = await registerAndMaterializePlayer(appMain, taggedEmail);
     await verifyKyc(superAdmin, tagged.userId);
     await assignTag(superAdmin, tagged.playerId, 'high_risk');
     await tagged.client.post('/wallet/deposit', { amount: '500', currency: 'USD' });
@@ -193,7 +180,7 @@ describe('BF-319 upgraded install: the migration DEFAULT tags gate before any ad
     expect(taggedRes.status).toBe('pending');
 
     const cleanEmail = `bf319-preexisting-clean-${randomUUID()}@e2e.test`;
-    const clean = await registerAndMaterializePlayer(appMain.app, cleanEmail);
+    const clean = await registerAndMaterializePlayer(appMain, cleanEmail);
     await verifyKyc(superAdmin, clean.userId);
     await clean.client.post('/wallet/deposit', { amount: '500', currency: 'USD' });
     const cleanRes = await readJson(
@@ -220,7 +207,7 @@ describe('BF-319 immediate effect: PUT excludeRiskFlags, GET reflects it right a
     await setConfig({ fiatThreshold: '1000', cryptoThreshold: '0', excludeRiskFlags: ['vip'] });
 
     const email = `bf319-widened-tag-${randomUUID()}@e2e.test`;
-    const { client, userId, playerId } = await registerAndMaterializePlayer(appMain.app, email);
+    const { client, userId, playerId } = await registerAndMaterializePlayer(appMain, email);
     await verifyKyc(superAdmin, userId);
     await assignTag(superAdmin, playerId, 'vip');
     await client.post('/wallet/deposit', { amount: '500', currency: 'USD' });
@@ -243,7 +230,7 @@ describe('BF-319 full admin control: excludeRiskFlags is the sole source of trut
     expect(got.excludeRiskFlags).toEqual([]);
 
     const email = `bf319-empty-array-clears-exclusion-${randomUUID()}@e2e.test`;
-    const { client, userId, playerId } = await registerAndMaterializePlayer(appMain.app, email);
+    const { client, userId, playerId } = await registerAndMaterializePlayer(appMain, email);
     await verifyKyc(superAdmin, userId);
     await assignTag(superAdmin, playerId, 'high_risk');
     await client.post('/wallet/deposit', { amount: '500', currency: 'USD' });
@@ -265,7 +252,7 @@ describe('BF-319 full admin control: excludeRiskFlags is the sole source of trut
     });
 
     const email = `bf319-omitted-tag-no-longer-excluded-${randomUUID()}@e2e.test`;
-    const { client, userId, playerId } = await registerAndMaterializePlayer(appMain.app, email);
+    const { client, userId, playerId } = await registerAndMaterializePlayer(appMain, email);
     await verifyKyc(superAdmin, userId);
     await assignTag(superAdmin, playerId, 'kyc_rejected');
     await client.post('/wallet/deposit', { amount: '500', currency: 'USD' });
@@ -285,7 +272,7 @@ describe('BF-319 effective set = the DB value verbatim: excluded regardless of a
     });
 
     const email = `bf319-tiny-amount-excluded-${randomUUID()}@e2e.test`;
-    const { client, userId, playerId } = await registerAndMaterializePlayer(appMain.app, email);
+    const { client, userId, playerId } = await registerAndMaterializePlayer(appMain, email);
     await verifyKyc(superAdmin, userId);
     await assignTag(superAdmin, playerId, 'vip');
     await client.post('/wallet/deposit', { amount: '500', currency: 'USD' });
@@ -305,7 +292,7 @@ describe('BF-319 regression (no weakening): a player with no excluded tag, under
     });
 
     const email = `bf319-no-regression-${randomUUID()}@e2e.test`;
-    const { client, userId } = await registerAndMaterializePlayer(appMain.app, email);
+    const { client, userId } = await registerAndMaterializePlayer(appMain, email);
     await verifyKyc(superAdmin, userId);
     await client.post('/wallet/deposit', { amount: '500', currency: 'USD' });
     const res = await readJson(
@@ -324,7 +311,7 @@ describe('BF-319 per-player override does not bypass the tag-exclusion gate', ()
     });
 
     const email = `bf319-rule-override-excluded-tag-${randomUUID()}@e2e.test`;
-    const { client, userId, playerId } = await registerAndMaterializePlayer(appMain.app, email);
+    const { client, userId, playerId } = await registerAndMaterializePlayer(appMain, email);
     await verifyKyc(superAdmin, userId);
     await assignTag(superAdmin, playerId, 'multi_account');
     await superAdmin.put(`/wallet/auto-withdrawal-rules/${userId}`, {
@@ -368,7 +355,7 @@ describe('BF-319 audit trail', () => {
     });
 
     const email = `bf319-audit-effective-tags-${randomUUID()}@e2e.test`;
-    const { client, userId } = await registerAndMaterializePlayer(appMain.app, email);
+    const { client, userId } = await registerAndMaterializePlayer(appMain, email);
     await verifyKyc(superAdmin, userId);
     await client.post('/wallet/deposit', { amount: '500', currency: 'USD' });
     const res = await readJson(

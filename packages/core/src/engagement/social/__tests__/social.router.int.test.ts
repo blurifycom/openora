@@ -2,7 +2,12 @@ import { describe, it, expect, beforeAll, afterAll, beforeEach } from 'vitest';
 import { randomUUID } from 'node:crypto';
 import { sql } from 'drizzle-orm';
 import { call, ORPCError } from '@orpc/server';
-import { createTestDb, type TestDb } from '@openora/core/testing';
+import {
+  createTestDb,
+  seedPlayerWithUser,
+  type SeedPlayerOverrides,
+  type TestDb,
+} from '@openora/core/testing';
 import { migrate as migrateChat } from '@openora/core/engagement/migrate/chat';
 import { chatUserBlock } from '@openora/core/engagement/schema/chat';
 import { migrate as migrateIdentity } from '@openora/core/pam/migrate/identity';
@@ -25,27 +30,8 @@ function build() {
   };
 }
 
-async function seedPlayer(overrides: Partial<typeof player.$inferInsert> = {}) {
-  const userId = overrides.userId ?? randomUUID();
-  const displayName = overrides.displayName ?? 'Player';
-  const username =
-    displayName === 'Player'
-      ? `player_${userId.replaceAll('-', '').slice(0, 12)}`
-      : displayName.toLowerCase().replaceAll(/[^a-z0-9_]+/g, '_');
-
-  await db.drizzle.db.insert(user).values({
-    id: userId,
-    name: displayName,
-    username,
-    email: `${userId}@test.dev`,
-    emailVerified: true,
-  });
-  const [row] = await db.drizzle.db
-    .insert(player)
-    .values({ userId, displayName, ...overrides })
-    .returning();
-  return row!;
-}
+const seedPlayer = async (overrides: SeedPlayerOverrides = {}) =>
+  (await seedPlayerWithUser(db, overrides)).player;
 
 const ctxFor = (userId: string) => testContext({ auth: { userId } });
 

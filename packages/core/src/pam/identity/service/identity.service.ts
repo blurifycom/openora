@@ -41,6 +41,7 @@ import type {
   PlatformConfig,
   ClientMeta,
   GeoCheckCommands,
+  PlayerProvisioning,
 } from '@openora/core/contracts';
 import { RATE_LIMIT_KEYS, makeRateLimitKey } from '@openora/core/contracts';
 import { assertSupportedLanguage } from '../../shared/language.js';
@@ -124,17 +125,9 @@ type AuthCall<B> = (opts: {
 }) => Promise<globalThis.Response>;
 
 type ExtendedAuthApi = {
-  signUpEmail: AuthCall<{
-    email: string;
-    password: string;
-    name: string;
-    username: string;
-    termsVersion: string;
-    termsAcceptedAt: Date;
-    ageAcceptedAt: Date;
-    registrationIp: string | null;
-    registrationUserAgent: string | null;
-  }>;
+  signUpEmail: AuthCall<
+    Pick<typeof user.$inferInsert, 'email' | 'name' | 'username'> & { password: string }
+  >;
   enableTwoFactor: AuthCall<{ password: string }>;
   verifyTOTP: AuthCall<{ code: string }>;
   disableTwoFactor: AuthCall<{ password: string }>;
@@ -265,6 +258,7 @@ export type IdentityServiceDeps = {
   limiter?: RateLimiterAdapter<RateLimitKey>;
   platformConfig?: PlatformConfig;
   geoCheck?: GeoCheckCommands;
+  playerProvisioning?: PlayerProvisioning;
   cache?: CacheAdapter;
 };
 
@@ -287,6 +281,7 @@ export class IdentityService {
   private readonly options?: IdentityServiceOptions;
   private readonly limiter?: RateLimiterAdapter<RateLimitKey>;
   private readonly platformConfig?: PlatformConfig;
+  private readonly playerProvisioning?: PlayerProvisioning;
   private readonly geoCheck?: GeoCheckCommands;
   private readonly cache?: CacheAdapter;
 
@@ -300,6 +295,7 @@ export class IdentityService {
     limiter,
     platformConfig,
     geoCheck,
+    playerProvisioning,
     cache,
   }: IdentityServiceDeps) {
     this.drizzle = drizzle;
@@ -311,6 +307,7 @@ export class IdentityService {
     this.limiter = limiter;
     this.platformConfig = platformConfig;
     this.geoCheck = geoCheck;
+    this.playerProvisioning = playerProvisioning;
     this.cache = cache;
     this.auth = createAuth({
       db: drizzle.db,
@@ -376,7 +373,8 @@ export class IdentityService {
 
   async register(input: RegisterInput, reqHeaders: NodeHeaders, resHeaders: Headers) {
     const registration = this.platformConfig?.registration;
-    if (!registration) {
+    const provisioning = this.playerProvisioning;
+    if (!registration || !provisioning) {
       throw new ORPCError('FORBIDDEN', { message: 'Registration is unavailable' });
     }
     const { ip, userAgent } = extractClientMeta(reqHeaders);
@@ -392,7 +390,7 @@ export class IdentityService {
     const [existingUsername] = await this.drizzle.db
       .select({ id: user.id })
       .from(user)
-      .where(eq(user.username, input.username))
+      .where(eq(sql`lower(${user.username})`, input.username))
       .limit(1);
     if (existingUsername) {
       throw new UsernameConflictError();
@@ -404,23 +402,15 @@ export class IdentityService {
         password: input.password,
         name: input.username,
         username: input.username,
-        termsVersion: registration.termsVersion,
-        termsAcceptedAt: new Date(),
-        ageAcceptedAt: new Date(),
-        registrationIp: ip,
-        registrationUserAgent: userAgent,
       },
       headers,
       asResponse: true,
     });
     if (!authResponse.ok) {
-      // Better Auth intentionally normalizes adapter errors. Its sign-up transaction
-      // has already rolled back; a newly present handle can therefore only be the
-      // concurrent winner of the username unique constraint.
       const [winner] = await this.drizzle.db
         .select({ id: user.id })
         .from(user)
-        .where(eq(user.username, input.username))
+        .where(eq(sql`lower(${user.username})`, input.username))
         .limit(1);
       if (winner) {
         throw new UsernameConflictError();
@@ -434,6 +424,14 @@ export class IdentityService {
       .where(eq(user.email, input.email.toLowerCase()))
       .limit(1);
     if (stored?.id === body.user.id) {
+      await provisioning.createForRegistration({
+        userId: body.user.id,
+        termsVersion: registration.termsVersion,
+        termsAcceptedAt: new Date(),
+        ageAcceptedAt: new Date(),
+        registrationIp: ip,
+        registrationUserAgent: userAgent,
+      });
       this.events.emit('identity.user.registered', {
         userId: body.user.id,
         playerId: await this.identityReader.getPlayerIdByUserIdSafe(body.user.id),
@@ -441,8 +439,6 @@ export class IdentityService {
         userAgent,
       });
     }
-    // autoSignIn:false guarantees Better Auth has no session cookie to forward;
-    // the public reply deliberately hides whether this was a new or known email.
     void resHeaders;
     return { status: 'check-email' as const };
   }
@@ -575,22 +571,6 @@ export class IdentityService {
         asResponse: true,
       });
       await ensureOk(authResponse);
-
-      // Email verification is required - reject login for unverified addresses even after
-      // credentials pass. This prevents an attacker from signing up with a victim's email,
-      // logging in (which fails until verified), and then resetting the victim's password
-      // before the victim finishes signup. better-auth doesn't enforce this by default.
-      const currentUser = await this.auth.api.getSession({ headers });
-      if (currentUser?.user && !currentUser.user.emailVerified) {
-        await this.drizzle.db
-          .update(session)
-          .set({ expiresAt: new Date() })
-          .where(eq(session.userId, currentUser.user.id));
-        throw new ORPCError('FORBIDDEN', {
-          message: 'Please verify your email address before logging in.',
-          data: { code: 'EMAIL_NOT_VERIFIED' },
-        });
-      }
 
       // Resolved once (only when a user was found), before either gate below, so both
       // the RG-block and the Backoffice-block events - and the eventual login success

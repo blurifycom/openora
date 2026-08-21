@@ -81,11 +81,6 @@ export function createAuth(options: AuthOptions): BetterAuthType {
       // PlatformConfig.supportedLanguages).
       additionalFields: {
         username: { type: 'string', required: false, input: true },
-        termsVersion: { type: 'string', required: false, input: true },
-        termsAcceptedAt: { type: 'date', required: false, input: true },
-        ageAcceptedAt: { type: 'date', required: false, input: true },
-        registrationIp: { type: 'string', required: false, input: true },
-        registrationUserAgent: { type: 'string', required: false, input: true },
         theme: { type: 'string', required: false, input: true, defaultValue: 'system' },
         language: { type: 'string', required: false, input: true, defaultValue: 'en' },
       },
@@ -93,6 +88,7 @@ export function createAuth(options: AuthOptions): BetterAuthType {
     emailAndPassword: {
       enabled: true,
       autoSignIn: false,
+      requireEmailVerification: true,
       revokeSessionsOnPasswordReset: true,
       onExistingUserSignUp: options.onExistingUserSignUp
         ? async ({ user }) => {

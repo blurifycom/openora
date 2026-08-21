@@ -28,6 +28,11 @@ export const player = pgTable(
     totalWagered: decimal({ precision: 18, scale: 2 }).notNull().default('0'),
     totalDeposits: decimal({ precision: 18, scale: 2 }).notNull().default('0'),
     lastSeenAt: timestamp({ withTimezone: true }),
+    termsVersion: text(),
+    termsAcceptedAt: timestamp({ withTimezone: true }),
+    ageAcceptedAt: timestamp({ withTimezone: true }),
+    registrationIp: text(),
+    registrationUserAgent: text(),
     createdAt: timestamp({ withTimezone: true }).notNull().defaultNow(),
     updatedAt: timestamp({ withTimezone: true })
       .notNull()

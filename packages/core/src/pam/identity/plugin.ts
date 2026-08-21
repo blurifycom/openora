@@ -9,6 +9,7 @@ import {
   SEND_EMAIL,
   EMAIL_TEMPLATE_RENDERER,
   GEO_CHECK_COMMANDS,
+  PLAYER_PROVISIONING,
   IDENTITY_OPTIONS,
   RATE_LIMITER,
   PLATFORM_CONFIG,
@@ -85,6 +86,7 @@ export default {
           limiter: c.get(RATE_LIMITER),
           platformConfig: c.has(PLATFORM_CONFIG) ? c.get(PLATFORM_CONFIG) : undefined,
           geoCheck: c.has(GEO_CHECK_COMMANDS) ? c.get(GEO_CHECK_COMMANDS) : undefined,
+          playerProvisioning: c.has(PLAYER_PROVISIONING) ? c.get(PLAYER_PROVISIONING) : undefined,
           cache: c.get(CACHE),
         }),
         new SessionService({

@@ -4,6 +4,7 @@ import { createTestDb, createTestRedis, type TestDb, type TestRedis } from '@ope
 import type {
   EmailTemplateRenderer,
   IdentityReader,
+  PlayerProvisioning,
   RateLimiterAdapter,
 } from '@openora/core/contracts';
 import { definePlatformConfig } from '@openora/core/contracts';
@@ -22,6 +23,7 @@ function withTemplateRenderer(
 ) {
   return new IdentityService({
     templateRenderer: testTemplateRenderer,
+    playerProvisioning: mock<PlayerProvisioning>({ createForRegistration: vi.fn() }),
     ...deps,
     identityReader: deps.identityReader ?? makeIdentityReader(),
   });

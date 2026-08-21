@@ -18,7 +18,7 @@ import {
   setupTestDb,
   bootTestApp,
   applyMigrations,
-  registrationRequestHeaders,
+  registerPlayer,
   asPlayer,
   asAdmin,
   seedMinimal,
@@ -52,22 +52,9 @@ async function readJson(res: Response): Promise<any> {
   return res.json();
 }
 
-async function registerAndMaterializePlayer(app: TestApp['app'], email: string) {
-  const registerRes = await app.request('/identity/register', {
-    method: 'POST',
-    headers: registrationRequestHeaders(),
-    body: JSON.stringify({
-      email,
-      password: 'password123',
-      username: `player_${randomUUID().replaceAll('-', '').slice(0, 12)}`,
-      acceptedTerms: true,
-      acceptedAge: true,
-    }),
-  });
-  if (!registerRes.ok) {
-    throw new Error(`register failed (${registerRes.status}): ${await registerRes.text()}`);
-  }
-  const client = await asPlayer(app, { email });
+async function registerAndMaterializePlayer(testApp: TestApp, email: string) {
+  await registerPlayer(testApp, { email });
+  const client = await asPlayer(testApp.app, { email });
   const profileRes = await client.get('/profile');
   if (!profileRes.ok) {
     throw new Error(
@@ -190,7 +177,7 @@ beforeAll(async () => {
 
   const superAdminEmail = `bf211-super-admin-${randomUUID()}@e2e.test`;
   const { client: superAdminClient, userId: superAdminUserId } = await registerAndMaterializePlayer(
-    appMain.app,
+    appMain,
     superAdminEmail,
   );
   await assignIamRoleByKey(appMain.container, superAdminUserId, 'super-admin');
@@ -198,13 +185,13 @@ beforeAll(async () => {
 
   const paymentsManagerEmail = `bf211-payments-manager-${randomUUID()}@e2e.test`;
   const { client: paymentsManagerClient, userId: paymentsManagerUserId } =
-    await registerAndMaterializePlayer(appMain.app, paymentsManagerEmail);
+    await registerAndMaterializePlayer(appMain, paymentsManagerEmail);
   await assignIamRoleByKey(appMain.container, paymentsManagerUserId, 'payments-manager');
   paymentsManager = paymentsManagerClient;
 
   const plainAdminEmail = `bf211-plain-admin-${randomUUID()}@e2e.test`;
   const { client: plainAdminClient, userId: plainAdminUserId } = await registerAndMaterializePlayer(
-    appMain.app,
+    appMain,
     plainAdminEmail,
   );
   await assignIamRoleByKey(appMain.container, plainAdminUserId, 'admin');
@@ -212,7 +199,7 @@ beforeAll(async () => {
 
   const bootstrapAdminEmail = `bf211-bootstrap-admin-${randomUUID()}@e2e.test`;
   const { client: bootstrapAdminClient, userId: bootstrapAdminUserId } =
-    await registerAndMaterializePlayer(appMain.app, bootstrapAdminEmail);
+    await registerAndMaterializePlayer(appMain, bootstrapAdminEmail);
   await setStaticRole(appMain.container, bootstrapAdminUserId, 'admin');
   bootstrapAdmin = bootstrapAdminClient;
 }, 60_000);
@@ -359,7 +346,7 @@ describe('BF-211 happy path: set -> immediate GET -> below/above threshold -> au
     expect(configAudit.items[0].before).toBeTruthy();
 
     const belowEmail = `bf211-below-${randomUUID()}@e2e.test`;
-    const below = await registerAndMaterializePlayer(appMain.app, belowEmail);
+    const below = await registerAndMaterializePlayer(appMain, belowEmail);
     await verifyKyc(superAdmin, below.userId);
     await below.client.post('/wallet/deposit', { amount: '500', currency: 'USD' });
     const belowRes = await below.client.post('/wallet/withdraw', {
@@ -371,7 +358,7 @@ describe('BF-211 happy path: set -> immediate GET -> below/above threshold -> au
     expect(belowBody.status).toBe('completed');
 
     const aboveEmail = `bf211-above-${randomUUID()}@e2e.test`;
-    const above = await registerAndMaterializePlayer(appMain.app, aboveEmail);
+    const above = await registerAndMaterializePlayer(appMain, aboveEmail);
     await verifyKyc(superAdmin, above.userId);
     await above.client.post('/wallet/deposit', { amount: '500', currency: 'USD' });
     const aboveRes = await above.client.post('/wallet/withdraw', {
@@ -407,7 +394,7 @@ describe('BF-211 happy path: set -> immediate GET -> below/above threshold -> au
 describe('BF-211 immediate effect: two consecutive config changes in one run', () => {
   it('each withdrawal picks up the latest threshold, no restart/cache needed', async () => {
     const email = `bf211-immediate-${randomUUID()}@e2e.test`;
-    const { client, userId } = await registerAndMaterializePlayer(appMain.app, email);
+    const { client, userId } = await registerAndMaterializePlayer(appMain, email);
     await verifyKyc(superAdmin, userId);
     await client.post('/wallet/deposit', { amount: '500', currency: 'USD' });
 
@@ -451,7 +438,7 @@ describe('BF-211 precedence: per-player auto_withdrawal_rule vs the global confi
       excludeRiskFlags: [],
     });
     const email = `bf211-rule-above-${randomUUID()}@e2e.test`;
-    const { client, userId } = await registerAndMaterializePlayer(appMain.app, email);
+    const { client, userId } = await registerAndMaterializePlayer(appMain, email);
     await verifyKyc(superAdmin, userId);
     await superAdmin.put(`/wallet/auto-withdrawal-rules/${userId}`, {
       threshold: '1000',
@@ -478,7 +465,7 @@ describe('BF-211 precedence: per-player auto_withdrawal_rule vs the global confi
       excludeRiskFlags: [],
     });
     const email = `bf211-rule-below-${randomUUID()}@e2e.test`;
-    const { client, userId } = await registerAndMaterializePlayer(appMain.app, email);
+    const { client, userId } = await registerAndMaterializePlayer(appMain, email);
     await verifyKyc(superAdmin, userId);
     await superAdmin.put(`/wallet/auto-withdrawal-rules/${userId}`, {
       threshold: '5',
@@ -502,7 +489,7 @@ describe('BF-211 fail-closed: the singleton config row is missing', () => {
     expect(row).toBeUndefined();
 
     const email = `bf211-unseeded-${randomUUID()}@e2e.test`;
-    const { client, userId } = await registerAndMaterializePlayer(appUnseeded.app, email);
+    const { client, userId } = await registerAndMaterializePlayer(appUnseeded, email);
     const admin = await asAdmin(appUnseeded.app);
     await verifyKyc(admin, userId);
     await client.post('/wallet/deposit', { amount: '500', currency: 'USD' });
@@ -515,7 +502,7 @@ describe('BF-211 fail-closed: the singleton config row is missing', () => {
 
   it('BUG: GET /wallet/auto-withdrawal-config 500s instead of a mapped 404 when the row is missing (router/index.ts autoWithdrawalConfig.get skips mapErrors, unlike every sibling handler)', async () => {
     const email = `bf211-unseeded-superadmin-${randomUUID()}@e2e.test`;
-    const { userId } = await registerAndMaterializePlayer(appUnseeded.app, email);
+    const { userId } = await registerAndMaterializePlayer(appUnseeded, email);
     await assignIamRoleByKey(appUnseeded.container, userId, 'super-admin');
     const client = await asPlayer(appUnseeded.app, { email });
 
@@ -530,7 +517,7 @@ describe('BF-211 fail-closed: the singleton config row is missing', () => {
 
   it('FIXED: PUT /wallet/auto-withdrawal-config self-heals the missing row via upsert instead of 500ing (agreed fix: setAutoWithdrawalConfig is an upsert on the admin WRITE path only - the READ path still fails closed)', async () => {
     const email = `bf211-unseeded-set-${randomUUID()}@e2e.test`;
-    const { userId } = await registerAndMaterializePlayer(appUnseeded.app, email);
+    const { userId } = await registerAndMaterializePlayer(appUnseeded, email);
     await assignIamRoleByKey(appUnseeded.container, userId, 'super-admin');
     const client = await asPlayer(appUnseeded.app, { email });
 

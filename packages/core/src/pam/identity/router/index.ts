@@ -9,7 +9,11 @@ import {
 } from '@openora/core/server';
 import { identityContract } from '../contract/index.js';
 import { PhoneLoginService } from '../service/phone-login.service.js';
-import { IdentityService, UserNotFoundError } from '../service/identity.service.js';
+import {
+  IdentityService,
+  UsernameConflictError,
+  UserNotFoundError,
+} from '../service/identity.service.js';
 import { SessionService, SessionNotFoundError } from '../service/session.service.js';
 import { UnsupportedLanguageError } from '../../shared/language.js';
 
@@ -24,7 +28,9 @@ export function createIdentityRouter(
 
   return os.router({
     register: os.register.handler(({ input, context }) =>
-      identity.register(input, context.request.headers, context.resHeaders ?? new Headers()),
+      mapErrors({ CONFLICT: UsernameConflictError }, () =>
+        identity.register(input, context.request.headers, context.resHeaders ?? new Headers()),
+      ),
     ),
 
     usernameAvailable: os.usernameAvailable.handler(({ input }) =>

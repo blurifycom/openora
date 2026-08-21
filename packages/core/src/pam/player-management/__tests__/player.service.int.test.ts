@@ -19,7 +19,6 @@ import { mock, makeEventBus } from '../../../testing/mock.js';
 import {
   PlayerService,
   PlayerNotFoundError,
-  DuplicateEmailError,
   DuplicateUsernameError,
 } from '../service/player.service.js';
 
@@ -403,16 +402,6 @@ describe('PlayerService.update (real PG)', () => {
 
     expect(result).toMatchObject({ username: 'renamed', level: 5 });
     expect(await rowById(seeded.id)).toMatchObject({ level: 5 });
-  });
-
-  it('throws DuplicateEmailError when the new email is already used by a different user', async () => {
-    const { svc } = makeService();
-    const taken = await seedUser({ email: 'taken@example.com' });
-    const { player: seeded, account } = await seedPlayerWithUser();
-
-    await expect(svc.update(seeded.id, { email: taken.email }, account.id)).rejects.toBeInstanceOf(
-      DuplicateEmailError,
-    );
   });
 
   it('maps only the username unique constraint to DuplicateUsernameError', async () => {

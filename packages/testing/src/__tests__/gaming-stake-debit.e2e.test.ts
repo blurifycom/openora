@@ -13,7 +13,7 @@ import { wallet, walletBalance, walletTransaction } from '@openora/core/wallet/s
 import {
   setupTestDb,
   bootTestApp,
-  registrationRequestHeaders,
+  registerPlayer,
   asPlayer,
   type TestDb,
   type TestApp,
@@ -30,20 +30,7 @@ async function readJson(res: Response): Promise<any> {
 }
 
 async function registerAndLogin(email: string): Promise<{ client: TestClient; userId: string }> {
-  const res = await app.app.request('/identity/register', {
-    method: 'POST',
-    headers: registrationRequestHeaders(),
-    body: JSON.stringify({
-      email,
-      password: 'password123',
-      username: `player_${randomUUID().replaceAll('-', '').slice(0, 12)}`,
-      acceptedTerms: true,
-      acceptedAge: true,
-    }),
-  });
-  if (!res.ok) {
-    throw new Error(`register failed (${res.status}): ${await res.text()}`);
-  }
+  await registerPlayer(app, { email });
   const client = await asPlayer(app.app, { email });
   const [registered] = await app.container
     .get(DRIZZLE)

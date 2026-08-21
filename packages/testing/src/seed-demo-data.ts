@@ -724,6 +724,8 @@ async function ensureUser(
     name: input.name,
     role,
     isActive: input.isActive,
+    // Sign-in requires a verified address; seeded fixtures skip the email round trip.
+    emailVerified: true,
   };
   if (input.createdAt) {
     patch.createdAt = input.createdAt;

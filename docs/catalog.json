@@ -745,6 +745,16 @@
       ]
     },
     {
+      "category": "player-provisioning",
+      "interface": "PlayerProvisioning",
+      "token": "PLAYER_PROVISIONING",
+      "status": "wired",
+      "boundIn": [
+        "packages/core/src/pam/identity/plugin.ts",
+        "packages/core/src/pam/profile/plugin.ts"
+      ]
+    },
+    {
       "category": "player-tags",
       "interface": "PlayerTags",
       "token": "PLAYER_TAGS",

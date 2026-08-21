@@ -13,7 +13,7 @@ import { chatUserBlock } from '@openora/core/engagement/schema/chat';
 import {
   setupTestDb,
   bootTestApp,
-  registrationRequestHeaders,
+  registerPlayer,
   asPlayer,
   asAdmin,
   seedMinimal,
@@ -60,20 +60,7 @@ async function registerAndMaterializePlayer(hono: TestApp['app'], email: string,
     .replaceAll(/[^a-z0-9_]+/g, '_')
     .slice(0, 7);
   const username = `${usernamePrefix}_${randomUUID().replaceAll('-', '').slice(0, 12)}`;
-  const registerRes = await hono.request('/identity/register', {
-    method: 'POST',
-    headers: registrationRequestHeaders(),
-    body: JSON.stringify({
-      email,
-      password: 'password123',
-      username,
-      acceptedTerms: true,
-      acceptedAge: true,
-    }),
-  });
-  if (!registerRes.ok) {
-    throw new Error(`register failed (${registerRes.status}): ${await registerRes.text()}`);
-  }
+  await registerPlayer(app, { email, username });
   const client = await asPlayer(hono, { email });
   const profileRes = await client.get('/profile');
   if (!profileRes.ok) {

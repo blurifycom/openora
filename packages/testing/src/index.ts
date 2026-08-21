@@ -8,6 +8,12 @@ export {
   type TestClient,
   type AdminCreds,
 } from './request.js';
+export {
+  markEmailVerified,
+  registerPlayer,
+  submitRegistration,
+  type RegisterPlayerInput,
+} from './register.js';
 export { seedMinimal, type SeedMinimalOptions } from './seed.js';
 export { seedDemoData } from './seed-demo-data.js';
 export type { SeedAuth, SeedOptions, SeedResult } from './seed-demo-data.js';

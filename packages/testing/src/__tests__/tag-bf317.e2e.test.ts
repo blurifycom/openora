@@ -11,7 +11,7 @@ import { rgExclusion } from '@openora/core/compliance/schema';
 import {
   setupTestDb,
   bootTestApp,
-  registrationRequestHeaders,
+  registerPlayer,
   asPlayer,
   asAdmin,
   seedMinimal,
@@ -39,20 +39,7 @@ async function readJson(res: Response): Promise<any> {
 }
 
 async function registerAndMaterializePlayer(honoApp: TestApp['app'], email: string) {
-  const registerRes = await honoApp.request('/identity/register', {
-    method: 'POST',
-    headers: registrationRequestHeaders(),
-    body: JSON.stringify({
-      email,
-      password: 'password123',
-      username: `player_${randomUUID().replaceAll('-', '').slice(0, 12)}`,
-      acceptedTerms: true,
-      acceptedAge: true,
-    }),
-  });
-  if (!registerRes.ok) {
-    throw new Error(`register failed (${registerRes.status}): ${await registerRes.text()}`);
-  }
+  await registerPlayer(app, { email });
   const client = await asPlayer(honoApp, { email });
   const profileRes = await client.get('/profile');
   if (!profileRes.ok) {

@@ -10,9 +10,6 @@ export type Theme = z.infer<typeof ThemeSchema>;
 // BCP 47 upper bound - the longest real-world tags stay well under this.
 export const LanguageSchema = z.string().max(35);
 
-// The username is the stable, public player identifier. It deliberately has no
-// display-name fallback: registrations and the backfill must establish it before
-// any player-facing surface can resolve an account.
 export const UsernameSchema = z
   .string()
   .min(3)

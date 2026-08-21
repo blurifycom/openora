@@ -30,7 +30,6 @@ import { toPlayer } from '../../shared/player-mapper.js';
 import type { PlayerSearchResult, PlayerProfileCard } from '../contract/index.js';
 
 export const PlayerNotFoundError = makeNotFoundError('Player');
-export const DuplicateEmailError = makeConflictError('DuplicateEmail', 'Email is already in use');
 export const DuplicateUsernameError = makeConflictError(
   'DuplicateUsername',
   'Username is already in use',

@@ -115,7 +115,7 @@ describe('AdminGuard.assert - static role fallback (real PG)', () => {
 
     await expect(
       guard.assert(
-        requestContext({ 'x-forwarded-for': '192.168.1.1, 10.0.0.1', 'user-agent': 'Mozilla/5.0' }),
+        requestContext({ 'x-real-ip': '192.168.1.1', 'user-agent': 'Mozilla/5.0' }),
         'admin',
         'delete',
       ),

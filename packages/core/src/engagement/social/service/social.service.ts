@@ -691,7 +691,7 @@ export class SocialService {
           {
             friendshipId: row.id,
             userId: counterpartId,
-            username: counterpartPlayer.username,
+            username: counterpartPlayer.username ?? '',
             direction,
             createdAt: row.createdAt,
             mutualFriendsCount:

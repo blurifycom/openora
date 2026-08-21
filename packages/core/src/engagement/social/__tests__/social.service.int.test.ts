@@ -2,7 +2,12 @@ import { describe, it, expect, beforeAll, afterAll, beforeEach } from 'vitest';
 import { randomUUID } from 'node:crypto';
 import { eq, sql } from 'drizzle-orm';
 import type { IdentityReader } from '@openora/core/contracts';
-import { createTestDb, type TestDb } from '@openora/core/testing';
+import {
+  createTestDb,
+  seedPlayerWithUser,
+  type SeedPlayerOverrides,
+  type TestDb,
+} from '@openora/core/testing';
 import { migrate as migrateChat } from '@openora/core/engagement/migrate/chat';
 import { chatUserBlock, chatUserIgnore } from '@openora/core/engagement/schema/chat';
 import { player } from '@openora/core/pam/schema/profile';
@@ -45,25 +50,8 @@ function makeService() {
   return { svc: new SocialService(db.drizzle, events, realIdentityReader()), events };
 }
 
-async function seedPlayer(overrides: Partial<typeof player.$inferInsert> = {}) {
-  const userId = overrides.userId ?? randomUUID();
-  const displayName = overrides.displayName ?? 'Player';
-  const username =
-    displayName === 'Player'
-      ? `player_${userId.replaceAll('-', '').slice(0, 12)}`
-      : displayName.toLowerCase();
-  await db.drizzle.db.insert(user).values({
-    id: userId,
-    name: displayName,
-    username,
-    email: `${randomUUID()}@example.com`,
-  });
-  const [row] = await db.drizzle.db
-    .insert(player)
-    .values({ userId, displayName: 'Player', ...overrides })
-    .returning();
-  return row!;
-}
+const seedPlayer = async (overrides: SeedPlayerOverrides = {}) =>
+  (await seedPlayerWithUser(db, overrides)).player;
 
 async function seedBlock(blockerId: string, blockedId: string) {
   await db.drizzle.db.insert(chatUserBlock).values({ blockerId, blockedId });
@@ -908,7 +896,7 @@ describe('SocialService.listFriendRequests (real PG)', () => {
     expect(result.total).toBe(1);
     expect(result.items[0]).toMatchObject({
       userId: target.userId,
-      displayName: 'Target',
+      username: 'target',
       direction: 'outgoing',
       mutualFriendsCount: null,
     });
