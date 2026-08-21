@@ -1,8 +1,9 @@
 import { createToken, type Token } from './token.js';
+import type { Uuid } from '../schemas/common.js';
 
 export type ChatBlockWriter = {
-  blockUser(blockerId: string, blockedId: string): Promise<unknown>;
-  ignoreUser(ignorerId: string, ignoredId: string): Promise<unknown>;
+  blockUser(blockerId: Uuid, blockedId: Uuid): Promise<unknown>;
+  ignoreUser(ignorerId: Uuid, ignoredId: Uuid): Promise<unknown>;
   /**
    * Union of blocked + ignored ids for a viewer - chat-commands uses this to keep
    * blocked/ignored players out of player search results.

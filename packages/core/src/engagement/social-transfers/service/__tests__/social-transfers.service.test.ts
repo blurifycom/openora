@@ -190,6 +190,12 @@ function makeRoomAccess(): ChatRoomAccess {
   return mock<ChatRoomAccess>({ verifyRoomAccess: vi.fn().mockResolvedValue(undefined) });
 }
 
+function makeBlockWriter(blocked = false): ChatBlockWriter {
+  return mock<ChatBlockWriter>({
+    isBlocked: vi.fn().mockResolvedValue(blocked),
+  });
+}
+
 function makeCache(initial: Record<string, unknown> = {}): CacheAdapter {
   const values = new Map<string, unknown>(Object.entries(initial));
   return {
@@ -222,10 +228,10 @@ function makeSvc(
     writer?: ChatSystemWriter;
     wallet?: WalletCommands;
     directory?: AdminUserDirectory;
-    blockWriter?: ChatBlockWriter;
     transport?: RealtimeTransport;
     audit?: AuditWritePort;
     roomAccess?: ChatRoomAccess;
+    blockWriter?: ChatBlockWriter;
     cache?: CacheAdapter;
   } = {},
 ) {
@@ -237,17 +243,13 @@ function makeSvc(
   return new SocialTransfersService(
     drizzle,
     overrides.writer ?? makeWriter(),
-    overrides.blockWriter ??
-      mock<ChatBlockWriter>({
-        getBlockedUserIds: vi.fn().mockResolvedValue([]),
-        isBlocked: vi.fn().mockResolvedValue(false),
-      }),
     overrides.wallet ?? makeWallet(),
     overrides.directory ?? makeDirectory(),
     overrides.audit ?? makeAudit(),
     overrides.transport ?? makeTransport(),
     mock(makeEventBus()),
     overrides.roomAccess ?? makeRoomAccess(),
+    overrides.blockWriter ?? makeBlockWriter(),
     overrides.cache ?? makeCache(),
   );
 }

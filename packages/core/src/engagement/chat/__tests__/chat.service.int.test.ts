@@ -1630,6 +1630,26 @@ describe('ChatService moderation (real PG)', () => {
     },
   );
 
+  it('supports a global mute when the virtual global room has no row', async () => {
+    const { svc, moderation } = makeService();
+    const userId = randomUUID();
+
+    await expect(
+      moderation.mute({
+        userId,
+        roomId: '__global',
+        durationSeconds: 60,
+        reason: 'spam',
+        actorId: randomUUID(),
+        ...NO_CLIENT_META,
+      }),
+    ).resolves.toEqual({ success: true });
+
+    await expect(svc.sendGlobalMessage(userId, 'Muted', 'hello')).rejects.toBeInstanceOf(
+      ChatPlayerMutedError,
+    );
+  });
+
   it('enforces an all-chat mute in private rooms', async () => {
     const { svc, moderation } = makeService();
     const { room } = await roomWithMember();

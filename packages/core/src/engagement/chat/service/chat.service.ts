@@ -1425,7 +1425,7 @@ export class ChatService {
     return { success: true } as const;
   }
 
-  async getExcludedUserIds(viewerId: User['id']): Promise<string[]> {
+  async getExcludedUserIds(viewerId: User['id']): Promise<User['id'][]> {
     return [...(await this.excludedSenderIdsFor(viewerId))];
   }
 
