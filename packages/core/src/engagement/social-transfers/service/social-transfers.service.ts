@@ -928,10 +928,6 @@ export class SocialTransfersService implements GiftCommands, RainCommands {
     if (target.userId === actorId) {
       throw new DonateSelfError();
     }
-    if (await this.blockWriter.isBlockedBetween(actorId, target.userId)) {
-      throw new DonateBlockedError();
-    }
-
     const senderSummaries = await this.directory.lookupPlayers([actorId]);
     const sender = senderSummaries.find((s) => s.userId === actorId);
     if (!sender) {
@@ -956,6 +952,10 @@ export class SocialTransfersService implements GiftCommands, RainCommands {
       input.idempotencyKey,
       () =>
         this.drizzle.db.transaction(async (tx) => {
+          if (await this.blockWriter.isBlockedBetweenInTransaction(tx, actorId, target.userId)) {
+            throw new DonateBlockedError();
+          }
+
           const debit = await this.wallet.debit(tx, {
             userId: actorId,
             amount: input.amount,

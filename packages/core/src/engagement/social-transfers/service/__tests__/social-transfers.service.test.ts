@@ -193,6 +193,7 @@ function makeRoomAccess(): ChatRoomAccess {
 function makeBlockWriter(blocked = false): ChatBlockWriter {
   return mock<ChatBlockWriter>({
     isBlockedBetween: vi.fn().mockResolvedValue(blocked),
+    isBlockedBetweenInTransaction: vi.fn().mockResolvedValue(blocked),
   });
 }
 
@@ -957,7 +958,11 @@ describe('SocialTransfersService.sendDonate', () => {
       ),
     ).rejects.toThrow(DonateBlockedError);
     expect(wallet.debit).not.toHaveBeenCalled();
-    expect(blockWriter.isBlockedBetween).toHaveBeenCalledWith(ACTOR_ID, CLAIMER_ID);
+    expect(blockWriter.isBlockedBetweenInTransaction).toHaveBeenCalledWith(
+      expect.anything(),
+      ACTOR_ID,
+      CLAIMER_ID,
+    );
   });
 
   it('throws ChatPlayerNotFoundError when the target username does not exist', async () => {

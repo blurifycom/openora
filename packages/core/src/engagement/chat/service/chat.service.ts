@@ -12,6 +12,7 @@ import {
   pageToOffset,
   withAdvisoryXactLock,
   type DrizzleDb,
+  type DrizzleTx,
 } from '@openora/core/server';
 import type {
   ClientMeta,
@@ -27,7 +28,7 @@ import type {
   SocialCommands,
   Uuid,
 } from '@openora/core/contracts';
-import { chatChannel, GLOBAL_CHAT_ROOM_ID } from '@openora/core/contracts';
+import { chatBlockPairLockKey, chatChannel, GLOBAL_CHAT_ROOM_ID } from '@openora/core/contracts';
 import {
   eq,
   and,
@@ -1221,19 +1222,21 @@ export class ChatService {
     // Any active friendship dissolves on the same tx as the block insert, so a block
     // can never leave a friendship (and the blocked user) still reachable from
     // /social/friends.
-    const { inserted, dissolvedFriendship } = await this.drizzle.db.transaction(async (tx) => {
-      const rows = await tx
-        .insert(chatUserBlock)
-        .values({ blockerId, blockedId })
-        .onConflictDoNothing()
-        .returning();
-      const dissolved: FriendshipDissolvedPayload | null =
-        rows.length > 0
-          ? ((await this.socialCommands?.dissolveFriendshipOnBlock(tx, blockerId, blockedId)) ??
-            null)
-          : null;
-      return { inserted: rows, dissolvedFriendship: dissolved };
-    });
+    const { inserted, dissolvedFriendship } = await this.drizzle.db.transaction(async (tx) =>
+      withAdvisoryXactLock(tx, chatBlockPairLockKey(blockerId, blockedId), async () => {
+        const rows = await tx
+          .insert(chatUserBlock)
+          .values({ blockerId, blockedId })
+          .onConflictDoNothing()
+          .returning();
+        const dissolved: FriendshipDissolvedPayload | null =
+          rows.length > 0
+            ? ((await this.socialCommands?.dissolveFriendshipOnBlock(tx, blockerId, blockedId)) ??
+              null)
+            : null;
+        return { inserted: rows, dissolvedFriendship: dissolved };
+      }),
+    );
 
     if (dissolvedFriendship) {
       this.events.emit('social.friendship.removed', dissolvedFriendship);
@@ -1409,12 +1412,30 @@ export class ChatService {
     return { success: true } as const;
   }
 
-  async getExcludedUserIds(viewerId: User['id']): Promise<string[]> {
+  async getExcludedUserIds(viewerId: User['id']): Promise<User['id'][]> {
     return [...(await this.excludedSenderIdsFor(viewerId))];
   }
 
   async isBlockedBetween(userA: User['id'], userB: User['id']): Promise<boolean> {
-    const [block] = await this.drizzle.db
+    return this.readIsBlockedBetween(this.drizzle.db, userA, userB);
+  }
+
+  async isBlockedBetweenInTransaction(
+    tx: DrizzleTx,
+    userA: User['id'],
+    userB: User['id'],
+  ): Promise<boolean> {
+    return withAdvisoryXactLock(tx, chatBlockPairLockKey(userA, userB), () =>
+      this.readIsBlockedBetween(tx, userA, userB),
+    );
+  }
+
+  private async readIsBlockedBetween(
+    db: DrizzleDb | DrizzleTx,
+    userA: User['id'],
+    userB: User['id'],
+  ) {
+    const [block] = await db
       .select({ blockerId: chatUserBlock.blockerId })
       .from(chatUserBlock)
       .where(
