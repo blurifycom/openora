@@ -1428,23 +1428,18 @@ export class ChatService {
     return [...(await this.blockedIdsFor(viewerId))];
   }
 
-  async isBlocked(tx: unknown, blockerId: User['id'], blockedId: User['id']): Promise<boolean> {
-    const [row] = await withAdvisoryXactLock(
-      tx as DrizzleTx,
-      chatBlockLockKey(blockerId, blockedId),
-      () =>
-        (tx as DrizzleTx)
-          .select({ blockedId: chatUserBlock.blockedId })
-          .from(chatUserBlock)
-          .where(
-            and(
-              eq(chatUserBlock.blockerId, blockerId),
-              eq(chatUserBlock.blockedId, blockedId),
-              isNull(chatUserBlock.removedAt),
-            ),
-          )
-          .limit(1),
-    );
+  async isBlocked(tx: DrizzleTx, blockerId: User['id'], blockedId: User['id']): Promise<boolean> {
+    const [row] = await tx
+      .select({ blockedId: chatUserBlock.blockedId })
+      .from(chatUserBlock)
+      .where(
+        and(
+          eq(chatUserBlock.blockerId, blockerId),
+          eq(chatUserBlock.blockedId, blockedId),
+          isNull(chatUserBlock.removedAt),
+        ),
+      )
+      .limit(1);
     return row !== undefined;
   }
 
