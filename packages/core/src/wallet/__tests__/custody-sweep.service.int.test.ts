@@ -45,6 +45,7 @@ const platformConfig = (overrides: Partial<Record<string, unknown>> = {}) =>
         batchSize: 200,
         concurrency: 4,
         unknownAfterMinutes: 60,
+        staleRunAfterMinutes: 30,
         ...overrides,
       },
     },
@@ -96,7 +97,7 @@ describe('CustodySweepService (real PG)', () => {
   it('no-ops without touching the database when sweep policy is unconfigured', async () => {
     const listSweepableBalances = vi.fn().mockResolvedValue([makeBalance()]);
     const { service } = serviceWith(
-      mock<PaymentAdapter>({ listSweepableBalances }),
+      mock<PaymentAdapter>({ listSweepableBalances, sweepToPool: vi.fn() }),
       definePlatformConfig({}),
     );
 
@@ -197,7 +198,8 @@ describe('CustodySweepService (real PG)', () => {
     // Deliberately no seedAsset() call - (currency, network) is unconfigured.
     const b = makeBalance({ currency: 'DOGE', network: 'MAINNET' });
     const listSweepableBalances = vi.fn().mockResolvedValue([b]);
-    const { service } = serviceWith(mock<PaymentAdapter>({ listSweepableBalances }));
+    const sweepToPool = vi.fn().mockResolvedValue({ externalId: 'never-called' });
+    const { service } = serviceWith(mock<PaymentAdapter>({ listSweepableBalances, sweepToPool }));
 
     const result = await service.runCycle();
     expect(result?.summary.swept).toBe(0);
@@ -238,6 +240,46 @@ describe('CustodySweepService (real PG)', () => {
     expect(entry.after).toMatchObject({ runId: result?.runId, swept: 3 });
   });
 
+  it('a repeated unconfigured asset files exactly one finding, not one per cycle', async () => {
+    // Without a stable dedup key this condition - which recurs every single tick until
+    // an operator configures the asset - files a fresh finding per cron tick and pins
+    // the reconciliation alert threshold permanently over the line.
+    const b = makeBalance({ currency: 'DOGE', network: 'MAINNET' });
+    const listSweepableBalances = vi.fn().mockResolvedValue([b]);
+    const sweepToPool = vi.fn();
+    const { service } = serviceWith(mock<PaymentAdapter>({ listSweepableBalances, sweepToPool }));
+
+    await service.runCycle();
+    await service.runCycle();
+
+    const findings = await db.drizzle.db.select().from(walletReconciliationFinding);
+    expect(findings).toHaveLength(1);
+  });
+
+  it('a throwing adapter fails the run and frees the claim for the next cycle', async () => {
+    await seedAsset();
+    const listSweepableBalances = vi
+      .fn()
+      .mockRejectedValueOnce(new Error('vendor 503'))
+      .mockResolvedValue([]);
+    const { service } = serviceWith(
+      mock<PaymentAdapter>({ listSweepableBalances, sweepToPool: vi.fn() }),
+    );
+
+    await expect(service.runCycle()).rejects.toThrow('vendor 503');
+
+    const [failed] = await db.drizzle.db
+      .select()
+      .from(walletJobRun)
+      .where(eq(walletJobRun.status, 'failed'));
+    expect(failed?.finishedAt).not.toBeNull();
+
+    // The whole point: a vendor blip must not hold the single live-run slot until the
+    // staleness window elapses.
+    const second = await service.runCycle();
+    expect(second).not.toBeNull();
+  });
+
   it('takes over a run whose startedAt is older than the staleness threshold', async () => {
     const staleRunId = randomUUID();
     await db.drizzle.db.insert(walletJobRun).values({
@@ -247,8 +289,8 @@ describe('CustodySweepService (real PG)', () => {
     });
     const listSweepableBalances = vi.fn().mockResolvedValue([]);
     const { service } = serviceWith(
-      mock<PaymentAdapter>({ listSweepableBalances }),
-      platformConfig({ unknownAfterMinutes: 1 }),
+      mock<PaymentAdapter>({ listSweepableBalances, sweepToPool: vi.fn() }),
+      platformConfig({ staleRunAfterMinutes: 1 }),
     );
 
     const result = await service.runCycle();

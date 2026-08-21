@@ -140,13 +140,11 @@ export class CustodySweepService {
       return null;
     }
 
-    const claim = await this.claimRun(requestedRunId, sweepConfig.unknownAfterMinutes);
+    const claim = await this.claimRun(requestedRunId, sweepConfig.staleRunAfterMinutes);
     if (!claim) {
       return null;
     }
     const { runId, jobRunId } = claim;
-
-    await this.resolveInFlightSweeps(sweepConfig.concurrency);
 
     const summary: SweepCycleSummary = {
       considered: 0,
@@ -158,28 +156,49 @@ export class CustodySweepService {
       failed: 0,
       unknown: 0,
     };
-    const poolBalanceCache = new Map<string, string>();
 
-    for (const providerName of this.paymentProviders.names()) {
-      const adapter = this.paymentProviders.get(providerName)?.adapter;
-      if (!adapter?.listSweepableBalances) {
-        continue;
+    // Everything past the claim runs guarded: an adapter that throws (a vendor 5xx is
+    // the ordinary case) would otherwise leave this run's row with finishedAt NULL, and
+    // the partial unique index would then block every subsequent cycle until the
+    // staleness takeover window elapsed. A failed cycle must free its own slot.
+    try {
+      await this.resolveInFlightSweeps(sweepConfig.concurrency);
+
+      const poolBalanceCache = new Map<string, string>();
+      for (const providerName of this.paymentProviders.names()) {
+        const adapter = this.paymentProviders.get(providerName)?.adapter;
+        // sweepToPool is checked here, not after a claim row exists: an adapter that
+        // advertises listSweepableBalances without it would otherwise claim a container,
+        // throw, and park an `unknown` row that holds the in-flight guard forever.
+        if (!adapter?.listSweepableBalances) {
+          continue;
+        }
+        if (!adapter.sweepToPool) {
+          logger.error(
+            { providerName },
+            'provider lists sweepable balances but cannot sweep them; skipping',
+          );
+          continue;
+        }
+        // listSweepableBalances is unbounded; sweeping is throughput work, so the cron
+        // cadence drains the backlog rather than one cycle chasing it all.
+        const balances = (await adapter.listSweepableBalances()).slice(0, sweepConfig.batchSize);
+        summary.considered += balances.length;
+        await mapConcurrent(balances, sweepConfig.concurrency, (balance) =>
+          this.processBalance({
+            providerName,
+            adapter,
+            balance,
+            runId,
+            sweepConfig,
+            summary,
+            poolBalanceCache,
+          }),
+        );
       }
-      // listSweepableBalances is unbounded; sweeping is throughput work, so the cron
-      // cadence drains the backlog rather than one cycle chasing it all.
-      const balances = (await adapter.listSweepableBalances()).slice(0, sweepConfig.batchSize);
-      summary.considered += balances.length;
-      await mapConcurrent(balances, sweepConfig.concurrency, (balance) =>
-        this.processBalance({
-          providerName,
-          adapter,
-          balance,
-          runId,
-          sweepConfig,
-          summary,
-          poolBalanceCache,
-        }),
-      );
+    } catch (err) {
+      await this.finishRun(jobRunId, runId, summary, 'failed', err);
+      throw err;
     }
 
     await this.finishRun(jobRunId, runId, summary);
@@ -332,15 +351,26 @@ export class CustodySweepService {
     if (!asset) {
       // Funds sitting in a container the operator has no policy for must be visible,
       // not a log line.
-      await this.drizzle.db.insert(walletReconciliationFinding).values({
-        runId,
-        providerName,
-        kind: 'unconfigured_asset',
-        currency: balance.currency,
-        network: balance.network,
-        amount: balance.amount,
-        detail: `no wallet_asset configured for ${balance.currency}/${balance.network}`,
-      });
+      await this.drizzle.db
+        .insert(walletReconciliationFinding)
+        .values({
+          runId,
+          providerName,
+          kind: 'unconfigured_asset',
+          currency: balance.currency,
+          network: balance.network,
+          amount: balance.amount,
+          // The dedup key for the partial unique index on (kind, externalId). This
+          // finding has no vendor reference, and the condition recurs every single
+          // cycle until an operator configures the asset - without a stable stand-in
+          // one missing catalog row files a finding every cron tick, drowning the real
+          // findings and pinning the alert threshold permanently over the line. The
+          // asset, not the player, is the subject: one row to act on, not one per
+          // affected container.
+          externalId: `unconfigured:${providerName}:${balance.currency}:${balance.network}`,
+          detail: `no wallet_asset configured for ${balance.currency}/${balance.network}`,
+        })
+        .onConflictDoNothing();
       return;
     }
 
@@ -445,11 +475,15 @@ export class CustodySweepService {
     jobRunId: WalletJobRun['id'],
     runId: Uuid,
     summary: SweepCycleSummary,
+    status: 'completed' | 'failed' = 'completed',
+    err?: unknown,
   ): Promise<void> {
+    const error =
+      err === undefined ? {} : { error: err instanceof Error ? err.message : String(err) };
     await this.drizzle.db.transaction(async (txn) => {
       await txn
         .update(walletJobRun)
-        .set({ finishedAt: new Date(), status: 'completed', summary })
+        .set({ finishedAt: new Date(), status, summary: { ...summary, ...error } })
         .where(eq(walletJobRun.id, jobRunId));
       // One entry for the whole cycle, never one per swept balance -
       // AuditService.recordInTransaction takes a single global advisory lock (the audit
@@ -461,7 +495,7 @@ export class CustodySweepService {
         action: 'wallet.custody.sweep_cycle',
         resourceType: 'wallet_job_run',
         resourceId: runId,
-        after: { runId, ...summary },
+        after: { runId, status, ...summary, ...error },
       });
     });
   }
