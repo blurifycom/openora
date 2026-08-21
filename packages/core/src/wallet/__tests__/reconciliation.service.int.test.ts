@@ -325,6 +325,30 @@ describe('ReconciliationService.runCycle - claim concurrency', () => {
   });
 });
 
+describe('ReconciliationService.runCycle - retried run', () => {
+  it('a queue retry carrying the same runId does not rewrite the failed attempt', async () => {
+    // BullMQ retries a job with the SAME payload, so both attempts share a runId. If
+    // the finish update keyed on runId instead of the claimed row, the retry's success
+    // would reach back and stamp `completed` over the first attempt - erasing the only
+    // record that reconciliation ever failed.
+    const runId = randomUUID();
+    const listTransactions = vi
+      .fn()
+      .mockRejectedValueOnce(new Error('vendor 503'))
+      .mockResolvedValue([]);
+    const { reconciliation } = makeServices(mock<PaymentAdapter>({ listTransactions }));
+
+    await expect(reconciliation.runCycle(runId)).rejects.toThrow('vendor 503');
+    expect(await reconciliation.runCycle(runId)).toEqual({ runId });
+
+    const runs = await db.drizzle.db
+      .select()
+      .from(walletJobRun)
+      .where(eq(walletJobRun.runId, runId));
+    expect(runs.map((r) => r.status).sort()).toEqual(['completed', 'failed']);
+  });
+});
+
 describe('ReconciliationService.runCycle - audit', () => {
   it('writes exactly one audit entry per run, with no address or tx hash in its payload', async () => {
     const externalId = randomUUID();

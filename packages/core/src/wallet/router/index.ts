@@ -416,11 +416,6 @@ export function createWalletRouter({
       sweep: {
         run: os.custody.sweep.run.handler(async ({ context }) => {
           await adminGuard.assert(context, 'wallet-custody', 'run');
-          if (!jobQueue) {
-            throw new ORPCError('INTERNAL_SERVER_ERROR', {
-              message: 'custody sweep job queue is not wired',
-            });
-          }
           // The run claim (a unique-index insert in wallet_job_run) is the sole
           // concurrency authority, not this request - enqueue and return immediately so
           // an HTTP timeout can never orphan a cycle. runId is minted here so the caller

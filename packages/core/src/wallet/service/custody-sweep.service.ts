@@ -23,10 +23,10 @@ import {
   walletAsset,
   walletCustodySweep,
   walletJobRun,
-  walletReconciliationFinding,
   type WalletAssetRow,
   type WalletJobRun,
 } from '../schema/index.js';
+import { recordReconciliationFinding } from './reconciliation-finding.service.js';
 
 const logger = createLogger('wallet-custody-sweep');
 
@@ -351,26 +351,22 @@ export class CustodySweepService {
     if (!asset) {
       // Funds sitting in a container the operator has no policy for must be visible,
       // not a log line.
-      await this.drizzle.db
-        .insert(walletReconciliationFinding)
-        .values({
-          runId,
-          providerName,
-          kind: 'unconfigured_asset',
-          currency: balance.currency,
-          network: balance.network,
-          amount: balance.amount,
-          // The dedup key for the partial unique index on (kind, externalId). This
-          // finding has no vendor reference, and the condition recurs every single
-          // cycle until an operator configures the asset - without a stable stand-in
-          // one missing catalog row files a finding every cron tick, drowning the real
-          // findings and pinning the alert threshold permanently over the line. The
-          // asset, not the player, is the subject: one row to act on, not one per
-          // affected container.
-          externalId: `unconfigured:${providerName}:${balance.currency}:${balance.network}`,
-          detail: `no wallet_asset configured for ${balance.currency}/${balance.network}`,
-        })
-        .onConflictDoNothing();
+      await recordReconciliationFinding(this.drizzle.db, {
+        runId,
+        providerName,
+        kind: 'unconfigured_asset',
+        currency: balance.currency,
+        network: balance.network,
+        amount: balance.amount,
+        // No vendor reference exists for this finding, and the condition recurs every
+        // single cycle until an operator configures the asset - without a stable
+        // stand-in one missing catalog row files a finding every cron tick, drowning
+        // the real findings and pinning the alert threshold permanently over the line.
+        // The asset, not the player, is the subject: one row to act on, not one per
+        // affected container.
+        externalId: `unconfigured:${providerName}:${balance.currency}:${balance.network}`,
+        detail: `no wallet_asset configured for ${balance.currency}/${balance.network}`,
+      });
       return;
     }
 

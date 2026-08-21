@@ -318,8 +318,8 @@ export class ReconciliationService {
   async runCycle(
     runId: WalletJobRun['runId'] = randomUUID(),
   ): Promise<{ runId: WalletJobRun['runId'] } | null> {
-    const claimed = await this.claimRun(runId);
-    if (!claimed) {
+    const jobRunId = await this.claimRun(runId);
+    if (!jobRunId) {
       return null;
     }
 
@@ -364,7 +364,7 @@ export class ReconciliationService {
       }
 
       const openFindings = await this.countOpenFindings();
-      await this.finishRun(runId, 'completed', { ...counts, openFindings });
+      await this.finishRun(jobRunId, 'completed', { ...counts, openFindings });
       await this.audit.record({
         actorType: 'system',
         action: 'wallet.reconciliation_run.completed',
@@ -387,7 +387,7 @@ export class ReconciliationService {
 
       return { runId };
     } catch (err) {
-      await this.finishRun(runId, 'failed', {
+      await this.finishRun(jobRunId, 'failed', {
         ...counts,
         error: err instanceof Error ? err.message : String(err),
       });
@@ -645,14 +645,10 @@ export class ReconciliationService {
    * than the configured staleness window - presumed crashed) is marked `abandoned` and its slot freed
    * for this call to retry the claim once.
    */
-  private async claimRun(runId: WalletJobRun['runId']): Promise<boolean> {
-    const inserted = await this.drizzle.db
-      .insert(walletJobRun)
-      .values({ jobName: JOB_NAME, runId })
-      .onConflictDoNothing()
-      .returning({ id: walletJobRun.id });
-    if (inserted.length > 0) {
-      return true;
+  private async claimRun(runId: WalletJobRun['runId']): Promise<WalletJobRun['id'] | null> {
+    const claimed = await this.retryClaim(runId);
+    if (claimed) {
+      return claimed;
     }
 
     const [existing] = await this.drizzle.db
@@ -668,7 +664,7 @@ export class ReconciliationService {
         DEFAULT_STALE_RUN_AFTER_MINUTES) * 60_000;
     if (existing.startedAt.getTime() >= Date.now() - staleAfterMs) {
       // A live run genuinely owns the claim - return immediately, no retry loop.
-      return false;
+      return null;
     }
 
     const abandoned = await this.drizzle.db
@@ -678,28 +674,32 @@ export class ReconciliationService {
       .returning({ id: walletJobRun.id });
     if (abandoned.length === 0) {
       // Someone else already resolved the stale run concurrently.
-      return false;
+      return null;
     }
     return this.retryClaim(runId);
   }
 
-  private async retryClaim(runId: WalletJobRun['runId']): Promise<boolean> {
-    const inserted = await this.drizzle.db
+  private async retryClaim(runId: WalletJobRun['runId']): Promise<WalletJobRun['id'] | null> {
+    const [inserted] = await this.drizzle.db
       .insert(walletJobRun)
       .values({ jobName: JOB_NAME, runId })
       .onConflictDoNothing()
       .returning({ id: walletJobRun.id });
-    return inserted.length > 0;
+    return inserted?.id ?? null;
   }
 
+  // Keyed on the claimed row's own id, never on runId: a job retried by the queue
+  // carries the same runId as the attempt that failed, so `WHERE run_id = ...` would
+  // reach back and rewrite that earlier row's `failed`/`abandoned` verdict to
+  // `completed` - erasing the only evidence that the first attempt went wrong.
   private async finishRun(
-    runId: WalletJobRun['runId'],
+    jobRunId: WalletJobRun['id'],
     status: WalletJobRunStatus,
     summary: Record<string, unknown>,
   ): Promise<void> {
     await this.drizzle.db
       .update(walletJobRun)
       .set({ finishedAt: new Date(), status, summary })
-      .where(eq(walletJobRun.runId, runId));
+      .where(eq(walletJobRun.id, jobRunId));
   }
 }
