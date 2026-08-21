@@ -1,5 +1,7 @@
+import { fileURLToPath } from 'node:url';
+import { readFileSync } from 'node:fs';
 import { describe, it, expect, beforeAll, afterAll, vi } from 'vitest';
-import { eq } from 'drizzle-orm';
+import { eq, sql } from 'drizzle-orm';
 import { createTestDb, InProcessRealtimeTransport, type TestDb } from '@openora/core/testing';
 import { migrate as migrateIdentity } from '@openora/core/pam/migrate/identity';
 import { migrate as migrateProfile } from '@openora/core/pam/migrate/profile';
@@ -10,6 +12,11 @@ import { migrate } from '../migrate.js';
 import { chatRoom } from '../schema/index.js';
 import { ChatService, ChatRoomProtectedError } from '../service/chat.service.js';
 import { ChatModerationService } from '../service/chat-moderation.service.js';
+
+const SEED_GLOBAL_CHAT_ROOM_SQL = readFileSync(
+  fileURLToPath(new URL('../drizzle/migrations/0007_seed_global_chat_room.sql', import.meta.url)),
+  'utf8',
+);
 
 let db: TestDb;
 
@@ -76,5 +83,42 @@ describe('global chat room invariant (BF-466)', () => {
       .from(chatRoom)
       .where(eq(chatRoom.slug, GLOBAL_CHAT_ROOM_ID));
     expect(stillThere?.deletedAt).toBeNull();
+  });
+
+  it('cannot have its slug changed through the admin updateRoom path', async () => {
+    const svc = makeService();
+    const [globalRoom] = await db.drizzle.db
+      .select()
+      .from(chatRoom)
+      .where(eq(chatRoom.slug, GLOBAL_CHAT_ROOM_ID));
+
+    await expect(
+      svc.updateRoom({ id: globalRoom!.id, slug: 'renamed', ...NO_CLIENT_META }),
+    ).rejects.toThrow(ChatRoomProtectedError);
+
+    const [stillThere] = await db.drizzle.db
+      .select()
+      .from(chatRoom)
+      .where(eq(chatRoom.slug, GLOBAL_CHAT_ROOM_ID));
+    expect(stillThere).toBeDefined();
+  });
+
+  it('is restored by re-applying the seed statement if it was previously soft-deleted out-of-band', async () => {
+    await db.drizzle.db
+      .update(chatRoom)
+      .set({ deletedAt: new Date(), isPublic: false })
+      .where(eq(chatRoom.slug, GLOBAL_CHAT_ROOM_ID));
+
+    // Migrations only re-run once per tracked db (migrate() would be a no-op here), so this
+    // re-executes the migration's own statement to prove its ON CONFLICT clause restores the
+    // room rather than leaving a soft-deleted row in place forever.
+    await db.drizzle.db.execute(sql.raw(SEED_GLOBAL_CHAT_ROOM_SQL));
+
+    const [room] = await db.drizzle.db
+      .select()
+      .from(chatRoom)
+      .where(eq(chatRoom.slug, GLOBAL_CHAT_ROOM_ID));
+    expect(room?.deletedAt).toBeNull();
+    expect(room?.isPublic).toBe(true);
   });
 });

@@ -507,7 +507,10 @@ export function createChatRouter({
     updateRoom: os.updateRoom.handler(async ({ input, context }) => {
       const { userId, ip, userAgent } = await adminGuard.assert(context, 'chat-room', 'update');
       return mapErrors(
-        { NOT_FOUND: ChatRoomNotFoundError, CONFLICT: ChatRoomSlugConflictError },
+        {
+          NOT_FOUND: ChatRoomNotFoundError,
+          CONFLICT: [ChatRoomSlugConflictError, ChatRoomProtectedError],
+        },
         () => chatService.updateRoom({ ...input, actorId: userId, ip, userAgent }),
       );
     }),

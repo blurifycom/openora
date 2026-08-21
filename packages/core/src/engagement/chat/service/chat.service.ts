@@ -1495,6 +1495,9 @@ export class ChatService {
         .limit(1),
       new ChatRoomNotFoundError(id),
     );
+    if (slug !== undefined && slug !== existing.slug && existing.slug === GLOBAL_CHAT_ROOM_ID) {
+      throw new ChatRoomProtectedError();
+    }
     if (slug !== undefined) {
       const [clash] = await this.drizzle.db
         .select({ id: chatRoom.id })
