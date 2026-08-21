@@ -28,7 +28,7 @@ import type {
   SocialCommands,
   Uuid,
 } from '@openora/core/contracts';
-import { chatBlockPairLockKey, chatChannel, GLOBAL_CHAT_ROOM_ID } from '@openora/core/contracts';
+import { chatBlockLockKey, chatChannel, GLOBAL_CHAT_ROOM_ID } from '@openora/core/contracts';
 import {
   eq,
   and,
@@ -274,8 +274,12 @@ export class ChatService {
   }
 
   async getOnlineCount(roomId: ChatRoom['id'] | null) {
-    const count = await this.transport.presence?.count(chatChannel(roomId));
-    return { count: count ?? 0 };
+    const onlineUserIds = await this.transport.getOnlineUserIds(chatChannel(roomId));
+    const onlineUsers = await this.directory.lookupUsers(onlineUserIds);
+    const playerCount = onlineUsers.filter(
+      (onlineUser) => onlineUser.role !== 'admin' && onlineUser.role !== 'super-admin',
+    ).length;
+    return { count: playerCount };
   }
 
   private async blockedIdsFor(viewerId: User['id']) {
@@ -1227,8 +1231,8 @@ export class ChatService {
     // Any active friendship dissolves on the same tx as the block insert, so a block
     // can never leave a friendship (and the blocked user) still reachable from
     // /social/friends.
-    const { inserted, dissolvedFriendship } = await this.drizzle.db.transaction(async (tx) =>
-      withAdvisoryXactLock(tx, chatBlockPairLockKey(blockerId, blockedId), async () => {
+    const { inserted, dissolvedFriendship } = await this.drizzle.db.transaction((tx) =>
+      withAdvisoryXactLock(tx, chatBlockLockKey(blockerId, blockedId), async () => {
         const rows = await tx
           .insert(chatUserBlock)
           .values({ blockerId, blockedId })
@@ -1263,17 +1267,21 @@ export class ChatService {
   async unblockUser(blockerId: User['id'], blockedId: User['id'], meta?: ClientMeta) {
     // Soft-delete: the partial unique index guarantees at most one active (removedAt
     // IS NULL) row per pair, so this is that row, or no-op if already unblocked.
-    const removed = await this.drizzle.db
-      .update(chatUserBlock)
-      .set({ removedAt: new Date() })
-      .where(
-        and(
-          eq(chatUserBlock.blockerId, blockerId),
-          eq(chatUserBlock.blockedId, blockedId),
-          isNull(chatUserBlock.removedAt),
-        ),
-      )
-      .returning();
+    const removed = await this.drizzle.db.transaction((tx) =>
+      withAdvisoryXactLock(tx, chatBlockLockKey(blockerId, blockedId), () =>
+        tx
+          .update(chatUserBlock)
+          .set({ removedAt: new Date() })
+          .where(
+            and(
+              eq(chatUserBlock.blockerId, blockerId),
+              eq(chatUserBlock.blockedId, blockedId),
+              isNull(chatUserBlock.removedAt),
+            ),
+          )
+          .returning(),
+      ),
+    );
 
     if (removed.length > 0) {
       this.events.emit('chat.user.unblocked', {
@@ -1421,39 +1429,23 @@ export class ChatService {
     return [...(await this.excludedSenderIdsFor(viewerId))];
   }
 
-  async isBlockedBetween(userA: User['id'], userB: User['id']): Promise<boolean> {
-    return this.readIsBlockedBetween(this.drizzle.db, userA, userB);
+  async getBlockedUserIds(viewerId: User['id']): Promise<string[]> {
+    return [...(await this.blockedIdsFor(viewerId))];
   }
 
-  async isBlockedBetweenInTransaction(
-    tx: DrizzleTx,
-    userA: User['id'],
-    userB: User['id'],
-  ): Promise<boolean> {
-    return withAdvisoryXactLock(tx, chatBlockPairLockKey(userA, userB), () =>
-      this.readIsBlockedBetween(tx, userA, userB),
-    );
-  }
-
-  private async readIsBlockedBetween(
-    db: DrizzleDb | DrizzleTx,
-    userA: User['id'],
-    userB: User['id'],
-  ) {
-    const [block] = await db
-      .select({ blockerId: chatUserBlock.blockerId })
+  async isBlocked(tx: DrizzleTx, blockerId: User['id'], blockedId: User['id']): Promise<boolean> {
+    const [row] = await tx
+      .select({ blockedId: chatUserBlock.blockedId })
       .from(chatUserBlock)
       .where(
         and(
+          eq(chatUserBlock.blockerId, blockerId),
+          eq(chatUserBlock.blockedId, blockedId),
           isNull(chatUserBlock.removedAt),
-          or(
-            and(eq(chatUserBlock.blockerId, userA), eq(chatUserBlock.blockedId, userB)),
-            and(eq(chatUserBlock.blockerId, userB), eq(chatUserBlock.blockedId, userA)),
-          ),
         ),
       )
       .limit(1);
-    return block !== undefined;
+    return row !== undefined;
   }
 
   async createRoom({

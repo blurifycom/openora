@@ -7,11 +7,11 @@ import {
   AUDIT_WRITER,
   CHAT_REALTIME_TRANSPORT,
   CHAT_ROOM_ACCESS,
-  CHAT_BLOCK_WRITER,
   CACHE,
   GIFT_COMMANDS,
   RAIN_COMMANDS,
   createToken,
+  CHAT_BLOCK_WRITER,
 } from '@openora/core/contracts';
 import { SocialTransfersService } from './service/social-transfers.service.js';
 import { createSocialTransfersRouter } from './router/index.js';

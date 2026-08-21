@@ -68,7 +68,18 @@ import { ChatRoomMuteService } from '../service/chat-room-mute.service.js';
 let db: TestDb;
 
 function makeService(
-  directory: AdminUserDirectory = mock<AdminUserDirectory>({ lookupPlayers: async () => [] }),
+  directory: AdminUserDirectory = mock<AdminUserDirectory>({
+    lookupPlayers: async () => [],
+    lookupUsers: async (ids: readonly string[]) =>
+      ids.map((id) => ({
+        id,
+        email: `${id}@example.com`,
+        name: id,
+        createdAt: new Date(),
+        isActive: true,
+        role: 'player',
+      })),
+  }),
   socialCommands?: SocialCommands,
 ) {
   const transport = new InProcessRealtimeTransport();
@@ -231,6 +242,31 @@ describe('ChatService realtime wiring', () => {
     await expect(svc.getOnlineCount('r1')).resolves.toEqual({ count: 1 });
     second();
     await expect(svc.getOnlineCount('r1')).resolves.toEqual({ count: 0 });
+  });
+
+  it('excludes admin and super-admin users from the online count', async () => {
+    const directory = mock<AdminUserDirectory>({
+      lookupPlayers: async () => [],
+      lookupUsers: async (ids: readonly string[]) =>
+        ids.map((id) => ({
+          id,
+          email: `${id}@example.com`,
+          name: id,
+          createdAt: new Date(),
+          isActive: true,
+          role: id === 'admin' ? 'admin' : id === 'super-admin' ? 'super-admin' : 'player',
+        })),
+    });
+    const { svc } = makeService(directory);
+    const playerUnsubscribe = svc.subscribeMessages('r1', () => undefined, 'player');
+    const adminUnsubscribe = svc.subscribeMessages('r1', () => undefined, 'admin');
+    const superAdminUnsubscribe = svc.subscribeMessages('r1', () => undefined, 'super-admin');
+
+    await expect(svc.getOnlineCount('r1')).resolves.toEqual({ count: 1 });
+
+    playerUnsubscribe();
+    adminUnsubscribe();
+    superAdminUnsubscribe();
   });
 });
 
@@ -523,19 +559,6 @@ describe('ChatService block list (real PG)', () => {
     const userId = randomUUID();
 
     await expect(svc.blockUser(userId, userId)).rejects.toThrow(ChatSelfBlockError);
-  });
-
-  it('reports an active block in either direction', async () => {
-    const { svc } = makeService();
-    const blockerId = randomUUID();
-    const blockedId = randomUUID();
-
-    await expect(svc.isBlockedBetween(blockerId, blockedId)).resolves.toBe(false);
-    await svc.blockUser(blockerId, blockedId);
-    await expect(svc.isBlockedBetween(blockerId, blockedId)).resolves.toBe(true);
-    await expect(svc.isBlockedBetween(blockedId, blockerId)).resolves.toBe(true);
-    await svc.unblockUser(blockerId, blockedId, NO_CLIENT_META);
-    await expect(svc.isBlockedBetween(blockerId, blockedId)).resolves.toBe(false);
   });
 
   it('dissolves any friendship on the same tx as the block insert, before returning', async () => {

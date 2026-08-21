@@ -16,8 +16,8 @@ import {
   InsufficientBalanceError,
   BelowMinimumError,
   DonateSelfError,
+  BlockedRecipientError,
   ChatPlayerNotFoundError,
-  DonateBlockedError,
   fingerprintCommand,
 } from '../social-transfers.service.js';
 
@@ -192,8 +192,7 @@ function makeRoomAccess(): ChatRoomAccess {
 
 function makeBlockWriter(blocked = false): ChatBlockWriter {
   return mock<ChatBlockWriter>({
-    isBlockedBetween: vi.fn().mockResolvedValue(blocked),
-    isBlockedBetweenInTransaction: vi.fn().mockResolvedValue(blocked),
+    isBlocked: vi.fn().mockResolvedValue(blocked),
   });
 }
 
@@ -489,6 +488,18 @@ describe('SocialTransfersService.claimGift', () => {
     expect(result).toEqual({ ok: false, reason: 'self_claim' });
   });
 
+  it('returns { ok: false, reason: "blocked_recipient" } when the sender blocked the claimer', async () => {
+    const svc = makeSvc({
+      drizzleRows: { select: [[GIFT_ROW]], returning: [] },
+      blockWriter: mock<ChatBlockWriter>({
+        getBlockedUserIds: vi.fn().mockResolvedValue([CLAIMER_ID]),
+        isBlocked: vi.fn().mockResolvedValue(true),
+      }),
+    });
+    const result = await svc.claimGift(GIFT_ID, CLAIMER_ID);
+    expect(result).toEqual({ ok: false, reason: 'blocked_recipient' });
+  });
+
   it('returns { ok: false, reason: "already_claimed" } when the update returns no rows (race lost)', async () => {
     const svc = makeSvc({
       drizzleRows: { select: [[GIFT_ROW]], returning: [[]] }, // empty = already claimed
@@ -643,7 +654,15 @@ describe('SocialTransfersService.sendRain (RAIN_COMMANDS port)', () => {
       drizzleRows: {
         select: [[RAIN_ROW]],
         returning: [[{ id: '00000000-0000-0000-0000-0000000000cc' }]],
-        execute: [[{ per_recipient: '5.00000000', total_distributed: '10.00000000' }]],
+        execute: [
+          [
+            {
+              per_recipient: '5.00000000',
+              total_distributed: '10.00000000',
+              has_positive_recipient: true,
+            },
+          ],
+        ],
       },
       wallet,
       writer,
@@ -690,13 +709,21 @@ describe('SocialTransfersService.sendRain (RAIN_COMMANDS port)', () => {
     expect(transport.publish).toHaveBeenCalledWith(`chat:room:${ROOM_ID}`, SYSTEM_MSG);
   });
 
-  it('debits only the amount actually distributed (floor(amount/n)*n), never the raw player-typed amount', async () => {
+  it('debits only the amount actually distributed after flooring per-recipient cents', async () => {
     const wallet = makeWallet();
     const svc = makeSvc({
       drizzleRows: {
         select: [[RAIN_ROW]],
         returning: [[{ id: '00000000-0000-0000-0000-0000000000cc' }]],
-        execute: [[{ per_recipient: '1.00000000', total_distributed: '10.00000000' }]],
+        execute: [
+          [
+            {
+              per_recipient: '1.09000000',
+              total_distributed: '10.90000000',
+              has_positive_recipient: true,
+            },
+          ],
+        ],
       },
       wallet,
       directory: makeDirectory(
@@ -720,7 +747,148 @@ describe('SocialTransfersService.sendRain (RAIN_COMMANDS port)', () => {
     );
     expect(wallet.debit).toHaveBeenCalledWith(expect.anything(), {
       userId: ACTOR_ID,
-      amount: '10.00000000',
+      amount: '10.90000000',
+      type: 'rain',
+    });
+  });
+
+  it('fixes the per-recipient amount from the requested count before reducing to available users', async () => {
+    const wallet = makeWallet();
+    const svc = makeSvc({
+      drizzleRows: {
+        select: [[RAIN_ROW]],
+        returning: [[{ id: '00000000-0000-0000-0000-0000000000cc' }]],
+        execute: [
+          [
+            {
+              per_recipient: '20.00000000',
+              total_distributed: '80.00000000',
+              has_positive_recipient: true,
+            },
+          ],
+        ],
+      },
+      wallet,
+      directory: makeDirectory('bob', 'alice', [
+        '00000000-0000-0000-0000-000000000010',
+        '00000000-0000-0000-0000-000000000011',
+      ]),
+    });
+
+    await svc.sendRain(
+      {
+        amount: '100.00000000',
+        recipientCount: 5,
+        roomId: ROOM_ID,
+        idempotencyKey: IDEMPOTENCY_KEY,
+        onlineUserIds: [
+          CLAIMER_ID,
+          RECIPIENT_2,
+          '00000000-0000-0000-0000-000000000010',
+          '00000000-0000-0000-0000-000000000011',
+        ],
+      },
+      ACTOR_ID,
+    );
+
+    expect(wallet.credit).toHaveBeenCalledTimes(4);
+    expect(wallet.credit).toHaveBeenCalledWith(expect.anything(), {
+      userId: CLAIMER_ID,
+      amount: '20.00000000',
+      currency: 'USD',
+      type: 'rain',
+    });
+    expect(wallet.debit).toHaveBeenCalledWith(expect.anything(), {
+      userId: ACTOR_ID,
+      amount: '80.00000000',
+      type: 'rain',
+    });
+  });
+
+  it('allows blocked users to receive rain', async () => {
+    const wallet = makeWallet();
+    const svc = makeSvc({
+      drizzleRows: {
+        select: [[RAIN_ROW]],
+        returning: [[{ id: '00000000-0000-0000-0000-0000000000cc' }]],
+        execute: [
+          [
+            {
+              per_recipient: '5.00000000',
+              total_distributed: '10.00000000',
+              has_positive_recipient: true,
+            },
+          ],
+        ],
+      },
+      wallet,
+      blockWriter: mock<ChatBlockWriter>({
+        getBlockedUserIds: vi.fn().mockResolvedValue([CLAIMER_ID]),
+        isBlocked: vi.fn().mockResolvedValue(true),
+      }),
+    });
+
+    await svc.sendRain(
+      {
+        amount: '10.00000000',
+        recipientCount: 2,
+        roomId: ROOM_ID,
+        idempotencyKey: IDEMPOTENCY_KEY,
+        onlineUserIds: [ACTOR_ID, CLAIMER_ID, RECIPIENT_2],
+      },
+      ACTOR_ID,
+    );
+
+    expect(wallet.credit).toHaveBeenCalledTimes(2);
+    expect(wallet.credit).toHaveBeenCalledWith(expect.anything(), {
+      userId: CLAIMER_ID,
+      amount: '5.00000000',
+      currency: 'USD',
+      type: 'rain',
+    });
+  });
+
+  it('supports non-even totals by flooring the requested per-recipient payout to cents', async () => {
+    const wallet = makeWallet();
+    const svc = makeSvc({
+      drizzleRows: {
+        select: [[RAIN_ROW]],
+        returning: [[{ id: '00000000-0000-0000-0000-0000000000cc' }]],
+        execute: [
+          [
+            {
+              per_recipient: '14.81000000',
+              total_distributed: '44.43000000',
+              has_positive_recipient: true,
+            },
+          ],
+        ],
+      },
+      wallet,
+      directory: makeDirectory('bob', 'alice', ['00000000-0000-0000-0000-000000000010']),
+    });
+
+    await svc.sendRain(
+      {
+        amount: '44.44000000',
+        recipientCount: 3,
+        roomId: ROOM_ID,
+        idempotencyKey: IDEMPOTENCY_KEY,
+        onlineUserIds: [ACTOR_ID, CLAIMER_ID, RECIPIENT_2, '00000000-0000-0000-0000-000000000010'],
+      },
+      ACTOR_ID,
+    );
+
+    expect(wallet.credit).toHaveBeenCalledTimes(3);
+    expect(wallet.credit).toHaveBeenCalledWith(expect.anything(), {
+      userId: CLAIMER_ID,
+      amount: '14.81000000',
+      currency: 'USD',
+      type: 'rain',
+    });
+    expect(wallet.debit).toHaveBeenCalledWith(expect.anything(), {
+      userId: ACTOR_ID,
+      amount: '44.43000000',
       type: 'rain',
     });
   });
@@ -774,21 +942,6 @@ describe('SocialTransfersService.sendRain (RAIN_COMMANDS port)', () => {
       ACTOR_ID,
     );
     expect(result).toEqual({ ok: false, reason: 'exceeds_limit' });
-  });
-
-  it('returns { ok: false, reason: "too_many_recipients" } when recipientCount exceeds the whole-dollar amount', async () => {
-    const svc = makeSvc({ drizzleRows: { select: [[RAIN_ROW]] } });
-    const result = await svc.sendRain(
-      {
-        amount: '3.00000000',
-        recipientCount: 4,
-        roomId: ROOM_ID,
-        idempotencyKey: IDEMPOTENCY_KEY,
-        onlineUserIds: [],
-      },
-      ACTOR_ID,
-    );
-    expect(result).toEqual({ ok: false, reason: 'too_many_recipients' });
   });
 });
 
@@ -932,20 +1085,15 @@ describe('SocialTransfersService.sendDonate', () => {
     ).rejects.toThrow(DonateSelfError);
   });
 
-  it('rejects a donation when either player has blocked the other', async () => {
-    const blockWriter = makeBlockWriter(true);
-    const wallet = makeWallet();
-    const writer = mock<ChatSystemWriter>({
-      postSystemMessage: vi.fn().mockResolvedValue(DONATE_SYSTEM_MSG),
-    });
+  it('throws BlockedRecipientError when the sender targets a blocked user', async () => {
     const svc = makeSvc({
       drizzleRows: { select: [[DONATE_ROW]] },
-      blockWriter,
-      wallet,
-      writer,
       directory: makeRecipientDirectory(),
+      blockWriter: mock<ChatBlockWriter>({
+        getBlockedUserIds: vi.fn().mockResolvedValue([CLAIMER_ID]),
+        isBlocked: vi.fn().mockResolvedValue(true),
+      }),
     });
-
     await expect(
       svc.sendDonate(
         {
@@ -956,13 +1104,7 @@ describe('SocialTransfersService.sendDonate', () => {
         },
         ACTOR_ID,
       ),
-    ).rejects.toThrow(DonateBlockedError);
-    expect(wallet.debit).not.toHaveBeenCalled();
-    expect(blockWriter.isBlockedBetweenInTransaction).toHaveBeenCalledWith(
-      expect.anything(),
-      ACTOR_ID,
-      CLAIMER_ID,
-    );
+    ).rejects.toThrow(BlockedRecipientError);
   });
 
   it('throws ChatPlayerNotFoundError when the target username does not exist', async () => {

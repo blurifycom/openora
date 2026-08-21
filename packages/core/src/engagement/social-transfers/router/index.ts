@@ -12,7 +12,6 @@ import {
   ChatCommandIdempotencyKeyReuseError,
   ConcurrentCommandReplayError,
   ChatRoomNotMemberError,
-  DonateBlockedError,
 } from '../service/social-transfers.service.js';
 
 export function createSocialTransfersRouter(svc: SocialTransfersService) {
@@ -29,7 +28,6 @@ export function createSocialTransfersRouter(svc: SocialTransfersService) {
             ExceedsLimitError,
             BelowMinimumError,
             DonateSelfError,
-            DonateBlockedError,
             ChatCommandIdempotencyKeyReuseError,
             ConcurrentCommandReplayError,
           ],
