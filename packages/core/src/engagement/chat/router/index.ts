@@ -25,6 +25,7 @@ import {
   ChatRoomSelfModerationError,
   ChatRoomLastModeratorError,
   ChatRoomLimitReachedError,
+  ChatRoomProtectedError,
   ChatMessageBlockedError,
   ChatSelfBlockError,
   ChatSelfIgnoreError,
@@ -518,7 +519,7 @@ export function createChatRouter({
 
     deleteRoom: os.deleteRoom.handler(async ({ input, context }) => {
       const { userId, ip, userAgent } = await adminGuard.assert(context, 'chat-room', 'delete');
-      return mapErrors({ NOT_FOUND: ChatRoomNotFoundError }, () =>
+      return mapErrors({ NOT_FOUND: ChatRoomNotFoundError, CONFLICT: ChatRoomProtectedError }, () =>
         chatService.deleteRoom(input.id, userId, { ip, userAgent }),
       );
     }),

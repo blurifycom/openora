@@ -127,6 +127,11 @@ export const ChatRoomLimitReachedError = makeConflictError(
   'Private room limit reached',
 );
 
+export const ChatRoomProtectedError = makeConflictError(
+  'ChatRoomProtectedError',
+  'The global chat room cannot be deleted',
+);
+
 export const ChatRoomRuleNotFoundError = createDomainError(
   'ChatRoomRuleNotFoundError',
   (id: string) => `Chat room rule not found: ${id}`,
@@ -1601,6 +1606,17 @@ export class ChatService {
   }
 
   async deleteRoom(id: ChatRoom['id'], actorId?: User['id'], meta?: ClientMeta) {
+    const existing = findOneOrThrow(
+      await this.drizzle.db
+        .select({ slug: chatRoom.slug })
+        .from(chatRoom)
+        .where(and(eq(chatRoom.id, id), isNull(chatRoom.deletedAt)))
+        .limit(1),
+      new ChatRoomNotFoundError(id),
+    );
+    if (existing.slug === GLOBAL_CHAT_ROOM_ID) {
+      throw new ChatRoomProtectedError();
+    }
     const deleted = findOneOrThrow(
       await this.drizzle.db
         .update(chatRoom)
