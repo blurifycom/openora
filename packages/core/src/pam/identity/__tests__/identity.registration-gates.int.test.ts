@@ -27,7 +27,7 @@ vi.mock('@openora/core/server', async (importOriginal) => {
 
 const events = makeEventBus();
 const registrationConfig = definePlatformConfig({
-  registration: { termsVersion: 'test-v1', webUrl: 'https://app.example.test' },
+  registration: { termsVersion: 'test-v1', requireEmailVerification: false },
 });
 
 let db: TestDb;

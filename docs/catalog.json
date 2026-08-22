@@ -1904,6 +1904,10 @@
       "file": "packages/core/src/contracts/schemas/identity.ts"
     },
     {
+      "name": "ResendEmailVerificationInputSchema",
+      "file": "packages/core/src/contracts/schemas/identity.ts"
+    },
+    {
       "name": "ResetPasswordInputSchema",
       "file": "packages/core/src/contracts/schemas/identity.ts"
     },

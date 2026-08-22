@@ -4,16 +4,12 @@ import { DefaultEmailTemplateRenderer } from '../default-email-template-renderer
 describe('DefaultEmailTemplateRenderer', () => {
   const renderer = new DefaultEmailTemplateRenderer();
 
-  it('renders the verifyEmail template with the url and token interpolated', () => {
-    const result = renderer.render(
-      'verifyEmail',
-      { url: 'https://example.com/verify', token: 'tok123' },
-      'de',
-    );
+  it('renders the verifyEmail template with the otp interpolated', () => {
+    const result = renderer.render('verifyEmail', { otp: '123456' }, 'de');
 
     expect(result).toEqual({
       subject: 'Verify your email',
-      body: 'Verify your email using this link: https://example.com/verify\n\nVerification token: tok123',
+      body: 'Your email verification code is: 123456',
     });
   });
 

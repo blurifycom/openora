@@ -13,8 +13,8 @@ export {
   registerPlayer,
   registerAndMaterializePlayer,
   submitRegistration,
-  verificationTokenFor,
-  verifyEmailByLink,
+  verificationOtpFor,
+  verifyEmailByOtp,
   type RegisterPlayerInput,
 } from './register.js';
 export { capturedEmailsFor, clearCapturedEmails, type CapturedEmail } from './captured-emails.js';

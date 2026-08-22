@@ -136,8 +136,13 @@ export const VerifyPasswordResetOtpInputSchema = ResetPasswordInputSchema.pick({
   otp: true,
 });
 
+export const ResendEmailVerificationInputSchema = z.object({
+  email: z.email(),
+});
+
 export const VerifyEmailInputSchema = z.object({
-  token: z.string().min(1),
+  email: z.email(),
+  otp: z.string().length(OTP_CODE_LENGTH),
 });
 
 export const UpdateProfileInputSchema = z
@@ -178,6 +183,7 @@ export type Disable2faInput = z.infer<typeof Disable2faInputSchema>;
 export type RequestPasswordResetInput = z.infer<typeof RequestPasswordResetInputSchema>;
 export type ResetPasswordInput = z.infer<typeof ResetPasswordInputSchema>;
 export type VerifyPasswordResetOtpInput = z.infer<typeof VerifyPasswordResetOtpInputSchema>;
+export type ResendEmailVerificationInput = z.infer<typeof ResendEmailVerificationInputSchema>;
 export type VerifyEmailInput = z.infer<typeof VerifyEmailInputSchema>;
 export type UpdateProfileInput = z.infer<typeof UpdateProfileInputSchema>;
 export type ChangePasswordInput = z.infer<typeof ChangePasswordInputSchema>;

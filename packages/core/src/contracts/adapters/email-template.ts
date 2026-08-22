@@ -10,7 +10,7 @@ export type EmailTemplateKey =
   | 'rgSelfExclusionLifted';
 
 export type EmailTemplateData = {
-  verifyEmail: { url: string; token: string };
+  verifyEmail: { otp: string };
   resetPasswordOtp: { otp: string; email: string };
   rgLimitUpdated: { period: string; type: string; description: string };
   rgCoolingOffActivated: { expiresAt: Date };
@@ -52,7 +52,7 @@ export const DEFAULT_EMAIL_TEMPLATES: {
 } = {
   verifyEmail: (data) => ({
     subject: 'Verify your email',
-    body: `Verify your email using this link: ${data.url}\n\nVerification token: ${data.token}`,
+    body: `Your email verification code is: ${data.otp}`,
   }),
   resetPasswordOtp: (data) => ({
     subject: 'Reset your password',

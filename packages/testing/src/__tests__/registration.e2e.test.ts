@@ -2,14 +2,15 @@ import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import { randomUUID } from 'node:crypto';
 import { eq } from 'drizzle-orm';
 import { loadExtensions, DRIZZLE } from '@openora/core/server';
-import { user } from '@openora/core/pam/schema/identity';
+import { user, session } from '@openora/core/pam/schema/identity';
 import { player } from '@openora/core/pam/schema/profile';
 import {
+  verificationOtpFor,
   setupTestDb,
   bootTestApp,
   registerPlayer,
   submitRegistration,
-  verifyEmailByLink,
+  verifyEmailByOtp,
   capturedEmailsFor,
   seedMinimal,
   type TestDb,
@@ -50,22 +51,97 @@ afterAll(async () => {
   await db?.dispose();
 });
 
-describe('registration email verification gate', () => {
-  it('refuses login until the address is verified, then allows it', async () => {
+describe('registration email verification', () => {
+  it('signs the player in when the emailed code is verified', async () => {
     const email = `reg-verify-${randomUUID()}@e2e.test`;
     const res = await submitRegistration(app, { email });
     expect(res.status).toBe(200);
     expect(await res.json()).toEqual({ status: 'check-email' });
+    // Sign-up stays sessionless - that is what keeps the duplicate-email answer
+    // indistinguishable. The session is minted by verification instead.
     expect(res.headers.get('set-cookie')).toBeNull();
 
-    const beforeVerify = await login(email);
-    expect(beforeVerify.ok).toBe(false);
+    const verified = await verifyEmailByOtp(app, email);
+    expect(verified.headers.get('set-cookie')).toBeTruthy();
+    const body = (await verified.json()) as { user: { email: string }; session: { token: string } };
+    expect(body.user.email).toBe(email.toLowerCase());
+    expect(body.session.token).toBeTruthy();
+  });
 
-    await verifyEmailByLink(app, email);
+  it('refuses to sign in a blocked account that enters a valid code', async () => {
+    // An account can be RG-blocked or suspended between registering and entering the
+    // code. Verification still stands - the block is on the session, not the address.
+    const email = `reg-blocked-${randomUUID()}@e2e.test`;
+    await submitRegistration(app, { email });
+    const otp = verificationOtpFor(email);
+    const db = app.container.get(DRIZZLE).db;
+    const userId = await userIdFor(email);
+    await db
+      .update(user)
+      .set({ rgBlocked: true, rgBlockedUntil: null })
+      .where(eq(user.id, userId!));
 
-    const afterVerify = await login(email);
-    expect(afterVerify.ok).toBe(true);
-    expect(afterVerify.headers.get('set-cookie')).toBeTruthy();
+    const res = await app.app.request('/identity/email/verify', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ email, otp }),
+    });
+
+    expect(res.status).toBe(403);
+    expect(res.headers.get('set-cookie')).toBeNull();
+    const [row] = await db
+      .select({ emailVerified: user.emailVerified })
+      .from(user)
+      .where(eq(user.id, userId!));
+    expect(row?.emailVerified).toBe(true);
+  });
+
+  it('verifies but does not sign in a 2FA-enrolled account', async () => {
+    // better-auth mints the post-verification session with `createSession`, which its
+    // twoFactor plugin does not hook - so the code alone must not replace the second
+    // factor. The address is verified; the player still signs in through /identity/login.
+    const email = `reg-2fa-${randomUUID()}@e2e.test`;
+    await submitRegistration(app, { email });
+    const otp = verificationOtpFor(email);
+    const db = app.container.get(DRIZZLE).db;
+    const userId = await userIdFor(email);
+    await db.update(user).set({ twoFactorEnabled: true }).where(eq(user.id, userId!));
+
+    const res = await app.app.request('/identity/email/verify', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ email, otp }),
+    });
+
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual({ twoFactorRedirect: true });
+    expect(res.headers.get('set-cookie')).toBeNull();
+    const sessions = await db.select().from(session).where(eq(session.userId, userId!));
+    expect(sessions.every((row) => row.expiresAt.getTime() <= Date.now())).toBe(true);
+  });
+
+  it('rejects a wrong code', async () => {
+    const email = `reg-badotp-${randomUUID()}@e2e.test`;
+    await submitRegistration(app, { email });
+
+    const res = await app.app.request('/identity/email/verify', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ email, otp: '000000' }),
+    });
+    expect(res.ok).toBe(false);
+    expect(res.headers.get('set-cookie')).toBeNull();
+  });
+
+  it('lets an unverified player sign in while the verification gate is off', async () => {
+    // Unverified players stay unrestricted until the operator turns the gate (or KYC)
+    // on, so registering and then signing in with the password must work.
+    const email = `reg-unverified-${randomUUID()}@e2e.test`;
+    await submitRegistration(app, { email });
+
+    const res = await login(email);
+    expect(res.ok).toBe(true);
+    expect(res.headers.get('set-cookie')).toBeTruthy();
   });
 
   it('hides whether the email was already taken and sends a reset instead', async () => {
@@ -88,6 +164,9 @@ describe('registration email verification gate', () => {
       .where(eq(player.userId, (await userIdFor(email)) ?? ''));
     expect(players).toHaveLength(1);
     expect(capturedEmailsFor(email).some((e) => /reset/i.test(e.subject))).toBe(true);
+    // Exactly one verification code was ever mailed - the one the real owner's own
+    // sign-up produced. A second would hand a stranger a code that signs them in.
+    expect(capturedEmailsFor(email).filter((e) => /verify/i.test(e.subject))).toHaveLength(1);
   });
 
   it('records the terms and age acceptance on the player row at registration', async () => {

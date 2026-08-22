@@ -121,12 +121,12 @@ export function createIdentityRouter(
       identity.changePassword(input, context.request.headers, context.resHeaders ?? new Headers()),
     ),
 
-    sendEmailVerification: os.sendEmailVerification.handler(({ context }) =>
-      identity.sendEmailVerification(context.request.headers),
+    sendEmailVerification: os.sendEmailVerification.handler(({ input, context }) =>
+      identity.sendEmailVerification(input, context.request.headers),
     ),
 
     verifyEmail: os.verifyEmail.handler(({ input, context }) =>
-      identity.verifyEmail(input, context.request.headers),
+      identity.verifyEmail(input, context.request.headers, context.resHeaders ?? new Headers()),
     ),
 
     changeEmail: os.changeEmail.handler(({ input, context }) =>

@@ -60,6 +60,29 @@ describe('createAuth', () => {
       });
     });
 
+    it('renders the verification code template for an email-verification OTP', async () => {
+      const sendEmail = vi.fn().mockResolvedValue(undefined);
+      const templateRenderer = {
+        render: vi.fn().mockResolvedValue({ subject: 'Verify your email', body: 'code' }),
+      };
+
+      createAuth({ db: {} as never, sendEmail, templateRenderer });
+
+      const emailOtpOpts = emailOTPMock.mock.calls[0][0];
+      await emailOtpOpts.sendVerificationOTP({
+        email: 'test@example.com',
+        otp: '123456',
+        type: 'email-verification',
+      });
+
+      expect(templateRenderer.render).toHaveBeenCalledWith('verifyEmail', { otp: '123456' }, 'en');
+      expect(sendEmail).toHaveBeenCalledWith({
+        to: 'test@example.com',
+        subject: 'Verify your email',
+        body: 'code',
+      });
+    });
+
     it('returns early without sending an email for other types', async () => {
       const sendEmail = vi.fn().mockResolvedValue(undefined);
       const templateRenderer = {
@@ -78,12 +101,38 @@ describe('createAuth', () => {
       await emailOtpOpts.sendVerificationOTP({
         email: 'test@example.com',
         otp: '123456',
-        type: 'verify-email',
+        type: 'sign-in',
       });
 
       expect(getUserLanguage).not.toHaveBeenCalled();
       expect(templateRenderer.render).not.toHaveBeenCalled();
       expect(sendEmail).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('email verification gate', () => {
+    it('does not require a verified address by default', () => {
+      // Unverified players stay unrestricted while the KYC toggle is off.
+      createAuth({ db: {} as never });
+
+      expect(betterAuthMock.mock.calls[0][0].emailAndPassword.requireEmailVerification).toBe(false);
+    });
+
+    it('requires one when the operator turns the gate on', () => {
+      createAuth({ db: {} as never, requireEmailVerification: true });
+
+      expect(betterAuthMock.mock.calls[0][0].emailAndPassword.requireEmailVerification).toBe(true);
+    });
+
+    it('never lets better-auth mail the code on sign-up', () => {
+      // Its sign-up hook also fires on the synthetic duplicate-email response, which
+      // would mail a live code to an address whose owner never asked for it.
+      createAuth({ db: {} as never });
+
+      expect(betterAuthMock.mock.calls[0][0].emailVerification.sendOnSignUp).toBe(false);
+      expect(betterAuthMock.mock.calls[0][0].emailVerification.autoSignInAfterVerification).toBe(
+        true,
+      );
     });
   });
 
