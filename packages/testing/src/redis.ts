@@ -5,8 +5,8 @@ const INFRA_HINT = 'integration tests need redis - run `docker compose up -d`';
 
 /**
  * Logical databases handed to `bootTestApp`, allocated downward from 15. The core
- * unit harness allocates upward from `VITEST_POOL_ID % 16`, so the two tiers stay
- * clear of each other when both run against the same Redis.
+ * harness is pinned to 0-7 (`VITEST_POOL_ID % 8`), so the two tiers stay clear of
+ * each other and both integration suites can run concurrently against one Redis.
  */
 const HIGHEST_DATABASE = 15;
 const LOWEST_DATABASE = 8;

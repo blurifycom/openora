@@ -27,28 +27,28 @@ Backoffice login: `admin@oss.dev` / `password123` (see `pnpm db:seed --help` for
 
 Scripts are grouped by prefix: `check:*` reports, `fix:*` rewrites, `gen:*` emits, `db:*` touches Postgres, `test:*` runs suites. Every `check:*` and `test:*` task goes through turbo, so repeat runs hit the cache.
 
-| Command                   | What it does                                                                 |
-| ------------------------- | ---------------------------------------------------------------------------- |
-| `pnpm dev`                | turbo dev across docs, mcp                                                   |
-| `pnpm verify`             | the full gate - every `check:*` plus `test:unit` + `test:tools`, in parallel |
-| `pnpm regen`              | tsconfig paths + drizzle generate + catalog                                  |
-| `pnpm check:types`        | `tsc --noEmit` across the workspace                                          |
-| `pnpm check:lint`         | oxlint (incl. the `oss-boundaries/*` plugin)                                 |
-| `pnpm check:format`       | oxfmt in check mode                                                          |
-| `pnpm check:boundaries`   | dependency-cruiser whole-graph boundary + cycle gate                         |
-| `pnpm check:shape`        | module layout conformance                                                    |
-| `pnpm check:deprecations` | fails on any use of a `@deprecated` symbol                                   |
-| `pnpm check:drift`        | regenerates the catalog and fails if the committed output is stale           |
-| `pnpm fix:lint`           | oxlint `--fix`                                                               |
-| `pnpm fix:format`         | oxfmt write + final-newline pass                                             |
-| `pnpm test:unit`          | vitest, no external services                                                 |
-| `pnpm test:integration`   | service/router tests against real Postgres                                   |
-| `pnpm test:tools`         | `node --test` over `tools/__tests__`                                         |
-| `pnpm test:scaffold`      | scaffolds a throwaway module and verifies it, then cleans up                 |
-| `pnpm gen:agents`         | regenerate the per-tool agent files from `.rulesync/` via rulesync           |
-| `pnpm db:migrate`         | apply every module's migrations                                              |
-| `pnpm db:seed`            | demo data (idempotent)                                                       |
-| `pnpm db:setup:test`      | provision the integration-test database                                      |
+| Command                   | What it does                                                        |
+| ------------------------- | ------------------------------------------------------------------- |
+| `pnpm dev`                | turbo dev across docs, mcp                                          |
+| `pnpm verify`             | the full gate - build, every `check:*`, tests, then the drift check |
+| `pnpm regen`              | tsconfig paths + drizzle generate + catalog                         |
+| `pnpm check:types`        | `tsc --noEmit` across the workspace                                 |
+| `pnpm check:lint`         | oxlint (incl. the `oss-boundaries/*` plugin)                        |
+| `pnpm check:format`       | oxfmt in check mode                                                 |
+| `pnpm check:boundaries`   | dependency-cruiser whole-graph boundary + cycle gate                |
+| `pnpm check:shape`        | module layout conformance                                           |
+| `pnpm check:deprecations` | fails on any use of a `@deprecated` symbol                          |
+| `pnpm check:drift`        | regenerates the catalog and fails if the committed output is stale  |
+| `pnpm fix:lint`           | oxlint `--fix`                                                      |
+| `pnpm fix:format`         | oxfmt write + final-newline pass                                    |
+| `pnpm test:unit`          | vitest, no external services                                        |
+| `pnpm test:integration`   | service/router tests against real Postgres                          |
+| `pnpm test:tools`         | `node --test` over `tools/__tests__`                                |
+| `pnpm test:scaffold`      | scaffolds a throwaway module and verifies it, then cleans up        |
+| `pnpm gen:agents`         | regenerate the per-tool agent files from `.rulesync/` via rulesync  |
+| `pnpm db:migrate`         | apply every module's migrations                                     |
+| `pnpm db:seed`            | demo data (idempotent)                                              |
+| `pnpm db:setup:test`      | provision the integration-test database                             |
 
 `check:deprecations` excludes `packages/core/src/pam/identity/adapters/identity-reader.service.ts`: depretec mis-resolves Drizzle's `SQL.as` overloads and flags the non-deprecated `as(alias: string)` one. Drop the exclusion once depretec resolves overloads correctly.
 
