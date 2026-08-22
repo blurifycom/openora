@@ -512,7 +512,7 @@ export const walletContract = {
         .route({
           method: 'POST',
           path: '/wallet/custody/sweep/run',
-          summary: NOT_IMPLEMENTED_YET,
+          summary: 'Enqueue a custody sweep cycle',
         })
         .output(JobRunResultSchema),
     },

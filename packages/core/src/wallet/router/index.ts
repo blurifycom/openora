@@ -1,3 +1,4 @@
+import { randomUUID } from 'node:crypto';
 import { implement, ORPCError } from '@orpc/server';
 import {
   getUserId,
@@ -11,12 +12,14 @@ import {
   RATE_LIMIT_KEYS,
   makeRateLimitKey,
   type AuditWritePort,
+  type JobQueueAdapter,
   type PaymentProviderRegistry,
   type PaymentWebhookEvent,
   type RateLimiterAdapter,
   type RateLimitKey,
 } from '@openora/core/contracts';
 import { walletContract } from '../contract/index.js';
+import { CUSTODY_SWEEP_QUEUE } from '../service/custody-sweep.service.js';
 import {
   WalletService,
   WalletNotFoundError,
@@ -88,13 +91,29 @@ async function dispatchWebhook(
   return { ok: true as const };
 }
 
-export function createWalletRouter(
-  wallet: WalletService,
-  adminGuard: AdminGuard,
-  audit: AuditWritePort,
-  paymentProviders: PaymentProviderRegistry,
-  limiter?: RateLimiterAdapter<RateLimitKey>,
-) {
+/**
+ * Named rather than positional. Half of these are structurally similar ports, so a
+ * positional slip type-checks; and the sweep and reconciliation branches each add their
+ * own dependencies here, which as positional parameters git merges into a signature that
+ * declares one twice without ever reporting a conflict.
+ */
+export type WalletRouterDeps = {
+  wallet: WalletService;
+  adminGuard: AdminGuard;
+  audit: AuditWritePort;
+  paymentProviders: PaymentProviderRegistry;
+  limiter?: RateLimiterAdapter<RateLimitKey>;
+  jobQueue?: JobQueueAdapter;
+};
+
+export function createWalletRouter({
+  wallet,
+  adminGuard,
+  audit,
+  paymentProviders,
+  limiter,
+  jobQueue,
+}: WalletRouterDeps) {
   const os = implement(walletContract).$context<OssContext>();
 
   const throttleWebhook = (context: OssContext) =>
@@ -394,7 +413,18 @@ export function createWalletRouter(
       sweep: {
         run: os.custody.sweep.run.handler(async ({ context }) => {
           await adminGuard.assert(context, 'wallet-custody', 'run');
-          return notImplemented();
+          if (!jobQueue) {
+            throw new ORPCError('INTERNAL_SERVER_ERROR', {
+              message: 'custody sweep job queue is not wired',
+            });
+          }
+          // The run claim (a unique-index insert in wallet_job_run) is the sole
+          // concurrency authority, not this request - enqueue and return immediately so
+          // an HTTP timeout can never orphan a cycle. runId is minted here so the caller
+          // gets it back synchronously, before the job actually runs.
+          const runId = randomUUID();
+          await jobQueue.enqueue(CUSTODY_SWEEP_QUEUE, { runId });
+          return { runId };
         }),
       },
     },

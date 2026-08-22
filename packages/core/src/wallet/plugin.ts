@@ -1,5 +1,5 @@
-import { ADMIN_GUARD, EVENT_BUS, DRIZZLE } from '@openora/core/server';
-import type { CoreTokenCatalog, Plugin } from '@openora/core/server';
+import { ADMIN_GUARD, EVENT_BUS, DRIZZLE, createLogger } from '@openora/core/server';
+import type { CoreTokenCatalog, Plugin, TypedContainer } from '@openora/core/server';
 import * as z from 'zod';
 import {
   ADMIN_USER_DIRECTORY,
@@ -18,15 +18,28 @@ import {
   TAG_EVALUATION_COMMANDS,
   PLAY_ELIGIBILITY,
   AUDIT_WRITER,
+  JOB_QUEUE,
 } from '@openora/core/contracts';
 import { WalletService } from './service/wallet.service.js';
 import { WalletCommandsService } from './service/wallet-commands.service.js';
+import {
+  CustodySweepService,
+  CUSTODY_SWEEP_QUEUE,
+  CustodySweepJobPayloadSchema,
+} from './service/custody-sweep.service.js';
 import { WalletReaderService } from './adapters/wallet-reader.service.js';
 import { WalletAssetCatalogService } from './adapters/wallet-asset-catalog.service.js';
 import { DrizzleAdminWalletReporting } from './admin-reporting.js';
 import { createWalletRouter } from './router/index.js';
 import { MockPaymentAdapter } from './adapters/mock/mock-payment-adapter.js';
 import { HmacPaymentWebhookVerifier } from './adapters/hmac-payment-webhook-verifier.js';
+
+const logger = createLogger('wallet');
+
+// Mirrors WalletConfigSchema's wallet.sweep.cron default - used only when the operator
+// hasn't configured platformConfig.wallet.sweep at all, so the job is still scheduled
+// (CustodySweepService.runCycle no-ops every tick until sweep policy is configured).
+const DEFAULT_SWEEP_CRON = '*/15 * * * *';
 
 export default {
   // NOT dependsOn 'tag': that would cycle (tag hard-depends on wallet's WALLET_READER).
@@ -73,9 +86,41 @@ export default {
     // Operator-editable currency/network config, readable by a payment adapter without
     // importing wallet tables. Overlay-rebindable, but bound here so it always works.
     ctx.provide(WALLET_ASSET_CATALOG, (c) => new WalletAssetCatalogService(c.get(DRIZZLE)));
-    ctx.routers.add('wallet', (c) =>
-      createWalletRouter(
-        new WalletService({
+
+    // One memoized instance backs the cron worker and the router factory below - lazily
+    // constructed (subscriptions/workers wire before router factories run), matching
+    // pam/tag's and compliance's job-worker shape.
+    let sweepSvc: CustodySweepService | null = null;
+    const custodySweepService = (c: TypedContainer<CoreTokenCatalog>) =>
+      (sweepSvc ??= new CustodySweepService({
+        drizzle: c.get(DRIZZLE),
+        paymentProviders: c.get(PAYMENT_PROVIDERS),
+        audit: c.get(AUDIT_WRITER),
+        platformConfig: c.has(PLATFORM_CONFIG) ? c.get(PLATFORM_CONFIG) : undefined,
+      }));
+
+    ctx.jobs.worker({
+      queue: CUSTODY_SWEEP_QUEUE,
+      schema: CustodySweepJobPayloadSchema,
+      handler: async ({ payload }) => {
+        await sweepSvc?.runCycle(payload.runId);
+      },
+    });
+
+    ctx.routers.add('wallet', (c) => {
+      const jobQueue = c.get(JOB_QUEUE);
+      custodySweepService(c); // ensure sweepSvc is constructed for the job worker above
+      const sweepCron =
+        (c.has(PLATFORM_CONFIG) ? c.get(PLATFORM_CONFIG) : undefined)?.wallet?.sweep?.cron ??
+        DEFAULT_SWEEP_CRON;
+      // Idempotent schedule (keyed by scheduleId). If platformConfig.wallet.sweep is
+      // absent, this still registers the tick - the handler just no-ops every time.
+      void jobQueue
+        .schedule(CUSTODY_SWEEP_QUEUE, 'wallet-custody-sweep.cron', {}, { cron: sweepCron })
+        .catch((err) => logger.error({ err }, 'wallet-custody-sweep schedule failed'));
+
+      return createWalletRouter({
+        wallet: new WalletService({
           drizzle: c.get(DRIZZLE),
           events: c.get(EVENT_BUS),
           payment: c.get(PAYMENT_ADAPTER),
@@ -90,11 +135,12 @@ export default {
             : undefined,
           audit: c.get(AUDIT_WRITER),
         }),
-        c.get(ADMIN_GUARD),
-        c.get(AUDIT_WRITER),
-        c.get(PAYMENT_PROVIDERS),
-        c.get(RATE_LIMITER),
-      ),
-    );
+        adminGuard: c.get(ADMIN_GUARD),
+        audit: c.get(AUDIT_WRITER),
+        paymentProviders: c.get(PAYMENT_PROVIDERS),
+        limiter: c.get(RATE_LIMITER),
+        jobQueue,
+      });
+    });
   },
 } as const satisfies Plugin<CoreTokenCatalog>;
