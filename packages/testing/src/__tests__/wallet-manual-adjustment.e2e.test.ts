@@ -3,8 +3,8 @@ import { randomUUID } from 'node:crypto';
 import { loadExtensions } from '@openora/core/server';
 import {
   asAdmin,
-  asPlayer,
   bootTestApp,
+  registerAndMaterializePlayer,
   seedMinimal,
   setupTestDb,
   type TestApp,
@@ -25,28 +25,14 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return value !== null && typeof value === 'object';
 }
 
+// Uses the shared helper rather than posting to /identity/register directly: the
+// registration contract owns which fields are mandatory, and a hand-rolled body here
+// silently rots the moment one is added.
 async function registerPlayer() {
-  const email = `manual-adjustment-${randomUUID()}@e2e.test`;
-  const registration = await testApp.app.request('/identity/register', {
-    method: 'POST',
-    headers: { 'content-type': 'application/json' },
-    body: JSON.stringify({ email, password: 'password123', name: 'Manual Adjustment Player' }),
+  const { client, userId } = await registerAndMaterializePlayer(testApp, {
+    email: `manual-adjustment-${randomUUID()}@e2e.test`,
   });
-  if (!registration.ok) {
-    throw new Error(`registration failed (${registration.status}): ${await registration.text()}`);
-  }
-  const player = await asPlayer(testApp.app, { email });
-  const profile = await player.get('/profile');
-  if (!profile.ok) {
-    throw new Error(`profile failed (${profile.status}): ${await profile.text()}`);
-  }
-  const profileRaw: unknown = await profile.json();
-  const profileBody = object(profileRaw);
-  const userId = profileBody['userId'];
-  if (typeof userId !== 'string') {
-    throw new Error('profile has no userId');
-  }
-  return { player, userId };
+  return { player: client, userId };
 }
 
 beforeAll(async () => {
