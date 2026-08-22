@@ -19,7 +19,11 @@ jobs:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
+      # No turbo here - taking the shared per-commit cache key would lock the verify
+      # job out of saving its own task outputs.
       - uses: ./.github/actions/bootstrap
+        with:
+          turbo-cache: 'false'
       - name: Commitlint
         run: pnpm commitlint --from ${{ github.event.pull_request.base.sha }} --to ${{ github.event.pull_request.head.sha }}
 
