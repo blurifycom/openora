@@ -24,3 +24,14 @@ export type SessionCommands = {
 
 export const SESSION_COMMANDS: Token<SessionCommands> =
   createToken<SessionCommands>('SESSION_COMMANDS');
+
+/**
+ * Writes to identity-owned user columns. Sibling modules may read `user` through the
+ * `/schema` subpath but must mutate it here, so identity keeps its own invariants.
+ */
+export type UserCommands = {
+  /** Throws if the handle is taken; comparison is case-insensitive. */
+  setUsername(userId: string, username: string): Promise<{ success: boolean }>;
+};
+
+export const USER_COMMANDS: Token<UserCommands> = createToken<UserCommands>('USER_COMMANDS');

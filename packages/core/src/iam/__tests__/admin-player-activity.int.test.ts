@@ -1,7 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import { describe, it, expect, beforeAll, afterAll, beforeEach } from 'vitest';
 import { sql } from 'drizzle-orm';
-import { createTestDb, type TestDb } from '@openora/core/testing';
+import { createTestDb, type TestDb, seedUser } from '@openora/core/testing';
 import { migrate as migrateIdentity } from '@openora/core/pam/migrate/identity';
 import { user, session } from '@openora/core/pam/schema/identity';
 import { DrizzleAdminPlayerActivity } from '../adapters/admin-player-activity.js';
@@ -10,14 +10,6 @@ let db: TestDb;
 let activity: DrizzleAdminPlayerActivity;
 
 const AT = (iso: string) => new Date(iso);
-
-async function seedUser(createdAt: Date) {
-  const [row] = await db.drizzle.db
-    .insert(user)
-    .values({ name: 'U', email: `${randomUUID()}@x.dev`, createdAt })
-    .returning();
-  return row!;
-}
 
 async function seedSession(userId: string, updatedAt: Date) {
   await db.drizzle.db.insert(session).values({
@@ -44,9 +36,9 @@ beforeEach(async () => {
 
 describe('DrizzleAdminPlayerActivity.getRegistrationsOverTime (real PG)', () => {
   it('counts registrations per day and includes zero-registration days', async () => {
-    await seedUser(AT('2026-01-01T10:00:00.000Z'));
-    await seedUser(AT('2026-01-01T15:00:00.000Z'));
-    await seedUser(AT('2026-01-03T00:00:00.000Z'));
+    await seedUser(db, { name: 'U', createdAt: AT('2026-01-01T10:00:00.000Z') });
+    await seedUser(db, { name: 'U', createdAt: AT('2026-01-01T15:00:00.000Z') });
+    await seedUser(db, { name: 'U', createdAt: AT('2026-01-03T00:00:00.000Z') });
 
     const rows = await activity.getRegistrationsOverTime({
       dateFrom: AT('2026-01-01T00:00:00.000Z'),
@@ -63,8 +55,8 @@ describe('DrizzleAdminPlayerActivity.getRegistrationsOverTime (real PG)', () => 
 
 describe('DrizzleAdminPlayerActivity.getActiveUsersTrend (real PG)', () => {
   it('computes distinct DAU/WAU/MAU per day from session activity', async () => {
-    const alice = await seedUser(AT('2025-11-01T00:00:00.000Z'));
-    const bob = await seedUser(AT('2025-11-01T00:00:00.000Z'));
+    const alice = await seedUser(db, { name: 'U', createdAt: AT('2025-11-01T00:00:00.000Z') });
+    const bob = await seedUser(db, { name: 'U', createdAt: AT('2025-11-01T00:00:00.000Z') });
     // Alice active on the target day; Bob active 5 days earlier (inside WAU/MAU, outside DAU).
     await seedSession(alice.id, AT('2026-01-10T12:00:00.000Z'));
     await seedSession(bob.id, AT('2026-01-05T12:00:00.000Z'));
@@ -78,7 +70,7 @@ describe('DrizzleAdminPlayerActivity.getActiveUsersTrend (real PG)', () => {
   });
 
   it('excludes a session outside every window from all three counts', async () => {
-    const alice = await seedUser(AT('2025-11-01T00:00:00.000Z'));
+    const alice = await seedUser(db, { name: 'U', createdAt: AT('2025-11-01T00:00:00.000Z') });
     await seedSession(alice.id, AT('2025-12-01T00:00:00.000Z'));
 
     const rows = await activity.getActiveUsersTrend({
@@ -90,7 +82,7 @@ describe('DrizzleAdminPlayerActivity.getActiveUsersTrend (real PG)', () => {
   });
 
   it('counts a user with two sessions on the same day only once', async () => {
-    const alice = await seedUser(AT('2025-11-01T00:00:00.000Z'));
+    const alice = await seedUser(db, { name: 'U', createdAt: AT('2025-11-01T00:00:00.000Z') });
     await seedSession(alice.id, AT('2026-01-10T08:00:00.000Z'));
     await seedSession(alice.id, AT('2026-01-10T18:00:00.000Z'));
 
@@ -105,7 +97,7 @@ describe('DrizzleAdminPlayerActivity.getActiveUsersTrend (real PG)', () => {
 
 describe('DrizzleAdminPlayerActivity.getRetentionCohorts (real PG)', () => {
   it('does not count the registration-day session itself as a return', async () => {
-    const alice = await seedUser(AT('2026-01-01T10:00:00.000Z'));
+    const alice = await seedUser(db, { name: 'U', createdAt: AT('2026-01-01T10:00:00.000Z') });
     // Only session is the one created at registration - should NOT count as returned.
     await seedSession(alice.id, AT('2026-01-01T10:00:00.000Z'));
 
@@ -120,7 +112,7 @@ describe('DrizzleAdminPlayerActivity.getRetentionCohorts (real PG)', () => {
   });
 
   it('counts a session the next calendar day even if less than 24h after registration', async () => {
-    const alice = await seedUser(AT('2026-01-01T23:00:00.000Z'));
+    const alice = await seedUser(db, { name: 'U', createdAt: AT('2026-01-01T23:00:00.000Z') });
     await seedSession(alice.id, AT('2026-01-02T09:00:00.000Z'));
 
     const rows = await activity.getRetentionCohorts(
@@ -132,7 +124,7 @@ describe('DrizzleAdminPlayerActivity.getRetentionCohorts (real PG)', () => {
   });
 
   it('counts a session on the day after registration as returned', async () => {
-    const alice = await seedUser(AT('2026-01-01T10:00:00.000Z'));
+    const alice = await seedUser(db, { name: 'U', createdAt: AT('2026-01-01T10:00:00.000Z') });
     await seedSession(alice.id, AT('2026-01-02T10:00:00.000Z'));
 
     const rows = await activity.getRetentionCohorts(
@@ -144,7 +136,7 @@ describe('DrizzleAdminPlayerActivity.getRetentionCohorts (real PG)', () => {
   });
 
   it('excludes a session after the retention window from the count', async () => {
-    const alice = await seedUser(AT('2026-01-01T10:00:00.000Z'));
+    const alice = await seedUser(db, { name: 'U', createdAt: AT('2026-01-01T10:00:00.000Z') });
     await seedSession(alice.id, AT('2026-01-10T10:00:00.000Z'));
 
     const rows = await activity.getRetentionCohorts(
@@ -157,7 +149,7 @@ describe('DrizzleAdminPlayerActivity.getRetentionCohorts (real PG)', () => {
 
   it('flags an incomplete cohort whose window has not elapsed yet', async () => {
     const now = new Date();
-    await seedUser(now);
+    await seedUser(db, { name: 'U', createdAt: now });
 
     const rows = await activity.getRetentionCohorts({ dateFrom: now, dateTo: now }, 30);
 

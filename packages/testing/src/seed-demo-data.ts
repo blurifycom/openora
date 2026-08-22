@@ -19,7 +19,7 @@ import type { ChatRoomCategory } from '@openora/core/engagement/contracts/chat';
 export type SeedAuth = {
   api: {
     signUpEmail(args: {
-      body: { email: string; password: string; name: string };
+      body: { email: string; password: string; name: string; username: string };
     }): Promise<unknown>;
   };
 };
@@ -513,7 +513,6 @@ export async function seedDemoData(options: SeedOptions): Promise<SeedResult> {
 
     await db.insert(player).values({
       userId: playerUser.id,
-      displayName,
       country,
       currency,
       status,
@@ -698,6 +697,16 @@ type EnsureUserInput = {
   phoneVerifiedAt?: Date | null;
 };
 
+/** Usernames are globally unique, so derive a stable one from the seeded address. */
+function usernameFor(email: string): string {
+  const base =
+    email
+      .split('@')[0]
+      ?.toLowerCase()
+      .replaceAll(/[^a-z0-9_]+/g, '_') ?? 'seed';
+  return base.length < 3 ? `seed_${base}` : base.slice(0, 20);
+}
+
 async function ensureUser(
   db: DrizzleDb,
   auth: SeedAuth,
@@ -709,7 +718,12 @@ async function ensureUser(
     .where(eq(user.email, input.email));
   if (!existing) {
     await auth.api.signUpEmail({
-      body: { email: input.email, password: input.password, name: input.name },
+      body: {
+        email: input.email,
+        password: input.password,
+        name: input.name,
+        username: usernameFor(input.email),
+      },
     });
     [existing] = await db
       .select({ id: user.id, role: user.role })
@@ -724,6 +738,8 @@ async function ensureUser(
     name: input.name,
     role,
     isActive: input.isActive,
+    // Sign-in requires a verified address; seeded fixtures skip the email round trip.
+    emailVerified: true,
   };
   if (input.createdAt) {
     patch.createdAt = input.createdAt;

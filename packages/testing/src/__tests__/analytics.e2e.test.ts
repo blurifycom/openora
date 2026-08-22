@@ -7,11 +7,11 @@ import {
   type Container,
   type CoreTokenCatalog,
 } from '@openora/core/server';
-import { user } from '@openora/core/pam/schema/identity';
 import { wallet, walletTransaction } from '@openora/core/wallet/schema';
 import {
   setupTestDb,
   bootTestApp,
+  registerPlayer,
   asPlayer,
   asAdmin,
   seedMinimal,
@@ -27,27 +27,6 @@ let admin: TestClient;
 // oxlint-disable-next-line typescript/no-explicit-any -- ad-hoc JSON shape assertions in tests
 async function readJson(res: Response): Promise<any> {
   return res.json();
-}
-
-async function registerPlayer(email: string) {
-  const res = await app.app.request('/identity/register', {
-    method: 'POST',
-    headers: { 'content-type': 'application/json' },
-    body: JSON.stringify({ email, password: 'password123', name: 'Analytics E2E Player' }),
-  });
-  if (!res.ok) {
-    throw new Error(`register failed (${res.status}): ${await res.text()}`);
-  }
-  const body = (await readJson(res)) as { user: { id: string } };
-  return body.user.id;
-}
-
-async function verifyEmail(container: Container<CoreTokenCatalog>, userId: string) {
-  await container
-    .get(DRIZZLE)
-    .db.update(user)
-    .set({ emailVerified: true })
-    .where(eq(user.id, userId));
 }
 
 async function deposit(client: TestClient, amount: string, currency = 'USD') {
@@ -105,7 +84,7 @@ afterAll(async () => {
 describe('analytics e2e', () => {
   it('breaks financial summary down by currency and rail, computed only from completed transactions', async () => {
     const email = `financial-e2e-${randomUUID()}@example.com`;
-    const userId = await registerPlayer(email);
+    const userId = await registerPlayer(app, { email });
     const client = await asPlayer(app.app, { email });
     await deposit(client, '500');
     await deposit(client, '120');
@@ -129,7 +108,7 @@ describe('analytics e2e', () => {
 
   it('computes a GGR trend from completed bet/win transactions only', async () => {
     const email = `ggr-e2e-${randomUUID()}@example.com`;
-    const userId = await registerPlayer(email);
+    const userId = await registerPlayer(app, { email });
     const client = await asPlayer(app.app, { email });
     await deposit(client, '1000');
     const walletId = await walletIdFor(app.container, userId);
@@ -156,10 +135,9 @@ describe('analytics e2e', () => {
     const verifiedDepositorBettorEmail = `funnel-a-${randomUUID()}@example.com`;
     const registeredOnlyEmail = `funnel-b-${randomUUID()}@example.com`;
 
-    const userIdA = await registerPlayer(verifiedDepositorBettorEmail);
-    await registerPlayer(registeredOnlyEmail);
+    const userIdA = await registerPlayer(app, { email: verifiedDepositorBettorEmail });
+    await registerPlayer(app, { email: registeredOnlyEmail, verifyEmail: false });
 
-    await verifyEmail(app.container, userIdA);
     const clientA = await asPlayer(app.app, { email: verifiedDepositorBettorEmail });
     await deposit(clientA, '50');
     const walletIdA = await walletIdFor(app.container, userIdA);
@@ -196,7 +174,7 @@ describe('analytics e2e', () => {
 
   it('rejects an analytics read from a non-admin caller', async () => {
     const email = `no-access-${randomUUID()}@example.com`;
-    await registerPlayer(email);
+    await registerPlayer(app, { email });
     const player = await asPlayer(app.app, { email });
     const res = await player.get('/analytics/financial/summary');
     expect(res.status).toBe(403);

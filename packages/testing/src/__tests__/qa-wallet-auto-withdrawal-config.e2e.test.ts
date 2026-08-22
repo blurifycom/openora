@@ -18,6 +18,7 @@ import {
   setupTestDb,
   bootTestApp,
   applyMigrations,
+  registerAndMaterializePlayer,
   asPlayer,
   asAdmin,
   seedMinimal,
@@ -51,26 +52,6 @@ async function readJson(res: Response): Promise<any> {
   return res.json();
 }
 
-async function registerAndMaterializePlayer(app: TestApp['app'], email: string) {
-  const registerRes = await app.request('/identity/register', {
-    method: 'POST',
-    headers: { 'content-type': 'application/json' },
-    body: JSON.stringify({ email, password: 'password123', name: 'QA Player' }),
-  });
-  if (!registerRes.ok) {
-    throw new Error(`register failed (${registerRes.status}): ${await registerRes.text()}`);
-  }
-  const client = await asPlayer(app, { email });
-  const profileRes = await client.get('/profile');
-  if (!profileRes.ok) {
-    throw new Error(
-      `profile materialize failed (${profileRes.status}): ${await profileRes.text()}`,
-    );
-  }
-  const profile = (await profileRes.json()) as { id: string; userId: string };
-  return { client, playerId: profile.id, userId: profile.userId };
-}
-
 async function verifyKyc(admin: TestClient, userId: string) {
   const res = await admin.post(`/compliance/players/${userId}/kyc/override`, {
     status: 'approved',
@@ -83,8 +64,7 @@ async function verifyKyc(admin: TestClient, userId: string) {
 
 /**
  * Assigns a REAL DB-backed IAM role (bypassing the API, since assignRole itself
- * requires an existing super-admin - a legitimate bootstrap gap, not a bug in the
- * feature under test).
+ * requires an existing super-admin - a legitimate bootstrap gap, not a bug).
  * This is what actually exercises the dynamic ADMIN_PERMISSION_RESOLVER path the
  * implementer's mocked-AdminGuard tests never touch.
  *
@@ -184,29 +164,29 @@ beforeAll(async () => {
 
   const superAdminEmail = `super-admin-${randomUUID()}@e2e.test`;
   const { client: superAdminClient, userId: superAdminUserId } = await registerAndMaterializePlayer(
-    appMain.app,
-    superAdminEmail,
+    appMain,
+    { email: superAdminEmail },
   );
   await assignIamRoleByKey(appMain.container, superAdminUserId, 'super-admin');
   superAdmin = superAdminClient;
 
   const paymentsManagerEmail = `payments-manager-${randomUUID()}@e2e.test`;
   const { client: paymentsManagerClient, userId: paymentsManagerUserId } =
-    await registerAndMaterializePlayer(appMain.app, paymentsManagerEmail);
+    await registerAndMaterializePlayer(appMain, { email: paymentsManagerEmail });
   await assignIamRoleByKey(appMain.container, paymentsManagerUserId, 'payments-manager');
   paymentsManager = paymentsManagerClient;
 
   const plainAdminEmail = `plain-admin-${randomUUID()}@e2e.test`;
   const { client: plainAdminClient, userId: plainAdminUserId } = await registerAndMaterializePlayer(
-    appMain.app,
-    plainAdminEmail,
+    appMain,
+    { email: plainAdminEmail },
   );
   await assignIamRoleByKey(appMain.container, plainAdminUserId, 'admin');
   plainAdmin = plainAdminClient;
 
   const bootstrapAdminEmail = `bootstrap-admin-${randomUUID()}@e2e.test`;
   const { client: bootstrapAdminClient, userId: bootstrapAdminUserId } =
-    await registerAndMaterializePlayer(appMain.app, bootstrapAdminEmail);
+    await registerAndMaterializePlayer(appMain, { email: bootstrapAdminEmail });
   await setStaticRole(appMain.container, bootstrapAdminUserId, 'admin');
   bootstrapAdmin = bootstrapAdminClient;
 }, 60_000);
@@ -353,7 +333,7 @@ describe('happy path: set -> immediate GET -> below/above threshold -> audit tra
     expect(configAudit.items[0].before).toBeTruthy();
 
     const belowEmail = `below-${randomUUID()}@e2e.test`;
-    const below = await registerAndMaterializePlayer(appMain.app, belowEmail);
+    const below = await registerAndMaterializePlayer(appMain, { email: belowEmail });
     await verifyKyc(superAdmin, below.userId);
     await below.client.post('/wallet/deposit', { amount: '500', currency: 'USD' });
     const belowRes = await below.client.post('/wallet/withdraw', {
@@ -365,7 +345,7 @@ describe('happy path: set -> immediate GET -> below/above threshold -> audit tra
     expect(belowBody.status).toBe('completed');
 
     const aboveEmail = `above-${randomUUID()}@e2e.test`;
-    const above = await registerAndMaterializePlayer(appMain.app, aboveEmail);
+    const above = await registerAndMaterializePlayer(appMain, { email: aboveEmail });
     await verifyKyc(superAdmin, above.userId);
     await above.client.post('/wallet/deposit', { amount: '500', currency: 'USD' });
     const aboveRes = await above.client.post('/wallet/withdraw', {
@@ -401,7 +381,7 @@ describe('happy path: set -> immediate GET -> below/above threshold -> audit tra
 describe('immediate effect: two consecutive config changes in one run', () => {
   it('each withdrawal picks up the latest threshold, no restart/cache needed', async () => {
     const email = `immediate-${randomUUID()}@e2e.test`;
-    const { client, userId } = await registerAndMaterializePlayer(appMain.app, email);
+    const { client, userId } = await registerAndMaterializePlayer(appMain, { email: email });
     await verifyKyc(superAdmin, userId);
     await client.post('/wallet/deposit', { amount: '500', currency: 'USD' });
 
@@ -445,7 +425,7 @@ describe('precedence: per-player auto_withdrawal_rule vs the global config', () 
       excludeRiskFlags: [],
     });
     const email = `rule-above-${randomUUID()}@e2e.test`;
-    const { client, userId } = await registerAndMaterializePlayer(appMain.app, email);
+    const { client, userId } = await registerAndMaterializePlayer(appMain, { email: email });
     await verifyKyc(superAdmin, userId);
     await superAdmin.put(`/wallet/auto-withdrawal-rules/${userId}`, {
       threshold: '1000',
@@ -472,7 +452,7 @@ describe('precedence: per-player auto_withdrawal_rule vs the global config', () 
       excludeRiskFlags: [],
     });
     const email = `rule-below-${randomUUID()}@e2e.test`;
-    const { client, userId } = await registerAndMaterializePlayer(appMain.app, email);
+    const { client, userId } = await registerAndMaterializePlayer(appMain, { email: email });
     await verifyKyc(superAdmin, userId);
     await superAdmin.put(`/wallet/auto-withdrawal-rules/${userId}`, {
       threshold: '5',
@@ -496,7 +476,7 @@ describe('fail-closed: the singleton config row is missing', () => {
     expect(row).toBeUndefined();
 
     const email = `unseeded-${randomUUID()}@e2e.test`;
-    const { client, userId } = await registerAndMaterializePlayer(appUnseeded.app, email);
+    const { client, userId } = await registerAndMaterializePlayer(appUnseeded, { email: email });
     const admin = await asAdmin(appUnseeded.app);
     await verifyKyc(admin, userId);
     await client.post('/wallet/deposit', { amount: '500', currency: 'USD' });
@@ -509,7 +489,7 @@ describe('fail-closed: the singleton config row is missing', () => {
 
   it('BUG: GET /wallet/auto-withdrawal-config 500s instead of a mapped 404 when the row is missing (router/index.ts autoWithdrawalConfig.get skips mapErrors, unlike every sibling handler)', async () => {
     const email = `unseeded-superadmin-${randomUUID()}@e2e.test`;
-    const { userId } = await registerAndMaterializePlayer(appUnseeded.app, email);
+    const { userId } = await registerAndMaterializePlayer(appUnseeded, { email: email });
     await assignIamRoleByKey(appUnseeded.container, userId, 'super-admin');
     const client = await asPlayer(appUnseeded.app, { email });
 
@@ -524,7 +504,7 @@ describe('fail-closed: the singleton config row is missing', () => {
 
   it('FIXED: PUT /wallet/auto-withdrawal-config self-heals the missing row via upsert instead of 500ing (agreed fix: setAutoWithdrawalConfig is an upsert on the admin WRITE path only - the READ path still fails closed)', async () => {
     const email = `unseeded-set-${randomUUID()}@e2e.test`;
-    const { userId } = await registerAndMaterializePlayer(appUnseeded.app, email);
+    const { userId } = await registerAndMaterializePlayer(appUnseeded, { email: email });
     await assignIamRoleByKey(appUnseeded.container, userId, 'super-admin');
     const client = await asPlayer(appUnseeded.app, { email });
 
@@ -584,8 +564,8 @@ describe('regression spot-check: static platform-config.yaml AutoWithdrawalConfi
       definePlatformConfig({
         autoWithdrawal: {
           enabled: true,
-          // @ts-expect-error -- this field was removed from the static schema; kept here to
-          // prove the regression the two existing fixtures below still trigger.
+          // @ts-expect-error -- this field was removed from the static schema; kept here to prove the
+          // regression the two existing fixtures below still trigger.
           fiatThreshold: '2',
         },
       }),

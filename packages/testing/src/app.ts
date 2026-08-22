@@ -1,4 +1,5 @@
 import { randomUUID } from 'node:crypto';
+import { fileURLToPath } from 'node:url';
 import {
   createApp,
   createRedisClient,
@@ -64,7 +65,17 @@ export async function bootTestApp(config: BootTestAppConfig): Promise<TestApp> {
 
   const created = await createApp(
     {
-      plugins: config.plugins,
+      plugins: [
+        {
+          id: 'testing-registration-config',
+          path: fileURLToPath(new URL('./test-registration-config-plugin.ts', import.meta.url)),
+        },
+        {
+          id: 'testing-email-capture',
+          path: fileURLToPath(new URL('./test-email-capture-plugin.ts', import.meta.url)),
+        },
+        ...config.plugins,
+      ],
       ...(config.igaming ? { igaming: config.igaming } : {}),
       databaseUrl: config.databaseUrl,
       authSchema: { user, session, account, verification, twoFactor },

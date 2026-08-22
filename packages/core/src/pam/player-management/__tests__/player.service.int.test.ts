@@ -7,8 +7,9 @@ import type {
   AdminGameReporting,
   ChatBlockWriter,
   SessionCommands,
+  UserCommands,
 } from '@openora/core/contracts';
-import { createTestDb, type TestDb } from '@openora/core/testing';
+import { createTestDb, type TestDb, seedUser } from '@openora/core/testing';
 import { user } from '@openora/core/pam/schema/identity';
 import { migrate as migrateIdentity } from '@openora/core/pam/migrate/identity';
 import { player } from '@openora/core/pam/schema/profile';
@@ -16,11 +17,7 @@ import { migrate as migrateProfile } from '@openora/core/pam/migrate/profile';
 import { tag, playerTag } from '@openora/core/pam/schema/tag';
 import { migrate as migrateTag } from '@openora/core/pam/migrate/tag';
 import { mock, makeEventBus } from '../../../testing/mock.js';
-import {
-  PlayerService,
-  PlayerNotFoundError,
-  DuplicateEmailError,
-} from '../service/player.service.js';
+import { PlayerService, PlayerNotFoundError } from '../service/player.service.js';
 
 let db: TestDb;
 
@@ -30,6 +27,7 @@ function makeService(
     gameReporting?: AdminGameReporting;
     blockWriter?: ChatBlockWriter;
     sessionCommands?: SessionCommands;
+    userCommands?: UserCommands;
   } = {},
 ) {
   const events = makeEventBus();
@@ -39,7 +37,18 @@ function makeService(
   const sessionCommands =
     overrides.sessionCommands ??
     mock<SessionCommands>({ revokeAll: vi.fn().mockResolvedValue({ success: true }) });
+  const userCommands =
+    overrides.userCommands ??
+    mock<UserCommands>({
+      setUsername: vi.fn(async (userId: string, username: string) => {
+        // Stands in for identity's USER_COMMANDS so the round-trip through the
+        // enriched read still holds; the real port is covered in its own module.
+        await db.drizzle.db.update(user).set({ username }).where(eq(user.id, userId));
+        return { success: true };
+      }),
+    });
   return {
+    userCommands,
     svc: new PlayerService(
       db.drizzle,
       events,
@@ -47,6 +56,7 @@ function makeService(
       gameReporting,
       blockWriter,
       sessionCommands,
+      userCommands,
     ),
     events,
     sessionCommands,
@@ -107,18 +117,10 @@ function makeBlockWriter(excluded: string[] = []): ChatBlockWriter {
   });
 }
 
-async function seedUser(overrides: Partial<typeof user.$inferInsert> = {}) {
-  const [row] = await db.drizzle.db
-    .insert(user)
-    .values({ name: 'Player', email: `${randomUUID()}@example.com`, ...overrides })
-    .returning();
-  return row!;
-}
-
 async function seedPlayer(userId: string, overrides: Partial<typeof player.$inferInsert> = {}) {
   const [row] = await db.drizzle.db
     .insert(player)
-    .values({ userId, displayName: 'Player', ...overrides })
+    .values({ userId, ...overrides })
     .returning();
   return row!;
 }
@@ -127,7 +129,7 @@ async function seedPlayerWithUser(
   userOverrides: Partial<typeof user.$inferInsert> = {},
   playerOverrides: Partial<typeof player.$inferInsert> = {},
 ) {
-  const account = await seedUser(userOverrides);
+  const account = await seedUser(db, userOverrides);
   const row = await seedPlayer(account.id, playerOverrides);
   return { account, player: row };
 }
@@ -296,15 +298,15 @@ describe('PlayerService.list (real PG)', () => {
     expect(items[0]?.status).toBe('suspended');
   });
 
-  it('matches players by a display name substring', async () => {
+  it('matches players by a username substring', async () => {
     const { svc } = makeService();
-    await seedPlayerWithUser({}, { displayName: 'Alice Anderson' });
-    await seedPlayerWithUser({}, { displayName: 'Bob Baker' });
+    await seedPlayerWithUser({ username: 'alice_anderson' });
+    await seedPlayerWithUser({ username: 'bob_baker' });
 
     const { items, total } = await svc.list({ page: 1, limit: 20, search: 'ander' });
 
     expect(total).toBe(1);
-    expect(items[0]?.displayName).toBe('Alice Anderson');
+    expect(items[0]?.username).toBe('alice_anderson');
   });
 
   it('matches players by an email substring', async () => {
@@ -354,18 +356,18 @@ describe('PlayerService.list (real PG)', () => {
 
   it('orders by the requested sort field and direction', async () => {
     const { svc } = makeService();
-    await seedPlayerWithUser({}, { displayName: 'Charlie' });
-    await seedPlayerWithUser({}, { displayName: 'Alice' });
-    await seedPlayerWithUser({}, { displayName: 'Bob' });
+    await seedPlayerWithUser({ username: 'charlie' });
+    await seedPlayerWithUser({ username: 'alice' });
+    await seedPlayerWithUser({ username: 'bob' });
 
     const { items } = await svc.list({
       page: 1,
       limit: 20,
-      sortBy: 'displayName',
+      sortBy: 'username',
       sortOrder: 'asc',
     });
 
-    expect(items.map((i) => i.displayName)).toEqual(['Alice', 'Bob', 'Charlie']);
+    expect(items.map((i) => i.username)).toEqual(['alice', 'bob', 'charlie']);
   });
 });
 
@@ -393,27 +395,26 @@ describe('PlayerService.update (real PG)', () => {
     const { svc } = makeService();
     const { player: seeded, account } = await seedPlayerWithUser();
 
-    const result = await svc.update(seeded.id, { displayName: 'Renamed', level: 5 }, account.id);
+    const result = await svc.update(seeded.id, { username: 'renamed', level: 5 }, account.id);
 
-    expect(result).toMatchObject({ displayName: 'Renamed', level: 5 });
-    expect(await rowById(seeded.id)).toMatchObject({ displayName: 'Renamed', level: 5 });
+    expect(result).toMatchObject({ username: 'renamed', level: 5 });
+    expect(await rowById(seeded.id)).toMatchObject({ level: 5 });
   });
 
-  it('throws DuplicateEmailError when the new email is already used by a different user', async () => {
-    const { svc } = makeService();
-    const taken = await seedUser({ email: 'taken@example.com' });
+  it('delegates a username change to identity rather than writing the user table', async () => {
+    const { svc, userCommands } = makeService();
     const { player: seeded, account } = await seedPlayerWithUser();
 
-    await expect(svc.update(seeded.id, { email: taken.email }, account.id)).rejects.toBeInstanceOf(
-      DuplicateEmailError,
-    );
+    await svc.update(seeded.id, { username: 'renamed_here' }, account.id);
+
+    expect(userCommands.setUsername).toHaveBeenCalledWith(seeded.userId, 'renamed_here');
   });
 
   it('throws PlayerNotFoundError for an unknown id', async () => {
     const { svc } = makeService();
 
     await expect(
-      svc.update(randomUUID(), { displayName: 'X' }, randomUUID()),
+      svc.update(randomUUID(), { username: 'player_x' }, randomUUID()),
     ).rejects.toBeInstanceOf(PlayerNotFoundError);
   });
 });
@@ -468,7 +469,7 @@ describe('PlayerService.update player.level.changed emission (real PG)', () => {
     const { svc, events } = makeService();
     const { player: seeded, account } = await seedPlayerWithUser({}, { level: 1 });
 
-    await svc.update(seeded.id, { displayName: 'New Name' }, account.id);
+    await svc.update(seeded.id, { username: 'new_name' }, account.id);
 
     expect(events.emit).not.toHaveBeenCalledWith('player.level.changed', expect.anything());
   });

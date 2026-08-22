@@ -4,11 +4,11 @@ import type { User } from '@openora/core/contracts';
 import { player } from '../profile/schema/index.js';
 import { user } from '../identity/schema/index.js';
 
-export function toPlayer(row: typeof player.$inferSelect, email: string) {
+export function toPlayer(row: typeof player.$inferSelect, email: string, username: string) {
   return {
     id: row.id,
     userId: row.userId,
-    displayName: row.displayName,
+    username,
     email,
     country: row.country,
     currency: row.currency,
@@ -23,13 +23,11 @@ export function toPlayer(row: typeof player.$inferSelect, email: string) {
   };
 }
 
-export async function fetchEmailByUserId(
-  drizzle: DrizzleService,
-  userId: User['id'],
-): Promise<string> {
+/** The identity columns `toPlayer` needs, or null when the user row is gone. */
+export async function fetchIdentityByUserId(drizzle: DrizzleService, userId: User['id']) {
   const [record] = await drizzle.db
-    .select({ email: user.email })
+    .select({ email: user.email, username: user.username })
     .from(user)
     .where(eq(user.id, userId));
-  return record?.email ?? '';
+  return record ?? null;
 }

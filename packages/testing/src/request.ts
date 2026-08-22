@@ -1,5 +1,20 @@
 import type { Hono } from 'hono';
 
+let registrationRequestCount = 0;
+
+/**
+ * Gives each registration helper a separate client IP for rate-limit-aware tests.
+ * Uses `x-real-ip` because `extractClientMeta` ignores `x-forwarded-for` without a
+ * trusted proxy boundary.
+ */
+export function registrationRequestHeaders(): Record<string, string> {
+  const count = registrationRequestCount++;
+  return {
+    'content-type': 'application/json',
+    'x-real-ip': `198.18.${Math.floor(count / 254)}.${(count % 254) + 1}`,
+  };
+}
+
 /** A thin wrapper over `app.request` that injects auth headers on every call. */
 export type TestClient = {
   request(path: string, init?: RequestInit): Promise<Response>;

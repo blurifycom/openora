@@ -10,7 +10,9 @@ export function migrate(databaseUrl?: string) {
     migrationsFolder: fileURLToPath(new URL('./drizzle/migrations', import.meta.url)),
     migrationsTable: '__drizzle_migrations_profile',
     migrationsSchema: 'drizzle',
-    // player.display_name GIN trgm index (substring search) needs the pg_trgm extension.
+    // Migration 0000 still creates the display_name trigram index that 0003 later drops,
+    // so a fresh database replaying the history needs the extension even though the
+    // current schema has no trigram index of its own.
     extensions: ['pg_trgm'],
     ...(databaseUrl ? { databaseUrl } : {}),
   });

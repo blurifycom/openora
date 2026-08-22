@@ -70,16 +70,19 @@ export class ComplianceService {
     return { success: true };
   }
 
-  async geoCheck(ipAddress: string) {
-    let countryCode: string | null = null;
-
-    if (this.geoIp) {
-      const result = await this.geoIp.lookup(ipAddress);
-      countryCode = result.countryCode;
-    }
+  async geoCheck(ipAddress: string | null) {
+    const countryCode =
+      this.geoIp && ipAddress ? (await this.geoIp.lookup(ipAddress)).countryCode : null;
 
     if (!countryCode) {
-      return { allowed: true, countryCode: null, reason: null };
+      // With rules configured, an unresolvable address is a gap in the gate, not a pass.
+      const [anyRule] = await this.drizzle.db
+        .select({ action: geoRule.action })
+        .from(geoRule)
+        .limit(1);
+      return anyRule
+        ? { allowed: false, countryCode: null, reason: 'Geolocation could not be determined' }
+        : { allowed: true, countryCode: null, reason: null };
     }
 
     const [rule] = await this.drizzle.db
@@ -87,15 +90,16 @@ export class ComplianceService {
       .from(geoRule)
       .where(eq(geoRule.countryCode, countryCode));
 
-    if (!rule) {
-      return { allowed: true, countryCode, reason: null };
-    }
-
-    if (rule.action === 'block') {
+    if (rule?.action === 'block') {
       return { allowed: false, countryCode, reason: `Country ${countryCode} is blocked` };
     }
 
     return { allowed: true, countryCode, reason: null };
+  }
+
+  async checkRegistration(ipAddress: string | null) {
+    const result = await this.geoCheck(ipAddress);
+    return { allowed: result.allowed };
   }
 
   async addGeoRule(input: AddGeoRuleInput, actorId?: User['id'], meta?: ClientMeta) {

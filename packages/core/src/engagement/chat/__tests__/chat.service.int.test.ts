@@ -1,7 +1,12 @@
 import { describe, it, expect, beforeAll, afterAll, beforeEach, vi } from 'vitest';
 import { randomUUID } from 'node:crypto';
 import { and, eq, isNull, sql } from 'drizzle-orm';
-import { createTestDb, InProcessRealtimeTransport, type TestDb } from '@openora/core/testing';
+import {
+  createTestDb,
+  InProcessRealtimeTransport,
+  type TestDb,
+  seedUser,
+} from '@openora/core/testing';
 import { user } from '@openora/core/pam/schema/identity';
 import { migrate as migrateIdentity } from '@openora/core/pam/migrate/identity';
 import type {
@@ -126,14 +131,6 @@ function makeService(
     transport,
     audit,
   };
-}
-
-async function seedUser(name = 'Player') {
-  const [row] = await db.drizzle.db
-    .insert(user)
-    .values({ name, email: `${randomUUID()}@test.dev`, emailVerified: true })
-    .returning();
-  return row!;
 }
 
 async function seedRoom(overrides: Partial<typeof chatRoom.$inferInsert> = {}) {
@@ -344,15 +341,15 @@ describe('ChatService.subscribeMessages per-viewer block filtering (real PG)', (
 });
 
 describe('ChatService.sendGlobalMessage (real PG)', () => {
-  it('stores the display name from the verified user, ignoring the header fallback', async () => {
+  it('stores the username from the verified user, ignoring the header fallback', async () => {
     const { svc, events } = makeService();
-    const account = await seedUser('Platform Admin');
+    const account = await seedUser(db, { name: 'Platform Admin', username: 'platform_admin' });
 
     const msg = await svc.sendGlobalMessage(account.id, 'spoofed-header-name', 'hi');
 
-    expect(msg.username).toBe('Platform Admin');
+    expect(msg.username).toBe('platform_admin');
     const [stored] = await db.drizzle.db.select().from(chatMessage);
-    expect(stored).toMatchObject({ roomId: null, username: 'Platform Admin' });
+    expect(stored).toMatchObject({ roomId: null, username: 'platform_admin' });
     expect(events.emit).toHaveBeenCalledWith('chat.message.sent', {
       messageId: msg.id,
       roomId: null,
@@ -477,7 +474,7 @@ describe('ChatService.sendRoomMessage (real PG)', () => {
   it('stores and publishes a message in a public room', async () => {
     const { svc, transport } = makeService();
     const room = await seedRoom();
-    const account = await seedUser('Alice');
+    const account = await seedUser(db, { name: 'Alice', username: 'alice' });
     const delivered: ChatMessage[] = [];
     transport.subscribe<ChatMessage>(chatChannel(room.id), (m) => delivered.push(m));
 
@@ -488,7 +485,7 @@ describe('ChatService.sendRoomMessage (real PG)', () => {
       content: 'hello room',
     });
 
-    expect(msg).toMatchObject({ roomId: room.id, username: 'Alice' });
+    expect(msg).toMatchObject({ roomId: room.id, username: 'alice' });
     expect(delivered.map((m) => m.id)).toEqual([msg.id]);
   });
 

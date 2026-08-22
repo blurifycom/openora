@@ -14,7 +14,7 @@ import { walletAutoWithdrawalConfig } from '@openora/core/wallet/schema';
 import {
   setupTestDb,
   bootTestApp,
-  asPlayer,
+  registerAndMaterializePlayer,
   seedMinimal,
   type TestDb,
   type TestApp,
@@ -22,7 +22,7 @@ import {
 } from '../index.js';
 
 /**
- * Independent QA verification of the wallet auto-withdrawal tag-exclusion list (moved
+ * Independent QA verification of the wallet auto-withdrawal tag-exclusion list moved
  * from static platform config to the DB-backed `wallet_auto_withdrawal_config` singleton's
  * `excludeRiskFlags` column, runtime-editable via `autoWithdrawalConfig.set`). The column
  * DEFAULT (5 tags, set at the migration level) is only a starting value for upgraded
@@ -31,8 +31,9 @@ import {
  * tag-based exclusion. Driven through the REAL app (bootTestApp: real Hono + oRPC + Postgres
  * + Redis + real tag module) rather than the implementer's own unit/router-level tests (which
  * mock PLAYER_TAGS / AdminGuard and never exercise a real tag assignment through the real tag
- * module + real IAM RBAC resolver end to end) - same rationale as the sibling
- * qa-wallet-auto-withdrawal-config.e2e.test.ts suite this file extends.
+ * module + real IAM RBAC resolver end to end) - same rationale as the sibling auto-withdrawal
+ * config QA suite
+ * this file extends.
  */
 
 let db: TestDb;
@@ -42,26 +43,6 @@ let superAdmin: TestClient;
 // oxlint-disable-next-line typescript/no-explicit-any -- ad-hoc JSON shape assertions in tests
 async function readJson(res: Response): Promise<any> {
   return res.json();
-}
-
-async function registerAndMaterializePlayer(app: TestApp['app'], email: string) {
-  const registerRes = await app.request('/identity/register', {
-    method: 'POST',
-    headers: { 'content-type': 'application/json' },
-    body: JSON.stringify({ email, password: 'password123', name: 'QA Player' }),
-  });
-  if (!registerRes.ok) {
-    throw new Error(`register failed (${registerRes.status}): ${await registerRes.text()}`);
-  }
-  const client = await asPlayer(app, { email });
-  const profileRes = await client.get('/profile');
-  if (!profileRes.ok) {
-    throw new Error(
-      `profile materialize failed (${profileRes.status}): ${await profileRes.text()}`,
-    );
-  }
-  const profile = (await profileRes.json()) as { id: string; userId: string };
-  return { client, playerId: profile.id, userId: profile.userId };
 }
 
 async function verifyKyc(admin: TestClient, userId: string) {
@@ -86,17 +67,16 @@ async function assignTag(admin: TestClient, playerId: string, tagKey: string) {
   return readJson(res);
 }
 
-// Bootstrap a super-admin the same way the sibling qa-wallet-auto-withdrawal-config.e2e.test.ts
-// suite does: stamp the static user.role='admin' coarse gate, then attach the real DB-backed
-// super-admin role assignment - both are required before the DB-backed permission resolver
-// becomes authoritative (see that sibling suite's own doc comment on AdminGuard.assert's
-// two-stage gate).
+// Bootstrap a super-admin the same way the sibling auto-withdrawal config suite does: stamp the static
+// user.role='admin' coarse gate, then attach the real DB-backed super-admin role
+// assignment - both are required before the DB-backed permission resolver becomes
+// authoritative (see that suite's own doc comment on AdminGuard.assert's two-stage gate).
 async function makeSuperAdmin(
-  app: TestApp['app'],
+  testApp: TestApp,
   container: Container<CoreTokenCatalog>,
   email: string,
 ) {
-  const { client, userId } = await registerAndMaterializePlayer(app, email);
+  const { client, userId } = await registerAndMaterializePlayer(testApp, { email: email });
   const drizzle = container.get(DRIZZLE).db;
   await drizzle.update(user).set({ role: 'admin' }).where(eq(user.id, userId));
   const [role] = await drizzle.select().from(adminRole).where(eq(adminRole.key, 'super-admin'));
@@ -145,7 +125,7 @@ beforeAll(async () => {
   await seedMinimal(appMain.container, { playerCount: 0 });
 
   const superAdminEmail = `super-admin-${randomUUID()}@e2e.test`;
-  const created = await makeSuperAdmin(appMain.app, appMain.container, superAdminEmail);
+  const created = await makeSuperAdmin(appMain, appMain.container, superAdminEmail);
   superAdmin = created.client;
 }, 60_000);
 
@@ -180,7 +160,7 @@ describe('upgraded install: the migration DEFAULT tags gate before any admin eve
     );
 
     const taggedEmail = `preexisting-tagged-${randomUUID()}@e2e.test`;
-    const tagged = await registerAndMaterializePlayer(appMain.app, taggedEmail);
+    const tagged = await registerAndMaterializePlayer(appMain, { email: taggedEmail });
     await verifyKyc(superAdmin, tagged.userId);
     await assignTag(superAdmin, tagged.playerId, 'high_risk');
     await tagged.client.post('/wallet/deposit', { amount: '500', currency: 'USD' });
@@ -190,7 +170,7 @@ describe('upgraded install: the migration DEFAULT tags gate before any admin eve
     expect(taggedRes.status).toBe('pending');
 
     const cleanEmail = `preexisting-clean-${randomUUID()}@e2e.test`;
-    const clean = await registerAndMaterializePlayer(appMain.app, cleanEmail);
+    const clean = await registerAndMaterializePlayer(appMain, { email: cleanEmail });
     await verifyKyc(superAdmin, clean.userId);
     await clean.client.post('/wallet/deposit', { amount: '500', currency: 'USD' });
     const cleanRes = await readJson(
@@ -217,7 +197,9 @@ describe('immediate effect: PUT excludeRiskFlags, GET reflects it right away, no
     await setConfig({ fiatThreshold: '1000', cryptoThreshold: '0', excludeRiskFlags: ['vip'] });
 
     const email = `widened-tag-${randomUUID()}@e2e.test`;
-    const { client, userId, playerId } = await registerAndMaterializePlayer(appMain.app, email);
+    const { client, userId, playerId } = await registerAndMaterializePlayer(appMain, {
+      email: email,
+    });
     await verifyKyc(superAdmin, userId);
     await assignTag(superAdmin, playerId, 'vip');
     await client.post('/wallet/deposit', { amount: '500', currency: 'USD' });
@@ -240,7 +222,9 @@ describe('full admin control: excludeRiskFlags is the sole source of truth, no s
     expect(got.excludeRiskFlags).toEqual([]);
 
     const email = `empty-array-clears-exclusion-${randomUUID()}@e2e.test`;
-    const { client, userId, playerId } = await registerAndMaterializePlayer(appMain.app, email);
+    const { client, userId, playerId } = await registerAndMaterializePlayer(appMain, {
+      email: email,
+    });
     await verifyKyc(superAdmin, userId);
     await assignTag(superAdmin, playerId, 'high_risk');
     await client.post('/wallet/deposit', { amount: '500', currency: 'USD' });
@@ -262,7 +246,9 @@ describe('full admin control: excludeRiskFlags is the sole source of truth, no s
     });
 
     const email = `omitted-tag-no-longer-excluded-${randomUUID()}@e2e.test`;
-    const { client, userId, playerId } = await registerAndMaterializePlayer(appMain.app, email);
+    const { client, userId, playerId } = await registerAndMaterializePlayer(appMain, {
+      email: email,
+    });
     await verifyKyc(superAdmin, userId);
     await assignTag(superAdmin, playerId, 'kyc_rejected');
     await client.post('/wallet/deposit', { amount: '500', currency: 'USD' });
@@ -282,7 +268,9 @@ describe('effective set = the DB value verbatim: excluded regardless of amount w
     });
 
     const email = `tiny-amount-excluded-${randomUUID()}@e2e.test`;
-    const { client, userId, playerId } = await registerAndMaterializePlayer(appMain.app, email);
+    const { client, userId, playerId } = await registerAndMaterializePlayer(appMain, {
+      email: email,
+    });
     await verifyKyc(superAdmin, userId);
     await assignTag(superAdmin, playerId, 'vip');
     await client.post('/wallet/deposit', { amount: '500', currency: 'USD' });
@@ -294,7 +282,7 @@ describe('effective set = the DB value verbatim: excluded regardless of amount w
 });
 
 describe('regression (no weakening): a player with no excluded tag, under threshold, KYC-approved still auto-approves', () => {
-  it('auto-approves exactly as before tag-exclusion existed, with the exclusion set configured but not held by this player', async () => {
+  it('auto-approves exactly as it did before the exclusion list existed, with the exclusion set configured but not held by this player', async () => {
     await setConfig({
       fiatThreshold: '1000',
       cryptoThreshold: '0',
@@ -302,7 +290,7 @@ describe('regression (no weakening): a player with no excluded tag, under thresh
     });
 
     const email = `no-regression-${randomUUID()}@e2e.test`;
-    const { client, userId } = await registerAndMaterializePlayer(appMain.app, email);
+    const { client, userId } = await registerAndMaterializePlayer(appMain, { email: email });
     await verifyKyc(superAdmin, userId);
     await client.post('/wallet/deposit', { amount: '500', currency: 'USD' });
     const res = await readJson(
@@ -321,7 +309,9 @@ describe('per-player override does not bypass the tag-exclusion gate', () => {
     });
 
     const email = `rule-override-excluded-tag-${randomUUID()}@e2e.test`;
-    const { client, userId, playerId } = await registerAndMaterializePlayer(appMain.app, email);
+    const { client, userId, playerId } = await registerAndMaterializePlayer(appMain, {
+      email: email,
+    });
     await verifyKyc(superAdmin, userId);
     await assignTag(superAdmin, playerId, 'multi_account');
     await superAdmin.put(`/wallet/auto-withdrawal-rules/${userId}`, {
@@ -365,7 +355,7 @@ describe('audit trail', () => {
     });
 
     const email = `audit-effective-tags-${randomUUID()}@e2e.test`;
-    const { client, userId } = await registerAndMaterializePlayer(appMain.app, email);
+    const { client, userId } = await registerAndMaterializePlayer(appMain, { email: email });
     await verifyKyc(superAdmin, userId);
     await client.post('/wallet/deposit', { amount: '500', currency: 'USD' });
     const res = await readJson(

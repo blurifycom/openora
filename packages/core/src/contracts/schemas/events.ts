@@ -493,14 +493,14 @@ export const domainEventSchemas = {
     friendshipId: UuidSchema,
     requesterId: UuidSchema,
     addresseeId: UuidSchema,
-    requesterDisplayName: z.string(),
+    requesterUsername: z.string(),
   }),
   'social.friend_request.accepted': authContextBase.extend({
     friendshipId: UuidSchema,
     requesterId: UuidSchema,
     addresseeId: UuidSchema,
     accepterId: UuidSchema,
-    accepterDisplayName: z.string(),
+    accepterUsername: z.string(),
   }),
   'social.friendship.removed': authContextBase.extend({
     friendshipId: UuidSchema,

@@ -1,9 +1,15 @@
-import { createHash, createHmac, randomUUID } from 'node:crypto';
+import { createHash, createHmac } from 'node:crypto';
 import { describe, it, expect, vi, beforeAll, afterAll, beforeEach } from 'vitest';
 import { ORPCError } from '@orpc/server';
 import { sql } from 'drizzle-orm';
 import { RedisCache } from '@openora/core/server';
-import { createTestDb, createTestRedis, type TestDb, type TestRedis } from '@openora/core/testing';
+import {
+  createTestDb,
+  createTestRedis,
+  type TestDb,
+  type TestRedis,
+  seedUser as insertUser,
+} from '@openora/core/testing';
 import { migrate as migrateIdentity } from '@openora/core/pam/migrate/identity';
 import { player } from '@openora/core/pam/schema/profile';
 import { migrate as migrateProfile } from '@openora/core/pam/migrate/profile';
@@ -81,20 +87,8 @@ function expectedSignature(token: string): string {
 // SHA-256 of a code, mirroring the service's hashCode.
 const hash = (code: string) => createHash('sha256').update(code).digest('hex');
 
-async function seedUser(over: Partial<typeof user.$inferInsert> = {}) {
-  const [row] = await db.drizzle.db
-    .insert(user)
-    .values({
-      name: 'A',
-      email: `${randomUUID()}@b.dev`,
-      emailVerified: true,
-      phoneNumber: PHONE,
-      phoneVerified: true,
-      ...over,
-    })
-    .returning();
-  return row;
-}
+const seedUser = (over: Partial<typeof user.$inferInsert> = {}) =>
+  insertUser(db, { name: 'A', phoneNumber: PHONE, phoneVerified: true, ...over });
 
 async function seedOtp(userId: string, over: Partial<typeof smsOtpSession.$inferInsert> = {}) {
   const [row] = await db.drizzle.db
@@ -481,9 +475,7 @@ describe('PhoneLoginService.verifyOtp (real PG + real Redis)', () => {
   it('suspended player is forbidden after the OTP passes, and neither the session nor the OTP is consumed', async () => {
     const code = '123456';
     const account = await seedUser();
-    await db.drizzle.db
-      .insert(player)
-      .values({ userId: account.id, displayName: 'x', status: 'suspended' });
+    await db.drizzle.db.insert(player).values({ userId: account.id, status: 'suspended' });
     await seedOtp(account.id, { codeHash: hash(code) });
     const { svc, events } = build();
     const resHeaders = new Headers();

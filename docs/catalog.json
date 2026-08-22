@@ -255,6 +255,7 @@
         "identity.streamSession",
         "identity.unlockUser",
         "identity.updateProfile",
+        "identity.usernameAvailable",
         "identity.verify2fa",
         "identity.verifyEmail",
         "identity.verifyPasswordResetOtp"
@@ -607,6 +608,16 @@
       ]
     },
     {
+      "category": "geo-check-commands",
+      "interface": "GeoCheckCommands",
+      "token": "GEO_CHECK_COMMANDS",
+      "status": "wired",
+      "boundIn": [
+        "packages/core/src/compliance/plugin.ts",
+        "packages/core/src/pam/identity/plugin.ts"
+      ]
+    },
+    {
       "category": "geo-ip",
       "interface": "GeoIpAdapter",
       "token": "GEO_IP_ADAPTER",
@@ -731,6 +742,16 @@
       "boundIn": [
         "packages/core/src/pam/player-management/plugin.ts",
         "packages/core/src/server/runtime/create-app.ts"
+      ]
+    },
+    {
+      "category": "player-provisioning",
+      "interface": "PlayerProvisioning",
+      "token": "PLAYER_PROVISIONING",
+      "status": "wired",
+      "boundIn": [
+        "packages/core/src/pam/identity/plugin.ts",
+        "packages/core/src/pam/profile/plugin.ts"
       ]
     },
     {
@@ -1776,6 +1797,14 @@
       "file": "packages/core/src/contracts/schemas/identity.ts"
     },
     {
+      "name": "RegisterOutputSchema",
+      "file": "packages/core/src/contracts/schemas/identity.ts"
+    },
+    {
+      "name": "RegistrationConfigSchema",
+      "file": "packages/core/src/contracts/schemas/platform-config.ts"
+    },
+    {
       "name": "RegistrationsOverTimePointSchema",
       "file": "packages/core/src/admin-console/contract/index.ts"
     },
@@ -1986,6 +2015,18 @@
     {
       "name": "UserIdInputSchema",
       "file": "packages/core/src/contracts/schemas/common.ts"
+    },
+    {
+      "name": "UsernameAvailabilityInputSchema",
+      "file": "packages/core/src/contracts/schemas/identity.ts"
+    },
+    {
+      "name": "UsernameAvailabilityOutputSchema",
+      "file": "packages/core/src/contracts/schemas/identity.ts"
+    },
+    {
+      "name": "UsernameSchema",
+      "file": "packages/core/src/contracts/schemas/identity.ts"
     },
     {
       "name": "UserRoleSchema",

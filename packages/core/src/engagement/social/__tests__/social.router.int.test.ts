@@ -2,9 +2,16 @@ import { describe, it, expect, beforeAll, afterAll, beforeEach } from 'vitest';
 import { randomUUID } from 'node:crypto';
 import { sql } from 'drizzle-orm';
 import { call, ORPCError } from '@orpc/server';
-import { createTestDb, type TestDb } from '@openora/core/testing';
+import {
+  createTestDb,
+  seedPlayerWithUser,
+  type SeedPlayerOverrides,
+  type TestDb,
+} from '@openora/core/testing';
 import { migrate as migrateChat } from '@openora/core/engagement/migrate/chat';
 import { chatUserBlock } from '@openora/core/engagement/schema/chat';
+import { migrate as migrateIdentity } from '@openora/core/pam/migrate/identity';
+import { user } from '@openora/core/pam/schema/identity';
 import { player } from '@openora/core/pam/schema/profile';
 import { migrate as migrateProfile } from '@openora/core/pam/migrate/profile';
 import { makeEventBus, makeIdentityReader, testContext } from '../../../testing/mock.js';
@@ -23,18 +30,13 @@ function build() {
   };
 }
 
-async function seedPlayer(overrides: Partial<typeof player.$inferInsert> = {}) {
-  const [row] = await db.drizzle.db
-    .insert(player)
-    .values({ userId: randomUUID(), displayName: 'Player', ...overrides })
-    .returning();
-  return row!;
-}
+const seedPlayer = async (overrides: SeedPlayerOverrides = {}) =>
+  (await seedPlayerWithUser(db, overrides)).player;
 
 const ctxFor = (userId: string) => testContext({ auth: { userId } });
 
 beforeAll(async () => {
-  db = await createTestDb([migrate, migrateProfile, migrateChat]);
+  db = await createTestDb([migrateIdentity, migrate, migrateProfile, migrateChat]);
 });
 
 afterAll(async () => {
@@ -43,7 +45,7 @@ afterAll(async () => {
 
 beforeEach(async () => {
   await db.drizzle.db.execute(
-    sql`TRUNCATE ${friendship}, ${chatUserBlock}, ${player} RESTART IDENTITY CASCADE`,
+    sql`TRUNCATE ${friendship}, ${chatUserBlock}, ${player}, ${user} RESTART IDENTITY CASCADE`,
   );
 });
 
@@ -120,8 +122,8 @@ describe('social router authz', () => {
 describe('social router listFriendRequests / accept / decline / cancel', () => {
   it('lists an incoming pending request and accepts it, removing it from the requests tab', async () => {
     const { router } = build();
-    const requester = await seedPlayer({ displayName: 'Alice' });
-    const addressee = await seedPlayer({ displayName: 'Bob' });
+    const requester = await seedPlayer({ username: 'alice' });
+    const addressee = await seedPlayer({ username: 'bob' });
     const sent = await call(
       router.sendFriendRequest,
       { targetUserId: addressee.userId },
@@ -257,8 +259,8 @@ describe('social router listFriendRequests / accept / decline / cancel', () => {
 describe('social router listFriends', () => {
   it('returns the accepted, non-removed friends for the caller', async () => {
     const { router } = build();
-    const caller = await seedPlayer({ displayName: 'Caller' });
-    const friend = await seedPlayer({ displayName: 'Friend' });
+    const caller = await seedPlayer({ username: 'caller' });
+    const friend = await seedPlayer({ username: 'friend' });
     await call(
       router.sendFriendRequest,
       { targetUserId: friend.userId },
@@ -277,7 +279,7 @@ describe('social router listFriends', () => {
     );
 
     expect(result.total).toBe(1);
-    expect(result.items[0]).toMatchObject({ userId: friend.userId, displayName: 'Friend' });
+    expect(result.items[0]).toMatchObject({ userId: friend.userId, username: 'friend' });
   });
 });
 
@@ -325,8 +327,8 @@ describe('social router removeFriend', () => {
 describe('social router sendFriendRequest', () => {
   it('sends a pending friend request for an authenticated caller', async () => {
     const { router } = build();
-    const requester = await seedPlayer({ displayName: 'Alice' });
-    const target = await seedPlayer({ displayName: 'Bob' });
+    const requester = await seedPlayer({ username: 'alice' });
+    const target = await seedPlayer({ username: 'bob' });
 
     const result = await call(
       router.sendFriendRequest,
