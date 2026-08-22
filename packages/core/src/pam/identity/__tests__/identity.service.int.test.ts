@@ -2,7 +2,13 @@ import { randomUUID } from 'node:crypto';
 import { describe, it, expect, vi, beforeAll, afterAll, beforeEach } from 'vitest';
 import { eq, sql } from 'drizzle-orm';
 import { ORPCError } from '@orpc/server';
-import { createTestDb, createTestRedis, type TestDb, type TestRedis } from '@openora/core/testing';
+import {
+  createTestDb,
+  createTestRedis,
+  type TestDb,
+  type TestRedis,
+  seedUser as insertUser,
+} from '@openora/core/testing';
 import { migrate as migrateIdentity } from '@openora/core/pam/migrate/identity';
 import { player } from '@openora/core/pam/schema/profile';
 import { migrate as migrateProfile } from '@openora/core/pam/migrate/profile';
@@ -109,19 +115,8 @@ const betterAuthUser = {
 
 const EMAIL = 'a@b.dev';
 
-async function seedUser(over: Partial<typeof user.$inferInsert> = {}) {
-  const [row] = await db.drizzle.db
-    .insert(user)
-    .values({
-      name: 'A',
-      username: `u_${randomUUID().replaceAll('-', '').slice(0, 14)}`,
-      email: EMAIL,
-      emailVerified: true,
-      ...over,
-    })
-    .returning();
-  return row;
-}
+const seedUser = (over: Partial<typeof user.$inferInsert> = {}) =>
+  insertUser(db, { name: 'A', email: EMAIL, ...over });
 
 async function readUser(userId: string) {
   const [row] = await db.drizzle.db.select().from(user).where(eq(user.id, userId));

@@ -1,1 +1,0 @@
-CREATE INDEX "user_username_trgm_idx" ON "user" USING gin ("username" gin_trgm_ops);

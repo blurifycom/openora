@@ -57,20 +57,6 @@
       "when": 1787339175084,
       "tag": "0007_fuzzy_barracuda",
       "breakpoints": true
-    },
-    {
-      "idx": 8,
-      "version": "7",
-      "when": 1787351352671,
-      "tag": "0008_great_swarm",
-      "breakpoints": true
-    },
-    {
-      "idx": 9,
-      "version": "7",
-      "when": 1787352334627,
-      "tag": "0009_silky_captain_marvel",
-      "breakpoints": true
     }
   ]
 }

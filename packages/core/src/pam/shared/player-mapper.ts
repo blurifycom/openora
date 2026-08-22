@@ -23,24 +23,11 @@ export function toPlayer(row: typeof player.$inferSelect, email: string, usernam
   };
 }
 
-export async function fetchEmailByUserId(
-  drizzle: DrizzleService,
-  userId: User['id'],
-): Promise<string> {
+/** The identity columns `toPlayer` needs, or null when the user row is gone. */
+export async function fetchIdentityByUserId(drizzle: DrizzleService, userId: User['id']) {
   const [record] = await drizzle.db
-    .select({ email: user.email })
+    .select({ email: user.email, username: user.username })
     .from(user)
     .where(eq(user.id, userId));
-  return record?.email ?? '';
-}
-
-export async function fetchUsernameByUserId(
-  drizzle: DrizzleService,
-  userId: User['id'],
-): Promise<string> {
-  const [record] = await drizzle.db
-    .select({ username: user.username })
-    .from(user)
-    .where(eq(user.id, userId));
-  return record?.username ?? '';
+  return record ?? null;
 }

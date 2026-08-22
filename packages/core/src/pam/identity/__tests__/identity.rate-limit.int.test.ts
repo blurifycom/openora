@@ -90,7 +90,6 @@ describe('IdentityService - rate limiting (real Redis)', () => {
           acceptedAge: true,
         },
         {},
-        new Headers(),
       ),
     ).rejects.toMatchObject({
       code: 'TOO_MANY_REQUESTS',
@@ -112,7 +111,6 @@ describe('IdentityService - rate limiting (real Redis)', () => {
           acceptedAge: true,
         },
         {},
-        new Headers(),
       ),
     ).rejects.not.toMatchObject({ code: 'TOO_MANY_REQUESTS' });
   });

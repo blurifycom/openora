@@ -16,7 +16,6 @@ import { createSealedToken, type SealedToken } from './token.js';
 export type DirectAuditAction =
   | 'admin.user.updated'
   | 'admin.player.updated'
-  | 'admin.player.username_corrected'
   | 'admin.player.removed'
   | 'admin.player_note.created'
   | 'audit.export'

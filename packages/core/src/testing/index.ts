@@ -12,4 +12,9 @@ export {
   type TestDb,
   type TestRedis,
 } from './real-infra.js';
-export { seedPlayerWithUser, type SeedPlayerOverrides } from './seed-player.js';
+export {
+  seedUser,
+  seedPlayerWithUser,
+  uniqueUsername,
+  type SeedPlayerOverrides,
+} from './seed-player.js';

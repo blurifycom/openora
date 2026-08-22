@@ -114,7 +114,7 @@ describe('player router update', () => {
       expect.objectContaining({
         actorId: CALLER,
         actorType: 'admin',
-        action: 'admin.player.username_corrected',
+        action: 'admin.player.updated',
         resourceType: 'player',
         resourceId: seeded.id,
         before: expect.objectContaining({ username: expect.any(String) }),

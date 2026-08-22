@@ -4,7 +4,7 @@ import { DRIZZLE } from '@openora/core/server';
 import { user } from '@openora/core/pam/schema/identity';
 import type { TestApp } from './app.js';
 import { capturedEmailsFor } from './captured-emails.js';
-import { registrationRequestHeaders } from './request.js';
+import { asPlayer, registrationRequestHeaders, type TestClient } from './request.js';
 
 export type RegisterPlayerInput = {
   email: string;
@@ -90,4 +90,28 @@ export async function registerPlayer(
     await verifyEmailByLink(app, input.email);
   }
   return registered.id;
+}
+
+/**
+ * Registers, verifies, signs in, and materialises the PAM `player` row (the profile
+ * route is get-or-create), so downstream modules resolve a real `player.id` - the
+ * audit trail's `resolvePlayerId` needs one.
+ */
+export async function registerAndMaterializePlayer(
+  app: TestApp,
+  input: RegisterPlayerInput,
+): Promise<{ client: TestClient; userId: string; playerId: string }> {
+  const userId = await registerPlayer(app, input);
+  const client = await asPlayer(app.app, {
+    email: input.email,
+    ...(input.password ? { password: input.password } : {}),
+  });
+  const profileRes = await client.get('/profile');
+  if (!profileRes.ok) {
+    throw new Error(
+      `profile materialize failed (${profileRes.status}): ${await profileRes.text()}`,
+    );
+  }
+  const { id: playerId } = (await profileRes.json()) as { id: string };
+  return { client, userId, playerId };
 }

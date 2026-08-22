@@ -15,7 +15,13 @@ import type {
   SendEmailPort,
   SessionCommands,
 } from '@openora/core/contracts';
-import { createTestDb, createTestRedis, type TestDb, type TestRedis } from '@openora/core/testing';
+import {
+  createTestDb,
+  createTestRedis,
+  type TestDb,
+  type TestRedis,
+  seedUser,
+} from '@openora/core/testing';
 import { migrate as migrateIam } from '@openora/core/iam/migrate';
 import { migrate as migrateIdentity } from '@openora/core/pam/migrate/identity';
 import { user } from '@openora/core/pam/schema/identity';
@@ -73,19 +79,6 @@ async function seedRole(
       key: overrides.key ?? null,
       isSystem: overrides.isSystem ?? false,
       isSuperAdmin: overrides.isSuperAdmin ?? false,
-    })
-    .returning();
-  return row;
-}
-
-async function seedUser(role: string) {
-  const [row] = await db.drizzle.db
-    .insert(user)
-    .values({
-      name: 'U',
-      username: `u_${randomUUID().replaceAll('-', '').slice(0, 14)}`,
-      email: `${randomUUID()}@x.dev`,
-      role,
     })
     .returning();
   return row;
@@ -425,7 +418,7 @@ describe('IamService.deleteRole', () => {
 describe('IamService.assignRole', () => {
   it('dedupes an existing assignment without inserting again (unique index)', async () => {
     const role = await seedRole();
-    const target = await seedUser('admin');
+    const target = await seedUser(db, { name: 'U', role: 'admin' });
     await seedAssignment(target.id, role.id);
     const events = makeEventBus();
     const svc = makeIamService(db.drizzle, events, makeEmail());
@@ -444,7 +437,7 @@ describe('IamService.assignRole', () => {
 
   it('rejects assigning a role to a non-admin (player) account', async () => {
     const role = await seedRole();
-    const player = await seedUser('player');
+    const player = await seedUser(db, { name: 'U', role: 'player' });
     const svc = makeIamService(db.drizzle, makeEventBus(), makeEmail());
     await expect(
       svc.assignRole({ userId: player.id, roleId: role.id, caller: ADMIN_CALLER }),
@@ -461,7 +454,7 @@ describe('IamService.assignRole', () => {
 
   it('the unique index keeps two concurrent assigns from double-inserting', async () => {
     const role = await seedRole();
-    const target = await seedUser('admin');
+    const target = await seedUser(db, { name: 'U', role: 'admin' });
     const svc = makeIamService(db.drizzle, makeEventBus(), makeEmail());
 
     await Promise.allSettled([
@@ -564,7 +557,7 @@ describe('IamService.previewEffectivePermissions', () => {
   });
 
   it('falls back to static role permissions when the user has no dynamic role assignments', async () => {
-    const u = await seedUser('support');
+    const u = await seedUser(db, { name: 'U', role: 'support' });
     const svc = makeIamService(db.drizzle, makeEventBus(), makeEmail());
     const result = await svc.previewEffectivePermissions({ userId: u.id });
     expect(result.permissions).not.toHaveLength(0);

@@ -311,13 +311,13 @@ export class ChatService {
     return new Map(summaries.map((s) => [s.userId, s.username]));
   }
 
-  private async resolveDisplayName(userId: User['id'], fallback: string) {
+  private async resolveUsername(userId: User['id'], fallback: string) {
     const [row] = await this.drizzle.db
-      .select({ name: user.name, username: user.username })
+      .select({ username: user.username })
       .from(user)
       .where(eq(user.id, userId))
       .limit(1);
-    return row?.username?.trim() || row?.name?.trim() || fallback || 'anonymous';
+    return row?.username.trim() || fallback || 'anonymous';
   }
 
   /** Throws ChatRoomNotFoundError or ChatRoomNotMemberError; returns the room on success. */
@@ -1055,7 +1055,7 @@ export class ChatService {
     await this.moderation.assertCanSend(userId, roomId, room.isPublic);
 
     const safeContent = gateContent(content);
-    const resolvedUsername = await this.resolveDisplayName(userId, username);
+    const resolvedUsername = await this.resolveUsername(userId, username);
     const [record] = await this.drizzle.db
       .insert(chatMessage)
       .values({
@@ -1119,7 +1119,7 @@ export class ChatService {
     // TODO: check RG_SELF_EXCLUSION_SERVICE before send (sealed token not yet implemented)
     await this.moderation.assertCanSend(userId, null);
     const safeContent = gateContent(content);
-    const resolvedUsername = await this.resolveDisplayName(userId, username);
+    const resolvedUsername = await this.resolveUsername(userId, username);
     const [record] = await this.drizzle.db
       .insert(chatMessage)
       .values({

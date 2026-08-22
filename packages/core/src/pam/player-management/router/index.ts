@@ -40,17 +40,6 @@ export function createPlayerRouter(
           },
           adminId,
         );
-        if (input.username !== undefined && input.username !== before.username) {
-          await audit.record({
-            actorId: adminId,
-            actorType: 'admin',
-            action: 'admin.player.username_corrected',
-            resourceType: 'player',
-            resourceId: input.playerId,
-            before: { username: before.username },
-            after: { username: updated.username },
-          });
-        }
         await audit.record({
           actorId: adminId,
           actorType: 'admin',
@@ -58,10 +47,12 @@ export function createPlayerRouter(
           resourceType: 'player',
           resourceId: input.playerId,
           before: {
+            username: before.username,
             status: before.status,
             level: before.level,
           },
           after: {
+            username: updated.username,
             status: updated.status,
             level: updated.level,
           },

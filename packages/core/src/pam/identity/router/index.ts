@@ -29,7 +29,7 @@ export function createIdentityRouter(
   return os.router({
     register: os.register.handler(({ input, context }) =>
       mapErrors({ CONFLICT: UsernameConflictError }, () =>
-        identity.register(input, context.request.headers, context.resHeaders ?? new Headers()),
+        identity.register(input, context.request.headers),
       ),
     ),
 

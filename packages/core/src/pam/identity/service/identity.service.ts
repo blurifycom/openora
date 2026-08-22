@@ -374,7 +374,7 @@ export class IdentityService {
     return session?.user?.id ?? null;
   }
 
-  async register(input: RegisterInput, reqHeaders: NodeHeaders, resHeaders: Headers) {
+  async register(input: RegisterInput, reqHeaders: NodeHeaders) {
     const registration = this.platformConfig?.registration;
     const provisioning = this.playerProvisioning;
     if (!registration || !provisioning) {
@@ -390,14 +390,6 @@ export class IdentityService {
     if (this.geoCheck && !(await this.geoCheck.checkRegistration(ip)).allowed) {
       throw new ORPCError('FORBIDDEN', { message: 'Registration is unavailable' });
     }
-    const [existingUsername] = await this.drizzle.db
-      .select({ id: user.id })
-      .from(user)
-      .where(eq(sql`lower(${user.username})`, input.username))
-      .limit(1);
-    if (existingUsername) {
-      throw new UsernameConflictError();
-    }
     const headers = nodeHeadersToHeaders(reqHeaders);
     const authResponse = await this.api.signUpEmail({
       body: {
@@ -410,23 +402,17 @@ export class IdentityService {
       asResponse: true,
     });
     if (!authResponse.ok) {
-      const [winner] = await this.drizzle.db
-        .select({ id: user.id })
-        .from(user)
-        .where(eq(sql`lower(${user.username})`, input.username))
-        .limit(1);
-      if (winner) {
+      // The `lower(username)` unique index is the only arbiter - a pre-flight check
+      // could not close the race anyway, so the taken handle is read off the failure.
+      if (await this.findUserIdByUsername(input.username)) {
         throw new UsernameConflictError();
       }
       await ensureOk(authResponse, { genericMessage: 'Registration is unavailable' });
     }
     const body = (await authResponse.json()) as { user: BetterAuthUser };
-    const [stored] = await this.drizzle.db
-      .select({ id: user.id })
-      .from(user)
-      .where(eq(user.email, input.email.toLowerCase()))
-      .limit(1);
-    if (stored?.id === body.user.id) {
+    // A known address gets an indistinguishable success response (and a reset mail)
+    // rather than a new account, so only a genuinely new user is provisioned.
+    if ((await this.findUserIdByEmail(input.email)) === body.user.id) {
       const { playerId } = await this.recordRegistrationConsent(
         provisioning,
         body.user.id,
@@ -440,8 +426,25 @@ export class IdentityService {
         userAgent,
       });
     }
-    void resHeaders;
     return { status: 'check-email' as const };
+  }
+
+  private async findUserIdByUsername(username: string) {
+    const [row] = await this.drizzle.db
+      .select({ id: user.id })
+      .from(user)
+      .where(eq(sql`lower(${user.username})`, username.toLowerCase()))
+      .limit(1);
+    return row?.id ?? null;
+  }
+
+  private async findUserIdByEmail(email: string) {
+    const [row] = await this.drizzle.db
+      .select({ id: user.id })
+      .from(user)
+      .where(eq(user.email, email.toLowerCase()))
+      .limit(1);
+    return row?.id ?? null;
   }
 
   /**
@@ -456,7 +459,7 @@ export class IdentityService {
     { ip, userAgent }: ClientMeta,
   ) {
     const now = new Date();
-    let outcome: { created: boolean; playerId?: string };
+    let outcome: Awaited<ReturnType<PlayerProvisioning['createForRegistration']>>;
     try {
       outcome = await provisioning.createForRegistration({
         userId,
@@ -492,12 +495,7 @@ export class IdentityService {
       `check-username:${ip ?? 'unknown'}`,
       USERNAME_AVAILABILITY_RATE_LIMIT,
     );
-    const [existing] = await this.drizzle.db
-      .select({ id: user.id })
-      .from(user)
-      .where(eq(sql`lower(${user.username})`, username.toLowerCase()))
-      .limit(1);
-    return { available: !existing };
+    return { available: !(await this.findUserIdByUsername(username)) };
   }
 
   /**
@@ -1241,15 +1239,7 @@ export class IdentityService {
     } catch {
       return null;
     }
-    if (typeof email !== 'string') {
-      return null;
-    }
-    const [row] = await this.drizzle.db
-      .select({ id: user.id })
-      .from(user)
-      .where(eq(user.email, email.toLowerCase()))
-      .limit(1);
-    return row?.id ?? null;
+    return typeof email === 'string' ? this.findUserIdByEmail(email) : null;
   }
 
   async changeEmail(input: ChangeEmailInput, reqHeaders: NodeHeaders, resHeaders: Headers) {

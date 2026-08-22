@@ -8,13 +8,11 @@ import {
   type CoreTokenCatalog,
 } from '@openora/core/server';
 import { game, gameRound } from '@openora/core/casino/schema/gaming';
-import { user } from '@openora/core/pam/schema/identity';
 import { wallet, walletBalance, walletTransaction } from '@openora/core/wallet/schema';
 import {
   setupTestDb,
   bootTestApp,
-  registerPlayer,
-  asPlayer,
+  registerAndMaterializePlayer,
   type TestDb,
   type TestApp,
   type TestClient,
@@ -27,20 +25,6 @@ let gameId: string;
 // oxlint-disable-next-line typescript/no-explicit-any -- ad-hoc JSON shape assertions in tests
 async function readJson(res: Response): Promise<any> {
   return res.json();
-}
-
-async function registerAndLogin(email: string): Promise<{ client: TestClient; userId: string }> {
-  await registerPlayer(app, { email });
-  const client = await asPlayer(app.app, { email });
-  const [registered] = await app.container
-    .get(DRIZZLE)
-    .db.select({ id: user.id })
-    .from(user)
-    .where(eq(user.email, email));
-  if (!registered) {
-    throw new Error('registered user was not persisted');
-  }
-  return { client, userId: registered.id };
 }
 
 async function deposit(client: TestClient, amount: string, currency = 'USD') {
@@ -89,7 +73,9 @@ afterAll(async () => {
 
 describe('gaming stake debit e2e', () => {
   it('debits the stake atomically with the round and records a completed bet ledger row', async () => {
-    const { client, userId } = await registerAndLogin(`stake-debit-${randomUUID()}@example.com`);
+    const { client, userId } = await registerAndMaterializePlayer(app, {
+      email: `stake-debit-${randomUUID()}@example.com`,
+    });
     await deposit(client, '100');
 
     const res = await client.post('/gaming/rounds/start', {
@@ -126,7 +112,9 @@ describe('gaming stake debit e2e', () => {
   });
 
   it('rejects starting a round the player cannot afford and creates no round', async () => {
-    const { client } = await registerAndLogin(`stake-debit-poor-${randomUUID()}@example.com`);
+    const { client } = await registerAndMaterializePlayer(app, {
+      email: `stake-debit-poor-${randomUUID()}@example.com`,
+    });
     await deposit(client, '5');
 
     const res = await client.post('/gaming/rounds/start', {

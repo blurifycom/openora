@@ -2,9 +2,8 @@ import { DrizzleService, makeNotFoundError } from '@openora/core/server';
 import type { PlayerProvisioning, PlayerRegistrationRecord, User } from '@openora/core/contracts';
 import { eq } from 'drizzle-orm';
 import { player } from '../schema/index.js';
-import { user } from '@openora/core/pam/schema/identity';
 import type { UpdatePlayerProfileInput } from '../contract/index.js';
-import { toPlayer, fetchEmailByUserId, fetchUsernameByUserId } from '../../shared/player-mapper.js';
+import { toPlayer, fetchIdentityByUserId } from '../../shared/player-mapper.js';
 
 export const ProfileUserNotFoundError = makeNotFoundError('User');
 
@@ -27,10 +26,7 @@ export class ProfileService implements PlayerProvisioning {
    * create an orphan that every downstream join then has to defend against.
    */
   private async ensureProfile(userId: User['id']) {
-    const [identity] = await this.drizzle.db
-      .select({ email: user.email, username: user.username })
-      .from(user)
-      .where(eq(user.id, userId));
+    const identity = await fetchIdentityByUserId(this.drizzle, userId);
     if (!identity) {
       throw new ProfileUserNotFoundError(userId);
     }
@@ -56,16 +52,12 @@ export class ProfileService implements PlayerProvisioning {
   }
 
   async updateMyProfile(userId: User['id'], data: UpdatePlayerProfileInput) {
-    await this.ensureProfile(userId);
+    const { email, username } = await this.ensureProfile(userId);
     const [record] = await this.drizzle.db
       .update(player)
       .set(data)
       .where(eq(player.userId, userId))
       .returning();
-    return toPlayer(
-      record,
-      await fetchEmailByUserId(this.drizzle, userId),
-      await fetchUsernameByUserId(this.drizzle, userId),
-    );
+    return toPlayer(record, email, username);
   }
 }

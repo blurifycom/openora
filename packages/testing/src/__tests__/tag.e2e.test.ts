@@ -14,7 +14,7 @@ import { walletTransaction } from '@openora/core/wallet/schema';
 import {
   setupTestDb,
   bootTestApp,
-  registerPlayer,
+  registerAndMaterializePlayer,
   asPlayer,
   asAdmin,
   seedMinimal,
@@ -37,19 +37,6 @@ let admin: TestClient;
 // oxlint-disable-next-line typescript/no-explicit-any -- ad-hoc JSON shape assertions in tests
 async function readJson(res: Response): Promise<any> {
   return res.json();
-}
-
-async function registerAndMaterializePlayer(honoApp: TestApp['app'], email: string) {
-  await registerPlayer(app, { email });
-  const client = await asPlayer(honoApp, { email });
-  const profileRes = await client.get('/profile');
-  if (!profileRes.ok) {
-    throw new Error(
-      `profile materialize failed (${profileRes.status}): ${await profileRes.text()}`,
-    );
-  }
-  const profile = (await profileRes.json()) as { id: string; userId: string };
-  return { client, playerId: profile.id, userId: profile.userId };
 }
 
 async function backdateSessions(
@@ -147,8 +134,8 @@ describe('withdrawal_review: assign on wallet.withdrawal.requested', () => {
 
     const belowEmail = `wr-below-${randomUUID()}@e2e.test`;
     const { client: belowClient, playerId: belowPlayerId } = await registerAndMaterializePlayer(
-      app.app,
-      belowEmail,
+      app,
+      { email: belowEmail },
     );
     await belowClient.post('/wallet/deposit', { amount: '1000', currency: 'USD' });
     const belowRes = await belowClient.post('/wallet/withdraw', { amount: '499', currency: 'USD' });
@@ -156,8 +143,8 @@ describe('withdrawal_review: assign on wallet.withdrawal.requested', () => {
 
     const aboveEmail = `wr-above-${randomUUID()}@e2e.test`;
     const { client: aboveClient, playerId: abovePlayerId } = await registerAndMaterializePlayer(
-      app.app,
-      aboveEmail,
+      app,
+      { email: aboveEmail },
     );
     await aboveClient.post('/wallet/deposit', { amount: '1000', currency: 'USD' });
     const aboveRes = await aboveClient.post('/wallet/withdraw', {
@@ -180,7 +167,7 @@ describe('withdrawal_review: assign on wallet.withdrawal.requested', () => {
 
   it('is sticky - the withdrawal completing afterwards never removes it (no automated removal path exists)', async () => {
     const email = `wr-sticky-${randomUUID()}@e2e.test`;
-    const { client, playerId } = await registerAndMaterializePlayer(app.app, email);
+    const { client, playerId } = await registerAndMaterializePlayer(app, { email: email });
     await client.post('/wallet/deposit', { amount: '1000', currency: 'USD' });
     const res = await client.post('/wallet/withdraw', { amount: '500', currency: 'USD' });
     expect(res.status).toBe(200);
@@ -218,14 +205,14 @@ describe('dormant_high_roller: co-occurrence sweep + login removal', () => {
       client: hrClient,
       playerId: hrPlayerId,
       userId: hrUserId,
-    } = await registerAndMaterializePlayer(app.app, hrEmail);
+    } = await registerAndMaterializePlayer(app, { email: hrEmail });
     await assignTagManually(admin, hrPlayerId, 'high_roller');
     await backdateSessions(app.container, hrUserId, 40);
 
     const plainEmail = `dhr-plain-${randomUUID()}@e2e.test`;
     const { playerId: plainPlayerId, userId: plainUserId } = await registerAndMaterializePlayer(
-      app.app,
-      plainEmail,
+      app,
+      { email: plainEmail },
     );
     await backdateSessions(app.container, plainUserId, 40);
 
@@ -262,7 +249,7 @@ describe('dormant_high_roller: co-occurrence sweep + login removal', () => {
     });
 
     const email = `dhr-disabled-${randomUUID()}@e2e.test`;
-    const { playerId, userId } = await registerAndMaterializePlayer(app.app, email);
+    const { playerId, userId } = await registerAndMaterializePlayer(app, { email: email });
     await assignTagManually(admin, playerId, 'high_roller');
     await backdateSessions(app.container, userId, 40);
 
@@ -290,7 +277,7 @@ describe('high_risk: existing assign path unaffected, frequency-only resweep', (
     });
 
     const email = `hr-amountonly-${randomUUID()}@e2e.test`;
-    const { playerId } = await registerAndMaterializePlayer(app.app, email);
+    const { playerId } = await registerAndMaterializePlayer(app, { email: email });
     await assignTagManually(admin, playerId, 'high_risk');
 
     await runDailySweep(app.container);
@@ -307,7 +294,7 @@ describe('high_risk: existing assign path unaffected, frequency-only resweep', (
     });
 
     const email = `hr-freq-${randomUUID()}@e2e.test`;
-    const { client, playerId } = await registerAndMaterializePlayer(app.app, email);
+    const { client, playerId } = await registerAndMaterializePlayer(app, { email: email });
     await client.post('/wallet/deposit', { amount: '100', currency: 'USD' });
 
     const w1 = await readJson(
@@ -355,7 +342,7 @@ describe('idempotency: at-least-once event delivery does not throw', () => {
     });
 
     const email = `idem-wr-${randomUUID()}@e2e.test`;
-    const { userId, playerId } = await registerAndMaterializePlayer(app.app, email);
+    const { userId, playerId } = await registerAndMaterializePlayer(app, { email: email });
 
     const eventBus = app.container.get(EVENT_BUS);
     const payload = {
@@ -384,7 +371,7 @@ describe('idempotency: at-least-once event delivery does not throw', () => {
 
   it('exactly one of 5 concurrent assignPlayerTag calls succeeds; the rest are rejected as a conflict (race repro, fixed by the player_tag_active_key unique index)', async () => {
     const email = `race-assign-${randomUUID()}@e2e.test`;
-    const { playerId } = await registerAndMaterializePlayer(app.app, email);
+    const { playerId } = await registerAndMaterializePlayer(app, { email: email });
 
     const results = await Promise.all(
       Array.from({ length: 5 }, () =>
@@ -417,7 +404,7 @@ describe('idempotency: at-least-once event delivery does not throw', () => {
 
   it('re-emitting identity.user.login for a player with no dormant_high_roller/inactive tag does not throw', async () => {
     const email = `idem-login-${randomUUID()}@e2e.test`;
-    const { userId } = await registerAndMaterializePlayer(app.app, email);
+    const { userId } = await registerAndMaterializePlayer(app, { email: email });
 
     const eventBus = app.container.get(EVENT_BUS);
     eventBus.emit('identity.user.login', { userId, playerId: null });
@@ -472,7 +459,7 @@ describe('authz: the 6 previously-unguarded tag routes', () => {
 
   it('rejects an authenticated non-admin player with 403 on all 6 routes, and a legitimate admin succeeds (positive control)', async () => {
     const email = `authz-player-${randomUUID()}@e2e.test`;
-    const { client, playerId } = await registerAndMaterializePlayer(app.app, email);
+    const { client, playerId } = await registerAndMaterializePlayer(app, { email: email });
     // Default role after registration is 'player' - explicitly not admin/support/content-manager.
 
     const createRes = await client.post('/tag', { key: 'vip', isSticky: true });
@@ -511,7 +498,7 @@ describe('authz: the 6 previously-unguarded tag routes', () => {
 
   it('players never see their own tags: a non-admin player cannot read tags even on their own profile', async () => {
     const email = `authz-selfread-${randomUUID()}@e2e.test`;
-    const { client, playerId } = await registerAndMaterializePlayer(app.app, email);
+    const { client, playerId } = await registerAndMaterializePlayer(app, { email: email });
     await assignTagManually(admin, playerId, 'vip');
 
     const res = await client.get(`/player/${playerId}/player-tag?page=1&limit=20`);

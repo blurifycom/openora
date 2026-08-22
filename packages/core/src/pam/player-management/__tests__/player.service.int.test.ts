@@ -9,7 +9,7 @@ import type {
   SessionCommands,
   UserCommands,
 } from '@openora/core/contracts';
-import { createTestDb, type TestDb } from '@openora/core/testing';
+import { createTestDb, type TestDb, seedUser } from '@openora/core/testing';
 import { user } from '@openora/core/pam/schema/identity';
 import { migrate as migrateIdentity } from '@openora/core/pam/migrate/identity';
 import { player } from '@openora/core/pam/schema/profile';
@@ -117,19 +117,6 @@ function makeBlockWriter(excluded: string[] = []): ChatBlockWriter {
   });
 }
 
-async function seedUser(overrides: Partial<typeof user.$inferInsert> = {}) {
-  const [row] = await db.drizzle.db
-    .insert(user)
-    .values({
-      name: 'Player',
-      username: randomUUID().replaceAll('-', '').slice(0, 20),
-      email: `${randomUUID()}@example.com`,
-      ...overrides,
-    })
-    .returning();
-  return row!;
-}
-
 async function seedPlayer(userId: string, overrides: Partial<typeof player.$inferInsert> = {}) {
   const [row] = await db.drizzle.db
     .insert(player)
@@ -142,7 +129,7 @@ async function seedPlayerWithUser(
   userOverrides: Partial<typeof user.$inferInsert> = {},
   playerOverrides: Partial<typeof player.$inferInsert> = {},
 ) {
-  const account = await seedUser(userOverrides);
+  const account = await seedUser(db, userOverrides);
   const row = await seedPlayer(account.id, playerOverrides);
   return { account, player: row };
 }

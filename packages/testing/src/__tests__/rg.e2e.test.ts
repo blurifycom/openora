@@ -13,7 +13,7 @@ import { user } from '@openora/core/pam/schema/identity';
 import {
   setupTestDb,
   bootTestApp,
-  registerPlayer,
+  registerAndMaterializePlayer,
   asPlayer,
   asAdmin,
   seedMinimal,
@@ -45,17 +45,6 @@ let admin: TestClient;
 // oxlint-disable-next-line typescript/no-explicit-any -- ad-hoc JSON shape assertions in tests
 async function readJson(res: Response): Promise<any> {
   return res.json();
-}
-
-async function registerAndLogin(email: string) {
-  const userId = await registerPlayer(app, { email });
-  const client = await asPlayer(app.app, { email });
-  // Materialize the PAM player row (get-or-create) so RG actions taken against this
-  // user resolve to a real player.id for the audit trail - see audit/plugin.ts
-  // mapEventToRecord's resolvePlayerId.
-  const profileRes = await client.get('/profile');
-  const profile = (await profileRes.json()) as { id: string };
-  return { client, userId, playerId: profile.id };
 }
 
 async function attemptLogin(email: string, password: string) {
@@ -112,7 +101,9 @@ afterAll(async () => {
 
 describe('RG limits, cooling-off, self-exclusion happy path', () => {
   it('sets a deposit + session-time limit, reads them back via getRgSection', async () => {
-    const { userId } = await registerAndLogin(`rg-limits-${randomUUID()}@e2e.test`);
+    const { userId } = await registerAndMaterializePlayer(app, {
+      email: `rg-limits-${randomUUID()}@e2e.test`,
+    });
 
     const depositRes = await admin.put(`/compliance/players/${userId}/limits`, {
       type: 'deposit',
@@ -144,7 +135,9 @@ describe('RG limits, cooling-off, self-exclusion happy path', () => {
   });
 
   it('activates a 24h cooling-off and surfaces it via getRgSection', async () => {
-    const { userId } = await registerAndLogin(`rg-cooloff-${randomUUID()}@e2e.test`);
+    const { userId } = await registerAndMaterializePlayer(app, {
+      email: `rg-cooloff-${randomUUID()}@e2e.test`,
+    });
 
     const res = await admin.post(`/compliance/players/${userId}/cooling-off`, {
       durationHours: 24,
@@ -161,8 +154,12 @@ describe('RG limits, cooling-off, self-exclusion happy path', () => {
   });
 
   it('activates a fixed-term (6mo) and a permanent self-exclusion on different players', async () => {
-    const fixed = await registerAndLogin(`rg-selfexcl-fixed-${randomUUID()}@e2e.test`);
-    const permanent = await registerAndLogin(`rg-selfexcl-perm-${randomUUID()}@e2e.test`);
+    const fixed = await registerAndMaterializePlayer(app, {
+      email: `rg-selfexcl-fixed-${randomUUID()}@e2e.test`,
+    });
+    const permanent = await registerAndMaterializePlayer(app, {
+      email: `rg-selfexcl-perm-${randomUUID()}@e2e.test`,
+    });
 
     const fixedRes = await admin.post(`/compliance/players/${fixed.userId}/self-exclusion`, {
       isPermanent: false,
@@ -191,7 +188,9 @@ describe('RG limits, cooling-off, self-exclusion happy path', () => {
   });
 
   it('lifts a fixed-term self-exclusion once the minimum period has elapsed', async () => {
-    const { userId } = await registerAndLogin(`rg-lift-${randomUUID()}@e2e.test`);
+    const { userId } = await registerAndMaterializePlayer(app, {
+      email: `rg-lift-${randomUUID()}@e2e.test`,
+    });
 
     const activateRes = await admin.post(`/compliance/players/${userId}/self-exclusion`, {
       isPermanent: false,
@@ -218,7 +217,7 @@ describe('RG limits, cooling-off, self-exclusion happy path', () => {
 describe('RG self-exclusion leaves player funds unlocked', () => {
   it('keeps a pending withdrawal in the admin queue and approvable after the exclusion lands', async () => {
     const email = `rg-withdraw-${randomUUID()}@e2e.test`;
-    const { client, userId } = await registerAndLogin(email);
+    const { client, userId } = await registerAndMaterializePlayer(app, { email: email });
 
     const depositRes = await client.post('/wallet/deposit', { amount: '50', currency: 'USD' });
     expect(depositRes.status).toBe(200);
@@ -247,7 +246,7 @@ describe('RG self-exclusion leaves player funds unlocked', () => {
 describe('RG login enforcement', () => {
   it('blocks login + revokes sessions after cooling-off; wrong password stays indistinguishable pre-auth', async () => {
     const email = `rg-enforce-cooloff-${randomUUID()}@e2e.test`;
-    const { client, userId } = await registerAndLogin(email);
+    const { client, userId } = await registerAndMaterializePlayer(app, { email: email });
 
     const preBlockRes = await client.get('/profile');
     expect(preBlockRes.status).toBe(200);
@@ -279,7 +278,7 @@ describe('RG login enforcement', () => {
 
   it('blocks login + revokes sessions after self-exclusion', async () => {
     const email = `rg-enforce-selfexcl-${randomUUID()}@e2e.test`;
-    const { client, userId } = await registerAndLogin(email);
+    const { client, userId } = await registerAndMaterializePlayer(app, { email: email });
 
     expect((await client.get('/profile')).status).toBe(200);
 
@@ -309,7 +308,7 @@ describe('RG cooling-off lift', () => {
 
   it('restores login and play when an admin lifts an active cooling-off early', async () => {
     const email = `rg-cooloff-lift-${randomUUID()}@e2e.test`;
-    const { userId } = await registerAndLogin(email);
+    const { userId } = await registerAndMaterializePlayer(app, { email: email });
 
     const activateRes = await admin.post(`/compliance/players/${userId}/cooling-off`, {
       durationHours: 1008,
@@ -339,7 +338,7 @@ describe('RG cooling-off lift', () => {
 
   it('keeps the player blocked when a self-exclusion is still active', async () => {
     const email = `rg-cooloff-lift-se-${randomUUID()}@e2e.test`;
-    const { userId } = await registerAndLogin(email);
+    const { userId } = await registerAndMaterializePlayer(app, { email: email });
 
     await admin.post(`/compliance/players/${userId}/cooling-off`, {
       durationHours: 24,
@@ -361,7 +360,9 @@ describe('RG cooling-off lift', () => {
   });
 
   it('rejects lifting when the player has no active cooling-off', async () => {
-    const { userId } = await registerAndLogin(`rg-cooloff-lift-none-${randomUUID()}@e2e.test`);
+    const { userId } = await registerAndMaterializePlayer(app, {
+      email: `rg-cooloff-lift-none-${randomUUID()}@e2e.test`,
+    });
 
     const res = await admin.post(`/compliance/players/${userId}/cooling-off/lift`, {
       reason: 'nothing to lift',
@@ -370,9 +371,9 @@ describe('RG cooling-off lift', () => {
   });
 
   it('records the lift in the audit trail with actor, reason and subject', async () => {
-    const { userId, playerId } = await registerAndLogin(
-      `rg-cooloff-lift-audit-${randomUUID()}@e2e.test`,
-    );
+    const { userId, playerId } = await registerAndMaterializePlayer(app, {
+      email: `rg-cooloff-lift-audit-${randomUUID()}@e2e.test`,
+    });
 
     await admin.post(`/compliance/players/${userId}/cooling-off`, {
       durationHours: 24,
@@ -398,9 +399,9 @@ describe('RG cooling-off lift', () => {
 
 describe('RG cooling-off expiry', () => {
   it('records the sweep-driven expiry in the audit trail, attributed to the system', async () => {
-    const { userId, playerId } = await registerAndLogin(
-      `rg-cooloff-expiry-${randomUUID()}@e2e.test`,
-    );
+    const { userId, playerId } = await registerAndMaterializePlayer(app, {
+      email: `rg-cooloff-expiry-${randomUUID()}@e2e.test`,
+    });
 
     const activateRes = await admin.post(`/compliance/players/${userId}/cooling-off`, {
       durationHours: 24,
@@ -428,7 +429,9 @@ describe('RG cooling-off expiry', () => {
 
 describe('RG self-exclusion lift negatives', () => {
   it('rejects lifting before the minimum period elapses', async () => {
-    const { userId } = await registerAndLogin(`rg-lift-early-${randomUUID()}@e2e.test`);
+    const { userId } = await registerAndMaterializePlayer(app, {
+      email: `rg-lift-early-${randomUUID()}@e2e.test`,
+    });
 
     const activateRes = await admin.post(`/compliance/players/${userId}/self-exclusion`, {
       isPermanent: false,
@@ -446,7 +449,9 @@ describe('RG self-exclusion lift negatives', () => {
   });
 
   it('rejects lifting a permanent self-exclusion, even long after activation', async () => {
-    const { userId } = await registerAndLogin(`rg-lift-permanent-${randomUUID()}@e2e.test`);
+    const { userId } = await registerAndMaterializePlayer(app, {
+      email: `rg-lift-permanent-${randomUUID()}@e2e.test`,
+    });
 
     const activateRes = await admin.post(`/compliance/players/${userId}/self-exclusion`, {
       isPermanent: true,
@@ -463,7 +468,9 @@ describe('RG self-exclusion lift negatives', () => {
   });
 
   it('requires reason + confirm:true on the lift', async () => {
-    const { userId } = await registerAndLogin(`rg-lift-shape-${randomUUID()}@e2e.test`);
+    const { userId } = await registerAndMaterializePlayer(app, {
+      email: `rg-lift-shape-${randomUUID()}@e2e.test`,
+    });
 
     await admin.post(`/compliance/players/${userId}/self-exclusion`, {
       isPermanent: false,
@@ -491,7 +498,7 @@ describe('RG self-exclusion lift negatives', () => {
 describe('RG regression: a permanent self-exclusion outlives a lapsed cooling-off', () => {
   it('keeps the login block after a subsequent short cooling-off expires, and allows re-activating cooling-off', async () => {
     const email = `rg-regression-${randomUUID()}@e2e.test`;
-    const { userId } = await registerAndLogin(email);
+    const { userId } = await registerAndMaterializePlayer(app, { email: email });
 
     const permRes = await admin.post(`/compliance/players/${userId}/self-exclusion`, {
       isPermanent: true,
@@ -568,7 +575,7 @@ describe('RG authz negatives', () => {
 
   it('a support-role caller (view only) gets 403 on mutations, 200 on reads', async () => {
     const email = `rg-support-${randomUUID()}@e2e.test`;
-    const { userId } = await registerAndLogin(email);
+    const { userId } = await registerAndMaterializePlayer(app, { email: email });
     await setRole(app.container, userId, 'support');
     const support = await asPlayer(app.app, { email });
     const targetUserId = randomUUID();
@@ -595,9 +602,9 @@ describe('RG authz negatives', () => {
 
 describe('RG monitoring (queue-based)', () => {
   it('a deposit crossing 80% of a deposit limit raises a limit_threshold flag, filterable by type/period/date', async () => {
-    const { client, userId } = await registerAndLogin(
-      `rg-monitor-deposit-${randomUUID()}@e2e.test`,
-    );
+    const { client, userId } = await registerAndMaterializePlayer(app, {
+      email: `rg-monitor-deposit-${randomUUID()}@e2e.test`,
+    });
 
     const limitRes = await admin.put(`/compliance/players/${userId}/limits`, {
       type: 'deposit',
@@ -634,7 +641,7 @@ describe('RG monitoring (queue-based)', () => {
 
   it('a self-excluded login attempt raises a self_excluded_login flag', async () => {
     const email = `rg-monitor-login-${randomUUID()}@e2e.test`;
-    const { userId } = await registerAndLogin(email);
+    const { userId } = await registerAndMaterializePlayer(app, { email: email });
 
     const res = await admin.post(`/compliance/players/${userId}/self-exclusion`, {
       isPermanent: true,
@@ -657,7 +664,9 @@ describe('RG monitoring (queue-based)', () => {
 
 describe('RG audit trail', () => {
   it('every RG mutation leaves an audit row with the right actor + before/after', async () => {
-    const { userId, playerId } = await registerAndLogin(`rg-audit-${randomUUID()}@e2e.test`);
+    const { userId, playerId } = await registerAndMaterializePlayer(app, {
+      email: `rg-audit-${randomUUID()}@e2e.test`,
+    });
 
     const limitRes = await admin.put(`/compliance/players/${userId}/limits`, {
       type: 'deposit',
@@ -738,7 +747,7 @@ describe('RG audit trail', () => {
 
   it('records a system-actor audit row for a blocked login attempt', async () => {
     const email = `rg-audit-login-${randomUUID()}@e2e.test`;
-    const { userId, playerId } = await registerAndLogin(email);
+    const { userId, playerId } = await registerAndMaterializePlayer(app, { email: email });
 
     await admin.post(`/compliance/players/${userId}/self-exclusion`, {
       isPermanent: true,
@@ -759,7 +768,9 @@ describe('RG audit trail', () => {
   });
 
   it('exportCsv({actionPrefix: "rg."}) returns only rg.* rows', async () => {
-    const { userId, playerId } = await registerAndLogin(`rg-audit-export-${randomUUID()}@e2e.test`);
+    const { userId, playerId } = await registerAndMaterializePlayer(app, {
+      email: `rg-audit-export-${randomUUID()}@e2e.test`,
+    });
 
     const limitRes = await admin.put(`/compliance/players/${userId}/limits`, {
       type: 'wager',

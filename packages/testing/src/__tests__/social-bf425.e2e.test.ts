@@ -13,8 +13,7 @@ import { chatUserBlock } from '@openora/core/engagement/schema/chat';
 import {
   setupTestDb,
   bootTestApp,
-  registerPlayer,
-  asPlayer,
+  registerAndMaterializePlayer,
   asAdmin,
   seedMinimal,
   type TestDb,
@@ -54,22 +53,13 @@ async function readJson(res: Response): Promise<any> {
   return res.json();
 }
 
-async function registerAndMaterializePlayer(hono: TestApp['app'], email: string, name: string) {
+async function registerNamedPlayer(email: string, name: string) {
   const usernamePrefix = name
     .toLowerCase()
     .replaceAll(/[^a-z0-9_]+/g, '_')
     .slice(0, 7);
   const username = `${usernamePrefix}_${randomUUID().replaceAll('-', '').slice(0, 12)}`;
-  await registerPlayer(app, { email, username });
-  const client = await asPlayer(hono, { email });
-  const profileRes = await client.get('/profile');
-  if (!profileRes.ok) {
-    throw new Error(
-      `profile materialize failed (${profileRes.status}): ${await profileRes.text()}`,
-    );
-  }
-  const profile = (await profileRes.json()) as { id: string; userId: string };
-  return { client, playerId: profile.id, userId: profile.userId, username };
+  return { ...(await registerAndMaterializePlayer(app, { email, username })), username };
 }
 
 async function setPlayerStatus(
@@ -120,16 +110,8 @@ afterAll(async () => {
 
 describe('BF-425 AC: relationship button-state + pending-on-send', () => {
   it('none -> send -> pending_outgoing (sender) / pending_incoming (recipient), immediately, no polling', async () => {
-    const a = await registerAndMaterializePlayer(
-      app.app,
-      `bf425-a-${randomUUID()}@e2e.test`,
-      'Alice BF425',
-    );
-    const b = await registerAndMaterializePlayer(
-      app.app,
-      `bf425-b-${randomUUID()}@e2e.test`,
-      'Bob BF425',
-    );
+    const a = await registerNamedPlayer(`bf425-a-${randomUUID()}@e2e.test`, 'Alice BF425');
+    const b = await registerNamedPlayer(`bf425-b-${randomUUID()}@e2e.test`, 'Bob BF425');
 
     const beforeRes = await a.client.post('/social/relationships', { userIds: [b.userId] });
     expect(beforeRes.status).toBe(200);
@@ -177,16 +159,8 @@ describe('BF-425 AC: relationship button-state + pending-on-send', () => {
 
 describe('BF-425 AC: recipient gets an in-app notification, type round-trips, and audit trail exists', () => {
   it('notifications.list surfaces social.friend_request.received with the right title/body; audit log exists', async () => {
-    const a = await registerAndMaterializePlayer(
-      app.app,
-      `bf425-notif-a-${randomUUID()}@e2e.test`,
-      'Carol BF425',
-    );
-    const b = await registerAndMaterializePlayer(
-      app.app,
-      `bf425-notif-b-${randomUUID()}@e2e.test`,
-      'Dave BF425',
-    );
+    const a = await registerNamedPlayer(`bf425-notif-a-${randomUUID()}@e2e.test`, 'Carol BF425');
+    const b = await registerNamedPlayer(`bf425-notif-b-${randomUUID()}@e2e.test`, 'Dave BF425');
 
     const sent = await readJson(
       await a.client.post('/social/friend-requests', { targetUserId: b.userId }),
@@ -233,16 +207,8 @@ describe('BF-425 AC: recipient gets an in-app notification, type round-trips, an
 
 describe('BF-425 AC: duplicate request while pending is rejected, not silently accepted or double-inserted', () => {
   it('a second sendFriendRequest to the same still-pending target fails with CONFLICT and leaves exactly one row', async () => {
-    const a = await registerAndMaterializePlayer(
-      app.app,
-      `bf425-dup-a-${randomUUID()}@e2e.test`,
-      'Eve BF425',
-    );
-    const b = await registerAndMaterializePlayer(
-      app.app,
-      `bf425-dup-b-${randomUUID()}@e2e.test`,
-      'Frank BF425',
-    );
+    const a = await registerNamedPlayer(`bf425-dup-a-${randomUUID()}@e2e.test`, 'Eve BF425');
+    const b = await registerNamedPlayer(`bf425-dup-b-${randomUUID()}@e2e.test`, 'Frank BF425');
 
     const first = await readJson(
       await a.client.post('/social/friend-requests', { targetUserId: b.userId }),
@@ -265,13 +231,11 @@ describe('BF-425 AC: duplicate request while pending is rejected, not silently a
 
 describe('BF-425 AC: "Add Friend" not offered when the recipient has blocked the sender (undisclosed)', () => {
   it('sendFriendRequest maps to CONFLICT (identical shape to a suspended target, distinct from a nonexistent one) and getRelationships returns unavailable', async () => {
-    const target = await registerAndMaterializePlayer(
-      app.app,
+    const target = await registerNamedPlayer(
       `bf425-blk-target-${randomUUID()}@e2e.test`,
       'Grace BF425',
     );
-    const blockedSender = await registerAndMaterializePlayer(
-      app.app,
+    const blockedSender = await registerNamedPlayer(
       `bf425-blk-sender-${randomUUID()}@e2e.test`,
       'Heidi BF425',
     );
@@ -295,8 +259,7 @@ describe('BF-425 AC: "Add Friend" not offered when the recipient has blocked the
 
     // But a suspended target gets the SAME 409 shape as a block: the caller still
     // cannot distinguish "blocked me" from "moderated" from the response.
-    const suspendedTarget = await registerAndMaterializePlayer(
-      app.app,
+    const suspendedTarget = await registerNamedPlayer(
       `bf425-blk-mod-${randomUUID()}@e2e.test`,
       'Grace Moderated BF425',
     );
@@ -319,13 +282,11 @@ describe('BF-425 AC: "Add Friend" not offered when the recipient has blocked the
 
 describe('BF-425 locked decision: caller blocked the target themselves -> disclosed CONFLICT (BLOCKED_BY_SELF)', () => {
   it('is a distinct, disclosed conflict - not the generic not-found used for the reverse-block case', async () => {
-    const blocker = await registerAndMaterializePlayer(
-      app.app,
+    const blocker = await registerNamedPlayer(
       `bf425-selfblk-${randomUUID()}@e2e.test`,
       'Ivan BF425',
     );
-    const target = await registerAndMaterializePlayer(
-      app.app,
+    const target = await registerNamedPlayer(
       `bf425-selfblk-target-${randomUUID()}@e2e.test`,
       'Judy BF425',
     );
@@ -342,11 +303,7 @@ describe('BF-425 locked decision: caller blocked the target themselves -> disclo
 
 describe('BF-425 locked decision: self-request is rejected', () => {
   it('targetUserId === callerId -> BAD_REQUEST', async () => {
-    const a = await registerAndMaterializePlayer(
-      app.app,
-      `bf425-self-${randomUUID()}@e2e.test`,
-      'Kim BF425',
-    );
+    const a = await registerNamedPlayer(`bf425-self-${randomUUID()}@e2e.test`, 'Kim BF425');
     const res = await a.client.post('/social/friend-requests', { targetUserId: a.userId });
     expect(res.status).toBe(400);
   });
@@ -354,16 +311,8 @@ describe('BF-425 locked decision: self-request is rejected', () => {
 
 describe('BF-425 locked decision: mutual/simultaneous request auto-accepts', () => {
   it('B sending back to A while A->B is pending flips the SAME row to accepted, notifies the original requester, and a later re-send is ALREADY_FRIENDS', async () => {
-    const a = await registerAndMaterializePlayer(
-      app.app,
-      `bf425-mutual-a-${randomUUID()}@e2e.test`,
-      'Leo BF425',
-    );
-    const b = await registerAndMaterializePlayer(
-      app.app,
-      `bf425-mutual-b-${randomUUID()}@e2e.test`,
-      'Mona BF425',
-    );
+    const a = await registerNamedPlayer(`bf425-mutual-a-${randomUUID()}@e2e.test`, 'Leo BF425');
+    const b = await registerNamedPlayer(`bf425-mutual-b-${randomUUID()}@e2e.test`, 'Mona BF425');
 
     // A -> B (pending)
     const first = await readJson(
@@ -417,15 +366,13 @@ describe('BF-425 locked decision: mutual/simultaneous request auto-accepts', () 
 
 describe('BF-425 locked decision: a suspended/closed target is unavailable, not a false 404', () => {
   it('suspended and closed targets both CONFLICT on send and are unavailable in getRelationships, moderation status never disclosed', async () => {
-    const caller = await registerAndMaterializePlayer(
-      app.app,
+    const caller = await registerNamedPlayer(
       `bf425-mod-caller-${randomUUID()}@e2e.test`,
       'Nina BF425',
     );
 
     for (const status of ['suspended', 'closed'] as const) {
-      const target = await registerAndMaterializePlayer(
-        app.app,
+      const target = await registerNamedPlayer(
         `bf425-mod-${status}-${randomUUID()}@e2e.test`,
         `Target ${status} BF425`,
       );
@@ -452,16 +399,8 @@ describe('BF-425 locked decision: a suspended/closed target is unavailable, not 
 
 describe('BF-425 break-it: rapid concurrent double-submit at the same target', () => {
   it('fires two sendFriendRequest calls at once - exactly one row, exactly one notification, no 500', async () => {
-    const a = await registerAndMaterializePlayer(
-      app.app,
-      `bf425-race-a-${randomUUID()}@e2e.test`,
-      'Oscar BF425',
-    );
-    const b = await registerAndMaterializePlayer(
-      app.app,
-      `bf425-race-b-${randomUUID()}@e2e.test`,
-      'Peggy BF425',
-    );
+    const a = await registerNamedPlayer(`bf425-race-a-${randomUUID()}@e2e.test`, 'Oscar BF425');
+    const b = await registerNamedPlayer(`bf425-race-b-${randomUUID()}@e2e.test`, 'Peggy BF425');
 
     const [r1, r2] = await Promise.all([
       a.client.post('/social/friend-requests', { targetUserId: b.userId }),

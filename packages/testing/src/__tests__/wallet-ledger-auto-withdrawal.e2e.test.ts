@@ -14,8 +14,7 @@ import { seedAutoWithdrawalConfig } from '@openora/core/wallet/seed';
 import {
   setupTestDb,
   bootTestApp,
-  registerPlayer,
-  asPlayer,
+  registerAndMaterializePlayer,
   asAdmin,
   seedMinimal,
   type TestDb,
@@ -38,19 +37,6 @@ let appCapGated: TestApp;
 // oxlint-disable-next-line typescript/no-explicit-any -- ad-hoc JSON shape assertions in tests
 async function readJson(res: Response): Promise<any> {
   return res.json();
-}
-
-async function registerAndMaterializePlayer(testApp: TestApp, email: string) {
-  await registerPlayer(testApp, { email });
-  const client = await asPlayer(testApp.app, { email });
-  const profileRes = await client.get('/profile');
-  if (!profileRes.ok) {
-    throw new Error(
-      `profile materialize failed (${profileRes.status}): ${await profileRes.text()}`,
-    );
-  }
-  const profile = (await profileRes.json()) as { id: string; userId: string };
-  return { client, playerId: profile.id, userId: profile.userId };
 }
 
 async function setRole(container: Container<CoreTokenCatalog>, userId: string, role: string) {
@@ -141,7 +127,7 @@ afterAll(async () => {
 describe('Auto-withdrawal: single-shot gates (appGated - fiatThreshold 2)', () => {
   it('auto-completes a fiat withdrawal under threshold, with a KYC-verified untagged player', async () => {
     const email = `auto-ok-${randomUUID()}@e2e.test`;
-    const { client, userId } = await registerAndMaterializePlayer(appGated, email);
+    const { client, userId } = await registerAndMaterializePlayer(appGated, { email: email });
     const admin = await asAdmin(appGated.app);
     await verifyKyc(admin, userId);
 
@@ -176,7 +162,7 @@ describe('Auto-withdrawal: single-shot gates (appGated - fiatThreshold 2)', () =
 
   it('stays pending when KYC is not verified/manually_overridden, even though kyc.gateWithdrawals is off', async () => {
     const email = `auto-kyc-pending-${randomUUID()}@e2e.test`;
-    const { client } = await registerAndMaterializePlayer(appGated, email);
+    const { client } = await registerAndMaterializePlayer(appGated, { email: email });
     const admin = await asAdmin(appGated.app);
     // No verifyKyc() call - player stays at the default kycStatus 'pending'.
 
@@ -194,7 +180,9 @@ describe('Auto-withdrawal: single-shot gates (appGated - fiatThreshold 2)', () =
 
   it('stays pending when the player carries an excluded risk tag', async () => {
     const email = `auto-risk-tag-${randomUUID()}@e2e.test`;
-    const { client, playerId, userId } = await registerAndMaterializePlayer(appGated, email);
+    const { client, playerId, userId } = await registerAndMaterializePlayer(appGated, {
+      email: email,
+    });
     const admin = await asAdmin(appGated.app);
     await verifyKyc(admin, userId);
     await assignTag(admin, playerId, 'high_risk');
@@ -211,7 +199,7 @@ describe('Auto-withdrawal: single-shot gates (appGated - fiatThreshold 2)', () =
 
   it('stays pending when the amount exceeds the resolved threshold', async () => {
     const email = `auto-over-threshold-${randomUUID()}@e2e.test`;
-    const { client, userId } = await registerAndMaterializePlayer(appGated, email);
+    const { client, userId } = await registerAndMaterializePlayer(appGated, { email: email });
     const admin = await asAdmin(appGated.app);
     await verifyKyc(admin, userId);
 
@@ -227,7 +215,7 @@ describe('Auto-withdrawal: single-shot gates (appGated - fiatThreshold 2)', () =
 
   it('never auto-approves the crypto rail, regardless of config', async () => {
     const email = `auto-crypto-${randomUUID()}@e2e.test`;
-    const { client, userId } = await registerAndMaterializePlayer(appGated, email);
+    const { client, userId } = await registerAndMaterializePlayer(appGated, { email: email });
     const admin = await asAdmin(appGated.app);
     await verifyKyc(admin, userId);
 
@@ -247,7 +235,7 @@ describe('Auto-withdrawal: single-shot gates (appGated - fiatThreshold 2)', () =
 
   it('a lower per-player rule blocks what the global threshold would allow', async () => {
     const email = `auto-rule-blocks-${randomUUID()}@e2e.test`;
-    const { client, userId } = await registerAndMaterializePlayer(appGated, email);
+    const { client, userId } = await registerAndMaterializePlayer(appGated, { email: email });
     const admin = await asAdmin(appGated.app);
     await verifyKyc(admin, userId);
 
@@ -266,7 +254,7 @@ describe('Auto-withdrawal: single-shot gates (appGated - fiatThreshold 2)', () =
 
   it('a higher per-player rule allows what the global threshold would block', async () => {
     const email = `auto-rule-allows-${randomUUID()}@e2e.test`;
-    const { client, userId } = await registerAndMaterializePlayer(appGated, email);
+    const { client, userId } = await registerAndMaterializePlayer(appGated, { email: email });
     const admin = await asAdmin(appGated.app);
     await verifyKyc(admin, userId);
 
@@ -298,7 +286,7 @@ describe('Auto-withdrawal: single-shot gates (appGated - fiatThreshold 2)', () =
 describe('Auto-withdrawal: daily cap (appCapGated - dailyCapCount 1)', () => {
   it('auto-approves the first fiat withdrawal, then stays pending once the daily cap is used', async () => {
     const email = `auto-cap-${randomUUID()}@e2e.test`;
-    const { client, userId } = await registerAndMaterializePlayer(appCapGated, email);
+    const { client, userId } = await registerAndMaterializePlayer(appCapGated, { email: email });
     const admin = await asAdmin(appCapGated.app);
     await verifyKyc(admin, userId);
 
@@ -323,13 +311,13 @@ describe('Auto-withdrawal: daily cap (appCapGated - dailyCapCount 1)', () => {
 describe('Auto-withdrawal-rule routes: authz + audit', () => {
   it('PUT/GET/DELETE require auth (401) and withdrawal:auto-rule (403), succeed for admin', async () => {
     const email = `rule-authz-${randomUUID()}@e2e.test`;
-    const { userId } = await registerAndMaterializePlayer(appDefault, email);
+    const { userId } = await registerAndMaterializePlayer(appDefault, { email: email });
     const admin = await asAdmin(appDefault.app);
 
     const staffEmail = `rule-staff-${randomUUID()}@e2e.test`;
     const { client: staffClient, userId: staffUserId } = await registerAndMaterializePlayer(
       appDefault,
-      staffEmail,
+      { email: staffEmail },
     );
     // `support` has other admin permissions but not `withdrawal:auto-rule`.
     await setRole(appDefault.container, staffUserId, 'support');
@@ -408,7 +396,7 @@ describe('Auto-withdrawal-rule routes: authz + audit', () => {
 describe('Manual withdrawal approve/reject regression (appDefault - autoWithdrawal off)', () => {
   it('approve settles the payout; reject returns the held funds', async () => {
     const email = `manual-flow-${randomUUID()}@e2e.test`;
-    const { client } = await registerAndMaterializePlayer(appDefault, email);
+    const { client } = await registerAndMaterializePlayer(appDefault, { email: email });
     const admin = await asAdmin(appDefault.app);
 
     await client.post('/wallet/deposit', { amount: '3', currency: 'USD' });

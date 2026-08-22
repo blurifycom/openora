@@ -75,7 +75,7 @@ describe('IdentityService.register - availability gates', () => {
   it('rejects registration when the operator has not configured it', async () => {
     const svc = makeService({ platformConfig: undefined });
 
-    await expect(svc.register(validInput(), {}, new Headers())).rejects.toMatchObject({
+    await expect(svc.register(validInput(), {})).rejects.toMatchObject({
       code: 'FORBIDDEN',
     });
   });
@@ -83,7 +83,7 @@ describe('IdentityService.register - availability gates', () => {
   it('rejects registration when no player provisioning port is bound', async () => {
     const svc = makeService({ playerProvisioning: undefined });
 
-    await expect(svc.register(validInput(), {}, new Headers())).rejects.toMatchObject({
+    await expect(svc.register(validInput(), {})).rejects.toMatchObject({
       code: 'FORBIDDEN',
     });
   });
@@ -92,9 +92,9 @@ describe('IdentityService.register - availability gates', () => {
     const checkRegistration = vi.fn().mockResolvedValue({ allowed: false });
     const svc = makeService({ geoCheck: mock<GeoCheckCommands>({ checkRegistration }) });
 
-    await expect(
-      svc.register(validInput(), { 'x-real-ip': '203.0.113.7' }, new Headers()),
-    ).rejects.toMatchObject({ code: 'FORBIDDEN' });
+    await expect(svc.register(validInput(), { 'x-real-ip': '203.0.113.7' })).rejects.toMatchObject({
+      code: 'FORBIDDEN',
+    });
     expect(checkRegistration).toHaveBeenCalledWith('203.0.113.7');
   });
 
@@ -106,10 +106,10 @@ describe('IdentityService.register - availability gates', () => {
     // early attempts fail downstream on the stubbed auth call - that is fine, the
     // limiter is consumed before that happens.
     for (let i = 0; i < 5; i++) {
-      await svc.register(validInput(), headers, new Headers()).catch(() => undefined);
+      await svc.register(validInput(), headers).catch(() => undefined);
     }
 
-    await expect(svc.register(validInput(), headers, new Headers())).rejects.toMatchObject({
+    await expect(svc.register(validInput(), headers)).rejects.toMatchObject({
       code: 'TOO_MANY_REQUESTS',
     });
   });

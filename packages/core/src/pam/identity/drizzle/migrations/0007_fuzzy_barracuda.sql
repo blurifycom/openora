@@ -39,4 +39,6 @@ BEGIN
   FROM ranked
   WHERE u.id = ranked.id;
 END $$;--> statement-breakpoint
-CREATE UNIQUE INDEX "user_username_unique" ON "user" USING btree (lower("username")) WHERE "user"."username" is not null;
+ALTER TABLE "user" ALTER COLUMN "username" SET NOT NULL;--> statement-breakpoint
+CREATE UNIQUE INDEX "user_username_unique" ON "user" USING btree (lower("username"));--> statement-breakpoint
+CREATE INDEX "user_username_trgm_idx" ON "user" USING gin ("username" gin_trgm_ops);

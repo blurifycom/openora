@@ -181,10 +181,7 @@ export class DrizzleAdminUserDirectory implements AdminUserDirectory {
       return null;
     }
     const kyc = KycStatusSchema.safeParse(row.kycStatus);
-    return {
-      ...row,
-      kycStatus: kyc.success ? normalizeKycStatus(kyc.data) : null,
-    };
+    return { ...row, kycStatus: kyc.success ? normalizeKycStatus(kyc.data) : null };
   }
 
   async findPlayerIds(query: string, limit = 1000) {

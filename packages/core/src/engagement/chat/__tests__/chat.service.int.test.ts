@@ -1,7 +1,12 @@
 import { describe, it, expect, beforeAll, afterAll, beforeEach, vi } from 'vitest';
 import { randomUUID } from 'node:crypto';
 import { and, eq, isNull, sql } from 'drizzle-orm';
-import { createTestDb, InProcessRealtimeTransport, type TestDb } from '@openora/core/testing';
+import {
+  createTestDb,
+  InProcessRealtimeTransport,
+  type TestDb,
+  seedUser,
+} from '@openora/core/testing';
 import { user } from '@openora/core/pam/schema/identity';
 import { migrate as migrateIdentity } from '@openora/core/pam/migrate/identity';
 import type {
@@ -126,19 +131,6 @@ function makeService(
     transport,
     audit,
   };
-}
-
-async function seedUser(name = 'Player') {
-  const [row] = await db.drizzle.db
-    .insert(user)
-    .values({
-      name,
-      username: name.toLowerCase().replaceAll(/[^a-z0-9_]+/g, '_'),
-      email: `${randomUUID()}@test.dev`,
-      emailVerified: true,
-    })
-    .returning();
-  return row!;
 }
 
 async function seedRoom(overrides: Partial<typeof chatRoom.$inferInsert> = {}) {
@@ -351,7 +343,7 @@ describe('ChatService.subscribeMessages per-viewer block filtering (real PG)', (
 describe('ChatService.sendGlobalMessage (real PG)', () => {
   it('stores the username from the verified user, ignoring the header fallback', async () => {
     const { svc, events } = makeService();
-    const account = await seedUser('Platform Admin');
+    const account = await seedUser(db, { name: 'Platform Admin', username: 'platform_admin' });
 
     const msg = await svc.sendGlobalMessage(account.id, 'spoofed-header-name', 'hi');
 
@@ -482,7 +474,7 @@ describe('ChatService.sendRoomMessage (real PG)', () => {
   it('stores and publishes a message in a public room', async () => {
     const { svc, transport } = makeService();
     const room = await seedRoom();
-    const account = await seedUser('Alice');
+    const account = await seedUser(db, { name: 'Alice', username: 'alice' });
     const delivered: ChatMessage[] = [];
     transport.subscribe<ChatMessage>(chatChannel(room.id), (m) => delivered.push(m));
 

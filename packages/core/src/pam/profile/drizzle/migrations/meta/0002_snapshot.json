@@ -1,5 +1,5 @@
 {
-  "id": "8ae9b014-26bd-40f9-ade5-00268a54cded",
+  "id": "f0525db2-f419-41f1-913d-ddf84c172e55",
   "prevId": "8610fe12-c792-464c-bd7e-218d022943ab",
   "version": "7",
   "dialect": "postgresql",
@@ -18,12 +18,6 @@
         "user_id": {
           "name": "user_id",
           "type": "uuid",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "display_name": {
-          "name": "display_name",
-          "type": "text",
           "primaryKey": false,
           "notNull": true
         },
@@ -156,21 +150,6 @@
           "isUnique": false,
           "concurrently": false,
           "method": "btree",
-          "with": {}
-        },
-        "player_name_trgm_idx": {
-          "name": "player_name_trgm_idx",
-          "columns": [
-            {
-              "expression": "\"display_name\" gin_trgm_ops",
-              "asc": true,
-              "isExpression": true,
-              "nulls": "last"
-            }
-          ],
-          "isUnique": false,
-          "concurrently": false,
-          "method": "gin",
           "with": {}
         }
       },

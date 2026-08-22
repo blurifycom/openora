@@ -25,7 +25,7 @@ import { eq, ilike, count, or, and, gte, asc, desc, sql, inArray, isNull, lt } f
 import { player } from '@openora/core/pam/schema/profile';
 import { user } from '@openora/core/pam/schema/identity';
 import { playerTag, tag } from '@openora/core/pam/schema/tag';
-import { toPlayer } from '../../shared/player-mapper.js';
+import { toPlayer, fetchIdentityByUserId } from '../../shared/player-mapper.js';
 import type { PlayerSearchResult, PlayerProfileCard } from '../contract/index.js';
 
 export const PlayerNotFoundError = makeNotFoundError('Player');
@@ -188,10 +188,7 @@ export class PlayerService implements PlayerActivityTracker {
       await this.drizzle.db.select().from(player).where(eq(player.userId, userId)),
       new PlayerNotFoundError(userId),
     );
-    const [identity] = await this.drizzle.db
-      .select({ email: user.email, username: user.username })
-      .from(user)
-      .where(eq(user.id, record.userId));
+    const identity = await fetchIdentityByUserId(this.drizzle, record.userId);
     return toPlayer(record, identity?.email ?? '', identity?.username ?? '');
   }
 

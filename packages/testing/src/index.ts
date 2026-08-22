@@ -11,6 +11,7 @@ export {
 export {
   forceEmailVerified,
   registerPlayer,
+  registerAndMaterializePlayer,
   submitRegistration,
   verificationTokenFor,
   verifyEmailByLink,

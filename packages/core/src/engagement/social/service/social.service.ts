@@ -115,17 +115,29 @@ export class SocialService {
     private readonly identityReader: IdentityReader,
   ) {}
 
+  /** `player` rows widened with the identity-owned handle. */
+  private playersWithUsername(where: SQL) {
+    return this.drizzle.db
+      .select({
+        userId: player.userId,
+        username: user.username,
+        status: player.status,
+        lastSeenAt: player.lastSeenAt,
+      })
+      .from(player)
+      .innerJoin(user, eq(user.id, player.userId))
+      .where(where);
+  }
+
   async sendFriendRequest(callerId: Uuid, targetUserId: Uuid): Promise<Friendship> {
     if (targetUserId === callerId) {
       throw new SelfFriendRequestError();
     }
 
     // Batched: caller + target resolved in one query rather than two round trips.
-    const players = await this.drizzle.db
-      .select({ userId: player.userId, username: user.username, status: player.status })
-      .from(player)
-      .innerJoin(user, eq(user.id, player.userId))
-      .where(inArray(player.userId, [callerId, targetUserId]));
+    const players = await this.playersWithUsername(
+      inArray(player.userId, [callerId, targetUserId]),
+    );
     const targetPlayer = players.find((p) => p.userId === targetUserId);
     const callerPlayer = players.find((p) => p.userId === callerId);
 
@@ -412,16 +424,7 @@ export class SocialService {
     const [players, ignores] =
       otherUserIds.length > 0
         ? await Promise.all([
-            this.drizzle.db
-              .select({
-                userId: player.userId,
-                username: user.username,
-                lastSeenAt: player.lastSeenAt,
-                status: player.status,
-              })
-              .from(player)
-              .innerJoin(user, eq(user.id, player.userId))
-              .where(inArray(player.userId, otherUserIds)),
+            this.playersWithUsername(inArray(player.userId, otherUserIds)),
             this.drizzle.db
               .select({ ignoredId: chatUserIgnore.ignoredId })
               .from(chatUserIgnore)
@@ -518,11 +521,7 @@ export class SocialService {
       throw new FriendRequestNotFoundError(friendshipId);
     }
 
-    const [callerPlayer] = await this.drizzle.db
-      .select({ username: user.username })
-      .from(player)
-      .innerJoin(user, eq(user.id, player.userId))
-      .where(eq(player.userId, callerId));
+    const [callerPlayer] = await this.playersWithUsername(eq(player.userId, callerId));
     if (!callerPlayer) {
       // Invariant: an authenticated caller always has a player row (see
       // sendFriendRequest's same guard).
@@ -630,15 +629,7 @@ export class SocialService {
 
     const [players, mutualCounts, blocks] = await Promise.all([
       counterpartIds.length > 0
-        ? this.drizzle.db
-            .select({
-              userId: player.userId,
-              username: user.username,
-              status: player.status,
-            })
-            .from(player)
-            .innerJoin(user, eq(user.id, player.userId))
-            .where(inArray(player.userId, counterpartIds))
+        ? this.playersWithUsername(inArray(player.userId, counterpartIds))
         : Promise.resolve([]),
       direction === 'incoming' && counterpartIds.length > 0
         ? this.getMutualFriendsCounts(callerId, counterpartIds)

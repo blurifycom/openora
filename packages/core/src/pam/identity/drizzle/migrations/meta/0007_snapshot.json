@@ -1,5 +1,5 @@
 {
-  "id": "47efe45a-b0a1-4c75-abd1-57201cd1d2b3",
+  "id": "9dda0af0-8b94-4845-9304-a149f9c5c8a2",
   "prevId": "df66abdc-4e91-493e-9580-ec9d56bfa1f6",
   "version": "7",
   "dialect": "postgresql",
@@ -415,7 +415,7 @@
           "name": "username",
           "type": "text",
           "primaryKey": false,
-          "notNull": false
+          "notNull": true
         },
         "email": {
           "name": "email",
@@ -581,7 +581,6 @@
             }
           ],
           "isUnique": true,
-          "where": "\"user\".\"username\" is not null",
           "concurrently": false,
           "method": "btree",
           "with": {}
@@ -591,6 +590,21 @@
           "columns": [
             {
               "expression": "\"email\" gin_trgm_ops",
+              "asc": true,
+              "isExpression": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "gin",
+          "with": {}
+        },
+        "user_username_trgm_idx": {
+          "name": "user_username_trgm_idx",
+          "columns": [
+            {
+              "expression": "\"username\" gin_trgm_ops",
               "asc": true,
               "isExpression": true,
               "nulls": "last"
