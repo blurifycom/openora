@@ -27,7 +27,7 @@
   "dependencies": {
     "@openora/core": "workspace:*",
     "drizzle-orm": "0.45.2",
-    "hono": "4.12.25",
+    "hono": "4.12.34",
     "pg": "8.21.0",
     "redis": "5.12.1"
   },
