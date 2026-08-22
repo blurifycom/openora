@@ -19,7 +19,11 @@ jobs:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
+      # No turbo here - taking the shared per-commit cache key would lock the verify
+      # job out of saving its own task outputs.
       - uses: ./.github/actions/bootstrap
+        with:
+          turbo-cache: 'false'
       - name: Commitlint
         run: pnpm commitlint --from ${{ github.event.pull_request.base.sha }} --to ${{ github.event.pull_request.head.sha }}
 
@@ -59,14 +63,15 @@ jobs:
       - uses: ./.github/actions/bootstrap
       - name: Prepare migration database
         run: pnpm db:setup:test
+      # Through turbo, not `pnpm --filter`, so the artifact lands in the turbo cache
+      # and the `build` inside Verify below is a hit instead of a second full tsc.
       - name: Build migration runner
-        run: pnpm --filter @openora/core build
+        run: pnpm exec turbo run build --filter=@openora/core
       - name: Run migrations
         run: pnpm db:migrate
-      # Fans out types, lint, format, boundaries, module shape, deprecations, unit
-      # + tool tests through turbo (parallel + cached). `build` runs implicitly as
-      # the `check:types` dependency.
+      # Fans out lint, format, boundaries, module shape, deprecations, unit + tool
+      # tests through turbo (parallel + cached). `build` runs implicitly as the
+      # test dependency and is what typechecks (every package builds with tsc).
+      # `pnpm verify` ends with check:drift - no separate step needed.
       - name: Verify
         run: pnpm verify
-      - name: Drift check
-        run: pnpm check:drift

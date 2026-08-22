@@ -1,6 +1,16 @@
 name: Bootstrap
 description: Set up Node + pnpm, install dependencies, and restore the turbo cache.
 
+inputs:
+  turbo-cache:
+    description: >-
+      Restore and save .turbo/cache. Only a job that actually runs turbo may set this.
+      Jobs share one cache key per commit, so a job that touches the cache without
+      producing task outputs would save an empty one and lock the real producer out
+      of saving (actions/cache refuses to overwrite its own primary key).
+    required: false
+    default: 'true'
+
 runs:
   using: composite
   steps:
@@ -30,11 +40,14 @@ runs:
       shell: bash
       run: pnpm install --frozen-lockfile
 
-    # Same key per commit -> the build job's cache is an exact hit for every downstream job.
-    # turbo 2.x writes to .turbo/cache at the repo root, not node_modules/.cache/turbo.
+    # Keyed on the HEAD commit, not `github.sha`: on `pull_request` that is the ephemeral
+    # merge sha, which repeats whenever the base hasn't moved - actions/cache then hits its
+    # own primary key, logs "not saving cache", and discards every task hash the run just
+    # computed. turbo 2.x writes to .turbo/cache at the repo root, not node_modules/.cache.
     - name: Cache turbo
+      if: inputs.turbo-cache == 'true'
       uses: actions/cache@v4
       with:
         path: .turbo/cache
-        key: turbo-${{ runner.os }}-${{ github.sha }}
+        key: turbo-${{ runner.os }}-${{ github.event.pull_request.head.sha || github.sha }}
         restore-keys: turbo-${{ runner.os }}-

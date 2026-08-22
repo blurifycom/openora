@@ -9,7 +9,9 @@ Parse $ARGUMENTS for an optional `--filter <package>` flag.
 If filter provided, run: `pnpm verify --filter <package>`
 Otherwise run: `pnpm verify`
 
-This executes `turbo run check:types lint test:unit` (or scoped to the filter).
+This executes `turbo run build check:lint check:format check:boundaries check:shape check:hygiene
+check:deprecations test:unit test:integration test:tools`, then `pnpm check:drift` (or scoped to the
+filter). `build` is what typechecks - see `docs/standards/enforcement.md`.
 
 After completion:
 
