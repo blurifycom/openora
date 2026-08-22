@@ -95,7 +95,7 @@ export default {
       }
       const p = parsed.data;
       const title = 'New friend request';
-      const body = `${p.requesterDisplayName} sent you a friend request.`;
+      const body = `${p.requesterUsername} sent you a friend request.`;
       svcRef
         .create({ userId: p.addresseeId, type: 'social.friend_request.received', title, body })
         .catch((err) => logger.error({ err }, 'social.friend_request.sent notification failed'));
@@ -108,7 +108,7 @@ export default {
       }
       const p = parsed.data;
       const title = 'Friend request accepted';
-      const body = `${p.accepterDisplayName} accepted your friend request.`;
+      const body = `${p.accepterUsername} accepted your friend request.`;
       svcRef
         .create({ userId: p.requesterId, type: 'social.friend_request.accepted', title, body })
         .catch((err) =>

@@ -12,7 +12,7 @@ import { player } from '@openora/core/pam/schema/profile';
 import {
   setupTestDb,
   bootTestApp,
-  asPlayer,
+  registerAndMaterializePlayer,
   asAdmin,
   seedMinimal,
   type TestDb,
@@ -56,26 +56,6 @@ async function readJson(res: Response): Promise<any> {
   return res.json();
 }
 
-async function registerAndMaterializePlayer(app: TestApp['app'], email: string) {
-  const registerRes = await app.request('/identity/register', {
-    method: 'POST',
-    headers: { 'content-type': 'application/json' },
-    body: JSON.stringify({ email, password: 'password123', name: 'KYC E2E Player' }),
-  });
-  if (!registerRes.ok) {
-    throw new Error(`register failed (${registerRes.status}): ${await registerRes.text()}`);
-  }
-  const client = await asPlayer(app, { email });
-  const profileRes = await client.get('/profile');
-  if (!profileRes.ok) {
-    throw new Error(
-      `profile materialize failed (${profileRes.status}): ${await profileRes.text()}`,
-    );
-  }
-  const profile = (await profileRes.json()) as { id: string; userId: string };
-  return { client, playerId: profile.id, userId: profile.userId };
-}
-
 async function seedLegacyVerifiedStatus(container: Container<CoreTokenCatalog>, userId: string) {
   await container
     .get(DRIZZLE)
@@ -117,7 +97,9 @@ afterAll(async () => {
 describe('KYC submit (default MockKycAdapter) + admin read + authz', () => {
   it('auto-verifies via the mock vendor, is admin-readable, and is denied to non-admins', async () => {
     const email = `kyc-submit-${randomUUID()}@e2e.test`;
-    const { client, userId, playerId } = await registerAndMaterializePlayer(appDefault.app, email);
+    const { client, userId, playerId } = await registerAndMaterializePlayer(appDefault, {
+      email: email,
+    });
 
     const submitRes = await client.post('/compliance/kyc', {
       documents: [{ type: 'passport', frontUrl: 'https://example.test/front.jpg' }],
@@ -171,7 +153,9 @@ describe('KYC submit (default MockKycAdapter) + admin read + authz', () => {
 describe('KYC webhook reconcile (gated stack)', () => {
   it('a valid HMAC signature reconciles; a forged/missing one is rejected and changes nothing', async () => {
     const email = `kyc-webhook-${randomUUID()}@e2e.test`;
-    const { client, userId, playerId } = await registerAndMaterializePlayer(appGated.app, email);
+    const { client, userId, playerId } = await registerAndMaterializePlayer(appGated, {
+      email: email,
+    });
     const admin = await asAdmin(appGated.app);
 
     const submitRes = await client.post('/compliance/kyc', {
@@ -236,7 +220,9 @@ describe('KYC webhook reconcile (gated stack)', () => {
 describe('KYC withdrawal gate (gated stack)', () => {
   it('blocks an unapproved withdrawal, then allows it once an admin marks the player approved', async () => {
     const email = `kyc-withdraw-${randomUUID()}@e2e.test`;
-    const { client, userId, playerId } = await registerAndMaterializePlayer(appGated.app, email);
+    const { client, userId, playerId } = await registerAndMaterializePlayer(appGated, {
+      email: email,
+    });
     const admin = await asAdmin(appGated.app);
 
     const depositRes = await client.post('/wallet/deposit', { amount: '2', currency: 'USD' });
@@ -281,7 +267,7 @@ describe('KYC withdrawal gate (gated stack)', () => {
 describe('KYC threshold re-KYC on deposit (gated stack)', () => {
   it('a deposit crossing the per-currency threshold flips a legacy-verified player to resubmission_requested', async () => {
     const email = `kyc-rekyc-${randomUUID()}@e2e.test`;
-    const { client, userId } = await registerAndMaterializePlayer(appGated.app, email);
+    const { client, userId } = await registerAndMaterializePlayer(appGated, { email: email });
     const admin = await asAdmin(appGated.app);
 
     const submitRes = await client.post('/compliance/kyc', {
@@ -312,7 +298,9 @@ describe('KYC threshold re-KYC on deposit (gated stack)', () => {
 describe('KYC admin actions: resubmit / override / bulk-approve (default stack)', () => {
   it('requestKycResubmission writes a manual history row, audits it, and notifies the player through the job queue', async () => {
     const email = `kyc-resubmit-${randomUUID()}@e2e.test`;
-    const { client, userId, playerId } = await registerAndMaterializePlayer(appDefault.app, email);
+    const { client, userId, playerId } = await registerAndMaterializePlayer(appDefault, {
+      email: email,
+    });
     const admin = await asAdmin(appDefault.app);
 
     const anonRes = await appDefault.app.request(`/compliance/players/${userId}/kyc/resubmit`, {
@@ -375,7 +363,7 @@ describe('KYC admin actions: resubmit / override / bulk-approve (default stack)'
 
   it('overrideKycStatus writes a rejected choice verbatim (no manually_overridden remap) with reason + actor in the audit log', async () => {
     const email = `kyc-override-reject-${randomUUID()}@e2e.test`;
-    const { userId, playerId } = await registerAndMaterializePlayer(appDefault.app, email);
+    const { userId, playerId } = await registerAndMaterializePlayer(appDefault, { email: email });
     const admin = await asAdmin(appDefault.app);
 
     const emptyReasonRes = await admin.post(`/compliance/players/${userId}/kyc/override`, {
@@ -407,14 +395,12 @@ describe('KYC admin actions: resubmit / override / bulk-approve (default stack)'
   it('bulkApproveKyc approves multiple players (one audit entry each) and isolates a not-found id without losing the rest of the batch', async () => {
     const emailA = `kyc-bulk-a-${randomUUID()}@e2e.test`;
     const emailB = `kyc-bulk-b-${randomUUID()}@e2e.test`;
-    const { userId: userA, playerId: playerA } = await registerAndMaterializePlayer(
-      appDefault.app,
-      emailA,
-    );
-    const { userId: userB, playerId: playerB } = await registerAndMaterializePlayer(
-      appDefault.app,
-      emailB,
-    );
+    const { userId: userA, playerId: playerA } = await registerAndMaterializePlayer(appDefault, {
+      email: emailA,
+    });
+    const { userId: userB, playerId: playerB } = await registerAndMaterializePlayer(appDefault, {
+      email: emailB,
+    });
     const missingUserId = randomUUID();
     const admin = await asAdmin(appDefault.app);
 
@@ -466,7 +452,7 @@ describe('KYC admin actions: resubmit / override / bulk-approve (default stack)'
 describe('Backoffice player list KYC status filter (legacy verified compatibility)', () => {
   it('filtering by the canonical "approved" also returns a player still holding the deprecated "verified" value', async () => {
     const email = `kyc-legacy-filter-${randomUUID()}@e2e.test`;
-    const { userId } = await registerAndMaterializePlayer(appDefault.app, email);
+    const { userId } = await registerAndMaterializePlayer(appDefault, { email: email });
     const admin = await asAdmin(appDefault.app);
 
     // Simulates a player verified before the expand/contract migration - a real row a
@@ -489,7 +475,7 @@ describe('Backoffice player list KYC status filter (legacy verified compatibilit
 describe('KYC status writer concurrency (real Postgres FOR UPDATE)', () => {
   it('two concurrent overrideKycStatus calls to the same target status write exactly one history row and one audit entry', async () => {
     const email = `kyc-concurrent-override-${randomUUID()}@e2e.test`;
-    const { userId, playerId } = await registerAndMaterializePlayer(appDefault.app, email);
+    const { userId, playerId } = await registerAndMaterializePlayer(appDefault, { email: email });
     const admin = await asAdmin(appDefault.app);
 
     // Two real HTTP requests racing through the full router -> service -> Postgres

@@ -11,7 +11,7 @@ import { rgExclusion } from '@openora/core/compliance/schema';
 import {
   setupTestDb,
   bootTestApp,
-  asPlayer,
+  registerAndMaterializePlayer,
   asAdmin,
   seedMinimal,
   type TestDb,
@@ -35,26 +35,6 @@ let app: TestApp;
 // oxlint-disable-next-line typescript/no-explicit-any -- ad-hoc JSON shape assertions in tests
 async function readJson(res: Response): Promise<any> {
   return res.json();
-}
-
-async function registerAndMaterializePlayer(honoApp: TestApp['app'], email: string) {
-  const registerRes = await honoApp.request('/identity/register', {
-    method: 'POST',
-    headers: { 'content-type': 'application/json' },
-    body: JSON.stringify({ email, password: 'password123', name: 'BF-317 E2E Player' }),
-  });
-  if (!registerRes.ok) {
-    throw new Error(`register failed (${registerRes.status}): ${await registerRes.text()}`);
-  }
-  const client = await asPlayer(honoApp, { email });
-  const profileRes = await client.get('/profile');
-  if (!profileRes.ok) {
-    throw new Error(
-      `profile materialize failed (${profileRes.status}): ${await profileRes.text()}`,
-    );
-  }
-  const profile = (await profileRes.json()) as { id: string; userId: string };
-  return { client, playerId: profile.id, userId: profile.userId };
 }
 
 async function loginWithIp(honoApp: TestApp['app'], email: string, ip: string) {
@@ -138,7 +118,7 @@ describe('self_excluded: auto-assign/remove on rg.self_exclusion.activated/.lift
   it('assigns self_excluded on activation, then removes it once lifted', async () => {
     const admin = await asAdmin(app.app);
     const email = `selfexcl-${randomUUID()}@e2e.test`;
-    const { userId, playerId } = await registerAndMaterializePlayer(app.app, email);
+    const { userId, playerId } = await registerAndMaterializePlayer(app, { email: email });
 
     const activateRes = await admin.post(`/compliance/players/${userId}/self-exclusion`, {
       userId,
@@ -178,7 +158,7 @@ describe('level: atomic replace-on-change driven by player.level.changed', () =>
   it('sets level, verifies the tag + reason, changes it again, verifies exactly one active row', async () => {
     const admin = await asAdmin(app.app);
     const email = `level-${randomUUID()}@e2e.test`;
-    const { playerId } = await registerAndMaterializePlayer(app.app, email);
+    const { playerId } = await registerAndMaterializePlayer(app, { email: email });
 
     // no level tag before any admin edit
     expect(await activeTagKeys(admin, playerId)).not.toContain('level');
@@ -212,7 +192,7 @@ describe('level: atomic replace-on-change driven by player.level.changed', () =>
   it('no-op: updating a field other than level does not touch the level tag', async () => {
     const admin = await asAdmin(app.app);
     const email = `level-noop-${randomUUID()}@e2e.test`;
-    const { playerId } = await registerAndMaterializePlayer(app.app, email);
+    const { playerId } = await registerAndMaterializePlayer(app, { email: email });
 
     const setRes = await admin.patch(`/players/${playerId}`, { level: 3 });
     expect(setRes.status).toBe(200);
@@ -241,8 +221,8 @@ describe('multi_account and bonus_abuser: automatic shared-IP risk tags', () => 
     const sharedIp = '203.0.113.77';
     const firstEmail = `multiacct-a-${randomUUID()}@e2e.test`;
     const secondEmail = `multiacct-b-${randomUUID()}@e2e.test`;
-    const first = await registerAndMaterializePlayer(app.app, firstEmail);
-    const second = await registerAndMaterializePlayer(app.app, secondEmail);
+    const first = await registerAndMaterializePlayer(app, { email: firstEmail });
+    const second = await registerAndMaterializePlayer(app, { email: secondEmail });
 
     await loginWithIp(app.app, firstEmail, sharedIp);
     await loginWithIp(app.app, secondEmail, sharedIp);
@@ -269,7 +249,7 @@ describe('multi_account and bonus_abuser: automatic shared-IP risk tags', () => 
   it('manual removal still clears the sticky multi_account tag after review', async () => {
     const admin = await asAdmin(app.app);
     const email = `multiacct-${randomUUID()}@e2e.test`;
-    const { playerId } = await registerAndMaterializePlayer(app.app, email);
+    const { playerId } = await registerAndMaterializePlayer(app, { email: email });
 
     const assignRes = await admin.post(`/player/${playerId}/player-tag`, {
       tagKey: 'multi_account',
@@ -296,7 +276,7 @@ describe('multi_account and bonus_abuser: automatic shared-IP risk tags', () => 
   it('assigning multi_account twice returns 409 CONFLICT (TagAlreadyInUseError)', async () => {
     const admin = await asAdmin(app.app);
     const email = `multiacct-conflict-${randomUUID()}@e2e.test`;
-    const { playerId } = await registerAndMaterializePlayer(app.app, email);
+    const { playerId } = await registerAndMaterializePlayer(app, { email: email });
 
     const first = await admin.post(`/player/${playerId}/player-tag`, {
       tagKey: 'multi_account',
@@ -318,7 +298,7 @@ describe('bonus_abuser: generic assign/remove round-trip, no restriction blocks 
   it('assigns then removes cleanly via the generic admin routes', async () => {
     const admin = await asAdmin(app.app);
     const email = `bonusabuser-${randomUUID()}@e2e.test`;
-    const { playerId } = await registerAndMaterializePlayer(app.app, email);
+    const { playerId } = await registerAndMaterializePlayer(app, { email: email });
 
     const assignRes = await admin.post(`/player/${playerId}/player-tag`, {
       tagKey: 'bonus_abuser',
@@ -374,7 +354,7 @@ describe('authz negatives: never a success or a 500 without admin credentials', 
 
   it('rejects an authenticated non-admin player with 403 on tag routes and the player update route', async () => {
     const email = `authz-bf317-${randomUUID()}@e2e.test`;
-    const { client, playerId } = await registerAndMaterializePlayer(app.app, email);
+    const { client, playerId } = await registerAndMaterializePlayer(app, { email: email });
 
     const listRes = await client.get(`/player/${playerId}/player-tag?page=1&limit=20`);
     expect(listRes.status).toBe(403);

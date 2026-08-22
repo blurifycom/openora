@@ -1,11 +1,12 @@
 import { EVENT_BUS, DRIZZLE, ADMIN_GUARD, createLogger } from '@openora/core/server';
-import type { CoreTokenCatalog, Plugin } from '@openora/core/server';
+import type { CoreTokenCatalog, Plugin, TypedContainer } from '@openora/core/server';
 import * as z from 'zod';
 import {
   ADMIN_USER_DIRECTORY,
   AUDIT_WRITER,
   CACHE,
   GEO_IP_ADAPTER,
+  GEO_CHECK_COMMANDS,
   JOB_QUEUE,
   KYC_ADAPTER,
   IDENTITY_READER,
@@ -36,6 +37,14 @@ import { HmacKycWebhookVerifier } from './adapters/hmac-kyc-webhook-verifier.js'
 
 const logger = createLogger('compliance');
 
+const makeComplianceService = (c: TypedContainer<CoreTokenCatalog>) =>
+  new ComplianceService(
+    c.get(DRIZZLE),
+    c.get(EVENT_BUS),
+    c.has(GEO_IP_ADAPTER) ? c.get(GEO_IP_ADAPTER) : null,
+    c.get(IDENTITY_READER),
+  );
+
 const RG_EVAL_QUEUE = queue('rg-eval');
 const RG_MONITOR_QUEUE = queue('rg-monitor');
 const KYC_DECISION_SYNC_QUEUE = queue('kyc-decision-sync');
@@ -58,6 +67,7 @@ export default {
   dependsOn: ['player-management', 'identity', 'wallet', 'gaming', 'audit'],
   requiresPorts: [LOGIN_ENFORCEMENT],
   register(ctx) {
+    ctx.provide(GEO_CHECK_COMMANDS, makeComplianceService);
     ctx.provide(KYC_WEBHOOK_VERIFIER, (c) => {
       const cfg = c.has(PLATFORM_CONFIG) ? c.get(PLATFORM_CONFIG) : undefined;
       const envName = cfg?.kyc?.webhookSecretEnv ?? 'KYC_WEBHOOK_SECRET';
@@ -211,12 +221,7 @@ export default {
         .catch((err) => logger.error({ err }, 'rg-monitor schedule failed'));
 
       return createComplianceRouter({
-        compliance: new ComplianceService(
-          c.get(DRIZZLE),
-          c.get(EVENT_BUS),
-          c.has(GEO_IP_ADAPTER) ? c.get(GEO_IP_ADAPTER) : null,
-          c.get(IDENTITY_READER),
-        ),
+        compliance: makeComplianceService(c),
         adminGuard: c.get(ADMIN_GUARD),
         audit: c.get(AUDIT_WRITER),
         kyc,

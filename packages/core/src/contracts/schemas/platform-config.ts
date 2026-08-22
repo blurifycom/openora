@@ -73,6 +73,15 @@ export const WalletConfigSchema = z
 
 export type WalletConfig = z.infer<typeof WalletConfigSchema>;
 
+export const RegistrationConfigSchema = z
+  .object({
+    /** Version recorded beside the player's affirmative terms acceptance. */
+    termsVersion: z.string().min(1),
+    /** Public consumer origin used in verification-email links. */
+    webUrl: z.url(),
+  })
+  .strict();
+
 export const PlatformConfigSchema = z
   .object({
     /**
@@ -106,6 +115,8 @@ export const PlatformConfigSchema = z
     autoWithdrawal: AutoWithdrawalConfigSchema.optional(),
     /** Wallet rail-routing knobs (currently: the crypto currency set). Absent = built-in default. */
     wallet: WalletConfigSchema.optional(),
+    /** Required before public registration is enabled. */
+    registration: RegistrationConfigSchema.optional(),
     /**
      * Player-facing language codes the operator supports (eg `['en', 'es']`).
      * Undefined or empty means no restriction - any value is accepted.

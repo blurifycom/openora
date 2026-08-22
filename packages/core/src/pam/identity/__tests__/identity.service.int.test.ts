@@ -2,7 +2,13 @@ import { randomUUID } from 'node:crypto';
 import { describe, it, expect, vi, beforeAll, afterAll, beforeEach } from 'vitest';
 import { eq, sql } from 'drizzle-orm';
 import { ORPCError } from '@orpc/server';
-import { createTestDb, createTestRedis, type TestDb, type TestRedis } from '@openora/core/testing';
+import {
+  createTestDb,
+  createTestRedis,
+  type TestDb,
+  type TestRedis,
+  seedUser as insertUser,
+} from '@openora/core/testing';
 import { migrate as migrateIdentity } from '@openora/core/pam/migrate/identity';
 import { player } from '@openora/core/pam/schema/profile';
 import { migrate as migrateProfile } from '@openora/core/pam/migrate/profile';
@@ -109,13 +115,8 @@ const betterAuthUser = {
 
 const EMAIL = 'a@b.dev';
 
-async function seedUser(over: Partial<typeof user.$inferInsert> = {}) {
-  const [row] = await db.drizzle.db
-    .insert(user)
-    .values({ name: 'A', email: EMAIL, emailVerified: true, ...over })
-    .returning();
-  return row;
-}
+const seedUser = (over: Partial<typeof user.$inferInsert> = {}) =>
+  insertUser(db, { name: 'A', email: EMAIL, ...over });
 
 async function readUser(userId: string) {
   const [row] = await db.drizzle.db.select().from(user).where(eq(user.id, userId));
@@ -533,7 +534,7 @@ describe('IdentityService - RG login gate (real PG)', () => {
 describe('IdentityService - player-status login gate (real PG)', () => {
   async function seedBlockedPlayer(status: 'suspended' | 'closed') {
     const account = await seedUser();
-    await db.drizzle.db.insert(player).values({ userId: account.id, displayName: 'x', status });
+    await db.drizzle.db.insert(player).values({ userId: account.id, status });
     const live = new Date(Date.now() + 24 * 60 * 60 * 1000);
     await db.drizzle.db
       .insert(session)
@@ -571,9 +572,7 @@ describe('IdentityService - player-status login gate (real PG)', () => {
 
   it('allows login for an active player (no regression)', async () => {
     const account = await seedUser();
-    await db.drizzle.db
-      .insert(player)
-      .values({ userId: account.id, displayName: 'x', status: 'active' });
+    await db.drizzle.db.insert(player).values({ userId: account.id, status: 'active' });
     const events = makeEventBus();
     signInEmailMock.mockResolvedValue(signInSuccess(account.id));
     const svc = buildService({ events });

@@ -1,7 +1,7 @@
 import { describe, it, expect, beforeAll, afterAll, beforeEach } from 'vitest';
 import { randomUUID } from 'node:crypto';
 import { eq, sql } from 'drizzle-orm';
-import { createTestDb, type TestDb } from '@openora/core/testing';
+import { createTestDb, type TestDb, seedUser } from '@openora/core/testing';
 import { migrate as migrateProfile } from '@openora/core/pam/migrate/profile';
 import { makeEventBus, makeIdentityReader } from '../../../testing/mock.js';
 import { migrate } from '../migrate.js';
@@ -21,19 +21,6 @@ function makeService() {
     identityReader: makeIdentityReader(),
   });
   return { svc: new LoginEnforcementService(db.drizzle, sessions), events };
-}
-
-async function seedUser(overrides: Partial<typeof user.$inferInsert> = {}) {
-  const [row] = await db.drizzle.db
-    .insert(user)
-    .values({
-      name: 'Player',
-      email: `${randomUUID()}@test.dev`,
-      emailVerified: true,
-      ...overrides,
-    })
-    .returning();
-  return row!;
 }
 
 async function seedActiveSession(userId: string) {
@@ -76,7 +63,7 @@ beforeEach(async () => {
 describe('LoginEnforcementService (real PG)', () => {
   it('writes the RG columns and expires every live session on a timed block', async () => {
     const { svc, events } = makeService();
-    const account = await seedUser();
+    const account = await seedUser(db);
     await seedActiveSession(account.id);
     await seedActiveSession(account.id);
     const until = new Date('2026-08-01T00:00:00.000Z');
@@ -93,7 +80,7 @@ describe('LoginEnforcementService (real PG)', () => {
 
   it('stores a null expiry for an indefinite block', async () => {
     const { svc } = makeService();
-    const account = await seedUser();
+    const account = await seedUser(db);
 
     await svc.block(account.id, { until: null });
 
@@ -102,8 +89,8 @@ describe('LoginEnforcementService (real PG)', () => {
 
   it('leaves another account session alive when blocking one player', async () => {
     const { svc } = makeService();
-    const blocked = await seedUser();
-    const other = await seedUser();
+    const blocked = await seedUser(db);
+    const other = await seedUser(db);
     await seedActiveSession(blocked.id);
     await seedActiveSession(other.id);
 
@@ -115,7 +102,7 @@ describe('LoginEnforcementService (real PG)', () => {
 
   it('clears both columns on unblock without reviving or revoking sessions', async () => {
     const { svc, events } = makeService();
-    const account = await seedUser({ rgBlocked: true, rgBlockedUntil: new Date() });
+    const account = await seedUser(db, { rgBlocked: true, rgBlockedUntil: new Date() });
     await seedActiveSession(account.id);
 
     await svc.unblock(account.id);
@@ -130,7 +117,7 @@ describe('LoginEnforcementService (real PG)', () => {
 
   it('overwrites an earlier block with the newer expiry', async () => {
     const { svc } = makeService();
-    const account = await seedUser();
+    const account = await seedUser(db);
     const later = new Date('2027-01-01T00:00:00.000Z');
 
     await svc.block(account.id, { until: new Date('2026-01-01T00:00:00.000Z') });

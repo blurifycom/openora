@@ -43,7 +43,7 @@ export function normalizeKycStatus(status: KycStatus): KycStatus {
 export const PlayerSchema = z.object({
   id: UuidSchema,
   userId: UuidSchema,
-  displayName: z.string(),
+  username: z.string(),
   email: z.string(),
   country: z.string().nullable(),
   currency: CurrencyCodeSchema,
@@ -66,7 +66,7 @@ export const PlayerSearchArgsSchema = z.object({
 
 export const PLAYER_SORT_BY_VALUES = [
   'createdAt',
-  'displayName',
+  'username',
   'status',
   'kycStatus',
   'totalWagered',
@@ -91,7 +91,6 @@ export type KycStatus = z.infer<typeof KycStatusSchema>;
 export type PaginatedPlayerListSearchArgs = z.infer<typeof PaginatedPlayerSearchArgsSchema>;
 
 export const UpdatePlayerProfileInputSchema = PlayerSchema.pick({
-  displayName: true,
   country: true,
   currency: true,
 }).partial();

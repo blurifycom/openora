@@ -1,6 +1,5 @@
 import {
   makeNotFoundError,
-  makeConflictError,
   DrizzleService,
   findOneOrThrow,
   pageToOffset,
@@ -19,32 +18,17 @@ import {
   type AdminGameReporting,
   type ChatBlockWriter,
   type SessionCommands,
+  type UserCommands,
   type PlayerActivityTracker,
 } from '@openora/core/contracts';
-import {
-  eq,
-  ilike,
-  count,
-  or,
-  and,
-  gte,
-  asc,
-  desc,
-  sql,
-  ne,
-  inArray,
-  isNull,
-  lt,
-} from 'drizzle-orm';
+import { eq, ilike, count, or, and, gte, asc, desc, sql, inArray, isNull, lt } from 'drizzle-orm';
 import { player } from '@openora/core/pam/schema/profile';
 import { user } from '@openora/core/pam/schema/identity';
 import { playerTag, tag } from '@openora/core/pam/schema/tag';
-import { toPlayer, fetchEmailByUserId } from '../../shared/player-mapper.js';
+import { toPlayer, fetchIdentityByUserId } from '../../shared/player-mapper.js';
 import type { PlayerSearchResult, PlayerProfileCard } from '../contract/index.js';
 
 export const PlayerNotFoundError = makeNotFoundError('Player');
-export const DuplicateEmailError = makeConflictError('DuplicateEmail', 'Email is already in use');
-
 const BLOCKING_PLAYER_STATUSES = new Set<PlayerStatus>(['suspended', 'closed']);
 
 function toDateKey(d: Date): string {
@@ -59,6 +43,7 @@ export class PlayerService implements PlayerActivityTracker {
     private readonly gameReporting: AdminGameReporting,
     private readonly blockWriter: ChatBlockWriter,
     private readonly sessionCommands: SessionCommands,
+    private readonly userCommands: UserCommands,
   ) {}
 
   async list({
@@ -100,7 +85,7 @@ export class PlayerService implements PlayerActivityTracker {
     if (search) {
       conditions.push(
         or(
-          ilike(player.displayName, `%${search}%`),
+          ilike(user.username, `%${search}%`),
           ilike(sql`${player.userId}::text`, search),
           ilike(sql`${player.id}::text`, search),
           ilike(user.email, `%${search}%`),
@@ -125,6 +110,7 @@ export class PlayerService implements PlayerActivityTracker {
         .select({
           player,
           email: user.email,
+          username: user.username,
           // Cast to text[] so pg driver deserializes as string[] (no parser for enum arrays).
           tags: sql<
             string[]
@@ -134,13 +120,13 @@ export class PlayerService implements PlayerActivityTracker {
         .leftJoin(user, eq(user.id, player.userId))
         .leftJoin(playerTag, and(eq(playerTag.playerId, player.id), isNull(playerTag.removedAt)))
         .leftJoin(tag, eq(tag.id, playerTag.tagId))
-        .groupBy(player.id, user.email)
+        .groupBy(player.id, user.email, user.username)
         .where(whereClause)
         .orderBy(
           ((sortOrder ?? 'desc') === 'asc' ? asc : desc)(
             {
               createdAt: player.createdAt,
-              displayName: player.displayName,
+              username: user.username,
               status: player.status,
               kycStatus: player.kycStatus,
               totalWagered: player.totalWagered,
@@ -160,7 +146,7 @@ export class PlayerService implements PlayerActivityTracker {
         .where(whereClause),
     ]);
     const items = rows.map((r) => ({
-      ...toPlayer(r.player, r.email ?? ''),
+      ...toPlayer(r.player, r.email ?? '', r.username ?? ''),
       tags: r.tags as TagKey[],
     }));
     return { items, total: Number(n), page, limit };
@@ -173,6 +159,7 @@ export class PlayerService implements PlayerActivityTracker {
         .select({
           player,
           email: user.email,
+          username: user.username,
           // Cast to text[] so pg driver deserializes as string[] (no parser for enum arrays).
           tags: sql<
             string[]
@@ -182,11 +169,14 @@ export class PlayerService implements PlayerActivityTracker {
         .leftJoin(user, eq(user.id, player.userId))
         .leftJoin(playerTag, and(eq(playerTag.playerId, player.id), isNull(playerTag.removedAt)))
         .leftJoin(tag, eq(tag.id, playerTag.tagId))
-        .groupBy(player.id, user.email)
+        .groupBy(player.id, user.email, user.username)
         .where(eq(player.id, playerId)),
       new PlayerNotFoundError(playerId),
     );
-    return { ...toPlayer(row.player, row.email ?? ''), tags: row.tags as TagKey[] };
+    return {
+      ...toPlayer(row.player, row.email ?? '', row.username ?? ''),
+      tags: row.tags as TagKey[],
+    };
   }
 
   async get(playerId: Player['id']) {
@@ -198,7 +188,8 @@ export class PlayerService implements PlayerActivityTracker {
       await this.drizzle.db.select().from(player).where(eq(player.userId, userId)),
       new PlayerNotFoundError(userId),
     );
-    return toPlayer(record, await fetchEmailByUserId(this.drizzle, record.userId));
+    const identity = await fetchIdentityByUserId(this.drizzle, record.userId);
+    return toPlayer(record, identity?.email ?? '', identity?.username ?? '');
   }
 
   async getExtended(playerId: Player['id']) {
@@ -207,7 +198,7 @@ export class PlayerService implements PlayerActivityTracker {
 
   async update(
     playerId: Player['id'],
-    data: Partial<Pick<Player, 'displayName' | 'status' | 'level' | 'email'>>,
+    data: { username?: string; status?: PlayerStatus; level?: number },
     actorId: User['id'],
   ) {
     const existing = findOneOrThrow(
@@ -215,21 +206,7 @@ export class PlayerService implements PlayerActivityTracker {
       new PlayerNotFoundError(playerId),
     );
 
-    if (data.email !== undefined) {
-      const clash = await this.drizzle.db
-        .select({ id: user.id })
-        .from(user)
-        .where(and(eq(user.email, data.email), ne(user.id, existing.userId)))
-        .limit(1);
-      if (clash.length > 0) {
-        throw new DuplicateEmailError();
-      }
-    }
-
     const patch: Partial<typeof player.$inferInsert> = {};
-    if (data.displayName !== undefined) {
-      patch.displayName = data.displayName;
-    }
     if (data.status !== undefined) {
       patch.status = data.status;
     }
@@ -237,14 +214,15 @@ export class PlayerService implements PlayerActivityTracker {
       patch.level = data.level;
     }
 
+    // The username lives on identity's table, so it is written through USER_COMMANDS
+    // rather than joined into this transaction - identity keeps its own invariants.
+    if (data.username !== undefined) {
+      await this.userCommands.setUsername(existing.userId, data.username);
+    }
     await this.drizzle.db.transaction(async (trx) => {
-      if (data.email !== undefined) {
-        await trx.update(user).set({ email: data.email }).where(eq(user.id, existing.userId));
-      }
       if (Object.keys(patch).length > 0) {
         await trx.update(player).set(patch).where(eq(player.id, playerId));
       }
-      // Verify the row still exists after all writes before the txn commits.
       findOneOrThrow(
         await trx.select().from(player).where(eq(player.id, playerId)),
         new PlayerNotFoundError(playerId),

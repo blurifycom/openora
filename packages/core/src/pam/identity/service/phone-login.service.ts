@@ -102,6 +102,7 @@ type UserRow = Pick<
   | 'id'
   | 'email'
   | 'name'
+  | 'username'
   | 'emailVerified'
   | 'image'
   | 'theme'
@@ -117,6 +118,7 @@ function serializeUser(u: UserRow): User {
     id: u.id,
     email: u.email,
     name: u.name,
+    username: u.username,
     emailVerified: u.emailVerified,
     theme: u.theme,
     language: u.language,
@@ -322,6 +324,7 @@ export class PhoneLoginService {
         id: user.id,
         email: user.email,
         name: user.name,
+        username: user.username,
         emailVerified: user.emailVerified,
         image: user.image,
         theme: user.theme,

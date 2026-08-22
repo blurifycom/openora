@@ -31,13 +31,10 @@ export function createPlayerRouter(
       const { userId: adminId } = await adminGuard.assert(context, 'player', 'update');
       return mapErrors({ NOT_FOUND: PlayerNotFoundError }, async () => {
         const before = await player.get(input.playerId);
-        // NOTE: `input.email` is accepted by the contract and by PlayerService.update's
-        // signature but is NOT forwarded here - that gap predates this change (present
-        // on `dev` too) and is out of scope for this fix; flagged, not silently patched.
         const updated = await player.update(
           input.playerId,
           {
-            displayName: input.displayName,
+            username: input.username,
             status: input.status,
             level: input.level,
           },
@@ -50,16 +47,14 @@ export function createPlayerRouter(
           resourceType: 'player',
           resourceId: input.playerId,
           before: {
-            displayName: before.displayName,
+            username: before.username,
             status: before.status,
             level: before.level,
-            email: before.email,
           },
           after: {
-            displayName: updated.displayName,
+            username: updated.username,
             status: updated.status,
             level: updated.level,
-            email: updated.email,
           },
         });
         return updated;

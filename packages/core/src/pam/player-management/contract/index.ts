@@ -9,6 +9,7 @@ import {
   TagKeySchema,
   PaginatedPlayerSearchArgsSchema,
   MoneyAmountSchema,
+  UsernameSchema,
 } from '@openora/core/contracts';
 import { paginated } from '@openora/core/contracts/kit';
 
@@ -81,10 +82,9 @@ export const playerContract = populateContractRouterPaths({
     .input(
       z.object({
         playerId: UuidSchema,
-        displayName: z.string().min(1).max(120).optional(),
+        username: UsernameSchema.optional(),
         status: PlayerStatusSchema.optional(),
         level: z.number().int().min(0).max(100).optional(),
-        email: z.email().optional(),
       }),
     )
     .output(PlayerWithTagsSchema),

@@ -8,7 +8,7 @@ import type {
   TagKey,
   KycStatus,
 } from '@openora/core/contracts';
-import { createTestDb, type TestDb } from '@openora/core/testing';
+import { createTestDb, type TestDb, seedUser } from '@openora/core/testing';
 import { user } from '@openora/core/pam/schema/identity';
 import { migrate as migrateIdentity } from '@openora/core/pam/migrate/identity';
 import { player } from '@openora/core/pam/schema/profile';
@@ -114,24 +114,16 @@ async function activeAssignmentRow(playerId: string, tagRow: { id: string }) {
   return row;
 }
 
-async function seedUser(overrides: Partial<typeof user.$inferInsert> = {}) {
-  const [row] = await db.drizzle.db
-    .insert(user)
-    .values({ name: 'Player', email: `${randomUUID()}@example.com`, ...overrides })
-    .returning();
-  return row!;
-}
-
 async function seedPlayer(userId: string, overrides: Partial<typeof player.$inferInsert> = {}) {
   const [row] = await db.drizzle.db
     .insert(player)
-    .values({ userId, displayName: 'Player', ...overrides })
+    .values({ userId, ...overrides })
     .returning();
   return row!;
 }
 
 async function seedPlayerWithUser() {
-  const account = await seedUser();
+  const account = await seedUser(db);
   const row = await seedPlayer(account.id);
   return { account, player: row };
 }

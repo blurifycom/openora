@@ -8,14 +8,18 @@ import {
   NOTIFICATION_DELIVERY_ADAPTER,
   SEND_EMAIL,
   EMAIL_TEMPLATE_RENDERER,
+  GEO_CHECK_COMMANDS,
+  PLAYER_PROVISIONING,
   IDENTITY_OPTIONS,
   RATE_LIMITER,
   PLATFORM_CONFIG,
   SESSION_COMMANDS,
+  USER_COMMANDS,
   SMS_ADAPTER,
 } from '@openora/core/contracts';
 import { ADMIN_GUARD, EVENT_BUS, DRIZZLE, AUTH_SESSION } from '@openora/core/server';
 import type { CoreTokenCatalog, Plugin } from '@openora/core/server';
+import { DrizzleUserCommands } from './service/user-commands.service.js';
 import { MockKycAdapter } from './adapters/mock/mock-kyc-adapter.js';
 import { MockSmsAdapter } from './adapters/mock/mock-sms-adapter.js';
 import { PhoneLoginService } from './service/phone-login.service.js';
@@ -62,6 +66,7 @@ export default {
         ),
     );
     ctx.provide(PLAY_ELIGIBILITY, (c) => new PlayEligibilityService(c.get(DRIZZLE)));
+    ctx.provide(USER_COMMANDS, (c) => new DrizzleUserCommands(c.get(DRIZZLE)));
     ctx.provide(SESSION_COMMANDS, (c) => {
       const sessionSvc = new SessionService({
         drizzle: c.get(DRIZZLE),
@@ -83,6 +88,8 @@ export default {
           options: c.has(IDENTITY_OPTIONS) ? c.get(IDENTITY_OPTIONS) : undefined,
           limiter: c.get(RATE_LIMITER),
           platformConfig: c.has(PLATFORM_CONFIG) ? c.get(PLATFORM_CONFIG) : undefined,
+          geoCheck: c.has(GEO_CHECK_COMMANDS) ? c.get(GEO_CHECK_COMMANDS) : undefined,
+          playerProvisioning: c.has(PLAYER_PROVISIONING) ? c.get(PLAYER_PROVISIONING) : undefined,
           cache: c.get(CACHE),
         }),
         new SessionService({

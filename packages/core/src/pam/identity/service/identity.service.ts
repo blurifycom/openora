@@ -8,6 +8,7 @@ import {
   extractClientMeta,
   getCurrentClientMeta,
   findOneOrThrow,
+  makeConflictError,
   makeNotFoundError,
   createLogger,
 } from '@openora/core/server';
@@ -39,6 +40,8 @@ import type {
   IdentityServiceOptions,
   PlatformConfig,
   ClientMeta,
+  GeoCheckCommands,
+  PlayerProvisioning,
 } from '@openora/core/contracts';
 import { RATE_LIMIT_KEYS, makeRateLimitKey } from '@openora/core/contracts';
 import { assertSupportedLanguage } from '../../shared/language.js';
@@ -81,6 +84,7 @@ function toUser(u: BetterAuthUser) {
     id: u.id,
     email: u.email,
     name: u.name,
+    username: u.username,
     emailVerified: u.emailVerified,
     theme: u.theme ?? 'system',
     language: u.language ?? 'en',
@@ -121,6 +125,9 @@ type AuthCall<B> = (opts: {
 }) => Promise<globalThis.Response>;
 
 type ExtendedAuthApi = {
+  signUpEmail: AuthCall<
+    Pick<typeof user.$inferInsert, 'email' | 'name' | 'username'> & { password: string }
+  >;
   enableTwoFactor: AuthCall<{ password: string }>;
   verifyTOTP: AuthCall<{ code: string }>;
   disableTwoFactor: AuthCall<{ password: string }>;
@@ -137,6 +144,7 @@ type ExtendedAuthApi = {
 const SUCCESS = { success: true as const };
 
 export const UserNotFoundError = makeNotFoundError('User');
+export const UsernameConflictError = makeConflictError('Username', 'Username is already in use');
 
 // better-auth calls use `asResponse: true`, which returns an error *Response*
 // (4xx/5xx) rather than throwing. Surface those as ORPCErrors so oRPC maps them
@@ -183,6 +191,9 @@ export const SESSION_DURATION_IN_SECONDS = 30 * 24 * 60 * 60; // 30 days
 // throttles (register/resend/etc.) keep the default fail-open.
 const LOGIN_RATE_LIMIT = { limit: 10, windowMs: 5 * MINUTE_MS, onUnavailable: 'deny' } as const;
 const REGISTER_RATE_LIMIT = { limit: 5, windowMs: 15 * MINUTE_MS };
+// Keyed on the caller, not the handle: the abuse shape here is enumerating many
+// usernames from one client, not probing one username repeatedly.
+const USERNAME_AVAILABILITY_RATE_LIMIT = { limit: 30, windowMs: MINUTE_MS };
 const PASSWORD_RESET_REQUEST_RATE_LIMIT = { limit: 3, windowMs: 15 * MINUTE_MS };
 const PASSWORD_RESET_RATE_LIMIT = {
   limit: 5,
@@ -249,6 +260,8 @@ export type IdentityServiceDeps = {
   options?: IdentityServiceOptions;
   limiter?: RateLimiterAdapter<RateLimitKey>;
   platformConfig?: PlatformConfig;
+  geoCheck?: GeoCheckCommands;
+  playerProvisioning?: PlayerProvisioning;
   cache?: CacheAdapter;
 };
 
@@ -271,6 +284,8 @@ export class IdentityService {
   private readonly options?: IdentityServiceOptions;
   private readonly limiter?: RateLimiterAdapter<RateLimitKey>;
   private readonly platformConfig?: PlatformConfig;
+  private readonly playerProvisioning?: PlayerProvisioning;
+  private readonly geoCheck?: GeoCheckCommands;
   private readonly cache?: CacheAdapter;
 
   constructor({
@@ -282,6 +297,8 @@ export class IdentityService {
     options,
     limiter,
     platformConfig,
+    geoCheck,
+    playerProvisioning,
     cache,
   }: IdentityServiceDeps) {
     this.drizzle = drizzle;
@@ -292,6 +309,8 @@ export class IdentityService {
     this.options = options;
     this.limiter = limiter;
     this.platformConfig = platformConfig;
+    this.geoCheck = geoCheck;
+    this.playerProvisioning = playerProvisioning;
     this.cache = cache;
     this.auth = createAuth({
       db: drizzle.db,
@@ -299,6 +318,15 @@ export class IdentityService {
       ...(email ? { sendEmail: (args) => email.send(args) } : {}),
       templateRenderer: this.templateRenderer,
       getUserLanguage: (lookupEmail) => this.resolveUserLanguage(lookupEmail),
+      registrationWebUrl: this.platformConfig?.registration?.webUrl,
+      onExistingUserSignUp: async (existing) => {
+        const response = await this.api.requestPasswordResetEmailOTP({
+          body: { email: existing.email },
+          headers: new Headers(),
+          asResponse: true,
+        });
+        await ensureOk(response);
+      },
       onPasswordReset: async (resetUser) => {
         this.events.emit('identity.password.reset', {
           userId: resetUser.id,
@@ -346,29 +374,128 @@ export class IdentityService {
     return session?.user?.id ?? null;
   }
 
-  async register(input: RegisterInput, reqHeaders: NodeHeaders, resHeaders: Headers) {
+  async register(input: RegisterInput, reqHeaders: NodeHeaders) {
+    const registration = this.platformConfig?.registration;
+    const provisioning = this.playerProvisioning;
+    if (!registration || !provisioning) {
+      throw new ORPCError('FORBIDDEN', { message: 'Registration is unavailable' });
+    }
+    const { ip, userAgent } = extractClientMeta(reqHeaders);
     await assertRateLimit(
       this.limiter,
       `register:${input.email.toLowerCase()}`,
       REGISTER_RATE_LIMIT,
     );
-    const { ip, userAgent } = extractClientMeta(reqHeaders);
+    await assertRateLimit(this.limiter, `register-ip:${ip ?? 'unknown'}`, REGISTER_RATE_LIMIT);
+    if (this.geoCheck && !(await this.geoCheck.checkRegistration(ip)).allowed) {
+      throw new ORPCError('FORBIDDEN', { message: 'Registration is unavailable' });
+    }
     const headers = nodeHeadersToHeaders(reqHeaders);
-    const authResponse = await this.auth.api.signUpEmail({
-      body: { email: input.email, password: input.password, name: input.name },
+    const authResponse = await this.api.signUpEmail({
+      body: {
+        email: input.email,
+        password: input.password,
+        name: input.username,
+        username: input.username,
+      },
       headers,
       asResponse: true,
     });
-    this.forwardCookies(authResponse, resHeaders);
+    if (!authResponse.ok) {
+      // The `lower(username)` unique index is the only arbiter - a pre-flight check
+      // could not close the race anyway, so the taken handle is read off the failure.
+      if (await this.findUserIdByUsername(input.username)) {
+        throw new UsernameConflictError();
+      }
+      await ensureOk(authResponse, { genericMessage: 'Registration is unavailable' });
+    }
     const body = (await authResponse.json()) as { user: BetterAuthUser };
+    // A known address gets an indistinguishable success response (and a reset mail)
+    // rather than a new account, so only a genuinely new user is provisioned.
+    if ((await this.findUserIdByEmail(input.email)) === body.user.id) {
+      const { playerId } = await this.recordRegistrationConsent(
+        provisioning,
+        body.user.id,
+        registration.termsVersion,
+        { ip, userAgent },
+      );
+      this.events.emit('identity.user.registered', {
+        userId: body.user.id,
+        playerId: playerId ?? (await this.identityReader.getPlayerIdByUserIdSafe(body.user.id)),
+        ip,
+        userAgent,
+      });
+    }
+    return { status: 'check-email' as const };
+  }
 
-    this.events.emit('identity.user.registered', {
-      userId: body.user.id,
-      playerId: await this.identityReader.getPlayerIdByUserIdSafe(body.user.id),
-      ip,
-      userAgent,
-    });
-    return { user: toUser(body.user) };
+  private async findUserIdByUsername(username: string) {
+    const [row] = await this.drizzle.db
+      .select({ id: user.id })
+      .from(user)
+      .where(eq(sql`lower(${user.username})`, username.toLowerCase()))
+      .limit(1);
+    return row?.id ?? null;
+  }
+
+  private async findUserIdByEmail(email: string) {
+    const [row] = await this.drizzle.db
+      .select({ id: user.id })
+      .from(user)
+      .where(eq(user.email, email.toLowerCase()))
+      .limit(1);
+    return row?.id ?? null;
+  }
+
+  /**
+   * Better Auth commits the user inside its own transaction before returning, so a
+   * failure here would otherwise leave an account with no consent record. The user is
+   * deleted instead (sessions and accounts cascade), making registration all-or-nothing.
+   */
+  private async recordRegistrationConsent(
+    provisioning: PlayerProvisioning,
+    userId: User['id'],
+    termsVersion: string,
+    { ip, userAgent }: ClientMeta,
+  ) {
+    const now = new Date();
+    let outcome: Awaited<ReturnType<PlayerProvisioning['createForRegistration']>>;
+    try {
+      outcome = await provisioning.createForRegistration({
+        userId,
+        termsVersion,
+        termsAcceptedAt: now,
+        ageAcceptedAt: now,
+        registrationIp: ip,
+        registrationUserAgent: userAgent,
+      });
+    } catch (err) {
+      identityLogger.error(
+        { err, userId },
+        'registration consent write failed - rolling back user',
+      );
+      await this.drizzle.db.delete(user).where(eq(user.id, userId));
+      throw new ORPCError('INTERNAL_SERVER_ERROR', { message: 'Registration is unavailable' });
+    }
+    if (!outcome.created) {
+      // A player row already existed, so this consent capture was discarded. Never
+      // silent: the acceptance evidence is a compliance record.
+      identityLogger.error(
+        { userId, termsVersion },
+        'registration consent not stored - player row already existed',
+      );
+    }
+    return { playerId: outcome.playerId ?? null };
+  }
+
+  async usernameAvailable(username: string, reqHeaders: NodeHeaders) {
+    const { ip } = extractClientMeta(reqHeaders);
+    await assertRateLimit(
+      this.limiter,
+      `check-username:${ip ?? 'unknown'}`,
+      USERNAME_AVAILABILITY_RATE_LIMIT,
+    );
+    return { available: !(await this.findUserIdByUsername(username)) };
   }
 
   /**
@@ -1069,10 +1196,12 @@ export class IdentityService {
   async verifyEmail(input: VerifyEmailInput, reqHeaders: NodeHeaders) {
     const { ip, userAgent } = extractClientMeta(reqHeaders);
     const headers = nodeHeadersToHeaders(reqHeaders);
-    const userId = await this.currentUserId(headers);
+    const sessionUserId = await this.currentUserId(headers);
+    // Verification links are followed without a session, so an `anonymous` bucket
+    // would be shared by every caller - one client could stall everyone's sign-up.
     await assertRateLimit(
       this.limiter,
-      `verify-email:${userId ?? 'anonymous'}`,
+      `verify-email:${sessionUserId ?? ip ?? 'unknown'}`,
       VERIFY_EMAIL_RATE_LIMIT,
     );
     const res = await this.api.verifyEmail({
@@ -1081,6 +1210,7 @@ export class IdentityService {
       asResponse: true,
     });
     await ensureOk(res);
+    const userId = sessionUserId ?? (await this.userIdFromVerificationToken(input.token));
     if (userId) {
       this.events.emit('identity.email.verified', {
         userId,
@@ -1090,6 +1220,26 @@ export class IdentityService {
       });
     }
     return SUCCESS;
+  }
+
+  /**
+   * Better Auth answers an unauthenticated verification with `user: null`, so the
+   * subject is recovered from the token it just accepted - otherwise the audit event
+   * would never fire for the ordinary click-the-link flow.
+   */
+  private async userIdFromVerificationToken(token: string) {
+    const payload = token.split('.')[1];
+    if (!payload) {
+      return null;
+    }
+    let email: unknown;
+    try {
+      email = (JSON.parse(Buffer.from(payload, 'base64url').toString()) as { email?: unknown })
+        .email;
+    } catch {
+      return null;
+    }
+    return typeof email === 'string' ? this.findUserIdByEmail(email) : null;
   }
 
   async changeEmail(input: ChangeEmailInput, reqHeaders: NodeHeaders, resHeaders: Headers) {

@@ -50,6 +50,13 @@
       "when": 1787167155336,
       "tag": "0006_brave_sabra",
       "breakpoints": true
+    },
+    {
+      "idx": 7,
+      "version": "7",
+      "when": 1787339175084,
+      "tag": "0007_fuzzy_barracuda",
+      "breakpoints": true
     }
   ]
 }

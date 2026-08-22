@@ -50,11 +50,25 @@ export function getUserId(context: unknown): string {
   return resolveAuth(context).userId;
 }
 
-export function extractClientMeta(headers: NodeHeaders): ClientMeta {
-  const fwd = headers['x-forwarded-for'];
-  const first = Array.isArray(fwd) ? fwd[0] : fwd;
-  const real = headers['x-real-ip'];
-  const ip = first?.split(',')[0]?.trim() || (Array.isArray(real) ? real[0] : real) || null;
+// Extracts IP only from headers; does not trust X-Forwarded-For without a
+// validated proxy boundary. Geo/rate-limit checks use this - a spoofed
+// X-Forwarded-For bypasses both. Use extractClientMeta({ headers, trustForwarded: true })
+// only when Node receives requests exclusively through a trusted reverse proxy
+// (Cloudflare, nginx, etc configured to strip and replace the header).
+export function extractClientMeta(
+  headers: NodeHeaders,
+  opts?: { trustForwarded?: boolean },
+): ClientMeta {
+  let ip: string | null = null;
+  if (opts?.trustForwarded) {
+    const fwd = headers['x-forwarded-for'];
+    const first = Array.isArray(fwd) ? fwd[0] : fwd;
+    ip = first?.split(',')[0]?.trim() || null;
+  }
+  if (!ip) {
+    const real = headers['x-real-ip'];
+    ip = (Array.isArray(real) ? real[0] : real) || null;
+  }
   const ua = headers['user-agent'];
   return { ip: ip ?? null, userAgent: (Array.isArray(ua) ? ua[0] : ua) ?? null };
 }

@@ -32,7 +32,7 @@ async function seedTag(key: TagKey, isSticky = false) {
 async function seedPlayer(overrides: Partial<typeof player.$inferInsert> = {}) {
   const [row] = await db.drizzle.db
     .insert(player)
-    .values({ userId: randomUUID(), displayName: 'Player', ...overrides })
+    .values({ userId: randomUUID(), ...overrides })
     .returning();
   return row!;
 }
