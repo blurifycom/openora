@@ -163,7 +163,7 @@ export function createWalletRouter(
         userId: adminId,
         ip,
         userAgent,
-      } = await adminGuard.assert(context, 'admin', 'update');
+      } = await adminGuard.assert(context, 'player', 'adjust-balance');
       return mapErrors(
         {
           NOT_FOUND: PlayerNotFoundError,

@@ -63,7 +63,10 @@ const transactionDenyingGuard = () =>
 const allowingGuard = () => makeAdminGuard({ caller: { userId: 'caller-1' } });
 
 const adjustmentDenyingGuard = () =>
-  makeAdminGuard({ deny: ['admin:update'], caller: { userId: 'caller-1', role: 'admin' } });
+  makeAdminGuard({
+    deny: ['player:adjust-balance'],
+    caller: { userId: 'caller-1', role: 'admin' },
+  });
 
 async function seedLedger(userId: string, amounts: string[]) {
   const row = findOneOrThrow(
@@ -127,7 +130,7 @@ describe('wallet router listPlayerTransactions authz', () => {
 });
 
 describe('wallet router manualAdjustment authz', () => {
-  it('requires the super-admin-only admin:update grant and changes nothing on denial', async () => {
+  it('requires the player:adjust-balance grant and changes nothing on denial', async () => {
     const userId = randomUUID();
 
     await expect(
@@ -143,7 +146,10 @@ describe('wallet router manualAdjustment authz', () => {
         },
         { context: CTX },
       ),
-    ).rejects.toBeInstanceOf(ORPCError);
+      // Asserted on the code, not just `ORPCError`: this input also fails
+      // PlayerNotFoundError, so a bare instanceof check passes no matter which
+      // permission the route asks for - and would not notice the guard changing.
+    ).rejects.toMatchObject({ code: 'FORBIDDEN' });
 
     expect(await db.drizzle.db.select().from(wallet)).toHaveLength(0);
     expect(await db.drizzle.db.select().from(walletTransaction)).toHaveLength(0);
