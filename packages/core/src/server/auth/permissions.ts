@@ -21,6 +21,9 @@ export const statement = {
   tag: ['view', 'create', 'delete'] as const,
   'chat-room': ['view', 'create', 'update', 'delete'] as const,
   'auto-withdrawal-config': ['view', 'update'] as const,
+  'wallet-asset': ['view', 'create', 'update', 'delete'] as const,
+  'wallet-custody': ['view', 'run'] as const,
+  'wallet-reconciliation': ['view', 'resolve', 'run'] as const,
   'chat-command': ['view', 'update'] as const,
   'chat-moderation': ['view', 'moderate'] as const,
 } as const;
@@ -48,6 +51,9 @@ export const adminRole = ac.newRole({
   tag: ['view', 'create', 'delete'],
   'chat-room': ['view', 'create', 'update', 'delete'],
   'auto-withdrawal-config': ['view', 'update'],
+  'wallet-asset': ['view', 'create', 'update', 'delete'],
+  'wallet-custody': ['view', 'run'],
+  'wallet-reconciliation': ['view', 'resolve', 'run'],
   'chat-command': ['view', 'update'],
   'chat-moderation': ['view', 'moderate'],
 });

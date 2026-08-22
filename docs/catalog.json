@@ -381,14 +381,20 @@
       "tables": [
         "auto_withdrawal_rule",
         "wallet",
+        "wallet_asset",
         "wallet_auto_withdrawal_config",
         "wallet_balance",
+        "wallet_custody_sweep",
         "wallet_deposit_address",
+        "wallet_job_run",
         "wallet_provider_vault",
+        "wallet_reconciliation_finding",
         "wallet_transaction"
       ],
       "routes": [
         "wallet.approve",
+        "wallet.create",
+        "wallet.delete",
         "wallet.delete",
         "wallet.deposit",
         "wallet.get",
@@ -397,13 +403,22 @@
         "wallet.getBalance",
         "wallet.getBalances",
         "wallet.list",
+        "wallet.list",
+        "wallet.list",
+        "wallet.listAssets",
         "wallet.listPlayerTransactions",
         "wallet.listTransactions",
+        "wallet.manualAdjustment",
         "wallet.reject",
+        "wallet.resolve",
+        "wallet.run",
+        "wallet.run",
         "wallet.set",
         "wallet.set",
         "wallet.setActiveCurrency",
+        "wallet.update",
         "wallet.webhook",
+        "wallet.webhookForProvider",
         "wallet.withdraw"
       ]
     }
@@ -825,6 +840,15 @@
       ]
     },
     {
+      "category": "wallet-asset-catalog",
+      "interface": "WalletAsset",
+      "token": "WALLET_ASSET_CATALOG",
+      "status": "wired",
+      "boundIn": [
+        "packages/core/src/wallet/plugin.ts"
+      ]
+    },
+    {
       "category": "wallet-commands",
       "interface": "WalletDebitArgs",
       "token": "WALLET_COMMANDS",
@@ -929,6 +953,7 @@
     "tag.player.removed",
     "tag.rule.upserted",
     "wallet.deposit.completed",
+    "wallet.manual_adjustment.created",
     "wallet.withdrawal.approved",
     "wallet.withdrawal.completed",
     "wallet.withdrawal.failed",
@@ -1019,6 +1044,10 @@
     {
       "name": "AdminUserSortBySchema",
       "file": "packages/core/src/admin-console/contract/index.ts"
+    },
+    {
+      "name": "AdminWalletTransactionSchema",
+      "file": "packages/core/src/wallet/contract/index.ts"
     },
     {
       "name": "ApproveWithdrawalInputSchema",
@@ -1243,6 +1272,10 @@
     {
       "name": "createTagSchema",
       "file": "packages/core/src/contracts/schemas/tag.ts"
+    },
+    {
+      "name": "CreateWalletAssetInputSchema",
+      "file": "packages/core/src/wallet/contract/index.ts"
     },
     {
       "name": "CurrencyCodeSchema",
@@ -1481,6 +1514,10 @@
       "file": "packages/core/src/contracts/schemas/iam.ts"
     },
     {
+      "name": "JobRunResultSchema",
+      "file": "packages/core/src/wallet/contract/index.ts"
+    },
+    {
       "name": "KycCheckResultSchema",
       "file": "packages/core/src/contracts/adapters/kyc.ts"
     },
@@ -1569,6 +1606,10 @@
       "file": "packages/core/src/engagement/social/contract/index.ts"
     },
     {
+      "name": "ListReconciliationFindingsInputSchema",
+      "file": "packages/core/src/wallet/contract/index.ts"
+    },
+    {
       "name": "ListRgFlagsInputSchema",
       "file": "packages/core/src/compliance/contract/rg.ts"
     },
@@ -1587,6 +1628,14 @@
     {
       "name": "LoginSecurityStateSchema",
       "file": "packages/core/src/contracts/schemas/identity.ts"
+    },
+    {
+      "name": "ManualAdjustmentDirectionSchema",
+      "file": "packages/core/src/wallet/contract/index.ts"
+    },
+    {
+      "name": "ManualWalletAdjustmentInputSchema",
+      "file": "packages/core/src/wallet/contract/index.ts"
     },
     {
       "name": "MemberSchema",
@@ -1650,6 +1699,10 @@
     },
     {
       "name": "PaymentWebhookOutputSchema",
+      "file": "packages/core/src/wallet/contract/index.ts"
+    },
+    {
+      "name": "PaymentWebhookProviderInputSchema",
       "file": "packages/core/src/wallet/contract/index.ts"
     },
     {
@@ -1789,8 +1842,16 @@
       "file": "packages/core/src/contracts/schemas/igaming-config.ts"
     },
     {
+      "name": "PublicWalletAssetSchema",
+      "file": "packages/core/src/wallet/contract/index.ts"
+    },
+    {
       "name": "RainCommandMetadataSchema",
       "file": "packages/core/src/contracts/schemas/chat-command-metadata.ts"
+    },
+    {
+      "name": "ReconciliationResolutionSchema",
+      "file": "packages/core/src/wallet/contract/index.ts"
     },
     {
       "name": "RegisterInputSchema",
@@ -1843,6 +1904,10 @@
     {
       "name": "ResetPasswordInputSchema",
       "file": "packages/core/src/contracts/schemas/identity.ts"
+    },
+    {
+      "name": "ResolveReconciliationFindingInputSchema",
+      "file": "packages/core/src/wallet/contract/index.ts"
     },
     {
       "name": "RetentionCohortRowSchema",
@@ -2005,6 +2070,10 @@
       "file": "packages/core/src/contracts/schemas/tag.ts"
     },
     {
+      "name": "UpdateWalletAssetInputSchema",
+      "file": "packages/core/src/wallet/contract/index.ts"
+    },
+    {
       "name": "UpsertLimitInputSchema",
       "file": "packages/core/src/compliance/contract/limits.ts"
     },
@@ -2053,6 +2122,14 @@
       "file": "packages/core/src/contracts/schemas/identity.ts"
     },
     {
+      "name": "WalletAssetKeySchema",
+      "file": "packages/core/src/wallet/contract/index.ts"
+    },
+    {
+      "name": "WalletAssetSchema",
+      "file": "packages/core/src/wallet/contract/index.ts"
+    },
+    {
       "name": "WalletAutoWithdrawalConfigSchema",
       "file": "packages/core/src/wallet/contract/index.ts"
     },
@@ -2069,7 +2146,27 @@
       "file": "packages/core/src/contracts/schemas/platform-config.ts"
     },
     {
+      "name": "WalletCustodySweepStatusSchema",
+      "file": "packages/core/src/contracts/schemas/wallet-tx.ts"
+    },
+    {
+      "name": "WalletJobRunStatusSchema",
+      "file": "packages/core/src/contracts/schemas/wallet-tx.ts"
+    },
+    {
       "name": "WalletRailSchema",
+      "file": "packages/core/src/contracts/schemas/wallet-tx.ts"
+    },
+    {
+      "name": "WalletReconciliationFindingKindSchema",
+      "file": "packages/core/src/contracts/schemas/wallet-tx.ts"
+    },
+    {
+      "name": "WalletReconciliationFindingSchema",
+      "file": "packages/core/src/wallet/contract/index.ts"
+    },
+    {
+      "name": "WalletReconciliationFindingStatusSchema",
       "file": "packages/core/src/contracts/schemas/wallet-tx.ts"
     },
     {

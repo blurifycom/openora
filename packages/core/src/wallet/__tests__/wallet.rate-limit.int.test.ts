@@ -5,7 +5,13 @@ import { findOneOrThrow, RedisRateLimiter } from '@openora/core/server';
 import { createTestDb, createTestRedis, type TestDb, type TestRedis } from '@openora/core/testing';
 import { migrate as migrateProfile } from '@openora/core/pam/migrate/profile';
 import type { PaymentAdapter, AuditWritePort } from '@openora/core/contracts';
-import { mock, NO_CLIENT_META, makeEventBus, makeIdentityReader } from '../../testing/mock.js';
+import {
+  mock,
+  NO_CLIENT_META,
+  makeEventBus,
+  makeIdentityReader,
+  makePaymentProviderRegistry,
+} from '../../testing/mock.js';
 import { migrate } from '../migrate.js';
 import { wallet, walletBalance, walletTransaction } from '../schema/index.js';
 import { WalletService } from '../service/wallet.service.js';
@@ -24,6 +30,7 @@ const makeService = () =>
     drizzle: db.drizzle,
     events,
     payment,
+    paymentProviders: makePaymentProviderRegistry(),
     audit,
     identityReader: makeIdentityReader(),
     limiter: new RedisRateLimiter(redis.client),

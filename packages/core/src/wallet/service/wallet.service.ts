@@ -3,6 +3,7 @@ import {
   type DrizzleDb,
   type DrizzleTx,
   makeNotFoundError,
+  serializeRow,
   makeConflictError,
   createDomainError,
   DrizzleService,
@@ -13,10 +14,15 @@ import {
   createLogger,
   moneyToNumber,
   moneyEquals,
+  moneyAdd,
+  moneyCompare,
+  moneySubtract,
 } from '@openora/core/server';
 import {
   normalizeKycStatus,
+  DEFAULT_PAYMENT_PROVIDER,
   type PaymentAdapter,
+  type PaymentProviderRegistry,
   type PaymentWebhookEvent,
   type AdminUserDirectory,
   type PlatformConfig,
@@ -42,11 +48,13 @@ import {
   autoWithdrawalRule,
   walletAutoWithdrawalConfig,
   walletDepositAddress,
+  walletAsset,
   type Wallet,
   type WalletDepositAddress,
   type WalletTransaction,
   type AutoWithdrawalRule as AutoWithdrawalRuleRow,
   type WalletAutoWithdrawalConfig as WalletAutoWithdrawalConfigRow,
+  type WalletAssetRow,
 } from '../schema/index.js';
 import type {
   TransactionResult,
@@ -55,6 +63,11 @@ import type {
   AutoWithdrawalRule,
   WalletAutoWithdrawalConfig,
   WalletTransactionSortBy,
+  WalletAsset,
+  PublicWalletAsset,
+  CreateWalletAssetInput,
+  UpdateWalletAssetInput,
+  ManualAdjustmentDirection,
 } from '../contract/index.js';
 
 const logger = createLogger('wallet');
@@ -62,6 +75,7 @@ const logger = createLogger('wallet');
 export const WalletNotFoundError = makeNotFoundError('Wallet');
 export const WithdrawalNotFoundError = makeNotFoundError('Withdrawal');
 export const AutoWithdrawalConfigNotFoundError = makeNotFoundError('AutoWithdrawalConfig');
+export const PlayerNotFoundError = makeNotFoundError('Player');
 
 export const InsufficientBalanceError = createDomainError<[available: string, requested: string]>(
   'InsufficientBalanceError',
@@ -93,6 +107,55 @@ export const DestinationAddressRequiredError = makeConflictError(
   'A destination address is required for a crypto-rail withdrawal',
 );
 
+export const WalletAssetNotFoundError = makeNotFoundError('WalletAsset');
+
+export const WalletAssetAlreadyExistsError = makeConflictError(
+  'WalletAssetAlreadyExistsError',
+  'An asset is already configured for this currency and network',
+);
+
+export const WalletAssetUnsupportedError = makeConflictError(
+  'WalletAssetUnsupportedError',
+  'The bound payment adapter cannot serve this currency and network',
+);
+
+export const WalletAssetInUseError = makeConflictError(
+  'WalletAssetInUseError',
+  'Players still hold a balance in this currency',
+);
+
+export const WalletAssetUnknownProviderError = makeConflictError(
+  'WalletAssetUnknownProviderError',
+  'providerName is not a registered payment provider',
+);
+
+export const WalletAssetHasInFlightTransactionsError = makeConflictError(
+  'WalletAssetHasInFlightTransactionsError',
+  'A pending or processing transaction exists for this currency and network',
+);
+
+export const AmbiguousNetworkError = createDomainError(
+  'AmbiguousNetworkError',
+  (currency, networks) =>
+    `Currency ${currency} settles on several networks (${networks}) - a network is required`,
+);
+
+export const UnsupportedNetworkError = createDomainError(
+  'UnsupportedNetworkError',
+  (currency, network) => `Currency ${currency} is not settled on network ${network}`,
+);
+
+export const WithdrawalDisabledError = createDomainError(
+  'WithdrawalDisabledError',
+  (currency) => `Withdrawals are disabled for ${currency} on every configured network`,
+);
+
+export const BelowMinimumWithdrawalError = createDomainError(
+  'BelowMinimumWithdrawalError',
+  (amount, minimum, currency, network) =>
+    `Withdrawal of ${amount} ${currency} on ${network} is below the ${minimum} ${currency} minimum`,
+);
+
 const KYC_PASS_STATUSES: ReadonlySet<KycStatus> = new Set(['approved', 'manually_overridden']);
 
 export const CurrencyMismatchError = createDomainError(
@@ -107,9 +170,9 @@ export const AmbiguousDepositAddressError = createDomainError(
     `Deposit address ${address} on ${network ?? 'an unknown network'} is issued to more than one user`,
 );
 
-// Crypto currencies settle on the crypto rail (Fireblocks); everything else on the
-// fiat rail (a PSP). The concrete provider is recorded per transaction, not here.
-// Overridable per-operator via `platformConfig.wallet.cryptoCurrencies` - see `railFor`.
+// Crypto currencies settle on the crypto rail through a custody/MPC vendor; everything
+// else on the fiat rail (a PSP). The concrete provider is recorded per transaction, not
+// here. Overridable per-operator via `platformConfig.wallet.cryptoCurrencies` - see `railFor`.
 const DEFAULT_CRYPTO_CURRENCIES = new Set(['BTC', 'ETH', 'USDT', 'USDC']);
 
 // Mirrors the `wallet.currency` column default: what a player without a wallet row
@@ -120,6 +183,69 @@ const DEFAULT_WALLET_CURRENCY = 'USD';
 // fraud (idempotency + the ledger guard cover correctness). An overlay rebinds
 // RATE_LIMITER to change the backend, not this policy.
 const WALLET_MUTATION_RATE_LIMIT = { limit: 30, windowMs: 60 * 1000 };
+
+/** The catalog fields a payout decision needs - a structural subset of a wallet_asset row. */
+type WithdrawalAsset = {
+  network: string;
+  minWithdrawal: string;
+  withdrawalEnabled: boolean;
+};
+
+/**
+ * Pins the chain a payout settles on. With one payable network the choice is implied; with
+ * several an explicit network is mandatory, because picking one silently would send a
+ * player's USDT over a chain their receiving wallet may not support.
+ *
+ * `assets` is every catalog row for the currency, enabled or not, so the two empty cases
+ * stay distinguishable: no rows at all means the operator never configured this currency
+ * (a fiat PSP), and the caller's choice passes through unchecked; rows that are all
+ * withdrawal-disabled is a deliberate operator decision and fails closed.
+ */
+export function resolveWithdrawalNetwork(
+  assets: readonly WithdrawalAsset[],
+  currency: string,
+  network?: string,
+): string | null {
+  if (assets.length === 0) {
+    return network?.toUpperCase() ?? null;
+  }
+  const payable = assets.filter((asset) => asset.withdrawalEnabled);
+  const [only, ...rest] = payable;
+  if (!only) {
+    throw new WithdrawalDisabledError(currency);
+  }
+  if (network === undefined) {
+    if (rest.length > 0) {
+      throw new AmbiguousNetworkError(currency, payable.map((asset) => asset.network).join(', '));
+    }
+    return only.network.toUpperCase();
+  }
+  const wanted = network.toUpperCase();
+  if (!payable.some((asset) => asset.network.toUpperCase() === wanted)) {
+    throw new UnsupportedNetworkError(currency, wanted);
+  }
+  return wanted;
+}
+
+/**
+ * Rejects a payout worth less than the operator's per-network floor. The floor is per chain,
+ * not per currency: moving USDT costs cents on BEP20 and dollars on ERC20, so one
+ * currency-wide minimum is either too high for the cheap chain or below the fee on the
+ * expensive one.
+ */
+export function assertAboveMinimumWithdrawal(
+  assets: readonly WithdrawalAsset[],
+  amount: string,
+  currency: string,
+  network: string | null,
+): void {
+  const asset = assets.find(
+    (candidate) => candidate.withdrawalEnabled && candidate.network.toUpperCase() === network,
+  );
+  if (asset && moneyCompare(amount, asset.minWithdrawal) < 0) {
+    throw new BelowMinimumWithdrawalError(amount, asset.minWithdrawal, currency, asset.network);
+  }
+}
 
 export function railFor(currency: string, cryptoCurrencies?: readonly string[]): WalletRail {
   const set = cryptoCurrencies
@@ -190,6 +316,7 @@ export async function readWalletBalance(
 // prefix won't parse - hash namespace + key into a stable pseudo-uuid instead.
 const DEPOSIT_IDEMPOTENCY_NAMESPACE = 'deposit';
 const WITHDRAW_IDEMPOTENCY_NAMESPACE = 'withdraw';
+const MANUAL_ADJUSTMENT_IDEMPOTENCY_NAMESPACE = 'manual-adjustment';
 
 function namespacedIdempotencyKey(namespace: string, rawKey: string): string {
   const hex = createHash('sha256').update(`${namespace}:${rawKey}`).digest('hex');
@@ -274,16 +401,28 @@ function toAutoWithdrawalConfigDto(row: WalletAutoWithdrawalConfigRow): WalletAu
   };
 }
 
-// The concrete settlement provider recorded per transaction: the crypto rail settles
-// through Fireblocks, the fiat rail through a PSP.
-function providerNameFor(rail: WalletRail | null): string {
-  return rail === 'crypto' ? 'fireblocks' : 'psp';
+const PUBLIC_ASSET_COLUMNS = {
+  currency: walletAsset.currency,
+  network: walletAsset.network,
+  minDeposit: walletAsset.minDeposit,
+  minWithdrawal: walletAsset.minWithdrawal,
+  withdrawalFee: walletAsset.withdrawalFee,
+  depositEnabled: walletAsset.depositEnabled,
+  withdrawalEnabled: walletAsset.withdrawalEnabled,
+};
+
+function toWalletAssetDto(row: WalletAssetRow): WalletAsset {
+  return serializeRow(row, { dateFields: ['createdAt', 'updatedAt'], decimalFields: [] });
 }
 
 export type WalletServiceDeps = {
   drizzle: DrizzleService;
   events: EventBus;
   payment: PaymentAdapter;
+  // Required: always bound (wallet/plugin.ts wraps the default single PAYMENT_ADAPTER/
+  // PAYMENT_WEBHOOK_VERIFIER tokens under DEFAULT_PAYMENT_PROVIDER), and the asset
+  // catalog's providerName write path needs it to fail closed on an unregistered name.
+  paymentProviders: PaymentProviderRegistry;
   identityReader: IdentityReader;
   directory?: AdminUserDirectory;
   platformConfig?: PlatformConfig;
@@ -311,6 +450,7 @@ export class WalletService {
   private readonly drizzle: DrizzleService;
   private readonly events: EventBus;
   private readonly payment: PaymentAdapter;
+  private readonly paymentProviders: PaymentProviderRegistry;
   private readonly identityReader: IdentityReader;
   private readonly directory?: AdminUserDirectory;
   private readonly platformConfig?: PlatformConfig;
@@ -323,6 +463,7 @@ export class WalletService {
     drizzle,
     events,
     payment,
+    paymentProviders,
     directory,
     identityReader,
     platformConfig,
@@ -334,6 +475,7 @@ export class WalletService {
     this.drizzle = drizzle;
     this.events = events;
     this.payment = payment;
+    this.paymentProviders = paymentProviders;
     this.directory = directory;
     this.identityReader = identityReader;
     this.platformConfig = platformConfig;
@@ -343,8 +485,37 @@ export class WalletService {
     this.audit = audit;
   }
 
+  // Every catalog row for the currency, enabled or not - resolveWithdrawalNetwork needs
+  // both to tell "never configured" from "deliberately disabled".
+  private assetsForCurrency(currency: string) {
+    return this.drizzle.db
+      .select({
+        network: walletAsset.network,
+        minWithdrawal: walletAsset.minWithdrawal,
+        withdrawalEnabled: walletAsset.withdrawalEnabled,
+      })
+      .from(walletAsset)
+      .where(eq(walletAsset.currency, currency.toUpperCase()));
+  }
+
   private resolveRail(currency: string): WalletRail {
     return railFor(currency, this.platformConfig?.wallet?.cryptoCurrencies);
+  }
+
+  // The concrete vendor a transaction/deposit-address settles through: the catalog row
+  // for the exact (currency, network) pair names the bound provider. Reconciliation
+  // scopes its diff by this column, so a null network (an unconfigured pair - no
+  // catalog row could ever match it) and a configured-but-null providerName column both
+  // resolve to the single default binding rather than leaving the column null.
+  private async providerNameFor(currency: string, network: string | null): Promise<string> {
+    if (network === null) {
+      return DEFAULT_PAYMENT_PROVIDER;
+    }
+    const [row] = await this.drizzle.db
+      .select({ providerName: walletAsset.providerName })
+      .from(walletAsset)
+      .where(and(eq(walletAsset.currency, currency), eq(walletAsset.network, network)));
+    return row?.providerName ?? DEFAULT_PAYMENT_PROVIDER;
   }
 
   private rateLimit(userId: User['id']) {
@@ -502,6 +673,155 @@ export class WalletService {
     return { transactionId, status: 'completed' };
   }
 
+  async manualAdjust({
+    adminId,
+    userId,
+    direction,
+    amount,
+    currency,
+    reason,
+    idempotencyKey,
+    ip,
+    userAgent,
+  }: {
+    adminId: User['id'];
+    userId: User['id'];
+    direction: ManualAdjustmentDirection;
+    amount: string;
+    currency: string;
+    reason: string;
+    idempotencyKey: string;
+  } & ClientMeta): Promise<TransactionResult> {
+    const playerId = await this.identityReader.getPlayerIdByUserId(userId);
+    if (!playerId) {
+      throw new PlayerNotFoundError(userId);
+    }
+
+    const { result, emitted } = await this.drizzle.db.transaction(async (txn) => {
+      let walletRecord = (
+        await txn.select().from(wallet).where(eq(wallet.userId, userId)).for('update')
+      ).at(0);
+      if (!walletRecord) {
+        if (direction === 'debit') {
+          throw new InsufficientBalanceError('0', amount);
+        }
+        const [created] = await txn
+          .insert(wallet)
+          .values({ userId, currency })
+          .onConflictDoNothing()
+          .returning();
+        walletRecord =
+          created ??
+          findOneOrThrow(
+            await txn.select().from(wallet).where(eq(wallet.userId, userId)).for('update'),
+            new WalletNotFoundError(userId),
+          );
+      }
+
+      const existing = await this.findByIdempotencyKey(
+        txn,
+        walletRecord.id,
+        namespacedIdempotencyKey(MANUAL_ADJUSTMENT_IDEMPOTENCY_NAMESPACE, idempotencyKey),
+      );
+      if (existing) {
+        this.assertManualAdjustmentReplayMatches(existing, {
+          adminId,
+          direction,
+          amount,
+          currency,
+          reason,
+        });
+        return { result: { transactionId: existing.id, status: existing.status }, emitted: false };
+      }
+
+      const { row, replayed } = await this.insertIdempotentTransaction(txn, {
+        namespace: MANUAL_ADJUSTMENT_IDEMPOTENCY_NAMESPACE,
+        walletId: walletRecord.id,
+        rawIdempotencyKey: idempotencyKey,
+        amount,
+        currency,
+        values: {
+          walletId: walletRecord.id,
+          type: direction === 'credit' ? 'manual_credit' : 'manual_debit',
+          amount,
+          currency,
+          status: 'completed',
+          reviewedBy: adminId,
+          reviewedAt: new Date(),
+          reviewReason: reason,
+        },
+      });
+      if (replayed) {
+        this.assertManualAdjustmentReplayMatches(row, {
+          adminId,
+          direction,
+          amount,
+          currency,
+          reason,
+        });
+        return { result: { transactionId: row.id, status: row.status }, emitted: false };
+      }
+
+      const balances =
+        direction === 'credit'
+          ? await creditWalletBalance(txn, walletRecord.id, currency, amount)
+          : await debitWalletBalance(txn, walletRecord.id, currency, amount);
+      const [balance] = balances;
+      if (!balance) {
+        throw new InsufficientBalanceError(
+          await readWalletBalance(txn, walletRecord.id, currency),
+          amount,
+        );
+      }
+      // Derived from the row the update returned, never read separately beforehand. The
+      // wallet row is locked here but the deposit credit path does not take that lock, so
+      // a deposit can commit between a pre-read and this update - and `before` is going
+      // into an append-only audit record that cannot be corrected later.
+      const balanceBefore =
+        direction === 'credit'
+          ? moneySubtract(balance.amount, amount)
+          : moneyAdd(balance.amount, amount);
+      await this.audit.recordInTransaction(txn, {
+        actorId: adminId,
+        actorType: 'admin',
+        action: 'wallet.manual_adjustment.created',
+        resourceType: 'wallet_transaction',
+        resourceId: row.id,
+        before: { balance: balanceBefore, currency },
+        after: {
+          balance: balance.amount,
+          currency,
+          transactionId: row.id,
+          direction,
+          amount,
+          reason,
+        },
+        ip,
+        userAgent,
+      });
+      return { result: { transactionId: row.id, status: row.status }, emitted: true };
+    });
+
+    // Every other balance-mutating path on this service emits; without this one an admin
+    // correction moves a real balance while responsible-gaming monitoring, analytics and
+    // any operator subscriber see nothing at all.
+    if (emitted) {
+      this.events.emit('wallet.manual_adjustment.created', {
+        userId,
+        playerId,
+        adminId,
+        amount,
+        currency,
+        transactionId: result.transactionId,
+        direction,
+        reason,
+        ip,
+        userAgent,
+      });
+    }
+    return result;
+  }
+
   // Pre-PSP replay check for deposit; also returns the resolved wallet so the transaction
   // below can skip re-selecting it. Throws IdempotencyKeyReuseError on an amount/currency mismatch.
   private async findDepositReplay({
@@ -544,6 +864,32 @@ export class WalletService {
     ) {
       throw new IdempotencyKeyReuseError();
     }
+  }
+
+  private assertManualAdjustmentReplayMatches(
+    existing: WalletTransaction,
+    {
+      adminId,
+      direction,
+      amount,
+      currency,
+      reason,
+    }: {
+      adminId: User['id'];
+      direction: ManualAdjustmentDirection;
+      amount: string;
+      currency: string;
+      reason: string;
+    },
+  ): void {
+    if (
+      existing.type !== (direction === 'credit' ? 'manual_credit' : 'manual_debit') ||
+      existing.reviewedBy !== adminId ||
+      existing.reviewReason !== reason
+    ) {
+      throw new IdempotencyKeyReuseError();
+    }
+    this.assertReplayMatches(existing, amount, currency);
   }
 
   // Two concurrent requests with the same key can both pass the pre-insert check and race
@@ -611,6 +957,7 @@ export class WalletService {
     userId,
     amount,
     currency,
+    network,
     idempotencyKey,
     destinationAddress,
     ip,
@@ -619,6 +966,7 @@ export class WalletService {
     userId: User['id'];
     amount: string;
     currency: string;
+    network?: string;
     idempotencyKey?: string;
     destinationAddress?: string;
   } & ClientMeta): Promise<TransactionResult> {
@@ -627,6 +975,9 @@ export class WalletService {
     if (this.resolveRail(currency) === 'crypto' && !destinationAddress) {
       throw new DestinationAddressRequiredError();
     }
+    const assets = await this.assetsForCurrency(currency);
+    const settlementNetwork = resolveWithdrawalNetwork(assets, currency, network);
+    assertAboveMinimumWithdrawal(assets, amount, currency, settlementNetwork);
 
     const { transactionId, status, replayed, walletId, rail } = await this.drizzle.db.transaction(
       async (txn) => {
@@ -667,6 +1018,7 @@ export class WalletService {
             currency,
             status: 'pending',
             rail: this.resolveRail(currency),
+            network: settlementNetwork,
             destinationAddress: destinationAddress ?? null,
           },
         });
@@ -818,6 +1170,7 @@ export class WalletService {
         username: summary?.username ?? '',
         amount: r.tx.amount,
         currency: r.tx.currency,
+        network: r.tx.network,
         rail: r.tx.rail ?? null,
         status: r.tx.status,
         kycStatus: summary?.kycStatus ?? null,
@@ -920,6 +1273,8 @@ export class WalletService {
         rail: tx.rail,
         adminId,
         destinationAddress: tx.destinationAddress,
+        // Pinned at request time; without it an adapter cannot tell ERC20 USDT from TRC20.
+        network: tx.network,
       });
     } catch (err) {
       // Payout did not happen - mark failed and return the held funds in one transaction.
@@ -935,7 +1290,10 @@ export class WalletService {
     if (result.status !== 'completed') {
       await this.drizzle.db
         .update(walletTransaction)
-        .set({ providerName: providerNameFor(tx.rail), providerRefId: result.externalId })
+        .set({
+          providerName: await this.providerNameFor(tx.currency, tx.network),
+          providerRefId: result.externalId,
+        })
         .where(eq(walletTransaction.id, tx.id));
       return { transactionId: tx.id, status: 'processing' };
     }
@@ -944,7 +1302,7 @@ export class WalletService {
       .update(walletTransaction)
       .set({
         status: 'completed',
-        providerName: providerNameFor(tx.rail),
+        providerName: await this.providerNameFor(tx.currency, tx.network),
         providerRefId: result.externalId,
       })
       .where(eq(walletTransaction.id, tx.id));
@@ -1289,6 +1647,171 @@ export class WalletService {
     });
   }
 
+  async listWalletAssets(): Promise<WalletAsset[]> {
+    const rows = await this.drizzle.db
+      .select()
+      .from(walletAsset)
+      .orderBy(asc(walletAsset.currency), asc(walletAsset.network));
+    return rows.map(toWalletAssetDto);
+  }
+
+  listEnabledWalletAssets(): Promise<PublicWalletAsset[]> {
+    return this.drizzle.db
+      .select(PUBLIC_ASSET_COLUMNS)
+      .from(walletAsset)
+      .where(or(eq(walletAsset.depositEnabled, true), eq(walletAsset.withdrawalEnabled, true)))
+      .orderBy(asc(walletAsset.currency), asc(walletAsset.network));
+  }
+
+  async getWalletAsset(currency: string, network: string): Promise<WalletAsset | null> {
+    const [row] = await this.drizzle.db
+      .select()
+      .from(walletAsset)
+      .where(and(eq(walletAsset.currency, currency), eq(walletAsset.network, network)));
+    return row ? toWalletAssetDto(row) : null;
+  }
+
+  // The catalog is operator-editable, so an admin can name a pair the bound vendor has
+  // never heard of. Reject at write time rather than at a player's deposit request.
+  private assertAdapterSupports(currency: string, network: string) {
+    if (this.payment.supportsAsset && !this.payment.supportsAsset(currency, network)) {
+      throw new WalletAssetUnsupportedError();
+    }
+  }
+
+  // Same discipline as assertAdapterSupports, for the provider key itself: an
+  // unvalidated typo silently falls back to the default adapter, which means eg a
+  // crypto payout attempted through a PSP. Undefined (the default binding) always passes.
+  private assertProviderNameValid(providerName: string | undefined) {
+    if (providerName !== undefined && !this.paymentProviders.names().includes(providerName)) {
+      throw new WalletAssetUnknownProviderError();
+    }
+  }
+
+  async createWalletAsset(
+    adminId: User['id'],
+    input: CreateWalletAssetInput,
+    meta?: ClientMeta,
+  ): Promise<WalletAsset> {
+    this.assertAdapterSupports(input.currency, input.network);
+    this.assertProviderNameValid(input.providerName);
+    return this.drizzle.db.transaction(async (txn) => {
+      const rows = await txn.insert(walletAsset).values(input).onConflictDoNothing().returning();
+      // Empty => the (currency, network) unique index rejected it.
+      const asset = toWalletAssetDto(findOneOrThrow(rows, new WalletAssetAlreadyExistsError()));
+      await this.audit.recordInTransaction(txn, {
+        actorId: adminId,
+        actorType: 'admin',
+        action: 'wallet.wallet_asset.created',
+        resourceType: 'wallet_asset',
+        resourceId: asset.id,
+        before: null,
+        after: asset,
+        ...meta,
+      });
+      return asset;
+    });
+  }
+
+  // Deliberately touches only the catalog row: a withdrawal already pending or processing
+  // in this currency keeps its own terms and is never cancelled by disabling the pair.
+  async updateWalletAsset(
+    adminId: User['id'],
+    { currency, network, ...changes }: UpdateWalletAssetInput,
+    meta?: ClientMeta,
+  ): Promise<WalletAsset> {
+    if (changes.providerAssetId !== undefined) {
+      this.assertAdapterSupports(currency, network);
+    }
+    return this.drizzle.db.transaction(async (txn) => {
+      const [before] = await txn
+        .select()
+        .from(walletAsset)
+        .where(and(eq(walletAsset.currency, currency), eq(walletAsset.network, network)));
+      if (!before) {
+        throw new WalletAssetNotFoundError(`${currency}/${network}`);
+      }
+      const rows = await txn
+        .update(walletAsset)
+        .set(changes)
+        .where(and(eq(walletAsset.currency, currency), eq(walletAsset.network, network)))
+        .returning();
+      const asset = toWalletAssetDto(
+        findOneOrThrow(rows, new WalletAssetNotFoundError(`${currency}/${network}`)),
+      );
+      await this.audit.recordInTransaction(txn, {
+        actorId: adminId,
+        actorType: 'admin',
+        action: 'wallet.wallet_asset.updated',
+        resourceType: 'wallet_asset',
+        resourceId: asset.id,
+        before: toWalletAssetDto(before),
+        after: asset,
+        ...meta,
+      });
+      return asset;
+    });
+  }
+
+  async deleteWalletAsset(
+    adminId: User['id'],
+    currency: string,
+    network: string,
+    meta?: ClientMeta,
+  ): Promise<boolean> {
+    return this.drizzle.db.transaction(async (txn) => {
+      const [before] = await txn
+        .select()
+        .from(walletAsset)
+        .where(and(eq(walletAsset.currency, currency), eq(walletAsset.network, network)));
+      if (!before) {
+        return false;
+      }
+      // wallet_balance is keyed by currency only (no network column), so this guard is
+      // necessarily currency-wide: removing one network of a currency players still hold
+      // is blocked even if their balance arrived over another network. Fails safe.
+      const [held] = await txn
+        .select({ n: count() })
+        .from(walletBalance)
+        .where(and(eq(walletBalance.currency, currency), sql`${walletBalance.amount} > 0`));
+      if ((held?.n ?? 0) > 0) {
+        throw new WalletAssetInUseError();
+      }
+      // Renaming a pair is a delete plus a create (the (currency, network) key AND
+      // providerName are immutable), so this delete is the only way providerName ever
+      // effectively changes. Block it while a pending/processing transaction exists for
+      // this exact (currency, network) pair - otherwise the vendor reference an in-flight
+      // payout is settling through gets rewritten out from under it.
+      const [inFlight] = await txn
+        .select({ n: count() })
+        .from(walletTransaction)
+        .where(
+          and(
+            eq(walletTransaction.currency, currency),
+            eq(walletTransaction.network, network),
+            inArray(walletTransaction.status, ['pending', 'processing']),
+          ),
+        );
+      if ((inFlight?.n ?? 0) > 0) {
+        throw new WalletAssetHasInFlightTransactionsError();
+      }
+      await txn
+        .delete(walletAsset)
+        .where(and(eq(walletAsset.currency, currency), eq(walletAsset.network, network)));
+      await this.audit.recordInTransaction(txn, {
+        actorId: adminId,
+        actorType: 'admin',
+        action: 'wallet.wallet_asset.deleted',
+        resourceType: 'wallet_asset',
+        resourceId: before.id,
+        before: toWalletAssetDto(before),
+        after: null,
+        ...meta,
+      });
+      return true;
+    });
+  }
+
   private async autoApprovalKycStatus(userId: User['id']): Promise<KycStatus | null> {
     // No directory bound => cannot verify KYC => fail closed.
     if (!this.directory) {
@@ -1493,7 +2016,11 @@ export class WalletService {
     limit,
     sortBy,
     sortOrder,
-  }: PaginationOptions<{ userId: User['id'] }, WalletTransactionSortBy>) {
+    includeInternal = false,
+  }: PaginationOptions<
+    { userId: User['id']; includeInternal?: boolean },
+    WalletTransactionSortBy
+  >) {
     const db = this.drizzle.db;
 
     const [walletRecord] = await db.select().from(wallet).where(eq(wallet.userId, userId));
@@ -1528,8 +2055,12 @@ export class WalletService {
         type: tx.type,
         amount: tx.amount,
         currency: tx.currency,
+        network: tx.network,
         status: tx.status,
         createdAt: tx.createdAt.toISOString(),
+        reviewedBy: includeInternal ? tx.reviewedBy : null,
+        reviewedAt: includeInternal ? (tx.reviewedAt?.toISOString() ?? null) : null,
+        reviewReason: includeInternal ? tx.reviewReason : null,
       })),
       total: Number(n),
       page,
@@ -1559,7 +2090,7 @@ export class WalletService {
         network: network ?? null,
         address: issued.address,
         tag: issued.tag ?? null,
-        providerName: providerNameFor(this.resolveRail(currency)),
+        providerName: await this.providerNameFor(currency, network ?? null),
       })
       .onConflictDoNothing()
       .returning();
@@ -1617,6 +2148,9 @@ export class WalletService {
           currency: event.currency,
           status: 'completed',
           rail: this.resolveRail(event.currency),
+          // Prefer the chain the vendor reported; fall back to the one the address was
+          // issued on, which is the only network an address-only webhook can imply.
+          network: event.network ?? depositAddress.network,
           providerName: depositAddress.providerName,
           providerRefId: event.externalId,
           destinationAddress: event.address,

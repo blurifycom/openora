@@ -1,9 +1,20 @@
 import { implement, ORPCError } from '@orpc/server';
-import { getUserId, mapErrors, type AdminGuard, type OssContext } from '@openora/core/server';
-import type {
-  AuditWritePort,
-  PaymentAdapter,
-  PaymentWebhookVerifier,
+import {
+  getUserId,
+  mapErrors,
+  assertRateLimit,
+  type AdminGuard,
+  type OssContext,
+} from '@openora/core/server';
+import {
+  DEFAULT_PAYMENT_PROVIDER,
+  RATE_LIMIT_KEYS,
+  makeRateLimitKey,
+  type AuditWritePort,
+  type PaymentProviderRegistry,
+  type PaymentWebhookEvent,
+  type RateLimiterAdapter,
+  type RateLimitKey,
 } from '@openora/core/contracts';
 import { walletContract } from '../contract/index.js';
 import {
@@ -18,16 +29,80 @@ import {
   DepositAddressUnsupportedError,
   DestinationAddressRequiredError,
   AutoWithdrawalConfigNotFoundError,
+  WalletAssetNotFoundError,
+  WalletAssetAlreadyExistsError,
+  WalletAssetUnsupportedError,
+  WalletAssetUnknownProviderError,
+  WalletAssetInUseError,
+  WalletAssetHasInFlightTransactionsError,
+  AmbiguousNetworkError,
+  UnsupportedNetworkError,
+  WithdrawalDisabledError,
+  BelowMinimumWithdrawalError,
+  PlayerNotFoundError,
 } from '../service/wallet.service.js';
+
+// One helper so `grep notImplemented` finds every remaining stub; the count reaching
+// zero is the definition of done for the custody sweep / reconciliation feature set.
+const notImplemented = (): never => {
+  throw new ORPCError('NOT_IMPLEMENTED');
+};
+
+// Unauthenticated route: it costs a signature verification (and, for a custody vendor,
+// a DB lookup) per request with nothing else gating it. Keyed on client IP, not a
+// vendor/account identity, since an attacker chooses neither. A request with no IP
+// signal (proxy misconfiguration) still shares one bucket rather than skipping the
+// limiter outright - "no signal" must never mean "no limit".
+const WALLET_WEBHOOK_RATE_LIMIT = { limit: 120, windowMs: 60 * 1000 };
+
+async function dispatchWebhook(
+  wallet: WalletService,
+  paymentProviders: PaymentProviderRegistry,
+  providerName: string,
+  rawBody: string | undefined,
+  headers: Record<string, string | string[] | undefined>,
+): Promise<{ ok: true }> {
+  const provider = paymentProviders.get(providerName);
+  // A missing provider fails the exact same shape as a bad signature - the path segment
+  // must never let an attacker enumerate which vendors are bound.
+  if (
+    rawBody === undefined ||
+    !provider ||
+    !(await provider.webhookVerifier.verify(rawBody, headers))
+  ) {
+    throw new ORPCError('UNAUTHORIZED', { message: 'Invalid payment webhook signature' });
+  }
+  // Always the SAME provider's adapter that verified the signature - never verify with
+  // one vendor's key and parse with another's format (signature confusion).
+  const event: PaymentWebhookEvent | null | undefined = provider.adapter.parseWebhook?.(
+    rawBody,
+    headers,
+  );
+  if (event) {
+    if (event.kind === 'deposit') {
+      await wallet.creditDepositByAddress(event);
+    } else {
+      await wallet.reconcileWithdrawalStatus(event);
+    }
+  }
+  return { ok: true as const };
+}
 
 export function createWalletRouter(
   wallet: WalletService,
   adminGuard: AdminGuard,
   audit: AuditWritePort,
-  paymentAdapter: PaymentAdapter,
-  webhookVerifier: PaymentWebhookVerifier,
+  paymentProviders: PaymentProviderRegistry,
+  limiter?: RateLimiterAdapter<RateLimitKey>,
 ) {
   const os = implement(walletContract).$context<OssContext>();
+
+  const throttleWebhook = (context: OssContext) =>
+    assertRateLimit(
+      limiter,
+      makeRateLimitKey(RATE_LIMIT_KEYS.WALLET_WEBHOOK, context.clientMeta.ip ?? 'unknown'),
+      WALLET_WEBHOOK_RATE_LIMIT,
+    );
 
   return os.router({
     getBalance: os.getBalance.handler(({ context }) => wallet.getBalance(getUserId(context))),
@@ -56,18 +131,46 @@ export function createWalletRouter(
       return mapErrors(
         {
           NOT_FOUND: WalletNotFoundError,
-          BAD_REQUEST: [InsufficientBalanceError, CurrencyMismatchError],
-          CONFLICT: [KycRequiredError, IdempotencyKeyReuseError, DestinationAddressRequiredError],
+          BAD_REQUEST: [
+            InsufficientBalanceError,
+            CurrencyMismatchError,
+            AmbiguousNetworkError,
+            UnsupportedNetworkError,
+            BelowMinimumWithdrawalError,
+          ],
+          CONFLICT: [
+            KycRequiredError,
+            IdempotencyKeyReuseError,
+            DestinationAddressRequiredError,
+            WithdrawalDisabledError,
+          ],
         },
         () =>
           wallet.withdraw({
             userId: getUserId(context),
             amount: input.amount,
             currency: input.currency,
+            network: input.network,
             idempotencyKey: input.idempotencyKey,
             destinationAddress: input.destinationAddress,
             ...context.clientMeta,
           }),
+      );
+    }),
+
+    manualAdjustment: os.manualAdjustment.handler(async ({ input, context }) => {
+      const {
+        userId: adminId,
+        ip,
+        userAgent,
+      } = await adminGuard.assert(context, 'player', 'adjust-balance');
+      return mapErrors(
+        {
+          NOT_FOUND: PlayerNotFoundError,
+          BAD_REQUEST: InsufficientBalanceError,
+          CONFLICT: IdempotencyKeyReuseError,
+        },
+        () => wallet.manualAdjust({ ...input, adminId, ip, userAgent }),
       );
     }),
 
@@ -89,6 +192,7 @@ export function createWalletRouter(
         limit: input.limit,
         sortBy: input.sortBy,
         sortOrder: input.sortOrder,
+        includeInternal: true,
       });
     }),
 
@@ -202,6 +306,60 @@ export function createWalletRouter(
       }),
     },
 
+    listAssets: os.listAssets.handler(() => wallet.listEnabledWalletAssets()),
+
+    assets: {
+      list: os.assets.list.handler(async ({ context }) => {
+        await adminGuard.assert(context, 'wallet-asset', 'view');
+        return wallet.listWalletAssets();
+      }),
+
+      create: os.assets.create.handler(async ({ input, context }) => {
+        const {
+          userId: adminId,
+          ip,
+          userAgent,
+        } = await adminGuard.assert(context, 'wallet-asset', 'create');
+        return mapErrors(
+          {
+            CONFLICT: [
+              WalletAssetAlreadyExistsError,
+              WalletAssetUnsupportedError,
+              WalletAssetUnknownProviderError,
+            ],
+          },
+          () => wallet.createWalletAsset(adminId, input, { ip, userAgent }),
+        );
+      }),
+
+      update: os.assets.update.handler(async ({ input, context }) => {
+        const {
+          userId: adminId,
+          ip,
+          userAgent,
+        } = await adminGuard.assert(context, 'wallet-asset', 'update');
+        return mapErrors(
+          {
+            NOT_FOUND: WalletAssetNotFoundError,
+            CONFLICT: WalletAssetUnsupportedError,
+          },
+          () => wallet.updateWalletAsset(adminId, input, { ip, userAgent }),
+        );
+      }),
+
+      delete: os.assets.delete.handler(async ({ input, context }) => {
+        const {
+          userId: adminId,
+          ip,
+          userAgent,
+        } = await adminGuard.assert(context, 'wallet-asset', 'delete');
+        return mapErrors(
+          { CONFLICT: [WalletAssetInUseError, WalletAssetHasInFlightTransactionsError] },
+          () => wallet.deleteWalletAsset(adminId, input.currency, input.network, { ip, userAgent }),
+        );
+      }),
+    },
+
     deposits: {
       getAddress: os.deposits.getAddress.handler(({ input, context }) =>
         mapErrors({ CONFLICT: DepositAddressUnsupportedError }, () =>
@@ -211,22 +369,51 @@ export function createWalletRouter(
     },
 
     webhook: os.webhook.handler(async ({ context }) => {
-      const rawBody = context.rawBody;
-      if (
-        rawBody === undefined ||
-        !(await webhookVerifier.verify(rawBody, context.request.headers))
-      ) {
-        throw new ORPCError('UNAUTHORIZED', { message: 'Invalid payment webhook signature' });
-      }
-      const event = paymentAdapter.parseWebhook?.(rawBody, context.request.headers);
-      if (event) {
-        if (event.kind === 'deposit') {
-          await wallet.creditDepositByAddress(event);
-        } else {
-          await wallet.reconcileWithdrawalStatus(event);
-        }
-      }
-      return { ok: true as const };
+      await throttleWebhook(context);
+      return dispatchWebhook(
+        wallet,
+        paymentProviders,
+        DEFAULT_PAYMENT_PROVIDER,
+        context.rawBody,
+        context.request.headers,
+      );
     }),
+
+    webhookForProvider: os.webhookForProvider.handler(async ({ input, context }) => {
+      await throttleWebhook(context);
+      return dispatchWebhook(
+        wallet,
+        paymentProviders,
+        input.provider,
+        context.rawBody,
+        context.request.headers,
+      );
+    }),
+
+    custody: {
+      sweep: {
+        run: os.custody.sweep.run.handler(async ({ context }) => {
+          await adminGuard.assert(context, 'wallet-custody', 'run');
+          return notImplemented();
+        }),
+      },
+    },
+
+    reconciliation: {
+      list: os.reconciliation.list.handler(async ({ context }) => {
+        await adminGuard.assert(context, 'wallet-reconciliation', 'view');
+        return notImplemented();
+      }),
+
+      resolve: os.reconciliation.resolve.handler(async ({ context }) => {
+        await adminGuard.assert(context, 'wallet-reconciliation', 'resolve');
+        return notImplemented();
+      }),
+
+      run: os.reconciliation.run.handler(async ({ context }) => {
+        await adminGuard.assert(context, 'wallet-reconciliation', 'run');
+        return notImplemented();
+      }),
+    },
   });
 }

@@ -36,6 +36,50 @@ export type PaymentWebhookEvent =
       txHash?: string;
     };
 
+/**
+ * A balance sitting in a per-player custody container that is not yet in the pooled
+ * account withdrawals are paid from. Produced by `PaymentAdapter.listSweepableBalances`
+ * and handed back to `sweepToPool` unchanged.
+ */
+export type CustodyBalance = {
+  userId: string;
+  currency: string;
+  network: string;
+  amount: string;
+  /** Current network cost to move it, same units as `amount`. */
+  estimatedFee: string;
+};
+
+/**
+ * Name of the single default `PaymentAdapter`/`PaymentWebhookVerifier` binding, wrapped
+ * as one `PaymentProviderRegistry` entry so an operator with one vendor changes nothing.
+ */
+export const DEFAULT_PAYMENT_PROVIDER = 'default';
+
+/** One named vendor binding: the adapter it settles through and the verifier for its webhooks. */
+export type PaymentProvider = {
+  adapter: PaymentAdapter;
+  webhookVerifier: PaymentWebhookVerifier;
+};
+
+/**
+ * Looks up a named vendor's adapter/verifier pair. `wallet_asset.providerName` is the
+ * key; a webhook route resolves both the verifier AND the adapter from the SAME entry so
+ * a request can never be verified against one vendor's key and parsed by another's
+ * format (signature confusion).
+ *
+ * Core only looks a name up here - it never discovers or enumerates vendors itself. The
+ * operator composes this map in their own plugin because `Container.register` is
+ * last-wins: two overlays each binding the single `PAYMENT_ADAPTER`/`PAYMENT_WEBHOOK_VERIFIER`
+ * tokens would clobber each other, so running a fiat PSP and a crypto custodian at once
+ * needs an operator-owned map from provider name to pair, not a second core-discovered
+ * binding slot.
+ */
+export type PaymentProviderRegistry = {
+  get(providerName: string): PaymentProvider | null;
+  names(): readonly string[];
+};
+
 export type PaymentAdapter = {
   processDeposit(
     amount: string,
@@ -80,6 +124,65 @@ export type PaymentAdapter = {
     rawBody: string,
     headers: Record<string, string | string[] | undefined>,
   ): PaymentWebhookEvent | null;
+
+  /**
+   * Whether this adapter can actually serve the given asset. The asset catalog is
+   * operator-editable at runtime, so an admin can name a (currency, network) pair the
+   * bound vendor has never heard of; the catalog's write path calls this first and
+   * rejects rather than letting the pair reach a player's deposit screen. Optional -
+   * an adapter that omits it is assumed to accept anything the operator configures.
+   */
+  supportsAsset?(currency: string, network: string): boolean;
+
+  /**
+   * Per-player balances the vendor holds that are not yet in the pooled account.
+   * Only meaningful for a custody vendor whose per-player deposit containers are
+   * distinct from the account withdrawals are paid out of - a synchronous PSP, which
+   * never holds a per-player balance, omits it.
+   */
+  listSweepableBalances?(): Promise<CustodyBalance[]>;
+
+  /**
+   * Move one player's balance into the pooled account. Implemented alongside
+   * `listSweepableBalances`; the caller owns the policy (dust floor, fee thresholds)
+   * and this only performs the transfer it is handed.
+   *
+   * `idempotencyKey` exists because a thrown call cannot be distinguished from a lost
+   * response - the vendor must dedupe the retry on this key rather than double-move
+   * funds. `poolRef` is an opaque vendor-side identifier for the destination pool,
+   * recorded so the ledger can evidence that player funds landed in the player pool and
+   * not an operator account - a regulator asks this.
+   */
+  sweepToPool?(
+    balance: CustodyBalance,
+    opts: { idempotencyKey: string },
+  ): Promise<{ externalId: string; poolRef?: string }>;
+
+  /**
+   * Balance currently in the pooled account for this asset. Consulted only when a sweep
+   * is blocked by the fee ceiling, to decide whether paying a high fee beats running the
+   * pool dry. Omit it and the ceiling is absolute.
+   */
+  getPoolBalance?(currency: string, network: string): Promise<string>;
+
+  /**
+   * Vendor transactions in a window, normalized into the same events `parseWebhook`
+   * produces - reconciliation is that same normalization, polled instead of pushed.
+   * Implemented by a vendor whose ledger can be listed after the fact; a PSP that only
+   * pushes webhooks omits it.
+   */
+  listTransactions?(range: { since: Date; until: Date }): Promise<PaymentWebhookEvent[]>;
+
+  /**
+   * Targeted status lookup for a single withdrawal, or null when the vendor has no
+   * record of it. Not redundant with `listTransactions`: a withdrawal stuck in
+   * `processing` for days falls outside any sane reconciliation window, so finalizing
+   * it needs a direct lookup by `externalId`.
+   */
+  getWithdrawalStatus?(externalId: string): Promise<{
+    status: 'processing' | 'completed' | 'failed';
+    txHash?: string;
+  } | null>;
 };
 
 export const PAYMENT_ADAPTER: Token<PaymentAdapter> = createToken('PAYMENT_ADAPTER');
@@ -101,3 +204,5 @@ export type PaymentWebhookVerifier = {
 export const PAYMENT_WEBHOOK_VERIFIER: Token<PaymentWebhookVerifier> = createToken(
   'PAYMENT_WEBHOOK_VERIFIER',
 );
+
+export const PAYMENT_PROVIDERS: Token<PaymentProviderRegistry> = createToken('PAYMENT_PROVIDERS');

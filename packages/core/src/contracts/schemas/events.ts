@@ -149,7 +149,7 @@ export const domainEventSchemas = {
     .extend({ playerId: UuidSchema.nullable() })
     .extend(authContextBase.shape),
   // A payments admin approved a pending withdrawal; it moves to `processing` and
-  // is sent to the PSP/Fireblocks rail. `adminId` is the acting reviewer.
+  // is sent to the PSP/custody rail. `adminId` is the acting reviewer.
   'wallet.withdrawal.approved': walletTxnBase
     .extend({ adminId: UuidSchema })
     .extend(authContextBase.shape),
@@ -158,9 +158,22 @@ export const domainEventSchemas = {
   'wallet.withdrawal.rejected': walletTxnBase
     .extend({ adminId: UuidSchema, reason: z.string() })
     .extend(authContextBase.shape),
-  // An approved withdrawal failed at the PSP/Fireblocks rail; the held funds were
+  // An approved withdrawal failed at the PSP/custody rail; the held funds were
   // returned to the player balance and the transaction moved to `failed`.
   'wallet.withdrawal.failed': walletTxnBase.extend({ adminId: UuidSchema }),
+  // A super admin credited or debited a balance directly, outside the deposit and
+  // withdrawal rails. Its own topic rather than a reuse of `wallet.deposit.completed`:
+  // a correction is not a deposit, and reporting it as one would overstate deposits and
+  // GGR. Subscribers that track balance movement must handle it or they see a balance
+  // change with no event behind it.
+  'wallet.manual_adjustment.created': walletTxnBase
+    .extend({
+      playerId: UuidSchema.nullable(),
+      adminId: UuidSchema,
+      direction: z.enum(['credit', 'debit']),
+      reason: z.string(),
+    })
+    .extend(authContextBase.shape),
 
   'gaming.round.started': z.object({
     roundId: UuidSchema,
@@ -548,6 +561,7 @@ export const domainEventVersions: Partial<Record<DomainEventName, number>> = {
   'wallet.withdrawal.approved': 2,
   'wallet.withdrawal.rejected': 2,
   'wallet.withdrawal.failed': 2,
+  'wallet.manual_adjustment.created': 2,
   // v2: amount/previousAmount (decimal string) + minutes/previousMinutes polymorphic
   // pair (money limit vs session-time limit), never a JS number.
   'rg.limit.set': 2,

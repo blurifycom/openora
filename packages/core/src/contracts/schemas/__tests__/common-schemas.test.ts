@@ -18,8 +18,9 @@ describe('MoneyAmountSchema', () => {
     expect(MoneyAmountSchema.parse('0')).toBe('0');
   });
 
-  it('rejects more than 18 decimal places and a negative amount', () => {
+  it('rejects amounts outside numeric(38, 18)', () => {
     expect(MoneyAmountSchema.safeParse('0.0000000000000000001').success).toBe(false);
+    expect(MoneyAmountSchema.safeParse('100000000000000000000').success).toBe(false);
     expect(MoneyAmountSchema.safeParse('-1').success).toBe(false);
   });
 });

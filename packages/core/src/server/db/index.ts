@@ -6,6 +6,10 @@ export {
   withAdvisoryXactLock,
   moneyToNumber,
   moneyEquals,
+  moneyCompare,
+  moneyScaleBy,
+  moneyAdd,
+  moneySubtract,
   mapConcurrent,
 } from './query-helpers.js';
 
