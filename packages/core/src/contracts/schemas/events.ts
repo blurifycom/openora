@@ -174,6 +174,15 @@ export const domainEventSchemas = {
       reason: z.string(),
     })
     .extend(authContextBase.shape),
+  // A reconciliation run's open-findings count exceeded the operator's configured
+  // threshold. System-driven (no player/admin actor) - the resource is the run itself,
+  // never a finding's payload (an address or tx hash must never reach the audit log
+  // through this event - see docs/standards/audit.md).
+  'wallet.reconciliation.alert': z.object({
+    runId: UuidSchema,
+    openFindings: z.number().int().nonnegative(),
+    threshold: z.number().int().nonnegative(),
+  }),
 
   'gaming.round.started': z.object({
     roundId: UuidSchema,

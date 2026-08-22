@@ -56,6 +56,10 @@ import {
   type WalletAutoWithdrawalConfig as WalletAutoWithdrawalConfigRow,
   type WalletAssetRow,
 } from '../schema/index.js';
+import {
+  LIVE_WEBHOOK_RUN_ID,
+  recordReconciliationFinding,
+} from './reconciliation-finding.service.js';
 import type {
   TransactionResult,
   WithdrawalQueueItem,
@@ -157,12 +161,6 @@ export const BelowMinimumWithdrawalError = createDomainError(
 );
 
 const KYC_PASS_STATUSES: ReadonlySet<KycStatus> = new Set(['approved', 'manually_overridden']);
-
-export const CurrencyMismatchError = createDomainError(
-  'CurrencyMismatchError',
-  (requested, walletCurrency) =>
-    `Currency mismatch: requested ${requested}, wallet holds ${walletCurrency}`,
-);
 
 export const AmbiguousDepositAddressError = createDomainError(
   'AmbiguousDepositAddressError',
@@ -2106,22 +2104,68 @@ export class WalletService {
     return toDepositAddressResult(winner);
   }
 
+  /**
+   * `providerName` is the vendor the webhook route already resolved (verifier + adapter
+   * came from the same registry entry) - it is only used to label a finding when this
+   * deposit can't be attributed, never to look anything up. Defaults to the single
+   * default binding for callers (tests, a poller with no named provider) that don't care.
+   */
   async creditDepositByAddress(
     event: Extract<PaymentWebhookEvent, { kind: 'deposit' }>,
+    providerName: string = DEFAULT_PAYMENT_PROVIDER,
   ): Promise<void> {
     const depositAddress = await this.findDepositAddressByAddress(event);
     if (!depositAddress) {
+      // A known vendor defect hits this live: a token deposit reported under a sibling
+      // token's asset id never resolves to a row. Never let it survive only as a log
+      // line - file a finding so an operator can attribute and manually credit it.
       logger.warn(
         { address: event.address, network: event.network, tag: event.tag },
         'payment webhook: no wallet_deposit_address for inbound deposit',
       );
+      await recordReconciliationFinding(this.drizzle.db, {
+        runId: LIVE_WEBHOOK_RUN_ID,
+        providerName,
+        kind: 'unattributed_deposit',
+        currency: event.currency,
+        network: event.network ?? null,
+        amount: event.amount,
+        address: event.address,
+        tag: event.tag ?? null,
+        txHash: event.txHash,
+        externalId: event.externalId,
+        detail: 'no wallet_deposit_address matched this address/network/tag',
+      });
       return;
     }
     if (
       event.network === undefined &&
       event.currency.toUpperCase() !== depositAddress.currency.toUpperCase()
     ) {
-      throw new CurrencyMismatchError(event.currency, depositAddress.currency);
+      // Same "do not silently drop" discipline as the no-address branch above - this is
+      // the push-path counterpart to the poll-path's currency_mismatch finding.
+      logger.warn(
+        {
+          address: event.address,
+          eventCurrency: event.currency,
+          addressCurrency: depositAddress.currency,
+        },
+        'payment webhook: currency mismatch for inbound deposit',
+      );
+      await recordReconciliationFinding(this.drizzle.db, {
+        runId: LIVE_WEBHOOK_RUN_ID,
+        providerName: depositAddress.providerName,
+        kind: 'currency_mismatch',
+        currency: event.currency,
+        network: event.network ?? depositAddress.network,
+        amount: event.amount,
+        address: event.address,
+        tag: event.tag ?? null,
+        txHash: event.txHash,
+        externalId: event.externalId,
+        detail: `currency mismatch: event reported ${event.currency}, address issued for ${depositAddress.currency}`,
+      });
+      return;
     }
 
     const { transactionId, replayed } = await this.drizzle.db.transaction(async (txn) => {

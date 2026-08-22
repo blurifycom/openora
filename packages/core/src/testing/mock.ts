@@ -12,6 +12,7 @@ import {
   type AuditWritePort,
   type ClientMeta,
   type IdentityReader,
+  type JobQueueAdapter,
   type PaymentAdapter,
   type PaymentProviderRegistry,
   type PaymentWebhookVerifier,
@@ -133,6 +134,17 @@ export const makePaymentProviderRegistry = (
     names: () => names,
   };
 };
+
+/** JobQueueAdapter double whose `enqueue` is a vitest mock, for a router test that only
+ * needs to assert a job was enqueued, never that it actually ran. */
+export const makeJobQueue = (): JobQueueAdapter & { enqueue: Mock } =>
+  mock<JobQueueAdapter & { enqueue: Mock }>({
+    enqueue: vi.fn(async () => ({ id: 'test-job' })),
+    schedule: vi.fn(async () => undefined),
+    unschedule: vi.fn(async () => undefined),
+    registerWorker: vi.fn(),
+    close: vi.fn(async () => undefined),
+  });
 
 export const makeIdentityReader = (): IdentityReader =>
   mock<IdentityReader>({

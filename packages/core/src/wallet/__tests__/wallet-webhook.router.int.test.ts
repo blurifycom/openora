@@ -4,13 +4,14 @@ import { randomUUID } from 'node:crypto';
 import { eq } from 'drizzle-orm';
 import { call, ORPCError } from '@orpc/server';
 import type { AdminGuard } from '@openora/core/server';
-import type {
-  PaymentAdapter,
-  PaymentProviderRegistry,
-  PaymentWebhookEvent,
-  PaymentWebhookVerifier,
-  RateLimiterAdapter,
-  RateLimitKey,
+import {
+  queue,
+  type PaymentAdapter,
+  type PaymentProviderRegistry,
+  type PaymentWebhookEvent,
+  type PaymentWebhookVerifier,
+  type RateLimiterAdapter,
+  type RateLimitKey,
 } from '@openora/core/contracts';
 import { createTestDb, type TestDb } from '@openora/core/testing';
 import { migrate as migrateProfile } from '@openora/core/pam/migrate/profile';
@@ -20,15 +21,24 @@ import {
   makeIdentityReader,
   testContext,
   makeAuditWriter,
+  makeJobQueue,
   makePaymentProviderRegistry,
 } from '../../testing/mock.js';
 import { migrate } from '../migrate.js';
-import { wallet, walletBalance, walletTransaction, walletDepositAddress } from '../schema/index.js';
+import {
+  wallet,
+  walletBalance,
+  walletTransaction,
+  walletDepositAddress,
+  walletReconciliationFinding,
+} from '../schema/index.js';
 import { createWalletRouter } from '../router/index.js';
 import { WalletService } from '../service/wallet.service.js';
+import type { ReconciliationService } from '../service/reconciliation.service.js';
 
 const USER_ID = '63d3c264-3bf4-4d08-9b92-ea3eaf40a440';
 const DEPOSIT_ADDRESS = 'bc1qxyz';
+const RECONCILIATION_QUEUE = queue('wallet-reconciliation');
 
 let db: TestDb;
 
@@ -41,6 +51,7 @@ afterAll(async () => {
 });
 
 beforeEach(async () => {
+  await db.drizzle.db.delete(walletReconciliationFinding);
   await db.drizzle.db.delete(walletTransaction);
   await db.drizzle.db.delete(walletDepositAddress);
   await db.drizzle.db.delete(walletBalance);
@@ -77,8 +88,18 @@ function routerWithProviders(
     adminGuard: mock<AdminGuard>({ assert: vi.fn() }),
     audit: makeAuditWriter(),
     paymentProviders,
+    reconciliation: mock<ReconciliationService>({}),
+    jobQueue: makeJobQueue(),
+    reconciliationQueue: RECONCILIATION_QUEUE,
     limiter,
   });
+}
+
+async function findingsFor(externalId: string) {
+  return db.drizzle.db
+    .select()
+    .from(walletReconciliationFinding)
+    .where(eq(walletReconciliationFinding.externalId, externalId));
 }
 
 // A registry with two DISTINCTLY-behaving named providers, to test that a webhook is
@@ -260,7 +281,7 @@ describe('wallet webhook route (M2M, no admin session)', () => {
     expect(await ledgerFor(w.id)).toHaveLength(0);
   });
 
-  it('returns ok and credits nothing when the deposit address is unknown', async () => {
+  it('returns ok, credits nobody, and files an unattributed_deposit finding when the deposit address is unknown', async () => {
     const w = await seedWallet();
     const router = routerWith(paymentParsing(depositEvent), verifierReturning(true));
 
@@ -268,6 +289,16 @@ describe('wallet webhook route (M2M, no admin session)', () => {
 
     expect(result).toEqual({ ok: true });
     expect(await ledgerFor(w.id)).toHaveLength(0);
+    const findings = await findingsFor(depositEvent.externalId);
+    expect(findings).toHaveLength(1);
+    expect(findings[0]).toMatchObject({
+      kind: 'unattributed_deposit',
+      providerName: 'default',
+      currency: 'BTC',
+      amount: '0.500000000000000000',
+      address: DEPOSIT_ADDRESS,
+      status: 'open',
+    });
   });
 });
 

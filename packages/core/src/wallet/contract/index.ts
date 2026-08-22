@@ -24,11 +24,6 @@ export {
   WalletReconciliationFindingStatusSchema,
 };
 
-// Stub routes not implemented in this PR - kept as one string so `grep 'Not implemented yet'`
-// (matching the router's `notImplemented()` helper) finds every remaining stub; the count
-// reaching zero is the definition of done for the custody/reconciliation feature set.
-const NOT_IMPLEMENTED_YET = 'Not implemented yet';
-
 // Deposit/withdraw amounts must be strictly positive; balances/thresholds may be zero.
 const PositiveMoneyAmountSchema = MoneyAmountSchema.refine((v) => Number(v) > 0, {
   message: 'must be greater than zero',
@@ -520,7 +515,11 @@ export const walletContract = {
 
   reconciliation: {
     list: oc
-      .route({ method: 'GET', path: '/wallet/reconciliation', summary: NOT_IMPLEMENTED_YET })
+      .route({
+        method: 'GET',
+        path: '/wallet/reconciliation',
+        summary: 'List reconciliation findings',
+      })
       .input(ListReconciliationFindingsInputSchema)
       .output(paginated(WalletReconciliationFindingSchema)),
 
@@ -528,7 +527,7 @@ export const walletContract = {
       .route({
         method: 'POST',
         path: '/wallet/reconciliation/{id}/resolve',
-        summary: NOT_IMPLEMENTED_YET,
+        summary: 'Resolve a reconciliation finding as credited or dismissed',
       })
       .input(ResolveReconciliationFindingInputSchema)
       .output(WalletReconciliationFindingSchema),
@@ -537,7 +536,7 @@ export const walletContract = {
       .route({
         method: 'POST',
         path: '/wallet/reconciliation/run',
-        summary: NOT_IMPLEMENTED_YET,
+        summary: 'Enqueue a reconciliation run',
       })
       .output(JobRunResultSchema),
   },

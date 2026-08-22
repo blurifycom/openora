@@ -3,7 +3,7 @@ import { findOneOrThrow } from '@openora/core/server';
 import { randomUUID } from 'node:crypto';
 import { call, ORPCError } from '@orpc/server';
 import type { AdminGuard } from '@openora/core/server';
-import type { PaymentAdapter } from '@openora/core/contracts';
+import { queue, type PaymentAdapter } from '@openora/core/contracts';
 import { createTestDb, type TestDb } from '@openora/core/testing';
 import {
   mock,
@@ -12,12 +12,16 @@ import {
   makeAuditWriter,
   makeAdminGuard,
   makeIdentityReader,
+  makeJobQueue,
   makePaymentProviderRegistry,
 } from '../../testing/mock.js';
 import { migrate } from '../migrate.js';
 import { wallet, walletTransaction } from '../schema/index.js';
 import { createWalletRouter } from '../router/index.js';
 import { WalletService } from '../service/wallet.service.js';
+import type { ReconciliationService } from '../service/reconciliation.service.js';
+
+const RECONCILIATION_QUEUE = queue('wallet-reconciliation');
 
 const CTX = testContext();
 const USER_ID = '63d3c264-3bf4-4d08-9b92-ea3eaf40a440';
@@ -54,6 +58,9 @@ function routerWith(adminGuard: AdminGuard) {
     adminGuard,
     audit: makeAuditWriter(),
     paymentProviders: makePaymentProviderRegistry(),
+    reconciliation: mock<ReconciliationService>({}),
+    jobQueue: makeJobQueue(),
+    reconciliationQueue: RECONCILIATION_QUEUE,
   });
 }
 

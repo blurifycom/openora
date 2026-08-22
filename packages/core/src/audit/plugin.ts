@@ -580,6 +580,19 @@ export async function mapEventToRecord(
     };
   }
 
+  // System-driven: a reconciliation run's open findings exceeded the configured
+  // threshold. resource = the run itself; after carries counts only, NEVER a finding's
+  // payload (an address or tx hash must never reach the audit log through this event).
+  if (topic === 'wallet.reconciliation.alert') {
+    return {
+      ...base,
+      actorType: 'system',
+      resourceType: 'wallet_job_run',
+      resourceId: str(p['runId']),
+      after: { openFindings: p['openFindings'] ?? null, threshold: p['threshold'] ?? null },
+    };
+  }
+
   // Wallet events carry the txn ref in transactionId; surface it as resourceId so
   // a transaction reference is searchable (it otherwise stays buried in `after`).
   // actorId = the resolved playerId (the wallet owner).
@@ -656,6 +669,7 @@ const SUBSCRIBED_TOPICS: DomainEventName[] = [
   'wallet.withdrawal.approved',
   'wallet.withdrawal.rejected',
   'wallet.withdrawal.failed',
+  'wallet.reconciliation.alert',
   'gaming.round.started',
   'gaming.round.ended',
   'chat.user.blocked',

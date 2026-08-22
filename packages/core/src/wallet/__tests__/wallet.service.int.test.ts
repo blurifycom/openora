@@ -26,6 +26,7 @@ import {
   walletTransaction,
   walletDepositAddress,
   walletAsset,
+  walletReconciliationFinding,
 } from '../schema/index.js';
 import {
   WalletService,
@@ -35,7 +36,6 @@ import {
   WithdrawalNotPendingError,
   InsufficientBalanceError,
   AmbiguousDepositAddressError,
-  CurrencyMismatchError,
   IdempotencyKeyReuseError,
   DepositAddressUnsupportedError,
   DestinationAddressRequiredError,
@@ -170,7 +170,7 @@ afterAll(async () => {
 
 beforeEach(async () => {
   await db.drizzle.db.execute(
-    sql`TRUNCATE ${walletTransaction}, ${walletDepositAddress}, ${walletAsset}, ${wallet} RESTART IDENTITY CASCADE`,
+    sql`TRUNCATE ${walletTransaction}, ${walletDepositAddress}, ${walletAsset}, ${walletReconciliationFinding}, ${wallet} RESTART IDENTITY CASCADE`,
   );
 });
 
@@ -1394,19 +1394,33 @@ describe('WalletService.creditDepositByAddress (real PG)', () => {
     expect(emittedTopics(events)).toEqual(['wallet.deposit.completed']);
   });
 
-  it('logs and no-ops when the address is unknown', async () => {
+  it('credits nobody and files an unattributed_deposit finding when the address is unknown', async () => {
     const { svc, events } = makeService();
+    const externalId = randomUUID();
 
-    await svc.creditDepositByAddress({
-      kind: 'deposit',
-      address: 'bc1qunknown',
-      amount: '1',
-      currency: 'BTC',
-      externalId: randomUUID(),
-      txHash: '0xunknown',
-    });
+    await svc.creditDepositByAddress(
+      {
+        kind: 'deposit',
+        address: 'bc1qunknown',
+        amount: '1',
+        currency: 'BTC',
+        externalId,
+        txHash: '0xunknown',
+      },
+      'default',
+    );
 
     expect(events.emit).not.toHaveBeenCalled();
+    const findings = await db.drizzle.db
+      .select()
+      .from(walletReconciliationFinding)
+      .where(eq(walletReconciliationFinding.externalId, externalId));
+    expect(findings).toHaveLength(1);
+    expect(findings[0]).toMatchObject({
+      kind: 'unattributed_deposit',
+      providerName: 'default',
+      status: 'open',
+    });
   });
 
   it('is idempotent on a replayed externalId', async () => {
@@ -1431,21 +1445,32 @@ describe('WalletService.creditDepositByAddress (real PG)', () => {
     expect(emittedTopics(events)).toEqual(['wallet.deposit.completed']);
   });
 
-  it('throws CurrencyMismatchError when the event currency differs from the address', async () => {
-    const { svc } = makeService();
+  it('credits nobody and files a currency_mismatch finding on a currency mismatch', async () => {
+    const { svc, events } = makeService();
     const w = await seedWallet({ currency: 'BTC' });
     await seedAddress(w.userId, 'bc1qmismatch');
+    const externalId = randomUUID();
 
-    await expect(
-      svc.creditDepositByAddress({
-        kind: 'deposit',
-        address: 'bc1qmismatch',
-        amount: '1',
-        currency: 'ETH',
-        externalId: randomUUID(),
-        txHash: '0xmismatch',
-      }),
-    ).rejects.toBeInstanceOf(CurrencyMismatchError);
+    await svc.creditDepositByAddress({
+      kind: 'deposit',
+      address: 'bc1qmismatch',
+      amount: '1',
+      currency: 'ETH',
+      externalId,
+      txHash: '0xmismatch',
+    });
+
+    expect(events.emit).not.toHaveBeenCalled();
+    expect(await balanceOf(w.userId)).toBe(0);
+    const findings = await db.drizzle.db
+      .select()
+      .from(walletReconciliationFinding)
+      .where(eq(walletReconciliationFinding.externalId, externalId));
+    expect(findings).toHaveLength(1);
+    // Its own taxonomy, not `unattributed_deposit`: the address resolved fine, the
+    // currency did not. The polled path already tags this case `currency_mismatch`,
+    // and an admin filtering findings by kind has to see both paths alike.
+    expect(findings[0]).toMatchObject({ kind: 'currency_mismatch', status: 'open' });
   });
 
   it('credits a token that shares the EVM address issued for another currency', async () => {
