@@ -23,7 +23,7 @@ That transitive argument does not hold end to end:
 - **The block is asynchronous with play.** An admin activating a cooling-off while a
   player is mid-session had no way to stop the wager that was already in flight.
 
-The regulatory requirement (BF-215) is that a cooling-off player "cannot log in or place
+The regulatory requirement is that a cooling-off player "cannot log in or place
 bets". Only the first half was true.
 
 ## Decision

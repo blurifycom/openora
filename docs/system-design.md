@@ -33,12 +33,12 @@ flowchart TB
       UIPKG["packages/ui<br/>design system"]
     end
     subgraph T2GAMES["Custom first-party games (plug into casino game seam)"]
-      JW["Jackpot Wheel"]:::game
-      CF["CoinFlip PvP"]:::game
-      MN["Mines PvP"]:::game
-      RR["Russian Roulette"]:::game
-      DD["Dice Duel"]:::game
-      GR["Gifts + Rain"]:::game
+      JW["Wheel-spin game"]:::game
+      CF["Coin-toss PvP game"]:::game
+      MN["Grid-reveal PvP game"]:::game
+      RR["Chamber-elimination game"]:::game
+      DD["Dice-roll PvP game"]:::game
+      GR["Peer gifting & giveaway feature"]:::game
     end
     subgraph T2VEND["Vendor adapters (implement @openora/core/contracts ports)"]
       FB["Payment processor<br/>PSP integration"]:::vend

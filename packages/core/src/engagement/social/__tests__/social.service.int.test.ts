@@ -403,7 +403,7 @@ describe('SocialService.removeFriend (real PG)', () => {
     });
   });
 
-  it('emits a null actorPlayerId when the caller has no player row (BF-427 audit fix)', async () => {
+  it('emits a null actorPlayerId when the caller has no player row', async () => {
     const { svc, events } = makeService();
     const alice = await seedPlayer();
     const staffCallerId = randomUUID(); // an identity userId with no `player` row

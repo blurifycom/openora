@@ -48,13 +48,13 @@ const MIGRATION_DEFAULT_EXCLUDE_RISK_FLAGS: readonly TagKey[] = [
 
 type ServiceOptions = {
   autoWithdrawal?: Partial<AutoWithdrawalConfig>;
-  // The global fiat/crypto thresholds are DB-backed (BF-211), not part of
+  // The global fiat/crypto thresholds are DB-backed, not part of
   // PlatformConfig any more - seeded into wallet_auto_withdrawal_config here
   // whenever `autoWithdrawal` is passed, mirroring the production seed
   // default ('0'/'0' = auto-approval off until configured).
   fiatThreshold?: string;
   cryptoThreshold?: string;
-  // The DB row's tag-exclusion column (BF-319). Undefined = let the column's
+  // The DB row's tag-exclusion column. Undefined = let the column's
   // migration DEFAULT apply (the 5-tag starting value); pass an explicit
   // array (incl. []) to seed exactly that set instead.
   excludeRiskFlags?: readonly TagKey[];

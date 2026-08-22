@@ -474,7 +474,7 @@ describe('AuditService.exportCsv() (real PG)', () => {
   });
 });
 
-describe('mapEventToRecord() player.id resolution (BF-335)', () => {
+describe('mapEventToRecord() player.id resolution', () => {
   // The emitter (never mapEventToRecord/AuditService) resolves playerId before the
   // event is published - these tests exercise the mapper as a pure function that
   // just reads p['playerId']/p['actorPlayerId'] straight off an already-resolved
@@ -617,7 +617,7 @@ describe('mapEventToRecord() player.id resolution (BF-335)', () => {
     expect(row.after).toMatchObject({ status: 'removed', reason: 'blocked' });
   });
 
-  it('social.friendship.removed: falls back to actorType admin and the raw actorId when the caller has no player row (BF-427 audit fix)', async () => {
+  it('social.friendship.removed: falls back to actorType admin and the raw actorId when the caller has no player row', async () => {
     const other = await seedPlayer();
     const friendshipId = randomUUID();
     const staffCallerId = randomUUID();

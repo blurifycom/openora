@@ -137,7 +137,7 @@ async function seedRoom(overrides: Partial<typeof chatRoom.$inferInsert> = {}) {
   const [row] = await db.drizzle.db
     .insert(chatRoom)
     .values({
-      name: 'Jackpot Wheel',
+      name: 'Wheel Spin',
       slug: `room-${randomUUID()}`,
       category: 'games-sports',
       ...overrides,
@@ -1073,13 +1073,13 @@ describe('ChatService admin rooms (real PG)', () => {
     const { svc, events } = makeService();
 
     const room = await svc.createRoom({
-      name: 'Jackpot Wheel',
-      slug: 'jackpot-wheel',
+      name: 'Wheel Spin',
+      slug: 'wheel-spin',
       category: 'games-sports',
       ...NO_CLIENT_META,
     });
 
-    expect(room).toMatchObject({ slug: 'jackpot-wheel', isPublic: true });
+    expect(room).toMatchObject({ slug: 'wheel-spin', isPublic: true });
     expect(typeof room.createdAt).toBe('string');
     const [configuration] = await db.drizzle.db
       .select()
@@ -1088,7 +1088,7 @@ describe('ChatService admin rooms (real PG)', () => {
     expect(configuration).toMatchObject({ roomId: room.id });
     expect(events.emit).toHaveBeenCalledWith(
       'chat.room.created',
-      expect.objectContaining({ roomId: room.id, slug: 'jackpot-wheel' }),
+      expect.objectContaining({ roomId: room.id, slug: 'wheel-spin' }),
     );
   });
 

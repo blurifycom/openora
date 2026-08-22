@@ -175,7 +175,7 @@ export const walletProviderVault = pgTable(
   ],
 );
 
-// Global fiat/crypto auto-withdrawal thresholds (BF-211), Super-Admin-editable at runtime.
+// Global fiat/crypto auto-withdrawal thresholds, Super-Admin-editable at runtime.
 // singletonKey's unique constraint DB-enforces exactly one row ever ('global').
 export const walletAutoWithdrawalConfig = pgTable('wallet_auto_withdrawal_config', {
   id: uuid().primaryKey().defaultRandom(),

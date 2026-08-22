@@ -11,7 +11,7 @@ The platform is headless backend + a headless React SDK, consumed by a downstrea
 Two problems with publishing the source graph as-is:
 
 1. **Granularity** - ~30 published packages is high version/release overhead and leaks internal structure as public API. We do not want every internal refactor to be a breaking change for consumers.
-2. **IP boundary** - not everything is open. Features are tagged **Shared IP** vs **Non-shared IP**. Custom games (Jackpot Wheel, CoinFlip, Mines, Russian Roulette, Dice Duel, Gifts, Rain), all custom UI, and every vendor adapter (Fireblocks, Sumsub, EveryMatrix, Ably, Betby) are proprietary and must never land in the OSS registry.
+2. **IP boundary** - not everything is open. Features are tagged **Shared IP** vs **Non-shared IP**. Custom games (the operator's first-party game titles), all custom UI, and every vendor adapter (crypto custody, KYC, games aggregation, realtime, sportsbook) are proprietary and must never land in the OSS registry.
 
 ADR-0021 deliberately makes every feature a standalone, isolated `@openora-addons/<name>` package. That isolation is load-bearing and is **not** changed here.
 

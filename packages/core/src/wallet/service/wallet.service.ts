@@ -1203,7 +1203,7 @@ export class WalletService {
     return { value: global, source: 'global', config };
   }
 
-  // The row always exists in a properly-seeded install (seeded once, BF-211) - a
+  // The row always exists in a properly-seeded install (seeded once) - a
   // missing row is an unexpected failure mode on the READ path, not a normal
   // "unconfigured" state, so this throws rather than silently defaulting.
   // maybeAutoApprove's outer try/catch handles that thrown error the same as any
@@ -1233,7 +1233,7 @@ export class WalletService {
   // a withdrawal must never silently create config.
   //
   // Update + audit write run in one transaction: an audit-write failure must roll back
-  // the threshold change too, or the config could change with no audit trail (BF-211 review).
+  // the threshold change too, or the config could change with no audit trail.
   async setAutoWithdrawalConfig(
     adminId: User['id'],
     {

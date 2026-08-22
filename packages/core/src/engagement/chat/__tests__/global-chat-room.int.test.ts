@@ -48,7 +48,7 @@ function makeService() {
   );
 }
 
-describe('global chat room invariant (BF-466)', () => {
+describe('global chat room invariant', () => {
   it('is provisioned by the chat module migration', async () => {
     const [room] = await db.drizzle.db
       .select()
