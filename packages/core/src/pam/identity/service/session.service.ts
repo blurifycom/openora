@@ -30,11 +30,12 @@ export class SessionService {
 
   async listSessions({
     userId,
+    currentSessionId,
     page,
     limit,
     sortBy,
     sortOrder,
-  }: PaginationOptions<{ userId: User['id'] }, SessionSortBy>) {
+  }: PaginationOptions<{ userId: User['id']; currentSessionId?: string }, SessionSortBy>) {
     const where = eq(session.userId, userId);
     const db = this.drizzle.db;
     // Active sessions first (expiresAt > now), then user-chosen sort within each group.
@@ -62,8 +63,10 @@ export class SessionService {
           id: s.id,
           expiresAt: s.expiresAt.toISOString(),
           createdAt: s.createdAt.toISOString(),
+          updatedAt: s.updatedAt.toISOString(),
           ipAddress: s.ipAddress,
           userAgent: s.userAgent,
+          current: s.id === currentSessionId,
         }),
       ),
       total: Number(n),

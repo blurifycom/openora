@@ -1,6 +1,6 @@
 'use client';
 
-import { useMutation, useQueryClient, type QueryClient } from '@tanstack/react-query';
+import { useMutation, useQuery, useQueryClient, type QueryClient } from '@tanstack/react-query';
 import type { Enable2faResult } from '@openora/core/contracts';
 import { useOrpcQueryUtils } from '@openora/core/react';
 import { identityContract } from '../contract/index.js';
@@ -70,5 +70,19 @@ export function useSendEmailVerification() {
   const utils = useOrpcQueryUtils(identityContract);
   return useMutation({
     ...utils.sendEmailVerification.mutationOptions(),
+  });
+}
+
+export function useMySessions() {
+  const utils = useOrpcQueryUtils(identityContract);
+  return useQuery(utils.sessions.listMine.queryOptions({ input: {} }));
+}
+
+export function useRevokeMySession() {
+  const utils = useOrpcQueryUtils(identityContract);
+  const queryClient = useQueryClient();
+  return useMutation({
+    ...utils.sessions.revokeMine.mutationOptions(),
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: utils.sessions.listMine.key() }),
   });
 }
