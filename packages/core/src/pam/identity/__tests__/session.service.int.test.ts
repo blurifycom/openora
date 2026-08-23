@@ -58,6 +58,23 @@ describe('SessionService', () => {
     expect(items.filter((s) => s.current).map((s) => s.id)).toEqual([here.id]);
   });
 
+  it('drops a revoked session from the active list', async () => {
+    const account = await seedUser(db);
+    const target = await seedSession(account.id);
+    await seedSession(account.id);
+
+    await service().revokeSession(account.id, target.id);
+
+    const active = await service().listSessions({
+      userId: account.id,
+      activeOnly: true,
+      page: 1,
+      limit: 20,
+    });
+    expect(active.total).toBe(1);
+    expect(active.items.map((s) => s.id)).not.toContain(target.id);
+  });
+
   it('expires the revoked session', async () => {
     const account = await seedUser(db);
     const target = await seedSession(account.id);

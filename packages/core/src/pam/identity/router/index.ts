@@ -193,6 +193,7 @@ export function createIdentityRouter(
         sessionSvc.listSessions({
           userId: getUserId(context),
           currentSessionId: getSessionId(context),
+          activeOnly: true,
           page: input.page,
           limit: input.limit,
           sortBy: input.sortBy,
