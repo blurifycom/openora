@@ -47,13 +47,13 @@ beforeEach(async () => {
   await db.drizzle.db.delete(walletWithdrawalAddress);
 });
 
-function routerWith() {
+function routerWith(payment: Partial<PaymentAdapter> = {}) {
   const audit = makeAuditWriter();
   const paymentProviders = makePaymentProviderRegistry({});
   const service = new WalletService({
     drizzle: db.drizzle,
     events: makeEventBus(),
-    payment: mock<PaymentAdapter>({}),
+    payment: mock<PaymentAdapter>(payment),
     paymentProviders,
     audit,
     identityReader: makeIdentityReader(),
@@ -210,5 +210,49 @@ describe('wallet withdrawal address book', () => {
 
     await expect(create(router)).rejects.toThrow(ORPCError);
     expect(await service.listWithdrawalAddresses(PLAYER)).toHaveLength(50);
+  });
+});
+
+describe('provider whitelisting on the address-book write path', () => {
+  it('registers the address with the provider and stores the returned id', async () => {
+    const calls: unknown[] = [];
+    const { router } = routerWith({
+      whitelistWithdrawalAddress: (input) => {
+        calls.push(input);
+        return Promise.resolve({ providerWalletId: 'fb-wallet-1' });
+      },
+    });
+
+    await create(router);
+
+    expect(calls).toEqual([
+      {
+        userId: PLAYER,
+        currency: LEDGER.currency,
+        network: LEDGER.network,
+        address: LEDGER.address,
+      },
+    ]);
+    const [row] = await db.drizzle.db.select().from(walletWithdrawalAddress);
+    expect(row?.providerWalletId).toBe('fb-wallet-1');
+    expect(row?.providerName).not.toBeNull();
+  });
+
+  it('saves nothing when the provider refuses - an unpayable address must not look usable', async () => {
+    const { router } = routerWith({
+      whitelistWithdrawalAddress: () => Promise.reject(new Error('screening failed')),
+    });
+
+    await expect(create(router)).rejects.toThrow(/screening failed/);
+    expect(await db.drizzle.db.select().from(walletWithdrawalAddress)).toEqual([]);
+  });
+
+  it('leaves the id null for an adapter that does not whitelist', async () => {
+    const { router } = routerWith();
+
+    await create(router);
+
+    const [row] = await db.drizzle.db.select().from(walletWithdrawalAddress);
+    expect(row?.providerWalletId).toBeNull();
   });
 });

@@ -27,6 +27,7 @@ import {
   walletDepositAddress,
   walletAsset,
   walletReconciliationFinding,
+  walletWithdrawalAddress,
 } from '../schema/index.js';
 import {
   WalletService,
@@ -901,6 +902,63 @@ describe('WalletService.approveWithdrawal (real PG)', () => {
       'wallet.withdrawal.approved',
       'wallet.withdrawal.completed',
     ]);
+  });
+
+  it('sends the whitelisted wallet id saved for the payout address', async () => {
+    const psp = {
+      ...makePsp(),
+      whitelistWithdrawalAddress: async () => ({ providerWalletId: 'fb-wallet-1' }),
+    };
+    const { svc } = makeService({ payment: mock<PaymentAdapter>(psp) });
+    const w = await seedWallet({ currency: 'BTC' });
+    await db.drizzle.db.insert(walletWithdrawalAddress).values({
+      userId: w.userId,
+      label: 'cold',
+      currency: 'BTC',
+      network: 'BITCOIN',
+      address: 'bc1qsaved',
+      providerName: DEFAULT_PAYMENT_PROVIDER,
+      providerWalletId: 'fb-wallet-1',
+    });
+    const pending = await seedTx(w.id, {
+      currency: 'BTC',
+      rail: 'crypto',
+      amount: '1',
+      network: 'BITCOIN',
+      destinationAddress: 'bc1qsaved',
+    });
+
+    await svc.approveWithdrawal(randomUUID(), pending.id);
+
+    expect(psp.processWithdrawal).toHaveBeenCalledWith(
+      expect.any(String),
+      'BTC',
+      expect.objectContaining({ destinationWalletId: 'fb-wallet-1' }),
+    );
+  });
+
+  it('sends no wallet id for an address that was never whitelisted', async () => {
+    const psp = {
+      ...makePsp(),
+      whitelistWithdrawalAddress: async () => ({ providerWalletId: 'fb-wallet-1' }),
+    };
+    const { svc } = makeService({ payment: mock<PaymentAdapter>(psp) });
+    const w = await seedWallet({ currency: 'BTC' });
+    const pending = await seedTx(w.id, {
+      currency: 'BTC',
+      rail: 'crypto',
+      amount: '1',
+      network: 'BITCOIN',
+      destinationAddress: 'bc1qnever-saved',
+    });
+
+    await svc.approveWithdrawal(randomUUID(), pending.id);
+
+    expect(psp.processWithdrawal).toHaveBeenCalledWith(
+      expect.any(String),
+      'BTC',
+      expect.not.objectContaining({ destinationWalletId: expect.anything() }),
+    );
   });
 
   it('resolves providerName from the default binding when the pair has no catalog row', async () => {

@@ -186,6 +186,14 @@ export const walletWithdrawalAddress = pgTable(
     currency: text().notNull(),
     network: text().notNull(),
     address: text().notNull(),
+    // Which custody provider `providerWalletId` belongs to. Without it a provider swap would
+    // silently reuse the previous vendor's id and pay out to whatever that id now names.
+    providerName: text(),
+    // The provider-side whitelisted destination this address was registered as, in whatever
+    // form the bound custody vendor names one. Null when the adapter does not whitelist - a
+    // synchronous PSP has no such concept - and the payout path then has nothing to send to,
+    // which is the intended failure: an unwhitelisted address must not be payable.
+    providerWalletId: text(),
     createdAt: timestamp({ withTimezone: true }).notNull().defaultNow(),
   },
   (t) => [

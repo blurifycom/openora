@@ -1301,6 +1301,11 @@ export class WalletService {
         rail: tx.rail,
         adminId,
         destinationAddress: tx.destinationAddress,
+        // The provider-side whitelisted destination for that address, when the bound adapter
+        // whitelists at all. Absent for an address that predates whitelisting or was never in
+        // the book, and such an adapter is expected to refuse rather than pay out to the raw
+        // address - the whitelist is the control, so bypassing it would defeat the point.
+        ...(await this.destinationWalletIdFor(userId, tx)),
         // Pinned at request time; without it an adapter cannot tell ERC20 USDT from TRC20.
         network: tx.network,
       });
@@ -2367,11 +2372,16 @@ export class WalletService {
       throw new WithdrawalAddressLimitReachedError(WITHDRAWAL_ADDRESS_LIMIT);
     }
 
+    // Registered with the custody provider BEFORE the row exists, so a rejected or unreachable
+    // provider leaves no saved address the player would believe they can withdraw to. The port
+    // is required to be idempotent, so the conflict path below cannot orphan a destination.
+    const whitelisted = await this.whitelistWithdrawalAddress(userId, input);
+
     // onConflictDoNothing turns the unique index into a domain conflict rather than a
     // 500 - a double-submitted form is a 409, not an incident.
     const [row] = await this.drizzle.db
       .insert(walletWithdrawalAddress)
-      .values({ userId, ...input })
+      .values({ userId, ...input, ...whitelisted })
       .onConflictDoNothing()
       .returning();
     if (!row) {
@@ -2390,6 +2400,61 @@ export class WalletService {
       ...meta,
     });
     return toWithdrawalAddressDto(row);
+  }
+
+  /**
+   * Looks up the whitelisted destination saved for this payout's address. Matched on the address
+   * itself rather than an id on the transaction, because a withdrawal is requested by address and
+   * may name one the player never saved.
+   */
+  private async destinationWalletIdFor(
+    userId: Uuid,
+    tx: WalletTransaction,
+  ): Promise<{ destinationWalletId?: string }> {
+    if (!this.payment.whitelistWithdrawalAddress || !tx.destinationAddress) {
+      return {};
+    }
+    const providerName = await this.providerNameFor(tx.currency, tx.network);
+    const [row] = await this.drizzle.db
+      .select({ providerWalletId: walletWithdrawalAddress.providerWalletId })
+      .from(walletWithdrawalAddress)
+      .where(
+        and(
+          eq(walletWithdrawalAddress.userId, userId),
+          eq(walletWithdrawalAddress.currency, tx.currency),
+          eq(walletWithdrawalAddress.address, tx.destinationAddress),
+          // A id minted by a different provider names nothing in the current one.
+          eq(walletWithdrawalAddress.providerName, providerName),
+          ...(tx.network ? [eq(walletWithdrawalAddress.network, tx.network)] : []),
+        ),
+      )
+      .limit(1);
+    return row?.providerWalletId ? { destinationWalletId: row.providerWalletId } : {};
+  }
+
+  /**
+   * Delegates to the bound payment adapter when it whitelists destinations, and returns nothing
+   * to store when it does not. A vendor failure propagates rather than being swallowed: saving
+   * the address anyway would produce a row that looks usable and fails only once the player has
+   * committed to a payout.
+   */
+  private async whitelistWithdrawalAddress(
+    userId: Uuid,
+    input: CreateWithdrawalAddressInput,
+  ): Promise<{ providerName: string; providerWalletId: string } | Record<string, never>> {
+    if (!this.payment.whitelistWithdrawalAddress) {
+      return {};
+    }
+    const { providerWalletId } = await this.payment.whitelistWithdrawalAddress({
+      userId,
+      currency: input.currency,
+      network: input.network,
+      address: input.address,
+    });
+    return {
+      providerName: await this.providerNameFor(input.currency, input.network),
+      providerWalletId,
+    };
   }
 
   /** False when the row does not exist OR belongs to someone else - the caller cannot
