@@ -172,6 +172,34 @@ export const walletDepositAddress = pgTable(
   ],
 );
 
+// A player's own address book: named payout destinations they pick from at withdrawal
+// time instead of re-typing a 40-character string. Never validated on-chain here - the
+// payment provider rejects a malformed address when the payout is actually attempted.
+export const walletWithdrawalAddress = pgTable(
+  'wallet_withdrawal_address',
+  {
+    id: uuid().primaryKey().defaultRandom(),
+    // Cross-module (identity), bare uuid - no .references, the user table is another
+    // domain's. Every read and write is scoped on this column.
+    userId: uuid().notNull(),
+    label: text().notNull(),
+    currency: text().notNull(),
+    network: text().notNull(),
+    address: text().notNull(),
+    createdAt: timestamp({ withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    // A double submit conflicts instead of duplicating the same destination twice.
+    uniqueIndex('wallet_withdrawal_address_user_id_currency_network_address_idx').on(
+      t.userId,
+      t.currency,
+      t.network,
+      t.address,
+    ),
+    index('wallet_withdrawal_address_user_id_created_at_idx').on(t.userId, t.createdAt),
+  ],
+);
+
 export const walletProviderVault = pgTable(
   'wallet_provider_vault',
   {
@@ -382,6 +410,7 @@ export type Wallet = typeof wallet.$inferSelect;
 export type WalletTransaction = typeof walletTransaction.$inferSelect;
 export type AutoWithdrawalRule = typeof autoWithdrawalRule.$inferSelect;
 export type WalletDepositAddress = typeof walletDepositAddress.$inferSelect;
+export type WalletWithdrawalAddressRow = typeof walletWithdrawalAddress.$inferSelect;
 export type WalletAutoWithdrawalConfig = typeof walletAutoWithdrawalConfig.$inferSelect;
 export type WalletAssetRow = typeof walletAsset.$inferSelect;
 export type WalletCustodySweep = typeof walletCustodySweep.$inferSelect;

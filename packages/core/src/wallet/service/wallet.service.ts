@@ -37,6 +37,7 @@ import {
   type User,
   type IdentityReader,
   type ClientMeta,
+  type Uuid,
   type PaginationOptions,
 } from '@openora/core/contracts';
 import { eq, asc, desc, sql, and, gte, lte, count, inArray, isNull, or } from 'drizzle-orm';
@@ -48,6 +49,7 @@ import {
   autoWithdrawalRule,
   walletAutoWithdrawalConfig,
   walletDepositAddress,
+  walletWithdrawalAddress,
   walletAsset,
   type Wallet,
   type WalletDepositAddress,
@@ -55,6 +57,7 @@ import {
   type AutoWithdrawalRule as AutoWithdrawalRuleRow,
   type WalletAutoWithdrawalConfig as WalletAutoWithdrawalConfigRow,
   type WalletAssetRow,
+  type WalletWithdrawalAddressRow,
 } from '../schema/index.js';
 import {
   LIVE_WEBHOOK_RUN_ID,
@@ -72,6 +75,8 @@ import type {
   CreateWalletAssetInput,
   UpdateWalletAssetInput,
   ManualAdjustmentDirection,
+  WithdrawalAddress,
+  CreateWithdrawalAddressInput,
 } from '../contract/index.js';
 
 const logger = createLogger('wallet');
@@ -138,6 +143,16 @@ export const WalletAssetHasInFlightTransactionsError = makeConflictError(
   'A pending or processing transaction exists for this currency and network',
 );
 
+export const WithdrawalAddressAlreadyExistsError = makeConflictError(
+  'WithdrawalAddressAlreadyExistsError',
+  'This address is already saved for that currency and network',
+);
+
+export const WithdrawalAddressLimitReachedError = createDomainError<[limit: number]>(
+  'WithdrawalAddressLimitReachedError',
+  (limit) => `A player may save at most ${limit} withdrawal addresses`,
+);
+
 export const AmbiguousNetworkError = createDomainError(
   'AmbiguousNetworkError',
   (currency, networks) =>
@@ -172,6 +187,21 @@ export const AmbiguousDepositAddressError = createDomainError(
 // else on the fiat rail (a PSP). The concrete provider is recorded per transaction, not
 // here. Overridable per-operator via `platformConfig.wallet.cryptoCurrencies` - see `railFor`.
 const DEFAULT_CRYPTO_CURRENCIES = new Set(['BTC', 'ETH', 'USDT', 'USDC']);
+
+// A saved-address book, not a payout allowlist: the cap only stops one account turning
+// the table into unbounded free storage. Not operator-configurable until someone asks.
+const WITHDRAWAL_ADDRESS_LIMIT = 50;
+
+function toWithdrawalAddressDto(row: WalletWithdrawalAddressRow): WithdrawalAddress {
+  return {
+    id: row.id,
+    label: row.label,
+    currency: row.currency,
+    network: row.network,
+    address: row.address,
+    createdAt: row.createdAt.toISOString(),
+  };
+}
 
 // Mirrors the `wallet.currency` column default: what a player without a wallet row
 // reads as their active currency before one is created on first deposit.
@@ -2298,5 +2328,91 @@ export class WalletService {
       throw new AmbiguousDepositAddressError(address, network);
     }
     return rows.find((row) => row.network === network) ?? rows[0];
+  }
+
+  /**
+   * The player's own payout address book. Every method here is scoped on `userId` - a
+   * saved address is personal data with no admin read path, so there is
+   * deliberately no variant of these that takes an arbitrary user id.
+   */
+  async listWithdrawalAddresses(userId: Uuid, currency?: string): Promise<WithdrawalAddress[]> {
+    const rows = await this.drizzle.db
+      .select()
+      .from(walletWithdrawalAddress)
+      .where(
+        and(
+          eq(walletWithdrawalAddress.userId, userId),
+          currency === undefined ? undefined : eq(walletWithdrawalAddress.currency, currency),
+        ),
+      )
+      .orderBy(desc(walletWithdrawalAddress.createdAt));
+    return rows.map(toWithdrawalAddressDto);
+  }
+
+  async createWithdrawalAddress(
+    userId: Uuid,
+    input: CreateWithdrawalAddressInput,
+    meta?: Partial<ClientMeta>,
+  ): Promise<WithdrawalAddress> {
+    // ponytail: count-then-insert, so N concurrent creates can land N over the cap.
+    // Move to an insert...where (select count) < limit if that ever matters.
+    const [existing] = await this.drizzle.db
+      .select({ total: count() })
+      .from(walletWithdrawalAddress)
+      .where(eq(walletWithdrawalAddress.userId, userId));
+    if ((existing?.total ?? 0) >= WITHDRAWAL_ADDRESS_LIMIT) {
+      throw new WithdrawalAddressLimitReachedError(WITHDRAWAL_ADDRESS_LIMIT);
+    }
+
+    // onConflictDoNothing turns the unique index into a domain conflict rather than a
+    // 500 - a double-submitted form is a 409, not an incident.
+    const [row] = await this.drizzle.db
+      .insert(walletWithdrawalAddress)
+      .values({ userId, ...input })
+      .onConflictDoNothing()
+      .returning();
+    if (!row) {
+      throw new WithdrawalAddressAlreadyExistsError();
+    }
+
+    await this.audit.record({
+      actorId: userId,
+      actorType: 'player',
+      action: 'wallet.withdrawal_address.created',
+      resourceType: 'wallet_withdrawal_address',
+      resourceId: row.id,
+      // The address string is deliberately absent: the audit log is admin-readable and
+      // a player's saved addresses are not. The row id is enough to correlate.
+      after: { label: row.label, currency: row.currency, network: row.network },
+      ...meta,
+    });
+    return toWithdrawalAddressDto(row);
+  }
+
+  /** False when the row does not exist OR belongs to someone else - the caller cannot
+   * tell the two apart, which is what stops the id space being probed. */
+  async deleteWithdrawalAddress(
+    userId: Uuid,
+    id: WithdrawalAddress['id'],
+    meta?: Partial<ClientMeta>,
+  ): Promise<boolean> {
+    const [row] = await this.drizzle.db
+      .delete(walletWithdrawalAddress)
+      .where(and(eq(walletWithdrawalAddress.id, id), eq(walletWithdrawalAddress.userId, userId)))
+      .returning();
+    if (!row) {
+      return false;
+    }
+
+    await this.audit.record({
+      actorId: userId,
+      actorType: 'player',
+      action: 'wallet.withdrawal_address.deleted',
+      resourceType: 'wallet_withdrawal_address',
+      resourceId: row.id,
+      before: { label: row.label, currency: row.currency, network: row.network },
+      ...meta,
+    });
+    return true;
   }
 }
