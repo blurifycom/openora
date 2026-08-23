@@ -248,7 +248,7 @@ export class WalletCommandsService implements WalletCommands {
           eq(walletBonusCredit.status, 'active'),
         ),
       )
-      .orderBy(asc(walletBonusCredit.createdAt));
+      .orderBy(asc(walletBonusCredit.createdAt), asc(walletBonusCredit.id));
 
     const completed: CompletedBonusCredit[] = [];
     let remaining = amount;

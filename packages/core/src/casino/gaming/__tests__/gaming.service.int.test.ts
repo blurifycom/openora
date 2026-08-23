@@ -218,6 +218,41 @@ describe('GamingService.startRound bonus rollover completion (real PG)', () => {
     });
   });
 
+  it('emits rollover completion before a provider launch failure can discard the notification', async () => {
+    const created = await seedGame({ id: '00000000-0000-0000-0000-0000000000a5', name: 'Aces' });
+    const events = makeEventBus();
+    const launchGame = vi.fn().mockRejectedValue(new Error('provider unavailable'));
+    const walletCommands = makeWalletCommands({
+      ok: true,
+      newBalance: '0',
+      currency: 'USD',
+      completedBonusCredits: [
+        { id: '00000000-0000-0000-0000-0000000000c5', currency: 'USD', creditedAmount: '25' },
+      ],
+    });
+    const svc = new GamingService(
+      db.drizzle,
+      events,
+      mock<GameAdapter>({ launchGame, endRound: vi.fn() }),
+      unrestricted,
+      walletCommands,
+      makeIdentityReader(),
+    );
+    const userId = '00000000-0000-0000-0000-000000000405';
+
+    await expect(svc.startRound(userId, created.id, 'USD', '25')).rejects.toThrow(
+      'provider unavailable',
+    );
+
+    expect(events.emit).toHaveBeenCalledWith('wallet.bonus_rollover.completed', {
+      userId,
+      creditId: '00000000-0000-0000-0000-0000000000c5',
+      currency: 'USD',
+      creditedAmount: '25',
+    });
+    expect(launchGame).toHaveBeenCalledOnce();
+  });
+
   it('emits no wallet.bonus_rollover.completed event when the debit completed no credit', async () => {
     const created = await seedGame({ id: '00000000-0000-0000-0000-0000000000a4', name: 'Aces' });
     const events = makeEventBus();

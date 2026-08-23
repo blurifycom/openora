@@ -106,16 +106,6 @@ export class GamingService {
       return { round: insertedRound, completedBonusCredits: outcome.completedBonusCredits ?? [] };
     });
 
-    const { launchUrl, token } = await this.provider.launchGame(gameId, userId, currency);
-
-    this.events.emit('gaming.round.started', {
-      roundId: round.id,
-      gameId,
-      userId,
-      playerId: await this.identityReader.getPlayerIdByUserIdSafe(userId),
-      currency,
-    });
-
     // wallet's WalletCommandsService.debit() runs INSIDE this method's own transaction
     // above and never owns its commit boundary, so it cannot safely emit itself - this
     // caller's transaction could still roll back afterward (it doesn't here, since we're
@@ -136,6 +126,16 @@ export class GamingService {
         creditedAmount: credit.creditedAmount,
       });
     }
+
+    const { launchUrl, token } = await this.provider.launchGame(gameId, userId, currency);
+
+    this.events.emit('gaming.round.started', {
+      roundId: round.id,
+      gameId,
+      userId,
+      playerId: await this.identityReader.getPlayerIdByUserIdSafe(userId),
+      currency,
+    });
 
     return { roundId: round.id, launchUrl, token };
   }
