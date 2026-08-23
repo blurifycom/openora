@@ -116,6 +116,11 @@ export const DestinationAddressRequiredError = makeConflictError(
   'A destination address is required for a crypto-rail withdrawal',
 );
 
+export const DestinationAddressNotWhitelistedError = makeConflictError(
+  'DestinationAddressNotWhitelistedError',
+  'This payout address is not approved for withdrawals. Save it in your address book first',
+);
+
 export const WalletAssetNotFoundError = makeNotFoundError('WalletAsset');
 
 export const WalletAssetAlreadyExistsError = makeConflictError(
@@ -1006,6 +1011,15 @@ export class WalletService {
     const assets = await this.assetsForCurrency(currency);
     const settlementNetwork = resolveWithdrawalNetwork(assets, currency, network);
     assertAboveMinimumWithdrawal(assets, amount, currency, settlementNetwork);
+    // Rejected here, before any funds are held. The payout path checks again and refuses to
+    // send without an approved destination, but discovering it there means the player's
+    // balance has already been debited into a pending withdrawal an operator must unwind.
+    await this.assertDestinationWhitelisted(
+      userId,
+      currency,
+      settlementNetwork,
+      destinationAddress,
+    );
 
     const { transactionId, status, replayed, walletId, rail } = await this.drizzle.db.transaction(
       async (txn) => {
@@ -2411,25 +2425,63 @@ export class WalletService {
     userId: Uuid,
     tx: WalletTransaction,
   ): Promise<{ destinationWalletId?: string }> {
-    if (!this.payment.whitelistWithdrawalAddress || !tx.destinationAddress) {
-      return {};
+    const walletId = await this.whitelistedWalletId(
+      userId,
+      tx.currency,
+      tx.network,
+      tx.destinationAddress,
+    );
+    return walletId ? { destinationWalletId: walletId } : {};
+  }
+
+  /**
+   * Refuses a payout to an address the provider has not approved. A no-op for an adapter that
+   * does not whitelist, and for a fiat rail, which has no address at all.
+   */
+  private async assertDestinationWhitelisted(
+    userId: Uuid,
+    currency: string,
+    network: string | null,
+    destinationAddress: string | undefined,
+  ): Promise<void> {
+    if (!this.payment.whitelistWithdrawalAddress || !destinationAddress) {
+      return;
     }
-    const providerName = await this.providerNameFor(tx.currency, tx.network);
+    if (!(await this.whitelistedWalletId(userId, currency, network, destinationAddress))) {
+      throw new DestinationAddressNotWhitelistedError();
+    }
+  }
+
+  /**
+   * The approved destination saved for this address, or null. Matched on the address itself
+   * rather than an id on the transaction, because a withdrawal is requested by address and may
+   * name one the player never saved.
+   */
+  private async whitelistedWalletId(
+    userId: Uuid,
+    currency: string,
+    network: string | null,
+    address: string | null | undefined,
+  ): Promise<string | null> {
+    if (!this.payment.whitelistWithdrawalAddress || !address) {
+      return null;
+    }
+    const providerName = await this.providerNameFor(currency, network);
     const [row] = await this.drizzle.db
       .select({ providerWalletId: walletWithdrawalAddress.providerWalletId })
       .from(walletWithdrawalAddress)
       .where(
         and(
           eq(walletWithdrawalAddress.userId, userId),
-          eq(walletWithdrawalAddress.currency, tx.currency),
-          eq(walletWithdrawalAddress.address, tx.destinationAddress),
-          // A id minted by a different provider names nothing in the current one.
+          eq(walletWithdrawalAddress.currency, currency),
+          eq(walletWithdrawalAddress.address, address),
+          // An id minted by a different provider names nothing in the current one.
           eq(walletWithdrawalAddress.providerName, providerName),
-          ...(tx.network ? [eq(walletWithdrawalAddress.network, tx.network)] : []),
+          ...(network ? [eq(walletWithdrawalAddress.network, network)] : []),
         ),
       )
       .limit(1);
-    return row?.providerWalletId ? { destinationWalletId: row.providerWalletId } : {};
+    return row?.providerWalletId ?? null;
   }
 
   /**
