@@ -36,10 +36,11 @@ function toMinorUnits(amount: string): bigint {
 }
 
 function fromMinorUnits(units: bigint): string {
-  const digits = units.toString().padStart(MONEY_SCALE + 1, '0');
+  const sign = units < 0n ? '-' : '';
+  const digits = (units < 0n ? -units : units).toString().padStart(MONEY_SCALE + 1, '0');
   const whole = digits.slice(0, -MONEY_SCALE);
   const fraction = digits.slice(-MONEY_SCALE);
-  return `${whole}.${fraction}`;
+  return `${sign}${whole}.${fraction}`;
 }
 
 // Exact three-way compare for two decimal-string money amounts. Never route this through

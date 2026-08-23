@@ -155,7 +155,7 @@ export type PaymentAdapter = {
    */
   sweepToPool?(
     balance: CustodyBalance,
-    opts: { idempotencyKey: string },
+    opts: { idempotencyKey: string; treasuryRef?: string },
   ): Promise<{ externalId: string; poolRef?: string }>;
 
   /**

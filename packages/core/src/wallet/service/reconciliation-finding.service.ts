@@ -1,5 +1,5 @@
 import type { DrizzleDb, DrizzleTx } from '@openora/core/server';
-import type { WalletReconciliationFindingKind } from '@openora/core/contracts';
+import type { AuditWritePort, WalletReconciliationFindingKind } from '@openora/core/contracts';
 import { walletReconciliationFinding } from '../schema/index.js';
 
 /**
@@ -42,8 +42,9 @@ export type ReconciliationFindingInput = {
 export async function recordReconciliationFinding(
   db: DrizzleDb | DrizzleTx,
   input: ReconciliationFindingInput,
+  audit?: AuditWritePort,
 ): Promise<void> {
-  await db
+  const [row] = await db
     .insert(walletReconciliationFinding)
     .values({
       runId: input.runId,
@@ -59,5 +60,17 @@ export async function recordReconciliationFinding(
       transactionId: input.transactionId ?? null,
       detail: input.detail ?? null,
     })
-    .onConflictDoNothing();
+    .onConflictDoNothing()
+    .returning();
+
+  if (row && audit) {
+    const { address: _address, tag: _tag, txHash: _txHash, ...auditable } = input;
+    await audit.record({
+      actorType: 'system',
+      action: 'wallet.reconciliation_finding.recorded',
+      resourceType: 'wallet_reconciliation_finding',
+      resourceId: row.id,
+      after: auditable,
+    });
+  }
 }

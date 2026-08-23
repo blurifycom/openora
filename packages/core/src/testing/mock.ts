@@ -183,12 +183,19 @@ export const makeAdminGuard = (
     allow?: readonly string[];
     deny?: readonly string[];
     caller?: Partial<AdminCaller>;
+    superAdmin?: boolean;
   } = {},
 ): AdminGuard =>
   mock<AdminGuard>({
     assert: vi.fn(async (_ctx: unknown, resource?: string, action?: string) => {
       if (resource && action && !isPermitted(options, resource, action)) {
         throw new ORPCError('FORBIDDEN', { message: `Missing permission: ${resource}:${action}` });
+      }
+      return adminCaller(options.caller);
+    }),
+    assertSuperAdmin: vi.fn(async () => {
+      if (options.superAdmin === false) {
+        throw new ORPCError('FORBIDDEN', { message: 'Super admin access required' });
       }
       return adminCaller(options.caller);
     }),

@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto';
-import { and, count, desc, eq, gte, inArray, isNull, lt } from 'drizzle-orm';
+import { and, asc, count, desc, eq, gte, inArray, isNull, lt } from 'drizzle-orm';
 import {
   type DrizzleService,
   type EventBus,
@@ -350,7 +350,7 @@ export class ReconciliationService {
           await this.reconcileProvider(runId, providerName, since, until, counts);
         }
 
-        await this.reconcileStuckWithdrawals(runId, cfg.stuckAfterMinutes, counts);
+        await this.reconcileStuckWithdrawals(runId, cfg.stuckAfterMinutes, cfg.batchSize, counts);
 
         // Deliberately not gated on `wallet.sweep` being configured. An operator can
         // adopt reconciliation without sweeping, and a stuck sweep is real player money
@@ -359,15 +359,17 @@ export class ReconciliationService {
         await this.reconcileStuckSweeps(
           runId,
           this.platformConfig?.wallet?.sweep?.unknownAfterMinutes ?? DEFAULT_UNKNOWN_AFTER_MINUTES,
+          cfg.batchSize,
           counts,
         );
       }
 
       const openFindings = await this.countOpenFindings();
-      await this.finishRun(jobRunId, 'completed', { ...counts, openFindings });
+      const status = cfg ? 'completed' : 'skipped';
+      await this.finishRun(jobRunId, status, { ...counts, openFindings });
       await this.audit.record({
         actorType: 'system',
-        action: 'wallet.reconciliation_run.completed',
+        action: cfg ? 'wallet.reconciliation_run.completed' : 'wallet.reconciliation_run.skipped',
         resourceType: 'wallet_job_run',
         resourceId: runId,
         after: { runId, ...counts, openFindings },
@@ -482,25 +484,29 @@ export class ReconciliationService {
             ? 'currencyMismatch'
             : 'amountMismatch'
       ] += 1;
-      await recordReconciliationFinding(this.drizzle.db, {
-        runId,
-        providerName,
-        kind: result,
-        currency: event.currency,
-        network: event.network ?? tx?.network ?? null,
-        amount: event.amount,
-        address: event.address,
-        tag: event.tag ?? null,
-        txHash: event.txHash,
-        externalId: event.externalId,
-        transactionId: tx?.id ?? null,
-        detail:
-          result === 'currency_mismatch'
-            ? `ledger currency ${tx?.currency}, vendor reported ${event.currency}`
-            : result === 'amount_mismatch'
-              ? `ledger amount ${tx?.amount}, vendor reported ${event.amount}`
-              : null,
-      });
+      await recordReconciliationFinding(
+        this.drizzle.db,
+        {
+          runId,
+          providerName,
+          kind: result,
+          currency: event.currency,
+          network: event.network ?? tx?.network ?? null,
+          amount: event.amount,
+          address: event.address,
+          tag: event.tag ?? null,
+          txHash: event.txHash,
+          externalId: event.externalId,
+          transactionId: tx?.id ?? null,
+          detail:
+            result === 'currency_mismatch'
+              ? `ledger currency ${tx?.currency}, vendor reported ${event.currency}`
+              : result === 'amount_mismatch'
+                ? `ledger amount ${tx?.amount}, vendor reported ${event.amount}`
+                : null,
+        },
+        this.audit,
+      );
     }
   }
 
@@ -529,6 +535,7 @@ export class ReconciliationService {
   private async reconcileStuckWithdrawals(
     runId: WalletJobRun['runId'],
     stuckAfterMinutes: number,
+    batchSize: number,
     counts: { unknownAtProvider: number },
   ): Promise<void> {
     const cutoff = new Date(Date.now() - stuckAfterMinutes * 60 * 1000);
@@ -541,7 +548,9 @@ export class ReconciliationService {
           eq(walletTransaction.type, 'withdrawal'),
           lt(walletTransaction.createdAt, cutoff),
         ),
-      );
+      )
+      .orderBy(asc(walletTransaction.createdAt))
+      .limit(batchSize);
 
     for (const tx of stuck) {
       const providerName = tx.providerName ?? DEFAULT_PAYMENT_PROVIDER;
@@ -551,17 +560,21 @@ export class ReconciliationService {
       // reference) - still worth a finding, deduped on the transaction's own id.
       if (!tx.providerRefId) {
         counts.unknownAtProvider += 1;
-        await recordReconciliationFinding(this.drizzle.db, {
-          runId,
-          providerName,
-          kind: 'unknown_at_provider',
-          currency: tx.currency,
-          network: tx.network,
-          amount: tx.amount,
-          transactionId: tx.id,
-          externalId: tx.id,
-          detail: 'withdrawal has no providerRefId to look up at the vendor',
-        });
+        await recordReconciliationFinding(
+          this.drizzle.db,
+          {
+            runId,
+            providerName,
+            kind: 'unknown_at_provider',
+            currency: tx.currency,
+            network: tx.network,
+            amount: tx.amount,
+            transactionId: tx.id,
+            externalId: tx.id,
+            detail: 'withdrawal has no providerRefId to look up at the vendor',
+          },
+          this.audit,
+        );
         continue;
       }
 
@@ -577,17 +590,21 @@ export class ReconciliationService {
       }
 
       counts.unknownAtProvider += 1;
-      await recordReconciliationFinding(this.drizzle.db, {
-        runId,
-        providerName,
-        kind: 'unknown_at_provider',
-        currency: tx.currency,
-        network: tx.network,
-        amount: tx.amount,
-        transactionId: tx.id,
-        externalId: tx.providerRefId,
-        detail: 'vendor has no record of this withdrawal',
-      });
+      await recordReconciliationFinding(
+        this.drizzle.db,
+        {
+          runId,
+          providerName,
+          kind: 'unknown_at_provider',
+          currency: tx.currency,
+          network: tx.network,
+          amount: tx.amount,
+          transactionId: tx.id,
+          externalId: tx.providerRefId,
+          detail: 'vendor has no record of this withdrawal',
+        },
+        this.audit,
+      );
     }
   }
 
@@ -596,6 +613,7 @@ export class ReconciliationService {
   private async reconcileStuckSweeps(
     runId: WalletJobRun['runId'],
     unknownAfterMinutes: number,
+    batchSize: number,
     counts: { stuckSweeps: number },
   ): Promise<void> {
     const cutoff = new Date(Date.now() - unknownAfterMinutes * 60 * 1000);
@@ -613,21 +631,27 @@ export class ReconciliationService {
           inArray(walletCustodySweep.status, ['pending', 'unknown']),
           lt(walletCustodySweep.createdAt, cutoff),
         ),
-      );
+      )
+      .orderBy(asc(walletCustodySweep.createdAt))
+      .limit(batchSize);
 
     for (const sweep of stuck) {
       counts.stuckSweeps += 1;
-      await recordReconciliationFinding(this.drizzle.db, {
-        runId,
-        providerName: sweep.providerName,
-        kind: 'stuck_sweep',
-        currency: sweep.currency,
-        network: sweep.network,
-        amount: sweep.amount,
-        txHash: sweep.txHash,
-        externalId: sweep.externalId ?? sweep.id,
-        detail: `custody sweep ${sweep.id} has been ${sweep.status} since ${sweep.updatedAt.toISOString()}`,
-      });
+      await recordReconciliationFinding(
+        this.drizzle.db,
+        {
+          runId,
+          providerName: sweep.providerName,
+          kind: 'stuck_sweep',
+          currency: sweep.currency,
+          network: sweep.network,
+          amount: sweep.amount,
+          txHash: sweep.txHash,
+          externalId: sweep.externalId ?? sweep.id,
+          detail: `custody sweep ${sweep.id} has been ${sweep.status} since ${sweep.updatedAt.toISOString()}`,
+        },
+        this.audit,
+      );
     }
   }
 

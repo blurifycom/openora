@@ -178,6 +178,7 @@ function toInvitationDto(row: typeof adminInvitation.$inferSelect) {
 // event-driven purge below normally beats the TTL; this is just the safety floor.
 const GRANTS_CACHE_TTL_MS = 10_000;
 const grantsCacheKey = (userId: User['id']) => `admin-grants:${userId}`;
+const superAdminCacheKey = (userId: User['id']) => `admin-super:${userId}`;
 
 /** Implements ADMIN_PERMISSION_RESOLVER; returns null when the user has no DB assignment (guard falls back to static roles for the bootstrap admin path). */
 export class DbAdminPermissionResolver implements AdminPermissionResolver {
@@ -192,6 +193,22 @@ export class DbAdminPermissionResolver implements AdminPermissionResolver {
     return cached(this.cache, grantsCacheKey(userId), GRANTS_CACHE_TTL_MS, () =>
       this.loadGrants(userId),
     );
+  }
+
+  isSuperAdmin(userId: User['id']) {
+    return cached(this.cache, superAdminCacheKey(userId), GRANTS_CACHE_TTL_MS, () =>
+      this.loadSuperAdmin(userId),
+    );
+  }
+
+  private async loadSuperAdmin(userId: User['id']): Promise<boolean | null> {
+    const rows = await this.drizzle.db
+      .select({ isSuperAdmin: adminRole.isSuperAdmin })
+      .from(adminRoleAssignment)
+      .innerJoin(adminRole, eq(adminRole.id, adminRoleAssignment.roleId))
+      .where(eq(adminRoleAssignment.userId, userId));
+
+    return rows.length === 0 ? null : rows.some((r) => r.isSuperAdmin);
   }
 
   private async loadGrants(userId: User['id']): Promise<AdminGrant[] | null> {
@@ -236,7 +253,7 @@ export class DbAdminPermissionResolver implements AdminPermissionResolver {
 
   /** Drop one user's cached grants - called on assign/revoke so revocation is instant. */
   async invalidateUser(userId: User['id']) {
-    await invalidate(this.cache, grantsCacheKey(userId));
+    await invalidate(this.cache, [grantsCacheKey(userId), superAdminCacheKey(userId)]);
   }
 
   /** Drop cached grants for every current holder of a role - for a role-wide permission change. */
@@ -248,7 +265,7 @@ export class DbAdminPermissionResolver implements AdminPermissionResolver {
     if (holders.length > 0) {
       await invalidate(
         this.cache,
-        holders.map((h) => grantsCacheKey(h.userId)),
+        holders.flatMap((h) => [grantsCacheKey(h.userId), superAdminCacheKey(h.userId)]),
       );
     }
   }

@@ -4,7 +4,7 @@ import { gateSweepBalance } from '../service/custody-sweep.service.js';
 const base = {
   amount: '100',
   estimatedFee: '1',
-  minDeposit: '10',
+  dustThreshold: '10',
   feeMultiple: '5',
   sweepFeeCeiling: null as string | null,
   poolLiquidityFloor: null as string | null,
@@ -16,7 +16,7 @@ describe('gateSweepBalance', () => {
     expect(gateSweepBalance(base)).toBe('sweep');
   });
 
-  describe('dust floor (amount >= minDeposit)', () => {
+  describe('dust floor (amount >= dustThreshold)', () => {
     it('skips strictly below the floor', () => {
       expect(gateSweepBalance({ ...base, amount: '9.999999999999999999' })).toBe('dust');
     });
@@ -30,13 +30,13 @@ describe('gateSweepBalance', () => {
     it('skips strictly below the floor', () => {
       // fee 1 * multiple 5 = 5; amount must be >= 5. Use 4.999... below it, but still
       // above the dust floor (10) so dust never masks this gate.
-      expect(gateSweepBalance({ ...base, minDeposit: '1', amount: '4.999999999999999999' })).toBe(
-        'fee',
-      );
+      expect(
+        gateSweepBalance({ ...base, dustThreshold: '1', amount: '4.999999999999999999' }),
+      ).toBe('fee');
     });
 
     it('sweeps exactly at the floor', () => {
-      expect(gateSweepBalance({ ...base, minDeposit: '1', amount: '5' })).toBe('sweep');
+      expect(gateSweepBalance({ ...base, dustThreshold: '1', amount: '5' })).toBe('sweep');
     });
   });
 

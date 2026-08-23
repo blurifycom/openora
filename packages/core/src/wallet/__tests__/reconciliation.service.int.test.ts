@@ -51,6 +51,7 @@ beforeEach(async () => {
 const RECONCILIATION_CONFIG: NonNullable<PlatformConfig['wallet']>['reconciliation'] = {
   cron: '0 * * * *',
   lookbackHours: 24,
+  batchSize: 200,
   stuckAfterMinutes: 60,
   staleRunAfterMinutes: 30,
   alertThreshold: 10,
@@ -350,7 +351,7 @@ describe('ReconciliationService.runCycle - retried run', () => {
 });
 
 describe('ReconciliationService.runCycle - audit', () => {
-  it('writes exactly one audit entry per run, with no address or tx hash in its payload', async () => {
+  it('audits the run and each finding, with no address or tx hash in either payload', async () => {
     const externalId = randomUUID();
     const payment = listTransactionsReturning([
       {
@@ -366,12 +367,14 @@ describe('ReconciliationService.runCycle - audit', () => {
 
     await reconciliation.runCycle();
 
-    expect(audit.record).toHaveBeenCalledTimes(1);
-    const [entry] = (audit.record as ReturnType<typeof vi.fn>).mock.calls[0] as [
-      Record<string, unknown>,
-    ];
-    expect(entry.action).toBe('wallet.reconciliation_run.completed');
-    const payload = JSON.stringify(entry);
+    const entries = (audit.record as ReturnType<typeof vi.fn>).mock.calls.map(
+      ([entry]) => entry as Record<string, unknown>,
+    );
+    expect(entries.map((e) => e.action)).toEqual([
+      'wallet.reconciliation_finding.recorded',
+      'wallet.reconciliation_run.completed',
+    ]);
+    const payload = JSON.stringify(entries);
     expect(payload).not.toContain('bc1qaudited');
     expect(payload).not.toContain('0xaudited');
   });

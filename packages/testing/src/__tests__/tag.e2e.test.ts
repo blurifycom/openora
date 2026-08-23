@@ -137,8 +137,16 @@ describe('withdrawal_review: assign on wallet.withdrawal.requested', () => {
       app,
       { email: belowEmail },
     );
-    await belowClient.post('/wallet/deposit', { amount: '1000', currency: 'USD' });
-    const belowRes = await belowClient.post('/wallet/withdraw', { amount: '499', currency: 'USD' });
+    await belowClient.post('/wallet/deposit', {
+      idempotencyKey: randomUUID(),
+      amount: '1000',
+      currency: 'USD',
+    });
+    const belowRes = await belowClient.post('/wallet/withdraw', {
+      idempotencyKey: randomUUID(),
+      amount: '499',
+      currency: 'USD',
+    });
     expect(belowRes.status).toBe(200);
 
     const aboveEmail = `wr-above-${randomUUID()}@e2e.test`;
@@ -146,8 +154,13 @@ describe('withdrawal_review: assign on wallet.withdrawal.requested', () => {
       app,
       { email: aboveEmail },
     );
-    await aboveClient.post('/wallet/deposit', { amount: '1000', currency: 'USD' });
+    await aboveClient.post('/wallet/deposit', {
+      idempotencyKey: randomUUID(),
+      amount: '1000',
+      currency: 'USD',
+    });
     const aboveRes = await aboveClient.post('/wallet/withdraw', {
+      idempotencyKey: randomUUID(),
       amount: '500',
       currency: 'USD',
     });
@@ -168,8 +181,16 @@ describe('withdrawal_review: assign on wallet.withdrawal.requested', () => {
   it('is sticky - the withdrawal completing afterwards never removes it (no automated removal path exists)', async () => {
     const email = `wr-sticky-${randomUUID()}@e2e.test`;
     const { client, playerId } = await registerAndMaterializePlayer(app, { email: email });
-    await client.post('/wallet/deposit', { amount: '1000', currency: 'USD' });
-    const res = await client.post('/wallet/withdraw', { amount: '500', currency: 'USD' });
+    await client.post('/wallet/deposit', {
+      idempotencyKey: randomUUID(),
+      amount: '1000',
+      currency: 'USD',
+    });
+    const res = await client.post('/wallet/withdraw', {
+      idempotencyKey: randomUUID(),
+      amount: '500',
+      currency: 'USD',
+    });
     expect(res.status).toBe(200);
     const body = await readJson(res);
 
@@ -295,13 +316,25 @@ describe('high_risk: existing assign path unaffected, frequency-only resweep', (
 
     const email = `hr-freq-${randomUUID()}@e2e.test`;
     const { client, playerId } = await registerAndMaterializePlayer(app, { email: email });
-    await client.post('/wallet/deposit', { amount: '100', currency: 'USD' });
+    await client.post('/wallet/deposit', {
+      idempotencyKey: randomUUID(),
+      amount: '100',
+      currency: 'USD',
+    });
 
     const w1 = await readJson(
-      await client.post('/wallet/withdraw', { amount: '5', currency: 'USD' }),
+      await client.post('/wallet/withdraw', {
+        idempotencyKey: randomUUID(),
+        amount: '5',
+        currency: 'USD',
+      }),
     );
     const w2 = await readJson(
-      await client.post('/wallet/withdraw', { amount: '5', currency: 'USD' }),
+      await client.post('/wallet/withdraw', {
+        idempotencyKey: randomUUID(),
+        amount: '5',
+        currency: 'USD',
+      }),
     );
 
     // appDefault has autoWithdrawal off - withdrawals stay pending until approved. The

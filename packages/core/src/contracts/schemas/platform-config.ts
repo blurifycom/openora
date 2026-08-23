@@ -68,6 +68,7 @@ export const WalletConfigSchema = z
      * core code change.
      */
     cryptoCurrencies: z.array(z.string().min(1)).optional(),
+    treasuryRef: z.string().min(1).optional(),
     /**
      * Custody sweep cron knobs. Static config, not a DB row - nothing here is edited
      * during an incident. Absent means the sweep job no-ops.
@@ -108,6 +109,7 @@ export const WalletConfigSchema = z
       .object({
         cron: z.string().default('0 * * * *'),
         lookbackHours: z.number().int().positive().default(24),
+        batchSize: z.number().int().positive().default(200),
         stuckAfterMinutes: z.number().int().positive().default(60),
         /** Run-claim takeover threshold, as in `sweep.staleRunAfterMinutes`. */
         staleRunAfterMinutes: z.number().int().positive().default(30),

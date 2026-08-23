@@ -26,6 +26,9 @@ export type DirectAuditAction =
   | 'wallet.auto_withdrawal_config.set'
   | 'wallet.manual_adjustment.created'
   | 'wallet.custody.sweep_cycle'
+  | 'wallet.custody.sweep'
+  | 'wallet.reconciliation_finding.recorded'
+  | 'wallet.reconciliation_run.skipped'
   | 'wallet.reconciliation_run.completed'
   | 'wallet.reconciliation_run.failed'
   | 'wallet.reconciliation_finding.resolved';

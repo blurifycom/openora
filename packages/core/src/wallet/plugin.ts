@@ -76,7 +76,10 @@ export default {
       queue: CUSTODY_SWEEP_QUEUE,
       schema: CustodySweepJobPayloadSchema,
       handler: async ({ payload }) => {
-        await sweepSvc?.runCycle(payload.runId);
+        if (!sweepSvc) {
+          throw new Error('wallet custody sweep: service not constructed yet');
+        }
+        await sweepSvc.runCycle(payload.runId);
       },
     });
 
@@ -84,7 +87,10 @@ export default {
       queue: WALLET_RECONCILIATION_QUEUE,
       schema: WalletReconciliationJobSchema,
       handler: async ({ payload }) => {
-        await reconciliationRef?.runCycle(payload.runId);
+        if (!reconciliationRef) {
+          throw new Error('wallet reconciliation: service not constructed yet');
+        }
+        await reconciliationRef.runCycle(payload.runId);
       },
     });
 

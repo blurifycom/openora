@@ -227,7 +227,7 @@ describe('CustodySweepService (real PG)', () => {
     expect(sweeps).toHaveLength(0);
   });
 
-  it('writes exactly one audit entry per cycle regardless of how many balances were swept', async () => {
+  it('writes one audit entry per swept balance plus one for the cycle', async () => {
     await seedAsset();
     const balances = [makeBalance(), makeBalance(), makeBalance()];
     const adapter = mock<PaymentAdapter>({
@@ -239,13 +239,16 @@ describe('CustodySweepService (real PG)', () => {
     const result = await service.runCycle();
     expect(result?.summary.swept).toBe(3);
 
-    expect(audit.recordInTransaction).toHaveBeenCalledTimes(1);
-    const [, entry] = (audit.recordInTransaction as ReturnType<typeof vi.fn>).mock.calls[0] as [
+    const calls = (audit.recordInTransaction as ReturnType<typeof vi.fn>).mock.calls as [
       unknown,
       { action: string; after: Record<string, unknown> },
-    ];
-    expect(entry.action).toBe('wallet.custody.sweep_cycle');
-    expect(entry.after).toMatchObject({ runId: result?.runId, swept: 3 });
+    ][];
+    const entries = calls.map(([, entry]) => entry);
+
+    expect(entries.filter((e) => e.action === 'wallet.custody.sweep')).toHaveLength(3);
+    const cycle = entries.filter((e) => e.action === 'wallet.custody.sweep_cycle');
+    expect(cycle).toHaveLength(1);
+    expect(cycle[0]?.after).toMatchObject({ runId: result?.runId, swept: 3 });
   });
 
   it('a repeated unconfigured asset files exactly one finding, not one per cycle', async () => {

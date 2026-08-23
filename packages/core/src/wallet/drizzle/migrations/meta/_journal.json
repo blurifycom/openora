@@ -78,6 +78,13 @@
       "when": 1787270367938,
       "tag": "0010_worthless_quasimodo",
       "breakpoints": true
+    },
+    {
+      "idx": 11,
+      "version": "7",
+      "when": 1787522656327,
+      "tag": "0011_silly_cannonball",
+      "breakpoints": true
     }
   ]
 }

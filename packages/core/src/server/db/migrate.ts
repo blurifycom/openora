@@ -35,6 +35,12 @@ export type RunMigrationsOptions = {
    * same rationale as `extensions`, different problem shape.
    */
   preSql?: string[];
+  /**
+   * Raw SQL statements to run, in order, AFTER every pending migration is applied. Same
+   * trust model as `preSql`; for constraints drizzle-kit cannot express against a table
+   * it has just created (eg an append-only trigger on the audit log).
+   */
+  postSql?: string[];
 };
 
 function migrateUrl(override?: string): string {
@@ -147,6 +153,9 @@ export async function runMigrations(opts: RunMigrationsOptions) {
       );
     } finally {
       lockClient.release();
+    }
+    for (const sql of opts.postSql ?? []) {
+      await pool.query(sql);
     }
   } finally {
     await pool.end();

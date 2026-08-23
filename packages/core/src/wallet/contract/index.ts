@@ -66,12 +66,12 @@ export const WalletTransactionSchema = z.object({
   network: WalletNetworkSchema.nullable(),
   status: WalletTransactionStatusSchema,
   createdAt: TimestampSchema,
+  reviewReason: z.string().nullable(),
 });
 
 export const AdminWalletTransactionSchema = WalletTransactionSchema.extend({
   reviewedBy: UuidSchema.nullable(),
   reviewedAt: TimestampSchema.nullable(),
-  reviewReason: z.string().nullable(),
 });
 export type AdminWalletTransaction = z.infer<typeof AdminWalletTransactionSchema>;
 
@@ -79,7 +79,7 @@ export const DepositInputSchema = z.object({
   amount: PositiveMoneyAmountSchema,
   currency: WalletCurrencyInputSchema,
   provider: z.string().optional(),
-  idempotencyKey: UuidSchema.optional(),
+  idempotencyKey: UuidSchema,
 });
 
 export const WithdrawInputSchema = z.object({
@@ -89,7 +89,7 @@ export const WithdrawInputSchema = z.object({
   // rejected as ambiguous rather than guessing which chain the player meant.
   network: WalletNetworkInputSchema.optional(),
   provider: z.string().optional(),
-  idempotencyKey: UuidSchema.optional(),
+  idempotencyKey: UuidSchema,
   destinationAddress: z.string().optional(),
 });
 
@@ -274,6 +274,7 @@ export const WalletAssetSchema = PublicWalletAssetSchema.extend({
   // Null means the default single binding (PAYMENT_ADAPTER / PAYMENT_WEBHOOK_VERIFIER),
   // never a vendor's name to parse - core treats this as an opaque operator-chosen key.
   providerName: z.string().nullable(),
+  sweepDustThreshold: MoneyAmountSchema.nullable(),
   sweepFeeCeiling: MoneyAmountSchema.nullable(),
   poolLiquidityFloor: MoneyAmountSchema.nullable(),
   createdAt: TimestampSchema,
@@ -299,6 +300,7 @@ export const CreateWalletAssetInputSchema = z.object({
   // unvalidated typo would fall back to the default adapter, attempting eg a crypto
   // payout through a PSP. Absent = the default single binding.
   providerName: z.string().trim().min(1).optional(),
+  sweepDustThreshold: WalletAssetAmountSchema.optional(),
   sweepFeeCeiling: WalletAssetAmountSchema.optional(),
   poolLiquidityFloor: WalletAssetAmountSchema.optional(),
 });
@@ -316,6 +318,7 @@ export const UpdateWalletAssetInputSchema = WalletAssetKeySchema.extend({
   withdrawalFee: WalletAssetAmountSchema.optional(),
   depositEnabled: z.boolean().optional(),
   withdrawalEnabled: z.boolean().optional(),
+  sweepDustThreshold: WalletAssetAmountSchema.optional(),
   sweepFeeCeiling: WalletAssetAmountSchema.optional(),
   poolLiquidityFloor: WalletAssetAmountSchema.optional(),
 });
