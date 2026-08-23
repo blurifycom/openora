@@ -1011,10 +1011,7 @@ export class WalletService {
     const assets = await this.assetsForCurrency(currency);
     const settlementNetwork = resolveWithdrawalNetwork(assets, currency, network);
     assertAboveMinimumWithdrawal(assets, amount, currency, settlementNetwork);
-    // Rejected here, before any funds are held. The payout path checks again and refuses to
-    // send without an approved destination, but discovering it there means the player's
-    // balance has already been debited into a pending withdrawal an operator must unwind.
-    await this.assertDestinationWhitelisted(
+    const destinationWalletId = await this.requireWhitelistedWalletId(
       userId,
       currency,
       settlementNetwork,
@@ -1062,6 +1059,7 @@ export class WalletService {
             rail: this.resolveRail(currency),
             network: settlementNetwork,
             destinationAddress: destinationAddress ?? null,
+            destinationWalletId,
           },
         });
 
@@ -1319,7 +1317,7 @@ export class WalletService {
         // whitelists at all. Absent for an address that predates whitelisting or was never in
         // the book, and such an adapter is expected to refuse rather than pay out to the raw
         // address - the whitelist is the control, so bypassing it would defeat the point.
-        ...(await this.destinationWalletIdFor(userId, tx)),
+        ...(tx.destinationWalletId ? { destinationWalletId: tx.destinationWalletId } : {}),
         // Pinned at request time; without it an adapter cannot tell ERC20 USDT from TRC20.
         network: tx.network,
       });
@@ -2417,39 +2415,23 @@ export class WalletService {
   }
 
   /**
-   * Looks up the whitelisted destination saved for this payout's address. Matched on the address
-   * itself rather than an id on the transaction, because a withdrawal is requested by address and
-   * may name one the player never saved.
-   */
-  private async destinationWalletIdFor(
-    userId: Uuid,
-    tx: WalletTransaction,
-  ): Promise<{ destinationWalletId?: string }> {
-    const walletId = await this.whitelistedWalletId(
-      userId,
-      tx.currency,
-      tx.network,
-      tx.destinationAddress,
-    );
-    return walletId ? { destinationWalletId: walletId } : {};
-  }
-
-  /**
    * Refuses a payout to an address the provider has not approved. A no-op for an adapter that
    * does not whitelist, and for a fiat rail, which has no address at all.
    */
-  private async assertDestinationWhitelisted(
+  private async requireWhitelistedWalletId(
     userId: Uuid,
     currency: string,
     network: string | null,
     destinationAddress: string | undefined,
-  ): Promise<void> {
+  ): Promise<string | null> {
     if (!this.payment.whitelistWithdrawalAddress || !destinationAddress) {
-      return;
+      return null;
     }
-    if (!(await this.whitelistedWalletId(userId, currency, network, destinationAddress))) {
+    const walletId = await this.whitelistedWalletId(userId, currency, network, destinationAddress);
+    if (!walletId) {
       throw new DestinationAddressNotWhitelistedError();
     }
+    return walletId;
   }
 
   /**
@@ -2468,20 +2450,43 @@ export class WalletService {
     }
     const providerName = await this.providerNameFor(currency, network);
     const [row] = await this.drizzle.db
-      .select({ providerWalletId: walletWithdrawalAddress.providerWalletId })
+      .select({
+        id: walletWithdrawalAddress.id,
+        network: walletWithdrawalAddress.network,
+        providerName: walletWithdrawalAddress.providerName,
+        providerWalletId: walletWithdrawalAddress.providerWalletId,
+      })
       .from(walletWithdrawalAddress)
       .where(
         and(
           eq(walletWithdrawalAddress.userId, userId),
           eq(walletWithdrawalAddress.currency, currency),
           eq(walletWithdrawalAddress.address, address),
-          // An id minted by a different provider names nothing in the current one.
-          eq(walletWithdrawalAddress.providerName, providerName),
           ...(network ? [eq(walletWithdrawalAddress.network, network)] : []),
         ),
       )
       .limit(1);
-    return row?.providerWalletId ?? null;
+    if (!row) {
+      return null;
+    }
+    // An id minted by a different provider names nothing in the current one, and a row
+    // saved while no whitelisting adapter was bound has no id at all. Both re-register
+    // with the provider that will actually settle, rather than failing a payout on a
+    // saved address the player cannot fix themselves.
+    if (row.providerWalletId && row.providerName === providerName) {
+      return row.providerWalletId;
+    }
+    const { providerWalletId } = await this.payment.whitelistWithdrawalAddress({
+      userId,
+      currency,
+      network: row.network,
+      address,
+    });
+    await this.drizzle.db
+      .update(walletWithdrawalAddress)
+      .set({ providerName, providerWalletId })
+      .where(eq(walletWithdrawalAddress.id, row.id));
+    return providerWalletId;
   }
 
   /**

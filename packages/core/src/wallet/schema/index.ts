@@ -101,6 +101,7 @@ export const walletTransaction = pgTable(
     providerName: text(),
     providerRefId: text(),
     destinationAddress: text(),
+    destinationWalletId: text(),
     txHash: text(),
     // Reserved escape hatch for genuinely free-form, non-queryable extras. Provider
     // identity now lives in the typed columns above, not here.

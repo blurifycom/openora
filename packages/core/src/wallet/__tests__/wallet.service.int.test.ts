@@ -975,13 +975,13 @@ describe('WalletService.approveWithdrawal (real PG)', () => {
     ]);
   });
 
-  it('sends the whitelisted wallet id saved for the payout address', async () => {
+  it('sends the whitelisted wallet id pinned on the withdrawal at request time', async () => {
     const psp = {
       ...makePsp(),
       whitelistWithdrawalAddress: async () => ({ providerWalletId: 'fb-wallet-1' }),
     };
     const { svc } = makeService({ payment: mock<PaymentAdapter>(psp) });
-    const w = await seedWallet({ currency: 'BTC' });
+    const w = await seedWallet({ currency: 'BTC', balance: '5' });
     await db.drizzle.db.insert(walletWithdrawalAddress).values({
       userId: w.userId,
       label: 'cold',
@@ -991,20 +991,87 @@ describe('WalletService.approveWithdrawal (real PG)', () => {
       providerName: DEFAULT_PAYMENT_PROVIDER,
       providerWalletId: 'fb-wallet-1',
     });
-    const pending = await seedTx(w.id, {
-      currency: 'BTC',
-      rail: 'crypto',
-      amount: '1',
-      network: 'BITCOIN',
-      destinationAddress: 'bc1qsaved',
-    });
 
-    await svc.approveWithdrawal(randomUUID(), pending.id);
+    const requested = await svc.withdraw({
+      userId: w.userId,
+      amount: '1',
+      currency: 'BTC',
+      destinationAddress: 'bc1qsaved',
+      ...NO_CLIENT_META,
+    });
+    await svc.approveWithdrawal(randomUUID(), requested.transactionId);
 
     expect(psp.processWithdrawal).toHaveBeenCalledWith(
       expect.any(String),
       'BTC',
       expect.objectContaining({ destinationWalletId: 'fb-wallet-1' }),
+    );
+  });
+
+  it('still pays out a pending withdrawal whose saved address was deleted meanwhile', async () => {
+    const psp = {
+      ...makePsp(),
+      whitelistWithdrawalAddress: async () => ({ providerWalletId: 'fb-wallet-1' }),
+    };
+    const { svc } = makeService({ payment: mock<PaymentAdapter>(psp) });
+    const w = await seedWallet({ currency: 'BTC', balance: '5' });
+    const [saved] = await db.drizzle.db
+      .insert(walletWithdrawalAddress)
+      .values({
+        userId: w.userId,
+        label: 'cold',
+        currency: 'BTC',
+        network: 'BITCOIN',
+        address: 'bc1qsaved',
+        providerName: DEFAULT_PAYMENT_PROVIDER,
+        providerWalletId: 'fb-wallet-1',
+      })
+      .returning();
+
+    const requested = await svc.withdraw({
+      userId: w.userId,
+      amount: '1',
+      currency: 'BTC',
+      destinationAddress: 'bc1qsaved',
+      ...NO_CLIENT_META,
+    });
+    await svc.deleteWithdrawalAddress(w.userId, saved!.id);
+    await svc.approveWithdrawal(randomUUID(), requested.transactionId);
+
+    expect(psp.processWithdrawal).toHaveBeenCalledWith(
+      expect.any(String),
+      'BTC',
+      expect.objectContaining({ destinationWalletId: 'fb-wallet-1' }),
+    );
+  });
+
+  it('re-registers a saved address that predates the whitelisting adapter', async () => {
+    const whitelistWithdrawalAddress = vi.fn(async () => ({ providerWalletId: 'fb-wallet-9' }));
+    const psp = { ...makePsp(), whitelistWithdrawalAddress };
+    const { svc } = makeService({ payment: mock<PaymentAdapter>(psp) });
+    const w = await seedWallet({ currency: 'BTC', balance: '5' });
+    await db.drizzle.db.insert(walletWithdrawalAddress).values({
+      userId: w.userId,
+      label: 'legacy',
+      currency: 'BTC',
+      network: 'BITCOIN',
+      address: 'bc1qlegacy',
+    });
+
+    const requested = await svc.withdraw({
+      userId: w.userId,
+      amount: '1',
+      currency: 'BTC',
+      destinationAddress: 'bc1qlegacy',
+      ...NO_CLIENT_META,
+    });
+    await svc.approveWithdrawal(randomUUID(), requested.transactionId);
+
+    expect(whitelistWithdrawalAddress).toHaveBeenCalledTimes(1);
+    expect(psp.processWithdrawal).toHaveBeenCalledWith(
+      expect.any(String),
+      'BTC',
+      expect.objectContaining({ destinationWalletId: 'fb-wallet-9' }),
     );
   });
 
