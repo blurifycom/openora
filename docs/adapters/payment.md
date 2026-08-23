@@ -236,9 +236,9 @@ flowchart TD
   list --> perbalance["for each balance"]
   perbalance --> catalogRow{"catalog row exists?"}
   catalogRow -- no --> skip
-  catalogRow -- yes --> minDeposit{"amount >= minimum<br/>deposit (dust)?"}
-  minDeposit -- no --> skip
-  minDeposit -- yes --> feeMultiple{"amount >= fee x<br/>fee-multiple?"}
+  catalogRow -- yes --> dust{"amount >= dust<br/>threshold?"}
+  dust -- no --> skip
+  dust -- yes --> feeMultiple{"amount >= fee x<br/>fee-multiple?"}
   feeMultiple -- no --> skip
   feeMultiple -- yes --> feeCeiling{"fee within ceiling,<br/>unless pool is below<br/>its liquidity floor?"}
   feeCeiling -- no --> skip
@@ -298,7 +298,7 @@ provider's transaction list - never a vendor's name. Which chains are UTXO, acco
 or tag-based is vendor topology, not policy; it belongs in the overlay adapter, not in
 core.
 
-### Planned routes
+### Routes
 
 | Route                                      | Does                                                                                            | Permission                      |
 | ------------------------------------------ | ----------------------------------------------------------------------------------------------- | ------------------------------- |
@@ -308,9 +308,23 @@ core.
 | `POST /wallet/reconciliation/{id}/resolve` | Resolves a finding (including a manual credit)                                                  | `wallet-reconciliation:resolve` |
 | `POST /wallet/reconciliation/run`          | Triggers one reconciliation pass on demand                                                      | `wallet-reconciliation:run`     |
 
-### Known limitation
+### Multiple vendors
 
-`PAYMENT_ADAPTER` and `PAYMENT_WEBHOOK_VERIFIER` are single DI bindings today - one
-adapter, one verifier, for the whole wallet module. A fiat PSP and a crypto custody
-vendor cannot both be bound at once. The provider registry in the diagram above (asset
-catalog provider name -> named adapter/verifier pair) is what removes that constraint.
+`PAYMENT_ADAPTER` and `PAYMENT_WEBHOOK_VERIFIER` remain single DI bindings, exposed as
+the `default` entry of `PAYMENT_PROVIDERS`. An operator running a fiat PSP and a crypto
+custodian at once rebinds `PAYMENT_PROVIDERS` with a map of named pairs and sets
+`wallet_asset.providerName` per (currency, network); withdrawal settlement and deposit
+address issuance then resolve the adapter from that column, and a webhook resolves both
+verifier and adapter from the same entry.
+
+### Treasury
+
+`wallet.treasuryRef` (platform config) names the vendor-side account sweeps move player
+funds into and withdrawals are paid out of. It is passed to `sweepToPool` and recorded on
+`wallet_custody_sweep.poolRef` when the vendor does not return one of its own. Absent, the
+destination is whatever the adapter defaults to and `poolRef` stays null.
+
+### Dust
+
+The sweep dust floor is `wallet_asset.sweepDustThreshold`, falling back to `minDeposit`
+when it is not set - so raising a deposit minimum does not silently change what gets swept.
