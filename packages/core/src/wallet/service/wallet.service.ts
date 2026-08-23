@@ -2354,6 +2354,9 @@ export class WalletService {
     input: CreateWithdrawalAddressInput,
     meta?: Partial<ClientMeta>,
   ): Promise<WithdrawalAddress> {
+    // Shares the wallet mutation budget with deposit/withdraw: the row cap alone does
+    // not bound writes, since deleting frees a slot and lets a client churn forever.
+    await this.rateLimit(userId);
     // ponytail: count-then-insert, so N concurrent creates can land N over the cap.
     // Move to an insert...where (select count) < limit if that ever matters.
     const [existing] = await this.drizzle.db
@@ -2396,6 +2399,7 @@ export class WalletService {
     id: WithdrawalAddress['id'],
     meta?: Partial<ClientMeta>,
   ): Promise<boolean> {
+    await this.rateLimit(userId);
     const [row] = await this.drizzle.db
       .delete(walletWithdrawalAddress)
       .where(and(eq(walletWithdrawalAddress.id, id), eq(walletWithdrawalAddress.userId, userId)))
